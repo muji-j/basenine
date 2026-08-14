@@ -35,6 +35,62 @@ export interface ArchiveDeps {
   fetcher: PoliteFetcher;
   sink: Sink;
   clock: Clock;
+  /** 월간 일정 캐시. 없으면 호출마다 새로 받는다 — 기간 백필에서는 반드시 넘겨라 */
+  schedule?: MonthlyScheduleCache;
+}
+
+/**
+ * 월간 일정 페이지를 **1회만** 받는다.
+ *
+ * ⚠이게 없으면 기간 백필에서 같은 페이지를 날짜 수만큼 다시 받는다.
+ * 167일치를 돌리면 167번이다 — 낭비이자 L1(예의) 위반이다.
+ * 캐시는 프로세스 수명과 같다. 시즌 중 일정이 갱신되므로 영속화하지 않는다.
+ */
+export class MonthlyScheduleCache {
+  private readonly byMonth = new Map<string, Promise<GameRef[]>>();
+  /** 실제 네트워크 취득이 일어난 횟수 — 테스트가 이걸 본다 */
+  fetchCount = 0;
+
+  async get(season: number, month: number, deps: ArchiveDeps): Promise<GameRef[]> {
+    const key = `${season}-${month}`;
+    const hit = this.byMonth.get(key);
+    if (hit) return hit;
+
+    const pending = this.load(season, month, deps);
+    this.byMonth.set(key, pending);
+    // ⚠실패를 캐시에 남기지 않는다. 남기면 일과성 오류 1회로 **그 달의 남은 날짜가 전부**
+    // 같은 실패를 되풀이한다 — 긴 백필에서 하루치 오류가 한 달치 손실이 된다.
+    void pending.catch(() => {
+      if (this.byMonth.get(key) === pending) this.byMonth.delete(key);
+    });
+    return pending;
+  }
+
+  private async load(season: number, month: number, deps: ArchiveDeps): Promise<GameRef[]> {
+    this.fetchCount += 1;
+    const url = monthlyScheduleUrl(season, month);
+    const res = await deps.fetcher.get(url);
+    if (res.body === null) throw new Error(`월간 일정을 받지 못했다 (HTTP ${res.status}): ${url}`);
+
+    // 발견의 출처도 보존한다 (M4: 이 경기 목록이 어디서 나왔는가).
+    const key = `npb/games/${season}/schedule_${String(month).padStart(2, "0")}`;
+    const digest = sha256(res.body);
+    const prev = await deps.sink.readMeta(key);
+    if (!prev || prev.sha256 !== digest) {
+      await deps.sink.write(key, res.body, {
+        url,
+        fetchedAt: deps.clock.now().toISOString(),
+        lastModified: res.lastModified,
+        etag: res.etag,
+        status: res.status,
+        sha256: digest,
+        byteLength: res.body.byteLength,
+        revision: (prev?.revision ?? 0) + 1,
+      });
+    }
+
+    return discoverGames(new TextDecoder("utf-8").decode(res.body), url);
+  }
 }
 
 /** 하위 페이지 1장을 보존한다. */
@@ -102,13 +158,8 @@ export async function archiveDate(date: string, deps: ArchiveDeps): Promise<DayR
   const season = Number(parsed[1]);
   const month = Number(parsed[2]);
 
-  const scheduleUrl = monthlyScheduleUrl(season, month);
-  const res = await deps.fetcher.get(scheduleUrl);
-  if (res.body === null) {
-    throw new Error(`월간 일정을 받지 못했다 (HTTP ${res.status}): ${scheduleUrl}`);
-  }
-
-  const all = discoverGames(new TextDecoder("utf-8").decode(res.body), scheduleUrl);
+  const schedule = deps.schedule ?? new MonthlyScheduleCache();
+  const all = await schedule.get(season, month, deps);
   const games = gamesOn(all, date);
 
   const pages: PageResult[] = [];
@@ -116,6 +167,44 @@ export async function archiveDate(date: string, deps: ArchiveDeps): Promise<DayR
     pages.push(...(await archiveGame(g, deps)));
   }
   return { date, gamesFound: games.length, pages };
+}
+
+/**
+ * 여러 경기일을 보존한다. 월간 일정은 달마다 1회만 받는다.
+ *
+ * 하루가 통째로 실패해도(ERROR) 나머지 날짜는 계속 진행한다 —
+ * 5시간짜리 백필이 3일차에서 멈추면 앞의 이틀도 헛수고가 된다.
+ */
+export async function archiveDates(
+  dates: readonly string[],
+  deps: ArchiveDeps,
+  onDay?: (day: DayResult | DayError) => void,
+): Promise<(DayResult | DayError)[]> {
+  const schedule = deps.schedule ?? new MonthlyScheduleCache();
+  const withCache: ArchiveDeps = { ...deps, schedule };
+  const out: (DayResult | DayError)[] = [];
+
+  for (const date of dates) {
+    let entry: DayResult | DayError;
+    try {
+      entry = await archiveDate(date, withCache);
+    } catch (err) {
+      entry = { date, error: err instanceof Error ? err.message : String(err) };
+    }
+    out.push(entry);
+    onDay?.(entry);
+  }
+  return out;
+}
+
+/** 날짜 단위 실패 — 페이지 단위 실패(FAIL)와 구별해서 센다(작업규칙 8). */
+export interface DayError {
+  date: string;
+  error: string;
+}
+
+export function isDayError(x: DayResult | DayError): x is DayError {
+  return "error" in x;
 }
 
 /** 결과 집계 — 분모를 함께 보고하기 위한 것(CLAUDE.md 작업규칙 7). */

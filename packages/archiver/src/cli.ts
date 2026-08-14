@@ -11,7 +11,7 @@ import { parseArgs } from "node:util";
 import { systemClock, toJstDateString } from "./clock.ts";
 import { PoliteFetcher, buildUserAgent } from "./fetcher.ts";
 import { LocalSink } from "./sink.ts";
-import { archiveDate, summarize } from "./archive.ts";
+import { MonthlyScheduleCache, archiveDates, isDayError, summarize } from "./archive.ts";
 import type { PageResult } from "./archive.ts";
 
 const { values } = parseArgs({
@@ -49,29 +49,34 @@ console.error(`대상 ${dates.length}일 · 저장 위치 ${values.out} · 요�
 
 const all: PageResult[] = [];
 let daysFailed = 0;
+let daysWithGames = 0;
+const schedule = new MonthlyScheduleCache();
 
-for (const date of dates) {
-  try {
-    const day = await archiveDate(date, { fetcher, sink, clock });
-    const s = summarize(day.pages);
-    all.push(...day.pages);
+// ERROR(돌지도 않음)와 FAIL(떨어짐)을 분리해서 센다 (CLAUDE.md 작업규칙 8).
+await archiveDates(dates, { fetcher, sink, clock, schedule }, (day) => {
+  if (isDayError(day)) {
+    daysFailed += 1;
+    console.error(`${day.date}  ERROR — ${day.error}`);
+    return;
+  }
+  const s = summarize(day.pages);
+  all.push(...day.pages);
+  if (day.gamesFound > 0) daysWithGames += 1;
+  if (day.gamesFound > 0 || s.failed > 0) {
     console.error(
-      `${date}  경기 ${day.gamesFound}건 · 페이지 ${s.total}장 ` +
+      `${day.date}  경기 ${day.gamesFound}건 · 페이지 ${s.total}장 ` +
         `(신규 ${s.stored} / 변경없음 ${s.unchanged} / 부재 ${s.absent} / 실패 ${s.failed})`,
     );
-    for (const p of day.pages) {
-      if (p.outcome === "failed") console.error(`  FAILED ${p.url} — ${p.error}`);
-    }
-  } catch (err) {
-    // ERROR(돌지도 않음)와 FAIL(떨어짐)을 분리해서 센다 (CLAUDE.md 작업규칙 8).
-    daysFailed += 1;
-    console.error(`${date}  ERROR — ${err instanceof Error ? err.message : String(err)}`);
   }
-}
+  for (const p of day.pages) {
+    if (p.outcome === "failed") console.error(`  FAILED ${p.url} — ${p.error}`);
+  }
+});
 
 const total = summarize(all);
 console.error(
-  `\n합계: ${dates.length}일 중 ${dates.length - daysFailed}일 처리 · ` +
+  `\n합계: ${dates.length}일 중 ${dates.length - daysFailed}일 처리 (경기 있는 날 ${daysWithGames}일) · ` +
+    `월간 일정 취득 ${schedule.fetchCount}회 · ` +
     `페이지 ${total.total}장 (신규 ${total.stored} / 변경없음 ${total.unchanged} / 부재 ${total.absent} / 실패 ${total.failed})`,
 );
 
