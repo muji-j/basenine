@@ -1,0 +1,12 @@
+{
+  "name": "@bb-app/aggregate",
+  "private": true,
+  "type": "module",
+  "description": "시즌 집계와 순위. 원시에서 재계산 가능해야 한다.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.ts\""
+  }
+}

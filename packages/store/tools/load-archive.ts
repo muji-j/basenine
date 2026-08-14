@@ -10,6 +10,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
 import { parseBoxScore } from "@bb-app/parser";
+import { competitionOf } from "@bb-app/domain";
 import { openDb } from "../src/db.ts";
 import { deriveBatting, derivePitching } from "../src/derive.ts";
 import type { QuarantineRow } from "../src/derive.ts";
@@ -32,7 +33,14 @@ async function* walk(dir: string): AsyncGenerator<string> {
   }
 }
 
-/** `.../npb/scores/2026/0814/s-db-17/box.html.gz` → 경기 식별 정보 */
+/**
+ * `.../npb/scores/2026/0814/s-db-17/box.html.gz` → 경기 식별 정보
+ *
+ * ⚠**슬러그는 `{홈}-{원정}-{경기번호}` 순서다.** 직관과 반대라서 실제로 한 번 틀렸고,
+ * 그 결과 전 선수의 소속 구단이 상대 팀으로 뒤집혔다.
+ * 실측 근거: 박스스코어의 `tablefix_t_b`(先攻=원정)에 붙은 팀명이 **슬러그 두 번째**와
+ * 일치한다 — 630경기 전건 확인(2026-08-15).
+ */
 function gameFromPath(file: string): {
   gameId: string;
   season: number;
@@ -51,8 +59,8 @@ function gameFromPath(file: string): {
     gameId: `${season}/${mm}${dd}/${slug}`,
     season: Number(season),
     gameDate: `${season}-${mm}-${dd}`,
-    awayCode: parts[0]!,
-    homeCode: parts.slice(1, -1).join("-"),
+    awayCode: parts.slice(1, -1).join("-"),
+    homeCode: parts[0]!,
     gameNo,
   };
 }
@@ -84,13 +92,24 @@ for await (const file of walk(archiveRoot)) {
 
   const sourceUrl = `https://npb.jp/scores/${meta.season}/${meta.gameId.split("/")[1]}/${meta.gameId.split("/")[2]}/box.html`;
 
+  // ⚠경기구분을 팀 코드로 판정한다. 올스타전(`cl`/`pl`)을 정규시즌에 섞으면
+  // 선수 성적이 조용히 부풀어 오른다 — 실제로 佐藤의 시즌 홈런이 2개 많았다.
+  let competition: string;
+  try {
+    competition = competitionOf(meta.awayCode, meta.homeCode);
+  } catch (err) {
+    failed += 1;
+    console.error(`구분 판정 실패 ${meta.gameId} — ${err instanceof Error ? err.message : String(err)}`);
+    continue;
+  }
+
   if (box.status === "notPlayed") {
     notPlayed += 1;
     budget.games += upsertGame(db, {
       ...meta,
       status: "notPlayed",
       notPlayedReason: box.reason,
-      competition: "regular",
+      competition,
       sourceUrl,
       fetchedAt: nowIso,
     });
@@ -102,7 +121,7 @@ for await (const file of walk(archiveRoot)) {
     ...meta,
     status: "played",
     notPlayedReason: null,
-    competition: "regular",
+    competition,
     sourceUrl,
     fetchedAt: nowIso,
   });
