@@ -36,9 +36,15 @@ let batters = 0;
 let parseErrors = 0;
 let notPlayed = 0;
 
+const playerIds = new Set<string>();
+const missingId = new Map<string, number>();
+
 function checkBatter(file: string, side: string, b: BatterRow): void {
   if (b.isTeamTotal) return; // 합계 행은 타석 셀이 없다. 별도 대조 대상이다.
   batters += 1;
+  // M10: 이름이 아니라 공식 ID로 조인해야 한다. ID가 없는 행이 있으면 그 자체가 설계 제약이다.
+  if (b.playerId === null) missingId.set(b.name, (missingId.get(b.name) ?? 0) + 1);
+  else playerIds.add(b.playerId);
   let ab = 0;
   let hits = 0;
   let rbi = 0;
@@ -78,6 +84,13 @@ for await (const file of walk(root)) {
 console.log(
   `성립 경기 ${games}건 · 미성립(중지 등) ${notPlayed}건 · 타자 행 ${batters}건 · 파싱 오류 ${parseErrors}건`,
 );
+
+console.log(
+  `\n=== 선수 ID (M10) ===\n고유 선수 ${playerIds.size}명 · ID 없는 타자 행 ${[...missingId.values()].reduce((a, b) => a + b, 0)}건`,
+);
+for (const [name, n] of [...missingId].sort((a, b) => b[1] - a[1]).slice(0, 10)) {
+  console.log(`${String(n).padStart(6)}  ${name}`);
+}
 
 console.log(`\n=== 결과 분류 ===`);
 for (const [o, n] of [...outcomeCounts].sort((a, b) => b[1] - a[1])) {

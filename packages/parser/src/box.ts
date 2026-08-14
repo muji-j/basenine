@@ -24,7 +24,13 @@ export interface BatterRow {
   order: string | null;
   /** `(遊)` 같은 수비 위치 표기 */
   position: string;
+  /** 표시명. **조인 키로 쓰지 마라**(M10) — 동명이인·등록명 변경이 실재한다 */
   name: string;
+  /**
+   * NPB 공식 선수 ID(`/bis/players/41845132.html` → `41845132`).
+   * **이것이 조인 키다.** 합계 행 등 링크가 없는 행은 null.
+   */
+  playerId: string | null;
   ab: number;
   runs: number;
   hits: number;
@@ -45,7 +51,10 @@ const TEAM_TOTAL_LABEL = "チーム計";
 export interface PitcherRow {
   /** `○` `●` `S` `H` 등. 없으면 빈 문자열 */
   decision: string;
+  /** 표시명. **조인 키로 쓰지 마라**(M10) */
   name: string;
+  /** NPB 공식 선수 ID. **이것이 조인 키다** */
+  playerId: string | null;
   pitches: number | null;
   battersFaced: number | null;
   /** 투구회를 아웃 카운트로 환산한 값. `6.2` → 20 */
@@ -96,20 +105,39 @@ function stripTags(s: string): string {
     .trim();
 }
 
+/**
+ * 셀을 **원본 HTML 그대로** 돌려준다.
+ * ⚠태그를 여기서 벗기면 선수 링크의 ID가 사라진다 — M10(이름 문자열 조인 금지)을
+ * 지키려면 `/bis/players/{id}.html` 의 공식 ID가 필요하다.
+ */
 function tableRows(html: string, id: string): string[][] {
   const table = new RegExp(`<table id="${id}"[^>]*>([\\s\\S]*?)</table>`).exec(html);
   if (!table) throw new BoxParseError("표를 찾지 못했다", `id=${id}`);
   const rows = [...table[1]!.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)].map((m) =>
-    [...m[1]!.matchAll(/<t[hd][^>]*>([\s\S]*?)<\/t[hd]>/g)].map((c) => stripTags(c[1]!)),
+    [...m[1]!.matchAll(/<t[hd][^>]*>([\s\S]*?)<\/t[hd]>/g)].map((c) => c[1]!),
   );
   if (rows.length === 0) throw new BoxParseError("표에 행이 없다", `id=${id}`);
   return rows;
 }
 
+/** 셀 원본 HTML → 표시 문자열. */
+function text(cell: string | undefined): string {
+  return cell === undefined ? "" : stripTags(cell);
+}
+
+/**
+ * 선수 셀에서 NPB 공식 선수 ID를 뽑는다.
+ * 없으면 null — 합계 행이나 링크 없는 표기가 실재하므로 예외로 만들지 않는다(M11).
+ */
+export function extractPlayerId(cellHtml: string | undefined): string | null {
+  if (cellHtml === undefined) return null;
+  const m = /\/bis\/players\/(\d+)\.html/.exec(cellHtml);
+  return m ? m[1]! : null;
+}
+
 /** 숫자 셀. 빈 칸·기호는 null(M11 — 0으로 메우지 않는다). */
 function num(cell: string | undefined): number | null {
-  if (cell === undefined) return null;
-  const t = cell.trim();
+  const t = text(cell);
   if (t === "" || t === "-" || t === "−") return null;
   const n = Number(t);
   return Number.isFinite(n) ? n : null;
@@ -117,7 +145,9 @@ function num(cell: string | undefined): number | null {
 
 function requireNum(cell: string | undefined, what: string, id: string): number {
   const n = num(cell);
-  if (n === null) throw new BoxParseError(`${what}를 수로 읽지 못했다`, `id=${id} value=${JSON.stringify(cell)}`);
+  if (n === null) {
+    throw new BoxParseError(`${what}를 수로 읽지 못했다`, `id=${id} value=${JSON.stringify(text(cell))}`);
+  }
   return n;
 }
 
@@ -135,7 +165,7 @@ export function inningsToOuts(text: string): number | null {
 
 function parseBatting(html: string, id: string): BatterRow[] {
   const rows = tableRows(html, id);
-  const header = rows[0]!;
+  const header = rows[0]!.map(text);
 
   const stealsAt = header.findIndex((h) => h.includes("盗塁"));
   if (stealsAt < 0) {
@@ -154,12 +184,13 @@ function parseBatting(html: string, id: string): BatterRow[] {
   }
 
   return rows.slice(1).map((cells) => {
-    const order = (cells[0] ?? "").trim();
-    const name = cells[col.name] ?? "";
+    const order = text(cells[0]);
+    const name = text(cells[col.name]);
     return {
       order: order === "" ? null : order,
-      position: cells[col.position] ?? "",
+      position: text(cells[col.position]),
       name,
+      playerId: extractPlayerId(cells[col.name]),
       isTeamTotal: name === TEAM_TOTAL_LABEL,
       ab: requireNum(cells[col.ab], "打数", id),
       runs: requireNum(cells[col.runs], "得点", id),
@@ -168,7 +199,7 @@ function parseBatting(html: string, id: string): BatterRow[] {
       steals: requireNum(cells[stealsAt], "盗塁", id),
       plateAppearances: cells
         .slice(stealsAt + 1)
-        .map(parsePaCell)
+        .map((c) => parsePaCell(text(c)))
         .filter((p): p is PaResult => p !== null),
     };
   });
@@ -176,7 +207,7 @@ function parseBatting(html: string, id: string): BatterRow[] {
 
 function parsePitching(html: string, id: string): PitcherRow[] {
   const rows = tableRows(html, id);
-  const header = rows[0]!;
+  const header = rows[0]!.map(text);
   const at = (label: string): number => {
     const i = header.findIndex((h) => h.includes(label));
     if (i < 0) throw new BoxParseError(`투수표 헤더에서 ${label} 열을 찾지 못했다`, `id=${id} header=${header.join("|")}`);
@@ -197,11 +228,12 @@ function parsePitching(html: string, id: string): PitcherRow[] {
   };
 
   return rows.slice(1).map((cells) => ({
-    decision: (cells[0] ?? "").trim(),
-    name: cells[col.name] ?? "",
+    decision: text(cells[0]),
+    name: text(cells[col.name]),
+    playerId: extractPlayerId(cells[col.name]),
     pitches: num(cells[col.pitches]),
     battersFaced: num(cells[col.bf]),
-    outs: inningsToOuts(cells[col.innings] ?? ""),
+    outs: inningsToOuts(text(cells[col.innings])),
     hits: num(cells[col.hits]),
     homeRuns: num(cells[col.hr]),
     walks: num(cells[col.bb]),

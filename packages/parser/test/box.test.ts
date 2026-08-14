@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BoxParseError, inningsToOuts, parseBoxScore } from "../src/box.ts";
+import { BoxParseError, extractPlayerId, inningsToOuts, parseBoxScore } from "../src/box.ts";
 
 /**
  * 실제 npb.jp 마크업을 축약한 픽스처.
@@ -15,11 +15,11 @@ function fixture(opts: { battingHeader?: string; battingRows?: string; cancelled
     `<tr><th>&nbsp;</th><th>守備</th><th>選手</th><th>打数</th><th>得点</th><th>安打</th><th>打点</th><th>盗塁</th><th>1</th><th>2</th><th>3</th></tr>`;
   const battingRows =
     opts.battingRows ??
-    `<tr><td>1</td><td>(遊)</td><td>村林</td><td>2</td><td>1</td><td>1</td><td>2</td><td>0</td><td>左越本②</td><td>四 球</td><td>三 振</td></tr>
-     <tr><td>&nbsp;</td><td>(打)</td><td>代打太郎</td><td>1</td><td>0</td><td>0</td><td>0</td><td>0</td><td>-</td><td>-</td><td>二ゴロ</td></tr>
+    `<tr><td>1</td><td>(遊)</td><td class="player"><a href="/bis/players/41845132.html">村林</a></td><td>2</td><td>1</td><td>1</td><td>2</td><td>0</td><td>左越本②</td><td>四 球</td><td>三 振</td></tr>
+     <tr><td>&nbsp;</td><td>(打)</td><td class="player"><a href="/bis/players/11015138.html">代打太郎</a></td><td>1</td><td>0</td><td>0</td><td>0</td><td>0</td><td>-</td><td>-</td><td>二ゴロ</td></tr>
      <tr><td>&nbsp;</td><td>&nbsp;</td><td>チーム計</td><td>3</td><td>1</td><td>1</td><td>2</td><td>0</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>`;
   const pitching = `<tr><th>&nbsp;</th><th>投手</th><th>投球数</th><th>打者</th><th>投球回</th><th>安打</th><th>本塁打</th><th>四球</th><th>死球</th><th>三振</th><th>暴投</th><th>ボーク</th><th>失点</th><th>自責点</th></tr>
-    <tr><td>○</td><td>荘司</td><td>105</td><td>28</td><td>6.2</td><td>5</td><td>1</td><td>2</td><td>1</td><td>7</td><td>0</td><td>0</td><td>3</td><td>2</td></tr>`;
+    <tr><td>○</td><td class="player"><a href="/bis/players/03005150.html">荘司</a></td><td>105</td><td>28</td><td>6.2</td><td>5</td><td>1</td><td>2</td><td>1</td><td>7</td><td>0</td><td>0</td><td>3</td><td>2</td></tr>`;
   return `<html>
     <table id="tablefix_t_b">${battingHeader}${battingRows}</table>
     <table id="tablefix_t_p">${pitching}</table>
@@ -45,6 +45,26 @@ test("타자 행과 타석 결과를 읽는다", () => {
     ["homerun", "walk", "strikeout"],
   );
   assert.equal(first.plateAppearances[0]?.rbi, 2);
+});
+
+test("⚠M10: 선수를 NPB 공식 ID로 식별한다 — 이름이 아니라", () => {
+  const box = parseBoxScore(fixture());
+  if (box.status !== "played") return assert.fail("played여야 한다");
+  assert.equal(box.away.batters[0]?.playerId, "41845132");
+  assert.equal(box.away.batters[1]?.playerId, "11015138");
+  assert.equal(box.away.pitchers[0]?.playerId, "03005150");
+});
+
+test("⚠링크 없는 행(팀 합계)의 ID는 예외가 아니라 null이다", () => {
+  const box = parseBoxScore(fixture());
+  if (box.status !== "played") return assert.fail("played여야 한다");
+  assert.equal(box.away.batters.at(-1)?.playerId, null);
+});
+
+test("선수 ID 추출", () => {
+  assert.equal(extractPlayerId('<a href="/bis/players/41845132.html">村林</a>'), "41845132");
+  assert.equal(extractPlayerId("<td>チーム計</td>"), null);
+  assert.equal(extractPlayerId(undefined), null);
 });
 
 test("교체 선수는 타순이 비어 있다", () => {
