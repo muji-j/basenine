@@ -55,6 +55,8 @@ export interface PitcherRow {
   name: string;
   /** NPB 공식 선수 ID. **이것이 조인 키다** */
   playerId: string | null;
+  /** `チーム計` 행인가. **투수표에도 합계 행이 있다** — 함께 더하면 정확히 2배가 된다 */
+  isTeamTotal: boolean;
   pitches: number | null;
   battersFaced: number | null;
   /** 투구회를 아웃 카운트로 환산한 값. `6.2` → 20 */
@@ -110,8 +112,29 @@ function stripTags(s: string): string {
  * ⚠태그를 여기서 벗기면 선수 링크의 ID가 사라진다 — M10(이름 문자열 조인 금지)을
  * 지키려면 `/bis/players/{id}.html` 의 공식 ID가 필요하다.
  */
-function tableRows(html: string, id: string): string[][] {
-  const table = new RegExp(`<table id="${id}"[^>]*>([\\s\\S]*?)</table>`).exec(html);
+/**
+ * ⚠`投球回` 셀 안에는 **중첩 테이블**이 들어 있다.
+ *
+ * ```html
+ * <td><table class="table_inning"><tbody><tr><th>1</th><td>.2</td></tr></tbody></table></td>
+ * ```
+ *
+ * 정수 이닝과 분수를 나눠 조판하기 위한 것인데, 셀 추출 정규식이 **안쪽 셀을 먼저 잡아
+ * 바깥 행이 통째로 어긋난다.** 실제로 투수 성적이 전부 한 칸씩 밀려 null이 됐다.
+ * → 셀을 나누기 **전에** 중첩 테이블을 그 텍스트(`1.2`)로 평탄화한다.
+ */
+function flattenInningTables(html: string): string {
+  return html.replace(/<table class="table_inning">[\s\S]*?<\/table>/g, (m) =>
+    stripTags(m).replace(/\s+/g, ""),
+  );
+}
+
+/**
+ * ⚠**평탄화는 문서 전체에 먼저 적용해야 한다.** 중첩 테이블의 `</table>`이
+ * 바깥 표의 비탐욕 매칭을 먼저 끊어버리기 때문이다 — 그래서 투수표가 5번째 셀에서 잘렸다.
+ */
+function tableRows(flatHtml: string, id: string): string[][] {
+  const table = new RegExp(`<table id="${id}"[^>]*>([\\s\\S]*?)</table>`).exec(flatHtml);
   if (!table) throw new BoxParseError("표를 찾지 못했다", `id=${id}`);
   const rows = [...table[1]!.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)].map((m) =>
     [...m[1]!.matchAll(/<t[hd][^>]*>([\s\S]*?)<\/t[hd]>/g)].map((c) => c[1]!),
@@ -231,6 +254,7 @@ function parsePitching(html: string, id: string): PitcherRow[] {
     decision: text(cells[0]),
     name: text(cells[col.name]),
     playerId: extractPlayerId(cells[col.name]),
+    isTeamTotal: text(cells[col.name]) === TEAM_TOTAL_LABEL,
     pitches: num(cells[col.pitches]),
     battersFaced: num(cells[col.bf]),
     outs: inningsToOuts(text(cells[col.innings])),
@@ -258,7 +282,8 @@ function notPlayedReason(html: string): string | null {
  * @throws {BoxParseError} 경기가 열렸는데 표를 읽지 못했을 때.
  * ⚠이 예외를 삼켜 빈 결과로 만들지 마라 — 그러면 구조 변경이 「그날 아무도 안 쳤다」가 된다.
  */
-export function parseBoxScore(html: string): BoxScore {
+export function parseBoxScore(rawHtml: string): BoxScore {
+  const html = flattenInningTables(rawHtml);
   const hasBattingTable = html.includes(`<table id="${TABLE_IDS.awayBatting}"`);
   if (!hasBattingTable) {
     const reason = notPlayedReason(html);

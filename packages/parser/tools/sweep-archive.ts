@@ -38,6 +38,8 @@ let notPlayed = 0;
 
 const playerIds = new Set<string>();
 const missingId = new Map<string, number>();
+const pitcherMismatches: string[] = [];
+let pitcherChecked = 0;
 
 function checkBatter(file: string, side: string, b: BatterRow): void {
   if (b.isTeamTotal) return; // 합계 행은 타석 셀이 없다. 별도 대조 대상이다.
@@ -79,6 +81,21 @@ for await (const file of walk(root)) {
   const short = file.slice(root.length + 1);
   for (const b of box.away.batters) checkBatter(short, "away", b);
   for (const b of box.home.batters) checkBatter(short, "home", b);
+
+  // ⚠투수 컬럼 정합성 교차 대조. 한쪽 투수진의 피안타 합계는 **상대 타자진의 안타 합계**와 같다.
+  // 컬럼이 한 칸이라도 밀리면 여기서 드러난다(중첩 이닝 테이블 때문에 실제로 밀린 적이 있다).
+  for (const [side, pitchers, opposingBatters] of [
+    ["away", box.away.pitchers, box.home.batters],
+    ["home", box.home.pitchers, box.away.batters],
+  ] as const) {
+    const allowed = opposingBatters.find((b) => b.isTeamTotal)?.hits;
+    if (allowed === undefined) continue;
+    const conceded = pitchers.filter((p) => !p.isTeamTotal).reduce((n, p) => n + (p.hits ?? 0), 0);
+    pitcherChecked += 1;
+    if (conceded !== allowed) {
+      pitcherMismatches.push(`被安打 상대합계 ${allowed} 투수합계 ${conceded}  ${short} ${side}`);
+    }
+  }
 }
 
 console.log(
@@ -102,8 +119,13 @@ for (const [t, n] of [...unknownTokens].sort((a, b) => b[1] - a[1])) {
   console.log(`${String(n).padStart(6)}  ${t}`);
 }
 
-console.log(`\n=== npb.jp 합계와의 불일치 (${mismatches.length}건 / 타자 ${batters}행) ===`);
-for (const m of mismatches.slice(0, 40)) console.log(`  ${m}`);
-if (mismatches.length > 40) console.log(`  ... 외 ${mismatches.length - 40}건`);
+console.log(`\n=== npb.jp 합계와의 불일치 — 타격 (${mismatches.length}건 / 타자 ${batters}행) ===`);
+for (const m of mismatches.slice(0, 20)) console.log(`  ${m}`);
+if (mismatches.length > 20) console.log(`  ... 외 ${mismatches.length - 20}건`);
 
-process.exitCode = parseErrors > 0 || unknownTokens.size > 0 || mismatches.length > 0 ? 1 : 0;
+console.log(`\n=== 투수 컬럼 교차 대조 (${pitcherMismatches.length}건 / ${pitcherChecked}팀) ===`);
+for (const m of pitcherMismatches.slice(0, 20)) console.log(`  ${m}`);
+if (pitcherMismatches.length > 20) console.log(`  ... 외 ${pitcherMismatches.length - 20}건`);
+
+process.exitCode =
+  parseErrors > 0 || unknownTokens.size > 0 || mismatches.length > 0 || pitcherMismatches.length > 0 ? 1 : 0;

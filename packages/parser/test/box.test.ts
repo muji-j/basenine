@@ -19,7 +19,8 @@ function fixture(opts: { battingHeader?: string; battingRows?: string; cancelled
      <tr><td>&nbsp;</td><td>(打)</td><td class="player"><a href="/bis/players/11015138.html">代打太郎</a></td><td>1</td><td>0</td><td>0</td><td>0</td><td>0</td><td>-</td><td>-</td><td>二ゴロ</td></tr>
      <tr><td>&nbsp;</td><td>&nbsp;</td><td>チーム計</td><td>3</td><td>1</td><td>1</td><td>2</td><td>0</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>`;
   const pitching = `<tr><th>&nbsp;</th><th>投手</th><th>投球数</th><th>打者</th><th>投球回</th><th>安打</th><th>本塁打</th><th>四球</th><th>死球</th><th>三振</th><th>暴投</th><th>ボーク</th><th>失点</th><th>自責点</th></tr>
-    <tr><td>○</td><td class="player"><a href="/bis/players/03005150.html">荘司</a></td><td>105</td><td>28</td><td>6.2</td><td>5</td><td>1</td><td>2</td><td>1</td><td>7</td><td>0</td><td>0</td><td>3</td><td>2</td></tr>`;
+    <tr><td>○</td><td class="player"><a href="/bis/players/03005150.html">荘司</a></td><td>105</td><td>28</td><td><table class="table_inning"><tbody><tr><th>6</th><td>.2</td></tr></tbody></table></td><td>5</td><td>1</td><td>2</td><td>1</td><td>7</td><td>0</td><td>0</td><td>3</td><td>2</td></tr>
+    <tr><td>&nbsp;</td><td>チーム計</td><td>105</td><td>28</td><td><table class="table_inning"><tbody><tr><th>6</th><td>.2</td></tr></tbody></table></td><td>5</td><td>1</td><td>2</td><td>1</td><td>7</td><td>0</td><td>0</td><td>3</td><td>2</td></tr>`;
   return `<html>
     <table id="tablefix_t_b">${battingHeader}${battingRows}</table>
     <table id="tablefix_t_p">${pitching}</table>
@@ -126,6 +127,31 @@ test("투수 행을 읽고 투구회를 아웃으로 환산한다", () => {
   assert.equal(p.outs, 20, "6.2이닝 = 20아웃");
   assert.equal(p.strikeouts, 7);
   assert.equal(p.earnedRuns, 2);
+});
+
+test("⚠投球回 셀의 중첩 테이블 때문에 뒤 컬럼이 밀리지 않는다", () => {
+  // `<td><table class="table_inning"><tr><th>6</th><td>.2</td></tr></table></td>` 구조가
+  // 셀 추출을 깨뜨려, 실제로 투수 성적이 전부 한 칸씩 밀려 null이 된 적이 있다.
+  const box = parseBoxScore(fixture());
+  if (box.status !== "played") return assert.fail("played여야 한다");
+  const p = box.away.pitchers[0];
+  assert.ok(p);
+  assert.equal(p.outs, 20, "6.2이닝 = 20아웃");
+  assert.equal(p.hits, 5, "投球回 뒤의 安打가 제자리에 있어야 한다");
+  assert.equal(p.homeRuns, 1);
+  assert.equal(p.walks, 2);
+  assert.equal(p.strikeouts, 7);
+  assert.equal(p.earnedRuns, 2, "맨 끝 컬럼까지 도달해야 한다");
+});
+
+test("⚠투수표에도 팀 합계 행이 있다 — 함께 더하면 정확히 2배가 된다", () => {
+  const box = parseBoxScore(fixture());
+  if (box.status !== "played") return assert.fail("played여야 한다");
+  const total = box.away.pitchers.at(-1);
+  assert.ok(total);
+  assert.equal(total.isTeamTotal, true);
+  assert.equal(box.away.pitchers[0]?.isTeamTotal, false);
+  assert.equal(box.away.pitchers.filter((p) => !p.isTeamTotal).length, 1);
 });
 
 test("이닝 → 아웃 환산", () => {

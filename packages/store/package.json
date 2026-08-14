@@ -1,0 +1,12 @@
+{
+  "name": "@bb-app/store",
+  "private": true,
+  "type": "module",
+  "description": "스키마·적재·조회. D1(SQLite) 호환 SQL만 쓴다.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.ts\""
+  }
+}
