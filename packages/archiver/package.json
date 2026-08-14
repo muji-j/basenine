@@ -1,0 +1,12 @@
+{
+  "name": "@bb-app/archiver",
+  "private": true,
+  "type": "module",
+  "description": "npb.jp 원시 HTML 아카이버 — 파싱하지 않고 원본을 보존한다",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts"
+  }
+}
