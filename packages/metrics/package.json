@@ -1,0 +1,12 @@
+{
+  "name": "@bb-app/metrics",
+  "private": true,
+  "type": "module",
+  "description": "야구 지표 계산 — 순수 함수, I/O 없음",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.ts\""
+  }
+}
