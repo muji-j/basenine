@@ -80,7 +80,11 @@ console.error(
     `페이지 ${total.total}장 (신규 ${total.stored} / 변경없음 ${total.unchanged} / 부재 ${total.absent} / 실패 ${total.failed})`,
 );
 
-process.exit(daysFailed > 0 || total.failed > 0 ? 1 : 0);
+// ⚠`process.exit()`를 쓰지 마라. 네트워크 작업 뒤에 부르면 Windows에서 libuv가
+// `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)` 로 죽는다(실측 2026-08-14).
+// 크래시하면 종료 코드가 0xC0000409가 되어 **크론이 성공/실패를 오판한다.**
+// exitCode만 세우고 이벤트 루프가 자연히 비도록 둔다.
+process.exitCode = daysFailed > 0 || total.failed > 0 ? 1 : 0;
 
 function resolveDates(): string[] {
   if (values.date) return [values.date];
