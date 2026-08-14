@@ -13,9 +13,9 @@ import type { BattingLine } from "./lines.ts";
  *           + 1.334×二塁打 + 1.725×三塁打 + 2.065×本塁打}
  *          ÷ (打数 + 四球 − 故意四球 + 死球 + 犠飛)
  *
- * ⚠**`roe`(失策出塁) 항은 계산에서 생략한다.** 선수별 실책출루를 공개하는 소스가 없다
- * (소스 조사 보고서 §3-5). 계수는 출처 대조를 위해 남겨두되 쓰지 않으며,
- * 이 생략은 지표 라벨에 각주로 표시한다.
+ * **`失策出塁` 항을 포함한다.** 소스 조사 단계에서는 「선수별 공개 소스 없음」으로 판정했으나,
+ * 박스스코어의 타석 결과 셀(`三ゴ失`·`遊ゴ失` 등)에 인코딩되어 있음을 실측으로 확인했다
+ * (2026-08-15, 340경기 214건). 따라서 **공식 산식을 생략 없이 계산한다.**
  *
  * ⚠**계수는 시즌마다 다르다**(1.02가 명시). 공개된 것은 이 1세트뿐이므로
  * wOBA 절대치가 아니라 **리그평균 대비 상대치(wRAA·wRC+)로 제시**한다.
@@ -48,6 +48,7 @@ export function wobaRaw(line: BattingLine): number | null {
   const numerator =
     w.bb * (line.bb - line.ibb) +
     w.hbp * line.hbp +
+    w.roe * line.roe +
     w.single * singles(line) +
     w.double * line.double +
     w.triple * line.triple +

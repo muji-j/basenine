@@ -1,0 +1,13 @@
+{
+  "name": "@bb-app/parser",
+  "private": true,
+  "type": "module",
+  "description": "npb.jp 원시 HTML → 구조화 레코드. 소스별 1벌, 실패는 실패로.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.ts\"",
+    "sweep": "node tools/sweep-archive.ts"
+  }
+}

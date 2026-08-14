@@ -23,7 +23,7 @@ export interface LeagueConstants {
 }
 
 const BATTING_KEYS = [
-  "pa", "ab", "h", "double", "triple", "hr", "bb", "ibb", "hbp", "sf", "sh", "so",
+  "pa", "ab", "h", "double", "triple", "hr", "bb", "ibb", "hbp", "sf", "sh", "so", "roe",
 ] as const;
 
 const PITCHING_KEYS = [

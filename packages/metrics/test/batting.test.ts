@@ -8,12 +8,12 @@ import type { BattingLine } from "../src/lines.ts";
 /** 검증용. 소수가 딱 떨어지도록 고른 값이다. */
 const LINE: BattingLine = {
   pa: 600, ab: 500, h: 150, double: 30, triple: 2, hr: 20,
-  bb: 70, ibb: 5, hbp: 10, sf: 20, sh: 0, so: 100,
+  bb: 70, ibb: 5, hbp: 10, sf: 20, sh: 0, so: 100, roe: 0,
 };
 
 const EMPTY: BattingLine = {
   pa: 0, ab: 0, h: 0, double: 0, triple: 0, hr: 0,
-  bb: 0, ibb: 0, hbp: 0, sf: 0, sh: 0, so: 0,
+  bb: 0, ibb: 0, hbp: 0, sf: 0, sh: 0, so: 0, roe: 0,
 };
 
 test("타율 = 안타 / 타수", () => {

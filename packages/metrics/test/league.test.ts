@@ -4,8 +4,8 @@ import { leagueConstants, sumBatting, sumPitching } from "../src/league.ts";
 import { earnedRunAverage } from "../src/pitching.ts";
 import type { BattingLine, PitchingLine } from "../src/lines.ts";
 
-const A: BattingLine = { pa: 100, ab: 90, h: 27, double: 5, triple: 1, hr: 3, bb: 8, ibb: 1, hbp: 1, sf: 1, sh: 0, so: 20 };
-const B: BattingLine = { pa: 200, ab: 180, h: 45, double: 8, triple: 0, hr: 6, bb: 15, ibb: 0, hbp: 2, sf: 3, sh: 0, so: 40 };
+const A: BattingLine = { pa: 100, ab: 90, h: 27, double: 5, triple: 1, hr: 3, bb: 8, ibb: 1, hbp: 1, sf: 1, sh: 0, so: 20, roe: 0 };
+const B: BattingLine = { pa: 200, ab: 180, h: 45, double: 8, triple: 0, hr: 6, bb: 15, ibb: 0, hbp: 2, sf: 3, sh: 0, so: 40, roe: 0 };
 
 const P1: PitchingLine = { outs: 243, bf: 330, h: 75, hr: 9, bb: 22, ibb: 1, hbp: 4, so: 90, er: 27, r: 30 };
 const P2: PitchingLine = { outs: 243, bf: 330, h: 75, hr: 9, bb: 23, ibb: 2, hbp: 5, so: 90, er: 27, r: 30 };

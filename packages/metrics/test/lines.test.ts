@@ -5,7 +5,7 @@ import type { BattingLine, PitchingLine } from "../src/lines.ts";
 
 const BAT: BattingLine = {
   pa: 600, ab: 520, h: 156, double: 30, triple: 3, hr: 25,
-  bb: 60, ibb: 5, hbp: 8, sf: 6, sh: 6, so: 90,
+  bb: 60, ibb: 5, hbp: 8, sf: 6, sh: 6, so: 90, roe: 0,
 };
 
 test("단타 = 안타 − 2루타 − 3루타 − 홈런", () => {

@@ -7,7 +7,7 @@ import type { BattingLine, PitchingLine } from "../src/lines.ts";
 
 const LINE: BattingLine = {
   pa: 600, ab: 500, h: 150, double: 30, triple: 2, hr: 20,
-  bb: 70, ibb: 5, hbp: 10, sf: 20, sh: 0, so: 100,
+  bb: 70, ibb: 5, hbp: 10, sf: 20, sh: 0, so: 100, roe: 0,
 };
 
 const P: PitchingLine = {
@@ -70,7 +70,7 @@ test("FIP는 삼진이 늘면 낮아지고 볼넷이 늘면 높아진다", () =>
 
 test("⚠미출장·미등판은 null이다", () => {
   const noPa: BattingLine = {
-    pa: 0, ab: 0, h: 0, double: 0, triple: 0, hr: 0, bb: 0, ibb: 0, hbp: 0, sf: 0, sh: 0, so: 0,
+    pa: 0, ab: 0, h: 0, double: 0, triple: 0, hr: 0, bb: 0, ibb: 0, hbp: 0, sf: 0, sh: 0, so: 0, roe: 0,
   };
   const noOuts: PitchingLine = { outs: 0, bf: 0, h: 0, hr: 0, bb: 0, ibb: 0, hbp: 0, so: 0, er: 0, r: 0 };
   assert.equal(wraa(noPa, LC).value, null);

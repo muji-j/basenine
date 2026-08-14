@@ -1,0 +1,138 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { BoxParseError, inningsToOuts, parseBoxScore } from "../src/box.ts";
+
+/**
+ * 실제 npb.jp 마크업을 축약한 픽스처.
+ * 컬럼 구성·표 id·팀 합계 행은 실측(2026-08-15) 그대로다.
+ */
+function fixture(opts: { battingHeader?: string; battingRows?: string; cancelled?: boolean } = {}): string {
+  if (opts.cancelled) {
+    return `<html><table id="tablefix_ls"><tr><td>1</td></tr></table><div class="state">中止</div></html>`;
+  }
+  const battingHeader =
+    opts.battingHeader ??
+    `<tr><th>&nbsp;</th><th>守備</th><th>選手</th><th>打数</th><th>得点</th><th>安打</th><th>打点</th><th>盗塁</th><th>1</th><th>2</th><th>3</th></tr>`;
+  const battingRows =
+    opts.battingRows ??
+    `<tr><td>1</td><td>(遊)</td><td>村林</td><td>2</td><td>1</td><td>1</td><td>2</td><td>0</td><td>左越本②</td><td>四 球</td><td>三 振</td></tr>
+     <tr><td>&nbsp;</td><td>(打)</td><td>代打太郎</td><td>1</td><td>0</td><td>0</td><td>0</td><td>0</td><td>-</td><td>-</td><td>二ゴロ</td></tr>
+     <tr><td>&nbsp;</td><td>&nbsp;</td><td>チーム計</td><td>3</td><td>1</td><td>1</td><td>2</td><td>0</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>`;
+  const pitching = `<tr><th>&nbsp;</th><th>投手</th><th>投球数</th><th>打者</th><th>投球回</th><th>安打</th><th>本塁打</th><th>四球</th><th>死球</th><th>三振</th><th>暴投</th><th>ボーク</th><th>失点</th><th>自責点</th></tr>
+    <tr><td>○</td><td>荘司</td><td>105</td><td>28</td><td>6.2</td><td>5</td><td>1</td><td>2</td><td>1</td><td>7</td><td>0</td><td>0</td><td>3</td><td>2</td></tr>`;
+  return `<html>
+    <table id="tablefix_t_b">${battingHeader}${battingRows}</table>
+    <table id="tablefix_t_p">${pitching}</table>
+    <table id="tablefix_b_b">${battingHeader}${battingRows}</table>
+    <table id="tablefix_b_p">${pitching}</table>
+  </html>`;
+}
+
+test("타자 행과 타석 결과를 읽는다", () => {
+  const box = parseBoxScore(fixture());
+  assert.equal(box.status, "played");
+  if (box.status !== "played") return;
+
+  const first = box.away.batters[0];
+  assert.ok(first);
+  assert.equal(first.order, "1");
+  assert.equal(first.name, "村林");
+  assert.equal(first.position, "(遊)");
+  assert.equal(first.ab, 2);
+  assert.equal(first.rbi, 2);
+  assert.deepEqual(
+    first.plateAppearances.map((p) => p.outcome),
+    ["homerun", "walk", "strikeout"],
+  );
+  assert.equal(first.plateAppearances[0]?.rbi, 2);
+});
+
+test("교체 선수는 타순이 비어 있다", () => {
+  const box = parseBoxScore(fixture());
+  if (box.status !== "played") return assert.fail("played여야 한다");
+  assert.equal(box.away.batters[1]?.order, null);
+  assert.equal(box.away.batters[1]?.name, "代打太郎");
+});
+
+test("빈 칸(-)은 타석으로 세지 않는다", () => {
+  const box = parseBoxScore(fixture());
+  if (box.status !== "played") return assert.fail("played여야 한다");
+  assert.equal(box.away.batters[1]?.plateAppearances.length, 1);
+});
+
+test("⚠팀 합계 행은 버리지 않고 표시만 한다", () => {
+  const box = parseBoxScore(fixture());
+  if (box.status !== "played") return assert.fail("played여야 한다");
+  const total = box.away.batters.at(-1);
+  assert.ok(total);
+  assert.equal(total.isTeamTotal, true);
+  assert.equal(total.ab, 3, "합계 값 자체는 대조에 쓸 수 있게 남긴다");
+  assert.equal(box.away.batters.filter((b) => !b.isTeamTotal).length, 2);
+});
+
+test("⚠컬럼 위치를 고정하지 않는다 — 연장전이면 이닝 컬럼이 늘어난다", () => {
+  const extended =
+    `<tr><th>&nbsp;</th><th>守備</th><th>選手</th><th>打数</th><th>得点</th><th>安打</th><th>打点</th><th>盗塁</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th></tr>`;
+  const rows =
+    `<tr><td>1</td><td>(遊)</td><td>村林</td><td>3</td><td>0</td><td>1</td><td>0</td><td>0</td><td>三 振</td><td>右前安</td><td>-</td><td>-</td><td>二ゴロ</td></tr>`;
+  const box = parseBoxScore(fixture({ battingHeader: extended, battingRows: rows }));
+  if (box.status !== "played") return assert.fail("played여야 한다");
+  assert.deepEqual(
+    box.away.batters[0]?.plateAppearances.map((p) => p.outcome),
+    ["strikeout", "single", "fieldedOut"],
+  );
+});
+
+test("⚠스페이서 빈 컬럼이 끼어도 어긋나지 않는다", () => {
+  const spaced =
+    `<tr><th>&nbsp;</th><th>守備</th><th>選手</th><th>打数</th><th>得点</th><th>安打</th><th>打点</th><th>盗塁</th><th>1</th><th>2</th><th>&nbsp;</th><th>3</th></tr>`;
+  const rows =
+    `<tr><td>1</td><td>(遊)</td><td>村林</td><td>2</td><td>0</td><td>1</td><td>0</td><td>0</td><td>右前安</td><td>三 振</td><td>&nbsp;</td><td>-</td></tr>`;
+  const box = parseBoxScore(fixture({ battingHeader: spaced, battingRows: rows }));
+  if (box.status !== "played") return assert.fail("played여야 한다");
+  assert.deepEqual(
+    box.away.batters[0]?.plateAppearances.map((p) => p.outcome),
+    ["single", "strikeout"],
+  );
+});
+
+test("투수 행을 읽고 투구회를 아웃으로 환산한다", () => {
+  const box = parseBoxScore(fixture());
+  if (box.status !== "played") return assert.fail("played여야 한다");
+  const p = box.away.pitchers[0];
+  assert.ok(p);
+  assert.equal(p.decision, "○");
+  assert.equal(p.name, "荘司");
+  assert.equal(p.outs, 20, "6.2이닝 = 20아웃");
+  assert.equal(p.strikeouts, 7);
+  assert.equal(p.earnedRuns, 2);
+});
+
+test("이닝 → 아웃 환산", () => {
+  assert.equal(inningsToOuts("7"), 21);
+  assert.equal(inningsToOuts("6.1"), 19);
+  assert.equal(inningsToOuts("6.2"), 20);
+  assert.equal(inningsToOuts("0"), 0);
+  assert.equal(inningsToOuts(""), null);
+  assert.equal(inningsToOuts("-"), null);
+  assert.equal(inningsToOuts("6.3"), null, "3분의 3은 표기되지 않는다");
+});
+
+test("⚠중지 경기는 오류가 아니라 미성립이다", () => {
+  const box = parseBoxScore(fixture({ cancelled: true }));
+  assert.equal(box.status, "notPlayed");
+  if (box.status === "notPlayed") assert.equal(box.reason, "中止");
+});
+
+test("⚠표가 없는데 중지 표기도 없으면 예외 — 구조 변경을 놓치지 않는다", () => {
+  assert.throws(() => parseBoxScore("<html><div>新レイアウト</div></html>"), BoxParseError);
+});
+
+test("⚠헤더에서 필수 열을 못 찾으면 예외 — 빈 결과로 넘어가지 않는다", () => {
+  const broken = `<tr><th>&nbsp;</th><th>守備</th><th>選手</th><th>打数</th><th>得点</th><th>安打</th><th>打点</th><th>1</th></tr>`;
+  assert.throws(
+    () => parseBoxScore(fixture({ battingHeader: broken, battingRows: "" })),
+    /盗塁/,
+    "盗塁 열이 사라지면 타석 셀의 시작 위치를 알 수 없다",
+  );
+});
