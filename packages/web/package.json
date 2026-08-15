@@ -1,0 +1,13 @@
+{
+  "name": "@bb-app/web",
+  "private": true,
+  "type": "module",
+  "description": "정적 생성 — DB에서 화면을 만든다. 런타임 서버가 없다.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.ts\"",
+    "build": "node tools/build.ts ../../data/bb.sqlite ../../dist 2026"
+  }
+}

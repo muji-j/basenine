@@ -1,0 +1,93 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { toString } from "../src/html.ts";
+import {
+  STALE_AFTER_DAYS,
+  freshness,
+  freshnessBar,
+  isStale,
+  page,
+  safeScript,
+  stateNote,
+} from "../src/layout.ts";
+import { NEUTRAL_COLOR } from "@bb-app/domain";
+import { html } from "../src/html.ts";
+
+test("신선도는 경기일과 생성일의 간격으로 정해진다", () => {
+  assert.equal(freshness("2026-08-14", "2026-08-15").lagDays, 1);
+  assert.equal(freshness("2026-08-01", "2026-08-15").lagDays, 14);
+  assert.equal(freshness(null, "2026-08-15").lagDays, null);
+});
+
+test("경계에서 낡음 판정이 뒤집힌다 — 임계값을 테스트가 고정한다", () => {
+  assert.equal(STALE_AFTER_DAYS, 3);
+  assert.equal(isStale(freshness("2026-08-12", "2026-08-15")), false);
+  assert.equal(isStale(freshness("2026-08-11", "2026-08-15")), true);
+});
+
+test("경기가 하나도 없으면 낡음이다 — 「데이터 없음」을 정상으로 보이게 하지 않는다", () => {
+  assert.equal(isStale(freshness(null, "2026-08-15")), true);
+  assert.match(toString(freshnessBar(freshness(null, "2026-08-15"))), /データがありません/);
+});
+
+test("낡았을 때만 경고 띠가 된다", () => {
+  assert.match(toString(freshnessBar(freshness("2026-08-14", "2026-08-15"))), /class="state fresh"/);
+  assert.match(toString(freshnessBar(freshness("2026-07-01", "2026-08-15"))), /class="state stale"/);
+});
+
+test("4상태는 서로 다른 문구가 된다(M12)", () => {
+  assert.equal(toString(stateNote({ kind: "ok" })), "");
+  const empty = toString(stateNote({ kind: "empty", detail: "打席がありません" }));
+  const failed = toString(stateNote({ kind: "failed", detail: "取得エラー" }));
+  const off = toString(stateNote({ kind: "offseason", detail: "開幕前" }));
+  assert.notEqual(empty, failed);
+  assert.notEqual(failed, off);
+  assert.match(failed, /取得できていません/);
+  assert.match(off, /シーズン外/);
+});
+
+test("safeScript는 문서를 끊는 문자를 죽인다", () => {
+  const out = safeScript(`window.X=["</script><script>evil()</script>"]`);
+  assert.ok(!out.includes("</script>"), "스크립트 종료 태그가 남으면 안 된다");
+  assert.ok(out.includes("\\u003c/script"), "이스케이프된 형태로는 남아야 한다");
+});
+
+test("safeScript는 JS 줄바꿈 문자(U+2028/2029)도 막는다", () => {
+  const out = safeScript(`"a${String.fromCharCode(0x2028)}b${String.fromCharCode(0x2029)}c"`);
+  assert.ok(!out.includes(String.fromCharCode(0x2028)));
+  assert.ok(!out.includes(String.fromCharCode(0x2029)));
+  assert.ok(out.includes("\\u2028") && out.includes("\\u2029"));
+});
+
+function render(contact: string): string {
+  return page({
+    title: "테스트",
+    base: "",
+    color: NEUTRAL_COLOR,
+    freshness: freshness("2026-08-14", "2026-08-15"),
+    site: { name: "bb-app", contact },
+    body: html`<p>본문</p>`,
+  });
+}
+
+test("모든 화면에 출처와 원본 링크가 있다(L3)", () => {
+  const out = render("a@example.invalid");
+  assert.match(out, /出典：日本野球機構/);
+  assert.match(out, /https:\/\/npb\.jp\//);
+  assert.match(out, /独自に再計算/);
+});
+
+test("연락처가 없으면 화면이 그 사실을 말한다(L4) — 가짜 주소를 만들지 않는다", () => {
+  assert.match(render(""), /連絡先が未設定/);
+  assert.ok(!render("a@example.invalid").includes("連絡先が未設定"));
+});
+
+test("페이지는 구단 색을 CSS 변수로만 싣는다", () => {
+  const out = render("a@example.invalid");
+  assert.match(out, /--team:#6b7280/);
+  assert.match(out, /<html lang="ja" data-base=""/);
+});
+
+test("검색 엔진에 올리지 않는다 — S1은 지인한정이다", () => {
+  assert.match(render(""), /name="robots" content="noindex, nofollow"/);
+});
