@@ -556,11 +556,24 @@ function showTabs(){
 function renderBlocks(){
   const end=$("#blocksEnd");
   state.order.forEach(id=>{const el=doc.getElementById("b-"+id);if(el&&end)end.parentNode.insertBefore(el,end)});
-  /* ⚠**카탈로그가 아니라 화면에 있는 블록 전부를 훑는다.**
-     전에는 BLOCKS(클라이언트가 아는 목록)만 돌았는데, 서버가 그린 블록이 그 목록에 없으면
-     **영원히 숨겨지지 않았다.** 투수 전용 블록을 새로 만들었을 때 정확히 그 일이 일어난다.
-     「모르는 것은 끄지 않는다」가 아니라 「구성에 없으면 끈다」가 맞다. */
-  $$(".block").forEach(el=>{el.hidden=state.order.indexOf(el.id.replace(/^b-/,""))<0});
+  /* ⚠**조립 시스템이 있는 페이지에서만 숨긴다.**
+     그 표식이 #blocksEnd 이고, 선수 페이지에만 있다.
+
+     두 번 틀린 자리다.
+     ① 처음에는 BLOCKS(클라이언트가 아는 목록)만 돌았다 → 서버가 그린 블록이 그 목록에 없으면
+        **영원히 숨겨지지 않았다.**
+     ② 그래서 화면의 블록 전부를 훑게 고쳤더니, **순위표·일람의 블록까지 숨겨
+        빈 화면이 나갔다**(2026-08-15 실기 확인). 그 페이지들의 블록은 id가 없거나
+        b-hi-central 처럼 조립 목록에 없는 id라 전부 「구성 밖」으로 판정됐다.
+
+     맞는 규칙은 「구성에 없으면 끈다」가 아니라 **「이 페이지의 구성 대상이면, 구성에 없을 때 끈다」**이다. */
+  if(end){
+    $$(".block").forEach(el=>{
+      /* 조립 대상은 b- 접두사를 가진 블록뿐이다 */
+      if(el.id.indexOf("b-")!==0)return;
+      el.hidden=state.order.indexOf(el.id.slice(2))<0;
+    });
+  }
   const pad=state.density==="compact"?"9px":"16px";
   $$(".block").forEach((el,i)=>{el.style.paddingTop=pad;el.style.paddingBottom=pad;el.style.setProperty("--i",String(i))});
 }

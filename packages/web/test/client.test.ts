@@ -577,6 +577,65 @@ test("저장된 설정이 깨져 있어도 기본값으로 돌아간다", () => 
   assert.deepEqual(visible(doc), [...BATTER_PRESETS.find((p) => p.id === "standard")!.blocks]);
 });
 
+/**
+ * 순위표·일람의 화면 뼈대.
+ *
+ * ⚠**여기에는 조립 시스템이 없다** — `#blocksEnd`도, `window.__BLOCKS__`도 없다.
+ * 그런데 `.block`은 있다. 선수 페이지용 숨김 규칙이 이 페이지까지 훑으면 **전부 사라진다.**
+ * 2026-08-15에 실제로 그렇게 나갔다 — 순위 탭이 통째로 빈 화면이었다.
+ */
+function buildRankingPage(): ReturnType<typeof makeDocument> {
+  const doc = makeDocument();
+  const main = make("div", { class: "main" });
+  doc.body.appendChild(main);
+
+  const rail = make("div", { class: "rail" });
+  rail.appendChild(tabs("rankleague", ["central", "pacific"]).list);
+  main.appendChild(rail);
+
+  for (const [i, lg] of ["central", "pacific"].entries()) {
+    const leaguePanel = make("div", {
+      "data-panelgroup": "rankleague",
+      "data-panelkey": lg,
+      role: "tabpanel",
+    });
+    // ⚠순위표의 블록에는 **id가 없다.** 조립 대상이 아니기 때문이다
+    const section = make("section", { class: "block" });
+    const cat = tabs("rankcat", ["batter", "starter", "reliever"]);
+    const h = make("h4");
+    h.appendChild(cat.list);
+    section.appendChild(h);
+    for (const c of cat.panels) section.appendChild(c);
+    leaguePanel.appendChild(section);
+    if (i > 0) leaguePanel.hidden = true;
+    main.appendChild(leaguePanel);
+  }
+
+  // 일람의 하이라이트 블록 — id는 있지만 **조립 목록에 없는 id**다
+  main.appendChild(make("section", { class: "block", id: "b-hi-central" }));
+  return doc;
+}
+
+test("⚠순위표의 블록을 숨기지 않는다 — 선수 페이지의 조립 규칙을 다른 화면에 적용하지 마라", () => {
+  const doc = buildRankingPage();
+  run(doc);
+  const blocks = doc.querySelectorAll(".block");
+  assert.equal(blocks.length, 3, "픽스처가 블록을 못 만들었다");
+  const hiddenOnes = blocks.filter((b) => b.hidden).map((b) => b.id || "(id 없음)");
+  assert.deepEqual(hiddenOnes, [], `순위표의 블록이 숨겨졌다: ${hiddenOnes.join(", ")}`);
+});
+
+test("조립 시스템이 없는 화면에서도 탭은 동작한다 — 부문 패널이 열려 있다", () => {
+  const doc = buildRankingPage();
+  run(doc);
+  const open = doc
+    .querySelectorAll('[data-panelgroup="rankcat"]')
+    .filter((p) => !p.hidden)
+    .map((p) => p.dataset["panelkey"]);
+  // 리그 패널이 둘이라 부문 패널도 리그마다 하나씩 열린다
+  assert.deepEqual(open, ["batter", "batter"], "부문 패널이 하나도 안 열렸다");
+});
+
 test("스텁이 모르는 선택자는 조용히 넘어가지 않는다", () => {
   const el = new El("div");
   assert.throws(() => el.querySelectorAll("div > span"), /스텁이 모르는 선택자/);
