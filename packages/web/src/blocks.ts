@@ -53,12 +53,22 @@ export const PRESETS: readonly PresetMeta[] = [
 ];
 
 /**
- * 투수 페이지에는 타자용 블록이 없다.
+ * 투수 페이지의 블록.
  *
- * ⚠**빈 블록을 내는 대신 목록에서 뺀다.** 스플릿·득점기대치는 타석에 선 쪽의 이야기이고,
- * 투수판은 아직 만들지 않았다(스펙 §7-3). 있는 척하는 빈 화면보다 **없는 것이 정직하다.**
+ * ⚠**`situation`(득점기대치)은 여전히 없다.** 그건 타석에 선 쪽의 이야기이고,
+ * 투수용으로 옮기려면 「이 투수가 만든 득점기대치 변화」라는 다른 지표가 필요하다.
+ * 있는 척하는 빈 화면보다 **없는 것이 정직하다** — 만들 때까지 목록에서 뺀다.
+ *
+ * `splits`는 2026-08-15에 투수 축(対左右打者·본거지·주자상황·월별)을 만들어 넣었다.
  */
-const PITCHER_BLOCKS = new Set<BlockId>(["standard", "advanced", "scorebook", "matchup", "ranking"]);
+const PITCHER_BLOCKS = new Set<BlockId>([
+  "standard",
+  "advanced",
+  "splits",
+  "scorebook",
+  "matchup",
+  "ranking",
+]);
 
 export function blocksFor(role: "batter" | "pitcher"): BlockMeta[] {
   return role === "pitcher" ? BLOCKS.filter((b) => PITCHER_BLOCKS.has(b.id)) : [...BLOCKS];

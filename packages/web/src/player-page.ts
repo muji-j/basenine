@@ -101,6 +101,11 @@ export interface SplitRow {
 export interface SplitAxisData {
   id: SplitAxisId;
   label: string;
+  /**
+   * 투수의 스플릿인가. **값의 뜻이 반대다** — 타율이 아니라 피안타율이다.
+   * 라벨을 「被~」로 바꾸는 데 쓴다.
+   */
+  allowed: boolean;
   rows: SplitRow[];
   /** 이 축으로 나눌 수 없었던 타석. **숨기지 않는다** */
   unclassified: number;
@@ -495,10 +500,15 @@ function splitsBlock(axes: readonly SplitAxisData[]): RawHtml {
     true,
   );
 
+  const allowed = axes[0]!.allowed;
+
   const panels = axes.map((a, ai) => {
     const max = Math.max(0.001, ...a.rows.map((r) => r.ops.value ?? 0));
     const rows: BarRow[] = a.rows.map((r) => ({
       label: r.label,
+      // ⚠**투수는 막대가 짧을수록 좋다.** 그래서 뒤집지 않는다 — 뒤집으면 같은 길이가
+      // 타자 화면에서는 좋고 투수 화면에서는 나쁜 것이 되어 눈이 배운 규칙이 무너진다.
+      // 대신 「棒が短いほど良い」라고 화면이 말한다.
       fill: (r.ops.value ?? 0) / max,
       thin: r.line.pa < a.thinBelow,
       text: html`${avg3(r.avg.value)} / ${avg3(r.obp.value)} / ${avg3(r.slg.value)}<span class="den">${r.line.pa}打席</span>`,
@@ -509,13 +519,23 @@ function splitsBlock(axes: readonly SplitAxisData[]): RawHtml {
       ai === 0,
       html`${a.rows.length === 0 ? html`<p class="empty">この区分の打席がありません。</p>` : bars(rows)}
       ${note(
-        `棒はOPS。数字は 打率 / 出塁率 / 長打率 と打席数です。${a.thinBelow}打席未満は棒を薄くしています — 値は小さな標本のもので、順位ではありません。` +
-          (a.unclassified === 0 ? "" : ` この軸で分類できない打席が${a.unclassified}あります（相手投手の投打が不明など）。`),
+        (allowed
+          ? `棒は被OPS（短いほど良い）。数字は 被打率 / 被出塁率 / 被長打率 と対戦打席数です。`
+          : `棒はOPS。数字は 打率 / 出塁率 / 長打率 と打席数です。`) +
+          `${a.thinBelow}打席未満は棒を薄くしています — 値は小さな標本のもので、順位ではありません。` +
+          (a.unclassified === 0
+            ? ""
+            : ` この軸で分類できない打席が${a.unclassified}あります（${allowed ? "相手打者" : "相手投手"}の投打が不明など）。`),
       )}`,
     );
   });
 
-  return block({ id: "splits", title: "スプリット", controls, body: html`${panels}` });
+  return block({
+    id: "splits",
+    title: allowed ? "スプリット（被成績）" : "スプリット",
+    controls,
+    body: html`${panels}`,
+  });
 }
 
 function scorebookBlock(rows: readonly ScorebookRow[], total: number): RawHtml {

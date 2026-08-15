@@ -115,6 +115,7 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
       {
         id: "hand",
         label: "対左右",
+        allowed: false,
         rows: [
           {
             key: "right",

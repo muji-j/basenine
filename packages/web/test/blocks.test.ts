@@ -26,12 +26,15 @@ test("기본 프리셋 standard가 존재한다 — 클라이언트의 초기 �
   assert.ok(PRESETS.some((p) => p.id === "standard"));
 });
 
-test("투수에게는 타자용 블록을 주지 않는다 — 빈 화면보다 없는 편이 정직하다", () => {
+test("⚠득점기대치는 투수에게 주지 않는다 — 빈 화면보다 없는 편이 정직하다", () => {
   const ids = blocksFor("pitcher").map((b) => b.id);
-  assert.ok(!ids.includes("splits"));
-  assert.ok(!ids.includes("situation"));
+  assert.ok(!ids.includes("situation"), "타석에 선 쪽의 이야기를 투수 페이지에 붙였다");
   assert.ok(ids.includes("standard"));
   assert.equal(blocksFor("batter").length, BLOCKS.length);
+});
+
+test("스플릿은 투수에게도 있다 — 투수 축(対左右打者)을 만들었다", () => {
+  assert.ok(blocksFor("pitcher").some((b) => b.id === "splits"));
 });
 
 test("투수 프리셋도 투수 블록만 가리킨다", () => {

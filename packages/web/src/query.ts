@@ -29,6 +29,7 @@ import {
   aggregateSeason,
   battingEntries,
   battingSplits,
+  pitchingSplits,
   buildLeagues,
   buildRunExpectancy,
   computeSrc,
@@ -117,14 +118,33 @@ const SPLIT_KEY_LABEL: Readonly<Record<string, string>> = {
   away: "ビジター",
 };
 
+/**
+ * 투수 쪽 라벨.
+ *
+ * ⚠**좌우가 「상대 투수」가 아니라 「상대 타자」다.** 타자 쪽 표를 그대로 쓰면
+ * 투수 페이지에 「対左投手」가 나오고, 값은 맞는데 뜻이 틀린 화면이 된다.
+ */
+const PITCHER_SPLIT_KEY_LABEL: Readonly<Record<string, string>> = {
+  left: "対左打者",
+  right: "対右打者",
+  both: "対両打者",
+  empty: "走者なし",
+  onBase: "走者あり",
+  scoring: "得点圏",
+  home: "本拠地",
+  away: "ビジター",
+};
+
 /** `2026-04` → `4月` */
 function monthLabel(key: string): string {
   const m = /^\d{4}-(\d{2})$/.exec(key);
   return m === null ? key : `${Number(m[1])}月`;
 }
 
-function splitLabel(axis: SplitAxisId, key: string): string {
-  return axis === "month" ? monthLabel(key) : (SPLIT_KEY_LABEL[key] ?? key);
+function splitLabel(axis: SplitAxisId, key: string, allowed: boolean): string {
+  if (axis === "month") return monthLabel(key);
+  const table = allowed ? PITCHER_SPLIT_KEY_LABEL : SPLIT_KEY_LABEL;
+  return table[key] ?? key;
 }
 
 /** 라인에서 파생 비율 4종. **산식은 metrics 것을 쓴다** */
@@ -522,19 +542,25 @@ function loadStatePa(
   return out;
 }
 
+/**
+ * @param allowed true면 투수 스플릿(피성적)을 만든다.
+ *   ⚠**같은 함수로 만든다**(M1) — 축 목록·정렬·얇은 표본 규칙이 두 벌이 되면 어긋난다.
+ */
 function loadSplits(
   db: Db,
   season: number,
   competition: string,
   through: string,
+  allowed = false,
 ): Map<string, SplitAxisData[]> {
   const out = new Map<string, SplitAxisData[]>();
+  const query = allowed ? pitchingSplits : battingSplits;
 
   for (const axis of SPLIT_AXES) {
-    for (const p of battingSplits(db, axis.dimension, season, competition, through)) {
+    for (const p of query(db, axis.dimension, season, competition, through)) {
       const rows: SplitRow[] = p.splits.map((s) => ({
         key: s.key,
-        label: splitLabel(axis.id, s.key),
+        label: splitLabel(axis.id, s.key, allowed),
         line: s.line,
         rbi: s.rbi,
         ...derived(s.line),
@@ -544,6 +570,7 @@ function loadSplits(
       const entry: SplitAxisData = {
         id: axis.id,
         label: axis.label,
+        allowed,
         rows,
         unclassified: p.unclassified,
         thinBelow: THIN_SPLIT_PA,
@@ -805,6 +832,8 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   const profiles = loadProfiles(db);
   const decisions = loadDecisions(db, o.season, competition, through);
   const splitsByPlayer = loadSplits(db, o.season, competition, through);
+  // 투수 스플릿은 축 식이 다르다(좌우가 상대 타자, 홈/원정이 반대). 같은 함수로 만든다
+  const pitcherSplitsByPlayer = loadSplits(db, o.season, competition, through, true);
   const scorebookByPlayer = loadScorebook(db, o.season, competition, through);
   const statePaByPlayer = loadStatePa(db, o.season, competition, through);
   const monthlyEra = loadMonthlyEra(db, o.season, competition, through);
@@ -917,7 +946,10 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
             };
           });
 
-    const splits = role === "pitcher" ? [] : (splitsByPlayer.get(playerId) ?? []);
+    const splits =
+      role === "pitcher"
+        ? (pitcherSplitsByPlayer.get(playerId) ?? [])
+        : (splitsByPlayer.get(playerId) ?? []);
     const opponents =
       role === "pitcher"
         ? (matchupsByPlayer.byPitcher.get(playerId) ?? [])

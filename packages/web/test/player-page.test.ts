@@ -201,13 +201,47 @@ test("클라이언트에 실리는 카탈로그가 서버가 그린 블록과 �
   }
 });
 
-test("투수 페이지에는 타자 블록이 없다", () => {
+test("투수 페이지에 득점기대치는 없다 — 타석에 선 쪽의 이야기다", () => {
   const out = renderPlayerPage(
     playerPage({ role: "pitcher", position: "投手", batting: null, pitching: pitchingBlock() }),
     context(),
   );
-  assert.ok(!out.includes('id="b-splits"'));
   assert.ok(!out.includes('id="b-situation"'));
+  assert.ok(out.includes('id="b-splits"'), "투수 스플릿은 있어야 한다");
+});
+
+test("⚠투수 스플릿은 「被成績」이라고 이름을 바꾼다 — 같은 숫자가 뜻이 반대다", () => {
+  const pitcherSplits = playerPage().splits.map((a) => ({
+    ...a,
+    allowed: true,
+    rows: a.rows.map((r) => ({ ...r, label: r.label.replace("投手", "打者") })),
+  }));
+  const out = renderPlayerPage(
+    playerPage({
+      role: "pitcher",
+      position: "投手",
+      batting: null,
+      pitching: pitchingBlock(),
+      splits: pitcherSplits,
+    }),
+    context(),
+  );
+  const section = /<section class="block"[^>]*id="b-splits">[\s\S]*?<\/section>/.exec(out)?.[0] ?? "";
+  assert.match(section, /スプリット（被成績）/);
+  assert.match(section, /棒は被OPS（短いほど良い）/);
+  assert.match(section, /被打率 \/ 被出塁率 \/ 被長打率/);
+  assert.match(section, /対右打者/);
+  assert.ok(!section.includes("対右投手"), "투수 페이지에 「対右投手」가 남았다");
+});
+
+test("타자 스플릿의 문구는 그대로다", () => {
+  const section =
+    /<section class="block"[^>]*id="b-splits">[\s\S]*?<\/section>/.exec(
+      renderPlayerPage(playerPage(), context()),
+    )?.[0] ?? "";
+  assert.match(section, />スプリット</);
+  assert.match(section, /棒はOPS。/);
+  assert.ok(!section.includes("被打率"));
 });
 
 test("투수는 기본 성적이 투수 항목이 된다", () => {

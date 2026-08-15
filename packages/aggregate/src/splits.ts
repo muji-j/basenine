@@ -77,15 +77,28 @@ export function battingSplits(
   competition = "regular",
   through = "9999-12-31",
 ): PlayerSplits[] {
-  const rows = db.raw.prepare(SQL(dimension)).all(season, competition, through) as {
-    playerId: string;
-    displayName: string;
-    splitKey: string | null;
-    outcome: string;
-    n: number;
-    rbi: number;
-  }[];
+  return foldSplitRows(
+    db.raw.prepare(SQL(dimension)).all(season, competition, through) as unknown as SplitQueryRow[],
+  );
+}
 
+/** 축별 SQL이 돌려주는 행. 타자·투수 양쪽이 같은 모양이다 */
+interface SplitQueryRow {
+  playerId: string;
+  displayName: string;
+  splitKey: string | null;
+  outcome: string;
+  n: number;
+  rbi: number;
+}
+
+/**
+ * 조회 결과를 선수별 스플릿으로 접는다.
+ *
+ * ⚠**타자와 투수가 같은 함수를 쓴다**(M1). 접는 규칙이 두 벌이 되면 어느 쪽이 맞는지 알 수 없다 —
+ * 다른 것은 SQL의 축 식뿐이다.
+ */
+function foldSplitRows(rows: readonly SplitQueryRow[]): PlayerSplits[] {
   const byPlayer = new Map<string, PlayerSplits>();
   const tallies = new Map<string, Map<string, { outcome: string; count: number; rbi: number }[]>>();
 
@@ -117,6 +130,63 @@ export function battingSplits(
   }
 
   return [...byPlayer.values()];
+}
+
+/**
+ * 투수 기준 축.
+ *
+ * ⚠**홈/원정이 타자와 반대다.** `half='top'`은 원정 팀이 치는 이닝이므로, 그때 던지는 쪽은
+ * **홈 팀 투수**다. 타자 쪽 식을 그대로 복사하면 홈과 원정이 통째로 뒤집힌다 —
+ * 값이 그럴듯하게 나오기 때문에 눈으로는 알아채지 못한다.
+ * ⚠**타순별은 만들 수 없다.** 타순은 `batting_line.batting_order`에 경기 단위로만 있고
+ * `pa_event`에는 없다. 없는 것을 추정으로 채우지 않는다(CLAUDE.md §2-2의 「타순별」은 미구현).
+ */
+const PITCHER_KEY_EXPR: Readonly<Record<SplitDimension, string>> = {
+  // 투수 기준 상대 타자의 치는 손. 투타 미상이면 NULL이 되어 unclassified로 빠진다
+  opponentHand: `bat.bats`,
+  homeAway: `CASE e.half WHEN 'top' THEN 'home' ELSE 'away' END`,
+  baseState: `CASE
+      WHEN e.bases = '' THEN 'empty'
+      WHEN e.bases LIKE '%2%' OR e.bases LIKE '%3%' THEN 'scoring'
+      ELSE 'onBase' END`,
+  month: `substr(g.game_date, 1, 7)`,
+};
+
+const PITCHER_SQL = (dimension: SplitDimension): string => `
+SELECT e.pitcher_id AS playerId,
+       pit.display_name AS displayName,
+       ${PITCHER_KEY_EXPR[dimension]} AS splitKey,
+       e.outcome AS outcome,
+       COUNT(*) AS n,
+       SUM(e.rbi) AS rbi
+FROM pa_event e
+JOIN game g ON g.game_id = e.game_id
+JOIN player pit ON pit.player_id = e.pitcher_id
+LEFT JOIN player bat ON bat.player_id = e.batter_id
+WHERE g.season = ? AND g.status = 'played' AND g.competition = ?
+  AND g.game_date <= ? AND e.status = 'final' AND e.pitcher_id IS NOT NULL
+GROUP BY e.pitcher_id, splitKey, e.outcome
+`;
+
+/**
+ * 투수별 스플릿.
+ *
+ * ⚠**돌아오는 `line`은 「투수가 허용한 것」이다** — `h`는 피안타, `hr`는 피홈런,
+ * 여기서 나오는 타율은 **피안타율**이다. 타자 쪽과 같은 `BattingLine`을 쓰지만 뜻이 반대이므로,
+ * 화면에서 라벨을 반드시 「被~」로 붙인다.
+ *
+ * 읽기 비용은 타자 쪽과 같다 — `pa_event`를 축마다 1회 스캔한다.
+ */
+export function pitchingSplits(
+  db: Db,
+  dimension: SplitDimension,
+  season: number,
+  competition = "regular",
+  through = "9999-12-31",
+): PlayerSplits[] {
+  return foldSplitRows(
+    db.raw.prepare(PITCHER_SQL(dimension)).all(season, competition, through) as unknown as SplitQueryRow[],
+  );
 }
 
 export interface Matchup {
