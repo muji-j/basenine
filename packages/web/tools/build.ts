@@ -42,8 +42,14 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
       const loadMs = Number(process.hrtime.bigint() - t0) / 1e6;
 
       const site = {
-        // 제품명 미확정(CLAUDE.md §7). 확정되면 여기 한 곳만 바꾼다
-        name: process.env["BB_SITE_NAME"] ?? "bb-app",
+        /**
+         * 제품명. **화면에 보이는 이름은 여기 하나뿐이다** — 표제·`<title>`·꼬리말이 전부 이 값을 쓴다.
+         *
+         * ⚠리포명(`bb-app`)·패키지명(`@bb-app/*`)·Pages 프로젝트명은 **내부 식별자**라
+         * 제품명과 별개다. 바꿀 이유가 없고, 바꾸면 이력과 링크만 끊긴다.
+         * 호스트명은 전용 도메인을 붙일 때 정리한다(deploy.md §7-2).
+         */
+        name: process.env["BB_SITE_NAME"] ?? "BaseNine",
         // ⚠**삭제·정정 요청 창구**(L4). 비어 있으면 화면이 「미설정」이라고 말한다 — 가짜 주소를 넣지 마라
         contact: process.env["BB_CONTACT"] ?? "",
       };
