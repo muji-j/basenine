@@ -23,6 +23,7 @@ import {
   strikeoutsPer9,
   walkRate,
   walksPer9,
+  whip,
 } from "@bb-app/metrics";
 import {
   ALL_STATES,
@@ -33,13 +34,22 @@ import {
   buildLeagues,
   buildRunExpectancy,
   computeSrc,
+  entriesOfRole,
   matchups,
   pitchingEntries,
+  qualifyingOuts,
   rankBatters,
   rankPitchers,
+  rankPitchersInRole,
   stateKey,
 } from "@bb-app/aggregate";
-import type { BattingEntry, LeagueBundle, PitchingEntry, SplitDimension } from "@bb-app/aggregate";
+import type {
+  BattingEntry,
+  LeagueBundle,
+  PitcherRole,
+  PitchingEntry,
+  SplitDimension,
+} from "@bb-app/aggregate";
 import { TEAMS, colorOf, shortNameOf, teamOf } from "@bb-app/domain";
 import type { League } from "@bb-app/domain";
 import { countsAsHit } from "@bb-app/parser";
@@ -54,6 +64,7 @@ import type {
   RankingPanel,
   RankingRow,
   Ranks,
+  RoleLine,
   ScorebookRow,
   SituationCell,
   SparkPoint,
@@ -66,6 +77,7 @@ import type {
   LeagueSection,
   ProbableGame,
   ProbableSide,
+  RankingCategory,
   RankingPageData,
   RosterEntry,
   SearchEntry,
@@ -166,6 +178,8 @@ interface MetricRanking {
   unit: string;
   /** 분모가 아웃 카운트인가. 투수 지표는 전부 그렇다 */
   denAsInnings: boolean;
+  /** **값**이 아웃 카운트인가(最多投球回만 해당) */
+  valueAsInnings: boolean;
   qualifier: string;
   /** 순위순. 자격 미달·값 없음은 뒤에 붙는다 */
   rows: RankingRow[];
@@ -189,6 +203,7 @@ function toMetricRanking(
   qualifier: string,
   ranked: readonly RankedLike[],
   denAsInnings = false,
+  valueAsInnings = false,
 ): MetricRanking {
   const rows: RankingRow[] = ranked
     .map((r) => ({
@@ -211,6 +226,7 @@ function toMetricRanking(
     digits,
     unit,
     denAsInnings,
+    valueAsInnings,
     qualifier,
     rows,
     rankOf: new Map(rows.map((r) => [r.playerId, r.rank])),
@@ -229,6 +245,7 @@ function countRanking(
   unit: string,
   items: readonly { playerId: string; name: string; teamCode: string; count: number; sample: number }[],
   denAsInnings = false,
+  valueAsInnings = false,
 ): MetricRanking {
   const sorted = [...items].sort((a, b) => b.count - a.count);
   const ranked: RankedLike[] = [];
@@ -254,7 +271,25 @@ function countRanking(
     "累計順です。規定打席・規定投球回はかかりません。",
     ranked,
     denAsInnings,
+    valueAsInnings,
   );
+}
+
+/**
+ * 역할별 성적 한 벌. **등판이 없으면 null**이다.
+ *
+ * ⚠**0등판을 「방어율 0.00」으로 그리지 않는다**(M11). 「없음」과 「0」은 다르고,
+ * 구원 등판이 없는 선발 투수에게 「救援 0.00」은 완벽한 구원 성적처럼 보인다.
+ */
+function roleLine(line: PitchingLine, games: number): RoleLine | null {
+  if (games === 0) return null;
+  return {
+    games,
+    line,
+    era: earnedRunAverage(line),
+    whip: whip(line),
+    k9: strikeoutsPer9(line),
+  };
 }
 
 function batterQualifier(bundle: LeagueBundle): string {
@@ -262,15 +297,28 @@ function batterQualifier(bundle: LeagueBundle): string {
   return `規定打席 ${need}（チーム${bundle.teamGames}試合 × 3.1、小数切り上げ）に達した選手だけに順位がつきます。同率は同じ順位で、次の順位を飛ばします。`;
 }
 
-function pitcherQualifier(bundle: LeagueBundle): string {
-  const need = qualifiedPitcherOuts(bundle.teamGames) / 3;
-  return `規定投球回 ${need}回（チーム${bundle.teamGames}試合 × 1回）に達した投手だけに順位がつきます。同率は同じ順位で、次の順位を飛ばします。`;
+/**
+ * 역할별 자격 문구.
+ *
+ * ⚠**선발은 NPB 공식 기준, 구원은 우리 기준**이다. 같은 문장으로 쓰면
+ * 자체 기준이 공식 기준으로 읽힌다 — 그건 출처를 속이는 것과 같다(§0-10 출처 추적성).
+ */
+function pitcherQualifier(bundle: LeagueBundle, role: PitcherRole): string {
+  const need = qualifyingOuts(bundle, role) / 3;
+  const rounded = Math.round(need * 10) / 10;
+  if (role === "starter") {
+    return `規定投球回 ${rounded}回（チーム${bundle.teamGames}試合 × 1回・NPB公式）に達した先発投手だけに順位がつきます。同率は同じ順位で、次の順位を飛ばします。`;
+  }
+  return `救援投手には公式の規定投球回がないため、当サイトは規定投球回の3分の1（${rounded}回）を基準にしています。これはNPBの基準ではありません。同率は同じ順位で、次の順位を飛ばします。`;
 }
 
 interface LeagueRankings {
   league: League;
   batting: MetricRanking[];
-  pitching: MetricRanking[];
+  /** 선발 부문 */
+  starter: MetricRanking[];
+  /** 구원 부문 */
+  reliever: MetricRanking[];
 }
 
 function buildLeagueRankings(
@@ -280,7 +328,6 @@ function buildLeagueRankings(
   srcByPlayer: Map<string, { src: number; pa: number }>,
 ): LeagueRankings {
   const bq = batterQualifier(bundle);
-  const pq = pitcherQualifier(bundle);
 
   const asRanked = <T>(
     ranked: readonly { item: T; rank: number | null; rate: Rate }[],
@@ -338,21 +385,93 @@ function buildLeagueRankings(
     ),
   ];
 
-  // ⚠투수 지표의 `Rate.denominator`는 **아웃 카운트**다. 이닝으로 바꿔 표기한다.
-  const pitching: MetricRanking[] = [
-    toMetricRanking("era", "防御率", 2, "投球回", pq, asRanked(rankPitchers(bundle, pit, (e) => e.era), pid), true),
-    toMetricRanking("fip", "FIP", 2, "投球回", pq, asRanked(rankPitchers(bundle, pit, (e) => e.fip), pid), true),
-    toMetricRanking("whip", "WHIP", 2, "投球回", pq, asRanked(rankPitchers(bundle, pit, (e) => e.whip), pid), true),
-    countRanking(
-      "so",
-      "奪三振",
-      "投球回",
-      pit.map((e) => ({ ...pid(e), count: e.player.line.so, sample: e.player.line.outs })),
+  return {
+    league: bundle.league,
+    batting,
+    starter: pitcherRankings(bundle, pit, "starter", pid),
+    reliever: pitcherRankings(bundle, pit, "reliever", pid),
+  };
+}
+
+/**
+ * 한 역할의 투수 순위 한 벌.
+ *
+ * ⚠**개수 지표에도 역할 필터를 건다.** 세이브 순위에 선발 투수를 섞으면 전원 0이 되고,
+ * 승리 순위에 마무리를 섞으면 「7승 선발」과 「7승 구원」이 같은 줄에 선다 —
+ * 두 7승은 같은 뜻이 아니다.
+ * ⚠**개수 지표에는 자격 기준이 없다.** 최다세이브에 이닝 하한은 걸리지 않는다.
+ */
+function pitcherRankings(
+  bundle: LeagueBundle,
+  pit: readonly PitchingEntry[],
+  role: PitcherRole,
+  pid: (e: PitchingEntry) => { playerId: string; name: string; teamCode: string },
+): MetricRanking[] {
+  const pq = pitcherQualifier(bundle, role);
+  const mine = entriesOfRole(pit, role);
+  const asRanked = (ranked: readonly { item: PitchingEntry; rank: number | null; rate: Rate }[]): RankedLike[] =>
+    ranked.map((r) => ({ rank: r.rank, rate: r.rate, ...pid(r.item) }));
+  const rate = (
+    id: string,
+    label: string,
+    pick: (e: PitchingEntry) => Rate,
+    higherIsBetter = false,
+  ): MetricRanking =>
+    // ⚠투수 지표의 `Rate.denominator`는 **아웃 카운트**다. 이닝으로 바꿔 표기한다.
+    toMetricRanking(
+      id, label, 2, "投球回", pq,
+      asRanked(rankPitchersInRole(bundle, pit, role, pick, higherIsBetter)),
       true,
-    ),
+    );
+  const count = (id: string, label: string, of: (e: PitchingEntry) => number): MetricRanking =>
+    countRanking(
+      id, label, "投球回",
+      mine.map((e) => ({ ...pid(e), count: of(e), sample: e.player.line.outs })),
+      true,
+    );
+
+  /**
+   * 投球回 순위만 모양이 다르다.
+   *
+   * ⚠**값이 아웃 카운트**라 그대로 정수로 내면 415아웃이 「415」가 된다 — 이닝으로 바꾼다.
+   * ⚠그리고 **분모를 투구회로 두면 같은 수가 두 번 나온다**(`138.1回 / 138.1回`).
+   * 여기서 알고 싶은 것은 「몇 경기로 그 이닝을 던졌는가」이므로 분모는 등판 수다.
+   */
+  const inningsRanking = (): MetricRanking =>
+    countRanking(
+      "outs", "投球回", "試合",
+      mine.map((e) => ({ ...pid(e), count: e.player.line.outs, sample: e.player.games })),
+      false,
+      true,
+    );
+
+  const common: MetricRanking[] = [
+    rate("era", "防御率", (e) => e.era),
+    rate("fip", "FIP", (e) => e.fip),
+    rate("whip", "WHIP", (e) => e.whip),
+    rate("k9", "K/9", (e) => strikeoutsPer9(e.player.line), true),
+    rate("bb9", "BB/9", (e) => walksPer9(e.player.line)),
+    count("so", "奪三振", (e) => e.player.line.so),
+    inningsRanking(),
   ];
 
-  return { league: bundle.league, batting, pitching };
+  if (role === "starter") {
+    return [
+      count("w", "勝利", (e) => e.player.decisions.w),
+      ...common,
+      count("l", "敗戦", (e) => e.player.decisions.l),
+      count("starts", "先発", (e) => e.player.starts),
+    ];
+  }
+  return [
+    count("sv", "セーブ", (e) => e.player.decisions.sv),
+    count("hld", "ホールド", (e) => e.player.decisions.hld),
+    // HP(홀드포인트) = 홀드 + 구원승. NPB 最優秀中継ぎ의 정의다
+    count("hp", "HP", (e) => e.player.decisions.hld + e.player.decisions.reliefW),
+    ...common,
+    count("w", "勝利", (e) => e.player.decisions.w),
+    count("games", "登板", (e) => e.player.games),
+  ];
 }
 
 /**
@@ -378,6 +497,7 @@ export function panelsForPlayer(
       digits: m.digits,
       unit: m.unit,
       denAsInnings: m.denAsInnings,
+      valueAsInnings: m.valueAsInnings === true,
       rows: top,
       qualifier: m.qualifier,
     };
@@ -391,6 +511,7 @@ function panelsForPage(rankings: readonly MetricRanking[], limit: number): Ranki
     digits: m.digits,
     unit: m.unit,
     denAsInnings: m.denAsInnings,
+    valueAsInnings: m.valueAsInnings === true,
     rows: m.rows.slice(0, limit),
     qualifier: m.qualifier,
   }));
@@ -422,35 +543,6 @@ function loadProfiles(db: Db): Map<string, ProfileRow> {
     )
     .all() as unknown as ProfileRow[];
   return new Map(rows.map((r) => [r.playerId, r]));
-}
-
-function loadDecisions(
-  db: Db,
-  season: number,
-  competition: string,
-  through: string,
-): Map<string, { w: number; l: number; sv: number; hld: number }> {
-  const rows = db.raw
-    .prepare(
-      `SELECT t.player_id AS playerId, t.decision AS decision, COUNT(*) AS n
-       FROM pitching_line t
-       JOIN game g ON g.game_id = t.game_id
-       WHERE g.season = ? AND g.status = 'played' AND g.competition = ? AND g.game_date <= ?
-         AND t.decision IS NOT NULL
-       GROUP BY t.player_id, t.decision`,
-    )
-    .all(season, competition, through) as { playerId: string; decision: string; n: number }[];
-
-  const out = new Map<string, { w: number; l: number; sv: number; hld: number }>();
-  for (const r of rows) {
-    const cur = out.get(r.playerId) ?? { w: 0, l: 0, sv: 0, hld: 0 };
-    if (r.decision === "○") cur.w += r.n;
-    else if (r.decision === "●") cur.l += r.n;
-    else if (r.decision === "S") cur.sv += r.n;
-    else if (r.decision === "H") cur.hld += r.n;
-    out.set(r.playerId, cur);
-  }
-  return out;
 }
 
 function loadScorebook(
@@ -830,7 +922,6 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   const bundles = buildLeagues(agg);
 
   const profiles = loadProfiles(db);
-  const decisions = loadDecisions(db, o.season, competition, through);
   const splitsByPlayer = loadSplits(db, o.season, competition, through);
   // 투수 스플릿은 축 식이 다르다(좌우가 상대 타자, 홈/원정이 반대). 같은 함수로 만든다
   const pitcherSplitsByPlayer = loadSplits(db, o.season, competition, through, true);
@@ -919,16 +1010,26 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
         : {
             games: pit.player.games,
             line: pit.player.line,
-            decisions: decisions.get(playerId) ?? { w: 0, l: 0, sv: 0, hld: 0 },
+            // ⚠집계가 세어 둔 것을 그대로 쓴다 — 여기서 다시 세면 두 벌이 된다(M1)
+            decisions: pit.player.decisions,
             era: pit.era,
             whip: pit.whip,
             fip: pit.fip,
             k9: strikeoutsPer9(pit.player.line),
             bb9: walksPer9(pit.player.line),
             hr9: homeRunsPer9(pit.player.line),
-            ranks: ranksFor(rankings.pitching, playerId),
-            qualified: pit.player.line.outs >= qualifiedPitcherOuts(bundle.teamGames),
-            needOuts: qualifiedPitcherOuts(bundle.teamGames),
+            // ⚠**자기 역할의 순위표에서 순위를 읽는다.** 선발 순위표에서 마무리의 등수를
+            // 찾으면 언제나 없다 — 애초에 그 표에 실려 있지 않기 때문이다
+            ranks: ranksFor(
+              pit.player.role === "reliever" ? rankings.reliever : rankings.starter,
+              playerId,
+            ),
+            qualified: pit.player.line.outs >= qualifyingOuts(bundle, pit.player.role),
+            needOuts: qualifyingOuts(bundle, pit.player.role),
+            role: pit.player.role,
+            starts: pit.player.starts,
+            asStarter: roleLine(pit.player.asStarter, pit.player.starts),
+            asReliever: roleLine(pit.player.asReliever, pit.player.games - pit.player.starts),
           };
 
     const reMatrix = reByLeague.get(base.league);
@@ -1017,7 +1118,12 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       situation,
       matchups: opponents,
       matchupTotal: opponents.length,
-      ranking: panelsForPlayer(role === "pitcher" ? rankings.pitching : rankings.batting, playerId),
+      ranking: panelsForPlayer(
+        role === "pitcher"
+          ? (pit?.player.role === "reliever" ? rankings.reliever : rankings.starter)
+          : rankings.batting,
+        playerId,
+      ),
       mark,
       spark,
       sparkLabel: role === "pitcher" ? "月別防御率" : "月別OPS",
@@ -1030,26 +1136,38 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   players.sort((a, b) => a.name.localeCompare(b.name, "ja"));
   search.sort((a, b) => a.n.localeCompare(b.n, "ja"));
 
-  const sections: LeagueSection[] = bundles.map((bundle) => {
-    const r = rankingsByLeague.get(bundle.league)!;
-    return {
-      id: bundle.league,
-      name: LEAGUE_NAME[bundle.league],
-      panels: [...panelsForPage(r.batting, RANKING_PAGE_ROWS), ...panelsForPage(r.pitching, RANKING_PAGE_ROWS)],
-    };
-  });
+  const categoriesOf = (r: LeagueRankings, limit: number): RankingCategory[] => [
+    { id: "batter", label: "打者", panels: panelsForPage(r.batting, limit) },
+    { id: "starter", label: "先発", panels: panelsForPage(r.starter, limit) },
+    { id: "reliever", label: "救援", panels: panelsForPage(r.reliever, limit) },
+  ];
 
+  const sections: LeagueSection[] = bundles.map((bundle) => ({
+    id: bundle.league,
+    name: LEAGUE_NAME[bundle.league],
+    categories: categoriesOf(rankingsByLeague.get(bundle.league)!, RANKING_PAGE_ROWS),
+  }));
+
+  // 일람의 하이라이트는 **부문마다 대표 지표 몇 개씩**만 낸다.
+  // ⚠전 지표를 실으면 첫 화면이 순위표 페이지의 복사본이 되고, 「일람」이라는 이름이 거짓이 된다
+  const HIGHLIGHT: Readonly<Record<string, readonly string[]>> = {
+    batter: ["wrcPlus", "ops", "hr"],
+    starter: ["era", "w", "so"],
+    reliever: ["sv", "hld", "era"],
+  };
   const highlights: LeagueSection[] = bundles.map((bundle) => {
     const r = rankingsByLeague.get(bundle.league)!;
-    const wrc = r.batting.find((m) => m.id === "wrcPlus");
-    const era = r.pitching.find((m) => m.id === "era");
     return {
       id: bundle.league,
       name: LEAGUE_NAME[bundle.league],
-      panels: [
-        ...(wrc === undefined ? [] : panelsForPage([wrc], 5)),
-        ...(era === undefined ? [] : panelsForPage([era], 5)),
-      ],
+      categories: categoriesOf(r, 5).map((c) => ({
+        ...c,
+        // ⚠`HIGHLIGHT`에 적은 순서대로 낸다 — `filter`로 뽑으면 원본 순서가 남아
+        // 「승리를 먼저 보여준다」는 의도가 조용히 사라진다
+        panels: (HIGHLIGHT[c.id] ?? [])
+          .map((id) => c.panels.find((p) => p.id === id))
+          .filter((p): p is RankingPanel => p !== undefined),
+      })),
     };
   });
 

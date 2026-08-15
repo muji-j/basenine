@@ -17,5 +17,10 @@ export { WOBA_SCALE, WOBA_WEIGHTS, woba, wobaRaw } from "./woba.ts";
 export { leagueConstants, sumBatting, sumPitching } from "./league.ts";
 export type { LeagueConstants } from "./league.ts";
 export { fip, wraa, wrcPlus } from "./advanced.ts";
-export { qualifiedBatterPa, qualifiedPitcherOuts, rankBy } from "./ranking.ts";
+export {
+  qualifiedBatterPa,
+  qualifiedPitcherOuts,
+  qualifiedRelieverOuts,
+  rankBy,
+} from "./ranking.ts";
 export type { RankOptions, Ranked } from "./ranking.ts";

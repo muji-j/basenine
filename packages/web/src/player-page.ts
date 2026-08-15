@@ -70,11 +70,25 @@ export interface BattingBlockData {
   needPa: number;
 }
 
+/**
+ * 한 역할에서의 성적. **선발과 구원을 나눠 보여주기 위한 것**이다.
+ *
+ * ⚠**혼재 투수(2026 시즌 356명 중 52명)에게는 하나의 방어율이 거짓말에 가깝다.**
+ * 선발 5경기와 구원 21경기를 합친 3.40이 어느 쪽의 3.40인지 알 수 없기 때문이다.
+ */
+export interface RoleLine {
+  games: number;
+  line: PitchingLine;
+  era: Rate;
+  whip: Rate;
+  k9: Rate;
+}
+
 export interface PitchingBlockData {
   games: number;
   line: PitchingLine;
   /** 승·패·세이브·홀드. 박스스코어의 결정 표기에서 센다 */
-  decisions: { w: number; l: number; sv: number; hld: number };
+  decisions: { w: number; l: number; sv: number; hld: number; reliefW: number };
   era: Rate;
   whip: Rate;
   fip: Rate;
@@ -83,8 +97,19 @@ export interface PitchingBlockData {
   hr9: Rate;
   ranks: Ranks;
   qualified: boolean;
-  /** 규정투구회(아웃 카운트) */
+  /** 이 투수의 역할에 해당하는 자격선(아웃 카운트) */
   needOuts: number;
+  /**
+   * 선발형인가 구원형인가. **아웃 카운트가 많은 쪽**이다(`@bb-app/aggregate`가 정한다).
+   * 순위표의 어느 부문에 서는지와, 어떤 분포로 색을 칠하는지를 이 값이 정한다.
+   */
+  role: "starter" | "reliever";
+  /** 선발 등판 수 */
+  starts: number;
+  /** 선발 등판분. 선발이 0경기면 null */
+  asStarter: RoleLine | null;
+  /** 구원 등판분. 구원이 0경기면 null */
+  asReliever: RoleLine | null;
 }
 
 export type SplitAxisId = "hand" | "base" | "homeAway" | "month";
@@ -167,6 +192,13 @@ export interface RankingPanel {
   unit: string;
   /** 분모가 아웃 카운트면 true — 표기는 이닝으로 바꾼다 */
   denAsInnings: boolean;
+  /**
+   * **값 자체**가 아웃 카운트면 true(最多投球回). 표기는 이닝으로 바꾼다.
+   *
+   * ⚠분모와 값은 **다른 축이다.** 방어율은 분모만 아웃이고, 投球回 순위는 값도 아웃이다.
+   * 하나의 깃발로 묶으면 327아웃이 「327回」로 나간다 — 분모가 3배로 부풀던 것과 같은 오류다.
+   */
+  valueAsInnings?: boolean;
   rows: RankingRow[];
   /** 자격 기준 설명. **규칙이 곧 값이다**(M3) */
   qualifier: string;
@@ -362,7 +394,9 @@ function rail(d: PlayerPageData): RawHtml {
   <button class="tab" type="button" data-density="normal" aria-pressed="true">標準</button>
   <button class="tab" type="button" data-density="compact" aria-pressed="false">高密度</button>
 </nav>
-${gradeLegend()}`;
+${gradeLegend(
+    d.role === "pitcher" ? (d.pitching?.role ?? "starter") : "batter",
+  )}`;
 }
 
 function editor(): RawHtml {
@@ -421,30 +455,103 @@ function standardBatting(b: BattingBlockData): RawHtml {
   });
 }
 
+/** 역할 이름. 화면에서 **하나의 표기만** 쓴다 — 「中継ぎ」와 「救援」이 섞이면 다른 말로 읽힌다 */
+export const ROLE_LABEL: Readonly<Record<"starter" | "reliever", string>> = {
+  starter: "先発",
+  reliever: "救援",
+};
+
+/**
+ * 자격선 설명. **선발은 NPB 공식 기준, 구원은 우리 기준**이라 문장이 달라야 한다.
+ *
+ * ⚠자체 기준을 공식 기준과 같은 얼굴로 내보내면 「NPB가 그렇게 정했다」는 오해가 생긴다.
+ */
+function pitcherQualifierText(p: PitchingBlockData): string {
+  const have = Math.floor(p.line.outs / 3);
+  const need = Math.floor(p.needOuts / 3);
+  const basis =
+    p.role === "starter"
+      ? "規定投球回（NPB公式）"
+      : "当サイトの救援基準（規定投球回の3分の1）";
+  return p.qualified
+    ? `${basis}到達（${have}回 / ${need}回）`
+    : `${basis}未満（${have}回 / ${need}回）— 率の指標には順位がつきません`;
+}
+
 function standardPitching(p: PitchingBlockData): RawHtml {
   const d = p.decisions;
   return block({
     id: "standard",
     title: "基本成績",
-    qualifier: qualifierText(p.qualified, Math.floor(p.line.outs / 3), Math.floor(p.needOuts / 3), "回"),
-    body: columns(
-      html`${statRateOuts("防御率", p.era, 2, rk(p.ranks, "era"))}
-        ${statRateOuts("WHIP", p.whip, 2, rk(p.ranks, "whip"))}
+    qualifier: pitcherQualifierText(p),
+    body: html`${columns(
+      html`${statRateOuts("防御率", p.era, 2, rk(p.ranks, "era"), p.role)}
+        ${statRateOuts("WHIP", p.whip, 2, rk(p.ranks, "whip"), p.role)}
         ${statText("投球回", innings(p.line.outs))}
         ${statCount("試合", p.games)}`,
       html`${statCount("勝", d.w, rk(p.ranks, "w"))}
         ${statCount("敗", d.l)}
         ${statCount("セーブ", d.sv, rk(p.ranks, "sv"))}
         ${statCount("ホールド", d.hld, rk(p.ranks, "hld"))}`,
+      html`${statCount("先発", p.starts)}
+        ${statCount("救援", p.games - p.starts)}
+        ${statCount("HP", d.hld + d.reliefW, rk(p.ranks, "hp"))}
+        ${statCount("対戦打者", p.line.bf)}`,
       html`${statCount("被安打", p.line.h)}
         ${statCount("被本塁打", p.line.hr)}
         ${statCount("与四球", p.line.bb)}
         ${statCount("与死球", p.line.hbp)}`,
       html`${statCount("奪三振", p.line.so, rk(p.ranks, "so"))}
         ${statCount("失点", p.line.r)}
-        ${statCount("自責点", p.line.er)}
-        ${statCount("対戦打者", p.line.bf)}`,
-    ),
+        ${statCount("自責点", p.line.er)}`,
+    )}
+    ${note(
+      `この投手は${ROLE_LABEL[p.role]}として扱っています（先発${p.starts}試合 / 救援${p.games - p.starts}試合、` +
+        `投球回の多いほうを役割としています）。順位も水準の色も${ROLE_LABEL[p.role]}投手の分布と比べたものです — ` +
+        `先発と救援では防御率の分布が違うためです。`,
+    )}`,
+  });
+}
+
+/**
+ * 선발분과 구원분을 나눠 보여준다. **양쪽에 등판이 있을 때만** 낸다.
+ *
+ * ⚠나누지 않으면 혼재 투수의 방어율이 어느 쪽의 값인지 알 수 없다. 그리고 ⚠**각각을
+ * 자기 역할의 분포와 비교해 칠한다** — 같은 3.40이 선발로서는 보통, 구원으로서는 나쁨이다.
+ */
+function roleSplitBlock(p: PitchingBlockData): RawHtml {
+  const sp = p.asStarter;
+  const rp = p.asReliever;
+  if (sp === null || rp === null) {
+    return block({
+      id: "rolesplit",
+      title: "先発・救援別",
+      body: html`<p class="empty">${
+        sp === null ? "先発登板がありません。" : "救援登板がありません。"
+      }上の基本成績がそのまま${ROLE_LABEL[p.role]}としての成績です。</p>`,
+    });
+  }
+  const row = (label: string, r: RoleLine, group: "starter" | "reliever"): RawHtml =>
+    html`<div class="rolecol">
+      <h5 class="subhead">${label}</h5>
+      <dl>
+        ${statCount("試合", r.games)}
+        ${statText("投球回", innings(r.line.outs))}
+        ${statRateOuts("防御率", r.era, 2, null, group)}
+        ${statRateOuts("WHIP", r.whip, 2, null, group)}
+        ${statRateOuts("K/9", r.k9, 2, null, group)}
+      </dl>
+    </div>`;
+  return block({
+    id: "rolesplit",
+    title: "先発・救援別",
+    body: html`<div class="cols">${row("先発として", sp, "starter")}${row("救援として", rp, "reliever")}</div>
+    ${note(
+      "同じ投手でも先発と救援では成績の出方が違うので分けています。" +
+        "色はそれぞれ先発投手・救援投手の分布と比べたものです — " +
+        "救援の防御率3.20はリーグ下位ですが、先発の3.20は中位です。" +
+        "母数が少ないほうは色がつきません。",
+    )}`,
   });
 }
 
@@ -479,11 +586,11 @@ function advancedPitching(p: PitchingBlockData): RawHtml {
     id: "advanced",
     title: "セイバーメトリクス",
     body: html`${columns(
-      html`${statRateOuts("FIP", p.fip, 2, rk(p.ranks, "fip"))}
-        ${statRateOuts("WHIP", p.whip, 2, rk(p.ranks, "whip"))}`,
-      html`${statRateOuts("K/9", p.k9, 2)}
-        ${statRateOuts("BB/9", p.bb9, 2)}
-        ${statRateOuts("HR/9", p.hr9, 2)}`,
+      html`${statRateOuts("FIP", p.fip, 2, rk(p.ranks, "fip"), p.role)}
+        ${statRateOuts("WHIP", p.whip, 2, rk(p.ranks, "whip"), p.role)}`,
+      html`${statRateOuts("K/9", p.k9, 2, rk(p.ranks, "k9"), p.role)}
+        ${statRateOuts("BB/9", p.bb9, 2, rk(p.ranks, "bb9"), p.role)}
+        ${statRateOuts("HR/9", p.hr9, 2, null, p.role)}`,
     )}
     ${note("FIPは本塁打・四死球・奪三振だけから防御率の目盛りに換算した値です。守備の影響を切り離す代わりに、打球の質は測っていません。")}`,
   });
@@ -753,6 +860,9 @@ function renderBlock(id: BlockId, d: PlayerPageData, base: string): RawHtml {
       if (d.role === "pitcher" && d.pitching !== null) return advancedPitching(d.pitching);
       if (d.batting !== null) return advancedBatting(d.batting);
       return block({ id: "advanced", title: "セイバーメトリクス", body: html`<p class="empty">成績がありません。</p>` });
+    case "rolesplit":
+      if (d.pitching !== null) return roleSplitBlock(d.pitching);
+      return block({ id: "rolesplit", title: "先発・救援別", body: html`<p class="empty">登板がありません。</p>` });
     case "splits":
       return splitsBlock(d.splits);
     case "scorebook":

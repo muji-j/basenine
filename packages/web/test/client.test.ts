@@ -7,7 +7,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { CLIENT_JS } from "../src/assets.ts";
-import { BLOCKS, PRESETS } from "../src/blocks.ts";
+import { BLOCKS, PRESETS, blocksFor, presetsFor } from "../src/blocks.ts";
+
+/**
+ * ⚠**클라이언트에 실제로 실리는 목록**이다(`bootstrapFor("batter")`와 같은 것).
+ * 필터 전 `PRESETS`와 비교하면 투수 전용 블록이 타자 화면에 섞여도 테스트가 통과한다.
+ */
+const BATTER_PRESETS = presetsFor("batter");
+const BATTER_BLOCKS = blocksFor("batter");
 import { bootstrapFor } from "../src/player-page.ts";
 import { El, make, makeDocument, makeStorage } from "./dom-stub.ts";
 
@@ -190,14 +197,14 @@ function press(doc: ReturnType<typeof makeDocument>, attr: string, value: string
 test("초기 상태는 標準 프리셋이고 그 블록만 보인다", () => {
   const doc = buildPage();
   run(doc);
-  const standard = PRESETS.find((p) => p.id === "standard")!;
+  const standard = BATTER_PRESETS.find((p) => p.id === "standard")!;
   assert.deepEqual(visible(doc), [...standard.blocks]);
 });
 
 test("프리셋을 바꾸면 그 프리셋의 블록만 그 순서로 보인다", () => {
   const doc = buildPage();
   run(doc);
-  for (const preset of PRESETS) {
+  for (const preset of BATTER_PRESETS) {
     press(doc, "preset", preset.id);
     assert.deepEqual(visible(doc), [...preset.blocks], `${preset.id} 프리셋이 어긋난다`);
   }
@@ -227,9 +234,11 @@ test("조립 목록에는 모든 블록이 나오고 켜진 것만 체크돼 있
   const doc = buildPage();
   run(doc);
   const rows = doc.querySelectorAll("#blockList .brow");
-  assert.equal(rows.length, BLOCKS.length);
+  // ⚠타자 페이지의 조립 목록에는 **타자 블록만** 나온다. 투수 전용이 섞이면 고를 수 없는 줄이 생긴다
+  assert.equal(rows.length, BATTER_BLOCKS.length);
+  assert.ok(BATTER_BLOCKS.length < BLOCKS.length, "역할별 필터가 아무것도 걸러내지 않는다");
   const checked = rows.filter((r) => r.querySelector("input")!.checked).length;
-  assert.equal(checked, PRESETS.find((p) => p.id === "standard")!.blocks.length);
+  assert.equal(checked, BATTER_PRESETS.find((p) => p.id === "standard")!.blocks.length);
 });
 
 test("체크를 끄면 그 블록이 사라지고 프리셋 선택이 풀린다", () => {
@@ -259,7 +268,7 @@ test("맨 위 블록의 ↑와 맨 아래의 ↓는 눌리지 않는다", () => 
   const doc = buildPage();
   run(doc);
   const rows = doc.querySelectorAll("#blockList .brow");
-  const n = PRESETS.find((p) => p.id === "standard")!.blocks.length;
+  const n = BATTER_PRESETS.find((p) => p.id === "standard")!.blocks.length;
   assert.equal(rows[0]!.querySelectorAll(".mv")[0]!.getAttribute("disabled") ?? "d", "d");
   assert.equal(rows[0]!.querySelectorAll(".mv")[0]!.hidden, false);
   // 스텁은 disabled를 프로퍼티로 갖지 않으므로 클릭해도 순서가 안 바뀌는 것으로 확인한다
@@ -278,15 +287,15 @@ test("설정은 저장되고 다음 방문에 살아난다", () => {
 
   const second = buildPage();
   run(second, { storage });
-  assert.deepEqual(visible(second), [...PRESETS.find((p) => p.id === "simple")!.blocks]);
+  assert.deepEqual(visible(second), [...BATTER_PRESETS.find((p) => p.id === "simple")!.blocks]);
 });
 
 test("저장이 막혀도 화면은 동작한다", () => {
   const doc = buildPage();
   assert.doesNotThrow(() => run(doc, { storage: makeStorage(true) }));
-  assert.deepEqual(visible(doc), [...PRESETS.find((p) => p.id === "standard")!.blocks]);
+  assert.deepEqual(visible(doc), [...BATTER_PRESETS.find((p) => p.id === "standard")!.blocks]);
   assert.doesNotThrow(() => press(doc, "preset", "analysis"));
-  assert.deepEqual(visible(doc), [...PRESETS.find((p) => p.id === "analysis")!.blocks]);
+  assert.deepEqual(visible(doc), [...BATTER_PRESETS.find((p) => p.id === "analysis")!.blocks]);
 });
 
 function openPanels(doc: ReturnType<typeof makeDocument>, group: string): (string | undefined)[] {
@@ -565,7 +574,7 @@ test("저장된 설정이 깨져 있어도 기본값으로 돌아간다", () => 
   storage.setItem("npb-meikan-layout", '{"order":"망가짐"}');
   const doc = buildPage();
   assert.doesNotThrow(() => run(doc, { storage }));
-  assert.deepEqual(visible(doc), [...PRESETS.find((p) => p.id === "standard")!.blocks]);
+  assert.deepEqual(visible(doc), [...BATTER_PRESETS.find((p) => p.id === "standard")!.blocks]);
 });
 
 test("스텁이 모르는 선택자는 조용히 넘어가지 않는다", () => {

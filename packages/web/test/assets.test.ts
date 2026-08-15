@@ -15,6 +15,26 @@ test("스크립트가 끝까지 실려 있다 — 안에 백틱이 들어가면 
   assert.ok(!CLIENT_JS.includes("`") && !CSS.includes("`"), "백틱이 남아 있다");
 });
 
+test("⚠탭줄이 줄어들 수 있다 — min-width:0이 없으면 페이지 전체가 옆으로 넓어진다", () => {
+  // flex 아이템의 min-width 기본값은 auto = 내용의 최소폭이다. 버튼이 nowrap이라
+  // 최소폭 = 버튼 폭의 합이 되고, 그러면 overflow-x:auto를 적어도 아무 일도 안 일어난다.
+  // **모바일에서 실제로 일어났다**(2026-08-15 실기 확인).
+  const rule = /\.tabs\.scroll\{([^}]*)\}/.exec(CSS)?.[1] ?? "";
+  assert.ok(rule.length > 0, ".tabs.scroll 규칙이 없다");
+  assert.match(rule, /overflow-x:auto/);
+  assert.match(rule, /min-width:0/, "줄어들 수 없으면 넘칠 수도 없다");
+  assert.match(rule, /max-width:100%/);
+  // 조상 쪽이 한 곳이라도 막히면 위의 규칙이 무효가 된다
+  assert.match(CSS, /\.block>h4 \.sw[^{]*\{min-width:0\}/);
+});
+
+test("탭줄에 「더 있다」는 신호가 있다 — 넘친 것을 말하지 않으면 없는 것과 같다", () => {
+  const rule = /\.tabs\.scroll\{([^}]*)\}/.exec(CSS)?.[1] ?? "";
+  // local은 내용과 함께 흐르고 scroll은 상자에 붙는다 — 둘을 겹쳐 끝을 감지한다
+  assert.match(rule, /no-repeat local/);
+  assert.match(rule, /no-repeat scroll/);
+});
+
 test("용어집이 스크립트에 실린다 — 정의를 두 벌로 만들지 않기 위해서다(M1)", async () => {
   const { GLOSSARY, glossaryKeys } = await import("../src/glossary.ts");
   assert.ok(!CLIENT_JS.includes("__GLOSSARY__"), "치환이 일어나지 않았다");

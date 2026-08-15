@@ -1,11 +1,20 @@
 export { aggregateSeason } from "./season.ts";
-export type { SeasonAggregate, SeasonBatting, SeasonPitching } from "./season.ts";
+export type {
+  Decisions,
+  PitcherRole,
+  SeasonAggregate,
+  SeasonBatting,
+  SeasonPitching,
+} from "./season.ts";
 export {
   battingEntries,
   buildLeagues,
+  entriesOfRole,
   pitchingEntries,
+  qualifyingOuts,
   rankBatters,
   rankPitchers,
+  rankPitchersInRole,
 } from "./leaderboard.ts";
 export type { BattingEntry, LeagueBundle, PitchingEntry } from "./leaderboard.ts";
 export { ALL_STATES, buildRunExpectancy, paValue, stateKey } from "./run-expectancy.ts";

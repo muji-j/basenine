@@ -13,6 +13,7 @@ import {
   ops,
   qualifiedBatterPa,
   qualifiedPitcherOuts,
+  qualifiedRelieverOuts,
   rankBy,
   sluggingPercentage,
   sumBatting,
@@ -23,7 +24,7 @@ import {
   wrcPlus,
 } from "@bb-app/metrics";
 import type { LeagueConstants, Ranked, Rate } from "@bb-app/metrics";
-import type { SeasonAggregate, SeasonBatting, SeasonPitching } from "./season.ts";
+import type { PitcherRole, SeasonAggregate, SeasonBatting, SeasonPitching } from "./season.ts";
 import { TEAMS } from "@bb-app/domain";
 import type { League } from "@bb-app/domain";
 
@@ -147,4 +148,48 @@ export function rankPitchers(
 ): Ranked<PitchingEntry>[] {
   const need = qualifiedPitcherOuts(bundle.teamGames);
   return rankQualified(entries, pick, (e) => e.player.line.outs >= need, higherIsBetter);
+}
+
+/** 이 역할의 투수만 남긴다. **부문이 다르면 애초에 같은 표에 올리지 않는다** */
+export function entriesOfRole(
+  entries: readonly PitchingEntry[],
+  role: PitcherRole,
+): PitchingEntry[] {
+  return entries.filter((e) => e.player.role === role);
+}
+
+/**
+ * 역할별 자격선(아웃 카운트). **선발은 NPB 공식 규정투구회, 구원은 우리 기준**이다.
+ *
+ * ⚠이 차이를 화면이 말해야 한다 — 공식 기준과 자체 기준을 같은 얼굴로 내보내면
+ * 「NPB가 그렇게 정했다」는 오해가 생긴다.
+ */
+export function qualifyingOuts(bundle: LeagueBundle, role: PitcherRole): number {
+  return role === "starter"
+    ? qualifiedPitcherOuts(bundle.teamGames)
+    : qualifiedRelieverOuts(bundle.teamGames);
+}
+
+/**
+ * 역할 안에서 순위를 매긴다.
+ *
+ * ⚠**전체 성적으로 줄 세우되, 줄은 역할마다 따로 세운다.** 선발 등판분만 떼어 재지 않는 것은
+ * NPB 공식 타이틀(방어율·승리)이 전 등판을 합쳐 매기기 때문이다 — 우리가 다른 정의를 쓰면
+ * 같은 이름의 값이 공표값과 어긋난다. 역할은 **어느 줄에 서는가**와
+ * **어떤 잣대로 색을 칠하는가**만 결정한다.
+ */
+export function rankPitchersInRole(
+  bundle: LeagueBundle,
+  entries: readonly PitchingEntry[],
+  role: PitcherRole,
+  pick: (e: PitchingEntry) => Rate,
+  higherIsBetter = false,
+): Ranked<PitchingEntry>[] {
+  const need = qualifyingOuts(bundle, role);
+  return rankQualified(
+    entriesOfRole(entries, role),
+    pick,
+    (e) => e.player.line.outs >= need,
+    higherIsBetter,
+  );
 }

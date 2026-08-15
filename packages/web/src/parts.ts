@@ -9,7 +9,8 @@ import type { RawHtml } from "./html.ts";
 import type { Rate } from "@bb-app/metrics";
 import { NO_VALUE, avg3, dec1, dec2, denominator, innings, int, signed1 } from "./format.ts";
 import { termKeyForLabel } from "./glossary.ts";
-import { GRADE_LABEL, gradeClass, gradeOf, gradeOrder } from "./grade.ts";
+import { GRADE_LABEL, GROUP_BASIS, gradeClass, gradeOf, gradeOrder } from "./grade.ts";
+import type { GradeGroup } from "./grade.ts";
 
 /** 자릿수 규약 — 3=타율 계열(선행 0 없음) · 2=방어율 계열 · 1=wRC+ 같은 지수 */
 export type Digits = 1 | 2 | 3;
@@ -26,7 +27,13 @@ function fmt(value: number | null, digits: Digits): string {
  * ⚠**표기 규칙을 페이지마다 다시 쓰지 마라** — 선수 페이지와 순위표 페이지가 같은 값을
  * 다르게 그리면 그것만으로 신뢰가 깎인다.
  */
-export function rankValue(value: number | null, digits: RankDigits): string {
+export function rankValue(
+  value: number | null,
+  digits: RankDigits,
+  asInnings = false,
+): string {
+  // ⚠아웃 카운트를 그대로 정수로 내면 327아웃이 「327」이 된다. 109회여야 한다
+  if (asInnings) return value === null ? NO_VALUE : `${innings(value)}回`;
   return digits === 0 ? int(value) : fmt(value, digits);
 }
 
@@ -65,12 +72,17 @@ export function termAttr(label: string): string {
  * ⚠색각 이상과 스크린리더에서 색은 전달되지 않는다. 색은 **빠르게 읽기 위한 보조**이고,
  * 등급 자체는 글자로도 존재해야 한다.
  */
-function gradeMark(metric: string | undefined, value: number | null, sample: number): {
+function gradeMark(
+  metric: string | undefined,
+  value: number | null,
+  sample: number,
+  group: GradeGroup,
+): {
   cls: string;
   label: RawHtml;
 } {
   if (metric === undefined) return { cls: "", label: raw("") };
-  const g = gradeOf(metric, value, sample);
+  const g = gradeOf(metric, value, sample, group);
   if (g === null) return { cls: "", label: raw("") };
   return { cls: ` ${gradeClass(g)}`, label: html`<span class="vh">（${GRADE_LABEL[g]}）</span>` };
 }
@@ -85,9 +97,10 @@ export function statRate(
   unit: string,
   digits: Digits = 3,
   rank: number | null = null,
+  group: GradeGroup = "batter",
 ): RawHtml {
   // 등급 척도의 키는 용어집 키와 같다 — 라벨 하나로 설명과 색이 둘 다 붙는다
-  const g = gradeMark(termKeyForLabel(label), r.value, r.denominator);
+  const g = gradeMark(termKeyForLabel(label), r.value, r.denominator, group);
   // ⚠**등급 글자는 분모 뒤에 온다.** 값과 분모 사이에 아무것도 끼우지 않는다(M2) —
   // 읽는 순서로도 이쪽이 맞다. 분모를 모르고 들은 「とても良い」는 근거가 없다.
   return html`<dt>${term(label)}</dt><dd class="v${raw(g.cls)}">${fmt(r.value, digits)}<span class="den">${denominator(r.denominator, unit)}</span>${g.label}${rankBadge(rank)}</dd>`;
@@ -105,9 +118,10 @@ export function statRateOuts(
   r: Rate,
   digits: Digits = 2,
   rank: number | null = null,
+  group: GradeGroup = "starter",
 ): RawHtml {
   // ⚠표본은 **아웃 카운트**다. 등급 척도의 minSample도 아웃 단위로 적혀 있어야 한다
-  const g = gradeMark(termKeyForLabel(label), r.value, r.denominator);
+  const g = gradeMark(termKeyForLabel(label), r.value, r.denominator, group);
   return html`<dt>${term(label)}</dt><dd class="v${raw(g.cls)}">${fmt(r.value, digits)}<span class="den">${innings(r.denominator)}回</span>${g.label}${rankBadge(rank)}</dd>`;
 }
 
@@ -143,8 +157,10 @@ export function statText(label: string, text: string, rank: number | null = null
  * ⚠**범례 없는 색은 장식이다.** 파랑이 좋은 쪽인지 주황이 좋은 쪽인지 화면이 말하지 않으면
  * 읽는 사람은 색을 무시하게 되고, 그러면 색을 칠한 의미가 없다.
  * ⚠**끄는 버튼을 함께 둔다.** 색이 방해가 되는 사람이 있고, 인쇄물의 질감을 원하는 사람도 있다.
+ * ⚠**무엇과 비교한 색인지 밝힌다.** 선발과 구원은 잣대가 다르므로, 어느 분포와 견준
+ * 색인지 말하지 않으면 같은 색이 두 뜻을 갖게 된다.
  */
-export function gradeLegend(): RawHtml {
+export function gradeLegend(group: GradeGroup = "batter"): RawHtml {
   return html`<div class="legend">
     <span class="lg">水準</span>
     ${gradeOrder().map(
@@ -152,7 +168,7 @@ export function gradeLegend(): RawHtml {
       // 다섯 개를 전부 늘어놓으면 모바일에서 두 줄을 먹고, 성적이 화면 밖으로 밀린다
       (g) => html`<span class="sw ${gradeClass(g)}"><i></i><b>${GRADE_LABEL[g]}</b></span>`,
     )}
-    <span class="lg tail">100打席・30回以上の分布から。母数が少ない値には色をつけていません</span>
+    <span class="lg tail">${GROUP_BASIS[group]}と比較。母数が少ない値には色をつけていません</span>
     <button class="tab" type="button" id="gradeBtn" aria-pressed="true">色分け</button>
   </div>`;
 }

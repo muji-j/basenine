@@ -26,6 +26,26 @@ export interface SeasonBatting {
   line: BattingLine;
 }
 
+/**
+ * 투수의 역할. **선발과 구원은 같은 잣대로 잴 수 없다.**
+ *
+ * 2026 시즌 실측(2026-08-15): 30이닝 이상 선발형 85명의 방어율 5분위는
+ * `2.59 / 2.97 / 3.50 / 4.63`, 20이닝 이상 구원형 90명은 `1.84 / 2.34 / 2.84 / 3.86`이다.
+ * ⚠**방어율 3.20은 선발에게 중위권이고 구원에게는 하위권이다.** 하나의 임계값으로 칠하면
+ * 값은 맞는데 화면이 틀린 말을 한다.
+ */
+export type PitcherRole = "starter" | "reliever";
+
+/** 승·패·세이브·홀드. 박스스코어의 결정 표기(`○ ● S H`)에서 센다 */
+export interface Decisions {
+  w: number;
+  l: number;
+  sv: number;
+  hld: number;
+  /** 구원 등판에서의 승리. **홀드포인트(HP = 홀드 + 구원승)의 입력이다** */
+  reliefW: number;
+}
+
 export interface SeasonPitching {
   playerId: string;
   displayName: string;
@@ -33,6 +53,22 @@ export interface SeasonPitching {
   league: League;
   games: number;
   line: PitchingLine;
+  /** 선발 등판 수 */
+  starts: number;
+  decisions: Decisions;
+  /** 선발 등판에서의 성적만. 선발이 0경기면 전 항목이 0이다 */
+  asStarter: PitchingLine;
+  /** 구원 등판에서의 성적만 */
+  asReliever: PitchingLine;
+  /**
+   * 역할 판정. **아웃 카운트가 많은 쪽**이다.
+   *
+   * ⚠**등판 수가 아니라 아웃으로 나눈다.** 33등판 중 1선발인 투수(실재한다)를
+   * 등판 수로 재면 구원이 맞지만, 선발 1회가 6이닝이고 구원 32회가 30이닝인 투수를
+   * 「선발」로 부르는 규칙도 만들 수 있다. 아웃으로 재면 그런 흔들림이 없다.
+   * 동수면 선발로 본다(선발 등판이 있다는 사실을 우선한다).
+   */
+  role: PitcherRole;
 }
 
 export interface SeasonAggregate {
@@ -69,17 +105,60 @@ WHERE g.season = ? AND g.status = 'played' AND g.competition = ? AND g.game_date
 GROUP BY b.player_id, teamCode
 `;
 
+/**
+ * 선발 투수 = **각 이닝 절반의 첫 타석을 던진 투수**.
+ *
+ * ⚠`pitching_line`에는 등판 순서가 없다(주키가 `game_id, player_id`라 순서를 담을 자리가 없다).
+ * 그래서 타석 로그에서 되찾는다. 실측(2026-08-15): 실시경기 632경기 전부에서 양 팀 선발이
+ * 빠짐없이 나오고(1264/1264), 그 투수가 `pitching_line`에 없는 경우는 0건이다.
+ * ⚠타석 로그가 없는 31경기는 **전부 우천 중지**라 투수 기록 자체가 없다 — 빈틈이 아니다.
+ */
+const STARTER_CTE = `
+starter AS (
+  SELECT e.game_id AS game_id, e.pitcher_id AS pitcher_id
+  FROM pa_event e
+  JOIN (SELECT game_id, half, MIN(seq) AS s FROM pa_event GROUP BY game_id, half) m
+    ON m.game_id = e.game_id AND m.half = e.half AND m.s = e.seq
+  WHERE e.pitcher_id IS NOT NULL
+)`;
+
+/** 선발 등판인가 — `CASE WHEN` 안에서 반복해 쓰는 조건 */
+const IS_START = `s.pitcher_id IS NOT NULL`;
+
+/** `SUM(CASE WHEN 선발 THEN col ELSE 0 END)` 한 쌍을 만든다. 손으로 16줄 쓰면 반드시 하나 틀린다 */
+function splitSum(col: string, alias: string): string {
+  return `SUM(CASE WHEN ${IS_START} THEN t.${col} ELSE 0 END) AS sp_${alias},
+       SUM(CASE WHEN ${IS_START} THEN 0 ELSE t.${col} END) AS rp_${alias}`;
+}
+
 const PITCHING_SQL = `
+WITH ${STARTER_CTE}
 SELECT t.player_id AS playerId,
        p.display_name AS displayName,
        CASE t.side WHEN 'away' THEN g.away_code ELSE g.home_code END AS teamCode,
        COUNT(*) AS games,
+       SUM(CASE WHEN ${IS_START} THEN 1 ELSE 0 END) AS starts,
        SUM(t.outs) AS outs, SUM(t.bf) AS bf, SUM(t.h) AS h, SUM(t.hr) AS hr,
        SUM(t.bb) AS bb, SUM(t.hbp) AS hbp, SUM(t.so) AS so,
-       SUM(t.runs) AS runs, SUM(t.er) AS er
+       SUM(t.runs) AS runs, SUM(t.er) AS er,
+       ${splitSum("outs", "outs")},
+       ${splitSum("bf", "bf")},
+       ${splitSum("h", "h")},
+       ${splitSum("hr", "hr")},
+       ${splitSum("bb", "bb")},
+       ${splitSum("hbp", "hbp")},
+       ${splitSum("so", "so")},
+       ${splitSum("runs", "runs")},
+       ${splitSum("er", "er")},
+       SUM(CASE WHEN t.decision = '○' THEN 1 ELSE 0 END) AS w,
+       SUM(CASE WHEN t.decision = '●' THEN 1 ELSE 0 END) AS l,
+       SUM(CASE WHEN t.decision = 'S' THEN 1 ELSE 0 END) AS sv,
+       SUM(CASE WHEN t.decision = 'H' THEN 1 ELSE 0 END) AS hld,
+       SUM(CASE WHEN t.decision = '○' AND s.pitcher_id IS NULL THEN 1 ELSE 0 END) AS reliefW
 FROM pitching_line t
 JOIN game g ON g.game_id = t.game_id
 JOIN player p ON p.player_id = t.player_id
+LEFT JOIN starter s ON s.game_id = t.game_id AND s.pitcher_id = t.player_id
 WHERE g.season = ? AND g.status = 'played' AND g.competition = ? AND g.game_date <= ?
 GROUP BY t.player_id, teamCode
 `;
@@ -184,22 +263,56 @@ export function aggregateSeason(
     } satisfies BattingLine,
   }));
 
+  /** `sp_`/`rp_` 접두사가 붙은 열을 한 벌의 `PitchingLine`으로 모은다 */
+  const splitLine = (r: Record<string, number>, p: "sp" | "rp"): PitchingLine => ({
+    outs: r[`${p}_outs`]!, bf: r[`${p}_bf`]!, h: r[`${p}_h`]!, hr: r[`${p}_hr`]!,
+    bb: r[`${p}_bb`]!, ibb: 0, hbp: r[`${p}_hbp`]!, so: r[`${p}_so`]!,
+    er: r[`${p}_er`]!, r: r[`${p}_runs`]!,
+  });
+  const addLine = (a: PitchingLine, b: PitchingLine): PitchingLine => ({
+    outs: a.outs + b.outs, bf: a.bf + b.bf, h: a.h + b.h, hr: a.hr + b.hr,
+    bb: a.bb + b.bb, ibb: a.ibb + b.ibb, hbp: a.hbp + b.hbp, so: a.so + b.so,
+    er: a.er + b.er, r: a.r + b.r,
+  });
+
   const pitching = mergeByPlayer(
-    pitRows.map((r) => ({
-      playerId: String(r["playerId"]),
-      displayName: String(r["displayName"]),
-      teamCode: String(r["teamCode"]),
-      games: Number(r["games"]),
-      outs: Number(r["outs"]), bf: Number(r["bf"]), h: Number(r["h"]), hr: Number(r["hr"]),
-      bb: Number(r["bb"]), hbp: Number(r["hbp"]), so: Number(r["so"]),
-      runs: Number(r["runs"]), er: Number(r["er"]),
-    })),
+    pitRows.map((r) => {
+      const n = Object.fromEntries(
+        Object.entries(r).map(([k, v]) => [k, typeof v === "number" ? v : 0]),
+      ) as Record<string, number>;
+      return {
+        playerId: String(r["playerId"]),
+        displayName: String(r["displayName"]),
+        teamCode: String(r["teamCode"]),
+        games: Number(r["games"]),
+        starts: Number(r["starts"]),
+        outs: Number(r["outs"]), bf: Number(r["bf"]), h: Number(r["h"]), hr: Number(r["hr"]),
+        bb: Number(r["bb"]), hbp: Number(r["hbp"]), so: Number(r["so"]),
+        runs: Number(r["runs"]), er: Number(r["er"]),
+        asStarter: splitLine(n, "sp"),
+        asReliever: splitLine(n, "rp"),
+        decisions: {
+          w: Number(r["w"]), l: Number(r["l"]), sv: Number(r["sv"]),
+          hld: Number(r["hld"]), reliefW: Number(r["reliefW"]),
+        } satisfies Decisions,
+      };
+    }),
     (a, b) => ({
       ...a,
       games: a.games + b.games,
+      starts: a.starts + b.starts,
       outs: a.outs + b.outs, bf: a.bf + b.bf, h: a.h + b.h, hr: a.hr + b.hr,
       bb: a.bb + b.bb, hbp: a.hbp + b.hbp, so: a.so + b.so,
       runs: a.runs + b.runs, er: a.er + b.er,
+      asStarter: addLine(a.asStarter, b.asStarter),
+      asReliever: addLine(a.asReliever, b.asReliever),
+      decisions: {
+        w: a.decisions.w + b.decisions.w,
+        l: a.decisions.l + b.decisions.l,
+        sv: a.decisions.sv + b.decisions.sv,
+        hld: a.decisions.hld + b.decisions.hld,
+        reliefW: a.decisions.reliefW + b.decisions.reliefW,
+      },
     }),
   ).map((r) => ({
     playerId: r.playerId,
@@ -207,6 +320,16 @@ export function aggregateSeason(
     teamCode: r.teamCode,
     league: leagueOf(r.teamCode),
     games: r.games,
+    starts: r.starts,
+    decisions: r.decisions,
+    asStarter: r.asStarter,
+    asReliever: r.asReliever,
+    // ⚠아웃이 같으면 선발로 본다. 0아웃끼리(등판했지만 아웃을 못 잡음)도 여기 걸리는데,
+    // 그때는 선발 등판이 있었는지가 유일한 정보라 `starts`가 0이면 구원이 된다
+    role: (r.asStarter.outs > r.asReliever.outs ||
+      (r.asStarter.outs === r.asReliever.outs && r.starts > 0)
+      ? "starter"
+      : "reliever") satisfies PitcherRole as PitcherRole,
     line: {
       outs: r.outs, bf: r.bf, h: r.h, hr: r.hr, bb: r.bb,
       // 박스스코어 투수표에는 고의사구 컬럼이 없다. 0이 아니라 「없음」이지만

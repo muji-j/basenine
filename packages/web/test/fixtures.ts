@@ -59,7 +59,7 @@ export function pitchingBlock(over: Partial<PitchingBlockData> = {}): PitchingBl
   return {
     games: 18,
     line: PITCHING_LINE,
-    decisions: { w: 9, l: 4, sv: 0, hld: 0 },
+    decisions: { w: 9, l: 4, sv: 0, hld: 0, reliefW: 0 },
     era: r(2.7, 300),
     whip: r(1.1, 300),
     fip: r(2.9, 300),
@@ -69,8 +69,25 @@ export function pitchingBlock(over: Partial<PitchingBlockData> = {}): PitchingBl
     ranks: { era: 3, fip: 5, whip: 4, so: 2 },
     qualified: true,
     needOuts: 300,
+    // 기본 픽스처는 **순수 선발**이다 — 구원 등판이 0이므로 「先発・救援別」은 빈 상태를 낸다
+    role: "starter",
+    starts: 18,
+    asStarter: { games: 18, line: PITCHING_LINE, era: r(2.7, 300), whip: r(1.1, 300), k9: r(9.9, 300) },
+    asReliever: null,
     ...over,
   };
+}
+
+/** 선발과 구원을 겸하는 투수. **45명이 실재하고, 이들에게 하나의 방어율은 거짓말에 가깝다** */
+export function mixedPitchingBlock(over: Partial<PitchingBlockData> = {}): PitchingBlockData {
+  return pitchingBlock({
+    games: 26,
+    starts: 5,
+    role: "reliever",
+    asStarter: { games: 5, line: PITCHING_LINE, era: r(3.2, 90), whip: r(1.3, 90), k9: r(7.5, 90) },
+    asReliever: { games: 21, line: PITCHING_LINE, era: r(3.2, 210), whip: r(1.05, 210), k9: r(9.5, 210) },
+    ...over,
+  });
 }
 
 export function rankingPanel(over: Partial<RankingPanel> = {}): RankingPanel {

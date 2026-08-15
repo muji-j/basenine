@@ -1,7 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { THRESHOLDS, bootstrapFor, renderPlayerPage } from "../src/player-page.ts";
-import { battingBlock, context, pitchingBlock, playerPage, rankingPanel } from "./fixtures.ts";
+import {
+  battingBlock,
+  context,
+  mixedPitchingBlock,
+  pitchingBlock,
+  playerPage,
+  rankingPanel,
+} from "./fixtures.ts";
 
 test("이름과 팀이 제목·배면·본문에 들어간다", () => {
   const out = renderPlayerPage(playerPage(), context());
@@ -257,7 +264,67 @@ test("투수는 기본 성적이 투수 항목이 된다", () => {
   // 라벨은 설명 버튼이 되었지만 값의 자리는 그대로여야 한다
   assert.match(standard, /data-term="innings"[^>]*>投球回<\/button><\/dt><dd class="v">100<\/dd>/);
   assert.ok(!standard.includes(">打率<"), "투수의 기본 성적에 타율 항목이 남았다");
-  assert.match(standard, /規定到達（100回 \/ 100回）/);
+  // ⚠기준의 출처를 화면이 말한다 — 선발은 NPB 공식, 구원은 우리 기준
+  assert.match(standard, /規定投球回（NPB公式）到達（100回 \/ 100回）/);
+});
+
+test("⚠구원 투수에게는 자체 기준임을 밝힌다 — 공식과 같은 얼굴로 내보내지 않는다", () => {
+  const out = renderPlayerPage(
+    playerPage({
+      role: "pitcher",
+      position: "投手",
+      batting: null,
+      pitching: pitchingBlock({ role: "reliever", starts: 0, needOuts: 108 }),
+    }),
+    context(),
+  );
+  assert.match(out, /当サイトの救援基準（規定投球回の3分の1）/);
+  assert.ok(!out.includes("NPB公式）到達"), "구원에 공식 기준 문구가 붙었다");
+  // 범례도 구원 분포를 근거로 든다
+  assert.match(out, /20回以上の救援投手90人の分布/);
+});
+
+test("역할과 그 근거를 화면이 말한다 — 색과 순위가 무엇과 비교한 것인지 알 수 있어야 한다", () => {
+  const out = renderPlayerPage(
+    playerPage({
+      role: "pitcher",
+      position: "投手",
+      batting: null,
+      pitching: mixedPitchingBlock(),
+    }),
+    context(),
+  );
+  assert.match(out, /この投手は救援として扱っています（先発5試合 \/ 救援21試合/);
+  assert.match(out, /投球回の多いほうを役割としています/);
+});
+
+test("⚠선발과 구원을 겸하면 나눠서 보여준다 — 하나의 방어율은 어느 쪽 것인지 알 수 없다", () => {
+  const out = renderPlayerPage(
+    playerPage({
+      role: "pitcher",
+      position: "投手",
+      batting: null,
+      pitching: mixedPitchingBlock(),
+    }),
+    context(),
+  );
+  const split = /<section class="block"[^>]*id="b-rolesplit">[\s\S]*?<\/section>/.exec(out)?.[0] ?? "";
+  assert.ok(split.length > 0, "先発・救援別 블록이 없다");
+  assert.match(split, /先発として/);
+  assert.match(split, /救援として/);
+  // ⚠같은 3.20이 양쪽에서 다른 색이 된다 — 이 블록의 존재 이유가 그것이다
+  assert.match(split, /g-average[^]*3\.20/, "선발 3.20이 ふつう가 아니다");
+  assert.match(split, /g-bad[^]*3\.20/, "구원 3.20이 悪い가 아니다");
+});
+
+test("한쪽 역할만 뛴 투수에게는 나눌 것이 없다고 말한다 — 0을 성적으로 그리지 않는다(M11)", () => {
+  const out = renderPlayerPage(
+    playerPage({ role: "pitcher", position: "投手", batting: null, pitching: pitchingBlock() }),
+    context(),
+  );
+  const split = /<section class="block"[^>]*id="b-rolesplit">[\s\S]*?<\/section>/.exec(out)?.[0] ?? "";
+  assert.match(split, /救援登板がありません。/);
+  assert.ok(!split.includes("救援として"), "0등판을 성적표로 그렸다");
 });
 
 test("투수 비율의 분모는 이닝으로 쓴다 — 아웃 카운트를 「投球回」라고 쓰지 않는다", () => {
@@ -293,7 +360,8 @@ test("수준 색에는 범례와 끄는 버튼이 함께 있다 — 범례 없�
     assert.ok(out.includes(label), `범례에 ${label}가 없다`);
   }
   // 기준 모집단을 화면이 말한다 — 「무엇과 비교한 색인가」에 답할 수 있어야 한다
-  assert.match(out, /100打席・30回以上/);
+  // 타자 페이지의 범례는 **타자 분포**를 근거로 든다
+  assert.match(out, /100打席以上の打者157人の分布/);
 });
 
 test("⚠버튼 안에 버튼이 없다 — 정렬 헤더에는 속성만 붙는다", () => {

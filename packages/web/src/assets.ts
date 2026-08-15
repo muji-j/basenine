@@ -116,8 +116,22 @@ a{color:inherit}
 
 /* 탭 묶음 — 화면을 아래로 늘리는 대신 골라 본다 */
 .tabs{display:flex;gap:5px;flex-wrap:wrap}
-.tabs.scroll{flex-wrap:nowrap;overflow-x:auto;padding-bottom:2px;scrollbar-width:thin}
+/* ⚠**min-width:0 이 이 줄의 핵심이다.** flex 아이템의 min-width 는 기본값이 auto 이고
+   그것은 **내용의 최소폭**으로 풀린다. 버튼이 white-space:nowrap 이라 최소폭 = 버튼 폭의 합이 되고,
+   그러면 이 줄은 줄어들기를 거부한다 → 부모가 밀리고 **페이지 전체가 옆으로 넓어진다.**
+   overflow-x:auto 만 적어두면 아무 일도 일어나지 않는다 — 줄어들 수 있어야 넘칠 수 있다. */
+.tabs.scroll{flex-wrap:nowrap;overflow-x:auto;overscroll-behavior-x:contain;
+  min-width:0;max-width:100%;padding-bottom:2px;scrollbar-width:thin;
+  /* 끝에 닿으면 사라지는 그늘 — 「더 있다」를 말하고, 다 봤으면 말하지 않는다.
+     local은 내용과 함께 흐르고 scroll은 상자에 붙는다. 둘을 겹쳐 끝을 감지한다 */
+  background:
+    linear-gradient(to right,var(--panel) 30%,rgba(0,0,0,0)) left center/22px 100% no-repeat local,
+    linear-gradient(to left,var(--panel) 30%,rgba(0,0,0,0)) right center/22px 100% no-repeat local,
+    linear-gradient(to right,var(--hair-2),rgba(0,0,0,0)) left center/9px 100% no-repeat scroll,
+    linear-gradient(to left,var(--hair-2),rgba(0,0,0,0)) right center/9px 100% no-repeat scroll}
 .tabs.scroll::-webkit-scrollbar{height:0}
+/* 탭줄을 안는 자리도 줄어들 수 있어야 한다 — 한 곳만 막혀도 위의 규칙이 무효가 된다 */
+.rail>.tabs,.block>h4 .sw,.block>h4 .sw>.tabs{min-width:0}
 
 /* ── 조립 UI ─────────────────────────────────────────────── */
 .editor{padding:14px var(--pad) 16px;border-bottom:1px solid var(--hair);background:var(--panel)}
@@ -240,6 +254,10 @@ dd.g-veryBad{box-shadow:inset 0 -3px 0 var(--g-vbad);background:var(--g-vbad-bg)
 }
 .rank{background:var(--team,#6b7280);color:var(--team-ink,#fff);font-weight:700;padding:0 5px;font-size:10px;
   margin-left:6px;font-family:var(--f-body)}
+
+/* 선발·구원별 — 두 단이 각자의 제목을 갖는다. 제목이 없으면 어느 쪽 숫자인지 알 수 없다 */
+.rolecol .subhead{margin:0 0 4px}
+.rolecol dl{margin:0}
 
 /* ⚠좁은 화면에서 표를 옆으로 밀면 **누구의 행인지**가 먼저 사라진다.
    첫 열을 고정해서 이름이 남게 한다. 오른쪽 끝의 그늘은 「더 있다」는 신호다. */
@@ -538,7 +556,11 @@ function showTabs(){
 function renderBlocks(){
   const end=$("#blocksEnd");
   state.order.forEach(id=>{const el=doc.getElementById("b-"+id);if(el&&end)end.parentNode.insertBefore(el,end)});
-  BLOCKS.forEach(b=>{const el=doc.getElementById("b-"+b.id);if(el)el.hidden=state.order.indexOf(b.id)<0});
+  /* ⚠**카탈로그가 아니라 화면에 있는 블록 전부를 훑는다.**
+     전에는 BLOCKS(클라이언트가 아는 목록)만 돌았는데, 서버가 그린 블록이 그 목록에 없으면
+     **영원히 숨겨지지 않았다.** 투수 전용 블록을 새로 만들었을 때 정확히 그 일이 일어난다.
+     「모르는 것은 끄지 않는다」가 아니라 「구성에 없으면 끈다」가 맞다. */
+  $$(".block").forEach(el=>{el.hidden=state.order.indexOf(el.id.replace(/^b-/,""))<0});
   const pad=state.density==="compact"?"9px":"16px";
   $$(".block").forEach((el,i)=>{el.style.paddingTop=pad;el.style.paddingBottom=pad;el.style.setProperty("--i",String(i))});
 }

@@ -38,10 +38,25 @@ export interface RenderContext {
   freshness: Freshness;
 }
 
+/**
+ * 순위의 부문 — 打者 · 先発 · 救援.
+ *
+ * ⚠**투수를 한 덩어리로 두지 않는다.** 선발과 구원은 방어율 분포가 다르고, 세이브·홀드는
+ * 선발에게 뜻이 없다. 한 표에 섞으면 「전원 0세이브」 같은 줄이 절반을 채운다.
+ * ⚠부문을 나누는 것은 **버튼 줄을 짧게 유지하는 장치이기도 하다.** 지표를 한 줄에 다 늘어놓으면
+ * 좁은 화면에서 20개가 넘는 버튼을 옆으로 밀어야 한다.
+ */
+export interface RankingCategory {
+  /** 탭 키. 리그를 바꿔도 유지되도록 리그마다 같은 값을 쓴다 */
+  id: string;
+  label: string;
+  panels: RankingPanel[];
+}
+
 export interface LeagueSection {
   id: string;
   name: string;
-  panels: RankingPanel[];
+  categories: RankingCategory[];
 }
 
 export interface RosterEntry {
@@ -74,6 +89,28 @@ export interface IndexPageData {
   highlights: LeagueSection[];
 }
 
+/** 순위표 페이지에 싣는 상위 인원 */
+const RANKING_PAGE_ROWS = 30;
+
+/**
+ * 한 부문의 지표 탭줄과 표들.
+ *
+ * ⚠**지표 탭 그룹을 부문마다 나눈다.** 하나로 묶으면 「打者」에서 고른 `wRC+`가
+ * 「先発」로 옮겼을 때 사라져, 아무 표도 안 열린 화면이 된다.
+ */
+function categoryPanels(c: RankingCategory, base: string, limit: number, prefix: string): RawHtml {
+  if (c.panels.length === 0) return html`<p class="empty">この部門の順位を計算できていません。</p>`;
+  // ⚠페이지마다 접두사를 다르게 준다 — 저장된 탭 상태를 공유하면 5행짜리 일람과
+  // 30행짜리 순위표가 서로의 선택을 덮어쓴다
+  const group = `${prefix}-${c.id}`;
+  return html`${tablist(
+    group,
+    c.panels.map((p) => ({ id: p.id, label: p.label })),
+    true,
+  )}
+  ${c.panels.map((p, pi) => panel(group, p.id, pi === 0, panelTable(p, base, limit)))}`;
+}
+
 function panelTable(p: RankingPanel, base: string, limit: number): RawHtml {
   const rows = p.rows.slice(0, limit);
   if (rows.length === 0) return html`<p class="empty">順位を計算できていません。</p>`;
@@ -85,7 +122,7 @@ function panelTable(p: RankingPanel, base: string, limit: number): RawHtml {
         <td>${r.rank === null ? NO_VALUE : r.rank}</td>
         <td class="l"><a href="${base}players/${r.playerId}.html">${r.name}</a></td>
         <td class="l">${r.teamCode.toUpperCase()}</td>
-        <td>${rankValue(r.value.value, p.digits)}</td>
+        <td>${rankValue(r.value.value, p.digits, p.valueAsInnings === true)}</td>
         <td>${denText(r.value.denominator, p.unit, p.denAsInnings)}</td>
       </tr>`,
     )}</tbody>
@@ -145,8 +182,14 @@ ${d.highlights.map((s) =>
     block({
       id: `hi-${s.id}`,
       title: s.name,
-      body: html`${s.panels.map(
-        (p) => html`<h5 class="subhead">${p.label}</h5>${panelTable(p, base, 5)}`,
+      // ⚠**세로로 쌓지 않는다.** 부문이 늘어날수록 이 화면이 한없이 길어지고,
+      // 모바일에서는 아래쪽 지표에 아무도 닿지 않는다. 순위표 페이지와 같은 조작으로 통일한다
+      controls: tablist(
+        `hicat-${s.id}`,
+        s.categories.map((c) => ({ id: c.id, label: c.label })),
+      ),
+      body: html`${s.categories.map((c, ci) =>
+        panel(`hicat-${s.id}`, c.id, ci === 0, categoryPanels(c, base, 5, `himetric-${s.id}`)),
       )}
       <p class="note"><a href="${base}ranking.html">${s.name}の順位表をすべて見る</a></p>`,
     }),
@@ -193,11 +236,12 @@ ${d.leagues.map((league, li) =>
       li === 0,
       html`<section class="block">
       <h4>${league.name}<span class="sw">${tablist(
-        "rankmetric",
-        league.panels.map((p) => ({ id: p.id, label: p.label })),
-        true,
+        "rankcat",
+        league.categories.map((c) => ({ id: c.id, label: c.label })),
       )}</span></h4>
-      ${league.panels.map((p, pi) => panel("rankmetric", p.id, pi === 0, panelTable(p, base, 30)))}
+      ${league.categories.map((c, ci) =>
+        panel("rankcat", c.id, ci === 0, categoryPanels(c, base, RANKING_PAGE_ROWS, "rankmetric")),
+      )}
     </section>`,
     ),
   )}`;

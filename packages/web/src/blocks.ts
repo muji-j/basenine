@@ -16,6 +16,7 @@ export type BlockId =
   | "splits"
   | "scorebook"
   | "situation"
+  | "rolesplit"
   | "matchup"
   | "ranking";
 
@@ -33,6 +34,7 @@ export const BLOCKS: readonly BlockMeta[] = [
   { id: "splits", name: "スプリット", desc: "対左右／走者状況／本拠地／月別" },
   { id: "scorebook", name: "打席記録", desc: "直近の打席を1つずつ" },
   { id: "situation", name: "得点期待値", desc: "24状況の期待値と、立った打席数" },
+  { id: "rolesplit", name: "先発・救援別", desc: "投手のみ。役割ごとに分けた成績" },
   { id: "matchup", name: "対戦成績", desc: "投手別。打席数の多い順" },
   { id: "ranking", name: "リーグ順位", desc: "指標を切り替えて上位と自分の位置" },
 ];
@@ -46,9 +48,10 @@ export interface PresetMeta {
 }
 
 export const PRESETS: readonly PresetMeta[] = [
-  { id: "standard", name: "標準", blocks: ["standard", "advanced", "splits", "ranking"] },
+  // `rolesplit`은 타자 페이지에서 걸러진다(`presetsFor`) — 투수에게만 기본으로 켜진다
+  { id: "standard", name: "標準", blocks: ["standard", "rolesplit", "advanced", "splits", "ranking"] },
   { id: "record", name: "記録", blocks: ["standard", "scorebook", "splits", "matchup"] },
-  { id: "analysis", name: "分析", blocks: ["advanced", "situation", "splits", "matchup", "ranking"] },
+  { id: "analysis", name: "分析", blocks: ["advanced", "rolesplit", "situation", "splits", "matchup", "ranking"] },
   { id: "simple", name: "簡易", blocks: ["standard"] },
 ];
 
@@ -64,19 +67,42 @@ export const PRESETS: readonly PresetMeta[] = [
 const PITCHER_BLOCKS = new Set<BlockId>([
   "standard",
   "advanced",
+  "rolesplit",
   "splits",
   "scorebook",
   "matchup",
   "ranking",
 ]);
 
+/**
+ * 타자 페이지의 블록.
+ *
+ * ⚠**`rolesplit`(선발·구원별)은 투수만의 이야기다.** 예전에는 타자에게 「전 블록」을 주고
+ * 투수만 걸렀는데, 그러면 투수 전용 블록을 새로 만들 때마다 **타자 페이지에 빈 블록이 샌다.**
+ * 양쪽을 명시한다 — 목록이 둘이면 어긋날 수 있지만, 어긋나는 것을 테스트가 잡는다.
+ */
+const BATTER_BLOCKS = new Set<BlockId>([
+  "standard",
+  "advanced",
+  "splits",
+  "scorebook",
+  "situation",
+  "matchup",
+  "ranking",
+]);
+
+function allowed(role: "batter" | "pitcher"): Set<BlockId> {
+  return role === "pitcher" ? PITCHER_BLOCKS : BATTER_BLOCKS;
+}
+
 export function blocksFor(role: "batter" | "pitcher"): BlockMeta[] {
-  return role === "pitcher" ? BLOCKS.filter((b) => PITCHER_BLOCKS.has(b.id)) : [...BLOCKS];
+  const ok = allowed(role);
+  return BLOCKS.filter((b) => ok.has(b.id));
 }
 
 export function presetsFor(role: "batter" | "pitcher"): PresetMeta[] {
-  if (role === "batter") return [...PRESETS];
-  return PRESETS.map((p) => ({ ...p, blocks: p.blocks.filter((b) => PITCHER_BLOCKS.has(b)) })).filter(
+  const ok = allowed(role);
+  return PRESETS.map((p) => ({ ...p, blocks: p.blocks.filter((b) => ok.has(b)) })).filter(
     (p) => p.blocks.length > 0,
   );
 }
