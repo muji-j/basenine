@@ -1,0 +1,131 @@
+/**
+ * 박스스코어의 **검증된 결과**와 playbyplay의 **문맥**을 타석 단위로 맞춘다.
+ *
+ * 왜 정렬이 성립하는가: 두 소스가 각자 독립적으로 타석을 나열하고, 타자별 타석 수가
+ * 632경기 17,351행에서 **전건 일치**한다(`sweep-playbyplay.ts`). 둘 다 시간순이므로
+ * 타자별로 순서대로 짝지으면 같은 타석이 만난다.
+ *
+ * ⚠**수가 어긋나면 짝짓지 않고 격리한다.** 어긋난 채로 짝지으면 결과가 엉뚱한 투수에게
+ * 붙고, 그건 상대전적이 조용히 틀리는 것을 의미한다.
+ */
+import type { BoxScore, PlayEvent } from "@bb-app/parser";
+import type { QuarantineRow } from "./derive.ts";
+
+export interface PaEventRow {
+  gameId: string;
+  seq: number;
+  inning: number;
+  half: "top" | "bottom";
+  outsBefore: number;
+  bases: string;
+  batterId: string;
+  pitcherId: string | null;
+  /** 박스스코어에서 온 분류 */
+  outcome: string;
+  rbi: number;
+  rawBox: string;
+  rawPbp: string;
+  status: "final" | "live";
+}
+
+export interface AlignResult {
+  events: PaEventRow[];
+  quarantine: QuarantineRow[];
+}
+
+/**
+ * @param events playbyplay 이벤트 전량(미완 타석 포함 — 여기서 거른다)
+ */
+export function alignPaEvents(gameId: string, box: BoxScore, events: readonly PlayEvent[]): AlignResult {
+  const quarantine: QuarantineRow[] = [];
+  if (box.status !== "played") return { events: [], quarantine };
+
+  // 박스: 타자별 결과 목록(시간순)
+  const boxByBatter = new Map<string, { raw: string; outcome: string; rbi: number }[]>();
+  for (const team of [box.away, box.home]) {
+    for (const b of team.batters) {
+      if (b.isTeamTotal || b.playerId === null) continue;
+      boxByBatter.set(
+        b.playerId,
+        b.plateAppearances.map((p) => ({ raw: p.raw, outcome: p.outcome, rbi: p.rbi })),
+      );
+    }
+  }
+
+  // 경과: 성립한 타석만, 타자별 시간순
+  const completed = events.filter((e) => e.completed);
+  const pbpByBatter = new Map<string, PlayEvent[]>();
+  for (const e of completed) {
+    const list = pbpByBatter.get(e.batterId);
+    if (list === undefined) pbpByBatter.set(e.batterId, [e]);
+    else list.push(e);
+  }
+
+  // ⚠짝짓기 전에 수를 맞춰본다. 하나라도 어긋나면 그 타자는 통째로 격리한다.
+  const usable = new Set<string>();
+  for (const [batterId, pbpList] of pbpByBatter) {
+    const boxList = boxByBatter.get(batterId);
+    if (boxList === undefined) {
+      quarantine.push({
+        kind: "paMismatch",
+        gameId,
+        playerId: batterId,
+        raw: String(pbpList.length),
+        detail: "경과에는 있으나 박스에 없는 타자",
+      });
+      continue;
+    }
+    if (boxList.length !== pbpList.length) {
+      quarantine.push({
+        kind: "paMismatch",
+        gameId,
+        playerId: batterId,
+        raw: `박스 ${boxList.length}`,
+        detail: `경과 ${pbpList.length}`,
+      });
+      continue;
+    }
+    usable.add(batterId);
+  }
+  for (const batterId of boxByBatter.keys()) {
+    if (!pbpByBatter.has(batterId) && (boxByBatter.get(batterId)?.length ?? 0) > 0) {
+      quarantine.push({
+        kind: "paMismatch",
+        gameId,
+        playerId: batterId,
+        raw: String(boxByBatter.get(batterId)?.length ?? 0),
+        detail: "박스에는 있으나 경과에 없는 타자",
+      });
+    }
+  }
+
+  // 타자별 소비 위치를 들고 시간순으로 훑는다.
+  const cursor = new Map<string, number>();
+  const rows: PaEventRow[] = [];
+  let seq = 0;
+  for (const e of completed) {
+    if (!usable.has(e.batterId)) continue;
+    const i = cursor.get(e.batterId) ?? 0;
+    cursor.set(e.batterId, i + 1);
+    const fromBox = boxByBatter.get(e.batterId)![i]!;
+    seq += 1;
+    rows.push({
+      gameId,
+      seq,
+      inning: e.inning,
+      half: e.half,
+      outsBefore: e.outsBefore,
+      bases: e.bases,
+      batterId: e.batterId,
+      pitcherId: e.pitcherId,
+      outcome: fromBox.outcome,
+      rbi: fromBox.rbi,
+      rawBox: fromBox.raw,
+      rawPbp: e.result,
+      // v1은 확정 데이터만 다룬다. 라이브는 v2에서 'live'로 들어온다(M9).
+      status: "final",
+    });
+  }
+
+  return { events: rows, quarantine };
+}

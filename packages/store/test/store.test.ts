@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parsePaCell } from "@bb-app/parser";
 import type { BatterRow, PitcherRow } from "@bb-app/parser";
-import { openDb } from "../src/db.ts";
+import { listMigrations, openDb } from "../src/db.ts";
 import { deriveBatting, derivePitching } from "../src/derive.ts";
 import { replaceQuarantine, upsertBatting, upsertGame, upsertPlayer } from "../src/load.ts";
 import type { GameRow } from "../src/load.ts";
@@ -64,7 +64,9 @@ test("마이그레이션은 재실행해도 안전하다", async () => {
     openDb(path, NOW).close();
     const db = openDb(path, NOW);
     const n = db.raw.prepare("SELECT COUNT(*) AS n FROM schema_migration").get() as { n: number };
-    assert.equal(n.n, 1, "같은 마이그레이션이 두 번 기록되면 안 된다");
+    // 마이그레이션이 늘어도 이 테스트가 계속 의미를 갖도록 개수를 고정하지 않는다.
+    assert.equal(n.n, listMigrations().length, "같은 마이그레이션이 두 번 기록되면 안 된다");
+    assert.ok(n.n >= 1, "마이그레이션이 하나도 없으면 이 테스트는 아무것도 재지 않는다");
     db.close();
   } finally {
     await rm(dir, { recursive: true, force: true });

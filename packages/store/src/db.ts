@@ -13,6 +13,14 @@ const MIGRATIONS_DIR = fileURLToPath(new URL("../migrations/", import.meta.url))
 
 export interface Db {
   readonly raw: DatabaseSync;
+  /**
+   * 여러 쓰기를 한 트랜잭션으로 묶는다.
+   *
+   * ⚠**묶지 않으면 INSERT 하나마다 커밋(=디스크 동기화)이 일어난다.** 타석 4만 건을
+   * 개별 커밋했더니 적재가 10분을 넘겼다. 매일 도는 작업에는 쓸 수 없는 속도다.
+   * 예외가 나면 롤백하므로 **부분 적재된 경기가 남지 않는다**(부분 실패 대응).
+   */
+  transaction<T>(fn: () => T): T;
   close(): void;
 }
 
@@ -53,6 +61,17 @@ export function openDb(path: string, nowIso: string): Db {
 
   return {
     raw,
+    transaction<T>(fn: () => T): T {
+      raw.exec("BEGIN");
+      try {
+        const out = fn();
+        raw.exec("COMMIT");
+        return out;
+      } catch (err) {
+        raw.exec("ROLLBACK");
+        throw err;
+      }
+    },
     close: () => raw.close(),
   };
 }

@@ -2,8 +2,12 @@ export { listMigrations, openDb } from "./db.ts";
 export type { Db } from "./db.ts";
 export { deriveBatting, derivePitching } from "./derive.ts";
 export type { BattingRow, DeriveResult, PitchingRow, QuarantineRow } from "./derive.ts";
+export { alignPaEvents } from "./align.ts";
+export type { AlignResult, PaEventRow } from "./align.ts";
 export {
+  D1_DAILY_WRITE_LIMIT,
   emptyBudget,
+  replacePaEvents,
   replaceQuarantine,
   upsertBatting,
   upsertGame,

@@ -9,6 +9,7 @@
  */
 import type { Db } from "./db.ts";
 import type { BattingRow, PitchingRow, QuarantineRow } from "./derive.ts";
+import type { PaEventRow } from "./align.ts";
 
 export interface GameRow {
   gameId: string;
@@ -29,13 +30,17 @@ export interface WriteBudget {
   games: number;
   batting: number;
   pitching: number;
+  paEvents: number;
   quarantine: number;
   total: number;
 }
 
 export function emptyBudget(): WriteBudget {
-  return { players: 0, games: 0, batting: 0, pitching: 0, quarantine: 0, total: 0 };
+  return { players: 0, games: 0, batting: 0, pitching: 0, paEvents: 0, quarantine: 0, total: 0 };
 }
+
+/** D1 무료 플랜의 하루 쓰기 한도. 초과하면 **과금이 아니라 차단**이다. */
+export const D1_DAILY_WRITE_LIMIT = 100_000;
 
 /**
  * 선수를 등록한다. 표시명은 최신으로 갱신하되 **ID는 절대 바뀌지 않는다**(M10).
@@ -117,6 +122,28 @@ export function upsertPitching(db: Db, r: PitchingRow): number {
       r.h, r.hr, r.bb, r.hbp, r.so, r.runs, r.er,
     );
   return 1;
+}
+
+/**
+ * 타석 이벤트를 경기 단위로 **교체**한다.
+ *
+ * ⚠순번(`seq`)이 재파싱으로 바뀔 수 있으므로 upsert가 아니라 삭제 후 삽입이다.
+ * 남은 옛 행이 새 행과 섞이면 타석이 중복되고, 그건 상대전적을 조용히 부풀린다.
+ */
+export function replacePaEvents(db: Db, gameId: string, rows: readonly PaEventRow[]): number {
+  db.raw.prepare("DELETE FROM pa_event WHERE game_id = ?").run(gameId);
+  const stmt = db.raw.prepare(
+    `INSERT INTO pa_event (game_id, seq, inning, half, outs_before, bases,
+       batter_id, pitcher_id, outcome, rbi, raw_box, raw_pbp, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  for (const r of rows) {
+    stmt.run(
+      r.gameId, r.seq, r.inning, r.half, r.outsBefore, r.bases,
+      r.batterId, r.pitcherId, r.outcome, r.rbi, r.rawBox, r.rawPbp, r.status,
+    );
+  }
+  return rows.length;
 }
 
 /**

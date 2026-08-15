@@ -9,18 +9,43 @@
 import { readdir, readFile } from "node:fs/promises";
 import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
-import { parseBoxScore } from "@bb-app/parser";
+import { parseArgs } from "node:util";
+import { parseBoxScore, parsePlayByPlay } from "@bb-app/parser";
+import type { PlayEvent } from "@bb-app/parser";
 import { competitionOf } from "@bb-app/domain";
 import { openDb } from "../src/db.ts";
+import { alignPaEvents } from "../src/align.ts";
 import { deriveBatting, derivePitching } from "../src/derive.ts";
 import type { QuarantineRow } from "../src/derive.ts";
-import { emptyBudget, replaceQuarantine, upsertBatting, upsertGame, upsertPitching, upsertPlayer } from "../src/load.ts";
+import {
+  D1_DAILY_WRITE_LIMIT,
+  emptyBudget,
+  replacePaEvents,
+  replaceQuarantine,
+  upsertBatting,
+  upsertGame,
+  upsertPitching,
+  upsertPlayer,
+} from "../src/load.ts";
 
-const [archiveRoot, dbPath] = process.argv.slice(2);
+const { values, positionals } = parseArgs({
+  allowPositionals: true,
+  options: {
+    from: { type: "string" },
+    to: { type: "string" },
+    /** ⚠D1 무료는 하루 10만 행에서 **차단**된다. 넘길 것 같으면 멈추고 재개 지점을 알린다 */
+    "max-writes": { type: "string", default: String(D1_DAILY_WRITE_LIMIT) },
+    "skip-events": { type: "boolean", default: false },
+  },
+});
+const [archiveRoot, dbPath] = positionals;
 if (!archiveRoot || !dbPath) {
-  console.error("usage: node tools/load-archive.ts <archive-root> <db-path>");
+  console.error(
+    "usage: node tools/load-archive.ts <archive-root> <db-path> [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--max-writes N] [--skip-events]",
+  );
   process.exit(2);
 }
+const maxWrites = Number(values["max-writes"]);
 
 // 시계는 1회만 읽어 전체 적재에 같은 값을 쓴다(M6).
 const nowIso = new Date().toISOString();
@@ -73,12 +98,24 @@ let notPlayed = 0;
 let failed = 0;
 const quarantineKinds = new Map<string, number>();
 
+let stoppedAt: string | null = null;
+
 for await (const file of walk(archiveRoot)) {
   const meta = gameFromPath(file);
   if (meta === null) {
     failed += 1;
     console.error(`경로에서 경기를 식별하지 못했다: ${file}`);
     continue;
+  }
+
+  if (values.from !== undefined && meta.gameDate < values.from) continue;
+  if (values.to !== undefined && meta.gameDate > values.to) continue;
+
+  // ⚠예산을 넘기기 **전에** 멈춘다. 넘긴 뒤에는 D1이 쿼리를 거부하므로 복구가 번거롭다.
+  const spent = budget.players + budget.games + budget.batting + budget.pitching + budget.paEvents + budget.quarantine;
+  if (spent >= maxWrites) {
+    stoppedAt = meta.gameDate;
+    break;
   }
 
   let box;
@@ -105,18 +142,38 @@ for await (const file of walk(archiveRoot)) {
 
   if (box.status === "notPlayed") {
     notPlayed += 1;
-    budget.games += upsertGame(db, {
-      ...meta,
-      status: "notPlayed",
-      notPlayedReason: box.reason,
-      competition,
-      sourceUrl,
-      fetchedAt: nowIso,
-    });
+    budget.games += db.transaction(() =>
+      upsertGame(db, {
+        ...meta,
+        status: "notPlayed",
+        notPlayedReason: box.reason,
+        competition,
+        sourceUrl,
+        fetchedAt: nowIso,
+      }),
+    );
     continue;
   }
 
+  // 타석 이벤트의 재료를 **쓰기 전에** 읽어둔다. 트랜잭션 안에서 파일을 기다리지 않게 한다.
+  let pbpEvents: PlayEvent[] | null = null;
+  if (!values["skip-events"]) {
+    const pbpFile = file.replace(/box\.html\.gz$/, "playbyplay.html.gz");
+    try {
+      const pbp = parsePlayByPlay(gunzipSync(await readFile(pbpFile)).toString("utf8"));
+      if (pbp.status === "played") pbpEvents = pbp.events;
+    } catch (err) {
+      failed += 1;
+      console.error(`PBP ERROR ${meta.gameId} — ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   played += 1;
+  const quarantine: QuarantineRow[] = [];
+
+  // ⚠경기 1건의 쓰기를 한 트랜잭션으로 묶는다. 개별 커밋은 느릴 뿐 아니라
+  // 도중에 죽으면 **절반만 적재된 경기**를 남긴다.
+  db.transaction(() => {
   budget.games += upsertGame(db, {
     ...meta,
     status: "played",
@@ -125,8 +182,6 @@ for await (const file of walk(archiveRoot)) {
     sourceUrl,
     fetchedAt: nowIso,
   });
-
-  const quarantine: QuarantineRow[] = [];
 
   for (const [side, team] of [["away", box.away], ["home", box.home]] as const) {
     for (const b of team.batters) {
@@ -150,19 +205,36 @@ for await (const file of walk(archiveRoot)) {
     }
   }
 
+  // 타석 이벤트: playbyplay의 문맥에 박스의 **검증된** 결과를 붙인다.
+  if (pbpEvents !== null) {
+    const aligned = alignPaEvents(meta.gameId, box, pbpEvents);
+    budget.paEvents += replacePaEvents(db, meta.gameId, aligned.events);
+    quarantine.push(...aligned.quarantine);
+  }
+
   budget.quarantine += replaceQuarantine(db, meta.gameId, quarantine, nowIso);
+  });
+
   for (const q of quarantine) quarantineKinds.set(q.kind, (quarantineKinds.get(q.kind) ?? 0) + 1);
 }
 
-budget.total = budget.players + budget.games + budget.batting + budget.pitching + budget.quarantine;
+budget.total =
+  budget.players + budget.games + budget.batting + budget.pitching + budget.paEvents + budget.quarantine;
 
 console.log(`성립 ${played}건 · 미성립 ${notPlayed}건 · 실패 ${failed}건`);
 console.log(
-  `\n=== 쓰기 예산 (D1 무료 한도 100,000행/일) ===\n` +
+  `\n=== 쓰기 예산 (D1 무료 한도 ${D1_DAILY_WRITE_LIMIT.toLocaleString()}행/일) ===\n` +
     `선수 ${budget.players} · 경기 ${budget.games} · 타격 ${budget.batting} · ` +
-    `투구 ${budget.pitching} · 격리 ${budget.quarantine}\n` +
-    `합계 ${budget.total}행 = 한도의 ${((budget.total / 100_000) * 100).toFixed(1)}%`,
+    `투구 ${budget.pitching} · 타석 ${budget.paEvents} · 격리 ${budget.quarantine}\n` +
+    `합계 ${budget.total}행 = 한도의 ${((budget.total / D1_DAILY_WRITE_LIMIT) * 100).toFixed(1)}%`,
 );
+
+if (stoppedAt !== null) {
+  console.log(
+    `\n⚠쓰기 예산 상한(${maxWrites.toLocaleString()}행)에 도달해 **${stoppedAt} 앞에서 멈췄다.**\n` +
+      `   내일 이어서: --from ${stoppedAt}`,
+  );
+}
 
 console.log(`\n=== 격리 (${[...quarantineKinds.values()].reduce((a, b) => a + b, 0)}건) ===`);
 if (quarantineKinds.size === 0) console.log("없음");
