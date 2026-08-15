@@ -1,0 +1,436 @@
+<title>記録票・状況盤・名鑑</title>
+<style>
+  :root {
+    --ink: #16202b;
+    --ink-2: #47576a;
+    --ink-3: #7e8b99;
+    --ground: #f6f5f2;
+    --panel: #ffffff;
+    --rule: #d9d8d2;
+    --mark: #9a3b2d;
+    --shell-font: "Yu Gothic", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Meiryo", system-ui, sans-serif;
+    --shell-mono: "SFMono-Regular", "Consolas", "Yu Gothic", monospace;
+  }
+  :root:not([data-theme="light"]) { }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #e8e6e1; --ink-2: #a9b3bd; --ink-3: #7a848f;
+      --ground: #14181d; --panel: #1b2028; --rule: #313841;
+      --mark: #d5715e;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink: #e8e6e1; --ink-2: #a9b3bd; --ink-3: #7a848f;
+    --ground: #14181d; --panel: #1b2028; --rule: #313841;
+    --mark: #d5715e;
+  }
+
+  body {
+    margin: 0; background: var(--ground); color: var(--ink);
+    font-family: var(--shell-font); line-height: 1.6;
+    font-feature-settings: "palt" 1;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 40px 20px 80px; }
+  h1 { font-size: clamp(24px, 4vw, 34px); letter-spacing: .02em; margin: 0 0 6px; text-wrap: balance; }
+  .lede { color: var(--ink-2); max-width: 68ch; margin: 0 0 8px; }
+  .meta { color: var(--ink-3); font-size: 13px; font-family: var(--shell-mono); }
+  hr.sep { border: 0; border-top: 1px solid var(--rule); margin: 34px 0; }
+
+  .head { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; margin-bottom: 4px; }
+  .head .n { font-family: var(--shell-mono); color: var(--mark); font-size: 13px; letter-spacing: .1em; }
+  .head h2 { margin: 0; font-size: 22px; letter-spacing: .04em; }
+  .head .en { color: var(--ink-3); font-size: 13px; font-family: var(--shell-mono); }
+  .why { color: var(--ink-2); max-width: 72ch; margin: 6px 0 4px; }
+  .risk { color: var(--ink-2); max-width: 72ch; margin: 0 0 18px; font-size: 14px; }
+  .risk b { color: var(--mark); font-weight: 600; }
+
+  .frame { border: 1px solid var(--rule); border-radius: 2px; overflow: hidden; }
+  .frame-cap {
+    font-family: var(--shell-mono); font-size: 11px; letter-spacing: .12em;
+    color: var(--ink-3); padding: 7px 12px; border-bottom: 1px solid var(--rule);
+    background: var(--panel);
+  }
+  .scroller { overflow-x: auto; }
+
+  .ask { background: var(--panel); border: 1px solid var(--rule); border-radius: 2px; padding: 20px 22px; }
+  .ask h3 { margin: 0 0 10px; font-size: 16px; letter-spacing: .03em; }
+  .ask ul { margin: 0; padding-left: 20px; color: var(--ink-2); }
+  .ask li { margin-bottom: 8px; }
+  .ask b { color: var(--ink); }
+
+  /* ============ A. 記録票 ============ */
+  .m-a {
+    --paper: #ebe8e0; --grid: #c3bfb2; --pen: #1d2b3a; --pen-2: #56656f;
+    --red: #a63b2a; --tab: #dcd8cc;
+    background: var(--paper); color: var(--pen);
+    font-family: "Yu Gothic", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
+    padding: 0;
+  }
+  .m-a .sheet-top {
+    display: flex; justify-content: space-between; align-items: flex-end; gap: 16px;
+    padding: 16px 18px 12px; border-bottom: 2px solid var(--pen); flex-wrap: wrap;
+  }
+  .m-a .who { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .m-a .nm { font-size: 26px; font-weight: 700; letter-spacing: .06em; }
+  .m-a .tm { font-size: 12px; color: var(--pen-2); letter-spacing: .12em; }
+  .m-a .stamp {
+    font-family: var(--shell-mono); font-size: 10px; letter-spacing: .14em;
+    color: var(--red); border: 1px solid var(--red); padding: 3px 7px; border-radius: 1px;
+  }
+  .m-a .slash {
+    font-family: var(--shell-mono); font-size: 20px; letter-spacing: .04em;
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  .m-a .slash s { text-decoration: none; color: var(--pen-2); font-size: 12px; }
+
+  .m-a table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  .m-a th, .m-a td {
+    border: 1px solid var(--grid); padding: 5px 7px; text-align: right;
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  .m-a thead th { background: var(--tab); font-weight: 600; letter-spacing: .06em; font-size: 11px; }
+  .m-a td.l, .m-a th.l { text-align: left; }
+  .m-a .pa-cell { font-size: 12px; letter-spacing: .02em; min-width: 62px; }
+  .m-a .hit { color: var(--red); font-weight: 700; }
+  .m-a .sec { padding: 14px 18px 4px; font-size: 11px; letter-spacing: .18em; color: var(--pen-2); }
+  .m-a .grid-wrap { padding: 0 18px 18px; }
+  .m-a .den { color: var(--pen-2); font-size: 10px; }
+
+  /* ============ B. 状況盤 ============ */
+  .m-b {
+    --board: #101418; --board-2: #171d23; --bulb: #f2a93b; --bulb-dim: #4a3a1e;
+    --cold: #6fb3c9; --line: #262e36; --off: #2a323a;
+    background: var(--board); color: #d6dee5;
+    font-family: "Yu Gothic", "Hiragino Kaku Gothic ProN", sans-serif;
+  }
+  .m-b .bar {
+    display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+    padding: 14px 18px; border-bottom: 1px solid var(--line); background: var(--board-2);
+  }
+  .m-b .nm { font-size: 22px; font-weight: 700; letter-spacing: .1em; color: #fff; }
+  .m-b .tag { font-size: 11px; letter-spacing: .16em; color: #8b97a3; }
+  .m-b .big {
+    margin-left: auto; font-family: var(--shell-mono); font-variant-numeric: tabular-nums;
+    display: flex; align-items: baseline; gap: 8px;
+  }
+  .m-b .big i { font-style: normal; font-size: 11px; letter-spacing: .14em; color: #8b97a3; }
+  .m-b .big b { font-size: 30px; color: var(--bulb); text-shadow: 0 0 14px rgba(242,169,59,.35); }
+  .m-b .body { padding: 18px; display: grid; gap: 20px; grid-template-columns: minmax(300px, 1fr) minmax(260px, 340px); }
+  @media (max-width: 720px) { .m-b .body { grid-template-columns: 1fr; } }
+  .m-b h4 { margin: 0 0 10px; font-size: 11px; letter-spacing: .2em; color: #8b97a3; font-weight: 500; }
+
+  .m-b .diamond-grid { display: grid; grid-template-columns: 62px repeat(3, 1fr); gap: 4px; }
+  .m-b .dg-h { font-size: 10px; letter-spacing: .12em; color: #78838e; text-align: center; padding-bottom: 2px; }
+  .m-b .dg-l { font-size: 11px; color: #9aa5b0; display: flex; align-items: center; }
+  .m-b .cell {
+    background: var(--board-2); border: 1px solid var(--line); padding: 6px 4px; text-align: center;
+    font-family: var(--shell-mono); font-variant-numeric: tabular-nums;
+  }
+  .m-b .cell u { display: block; text-decoration: none; font-size: 14px; color: var(--bulb); }
+  .m-b .cell s { display: block; text-decoration: none; font-size: 9px; color: #66707a; margin-top: 1px; }
+  .m-b .cell.thin u { color: var(--bulb-dim); }
+
+  .m-b .rows { display: flex; flex-direction: column; gap: 6px; }
+  .m-b .row { display: grid; grid-template-columns: 72px 1fr 84px; gap: 10px; align-items: center; }
+  .m-b .row span { font-size: 12px; color: #9aa5b0; }
+  .m-b .bar-t { height: 14px; background: var(--off); position: relative; }
+  .m-b .bar-t i { display: block; height: 100%; background: var(--bulb); }
+  .m-b .bar-t i.cool { background: var(--cold); }
+  .m-b .row em {
+    font-style: normal; font-family: var(--shell-mono); font-variant-numeric: tabular-nums;
+    font-size: 12px; text-align: right; color: #d6dee5;
+  }
+  .m-b .row em s { text-decoration: none; color: #66707a; font-size: 10px; }
+
+  /* ============ C. 名鑑 ============ */
+  .m-c {
+    --page: #fbfaf7; --tx: #1a1a18; --tx-2: #5d5d57; --hair: #ddddd6;
+    --team: #f2c800; --team-ink: #17170f;
+    background: var(--page); color: var(--tx);
+    font-family: "Yu Gothic", "Hiragino Kaku Gothic ProN", sans-serif;
+    display: grid; grid-template-columns: 46px 1fr;
+  }
+  @media (max-width: 640px) { .m-c { grid-template-columns: 20px 1fr; } }
+  .m-c .spine {
+    background: var(--team); color: var(--team-ink);
+    display: flex; align-items: flex-start; justify-content: center; padding-top: 14px;
+  }
+  .m-c .spine span {
+    writing-mode: vertical-rl; font-size: 13px; letter-spacing: .3em; font-weight: 700;
+  }
+  .m-c .inner { padding: 16px 18px 20px; min-width: 0; }
+  .m-c .idline { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; border-bottom: 3px solid var(--team); padding-bottom: 8px; }
+  .m-c .no { font-family: var(--shell-mono); font-size: 30px; font-weight: 700; letter-spacing: -.02em; }
+  .m-c .nm { font-size: 24px; font-weight: 700; letter-spacing: .08em; }
+  .m-c .sub { font-size: 11px; color: var(--tx-2); letter-spacing: .1em; }
+  .m-c .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 0 22px; margin-top: 12px; }
+  .m-c dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 0; align-items: baseline; }
+  .m-c dt {
+    font-size: 10.5px; color: var(--tx-2); letter-spacing: .14em;
+    padding: 4px 10px 4px 0; border-bottom: 1px solid var(--hair); white-space: nowrap;
+  }
+  .m-c dd {
+    margin: 0; text-align: right; font-family: var(--shell-mono);
+    font-variant-numeric: tabular-nums; font-size: 14px; padding: 4px 0;
+    border-bottom: 1px solid var(--hair);
+  }
+  .m-c dd s { text-decoration: none; font-size: 10px; color: var(--tx-2); }
+  .m-c .rank { background: var(--team); color: var(--team-ink); font-weight: 700; padding: 0 5px; font-size: 10px; margin-left: 6px; }
+  .m-c .board { margin-top: 16px; }
+  .m-c .board h4 { margin: 0 0 6px; font-size: 10.5px; letter-spacing: .18em; color: var(--tx-2); font-weight: 500; }
+  .m-c table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  .m-c th, .m-c td { padding: 4px 8px; text-align: right; font-variant-numeric: tabular-nums; border-bottom: 1px solid var(--hair); white-space: nowrap; }
+  .m-c th { font-size: 10px; letter-spacing: .1em; color: var(--tx-2); font-weight: 500; }
+  .m-c td.l, .m-c th.l { text-align: left; }
+  .m-c tr.me td { background: var(--team); color: var(--team-ink); font-weight: 700; }
+</style>
+
+<div class="wrap">
+  <h1>選手ページと順位表 — 方向性3案</h1>
+  <p class="lede">
+    どれも実データで組んでいます。2026年8月14日時点、佐藤 輝明（阪神）と セ・リーグ 打撃順位。
+    数値・分母・順位はすべて我々の集計から出したもので、仮の値は一つもありません。
+  </p>
+  <p class="meta">104試合 / 442打席 · セ・リーグ規定打席 332 · 出典 npb.jp</p>
+
+  <hr class="sep">
+
+  <!-- ================= A ================= -->
+  <div class="head">
+    <span class="n">A</span>
+    <h2>記録票</h2>
+    <span class="en">official scorebook</span>
+  </div>
+  <p class="why">
+    公式記録の記入用紙をそのまま画面にする。打席ごとの結果表記（<b>二ゴロ</b>・<b>左越本②</b>）を
+    テクスチャとして前に出す — これは我々の一次データそのものであり、他のどのサイトも見せていない。
+  </p>
+  <p class="risk"><b>賭け:</b> 数字より先に日本語の記録表記を読ませる。野球を知る人には濃く、知らない人には不親切。</p>
+
+  <div class="frame">
+    <div class="frame-cap">A — 記録票</div>
+    <div class="m-a">
+      <div class="sheet-top">
+        <div class="who">
+          <span class="nm">佐藤 輝明</span>
+          <span class="tm">阪神タイガース　内野手　8</span>
+          <span class="stamp">2026 公式戦</span>
+        </div>
+        <div class="slash">.317 / .403 / .620 <s>（442打席）</s></div>
+      </div>
+
+      <div class="sec">打席記録 — 8月10日〜14日</div>
+      <div class="grid-wrap scroller">
+        <table>
+          <thead>
+            <tr>
+              <th class="l">日付</th><th class="l">対戦</th>
+              <th>1</th><th>2</th><th>3</th><th>4</th><th>5</th>
+              <th>打数</th><th>安打</th><th>本</th><th>点</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="l">8/14</td><td class="l">対 DeNA</td>
+              <td class="pa-cell hit">左越本①</td><td class="pa-cell">三 振</td><td class="pa-cell">遊ゴロ</td>
+              <td class="pa-cell hit">中前安</td><td class="pa-cell">四 球</td>
+              <td>4</td><td>2</td><td>1</td><td>1</td>
+            </tr>
+            <tr>
+              <td class="l">8/13</td><td class="l">対 広島</td>
+              <td class="pa-cell">二ゴロ</td><td class="pa-cell hit">右線２②</td><td class="pa-cell">三 振</td>
+              <td class="pa-cell">中 飛</td><td class="pa-cell">—</td>
+              <td>4</td><td>1</td><td>0</td><td>2</td>
+            </tr>
+            <tr>
+              <td class="l">8/12</td><td class="l">対 広島</td>
+              <td class="pa-cell">四 球</td><td class="pa-cell">遊併打</td><td class="pa-cell hit">左中２</td>
+              <td class="pa-cell">三 振</td><td class="pa-cell">—</td>
+              <td>3</td><td>1</td><td>0</td><td>0</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="sec">対戦投手別 — 6打席以上</div>
+      <div class="grid-wrap scroller">
+        <table>
+          <thead>
+            <tr><th class="l">投手</th><th>打席</th><th>打数</th><th>安打</th><th>本</th><th>三振</th><th>四球</th><th>打率</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="l">柳</td><td>14</td><td>12</td><td>2</td><td>1</td><td>4</td><td>2</td><td>.167</td></tr>
+            <tr><td class="l">マラー</td><td>13</td><td>12</td><td>4</td><td>2</td><td>5</td><td>1</td><td class="hit">.333</td></tr>
+            <tr><td class="l">栗林</td><td>13</td><td>13</td><td>1</td><td>1</td><td>4</td><td>0</td><td>.077</td></tr>
+            <tr><td class="l">髙橋宏</td><td>12</td><td>8</td><td>4</td><td>1</td><td>3</td><td>3</td><td class="hit">.500</td></tr>
+            <tr><td class="l">山野</td><td>9</td><td>9</td><td>1</td><td>0</td><td>3</td><td>0</td><td>.111</td></tr>
+            <tr><td class="l">竹丸</td><td>9</td><td>8</td><td>2</td><td>0</td><td>3</td><td>0</td><td>.250</td></tr>
+          </tbody>
+        </table>
+        <p class="den" style="margin:8px 0 0">
+          ※ 対戦成績は標本が小さい。14打席の .167 と 12打席の .500 を同じ重みで読まないこと。
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <hr class="sep">
+
+  <!-- ================= B ================= -->
+  <div class="head">
+    <span class="n">B</span>
+    <h2>状況盤</h2>
+    <span class="en">situation board</span>
+  </div>
+  <p class="why">
+    球場の電光掲示板とベース図から。主役は <b>24の塁・アウト状況に分解した貢献度</b> —
+    「どこで点を作る打者か」が一目で出る。この盤は我々が自前で作った得点期待値行列がなければ描けない。
+  </p>
+  <p class="risk"><b>賭け:</b> 暗い盤面。単なる「黒背景＋差し色」に落ちないよう、電球の粒と格子で物としての掲示板に寄せた。</p>
+
+  <div class="frame">
+    <div class="frame-cap">B — 状況盤</div>
+    <div class="m-b">
+      <div class="bar">
+        <span class="nm">佐藤 輝明</span>
+        <span class="tag">阪神　104試合</span>
+        <span class="big"><i>SRC 状況得点貢献</i><b>+57.9</b><i>442打席 · 600打席換算 +78.7</i></span>
+      </div>
+      <div class="body">
+        <div>
+          <h4>状況別 得点期待値 — セ・リーグ 2026</h4>
+          <div class="diamond-grid">
+            <div></div><div class="dg-h">無死</div><div class="dg-h">一死</div><div class="dg-h">二死</div>
+            <div class="dg-l">走者なし</div>
+            <div class="cell"><u>0.381</u><s>5729</s></div><div class="cell"><u>0.195</u><s>4227</s></div><div class="cell"><u>0.077</u><s>3399</s></div>
+            <div class="dg-l">一塁</div>
+            <div class="cell"><u>0.743</u><s>1294</s></div><div class="cell"><u>0.421</u><s>1476</s></div><div class="cell"><u>0.175</u><s>1466</s></div>
+            <div class="dg-l">二塁</div>
+            <div class="cell"><u>1.055</u><s>290</s></div><div class="cell"><u>0.596</u><s>651</s></div><div class="cell"><u>0.249</u><s>814</s></div>
+            <div class="dg-l">三塁</div>
+            <div class="cell thin"><u>1.762</u><s>21</s></div><div class="cell"><u>0.929</u><s>155</s></div><div class="cell"><u>0.332</u><s>292</s></div>
+            <div class="dg-l">満塁</div>
+            <div class="cell thin"><u>2.521</u><s>96</s></div><div class="cell"><u>1.327</u><s>220</s></div><div class="cell"><u>0.593</u><s>312</s></div>
+          </div>
+          <p style="font-size:11px;color:#78838e;margin:10px 0 0">
+            下段の数字は標本数。<b style="color:var(--bulb-dim)">くすんだ値</b>は標本100未満で、それだけ揺れる。
+          </p>
+        </div>
+
+        <div>
+          <h4>状況別 打撃成績</h4>
+          <div class="rows">
+            <div class="row"><span>得点圏</span><div class="bar-t"><i style="width:100%"></i></div><em>.359 <s>118打席</s></em></div>
+            <div class="row"><span>走者なし</span><div class="bar-t"><i style="width:85%"></i></div><em>.306 <s>228打席</s></em></div>
+            <div class="row"><span>走者あり</span><div class="bar-t"><i style="width:83%"></i></div><em>.298 <s>96打席</s></em></div>
+          </div>
+          <h4 style="margin-top:18px">対 投手タイプ</h4>
+          <div class="rows">
+            <div class="row"><span>対 左投</span><div class="bar-t"><i style="width:100%"></i></div><em>.341 <s>148打席</s></em></div>
+            <div class="row"><span>対 右投</span><div class="bar-t"><i class="cool" style="width:89%"></i></div><em>.304 <s>294打席</s></em></div>
+          </div>
+          <h4 style="margin-top:18px">月別</h4>
+          <div class="rows">
+            <div class="row"><span>4月</span><div class="bar-t"><i style="width:100%"></i></div><em>.376 <s>100打席</s></em></div>
+            <div class="row"><span>5月</span><div class="bar-t"><i style="width:97%"></i></div><em>.363 <s>104打席</s></em></div>
+            <div class="row"><span>6月</span><div class="bar-t"><i class="cool" style="width:76%"></i></div><em>.286 <s>75打席</s></em></div>
+            <div class="row"><span>7月</span><div class="bar-t"><i class="cool" style="width:61%"></i></div><em>.229 <s>95打席</s></em></div>
+            <div class="row"><span>8月</span><div class="bar-t"><i style="width:78%"></i></div><em>.295 <s>51打席</s></em></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <hr class="sep">
+
+  <!-- ================= C ================= -->
+  <div class="head">
+    <span class="n">C</span>
+    <h2>名鑑</h2>
+    <span class="en">player yearbook</span>
+  </div>
+  <p class="why">
+    毎年出る選手名鑑の密度から。<b>ページが選手の球団色をまとう</b> — 背表紙も順位のバッジも所属球団の色になる。
+    情報は小さく詰め、読む人はスキャンで拾う。
+  </p>
+  <p class="risk"><b>賭け:</b> 12球団ぶんの配色が必要で、色の管理が増える。阪神の黄は強く、可読性の調整が要る。</p>
+
+  <div class="frame">
+    <div class="frame-cap">C — 名鑑</div>
+    <div class="m-c">
+      <div class="spine"><span>阪神タイガース</span></div>
+      <div class="inner">
+        <div class="idline">
+          <span class="no">8</span>
+          <span class="nm">佐藤 輝明</span>
+          <span class="sub">内野手　右投左打　1999年3月13日　187cm／96kg</span>
+        </div>
+
+        <div class="cols">
+          <dl>
+            <dt>試合</dt><dd>104</dd>
+            <dt>打席</dt><dd>442</dd>
+            <dt>打数</dt><dd>382</dd>
+            <dt>安打</dt><dd>121</dd>
+            <dt>本塁打</dt><dd>27<span class="rank">2位</span></dd>
+            <dt>打点</dt><dd>76</dd>
+          </dl>
+          <dl>
+            <dt>打率</dt><dd>.317<span class="rank">1位</span></dd>
+            <dt>出塁率</dt><dd>.403<span class="rank">1位</span></dd>
+            <dt>長打率</dt><dd>.620<span class="rank">1位</span></dd>
+            <dt>OPS</dt><dd>1.023</dd>
+            <dt>四球／三振</dt><dd>56 / 117</dd>
+            <dt>盗塁</dt><dd>5</dd>
+          </dl>
+          <dl>
+            <dt>wOBA</dt><dd>.441</dd>
+            <dt>wRC+</dt><dd>227.1<span class="rank">1位</span></dd>
+            <dt>wRAA</dt><dd>+51.9</dd>
+            <dt>SRC 状況得点貢献</dt><dd>+57.9<span class="rank">1位</span></dd>
+            <dt>SRC／600打席</dt><dd>+78.7</dd>
+            <dt>対左投 打率</dt><dd>.341 <s>148打席</s></dd>
+          </dl>
+        </div>
+
+        <div class="board">
+          <h4>セ・リーグ wRC+ 上位 — 規定打席 332 以上</h4>
+          <div class="scroller">
+            <table>
+              <thead>
+                <tr><th class="l">順</th><th class="l">選手</th><th class="l">球団</th><th>打席</th><th>打率</th><th>本</th><th>wRC+</th><th>SRC</th></tr>
+              </thead>
+              <tbody>
+                <tr class="me"><td class="l">1</td><td class="l">佐藤</td><td class="l">阪神</td><td>442</td><td>.317</td><td>27</td><td>227.1</td><td>+57.9</td></tr>
+                <tr><td class="l">2</td><td class="l">森下</td><td class="l">阪神</td><td>454</td><td>.288</td><td>28</td><td>201.4</td><td>+26.4</td></tr>
+                <tr><td class="l">3</td><td class="l">サンタナ</td><td class="l">ヤクルト</td><td>361</td><td>.245</td><td>15</td><td>158.2</td><td>+13.9</td></tr>
+                <tr><td class="l">4</td><td class="l">ダルベック</td><td class="l">巨人</td><td>413</td><td>.265</td><td>20</td><td>152.6</td><td>+16.6</td></tr>
+                <tr><td class="l">5</td><td class="l">大山</td><td class="l">阪神</td><td>424</td><td>.273</td><td>13</td><td>151.2</td><td>+19.5</td></tr>
+                <tr><td class="l">6</td><td class="l">細川</td><td class="l">中日</td><td>450</td><td>.232</td><td>19</td><td>147.7</td><td>+17.4</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <hr class="sep">
+
+  <div class="ask">
+    <h3>決めていただきたいこと</h3>
+    <ul>
+      <li><b>方向をひとつ。</b> 混ぜることもできます（例：A の打席グリッド ＋ C の情報密度）。</li>
+      <li>
+        <b>ラベルと数値、どちらを強くするか。</b>
+        既存の規約は「項目名が値より見えること」ですが、統計サービスでは数値が中身です。
+        3案とも <b>数値を主役にし、分母を必ず隣に置く</b> 形にしています。規約を上書きしてよいか確認させてください。
+      </li>
+      <li>
+        <b>対戦成績の見せ方。</b> ほとんどが10打席未満です。
+        A案は表に注記、B案は標本の薄い値をくすませる形にしました。順位を付けない方が誠実かもしれません。
+      </li>
+    </ul>
+  </div>
+</div>

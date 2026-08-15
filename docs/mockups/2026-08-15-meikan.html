@@ -1,0 +1,600 @@
+<title>名鑑 — 組み替えられる選手ページ</title>
+<style>
+  :root {
+    --team: #f2c800;
+    --team-ink: #17170f;
+    --page: #fbfaf7;
+    --tx: #17171a;
+    --tx-2: #5d5d59;
+    --tx-3: #8d8d87;
+    --hair: #e0dfd8;
+    --hair-2: #cfcec5;
+    --panel: #ffffff;
+    --warn: #a8452f;
+    --f-body: "Yu Gothic", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Meiryo", system-ui, sans-serif;
+    --f-num: "SFMono-Regular", "Consolas", "Menlo", "Yu Gothic", monospace;
+    --gap: 18px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --page: #15161a; --tx: #e9e8e3; --tx-2: #a5a49d; --tx-3: #7b7a74;
+      --hair: #2b2d33; --hair-2: #3b3e45; --panel: #1c1e23; --warn: #e08a72;
+    }
+  }
+  :root[data-theme="dark"] {
+    --page: #15161a; --tx: #e9e8e3; --tx-2: #a5a49d; --tx-3: #7b7a74;
+    --hair: #2b2d33; --hair-2: #3b3e45; --panel: #1c1e23; --warn: #e08a72;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--page); color: var(--tx);
+    font-family: var(--f-body); line-height: 1.55;
+    font-feature-settings: "palt" 1;
+  }
+  .shell { display: grid; grid-template-columns: 44px 1fr; min-height: 100vh; }
+  @media (max-width: 680px) { .shell { grid-template-columns: 16px 1fr; } }
+
+  /* 背表紙 — 名鑑の綴じ側。球団色はここが担う */
+  .spine { background: var(--team); display: flex; flex-direction: column; align-items: center; padding: 16px 0; gap: 18px; }
+  .spine .vt { writing-mode: vertical-rl; font-size: 12.5px; letter-spacing: .32em; font-weight: 700; color: var(--team-ink); }
+  @media (max-width: 680px) { .spine .vt { display: none; } }
+
+  .main { min-width: 0; padding: 0 0 60px; }
+
+  /* ---- 見出し ---- */
+  .idline {
+    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+    padding: 16px 20px 9px; border-bottom: 3px solid var(--team);
+  }
+  .idline .no { font-family: var(--f-num); font-size: 30px; font-weight: 700; letter-spacing: -.02em; }
+  .idline .nm { font-size: 25px; font-weight: 700; letter-spacing: .08em; }
+  .idline .sub { font-size: 11.5px; color: var(--tx-2); letter-spacing: .09em; }
+  .idline .asof { margin-left: auto; font-family: var(--f-num); font-size: 11px; color: var(--tx-3); }
+
+  /* ---- 操作バー — 名鑑の「見出しインデックス」に寄せる ---- */
+  .rail {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    padding: 9px 20px; border-bottom: 1px solid var(--hair); background: var(--panel);
+    position: sticky; top: 0; z-index: 5;
+  }
+  .rail .lbl { font-size: 10.5px; letter-spacing: .16em; color: var(--tx-3); margin-right: 2px; }
+  .tab {
+    font: inherit; font-size: 12px; padding: 3px 10px; cursor: pointer;
+    background: transparent; color: var(--tx-2);
+    border: 1px solid var(--hair-2); border-radius: 0;
+  }
+  .tab:hover { color: var(--tx); border-color: var(--tx-3); }
+  .tab[aria-pressed="true"] { background: var(--team); color: var(--team-ink); border-color: var(--team); font-weight: 700; }
+  .tab:focus-visible { outline: 2px solid var(--tx); outline-offset: 1px; }
+  .rail .grow { flex: 1 1 auto; }
+
+  /* ---- 編集モード ---- */
+  .editor { padding: 14px 20px 16px; border-bottom: 1px solid var(--hair); background: var(--panel); }
+  .editor[hidden] { display: none; }
+  .editor h3 { margin: 0 0 3px; font-size: 12px; letter-spacing: .14em; color: var(--tx-2); font-weight: 600; }
+  .editor p { margin: 0 0 12px; font-size: 11.5px; color: var(--tx-3); }
+  .blocks { display: flex; flex-direction: column; gap: 4px; max-width: 520px; }
+  .brow {
+    display: grid; grid-template-columns: auto 1fr auto auto; gap: 10px; align-items: center;
+    padding: 6px 8px; border: 1px solid var(--hair); background: var(--page);
+  }
+  .brow input[type="checkbox"] { accent-color: var(--team); width: 15px; height: 15px; }
+  .brow .bn { font-size: 13px; }
+  .brow .bd { font-size: 11px; color: var(--tx-3); }
+  .mv { font: inherit; font-size: 11px; padding: 1px 7px; cursor: pointer; background: transparent; color: var(--tx-2); border: 1px solid var(--hair-2); }
+  .mv:hover:not(:disabled) { color: var(--tx); border-color: var(--tx-3); }
+  .mv:disabled { opacity: .3; cursor: default; }
+
+  .fixed-note {
+    margin-top: 12px; padding: 9px 11px; border-left: 3px solid var(--warn);
+    background: var(--page); font-size: 11.5px; color: var(--tx-2); max-width: 520px;
+  }
+  .fixed-note b { color: var(--warn); }
+
+  /* ---- ブロック ---- */
+  .block { padding: 16px 20px; border-bottom: 1px solid var(--hair); }
+  .block[hidden] { display: none; }
+  .block > h4 {
+    margin: 0 0 9px; font-size: 10.5px; letter-spacing: .19em; color: var(--tx-2);
+    font-weight: 600; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  }
+  .block > h4 .sw { display: flex; gap: 4px; margin-left: auto; }
+
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(196px, 1fr)); gap: 0 24px; }
+  dl { margin: 0; display: grid; grid-template-columns: auto 1fr; align-items: baseline; }
+  dt { font-size: 10.5px; color: var(--tx-2); letter-spacing: .12em; padding: 4px 10px 4px 0; border-bottom: 1px solid var(--hair); white-space: nowrap; }
+  dd {
+    margin: 0; text-align: right; font-family: var(--f-num); font-variant-numeric: tabular-nums;
+    font-size: 14px; padding: 4px 0; border-bottom: 1px solid var(--hair);
+  }
+  .den { font-family: var(--f-num); font-size: 10px; color: var(--tx-3); margin-left: 5px; }
+  .rank { background: var(--team); color: var(--team-ink); font-weight: 700; padding: 0 5px; font-size: 10px; margin-left: 6px; font-family: var(--f-body); }
+
+  .scroller { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  th, td { padding: 4px 8px; text-align: right; font-variant-numeric: tabular-nums; border-bottom: 1px solid var(--hair); white-space: nowrap; }
+  th { font-size: 10px; letter-spacing: .1em; color: var(--tx-2); font-weight: 500; }
+  td.l, th.l { text-align: left; }
+  tr.me td { background: var(--team); color: var(--team-ink); font-weight: 700; }
+  td .num { font-family: var(--f-num); }
+  .thin td { color: var(--tx-3); }
+
+  /* 打席記録グリッド（A案由来） */
+  .pa { font-size: 11.5px; letter-spacing: .02em; }
+  .pa.h { color: var(--warn); font-weight: 700; }
+
+  /* 状況盤（B案由来） */
+  .dg { display: grid; grid-template-columns: 68px repeat(3, minmax(58px, 1fr)); gap: 3px; min-width: 300px; }
+  .dg .h { font-size: 10px; letter-spacing: .1em; color: var(--tx-3); text-align: center; }
+  .dg .rl { font-size: 11px; color: var(--tx-2); display: flex; align-items: center; }
+  .dg .c { border: 1px solid var(--hair); padding: 5px 3px; text-align: center; font-family: var(--f-num); font-variant-numeric: tabular-nums; }
+  .dg .c u { display: block; text-decoration: none; font-size: 13px; }
+  .dg .c s { display: block; text-decoration: none; font-size: 9px; color: var(--tx-3); }
+  .dg .c.thin u { color: var(--tx-3); }
+
+  .bars { display: flex; flex-direction: column; gap: 5px; max-width: 460px; }
+  .bar { display: grid; grid-template-columns: 78px 1fr 116px; gap: 10px; align-items: center; }
+  .bar span { font-size: 11.5px; color: var(--tx-2); }
+  .track { height: 13px; background: var(--hair); }
+  .track i { display: block; height: 100%; background: var(--team); }
+  .bar em {
+    font-style: normal; font-family: var(--f-num); font-variant-numeric: tabular-nums;
+    font-size: 12px; text-align: right;
+  }
+  .note { font-size: 11px; color: var(--tx-3); margin: 9px 0 0; max-width: 60ch; }
+
+  .foot { padding: 18px 20px; color: var(--tx-3); font-size: 11.5px; }
+  .foot a { color: inherit; }
+</style>
+
+<div class="shell">
+  <div class="spine"><span class="vt" id="spineName">阪神タイガース</span></div>
+
+  <div class="main">
+    <div class="idline">
+      <span class="no">8</span>
+      <span class="nm">佐藤 輝明</span>
+      <span class="sub">内野手　右投左打　1999年3月13日　187cm／96kg</span>
+      <span class="asof">2026年8月14日現在</span>
+    </div>
+
+    <div class="rail">
+      <span class="lbl">見出し</span>
+      <button class="tab" data-preset="standard" aria-pressed="true">標準</button>
+      <button class="tab" data-preset="record">記録</button>
+      <button class="tab" data-preset="analysis">分析</button>
+      <button class="tab" data-preset="light">簡易</button>
+      <span class="grow"></span>
+      <span class="lbl">密度</span>
+      <button class="tab" data-density="normal" aria-pressed="true">標準</button>
+      <button class="tab" data-density="compact">高</button>
+      <button class="tab" id="editBtn" aria-pressed="false">組み替え</button>
+    </div>
+
+    <div class="editor" id="editor" hidden>
+      <h3>ページの組み替え</h3>
+      <p>表示するブロックと並び順を決めます。設定はこの端末に残ります。</p>
+      <div class="blocks" id="blockList"></div>
+      <div class="fixed-note">
+        <b>外せないもの</b> — 比率の隣の分母（打席数・打数）は常に出ます。
+        10打席の .400 を順位として見せないための決まりで、設定では消せません。
+      </div>
+    </div>
+
+    <!-- 基本成績 -->
+    <section class="block" id="b-standard">
+      <h4>基本成績</h4>
+      <div class="cols">
+        <dl>
+          <dt>試合</dt><dd>104</dd>
+          <dt>打席</dt><dd>442</dd>
+          <dt>打数</dt><dd>382</dd>
+          <dt>安打</dt><dd>121</dd>
+          <dt>二塁打</dt><dd>29</dd>
+          <dt>三塁打</dt><dd>3</dd>
+        </dl>
+        <dl>
+          <dt>本塁打</dt><dd>27<span class="rank">2位</span></dd>
+          <dt>打点</dt><dd>76</dd>
+          <dt>得点</dt><dd>76</dd>
+          <dt>四球</dt><dd>56<span class="den">うち敬遠6</span></dd>
+          <dt>死球</dt><dd>1</dd>
+          <dt>三振</dt><dd>117</dd>
+        </dl>
+        <dl>
+          <dt>打率</dt><dd>.317<span class="rank">1位</span></dd>
+          <dt>出塁率</dt><dd>.403<span class="rank">1位</span></dd>
+          <dt>長打率</dt><dd>.620<span class="rank">1位</span></dd>
+          <dt>OPS</dt><dd>1.023</dd>
+          <dt>盗塁</dt><dd>5</dd>
+          <dt>失策出塁</dt><dd>4</dd>
+        </dl>
+      </div>
+    </section>
+
+    <!-- セイバー -->
+    <section class="block" id="b-advanced">
+      <h4>セイバーメトリクス</h4>
+      <div class="cols">
+        <dl>
+          <dt>wOBA</dt><dd>.441<span class="den">442打席</span></dd>
+          <dt>wRC+</dt><dd>227.1<span class="rank">1位</span></dd>
+          <dt>wRAA</dt><dd>+51.9</dd>
+        </dl>
+        <dl>
+          <dt>SRC 状況得点貢献</dt><dd>+57.9<span class="rank">1位</span></dd>
+          <dt>SRC／600打席</dt><dd>+78.7</dd>
+          <dt>ISO</dt><dd>.303</dd>
+        </dl>
+        <dl>
+          <dt>BABIP</dt><dd>.361<span class="den">271打数</span></dd>
+          <dt>三振率</dt><dd>26.5%<span class="den">442打席</span></dd>
+          <dt>四球率</dt><dd>12.7%<span class="den">442打席</span></dd>
+        </dl>
+      </div>
+      <p class="note">
+        SRC は打席ごとに得点期待値をどれだけ動かしたかの合計。<b>守備・走塁・ポジション補正を含みません</b>。
+        WAR とは別物で、比較はできません。
+      </p>
+    </section>
+
+    <!-- スプリット -->
+    <section class="block" id="b-splits">
+      <h4>
+        スプリット
+        <span class="sw">
+          <button class="tab" data-split="hand" aria-pressed="true">対投手</button>
+          <button class="tab" data-split="base">走者状況</button>
+          <button class="tab" data-split="homeAway">本拠地</button>
+          <button class="tab" data-split="month">月別</button>
+        </span>
+      </h4>
+      <div class="bars" id="splitBars"></div>
+      <p class="note" id="splitNote"></p>
+    </section>
+
+    <!-- 打席記録（A案） -->
+    <section class="block" id="b-scorebook">
+      <h4>打席記録　<span style="letter-spacing:0;font-weight:400;color:var(--tx-3)">8月12日〜14日</span></h4>
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th class="l">日付</th><th class="l">対戦</th><th class="l">1</th><th class="l">2</th><th class="l">3</th><th class="l">4</th><th class="l">5</th><th>打数</th><th>安打</th><th>本</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="l">8/14</td><td class="l">DeNA</td><td class="l pa h">左越本①</td><td class="l pa">三 振</td><td class="l pa">遊ゴロ</td><td class="l pa h">中前安</td><td class="l pa">四 球</td><td>4</td><td>2</td><td>1</td></tr>
+            <tr><td class="l">8/13</td><td class="l">広島</td><td class="l pa">二ゴロ</td><td class="l pa h">右線２②</td><td class="l pa">三 振</td><td class="l pa">中 飛</td><td class="l pa">—</td><td>4</td><td>1</td><td>0</td></tr>
+            <tr><td class="l">8/12</td><td class="l">広島</td><td class="l pa">四 球</td><td class="l pa">遊併打</td><td class="l pa h">左中２</td><td class="l pa">三 振</td><td class="l pa">—</td><td>3</td><td>1</td><td>0</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">結果表記は公式記録のまま。解釈を挟まず、元の記録をそのまま出しています。</p>
+    </section>
+
+    <!-- 状況盤（B案） -->
+    <section class="block" id="b-situation">
+      <h4>得点期待値　<span style="letter-spacing:0;font-weight:400;color:var(--tx-3)">セ・リーグ 2026 · 我々の集計</span></h4>
+      <div class="scroller">
+        <div class="dg" id="reGrid"></div>
+      </div>
+      <p class="note">
+        下段は標本数。<b style="color:var(--tx-3)">薄い値</b>は標本100未満で、それだけ揺れます。
+        この表は他所から借りず、我々のアーカイブ23,119打席から作っています。
+      </p>
+    </section>
+
+    <!-- 対戦成績 -->
+    <section class="block" id="b-matchup">
+      <h4>対戦投手別　<span style="letter-spacing:0;font-weight:400;color:var(--tx-3)">6打席以上</span></h4>
+      <div class="scroller">
+        <table>
+          <thead><tr><th class="l">投手</th><th>打席</th><th>打数</th><th>安打</th><th>本</th><th>三振</th><th>四球</th><th>打率</th></tr></thead>
+          <tbody id="matchupBody"></tbody>
+        </table>
+      </div>
+      <p class="note">
+        <b>順位は付けません。</b>ほとんどが10打席未満で、並べた瞬間に「この投手に強い」と読まれてしまうためです。
+        打席数の多い順に並べ、薄い標本は色を落としています。
+      </p>
+    </section>
+
+    <!-- 順位表 -->
+    <section class="block" id="b-ranking">
+      <h4>
+        セ・リーグ順位　<span style="letter-spacing:0;font-weight:400;color:var(--tx-3)">規定打席 332 以上</span>
+        <span class="sw">
+          <button class="tab" data-sort="wrcPlus" aria-pressed="true">wRC+</button>
+          <button class="tab" data-sort="src">SRC</button>
+          <button class="tab" data-sort="ops">OPS</button>
+          <button class="tab" data-sort="avg">打率</button>
+          <button class="tab" data-sort="hr">本塁打</button>
+        </span>
+      </h4>
+      <div class="scroller">
+        <table>
+          <thead><tr><th class="l">順</th><th class="l">選手</th><th class="l">球団</th><th>打席</th><th>打率</th><th>OPS</th><th>本</th><th>wRC+</th><th>SRC</th></tr></thead>
+          <tbody id="boardBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <p class="foot">
+      出典 <a href="https://npb.jp/">日本野球機構（npb.jp）</a>。数値は当サイトが公式記録から集計したものです。
+      誤りのご指摘・掲載停止のご依頼はお問い合わせから。
+    </p>
+  </div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  const DATA = {
+    splits: {
+      hand: { label: "対投手 左右", note: "投げる手は選手ページから取得。695人全員ぶん揃っています。",
+        rows: [["対 左投", .341, 148, ".341/.399/.637"], ["対 右投", .304, 294, ".304/.405/.611"]] },
+      base: { label: "走者状況", note: "得点圏は二塁または三塁に走者がいる状態。数え方はサイトによって違うため明記しています。",
+        rows: [["得点圏", .359, 118, ".359/.475/.696"], ["走者なし", .306, 228, ".306/.373/.602"], ["走者あり", .298, 96, ".298/.385/.583"]] },
+      homeAway: { label: "本拠地", note: "",
+        rows: [["本拠地", .316, 204, ".316/.397/.633"], ["敵地", .317, 238, ".317/.408/.610"]] },
+      month: { label: "月別", note: "1か月は本質的に標本が薄い。3月の .375 は17打席です。",
+        rows: [["3月", .375, 17, ".375/.412/.563"], ["4月", .376, 100, ".376/.450/.776"], ["5月", .363, 104, ".363/.442/.670"],
+               ["6月", .286, 75, ".286/.387/.460"], ["7月", .229, 95, ".229/.326/.506"], ["8月", .295, 51, ".295/.392/.682"]] }
+    },
+    matchups: [
+      ["柳", 14, 12, 2, 1, 4, 2, ".167"], ["マラー", 13, 12, 4, 2, 5, 1, ".333"],
+      ["栗林", 13, 13, 1, 1, 4, 0, ".077"], ["髙橋宏", 12, 8, 4, 1, 3, 3, ".500"],
+      ["山野", 9, 9, 1, 0, 3, 0, ".111"], ["竹丸", 9, 8, 2, 0, 3, 0, ".250"]
+    ],
+    board: [
+      { n: "佐藤", t: "阪神", pa: 442, avg: .317, ops: 1.023, hr: 27, wrcPlus: 227.1, src: 57.9, me: true },
+      { n: "森下", t: "阪神", pa: 454, avg: .288, ops: .943, hr: 28, wrcPlus: 201.4, src: 26.4 },
+      { n: "サンタナ", t: "ヤクルト", pa: 361, avg: .245, ops: .823, hr: 15, wrcPlus: 158.2, src: 13.9 },
+      { n: "ダルベック", t: "巨人", pa: 413, avg: .265, ops: .820, hr: 20, wrcPlus: 152.6, src: 16.6 },
+      { n: "大山", t: "阪神", pa: 424, avg: .273, ops: .797, hr: 13, wrcPlus: 151.2, src: 19.5 },
+      { n: "細川", t: "中日", pa: 450, avg: .232, ops: .786, hr: 19, wrcPlus: 147.7, src: 17.4 }
+    ],
+    re: [
+      ["走者なし", [[.381, 5729], [.195, 4227], [.077, 3399]]],
+      ["一塁", [[.743, 1294], [.421, 1476], [.175, 1466]]],
+      ["二塁", [[1.055, 290], [.596, 651], [.249, 814]]],
+      ["三塁", [[1.762, 21], [.929, 155], [.332, 292]]],
+      ["一二塁", [[1.572, 283], [.814, 592], [.365, 767]]],
+      ["満塁", [[2.521, 96], [1.327, 220], [.593, 312]]]
+    ]
+  };
+
+  const BLOCKS = [
+    { id: "standard", name: "基本成績", desc: "打率・本塁打・打点ほか" },
+    { id: "advanced", name: "セイバーメトリクス", desc: "wOBA・wRC+・SRC" },
+    { id: "splits", name: "スプリット", desc: "対投手左右・走者状況・本拠地・月別" },
+    { id: "scorebook", name: "打席記録", desc: "公式記録の表記そのまま" },
+    { id: "situation", name: "得点期待値", desc: "24の塁・アウト状況" },
+    { id: "matchup", name: "対戦投手別", desc: "標本は薄い" },
+    { id: "ranking", name: "リーグ順位", desc: "指標を選んで並べ替え" }
+  ];
+
+  const PRESETS = {
+    standard: ["standard", "advanced", "splits", "ranking"],
+    record: ["standard", "scorebook", "splits", "matchup"],
+    analysis: ["advanced", "situation", "splits", "matchup", "ranking"],
+    light: ["standard"]
+  };
+
+  const KEY = "npb-meikan-layout";
+  const load = () => { try { return JSON.parse(localStorage.getItem(KEY) || "null"); } catch { return null; } };
+  const save = (s) => { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch { /* 保存できなくても動く */ } };
+
+  let state = load() || { order: PRESETS.standard.slice(), preset: "standard", density: "normal", split: "hand", sort: "wrcPlus" };
+  if (!Array.isArray(state.order) || state.order.length === 0) state.order = PRESETS.standard.slice();
+
+  const $ = (s) => document.querySelector(s);
+  const main = $(".main");
+
+  function press(sel, attr, val) {
+    document.querySelectorAll(sel).forEach((b) => b.setAttribute("aria-pressed", String(b.dataset[attr] === val)));
+  }
+
+  function renderBlocks() {
+    // 並び順どおりに DOM を並べ替え、含まれないものは隠す
+    const anchor = $("#b-ranking").parentNode;
+    state.order.forEach((id) => {
+      const el = document.getElementById("b-" + id);
+      if (el) anchor.insertBefore(el, $(".foot"));
+    });
+    BLOCKS.forEach((b) => {
+      const el = document.getElementById("b-" + b.id);
+      if (el) el.hidden = !state.order.includes(b.id);
+    });
+    document.documentElement.style.setProperty("--gap", state.density === "compact" ? "10px" : "18px");
+    document.querySelectorAll(".block").forEach((el) => {
+      el.style.paddingTop = state.density === "compact" ? "10px" : "16px";
+      el.style.paddingBottom = state.density === "compact" ? "10px" : "16px";
+    });
+  }
+
+  function renderEditor() {
+    const host = $("#blockList");
+    host.textContent = "";
+    const ordered = state.order.concat(BLOCKS.map((b) => b.id).filter((id) => !state.order.includes(id)));
+    ordered.forEach((id, i) => {
+      const meta = BLOCKS.find((b) => b.id === id);
+      if (!meta) return;
+      const on = state.order.includes(id);
+      const row = document.createElement("div");
+      row.className = "brow";
+
+      const cb = document.createElement("input");
+      cb.type = "checkbox"; cb.checked = on;
+      cb.setAttribute("aria-label", meta.name + "を表示");
+      cb.addEventListener("change", () => {
+        state.order = cb.checked
+          ? state.order.concat([id])
+          : state.order.filter((x) => x !== id);
+        state.preset = "";
+        press(".rail [data-preset]", "preset", "");
+        commit();
+      });
+
+      const txt = document.createElement("div");
+      const n = document.createElement("div"); n.className = "bn"; n.textContent = meta.name;
+      const d = document.createElement("div"); d.className = "bd"; d.textContent = meta.desc;
+      txt.append(n, d);
+
+      const up = document.createElement("button");
+      up.className = "mv"; up.type = "button"; up.textContent = "↑";
+      up.setAttribute("aria-label", meta.name + "を上へ");
+      up.disabled = !on || state.order.indexOf(id) <= 0;
+      up.addEventListener("click", () => { move(id, -1); });
+
+      const dn = document.createElement("button");
+      dn.className = "mv"; dn.type = "button"; dn.textContent = "↓";
+      dn.setAttribute("aria-label", meta.name + "を下へ");
+      dn.disabled = !on || state.order.indexOf(id) >= state.order.length - 1;
+      dn.addEventListener("click", () => { move(id, 1); });
+
+      row.append(cb, txt, up, dn);
+      host.append(row);
+    });
+  }
+
+  function move(id, delta) {
+    const i = state.order.indexOf(id);
+    const j = i + delta;
+    if (i < 0 || j < 0 || j >= state.order.length) return;
+    const next = state.order.slice();
+    next.splice(j, 0, next.splice(i, 1)[0]);
+    state.order = next;
+    state.preset = "";
+    press(".rail [data-preset]", "preset", "");
+    commit();
+  }
+
+  function renderSplit() {
+    const s = DATA.splits[state.split];
+    const host = $("#splitBars");
+    host.textContent = "";
+    const max = Math.max.apply(null, s.rows.map((r) => r[1]));
+    s.rows.forEach(([label, avg, pa, slash]) => {
+      const row = document.createElement("div"); row.className = "bar";
+      const l = document.createElement("span"); l.textContent = label;
+      const t = document.createElement("div"); t.className = "track";
+      const i = document.createElement("i"); i.style.width = Math.round((avg / max) * 100) + "%";
+      // 標本が薄いものは塗りを弱め、太字にしない
+      if (pa < 100) i.style.opacity = ".45";
+      t.append(i);
+      const em = document.createElement("em");
+      em.append(document.createTextNode(slash + " "));
+      const den = document.createElement("span"); den.className = "den"; den.textContent = pa + "打席";
+      em.append(den);
+      row.append(l, t, em);
+      host.append(row);
+    });
+    $("#splitNote").textContent = s.note;
+    press("#b-splits [data-split]", "split", state.split);
+  }
+
+  function renderMatchups() {
+    const body = $("#matchupBody");
+    body.textContent = "";
+    DATA.matchups.forEach((m) => {
+      const tr = document.createElement("tr");
+      if (m[1] < 10) tr.className = "thin";
+      [m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7]].forEach((v, i) => {
+        const td = document.createElement("td");
+        if (i === 0) td.className = "l";
+        td.textContent = String(v);
+        tr.append(td);
+      });
+      body.append(tr);
+    });
+  }
+
+  function renderBoard() {
+    const key = state.sort;
+    const rows = DATA.board.slice().sort((a, b) => b[key] - a[key]);
+    const body = $("#boardBody");
+    body.textContent = "";
+    rows.forEach((r, i) => {
+      const tr = document.createElement("tr");
+      if (r.me) tr.className = "me";
+      const cells = [
+        String(i + 1), r.n, r.t, r.pa,
+        r.avg.toFixed(3).replace(/^0/, ""), r.ops.toFixed(3).replace(/^0/, ""),
+        r.hr, r.wrcPlus.toFixed(1), (r.src >= 0 ? "+" : "") + r.src.toFixed(1)
+      ];
+      cells.forEach((v, ci) => {
+        const td = document.createElement("td");
+        if (ci < 3) td.className = "l";
+        td.textContent = String(v);
+        tr.append(td);
+      });
+      body.append(tr);
+    });
+    press("#b-ranking [data-sort]", "sort", state.sort);
+  }
+
+  function renderRe() {
+    const g = $("#reGrid");
+    g.textContent = "";
+    ["", "無死", "一死", "二死"].forEach((h) => {
+      const d = document.createElement("div");
+      d.className = h ? "h" : "";
+      d.textContent = h;
+      g.append(d);
+    });
+    DATA.re.forEach(([label, cells]) => {
+      const rl = document.createElement("div"); rl.className = "rl"; rl.textContent = label;
+      g.append(rl);
+      cells.forEach(([v, n]) => {
+        const c = document.createElement("div");
+        c.className = "c" + (n < 100 ? " thin" : "");
+        const u = document.createElement("u"); u.textContent = v.toFixed(3);
+        const s = document.createElement("s"); s.textContent = String(n);
+        c.append(u, s);
+        g.append(c);
+      });
+    });
+  }
+
+  function commit() {
+    save(state);
+    renderBlocks();
+    renderEditor();
+  }
+
+  // ---- 操作 ----
+  document.querySelectorAll(".rail [data-preset]").forEach((b) => {
+    b.addEventListener("click", () => {
+      state.preset = b.dataset.preset;
+      state.order = PRESETS[state.preset].slice();
+      press(".rail [data-preset]", "preset", state.preset);
+      commit();
+    });
+  });
+  document.querySelectorAll(".rail [data-density]").forEach((b) => {
+    b.addEventListener("click", () => {
+      state.density = b.dataset.density;
+      press(".rail [data-density]", "density", state.density);
+      commit();
+    });
+  });
+  $("#editBtn").addEventListener("click", () => {
+    const open = $("#editor").hidden;
+    $("#editor").hidden = !open;
+    $("#editBtn").setAttribute("aria-pressed", String(open));
+  });
+  document.querySelectorAll("#b-splits [data-split]").forEach((b) => {
+    b.addEventListener("click", () => { state.split = b.dataset.split; save(state); renderSplit(); });
+  });
+  document.querySelectorAll("#b-ranking [data-sort]").forEach((b) => {
+    b.addEventListener("click", () => { state.sort = b.dataset.sort; save(state); renderBoard(); });
+  });
+
+  // ---- 初期描画 ----
+  press(".rail [data-preset]", "preset", state.preset);
+  press(".rail [data-density]", "density", state.density);
+  renderBlocks(); renderEditor(); renderSplit(); renderMatchups(); renderBoard(); renderRe();
+})();
+</script>
