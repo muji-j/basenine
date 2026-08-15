@@ -133,7 +133,7 @@ rm -rf .tmp-empty
 |---|---|
 | Application domain | `bb-app-7mk.pages.dev` |
 | Identity provider | **One-time PIN**(기본 제공). 아래 참조 |
-| Policy | Action **Allow** · Include **Emails** 에 주소를 하나씩 열거 |
+| Policy |  · Action **Allow** · Include **Emails** 에 주소를 하나씩 열거 |
 | Session | 24시간 |
 
 #### ⚠IdP는 문지기가 아니다
@@ -235,7 +235,7 @@ Access는 두 층이다. **애플리케이션은 이메일을 갖지 않고 정�
 | 애플리케이션 2개 | **어느 주소를** | Access → Applications |
 
 ```
-allow_emails ──┬─→ bb-app-7mk.pages.dev        (프로덕션)
+friends_allowlist ──┬─→ bb-app-7mk.pages.dev        (프로덕션)
                └─→ *.bb-app-7mk.pages.dev      (배포별 별칭)
 ```
 
@@ -264,6 +264,18 @@ allow_emails ──┬─→ bb-app-7mk.pages.dev        (프로덕션)
 3. 남은 중복 정책을 지운다. ⚠**지우기 전에 `Used by applications`가 0인지 확인한다**
 
 **완료 신호**: 정책이 **1개**만 남고, 그 `Used by applications`가 **2**.
+
+##### 최종 상태 (2026-08-15 확인)
+
+| 항목 | 값 |
+|---|---|
+| 정책 | `friends_allowlist` **1개** · Allow · Rules 1 |
+| `Used by applications` | **2** |
+| Policy ID | `12fcaef5-705f-4884-93c8-17accc3b8965` |
+| `bb-app-7mk.pages.dev` | 302 → Access 로그인 |
+| `ae09c431.bb-app-7mk.pages.dev` | 302 → Access 로그인(자기 호스트명으로) |
+
+**지인을 넣고 뺄 곳은 `Access → Policies → friends_allowlist` 한 곳이다.**
 
 안 되는 경우의 대안(이번에는 쓰지 않았다):
 - 앱을 하나 더 만든다 — subdomain `*` · domain `bb-app-7mk.pages.dev`.
