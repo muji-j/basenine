@@ -12,6 +12,7 @@
     "test": "node --test \"packages/*/test/*.test.ts\"",
     "typecheck": "tsc -p tsconfig.json",
     "build:web": "node packages/web/tools/build.ts data/bb.sqlite dist 2026",
+    "preview": "node scripts/preview.ts dist 4173",
     "archive": "node packages/archiver/src/cli.ts",
     "update": "node scripts/update.ts",
     "freshness": "node scripts/freshness.ts data/bb.sqlite",

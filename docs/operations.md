@@ -76,7 +76,11 @@ D1 무료는 **하루 10만 행**에서 **차단**된다(과금이 아니다).
 ```
 npm run build:web            # data/bb.sqlite → dist/  (2026 시즌)
 BB_CONTACT="..." npm run build:web
+npm run preview              # http://127.0.0.1:4173
 ```
+
+⚠**`dist/index.html`을 파일로 직접 열면 검색이 안 된다.** 선수 색인을 `fetch`로 받는데
+`file://`에서는 브라우저가 막는다. 볼 때는 `npm run preview`를 쓴다.
 
 | 항목 | 실측 (2026 시즌, 630경기 시점) |
 |---|---|
