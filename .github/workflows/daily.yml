@@ -102,11 +102,15 @@ jobs:
           set -euo pipefail
           mkdir -p ops
           node scripts/archive-guard.ts write data/archive ops/archive-manifest.json
-          node scripts/freshness.ts data/bb.sqlite 2 >> ops/collection-log.txt 2>&1 || true
+          # ⚠**구조화 기록(JSONL)이 화면의 근거다.** 사람이 읽는 산문 로그는 그대로 두되,
+          # 화면이 산문을 파싱하게 만들지 않는다 — 문구를 다듬는 순간 조용히 0이 나오는 길이 생긴다.
+          # ⚠경기 0건인 날과 크론이 안 돈 날은 DB만으로는 구별되지 않는다. 이 줄이 그 둘을 가른다.
+          node scripts/freshness.ts data/bb.sqlite 2 --json ops/collection-log.jsonl \
+            >> ops/collection-log.txt 2>&1 || true
           echo "--- $(date -u +%FT%TZ) ---" >> ops/collection-log.txt
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add ops/collection-log.txt ops/archive-manifest.json
+          git add ops/collection-log.txt ops/collection-log.jsonl ops/archive-manifest.json
           git diff --staged --quiet || git commit -m "chore(ops): collection log"
           git push
 

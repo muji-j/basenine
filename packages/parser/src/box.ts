@@ -206,15 +206,30 @@ function parseBatting(html: string, id: string): BatterRow[] {
     if (at < 0) throw new BoxParseError(`타격표 헤더에서 ${key} 열을 찾지 못했다`, `id=${id} header=${header.join("|")}`);
   }
 
+  /**
+   * ⚠**빈 타순 칸은 「없음」이 아니라 「위와 같음」이다.**
+   *
+   * 박스스코어는 선발 9명에게만 번호를 찍고, 교대로 들어간 선수는 칸을 비운 채
+   * **바로 위 선수의 타순을 잇는다**(대타·대주자·수비 교대 전부). 실측(2026-08-15):
+   * 17,351행 중 5,975행(34%)이 교대 선수이고, 이어받지 않으면 그 34%가 통째로
+   * 「타순 불명」이 되어 타순별 집계에서 사라진다.
+   *
+   * ⚠팀 합계 행에서는 잇지 않는다 — 팀에는 타순이 없다.
+   */
+  let carried: string | null = null;
+
   return rows.slice(1).map((cells) => {
     const order = text(cells[0]);
     const name = text(cells[col.name]);
+    const isTeamTotal = name === TEAM_TOTAL_LABEL;
+    if (order !== "") carried = order;
+    else if (isTeamTotal) carried = null;
     return {
-      order: order === "" ? null : order,
+      order: isTeamTotal ? null : carried,
       position: text(cells[col.position]),
       name,
       playerId: extractPlayerId(cells[col.name]),
-      isTeamTotal: name === TEAM_TOTAL_LABEL,
+      isTeamTotal,
       ab: requireNum(cells[col.ab], "打数", id),
       runs: requireNum(cells[col.runs], "得点", id),
       hits: requireNum(cells[col.hits], "安打", id),

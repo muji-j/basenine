@@ -13,7 +13,12 @@ import { foldOutcomes } from "@bb-app/store";
 import type { BattingLine } from "@bb-app/metrics";
 
 /** 나눌 축. */
-export type SplitDimension = "opponentHand" | "homeAway" | "baseState" | "month";
+export type SplitDimension =
+  | "opponentHand"
+  | "homeAway"
+  | "baseState"
+  | "month"
+  | "battingOrder";
 
 export interface SplitLine {
   /** 축 안의 구분값. `left`/`right` · `home`/`away` · `empty`/`onBase`/`scoring` · `2026-04` */
@@ -46,6 +51,9 @@ const KEY_EXPR: Readonly<Record<SplitDimension, string>> = {
       WHEN e.bases LIKE '%2%' OR e.bases LIKE '%3%' THEN 'scoring'
       ELSE 'onBase' END`,
   month: `substr(g.game_date, 1, 7)`,
+  // ⚠타순은 타석 로그에 없다. **박스스코어의 타순 칸**에서 온다.
+  // 교대 선수는 위 선수의 타순을 잇는다(파서가 처리) — 안 이으면 34%가 「불명」이 된다
+  battingOrder: `bl.batting_order`,
 };
 
 const SQL = (dimension: SplitDimension): string => `
@@ -59,6 +67,7 @@ FROM pa_event e
 JOIN game g ON g.game_id = e.game_id
 JOIN player b ON b.player_id = e.batter_id
 LEFT JOIN player pit ON pit.player_id = e.pitcher_id
+LEFT JOIN batting_line bl ON bl.game_id = e.game_id AND bl.player_id = e.batter_id
 WHERE g.season = ? AND g.status = 'played' AND g.competition = ?
   AND g.game_date <= ? AND e.status = 'final'
 GROUP BY e.batter_id, splitKey, e.outcome
@@ -150,6 +159,8 @@ const PITCHER_KEY_EXPR: Readonly<Record<SplitDimension, string>> = {
       WHEN e.bases LIKE '%2%' OR e.bases LIKE '%3%' THEN 'scoring'
       ELSE 'onBase' END`,
   month: `substr(g.game_date, 1, 7)`,
+  // ⚠투수 쪽의 「타순」은 **상대 타자가 몇 번이었는가**다. 자기 타순이 아니다
+  battingOrder: `bl.batting_order`,
 };
 
 const PITCHER_SQL = (dimension: SplitDimension): string => `
@@ -163,6 +174,7 @@ FROM pa_event e
 JOIN game g ON g.game_id = e.game_id
 JOIN player pit ON pit.player_id = e.pitcher_id
 LEFT JOIN player bat ON bat.player_id = e.batter_id
+LEFT JOIN batting_line bl ON bl.game_id = e.game_id AND bl.player_id = e.batter_id
 WHERE g.season = ? AND g.status = 'played' AND g.competition = ?
   AND g.game_date <= ? AND e.status = 'final' AND e.pitcher_id IS NOT NULL
 GROUP BY e.pitcher_id, splitKey, e.outcome

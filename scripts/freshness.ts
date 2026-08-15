@@ -72,5 +72,39 @@ if (counts.quarantine > 0) {
   }
 }
 
+/**
+ * 실행 기록을 **한 줄 JSON**으로 덧붙인다.
+ *
+ * ⚠**산문 로그를 화면이 파싱하게 만들지 않는다**(M7의 정신). 사람이 읽는 로그는 그대로 두고,
+ * 화면이 읽을 것은 처음부터 구조화해서 남긴다 — 문구를 한 번 다듬는 순간
+ * 파서가 조용히 0을 뱉는 길을 만들지 않기 위해서다.
+ *
+ * ⚠**경기가 0건인 날과 크론이 안 돈 날은 DB만 봐서는 구별되지 않는다.**
+ * 이 기록이 그 둘을 가르는 유일한 근거다.
+ */
+const jsonAt = process.argv.indexOf("--json");
+if (jsonAt >= 0) {
+  const path = process.argv[jsonAt + 1];
+  if (path === undefined) {
+    console.error("--json 뒤에 경로가 필요하다");
+    process.exitCode = 2;
+  } else {
+    const { appendFileSync } = await import("node:fs");
+    const record = {
+      // 실행 시각(UTC). ⚠경기일은 JST, 실행 시각은 UTC — 섞지 않는다
+      ranAt: new Date().toISOString(),
+      todayJst,
+      latestGameDate: latest.d,
+      games: counts.games,
+      pa: counts.pa,
+      players: counts.players,
+      noHand: counts.noHand,
+      quarantine: counts.quarantine,
+      stale,
+    };
+    appendFileSync(path, `${JSON.stringify(record)}\n`, "utf8");
+  }
+}
+
 db.close();
 process.exitCode = stale ? 1 : 0;

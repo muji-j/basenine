@@ -7,7 +7,7 @@ import { openDb, replacePaEvents, upsertGame, upsertPlayer } from "@bb-app/store
 import type { Db, PaEventRow } from "@bb-app/store";
 import { buildRunExpectancy, stateKey } from "../src/run-expectancy.ts";
 import type { RunExpectancy } from "../src/run-expectancy.ts";
-import { computeSrc } from "../src/situational.ts";
+import { computeSrc, computeSrp } from "../src/situational.ts";
 
 const NOW = "2026-08-15T00:00:00.000Z";
 
@@ -148,5 +148,79 @@ test("올스타전은 SRC에 들어가지 않는다", async () => {
     replacePaEvents(db, "as1", [ev({ gameId: "as1", seq: 1, batterId: "B1", bases: "1", runsScored: 2 })]);
     const [e] = computeSrc(db, FIXED_RE, ["t", "g"]);
     assert.equal(e?.pa, 1);
+  });
+});
+
+// ── SRP (투수판) ──────────────────────────────────────────────────────────
+
+test("⚠SRP는 같은 타석에서 SRC의 정확한 반대다 — 타자가 얻은 것이 투수가 내준 것이다", async () => {
+  await withDb((db) => {
+    seedGame(db, "g1");
+    upsertPlayer(db, "B1", "타자", NOW);
+    replacePaEvents(db, "g1", [
+      ev({ gameId: "g1", seq: 1, batterId: "B1", outsBefore: 0, bases: "" }),
+      ev({ gameId: "g1", seq: 2, batterId: "B1", outsBefore: 0, bases: "1", runsScored: 1 }),
+      ev({ gameId: "g1", seq: 3, batterId: "B1", outsBefore: 1, bases: "1" }),
+    ]);
+    const [bat] = computeSrc(db, FIXED_RE, ["t", "g"]);
+    const [pit] = computeSrp(db, FIXED_RE, ["t", "g"]);
+    assert.ok(bat && pit);
+    assert.ok(
+      Math.abs(bat.src + pit.srp) < 1e-9,
+      `부호만 반대여야 한다: SRC ${bat.src} · SRP ${pit.srp}`,
+    );
+    assert.equal(pit.bf, bat.pa, "같은 타석 수를 세야 한다");
+    assert.equal(pit.playerId, "P1");
+  });
+});
+
+test("실점을 막으면 SRP가 양수다 — 부호 방향을 고정한다", async () => {
+  await withDb((db) => {
+    seedGame(db, "g1");
+    upsertPlayer(db, "B1", "타자", NOW);
+    // 1루 무사(0.8)에서 아무도 안 들어오고 이닝 종료 → 0.8을 막았다
+    replacePaEvents(db, "g1", [ev({ gameId: "g1", seq: 1, batterId: "B1", outsBefore: 0, bases: "1" })]);
+    const [good] = computeSrp(db, FIXED_RE, ["t", "g"]);
+    assert.ok(good && Math.abs(good.srp - 0.8) < 1e-9, `막았으면 양수여야 한다: ${good?.srp}`);
+  });
+});
+
+test("실점하면 SRP가 음수가 된다", async () => {
+  await withDb((db) => {
+    seedGame(db, "g1");
+    upsertPlayer(db, "B1", "타자", NOW);
+    // 1루 무사(0.8)에서 2점 주고 이닝 종료 → −(0 − 0.8 + 2) = −1.2
+    replacePaEvents(db, "g1", [
+      ev({ gameId: "g1", seq: 1, batterId: "B1", outsBefore: 0, bases: "1", runsScored: 2 }),
+    ]);
+    const [bad] = computeSrp(db, FIXED_RE, ["t", "g"]);
+    assert.ok(bad && Math.abs(bad.srp + 1.2) < 1e-9, `내줬으면 음수여야 한다: ${bad?.srp}`);
+  });
+});
+
+test("⚠RE에 없는 상태는 SRP에서도 0으로 때우지 않는다", async () => {
+  await withDb((db) => {
+    seedGame(db, "g1");
+    upsertPlayer(db, "B1", "타자", NOW);
+    // 만루는 FIXED_RE에 없다
+    replacePaEvents(db, "g1", [ev({ gameId: "g1", seq: 1, batterId: "B1", outsBefore: 0, bases: "123" })]);
+    const [e] = computeSrp(db, FIXED_RE, ["t", "g"]);
+    assert.ok(e);
+    assert.equal(e.srp, 0);
+    assert.equal(e.bf, 0, "계산 못 한 타석을 분모에 넣으면 안 된다");
+    assert.equal(e.skipped, 1);
+  });
+});
+
+test("9이닝 환산은 아웃이 없으면 null이다 — 0으로 나누지 않는다(M11)", async () => {
+  await withDb((db) => {
+    seedGame(db, "g1");
+    upsertPlayer(db, "B1", "타자", NOW);
+    replacePaEvents(db, "g1", [ev({ gameId: "g1", seq: 1, batterId: "B1", outsBefore: 0, bases: "1" })]);
+    // 투수표를 적재하지 않았으므로 아웃은 0이다
+    const [e] = computeSrp(db, FIXED_RE, ["t", "g"]);
+    assert.ok(e);
+    assert.equal(e.outs, 0);
+    assert.equal(e.srpPer9, null);
   });
 });

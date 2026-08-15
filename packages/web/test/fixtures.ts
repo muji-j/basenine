@@ -73,6 +73,7 @@ export function pitchingBlock(over: Partial<PitchingBlockData> = {}): PitchingBl
     // 기본 픽스처는 **순수 선발**이다 — 구원 등판이 0이므로 「先発・救援別」은 빈 상태를 낸다
     role: "starter",
     starts: 18,
+    srp: { srp: 12.4, bf: 400, skipped: 0, srpPer9: 1.12 },
     asStarter: { games: 18, line: PITCHING_LINE, era: r(2.7, 300), whip: r(1.1, 300), k9: r(9.9, 300) },
     asReliever: null,
     ...over,

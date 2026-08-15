@@ -107,13 +107,18 @@ export interface PitchingBlockData {
   role: "starter" | "reliever";
   /** 선발 등판 수 */
   starts: number;
+  /**
+   * SRP(状況失点抑制). RE 행렬이 없는 리그(올스타 등)면 null.
+   * ⚠**타자의 SRC와 부호가 반대인 같은 계산**이다 — 두 벌로 만들지 않는다(M1)
+   */
+  srp: { srp: number; bf: number; skipped: number; srpPer9: number | null } | null;
   /** 선발 등판분. 선발이 0경기면 null */
   asStarter: RoleLine | null;
   /** 구원 등판분. 구원이 0경기면 null */
   asReliever: RoleLine | null;
 }
 
-export type SplitAxisId = "hand" | "base" | "homeAway" | "month";
+export type SplitAxisId = "hand" | "base" | "homeAway" | "month" | "order";
 
 export interface SplitRow {
   /** 원본 구분값(`2026-04` 등). **정렬은 라벨이 아니라 이걸로 한다** — 「10月」은 「4月」보다 앞에 온다 */
@@ -622,6 +627,7 @@ function advancedBatting(b: BattingBlockData): RawHtml {
 }
 
 function advancedPitching(p: PitchingBlockData): RawHtml {
+  const srp = p.srp;
   return block({
     id: "advanced",
     title: "セイバーメトリクス",
@@ -631,8 +637,24 @@ function advancedPitching(p: PitchingBlockData): RawHtml {
       html`${statRateOuts("K/9", p.k9, 2, rk(p.ranks, "k9"), p.role)}
         ${statRateOuts("BB/9", p.bb9, 2, rk(p.ranks, "bb9"), p.role)}
         ${statRateOuts("HR/9", p.hr9, 2, null, p.role)}`,
+      srp === null
+        ? html`${statText("SRP", NO_VALUE)}`
+        : html`${statSigned("SRP", srp.srp, srp.bf, "対戦打者", rk(p.ranks, "srp"))}
+            ${statSigned("SRP/9", srp.srpPer9, srp.bf, "対戦打者")}`,
     )}
-    ${note("FIPは本塁打・四死球・奪三振だけから防御率の目盛りに換算した値です。守備の影響を切り離す代わりに、打球の質は測っていません。")}`,
+    ${note(
+      "FIPは本塁打・四死球・奪三振だけから防御率の目盛りに換算した値です。守備の影響を切り離す代わりに、打球の質は測っていません。",
+    )}
+    ${note(
+      "SRP（状況失点抑制）は、投げた打席ごとに失点の期待値をどれだけ抑えたかを合計した自前の指標です。" +
+        "0が平均で、プラスなら平均より抑えたことを表します。打者のSRCと同じ計算を裏返したものです。" +
+        "⚠自責点とは「引き継いだ走者」の扱いが逆です — SRPは各打席をその打席を投げた投手に付けるので、" +
+        "走者を残して降りた投手の責任はそこで止まり、その走者が生還した分は次の投手に付きます。" +
+        "WARではなく、WARと比較できません。" +
+        (srp === null || srp.skipped === 0
+          ? ""
+          : ` 期待値表にない状況が${srp.skipped}打席あり、計算から外しています。`),
+    )}`,
   });
 }
 

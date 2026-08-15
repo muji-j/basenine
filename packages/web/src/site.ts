@@ -13,6 +13,8 @@ import {
   searchIndexJson,
 } from "./pages.ts";
 import { renderPlayerPage } from "./player-page.ts";
+import { renderLogPage } from "./log-page.ts";
+import type { LogPageData } from "./log-page.ts";
 import { freshness, isStale } from "./layout.ts";
 import type { SiteMeta } from "./layout.ts";
 import type { SiteData } from "./query.ts";
@@ -31,7 +33,13 @@ export interface BuildResult {
   playerCount: number;
 }
 
-export function buildSite(data: SiteData, site: SiteMeta, builtOn: string): BuildResult {
+export function buildSite(
+  data: SiteData,
+  site: SiteMeta,
+  builtOn: string,
+  // ⚠수집 기록이 없으면 그 페이지를 만들지 않는다 — 빈 페이지를 두는 것보다 없는 편이 정직하다
+  log?: LogPageData,
+): BuildResult {
   const f = freshness(data.asOf, builtOn);
   const ctx = { site, freshness: f };
 
@@ -47,6 +55,10 @@ export function buildSite(data: SiteData, site: SiteMeta, builtOn: string): Buil
     },
     { path: "players.json", content: searchIndexJson(data.search) },
   ];
+
+  if (log !== undefined) {
+    files.push({ path: "log.html", content: renderLogPage(log, ctx) });
+  }
 
   for (const p of data.players) {
     // ⚠**선수 ID는 외부에서 온 문자열이고, 여기서 파일 경로가 된다.**

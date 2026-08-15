@@ -14,7 +14,7 @@ import { dirname, join, resolve } from "node:path";
 import { openDb } from "@bb-app/store";
 import { systemClock, toJstDateString } from "@bb-app/archiver";
 import { buildSite } from "../src/site.ts";
-import { loadSite } from "../src/query.ts";
+import { loadLog, loadSite } from "../src/query.ts";
 
 const [dbArg, outArg, seasonArg, throughArg] = process.argv.slice(2);
 
@@ -54,7 +54,16 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
         contact: process.env["BB_CONTACT"] ?? "",
       };
 
-      const result = buildSite(data, site, builtOn);
+      // 운영 파일은 리포 안에 있다. 없으면 収集ログ 페이지가 「기록 없음」으로 그려진다
+      const log = loadLog(db, {
+        season,
+        builtOn,
+        runLogPath: "ops/collection-log.jsonl",
+        manifestPath: "ops/archive-manifest.json",
+        ...(throughArg === undefined ? {} : { through: throughArg }),
+      });
+
+      const result = buildSite(data, site, builtOn, log);
 
       rmSync(outDir, { recursive: true, force: true });
       let bytes = 0;

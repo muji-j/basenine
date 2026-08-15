@@ -68,11 +68,41 @@ test("선수 ID 추출", () => {
   assert.equal(extractPlayerId(undefined), null);
 });
 
-test("교체 선수는 타순이 비어 있다", () => {
+test("⚠교체 선수는 위 선수의 타순을 잇는다 — 빈 칸은 「없음」이 아니라 「위와 같음」이다", () => {
   const box = parseBoxScore(fixture());
   if (box.status !== "played") return assert.fail("played여야 한다");
-  assert.equal(box.away.batters[1]?.order, null);
+  // 2026-08-15 이전에는 여기서 null을 기대했다. **그게 틀렸다** —
+  // 대타는 자기 타순이 없는 것이 아니라 바꿔 들어간 자리의 타순으로 친다.
+  // null로 두면 실데이터의 34%(17,351행 중 5,975행)가 타순별 집계에서 사라진다.
   assert.equal(box.away.batters[1]?.name, "代打太郎");
+  assert.equal(box.away.batters[1]?.order, "1", "대타가 1번 자리를 이어받아야 한다");
+});
+
+test("팀 합계 행에는 타순이 없다 — 팀은 타순을 갖지 않는다", () => {
+  const box = parseBoxScore(fixture());
+  if (box.status !== "played") return assert.fail("played여야 한다");
+  const total = box.away.batters.find((b) => b.isTeamTotal);
+  assert.ok(total, "팀 합계 행이 없다");
+  assert.equal(total.order, null, "합계 행이 마지막 타자의 타순을 이어받았다");
+});
+
+test("여러 번 교체돼도 각자 자기 자리의 타순을 잇는다", () => {
+  const rows =
+    `<tr><td>1</td><td>(遊)</td><td class="player"><a href="/bis/players/41845132.html">一番</a></td><td>1</td><td>0</td><td>0</td><td>0</td><td>0</td><td>三 振</td><td>-</td><td>-</td></tr>
+     <tr><td>&nbsp;</td><td>(打)</td><td class="player"><a href="/bis/players/11015138.html">一番の代打</a></td><td>1</td><td>0</td><td>0</td><td>0</td><td>0</td><td>-</td><td>二ゴロ</td><td>-</td></tr>
+     <tr><td>2</td><td>(中)</td><td class="player"><a href="/bis/players/11015139.html">二番</a></td><td>1</td><td>0</td><td>0</td><td>0</td><td>0</td><td>-</td><td>-</td><td>三 振</td></tr>
+     <tr><td>&nbsp;</td><td>(打)</td><td class="player"><a href="/bis/players/11015140.html">二番の代打</a></td><td>1</td><td>0</td><td>0</td><td>0</td><td>0</td><td>-</td><td>-</td><td>二ゴロ</td></tr>`;
+  const box = parseBoxScore(fixture({ battingRows: rows }));
+  if (box.status !== "played") return assert.fail("played여야 한다");
+  assert.deepEqual(
+    box.away.batters.map((b) => [b.name, b.order]),
+    [
+      ["一番", "1"],
+      ["一番の代打", "1"],
+      ["二番", "2"],
+      ["二番の代打", "2"],
+    ],
+  );
 });
 
 test("빈 칸(-)은 타석으로 세지 않는다", () => {

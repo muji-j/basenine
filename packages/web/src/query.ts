@@ -34,6 +34,7 @@ import {
   buildLeagues,
   buildRunExpectancy,
   computeSrc,
+  computeSrp,
   entriesOfRole,
   matchups,
   pitchingEntries,
@@ -86,6 +87,9 @@ import type {
 } from "./pages.ts";
 import type { RankDigits } from "./parts.ts";
 import { denominator, innings } from "./format.ts";
+import { readFileSync } from "node:fs";
+import { POLITENESS } from "./log-page.ts";
+import type { CoverageDay, LogPageData, RunRecord } from "./log-page.ts";
 
 /**
  * 스플릿에서 「표본이 얇다」고 볼 타석 수.
@@ -106,6 +110,10 @@ const SCOREBOOK_LIMIT = 40;
 const RANKING_ROWS = 10;
 /** 순위표 페이지에 싣는 상위 인원 */
 const RANKING_PAGE_ROWS = 30;
+/** 収集ログ에 싣는 경기일 수. 한 달이면 구멍이 보인다 */
+const COVERAGE_DAYS = 30;
+/** 収集ログ에 싣는 실행 기록 수 */
+const RUN_LOG_ROWS = 20;
 
 const LEAGUE_NAME: Readonly<Record<League, string>> = {
   central: "セントラル・リーグ",
@@ -117,6 +125,8 @@ const SPLIT_AXES: readonly { id: SplitAxisId; dimension: SplitDimension; label: 
   { id: "base", dimension: "baseState", label: "走者状況" },
   { id: "homeAway", dimension: "homeAway", label: "本拠地" },
   { id: "month", dimension: "month", label: "月別" },
+  // ⚠투수 쪽의 뜻이 다르다 — 자기 타순이 아니라 **상대 타자가 몇 번이었는가**다
+  { id: "order", dimension: "battingOrder", label: "打順" },
 ];
 
 const SPLIT_KEY_LABEL: Readonly<Record<string, string>> = {
@@ -155,6 +165,8 @@ function monthLabel(key: string): string {
 
 function splitLabel(axis: SplitAxisId, key: string, allowed: boolean): string {
   if (axis === "month") return monthLabel(key);
+  // 타순은 그대로 수다 — 「3」을 「3番」으로 읽히게만 한다
+  if (axis === "order") return `${key}番`;
   const table = allowed ? PITCHER_SPLIT_KEY_LABEL : SPLIT_KEY_LABEL;
   return table[key] ?? key;
 }
@@ -326,6 +338,7 @@ function buildLeagueRankings(
   bat: readonly BattingEntry[],
   pit: readonly PitchingEntry[],
   srcByPlayer: Map<string, { src: number; pa: number }>,
+  srpByPlayer: Map<string, { srp: number; bf: number }>,
 ): LeagueRankings {
   const bq = batterQualifier(bundle);
 
@@ -388,8 +401,8 @@ function buildLeagueRankings(
   return {
     league: bundle.league,
     batting,
-    starter: pitcherRankings(bundle, pit, "starter", pid),
-    reliever: pitcherRankings(bundle, pit, "reliever", pid),
+    starter: pitcherRankings(bundle, pit, "starter", pid, srpByPlayer),
+    reliever: pitcherRankings(bundle, pit, "reliever", pid, srpByPlayer),
   };
 }
 
@@ -406,6 +419,7 @@ function pitcherRankings(
   pit: readonly PitchingEntry[],
   role: PitcherRole,
   pid: (e: PitchingEntry) => { playerId: string; name: string; teamCode: string },
+  srpByPlayer: Map<string, { srp: number; bf: number }>,
 ): MetricRanking[] {
   const pq = pitcherQualifier(bundle, role);
   const mine = entriesOfRole(pit, role);
@@ -451,6 +465,11 @@ function pitcherRankings(
     rate("whip", "WHIP", (e) => e.whip),
     rate("k9", "K/9", (e) => strikeoutsPer9(e.player.line), true),
     rate("bb9", "BB/9", (e) => walksPer9(e.player.line)),
+    // ⚠SRP는 **높을수록 좋다.** 다른 투수 비율과 방향이 반대다
+    rate("srp", "SRP", (e) => {
+      const v = srpByPlayer.get(e.player.playerId);
+      return v === undefined ? { value: null, denominator: 0 } : { value: v.srp, denominator: v.bf };
+    }, true),
     count("so", "奪三振", (e) => e.player.line.so),
     inningsRanking(),
   ];
@@ -907,6 +926,127 @@ export interface SiteData {
   search: SearchEntry[];
 }
 
+/**
+ * 경기일별 취득 상황.
+ *
+ * ⚠**「치러졌는데 타석 로그가 없는 날」이 이 표의 존재 이유다.** 경기 수만 세면
+ * 로그가 통째로 빠진 날을 정상으로 본다 — 그러면 스플릿과 SRC가 조용히 얇아진다.
+ */
+function loadCoverage(db: Db, season: number, competition: string, limit: number): CoverageDay[] {
+  const rows = db.raw
+    .prepare(
+      `SELECT g.game_date AS date,
+              COUNT(*) AS scheduled,
+              SUM(CASE WHEN g.status = 'played' THEN 1 ELSE 0 END) AS played,
+              SUM(CASE WHEN g.status = 'played' THEN 0 ELSE 1 END) AS notPlayed,
+              SUM(CASE WHEN g.status = 'played'
+                        AND EXISTS (SELECT 1 FROM pa_event e WHERE e.game_id = g.game_id)
+                       THEN 1 ELSE 0 END) AS withPa
+       FROM game g
+       WHERE g.season = ? AND g.competition = ?
+       GROUP BY g.game_date
+       ORDER BY g.game_date DESC
+       LIMIT ?`,
+    )
+    .all(season, competition, limit) as unknown as CoverageDay[];
+
+  if (rows.length === 0) return [];
+
+  /**
+   * ⚠**행이 없는 날짜를 표에서 지우면 구멍이 안 보인다.**
+   *
+   * 이 표의 존재 이유가 「빠진 날 찾기」인데, DB에 행이 없는 날은 `GROUP BY`가
+   * 애초에 만들지 않는다. 그러면 8/11 다음이 8/9로 이어져 **8/10이 조용히 사라진다** —
+   * 월요일 휴장인지 수집 누락인지 화면이 답하지 못하게 된다.
+   * 달력의 모든 날을 채워 넣고, 일정이 0건이면 0건이라고 말한다.
+   */
+  const newest = rows[0]!.date;
+  const oldest = rows[rows.length - 1]!.date;
+  const byDate = new Map(rows.map((r) => [r.date, r]));
+  const out: CoverageDay[] = [];
+  for (let t = Date.parse(`${newest}T00:00:00Z`); t >= Date.parse(`${oldest}T00:00:00Z`); t -= 86_400_000) {
+    const date = new Date(t).toISOString().slice(0, 10);
+    out.push(byDate.get(date) ?? { date, scheduled: 0, played: 0, notPlayed: 0, withPa: 0 });
+  }
+  return out;
+}
+
+/**
+ * 배치 실행 기록을 읽는다.
+ *
+ * ⚠**파일이 없어도 던지지 않는다** — 아직 한 번도 안 돌았을 수 있고, 그건 결함이 아니다.
+ * ⚠**깨진 줄은 건너뛰되 세지 않는다.** 여기서 조용히 0을 만들면 「돌았는데 0건」으로 보인다.
+ */
+export function readRunLog(path: string, limit: number): RunRecord[] {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
+    return [];
+  }
+  const out: RunRecord[] = [];
+  for (const line of text.split("\n")) {
+    if (line.trim() === "") continue;
+    try {
+      const r = JSON.parse(line) as RunRecord;
+      if (typeof r.ranAt === "string" && typeof r.games === "number") out.push(r);
+    } catch {
+      // 깨진 줄. 기록 자체가 없는 것과 다르므로 버리기만 한다
+    }
+  }
+  return out.reverse().slice(0, limit);
+}
+
+export interface LogOptions {
+  /** 실행 기록 JSONL 경로. 없으면 「기록 없음」으로 그린다 */
+  runLogPath?: string;
+  /** 원시 아카이브 매니페스트 경로 */
+  manifestPath?: string;
+}
+
+/** 収集ログ 페이지의 데이터. **DB와 운영 파일 양쪽에서 온다** */
+export function loadLog(db: Db, o: LoadOptions & LogOptions): LogPageData {
+  const competition = o.competition ?? "regular";
+  // ⚠**실행 기록과 같은 방식으로 센다**(`scripts/freshness.ts`). 시즌·대회로 거르면
+  // 같은 화면에 「試合 630」과 「632」가 나란히 서고, 그건 어느 쪽이 맞는지 알 수 없는 화면이 된다
+  const totals = db.raw
+    .prepare(
+      `SELECT (SELECT COUNT(*) FROM game WHERE status='played') AS games,
+              (SELECT COUNT(*) FROM pa_event) AS pa,
+              (SELECT COUNT(*) FROM player) AS players,
+              (SELECT COUNT(*) FROM quarantine) AS quarantine`,
+    )
+    .get() as {
+    games: number;
+    pa: number;
+    players: number;
+    quarantine: number;
+  };
+
+  let archive: LogPageData["archive"] = null;
+  if (o.manifestPath !== undefined) {
+    try {
+      const m = JSON.parse(readFileSync(o.manifestPath, "utf8")) as {
+        files: number;
+        bytes: number;
+        updatedAt: string;
+      };
+      if (typeof m.files === "number") archive = m;
+    } catch {
+      // 매니페스트가 없으면 「—」로 그린다. 0으로 그리지 않는다(M11)
+    }
+  }
+
+  return {
+    season: o.season,
+    coverage: loadCoverage(db, o.season, competition, COVERAGE_DAYS),
+    runs: o.runLogPath === undefined ? [] : readRunLog(o.runLogPath, RUN_LOG_ROWS),
+    archive,
+    totals,
+    politeness: POLITENESS,
+  };
+}
+
 export function loadSite(db: Db, o: LoadOptions): SiteData {
   const competition = o.competition ?? "regular";
   const through = o.through ?? "9999-12-31";
@@ -938,6 +1078,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   const rankingsByLeague = new Map<League, LeagueRankings>();
   const reByLeague = new Map<League, Map<string, number>>();
   const srcByPlayer = new Map<string, { src: number; pa: number; skipped: number; srcPer600: number | null }>();
+  const srpByPlayer = new Map<string, { srp: number; bf: number; skipped: number; srpPer9: number | null }>();
   const battingByPlayer = new Map<string, BattingEntry>();
   const pitchingByPlayer = new Map<string, PitchingEntry>();
   const bundleByLeague = new Map<League, LeagueBundle>();
@@ -951,12 +1092,16 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     for (const s of computeSrc(db, re, codes, competition)) {
       srcByPlayer.set(s.playerId, { src: s.src, pa: s.pa, skipped: s.skipped, srcPer600: s.srcPer600 });
     }
+    // ⚠투수는 같은 커널의 부호 반대다. 같은 리그 RE 행렬을 쓴다
+    for (const s of computeSrp(db, re, codes, competition)) {
+      srpByPlayer.set(s.playerId, { srp: s.srp, bf: s.bf, skipped: s.skipped, srpPer9: s.srpPer9 });
+    }
 
     const bat = battingEntries(bundle);
     const pit = pitchingEntries(bundle);
     for (const e of bat) battingByPlayer.set(e.player.playerId, e);
     for (const e of pit) pitchingByPlayer.set(e.player.playerId, e);
-    rankingsByLeague.set(bundle.league, buildLeagueRankings(bundle, bat, pit, srcByPlayer));
+    rankingsByLeague.set(bundle.league, buildLeagueRankings(bundle, bat, pit, srcByPlayer, srpByPlayer));
   }
 
   const players: PlayerPageData[] = [];
@@ -1028,6 +1173,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
             needOuts: qualifyingOuts(bundle, pit.player.role),
             role: pit.player.role,
             starts: pit.player.starts,
+            srp: srpByPlayer.get(playerId) ?? null,
             asStarter: roleLine(pit.player.asStarter, pit.player.starts),
             asReliever: roleLine(pit.player.asReliever, pit.player.games - pit.player.starts),
           };
