@@ -13,6 +13,7 @@ import type { BlockId } from "./blocks.ts";
 import {
   bars,
   block,
+  buttonGroup,
   columns,
   denText,
   note,
@@ -585,16 +586,57 @@ function situationBlock(cells: readonly SituationCell[], leagueName: string): Ra
  * 그대로 타율로 정렬하면 「5타석 3안타」가 맨 위에 오고, 그건 순위가 아니라 잡음이다.
  * 제한한다는 사실을 탭 이름에 쓴다 — 숨겨진 규칙을 만들지 않는다.
  */
+/**
+ * 정렬 가능한 열. **키는 행의 `data-*`와 같은 이름**이어야 한다 — 어긋나면 조용히 정렬이 안 먹는다.
+ * `rate`인 열은 표본이 작으면 오독되므로 클라이언트가 경고를 낸다.
+ */
+const MATCHUP_COLUMNS: readonly {
+  key: string;
+  label: string;
+  align: "l" | "r";
+  type: "text" | "num";
+  rate?: true;
+}[] = [
+  { key: "name", label: "", align: "l", type: "text" },
+  { key: "team", label: "球団", align: "l", type: "text" },
+  { key: "pa", label: "打席", align: "r", type: "num" },
+  { key: "ab", label: "打数", align: "r", type: "num" },
+  { key: "h", label: "安打", align: "r", type: "num" },
+  { key: "hr", label: "本塁打", align: "r", type: "num" },
+  { key: "bb", label: "四球", align: "r", type: "num" },
+  { key: "so", label: "三振", align: "r", type: "num" },
+  { key: "rbi", label: "打点", align: "r", type: "num" },
+  { key: "avg", label: "打率", align: "r", type: "num", rate: true },
+];
+
+/** 최소 타석 선택지. **10이 기본이 아니다** — 기본은 전부 보이는 것이고, 좁히는 것은 선택이다 */
+const MATCHUP_MIN_PA = [1, 3, 5, 10, 20];
+
+/**
+ * 상대전적 — **검색하고 정렬해서 보는 표**.
+ *
+ * ⚠**타율로 정렬할 수 있게 하되, 그것이 순위가 아님을 화면이 계속 말한다.**
+ * 대전 표본은 대부분 한 자릿수라 「5타석 3안타」가 맨 위에 온다. 막지는 않는다 —
+ * 대신 **지금 무엇으로 정렬돼 있고 몇 타석 이상만 보고 있는지**를 상태 줄에 항상 낸다.
+ * ⚠`THIN_MATCHUP_PA` 미만은 여전히 색을 낮춘다. 값은 지우지 않는다.
+ */
 function matchupBlock(rows: readonly MatchupRow[], total: number, opponent: string): RawHtml {
   if (rows.length === 0) {
     return block({ id: "matchup", title: "対戦成績", body: html`<p class="empty">対戦記録がありません。</p>` });
   }
 
-  const controls = tablist("matchup", [
-    { id: "pa", label: "対戦数順" },
-    { id: "hr", label: "本塁打順" },
-    { id: "avg", label: `打率順（${THIN_MATCHUP_PA}打席以上）` },
-  ]);
+  const controls = buttonGroup(
+    "matchupMin",
+    MATCHUP_MIN_PA.map((n) => ({ id: String(n), label: n === 1 ? "すべて" : `${n}打席以上` })),
+    "最少打席でしぼる",
+  );
+
+  const head = MATCHUP_COLUMNS.map(
+    (c) => html`<th class="${c.align === "l" ? "l" : ""}" scope="col" aria-sort="${c.key === "pa" ? "descending" : "none"}">
+      <button class="sortable" type="button" data-sortkey="${c.key}" data-sorttype="${c.type}"
+        ${raw(c.rate === true ? 'data-sortrate="1"' : "")}>${c.label === "" ? opponent : c.label}<i></i></button>
+    </th>`,
+  );
 
   const body = html`<div class="mfind">
   <label for="matchupFilter">${opponent}名でしぼる</label>
@@ -602,14 +644,13 @@ function matchupBlock(rows: readonly MatchupRow[], total: number, opponent: stri
   <span class="count"><span id="matchupCount">${rows.length}件</span> / 全${total}件</span>
 </div>
 ${scroller(html`<table id="matchupTable">
-  <thead><tr>
-    <th class="l">${opponent}</th><th class="l">球団</th><th>打席</th><th>打数</th><th>安打</th><th>本塁打</th>
-    <th>四球</th><th>三振</th><th>打点</th><th>打率</th>
-  </tr></thead>
+  <thead><tr>${head}</tr></thead>
   <tbody>${rows.map(
     (r) => html`<tr class="${r.line.pa < THIN_MATCHUP_PA ? "thin" : ""}"
-      data-name="${r.opponentName}" data-pa="${r.line.pa}" data-hr="${r.line.hr}"
-      data-avg="${r.avg.value === null ? -1 : r.avg.value.toFixed(4)}">
+      data-name="${r.opponentName}" data-team="${r.opponentTeam}"
+      data-pa="${r.line.pa}" data-ab="${r.line.ab}" data-h="${r.line.h}" data-hr="${r.line.hr}"
+      data-bb="${r.line.bb}" data-so="${r.line.so}" data-rbi="${r.rbi}"
+      ${raw(r.avg.value === null ? "" : `data-avg="${r.avg.value.toFixed(4)}"`)}>
       <td class="l"><a href="${r.opponentId}.html">${r.opponentName}</a></td>
       <td class="l">${r.opponentTeam}</td>
       <td>${r.line.pa}</td><td>${r.line.ab}</td><td>${r.line.h}</td><td>${r.line.hr}</td>
@@ -619,10 +660,11 @@ ${scroller(html`<table id="matchupTable">
   )}</tbody>
 </table>`)}
 <p class="empty" id="matchupEmpty" hidden role="status">この条件の対戦記録はありません。</p>
+<p class="note" id="matchupStatus" role="status">打席の多い順</p>
 ${note(
-    `既定は対戦数の多い順です。大半が${THIN_MATCHUP_PA}打席未満なので、その行は薄く表示し、` +
-      `打率順は${THIN_MATCHUP_PA}打席以上だけを並べます — 5打席3安打を先頭に置かないためです。` +
-      `${opponent}名を押すとその選手のページに移ります。`,
+    `見出しを押すと並べ替わります（もう一度押すと逆順）。${THIN_MATCHUP_PA}打席未満は薄く表示しています — ` +
+      `対戦成績は大半が一桁打席で、率で並べると少ない打席が先頭に来ます。` +
+      `並び順と絞り込みは上の行に出ています。${opponent}名を押すとその選手のページに移ります。`,
   )}`;
 
   return block({ id: "matchup", title: "対戦成績", controls, body });

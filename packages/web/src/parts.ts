@@ -163,6 +163,25 @@ export function tablist(
   </div>`;
 }
 
+/**
+ * 패널이 없는 버튼 묶음 — 「최소 타석」처럼 **표를 좁히기만** 하는 선택지.
+ *
+ * ⚠**`role="tablist"`를 쓰지 않는다.** 탭은 「대응하는 패널을 연다」는 뜻이고,
+ * 여는 것이 없는데 탭이라고 하면 스크린리더에게 거짓말이 된다. 상태는 `aria-pressed`로 낸다.
+ * 선택 상태의 저장은 탭과 같은 구조를 쓰므로 `data-tabgroup`/`data-tab`은 그대로 둔다.
+ */
+export function buttonGroup(
+  group: string,
+  items: readonly { id: string; label: string }[],
+  label: string,
+): RawHtml {
+  return html`<div class="tabs" role="group" data-tabgroup="${group}" aria-label="${label}">
+    ${items.map(
+      (t, i) => html`<button class="tab" type="button" data-tab="${t.id}" aria-pressed="${i === 0 ? "true" : "false"}">${t.label}</button>`,
+    )}
+  </div>`;
+}
+
 /** 탭에 대응하는 패널. **첫 번째만 열어둔다** — JS가 없어도 뭔가는 보인다 */
 export function panel(group: string, key: string, first: boolean, body: RawHtml): RawHtml {
   return html`<div data-panelgroup="${group}" data-panelkey="${key}" role="tabpanel" ${raw(first ? "" : "hidden")}>${body}</div>`;

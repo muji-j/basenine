@@ -170,6 +170,22 @@ tr.thin td{color:var(--tx-3)}
 td a{text-decoration:none;box-shadow:inset 0 -1px 0 var(--hair-2)}
 td a:hover{box-shadow:inset 0 -1px 0 currentColor}
 
+/* 정렬 가능한 머리 — **버튼이다.** 클릭만 되고 초점이 안 가는 머리를 만들지 않는다 */
+th:has(.sortable){padding:0}
+.sortable{font:inherit;font-size:10px;letter-spacing:.1em;color:var(--tx-2);background:transparent;
+  border:0;cursor:pointer;padding:5px 8px;width:100%;text-align:inherit;white-space:nowrap;
+  display:inline-flex;align-items:center;gap:3px;justify-content:flex-end;
+  transition:color var(--fast) var(--ease)}
+th.l .sortable{justify-content:flex-start}
+.sortable:hover{color:var(--tx)}
+.sortable i{font-style:normal;width:7px;opacity:.3}
+.sortable i::before{content:"↕"}
+th[aria-sort="ascending"] .sortable,th[aria-sort="descending"] .sortable{color:var(--tx);font-weight:700}
+th[aria-sort="ascending"] .sortable i,th[aria-sort="descending"] .sortable i{opacity:1}
+th[aria-sort="ascending"] .sortable i::before{content:"↑"}
+th[aria-sort="descending"] .sortable i::before{content:"↓"}
+@media (pointer:coarse){.sortable{padding:9px 8px}}
+
 .pa{font-size:11.5px;letter-spacing:.02em}
 .pa.h{color:var(--warn);font-weight:700}
 
@@ -352,6 +368,8 @@ const state={
   preset:typeof saved.preset==="string"?saved.preset:"standard",
   density:saved.density==="compact"?"compact":"normal",
   tabs:(saved.tabs&&typeof saved.tabs==="object")?saved.tabs:{},
+  // 대전 표의 정렬. 저장된 열이 지금 표에 없으면 표를 그릴 때 기본으로 되돌린다
+  matchup:(saved.matchup&&typeof saved.matchup==="object")?saved.matchup:null,
   theme:saved.theme==="dark"||saved.theme==="light"?saved.theme:"system"
 };
 
@@ -469,9 +487,9 @@ if(eb)eb.addEventListener("click",()=>{
 });
 
 /* ── 상대전적 좁히기·정렬 ──
-   ⚠**타율순은 표본이 얇은 행을 뺀다.** 5타석 3안타를 맨 위에 올리지 않기 위한 규칙이고,
-   그 사실은 탭 이름에 쓰여 있다(숨은 규칙 금지). */
-const MATCHUP_MIN_AVG_PA=10;
+   ⚠**막지 않고 말한다.** 대전 표본은 대부분 한 자릿수라 율로 정렬하면 적은 타석이 위로 온다.
+   정렬 자체를 막는 대신, **지금 무엇으로 정렬돼 있고 얇은 행이 몇 개 섞였는지**를 늘 낸다. */
+const THIN_MATCHUP_PA=10;
 /* 질의문자열 vs=山本 — 「対戦を選ぶ」에서 넘어온 상대 이름 */
 function vsParam(){
   const m=/[?&]vs=([^&#]*)/.exec(LOC.search||"");
@@ -484,30 +502,86 @@ if(mtable){
   const all=$$("tr",tbody);
   const mfilter=$("#matchupFilter");
   const empty=$("#matchupEmpty");
+  const status=$("#matchupStatus");
+  const heads=$$("th",mtable);
+  const buttons=$$(".sortable",mtable);
+  const labelOf={},typeOf={},rateOf={};
+  buttons.forEach(b=>{
+    labelOf[b.dataset.sortkey]=b.textContent;
+    typeOf[b.dataset.sortkey]=b.dataset.sorttype;
+    rateOf[b.dataset.sortkey]=b.dataset.sortrate==="1";
+  });
+
+  if(!state.matchup||typeof state.matchup!=="object"||!labelOf[state.matchup.key]){
+    state.matchup={key:"pa",dir:"desc"};
+  }
+
+  /* ⚠**값이 없는 행은 방향과 무관하게 뒤로 보낸다.** 오름차순에서 「기록 없음」이 1위가 되면
+     비어 있다는 사실이 성적처럼 읽힌다(M11). */
+  const compare=(a,b,key)=>{
+    const av=a.dataset[key],bv=b.dataset[key];
+    if(typeOf[key]==="text")return String(av||"").localeCompare(String(bv||""),"ja");
+    return Number(av)-Number(bv);
+  };
+
   const apply=()=>{
-    const mode=state.tabs.matchup||"pa";
+    const key=state.matchup.key,dir=state.matchup.dir;
+    const min=Number(state.tabs.matchupMin||"1");
     const term=mfilter?mfilter.value.trim():"";
-    const min=mode==="avg"?MATCHUP_MIN_AVG_PA:0;
-    const key=mode==="avg"?"avg":mode==="hr"?"hr":"pa";
-    const sorted=all.slice().sort((a,b)=>
-      (Number(b.dataset[key])-Number(a.dataset[key]))||(Number(b.dataset.pa)-Number(a.dataset.pa)));
-    let n=0;
+    const sign=dir==="asc"?1:-1;
+
+    const sorted=all.slice().sort((a,b)=>{
+      const miss=(a.dataset[key]===undefined?1:0)-(b.dataset[key]===undefined?1:0);
+      if(miss!==0)return miss;
+      return sign*compare(a,b,key)||(Number(b.dataset.pa)-Number(a.dataset.pa));
+    });
+
+    let n=0,thin=0;
     sorted.forEach(tr=>{
       tbody.appendChild(tr);
       const hit=Number(tr.dataset.pa)>=min&&(term===""||tr.dataset.name.indexOf(term)>=0);
-      tr.hidden=!hit;if(hit)n++;
+      tr.hidden=!hit;
+      if(hit){n++;if(Number(tr.dataset.pa)<THIN_MATCHUP_PA)thin++}
     });
+
     const c=$("#matchupCount");if(c)c.textContent=n+"件";
-    // ⚠**0건을 빈 표로 두지 않는다.** 「대전이 없다」와 「고장났다」가 같은 화면이면 결함이다(M12)
+    /* ⚠**0건을 빈 표로 두지 않는다.** 「대전이 없다」와 「고장났다」가 같은 화면이면 결함이다(M12) */
     if(empty)empty.hidden=n!==0;
+
+    heads.forEach(th=>{
+      const b=$(".sortable",th);
+      const on=b&&b.dataset.sortkey===key;
+      th.setAttribute("aria-sort",on?(dir==="asc"?"ascending":"descending"):"none");
+    });
+
+    if(status){
+      let text=typeOf[key]==="text"
+        ?labelOf[key]+(dir==="asc"?" 昇順":" 降順")
+        :labelOf[key]+(dir==="asc"?"の少ない順":"の多い順");
+      if(min>1)text+=" · "+min+"打席以上";
+      if(rateOf[key]&&min<THIN_MATCHUP_PA&&thin>0){
+        text+=" · ⚠"+THIN_MATCHUP_PA+"打席未満が"+thin+"件混ざっています（率は標本が小さいほど揺れます）";
+      }
+      status.textContent=text;
+    }
   };
+
+  /* 같은 열을 다시 누르면 방향이 뒤집힌다. 다른 열은 그 열에 자연스러운 방향에서 시작한다 —
+     이름·구단은 오름차순, 수치는 내림차순 */
+  buttons.forEach(b=>b.addEventListener("click",()=>{
+    const key=b.dataset.sortkey;
+    state.matchup=state.matchup.key===key
+      ?{key:key,dir:state.matchup.dir==="desc"?"asc":"desc"}
+      :{key:key,dir:typeOf[key]==="text"?"asc":"desc"};
+    save(state);apply();
+  }));
   if(mfilter)mfilter.addEventListener("input",apply);
   tabHooks.push(apply);
 
   const vs=vsParam();
   if(vs!==""&&mfilter){
     mfilter.value=vs;
-    // 대전 블록이 꺼져 있으면 이번 방문에만 켠다 — 사용자의 저장된 구성은 건드리지 않는다
+    /* 대전 블록이 꺼져 있으면 이번 방문에만 켠다 — 사용자의 저장된 구성은 건드리지 않는다 */
     if(state.order.indexOf("matchup")<0)state.order=state.order.concat(["matchup"]);
   }
 }

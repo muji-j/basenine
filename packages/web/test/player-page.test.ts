@@ -80,12 +80,47 @@ function matchupSection(out: string): string {
   return /<section class="block"[^>]*id="b-matchup">[\s\S]*?<\/section>/.exec(out)?.[0] ?? "";
 }
 
-test("대전 성적에는 순위 열이 없다 — 10타석짜리를 순서로 보여주지 않는다", () => {
+test("대전 성적에는 순위 열이 없다 — 매긴 순위가 아니라 정렬이다", () => {
   const section = matchupSection(renderPlayerPage(playerPage(), context()));
   assert.ok(section.length > 0, "대전 성적 블록이 없다");
   const head = /<thead>[\s\S]*?<\/thead>/.exec(section)?.[0] ?? "";
   assert.ok(!head.includes("順位"), "대전 성적 표에 순위 열이 생겼다");
-  assert.match(section, /既定は対戦数の多い順/);
+  assert.match(section, /見出しを押すと並べ替わります/);
+});
+
+test("모든 열의 머리가 정렬 버튼이다 — 클릭만 되고 초점이 안 가는 머리를 만들지 않는다", () => {
+  const section = matchupSection(renderPlayerPage(playerPage(), context()));
+  const keys = [...section.matchAll(/class="sortable" type="button" data-sortkey="(\w+)"/g)].map((m) => m[1]);
+  assert.deepEqual(keys, ["name", "team", "pa", "ab", "h", "hr", "bb", "so", "rbi", "avg"]);
+  const heads = [...section.matchAll(/<th[\s>]/g)].length;
+  assert.equal(heads, keys.length, "정렬 버튼이 없는 머리가 있다");
+});
+
+test("행이 정렬에 필요한 값을 전부 싣는다 — 클라이언트가 다시 계산하지 않는다(M1)", () => {
+  const section = matchupSection(renderPlayerPage(playerPage(), context()));
+  const row = /<tr class="thin"[\s\S]*?<\/tr>/.exec(section)?.[0] ?? "";
+  for (const attr of ["data-name", "data-team", "data-pa", "data-ab", "data-h", "data-hr", "data-bb", "data-so", "data-rbi"]) {
+    assert.ok(row.includes(attr), `${attr}가 없다`);
+  }
+});
+
+test("초기 정렬은 打席 내림차순이고 aria-sort가 그것만 가리킨다", () => {
+  const section = matchupSection(renderPlayerPage(playerPage(), context()));
+  assert.equal([...section.matchAll(/aria-sort="descending"/g)].length, 1);
+  assert.match(section, /aria-sort="descending"[\s\S]{0,120}data-sortkey="pa"/);
+});
+
+test("최소 타석은 탭이 아니라 버튼 묶음이다 — 여는 패널이 없다", () => {
+  const section = matchupSection(renderPlayerPage(playerPage(), context()));
+  assert.match(section, /role="group" data-tabgroup="matchupMin"/);
+  assert.ok(!section.includes('data-tabgroup="matchupMin" aria-label="表示の切り替え"'));
+  assert.match(section, /data-tab="1"[^>]*aria-pressed="true"/);
+  assert.match(section, /10打席以上/);
+});
+
+test("정렬 상태를 말하는 자리가 있다", () => {
+  const section = matchupSection(renderPlayerPage(playerPage(), context()));
+  assert.match(section, /id="matchupStatus" role="status"/);
 });
 
 test("대전 성적은 이름으로 좁힐 수 있고 상대 페이지로 이어진다", () => {
@@ -100,10 +135,13 @@ test("정렬용 값이 행에 실린다 — 클라이언트가 다시 계산하�
   assert.match(section, /data-pa="14"[^>]*data-hr="27"[^>]*data-avg="0\.3330"/);
 });
 
-test("타율순 정렬에 표본 하한이 있다는 것을 탭 이름이 말한다", () => {
+test("⚠율로 정렬할 수 있게 하되, 그것이 순위가 아님을 화면이 말한다", () => {
   const section = matchupSection(renderPlayerPage(playerPage(), context()));
-  assert.match(section, /打率順（10打席以上）/);
-  assert.match(section, /5打席3安打を先頭に置かないため/);
+  // 타율 열도 정렬 가능하다 — 막지 않는다
+  assert.match(section, /data-sortkey="avg"[^>]*data-sortrate="1"/);
+  // 대신 표본이 작다는 사실을 말한다
+  assert.match(section, /率で並べると少ない打席が先頭に来ます/);
+  assert.match(section, /10打席未満は薄く表示/);
 });
 
 test("투수 페이지의 대전 상대는 타자다", () => {
@@ -111,7 +149,7 @@ test("투수 페이지의 대전 상대는 타자다", () => {
     playerPage({ role: "pitcher", position: "投手", batting: null, pitching: pitchingBlock() }),
     context(),
   );
-  assert.match(matchupSection(out), /<th class="l">打者<\/th>/);
+  assert.match(matchupSection(out), /data-sortkey="name"[^>]*>打者</);
   assert.match(matchupSection(out), /打者名でしぼる/);
 });
 

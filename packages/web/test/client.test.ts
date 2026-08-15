@@ -11,12 +11,22 @@ import { BLOCKS, PRESETS } from "../src/blocks.ts";
 import { bootstrapFor } from "../src/player-page.ts";
 import { El, make, makeDocument, makeStorage } from "./dom-stub.ts";
 
-/** 대전 성적 표의 행. 정렬·좁히기 테스트의 입력 */
-const MATCHUPS = [
-  { name: "山本", pa: 14, hr: 1, avg: 0.333 },
-  { name: "戸郷", pa: 5, hr: 2, avg: 0.6 },
-  { name: "今永", pa: 22, hr: 0, avg: 0.25 },
-  { name: "森下", pa: 9, hr: 3, avg: 0.5 },
+/** 정렬 가능한 열. 서버(`player-page.ts`)의 목록과 같은 키여야 한다 */
+const MATCHUP_COLUMNS: { key: string; label: string; type: "text" | "num"; rate?: true }[] = [
+  { key: "name", label: "投手", type: "text" },
+  { key: "team", label: "球団", type: "text" },
+  { key: "pa", label: "打席", type: "num" },
+  { key: "hr", label: "本塁打", type: "num" },
+  { key: "avg", label: "打率", type: "num", rate: true },
+];
+
+/** 대전 성적 표의 행. 정렬·좁히기 테스트의 입력. `avg: null`은 타수 0 */
+const MATCHUPS: { name: string; team: string; pa: number; hr: number; avg: number | null }[] = [
+  { name: "山本", team: "B", pa: 14, hr: 1, avg: 0.333 },
+  { name: "戸郷", team: "G", pa: 5, hr: 2, avg: 0.6 },
+  { name: "今永", team: "DB", pa: 22, hr: 0, avg: 0.25 },
+  { name: "森下", team: "C", pa: 9, hr: 3, avg: 0.5 },
+  { name: "大勢", team: "G", pa: 2, hr: 0, avg: null },
 ];
 
 /** 탭 한 줄 + 대응 패널. 서버의 `tablist`/`panel`과 같은 모양이어야 한다 */
@@ -69,18 +79,47 @@ function buildPage(): ReturnType<typeof makeDocument> {
       for (const p of panels) section.appendChild(p);
     }
     if (b.id === "matchup") {
-      const { list } = tabs("matchup", ["pa", "hr", "avg"]);
       const h = make("h4");
-      h.appendChild(list);
+      // 최소 타석은 탭이 아니라 버튼 묶음이다(여는 패널이 없다)
+      const min = make("div", { class: "tabs", role: "group", "data-tabgroup": "matchupMin" });
+      for (const n of ["1", "5", "10", "20"]) {
+        min.appendChild(make("button", { class: "tab", "data-tab": n, "aria-pressed": "false" }));
+      }
+      h.appendChild(min);
       section.appendChild(h);
       section.appendChild(make("input", { id: "matchupFilter", type: "search" }));
       section.appendChild(make("span", { id: "matchupCount" }));
+      section.appendChild(make("p", { id: "matchupStatus" }));
+
       const table = make("table", { id: "matchupTable" });
+      const thead = make("thead");
+      const hrow = make("tr");
+      for (const c of MATCHUP_COLUMNS) {
+        const th = make("th", { "aria-sort": c.key === "pa" ? "descending" : "none" });
+        const btn = make("button", {
+          class: "sortable",
+          "data-sortkey": c.key,
+          "data-sorttype": c.type,
+          ...(c.rate === true ? { "data-sortrate": "1" } : {}),
+        });
+        btn.textContent = c.label;
+        th.appendChild(btn);
+        hrow.appendChild(th);
+      }
+      thead.appendChild(hrow);
+      table.appendChild(thead);
+
       const tbody = make("tbody");
       for (const r of MATCHUPS) {
-        tbody.appendChild(
-          make("tr", { "data-name": r.name, "data-pa": String(r.pa), "data-hr": String(r.hr), "data-avg": String(r.avg) }),
-        );
+        const attrs: Record<string, string> = {
+          "data-name": r.name,
+          "data-team": r.team,
+          "data-pa": String(r.pa),
+          "data-hr": String(r.hr),
+        };
+        // ⚠타율이 없는 행은 속성 자체가 없다 — 「없음」과 「.000」은 다르다
+        if (r.avg !== null) attrs["data-avg"] = String(r.avg);
+        tbody.appendChild(make("tr", attrs));
       }
       table.appendChild(tbody);
       section.appendChild(table);
@@ -313,32 +352,119 @@ test("저장된 탭이 지금 없는 값이면 첫 탭으로 돌아간다", () =
   assert.deepEqual(openPanels(doc, "splits"), ["hand"]);
 });
 
-test("대전 성적은 기본이 대전수 순이다", () => {
-  const doc = buildPage();
-  run(doc);
-  const names = doc.querySelectorAll("#matchupTable tbody tr").map((r) => r.dataset["name"]);
-  assert.deepEqual(names, ["今永", "山本", "森下", "戸郷"]);
-});
+function order(doc: ReturnType<typeof makeDocument>): (string | undefined)[] {
+  return doc.querySelectorAll("#matchupTable tbody tr").map((r) => r.dataset["name"]);
+}
 
-test("본루타순으로 바꾸면 순서가 바뀐다", () => {
-  const doc = buildPage();
-  run(doc);
-  clickTab(doc, "matchup", "hr");
-  const names = doc.querySelectorAll("#matchupTable tbody tr").map((r) => r.dataset["name"]);
-  assert.deepEqual(names, ["森下", "戸郷", "山本", "今永"]);
-});
-
-test("타율순은 10타석 미만을 뺀다 — 5타석 .600을 맨 위에 올리지 않는다", () => {
-  const doc = buildPage();
-  run(doc);
-  clickTab(doc, "matchup", "avg");
-  const shown = doc
+function shownNames(doc: ReturnType<typeof makeDocument>): (string | undefined)[] {
+  return doc
     .querySelectorAll("#matchupTable tbody tr")
     .filter((r) => !r.hidden)
     .map((r) => r.dataset["name"]);
-  assert.deepEqual(shown, ["山本", "今永"]);
-  assert.ok(!shown.includes("戸郷"), "5타석짜리가 타율순에 남았다");
+}
+
+function clickHeader(doc: ReturnType<typeof makeDocument>, key: string): void {
+  const b = doc.querySelectorAll(".sortable").find((x) => x.dataset["sortkey"] === key);
+  assert.notEqual(b, undefined, `${key} 머리 버튼이 없다`);
+  b!.fire("click");
+}
+
+test("대전 성적은 기본이 대전수 많은 순이다", () => {
+  const doc = buildPage();
+  run(doc);
+  assert.deepEqual(order(doc), ["今永", "山本", "森下", "戸郷", "大勢"]);
+  assert.match(doc.getElementById("matchupStatus")!.textContent, /打席の多い順/);
+});
+
+test("머리를 누르면 그 열로 정렬된다", () => {
+  const doc = buildPage();
+  run(doc);
+  clickHeader(doc, "hr");
+  assert.deepEqual(order(doc), ["森下", "戸郷", "山本", "今永", "大勢"]);
+  assert.match(doc.getElementById("matchupStatus")!.textContent, /本塁打の多い順/);
+});
+
+test("같은 머리를 다시 누르면 방향이 뒤집힌다", () => {
+  const doc = buildPage();
+  run(doc);
+  clickHeader(doc, "hr");
+  clickHeader(doc, "hr");
+  assert.deepEqual(order(doc).slice(0, 2), ["今永", "大勢"]);
+  assert.match(doc.getElementById("matchupStatus")!.textContent, /本塁打の少ない順/);
+});
+
+test("문자 열은 오름차순에서 시작한다 — 이름은 가나다순이 자연스럽다", () => {
+  const doc = buildPage();
+  run(doc);
+  clickHeader(doc, "team");
+  assert.match(doc.getElementById("matchupStatus")!.textContent, /球団 昇順/);
+});
+
+test("aria-sort가 지금 정렬된 열에만 붙는다", () => {
+  const doc = buildPage();
+  run(doc);
+  clickHeader(doc, "avg");
+  const sorted = doc
+    .querySelectorAll("th")
+    .filter((th) => th.getAttribute("aria-sort") !== "none")
+    .map((th) => th.querySelector(".sortable")!.dataset["sortkey"]);
+  assert.deepEqual(sorted, ["avg"]);
+});
+
+test("⚠값이 없는 행은 방향과 무관하게 뒤로 간다 — 「기록 없음」이 1위가 되면 안 된다(M11)", () => {
+  const doc = buildPage();
+  run(doc);
+  clickHeader(doc, "avg");
+  assert.equal(order(doc).at(-1), "大勢", "내림차순에서 타수 0이 뒤로 가지 않았다");
+  clickHeader(doc, "avg");
+  assert.equal(order(doc).at(-1), "大勢", "오름차순에서 타수 0이 앞으로 왔다");
+});
+
+test("최소 타석으로 좁힐 수 있다", () => {
+  const doc = buildPage();
+  run(doc);
+  assert.equal(shownNames(doc).length, 5);
+  clickTab(doc, "matchupMin", "10");
+  assert.deepEqual(shownNames(doc), ["今永", "山本"]);
   assert.equal(doc.getElementById("matchupCount")!.textContent, "2件");
+  assert.match(doc.getElementById("matchupStatus")!.textContent, /10打席以上/);
+});
+
+test("⚠율로 정렬하면서 표본이 얇으면 막지 않고 말한다", () => {
+  const doc = buildPage();
+  run(doc);
+  clickHeader(doc, "avg");
+  const status = doc.getElementById("matchupStatus")!.textContent;
+  assert.match(status, /10打席未満が3件混ざっています/);
+  // 막지 않는다 — 5타석 .600이 맨 위에 있다
+  assert.equal(order(doc)[0], "戸郷");
+});
+
+test("좁히면 경고가 사라진다 — 없는 위험을 계속 말하지 않는다", () => {
+  const doc = buildPage();
+  run(doc);
+  clickHeader(doc, "avg");
+  clickTab(doc, "matchupMin", "10");
+  assert.ok(!doc.getElementById("matchupStatus")!.textContent.includes("混ざって"));
+});
+
+test("정렬 선택도 저장된다", () => {
+  const storage = makeStorage();
+  const first = buildPage();
+  run(first, { storage });
+  clickHeader(first, "hr");
+
+  const second = buildPage();
+  run(second, { storage });
+  assert.deepEqual(order(second), ["森下", "戸郷", "山本", "今永", "大勢"]);
+});
+
+test("저장된 정렬 열이 지금 표에 없으면 기본으로 돌아간다", () => {
+  const storage = makeStorage();
+  storage.setItem("npb-meikan-layout", JSON.stringify({ matchup: { key: "存在しない", dir: "asc" } }));
+  const doc = buildPage();
+  assert.doesNotThrow(() => run(doc, { storage }));
+  assert.deepEqual(order(doc), ["今永", "山本", "森下", "戸郷", "大勢"]);
 });
 
 test("대전 상대를 이름으로 좁힐 수 있다", () => {
@@ -347,11 +473,7 @@ test("대전 상대를 이름으로 좁힐 수 있다", () => {
   const input = doc.getElementById("matchupFilter")!;
   input.value = "山";
   input.fire("input");
-  const shown = doc
-    .querySelectorAll("#matchupTable tbody tr")
-    .filter((r) => !r.hidden)
-    .map((r) => r.dataset["name"]);
-  assert.deepEqual(shown, ["山本"]);
+  assert.deepEqual(shownNames(doc), ["山本"]);
   assert.equal(doc.getElementById("matchupCount")!.textContent, "1件");
 });
 
