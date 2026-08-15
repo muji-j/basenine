@@ -9,6 +9,7 @@
  * ⚠**모션은 인쇄물의 질감을 깨지 않는 선까지.** 튀는 이징·큰 이동·연속 재생은 쓰지 않는다.
  * 전부 `prefers-reduced-motion`에서 꺼진다.
  */
+import { GLOSSARY } from "./glossary.ts";
 
 export const CSS = `
 :root {
@@ -154,10 +155,82 @@ dt{font-size:10.5px;color:var(--tx-2);letter-spacing:.12em;padding:4px 10px 4px 
 dd{margin:0;text-align:right;font-family:var(--f-num);font-variant-numeric:tabular-nums;font-size:14px;
   padding:4px 0;border-bottom:1px solid var(--hair)}
 .den{font-family:var(--f-num);font-size:10px;color:var(--tx-3);margin-left:5px}
+
+/* 보이지 않는 글자 — 색으로만 전하지 않기 위한 것이다. 지우지 마라 */
+.vh{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+  clip:rect(0 0 0 0);white-space:nowrap;border:0}
+
+/* ── 용어 ──────────────────────────────────────────────────
+   ⚠버튼이어야 한다. span+hover로 만들면 터치와 키보드에서 열 방법이 없다. */
+.term{font:inherit;color:inherit;letter-spacing:inherit;background:transparent;border:0;padding:0;
+  cursor:help;text-align:inherit;
+  border-bottom:1px dotted var(--hair-2);transition:border-color var(--fast) var(--ease)}
+.term:hover,.term[aria-expanded="true"]{border-bottom-color:var(--tx-2);border-bottom-style:solid}
+th .term{cursor:help}
+
+#tip{position:absolute;z-index:40;max-width:min(30ch,86vw);padding:9px 11px;
+  background:var(--tx);color:var(--page);font-size:12px;line-height:1.5;
+  box-shadow:0 2px 10px rgba(0,0,0,.22);animation:drop var(--fast) var(--ease)}
+#tip[hidden]{display:none}
+#tip b{display:block;font-size:12.5px;letter-spacing:.06em;margin-bottom:3px}
+#tip s{display:block;text-decoration:none;font-family:var(--f-num);font-size:10.5px;opacity:.72;margin-top:5px}
+#tip u{display:block;text-decoration:none;font-size:11.5px;margin-top:5px;
+  padding-left:7px;box-shadow:inset 2px 0 0 var(--warn)}
+
+/* ── 수준 색 ───────────────────────────────────────────────
+   ⚠**빨강↔초록을 쓰지 않는다.** 가장 흔한 색각 이상에서 구별되지 않는다.
+   파랑↔주황의 발산 배색을 쓰고, 명도도 함께 벌려 흑백에서도 순서가 남게 한다.
+   ⚠색은 **보조**다. 등급 자체는 보이지 않는 글자(.vh)로도 나간다. */
+:root{
+  --g-vgood:#1b6ca8; --g-good:#7aaed0; --g-avg:#c9c7c0; --g-bad:#e2a86a; --g-vbad:#b8651f;
+  --g-vgood-bg:rgba(27,108,168,.07); --g-vbad-bg:rgba(184,101,31,.09);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --g-vgood:#5fa8dd; --g-good:#3d7ba6; --g-avg:#4a4d54; --g-bad:#a8703a; --g-vbad:#d98f4a;
+    --g-vgood-bg:rgba(95,168,221,.10); --g-vbad-bg:rgba(217,143,74,.10);
+  }
+}
+:root[data-theme="dark"]{
+  --g-vgood:#5fa8dd; --g-good:#3d7ba6; --g-avg:#4a4d54; --g-bad:#a8703a; --g-vbad:#d98f4a;
+  --g-vgood-bg:rgba(95,168,221,.10); --g-vbad-bg:rgba(217,143,74,.10);
+}
+dd.v{transition:box-shadow var(--fast) var(--ease)}
+dd.g-veryGood{box-shadow:inset 0 -3px 0 var(--g-vgood);background:var(--g-vgood-bg)}
+dd.g-good{box-shadow:inset 0 -3px 0 var(--g-good)}
+dd.g-average{box-shadow:inset 0 -3px 0 var(--g-avg)}
+dd.g-bad{box-shadow:inset 0 -3px 0 var(--g-bad)}
+dd.g-veryBad{box-shadow:inset 0 -3px 0 var(--g-vbad);background:var(--g-vbad-bg)}
+/* 색 끄기 — 취향이다. 분모는 끌 수 없지만 색은 보조이므로 끌 수 있다 */
+:root[data-grades="off"] dd.v{box-shadow:none;background:transparent}
+
+/* 범례 — 색이 무엇을 뜻하는지 말한다. 말하지 않으면 색은 장식이다 */
+.legend{display:flex;align-items:center;gap:11px;flex-wrap:wrap;
+  padding:6px var(--pad);border-bottom:1px solid var(--hair);background:var(--panel-2);
+  font-size:10.5px;color:var(--tx-2)}
+.legend .lg{letter-spacing:.16em;color:var(--tx-3);white-space:nowrap}
+.legend .tail{margin-left:auto}
+.legend .sw{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.legend .sw i{width:15px;height:4px;background:var(--g-avg)}
+.legend .sw.g-veryGood i{background:var(--g-vgood)}
+.legend .sw.g-good i{background:var(--g-good)}
+.legend .sw.g-bad i{background:var(--g-bad)}
+.legend .sw.g-veryBad i{background:var(--g-vbad)}
+.legend #gradeBtn{font-size:11px;padding:2px 8px}
+/* 색을 끄면 범례의 견본도 함께 죽는다 — 안 쓰는 안내가 남아 있으면 그것도 거짓말이다 */
+:root[data-grades="off"] .legend .sw{opacity:.3}
+@media (max-width:620px){.legend .tail{display:none}}
 .rank{background:var(--team,#6b7280);color:var(--team-ink,#fff);font-weight:700;padding:0 5px;font-size:10px;
   margin-left:6px;font-family:var(--f-body)}
 
-.scroller{overflow-x:auto;-webkit-overflow-scrolling:touch}
+/* ⚠좁은 화면에서 표를 옆으로 밀면 **누구의 행인지**가 먼저 사라진다.
+   첫 열을 고정해서 이름이 남게 한다. 오른쪽 끝의 그늘은 「더 있다」는 신호다. */
+.scroller{overflow-x:auto;-webkit-overflow-scrolling:touch;position:relative;
+  background:linear-gradient(to left,var(--page),rgba(0,0,0,0) 24px) right center / 24px 100% no-repeat}
+.scroller table{background:var(--page)}
+.scroller th:first-child,.scroller td:first-child{position:sticky;left:0;z-index:1;background:var(--page)}
+.scroller tr.me td:first-child{background:var(--team,#6b7280)}
+.scroller tbody tr:hover td:first-child{background:var(--panel-2)}
 table{border-collapse:collapse;width:100%;font-size:12px}
 th,td{padding:5px 8px;text-align:right;font-variant-numeric:tabular-nums;border-bottom:1px solid var(--hair);white-space:nowrap}
 th{font-size:10px;letter-spacing:.1em;color:var(--tx-2);font-weight:500;position:sticky;top:0;background:var(--page)}
@@ -355,7 +428,7 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
  * ⚠**서버가 없다.** 정적 파일만으로 도는 것이 이 설계의 전제다.
  * ⚠**선수명은 우리가 만든 문자열이 아니다.** DOM에 넣을 때 `textContent`만 쓴다 — `innerHTML` 금지.
  */
-export const CLIENT_JS = `
+const CLIENT_JS_TEMPLATE = `
 (()=>{"use strict";
 const doc=document;
 const $=(s,r)=>(r||doc).querySelector(s);
@@ -368,6 +441,8 @@ const KEY="npb-meikan-layout";
 const load=()=>{try{return JSON.parse(localStorage.getItem(KEY)||"null")}catch(e){return null}};
 const save=(s)=>{try{localStorage.setItem(KEY,JSON.stringify(s))}catch(e){}};
 const BLOCKS=window.__BLOCKS__||[];
+/* 용어집. 서버와 같은 정의 한 벌을 쓴다(M1) */
+const GLOSSARY=__GLOSSARY__;
 const PRESETS=window.__PRESETS__||{};
 
 const saved=load()||{};
@@ -379,6 +454,7 @@ const state={
   // 대전 표의 정렬. 저장된 열이 지금 표에 없으면 표를 그릴 때 기본으로 되돌린다
   matchup:(saved.matchup&&typeof saved.matchup==="object")?saved.matchup:null,
   matchupTeam:typeof saved.matchupTeam==="string"?saved.matchupTeam:"",
+  grades:saved.grades!==false,
   theme:saved.theme==="dark"||saved.theme==="light"?saved.theme:"system"
 };
 
@@ -494,6 +570,86 @@ const eb=$("#editBtn");
 if(eb)eb.addEventListener("click",()=>{
   const ed=$("#editor");const open=ed.hidden;ed.hidden=!open;eb.setAttribute("aria-pressed",String(open));
 });
+
+/* ── 용어 설명 ──
+   PC는 호버, 모바일은 탭, 키보드는 포커스 — **같은 요소가 셋 다 받는다.**
+   ⚠호버만 붙이면 터치 단말에서 열 수 없고, 탭만 붙이면 PC에서 한 번 더 눌러야 한다. */
+const tip=$("#tip");
+if(tip&&typeof GLOSSARY!=="undefined"){
+  let current=null;
+  const hide=()=>{
+    if(current)current.setAttribute("aria-expanded","false");
+    current=null;tip.hidden=true;
+  };
+  const show=(btn)=>{
+    const t=GLOSSARY[btn.dataset.term];
+    if(!t)return;
+    tip.textContent="";
+    const b=doc.createElement("b");b.textContent=t.label;tip.appendChild(b);
+    const p=doc.createElement("span");p.textContent=t.short;tip.appendChild(p);
+    if(t.how){const s=doc.createElement("s");s.textContent=t.how;tip.appendChild(s)}
+    if(t.caveat){const u=doc.createElement("u");u.textContent=t.caveat;tip.appendChild(u)}
+    tip.hidden=false;
+    if(current&&current!==btn)current.setAttribute("aria-expanded","false");
+    current=btn;btn.setAttribute("aria-expanded","true");
+    place(btn);
+  };
+  /* 화면 밖으로 나가지 않게 가로 위치를 접는다. 세로는 자리가 없으면 위로 올린다 */
+  const place=(btn)=>{
+    if(!btn.getBoundingClientRect||!tip.getBoundingClientRect)return;
+    const r=btn.getBoundingClientRect();
+    const w=tip.offsetWidth||260,h=tip.offsetHeight||90;
+    const vw=(doc.documentElement&&doc.documentElement.clientWidth)||w;
+    const sx=(typeof window!=="undefined"&&window.scrollX)||0;
+    const sy=(typeof window!=="undefined"&&window.scrollY)||0;
+    let x=r.left+sx;
+    if(x+w>sx+vw-8)x=sx+vw-w-8;
+    if(x<sx+8)x=sx+8;
+    const above=r.top>h+12;
+    tip.style.left=x+"px";
+    tip.style.top=(above?r.top+sy-h-8:r.bottom+sy+8)+"px";
+  };
+  /* ⚠**정렬 버튼에는 탭으로 열지 않는다.** 표 헤더를 누르는 것은 「정렬」이라는 뜻이고,
+     같은 탭이 설명도 열면 어느 쪽이 일어난 건지 알 수 없다. 호버·포커스만 받는다.
+     같은 용어가 위쪽 성적표에 제대로 된 버튼으로 있으므로 터치에서도 길은 남아 있다. */
+  $$("[data-term]").forEach(btn=>{
+    const tapToOpen=btn.className&&String(btn.className).split(" ").indexOf("term")>=0;
+    if(tapToOpen)btn.setAttribute("aria-expanded","false");
+    btn.addEventListener("mouseenter",()=>show(btn));
+    btn.addEventListener("mouseleave",hide);
+    btn.addEventListener("focus",()=>show(btn));
+    btn.addEventListener("blur",hide);
+    if(!tapToOpen)return;
+    /* 터치: 같은 것을 다시 누르면 닫는다 */
+    btn.addEventListener("click",(e)=>{
+      if(e&&e.preventDefault)e.preventDefault();
+      if(current===btn)hide();else show(btn);
+    });
+  });
+  doc.addEventListener("keydown",(e)=>{if(e&&e.key==="Escape")hide()});
+  doc.addEventListener("click",(e)=>{
+    let n=e&&e.target;
+    while(n){if(n===tip||(n.getAttribute&&n.getAttribute("data-term")))return;n=n.parentNode}
+    hide();
+  });
+  /* ⚠표를 가로로 밀면 설명만 제자리에 남는다 — 좌표를 문서 기준으로 잡기 때문이다. 닫는다 */
+  doc.addEventListener("scroll",hide,true);
+}
+
+/* 수준 색 끄기 — 분모는 끌 수 없지만 색은 보조라 끌 수 있다 */
+const gradeBtn=$("#gradeBtn");
+if(gradeBtn){
+  const applyGrades=()=>{
+    const on=state.grades!==false;
+    if(on)doc.documentElement.removeAttribute("data-grades");
+    else doc.documentElement.setAttribute("data-grades","off");
+    gradeBtn.setAttribute("aria-pressed",String(on));
+  };
+  gradeBtn.addEventListener("click",()=>{
+    state.grades=state.grades===false;save(state);applyGrades();
+  });
+  applyGrades();
+}
 
 /* ── 상대전적 좁히기·정렬 ──
    ⚠**막지 않고 말한다.** 대전 표본은 대부분 한 자릿수라 율로 정렬하면 적은 타석이 위로 온다.
@@ -742,3 +898,22 @@ press(".rail [data-density]","density",state.density);
 applyTheme();renderBlocks();renderEditor();showTabs();
 })();
 `;
+
+/**
+ * 용어집을 클라이언트 스크립트에 심는다.
+ *
+ * ⚠**정의를 두 벌로 만들지 않기 위해서다**(M1). 서버가 그리는 라벨과 클라이언트가 띄우는 설명이
+ * 같은 `glossary.ts`에서 나온다.
+ * ⚠치환은 **함수 형태**로 한다 — 문자열 치환에서 `$&`·`$1` 같은 패턴이 해석되면
+ * 설명문이 조용히 망가진다.
+ * ⚠JSON에 백틱이 있으면 템플릿 리터럴이 아니라 **최종 스크립트가** 깨진다. 여기서 막는다.
+ */
+function embedGlossary(template: string): string {
+  const json = JSON.stringify(GLOSSARY);
+  if (json.includes("`")) {
+    throw new Error("용어집에 백틱이 있다 — 클라이언트 스크립트가 깨진다");
+  }
+  return template.replace("__GLOSSARY__", () => json);
+}
+
+export const CLIENT_JS = embedGlossary(CLIENT_JS_TEMPLATE);

@@ -27,7 +27,10 @@ test("비율에는 반드시 분모가 붙는다(M2)", () => {
 
 test("분모 없는 비율이 화면에 없다 — dd 안의 소수는 전부 den을 동반한다", () => {
   const out = renderPlayerPage(playerPage(), context());
-  const dds = [...out.matchAll(/<dd>(.*?)<\/dd>/g)].map((m) => m[1] ?? "");
+  // ⚠**`dd`에 클래스가 붙어도 잡혀야 한다.** 전에 `<dd>`만 찾다가 클래스가 붙은 순간
+  // 매치 0건이 되어 이 테스트가 조용히 공회전했다. 분모를 세는 것이 이 테스트의 일이다
+  const dds = [...out.matchAll(/<dd[^>]*>(.*?)<\/dd>/g)].map((m) => m[1] ?? "");
+  assert.ok(dds.length > 10, `dd를 찾지 못했다(${dds.length}건) — 이 테스트가 공회전하고 있다`);
   const bare = dds.filter((d) => /^-?[\d.]*\.\d/.test(d) && !d.includes('class="den"'));
   assert.deepEqual(bare, [], `분모 없는 비율이 남아 있다: ${bare.join(" / ")}`);
 });
@@ -251,8 +254,9 @@ test("투수는 기본 성적이 투수 항목이 된다", () => {
   );
   const standard = /<section class="block"[^>]*id="b-standard">[\s\S]*?<\/section>/.exec(out)?.[0] ?? "";
   assert.match(standard, /防御率/);
-  assert.match(standard, /<dt>投球回<\/dt><dd>100<\/dd>/);
-  assert.ok(!standard.includes("打率"), "투수의 기본 성적에 타율 항목이 남았다");
+  // 라벨은 설명 버튼이 되었지만 값의 자리는 그대로여야 한다
+  assert.match(standard, /data-term="innings"[^>]*>投球回<\/button><\/dt><dd class="v">100<\/dd>/);
+  assert.ok(!standard.includes(">打率<"), "투수의 기본 성적에 타율 항목이 남았다");
   assert.match(standard, /規定到達（100回 \/ 100回）/);
 });
 
@@ -273,6 +277,32 @@ test("자격 미달이어도 누계 지표에는 순위가 붙는다 — 화면 
   );
   assert.match(out, /率の指標には順位がつきません/);
   assert.ok(out.includes('<span class="rank">2位</span>'), "누계 지표의 순위가 사라졌다");
+});
+
+test("설명을 띄울 자리가 모든 페이지에 있다 — 없으면 툴팁이 조용히 안 뜬다", () => {
+  const out = renderPlayerPage(playerPage(), context());
+  assert.match(out, /<div id="tip" role="tooltip" hidden><\/div>/);
+  assert.match(out, /class="term" type="button" data-term="avg"/);
+});
+
+test("수준 색에는 범례와 끄는 버튼이 함께 있다 — 범례 없는 색은 장식이다", () => {
+  const out = renderPlayerPage(playerPage(), context());
+  assert.match(out, /class="legend"/);
+  assert.match(out, /id="gradeBtn"/);
+  for (const label of ["とても悪い", "悪い", "ふつう", "良い", "とても良い"]) {
+    assert.ok(out.includes(label), `범례에 ${label}가 없다`);
+  }
+  // 기준 모집단을 화면이 말한다 — 「무엇과 비교한 색인가」에 답할 수 있어야 한다
+  assert.match(out, /100打席・30回以上/);
+});
+
+test("⚠버튼 안에 버튼이 없다 — 정렬 헤더에는 속성만 붙는다", () => {
+  const out = renderPlayerPage(playerPage(), context());
+  // <button …> 이 닫히기 전에 또 <button 이 나오면 중첩이다
+  const nested = /<button(?:(?!<\/button>)[\s\S])*?<button/.exec(out);
+  assert.equal(nested, null, `중첩된 버튼이 있다: ${nested?.[0].slice(0, 120)}`);
+  // 정렬 헤더는 data-term만 갖는다
+  assert.match(out, /<button class="sortable"[^>]*data-term="avg"/);
 });
 
 test("성적이 아예 없으면 빈 상태를 말한다 — 0으로 채우지 않는다(M11)", () => {

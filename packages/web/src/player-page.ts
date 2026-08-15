@@ -17,6 +17,7 @@ import {
   buttonGroup,
   columns,
   denText,
+  gradeLegend,
   note,
   panel,
   rankValue,
@@ -27,6 +28,8 @@ import {
   statSigned,
   statText,
   tablist,
+  term,
+  termAttr,
 } from "./parts.ts";
 import type { BarRow, RankDigits } from "./parts.ts";
 import { NO_VALUE, avg3, gameDate, innings, throwsBats } from "./format.ts";
@@ -358,7 +361,8 @@ function rail(d: PlayerPageData): RawHtml {
   <span class="lbl">密度</span>
   <button class="tab" type="button" data-density="normal" aria-pressed="true">標準</button>
   <button class="tab" type="button" data-density="compact" aria-pressed="false">高密度</button>
-</nav>`;
+</nav>
+${gradeLegend()}`;
 }
 
 function editor(): RawHtml {
@@ -655,7 +659,7 @@ function matchupBlock(rows: readonly MatchupRow[], total: number, opponent: stri
   const head = MATCHUP_COLUMNS.map(
     (c) => html`<th class="${c.align === "l" ? "l" : ""}" scope="col" aria-sort="${c.key === "pa" ? "descending" : "none"}">
       <button class="sortable" type="button" data-sortkey="${c.key}" data-sorttype="${c.type}"
-        ${raw(c.rate === true ? 'data-sortrate="1"' : "")}>${c.label === "" ? opponent : c.label}<i></i></button>
+        ${raw(termAttr(c.label))}${raw(c.rate === true ? ' data-sortrate="1"' : "")}>${c.label === "" ? opponent : c.label}<i></i></button>
     </th>`,
   );
 
@@ -719,7 +723,7 @@ function rankingBlock(panels: readonly RankingPanel[], base: string): RawHtml {
       p.id,
       pi === 0,
       html`${scroller(html`<table>
-        <thead><tr><th>順位</th><th class="l">選手</th><th class="l">球団</th><th>${p.label}</th><th>母数</th></tr></thead>
+        <thead><tr><th>順位</th><th class="l">選手</th><th class="l">球団</th><th>${term(p.label)}</th><th>${term("母数")}</th></tr></thead>
         <tbody>${p.rows.map(
           (r) => html`<tr class="${r.isMe ? "me" : ""}">
             <td>${r.rank === null ? NO_VALUE : r.rank}</td>

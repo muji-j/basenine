@@ -22,6 +22,7 @@ import {
   statRateOuts,
   statText,
   tablist,
+  term,
 } from "./parts.ts";
 import { page } from "./layout.ts";
 import type { Freshness, SiteMeta } from "./layout.ts";
@@ -78,7 +79,7 @@ function panelTable(p: RankingPanel, base: string, limit: number): RawHtml {
   if (rows.length === 0) return html`<p class="empty">順位を計算できていません。</p>`;
   const truncated = p.rows.length > limit;
   return html`${scroller(html`<table>
-    <thead><tr><th>順位</th><th class="l">選手</th><th class="l">球団</th><th>${p.label}</th><th>母数</th></tr></thead>
+    <thead><tr><th>順位</th><th class="l">選手</th><th class="l">球団</th><th>${term(p.label)}</th><th>${term("母数")}</th></tr></thead>
     <tbody>${rows.map(
       (r) => html`<tr class="${r.isMe ? "me" : ""}">
         <td>${r.rank === null ? NO_VALUE : r.rank}</td>

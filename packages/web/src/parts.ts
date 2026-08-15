@@ -8,6 +8,8 @@ import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import type { Rate } from "@bb-app/metrics";
 import { NO_VALUE, avg3, dec1, dec2, denominator, innings, int, signed1 } from "./format.ts";
+import { termKeyForLabel } from "./glossary.ts";
+import { GRADE_LABEL, gradeClass, gradeOf, gradeOrder } from "./grade.ts";
 
 /** 자릿수 규약 — 3=타율 계열(선행 0 없음) · 2=방어율 계열 · 1=wRC+ 같은 지수 */
 export type Digits = 1 | 2 | 3;
@@ -34,6 +36,46 @@ export function rankBadge(rank: number | null): RawHtml {
 }
 
 /**
+ * 용어 라벨. 용어집에 있으면 **누를 수 있는 버튼**이 되어 설명이 뜬다.
+ *
+ * ⚠**버튼이어야 한다.** `<span>` + hover로 만들면 터치 단말과 키보드에서 열 방법이 없다.
+ * PC는 호버, 모바일은 탭, 키보드는 포커스 — 셋이 같은 요소로 동작해야 한다.
+ */
+export function term(label: string): RawHtml {
+  const key = termKeyForLabel(label);
+  if (key === undefined) return html`${label}`;
+  return html`<button class="term" type="button" data-term="${key}" aria-describedby="tip">${label}</button>`;
+}
+
+/**
+ * 이미 버튼인 요소(정렬 헤더)에 붙일 `data-term` 조각.
+ *
+ * ⚠**버튼 안에 버튼을 넣을 수 없다.** 정렬 헤더는 이미 버튼이므로 `term()`을 쓸 수 없고,
+ * 속성만 얹어 호버·포커스로 설명이 뜨게 한다(탭은 정렬이 가져간다).
+ * @returns 앞에 공백이 붙은 속성 문자열. 용어집에 없으면 빈 문자열
+ */
+export function termAttr(label: string): string {
+  const key = termKeyForLabel(label);
+  return key === undefined ? "" : ` data-term="${key}"`;
+}
+
+/**
+ * 값에 붙는 등급. **색만으로 전하지 않는다** — 보이지 않는 글자로도 등급을 낸다.
+ *
+ * ⚠색각 이상과 스크린리더에서 색은 전달되지 않는다. 색은 **빠르게 읽기 위한 보조**이고,
+ * 등급 자체는 글자로도 존재해야 한다.
+ */
+function gradeMark(metric: string | undefined, value: number | null, sample: number): {
+  cls: string;
+  label: RawHtml;
+} {
+  if (metric === undefined) return { cls: "", label: raw("") };
+  const g = gradeOf(metric, value, sample);
+  if (g === null) return { cls: "", label: raw("") };
+  return { cls: ` ${gradeClass(g)}`, label: html`<span class="vh">（${GRADE_LABEL[g]}）</span>` };
+}
+
+/**
  * 비율 항목 한 줄. **분모가 필수 인자다.**
  * @param digits 타율 계열은 3자리·선행 0 없음, 방어율 계열은 2자리
  */
@@ -44,7 +86,11 @@ export function statRate(
   digits: Digits = 3,
   rank: number | null = null,
 ): RawHtml {
-  return html`<dt>${label}</dt><dd>${fmt(r.value, digits)}<span class="den">${denominator(r.denominator, unit)}</span>${rankBadge(rank)}</dd>`;
+  // 등급 척도의 키는 용어집 키와 같다 — 라벨 하나로 설명과 색이 둘 다 붙는다
+  const g = gradeMark(termKeyForLabel(label), r.value, r.denominator);
+  // ⚠**등급 글자는 분모 뒤에 온다.** 값과 분모 사이에 아무것도 끼우지 않는다(M2) —
+  // 읽는 순서로도 이쪽이 맞다. 분모를 모르고 들은 「とても良い」는 근거가 없다.
+  return html`<dt>${term(label)}</dt><dd class="v${raw(g.cls)}">${fmt(r.value, digits)}<span class="den">${denominator(r.denominator, unit)}</span>${g.label}${rankBadge(rank)}</dd>`;
 }
 
 /**
@@ -60,7 +106,9 @@ export function statRateOuts(
   digits: Digits = 2,
   rank: number | null = null,
 ): RawHtml {
-  return html`<dt>${label}</dt><dd>${fmt(r.value, digits)}<span class="den">${innings(r.denominator)}回</span>${rankBadge(rank)}</dd>`;
+  // ⚠표본은 **아웃 카운트**다. 등급 척도의 minSample도 아웃 단위로 적혀 있어야 한다
+  const g = gradeMark(termKeyForLabel(label), r.value, r.denominator);
+  return html`<dt>${term(label)}</dt><dd class="v${raw(g.cls)}">${fmt(r.value, digits)}<span class="den">${innings(r.denominator)}回</span>${g.label}${rankBadge(rank)}</dd>`;
 }
 
 /** 순위표의 분모 칸. 아웃 카운트는 이닝으로 바꿔 보여준다 */
@@ -76,17 +124,35 @@ export function statSigned(
   unit: string,
   rank: number | null = null,
 ): RawHtml {
-  return html`<dt>${label}</dt><dd>${signed1(value)}<span class="den">${denominator(sample, unit)}</span>${rankBadge(rank)}</dd>`;
+  return html`<dt>${term(label)}</dt><dd class="v">${signed1(value)}<span class="den">${denominator(sample, unit)}</span>${rankBadge(rank)}</dd>`;
 }
 
 /** 개수 항목 한 줄. 개수에는 분모가 없다 — **비율이 아니기 때문**이지 예외가 아니다. */
 export function statCount(label: string, n: number | null, rank: number | null = null): RawHtml {
-  return html`<dt>${label}</dt><dd>${int(n)}${rankBadge(rank)}</dd>`;
+  return html`<dt>${term(label)}</dt><dd class="v">${int(n)}${rankBadge(rank)}</dd>`;
 }
 
 /** 이미 문자열로 만든 값. 이닝(6.2)처럼 포맷이 특수한 것에만 쓴다. */
 export function statText(label: string, text: string, rank: number | null = null): RawHtml {
-  return html`<dt>${label}</dt><dd>${text === "" ? NO_VALUE : text}${rankBadge(rank)}</dd>`;
+  return html`<dt>${term(label)}</dt><dd class="v">${text === "" ? NO_VALUE : text}${rankBadge(rank)}</dd>`;
+}
+
+/**
+ * 수준 색의 범례.
+ *
+ * ⚠**범례 없는 색은 장식이다.** 파랑이 좋은 쪽인지 주황이 좋은 쪽인지 화면이 말하지 않으면
+ * 읽는 사람은 색을 무시하게 되고, 그러면 색을 칠한 의미가 없다.
+ * ⚠**끄는 버튼을 함께 둔다.** 색이 방해가 되는 사람이 있고, 인쇄물의 질감을 원하는 사람도 있다.
+ */
+export function gradeLegend(): RawHtml {
+  return html`<div class="legend">
+    <span class="lg">水準</span>
+    ${gradeOrder().map(
+      (g) => html`<span class="sw ${gradeClass(g)}"><i></i>${GRADE_LABEL[g]}</span>`,
+    )}
+    <span class="lg tail">100打席・30回以上の分布から。母数が少ない値には色をつけていません</span>
+    <button class="tab" type="button" id="gradeBtn" aria-pressed="true">色分け</button>
+  </div>`;
 }
 
 export interface BlockOptions {

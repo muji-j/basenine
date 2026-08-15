@@ -185,6 +185,8 @@ ${topbar(o)}
     </footer>
   </main>
 </div>
+<!-- 용어 설명. ⚠**모든 페이지에 있어야 한다** — 용어는 순위표에도 대전표에도 나온다 -->
+<div id="tip" role="tooltip" hidden></div>
 ${boot}
 <script src="${o.base}assets/site.js" defer></script>
 </body>

@@ -15,6 +15,50 @@ test("스크립트가 끝까지 실려 있다 — 안에 백틱이 들어가면 
   assert.ok(!CLIENT_JS.includes("`") && !CSS.includes("`"), "백틱이 남아 있다");
 });
 
+test("용어집이 스크립트에 실린다 — 정의를 두 벌로 만들지 않기 위해서다(M1)", async () => {
+  const { GLOSSARY, glossaryKeys } = await import("../src/glossary.ts");
+  assert.ok(!CLIENT_JS.includes("__GLOSSARY__"), "치환이 일어나지 않았다");
+  for (const k of glossaryKeys()) {
+    assert.ok(CLIENT_JS.includes(`"${k}":`), `${k}가 클라이언트에 없다`);
+  }
+  // 문장까지 실렸는지 — 키만 있고 내용이 비면 툴팁이 빈 채로 뜬다
+  assert.ok(CLIENT_JS.includes(GLOSSARY["avg"]!.short), "설명 문장이 실리지 않았다");
+});
+
+test("⚠정렬 헤더는 탭으로 열지 않는다 — 같은 탭이 정렬과 설명을 둘 다 하면 안 된다", () => {
+  assert.match(CLIENT_JS, /\[data-term\]/, "호버·포커스는 data-term 전체가 받는다");
+  assert.match(CLIENT_JS, /tapToOpen/, "탭으로 여는 것은 .term뿐이어야 한다");
+});
+
+test("설명은 Escape·바깥클릭·스크롤로 닫힌다 — 열린 채 남으면 화면을 가린다", () => {
+  assert.match(CLIENT_JS, /"Escape"/);
+  assert.match(CLIENT_JS, /doc\.addEventListener\("scroll",hide,true\)/);
+});
+
+test("수준 색은 끌 수 있고, 분모는 끌 수 없다", () => {
+  assert.match(CLIENT_JS, /data-grades/);
+  assert.match(CSS, /:root\[data-grades="off"\] dd\.v\{box-shadow:none/);
+  // 분모를 지우는 규칙이 있으면 M2가 무너진다
+  assert.ok(!/\.den\{[^}]*display:none/.test(CSS), "분모를 숨기는 규칙이 있다");
+});
+
+test("⚠수준 색은 빨강↔초록이 아니다 — 가장 흔한 색각 이상에서 구별되지 않는다", () => {
+  const good = /--g-vgood:(#[0-9a-f]{6})/.exec(CSS)?.[1] ?? "";
+  const bad = /--g-vbad:(#[0-9a-f]{6})/.exec(CSS)?.[1] ?? "";
+  const hue = (hex: string): "blue" | "orange" | "other" => {
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)) as [
+      number,
+      number,
+      number,
+    ];
+    if (b > r && b > g) return "blue";
+    if (r > b) return "orange";
+    return "other";
+  };
+  assert.equal(hue(good), "blue", `좋은 쪽이 파랑이어야 한다: ${good}`);
+  assert.equal(hue(bad), "orange", `나쁜 쪽이 주황이어야 한다: ${bad}`);
+});
+
 test("클라이언트는 서버가 심는 전역만 읽는다", () => {
   assert.match(CLIENT_JS, /window\.__BLOCKS__/);
   assert.match(CLIENT_JS, /window\.__PRESETS__/);
