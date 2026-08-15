@@ -18,7 +18,7 @@ function side(over: Partial<ProbableSide> = {}): ProbableSide {
       {
         opponentId: "71575132",
         opponentName: "泉口",
-        opponentTeam: "G",
+        opponentTeam: "g",
         line: { pa: 6, ab: 6, h: 3, double: 1, triple: 0, hr: 1, bb: 0, ibb: 0, hbp: 0, sf: 0, sh: 0, so: 1, roe: 0 },
         avg: r(0.5, 6),
         rbi: 2,
@@ -26,7 +26,7 @@ function side(over: Partial<ProbableSide> = {}): ProbableSide {
       {
         opponentId: "71575133",
         opponentName: "吉川",
-        opponentTeam: "G",
+        opponentTeam: "g",
         line: { pa: 3, ab: 3, h: 3, double: 0, triple: 0, hr: 0, bb: 0, ibb: 0, hbp: 0, sf: 0, sh: 0, so: 0, roe: 0 },
         avg: r(1, 3),
         rbi: 1,

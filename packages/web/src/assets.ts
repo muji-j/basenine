@@ -210,8 +210,16 @@ th[aria-sort="descending"] .sortable i::before{content:"↓"}
 .mfind input{font:inherit;font-size:13px;padding:5px 9px;width:170px;background:var(--panel);color:var(--tx);
   border:1px solid var(--hair-2);transition:border-color var(--fast) var(--ease)}
 .mfind input:hover{border-color:var(--tx-3)}
+.mfind select{font:inherit;font-size:13px;padding:5px 8px;background:var(--panel);color:var(--tx);
+  border:1px solid var(--hair-2);max-width:180px;transition:border-color var(--fast) var(--ease)}
+.mfind select:hover{border-color:var(--tx-3)}
 .mfind .count{font-family:var(--f-num);font-size:11px;color:var(--tx-3)}
-@media (max-width:680px){.mfind input{flex:1 1 auto;width:auto;min-width:0}}
+@media (max-width:680px){
+  .mfind input{flex:1 1 auto;width:auto;min-width:0}
+  .mfind select{flex:1 1 auto;max-width:none;min-width:0}
+  .mfind .count{flex-basis:100%}
+}
+@media (pointer:coarse){.mfind select,.mfind input{padding:8px}}
 
 .note{font-size:11px;color:var(--tx-3);margin:9px 0 0;max-width:64ch}
 .empty{font-size:12px;color:var(--tx-3);padding:6px 0}
@@ -370,6 +378,7 @@ const state={
   tabs:(saved.tabs&&typeof saved.tabs==="object")?saved.tabs:{},
   // 대전 표의 정렬. 저장된 열이 지금 표에 없으면 표를 그릴 때 기본으로 되돌린다
   matchup:(saved.matchup&&typeof saved.matchup==="object")?saved.matchup:null,
+  matchupTeam:typeof saved.matchupTeam==="string"?saved.matchupTeam:"",
   theme:saved.theme==="dark"||saved.theme==="light"?saved.theme:"system"
 };
 
@@ -501,6 +510,7 @@ if(mtable){
   const tbody=$("tbody",mtable);
   const all=$$("tr",tbody);
   const mfilter=$("#matchupFilter");
+  const mteam=$("#matchupTeam");
   const empty=$("#matchupEmpty");
   const status=$("#matchupStatus");
   const heads=$$("th",mtable);
@@ -528,6 +538,7 @@ if(mtable){
     const key=state.matchup.key,dir=state.matchup.dir;
     const min=Number(state.tabs.matchupMin||"1");
     const term=mfilter?mfilter.value.trim():"";
+    const team=mteam?mteam.value:"";
     const sign=dir==="asc"?1:-1;
 
     const sorted=all.slice().sort((a,b)=>{
@@ -539,7 +550,9 @@ if(mtable){
     let n=0,thin=0;
     sorted.forEach(tr=>{
       tbody.appendChild(tr);
-      const hit=Number(tr.dataset.pa)>=min&&(term===""||tr.dataset.name.indexOf(term)>=0);
+      const hit=Number(tr.dataset.pa)>=min
+        &&(term===""||tr.dataset.name.indexOf(term)>=0)
+        &&(team===""||tr.dataset.teamcode===team);
       tr.hidden=!hit;
       if(hit){n++;if(Number(tr.dataset.pa)<THIN_MATCHUP_PA)thin++}
     });
@@ -558,6 +571,7 @@ if(mtable){
       let text=typeOf[key]==="text"
         ?labelOf[key]+(dir==="asc"?" 昇順":" 降順")
         :labelOf[key]+(dir==="asc"?"の少ない順":"の多い順");
+      if(team!==""&&mteam)text+=" · "+mteam.options[mteam.selectedIndex].textContent;
       if(min>1)text+=" · "+min+"打席以上";
       if(rateOf[key]&&min<THIN_MATCHUP_PA&&thin>0){
         text+=" · ⚠"+THIN_MATCHUP_PA+"打席未満が"+thin+"件混ざっています（率は標本が小さいほど揺れます）";
@@ -576,6 +590,12 @@ if(mtable){
     save(state);apply();
   }));
   if(mfilter)mfilter.addEventListener("input",apply);
+  if(mteam)mteam.addEventListener("change",()=>{state.matchupTeam=mteam.value;save(state);apply()});
+  /* 저장된 구단이 이 선수의 선택지에 없으면 「すべて」로 되돌린다 — 0건 화면이 되지 않게 */
+  if(mteam&&typeof state.matchupTeam==="string"){
+    const ok=Array.prototype.some.call(mteam.options,o=>o.value===state.matchupTeam);
+    mteam.value=ok?state.matchupTeam:"";
+  }
   tabHooks.push(apply);
 
   const vs=vsParam();

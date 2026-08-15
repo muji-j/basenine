@@ -130,6 +130,22 @@ test("대전 성적은 이름으로 좁힐 수 있고 상대 페이지로 이어
   assert.match(section, /全2件/);
 });
 
+test("구단으로 좁힐 수 있다 — 선택지는 **실제로 대전한 구단만**", () => {
+  const section = matchupSection(renderPlayerPage(playerPage(), context()));
+  const opts = [...section.matchAll(/<option value="(\w*)">([^<]*)<\/option>/g)].map((m) => [m[1], m[2]]);
+  assert.deepEqual(opts, [
+    ["", "すべての球団"],
+    ["g", "巨人（1）"],
+    ["b", "オリックス（1）"],
+  ]);
+});
+
+test("구단 열은 표기로 정렬하고 좁히기는 코드로 한다", () => {
+  const section = matchupSection(renderPlayerPage(playerPage(), context()));
+  assert.match(section, /data-team="オリックス" data-teamcode="b"/);
+  assert.match(section, /<td class="l">オリックス<\/td>/);
+});
+
 test("정렬용 값이 행에 실린다 — 클라이언트가 다시 계산하지 않는다", () => {
   const section = matchupSection(renderPlayerPage(playerPage(), context()));
   assert.match(section, /data-pa="14"[^>]*data-hr="27"[^>]*data-avg="0\.3330"/);

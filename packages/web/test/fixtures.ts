@@ -160,7 +160,7 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
       {
         opponentId: "91045111",
         opponentName: "山本",
-        opponentTeam: "B",
+        opponentTeam: "b",
         line: { ...BATTING_LINE, pa: 14, ab: 12, h: 4 },
         avg: r(0.333, 12),
         rbi: 3,
@@ -168,7 +168,7 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
       {
         opponentId: "91045112",
         opponentName: "戸郷",
-        opponentTeam: "G",
+        opponentTeam: "g",
         line: { ...BATTING_LINE, pa: 5, ab: 5, h: 3 },
         avg: r(0.6, 5),
         rbi: 1,

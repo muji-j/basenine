@@ -7,6 +7,7 @@
 import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import type { BattingLine, PitchingLine, Rate } from "@bb-app/metrics";
+import { TEAMS, shortNameOf } from "@bb-app/domain";
 import type { League, TeamColor } from "@bb-app/domain";
 import { blocksFor, presetsFor } from "./blocks.ts";
 import type { BlockId } from "./blocks.ts";
@@ -638,21 +639,33 @@ function matchupBlock(rows: readonly MatchupRow[], total: number, opponent: stri
     </th>`,
   );
 
+  // 구단 선택지는 **실제로 대전한 구단만** 낸다 — 없는 구단을 고르게 하면 0건 화면이 된다
+  const counts = new Map<string, number>();
+  for (const r of rows) counts.set(r.opponentTeam, (counts.get(r.opponentTeam) ?? 0) + 1);
+  const teams = TEAMS.filter((t) => counts.has(t.code));
+
   const body = html`<div class="mfind">
   <label for="matchupFilter">${opponent}名でしぼる</label>
   <input id="matchupFilter" type="search" autocomplete="off" placeholder="例：山本">
+  <label for="matchupTeam">球団</label>
+  <select id="matchupTeam">
+    <option value="">すべての球団</option>
+    ${teams.map(
+      (t) => html`<option value="${t.code}">${shortNameOf(t.code)}（${counts.get(t.code)}）</option>`,
+    )}
+  </select>
   <span class="count"><span id="matchupCount">${rows.length}件</span> / 全${total}件</span>
 </div>
 ${scroller(html`<table id="matchupTable">
   <thead><tr>${head}</tr></thead>
   <tbody>${rows.map(
     (r) => html`<tr class="${r.line.pa < THIN_MATCHUP_PA ? "thin" : ""}"
-      data-name="${r.opponentName}" data-team="${r.opponentTeam}"
+      data-name="${r.opponentName}" data-team="${shortNameOf(r.opponentTeam)}" data-teamcode="${r.opponentTeam}"
       data-pa="${r.line.pa}" data-ab="${r.line.ab}" data-h="${r.line.h}" data-hr="${r.line.hr}"
       data-bb="${r.line.bb}" data-so="${r.line.so}" data-rbi="${r.rbi}"
       ${raw(r.avg.value === null ? "" : `data-avg="${r.avg.value.toFixed(4)}"`)}>
       <td class="l"><a href="${r.opponentId}.html">${r.opponentName}</a></td>
-      <td class="l">${r.opponentTeam}</td>
+      <td class="l">${shortNameOf(r.opponentTeam)}</td>
       <td>${r.line.pa}</td><td>${r.line.ab}</td><td>${r.line.h}</td><td>${r.line.hr}</td>
       <td>${r.line.bb}</td><td>${r.line.so}</td><td>${r.rbi}</td>
       <td>${avg3(r.avg.value)}</td>

@@ -39,7 +39,7 @@ import {
   stateKey,
 } from "@bb-app/aggregate";
 import type { BattingEntry, LeagueBundle, PitchingEntry, SplitDimension } from "@bb-app/aggregate";
-import { TEAMS, colorOf, teamOf } from "@bb-app/domain";
+import { TEAMS, colorOf, shortNameOf, teamOf } from "@bb-app/domain";
 import type { League } from "@bb-app/domain";
 import { countsAsHit } from "@bb-app/parser";
 import type { Outcome } from "@bb-app/parser";
@@ -587,7 +587,7 @@ function loadMatchups(
     push(byBatter, m.batterId, {
       opponentId: m.pitcherId,
       opponentName: m.pitcherName,
-      opponentTeam: (teamOf.get(m.pitcherId) ?? "").toUpperCase(),
+      opponentTeam: teamOf.get(m.pitcherId) ?? "",
       line: m.line,
       rbi: m.rbi,
       avg,
@@ -595,7 +595,7 @@ function loadMatchups(
     push(byPitcher, m.pitcherId, {
       opponentId: m.batterId,
       opponentName: m.batterName,
-      opponentTeam: (teamOf.get(m.batterId) ?? "").toUpperCase(),
+      opponentTeam: teamOf.get(m.batterId) ?? "",
       line: m.line,
       rbi: m.rbi,
       avg,
@@ -643,12 +643,6 @@ function loadMonthlyEra(
   return out;
 }
 
-/** 명감 표기의 짧은 이름. 칩에 「福岡ソフトバンクホークス」를 넣으면 칩이 아니라 문단이 된다 */
-const SHORT_NAME: Readonly<Record<string, string>> = {
-  g: "巨人", t: "阪神", db: "DeNA", c: "広島", d: "中日", s: "ヤクルト",
-  h: "ソフトバンク", f: "日本ハム", m: "ロッテ", l: "西武", e: "楽天", b: "オリックス",
-};
-
 /**
  * 구단별 선수 목록. **색인 화면은 서버가 그린다** —
  * 스크립트가 죽어도 전 선수에게 도달할 수 있어야 하고, 그게 §0-1(3클릭)의 최저선이다.
@@ -673,7 +667,7 @@ function rosters(players: readonly PlayerPageData[]): TeamRoster[] {
   return TEAMS.filter((t) => byTeam.has(t.code)).map((t) => ({
     code: t.code,
     name: t.name,
-    shortName: SHORT_NAME[t.code] ?? t.name,
+    shortName: shortNameOf(t.code),
     color: colorOf(t.code),
     players: (byTeam.get(t.code) ?? []).sort((a, b) => a.name.localeCompare(b.name, "ja")),
   }));
@@ -735,7 +729,7 @@ function startersPage(
     return {
       teamCode: r.teamCode,
       teamName: team.name,
-      shortName: SHORT_NAME[r.teamCode] ?? team.name,
+      shortName: shortNameOf(r.teamCode),
       color: colorOf(r.teamCode),
       playerId: r.playerId,
       name: r.playerId === null ? null : (entry?.player.displayName ?? null),
@@ -751,7 +745,7 @@ function startersPage(
               so: entry.player.line.so,
             },
       // 상대 팀 타자만 남긴다 — 다른 팀 상대 기록은 오늘의 경기와 무관하다
-      opponents: all.filter((m) => m.opponentTeam === opponentCode.toUpperCase()),
+      opponents: all.filter((m) => m.opponentTeam === opponentCode),
     };
   };
 

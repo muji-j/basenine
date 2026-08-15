@@ -88,6 +88,16 @@ function buildPage(): ReturnType<typeof makeDocument> {
       h.appendChild(min);
       section.appendChild(h);
       section.appendChild(make("input", { id: "matchupFilter", type: "search" }));
+      const sel = make("select", { id: "matchupTeam" });
+      const all = make("option", { value: "" });
+      all.textContent = "すべての球団";
+      sel.appendChild(all);
+      for (const code of [...new Set(MATCHUPS.map((m) => m.team))]) {
+        const o = make("option", { value: code });
+        o.textContent = code;
+        sel.appendChild(o);
+      }
+      section.appendChild(sel);
       section.appendChild(make("span", { id: "matchupCount" }));
       section.appendChild(make("p", { id: "matchupStatus" }));
 
@@ -113,7 +123,9 @@ function buildPage(): ReturnType<typeof makeDocument> {
       for (const r of MATCHUPS) {
         const attrs: Record<string, string> = {
           "data-name": r.name,
+          // 정렬은 표기(사람이 읽는 이름), 좁히기는 코드로 한다
           "data-team": r.team,
+          "data-teamcode": r.team,
           "data-pa": String(r.pa),
           "data-hr": String(r.hr),
         };
@@ -446,6 +458,50 @@ test("좁히면 경고가 사라진다 — 없는 위험을 계속 말하지 않
   clickHeader(doc, "avg");
   clickTab(doc, "matchupMin", "10");
   assert.ok(!doc.getElementById("matchupStatus")!.textContent.includes("混ざって"));
+});
+
+test("구단을 고르면 그 구단 상대만 남는다", () => {
+  const doc = buildPage();
+  run(doc);
+  const sel = doc.getElementById("matchupTeam")!;
+  sel.value = "G";
+  sel.fire("change");
+  assert.deepEqual(shownNames(doc), ["戸郷", "大勢"]);
+  assert.equal(doc.getElementById("matchupCount")!.textContent, "2件");
+  assert.match(doc.getElementById("matchupStatus")!.textContent, /· G/);
+});
+
+test("구단 · 이름 · 최소 타석이 함께 걸린다", () => {
+  const doc = buildPage();
+  run(doc);
+  const sel = doc.getElementById("matchupTeam")!;
+  sel.value = "G";
+  sel.fire("change");
+  clickTab(doc, "matchupMin", "5");
+  assert.deepEqual(shownNames(doc), ["戸郷"], "2타석짜리가 남았다");
+});
+
+test("구단 선택도 저장된다", () => {
+  const storage = makeStorage();
+  const first = buildPage();
+  run(first, { storage });
+  const sel = first.getElementById("matchupTeam")!;
+  sel.value = "G";
+  sel.fire("change");
+
+  const second = buildPage();
+  run(second, { storage });
+  assert.equal(second.getElementById("matchupTeam")!.value, "G");
+  assert.deepEqual(shownNames(second), ["戸郷", "大勢"]);
+});
+
+test("⚠저장된 구단이 이 선수의 선택지에 없으면 「すべて」로 돌아간다 — 0건 화면이 되지 않게", () => {
+  const storage = makeStorage();
+  storage.setItem("npb-meikan-layout", JSON.stringify({ matchupTeam: "t" }));
+  const doc = buildPage();
+  run(doc, { storage });
+  assert.equal(doc.getElementById("matchupTeam")!.value, "");
+  assert.equal(shownNames(doc).length, MATCHUPS.length);
 });
 
 test("정렬 선택도 저장된다", () => {

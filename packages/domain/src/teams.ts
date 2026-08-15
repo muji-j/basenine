@@ -79,6 +79,22 @@ export function leagueOf(code: string): League {
   return teamOf(code).league;
 }
 
+/**
+ * 짧은 표기. 칩·선택지·표 머리처럼 **좁은 자리**에 쓴다.
+ *
+ * ⚠`name`을 잘라 만들지 않는다 — 「福岡ソフトバンクホークス」를 앞에서 자르면 「福岡ソフ」가 되고
+ * 「北海道日本ハムファイターズ」는 「北海道日」가 된다. 통용되는 약칭은 규칙이 아니라 목록이다.
+ */
+const SHORT_NAME: Readonly<Record<string, string>> = {
+  g: "巨人", t: "阪神", db: "DeNA", c: "広島", d: "中日", s: "ヤクルト",
+  h: "ソフトバンク", f: "日本ハム", m: "ロッテ", l: "西武", e: "楽天", b: "オリックス",
+};
+
+/** 모르는 코드는 정식 표기로 되돌린다(그것도 없으면 코드 자체). **던지지 않는다** — 표시용이다 */
+export function shortNameOf(code: string): string {
+  return SHORT_NAME[code] ?? BY_CODE.get(code)?.name ?? code.toUpperCase();
+}
+
 const BY_NAME = new Map(TEAMS.map((t) => [t.name, t]));
 
 /**

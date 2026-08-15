@@ -33,9 +33,27 @@ export class El {
   hidden = false;
   checked = false;
   disabled = false;
-  value = "";
   type = "";
   #text = "";
+  #value: string | null = null;
+
+  /** input의 입력값이자 option의 `value` 속성 — 둘을 같은 이름으로 읽는 코드가 있다 */
+  get value(): string {
+    return this.#value ?? this.getAttribute("value") ?? "";
+  }
+  set value(v: string) {
+    this.#value = v;
+  }
+
+  /** select의 선택지 */
+  get options(): El[] {
+    return this.children.filter((c) => c.tagName === "OPTION");
+  }
+
+  /** 지금 값과 일치하는 선택지의 위치. 없으면 -1(브라우저와 같다) */
+  get selectedIndex(): number {
+    return this.options.findIndex((o) => o.value === this.value);
+  }
 
   constructor(tag: string) {
     this.tagName = tag.toUpperCase();
