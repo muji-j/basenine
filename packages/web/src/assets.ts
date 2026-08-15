@@ -147,8 +147,9 @@ if(!Array.isArray(state.order)||!state.order.length)state.order=(PRESETS.standar
 function press(sel,attr,val){$$(sel).forEach(b=>b.setAttribute("aria-pressed",String(b.dataset[attr]===val)))}
 
 function renderBlocks(){
-  const foot=$(".foot");
-  state.order.forEach(id=>{const el=document.getElementById("b-"+id);if(el&&foot)foot.parentNode.insertBefore(el,foot)});
+  // ⚠블록을 다시 꽂는 기준점. 꼬리말 앞에 꽂으면 그 사이에 있는 내비게이션을 넘어간다.
+  const end=$("#blocksEnd");
+  state.order.forEach(id=>{const el=document.getElementById("b-"+id);if(el&&end)end.parentNode.insertBefore(el,end)});
   BLOCKS.forEach(b=>{const el=document.getElementById("b-"+b.id);if(el)el.hidden=state.order.indexOf(b.id)<0});
   const pad=state.density==="compact"?"10px":"16px";
   $$(".block").forEach(el=>{el.style.paddingTop=pad;el.style.paddingBottom=pad});

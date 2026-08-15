@@ -68,6 +68,10 @@ test("구단 색은 CSS 변수로 받는다 — 색값이 스타일시트에 박
   assert.match(CSS, /var\(--team-ink,/);
 });
 
+test("블록 재배치 기준점이 서버 마크업과 맞는다 — 어긋나면 순서 변경이 조용히 안 먹는다", () => {
+  assert.match(CLIENT_JS, /\$\("#blocksEnd"\)/);
+});
+
 test("블록마다 CSS가 필요로 하는 id 규칙이 유지된다", () => {
   assert.match(CSS, /\.block\[hidden\]\{display:none\}/);
   for (const b of BLOCKS) assert.ok(/^[a-z]+$/.test(b.id), `${b.id}가 id로 쓸 수 없는 형태다`);

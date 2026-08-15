@@ -101,6 +101,13 @@ test("JS 없이도 標準 프리셋은 보이고 나머지는 접혀 있다", ()
   assert.match(out, /<section class="block" hidden id="b-scorebook">/);
 });
 
+test("블록 재배치 기준점이 마지막 블록 뒤·내비 앞에 있다", () => {
+  const out = renderPlayerPage(playerPage(), context());
+  const end = out.indexOf('id="blocksEnd"');
+  assert.ok(end > out.lastIndexOf('class="block"'), "기준점이 블록보다 앞에 있다");
+  assert.ok(end < out.indexOf('aria-label="ほかの選手"'), "기준점이 내비보다 뒤에 있다");
+});
+
 test("클라이언트에 실리는 카탈로그가 서버가 그린 블록과 같다", () => {
   const out = renderPlayerPage(playerPage(), context());
   const boot = bootstrapFor("batter");

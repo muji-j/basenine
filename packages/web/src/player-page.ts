@@ -574,6 +574,7 @@ ${catalog.map((meta) => {
     // JS가 없어도 「標準」은 보인다. 나머지는 조립에서 켜면 나온다.
     return initial.has(meta.id) ? rendered : hidden(rendered);
   })}
+<div id="blocksEnd" hidden></div>
 <nav class="find" aria-label="ほかの選手">
   <a href="${base}index.html">選手を探す</a> · <a href="${base}ranking.html">リーグ順位表</a>
 </nav>`;
