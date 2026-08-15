@@ -200,9 +200,29 @@ Pages는 **배포마다** `<hash>.bb-app-7mk.pages.dev`를 새로 내준다.
 
 별칭도 **자기 호스트명으로** Access 로그인에 넘겨진다 — 우회 경로 없이 걸렸다.
 
-⚠**302가 나왔다고 끝이 아니다.** `Preview access`가 만드는 정책이 「가입한 사람 누구나」류면
-로그인 화면은 뜨지만 아무나 들어온다. **상태 코드만으로는 구별되지 않는다.**
-`Zero Trust → Access → Applications`에서 새 앱의 정책이 **이메일 허용목록**인지 확인한다.
+#### ⚠`Preview access`는 **자기 정책을 붙인다** — 확인하고 바꿔야 한다 (2026-08-15 실측)
+
+켠 직후 `Zero Trust → Access → Applications`의 상태:
+
+| 앱 | 대상 | 정책 |
+|---|---|---|
+| `bb-app-7mk.pages.dev` | 프로덕션 | `allow_emails` ✅ |
+| `bb-app - Cloudflare Pages` | `*.bb-app-7mk.pages.dev` | ⚠**`Allow Members - Cloudflare Pages`**(자동 생성) |
+
+**「Allow Members」는 Cloudflare 계정 멤버를 허용한다는 뜻이지 우리 허용목록이 아니다.**
+계정 멤버가 혼자면 결과가 같아서 **차이가 드러나지 않는다.** 문제는 규칙이 두 벌인 것이다:
+
+- 지인을 `allow_emails`에 넣어도 **배포별 URL에는 못 들어간다**
+- Cloudflare 계정에 협업자를 한 명 추가하면(다른 프로젝트 때문이라도)
+  **허용목록에 없는 사람이 배포별 URL로 사이트 전체를 본다**
+- ⚠**두 번째가 조용하다.** 경고가 없고 상태 코드로도 드러나지 않는다
+
+**고친다**: `bb-app - Cloudflare Pages` → Policies → 자동 생성 정책을 빼고
+**기존 `allow_emails`를 선택**한다(새로 만들지 않는다).
+정책 화면의 `Used by applications`가 **2**가 되면 맞다.
+
+⚠**이 항목은 `curl`로 검증되지 않는다.** 정책이 무엇이든 익명은 똑같이 302다.
+**설정 화면을 읽는 것이 검증**이고, 그래서 여기 표로 적어 둔다.
 
 안 되는 경우의 대안(이번에는 쓰지 않았다):
 - 앱을 하나 더 만든다 — subdomain `*` · domain `bb-app-7mk.pages.dev`.
