@@ -11,9 +11,34 @@ import { BLOCKS, PRESETS } from "../src/blocks.ts";
 import { bootstrapFor } from "../src/player-page.ts";
 import { El, make, makeDocument, makeStorage } from "./dom-stub.ts";
 
+/** 대전 성적 표의 행. 정렬·좁히기 테스트의 입력 */
+const MATCHUPS = [
+  { name: "山本", pa: 14, hr: 1, avg: 0.333 },
+  { name: "戸郷", pa: 5, hr: 2, avg: 0.6 },
+  { name: "今永", pa: 22, hr: 0, avg: 0.25 },
+  { name: "森下", pa: 9, hr: 3, avg: 0.5 },
+];
+
+/** 탭 한 줄 + 대응 패널. 서버의 `tablist`/`panel`과 같은 모양이어야 한다 */
+function tabs(group: string, keys: readonly string[]): { list: El; panels: El[] } {
+  const list = make("div", { class: "tabs", role: "tablist", "data-tabgroup": group });
+  for (const k of keys) {
+    list.appendChild(make("button", { class: "tab", role: "tab", "data-tab": k, "aria-selected": "false" }));
+  }
+  const panels = keys.map((k) =>
+    make("div", { "data-panelgroup": group, "data-panelkey": k, role: "tabpanel" }),
+  );
+  return { list, panels };
+}
+
 /** 선수 페이지의 뼈대를 스텁으로 다시 만든다. 실제 마크업과의 일치는 별도 테스트가 본다 */
 function buildPage(): ReturnType<typeof makeDocument> {
   const doc = makeDocument("../");
+
+  const topbar = make("header", { class: "topbar" });
+  topbar.appendChild(make("button", { class: "tbtn", id: "themeBtn" }));
+  doc.body.appendChild(topbar);
+
   const main = make("div", { class: "main" });
   doc.body.appendChild(main);
 
@@ -34,25 +59,31 @@ function buildPage(): ReturnType<typeof makeDocument> {
 
   for (const b of BLOCKS) {
     const section = make("section", { class: "block", id: `b-${b.id}` });
-    if (b.id === "splits") {
+    const group = b.id === "splits" ? "splits" : b.id === "ranking" ? "pranking" : null;
+    if (group !== null) {
+      const keys = group === "splits" ? ["hand", "base"] : ["wrcPlus", "ops"];
+      const { list, panels } = tabs(group, keys);
       const h = make("h4");
-      for (const axis of ["hand", "base"]) {
-        h.appendChild(make("button", { class: "tab", "data-split": axis, "aria-pressed": "false" }));
-      }
+      h.appendChild(list);
       section.appendChild(h);
-      for (const axis of ["hand", "base"]) {
-        section.appendChild(make("div", { "data-split-panel": axis }));
-      }
+      for (const p of panels) section.appendChild(p);
     }
-    if (b.id === "ranking") {
+    if (b.id === "matchup") {
+      const { list } = tabs("matchup", ["pa", "hr", "avg"]);
       const h = make("h4");
-      for (const id of ["wrcPlus", "ops"]) {
-        h.appendChild(make("button", { class: "tab", "data-sort": id, "aria-pressed": "false" }));
-      }
+      h.appendChild(list);
       section.appendChild(h);
-      for (const id of ["wrcPlus", "ops"]) {
-        section.appendChild(make("div", { "data-sort-panel": id }));
+      section.appendChild(make("input", { id: "matchupFilter", type: "search" }));
+      section.appendChild(make("span", { id: "matchupCount" }));
+      const table = make("table", { id: "matchupTable" });
+      const tbody = make("tbody");
+      for (const r of MATCHUPS) {
+        tbody.appendChild(
+          make("tr", { "data-name": r.name, "data-pa": String(r.pa), "data-hr": String(r.hr), "data-avg": String(r.avg) }),
+        );
       }
+      table.appendChild(tbody);
+      section.appendChild(table);
     }
     main.appendChild(section);
   }
@@ -189,24 +220,113 @@ test("저장이 막혀도 화면은 동작한다", () => {
   assert.deepEqual(visible(doc), [...PRESETS.find((p) => p.id === "analysis")!.blocks]);
 });
 
+function openPanels(doc: ReturnType<typeof makeDocument>, group: string): (string | undefined)[] {
+  return doc
+    .querySelectorAll(`[data-panelgroup="${group}"]`)
+    .filter((p) => !p.hidden)
+    .map((p) => p.dataset["panelkey"]);
+}
+
+function clickTab(doc: ReturnType<typeof makeDocument>, group: string, key: string): void {
+  const btn = doc.querySelectorAll(`[data-tabgroup="${group}"] [data-tab]`).find((b) => b.dataset["tab"] === key);
+  assert.notEqual(btn, undefined, `${group}:${key} 탭이 없다`);
+  btn!.fire("click");
+}
+
 test("스플릿 축을 바꾸면 그 패널만 남는다", () => {
   const doc = buildPage();
   run(doc);
-  const panels = () =>
-    doc.querySelectorAll("[data-split-panel]").filter((p) => !p.hidden).map((p) => p.dataset["splitPanel"]);
-  assert.deepEqual(panels(), ["hand"]);
-  doc.querySelectorAll("[data-split]").find((b) => b.dataset["split"] === "base")!.fire("click");
-  assert.deepEqual(panels(), ["base"]);
+  assert.deepEqual(openPanels(doc, "splits"), ["hand"]);
+  clickTab(doc, "splits", "base");
+  assert.deepEqual(openPanels(doc, "splits"), ["base"]);
 });
 
 test("순위 지표를 바꾸면 그 표만 남는다", () => {
   const doc = buildPage();
   run(doc);
-  const panels = () =>
-    doc.querySelectorAll("[data-sort-panel]").filter((p) => !p.hidden).map((p) => p.dataset["sortPanel"]);
-  assert.deepEqual(panels(), ["wrcPlus"]);
-  doc.querySelectorAll("[data-sort]").find((b) => b.dataset["sort"] === "ops")!.fire("click");
-  assert.deepEqual(panels(), ["ops"]);
+  assert.deepEqual(openPanels(doc, "pranking"), ["wrcPlus"]);
+  clickTab(doc, "pranking", "ops");
+  assert.deepEqual(openPanels(doc, "pranking"), ["ops"]);
+});
+
+test("탭 선택도 저장된다", () => {
+  const storage = makeStorage();
+  const first = buildPage();
+  run(first, storage);
+  clickTab(first, "splits", "base");
+
+  const second = buildPage();
+  run(second, storage);
+  assert.deepEqual(openPanels(second, "splits"), ["base"]);
+});
+
+test("저장된 탭이 지금 없는 값이면 첫 탭으로 돌아간다", () => {
+  const storage = makeStorage();
+  storage.setItem("npb-meikan-layout", JSON.stringify({ tabs: { splits: "존재하지않음" } }));
+  const doc = buildPage();
+  run(doc, storage);
+  assert.deepEqual(openPanels(doc, "splits"), ["hand"]);
+});
+
+test("대전 성적은 기본이 대전수 순이다", () => {
+  const doc = buildPage();
+  run(doc);
+  const names = doc.querySelectorAll("#matchupTable tbody tr").map((r) => r.dataset["name"]);
+  assert.deepEqual(names, ["今永", "山本", "森下", "戸郷"]);
+});
+
+test("본루타순으로 바꾸면 순서가 바뀐다", () => {
+  const doc = buildPage();
+  run(doc);
+  clickTab(doc, "matchup", "hr");
+  const names = doc.querySelectorAll("#matchupTable tbody tr").map((r) => r.dataset["name"]);
+  assert.deepEqual(names, ["森下", "戸郷", "山本", "今永"]);
+});
+
+test("타율순은 10타석 미만을 뺀다 — 5타석 .600을 맨 위에 올리지 않는다", () => {
+  const doc = buildPage();
+  run(doc);
+  clickTab(doc, "matchup", "avg");
+  const shown = doc
+    .querySelectorAll("#matchupTable tbody tr")
+    .filter((r) => !r.hidden)
+    .map((r) => r.dataset["name"]);
+  assert.deepEqual(shown, ["山本", "今永"]);
+  assert.ok(!shown.includes("戸郷"), "5타석짜리가 타율순에 남았다");
+  assert.equal(doc.getElementById("matchupCount")!.textContent, "2件");
+});
+
+test("대전 상대를 이름으로 좁힐 수 있다", () => {
+  const doc = buildPage();
+  run(doc);
+  const input = doc.getElementById("matchupFilter")!;
+  input.value = "山";
+  input.fire("input");
+  const shown = doc
+    .querySelectorAll("#matchupTable tbody tr")
+    .filter((r) => !r.hidden)
+    .map((r) => r.dataset["name"]);
+  assert.deepEqual(shown, ["山本"]);
+  assert.equal(doc.getElementById("matchupCount")!.textContent, "1件");
+});
+
+test("테마는 자동 → 밝게 → 어둡게로 돌고 저장된다", () => {
+  const storage = makeStorage();
+  const doc = buildPage();
+  run(doc, storage);
+  const btn = doc.getElementById("themeBtn")!;
+  assert.equal(doc.documentElement.getAttribute("data-theme"), null);
+  btn.fire("click");
+  assert.equal(doc.documentElement.getAttribute("data-theme"), "light");
+  btn.fire("click");
+  assert.equal(doc.documentElement.getAttribute("data-theme"), "dark");
+  btn.fire("click");
+  assert.equal(doc.documentElement.getAttribute("data-theme"), null);
+
+  btn.fire("click");
+  const again = buildPage();
+  run(again, storage);
+  assert.equal(again.documentElement.getAttribute("data-theme"), "light");
 });
 
 test("밀도를 바꾸면 블록 여백이 바뀐다", () => {
@@ -214,7 +334,7 @@ test("밀도를 바꾸면 블록 여백이 바뀐다", () => {
   run(doc);
   assert.equal(doc.querySelector(".block")!.style["paddingTop"], "16px");
   press(doc, "density", "compact");
-  assert.equal(doc.querySelector(".block")!.style["paddingTop"], "10px");
+  assert.equal(doc.querySelector(".block")!.style["paddingTop"], "9px");
 });
 
 test("저장된 설정이 깨져 있어도 기본값으로 돌아간다", () => {

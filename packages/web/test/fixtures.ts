@@ -116,6 +116,7 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
         label: "対左右",
         rows: [
           {
+            key: "right",
             label: "対右投手",
             line: { ...BATTING_LINE, pa: 320, ab: 280, h: 90 },
             avg: r(0.321, 280),
@@ -125,6 +126,7 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
             rbi: 55,
           },
           {
+            key: "left",
             label: "対左投手",
             line: { ...BATTING_LINE, pa: 20, ab: 18, h: 8 },
             avg: r(0.444, 18),
@@ -152,16 +154,35 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
       },
     ],
     situation: [{ bases: "", outs: 0, re: 0.381, pa: 88 }],
+    scorebookTotal: 442,
     matchups: [
       {
-        pitcherId: "91045111",
-        pitcherName: "山本",
+        opponentId: "91045111",
+        opponentName: "山本",
+        opponentTeam: "B",
         line: { ...BATTING_LINE, pa: 14, ab: 12, h: 4 },
         avg: r(0.333, 12),
         rbi: 3,
       },
+      {
+        opponentId: "91045112",
+        opponentName: "戸郷",
+        opponentTeam: "G",
+        line: { ...BATTING_LINE, pa: 5, ab: 5, h: 3 },
+        avg: r(0.6, 5),
+        rbi: 1,
+      },
     ],
+    matchupTotal: 2,
     ranking: [rankingPanel()],
+    spark: [
+      { label: "3月", value: 0.812 },
+      { label: "4月", value: 1.104 },
+      { label: "5月", value: 0.99 },
+      { label: "6月", value: null },
+      { label: "7月", value: 1.201 },
+    ],
+    sparkLabel: "月別OPS",
     asOf: "2026-08-14",
     ...over,
   };

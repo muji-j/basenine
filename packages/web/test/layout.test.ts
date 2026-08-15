@@ -66,6 +66,7 @@ function render(contact: string): string {
     color: NEUTRAL_COLOR,
     freshness: freshness("2026-08-14", "2026-08-15"),
     site: { name: "bb-app", contact },
+    nav: "index",
     body: html`<p>본문</p>`,
   });
 }

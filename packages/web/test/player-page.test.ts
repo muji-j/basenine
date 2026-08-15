@@ -76,13 +76,43 @@ test("표본이 얇은 스플릿은 칠이 약해진다 — 값은 그대로 남
   assert.ok(out.includes("20打席"), "얇은 구간의 값과 분모는 지우지 않는다");
 });
 
+function matchupSection(out: string): string {
+  return /<section class="block"[^>]*id="b-matchup">[\s\S]*?<\/section>/.exec(out)?.[0] ?? "";
+}
+
 test("대전 성적에는 순위 열이 없다 — 10타석짜리를 순서로 보여주지 않는다", () => {
-  const out = renderPlayerPage(playerPage(), context());
-  const section = /<section class="block"[^>]*id="b-matchup">[\s\S]*?<\/section>/.exec(out)?.[0] ?? "";
+  const section = matchupSection(renderPlayerPage(playerPage(), context()));
   assert.ok(section.length > 0, "대전 성적 블록이 없다");
   const head = /<thead>[\s\S]*?<\/thead>/.exec(section)?.[0] ?? "";
   assert.ok(!head.includes("順位"), "대전 성적 표에 순위 열이 생겼다");
-  assert.match(section, /打席数の多い順/);
+  assert.match(section, /既定は対戦数の多い順/);
+});
+
+test("대전 성적은 이름으로 좁힐 수 있고 상대 페이지로 이어진다", () => {
+  const section = matchupSection(renderPlayerPage(playerPage(), context()));
+  assert.match(section, /id="matchupFilter"/);
+  assert.match(section, /<a href="91045111\.html">山本<\/a>/);
+  assert.match(section, /全2件/);
+});
+
+test("정렬용 값이 행에 실린다 — 클라이언트가 다시 계산하지 않는다", () => {
+  const section = matchupSection(renderPlayerPage(playerPage(), context()));
+  assert.match(section, /data-pa="14"[^>]*data-hr="27"[^>]*data-avg="0\.3330"/);
+});
+
+test("타율순 정렬에 표본 하한이 있다는 것을 탭 이름이 말한다", () => {
+  const section = matchupSection(renderPlayerPage(playerPage(), context()));
+  assert.match(section, /打率順（10打席以上）/);
+  assert.match(section, /5打席3安打を先頭に置かないため/);
+});
+
+test("투수 페이지의 대전 상대는 타자다", () => {
+  const out = renderPlayerPage(
+    playerPage({ role: "pitcher", position: "投手", batting: null, pitching: pitchingBlock() }),
+    context(),
+  );
+  assert.match(matchupSection(out), /<th class="l">打者<\/th>/);
+  assert.match(matchupSection(out), /打者名でしぼる/);
 });
 
 test("임계값을 코드 밖에서 확인할 수 있다", () => {

@@ -6,10 +6,11 @@
  * 만든 값을 옮겨 담기만 한다. 여기에 산식이 생기는 순간 값이 두 벌이 된다.
  */
 import type { Db } from "@bb-app/store";
-import type { BattingLine, Rate } from "@bb-app/metrics";
+import type { BattingLine, PitchingLine, Rate } from "@bb-app/metrics";
 import {
   babip,
   battingAverage,
+  earnedRunAverage,
   homeRunsPer9,
   iso,
   onBasePercentage,
@@ -42,6 +43,7 @@ import { TEAMS, colorOf, teamOf } from "@bb-app/domain";
 import type { League } from "@bb-app/domain";
 import { countsAsHit } from "@bb-app/parser";
 import type { Outcome } from "@bb-app/parser";
+import { positionMark } from "./player-page.ts";
 import type {
   BattingBlockData,
   MatchupRow,
@@ -52,11 +54,19 @@ import type {
   Ranks,
   ScorebookRow,
   SituationCell,
+  SparkPoint,
   SplitAxisData,
   SplitAxisId,
   SplitRow,
 } from "./player-page.ts";
-import type { IndexPageData, LeagueSection, RankingPageData, SearchEntry } from "./pages.ts";
+import type {
+  IndexPageData,
+  LeagueSection,
+  RankingPageData,
+  RosterEntry,
+  SearchEntry,
+  TeamRoster,
+} from "./pages.ts";
 import type { RankDigits } from "./parts.ts";
 
 /**
@@ -67,8 +77,11 @@ import type { RankDigits } from "./parts.ts";
  */
 export const THIN_SPLIT_PA = 30;
 
-/** 선수 페이지의 대전 성적에 싣는 상대 투수 수. 전부 실으면 페이지가 표로 뒤덮인다 */
-const MATCHUP_LIMIT = 25;
+/** `earnedRunAverage`가 요구하는 나머지 필드. 월별 방어율은 아웃과 자책점만 있으면 된다 */
+const EMPTY_PITCHING: PitchingLine = {
+  outs: 0, bf: 0, h: 0, hr: 0, bb: 0, ibb: 0, hbp: 0, so: 0, er: 0, r: 0,
+};
+
 /** 打席記録에 싣는 최근 타석 수 */
 const SCOREBOOK_LIMIT = 40;
 /** 선수 페이지 안의 순위표에 싣는 상위 인원 */
@@ -99,12 +112,14 @@ const SPLIT_KEY_LABEL: Readonly<Record<string, string>> = {
   away: "ビジター",
 };
 
+/** `2026-04` → `4月` */
+function monthLabel(key: string): string {
+  const m = /^\d{4}-(\d{2})$/.exec(key);
+  return m === null ? key : `${Number(m[1])}月`;
+}
+
 function splitLabel(axis: SplitAxisId, key: string): string {
-  if (axis === "month") {
-    const m = /^\d{4}-(\d{2})$/.exec(key);
-    return m === null ? key : `${Number(m[1])}月`;
-  }
-  return SPLIT_KEY_LABEL[key] ?? key;
+  return axis === "month" ? monthLabel(key) : (SPLIT_KEY_LABEL[key] ?? key);
 }
 
 /** 라인에서 파생 비율 4종. **산식은 metrics 것을 쓴다** */
@@ -512,13 +527,19 @@ function loadSplits(
 
   for (const axis of SPLIT_AXES) {
     for (const p of battingSplits(db, axis.dimension, season, competition, through)) {
-      const rows: SplitRow[] = p.splits
-        .map((s) => ({ label: splitLabel(axis.id, s.key), line: s.line, rbi: s.rbi, ...derived(s.line) }))
-        .sort((a, b) => b.line.pa - a.line.pa);
+      const rows: SplitRow[] = p.splits.map((s) => ({
+        key: s.key,
+        label: splitLabel(axis.id, s.key),
+        line: s.line,
+        rbi: s.rbi,
+        ...derived(s.line),
+      }));
+      // ⚠**월별은 라벨이 아니라 키로 정렬한다.** 「10月」은 문자열 비교에서 「4月」보다 앞에 온다.
+      rows.sort((a, b) => (axis.id === "month" ? a.key.localeCompare(b.key) : b.line.pa - a.line.pa));
       const entry: SplitAxisData = {
         id: axis.id,
         label: axis.label,
-        rows: axis.id === "month" ? rows.sort((a, b) => a.label.localeCompare(b.label, "ja")) : rows,
+        rows,
         unclassified: p.unclassified,
         thinBelow: THIN_SPLIT_PA,
       };
@@ -534,30 +555,117 @@ function loadSplits(
   return out;
 }
 
+/**
+ * 상대전적을 **양방향으로** 만든다 — 타자에게는 상대 투수 목록, 투수에게는 상대 타자 목록.
+ *
+ * ⚠**자르지 않는다.** 2026 시즌 실측으로 조합은 19,769쌍, 한 선수 최대 156명이라
+ * 전량을 실어도 페이지가 감당한다. 잘라 놓고 검색하게 하면 「없는 상대」가 생긴다.
+ */
 function loadMatchups(
   db: Db,
   season: number,
   competition: string,
   through: string,
-): Map<string, MatchupRow[]> {
-  const out = new Map<string, MatchupRow[]>();
+  teamOf: Map<string, string>,
+): { byBatter: Map<string, MatchupRow[]>; byPitcher: Map<string, MatchupRow[]> } {
+  const byBatter = new Map<string, MatchupRow[]>();
+  const byPitcher = new Map<string, MatchupRow[]>();
+
+  const push = (map: Map<string, MatchupRow[]>, key: string, row: MatchupRow): void => {
+    const list = map.get(key);
+    if (list === undefined) map.set(key, [row]);
+    else list.push(row);
+  };
+
   for (const m of matchups(db, season, 1, competition, through)) {
-    const row: MatchupRow = {
-      pitcherId: m.pitcherId,
-      pitcherName: m.pitcherName,
+    const avg = battingAverage(m.line);
+    push(byBatter, m.batterId, {
+      opponentId: m.pitcherId,
+      opponentName: m.pitcherName,
+      opponentTeam: (teamOf.get(m.pitcherId) ?? "").toUpperCase(),
       line: m.line,
       rbi: m.rbi,
-      avg: battingAverage(m.line),
-    };
-    const list = out.get(m.batterId);
-    if (list === undefined) out.set(m.batterId, [row]);
-    else list.push(row);
+      avg,
+    });
+    push(byPitcher, m.pitcherId, {
+      opponentId: m.batterId,
+      opponentName: m.batterName,
+      opponentTeam: (teamOf.get(m.batterId) ?? "").toUpperCase(),
+      line: m.line,
+      rbi: m.rbi,
+      avg,
+    });
   }
-  for (const [k, list] of out) {
-    list.sort((a, b) => b.line.pa - a.line.pa || b.line.h - a.line.h);
-    out.set(k, list.slice(0, MATCHUP_LIMIT));
+
+  for (const map of [byBatter, byPitcher]) {
+    for (const list of map.values()) list.sort((a, b) => b.line.pa - a.line.pa || b.line.h - a.line.h);
+  }
+  return { byBatter, byPitcher };
+}
+
+/** 투수의 월별 방어율. 표제 옆 꺾은선의 입력이 된다 */
+function loadMonthlyEra(
+  db: Db,
+  season: number,
+  competition: string,
+  through: string,
+): Map<string, { month: string; era: number | null }[]> {
+  const rows = db.raw
+    .prepare(
+      `SELECT t.player_id AS playerId, substr(g.game_date, 1, 7) AS month,
+              SUM(t.outs) AS outs, SUM(t.er) AS er
+       FROM pitching_line t
+       JOIN game g ON g.game_id = t.game_id
+       WHERE g.season = ? AND g.status = 'played' AND g.competition = ? AND g.game_date <= ?
+       GROUP BY t.player_id, month
+       ORDER BY t.player_id, month`,
+    )
+    .all(season, competition, through) as {
+    playerId: string;
+    month: string;
+    outs: number;
+    er: number;
+  }[];
+
+  const out = new Map<string, { month: string; era: number | null }[]>();
+  for (const r of rows) {
+    const era = earnedRunAverage({ ...EMPTY_PITCHING, outs: r.outs, er: r.er }).value;
+    const list = out.get(r.playerId);
+    const entry = { month: r.month, era };
+    if (list === undefined) out.set(r.playerId, [entry]);
+    else list.push(entry);
   }
   return out;
+}
+
+/** 명감 표기의 짧은 이름. 칩에 「福岡ソフトバンクホークス」를 넣으면 칩이 아니라 문단이 된다 */
+const SHORT_NAME: Readonly<Record<string, string>> = {
+  g: "巨人", t: "阪神", db: "DeNA", c: "広島", d: "中日", s: "ヤクルト",
+  h: "ソフトバンク", f: "日本ハム", m: "ロッテ", l: "西武", e: "楽天", b: "オリックス",
+};
+
+/**
+ * 구단별 선수 목록. **색인 화면은 서버가 그린다** —
+ * 스크립트가 죽어도 전 선수에게 도달할 수 있어야 하고, 그게 §0-1(3클릭)의 최저선이다.
+ */
+function rosters(players: readonly PlayerPageData[]): TeamRoster[] {
+  const byTeam = new Map<string, RosterEntry[]>();
+  for (const p of players) {
+    const mark = positionMark(p.position);
+    const list = byTeam.get(p.teamCode);
+    const entry: RosterEntry = { playerId: p.playerId, name: p.name, mark };
+    if (list === undefined) byTeam.set(p.teamCode, [entry]);
+    else list.push(entry);
+  }
+
+  // 구단 순서는 마스터 순서를 따른다 — 선수 수로 정렬하면 매일 순서가 바뀐다
+  return TEAMS.filter((t) => byTeam.has(t.code)).map((t) => ({
+    code: t.code,
+    name: t.name,
+    shortName: SHORT_NAME[t.code] ?? t.name,
+    color: colorOf(t.code),
+    players: (byTeam.get(t.code) ?? []).sort((a, b) => a.name.localeCompare(b.name, "ja")),
+  }));
 }
 
 // ─── 조립 ────────────────────────────────────────────────────────────────
@@ -599,7 +707,13 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   const splitsByPlayer = loadSplits(db, o.season, competition, through);
   const scorebookByPlayer = loadScorebook(db, o.season, competition, through);
   const statePaByPlayer = loadStatePa(db, o.season, competition, through);
-  const matchupsByPlayer = loadMatchups(db, o.season, competition, through);
+  const monthlyEra = loadMonthlyEra(db, o.season, competition, through);
+
+  // 상대 선수의 소속 구단은 시즌 집계에서 온다 — 이름 문자열로 조인하지 않는다(M10)
+  const teamOfPlayer = new Map<string, string>();
+  for (const b of agg.batting) teamOfPlayer.set(b.playerId, b.teamCode);
+  for (const p of agg.pitching) if (!teamOfPlayer.has(p.playerId)) teamOfPlayer.set(p.playerId, p.teamCode);
+  const matchupsByPlayer = loadMatchups(db, o.season, competition, through, teamOfPlayer);
 
   const rankingsByLeague = new Map<League, LeagueRankings>();
   const reByLeague = new Map<League, Map<string, number>>();
@@ -703,6 +817,21 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
             };
           });
 
+    const splits = role === "pitcher" ? [] : (splitsByPlayer.get(playerId) ?? []);
+    const opponents =
+      role === "pitcher"
+        ? (matchupsByPlayer.byPitcher.get(playerId) ?? [])
+        : (matchupsByPlayer.byBatter.get(playerId) ?? []);
+
+    // 표제 옆 꺾은선 — 타자는 월별 OPS, 투수는 월별 방어율. **사진 대신 쓰는 표시**다
+    const spark: SparkPoint[] =
+      role === "pitcher"
+        ? (monthlyEra.get(playerId) ?? []).map((m) => ({ label: monthLabel(m.month), value: m.era }))
+        : ((splitsByPlayer.get(playerId) ?? []).find((a) => a.id === "month")?.rows ?? []).map((r) => ({
+            label: r.label,
+            value: r.ops.value,
+          }));
+
     players.push({
       playerId,
       name: base.displayName,
@@ -720,11 +849,15 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       role,
       batting: battingData,
       pitching: pitchingData,
-      splits: role === "pitcher" ? [] : (splitsByPlayer.get(playerId) ?? []),
+      splits,
       scorebook: scorebookByPlayer.get(playerId) ?? [],
+      scorebookTotal: bat?.player.line.pa ?? 0,
       situation,
-      matchups: role === "pitcher" ? [] : (matchupsByPlayer.get(playerId) ?? []),
+      matchups: opponents,
+      matchupTotal: opponents.length,
       ranking: panelsForPlayer(role === "pitcher" ? rankings.pitching : rankings.batting, playerId),
+      spark,
+      sparkLabel: role === "pitcher" ? "月別防御率" : "月別OPS",
       asOf: meta.latest,
     });
 
@@ -768,6 +901,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       playerCount: players.length,
       gameCount: meta.games,
       asOf: meta.latest,
+      teams: rosters(players),
       highlights,
     },
     ranking: { season: o.season, asOf: meta.latest, leagues: sections },

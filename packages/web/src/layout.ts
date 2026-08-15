@@ -88,6 +88,9 @@ export interface SiteMeta {
   contact: string;
 }
 
+/** 전역 헤더에서 지금 어디에 있는지. `aria-current`로 나간다 */
+export type NavKey = "index" | "ranking" | "player";
+
 export interface PageOptions {
   title: string;
   /** 사이트 루트까지의 상대 경로. 루트는 `""`, `players/` 아래는 `"../"` */
@@ -97,12 +100,35 @@ export interface PageOptions {
   spine?: string;
   freshness: Freshness;
   site: SiteMeta;
+  nav: NavKey;
   /** 본문. 블록들이 여기 들어간다 */
   body: RawHtml;
-  /** 조립 UI가 필요한 페이지만 true */
-  interactive?: boolean;
   /** 클라이언트에 실어 보낼 스크립트 본문(블록 카탈로그 등) */
   bootstrapJs?: string;
+}
+
+/**
+ * 전역 헤더.
+ *
+ * ⚠**검색과 이동은 어느 화면에서나 손에 닿아야 한다.** 최하단 링크 하나로 두면
+ * 1000행짜리 순위표 아래에 묻히고, 모바일에서는 사실상 없는 기능이 된다.
+ */
+function topbar(o: PageOptions): RawHtml {
+  const here = (key: NavKey): RawHtml =>
+    o.nav === key ? raw(' aria-current="page"') : raw("");
+  return html`<header class="topbar">
+  <a class="brand" href="${o.base}index.html">${o.site.name}<b>by Lunomel</b></a>
+  <div class="qbox">
+    <input id="q" type="search" autocomplete="off" placeholder="選手を検索"
+      aria-label="選手を検索" role="combobox" aria-expanded="false" aria-controls="qhits" aria-autocomplete="list">
+    <ul class="qhits" id="qhits" role="listbox" aria-label="検索結果" hidden></ul>
+  </div>
+  <nav class="tnav" aria-label="主要ページ">
+    <a href="${o.base}index.html"${here("index")}>一覧</a>
+    <a href="${o.base}ranking.html"${here("ranking")}>順位</a>
+  </nav>
+  <button class="tbtn" type="button" id="themeBtn" aria-label="表示テーマ">自動</button>
+</header>`;
 }
 
 const LT = String.fromCharCode(0x3c);
@@ -129,34 +155,36 @@ export function page(o: PageOptions): string {
   const style = `--team:${o.color.base};--team-ink:${o.color.ink}`;
   const boot =
     o.bootstrapJs === undefined ? raw("") : html`<script>${raw(safeScript(o.bootstrapJs))}</script>`;
-  const script =
-    o.interactive === true ? html`<script src="${o.base}assets/site.js" defer></script>` : raw("");
 
   const doc = html`<!doctype html>
 <html lang="ja" data-base="${o.base}">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>${o.title}</title>
 <meta name="robots" content="noindex, nofollow">
+<meta name="color-scheme" content="light dark">
 <link rel="stylesheet" href="${o.base}assets/site.css">
 </head>
 <body style="${style}">
+<a class="skip" href="#main">本文へ</a>
+${topbar(o)}
 <div class="shell">
   <div class="spine">${o.spine === undefined ? null : html`<span class="vt">${o.spine}</span>`}</div>
-  <div class="main">
+  <main class="main" id="main">
     ${freshnessBar(o.freshness)}
     ${o.body}
     <footer class="foot">
       出典：日本野球機構（NPB）公式サイト <a href="https://npb.jp/" rel="noreferrer noopener">npb.jp</a>。
       本ページの数値は公表記録をもとに<b>当サイトが独自に再計算</b>したものです。原本の表を再現するものではありません。<br>
+      選手の写真・球団ロゴは<b>使用していません</b>（記録は事実ですが、写真とロゴは別の権利です）。<br>
       掲載内容の削除・訂正のご依頼は ${o.site.contact === "" ? html`<b>連絡先が未設定です（公開前に設定してください）</b>` : o.site.contact} まで。<br>
       ${o.site.name} by Lunomel · ${fullDate(o.freshness.builtOn)} 生成
     </footer>
-  </div>
+  </main>
 </div>
 ${boot}
-${script}
+<script src="${o.base}assets/site.js" defer></script>
 </body>
 </html>`;
 

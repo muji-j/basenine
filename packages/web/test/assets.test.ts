@@ -60,7 +60,26 @@ test("키보드 초점이 보인다", () => {
 });
 
 test("넓은 표는 자기 컨테이너 안에서만 가로 스크롤한다", () => {
-  assert.match(CSS, /\.scroller\{overflow-x:auto\}/);
+  assert.match(CSS, /\.scroller\{overflow-x:auto/);
+});
+
+test("좁은 화면 규칙이 실제로 들어 있다 — 스마트폰에서 보는 화면이다", () => {
+  for (const bp of [900, 680, 420]) {
+    assert.ok(CSS.includes(`@media (max-width:${bp}px)`), `${bp}px 분기점이 없다`);
+  }
+  // 배면(44px)이 좁은 화면에서 본문을 먹지 않아야 한다
+  assert.match(CSS, /@media \(max-width:680px\)\{[\s\S]*?\.shell\{grid-template-columns:7px 1fr\}/);
+});
+
+test("손가락 조작에서 버튼이 커진다", () => {
+  assert.match(CSS, /@media \(pointer:coarse\)/);
+});
+
+test("모션은 감소 설정에서 전부 꺼진다 — 애니메이션을 늘렸으면 이 규칙도 넓어야 한다", () => {
+  const rule = /@media \(prefers-reduced-motion:reduce\)\{([^}]*\}[^}]*)\}/.exec(CSS)?.[1] ?? "";
+  assert.match(rule, /animation-duration:1ms!important/);
+  assert.match(rule, /transition-duration:1ms!important/);
+  assert.match(rule, /\*,\*::before,\*::after/);
 });
 
 test("구단 색은 CSS 변수로 받는다 — 색값이 스타일시트에 박혀 있지 않다", () => {

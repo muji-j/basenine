@@ -13,7 +13,22 @@ function siteData(over: Partial<SiteData> = {}): SiteData {
     gameCount: 630,
     players: [p],
     search: [{ i: p.playerId, n: p.name, t: p.teamName }],
-    index: { season: 2026, playerCount: 1, gameCount: 630, asOf: "2026-08-14", highlights: [] },
+    index: {
+      season: 2026,
+      playerCount: 1,
+      gameCount: 630,
+      asOf: "2026-08-14",
+      teams: [
+        {
+          code: "t",
+          name: "阪神タイガース",
+          shortName: "阪神",
+          color: { base: "#f2c800", ink: "#17170f" },
+          players: [{ playerId: p.playerId, name: p.name, mark: "内" }],
+        },
+      ],
+      highlights: [],
+    },
     ranking: { season: 2026, asOf: "2026-08-14", leagues: [] },
     ...over,
   };

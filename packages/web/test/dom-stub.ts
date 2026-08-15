@@ -7,12 +7,27 @@
  * `[attr="v"]`와 공백(자손) 결합. 그 밖의 문법을 쓰면 **조용히 빈 결과가 아니라 예외**가 난다.
  */
 
+export interface StubStyle {
+  [property: string]: string | ((name: string, value: string) => void);
+  setProperty(name: string, value: string): void;
+}
+
+function makeStyle(): StubStyle {
+  const style = {
+    setProperty(name: string, value: string): void {
+      style[name] = value;
+    },
+  } as StubStyle;
+  return style;
+}
+
 export class El {
   readonly tagName: string;
   readonly children: El[] = [];
   readonly attrs: Record<string, string> = {};
   readonly dataset: Record<string, string> = {};
-  readonly style: Record<string, string> = {};
+  /** `el.style.setProperty("--i","3")`도 쓰이므로 순수 객체가 아니다 */
+  readonly style: StubStyle = makeStyle();
   readonly listeners: Record<string, ((e: unknown) => void)[]> = {};
   parentNode: El | null = null;
   hidden = false;
@@ -56,6 +71,14 @@ export class El {
   getAttribute(k: string): string | null {
     return this.attrs[k] ?? null;
   }
+
+  removeAttribute(k: string): void {
+    delete this.attrs[k];
+    if (k.startsWith("data-")) {
+      delete this.dataset[k.slice(5).replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())];
+    }
+  }
+
 
   appendChild(c: El): El {
     c.detach();

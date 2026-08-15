@@ -16,6 +16,7 @@ import {
   columns,
   denText,
   note,
+  panel,
   rankValue,
   scroller,
   statCount,
@@ -23,6 +24,7 @@ import {
   statRateOuts,
   statSigned,
   statText,
+  tablist,
 } from "./parts.ts";
 import type { BarRow, RankDigits } from "./parts.ts";
 import { NO_VALUE, avg3, gameDate, innings, throwsBats } from "./format.ts";
@@ -81,6 +83,8 @@ export interface PitchingBlockData {
 export type SplitAxisId = "hand" | "base" | "homeAway" | "month";
 
 export interface SplitRow {
+  /** 원본 구분값(`2026-04` 등). **정렬은 라벨이 아니라 이걸로 한다** — 「10月」은 「4月」보다 앞에 온다 */
+  key: string;
   label: string;
   line: BattingLine;
   avg: Rate;
@@ -122,9 +126,14 @@ export interface SituationCell {
   pa: number;
 }
 
+/**
+ * 상대전적 한 줄. **타자 페이지에서는 상대가 투수, 투수 페이지에서는 상대가 타자**다 —
+ * 같은 표를 양쪽에서 쓰므로 이름을 「상대」로 둔다.
+ */
 export interface MatchupRow {
-  pitcherId: string;
-  pitcherName: string;
+  opponentId: string;
+  opponentName: string;
+  opponentTeam: string;
   line: BattingLine;
   avg: Rate;
   rbi: number;
@@ -151,6 +160,19 @@ export interface RankingPanel {
   qualifier: string;
 }
 
+/**
+ * 표제 옆의 작은 꺾은선. **사진 대신 이 선수를 구별하는 표시**가 된다.
+ *
+ * ⚠**선수 사진은 쓰지 않는다.** 기록은 사실이라 저작물이 아니지만(CLAUDE.md §2-5 1층),
+ * 사진은 촬영자의 저작물이고 선수의 초상권도 붙는다 — 「공개 정보」 논리가 닿지 않는다.
+ * L5(공개된 직업활동 성적만) · L6(외부 노출은 파생값)에도 걸린다.
+ * 대신 **우리가 계산한 값으로 만든 우리 그림**을 놓는다. 정보량도 사진보다 많다.
+ */
+export interface SparkPoint {
+  label: string;
+  value: number | null;
+}
+
 export interface PlayerPageData {
   playerId: string;
   name: string;
@@ -171,9 +193,17 @@ export interface PlayerPageData {
   pitching: PitchingBlockData | null;
   splits: SplitAxisData[];
   scorebook: ScorebookRow[];
+  /** 이 선수의 전체 타석 수. `scorebook`이 잘렸는지 말하기 위한 값 */
+  scorebookTotal: number;
   situation: SituationCell[];
   matchups: MatchupRow[];
+  /** 대전한 투수(또는 타자)의 총 수. `matchups`가 잘렸는지 말하기 위한 값 */
+  matchupTotal: number;
   ranking: RankingPanel[];
+  /** 월별 추이. 표제 옆의 꺾은선이 된다 */
+  spark: SparkPoint[];
+  /** 그 꺾은선이 무엇인지 (`月別OPS` 등) */
+  sparkLabel: string;
   /** 반영 기준 경기일 */
   asOf: string | null;
 }
@@ -189,6 +219,16 @@ const POSITION_MARK: Readonly<Record<string, string>> = {
   内野手: "内",
   外野手: "外",
 };
+
+/**
+ * 포지션 한 글자. 표제의 마크와 색인 목록이 **같은 규칙**을 써야 한다(M1의 정신) —
+ * 두 곳에 적으면 언젠가 어긋나고, 그때는 어느 쪽이 맞는지 알 수 없다.
+ * @param fallback 포지션을 모를 때 낼 문자
+ */
+export function positionMark(position: string | null, fallback = ""): string {
+  if (position === null || position === "") return fallback;
+  return POSITION_MARK[position] ?? position.slice(0, 1);
+}
 
 const BASE_LABEL: Readonly<Record<string, string>> = {
   "-": "走者なし",
@@ -207,9 +247,49 @@ const BASE_ORDER = ["-", "1", "2", "3", "12", "13", "23", "123"];
 /** 표본이 이보다 적은 칸은 시각적 무게를 뺀다. 값은 그대로 보인다 */
 const THIN_SITUATION_PA = 10;
 const THIN_MATCHUP_PA = 10;
+/** 선수 페이지 순위표에 싣는 상위 인원. `query.ts`와 같은 값이어야 한다 */
+const RANKING_TOP = 10;
+
+/**
+ * 월별 추이 꺾은선.
+ *
+ * ⚠**축을 그리지 않는다.** 눈금 없는 선은 「값」이 아니라 **모양**이고, 정확한 값은
+ * 스플릿 블록에 분모와 함께 있다. 여기서 읽히면 안 되는 것을 읽히게 만들지 않는다.
+ */
+function sparkline(points: readonly SparkPoint[], label: string): RawHtml {
+  const values = points.map((p) => p.value).filter((v): v is number => v !== null);
+  if (values.length < 2) return raw("");
+
+  const w = 108;
+  const h = 26;
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  const span = hi - lo || 1;
+  const step = w / (points.length - 1);
+
+  const coords = points.map((p, i) => ({
+    x: i * step,
+    y: p.value === null ? null : h - ((p.value - lo) / span) * h,
+  }));
+  const line = coords
+    .filter((c): c is { x: number; y: number } => c.y !== null)
+    .map((c) => `${c.x.toFixed(1)},${c.y.toFixed(1)}`)
+    .join(" ");
+  const last = [...coords].reverse().find((c) => c.y !== null);
+
+  return html`<div class="spark">
+  <svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img"
+    aria-label="${label}：${points.map((p) => `${p.label} ${p.value === null ? "なし" : p.value.toFixed(3)}`).join("、")}">
+    <polyline points="${line}" fill="none" stroke="var(--team,#6b7280)" stroke-width="1.6"
+      stroke-linejoin="round" stroke-linecap="round"></polyline>
+    ${last === undefined ? null : html`<circle cx="${last.x.toFixed(1)}" cy="${last.y!.toFixed(1)}" r="2.4" fill="var(--team,#6b7280)"></circle>`}
+  </svg>
+  <span class="sl">${label}　${points[0]?.label ?? ""}→${points.at(-1)?.label ?? ""}</span>
+</div>`;
+}
 
 function idLine(d: PlayerPageData): RawHtml {
-  const mark = d.position === null ? NO_VALUE : (POSITION_MARK[d.position] ?? d.position.slice(0, 1));
+  const mark = positionMark(d.position, "—");
   const bio = [
     d.teamName,
     d.position ?? "ポジション不明",
@@ -219,10 +299,13 @@ function idLine(d: PlayerPageData): RawHtml {
   ].filter((s): s is string => s !== null && s !== "" && s !== NO_VALUE);
 
   return html`<header class="idline">
-  <span class="no" aria-hidden="true">${mark}</span>
-  <span class="nm">${d.name}</span>
-  <span class="sub">${bio.join(" · ")}</span>
-  <span class="asof">${d.season}年${d.asOf === null ? "" : ` · ${gameDate(d.asOf)}まで`}</span>
+  <span class="mark" aria-hidden="true">${mark}</span>
+  <div class="idtext">
+    <span class="nm">${d.name}</span>
+    <span class="sub">${bio.join(" · ")}</span>
+    <span class="asof">${d.season}年${d.asOf === null ? "" : ` · ${gameDate(d.asOf)}まで`}</span>
+  </div>
+  ${sparkline(d.spark, d.sparkLabel)}
 </header>`;
 }
 
@@ -374,11 +457,13 @@ function splitsBlock(axes: readonly SplitAxisData[]): RawHtml {
     });
   }
 
-  const controls = html`${axes.map(
-    (a) => html`<button class="tab" type="button" data-split="${a.id}" aria-pressed="${a.id === axes[0]!.id ? "true" : "false"}">${a.label}</button>`,
-  )}`;
+  const controls = tablist(
+    "splits",
+    axes.map((a) => ({ id: a.id, label: a.label })),
+    true,
+  );
 
-  const panels = axes.map((a) => {
+  const panels = axes.map((a, ai) => {
     const max = Math.max(0.001, ...a.rows.map((r) => r.ops.value ?? 0));
     const rows: BarRow[] = a.rows.map((r) => ({
       label: r.label,
@@ -386,19 +471,22 @@ function splitsBlock(axes: readonly SplitAxisData[]): RawHtml {
       thin: r.line.pa < a.thinBelow,
       text: html`${avg3(r.avg.value)} / ${avg3(r.obp.value)} / ${avg3(r.slg.value)}<span class="den">${r.line.pa}打席</span>`,
     }));
-    return html`<div data-split-panel="${a.id}" ${raw(a.id === axes[0]!.id ? "" : "hidden")}>
-      ${a.rows.length === 0 ? html`<p class="empty">この区分の打席がありません。</p>` : bars(rows)}
+    return panel(
+      "splits",
+      a.id,
+      ai === 0,
+      html`${a.rows.length === 0 ? html`<p class="empty">この区分の打席がありません。</p>` : bars(rows)}
       ${note(
         `棒はOPS。数字は 打率 / 出塁率 / 長打率 と打席数です。${a.thinBelow}打席未満は棒を薄くしています — 値は小さな標本のもので、順位ではありません。` +
           (a.unclassified === 0 ? "" : ` この軸で分類できない打席が${a.unclassified}あります（相手投手の投打が不明など）。`),
-      )}
-    </div>`;
+      )}`,
+    );
   });
 
   return block({ id: "splits", title: "スプリット", controls, body: html`${panels}` });
 }
 
-function scorebookBlock(rows: readonly ScorebookRow[]): RawHtml {
+function scorebookBlock(rows: readonly ScorebookRow[], total: number): RawHtml {
   const body =
     rows.length === 0
       ? html`<p class="empty">打席記録がありません。</p>`
@@ -418,7 +506,11 @@ function scorebookBlock(rows: readonly ScorebookRow[]): RawHtml {
             </tr>`,
           )}</tbody>
         </table>`)}
-        ${note("新しい順。結果の表記はボックススコアの原文です。")}`;
+        ${note(
+          `新しい順。結果の表記はボックススコアの原文です。` +
+            // ⚠**자른 것을 말한다.** 「전부」로 읽히면 그것도 거짓말이다
+            (total > rows.length ? ` 全${total}打席のうち直近${rows.length}件を表示しています。` : ""),
+        )}`;
   return block({ id: "scorebook", title: "打席記録", body });
 }
 
@@ -456,42 +548,71 @@ function situationBlock(cells: readonly SituationCell[], leagueName: string): Ra
   });
 }
 
-function matchupBlock(rows: readonly MatchupRow[]): RawHtml {
-  const body =
-    rows.length === 0
-      ? html`<p class="empty">対戦記録がありません。</p>`
-      : html`${scroller(html`<table>
-          <thead><tr>
-            <th class="l">投手</th><th>打席</th><th>打数</th><th>安打</th><th>本塁打</th>
-            <th>四球</th><th>三振</th><th>打点</th><th>打率</th>
-          </tr></thead>
-          <tbody>${rows.map(
-            (r) => html`<tr class="${r.line.pa < THIN_MATCHUP_PA ? "thin" : ""}">
-              <td class="l">${r.pitcherName}</td>
-              <td>${r.line.pa}</td><td>${r.line.ab}</td><td>${r.line.h}</td><td>${r.line.hr}</td>
-              <td>${r.line.bb}</td><td>${r.line.so}</td><td>${r.rbi}</td>
-              <td>${avg3(r.avg.value)}</td>
-            </tr>`,
-          )}</tbody>
-        </table>`)}
-        ${note(
-          `打席数の多い順です。順位はつけません — 大半が${THIN_MATCHUP_PA}打席未満で、並べ替えると「この投手に強い」と読めてしまうからです。` +
-            `${THIN_MATCHUP_PA}打席未満は薄く表示しています。`,
-        )}`;
-  return block({ id: "matchup", title: "対戦成績", body });
+/**
+ * 상대전적 — **검색하고 골라 보는 표**.
+ *
+ * ⚠**타율순 정렬은 10타석 이상으로 제한한다.** 대전 표본은 대부분 한 자릿수라
+ * 그대로 타율로 정렬하면 「5타석 3안타」가 맨 위에 오고, 그건 순위가 아니라 잡음이다.
+ * 제한한다는 사실을 탭 이름에 쓴다 — 숨겨진 규칙을 만들지 않는다.
+ */
+function matchupBlock(rows: readonly MatchupRow[], total: number, opponent: string): RawHtml {
+  if (rows.length === 0) {
+    return block({ id: "matchup", title: "対戦成績", body: html`<p class="empty">対戦記録がありません。</p>` });
+  }
+
+  const controls = tablist("matchup", [
+    { id: "pa", label: "対戦数順" },
+    { id: "hr", label: "本塁打順" },
+    { id: "avg", label: `打率順（${THIN_MATCHUP_PA}打席以上）` },
+  ]);
+
+  const body = html`<div class="mfind">
+  <label for="matchupFilter">${opponent}名でしぼる</label>
+  <input id="matchupFilter" type="search" autocomplete="off" placeholder="例：山本">
+  <span class="count"><span id="matchupCount">${rows.length}件</span> / 全${total}件</span>
+</div>
+${scroller(html`<table id="matchupTable">
+  <thead><tr>
+    <th class="l">${opponent}</th><th class="l">球団</th><th>打席</th><th>打数</th><th>安打</th><th>本塁打</th>
+    <th>四球</th><th>三振</th><th>打点</th><th>打率</th>
+  </tr></thead>
+  <tbody>${rows.map(
+    (r) => html`<tr class="${r.line.pa < THIN_MATCHUP_PA ? "thin" : ""}"
+      data-name="${r.opponentName}" data-pa="${r.line.pa}" data-hr="${r.line.hr}"
+      data-avg="${r.avg.value === null ? -1 : r.avg.value.toFixed(4)}">
+      <td class="l"><a href="${r.opponentId}.html">${r.opponentName}</a></td>
+      <td class="l">${r.opponentTeam}</td>
+      <td>${r.line.pa}</td><td>${r.line.ab}</td><td>${r.line.h}</td><td>${r.line.hr}</td>
+      <td>${r.line.bb}</td><td>${r.line.so}</td><td>${r.rbi}</td>
+      <td>${avg3(r.avg.value)}</td>
+    </tr>`,
+  )}</tbody>
+</table>`)}
+${note(
+    `既定は対戦数の多い順です。大半が${THIN_MATCHUP_PA}打席未満なので、その行は薄く表示し、` +
+      `打率順は${THIN_MATCHUP_PA}打席以上だけを並べます — 5打席3安打を先頭に置かないためです。` +
+      `${opponent}名を押すとその選手のページに移ります。`,
+  )}`;
+
+  return block({ id: "matchup", title: "対戦成績", controls, body });
 }
 
 function rankingBlock(panels: readonly RankingPanel[], base: string): RawHtml {
   if (panels.length === 0) {
     return block({ id: "ranking", title: "リーグ順位", body: html`<p class="empty">順位を計算できていません。</p>` });
   }
-  const controls = html`${panels.map(
-    (p) => html`<button class="tab" type="button" data-sort="${p.id}" aria-pressed="${p.id === panels[0]!.id ? "true" : "false"}">${p.label}</button>`,
-  )}`;
+  const controls = tablist(
+    "pranking",
+    panels.map((p) => ({ id: p.id, label: p.label })),
+    true,
+  );
 
-  const body = panels.map(
-    (p) => html`<div data-sort-panel="${p.id}" ${raw(p.id === panels[0]!.id ? "" : "hidden")}>
-      ${scroller(html`<table>
+  const body = panels.map((p, pi) =>
+    panel(
+      "pranking",
+      p.id,
+      pi === 0,
+      html`${scroller(html`<table>
         <thead><tr><th>順位</th><th class="l">選手</th><th class="l">球団</th><th>${p.label}</th><th>母数</th></tr></thead>
         <tbody>${p.rows.map(
           (r) => html`<tr class="${r.isMe ? "me" : ""}">
@@ -503,8 +624,8 @@ function rankingBlock(panels: readonly RankingPanel[], base: string): RawHtml {
           </tr>`,
         )}</tbody>
       </table>`)}
-      ${note(p.qualifier)}
-    </div>`,
+      ${note(`${p.qualifier} 上位${RANKING_TOP}人とこの選手の行だけを表示しています。`)}`,
+    ),
   );
 
   return block({ id: "ranking", title: "リーグ順位", controls, body: html`${body}` });
@@ -525,11 +646,11 @@ function renderBlock(id: BlockId, d: PlayerPageData, base: string): RawHtml {
     case "splits":
       return splitsBlock(d.splits);
     case "scorebook":
-      return scorebookBlock(d.scorebook);
+      return scorebookBlock(d.scorebook, d.scorebookTotal);
     case "situation":
       return situationBlock(d.situation, d.leagueName);
     case "matchup":
-      return matchupBlock(d.matchups);
+      return matchupBlock(d.matchups, d.matchupTotal, d.role === "pitcher" ? "打者" : "投手");
     case "ranking":
       return rankingBlock(d.ranking, base);
   }
@@ -576,7 +697,7 @@ ${catalog.map((meta) => {
   })}
 <div id="blocksEnd" hidden></div>
 <nav class="find" aria-label="ほかの選手">
-  <a href="${base}index.html">選手を探す</a> · <a href="${base}ranking.html">リーグ順位表</a>
+  <a href="${base}index.html">${d.teamName}の選手一覧</a> · <a href="${base}ranking.html">リーグ順位表</a>
 </nav>`;
 
   return page({
@@ -586,8 +707,8 @@ ${catalog.map((meta) => {
     spine: `${d.teamName}　${d.name}`,
     freshness: ctx.freshness,
     site: ctx.site,
+    nav: "player",
     body,
-    interactive: true,
     bootstrapJs: bootstrapFor(d.role),
   });
 }

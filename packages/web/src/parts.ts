@@ -143,3 +143,27 @@ export function valueWithDen(r: Rate, unit: string, digits: Digits = 3): RawHtml
 export function note(text: string): RawHtml {
   return html`<p class="note">${text}</p>`;
 }
+
+/**
+ * 탭 한 줄.
+ *
+ * ⚠**같은 `group`을 쓰는 탭줄은 함께 움직인다.** 순위표에서 리그를 바꿔도 보고 있던
+ * 지표가 유지되는 것이 이 성질 덕분이다 — 리그마다 탭줄을 따로 그리되 그룹은 하나다.
+ * @param scroll 좁은 화면에서 줄바꿈 대신 가로로 흐르게 한다
+ */
+export function tablist(
+  group: string,
+  items: readonly { id: string; label: string }[],
+  scroll = false,
+): RawHtml {
+  return html`<div class="tabs${scroll ? " scroll" : ""}" role="tablist" data-tabgroup="${group}" aria-label="表示の切り替え">
+    ${items.map(
+      (t, i) => html`<button class="tab" type="button" role="tab" data-tab="${t.id}" aria-selected="${i === 0 ? "true" : "false"}">${t.label}</button>`,
+    )}
+  </div>`;
+}
+
+/** 탭에 대응하는 패널. **첫 번째만 열어둔다** — JS가 없어도 뭔가는 보인다 */
+export function panel(group: string, key: string, first: boolean, body: RawHtml): RawHtml {
+  return html`<div data-panelgroup="${group}" data-panelkey="${key}" role="tabpanel" ${raw(first ? "" : "hidden")}>${body}</div>`;
+}
