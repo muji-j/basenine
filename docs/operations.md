@@ -96,9 +96,25 @@ npm run preview              # http://127.0.0.1:4173
 가짜 주소를 넣지 않도록 비워 두면 화면이 「미설정」이라고 말하고, 빌드가 경고한다.
 **공개 전 필수**다.
 
+## 보관소
+
+아카이브와 DB는 **비공개 리포의 릴리스 자산**(`data-store` 태그)에 둔다.
+R2가 아닌 이유와 실측은 `docs/operations/deploy.md`에 있다 — 요약하면
+Actions 캐시는 7일이면 지워지고, R2는 시크릿이 늘고, 릴리스는 추가 계정·시크릿이 0이다.
+
+```bash
+node scripts/archive-guard.ts count data/archive              # 지금 몇 건인가
+node scripts/archive-guard.ts check data/archive ops/archive-manifest.json
+```
+
+⚠**줄어들면 멈춘다.** 복원이 조용히 실패한 채 덮어쓰면 소급 불가능한 자산이
+한 번에 사라지고 로그에는 「정상 종료」가 남는다. 워크플로가 복원 직후와 수집 직후
+**두 번** 검사하고, 통과하지 못하면 보관소에 올리지 않는다.
+
 ## 아직 안 된 것
 
-- **아카이브·DB의 원격 보관** — 지금은 로컬 `data/`에만 있다. R2 연결은 증분 H
-- **자동 실행** — `.github/workflows/daily.yml`이 있지만 리포가 아직 GitHub에 없다
+- **Cloudflare Pages 배포** — 런북은 `docs/operations/deploy.md`. 시크릿 2개(`CLOUDFLARE_API_TOKEN`·
+  `CLOUDFLARE_ACCOUNT_ID`)가 생긴 뒤에 워크플로에 붙인다
+- **Access 허용목록** — ⚠**데이터를 올리기 전에** 건다. 순서가 바뀌면 그 사이가 공개다
 - **경기 진행 중 판정** — 위의 「어제」 규칙으로 우회하고 있다
 - **화면 배포** — `dist/`를 만드는 데까지. Cloudflare Pages + Access 연결은 증분 H

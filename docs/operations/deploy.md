@@ -51,29 +51,37 @@ muji-j/bb-app   비공개
 
 ---
 
-## 3. 첫 수집 (수동 1회)
+## 3. 보관소 초기 적재 (완료 · 2026-08-15)
+
+⚠**CI를 먼저 돌리면 안 됐다.** CI가 처음부터 다시 받는 것이 아니라 **어제분만** 받으므로,
+로컬에 쌓인 3,354건이 CI로 옮겨가지 않은 채 빈 아카이브가 보관소가 됐을 것이다.
+그래서 로컬 자산을 먼저 올렸다.
 
 ```
-Actions → daily collection → Run workflow
+릴리스 data-store
+  archive.tar    35,287,040 B  (3,354건 · 27.5MB 압축분)
+  bb.sqlite.gz    3,247,281 B
 ```
 
-- 첫 실행은 보관소가 없으므로 `기록 없음 — 첫 실행으로 본다`가 나온다. 정상이다.
-- 끝나면 `data-store` 릴리스에 `archive.tar` + `bb.sqlite.gz`가 생긴다.
-- `ops/archive-manifest.json`이 커밋된다. **다음 실행부터 이 값이 축소 감지의 기준**이 된다.
+**복원 왕복을 실측했다** — 이게 안 되면 설계 자체가 무의미하다:
 
-⚠**로컬 아카이브를 먼저 올리는 편이 낫다.** 지금 로컬에 3,354건(27.5MB)이 쌓여 있고,
-CI가 처음부터 다시 받으면 **2025년분을 다시 긁는 것이 아니라 어제분만 받는다** —
-즉 로컬 자산이 CI로 옮겨가지 않는다. 첫 실행 전에 수동으로 올린다:
+| 검사 | 결과 |
+|---|---|
+| 내려받아 풀었을 때 파일 수 | 3,354건 → **3,354건 일치** |
+| 가드 판정 | `복원 확인: 3354건 → 3354건` · exit 0 |
+| 복원된 DB `game` | 663 → **663** |
+| 복원된 DB `pa_event` | 46,899 → **46,899** |
+| 복원된 DB `player` | 695 → **695** |
+| 복원된 DB `probable_pitcher` | 12 → **12** |
 
-```bash
-tar -cf /tmp/archive.tar -C data archive
-gzip -c data/bb.sqlite > /tmp/bb.sqlite.gz
-gh release create data-store --title "데이터 보관소" \
-  --notes "일일 수집이 덮어쓴다. 코드 릴리스가 아니다." --latest=false
-gh release upload data-store /tmp/archive.tar /tmp/bb.sqlite.gz --clobber
-node scripts/archive-guard.ts write data/archive ops/archive-manifest.json
-git add ops/archive-manifest.json && git commit -m "chore(ops): archive manifest" && git push
+### 이후의 일일 실행
+
 ```
+Actions → daily collection → Run workflow  (또는 02:00 JST 크론)
+```
+
+- `ops/archive-manifest.json`이 매 실행 갱신·커밋된다. **이 값이 축소 감지의 기준**이다.
+- 복원 직후와 수집 직후 **두 번** 검사하고, 통과하지 못하면 보관소에 올리지 않는다.
 
 ---
 
