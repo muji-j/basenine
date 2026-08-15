@@ -346,13 +346,39 @@ DB를 이미 들고 있는 Actions에서 올리는 편이 단순하고 권한도
 
 ---
 
-## 6. 아직 넣지 않은 것 — 왜
+## 6. 시크릿 (완료 · 2026-08-15)
 
-배포 단계는 **시크릿 2개가 생긴 뒤에** 워크플로에 넣는다.
+`gh secret list --repo muji-j/bb-app`로 이름만 확인했다(값은 볼 수 없다):
+
+```
+BB_ARCHIVER_CONTACT
+BB_CONTACT
+CLOUDFLARE_ACCOUNT_ID
+CLOUDFLARE_API_TOKEN
+```
+
+배포 단계는 **시크릿이 생긴 뒤에** 워크플로에 넣었다.
 없는 시크릿으로 도는 단계를 미리 넣으면 매일 밤 빨간 실패가 쌓이고,
 **실패가 일상이 되면 진짜 실패를 못 본다.**
 
-시크릿을 넣었다고 알려 주면 §5의 단계를 워크플로에 붙인다.
+### 계정 ID를 찾는 법
+
+`npx wrangler@4 whoami`가 표로 낸다. 비밀값이 아니다 — 대시보드 URL에도 그대로 들어간다.
+
+### API 토큰
+
+`wrangler login`의 OAuth 토큰은 CI에서 쓸 수 없다. 별도 발급한다.
+
+`dash.cloudflare.com/profile/api-tokens → Create Token → Custom token`
+
+| 항목 | 값 |
+|---|---|
+| Permissions | **Account · Cloudflare Pages · Edit** ← 이 한 줄만 |
+| Account Resources | Include · 해당 계정 |
+
+⚠**템플릿(「Edit Cloudflare Workers」 등)을 쓰지 마라.** 권한이 훨씬 넓다.
+이 토큰은 GitHub에 저장되므로 **Pages 배포 하나만** 할 수 있어야 한다.
+⚠권한 부족 오류가 나면 `Account · Account Settings · Read`를 한 줄 더한다.
 
 ---
 
