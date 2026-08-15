@@ -132,3 +132,74 @@ test("헤더에서 지금 이 페이지임을 표시한다", () => {
   const out = renderStartersPage(data(), context());
   assert.match(out, /<a href="starters\.html" aria-current="page">先発<\/a>/);
 });
+
+// ── 대전 카드 버튼 ────────────────────────────────────────────────────────
+
+function threeGames(): StartersPageData {
+  return data({
+    games: [
+      game(),
+      game({
+        venue: "神宮",
+        startTime: "18:00",
+        sides: [
+          side({ teamCode: "s", shortName: "ヤクルト", color: colorOf("s") }),
+          side({ teamCode: "db", shortName: "DeNA", color: colorOf("db") }),
+        ],
+      }),
+      game({
+        venue: "ベルーナドーム",
+        startTime: "17:00",
+        sides: [
+          side({ teamCode: "l", shortName: "西武", color: colorOf("l") }),
+          side({ teamCode: "m", shortName: "ロッテ", color: colorOf("m") }),
+        ],
+      }),
+    ],
+  });
+}
+
+test("경기 수만큼 버튼이 생긴다 — 실제 대전 카드 기준이다", () => {
+  const out = renderStartersPage(threeGames(), context());
+  const tabs = [...out.matchAll(/class="card[^"]*"[^>]*data-tab="([a-z-]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(tabs, ["d-g", "s-db", "l-m", "all"]);
+});
+
+test("버튼 키는 팀 코드 쌍이다 — 순번이나 구장이면 다음날 엉뚱한 경기를 가리킨다", () => {
+  const out = renderStartersPage(threeGames(), context());
+  assert.match(out, /data-tab="d-g"/);
+  assert.ok(!out.includes('data-tab="0"'), "순번을 키로 쓰고 있다");
+});
+
+test("버튼에 양 팀 색과 카드 이름·시각이 들어간다", () => {
+  const out = renderStartersPage(threeGames(), context());
+  const card = /<button class="card"[\s\S]*?<\/button>/.exec(out)?.[0] ?? "";
+  assert.ok(card.includes(colorOf("d").base), "왼쪽 팀 색이 없다");
+  assert.ok(card.includes(colorOf("g").base), "오른쪽 팀 색이 없다");
+  assert.match(card, /中日 − 巨人/);
+  assert.match(card, /13:30 バンテリンドーム/);
+});
+
+test("첫 경기만 열려 있고 나머지는 접혀 있다 — JS가 없어도 하나는 보인다", () => {
+  const out = renderStartersPage(threeGames(), context());
+  const panels = [...out.matchAll(/data-panelgroup="starters" data-panelkey="([a-z-]+)"([^>]*)>/g)];
+  assert.deepEqual(
+    panels.map(([, key, attrs]) => [key, attrs!.includes("hidden")]),
+    [
+      ["d-g", false],
+      ["s-db", true],
+      ["l-m", true],
+    ],
+  );
+});
+
+test("「すべて」 버튼이 있다 — 골라 보는 화면에서 전부 보기를 뺏지 않는다", () => {
+  const out = renderStartersPage(threeGames(), context());
+  assert.match(out, /data-tab="all"[^>]*aria-selected="false"/);
+  assert.match(out, /すべて<\/b><s>3試合/);
+});
+
+test("예고가 없으면 버튼도 없다", () => {
+  const out = renderStartersPage(data({ gameDate: null, games: [] }), context());
+  assert.ok(!out.includes('class="cards"'));
+});

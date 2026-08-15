@@ -87,8 +87,10 @@ a{color:inherit}
 /* ── 선수 표제 ───────────────────────────────────────────── */
 .idline{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:16px var(--pad) 11px;
   border-bottom:3px solid var(--team,#6b7280)}
-.mark{flex:0 0 auto;width:46px;height:46px;display:grid;place-items:center;background:var(--team,#6b7280);
-  color:var(--team-ink,#fff);font-size:22px;font-weight:700;letter-spacing:0}
+/* 식별 마크(成績の紋). 배경은 SVG가 스스로 칠한다 */
+.mark{flex:0 0 auto;display:flex;line-height:0}
+.mk{display:block}
+.mkline{display:inline-block;vertical-align:-3px;margin-right:6px;line-height:0}
 .idtext{min-width:0;display:flex;flex-direction:column;gap:2px}
 .idline .nm{font-size:clamp(21px,5vw,26px);font-weight:700;letter-spacing:.08em;line-height:1.2}
 .idline .sub{font-size:11.5px;color:var(--tx-2);letter-spacing:.06em}
@@ -199,6 +201,23 @@ td a:hover{box-shadow:inset 0 -1px 0 currentColor}
 .empty{font-size:12px;color:var(--tx-3);padding:6px 0}
 
 /* ── 予告先発 ────────────────────────────────────────────── */
+/* 대전 카드 버튼 — **경기 수만큼 만들어지고, 폭에 맞춰 열이 접힌다** */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:6px;
+  padding:12px var(--pad);border-bottom:1px solid var(--hair);background:var(--panel)}
+.card{display:flex;align-items:center;gap:9px;font:inherit;text-align:left;cursor:pointer;
+  padding:8px 10px;background:transparent;color:var(--tx-2);border:1px solid var(--hair-2);
+  transition:color var(--fast) var(--ease),border-color var(--fast) var(--ease),background var(--fast) var(--ease)}
+.card:hover{color:var(--tx);border-color:var(--tx-3)}
+.card[aria-selected="true"]{color:var(--tx);border-color:var(--tx);background:var(--page)}
+.card .cbar{display:flex;flex-direction:column;gap:2px;flex:0 0 auto}
+.card .cbar i{display:block;width:5px;height:13px}
+.card .ctxt{min-width:0;display:flex;flex-direction:column;gap:1px}
+.card .ctxt b{font-size:12.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card .ctxt s{text-decoration:none;font-family:var(--f-num);font-size:10px;color:var(--tx-3);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.card.all .ctxt b{letter-spacing:.1em}
+@media (max-width:420px){.cards{grid-template-columns:1fr 1fr;gap:5px}.card{padding:7px 8px}}
+
 .starters{display:grid;grid-template-columns:1fr 1fr;gap:22px}
 .sside{min-width:0}
 .sname{margin:0 0 6px;font-size:11px;letter-spacing:.14em;font-weight:700;display:flex;align-items:center;gap:7px}
@@ -268,7 +287,7 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
   .qbox{max-width:none}
   .tnav a{padding:5px 7px}
   .idline{gap:11px;padding-top:13px}
-  .mark{width:38px;height:38px;font-size:18px}
+  .mark .mk{width:42px;height:42px}
   .spark{width:100%;margin-left:0;align-items:flex-start}
   .cols{grid-template-columns:1fr;gap:0}
   .bars{max-width:none}
@@ -374,7 +393,8 @@ const tabHooks=[];
 function showTabs(){
   Object.keys(tabGroups()).forEach(g=>{
     const cur=state.tabs[g];
-    $$('[data-panelgroup="'+g+'"]').forEach(p=>{p.hidden=p.dataset.panelkey!==cur});
+    // "all"은 특별 취급 — 골라 보는 화면에서 「전부」를 뺏지 않는다
+    $$('[data-panelgroup="'+g+'"]').forEach(p=>{p.hidden=cur!=="all"&&p.dataset.panelkey!==cur});
     $$('[data-tabgroup="'+g+'"] [data-tab]').forEach(b=>{
       b.setAttribute("aria-selected",String(b.dataset.tab===cur));
     });

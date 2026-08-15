@@ -267,6 +267,33 @@ test("순위 지표를 바꾸면 그 표만 남는다", () => {
   assert.deepEqual(openPanels(doc, "pranking"), ["ops"]);
 });
 
+test("「すべて」를 고르면 그 그룹의 패널이 전부 열린다", () => {
+  const doc = makeDocument("");
+  const { list, panels } = tabs("starters", ["d-g", "s-db", "l-m"]);
+  // 서버는 「すべて」 버튼을 같은 탭줄에 넣는다
+  list.appendChild(make("button", { class: "card", role: "tab", "data-tab": "all" }));
+  doc.body.appendChild(list);
+  for (const p of panels) doc.body.appendChild(p);
+  run(doc);
+
+  assert.deepEqual(openPanels(doc, "starters"), ["d-g"]);
+  clickTab(doc, "starters", "all");
+  assert.deepEqual(openPanels(doc, "starters"), ["d-g", "s-db", "l-m"]);
+  clickTab(doc, "starters", "l-m");
+  assert.deepEqual(openPanels(doc, "starters"), ["l-m"]);
+});
+
+test("⚠어제 고른 경기가 오늘 없으면 첫 경기로 돌아간다 — 대전 카드는 매일 바뀐다", () => {
+  const storage = makeStorage();
+  storage.setItem("npb-meikan-layout", JSON.stringify({ tabs: { starters: "c-t" } }));
+  const doc = makeDocument("");
+  const { list, panels } = tabs("starters", ["d-g", "s-db"]);
+  doc.body.appendChild(list);
+  for (const p of panels) doc.body.appendChild(p);
+  run(doc, { storage });
+  assert.deepEqual(openPanels(doc, "starters"), ["d-g"]);
+});
+
 test("탭 선택도 저장된다", () => {
   const storage = makeStorage();
   const first = buildPage();

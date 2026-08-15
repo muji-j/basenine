@@ -106,7 +106,7 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
     <span class="hp">${why}</span>
   </td>
   <td class="mkcell">${markStamp(player, 52)}</td>
-  <td class="mkcell">${markProfile(player, axes, b.line.pa, 52)}
+  <td class="mkcell">${markProfile(player, axes, denominator(b.line.pa), 52)}
     <s>${denominator(b.line.pa)}</s></td>
   <td class="mkcell">${markStrip(player, kinds, 52)}
     <s>${kinds.length === 0 ? "打席なし" : `直近${kinds.length}打席`}</s></td>

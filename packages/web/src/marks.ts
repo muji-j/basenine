@@ -10,8 +10,11 @@
  * 세 방향 모두 **우리가 만든 우리 그림**이고 초상이 아니다.
  *
  *   A 印(いん)      선수 ID에서 결정론적으로 나오는 문양. 고유하지만 **뜻이 없다**
- *   B 成績の紋      성적 프로필의 다각형. **모양이 곧 정보**다
+ *   B 成績の紋      성적 프로필의 다각형. **모양이 곧 정보**다  ← **채택**(2026-08-15)
  *   C 打席の帯      최근 타석 결과의 띠. 원시 기록에 가장 가깝다
+ *
+ * A·C는 채택되지 않았지만 **지운다면 비교 근거가 사라진다.** 비교표(`tools/marks.ts`)가
+ * 셋을 계속 그리고, 다시 고를 때 같은 조건에서 볼 수 있게 남겨 둔다.
  *
  * ⚠**B와 C는 값을 그린다. 그러므로 분모가 따라붙어야 한다**(M2).
  * 마크만 떼어 쓰는 경로를 만들지 않기 위해, 세 함수 모두 분모를 함께 그린다.
@@ -19,7 +22,7 @@
 import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import type { TeamColor } from "@bb-app/domain";
-import { avg3, denominator } from "./format.ts";
+import { avg3, dec2 } from "./format.ts";
 
 export interface MarkPlayer {
   playerId: string;
@@ -99,7 +102,12 @@ export interface ProfileAxis {
  * ⚠**축의 눈금을 그리지 않는다.** 눈금 없는 도형에서 값을 읽게 하면 안 된다 —
  * 정확한 값은 옆의 숫자와 분모에 있고, 이 도형은 **모양**을 보여줄 뿐이다.
  */
-export function markProfile(p: MarkPlayer, axes: readonly ProfileAxis[], sample: number, size = 46): RawHtml {
+export function markProfile(
+  p: MarkPlayer,
+  axes: readonly ProfileAxis[],
+  sampleText: string,
+  size = 46,
+): RawHtml {
   if (axes.length < 3) return raw("");
   const c = size / 2;
   const r = c - 3;
@@ -113,7 +121,7 @@ export function markProfile(p: MarkPlayer, axes: readonly ProfileAxis[], sample:
   const shape = axes.map((a, i) => point(i, Math.max(0.06, Math.min(1, a.scaled ?? 0)))).join(" ");
 
   return html`<svg class="mk" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"
-  role="img" aria-label="${p.name}の成績プロフィール（${denominator(sample)}）：${axes.map((a) => `${a.label} ${a.text}`).join("、")}">
+  role="img" aria-label="${p.name}の成績プロフィール（${sampleText}）：${axes.map((a) => `${a.label} ${a.text}`).join("、")}">
   <rect width="${size}" height="${size}" fill="${p.color.base}"></rect>
   <polygon points="${outline}" fill="none" stroke="${p.color.ink}" stroke-opacity=".28" stroke-width="1"></polygon>
   <polygon points="${shape}" fill="${p.color.ink}" fill-opacity=".85"></polygon>
@@ -212,4 +220,66 @@ export function battingProfile(b: BattingProfileInput): ProfileAxis[] {
     { label: "選球", scaled: scale(b.bbRate, PROFILE_ANCHORS.bbRate), text: avg3(b.bbRate) },
     { label: "接触", scaled: scale(contact, PROFILE_ANCHORS.contact), text: avg3(contact) },
   ];
+}
+
+/**
+ * 투수용 앵커.
+ *
+ * ⚠**네 축이 「낮을수록 좋다」**라서 뒤집어 넣는다. 그대로 넣으면 좋은 투수가 작은 도형이 되고,
+ * 모양의 뜻이 타자와 정반대가 된다 — 같은 화면에 나란히 놓으면 그 자체로 거짓말이다.
+ */
+export const PITCHING_ANCHORS = {
+  k9: [4, 12],
+  /** BB/9 — 뒤집는다 */
+  bb9: [1.5, 5],
+  /** HR/9 — 뒤집는다 */
+  hr9: [0.3, 1.8],
+  /** WHIP — 뒤집는다 */
+  whip: [1, 1.7],
+  /** 방어율 — 뒤집는다 */
+  era: [2, 5.5],
+} as const;
+
+/** 「낮을수록 좋다」를 0~1로 뒤집는다 */
+function scaleInverted(value: number | null, [lo, hi]: readonly [number, number]): number | null {
+  const s = scale(value, [lo, hi]);
+  return s === null ? null : 1 - s;
+}
+
+export interface PitchingProfileInput {
+  k9: number | null;
+  bb9: number | null;
+  hr9: number | null;
+  whip: number | null;
+  era: number | null;
+}
+
+export function pitchingProfile(p: PitchingProfileInput): ProfileAxis[] {
+  return [
+    { label: "奪三振", scaled: scale(p.k9, PITCHING_ANCHORS.k9), text: dec2(p.k9) },
+    { label: "制球", scaled: scaleInverted(p.bb9, PITCHING_ANCHORS.bb9), text: dec2(p.bb9) },
+    { label: "被弾", scaled: scaleInverted(p.hr9, PITCHING_ANCHORS.hr9), text: dec2(p.hr9) },
+    { label: "抑制", scaled: scaleInverted(p.whip, PITCHING_ANCHORS.whip), text: dec2(p.whip) },
+    { label: "失点", scaled: scaleInverted(p.era, PITCHING_ANCHORS.era), text: dec2(p.era) },
+  ];
+}
+
+/**
+ * 표본이 없을 때의 대체 마크 — 포지션 한 글자.
+ *
+ * ⚠**성적이 없는 선수를 「아주 작은 도형」으로 그리지 않는다.** 그건 「성적이 나쁘다」로 읽힌다.
+ * 값이 없는 것과 값이 낮은 것은 다르다(M11).
+ */
+export function markLetter(p: MarkPlayer, letter: string, size = 46): RawHtml {
+  return html`<svg class="mk" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"
+  role="img" aria-label="${p.name}（成績なし）">
+  <rect width="${size}" height="${size}" fill="${p.color.base}"></rect>
+  <text x="${size / 2}" y="${size / 2}" fill="${p.color.ink}" font-size="${(size * 0.46).toFixed(1)}"
+    font-weight="700" text-anchor="middle" dominant-baseline="central">${letter}</text>
+</svg>`;
+}
+
+/** 축이 전부 값 없음인가 — 대체 마크로 갈지 판정한다 */
+export function isEmptyProfile(axes: readonly ProfileAxis[]): boolean {
+  return axes.length === 0 || axes.every((a) => a.scaled === null);
 }

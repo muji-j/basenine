@@ -6,6 +6,7 @@
  */
 import type { BattingLine, PitchingLine, Rate } from "@bb-app/metrics";
 import { colorOf } from "@bb-app/domain";
+import { battingProfile } from "../src/marks.ts";
 import type {
   BattingBlockData,
   PitchingBlockData,
@@ -175,6 +176,10 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
     ],
     matchupTotal: 2,
     ranking: [rankingPanel()],
+    mark: {
+      axes: battingProfile({ avg: 0.317, obp: 0.403, iso: 0.304, bbRate: 0.127, kRate: 0.265 }),
+      sampleText: "442打席",
+    },
     spark: [
       { label: "3月", value: 0.812 },
       { label: "4月", value: 1.104 },

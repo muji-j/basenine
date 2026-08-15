@@ -44,6 +44,7 @@ import type { League } from "@bb-app/domain";
 import { countsAsHit } from "@bb-app/parser";
 import type { Outcome } from "@bb-app/parser";
 import { positionMark } from "./player-page.ts";
+import { battingProfile, pitchingProfile } from "./marks.ts";
 import type {
   BattingBlockData,
   MatchupRow,
@@ -71,6 +72,7 @@ import type {
   TeamRoster,
 } from "./pages.ts";
 import type { RankDigits } from "./parts.ts";
+import { denominator, innings } from "./format.ts";
 
 /**
  * 스플릿에서 「표본이 얇다」고 볼 타석 수.
@@ -654,9 +656,15 @@ const SHORT_NAME: Readonly<Record<string, string>> = {
 function rosters(players: readonly PlayerPageData[]): TeamRoster[] {
   const byTeam = new Map<string, RosterEntry[]>();
   for (const p of players) {
-    const mark = positionMark(p.position);
     const list = byTeam.get(p.teamCode);
-    const entry: RosterEntry = { playerId: p.playerId, name: p.name, mark };
+    // 마크는 선수 페이지와 **같은 것**을 작게 쓴다 — 목록과 상세가 다른 그림이면 표시로서 쓸모가 없다
+    const entry: RosterEntry = {
+      playerId: p.playerId,
+      name: p.name,
+      mark: positionMark(p.position),
+      axes: p.mark.axes,
+      sampleText: p.mark.sampleText,
+    };
     if (list === undefined) byTeam.set(p.teamCode, [entry]);
     else list.push(entry);
   }
@@ -921,6 +929,36 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
         ? (matchupsByPlayer.byPitcher.get(playerId) ?? [])
         : (matchupsByPlayer.byBatter.get(playerId) ?? []);
 
+    // 식별 마크(B안 成績の紋) — 축이 타자·투수로 다르다.
+    // ⚠**투수 축은 네 개가 「낮을수록 좋다」라 뒤집혀 있다**(marks.ts). 같은 화면에 나란히
+    // 놓이므로 뒤집지 않으면 좋은 투수가 작은 도형이 되어 뜻이 정반대가 된다.
+    const mark =
+      role === "pitcher" && pitchingData !== null
+        ? {
+            axes: pitchingProfile({
+              k9: pitchingData.k9.value,
+              bb9: pitchingData.bb9.value,
+              hr9: pitchingData.hr9.value,
+              whip: pitchingData.whip.value,
+              era: pitchingData.era.value,
+            }),
+            // ⚠아웃 카운트가 아니라 이닝으로 쓴다 — 사이트의 다른 분모와 같은 단위여야 한다
+            sampleText: `${innings(pitchingData.line.outs)}回`,
+          }
+        : {
+            axes:
+              battingData === null
+                ? []
+                : battingProfile({
+                    avg: battingData.avg.value,
+                    obp: battingData.obp.value,
+                    iso: battingData.iso.value,
+                    bbRate: battingData.bbRate.value,
+                    kRate: battingData.kRate.value,
+                  }),
+            sampleText: denominator(battingData?.line.pa ?? 0),
+          };
+
     // 표제 옆 꺾은선 — 타자는 월별 OPS, 투수는 월별 방어율. **사진 대신 쓰는 표시**다
     const spark: SparkPoint[] =
       role === "pitcher"
@@ -954,6 +992,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       matchups: opponents,
       matchupTotal: opponents.length,
       ranking: panelsForPlayer(role === "pitcher" ? rankings.pitching : rankings.batting, playerId),
+      mark,
       spark,
       sparkLabel: role === "pitcher" ? "月別防御率" : "月別OPS",
       asOf: meta.latest,

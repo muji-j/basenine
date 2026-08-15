@@ -28,6 +28,8 @@ import {
 } from "./parts.ts";
 import type { BarRow, RankDigits } from "./parts.ts";
 import { NO_VALUE, avg3, gameDate, innings, throwsBats } from "./format.ts";
+import { isEmptyProfile, markLetter, markProfile } from "./marks.ts";
+import type { MarkPlayer, ProfileAxis } from "./marks.ts";
 import { page } from "./layout.ts";
 import type { Freshness, SiteMeta } from "./layout.ts";
 
@@ -173,6 +175,21 @@ export interface SparkPoint {
   value: number | null;
 }
 
+/**
+ * 표제의 식별 마크(B안 成績の紋). **선수마다 모양이 다르고, 그 모양이 정보다.**
+ * 축은 타자와 투수가 다르고, 표본이 없으면 포지션 한 글자로 대체한다.
+ */
+export interface MarkData {
+  axes: ProfileAxis[];
+  /**
+   * 분모 표기. **이미 사람이 읽는 형태여야 한다**(`442打席` · `138.1回`).
+   *
+   * ⚠숫자와 단위를 따로 받지 않는다 — 투수 표본은 아웃 카운트라 `415アウト`가 되고,
+   * 사이트의 다른 곳(이닝 표기)과 어긋난다. 어긋나는 경로를 타입에서 없앤다.
+   */
+  sampleText: string;
+}
+
 export interface PlayerPageData {
   playerId: string;
   name: string;
@@ -200,6 +217,8 @@ export interface PlayerPageData {
   /** 대전한 투수(또는 타자)의 총 수. `matchups`가 잘렸는지 말하기 위한 값 */
   matchupTotal: number;
   ranking: RankingPanel[];
+  /** 표제의 식별 마크 */
+  mark: MarkData;
   /** 월별 추이. 표제 옆의 꺾은선이 된다 */
   spark: SparkPoint[];
   /** 그 꺾은선이 무엇인지 (`月別OPS` 등) */
@@ -289,7 +308,18 @@ function sparkline(points: readonly SparkPoint[], label: string): RawHtml {
 }
 
 function idLine(d: PlayerPageData): RawHtml {
-  const mark = positionMark(d.position, "—");
+  const who: MarkPlayer = {
+    playerId: d.playerId,
+    name: d.name,
+    teamName: d.teamName,
+    color: d.color,
+    positionMark: positionMark(d.position, "—"),
+  };
+  // ⚠성적이 없는 선수를 아주 작은 도형으로 그리지 않는다 — 「나쁘다」로 읽힌다(M11)
+  const mark = isEmptyProfile(d.mark.axes)
+    ? markLetter(who, who.positionMark, 52)
+    : markProfile(who, d.mark.axes, d.mark.sampleText, 52);
+
   const bio = [
     d.teamName,
     d.position ?? "ポジション不明",
@@ -299,7 +329,7 @@ function idLine(d: PlayerPageData): RawHtml {
   ].filter((s): s is string => s !== null && s !== "" && s !== NO_VALUE);
 
   return html`<header class="idline">
-  <span class="mark" aria-hidden="true">${mark}</span>
+  <span class="mark">${mark}</span>
   <div class="idtext">
     <span class="nm">${d.name}</span>
     <span class="sub">${bio.join(" · ")}</span>

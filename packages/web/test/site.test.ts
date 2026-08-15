@@ -24,7 +24,15 @@ function siteData(over: Partial<SiteData> = {}): SiteData {
           name: "阪神タイガース",
           shortName: "阪神",
           color: { base: "#f2c800", ink: "#17170f" },
-          players: [{ playerId: p.playerId, name: p.name, mark: "内" }],
+          players: [
+            {
+              playerId: p.playerId,
+              name: p.name,
+              mark: "内",
+              axes: p.mark.axes,
+              sampleText: p.mark.sampleText,
+            },
+          ],
         },
       ],
       highlights: [],

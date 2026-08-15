@@ -29,6 +29,8 @@ import type { MatchupRow, RankingPanel } from "./player-page.ts";
 import { NEUTRAL_COLOR } from "@bb-app/domain";
 import type { TeamColor } from "@bb-app/domain";
 import type { Rate } from "@bb-app/metrics";
+import { isEmptyProfile, markLetter, markProfile } from "./marks.ts";
+import type { MarkPlayer, ProfileAxis } from "./marks.ts";
 
 export interface RenderContext {
   site: SiteMeta;
@@ -46,6 +48,10 @@ export interface RosterEntry {
   name: string;
   /** 「投」「捕」 등 한 글자. 미상이면 빈 문자열 */
   mark: string;
+  /** 성적 문양의 축. 비어 있으면 문양 대신 포지션 글자를 쓴다 */
+  axes: ProfileAxis[];
+  /** 이미 사람이 읽는 형태의 분모(`442打席`) */
+  sampleText: string;
 }
 
 export interface TeamRoster {
@@ -114,11 +120,23 @@ export function renderIndexPage(d: IndexPageData, ctx: RenderContext): string {
 ${d.teams.map(
     (t) => html`<section class="teamgroup" style="--chip:${t.color.base};--chip-ink:${t.color.ink}">
   <h4><i></i>${t.name}<span class="qt">${t.players.length}人</span></h4>
-  <ul class="roster">${t.players.map(
-      (p) => html`<li data-team="${t.code}" data-name="${p.name}">
-      <a href="${base}players/${p.playerId}.html"><span class="hn">${p.name}</span><span class="hp">${p.mark}</span></a>
-    </li>`,
-    )}</ul>
+  <ul class="roster">${t.players.map((p) => {
+      const who: MarkPlayer = {
+        playerId: p.playerId,
+        name: p.name,
+        teamName: t.name,
+        color: t.color,
+        positionMark: p.mark,
+      };
+      return html`<li data-team="${t.code}" data-name="${p.name}">
+      <a href="${base}players/${p.playerId}.html">
+        <span class="mkline">${isEmptyProfile(p.axes)
+          ? markLetter(who, p.mark === "" ? "—" : p.mark, 18)
+          : markProfile(who, p.axes, p.sampleText, 18)}</span>
+        <span class="hn">${p.name}</span><span class="hp">${p.mark}</span>
+      </a>
+    </li>`;
+    })}</ul>
 </section>`,
   )}
 
@@ -240,6 +258,16 @@ export interface StartersPageData {
  * ⚠**라인업은 모른다.** 그래서 「이 투수와 대전한 적이 있는 상대 팀 타자」를 타석수 순으로 낸다 —
  * 오늘 나올 타자를 아는 척하지 않는다.
  */
+/**
+ * 경기 하나를 가리키는 탭 키.
+ *
+ * ⚠**구장이나 순번이 아니라 대전 카드로 만든다.** 구장은 더블헤더에서 겹치고,
+ * 순번은 다음날 다른 경기를 가리킨다 — 저장된 선택이 엉뚱한 경기로 되살아난다.
+ */
+function gameKey(g: ProbableGame): string {
+  return [g.sides[0].teamCode, g.sides[1].teamCode].join("-");
+}
+
 export function renderStartersPage(d: StartersPageData, ctx: RenderContext): string {
   const base = "";
   const isToday = d.gameDate !== null && d.gameDate === d.builtOn;
@@ -284,15 +312,33 @@ export function renderStartersPage(d: StartersPageData, ctx: RenderContext): str
 
 ${d.gameDate === null || d.games.length === 0
     ? html`<section class="block"><p class="empty">予告先発はまだ発表されていません。発表は前日〜当日です。</p></section>`
-    : html`${d.games.map(
-        (g) => html`<section class="block">
+    : html`<nav class="cards" role="tablist" data-tabgroup="starters" aria-label="試合">
+    ${d.games.map(
+      (g, i) => html`<button class="card" type="button" role="tab" data-tab="${gameKey(g)}"
+        aria-selected="${i === 0 ? "true" : "false"}">
+      <span class="cbar"><i style="background:${g.sides[0].color.base}"></i><i style="background:${g.sides[1].color.base}"></i></span>
+      <span class="ctxt"><b>${g.sides[0].shortName} − ${g.sides[1].shortName}</b>
+        <s>${g.startTime ?? ""}${g.venue === null ? "" : ` ${g.venue}`}</s></span>
+    </button>`,
+    )}
+    <button class="card all" type="button" role="tab" data-tab="all" aria-selected="false">
+      <span class="ctxt"><b>すべて</b><s>${d.games.length}試合</s></span>
+    </button>
+  </nav>
+${d.games.map((g, i) =>
+      panel(
+        "starters",
+        gameKey(g),
+        i === 0,
+        html`<section class="block">
       <h4>${g.sides[0].shortName} 対 ${g.sides[1].shortName}<span class="qt">${g.venue ?? ""}${g.startTime === null ? "" : ` ${g.startTime}`}</span></h4>
       <div class="starters">
         ${sideBlock(g.sides[0], g.sides[1])}
         ${sideBlock(g.sides[1], g.sides[0])}
       </div>
     </section>`,
-      )}`}
+      ),
+    )}`}
 
 <section class="block">
   <h4>この画面について</h4>
