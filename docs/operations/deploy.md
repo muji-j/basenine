@@ -90,19 +90,29 @@ Actions → daily collection → Run workflow  (또는 02:00 JST 크론)
 **순서를 바꾸지 마라.** Pages는 배포하는 즉시 URL이 살아난다.
 데이터를 먼저 올리면 Access를 붙이기 전까지 **공개 상태**가 되고, 그 사이가 S1 위반이다.
 
-### 4-1. 빈 프로젝트를 먼저 만든다
+### 4-1. 빈 프로젝트를 먼저 만든다 — ⚠**GitHub 연결을 하지 않는다**
 
-`Cloudflare 대시보드 → Workers & Pages → Create → Pages → Connect to Git`
+⚠**대시보드의 「Connect to Git」을 쓰지 마라.** 두 가지 이유가 있다:
 
-| 항목 | 값 |
-|---|---|
-| 리포 | `muji-j/bb-app` |
-| 프로덕션 브랜치 | `main` |
-| 빌드 명령 | *(비워 둔다 — 4-3까지)* |
-| 출력 디렉터리 | `dist` |
-| 프로젝트명 | `bb-app` → `bb-app.pages.dev` |
+1. **Pages 빌더에는 `data/bb.sqlite`가 없다.** 리포에 DB를 두지 않기 때문이다(L6).
+   Git 빌드를 연결해도 빌드가 성립하지 않는다.
+2. Cloudflare GitHub App이 새 비공개 리포를 못 본다 —
+   앱 설치가 「선택한 리포만」이면 `bb-app`이 검색 결과에 **뜨지 않는다**(2026-08-15 실측).
+   권한을 열어도 1번 때문에 소용이 없다.
 
-첫 배포는 **빈 `dist`**로 둔다. 사람이 볼 것이 없는 상태에서 Access를 건다.
+**직접 업로드로 만든다.** 로컬에서:
+
+```bash
+npx wrangler@4 login                                     # 브라우저 OAuth (Cloudflare 계정)
+npx wrangler@4 pages project create bb-app --production-branch main
+
+# 자리표시자 1장으로 첫 배포 — 사람이 볼 것이 없는 상태에서 Access를 건다
+mkdir -p .tmp-empty && echo "setting up" > .tmp-empty/index.html
+npx wrangler@4 pages deploy .tmp-empty --project-name bb-app --branch main
+rm -rf .tmp-empty
+```
+
+→ `bb-app.pages.dev`가 생긴다. **아직 데이터는 올리지 않았다.**
 
 ### 4-2. Access를 건다 (Zero Trust)
 
@@ -132,27 +142,22 @@ curl -s -o /dev/null -w "%{http_code}\n" https://bb-app.pages.dev/
 curl -s -o /dev/null -w "%{http_code}\n" https://<preview-hash>.bb-app.pages.dev/
 ```
 
-### 4-3. 빌드를 켠다
+### 4-3. 첫 실제 배포 (Access 검증을 통과한 뒤에만)
 
-Pages 프로젝트 설정에서 빌드 명령을 넣는다.
+로컬에서 한 번 확인하고 싶다면:
 
-| 항목 | 값 |
-|---|---|
-| 빌드 명령 | `npm ci --no-audit --no-fund && node packages/web/tools/build.ts data/bb.sqlite dist 2026` |
-| 출력 디렉터리 | `dist` |
-| Node 버전 | `24` (환경변수 `NODE_VERSION=24`) |
-| 환경변수 | `BB_CONTACT` = §2와 같은 값 |
+```bash
+npm run build:web
+npx wrangler@4 pages deploy dist --project-name bb-app --branch main
+```
 
-⚠**여기에 문제가 하나 있다 — Pages 빌더에는 `data/bb.sqlite`가 없다.**
-리포에 DB를 두지 않기 때문이다(L6). 선택지는 둘이다:
+이후는 Actions가 매일 올린다(§5).
 
-| 안 | 방법 | 판정 |
-|---|---|---|
-| **A (권장)** | Pages 빌드를 쓰지 않고, **Actions가 만든 `dist`를 `wrangler pages deploy`로 올린다** | 시크릿 1개(`CLOUDFLARE_API_TOKEN`)가 늘지만, DB를 리포에 넣지 않아도 된다 |
-| B | Pages 빌드 안에서 `gh release download`로 보관소를 받는다 | Pages 빌더에 GitHub 토큰을 줘야 한다. 시크릿이 한쪽 더 늘고 경계가 흐려진다 |
-
-→ **A안으로 간다.** 4-1의 Git 연결은 **끊고**, Actions에서 직접 배포한다.
-아래 §5가 그 형태다.
+⚠**왜 Pages의 Git 빌드를 쓰지 않는가** — 다시 적어 둔다.
+Pages 빌더에는 `data/bb.sqlite`가 없다(리포에 DB를 두지 않는다 · L6).
+보관소에서 받아오게 하려면 Pages 빌더에 GitHub 토큰을 줘야 하고,
+그러면 시크릿이 한쪽 더 늘면서 **어느 쪽이 무엇을 할 수 있는지의 경계가 흐려진다.**
+DB를 이미 들고 있는 Actions에서 올리는 편이 단순하고 권한도 좁다.
 
 ---
 
@@ -170,7 +175,7 @@ Pages 프로젝트 설정에서 빌드 명령을 넣는다.
 ```yaml
       - name: 배포
         if: success()
-        run: npx wrangler@3 pages deploy dist --project-name bb-app --branch main
+        run: npx wrangler@4 pages deploy dist --project-name bb-app --branch main
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
