@@ -8,5 +8,7 @@ export {
   rankPitchers,
 } from "./leaderboard.ts";
 export type { BattingEntry, LeagueBundle, PitchingEntry } from "./leaderboard.ts";
+export { ALL_STATES, buildRunExpectancy, paValue, stateKey } from "./run-expectancy.ts";
+export type { RunExpectancy, StateKey } from "./run-expectancy.ts";
 export { battingSplits, matchups } from "./splits.ts";
 export type { Matchup, PlayerSplits, SplitDimension, SplitLine } from "./splits.ts";

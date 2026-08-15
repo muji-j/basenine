@@ -26,6 +26,8 @@ export interface PaEventRow {
   rawBox: string;
   rawPbp: string;
   status: "final" | "live";
+  /** 이 타석에서 난 득점. `runs.ts`가 유도하고 라인스코어로 검증한다 */
+  runsScored: number;
 }
 
 export interface AlignResult {
@@ -36,7 +38,13 @@ export interface AlignResult {
 /**
  * @param events playbyplay 이벤트 전량(미완 타석 포함 — 여기서 거른다)
  */
-export function alignPaEvents(gameId: string, box: BoxScore, events: readonly PlayEvent[]): AlignResult {
+export function alignPaEvents(
+  gameId: string,
+  box: BoxScore,
+  events: readonly PlayEvent[],
+  /** `deriveRuns`가 낸 값. `events`(미완 포함) 중 **성립한 타석만** 순서대로 대응한다 */
+  runsForCompleted: readonly number[] = [],
+): AlignResult {
   const quarantine: QuarantineRow[] = [];
   if (box.status !== "played") return { events: [], quarantine };
 
@@ -103,7 +111,7 @@ export function alignPaEvents(gameId: string, box: BoxScore, events: readonly Pl
   const cursor = new Map<string, number>();
   const rows: PaEventRow[] = [];
   let seq = 0;
-  for (const e of completed) {
+  for (const [completedIndex, e] of completed.entries()) {
     if (!usable.has(e.batterId)) continue;
     const i = cursor.get(e.batterId) ?? 0;
     cursor.set(e.batterId, i + 1);
@@ -124,6 +132,7 @@ export function alignPaEvents(gameId: string, box: BoxScore, events: readonly Pl
       rawPbp: e.result,
       // v1은 확정 데이터만 다룬다. 라이브는 v2에서 'live'로 들어온다(M9).
       status: "final",
+      runsScored: runsForCompleted[completedIndex] ?? 0,
     });
   }
 

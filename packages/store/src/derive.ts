@@ -50,7 +50,7 @@ export interface PitchingRow {
 
 /** 격리 대상. **버리지 않는다.** */
 export interface QuarantineRow {
-  kind: "unknownToken" | "paMismatch" | "hitMismatch" | "abMismatch";
+  kind: "unknownToken" | "paMismatch" | "hitMismatch" | "abMismatch" | "runsMismatch";
   gameId: string;
   playerId: string | null;
   raw: string;

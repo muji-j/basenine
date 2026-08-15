@@ -27,7 +27,7 @@ function seedPlayer(db: Db, id: string, name: string, throws: string | null = nu
 function event(o: Partial<PaEventRow> & { gameId: string; seq: number; batterId: string }): PaEventRow {
   return {
     inning: 1, half: "top", outsBefore: 0, bases: "",
-    pitcherId: "P1", outcome: "single", rbi: 0,
+    pitcherId: "P1", outcome: "single", rbi: 0, runsScored: 0,
     rawBox: "中前安", rawPbp: "センター前ヒット", status: "final",
     ...o,
   };

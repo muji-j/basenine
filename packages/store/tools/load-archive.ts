@@ -10,11 +10,12 @@ import { readdir, readFile } from "node:fs/promises";
 import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { parseBoxScore, parsePlayByPlay } from "@bb-app/parser";
+import { parseBoxScore, parseLineScore, parsePlayByPlay } from "@bb-app/parser";
 import type { PlayEvent } from "@bb-app/parser";
 import { competitionOf } from "@bb-app/domain";
 import { openDb } from "../src/db.ts";
 import { alignPaEvents } from "../src/align.ts";
+import { deriveRuns } from "../src/runs.ts";
 import { deriveBatting, derivePitching } from "../src/derive.ts";
 import type { QuarantineRow } from "../src/derive.ts";
 import {
@@ -157,11 +158,20 @@ for await (const file of walk(archiveRoot)) {
 
   // 타석 이벤트의 재료를 **쓰기 전에** 읽어둔다. 트랜잭션 안에서 파일을 기다리지 않게 한다.
   let pbpEvents: PlayEvent[] | null = null;
+  let runsForCompleted: number[] = [];
+  const runsQuarantine: QuarantineRow[] = [];
   if (!values["skip-events"]) {
     const pbpFile = file.replace(/box\.html\.gz$/, "playbyplay.html.gz");
     try {
-      const pbp = parsePlayByPlay(gunzipSync(await readFile(pbpFile)).toString("utf8"));
-      if (pbp.status === "played") pbpEvents = pbp.events;
+      const pbpHtml = gunzipSync(await readFile(pbpFile)).toString("utf8");
+      const pbp = parsePlayByPlay(pbpHtml);
+      if (pbp.status === "played") {
+        pbpEvents = pbp.events;
+        // 타석별 득점을 유도하고 라인스코어로 검증한다.
+        const derived = deriveRuns(meta.gameId, pbp.events.filter((e) => e.completed), parseLineScore(pbpHtml));
+        runsForCompleted = derived.runsPerEvent;
+        runsQuarantine.push(...derived.quarantine);
+      }
     } catch (err) {
       failed += 1;
       console.error(`PBP ERROR ${meta.gameId} — ${err instanceof Error ? err.message : String(err)}`);
@@ -207,9 +217,9 @@ for await (const file of walk(archiveRoot)) {
 
   // 타석 이벤트: playbyplay의 문맥에 박스의 **검증된** 결과를 붙인다.
   if (pbpEvents !== null) {
-    const aligned = alignPaEvents(meta.gameId, box, pbpEvents);
+    const aligned = alignPaEvents(meta.gameId, box, pbpEvents, runsForCompleted);
     budget.paEvents += replacePaEvents(db, meta.gameId, aligned.events);
-    quarantine.push(...aligned.quarantine);
+    quarantine.push(...aligned.quarantine, ...runsQuarantine);
   }
 
   budget.quarantine += replaceQuarantine(db, meta.gameId, quarantine, nowIso);
