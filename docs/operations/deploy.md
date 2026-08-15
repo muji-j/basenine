@@ -132,9 +132,41 @@ rm -rf .tmp-empty
 | 항목 | 값 |
 |---|---|
 | Application domain | `bb-app-7mk.pages.dev` |
-| Identity provider | Google (`307930238+muji-j@users.noreply.github.com` 계정) |
-| Policy | Allow · **Emails** 에 지인 주소를 열거 |
+| Identity provider | **One-time PIN**(기본 제공). 아래 참조 |
+| Policy | Action **Allow** · Include **Emails** 에 주소를 하나씩 열거 |
 | Session | 24시간 |
+
+#### ⚠IdP는 문지기가 아니다
+
+누가 들어올 수 있는지는 **Policy**가 정한다. IdP는 「어떻게 본인임을 증명하는가」일 뿐이다.
+IdP를 고르는 것으로 허용목록이 생기지 않는다.
+
+⚠**`Everyone`이나 `Emails ending in`(도메인 전체)을 쓰지 마라.** 그건 허용목록이 아니다.
+`Emails`에 주소를 하나씩 적는다.
+
+#### Google 로그인 대신 One-time PIN을 쓴다 (2026-08-15 확정)
+
+CLAUDE.md §2-5의 S1은 「**Google 로그인** + 허용목록」이라고 적었다. 그런데 그 조항의
+**목적은 「허용목록을 UI 숨김이 아니라 엣지에서 매 요청 검증한다」**였고,
+Google 로그인은 그 목적을 이루는 **수단**이었다.
+
+Zero Trust 계정에 Google IdP가 없으면 드롭다운에 기본 제공 항목 하나만 뜬다
+(2026-08-15 실측). 추가하려면 Google Cloud Console에서 OAuth 클라이언트를 만들어
+client ID/secret과 리디렉션 URI를 등록해야 한다.
+
+**One-time PIN으로 간다.** 판단 근거:
+
+| 축 | One-time PIN | Google IdP |
+|---|---|---|
+| 엣지에서 매 요청 검증 | ✅ 같다 | ✅ |
+| 허용목록 강제 | ✅ Policy가 한다(동일) | ✅ |
+| 지인이 Google 계정 필요 | **불필요** | 필요 |
+| 설정 비용 | 0 | Google Cloud OAuth 클라이언트 생성·유지 |
+| 접속 마찰 | 이메일로 6자리 코드(세션 24시간이면 하루 1회) | 원클릭 |
+
+마찰이 문제가 되면 그때 Google IdP를 추가한다. **보증 수준은 바뀌지 않는다.**
+→ CLAUDE.md §2-5의 「Google 로그인」 표기는 「Access의 로그인 수단(One-time PIN 등)」으로
+읽는다. 수단이 목적으로 굳지 않게 문구를 고쳐 둔다.
 
 ⚠**허용목록은 UI 숨김이 아니라 엣지에서 매 요청 검증**돼야 한다(CLAUDE.md §2-5).
 Access 애플리케이션은 그 조건을 만족한다.
