@@ -1,0 +1,194 @@
+# 배포 런북 — 증분 H
+
+**작성일** 2026-08-15 · **상태** 계정 작업 대기
+
+> **승인 경계**(`../../x-scraper/docs/operations/trovune-domain-cutover.md`의 규약을 따른다)
+> 이 문서는 **검토된 순서와 정확한 값**을 기록한다. 유료 인프라 생성·DNS 변경·공개 트래픽 유입에
+> 대한 승인이 아니다. **외부 변경마다 실행 시점에 승인을 받는다.**
+
+---
+
+## 0. 이미 되어 있는 것 (2026-08-15 확인)
+
+| 항목 | 상태 | 근거 |
+|---|---|---|
+| GitHub 계정 | `muji-j` 로그인됨. 스코프 `repo`·`workflow`·`gist`·`read:org` | `gh auth status` 실측 |
+| GitHub 리포 | **`muji-j/bb-app` 생성 완료(비공개)** | 아래 §1 |
+| Cloudflare 계정 | **있다.** `lunomel.com`·`trovune.app`이 등록·Active(2026-08-14 확인, 2027-08-14 만료, 자동갱신) | x-scraper 컷오버 문서 |
+| Cloudflare Pages 사용 이력 | 있다(x-scraper가 쓴다) | 동상 |
+| Cloudflare Access 무료 한도 | **50 사용자** | `docs/decisions/2026-08-14-paid-track-verified.md` |
+
+⚠**bb-app 전용 도메인은 아직 없다.** 제품명이 미확정이기 때문이다(CLAUDE.md §7).
+S1(지인한정)에서는 **`*.pages.dev` + Access**로 충분하다. 도메인은 제품명 확정 뒤에 정한다.
+`lunomel.com`은 x-scraper 컷오버 문서에서 **파킹 유지**로 못 박혀 있으므로 여기에 붙이지 않는다.
+
+---
+
+## 1. GitHub 리포 (완료)
+
+```
+muji-j/bb-app   비공개
+```
+
+⚠**반드시 비공개다.** 리포에 NPB 원시 아카이브·DB는 들어가지 않지만(`.gitignore`),
+`docs/mockups/`의 산출물에는 실제 선수명과 성적이 들어 있다. S1은 재배포 형태를 취하지 않는다.
+
+보관소는 **릴리스 자산**이다(`data-store` 태그). 코드 릴리스가 아니다.
+
+---
+
+## 2. 리포 시크릿 (사람이 넣는다)
+
+`Settings → Secrets and variables → Actions`
+
+| 이름 | 값 | 왜 |
+|---|---|---|
+| `BB_ARCHIVER_CONTACT` | 연락 가능한 메일 주소 | ⚠**L1이 요구한다** — 식별 가능한 UA + 연락처 없이 수집하지 않는다. 없으면 수집기가 `exit 2`로 멈춘다 |
+| `BB_CONTACT` | 삭제·정정 요청을 받을 주소 | ⚠**L4가 요구한다.** 없으면 화면이 「連絡先が未設定です」라고 표시한다 |
+
+두 값은 같아도 되지만 **역할이 다르다** — 하나는 상대 서버에 밝히는 신원,
+하나는 이용자에게 공개하는 창구다.
+
+---
+
+## 3. 첫 수집 (수동 1회)
+
+```
+Actions → daily collection → Run workflow
+```
+
+- 첫 실행은 보관소가 없으므로 `기록 없음 — 첫 실행으로 본다`가 나온다. 정상이다.
+- 끝나면 `data-store` 릴리스에 `archive.tar` + `bb.sqlite.gz`가 생긴다.
+- `ops/archive-manifest.json`이 커밋된다. **다음 실행부터 이 값이 축소 감지의 기준**이 된다.
+
+⚠**로컬 아카이브를 먼저 올리는 편이 낫다.** 지금 로컬에 3,354건(27.5MB)이 쌓여 있고,
+CI가 처음부터 다시 받으면 **2025년분을 다시 긁는 것이 아니라 어제분만 받는다** —
+즉 로컬 자산이 CI로 옮겨가지 않는다. 첫 실행 전에 수동으로 올린다:
+
+```bash
+tar -cf /tmp/archive.tar -C data archive
+gzip -c data/bb.sqlite > /tmp/bb.sqlite.gz
+gh release create data-store --title "데이터 보관소" \
+  --notes "일일 수집이 덮어쓴다. 코드 릴리스가 아니다." --latest=false
+gh release upload data-store /tmp/archive.tar /tmp/bb.sqlite.gz --clobber
+node scripts/archive-guard.ts write data/archive ops/archive-manifest.json
+git add ops/archive-manifest.json && git commit -m "chore(ops): archive manifest" && git push
+```
+
+---
+
+## 4. Cloudflare Pages — ⚠**Access를 먼저 걸고 데이터를 나중에 올린다**
+
+**순서를 바꾸지 마라.** Pages는 배포하는 즉시 URL이 살아난다.
+데이터를 먼저 올리면 Access를 붙이기 전까지 **공개 상태**가 되고, 그 사이가 S1 위반이다.
+
+### 4-1. 빈 프로젝트를 먼저 만든다
+
+`Cloudflare 대시보드 → Workers & Pages → Create → Pages → Connect to Git`
+
+| 항목 | 값 |
+|---|---|
+| 리포 | `muji-j/bb-app` |
+| 프로덕션 브랜치 | `main` |
+| 빌드 명령 | *(비워 둔다 — 4-3까지)* |
+| 출력 디렉터리 | `dist` |
+| 프로젝트명 | `bb-app` → `bb-app.pages.dev` |
+
+첫 배포는 **빈 `dist`**로 둔다. 사람이 볼 것이 없는 상태에서 Access를 건다.
+
+### 4-2. Access를 건다 (Zero Trust)
+
+`Zero Trust → Access → Applications → Add an application → Self-hosted`
+
+| 항목 | 값 |
+|---|---|
+| Application domain | `bb-app.pages.dev` (서브도메인 전체) |
+| Identity provider | Google (`307930238+muji-j@users.noreply.github.com` 계정) |
+| Policy | Allow · **Emails** 에 지인 주소를 열거 |
+| Session | 24시간 |
+
+⚠**허용목록은 UI 숨김이 아니라 엣지에서 매 요청 검증**돼야 한다(CLAUDE.md §2-5).
+Access 애플리케이션은 그 조건을 만족한다.
+
+⚠**`*.pages.dev`에 Access가 실제로 걸리는지 실행 시점에 확인한다.**
+프리뷰 배포(`<hash>.bb-app.pages.dev`)까지 덮이는지도 함께 본다 —
+프리뷰가 새면 프로덕션을 막은 의미가 없다.
+안 되면 대안: 소유 중인 도메인의 서브도메인을 붙인다(제품명 확정 후).
+
+**검증 — 이걸 통과하기 전에는 데이터를 올리지 않는다:**
+
+```bash
+# 익명 접근이 막히는가 (302 → Access 로그인 화면이어야 한다)
+curl -s -o /dev/null -w "%{http_code}\n" https://bb-app.pages.dev/
+# 프리뷰도 막히는가
+curl -s -o /dev/null -w "%{http_code}\n" https://<preview-hash>.bb-app.pages.dev/
+```
+
+### 4-3. 빌드를 켠다
+
+Pages 프로젝트 설정에서 빌드 명령을 넣는다.
+
+| 항목 | 값 |
+|---|---|
+| 빌드 명령 | `npm ci --no-audit --no-fund && node packages/web/tools/build.ts data/bb.sqlite dist 2026` |
+| 출력 디렉터리 | `dist` |
+| Node 버전 | `24` (환경변수 `NODE_VERSION=24`) |
+| 환경변수 | `BB_CONTACT` = §2와 같은 값 |
+
+⚠**여기에 문제가 하나 있다 — Pages 빌더에는 `data/bb.sqlite`가 없다.**
+리포에 DB를 두지 않기 때문이다(L6). 선택지는 둘이다:
+
+| 안 | 방법 | 판정 |
+|---|---|---|
+| **A (권장)** | Pages 빌드를 쓰지 않고, **Actions가 만든 `dist`를 `wrangler pages deploy`로 올린다** | 시크릿 1개(`CLOUDFLARE_API_TOKEN`)가 늘지만, DB를 리포에 넣지 않아도 된다 |
+| B | Pages 빌드 안에서 `gh release download`로 보관소를 받는다 | Pages 빌더에 GitHub 토큰을 줘야 한다. 시크릿이 한쪽 더 늘고 경계가 흐려진다 |
+
+→ **A안으로 간다.** 4-1의 Git 연결은 **끊고**, Actions에서 직접 배포한다.
+아래 §5가 그 형태다.
+
+---
+
+## 5. Actions에서 직접 배포 (A안)
+
+`Settings → Secrets and variables → Actions`
+
+| 이름 | 값 | 범위 |
+|---|---|---|
+| `CLOUDFLARE_API_TOKEN` | Pages 편집 권한 토큰 | ⚠**최소 권한으로 만든다** — `Account · Cloudflare Pages · Edit`만. 계정 전역 토큰을 쓰지 마라 |
+| `CLOUDFLARE_ACCOUNT_ID` | 계정 ID | 대시보드 우측에 있다 |
+
+워크플로에 붙일 단계(§6에서 실제로 넣는다):
+
+```yaml
+      - name: 배포
+        if: success()
+        run: npx wrangler@3 pages deploy dist --project-name bb-app --branch main
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+```
+
+⚠**`if: success()`가 중요하다.** 신선도가 낡으면 빌드가 종료 코드 1을 내는데,
+그때 배포하면 **낡은 화면이 조용히 올라간다.** 실패는 실패로 끝낸다.
+
+---
+
+## 6. 아직 넣지 않은 것 — 왜
+
+배포 단계는 **시크릿 2개가 생긴 뒤에** 워크플로에 넣는다.
+없는 시크릿으로 도는 단계를 미리 넣으면 매일 밤 빨간 실패가 쌓이고,
+**실패가 일상이 되면 진짜 실패를 못 본다.**
+
+시크릿을 넣었다고 알려 주면 §5의 단계를 워크플로에 붙인다.
+
+---
+
+## 7. 남은 확인 항목
+
+| # | 항목 | 상태 |
+|---|---|---|
+| 1 | `*.pages.dev`에 Access가 프리뷰까지 걸리는가 | **미확인** — 4-2에서 실측 |
+| 2 | 제품명·도메인 | 미정(CLAUDE.md §7) |
+| 3 | Pages 무료 한도 대비 산출물 크기 | 702파일 / 45.9MB. Pages는 파일 20,000개·파일당 25MiB — **여유 있다** |
+| 4 | 모바일 실기 확인 | 미확인 |
+| 5 | wRC+ 외부 공표값 대조 | 미실시 |
