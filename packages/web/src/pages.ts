@@ -182,6 +182,80 @@ ${d.leagues.map((league, li) =>
   });
 }
 
+export interface MatchupPageData {
+  season: number;
+  asOf: string | null;
+}
+
+/**
+ * 「対戦を選ぶ」 — 경기를 보면서 쓰는 화면.
+ *
+ * ⚠**라이브 데이터를 취득하지 않는다.** 경기를 보는 사람은 지금 누가 던지고 누가 치는지
+ * 이미 알고 있다. 그 사실을 우리가 가져오면 데이터 권리 3층(정보의 신선도 이용)과
+ * 4층(규정)에 걸리고, 필요한 폴링은 L1을 100배 벗어난다.
+ * 근거: `docs/decisions/2026-08-15-live-matchup-feasibility.md`
+ */
+export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): string {
+  const base = "";
+  const side = (id: string, label: string, placeholder: string): RawHtml =>
+    html`<div class="pickside">
+    <label for="pick${id}">${label}</label>
+    <div class="qbox">
+      <input id="pick${id}" type="search" autocomplete="off" placeholder="${placeholder}"
+        role="combobox" aria-expanded="false" aria-controls="pick${id}Hits" aria-autocomplete="list">
+      <ul class="qhits" id="pick${id}Hits" role="listbox" aria-label="${label}の候補" hidden></ul>
+    </div>
+    <p class="chosen">選択中：<b id="pick-${id.toLowerCase()}-chosen">未選択</b></p>
+  </div>`;
+
+  const body = html`<header class="idline">
+  <div class="idtext">
+    <span class="nm">対戦を選ぶ</span>
+    <span class="sub">${d.season}年 · 投手と打者を選ぶと、これまでの対戦成績が出ます</span>
+  </div>
+  <span class="asof">${d.asOf === null ? "" : `${fullDate(d.asOf)}まで`}</span>
+</header>
+
+<section class="block" id="pickForm">
+  <h4>投手と打者</h4>
+  <div class="picker">
+    ${side("Pitcher", "投手", "例：山本")}
+    ${side("Batter", "打者", "例：佐藤")}
+  </div>
+  <p><button class="go" type="button" id="pickGo" disabled>対戦成績を見る</button></p>
+  ${note(
+    "試合を見ながら使う画面です。いま投げている投手と打っている打者を選ぶと、" +
+      "その二人のこれまでの対戦成績（と打者のスプリット）が開きます。",
+  )}
+</section>
+
+<section class="block">
+  <h4>この画面が試合中の情報を取りに行かない理由</h4>
+  <p class="note" style="max-width:64ch">
+    進行中の試合の情報を自動で取得して表示することは、技術的にはできます。ただし
+    <b>公表記録の「新しさ」を利用する形</b>になり、取得のために必要な連続アクセスも、
+    当サイトが自分に課している取得ルール（1日1回のバッチ）を大きく外れます。<br>
+    試合を見ている人は、いま誰が投げて誰が打っているかを<b>すでに知っています</b>。
+    だから当サイトはそれを取りに行かず、<b>選んでもらう</b>ことにしました。
+    表示する数字は前日までの確定記録です。
+  </p>
+</section>
+
+<nav class="find" aria-label="ほかのページ">
+  <a href="${base}index.html">選手一覧</a> · <a href="${base}ranking.html">リーグ順位表</a>
+</nav>`;
+
+  return page({
+    title: `対戦を選ぶ — ${d.season}年`,
+    base,
+    color: NEUTRAL_COLOR,
+    freshness: ctx.freshness,
+    site: ctx.site,
+    nav: "matchup",
+    body,
+  });
+}
+
 /** 검색 색인. **선수 수만큼 커지므로 필드 이름을 1글자로 줄인다** — 900명이면 이 차이가 실측된다. */
 export interface SearchEntry {
   /** id */

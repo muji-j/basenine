@@ -198,6 +198,19 @@ td a:hover{box-shadow:inset 0 -1px 0 currentColor}
 .note{font-size:11px;color:var(--tx-3);margin:9px 0 0;max-width:64ch}
 .empty{font-size:12px;color:var(--tx-3);padding:6px 0}
 
+/* ── 対戦を選ぶ ──────────────────────────────────────────── */
+.picker{display:grid;grid-template-columns:repeat(auto-fit,minmax(238px,1fr));gap:18px;max-width:640px}
+.pickside label{display:block;font-size:10.5px;letter-spacing:.16em;color:var(--tx-3);margin-bottom:6px}
+.pickside .qbox{max-width:none}
+.pickside .qbox input{font-size:15px;padding:8px 10px}
+.chosen{margin:7px 0 0;font-size:12px;color:var(--tx-3)}
+.chosen b{color:var(--tx);font-weight:700}
+.go{font:inherit;font-size:13px;padding:9px 18px;cursor:pointer;background:var(--team,#6b7280);
+  color:var(--team-ink,#fff);border:1px solid var(--team,#6b7280);font-weight:700;
+  transition:opacity var(--fast) var(--ease)}
+.go:disabled{opacity:.35;cursor:default}
+.go:hover:not(:disabled){opacity:.85}
+
 /* ── 색인 ────────────────────────────────────────────────── */
 .find{padding:14px var(--pad);border-bottom:1px solid var(--hair)}
 .find label{display:block;font-size:10.5px;letter-spacing:.16em;color:var(--tx-3);margin-bottom:6px}
@@ -288,6 +301,9 @@ const doc=document;
 const $=(s,r)=>(r||doc).querySelector(s);
 const $$=(s,r)=>Array.from((r||doc).querySelectorAll(s));
 const BASE=doc.documentElement.dataset.base||"";
+// 테스트에서는 location이 없다. 없으면 이동도 질의문자열도 없는 것으로 다룬다
+const LOC=typeof location!=="undefined"?location:{search:"",href:""};
+const go=(url)=>{LOC.href=url};
 const KEY="npb-meikan-layout";
 const load=()=>{try{return JSON.parse(localStorage.getItem(KEY)||"null")}catch(e){return null}};
 const save=(s)=>{try{localStorage.setItem(KEY,JSON.stringify(s))}catch(e){}};
@@ -419,11 +435,18 @@ if(eb)eb.addEventListener("click",()=>{
    ⚠**타율순은 표본이 얇은 행을 뺀다.** 5타석 3안타를 맨 위에 올리지 않기 위한 규칙이고,
    그 사실은 탭 이름에 쓰여 있다(숨은 규칙 금지). */
 const MATCHUP_MIN_AVG_PA=10;
+/* 질의문자열 vs=山本 — 「対戦を選ぶ」에서 넘어온 상대 이름 */
+function vsParam(){
+  const m=/[?&]vs=([^&#]*)/.exec(LOC.search||"");
+  if(!m)return "";
+  try{return decodeURIComponent(m[1].replace(/\\+/g," "))}catch(e){return ""}
+}
 const mtable=$("#matchupTable");
 if(mtable){
   const tbody=$("tbody",mtable);
   const all=$$("tr",tbody);
   const mfilter=$("#matchupFilter");
+  const empty=$("#matchupEmpty");
   const apply=()=>{
     const mode=state.tabs.matchup||"pa";
     const term=mfilter?mfilter.value.trim():"";
@@ -438,41 +461,49 @@ if(mtable){
       tr.hidden=!hit;if(hit)n++;
     });
     const c=$("#matchupCount");if(c)c.textContent=n+"件";
+    // ⚠**0건을 빈 표로 두지 않는다.** 「대전이 없다」와 「고장났다」가 같은 화면이면 결함이다(M12)
+    if(empty)empty.hidden=n!==0;
   };
   if(mfilter)mfilter.addEventListener("input",apply);
   tabHooks.push(apply);
+
+  const vs=vsParam();
+  if(vs!==""&&mfilter){
+    mfilter.value=vs;
+    // 대전 블록이 꺼져 있으면 이번 방문에만 켠다 — 사용자의 저장된 구성은 건드리지 않는다
+    if(state.order.indexOf("matchup")<0)state.order=state.order.concat(["matchup"]);
+  }
 }
 
 /* ── 선수 색인 ── 한 번 받아서 헤더 검색과 색인 화면이 함께 쓴다 */
-let INDEX=null,indexError=false;
+let INDEX=null,indexError=false,fetching=false;
 const waiting=[];
 function withIndex(fn){if(INDEX)fn(INDEX);else if(indexError)fn(null);else waiting.push(fn)}
 function fetchIndex(){
+  // ⚠**한 번만 받는다.** 검색창에 포커스할 때마다 받으면 같은 파일을 몇 번이고 내려받는다
+  if(INDEX||indexError||fetching)return;
   if(typeof fetch!=="function"){indexError=true;return}
+  fetching=true;
   fetch(BASE+"players.json").then(r=>r.json()).then(j=>{
-    INDEX=j;waiting.splice(0).forEach(f=>f(j));
+    INDEX=j;fetching=false;waiting.splice(0).forEach(f=>f(j));
   }).catch(()=>{
-    indexError=true;waiting.splice(0).forEach(f=>f(null));
+    indexError=true;fetching=false;waiting.splice(0).forEach(f=>f(null));
   });
 }
 
-/* ── 헤더 검색 ── 어느 화면에서나 선수로 갈 수 있다 */
-const q=$("#q"),qhits=$("#qhits");
-if(q&&qhits){
+/* ── 선수 고르기 ──
+   헤더 검색과 「対戦を選ぶ」 화면이 **같은 구현**을 쓴다. 두 벌로 나누면 키보드 조작이
+   한쪽에만 붙는 식으로 어긋난다. */
+function attachPicker(input,list,onPick){
+  if(!input||!list)return null;
   let rows=[],active=-1;
-  const close=()=>{qhits.hidden=true;q.setAttribute("aria-expanded","false");active=-1};
-  const draw=(list,failed)=>{
-    qhits.textContent="";
-    if(failed){
-      const li=doc.createElement("li");li.className="none";
-      li.textContent="選手一覧を読み込めませんでした。再読み込みしてください。";
-      qhits.appendChild(li);qhits.hidden=false;q.setAttribute("aria-expanded","true");return;
-    }
-    if(!list.length){
-      const li=doc.createElement("li");li.className="none";li.textContent="該当なし";
-      qhits.appendChild(li);qhits.hidden=false;q.setAttribute("aria-expanded","true");return;
-    }
-    list.forEach((p,i)=>{
+  const close=()=>{list.hidden=true;input.setAttribute("aria-expanded","false");active=-1};
+  const draw=(items,failed)=>{
+    list.textContent="";
+    const one=(text)=>{const li=doc.createElement("li");li.className="none";li.textContent=text;list.appendChild(li)};
+    if(failed)one("選手一覧を読み込めませんでした。再読み込みしてください。");
+    else if(!items.length)one("該当なし");
+    else items.forEach((p,i)=>{
       const li=doc.createElement("li");
       // combobox의 목록 항목은 role=option이어야 aria-selected가 뜻을 갖는다
       li.setAttribute("role","option");
@@ -480,12 +511,14 @@ if(q&&qhits){
       const a=doc.createElement("a");a.href=BASE+"players/"+p.i+".html";
       const n=doc.createElement("span");n.className="hn";n.textContent=p.n;
       const t=doc.createElement("span");t.className="ht";t.textContent=p.t;
-      a.appendChild(n);a.appendChild(t);li.appendChild(a);qhits.appendChild(li);
+      a.appendChild(n);a.appendChild(t);li.appendChild(a);
+      if(onPick)a.addEventListener("click",(e)=>{if(e&&e.preventDefault)e.preventDefault();onPick(p);close()});
+      list.appendChild(li);
     });
-    qhits.hidden=false;q.setAttribute("aria-expanded","true");
+    list.hidden=false;input.setAttribute("aria-expanded","true");
   };
   const run=()=>{
-    const term=q.value.trim();
+    const term=input.value.trim();
     if(term===""){close();return}
     withIndex(idx=>{
       if(!idx){draw([],true);return}
@@ -493,23 +526,55 @@ if(q&&qhits){
       active=-1;draw(rows,false);
     });
   };
-  q.addEventListener("input",run);
-  q.addEventListener("focus",()=>{fetchIndex();if(q.value.trim()!=="")run()});
-  q.addEventListener("keydown",(e)=>{
+  input.addEventListener("input",run);
+  input.addEventListener("focus",()=>{fetchIndex();if(input.value.trim()!=="")run()});
+  input.addEventListener("keydown",(e)=>{
     if(e.key==="Escape"){close();return}
-    if(qhits.hidden||!rows.length)return;
+    if(list.hidden||!rows.length)return;
     if(e.key==="ArrowDown"||e.key==="ArrowUp"){
-      e.preventDefault();
+      if(e.preventDefault)e.preventDefault();
       active=e.key==="ArrowDown"?Math.min(active+1,rows.length-1):Math.max(active-1,0);
       draw(rows,false);
     }else if(e.key==="Enter"&&active>=0){
-      e.preventDefault();location.href=BASE+"players/"+rows[active].i+".html";
+      if(e.preventDefault)e.preventDefault();
+      if(onPick)onPick(rows[active]);else go(BASE+"players/"+rows[active].i+".html");
+      close();
     }
   });
   doc.addEventListener("click",(e)=>{
-    let n=e.target;
-    while(n){if(n===q||n===qhits)return;n=n.parentNode}
+    let n=e&&e.target;
+    while(n){if(n===input||n===list)return;n=n.parentNode}
     close();
+  });
+  return {run:run,close:close};
+}
+attachPicker($("#q"),$("#qhits"),null);
+
+/* ── 対戦を選ぶ ──
+   ⚠**라이브 데이터를 취득하지 않는다.** 경기를 보는 사람은 지금 누가 던지고 누가 치는지
+   이미 알고 있다 — 그 사실을 우리가 가져올 이유가 없다.
+   근거: docs/decisions/2026-08-15-live-matchup-feasibility.md */
+const pickForm=$("#pickForm");
+if(pickForm){
+  const chosen={pitcher:null,batter:null};
+  const show=(side,p)=>{
+    chosen[side]=p;
+    const label=$("#pick-"+side+"-chosen");
+    if(label)label.textContent=p?p.n+"（"+p.t+"）":"未選択";
+    const go2=$("#pickGo");
+    if(go2)go2.disabled=!(chosen.pitcher&&chosen.batter);
+  };
+  attachPicker($("#pickPitcher"),$("#pickPitcherHits"),(p)=>{
+    const i=$("#pickPitcher");if(i)i.value=p.n;show("pitcher",p);
+  });
+  attachPicker($("#pickBatter"),$("#pickBatterHits"),(p)=>{
+    const i=$("#pickBatter");if(i)i.value=p.n;show("batter",p);
+  });
+  const go2=$("#pickGo");
+  if(go2)go2.addEventListener("click",()=>{
+    if(!chosen.pitcher||!chosen.batter)return;
+    // 타자 페이지에서 보는 것을 기본으로 한다 — 「이 타자가 이 투수에게」가 보통 찾는 방향이다
+    go(BASE+"players/"+chosen.batter.i+".html?vs="+encodeURIComponent(chosen.pitcher.n)+"#b-matchup");
   });
 }
 

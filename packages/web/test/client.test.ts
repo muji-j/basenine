@@ -84,6 +84,9 @@ function buildPage(): ReturnType<typeof makeDocument> {
       }
       table.appendChild(tbody);
       section.appendChild(table);
+      const empty = make("p", { class: "empty", id: "matchupEmpty" });
+      empty.hidden = true;
+      section.appendChild(empty);
     }
     main.appendChild(section);
   }
@@ -93,16 +96,31 @@ function buildPage(): ReturnType<typeof makeDocument> {
   return doc;
 }
 
-function run(doc: ReturnType<typeof makeDocument>, storage = makeStorage()): void {
+interface RunOptions {
+  storage?: Storage;
+  /** `players.json`의 내용. 주지 않으면 취득 실패로 다룬다 */
+  index?: { i: string; n: string; t: string }[];
+  /** `location` 대역. `?vs=` 처리를 보려면 필요하다 */
+  location?: { search: string; href: string };
+}
+
+function run(doc: ReturnType<typeof makeDocument>, opts: RunOptions = {}): { location: { search: string; href: string } } {
   const win: Record<string, unknown> = {};
+  const loc = opts.location ?? { search: "", href: "" };
   // 서버가 심는 것과 **같은 함수**로 만든다 — 두 벌이 되면 어긋난다
   new Function("window", `${bootstrapFor("batter")}`)(win);
-  new Function("document", "localStorage", "window", "fetch", CLIENT_JS)(
+  const fetchImpl =
+    opts.index === undefined
+      ? () => Promise.reject(new Error("no network"))
+      : () => Promise.resolve({ json: () => Promise.resolve(opts.index) });
+  new Function("document", "localStorage", "window", "fetch", "location", CLIENT_JS)(
     doc,
-    storage,
+    opts.storage ?? makeStorage(),
     win,
-    () => Promise.reject(new Error("no network")),
+    fetchImpl,
+    loc,
   );
+  return { location: loc };
 }
 
 function visible(doc: ReturnType<typeof makeDocument>): string[] {
@@ -204,17 +222,17 @@ test("맨 위 블록의 ↑와 맨 아래의 ↓는 눌리지 않는다", () => 
 test("설정은 저장되고 다음 방문에 살아난다", () => {
   const storage = makeStorage();
   const first = buildPage();
-  run(first, storage);
+  run(first, { storage });
   press(first, "preset", "simple");
 
   const second = buildPage();
-  run(second, storage);
+  run(second, { storage });
   assert.deepEqual(visible(second), [...PRESETS.find((p) => p.id === "simple")!.blocks]);
 });
 
 test("저장이 막혀도 화면은 동작한다", () => {
   const doc = buildPage();
-  assert.doesNotThrow(() => run(doc, makeStorage(true)));
+  assert.doesNotThrow(() => run(doc, { storage: makeStorage(true) }));
   assert.deepEqual(visible(doc), [...PRESETS.find((p) => p.id === "standard")!.blocks]);
   assert.doesNotThrow(() => press(doc, "preset", "analysis"));
   assert.deepEqual(visible(doc), [...PRESETS.find((p) => p.id === "analysis")!.blocks]);
@@ -252,11 +270,11 @@ test("순위 지표를 바꾸면 그 표만 남는다", () => {
 test("탭 선택도 저장된다", () => {
   const storage = makeStorage();
   const first = buildPage();
-  run(first, storage);
+  run(first, { storage });
   clickTab(first, "splits", "base");
 
   const second = buildPage();
-  run(second, storage);
+  run(second, { storage });
   assert.deepEqual(openPanels(second, "splits"), ["base"]);
 });
 
@@ -264,7 +282,7 @@ test("저장된 탭이 지금 없는 값이면 첫 탭으로 돌아간다", () =
   const storage = makeStorage();
   storage.setItem("npb-meikan-layout", JSON.stringify({ tabs: { splits: "존재하지않음" } }));
   const doc = buildPage();
-  run(doc, storage);
+  run(doc, { storage });
   assert.deepEqual(openPanels(doc, "splits"), ["hand"]);
 });
 
@@ -313,7 +331,7 @@ test("대전 상대를 이름으로 좁힐 수 있다", () => {
 test("테마는 자동 → 밝게 → 어둡게로 돌고 저장된다", () => {
   const storage = makeStorage();
   const doc = buildPage();
-  run(doc, storage);
+  run(doc, { storage });
   const btn = doc.getElementById("themeBtn")!;
   assert.equal(doc.documentElement.getAttribute("data-theme"), null);
   btn.fire("click");
@@ -325,7 +343,7 @@ test("테마는 자동 → 밝게 → 어둡게로 돌고 저장된다", () => {
 
   btn.fire("click");
   const again = buildPage();
-  run(again, storage);
+  run(again, { storage });
   assert.equal(again.documentElement.getAttribute("data-theme"), "light");
 });
 
@@ -341,11 +359,102 @@ test("저장된 설정이 깨져 있어도 기본값으로 돌아간다", () => 
   const storage = makeStorage();
   storage.setItem("npb-meikan-layout", '{"order":"망가짐"}');
   const doc = buildPage();
-  assert.doesNotThrow(() => run(doc, storage));
+  assert.doesNotThrow(() => run(doc, { storage }));
   assert.deepEqual(visible(doc), [...PRESETS.find((p) => p.id === "standard")!.blocks]);
 });
 
 test("스텁이 모르는 선택자는 조용히 넘어가지 않는다", () => {
   const el = new El("div");
   assert.throws(() => el.querySelectorAll("div > span"), /스텁이 모르는 선택자/);
+});
+
+// ─── 対戦を選ぶ ─────────────────────────────────────────────────────────
+
+const INDEX = [
+  { i: "p1", n: "山本", t: "オリックス・バファローズ" },
+  { i: "b1", n: "佐藤", t: "阪神タイガース" },
+];
+
+/** 「対戦を選ぶ」 화면의 뼈대 */
+function buildPicker(): ReturnType<typeof makeDocument> {
+  const doc = makeDocument("");
+  const form = make("section", { class: "block", id: "pickForm" });
+  for (const [id, key] of [
+    ["Pitcher", "pitcher"],
+    ["Batter", "batter"],
+  ]) {
+    form.appendChild(make("input", { id: `pick${id}`, type: "search", "aria-expanded": "false" }));
+    form.appendChild(make("ul", { id: `pick${id}Hits`, role: "listbox" }));
+    form.appendChild(make("b", { id: `pick-${key}-chosen` }));
+  }
+  const go = make("button", { id: "pickGo", type: "button" });
+  go.disabled = true;
+  form.appendChild(go);
+  doc.body.appendChild(form);
+  return doc;
+}
+
+/** 검색창에 입력하고, 색인 fetch가 끝난 뒤 결과 목록을 돌려준다 */
+async function search(doc: ReturnType<typeof makeDocument>, inputId: string, term: string): Promise<El[]> {
+  const input = doc.getElementById(inputId)!;
+  input.fire("focus");
+  input.value = term;
+  input.fire("input");
+  // 색인 fetch가 microtask 여러 단계로 풀린다 — 매크로태스크 하나로 전부 흘려보낸다
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  return doc.querySelectorAll(`#${inputId}Hits li`);
+}
+
+test("투수와 타자를 고르면 버튼이 열리고, 타자 페이지로 상대를 달고 간다", async () => {
+  const doc = buildPicker();
+  const { location } = run(doc, { index: INDEX });
+  const go = doc.getElementById("pickGo")!;
+  assert.equal(go.disabled, true, "아무것도 안 고른 상태에서 버튼이 열려 있다");
+
+  (await search(doc, "pickPitcher", "山"))[0]!.querySelector("a")!.fire("click");
+  assert.equal(doc.getElementById("pick-pitcher-chosen")!.textContent, "山本（オリックス・バファローズ）");
+  assert.equal(go.disabled, true, "한쪽만 골랐는데 버튼이 열렸다");
+
+  (await search(doc, "pickBatter", "佐"))[0]!.querySelector("a")!.fire("click");
+  assert.equal(go.disabled, false);
+
+  go.fire("click");
+  assert.equal(location.href, `players/b1.html?vs=${encodeURIComponent("山本")}#b-matchup`);
+});
+
+test("색인을 못 받으면 고르기 화면이 그렇다고 말한다", async () => {
+  const doc = buildPicker();
+  run(doc);
+  const items = await search(doc, "pickPitcher", "山");
+  assert.equal(items.length, 1);
+  assert.match(items[0]!.textContent, /読み込めませんでした/);
+});
+
+test("?vs= 로 오면 상대가 미리 채워지고 대전 블록이 열린다", () => {
+  const doc = buildPage();
+  run(doc, { location: { search: `?vs=${encodeURIComponent("今永")}`, href: "" } });
+  assert.equal(doc.getElementById("matchupFilter")!.value, "今永");
+  assert.equal(doc.getElementById("b-matchup")!.hidden, false, "대전 블록이 닫혀 있다");
+  const shown = doc
+    .querySelectorAll("#matchupTable tbody tr")
+    .filter((r) => !r.hidden)
+    .map((r) => r.dataset["name"]);
+  assert.deepEqual(shown, ["今永"]);
+});
+
+test("?vs= 는 저장된 구성을 바꾸지 않는다 — 이번 방문에만 연다", () => {
+  const storage = makeStorage();
+  const first = buildPage();
+  run(first, { storage, location: { search: `?vs=${encodeURIComponent("今永")}`, href: "" } });
+
+  const second = buildPage();
+  run(second, { storage });
+  assert.equal(second.getElementById("b-matchup")!.hidden, true, "다음 방문에도 대전 블록이 켜져 있다");
+});
+
+test("대전이 없는 조합이면 빈 표가 아니라 그렇다고 말한다(M12)", () => {
+  const doc = buildPage();
+  run(doc, { location: { search: `?vs=${encodeURIComponent("存在しない投手")}`, href: "" } });
+  assert.equal(doc.getElementById("matchupCount")!.textContent, "0件");
+  assert.equal(doc.getElementById("matchupEmpty")!.hidden, false);
 });

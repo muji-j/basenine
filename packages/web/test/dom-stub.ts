@@ -32,6 +32,7 @@ export class El {
   parentNode: El | null = null;
   hidden = false;
   checked = false;
+  disabled = false;
   value = "";
   type = "";
   #text = "";
@@ -161,6 +162,10 @@ export interface StubDocument {
   getElementById(id: string): El | null;
   querySelector(sel: string): El | null;
   querySelectorAll(sel: string): El[];
+  /** 바깥 클릭으로 목록을 닫는 코드가 문서에 붙는다 */
+  addEventListener(type: string, fn: (e: unknown) => void): void;
+  /** 테스트에서 문서 수준 이벤트를 쏜다 */
+  fire(type: string, event?: unknown): void;
 }
 
 export function makeDocument(base = ""): StubDocument {
@@ -168,6 +173,7 @@ export function makeDocument(base = ""): StubDocument {
   root.dataset["base"] = base;
   const body = new El("body");
   root.appendChild(body);
+  const listeners: Record<string, ((e: unknown) => void)[]> = {};
   return {
     documentElement: root,
     body,
@@ -175,6 +181,10 @@ export function makeDocument(base = ""): StubDocument {
     getElementById: (id) => root.descendants().find((el) => el.id === id) ?? null,
     querySelector: (sel) => root.querySelector(sel),
     querySelectorAll: (sel) => root.querySelectorAll(sel),
+    addEventListener: (type, fn) => void (listeners[type] ??= []).push(fn),
+    fire: (type, event) => {
+      for (const fn of listeners[type] ?? []) fn(event ?? {});
+    },
   };
 }
 

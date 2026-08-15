@@ -8,6 +8,13 @@ test("클라이언트 스크립트가 문법적으로 유효하다 — 깨진 �
   assert.doesNotThrow(() => new Function(CLIENT_JS));
 });
 
+test("스크립트가 끝까지 실려 있다 — 안에 백틱이 들어가면 문자열이 거기서 잘린다", () => {
+  // 실제로 한 번 잘렸다: 스크립트 안 주석에 백틱을 썼더니 템플릿 리터럴이 조기 종료됐다
+  assert.ok(CLIENT_JS.trim().endsWith("})();"), "클라이언트 스크립트가 잘렸다");
+  assert.ok(CSS.trim().endsWith("}"), "스타일시트가 잘렸다");
+  assert.ok(!CLIENT_JS.includes("`") && !CSS.includes("`"), "백틱이 남아 있다");
+});
+
 test("클라이언트는 서버가 심는 전역만 읽는다", () => {
   assert.match(CLIENT_JS, /window\.__BLOCKS__/);
   assert.match(CLIENT_JS, /window\.__PRESETS__/);

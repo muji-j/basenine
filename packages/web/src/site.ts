@@ -5,7 +5,7 @@
  * 그래야 「무엇이 만들어지는가」를 디스크 없이 테스트할 수 있다.
  */
 import { CLIENT_JS, CSS } from "./assets.ts";
-import { renderIndexPage, renderRankingPage, searchIndexJson } from "./pages.ts";
+import { renderIndexPage, renderMatchupPage, renderRankingPage, searchIndexJson } from "./pages.ts";
 import { renderPlayerPage } from "./player-page.ts";
 import { freshness, isStale } from "./layout.ts";
 import type { SiteMeta } from "./layout.ts";
@@ -34,6 +34,10 @@ export function buildSite(data: SiteData, site: SiteMeta, builtOn: string): Buil
     { path: "assets/site.js", content: CLIENT_JS },
     { path: "index.html", content: renderIndexPage(data.index, ctx) },
     { path: "ranking.html", content: renderRankingPage(data.ranking, ctx) },
+    {
+      path: "matchup.html",
+      content: renderMatchupPage({ season: data.season, asOf: data.asOf }, ctx),
+    },
     { path: "players.json", content: searchIndexJson(data.search) },
   ];
 

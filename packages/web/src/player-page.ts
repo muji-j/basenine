@@ -588,6 +588,7 @@ ${scroller(html`<table id="matchupTable">
     </tr>`,
   )}</tbody>
 </table>`)}
+<p class="empty" id="matchupEmpty" hidden role="status">この条件の対戦記録はありません。</p>
 ${note(
     `既定は対戦数の多い順です。大半が${THIN_MATCHUP_PA}打席未満なので、その行は薄く表示し、` +
       `打率順は${THIN_MATCHUP_PA}打席以上だけを並べます — 5打席3安打を先頭に置かないためです。` +

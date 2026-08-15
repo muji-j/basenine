@@ -43,6 +43,7 @@ test("사이트는 정해진 파일 집합을 만든다", () => {
     "assets/site.css",
     "assets/site.js",
     "index.html",
+    "matchup.html",
     "players.json",
     "players/41045153.html",
     "ranking.html",
