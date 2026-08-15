@@ -8,3 +8,5 @@ export { LineScoreParseError, parseLineScore } from "./linescore.ts";
 export type { LineScore } from "./linescore.ts";
 export { PlayerParseError, parseBirthDate, parsePlayerProfile, parseThrowsBats } from "./player.ts";
 export type { Hand, PlayerProfile } from "./player.ts";
+export { StarterParseError, parseAnnouncedStarters } from "./starter.ts";
+export type { AnnouncedStarters, StarterGame, StarterSide } from "./starter.ts";

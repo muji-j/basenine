@@ -59,6 +59,69 @@ export function upsertPlayer(db: Db, playerId: string, displayName: string, nowI
   return 1;
 }
 
+/**
+ * 선수 행이 없으면 만든다. **있으면 표기를 건드리지 않는다.**
+ *
+ * ⚠`upsertPlayer`를 쓰면 안 된다 — 予告先発 페이지의 표기는 `柳　裕也`이고 박스스코어는 `柳`다.
+ * 덮어쓰면 **예고 선발로 나온 선수만 표기가 길어져** 화면이 들쭉날쭉해진다.
+ * 표기의 주인은 박스스코어 경로 하나로 둔다(M1의 정신).
+ */
+export function ensurePlayer(db: Db, playerId: string, displayName: string, nowIso: string): number {
+  db.raw
+    .prepare(
+      `INSERT INTO player (player_id, display_name, first_seen_at, last_seen_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(player_id) DO NOTHING`,
+    )
+    .run(playerId, displayName, nowIso, nowIso);
+  return 1;
+}
+
+export interface ProbablePitcherRow {
+  gameDate: string;
+  teamCode: string;
+  opponentCode: string;
+  playerId: string | null;
+  sourceName: string | null;
+  venue: string | null;
+  startTime: string | null;
+  league: string;
+  sourceUrl: string;
+  fetchedAt: string;
+}
+
+/**
+ * 예고 선발을 적재한다. **멱등**이며(M5), 투수가 바뀌면 `revision`이 오른다(M4).
+ *
+ * ⚠`IS NOT`은 SQLite에서 NULL 안전 비교다. `<>`를 쓰면 미발표(NULL) → 발표 전이가
+ * 조용히 「변화 없음」이 되어 revision이 멈춘다.
+ */
+export function upsertProbablePitcher(db: Db, r: ProbablePitcherRow): number {
+  db.raw
+    .prepare(
+      `INSERT INTO probable_pitcher
+         (game_date, team_code, opponent_code, player_id, source_name,
+          venue, start_time, league, source_url, fetched_at, revision)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+       ON CONFLICT(game_date, team_code) DO UPDATE SET
+         opponent_code = excluded.opponent_code,
+         player_id     = excluded.player_id,
+         source_name   = excluded.source_name,
+         venue         = excluded.venue,
+         start_time    = excluded.start_time,
+         league        = excluded.league,
+         source_url    = excluded.source_url,
+         fetched_at    = excluded.fetched_at,
+         revision      = probable_pitcher.revision
+                         + (probable_pitcher.player_id IS NOT excluded.player_id)`,
+    )
+    .run(
+      r.gameDate, r.teamCode, r.opponentCode, r.playerId, r.sourceName,
+      r.venue, r.startTime, r.league, r.sourceUrl, r.fetchedAt,
+    );
+  return 1;
+}
+
 export function upsertGame(db: Db, g: GameRow): number {
   db.raw
     .prepare(

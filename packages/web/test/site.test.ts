@@ -30,6 +30,7 @@ function siteData(over: Partial<SiteData> = {}): SiteData {
       highlights: [],
     },
     ranking: { season: 2026, asOf: "2026-08-14", leagues: [] },
+    starters: { gameDate: null, builtOn: "2026-08-15", games: [] },
     ...over,
   };
 }
@@ -47,6 +48,7 @@ test("사이트는 정해진 파일 집합을 만든다", () => {
     "players.json",
     "players/41045153.html",
     "ranking.html",
+    "starters.html",
   ]);
   assert.equal(out.playerCount, 1);
   assert.equal(out.stale, false);

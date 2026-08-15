@@ -62,9 +62,12 @@ import type {
 import type {
   IndexPageData,
   LeagueSection,
+  ProbableGame,
+  ProbableSide,
   RankingPageData,
   RosterEntry,
   SearchEntry,
+  StartersPageData,
   TeamRoster,
 } from "./pages.ts";
 import type { RankDigits } from "./parts.ts";
@@ -668,6 +671,100 @@ function rosters(players: readonly PlayerPageData[]): TeamRoster[] {
   }));
 }
 
+interface ProbableRow {
+  gameDate: string;
+  teamCode: string;
+  opponentCode: string;
+  playerId: string | null;
+  venue: string | null;
+  startTime: string | null;
+  league: string;
+}
+
+/**
+ * 예고 선발을 읽는다. **가장 최근에 예고된 하루**만 본다 —
+ * 지난 예고는 이미 경기가 끝나 확정 기록으로 대체됐다.
+ *
+ * ⚠**미래 날짜를 고르지 않는다.** 페이지가 내일분을 게시하므로 `MAX(game_date)`가
+ * 곧 「다음 경기일」이고, 그게 이 화면의 대상이다.
+ */
+function loadProbables(db: Db): ProbableRow[] {
+  const latest = db.raw.prepare("SELECT MAX(game_date) AS d FROM probable_pitcher").get() as {
+    d: string | null;
+  };
+  if (latest.d === null) return [];
+  return db.raw
+    .prepare(
+      `SELECT game_date AS gameDate, team_code AS teamCode, opponent_code AS opponentCode,
+              player_id AS playerId, venue, start_time AS startTime, league
+       FROM probable_pitcher WHERE game_date = ?`,
+    )
+    .all(latest.d) as unknown as ProbableRow[];
+}
+
+/**
+ * 예고 선발 화면 데이터.
+ *
+ * ⚠**같은 경기의 두 행을 팀 코드로 짝짓는다**(`team_code`/`opponent_code`).
+ * 순서나 구장으로 짝지으면 더블헤더에서 어긋난다.
+ */
+function startersPage(
+  rows: readonly ProbableRow[],
+  builtOn: string,
+  pitchingByPlayer: Map<string, PitchingEntry>,
+  matchupsByPitcher: Map<string, MatchupRow[]>,
+): StartersPageData {
+  if (rows.length === 0) return { gameDate: null, builtOn, games: [] };
+
+  const byTeam = new Map(rows.map((r) => [r.teamCode, r]));
+  const seen = new Set<string>();
+  const games: ProbableGame[] = [];
+
+  const toSide = (r: ProbableRow, opponentCode: string): ProbableSide => {
+    const team = teamOf(r.teamCode);
+    const entry = r.playerId === null ? undefined : pitchingByPlayer.get(r.playerId);
+    const all = r.playerId === null ? [] : (matchupsByPitcher.get(r.playerId) ?? []);
+    return {
+      teamCode: r.teamCode,
+      teamName: team.name,
+      shortName: SHORT_NAME[r.teamCode] ?? team.name,
+      color: colorOf(r.teamCode),
+      playerId: r.playerId,
+      name: r.playerId === null ? null : (entry?.player.displayName ?? null),
+      summary:
+        entry === undefined
+          ? null
+          : {
+              games: entry.player.games,
+              outs: entry.player.line.outs,
+              era: entry.era,
+              whip: entry.whip,
+              fip: entry.fip,
+              so: entry.player.line.so,
+            },
+      // 상대 팀 타자만 남긴다 — 다른 팀 상대 기록은 오늘의 경기와 무관하다
+      opponents: all.filter((m) => m.opponentTeam === opponentCode.toUpperCase()),
+    };
+  };
+
+  for (const r of rows) {
+    const key = [r.teamCode, r.opponentCode].sort().join("|");
+    if (seen.has(key)) continue;
+    const other = byTeam.get(r.opponentCode);
+    if (other === undefined) continue;
+    seen.add(key);
+    games.push({
+      venue: r.venue,
+      startTime: r.startTime,
+      league: r.league,
+      sides: [toSide(r, r.opponentCode), toSide(other, r.teamCode)],
+    });
+  }
+
+  games.sort((a, b) => (a.startTime ?? "").localeCompare(b.startTime ?? "") || a.league.localeCompare(b.league));
+  return { gameDate: rows[0]!.gameDate, builtOn, games };
+}
+
 // ─── 조립 ────────────────────────────────────────────────────────────────
 
 export interface LoadOptions {
@@ -685,6 +782,7 @@ export interface SiteData {
   players: PlayerPageData[];
   index: IndexPageData;
   ranking: RankingPageData;
+  starters: StartersPageData;
   search: SearchEntry[];
 }
 
@@ -905,5 +1003,6 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       highlights,
     },
     ranking: { season: o.season, asOf: meta.latest, leagues: sections },
+    starters: startersPage(loadProbables(db), o.builtOn, pitchingByPlayer, matchupsByPlayer.byPitcher),
   };
 }

@@ -198,6 +198,16 @@ td a:hover{box-shadow:inset 0 -1px 0 currentColor}
 .note{font-size:11px;color:var(--tx-3);margin:9px 0 0;max-width:64ch}
 .empty{font-size:12px;color:var(--tx-3);padding:6px 0}
 
+/* ── 予告先発 ────────────────────────────────────────────── */
+.starters{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+.sside{min-width:0}
+.sname{margin:0 0 6px;font-size:11px;letter-spacing:.14em;font-weight:700;display:flex;align-items:center;gap:7px}
+.sname i{width:10px;height:10px;background:var(--chip,#6b7280);font-style:normal}
+.spitcher{margin:0 0 9px;font-size:19px;font-weight:700;letter-spacing:.06em}
+.spitcher a{text-decoration:none;box-shadow:inset 0 -2px 0 var(--chip,#6b7280)}
+dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
+@media (max-width:680px){.starters{grid-template-columns:1fr;gap:18px}}
+
 /* ── 対戦を選ぶ ──────────────────────────────────────────── */
 .picker{display:grid;grid-template-columns:repeat(auto-fit,minmax(238px,1fr));gap:18px;max-width:640px}
 .pickside label{display:block;font-size:10.5px;letter-spacing:.16em;color:var(--tx-3);margin-bottom:6px}
@@ -267,9 +277,16 @@ td a:hover{box-shadow:inset 0 -1px 0 currentColor}
   .roster{grid-template-columns:1fr}
   th,td{padding:6px 7px}
 }
+@media (max-width:480px){
+  /* 링크가 4개가 되면 한 줄에 브랜드·검색·내비·테마가 다 들어가지 않는다.
+     검색창을 아랫줄로 내린다 — 줄이는 것보다 두 줄이 낫다 */
+  .topbar{height:auto;flex-wrap:wrap;padding:6px 10px 8px;gap:6px}
+  .qbox{order:3;flex-basis:100%;max-width:none}
+  .tnav{margin-left:auto}
+}
 @media (max-width:420px){
   .brand{font-size:12px;letter-spacing:.08em}
-  .tnav a{font-size:11px}
+  .tnav a{font-size:11px;padding:5px 6px}
 }
 /* 손가락은 마우스보다 크다 */
 @media (pointer:coarse){

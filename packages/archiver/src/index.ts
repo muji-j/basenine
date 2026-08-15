@@ -16,6 +16,8 @@ export { LocalSink, MemorySink, sha256 } from "./sink.ts";
 export type { BlobMeta, Sink } from "./sink.ts";
 export { archivePlayer, archivePlayers, playerKey, playerUrl } from "./players.ts";
 export type { ArchivePlayersDeps } from "./players.ts";
+export { STARTERS_URL, archiveStarters, startersKey } from "./starters.ts";
+export type { ArchiveStartersDeps } from "./starters.ts";
 export {
   MonthlyScheduleCache,
   archiveDate,

@@ -10,13 +10,25 @@
  */
 import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
-import { NO_VALUE, fullDate } from "./format.ts";
-import { block, denText, note, panel, rankValue, scroller, tablist } from "./parts.ts";
+import { NO_VALUE, avg3, fullDate, innings } from "./format.ts";
+import {
+  block,
+  denText,
+  note,
+  panel,
+  rankValue,
+  scroller,
+  statCount,
+  statRateOuts,
+  statText,
+  tablist,
+} from "./parts.ts";
 import { page } from "./layout.ts";
 import type { Freshness, SiteMeta } from "./layout.ts";
-import type { RankingPanel } from "./player-page.ts";
+import type { MatchupRow, RankingPanel } from "./player-page.ts";
 import { NEUTRAL_COLOR } from "@bb-app/domain";
 import type { TeamColor } from "@bb-app/domain";
+import type { Rate } from "@bb-app/metrics";
 
 export interface RenderContext {
   site: SiteMeta;
@@ -178,6 +190,131 @@ ${d.leagues.map((league, li) =>
     freshness: ctx.freshness,
     site: ctx.site,
     nav: "ranking",
+    body,
+  });
+}
+
+export interface StarterSummary {
+  games: number;
+  outs: number;
+  era: Rate;
+  whip: Rate;
+  fip: Rate;
+  so: number;
+}
+
+export interface ProbableSide {
+  teamCode: string;
+  teamName: string;
+  shortName: string;
+  color: TeamColor;
+  /** 미발표면 null. **「投手なし」가 아니라 「まだ発表されていない」다**(M11) */
+  playerId: string | null;
+  name: string | null;
+  summary: StarterSummary | null;
+  /** 이 투수가 상대한 **상대 팀** 타자들. 타석수 순 */
+  opponents: MatchupRow[];
+}
+
+export interface ProbableGame {
+  venue: string | null;
+  startTime: string | null;
+  league: string;
+  sides: [ProbableSide, ProbableSide];
+}
+
+export interface StartersPageData {
+  /** 예고가 나와 있는 경기일. 없으면 null */
+  gameDate: string | null;
+  /** 사이트를 만든 날. 「本日」인지 판정하는 데 쓴다 */
+  builtOn: string;
+  games: ProbableGame[];
+}
+
+/**
+ * 予告先発 — 경기 **전에** 공표되는 유일한 라인업 정보.
+ *
+ * ⚠**「오늘」이라고 단정하지 않는다.** 이 페이지는 「다음에 발표된 하루」를 보여주고,
+ * 그게 내일인 경우가 실제로 많다(2026-08-15에 8/16분이 게시돼 있었다).
+ * 날짜를 그대로 쓰고, 생성일과 같을 때만 「本日」를 붙인다.
+ * ⚠**라인업은 모른다.** 그래서 「이 투수와 대전한 적이 있는 상대 팀 타자」를 타석수 순으로 낸다 —
+ * 오늘 나올 타자를 아는 척하지 않는다.
+ */
+export function renderStartersPage(d: StartersPageData, ctx: RenderContext): string {
+  const base = "";
+  const isToday = d.gameDate !== null && d.gameDate === d.builtOn;
+
+  const sideBlock = (side: ProbableSide, opponent: ProbableSide): RawHtml => html`<div class="sside"
+  style="--chip:${side.color.base};--chip-ink:${side.color.ink}">
+  <h5 class="sname"><i></i>${side.shortName}</h5>
+  ${side.playerId === null || side.name === null
+    ? html`<p class="empty">先発はまだ発表されていません。</p>`
+    : html`<p class="spitcher"><a href="${base}players/${side.playerId}.html">${side.name}</a></p>
+      ${side.summary === null
+        ? html`<p class="empty">今季の登板記録がありません。</p>`
+        : html`<dl class="srow">
+            ${statRateOuts("防御率", side.summary.era, 2)}
+            ${statRateOuts("WHIP", side.summary.whip, 2)}
+            ${statRateOuts("FIP", side.summary.fip, 2)}
+            ${statText("投球回", innings(side.summary.outs))}
+            ${statCount("登板", side.summary.games)}
+            ${statCount("奪三振", side.summary.so)}
+          </dl>`}
+      ${side.opponents.length === 0
+        ? html`<p class="empty">${opponent.shortName}の打者との対戦記録はまだありません。</p>`
+        : html`${scroller(html`<table>
+            <thead><tr><th class="l">${opponent.shortName}の打者</th><th>打席</th><th>安打</th><th>本塁打</th><th>三振</th><th>打率</th></tr></thead>
+            <tbody>${side.opponents.map(
+              (m) => html`<tr class="${m.line.pa < 10 ? "thin" : ""}">
+                <td class="l"><a href="${base}players/${m.opponentId}.html?vs=${encodeURIComponent(side.name ?? "")}#b-matchup">${m.opponentName}</a></td>
+                <td>${m.line.pa}</td><td>${m.line.h}</td><td>${m.line.hr}</td><td>${m.line.so}</td>
+                <td>${avg3(m.avg.value)}</td>
+              </tr>`,
+            )}</tbody>
+          </table>`)}`}`}
+</div>`;
+
+  const body = html`<header class="idline">
+  <div class="idtext">
+    <span class="nm">予告先発</span>
+    <span class="sub">${d.gameDate === null ? "発表待ち" : `${fullDate(d.gameDate)}${isToday ? "（本日）" : ""}の試合`}</span>
+  </div>
+  <span class="asof">成績は${fullDate(d.builtOn)}生成時点</span>
+</header>
+
+${d.gameDate === null || d.games.length === 0
+    ? html`<section class="block"><p class="empty">予告先発はまだ発表されていません。発表は前日〜当日です。</p></section>`
+    : html`${d.games.map(
+        (g) => html`<section class="block">
+      <h4>${g.sides[0].shortName} 対 ${g.sides[1].shortName}<span class="qt">${g.venue ?? ""}${g.startTime === null ? "" : ` ${g.startTime}`}</span></h4>
+      <div class="starters">
+        ${sideBlock(g.sides[0], g.sides[1])}
+        ${sideBlock(g.sides[1], g.sides[0])}
+      </div>
+    </section>`,
+      )}`}
+
+<section class="block">
+  <h4>この画面について</h4>
+  ${note(
+    "予告先発は試合の前日〜当日に公表される情報です。当サイトは1日1回の取得でこれを反映しており、" +
+      "試合中の情報は取得していません。打順は試合前には分からないため、" +
+      "「その投手と対戦したことがある相手球団の打者」を打席数の多い順に並べています。" +
+      "10打席未満は薄く表示しています。選手名を押すと、その投手との対戦成績を開いた状態でページが開きます。",
+  )}
+</section>
+
+<nav class="find" aria-label="ほかのページ">
+  <a href="${base}matchup.html">対戦を選ぶ</a> · <a href="${base}index.html">選手一覧</a> · <a href="${base}ranking.html">リーグ順位表</a>
+</nav>`;
+
+  return page({
+    title: `予告先発${d.gameDate === null ? "" : ` — ${fullDate(d.gameDate)}`}`,
+    base,
+    color: NEUTRAL_COLOR,
+    freshness: ctx.freshness,
+    site: ctx.site,
+    nav: "starters",
     body,
   });
 }

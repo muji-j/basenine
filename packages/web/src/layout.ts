@@ -89,7 +89,7 @@ export interface SiteMeta {
 }
 
 /** 전역 헤더에서 지금 어디에 있는지. `aria-current`로 나간다 */
-export type NavKey = "index" | "ranking" | "matchup" | "player";
+export type NavKey = "starters" | "index" | "ranking" | "matchup" | "player";
 
 export interface PageOptions {
   title: string;
@@ -124,6 +124,7 @@ function topbar(o: PageOptions): RawHtml {
     <ul class="qhits" id="qhits" role="listbox" aria-label="検索結果" hidden></ul>
   </div>
   <nav class="tnav" aria-label="主要ページ">
+    <a href="${o.base}starters.html"${here("starters")}>先発</a>
     <a href="${o.base}index.html"${here("index")}>一覧</a>
     <a href="${o.base}ranking.html"${here("ranking")}>順位</a>
     <a href="${o.base}matchup.html"${here("matchup")}>対戦</a>

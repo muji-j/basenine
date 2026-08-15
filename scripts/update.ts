@@ -9,7 +9,8 @@
  *   1. 그날 경기 페이지를 아카이브 (없으면 조용히 0건)
  *   2. 아카이브 → DB 적재 (멱등)
  *   3. 새로 등장한 선수의 프로필을 아카이브하고 적재
- *   4. **신선도 보고** — 마지막 경기일이 언제인지, 며칠 전인지
+ *   4. 予告先発(선발 예고)을 아카이브하고 적재 — 경기 **전** 정보라 「오늘의 매치업」의 근거가 된다
+ *   5. **신선도 보고** — 마지막 경기일이 언제인지, 며칠 전인지
  *
  * ⚠**「돌았다」가 아니라 「몇 건을 언제까지 넣었는가」를 보고한다.** 크론이 조용히
  * 안 도는 것이 이 서비스의 가장 흔한 죽음이고, 그건 성공 로그로는 구별되지 않는다.
@@ -109,7 +110,20 @@ if (emit.status === 0 && emit.stdout) {
   failures += 1;
 }
 
-// 4. 신선도 보고
+// 4. 予告先発 — 하루 1요청. ⚠거르면 그날 예고는 영영 못 받는다(페이지가 하루치만 보여준다)
+failures += run("予告先発 아카이브", [
+  "packages/archiver/src/cli-starters.ts",
+  "--out", values.archive,
+  "--contact", contact,
+  "--delay", values.delay,
+]) === 0 ? 0 : 1;
+failures += run("予告先発 적재", [
+  "packages/store/tools/load-starters.ts",
+  values.archive,
+  values.db,
+]) === 0 ? 0 : 1;
+
+// 5. 신선도 보고
 console.log(`\n── 신선도 ──`);
 const freshness = spawnSync(
   process.execPath,

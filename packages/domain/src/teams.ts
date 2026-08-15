@@ -78,3 +78,18 @@ export function teamOf(code: string): Team {
 export function leagueOf(code: string): League {
   return teamOf(code).league;
 }
+
+const BY_NAME = new Map(TEAMS.map((t) => [t.name, t]));
+
+/**
+ * 정식 표기로 구단을 찾는다. 予告先発 페이지처럼 **코드가 아니라 이름만 오는 소스**에 쓴다.
+ *
+ * ⚠**부분 일치·정규화를 하지 않는다.** 「阪神」과 「阪神タイガース」를 같게 보기 시작하면
+ * 어디까지 같게 볼지 규칙이 코드에 흩어지고, 표기가 흔들릴 때 조용히 틀린 팀에 붙는다.
+ * 표기가 바뀌면 여기서 던지고, 구단 마스터를 고친다.
+ */
+export function teamByName(name: string): Team {
+  const t = BY_NAME.get(name);
+  if (!t) throw new RangeError(`모르는 구단 표기: ${JSON.stringify(name)}. 구단 마스터를 갱신하라`);
+  return t;
+}
