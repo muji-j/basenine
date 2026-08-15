@@ -11,7 +11,13 @@
   "scripts": {
     "test": "node --test \"packages/*/test/*.test.ts\"",
     "typecheck": "tsc --build --force",
-    "archive": "node packages/archiver/src/cli.ts"
+    "archive": "node packages/archiver/src/cli.ts",
+    "update": "node scripts/update.ts",
+    "freshness": "node scripts/freshness.ts data/bb.sqlite",
+    "leaderboard": "node packages/aggregate/tools/leaderboard.ts data/bb.sqlite 2026",
+    "splits": "node packages/aggregate/tools/splits-report.ts data/bb.sqlite 2026",
+    "src": "node packages/aggregate/tools/src-report.ts data/bb.sqlite 2026",
+    "run-expectancy": "node packages/aggregate/tools/run-expectancy.ts data/bb.sqlite 2026"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
