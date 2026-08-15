@@ -148,7 +148,9 @@ export function gradeLegend(): RawHtml {
   return html`<div class="legend">
     <span class="lg">水準</span>
     ${gradeOrder().map(
-      (g) => html`<span class="sw ${gradeClass(g)}"><i></i>${GRADE_LABEL[g]}</span>`,
+      // ⚠글자를 감싸 둔다 — 좁은 화면에서 **가운데 세 칸의 글자만** 접어 양 끝 라벨을 남긴다.
+      // 다섯 개를 전부 늘어놓으면 모바일에서 두 줄을 먹고, 성적이 화면 밖으로 밀린다
+      (g) => html`<span class="sw ${gradeClass(g)}"><i></i><b>${GRADE_LABEL[g]}</b></span>`,
     )}
     <span class="lg tail">100打席・30回以上の分布から。母数が少ない値には色をつけていません</span>
     <button class="tab" type="button" id="gradeBtn" aria-pressed="true">色分け</button>

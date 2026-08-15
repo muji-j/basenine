@@ -167,6 +167,14 @@ dd{margin:0;text-align:right;font-family:var(--f-num);font-variant-numeric:tabul
   border-bottom:1px dotted var(--hair-2);transition:border-color var(--fast) var(--ease)}
 .term:hover,.term[aria-expanded="true"]{border-bottom-color:var(--tx-2);border-bottom-style:solid}
 th .term{cursor:help}
+/* ⚠**손가락은 글자보다 크다.** 항목명은 10.5px라 그대로는 누르기 어렵다.
+   가짜 요소로 **판정 영역만** 넓힌다 — 여백을 주면 표의 행 높이가 늘어난다.
+   위아래는 5px까지만 — 항목 줄 간격이 25px 남짓이라 더 넓히면 옆 줄의 설명이 뜬다 */
+@media (pointer:coarse){
+  .term{position:relative}
+  .term::after{content:"";position:absolute;left:-7px;right:-7px;top:-5px;bottom:-5px}
+}
+.term:active{border-bottom-color:var(--tx);border-bottom-style:solid}
 
 #tip{position:absolute;z-index:40;max-width:min(30ch,86vw);padding:9px 11px;
   background:var(--tx);color:var(--page);font-size:12px;line-height:1.5;
@@ -211,6 +219,7 @@ dd.g-veryBad{box-shadow:inset 0 -3px 0 var(--g-vbad);background:var(--g-vbad-bg)
 .legend .lg{letter-spacing:.16em;color:var(--tx-3);white-space:nowrap}
 .legend .tail{margin-left:auto}
 .legend .sw{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.legend .sw b{font-weight:400}
 .legend .sw i{width:15px;height:4px;background:var(--g-avg)}
 .legend .sw.g-veryGood i{background:var(--g-vgood)}
 .legend .sw.g-good i{background:var(--g-good)}
@@ -220,6 +229,15 @@ dd.g-veryBad{box-shadow:inset 0 -3px 0 var(--g-vbad);background:var(--g-vbad-bg)
 /* 색을 끄면 범례의 견본도 함께 죽는다 — 안 쓰는 안내가 남아 있으면 그것도 거짓말이다 */
 :root[data-grades="off"] .legend .sw{opacity:.3}
 @media (max-width:620px){.legend .tail{display:none}}
+/* 좁은 화면 — 가운데 세 칸의 글자를 접고 견본만 남긴다. 양 끝(とても悪い↔とても良い)이
+   남으므로 눈금의 뜻은 그대로 읽힌다. 다섯 줄을 다 늘어놓으면 성적이 화면 밖으로 밀린다 */
+@media (max-width:520px){
+  .legend{gap:7px}
+  .legend .sw{gap:0}
+  .legend .sw.g-bad b,.legend .sw.g-average b,.legend .sw.g-good b{display:none}
+  .legend .sw.g-veryBad i{margin-right:5px}
+  .legend .sw.g-veryGood i{margin-right:5px}
+}
 .rank{background:var(--team,#6b7280);color:var(--team-ink,#fff);font-weight:700;padding:0 5px;font-size:10px;
   margin-left:6px;font-family:var(--f-body)}
 
