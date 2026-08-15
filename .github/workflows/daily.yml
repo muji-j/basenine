@@ -6,6 +6,18 @@
 #
 # ⚠**주 감시 장치는 이것이 아니다.** 제품 화면의 신선도 표시가 주 감시다
 # (조사 결과 무료 외부 감시 3종이 전부 시한부였다). 이 워크플로는 보조다.
+#
+# ## 보관소를 왜 GitHub 릴리스로 두는가
+#
+# CI 러너는 매번 빈 상태로 시작하므로 「복원 → 수집 → 보관」이 필요하다.
+# 후보는 R2 · Actions 캐시 · 릴리스 자산 셋이었다:
+#   · R2          — 계정·API 토큰·시크릿이 늘어난다. 무료 한도는 넉넉하다
+#   · Actions 캐시 — **7일 미사용이면 삭제된다.** 소급 불가 자산을 둘 곳이 아니다
+#   · 릴리스 자산  — 추가 계정 0 · 추가 시크릿 0(`GITHUB_TOKEN`) · 파일당 2GB
+# 지금 아카이브는 27.5MB이므로 릴리스로 충분하다. R2는 용량이 커지면 옮긴다.
+#
+# ⚠**아카이브는 소급 불가능한 자산이다.** 복원이 조용히 실패한 채 덮어쓰면
+# 한 번에 사라지고 로그에는 「정상 종료」가 남는다. `archive-guard`가 **줄어들면 멈춘다.**
 
 name: daily collection
 
@@ -19,14 +31,19 @@ permissions:
   contents: write
 
 concurrency:
-  # ⚠중복 기동을 막는다. 수집기는 멱등이지만 동시 실행은 D1 쓰기 예산을 두 배로 태운다.
+  # ⚠중복 기동을 막는다. 수집기는 멱등이지만 동시 실행은 D1 쓰기 예산을 두 배로 태우고,
+  # 보관소에 서로를 덮어쓴다.
   group: daily-collection
   cancel-in-progress: false
+
+env:
+  # 아카이브·DB를 담아 두는 릴리스. 코드 릴리스가 아니라 **데이터 보관소**다
+  DATA_TAG: data-store
 
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -38,23 +55,81 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: 아카이브·DB 복원
-        # 아카이브와 DB는 리포에 두지 않는다(용량·데이터 권리 L6).
-        # 실제 운영에서는 R2에서 내려받는 단계가 여기 들어간다.
-        run: echo "TODO: R2에서 data/ 복원 — 증분 G(배포)에서 붙인다"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p data
+          if gh release view "$DATA_TAG" >/dev/null 2>&1; then
+            # ⚠실패를 삼키지 않는다. 릴리스가 있는데 못 받았다면 그것은 사고다
+            gh release download "$DATA_TAG" --dir /tmp/store --clobber
+            tar -xf /tmp/store/archive.tar -C data
+            gunzip -c /tmp/store/bb.sqlite.gz > data/bb.sqlite
+            echo "복원 완료"
+          else
+            echo "보관소 릴리스가 없다 — 첫 실행으로 본다"
+          fi
+
+      - name: 복원 검증 — 줄어들면 여기서 멈춘다
+        run: node scripts/archive-guard.ts check data/archive ops/archive-manifest.json
 
       - name: 수집·적재
         env:
           BB_ARCHIVER_CONTACT: ${{ secrets.BB_ARCHIVER_CONTACT }}
         run: node scripts/update.ts
 
-      - name: 수집 로그 커밋
+      - name: 수집 후 재검증
+        # 수집이 아카이브를 줄이는 일은 없어야 한다. 줄었다면 올리기 전에 멈춘다
+        run: node scripts/archive-guard.ts check data/archive ops/archive-manifest.json
+
+      - name: 보관소에 올림
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tar -cf /tmp/archive.tar -C data archive
+          gzip -c data/bb.sqlite > /tmp/bb.sqlite.gz
+          gh release view "$DATA_TAG" >/dev/null 2>&1 || \
+            gh release create "$DATA_TAG" \
+              --title "데이터 보관소" \
+              --notes "일일 수집이 덮어쓴다. 코드 릴리스가 아니다." \
+              --latest=false
+          gh release upload "$DATA_TAG" /tmp/archive.tar /tmp/bb.sqlite.gz --clobber
+
+      - name: 기록 갱신과 커밋
         # ⚠이 커밋이 리포 활동을 갱신해 60일 자동 비활성화를 막는다. 자기 문제를 자기가 푼다.
         run: |
+          set -euo pipefail
           mkdir -p ops
+          node scripts/archive-guard.ts write data/archive ops/archive-manifest.json
           node scripts/freshness.ts data/bb.sqlite 2 >> ops/collection-log.txt 2>&1 || true
           echo "--- $(date -u +%FT%TZ) ---" >> ops/collection-log.txt
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add ops/collection-log.txt
+          git add ops/collection-log.txt ops/archive-manifest.json
           git diff --staged --quiet || git commit -m "chore(ops): collection log"
           git push
+
+      - name: 화면 생성
+        env:
+          BB_CONTACT: ${{ secrets.BB_CONTACT }}
+        # ⚠낡은 데이터면 종료 코드 1이 된다. 그때도 산출물은 남기고, 실패로 표시한다
+        run: node packages/web/tools/build.ts data/bb.sqlite dist 2026
+
+      - name: 배포
+        # ⚠**`success()`가 핵심이다.** 신선도가 낡으면 앞의 생성 단계가 종료 코드 1을 낸다.
+        # 그때도 배포하면 **낡은 화면이 조용히 올라간다** — 실패는 실패로 끝낸다.
+        if: success()
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler@4 pages deploy dist --project-name bb-app --branch main
+
+      - name: 산출물 보관
+        # ⚠실패했을 때도 남긴다. 「무엇이 만들어졌는데 안 올라갔는가」를 봐야 원인을 안다
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: dist
+          retention-days: 7

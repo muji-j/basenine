@@ -11,11 +11,13 @@ export type { AlignResult, PaEventRow } from "./align.ts";
 export {
   D1_DAILY_WRITE_LIMIT,
   emptyBudget,
+  ensurePlayer,
   replacePaEvents,
   replaceQuarantine,
   upsertBatting,
   upsertGame,
   upsertPitching,
   upsertPlayer,
+  upsertProbablePitcher,
 } from "./load.ts";
-export type { GameRow, WriteBudget } from "./load.ts";
+export type { GameRow, ProbablePitcherRow, WriteBudget } from "./load.ts";

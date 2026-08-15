@@ -78,3 +78,34 @@ export function teamOf(code: string): Team {
 export function leagueOf(code: string): League {
   return teamOf(code).league;
 }
+
+/**
+ * 짧은 표기. 칩·선택지·표 머리처럼 **좁은 자리**에 쓴다.
+ *
+ * ⚠`name`을 잘라 만들지 않는다 — 「福岡ソフトバンクホークス」를 앞에서 자르면 「福岡ソフ」가 되고
+ * 「北海道日本ハムファイターズ」는 「北海道日」가 된다. 통용되는 약칭은 규칙이 아니라 목록이다.
+ */
+const SHORT_NAME: Readonly<Record<string, string>> = {
+  g: "巨人", t: "阪神", db: "DeNA", c: "広島", d: "中日", s: "ヤクルト",
+  h: "ソフトバンク", f: "日本ハム", m: "ロッテ", l: "西武", e: "楽天", b: "オリックス",
+};
+
+/** 모르는 코드는 정식 표기로 되돌린다(그것도 없으면 코드 자체). **던지지 않는다** — 표시용이다 */
+export function shortNameOf(code: string): string {
+  return SHORT_NAME[code] ?? BY_CODE.get(code)?.name ?? code.toUpperCase();
+}
+
+const BY_NAME = new Map(TEAMS.map((t) => [t.name, t]));
+
+/**
+ * 정식 표기로 구단을 찾는다. 予告先発 페이지처럼 **코드가 아니라 이름만 오는 소스**에 쓴다.
+ *
+ * ⚠**부분 일치·정규화를 하지 않는다.** 「阪神」과 「阪神タイガース」를 같게 보기 시작하면
+ * 어디까지 같게 볼지 규칙이 코드에 흩어지고, 표기가 흔들릴 때 조용히 틀린 팀에 붙는다.
+ * 표기가 바뀌면 여기서 던지고, 구단 마스터를 고친다.
+ */
+export function teamByName(name: string): Team {
+  const t = BY_NAME.get(name);
+  if (!t) throw new RangeError(`모르는 구단 표기: ${JSON.stringify(name)}. 구단 마스터를 갱신하라`);
+  return t;
+}

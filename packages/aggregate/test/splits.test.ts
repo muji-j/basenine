@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb, replacePaEvents, upsertGame, upsertPlayer } from "@bb-app/store";
 import type { Db, PaEventRow } from "@bb-app/store";
-import { battingSplits, matchups } from "../src/splits.ts";
+import { battingSplits, matchups, pitchingSplits } from "../src/splits.ts";
 
 const NOW = "2026-08-15T00:00:00.000Z";
 
@@ -205,5 +205,100 @@ test("올스타전은 스플릿에도 들어가지 않는다", async () => {
 
     const [p] = battingSplits(db, "opponentHand", 2026);
     assert.equal(p?.splits.find((s) => s.key === "left")?.line.pa, 1);
+  });
+});
+
+// ── 투수 스플릿 ───────────────────────────────────────────────────────────
+
+function seedBatter(db: Db, id: string, name: string, bats: string | null): void {
+  upsertPlayer(db, id, name, NOW);
+  if (bats !== null) {
+    db.raw.prepare("UPDATE player SET bats = ?, throws = 'right' WHERE player_id = ?").run(bats, id);
+  }
+}
+
+test("투수 스플릿 — 상대 타자의 치는 손으로 나눈다", async () => {
+  await withDb((db) => {
+    seedGame(db, "g1", "2026-04-01");
+    seedPlayer(db, "P1", "투수", "right");
+    seedBatter(db, "BL", "좌타", "left");
+    seedBatter(db, "BR", "우타", "right");
+    replacePaEvents(db, "g1", [
+      event({ gameId: "g1", seq: 1, batterId: "BL", pitcherId: "P1", outcome: "single" }),
+      event({ gameId: "g1", seq: 2, batterId: "BL", pitcherId: "P1", outcome: "strikeout" }),
+      event({ gameId: "g1", seq: 3, batterId: "BR", pitcherId: "P1", outcome: "homerun", rbi: 2 }),
+    ]);
+
+    const p = pitchingSplits(db, "opponentHand", 2026).find((x) => x.playerId === "P1");
+    assert.ok(p);
+    // ⚠line은 「허용한 것」이다 — h는 피안타, hr는 피홈런
+    assert.equal(p.splits.find((s) => s.key === "left")?.line.pa, 2);
+    assert.equal(p.splits.find((s) => s.key === "left")?.line.h, 1);
+    assert.equal(p.splits.find((s) => s.key === "right")?.line.hr, 1);
+  });
+});
+
+test("⚠투수의 홈/원정은 타자와 반대다 — 표(top)에서는 홈 팀이 던진다", async () => {
+  await withDb((db) => {
+    seedGame(db, "g1", "2026-04-01", "t", "g"); // 원정 阪神 · 홈 巨人
+    seedPlayer(db, "P1", "홈투수", "right");
+    seedBatter(db, "B1", "원정타자", "right");
+    replacePaEvents(db, "g1", [
+      // 표 = 원정(阪神)의 공격 → 던지는 쪽은 홈(巨人)
+      event({ gameId: "g1", seq: 1, half: "top", batterId: "B1", pitcherId: "P1" }),
+      event({ gameId: "g1", seq: 2, half: "top", batterId: "B1", pitcherId: "P1" }),
+    ]);
+
+    const pitcher = pitchingSplits(db, "homeAway", 2026).find((x) => x.playerId === "P1");
+    const batter = battingSplits(db, "homeAway", 2026).find((x) => x.playerId === "B1");
+    assert.equal(pitcher?.splits[0]?.key, "home", "표 이닝의 투수는 홈이다");
+    assert.equal(batter?.splits[0]?.key, "away", "표 이닝의 타자는 원정이다");
+    assert.notEqual(pitcher?.splits[0]?.key, batter?.splits[0]?.key, "둘이 같으면 한쪽이 뒤집혀 있다");
+  });
+});
+
+test("⚠투타 미상 타자는 투수의 좌우 스플릿에서 빠지되 숨기지 않는다", async () => {
+  await withDb((db) => {
+    seedGame(db, "g1", "2026-04-01");
+    seedPlayer(db, "P1", "투수", "right");
+    seedBatter(db, "BL", "좌타", "left");
+    seedBatter(db, "BX", "미상", null);
+    replacePaEvents(db, "g1", [
+      event({ gameId: "g1", seq: 1, batterId: "BL", pitcherId: "P1" }),
+      event({ gameId: "g1", seq: 2, batterId: "BX", pitcherId: "P1" }),
+    ]);
+
+    const p = pitchingSplits(db, "opponentHand", 2026).find((x) => x.playerId === "P1");
+    assert.equal(p?.unclassified, 1);
+    assert.equal(p?.splits.length, 1);
+  });
+});
+
+test("투수가 없는 타석은 투수 스플릿에 들어가지 않는다", async () => {
+  await withDb((db) => {
+    seedGame(db, "g1", "2026-04-01");
+    seedBatter(db, "B1", "타자", "right");
+    replacePaEvents(db, "g1", [event({ gameId: "g1", seq: 1, batterId: "B1", pitcherId: null })]);
+    assert.deepEqual(pitchingSplits(db, "opponentHand", 2026), []);
+    // 타자 쪽에는 남는다 — 상대 투수를 모를 뿐 타석은 있었다
+    assert.equal(battingSplits(db, "opponentHand", 2026)[0]?.unclassified, 1);
+  });
+});
+
+test("타자와 투수의 스플릿이 같은 접기 규칙을 쓴다(M1)", async () => {
+  await withDb((db) => {
+    seedGame(db, "g1", "2026-04-01");
+    seedPlayer(db, "P1", "투수", "right");
+    seedBatter(db, "B1", "타자", "right");
+    replacePaEvents(db, "g1", [
+      event({ gameId: "g1", seq: 1, batterId: "B1", pitcherId: "P1", outcome: "double" }),
+      event({ gameId: "g1", seq: 2, batterId: "B1", pitcherId: "P1", outcome: "walk" }),
+      event({ gameId: "g1", seq: 3, batterId: "B1", pitcherId: "P1", outcome: "sacFly", rbi: 1 }),
+    ]);
+    const bat = battingSplits(db, "baseState", 2026)[0]!.splits[0]!;
+    const pit = pitchingSplits(db, "baseState", 2026)[0]!.splits[0]!;
+    // 같은 타석들이므로 접힌 결과가 똑같아야 한다
+    assert.deepEqual(pit.line, bat.line);
+    assert.equal(pit.rbi, bat.rbi);
   });
 });

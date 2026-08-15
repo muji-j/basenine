@@ -1,0 +1,1143 @@
+<!doctype html>
+<html lang="ja" data-base="">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>選手識別マーク 3案 — 写真の代わりに</title>
+<meta name="robots" content="noindex, nofollow">
+<meta name="color-scheme" content="light dark">
+<style>
+:root {
+  --page:#fbfaf7; --tx:#17171a; --tx-2:#5d5d59; --tx-3:#8d8d87;
+  --hair:#e0dfd8; --hair-2:#cfcec5; --panel:#ffffff; --panel-2:#f3f1ec;
+  --warn:#a8452f; --ok:#3f6b4a;
+  --f-body:&quot;Yu Gothic&quot;,&quot;Hiragino Kaku Gothic ProN&quot;,&quot;Noto Sans JP&quot;,&quot;Meiryo&quot;,system-ui,sans-serif;
+  --f-num:&quot;SFMono-Regular&quot;,&quot;Consolas&quot;,&quot;Menlo&quot;,&quot;Yu Gothic&quot;,monospace;
+  --topbar:46px;
+  --ease:cubic-bezier(.2,.6,.2,1);
+  --fast:120ms; --mid:200ms;
+  --pad:20px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme=&quot;light&quot;]) {
+    --page:#15161a; --tx:#e9e8e3; --tx-2:#a5a49d; --tx-3:#7b7a74;
+    --hair:#2b2d33; --hair-2:#3b3e45; --panel:#1c1e23; --panel-2:#23262c;
+    --warn:#e08a72; --ok:#8fc09c;
+  }
+}
+:root[data-theme=&quot;dark&quot;] {
+  --page:#15161a; --tx:#e9e8e3; --tx-2:#a5a49d; --tx-3:#7b7a74;
+  --hair:#2b2d33; --hair-2:#3b3e45; --panel:#1c1e23; --panel-2:#23262c;
+  --warn:#e08a72; --ok:#8fc09c;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--page);color:var(--tx);font-family:var(--f-body);line-height:1.55;font-feature-settings:&quot;palt&quot; 1;overflow-wrap:anywhere}
+a{color:inherit}
+:focus-visible{outline:2px solid var(--tx);outline-offset:1px}
+
+/* 본문으로 건너뛰기 — 키보드 사용자가 매번 헤더를 지나지 않게 */
+.skip{position:absolute;left:-9999px;top:0;z-index:50;background:var(--tx);color:var(--page);padding:8px 14px}
+.skip:focus{left:0}
+
+/* ── 전역 헤더 ─────────────────────────────────────────────
+   ⚠검색과 이동이 **어느 화면에서나 손에 닿아야 한다.** 최하단에만 두면
+   1000행짜리 순위표 아래에 묻힌다. */
+.topbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px;
+  height:var(--topbar);padding:0 12px 0 var(--pad);background:var(--panel);border-bottom:1px solid var(--hair-2)}
+.brand{font-size:13px;font-weight:700;letter-spacing:.14em;text-decoration:none;white-space:nowrap}
+.brand b{color:var(--tx-3);font-weight:400;letter-spacing:.04em;font-size:10px;margin-left:5px}
+@media (max-width:560px){.brand b{display:none}}
+.qbox{position:relative;flex:1 1 auto;max-width:340px;min-width:0}
+.qbox input{font:inherit;font-size:13px;width:100%;padding:5px 9px;background:var(--page);color:var(--tx);
+  border:1px solid var(--hair-2);transition:border-color var(--fast) var(--ease)}
+.qbox input:hover{border-color:var(--tx-3)}
+.qhits{position:absolute;left:0;right:0;top:calc(100% + 3px);z-index:30;margin:0;padding:4px 0;list-style:none;
+  background:var(--panel);border:1px solid var(--hair-2);max-height:min(60vh,380px);overflow:auto;
+  animation:drop var(--fast) var(--ease)}
+.qhits[hidden]{display:none}
+.qhits li a{display:flex;gap:8px;align-items:baseline;padding:6px 11px;text-decoration:none;font-size:13px}
+.qhits li a:hover,.qhits li[aria-selected=&quot;true&quot;] a{background:var(--panel-2)}
+.qhits .ht{margin-left:auto;font-size:10.5px;color:var(--tx-3);white-space:nowrap}
+.qhits .none{padding:7px 11px;font-size:12px;color:var(--tx-3)}
+.tnav{display:flex;gap:2px;margin-left:auto}
+.tnav a{font-size:12px;padding:5px 9px;text-decoration:none;color:var(--tx-2);white-space:nowrap;
+  transition:color var(--fast) var(--ease),background var(--fast) var(--ease)}
+.tnav a:hover{color:var(--tx);background:var(--panel-2)}
+.tnav a[aria-current=&quot;page&quot;]{color:var(--tx);font-weight:700;box-shadow:inset 0 -2px 0 var(--team,#6b7280)}
+.tbtn{font:inherit;font-size:13px;line-height:1;padding:6px 8px;cursor:pointer;background:transparent;
+  color:var(--tx-2);border:1px solid transparent;transition:color var(--fast) var(--ease)}
+.tbtn:hover{color:var(--tx);border-color:var(--hair-2)}
+
+.shell{display:grid;grid-template-columns:44px 1fr;min-height:calc(100vh - var(--topbar))}
+.spine{background:var(--team,#6b7280);display:flex;flex-direction:column;align-items:center;padding:16px 0;gap:18px}
+.spine .vt{writing-mode:vertical-rl;font-size:12.5px;letter-spacing:.32em;font-weight:700;color:var(--team-ink,#fff)}
+.main{min-width:0;padding:0 0 64px}
+
+/* 상태 띠 — 4상태(M12) 중 「수집실패·낡음」을 여기서 말한다 */
+.state{padding:7px var(--pad);font-size:12px;border-bottom:1px solid var(--hair)}
+.state.stale{background:var(--warn);color:#fff}
+.state.fresh{color:var(--tx-3)}
+.state b{font-weight:700}
+
+/* ── 선수 표제 ───────────────────────────────────────────── */
+.idline{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:16px var(--pad) 11px;
+  border-bottom:3px solid var(--team,#6b7280)}
+/* 식별 마크(成績の紋). 배경은 SVG가 스스로 칠한다 */
+.mark{flex:0 0 auto;display:flex;line-height:0}
+.mk{display:block}
+.mkline{display:inline-block;vertical-align:-3px;margin-right:6px;line-height:0}
+.idtext{min-width:0;display:flex;flex-direction:column;gap:2px}
+.idline .nm{font-size:clamp(21px,5vw,26px);font-weight:700;letter-spacing:.08em;line-height:1.2}
+.idline .sub{font-size:11.5px;color:var(--tx-2);letter-spacing:.06em}
+.spark{margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:2px}
+.spark svg{display:block;overflow:visible}
+.spark .sl{font-family:var(--f-num);font-size:9.5px;color:var(--tx-3);letter-spacing:.06em}
+.idline .asof{font-family:var(--f-num);font-size:11px;color:var(--tx-3)}
+
+/* ── 조작 레일 ───────────────────────────────────────────── */
+.rail{position:sticky;top:var(--topbar);z-index:10;display:flex;align-items:center;gap:6px;
+  padding:9px var(--pad);border-bottom:1px solid var(--hair);background:var(--panel);
+  overflow-x:auto;scrollbar-width:thin;-webkit-overflow-scrolling:touch}
+.rail::-webkit-scrollbar{height:0}
+.rail .lbl{font-size:10.5px;letter-spacing:.16em;color:var(--tx-3);white-space:nowrap}
+.rail .grow{flex:1 1 auto;min-width:6px}
+.tab{font:inherit;font-size:12px;padding:4px 10px;cursor:pointer;background:transparent;color:var(--tx-2);
+  border:1px solid var(--hair-2);white-space:nowrap;
+  transition:color var(--fast) var(--ease),background var(--fast) var(--ease),border-color var(--fast) var(--ease)}
+.tab:hover{color:var(--tx);border-color:var(--tx-3)}
+.tab[aria-pressed=&quot;true&quot;],.tab[aria-selected=&quot;true&quot;]{background:var(--team,#6b7280);color:var(--team-ink,#fff);
+  border-color:var(--team,#6b7280);font-weight:700}
+
+/* 탭 묶음 — 화면을 아래로 늘리는 대신 골라 본다 */
+.tabs{display:flex;gap:5px;flex-wrap:wrap}
+.tabs.scroll{flex-wrap:nowrap;overflow-x:auto;padding-bottom:2px;scrollbar-width:thin}
+.tabs.scroll::-webkit-scrollbar{height:0}
+
+/* ── 조립 UI ─────────────────────────────────────────────── */
+.editor{padding:14px var(--pad) 16px;border-bottom:1px solid var(--hair);background:var(--panel)}
+.editor[hidden]{display:none}
+.editor h3{margin:0 0 3px;font-size:12px;letter-spacing:.14em;color:var(--tx-2);font-weight:600}
+.editor p{margin:0 0 12px;font-size:11.5px;color:var(--tx-3)}
+.blocks{display:flex;flex-direction:column;gap:4px;max-width:520px}
+.brow{display:grid;grid-template-columns:auto 1fr auto auto;gap:10px;align-items:center;padding:6px 8px;
+  border:1px solid var(--hair);background:var(--page)}
+.brow input[type=checkbox]{accent-color:var(--team,#6b7280);width:16px;height:16px}
+.brow .bn{font-size:13px}
+.brow .bd{font-size:11px;color:var(--tx-3)}
+.mv{font:inherit;font-size:11px;padding:3px 8px;cursor:pointer;background:transparent;color:var(--tx-2);
+  border:1px solid var(--hair-2);transition:color var(--fast) var(--ease)}
+.mv:hover:not(:disabled){color:var(--tx);border-color:var(--tx-3)}
+.mv:disabled{opacity:.3;cursor:default}
+.fixed-note{margin-top:12px;padding:9px 11px;border-left:3px solid var(--warn);background:var(--page);
+  font-size:11.5px;color:var(--tx-2);max-width:520px}
+.fixed-note b{color:var(--warn)}
+
+/* ── 블록 ────────────────────────────────────────────────── */
+.block{padding:16px var(--pad);border-bottom:1px solid var(--hair);animation:rise var(--mid) var(--ease) both;
+  animation-delay:calc(var(--i,0) * 26ms)}
+.block[hidden]{display:none}
+.block&gt;h4{margin:0 0 9px;font-size:10.5px;letter-spacing:.19em;color:var(--tx-2);font-weight:600;
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.block&gt;h4 .sw{display:flex;gap:4px;margin-left:auto;flex-wrap:wrap}
+.block&gt;h4 .qt{letter-spacing:0;font-weight:400;color:var(--tx-3)}
+[data-panelgroup]{animation:fade var(--fast) var(--ease)}
+[data-panelgroup][hidden]{display:none}
+
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:0 24px}
+dl{margin:0;display:grid;grid-template-columns:auto 1fr;align-items:baseline}
+dt{font-size:10.5px;color:var(--tx-2);letter-spacing:.12em;padding:4px 10px 4px 0;border-bottom:1px solid var(--hair);white-space:nowrap}
+dd{margin:0;text-align:right;font-family:var(--f-num);font-variant-numeric:tabular-nums;font-size:14px;
+  padding:4px 0;border-bottom:1px solid var(--hair)}
+.den{font-family:var(--f-num);font-size:10px;color:var(--tx-3);margin-left:5px}
+.rank{background:var(--team,#6b7280);color:var(--team-ink,#fff);font-weight:700;padding:0 5px;font-size:10px;
+  margin-left:6px;font-family:var(--f-body)}
+
+.scroller{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{border-collapse:collapse;width:100%;font-size:12px}
+th,td{padding:5px 8px;text-align:right;font-variant-numeric:tabular-nums;border-bottom:1px solid var(--hair);white-space:nowrap}
+th{font-size:10px;letter-spacing:.1em;color:var(--tx-2);font-weight:500;position:sticky;top:0;background:var(--page)}
+td.l,th.l{text-align:left}
+tbody tr{transition:background var(--fast) var(--ease)}
+tbody tr:hover{background:var(--panel-2)}
+tr.me td{background:var(--team,#6b7280);color:var(--team-ink,#fff);font-weight:700}
+tr.me:hover td{background:var(--team,#6b7280)}
+tr.thin td{color:var(--tx-3)}
+td a{text-decoration:none;box-shadow:inset 0 -1px 0 var(--hair-2)}
+td a:hover{box-shadow:inset 0 -1px 0 currentColor}
+
+.pa{font-size:11.5px;letter-spacing:.02em}
+.pa.h{color:var(--warn);font-weight:700}
+
+.dg{display:grid;grid-template-columns:66px repeat(3,minmax(56px,1fr));gap:3px;min-width:300px}
+.dg .h{font-size:10px;letter-spacing:.1em;color:var(--tx-3);text-align:center}
+.dg .rl{font-size:11px;color:var(--tx-2);display:flex;align-items:center}
+.dg .c{border:1px solid var(--hair);padding:5px 3px;text-align:center;font-family:var(--f-num);font-variant-numeric:tabular-nums}
+.dg .c u{display:block;text-decoration:none;font-size:13px}
+.dg .c s{display:block;text-decoration:none;font-size:9px;color:var(--tx-3)}
+.dg .c.thin u{color:var(--tx-3)}
+
+.bars{display:flex;flex-direction:column;gap:6px;max-width:480px}
+.bar{display:grid;grid-template-columns:84px 1fr 132px;gap:10px;align-items:center}
+.bar span{font-size:11.5px;color:var(--tx-2)}
+.track{height:13px;background:var(--hair)}
+.track i{display:block;height:100%;background:var(--team,#6b7280);transform-origin:left center;
+  animation:grow 420ms var(--ease) both}
+.bar em{font-style:normal;font-family:var(--f-num);font-variant-numeric:tabular-nums;font-size:12px;text-align:right}
+/* 상대전적 좁히기 */
+.mfind{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:0 0 9px}
+.mfind label{font-size:10.5px;letter-spacing:.14em;color:var(--tx-3)}
+.mfind input{font:inherit;font-size:13px;padding:5px 9px;width:170px;background:var(--panel);color:var(--tx);
+  border:1px solid var(--hair-2);transition:border-color var(--fast) var(--ease)}
+.mfind input:hover{border-color:var(--tx-3)}
+.mfind .count{font-family:var(--f-num);font-size:11px;color:var(--tx-3)}
+@media (max-width:680px){.mfind input{flex:1 1 auto;width:auto;min-width:0}}
+
+.note{font-size:11px;color:var(--tx-3);margin:9px 0 0;max-width:64ch}
+.empty{font-size:12px;color:var(--tx-3);padding:6px 0}
+
+/* ── 予告先発 ────────────────────────────────────────────── */
+/* 대전 카드 버튼 — **경기 수만큼 만들어지고, 폭에 맞춰 열이 접힌다** */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:6px;
+  padding:12px var(--pad);border-bottom:1px solid var(--hair);background:var(--panel)}
+.card{display:flex;align-items:center;gap:9px;font:inherit;text-align:left;cursor:pointer;
+  padding:8px 10px;background:transparent;color:var(--tx-2);border:1px solid var(--hair-2);
+  transition:color var(--fast) var(--ease),border-color var(--fast) var(--ease),background var(--fast) var(--ease)}
+.card:hover{color:var(--tx);border-color:var(--tx-3)}
+.card[aria-selected=&quot;true&quot;]{color:var(--tx);border-color:var(--tx);background:var(--page)}
+.card .cbar{display:flex;flex-direction:column;gap:2px;flex:0 0 auto}
+.card .cbar i{display:block;width:5px;height:13px}
+.card .ctxt{min-width:0;display:flex;flex-direction:column;gap:1px}
+.card .ctxt b{font-size:12.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card .ctxt s{text-decoration:none;font-family:var(--f-num);font-size:10px;color:var(--tx-3);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.card.all .ctxt b{letter-spacing:.1em}
+@media (max-width:420px){.cards{grid-template-columns:1fr 1fr;gap:5px}.card{padding:7px 8px}}
+
+.starters{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+.sside{min-width:0}
+.sname{margin:0 0 6px;font-size:11px;letter-spacing:.14em;font-weight:700;display:flex;align-items:center;gap:7px}
+.sname i{width:10px;height:10px;background:var(--chip,#6b7280);font-style:normal}
+.spitcher{margin:0 0 9px;font-size:19px;font-weight:700;letter-spacing:.06em}
+.spitcher a{text-decoration:none;box-shadow:inset 0 -2px 0 var(--chip,#6b7280)}
+dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
+@media (max-width:680px){.starters{grid-template-columns:1fr;gap:18px}}
+
+/* ── 対戦を選ぶ ──────────────────────────────────────────── */
+.picker{display:grid;grid-template-columns:repeat(auto-fit,minmax(238px,1fr));gap:18px;max-width:640px}
+.pickside label{display:block;font-size:10.5px;letter-spacing:.16em;color:var(--tx-3);margin-bottom:6px}
+.pickside .qbox{max-width:none}
+.pickside .qbox input{font-size:15px;padding:8px 10px}
+.chosen{margin:7px 0 0;font-size:12px;color:var(--tx-3)}
+.chosen b{color:var(--tx);font-weight:700}
+.go{font:inherit;font-size:13px;padding:9px 18px;cursor:pointer;background:var(--team,#6b7280);
+  color:var(--team-ink,#fff);border:1px solid var(--team,#6b7280);font-weight:700;
+  transition:opacity var(--fast) var(--ease)}
+.go:disabled{opacity:.35;cursor:default}
+.go:hover:not(:disabled){opacity:.85}
+
+/* ── 색인 ────────────────────────────────────────────────── */
+.find{padding:14px var(--pad);border-bottom:1px solid var(--hair)}
+.find label{display:block;font-size:10.5px;letter-spacing:.16em;color:var(--tx-3);margin-bottom:6px}
+.find input{font:inherit;font-size:15px;padding:8px 10px;width:100%;max-width:420px;background:var(--panel);
+  color:var(--tx);border:1px solid var(--hair-2)}
+.chips{display:flex;gap:5px;flex-wrap:wrap;margin-top:11px}
+.chip{font:inherit;font-size:11.5px;padding:4px 9px;cursor:pointer;background:transparent;color:var(--tx-2);
+  border:1px solid var(--hair-2);white-space:nowrap;transition:all var(--fast) var(--ease)}
+.chip:hover{color:var(--tx);border-color:var(--tx-3)}
+.chip[aria-pressed=&quot;true&quot;]{background:var(--chip,#6b7280);color:var(--chip-ink,#fff);border-color:var(--chip,#6b7280);font-weight:700}
+.count{font-size:11px;color:var(--tx-3);margin-top:10px}
+.teamgroup{padding:14px var(--pad);border-bottom:1px solid var(--hair)}
+.teamgroup[hidden]{display:none}
+.teamgroup h4{margin:0 0 8px;font-size:11px;letter-spacing:.14em;font-weight:700;
+  display:flex;align-items:center;gap:8px}
+.teamgroup h4 i{width:11px;height:11px;background:var(--chip,#6b7280);font-style:normal}
+.roster{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:0 16px}
+.roster li[hidden]{display:none}
+.roster a{display:flex;gap:8px;align-items:baseline;padding:5px 0;text-decoration:none;border-bottom:1px solid var(--hair);
+  transition:padding-left var(--fast) var(--ease)}
+.roster a:hover{padding-left:4px}
+.roster .hn{font-size:13px}
+.roster .hp{margin-left:auto;font-size:10px;color:var(--tx-3)}
+
+.foot{padding:18px var(--pad);color:var(--tx-3);font-size:11.5px}
+.foot a{text-decoration:underline}
+
+@keyframes rise{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+@keyframes drop{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+@keyframes grow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+
+/* ── 반응형 ──────────────────────────────────────────────── */
+@media (max-width:900px){
+  :root{--pad:16px}
+  .bar{grid-template-columns:76px 1fr 118px;gap:8px}
+}
+@media (max-width:680px){
+  :root{--pad:13px;--topbar:44px}
+  .shell{grid-template-columns:7px 1fr}
+  .spine{padding:0}
+  .spine .vt{display:none}
+  /* 화면이 좁으면 레일까지 고정하면 본문이 사라진다 — 헤더만 남긴다 */
+  .rail{position:static}
+  .qbox{max-width:none}
+  .tnav a{padding:5px 7px}
+  .idline{gap:11px;padding-top:13px}
+  .mark .mk{width:42px;height:42px}
+  .spark{width:100%;margin-left:0;align-items:flex-start}
+  .cols{grid-template-columns:1fr;gap:0}
+  .bars{max-width:none}
+  .bar{grid-template-columns:1fr;gap:2px}
+  .bar em{text-align:left}
+  .roster{grid-template-columns:1fr}
+  th,td{padding:6px 7px}
+}
+@media (max-width:480px){
+  /* 링크가 4개가 되면 한 줄에 브랜드·검색·내비·테마가 다 들어가지 않는다.
+     검색창을 아랫줄로 내린다 — 줄이는 것보다 두 줄이 낫다 */
+  .topbar{height:auto;flex-wrap:wrap;padding:6px 10px 8px;gap:6px}
+  .qbox{order:3;flex-basis:100%;max-width:none}
+  .tnav{margin-left:auto}
+}
+@media (max-width:420px){
+  .brand{font-size:12px;letter-spacing:.08em}
+  .tnav a{font-size:11px;padding:5px 6px}
+}
+/* 손가락은 마우스보다 크다 */
+@media (pointer:coarse){
+  .tab,.chip{padding:7px 12px}
+  .mv{padding:6px 11px}
+  .tnav a{padding:9px 10px}
+  .roster a,.qhits li a{padding-top:8px;padding-bottom:8px}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:1ms!important;animation-delay:0ms!important;transition-duration:1ms!important}
+}
+@media print{
+  .topbar,.rail,.editor,.skip{display:none}
+  .block[hidden]{display:block}
+  .shell{grid-template-columns:0 1fr}
+}
+
+.wrap{padding:20px;max-width:960px}
+.wrap h1{font-size:19px;letter-spacing:.08em;margin:0 0 4px}
+.wrap h2{font-size:12px;letter-spacing:.16em;color:var(--tx-2);margin:26px 0 8px}
+.wrap p{font-size:12.5px;max-width:70ch;color:var(--tx-2)}
+.wrap table{margin-top:8px}
+.mkcell{text-align:center;padding:9px 8px}
+.mkcell s{display:block;text-decoration:none;font-size:9.5px;color:var(--tx-3);margin-top:4px}
+.mk{display:inline-block;vertical-align:middle}
+.num{font-family:var(--f-num);font-variant-numeric:tabular-nums}
+.hp{font-size:10.5px;color:var(--tx-3)}
+.warn{border-left:3px solid var(--warn);padding:10px 12px;background:var(--panel);font-size:12.5px;max-width:70ch}
+.warn b{color:var(--warn)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>選手識別マーク 3案</h1>
+<p>写真の代わりに「このページが誰のものか」を一目で示すための案です。5人ぶんを実データで描いています。</p>
+
+<div class="warn">
+  <b>実在選手の似顔絵（カリカチュア）は作りません。</b>
+  写真の問題は著作権だけではありません。パブリシティ権は「肖像<b>等</b>」を対象としており、
+  似顔絵もそこに含まれます（ピンク・レディー事件・最高裁 2012-02-02）。媒体を変えても外れません。
+  さらに参照写真から描けばその写真の二次的著作物になり（著作権法 §27）、
+  695人ぶんとなると規模そのものが不利にはたらきます。<br>
+  そこで、写真が<b>画面でしていた仕事</b>だけを、肖像ではない方法で置き換えます。
+</div>
+
+<h2>3案の比較</h2>
+<div class="scroller"><table>
+<thead><tr>
+  <th class="l">選手</th>
+  <th>A 印</th><th>B 成績の紋</th><th>C 打席の帯</th>
+  <th class="l">打率 / 出塁 / 長打</th>
+</tr></thead>
+<tbody><tr>
+  <td class="l">
+    <b>栗原</b><br>
+    <span class="hp">福岡ソフトバンクホークス</span><br>
+    <span class="hp">主砲（長打型）</span>
+  </td>
+  <td class="mkcell"><svg class="mk" width="52" height="52" viewBox="0 0 52 52"
+  role="img" aria-label="栗原の識別マーク">
+  <rect width="52" height="52" fill="#f5c400"></rect>
+  <rect x="10.4" y="10.4"
+            width="10.4" height="10.4" fill="#171509"></rect><rect x="31.2" y="10.4"
+            width="10.4" height="10.4" fill="#171509"></rect><rect x="20.8" y="31.2"
+            width="10.4" height="10.4" fill="#171509"></rect><rect x="0.0" y="41.6"
+            width="10.4" height="10.4" fill="#171509"></rect><rect x="41.6" y="41.6"
+            width="10.4" height="10.4" fill="#171509"></rect><rect x="10.4" y="41.6"
+            width="10.4" height="10.4" fill="#171509"></rect><rect x="31.2" y="41.6"
+            width="10.4" height="10.4" fill="#171509"></rect><rect x="20.8" y="41.6"
+            width="10.4" height="10.4" fill="#171509"></rect>
+</svg></td>
+  <td class="mkcell"><svg class="mk" width="52" height="52" viewBox="0 0 52 52"
+  role="img" aria-label="栗原の成績プロフィール（457打席）：打率 .250、出塁 .346、長打 .304、選球 .118、接触 .807">
+  <rect width="52" height="52" fill="#f5c400"></rect>
+  <polygon points="26.0,3.0 47.9,18.9 39.5,44.6 12.5,44.6 4.1,18.9" fill="none" stroke="#171509" stroke-opacity=".28" stroke-width="1"></polygon>
+  <polygon points="26.0,14.5 36.6,22.6 39.5,44.6 18.0,37.0 14.7,22.3" fill="#171509" fill-opacity=".85"></polygon>
+</svg>
+    <s>457打席</s></td>
+  <td class="mkcell"><svg class="mk" width="52" height="52" viewBox="0 0 52 52"
+  role="img" aria-label="栗原の直近90打席">
+  <rect width="52" height="52" fill="#f5c400"></rect>
+  <rect x="0.00" y="3.0"
+      width="0.60" height="46.0"
+      fill="#171509" fill-opacity="1"></rect><rect x="0.58" y="39.8"
+      width="0.60" height="9.2"
+      fill="#171509" fill-opacity=".26"></rect><rect x="1.16" y="28.8"
+      width="0.60" height="20.2"
+      fill="#171509" fill-opacity=".7"></rect><rect x="1.73" y="28.8"
+      width="0.60" height="20.2"
+      fill="#171509" fill-opacity=".7"></rect><rect x="2.31" y="15.9"
+      width="0.60" height="33.1"
+      fill="#171509" fill-opacity="1"></rect><rect x="2.89" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="3.47" y="28.8"
+      width="0.60" height="20.2"
+      fill="#171509" fill-opacity=".7"></rect><rect x="4.04" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="4.62" y="28.8"
+      width="0.60" height="20.2"
+      fill="#171509" fill-opacity=".7"></rect><rect x="5.20" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="5.78" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="6.36" y="39.8"
+      width="0.60" height="9.2"
+      fill="#171509" fill-opacity=".26"></rect><rect x="6.93" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="7.51" y="15.9"
+      width="0.60" height="33.1"
+      fill="#171509" fill-opacity="1"></rect><rect x="8.09" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="8.67" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="9.24" y="28.8"
+      width="0.60" height="20.2"
+      fill="#171509" fill-opacity=".7"></rect><rect x="9.82" y="39.8"
+      width="0.60" height="9.2"
+      fill="#171509" fill-opacity=".26"></rect><rect x="10.40" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="10.98" y="39.8"
+      width="0.60" height="9.2"
+      fill="#171509" fill-opacity=".26"></rect><rect x="11.56" y="15.9"
+      width="0.60" height="33.1"
+      fill="#171509" fill-opacity="1"></rect><rect x="12.13" y="3.0"
+      width="0.60" height="46.0"
+      fill="#171509" fill-opacity="1"></rect><rect x="12.71" y="15.9"
+      width="0.60" height="33.1"
+      fill="#171509" fill-opacity="1"></rect><rect x="13.29" y="15.9"
+      width="0.60" height="33.1"
+      fill="#171509" fill-opacity="1"></rect><rect x="13.87" y="3.0"
+      width="0.60" height="46.0"
+      fill="#171509" fill-opacity="1"></rect><rect x="14.44" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="15.02" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="15.60" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="16.18" y="28.8"
+      width="0.60" height="20.2"
+      fill="#171509" fill-opacity=".7"></rect><rect x="16.76" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="17.33" y="39.8"
+      width="0.60" height="9.2"
+      fill="#171509" fill-opacity=".26"></rect><rect x="17.91" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="18.49" y="3.0"
+      width="0.60" height="46.0"
+      fill="#171509" fill-opacity="1"></rect><rect x="19.07" y="15.9"
+      width="0.60" height="33.1"
+      fill="#171509" fill-opacity="1"></rect><rect x="19.64" y="28.8"
+      width="0.60" height="20.2"
+      fill="#171509" fill-opacity=".7"></rect><rect x="20.22" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="20.80" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="21.38" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="21.96" y="28.8"
+      width="0.60" height="20.2"
+      fill="#171509" fill-opacity=".7"></rect><rect x="22.53" y="39.8"
+      width="0.60" height="9.2"
+      fill="#171509" fill-opacity=".26"></rect><rect x="23.11" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="23.69" y="28.8"
+      width="0.60" height="20.2"
+      fill="#171509" fill-opacity=".7"></rect><rect x="24.27" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="24.84" y="28.8"
+      width="0.60" height="20.2"
+      fill="#171509" fill-opacity=".7"></rect><rect x="25.42" y="39.8"
+      width="0.60" height="9.2"
+      fill="#171509" fill-opacity=".26"></rect><rect x="26.00" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="26.58" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="27.16" y="39.8"
+      width="0.60" height="9.2"
+      fill="#171509" fill-opacity=".26"></rect><rect x="27.73" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="28.31" y="28.8"
+      width="0.60" height="20.2"
+      fill="#171509" fill-opacity=".7"></rect><rect x="28.89" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="29.47" y="28.8"
+      width="0.60" height="20.2"
+      fill="#171509" fill-opacity=".7"></rect><rect x="30.04" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="30.62" y="39.8"
+      width="0.60" height="9.2"
+      fill="#171509" fill-opacity=".26"></rect><rect x="31.20" y="39.8"
+      width="0.60" height="9.2"
+      fill="#171509" fill-opacity=".26"></rect><rect x="31.78" y="39.8"
+      width="0.60" height="9.2"
+      fill="#171509" fill-opacity=".26"></rect><rect x="32.36" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="32.93" y="15.9"
+      width="0.60" height="33.1"
+      fill="#171509" fill-opacity="1"></rect><rect x="33.51" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="34.09" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="34.67" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="35.24" y="39.8"
+      width="0.60" height="9.2"
+      fill="#171509" fill-opacity=".26"></rect><rect x="35.82" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="36.40" y="28.8"
+      width="0.60" height="20.2"
+      fill="#171509" fill-opacity=".7"></rect><rect x="36.98" y="39.8"
+      width="0.60" height="9.2"
+      fill="#171509" fill-opacity=".26"></rect><rect x="37.56" y="39.8"
+      width="0.60" height="9.2"
+      fill="#171509" fill-opacity=".26"></rect><rect x="38.13" y="28.8"
+      width="0.60" height="20.2"
+      fill="#171509" fill-opacity=".7"></rect><rect x="38.71" y="39.8"
+      width="0.60" height="9.2"
+      fill="#171509" fill-opacity=".26"></rect><rect x="39.29" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="39.87" y="28.8"
+      width="0.60" height="20.2"
+      fill="#171509" fill-opacity=".7"></rect><rect x="40.44" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="41.02" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="41.60" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="42.18" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="42.76" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="43.33" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="43.91" y="3.0"
+      width="0.60" height="46.0"
+      fill="#171509" fill-opacity="1"></rect><rect x="44.49" y="28.8"
+      width="0.60" height="20.2"
+      fill="#171509" fill-opacity=".7"></rect><rect x="45.07" y="28.8"
+      width="0.60" height="20.2"
+      fill="#171509" fill-opacity=".7"></rect><rect x="45.64" y="28.8"
+      width="0.60" height="20.2"
+      fill="#171509" fill-opacity=".7"></rect><rect x="46.22" y="3.0"
+      width="0.60" height="46.0"
+      fill="#171509" fill-opacity="1"></rect><rect x="46.80" y="28.8"
+      width="0.60" height="20.2"
+      fill="#171509" fill-opacity=".7"></rect><rect x="47.38" y="28.8"
+      width="0.60" height="20.2"
+      fill="#171509" fill-opacity=".7"></rect><rect x="47.96" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="48.53" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="49.11" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="49.69" y="15.9"
+      width="0.60" height="33.1"
+      fill="#171509" fill-opacity="1"></rect><rect x="50.27" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="50.84" y="35.2"
+      width="0.60" height="13.8"
+      fill="#171509" fill-opacity=".4"></rect><rect x="51.42" y="28.8"
+      width="0.60" height="20.2"
+      fill="#171509" fill-opacity=".7"></rect>
+</svg>
+    <s>直近90打席</s></td>
+  <td class="l num">.250 / .346 /
+    .304<br>
+    <span class="hp">K .193 · BB .118 ·
+    BABIP .239</span></td>
+</tr><tr>
+  <td class="l">
+    <b>中川</b><br>
+    <span class="hp">オリックス・バファローズ</span><br>
+    <span class="hp">三振の少ない打者（コンタクト型）</span>
+  </td>
+  <td class="mkcell"><svg class="mk" width="52" height="52" viewBox="0 0 52 52"
+  role="img" aria-label="中川の識別マーク">
+  <rect width="52" height="52" fill="#1d1f4e"></rect>
+  <rect x="0.0" y="0.0"
+            width="10.4" height="10.4" fill="#eeeff8"></rect><rect x="41.6" y="0.0"
+            width="10.4" height="10.4" fill="#eeeff8"></rect><rect x="10.4" y="0.0"
+            width="10.4" height="10.4" fill="#eeeff8"></rect><rect x="31.2" y="0.0"
+            width="10.4" height="10.4" fill="#eeeff8"></rect><rect x="20.8" y="0.0"
+            width="10.4" height="10.4" fill="#eeeff8"></rect><rect x="0.0" y="10.4"
+            width="10.4" height="10.4" fill="#eeeff8"></rect><rect x="41.6" y="10.4"
+            width="10.4" height="10.4" fill="#eeeff8"></rect><rect x="10.4" y="10.4"
+            width="10.4" height="10.4" fill="#eeeff8"></rect><rect x="31.2" y="10.4"
+            width="10.4" height="10.4" fill="#eeeff8"></rect><rect x="20.8" y="10.4"
+            width="10.4" height="10.4" fill="#eeeff8"></rect><rect x="0.0" y="20.8"
+            width="10.4" height="10.4" fill="#eeeff8"></rect><rect x="41.6" y="20.8"
+            width="10.4" height="10.4" fill="#eeeff8"></rect><rect x="10.4" y="20.8"
+            width="10.4" height="10.4" fill="#eeeff8"></rect><rect x="31.2" y="20.8"
+            width="10.4" height="10.4" fill="#eeeff8"></rect><rect x="20.8" y="20.8"
+            width="10.4" height="10.4" fill="#eeeff8"></rect><rect x="20.8" y="31.2"
+            width="10.4" height="10.4" fill="#eeeff8"></rect><rect x="20.8" y="41.6"
+            width="10.4" height="10.4" fill="#eeeff8"></rect>
+</svg></td>
+  <td class="mkcell"><svg class="mk" width="52" height="52" viewBox="0 0 52 52"
+  role="img" aria-label="中川の成績プロフィール（381打席）：打率 .243、出塁 .306、長打 .094、選球 .073、接触 .895">
+  <rect width="52" height="52" fill="#1d1f4e"></rect>
+  <polygon points="26.0,3.0 47.9,18.9 39.5,44.6 12.5,44.6 4.1,18.9" fill="none" stroke="#eeeff8" stroke-opacity=".28" stroke-width="1"></polygon>
+  <polygon points="26.0,15.3 32.1,24.0 30.2,31.8 21.0,32.8 9.9,20.8" fill="#eeeff8" fill-opacity=".85"></polygon>
+</svg>
+    <s>381打席</s></td>
+  <td class="mkcell"><svg class="mk" width="52" height="52" viewBox="0 0 52 52"
+  role="img" aria-label="中川の直近90打席">
+  <rect width="52" height="52" fill="#1d1f4e"></rect>
+  <rect x="0.00" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="0.58" y="15.9"
+      width="0.60" height="33.1"
+      fill="#eeeff8" fill-opacity="1"></rect><rect x="1.16" y="15.9"
+      width="0.60" height="33.1"
+      fill="#eeeff8" fill-opacity="1"></rect><rect x="1.73" y="15.9"
+      width="0.60" height="33.1"
+      fill="#eeeff8" fill-opacity="1"></rect><rect x="2.31" y="39.8"
+      width="0.60" height="9.2"
+      fill="#eeeff8" fill-opacity=".26"></rect><rect x="2.89" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="3.47" y="3.0"
+      width="0.60" height="46.0"
+      fill="#eeeff8" fill-opacity="1"></rect><rect x="4.04" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="4.62" y="15.9"
+      width="0.60" height="33.1"
+      fill="#eeeff8" fill-opacity="1"></rect><rect x="5.20" y="3.0"
+      width="0.60" height="46.0"
+      fill="#eeeff8" fill-opacity="1"></rect><rect x="5.78" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="6.36" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="6.93" y="15.9"
+      width="0.60" height="33.1"
+      fill="#eeeff8" fill-opacity="1"></rect><rect x="7.51" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="8.09" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="8.67" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="9.24" y="15.9"
+      width="0.60" height="33.1"
+      fill="#eeeff8" fill-opacity="1"></rect><rect x="9.82" y="28.8"
+      width="0.60" height="20.2"
+      fill="#eeeff8" fill-opacity=".7"></rect><rect x="10.40" y="15.9"
+      width="0.60" height="33.1"
+      fill="#eeeff8" fill-opacity="1"></rect><rect x="10.98" y="28.8"
+      width="0.60" height="20.2"
+      fill="#eeeff8" fill-opacity=".7"></rect><rect x="11.56" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="12.13" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="12.71" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="13.29" y="15.9"
+      width="0.60" height="33.1"
+      fill="#eeeff8" fill-opacity="1"></rect><rect x="13.87" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="14.44" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="15.02" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="15.60" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="16.18" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="16.76" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="17.33" y="28.8"
+      width="0.60" height="20.2"
+      fill="#eeeff8" fill-opacity=".7"></rect><rect x="17.91" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="18.49" y="28.8"
+      width="0.60" height="20.2"
+      fill="#eeeff8" fill-opacity=".7"></rect><rect x="19.07" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="19.64" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="20.22" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="20.80" y="28.8"
+      width="0.60" height="20.2"
+      fill="#eeeff8" fill-opacity=".7"></rect><rect x="21.38" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="21.96" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="22.53" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="23.11" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="23.69" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="24.27" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="24.84" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="25.42" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="26.00" y="39.8"
+      width="0.60" height="9.2"
+      fill="#eeeff8" fill-opacity=".26"></rect><rect x="26.58" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="27.16" y="15.9"
+      width="0.60" height="33.1"
+      fill="#eeeff8" fill-opacity="1"></rect><rect x="27.73" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="28.31" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="28.89" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="29.47" y="15.9"
+      width="0.60" height="33.1"
+      fill="#eeeff8" fill-opacity="1"></rect><rect x="30.04" y="15.9"
+      width="0.60" height="33.1"
+      fill="#eeeff8" fill-opacity="1"></rect><rect x="30.62" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="31.20" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="31.78" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="32.36" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="32.93" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="33.51" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="34.09" y="28.8"
+      width="0.60" height="20.2"
+      fill="#eeeff8" fill-opacity=".7"></rect><rect x="34.67" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="35.24" y="15.9"
+      width="0.60" height="33.1"
+      fill="#eeeff8" fill-opacity="1"></rect><rect x="35.82" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="36.40" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="36.98" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="37.56" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="38.13" y="28.8"
+      width="0.60" height="20.2"
+      fill="#eeeff8" fill-opacity=".7"></rect><rect x="38.71" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="39.29" y="39.8"
+      width="0.60" height="9.2"
+      fill="#eeeff8" fill-opacity=".26"></rect><rect x="39.87" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="40.44" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="41.02" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="41.60" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="42.18" y="39.8"
+      width="0.60" height="9.2"
+      fill="#eeeff8" fill-opacity=".26"></rect><rect x="42.76" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="43.33" y="39.8"
+      width="0.60" height="9.2"
+      fill="#eeeff8" fill-opacity=".26"></rect><rect x="43.91" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="44.49" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="45.07" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="45.64" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="46.22" y="39.8"
+      width="0.60" height="9.2"
+      fill="#eeeff8" fill-opacity=".26"></rect><rect x="46.80" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="47.38" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="47.96" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="48.53" y="28.8"
+      width="0.60" height="20.2"
+      fill="#eeeff8" fill-opacity=".7"></rect><rect x="49.11" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="49.69" y="28.8"
+      width="0.60" height="20.2"
+      fill="#eeeff8" fill-opacity=".7"></rect><rect x="50.27" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eeeff8" fill-opacity=".4"></rect><rect x="50.84" y="15.9"
+      width="0.60" height="33.1"
+      fill="#eeeff8" fill-opacity="1"></rect><rect x="51.42" y="28.8"
+      width="0.60" height="20.2"
+      fill="#eeeff8" fill-opacity=".7"></rect>
+</svg>
+    <s>直近90打席</s></td>
+  <td class="l num">.243 / .306 /
+    .094<br>
+    <span class="hp">K .105 · BB .073 ·
+    BABIP .257</span></td>
+</tr><tr>
+  <td class="l">
+    <b>細川</b><br>
+    <span class="hp">中日ドラゴンズ</span><br>
+    <span class="hp">四球の多い打者（選球型）</span>
+  </td>
+  <td class="mkcell"><svg class="mk" width="52" height="52" viewBox="0 0 52 52"
+  role="img" aria-label="細川の識別マーク">
+  <rect width="52" height="52" fill="#0a2f7a"></rect>
+  <rect x="0.0" y="0.0"
+            width="10.4" height="10.4" fill="#eef3fb"></rect><rect x="41.6" y="0.0"
+            width="10.4" height="10.4" fill="#eef3fb"></rect><rect x="20.8" y="0.0"
+            width="10.4" height="10.4" fill="#eef3fb"></rect><rect x="0.0" y="10.4"
+            width="10.4" height="10.4" fill="#eef3fb"></rect><rect x="41.6" y="10.4"
+            width="10.4" height="10.4" fill="#eef3fb"></rect><rect x="10.4" y="10.4"
+            width="10.4" height="10.4" fill="#eef3fb"></rect><rect x="31.2" y="10.4"
+            width="10.4" height="10.4" fill="#eef3fb"></rect><rect x="20.8" y="10.4"
+            width="10.4" height="10.4" fill="#eef3fb"></rect><rect x="0.0" y="31.2"
+            width="10.4" height="10.4" fill="#eef3fb"></rect><rect x="41.6" y="31.2"
+            width="10.4" height="10.4" fill="#eef3fb"></rect><rect x="10.4" y="31.2"
+            width="10.4" height="10.4" fill="#eef3fb"></rect><rect x="31.2" y="31.2"
+            width="10.4" height="10.4" fill="#eef3fb"></rect><rect x="20.8" y="41.6"
+            width="10.4" height="10.4" fill="#eef3fb"></rect>
+</svg></td>
+  <td class="mkcell"><svg class="mk" width="52" height="52" viewBox="0 0 52 52"
+  role="img" aria-label="細川の成績プロフィール（450打席）：打率 .232、出塁 .362、長打 .192、選球 .158、接触 .742">
+  <rect width="52" height="52" fill="#0a2f7a"></rect>
+  <polygon points="26.0,3.0 47.9,18.9 39.5,44.6 12.5,44.6 4.1,18.9" fill="none" stroke="#eef3fb" stroke-opacity=".28" stroke-width="1"></polygon>
+  <polygon points="26.0,16.5 38.3,22.0 34.6,37.9 15.3,40.7 18.2,23.5" fill="#eef3fb" fill-opacity=".85"></polygon>
+</svg>
+    <s>450打席</s></td>
+  <td class="mkcell"><svg class="mk" width="52" height="52" viewBox="0 0 52 52"
+  role="img" aria-label="細川の直近90打席">
+  <rect width="52" height="52" fill="#0a2f7a"></rect>
+  <rect x="0.00" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="0.58" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="1.16" y="15.9"
+      width="0.60" height="33.1"
+      fill="#eef3fb" fill-opacity="1"></rect><rect x="1.73" y="3.0"
+      width="0.60" height="46.0"
+      fill="#eef3fb" fill-opacity="1"></rect><rect x="2.31" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="2.89" y="39.8"
+      width="0.60" height="9.2"
+      fill="#eef3fb" fill-opacity=".26"></rect><rect x="3.47" y="39.8"
+      width="0.60" height="9.2"
+      fill="#eef3fb" fill-opacity=".26"></rect><rect x="4.04" y="15.9"
+      width="0.60" height="33.1"
+      fill="#eef3fb" fill-opacity="1"></rect><rect x="4.62" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="5.20" y="39.8"
+      width="0.60" height="9.2"
+      fill="#eef3fb" fill-opacity=".26"></rect><rect x="5.78" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="6.36" y="39.8"
+      width="0.60" height="9.2"
+      fill="#eef3fb" fill-opacity=".26"></rect><rect x="6.93" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="7.51" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="8.09" y="39.8"
+      width="0.60" height="9.2"
+      fill="#eef3fb" fill-opacity=".26"></rect><rect x="8.67" y="28.8"
+      width="0.60" height="20.2"
+      fill="#eef3fb" fill-opacity=".7"></rect><rect x="9.24" y="15.9"
+      width="0.60" height="33.1"
+      fill="#eef3fb" fill-opacity="1"></rect><rect x="9.82" y="28.8"
+      width="0.60" height="20.2"
+      fill="#eef3fb" fill-opacity=".7"></rect><rect x="10.40" y="28.8"
+      width="0.60" height="20.2"
+      fill="#eef3fb" fill-opacity=".7"></rect><rect x="10.98" y="3.0"
+      width="0.60" height="46.0"
+      fill="#eef3fb" fill-opacity="1"></rect><rect x="11.56" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="12.13" y="39.8"
+      width="0.60" height="9.2"
+      fill="#eef3fb" fill-opacity=".26"></rect><rect x="12.71" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="13.29" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="13.87" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="14.44" y="3.0"
+      width="0.60" height="46.0"
+      fill="#eef3fb" fill-opacity="1"></rect><rect x="15.02" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="15.60" y="15.9"
+      width="0.60" height="33.1"
+      fill="#eef3fb" fill-opacity="1"></rect><rect x="16.18" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="16.76" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="17.33" y="28.8"
+      width="0.60" height="20.2"
+      fill="#eef3fb" fill-opacity=".7"></rect><rect x="17.91" y="39.8"
+      width="0.60" height="9.2"
+      fill="#eef3fb" fill-opacity=".26"></rect><rect x="18.49" y="39.8"
+      width="0.60" height="9.2"
+      fill="#eef3fb" fill-opacity=".26"></rect><rect x="19.07" y="39.8"
+      width="0.60" height="9.2"
+      fill="#eef3fb" fill-opacity=".26"></rect><rect x="19.64" y="28.8"
+      width="0.60" height="20.2"
+      fill="#eef3fb" fill-opacity=".7"></rect><rect x="20.22" y="15.9"
+      width="0.60" height="33.1"
+      fill="#eef3fb" fill-opacity="1"></rect><rect x="20.80" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="21.38" y="15.9"
+      width="0.60" height="33.1"
+      fill="#eef3fb" fill-opacity="1"></rect><rect x="21.96" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="22.53" y="3.0"
+      width="0.60" height="46.0"
+      fill="#eef3fb" fill-opacity="1"></rect><rect x="23.11" y="39.8"
+      width="0.60" height="9.2"
+      fill="#eef3fb" fill-opacity=".26"></rect><rect x="23.69" y="3.0"
+      width="0.60" height="46.0"
+      fill="#eef3fb" fill-opacity="1"></rect><rect x="24.27" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="24.84" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="25.42" y="15.9"
+      width="0.60" height="33.1"
+      fill="#eef3fb" fill-opacity="1"></rect><rect x="26.00" y="15.9"
+      width="0.60" height="33.1"
+      fill="#eef3fb" fill-opacity="1"></rect><rect x="26.58" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="27.16" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="27.73" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="28.31" y="39.8"
+      width="0.60" height="9.2"
+      fill="#eef3fb" fill-opacity=".26"></rect><rect x="28.89" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="29.47" y="15.9"
+      width="0.60" height="33.1"
+      fill="#eef3fb" fill-opacity="1"></rect><rect x="30.04" y="15.9"
+      width="0.60" height="33.1"
+      fill="#eef3fb" fill-opacity="1"></rect><rect x="30.62" y="28.8"
+      width="0.60" height="20.2"
+      fill="#eef3fb" fill-opacity=".7"></rect><rect x="31.20" y="28.8"
+      width="0.60" height="20.2"
+      fill="#eef3fb" fill-opacity=".7"></rect><rect x="31.78" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="32.36" y="39.8"
+      width="0.60" height="9.2"
+      fill="#eef3fb" fill-opacity=".26"></rect><rect x="32.93" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="33.51" y="28.8"
+      width="0.60" height="20.2"
+      fill="#eef3fb" fill-opacity=".7"></rect><rect x="34.09" y="28.8"
+      width="0.60" height="20.2"
+      fill="#eef3fb" fill-opacity=".7"></rect><rect x="34.67" y="39.8"
+      width="0.60" height="9.2"
+      fill="#eef3fb" fill-opacity=".26"></rect><rect x="35.24" y="15.9"
+      width="0.60" height="33.1"
+      fill="#eef3fb" fill-opacity="1"></rect><rect x="35.82" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="36.40" y="28.8"
+      width="0.60" height="20.2"
+      fill="#eef3fb" fill-opacity=".7"></rect><rect x="36.98" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="37.56" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="38.13" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="38.71" y="15.9"
+      width="0.60" height="33.1"
+      fill="#eef3fb" fill-opacity="1"></rect><rect x="39.29" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="39.87" y="15.9"
+      width="0.60" height="33.1"
+      fill="#eef3fb" fill-opacity="1"></rect><rect x="40.44" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="41.02" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="41.60" y="15.9"
+      width="0.60" height="33.1"
+      fill="#eef3fb" fill-opacity="1"></rect><rect x="42.18" y="39.8"
+      width="0.60" height="9.2"
+      fill="#eef3fb" fill-opacity=".26"></rect><rect x="42.76" y="28.8"
+      width="0.60" height="20.2"
+      fill="#eef3fb" fill-opacity=".7"></rect><rect x="43.33" y="39.8"
+      width="0.60" height="9.2"
+      fill="#eef3fb" fill-opacity=".26"></rect><rect x="43.91" y="28.8"
+      width="0.60" height="20.2"
+      fill="#eef3fb" fill-opacity=".7"></rect><rect x="44.49" y="39.8"
+      width="0.60" height="9.2"
+      fill="#eef3fb" fill-opacity=".26"></rect><rect x="45.07" y="3.0"
+      width="0.60" height="46.0"
+      fill="#eef3fb" fill-opacity="1"></rect><rect x="45.64" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="46.22" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="46.80" y="3.0"
+      width="0.60" height="46.0"
+      fill="#eef3fb" fill-opacity="1"></rect><rect x="47.38" y="39.8"
+      width="0.60" height="9.2"
+      fill="#eef3fb" fill-opacity=".26"></rect><rect x="47.96" y="39.8"
+      width="0.60" height="9.2"
+      fill="#eef3fb" fill-opacity=".26"></rect><rect x="48.53" y="28.8"
+      width="0.60" height="20.2"
+      fill="#eef3fb" fill-opacity=".7"></rect><rect x="49.11" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="49.69" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="50.27" y="35.2"
+      width="0.60" height="13.8"
+      fill="#eef3fb" fill-opacity=".4"></rect><rect x="50.84" y="39.8"
+      width="0.60" height="9.2"
+      fill="#eef3fb" fill-opacity=".26"></rect><rect x="51.42" y="39.8"
+      width="0.60" height="9.2"
+      fill="#eef3fb" fill-opacity=".26"></rect>
+</svg>
+    <s>直近90打席</s></td>
+  <td class="l num">.232 / .362 /
+    .192<br>
+    <span class="hp">K .258 · BB .158 ·
+    BABIP .282</span></td>
+</tr><tr>
+  <td class="l">
+    <b>エドポロ</b><br>
+    <span class="hp">北海道日本ハムファイターズ</span><br>
+    <span class="hp">⚠標本の薄い選手（ここで壊れないか）</span>
+  </td>
+  <td class="mkcell"><svg class="mk" width="52" height="52" viewBox="0 0 52 52"
+  role="img" aria-label="エドポロの識別マーク">
+  <rect width="52" height="52" fill="#0b5c9c"></rect>
+  <rect x="20.8" y="0.0"
+            width="10.4" height="10.4" fill="#f2f7fb"></rect><rect x="0.0" y="10.4"
+            width="10.4" height="10.4" fill="#f2f7fb"></rect><rect x="41.6" y="10.4"
+            width="10.4" height="10.4" fill="#f2f7fb"></rect><rect x="10.4" y="10.4"
+            width="10.4" height="10.4" fill="#f2f7fb"></rect><rect x="31.2" y="10.4"
+            width="10.4" height="10.4" fill="#f2f7fb"></rect><rect x="0.0" y="20.8"
+            width="10.4" height="10.4" fill="#f2f7fb"></rect><rect x="41.6" y="20.8"
+            width="10.4" height="10.4" fill="#f2f7fb"></rect><rect x="20.8" y="20.8"
+            width="10.4" height="10.4" fill="#f2f7fb"></rect><rect x="0.0" y="31.2"
+            width="10.4" height="10.4" fill="#f2f7fb"></rect><rect x="41.6" y="31.2"
+            width="10.4" height="10.4" fill="#f2f7fb"></rect><rect x="20.8" y="31.2"
+            width="10.4" height="10.4" fill="#f2f7fb"></rect><rect x="10.4" y="41.6"
+            width="10.4" height="10.4" fill="#f2f7fb"></rect><rect x="31.2" y="41.6"
+            width="10.4" height="10.4" fill="#f2f7fb"></rect>
+</svg></td>
+  <td class="mkcell"><svg class="mk" width="52" height="52" viewBox="0 0 52 52"
+  role="img" aria-label="エドポロの成績プロフィール（10打席）：打率 .000、出塁 .000、長打 .000、選球 .000、接触 .600">
+  <rect width="52" height="52" fill="#0b5c9c"></rect>
+  <polygon points="26.0,3.0 47.9,18.9 39.5,44.6 12.5,44.6 4.1,18.9" fill="none" stroke="#f2f7fb" stroke-opacity=".28" stroke-width="1"></polygon>
+  <polygon points="26.0,24.6 27.3,25.6 26.8,27.1 25.2,27.1 24.7,25.6" fill="#f2f7fb" fill-opacity=".85"></polygon>
+</svg>
+    <s>10打席</s></td>
+  <td class="mkcell"><svg class="mk" width="52" height="52" viewBox="0 0 52 52"
+  role="img" aria-label="エドポロの直近10打席">
+  <rect width="52" height="52" fill="#0b5c9c"></rect>
+  <rect x="0.00" y="39.8"
+      width="4.95" height="9.2"
+      fill="#f2f7fb" fill-opacity=".26"></rect><rect x="5.20" y="39.8"
+      width="4.95" height="9.2"
+      fill="#f2f7fb" fill-opacity=".26"></rect><rect x="10.40" y="39.8"
+      width="4.95" height="9.2"
+      fill="#f2f7fb" fill-opacity=".26"></rect><rect x="15.60" y="39.8"
+      width="4.95" height="9.2"
+      fill="#f2f7fb" fill-opacity=".26"></rect><rect x="20.80" y="35.2"
+      width="4.95" height="13.8"
+      fill="#f2f7fb" fill-opacity=".4"></rect><rect x="26.00" y="35.2"
+      width="4.95" height="13.8"
+      fill="#f2f7fb" fill-opacity=".4"></rect><rect x="31.20" y="35.2"
+      width="4.95" height="13.8"
+      fill="#f2f7fb" fill-opacity=".4"></rect><rect x="36.40" y="35.2"
+      width="4.95" height="13.8"
+      fill="#f2f7fb" fill-opacity=".4"></rect><rect x="41.60" y="35.2"
+      width="4.95" height="13.8"
+      fill="#f2f7fb" fill-opacity=".4"></rect><rect x="46.80" y="35.2"
+      width="4.95" height="13.8"
+      fill="#f2f7fb" fill-opacity=".4"></rect>
+</svg>
+    <s>直近10打席</s></td>
+  <td class="l num">.000 / .000 /
+    .000<br>
+    <span class="hp">K .400 · BB .000 ·
+    BABIP .000</span></td>
+</tr><tr>
+  <td class="l">
+    <b>達</b><br>
+    <span class="hp">北海道日本ハムファイターズ</span><br>
+    <span class="hp">⚠投手（打撃成績がほとんどない）</span>
+  </td>
+  <td class="mkcell"><svg class="mk" width="52" height="52" viewBox="0 0 52 52"
+  role="img" aria-label="達の識別マーク">
+  <rect width="52" height="52" fill="#0b5c9c"></rect>
+  <rect x="10.4" y="10.4"
+            width="10.4" height="10.4" fill="#f2f7fb"></rect><rect x="31.2" y="10.4"
+            width="10.4" height="10.4" fill="#f2f7fb"></rect><rect x="0.0" y="20.8"
+            width="10.4" height="10.4" fill="#f2f7fb"></rect><rect x="41.6" y="20.8"
+            width="10.4" height="10.4" fill="#f2f7fb"></rect><rect x="20.8" y="20.8"
+            width="10.4" height="10.4" fill="#f2f7fb"></rect><rect x="0.0" y="31.2"
+            width="10.4" height="10.4" fill="#f2f7fb"></rect><rect x="41.6" y="31.2"
+            width="10.4" height="10.4" fill="#f2f7fb"></rect><rect x="0.0" y="41.6"
+            width="10.4" height="10.4" fill="#f2f7fb"></rect><rect x="41.6" y="41.6"
+            width="10.4" height="10.4" fill="#f2f7fb"></rect><rect x="10.4" y="41.6"
+            width="10.4" height="10.4" fill="#f2f7fb"></rect><rect x="31.2" y="41.6"
+            width="10.4" height="10.4" fill="#f2f7fb"></rect><rect x="20.8" y="41.6"
+            width="10.4" height="10.4" fill="#f2f7fb"></rect>
+</svg></td>
+  <td class="mkcell"><svg class="mk" width="52" height="52" viewBox="0 0 52 52"
+  role="img" aria-label="達の成績プロフィール（0打席）：打率 —、出塁 —、長打 —、選球 —、接触 —">
+  <rect width="52" height="52" fill="#0b5c9c"></rect>
+  <polygon points="26.0,3.0 47.9,18.9 39.5,44.6 12.5,44.6 4.1,18.9" fill="none" stroke="#f2f7fb" stroke-opacity=".28" stroke-width="1"></polygon>
+  <polygon points="26.0,24.6 27.3,25.6 26.8,27.1 25.2,27.1 24.7,25.6" fill="#f2f7fb" fill-opacity=".85"></polygon>
+</svg>
+    <s>0打席</s></td>
+  <td class="mkcell">
+    <s>打席なし</s></td>
+  <td class="l num">— / — /
+    —<br>
+    <span class="hp">K — · BB — ·
+    BABIP —</span></td>
+</tr></tbody>
+</table></div>
+
+<h2>それぞれの性質</h2>
+<div class="scroller"><table>
+<thead><tr><th class="l">案</th><th class="l">出どころ</th><th class="l">強み</th><th class="l">弱み</th></tr></thead>
+<tbody>
+<tr><td class="l"><b>A 印</b></td><td class="l">選手ID（固定）</td>
+  <td class="l">完全に固有。成績がなくても描ける。毎日変わらない</td>
+  <td class="l"><b>意味がない</b>。模様が選手について何も語らない</td></tr>
+<tr><td class="l"><b>B 成績の紋</b></td><td class="l">打率・出塁・長打・選球・接触</td>
+  <td class="l"><b>形がそのまま情報</b>。長打型と選球型が違う形になる</td>
+  <td class="l">標本が薄いと形が暴れる。目盛りがないので値は読めない</td></tr>
+<tr><td class="l"><b>C 打席の帯</b></td><td class="l">直近の打席結果（最大90）</td>
+  <td class="l">加工が最も少ない。<b>リズムが見える</b></td>
+  <td class="l">毎日変わる。打席が少ないと痩せる</td></tr>
+</tbody>
+</table></div>
+
+<h2>組み合わせも選べます</h2>
+<p>A は「固有で安定」、B・C は「意味がある」。たとえば <b>A を一覧の小さなマークに、
+B を選手ページの大きなマークに</b>使う、といった分担もできます。
+どれを選んでも、比率のとなりには母数を必ず添えます。</p>
+
+<p class="hp">5人 / 2026年 · 生成物であり、原本の表を再現するものではありません。</p>
+</div>
+</body>
+</html>
