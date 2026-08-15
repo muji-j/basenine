@@ -186,14 +186,29 @@ Pages는 **배포마다** `<hash>.bb-app-7mk.pages.dev`를 새로 내준다.
 ⚠**처음 쟀을 때 이 URL은 `000`(TLS 실패)이었다.** 인증서가 나오면서 200으로 드러났다.
 **`000`을 「막혔다」로 읽었다면 여기서 데이터를 올렸을 것이다.** 판정표를 그래서 만들었다.
 
-**막는 법** (앞의 것을 먼저 시도):
+**막는 법 — `Preview access`로 해결됐다 (2026-08-15 확인)**
 
-1. `Workers & Pages → bb-app → Settings`의 **Access Policy**(프리뷰 배포 보호) 스위치.
-   켜면 Cloudflare가 `*.bb-app-7mk.pages.dev`를 덮는 앱을 만든다.
-2. 안 보이면 앱을 하나 더 만든다 — subdomain `*` · domain `bb-app-7mk.pages.dev`.
-   ⚠**정책은 새로 만들지 말고 기존 `allow_emails`를 선택한다** — 두 벌이 되면 한쪽만 고치게 된다.
-   ⚠`pages.dev`는 계정 소유 존이 아니라 와일드카드 입력이 거부될 수 있다.
-3. 둘 다 안 되면 **제품명 확정 후 소유 도메인의 서브도메인으로 옮긴다.**
+`Workers & Pages → bb-app → Settings → Preview access` → **Restrict**.
+
+화면 설명은 「preview deployment URL만 보호한다」고 한정하지만, **프로덕션 브랜치(`main`)로
+올린 배포의 해시 별칭까지 덮였다** — 문구로 추정하지 않고 재서 확인했다:
+
+| 대상 | Restrict 후 |
+|---|---|
+| `bb-app-7mk.pages.dev` | **302** → `…cloudflareaccess.com/…/login/bb-app-7mk.pages.dev` |
+| `ae09c431.bb-app-7mk.pages.dev` | **302** → `…/login/ae09c431.bb-app-7mk.pages.dev` |
+
+별칭도 **자기 호스트명으로** Access 로그인에 넘겨진다 — 우회 경로 없이 걸렸다.
+
+⚠**302가 나왔다고 끝이 아니다.** `Preview access`가 만드는 정책이 「가입한 사람 누구나」류면
+로그인 화면은 뜨지만 아무나 들어온다. **상태 코드만으로는 구별되지 않는다.**
+`Zero Trust → Access → Applications`에서 새 앱의 정책이 **이메일 허용목록**인지 확인한다.
+
+안 되는 경우의 대안(이번에는 쓰지 않았다):
+- 앱을 하나 더 만든다 — subdomain `*` · domain `bb-app-7mk.pages.dev`.
+  ⚠정책은 새로 만들지 말고 기존 `allow_emails`를 선택한다 — 두 벌이 되면 한쪽만 고치게 된다.
+  ⚠`pages.dev`는 계정 소유 존이 아니라 와일드카드 입력이 거부될 수 있다.
+- 그것도 안 되면 **제품명 확정 후 소유 도메인의 서브도메인으로 옮긴다.**
 
 ⚠**정책과 애플리케이션은 다른 것이다.** 정책은 「누가」, 애플리케이션은 「어느 주소를」이다.
 정책 화면의 `Used by applications` 수가 **지켜지고 있는 주소의 수**다 —
