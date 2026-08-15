@@ -4,3 +4,5 @@ export { BoxParseError, extractPlayerId, inningsToOuts, parseBoxScore } from "./
 export type { BatterRow, BoxScore, PitcherRow } from "./box.ts";
 export { PlayByPlayParseError, parsePlayByPlay } from "./playbyplay.ts";
 export type { PlayByPlay, PlayEvent } from "./playbyplay.ts";
+export { PlayerParseError, parseBirthDate, parsePlayerProfile, parseThrowsBats } from "./player.ts";
+export type { Hand, PlayerProfile } from "./player.ts";
