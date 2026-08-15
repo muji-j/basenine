@@ -6,7 +6,8 @@
  */
 import type { BattingLine, PitchingLine, Rate } from "@bb-app/metrics";
 import { colorOf } from "@bb-app/domain";
-import { battingProfile } from "../src/marks.ts";
+import { battingProfile, pitchingProfile } from "../src/marks.ts";
+import type { ProfileAxis } from "../src/marks.ts";
 import type {
   BattingBlockData,
   PitchingBlockData,
@@ -89,6 +90,25 @@ export function mixedPitchingBlock(over: Partial<PitchingBlockData> = {}): Pitch
     ...over,
   });
 }
+
+/**
+ * 투수의 紋 — **축이 타자와 다르고 넷이 뒤집혀 있다.**
+ *
+ * ⚠기본 픽스처는 타자 축이라 `role: "pitcher"`만 바꾸면 **투수 페이지에 타자 축이 나온다.**
+ * 실제 파이프라인은 역할에 따라 축을 바꾸므로, 투수를 시험할 때는 이걸 함께 넘긴다.
+ */
+export function pitcherMark(): { axes: ProfileAxis[]; sampleText: string } {
+  return {
+    axes: pitchingProfile({
+      k9: r(9.9, 300), bb9: r(2.25, 300), hr9: r(0.72, 300),
+      whip: r(1.1, 300), era: r(2.7, 300),
+    }),
+    sampleText: "100回",
+  };
+}
+
+/** 성적이 없는 선수의 紋 — **축이 하나도 없다.** 실제로 신인·부상 선수에서 나온다 */
+export const EMPTY_MARK = { axes: [] as ProfileAxis[], sampleText: "0打席" };
 
 export function rankingPanel(over: Partial<RankingPanel> = {}): RankingPanel {
   return {
@@ -195,7 +215,10 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
     matchupTotal: 2,
     ranking: [rankingPanel()],
     mark: {
-      axes: battingProfile({ avg: 0.317, obp: 0.403, iso: 0.304, bbRate: 0.127, kRate: 0.265 }),
+      axes: battingProfile({
+        avg: r(0.317, 382), obp: r(0.403, 442), iso: r(0.304, 382),
+        bbRate: r(0.127, 442), kRate: r(0.265, 442),
+      }),
       sampleText: "442打席",
     },
     spark: [

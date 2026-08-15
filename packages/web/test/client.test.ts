@@ -636,6 +636,137 @@ test("조립 시스템이 없는 화면에서도 탭은 동작한다 — 부문 
   assert.deepEqual(open, ["batter", "batter"], "부문 패널이 하나도 안 열렸다");
 });
 
+/** 확대한 紋의 뼈대 — 꼭짓점 5개, 항목 버튼 5개, 판독부 5벌 */
+function buildMarkPanel(): ReturnType<typeof makeDocument> {
+  const doc = makeDocument();
+  const main = make("div", { class: "main" });
+  doc.body.appendChild(main);
+
+  const btn = make("button", { class: "mark markbtn", id: "markBtn", "aria-expanded": "false" });
+  main.appendChild(btn);
+
+  const panel = make("section", { class: "markpanel", id: "markPanel" });
+  panel.hidden = true;
+  const svg = make("svg", { class: "mkfig" });
+  const pick = make("div", { class: "tabs", "data-markpick": "" });
+  const labels = ["打率", "出塁", "長打", "選球", "接触"];
+  labels.forEach((_, i) => {
+    const g = make("g", {
+      class: "mf-ax",
+      role: "button",
+      tabindex: "0",
+      "data-axis": String(i),
+      "aria-pressed": i === 0 ? "true" : "false",
+    });
+    svg.appendChild(g);
+    pick.appendChild(
+      make("button", { class: "tab", "data-axis": String(i), "aria-pressed": i === 0 ? "true" : "false" }),
+    );
+    const read = make("div", { class: "mkread", "data-axisread": String(i) });
+    read.hidden = i !== 0;
+    panel.appendChild(read);
+  });
+  panel.appendChild(svg);
+  panel.appendChild(pick);
+  main.appendChild(panel);
+  main.appendChild(make("div", { id: "blocksEnd" }));
+  return doc;
+}
+
+function openMark(doc: ReturnType<typeof makeDocument>): void {
+  doc.getElementById("markBtn")!.fire("click");
+}
+
+function shownAxis(doc: ReturnType<typeof makeDocument>): string[] {
+  return doc
+    .querySelectorAll("[data-axisread]")
+    .filter((el) => !el.hidden)
+    .map((el) => el.dataset["axisread"] ?? "");
+}
+
+test("紋은 닫혀서 시작하고 눌러서 연다 — 열린 채로 시작하면 성적이 화면 밖으로 밀린다", () => {
+  const doc = buildMarkPanel();
+  run(doc);
+  assert.equal(doc.getElementById("markPanel")!.hidden, true);
+  assert.equal(doc.getElementById("markBtn")!.getAttribute("aria-expanded"), "false");
+  openMark(doc);
+  assert.equal(doc.getElementById("markPanel")!.hidden, false);
+  assert.equal(doc.getElementById("markBtn")!.getAttribute("aria-expanded"), "true");
+});
+
+test("꼭짓점을 누르면 그 항목만 보이고 그 꼭짓점이 커진다", () => {
+  const doc = buildMarkPanel();
+  run(doc);
+  openMark(doc);
+  assert.deepEqual(shownAxis(doc), ["0"]);
+
+  doc.querySelectorAll(".mf-ax").filter((g) => g.dataset["axis"] === "3")[0]!.fire("click");
+  assert.deepEqual(shownAxis(doc), ["3"], "판독부가 하나만 보여야 한다");
+  const on = doc.querySelectorAll(".mf-ax").filter((g) => g.getAttribute("class") === "mf-ax on");
+  assert.equal(on.length, 1, "강조된 꼭짓점이 하나여야 한다");
+  assert.equal(on[0]!.dataset["axis"], "3");
+  assert.equal(on[0]!.getAttribute("aria-pressed"), "true");
+});
+
+test("항목 버튼도 같은 일을 한다 — 손가락에는 이쪽이 확실하다", () => {
+  const doc = buildMarkPanel();
+  run(doc);
+  openMark(doc);
+  doc.querySelectorAll("[data-markpick] [data-axis]")[2]!.fire("click");
+  assert.deepEqual(shownAxis(doc), ["2"]);
+  const pressed = doc
+    .querySelectorAll("[data-markpick] [data-axis]")
+    .filter((b) => b.getAttribute("aria-pressed") === "true")
+    .map((b) => b.dataset["axis"]);
+  assert.deepEqual(pressed, ["2"], "눌린 버튼이 하나여야 한다");
+});
+
+test("⚠키보드로도 고를 수 있다 — SVG에 클릭만 붙이면 키보드 사용자는 못 연다", () => {
+  const doc = buildMarkPanel();
+  run(doc);
+  openMark(doc);
+  // 실제 브라우저에서는 초점이 옮겨간 꼭짓점에서 다음 키가 눌린다. 그대로 흉내 낸다
+  const arrow = (key: string): void => {
+    const at = shownAxis(doc)[0]!;
+    doc.querySelectorAll(".mf-ax").filter((g) => g.dataset["axis"] === at)[0]!.fire("keydown", { key });
+  };
+  arrow("ArrowRight");
+  assert.deepEqual(shownAxis(doc), ["1"]);
+  arrow("ArrowRight");
+  assert.deepEqual(shownAxis(doc), ["2"]);
+  arrow("ArrowLeft");
+  assert.deepEqual(shownAxis(doc), ["1"], "왼쪽으로도 움직여야 한다");
+  // 끝에서 반대편으로 넘어간다 — 다섯 개를 한 방향으로만 돌게 하지 않는다
+  arrow("ArrowLeft");
+  arrow("ArrowLeft");
+  assert.deepEqual(shownAxis(doc), ["4"], "0에서 왼쪽이면 마지막으로 돌아야 한다");
+});
+
+test("Enter로도 고를 수 있다", () => {
+  const doc = buildMarkPanel();
+  run(doc);
+  openMark(doc);
+  doc.querySelectorAll(".mf-ax")[2]!.fire("keydown", { key: "Enter" });
+  assert.deepEqual(shownAxis(doc), ["2"]);
+});
+
+test("연 상태가 저장된다 — 선수를 넘겨 볼 때마다 다시 여는 것은 성가시다", () => {
+  const storage = makeStorage();
+  const first = buildMarkPanel();
+  run(first, { storage });
+  openMark(first);
+
+  const second = buildMarkPanel();
+  run(second, { storage });
+  assert.equal(second.getElementById("markPanel")!.hidden, false, "다음 방문에 닫혀 있다");
+});
+
+test("紋이 없는 화면에서도 스크립트가 죽지 않는다 — 성적 없는 선수는 판이 없다", () => {
+  const doc = makeDocument();
+  doc.body.appendChild(make("div", { class: "main" }));
+  assert.doesNotThrow(() => run(doc));
+});
+
 test("스텁이 모르는 선택자는 조용히 넘어가지 않는다", () => {
   const el = new El("div");
   assert.throws(() => el.querySelectorAll("div > span"), /스텁이 모르는 선택자/);

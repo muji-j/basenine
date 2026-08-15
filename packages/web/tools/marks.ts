@@ -86,12 +86,13 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
       positionMark: positionMark(null, "—"),
     };
 
+    // ⚠비율을 값만이 아니라 분모까지 통째로 넘긴다 — 축이 자기 분모를 들고 다녀야 M2를 지킨다
     const axes = battingProfile({
-      avg: battingAverage(b.line).value,
-      obp: onBasePercentage(b.line).value,
-      iso: iso(b.line).value,
-      bbRate: walkRate(b.line).value,
-      kRate: strikeoutRate(b.line).value,
+      avg: battingAverage(b.line),
+      obp: onBasePercentage(b.line),
+      iso: iso(b.line),
+      bbRate: walkRate(b.line),
+      kRate: strikeoutRate(b.line),
     });
 
     // 최근 순으로 받아 뒤집는다 — 띠는 왼쪽이 과거다

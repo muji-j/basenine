@@ -4,7 +4,9 @@ import { THRESHOLDS, bootstrapFor, renderPlayerPage } from "../src/player-page.t
 import {
   battingBlock,
   context,
+  EMPTY_MARK,
   mixedPitchingBlock,
+  pitcherMark,
   pitchingBlock,
   playerPage,
   rankingPanel,
@@ -344,6 +346,58 @@ test("자격 미달이어도 누계 지표에는 순위가 붙는다 — 화면 
   );
   assert.match(out, /率の指標には順位がつきません/);
   assert.ok(out.includes('<span class="rank">2位</span>'), "누계 지표의 순위가 사라졌다");
+});
+
+test("紋을 눌러 열 수 있고, 다섯 항목의 판독부가 미리 그려져 있다", () => {
+  const out = renderPlayerPage(playerPage(), context());
+  assert.match(out, /<button class="mark markbtn"[^>]*id="markBtn"[^>]*aria-expanded="false"/);
+  assert.match(out, /aria-controls="markPanel"/);
+  // ⚠판독부는 **서버가 다섯 벌 다 그린다.** 클라이언트가 글자를 만들면 용어집과 두 벌이 된다
+  const reads = [...out.matchAll(/<div class="mkread" data-axisread="(\d)"/g)].map((m) => m[1]);
+  assert.deepEqual(reads, ["0", "1", "2", "3", "4"]);
+  // 첫 벌만 열려 있다 — 스크립트가 없어도 하나는 읽힌다
+  assert.equal([...out.matchAll(/<div class="mkread" data-axisread="\d" hidden>/g)].length, 4);
+});
+
+test("⚠紋의 값에도 분모가 붙는다(M2) — 축마다 분모가 다르다", () => {
+  const out = renderPlayerPage(playerPage(), context());
+  const panel = /<section class="markpanel"[\s\S]*?<\/section>/.exec(out)?.[0] ?? "";
+  assert.ok(panel.length > 0, "紋 패널이 없다");
+  assert.ok(panel.includes(`.317<span class="den">382打数</span>`), "打率에 打数가 안 붙었다");
+  assert.ok(panel.includes(`.403<span class="den">442打席</span>`), "出塁에 打席이 안 붙었다");
+  // 값이 나오는 자리 전부에 분모가 따라온다
+  const values = [...panel.matchAll(/<em>([^<]*)<span class="den">([^<]*)<\/span>/g)];
+  assert.equal(values.length, 5);
+  for (const v of values) assert.ok((v[2] ?? "").length > 0, `${v[1]}에 분모가 없다`);
+});
+
+test("紋의 설명은 용어집에서 온다 — 여기서 새로 쓰면 두 벌이 된다(M1)", async () => {
+  const { termOf } = await import("../src/glossary.ts");
+  const out = renderPlayerPage(playerPage(), context());
+  assert.ok(out.includes(termOf("avg")!.short), "打率 설명이 용어집 문장과 다르다");
+  assert.ok(out.includes(termOf("obp")!.short), "出塁 설명이 용어집 문장과 다르다");
+});
+
+test("⚠투수의 뒤집힌 축은 그 사실을 화면에서 말한다 — 안 말하면 도형을 반대로 읽는다", () => {
+  const out = renderPlayerPage(
+    playerPage({ role: "pitcher", position: "投手", batting: null, pitching: pitchingBlock(), mark: pitcherMark() }),
+    context(),
+  );
+  const panel = /<section class="markpanel"[\s\S]*?<\/section>/.exec(out)?.[0] ?? "";
+  assert.match(panel, /mr-note/);
+  assert.match(panel, /外側ほど良くなるよう反転/);
+  // 방향이 그대로인 축(奪三振)에는 붙지 않는다 — 전부에 붙이면 경고가 소음이 된다
+  assert.equal([...panel.matchAll(/mr-note/g)].length, 4);
+});
+
+test("성적이 없으면 紋도 여는 버튼도 없다 — 눌리는 척하는 버튼을 만들지 않는다(M11)", () => {
+  const out = renderPlayerPage(
+    playerPage({ batting: null, splits: [], scorebook: [], situation: [], matchups: [], ranking: [], mark: EMPTY_MARK }),
+    context(),
+  );
+  assert.ok(!out.includes('id="markBtn"'), "열 것이 없는데 버튼이 있다");
+  assert.ok(!out.includes('id="markPanel"'));
+  assert.match(out, /<span class="mark">/, "대체 마크는 남아야 한다");
 });
 
 test("설명을 띄울 자리가 모든 페이지에 있다 — 없으면 툴팁이 조용히 안 뜬다", () => {

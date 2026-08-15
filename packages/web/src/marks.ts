@@ -22,7 +22,8 @@
 import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import type { TeamColor } from "@bb-app/domain";
-import { avg3, dec2 } from "./format.ts";
+import type { Rate } from "@bb-app/metrics";
+import { avg3, dec2, denominator, innings } from "./format.ts";
 
 export interface MarkPlayer {
   playerId: string;
@@ -91,6 +92,27 @@ export interface ProfileAxis {
   scaled: number | null;
   /** 사람이 읽는 원래 값 */
   text: string;
+  /**
+   * 이 축의 **분모**. ⚠값과 반드시 함께 나간다(M2).
+   *
+   * 축마다 다르다 — 打率는 打数, 出塁는 打席, 투수는 전부 投球回다.
+   * 그래서 하나의 「표본」으로 뭉뚱그리지 않고 축이 자기 분모를 들고 다닌다.
+   */
+  sample: string;
+  /**
+   * 이 축이 실제로 무슨 지표인가 — 용어집 키(M1).
+   *
+   * ⚠**축 이름과 지표 이름이 다르다.** 「出塁」는 出塁率이고 「接触」은 K%의 뒤집힌 값이다.
+   * 설명을 여기서 새로 쓰면 용어집과 두 벌이 되므로 키만 들고 다닌다.
+   */
+  term: string;
+  /**
+   * 축 고유의 한마디. **축 이름이 지표 이름과 다를 때와, 방향이 뒤집혔을 때** 쓴다.
+   *
+   * ⚠**뒤집힌 축에서 이 문장을 비우지 마라.** 도형은 「바깥쪽이 좋다」로 그려지는데
+   * 값은 「낮을수록 좋다」이므로, 말하지 않으면 화면이 조용히 반대로 읽힌다.
+   */
+  note: string;
 }
 
 /**
@@ -125,6 +147,65 @@ export function markProfile(
   <rect width="${size}" height="${size}" fill="${p.color.base}"></rect>
   <polygon points="${outline}" fill="none" stroke="${p.color.ink}" stroke-opacity=".28" stroke-width="1"></polygon>
   <polygon points="${shape}" fill="${p.color.ink}" fill-opacity=".85"></polygon>
+</svg>`;
+}
+
+/**
+ * 확대한 成績の紋 — **꼭짓점을 고를 수 있는 판**.
+ *
+ * 표제의 마크(52px)는 신원 표시라 꼭짓점이 10px 간격으로 붙어 있어 누를 수 없다.
+ * 그래서 「고를 수 있는 도형」은 크게 따로 그린다.
+ *
+ * ⚠**꼭짓점은 진짜 조작 요소여야 한다.** SVG 도형에 클릭만 붙이면 키보드로 못 고르고
+ * 스크린리더에도 안 잡힌다. `role="button"` + `tabindex`를 주고 화살표로도 옮겨 다닌다.
+ * ⚠**판정 영역을 보이는 점보다 크게** 잡는다 — 손가락은 4px 점을 못 누른다.
+ * ⚠**눈금은 여전히 그리지 않는다.** 도형에서 값을 읽게 하지 않는다 — 값은 판독부에 글자로 있다.
+ */
+export function markFigure(
+  p: MarkPlayer,
+  axes: readonly ProfileAxis[],
+  sampleText: string,
+): RawHtml {
+  if (axes.length < 3) return raw("");
+  const size = 176;
+  const c = size / 2;
+  const r = c - 34; // 라벨이 들어갈 자리를 바깥에 남긴다
+
+  const at = (i: number, len: number): { x: number; y: number } => {
+    const angle = (Math.PI * 2 * i) / axes.length - Math.PI / 2;
+    return { x: c + Math.cos(angle) * r * len, y: c + Math.sin(angle) * r * len };
+  };
+  const xy = (i: number, len: number): string => {
+    const q = at(i, len);
+    return `${q.x.toFixed(1)},${q.y.toFixed(1)}`;
+  };
+  const len = (a: ProfileAxis): number => Math.max(0.06, Math.min(1, a.scaled ?? 0));
+
+  const outline = axes.map((_, i) => xy(i, 1)).join(" ");
+  const shape = axes.map((a, i) => xy(i, len(a))).join(" ");
+
+  return html`<svg class="mkfig" viewBox="0 0 ${size} ${size}" role="group"
+  aria-label="${p.name}の成績プロフィール（${sampleText}）">
+  <polygon class="mf-grid" points="${outline}"></polygon>
+  <polygon class="mf-shape" points="${shape}" fill="${p.color.base}"></polygon>
+  ${axes.map((a, i) => {
+    // ⚠**손잡이는 바깥 둘레에, 값 표시점은 도형 위에.** 둘을 한 자리에 두면
+    // 성적이 낮은 축의 점이 중앙으로 모여 서로 겹치고, 그러면 누를 수가 없다
+    const grip = at(i, 1);
+    const v = at(i, len(a));
+    const lab = at(i, 1.24);
+    // 라벨이 좌우 어느 쪽에 오는지에 따라 정렬을 바꾼다 — 안 그러면 도형에 겹친다
+    const anchor = lab.x < c - 4 ? "end" : lab.x > c + 4 ? "start" : "middle";
+    return html`<g class="mf-ax" role="button" tabindex="0" data-axis="${i}"
+      aria-pressed="${i === 0 ? "true" : "false"}"
+      aria-label="${a.label} ${a.text} ${a.sample}">
+      <line class="mf-spoke" x1="${c}" y1="${c}" x2="${grip.x.toFixed(1)}" y2="${grip.y.toFixed(1)}"></line>
+      <circle class="mf-hit" cx="${grip.x.toFixed(1)}" cy="${grip.y.toFixed(1)}" r="21"></circle>
+      <circle class="mf-dot" cx="${v.x.toFixed(1)}" cy="${v.y.toFixed(1)}" r="3.5"></circle>
+      <text class="mf-lab" x="${lab.x.toFixed(1)}" y="${lab.y.toFixed(1)}"
+        text-anchor="${anchor}" dominant-baseline="middle">${a.label}</text>
+    </g>`;
+  })}
 </svg>`;
 }
 
@@ -204,21 +285,43 @@ function scale(value: number | null, [lo, hi]: readonly [number, number]): numbe
 }
 
 export interface BattingProfileInput {
-  avg: number | null;
-  obp: number | null;
-  iso: number | null;
-  bbRate: number | null;
-  kRate: number | null;
+  avg: Rate;
+  obp: Rate;
+  iso: Rate;
+  bbRate: Rate;
+  kRate: Rate;
 }
 
+/** 「낮을수록 좋다」를 뒤집어 그린 축이 반드시 다는 문장 */
+const INVERTED_NOTE =
+  "この指標は低いほど良いため、図では外側ほど良くなるよう反転しています。数字そのものは小さいほど良い値です。";
+
 export function battingProfile(b: BattingProfileInput): ProfileAxis[] {
-  const contact = b.kRate === null ? null : 1 - b.kRate;
+  // ⚠접촉률은 K%의 뒤집힌 값이다. **분모는 K%의 것을 그대로 쓴다** — 같은 타석에서 나온다
+  const contact = b.kRate.value === null ? null : 1 - b.kRate.value;
   return [
-    { label: "打率", scaled: scale(b.avg, PROFILE_ANCHORS.avg), text: avg3(b.avg) },
-    { label: "出塁", scaled: scale(b.obp, PROFILE_ANCHORS.obp), text: avg3(b.obp) },
-    { label: "長打", scaled: scale(b.iso, PROFILE_ANCHORS.iso), text: avg3(b.iso) },
-    { label: "選球", scaled: scale(b.bbRate, PROFILE_ANCHORS.bbRate), text: avg3(b.bbRate) },
-    { label: "接触", scaled: scale(contact, PROFILE_ANCHORS.contact), text: avg3(contact) },
+    {
+      label: "打率", scaled: scale(b.avg.value, PROFILE_ANCHORS.avg), text: avg3(b.avg.value),
+      sample: denominator(b.avg.denominator, "打数"), term: "avg", note: "",
+    },
+    {
+      label: "出塁", scaled: scale(b.obp.value, PROFILE_ANCHORS.obp), text: avg3(b.obp.value),
+      sample: denominator(b.obp.denominator, "打席"), term: "obp", note: "",
+    },
+    {
+      label: "長打", scaled: scale(b.iso.value, PROFILE_ANCHORS.iso), text: avg3(b.iso.value),
+      sample: denominator(b.iso.denominator, "打数"), term: "iso", note: "",
+    },
+    {
+      label: "選球", scaled: scale(b.bbRate.value, PROFILE_ANCHORS.bbRate), text: avg3(b.bbRate.value),
+      sample: denominator(b.bbRate.denominator, "打席"), term: "bbRate", note: "",
+    },
+    {
+      label: "接触", scaled: scale(contact, PROFILE_ANCHORS.contact), text: avg3(contact),
+      sample: denominator(b.kRate.denominator, "打席"), term: "kRate",
+      // ⚠**표시하는 수가 K%가 아니다.** 말하지 않으면 삼진율을 .735로 읽는다
+      note: "三振にならなかった打席の割合（1 − K%）です。K%そのものではありません。",
+    },
   ];
 }
 
@@ -247,20 +350,43 @@ function scaleInverted(value: number | null, [lo, hi]: readonly [number, number]
 }
 
 export interface PitchingProfileInput {
-  k9: number | null;
-  bb9: number | null;
-  hr9: number | null;
-  whip: number | null;
-  era: number | null;
+  k9: Rate;
+  bb9: Rate;
+  hr9: Rate;
+  whip: Rate;
+  era: Rate;
+}
+
+/**
+ * ⚠투수 축의 분모는 **아웃 카운트**다. 이닝으로 바꿔 쓴다 —
+ * `415アウト`라고 쓰면 사이트의 다른 분모와 단위가 어긋난다.
+ */
+function innsOf(r: Rate): string {
+  return `${innings(r.denominator)}回`;
 }
 
 export function pitchingProfile(p: PitchingProfileInput): ProfileAxis[] {
   return [
-    { label: "奪三振", scaled: scale(p.k9, PITCHING_ANCHORS.k9), text: dec2(p.k9) },
-    { label: "制球", scaled: scaleInverted(p.bb9, PITCHING_ANCHORS.bb9), text: dec2(p.bb9) },
-    { label: "被弾", scaled: scaleInverted(p.hr9, PITCHING_ANCHORS.hr9), text: dec2(p.hr9) },
-    { label: "抑制", scaled: scaleInverted(p.whip, PITCHING_ANCHORS.whip), text: dec2(p.whip) },
-    { label: "失点", scaled: scaleInverted(p.era, PITCHING_ANCHORS.era), text: dec2(p.era) },
+    {
+      label: "奪三振", scaled: scale(p.k9.value, PITCHING_ANCHORS.k9), text: dec2(p.k9.value),
+      sample: innsOf(p.k9), term: "k9", note: "",
+    },
+    {
+      label: "制球", scaled: scaleInverted(p.bb9.value, PITCHING_ANCHORS.bb9), text: dec2(p.bb9.value),
+      sample: innsOf(p.bb9), term: "bb9", note: INVERTED_NOTE,
+    },
+    {
+      label: "被弾", scaled: scaleInverted(p.hr9.value, PITCHING_ANCHORS.hr9), text: dec2(p.hr9.value),
+      sample: innsOf(p.hr9), term: "hr9", note: INVERTED_NOTE,
+    },
+    {
+      label: "抑制", scaled: scaleInverted(p.whip.value, PITCHING_ANCHORS.whip), text: dec2(p.whip.value),
+      sample: innsOf(p.whip), term: "whip", note: INVERTED_NOTE,
+    },
+    {
+      label: "失点", scaled: scaleInverted(p.era.value, PITCHING_ANCHORS.era), text: dec2(p.era.value),
+      sample: innsOf(p.era), term: "era", note: INVERTED_NOTE,
+    },
   ];
 }
 

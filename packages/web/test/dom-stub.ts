@@ -126,9 +126,16 @@ export class El {
     (this.listeners[type] ??= []).push(fn);
   }
 
-  /** 테스트에서 이벤트를 쏜다 */
-  fire(type: string): void {
-    for (const fn of this.listeners[type] ?? []) fn({});
+  /**
+   * 테스트에서 이벤트를 쏜다.
+   *
+   * ⚠`event`를 받는다 — 키보드 조작은 `key`가 없으면 검증할 수 없다.
+   * `preventDefault`를 항상 넣어 둔다: 핸들러가 그걸 부르는 것이 정상 동작이고,
+   * 없으면 스텁에서만 죽는다(실제 브라우저에는 늘 있다).
+   */
+  fire(type: string, event: Record<string, unknown> = {}): void {
+    const e = { preventDefault: () => {}, ...event };
+    for (const fn of this.listeners[type] ?? []) fn(e);
   }
 
   descendants(): El[] {

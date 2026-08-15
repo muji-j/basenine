@@ -1062,12 +1062,14 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     const mark =
       role === "pitcher" && pitchingData !== null
         ? {
+            // ⚠**값이 아니라 `Rate`를 통째로 넘긴다.** 축마다 분모가 다르고,
+            // 값만 넘기면 축이 자기 분모를 잃는다 — 그러면 M2를 지킬 방법이 없다
             axes: pitchingProfile({
-              k9: pitchingData.k9.value,
-              bb9: pitchingData.bb9.value,
-              hr9: pitchingData.hr9.value,
-              whip: pitchingData.whip.value,
-              era: pitchingData.era.value,
+              k9: pitchingData.k9,
+              bb9: pitchingData.bb9,
+              hr9: pitchingData.hr9,
+              whip: pitchingData.whip,
+              era: pitchingData.era,
             }),
             // ⚠아웃 카운트가 아니라 이닝으로 쓴다 — 사이트의 다른 분모와 같은 단위여야 한다
             sampleText: `${innings(pitchingData.line.outs)}回`,
@@ -1077,11 +1079,11 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
               battingData === null
                 ? []
                 : battingProfile({
-                    avg: battingData.avg.value,
-                    obp: battingData.obp.value,
-                    iso: battingData.iso.value,
-                    bbRate: battingData.bbRate.value,
-                    kRate: battingData.kRate.value,
+                    avg: battingData.avg,
+                    obp: battingData.obp,
+                    iso: battingData.iso,
+                    bbRate: battingData.bbRate,
+                    kRate: battingData.kRate,
                   }),
             sampleText: denominator(battingData?.line.pa ?? 0),
           };

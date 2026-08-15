@@ -33,8 +33,9 @@ import {
 } from "./parts.ts";
 import type { BarRow, RankDigits } from "./parts.ts";
 import { NO_VALUE, avg3, gameDate, innings, throwsBats } from "./format.ts";
-import { isEmptyProfile, markLetter, markProfile } from "./marks.ts";
+import { isEmptyProfile, markFigure, markLetter, markProfile } from "./marks.ts";
 import type { MarkPlayer, ProfileAxis } from "./marks.ts";
+import { termOf } from "./glossary.ts";
 import { page } from "./layout.ts";
 import type { Freshness, SiteMeta } from "./layout.ts";
 
@@ -358,9 +359,15 @@ function idLine(d: PlayerPageData): RawHtml {
     positionMark: positionMark(d.position, "—"),
   };
   // ⚠성적이 없는 선수를 아주 작은 도형으로 그리지 않는다 — 「나쁘다」로 읽힌다(M11)
-  const mark = isEmptyProfile(d.mark.axes)
+  const empty = isEmptyProfile(d.mark.axes);
+  const svg = empty
     ? markLetter(who, who.positionMark, 52)
     : markProfile(who, d.mark.axes, d.mark.sampleText, 52);
+  // 성적이 없으면 열 것도 없다 — 눌리는 척하는 버튼을 만들지 않는다
+  const mark = empty
+    ? html`<span class="mark">${svg}</span>`
+    : html`<button class="mark markbtn" type="button" id="markBtn"
+        aria-expanded="false" aria-controls="markPanel">${svg}<span class="mkcap">くわしく</span></button>`;
 
   const bio = [
     d.teamName,
@@ -371,14 +378,47 @@ function idLine(d: PlayerPageData): RawHtml {
   ].filter((s): s is string => s !== null && s !== "" && s !== NO_VALUE);
 
   return html`<header class="idline">
-  <span class="mark">${mark}</span>
+  ${mark}
   <div class="idtext">
     <span class="nm">${d.name}</span>
     <span class="sub">${bio.join(" · ")}</span>
     <span class="asof">${d.season}年${d.asOf === null ? "" : ` · ${gameDate(d.asOf)}まで`}</span>
   </div>
   ${sparkline(d.spark, d.sparkLabel)}
-</header>`;
+</header>
+${empty ? raw("") : markPanel(who, d.mark.axes, d.mark.sampleText)}`;
+}
+
+/**
+ * 확대한 紋과 항목별 판독부.
+ *
+ * ⚠**판독부를 다섯 벌 전부 그려 두고 하나만 보인다.** 클라이언트가 글자를 만들지 않는다 —
+ * 설명은 용어집에서 오고(M1), 그것을 빌드 시점에 심어 두면 스크립트가 죽어도 값이 남는다.
+ * ⚠**분모를 값에서 떼지 않는다**(M2). 축마다 분모가 다르므로 축이 자기 분모를 들고 온다.
+ */
+function markPanel(who: MarkPlayer, axes: readonly ProfileAxis[], sampleText: string): RawHtml {
+  return html`<section class="markpanel" id="markPanel" hidden aria-label="成績プロフィール">
+  <div class="mkfigwrap">${markFigure(who, axes, sampleText)}</div>
+  <div class="mkside">
+    <div class="tabs" role="group" data-markpick aria-label="項目を選ぶ">
+      ${axes.map(
+        (a, i) => html`<button class="tab" type="button" data-axis="${i}" aria-pressed="${i === 0 ? "true" : "false"}">${a.label}</button>`,
+      )}
+    </div>
+    ${axes.map((a, i) => {
+      const t = termOf(a.term);
+      return html`<div class="mkread" data-axisread="${i}" ${raw(i === 0 ? "" : "hidden")}>
+        <b>${a.label}</b>
+        <em>${a.text}<span class="den">${a.sample}</span></em>
+        <p>${t === undefined ? "" : t.short}</p>
+        ${a.note === "" ? null : html`<p class="mr-note">${a.note}</p>`}
+        ${t?.how === undefined ? null : html`<p class="mr-how">${t.how}</p>`}
+      </div>`;
+    })}
+    <p class="note">形は${sampleText}ぶんの成績です。<b>外側ほど良い</b>ように描いています。
+      目盛りは引いていません — 正確な数字はこの欄と基本成績にあります。</p>
+  </div>
+</section>`;
 }
 
 function rail(d: PlayerPageData): RawHtml {

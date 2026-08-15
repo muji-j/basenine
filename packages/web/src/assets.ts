@@ -100,6 +100,62 @@ a{color:inherit}
 .spark .sl{font-family:var(--f-num);font-size:9.5px;color:var(--tx-3);letter-spacing:.06em}
 .idline .asof{font-family:var(--f-num);font-size:11px;color:var(--tx-3)}
 
+/* 紋을 여는 버튼 — 눌리는 것임을 글자로도 말한다. 도형만 두면 아무도 누르지 않는다 */
+.markbtn{padding:0;border:0;background:transparent;cursor:pointer;flex-direction:column;gap:3px;align-items:center}
+.markbtn .mkcap{font-size:9px;letter-spacing:.12em;color:var(--tx-3);line-height:1;
+  border-bottom:1px dotted var(--hair-2);transition:color var(--fast) var(--ease)}
+.markbtn:hover .mkcap,.markbtn[aria-expanded="true"] .mkcap{color:var(--tx)}
+.markbtn .mk{transition:box-shadow var(--fast) var(--ease)}
+.markbtn:hover .mk,.markbtn[aria-expanded="true"] .mk{box-shadow:0 0 0 2px var(--tx-2)}
+
+/* ── 成績の紋（확대） ───────────────────────────────────────
+   ⚠**꼭짓점을 고르는 판이다.** 표제의 52px 마크는 신원 표시라 꼭짓점이 붙어 있어 못 누른다. */
+.markpanel{display:flex;flex-wrap:wrap;gap:18px 24px;align-items:flex-start;
+  padding:14px var(--pad) 16px;border-bottom:1px solid var(--hair);background:var(--panel);
+  animation:rise var(--mid) var(--ease) both}
+.markpanel[hidden]{display:none}
+.mkfigwrap{flex:0 0 auto;width:min(212px,52vw)}
+.mkfig{display:block;width:100%;height:auto;overflow:visible}
+.mf-grid{fill:none;stroke:var(--hair-2);stroke-width:1}
+.mf-spoke{stroke:var(--hair);stroke-width:1;transition:stroke var(--fast) var(--ease)}
+.mf-shape{fill-opacity:.42;stroke:var(--team,#6b7280);stroke-width:1.5;stroke-linejoin:round}
+/* ⚠보이는 점은 작아도 **판정 영역은 손가락 크기**여야 한다 — mf-hit이 그 역할이다.
+   손잡이는 둘레에 고르게 있고, 값 표시점(mf-dot)은 도형 위에 따로 있다 */
+.mf-hit{fill:transparent}
+.mf-dot{fill:var(--panel);stroke:var(--team,#6b7280);stroke-width:2;
+  transform-box:fill-box;transform-origin:center;
+  transition:transform var(--fast) var(--ease),fill var(--fast) var(--ease)}
+.mf-lab{font-family:var(--f-body);font-size:11px;fill:var(--tx-2);letter-spacing:.06em;
+  transition:fill var(--fast) var(--ease)}
+.mf-ax{cursor:pointer}
+.mf-ax:hover .mf-dot{transform:scale(1.4)}
+.mf-ax:hover .mf-lab{fill:var(--tx)}
+.mf-ax:focus-visible{outline:none}
+.mf-ax:focus-visible .mf-dot{transform:scale(1.7)}
+.mf-ax:focus-visible .mf-lab,.mf-ax:focus-visible .mf-spoke{fill:var(--tx);stroke:var(--tx)}
+/* 고른 축 — **점이 커지고 살과 라벨이 진해진다.** 색만으로 말하지 않는다 */
+.mf-ax.on .mf-dot{transform:scale(2);fill:var(--team,#6b7280)}
+.mf-ax.on .mf-lab{fill:var(--tx);font-weight:700}
+.mf-ax.on .mf-spoke{stroke:var(--tx-2)}
+
+.mkside{flex:1 1 260px;min-width:0;display:flex;flex-direction:column;gap:9px}
+.mkside [data-markpick]{gap:4px}
+.mkside [data-markpick] .tab{font-size:11.5px;padding:3px 9px}
+.mkread{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;align-items:baseline}
+.mkread[hidden]{display:none}
+.mkread b{font-size:12px;letter-spacing:.14em;color:var(--tx-2);font-weight:600}
+.mkread em{font-style:normal;font-family:var(--f-num);font-variant-numeric:tabular-nums;
+  font-size:21px;text-align:right}
+.mkread p{grid-column:1 / -1;margin:4px 0 0;font-size:12px;color:var(--tx-2);line-height:1.6}
+.mkread .mr-how{font-family:var(--f-num);font-size:10.5px;color:var(--tx-3)}
+/* ⚠뒤집힌 축의 한마디는 **눈에 띄어야 한다.** 못 보면 도형을 반대로 읽는다 */
+.mkread .mr-note{padding-left:8px;box-shadow:inset 2px 0 0 var(--warn);color:var(--tx)}
+@media (max-width:520px){
+  .markpanel{gap:12px}
+  .mkfigwrap{width:min(190px,58vw);margin:0 auto}
+  .mkread em{font-size:19px}
+}
+
 /* ── 조작 레일 ───────────────────────────────────────────── */
 .rail{position:sticky;top:var(--topbar);z-index:10;display:flex;align-items:center;gap:6px;
   padding:9px var(--pad);border-bottom:1px solid var(--hair);background:var(--panel);
@@ -491,6 +547,7 @@ const state={
   matchup:(saved.matchup&&typeof saved.matchup==="object")?saved.matchup:null,
   matchupTeam:typeof saved.matchupTeam==="string"?saved.matchupTeam:"",
   grades:saved.grades!==false,
+  mark:saved.mark===true,
   theme:saved.theme==="dark"||saved.theme==="light"?saved.theme:"system"
 };
 
@@ -688,6 +745,69 @@ if(tip&&typeof GLOSSARY!=="undefined"){
   /* ⚠표를 가로로 밀면 설명만 제자리에 남는다 — 좌표를 문서 기준으로 잡기 때문이다. 닫는다 */
   doc.addEventListener("scroll",hide,true);
 }
+
+/* ── 成績の紋 ──
+   표제의 마크를 누르면 확대판이 열리고, 꼭짓점을 누르면 그 항목이 커지며 판독부가 바뀐다.
+
+   ⚠**글자를 여기서 만들지 않는다.** 다섯 벌의 판독부를 서버가 이미 그려 두었고
+   여기서는 hidden만 옮긴다 — 설명이 용어집에서 오는 한 벌로 유지된다(M1).
+   ⚠**SVG 꼭짓점에 클릭만 붙이지 않는다.** 키보드로도 고를 수 있어야 하고,
+   같은 일을 하는 진짜 버튼(항목 고르기)도 함께 둔다 — 손가락에는 그쪽이 확실하다. */
+(function markPanel(){
+  const panel=$("#markPanel");
+  if(!panel)return;
+  const btn=$("#markBtn");
+  const axesEls=$$(".mf-ax");
+  const picks=$$("[data-markpick] [data-axis]");
+  const reads=$$("[data-axisread]");
+  if(reads.length===0)return;
+
+  let cur=0;
+  const select=(i)=>{
+    if(i<0||i>=reads.length)return;
+    cur=i;
+    reads.forEach(el=>{el.hidden=el.dataset.axisread!==String(i)});
+    picks.forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.axis===String(i))));
+    axesEls.forEach(g=>{
+      const on=g.dataset.axis===String(i);
+      g.setAttribute("class",on?"mf-ax on":"mf-ax");
+      g.setAttribute("aria-pressed",String(on));
+    });
+  };
+
+  axesEls.forEach(g=>{
+    const i=Number(g.dataset.axis);
+    g.addEventListener("click",()=>select(i));
+    g.addEventListener("keydown",(e)=>{
+      if(!e||!e.key)return;
+      if(e.key==="Enter"||e.key===" "){if(e.preventDefault)e.preventDefault();select(i);return}
+      /* 화살표로 옆 꼭짓점으로 옮긴다 — 다섯 개를 Tab으로만 도는 것은 느리다 */
+      const step=e.key==="ArrowRight"||e.key==="ArrowDown"?1:e.key==="ArrowLeft"||e.key==="ArrowUp"?-1:0;
+      if(step===0)return;
+      if(e.preventDefault)e.preventDefault();
+      const next=(i+step+axesEls.length)%axesEls.length;
+      select(next);
+      const el=axesEls.filter(g2=>g2.dataset.axis===String(next))[0];
+      if(el&&el.focus)el.focus();
+    });
+  });
+  picks.forEach(b=>b.addEventListener("click",()=>select(Number(b.dataset.axis))));
+
+  if(btn){
+    const apply=(open)=>{
+      panel.hidden=!open;
+      btn.setAttribute("aria-expanded",String(open));
+      if(open)select(cur);
+    };
+    btn.addEventListener("click",()=>{
+      const open=panel.hidden;
+      apply(open);
+      /* 열어 둔 상태를 기억한다 — 선수를 넘겨 볼 때마다 다시 여는 것은 성가시다 */
+      state.mark=open;save(state);
+    });
+    apply(state.mark===true);
+  }
+})();
 
 /* 수준 색 끄기 — 분모는 끌 수 없지만 색은 보조라 끌 수 있다 */
 const gradeBtn=$("#gradeBtn");

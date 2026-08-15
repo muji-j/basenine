@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import { r } from "./fixtures.ts";
 import assert from "node:assert/strict";
 import { toString } from "../src/html.ts";
 import {
@@ -7,6 +8,7 @@ import {
   battingProfile,
   isEmptyProfile,
   markLetter,
+  markFigure,
   markProfile,
   markStamp,
   markStrip,
@@ -37,6 +39,25 @@ function assertFiniteCoords(svg: string): void {
 
 // ── A안 印 ────────────────────────────────────────────────────────────────
 
+/**
+ * 테스트용 축 생성기 — **값만 주면 분모를 붙여 준다.**
+ *
+ * ⚠분모는 축마다 다르지만(打数/打席/投球回) 이 테스트들이 보는 것은 **모양과 방향**이다.
+ * 분모가 값과 함께 나가는지는 M2 테스트가 따로 본다.
+ */
+function bp(o: { avg: number | null; obp: number | null; iso: number | null; bbRate: number | null; kRate: number | null }) {
+  return battingProfile({
+    avg: r(o.avg, 382), obp: r(o.obp, 442), iso: r(o.iso, 382),
+    bbRate: r(o.bbRate, 442), kRate: r(o.kRate, 442),
+  });
+}
+function pp(o: { k9: number | null; bb9: number | null; hr9: number | null; whip: number | null; era: number | null }) {
+  return pitchingProfile({
+    k9: r(o.k9, 300), bb9: r(o.bb9, 300), hr9: r(o.hr9, 300),
+    whip: r(o.whip, 300), era: r(o.era, 300),
+  });
+}
+
 test("같은 선수는 언제나 같은 문양이다 — 빌드마다 바뀌면 식별 표시가 아니다", () => {
   assert.equal(toString(markStamp(player())), toString(markStamp(player())));
 });
@@ -64,7 +85,7 @@ test("문양 좌표는 유한하다", () => {
 // ── B안 成績の紋 ──────────────────────────────────────────────────────────
 
 test("성적 프로필은 5축이고 값과 표기를 함께 낸다", () => {
-  const axes = battingProfile({ avg: 0.317, obp: 0.403, iso: 0.304, bbRate: 0.127, kRate: 0.265 });
+  const axes = bp({ avg: 0.317, obp: 0.403, iso: 0.304, bbRate: 0.127, kRate: 0.265 });
   assert.equal(axes.length, 5);
   assert.deepEqual(
     axes.map((a) => a.label),
@@ -74,20 +95,20 @@ test("성적 프로필은 5축이고 값과 표기를 함께 낸다", () => {
 });
 
 test("⚠삼진은 적을수록 좋다 — 뒤집어 넣지 않으면 모양이 정반대가 된다", () => {
-  const few = battingProfile({ avg: 0.25, obp: 0.3, iso: 0.1, bbRate: 0.08, kRate: 0.1 });
-  const many = battingProfile({ avg: 0.25, obp: 0.3, iso: 0.1, bbRate: 0.08, kRate: 0.35 });
+  const few = bp({ avg: 0.25, obp: 0.3, iso: 0.1, bbRate: 0.08, kRate: 0.1 });
+  const many = bp({ avg: 0.25, obp: 0.3, iso: 0.1, bbRate: 0.08, kRate: 0.35 });
   assert.ok(few[4]!.scaled! > many[4]!.scaled!, "삼진이 적은 쪽의 接触이 더 커야 한다");
 });
 
 test("정규화는 0~1로 잘린다 — 앵커 밖의 값이 도형을 뚫고 나가지 않는다", () => {
-  const extreme = battingProfile({ avg: 0.9, obp: 0.9, iso: 0.9, bbRate: 0.9, kRate: 0 });
+  const extreme = bp({ avg: 0.9, obp: 0.9, iso: 0.9, bbRate: 0.9, kRate: 0 });
   for (const a of extreme) assert.equal(a.scaled, 1);
-  const zero = battingProfile({ avg: 0, obp: 0, iso: 0, bbRate: 0, kRate: 1 });
+  const zero = bp({ avg: 0, obp: 0, iso: 0, bbRate: 0, kRate: 1 });
   for (const a of zero) assert.equal(a.scaled, 0);
 });
 
 test("값이 없으면 null이고 0이 아니다(M11)", () => {
-  const none = battingProfile({ avg: null, obp: null, iso: null, bbRate: null, kRate: null });
+  const none = bp({ avg: null, obp: null, iso: null, bbRate: null, kRate: null });
   for (const a of none) {
     assert.equal(a.scaled, null);
     assert.equal(a.text, "—");
@@ -95,19 +116,19 @@ test("값이 없으면 null이고 0이 아니다(M11)", () => {
 });
 
 test("성적이 하나도 없어도 도형이 깨지지 않는다 — 투수 페이지에서 실제로 일어난다", () => {
-  const none = battingProfile({ avg: null, obp: null, iso: null, bbRate: null, kRate: null });
+  const none = bp({ avg: null, obp: null, iso: null, bbRate: null, kRate: null });
   const svg = toString(markProfile(player(), none, "0打席"));
   assertFiniteCoords(svg);
   assert.match(svg, /<polygon/);
 });
 
 test("분모가 접근성 라벨에 들어간다(M2)", () => {
-  const axes = battingProfile({ avg: 0.317, obp: 0.403, iso: 0.304, bbRate: 0.127, kRate: 0.265 });
+  const axes = bp({ avg: 0.317, obp: 0.403, iso: 0.304, bbRate: 0.127, kRate: 0.265 });
   assert.match(toString(markProfile(player(), axes, "442打席")), /442打席/);
 });
 
 test("축이 3개 미만이면 그리지 않는다 — 다각형이 되지 않는다", () => {
-  assert.equal(toString(markProfile(player(), [{ label: "a", scaled: 1, text: "1" }], "10打席")), "");
+  assert.equal(toString(markProfile(player(), [{ label: "a", scaled: 1, text: "1", sample: "10打席", term: "avg", note: "" }], "10打席")), "");
 });
 
 test("앵커를 코드 밖에서 확인할 수 있다 — 표시 배율이지 지표가 아니다", () => {
@@ -118,7 +139,7 @@ test("앵커를 코드 밖에서 확인할 수 있다 — 표시 배율이지 �
 // ── 투수 축 ───────────────────────────────────────────────────────────────
 
 test("투수 프로필도 5축이고 값 표기는 소수 2자리다", () => {
-  const axes = pitchingProfile({ k9: 9.9, bb9: 2.25, hr9: 0.72, whip: 1.1, era: 2.7 });
+  const axes = pp({ k9: 9.9, bb9: 2.25, hr9: 0.72, whip: 1.1, era: 2.7 });
   assert.deepEqual(
     axes.map((a) => a.label),
     ["奪三振", "制球", "被弾", "抑制", "失点"],
@@ -127,8 +148,8 @@ test("투수 프로필도 5축이고 값 표기는 소수 2자리다", () => {
 });
 
 test("⚠좋은 투수가 큰 도형이 된다 — 네 축이 뒤집혀 있지 않으면 뜻이 정반대가 된다", () => {
-  const good = pitchingProfile({ k9: 10, bb9: 1.6, hr9: 0.4, whip: 1.02, era: 2.1 });
-  const bad = pitchingProfile({ k9: 5, bb9: 4.5, hr9: 1.6, whip: 1.6, era: 5.2 });
+  const good = pp({ k9: 10, bb9: 1.6, hr9: 0.4, whip: 1.02, era: 2.1 });
+  const bad = pp({ k9: 5, bb9: 4.5, hr9: 1.6, whip: 1.6, era: 5.2 });
   for (const [i, a] of good.entries()) {
     assert.ok(
       a.scaled! > bad[i]!.scaled!,
@@ -143,7 +164,7 @@ test("투수 앵커를 코드 밖에서 확인할 수 있다", () => {
 });
 
 test("등판이 없으면 축이 전부 값 없음이고, 대체 마크로 간다(M11)", () => {
-  const none = pitchingProfile({ k9: null, bb9: null, hr9: null, whip: null, era: null });
+  const none = pp({ k9: null, bb9: null, hr9: null, whip: null, era: null });
   assert.ok(isEmptyProfile(none));
   const svg = toString(markLetter(player(), "投", 40));
   assert.match(svg, />投</);
@@ -151,7 +172,7 @@ test("등판이 없으면 축이 전부 값 없음이고, 대체 마크로 간�
 });
 
 test("값이 하나라도 있으면 대체 마크로 가지 않는다", () => {
-  const some = pitchingProfile({ k9: 8, bb9: null, hr9: null, whip: null, era: null });
+  const some = pp({ k9: 8, bb9: null, hr9: null, whip: null, era: null });
   assert.equal(isEmptyProfile(some), false);
 });
 
@@ -203,7 +224,7 @@ test("결과 분류는 parser의 Outcome을 그대로 접는다 — 문자열을
 // ── 공통 ─────────────────────────────────────────────────────────────────
 
 test("어느 안도 선수의 얼굴·사진 URL을 담지 않는다", () => {
-  const axes = battingProfile({ avg: 0.3, obp: 0.35, iso: 0.15, bbRate: 0.08, kRate: 0.2 });
+  const axes = bp({ avg: 0.3, obp: 0.35, iso: 0.15, bbRate: 0.08, kRate: 0.2 });
   const all = [
     toString(markStamp(player())),
     toString(markProfile(player(), axes, "400打席")),
@@ -214,8 +235,101 @@ test("어느 안도 선수의 얼굴·사진 URL을 담지 않는다", () => {
   assert.ok(!all.includes("href"));
 });
 
+// ── 확대판(고를 수 있는 紋) ──────────────────────────────────────────────
+
+test("⚠축마다 자기 분모를 들고 다닌다 — 打率는 打数, 出塁는 打席이다", () => {
+  const axes = battingProfile({
+    avg: r(0.317, 382), obp: r(0.403, 442), iso: r(0.304, 382),
+    bbRate: r(0.127, 442), kRate: r(0.265, 442),
+  });
+  assert.deepEqual(
+    axes.map((a) => a.sample),
+    ["382打数", "442打席", "382打数", "442打席", "442打席"],
+  );
+  // 분모가 비어 있으면 M2가 무너진다
+  for (const a of axes) assert.ok(a.sample.length > 0, `${a.label}에 분모가 없다`);
+});
+
+test("투수 축의 분모는 이닝으로 나온다 — 아웃 카운트를 그대로 쓰지 않는다", () => {
+  const axes = pitchingProfile({
+    k9: r(9.9, 300), bb9: r(2.25, 300), hr9: r(0.72, 300),
+    whip: r(1.1, 300), era: r(2.7, 300),
+  });
+  for (const a of axes) assert.equal(a.sample, "100回", `${a.label}: 300아웃은 100이닝이다`);
+  assert.ok(!axes.some((a) => a.sample.includes("300")), "아웃 수가 그대로 나갔다");
+});
+
+test("⚠뒤집힌 축은 그 사실을 말한다 — 안 말하면 도형을 반대로 읽는다", () => {
+  const axes = pp({ k9: 9.9, bb9: 2.25, hr9: 0.72, whip: 1.1, era: 2.7 });
+  // 奪三振만 방향이 그대로다
+  assert.equal(axes[0]!.note, "", "뒤집히지 않은 축에 반전 문구가 붙었다");
+  for (const a of axes.slice(1)) {
+    assert.match(a.note, /低いほど良い/, `${a.label}에 방향 설명이 없다`);
+    assert.match(a.note, /外側ほど良く/, `${a.label}에 도형 방향 설명이 없다`);
+  }
+});
+
+test("接触은 K%가 아니라는 것을 말한다 — .735를 삼진율로 읽으면 정반대다", () => {
+  const axes = bp({ avg: 0.3, obp: 0.35, iso: 0.15, bbRate: 0.08, kRate: 0.265 });
+  const contact = axes[4]!;
+  assert.equal(contact.label, "接触");
+  assert.equal(contact.text, ".735");
+  assert.match(contact.note, /1 − K%/);
+  assert.equal(contact.term, "kRate", "설명은 용어집에서 온다(M1)");
+});
+
+test("모든 축이 용어집에 닿는다 — 설명 없는 축을 만들지 않는다", async () => {
+  const { termOf } = await import("../src/glossary.ts");
+  const all = [
+    ...bp({ avg: 0.3, obp: 0.35, iso: 0.15, bbRate: 0.08, kRate: 0.2 }),
+    ...pp({ k9: 9, bb9: 2, hr9: 0.7, whip: 1.1, era: 2.7 }),
+  ];
+  const missing = all.filter((a) => termOf(a.term) === undefined).map((a) => a.label);
+  assert.deepEqual(missing, [], `용어집에 없는 축: ${missing.join(", ")}`);
+});
+
+test("확대판의 꼭짓점은 조작 요소다 — 클릭만 붙이면 키보드에서 못 고른다", () => {
+  const axes = bp({ avg: 0.3, obp: 0.35, iso: 0.15, bbRate: 0.08, kRate: 0.2 });
+  const svg = toString(markFigure(player(), axes, "400打席"));
+  const groups = [...svg.matchAll(/<g class="mf-ax"[^>]*>/g)].map((m) => m[0]);
+  assert.equal(groups.length, 5);
+  for (const g of groups) {
+    assert.match(g, /role="button"/);
+    assert.match(g, /tabindex="0"/);
+    assert.match(g, /aria-label="/);
+  }
+  // 값과 분모가 읽어 주는 이름에 들어 있다
+  assert.match(groups[0]!, /aria-label="打率 [^"]*打数"/);
+});
+
+test("⚠손잡이는 둘레에 고르게 놓인다 — 값 위치에 두면 낮은 축이 중앙에 겹친다", () => {
+  // 한 축만 아주 낮은 선수
+  const axes = bp({ avg: 0.15, obp: 0.25, iso: 0, bbRate: 0.08, kRate: 0.2 });
+  const svg = toString(markFigure(player(), axes, "400打席"));
+  const hits = [...svg.matchAll(/<circle class="mf-hit" cx="([\d.]+)" cy="([\d.]+)"/g)].map((m) => ({
+    x: Number(m[1]),
+    y: Number(m[2]),
+  }));
+  assert.equal(hits.length, 5);
+  const c = 88;
+  // 전부 같은 반지름 위에 있어야 한다(= 값과 무관하게 고르게 배치)
+  const radii = hits.map((h) => Math.hypot(h.x - c, h.y - c));
+  for (const rad of radii) assert.ok(Math.abs(rad - radii[0]!) < 0.5, `반지름이 흔들린다: ${radii.join(", ")}`);
+  // 어느 두 손잡이도 서로 겹치지 않는다(판정 반지름 21)
+  for (let i = 0; i < hits.length; i += 1) {
+    for (let j = i + 1; j < hits.length; j += 1) {
+      const d = Math.hypot(hits[i]!.x - hits[j]!.x, hits[i]!.y - hits[j]!.y);
+      assert.ok(d > 24, `손잡이 ${i}와 ${j}가 ${d.toFixed(1)}만큼 붙어 있다`);
+    }
+  }
+});
+
+test("축이 3개 미만이면 확대판도 그리지 않는다", () => {
+  assert.equal(toString(markFigure(player(), [], "0打席")), "");
+});
+
 test("세 안 모두 구단 색을 쓴다 — 배면과 같은 정체성", () => {
-  const axes = battingProfile({ avg: 0.3, obp: 0.35, iso: 0.15, bbRate: 0.08, kRate: 0.2 });
+  const axes = bp({ avg: 0.3, obp: 0.35, iso: 0.15, bbRate: 0.08, kRate: 0.2 });
   for (const svg of [
     toString(markStamp(player())),
     toString(markProfile(player(), axes, "400打席")),
