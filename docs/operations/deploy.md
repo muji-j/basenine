@@ -112,7 +112,18 @@ npx wrangler@4 pages deploy .tmp-empty --project-name bb-app --branch main
 rm -rf .tmp-empty
 ```
 
-→ `bb-app.pages.dev`가 생긴다. **아직 데이터는 올리지 않았다.**
+⚠**호스트명에 임의 접미사가 붙는다.** 2026-08-15 실행 결과는 `bb-app`이 아니라
+**`bb-app-7mk.pages.dev`**였다. Cloudflare가 `pages.dev` 서브도메인 선점을 막으려고 붙인다.
+아래의 모든 검증·Access 설정은 **실제로 받은 호스트명**을 쓴다.
+
+**실측(2026-08-15, Access 적용 전):**
+
+| 대상 | 결과 |
+|---|---|
+| `https://bb-app-7mk.pages.dev/` | **200 · 공개** — 자리표시자가 그대로 보였다 |
+| `https://ae09c431.bb-app-7mk.pages.dev/` | TLS 핸드셰이크 실패로 **판정 불가**(인증서 미발급 추정) |
+
+→ **자리표시자를 올린 판단이 맞았다.** 여기에 데이터를 올렸다면 그 사이가 공개였다.
 
 ### 4-2. Access를 건다 (Zero Trust)
 
@@ -120,7 +131,7 @@ rm -rf .tmp-empty
 
 | 항목 | 값 |
 |---|---|
-| Application domain | `bb-app.pages.dev` (서브도메인 전체) |
+| Application domain | `bb-app-7mk.pages.dev` |
 | Identity provider | Google (`307930238+muji-j@users.noreply.github.com` 계정) |
 | Policy | Allow · **Emails** 에 지인 주소를 열거 |
 | Session | 24시간 |
@@ -128,19 +139,24 @@ rm -rf .tmp-empty
 ⚠**허용목록은 UI 숨김이 아니라 엣지에서 매 요청 검증**돼야 한다(CLAUDE.md §2-5).
 Access 애플리케이션은 그 조건을 만족한다.
 
-⚠**`*.pages.dev`에 Access가 실제로 걸리는지 실행 시점에 확인한다.**
-프리뷰 배포(`<hash>.bb-app.pages.dev`)까지 덮이는지도 함께 본다 —
-프리뷰가 새면 프로덕션을 막은 의미가 없다.
-안 되면 대안: 소유 중인 도메인의 서브도메인을 붙인다(제품명 확정 후).
+⚠**배포별 URL도 덮이는지 확인한다.** Pages는 배포마다
+`<hash>.bb-app-7mk.pages.dev`를 따로 내주는데, **여기가 새면 프로덕션을 막은 의미가 없다.**
+UI에 「Pages 프로젝트를 고르는」 선택지가 있으면 그쪽을 쓴다(프리뷰까지 함께 덮인다).
+도메인을 직접 넣는 형태뿐이면 `*.bb-app-7mk.pages.dev`도 등록할 수 있는지 본다.
+어느 쪽도 안 되면 **제품명 확정 후 소유 도메인의 서브도메인으로 옮긴다.**
 
 **검증 — 이걸 통과하기 전에는 데이터를 올리지 않는다:**
 
 ```bash
-# 익명 접근이 막히는가 (302 → Access 로그인 화면이어야 한다)
-curl -s -o /dev/null -w "%{http_code}\n" https://bb-app.pages.dev/
-# 프리뷰도 막히는가
-curl -s -o /dev/null -w "%{http_code}\n" https://<preview-hash>.bb-app.pages.dev/
+curl -s -o /dev/null -w "%{http_code}\n" https://bb-app-7mk.pages.dev/
+curl -s -o /dev/null -w "%{http_code}\n" https://<배포해시>.bb-app-7mk.pages.dev/
 ```
+
+| 코드 | 뜻 |
+|---|---|
+| 302 / 403 | **정상** — Access가 막고 있다 |
+| 200 | ⚠**아직 공개다.** 데이터를 올리지 마라 |
+| 000 | 판정 불가(TLS·DNS). 막힌 것이 **아니다** — 다시 잰다 |
 
 ### 4-3. 첫 실제 배포 (Access 검증을 통과한 뒤에만)
 
