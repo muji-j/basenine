@@ -8,3 +8,5 @@ export {
   rankPitchers,
 } from "./leaderboard.ts";
 export type { BattingEntry, LeagueBundle, PitchingEntry } from "./leaderboard.ts";
+export { battingSplits, matchups } from "./splits.ts";
+export type { Matchup, PlayerSplits, SplitDimension, SplitLine } from "./splits.ts";

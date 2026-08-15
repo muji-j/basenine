@@ -5,7 +5,7 @@
  * 분류를 **여기서 센다**. 이 파일이 지표 입력을 만드는 마지막 단계다.
  */
 import type { BatterRow, PitcherRow } from "@bb-app/parser";
-import { countsAsAtBat, countsAsHit } from "@bb-app/parser";
+import { foldOutcomes } from "./fold.ts";
 
 export interface BattingRow {
   gameId: string;
@@ -79,52 +79,31 @@ export function deriveBatting(
   if (row.playerId === null) return null;
 
   const q: QuarantineRow[] = [];
+
+  // ⚠분류 → 카운팅 스탯 변환은 `fold.ts` 한 벌만 쓴다(M1). 스플릿 집계도 같은 함수를 쓴다.
+  const { line } = foldOutcomes(
+    row.plateAppearances.map((p) => ({ outcome: p.outcome, count: 1, rbi: p.rbi })),
+  );
+
+  for (const pa of row.plateAppearances) {
+    if (pa.outcome === "unknown") {
+      q.push({ kind: "unknownToken", gameId, playerId: row.playerId, raw: pa.raw, detail: null });
+    }
+  }
+
   const out: BattingRow = {
     gameId,
     playerId: row.playerId,
     side,
     battingOrder: row.order,
     position: row.position,
-    pa: row.plateAppearances.length,
-    ab: 0, h: 0, d2: 0, d3: 0, hr: 0,
-    bb: 0, ibb: 0, hbp: 0, sf: 0, sh: 0, so: 0, roe: 0,
+    pa: line.pa,
+    ab: line.ab, h: line.h, d2: line.double, d3: line.triple, hr: line.hr,
+    bb: line.bb, ibb: line.ibb, hbp: line.hbp, sf: line.sf, sh: line.sh,
+    so: line.so, roe: line.roe,
+    // 득점·타점·도루는 박스스코어가 컬럼으로 주므로 그 값을 쓴다(결과 셀에서 도출하지 않는다).
     runs: row.runs, rbi: row.rbi, sb: row.steals,
   };
-
-  for (const pa of row.plateAppearances) {
-    if (countsAsAtBat(pa.outcome)) out.ab += 1;
-    if (countsAsHit(pa.outcome)) out.h += 1;
-    switch (pa.outcome) {
-      case "double": out.d2 += 1; break;
-      case "triple": out.d3 += 1; break;
-      case "homerun": out.hr += 1; break;
-      case "walk": out.bb += 1; break;
-      case "intentionalWalk": out.bb += 1; out.ibb += 1; break;
-      case "hitByPitch": out.hbp += 1; break;
-      case "sacFly": out.sf += 1; break;
-      case "sacBunt":
-      case "sacBuntFieldersChoice":
-      case "sacBuntError":
-        out.sh += 1;
-        break;
-      case "strikeout":
-      case "strikeoutReached":
-        out.so += 1;
-        break;
-      case "reachedOnError": out.roe += 1; break;
-      case "unknown":
-        q.push({
-          kind: "unknownToken",
-          gameId,
-          playerId: row.playerId,
-          raw: pa.raw,
-          detail: null,
-        });
-        break;
-      default:
-        break;
-    }
-  }
 
   // ⚠npb.jp가 낸 합계와 대조한다. 어긋나면 **조용히 넘기지 않고 격리한다.**
   if (out.ab !== row.ab) {
