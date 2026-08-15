@@ -9,6 +9,7 @@ import { openDb } from "@bb-app/store";
 import { battingAverage, onBasePercentage, ops, qualifiedBatterPa, sluggingPercentage } from "@bb-app/metrics";
 import type { BattingLine } from "@bb-app/metrics";
 import { battingSplits, matchups } from "../src/splits.ts";
+import { aggregateSeason } from "../src/season.ts";
 
 const [dbPath, seasonArg, targetName] = process.argv.slice(2);
 if (!dbPath || !seasonArg) {
@@ -35,16 +36,13 @@ console.log(`${season} 시즌 · 투타 분포`);
 for (const h of hands) console.log(`  ${String(h.throws ?? "미상").padEnd(6)}投 ${String(h.bats ?? "미상").padEnd(6)}打  ${h.n}명`);
 
 // ---- 좌우 스플릿 --------------------------------------------------------
-const teamGames = (
-  db.raw
-    .prepare(
-      `SELECT MAX(n) AS n FROM (
-         SELECT COUNT(*) AS n FROM game WHERE season=? AND status='played' AND competition='regular' GROUP BY home_code
-         UNION ALL
-         SELECT COUNT(*) AS n FROM game WHERE season=? AND status='played' AND competition='regular' GROUP BY away_code)`,
-    )
-    .get(season, season) as { n: number }
-).n;
+// ⚠팀 경기수는 **`aggregateSeason`이 내는 값 하나만** 쓴다.
+// 여기서 SQL로 다시 구하다가 홈 경기만 세어 규정타석이 절반(177 vs 332)이 된 적이 있다 —
+// 같은 계산을 두 곳에 두면 반드시 어긋난다(M1).
+const agg = aggregateSeason(db, season);
+// ⚠이 도구는 스플릿을 리그로 나누지 않으므로 **양 리그 최대 팀 경기수**를 쓴다.
+// 실제 화면(증분 G)에서는 리그별로 따로 잡아야 한다 — 리그마다 소화 경기수가 다르다.
+const teamGames = Math.max(...[...agg.teamGames.values()]);
 const needPa = qualifiedBatterPa(teamGames);
 
 const byHand = battingSplits(db, "opponentHand", season);
@@ -62,7 +60,7 @@ const qualified = byHand.filter(
 const MIN_SPLIT_PA = 100;
 
 console.log(
-  `\n=== 좌투 상대 타율 상위 5 (규정타석 ${needPa}+ · **좌투 상대 ${MIN_SPLIT_PA}타석+** · 분모 병기) ===`,
+  `\n=== 좌투 상대 타율 상위 5 (규정타석 ${needPa}+ · 양 리그 공통 기준 · **좌투 상대 ${MIN_SPLIT_PA}타석+** · 분모 병기) ===`,
 );
 const vsLeft = qualified
   .map((p) => ({ p, s: p.splits.find((x) => x.key === "left") }))

@@ -8,6 +8,7 @@ import { TEAMS } from "@bb-app/domain";
 import { qualifiedBatterPa } from "@bb-app/metrics";
 import { buildRunExpectancy } from "../src/run-expectancy.ts";
 import { computeSrc } from "../src/situational.ts";
+import { aggregateSeason } from "../src/season.ts";
 
 const [dbPath, seasonArg] = process.argv.slice(2);
 if (!dbPath || !seasonArg) {
@@ -16,6 +17,7 @@ if (!dbPath || !seasonArg) {
 }
 const season = Number(seasonArg);
 const db = openDb(dbPath, "1970-01-01T00:00:00.000Z");
+const agg = aggregateSeason(db, season);
 
 console.log(`SRC — 状況得点貢献 (Situational Run Contribution) · ${season}`);
 console.log(`타석마다 팀의 득점기대치를 얼마나 바꿨는가. 단위는 평균 대비 득점.`);
@@ -26,16 +28,8 @@ for (const league of ["central", "pacific"] as const) {
   const re = buildRunExpectancy(db, season, league, codes);
   const entries = computeSrc(db, re, codes);
 
-  const teamGames = (
-    db.raw
-      .prepare(
-        `SELECT MAX(n) AS n FROM (
-           SELECT COUNT(*) AS n FROM game WHERE season=? AND status='played' AND competition='regular' AND home_code IN (SELECT value FROM json_each(?)) GROUP BY home_code
-           UNION ALL
-           SELECT COUNT(*) AS n FROM game WHERE season=? AND status='played' AND competition='regular' AND away_code IN (SELECT value FROM json_each(?)) GROUP BY away_code)`,
-      )
-      .get(season, JSON.stringify(codes), season, JSON.stringify(codes)) as { n: number }
-  ).n;
+  // ⚠팀 경기수는 `aggregateSeason`이 내는 값 하나만 쓴다(M1 — 위 splits-report와 같은 이유).
+  const teamGames = Math.max(...codes.map((c) => agg.teamGames.get(c) ?? 0));
   const needPa = qualifiedBatterPa(teamGames);
 
   const qualified = entries.filter((e) => e.pa + e.skipped >= needPa).sort((a, b) => b.src - a.src);
