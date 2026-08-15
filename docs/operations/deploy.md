@@ -133,7 +133,7 @@ rm -rf .tmp-empty
 |---|---|
 | Application domain | `bb-app-7mk.pages.dev` |
 | Identity provider | **One-time PIN**(기본 제공). 아래 참조 |
-| Policy |  · Action **Allow** · Include **Emails** 에 주소를 하나씩 열거 |
+| Policy | `friends_allowlist` · Action **Allow** · Include **Emails** 에 주소를 하나씩 열거 |
 | Session | 24시간 |
 
 #### ⚠IdP는 문지기가 아니다
@@ -218,8 +218,10 @@ Pages는 **배포마다** `<hash>.bb-app-7mk.pages.dev`를 새로 내준다.
 - ⚠**두 번째가 조용하다.** 경고가 없고 상태 코드로도 드러나지 않는다
 
 **고친다**: `bb-app - Cloudflare Pages` → Policies → 자동 생성 정책을 빼고
-**기존 `allow_emails`를 선택**한다(새로 만들지 않는다).
+**기존 정책을 선택**한다(새로 만들지 않는다).
 정책 화면의 `Used by applications`가 **2**가 되면 맞다.
+
+※ 위 표의 `allow_emails`는 그 시점의 이름이다. 정리 과정에서 `friends_allowlist`로 바꿨다.
 
 ⚠**이 항목은 `curl`로 검증되지 않는다.** 익명 접근은 어느 경우에도 302다 —
 정책이 허용목록이어도, 「계정 멤버 전원」이어도, **정책이 아예 없어도**(2026-08-15 실측).
@@ -231,15 +233,15 @@ Access는 두 층이다. **애플리케이션은 이메일을 갖지 않고 정�
 
 | | 무엇 | 어디 |
 |---|---|---|
-| 정책 `allow_emails` | **누가** — 이메일 목록이 여기 하나만 있다 | Access → Policies |
+| 정책 `friends_allowlist` | **누가** — 이메일 목록이 여기 하나만 있다 | Access → Policies |
 | 애플리케이션 2개 | **어느 주소를** | Access → Applications |
 
 ```
-friends_allowlist ──┬─→ bb-app-7mk.pages.dev        (프로덕션)
-               └─→ *.bb-app-7mk.pages.dev      (배포별 별칭)
+friends_allowlist ─┬─→ bb-app-7mk.pages.dev      (프로덕션)
+                   └─→ *.bb-app-7mk.pages.dev    (배포별 별칭)
 ```
 
-지인을 넣고 뺄 때는 **`Access → Policies → allow_emails`의 Emails 목록 한 곳**만 고친다.
+지인을 넣고 뺄 때는 **`Access → Policies → friends_allowlist`의 Emails 목록 한 곳**만 고친다.
 정책 화면의 `Used by applications`가 **2**인 것이 이 구조가 유지되고 있다는 표시다.
 
 ⚠**앱마다 정책을 따로 만들면 여기가 두 벌이 된다.** 그러면 한쪽만 고치는 날이 오고,
@@ -279,7 +281,7 @@ friends_allowlist ──┬─→ bb-app-7mk.pages.dev        (프로덕션)
 
 안 되는 경우의 대안(이번에는 쓰지 않았다):
 - 앱을 하나 더 만든다 — subdomain `*` · domain `bb-app-7mk.pages.dev`.
-  ⚠정책은 새로 만들지 말고 기존 `allow_emails`를 선택한다 — 두 벌이 되면 한쪽만 고치게 된다.
+  ⚠정책은 새로 만들지 말고 기존 `friends_allowlist`를 선택한다 — 두 벌이 되면 한쪽만 고치게 된다.
   ⚠`pages.dev`는 계정 소유 존이 아니라 와일드카드 입력이 거부될 수 있다.
 - 그것도 안 되면 **제품명 확정 후 소유 도메인의 서브도메인으로 옮긴다.**
 
