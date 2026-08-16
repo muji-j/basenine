@@ -45,6 +45,21 @@ export interface RunRecord {
   stale: boolean;
 }
 
+/**
+ * 격리된 기록 한 종류.
+ *
+ * ⚠**격리는 버그가 아니라 판단 요청이다.** 규칙 밖의 값을 버리지 않고 모아 둔 것이고,
+ * 사람이 원문을 보고 규칙을 정해야 한다. 그래서 **빨간 실패로 칠하지 않는다** —
+ * 정상 상태(0건)와 구별되기만 하면 된다.
+ * ⚠**화면이 없으면 1건이 생겨도 아무도 모른다.** 그것이 이 표의 존재 이유다.
+ */
+export interface QuarantineKind {
+  kind: string;
+  count: number;
+  /** 원문 표본 몇 개. **판단하려면 원문이 필요하다** */
+  samples: { raw: string; detail: string | null; gameId: string | null }[];
+}
+
 export interface LogPageData {
   season: number;
   /** 최근 것이 앞. 화면에 싣는 만큼만 */
@@ -54,6 +69,8 @@ export interface LogPageData {
   /** 원시 아카이브 규모. 없으면 null */
   archive: { files: number; bytes: number; updatedAt: string } | null;
   totals: { games: number; pa: number; players: number; quarantine: number };
+  /** 격리된 기록. 0건이면 빈 배열 — **「없다」와 「화면이 없다」는 다르다** */
+  quarantine: QuarantineKind[];
   /** 수집 규약(L1). 코드에 있는 값을 그대로 표시한다 — 문서와 화면이 어긋나지 않게 */
   politeness: { minDelayMs: number; concurrency: number };
 }
@@ -140,6 +157,36 @@ function runTable(runs: readonly RunRecord[]): RawHtml {
   )}`;
 }
 
+/**
+ * 격리된 기록.
+ *
+ * ⚠**0건을 「이상 없음」이라고만 쓰지 않는다.** 그러면 화면이 있는지 없는지 알 수 없다 —
+ * 무엇을 세고 있는지 함께 말해야 「0건」이 정보가 된다.
+ * ⚠**빨간 실패로 칠하지 않는다.** 격리는 버그가 아니라 판단 요청이다.
+ */
+function quarantineTable(kinds: readonly QuarantineKind[]): RawHtml {
+  if (kinds.length === 0) {
+    return html`<p class="empty">規則の外にあった記録は<b>0件</b>です。取り込みが規則どおりに進んでいます。</p>`;
+  }
+  return html`${scroller(html`<table>
+    <thead><tr><th class="l">種類</th><th>件数</th><th class="l">原文の例</th></tr></thead>
+    <tbody>${kinds.map(
+      (k) => html`<tr>
+        <td class="l">${k.kind}</td>
+        <td>${k.count}</td>
+        <td class="l">${k.samples.map(
+          (s) => html`<code class="qs">${s.raw}</code>${s.detail === null ? null : html` <span class="qd">${s.detail}</span>`} `,
+        )}</td>
+      </tr>`,
+    )}</tbody>
+  </table>`)}
+  ${note(
+    "⚠これは不具合の一覧ではなく<b>判断待ちの一覧</b>です。規則にない書き方が出てきたとき、" +
+      "捨てずに原文のまま取っておいて、人がどう数えるか決めます。" +
+      "0で埋めてしまうと「その打席は無かった」ことになり、あとから直せません。",
+  )}`;
+}
+
 export function renderLogPage(d: LogPageData, ctx: RenderContext): string {
   const base = "";
   const a = d.archive;
@@ -187,6 +234,13 @@ ${block({
     title: "自動収集の実行記録",
     qualifier: d.runs.length === 0 ? "記録なし" : `直近${d.runs.length}回`,
     body: runTable(d.runs),
+  })}
+
+${block({
+    id: "quarantine",
+    title: "判断待ちの記録",
+    qualifier: d.quarantine.length === 0 ? "0件" : `${d.totals.quarantine}件`,
+    body: quarantineTable(d.quarantine),
   })}
 
 <section class="block">

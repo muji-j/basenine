@@ -37,6 +37,8 @@ test("월간 일정에서 경기 링크를 추출한다", () => {
     date: "2026-08-01",
     slug: "g-db-15",
     path: "/scores/2026/0801/g-db-15/",
+    // ⚠이 픽스처에는 `place` 칸이 없다. **0이나 빈 문자열이 아니라 null**이다(M11)
+    venue: null,
   });
 });
 
@@ -82,7 +84,7 @@ test("더블헤더처럼 같은 날 복수 경기가 남는다", () => {
 });
 
 test("저장 키와 URL", () => {
-  const ref = { season: 2026, date: "2026-08-14", slug: "s-db-17", path: "/scores/2026/0814/s-db-17/" };
+  const ref = { season: 2026, date: "2026-08-14", slug: "s-db-17", path: "/scores/2026/0814/s-db-17/", venue: null };
   assert.equal(pageKey(ref, ""), "npb/scores/2026/0814/s-db-17/index");
   assert.equal(pageKey(ref, "playbyplay.html"), "npb/scores/2026/0814/s-db-17/playbyplay");
   assert.equal(pageUrl(ref, ""), "https://npb.jp/scores/2026/0814/s-db-17/");

@@ -107,6 +107,13 @@ export interface PitchingBlockData {
   role: "starter" | "reliever";
   /** 선발 등판 수 */
   starts: number;
+  /** 투구수. ⚠산식의 입력이 아니라 표시용이다. 없으면 null(M11) */
+  pitches: number | null;
+  /** 폭투·보크 */
+  wp: number | null;
+  balk: number | null;
+  /** 아웃 1개당 투구수. **낮을수록 효율이 좋다** — 등급 방향이 다른 지표와 반대다 */
+  pitchesPerOut: Rate;
   /**
    * SRP(状況失点抑制). RE 행렬이 없는 리그(올스타 등)면 null.
    * ⚠**타자의 SRC와 부호가 반대인 같은 계산**이다 — 두 벌로 만들지 않는다(M1)
@@ -118,7 +125,26 @@ export interface PitchingBlockData {
   asReliever: RoleLine | null;
 }
 
-export type SplitAxisId = "hand" | "base" | "homeAway" | "month" | "order";
+/**
+ * 연속 기록. ⚠**「지금 이어지는 중」과 「올해 최장」은 다른 값**이라 항상 둘 다 낸다.
+ * 하나만 내면 어제 끊긴 기록이 오늘도 이어지는 것처럼 보인다.
+ */
+export interface StreakData {
+  current: number;
+  best: number;
+  bestFrom: string | null;
+  bestTo: string | null;
+}
+
+export interface StreakBlockData {
+  hitting: StreakData;
+  onBase: StreakData;
+  hitless: StreakData;
+  /** 센 경기 수. **분모다**(M2) */
+  games: number;
+}
+
+export type SplitAxisId = "hand" | "base" | "homeAway" | "month" | "order" | "venue";
 
 export interface SplitRow {
   /** 원본 구분값(`2026-04` 등). **정렬은 라벨이 아니라 이걸로 한다** — 「10月」은 「4月」보다 앞에 온다 */
@@ -271,6 +297,8 @@ export interface PlayerPageData {
   spark: SparkPoint[];
   /** 그 꺾은선이 무엇인지 (`月別OPS` 등) */
   sparkLabel: string;
+  /** 연속 기록. 타자만. 타석이 하나도 없으면 null */
+  streaks: StreakBlockData | null;
   /** 반영 기준 경기일 */
   asOf: string | null;
 }
@@ -549,6 +577,10 @@ function standardPitching(p: PitchingBlockData): RawHtml {
       html`${statCount("奪三振", p.line.so, rk(p.ranks, "so"))}
         ${statCount("失点", p.line.r)}
         ${statCount("自責点", p.line.er)}`,
+      html`${statCount("投球数", p.pitches, rk(p.ranks, "pitches"))}
+        ${statRateOuts("球数/アウト", p.pitchesPerOut, 2, null, p.role)}
+        ${statCount("暴投", p.wp)}
+        ${statCount("ボーク", p.balk)}`,
     )}
     ${note(
       `この投手は${ROLE_LABEL[p.role]}として扱っています（先発${p.starts}試合 / 救援${p.games - p.starts}試合、` +
@@ -658,6 +690,39 @@ function advancedPitching(p: PitchingBlockData): RawHtml {
   });
 }
 
+/**
+ * 연속 기록.
+ *
+ * ⚠**「今」과 「今季最長」을 나란히 둔다.** 하나만 내면 어제 끊긴 기록이 오늘도
+ * 이어지는 것처럼 보인다 — 연속 기록에서 가장 흔한 오독이다.
+ * ⚠**「通算」이라고 쓰지 않는다.** 소급 범위가 2시즌뿐이라 통산이 될 수 없다(§2-1).
+ */
+function streakBlock(s: StreakBlockData, season: number): RawHtml {
+  const row = (label: string, v: StreakData, unit = "試合"): RawHtml => {
+    const span =
+      v.bestFrom === null || v.bestTo === null
+        ? null
+        : html`<span class="den">${gameDate(v.bestFrom)}〜${gameDate(v.bestTo)}</span>`;
+    return html`<dt>${term(label)}</dt><dd class="v">${v.current}${unit}<span class="den">今</span></dd>
+      <dt class="sub2">今季最長</dt><dd class="v">${v.best}${unit}${span}</dd>`;
+  };
+  return block({
+    id: "streak",
+    title: "連続記録",
+    qualifier: `${season}年 · 打席のあった${s.games}試合`,
+    body: html`${columns(
+      row("連続安打", s.hitting),
+      row("連続出塁", s.onBase),
+      row("連続無安打", s.hitless),
+    )}
+    ${note(
+      "「今」はいま続いている記録、「今季最長」はこの1年でいちばん長かった記録です。" +
+        "⚠打席のなかった試合（代走・守備固めだけ）は数えません — 数えると連続記録が理不尽に途切れます。" +
+        `⚠${season}年のなかだけで数えています。当サイトは2025年からの記録しか持っていないので「通算」ではありません。`,
+    )}`,
+  });
+}
+
 function splitsBlock(axes: readonly SplitAxisData[]): RawHtml {
   if (axes.length === 0) {
     return block({
@@ -696,6 +761,11 @@ function splitsBlock(axes: readonly SplitAxisData[]): RawHtml {
           ? `棒は被OPS（短いほど良い）。数字は 被打率 / 被出塁率 / 被長打率 と対戦打席数です。`
           : `棒はOPS。数字は 打率 / 出塁率 / 長打率 と打席数です。`) +
           `${a.thinBelow}打席未満は棒を薄くしています — 値は小さな標本のもので、順位ではありません。` +
+          // ⚠**접은 사실을 말한다.** 지방 개최는 한 선수에게 3~4타석뿐이라 접지 않으면
+          // 표의 절반이 1타석짜리 줄이 된다. 다만 **버린 것이 아니라 합친 것**이므로 그렇게 적는다
+          (a.id === "venue"
+            ? ` 打席の少ない球場は「その他の球場」にまとめています（捨てずに合算しているので、合計は変わりません）。`
+            : "") +
           (a.unclassified === 0
             ? ""
             : ` この軸で分類できない打席が${a.unclassified}あります（${allowed ? "相手打者" : "相手投手"}の投打が不明など）。`),
@@ -925,6 +995,9 @@ function renderBlock(id: BlockId, d: PlayerPageData, base: string): RawHtml {
     case "rolesplit":
       if (d.pitching !== null) return roleSplitBlock(d.pitching);
       return block({ id: "rolesplit", title: "先発・救援別", body: html`<p class="empty">登板がありません。</p>` });
+    case "streak":
+      if (d.streaks !== null) return streakBlock(d.streaks, d.season);
+      return block({ id: "streak", title: "連続記録", body: html`<p class="empty">打席がありません。</p>` });
     case "splits":
       return splitsBlock(d.splits);
     case "scorebook":

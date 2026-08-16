@@ -17,6 +17,7 @@ export type BlockId =
   | "scorebook"
   | "situation"
   | "rolesplit"
+  | "streak"
   | "matchup"
   | "ranking";
 
@@ -35,6 +36,7 @@ export const BLOCKS: readonly BlockMeta[] = [
   { id: "scorebook", name: "打席記録", desc: "直近の打席を1つずつ" },
   { id: "situation", name: "得点期待値", desc: "24状況の期待値と、立った打席数" },
   { id: "rolesplit", name: "先発・救援別", desc: "投手のみ。役割ごとに分けた成績" },
+  { id: "streak", name: "連続記録", desc: "打者のみ。連続安打・連続出塁" },
   { id: "matchup", name: "対戦成績", desc: "投手別。打席数の多い順" },
   { id: "ranking", name: "リーグ順位", desc: "指標を切り替えて上位と自分の位置" },
 ];
@@ -50,7 +52,7 @@ export interface PresetMeta {
 export const PRESETS: readonly PresetMeta[] = [
   // `rolesplit`은 타자 페이지에서 걸러진다(`presetsFor`) — 투수에게만 기본으로 켜진다
   { id: "standard", name: "標準", blocks: ["standard", "rolesplit", "advanced", "splits", "ranking"] },
-  { id: "record", name: "記録", blocks: ["standard", "scorebook", "splits", "matchup"] },
+  { id: "record", name: "記録", blocks: ["standard", "streak", "scorebook", "splits", "matchup"] },
   { id: "analysis", name: "分析", blocks: ["advanced", "rolesplit", "situation", "splits", "matchup", "ranking"] },
   { id: "simple", name: "簡易", blocks: ["standard"] },
 ];
@@ -83,6 +85,7 @@ const PITCHER_BLOCKS = new Set<BlockId>([
  */
 const BATTER_BLOCKS = new Set<BlockId>([
   "standard",
+  "streak",
   "advanced",
   "splits",
   "scorebook",

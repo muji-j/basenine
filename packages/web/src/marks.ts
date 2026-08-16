@@ -150,6 +150,61 @@ export function markProfile(
 </svg>`;
 }
 
+/** 확대 도형의 변. 비교 화면도 **같은 값**을 써야 두 도형이 겹쳐진다 */
+export const MARK_FIGURE_SIZE = 176;
+
+/** 紋 한 축의 화면 좌표. `grip`은 바깥 둘레, `value`는 도형 위, `label`은 그 바깥 */
+export interface AxisGeometry {
+  grip: { x: number; y: number };
+  value: { x: number; y: number };
+  label: { x: number; y: number; anchor: "start" | "middle" | "end" };
+}
+
+/**
+ * 紋의 좌표 계산 — **한 벌만 둔다**(M1의 정신).
+ *
+ * ⚠**비교 화면이 이걸 클라이언트에서 다시 계산하면 두 벌이 된다.** 그러면 어느 날 한쪽만
+ * 고쳐져 「같은 선수인데 두 화면에서 도형이 다르다」가 나온다. 서버가 좌표까지 계산해
+ * 문자열로 넘기고, 클라이언트는 그리기만 한다.
+ *
+ * @param pad 라벨 자리로 바깥에 남길 여백
+ */
+export function profileGeometry(
+  axes: readonly ProfileAxis[],
+  size = MARK_FIGURE_SIZE,
+  pad = 34,
+): { size: number; center: number; outline: string; shape: string; axes: AxisGeometry[] } {
+  const c = size / 2;
+  const r = c - pad;
+
+  const at = (i: number, len: number): { x: number; y: number } => {
+    const angle = (Math.PI * 2 * i) / axes.length - Math.PI / 2;
+    return { x: c + Math.cos(angle) * r * len, y: c + Math.sin(angle) * r * len };
+  };
+  const xy = (i: number, len: number): string => {
+    const q = at(i, len);
+    return `${q.x.toFixed(1)},${q.y.toFixed(1)}`;
+  };
+  // ⚠**0을 0으로 그리지 않는다.** 전 축이 0이면 도형이 점이 되어 「데이터 없음」과 구별되지 않는다
+  const len = (a: ProfileAxis): number => Math.max(0.06, Math.min(1, a.scaled ?? 0));
+
+  return {
+    size,
+    center: c,
+    outline: axes.map((_, i) => xy(i, 1)).join(" "),
+    shape: axes.map((a, i) => xy(i, len(a))).join(" "),
+    axes: axes.map((a, i) => {
+      const lab = at(i, 1.24);
+      return {
+        grip: at(i, 1),
+        value: at(i, len(a)),
+        // 라벨이 좌우 어느 쪽에 오는지에 따라 정렬을 바꾼다 — 안 그러면 도형에 겹친다
+        label: { ...lab, anchor: lab.x < c - 4 ? "end" : lab.x > c + 4 ? "start" : "middle" },
+      };
+    }),
+  };
+}
+
 /**
  * 확대한 成績の紋 — **꼭짓점을 고를 수 있는 판**.
  *
@@ -167,43 +222,25 @@ export function markFigure(
   sampleText: string,
 ): RawHtml {
   if (axes.length < 3) return raw("");
-  const size = 176;
-  const c = size / 2;
-  const r = c - 34; // 라벨이 들어갈 자리를 바깥에 남긴다
+  const g = profileGeometry(axes);
+  const c = g.center;
 
-  const at = (i: number, len: number): { x: number; y: number } => {
-    const angle = (Math.PI * 2 * i) / axes.length - Math.PI / 2;
-    return { x: c + Math.cos(angle) * r * len, y: c + Math.sin(angle) * r * len };
-  };
-  const xy = (i: number, len: number): string => {
-    const q = at(i, len);
-    return `${q.x.toFixed(1)},${q.y.toFixed(1)}`;
-  };
-  const len = (a: ProfileAxis): number => Math.max(0.06, Math.min(1, a.scaled ?? 0));
-
-  const outline = axes.map((_, i) => xy(i, 1)).join(" ");
-  const shape = axes.map((a, i) => xy(i, len(a))).join(" ");
-
-  return html`<svg class="mkfig" viewBox="0 0 ${size} ${size}" role="group"
+  return html`<svg class="mkfig" viewBox="0 0 ${g.size} ${g.size}" role="group"
   aria-label="${p.name}の成績プロフィール（${sampleText}）">
-  <polygon class="mf-grid" points="${outline}"></polygon>
-  <polygon class="mf-shape" points="${shape}" fill="${p.color.base}"></polygon>
+  <polygon class="mf-grid" points="${g.outline}"></polygon>
+  <polygon class="mf-shape" points="${g.shape}" fill="${p.color.base}"></polygon>
   ${axes.map((a, i) => {
     // ⚠**손잡이는 바깥 둘레에, 값 표시점은 도형 위에.** 둘을 한 자리에 두면
     // 성적이 낮은 축의 점이 중앙으로 모여 서로 겹치고, 그러면 누를 수가 없다
-    const grip = at(i, 1);
-    const v = at(i, len(a));
-    const lab = at(i, 1.24);
-    // 라벨이 좌우 어느 쪽에 오는지에 따라 정렬을 바꾼다 — 안 그러면 도형에 겹친다
-    const anchor = lab.x < c - 4 ? "end" : lab.x > c + 4 ? "start" : "middle";
+    const q = g.axes[i]!;
     return html`<g class="mf-ax" role="button" tabindex="0" data-axis="${i}"
       aria-pressed="${i === 0 ? "true" : "false"}"
       aria-label="${a.label} ${a.text} ${a.sample}">
-      <line class="mf-spoke" x1="${c}" y1="${c}" x2="${grip.x.toFixed(1)}" y2="${grip.y.toFixed(1)}"></line>
-      <circle class="mf-hit" cx="${grip.x.toFixed(1)}" cy="${grip.y.toFixed(1)}" r="21"></circle>
-      <circle class="mf-dot" cx="${v.x.toFixed(1)}" cy="${v.y.toFixed(1)}" r="3.5"></circle>
-      <text class="mf-lab" x="${lab.x.toFixed(1)}" y="${lab.y.toFixed(1)}"
-        text-anchor="${anchor}" dominant-baseline="middle">${a.label}</text>
+      <line class="mf-spoke" x1="${c}" y1="${c}" x2="${q.grip.x.toFixed(1)}" y2="${q.grip.y.toFixed(1)}"></line>
+      <circle class="mf-hit" cx="${q.grip.x.toFixed(1)}" cy="${q.grip.y.toFixed(1)}" r="21"></circle>
+      <circle class="mf-dot" cx="${q.value.x.toFixed(1)}" cy="${q.value.y.toFixed(1)}" r="3.5"></circle>
+      <text class="mf-lab" x="${q.label.x.toFixed(1)}" y="${q.label.y.toFixed(1)}"
+        text-anchor="${q.label.anchor}" dominant-baseline="middle">${a.label}</text>
     </g>`;
   })}
 </svg>`;

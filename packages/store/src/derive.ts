@@ -46,6 +46,12 @@ export interface PitchingRow {
   so: number;
   runs: number;
   er: number;
+  /**
+   * 폭투·보크. ⚠**읽지 못하면 0이 아니라 null**이다(M11) —
+   * 「폭투 0개」와 「폭투 열을 못 읽었다」는 다르다.
+   */
+  wp: number | null;
+  balk: number | null;
 }
 
 /** 격리 대상. **버리지 않는다.** */
@@ -149,5 +155,8 @@ export function derivePitching(
     so: row.strikeouts ?? 0,
     runs: row.runs ?? 0,
     er: row.earnedRuns ?? 0,
+    // ⚠여기서는 `?? 0`을 쓰지 않는다. 다른 필드와 달리 이 둘은 「없음」이 실재한다
+    wp: row.wildPitches,
+    balk: row.balks,
   };
 }

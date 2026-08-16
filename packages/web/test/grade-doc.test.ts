@@ -36,6 +36,7 @@ const BY_LABEL: Readonly<Record<string, string>> = {
   "K/9": "k9",
   "BB/9": "bb9",
   "HR/9": "hr9",
+  "球数/アウト": "pitchesPerOut",
 };
 
 /** 어느 소제목 아래의 표인가. 문서의 제목이 바뀌면 여기도 바뀐다 */

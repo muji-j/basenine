@@ -10,9 +10,15 @@ import { readdir, readFile } from "node:fs/promises";
 import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { parseBoxScore, parseLineScore, parsePlayByPlay } from "@bb-app/parser";
+import {
+  parseBoxScore,
+  parseCompetitionLabel,
+  parseLineScore,
+  parsePlayByPlay,
+  venuesByGameId,
+} from "@bb-app/parser";
 import type { PlayEvent } from "@bb-app/parser";
-import { competitionOf } from "@bb-app/domain";
+import { competitionFromLabel, competitionOf } from "@bb-app/domain";
 import { openDb } from "../src/db.ts";
 import { alignPaEvents } from "../src/align.ts";
 import { deriveRuns } from "../src/runs.ts";
@@ -51,11 +57,24 @@ const maxWrites = Number(values["max-writes"]);
 // 시계는 1회만 읽어 전체 적재에 같은 값을 쓴다(M6).
 const nowIso = new Date().toISOString();
 
-async function* walk(dir: string): AsyncGenerator<string> {
+/**
+ * @param leaf 찾을 파일명. ⚠**기본값을 두지 않는다** — 예전에 `box.html.gz` 고정이었는데
+ *   일정 페이지를 찾으려다 **0건이 조용히 돌아왔다.** 무엇을 찾는지 호출자가 매번 말한다.
+ */
+async function* walk(dir: string, leaf: string): AsyncGenerator<string> {
   for (const e of await readdir(dir, { withFileTypes: true })) {
     const p = join(dir, e.name);
-    if (e.isDirectory()) yield* walk(p);
-    else if (e.name === "box.html.gz") yield p;
+    if (e.isDirectory()) yield* walk(p, leaf);
+    else if (e.name === leaf) yield p;
+  }
+}
+
+/** 일정 페이지는 `schedule_08.html.gz`처럼 달마다 이름이 다르다 */
+async function* walkSchedules(dir: string): AsyncGenerator<string> {
+  for (const e of await readdir(dir, { withFileTypes: true })) {
+    const p = join(dir, e.name);
+    if (e.isDirectory()) yield* walkSchedules(p);
+    else if (/^schedule_\d{2}\.html\.gz$/.test(e.name)) yield p;
   }
 }
 
@@ -101,7 +120,26 @@ const quarantineKinds = new Map<string, number>();
 
 let stoppedAt: string | null = null;
 
-for await (const file of walk(archiveRoot)) {
+/**
+ * 구장 조회표. **월간 일정 페이지**에서 만든다.
+ *
+ * ⚠경기 페이지(`index.html`)에는 다른 경기들의 스코어 박스가 함께 있어
+ * 거기서 뽑으면 **남의 구장**을 집어 온다(실측 2026-08-15: 8/14 페이지에서
+ * 8/15 경기의 구장이 먼저 잡혔다).
+ * ⚠일정 페이지를 못 읽어도 적재를 멈추지 않는다 — 그 달의 구장만 비어 있게 된다.
+ * **없는 것을 0이나 빈 문자열로 뭉개지 않는다**(M11).
+ */
+const venueByGameId = new Map<string, string>();
+for await (const f of walkSchedules(archiveRoot)) {
+  try {
+    const html = gunzipSync(await readFile(f)).toString("utf8");
+    for (const [gameId, venue] of venuesByGameId(html)) venueByGameId.set(gameId, venue);
+  } catch (err) {
+    console.error(`일정 페이지를 읽지 못했다(구장만 비게 된다): ${f} — ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+for await (const file of walk(archiveRoot, "box.html.gz")) {
   const meta = gameFromPath(file);
   if (meta === null) {
     failed += 1;
@@ -120,8 +158,10 @@ for await (const file of walk(archiveRoot)) {
   }
 
   let box;
+  let boxHtml: string;
   try {
-    box = parseBoxScore(gunzipSync(await readFile(file)).toString("utf8"));
+    boxHtml = gunzipSync(await readFile(file)).toString("utf8");
+    box = parseBoxScore(boxHtml);
   } catch (err) {
     failed += 1;
     console.error(`PARSE ERROR ${meta.gameId} — ${err instanceof Error ? err.message : String(err)}`);
@@ -130,30 +170,89 @@ for await (const file of walk(archiveRoot)) {
 
   const sourceUrl = `https://npb.jp/scores/${meta.season}/${meta.gameId.split("/")[1]}/${meta.gameId.split("/")[2]}/box.html`;
 
-  // ⚠경기구분을 팀 코드로 판정한다. 올스타전(`cl`/`pl`)을 정규시즌에 섞으면
-  // 선수 성적이 조용히 부풀어 오른다 — 실제로 佐藤의 시즌 홈런이 2개 많았다.
+  /**
+   * 경기구분.
+   *
+   * ⚠**표기로 판정한다.** 팀 코드로는 CS·일본시리즈를 구별할 수 없다 —
+   * 같은 구단 코드를 쓰기 때문이다. 실측(2026-08-16): 표기를 안 보던 동안
+   * 2025년 CS 13경기와 일본시리즈 5경기가 「정규시즌」에 들어와 있었다.
+   * ⚠올스타는 팀 코드로도 판정되므로 **둘을 대조**한다. 어긋나면 규칙이 틀린 것이니 던진다.
+   */
+  const series = parseCompetitionLabel(boxHtml);
   let competition: string;
   try {
-    competition = competitionOf(meta.awayCode, meta.homeCode);
+    if (series === null) {
+      throw new RangeError("대회 표기(【…】)를 찾지 못했다 — 페이지 구조 변경을 의심하라");
+    }
+    competition = competitionFromLabel(series);
+    const byCode = competitionOf(meta.awayCode, meta.homeCode);
+    // 팀 코드로 판정되는 것은 올스타뿐이다. 그 하나가 어긋나면 둘 중 하나가 틀렸다
+    if (byCode === "allStar" !== (competition === "allStar")) {
+      throw new RangeError(`구분이 표기(${series}→${competition})와 팀 코드(${byCode})에서 다르다`);
+    }
   } catch (err) {
     failed += 1;
     console.error(`구분 판정 실패 ${meta.gameId} — ${err instanceof Error ? err.message : String(err)}`);
     continue;
   }
 
+  const venue = venueByGameId.get(meta.gameId) ?? null;
+
   if (box.status === "notPlayed") {
     notPlayed += 1;
-    budget.games += db.transaction(() =>
-      upsertGame(db, {
+    budget.games += db.transaction(() => {
+      const n = upsertGame(db, {
         ...meta,
         status: "notPlayed",
         notPlayedReason: box.reason,
         competition,
+        series,
         sourceUrl,
         fetchedAt: nowIso,
-      }),
-    );
+        // ⚠중지 경기에 결과는 없다. **0-0이 아니라 「없음」**이다(M11)
+        venue,
+      });
+      /**
+       * ⚠**성립하지 않은 경기의 기록을 지운다.**
+       *
+       * 재적재가 멱등이려면(M5) 「전에 실시로 들어왔다가 지금 미성립으로 바뀐」 경우에
+       * 이전 행이 남아 있으면 안 된다. 실제로 일어났다 — ノーゲーム 판정을 고치기 전에
+       * 3경기가 실시로 적재돼 있었고, 그 기록이 시즌 성적에 섞여 있었다.
+       * 상태만 바꾸고 자식 행을 두면 **화면은 「미성립」인데 성적에는 남는다.**
+       */
+      db.raw.prepare("DELETE FROM pa_event WHERE game_id = ?").run(meta.gameId);
+      db.raw.prepare("DELETE FROM batting_line WHERE game_id = ?").run(meta.gameId);
+      db.raw.prepare("DELETE FROM pitching_line WHERE game_id = ?").run(meta.gameId);
+      db.raw.prepare("DELETE FROM quarantine WHERE game_id = ?").run(meta.gameId);
+      return n;
+    });
     continue;
+  }
+
+  /**
+   * 경기 결과(R·H·E). 라인스코어에서 온다.
+   *
+   * ⚠**팀 승패를 투수의 `decision`으로 세지 마라.** 그건 개인 기록이라 무승부에서
+   * 아무에게도 안 붙는다(실측: 632경기에 승 620·패 620 — 12경기가 무승부).
+   * ⚠읽지 못하면 **넣지 않는다.** 0으로 채우면 0-0 무승부가 만들어진다.
+   */
+  let result: {
+    awayRuns: number | null; homeRuns: number | null;
+    awayHits: number | null; homeHits: number | null;
+    awayErrors: number | null; homeErrors: number | null;
+  } = {
+    awayRuns: null, homeRuns: null, awayHits: null, homeHits: null,
+    awayErrors: null, homeErrors: null,
+  };
+  try {
+    const ls = parseLineScore(gunzipSync(await readFile(file)).toString("utf8"));
+    result = {
+      awayRuns: ls.awayTotal, homeRuns: ls.homeTotal,
+      awayHits: ls.awayHits, homeHits: ls.homeHits,
+      awayErrors: ls.awayErrors, homeErrors: ls.homeErrors,
+    };
+  } catch (err) {
+    console.error(`라인스코어 ERROR ${meta.gameId} — ${err instanceof Error ? err.message : String(err)}`);
   }
 
   // 타석 이벤트의 재료를 **쓰기 전에** 읽어둔다. 트랜잭션 안에서 파일을 기다리지 않게 한다.
@@ -189,8 +288,11 @@ for await (const file of walk(archiveRoot)) {
     status: "played",
     notPlayedReason: null,
     competition,
+    series,
     sourceUrl,
     fetchedAt: nowIso,
+    ...result,
+    venue,
   });
 
   for (const [side, team] of [["away", box.away], ["home", box.home]] as const) {

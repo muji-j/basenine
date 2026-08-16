@@ -41,7 +41,7 @@ function seedPitcher(db: Db, gameId: string, playerId: string, side: "away" | "h
   upsertPlayer(db, playerId, `투수${playerId}`, NOW);
   upsertPitching(db, {
     gameId, playerId, side, decision: null, outs, bf: 20, pitches: 80,
-    h: 4, hr: 1, bb: 1, hbp: 0, so: 5, runs: er, er,
+    h: 4, hr: 1, bb: 1, hbp: 0, so: 5, runs: er, er, wp: null, balk: null,
   });
 }
 

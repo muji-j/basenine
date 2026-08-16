@@ -21,8 +21,27 @@ export interface GameRow {
   status: "played" | "notPlayed";
   notPlayedReason: string | null;
   competition: string;
+  /**
+   * 대회 표기 **원문**(`JERA セ・リーグ公式戦` · `CS ファーストステージ` …).
+   *
+   * ⚠**판정 결과(`competition`)와 함께 든다**(M4). 판정 규칙이 바뀌었을 때
+   * 「원본이 뭐라고 썼는가」로 되돌아갈 수 있어야 한다. 후원사 이름이 붙어 해마다 바뀐다.
+   */
+  series?: string | null;
   sourceUrl: string;
   fetchedAt: string;
+  /**
+   * 경기 결과. ⚠**중지 경기에는 없다 — 0이 아니라 null**이다(M11).
+   * 팀 승패는 이 두 값으로만 판정한다(투수의 `decision`으로 세면 무승부가 사라진다).
+   */
+  awayRuns?: number | null;
+  homeRuns?: number | null;
+  awayHits?: number | null;
+  homeHits?: number | null;
+  awayErrors?: number | null;
+  homeErrors?: number | null;
+  /** 구장 원문 표기. ⚠홈팀으로 대리하면 지방개최를 놓친다 */
+  venue?: string | null;
 }
 
 export interface WriteBudget {
@@ -126,23 +145,42 @@ export function upsertGame(db: Db, g: GameRow): number {
   db.raw
     .prepare(
       `INSERT INTO game (game_id, season, game_date, away_code, home_code, game_no,
-                         status, not_played_reason, competition, source_url, fetched_at, revision)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                         status, not_played_reason, competition, series, source_url, fetched_at, revision,
+                         away_runs, home_runs, away_hits, home_hits, away_errors, home_errors, venue)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(game_id) DO UPDATE SET
          status = excluded.status,
          not_played_reason = excluded.not_played_reason,
          competition = excluded.competition,
+         series = excluded.series,
          source_url = excluded.source_url,
          fetched_at = excluded.fetched_at,
-         -- 내용이 실제로 달라졌을 때만 revision을 올린다. 재적재만으로는 오르지 않는다
+         away_runs = excluded.away_runs,
+         home_runs = excluded.home_runs,
+         away_hits = excluded.away_hits,
+         home_hits = excluded.home_hits,
+         away_errors = excluded.away_errors,
+         home_errors = excluded.home_errors,
+         venue = excluded.venue,
+         -- 내용이 실제로 달라졌을 때만 revision을 올린다. 재적재만으로는 오르지 않는다.
+         -- ⚠득점이 바뀌는 것은 **정정**이다. revision이 올라가야 M4가 답할 수 있다
          revision = CASE
            WHEN game.status IS NOT excluded.status
              OR game.not_played_reason IS NOT excluded.not_played_reason
+             OR game.away_runs IS NOT excluded.away_runs
+             OR game.home_runs IS NOT excluded.home_runs
+             -- ⚠구분이 바뀌는 것도 정정이다. 정규시즌이던 경기가 CS로 바뀌면
+             -- 그 선수의 시즌 성적이 통째로 달라진다
+             OR game.competition IS NOT excluded.competition
            THEN game.revision + 1 ELSE game.revision END`,
     )
     .run(
       g.gameId, g.season, g.gameDate, g.awayCode, g.homeCode, g.gameNo,
-      g.status, g.notPlayedReason, g.competition, g.sourceUrl, g.fetchedAt,
+      g.status, g.notPlayedReason, g.competition, g.series ?? null, g.sourceUrl, g.fetchedAt,
+      g.awayRuns ?? null, g.homeRuns ?? null,
+      g.awayHits ?? null, g.homeHits ?? null,
+      g.awayErrors ?? null, g.homeErrors ?? null,
+      g.venue ?? null,
     );
   return 1;
 }
@@ -172,17 +210,18 @@ export function upsertPitching(db: Db, r: PitchingRow): number {
   db.raw
     .prepare(
       `INSERT INTO pitching_line (game_id, player_id, side, decision, outs, bf, pitches,
-         h, hr, bb, hbp, so, runs, er)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         h, hr, bb, hbp, so, runs, er, wp, balk)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(game_id, player_id) DO UPDATE SET
          side = excluded.side, decision = excluded.decision, outs = excluded.outs,
          bf = excluded.bf, pitches = excluded.pitches, h = excluded.h, hr = excluded.hr,
          bb = excluded.bb, hbp = excluded.hbp, so = excluded.so,
-         runs = excluded.runs, er = excluded.er`,
+         runs = excluded.runs, er = excluded.er,
+         wp = excluded.wp, balk = excluded.balk`,
     )
     .run(
       r.gameId, r.playerId, r.side, r.decision, r.outs, r.bf, r.pitches,
-      r.h, r.hr, r.bb, r.hbp, r.so, r.runs, r.er,
+      r.h, r.hr, r.bb, r.hbp, r.so, r.runs, r.er, r.wp ?? null, r.balk ?? null,
     );
   return 1;
 }

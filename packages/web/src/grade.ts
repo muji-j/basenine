@@ -90,6 +90,8 @@ export const SCALES: Readonly<Record<GradeGroup, Readonly<Record<string, GradeSc
     k9: { thresholds: [6.4, 7.35, 8.4, 9.3], higherIsBetter: true, minSample: STARTER_MIN },
     bb9: { thresholds: [1.8, 2.25, 2.8, 3.4], higherIsBetter: false, minSample: STARTER_MIN },
     hr9: { thresholds: [0.65, 0.8, 0.93, 1.15], higherIsBetter: false, minSample: STARTER_MIN },
+    // ⚠적을수록 좋다. 다만 삼진형 투수는 球数가 늘기 마련이라 「효율=좋은 투수」가 아니다
+    pitchesPerOut: { thresholds: [5.2, 5.4, 5.6, 5.85], higherIsBetter: false, minSample: STARTER_MIN },
   },
 
   // ── 구원 (20이닝 이상 90명 기준) ──
@@ -100,6 +102,7 @@ export const SCALES: Readonly<Record<GradeGroup, Readonly<Record<string, GradeSc
     k9: { thresholds: [6.65, 8.1, 9.1, 10.15], higherIsBetter: true, minSample: RELIEVER_MIN },
     bb9: { thresholds: [2.15, 2.85, 3.45, 4.2], higherIsBetter: false, minSample: RELIEVER_MIN },
     hr9: { thresholds: [0.32, 0.53, 0.66, 1.12], higherIsBetter: false, minSample: RELIEVER_MIN },
+    pitchesPerOut: { thresholds: [5.05, 5.25, 5.5, 5.75], higherIsBetter: false, minSample: RELIEVER_MIN },
   },
 };
 

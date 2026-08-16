@@ -155,6 +155,8 @@ const PITCHER: PitcherRow = {
   strikeouts: 7,
   runs: 3,
   earnedRuns: 2,
+  wildPitches: 0,
+  balks: 0,
 };
 
 test("⚠투수 팀 합계 행은 적재 대상이 아니다", () => {

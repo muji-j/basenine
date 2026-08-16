@@ -10,7 +10,7 @@
  */
 import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
-import { NO_VALUE, avg3, fullDate, innings } from "./format.ts";
+import { NO_VALUE, avg3, dec2, fullDate, innings } from "./format.ts";
 import {
   block,
   denText,
@@ -206,10 +206,94 @@ ${d.highlights.map((s) =>
   });
 }
 
+/**
+ * 팀 순위표 한 줄. **값은 이미 계산이 끝나 있다** — 렌더러는 지표를 만들지 않는다(M1).
+ */
+export interface StandingRow {
+  teamCode: string;
+  name: string;
+  shortName: string;
+  color: TeamColor;
+  rank: number;
+  /** 동률이면 화면이 「同」이라고 말한다 */
+  tiedRank: boolean;
+  games: number;
+  w: number;
+  l: number;
+  t: number;
+  /** 勝率. ⚠**분모는 `勝+敗`**(무승부 제외 · NPB 규칙). 결판난 경기가 없으면 null */
+  pct: number | null;
+  /** 1위와의 게임 차. 1위는 0 */
+  gamesBehind: number;
+  rf: number;
+  ra: number;
+  /** 팀 타율·팀 방어율 — 분모를 들고 다닌다 */
+  avg: Rate;
+  era: Rate;
+  home: { w: number; l: number; t: number };
+  away: { w: number; l: number; t: number };
+  last10: { w: number; l: number; t: number };
+}
+
+export interface StandingsSection {
+  id: string;
+  name: string;
+  rows: StandingRow[];
+}
+
 export interface RankingPageData {
   season: number;
   asOf: string | null;
+  /** 팀 순위표. **개인 순위보다 먼저 온다** — 「順位」를 누른 사람이 먼저 찾는 것이다 */
+  standings: StandingsSection[];
+  /** 동률 처리 규칙. ⚠**화면에 적는다**(M3) */
+  tieRule: string;
   leagues: LeagueSection[];
+}
+
+/** 승패무 표기 `25-24-1`. 무승부가 0이어도 자리를 비우지 않는다 — 열이 흔들린다 */
+function wlt(x: { w: number; l: number; t: number }): string {
+  return `${x.w}-${x.l}-${x.t}`;
+}
+
+/** 得失点差. **부호를 항상 붙인다** — 0을 기준으로 읽는 값이다 */
+function diff(rf: number, ra: number): string {
+  const d = rf - ra;
+  return (d >= 0 ? "+" : "") + String(d);
+}
+
+/**
+ * 팀 순위표.
+ *
+ * ⚠**勝率의 분모를 옆에 둔다**(M2). 여기서 분모는 `勝`과 `敗` 열 자체이므로
+ * 별도 표기 대신 **인접**으로 지킨다 — 그 사실을 주석에 남기지 않으면 나중에 열이 흩어진다.
+ * ⚠**得失点差 막대는 우리가 만든 그림**이다. 로고를 쓸 수 없는 자리에서 구단을 구별하는 수단이기도 하다.
+ */
+function standingsTable(s: StandingsSection, base: string): RawHtml {
+  if (s.rows.length === 0) return html`<p class="empty">まだ順位を計算できていません。</p>`;
+  const widest = Math.max(1, ...s.rows.map((r) => Math.abs(r.rf - r.ra)));
+  return scroller(html`<table class="stand">
+    <thead><tr>
+      <th>順位</th><th class="l">球団</th><th>試合</th><th>勝</th><th>敗</th><th>分</th>
+      <th>勝率</th><th>差</th><th>得点</th><th>失点</th><th>得失差</th>
+      <th>${term("打率")}</th><th>${term("防御率")}</th>
+      <th>ホーム</th><th>ビジター</th><th>直近${10}</th>
+    </tr></thead>
+    <tbody>${s.rows.map(
+      (r) => html`<tr style="--chip:${r.color.base}">
+        <td class="rk">${r.rank}${r.tiedRank ? html`<em>同</em>` : null}</td>
+        <td class="l tm"><i></i>${r.shortName}</td>
+        <td>${r.games}</td><td class="b">${r.w}</td><td>${r.l}</td><td>${r.t}</td>
+        <td class="b">${avg3(r.pct)}</td>
+        <td>${r.gamesBehind === 0 ? "—" : r.gamesBehind.toFixed(1).replace(/\.0$/, "")}</td>
+        <td>${r.rf}</td><td>${r.ra}</td>
+        <td class="dif"><b>${diff(r.rf, r.ra)}</b><i class="${r.rf >= r.ra ? "p" : "n"}"
+          style="--w:${((Math.abs(r.rf - r.ra) / widest) * 100).toFixed(1)}"></i></td>
+        <td>${avg3(r.avg.value)}</td><td>${dec2(r.era.value)}</td>
+        <td>${wlt(r.home)}</td><td>${wlt(r.away)}</td><td>${wlt(r.last10)}</td>
+      </tr>`,
+    )}</tbody>
+  </table>`);
 }
 
 /**
@@ -228,6 +312,25 @@ export function renderRankingPage(d: RankingPageData, ctx: RenderContext): strin
   </div>
   <span class="asof">${d.asOf === null ? "" : `${fullDate(d.asOf)}まで`}</span>
 </header>
+
+${d.standings.length === 0
+    ? raw("")
+    : html`<section class="block" id="b-standings">
+  <h4>チーム順位</h4>
+  ${d.standings.map(
+    (s) => html`<div class="standwrap">
+    <h5 class="standname">${s.name}</h5>
+    ${standingsTable(s, base)}
+  </div>`,
+  )}
+  ${note(
+    // ⚠**勝率의 정의와 동률 규칙을 화면에 적는다**(M2·M3). 규칙이 코드에만 있으면 아무도 검증할 수 없다
+    `勝率は 勝 ÷（勝＋敗）で、引き分けは分母に入れません（NPBの規定）。` +
+      `交流戦の試合もリーグ順位に含めています。${d.tieRule}` +
+      `得点・失点は公表記録、打率と防御率は当サイトの再計算です。`,
+  )}
+</section>`}
+
 <nav class="rail" aria-label="リーグ">${tablist("rankleague", leagueTabs)}</nav>
 ${d.leagues.map((league, li) =>
     panel(
@@ -405,7 +508,9 @@ ${d.games.map((g, i) =>
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
-    nav: "starters",
+    // ⚠予告先発은 「試合」의 자식 화면이다. 부모 항목을 켜 두지 않으면
+    // 내비게이션이 「아무 데도 아님」을 가리킨다
+    nav: "today",
     body,
   });
 }

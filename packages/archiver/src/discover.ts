@@ -6,6 +6,8 @@
  * 조용한 0건은 「그날 경기가 없었다」로 오독되어 영구히 빈 아카이브를 남긴다.
  */
 
+import { parseScheduleVenues } from "@bb-app/parser";
+
 /** 발견된 경기 1건. */
 export interface GameRef {
   /** 시즌(서기 연도) */
@@ -16,6 +18,15 @@ export interface GameRef {
   slug: string;
   /** npb.jp 기준 절대 경로 `/scores/2026/0814/s-db-17/` */
   path: string;
+  /**
+   * 구장 원문 표기(`京セラD大阪`). 못 찾으면 null.
+   *
+   * ⚠**홈팀으로 대리하면 안 된다.** 같은 팀의 홈경기가 여러 구장에서 열린다(지방개최).
+   * ⚠**경기 페이지에서 뽑지 마라.** 경기 페이지에는 **다른 경기들의 스코어 박스**가 함께 있어
+   * 남의 구장을 집어 온다(실측 2026-08-15: 8/14 페이지에서 8/15 경기의 구장이 먼저 잡혔다).
+   * 일정 페이지의 `place` 칸이 유일하게 그 경기의 것이다.
+   */
+  venue: string | null;
 }
 
 export class NoGamesFoundError extends Error {
@@ -34,12 +45,16 @@ export class NoGamesFoundError extends Error {
 
 const GAME_HREF = /\/scores\/(\d{4})\/(\d{2})(\d{2})\/([a-z0-9]+(?:-[a-z0-9]+)+)\//g;
 
+
+
 /**
  * 월간 일정 HTML에서 경기 참조를 추출한다.
  *
  * @throws {NoGamesFoundError} 링크가 0건일 때. 호출자가 삼키지 마라.
  */
 export function discoverGames(html: string, sourceUrl: string): GameRef[] {
+  // ⚠구장 추출은 parser 한 벌만 쓴다(M1) — 수집기와 적재기가 다른 값을 내면 안 된다
+  const venues = parseScheduleVenues(html);
   const seen = new Set<string>();
   const out: GameRef[] = [];
 
@@ -54,6 +69,7 @@ export function discoverGames(html: string, sourceUrl: string): GameRef[] {
       date: `${yyyy}-${mm}-${dd}`,
       slug,
       path,
+      venue: venues.get(path) ?? null,
     });
   }
 

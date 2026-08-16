@@ -1,0 +1,190 @@
+/**
+ * 경기 화면.
+ *
+ * ⚠**이 화면이 조용히 틀리는 두 길을 막는다.**
+ * ① 공격이 없던 이닝에 `0`을 찍는 것 — 실측 1,487경기 중 674경기가 해당하므로
+ *    절반의 페이지가 야구를 아는 사람에게 고장으로 보인다.
+ * ② 복원이 어긋났는데 그냥 표를 내는 것 — 우리가 조립한 숫자라서 조용히 틀릴 수 있다.
+ *
+ * 그리고 **원본을 대체하지 않는다는 선**(L2·L3)도 여기서 고정한다.
+ */
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { baseLabel, basesMark, gameSlug, renderGamePage, situationLabel } from "../src/game-page.ts";
+import type { GamePageData, GamePlayView, GameSide } from "../src/game-page.ts";
+import { colorOf } from "@bb-app/domain";
+import { toString } from "../src/html.ts";
+import { context } from "./fixtures.ts";
+
+function side(code: string, shortName: string, runs: number, hits: number, errors: number): GameSide {
+  return { teamCode: code, name: `${shortName}チーム`, shortName, color: colorOf(code), runs, hits, errors };
+}
+
+function play(over: Partial<GamePlayView> = {}): GamePlayView {
+  return {
+    inning: 6,
+    half: "bottom",
+    outsBefore: 2,
+    bases: "123",
+    batter: { playerId: "B1", name: "長岡" },
+    pitcher: { playerId: "P1", name: "松本凌" },
+    rawBox: "右越本④",
+    rbi: 4,
+    runsScored: 4,
+    swing: 3.48,
+    awayScore: 0,
+    homeScore: 7,
+    ...over,
+  };
+}
+
+/** 1회말 1점 · 6회말 6점 · 7회표 2점. **9회말은 치지 않았다** */
+function innings() {
+  const out = [];
+  for (let i = 1; i <= 9; i += 1) {
+    out.push({ inning: i, half: "top" as const, runs: i === 7 ? 2 : 0, batted: true });
+    out.push({
+      inning: i,
+      half: "bottom" as const,
+      runs: i === 1 ? 1 : i === 6 ? 6 : 0,
+      // ⚠9회말은 공격이 없었다
+      batted: i !== 9,
+    });
+  }
+  return out;
+}
+
+function data(over: Partial<GamePageData> = {}): GamePageData {
+  return {
+    gameId: "2026/0814/s-db-17",
+    gameDate: "2026-08-14",
+    venue: "神宮",
+    series: "JERA セ・リーグ公式戦",
+    away: side("db", "DeNA", 2, 4, 2),
+    home: side("s", "ヤクルト", 7, 9, 0),
+    innings: innings(),
+    reconciles: true,
+    scoringPlays: [play()],
+    keyPlays: [play()],
+    keyPlayLimit: 5,
+    win: { playerId: "PW", name: "奥川" },
+    lose: { playerId: "PL", name: "平良" },
+    save: null,
+    sourceUrl: "https://npb.jp/scores/2026/0814/s-db-17/box.html",
+    ...over,
+  };
+}
+
+test("⚠공격이 없던 이닝은 「x」다 — 「0」이라고 쓰면 야구를 아는 사람에게 고장으로 보인다(M11)", () => {
+  const out = renderGamePage(data(), context());
+  assert.match(out, /<td class="x" aria-label="攻撃なし">x<\/td>/, "9회말이 x로 나오지 않았다");
+  // 0점이지만 친 이닝은 0이어야 한다 — 전부 x가 되면 뜻이 없다
+  assert.match(out, /<td class="">0<\/td>/, "0점 이닝이 사라졌다");
+});
+
+test("득점한 이닝을 강조한다 — 이 표에서 눈이 찾는 것은 「어디서 났는가」다", () => {
+  const out = renderGamePage(data(), context());
+  assert.match(out, /<td class="sc">6<\/td>/, "6점 이닝이 강조되지 않았다");
+  assert.ok(!/<td class="sc">0</.test(out), "0점 이닝이 강조됐다");
+});
+
+test("⚠복원이 어긋나면 표보다 먼저 말한다 — 조용히 틀린 표를 내지 않는다", () => {
+  const bad = renderGamePage(data({ reconciles: false }), context());
+  assert.match(bad, /一致していません/);
+  assert.ok(bad.indexOf("一致していません") < bad.indexOf("iscore"), "경고가 표보다 뒤에 있다");
+
+  const good = renderGamePage(data(), context());
+  assert.ok(!good.includes("一致していません"), "맞는데 경고가 나왔다");
+});
+
+test("⚠이닝별 득점이 우리가 조립한 값임을 밝힌다(L2·M4)", () => {
+  const out = renderGamePage(data(), context());
+  assert.match(out, /打席ごとの記録から組み直したもの/);
+  assert.match(out, /原本の表を写したものではありません/);
+});
+
+test("⚠원본으로 가는 링크를 둔다 — 대체하는 것이 아니라 가리킨다(L3)", () => {
+  const out = renderGamePage(data(), context());
+  assert.match(out, /https:\/\/npb\.jp\/scores\/2026\/0814\/s-db-17\/box\.html/);
+});
+
+test("⚠중계 문장을 옮기지 않는다 — 기록의 표준 기호만 쓴다(L2)", () => {
+  const out = renderGamePage(data(), context());
+  assert.match(out, /右越本④/, "기호 표기가 없다");
+  assert.ok(!out.includes("ライト"), "중계 문장이 섞였다");
+});
+
+test("주자 상황을 그림과 말로 함께 낸다 — 그림만 있으면 읽어 주는 화면에서 사라진다", () => {
+  const out = renderGamePage(data(), context());
+  assert.match(out, /aria-label="2死 満塁"/);
+});
+
+test("다이아몬드는 채워진 베이스만 칠한다 — 색만으로 구별하지 않는다", () => {
+  const full = toString(basesMark("123", 2));
+  assert.equal(full.match(/class="db on"/g)?.length, 3, "만루인데 3개가 안 채워졌다");
+  const empty = toString(basesMark("", 0));
+  assert.ok(!empty.includes('class="db on"'), "주자가 없는데 베이스가 칠해졌다");
+  assert.equal(empty.match(/class="do "/g)?.length, 3, "0아웃인데 아웃 점이 켜졌다");
+});
+
+test("주자 표기가 일본어 야구 표기다", () => {
+  assert.equal(baseLabel(""), "走者なし");
+  assert.equal(baseLabel("123"), "満塁");
+  assert.equal(baseLabel("23"), "二三塁");
+  assert.equal(situationLabel(1, "2"), "1死 二塁");
+});
+
+test("⚠득점기대치가 실력이 아니라는 것을 말한다 — SRC와 같은 주의가 붙는다", () => {
+  const out = renderGamePage(data(), context());
+  assert.match(out, /選手の実力を表すものではありません/);
+  assert.match(out, /守備や走塁も含みません/);
+});
+
+test("자른 사실을 말한다 — 「上位5打席」", () => {
+  const out = renderGamePage(data(), context());
+  assert.match(out, /上位5打席/);
+});
+
+test("승·패·세이브를 라벨로 구분한다 — 색만으로는 구별되지 않는다", () => {
+  const out = renderGamePage(data({ save: { playerId: "PS", name: "田口" } }), context());
+  assert.match(out, /<b>勝<\/b>/);
+  assert.match(out, /<b>負<\/b>/);
+  assert.match(out, /<b>S<\/b>/);
+});
+
+test("이긴 쪽을 표시한다 — 무승부면 그렇게 말한다", () => {
+  const won = renderGamePage(data(), context());
+  assert.match(won, /gbside w/);
+  const tie = renderGamePage(
+    data({ away: side("db", "DeNA", 3, 8, 0), home: side("s", "ヤクルト", 3, 9, 1) }),
+    context(),
+  );
+  assert.match(tie, /引き分け/);
+  assert.ok(!/gbside w/.test(tie), "무승부인데 이긴 쪽 표시가 붙었다");
+});
+
+test("연장전이면 이닝 열이 늘어난다", () => {
+  const ex = [...innings()];
+  for (let i = 10; i <= 12; i += 1) {
+    ex.push({ inning: i, half: "top" as const, runs: 0, batted: true });
+    ex.push({ inning: i, half: "bottom" as const, runs: i === 12 ? 1 : 0, batted: true });
+  }
+  const out = renderGamePage(data({ innings: ex }), context());
+  assert.match(out, /<th>12<\/th>/, "12회 열이 없다");
+});
+
+test("득점이 없는 경기는 그렇게 말한다 — 빈 목록을 남기지 않는다(M12)", () => {
+  const out = renderGamePage(data({ scoringPlays: [], away: side("db", "DeNA", 0, 3, 0), home: side("s", "ヤクルト", 0, 2, 1) }), context());
+  assert.match(out, /この試合に得点はありませんでした/);
+});
+
+test("⚠경기 ID를 파일 이름으로 바꾸는 규칙은 한 곳이다 — 어긋나면 404가 조용히 생긴다", () => {
+  assert.equal(gameSlug("2026/0814/s-db-17"), "2026-0814-s-db-17");
+});
+
+test("선수 이름을 모르면 그 자리를 비운다 — 숫자 ID를 화면에 내지 않는다", () => {
+  const blank = [play({ batter: null, pitcher: null })];
+  const out = renderGamePage(data({ keyPlays: blank, scoringPlays: blank }), context());
+  assert.ok(!out.includes("B1"), "선수 ID가 화면에 나왔다");
+  assert.ok(!out.includes("P1"), "투수 ID가 화면에 나왔다");
+});

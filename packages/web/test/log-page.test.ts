@@ -37,6 +37,7 @@ function data(over: Partial<LogPageData> = {}): LogPageData {
     runs: [run()],
     archive: { files: 3354, bytes: 28_868_037, updatedAt: "2026-08-15T13:27:13.764Z" },
     totals: { games: 632, pa: 46899, players: 695, quarantine: 0 },
+    quarantine: [],
     politeness: { minDelayMs: 3000, concurrency: 1 },
     ...over,
   };
@@ -126,4 +127,44 @@ test("출처와 삭제·정정 창구가 있다(L3·L4)", () => {
 test("경기가 하나도 없으면 빈 상태를 말한다", () => {
   const out = renderLogPage(data({ coverage: [] }), context());
   assert.match(out, /まだ試合が入っていません/);
+});
+
+test("격리 0건을 「화면이 없는 것」과 구별해 말한다", () => {
+  const out = renderLogPage(data(), context());
+  // ⚠「이상 없음」만 쓰면 화면이 있는지 없는지 알 수 없다. 무엇을 셌는지 함께 말한다
+  assert.ok(out.includes("規則の外にあった記録は<b>0件</b>です"));
+  assert.match(out, /判断待ちの記録/);
+});
+
+test("⚠격리에는 원문이 함께 나온다 — 「3건」만으로는 무엇을 정할지 모른다", () => {
+  const out = renderLogPage(
+    data({
+      totals: { games: 632, pa: 46899, players: 695, quarantine: 3 },
+      quarantine: [
+        {
+          kind: "unknownToken",
+          count: 3,
+          samples: [{ raw: "謎の記号", detail: "打席3", gameId: "2026/0814/b-f-19" }],
+        },
+      ],
+    }),
+    context(),
+  );
+  assert.match(out, /unknownToken/);
+  assert.match(out, /謎の記号/, "원문이 화면에 없다");
+  assert.match(out, /判断待ちの一覧/, "불구합 목록으로 읽히면 안 된다");
+});
+
+test("⚠격리를 실패로 칠하지 않는다 — 버그가 아니라 판단 요청이다", () => {
+  const out = renderLogPage(
+    data({
+      totals: { games: 1, pa: 1, players: 1, quarantine: 1 },
+      quarantine: [{ kind: "paMismatch", count: 1, samples: [{ raw: "x", detail: null, gameId: null }] }],
+    }),
+    context(),
+  );
+  const from = out.indexOf('id="b-quarantine"');
+  const section = from < 0 ? "" : out.slice(from, out.indexOf("</section>", from));
+  assert.ok(section.length > 0, "격리 블록이 없다");
+  assert.ok(!section.includes('class="l bad"'), "격리를 실패색으로 칠했다");
 });

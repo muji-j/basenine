@@ -44,12 +44,50 @@ export const NON_TEAM_CODES: Readonly<Record<string, string>> = {
 };
 
 /**
+ * 경기의 구분.
+ *
+ * ⚠**交流戦은 `regular`다.** 정규시즌 경기이고 **리그 순위에 그대로 들어간다** —
+ * 따로 빼면 어느 사이트와도 승패 수가 맞지 않는다. 원문 표기는 `game.series`에 남긴다.
+ * ⚠**CS·일본시리즈는 `regular`가 아니다.** 섞으면 「시즌 성적」이 시즌 성적이 아니게 된다(§2-1).
+ */
+export type Competition = "regular" | "climaxSeries" | "nipponSeries" | "allStar";
+
+/**
+ * 박스스코어의 대회 표기(`【…】` 안쪽)로 구분을 판정한다.
+ *
+ * ⚠**후원사 이름이 붙어 해마다 바뀐다** — `JERA セ・リーグ公式戦` · `パーソル パ・リーグ公式戦` ·
+ * `日本生命セ・パ交流戦` · `SMBC日本シリーズ`. 전체 일치로 판정하면 후원사가 바뀐 해에
+ * **조용히 전 경기가 미분류가 된다.** 그래서 변하지 않는 알맹이만 본다.
+ *
+ * ⚠**모르는 표기는 예외다**(M7). 조용히 `regular`로 흘리면 아무도 모르는 채로 집계가 오염되고,
+ * 오염은 숫자로만 드러나므로 알아채기 어렵다. 실제로 2025년 CS·일본시리즈 18경기가
+ * 그렇게 「정규시즌」에 들어와 있었다(2026-08-16 발견).
+ *
+ * 근거: 아카이브 1,569장 전수 조사(2026-08-16) — 위 6종 외의 표기는 없었다.
+ */
+export function competitionFromLabel(label: string): Competition {
+  // ⚠순서가 뜻을 갖는다. 「日本シリーズ」를 먼저 봐야 한다 — 「セ・リーグ公式戦」과 겹치지 않지만,
+  // 앞으로 표기가 늘어날 때 넓은 규칙이 좁은 규칙을 삼키는 사고를 막는다
+  if (label.includes("日本シリーズ")) return "nipponSeries";
+  if (label.includes("クライマックス") || /\bCS\b/.test(label) || label.startsWith("CS ")) {
+    return "climaxSeries";
+  }
+  if (label.includes("オールスター")) return "allStar";
+  if (label.includes("交流戦")) return "regular";
+  if (label.includes("セ・リーグ公式戦") || label.includes("パ・リーグ公式戦")) return "regular";
+  throw new RangeError(
+    `모르는 대회 표기: ${JSON.stringify(label)}. 판정 규칙을 갱신하라 — regular로 흘리면 집계가 조용히 오염된다`,
+  );
+}
+
+/**
  * 경기의 구분을 팀 코드로 판정한다.
  *
  * ⚠**모르는 코드는 예외다.** 조용히 `regular`로 흘리면 집계가 오염되고,
  * 오염은 숫자로만 드러나므로 알아채기 어렵다.
- * ⚠CS·일본시리즈는 정규 구단 코드를 쓰므로 **이 함수로 구별되지 않는다**(날짜·별도 판정 필요).
- * v1 범위는 8월까지라 아직 문제가 되지 않지만, 시즌 종반 전에 반드시 다뤄야 한다.
+ * ⚠**CS·일본시리즈는 정규 구단 코드를 쓰므로 이 함수로 구별되지 않는다.**
+ * 판정의 본체는 `competitionFromLabel`이고, 이 함수는 **표기를 못 읽었을 때의 대비책**이자
+ * 올스타 판정의 **대조용**이다(둘이 어긋나면 규칙이 틀린 것이다).
  */
 export function competitionOf(awayCode: string, homeCode: string): string {
   const kinds = [awayCode, homeCode].map((code) => {

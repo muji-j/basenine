@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BoxParseError, extractPlayerId, inningsToOuts, parseBoxScore } from "../src/box.ts";
+import {
+  BoxParseError,
+  extractPlayerId,
+  inningsToOuts,
+  parseBoxScore,
+  parseCompetitionLabel,
+} from "../src/box.ts";
 
 /**
  * 실제 npb.jp 마크업을 축약한 픽스처.
@@ -211,4 +217,70 @@ test("⚠헤더에서 필수 열을 못 찾으면 예외 — 빈 결과로 넘�
     /盗塁/,
     "盗塁 열이 사라지면 타석 셀의 시작 위치를 알 수 없다",
   );
+});
+
+test("⚠ノーゲームは表があっても成立しない — 부분 표가 남아 시즌 성적에 섞였다", () => {
+  // 우천으로 2회에 끝난 경기. npb.jp는 **그때까지의 표를 그대로 남긴다**
+  const html = fixture().replace(
+    "<html>",
+    '<html><div id="game_stats"><div class="line-score"><p class="game_info">【雨天のためノーゲーム】</p></div></div>',
+  );
+  const box = parseBoxScore(html);
+  assert.equal(box.status, "notPlayed", "표가 있다고 실시로 판정했다");
+  if (box.status === "notPlayed") assert.equal(box.reason, "ノーゲーム");
+});
+
+test("⚠남의 경기가 중지여도 이 경기는 실시다 — 페이지에 다른 경기 스코어가 함께 실린다", () => {
+  // 경기 자신의 game_info 밖에 있는 중지 표기는 무시해야 한다
+  const html = fixture().replace("<html>", '<html><div class="state">中止</div><div class="score">ノーゲーム</div>');
+  const box = parseBoxScore(html);
+  assert.equal(box.status, "played", "남의 경기 표기에 끌려갔다");
+});
+
+test("サスペンデッド는 무효가 아니다 — 이어서 하는 경기라 기록이 살아남는다", () => {
+  const html = fixture().replace(
+    "<html>",
+    '<html><div id="game_stats"><div class="line-score"><p class="game_info">【サスペンデッドゲーム】</p></div></div>',
+  );
+  assert.equal(parseBoxScore(html).status, "played");
+});
+
+// ── 대회 구분 표기 ───────────────────────────────────────────────────────
+
+/**
+ * ⚠**표기는 `#game_stats > .game_tit > h3`에 있고 그 경기 하나만 설명한다.**
+ * 경기 페이지에는 그날 다른 경기의 스코어 박스가 함께 실려 있으므로,
+ * 페이지 전체에서 `【…】`를 찾으면 **남의 경기 표기**를 집는다.
+ */
+function titled(label: string, extra = ""): string {
+  return `${extra}
+<div class="wrap" id="game_stats">
+  <div class="game_tit">
+    <time>2025年10月11日（土）</time>
+    <span class="place">横　浜</span>
+    <h3>【${label}】 横浜DeNAベイスターズ vs 読売ジャイアンツ
+    第1戦    </h3>
+  </div>
+  <p class="game_info">【試合終了】</p>
+</div>`;
+}
+
+test("경기 표제에서 대회 표기를 읽는다", () => {
+  assert.equal(parseCompetitionLabel(titled("CS ファーストステージ")), "CS ファーストステージ");
+  assert.equal(parseCompetitionLabel(titled("JERA セ・リーグ公式戦")), "JERA セ・リーグ公式戦");
+});
+
+test("⚠같은 페이지의 다른 경기 표기를 집지 않는다 — 조용히 틀린 구분을 만드는 실수다", () => {
+  // 페이지 상단의 「오늘의 경기」 목록에 다른 경기의 표기가 먼저 나오는 상황
+  const other = `<div class="score_box"><h4>【SMBC日本シリーズ】 別の試合</h4></div>`;
+  assert.equal(parseCompetitionLabel(titled("JERA セ・リーグ公式戦", other)), "JERA セ・リーグ公式戦");
+});
+
+test("⚠경기 상태(【試合終了】)를 대회 표기로 착각하지 않는다", () => {
+  assert.equal(parseCompetitionLabel(titled("パーソル パ・リーグ公式戦")), "パーソル パ・リーグ公式戦");
+});
+
+test("표기가 없으면 null이다 — 호출자가 「구조 변경」으로 다룰 수 있어야 한다(M7)", () => {
+  assert.equal(parseCompetitionLabel("<div>표제가 없는 문서</div>"), null);
+  assert.equal(parseCompetitionLabel(`<div class="game_tit"><h3>표기 없는 표제</h3></div>`), null);
 });

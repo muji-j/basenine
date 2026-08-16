@@ -55,6 +55,14 @@ export interface SeasonPitching {
   line: PitchingLine;
   /** 선발 등판 수 */
   starts: number;
+  /**
+   * 투구수·폭투·보크. ⚠**투구 라인(PitchingLine)에 넣지 않는다** — 지표 산식의 입력이 아니라
+   * 표시용이다(득점·타점·도루를 타자 라인 밖에 둔 것과 같은 이유).
+   * ⚠전부 null일 수 있다(원본에 열이 없던 시절의 행) — 0으로 메우지 않는다(M11).
+   */
+  pitches: number | null;
+  wp: number | null;
+  balk: number | null;
   decisions: Decisions;
   /** 선발 등판에서의 성적만. 선발이 0경기면 전 항목이 0이다 */
   asStarter: PitchingLine;
@@ -141,6 +149,7 @@ SELECT t.player_id AS playerId,
        SUM(t.outs) AS outs, SUM(t.bf) AS bf, SUM(t.h) AS h, SUM(t.hr) AS hr,
        SUM(t.bb) AS bb, SUM(t.hbp) AS hbp, SUM(t.so) AS so,
        SUM(t.runs) AS runs, SUM(t.er) AS er,
+       SUM(t.pitches) AS pitches, SUM(t.wp) AS wp, SUM(t.balk) AS balk,
        ${splitSum("outs", "outs")},
        ${splitSum("bf", "bf")},
        ${splitSum("h", "h")},
@@ -286,6 +295,9 @@ export function aggregateSeason(
         teamCode: String(r["teamCode"]),
         games: Number(r["games"]),
         starts: Number(r["starts"]),
+        pitches: r["pitches"] === null ? null : Number(r["pitches"]),
+        wp: r["wp"] === null ? null : Number(r["wp"]),
+        balk: r["balk"] === null ? null : Number(r["balk"]),
         outs: Number(r["outs"]), bf: Number(r["bf"]), h: Number(r["h"]), hr: Number(r["hr"]),
         bb: Number(r["bb"]), hbp: Number(r["hbp"]), so: Number(r["so"]),
         runs: Number(r["runs"]), er: Number(r["er"]),
@@ -301,6 +313,9 @@ export function aggregateSeason(
       ...a,
       games: a.games + b.games,
       starts: a.starts + b.starts,
+      pitches: a.pitches === null && b.pitches === null ? null : (a.pitches ?? 0) + (b.pitches ?? 0),
+      wp: a.wp === null && b.wp === null ? null : (a.wp ?? 0) + (b.wp ?? 0),
+      balk: a.balk === null && b.balk === null ? null : (a.balk ?? 0) + (b.balk ?? 0),
       outs: a.outs + b.outs, bf: a.bf + b.bf, h: a.h + b.h, hr: a.hr + b.hr,
       bb: a.bb + b.bb, hbp: a.hbp + b.hbp, so: a.so + b.so,
       runs: a.runs + b.runs, er: a.er + b.er,
@@ -321,6 +336,9 @@ export function aggregateSeason(
     league: leagueOf(r.teamCode),
     games: r.games,
     starts: r.starts,
+    pitches: r.pitches,
+    wp: r.wp,
+    balk: r.balk,
     decisions: r.decisions,
     asStarter: r.asStarter,
     asReliever: r.asReliever,

@@ -1,0 +1,291 @@
+/**
+ * 경기 한 판.
+ *
+ * ## ⚠이 화면이 원본을 대체하지 않는 방법 (L2·L3·L6)
+ *
+ * 경기 페이지는 이 서비스에서 **원본에 가장 가까워지기 쉬운 화면**이다. 세 가지로 선을 긋는다.
+ *
+ * 1. **이닝별 득점을 우리가 타석 로그에서 복원한다.** 원본의 표를 옮기지 않는다.
+ *    복원 합계와 공표 득점을 매번 대조하고, **어긋나면 화면이 그 사실을 먼저 말한다.**
+ * 2. **전 타석 중계를 옮기지 않는다.** 그건 원본의 표현물이다. 우리는 **득점 장면**과
+ *    **경기를 움직인 타석**만 고르고, 고르는 기준(득점기대치)은 우리 것이다.
+ *    타석 표기는 기록의 표준 기호(`右越本④`)를 쓴다 — 중계 문장이 아니다.
+ * 3. **원본으로 가는 링크를 둔다**(L3). 가리키는 것이지 대체하는 것이 아니다.
+ *
+ * ## ⚠0과 「치지 않았다」를 구별한다 (M11)
+ *
+ * 홈 팀이 앞서면 9회말을 치지 않는다 — 실측 1,487경기 중 **674경기**가 그렇다.
+ * 거기에 `0`을 찍으면 **절반의 페이지가 야구를 아는 사람에게 고장으로 보인다.** `x`로 그린다.
+ */
+import { html, raw } from "./html.ts";
+import type { RawHtml } from "./html.ts";
+import { NO_VALUE, fullDate, signed1 } from "./format.ts";
+import { note, scroller, term } from "./parts.ts";
+import { page } from "./layout.ts";
+import type { RenderContext } from "./pages.ts";
+import { NEUTRAL_COLOR } from "@bb-app/domain";
+import type { TeamColor } from "@bb-app/domain";
+import type { HalfInning } from "@bb-app/aggregate";
+
+export interface GameSide {
+  teamCode: string;
+  name: string;
+  shortName: string;
+  color: TeamColor;
+  runs: number;
+  hits: number | null;
+  errors: number | null;
+}
+
+export interface PlayerRef {
+  playerId: string;
+  name: string;
+}
+
+export interface GamePlayView {
+  inning: number;
+  half: "top" | "bottom";
+  outsBefore: number;
+  bases: string;
+  batter: PlayerRef | null;
+  pitcher: PlayerRef | null;
+  /** 기록의 표준 기호 표기(`右越本④`) */
+  rawBox: string | null;
+  rbi: number;
+  runsScored: number;
+  /** 득점기대치의 변화. 없으면 null(**0이 아니다**) */
+  swing: number | null;
+  awayScore: number;
+  homeScore: number;
+}
+
+export interface GamePageData {
+  gameId: string;
+  gameDate: string;
+  venue: string | null;
+  /** 대회 표기 원문(`JERA セ・リーグ公式戦`) */
+  series: string | null;
+  away: GameSide;
+  home: GameSide;
+  innings: HalfInning[];
+  /** ⚠복원 합계와 공표 득점이 맞는가. false면 화면이 먼저 말한다 */
+  reconciles: boolean;
+  scoringPlays: GamePlayView[];
+  keyPlays: GamePlayView[];
+  /** 「경기를 움직인 타석」을 몇 개까지 내는가. **화면에 적는다** */
+  keyPlayLimit: number;
+  win: PlayerRef | null;
+  lose: PlayerRef | null;
+  save: PlayerRef | null;
+  /** 원본 페이지(L3) */
+  sourceUrl: string;
+}
+
+/**
+ * 경기 ID → 파일 이름.
+ *
+ * ⚠**규칙을 한 곳에만 둔다**(M1의 정신). 링크를 만드는 쪽과 파일을 쓰는 쪽이 따로 계산하면
+ * 언젠가 어긋나고, 그때 생기는 것은 오류가 아니라 **404**다 — 조용하고 발견이 늦다.
+ */
+export function gameSlug(gameId: string): string {
+  return gameId.replace(/\//g, "-");
+}
+
+/** 주자 상황의 일본어 표기. **화면과 스크린리더가 같은 말을 쓴다** */
+export const BASE_LABEL: Readonly<Record<string, string>> = {
+  "": "走者なし",
+  "1": "一塁",
+  "2": "二塁",
+  "3": "三塁",
+  "12": "一二塁",
+  "13": "一三塁",
+  "23": "二三塁",
+  "123": "満塁",
+};
+
+export function baseLabel(bases: string): string {
+  return BASE_LABEL[bases] ?? bases;
+}
+
+/** `2死 満塁` */
+export function situationLabel(outs: number, bases: string): string {
+  return `${outs}死 ${baseLabel(bases)}`;
+}
+
+/**
+ * 주자 상황의 다이아몬드.
+ *
+ * ⚠**이 그림이 이 화면의 축이다.** 「2死 満塁」를 글자로만 두면 훑을 때 눈에 안 들어오고,
+ * 야구를 보는 사람의 머릿속에 있는 모양과도 다르다. 우리 데이터로 그린 우리 그림이라
+ * 로고·사진 금지(§6)에도 걸리지 않는다.
+ *
+ * ⚠**색으로만 구별하지 않는다.** 채워진 베이스는 칠하고, 빈 베이스는 테두리만 둔다 —
+ * 명도 차이로도 읽힌다. 아웃 카운트는 아래에 점으로 센다.
+ * ⚠**`aria-label`로 같은 말을 낸다.** 그림만 있으면 읽어 주는 화면에서 상황이 사라진다.
+ */
+export function basesMark(bases: string, outs: number, size = 34): RawHtml {
+  const on = (b: string): boolean => bases.includes(b);
+  // 다이아몬드: 2루가 위, 1루가 오른쪽, 3루가 왼쪽. 본루는 그리지 않는다(타자가 서 있는 자리다)
+  const s = size;
+  const half = s / 2;
+  const r = s * 0.15;
+  const spots: [string, number, number][] = [
+    ["2", half, s * 0.2],
+    ["1", s * 0.78, half * 0.95],
+    ["3", s * 0.22, half * 0.95],
+  ];
+  return html`<svg class="dia" viewBox="0 0 ${s} ${s}" width="${s}" height="${s}" role="img"
+  aria-label="${situationLabel(outs, bases)}">
+  ${spots.map(
+    ([b, x, y]) => html`<rect class="db ${on(b) ? "on" : ""}" x="${(x - r).toFixed(1)}" y="${(y - r).toFixed(1)}"
+      width="${(r * 2).toFixed(1)}" height="${(r * 2).toFixed(1)}"
+      transform="rotate(45 ${x.toFixed(1)} ${y.toFixed(1)})"></rect>`,
+  )}
+  ${[0, 1, 2].map(
+    (i) => html`<circle class="do ${i < outs ? "on" : ""}" cx="${(half + (i - 1) * s * 0.16).toFixed(1)}"
+      cy="${(s * 0.88).toFixed(1)}" r="${(s * 0.048).toFixed(1)}"></circle>`,
+  )}
+</svg>`;
+}
+
+/** `6回裏` */
+export function inningLabel(inning: number, half: "top" | "bottom"): string {
+  return `${inning}回${half === "top" ? "表" : "裏"}`;
+}
+
+/**
+ * 이닝별 득점표.
+ *
+ * ⚠**`0`과 `x`를 구별한다**(M11). `x`는 「공격이 없었다」이지 「0점」이 아니다.
+ * ⚠**득점이 난 칸을 강조한다.** 이 표에서 눈이 찾는 것은 숫자가 아니라 **어디서 점수가 났는가**다.
+ */
+function inningTable(d: GamePageData): RawHtml {
+  const innings = [...new Set(d.innings.map((i) => i.inning))].sort((a, b) => a - b);
+  const cell = (inning: number, half: "top" | "bottom"): RawHtml => {
+    const h = d.innings.find((x) => x.inning === inning && x.half === half);
+    if (h === undefined || !h.batted) {
+      // ⚠공격이 없던 이닝. 「0」이 아니다
+      return html`<td class="x" aria-label="攻撃なし">x</td>`;
+    }
+    return html`<td class="${h.runs > 0 ? "sc" : ""}">${h.runs}</td>`;
+  };
+  const row = (side: GameSide, half: "top" | "bottom"): RawHtml => html`<tr style="--chip:${side.color.base}">
+    <th class="l tm" scope="row"><i></i>${side.shortName}</th>
+    ${innings.map((i) => cell(i, half))}
+    <td class="tot">${side.runs}</td>
+    <td>${side.hits ?? NO_VALUE}</td>
+    <td>${side.errors ?? NO_VALUE}</td>
+  </tr>`;
+
+  return scroller(html`<table class="iscore">
+    <thead><tr><th class="l">球団</th>${innings.map((i) => html`<th>${i}</th>`)}<th class="tot">計</th><th>H</th><th>E</th></tr></thead>
+    <tbody>${row(d.away, "top")}${row(d.home, "bottom")}</tbody>
+  </table>`);
+}
+
+function playRow(p: GamePlayView, d: GamePageData, base: string, widest: number): RawHtml {
+  const side = p.half === "top" ? d.away : d.home;
+  return html`<li class="play" style="--chip:${side.color.base}">
+  <span class="pin">${inningLabel(p.inning, p.half)}</span>
+  <span class="pdia">${basesMark(p.bases, p.outsBefore)}</span>
+  <span class="pwho">${p.batter === null
+    ? html`<b>${NO_VALUE}</b>`
+    : html`<a href="${base}players/${p.batter.playerId}.html">${p.batter.name}</a>`}
+    ${p.pitcher === null ? null : html`<s>対 ${p.pitcher.name}</s>`}</span>
+  <span class="pres">${p.rawBox ?? NO_VALUE}${p.runsScored > 0 ? html`<em>${p.runsScored}点</em>` : null}</span>
+  <span class="psc">${p.awayScore}-${p.homeScore}</span>
+  ${p.swing === null
+    ? html`<span class="pswing none">${NO_VALUE}</span>`
+    : html`<span class="pswing"><b>${signed1(p.swing)}</b><i class="${p.swing >= 0 ? "p" : "n"}"
+        style="--w:${((Math.abs(p.swing) / widest) * 100).toFixed(1)}"></i></span>`}
+</li>`;
+}
+
+export function renderGamePage(d: GamePageData, ctx: RenderContext): string {
+  const base = "../";
+  const winner = d.away.runs === d.home.runs ? null : d.away.runs > d.home.runs ? "away" : "home";
+  const widest = Math.max(0.5, ...d.keyPlays.map((p) => Math.abs(p.swing ?? 0)));
+
+  const scoreSide = (side: GameSide, won: boolean): RawHtml => html`<div class="gbside${won ? " w" : ""}"
+  style="--chip:${side.color.base};--chip-ink:${side.color.ink}">
+  <span class="gbt"><i></i>${side.name}</span>
+  <span class="gbr">${side.runs}</span>
+</div>`;
+
+  const decision = (label: string, p: PlayerRef | null): RawHtml =>
+    p === null
+      ? raw("")
+      : html`<span class="gd"><b>${label}</b><a href="${base}players/${p.playerId}.html">${p.name}</a></span>`;
+
+  const body = html`<header class="idline">
+  <div class="idtext">
+    <span class="nm">${fullDate(d.gameDate)}</span>
+    <span class="sub">${d.venue ?? ""}${d.series === null ? "" : ` · ${d.series}`}</span>
+  </div>
+</header>
+
+<section class="block" id="b-score">
+  <div class="gbig">
+    ${scoreSide(d.away, winner === "away")}
+    ${scoreSide(d.home, winner === "home")}
+  </div>
+  ${winner === null ? html`<p class="gtie2">引き分け</p>` : raw("")}
+  ${d.win === null && d.lose === null && d.save === null
+    ? raw("")
+    : html`<p class="gdec">${decision("勝", d.win)}${decision("負", d.lose)}${decision("S", d.save)}</p>`}
+
+  ${d.reconciles
+    ? raw("")
+    : html`<p class="cmpwarn" role="status">この試合のイニング別得点は、当サイトの打席ログから組み直した数字と
+      公表されている合計が一致していません。下の表は参考値として扱ってください。</p>`}
+
+  ${inningTable(d)}
+  ${note(
+    // ⚠**어디서 온 숫자인지 말한다**(M4·L2). 원본 표를 옮긴 것이 아니라 우리가 조립한 것이다
+    "イニング別の得点は、当サイトが保存している打席ごとの記録から組み直したものです（原本の表を写したものではありません）。" +
+      "「x」はその回に攻撃がなかったことを表します — 0点とは違います。安打・失策は公表記録です。",
+  )}
+</section>
+
+${d.keyPlays.length === 0
+    ? raw("")
+    : html`<section class="block" id="b-key">
+  <h4>試合を動かした打席<span class="qt">上位${d.keyPlayLimit}打席</span></h4>
+  <ul class="plays">${d.keyPlays.map((p) => playRow(p, d, base, widest))}</ul>
+  ${note(
+    "右の数字は、その打席で「これから入りそうな点」がどれだけ動いたかです（" +
+      "当サイトのアーカイブから計算した得点期待値の変化）。" +
+      "⚠打席の状況の重さを表す数字で、選手の実力を表すものではありません。守備や走塁も含みません。",
+  )}
+</section>`}
+
+${d.scoringPlays.length === 0
+    ? html`<section class="block"><h4>得点した場面</h4><p class="empty">この試合に得点はありませんでした。</p></section>`
+    : html`<section class="block" id="b-scoring">
+  <h4>得点した場面<span class="qt">${d.scoringPlays.length}回</span></h4>
+  <ul class="plays">${d.scoringPlays.map((p) => playRow(p, d, base, widest))}</ul>
+</section>`}
+
+<section class="block">
+  <h4>この試合の記録について</h4>
+  ${note(
+    "当サイトは試合の全経過を転載していません。得点の場面と、得点期待値を大きく動かした打席だけを選んで載せています。" +
+      "打席の表記（右越本④ など）は記録の標準的な書き方です。",
+  )}
+  <p class="note"><a href="${d.sourceUrl}" rel="noreferrer noopener">この試合の記録を NPB 公式サイトで見る</a></p>
+</section>
+
+<nav class="find" aria-label="ほかのページ">
+  <a href="${base}today.html">試合</a> · <a href="${base}index.html">選手一覧</a> · <a href="${base}ranking.html">リーグ順位表</a>
+</nav>`;
+
+  return page({
+    title: `${d.away.shortName} ${d.away.runs}-${d.home.runs} ${d.home.shortName} — ${fullDate(d.gameDate)}`,
+    base,
+    color: (winner === "home" ? d.home : d.away).color,
+    freshness: ctx.freshness,
+    site: ctx.site,
+    nav: "today",
+    body,
+  });
+}

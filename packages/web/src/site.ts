@@ -13,6 +13,9 @@ import {
   searchIndexJson,
 } from "./pages.ts";
 import { renderPlayerPage } from "./player-page.ts";
+import { compareCard, compareCardJson, renderComparePage } from "./compare.ts";
+import { renderTodayPage } from "./today-page.ts";
+import { gameSlug, renderGamePage } from "./game-page.ts";
 import { renderLogPage } from "./log-page.ts";
 import type { LogPageData } from "./log-page.ts";
 import { freshness, isStale } from "./layout.ts";
@@ -46,12 +49,17 @@ export function buildSite(
   const files: SiteFile[] = [
     { path: "assets/site.css", content: CSS },
     { path: "assets/site.js", content: CLIENT_JS },
+    { path: "today.html", content: renderTodayPage(data.today, ctx) },
     { path: "index.html", content: renderIndexPage(data.index, ctx) },
     { path: "ranking.html", content: renderRankingPage(data.ranking, ctx) },
     { path: "starters.html", content: renderStartersPage(data.starters, ctx) },
     {
       path: "matchup.html",
       content: renderMatchupPage({ season: data.season, asOf: data.asOf }, ctx),
+    },
+    {
+      path: "compare.html",
+      content: renderComparePage({ season: data.season, asOf: data.asOf }, ctx),
     },
     { path: "players.json", content: searchIndexJson(data.search) },
   ];
@@ -67,6 +75,23 @@ export function buildSite(
       throw new Error(`선수 ID가 경로로 쓸 수 없는 형태다: ${JSON.stringify(p.playerId)}`);
     }
     files.push({ path: `players/${p.playerId}.html`, content: renderPlayerPage(p, ctx) });
+    // ⚠**비교용 값을 따로 계산하지 않는다**(M1) — 위 페이지가 쓰는 것과 같은 객체에서 뽑는다
+    files.push({ path: `compare/${p.playerId}.json`, content: compareCardJson(compareCard(p)) });
+  }
+
+  /**
+   * 경기 페이지.
+   *
+   * ⚠**경기 ID가 파일 경로가 된다.** `2026/0814/s-db-17` 형태이므로 `/`를 그대로 두면
+   * 디렉터리가 세 겹 파이는데, 그건 상대 경로 계산을 어렵게 만들 뿐이다 — 평평하게 편다.
+   * 그리고 **외부에서 온 문자열이므로 형태를 검사한다**(선수 ID와 같은 이유).
+   */
+  for (const g of data.games) {
+    const slug = gameSlug(g.gameId);
+    if (!/^[A-Za-z0-9_-]+$/.test(slug)) {
+      throw new Error(`경기 ID가 경로로 쓸 수 없는 형태다: ${JSON.stringify(g.gameId)}`);
+    }
+    files.push({ path: `games/${slug}.html`, content: renderGamePage(g, ctx) });
   }
 
   return {

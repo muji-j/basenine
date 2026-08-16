@@ -65,7 +65,7 @@ a{color:inherit}
 .qhits li a:hover,.qhits li[aria-selected="true"] a{background:var(--panel-2)}
 .qhits .ht{margin-left:auto;font-size:10.5px;color:var(--tx-3);white-space:nowrap}
 .qhits .none{padding:7px 11px;font-size:12px;color:var(--tx-3)}
-.tnav{display:flex;gap:2px;margin-left:auto}
+.tnav{display:flex;gap:2px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
 .tnav a{font-size:12px;padding:5px 9px;text-decoration:none;color:var(--tx-2);white-space:nowrap;
   transition:color var(--fast) var(--ease),background var(--fast) var(--ease)}
 .tnav a:hover{color:var(--tx);background:var(--panel-2)}
@@ -312,6 +312,9 @@ dd.g-veryBad{box-shadow:inset 0 -3px 0 var(--g-vbad);background:var(--g-vbad-bg)
   margin-left:6px;font-family:var(--f-body)}
 
 /* 선발·구원별 — 두 단이 각자의 제목을 갖는다. 제목이 없으면 어느 쪽 숫자인지 알 수 없다 */
+/* 격리 원문 — 코드가 아니라 **원본 그대로의 글자**임을 보이게 한다 */
+.qs{font-family:var(--f-num);font-size:11px;background:var(--panel-2);padding:1px 5px;white-space:nowrap}
+.qd{font-size:10.5px;color:var(--tx-3)}
 .rolecol .subhead{margin:0 0 4px}
 .rolecol dl{margin:0}
 
@@ -428,6 +431,184 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
   transition:opacity var(--fast) var(--ease)}
 .go:disabled{opacity:.35;cursor:default}
 .go:hover:not(:disabled){opacity:.85}
+.go.alt{background:transparent;color:var(--tx-2);border-color:var(--hair-2);font-weight:400;margin-left:7px}
+.go.alt:hover:not(:disabled){color:var(--tx);border-color:var(--tx-3);opacity:1}
+
+/* ── 試合ページ ────────────────────────────────────────────
+   ⚠**원본의 이닝별 표를 옮긴 화면이 아니다**(L2). 숫자는 우리가 타석 로그에서 조립했고,
+   화면의 주역은 「어디서 점수가 났는가」와 「어느 타석이 경기를 움직였는가」다. */
+.gbig{display:grid;grid-template-columns:1fr;gap:2px;max-width:520px}
+.gbside{display:flex;align-items:center;gap:11px;padding:7px 0;border-bottom:1px solid var(--hair)}
+.gbside:last-child{border-bottom:0}
+.gbt{display:flex;align-items:center;gap:9px;font-size:15px;color:var(--tx-2);min-width:0}
+.gbt i{width:12px;height:12px;background:var(--chip,#6b7280);font-style:normal;flex:none}
+/* ⚠이긴 쪽은 **크기와 굵기**로 표시한다. 색만 쓰면 색각 특성에 따라 구별되지 않는다 */
+.gbside.w .gbt{color:var(--tx);font-weight:700}
+.gbr{margin-left:auto;font-size:34px;line-height:1;font-variant-numeric:tabular-nums;color:var(--tx-3);
+  letter-spacing:-.02em}
+.gbside.w .gbr{font-size:44px;color:var(--tx);font-weight:700}
+.gtie2{margin:8px 0 0;font-size:12px;color:var(--tx-2)}
+/* 이닝별 득점 — 득점한 칸이 먼저 보여야 한다 */
+table.iscore{font-variant-numeric:tabular-nums;margin-top:13px}
+table.iscore th,table.iscore td{text-align:center;padding:5px 9px;white-space:nowrap}
+table.iscore th.l{text-align:left}
+table.iscore .tm{display:flex;align-items:center;gap:6px;font-weight:400}
+table.iscore .tm i{width:9px;height:9px;background:var(--chip,#6b7280);flex:none}
+table.iscore td.sc{font-weight:700;color:var(--tx);background:var(--panel-2)}
+/* ⚠「x」는 0이 아니다 — 공격이 없었다는 뜻이다. 흐리게 두어 숫자와 섞이지 않게 한다 */
+table.iscore td.x{color:var(--tx-3)}
+table.iscore .tot{font-weight:700;border-left:1px solid var(--hair-2)}
+/* 타석 목록 — 훑어 읽는 자리다. 이닝 · 상황 그림 · 사람 · 결과 · 점수 · 움직임 */
+.plays{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.play{display:grid;grid-template-columns:4.6em 34px minmax(0,1fr) minmax(0,1.1fr) 4.2em 5.4em;
+  gap:0 10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--hair)}
+.play:last-child{border-bottom:0}
+.pin{font-size:11.5px;color:var(--tx-3);letter-spacing:.04em}
+.pdia{display:flex;align-items:center}
+.pwho{min-width:0;font-size:13.5px;display:flex;flex-direction:column;gap:1px}
+.pwho a{text-decoration:none;font-weight:700;border-bottom:1px solid var(--hair-2)}
+.pwho a:hover{border-bottom-color:var(--tx-3)}
+.pwho s{text-decoration:none;font-size:10.5px;color:var(--tx-3)}
+.pres{font-size:13px;color:var(--tx-2);min-width:0;display:flex;align-items:baseline;gap:6px}
+.pres em{font-style:normal;font-size:11px;font-weight:700;color:var(--tx);
+  border-left:3px solid var(--chip,#6b7280);padding-left:5px;flex:none}
+.psc{font-size:12px;color:var(--tx-3);font-variant-numeric:tabular-nums;text-align:right}
+.pswing{position:relative;text-align:right;font-variant-numeric:tabular-nums;font-size:13px;padding-bottom:6px}
+.pswing.none{color:var(--tx-3)}
+.pswing i{position:absolute;bottom:0;height:3px;width:calc(var(--w) * 1%);font-style:normal;opacity:.8}
+.pswing i.p{right:0;background:var(--g-vgood)}
+.pswing i.n{right:0;background:var(--g-vbad)}
+/* 주자 다이아몬드 — **우리 데이터로 그린 우리 그림**(로고·사진 금지의 대체물) */
+.dia{display:block;overflow:visible}
+.dia .db{fill:none;stroke:var(--tx-3);stroke-width:1.2}
+.dia .db.on{fill:var(--chip,#6b7280);stroke:var(--chip,#6b7280)}
+.dia .do{fill:none;stroke:var(--tx-3);stroke-width:1}
+.dia .do.on{fill:var(--tx-2);stroke:var(--tx-2)}
+@media (max-width:600px){
+  .play{grid-template-columns:3.9em 30px minmax(0,1fr) 4.6em;gap:2px 8px}
+  /* 좁은 화면에서는 결과와 움직임을 아랫줄로 내린다 — 가로로 밀지 않는다 */
+  .pres{grid-column:3 / span 2;font-size:12px}
+  .psc{grid-column:1 / span 2;text-align:left;font-size:11px}
+  .pswing{grid-column:4;text-align:right}
+  .gbr{font-size:28px}
+  .gbside.w .gbr{font-size:36px}
+}
+
+/* ── チーム順位表 ──────────────────────────────────────────
+   ⚠**로고를 쓰지 않는다.** 구단 구별은 색 마크와 짧은 이름으로 한다(CLAUDE.md §6). */
+.standwrap{margin-bottom:16px}
+.standwrap:last-of-type{margin-bottom:0}
+.standname{margin:0 0 7px;font-size:11px;letter-spacing:.14em;font-weight:700;color:var(--tx-2)}
+table.stand{font-variant-numeric:tabular-nums}
+table.stand td,table.stand th{white-space:nowrap}
+table.stand .rk{font-weight:700}
+table.stand .rk em{font-style:normal;font-size:9px;color:var(--tx-3);margin-left:2px}
+table.stand .tm{display:flex;align-items:center;gap:6px}
+table.stand .tm i{width:9px;height:9px;background:var(--chip,#6b7280);flex:none}
+table.stand td.b{font-weight:700}
+/* 得失点差 — **우리가 만든 그림**. 눈금은 없고, 정확한 값은 바로 옆 숫자에 있다 */
+table.stand .dif{position:relative;min-width:64px}
+table.stand .dif b{font-weight:400}
+table.stand .dif i{position:absolute;bottom:3px;height:3px;width:calc(var(--w) * 0.5%);
+  background:var(--chip,#6b7280);font-style:normal;opacity:.75}
+table.stand .dif i.p{left:50%}
+table.stand .dif i.n{right:50%}
+
+/* ── 試合（直近の結果） ──────────────────────────────────────
+   ⚠**원본 표(이닝별 스코어보드)를 재현하지 않는다**(L2). 우리가 가진 것은 R·H·E뿐이고,
+   화면은 그 사실에 맞춰 만든다 — 없는 칸을 흉내 내지 않는다. */
+.gcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(258px,1fr));gap:12px}
+.gcard{border:1px solid var(--hair-2);padding:11px 12px 10px;min-width:0}
+.gcard.off{opacity:.62}
+.gvenue{margin:0 0 8px;font-size:10.5px;letter-spacing:.12em;color:var(--tx-3);font-weight:400;
+  display:flex;align-items:baseline;gap:7px}
+.gtie{margin-left:auto;color:var(--tx-2);letter-spacing:.04em}
+.gscore{display:flex;flex-direction:column;gap:1px}
+.gside{display:flex;align-items:baseline;gap:8px;padding:3px 0}
+.gside .gt{display:flex;align-items:center;gap:6px;font-size:13.5px;color:var(--tx-2)}
+.gside .gt i{width:9px;height:9px;background:var(--chip,#6b7280);font-style:normal;flex:none}
+/* ⚠이긴 쪽은 **굵기와 크기**로 표시한다. 색만 쓰면 색각 특성에 따라 구별되지 않는다 */
+.gside.w .gt{color:var(--tx);font-weight:700}
+.gside .gr{margin-left:auto;font-size:20px;line-height:1;font-variant-numeric:tabular-nums;color:var(--tx-2)}
+.gside.w .gr{font-size:26px;font-weight:700;color:var(--tx)}
+.ghe{margin:8px 0 0;display:flex;gap:13px;font-size:11px;color:var(--tx-3);
+  padding-top:7px;border-top:1px solid var(--hair)}
+.ghe b{color:var(--tx-2);font-weight:400;font-variant-numeric:tabular-nums}
+.gdec{margin:6px 0 0;display:flex;flex-wrap:wrap;gap:4px 11px;font-size:11.5px}
+.gd b{font-size:9.5px;letter-spacing:.1em;color:var(--tx-3);font-weight:400;margin-right:4px}
+.gd a{text-decoration:none;border-bottom:1px solid var(--hair-2)}
+.gd a:hover{border-bottom-color:var(--tx-3)}
+.gnone{margin:7px 0 0;font-size:11.5px;color:var(--tx-3)}
+.gstars{list-style:none;margin:9px 0 0;padding:8px 0 0;border-top:1px solid var(--hair);
+  display:flex;flex-direction:column;gap:4px}
+.gstars li{display:flex;align-items:baseline;gap:6px;font-size:12px;min-width:0}
+.gstars li i{width:3px;align-self:stretch;background:var(--chip,#6b7280);font-style:normal;flex:none}
+.gstars a{text-decoration:none;font-weight:700;white-space:nowrap}
+.gstars a:hover{text-decoration:underline}
+.gsl{color:var(--tx-2);font-variant-numeric:tabular-nums;font-size:11.5px}
+.gsd{margin-left:auto;font-style:normal;font-size:10px;color:var(--tx-3);border:1px solid var(--hair-2);padding:0 4px;flex:none}
+.gmore{margin:9px 0 0;padding-top:8px;border-top:1px solid var(--hair);font-size:11.5px}
+.gmore a{text-decoration:none;border-bottom:1px solid var(--hair-2)}
+.gmore a:hover{border-bottom-color:var(--tx-3)}
+/* 予告先発の要約 — 상세는 予告先発 페이지가 낸다 */
+.pbcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
+.pbcard{border:1px solid var(--hair-2);padding:10px 11px}
+.pbside{display:flex;align-items:baseline;gap:7px;padding:3px 0;min-width:0}
+.pbt{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--tx-3);flex:none}
+.pbt i{width:8px;height:8px;background:var(--chip,#6b7280);font-style:normal}
+.pbn{font-size:13.5px;text-decoration:none;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pbn:hover{text-decoration:underline}
+.pbn.empty{font-weight:400;color:var(--tx-3);font-size:11.5px}
+.pbe{margin-left:auto;font-size:11px;color:var(--tx-2);font-variant-numeric:tabular-nums;white-space:nowrap;flex:none}
+.pbe s{text-decoration:none;color:var(--tx-3);font-size:9.5px;margin-left:4px}
+
+/* ── 選手をくらべる ──────────────────────────────────────────
+   ⚠**두 열의 폭을 같게 고정한다.** 이름 길이에 따라 열이 움직이면 값이 세로로 안 맞고,
+   그러면 비교라는 이 화면의 유일한 목적이 사라진다. */
+.cmpwrap{padding:16px var(--pad);border-bottom:1px solid var(--hair)}
+.cmphead{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:4px}
+.cmpwho{padding:9px 11px;border:1px solid var(--hair-2);border-top:3px solid var(--who,#6b7280);min-width:0}
+.cmpwho .nm{display:block;font-size:16px;font-weight:700;line-height:1.25}
+.cmpwho .nm a{text-decoration:none}
+.cmpwho .nm a:hover{text-decoration:underline}
+.cmpwho .sub{display:block;font-size:11px;color:var(--tx-3);margin-top:3px}
+.cmpwho .smp{display:block;font-size:11px;color:var(--tx-2);margin-top:5px;font-variant-numeric:tabular-nums}
+/* 겹친 紋 — 두 선수를 같은 판에 그린다. 색만으로 구별하지 않고 범례를 붙인다 */
+.cmpfig{max-width:300px;margin:14px auto 4px}
+.cmpfig svg{display:block;width:100%;height:auto;overflow:visible}
+.cmpfig .cf-a{fill-opacity:.30;stroke-width:1.8;stroke-linejoin:round}
+.cmpfig .cf-b{fill-opacity:0;stroke-width:1.8;stroke-linejoin:round;stroke-dasharray:4 3}
+.cmpkey{display:flex;gap:14px;justify-content:center;font-size:11px;color:var(--tx-2);margin:2px 0 0}
+.cmpkey span{display:inline-flex;align-items:center;gap:5px}
+.cmpkey i{width:16px;height:0;border-top-width:2px;font-style:normal}
+.cmpkey .ka i{border-top-style:solid}
+.cmpkey .kb i{border-top-style:dashed}
+/* 값 표 — 라벨을 가운데 두고 값을 양쪽으로 민다. 어느 쪽 열인지 눈이 헤매지 않는다 */
+.cmprow{display:grid;grid-template-columns:1fr 8.5em 1fr;align-items:baseline;gap:0 8px;
+  padding:7px 0;border-bottom:1px solid var(--hair)}
+.cmprow .lb{grid-column:2;text-align:center;font-size:11px;color:var(--tx-3);letter-spacing:.06em}
+.cmprow .va,.cmprow .vb{font-variant-numeric:tabular-nums;font-size:17px;line-height:1.15;min-width:0}
+.cmprow .va{grid-column:1;text-align:right}
+.cmprow .vb{grid-column:3;text-align:left}
+.cmprow .den{display:block;font-size:10px;color:var(--tx-3);margin-top:2px;font-variant-numeric:tabular-nums}
+/* ⚠**이긴 쪽에만 표시를 붙인다.** 양쪽에 붙이면 아무 말도 안 한 것과 같다 */
+.cmprow .win{font-weight:700}
+.cmprow .win::after{content:"◂";margin-left:5px;color:var(--g-vgood);font-size:12px}
+.cmprow .vb.win::after{content:none}
+.cmprow .vb.win::before{content:"▸";margin-right:5px;color:var(--g-vgood);font-size:12px}
+.cmprow .g{display:inline-block;width:14px;height:3px;vertical-align:2px;margin-left:5px;background:var(--g-avg)}
+.cmprow .g.g-veryGood{background:var(--g-vgood)}
+.cmprow .g.g-good{background:var(--g-good)}
+.cmprow .g.g-bad{background:var(--g-bad)}
+.cmprow .g.g-veryBad{background:var(--g-vbad)}
+.cmprow .vb .g{margin-left:0;margin-right:5px}
+.cmpwarn{margin:0 0 12px;padding:9px 11px;font-size:12px;line-height:1.6;color:var(--tx-2);
+  border-left:3px solid var(--g-bad);background:var(--panel-2);max-width:64ch}
+@media (max-width:560px){
+  .cmprow{grid-template-columns:1fr 6.4em 1fr}
+  .cmprow .va,.cmprow .vb{font-size:15px}
+  .cmpwho .nm{font-size:14px}
+}
 
 /* ── 색인 ────────────────────────────────────────────────── */
 .find{padding:14px var(--pad);border-bottom:1px solid var(--hair)}
@@ -684,6 +865,9 @@ if(eb)eb.addEventListener("click",()=>{
 /* ── 용어 설명 ──
    PC는 호버, 모바일은 탭, 키보드는 포커스 — **같은 요소가 셋 다 받는다.**
    ⚠호버만 붙이면 터치 단말에서 열 수 없고, 탭만 붙이면 PC에서 한 번 더 눌러야 한다. */
+/* ⚠**나중에 만들어지는 요소에도 붙일 수 있어야 한다.** 비교 화면의 표는 브라우저가
+   조립하므로, 최초 1회만 훑으면 그 표의 용어에는 설명이 조용히 안 뜬다. */
+let bindTerms=null;
 const tip=$("#tip");
 if(tip&&typeof GLOSSARY!=="undefined"){
   let current=null;
@@ -722,20 +906,23 @@ if(tip&&typeof GLOSSARY!=="undefined"){
   /* ⚠**정렬 버튼에는 탭으로 열지 않는다.** 표 헤더를 누르는 것은 「정렬」이라는 뜻이고,
      같은 탭이 설명도 열면 어느 쪽이 일어난 건지 알 수 없다. 호버·포커스만 받는다.
      같은 용어가 위쪽 성적표에 제대로 된 버튼으로 있으므로 터치에서도 길은 남아 있다. */
-  $$("[data-term]").forEach(btn=>{
-    const tapToOpen=btn.className&&String(btn.className).split(" ").indexOf("term")>=0;
-    if(tapToOpen)btn.setAttribute("aria-expanded","false");
-    btn.addEventListener("mouseenter",()=>show(btn));
-    btn.addEventListener("mouseleave",hide);
-    btn.addEventListener("focus",()=>show(btn));
-    btn.addEventListener("blur",hide);
-    if(!tapToOpen)return;
-    /* 터치: 같은 것을 다시 누르면 닫는다 */
-    btn.addEventListener("click",(e)=>{
-      if(e&&e.preventDefault)e.preventDefault();
-      if(current===btn)hide();else show(btn);
+  bindTerms=(root)=>{
+    $$("[data-term]",root).forEach(btn=>{
+      const tapToOpen=btn.className&&String(btn.className).split(" ").indexOf("term")>=0;
+      if(tapToOpen)btn.setAttribute("aria-expanded","false");
+      btn.addEventListener("mouseenter",()=>show(btn));
+      btn.addEventListener("mouseleave",hide);
+      btn.addEventListener("focus",()=>show(btn));
+      btn.addEventListener("blur",hide);
+      if(!tapToOpen)return;
+      /* 터치: 같은 것을 다시 누르면 닫는다 */
+      btn.addEventListener("click",(e)=>{
+        if(e&&e.preventDefault)e.preventDefault();
+        if(current===btn)hide();else show(btn);
+      });
     });
-  });
+  };
+  bindTerms(doc);
   doc.addEventListener("keydown",(e)=>{if(e&&e.key==="Escape")hide()});
   doc.addEventListener("click",(e)=>{
     let n=e&&e.target;
@@ -1036,6 +1223,213 @@ if(pickForm){
     // 타자 페이지에서 보는 것을 기본으로 한다 — 「이 타자가 이 투수에게」가 보통 찾는 방향이다
     go(BASE+"players/"+chosen.batter.i+".html?vs="+encodeURIComponent(chosen.pitcher.n)+"#b-matchup");
   });
+}
+
+/* ── 選手をくらべる ──
+   ⚠**여기서 지표를 계산하지 않는다**(M1). 서버가 이미 계산·반올림·등급 판정을 끝낸
+   문자열을 받아 배치만 한다. 판정 근거(dir·min·s)도 전부 서버가 실어 보낸다 —
+   기준이 두 곳에 있으면 언젠가 한쪽만 고쳐진다. 규칙의 출처는 src/compare.ts. */
+const cmpForm=$("#cmpForm");
+if(cmpForm){
+  const out=$("#cmpOut");
+  const chosen={a:null,b:null};
+  const cache={};
+  const el=(tag,cls,text)=>{const n=doc.createElement(tag);if(cls)n.className=cls;
+    if(text!==undefined&&text!==null)n.textContent=text;return n};
+
+  const label=(side)=>$("#cmp-"+side+"-chosen");
+  const show=(side,p)=>{
+    chosen[side]=p;
+    const l=label(side);
+    if(l)l.textContent=p?p.n+"（"+p.t+"）":"未選択";
+    const g=$("#cmpGo"),s=$("#cmpSwap");
+    const both=!!(chosen.a&&chosen.b);
+    if(g)g.disabled=!both;
+    if(s)s.disabled=!both;
+  };
+  const setInput=(side,p)=>{const i=$("#cmp"+side.toUpperCase());if(i)i.value=p?p.n:""};
+
+  attachPicker($("#cmpA"),$("#cmpAHits"),(p)=>{setInput("a",p);show("a",p)});
+  attachPicker($("#cmpB"),$("#cmpBHits"),(p)=>{setInput("b",p);show("b",p)});
+
+  /* 값 하나를 그린다. ⚠등급 막대는 **값 뒤**에 온다 — 분모를 모르고 본 색은 근거가 없다 */
+  const cell=(st,cls,win)=>{
+    const d=el("div",cls+(win?" win":""));
+    d.appendChild(doc.createTextNode(st&&st.v!==null?st.v:"—"));
+    if(st&&st.g){const g=el("i","g g-"+st.g);g.setAttribute("aria-hidden","true");d.appendChild(g)}
+    if(st&&st.d)d.appendChild(el("span","den",st.d));
+    return d;
+  };
+
+  /* ⚠**src/compare.ts의 betterSide와 같은 규칙.** 판정에 쓰는 값은 전부 서버가 보낸 것이라
+     기준 자체(등급 척도·최소 표본)는 grade.ts 한 곳에서 나온다. */
+  const better=(a,b)=>{
+    if(!a||!b)return"";
+    if(a.dir===0||a.min===null)return"";
+    if(a.n===null||b.n===null)return"";
+    if(a.s<a.min||b.s<a.min)return"";
+    if(a.n===b.n)return"";
+    return (a.dir===1?a.n>b.n:a.n<b.n)?"a":"b";
+  };
+
+  /* 겹친 紋. 좌표는 서버가 계산했다 — 여기서 다시 계산하면 도형이 두 벌이 된다 */
+  const figure=(A,B)=>{
+    if(!A.mark||!B.mark)return null;
+    if(A.mark.labels.length!==B.mark.labels.length)return null;
+    const box=el("div","cmpfig");
+    const NS="http://www.w3.org/2000/svg";
+    const svg=doc.createElementNS(NS,"svg");
+    svg.setAttribute("viewBox","0 0 "+A.mark.size+" "+A.mark.size);
+    svg.setAttribute("role","img");
+    svg.setAttribute("aria-label",A.name+"と"+B.name+"の成績プロフィールの重ね合わせ。"+
+      A.mark.labels.map(l=>l.text+" "+A.name+" "+l.value+"、"+B.name+" "+
+        (B.mark.labels.filter(x=>x.text===l.text)[0]||{value:"—"}).value).join("。"));
+    const poly=(pts,cls,color)=>{
+      const p=doc.createElementNS(NS,"polygon");
+      p.setAttribute("points",pts);p.setAttribute("class",cls);
+      if(color){p.setAttribute("fill",color);p.setAttribute("stroke",color)}
+      return p;
+    };
+    svg.appendChild(poly(A.mark.outline,"mf-grid"));
+    svg.appendChild(poly(A.mark.shape,"cf-a",A.color.base));
+    svg.appendChild(poly(B.mark.shape,"cf-b",B.color.base));
+    A.mark.labels.forEach(l=>{
+      const t=doc.createElementNS(NS,"text");
+      t.setAttribute("x",String(l.x));t.setAttribute("y",String(l.y));
+      t.setAttribute("text-anchor",l.anchor);t.setAttribute("dominant-baseline","middle");
+      t.setAttribute("class","mf-lab");t.textContent=l.text;
+      svg.appendChild(t);
+    });
+    box.appendChild(svg);
+    const key=el("p","cmpkey");
+    const one=(cls,c,name)=>{const s=el("span",cls);const i=el("i");i.style.borderTopColor=c;
+      s.appendChild(i);s.appendChild(doc.createTextNode(name));return s};
+    key.appendChild(one("ka",A.color.base,A.name));
+    key.appendChild(one("kb",B.color.base,B.name));
+    box.appendChild(key);
+    return box;
+  };
+
+  const warn=(text)=>{const p=el("p","cmpwarn");p.textContent=text;return p};
+
+  const render=(A,B)=>{
+    out.textContent="";
+    const wrap=el("section","cmpwrap");
+
+    /* ⚠**타자와 투수는 나란히 놓지 않는다.** 공통 지표가 없어 전부 「—」인 표가 되고,
+       그건 답이 아니라 고장으로 보인다 */
+    if(A.role!==B.role){
+      wrap.appendChild(warn("打者と投手は共通の指標がないため並べられません。"+
+        "打者どうし、または投手どうしを選んでください。（"+A.name+"＝"+
+        (A.role==="batter"?"打者":"投手")+"／"+B.name+"＝"+(B.role==="batter"?"打者":"投手")+"）"));
+      out.appendChild(wrap);return;
+    }
+
+    const head=el("div","cmphead");
+    [A,B].forEach(p=>{
+      const w=el("div","cmpwho");w.style.setProperty("--who",p.color.base);
+      const nm=el("span","nm");
+      const a=doc.createElement("a");a.href=BASE+"players/"+p.id+".html";a.textContent=p.name;
+      nm.appendChild(a);w.appendChild(nm);
+      w.appendChild(el("span","sub",p.teamName+"　"+(p.position||"")));
+      w.appendChild(el("span","smp",p.sample));
+      head.appendChild(w);
+    });
+    wrap.appendChild(head);
+
+    /* ⚠**잣대가 다르면 먼저 말한다.** 선발 3.20은 중위권이고 구원 3.20은 하위권이다 */
+    if(A.group!==B.group){
+      const nm={batter:"打者",starter:"先発",reliever:"救援"};
+      wrap.appendChild(warn("役割が違う二人です（"+A.name+"＝"+nm[A.group]+"、"+B.name+"＝"+nm[B.group]+
+        "）。先発と救援は防御率などの分布そのものが違うため、色は「それぞれの役割の中での位置」を表します。"+
+        "数字の大小をそのまま優劣として読まないでください。"));
+    }
+
+    const fig=figure(A,B);
+    if(fig)wrap.appendChild(fig);
+
+    const byKey={};B.stats.forEach(s=>{byKey[s.k]=s});
+    let judged=0;
+    A.stats.forEach(sa=>{
+      const sb=byKey[sa.k];
+      const w=better(sa,sb);
+      if(w)judged++;
+      const row=el("div","cmprow");
+      row.appendChild(cell(sa,"va",w==="a"));
+      const lb=el("span","lb");
+      /* 용어집 툴팁을 그대로 태운다 — 설명을 여기서 새로 쓰지 않는다(M1).
+         ⚠**진짜 버튼으로 만든다.** 그래야 터치로도 열리고 키보드에도 잡힌다 */
+      if(GLOSSARY[sa.k]){
+        const t=doc.createElement("button");t.type="button";t.className="term";
+        t.setAttribute("data-term",sa.k);t.setAttribute("aria-describedby","tip");
+        t.textContent=sa.l;lb.appendChild(t);
+      }else lb.appendChild(doc.createTextNode(sa.l));
+      row.appendChild(lb);
+      row.appendChild(cell(sb,"vb",w==="b"));
+      wrap.appendChild(row);
+    });
+
+    if(judged===0){
+      wrap.appendChild(warn("どちらが上かの印はついていません。"+
+        "母数が色づけの最低ラインに届いていないか、優劣を言えない指標だけが並んでいます。"));
+    }
+    out.appendChild(wrap);
+    if(typeof bindTerms==="function")bindTerms(wrap);
+  };
+
+  const load=(id)=>{
+    if(cache[id])return Promise.resolve(cache[id]);
+    if(typeof fetch!=="function")return Promise.reject(new Error("no fetch"));
+    return fetch(BASE+"compare/"+id+".json").then(r=>{
+      if(!r.ok)throw new Error("http "+r.status);
+      return r.json();
+    }).then(j=>{cache[id]=j;return j});
+  };
+
+  const run=()=>{
+    if(!chosen.a||!chosen.b||!out)return;
+    out.textContent="";
+    const wait=el("section","cmpwrap");wait.appendChild(el("p","empty","読み込んでいます…"));
+    out.appendChild(wait);
+    Promise.all([load(chosen.a.i),load(chosen.b.i)]).then(r=>render(r[0],r[1])).catch(()=>{
+      out.textContent="";
+      const e=el("section","cmpwrap");
+      /* ⚠**빈 화면으로 두지 않는다**(M12) — 「데이터 없음」과 「읽지 못함」은 다른 상태다 */
+      e.appendChild(warn("成績を読み込めませんでした。通信を確認して、もう一度お試しください。"));
+      out.appendChild(e);
+    });
+    /* 공유할 수 있는 주소로 바꾼다. **뒤로가기 이력을 더럽히지 않는다** — 비교는 이동이 아니다 */
+    if(typeof history!=="undefined"&&history.replaceState){
+      try{history.replaceState(null,"","?a="+encodeURIComponent(chosen.a.i)+"&b="+encodeURIComponent(chosen.b.i))}catch(e){}
+    }
+  };
+
+  const goBtn=$("#cmpGo");
+  if(goBtn)goBtn.addEventListener("click",run);
+  const swap=$("#cmpSwap");
+  if(swap)swap.addEventListener("click",()=>{
+    const t=chosen.a;setInput("a",chosen.b);setInput("b",t);
+    const bb=chosen.b;show("a",bb);show("b",t);
+    if(out&&out.firstChild)run();
+  });
+
+  /* URL로 들어온 두 사람을 되살린다 — 공유한 링크가 같은 화면을 열어야 한다 */
+  const qs=(name)=>{
+    const m=new RegExp("[?&]"+name+"=([^&]*)").exec(LOC.search||"");
+    return m?decodeURIComponent(m[1]):"";
+  };
+  const ia=qs("a"),ib=qs("b");
+  if(ia&&ib){
+    withIndex(idx=>{
+      if(!idx)return;
+      const find=(id)=>idx.filter(p=>p.i===id)[0]||null;
+      const pa=find(ia),pb=find(ib);
+      if(!pa||!pb)return;
+      setInput("a",pa);show("a",pa);setInput("b",pb);show("b",pb);
+      run();
+    });
+    fetchIndex();
+  }
 }
 
 /* ── 색인 화면의 이름·구단 좁히기 ──

@@ -37,8 +37,18 @@ function siteData(over: Partial<SiteData> = {}): SiteData {
       ],
       highlights: [],
     },
-    ranking: { season: 2026, asOf: "2026-08-14", leagues: [] },
+    ranking: { season: 2026, asOf: "2026-08-14", standings: [], tieRule: "同順位", leagues: [] },
     starters: { gameDate: null, builtOn: "2026-08-15", games: [] },
+    today: {
+      gameDate: "2026-08-14",
+      builtOn: "2026-08-15",
+      games: [],
+      probableDate: null,
+      probables: [],
+      starRule: "3安打以上",
+      starLimit: 6,
+    },
+    games: [],
     ...over,
   };
 }
@@ -51,12 +61,15 @@ test("사이트는 정해진 파일 집합을 만든다", () => {
   assert.deepEqual(paths, [
     "assets/site.css",
     "assets/site.js",
+    "compare.html",
+    "compare/41045153.json",
     "index.html",
     "matchup.html",
     "players.json",
     "players/41045153.html",
     "ranking.html",
     "starters.html",
+    "today.html",
   ]);
   assert.equal(out.playerCount, 1);
   assert.equal(out.stale, false);

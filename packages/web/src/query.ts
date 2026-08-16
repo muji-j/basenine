@@ -21,20 +21,30 @@ import {
   sluggingPercentage,
   strikeoutRate,
   strikeoutsPer9,
+  sumBatting,
   walkRate,
   walksPer9,
   whip,
 } from "@bb-app/metrics";
 import {
   ALL_STATES,
+  STAR_ER,
+  STAR_HITS,
+  STAR_LIMIT,
+  STAR_OUTS,
+  STAR_RBI,
+  STAR_SO,
   aggregateSeason,
   battingEntries,
   battingSplits,
+  battingStreaks,
   pitchingSplits,
   buildLeagues,
   buildRunExpectancy,
   computeSrc,
   computeSrp,
+  dayResults,
+  gameDetails,
   entriesOfRole,
   matchups,
   pitchingEntries,
@@ -43,15 +53,19 @@ import {
   rankPitchers,
   rankPitchersInRole,
   stateKey,
+  teamStandings,
 } from "@bb-app/aggregate";
 import type {
   BattingEntry,
+  DayGame,
+  GamePlay,
   LeagueBundle,
   PitcherRole,
   PitchingEntry,
+  RunExpectancy,
   SplitDimension,
 } from "@bb-app/aggregate";
-import { TEAMS, colorOf, shortNameOf, teamOf } from "@bb-app/domain";
+import { TEAMS, colorOf, leagueOf, shortNameOf, teamOf } from "@bb-app/domain";
 import type { League } from "@bb-app/domain";
 import { countsAsHit } from "@bb-app/parser";
 import type { Outcome } from "@bb-app/parser";
@@ -85,11 +99,22 @@ import type {
   StartersPageData,
   TeamRoster,
 } from "./pages.ts";
+import type { StandingRow, StandingsSection } from "./pages.ts";
 import type { RankDigits } from "./parts.ts";
 import { denominator, innings } from "./format.ts";
 import { readFileSync } from "node:fs";
+import type {
+  PlayerRef,
+  TodayGame,
+  TodayPageData,
+  TodayProbable,
+  TodaySide,
+} from "./today-page.ts";
+import { KEY_PLAY_LIMIT } from "@bb-app/aggregate";
+import type { GamePageData, GamePlayView, GameSide } from "./game-page.ts";
+import type { PlayerRef as GamePlayerRef } from "./game-page.ts";
 import { POLITENESS } from "./log-page.ts";
-import type { CoverageDay, LogPageData, RunRecord } from "./log-page.ts";
+import type { CoverageDay, LogPageData, QuarantineKind, RunRecord } from "./log-page.ts";
 
 /**
  * 스플릿에서 「표본이 얇다」고 볼 타석 수.
@@ -114,6 +139,8 @@ const RANKING_PAGE_ROWS = 30;
 const COVERAGE_DAYS = 30;
 /** 収集ログ에 싣는 실행 기록 수 */
 const RUN_LOG_ROWS = 20;
+/** 격리 종류마다 보여줄 원문 표본 수. **판단하려면 원문이 필요하다** */
+const QUARANTINE_SAMPLES = 5;
 
 const LEAGUE_NAME: Readonly<Record<League, string>> = {
   central: "セントラル・リーグ",
@@ -127,7 +154,19 @@ const SPLIT_AXES: readonly { id: SplitAxisId; dimension: SplitDimension; label: 
   { id: "month", dimension: "month", label: "月別" },
   // ⚠투수 쪽의 뜻이 다르다 — 자기 타순이 아니라 **상대 타자가 몇 번이었는가**다
   { id: "order", dimension: "battingOrder", label: "打順" },
+  { id: "venue", dimension: "venue", label: "球場別" },
 ];
+
+/**
+ * 구장별 스플릿에서 **한 줄로 남길 최소 타석 수**.
+ *
+ * ⚠**접는 것이지 숨기는 것이 아니다.** 구장은 시즌에 30곳 넘게 나오고(2025~2026 실측 37곳),
+ * 그중 지방 개최는 한 선수에게 3~4타석뿐이다. 전부 늘어놓으면 1~2타석짜리 줄이 표의 절반을
+ * 채우고, 그건 정보가 아니라 잡음이다.
+ * ⚠**접은 것은 「その他の球場」 한 줄로 합치고, 몇 곳을 합쳤는지 화면이 말한다.**
+ * 조용히 버리면 합계가 안 맞고, 그때 어디로 갔는지 아무도 답할 수 없다.
+ */
+export const VENUE_MIN_PA = 10;
 
 const SPLIT_KEY_LABEL: Readonly<Record<string, string>> = {
   left: "対左投手",
@@ -165,6 +204,8 @@ function monthLabel(key: string): string {
 
 function splitLabel(axis: SplitAxisId, key: string, allowed: boolean): string {
   if (axis === "month") return monthLabel(key);
+  // 구장명은 이미 사람이 읽는 이름이다(파서가 다듬었다) — 표를 다시 만들지 않는다
+  if (axis === "venue") return key;
   // 타순은 그대로 수다 — 「3」을 「3番」으로 읽히게만 한다
   if (axis === "order") return `${key}番`;
   const table = allowed ? PITCHER_SPLIT_KEY_LABEL : SPLIT_KEY_LABEL;
@@ -471,6 +512,13 @@ function pitcherRankings(
       return v === undefined ? { value: null, denominator: 0 } : { value: v.srp, denominator: v.bf };
     }, true),
     count("so", "奪三振", (e) => e.player.line.so),
+    // ⚠球数/アウト는 **낮을수록 좋다.** 다른 투수 개수 지표와 성격이 다르다
+    rate("pitchesPerOut", "球数/アウト", (e) =>
+      e.player.pitches === null
+        ? { value: null, denominator: e.player.line.outs }
+        : { value: e.player.pitches / e.player.line.outs, denominator: e.player.line.outs },
+    ),
+    count("pitches", "投球数", (e) => e.player.pitches ?? 0),
     inningsRanking(),
   ];
 
@@ -654,6 +702,32 @@ function loadStatePa(
 }
 
 /**
+ * 얇은 구장을 한 줄로 접는다.
+ *
+ * ⚠**버리지 않고 합친다.** 합계가 맞아야 「그 선수의 전 타석이 어딘가에 있다」고 말할 수 있다.
+ * 몇 곳을 합쳤는지 라벨에 적어, 「왜 어제 갔던 지방구장이 안 보이지?」에 답할 수 있게 한다.
+ *
+ * ⚠**한 곳만 얇으면 접지 않는다.** 「その他の球場（1球場）」은 이름을 감추기만 하고
+ * 줄 수는 그대로다 — 아무것도 얻지 못하고 정보만 사라진다.
+ */
+export function foldThinVenues(rows: readonly SplitRow[]): SplitRow[] {
+  const thin = rows.filter((r) => r.line.pa < VENUE_MIN_PA);
+  if (thin.length <= 1) return [...rows];
+
+  const line = sumBatting(thin.map((r) => r.line));
+  return [
+    ...rows.filter((r) => r.line.pa >= VENUE_MIN_PA),
+    {
+      key: "__other__",
+      label: `その他の球場（${thin.length}球場）`,
+      line,
+      rbi: thin.reduce((n, r) => n + r.rbi, 0),
+      ...derived(line),
+    },
+  ];
+}
+
+/**
  * @param allowed true면 투수 스플릿(피성적)을 만든다.
  *   ⚠**같은 함수로 만든다**(M1) — 축 목록·정렬·얇은 표본 규칙이 두 벌이 되면 어긋난다.
  */
@@ -682,7 +756,7 @@ function loadSplits(
         id: axis.id,
         label: axis.label,
         allowed,
-        rows,
+        rows: axis.id === "venue" ? foldThinVenues(rows) : rows,
         unclassified: p.unclassified,
         thinBelow: THIN_SPLIT_PA,
       };
@@ -905,6 +979,220 @@ function startersPage(
   return { gameDate: rows[0]!.gameDate, builtOn, games };
 }
 
+/**
+ * 경기 페이지 데이터.
+ *
+ * ⚠**선수 이름은 ID로 찾는다**(M10). 이름 문자열로 조인하면 동명이인이 섞인다 —
+ * 실제로 2026-08-14 西武−ロッテ 전에 「小島」가 둘 있었다.
+ * ⚠**이름을 모르면 그 자리를 비운다.** 숫자 ID를 화면에 내지 않는다.
+ */
+function gamePages(
+  db: Db,
+  o: LoadOptions,
+  reFull: ReadonlyMap<string, RunExpectancy>,
+  nameOf: (playerId: string) => string | null,
+): GamePageData[] {
+  const details = gameDetails(
+    db,
+    o.season,
+    reFull,
+    leagueOf,
+    o.competition ?? "regular",
+    o.through ?? "9999-12-31",
+  );
+
+  const ref = (playerId: string | null): GamePlayerRef | null => {
+    if (playerId === null) return null;
+    const name = nameOf(playerId);
+    return name === null ? null : { playerId, name };
+  };
+  const side = (code: string, runs: number, hits: number | null, errors: number | null): GameSide => ({
+    teamCode: code,
+    name: teamOf(code).name,
+    shortName: shortNameOf(code),
+    color: colorOf(code),
+    runs,
+    hits,
+    errors,
+  });
+  const play = (p: GamePlay): GamePlayView => ({
+    inning: p.inning,
+    half: p.half,
+    outsBefore: p.outsBefore,
+    bases: p.bases,
+    batter: ref(p.batterId),
+    pitcher: ref(p.pitcherId),
+    rawBox: p.rawBox,
+    rbi: p.rbi,
+    runsScored: p.runsScored,
+    swing: p.swing,
+    awayScore: p.awayScore,
+    homeScore: p.homeScore,
+  });
+
+  return [...details.values()].map((g) => {
+    // `2026/0814/s-db-17` → `https://npb.jp/scores/2026/0814/s-db-17/box.html`
+    const [year, day, slug] = g.gameId.split("/");
+    return {
+      gameId: g.gameId,
+      gameDate: g.gameDate,
+      venue: g.venue,
+      series: g.series,
+      away: side(g.awayCode, g.awayRuns, g.awayHits, g.awayErrors),
+      home: side(g.homeCode, g.homeRuns, g.homeHits, g.homeErrors),
+      innings: g.innings,
+      reconciles: g.reconciles,
+      scoringPlays: g.scoringPlays.map(play),
+      keyPlays: g.keyPlays.map(play),
+      keyPlayLimit: KEY_PLAY_LIMIT,
+      win: ref(g.winPitcher),
+      lose: ref(g.losePitcher),
+      save: ref(g.savePitcher),
+      // ⚠**원본으로 가는 링크는 지우지 마라**(L3). 대체하는 것이 아니라 가리킨다
+      sourceUrl: `https://npb.jp/scores/${year}/${day}/${slug}/box.html`,
+    };
+  });
+}
+
+/**
+ * 「눈에 띈 기록」의 기준을 사람이 읽는 한 문장으로.
+ *
+ * ⚠**코드의 상수에서 만든다.** 문장을 손으로 적으면 임계값을 바꿨을 때 화면만 옛날 말을 한다 —
+ * 순위의 자격 기준을 숨기는 것과 같은 종류의 잘못이다(M3의 정신).
+ */
+function starRuleText(): string {
+  return (
+    `打者は${STAR_HITS}安打以上・本塁打・${STAR_RBI}打点以上、` +
+    `投手は${innings(STAR_OUTS)}回以上を自責${STAR_ER}以内、または${STAR_SO}奪三振以上`
+  );
+}
+
+/**
+ * 「試合」 화면 데이터 — 직전 경기일의 결과 + 다음 예고선발 요약.
+ *
+ * ⚠**예고선발의 짝짓기를 다시 구현하지 않는다**(M1). 予告先発 페이지가 이미 만든
+ * `StartersPageData`에서 뽑아 줄인다 — 두 벌로 만들면 더블헤더에서 한쪽만 어긋난다.
+ */
+function todayPage(
+  db: Db,
+  o: LoadOptions,
+  latestDate: string | null,
+  starters: StartersPageData,
+  nameOf: (playerId: string) => string | null,
+): TodayPageData {
+  const competition = o.competition ?? "regular";
+  const raw: DayGame[] = latestDate === null ? [] : dayResults(db, o.season, latestDate);
+
+  const ref = (p: { playerId: string; teamCode: string } | null): PlayerRef | null => {
+    if (p === null) return null;
+    const name = nameOf(p.playerId);
+    // ⚠이름을 모르면 ID를 내지 않는다 — 숫자만 있는 링크는 정보가 아니라 잡음이다
+    return name === null ? null : { playerId: p.playerId, name, teamCode: p.teamCode };
+  };
+  const side = (s: DayGame["away"]): TodaySide => ({
+    teamCode: s.teamCode,
+    shortName: shortNameOf(s.teamCode),
+    name: teamOf(s.teamCode).name,
+    color: colorOf(s.teamCode),
+    runs: s.runs,
+    hits: s.hits,
+    errors: s.errors,
+  });
+
+  const games: TodayGame[] = raw
+    // 다른 대회(오픈전·교류전 표기 등)를 섞지 않는다(§2-1)
+    .filter((g) => g.competition === competition)
+    .map((g) => ({
+      gameId: g.gameId,
+      venue: g.venue,
+      status: g.status,
+      notPlayedReason: g.notPlayedReason,
+      away: side(g.away),
+      home: side(g.home),
+      winner: g.winner,
+      win: ref(g.winPitcher),
+      lose: ref(g.losePitcher),
+      save: ref(g.savePitcher),
+      stars: g.stars.flatMap((s) => {
+        const name = nameOf(s.playerId);
+        if (name === null) return [];
+        return [{ ...s, name }];
+      }),
+    }));
+
+  const probables: TodayProbable[] = starters.games.map((g) => ({
+    venue: g.venue,
+    startTime: g.startTime,
+    sides: [0, 1].map((i) => {
+      const s = g.sides[i]!;
+      return {
+        shortName: s.shortName,
+        color: s.color,
+        playerId: s.playerId,
+        name: s.name,
+        era: s.summary === null ? null : s.summary.era,
+      };
+    }) as [TodayProbable["sides"][0], TodayProbable["sides"][1]],
+  }));
+
+  return {
+    gameDate: latestDate,
+    builtOn: o.builtOn,
+    games,
+    probableDate: starters.gameDate,
+    probables,
+    starRule: starRuleText(),
+    starLimit: STAR_LIMIT,
+  };
+}
+
+/**
+ * 동률 처리 규칙의 문장. ⚠**화면에 적는다**(M3) — 규칙이 코드에만 있으면 아무도 검증할 수 없다.
+ *
+ * ⚠NPB 협약의 2단계(前年度順位)를 쓰지 않는 이유까지 적는다. 「우리 규칙이 다르다」를
+ * 숨기면, 다른 사이트와 순위가 어긋났을 때 버그와 구별할 수 없다.
+ */
+const TIE_RULE =
+  "勝率が同じ場合は当該球団間の対戦成績で上位を決めます。それでも並ぶときは同順位として表示します" +
+  "（NPBの規定では次に前年度順位を使いますが、当サイトは2025年からのデータしか持たないため使えません）。";
+
+function standingsSections(db: Db, o: LoadOptions): StandingsSection[] {
+  const rows = teamStandings(db, o.season, leagueOf, o.competition ?? "regular", o.through ?? "9999-12-31");
+  if (rows.length === 0) return [];
+  const toRow = (r: (typeof rows)[number]): StandingRow => {
+    const team = teamOf(r.teamCode);
+    return {
+      teamCode: r.teamCode,
+      name: team.name,
+      shortName: shortNameOf(r.teamCode),
+      color: colorOf(r.teamCode),
+      rank: r.rank,
+      tiedRank: r.tiedRank,
+      games: r.games,
+      w: r.w,
+      l: r.l,
+      t: r.t,
+      pct: r.pct,
+      gamesBehind: r.gamesBehind,
+      rf: r.rf,
+      ra: r.ra,
+      // ⚠**지표를 여기서 새로 쓰지 않는다**(M1). 선수 화면과 같은 함수로 만든다
+      avg: battingAverage(r.batting),
+      era: earnedRunAverage(r.pitching),
+      home: r.home,
+      away: r.away,
+      last10: r.last10,
+    };
+  };
+  return (["central", "pacific"] as const)
+    .map((league) => ({
+      id: league,
+      name: LEAGUE_NAME[league],
+      rows: rows.filter((r) => r.league === league).map(toRow),
+    }))
+    .filter((s) => s.rows.length > 0);
+}
+
 // ─── 조립 ────────────────────────────────────────────────────────────────
 
 export interface LoadOptions {
@@ -923,6 +1211,9 @@ export interface SiteData {
   index: IndexPageData;
   ranking: RankingPageData;
   starters: StartersPageData;
+  today: TodayPageData;
+  /** 경기 페이지. **빌드 대상 시즌만** — 2025년은 아카이브에 있지만 화면은 아직 한 시즌이다 */
+  games: GamePageData[];
   search: SearchEntry[];
 }
 
@@ -1037,9 +1328,27 @@ export function loadLog(db: Db, o: LoadOptions & LogOptions): LogPageData {
     }
   }
 
+  /**
+   * 격리를 종류별로 묶고 원문 표본을 몇 개 붙인다.
+   *
+   * ⚠**원문이 없으면 판단할 수 없다.** 「unknownToken 3건」만으로는 무엇을 정해야 할지 모른다.
+   */
+  const quarantine: QuarantineKind[] = (
+    db.raw
+      .prepare("SELECT kind, COUNT(*) AS count FROM quarantine GROUP BY kind ORDER BY count DESC")
+      .all() as unknown as { kind: string; count: number }[]
+  ).map((k) => ({
+    kind: k.kind,
+    count: k.count,
+    samples: db.raw
+      .prepare("SELECT raw, detail, game_id AS gameId FROM quarantine WHERE kind = ? LIMIT ?")
+      .all(k.kind, QUARANTINE_SAMPLES) as unknown as QuarantineKind["samples"],
+  }));
+
   return {
     season: o.season,
     coverage: loadCoverage(db, o.season, competition, COVERAGE_DAYS),
+    quarantine,
     runs: o.runLogPath === undefined ? [] : readRunLog(o.runLogPath, RUN_LOG_ROWS),
     archive,
     totals,
@@ -1068,6 +1377,8 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   const scorebookByPlayer = loadScorebook(db, o.season, competition, through);
   const statePaByPlayer = loadStatePa(db, o.season, competition, through);
   const monthlyEra = loadMonthlyEra(db, o.season, competition, through);
+  // ⚠연속 기록은 경기 단위다. 타석이 없는 경기(대주자·수비 교대)는 세지 않는다
+  const streaksByPlayer = battingStreaks(db, o.season, competition, through);
 
   // 상대 선수의 소속 구단은 시즌 집계에서 온다 — 이름 문자열로 조인하지 않는다(M10)
   const teamOfPlayer = new Map<string, string>();
@@ -1077,6 +1388,9 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
 
   const rankingsByLeague = new Map<League, LeagueRankings>();
   const reByLeague = new Map<League, Map<string, number>>();
+  // ⚠경기 페이지는 **행렬만이 아니라 `RunExpectancy` 자체**가 필요하다(`paValue`가 그걸 받는다).
+  // 여기서 다시 만들지 않는다 — 같은 시즌을 두 번 훑는 것도, 값이 갈라지는 것도 피한다(M1)
+  const reFull = new Map<string, RunExpectancy>();
   const srcByPlayer = new Map<string, { src: number; pa: number; skipped: number; srcPer600: number | null }>();
   const srpByPlayer = new Map<string, { srp: number; bf: number; skipped: number; srpPer9: number | null }>();
   const battingByPlayer = new Map<string, BattingEntry>();
@@ -1088,6 +1402,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     const codes = TEAMS.filter((t) => t.league === bundle.league).map((t) => t.code);
     const re = buildRunExpectancy(db, o.season, bundle.league, codes, competition);
     reByLeague.set(bundle.league, re.matrix);
+    reFull.set(bundle.league, re);
 
     for (const s of computeSrc(db, re, codes, competition)) {
       srcByPlayer.set(s.playerId, { src: s.src, pa: s.pa, skipped: s.skipped, srcPer600: s.srcPer600 });
@@ -1173,6 +1488,15 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
             needOuts: qualifyingOuts(bundle, pit.player.role),
             role: pit.player.role,
             starts: pit.player.starts,
+            pitches: pit.player.pitches,
+            wp: pit.player.wp,
+            balk: pit.player.balk,
+            // ⚠분모는 **아웃 카운트**다. 이닝으로 나누면 3배 작아진 수가 나온다.
+            // ⚠투구수가 없으면 `rate(0, …)`로 때우지 않는다 — 「0구」가 되어 효율 1위가 된다
+            pitchesPerOut:
+              pit.player.pitches === null
+                ? { value: null, denominator: pit.player.line.outs }
+                : rate(pit.player.pitches, pit.player.line.outs),
             srp: srpByPlayer.get(playerId) ?? null,
             asStarter: roleLine(pit.player.asStarter, pit.player.starts),
             asReliever: roleLine(pit.player.asReliever, pit.player.games - pit.player.starts),
@@ -1274,6 +1598,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       ),
       mark,
       spark,
+      streaks: streaksByPlayer.get(playerId) ?? null,
       sparkLabel: role === "pitcher" ? "月別防御率" : "月別OPS",
       asOf: meta.latest,
     });
@@ -1319,6 +1644,19 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     };
   });
 
+  const startersData = startersPage(
+    loadProbables(db),
+    o.builtOn,
+    pitchingByPlayer,
+    matchupsByPlayer.byPitcher,
+  );
+
+  // 선수명은 시즌 집계에서 온다 — **이름 문자열로 조인하지 않는다**(M10). ID로 찾아 이름을 붙인다
+  const nameOf = (playerId: string): string | null =>
+    battingByPlayer.get(playerId)?.player.displayName ??
+    pitchingByPlayer.get(playerId)?.player.displayName ??
+    null;
+
   return {
     season: o.season,
     asOf: meta.latest,
@@ -1333,7 +1671,15 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       teams: rosters(players),
       highlights,
     },
-    ranking: { season: o.season, asOf: meta.latest, leagues: sections },
-    starters: startersPage(loadProbables(db), o.builtOn, pitchingByPlayer, matchupsByPlayer.byPitcher),
+    ranking: {
+      season: o.season,
+      asOf: meta.latest,
+      standings: standingsSections(db, o),
+      tieRule: TIE_RULE,
+      leagues: sections,
+    },
+    starters: startersData,
+    today: todayPage(db, o, meta.latest, startersData, nameOf),
+    games: gamePages(db, o, reFull, nameOf),
   };
 }

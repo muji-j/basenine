@@ -50,7 +50,7 @@ function seedGame(db: Db, id: string, date: string): void {
 function pitch(o: Partial<PitchingRow> & { gameId: string; playerId: string }): PitchingRow {
   return {
     side: "home", decision: null, outs: 3, bf: 3, pitches: 12,
-    h: 1, hr: 0, bb: 0, hbp: 0, so: 1, runs: 0, er: 0,
+    h: 1, hr: 0, bb: 0, hbp: 0, so: 1, runs: 0, er: 0, wp: null, balk: null,
     ...o,
   };
 }

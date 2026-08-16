@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { BLOCKS, PRESETS, blocksFor, presetsFor } from "../src/blocks.ts";
 
 test("블록 수를 고정한다 — 하나 빠지면 조립 UI에서 조용히 사라진다", () => {
-  assert.equal(BLOCKS.length, 8);
-  assert.equal(new Set(BLOCKS.map((b) => b.id)).size, 8);
+  assert.equal(BLOCKS.length, 9);
+  assert.equal(new Set(BLOCKS.map((b) => b.id)).size, 9);
 });
 
 test("모든 블록에 이름과 설명이 있다 — 이름만으로는 고를 수 없다", () => {
@@ -30,6 +30,11 @@ test("⚠득점기대치는 투수에게 주지 않는다 — 빈 화면보다 �
   const ids = blocksFor("pitcher").map((b) => b.id);
   assert.ok(!ids.includes("situation"), "타석에 선 쪽의 이야기를 투수 페이지에 붙였다");
   assert.ok(ids.includes("standard"));
+});
+
+test("⚠연속 기록은 투수에게 주지 않는다 — 타석이 주역인 기록이다", () => {
+  assert.ok(!blocksFor("pitcher").map((b) => b.id).includes("streak"));
+  assert.ok(blocksFor("batter").map((b) => b.id).includes("streak"));
 });
 
 test("⚠선발·구원별은 타자에게 주지 않는다 — 반대 방향의 같은 오류다", () => {

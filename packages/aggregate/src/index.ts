@@ -23,3 +23,20 @@ export { computeSrc, computeSrp, missingStates } from "./situational.ts";
 export type { SrcEntry, SrpEntry } from "./situational.ts";
 export { battingSplits, matchups, pitchingSplits } from "./splits.ts";
 export type { Matchup, PlayerSplits, SplitDimension, SplitLine } from "./splits.ts";
+export {
+  STAR_ER,
+  STAR_HITS,
+  STAR_LIMIT,
+  STAR_OUTS,
+  STAR_RBI,
+  STAR_SO,
+  dayResults,
+  latestGameDate,
+} from "./day.ts";
+export type { DayGame, DayPitcherRef, DaySide, DayStar } from "./day.ts";
+export { RECENT_GAMES, gamesBehind, teamStandings, winPct } from "./standings.ts";
+export type { TeamRecord } from "./standings.ts";
+export { KEY_PLAY_LIMIT, gameDetails } from "./game.ts";
+export type { GameDetail, GamePlay, HalfInning } from "./game.ts";
+export { battingStreaks, emptyStreaks } from "./streaks.ts";
+export type { PlayerStreaks, Streak } from "./streaks.ts";

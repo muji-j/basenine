@@ -128,9 +128,12 @@ test("라인업을 아는 척하지 않는다고 화면이 밝힌다", () => {
   assert.match(out, /試合中の情報は取得していません/);
 });
 
-test("헤더에서 지금 이 페이지임을 표시한다", () => {
+test("헤더에서 부모 항목(試合)을 켠다 — 予告先発은 그 자식 화면이다", () => {
   const out = renderStartersPage(data(), context());
-  assert.match(out, /<a href="starters\.html" aria-current="page">先発<\/a>/);
+  // ⚠**어느 항목도 안 켜진 상태로 두지 않는다.** 「지금 어디인가」가 사라지면
+  // 내비게이션이 방향을 잃는다. 予告先発은 「試合」 아래에 있으므로 그쪽을 켠다
+  assert.match(out, /<a href="today\.html" aria-current="page">試合<\/a>/);
+  assert.equal(out.match(/aria-current="page"/g)?.length, 1, "켜진 항목이 하나가 아니다");
 });
 
 // ── 대전 카드 버튼 ────────────────────────────────────────────────────────

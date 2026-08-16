@@ -45,7 +45,7 @@ function recorder(route: (url: string, n: number) => ReturnType<typeof response>
 }
 
 const MONTHLY = `<a href="/scores/2026/0814/s-db-17/">g1</a><a href="/scores/2026/0813/h-m-17/">g2</a>`;
-const REF = { season: 2026, date: "2026-08-14", slug: "s-db-17", path: "/scores/2026/0814/s-db-17/" };
+const REF = { season: 2026, date: "2026-08-14", slug: "s-db-17", path: "/scores/2026/0814/s-db-17/", venue: null };
 
 // ---- PoliteFetcher -------------------------------------------------------
 

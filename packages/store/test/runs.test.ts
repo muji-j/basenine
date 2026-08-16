@@ -13,7 +13,11 @@ function ev(inning: number, half: "top" | "bottom", outs: number, bases: string)
 
 function ls(away: (number | null)[], home: (number | null)[]): LineScore {
   const sum = (a: (number | null)[]): number => a.reduce<number>((n, v) => n + (v ?? 0), 0);
-  return { away, home, awayTotal: sum(away), homeTotal: sum(home) };
+  // H·E는 이 테스트의 관심 밖이다. ⚠0이 아니라 null로 둔다 — 「없음」과 「0」은 다르다(M11)
+  return {
+    away, home, awayTotal: sum(away), homeTotal: sum(home),
+    awayHits: null, homeHits: null, awayErrors: null, homeErrors: null,
+  };
 }
 
 test("이닝 내부 전이로 득점을 유도한다", () => {

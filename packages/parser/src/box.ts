@@ -68,6 +68,12 @@ export interface PitcherRow {
   strikeouts: number | null;
   runs: number | null;
   earnedRuns: number | null;
+  /**
+   * 폭투·보크. ⚠**표에 열이 있는데 지금까지 건너뛰고 있었다**(2026-08-15 발견).
+   * 제구를 말할 때 BB/9과 함께 보면 그림이 완성된다.
+   */
+  wildPitches: number | null;
+  balks: number | null;
 }
 
 /**
@@ -261,6 +267,8 @@ function parsePitching(html: string, id: string): PitcherRow[] {
     bb: at("四球"),
     hbp: at("死球"),
     so: at("三振"),
+    wp: at("暴投"),
+    balk: at("ボーク"),
     runs: at("失点"),
     er: at("自責点"),
   };
@@ -280,6 +288,8 @@ function parsePitching(html: string, id: string): PitcherRow[] {
     strikeouts: num(cells[col.so]),
     runs: num(cells[col.runs]),
     earnedRuns: num(cells[col.er]),
+    wildPitches: num(cells[col.wp]),
+    balks: num(cells[col.balk]),
   }));
 }
 
@@ -289,6 +299,62 @@ const NOT_PLAYED_MARKERS = ["中止", "ノーゲーム", "サスペンデッド"
 function notPlayedReason(html: string): string | null {
   for (const marker of NOT_PLAYED_MARKERS) {
     if (html.includes(marker)) return marker;
+  }
+  return null;
+}
+
+/**
+ * **이 경기 자신의** 안내문(`【雨天のためノーゲーム】` 등).
+ *
+ * ⚠**페이지 전체에서 찾으면 안 된다.** 경기 페이지에는 그날 다른 경기들의 스코어 박스가
+ * 함께 실려 있어서, 남의 경기가 중지면 이 경기까지 중지로 판정된다.
+ * `game_info`는 `#game_stats` 안에 있고 그 경기 하나만 설명한다.
+ */
+function ownGameInfo(html: string): string {
+  return /<p class="game_info">([\s\S]*?)<\/p>/.exec(html)?.[1] ?? "";
+}
+
+/**
+ * **이 경기의 대회 표기**(`JERA セ・リーグ公式戦` · `CS ファーストステージ` · `SMBC日本シリーズ` …).
+ *
+ * ⚠**이것이 없으면 포스트시즌이 정규시즌에 섞인다.** 구단 코드로는 구별할 수 없다 —
+ * CS도 일본시리즈도 같은 구단 코드를 쓰기 때문이다. 실측(2026-08-16): 2025년 아카이브를
+ * 채운 직후 「정규시즌」이 904경기가 됐고, 그 안에 **CS 13경기와 일본시리즈 5경기**가 들어 있었다.
+ * 빼고 나면 실시 858경기 = NPB 정규시즌 경기 수(143×12÷2)와 정확히 일치한다.
+ *
+ * ⚠**표기는 후원사 이름이 붙어 해마다 달라진다**(`JERA` · `パーソル` · `日本生命` · `SMBC`).
+ * 그래서 전체 일치로 판정하지 않는다 — 판정은 `@bb-app/domain`의 `competitionFromLabel`이 한다.
+ *
+ * 위치: `#game_stats > .game_tit > h3`의 맨 앞 `【…】`. **그 경기 하나만** 설명하는 자리다.
+ *
+ * @returns 표기 원문. 없으면 null(**구조 변경 신호다 — 조용히 넘기지 마라**)
+ */
+export function parseCompetitionLabel(html: string): string | null {
+  const tit = /<div class="game_tit">([\s\S]*?)<\/div>/.exec(html)?.[1] ?? "";
+  const h3 = /<h3[^>]*>([\s\S]*?)<\/h3>/.exec(tit)?.[1] ?? "";
+  const label = /【([^】]+)】/.exec(stripTags(h3))?.[1];
+  return label === undefined ? null : label.trim();
+}
+
+/**
+ * ⚠**ノーゲーム은 표가 있어도 성립하지 않은 경기다.**
+ *
+ * 우천으로 도중에 끝난 경기는 npb.jp가 **그때까지의 부분 표를 그대로 남긴다.**
+ * 「타격표가 있으면 실시」로 판정하면 이 경기가 실시로 들어오고,
+ * 무효인 기록이 시즌 성적에 섞인다 — 실측(2026-08-16)에서 `2026/0426/h-m-05`가
+ * **타격 18행·투구 2행·타석 10건**을 시즌에 흘려 넣고 있었다.
+ * 발견 경위: 라인스코어로 센 무승부(11)와 투수 승패로 센 무승부(12)가 1건 어긋났고,
+ * 그 1건이 「1-0인데 승리투수가 없는 경기」였다.
+ *
+ * ⚠NPB에서 ノーゲーム은 **처음부터 다시 하는 경기**이고 기록은 남지 않는다.
+ * 반면 サスペンデッド는 이어서 하는 경기라 기록이 살아남는다 — 같이 묶지 않는다.
+ */
+const VOID_MARKERS = ["ノーゲーム"] as const;
+
+function voidedReason(html: string): string | null {
+  const info = ownGameInfo(html);
+  for (const marker of VOID_MARKERS) {
+    if (info.includes(marker)) return marker;
   }
   return null;
 }
@@ -311,6 +377,10 @@ export function parseBoxScore(rawHtml: string): BoxScore {
     }
     return { status: "notPlayed", reason };
   }
+
+  // ⚠표가 있어도 성립하지 않은 경기가 있다. **표의 유무로만 판정하지 않는다**
+  const voided = voidedReason(html);
+  if (voided !== null) return { status: "notPlayed", reason: voided };
 
   return {
     status: "played",

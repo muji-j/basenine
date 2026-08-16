@@ -18,6 +18,17 @@ export interface LineScore {
   home: (number | null)[];
   awayTotal: number;
   homeTotal: number;
+  /**
+   * 안타·실책 합계(`H`·`E` 열). ⚠**읽지 못하면 0이 아니라 null**이다(M11).
+   *
+   * 이 값들이 있어야 팀 승패(=`計` 비교)와 실책을 말할 수 있다.
+   * 개인 기록에서 합산해 만들지 **않는다** — 원본이 낸 팀 합계를 그대로 쓰고,
+   * 어긋나면 그 사실이 대조 지점이 된다.
+   */
+  awayHits: number | null;
+  homeHits: number | null;
+  awayErrors: number | null;
+  homeErrors: number | null;
 }
 
 export class LineScoreParseError extends Error {
@@ -76,17 +87,42 @@ export function parseLineScore(html: string): LineScore {
     throw new LineScoreParseError("라인스코어에서 「計」 열을 찾지 못했다", `header=${header.join("|")}`);
   }
 
+  /**
+   * `計` 뒤의 `H`(안타)·`E`(실책) 열.
+   *
+   * ⚠**헤더가 `1 2 … 9 計 H E`다**(2026-08-15 실측). 「失策」이라는 낱말은 페이지 어디에도 없고
+   * 열 머리 한 글자로만 나온다 — 낱말로 찾으면 영원히 못 찾는다.
+   * ⚠**없으면 0이 아니라 null이다**(M11). 연장전이면 이닝 열이 늘어 위치가 밀리므로
+   * 자리로 세지 않고 **헤더에서 찾는다.**
+   */
+  const hitsAt = header.findIndex((h, i) => i > totalAt && h.trim() === "H");
+  const errorsAt = header.findIndex((h, i) => i > totalAt && h.trim() === "E");
+
   // 0번은 팀명 열. 1번부터 (計 앞까지)가 이닝이다.
-  const read = (row: string[]): { runs: (number | null)[]; total: number } => {
+  const read = (row: string[]): { runs: (number | null)[]; total: number; hits: number | null; errors: number | null } => {
     const runs = row.slice(1, totalAt).map(inningRuns);
     const total = inningRuns(row[totalAt] ?? "");
     if (total === null) {
       throw new LineScoreParseError("합계를 수로 읽지 못했다", `value=${JSON.stringify(row[totalAt])}`);
     }
-    return { runs, total };
+    const at = (i: number): number | null => {
+      if (i < 0) return null;
+      const t = (row[i] ?? "").trim();
+      return /^\d+$/.test(t) ? Number(t) : null;
+    };
+    return { runs, total, hits: at(hitsAt), errors: at(errorsAt) };
   };
 
   const away = read(rows[1]!);
   const home = read(rows[2]!);
-  return { away: away.runs, home: home.runs, awayTotal: away.total, homeTotal: home.total };
+  return {
+    away: away.runs,
+    home: home.runs,
+    awayTotal: away.total,
+    homeTotal: home.total,
+    awayHits: away.hits,
+    homeHits: home.hits,
+    awayErrors: away.errors,
+    homeErrors: home.errors,
+  };
 }

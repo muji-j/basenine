@@ -18,7 +18,8 @@ export type SplitDimension =
   | "homeAway"
   | "baseState"
   | "month"
-  | "battingOrder";
+  | "battingOrder"
+  | "venue";
 
 export interface SplitLine {
   /** 축 안의 구분값. `left`/`right` · `home`/`away` · `empty`/`onBase`/`scoring` · `2026-04` */
@@ -54,6 +55,9 @@ const KEY_EXPR: Readonly<Record<SplitDimension, string>> = {
   // ⚠타순은 타석 로그에 없다. **박스스코어의 타순 칸**에서 온다.
   // 교대 선수는 위 선수의 타순을 잇는다(파서가 처리) — 안 이으면 34%가 「불명」이 된다
   battingOrder: `bl.batting_order`,
+  // ⚠구장명은 **파서가 이미 다듬은 값**이다(전각 패딩 제거). 여기서 다시 다듬지 않는다 —
+  // 두 곳에서 다듬으면 규칙이 어긋나 같은 구장이 두 줄로 갈라진다
+  venue: `g.venue`,
 };
 
 const SQL = (dimension: SplitDimension): string => `
@@ -161,6 +165,7 @@ const PITCHER_KEY_EXPR: Readonly<Record<SplitDimension, string>> = {
   month: `substr(g.game_date, 1, 7)`,
   // ⚠투수 쪽의 「타순」은 **상대 타자가 몇 번이었는가**다. 자기 타순이 아니다
   battingOrder: `bl.batting_order`,
+  venue: `g.venue`,
 };
 
 const PITCHER_SQL = (dimension: SplitDimension): string => `
