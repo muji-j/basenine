@@ -17,6 +17,7 @@ export type BlockId =
   | "scorebook"
   | "situation"
   | "rolesplit"
+  | "timesthrough"
   | "streak"
   | "matchup"
   | "ranking";
@@ -36,6 +37,7 @@ export const BLOCKS: readonly BlockMeta[] = [
   { id: "scorebook", name: "打席記録", desc: "直近の打席を1つずつ" },
   { id: "situation", name: "得点期待値", desc: "24状況の期待値と、立った打席数" },
   { id: "rolesplit", name: "先発・救援別", desc: "投手のみ。役割ごとに分けた成績" },
+  { id: "timesthrough", name: "打順一巡", desc: "投手のみ。NPB全体の巡目別成績（この選手の記録ではありません）" },
   { id: "streak", name: "連続記録", desc: "打者のみ。連続安打・連続出塁" },
   { id: "matchup", name: "対戦成績", desc: "投手別。打席数の多い順" },
   { id: "ranking", name: "リーグ順位", desc: "指標を切り替えて上位と自分の位置" },
@@ -53,7 +55,7 @@ export const PRESETS: readonly PresetMeta[] = [
   // `rolesplit`은 타자 페이지에서 걸러진다(`presetsFor`) — 투수에게만 기본으로 켜진다
   { id: "standard", name: "標準", blocks: ["standard", "rolesplit", "advanced", "splits", "ranking"] },
   { id: "record", name: "記録", blocks: ["standard", "streak", "scorebook", "splits", "matchup"] },
-  { id: "analysis", name: "分析", blocks: ["advanced", "rolesplit", "situation", "splits", "matchup", "ranking"] },
+  { id: "analysis", name: "分析", blocks: ["advanced", "rolesplit", "situation", "timesthrough", "splits", "matchup", "ranking"] },
   { id: "simple", name: "簡易", blocks: ["standard"] },
 ];
 
@@ -70,6 +72,14 @@ const PITCHER_BLOCKS = new Set<BlockId>([
   "standard",
   "advanced",
   "rolesplit",
+  /**
+   * ⚠**`situation` 과 달리 이것은 투수 쪽 이야기다.**
+   * 得点期待値는 「타석에 선 쪽」의 값이라 투수 목록에서 빼 두었는데,
+   * 타순 순회는 **같은 투수가 같은 타자를 몇 번째로 만나는가**라 투수의 이야기다.
+   * ⚠**그래도 이 선수의 기록은 아니다** — NPB 전체의 값이고, 화면이 그렇게 말한다.
+   *   개인 순위를 매기지 않는다(개인의 3순회 표본은 얇다).
+   */
+  "timesthrough",
   "splits",
   "scorebook",
   "matchup",
