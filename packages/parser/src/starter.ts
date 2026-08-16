@@ -60,6 +60,16 @@ export interface AnnouncedStarters {
   /** `MM-DD`. **연도는 붙이지 않는다** — 페이지에 없다 */
   monthDay: string;
   games: StarterGame[];
+  /**
+   * 그날 **경기 자체가 없다**고 페이지가 말했는가(「試合が予定されていません。」).
+   *
+   * ⚠**「경기 0」과 「못 읽음」은 다르다**(M11). NPB는 월요일이 대체로 휴일이고,
+   * 일요일 밤이면 이 페이지가 이미 월요일자로 넘어가 있다. 그때 경기 블록이 0인 것은
+   * **정상**인데, 그것을 구조 변화로 다루면 **매주 일요일 밤에 수집 전체가 멈춘다**
+   * (2026-08-16 실측: 빌드까지 못 가서 배포가 통째로 실패했다).
+   * ⚠그렇다고 「0이면 통과」로 두지 않는다 — 페이지가 그렇게 **적었을 때만** 참이다.
+   */
+  noGamesScheduled: boolean;
 }
 
 /**
@@ -99,9 +109,25 @@ function parseSide(block: string, which: string): StarterSide {
 const UNIT = /<div class="unit (cl|pl)_\d+">([\s\S]*?)<div class="info">([\s\S]*?)<\/div>/g;
 
 /**
+ * 페이지가 「그날은 경기가 없다」고 **명시**하는 문구.
+ *
+ * ⚠**이 문자열이 있을 때만 「경기 0」을 참으로 받는다.** 없으면 지금까지처럼 실패다 —
+ * 「경기 블록이 0개」라는 사실만으로는 휴일인지 마크업이 바뀐 것인지 구별할 수 없다.
+ */
+const NO_GAMES = "試合が予定されていません";
+
+/**
+ * 제목 바로 뒤의 좁은 창.
+ * ⚠**페이지 어디에 있든 인정하지는 않는다** — 다른 구획(과거 공지·푸터)에 같은 문구가
+ * 들어오면 진짜 구조 변화를 그 문구가 덮어 버린다. 제목에 붙어 있을 때만 그날의 말이다.
+ */
+const NO_GAMES_WINDOW = 400;
+
+/**
  * @param html 予告先発 페이지 원문
- * @throws {StarterParseError} 날짜 제목이나 경기 블록을 찾지 못했을 때.
- *   **빈 목록을 조용히 돌려주지 않는다** — 구조가 바뀌면 화면이 매일 「未発表」가 된다.
+ * @throws {StarterParseError} 날짜 제목을 찾지 못했거나, 경기 블록이 0인데
+ *   「試合が予定されていません」도 없을 때. **빈 목록을 조용히 돌려주지 않는다** —
+ *   구조가 바뀌면 화면이 매일 「未発表」가 된다.
  */
 export function parseAnnouncedStarters(html: string): AnnouncedStarters {
   const heading = /<h4>\s*(\d{1,2})月(\d{1,2})日の予告先発投手\s*<\/h4>/.exec(html);
@@ -140,7 +166,12 @@ export function parseAnnouncedStarters(html: string): AnnouncedStarters {
   }
 
   if (games.length === 0) {
-    throw new StarterParseError("경기 블록(div.unit)을 하나도 찾지 못했다", `length=${html.length}`);
+    // ⚠**휴일과 구조 변화를 가른다**(M11). 페이지가 그렇게 적었을 때만 「경기 0」이 참이다
+    const after = text(html.slice(heading.index + heading[0].length, heading.index + heading[0].length + NO_GAMES_WINDOW));
+    if (!after.includes(NO_GAMES)) {
+      throw new StarterParseError("경기 블록(div.unit)을 하나도 찾지 못했다", `length=${html.length}`);
+    }
+    return { monthDay, games, noGamesScheduled: true };
   }
-  return { monthDay, games };
+  return { monthDay, games, noGamesScheduled: false };
 }
