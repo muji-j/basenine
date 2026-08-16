@@ -36,11 +36,42 @@ const { values, positionals } = parseArgs({
   options: {
     archive: { type: "string", default: "data/archive" },
     competition: { type: "string", default: "regular" },
+    /**
+     * ⚠**공표표는 스냅샷이다.** 우리 DB가 그보다 하루라도 앞서면 그날 뛴 선수가 **전부**
+     * 불일치로 잡힌다 — 실측(2026-08-17): 기준일을 안 맞추면 「결함 후보 1,253건」이 나온다.
+     * 그 상태의 대조 도구는 진짜 결함을 찾는 데 쓸 수 없다. **거짓 경보는 경보를 죽인다.**
+     * 주지 않으면 공표표의 `fetchedAt` 에서 유도하고, **무엇을 가정했는지 화면에 적는다.**
+     */
+    through: { type: "string" },
     verbose: { type: "boolean", default: false },
   },
 });
 const dbPath = positionals[0] ?? "data/bb.sqlite";
 const season = Number(positionals[1] ?? 2026);
+
+/**
+ * 공표표가 어느 날까지를 담고 있는가.
+ *
+ * ⚠**추측이지 사실이 아니다.** 페이지에 기준일이 적혀 있지 않으므로 취득 시각으로 유도한다 —
+ * JST 날짜에서 하루를 뺀다(경기는 오후에 시작하므로 낮에 받은 표는 전날까지를 담는다).
+ * 그래서 **화면에 가정을 적고**, 맞지 않으면 `--through` 로 덮어쓸 수 있게 둔다.
+ */
+function publishedThrough(): { date: string; from: string } {
+  if (values.through !== undefined) return { date: values.through, from: "--through" };
+  try {
+    const meta = JSON.parse(
+      readFileSync(`${values.archive}/npb/stats/${season}/idb1_c.meta.json`, "utf8"),
+    ) as { fetchedAt?: string };
+    if (typeof meta.fetchedAt === "string") {
+      const jst = new Date(new Date(meta.fetchedAt).getTime() + 9 * 3600 * 1000 - 24 * 3600 * 1000);
+      return { date: jst.toISOString().slice(0, 10), from: `취득 ${meta.fetchedAt} 에서 유도` };
+    }
+  } catch {
+    // 메타가 없으면 아래로
+  }
+  return { date: "9999-12-31", from: "⚠유도 실패 — 전 기간으로 비교한다(거짓 경보가 난다)" };
+}
+const through = publishedThrough();
 
 /** ⚠시계를 읽지 않는다(M6) — 이 도구는 쓰기를 하지 않으므로 고정값으로 연다 */
 const db = openDb(dbPath, `${season}-01-01T00:00:00.000Z`);
@@ -111,6 +142,7 @@ FROM batting_line b
 JOIN game g ON g.game_id = b.game_id
 JOIN player p ON p.player_id = b.player_id
 WHERE g.season = ? AND g.status = 'played' AND g.competition = ?
+  AND g.game_date <= ?
   AND ((b.side = 'away' AND g.away_code = ?) OR (b.side = 'home' AND g.home_code = ?))
 GROUP BY b.player_id
 `;
@@ -131,6 +163,7 @@ FROM pitching_line pl
 JOIN game g ON g.game_id = pl.game_id
 JOIN player p ON p.player_id = pl.player_id
 WHERE g.season = ? AND g.status = 'played' AND g.competition = ?
+  AND g.game_date <= ?
   AND ((pl.side = 'away' AND g.away_code = ?) OR (pl.side = 'home' AND g.home_code = ?))
 GROUP BY pl.player_id
 `;
@@ -149,7 +182,7 @@ for (const team of TEAMS) {
     console.error(`⚠ 공표 타격 성적표 없음: ${team.code} — 먼저 cli-stats.ts로 받아라`);
   } else {
     const pub = parseTeamBatting(batHtml);
-    const ours = db.raw.prepare(BAT_SQL).all(season, values.competition, team.code, team.code) as unknown as {
+    const ours = db.raw.prepare(BAT_SQL).all(season, values.competition, through.date, team.code, team.code) as unknown as {
       name: string; games: number; pa: number; ab: number; runs: number; h: number;
       d2: number; d3: number; hr: number; rbi: number; sb: number; sh: number; sf: number;
       bb: number; ibb: number; hbp: number; so: number;
@@ -202,7 +235,7 @@ for (const team of TEAMS) {
     continue;
   }
   const pub = parseTeamPitching(pitHtml);
-  const ours = db.raw.prepare(PIT_SQL).all(season, values.competition, team.code, team.code) as unknown as {
+  const ours = db.raw.prepare(PIT_SQL).all(season, values.competition, through.date, team.code, team.code) as unknown as {
     name: string; games: number; w: number; l: number; sv: number; hld: number;
     outs: number; h: number; hr: number; bb: number; hbp: number; so: number;
     runs: number; er: number; wp: number; balk: number;
@@ -272,6 +305,9 @@ function classify(d: Diff): string | null {
 }
 
 console.log(`\n=== 외부 대조 ${season}년 (${values.competition}) ===`);
+// ⚠**가정을 적는다.** 기준일이 안 맞으면 그날 뛴 선수가 전부 불일치로 잡히고,
+// 그 상태의 「결함 후보 N건」은 아무 뜻도 없다 — 거짓 경보는 경보를 죽인다
+console.log(`공표표 기준일 ${through.date}（${through.from}）`);
 console.log(`대조한 선수 ${comparedPlayers}명 · 항목 ${comparedFields}개`);
 
 const known = new Map<string, Diff[]>();
