@@ -13,7 +13,7 @@ import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import { NO_VALUE, dec2, fullDate, innings } from "./format.ts";
 import { note } from "./parts.ts";
-import { page } from "./layout.ts";
+import { page, pastSeasonOf } from "./layout.ts";
 import type { RenderContext } from "./pages.ts";
 import { NEUTRAL_COLOR, shortNameOf } from "@bb-app/domain";
 import { gameSlug } from "./game-page.ts";
@@ -310,6 +310,8 @@ function probableCard(p: TodayProbable, base: string): RawHtml {
 export function renderTodayPage(d: TodayPageData, ctx: RenderContext): string {
   const { base, root, seasons } = ctx.paths("today.html");
   const isToday = d.gameDate !== null && d.gameDate === d.builtOn;
+  // ⚠**끝난 시즌에 「発表待ち」라고 쓰지 않는다.** 기다리는 것이 아니라 끝난 것이다
+  const past = pastSeasonOf(seasons);
   const played = d.games.filter((g) => g.status === "played").length;
   const off = d.games.length - played;
 
@@ -325,13 +327,21 @@ export function renderTodayPage(d: TodayPageData, ctx: RenderContext): string {
 
 ${dayBar(base, { prev: d.prev, next: null, latestDate: d.gameDate, dayCount: d.dayCount })}
 
-${d.probables.length === 0
-    ? raw("")
-    : html`<section class="block" id="b-probable">
+<!-- ⚠**구획을 통째로 지우지 않는다**(M12). 예전에는 예고가 없으면 이 구획이 사라져서,
+     읽는 사람이 「아직 발표 전」인지 「화면이 고장났는지」를 구별할 수 없었다.
+     ⚠그리고 이 구획이 사라지면 **予告先発 화면으로 가는 유일한 길이 함께 사라진다** —
+     내비에 항목이 없어서, 예고가 없는 날에는 그 화면에 닿을 방법이 아예 없었다. -->
+<section class="block" id="b-probable">
   <h2>次の予告先発<span class="qt">${d.probableDate === null ? "" : fullDate(d.probableDate)}</span></h2>
-  <div class="pbcards">${d.probables.map((p) => probableCard(p, base))}</div>
-  <p class="note"><a href="${base}starters.html">対戦する打者の成績まで見る</a></p>
-</section>`}
+  ${d.probables.length === 0
+    ? html`<p class="empty">${past
+      ? "このシーズンの予告先発は記録していません。予告先発の保存を始めたのが今シーズンからです。"
+      : "予告先発はまだ発表されていません。発表は前日〜当日です。"}</p>`
+    : html`<div class="pbcards">${d.probables.map((p) => probableCard(p, base))}</div>`}
+  <p class="note"><a href="${base}starters.html">${d.probables.length === 0
+    ? "予告先発のページを見る"
+    : "対戦する打者の成績まで見る"}</a></p>
+</section>
 
 <section class="block" id="b-results">
   <h2>${d.gameDate === null ? "試合結果" : `${fullDate(d.gameDate)}の結果`}</h2>
