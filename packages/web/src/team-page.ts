@@ -99,6 +99,13 @@ export interface TeamPageData {
    * **240개가 통째로 404가 된다**(2026-08-16 실측). 깊이를 아는 것은 렌더러다.
    */
   recent: { date: string; opponent: string; home: boolean; result: string }[];
+  /**
+   * 상대 구단별 전적. **자기 자신은 들어 있지 않다.**
+   *
+   * ⚠**정규시즌만이다**(§2-1). 포스트시즌을 섞으면 어느 규칙에도 속하지 않는 수가 된다.
+   * ⚠**무승부는 승률의 분모에서 빠진다**(NPB 규정) — 그래서 경기 수를 따로 들고 다닌다(M2).
+   */
+  vs: { code: string; shortName: string; color: TeamColor; w: number; l: number; t: number }[];
   /** 최신 경기일. `dayHref`가 그 날만 `today.html`로 보낸다 */
   latestDate: string | null;
   /** 이 시즌에 ポストシーズン 기록이 있는가 */
@@ -226,6 +233,28 @@ ${d.months.length === 0
     : html`<section class="block" id="b-teammonth">
   <h2>月別<span class="qt">勝-敗-分</span></h2>
   ${monthBars(d.months)}
+</section>`}
+
+${d.vs.length === 0
+    ? raw("")
+    : html`<section class="block" id="b-vs">
+  <h2>対戦成績<span class="qt">レギュラーシーズン</span></h2>
+  <div class="scroller"><table class="vs">
+    <thead><tr><th class="l">相手</th><th>勝</th><th>敗</th><th>分</th><th>試合</th><th class="l">勝敗</th></tr></thead>
+    <tbody>${d.vs.map((v) => {
+      const n = v.w + v.l + v.t;
+      return html`<tr style="--chip:${v.color.base}">
+      <td class="l tm"><i></i><a href="${v.code}.html">${v.shortName}</a></td>
+      <td class="b">${v.w}</td><td>${v.l}</td><td>${v.t}</td>
+      <td>${n}</td>
+      <td class="l"><span class="vsbar" style="--w:${n === 0 ? 0 : Math.round((v.w / n) * 100)}"><i></i></span></td>
+    </tr>`;
+    })}</tbody>
+  </table></div>
+  ${note(
+    "レギュラーシーズンのみです。**引き分けは勝率の分母に入りません**（NPBの規定）。" +
+      "バーは勝った試合の割合で、目盛りはありません — 正確な数は左の勝・敗・分にあります。",
+  )}
 </section>`}
 
 <section class="block" id="b-teambat">

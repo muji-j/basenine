@@ -6,7 +6,8 @@
  * 만든 값을 옮겨 담기만 한다. 여기에 산식이 생기는 순간 값이 두 벌이 된다.
  */
 import type { Db } from "@bb-app/store";
-import { battedBalls } from "@bb-app/aggregate";
+import { battedBalls, headToHead } from "@bb-app/aggregate";
+import type { HeadToHead } from "@bb-app/aggregate";
 import type { BattedBallData } from "./player-page.ts";
 import type { BattingLine, LeagueConstants, PitchingLine, Rate } from "@bb-app/metrics";
 import {
@@ -1639,6 +1640,14 @@ function dayResultsRange(
  * 여기서 다시 세면 「순위표의 팀 타율」과 「팀 페이지의 팀 타율」이 언젠가 갈린다.
  * ⚠**정규시즌만이다**(§2-1). 포스트시즌은 별도 화면이고, 그 사실을 화면이 말한다.
  */
+/**
+ * 팀 대 팀 전적 — **정규시즌만**(§2-1).
+ * ⚠한 경기가 두 줄이 된다(양 팀 관점). 각 줄이 「그 팀에서 본 전적」이다.
+ */
+function h2hOf(db: Db, o: LoadOptions): HeadToHead[] {
+  return headToHead(db, o.season, o.competition ?? "regular", o.through ?? "9999-12-31");
+}
+
 function teamPages(
   db: Db,
   o: LoadOptions,
@@ -1653,6 +1662,7 @@ function teamPages(
 ): TeamPageData[] {
   const competition = o.competition ?? "regular";
   const through = o.through ?? "9999-12-31";
+  const h2h = h2hOf(db, o);
 
   /** 월별 승패. ⚠**분모(경기 수)를 함께 낸다** — 「4월 12승」만으로는 몇 경기 중인지 모른다 */
   const monthRows = db.raw
@@ -1812,6 +1822,19 @@ function teamPages(
         batters,
         pitchers,
         recent,
+        /**
+         * 상대 구단별 전적. ⚠**자기 자신은 뺀다** — 「阪神 대 阪神」은 없는 경기다.
+         * ⚠**정규시즌만**이다(§2-1). 순서는 이긴 수가 많은 쪽부터.
+         */
+        vs: h2h
+          .filter((x) => x.teamCode === code && x.opponentCode !== code)
+          .map((x) => ({
+            code: x.opponentCode,
+            shortName: shortNameOf(x.opponentCode),
+            color: colorOf(x.opponentCode),
+            w: x.w, l: x.l, t: x.t,
+          }))
+          .sort((a, b) => b.w - a.w || a.l - b.l || a.code.localeCompare(b.code)),
         latestDate,
         hasPostseason,
       });

@@ -189,7 +189,7 @@ test("만든 화면이 전부 시즌 경로 목록에 있다 — 빠진 만큼�
         pct: 1, gamesBehind: 0, rf: 1, ra: 0,
         avg: { value: null, denominator: 0 }, era: { value: null, denominator: 0 },
         home: { w: 1, l: 0, t: 0 }, away: { w: 0, l: 0, t: 0 }, last10: { w: 1, l: 0, t: 0 },
-        months: [], batters: [], pitchers: [], recent: [], latestDate: "2026-08-14",
+        months: [], batters: [], pitchers: [], recent: [], vs: [], latestDate: "2026-08-14",
         hasPostseason: false,
       },
     ],

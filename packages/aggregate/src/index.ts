@@ -46,3 +46,5 @@ export { battingStreaks, emptyStreaks } from "./streaks.ts";
 export type { PlayerStreaks, Streak } from "./streaks.ts";
 export { battedBalls } from "./batted-ball.ts";
 export type { BattedBall } from "./batted-ball.ts";
+export { games, headToHead } from "./head-to-head.ts";
+export type { HeadToHead } from "./head-to-head.ts";

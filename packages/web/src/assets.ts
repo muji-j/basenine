@@ -735,6 +735,10 @@ table.stand .dif i.n{right:50%}
 .stand .tm a,.teamgroup h2 a{text-decoration:none}
 .stand .tm a:hover,.teamgroup h2 a:hover{text-decoration:underline}
 
+/* 상대전적 — 이긴 비율의 띠. 눈금은 없고 정확한 수는 옆 칸에 있다 */
+table.vs .vsbar{display:inline-block;width:88px;height:6px;background:var(--hair);vertical-align:middle}
+table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);background:var(--chip,#6b7280)}
+
 /* ── ポストシーズン ────────────────────────────────────────
    ⚠**순위가 아니라 기록이다.** 표본이 13경기·5경기라 순위를 붙이면 거짓말이 된다 */
 .postrow{margin:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}

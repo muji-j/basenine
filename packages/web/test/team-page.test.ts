@@ -68,6 +68,10 @@ function data(over: Partial<TeamPageData> = {}): TeamPageData {
         qualified: true,
       },
     ],
+    vs: [
+    { code: "g", shortName: "巨人", color: colorOf("g"), w: 13, l: 7, t: 0 },
+    { code: "db", shortName: "DeNA", color: colorOf("db"), w: 8, l: 8, t: 1 },
+    ],
     recent: [
       { date: "2026-08-15", opponent: "広島", home: false, result: "●" },
       { date: "2026-08-14", opponent: "広島", home: true, result: "○" },
@@ -170,4 +174,38 @@ test("표가 「현재 로스터」가 아니라 「이 구단에서 낸 기록�
   assert.ok(out.includes("この球団で出場した記録です"), "타자표가 무엇을 센 것인지 말하지 않는다");
   assert.ok(out.includes("この球団で登板した記録です"), "투수표가 무엇을 센 것인지 말하지 않는다");
   assert.equal((out.match(/移籍した/g) ?? []).length, 2, "이적 선수가 포함된다는 말이 빠졌다");
+});
+
+/**
+ * ⚠**「対戦成績表」가 사이트 3,257장 중 0장이었다**(2026-08-16 확인).
+ * NPB 순위표를 보는 사람이 두 번째로 찾는 표인데 없었고, 재료는 계속 있었다.
+ */
+test("구단 페이지에 상대 구단별 전적이 실린다", () => {
+  const out = renderTeamPage(data(), context());
+  assert.ok(out.includes("対戦成績"), "상대전적 표가 없다");
+  assert.ok(out.includes("巨人"), "상대 구단이 안 보인다");
+  // ⚠**상대 구단 페이지로 갈 수 있어야 한다** — 막다른 표를 만들지 않는다
+  assert.match(out, /href="g\.html"/, "상대 구단으로 가는 길이 없다");
+});
+
+/**
+ * ⚠**무승부는 승률의 분모에서 빠진다**(NPB 규정). 그래서 경기 수를 따로 낸다 —
+ * 「13勝7敗」만 보면 몇 경기 중인지 알 수 없다(M2).
+ */
+test("승·패·분과 경기 수를 함께 낸다 — 무승부가 승률 분모에서 빠지기 때문이다", () => {
+  const out = renderTeamPage(data(), context());
+  assert.ok(out.includes("引き分けは勝率の分母に入りません"), "무승부 규칙을 말하지 않는다");
+  // 8-8-1 은 17경기다. 분모가 화면에 있어야 한다
+  assert.match(out, /<td>17<\/td>/, "경기 수가 없다");
+});
+
+/** ⚠**정규시즌만이다**(§2-1). 포스트시즌을 섞으면 어느 규칙에도 속하지 않는 수가 된다 */
+test("정규시즌만이라고 화면이 말한다(§2-1)", () => {
+  const out = renderTeamPage(data(), context());
+  assert.ok(out.includes("レギュラーシーズンのみです"), "무엇을 센 것인지 말하지 않는다");
+});
+
+test("상대가 없으면 표를 만들지 않는다 — 빈 표는 고장으로 보인다(M12)", () => {
+  const out = renderTeamPage(data({ vs: [] }), context());
+  assert.ok(!out.includes(`id="b-vs"`), "상대가 없는데 빈 표를 냈다");
 });
