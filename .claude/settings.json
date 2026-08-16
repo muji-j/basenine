@@ -30,5 +30,19 @@
         "repo": "anthropics/claude-plugins-official"
       }
     }
+  },
+  "permissions": {
+    "allow": [
+      "Bash(npm run typecheck)",
+      "Bash(npm run typecheck *)",
+      "Bash(npm test)",
+      "Bash(npm test *)",
+      "Bash(npm run build:web)",
+      "Bash(npm run build:web *)",
+      "Bash(npm run freshness)",
+      "Bash(npm run freshness *)",
+      "Bash(git fetch)",
+      "Bash(git fetch *)"
+    ]
   }
 }

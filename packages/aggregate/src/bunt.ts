@@ -8,7 +8,7 @@
  * ⚠**득점기대값은 승리기대값이 아니다.** 동점 9회말에 1점만 필요하면 RE 손해여도 옳을 수 있다.
  *   우리는 승리기대값을 신뢰도 있게 만들 수 없으므로(상태당 중앙값 6타석) 거기까지만 말한다.
  */
-import { paValue, stateKey } from "./run-expectancy.ts";
+import { paValue, stateKey, withLeagueTeams } from "./run-expectancy.ts";
 import type { RunExpectancy } from "./run-expectancy.ts";
 import type { Db } from "@bb-app/store";
 
@@ -46,6 +46,9 @@ FROM pa_event e
 JOIN game g ON g.game_id = e.game_id
 WHERE g.season = ? AND g.status = 'played' AND g.competition = ? AND g.game_date <= ?
   AND e.status = 'final'
+  -- ⚠**공격 팀으로 거른다.** 안 거르면 리그마다 부르는 호출이 전 시즌 번트를 매번 다 세어
+  -- **표본이 정확히 2배로 부풀고**, 파 리그의 번트가 센트럴 RE로 평가된다(2026-08-17 이중 검토 P0)
+  AND (CASE e.half WHEN 'top' THEN g.away_code ELSE g.home_code END) IN (SELECT code FROM league_team)
 ORDER BY e.game_id, e.inning, e.half, e.seq
 `;
 
@@ -61,8 +64,15 @@ export function buntValues(
   competition: string,
   through: string,
   re: RunExpectancy,
+  /**
+   * 이 리그의 구단 코드. ⚠**빠뜨리면 두 리그의 번트가 섞인다** —
+   * 호출부가 리그마다 부르므로 필터가 없으면 같은 번트를 두 번 센다.
+   */
+  teamCodes: readonly string[],
 ): BuntSituation[] {
-  const rows = db.raw.prepare(BUNT_SQL).all(season, competition, through) as unknown as {
+  const rows = withLeagueTeams(db, teamCodes, () =>
+    db.raw.prepare(BUNT_SQL).all(season, competition, through),
+  ) as unknown as {
     gameId: string; inning: number; half: string; seq: number;
     bases: string; outs: number; runs: number; outcome: string;
   }[];

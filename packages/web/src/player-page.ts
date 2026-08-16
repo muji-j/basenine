@@ -563,7 +563,10 @@ ${gradeLegend(
 
 function editor(): RawHtml {
   return html`<section class="editor" id="editor" hidden aria-label="ブロックの組み替え">
-  <h3>ブロックの組み替え</h3>
+  <!-- ⚠**h2 다. h3 로 두면 헤딩이 h1 → h3 → h2 로 흐른다** — 이 편집 패널이 첫 콘텐츠 블록보다
+       앞에 있기 때문이다. 레벨을 건너뛰면 스크린리더의 목록에서 이 패널이 페이지 제목의
+       바로 아래 자식처럼 보인다(2026-08-17 이중 검토 지적) -->
+  <h2>ブロックの組み替え</h2>
   <p>表示するブロックと並び順を決めます。設定はこの端末に保存されます。</p>
   <div class="blocks" id="blockList"></div>
   <div class="fixed-note">

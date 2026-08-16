@@ -53,8 +53,13 @@ const SQL_PITCHER = SQL
     "CASE e.half WHEN 'top' THEN g.home_code ELSE g.away_code END")
   + " AND e.pitcher_id IS NOT NULL";
 
-/** 안타인 결과. ⚠홈런은 내야안타가 될 수 없다 */
-const HIT = new Set(["single", "double", "triple", "homeRun"]);
+/**
+ * 안타인 결과. ⚠홈런은 내야안타가 될 수 없다.
+ * ⚠**어휘를 추측하지 않는다.** `homerun` 은 소문자 r 이다(실측) —
+ * `homeRun` 으로 쓰면 그 분기가 죽은 코드가 되고, 나중에 재사용할 때 조용히 틀린다.
+ * 같은 실수를 `bunt.ts` 가 먼저 겪었다(피타율 .216 대 .237).
+ */
+const HIT = new Set(["single", "double", "triple", "homerun"]);
 
 /**
  * 한 시즌의 타구 성향을 센다.
@@ -112,7 +117,7 @@ export function battedBalls(
     // ⚠내야안타의 분모는 **내야 타구**다. 「타수」로 하면 외야로 친 타구까지 분모에 들어간다
     if (isInfield(f.field)) {
       e.infield += 1;
-      if (isHit && r.outcome !== "homeRun") e.infieldHits += 1;
+      if (isHit && r.outcome !== "homerun") e.infieldHits += 1;
     }
   }
   return [...out.values()];

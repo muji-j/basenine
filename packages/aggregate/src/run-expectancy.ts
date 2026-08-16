@@ -53,7 +53,7 @@ ORDER BY e.game_id, e.inning, e.half, e.seq
  * 리그 소속 판정을 SQL에 넣기 위한 임시 표. 구단 마스터는 코드에 있고 DB에는 없으므로
  * 조회할 때마다 만들어 붙인다 — **구단 목록이 두 곳에 생기지 않게 하려는 것**이다.
  */
-function withLeagueTeams<T>(db: Db, codes: readonly string[], fn: () => T): T {
+export function withLeagueTeams<T>(db: Db, codes: readonly string[], fn: () => T): T {
   db.raw.exec("CREATE TEMP TABLE IF NOT EXISTS league_team (code TEXT PRIMARY KEY)");
   db.raw.exec("DELETE FROM league_team");
   const stmt = db.raw.prepare("INSERT INTO league_team (code) VALUES (?)");

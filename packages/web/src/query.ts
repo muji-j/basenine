@@ -2230,7 +2230,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     reByLeague.set(bundle.league, re.matrix);
     reFull.set(bundle.league, re);
     // ⚠**리그별로 낸다.** 득점환경이 다르므로 두 리그를 섞은 하나의 번트 가치는 뜻이 흐려진다
-    buntByLeague.set(bundle.league, buntValues(db, o.season, competition, through, re));
+    buntByLeague.set(bundle.league, buntValues(db, o.season, competition, through, re, codes));
 
     // ⚠**더하고 덮어쓰지 않는다.** SRC는 그 리그의 득점기대 행렬로 잰 **런 수**라 리그를 넘어도
     // 더하는 것이 맞다. 덮어쓰면 리그를 넘은 선수의 절반이 사라진다(2026-08-16 이중 검토 P0)
