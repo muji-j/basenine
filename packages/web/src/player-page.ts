@@ -1096,9 +1096,21 @@ const MIN_TTO_PA = 300;
 
 function timesThroughBlock(rows: readonly TimesThroughRow[]): RawHtml {
   const shown = rows.filter((r) => r.pa >= MIN_TTO_PA);
-  if (shown.length < 2) return raw("");
-  return html`<h3>打順一巡ごと</h3>
-  ${scroller(html`<table>
+  /**
+   * ⚠**줄이 하나뿐이면 블록을 내지 않는다.** 순회 사이의 차이를 보는 값이라
+   * 한 줄만 있으면 비교할 것이 없다 — 있는 척하는 빈 화면보다 없는 것이 정직하다.
+   */
+  if (shown.length < 2) {
+    return block({
+      id: "timesthrough",
+      title: "打順一巡",
+      body: html`<p class="empty">巡目別に出せるだけの打席がまだありません。</p>`,
+    });
+  }
+  return block({
+    id: "timesthrough",
+    title: "打順一巡",
+    body: html`${scroller(html`<table>
     <thead><tr>
       <th class="l">巡</th><th>打席</th><th>${term("打率")}</th><th>本塁打</th><th>四球</th><th>三振</th>
     </tr></thead>
@@ -1119,15 +1131,14 @@ function timesThroughBlock(rows: readonly TimesThroughRow[]): RawHtml {
       "⚠**「3巡目は打たれる」と読まないでください。** 3巡目まで投げる投手はその日good投球をしている" +
       "投手なので、**実際の不利より成績が良く出ます**（生存者バイアス）。" +
       `⚠個人の順位はつけません — 個人の3巡目は標本が薄すぎます。${MIN_TTO_PA}打席未満の巡は出していません。`,
-  )}`;
+  )}`,
+  });
 }
 
 function situationBlock(
   cells: readonly SituationCell[],
   leagueName: string,
   bunts: readonly BuntCell[],
-  timesThrough: readonly TimesThroughRow[],
-  role: "batter" | "pitcher",
 ): RawHtml {
   if (cells.length === 0) {
     return block({
@@ -1159,7 +1170,7 @@ function situationBlock(
       `大きい数字は${leagueName}の得点期待値（その状況からイニング終了までに入る平均得点）で、リーグ全体の値です。` +
         `小さい数字はこの選手がその状況で立った打席数。${THIN_SITUATION_PA}打席未満は薄くしています。`,
     )}
-    ${role === "pitcher" ? timesThroughBlock(timesThrough) : buntBlock(bunts, leagueName)}`,
+    ${buntBlock(bunts, leagueName)}`,
   });
 }
 
@@ -1323,7 +1334,9 @@ function renderBlock(id: BlockId, d: PlayerPageData, base: string): RawHtml {
     case "scorebook":
       return scorebookBlock(d.scorebook, d.scorebookTotal);
     case "situation":
-      return situationBlock(d.situation, d.leagueName, d.bunts, d.timesThrough, d.role);
+      return situationBlock(d.situation, d.leagueName, d.bunts);
+    case "timesthrough":
+      return timesThroughBlock(d.timesThrough);
     case "matchup":
       return matchupBlock(d.matchups, d.matchupTotal, d.role === "pitcher" ? "打者" : "投手");
     case "ranking":
