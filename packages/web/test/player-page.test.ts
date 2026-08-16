@@ -659,3 +659,66 @@ test("번트가 적은 상황은 표에 넣지 않는다", () => {
   );
   assert.ok(!out.includes("0.208"), "6건짜리 상황을 값으로 냈다");
 });
+
+/**
+ * ⚠**좌타자는 당겨치면 오른쪽이다.**
+ * 무조건 「왼쪽 = 당겨치기」로 적으면 **좌타자 페이지의 두 라벨이 정반대**가 되어
+ * 당겨치는 타자를 밀어치는 타자로 읽게 만든다.
+ * 실측(2026): 우타는 좌 46.3%/우 31.2%, 좌타는 좌 34.4%/우 43.3% —
+ * 이 줄이 그려지는 163장 중 **83장(50.9%)이 좌타자**였다.
+ */
+test("⚠좌타자의 당겨치기는 오른쪽이다 — 라벨이 뒤집힌다", () => {
+  const dir = (bats: string | null): string =>
+    renderPlayerPage(playerPage({ bats }), context());
+
+  const r = dir("right");
+  const l = dir("left");
+  // 우타: 왼쪽이 당겨치기
+  const rl = /引っ張り側<\/[^>]*><dd[^>]*>\.?(\d+)/.exec(r.replace(/<span class="dt-[^"]*">/g, ""));
+  assert.ok(r.includes("引っ張り側"), "우타에 당겨치기 라벨이 없다");
+  assert.ok(l.includes("引っ張り側"), "좌타에 당겨치기 라벨이 없다");
+  // ⚠**같은 값에 붙는 라벨이 좌우로 갈려야 한다.** 두 화면이 같으면 뒤집지 않은 것이다
+  const pos = (html: string, label: string): number => html.indexOf(label);
+  assert.ok(
+    pos(r, "引っ張り側") < pos(r, "逆方向側"),
+    "우타는 당겨치기(왼쪽)가 먼저 나와야 한다",
+  );
+  assert.ok(
+    pos(l, "引っ張り側") > pos(l, "逆方向側"),
+    "좌타인데 당겨치기가 왼쪽 자리에 있다 — 라벨이 뒤집히지 않았다",
+  );
+  void rl;
+});
+
+/**
+ * ⚠**양타·미상은 방향으로만 말한다.** 그 타석에 어느 쪽에 섰는지 우리는 모른다 —
+ * 추정해서 「당겨치기」라고 쓰면 사실이 아니라 우리 짐작이다.
+ */
+test("타석의 좌우를 모르면 당겨치기라고 말하지 않는다", () => {
+  for (const bats of ["both", null]) {
+    const out = renderPlayerPage(playerPage({ bats }), context());
+    assert.ok(!out.includes("引っ張り側"), `${bats}: 모르는데 당겨치기라고 했다`);
+    assert.ok(out.includes("左方向"), `${bats}: 방향 라벨이 없다`);
+    assert.ok(out.includes("打席の左右がわからない"), `${bats}: 왜 그렇게 쓰는지 말하지 않는다`);
+  }
+});
+
+/**
+ * ⚠**내야타구만 충분한 선수가 통째로 빠졌다** — 실측 1,664 선수-시즌 중 55건(3.3%).
+ * 표시 가드에서 그 축만 빠져 있었다.
+ */
+test("내야타구만 충분해도 그 줄은 그린다", () => {
+  const out = renderPlayerPage(
+    playerPage({
+      batting: {
+        ...playerPage().batting!,
+        batted: {
+          groundOuts: 10, airOuts: 10, left: 20, center: 20, right: 20,
+          infield: 80, infieldHits: 8, swinging: 10, looking: 5,
+        },
+      },
+    }),
+    context(),
+  );
+  assert.ok(out.includes("内野安打率"), "내야타구가 충분한데 줄이 사라졌다");
+});

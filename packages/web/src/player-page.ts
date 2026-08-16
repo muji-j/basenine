@@ -677,7 +677,7 @@ function standardPitching(p: PitchingBlockData): RawHtml {
     ${p.quality.starts === 0
       ? raw("")
       : html`${columns(
-        html`${statRate("QS率", { value: p.quality.qs / p.quality.starts, denominator: p.quality.starts }, "先発", 3, rk(p.ranks, "qsRate"), "starter")}
+        html`${statRate("QS率", { value: p.quality.qs / p.quality.starts, denominator: p.quality.starts }, "先発", 3, null /* ⚠QS率의 순위는 만들지 않는다 — 없는 키를 넘기면 배지가 영원히 안 붙는다 */, "starter")}
           ${statCount("QS", p.quality.qs, rk(p.ranks, "qs"))}`,
         html`${statCount("HQS", p.quality.hqs)}
           ${statCount("完投", p.quality.cg)}
@@ -747,20 +747,39 @@ const GROUND_LABEL = "ゴロアウト率";
  *
  * ⚠**표본이 얇으면 그리지 않는다**(M2·M11). 20타구짜리 「좌측 70%」는 값이 아니라 소음이다.
  */
-function battedBallRow(d: BattedBallData): RawHtml {
+/**
+ * 좌·우 라벨.
+ *
+ * ⚠**좌타자는 당겨치면 오른쪽이다.** 무조건 「왼쪽 = 당겨치기」로 적으면
+ * **좌타자 페이지의 두 라벨이 정반대**가 된다 — 실측(2026): 우타는 좌 46.3%/우 31.2%,
+ * 좌타는 좌 34.4%/우 43.3%. 당겨치는 타자를 밀어치는 타자로 읽게 만든다.
+ * 이 줄이 그려지는 163장 중 **83장(50.9%)이 좌타자**였다.
+ * ⚠**양타·미상은 방향으로만 말한다.** 그 타석에 어느 쪽에 섰는지 우리는 모른다 —
+ * 추정해서 「당겨치기」라고 쓰면 그건 사실이 아니라 우리 짐작이다.
+ */
+function sideLabels(bats: string | null): { left: string; right: string } {
+  if (bats === "right") return { left: "引っ張り側", right: "逆方向側" };
+  if (bats === "left") return { left: "逆方向側", right: "引っ張り側" };
+  return { left: "左方向", right: "右方向" };
+}
+
+function battedBallRow(d: BattedBallData, bats: string | null): RawHtml {
   const outs = d.groundOuts + d.airOuts;
   const dir = d.left + d.center + d.right;
   const so = d.swinging + d.looking;
-  if (outs < MIN_BATTED && dir < MIN_DIRECTION && so < MIN_STRIKEOUT) return raw("");
+  // ⚠**내야타구가 빠져 있었다** — 그 축만 충분한 선수 55명(1,664 중 3.3%)의 줄이 통째로 사라졌다
+  if (outs < MIN_BATTED && dir < MIN_DIRECTION && so < MIN_STRIKEOUT && d.infield < MIN_INFIELD) {
+    return raw("");
+  }
   return html`${columns(
     outs < MIN_BATTED
       ? raw("")
       : html`${statRate(GROUND_LABEL, { value: d.groundOuts / outs, denominator: outs }, "アウト", 3)}`,
     dir < MIN_DIRECTION
       ? raw("")
-      : html`${statRate("引っ張り側", { value: d.left / dir, denominator: dir }, "打球", 3)}
+      : html`${statRate(sideLabels(bats).left, { value: d.left / dir, denominator: dir }, "打球", 3)}
           ${statRate("センター", { value: d.center / dir, denominator: dir }, "打球", 3)}
-          ${statRate("逆方向側", { value: d.right / dir, denominator: dir }, "打球", 3)}`,
+          ${statRate(sideLabels(bats).right, { value: d.right / dir, denominator: dir }, "打球", 3)}`,
     d.infield < MIN_INFIELD
       ? raw("")
       : html`${statRate("内野安打率", { value: d.infieldHits / d.infield, denominator: d.infield }, "内野打球", 3)}`,
@@ -771,12 +790,16 @@ function battedBallRow(d: BattedBallData): RawHtml {
   ${note(
     "打球の方向は**打球が落ちた地点ではなく、処理した野手の位置**です — シフトや好守が混ざります。" +
       "左右は守備位置で分けており、**二塁手は右側**に入れています（当サイトの定義）。" +
+      "**犠打は方向に数えていません** — 作戦であって打撃の傾向ではないためです。" +
+      (bats === "right" || bats === "left"
+        ? ""
+        : "**打席の左右がわからないため、引っ張り・逆方向ではなく方向そのもので示しています。**") +
       "**ゴロアウト率の分母はアウトだけ**です — 本塁打以外の安打には打球の種類が公表されないため、" +
       "一般的なGB%とは分母が違います。**空振り三振の割合は三振の内訳**であって、空振り率ではありません。",
   )}`;
 }
 
-function advancedBatting(b: BattingBlockData): RawHtml {
+function advancedBatting(b: BattingBlockData, bats: string | null): RawHtml {
   const src = b.src;
   return block({
     id: "advanced",
@@ -794,7 +817,7 @@ function advancedBatting(b: BattingBlockData): RawHtml {
         : html`${statSigned("SRC", src.src, src.pa, "打席", rk(b.ranks, "src"))}
             ${statSigned("SRC/600", src.srcPer600, src.pa, "打席")}`,
     )}
-    ${battedBallRow(b.batted)}
+    ${battedBallRow(b.batted, bats)}
     ${note(
       "SRC（状況得点貢献）は、打席ごとに得点期待値をどれだけ動かしたかを合計した自前の指標です。" +
         "打撃だけを測り、守備・走塁・ポジション補正は含みません。WARではなく、WARと比較できません。" +
@@ -819,7 +842,7 @@ function advancedPitching(p: PitchingBlockData): RawHtml {
         : html`${statSigned("SRP", srp.srp, srp.bf, "対戦打者", rk(p.ranks, "srp"))}
             ${statSigned("SRP/9", srp.srpPer9, srp.bf, "対戦打者")}`,
     )}
-    ${battedBallRow(p.batted)}
+    ${battedBallRow(p.batted, null)}
     ${note(
       "FIPは本塁打・四死球・奪三振だけから防御率の目盛りに換算した値です。守備の影響を切り離す代わりに、打球の質は測っていません。",
     )}
@@ -1200,7 +1223,7 @@ function renderBlock(id: BlockId, d: PlayerPageData, base: string): RawHtml {
       return block({ id: "standard", title: "基本成績", body: html`<p class="empty">成績がありません。</p>` });
     case "advanced":
       if (d.role === "pitcher" && d.pitching !== null) return advancedPitching(d.pitching);
-      if (d.batting !== null) return advancedBatting(d.batting);
+      if (d.batting !== null) return advancedBatting(d.batting, d.bats);
       return block({ id: "advanced", title: "セイバーメトリクス", body: html`<p class="empty">成績がありません。</p>` });
     case "rolesplit":
       if (d.pitching !== null) return roleSplitBlock(d.pitching);

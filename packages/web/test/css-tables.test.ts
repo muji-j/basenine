@@ -297,11 +297,21 @@ function contrast(a: string, b: string): number {
   return (x! + 0.05) / (y! + 0.05);
 }
 
-/** 토큰 값을 CSS에서 꺼낸다 — 코드가 실제로 쓰는 값을 재야 의미가 있다 */
+/**
+ * 토큰 값을 CSS에서 꺼낸다 — 코드가 실제로 쓰는 값을 재야 의미가 있다.
+ *
+ * ⚠**다크 값은 두 곳에 있다.** `:root[data-theme="dark"]`(토글)와
+ * `@media (prefers-color-scheme: dark)`(OS 설정)에 **같은 값이 중복**으로 적혀 있다.
+ * 한쪽만 보면 다른 쪽이 옛 색으로 남아도 시험이 통과한다 — **둘 다 꺼내 비교한다.**
+ */
+function darkBlocks(): string[] {
+  const a = /:root\[data-theme="dark"\]\s*\{([\s\S]*?)\}/.exec(CSS)?.[1] ?? "";
+  const b = /:root:not\(\[data-theme="light"\]\)\s*\{([\s\S]*?)\}/.exec(CSS)?.[1] ?? "";
+  return [a, b];
+}
+
 function token(name: string, dark = false): string {
-  const block = dark
-    ? /:root\[data-theme="dark"\]\s*\{([\s\S]*?)\}/.exec(CSS)?.[1] ?? ""
-    : /:root \{([\s\S]*?)\}/.exec(CSS)?.[1] ?? "";
+  const block = dark ? darkBlocks()[0] ?? "" : /:root \{([\s\S]*?)\}/.exec(CSS)?.[1] ?? "";
   return new RegExp(`${name}:(#[0-9a-fA-F]{6})`).exec(block)?.[1] ?? "";
 }
 
@@ -339,4 +349,49 @@ test("규정 미달 행을 색만으로 구별하지 않는다", () => {
     thin.some((r) => /box-shadow|border|outline|font-style/.test(r.body)),
     "색 말고 다른 채널로 얇음을 말하지 않는다",
   );
+});
+
+/**
+ * ⚠**다크 값이 두 곳에 중복으로 적혀 있다.** 토글용(`[data-theme="dark"]`)과
+ * OS 설정용(`prefers-color-scheme`)이다. 한쪽만 고치면 **OS 다크 사용자는 옛 색을 계속 본다** —
+ * 그리고 위의 대비 시험은 그걸 못 잡는다(한 블록만 읽으므로).
+ */
+test("⚠다크 토큰이 두 곳에서 같은 값이다 — 한쪽만 고치면 절반이 옛 색을 본다", () => {
+  const [toggle, media] = darkBlocks();
+  assert.ok((toggle ?? "") !== "" && (media ?? "") !== "", "다크 블록을 못 찾았다 — 이 시험이 공회전한다");
+  const pick = (b: string, n: string): string => new RegExp(`${n}:(#[0-9a-fA-F]{6})`).exec(b)?.[1] ?? "";
+  for (const n of ["--page", "--tx", "--tx-2", "--tx-3", "--panel", "--panel-2", "--hair", "--hair-2"]) {
+    assert.equal(pick(toggle ?? "", n), pick(media ?? "", n), `${n} 가 두 다크 블록에서 다르다`);
+  }
+});
+
+/**
+ * ⚠**태그를 바꿨으면 선택자도 따라가야 한다.**
+ * 헤딩 순서를 고치며 `h3`→`h2`, `h5`→`h3` 로 올렸는데 CSS가 옛 태그를 가리키면
+ * 그 제목만 **브라우저 기본 크기**로 튄다 — 값이 아니라 형태가 조용히 무너진다.
+ * ⚠**크기를 태그 기본값에 맡기지 않는다.** `.subhead` 는 font-size 가 없어
+ * h5(0.83em) → h3(1.17em) 로 **41% 커졌다.**
+ */
+test("⚠태그를 올린 곳의 CSS가 따라왔다 — 기본 크기로 튀지 않는다", () => {
+  const sel = (x: string): { sel: string; body: string } | undefined =>
+    rules(CSS).find((r) => r.sel.split(",").some((one) => one.trim() === x));
+
+  assert.notEqual(sel(".editor h2"), undefined, "편집 패널 제목이 h2 인데 규칙은 h3 를 가리킨다");
+  assert.equal(sel(".editor h3"), undefined, "쓰이지 않는 h3 규칙이 남아 있다");
+
+  const sub = sel(".rolecol .subhead");
+  assert.notEqual(sub, undefined, ".subhead 규칙을 못 찾았다");
+  assert.match(sub!.body, /font-size:\s*\d/, "크기를 태그 기본값에 맡기고 있다");
+});
+
+/**
+ * ⚠**새로 낸 요소에 규칙이 없으면 body 기본값으로 그려진다.**
+ * 명부의 성적 줄(실측 1,397칸)이 규칙 없이 나가 **선수 이름보다 크고 진해졌다.**
+ * 검색 드롭다운의 `.qhits .hs` 는 그쪽 전용이라 여기 안 걸린다.
+ */
+test("⚠명부의 성적 줄에 규칙이 있다 — 없으면 이름보다 커진다", () => {
+  const r = rules(CSS).filter((x) => x.sel.split(",").some((one) => /\.roster\s+\.hs$/.test(one.trim())));
+  assert.ok(r.length > 0, "명부 성적 줄의 규칙이 없다 — body 기본 16px 로 그려진다");
+  assert.match(r[0]!.body, /font-size:\s*\d/, "크기가 없다");
+  assert.match(r[0]!.body, /color:\s*var\(--tx/, "색이 없다");
 });

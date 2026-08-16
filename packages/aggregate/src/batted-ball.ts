@@ -103,12 +103,32 @@ export function battedBalls(
     if (f.strikeout === "looking") e.looking += 1;
     if (f.field === null) continue;
 
-    const side = sideOf(f.field);
-    if (side === "left") e.left += 1;
-    else if (side === "center") e.center += 1;
-    else e.right += 1;
+    /**
+     * ⚠**번트는 방향 통계에서 뺀다.** 「어디로 치는가」를 말하는 값인데,
+     * 희생번트는 작전이지 타격 성향이 아니다. 실측 1,672건 중 919건이 투수 앞이라
+     * 번트를 많이 대는 타자의 「중앙」이 통째로 부풀어 오른다.
+     */
+    if (f.trajectory !== "bunt") {
+      const side = sideOf(f.field);
+      if (side === "left") e.left += 1;
+      else if (side === "center") e.center += 1;
+      else e.right += 1;
+    }
 
     const isHit = HIT.has(r.outcome);
+    /**
+     * ⚠**「방향 토큰으로 시작한다」만으로는 M7이 안 지켜진다.**
+     * `unknownTokens` 는 접두어만 보므로 `センター大飛球` 처럼 **종류 어휘만 바뀌면 통과**한다.
+     * 그러면 실측 22,901건의 공중 아웃이 조용히 0이 되고 땅볼 비율이 1.000으로 튄다.
+     *
+     * 실측 불변식이 그 자리를 막는다: **종류를 모르는 인플레이 타구는 22,271/22,271이 전부 안타**다
+     * (비홈런 안타에는 표기가 없다). 안타가 아닌데 종류를 모르면 어휘가 바뀐 것이다.
+     */
+    if (f.trajectory === "unknown" && !isHit) {
+      throw new RangeError(
+        `타구 종류를 못 읽었는데 안타도 아니다 — 소스 표기가 바뀌었다: ${r.raw}（${r.outcome}）`,
+      );
+    }
     // ⚠**아웃만 센다.** 안타는 타구 종류를 모르므로 분모에 넣으면 분자만 빠진 비율이 된다
     if (!isHit) {
       if (f.trajectory === "ground") e.groundOuts += 1;

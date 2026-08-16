@@ -237,7 +237,9 @@ a{color:inherit}
 /* ── 조립 UI ─────────────────────────────────────────────── */
 .editor{padding:14px var(--pad) 16px;border-bottom:1px solid var(--hair);background:var(--panel)}
 .editor[hidden]{display:none}
-.editor h3{margin:0 0 3px;font-size:12px;letter-spacing:.14em;color:var(--tx-2);font-weight:600}
+/* ⚠**태그를 h2 로 올렸으면 선택자도 따라가야 한다.** 안 그러면 이 제목만
+   브라우저 기본 h2(24px + 큰 여백)로 그려진다 — 헤딩 순서를 고치다 만든 결함이다 */
+.editor h2{margin:0 0 3px;font-size:12px;letter-spacing:.14em;color:var(--tx-2);font-weight:600}
 .editor p{margin:0 0 12px;font-size:11.5px;color:var(--tx-3)}
 .blocks{display:flex;flex-direction:column;gap:4px;max-width:520px}
 .brow{display:grid;grid-template-columns:auto 1fr auto auto;gap:10px;align-items:center;padding:6px 8px;
@@ -363,7 +365,9 @@ dd.g-veryBad{box-shadow:inset 0 -3px 0 var(--g-vbad);background:var(--g-vbad-bg)
 /* 격리 원문 — 코드가 아니라 **원본 그대로의 글자**임을 보이게 한다 */
 .qs{font-family:var(--f-num);font-size:11px;background:var(--panel-2);padding:1px 5px;white-space:nowrap}
 .qd{font-size:10.5px;color:var(--tx-3)}
-.rolecol .subhead{margin:0 0 4px}
+/* ⚠**크기를 명시한다.** 원래 h5 의 기본값(0.83em)에 기대고 있었는데 h3 로 올리면서
+   1.17em 이 되어 41% 커졌다 — 블록 제목(10.5px)보다 커진다. 태그에 기대지 않는다 */
+.rolecol .subhead{margin:0 0 4px;font-size:11px;letter-spacing:.1em;color:var(--tx-2);font-weight:600}
 .rolecol dl{margin:0}
 
 /* ⚠좁은 화면에서 표를 옆으로 밀면 **누구의 행인지**가 먼저 사라진다.
@@ -451,7 +455,7 @@ th[aria-sort="descending"] .sortable i::before{content:"↓"}
 .dg .c{border:1px solid var(--hair);padding:5px 3px;text-align:center;font-family:var(--f-num);font-variant-numeric:tabular-nums}
 .dg .c u{display:block;text-decoration:none;font-size:13px}
 .dg .c s{display:block;text-decoration:none;font-size:9px;color:var(--tx-3)}
-.dg .c.thin u{color:var(--tx-3)}
+.dg .c.thin u{color:var(--tx-2)}
 
 .bars{display:flex;flex-direction:column;gap:6px;max-width:480px}
 .bar{display:grid;grid-template-columns:84px 1fr 132px;gap:10px;align-items:center}
@@ -900,6 +904,11 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
 .roster li[hidden]{display:none}
 .roster a{display:flex;gap:8px;align-items:baseline;padding:5px 0;text-decoration:none;border-bottom:1px solid var(--hair);
   transition:padding-left var(--fast) var(--ease)}
+/* ⚠**명부의 성적 줄.** 규칙이 없으면 body 기본 16px·--tx 로 그려져 **선수 이름(13px)보다
+   크고 진해진다** — 실측 1,397칸. 검색 드롭다운의 .qhits .hs 는 그쪽 전용이라 여기 안 걸린다 */
+.roster .hs{flex:0 0 auto;margin-left:8px;font-size:10.5px;color:var(--tx-3);
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+@media (max-width:520px){.roster .hs{display:none}}
 .roster a:hover{padding-left:4px}
 .roster .hn{font-size:13px}
 .roster .hp{margin-left:auto;font-size:10px;color:var(--tx-3)}

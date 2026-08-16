@@ -268,3 +268,48 @@ test("내야안타는 내야 타구를 분모로 하고, 홈런을 세지 않는
     assert.equal(b.infieldHits, 1, "홈런을 내야안타로 셌다");
   });
 });
+
+/**
+ * ⚠**「방향 토큰으로 시작한다」만으로는 M7이 안 지켜진다.**
+ * `unknownTokens` 는 접두어만 보므로 `センター大飛球` 처럼 **종류 어휘만 바뀌면 통과**한다.
+ * 그러면 실측 22,901건의 공중 아웃이 조용히 0이 되고 땅볼 비율이 1.000으로 튄다.
+ *
+ * 실측 불변식이 그 자리를 막는다 — **종류를 모르는 인플레이 타구는 22,271/22,271이 전부 안타**다.
+ */
+test("⚠타구 종류 어휘가 바뀌면 멈춘다 — 접두어만 맞으면 통과시키지 않는다(M7)", async () => {
+  await withDb((db) => {
+    // 방향은 읽히지만 종류를 모르는 **아웃**. 어휘가 바뀐 날의 모습이다
+    game(db, "cl1", CL[1], CL[0], [{ bases: "", outs: 0, outcome: "fieldedOut", raw: "センター大飛球" }]);
+    assert.throws(
+      () => battedBalls(db, 2026, "regular", "9999-12-31"),
+      /타구 종류를 못 읽었는데 안타도 아니다/,
+      "종류 어휘가 바뀌었는데 조용히 흘렸다",
+    );
+  });
+});
+
+test("종류를 모르는 안타는 정상이다 — 비홈런 안타에는 표기가 없다", async () => {
+  await withDb((db) => {
+    game(db, "cl1", CL[1], CL[0], [{ bases: "", outs: 0, outcome: "single", raw: "センター前ヒット" }]);
+    const b = battedBalls(db, 2026, "regular", "9999-12-31")[0]!;
+    assert.equal(b.groundOuts + b.airOuts, 0, "안타를 아웃으로 셌다");
+    assert.equal(b.center, 1, "방향은 읽혀야 한다");
+  });
+});
+
+/**
+ * ⚠**번트는 방향 통계에서 뺀다.** 「어디로 치는가」를 말하는 값인데 희생번트는 작전이다.
+ * 실측 1,672건 중 919건이 투수 앞이라, 번트를 많이 대는 타자의 「중앙」이 통째로 부푼다.
+ */
+test("⚠희생번트를 방향 통계에 넣지 않는다 — 작전이지 타격 성향이 아니다", async () => {
+  await withDb((db) => {
+    game(db, "cl1", CL[1], CL[0], [
+      { bases: "", outs: 0, outcome: "single", raw: "センター前ヒット" },
+      { bases: "1", outs: 0, outcome: "sacBunt", raw: "ピッチャー犠牲バント" },
+      { bases: "2", outs: 1, outcome: "fieldedOut", raw: "レフトフライ" },
+    ]);
+    const b = battedBalls(db, 2026, "regular", "9999-12-31")[0]!;
+    assert.equal(b.center, 1, "번트가 중앙에 섞였다");
+    assert.equal(b.left + b.center + b.right, 2, "번트가 방향 분모에 들어갔다");
+  });
+});
