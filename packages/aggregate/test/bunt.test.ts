@@ -200,6 +200,26 @@ test("타순 순회는 같은 투수 × 같은 타자의 만남 횟수로 센다
   });
 });
 
+/**
+ * ⚠**수비방해 아웃(`捕守妨`)은 「타수 아님」이 아니다.**
+ * 이름이 `interference`(打妨出 · 출루) 와 비슷해서 `NOT_AB` 로 밀어 넣기 쉬운데,
+ * 타자가 아웃된 것이라 **타수에 들어간다**(박스 打数 실측으로 확정).
+ * 아는 어휘 목록에서 빠지면 M7 이 먼저 멈춘다 — 그 자리를 여기서 고정한다.
+ */
+test("⚠수비방해 아웃을 타수로 센다 — 아는 어휘에서 빠지면 멈춘다", async () => {
+  await withDb((db) => {
+    game(db, "cl1", CL[1], CL[0], [
+      { bases: "", outs: 0, outcome: "single", batter: "B1", pitcher: "P1" },
+      { bases: "1", outs: 0, outcome: "interferenceOut", batter: "B2", pitcher: "P1", raw: "キャッチャー守備妨害アウト" },
+    ]);
+    const t = timesThroughOrder(db, 2026, "regular", "9999-12-31");
+    const one = t.find((x) => x.round === 1)!;
+    assert.equal(one.pa, 2);
+    assert.equal(one.ab, 2, "수비방해 아웃이 타수에서 빠졌다");
+    assert.equal(one.h, 1);
+  });
+});
+
 /** ⚠**어휘를 추측하지 않는다.** 모르는 결과가 오면 멈춘다(M7) */
 test("⚠모르는 타석 결과가 오면 멈춘다 — 조용히 타수에서 빼지 않는다(M7)", async () => {
   await withDb((db) => {

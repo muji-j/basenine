@@ -148,6 +148,9 @@ const KNOWN = new Set([
   ...HITS, ...NOT_AB,
   "fieldedOut", "strikeout", "strikeoutReached", "groundedIntoDoublePlay",
   "reachedOnError", "fieldersChoice",
+  // ⚠**수비방해 아웃은 `NOT_AB` 가 아니라 여기다.** 이름이 `interference` 와 비슷하지만
+  // 타자가 아웃된 것이라 **타수에 들어간다**(박스 打数 실측으로 확정)
+  "interferenceOut",
 ]);
 
 /**

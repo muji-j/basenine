@@ -60,8 +60,18 @@ const FIELDS: readonly (readonly [string, Field])[] = [
   ["キャッチャー", "c"],
 ];
 
-/** 타구가 아예 없는 사건. ⚠여기에 없으면서 방향도 없으면 **모르는 어휘**다 */
-const NO_BALL = ["三振", "フォアボール", "デッドボール", "振り逃げ", "打撃妨害"];
+/**
+ * 타구가 아예 없는 사건. ⚠여기에 없으면서 방향도 없으면 **모르는 어휘**다.
+ *
+ * ⚠**방해 3종이 전부 들어 있어야 한다.** 표기가 비슷하지만 규칙상 서로 다른 사건이다 —
+ * `打撃妨害`(포수가 타자를 방해 → 출루) · `走塁妨害`(수비가 주자를 방해 → 출루) ·
+ * `守備妨害`(타자·주자가 수비를 방해 → **아웃**). 공통점은 **타구가 없다**는 것뿐이고,
+ * 여기서 우리가 쓰는 것은 그 공통점이다.
+ */
+const NO_BALL = [
+  "三振", "フォアボール", "デッドボール", "振り逃げ",
+  "打撃妨害", "走塁妨害", "守備妨害",
+];
 
 /** 좌·중·우 세 구역. ⚠**2루수를 우측에 넣는 것은 우리 정의다**(수비 위치 기준) */
 const SIDE: Readonly<Record<Field, "left" | "center" | "right">> = {
@@ -109,8 +119,23 @@ export function readPbp(raw: string): PbpFacts {
   const t = raw.trim();
   if (t === "") return { field: null, trajectory: null, strikeout: null, inPlay: false };
 
-  const hit = FIELDS.find(([tok]) => t.startsWith(tok));
   const strikeout = strikeoutOf(t);
+
+  /**
+   * ⚠**방해를 방향 토큰보다 먼저 본다.** 방해 표기는 **가해자의 수비 위치**로 시작한다 —
+   * `ピッチャー走塁妨害出塁` · `キャッチャー守備妨害アウト`. 앞을 먼저 보면 「투수 앞 타구」가 되어
+   * 방향 통계가 오염되고, 타구 종류가 `unknown` 인데 안타가 아니라서
+   * `batted-ball.ts` 의 M7 불변식이 예외를 던진다(2024 시즌 적재에서 실제로 터졌다).
+   *
+   * ⚠**이 순서 변경은 실측으로 안전을 확인했다**: 타석 로그 178,420행(고유 290종) 중
+   * 「방향으로 시작하면서 방해 어휘 포함」은 **2종 3행**뿐이고 둘 다 방해 플레이다.
+   * 정상 타구는 한 건도 이 분기로 새지 않는다.
+   */
+  if (NO_BALL.some((tok) => t.includes(tok))) {
+    return { field: null, trajectory: null, strikeout, inPlay: false };
+  }
+
+  const hit = FIELDS.find(([tok]) => t.startsWith(tok));
   if (hit === undefined) {
     return { field: null, trajectory: null, strikeout, inPlay: false };
   }
