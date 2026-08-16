@@ -63,7 +63,7 @@ function pa(
   return {
     gameId: G, seq, inning, half, outsBefore: 0, bases: "",
     batterId: "B1", pitcherId: "P1", outcome: "single", rbi: 0,
-    rawBox: "右前安", rawPbp: "ライト前ヒット", status: "final", runsScored: 0,
+    rawBox: "右前安", rawPbp: "ライト前ヒット", ballCount: null, status: "final", runsScored: 0,
     ...over,
   };
 }

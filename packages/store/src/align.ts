@@ -25,6 +25,14 @@ export interface PaEventRow {
   rbi: number;
   rawBox: string;
   rawPbp: string;
+  /**
+   * 타석이 끝난 시점의 볼카운트 원문(`1-2より`). 표기가 없으면 null.
+   *
+   * ⚠**파서는 처음부터 이 값을 뽑고 있었는데 받는 자리가 없어 버려졌다**(2026-08-17).
+   * ⚠**정규화하지 않고 원문 그대로 든다**(M4). 해석은 읽는 쪽에서 한다.
+   * ⚠**없으면 null 이다**(M11) — `0-0` 으로 채우면 「초구에 끝났다」는 거짓이 된다.
+   */
+  ballCount: string | null;
   status: "final" | "live";
   /** 이 타석에서 난 득점. `runs.ts`가 유도하고 라인스코어로 검증한다 */
   runsScored: number;
@@ -130,6 +138,7 @@ export function alignPaEvents(
       rbi: fromBox.rbi,
       rawBox: fromBox.raw,
       rawPbp: e.result,
+      ballCount: e.count === undefined || e.count === "" ? null : e.count,
       // v1은 확정 데이터만 다룬다. 라이브는 v2에서 'live'로 들어온다(M9).
       status: "final",
       runsScored: runsForCompleted[completedIndex] ?? 0,

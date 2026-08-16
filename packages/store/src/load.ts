@@ -245,13 +245,14 @@ export function replacePaEvents(db: Db, gameId: string, rows: readonly PaEventRo
   db.raw.prepare("DELETE FROM pa_event WHERE game_id = ?").run(gameId);
   const stmt = db.raw.prepare(
     `INSERT INTO pa_event (game_id, seq, inning, half, outs_before, bases,
-       batter_id, pitcher_id, outcome, rbi, raw_box, raw_pbp, status, runs_scored)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       batter_id, pitcher_id, outcome, rbi, raw_box, raw_pbp, status, runs_scored, ball_count)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   for (const r of rows) {
     stmt.run(
       r.gameId, r.seq, r.inning, r.half, r.outsBefore, r.bases,
       r.batterId, r.pitcherId, r.outcome, r.rbi, r.rawBox, r.rawPbp, r.status, r.runsScored,
+      r.ballCount,
     );
   }
   return rows.length;

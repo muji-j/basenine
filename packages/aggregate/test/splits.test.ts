@@ -28,7 +28,7 @@ function event(o: Partial<PaEventRow> & { gameId: string; seq: number; batterId:
   return {
     inning: 1, half: "top", outsBefore: 0, bases: "",
     pitcherId: "P1", outcome: "single", rbi: 0, runsScored: 0,
-    rawBox: "中前安", rawPbp: "センター前ヒット", status: "final",
+    rawBox: "中前安", rawPbp: "センター前ヒット", ballCount: null, status: "final",
     ...o,
   };
 }
