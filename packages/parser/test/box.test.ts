@@ -313,3 +313,85 @@ test("⚠읽을 수 없으면 null이다 — 0을 돌려주면 「던지지 않�
   assert.equal(inningsToOuts("5 1/3"), null);
   assert.equal(inningsToOuts("あ"), null);
 });
+
+/**
+ * 구형(2016~2018) 박스스코어.
+ *
+ * ⚠**이 분기가 없으면 그 시즌들이 「타격표가 없다」로 예외를 던진다**(2026-08-17 실측).
+ * 백필에서 예외를 삼키는 코드가 하나라도 있으면 **3시즌이 조용히 0건**으로 들어간다 —
+ * M7이 잡으라고 하는 실패 모드 그 자체다.
+ *
+ * 구형은 표에 `id` 가 없고 `<div class="… table_batter">` 로 감싸 **순서로만** 구별한다.
+ * 열 이름도 다르다 — 신형 `選手` 대 구형 `打者`.
+ */
+const LEGACY_BOX = `
+<div class="wrap"><section><h4>広島東洋カープ</h4>
+<div class="scroll_wrapper table_score table_batter"><table>
+<thead><tr><th>&nbsp;</th><th>守備</th><th>打者</th><th>打数</th><th>得点</th><th>安打</th><th>打点</th><th>盗塁</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>(遊)</td><td><a href="/bis/players/61965139.html">田中</a></td><td>6</td><td>2</td><td>2</td><td>0</td><td>0</td></tr>
+<tr><td>&nbsp;</td><td>計</td><td>&nbsp;</td><td>6</td><td>2</td><td>2</td><td>0</td><td>0</td></tr>
+</tbody></table></div>
+<div class="scroll_wrapper table_score table_pitcher"><table>
+<thead><tr><th>&nbsp;</th><th>投手</th><th>投球数</th><th>打者</th><th>投球回</th><th>安打</th><th>本塁打</th><th>四球</th><th>死球</th><th>三振</th><th>暴投</th><th>ボーク</th><th>失点</th><th>自責点</th></tr></thead>
+<tbody>
+<tr><td>○</td><td><a href="/bis/players/53355130.html">ジョンソン</a></td><td>120</td><td>28</td><td>7</td><td>5</td><td>0</td><td>2</td><td>0</td><td>8</td><td>0</td><td>0</td><td>1</td><td>1</td></tr>
+</tbody></table></div>
+</section></div>
+<div class="wrap"><section><h4>東京ヤクルトスワローズ</h4>
+<div class="scroll_wrapper table_score table_batter"><table>
+<thead><tr><th>&nbsp;</th><th>守備</th><th>打者</th><th>打数</th><th>得点</th><th>安打</th><th>打点</th><th>盗塁</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>(中)</td><td><a href="/bis/players/11115131.html">山田</a></td><td>4</td><td>1</td><td>1</td><td>1</td><td>1</td></tr>
+</tbody></table></div>
+<div class="scroll_wrapper table_score table_pitcher"><table>
+<thead><tr><th>&nbsp;</th><th>投手</th><th>投球数</th><th>打者</th><th>投球回</th><th>安打</th><th>本塁打</th><th>四球</th><th>死球</th><th>三振</th><th>暴投</th><th>ボーク</th><th>失点</th><th>自責点</th></tr></thead>
+<tbody>
+<tr><td>●</td><td><a href="/bis/players/22225132.html">小川</a></td><td>98</td><td>26</td><td>6</td><td>7</td><td>1</td><td>1</td><td>0</td><td>5</td><td>0</td><td>0</td><td>3</td><td>3</td></tr>
+</tbody></table></div>
+</section></div>`;
+
+test("⚠구형 박스도 읽는다 — 안 읽으면 그 시즌이 조용히 0건이 된다(M7)", () => {
+  const b = parseBoxScore(LEGACY_BOX);
+  assert.equal(b.status, "played", "구형을 「중지」로 읽었다");
+  if (b.status !== "played") return;
+  // ⚠**순서가 뜻을 갖는다** — 원정 타자 → 원정 투수 → 홈 타자 → 홈 투수
+  assert.equal(b.away.batters[0]?.name, "田中", "원정 타자를 못 읽었다");
+  assert.equal(b.home.batters[0]?.name, "山田", "홈 타자가 원정 자리에 있다");
+  assert.equal(b.away.pitchers[0]?.name, "ジョンソン");
+  assert.equal(b.home.pitchers[0]?.name, "小川");
+  // ⚠**선수 ID가 살아 있어야 한다**(M10) — 이름으로 조인하면 동명이인이 섞인다
+  assert.equal(b.away.batters[0]?.playerId, "61965139");
+  assert.equal(b.away.pitchers[0]?.playerId, "53355130");
+});
+
+/** ⚠**열 이름이 다르다** — 신형 `選手` 대 구형 `打者`. 하나를 못 맞히면 시즌이 통째로 예외다 */
+test("구형의 打者 열을 선수명으로 읽는다", () => {
+  const b = parseBoxScore(LEGACY_BOX);
+  if (b.status !== "played") throw new Error("played 가 아니다");
+  assert.equal(b.away.batters[0]?.ab, 6, "열 위치가 밀렸다");
+  assert.equal(b.away.batters[0]?.hits, 2);
+});
+
+/**
+ * ⚠**순서로 구별하므로 개수를 확인한다.** 3개만 있는데 조용히 읽으면
+ * 한 팀의 투수 성적이 통째로 사라진다.
+ */
+test("⚠구형 표가 4개가 아니면 멈춘다 — 조용히 3개만 읽지 않는다", () => {
+  const cut = LEGACY_BOX.slice(0, LEGACY_BOX.lastIndexOf(`<div class="scroll_wrapper table_score table_pitcher">`));
+  assert.throws(() => parseBoxScore(cut), /구형 표가 4개가 아니다/);
+});
+
+/**
+ * ⚠**순서만 믿지 않는다.** 구형은 `id` 가 없어 순서로 구별하는데,
+ * 타자 자리에 투수표가 오면 **열이 통째로 어긋난 값**이 그대로 저장된다 —
+ * 예외가 아니라 「그럴듯한 틀린 수」가 되는 쪽이 훨씬 나쁘다.
+ */
+test("⚠구형 표의 종류가 순서와 어긋나면 멈춘다 — 그럴듯한 틀린 수를 만들지 않는다", () => {
+  // 원정 타자 자리에 투수표를 놓는다(클래스만 바꿔치기)
+  const swapped = LEGACY_BOX.replace(
+    `<div class="scroll_wrapper table_score table_batter">`,
+    `<div class="scroll_wrapper table_score table_pitcher">`,
+  );
+  assert.throws(() => parseBoxScore(swapped), /구형 표의 순서가 다르다/);
+});
