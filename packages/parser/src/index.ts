@@ -13,6 +13,8 @@ export type { PlayByPlay, PlayEvent, RunnerEvent } from "./playbyplay.ts";
 export { LineScoreParseError, parseLineScore } from "./linescore.ts";
 export type { LineScore } from "./linescore.ts";
 export { PlayerParseError, parseBirthDate, parsePlayerProfile, parseThrowsBats, parseVitals } from "./player.ts";
+export { RosterParseError, parseGameRoster } from "./roster.ts";
+export type { RosterEntry as GameRosterEntry } from "./roster.ts";
 export type { Hand, PlayerProfile } from "./player.ts";
 export { StarterParseError, parseAnnouncedStarters } from "./starter.ts";
 export type { AnnouncedStarters, StarterGame, StarterSide } from "./starter.ts";

@@ -14,6 +14,7 @@ import {
   parseBoxScore,
   parseCompetitionLabel,
   parseLineScore,
+  parseGameRoster,
   parsePlayByPlay,
   venuesByGameId,
 } from "@bb-app/parser";
@@ -142,6 +143,21 @@ let stoppedAt: string | null = null;
  * ⚠일정 페이지를 못 읽어도 적재를 멈추지 않는다 — 그 달의 구장만 비어 있게 된다.
  * **없는 것을 0이나 빈 문자열로 뭉개지 않는다**(M11).
  */
+/**
+ * 경기별 명단에서 읽은 **가장 최근**의 투타·배번.
+ *
+ * ⚠**투타의 권위 있는 출처는 선수 페이지다**(`#pc_bio`). 여기는 **닿지 않는 선수를 위한 보충**이다 —
+ * 선수 페이지는 현재 등록 선수만 받으므로, 소급 시즌을 백필하면 NPB를 떠난 선수가 대거 들어온다.
+ * 실측(2026-08-17): 투타 미상 122명 **전원**이 이 명단에 있고, 양쪽에 값이 있는 858명은
+ * **858/858 일치**한다. 그래도 **덮어쓰지 않는다** — 출처가 둘이 되면 언젠가 갈린다(M1).
+ *
+ * ⚠**가장 최근 경기의 값을 쓴다.** 표기가 갈린 선수가 2명 있었고(스위치 전향 등),
+ * 최근 값이 선수 페이지와 일치했다.
+ */
+const rosterLatest = new Map<string, { date: string; throws: string; bats: string; uniformNumber: string | null }>();
+let rosterFiles = 0;
+let rosterFailed = 0;
+
 const venueByGameId = new Map<string, string>();
 for await (const f of walkSchedules(archiveRoot)) {
   try {
@@ -302,6 +318,31 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
     }
   }
 
+  /**
+   * 명단(`roster.html`). ⚠**적재를 멈추지 않는다** — 이건 보충이지 본체가 아니다.
+   * 실패하면 세어서 마지막에 보고한다(0이 아닌 값이 나오면 마크업이 바뀐 것이다).
+   */
+  {
+    const rosterFile = file.replace(/box\.html\.gz$/, "roster.html.gz");
+    try {
+      const html = gunzipSync(await readFile(rosterFile)).toString("utf8");
+      rosterFiles += 1;
+      for (const e of parseGameRoster(html)) {
+        const prev = rosterLatest.get(e.playerId);
+        if (prev === undefined || prev.date <= meta.gameDate) {
+          rosterLatest.set(e.playerId, {
+            date: meta.gameDate, throws: e.throws, bats: e.bats, uniformNumber: e.uniformNumber,
+          });
+        }
+      }
+    } catch (err) {
+      rosterFailed += 1;
+      if (rosterFailed <= 3) {
+        console.error(`ROSTER ERROR ${meta.gameId} — ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+
   played += 1;
   const quarantine: QuarantineRow[] = [];
 
@@ -431,11 +472,43 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
   for (const q of quarantine) quarantineKinds.set(q.kind, (quarantineKinds.get(q.kind) ?? 0) + 1);
 }
 
+/**
+ * ⚠**빈 자리만 채운다.** `WHERE throws IS NULL` 이 그 계약이고, 그래서 선수 페이지가
+ * 언제나 이깁니다 — 출처가 둘이 되면 어느 날 갈린다(M1).
+ * 배번도 같다: 페이지는 **현재** 번호, 명단은 **그 경기 시점**의 번호다.
+ * 실측 782명 중 10명이 어긋났고 전부 실제 변경이었다(育成 `122` → 支配下 `64` 등).
+ */
+let filledHand = 0;
+let filledNumber = 0;
+if (rosterLatest.size > 0) {
+  const hand = db.raw.prepare(
+    "UPDATE player SET throws = ?, bats = ? WHERE player_id = ? AND (throws IS NULL OR bats IS NULL)",
+  );
+  const num = db.raw.prepare(
+    "UPDATE player SET uniform_number = ? WHERE player_id = ? AND uniform_number IS NULL",
+  );
+  db.transaction(() => {
+    for (const [playerId, r] of rosterLatest) {
+      hand.run(r.throws, r.bats, playerId);
+      filledHand += (db.raw.prepare("SELECT changes() AS n").get() as { n: number }).n;
+      if (r.uniformNumber !== null) {
+        num.run(r.uniformNumber, playerId);
+        filledNumber += (db.raw.prepare("SELECT changes() AS n").get() as { n: number }).n;
+      }
+    }
+  });
+}
+
 budget.total =
   budget.players + budget.games + budget.batting + budget.pitching
   + budget.paEvents + budget.runnerEvents + budget.quarantine;
 
 console.log(`성립 ${played}건 · 미성립 ${notPlayed}건 · 실패 ${failed}건`);
+// ⚠**분모를 같이 낸다.** 「보충 122명」만 내면 그것이 전부인지 일부인지 모른다
+console.log(
+  `명단 ${rosterFiles}장(실패 ${rosterFailed}) · 선수 ${rosterLatest.size}명 · ` +
+    `투타 보충 ${filledHand}명 · 배번 보충 ${filledNumber}명`,
+);
 if (lineScoreFailed > 0) {
   // ⚠**「성립」 안에 숨어 있던 부분 실패를 드러낸다.** 이 경기들은 득점이 없어
   // 순위표·경기 페이지에서 빠진다 — 요약만 보면 정상으로 보인다
