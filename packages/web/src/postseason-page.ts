@@ -17,7 +17,7 @@
  */
 import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
-import { avg3, dec2, fullDate, innings } from "./format.ts";
+import { fullDate, innings } from "./format.ts";
 import { note, scroller, term, valueWithDen } from "./parts.ts";
 import { page } from "./layout.ts";
 import type { RenderContext } from "./pages.ts";
@@ -51,8 +51,18 @@ export interface PostGame {
    * 우리가 세면 4개의 독립 시리즈가 한 줄로 이어져 최대 6경기짜리 파이널에 「第13戦」이 붙는다.
    */
   gameNo: number;
-  /** 「CS ファーストステージ」 등. 없으면 null */
+  /** 「CS ファーストステージ」 등. **소스 원문 그대로**(M4). 없으면 null */
   series: string | null;
+  /**
+   * 화면에서 스테이지를 나눌 때 쓰는 라벨. `series`와 다를 수 있다.
+   *
+   * ⚠**CS는 `series` 하나로 나뉘지 않는다.** npb.jp의 표기가 セ/パ를 구분하지 않아
+   * 「CS ファーストステージ」 한 제목 아래에 **두 리그의 독립 시리즈가 섞이고**
+   * 「第1戦」이 연속으로 두 번 나온다(2026-08-16 실측: 巨人-DeNA와 オリックス-日本ハム).
+   * 리그는 **팀 코드에서 나온다** — CS는 두 팀이 같은 리그라 새 데이터가 필요 없다.
+   * ⚠**日本シリーズには 하면 안 된다** — 양 리그가 맞붙으므로 「어느 리그의 시리즈」가 성립하지 않는다.
+   */
+  stage: string | null;
 }
 
 /** 포스트시즌 한 선수의 성적 한 줄. ⚠**분모를 들고 다닌다**(M2) */
@@ -130,18 +140,22 @@ export interface PostseasonBrief {
  *
  * ⚠**클라이맥스시리즈는 하나의 시리즈가 아니다** — セ/パ × ファースト/ファイナル이다.
  * 한 줄로 이으면 「第N戦」이 어느 시리즈의 N인지 알 수 없게 된다.
- * ⚠**순서는 나온 순서 그대로** — 날짜 순으로 정렬돼 들어오므로 스테이지도 시간 순이 된다.
+ *
+ * ⚠**인접을 가정하지 않는다.** 전에는 「앞 항목과 라벨이 같으면 같은 그룹」이었는데,
+ * SQL의 `ORDER BY game_date, game_id`는 **같은 스테이지가 붙어 들어오는 것을 보장하지 않는다.**
+ * 우천으로 한 리그의 스테이지가 밀려 다른 스테이지와 겹치는 날, 같은 제목이 두 번 나온다.
+ * 라벨로 모으면 그 가정 자체가 사라진다 — 그룹의 순서는 **첫 등장 순**이다.
  */
 function stageGroups(games: readonly PostGame[]): [string, PostGame[]][] {
-  const out: [string, PostGame[]][] = [];
+  const m = new Map<string, PostGame[]>();
   for (const g of games) {
-    const label = g.series ?? "";
-    const last = out.at(-1);
-    if (last !== undefined && last[0] === label) last[1].push(g);
-    else out.push([label, [g]]);
+    const label = g.stage ?? "";
+    const list = m.get(label);
+    if (list === undefined) m.set(label, [g]);
+    else list.push(g);
   }
   // 라벨이 하나뿐이면 제목을 붙이지 않는다 — 나눌 것이 없는데 나눈 척하지 않는다
-  return out.length <= 1 ? [["", games.slice()]] : out;
+  return m.size <= 1 ? [["", games.slice()]] : [...m];
 }
 
 function score(side: PostGame["away"], won: boolean): RawHtml {
@@ -201,7 +215,7 @@ function pitcherTable(rows: PostPitcher[], base: string): RawHtml {
       <td>${r.games}</td><td class="b">${innings(r.outs)}</td>
       <td>${r.w}</td><td>${r.l}</td><td>${r.sv}</td>
       <td>${r.h}</td><td>${r.hr}</td><td>${r.bb}</td><td>${r.so}</td><td>${r.er}</td>
-      <td class="wd">${dec2(r.era.value)}<span class="den">${innings(r.era.denominator)}回</span></td>
+      <td class="wd">${valueWithDen(r.era, "回", 2)}</td>
     </tr>`,
     )}</tbody>
   </table>`);

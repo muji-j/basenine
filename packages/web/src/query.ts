@@ -1433,6 +1433,30 @@ function postseasonPage(db: Db, o: LoadOptions): PostseasonPageData {
      * 정답은 **처음부터 데이터에 있었다** — npb.jp 슬러그 끝에서 파싱한 `game.game_no`와
      * 스테이지 표기 `game.series`다. 우리가 세는 순간 존재하지 않는 숫자가 된다.
      */
+    /**
+     * 스테이지 라벨과 그 순서.
+     *
+     * ⚠**CS는 `series` 하나로 나뉘지 않는다.** npb.jp의 표기가 セ/パ를 구분하지 않아
+     * 「CS ファーストステージ」 한 제목 아래에 두 리그의 독립 시리즈가 섞이고
+     * 「第1戦」이 연속 두 번 나온다(2026-08-16 실측). 리그는 **팀 코드에서 나온다** —
+     * CS는 두 팀이 같은 리그라 새 데이터가 필요 없다.
+     * ⚠**日本シリーズ에는 하지 않는다** — 양 리그가 맞붙어 「어느 리그의 시리즈」가 성립하지 않는다.
+     * ⚠**올스타에도 하지 않는다** — 팀 코드가 `cl`/`pl`이라 `leagueOf`가 던진다.
+     */
+    const splitsByLeague = id === "climaxSeries";
+    const stageOrder = new Map<string, number>();
+    for (const g of raw) {
+      const key = g.series ?? "";
+      if (!stageOrder.has(key)) stageOrder.set(key, stageOrder.size);
+    }
+    const leagueTag = (homeCode: string): string => squadName(leagueOf(homeCode) === "central" ? "cl" : "pl");
+    const stageOf = (g: { series: string | null; homeCode: string }): string | null =>
+      g.series === null ? null : splitsByLeague ? `${leagueTag(g.homeCode)} ${g.series}` : g.series;
+    /** 스테이지 첫 등장 순 × 2 + (セ=0 / パ=1) — 세·파가 번갈지 않고 스테이지끼리 붙는다 */
+    const stageRank = (g: { series: string | null; homeCode: string }): number =>
+      (stageOrder.get(g.series ?? "") ?? 0) * 2 +
+      (splitsByLeague && leagueOf(g.homeCode) === "pacific" ? 1 : 0);
+
     const games: PostGame[] = raw.map((g) => ({
       gameId: gameSlug(g.gameId),
       rawGameId: g.gameId,
@@ -1441,6 +1465,7 @@ function postseasonPage(db: Db, o: LoadOptions): PostseasonPageData {
       date: g.gameDate,
       venue: g.venue,
       series: g.series,
+      stage: stageOf(g),
       gameNo: g.gameNo,
       away: { shortName: squadName(g.awayCode), color: squadColor(g.awayCode), runs: g.awayRuns },
       home: { shortName: squadName(g.homeCode), color: squadColor(g.homeCode), runs: g.homeRuns },
@@ -1454,6 +1479,14 @@ function postseasonPage(db: Db, o: LoadOptions): PostseasonPageData {
               ? "away"
               : "home",
     }));
+    /**
+     * ⚠**화면의 순서는 우리가 정한다.** SQL의 `ORDER BY game_date, game_id`에 기대면
+     * 스테이지가 붙어 들어오는 것을 아무도 보장하지 않는다 — 겹치는 날 제목이 두 번 나온다.
+     */
+    const rankById = new Map(raw.map((g) => [g.gameId, stageRank(g)]));
+    games.sort((a, b) =>
+      (rankById.get(a.rawGameId) ?? 0) - (rankById.get(b.rawGameId) ?? 0) ||
+      a.date.localeCompare(b.date) || a.gameNo - b.gameNo);
 
     /**
      * ⚠**올스타는 선수 성적을 집계하지 않는다.**
@@ -1497,7 +1530,8 @@ function postseasonPage(db: Db, o: LoadOptions): PostseasonPageData {
         avg: battingAverage(b.line),
       }))
       // 출장 순. 같으면 이름으로 고정한다 — 빌드마다 순서가 흔들리면 diff 가 못 쓰게 된다
-      .sort((a, b) => b.pa - a.pa || a.name.localeCompare(b.name, "ja"));
+      // 출장 순. 이름까지 같으면 **선수 ID**로 고정한다 — 동명이인이 실재한다(M10)
+      .sort((a, b) => b.pa - a.pa || a.name.localeCompare(b.name, "ja") || a.playerId.localeCompare(b.playerId));
 
     const pitchers: PostPitcher[] = agg.pitching
       .filter((p) => p.games > 0)
@@ -1519,7 +1553,7 @@ function postseasonPage(db: Db, o: LoadOptions): PostseasonPageData {
         sv: p.decisions.sv,
         era: earnedRunAverage(p.line),
       }))
-      .sort((a, b) => b.outs - a.outs || a.name.localeCompare(b.name, "ja"));
+      .sort((a, b) => b.outs - a.outs || a.name.localeCompare(b.name, "ja") || a.playerId.localeCompare(b.playerId));
 
     competitions.push({
       id,

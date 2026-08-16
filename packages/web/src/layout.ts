@@ -40,6 +40,15 @@ export interface Freshness {
   builtOn: string;
   /** 경기일과 생성일의 간격(일). null이면 경기가 하나도 없다 */
   lagDays: number | null;
+  /**
+   * **정규시즌**의 가장 최근 경기일. `latestGameDate`와 다를 수 있다.
+   *
+   * ⚠**띠는 사이트 공통인데 화면 대부분은 정규시즌만 싣는다.** 둘이 갈리는 시기
+   * (포스트시즌·올스타 휴식기)에 「最新の試合 10月19日 まで反映」이라고만 쓰면,
+   * 10월 5일까지밖에 안 담긴 순위표 위에서 그 문장이 거짓이 된다.
+   * 다르면 **둘 다 적는다** — 어느 쪽도 숨기지 않는 것이 답이다.
+   */
+  regularGameDate: string | null;
 }
 
 /** 며칠까지를 「최신」으로 볼 것인가. 하루 1회 배치라 전날 경기까지가 정상이다. */
@@ -55,11 +64,16 @@ function daysBetween(fromIso: string, toIso: string): number {
   return Math.round((b - a) / 86_400_000);
 }
 
-export function freshness(latestGameDate: string | null, builtOn: string): Freshness {
+export function freshness(
+  latestGameDate: string | null,
+  builtOn: string,
+  regularGameDate: string | null = latestGameDate,
+): Freshness {
   return {
     latestGameDate,
     builtOn,
     lagDays: latestGameDate === null ? null : daysBetween(latestGameDate, builtOn),
+    regularGameDate,
   };
 }
 
@@ -83,12 +97,17 @@ export function freshnessBar(f: Freshness, pastSeason = false): RawHtml {
     </div>`;
   }
   const latest = fullDate(f.latestGameDate);
+  // ⚠정규시즌이 다른 날에서 멈춰 있으면 **그것도 적는다** — 화면 대부분이 싣는 것은 그쪽이다
+  const regular =
+    f.regularGameDate === null || f.regularGameDate === f.latestGameDate
+      ? raw("")
+      : html`（レギュラーシーズンは ${fullDate(f.regularGameDate)} まで）`;
   if (isStale(f)) {
     return html`<div class="state stale" role="status">
       <b>更新が止まっています</b> — 最新の試合は ${latest}（${f.lagDays}日前）。取得に失敗している可能性があります
     </div>`;
   }
-  return html`<div class="state fresh">最新の試合 ${latest} まで反映</div>`;
+  return html`<div class="state fresh">最新の試合 ${latest} まで反映${regular}</div>`;
 }
 
 export interface SiteMeta {

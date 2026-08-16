@@ -88,7 +88,7 @@ export function buildSite(
 ): BuildResult {
   // ⚠**신선도는 대회를 가리지 않는다.** 정규시즌만 보면 포스트시즌 기간에
   // 사이트 전체가 「취득 실패」라고 거짓말하고, 빌드가 매일 실패로 끝난다
-  const f = freshness(data.latestAnyGameDate ?? data.asOf, builtOn);
+  const f = freshness(data.latestAnyGameDate ?? data.asOf, builtOn, data.asOf);
   const me = plans.find((p) => p.season === data.season);
   const prefix = me?.prefix ?? "";
   const ctx: RenderContext = {

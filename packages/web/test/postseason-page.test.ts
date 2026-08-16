@@ -26,6 +26,7 @@ function cs(over: Partial<PostCompetition> = {}): PostCompetition {
         venue: "甲子園",
         gameNo: 1,
         series: "CS ファイナルステージ",
+        stage: "セ・リーグ CS ファイナルステージ",
         away: { shortName: "DeNA", color: colorOf("db"), runs: 2 },
         home: { shortName: "阪神", color: colorOf("t"), runs: 5 },
         winner: "home",
@@ -134,7 +135,7 @@ test("올스타는 포스트시즌이 아니라고 말하고, 선수표가 없�
           detail: "⚠**これはポストシーズンではありません** — シーズン中の親善試合です。",
           games: [
             {
-              gameId: "x", rawGameId: "x", hasPage: false, date: "2025-07-23", venue: "京セラD大阪", gameNo: 1, series: null,
+              gameId: "x", rawGameId: "x", hasPage: false, date: "2025-07-23", venue: "京セラD大阪", gameNo: 1, series: null, stage: null,
               away: { shortName: "セ・リーグ", color: colorOf("t"), runs: 1 },
               home: { shortName: "パ・リーグ", color: colorOf("h"), runs: 5 },
               winner: "home",
@@ -190,9 +191,9 @@ test("스테이지가 둘 이상이면 제목으로 나눈다", () => {
       competitions: [
         cs({
           games: [
-            { ...g, gameId: "a1", gameNo: 1, series: "CS ファーストステージ" },
-            { ...g, gameId: "a2", gameNo: 2, series: "CS ファーストステージ" },
-            { ...g, gameId: "b1", gameNo: 1, series: "CS ファイナルステージ" },
+            { ...g, gameId: "a1", gameNo: 1, stage: "CS ファーストステージ" },
+            { ...g, gameId: "a2", gameNo: 2, stage: "CS ファーストステージ" },
+            { ...g, gameId: "b1", gameNo: 1, stage: "CS ファイナルステージ" },
           ],
         }),
       ],
@@ -212,5 +213,31 @@ test("스테이지가 둘 이상이면 제목으로 나눈다", () => {
 
 test("스테이지가 하나뿐이면 제목을 붙이지 않는다 — 나눌 것이 없는데 나눈 척하지 않는다", () => {
   const out = renderPostseasonPage(data(), context());
-  assert.ok(!out.includes(`class="standname">CS ファイナルステージ`), "나눌 것이 없는데 제목을 냈다");
+  assert.ok(!out.includes(`class="standname">セ・リーグ CS ファイナルステージ`), "나눌 것이 없는데 제목을 냈다");
+});
+
+/**
+ * ⚠**같은 스테이지가 붙어 들어오는 것을 아무도 보장하지 않는다.**
+ * 전에는 「앞 항목과 라벨이 같으면 같은 그룹」이라 순서에 기댔고,
+ * 우천으로 한 리그의 스테이지가 밀려 겹치는 날 **같은 제목이 두 번** 나왔을 것이다.
+ */
+test("떨어져 들어온 같은 스테이지를 한 제목으로 모은다 — 순서에 기대지 않는다", () => {
+  const g = cs().games[0]!;
+  const out = renderPostseasonPage(
+    data({
+      competitions: [
+        cs({
+          games: [
+            { ...g, gameId: "a1", gameNo: 1, stage: "セ CS" },
+            { ...g, gameId: "b1", gameNo: 1, stage: "パ CS" },
+            { ...g, gameId: "a2", gameNo: 2, stage: "セ CS" },
+            { ...g, gameId: "b2", gameNo: 2, stage: "パ CS" },
+          ],
+        }),
+      ],
+    }),
+    context(),
+  );
+  assert.equal((out.match(/class="standname">セ CS</g) ?? []).length, 1, "같은 제목이 두 번 나왔다");
+  assert.equal((out.match(/class="standname">パ CS</g) ?? []).length, 1, "같은 제목이 두 번 나왔다");
 });

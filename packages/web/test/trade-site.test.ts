@@ -209,6 +209,12 @@ async function withPostseason(fn: (site: ReturnType<typeof loadSite>) => void): 
   try {
     upsertPlayer(db, "HERO", "英雄", NOW);
     upsertPlayer(db, "ARM", "剛腕", NOW);
+    /**
+     * ⚠**동명이인은 실재한다** — 이 프로젝트가 실측한 「小島」 2명이 그렇다.
+     * 표시명도 타석 수도 같으면 정렬의 마지막 갈래가 없는 한 순서가 SQLite의 산출 순서에 기댄다.
+     * 그러면 인덱스나 플랜이 바뀌는 날 빌드 diff가 이유 없이 흔들린다. **ID로 고정한다**(M10).
+     */
+    upsertPlayer(db, "AHERO", "英雄", NOW);
     const play = (id: string, date: string, comp: string, h: number): void => {
       upsertGame(db, {
         gameId: id, season: 2026, gameDate: date, awayCode: "g", homeCode: "t", gameNo: 1,
@@ -223,6 +229,12 @@ async function withPostseason(fn: (site: ReturnType<typeof loadSite>) => void): 
       upsertPitching(db, {
         gameId: id, playerId: "ARM", side: "home", decision: "○",
         outs: 21, bf: 28, pitches: 95, h: 4, hr: 0, bb: 1, hbp: 0, so: 8, runs: 1, er: 1, wp: 0, balk: 0,
+      });
+      // ⚠같은 이름·같은 타석 수의 두 번째 선수. 정렬의 마지막 갈래가 여기서 드러난다
+      upsertBatting(db, {
+        gameId: id, playerId: "AHERO", side: "away", battingOrder: "5", position: "(左)",
+        pa: 4, ab: 4, h, d2: 0, d3: 0, hr: 0, bb: 0, ibb: 0, hbp: 0,
+        sf: 0, sh: 0, so: 0, roe: 0, runs: 0, rbi: h, sb: 0,
       });
     };
     play("r1", "2026-04-01", "regular", 2);
@@ -583,3 +595,23 @@ test("⚠올스타뿐인 시즌은 구단 페이지가 포스트시즌을 안내
  * - **동점 시 `playerId` 정렬**은 SQLite의 GROUP BY 출력 순서가 이미 안정적이라 가려진다.
  *   가리는 것이 사라지는 날(인덱스·플랜 변경)을 대비한 것이므로 남긴다.
  */
+
+/**
+ * ⚠**이 시험은 계약을 못 박을 뿐, 갈래의 유무를 가려내지는 못한다.**
+ * SQLite가 `player_id` 순으로 내보내고 갈래도 `playerId` 오름차순이라 **둘의 결과가 같다** —
+ * 갈래를 빼도 오늘은 이 시험이 통과한다(2026-08-16 뮤테이션으로 확인).
+ * 그래도 남긴다: 가리는 것이 사라지는 날(인덱스·플랜 변경)에 이 시험이 그 순간을 잡는다.
+ */
+test("⚠표시명도 타석 수도 같으면 선수 ID로 순서를 고정한다(M10)", async () => {
+  await withPostseason((site) => {
+    const cs = site.postseason.competitions.find((c) => c.id === "climaxSeries")!;
+    const same = cs.batters.filter((b) => b.name === "英雄");
+    assert.equal(same.length, 2, "동명이인 픽스처가 두 명이 아니다 — 이 시험이 공회전한다");
+    assert.equal(same[0]!.pa, same[1]!.pa, "타석 수가 달라 정렬의 마지막 갈래에 닿지 않는다");
+    assert.deepEqual(
+      same.map((b) => b.playerId),
+      ["AHERO", "HERO"],
+      "동명·동타석의 순서가 ID로 고정되지 않았다",
+    );
+  });
+});

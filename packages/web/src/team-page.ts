@@ -11,8 +11,8 @@
  */
 import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
-import { avg3, dec2, fullDate, innings } from "./format.ts";
-import { note, scroller, term } from "./parts.ts";
+import { avg3, fullDate, innings } from "./format.ts";
+import { note, scroller, term, valueWithDen } from "./parts.ts";
 import { page } from "./layout.ts";
 import type { RenderContext } from "./pages.ts";
 import { dayHref } from "./today-page.ts";
@@ -114,12 +114,12 @@ function wlt(x: { w: number; l: number; t: number }): string {
   return `${x.w}-${x.l}-${x.t}`;
 }
 
-/** 값과 분모를 한 덩어리로 — 떼어 쓰지 못하게 */
-function rate(r: Rate, unit: string, digits: 2 | 3): RawHtml {
-  const v = r.value === null ? "—" : digits === 3 ? avg3(r.value) : dec2(r.value);
-  const den = unit === "回" ? `${innings(r.denominator)}回` : `${r.denominator}${unit}`;
-  return html`${v}<span class="den">${den}</span>`;
-}
+/**
+ * 값과 분모를 한 덩어리로.
+ * ⚠**여기서 다시 만들지 않는다** — `valueWithDen`이 그 한 벌이다(M2의 구조적 강제).
+ * 전에는 이 파일에 같은 일을 하는 함수가 따로 있어 **M2를 지키는 함수 자체가 세 벌**이 됐다.
+ */
+const rate = valueWithDen;
 
 function batterTable(rows: TeamBatter[], base: string): RawHtml {
   if (rows.length === 0) return html`<p class="empty">打者の記録がありません。</p>`;
@@ -231,13 +231,23 @@ ${d.months.length === 0
 <section class="block" id="b-teambat">
   <h4>打者<span class="qt">${d.batters.length}人</span></h4>
   ${batterTable(d.batters, base)}
-  ${note("打席の多い順です。規定打席に届いていない選手は薄く表示しています — 値は小さな標本のものです。")}
+  ${note(
+    // ⚠**이 표는 「현재 로스터」가 아니다.** `battingByTeam`은 **그 구단에서 낸 몫**이라
+    // 시즌 도중 떠난 선수도 남는다(실측 2026-08-16: 2026년 3구단·2025년 4구단).
+    // 一覧 화면의 구단 묶음은 최신 소속 기준이라, 말하지 않으면 두 화면이 같은 로스터를
+    // 다르게 말하게 된다 — 숫자가 아니라 **무엇을 세었는지**를 적어서 맞춘다
+    "この球団で出場した記録です — シーズン途中に移籍した選手も、この球団での分だけ含みます。" +
+      "打席の多い順で、規定打席に届いていない選手は薄く表示しています — 値は小さな標本のものです。",
+  )}
 </section>
 
 <section class="block" id="b-teampit">
   <h4>投手<span class="qt">${d.pitchers.length}人</span></h4>
   ${pitcherTable(d.pitchers, base)}
-  ${note("投球回の多い順です。規定投球回に届いていない投手は薄く表示しています。")}
+  ${note(
+    "この球団で登板した記録です — シーズン途中に移籍した投手も、この球団での分だけ含みます。" +
+      "投球回の多い順で、規定投球回に届いていない投手は薄く表示しています。",
+  )}
 </section>
 
 ${d.recent.length === 0

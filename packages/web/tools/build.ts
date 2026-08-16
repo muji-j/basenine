@@ -10,6 +10,8 @@
  * ⚠**시계는 여기서 한 번만 읽는다**(M6). 아래로 내려가는 것은 `YYYY-MM-DD` 문자열이다.
  */
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { brokenLinks } from "../src/link-check.ts";
+import type { OutFile } from "../src/link-check.ts";
 import { dirname, join, resolve } from "node:path";
 import { openDb } from "@bb-app/store";
 import { systemClock, toJstDateString } from "@bb-app/archiver";
@@ -91,6 +93,8 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
       let bytes = 0;
       let fileCount = 0;
       let current: BuildResult | null = null;
+      // ⚠**링크 검사는 전 시즌을 모은 뒤에 한다** — `../2025/…` 처럼 시즌을 넘는 링크가 있다
+      const all: OutFile[] = [];
       for (const l of loaded) {
         const r = buildSite(l.data, site, builtOn, l.season === season ? log : undefined, plans);
         if (l.season === season) current = r;
@@ -100,6 +104,7 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
           writeFileSync(path, f.content, "utf8");
           bytes += Buffer.byteLength(f.content, "utf8");
           fileCount += 1;
+          all.push(f);
         }
         console.log(
           `  ${l.season}年${l.prefix === "" ? "(現行)" : ` → /${l.prefix}`} : ${r.files.length}파일 · 선수 ${r.playerCount}명 · 최신 ${r.latestGameDate ?? "없음"}`,
@@ -112,6 +117,21 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
       console.log(`집계: ${loadMs.toFixed(0)}ms · 최신 경기일 ${result.latestGameDate ?? "없음"} · 생성일 ${builtOn}`);
       if (site.contact === "") {
         console.warn("⚠ BB_CONTACT 미설정 — 삭제·정정 요청 창구가 화면에 나오지 않는다(공개 전 필수)");
+      }
+      /**
+       * ⚠**깨진 링크로 배포하지 않는다.**
+       * `daily.yml`은 테스트도 타입체크도 돌리지 않고 빌드 뒤 바로 배포한다 — 여기가 마지막 그물이다.
+       * 실제로 구단 페이지를 만들며 240개가 한 번에 404가 된 적이 있고(2026-08-16),
+       * 그건 타입도 시험도 못 잡았다. 문자열이 문자열로 맞았기 때문이다.
+       */
+      const broken = brokenLinks(all);
+      if (broken.length > 0) {
+        console.error(`⚠ 깨진 내부 링크 ${broken.length}개 — 배포하지 않는다`);
+        for (const b of broken.slice(0, 20)) console.error(`   ${b.from} → ${b.href}（${b.to} 없음）`);
+        if (broken.length > 20) console.error(`   … 그 밖에 ${broken.length - 20}개`);
+        process.exitCode = 1;
+      } else {
+        console.log(`링크: ${all.filter((f) => f.path.endsWith(".html")).length}장 검사 · 깨진 것 없음`);
       }
       if (result.stale) {
         console.error("⚠ 데이터가 낡았다 — 수집이 멈췄는지 확인하라");
