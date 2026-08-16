@@ -38,6 +38,8 @@ import type { MarkPlayer, ProfileAxis } from "./marks.ts";
 import { termOf } from "./glossary.ts";
 import { page } from "./layout.ts";
 import { teamPath } from "./team-page.ts";
+import { postseasonBrief } from "./postseason-page.ts";
+import type { PostseasonBrief } from "./postseason-page.ts";
 import type { Freshness, SiteMeta } from "./layout.ts";
 
 /** 지표별 순위. 없으면 자격 미달이거나 값이 없다 — **둘 다 「순위 없음」으로 같게 다룬다** */
@@ -317,6 +319,11 @@ export interface PlayerPageData {
    * 실측(2026): 山本는 DeNA 105타석 · ソフトバンク 97타석으로 리그를 넘어 옮겼다.
    */
   stints: PlayerStint[];
+  /**
+   * ポストシーズン 요약. 없으면 빈 배열.
+   * ⚠**위의 시즌 성적에 포함되지 않는다**(§2-1) — 화면이 그렇게 적는다.
+   */
+  postseason: PostseasonBrief[];
 }
 
 /** 한 소속에서의 출장. 시즌 중 이적한 선수만 둘 이상이 된다 */
@@ -1107,6 +1114,10 @@ ${catalog.map((meta) => {
     return initial.has(meta.id) ? rendered : hidden(rendered);
   })}
 <div id="blocksEnd" hidden></div>
+<!-- ⚠**조립 대상 밖에 둔다.** 이 구획은 b- 접두사를 쓰지 않으므로 블록 조립이 건드리지 않고,
+     기준점(#blocksEnd) 뒤에 있어 순서를 바꿔도 늘 성적 아래에 남는다.
+     ⚠**위 성적에 포함되지 않는다는 것을 그 구획이 스스로 말한다**(§2-1). -->
+${postseasonBrief(d.postseason, base)}
 <nav class="find" aria-label="ほかの選手">
   <a href="${base}${teamPath(d.teamCode)}">${d.teamName}</a> · <a href="${base}index.html">選手一覧</a> · <a href="${base}ranking.html">リーグ順位表</a>
 </nav>`;
@@ -1120,7 +1131,7 @@ ${catalog.map((meta) => {
     spine: `${d.teamName}　${d.name}`,
     freshness: ctx.freshness,
     site: ctx.site,
-    hasPostseason: ctx.hasPostseason === true,
+    hasPostseason: ctx.hasPostseason,
     nav: "player",
     body,
     bootstrapJs: bootstrapFor(d.role),

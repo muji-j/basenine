@@ -215,7 +215,7 @@ ${d.highlights.map((s) =>
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
-    hasPostseason: ctx.hasPostseason === true,
+    hasPostseason: ctx.hasPostseason,
     nav: "index",
     body,
   });
@@ -411,7 +411,7 @@ ${hasPersonal ? (split ? panel("ranktype", "personal", false, personalBody) : pe
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
-    hasPostseason: ctx.hasPostseason === true,
+    hasPostseason: ctx.hasPostseason,
     nav: "ranking",
     body,
   });
@@ -581,7 +581,7 @@ ${d.games.map((g, i) =>
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
-    hasPostseason: ctx.hasPostseason === true,
+    hasPostseason: ctx.hasPostseason,
     // ⚠予告先発은 「試合」의 자식 화면이다. 부모 항목을 켜 두지 않으면
     // 내비게이션이 「아무 데도 아님」을 가리킨다
     nav: "today",
@@ -796,7 +796,7 @@ export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): strin
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
-    hasPostseason: ctx.hasPostseason === true,
+    hasPostseason: ctx.hasPostseason,
     nav: "matchup",
     body,
   });

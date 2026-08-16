@@ -194,7 +194,7 @@ function topbar(o: PageOptions): RawHtml {
          눌러도 빈 화면이 나오는 항목은 고장으로 읽힌다 -->
     <!-- ⚠**이름을 「PS」로 두지 않는다.** 올스타뿐인 시즌도 여기로 오므로
          포스트시즌이라고 부르면 틀린다. 「레귤러 시즌 밖의 경기」가 이 항목이 담는 것이다 -->
-    ${o.hasPostseason === true ? html`<a href="${o.base}postseason.html"${here("postseason")}>他大会</a>` : raw("")}
+    ${o.hasPostseason ? html`<a href="${o.base}postseason.html"${here("postseason")}>他大会</a>` : raw("")}
     <!-- ⚠수집 로그는 시즌별이 아니라 사이트 전체다(「언제 어디서 데이터가 들어왔나」).
          과거 시즌에는 만들지 않으므로 링크는 root로 현재 시즌의 것을 가리킨다.
          base로 두면 2025 화면 2,307장이 전부 404가 된다(2026-08-16 실측 1,585종). -->
@@ -336,11 +336,13 @@ export interface RenderContext {
   /** 이 페이지의 경로. **자기 경로만 말하면 나머지는 계산된다** */
   paths: (selfPath: string, fallback?: Fallback) => PagePaths;
   /**
-   * 이 시즌에 ポストシーズン 기록이 있는가.
-   * ⚠**내비의 항목 하나를 켜고 끄는 값이다.** 기록이 없는 시즌(2026년 8월 시점)에 항목을 내면
-   * 눌러도 빈 화면이 나오고, 그건 고장으로 읽힌다.
+   * 이 시즌에 レギュラーシーズン外の試合 기록이 있는가.
+   *
+   * ⚠**필수다.** 선택 인자로 두면 새 화면을 만들며 한 줄을 빠뜨렸을 때
+   * **그 화면에서만 내비 항목이 조용히 사라진다** — 타입도 시험도 못 잡는다.
+   * 필수로 두면 컴파일이 멈춘다.
    */
-  hasPostseason?: boolean;
+  hasPostseason: boolean;
 }
 
 const LT = String.fromCharCode(0x3c);

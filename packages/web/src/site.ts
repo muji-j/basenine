@@ -86,7 +86,9 @@ export function buildSite(
    */
   plans: readonly SeasonPlan[] = [],
 ): BuildResult {
-  const f = freshness(data.asOf, builtOn);
+  // ⚠**신선도는 대회를 가리지 않는다.** 정규시즌만 보면 포스트시즌 기간에
+  // 사이트 전체가 「취득 실패」라고 거짓말하고, 빌드가 매일 실패로 끝난다
+  const f = freshness(data.latestAnyGameDate ?? data.asOf, builtOn);
   const me = plans.find((p) => p.season === data.season);
   const prefix = me?.prefix ?? "";
   const ctx: RenderContext = {
@@ -180,7 +182,9 @@ export function buildSite(
   return {
     files,
     stale: isStale(f),
-    latestGameDate: data.asOf,
+    // ⚠**신선도 판정과 같은 값을 보고한다.** 다른 값을 보고하면 「낡았다」와 「최신 경기일」이
+    // 서로 다른 날을 가리키고, 로그를 읽는 사람이 그 차이를 설명할 수 없다
+    latestGameDate: data.latestAnyGameDate ?? data.asOf,
     playerCount: data.players.length,
   };
 }

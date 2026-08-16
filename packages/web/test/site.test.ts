@@ -53,6 +53,7 @@ function siteData(over: Partial<SiteData> = {}): SiteData {
     },
     days: [],
     dayIndex: { season: 2026, latestDate: "2026-08-14", days: [] },
+    latestAnyGameDate: "2026-08-14",
     postseason: { season: 2026, competitions: [] },
     teams: [],
     games: [],
@@ -85,9 +86,27 @@ test("사이트는 정해진 파일 집합을 만든다", () => {
 });
 
 test("경기가 없으면 낡음으로 보고한다 — 호출자가 종료 코드를 바꾼다", () => {
-  const out = buildSite(siteData({ asOf: null }), SITE, "2026-08-15");
+  const out = buildSite(siteData({ asOf: null, latestAnyGameDate: null }), SITE, "2026-08-15");
   assert.equal(out.stale, true);
   assert.equal(out.latestGameDate, null);
+});
+
+/**
+ * ⚠**신선도는 대회를 가리지 않는다.**
+ * 정규시즌만 보면 10월에 사이트 전체가 「更新が止まっています … 取得に失敗している可能性があります」로 바뀌는데,
+ * **같은 빌드의 포스트시즌 화면은 어제 경기를 보여주고 있다.**
+ * 게다가 빌드가 종료 코드 1을 내므로 **일일 배치가 매일 실패로 보고된다.**
+ * 날짜가 정해진 결함이라 손대지 않으면 그때 반드시 터진다.
+ */
+test("포스트시즌이 진행 중이면 낡았다고 하지 않는다 — 정규시즌만 보면 10월에 거짓말한다", () => {
+  const out = buildSite(
+    // 정규시즌은 10/5에 끝났고 오늘은 10/20 — 그런데 어제 CS 경기가 있었다
+    siteData({ asOf: "2026-10-05", latestAnyGameDate: "2026-10-19" }),
+    SITE,
+    "2026-10-20",
+  );
+  assert.equal(out.stale, false, "포스트시즌이 도는 중인데 취득 실패라고 했다");
+  assert.equal(out.latestGameDate, "2026-10-19", "보고하는 날짜가 판정과 다르다");
 });
 
 test("선수 ID가 경로로 쓸 수 없는 형태면 던진다 — 출력 밖에 쓰지 않는다", () => {

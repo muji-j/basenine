@@ -265,7 +265,7 @@ ${d.recent.length === 0
     spine: d.name,
     freshness: ctx.freshness,
     site: ctx.site,
-    hasPostseason: ctx.hasPostseason === true,
+    hasPostseason: ctx.hasPostseason,
     nav: "team",
     body,
   });

@@ -273,7 +273,7 @@ ${block({
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
-    hasPostseason: ctx.hasPostseason === true,
+    hasPostseason: ctx.hasPostseason,
     nav: "log",
     body,
   });

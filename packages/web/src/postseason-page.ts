@@ -18,25 +18,41 @@
 import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import { avg3, dec2, fullDate, innings } from "./format.ts";
-import { note, scroller, term } from "./parts.ts";
+import { note, scroller, term, valueWithDen } from "./parts.ts";
 import { page } from "./layout.ts";
 import type { RenderContext } from "./pages.ts";
 import { NEUTRAL_COLOR } from "@bb-app/domain";
 import type { TeamColor } from "@bb-app/domain";
+import type { Rate } from "@bb-app/metrics";
 
 /** 한 경기 — 날짜·구장·점수. 상세 페이지가 있으면 그리로 간다 */
 export interface PostGame {
+  /** 화면 링크에 쓰는 파일명 슬러그 */
   gameId: string;
+  /**
+   * DB의 원래 경기 ID. **경기 페이지가 만들어졌는지 대조할 때만 쓴다.**
+   * ⚠슬러그로 대조하면 안 된다 — 슬래시를 바꾼 뒤라 원본과 다른 문자열이다.
+   */
+  rawGameId: string;
   /** 경기 페이지가 실제로 만들어졌는가. ⚠없는 페이지로 링크하면 404다 */
   hasPage: boolean;
   date: string;
   venue: string | null;
   away: { shortName: string; color: TeamColor; runs: number | null };
   home: { shortName: string; color: TeamColor; runs: number | null };
-  /** 이긴 쪽. 무승부는 null */
-  winner: "away" | "home" | null;
-  /** 「第3戦」처럼 몇 번째 경기인가 */
+  /**
+   * 이긴 쪽.
+   * ⚠**「무승부」와 「득점을 못 읽음」을 같은 값으로 접지 않는다**(M11).
+   * 접으면 결측 경기가 「— : — 引き分け」로 나온다 — 있지도 않은 무승부를 만든다.
+   */
+  winner: "away" | "home" | "tie" | null;
+  /**
+   * 「第3戦」의 N. ⚠**우리가 세지 않는다** — npb.jp 슬러그에서 파싱해 저장한 `game.game_no`다.
+   * 우리가 세면 4개의 독립 시리즈가 한 줄로 이어져 최대 6경기짜리 파이널에 「第13戦」이 붙는다.
+   */
   gameNo: number;
+  /** 「CS ファーストステージ」 등. 없으면 null */
+  series: string | null;
 }
 
 /** 포스트시즌 한 선수의 성적 한 줄. ⚠**분모를 들고 다닌다**(M2) */
@@ -54,8 +70,8 @@ export interface PostBatter {
   rbi: number;
   bb: number;
   so: number;
-  /** 타율. 타수가 0이면 null — 「.000」이 아니다(M11) */
-  avg: number | null;
+  /** 타율. ⚠**값과 분모를 한 덩어리로 든다**(M2) — 타수 0이면 value 가 null 이다(M11) */
+  avg: Rate;
 }
 
 export interface PostPitcher {
@@ -75,8 +91,8 @@ export interface PostPitcher {
   w: number;
   l: number;
   sv: number;
-  /** 방어율. 아웃이 0이면 null */
-  era: number | null;
+  /** 방어율. 분모는 아웃 카운트다 */
+  era: Rate;
 }
 
 /** 한 대회분 */
@@ -109,6 +125,25 @@ export interface PostseasonBrief {
   line: string;
 }
 
+/**
+ * 스테이지별로 나눈다.
+ *
+ * ⚠**클라이맥스시리즈는 하나의 시리즈가 아니다** — セ/パ × ファースト/ファイナル이다.
+ * 한 줄로 이으면 「第N戦」이 어느 시리즈의 N인지 알 수 없게 된다.
+ * ⚠**순서는 나온 순서 그대로** — 날짜 순으로 정렬돼 들어오므로 스테이지도 시간 순이 된다.
+ */
+function stageGroups(games: readonly PostGame[]): [string, PostGame[]][] {
+  const out: [string, PostGame[]][] = [];
+  for (const g of games) {
+    const label = g.series ?? "";
+    const last = out.at(-1);
+    if (last !== undefined && last[0] === label) last[1].push(g);
+    else out.push([label, [g]]);
+  }
+  // 라벨이 하나뿐이면 제목을 붙이지 않는다 — 나눌 것이 없는데 나눈 척하지 않는다
+  return out.length <= 1 ? [["", games.slice()]] : out;
+}
+
 function score(side: PostGame["away"], won: boolean): RawHtml {
   return html`<div class="gside${won ? " w" : ""}" style="--chip:${side.color.base};--chip-ink:${side.color.ink}">
   <span class="gt"><i></i>${side.shortName}</span>
@@ -122,7 +157,7 @@ function gameCard(g: PostGame, base: string): RawHtml {
     ${score(g.away, g.winner === "away")}
     ${score(g.home, g.winner === "home")}
   </div>
-  <p class="gnone">${g.venue ?? ""}${g.winner === null ? "　引き分け" : ""}</p>`;
+  <p class="gnone">${g.venue ?? ""}${g.winner === "tie" ? "　引き分け" : ""}</p>`;
   // ⚠상세 페이지가 없으면 카드를 누를 수 있게 만들지 않는다 — 눌러도 안 가는 카드는 결함이다
   return g.hasPage
     ? html`<article class="gcard tapcard">${body}
@@ -145,7 +180,7 @@ function batterTable(rows: PostBatter[], base: string): RawHtml {
       <td class="l tm"><i></i>${r.shortName}</td>
       <td>${r.games}</td><td class="b">${r.pa}</td><td>${r.ab}</td><td>${r.h}</td>
       <td>${r.hr}</td><td>${r.rbi}</td><td>${r.bb}</td><td>${r.so}</td>
-      <td class="wd">${r.avg === null ? "—" : avg3(r.avg)}<span class="den">${r.ab}打数</span></td>
+      <td class="wd">${valueWithDen(r.avg, "打数", 3)}</td>
     </tr>`,
     )}</tbody>
   </table>`);
@@ -166,7 +201,7 @@ function pitcherTable(rows: PostPitcher[], base: string): RawHtml {
       <td>${r.games}</td><td class="b">${innings(r.outs)}</td>
       <td>${r.w}</td><td>${r.l}</td><td>${r.sv}</td>
       <td>${r.h}</td><td>${r.hr}</td><td>${r.bb}</td><td>${r.so}</td><td>${r.er}</td>
-      <td class="wd">${r.era === null ? "—" : dec2(r.era)}<span class="den">${innings(r.outs)}回</span></td>
+      <td class="wd">${dec2(r.era.value)}<span class="den">${innings(r.era.denominator)}回</span></td>
     </tr>`,
     )}</tbody>
   </table>`);
@@ -194,7 +229,10 @@ ${d.competitions.length === 0
       (c) => html`<section class="block" id="pc-${c.id}">
   <h4>${c.name}<span class="qt">${c.games.length}試合</span></h4>
   ${note(c.detail)}
-  <div class="gcards">${c.games.map((g) => gameCard(g, base))}</div>
+  ${stageGroups(c.games).map(
+    ([label, games]) => html`${label === "" ? raw("") : html`<h5 class="standname">${label}</h5>`}
+  <div class="gcards">${games.map((g) => gameCard(g, base))}</div>`,
+  )}
 
   ${c.batters.length === 0 && c.pitchers.length === 0
     ? note(
@@ -228,7 +266,7 @@ ${d.competitions.length === 0
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
-    hasPostseason: ctx.hasPostseason === true,
+    hasPostseason: ctx.hasPostseason,
     nav: "postseason",
     body,
   });

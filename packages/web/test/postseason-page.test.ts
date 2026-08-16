@@ -20,10 +20,12 @@ function cs(over: Partial<PostCompetition> = {}): PostCompetition {
     games: [
       {
         gameId: "2025-1011-t-db-01",
+        rawGameId: "2025/1011/t-db-01",
         hasPage: true,
         date: "2025-10-11",
         venue: "甲子園",
         gameNo: 1,
+        series: "CS ファイナルステージ",
         away: { shortName: "DeNA", color: colorOf("db"), runs: 2 },
         home: { shortName: "阪神", color: colorOf("t"), runs: 5 },
         winner: "home",
@@ -32,18 +34,20 @@ function cs(over: Partial<PostCompetition> = {}): PostCompetition {
     batters: [
       {
         playerId: "B1", name: "佐藤", teamCode: "t", shortName: "阪神", color: colorOf("t"),
-        games: 5, pa: 21, ab: 18, h: 6, hr: 2, rbi: 5, bb: 3, so: 4, avg: 6 / 18,
+        games: 5, pa: 21, ab: 18, h: 6, hr: 2, rbi: 5, bb: 3, so: 4,
+        avg: { value: 6 / 18, denominator: 18 },
       },
       {
         playerId: "B2", name: "代打", teamCode: "t", shortName: "阪神", color: colorOf("t"),
-        games: 2, pa: 2, ab: 0, h: 0, hr: 0, rbi: 0, bb: 2, so: 0, avg: null,
+        games: 2, pa: 2, ab: 0, h: 0, hr: 0, rbi: 0, bb: 2, so: 0,
+        avg: { value: null, denominator: 0 },
       },
     ],
     pitchers: [
       {
         playerId: "P1", name: "村上", teamCode: "t", shortName: "阪神", color: colorOf("t"),
         games: 2, outs: 39, h: 8, hr: 0, bb: 3, so: 14, er: 2, w: 2, l: 0, sv: 0,
-        era: (2 * 27) / 39,
+        era: { value: (2 * 27) / 39, denominator: 39 },
       },
     ],
     ...over,
@@ -59,7 +63,8 @@ test("대회마다 따로 낸다 — 경기·타자·투수가 그 대회 안에
   assert.match(out, /id="pc-climaxSeries"/);
   assert.match(out, /クライマックスシリーズ/);
   assert.match(out, /第1戦/);
-  assert.match(out, /data-n?|佐藤/);
+  // ⚠앞서 여기 있던 정규식은 교대(|) 때문에 佐藤을 한 번도 검사하지 않았다 — 항상 통과였다
+  assert.ok(out.includes("佐藤"), "타자표가 없다");
   assert.ok(out.includes("村上"), "투수표가 없다");
 });
 
@@ -129,7 +134,7 @@ test("올스타는 포스트시즌이 아니라고 말하고, 선수표가 없�
           detail: "⚠**これはポストシーズンではありません** — シーズン中の親善試合です。",
           games: [
             {
-              gameId: "x", hasPage: false, date: "2025-07-23", venue: "京セラD大阪", gameNo: 1,
+              gameId: "x", rawGameId: "x", hasPage: false, date: "2025-07-23", venue: "京セラD大阪", gameNo: 1, series: null,
               away: { shortName: "セ・リーグ", color: colorOf("t"), runs: 1 },
               home: { shortName: "パ・リーグ", color: colorOf("h"), runs: 5 },
               winner: "home",
@@ -172,4 +177,40 @@ test("올스타뿐인 시즌은 「ポストシーズン」이라고 부르지 �
 test("기록이 없으면 그렇다고 말한다 — 빈 화면은 고장으로 보인다(M12)", () => {
   const out = renderPostseasonPage(data({ competitions: [] }), context());
   assert.match(out, /ポストシーズンはまだ記録していません/);
+});
+
+/**
+ * ⚠**클라이맥스시리즈는 하나의 시리즈가 아니다** — セ/パ × ファースト/ファイナル로 넷이다.
+ * 한 줄로 이어 놓으면 「第1戦」이 네 번 나오고 어느 것이 어느 시리즈인지 화면에서 사라진다.
+ */
+test("스테이지가 둘 이상이면 제목으로 나눈다", () => {
+  const g = cs().games[0]!;
+  const out = renderPostseasonPage(
+    data({
+      competitions: [
+        cs({
+          games: [
+            { ...g, gameId: "a1", gameNo: 1, series: "CS ファーストステージ" },
+            { ...g, gameId: "a2", gameNo: 2, series: "CS ファーストステージ" },
+            { ...g, gameId: "b1", gameNo: 1, series: "CS ファイナルステージ" },
+          ],
+        }),
+      ],
+    }),
+    context(),
+  );
+  assert.ok(out.includes("CS ファーストステージ"), "스테이지 제목이 없다");
+  assert.ok(out.includes("CS ファイナルステージ"), "스테이지 제목이 없다");
+  // 「第1戦」 제목이 두 번 나오는 것이 정상이다 — 서로 다른 시리즈의 1차전이기 때문.
+  // ⚠제목만 센다. 링크의 숨김 텍스트에도 같은 문자열이 들어가 전체를 세면 배로 잡힌다
+  assert.equal((out.match(/class="gvenue">第1戦/g) ?? []).length, 2);
+  assert.ok(
+    out.indexOf("CS ファーストステージ") < out.indexOf("CS ファイナルステージ"),
+    "스테이지 순서가 뒤집혔다",
+  );
+});
+
+test("스테이지가 하나뿐이면 제목을 붙이지 않는다 — 나눌 것이 없는데 나눈 척하지 않는다", () => {
+  const out = renderPostseasonPage(data(), context());
+  assert.ok(!out.includes(`class="standname">CS ファイナルステージ`), "나눌 것이 없는데 제목을 냈다");
 });

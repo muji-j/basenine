@@ -59,14 +59,16 @@ async function withSite(fn: (site: ReturnType<typeof loadSite>) => void): Promis
     for (const [id, name] of [
       [MOVER, "移籍太郎"], ["CL_BAT", "セ打者"], ["PL_BAT", "パ打者"],
       ["CL_PIT", "セ投手"], ["PL_PIT", "パ投手"],
+      // ⚠**투수도 이적한다.** 타자만으로는 투수 쪽 경계가 검사되지 않는다
+      ["MOVER_P", "移籍投手"],
     ] as const) {
       upsertPlayer(db, id, name, NOW);
     }
     // 파 리그(西武 l) — 4월. 여기서 더 많이 뛴다
-    play(db, "2026-04-01", "l", "m", [{ id: MOVER, pa: 5, h: 2 }, { id: "PL_BAT", pa: 4, h: 1 }], "PL_PIT");
+    play(db, "2026-04-01", "l", "m", [{ id: MOVER, pa: 5, h: 2 }, { id: "PL_BAT", pa: 4, h: 1 }], "MOVER_P");
     play(db, "2026-04-02", "l", "m", [{ id: MOVER, pa: 5, h: 1 }, { id: "PL_BAT", pa: 4, h: 2 }], "PL_PIT");
     // 세 리그(阪神 t) — 7월. **가장 최근에 뛴 곳이 여기다**
-    play(db, "2026-07-01", "t", "g", [{ id: MOVER, pa: 3, h: 3 }, { id: "CL_BAT", pa: 4, h: 1 }], "CL_PIT");
+    play(db, "2026-07-01", "t", "g", [{ id: MOVER, pa: 3, h: 3 }, { id: "CL_BAT", pa: 4, h: 1 }], "MOVER_P");
     fn(loadSite(db, { season: 2026, builtOn: "2026-08-16" }));
   } finally {
     db.close();
@@ -229,6 +231,30 @@ async function withPostseason(fn: (site: ReturnType<typeof loadSite>) => void): 
     // ⚠**대회가 둘 이상이어야 「합쳐 집계」가 드러난다.** 하나뿐이면 합쳐도 같은 수가 나온다
     play("ns1", "2026-10-25", "nipponSeries", 1);
     /**
+     * ⚠**스테이지와 경기 번호는 데이터에 있는 것을 쓴다.** 우리가 세면 4개의 독립 시리즈가
+     * 한 줄로 이어져 최대 6경기짜리 파이널에 「第13戦」이 붙는다(2026-08-16 실측).
+     */
+    upsertGame(db, {
+      gameId: "cs2", season: 2026, gameDate: "2026-10-12", awayCode: "g", homeCode: "t",
+      gameNo: 2, status: "played", notPlayedReason: null, competition: "climaxSeries",
+      series: "CS ファイナルステージ", sourceUrl: "https://npb.jp/x", fetchedAt: NOW,
+      awayRuns: 0, homeRuns: 3,
+    });
+    // ⚠**득점을 못 읽은 경기.** 무승부와 같은 값으로 접으면 「— : — 引き分け」가 나온다(M11)
+    upsertGame(db, {
+      gameId: "cs3", season: 2026, gameDate: "2026-10-13", awayCode: "g", homeCode: "t",
+      gameNo: 3, status: "played", notPlayedReason: null, competition: "climaxSeries",
+      series: "CS ファイナルステージ", sourceUrl: "https://npb.jp/x", fetchedAt: NOW,
+      awayRuns: null, homeRuns: null,
+    });
+    // ⚠**진짜 무승부.** 결측(cs3)과 같은 값으로 접히지 않는지는 둘이 다 있어야 드러난다
+    upsertGame(db, {
+      gameId: "cs4", season: 2026, gameDate: "2026-10-14", awayCode: "g", homeCode: "t",
+      gameNo: 4, status: "played", notPlayedReason: null, competition: "climaxSeries",
+      series: "CS ファイナルステージ", sourceUrl: "https://npb.jp/x", fetchedAt: NOW,
+      awayRuns: 2, homeRuns: 2,
+    });
+    /**
      * ⚠**올스타는 팀 코드가 구단이 아니다**(`cl`/`pl` = 리그 선발).
      * 구단 마스터에 없으므로 집계하면 예외가 난다 — 그 예외는 M7의 안전장치이고,
      * 2025년 CS·일본시리즈 18경기가 정규시즌에 섞여 있던 것을 잡아낸 바로 그 장치다.
@@ -269,7 +295,7 @@ test("포스트시즌 성적은 그 화면에 따로 있다 — 배제하지 않
       "대회가 통째로 사라졌거나 순서가 뒤집혔다",
     );
     const cs = site.postseason.competitions[0]!;
-    assert.equal(cs.games.length, 1);
+    assert.equal(cs.games.length, 4);
     const hero = cs.batters.find((b) => b.playerId === "HERO")!;
     assert.equal(hero.pa, 4, "CS 몫이 아니라 다른 수가 실렸다");
     assert.equal(hero.h, 3);
@@ -334,8 +360,226 @@ test("팀 페이지도 정규시즌만 센다 — 12구단분이 나온다", asy
     const t = site.teams.find((x) => x.teamCode === "t")!;
     assert.equal(t.games, 2, "팀 페이지에 포스트시즌이 섞였다");
     assert.equal(t.hasPostseason, true, "포스트시즌이 있는데 없다고 했다");
-    // 그 팀 선수만 실린다
-    assert.ok(t.batters.every((b) => b.playerId !== "NOBODY"));
-    assert.ok(t.batters.some((b) => b.playerId === "HERO"));
+    // ⚠**그 팀에서 낸 것만 실린다.** 「없는 선수가 없다」는 아무것도 재지 않는다 —
+    // 실제로 있는 선수가 **그 팀 몫으로** 실렸는지를 본다
+    const hero = t.batters.find((b) => b.playerId === "HERO")!;
+    assert.notEqual(hero, undefined, "그 팀 선수가 목록에 없다");
+    assert.equal(hero.pa, 8, "포스트시즌이나 남의 팀 몫이 섞였다");
+    assert.equal(hero.games, 2);
   });
 });
+
+/**
+ * ⚠**球団ページ는 「이 팀에서 낸 것」만 싣는다.**
+ * 합계를 쓰면 이적 선수의 옛 팀 몫이 새 팀 표에 실리고, 같은 화면 머리의 팀 打率 분모
+ * (그 팀만의 打数)와 어긋난다 — 실측(2026): 山本가 ソフトバンク 표에 202타석으로 실리고
+ * **DeNA 표에는 아예 없었다.** 24장 중 8장에서 머리와 표 합계가 어긋나 있었다.
+ */
+test("⚠球団ページ는 그 팀에서 낸 것만 싣는다 — 이적 선수가 양쪽에 각자의 몫으로 실린다", async () => {
+  await withSite((site) => {
+    const cl = site.teams.find((t) => t.teamCode === "t")!; // 세 리그 · 나중
+    const pl = site.teams.find((t) => t.teamCode === "l")!; // 파 리그 · 먼저
+
+    const a = cl.batters.find((b) => b.playerId === MOVER)!;
+    const b = pl.batters.find((x) => x.playerId === MOVER)!;
+    assert.notEqual(a, undefined, "옮겨 간 팀에 없다");
+    assert.notEqual(b, undefined, "옛 팀에서 사라졌다 — 그 팀에서 낸 성적은 그 팀 것이다");
+    assert.equal(a.pa, 3, "옮겨 간 팀 표에 합계가 실렸다");
+    assert.equal(b.pa, 10, "옛 팀 표에 합계가 실렸다");
+    // 합계는 선수 페이지의 몫이다
+    assert.equal(site.players.find((p) => p.playerId === MOVER)!.batting!.line.pa, 13);
+  });
+});
+
+/**
+ * ⚠**머리의 팀 打数와 표의 打数 합계가 맞아야 한다.**
+ * 한 화면 안에서 분모가 두 종류면, 어느 쪽을 믿어야 하는지 화면이 답할 수 없다.
+ */
+test("⚠머리의 팀 打数와 타자표 打数 합계가 맞는다", async () => {
+  await withSite((site) => {
+    for (const t of site.teams) {
+      const sum = t.batters.reduce((n, b) => n + b.ab, 0);
+      assert.equal(sum, t.avg.denominator, `${t.shortName}: 머리 ${t.avg.denominator} · 표합 ${sum}`);
+    }
+  });
+});
+
+/**
+ * ⚠**자격 판정은 소속 리그 몫이다** — 팀 몫이 아니다.
+ * 타이틀은 리그에서 겨루고, 같은 리그 안에서 이적한 선수의 규정타석은 두 팀분을 합쳐 센다.
+ */
+test("자격 판정은 팀이 아니라 소속 리그 몫으로 한다", async () => {
+  await withSite((site) => {
+    const t = site.teams.find((x) => x.teamCode === "t")!;
+    const mover = t.batters.find((b) => b.playerId === MOVER)!;
+    // 세 리그 몫은 3타석 — 규정에 못 미친다. 팀 표의 3타석과 우연히 같지만 규칙이 다르다
+    assert.equal(mover.qualified, false);
+  });
+});
+
+test("⚠球団ページ의 투수도 그 팀에서 낸 것만 싣는다", async () => {
+  await withSite((site) => {
+    // ⚠`play()`는 투수를 **원정 팀**에 넣는다 — 그래서 이 투수의 소속은 m(파) → g(세)다
+    const cl = site.teams.find((t) => t.teamCode === "g")!;
+    const pl = site.teams.find((t) => t.teamCode === "m")!;
+    const a = cl.pitchers.find((x) => x.playerId === "MOVER_P")!;
+    const b = pl.pitchers.find((x) => x.playerId === "MOVER_P")!;
+    assert.notEqual(a, undefined, "옮겨 간 팀에 투수가 없다");
+    assert.notEqual(b, undefined, "옛 팀에서 투수가 사라졌다");
+    assert.equal(a.games, 1, "옮겨 간 팀 표에 합계가 실렸다");
+    assert.equal(b.games, 1, "옛 팀 표에 합계가 실렸다");
+    // 합계(2등판)는 선수 페이지의 몫이다
+    assert.equal(site.players.find((p) => p.playerId === "MOVER_P")!.pitching!.games, 2);
+  });
+});
+
+/**
+ * ⚠**「第N戦」을 우리가 세지 않는다.** 클라이맥스시리즈는 セ/パ × ファースト/ファイナル =
+ * 4개의 독립 시리즈라, 대회 전체에 번호를 이으면 최대 6경기짜리 파이널에 「第13戦」이 붙는다.
+ * 정답은 처음부터 데이터에 있었다 — `game.game_no`와 `game.series`다.
+ */
+test("⚠경기 번호와 스테이지는 데이터에서 온다 — 우리가 세지 않는다", async () => {
+  await withPostseason((site) => {
+    const cs = site.postseason.competitions.find((c) => c.id === "climaxSeries")!;
+    assert.deepEqual(cs.games.map((g) => g.gameNo), [1, 2, 3, 4], "번호를 우리가 셌다");
+    assert.deepEqual(
+      cs.games.map((g) => g.series),
+      [null, "CS ファイナルステージ", "CS ファイナルステージ", "CS ファイナルステージ"],
+      "스테이지 표기를 싣지 않았다",
+    );
+  });
+});
+
+/**
+ * ⚠**무승부와 「득점을 못 읽음」은 다르다**(M11).
+ * 접으면 결측 경기가 「— : — 引き分け」로 나온다 — 있지도 않은 무승부를 만든다.
+ */
+test("⚠득점을 못 읽은 경기를 무승부로 만들지 않는다(M11)", async () => {
+  await withPostseason((site) => {
+    const cs = site.postseason.competitions.find((c) => c.id === "climaxSeries")!;
+    const missing = cs.games.find((g) => g.gameNo === 3)!;
+    assert.equal(missing.away.runs, null);
+    assert.equal(missing.winner, null, "결측을 무승부로 접었다");
+    // 진짜 결과가 있는 경기는 승자가 잡힌다 — 무승부는 무승부로, 결측은 결측으로
+    assert.equal(cs.games.find((g) => g.gameNo === 2)!.winner, "home");
+    assert.equal(cs.games.find((g) => g.gameNo === 4)!.winner, "tie", "무승부를 결측으로 접었다");
+  });
+});
+
+/**
+ * ⚠**대회 표기는 경기 페이지에도 실린다**(M4 — 어느 판의 무엇인지 답할 수 있어야 한다).
+ * 포스트시즌 화면만 고치고 여기를 잊으면, 같은 경기가 화면마다 다른 것을 말하게 된다.
+ */
+test("경기 페이지도 대회 표기를 싣는다", async () => {
+  await withPostseason((site) => {
+    const g = site.games.find((x) => x.gameId === "cs2")!;
+    assert.notEqual(g, undefined, "경기 페이지가 만들어지지 않았다");
+    assert.equal(g.series, "CS ファイナルステージ", "경기 페이지에서 대회 표기가 사라졌다");
+  });
+});
+
+/**
+ * ⚠**신선도는 대회를 가리지 않는다.** 정규시즌만 보면 10월에 사이트 전체가
+ * 「취득 실패」라고 거짓말하고, 빌드가 매일 실패로 끝난다.
+ */
+test("⚠신선도가 보는 최신 경기일은 포스트시즌을 포함한다", async () => {
+  await withPostseason((site) => {
+    assert.equal(site.asOf, "2026-04-02", "표시용 기준일은 정규시즌 그대로여야 한다");
+    assert.equal(site.latestAnyGameDate, "2026-10-25", "포스트시즌을 보지 않는다");
+  });
+});
+
+test("선수 페이지에 포스트시즌 요약이 실린다 — 가장 필요한 화면이다", async () => {
+  await withPostseason((site) => {
+    const p = site.players.find((x) => x.playerId === "HERO")!;
+    assert.ok(p.postseason.length >= 2, "포스트시즌 요약이 없다");
+    assert.deepEqual(
+      p.postseason.map((b) => b.competitionId).sort(),
+      ["climaxSeries", "nipponSeries"],
+      "대회별로 나뉘지 않았다",
+    );
+    // ⚠올스타는 넣지 않는다 — 소속이 구단이 아니라 선수 성적을 집계하지 않는다
+    assert.ok(!p.postseason.some((b) => b.competitionId === "allStar"));
+  });
+});
+
+/**
+ * ⚠**모르는 대회를 조용히 흘리지 않는다**(M7).
+ * 이 화면이 고치고 있는 결함이 정확히 그 모양이었다 — 데이터는 있는데 어느 목록에도 없어서
+ * 사이트 전체에서 조용히 사라졌다. 대회가 하나 늘면 같은 일이 반복된다.
+ */
+test("⚠모르는 대회가 데이터에 있으면 빌드가 멈춘다 — 조용히 사라지는 것보다 낫다", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "bb-unknown-"));
+  const db = openDb(join(dir, "t.sqlite"), NOW);
+  try {
+    upsertPlayer(db, "X", "選手", NOW);
+    upsertGame(db, {
+      gameId: "op1", season: 2026, gameDate: "2026-03-01", awayCode: "g", homeCode: "t", gameNo: 1,
+      status: "played", notPlayedReason: null, competition: "openSeason",
+      sourceUrl: "https://npb.jp/x", fetchedAt: NOW, awayRuns: 1, homeRuns: 2,
+    });
+    assert.throws(
+      () => loadSite(db, { season: 2026, builtOn: "2026-08-16" }),
+      /모르는 대회/,
+      "모르는 대회를 조용히 흘렸다",
+    );
+  } finally {
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * ⚠**「기록이 있다」와 「포스트시즌이 있다」는 다른 말이다.**
+ * 2026년은 8월 시점에 올스타 4경기뿐이다. 그런데 「기록이 하나라도 있으면」으로 판정하면
+ * 12개 구단 페이지 전부가 「ポストシーズンは別の画面にあります」라고 쓴다 — 없는 것을 있다고 안내한다.
+ */
+test("⚠올스타뿐인 시즌은 구단 페이지가 포스트시즌을 안내하지 않는다", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "bb-as-"));
+  const db = openDb(join(dir, "t.sqlite"), NOW);
+  try {
+    upsertPlayer(db, "HERO", "英雄", NOW);
+    upsertPlayer(db, "ARM", "剛腕", NOW);
+    upsertGame(db, {
+      gameId: "r1", season: 2026, gameDate: "2026-04-01", awayCode: "g", homeCode: "t", gameNo: 1,
+      status: "played", notPlayedReason: null, competition: "regular",
+      sourceUrl: "https://npb.jp/x", fetchedAt: NOW, awayRuns: 1, homeRuns: 2,
+    });
+    upsertBatting(db, {
+      gameId: "r1", playerId: "HERO", side: "home", battingOrder: "3", position: "(三)",
+      pa: 4, ab: 4, h: 2, d2: 0, d3: 0, hr: 0, bb: 0, ibb: 0, hbp: 0,
+      sf: 0, sh: 0, so: 0, roe: 0, runs: 0, rbi: 2, sb: 0,
+    });
+    // ⚠투수 기록이 없으면 그 리그의 번들 자체가 안 생긴다 — 리그 상수도 없어진다
+    upsertPitching(db, {
+      gameId: "r1", playerId: "ARM", side: "home", decision: "○",
+      outs: 27, bf: 33, pitches: 110, h: 5, hr: 0, bb: 1, hbp: 0, so: 9, runs: 1, er: 1, wp: 0, balk: 0,
+    });
+    upsertGame(db, {
+      gameId: "as1", season: 2026, gameDate: "2026-07-28", awayCode: "cl", homeCode: "pl", gameNo: 1,
+      status: "played", notPlayedReason: null, competition: "allStar",
+      sourceUrl: "https://npb.jp/y", fetchedAt: NOW, awayRuns: 5, homeRuns: 7,
+    });
+    const site = loadSite(db, { season: 2026, builtOn: "2026-08-16" });
+    assert.equal(site.postseason.competitions.length, 1, "올스타 경기 자체는 실려야 한다");
+    assert.ok(
+      site.teams.every((t) => !t.hasPostseason),
+      "올스타뿐인데 구단 페이지가 포스트시즌이 있다고 말한다",
+    );
+  } finally {
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * ⚠**여기서 재지 못한 것을 적어 둔다** — 통과하든 말든 상관없는 시험을 남기면
+ * 「무의미하게 통과하는 시험」이 하나 늘 뿐이라 넣지 않았다(2026-08-16 뮤테이션 검사).
+ *
+ * - **타율 식을 인라인으로 새로 쓰는 변형**은 `battingAverage`와 **수치가 같다.**
+ *   M1(계산식 1벌)은 값이 아니라 구조의 규칙이라 값으로는 잡히지 않는다. 잡는 것은 리뷰다.
+ * - **모르는 비구단 코드의 예외**는 `NON_TEAM_CODES`와 `SQUAD`가 둘 다 정확히 `cl`/`pl`이라
+ *   현재 코드에서 발화할 수 없다. 발화하는 것은 **새 코드가 생긴 날**이고, 그때를 위한 장치다.
+ * - **동점 시 `playerId` 정렬**은 SQLite의 GROUP BY 출력 순서가 이미 안정적이라 가려진다.
+ *   가리는 것이 사라지는 날(인덱스·플랜 변경)을 대비한 것이므로 남긴다.
+ */

@@ -391,7 +391,7 @@ export function renderComparePage(d: ComparePageData, ctx: RenderContext): strin
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
-    hasPostseason: ctx.hasPostseason === true,
+    hasPostseason: ctx.hasPostseason,
     nav: "compare",
     body,
   });
