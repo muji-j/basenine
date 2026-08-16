@@ -33,7 +33,7 @@ try {
 const db = openDb(dbPath, nowIso);
 const stmt = db.raw.prepare(
   `UPDATE player SET position = ?, throws = ?, bats = ?, birth_date = ?, physique = ?,
-     profile_fetched_at = ?
+     kana = ?, uniform_number = ?, profile_fetched_at = ?
    WHERE player_id = ?`,
 );
 
@@ -65,6 +65,8 @@ db.transaction(() => {
       profile.bats,
       profile.birthDate,
       profile.physique,
+      profile.kana,
+      profile.uniformNumber,
       nowIso,
       playerId,
     );
@@ -83,6 +85,11 @@ const withHand = (
 
 console.log(`선수 페이지 ${files.length}장 · 갱신 ${updated} · DB에 없는 선수 ${missing} · 파싱 실패 ${failed}`);
 console.log(`투타 확인 ${withHand} / 전체 ${total}명 (미상 ${total - withHand}명)`);
+// ⚠**분모를 같이 낸다.** 「카나 있음 737」만 내면 121명이 빠진 것인지 그런 선수가 없는 것인지 모른다.
+// ⚠등번호 없음은 **결손이 아니라 「지금 등록이 없다」**(M11) — 은퇴·이적 선수다
+const withKana = (db.raw.prepare("SELECT COUNT(*) AS n FROM player WHERE kana IS NOT NULL").get() as { n: number }).n;
+const withNo = (db.raw.prepare("SELECT COUNT(*) AS n FROM player WHERE uniform_number IS NOT NULL").get() as { n: number }).n;
+console.log(`읽는 법 ${withKana} / 전체 ${total}명 · 등번호 ${withNo} / 전체 ${total}명(없음 = 현役登録なし)`);
 if (unknownPlayers.length > 0) {
   console.log(`⚠투타를 읽지 못한 선수: ${unknownPlayers.slice(0, 10).join(", ")}${unknownPlayers.length > 10 ? " …" : ""}`);
 }

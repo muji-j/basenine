@@ -722,3 +722,18 @@ test("내야타구만 충분해도 그 줄은 그린다", () => {
   );
   assert.ok(out.includes("内野安打率"), "내야타구가 충분한데 줄이 사라졌다");
 });
+
+/**
+ * ⚠**등번호 없음은 「0번」이 아니라 「지금 등록이 없다」**(M11).
+ * 실측 980명 중 198명이 여기 해당한다(은퇴·이적 + 프로필 미취득).
+ * 「―」로 채우면 그 198장이 전부 같은 기호를 달고, 결손처럼 읽힌다.
+ */
+test("등번호가 있으면 표제에 내고, 없으면 자리도 만들지 않는다", () => {
+  const withNo = renderPlayerPage(playerPage({ uniformNumber: "18" }), context());
+  assert.match(withNo, /背番号 18/, "등번호가 표제에 안 나온다");
+
+  const noNo = renderPlayerPage(playerPage({ uniformNumber: null }), context());
+  assert.doesNotMatch(noNo, /背番号/, "등번호가 없는데 항목이 그려졌다");
+  // 나머지 소개줄은 그대로 남아야 한다 — 등번호 하나 때문에 줄이 사라지면 안 된다
+  assert.match(noNo, /投手|野手/, "등번호가 없다고 소개줄까지 잃었다");
+});

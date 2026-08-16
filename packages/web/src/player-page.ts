@@ -322,6 +322,11 @@ export interface PlayerPageData {
   bats: string | null;
   birthDate: string | null;
   physique: string | null;
+  /**
+   * 등번호. ⚠**null은 「0번」이 아니라 「지금 등록이 없다」**(M11) — 은퇴·이적 선수다.
+   * 그래서 없으면 「―」로 채우지 않고 **자리 자체를 만들지 않는다**.
+   */
+  uniformNumber: string | null;
   /** 어느 쪽 페이지로 만들 것인가. 투수도 타석에 서지만 주역은 하나다 */
   role: "batter" | "pitcher";
   batting: BattingBlockData | null;
@@ -479,6 +484,9 @@ function idLine(d: PlayerPageData): RawHtml {
 
   const bio = [
     d.teamName,
+    // ⚠**등번호는 팀명 옆이다.** 야구에서 「구단 + 배번」이 한 덩어리로 읽히고,
+    // 없는 사람에게는 이 항목이 아예 빠진다(M11) — 「―」를 넣으면 은퇴가 결손처럼 보인다
+    d.uniformNumber === null ? null : `背番号 ${d.uniformNumber}`,
     d.position ?? "ポジション不明",
     throwsBats(d.throws, d.bats),
     d.birthDate === null ? null : `${d.birthDate.slice(0, 4)}年生`,

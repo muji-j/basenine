@@ -85,6 +85,10 @@ a{color:inherit}
 .qhits li a:hover,.qhits li[aria-selected="true"] a{background:var(--panel-2)}
 .qhits li a{flex-wrap:wrap}
 .qhits .ht{margin-left:auto;font-size:10.5px;color:var(--tx-3);white-space:nowrap}
+/* 등번호. **고정폭 자리를 준다** — 한 자리와 세 자리가 섞이면 이름의 시작선이 들쭉날쭉해진다.
+   ⚠없는 사람에게는 요소 자체가 없으므로 이름이 왼쪽으로 붙는다. 그게 「등록 없음」의 표시다 */
+.qhits .hu{min-width:2.1em;text-align:right;font-size:11px;color:var(--tx-3);
+  font-variant-numeric:tabular-nums}
 /* 성적은 둘째 줄에. **분모까지 붙어 있다**(M2) — 이 줄의 존재 이유가 「이 사람이 맞나」의 판단이다 */
 .qhits .hs{flex-basis:100%;font-size:10.5px;color:var(--tx-2);font-variant-numeric:tabular-nums}
 .qhits .none{padding:7px 11px;font-size:12px;color:var(--tx-3)}
@@ -1505,6 +1509,27 @@ if(mtable){
   }
 }
 
+/* ── 검색어 접기 ──
+   ⚠**이 함수는 한 벌뿐이다**(M1). 색인의 읽는 법과 질의어를 **같은 규칙으로** 접어야
+   맞는데, 빌드 쪽에도 한 벌 두면 어느 날 한쪽만 고쳐지고 검색이 조용히 안 맞는다.
+   그래서 색인은 원문을 싣고 접기는 여기서만 한다.
+
+   1) 소문자로 — 외국인 선수의 라틴 표기가 (LUKE VOIT) 처럼 대문자다
+   2) 카타카나 → 히라가나 — IME 로 「ぼいと」까지 친 상태에서도 「ボイト」가 잡혀야 한다.
+      실측으로 읽는 법 858명 중 **121명이 카타카나**(외국인 선수)라, 접지 않으면
+      그 121명은 히라가나 입력으로 영영 안 나온다.
+      ⚠장음 기호 U+30FC 는 옮기지 않는다 — 히라가나 표기에서도 그대로 쓴다.
+      범위를 30A1〜30F6 으로 끊는 이유가 그것이다. */
+function fold(s){
+  var out="",i,c;
+  s=String(s).toLowerCase();
+  for(i=0;i<s.length;i++){
+    c=s.charCodeAt(i);
+    out+=(c>=0x30a1&&c<=0x30f6)?String.fromCharCode(c-0x60):s.charAt(i);
+  }
+  return out;
+}
+
 /* ── 선수 색인 ── 한 번 받아서 헤더 검색과 색인 화면이 함께 쓴다 */
 let INDEX=null,indexError=false,fetching=false;
 const waiting=[];
@@ -1515,6 +1540,8 @@ function fetchIndex(){
   if(typeof fetch!=="function"){indexError=true;return}
   fetching=true;
   fetch(BASE+"players.json").then(r=>r.json()).then(j=>{
+    /* 접은 읽는 법을 **한 번만** 만들어 둔다 — 키 입력마다 980행을 접을 이유가 없다 */
+    for(var i=0;i<j.length;i++)if(j[i].k)j[i].kf=fold(j[i].k);
     INDEX=j;fetching=false;waiting.splice(0).forEach(f=>f(j));
   }).catch(()=>{
     indexError=true;fetching=false;waiting.splice(0).forEach(f=>f(null));
@@ -1543,6 +1570,9 @@ function attachPicker(input,list,onPick){
       li.setAttribute("role","option");
       li.setAttribute("aria-selected",String(i===active));
       const a=doc.createElement("a");a.href=BASE+"players/"+p.i+".html";
+      /* 등번호. ⚠**없으면 자리도 만들지 않는다** — 「―」를 넣으면 은퇴 선수 198명 줄이
+         전부 같은 기호로 채워져 시선만 먹는다(M11) */
+      if(p.u){const u=doc.createElement("span");u.className="hu";u.textContent=p.u;a.appendChild(u)}
       const n=doc.createElement("span");n.className="hn";n.textContent=p.n;
       const t=doc.createElement("span");t.className="ht";t.textContent=p.t;
       a.appendChild(n);a.appendChild(t);
@@ -1563,7 +1593,11 @@ function attachPicker(input,list,onPick){
     withIndex(idx=>{
       if(input.value.trim()!==term)return;
       if(!idx){draw([],true);return}
-      rows=idx.filter(p=>p.n.indexOf(term)>=0||p.t.indexOf(term)>=0).slice(0,20);
+      /* ⚠**등번호는 완전일치다.** 부분일치로 두면 「1」이 1·10〜19·100번대를 전부 끌고 와
+         이름 검색 결과를 밀어낸다. 「34」로 34번을 찾는 것이 이 기능의 전부다 */
+      var q=fold(term);
+      rows=idx.filter(p=>p.n.indexOf(term)>=0||p.t.indexOf(term)>=0
+        ||(p.kf&&p.kf.indexOf(q)>=0)||p.u===term).slice(0,20);
       active=-1;draw(rows,false);
     });
   };

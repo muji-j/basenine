@@ -644,13 +644,18 @@ interface ProfileRow {
   bats: string | null;
   birthDate: string | null;
   physique: string | null;
+  /** 읽는 법 **원문**. 외국인 선수는 `ルーク・ボイト (LUKE VOIT)` 꼴이다 — 정규화는 검색이 한다 */
+  kana: string | null;
+  /** 등번호. ⚠**null은 「0번」이 아니라 「지금 등록이 없다」**(M11) — 은퇴·이적 선수다 */
+  uniformNumber: string | null;
 }
 
 function loadProfiles(db: Db): Map<string, ProfileRow> {
   const rows = db.raw
     .prepare(
       `SELECT player_id AS playerId, position, throws, bats,
-              birth_date AS birthDate, physique
+              birth_date AS birthDate, physique,
+              kana, uniform_number AS uniformNumber
        FROM player`,
     )
     .all() as unknown as ProfileRow[];
@@ -2526,6 +2531,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       bats: profile?.bats ?? null,
       birthDate: profile?.birthDate ?? null,
       physique: profile?.physique ?? null,
+      uniformNumber: profile?.uniformNumber ?? null,
       role,
       batting: battingData,
       pitching: pitchingData,
@@ -2562,6 +2568,10 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       n: base.displayName,
       t: team.name,
       ...(summary === null ? {} : { s: summary }),
+      // ⚠**없으면 필드를 만들지 않는다**(M11). 빈 문자열을 넣으면 색인이 980행만큼 커지고,
+      // 검색 쪽에서 「읽는 법이 빈 사람」과 「읽는 법을 모르는 사람」이 같아진다
+      ...(profile?.kana == null ? {} : { k: profile.kana }),
+      ...(profile?.uniformNumber == null ? {} : { u: profile.uniformNumber }),
     });
   }
 

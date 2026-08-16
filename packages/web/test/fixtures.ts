@@ -163,6 +163,7 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
     bats: "left",
     birthDate: "1999-03-13",
     physique: "187cm／96kg",
+    uniformNumber: "18",
     role: "batter",
     batting: battingBlock(),
     pitching: null,
