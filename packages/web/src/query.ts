@@ -560,11 +560,18 @@ function pitcherRankings(
   ];
 
   if (role === "starter") {
+    /**
+     * ⚠**첫 지표가 그 화면의 주장이다.** 여기가 「勝利」였다 —
+     * FIP·WHIP·SRP를 자체 산출하는 사이트의 선발 첫 화면이 승수인 것은 자기모순이고,
+     * 승수는 타선과 구원진이 절반을 정한다. **투수 자신을 재는 값**을 먼저 놓는다.
+     * (`common` 의 첫 항목이 방어율이므로 그것이 기본값이 된다.)
+     */
     return [
-      count("w", "勝利", (e) => e.player.decisions.w),
       ...common,
+      count("w", "勝利", (e) => e.player.decisions.w),
       count("l", "敗戦", (e) => e.player.decisions.l),
       count("starts", "先発", (e) => e.player.starts),
+      count("qs", "QS", (e) => e.player.quality.qs),
     ];
   }
   return [
@@ -907,6 +914,9 @@ function rosters(players: readonly PlayerPageData[]): TeamRoster[] {
       mark: positionMark(p.position),
       axes: p.mark.axes,
       sampleText: p.mark.sampleText,
+      // ⚠**검색 드롭다운이 쓰는 것과 같은 문자열이다**(M1). 명부에만 없어서 첫 화면에
+      // 숫자가 한 개도 없었다 — 값은 계속 있었고 실리는 자리가 없었을 뿐이다
+      summary: p.summary,
     };
     if (list === undefined) byTeam.set(p.teamCode, [entry]);
     else list.push(entry);
@@ -2101,6 +2111,28 @@ function addBatted(a: BattedBallData, b: BattedBallData): BattedBallData {
   };
 }
 
+/**
+ * 목록·검색에 쓰는 한 줄 성적.
+ *
+ * ⚠**한 곳에서만 만든다**(M1). 헤더 검색과 선수 명부가 **같은 문자열**을 써야
+ * 「같은 선수인데 두 화면에서 다른 수」가 안 난다.
+ * ⚠**분모를 문자열 안에 넣는다**(M2) — 값만 떼어 쓸 수 없게 한다.
+ */
+function summaryOf(
+  role: "batter" | "pitcher",
+  bat: { avg: Rate } | undefined,
+  pit: { era: Rate } | undefined,
+): string | null {
+  if (role === "pitcher") {
+    return pit === undefined || pit.era.value === null
+      ? null
+      : `防御率 ${dec2(pit.era.value)}（${innings(pit.era.denominator)}回）`;
+  }
+  return bat === undefined || bat.avg.value === null
+    ? null
+    : `打率 ${avg3(bat.avg.value)}（${bat.avg.denominator}打数）`;
+}
+
 export function loadSite(db: Db, o: LoadOptions): SiteData {
   const competition = o.competition ?? "regular";
   const through = o.through ?? "9999-12-31";
@@ -2453,6 +2485,8 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     players.push({
       playerId,
       name: base.displayName,
+      // 명부와 검색이 같은 문자열을 쓴다(M1)
+      summary: summaryOf(role, battingData ?? undefined, pitchingData ?? undefined),
       season: o.season,
       teamCode: base.teamCode,
       teamName: team.name,
@@ -2493,14 +2527,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
      * ⚠**서식은 화면과 같은 함수로 만든다**(M1) — 여기서 손으로 반올림하면 값이 두 벌이 된다.
      * ⚠타자는 타율, 투수는 방어율. 역할 판정은 위에서 이미 한 것을 그대로 쓴다.
      */
-    const summary =
-      role === "pitcher"
-        ? pit === undefined || pit.era.value === null
-          ? null
-          : `防御率 ${dec2(pit.era.value)}（${innings(pit.era.denominator)}回）`
-        : bat === undefined || bat.avg.value === null
-          ? null
-          : `打率 ${avg3(bat.avg.value)}（${bat.avg.denominator}打数）`;
+    const summary = summaryOf(role, bat, pit);
     search.push({
       i: playerId,
       n: base.displayName,

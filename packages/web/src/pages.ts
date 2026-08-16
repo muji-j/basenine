@@ -71,6 +71,14 @@ export interface RosterEntry {
   axes: ProfileAxis[];
   /** 이미 사람이 읽는 형태의 분모(`442打席`) */
   sampleText: string;
+  /**
+   * 한 줄 성적(`打率 .260（104打数）`). 값이 없으면 null.
+   *
+   * ⚠**분모가 문자열 안에 이미 들어 있다**(M2). 값만 떼어 쓰지 마라.
+   * ⚠**여기서 다시 만들지 않는다**(M1) — 헤더 검색이 쓰는 것과 **같은 문자열**이다.
+   *   같은 값을 두 곳에서 만들면 어느 날 한쪽만 고쳐진다.
+   */
+  summary: string | null;
 }
 
 export interface TeamRoster {
@@ -182,6 +190,7 @@ ${d.teams.map(
           ? markLetter(who, p.mark === "" ? "—" : p.mark, 18)
           : markProfile(who, p.axes, p.sampleText, 18)}</span>
         <span class="hn">${p.name}</span><span class="hp">${p.mark}</span>
+        ${p.summary === null ? raw("") : html`<span class="hs">${p.summary}</span>`}
       </a>
     </li>`;
     })}</ul>

@@ -30,6 +30,7 @@ function siteData(over: Partial<SiteData> = {}): SiteData {
               name: p.name,
               mark: "内",
               axes: p.mark.axes,
+              summary: "打率 .317（382打数）",
               sampleText: p.mark.sampleText,
             },
           ],
@@ -201,4 +202,35 @@ test("만든 화면이 전부 시즌 경로 목록에 있다 — 빠진 만큼�
     assert.ok(known.has(p), `${p} 를 만들었는데 시즌 경로 목록에 없다`);
   }
   assert.ok(known.has("teams/t.html"), "팀 화면이 목록에 없다");
+});
+
+
+/**
+ * ⚠**첫 화면 명부 698행에 숫자가 한 개도 없었다.**
+ * 각 행은 마크 + 이름 + 포지션 한 글자뿐이었고, 리그 리더는 문서의 94.1% 지점에 있었다.
+ * 여백 과다가 아니라 **정보 결손**이다 — 값은 계속 있었고 **실리는 자리가 없었을 뿐**이다
+ * (같은 문자열을 헤더 검색 드롭다운이 이미 보여주고 있었다).
+ */
+test("⚠명부의 각 행이 성적을 한 줄 보여준다 — 분모까지 함께(M2)", () => {
+  const out = buildSite(siteData(), SITE, "2026-08-16");
+  const idx = out.files.find((f) => f.path === "index.html");
+  assert.notEqual(idx, undefined, "일람 화면이 없다");
+  assert.ok(idx!.content.includes("打率 .317（382打数）"), "명부에 성적이 없다");
+  // ⚠**분모가 문자열 안에 있다** — 명부의 성적 줄은 하나도 빠짐없이 분모를 동반해야 한다(M2)
+  const rows = [...idx!.content.matchAll(/<span class="hs">([^<]*)<\/span>/g)].map((m) => m[1] ?? "");
+  assert.ok(rows.length > 0, "성적 줄을 못 찾았다 — 이 시험이 공회전한다");
+  const bare = rows.filter((r) => !r.includes("（"));
+  assert.deepEqual(bare, [], `분모 없는 성적 줄이 있다: ${bare.join(" / ")}`);
+});
+
+/** ⚠**성적이 없으면 자리도 만들지 않는다** — 빈 줄은 「0」처럼 읽힌다(M11) */
+test("성적이 없는 선수는 빈 줄을 만들지 않는다", () => {
+  const d = siteData();
+  const teams = d.index.teams.map((t) => ({
+    ...t,
+    players: t.players.map((pl) => ({ ...pl, summary: null })),
+  }));
+  const out = buildSite({ ...d, index: { ...d.index, teams } }, SITE, "2026-08-16");
+  const idx = out.files.find((f) => f.path === "index.html")!;
+  assert.ok(!idx.content.includes(`class="hs"`), "값이 없는데 자리를 만들었다");
 });

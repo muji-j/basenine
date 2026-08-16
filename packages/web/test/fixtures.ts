@@ -135,7 +135,8 @@ export function rankingPanel(over: Partial<RankingPanel> = {}): RankingPanel {
     qualifier: "規定打席 332 に達した選手だけに順位がつきます。",
     rows: Array.from({ length: 10 }, (_, i) => ({
       rank: i + 1,
-      playerId: `p${i}`,
+      summary: "打率 .317（382打数）",
+    playerId: `p${i}`,
       name: `選手${i}`,
       teamCode: "t",
       value: r(200 - i * 5, 400),
@@ -149,6 +150,7 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
   return {
     playerId: "41045153",
     name: "佐藤",
+    summary: "打率 .317（382打数）",
     season: 2026,
     teamCode: "t",
     teamName: "阪神タイガース",

@@ -304,6 +304,11 @@ export interface MarkData {
 }
 
 export interface PlayerPageData {
+  /**
+   * 목록·검색에 쓰는 한 줄 성적(`打率 .260（104打数）`). 값이 없으면 null.
+   * ⚠**분모가 문자열 안에 들어 있다**(M2). 값만 떼어 쓰지 마라.
+   */
+  summary: string | null;
   playerId: string;
   name: string;
   season: number;
