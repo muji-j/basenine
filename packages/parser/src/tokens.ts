@@ -30,6 +30,13 @@ export type Outcome =
   | "sacBuntError"
   /** 타격방해 출루(打妨出). 타수에 들어가지 않는다 */
   | "interference"
+  /**
+   * 주루방해 출루(走妨出). **타격방해와 다른 사건이다** — 수비가 주자의 진루를 방해한 것이고,
+   * 타자에게는 타석이 기록되지만 타수에 들어가지 않는다.
+   * ⚠2024년 아카이브에서 실제로 나왔고 격리에 잡혔다(2026-08-17) — 소급 시즌에는
+   * 지금 어휘에 없는 표기가 더 있을 수 있다.
+   */
+  | "obstruction"
   | "reachedOnError"
   | "fieldersChoice"
   | "groundedIntoDoublePlay"
@@ -62,6 +69,9 @@ const RULES: readonly (readonly [RegExp, Outcome])[] = [
   [/振逃$/, "strikeoutReached"],
   [/三振$/, "strikeout"],
   [/打妨出$/, "interference"],
+  // ⚠**주루방해는 타격방해와 다른 사건이다.** 접미어가 한 글자만 달라 묶기 쉽지만,
+  // 방해한 대상이 타자가 아니라 주자다. 이름을 같게 하면 나중에 구별할 수 없다
+  [/走妨出$/, "obstruction"],
   // ⚠**희생(犠) 계열을 가장 먼저 본다.** 뒤에 失·野選이 붙어도 **희생타로 기록되어
   // 타수에 들어가지 않는다.** `投犠失`를 `失$` 규칙으로 먼저 잡으면 타수가 1 늘어난다
   // (아카이브 대조에서 실제로 19건이 이 원인이었다).
@@ -124,6 +134,7 @@ export function countsAsAtBat(outcome: Outcome): boolean {
     case "sacBuntFieldersChoice":
     case "sacBuntError":
     case "interference":
+    case "obstruction":
     case "unknown":
       return false;
     default:

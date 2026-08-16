@@ -112,3 +112,17 @@ test("안타 판정은 4종뿐이다", () => {
 test("전각 공백도 제거한다", () => {
   assert.equal(parsePaCell("三　振")?.outcome, "strikeout");
 });
+
+/**
+ * ⚠**주루방해(走妨出)는 타격방해(打妨出)와 다른 사건이다.**
+ * 접미어가 한 글자만 다르지만 방해한 대상이 타자가 아니라 주자다.
+ * 2024년 아카이브에서 실제로 나와 격리에 잡혔다(2026-08-17) —
+ * **소급 시즌에는 지금 어휘에 없는 표기가 더 있을 수 있다**는 신호이기도 하다.
+ */
+test("⚠주루방해를 타격방해와 같은 것으로 묶지 않는다", () => {
+  assert.equal(parsePaCell("走妨出")?.outcome, "obstruction");
+  assert.equal(parsePaCell("打妨出")?.outcome, "interference");
+  // 둘 다 타수에 들어가지 않는다
+  assert.equal(countsAsAtBat("obstruction"), false);
+  assert.equal(countsAsAtBat("interference"), false);
+});
