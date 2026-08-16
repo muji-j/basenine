@@ -45,6 +45,8 @@ let games = 0;
 let announced = 0;
 let pending = 0;
 let failed = 0;
+/** 경기가 예정되지 않은 날. **실패가 아니다** — 적재할 것이 없을 뿐이다(M11) */
+let restDays = 0;
 const problems: string[] = [];
 
 /**
@@ -72,6 +74,17 @@ for (const file of files) {
   } catch (err) {
     failed += 1;
     problems.push(`${file}: ${err instanceof Error ? err.message : String(err)}`);
+    continue;
+  }
+
+  /**
+   * ⚠**휴일은 실패가 아니다**(M11). NPB는 월요일이 대체로 휴일이고, 일요일 밤이면
+   * 이 페이지가 이미 월요일자로 넘어가 「試合が予定されていません。」만 남는다.
+   * 그것을 실패로 세면 **매주 일요일 밤에 수집이 exit 1로 끝나고, 빌드도 배포도 못 간다**
+   * (2026-08-16 실측). 적재할 것이 없을 뿐이므로 세어 두고 다음 파일로 넘어간다.
+   */
+  if (parsed.noGamesScheduled) {
+    restDays += 1;
     continue;
   }
 
@@ -122,7 +135,11 @@ for (const file of files) {
 
 db.close();
 
-console.log(`予告先発: 파일 ${files.length}건 · 경기 ${games} · 발표 ${announced} · 미발표 ${pending}`);
+console.log(
+  `予告先発: 파일 ${files.length}건 · 경기 ${games} · 발표 ${announced} · 미발표 ${pending}` +
+    // ⚠**「경기가 없는 날」을 세어서 보여준다.** 안 보이면 「왜 오늘은 0건이지?」에 답할 수 없다
+    (restDays > 0 ? ` · 경기 없는 날 ${restDays}` : ""),
+);
 if (problems.length > 0) {
   console.error(`⚠문제 ${problems.length}건`);
   for (const p of problems.slice(0, 10)) console.error(`  ${p}`);

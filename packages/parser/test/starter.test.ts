@@ -134,3 +134,47 @@ test("⚠로고가 없으면 던진다 — 팀을 모르는 채로 투수를 붙
   const broken = FIXTURE.replace(/<img src="\/img\/common\/logo\/2026\/logo_d_m\.gif"[^>]*\/>/, "");
   assert.throws(() => parseAnnouncedStarters(broken), StarterParseError);
 });
+
+/**
+ * ⚠**경기가 없는 날의 실제 마크업**(2026-08-16 21:50 JST 실측).
+ * NPB는 월요일이 대체로 휴일이고, 일요일 밤이면 이 페이지가 이미 월요일자로 넘어가
+ * 경기 블록이 **0개**가 된다. 그것을 구조 변화로 다뤄서 이날 수집이 exit 1로 끝났고,
+ * **빌드까지 못 가서 배포가 통째로 실패했다.** 「0」과 「못 읽음」은 다르다(M11).
+ */
+const REST_DAY = `<h3><span>予告先発投手</span></h3>
+<div class="contents">
+<div class="wrap">
+<h4>8月17日の予告先発投手</h4>
+試合が予定されていません。
+</div>
+</div>`;
+
+test("경기가 없다고 페이지가 적으면 실패가 아니라 「경기 0」이다(M11)", () => {
+  const out = parseAnnouncedStarters(REST_DAY);
+  assert.equal(out.monthDay, "08-17");
+  assert.deepEqual(out.games, []);
+  assert.equal(out.noGamesScheduled, true, "휴일을 휴일이라고 말하지 않는다");
+});
+
+test("경기가 있는 날은 휴일이라고 하지 않는다", () => {
+  assert.equal(parseAnnouncedStarters(FIXTURE).noGamesScheduled, false);
+});
+
+/**
+ * ⚠**「0이면 통과」로 약화시키지 않는다.** 경기 블록이 0개라는 사실만으로는
+ * 휴일인지 마크업이 바뀐 것인지 구별할 수 없다 — 페이지가 그렇게 **적었을 때만** 참이다.
+ * 이걸 놓치면 구조가 바뀐 날 화면이 매일 조용히 「未発表」가 된다(M7).
+ */
+test("⚠경기 0인데 휴일이라는 말이 없으면 여전히 실패다(M7)", () => {
+  const drifted = REST_DAY.replace("試合が予定されていません。", "");
+  assert.throws(() => parseAnnouncedStarters(drifted), StarterParseError);
+});
+
+/**
+ * ⚠**제목에서 멀리 떨어진 같은 문구는 그날의 말이 아니다.**
+ * 과거 공지나 푸터에 그 문자열이 들어오면, 진짜 구조 변화를 그 문구가 덮어 버린다.
+ */
+test("⚠제목에서 멀리 떨어진 「試合が予定されていません」은 인정하지 않는다", () => {
+  const far = REST_DAY.replace("試合が予定されていません。", `${"　".repeat(500)}試合が予定されていません。`);
+  assert.throws(() => parseAnnouncedStarters(far), StarterParseError);
+});
