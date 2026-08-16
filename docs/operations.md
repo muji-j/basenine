@@ -74,7 +74,7 @@ D1 무료는 **하루 10만 행**에서 **차단**된다(과금이 아니다).
 ## 화면 생성
 
 ```
-npm run build:web            # data/bb.sqlite → dist/  (2026 시즌)
+npm run build:web            # data/bb.sqlite → dist/  (2026 현행 + 2025·2024 는 /{연도}/)
 BB_CONTACT="..." npm run build:web
 npm run preview              # http://127.0.0.1:4173
 ```
