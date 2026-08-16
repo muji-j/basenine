@@ -325,3 +325,23 @@ test("예고가 없으면 빠른 선택을 만들지 않는다 — 검색은 그
   assert.match(out, /id="cmpA"/);
   assert.match(out, /id="cmpB"/);
 });
+
+/**
+ * ⚠**되돌려보내면서 길을 알려준다.**
+ * 타자 × 투수는 나란히 놓을 수 없지만, **그 조합이야말로 답이 있는 조합**이다 —
+ * 투수 대 타자를 다루는 화면이 이미 있고, 그 시점에 두 사람의 ID와 이름을 다 쥐고 있다.
+ * 지금까지는 거절만 하고 끝나서 막다른 길이었다.
+ */
+test("⚠타자×투수를 고르면 대전 성적으로 가는 길을 준다", () => {
+  const m = /if\(A\.role!==B\.role\)\{([\s\S]*?)\n    \}/.exec(CLIENT_JS);
+  assert.notEqual(m, null, "역할 불일치 분기를 못 찾았다 — 이 시험이 공회전한다");
+  const body = m![1] ?? "";
+  assert.match(body, /cmpgo/, "갈 곳을 알려주는 링크가 없다");
+  assert.match(body, /\?vs=/, "대전 성적으로 가는 URL을 만들지 않는다");
+  assert.match(body, /#b-matchup/, "대전 성적 자리로 보내지 않는다");
+  // ⚠타자 쪽 페이지로 가야 한다 — 대전 성적표는 타자 페이지에 있다
+  assert.match(body, /A\.role==="batter"\?A:B/, "누가 타자인지 가리지 않는다");
+  // ⚠**만들기만 하고 붙이지 않으면 화면에 없는 것과 같다**
+  assert.match(body, /wrap\.appendChild\(go\)/, "링크를 만들어 놓고 화면에 붙이지 않는다");
+  assert.match(body, /go\.textContent=/, "링크에 글자가 없다 — 누를 것이 안 보인다");
+});

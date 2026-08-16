@@ -251,3 +251,147 @@ test("동적 클래스가 든 칸의 리터럴 클래스도 모은다", () => {
   assert.ok(CELL_CLASSES.has("ok") || CELL_CLASSES.has("bad") || CELL_CLASSES.has("sc"),
     "동적 클래스가 섞인 칸에서 아무 클래스도 못 건졌다");
 });
+
+/**
+ * ⚠**고정된 표 머리는 상단 띠 아래에 선다.**
+ * `top:0` 으로 두면 상단 띠(z-index 20)가 겹침에서 이겨 **열 이름이 통째로 가려진다** —
+ * 147행짜리 대전표에서 40행쯤 내려가면 「三振」과 「打点」을 구별할 방법이 없다.
+ * 탭줄이 있는 화면은 그 높이만큼 더 내려야 같은 일이 안 난다.
+ */
+test("⚠고정된 표 머리가 상단 띠 뒤에 숨지 않는다", () => {
+  const head = rules(CSS).find((r) => r.sel.split(",").some((one) => one.trim() === "thead th"));
+  assert.notEqual(head, undefined, "thead th 규칙을 못 찾았다 — 이 시험이 공회전한다");
+  assert.match(head!.body, /position\s*:\s*sticky/);
+  assert.match(head!.body, /top\s*:\s*var\(--topbar\)/, "머리가 상단 띠 뒤로 들어간다");
+  assert.match(
+    CSS,
+    /html:has\(\.rail\) thead th\{top:calc\(var\(--topbar\) \+ var\(--rail\)\)\}/,
+    "탭줄이 있는 화면에서 머리가 탭줄 뒤로 들어간다",
+  );
+});
+
+/**
+ * ⚠**로고를 금지했으므로 이 9×9 사각형이 유일한 팀 식별 그래픽이다.**
+ * 그런데 배경 대비가 24조합 중 11개에서 3:1 미만이다(阪神 1.54 · 다크의 オリックス 1.17).
+ * 테두리 하나면 어느 테마에서도 보인다.
+ */
+test("⚠구단 색 칩에 테두리가 있다 — 배경에 묻히는 팀이 24조합 중 11개다", () => {
+  const chip = rules(CSS).filter((r) => r.sel.split(",").some((one) => /\.tm\s*[>\s]\s*i$/.test(one.trim())));
+  assert.ok(chip.length > 0, "칩 규칙을 못 찾았다");
+  for (const r of chip) {
+    assert.match(r.body, /box-shadow[^;]*var\(--tx-2\)/, "칩이 배경에 묻힐 수 있다 — 테두리가 없다");
+  }
+});
+
+/**
+ * 두 색의 대비비(WCAG 2.x 상대휘도). ⚠**본문은 4.5:1 이상이어야 한다.**
+ */
+function contrast(a: string, b: string): number {
+  const lum = (hex: string): number => {
+    const n = hex.replace("#", "");
+    const ch = [0, 2, 4].map((i) => Number.parseInt(n.slice(i, i + 2), 16) / 255);
+    const lin = ch.map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * lin[0]! + 0.7152 * lin[1]! + 0.0722 * lin[2]!;
+  };
+  const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p);
+  return (x! + 0.05) / (y! + 0.05);
+}
+
+/**
+ * 토큰 값을 CSS에서 꺼낸다 — 코드가 실제로 쓰는 값을 재야 의미가 있다.
+ *
+ * ⚠**다크 값은 두 곳에 있다.** `:root[data-theme="dark"]`(토글)와
+ * `@media (prefers-color-scheme: dark)`(OS 설정)에 **같은 값이 중복**으로 적혀 있다.
+ * 한쪽만 보면 다른 쪽이 옛 색으로 남아도 시험이 통과한다 — **둘 다 꺼내 비교한다.**
+ */
+function darkBlocks(): string[] {
+  const a = /:root\[data-theme="dark"\]\s*\{([\s\S]*?)\}/.exec(CSS)?.[1] ?? "";
+  const b = /:root:not\(\[data-theme="light"\]\)\s*\{([\s\S]*?)\}/.exec(CSS)?.[1] ?? "";
+  return [a, b];
+}
+
+function token(name: string, dark = false): string {
+  const block = dark ? darkBlocks()[0] ?? "" : /:root \{([\s\S]*?)\}/.exec(CSS)?.[1] ?? "";
+  return new RegExp(`${name}:(#[0-9a-fA-F]{6})`).exec(block)?.[1] ?? "";
+}
+
+/**
+ * ⚠**M2가 요구하는 바로 그 정보가 화면에서 가장 안 읽혔다.**
+ * `--tx-3` 이 붙는 것은 **분모**(`.den`) · **자격 기준과 표본 경고**(`.note`) · 규정 미달 행이다.
+ * 실측(2026-08-16): 라이트 3.20:1 · 다크 4.20:1 로 본문 기준 4.5:1 에 미달했고,
+ * 구단 페이지는 표의 86%가 그 색이었다.
+ */
+test("⚠분모와 주석이 읽히는 대비로 그려진다(4.5:1)", () => {
+  for (const dark of [false, true]) {
+    const page = token("--page", dark);
+    const panel = token("--panel-2", dark);
+    const tx3 = token("--tx-3", dark);
+    assert.ok(page !== "" && panel !== "" && tx3 !== "", `토큰을 못 읽었다(dark=${dark})`);
+    assert.ok(
+      contrast(tx3, page) >= 4.5,
+      `${dark ? "다크" : "라이트"} 본문 위 대비 ${contrast(tx3, page).toFixed(2)}:1`,
+    );
+    assert.ok(
+      contrast(tx3, panel) >= 4.5,
+      `${dark ? "다크" : "라이트"} 패널 위 대비 ${contrast(tx3, panel).toFixed(2)}:1`,
+    );
+  }
+});
+
+/**
+ * ⚠**「얇음」을 대비 강등으로 말하지 않는다.** 그러면 규정 미달 행 전체가 읽기 어려워진다 —
+ * 구단 페이지 76행 중 65행(86%)이 그 상태였다. 다른 채널로 말한다.
+ */
+test("규정 미달 행을 색만으로 구별하지 않는다", () => {
+  const thin = rules(CSS).filter((r) => r.sel.split(",").some((one) => one.trim().startsWith("tr.thin")));
+  assert.ok(thin.length >= 2, "얇은 행 규칙이 색 하나뿐이다 — 다른 채널이 없다");
+  assert.ok(
+    thin.some((r) => /box-shadow|border|outline|font-style/.test(r.body)),
+    "색 말고 다른 채널로 얇음을 말하지 않는다",
+  );
+});
+
+/**
+ * ⚠**다크 값이 두 곳에 중복으로 적혀 있다.** 토글용(`[data-theme="dark"]`)과
+ * OS 설정용(`prefers-color-scheme`)이다. 한쪽만 고치면 **OS 다크 사용자는 옛 색을 계속 본다** —
+ * 그리고 위의 대비 시험은 그걸 못 잡는다(한 블록만 읽으므로).
+ */
+test("⚠다크 토큰이 두 곳에서 같은 값이다 — 한쪽만 고치면 절반이 옛 색을 본다", () => {
+  const [toggle, media] = darkBlocks();
+  assert.ok((toggle ?? "") !== "" && (media ?? "") !== "", "다크 블록을 못 찾았다 — 이 시험이 공회전한다");
+  const pick = (b: string, n: string): string => new RegExp(`${n}:(#[0-9a-fA-F]{6})`).exec(b)?.[1] ?? "";
+  for (const n of ["--page", "--tx", "--tx-2", "--tx-3", "--panel", "--panel-2", "--hair", "--hair-2"]) {
+    assert.equal(pick(toggle ?? "", n), pick(media ?? "", n), `${n} 가 두 다크 블록에서 다르다`);
+  }
+});
+
+/**
+ * ⚠**태그를 바꿨으면 선택자도 따라가야 한다.**
+ * 헤딩 순서를 고치며 `h3`→`h2`, `h5`→`h3` 로 올렸는데 CSS가 옛 태그를 가리키면
+ * 그 제목만 **브라우저 기본 크기**로 튄다 — 값이 아니라 형태가 조용히 무너진다.
+ * ⚠**크기를 태그 기본값에 맡기지 않는다.** `.subhead` 는 font-size 가 없어
+ * h5(0.83em) → h3(1.17em) 로 **41% 커졌다.**
+ */
+test("⚠태그를 올린 곳의 CSS가 따라왔다 — 기본 크기로 튀지 않는다", () => {
+  const sel = (x: string): { sel: string; body: string } | undefined =>
+    rules(CSS).find((r) => r.sel.split(",").some((one) => one.trim() === x));
+
+  assert.notEqual(sel(".editor h2"), undefined, "편집 패널 제목이 h2 인데 규칙은 h3 를 가리킨다");
+  assert.equal(sel(".editor h3"), undefined, "쓰이지 않는 h3 규칙이 남아 있다");
+
+  const sub = sel(".rolecol .subhead");
+  assert.notEqual(sub, undefined, ".subhead 규칙을 못 찾았다");
+  assert.match(sub!.body, /font-size:\s*\d/, "크기를 태그 기본값에 맡기고 있다");
+});
+
+/**
+ * ⚠**새로 낸 요소에 규칙이 없으면 body 기본값으로 그려진다.**
+ * 명부의 성적 줄(실측 1,397칸)이 규칙 없이 나가 **선수 이름보다 크고 진해졌다.**
+ * 검색 드롭다운의 `.qhits .hs` 는 그쪽 전용이라 여기 안 걸린다.
+ */
+test("⚠명부의 성적 줄에 규칙이 있다 — 없으면 이름보다 커진다", () => {
+  const r = rules(CSS).filter((x) => x.sel.split(",").some((one) => /\.roster\s+\.hs$/.test(one.trim())));
+  assert.ok(r.length > 0, "명부 성적 줄의 규칙이 없다 — body 기본 16px 로 그려진다");
+  assert.match(r[0]!.body, /font-size:\s*\d/, "크기가 없다");
+  assert.match(r[0]!.body, /color:\s*var\(--tx/, "색이 없다");
+});

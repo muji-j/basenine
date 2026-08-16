@@ -246,7 +246,7 @@ const DECISION_LABEL: Readonly<Record<string, string>> = { "○": "勝", "●": 
 function gameCard(g: TodayGame, base: string): RawHtml {
   if (g.status !== "played") {
     return html`<article class="gcard off">
-  <h5 class="gvenue">${g.venue ?? ""}</h5>
+  <h3 class="gvenue">${g.venue ?? ""}</h3>
   <div class="gscore">
     <div class="gside" style="--chip:${g.away.color.base}"><span class="gt"><i></i>${g.away.shortName}</span></div>
     <div class="gside" style="--chip:${g.home.color.base}"><span class="gt"><i></i>${g.home.shortName}</span></div>
@@ -264,7 +264,7 @@ function gameCard(g: TodayGame, base: string): RawHtml {
   // 겹쳐 놓으면 스크린리더의 링크 목록에 같은 곳이 두 번 나오고, 탭 이동도 두 번 걸린다.
   // 상세 페이지가 없는 경기는 `link`를 붙이지 않는다 — 눌러도 안 가는데 눌릴 것처럼 보이면 그것이 결함이다
   return html`<article class="gcard${g.hasPage ? " tapcard" : ""}">
-  <h5 class="gvenue">${g.venue ?? ""}${g.winner === null ? html`<span class="gtie">引き分け</span>` : null}</h5>
+  <h3 class="gvenue">${g.venue ?? ""}${g.winner === null ? html`<span class="gtie">引き分け</span>` : null}</h3>
   <div class="gscore">
     ${scoreLine(g.away, g.winner === "away", base)}
     ${scoreLine(g.home, g.winner === "home", base)}
@@ -300,7 +300,7 @@ function probableCard(p: TodayProbable, base: string): RawHtml {
     : html`<span class="pbe">防御率 ${dec2(b.era.value)}<s>${innings(b.era.denominator)}回</s></span>`}
 </div>`;
   return html`<article class="pbcard tapcard">
-  <h5 class="gvenue">${p.venue ?? ""}${p.startTime === null ? "" : ` ${p.startTime}`}</h5>
+  <h3 class="gvenue">${p.venue ?? ""}${p.startTime === null ? "" : ` ${p.startTime}`}</h3>
   ${side(p.sides[0])}${side(p.sides[1])}
   <p class="gmore"><a class="cardlink" href="${base}starters.html#${p.anchor}">対戦する打者まで見る<span
     class="vh">（${p.sides[0].shortName} 対 ${p.sides[1].shortName}）</span></a></p>
@@ -315,7 +315,7 @@ export function renderTodayPage(d: TodayPageData, ctx: RenderContext): string {
 
   const body = html`<header class="idline">
   <div class="idtext">
-    <span class="nm">試合</span>
+    <h1 class="nm">試合</h1>
     <span class="sub">${d.gameDate === null
       ? "試合の記録がまだありません"
       : `${fullDate(d.gameDate)}${isToday ? "（本日）" : ""}の結果 · ${played}試合${off > 0 ? ` · 中止${off}試合` : ""}`}</span>
@@ -328,13 +328,13 @@ ${dayBar(base, { prev: d.prev, next: null, latestDate: d.gameDate, dayCount: d.d
 ${d.probables.length === 0
     ? raw("")
     : html`<section class="block" id="b-probable">
-  <h4>次の予告先発<span class="qt">${d.probableDate === null ? "" : fullDate(d.probableDate)}</span></h4>
+  <h2>次の予告先発<span class="qt">${d.probableDate === null ? "" : fullDate(d.probableDate)}</span></h2>
   <div class="pbcards">${d.probables.map((p) => probableCard(p, base))}</div>
   <p class="note"><a href="${base}starters.html">対戦する打者の成績まで見る</a></p>
 </section>`}
 
 <section class="block" id="b-results">
-  <h4>${d.gameDate === null ? "試合結果" : `${fullDate(d.gameDate)}の結果`}</h4>
+  <h2>${d.gameDate === null ? "試合結果" : `${fullDate(d.gameDate)}の結果`}</h2>
   ${d.games.length === 0
     ? html`<p class="empty">この日の試合はまだ取り込んでいません。</p>`
     : html`<div class="gcards">${d.games.map((g) => gameCard(g, base))}</div>`}
@@ -382,7 +382,7 @@ export function renderDayPage(d: DayPageData, ctx: RenderContext): string {
 
   const body = html`<header class="idline">
   <div class="idtext">
-    <span class="nm">${fullDate(d.date)}の試合</span>
+    <h1 class="nm">${fullDate(d.date)}の試合</h1>
     <span class="sub">${d.games.length === 0
       ? "この日の記録がありません"
       : `${played}試合${off > 0 ? ` · 中止${off}試合` : ""}`}</span>
@@ -393,7 +393,7 @@ export function renderDayPage(d: DayPageData, ctx: RenderContext): string {
 ${dayBar(base, d)}
 
 <section class="block" id="b-results">
-  <h4>${fullDate(d.date)}の結果</h4>
+  <h2>${fullDate(d.date)}の結果</h2>
   ${d.games.length === 0
     ? html`<p class="empty">この日の試合は取り込んでいません。</p>`
     : html`<div class="gcards">${d.games.map((g) => gameCard(g, base))}</div>`}
@@ -447,7 +447,7 @@ export function renderDayIndexPage(d: DayIndexData, ctx: RenderContext): string 
 
   const body = html`<header class="idline">
   <div class="idtext">
-    <span class="nm">日付をえらぶ</span>
+    <h1 class="nm">日付をえらぶ</h1>
     <span class="sub">${d.season}年 · ${d.days.length}日 · ${played}試合${off > 0 ? ` · 中止${off}試合` : ""}</span>
   </div>
 </header>
@@ -456,7 +456,7 @@ ${d.days.length === 0
     ? html`<section class="block"><p class="empty">このシーズンの試合はまだありません。</p></section>`
     : html`${[...months].map(
       ([month, list]) => html`<section class="block">
-  <h4>${Number(month.slice(5))}月<span class="qt">${list.length}日</span></h4>
+  <h2>${Number(month.slice(5))}月<span class="qt">${list.length}日</span></h2>
   <div class="daygrid">${list.map(
         (day) => html`<a class="dayc${day.date === d.latestDate ? " now" : ""}"
       href="${dayHref(base, day.date, d.latestDate)}">

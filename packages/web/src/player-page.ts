@@ -72,6 +72,8 @@ export interface BattingBlockData {
   qualified: boolean;
   /** 규정타석 */
   needPa: number;
+  /** 타구 성향. 표본이 얇으면 그 줄을 그리지 않는다 */
+  batted: BattedBallData;
 }
 
 /**
@@ -86,6 +88,27 @@ export interface RoleLine {
   era: Rate;
   whip: Rate;
   k9: Rate;
+}
+
+/**
+ * 타구 성향 — 땅볼/뜬공 · 방향 · 내야안타 · 삼진 내역.
+ *
+ * ⚠**이름을 정확히 붙이는 것이 절반이다.**
+ * - 땅볼 비율은 **「GB%」가 아니다.** GB%는 안타를 포함한 전 타구가 분모인데
+ *   비홈런 안타에는 타구 종류 표기가 없어(실측 27.5%) 우리는 그걸 모른다. **아웃만**을 분모로 한다.
+ * - 삼진 내역은 **「헛스윙 유도율」이 아니다.** 그건 투구 단위 데이터가 필요하고 우리에겐 없다.
+ * - 방향은 **「처리한 야수 기준」**이다. 타구가 떨어진 지점이 아니다 — 시프트·호수비가 섞인다.
+ */
+export interface BattedBallData {
+  groundOuts: number;
+  airOuts: number;
+  left: number;
+  center: number;
+  right: number;
+  infield: number;
+  infieldHits: number;
+  swinging: number;
+  looking: number;
 }
 
 export interface PitchingBlockData {
@@ -103,6 +126,13 @@ export interface PitchingBlockData {
   qualified: boolean;
   /** 이 투수의 역할에 해당하는 자격선(아웃 카운트) */
   needOuts: number;
+  /**
+   * 선발 등판의 내용 — QS · HQS · 완투 · 완봉승.
+   * ⚠**선발이 0경기면 이 줄을 그리지 않는다** — 구원 투수에게 「QS 0」은 「못 했다」로 읽힌다(M11).
+   */
+  quality: { starts: number; qs: number; hqs: number; cg: number; sho: number };
+  /** 타구 성향. 표본이 얇으면 그 줄을 그리지 않는다 */
+  batted: BattedBallData;
   /**
    * 선발형인가 구원형인가. **아웃 카운트가 많은 쪽**이다(`@bb-app/aggregate`가 정한다).
    * 순위표의 어느 부문에 서는지와, 어떤 분포로 색을 칠하는지를 이 값이 정한다.
@@ -274,6 +304,11 @@ export interface MarkData {
 }
 
 export interface PlayerPageData {
+  /**
+   * 목록·검색에 쓰는 한 줄 성적(`打率 .260（104打数）`). 값이 없으면 null.
+   * ⚠**분모가 문자열 안에 들어 있다**(M2). 값만 떼어 쓰지 마라.
+   */
+  summary: string | null;
   playerId: string;
   name: string;
   season: number;
@@ -296,6 +331,11 @@ export interface PlayerPageData {
   /** 이 선수의 전체 타석 수. `scorebook`이 잘렸는지 말하기 위한 값 */
   scorebookTotal: number;
   situation: SituationCell[];
+  /**
+   * 상황별 번트의 득점기대값 변화. **리그 전체의 값**이다(이 선수의 기록이 아니다).
+   * ⚠새 데이터가 0이다 — 이미 있는 득점기대값 계산기가 답한다.
+   */
+  bunts: BuntCell[];
   matchups: MatchupRow[];
   /** 대전한 투수(또는 타자)의 총 수. `matchups`가 잘렸는지 말하기 위한 값 */
   matchupTotal: number;
@@ -448,11 +488,11 @@ function idLine(d: PlayerPageData): RawHtml {
   return html`<header class="idline">
   ${mark}
   <div class="idtext">
-    <span class="nm">${d.name}<!-- ⚠**계정 없이 되는 것만 만든다.** 이 표시는 이 브라우저에만 남고
+    <h1 class="nm">${d.name}<!-- ⚠**계정 없이 되는 것만 만든다.** 이 표시는 이 브라우저에만 남고
       서버로 가지 않는다. 스크립트가 없으면 버튼 자체를 띄우지 않는다 —
       눌러도 아무 일이 없는 버튼을 두는 것보다 없는 편이 정직하다 -->
       <button class="favbtn" type="button" id="favBtn" data-fav="${d.playerId}"
-        aria-pressed="false" aria-label="お気に入りに入れる" hidden>★</button></span>
+        aria-pressed="false" aria-label="お気に入りに入れる" hidden>★</button></h1>
     <span class="sub">${bio.join(" · ")}</span>
     <span class="asof">${d.season}年${d.asOf === null ? "" : ` · ${gameDate(d.asOf)}まで`}</span>
     ${d.stints.length < 2
@@ -523,7 +563,10 @@ ${gradeLegend(
 
 function editor(): RawHtml {
   return html`<section class="editor" id="editor" hidden aria-label="ブロックの組み替え">
-  <h3>ブロックの組み替え</h3>
+  <!-- ⚠**h2 다. h3 로 두면 헤딩이 h1 → h3 → h2 로 흐른다** — 이 편집 패널이 첫 콘텐츠 블록보다
+       앞에 있기 때문이다. 레벨을 건너뛰면 스크린리더의 목록에서 이 패널이 페이지 제목의
+       바로 아래 자식처럼 보인다(2026-08-17 이중 검토 지적) -->
+  <h2>ブロックの組み替え</h2>
   <p>表示するブロックと並び順を決めます。設定はこの端末に保存されます。</p>
   <div class="blocks" id="blockList"></div>
   <div class="fixed-note">
@@ -631,6 +674,21 @@ function standardPitching(p: PitchingBlockData): RawHtml {
         ${statCount("暴投", p.wp)}
         ${statCount("ボーク", p.balk)}`,
     )}
+    ${p.quality.starts === 0
+      ? raw("")
+      : html`${columns(
+        html`${statRate("QS率", { value: p.quality.qs / p.quality.starts, denominator: p.quality.starts }, "先発", 3, null /* ⚠QS率의 순위는 만들지 않는다 — 없는 키를 넘기면 배지가 영원히 안 붙는다 */, "starter")}
+          ${statCount("QS", p.quality.qs, rk(p.ranks, "qs"))}`,
+        html`${statCount("HQS", p.quality.hqs)}
+          ${statCount("完投", p.quality.cg)}
+          ${statCount("完封勝", p.quality.sho)}`,
+      )}
+      ${note(
+        "QS は先発して6回以上を自責点3以内、HQS は7回以上を自責点2以内です。" +
+          "**完投は「その試合でその球団の投手がこの1人だけ」で数えています** — " +
+          "アウト27個で数えると、ホームが勝って9回裏がなかった試合のビジター先発（8回完投）が漏れます。" +
+          "完封勝は完投・無失点・勝利投手のすべてを満たしたものです。",
+      )}`}
     ${note(
       `この投手は${ROLE_LABEL[p.role]}として扱っています（先発${p.starts}試合 / 救援${p.games - p.starts}試合、` +
         `投球回の多いほうを役割としています）。順位も水準の色も${ROLE_LABEL[p.role]}投手の分布と比べたものです — ` +
@@ -659,7 +717,7 @@ function roleSplitBlock(p: PitchingBlockData): RawHtml {
   }
   const row = (label: string, r: RoleLine, group: "starter" | "reliever"): RawHtml =>
     html`<div class="rolecol">
-      <h5 class="subhead">${label}</h5>
+      <h3 class="subhead">${label}</h3>
       <dl>
         ${statCount("試合", r.games)}
         ${statText("投球回", innings(r.line.outs))}
@@ -681,7 +739,67 @@ function roleSplitBlock(p: PitchingBlockData): RawHtml {
   });
 }
 
-function advancedBatting(b: BattingBlockData): RawHtml {
+/** 아웃 중 땅볼 비율. ⚠**분모가 아웃이라는 것을 라벨이 말한다** */
+const GROUND_LABEL = "ゴロアウト率";
+
+/**
+ * 타구 성향 한 줄.
+ *
+ * ⚠**표본이 얇으면 그리지 않는다**(M2·M11). 20타구짜리 「좌측 70%」는 값이 아니라 소음이다.
+ */
+/**
+ * 좌·우 라벨.
+ *
+ * ⚠**좌타자는 당겨치면 오른쪽이다.** 무조건 「왼쪽 = 당겨치기」로 적으면
+ * **좌타자 페이지의 두 라벨이 정반대**가 된다 — 실측(2026): 우타는 좌 46.3%/우 31.2%,
+ * 좌타는 좌 34.4%/우 43.3%. 당겨치는 타자를 밀어치는 타자로 읽게 만든다.
+ * 이 줄이 그려지는 163장 중 **83장(50.9%)이 좌타자**였다.
+ * ⚠**양타·미상은 방향으로만 말한다.** 그 타석에 어느 쪽에 섰는지 우리는 모른다 —
+ * 추정해서 「당겨치기」라고 쓰면 그건 사실이 아니라 우리 짐작이다.
+ */
+function sideLabels(bats: string | null): { left: string; right: string } {
+  if (bats === "right") return { left: "引っ張り側", right: "逆方向側" };
+  if (bats === "left") return { left: "逆方向側", right: "引っ張り側" };
+  return { left: "左方向", right: "右方向" };
+}
+
+function battedBallRow(d: BattedBallData, bats: string | null): RawHtml {
+  const outs = d.groundOuts + d.airOuts;
+  const dir = d.left + d.center + d.right;
+  const so = d.swinging + d.looking;
+  // ⚠**내야타구가 빠져 있었다** — 그 축만 충분한 선수 55명(1,664 중 3.3%)의 줄이 통째로 사라졌다
+  if (outs < MIN_BATTED && dir < MIN_DIRECTION && so < MIN_STRIKEOUT && d.infield < MIN_INFIELD) {
+    return raw("");
+  }
+  return html`${columns(
+    outs < MIN_BATTED
+      ? raw("")
+      : html`${statRate(GROUND_LABEL, { value: d.groundOuts / outs, denominator: outs }, "アウト", 3)}`,
+    dir < MIN_DIRECTION
+      ? raw("")
+      : html`${statRate(sideLabels(bats).left, { value: d.left / dir, denominator: dir }, "打球", 3)}
+          ${statRate("センター", { value: d.center / dir, denominator: dir }, "打球", 3)}
+          ${statRate(sideLabels(bats).right, { value: d.right / dir, denominator: dir }, "打球", 3)}`,
+    d.infield < MIN_INFIELD
+      ? raw("")
+      : html`${statRate("内野安打率", { value: d.infieldHits / d.infield, denominator: d.infield }, "内野打球", 3)}`,
+    so < MIN_STRIKEOUT
+      ? raw("")
+      : html`${statRate("空振り三振の割合", { value: d.swinging / so, denominator: so }, "三振", 3)}`,
+  )}
+  ${note(
+    "打球の方向は**打球が落ちた地点ではなく、処理した野手の位置**です — シフトや好守が混ざります。" +
+      "左右は守備位置で分けており、**二塁手は右側**に入れています（当サイトの定義）。" +
+      "**犠打は方向に数えていません** — 作戦であって打撃の傾向ではないためです。" +
+      (bats === "right" || bats === "left"
+        ? ""
+        : "**打席の左右がわからないため、引っ張り・逆方向ではなく方向そのもので示しています。**") +
+      "**ゴロアウト率の分母はアウトだけ**です — 本塁打以外の安打には打球の種類が公表されないため、" +
+      "一般的なGB%とは分母が違います。**空振り三振の割合は三振の内訳**であって、空振り率ではありません。",
+  )}`;
+}
+
+function advancedBatting(b: BattingBlockData, bats: string | null): RawHtml {
   const src = b.src;
   return block({
     id: "advanced",
@@ -699,6 +817,7 @@ function advancedBatting(b: BattingBlockData): RawHtml {
         : html`${statSigned("SRC", src.src, src.pa, "打席", rk(b.ranks, "src"))}
             ${statSigned("SRC/600", src.srcPer600, src.pa, "打席")}`,
     )}
+    ${battedBallRow(b.batted, bats)}
     ${note(
       "SRC（状況得点貢献）は、打席ごとに得点期待値をどれだけ動かしたかを合計した自前の指標です。" +
         "打撃だけを測り、守備・走塁・ポジション補正は含みません。WARではなく、WARと比較できません。" +
@@ -723,6 +842,7 @@ function advancedPitching(p: PitchingBlockData): RawHtml {
         : html`${statSigned("SRP", srp.srp, srp.bf, "対戦打者", rk(p.ranks, "srp"))}
             ${statSigned("SRP/9", srp.srpPer9, srp.bf, "対戦打者")}`,
     )}
+    ${battedBallRow(p.batted, null)}
     ${note(
       "FIPは本塁打・四死球・奪三振だけから防御率の目盛りに換算した値です。守備の影響を切り離す代わりに、打球の質は測っていません。",
     )}
@@ -872,7 +992,56 @@ function scorebookBlock(rows: readonly ScorebookRow[], total: number): RawHtml {
   return block({ id: "scorebook", title: "打席記録", body });
 }
 
-function situationBlock(cells: readonly SituationCell[], leagueName: string): RawHtml {
+/**
+ * 상황별 번트의 득점기대값 변화. **리그 전체의 값**이다(이 선수의 값이 아니다).
+ *
+ * ⚠**「번트는 손해다」가 결론이 아니다** — 상황별로 갈리는 것이 결론이다.
+ * ⚠**득점기대값은 승리기대값이 아니다.** 동점 9회말에 1점만 필요하면 RE 손해여도 옳을 수 있다.
+ */
+export interface BuntCell {
+  bases: string;
+  outs: number;
+  /** 이 상황의 번트 수. **분모다**(M2) */
+  n: number;
+  before: number;
+  delta: number;
+}
+
+/** 번트를 몇 건 이상 대야 값을 낼 것인가. 6건짜리 평균은 값이 아니라 소음이다 */
+const MIN_BUNT = 30;
+
+function buntBlock(rows: readonly BuntCell[], leagueName: string): RawHtml {
+  const shown = rows.filter((r) => r.n >= MIN_BUNT);
+  if (shown.length === 0) return raw("");
+  return html`${scroller(html`<table>
+    <thead><tr>
+      <th class="l">状況</th><th>犠打</th><th>直前の期待値</th><th>期待値の変化</th>
+    </tr></thead>
+    <tbody>${shown.map(
+      (r) => html`<tr>
+      <td class="l">${BASE_LABEL[r.bases === "" ? "" : r.bases] ?? r.bases}　${r.outs}死</td>
+      <td class="b">${r.n}</td>
+      <td class="wd">${r.before.toFixed(3)}</td>
+      <td class="wd">${r.delta >= 0 ? "+" : ""}${r.delta.toFixed(3)}</td>
+    </tr>`,
+    )}</tbody>
+  </table>`)}
+  ${note(
+    `${leagueName}全体の値です（この選手の記録ではありません）。` +
+      "**「バントは損」が結論ではありません** — 状況によって変わることが結論です。" +
+      "⚠**得点期待値は勝利期待値ではありません。** 同点9回裏で1点だけ必要な場面では、" +
+      "得点期待値が下がる選択が正しいことがあります。当サイトは勝利期待値を信頼できる形で作れないため、" +
+      "**得点期待値の話までしかしません。** " +
+      `また、バントを任される打者は平均以下であることが多く、比較対象は「リーグ平均打者の強攻」ではありません。` +
+      `犠打${MIN_BUNT}件未満の状況は出していません。`,
+  )}`;
+}
+
+function situationBlock(
+  cells: readonly SituationCell[],
+  leagueName: string,
+  bunts: readonly BuntCell[],
+): RawHtml {
   if (cells.length === 0) {
     return block({
       id: "situation",
@@ -902,7 +1071,8 @@ function situationBlock(cells: readonly SituationCell[], leagueName: string): Ra
     ${note(
       `大きい数字は${leagueName}の得点期待値（その状況からイニング終了までに入る平均得点）で、リーグ全体の値です。` +
         `小さい数字はこの選手がその状況で立った打席数。${THIN_SITUATION_PA}打席未満は薄くしています。`,
-    )}`,
+    )}
+    ${buntBlock(bunts, leagueName)}`,
   });
 }
 
@@ -1053,7 +1223,7 @@ function renderBlock(id: BlockId, d: PlayerPageData, base: string): RawHtml {
       return block({ id: "standard", title: "基本成績", body: html`<p class="empty">成績がありません。</p>` });
     case "advanced":
       if (d.role === "pitcher" && d.pitching !== null) return advancedPitching(d.pitching);
-      if (d.batting !== null) return advancedBatting(d.batting);
+      if (d.batting !== null) return advancedBatting(d.batting, d.bats);
       return block({ id: "advanced", title: "セイバーメトリクス", body: html`<p class="empty">成績がありません。</p>` });
     case "rolesplit":
       if (d.pitching !== null) return roleSplitBlock(d.pitching);
@@ -1066,7 +1236,7 @@ function renderBlock(id: BlockId, d: PlayerPageData, base: string): RawHtml {
     case "scorebook":
       return scorebookBlock(d.scorebook, d.scorebookTotal);
     case "situation":
-      return situationBlock(d.situation, d.leagueName);
+      return situationBlock(d.situation, d.leagueName, d.bunts);
     case "matchup":
       return matchupBlock(d.matchups, d.matchupTotal, d.role === "pitcher" ? "打者" : "投手");
     case "ranking":
@@ -1139,6 +1309,18 @@ ${postseasonBrief(d.postseason, base)}
 }
 
 /** 임계값을 코드에만 두지 않는다 — 테스트가 이 값을 고정한다. */
+/**
+ * 타구 성향의 최소 표본.
+ *
+ * ⚠**분모가 축마다 다르므로 임계값도 축마다 다르다**(M2). 아웃·타구·내야타구·삼진은 서로 다른 표본이다.
+ * 값은 「이보다 얇으면 모양이 요동친다」는 실측 감각에서 잡았고, 순위를 매기지 않으므로
+ * 자격 기준(M3)이 아니라 **표시 임계값**이다.
+ */
+const MIN_BATTED = 100;
+const MIN_DIRECTION = 150;
+const MIN_INFIELD = 60;
+const MIN_STRIKEOUT = 50;
+
 export const THRESHOLDS = { situationPa: THIN_SITUATION_PA, matchupPa: THIN_MATCHUP_PA };
 
 export { BASE_LABEL, BASE_ORDER };

@@ -99,6 +99,13 @@ export interface TeamPageData {
    * **240개가 통째로 404가 된다**(2026-08-16 실측). 깊이를 아는 것은 렌더러다.
    */
   recent: { date: string; opponent: string; home: boolean; result: string }[];
+  /**
+   * 상대 구단별 전적. **자기 자신은 들어 있지 않다.**
+   *
+   * ⚠**정규시즌만이다**(§2-1). 포스트시즌을 섞으면 어느 규칙에도 속하지 않는 수가 된다.
+   * ⚠**무승부는 승률의 분모에서 빠진다**(NPB 규정) — 그래서 경기 수를 따로 들고 다닌다(M2).
+   */
+  vs: { code: string; shortName: string; color: TeamColor; w: number; l: number; t: number }[];
   /** 최신 경기일. `dayHref`가 그 날만 `today.html`로 보낸다 */
   latestDate: string | null;
   /** 이 시즌에 ポストシーズン 기록이 있는가 */
@@ -190,7 +197,7 @@ export function renderTeamPage(d: TeamPageData, ctx: RenderContext): string {
 
   const body = html`<header class="idline">
   <div class="idtext">
-    <span class="nm">${d.name}</span>
+    <h1 class="nm">${d.name}</h1>
     <span class="sub">${d.season}年 · ${d.leagueName}${d.rank === null
       ? ""
       : ` · ${d.rank}位${d.tiedRank ? "（同）" : ""}`} · ${wlt(d)}</span>
@@ -199,7 +206,7 @@ export function renderTeamPage(d: TeamPageData, ctx: RenderContext): string {
 </header>
 
 <section class="block" id="b-teamsum">
-  <h4>チーム成績<span class="qt">${d.games}試合</span></h4>
+  <h2>チーム成績<span class="qt">${d.games}試合</span></h2>
   <dl class="row">
     <div><dt>${term("勝率")}</dt><dd>${d.pct === null ? "—" : avg3(d.pct)}<span class="den">${d.w + d.l}試合</span></dd></div>
     <div><dt>ゲーム差</dt><dd>${d.gamesBehind === 0 ? "—" : d.gamesBehind.toFixed(1).replace(/\.0$/, "")}</dd></div>
@@ -224,12 +231,34 @@ export function renderTeamPage(d: TeamPageData, ctx: RenderContext): string {
 ${d.months.length === 0
     ? raw("")
     : html`<section class="block" id="b-teammonth">
-  <h4>月別<span class="qt">勝-敗-分</span></h4>
+  <h2>月別<span class="qt">勝-敗-分</span></h2>
   ${monthBars(d.months)}
 </section>`}
 
+${d.vs.length === 0
+    ? raw("")
+    : html`<section class="block" id="b-vs">
+  <h2>対戦成績<span class="qt">レギュラーシーズン</span></h2>
+  <div class="scroller"><table class="vs">
+    <thead><tr><th class="l">相手</th><th>勝</th><th>敗</th><th>分</th><th>試合</th><th class="l">勝敗</th></tr></thead>
+    <tbody>${d.vs.map((v) => {
+      const n = v.w + v.l + v.t;
+      return html`<tr style="--chip:${v.color.base}">
+      <td class="l tm"><i></i><a href="${v.code}.html">${v.shortName}</a></td>
+      <td class="b">${v.w}</td><td>${v.l}</td><td>${v.t}</td>
+      <td>${n}</td>
+      <td class="l"><span class="vsbar" style="--w:${n === 0 ? 0 : Math.round((v.w / n) * 100)}"><i></i></span></td>
+    </tr>`;
+    })}</tbody>
+  </table></div>
+  ${note(
+    "レギュラーシーズンのみです。**引き分けは勝率の分母に入りません**（NPBの規定）。" +
+      "バーは勝った試合の割合で、目盛りはありません — 正確な数は左の勝・敗・分にあります。",
+  )}
+</section>`}
+
 <section class="block" id="b-teambat">
-  <h4>打者<span class="qt">${d.batters.length}人</span></h4>
+  <h2>打者<span class="qt">${d.batters.length}人</span></h2>
   ${batterTable(d.batters, base)}
   ${note(
     // ⚠**이 표는 「현재 로스터」가 아니다.** `battingByTeam`은 **그 구단에서 낸 몫**이라
@@ -242,7 +271,7 @@ ${d.months.length === 0
 </section>
 
 <section class="block" id="b-teampit">
-  <h4>投手<span class="qt">${d.pitchers.length}人</span></h4>
+  <h2>投手<span class="qt">${d.pitchers.length}人</span></h2>
   ${pitcherTable(d.pitchers, base)}
   ${note(
     "この球団で登板した記録です — シーズン途中に移籍した投手も、この球団での分だけ含みます。" +
@@ -253,7 +282,7 @@ ${d.months.length === 0
 ${d.recent.length === 0
     ? raw("")
     : html`<section class="block" id="b-teamgames">
-  <h4>直近の試合</h4>
+  <h2>直近の試合</h2>
   <ul class="trecent">${d.recent.map(
     (g) => html`<li class="${g.result === "○" ? "w" : g.result === "●" ? "l" : ""}">
     <a href="${dayHref(base, g.date, d.latestDate)}"><b>${g.result}</b><span>${fullDate(g.date)}</span>

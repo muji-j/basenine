@@ -6,6 +6,9 @@
  * 만든 값을 옮겨 담기만 한다. 여기에 산식이 생기는 순간 값이 두 벌이 된다.
  */
 import type { Db } from "@bb-app/store";
+import { battedBalls, buntValues, headToHead } from "@bb-app/aggregate";
+import type { HeadToHead } from "@bb-app/aggregate";
+import type { BattedBallData, BuntCell } from "./player-page.ts";
 import type { BattingLine, LeagueConstants, PitchingLine, Rate } from "@bb-app/metrics";
 import {
   babip,
@@ -558,11 +561,18 @@ function pitcherRankings(
   ];
 
   if (role === "starter") {
+    /**
+     * ⚠**첫 지표가 그 화면의 주장이다.** 여기가 「勝利」였다 —
+     * FIP·WHIP·SRP를 자체 산출하는 사이트의 선발 첫 화면이 승수인 것은 자기모순이고,
+     * 승수는 타선과 구원진이 절반을 정한다. **투수 자신을 재는 값**을 먼저 놓는다.
+     * (`common` 의 첫 항목이 방어율이므로 그것이 기본값이 된다.)
+     */
     return [
-      count("w", "勝利", (e) => e.player.decisions.w),
       ...common,
+      count("w", "勝利", (e) => e.player.decisions.w),
       count("l", "敗戦", (e) => e.player.decisions.l),
       count("starts", "先発", (e) => e.player.starts),
+      count("qs", "QS", (e) => e.player.quality.qs),
     ];
   }
   return [
@@ -905,6 +915,9 @@ function rosters(players: readonly PlayerPageData[]): TeamRoster[] {
       mark: positionMark(p.position),
       axes: p.mark.axes,
       sampleText: p.mark.sampleText,
+      // ⚠**검색 드롭다운이 쓰는 것과 같은 문자열이다**(M1). 명부에만 없어서 첫 화면에
+      // 숫자가 한 개도 없었다 — 값은 계속 있었고 실리는 자리가 없었을 뿐이다
+      summary: p.summary,
     };
     if (list === undefined) byTeam.set(p.teamCode, [entry]);
     else list.push(entry);
@@ -1627,6 +1640,14 @@ function dayResultsRange(
  * 여기서 다시 세면 「순위표의 팀 타율」과 「팀 페이지의 팀 타율」이 언젠가 갈린다.
  * ⚠**정규시즌만이다**(§2-1). 포스트시즌은 별도 화면이고, 그 사실을 화면이 말한다.
  */
+/**
+ * 팀 대 팀 전적 — **정규시즌만**(§2-1).
+ * ⚠한 경기가 두 줄이 된다(양 팀 관점). 각 줄이 「그 팀에서 본 전적」이다.
+ */
+function h2hOf(db: Db, o: LoadOptions): HeadToHead[] {
+  return headToHead(db, o.season, o.competition ?? "regular", o.through ?? "9999-12-31");
+}
+
 function teamPages(
   db: Db,
   o: LoadOptions,
@@ -1641,6 +1662,7 @@ function teamPages(
 ): TeamPageData[] {
   const competition = o.competition ?? "regular";
   const through = o.through ?? "9999-12-31";
+  const h2h = h2hOf(db, o);
 
   /** 월별 승패. ⚠**분모(경기 수)를 함께 낸다** — 「4월 12승」만으로는 몇 경기 중인지 모른다 */
   const monthRows = db.raw
@@ -1800,6 +1822,19 @@ function teamPages(
         batters,
         pitchers,
         recent,
+        /**
+         * 상대 구단별 전적. ⚠**자기 자신은 뺀다** — 「阪神 대 阪神」은 없는 경기다.
+         * ⚠**정규시즌만**이다(§2-1). 순서는 이긴 수가 많은 쪽부터.
+         */
+        vs: h2h
+          .filter((x) => x.teamCode === code && x.opponentCode !== code)
+          .map((x) => ({
+            code: x.opponentCode,
+            shortName: shortNameOf(x.opponentCode),
+            color: colorOf(x.opponentCode),
+            w: x.w, l: x.l, t: x.t,
+          }))
+          .sort((a, b) => b.w - a.w || a.l - b.l || a.code.localeCompare(b.code)),
         latestDate,
         hasPostseason,
       });
@@ -2083,6 +2118,44 @@ export function loadLog(db: Db, o: LoadOptions & LogOptions): LogPageData {
   };
 }
 
+/** 타구 로그가 없는 선수. ⚠**0이 아니라 「그릴 것이 없음」이다** — 화면이 그 줄을 뺀다 */
+const EMPTY_BATTED: BattedBallData = {
+  groundOuts: 0, airOuts: 0, left: 0, center: 0, right: 0,
+  infield: 0, infieldHits: 0, swinging: 0, looking: 0,
+};
+
+/** 같은 선수가 두 구단에서 낸 타구를 합친다 — 이적해도 선수 페이지는 시즌 합계다 */
+function addBatted(a: BattedBallData, b: BattedBallData): BattedBallData {
+  return {
+    groundOuts: a.groundOuts + b.groundOuts, airOuts: a.airOuts + b.airOuts,
+    left: a.left + b.left, center: a.center + b.center, right: a.right + b.right,
+    infield: a.infield + b.infield, infieldHits: a.infieldHits + b.infieldHits,
+    swinging: a.swinging + b.swinging, looking: a.looking + b.looking,
+  };
+}
+
+/**
+ * 목록·검색에 쓰는 한 줄 성적.
+ *
+ * ⚠**한 곳에서만 만든다**(M1). 헤더 검색과 선수 명부가 **같은 문자열**을 써야
+ * 「같은 선수인데 두 화면에서 다른 수」가 안 난다.
+ * ⚠**분모를 문자열 안에 넣는다**(M2) — 값만 떼어 쓸 수 없게 한다.
+ */
+function summaryOf(
+  role: "batter" | "pitcher",
+  bat: { avg: Rate } | undefined,
+  pit: { era: Rate } | undefined,
+): string | null {
+  if (role === "pitcher") {
+    return pit === undefined || pit.era.value === null
+      ? null
+      : `防御率 ${dec2(pit.era.value)}（${innings(pit.era.denominator)}回）`;
+  }
+  return bat === undefined || bat.avg.value === null
+    ? null
+    : `打率 ${avg3(bat.avg.value)}（${bat.avg.denominator}打数）`;
+}
+
 export function loadSite(db: Db, o: LoadOptions): SiteData {
   const competition = o.competition ?? "regular";
   const through = o.through ?? "9999-12-31";
@@ -2118,6 +2191,24 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   // ⚠경기 페이지는 **행렬만이 아니라 `RunExpectancy` 자체**가 필요하다(`paValue`가 그걸 받는다).
   // 여기서 다시 만들지 않는다 — 같은 시즌을 두 번 훑는 것도, 값이 갈라지는 것도 피한다(M1)
   const reFull = new Map<string, RunExpectancy>();
+  /**
+   * 타구 성향 — **타석 로그 원문에서 읽는다.**
+   * ⚠**선수당 한 벌씩만 만든다**(리그를 나눠 두 번 부르면 이적 선수가 반씩 나뉜다).
+   * ⚠모르는 표기가 있으면 집계가 던진다(M7) — 조용히 흘리면 타구 성향이 서서히 틀려진다.
+   */
+  const bbBatter = new Map<string, BattedBallData>();
+  for (const b of battedBalls(db, o.season, competition, through)) {
+    const cur = bbBatter.get(b.playerId);
+    bbBatter.set(b.playerId, cur === undefined ? b : addBatted(cur, b));
+  }
+  const bbPitcher = new Map<string, BattedBallData>();
+  for (const b of battedBalls(db, o.season, competition, through, true)) {
+    const cur = bbPitcher.get(b.playerId);
+    bbPitcher.set(b.playerId, cur === undefined ? b : addBatted(cur, b));
+  }
+
+  /** 리그별 번트의 득점기대값 변화. **선수의 기록이 아니라 리그 전체의 값**이다 */
+  const buntByLeague = new Map<League, BuntCell[]>();
   const srcByPlayer = new Map<string, { src: number; pa: number; skipped: number; srcPer600: number | null }>();
   // ⚠9이닝 환산의 분모는 **아웃**이다. 상대 타자 수(bf)는 표본 표기용이라 둘 다 들고 있어야 한다
   const srpByPlayer = new Map<string, { srp: number; bf: number; skipped: number; outs: number; srpPer9: number | null }>();
@@ -2138,6 +2229,8 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     const re = buildRunExpectancy(db, o.season, bundle.league, codes, competition, through);
     reByLeague.set(bundle.league, re.matrix);
     reFull.set(bundle.league, re);
+    // ⚠**리그별로 낸다.** 득점환경이 다르므로 두 리그를 섞은 하나의 번트 가치는 뜻이 흐려진다
+    buntByLeague.set(bundle.league, buntValues(db, o.season, competition, through, re, codes));
 
     // ⚠**더하고 덮어쓰지 않는다.** SRC는 그 리그의 득점기대 행렬로 잰 **런 수**라 리그를 넘어도
     // 더하는 것이 맞다. 덮어쓰면 리그를 넘은 선수의 절반이 사라진다(2026-08-16 이중 검토 P0)
@@ -2308,6 +2401,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
             ranks: ranksFor(rankings.batting, playerId),
             qualified: (batPart?.player.line.pa ?? 0) >= qualifiedBatterPa(bundle.teamGames),
             needPa: qualifiedBatterPa(bundle.teamGames),
+            batted: bbBatter.get(playerId) ?? EMPTY_BATTED,
           };
 
     const pitchingData: PitchingBlockData | null =
@@ -2318,6 +2412,8 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
             line: pit.player.line,
             // ⚠집계가 세어 둔 것을 그대로 쓴다 — 여기서 다시 세면 두 벌이 된다(M1)
             decisions: pit.player.decisions,
+            quality: pit.player.quality,
+            batted: bbPitcher.get(playerId) ?? EMPTY_BATTED,
             era: pit.era,
             whip: pit.whip,
             fip: pit.fip,
@@ -2350,6 +2446,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
 
     const reMatrix = reByLeague.get(base.league);
     const statePa = statePaByPlayer.get(playerId);
+    const bunts = buntByLeague.get(base.league) ?? [];
     const situation: SituationCell[] =
       reMatrix === undefined || role === "pitcher"
         ? []
@@ -2416,6 +2513,8 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     players.push({
       playerId,
       name: base.displayName,
+      // 명부와 검색이 같은 문자열을 쓴다(M1)
+      summary: summaryOf(role, battingData ?? undefined, pitchingData ?? undefined),
       season: o.season,
       teamCode: base.teamCode,
       teamName: team.name,
@@ -2448,6 +2547,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       sparkLabel: role === "pitcher" ? "月別防御率" : "月別OPS",
       asOf: meta.latest,
       stints: stintsOf(playerId, role),
+      bunts,
       postseason: briefByPlayer.get(playerId) ?? [],
     });
 
@@ -2456,14 +2556,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
      * ⚠**서식은 화면과 같은 함수로 만든다**(M1) — 여기서 손으로 반올림하면 값이 두 벌이 된다.
      * ⚠타자는 타율, 투수는 방어율. 역할 판정은 위에서 이미 한 것을 그대로 쓴다.
      */
-    const summary =
-      role === "pitcher"
-        ? pit === undefined || pit.era.value === null
-          ? null
-          : `防御率 ${dec2(pit.era.value)}（${innings(pit.era.denominator)}回）`
-        : bat === undefined || bat.avg.value === null
-          ? null
-          : `打率 ${avg3(bat.avg.value)}（${bat.avg.denominator}打数）`;
+    const summary = summaryOf(role, bat, pit);
     search.push({
       i: playerId,
       n: base.displayName,

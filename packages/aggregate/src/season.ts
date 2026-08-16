@@ -43,6 +43,34 @@ export interface SeasonBatting {
 export type PitcherRole = "starter" | "reliever";
 
 /** 승·패·세이브·홀드. 박스스코어의 결정 표기(`○ ● S H`)에서 센다 */
+/**
+ * 선발 등판의 내용 지표.
+ *
+ * ⚠**지표 카탈로그에 「퀄리티스타트」가 적혀 있는데 구현이 0곳이었다**(2026-08-16 확인) —
+ * 규약과 코드의 명시적 불일치 1건. 그리고 이건 **공표값과 대조할 수 있는 몇 안 되는 신규 지표**다
+ * (npb.jp 성적표에 `完投`·`完封勝` 컬럼이 있고 파서 헤더에 이미 들어 있다).
+ */
+export interface StarterQuality {
+  /** 선발 등판 수. **비율의 분모다**(M2) */
+  starts: number;
+  /** 6이닝 이상 · 자책 3 이하 */
+  qs: number;
+  /** 7이닝 이상 · 자책 2 이하 */
+  hqs: number;
+  /**
+   * 완투.
+   *
+   * ⚠**아웃 27개로 세지 않는다.** 홈팀이 이겨 9회말이 없으면 원정 선발은 8이닝(24아웃)으로 완투다.
+   * 실측(2026-08-17 재현): 27아웃 기준 2026년 **43건** · 2025년 **71건**인데,
+   * **「그 팀의 유일한 투수」** 기준으로는 **55건 · 88건**이다. 차이 12·17건이 전부
+   * 홈팀이 이겨 9회말이 없던 경기의 원정 선발(8이닝 완투)이고 **후자가 규칙상 옳다.**
+   * ⚠앞서 이 주석에 41·65로 적혀 있었는데 재현되지 않았다 — 손으로 센 값이었다.
+   */
+  cg: number;
+  /** 완봉승 — 완투 · 실점 0 · 승리투수. ⚠**승리가 조건이다**(0-0 무승부는 완봉승이 아니다) */
+  sho: number;
+}
+
 export interface Decisions {
   w: number;
   l: number;
@@ -76,6 +104,8 @@ export interface SeasonPitching {
   wp: number | null;
   balk: number | null;
   decisions: Decisions;
+  /** 선발 등판의 내용. 선발이 0경기면 전 항목이 0이다 */
+  quality: StarterQuality;
   /** 선발 등판에서의 성적만. 선발이 0경기면 전 항목이 0이다 */
   asStarter: PitchingLine;
   /** 구원 등판에서의 성적만 */
@@ -161,6 +191,13 @@ starter AS (
   JOIN (SELECT game_id, half, MIN(seq) AS s FROM pa_event GROUP BY game_id, half) m
     ON m.game_id = e.game_id AND m.half = e.half AND m.s = e.seq
   WHERE e.pitcher_id IS NOT NULL
+),
+/**
+ * 그 경기 그 팀의 투수 수. **완투 판정이 여기서 나온다.**
+ * ⚠아웃 27개로 세면 홈팀이 이겨 9회말이 없던 경기의 원정 선발(8이닝 완투)을 놓친다.
+ */
+solo AS (
+  SELECT game_id, side, COUNT(*) AS pitchers FROM pitching_line GROUP BY game_id, side
 )`;
 
 /** 선발 등판인가 — `CASE WHEN` 안에서 반복해 쓰는 조건 */
@@ -218,11 +255,18 @@ SELECT t.player_id AS playerId,
        SUM(CASE WHEN t.decision = '●' THEN 1 ELSE 0 END) AS l,
        SUM(CASE WHEN t.decision = 'S' THEN 1 ELSE 0 END) AS sv,
        SUM(CASE WHEN t.decision = 'H' THEN 1 ELSE 0 END) AS hld,
-       SUM(CASE WHEN t.decision = '○' AND s.pitcher_id IS NULL THEN 1 ELSE 0 END) AS reliefW
+       SUM(CASE WHEN t.decision = '○' AND s.pitcher_id IS NULL THEN 1 ELSE 0 END) AS reliefW,
+       -- 선발 등판의 내용. ⚠**전부 선발 등판으로 한정한다** — 구원의 6이닝은 QS가 아니다
+       SUM(CASE WHEN ${IS_START} AND t.outs >= 18 AND t.er <= 3 THEN 1 ELSE 0 END) AS qs,
+       SUM(CASE WHEN ${IS_START} AND t.outs >= 21 AND t.er <= 2 THEN 1 ELSE 0 END) AS hqs,
+       SUM(CASE WHEN ${IS_START} AND so2.pitchers = 1 THEN 1 ELSE 0 END) AS cg,
+       SUM(CASE WHEN ${IS_START} AND so2.pitchers = 1 AND t.runs = 0 AND t.decision = '○'
+           THEN 1 ELSE 0 END) AS sho
 FROM pitching_line t
 JOIN game g ON g.game_id = t.game_id
 JOIN player p ON p.player_id = t.player_id
 LEFT JOIN starter s ON s.game_id = t.game_id AND s.pitcher_id = t.player_id
+LEFT JOIN solo so2 ON so2.game_id = t.game_id AND so2.side = t.side
 WHERE g.season = ? AND g.status = 'played' AND g.competition = ? AND g.game_date <= ?
 GROUP BY t.player_id, teamCode
 `;
@@ -414,6 +458,10 @@ export function aggregateSeason(
           w: Number(r["w"]), l: Number(r["l"]), sv: Number(r["sv"]),
           hld: Number(r["hld"]), reliefW: Number(r["reliefW"]),
         } satisfies Decisions,
+        quality: {
+          starts: Number(r["starts"]), qs: Number(r["qs"]), hqs: Number(r["hqs"]),
+          cg: Number(r["cg"]), sho: Number(r["sho"]),
+        } satisfies StarterQuality,
       };
   });
   const addPit = (a: (typeof pitBase)[number], b: (typeof pitBase)[number]): (typeof pitBase)[number] => ({
@@ -436,6 +484,14 @@ export function aggregateSeason(
         hld: a.decisions.hld + b.decisions.hld,
         reliefW: a.decisions.reliefW + b.decisions.reliefW,
       },
+      // ⚠리그를 넘어 이적해도 선발 내용은 합계다 — 개수 지표라 분모가 두 번 세어지지 않는다
+      quality: {
+        starts: a.quality.starts + b.quality.starts,
+        qs: a.quality.qs + b.quality.qs,
+        hqs: a.quality.hqs + b.quality.hqs,
+        cg: a.quality.cg + b.quality.cg,
+        sho: a.quality.sho + b.quality.sho,
+      },
   });
   const toPitching = (r: (typeof pitBase)[number]): SeasonPitching => ({
     playerId: r.playerId,
@@ -445,6 +501,7 @@ export function aggregateSeason(
     lastDate: r.lastDate,
     games: r.games,
     starts: r.starts,
+    quality: r.quality,
     pitches: r.pitches,
     wp: r.wp,
     balk: r.balk,

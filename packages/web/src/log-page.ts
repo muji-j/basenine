@@ -192,13 +192,13 @@ export function renderLogPage(d: LogPageData, ctx: RenderContext): string {
 
   const body = html`<header class="idline">
   <div class="idtext">
-    <span class="nm">収集ログ</span>
+    <h1 class="nm">収集ログ</h1>
     <span class="sub">${d.season}年 · このサイトの数字がいつ・どこから入ったか</span>
   </div>
 </header>
 
 <section class="block">
-  <h4>いまの中身<span class="qt">アーカイブ全体（2025年〜・ポストシーズン含む）</span></h4>
+  <h2>いまの中身<span class="qt">アーカイブ全体（2025年〜・ポストシーズン含む）</span></h2>
   <div class="cols">
     <dl>
       <dt>試合</dt><dd class="v">${d.totals.games.toLocaleString()}</dd>
@@ -248,7 +248,7 @@ ${block({
   })}
 
 <section class="block">
-  <h4>取り込みかた</h4>
+  <h2>取り込みかた</h2>
   <p class="note">
     出典は日本野球機構（NPB）公式サイト <a href="https://npb.jp/" rel="noreferrer noopener">npb.jp</a> です。
     自動収集は<b>1リクエストにつき${(d.politeness.minDelayMs / 1000).toFixed(0)}秒以上あけ、同時接続は${d.politeness.concurrency}本</b>、

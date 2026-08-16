@@ -560,3 +560,165 @@ test("포스트시즌 요약의 대회 이름이 그 대회 탭으로 간다", (
     "대회 이름이 그 대회 앵커로 가지 않는다 — 첫 탭만 열린 화면이 나온다",
   );
 });
+
+/**
+ * ⚠**지표 카탈로그에 「퀄리티스타트」가 적혀 있는데 구현이 0곳이었다**(2026-08-16 확인) —
+ * 규약과 코드의 명시적 불일치였다. 그리고 **공표값과 대조 가능한 몇 안 되는 신규 지표**다.
+ */
+test("선발 투수에게 QS·완투를 낸다 — 분모는 선발 등판 수다(M2)", () => {
+  const out = renderPlayerPage(playerPage({ role: "pitcher", batting: null, pitching: pitchingBlock(), mark: pitcherMark(), streaks: null }), context());
+  assert.ok(out.includes("QS"), "QS가 없다");
+  assert.ok(out.includes("完投"), "완투가 없다");
+  // ⚠**비율에는 분모가 붙는다.** QS율의 분모는 시합수가 아니라 **선발 등판 수**다
+  assert.ok(out.includes('<span class="den">22先発</span>'), "QS율의 분모가 없거나 틀렸다");
+  // ⚠완투를 어떻게 셌는지 화면이 말한다 — 아웃 27개로 세면 값이 달라진다
+  assert.ok(out.includes("この1人だけ"), "완투를 어떻게 셌는지 말하지 않는다");
+});
+
+/**
+ * ⚠**구원 투수에게 「QS 0」은 「못 했다」로 읽힌다**(M11).
+ * 선발이 0경기면 그 줄 자체가 없어야 한다 — 0과 해당없음은 다르다.
+ */
+test("선발이 0경기면 QS 줄을 그리지 않는다 — 0과 해당없음은 다르다(M11)", () => {
+  const relief = pitchingBlock();
+  const out = renderPlayerPage(
+    playerPage({
+      role: "pitcher",
+      batting: null,
+      mark: pitcherMark(),
+      streaks: null,
+      pitching: { ...relief, quality: { starts: 0, qs: 0, hqs: 0, cg: 0, sho: 0 } },
+    }),
+    context(),
+  );
+  assert.ok(!out.includes("QS率"), "선발이 없는데 QS율을 냈다");
+  assert.ok(!out.includes("完封勝"), "선발이 없는데 완봉승을 냈다");
+});
+
+/**
+ * ⚠**이름을 정확히 붙이는 것이 이 지표의 절반이다.**
+ * 땅볼 비율을 「GB%」라고 부르면 거짓말이 된다 — GB%는 안타를 포함한 전 타구가 분모인데
+ * 비홈런 안타에는 타구 종류 표기가 없어(실측 27.5%) 우리는 그걸 **모른다**.
+ * 그리고 방향은 「타구가 떨어진 지점」이 아니라 **「처리한 야수 기준」**이다.
+ */
+test("타구 성향을 내되, 무엇을 센 것인지 화면이 말한다", () => {
+  const out = renderPlayerPage(playerPage(), context());
+  assert.ok(out.includes("ゴロアウト率"), "타구 성향이 없다");
+  // ⚠**라벨로 쓰였는지**를 본다. 설명문이 「GB%와 분모가 다르다」고 말하는 것은 옳은 등장이다
+  assert.ok(!/<dt[^>]*>[^<]*GB%/.test(out), "GB% 를 지표 이름으로 썼다 — 분모가 달라 거짓말이 된다");
+  assert.ok(out.includes("一般的なGB%とは分母が違います"), "GB% 와 어떻게 다른지 말하지 않는다");
+  assert.ok(out.includes("処理した野手の位置"), "방향의 뜻을 말하지 않는다");
+  assert.ok(out.includes("分母はアウトだけ"), "땅볼 비율의 분모를 말하지 않는다");
+  assert.ok(out.includes("三振の内訳"), "삼진 내역을 헛스윙률로 오해할 수 있다");
+  // ⚠분모가 값에 인접한다(M2). 축마다 분모가 다르다
+  assert.ok(out.includes('<span class="den">230アウト</span>'), "땅볼 비율의 분모가 없다");
+  assert.ok(out.includes('<span class="den">360打球</span>'), "방향의 분모가 없다");
+});
+
+/**
+ * ⚠**얇은 표본에서 방향 비율은 값이 아니라 소음이다.**
+ * 20타구짜리 「좌측 70%」를 내면 M2가 막으라는 바로 그것을 하게 된다.
+ */
+test("표본이 얇은 축은 그리지 않는다 — 축마다 분모가 다르므로 임계값도 다르다", () => {
+  const thin = playerPage({
+    batting: {
+      ...playerPage().batting!,
+      batted: {
+        groundOuts: 5, airOuts: 5, left: 8, center: 6, right: 6,
+        infield: 4, infieldHits: 1, swinging: 6, looking: 2,
+      },
+    },
+  });
+  const out = renderPlayerPage(thin, context());
+  assert.ok(!out.includes("ゴロアウト率"), "10아웃짜리 땅볼 비율을 냈다");
+  assert.ok(!out.includes("引っ張り側"), "20타구짜리 방향 비율을 냈다");
+  assert.ok(!out.includes("内野安打率"), "4타구짜리 내야안타율을 냈다");
+});
+
+/**
+ * ⚠**「번트는 손해다」가 결론이 아니다.** 상황별로 갈리는 것이 결론이고,
+ * 무엇보다 **득점기대값은 승리기대값이 아니다** — 동점 9회말에 1점만 필요하면
+ * RE가 내려가는 선택이 옳을 수 있다. 우리는 승리기대값을 신뢰도 있게 만들 수 없으므로
+ * 거기까지만 말한다. 이 문장이 빠지면 화면이 과한 주장을 하게 된다.
+ */
+test("번트의 득점기대값을 내되, 승리기대값이 아니라고 말한다", () => {
+  const out = renderPlayerPage(playerPage(), context());
+  assert.ok(out.includes("犠打"), "번트 표가 없다");
+  assert.ok(out.includes("-0.121"), "기대값 변화가 없다");
+  assert.ok(out.includes("勝利期待値ではありません"), "RE와 WE를 구별하지 않는다");
+  assert.ok(out.includes("「バントは損」が結論ではありません"), "과한 주장을 막는 문장이 없다");
+  // ⚠**분모가 붙는다**(M2) — 6건짜리 평균과 895건짜리 평균은 다른 값이다
+  assert.match(out, /<td class="b">895<\/td>/, "번트 수(분모)가 없다");
+});
+
+/** ⚠**표본이 얇은 상황은 내지 않는다.** 6건짜리 평균은 값이 아니라 소음이다 */
+test("번트가 적은 상황은 표에 넣지 않는다", () => {
+  const out = renderPlayerPage(
+    playerPage({ bunts: [{ bases: "3", outs: 1, n: 6, before: 0.869, delta: 0.208 }] }),
+    context(),
+  );
+  assert.ok(!out.includes("0.208"), "6건짜리 상황을 값으로 냈다");
+});
+
+/**
+ * ⚠**좌타자는 당겨치면 오른쪽이다.**
+ * 무조건 「왼쪽 = 당겨치기」로 적으면 **좌타자 페이지의 두 라벨이 정반대**가 되어
+ * 당겨치는 타자를 밀어치는 타자로 읽게 만든다.
+ * 실측(2026): 우타는 좌 46.3%/우 31.2%, 좌타는 좌 34.4%/우 43.3% —
+ * 이 줄이 그려지는 163장 중 **83장(50.9%)이 좌타자**였다.
+ */
+test("⚠좌타자의 당겨치기는 오른쪽이다 — 라벨이 뒤집힌다", () => {
+  const dir = (bats: string | null): string =>
+    renderPlayerPage(playerPage({ bats }), context());
+
+  const r = dir("right");
+  const l = dir("left");
+  // 우타: 왼쪽이 당겨치기
+  const rl = /引っ張り側<\/[^>]*><dd[^>]*>\.?(\d+)/.exec(r.replace(/<span class="dt-[^"]*">/g, ""));
+  assert.ok(r.includes("引っ張り側"), "우타에 당겨치기 라벨이 없다");
+  assert.ok(l.includes("引っ張り側"), "좌타에 당겨치기 라벨이 없다");
+  // ⚠**같은 값에 붙는 라벨이 좌우로 갈려야 한다.** 두 화면이 같으면 뒤집지 않은 것이다
+  const pos = (html: string, label: string): number => html.indexOf(label);
+  assert.ok(
+    pos(r, "引っ張り側") < pos(r, "逆方向側"),
+    "우타는 당겨치기(왼쪽)가 먼저 나와야 한다",
+  );
+  assert.ok(
+    pos(l, "引っ張り側") > pos(l, "逆方向側"),
+    "좌타인데 당겨치기가 왼쪽 자리에 있다 — 라벨이 뒤집히지 않았다",
+  );
+  void rl;
+});
+
+/**
+ * ⚠**양타·미상은 방향으로만 말한다.** 그 타석에 어느 쪽에 섰는지 우리는 모른다 —
+ * 추정해서 「당겨치기」라고 쓰면 사실이 아니라 우리 짐작이다.
+ */
+test("타석의 좌우를 모르면 당겨치기라고 말하지 않는다", () => {
+  for (const bats of ["both", null]) {
+    const out = renderPlayerPage(playerPage({ bats }), context());
+    assert.ok(!out.includes("引っ張り側"), `${bats}: 모르는데 당겨치기라고 했다`);
+    assert.ok(out.includes("左方向"), `${bats}: 방향 라벨이 없다`);
+    assert.ok(out.includes("打席の左右がわからない"), `${bats}: 왜 그렇게 쓰는지 말하지 않는다`);
+  }
+});
+
+/**
+ * ⚠**내야타구만 충분한 선수가 통째로 빠졌다** — 실측 1,664 선수-시즌 중 55건(3.3%).
+ * 표시 가드에서 그 축만 빠져 있었다.
+ */
+test("내야타구만 충분해도 그 줄은 그린다", () => {
+  const out = renderPlayerPage(
+    playerPage({
+      batting: {
+        ...playerPage().batting!,
+        batted: {
+          groundOuts: 10, airOuts: 10, left: 20, center: 20, right: 20,
+          infield: 80, infieldHits: 8, swinging: 10, looking: 5,
+        },
+      },
+    }),
+    context(),
+  );
+  assert.ok(out.includes("内野安打率"), "내야타구가 충분한데 줄이 사라졌다");
+});

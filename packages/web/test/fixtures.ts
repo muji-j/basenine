@@ -51,7 +51,11 @@ export function battingBlock(over: Partial<BattingBlockData> = {}): BattingBlock
     src: { src: 44.2, pa: 442, skipped: 0, srcPer600: 60.0 },
     ranks: { avg: 1, obp: 1, slg: 1, ops: 1, hr: 2, rbi: 1, sb: 16, wrcPlus: 1, src: 1 },
     qualified: true,
-    needPa: 332,
+    batted: {
+    groundOuts: 120, airOuts: 110, left: 140, center: 120, right: 100,
+    infield: 90, infieldHits: 8, swinging: 70, looking: 25,
+  },
+  needPa: 332,
     ...over,
   };
 }
@@ -61,6 +65,11 @@ export function pitchingBlock(over: Partial<PitchingBlockData> = {}): PitchingBl
     games: 18,
     line: PITCHING_LINE,
     decisions: { w: 9, l: 4, sv: 0, hld: 0, reliefW: 0 },
+  batted: {
+    groundOuts: 120, airOuts: 110, left: 140, center: 120, right: 100,
+    infield: 90, infieldHits: 8, swinging: 70, looking: 25,
+  },
+  quality: { starts: 22, qs: 14, hqs: 7, cg: 1, sho: 0 },
     era: r(2.7, 300),
     whip: r(1.1, 300),
     fip: r(2.9, 300),
@@ -126,7 +135,8 @@ export function rankingPanel(over: Partial<RankingPanel> = {}): RankingPanel {
     qualifier: "規定打席 332 に達した選手だけに順位がつきます。",
     rows: Array.from({ length: 10 }, (_, i) => ({
       rank: i + 1,
-      playerId: `p${i}`,
+      summary: "打率 .317（382打数）",
+    playerId: `p${i}`,
       name: `選手${i}`,
       teamCode: "t",
       value: r(200 - i * 5, 400),
@@ -140,6 +150,8 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
   return {
     playerId: "41045153",
     name: "佐藤",
+    summary: "打率 .317（382打数）",
+    bunts: [{ bases: "1", outs: 0, n: 895, before: 0.716, delta: -0.121 }],
     season: 2026,
     teamCode: "t",
     teamName: "阪神タイガース",

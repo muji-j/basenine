@@ -181,7 +181,7 @@ function score(side: PostGame["away"], won: boolean): RawHtml {
 }
 
 function gameCard(g: PostGame, base: string): RawHtml {
-  const body = html`<h5 class="gvenue">第${g.gameNo}戦<span class="gtie">${fullDate(g.date)}</span></h5>
+  const body = html`<h3 class="gvenue">第${g.gameNo}戦<span class="gtie">${fullDate(g.date)}</span></h3>
   <div class="gscore">
     ${score(g.away, g.winner === "away")}
     ${score(g.home, g.winner === "home")}
@@ -249,9 +249,9 @@ export function renderPostseasonPage(d: PostseasonPageData, ctx: RenderContext):
   <div class="idtext">
     <!-- ⚠**있는 것만 이름으로 부른다.** 2026년은 올스타뿐인데 「ポストシーズン」이라고 하면
          화면이 거짓말을 한다 — 올스타는 시즌 중 경기이고 포스트시즌이 아니다 -->
-    <span class="nm">${d.competitions.some((c) => c.id !== "allStar")
+    <h1 class="nm">${d.competitions.some((c) => c.id !== "allStar")
       ? "ポストシーズン"
-      : "レギュラーシーズン外の試合"}</span>
+      : "レギュラーシーズン外の試合"}</h1>
     <span class="sub">${d.season}年 · ${d.competitions.length === 0
       ? "記録がありません"
       : d.competitions.map((c) => `${c.name}${c.games.length}試合`).join(" · ")}</span>
@@ -276,10 +276,10 @@ ${d.competitions.length === 0
     ? html`<section class="block"><p class="empty">このシーズンのポストシーズンはまだ記録していません。</p></section>`
     : html`${d.competitions.map(
       (c, i) => wrap(many, c.id, i === 0, html`<section class="block" id="pc-${c.id}">
-  <h4>${c.name}<span class="qt">${c.games.length}試合</span></h4>
+  <h2>${c.name}<span class="qt">${c.games.length}試合</span></h2>
   ${note(c.detail)}
   ${stageGroups(c.games).map(
-    ([label, games]) => html`${label === "" ? raw("") : html`<h5 class="standname">${label}</h5>`}
+    ([label, games]) => html`${label === "" ? raw("") : html`<h3 class="standname">${label}</h3>`}
   <div class="gcards">${games.map((g) => gameCard(g, base))}</div>`,
   )}
 
@@ -289,9 +289,9 @@ ${d.competitions.length === 0
       "この大会は選手成績を集計していません — 出場は「セ・リーグ」「パ・リーグ」の選抜としてで、" +
         "球団に紐づく成績にならないためです。試合結果のみ残しています。",
     )
-    : html`<h5 class="standname">打者</h5>
+    : html`<h3 class="standname">打者</h3>
   ${batterTable(c.batters, base)}
-  <h5 class="standname">投手</h5>
+  <h3 class="standname">投手</h3>
   ${pitcherTable(c.pitchers, base)}
   ${note(
     // ⚠**순위가 아니라는 것을 화면이 말한다**(M2·M3). 13경기·5경기짜리 표본이다
@@ -330,7 +330,7 @@ ${d.competitions.length === 0
 export function postseasonBrief(rows: readonly PostseasonBrief[], base: string): RawHtml {
   if (rows.length === 0) return raw("");
   return html`<section class="block" id="postbrief">
-  <h4>ポストシーズン<span class="qt">レギュラーシーズンとは別です</span></h4>
+  <h2>ポストシーズン<span class="qt">レギュラーシーズンとは別です</span></h2>
   <dl class="postrow">${rows.map(
     /**
      * ⚠**대회 이름이 그 대회의 탭으로 간다.**

@@ -31,7 +31,7 @@ export const ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32
 
 export const CSS = `
 :root {
-  --page:#fbfaf7; --tx:#17171a; --tx-2:#5d5d59; --tx-3:#8d8d87;
+  --page:#fbfaf7; --tx:#17171a; --tx-2:#5d5d59; --tx-3:#6e6e69;
   --hair:#e0dfd8; --hair-2:#cfcec5; --panel:#ffffff; --panel-2:#f3f1ec;
   --warn:#a8452f; --ok:#3f6b4a;
   --f-body:"Yu Gothic","Hiragino Kaku Gothic ProN","Noto Sans JP","Meiryo",system-ui,sans-serif;
@@ -45,13 +45,13 @@ export const CSS = `
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --page:#15161a; --tx:#e9e8e3; --tx-2:#a5a49d; --tx-3:#7b7a74;
+    --page:#15161a; --tx:#e9e8e3; --tx-2:#a5a49d; --tx-3:#8f8e87;
     --hair:#2b2d33; --hair-2:#3b3e45; --panel:#1c1e23; --panel-2:#23262c;
     --warn:#e08a72; --ok:#8fc09c;
   }
 }
 :root[data-theme="dark"] {
-  --page:#15161a; --tx:#e9e8e3; --tx-2:#a5a49d; --tx-3:#7b7a74;
+  --page:#15161a; --tx:#e9e8e3; --tx-2:#a5a49d; --tx-3:#8f8e87;
   --hair:#2b2d33; --hair-2:#3b3e45; --panel:#1c1e23; --panel-2:#23262c;
   --warn:#e08a72; --ok:#8fc09c;
 }
@@ -116,7 +116,10 @@ a{color:inherit}
 .mk{display:block}
 .mkline{display:inline-block;vertical-align:-3px;margin-right:6px;line-height:0}
 .idtext{min-width:0;display:flex;flex-direction:column;gap:2px}
-.idline .nm{font-size:clamp(21px,5vw,26px);font-weight:700;letter-spacing:.08em;line-height:1.2}
+/* ⚠**표제는 h1 이다.** 크기는 원래 맞았는데 태그가 span 이라, 스크린리더의 헤딩 목록에
+   페이지 제목이 없었다(3,257장 중 h1 0장). 여백은 여기서 지운다 — h1 의 기본 여백이 붙으면
+   머리줄이 벌어진다 */
+.idline .nm{margin:0;font-size:clamp(21px,5vw,26px);font-weight:700;letter-spacing:.08em;line-height:1.2}
 .idline .sub{font-size:11.5px;color:var(--tx-2);letter-spacing:.06em}
 .spark{margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:2px}
 .spark svg{display:block;overflow:visible}
@@ -216,7 +219,7 @@ a{color:inherit}
     linear-gradient(to left,var(--hair-2),rgba(0,0,0,0)) right center/9px 100% no-repeat scroll}
 .tabs.scroll::-webkit-scrollbar{height:0}
 /* 탭줄을 안는 자리도 줄어들 수 있어야 한다 — 한 곳만 막혀도 위의 규칙이 무효가 된다 */
-.rail>.tabs,.block>h4 .sw,.block>h4 .sw>.tabs{min-width:0}
+.rail>.tabs,.block>h2 .sw,.block>h2 .sw>.tabs{min-width:0}
 
 /* 세그먼티드 — 「둘 중 하나」인 상위 전환. 붙여 놓으면 배타성이 형태로 보인다.
    ⚠**줄어들지 않게 flex:none.** 이 줄은 화면의 갈래 자체라 스크롤 밖으로 밀리면 안 된다 */
@@ -234,7 +237,9 @@ a{color:inherit}
 /* ── 조립 UI ─────────────────────────────────────────────── */
 .editor{padding:14px var(--pad) 16px;border-bottom:1px solid var(--hair);background:var(--panel)}
 .editor[hidden]{display:none}
-.editor h3{margin:0 0 3px;font-size:12px;letter-spacing:.14em;color:var(--tx-2);font-weight:600}
+/* ⚠**태그를 h2 로 올렸으면 선택자도 따라가야 한다.** 안 그러면 이 제목만
+   브라우저 기본 h2(24px + 큰 여백)로 그려진다 — 헤딩 순서를 고치다 만든 결함이다 */
+.editor h2{margin:0 0 3px;font-size:12px;letter-spacing:.14em;color:var(--tx-2);font-weight:600}
 .editor p{margin:0 0 12px;font-size:11.5px;color:var(--tx-3)}
 .blocks{display:flex;flex-direction:column;gap:4px;max-width:520px}
 .brow{display:grid;grid-template-columns:auto 1fr auto auto;gap:10px;align-items:center;padding:6px 8px;
@@ -254,10 +259,10 @@ a{color:inherit}
 .block{padding:16px var(--pad);border-bottom:1px solid var(--hair);animation:rise var(--mid) var(--ease) both;
   animation-delay:calc(var(--i,0) * 26ms)}
 .block[hidden]{display:none}
-.block>h4{margin:0 0 9px;font-size:10.5px;letter-spacing:.19em;color:var(--tx-2);font-weight:600;
+.block>h2{margin:0 0 9px;font-size:10.5px;letter-spacing:.19em;color:var(--tx-2);font-weight:600;
   display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.block>h4 .sw{display:flex;gap:4px;margin-left:auto;flex-wrap:wrap}
-.block>h4 .qt{letter-spacing:0;font-weight:400;color:var(--tx-3)}
+.block>h2 .sw{display:flex;gap:4px;margin-left:auto;flex-wrap:wrap}
+.block>h2 .qt{letter-spacing:0;font-weight:400;color:var(--tx-3)}
 [data-panelgroup]{animation:fade var(--fast) var(--ease)}
 [data-panelgroup][hidden]{display:none}
 /* ⚠**패널에만 준다.** 레일 안의 하위 탭줄도 같은 그룹에 속하는데, 탭줄이 미끄러지면 조작이 흔들린다 */
@@ -360,7 +365,9 @@ dd.g-veryBad{box-shadow:inset 0 -3px 0 var(--g-vbad);background:var(--g-vbad-bg)
 /* 격리 원문 — 코드가 아니라 **원본 그대로의 글자**임을 보이게 한다 */
 .qs{font-family:var(--f-num);font-size:11px;background:var(--panel-2);padding:1px 5px;white-space:nowrap}
 .qd{font-size:10.5px;color:var(--tx-3)}
-.rolecol .subhead{margin:0 0 4px}
+/* ⚠**크기를 명시한다.** 원래 h5 의 기본값(0.83em)에 기대고 있었는데 h3 로 올리면서
+   1.17em 이 되어 41% 커졌다 — 블록 제목(10.5px)보다 커진다. 태그에 기대지 않는다 */
+.rolecol .subhead{margin:0 0 4px;font-size:11px;letter-spacing:.1em;color:var(--tx-2);font-weight:600}
 .rolecol dl{margin:0}
 
 /* ⚠좁은 화면에서 표를 옆으로 밀면 **누구의 행인지**가 먼저 사라진다.
@@ -387,7 +394,11 @@ th{font-size:10px;letter-spacing:.1em;color:var(--tx-2);font-weight:500}
 /* ⚠**머리 고정은 thead 에만 건다.** th 전체에 걸면 tbody 의 **행 머리**(이닝 스코어의
    구단명 칸)까지 top:0 으로 붙어 자기 행을 떠나 화면 위에 뜬다 — 표가 고장 난 것으로 보인다.
    실측(2026-08-16): 사이트에서 scope=row 를 쓰는 표는 이닝 스코어 하나뿐이다 */
-thead th{position:sticky;top:0;z-index:2;background:var(--page)}
+thead th{position:sticky;top:var(--topbar);z-index:2;background:var(--page)}
+/* ⚠**상단 띠 아래에 세운다.** top:0 으로 두면 상단 띠(z-index 20)가 겹침에서 이겨
+   **열 이름이 그 띠 뒤로 완전히 가려진다** — 147행짜리 대전표에서 40행쯤 내려가면
+   「三振」과 「打点」을 구별할 방법이 없다. 탭줄이 있는 화면은 그만큼 더 내린다 */
+html:has(.rail) thead th{top:calc(var(--topbar) + var(--rail))}
 /* ⚠**모서리 칸이 제일 위여야 한다.** 가로·세로 양쪽으로 고정되는 칸은 첫 열의 머리 하나뿐인데,
    .scroller th:first-child(z-index:1)가 특이도에서 이겨 **다른 머리 칸(2)이 그 위를 지나간다** —
    가로로 밀면 고정된 첫 열의 머리만 사라진다. 본문 칸은 멀쩡해서 더 이상하게 보인다.
@@ -401,7 +412,13 @@ tbody tr{transition:background var(--fast) var(--ease)}
 tbody tr:hover{background:var(--panel-2)}
 tr.me td{background:var(--team,#6b7280);color:var(--team-ink,#fff);font-weight:700}
 tr.me:hover td{background:var(--team,#6b7280)}
-tr.thin td{color:var(--tx-3)}
+/* ⚠**「얇음」을 대비 강등으로 말하지 않는다.**
+   --tx-3 이 붙는 것은 분모(.den)·자격 기준과 표본 경고(.note)·규정 미달 행인데,
+   실측(2026-08-16) 대비가 라이트 3.20:1 · 다크 4.20:1 이었다 —
+   **M2가 요구하는 바로 그 정보가 화면에서 가장 안 읽혔다.** 구단 페이지는 표의 86%가 그 색이다.
+   토큰 명도를 올리고(색상환은 그대로라 인쇄물의 질감은 남는다), 얇음은 **다른 채널**로 말한다 */
+tr.thin td{color:var(--tx-2)}
+tr.thin td:first-child{box-shadow:inset 2px 0 0 var(--hair-2)}
 /* 구단 색 칩 — **모든 표가 같은 한 벌을 쓴다**(M1의 정신).
    ⚠**셀을 flex 컨테이너로 만들지 않는다.** td{display:flex} 는 그 칸을 테이블 셀 박스에서
    빼내어, **그 열만 아래 경계선이 다른 열과 어긋난다**(2026-08-16 실측: 순위표 球団 열).
@@ -409,7 +426,7 @@ tr.thin td{color:var(--tx-3)}
    아예 그려지지 않았다** — <i> 는 인라인이라 width/height 가 먹지 않는다.
    네 화면(順位·イニングスコア·ポストシーズン 타자표·투수표)이 이 한 벌을 쓴다 */
 .tm i{display:inline-block;width:9px;height:9px;margin-right:6px;vertical-align:middle;
-  background:var(--chip,#6b7280)}
+  background:var(--chip,#6b7280);box-shadow:inset 0 0 0 1px var(--tx-2)}
 td a{text-decoration:none;box-shadow:inset 0 -1px 0 var(--hair-2)}
 td a:hover{box-shadow:inset 0 -1px 0 currentColor}
 
@@ -438,7 +455,7 @@ th[aria-sort="descending"] .sortable i::before{content:"↓"}
 .dg .c{border:1px solid var(--hair);padding:5px 3px;text-align:center;font-family:var(--f-num);font-variant-numeric:tabular-nums}
 .dg .c u{display:block;text-decoration:none;font-size:13px}
 .dg .c s{display:block;text-decoration:none;font-size:9px;color:var(--tx-3)}
-.dg .c.thin u{color:var(--tx-3)}
+.dg .c.thin u{color:var(--tx-2)}
 
 .bars{display:flex;flex-direction:column;gap:6px;max-width:480px}
 .bar{display:grid;grid-template-columns:84px 1fr 132px;gap:10px;align-items:center}
@@ -719,8 +736,12 @@ table.stand .dif i.n{right:50%}
 .trecent s{text-decoration:none;margin-left:auto;font-size:11.5px}
 .trecent a:hover{padding-left:4px}
 /* 순위표·일람의 구단명이 링크가 됐다 — 밑줄 대신 색으로만 반응한다(인쇄물의 질감) */
-.stand .tm a,.teamgroup h4 a{text-decoration:none}
-.stand .tm a:hover,.teamgroup h4 a:hover{text-decoration:underline}
+.stand .tm a,.teamgroup h2 a{text-decoration:none}
+.stand .tm a:hover,.teamgroup h2 a:hover{text-decoration:underline}
+
+/* 상대전적 — 이긴 비율의 띠. 눈금은 없고 정확한 수는 옆 칸에 있다 */
+table.vs .vsbar{display:inline-block;width:88px;height:6px;background:var(--hair);vertical-align:middle}
+table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);background:var(--chip,#6b7280)}
 
 /* ── ポストシーズン ────────────────────────────────────────
    ⚠**순위가 아니라 기록이다.** 표본이 13경기·5경기라 순위를 붙이면 거짓말이 된다 */
@@ -843,6 +864,10 @@ table.stand .dif i.n{right:50%}
 .cmprow .vb .g{margin-left:0;margin-right:5px}
 .cmpwarn{margin:0 0 12px;padding:9px 11px;font-size:12px;line-height:1.6;color:var(--tx-2);
   border-left:3px solid var(--g-bad);background:var(--panel-2);max-width:64ch}
+/* 「나란히 못 놓는다」로 끝내지 않고 갈 곳을 준다 */
+.cmpgo{display:inline-block;margin-top:10px;font-size:13px;padding:6px 12px;
+  border:1px solid var(--hair-2);text-decoration:none}
+.cmpgo:hover{border-color:var(--tx-2);background:var(--panel-2)}
 @media (max-width:560px){
   .cmprow{grid-template-columns:1fr 6.4em 1fr}
   .cmprow .va,.cmprow .vb{font-size:15px}
@@ -862,9 +887,9 @@ table.stand .dif i.n{right:50%}
 .count{font-size:11px;color:var(--tx-3);margin-top:10px}
 .teamgroup{padding:14px var(--pad);border-bottom:1px solid var(--hair)}
 .teamgroup[hidden]{display:none}
-.teamgroup h4{margin:0 0 8px;font-size:11px;letter-spacing:.14em;font-weight:700;
+.teamgroup h2{margin:0 0 8px;font-size:11px;letter-spacing:.14em;font-weight:700;
   display:flex;align-items:center;gap:8px}
-.teamgroup h4 i{width:11px;height:11px;background:var(--chip,#6b7280);font-style:normal}
+.teamgroup h2 i{width:11px;height:11px;background:var(--chip,#6b7280);font-style:normal;box-shadow:inset 0 0 0 1px var(--tx-2)}
 /* ⚠**화면 밖의 구단 묶음은 그리지 않는다.**
    일람은 구단 12묶음에 선수 698명이고, 선수마다 인라인 SVG가 하나씩 붙는다
    (실측: SVG 698개 · polygon 1,390개 · DOM 요소 7,326개).
@@ -879,6 +904,11 @@ table.stand .dif i.n{right:50%}
 .roster li[hidden]{display:none}
 .roster a{display:flex;gap:8px;align-items:baseline;padding:5px 0;text-decoration:none;border-bottom:1px solid var(--hair);
   transition:padding-left var(--fast) var(--ease)}
+/* ⚠**명부의 성적 줄.** 규칙이 없으면 body 기본 16px·--tx 로 그려져 **선수 이름(13px)보다
+   크고 진해진다** — 실측 1,397칸. 검색 드롭다운의 .qhits .hs 는 그쪽 전용이라 여기 안 걸린다 */
+.roster .hs{flex:0 0 auto;margin-left:8px;font-size:10.5px;color:var(--tx-3);
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+@media (max-width:520px){.roster .hs{display:none}}
 .roster a:hover{padding-left:4px}
 .roster .hn{font-size:13px}
 .roster .hp{margin-left:auto;font-size:10px;color:var(--tx-3)}
@@ -1498,12 +1528,16 @@ function attachPicker(input,list,onPick){
   if(!input||!list)return null;
   let rows=[],active=-1;
   const close=()=>{list.hidden=true;input.setAttribute("aria-expanded","false");active=-1};
+  /* @param items 배열이면 결과, **null 이면 아직 읽는 중**이다 */
   const draw=(items,failed)=>{
     list.textContent="";
     const one=(text)=>{const li=doc.createElement("li");li.className="none";li.textContent=text;list.appendChild(li)};
     if(failed)one("選手一覧を読み込めませんでした。再読み込みしてください。");
+    /* ⚠**「읽는 중」과 「없음」은 다르다**(M12의 4상태). 실패와 0건에는 문구가 있는데
+       로딩만 없어서, 느린 회선에서는 목록이 안 뜨는 동안 「검색이 고장났다」로 읽힌다 */
+    else if(items===null)one("読み込み中…");
     else if(!items.length)one("該当なし");
-    else items.forEach((p,i)=>{
+    else (items||[]).forEach((p,i)=>{
       const li=doc.createElement("li");
       // combobox의 목록 항목은 role=option이어야 aria-selected가 뜻을 갖는다
       li.setAttribute("role","option");
@@ -1524,7 +1558,10 @@ function attachPicker(input,list,onPick){
   const run=()=>{
     const term=input.value.trim();
     if(term===""){close();return}
+    /* 인덱스가 아직 안 왔으면 **그렇다고 말하고** 기다린다 — 잠자코 있지 않는다 */
+    if(!INDEX&&!indexError)draw(null,false);
     withIndex(idx=>{
+      if(input.value.trim()!==term)return;
       if(!idx){draw([],true);return}
       rows=idx.filter(p=>p.n.indexOf(term)>=0||p.t.indexOf(term)>=0).slice(0,20);
       active=-1;draw(rows,false);
@@ -1756,6 +1793,14 @@ if(cmpForm){
       wrap.appendChild(warn("打者と投手は共通の指標がないため並べられません。"+
         "打者どうし、または投手どうしを選んでください。（"+A.name+"＝"+
         (A.role==="batter"?"打者":"投手")+"／"+B.name+"＝"+(B.role==="batter"?"打者":"投手")+"）"));
+      /* ⚠**되돌려보내면서 길을 알려준다.** 이 조합이야말로 답이 있는 조합이다 —
+         투수 대 타자를 다루는 화면이 이미 있는데, 지금까지는 거절만 하고 끝났다 */
+      const bat=A.role==="batter"?A:B, pit=A.role==="batter"?B:A;
+      const go=doc.createElement("a");
+      go.className="cmpgo";
+      go.href=BASE+"players/"+bat.id+".html?vs="+encodeURIComponent(pit.name)+"#b-matchup";
+      go.textContent="この二人の対戦成績を見る";
+      wrap.appendChild(go);
       out.appendChild(wrap);return;
     }
 
