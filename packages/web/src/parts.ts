@@ -224,8 +224,21 @@ export function valueWithDen(r: Rate, unit: string, digits: Digits = 3): RawHtml
   return html`${fmt(r.value, digits)}<span class="den">${denominator(r.denominator, unit)}</span>`;
 }
 
+/**
+ * 설명 한 줄.
+ *
+ * ⚠**별표 두 개로 감싼 곳을 굵게 만든다.** 이 프로젝트의 문구는 어디서나 그 표기로 강조를 쓰는데,
+ * 여기만 순수 텍스트라 **별표가 그대로 화면에 찍히고 있었다** — 실측 1,537장(2026-08-16).
+ * ⚠**직접 HTML을 만들지 않는다.** 조각을 나눈 뒤 각 조각을 `html`에 넘기므로 이스케이프는 그대로 산다 —
+ * 선수명·구단명이 이 문구에 섞여 들어와도 태그가 되지 않는다.
+ * ⚠**짝이 맞지 않으면 아무것도 하지 않는다.** 별표가 홀수 개면 어디까지가 강조인지 알 수 없고,
+ * 그때 억지로 자르면 엉뚱한 곳이 굵어진다.
+ */
 export function note(text: string): RawHtml {
-  return html`<p class="note">${text}</p>`;
+  const parts = text.split("**");
+  // 조각이 짝수 개 = 별표가 홀수 개 = 짝이 안 맞는다
+  if (parts.length % 2 === 0) return html`<p class="note">${text}</p>`;
+  return html`<p class="note">${parts.map((s, i) => (i % 2 === 1 ? html`<b>${s}</b>` : s))}</p>`;
 }
 
 /**

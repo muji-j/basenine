@@ -76,7 +76,9 @@ export function innings(outs: number | null): string {
 
 /** 분모 표기. `442打席` */
 export function denominator(n: number, unit = "打席"): string {
-  return `${n}${unit}`;
+  // ⚠**「回」의 분모는 아웃 카운트다.** 39를 그대로 쓰면 「39回」가 되어 13이닝이 39이닝이 된다.
+  // 이 환산을 화면마다 다시 쓰면 언젠가 한 곳만 고쳐진다 — 그래서 여기 한 곳에 둔다
+  return unit === "回" ? `${innings(n)}回` : `${n}${unit}`;
 }
 
 /** `Rate`를 표기와 분모로 나눠 돌려준다. **둘을 떼어 쓰지 마라.** */

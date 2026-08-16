@@ -40,6 +40,15 @@ export interface Freshness {
   builtOn: string;
   /** 경기일과 생성일의 간격(일). null이면 경기가 하나도 없다 */
   lagDays: number | null;
+  /**
+   * **정규시즌**의 가장 최근 경기일. `latestGameDate`와 다를 수 있다.
+   *
+   * ⚠**띠는 사이트 공통인데 화면 대부분은 정규시즌만 싣는다.** 둘이 갈리는 시기
+   * (포스트시즌·올스타 휴식기)에 「最新の試合 10月19日 まで反映」이라고만 쓰면,
+   * 10월 5일까지밖에 안 담긴 순위표 위에서 그 문장이 거짓이 된다.
+   * 다르면 **둘 다 적는다** — 어느 쪽도 숨기지 않는 것이 답이다.
+   */
+  regularGameDate: string | null;
 }
 
 /** 며칠까지를 「최신」으로 볼 것인가. 하루 1회 배치라 전날 경기까지가 정상이다. */
@@ -55,11 +64,16 @@ function daysBetween(fromIso: string, toIso: string): number {
   return Math.round((b - a) / 86_400_000);
 }
 
-export function freshness(latestGameDate: string | null, builtOn: string): Freshness {
+export function freshness(
+  latestGameDate: string | null,
+  builtOn: string,
+  regularGameDate: string | null = latestGameDate,
+): Freshness {
   return {
     latestGameDate,
     builtOn,
     lagDays: latestGameDate === null ? null : daysBetween(latestGameDate, builtOn),
+    regularGameDate,
   };
 }
 
@@ -83,12 +97,17 @@ export function freshnessBar(f: Freshness, pastSeason = false): RawHtml {
     </div>`;
   }
   const latest = fullDate(f.latestGameDate);
+  // ⚠정규시즌이 다른 날에서 멈춰 있으면 **그것도 적는다** — 화면 대부분이 싣는 것은 그쪽이다
+  const regular =
+    f.regularGameDate === null || f.regularGameDate === f.latestGameDate
+      ? raw("")
+      : html`（レギュラーシーズンは ${fullDate(f.regularGameDate)} まで）`;
   if (isStale(f)) {
     return html`<div class="state stale" role="status">
       <b>更新が止まっています</b> — 最新の試合は ${latest}（${f.lagDays}日前）。取得に失敗している可能性があります
     </div>`;
   }
-  return html`<div class="state fresh">最新の試合 ${latest} まで反映</div>`;
+  return html`<div class="state fresh">最新の試合 ${latest} まで反映${regular}</div>`;
 }
 
 export interface SiteMeta {
@@ -99,7 +118,16 @@ export interface SiteMeta {
 }
 
 /** 전역 헤더에서 지금 어디에 있는지. `aria-current`로 나간다 */
-export type NavKey = "today" | "index" | "ranking" | "matchup" | "compare" | "log" | "player";
+export type NavKey =
+  | "today"
+  | "index"
+  | "ranking"
+  | "matchup"
+  | "compare"
+  | "log"
+  | "player"
+  | "postseason"
+  | "team";
 
 /**
  * 시즌 전환의 한 칸.
@@ -151,6 +179,8 @@ export interface PageOptions {
    * 그런 화면은 `false`로 두고 `aria-current="true"`(구획 안에 있다)만 낸다.
    */
   navExact?: boolean;
+  /** 이 시즌에 ポストシーズン 기록이 있는가. 없으면 내비에 항목을 내지 않는다 */
+  hasPostseason?: boolean;
   /** 본문. 블록들이 여기 들어간다 */
   body: RawHtml;
   /** 클라이언트에 실어 보낼 스크립트 본문(블록 카탈로그 등) */
@@ -179,6 +209,11 @@ function topbar(o: PageOptions): RawHtml {
     <a href="${o.base}ranking.html"${here("ranking")}>順位</a>
     <a href="${o.base}matchup.html"${here("matchup")}>対戦</a>
     <a href="${o.base}compare.html"${here("compare")}>比較</a>
+    <!-- ⚠**기록이 있는 시즌에만 낸다.** 2026년은 아직 포스트시즌이 없다 —
+         눌러도 빈 화면이 나오는 항목은 고장으로 읽힌다 -->
+    <!-- ⚠**이름을 「PS」로 두지 않는다.** 올스타뿐인 시즌도 여기로 오므로
+         포스트시즌이라고 부르면 틀린다. 「레귤러 시즌 밖의 경기」가 이 항목이 담는 것이다 -->
+    ${o.hasPostseason ? html`<a href="${o.base}postseason.html"${here("postseason")}>他大会</a>` : raw("")}
     <!-- ⚠수집 로그는 시즌별이 아니라 사이트 전체다(「언제 어디서 데이터가 들어왔나」).
          과거 시즌에는 만들지 않으므로 링크는 root로 현재 시즌의 것을 가리킨다.
          base로 두면 2025 화면 2,307장이 전부 404가 된다(2026-08-16 실측 1,585종). -->
@@ -319,6 +354,14 @@ export interface RenderContext {
   freshness: Freshness;
   /** 이 페이지의 경로. **자기 경로만 말하면 나머지는 계산된다** */
   paths: (selfPath: string, fallback?: Fallback) => PagePaths;
+  /**
+   * 이 시즌에 レギュラーシーズン外の試合 기록이 있는가.
+   *
+   * ⚠**필수다.** 선택 인자로 두면 새 화면을 만들며 한 줄을 빠뜨렸을 때
+   * **그 화면에서만 내비 항목이 조용히 사라진다** — 타입도 시험도 못 잡는다.
+   * 필수로 두면 컴파일이 멈춘다.
+   */
+  hasPostseason: boolean;
 }
 
 const LT = String.fromCharCode(0x3c);

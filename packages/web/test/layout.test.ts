@@ -156,3 +156,20 @@ test("링크 카드 정보를 싣는다 — 제목은 페이지 제목과 같다
   assert.match(out, /property="og:site_name" content="bb-app"/);
   assert.match(out, /property="og:locale" content="ja_JP"/);
 });
+
+/**
+ * ⚠**띠는 사이트 공통인데 화면 대부분은 정규시즌만 싣는다.**
+ * 포스트시즌 기간에 「最新の試合 10月19日 まで反映」이라고만 쓰면,
+ * 10월 5일까지밖에 안 담긴 순위표 위에서 그 문장이 거짓이 된다.
+ * 정규시즌이 다른 날에서 멈춰 있으면 **그것도 적는다.**
+ */
+test("정규시즌이 뒤처져 있으면 띠가 두 날짜를 다 말한다", () => {
+  const out = toString(freshnessBar(freshness("2026-10-19", "2026-10-20", "2026-10-05")));
+  assert.match(out, /最新の試合 2026年10月19日 まで反映/);
+  assert.match(out, /レギュラーシーズンは 2026年10月5日 まで/, "정규시즌 기준일을 숨겼다");
+});
+
+test("두 날짜가 같으면 괄호를 달지 않는다 — 같은 말을 두 번 하지 않는다", () => {
+  const out = toString(freshnessBar(freshness("2026-08-14", "2026-08-15", "2026-08-14")));
+  assert.ok(!out.includes("レギュラーシーズンは"), "같은 날짜인데 괄호가 나왔다");
+});

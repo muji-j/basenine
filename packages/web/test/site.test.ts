@@ -53,6 +53,9 @@ function siteData(over: Partial<SiteData> = {}): SiteData {
     },
     days: [],
     dayIndex: { season: 2026, latestDate: "2026-08-14", days: [] },
+    latestAnyGameDate: "2026-08-14",
+    postseason: { season: 2026, competitions: [] },
+    teams: [],
     games: [],
     ...over,
   };
@@ -83,9 +86,27 @@ test("사이트는 정해진 파일 집합을 만든다", () => {
 });
 
 test("경기가 없으면 낡음으로 보고한다 — 호출자가 종료 코드를 바꾼다", () => {
-  const out = buildSite(siteData({ asOf: null }), SITE, "2026-08-15");
+  const out = buildSite(siteData({ asOf: null, latestAnyGameDate: null }), SITE, "2026-08-15");
   assert.equal(out.stale, true);
   assert.equal(out.latestGameDate, null);
+});
+
+/**
+ * ⚠**신선도는 대회를 가리지 않는다.**
+ * 정규시즌만 보면 10월에 사이트 전체가 「更新が止まっています … 取得に失敗している可能性があります」로 바뀌는데,
+ * **같은 빌드의 포스트시즌 화면은 어제 경기를 보여주고 있다.**
+ * 게다가 빌드가 종료 코드 1을 내므로 **일일 배치가 매일 실패로 보고된다.**
+ * 날짜가 정해진 결함이라 손대지 않으면 그때 반드시 터진다.
+ */
+test("포스트시즌이 진행 중이면 낡았다고 하지 않는다 — 정규시즌만 보면 10월에 거짓말한다", () => {
+  const out = buildSite(
+    // 정규시즌은 10/5에 끝났고 오늘은 10/20 — 그런데 어제 CS 경기가 있었다
+    siteData({ asOf: "2026-10-05", latestAnyGameDate: "2026-10-19" }),
+    SITE,
+    "2026-10-20",
+  );
+  assert.equal(out.stale, false, "포스트시즌이 도는 중인데 취득 실패라고 했다");
+  assert.equal(out.latestGameDate, "2026-10-19", "보고하는 날짜가 판정과 다르다");
 });
 
 test("선수 ID가 경로로 쓸 수 없는 형태면 던진다 — 출력 밖에 쓰지 않는다", () => {
@@ -149,4 +170,35 @@ test("시즌 경로 목록과 실제로 만든 파일이 어긋나지 않는다 
   for (const p of seasonPaths(data, false)) {
     assert.ok(made.has(p), `${p} 를 만든다고 해놓고 안 만들었다`);
   }
+});
+
+/**
+ * ⚠**목록과 파일은 양방향으로 맞아야 한다.**
+ * 한쪽만 보면 「만들었는데 목록에 없는」 화면이 생기고, 그 화면은 다른 시즌에서 볼 때
+ * **조용히 選手一覧으로 튕긴다** — 404는 아니지만 사람은 「없어졌다」고 읽는다.
+ */
+test("만든 화면이 전부 시즌 경로 목록에 있다 — 빠진 만큼이 조용히 튕긴다", () => {
+  const data = siteData({
+    days: [day("2026-08-13")],
+    teams: [
+      {
+        season: 2026, teamCode: "t", name: "阪神タイガース", shortName: "阪神",
+        color: { base: "#f2c800", ink: "#17170f" }, leagueName: "セントラル・リーグ",
+        asOf: "2026-08-14", rank: 1, tiedRank: false, games: 1, w: 1, l: 0, t: 0,
+        pct: 1, gamesBehind: 0, rf: 1, ra: 0,
+        avg: { value: null, denominator: 0 }, era: { value: null, denominator: 0 },
+        home: { w: 1, l: 0, t: 0 }, away: { w: 0, l: 0, t: 0 }, last10: { w: 1, l: 0, t: 0 },
+        months: [], batters: [], pitchers: [], recent: [], latestDate: "2026-08-14",
+        hasPostseason: false,
+      },
+    ],
+  });
+  const known = seasonPaths(data, false);
+  const made = buildSite(data, SITE, "2026-08-15").files.map((f) => f.path);
+  for (const p of made) {
+    // 자산·색인은 화면이 아니다 — 시즌 전환의 대상이 아니므로 목록에도 없다
+    if (!p.endsWith(".html")) continue;
+    assert.ok(known.has(p), `${p} 를 만들었는데 시즌 경로 목록에 없다`);
+  }
+  assert.ok(known.has("teams/t.html"), "팀 화면이 목록에 없다");
 });

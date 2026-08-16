@@ -100,6 +100,14 @@ export interface SeasonAggregate {
   batting: SeasonBatting[];
   pitching: SeasonPitching[];
   /**
+   * 선수 × **구단**. 이적하면 두 줄이 된다 — **구단 페이지**가 쓴다.
+   *
+   * ⚠**「이 팀은 올해 어땠나」에 남의 팀 성적을 넣지 않는다.** 합계를 쓰면 이적 선수의
+   * 옛 팀 몫이 새 팀 표에 실리고, 같은 화면의 팀 打率 분모(그 팀만의 打数)와 어긋난다.
+   */
+  battingByTeam: SeasonBatting[];
+  pitchingByTeam: SeasonPitching[];
+  /**
    * 선수 × **리그**. 리그를 넘어 이적하면 두 줄이 된다 — 순위표와 리그 상수가 쓴다.
    *
    * ⚠**순위와 합계를 같은 배열로 만들지 않는다.** NPB의 타이틀은 소속 리그 성적만 세고,
@@ -262,10 +270,22 @@ interface Keyed {
 function mergeByPlayer<T extends Keyed>(
   rows: readonly T[],
   sum: (a: T, b: T) => T,
-  by: "player" | "playerLeague" = "player",
+  by: "player" | "playerLeague" | "playerTeam" = "player",
 ): T[] {
+  /**
+   * ⚠**세 질문이 서로 다른 답을 갖는다.**
+   * ① 「이 선수의 올 시즌 성적은?」 → **합계**(선수 페이지)
+   * ② 「이 리그의 타율 1위는?」 → **그 리그에서 낸 것만**(순위표 · NPB 관례)
+   * ③ 「이 팀은 올해 어땠나?」 → **그 팀에서 낸 것만**(구단 페이지)
+   * 하나로 뭉치면 ③에서 **남의 팀 안타가 이 팀 표에 실린다** — 실측(2026): 山本가
+   * ソフトバンク 페이지에 202타석으로 실리고(그중 105타석은 DeNA) DeNA 페이지에는 없었다.
+   */
   const keyOf = (r: T): string =>
-    by === "player" ? r.playerId : `${r.playerId}|${leagueOf(r.teamCode)}`;
+    by === "player"
+      ? r.playerId
+      : by === "playerTeam"
+        ? `${r.playerId}|${r.teamCode}`
+        : `${r.playerId}|${leagueOf(r.teamCode)}`;
 
   /**
    * ⚠**소속은 「가장 최근에 뛴 팀」이다.** 출장 수로 정하면 지금 있는 팀과 달라진다 —
@@ -355,6 +375,7 @@ export function aggregateSeason(
     } satisfies BattingLine,
   });
   const batting = mergeByPlayer(batBase, addBat, "player").map(toBatting);
+  const battingByTeam = mergeByPlayer(batBase, addBat, "playerTeam").map(toBatting);
   const battingByLeague = mergeByPlayer(batBase, addBat, "playerLeague").map(toBatting);
 
   /** `sp_`/`rp_` 접두사가 붙은 열을 한 벌의 `PitchingLine`으로 모은다 */
@@ -445,12 +466,15 @@ export function aggregateSeason(
     } satisfies PitchingLine,
   });
   const pitching = mergeByPlayer(pitBase, addPit, "player").map(toPitching);
+  const pitchingByTeam = mergeByPlayer(pitBase, addPit, "playerTeam").map(toPitching);
   const pitchingByLeague = mergeByPlayer(pitBase, addPit, "playerLeague").map(toPitching);
 
   return {
     season,
     batting,
     pitching,
+    battingByTeam,
+    pitchingByTeam,
     battingByLeague,
     pitchingByLeague,
     teamGames,

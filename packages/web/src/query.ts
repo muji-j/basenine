@@ -73,10 +73,11 @@ import type {
   PitcherRole,
   PitchingEntry,
   RunExpectancy,
+  SeasonAggregate,
   SplitDimension,
 } from "@bb-app/aggregate";
-import { TEAMS, colorOf, leagueOf, shortNameOf, teamOf } from "@bb-app/domain";
-import type { League } from "@bb-app/domain";
+import { NEUTRAL_COLOR, NON_TEAM_CODES, TEAMS, colorOf, leagueOf, shortNameOf, teamOf } from "@bb-app/domain";
+import type { Competition, League, TeamColor } from "@bb-app/domain";
 import { countsAsHit } from "@bb-app/parser";
 import type { Outcome } from "@bb-app/parser";
 import { positionMark } from "./player-page.ts";
@@ -121,6 +122,20 @@ import type { RankDigits } from "./parts.ts";
 import { avg3, dec2, denominator, innings } from "./format.ts";
 import { readFileSync } from "node:fs";
 import type {
+  TeamBatter,
+  TeamMonth,
+  TeamPageData,
+  TeamPitcher,
+} from "./team-page.ts";
+import type {
+  PostBatter,
+  PostCompetition,
+  PostGame,
+  PostPitcher,
+  PostseasonBrief,
+  PostseasonPageData,
+} from "./postseason-page.ts";
+import type {
   DayIndexData,
   DayPageData,
   PlayerRef,
@@ -130,6 +145,7 @@ import type {
   TodaySide,
 } from "./today-page.ts";
 import { KEY_PLAY_LIMIT } from "@bb-app/aggregate";
+import { gameSlug } from "./game-page.ts";
 import type { GamePageData, GamePlayView, GameSide } from "./game-page.ts";
 import type { PlayerRef as GamePlayerRef } from "./game-page.ts";
 import { POLITENESS } from "./log-page.ts";
@@ -1010,18 +1026,24 @@ function startersPage(
  * 실제로 2026-08-14 西武−ロッテ 전에 「小島」가 둘 있었다.
  * ⚠**이름을 모르면 그 자리를 비운다.** 숫자 ID를 화면에 내지 않는다.
  */
+/**
+ * @param competition 어느 대회의 경기 페이지를 만들 것인가.
+ *   ⚠**포스트시즌도 만든다.** 경기 페이지는 그 경기 하나만 말하므로 대회를 섞을 위험이 없다 —
+ *   섞이면 안 되는 것은 **집계**다(§2-1).
+ */
 function gamePages(
   db: Db,
   o: LoadOptions,
   reFull: ReadonlyMap<string, RunExpectancy>,
   nameOf: (playerId: string) => string | null,
+  competition = o.competition ?? "regular",
 ): GamePageData[] {
   const details = gameDetails(
     db,
     o.season,
     reFull,
     leagueOf,
-    o.competition ?? "regular",
+    competition,
     o.through ?? "9999-12-31",
   );
 
@@ -1278,6 +1300,514 @@ function dayPages(
     }));
 }
 
+/**
+ * ポストシーズンの대회 목록. **정규시즌은 여기 없다** — 섞지 않기 위한 경계다(§2-1).
+ * ⚠순서가 화면 순서다. 시간 순(CS → 일본시리즈)으로 두고, 올스타는 성격이 달라 맨 뒤에 둔다.
+ */
+const POSTSEASON: readonly Exclude<Competition, "regular">[] = [
+  "climaxSeries",
+  "nipponSeries",
+  "allStar",
+];
+
+/**
+ * 그중 **경기 상세 페이지를 만드는** 대회.
+ *
+ * ⚠**올스타는 뺀다.** 경기 페이지의 알맹이는 득점기대치(RE)로 잰 「경기를 움직인 타석」인데,
+ * RE는 **그 리그의 득점 환경**이고 올스타에는 그 리그가 없다(양 리그 선발이 맞붙는다).
+ * 게다가 팀 코드가 `cl`/`pl`이라 리그를 고를 수도 없다 — 억지로 하나를 고르면
+ * 그 화면의 모든 수가 근거 없는 기준으로 매겨진다. **못 만드는 것이 아니라 만들면 안 되는 것이다.**
+ */
+const POSTSEASON_PAGES: readonly Exclude<Competition, "regular" | "allStar">[] = [
+  "climaxSeries",
+  "nipponSeries",
+];
+
+/**
+ * ⚠**모르는 대회가 DB에 있으면 던진다**(M7).
+ *
+ * 이 커밋이 고치고 있는 결함이 정확히 그 모양이었다 — 데이터는 있었는데 어느 목록에도 없어서
+ * **사이트 전체에서 조용히 사라졌다.** 대회가 하나 늘면(オープン戦·이스턴/웨스턴 등)
+ * `regular` 필터에도 안 걸리고 `POSTSEASON`에도 없어서 같은 일이 반복된다.
+ * 그래서 **빌드가 멈춘다.** 조용히 사라지는 것보다 낫다.
+ */
+function assertKnownCompetitions(db: Db, season: number): void {
+  const known = new Set<string>(["regular", ...POSTSEASON]);
+  const rows = db.raw
+    .prepare("SELECT DISTINCT competition AS c FROM game WHERE season = ?")
+    .all(season) as unknown as { c: string }[];
+  const unknown = rows.map((r) => r.c).filter((c) => !known.has(c));
+  if (unknown.length > 0) {
+    throw new RangeError(
+      `모르는 대회가 ${season}년 데이터에 있다: ${unknown.join(", ")}. ` +
+        "어느 화면에도 안 나오므로 조용히 사라진다 — POSTSEASON 목록을 갱신하라",
+    );
+  }
+}
+
+const POSTSEASON_NAME: Readonly<Record<string, string>> = {
+  climaxSeries: "クライマックスシリーズ",
+  nipponSeries: "日本シリーズ",
+  allStar: "オールスターゲーム",
+};
+
+/**
+ * ⚠**규칙을 화면에 적는다**(M3의 정신). 무엇을 세고 무엇을 안 세는지 말하지 않으면
+ * 「왜 이 선수가 없지?」에 답할 수 없다.
+ */
+/**
+ * ⚠**올스타의 팀 코드는 실제 구단이 아니다** — `cl`/`pl`(리그 선발)이다.
+ *
+ * ⚠**앞서 여기 적혀 있던 설명은 틀렸다**(2026-08-16 이중 검토에서 지적).
+ * 「`shortNameOf`·`colorOf`가 예외를 던진다」고 썼는데 **둘 다 던지지 않는다** —
+ * 표시용 함수라 `code.toUpperCase()`와 중립색으로 조용히 떨어진다.
+ * 실제 안전장치는 `aggregateSeason` 안의 `leagueOf()`이고, 그건 올스타를 집계하지 않는 것으로 피한다.
+ *
+ * ⚠**모르는 비구단 코드는 던진다.** 도메인의 `NON_TEAM_CODES`에 코드가 하나 늘고 여기 안 늘면
+ * 「XX」라는 정체불명의 이름이 조용히 화면에 나간다 — 그게 M7이 막으라는 것이다.
+ */
+const SQUAD: Readonly<Record<string, string>> = { cl: "セ・リーグ", pl: "パ・リーグ" };
+function squadName(code: string): string {
+  if (NON_TEAM_CODES[code] === undefined) return shortNameOf(code);
+  const name = SQUAD[code];
+  if (name === undefined) {
+    throw new RangeError(`구단이 아닌 코드 ${code}의 표기를 모른다 — SQUAD를 갱신하라`);
+  }
+  return name;
+}
+const squadColor = (code: string): TeamColor =>
+  NON_TEAM_CODES[code] === undefined ? colorOf(code) : NEUTRAL_COLOR;
+
+const POSTSEASON_DETAIL: Readonly<Record<string, string>> = {
+  climaxSeries:
+    "各リーグの上位3球団が日本シリーズ進出を争うトーナメントです。" +
+    "試合はステージごとに分けて並べていますが、**成績はステージをまとめて集計しています** — " +
+    "1ステージあたり最大3〜6試合しかなく、分けるとどの数字も読めない標本になるためです。",
+  nipponSeries: "両リーグの優勝球団が対戦する日本一決定戦です。",
+  allStar:
+    "⚠**これはポストシーズンではありません** — シーズン中に行われる両リーグ選抜の親善試合です。" +
+    "球団ではなく「セ・リーグ」「パ・リーグ」として出場するため、所属もその表記になっています。" +
+    "成績としての意味は薄く、記録として残しているだけです — " +
+    "レギュラーシーズンにもポストシーズンの成績にも加えていません。",
+};
+
+/**
+ * ポストシーズン — **대회마다 독립 집계**.
+ *
+ * ⚠**절대 합치지 않는다.** 클라이맥스시리즈와 일본시리즈는 다른 대회이고,
+ * 정규시즌과는 더더욱 다르다. 합치는 순간 그 수는 어느 규칙에도 속하지 않는다(§2-1).
+ * ⚠**순위를 매기지 않는다.** 13경기·5경기짜리 표본이라 「1위」를 붙이면 5타수 3안타가 타율 1위가 된다.
+ * 출장 순으로 늘어놓고, 그 사실을 화면이 말한다.
+ */
+/**
+ * 만들어진 경기 페이지를 알게 된 **뒤에** 링크 가능 여부를 채운다.
+ *
+ * ⚠**집계와 링크를 한 함수에서 하지 않는다.** 집계는 선수 페이지가 이른 시점에 필요로 하고,
+ * 링크는 경기 페이지 목록이 정해진 늦은 시점에야 알 수 있다 — 한 덩어리로 두면
+ * 「선언 전에 쓴다」가 되어 순서가 코드를 지배하게 된다.
+ */
+function withGamePages(d: PostseasonPageData, gamePageIds: ReadonlySet<string>): PostseasonPageData {
+  return {
+    ...d,
+    competitions: d.competitions.map((c) => ({
+      ...c,
+      games: c.games.map((g) => ({ ...g, hasPage: gamePageIds.has(g.rawGameId) })),
+    })),
+  };
+}
+
+function postseasonPage(db: Db, o: LoadOptions): PostseasonPageData {
+  const through = o.through ?? "9999-12-31";
+  // ⚠**모르는 대회를 조용히 흘리지 않는다**(M7). 이 화면이 고치고 있는 결함이 그 모양이었다
+  assertKnownCompetitions(db, o.season);
+  const competitions: PostCompetition[] = [];
+
+  for (const id of POSTSEASON) {
+    const raw = dayResultsRange(db, o.season, id, through);
+    if (raw.length === 0) continue;
+
+    /**
+     * ⚠**「第N戦」을 우리가 세지 않는다.** 한때 대회 전체 배열의 인덱스를 썼는데,
+     * 클라이맥스시리즈는 **セ/パ × ファースト/ファイナル = 4개의 독립 시리즈**라
+     * 최대 6경기짜리 파이널에 **「第13戦」**이 붙었다(2026-08-16 실측).
+     * 정답은 **처음부터 데이터에 있었다** — npb.jp 슬러그 끝에서 파싱한 `game.game_no`와
+     * 스테이지 표기 `game.series`다. 우리가 세는 순간 존재하지 않는 숫자가 된다.
+     */
+    /**
+     * 스테이지 라벨과 그 순서.
+     *
+     * ⚠**CS는 `series` 하나로 나뉘지 않는다.** npb.jp의 표기가 セ/パ를 구분하지 않아
+     * 「CS ファーストステージ」 한 제목 아래에 두 리그의 독립 시리즈가 섞이고
+     * 「第1戦」이 연속 두 번 나온다(2026-08-16 실측). 리그는 **팀 코드에서 나온다** —
+     * CS는 두 팀이 같은 리그라 새 데이터가 필요 없다.
+     * ⚠**日本シリーズ에는 하지 않는다** — 양 리그가 맞붙어 「어느 리그의 시리즈」가 성립하지 않는다.
+     * ⚠**올스타에도 하지 않는다** — 팀 코드가 `cl`/`pl`이라 `leagueOf`가 던진다.
+     */
+    const splitsByLeague = id === "climaxSeries";
+    const stageOrder = new Map<string, number>();
+    for (const g of raw) {
+      const key = g.series ?? "";
+      if (!stageOrder.has(key)) stageOrder.set(key, stageOrder.size);
+    }
+    const leagueTag = (homeCode: string): string => squadName(leagueOf(homeCode) === "central" ? "cl" : "pl");
+    const stageOf = (g: { series: string | null; homeCode: string }): string | null =>
+      g.series === null ? null : splitsByLeague ? `${leagueTag(g.homeCode)} ${g.series}` : g.series;
+    /** 스테이지 첫 등장 순 × 2 + (セ=0 / パ=1) — 세·파가 번갈지 않고 스테이지끼리 붙는다 */
+    const stageRank = (g: { series: string | null; homeCode: string }): number =>
+      (stageOrder.get(g.series ?? "") ?? 0) * 2 +
+      (splitsByLeague && leagueOf(g.homeCode) === "pacific" ? 1 : 0);
+
+    const games: PostGame[] = raw.map((g) => ({
+      gameId: gameSlug(g.gameId),
+      rawGameId: g.gameId,
+      // 경기 페이지 목록은 아직 모른다 — `withGamePages`가 나중에 채운다
+      hasPage: false,
+      date: g.gameDate,
+      venue: g.venue,
+      series: g.series,
+      stage: stageOf(g),
+      gameNo: g.gameNo,
+      away: { shortName: squadName(g.awayCode), color: squadColor(g.awayCode), runs: g.awayRuns },
+      home: { shortName: squadName(g.homeCode), color: squadColor(g.homeCode), runs: g.homeRuns },
+      // ⚠**무승부와 「득점을 못 읽음」은 다르다**(M11). 접으면 결측이 무승부로 보인다
+      winner:
+        g.awayRuns === null || g.homeRuns === null
+          ? null
+          : g.awayRuns === g.homeRuns
+            ? "tie"
+            : g.awayRuns > g.homeRuns
+              ? "away"
+              : "home",
+    }));
+    /**
+     * ⚠**화면의 순서는 우리가 정한다.** SQL의 `ORDER BY game_date, game_id`에 기대면
+     * 스테이지가 붙어 들어오는 것을 아무도 보장하지 않는다 — 겹치는 날 제목이 두 번 나온다.
+     */
+    const rankById = new Map(raw.map((g) => [g.gameId, stageRank(g)]));
+    games.sort((a, b) =>
+      (rankById.get(a.rawGameId) ?? 0) - (rankById.get(b.rawGameId) ?? 0) ||
+      a.date.localeCompare(b.date) || a.gameNo - b.gameNo);
+
+    /**
+     * ⚠**올스타는 선수 성적을 집계하지 않는다.**
+     * 집계는 선수를 **구단**에 붙이는데, 올스타의 소속은 `cl`/`pl`(리그 선발)이라 구단이 아니다.
+     * 억지로 구단 마스터에 끼워 넣으면 「모르는 코드는 예외」라는 안전장치(M7)를 우리 손으로 무너뜨리게 되고,
+     * 그 장치는 2025년 CS·일본시리즈 18경기가 정규시즌에 섞여 있던 것을 잡아낸 바로 그 장치다.
+     * 경기와 점수는 싣고, **왜 선수표가 없는지는 화면이 말한다.**
+     */
+    if (id === "allStar") {
+      competitions.push({
+        id,
+        name: POSTSEASON_NAME[id] ?? id,
+        detail: POSTSEASON_DETAIL[id] ?? "",
+        games,
+        batters: [],
+        pitchers: [],
+      });
+      continue;
+    }
+
+    // ⚠**그 대회만으로 집계한다.** aggregateSeason 이 competition 을 받으므로 경계가 여기서 지켜진다
+    const agg = aggregateSeason(db, o.season, id, through);
+    const batters: PostBatter[] = agg.batting
+      .filter((b) => b.line.pa > 0)
+      .map((b) => ({
+        playerId: b.playerId,
+        name: b.displayName,
+        teamCode: b.teamCode,
+        shortName: squadName(b.teamCode),
+        color: squadColor(b.teamCode),
+        games: b.games,
+        pa: b.line.pa,
+        ab: b.line.ab,
+        h: b.line.h,
+        hr: b.line.hr,
+        rbi: b.rbi,
+        bb: b.line.bb,
+        so: b.line.so,
+        // ⚠**여기서 식을 새로 쓰지 않는다**(M1). `battingAverage`가 그 식이고 `Rate`를 돌려주므로
+        // 값과 분모가 떨어지지 않는다(M2의 구조적 강제) — 타수 0이면 value 가 null 이다(M11)
+        avg: battingAverage(b.line),
+      }))
+      // 출장 순. 같으면 이름으로 고정한다 — 빌드마다 순서가 흔들리면 diff 가 못 쓰게 된다
+      // 출장 순. 이름까지 같으면 **선수 ID**로 고정한다 — 동명이인이 실재한다(M10)
+      .sort((a, b) => b.pa - a.pa || a.name.localeCompare(b.name, "ja") || a.playerId.localeCompare(b.playerId));
+
+    const pitchers: PostPitcher[] = agg.pitching
+      .filter((p) => p.games > 0)
+      .map((p) => ({
+        playerId: p.playerId,
+        name: p.displayName,
+        teamCode: p.teamCode,
+        shortName: squadName(p.teamCode),
+        color: squadColor(p.teamCode),
+        games: p.games,
+        outs: p.line.outs,
+        h: p.line.h,
+        hr: p.line.hr,
+        bb: p.line.bb,
+        so: p.line.so,
+        er: p.line.er,
+        w: p.decisions.w,
+        l: p.decisions.l,
+        sv: p.decisions.sv,
+        era: earnedRunAverage(p.line),
+      }))
+      .sort((a, b) => b.outs - a.outs || a.name.localeCompare(b.name, "ja") || a.playerId.localeCompare(b.playerId));
+
+    competitions.push({
+      id,
+      name: POSTSEASON_NAME[id] ?? id,
+      detail: POSTSEASON_DETAIL[id] ?? "",
+      games,
+      batters,
+      pitchers,
+    });
+  }
+
+  return { season: o.season, competitions };
+}
+
+/** 그 대회의 경기를 날짜 순으로. 점수까지만 — 상세는 경기 페이지가 낸다 */
+function dayResultsRange(
+  db: Db,
+  season: number,
+  competition: string,
+  through: string,
+): {
+  gameId: string;
+  gameDate: string;
+  venue: string | null;
+  series: string | null;
+  gameNo: number;
+  awayCode: string;
+  homeCode: string;
+  awayRuns: number | null;
+  homeRuns: number | null;
+}[] {
+  const rows = db.raw
+    .prepare(
+      `SELECT game_id AS gameId, game_date AS gameDate, venue, series,
+              game_no AS gameNo,
+              away_code AS awayCode, home_code AS homeCode,
+              away_runs AS awayRuns, home_runs AS homeRuns
+       FROM game
+       WHERE season = ? AND competition = ? AND status = 'played' AND game_date <= ?
+       ORDER BY game_date, game_id`,
+    )
+    .all(season, competition, through) as unknown as {
+    gameId: string;
+    gameDate: string;
+    venue: string | null;
+    series: string | null;
+    gameNo: number;
+    awayCode: string;
+    homeCode: string;
+    awayRuns: number | null;
+    homeRuns: number | null;
+  }[];
+  // ⚠node:sqlite 는 프로토타입 없는 객체를 준다 — 그대로 흘리면 전개·비교에서 조용히 어긋난다
+  return rows.map((r) => ({
+    gameId: r.gameId,
+    gameDate: r.gameDate,
+    venue: r.venue,
+    series: r.series,
+    gameNo: r.gameNo,
+    awayCode: r.awayCode,
+    homeCode: r.homeCode,
+    awayRuns: r.awayRuns,
+    homeRuns: r.homeRuns,
+  }));
+}
+
+/**
+ * 球団ページ — 순위표의 한 줄과 그 팀 선수들을 한 화면에 모은다.
+ *
+ * ⚠**새로 계산하지 않는다**(M1). 순위는 `standingsSections`가, 선수 성적은 리그 번들이 이미 만든 것이다.
+ * 여기서 다시 세면 「순위표의 팀 타율」과 「팀 페이지의 팀 타율」이 언젠가 갈린다.
+ * ⚠**정규시즌만이다**(§2-1). 포스트시즌은 별도 화면이고, 그 사실을 화면이 말한다.
+ */
+function teamPages(
+  db: Db,
+  o: LoadOptions,
+  standings: readonly StandingsSection[],
+  agg: SeasonAggregate,
+  leagueBatting: ReadonlyMap<string, BattingEntry>,
+  leaguePitching: ReadonlyMap<string, PitchingEntry>,
+  bundleByLeague: ReadonlyMap<League, LeagueBundle>,
+  asOf: string | null,
+  hasPostseason: boolean,
+  latestDate: string | null,
+): TeamPageData[] {
+  const competition = o.competition ?? "regular";
+  const through = o.through ?? "9999-12-31";
+
+  /** 월별 승패. ⚠**분모(경기 수)를 함께 낸다** — 「4월 12승」만으로는 몇 경기 중인지 모른다 */
+  const monthRows = db.raw
+    .prepare(
+      `SELECT substr(g.game_date, 1, 7) AS month,
+              CASE WHEN g.away_code = ? THEN 'away' ELSE 'home' END AS side,
+              g.away_runs AS awayRuns, g.home_runs AS homeRuns
+       FROM game g
+       WHERE g.season = ? AND g.status = 'played' AND g.competition = ? AND g.game_date <= ?
+         AND (g.away_code = ? OR g.home_code = ?)
+       ORDER BY g.game_date`,
+    );
+
+  /** 최근 경기. 날짜 화면으로 보낸다 — 경기 페이지가 없는 경기가 있기 때문이다 */
+  const recentRows = db.raw
+    .prepare(
+      `SELECT g.game_date AS date, g.away_code AS awayCode, g.home_code AS homeCode,
+              g.away_runs AS awayRuns, g.home_runs AS homeRuns
+       FROM game g
+       WHERE g.season = ? AND g.status = 'played' AND g.competition = ? AND g.game_date <= ?
+         AND (g.away_code = ? OR g.home_code = ?)
+       ORDER BY g.game_date DESC, g.game_id DESC LIMIT 10`,
+    );
+
+  const out: TeamPageData[] = [];
+  for (const section of standings) {
+    for (const r of section.rows) {
+      const code = r.teamCode;
+      const league = leagueOf(code) as League;
+      const bundle = bundleByLeague.get(league);
+      // ⚠**리그 번들이 없으면 지표를 계산할 기준이 없다.** 그 리그에 선수가 하나도 없는 경우인데,
+      // 억지로 다른 리그의 상수를 쓰면 근거 없는 수가 된다 — 표를 비우고 화면이 그렇게 말한다
+      if (bundle === undefined) continue;
+
+      /**
+       * ⚠**「이 팀에서 낸 것」만 싣는다.** 합계를 쓰면 이적 선수의 옛 팀 몫이 여기 실리고,
+       * 같은 화면 머리의 팀 打率 분모(그 팀만의 打数)와 어긋난다 —
+       * 실측(2026): 山本가 ソフトバンク 표에 202타석으로 실리고 DeNA 표에는 없었다.
+       * ⚠**지표는 여기서 새로 계산하지 않는다**(M1). 같은 입구(`battingEntryOf`)를 쓰고
+       * 리그 상수만 그 팀의 리그 것을 준다.
+       * ⚠**자격 판정은 소속 리그 몫으로 한다** — 팀 몫이 아니다. 타이틀은 리그에서 겨루고,
+       * 같은 리그 안에서 이적한 선수의 규정타석은 두 팀분을 합쳐 센다.
+       */
+      const batters: TeamBatter[] = agg.battingByTeam
+        .filter((r) => r.teamCode === code && r.line.pa > 0)
+        .map((r) => {
+          const e = battingEntryOf(r, bundle.constants);
+          const part = leagueBatting.get(`${r.playerId}|${league}`);
+          return {
+            playerId: r.playerId,
+            name: r.displayName,
+            games: r.games,
+            pa: r.line.pa,
+            ab: r.line.ab,
+            h: r.line.h,
+            hr: r.line.hr,
+            rbi: r.rbi,
+            sb: r.sb,
+            avg: e.avg,
+            obp: e.obp,
+            slg: e.slg,
+            ops: e.ops,
+            qualified: (part?.player.line.pa ?? 0) >= qualifiedBatterPa(bundle.teamGames),
+          };
+        })
+        // ⚠**마지막 갈래는 선수 ID다.** 동명이인이 실재하므로(「小島」 2명) 이름으로 끝내면
+        // 순서가 SQL 그룹 산출 순서에 기대게 된다 — 이 프로젝트가 이미 한 번 밟은 함정이다
+        .sort((a, b) => b.pa - a.pa || a.name.localeCompare(b.name, "ja") || a.playerId.localeCompare(b.playerId));
+
+      const pitchers: TeamPitcher[] = agg.pitchingByTeam
+        .filter((r) => r.teamCode === code && r.games > 0)
+        .map((r) => {
+          const e = pitchingEntryOf(r, bundle.constants);
+          const part = leaguePitching.get(`${r.playerId}|${league}`);
+          return {
+            playerId: r.playerId,
+            name: r.displayName,
+            role: r.role,
+            games: r.games,
+            outs: r.line.outs,
+            w: r.decisions.w,
+            l: r.decisions.l,
+            sv: r.decisions.sv,
+            hld: r.decisions.hld,
+            so: r.line.so,
+            era: e.era,
+            whip: e.whip,
+            qualified: (part?.player.line.outs ?? 0) >= qualifyingOuts(bundle, r.role),
+          };
+        })
+        .sort((a, b) => b.outs - a.outs || a.name.localeCompare(b.name, "ja") || a.playerId.localeCompare(b.playerId));
+
+      const byMonth = new Map<string, TeamMonth>();
+      for (const m of monthRows.all(code, o.season, competition, through, code, code) as unknown as {
+        month: string;
+        side: string;
+        awayRuns: number | null;
+        homeRuns: number | null;
+      }[]) {
+        const cur = byMonth.get(m.month) ?? { month: m.month, w: 0, l: 0, t: 0 };
+        // ⚠**득점을 못 읽은 경기는 세지 않는다**(M11) — 0대0으로 때우면 무승부가 늘어난다
+        if (m.awayRuns !== null && m.homeRuns !== null) {
+          const mine = m.side === "away" ? m.awayRuns : m.homeRuns;
+          const theirs = m.side === "away" ? m.homeRuns : m.awayRuns;
+          if (mine > theirs) cur.w += 1;
+          else if (mine < theirs) cur.l += 1;
+          else cur.t += 1;
+        }
+        byMonth.set(m.month, cur);
+      }
+
+      const recent = (
+        recentRows.all(o.season, competition, through, code, code) as unknown as {
+          date: string;
+          awayCode: string;
+          homeCode: string;
+          awayRuns: number | null;
+          homeRuns: number | null;
+        }[]
+      ).map((g) => {
+        const isHome = g.homeCode === code;
+        const mine = isHome ? g.homeRuns : g.awayRuns;
+        const theirs = isHome ? g.awayRuns : g.homeRuns;
+        return {
+          date: g.date,
+          opponent: shortNameOf(isHome ? g.awayCode : g.homeCode),
+          home: isHome,
+          result:
+            mine === null || theirs === null ? "—" : mine > theirs ? "○" : mine < theirs ? "●" : "△",
+        };
+      });
+
+      out.push({
+        season: o.season,
+        teamCode: code,
+        name: r.name,
+        shortName: r.shortName,
+        color: r.color,
+        leagueName: section.name,
+        asOf,
+        rank: r.rank,
+        tiedRank: r.tiedRank,
+        games: r.games,
+        w: r.w,
+        l: r.l,
+        t: r.t,
+        pct: r.pct,
+        gamesBehind: r.gamesBehind,
+        rf: r.rf,
+        ra: r.ra,
+        avg: r.avg,
+        era: r.era,
+        home: r.home,
+        away: r.away,
+        last10: r.last10,
+        months: [...byMonth.values()].sort((a, b) => a.month.localeCompare(b.month)),
+        batters,
+        pitchers,
+        recent,
+        latestDate,
+        hasPostseason,
+      });
+    }
+  }
+  return out;
+}
+
 function todayPage(
   db: Db,
   o: LoadOptions,
@@ -1400,6 +1930,15 @@ export interface SiteData {
   /** 지난 경기일 화면. **최신 경기일은 빠져 있다** — 그 날은 `today.html`이 맡는다 */
   days: DayPageData[];
   dayIndex: DayIndexData;
+  /**
+   * 대회를 가리지 않은 가장 최근 경기일. **신선도 판정만 이것을 본다.**
+   * ⚠정규시즌만 보면 포스트시즌 기간에 사이트 전체가 「취득 실패」라고 거짓말한다.
+   */
+  latestAnyGameDate: string | null;
+  /** ポストシーズン. ⚠**정규시즌 집계와 섞지 않는다**(§2-1) */
+  postseason: PostseasonPageData;
+  /** 球団ページ. 순위표에서 팀명을 누르면 여기로 온다 */
+  teams: TeamPageData[];
   /** 경기 페이지. **빌드 대상 시즌만** — 2025년은 아카이브에 있지만 화면은 아직 한 시즌이다 */
   games: GamePageData[];
   search: SearchEntry[];
@@ -1686,6 +2225,41 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
 
   const players: PlayerPageData[] = [];
   const search: SearchEntry[] = [];
+  // ⚠**집계만 먼저 만든다.** 경기 페이지 목록은 아직 모르므로 링크는 나중에 채운다
+  const postseasonStats = postseasonPage(db, o);
+  /**
+   * 선수별 포스트시즌 요약 — **선수 페이지가 쓴다.**
+   *
+   * ⚠**정규시즌 성적 블록과 섞지 않는다**(§2-1). 같은 표에 넣으면 위에서 아래로 읽는 사람이
+   * 두 수를 더한 것으로 읽는다. 그래서 별도 구획이고, 화면이 「위 성적에 포함되지 않는다」고 적는다.
+   * ⚠**올스타는 넣지 않는다** — 소속이 구단이 아니라 선수 성적을 집계하지 않는다.
+   */
+  const briefByPlayer = new Map<string, PostseasonBrief[]>();
+  for (const c of postseasonStats.competitions) {
+    for (const b of c.batters) {
+      const list = briefByPlayer.get(b.playerId) ?? [];
+      list.push({
+        competitionId: c.id,
+        competitionName: c.name,
+        games: b.games,
+        sampleText: `${b.pa}打席`,
+        line: `${b.h}安打${b.hr > 0 ? ` ${b.hr}本塁打` : ""}${b.rbi > 0 ? ` ${b.rbi}打点` : ""}`,
+      });
+      briefByPlayer.set(b.playerId, list);
+    }
+    for (const t of c.pitchers) {
+      const list = briefByPlayer.get(t.playerId) ?? [];
+      list.push({
+        competitionId: c.id,
+        competitionName: `${c.name}（投）`,
+        games: t.games,
+        sampleText: `${innings(t.outs)}回`,
+        line: `${t.w}勝${t.l}敗${t.sv > 0 ? ` ${t.sv}S` : ""} 自責${t.er}`,
+      });
+      briefByPlayer.set(t.playerId, list);
+    }
+  }
+
   const ids = new Set<string>([...battingByPlayer.keys(), ...pitchingByPlayer.keys()]);
 
   for (const playerId of ids) {
@@ -1874,6 +2448,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       sparkLabel: role === "pitcher" ? "月別防御率" : "月別OPS",
       asOf: meta.latest,
       stints: stintsOf(playerId, role),
+      postseason: briefByPlayer.get(playerId) ?? [],
     });
 
     /**
@@ -1950,15 +2525,45 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
 
   // ⚠**만들어진 경기 페이지를 먼저 안다.** 試合 화면이 없는 페이지로 링크하면 404가 된다
   const gameList = gamePages(db, o, reFull, nameOf);
-  const gamePageIds = new Set(gameList.map((g) => g.gameId));
+  /**
+   * 포스트시즌의 경기 페이지도 만든다.
+   *
+   * ⚠**경기 페이지는 대회를 섞을 위험이 없다** — 그 경기 하나만 말하기 때문이다.
+   * 섞이면 안 되는 것은 집계이고, 그건 아래 `postseasonPage`가 대회별로 따로 만든다(§2-1).
+   * ⚠**RE 행렬은 정규시즌 것을 쓴다.** 포스트시즌만으로 득점기대치를 만들면 18경기짜리 표본이 되고,
+   * 그건 어느 쪽이 나은지 말할 수 없는 수다. 같은 시즌의 리그 환경을 기준으로 읽는 편이 정직하다.
+   */
+  const postGameList = POSTSEASON_PAGES.flatMap((c) => gamePages(db, o, reFull, nameOf, c));
+  // 순위표는 팀 페이지도 쓴다 — **한 번만 만든다**(M1). 두 번 만들면 언젠가 값이 갈린다
+  const standings = standingsSections(db, o);
+  const gamePageIds = new Set([...gameList, ...postGameList].map((g) => g.gameId));
   // ⚠**경기일 목록도 먼저 만든다.** 「앞뒤 경기일」이 이 목록에서 나오므로,
   // 날짜 화면과 오늘 화면이 서로 다른 목록을 보면 링크가 끊긴다
   const days = gameDates(db, o.season, through, competition);
   const latestDay = latestGameDate(db, o.season, through, competition);
+  const postseasonData = withGamePages(postseasonStats, gamePageIds);
+  /**
+   * 신선도가 보는 「가장 최근 경기일」 — **대회를 가리지 않는다.**
+   *
+   * ⚠**정규시즌만 보면 10월에 사이트 전체가 거짓말을 한다.** 정규시즌 최종일(≈10/5)에서
+   * 사흘이 지나면 신선도 띠가 「更新が止まっています … 取得に失敗している可能性があります」로 바뀌는데,
+   * **같은 빌드의 포스트시즌 화면은 어제 경기를 보여주고 있다.**
+   * 게다가 빌드가 종료 코드 1을 내므로 **일일 배치가 매일 실패로 보고된다.**
+   * (2026-08-16 이중 검토에서 지적. 날짜가 정해진 결함이라 그때 반드시 터진다.)
+   */
+  const latestAnyDate = (db.raw
+    .prepare(
+      `SELECT MAX(game_date) AS d FROM game
+       WHERE season = ? AND status = 'played' AND game_date <= ?`,
+    )
+    .get(o.season, through) as unknown as { d: string | null } | undefined)?.d ?? null;
 
   return {
     season: o.season,
     asOf: meta.latest,
+    // ⚠**신선도는 대회를 가리지 않는다.** 표시용 기준일(`asOf`)은 정규시즌 그대로다 —
+    // 「데이터가 언제까지 들어왔나」와 「이 화면이 무엇을 보여주나」는 다른 질문이다
+    latestAnyGameDate: latestAnyDate,
     gameCount: meta.games,
     players,
     search,
@@ -1973,7 +2578,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     ranking: {
       season: o.season,
       asOf: meta.latest,
-      standings: standingsSections(db, o),
+      standings,
       tieRule: TIE_RULE,
       leagues: sections,
     },
@@ -1982,6 +2587,22 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     today: todayPage(db, o, startersData, nameOf, gamePageIds, days),
     days: dayPages(db, o, days, latestDay, nameOf, gamePageIds),
     dayIndex: { season: o.season, latestDate: latestDay, days: [...days] },
-    games: gameList,
+    postseason: postseasonData,
+    teams: teamPages(
+      db,
+      o,
+      standings,
+      agg,
+      leagueBatting,
+      leaguePitching,
+      bundleByLeague,
+      meta.latest,
+      // ⚠**「기록이 있다」와 「포스트시즌이 있다」는 다른 말이다.** 올스타뿐인 시즌(2026)에
+      // 「ポストシーズンは別の画面にあります」라고 쓰면 없는 것을 있다고 안내하는 것이 된다.
+      // 내비 항목은 기록이 있으면 내지만, 이 문구는 진짜 포스트시즌일 때만이다
+      postseasonData.competitions.some((c) => c.id !== "allStar"),
+      latestDay,
+    ),
+    games: [...gameList, ...postGameList],
   };
 }

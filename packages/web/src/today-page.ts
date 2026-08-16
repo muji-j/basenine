@@ -357,6 +357,7 @@ ${d.probables.length === 0
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
+    hasPostseason: ctx.hasPostseason,
     nav: "today",
     body,
   });
@@ -414,6 +415,7 @@ ${dayBar(base, d)}
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
+    hasPostseason: ctx.hasPostseason,
     nav: "today",
     // 試合 구획에 있지만 이 문서는 today.html 이 아니다
     navExact: false,
@@ -477,6 +479,7 @@ ${d.days.length === 0
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
+    hasPostseason: ctx.hasPostseason,
     nav: "today",
     navExact: false,
     body,

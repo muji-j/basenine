@@ -189,7 +189,17 @@ test("동률이 아니면 「同」이 없다", () => {
 test("⚠구단 로고를 쓰지 않는다 — 기록은 사실이지만 로고는 상표다", () => {
   const out = renderRankingPage(data(), context());
   assert.ok(!/<img/.test(out), "이미지 태그가 들어갔다");
-  assert.match(out, /class="l tm"><i><\/i>阪神/, "색 마크로 구단을 구별하지 않는다");
+  assert.match(out, /class="l tm"><i><\/i><a href="teams\/t\.html">阪神<\/a>/, "색 마크로 구단을 구별하지 않는다");
+});
+
+/**
+ * ⚠**팀명을 누르면 갈 곳이 있어야 한다.** 지금까지 목적지가 없어서, 팀을 보려면
+ * 순위표의 한 줄과 선수 일람의 한 덩어리를 **머리에서 합쳐야** 했다.
+ */
+test("팀명이 그 팀의 화면으로 간다", () => {
+  const out = renderRankingPage(data(), context());
+  assert.match(out, /href="teams\/t\.html"/);
+  assert.match(out, /href="teams\/g\.html"/);
 });
 
 test("홈·원정·직전10경기를 승패무 세 자리로 낸다 — 무승부가 0이어도 자리를 비우지 않는다", () => {

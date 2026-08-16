@@ -147,6 +147,11 @@ export function pitchingEntries(bundle: LeagueBundle): PitchingEntry[] {
 export function blendConstants(
   parts: readonly { constants: LeagueConstants; weight: number }[],
 ): LeagueConstants {
+  // ⚠**상수를 무에서 만들 수는 없다.** 여기서 기본값을 지어내면 그 값으로 계산된 wRC+가
+  // 화면까지 나가고, 아무도 그것이 지어낸 값인 줄 모른다. 멈추는 쪽이 맞다(M7)
+  if (parts.length === 0) {
+    throw new RangeError("리그 상수가 하나도 없다 — 이 시즌에 집계 가능한 리그가 없다");
+  }
   const usable = parts.filter((p) => p.weight > 0);
   // ⚠표본이 0이면 가중할 것이 없다. 첫 상수를 그대로 쓴다 — 나눗셈으로 NaN을 만들지 않는다
   if (usable.length === 0) return parts[0]!.constants;

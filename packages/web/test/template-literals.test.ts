@@ -15,12 +15,14 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "assets.ts");
+const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
+const SRC = join(SRC_DIR, "assets.ts");
 const TICK = "`";
+const NL = String.fromCharCode(10);
 
 /** `open` 다음의 첫 백틱 위치. 이스케이프된 것은 건너뛴다 */
 function closingTick(text: string, open: string): number {
@@ -106,4 +108,33 @@ test("스크립트 구역에 스타일시트가 섞이지 않는다", () => {
   for (const sign of ["@media ", "@keyframes "]) {
     assert.ok(!js.includes(sign), `스크립트 구역에 스타일시트가 섞였다 — ${JSON.stringify(sign)} 이 있다`);
   }
+});
+
+/**
+ * ⚠**실제로 12번 밟은 자리는 「HTML 주석 안의 백틱」이다.**
+ *
+ * 렌더러는 화면 설명을 `<!-- … -->`로 남기는데, 그 안에서 코드를 인용하려고 백틱을 쓰면
+ * **템플릿 리터럴이 거기서 끝난다.** 타입체크가 잡긴 하지만 메시지가 「',' expected」라
+ * 원인을 말하지 않고, `assets.ts` 전용 검사는 다른 렌더러를 못 본다(12번째가 그랬다).
+ *
+ * ⚠**아주 좁은 그물이다.** 소스의 `<!--` 는 사실상 전부 html 템플릿 안이므로,
+ * 그 구간의 백틱은 예외 없이 결함이다. 넓히면 오탐으로 죽는다.
+ */
+test("HTML 주석 안에 백틱을 쓰지 않는다 — 템플릿이 거기서 끝난다", () => {
+  const files = readdirSync(SRC_DIR).filter((f) => f.endsWith(".ts"));
+  assert.ok(files.length > 5, `소스를 못 찾았다(${files.length}개)`);
+  const offenders: string[] = [];
+  for (const f of files) {
+    const text = readFileSync(join(SRC_DIR, f), "utf8");
+    for (const m of text.matchAll(/<!--[\s\S]*?-->/g)) {
+      if (!m[0].includes(TICK)) continue;
+      const no = text.slice(0, m.index).split(NL).length;
+      offenders.push(`${f}:${no}  ${m[0].split(NL)[0]!.slice(0, 64)}`);
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `HTML 주석 안의 백틱 — 여기서 템플릿이 끝난다:${NL}${offenders.join(NL)}`,
+  );
 });

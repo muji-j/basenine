@@ -36,3 +36,31 @@ test("선수명에 태그가 섞여도 문서 구조가 깨지지 않는다", ()
   assert.ok(!out.includes("<script>"), "스크립트 태그가 살아 나가면 안 된다");
   assert.equal(out.match(/<span/g)?.length, 1);
 });
+
+/**
+ * ⚠**별표가 그대로 화면에 찍히고 있었다** — 실측 1,537장(2026-08-16).
+ * 이 프로젝트의 문구는 어디서나 `**…**`로 강조를 쓰는데 `note()`만 순수 텍스트였다.
+ * 값이 맞아도 화면이 어수선해지는 종류라 값 검사로는 잡히지 않는다.
+ */
+test("설명 줄의 별표 강조가 굵은 글자가 된다 — 별표가 그대로 남지 않는다", async () => {
+  const { note } = await import("../src/parts.ts");
+  const out = toString(note("これは**強調**です"));
+  assert.equal(out, '<p class="note">これは<b>強調</b>です</p>');
+  assert.ok(!out.includes("**"), "별표가 화면에 남았다");
+});
+
+test("⚠짝이 안 맞으면 아무것도 하지 않는다 — 억지로 자르면 엉뚱한 곳이 굵어진다", async () => {
+  const { note } = await import("../src/parts.ts");
+  assert.equal(toString(note("짝이 없는 **경우")), '<p class="note">짝이 없는 **경우</p>');
+});
+
+/**
+ * ⚠**이스케이프가 살아 있어야 한다.** 이 문구에는 선수명·구단명이 섞여 들어온다 —
+ * 우리가 만든 문자열이 아니므로 태그가 되면 안 된다.
+ */
+test("강조를 붙여도 태그는 글자로 남는다", async () => {
+  const { note } = await import("../src/parts.ts");
+  const out = toString(note("태그가 <b>섞여도</b> **굵게**"));
+  assert.match(out, /&lt;b&gt;섞여도&lt;\/b&gt;/, "태그가 escape 되지 않았다");
+  assert.match(out, /<b>굵게<\/b>/);
+});

@@ -658,6 +658,42 @@ table.stand .dif i.n{right:50%}
    그 2개는 대개 첫 화면 안에 있어 생략할 것이 없고, contain 의 부작용만 남는다.
    근거로 들었던 「대전 146행·순위 122행」은 전부 탭 패널 안이라 이 규칙이 애초에 안 닿는다. */
 
+/* ── 球団ページ ────────────────────────────────────────────
+   ⚠**로고를 쓸 수 없는 자리에서 팀을 구별하는 것은 구단 색과 이름이다**(§6).
+   월별 막대는 우리가 계산한 값으로 만든 우리 그림이다. */
+.tmonths{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:10px}
+.tmonth{display:flex;flex-direction:column;gap:3px;min-width:0}
+.tmonth b{font-size:11px;color:var(--tx-2);font-weight:400}
+.tmonth s{text-decoration:none;font-size:10.5px;color:var(--tx-3);
+  font-variant-numeric:tabular-nums;display:flex;align-items:baseline;gap:5px}
+.tmonth em{font-style:normal;font-size:9.5px}
+/* 이긴 만큼과 진 만큼을 위아래로 — 색만으로 말하지 않게 수를 옆에 둔다 */
+.tbar{display:flex;flex-direction:column;gap:1px;height:26px;justify-content:flex-end}
+.tbar i{display:block;font-style:normal}
+.tbar .w{height:calc(var(--w) * 0.24px);background:var(--team,#6b7280)}
+.tbar .l{height:calc(var(--l) * 0.24px);background:var(--hair-2)}
+/* 최근 경기 — 결과를 글자로 낸다. 색만 쓰면 색각 특성에 따라 구별되지 않는다 */
+.trecent{list-style:none;margin:0;padding:0;display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:0 16px}
+.trecent a{display:flex;align-items:baseline;gap:8px;padding:5px 0;text-decoration:none;
+  border-bottom:1px solid var(--hair)}
+.trecent b{font-size:13px;width:1.2em;text-align:center;color:var(--tx-3)}
+.trecent li.w b{color:var(--team,#6b7280)}
+.trecent li.l b{color:var(--tx-2)}
+.trecent span{font-size:11.5px;color:var(--tx-2)}
+.trecent s{text-decoration:none;margin-left:auto;font-size:11.5px}
+.trecent a:hover{padding-left:4px}
+/* 순위표·일람의 구단명이 링크가 됐다 — 밑줄 대신 색으로만 반응한다(인쇄물의 질감) */
+.stand .tm a,.teamgroup h4 a{text-decoration:none}
+.stand .tm a:hover,.teamgroup h4 a:hover{text-decoration:underline}
+
+/* ── ポストシーズン ────────────────────────────────────────
+   ⚠**순위가 아니라 기록이다.** 표본이 13경기·5경기라 순위를 붙이면 거짓말이 된다 */
+.postrow{margin:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
+.postrow>div{display:flex;flex-direction:column;gap:2px}
+.postrow dt{font-size:10.5px;letter-spacing:.12em;color:var(--tx-3)}
+.postrow dd{margin:0;font-size:15px;font-variant-numeric:tabular-nums}
+
 /* ── 카드 전체를 누르기 ──────────────────────────────────────
    ⚠**링크를 하나 더 겹치지 않는다.** 이미 있는 「この試合の詳細」의 클릭 영역을
    카드 전체로 넓힌다. 겹쳐 두면 같은 목적지가 링크 목록에 두 번 나오고 탭도 두 번 걸린다.

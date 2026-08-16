@@ -15,6 +15,8 @@ import {
 import { renderPlayerPage } from "./player-page.ts";
 import { compareCard, compareCardJson, renderComparePage } from "./compare.ts";
 import { renderDayIndexPage, renderDayPage, renderTodayPage } from "./today-page.ts";
+import { renderPostseasonPage } from "./postseason-page.ts";
+import { renderTeamPage, teamPath } from "./team-page.ts";
 import { gameSlug, renderGamePage } from "./game-page.ts";
 import { renderLogPage } from "./log-page.ts";
 import type { LogPageData } from "./log-page.ts";
@@ -63,6 +65,9 @@ export function seasonPaths(data: SiteData, hasLog: boolean): Set<string> {
     "days.html",
   ]);
   if (hasLog) out.add("log.html");
+  // ⚠**기록이 있는 시즌에만 넣는다.** 없는 화면을 시즌 전환이 가리키면 404가 된다
+  if (data.postseason.competitions.length > 0) out.add("postseason.html");
+  for (const t of data.teams) out.add(teamPath(t.teamCode));
   for (const d of pastDays(data)) out.add(`days/${d.date}.html`);
   for (const p of data.players) out.add(`players/${p.playerId}.html`);
   for (const g of data.games) out.add(`games/${gameSlug(g.gameId)}.html`);
@@ -81,10 +86,19 @@ export function buildSite(
    */
   plans: readonly SeasonPlan[] = [],
 ): BuildResult {
-  const f = freshness(data.asOf, builtOn);
+  // ⚠**신선도는 대회를 가리지 않는다.** 정규시즌만 보면 포스트시즌 기간에
+  // 사이트 전체가 「취득 실패」라고 거짓말하고, 빌드가 매일 실패로 끝난다
+  const f = freshness(data.latestAnyGameDate ?? data.asOf, builtOn, data.asOf);
   const me = plans.find((p) => p.season === data.season);
   const prefix = me?.prefix ?? "";
-  const ctx: RenderContext = { site, freshness: f, paths: pathsFor(plans, data.season) };
+  const ctx: RenderContext = {
+    site,
+    freshness: f,
+    paths: pathsFor(plans, data.season),
+    // ⚠**기록이 있는 시즌에만 내비에 항목을 낸다.** 2026년은 아직 포스트시즌이 없다 —
+    // 눌러도 빈 화면이 나오는 항목은 고장으로 읽힌다
+    hasPostseason: data.postseason.competitions.length > 0,
+  };
 
   /** 시즌 접두사를 붙인다. ⚠**자산은 붙이지 않는다** — 사이트 전체가 한 벌을 쓴다 */
   const at = (p: string): string => `${prefix}${p}`;
@@ -104,6 +118,11 @@ export function buildSite(
       : []),
     { path: at("today.html"), content: renderTodayPage(data.today, ctx) },
     { path: at("days.html"), content: renderDayIndexPage(data.dayIndex, ctx) },
+    // ⚠기록이 없는 시즌에는 만들지 않는다 — 빈 화면을 두는 것보다 없는 편이 정직하다
+    ...(data.postseason.competitions.length === 0
+      ? []
+      : [{ path: at("postseason.html"), content: renderPostseasonPage(data.postseason, ctx) }]),
+    ...data.teams.map((t) => ({ path: at(teamPath(t.teamCode)), content: renderTeamPage(t, ctx) })),
     ...pastDays(data).map((d) => ({ path: at(`days/${d.date}.html`), content: renderDayPage(d, ctx) })),
     { path: at("index.html"), content: renderIndexPage(data.index, ctx) },
     { path: at("ranking.html"), content: renderRankingPage(data.ranking, ctx) },
@@ -163,7 +182,9 @@ export function buildSite(
   return {
     files,
     stale: isStale(f),
-    latestGameDate: data.asOf,
+    // ⚠**신선도 판정과 같은 값을 보고한다.** 다른 값을 보고하면 「낡았다」와 「최신 경기일」이
+    // 서로 다른 날을 가리키고, 로그를 읽는 사람이 그 차이를 설명할 수 없다
+    latestGameDate: data.latestAnyGameDate ?? data.asOf,
     playerCount: data.players.length,
   };
 }

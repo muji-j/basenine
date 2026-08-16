@@ -498,3 +498,39 @@ test("이적하지 않았으면 그 줄 자체가 없다 — 설명할 차이가
   assert.ok(!out.includes('class="stint"'));
   assert.ok(!out.includes("成績は今季の合計"));
 });
+
+/**
+ * ⚠**선수 페이지가 포스트시즌을 말하지 않으면, 그 데이터는 사실상 없는 것과 같다.**
+ * 「阪神の佐藤이 일본시리즈에서 어땠나」는 선수 페이지에서 묻는 질문이지
+ * 대회 페이지를 뒤져서 찾는 질문이 아니다. 그리고 **위 성적에 포함되지 않는다고 적는다**(§2-1).
+ */
+test("포스트시즌 기록이 있으면 선수 페이지에 별도 구획으로 붙는다", () => {
+  const out = renderPlayerPage(
+    playerPage({
+      postseason: [
+        {
+          competitionId: "nipponSeries",
+          competitionName: "日本シリーズ",
+          games: 5,
+          sampleText: "21打席",
+          line: "6安打 2本塁打 5打点",
+        },
+      ],
+    }),
+    context(),
+  );
+  assert.ok(out.includes("日本シリーズ"), "포스트시즌 구획이 없다");
+  assert.ok(out.includes("6安打 2本塁打 5打点"));
+  // ⚠**분모가 붙는다**(M2) — 5경기 21타석짜리 수라는 것을 값 옆에서 말한다
+  assert.ok(
+    out.includes('<span class="den">5試合 21打席</span>'),
+    "분모가 값에서 떨어졌거나 없다",
+  );
+  // ⚠**위 성적에 포함되지 않는다고 적는다** — 안 적으면 더한 수로 읽힌다
+  assert.ok(out.includes("上の成績に含まれていません"), "경계를 말하지 않는다");
+});
+
+test("포스트시즌 기록이 없으면 빈 구획을 만들지 않는다", () => {
+  const out = renderPlayerPage(playerPage({ postseason: [] }), context());
+  assert.ok(!out.includes("ポストシーズン"), "기록이 없는데 구획이 나왔다");
+});

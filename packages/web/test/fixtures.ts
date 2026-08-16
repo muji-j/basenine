@@ -246,6 +246,7 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
     asOf: "2026-08-14",
     // 기본 픽스처는 **이적하지 않은 선수**다 — 이력이 비어 있으면 화면에 안 나온다
     stints: [],
+    postseason: [],
     ...over,
   };
 }
@@ -261,6 +262,7 @@ export function context(over: Partial<RenderContext> = {}): RenderContext {
     site: { name: "bb-app", contact: "example@example.invalid" },
     freshness: freshness("2026-08-14", "2026-08-15"),
     paths: pathsFor([], 2026),
+    hasPostseason: false,
     ...over,
   };
 }
