@@ -15,7 +15,7 @@ import type {
   RankingPanel,
   RenderContext,
 } from "../src/player-page.ts";
-import { freshness } from "../src/layout.ts";
+import { freshness, pathsFor } from "../src/layout.ts";
 
 export function r(value: number | null, denominator: number): Rate {
   return { value, denominator };
@@ -244,14 +244,54 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
     },
     sparkLabel: "月別OPS",
     asOf: "2026-08-14",
+    // 기본 픽스처는 **이적하지 않은 선수**다 — 이력이 비어 있으면 화면에 안 나온다
+    stints: [],
     ...over,
   };
 }
 
+/**
+ * 화면 시험용 문맥.
+ *
+ * ⚠**기본은 「시즌이 하나뿐」이다** — 시즌 전환 띠가 안 나온다.
+ * 전환을 시험할 때는 `seasonContext()`를 쓴다.
+ */
 export function context(over: Partial<RenderContext> = {}): RenderContext {
   return {
     site: { name: "bb-app", contact: "example@example.invalid" },
     freshness: freshness("2026-08-14", "2026-08-15"),
+    paths: pathsFor([], 2026),
     ...over,
   };
+}
+
+/** 시즌이 둘인 문맥. `paths2025`에 없는 경로는 「그 시즌엔 없음」으로 다뤄진다 */
+export function seasonContext(paths2025: readonly string[] = []): RenderContext {
+  return context({
+    paths: pathsFor(
+      [
+        { season: 2026, prefix: "", paths: new Set<string>() },
+        { season: 2025, prefix: "2025/", paths: new Set(paths2025) },
+      ],
+      2026,
+    ),
+  });
+}
+
+/**
+ * **지난 시즌**의 문맥 — 2025 화면을 그리는 상황.
+ *
+ * ⚠끝난 시즌의 화면이 「発表待ち」·「いま投げている投手」처럼 현재형으로 말하는지 보려면
+ * 이것이 필요하다. `seasonContext`(현재 시즌 쪽)와 방향이 반대다.
+ */
+export function pastSeasonContext(paths2025: readonly string[] = []): RenderContext {
+  return context({
+    paths: pathsFor(
+      [
+        { season: 2026, prefix: "", paths: new Set<string>() },
+        { season: 2025, prefix: "2025/", paths: new Set(paths2025) },
+      ],
+      2025,
+    ),
+  });
 }

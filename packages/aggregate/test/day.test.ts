@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb, upsertBatting, upsertGame, upsertPitching, upsertPlayer } from "@bb-app/store";
 import type { BattingRow, Db, PitchingRow } from "@bb-app/store";
-import { STAR_LIMIT, dayResults, latestGameDate } from "../src/day.ts";
+import { STAR_LIMIT, dayResults, gameDates, latestGameDate } from "../src/day.ts";
 
 const NOW = "2026-08-16T00:00:00.000Z";
 const DATE = "2026-08-14";
@@ -270,5 +270,66 @@ test("⚠최신 경기일에 포스트시즌을 섞지 않는다 — CS가 있�
       sourceUrl: "https://npb.jp/z", fetchedAt: NOW,
     });
     assert.equal(latestGameDate(db, 2026), DATE, "CS 경기일이 정규시즌의 최신일로 나왔다");
+  });
+});
+
+/**
+ * ⚠**경기일 목록에서 중지된 날을 빼지 않는다.** 빼면 그 날이 없었던 것이 되고,
+ * 날짜를 짚어 온 사람에게 404가 된다. 편성과 실시를 **따로 센다**(M11).
+ */
+test("경기일 목록은 전 경기 중지된 날도 센다 — 편성과 실시를 따로 센다", async () => {
+  await withDb((db) => {
+    game(db);
+    upsertGame(db, {
+      gameId: "off1", season: 2026, gameDate: "2026-08-15",
+      awayCode: "g", homeCode: "db", gameNo: 1,
+      status: "notPlayed", notPlayedReason: "雨天中止", competition: "regular",
+      sourceUrl: "https://npb.jp/y", fetchedAt: NOW,
+    });
+    assert.deepEqual(gameDates(db, 2026), [
+      { date: DATE, scheduled: 1, played: 1 },
+      { date: "2026-08-15", scheduled: 1, played: 0 },
+    ]);
+  });
+});
+
+test("⚠경기일 목록에도 포스트시즌을 섞지 않는다 — 정규시즌 화면이 10월로 이어진다", async () => {
+  await withDb((db) => {
+    game(db);
+    upsertGame(db, {
+      gameId: "cs2", season: 2026, gameDate: "2026-10-11",
+      awayCode: "g", homeCode: "db", gameNo: 1,
+      status: "played", notPlayedReason: null, competition: "climaxSeries",
+      sourceUrl: "https://npb.jp/z", fetchedAt: NOW,
+    });
+    assert.deepEqual(gameDates(db, 2026).map((d) => d.date), [DATE]);
+  });
+});
+
+test("through 를 넘긴 날은 목록에 없다 — 「7월 말 기준」 빌드가 8월을 가리키면 안 된다", async () => {
+  await withDb((db) => {
+    game(db);
+    assert.deepEqual(gameDates(db, 2026, "2026-08-13"), []);
+  });
+});
+
+/**
+ * ⚠**`latestGameDate`와 `gameDates`는 같은 계약이어야 한다.**
+ * 한쪽만 대회를 고정해 두면, 대회를 바꿔 빌드했을 때 「최신 경기일」이 날짜 목록에 없는 날이 되어
+ * 앞뒤 이동이 통째로 사라지고 그 화면이 빈 채로 나간다(2026-08-16 이중 검토 P2).
+ */
+test("최신 경기일도 대회를 인자로 받는다 — 날짜 목록과 규칙이 어긋나지 않는다", async () => {
+  await withDb((db) => {
+    game(db);
+    upsertGame(db, {
+      gameId: "cs3", season: 2026, gameDate: "2026-10-11",
+      awayCode: "g", homeCode: "db", gameNo: 1,
+      status: "played", notPlayedReason: null, competition: "climaxSeries",
+      sourceUrl: "https://npb.jp/z", fetchedAt: NOW,
+    });
+    assert.equal(latestGameDate(db, 2026, "9999-12-31", "climaxSeries"), "2026-10-11");
+    // 그 대회의 날짜 목록에 반드시 들어 있어야 한다 — 없으면 앞뒤 이동이 끊긴다
+    const days = gameDates(db, 2026, "9999-12-31", "climaxSeries").map((d) => d.date);
+    assert.ok(days.includes(latestGameDate(db, 2026, "9999-12-31", "climaxSeries")!));
   });
 });

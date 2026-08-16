@@ -75,10 +75,9 @@ export interface LogPageData {
   politeness: { minDelayMs: number; concurrency: number };
 }
 
-export interface RenderContext {
-  site: SiteMeta;
-  freshness: Freshness;
-}
+// ⚠**타입은 `layout.ts` 한 벌만 둔다.** 세 곳에 두면 필드를 늘릴 때마다 세 곳을 고친다
+export type { RenderContext } from "./layout.ts";
+import type { RenderContext } from "./layout.ts";
 
 function mb(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
@@ -188,7 +187,7 @@ function quarantineTable(kinds: readonly QuarantineKind[]): RawHtml {
 }
 
 export function renderLogPage(d: LogPageData, ctx: RenderContext): string {
-  const base = "";
+  const { base, root, seasons } = ctx.paths("log.html");
   const a = d.archive;
 
   const body = html`<header class="idline">
@@ -269,6 +268,8 @@ ${block({
   return page({
     title: `収集ログ — ${ctx.site.name}`,
     base,
+    root,
+    seasons,
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,

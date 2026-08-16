@@ -13,20 +13,29 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { openDb } from "@bb-app/store";
 import { systemClock, toJstDateString } from "@bb-app/archiver";
-import { buildSite } from "../src/site.ts";
+import { buildSite, seasonPaths } from "../src/site.ts";
+import type { BuildResult } from "../src/site.ts";
 import { loadLog, loadSite } from "../src/query.ts";
 
 const [dbArg, outArg, seasonArg, throughArg] = process.argv.slice(2);
 
 if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
-  console.error("usage: build.ts <db> <outDir> <season> [through=YYYY-MM-DD]");
+  console.error("usage: build.ts <db> <outDir> <season[,season...]> [through=YYYY-MM-DD]");
   process.exitCode = 2;
 } else {
-  const season = Number(seasonArg);
-  if (!Number.isInteger(season)) {
+  /**
+   * ⚠**첫 시즌이 「현재 시즌」이다.** 그 시즌만 사이트 루트에 놓이고 나머지는 `/{연도}/` 아래로 간다.
+   * 기존 URL(`/players/x.html`)이 계속 현재 시즌을 가리키게 하기 위한 배치다.
+   */
+  const seasons = seasonArg.split(",").map((x) => Number(x.trim()));
+  if (seasons.length === 0 || seasons.some((x) => !Number.isInteger(x))) {
     console.error(`시즌이 정수가 아니다: ${seasonArg}`);
     process.exitCode = 2;
+  } else if (new Set(seasons).size !== seasons.length) {
+    console.error(`시즌이 중복됐다: ${seasonArg}`);
+    process.exitCode = 2;
   } else {
+    const season = seasons[0]!;
     const now = systemClock.now();
     const builtOn = toJstDateString(now);
     const outDir = resolve(outArg);
@@ -34,11 +43,19 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
     const db = openDb(resolve(dbArg), now.toISOString());
     try {
       const t0 = process.hrtime.bigint();
-      const data = loadSite(db, {
-        season,
-        builtOn,
-        ...(throughArg === undefined ? {} : { through: throughArg }),
-      });
+      /**
+       * ⚠**전 시즌을 먼저 읽는다.** 시즌 전환이 「그 시즌에 같은 화면이 있는가」를 물어야 하고,
+       * 그건 렌더링 **전에** 알아야 한다 — 없는 곳으로 링크하면 404가 되고 조용하다.
+       */
+      const loaded = seasons.map((s) => ({
+        season: s,
+        prefix: s === season ? "" : `${s}/`,
+        data: loadSite(db, {
+          season: s,
+          builtOn,
+          ...(throughArg === undefined ? {} : { through: throughArg }),
+        }),
+      }));
       const loadMs = Number(process.hrtime.bigint() - t0) / 1e6;
 
       const site = {
@@ -55,6 +72,7 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
       };
 
       // 운영 파일은 리포 안에 있다. 없으면 収集ログ 페이지가 「기록 없음」으로 그려진다
+      // ⚠**수집 로그는 현재 시즌에만 붙인다.** 과거 시즌 화면에 「어제 수집했다」는 무의미하다
       const log = loadLog(db, {
         season,
         builtOn,
@@ -63,19 +81,34 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
         ...(throughArg === undefined ? {} : { through: throughArg }),
       });
 
-      const result = buildSite(data, site, builtOn, log);
+      const plans = loaded.map((l) => ({
+        season: l.season,
+        prefix: l.prefix,
+        paths: seasonPaths(l.data, l.season === season),
+      }));
 
       rmSync(outDir, { recursive: true, force: true });
       let bytes = 0;
-      for (const f of result.files) {
-        const path = join(outDir, f.path);
-        mkdirSync(dirname(path), { recursive: true });
-        writeFileSync(path, f.content, "utf8");
-        bytes += Buffer.byteLength(f.content, "utf8");
+      let fileCount = 0;
+      let current: BuildResult | null = null;
+      for (const l of loaded) {
+        const r = buildSite(l.data, site, builtOn, l.season === season ? log : undefined, plans);
+        if (l.season === season) current = r;
+        for (const f of r.files) {
+          const path = join(outDir, f.path);
+          mkdirSync(dirname(path), { recursive: true });
+          writeFileSync(path, f.content, "utf8");
+          bytes += Buffer.byteLength(f.content, "utf8");
+          fileCount += 1;
+        }
+        console.log(
+          `  ${l.season}年${l.prefix === "" ? "(現行)" : ` → /${l.prefix}`} : ${r.files.length}파일 · 선수 ${r.playerCount}명 · 최신 ${r.latestGameDate ?? "없음"}`,
+        );
       }
+      const result = current!;
 
       const mb = (bytes / 1024 / 1024).toFixed(1);
-      console.log(`생성: ${result.files.length}파일 / ${mb}MB / 선수 ${result.playerCount}명`);
+      console.log(`생성: ${fileCount}파일 / ${mb}MB / 시즌 ${seasons.join("·")}`);
       console.log(`집계: ${loadMs.toFixed(0)}ms · 최신 경기일 ${result.latestGameDate ?? "없음"} · 생성일 ${builtOn}`);
       if (site.contact === "") {
         console.warn("⚠ BB_CONTACT 미설정 — 삭제·정정 요청 창구가 화면에 나오지 않는다(공개 전 필수)");

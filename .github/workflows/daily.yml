@@ -123,7 +123,9 @@ jobs:
         env:
           BB_CONTACT: ${{ secrets.BB_CONTACT }}
         # ⚠낡은 데이터면 종료 코드 1이 된다. 그때도 산출물은 남기고, 실패로 표시한다
-        run: node packages/web/tools/build.ts data/bb.sqlite dist 2026
+        # ⚠**시즌 목록의 첫 번째가 「현재」다** — 루트에 놓이고 나머지는 /{연도}/ 아래로 간다.
+        # 순서를 바꾸면 기존 URL이 통째로 옮겨간다. 새 시즌이 시작하면 **앞에** 붙인다.
+        run: node packages/web/tools/build.ts data/bb.sqlite dist 2026,2025
 
       - name: 배포
         # ⚠**`success()`가 핵심이다.** 신선도가 낡으면 앞의 생성 단계가 종료 코드 1을 낸다.

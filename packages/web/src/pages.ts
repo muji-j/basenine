@@ -14,6 +14,7 @@ import { NO_VALUE, avg3, dec2, fullDate, innings } from "./format.ts";
 import {
   block,
   denText,
+  follower,
   note,
   panel,
   rankValue,
@@ -24,7 +25,7 @@ import {
   tablist,
   term,
 } from "./parts.ts";
-import { page } from "./layout.ts";
+import { page, pastSeasonOf } from "./layout.ts";
 import type { Freshness, SiteMeta } from "./layout.ts";
 import type { MatchupRow, RankingPanel } from "./player-page.ts";
 import { NEUTRAL_COLOR } from "@bb-app/domain";
@@ -35,10 +36,9 @@ import type { Rate } from "@bb-app/metrics";
 import { isEmptyProfile, markLetter, markProfile } from "./marks.ts";
 import type { MarkPlayer, ProfileAxis } from "./marks.ts";
 
-export interface RenderContext {
-  site: SiteMeta;
-  freshness: Freshness;
-}
+// ⚠**타입은 `layout.ts` 한 벌만 둔다.** 세 곳에 두면 필드를 늘릴 때마다 세 곳을 고친다
+export type { RenderContext } from "./layout.ts";
+import type { RenderContext } from "./layout.ts";
 
 /**
  * 순위의 부문 — 打者 · 先発 · 救援.
@@ -136,7 +136,7 @@ function panelTable(p: RankingPanel, base: string, limit: number): RawHtml {
 }
 
 export function renderIndexPage(d: IndexPageData, ctx: RenderContext): string {
-  const base = "";
+  const { base, root, seasons } = ctx.paths("index.html");
   const body = html`<header class="idline">
   <div class="idtext">
     <span class="nm">選手一覧</span>
@@ -193,13 +193,17 @@ ${d.highlights.map((s) =>
       body: html`${s.categories.map((c, ci) =>
         panel(`hicat-${s.id}`, c.id, ci === 0, categoryPanels(c, base, 5, `himetric-${s.id}`)),
       )}
-      <p class="note"><a href="${base}ranking.html">${s.name}の順位表をすべて見る</a></p>`,
+      <!-- ⚠**개인 순위는 순위표의 「個人」 갈래 안에 있다.** 그냥 ranking.html 로 보내면
+           지난번에 팀 순위를 보고 있던 사람은 개인 순위가 어디 갔는지 알 수 없다 -->
+      <p class="note"><a href="${base}ranking.html#lg-${s.id}">${s.name}の順位表をすべて見る</a></p>`,
     }),
   )}`;
 
   return page({
     title: `選手一覧 — ${ctx.site.name} ${d.season}年`,
     base,
+    root,
+    seasons,
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
@@ -300,25 +304,27 @@ function standingsTable(s: StandingsSection, base: string): RawHtml {
 }
 
 /**
- * 순위표 — 리그 탭 × 지표 탭.
+ * 순위표 — **チーム / 個人** 두 갈래, 그 아래 리그 탭 × 지표 탭.
  *
+ * ⚠**한 화면에 두 종류의 순위가 있다.** 팀 순위와 개인 타이틀은 읽는 목적이 다른데
+ * 세로로 이어 붙이면 개인 순위가 화면 밖에 있다는 사실 자체가 안 보인다.
+ * 갈래를 나누되 **레일 한 줄에 둔다** — 레일이 두 줄이면 둘 다 sticky라 서로를 가린다.
+ *
+ * 리그 탭은 **個人에만 붙는다.** 팀 순위는 두 리그를 함께 보는 것이 자연스럽고,
+ * 리그 탭을 공용으로 만들면 「팀에서 セ를 골랐더니 개인도 セ」가 되어 되돌리기 어렵다.
  * 지표 탭은 **리그별로 그리되 같은 그룹 이름을 쓴다.** 리그를 바꿔도 보고 있던 지표가 유지된다.
  */
 export function renderRankingPage(d: RankingPageData, ctx: RenderContext): string {
-  const base = "";
+  const { base, root, seasons } = ctx.paths("ranking.html");
   const leagueTabs = d.leagues.map((l) => ({ id: l.id, label: l.name.replace("・リーグ", "") }));
+  const hasTeam = d.standings.length > 0;
+  const hasPersonal = d.leagues.length > 0;
+  // ⚠**한쪽이 없으면 갈래를 만들지 않는다.** 눌러도 아무것도 없는 탭은 고장으로 읽힌다
+  const split = hasTeam && hasPersonal;
 
-  const body = html`<header class="idline">
-  <div class="idtext">
-    <span class="nm">リーグ順位</span>
-    <span class="sub">${d.season}年 · 規定到達者に順位がつきます</span>
-  </div>
-  <span class="asof">${d.asOf === null ? "" : `${fullDate(d.asOf)}まで`}</span>
-</header>
-
-${d.standings.length === 0
-    ? raw("")
-    : html`<section class="block" id="b-standings">
+  // ⚠**탭 이름과 제목이 겹치는 것을 남겨둔다.** 우리 패널에는 `aria-labelledby`가 없어서
+  // 이 제목이 「지금 열린 것이 무엇인가」를 말하는 유일한 수단이다
+  const teamBody = html`<section class="block" id="b-standings">
   <h4>チーム順位</h4>
   ${d.standings.map(
     (s) => html`<div class="standwrap">
@@ -332,18 +338,19 @@ ${d.standings.length === 0
       `交流戦の試合もリーグ順位に含めています。${d.tieRule}` +
       `得点・失点は公表記録、打率と防御率は当サイトの再計算です。`,
   )}
-</section>`}
+</section>`;
 
-<nav class="rail" aria-label="リーグ">${tablist("rankleague", leagueTabs)}</nav>
-${d.leagues.map((league, li) =>
+  const personalBody = html`${d.leagues.map((league, li) =>
     panel(
       "rankleague",
       league.id,
       li === 0,
-      html`<section class="block">
+      html`<section class="block" id="lg-${league.id}">
       <h4>${league.name}<span class="sw">${tablist(
         "rankcat",
         league.categories.map((c) => ({ id: c.id, label: c.label })),
+        false,
+        `${league.name}の部門`,
       )}</span></h4>
       ${league.categories.map((c, ci) =>
         panel("rankcat", c.id, ci === 0, categoryPanels(c, base, RANKING_PAGE_ROWS, "rankmetric")),
@@ -352,9 +359,44 @@ ${d.leagues.map((league, li) =>
     ),
   )}`;
 
+  // 갈래가 없으면 구분선도 없다 — 앞이 비어 있는 구분선은 그냥 흠집이다
+  const leagueRail = hasPersonal
+    ? html`${split ? html`<span class="div"></span>` : raw("")}${tablist("rankleague", leagueTabs, false, "リーグ")}`
+    : raw("");
+
+  const body = html`<header class="idline">
+  <div class="idtext">
+    <span class="nm">リーグ順位</span>
+    <span class="sub">${d.season}年</span>
+  </div>
+  <span class="asof">${d.asOf === null ? "" : `${fullDate(d.asOf)}まで`}</span>
+</header>
+
+${!hasTeam && !hasPersonal
+    ? html`<p class="empty">このシーズンの順位はまだ計算できていません。</p>`
+    : html`${!split && !hasPersonal
+      ? raw("")
+      : html`<nav class="rail" aria-label="順位の表示">
+  ${split
+        ? tablist(
+          "ranktype",
+          [{ id: "team", label: "チーム" }, { id: "personal", label: "個人" }],
+          false,
+          "順位の種類",
+          true,
+        )
+        : raw("")}
+  ${split ? follower("ranktype", "personal", false, leagueRail) : leagueRail}
+</nav>`}
+
+${hasTeam ? (split ? panel("ranktype", "team", true, teamBody) : teamBody) : raw("")}
+${hasPersonal ? (split ? panel("ranktype", "personal", false, personalBody) : personalBody) : raw("")}`}`;
+
   return page({
     title: `リーグ順位 — ${d.season}年`,
     base,
+    root,
+    seasons,
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
@@ -415,13 +457,23 @@ export interface StartersPageData {
  * ⚠**구장이나 순번이 아니라 대전 카드로 만든다.** 구장은 더블헤더에서 겹치고,
  * 순번은 다음날 다른 경기를 가리킨다 — 저장된 선택이 엉뚱한 경기로 되살아난다.
  */
-function gameKey(g: ProbableGame): string {
+export function gameKey(g: ProbableGame): string {
   return [g.sides[0].teamCode, g.sides[1].teamCode].join("-");
 }
 
+/**
+ * 予告先発 페이지에서 그 경기 구획의 id.
+ * ⚠**試合 화면의 카드가 여기로 온다.** 키를 두 곳에서 만들면 언제고 어긋나므로 `gameKey` 한 벌만 쓴다(M1).
+ */
+export function startersAnchor(key: string): string {
+  return `sg-${key}`;
+}
+
 export function renderStartersPage(d: StartersPageData, ctx: RenderContext): string {
-  const base = "";
+  const { base, root, seasons } = ctx.paths("starters.html");
   const isToday = d.gameDate !== null && d.gameDate === d.builtOn;
+  // ⚠**끝난 시즌에 「発表待ち」라고 쓰지 않는다.** 기다리는 것이 아니라 끝난 것이다
+  const past = pastSeasonOf(seasons);
 
   const sideBlock = (side: ProbableSide, opponent: ProbableSide): RawHtml => html`<div class="sside"
   style="--chip:${side.color.base};--chip-ink:${side.color.ink}">
@@ -456,13 +508,17 @@ export function renderStartersPage(d: StartersPageData, ctx: RenderContext): str
   const body = html`<header class="idline">
   <div class="idtext">
     <span class="nm">予告先発</span>
-    <span class="sub">${d.gameDate === null ? "発表待ち" : `${fullDate(d.gameDate)}${isToday ? "（本日）" : ""}の試合`}</span>
+    <span class="sub">${d.gameDate === null
+      ? past ? "終了したシーズンです" : "発表待ち"
+      : `${fullDate(d.gameDate)}${isToday ? "（本日）" : ""}の試合`}</span>
   </div>
   <span class="asof">成績は${fullDate(d.builtOn)}生成時点</span>
 </header>
 
 ${d.gameDate === null || d.games.length === 0
-    ? html`<section class="block"><p class="empty">予告先発はまだ発表されていません。発表は前日〜当日です。</p></section>`
+    ? html`<section class="block"><p class="empty">${past
+      ? "このシーズンの予告先発は記録していません。予告先発の保存を始めたのが今シーズンからです。"
+      : "予告先発はまだ発表されていません。発表は前日〜当日です。"}</p></section>`
     : html`<nav class="cards" role="tablist" data-tabgroup="starters" aria-label="試合">
     ${d.games.map(
       (g, i) => html`<button class="card" type="button" role="tab" data-tab="${gameKey(g)}"
@@ -481,7 +537,7 @@ ${d.games.map((g, i) =>
         "starters",
         gameKey(g),
         i === 0,
-        html`<section class="block">
+        html`<section class="block" id="${startersAnchor(gameKey(g))}">
       <h4>${g.sides[0].shortName} 対 ${g.sides[1].shortName}<span class="qt">${g.venue ?? ""}${g.startTime === null ? "" : ` ${g.startTime}`}</span></h4>
       <div class="starters">
         ${sideBlock(g.sides[0], g.sides[1])}
@@ -508,19 +564,81 @@ ${d.games.map((g, i) =>
   return page({
     title: `予告先発${d.gameDate === null ? "" : ` — ${fullDate(d.gameDate)}`}`,
     base,
+    root,
+    seasons,
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
     // ⚠予告先発은 「試合」의 자식 화면이다. 부모 항목을 켜 두지 않으면
     // 내비게이션이 「아무 데도 아님」을 가리킨다
     nav: "today",
+    // 予告先発는 試合 구획이지만 today.html 은 아니다
+    navExact: false,
     body,
   });
+}
+
+/**
+ * 대전 화면의 빠른 선택 버튼 하나.
+ *
+ * ⚠**비율을 싣지 않는다.** 버튼마다 타율을 적으면 분모까지 적어야 하고(M2), 그러면
+ * 버튼이 문장이 되어 「고르는 화면」이 「읽는 화면」으로 바뀐다.
+ * 대신 **세는 값**(打席·投球回)만 쓴다 — 분모 문제가 없고, 누가 주전인지도 그 값이 말한다.
+ */
+export interface MatchupPick {
+  playerId: string;
+  name: string;
+  /** 「412打席」 · 「118回」 — 얼마나 나왔는가 */
+  usage: string;
+  /** 予告先発로 발표된 투수 */
+  probable: boolean;
+}
+
+/**
+ * 빠른 선택 버튼을 만드는 **유일한 입구**.
+ *
+ * ⚠**세는 값만 받는다.** 타율·방어율을 넣을 수 있게 열어 두면 언젠가 들어가고,
+ * 그러면 분모 없는 비율이 화면에 뜬다(M2). 형태로 막는 편이 시험으로 막는 것보다 오래 간다.
+ */
+export function batterPick(playerId: string, name: string, pa: number): MatchupPick {
+  return { playerId, name, usage: `${pa}打席`, probable: false };
+}
+
+export function pitcherPick(playerId: string, name: string, outs: number): MatchupPick {
+  return { playerId, name, usage: `${innings(outs)}回`, probable: false };
+}
+
+/** 올 시즌 등판이 없는 예고선발. ⚠**「0回」가 아니라 「기록이 없다」다**(M11) */
+export function unseenPitcherPick(playerId: string, name: string): MatchupPick {
+  return { playerId, name, usage: "今季登板なし", probable: true };
+}
+
+export interface MatchupTeam {
+  teamCode: string;
+  shortName: string;
+  /** 검색 색인과 같은 표기 — 선택 라벨이 「奥川（東京ヤクルトスワローズ）」로 이어진다 */
+  name: string;
+  color: TeamColor;
+  pitchers: MatchupPick[];
+  batters: MatchupPick[];
+}
+
+export interface MatchupGame {
+  /** 탭 키. **`gameKey`와 같은 규칙**을 쓴다 — 구장·순번은 더블헤더에서 겹친다 */
+  key: string;
+  venue: string | null;
+  startTime: string | null;
+  sides: [MatchupTeam, MatchupTeam];
 }
 
 export interface MatchupPageData {
   season: number;
   asOf: string | null;
+  /** 빠른 선택에 쓰는 경기일. 예고가 없으면 null */
+  pickDate: string | null;
+  /** 사이트 생성일. 「本日」인지 판정한다 */
+  builtOn: string;
+  games: MatchupGame[];
 }
 
 /**
@@ -531,8 +649,38 @@ export interface MatchupPageData {
  * 4층(규정)에 걸리고, 필요한 폴링은 L1을 100배 벗어난다.
  * 근거: `docs/decisions/2026-08-15-live-matchup-feasibility.md`
  */
+/** 빠른 선택 버튼 한 줄. `data-*`는 검색 색인과 **같은 모양**이라 이후 처리가 하나로 이어진다 */
+function pickButton(p: MatchupPick, role: "pitcher" | "batter", team: MatchupTeam): RawHtml {
+  return html`<button class="pk" type="button" aria-pressed="false"
+    data-pick="${role}" data-i="${p.playerId}" data-n="${p.name}" data-t="${team.name}">${p.name}<s>${p.usage}</s>${
+    p.probable ? html`<em>予告</em>` : null
+  }</button>`;
+}
+
+/**
+ * 한 팀의 빠른 선택 묶음.
+ *
+ * ⚠**양 팀 모두에 投手와 打者를 둔다.** 「어느 쪽이 공격 중인가」를 먼저 묻는 화면으로 만들면
+ * 조작이 한 단계 늘고, 그 답은 화면을 보는 사람이 이미 알고 있다.
+ * ⚠**자른 목록을 만들지 않는다.** 대타·중간계투가 잘려 나가면 「내가 찾는 사람이 없다」가 되고,
+ * 그 순간 이 기능은 없는 것과 같아진다. 대신 상자 안에서 스크롤한다.
+ */
+function pickTeam(t: MatchupTeam): RawHtml {
+  const list = (label: string, role: "pitcher" | "batter", picks: MatchupPick[]): RawHtml =>
+    picks.length === 0
+      ? html`<p class="picklab">${label}</p><p class="empty">今季の記録がありません。</p>`
+      : html`<p class="picklab">${label}<s>${picks.length}人</s></p>
+        <div class="picklist" role="toolbar" aria-orientation="horizontal"
+          aria-label="${t.shortName}の${label}（左右キーで移動）">${picks.map((p) => pickButton(p, role, t))}</div>`;
+  return html`<div class="pickteam" style="--chip:${t.color.base};--chip-ink:${t.color.ink}">
+  <h5 class="picktm"><i></i>${t.shortName}</h5>
+  ${list("投手", "pitcher", t.pitchers)}
+  ${list("打者", "batter", t.batters)}
+</div>`;
+}
+
 export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): string {
-  const base = "";
+  const { base, root, seasons } = ctx.paths("matchup.html");
   const side = (id: string, label: string, placeholder: string): RawHtml =>
     html`<div class="pickside">
     <label for="pick${id}">${label}</label>
@@ -541,8 +689,15 @@ export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): strin
         role="combobox" aria-expanded="false" aria-controls="pick${id}Hits" aria-autocomplete="list">
       <ul class="qhits" id="pick${id}Hits" role="listbox" aria-label="${label}の候補" hidden></ul>
     </div>
-    <p class="chosen">選択中：<b id="pick-${id.toLowerCase()}-chosen">未選択</b></p>
   </div>`;
+
+  const isToday = d.pickDate !== null && d.pickDate === d.builtOn;
+  // ⚠끝난 시즌에서 「いま投げている投手を選ぶと」는 거짓말이다. 그 시즌에 진행 중인 경기는 없다
+  const past = pastSeasonOf(seasons);
+  const gameTabs = d.games.map((g) => ({
+    id: g.key,
+    label: `${g.sides[0].shortName} − ${g.sides[1].shortName}`,
+  }));
 
   const body = html`<header class="idline">
   <div class="idtext">
@@ -554,14 +709,49 @@ export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): strin
 
 <section class="block" id="pickForm">
   <h4>投手と打者</h4>
-  <div class="picker">
-    ${side("Pitcher", "投手", "例：山本")}
-    ${side("Batter", "打者", "例：佐藤")}
+  <!-- ⚠**고른 것과 실행 버튼을 붙어 있게 두고 화면에 남긴다.** 선수 목록은 길어서
+       아래로 내려가면 「골랐는데 어떻게 보지?」가 된다. 레일과 같은 sticky를 쓴다 -->
+  <div class="pickbar">
+    <p class="chosen"><span>投手</span><b id="pick-pitcher-chosen">未選択</b></p>
+    <p class="chosen"><span>打者</span><b id="pick-batter-chosen">未選択</b></p>
+    <button class="go" type="button" id="pickGo" disabled>対戦成績を見る</button>
   </div>
-  <p><button class="go" type="button" id="pickGo" disabled>対戦成績を見る</button></p>
+
+  ${d.games.length === 0
+    ? raw("")
+    : html`<div id="pickToday">
+    <p class="picknote">${d.pickDate === null ? "" : `${fullDate(d.pickDate)}${isToday ? "（本日）" : ""}の対戦から選ぶ`}</p>
+    <!-- ⚠**여기에 sticky를 걸지 않는다.** 바로 위의 pickbar가 이미 sticky라
+         둘 다 붙으면 같은 자리를 두고 겹친다. 경기 고르기는 한 번 하고 끝나는 조작이다 -->
+    <nav class="pickgames" aria-label="試合">${tablist("picktoday", gameTabs, true, "試合")}</nav>
+    ${d.games.map((g, i) =>
+      panel(
+        "picktoday",
+        g.key,
+        i === 0,
+        html`<div class="pickteams">${pickTeam(g.sides[0])}${pickTeam(g.sides[1])}</div>`,
+      ),
+    )}
+  </div>`}
+
+  <details class="pickfind"${d.games.length === 0 ? raw(" open") : raw("")}>
+    <summary>名前でさがす</summary>
+    <div class="picker">
+      ${side("Pitcher", "投手", "例：山本")}
+      ${side("Batter", "打者", "例：佐藤")}
+    </div>
+  </details>
+
   ${note(
-    "試合を見ながら使う画面です。いま投げている投手と打っている打者を選ぶと、" +
-      "その二人のこれまでの対戦成績（と打者のスプリット）が開きます。",
+    (past
+      ? `${d.season}年は終了したシーズンです。投手と打者を選ぶと、そのシーズンの対戦成績（と打者のスプリット）が開きます。`
+      : "試合を見ながら使う画面です。いま投げている投手と打っている打者を選ぶと、" +
+        "その二人のこれまでの対戦成績（と打者のスプリット）が開きます。") +
+      (d.games.length === 0
+        ? past
+          ? "このシーズンの予告先発は記録していないため、名前でさがす形になっています。"
+          : "予告先発がまだ発表されていないため、名前でさがす形になっています。"
+        : "ボタンに出しているのは今季その球団で記録のある選手です。並びは出場の多い順で、数字は打席数・投球回です。"),
   )}
 </section>
 
@@ -584,6 +774,8 @@ export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): strin
   return page({
     title: `対戦を選ぶ — ${d.season}年`,
     base,
+    root,
+    seasons,
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,

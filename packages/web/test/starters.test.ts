@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { renderStartersPage } from "../src/pages.ts";
 import type { ProbableGame, ProbableSide, StartersPageData } from "../src/pages.ts";
 import { colorOf } from "@bb-app/domain";
-import { context, r } from "./fixtures.ts";
+import { context, pastSeasonContext, r } from "./fixtures.ts";
 
 function side(over: Partial<ProbableSide> = {}): ProbableSide {
   return {
@@ -131,9 +131,14 @@ test("라인업을 아는 척하지 않는다고 화면이 밝힌다", () => {
 test("헤더에서 부모 항목(試合)을 켠다 — 予告先発은 그 자식 화면이다", () => {
   const out = renderStartersPage(data(), context());
   // ⚠**어느 항목도 안 켜진 상태로 두지 않는다.** 「지금 어디인가」가 사라지면
-  // 내비게이션이 방향을 잃는다. 予告先発은 「試合」 아래에 있으므로 그쪽을 켠다
-  assert.match(out, /<a href="today\.html" aria-current="page">試合<\/a>/);
-  assert.equal(out.match(/aria-current="page"/g)?.length, 1, "켜진 항목이 하나가 아니다");
+  // 내비게이션이 방향을 잃는다. 予告先発은 「試合」 아래에 있으므로 그쪽을 켠다.
+  //
+  // ⚠**단 `page`가 아니라 `true`다.** `aria-current="page"`는 「이 링크가 지금 이 문서다」라는
+  // 뜻인데 그 링크는 `today.html`(다른 문서)을 가리킨다 — 스크린리더에게 거짓말이 된다.
+  // 구획 안에 있다는 뜻은 `aria-current="true"`가 낸다(2026-08-16 이중 검토 P2).
+  assert.match(out, /<a href="today\.html" aria-current="true">試合<\/a>/);
+  assert.equal(out.match(/aria-current="page"/g), null, "다른 문서를 가리키는 링크를 「지금 여기」라고 했다");
+  assert.equal(out.match(/aria-current="true"/g)?.length, 1, "켜진 항목이 하나가 아니다");
 });
 
 // ── 대전 카드 버튼 ────────────────────────────────────────────────────────
@@ -205,4 +210,34 @@ test("「すべて」 버튼이 있다 — 골라 보는 화면에서 전부 보
 test("예고가 없으면 버튼도 없다", () => {
   const out = renderStartersPage(data({ gameDate: null, games: [] }), context());
   assert.ok(!out.includes('class="cards"'));
+});
+
+/**
+ * ⚠**試合 화면의 予告先発 카드가 여기로 온다.** 착지점이 없으면 눌러도 페이지 맨 위에 떨어지고,
+ * 고른 경기가 아닌 첫 경기가 열린 채로 보인다 — 「눌렀는데 다른 경기」가 된다.
+ */
+test("경기마다 착지점이 있다 — 試合 화면의 카드가 그 경기로 온다", () => {
+  const out = renderStartersPage(threeGames(), context());
+  const ids = [...out.matchAll(/id="(sg-[^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(ids, ["sg-d-g", "sg-s-db", "sg-l-m"]);
+  // 착지점은 그 경기의 탭 키와 짝이어야 한다 — 어긋나면 탭이 안 열린다
+  for (const id of ids) assert.ok(out.includes(`data-tab="${id.slice(3)}"`), `${id}에 맞는 탭이 없다`);
+});
+
+/**
+ * ⚠**끝난 시즌에 「発表待ち」라고 쓰지 않는다.** 기다리는 것이 아니라 끝난 것이다.
+ * 신선도 띠만 고치고 본문을 두면, 같은 화면이 위에서는 「終了したシーズン」이라 하고
+ * 아래에서는 「発表は前日〜当日です」라고 말한다(2026-08-16 이중 검토 P2).
+ */
+test("끝난 시즌의 予告先発 화면은 현재형으로 말하지 않는다", () => {
+  const out = renderStartersPage(data({ gameDate: null, games: [] }), pastSeasonContext(["starters.html"]));
+  assert.match(out, /終了したシーズンです/);
+  assert.ok(!out.includes("発表は前日〜当日です"), "끝난 시즌에 「곧 발표된다」고 말했다");
+  assert.ok(!out.includes("発表待ち"), "끝난 시즌을 기다리고 있다고 말했다");
+});
+
+test("진행 중인 시즌에서는 지금까지대로 말한다", () => {
+  const out = renderStartersPage(data({ gameDate: null, games: [] }), context());
+  assert.match(out, /発表は前日〜当日です/);
+  assert.match(out, /発表待ち/);
 });

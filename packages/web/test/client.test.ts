@@ -158,11 +158,14 @@ interface RunOptions {
   storage?: Storage;
   /** `players.json`의 내용. 주지 않으면 취득 실패로 다룬다 */
   index?: { i: string; n: string; t: string }[];
-  /** `location` 대역. `?vs=` 처리를 보려면 필요하다 */
-  location?: { search: string; href: string };
+  /** `location` 대역. `?vs=` 처리와 `#앵커` 처리를 보려면 필요하다 */
+  location?: { search: string; href: string; hash?: string };
 }
 
-function run(doc: ReturnType<typeof makeDocument>, opts: RunOptions = {}): { location: { search: string; href: string } } {
+function run(
+  doc: ReturnType<typeof makeDocument>,
+  opts: RunOptions = {},
+): { location: { search: string; href: string; hash?: string } } {
   const win: Record<string, unknown> = {};
   const loc = opts.location ?? { search: "", href: "" };
   // 서버가 심는 것과 **같은 함수**로 만든다 — 두 벌이 되면 어긋난다
@@ -589,9 +592,31 @@ function buildRankingPage(): ReturnType<typeof makeDocument> {
   const main = make("div", { class: "main" });
   doc.body.appendChild(main);
 
+  // 레일 한 줄에 상위 갈래(チーム/個人)와 하위 리그 탭줄이 함께 놓인다.
+  // 리그 탭줄은 **패널이 아니라 따라 움직이는 자리**에 들어간다(`follower`)
   const rail = make("div", { class: "rail" });
-  rail.appendChild(tabs("rankleague", ["central", "pacific"]).list);
+  rail.appendChild(tabs("ranktype", ["team", "personal"]).list);
+  const sub = make("div", { "data-panelgroup": "ranktype", "data-panelkey": "personal" });
+  sub.hidden = true;
+  sub.appendChild(tabs("rankleague", ["central", "pacific"]).list);
+  rail.appendChild(sub);
   main.appendChild(rail);
+
+  const teamPanel = make("div", {
+    "data-panelgroup": "ranktype",
+    "data-panelkey": "team",
+    role: "tabpanel",
+  });
+  teamPanel.appendChild(make("section", { class: "block", id: "b-standings" }));
+  main.appendChild(teamPanel);
+
+  const personalPanel = make("div", {
+    "data-panelgroup": "ranktype",
+    "data-panelkey": "personal",
+    role: "tabpanel",
+  });
+  personalPanel.hidden = true;
+  main.appendChild(personalPanel);
 
   for (const [i, lg] of ["central", "pacific"].entries()) {
     const leaguePanel = make("div", {
@@ -599,8 +624,8 @@ function buildRankingPage(): ReturnType<typeof makeDocument> {
       "data-panelkey": lg,
       role: "tabpanel",
     });
-    // ⚠순위표의 블록에는 **id가 없다.** 조립 대상이 아니기 때문이다
-    const section = make("section", { class: "block" });
+    // ⚠순위표의 블록 id는 **조립 목록에 없는 id**다 — 조립 규칙이 훑으면 전부 사라진다
+    const section = make("section", { class: "block", id: `lg-${lg}` });
     const cat = tabs("rankcat", ["batter", "starter", "reliever"]);
     const h = make("h4");
     h.appendChild(cat.list);
@@ -608,7 +633,7 @@ function buildRankingPage(): ReturnType<typeof makeDocument> {
     for (const c of cat.panels) section.appendChild(c);
     leaguePanel.appendChild(section);
     if (i > 0) leaguePanel.hidden = true;
-    main.appendChild(leaguePanel);
+    personalPanel.appendChild(leaguePanel);
   }
 
   // 일람의 하이라이트 블록 — id는 있지만 **조립 목록에 없는 id**다
@@ -620,7 +645,7 @@ test("⚠순위표의 블록을 숨기지 않는다 — 선수 페이지의 조�
   const doc = buildRankingPage();
   run(doc);
   const blocks = doc.querySelectorAll(".block");
-  assert.equal(blocks.length, 3, "픽스처가 블록을 못 만들었다");
+  assert.equal(blocks.length, 4, "픽스처가 블록을 못 만들었다");
   const hiddenOnes = blocks.filter((b) => b.hidden).map((b) => b.id || "(id 없음)");
   assert.deepEqual(hiddenOnes, [], `순위표의 블록이 숨겨졌다: ${hiddenOnes.join(", ")}`);
 });
@@ -634,6 +659,119 @@ test("조립 시스템이 없는 화면에서도 탭은 동작한다 — 부문 
     .map((p) => p.dataset["panelkey"]);
   // 리그 패널이 둘이라 부문 패널도 리그마다 하나씩 열린다
   assert.deepEqual(open, ["batter", "batter"], "부문 패널이 하나도 안 열렸다");
+});
+
+/**
+ * 지금 열려 있는 **패널**의 키.
+ * ⚠`role="tabpanel"`로 거른다 — 같은 그룹에는 레일 안의 하위 탭줄(`follower`)도 붙어 있어서
+ * 거르지 않으면 한 갈래가 두 번 세어진다.
+ */
+function openKeys(doc: ReturnType<typeof makeDocument>, group: string): string[] {
+  return doc
+    .querySelectorAll(`[data-panelgroup="${group}"]`)
+    .filter((p) => !p.hidden && p.getAttribute("role") === "tabpanel")
+    .map((p) => p.dataset["panelkey"]!);
+}
+
+test("갈래를 안 고르면 팀 순위가 열린다 — 「順位」를 누른 사람이 먼저 찾는 것이다", () => {
+  const doc = buildRankingPage();
+  run(doc);
+  assert.deepEqual(openKeys(doc, "ranktype"), ["team"]);
+});
+
+/**
+ * ⚠**깊은 링크가 닫힌 탭 안을 가리키면 브라우저는 아무 일도 하지 않는다.**
+ * 탭 선택은 localStorage에 남으므로, 「セの順位表をすべて見る」를 눌러도
+ * 지난번에 팀 순위를 보고 있었다면 개인 순위는 hidden 인 채다 — **눌러도 아무 반응이 없다.**
+ */
+test("#lg-central 로 오면 그 자리를 감싼 탭을 전부 연다 — 상위 갈래까지 거슬러 올라간다", () => {
+  const doc = buildRankingPage();
+  // 저장된 선택은 「팀 순위 · パ리그」 — 링크가 가리키는 곳과 **둘 다** 어긋나 있다
+  const storage = makeStorage();
+  storage.setItem(
+    "npb-meikan-layout",
+    JSON.stringify({ tabs: { ranktype: "team", rankleague: "pacific" } }),
+  );
+  run(doc, { storage, location: { search: "", href: "", hash: "#lg-central" } });
+
+  assert.deepEqual(openKeys(doc, "ranktype"), ["personal"], "상위 갈래가 안 열렸다");
+  assert.deepEqual(openKeys(doc, "rankleague"), ["central"], "리그 탭이 안 따라왔다");
+  // 레일의 하위 탭줄도 함께 나와야 한다 — 열린 화면에 조작이 없으면 되돌아갈 수 없다
+  const sub = doc
+    .querySelectorAll('[data-panelgroup="ranktype"]')
+    .filter((p) => p.dataset["panelkey"] === "personal" && p.getAttribute("role") === null);
+  assert.equal(sub.length, 1, "레일 안의 리그 탭줄 자리가 없다");
+  assert.equal(sub[0]!.hidden, false, "리그 탭줄이 숨겨진 채다");
+});
+
+/**
+ * ⚠**깊은 링크가 사용자의 기본값을 바꾸면 안 된다.**
+ * 「セの順位表をすべて見る」를 한 번 누른 뒤로 상단 내비의 「順位」가 영원히 개인 순위부터
+ * 열리면, 링크 한 번이 사용자의 설정을 뒤집은 것이다(2026-08-16 이중 검토 P2).
+ * 이번 방문에만 열고 **저장하지 않는다.**
+ */
+test("⚠깊은 링크로 연 탭은 저장되지 않는다 — 다음 방문의 기본값을 바꾸지 않는다", () => {
+  const doc = buildRankingPage();
+  const storage = makeStorage();
+  storage.setItem("npb-meikan-layout", JSON.stringify({ tabs: { ranktype: "team", rankleague: "pacific" } }));
+  run(doc, { storage, location: { search: "", href: "", hash: "#lg-central" } });
+
+  // 이 방문에서는 열린다
+  assert.deepEqual(openKeys(doc, "ranktype"), ["personal"]);
+  // 그러나 저장된 것은 그대로여야 한다
+  const saved = JSON.parse(storage.getItem("npb-meikan-layout")!);
+  assert.equal(saved.tabs.ranktype, "team", "링크 한 번이 저장된 기본값을 바꿨다");
+  assert.equal(saved.tabs.rankleague, "pacific");
+});
+
+test("직접 누른 탭은 임시 선택을 이기고, 그때는 저장된다", () => {
+  const doc = buildRankingPage();
+  const storage = makeStorage();
+  storage.setItem("npb-meikan-layout", JSON.stringify({ tabs: { ranktype: "team" } }));
+  run(doc, { storage, location: { search: "", href: "", hash: "#lg-central" } });
+  assert.deepEqual(openKeys(doc, "ranktype"), ["personal"]);
+
+  const teamTab = doc
+    .querySelectorAll('[data-tabgroup="ranktype"] [data-tab]')
+    .find((b) => b.dataset["tab"] === "team")!;
+  teamTab.fire("click");
+  assert.deepEqual(openKeys(doc, "ranktype"), ["team"], "직접 누른 것이 임시 선택에 졌다");
+  assert.equal(JSON.parse(storage.getItem("npb-meikan-layout")!).tabs.ranktype, "team");
+});
+
+/**
+ * ⚠**저장은 다른 조작에 딸려서 일어난다.** 깊은 링크가 `state`를 더럽혀 두면,
+ * 사용자가 **전혀 다른 탭**을 누른 순간 그 값까지 함께 저장된다 — 한 박자 늦게 새어 나간다.
+ */
+test("⚠다른 탭을 눌러 저장이 일어나도 깊은 링크의 선택은 새어 나가지 않는다", () => {
+  const doc = buildRankingPage();
+  const storage = makeStorage();
+  storage.setItem("npb-meikan-layout", JSON.stringify({ tabs: { ranktype: "team", rankcat: "batter" } }));
+  run(doc, { storage, location: { search: "", href: "", hash: "#lg-central" } });
+
+  // 관계없는 그룹(부문 탭)을 누른다 → 여기서 save 가 일어난다
+  const other = doc
+    .querySelectorAll('[data-tabgroup="rankcat"] [data-tab]')
+    .find((b) => b.dataset["tab"] === "starter")!;
+  other.fire("click");
+
+  const saved = JSON.parse(storage.getItem("npb-meikan-layout")!);
+  assert.equal(saved.tabs.rankcat, "starter", "누른 탭이 저장되지 않았다");
+  assert.equal(saved.tabs.ranktype, "team", "깊은 링크가 연 탭이 다른 조작에 딸려 저장됐다");
+});
+
+test("가리키는 자리가 이미 열려 있으면 선택을 건드리지 않는다", () => {
+  const doc = buildRankingPage();
+  const storage = makeStorage();
+  storage.setItem("npb-meikan-layout", JSON.stringify({ tabs: { ranktype: "team" } }));
+  run(doc, { storage, location: { search: "", href: "", hash: "#b-standings" } });
+  assert.deepEqual(openKeys(doc, "ranktype"), ["team"]);
+});
+
+test("없는 앵커가 와도 조용히 넘어간다 — 화면이 멈추면 안 된다", () => {
+  const doc = buildRankingPage();
+  run(doc, { location: { search: "", href: "", hash: "#nowhere" } });
+  assert.deepEqual(openKeys(doc, "ranktype"), ["team"]);
 });
 
 /** 확대한 紋의 뼈대 — 꼭짓점 5개, 항목 버튼 5개, 판독부 5벌 */
@@ -794,8 +932,32 @@ function buildPicker(): ReturnType<typeof makeDocument> {
   const go = make("button", { id: "pickGo", type: "button" });
   go.disabled = true;
   form.appendChild(go);
+
+  // 오늘 대전 두 팀의 빠른 선택 버튼. 서버가 내는 구조와 같은 모양이어야 한다
+  // (`.picklist` 상자가 있어야 화살표 이동이 어디까지인지 정해진다)
+  const today = make("div", { id: "pickToday" });
+  for (const [role, people] of [
+    ["pitcher", [["p1", "山本", "オリックス・バファローズ"], ["p2", "宮城", "オリックス・バファローズ"]]],
+    ["batter", [["b1", "佐藤", "阪神タイガース"]]],
+  ] as [string, string[][]][]) {
+    const list = make("div", { class: "picklist", role: "toolbar", "aria-orientation": "horizontal" });
+    for (const [i, n, t] of people) {
+      list.appendChild(
+        make("button", { class: "pk", type: "button", "aria-pressed": "false", "data-pick": role, "data-i": i!, "data-n": n!, "data-t": t! }),
+      );
+    }
+    today.appendChild(list);
+  }
+  form.appendChild(today);
   doc.body.appendChild(form);
   return doc;
+}
+
+/** 빠른 선택 버튼 하나 */
+function pk(doc: ReturnType<typeof makeDocument>, id: string): El {
+  const b = doc.querySelectorAll("#pickToday [data-pick]").find((x) => x.dataset["i"] === id);
+  assert.notEqual(b, undefined, `${id} 버튼이 없다`);
+  return b!;
 }
 
 /** 검색창에 입력하고, 색인 fetch가 끝난 뒤 결과 목록을 돌려준다 */
@@ -824,6 +986,94 @@ test("투수와 타자를 고르면 버튼이 열리고, 타자 페이지로 상
 
   go.fire("click");
   assert.equal(location.href, `players/b1.html?vs=${encodeURIComponent("山本")}#b-matchup`);
+});
+
+/**
+ * ⚠**이 경로는 색인 fetch를 타지 않는다.** 오늘 대전하는 두 팀은 서버가 이미 알고 있어서
+ * 버튼으로 나와 있다 — 검색이 실패해도 고를 수 있어야 한다는 뜻이기도 하다.
+ */
+test("오늘 대전 팀의 버튼만으로 고르기가 끝난다 — 이름을 칠 필요도, 색인을 받을 필요도 없다", () => {
+  const doc = buildPicker();
+  const { location } = run(doc); // 색인 없음 = 취득 실패
+  const go = doc.getElementById("pickGo")!;
+
+  pk(doc, "p1").fire("click");
+  assert.equal(doc.getElementById("pick-pitcher-chosen")!.textContent, "山本（オリックス・バファローズ）");
+  assert.equal(doc.getElementById("pickPitcher")!.value, "山本", "검색창에도 반영되지 않았다");
+  assert.equal(pk(doc, "p1").getAttribute("aria-pressed"), "true", "누른 버튼이 그렇다고 말하지 않는다");
+  assert.equal(go.disabled, true, "한쪽만 골랐는데 버튼이 열렸다");
+
+  pk(doc, "b1").fire("click");
+  assert.equal(go.disabled, false);
+  go.fire("click");
+  assert.equal(location.href, `players/b1.html?vs=${encodeURIComponent("山本")}#b-matchup`);
+});
+
+test("같은 갈래에서 다른 사람을 누르면 앞의 것이 풀린다 — 둘 다 눌린 것처럼 보이면 안 된다", () => {
+  const doc = buildPicker();
+  run(doc);
+  pk(doc, "p1").fire("click");
+  pk(doc, "p2").fire("click");
+  assert.equal(pk(doc, "p1").getAttribute("aria-pressed"), "false");
+  assert.equal(pk(doc, "p2").getAttribute("aria-pressed"), "true");
+  assert.equal(doc.getElementById("pick-pitcher-chosen")!.textContent, "宮城（オリックス・バファローズ）");
+});
+
+test("⚠같은 버튼을 다시 누르면 풀린다 — 잘못 눌렀을 때 되돌릴 길이 없으면 안 된다", () => {
+  const doc = buildPicker();
+  run(doc);
+  pk(doc, "p1").fire("click");
+  pk(doc, "b1").fire("click");
+  assert.equal(doc.getElementById("pickGo")!.disabled, false);
+
+  pk(doc, "p1").fire("click");
+  assert.equal(pk(doc, "p1").getAttribute("aria-pressed"), "false");
+  assert.equal(doc.getElementById("pick-pitcher-chosen")!.textContent, "未選択");
+  assert.equal(doc.getElementById("pickPitcher")!.value, "", "검색창에 이름이 남았다");
+  assert.equal(doc.getElementById("pickGo")!.disabled, true, "한쪽을 풀었는데 버튼이 열린 채다");
+});
+
+/**
+ * ⚠**한 팀에 투수 30명·타자 40명이 실제로 나온다.** 전부 탭 정지로 두면 이 화면을
+ * 키보드로 지나가는 데만 탭을 100번 넘게 눌러야 한다. 목록 하나가 탭 정지 하나다.
+ */
+test("긴 목록은 탭 정지 하나다 — 안에서는 화살표로 움직인다", () => {
+  const doc = buildPicker();
+  run(doc);
+  const list = doc.querySelectorAll(".picklist")[0]!;
+  const items = doc.querySelectorAll('.picklist [data-pick="pitcher"]');
+  assert.deepEqual(
+    items.map((b) => b.getAttribute("tabindex")),
+    ["0", "-1"],
+    "목록의 버튼이 전부 탭 정지다",
+  );
+  // ⚠**`group`이 아니라 `toolbar`다.** roving tabindex(화살표로 이동)를 규정하는 롤이 toolbar이고,
+  // group 은 그걸 함의하지 않는다 — 「여기서 화살표를 쓰라」는 신호가 어디에도 없게 된다
+  assert.equal(list.getAttribute("role"), "toolbar", "화살표로 움직이는 묶음이라고 말하지 않는다");
+  assert.equal(list.getAttribute("aria-orientation"), "horizontal");
+
+  items[0]!.fire("keydown", { key: "ArrowRight" });
+  assert.deepEqual(items.map((b) => b.getAttribute("tabindex")), ["-1", "0"]);
+  // 끝에서 한 번 더 — 처음으로 돌아온다
+  items[1]!.fire("keydown", { key: "ArrowDown" });
+  assert.deepEqual(items.map((b) => b.getAttribute("tabindex")), ["0", "-1"]);
+  items[0]!.fire("keydown", { key: "End" });
+  assert.deepEqual(items.map((b) => b.getAttribute("tabindex")), ["-1", "0"]);
+});
+
+test("화살표 이동은 그 목록 안에서 끝난다 — 투수를 넘어 타자로 새지 않는다", () => {
+  const doc = buildPicker();
+  run(doc);
+  const batters = doc.querySelectorAll('.picklist [data-pick="batter"]');
+  doc.querySelectorAll('.picklist [data-pick="pitcher"]')[1]!.fire("keydown", { key: "ArrowRight" });
+  assert.deepEqual(batters.map((b) => b.getAttribute("tabindex")), ["0"], "타자 목록의 탭 정지가 움직였다");
+});
+
+test("검색으로 고르면 빠른 선택 버튼의 눌림 표시도 따라간다 — 두 경로가 어긋나면 안 된다", async () => {
+  const doc = buildPicker();
+  run(doc, { index: INDEX });
+  (await search(doc, "pickPitcher", "山"))[0]!.querySelector("a")!.fire("click");
+  assert.equal(pk(doc, "p1").getAttribute("aria-pressed"), "true", "검색으로 고른 것이 버튼에 안 비쳤다");
 });
 
 test("색인을 못 받으면 고르기 화면이 그렇다고 말한다", async () => {

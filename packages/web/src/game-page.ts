@@ -205,7 +205,7 @@ function playRow(p: GamePlayView, d: GamePageData, base: string, widest: number)
 }
 
 export function renderGamePage(d: GamePageData, ctx: RenderContext): string {
-  const base = "../";
+  const { base, root, seasons } = ctx.paths(`games/${gameSlug(d.gameId)}.html`);
   const winner = d.away.runs === d.home.runs ? null : d.away.runs > d.home.runs ? "away" : "home";
   const widest = Math.max(0.5, ...d.keyPlays.map((p) => Math.abs(p.swing ?? 0)));
 
@@ -297,10 +297,14 @@ ${d.scoringPlays.length === 0
   return page({
     title: `${d.away.shortName} ${d.away.runs}-${d.home.runs} ${d.home.shortName} — ${fullDate(d.gameDate)}`,
     base,
+    root,
+    seasons,
     color: (winner === "home" ? d.home : d.away).color,
     freshness: ctx.freshness,
     site: ctx.site,
     nav: "today",
+    // 試合 구획에 있지만 이 문서는 today.html 이 아니다
+    navExact: false,
     body,
   });
 }

@@ -307,12 +307,33 @@ export interface PlayerPageData {
   streaks: StreakBlockData | null;
   /** 반영 기준 경기일 */
   asOf: string | null;
+  /**
+   * 시즌 중에 소속이 바뀌었으면 그 내역. 안 바뀌었으면 빈 배열.
+   *
+   * ⚠**합계만 보여주면 거짓말이 된다.** 이 페이지의 성적은 **시즌 합계**인데,
+   * 순위표는 NPB 관례대로 **리그별로 나눠** 센다 — 두 화면의 수가 다른 이유가
+   * 여기 적혀 있지 않으면 「어느 쪽이 맞지?」가 된다.
+   * 실측(2026): 山本는 DeNA 105타석 · ソフトバンク 97타석으로 리그를 넘어 옮겼다.
+   */
+  stints: PlayerStint[];
 }
 
-export interface RenderContext {
-  site: SiteMeta;
-  freshness: Freshness;
+/** 한 소속에서의 출장. 시즌 중 이적한 선수만 둘 이상이 된다 */
+export interface PlayerStint {
+  teamCode: string;
+  teamName: string;
+  leagueName: string;
+  games: number;
+  /** 타자는 타석, 투수는 아웃 카운트 */
+  sample: number;
+  sampleText: string;
+  /** 이 소속에서의 마지막 출장일. **화면은 시간 순으로 잇는다** */
+  lastDate: string;
 }
+
+// ⚠**타입은 `layout.ts` 한 벌만 둔다.** 세 곳에 두면 필드를 늘릴 때마다 세 곳을 고친다
+export type { RenderContext } from "./layout.ts";
+import type { RenderContext } from "./layout.ts";
 
 const POSITION_MARK: Readonly<Record<string, string>> = {
   投手: "投",
@@ -422,6 +443,16 @@ function idLine(d: PlayerPageData): RawHtml {
     <span class="nm">${d.name}</span>
     <span class="sub">${bio.join(" · ")}</span>
     <span class="asof">${d.season}年${d.asOf === null ? "" : ` · ${gameDate(d.asOf)}まで`}</span>
+    ${d.stints.length < 2
+      ? null
+      : html`<span class="stint">${d.stints
+          .map((t) => `${t.teamName}${t.games}試合`)
+          .join(" → ")}<em>${
+            // ⚠**수가 두 종류인 이유를 여기서 말한다.** 이 줄의 존재 이유가 그것이다.
+            // 아래 성적은 시즌 합계이고 順位는 소속 리그에서 낸 몫으로만 매긴다(NPBの規定) —
+            // 적지 않으면 「어느 쪽이 맞지?」가 된다
+            `成績は今季の合計。順位は${d.stints.at(-1)!.leagueName}での${d.stints.at(-1)!.sampleText}で計算`
+          }</em></span>`}
   </div>
   ${sparkline(d.spark, d.sparkLabel)}
 </header>
@@ -1058,7 +1089,7 @@ export function bootstrapFor(role: "batter" | "pitcher"): string {
 }
 
 export function renderPlayerPage(d: PlayerPageData, ctx: RenderContext): string {
-  const base = "../";
+  const { base, root, seasons } = ctx.paths(`players/${d.playerId}.html`);
   const catalog = blocksFor(d.role);
   const initial = new Set(presetsFor(d.role).find((p) => p.id === "standard")?.blocks ?? []);
 
@@ -1078,6 +1109,8 @@ ${catalog.map((meta) => {
   return page({
     title: `${d.name} — ${d.teamName} ${d.season}年`,
     base,
+    root,
+    seasons,
     color: d.color,
     spine: `${d.teamName}　${d.name}`,
     freshness: ctx.freshness,

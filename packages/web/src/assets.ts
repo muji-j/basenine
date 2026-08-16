@@ -189,6 +189,19 @@ a{color:inherit}
 /* 탭줄을 안는 자리도 줄어들 수 있어야 한다 — 한 곳만 막혀도 위의 규칙이 무효가 된다 */
 .rail>.tabs,.block>h4 .sw,.block>h4 .sw>.tabs{min-width:0}
 
+/* 세그먼티드 — 「둘 중 하나」인 상위 전환. 붙여 놓으면 배타성이 형태로 보인다.
+   ⚠**줄어들지 않게 flex:none.** 이 줄은 화면의 갈래 자체라 스크롤 밖으로 밀리면 안 된다 */
+.tabs.seg{gap:0;flex:none}
+/* 테두리를 겹쳐 한 줄로 만든다. 겹치면 고른 쪽 테두리가 덮이므로 위로 올린다 */
+.tabs.seg .tab+.tab{margin-left:-1px}
+.tabs.seg .tab[aria-selected="true"]{position:relative;z-index:1}
+/* 레일 안에서 상위 탭을 따라 열리고 닫히는 자리(하위 탭줄).
+   ⚠**[hidden] 규칙을 여기서 다시 쓴다** — 위쪽의 display:none 과 특이도가 같아
+   나중에 오는 이 display:flex 가 이기기 때문이다. 안 쓰면 숨겨야 할 탭줄이 계속 보인다 */
+.rail>[data-panelgroup]{display:flex;align-items:center;gap:6px;min-width:0}
+.rail>[data-panelgroup][hidden]{display:none}
+.rail .div{flex:none;align-self:stretch;width:1px;margin:-2px 2px;background:var(--hair-2)}
+
 /* ── 조립 UI ─────────────────────────────────────────────── */
 .editor{padding:14px var(--pad) 16px;border-bottom:1px solid var(--hair);background:var(--panel)}
 .editor[hidden]{display:none}
@@ -434,6 +447,46 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
 .go.alt{background:transparent;color:var(--tx-2);border-color:var(--hair-2);font-weight:400;margin-left:7px}
 .go.alt:hover:not(:disabled){color:var(--tx);border-color:var(--tx-3);opacity:1}
 
+/* ⚠**고른 것과 실행 버튼은 화면에서 사라지면 안 된다.** 아래의 선수 목록이 길어서
+   스크롤하면 「골랐는데 어떻게 보지?」가 된다. 레일과 같은 sticky를 쓴다 */
+.pickbar{position:sticky;top:var(--topbar);z-index:9;display:flex;align-items:center;
+  flex-wrap:wrap;gap:8px 16px;margin:0 0 14px;padding:9px 0;background:var(--panel);
+  border-bottom:1px solid var(--hair)}
+.pickbar .chosen{margin:0;display:flex;align-items:baseline;gap:7px;min-width:0}
+.pickbar .chosen span{font-size:10px;letter-spacing:.16em;color:var(--tx-3);flex:none}
+.pickbar .chosen b{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pickbar .go{margin-left:auto;flex:none}
+.picknote{margin:0 0 8px;font-size:11.5px;color:var(--tx-3)}
+.pickgames{margin:0 0 12px}
+/* 두 팀을 나란히. 좁으면 위아래로 — 어느 쪽이 어느 팀인지는 색 표식과 이름이 말한다 */
+.pickteams{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px}
+.pickteam{min-width:0}
+.picktm{margin:0 0 8px;font-size:13px;display:flex;align-items:center;gap:7px}
+.picktm i{width:10px;height:10px;background:var(--chip,#6b7280);font-style:normal;flex:none}
+.picklab{margin:10px 0 5px;font-size:10px;letter-spacing:.16em;color:var(--tx-3);
+  display:flex;align-items:baseline;gap:6px}
+.picklab s{text-decoration:none;letter-spacing:0;font-size:10.5px}
+/* ⚠**자르지 않고 상자 안에서 스크롤한다.** 상위 N만 내면 대타·중간계투가 사라지고,
+   찾는 사람이 없는 순간 이 기능은 없는 것과 같아진다 */
+.picklist{display:flex;flex-wrap:wrap;gap:4px;max-height:184px;overflow-y:auto;
+  overscroll-behavior-y:contain;padding:1px}
+.pk{font:inherit;font-size:12.5px;padding:4px 8px;cursor:pointer;background:transparent;
+  color:var(--tx-2);border:1px solid var(--hair-2);display:inline-flex;align-items:baseline;gap:5px;
+  transition:color var(--fast) var(--ease),border-color var(--fast) var(--ease)}
+.pk s{text-decoration:none;font-size:10px;color:var(--tx-3);font-variant-numeric:tabular-nums}
+.pk em{font-style:normal;font-size:9.5px;letter-spacing:.08em;color:var(--chip-ink,#fff);
+  background:var(--chip,#6b7280);padding:0 4px}
+.pk:hover{color:var(--tx);border-color:var(--tx-3)}
+/* 고른 것은 **버튼 자신이** 말한다 — 위의 pickbar만 바뀌면 목록 안에서 무엇을 눌렀는지 잃는다 */
+.pk[aria-pressed="true"]{background:var(--chip,#6b7280);color:var(--chip-ink,#fff);
+  border-color:var(--chip,#6b7280);font-weight:700}
+.pk[aria-pressed="true"] s{color:inherit;opacity:.75}
+.pk[aria-pressed="true"] em{background:var(--chip-ink,#fff);color:var(--chip,#6b7280)}
+.pickfind{margin:16px 0 0;border-top:1px solid var(--hair);padding-top:12px}
+.pickfind summary{font-size:12px;color:var(--tx-2);cursor:pointer}
+.pickfind summary:hover{color:var(--tx)}
+.pickfind .picker{margin-top:12px}
+
 /* ── 試合ページ ────────────────────────────────────────────
    ⚠**원본의 이닝별 표를 옮긴 화면이 아니다**(L2). 숫자는 우리가 타석 로그에서 조립했고,
    화면의 주역은 「어디서 점수가 났는가」와 「어느 타석이 경기를 움직였는가」다. */
@@ -521,6 +574,23 @@ table.stand .dif i{position:absolute;bottom:3px;height:3px;width:calc(var(--w) *
 table.stand .dif i.p{left:50%}
 table.stand .dif i.n{right:50%}
 
+/* ── シーズン切り替え ────────────────────────────────────────
+   ⚠**연도 두 개만 띄우지 않는다.** 「シーズン」이라는 이름이 없으면 그게 무엇을 고르는
+   조작인지 알 수 없고, 순위표의 리그 탭과 헷갈린다. */
+.seasons{display:flex;align-items:center;gap:4px;padding:5px var(--pad);
+  border-bottom:1px solid var(--hair);background:var(--panel-2);flex-wrap:wrap}
+.slab{font-size:9.5px;letter-spacing:.16em;color:var(--tx-3);margin-right:5px}
+/* 시즌 중 이적 이력. ⚠**합계와 순위가 다른 이유**가 여기 적힌다 */
+.stint{display:block;font-size:10.5px;color:var(--tx-3);margin-top:2px}
+/* 「합계와 순위의 수가 왜 다른가」 — 이적 이력 바로 아래에 붙는다 */
+.stint em{display:block;font-style:normal;font-size:10px;color:var(--tx-3);opacity:.85}
+.seasons a{font-size:12px;padding:3px 10px;text-decoration:none;color:var(--tx-2);
+  border:1px solid transparent;transition:color var(--fast) var(--ease)}
+.seasons a:hover{color:var(--tx);border-color:var(--hair-2)}
+.seasons a[aria-current="page"]{color:var(--tx);font-weight:700;border-color:var(--tx-3);background:var(--panel)}
+/* 같은 화면이 그 시즌에 없어 다른 곳으로 보낼 때. **숨기지 않고 표시한다** */
+.seasons a i{font-style:normal;font-size:9px;color:var(--tx-3);margin-left:3px}
+
 /* ── 試合（直近の結果） ──────────────────────────────────────
    ⚠**원본 표(이닝별 스코어보드)를 재현하지 않는다**(L2). 우리가 가진 것은 R·H·E뿐이고,
    화면은 그 사실에 맞춰 만든다 — 없는 칸을 흉내 내지 않는다. */
@@ -557,6 +627,60 @@ table.stand .dif i.n{right:50%}
 .gmore{margin:9px 0 0;padding-top:8px;border-top:1px solid var(--hair);font-size:11.5px}
 .gmore a{text-decoration:none;border-bottom:1px solid var(--hair-2)}
 .gmore a:hover{border-bottom-color:var(--tx-3)}
+
+/* ── 카드 전체를 누르기 ──────────────────────────────────────
+   ⚠**링크를 하나 더 겹치지 않는다.** 이미 있는 「この試合の詳細」의 클릭 영역을
+   카드 전체로 넓힌다. 겹쳐 두면 같은 목적지가 링크 목록에 두 번 나오고 탭도 두 번 걸린다.
+   ⚠**안쪽 링크를 위로 올려야 한다.** 안 올리면 선수 이름을 눌러도 경기 상세로 간다 —
+   눌린 것과 다른 곳으로 가는 것은 조용한 오작동이다. */
+.tapcard{position:relative;transition:border-color var(--fast) var(--ease)}
+.cardlink::after{content:"";position:absolute;inset:0;z-index:0}
+.tapcard a:not(.cardlink){position:relative;z-index:1}
+/* 마우스가 있는 환경에서만 hover를 준다 — 터치에서는 hover가 눌린 뒤에도 남아 있다 */
+@media (hover:hover){
+  .tapcard:hover{border-color:var(--tx-3)}
+  .tapcard:hover .gmore a{border-bottom-color:var(--tx-3)}
+}
+/* ⚠**터치의 눌림 표시는 덮개가 낸다.** 링크 글자만 반짝이면 카드를 눌렀다는 느낌이 없고,
+   article:active 는 iOS에서 링크가 아닌 요소에 걸리지 않는다 */
+.cardlink:active::after{background:var(--tx);opacity:.06}
+/* 초점은 **카드 테두리**로 낸다. 덮개에 outline을 걸면 실제로 눌리는 범위와 정확히 일치한다.
+   :focus-within 을 쓰면 안쪽 선수 링크에 초점이 갔을 때도 카드가 켜져 어디에 있는지 알 수 없다 */
+.cardlink:focus-visible{outline:none}
+.cardlink:focus-visible::after{outline:2px solid var(--tx);outline-offset:-1px}
+/* ── 날짜 이동 ────────────────────────────────────────────
+   ⚠**앞뒤는 달력의 어제·내일이 아니라 「경기가 있었던 날」이다.** 월요일은 대개 경기가 없어서
+   달력대로 움직이면 빈 날에 떨어진다. 그래서 날짜를 글자로 함께 낸다 — 어디로 가는지 보인다. */
+.daybar{display:flex;align-items:stretch;gap:8px;margin:0 0 4px;padding:10px var(--pad);
+  border-bottom:1px solid var(--hair)}
+.daystep,.daypick{display:flex;flex-direction:column;gap:2px;text-decoration:none;font-size:12px;
+  padding:5px 10px;border:1px solid var(--hair-2);min-width:0;
+  transition:border-color var(--fast) var(--ease),color var(--fast) var(--ease)}
+.daystep s,.daypick s{text-decoration:none;font-size:10px;color:var(--tx-3);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.daystep:hover,.daypick:hover{border-color:var(--tx-3);color:var(--tx)}
+.daystep.n{margin-left:auto;text-align:right}
+.daypick{margin:0 auto;text-align:center}
+/* ⚠**끝에 왔으면 링크가 아니다.** href 없는 a 는 초점도 안 받고 눌러도 아무 일이 없어서,
+   「더 있다」고 조용히 거짓말하지 않는다 */
+.daystep.off{color:var(--tx-3);border-style:dashed;opacity:.5}
+.daystep.n.off{margin-left:auto}
+@media (max-width:520px){
+  .daybar{flex-wrap:wrap}
+  .daypick{order:3;width:100%;margin:0}
+}
+/* 날짜 일람 — 달마다 한 덩어리 */
+.daygrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(76px,1fr));gap:5px}
+.dayc{display:flex;flex-direction:column;align-items:center;gap:2px;padding:7px 4px;
+  text-decoration:none;border:1px solid var(--hair-2);
+  transition:border-color var(--fast) var(--ease),background var(--fast) var(--ease)}
+.dayc b{font-size:16px;font-variant-numeric:tabular-nums;color:var(--tx)}
+.dayc s{text-decoration:none;font-size:9.5px;color:var(--tx-3);display:flex;gap:4px;align-items:baseline}
+.dayc em{font-style:normal;color:var(--tx-2);border:1px solid var(--hair-2);padding:0 3px}
+.dayc:hover{border-color:var(--tx-3);background:var(--panel-2)}
+/* 지금 보고 있는 최신 경기일 */
+.dayc.now{border-color:var(--tx);background:var(--panel-2)}
+
 /* 予告先発の要約 — 상세는 予告先発 페이지가 낸다 */
 .pbcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
 .pbcard{border:1px solid var(--hair-2);padding:10px 11px}
@@ -774,9 +898,12 @@ function tabGroups(){
   return groups;
 }
 const tabHooks=[];
+/* ⚠**이번 방문에만 여는 선택.** 깊은 링크(#앵커)가 연 탭은 여기 들어간다 —
+   state.tabs 에 쓰면 저장되어 다음 방문의 기본값까지 바뀐다. 사용자가 직접 탭을 누르면 지운다. */
+const transient={};
 function showTabs(){
   Object.keys(tabGroups()).forEach(g=>{
-    const cur=state.tabs[g];
+    const cur=transient[g]!==undefined?transient[g]:state.tabs[g];
     // "all"은 특별 취급 — 골라 보는 화면에서 「전부」를 뺏지 않는다
     $$('[data-panelgroup="'+g+'"]').forEach(p=>{p.hidden=cur!=="all"&&p.dataset.panelkey!==cur});
     $$('[data-tabgroup="'+g+'"] [data-tab]').forEach(b=>{
@@ -792,10 +919,39 @@ function showTabs(){
     const keys=buttons.map(b=>b.dataset.tab);
     if(keys.indexOf(state.tabs[g])<0)state.tabs[g]=keys[0];
     buttons.forEach(b=>b.addEventListener("click",()=>{
+      /* 직접 고른 것이 임시 선택을 이긴다 — 그리고 그때는 저장한다 */
+      delete transient[g];
       state.tabs[g]=b.dataset.tab;save(state);showTabs();
     }));
   });
 })();
+
+/* ⚠**깊은 링크가 닫힌 탭 안을 가리킬 수 있다.**
+   탭 선택은 localStorage에 남으므로, 「セの順位表をすべて見る」로 #b-standings 에 와도
+   지난번에 個人을 보고 있었다면 그 자리는 hidden 이다. 브라우저는 아무 데도 가지 않고
+   **아무 일도 일어나지 않은 것처럼 보인다.** 조상 패널을 거슬러 올라가 전부 연다. */
+function revealHash(){
+  const id=((typeof LOC.hash==="string"?LOC.hash:"")||"").slice(1);
+  if(!id)return;
+  const el=doc.getElementById(id);
+  if(!el)return;
+  let n=el,changed=false;
+  while(n&&n!==doc.body){
+    const d=n.dataset;
+    if(d&&d.panelgroup&&d.panelkey&&state.tabs[d.panelgroup]!==d.panelkey&&state.tabs[d.panelgroup]!=="all"){
+      transient[d.panelgroup]=d.panelkey;changed=true;
+    }
+    n=n.parentNode;
+  }
+  if(!changed)return;
+  /* ⚠**저장하지 않는다.** 이 방문에만 연다.
+     저장하면 「セの順位表をすべて見る」를 한 번 누른 뒤로 상단 내비의 「順位」가
+     영원히 개인 순위부터 열린다 — 링크 한 번이 사용자의 기본값을 바꿔 버린다.
+     ?vs= 처리도 같은 이유로 저장하지 않는다(한 파일 안에서 규칙을 둘로 두지 않는다). */
+  showTabs();
+  if(typeof el.scrollIntoView==="function")el.scrollIntoView();
+}
+if(typeof window!=="undefined"&&window.addEventListener)window.addEventListener("hashchange",revealHash);
 
 /* ── 블록 조립 ── */
 function renderBlocks(){
@@ -1218,11 +1374,54 @@ if(pickForm){
     const go2=$("#pickGo");
     if(go2)go2.disabled=!(chosen.pitcher&&chosen.batter);
   };
-  attachPicker($("#pickPitcher"),$("#pickPitcherHits"),(p)=>{
-    const i=$("#pickPitcher");if(i)i.value=p.n;show("pitcher",p);
-  });
-  attachPicker($("#pickBatter"),$("#pickBatterHits"),(p)=>{
-    const i=$("#pickBatter");if(i)i.value=p.n;show("batter",p);
+  /* 빠른 선택 버튼의 눌림 상태. **고른 것을 목록 안에서도 보여야** 한다 —
+     위의 띠만 바뀌면 목록을 스크롤한 뒤 무엇을 눌렀는지 알 수 없다 */
+  const mark=(side)=>{
+    const id=chosen[side]?chosen[side].i:null;
+    $$('#pickToday [data-pick="'+side+'"]').forEach(b=>{
+      b.setAttribute("aria-pressed",String(id!==null&&b.dataset.i===id));
+    });
+  };
+  const setSide=(side,p)=>{
+    const i=$(side==="pitcher"?"#pickPitcher":"#pickBatter");
+    if(i)i.value=p.n;
+    show(side,p);mark(side);
+  };
+  attachPicker($("#pickPitcher"),$("#pickPitcherHits"),(p)=>setSide("pitcher",p));
+  attachPicker($("#pickBatter"),$("#pickBatterHits"),(p)=>setSide("batter",p));
+  /* 오늘 대전하는 두 팀에서 바로 고르기. 값의 모양은 검색 색인과 같아서 이후가 하나로 이어진다 */
+  $$("#pickToday [data-pick]").forEach(b=>b.addEventListener("click",()=>{
+    const side=b.dataset.pick;
+    /* 같은 것을 다시 누르면 해제한다 — 잘못 눌렀을 때 되돌릴 길이 없으면 안 된다 */
+    if(chosen[side]&&chosen[side].i===b.dataset.i){
+      const i=$(side==="pitcher"?"#pickPitcher":"#pickBatter");
+      if(i)i.value="";
+      show(side,null);mark(side);
+      return;
+    }
+    setSide(side,{i:b.dataset.i,n:b.dataset.n,t:b.dataset.t});
+  }));
+  /* ⚠**버튼 100개짜리 목록을 탭으로 하나씩 지나가게 두지 않는다.**
+     한 팀에 투수 30명·타자 40명이 실제로 나오므로, 그대로 두면 이 화면을 키보드로 빠져나가는 데만
+     탭을 140번 눌러야 한다. 목록 하나가 탭 정지 하나가 되고 안에서는 화살표로 움직인다.
+     ⚠**tabindex를 서버가 아니라 여기서 준다** — JS가 없으면 화살표도 없으니
+     그때는 전부 탭으로 닿는 편이 맞다. */
+  $$("#pickToday .picklist").forEach(list=>{
+    const items=$$("[data-pick]",list);
+    if(items.length===0)return;
+    const rove=(el)=>{items.forEach(b=>b.setAttribute("tabindex",b===el?"0":"-1"))};
+    rove(items[0]);
+    items.forEach((b,at)=>{
+      b.addEventListener("click",()=>rove(b));
+      b.addEventListener("keydown",(e)=>{
+        const step=e.key==="ArrowRight"||e.key==="ArrowDown"?at+1
+          :e.key==="ArrowLeft"||e.key==="ArrowUp"?at-1
+          :e.key==="Home"?0:e.key==="End"?items.length-1:null;
+        if(step===null)return;
+        const to=items[(step+items.length)%items.length];
+        e.preventDefault();rove(to);if(to.focus)to.focus();
+      });
+    });
   });
   const go2=$("#pickGo");
   if(go2)go2.addEventListener("click",()=>{
@@ -1472,7 +1671,7 @@ if(filter||chips.length){
 
 press(".rail [data-preset]","preset",state.preset);
 press(".rail [data-density]","density",state.density);
-applyTheme();renderBlocks();renderEditor();showTabs();
+applyTheme();renderBlocks();renderEditor();showTabs();revealHash();
 })();
 `;
 

@@ -465,3 +465,36 @@ test("최신 경기일에 나온 선수는 「今」이다 — 전부 시점 표
   assert.match(out, /<span class="den">今<\/span>/);
   assert.ok(!out.includes("時点"), "최신 경기에 나온 선수에게 시점 표기가 붙었다");
 });
+
+/**
+ * ⚠**한 화면에 수가 두 종류 있으면 그 이유를 그 화면이 말해야 한다.**
+ * 리그를 넘어 이적한 선수의 성적은 시즌 합계이고 順位는 소속 리그에서 낸 몫으로만 매긴다
+ * (NPB의 타이틀 규정). 적지 않으면 「어느 쪽이 맞지?」가 되고,
+ * 그 질문에 답할 수 없는 화면은 값이 맞아도 틀린 화면이다.
+ */
+test("이적 이력 아래에 「합계인지 리그별인지」를 적는다", () => {
+  const out = renderPlayerPage(
+    playerPage({
+      stints: [
+        {
+          teamCode: "db", teamName: "横浜DeNAベイスターズ", leagueName: "セントラル・リーグ",
+          games: 28, sample: 105, sampleText: "105打席", lastDate: "2026-06-30",
+        },
+        {
+          teamCode: "h", teamName: "福岡ソフトバンクホークス", leagueName: "パシフィック・リーグ",
+          games: 27, sample: 97, sampleText: "97打席", lastDate: "2026-08-15",
+        },
+      ],
+    }),
+    context(),
+  );
+  assert.match(out, /横浜DeNAベイスターズ28試合 → 福岡ソフトバンクホークス27試合/);
+  // **마지막(=현재) 소속 리그와 그 표본**을 적는다 — 옛 리그를 적으면 반대로 읽힌다
+  assert.match(out, /成績は今季の合計。順位はパシフィック・リーグでの97打席で計算/);
+});
+
+test("이적하지 않았으면 그 줄 자체가 없다 — 설명할 차이가 없다", () => {
+  const out = renderPlayerPage(playerPage(), context());
+  assert.ok(!out.includes('class="stint"'));
+  assert.ok(!out.includes("成績は今季の合計"));
+});
