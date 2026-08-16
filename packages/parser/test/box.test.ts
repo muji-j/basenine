@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { gunzipSync } from "node:zlib";
 import {
   BoxParseError,
   extractPlayerId,
@@ -312,4 +314,138 @@ test("⚠읽을 수 없으면 null이다 — 0을 돌려주면 「던지지 않�
   assert.equal(inningsToOuts("5.3"), null, "3분의 3은 없다");
   assert.equal(inningsToOuts("5 1/3"), null);
   assert.equal(inningsToOuts("あ"), null);
+});
+
+/**
+ * 구형(2016~2018) 박스스코어.
+ *
+ * ⚠**이 분기가 없으면 그 시즌들이 「타격표가 없다」로 예외를 던진다**(2026-08-17 실측).
+ * 백필에서 예외를 삼키는 코드가 하나라도 있으면 **3시즌이 조용히 0건**으로 들어간다 —
+ * M7이 잡으라고 하는 실패 모드 그 자체다.
+ *
+ * 구형은 표에 `id` 가 없고 `<div class="… table_batter">` 로 감싸 **순서로만** 구별한다.
+ * 열 이름도 다르다 — 신형 `選手` 대 구형 `打者`.
+ */
+const LEGACY_BOX = `
+<div class="wrap"><section><h4>広島東洋カープ</h4>
+<div class="scroll_wrapper table_score table_batter"><table>
+<thead><tr><th>&nbsp;</th><th>守備</th><th>打者</th><th>打数</th><th>得点</th><th>安打</th><th>打点</th><th>盗塁</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>(遊)</td><td><a href="/bis/players/61965139.html">田中</a></td><td>6</td><td>2</td><td>2</td><td>0</td><td>0</td></tr>
+<tr><td>&nbsp;</td><td>計</td><td>&nbsp;</td><td>6</td><td>2</td><td>2</td><td>0</td><td>0</td></tr>
+</tbody></table></div>
+<div class="scroll_wrapper table_score table_pitcher"><table>
+<thead><tr><th>&nbsp;</th><th>投手</th><th>投球数</th><th>打者</th><th>投球回</th><th>安打</th><th>本塁打</th><th>四球</th><th>死球</th><th>三振</th><th>暴投</th><th>ボーク</th><th>失点</th><th>自責点</th></tr></thead>
+<tbody>
+<tr><td>○</td><td><a href="/bis/players/53355130.html">ジョンソン</a></td><td>120</td><td>28</td><td>7</td><td>5</td><td>0</td><td>2</td><td>0</td><td>8</td><td>0</td><td>0</td><td>1</td><td>1</td></tr>
+</tbody></table></div>
+</section></div>
+<div class="wrap"><section><h4>東京ヤクルトスワローズ</h4>
+<div class="scroll_wrapper table_score table_batter"><table>
+<thead><tr><th>&nbsp;</th><th>守備</th><th>打者</th><th>打数</th><th>得点</th><th>安打</th><th>打点</th><th>盗塁</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>(中)</td><td><a href="/bis/players/11115131.html">山田</a></td><td>4</td><td>1</td><td>1</td><td>1</td><td>1</td></tr>
+</tbody></table></div>
+<div class="scroll_wrapper table_score table_pitcher"><table>
+<thead><tr><th>&nbsp;</th><th>投手</th><th>投球数</th><th>打者</th><th>投球回</th><th>安打</th><th>本塁打</th><th>四球</th><th>死球</th><th>三振</th><th>暴投</th><th>ボーク</th><th>失点</th><th>自責点</th></tr></thead>
+<tbody>
+<tr><td>●</td><td><a href="/bis/players/22225132.html">小川</a></td><td>98</td><td>26</td><td>6</td><td>7</td><td>1</td><td>1</td><td>0</td><td>5</td><td>0</td><td>0</td><td>3</td><td>3</td></tr>
+</tbody></table></div>
+</section></div>`;
+
+test("⚠구형 박스도 읽는다 — 안 읽으면 그 시즌이 조용히 0건이 된다(M7)", () => {
+  const b = parseBoxScore(LEGACY_BOX);
+  assert.equal(b.status, "played", "구형을 「중지」로 읽었다");
+  if (b.status !== "played") return;
+  // ⚠**순서가 뜻을 갖는다** — 원정 타자 → 원정 투수 → 홈 타자 → 홈 투수
+  assert.equal(b.away.batters[0]?.name, "田中", "원정 타자를 못 읽었다");
+  assert.equal(b.home.batters[0]?.name, "山田", "홈 타자가 원정 자리에 있다");
+  assert.equal(b.away.pitchers[0]?.name, "ジョンソン");
+  assert.equal(b.home.pitchers[0]?.name, "小川");
+  // ⚠**선수 ID가 살아 있어야 한다**(M10) — 이름으로 조인하면 동명이인이 섞인다
+  assert.equal(b.away.batters[0]?.playerId, "61965139");
+  assert.equal(b.away.pitchers[0]?.playerId, "53355130");
+});
+
+/** ⚠**열 이름이 다르다** — 신형 `選手` 대 구형 `打者`. 하나를 못 맞히면 시즌이 통째로 예외다 */
+test("구형의 打者 열을 선수명으로 읽는다", () => {
+  const b = parseBoxScore(LEGACY_BOX);
+  if (b.status !== "played") throw new Error("played 가 아니다");
+  assert.equal(b.away.batters[0]?.ab, 6, "열 위치가 밀렸다");
+  assert.equal(b.away.batters[0]?.hits, 2);
+});
+
+/**
+ * ⚠**순서로 구별하므로 개수를 확인한다.** 3개만 있는데 조용히 읽으면
+ * 한 팀의 투수 성적이 통째로 사라진다.
+ */
+test("⚠구형 표가 4개가 아니면 멈춘다 — 조용히 3개만 읽지 않는다", () => {
+  const cut = LEGACY_BOX.slice(0, LEGACY_BOX.lastIndexOf(`<div class="scroll_wrapper table_score table_pitcher">`));
+  assert.throws(() => parseBoxScore(cut), /구형 표가 4개가 아니다/);
+});
+
+/**
+ * ⚠**순서만 믿지 않는다.** 구형은 `id` 가 없어 순서로 구별하는데,
+ * 타자 자리에 투수표가 오면 **열이 통째로 어긋난 값**이 그대로 저장된다 —
+ * 예외가 아니라 「그럴듯한 틀린 수」가 되는 쪽이 훨씬 나쁘다.
+ */
+test("⚠구형 표의 종류가 순서와 어긋나면 멈춘다 — 그럴듯한 틀린 수를 만들지 않는다", () => {
+  // 원정 타자 자리에 투수표를 놓는다(클래스만 바꿔치기)
+  const swapped = LEGACY_BOX.replace(
+    `<div class="scroll_wrapper table_score table_batter">`,
+    `<div class="scroll_wrapper table_score table_pitcher">`,
+  );
+  assert.throws(() => parseBoxScore(swapped), /구형 표의 순서가 다르다/);
+});
+
+/**
+ * 구형(2016~2018) — **실물 페이지로 검증한다.**
+ *
+ * ⚠**합성 픽스처만으로는 이 PR의 목적이 검증되지 않는다**(이중 검토 지적).
+ * 위의 `LEGACY_BOX` 에는 **타석 결과 칸이 하나도 없어서**, 구형 경로의 `plateAppearances` 가
+ * 항상 빈 배열이어도 전부 초록이었다. 그 상태로 백필하면 CLAUDE.md §2-2 가 경고한
+ * **「3시즌이 조용히 0건」**이 그대로 난다 — 타격표는 들어가고 결과 칸만 비므로
+ * 합계는 그럴듯한데 안타·홈런이 전부 0이 된다.
+ *
+ * ⚠**개발 루프에서 외부를 히트하지 않는다**(작업규칙 11) — 그때 받은 실물을 gz로 고정해 둔다.
+ */
+const LEGACY_REAL = gunzipSync(
+  readFileSync(new URL("./fixtures/2016-box.html.gz", import.meta.url)),
+).toString("utf8");
+
+test("⚠구형 실물에서 타석 결과 칸을 읽는다 — 못 읽으면 그 시즌이 조용히 0건이 된다", () => {
+  const b = parseBoxScore(LEGACY_REAL);
+  assert.equal(b.status, "played");
+  if (b.status !== "played") return;
+
+  const batters = [...b.away.batters, ...b.home.batters];
+  const real = batters.filter((x) => !x.isTeamTotal);
+  // ⚠**합계 행은 선수가 아니다.** 함께 세면 팀 성적이 두 번 들어간다
+  assert.equal(batters.length - real.length, 2, "양 팀의 チーム計 행을 구별하지 못했다");
+
+  const cells = real.reduce((n, x) => n + x.plateAppearances.length, 0);
+  assert.ok(cells > 0, "구형에서 타석 결과 칸을 하나도 못 읽었다 — 조용히 0건이 되는 경로다");
+  assert.equal(cells, 88, `결과 칸 수가 실측(88)과 다르다: ${cells}`);
+
+  // 어휘가 실제로 해석된다 — 「칸은 읽었는데 전부 unknown」이 아니다
+  const first = b.away.batters[0]!;
+  assert.deepEqual(
+    first.plateAppearances.map((x) => x.outcome),
+    ["fieldedOut", "single", "strikeout", "fieldedOut", "homerun", "fieldedOut"],
+    "구형의 결과 어휘를 해석하지 못했다",
+  );
+  assert.equal(first.playerId, "61965139", "구형에서 선수 ID를 잃었다(M10)");
+  assert.equal(first.ab, 6);
+  assert.equal(first.hits, 2);
+});
+
+/** 투수표도 같다 — 합계 행이 등판으로 새면 팀 방어율이 선수 목록에 섞인다 */
+test("구형 실물의 투수표에서 합계 행을 구별한다", () => {
+  const b = parseBoxScore(LEGACY_REAL);
+  if (b.status !== "played") throw new Error("played 가 아니다");
+  const totals = b.away.pitchers.filter((p) => p.isTeamTotal);
+  assert.equal(totals.length, 1, "チーム計 행을 구별하지 못했다");
+  const real = b.away.pitchers.filter((p) => !p.isTeamTotal);
+  assert.ok(real.length >= 2, "구형 투수표를 읽지 못했다");
+  assert.ok(real.every((p) => p.outs !== null), "구형에서 투구회를 읽지 못했다");
 });

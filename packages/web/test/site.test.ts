@@ -28,6 +28,8 @@ function siteData(over: Partial<SiteData> = {}): SiteData {
             {
               playerId: p.playerId,
               name: p.name,
+              kana: "さとう・てるあき",
+              uniformNumber: "8",
               mark: "内",
               axes: p.mark.axes,
               summary: "打率 .317（382打数）",

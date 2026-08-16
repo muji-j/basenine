@@ -51,9 +51,84 @@ export interface PlayEvent {
  */
 const INCOMPLETE_MARKERS = new Set(["（途中終了）", "（途中交代）"]);
 
+/**
+ * 주자 사건(도루·도루자·견제사).
+ *
+ * ⚠**타석이 아니다.** 타석 사이에 일어나고 타자가 없다 — `pa_event` 에 넣을 수 없다
+ * (`batter_id` 가 NOT NULL 이고, 넣으면 타석 수가 부풀어 타율 분모가 틀린다).
+ *
+ * ⚠**지금까지 이 행들은 버려지고 있었다.** 주자 행도 칸이 5개라 타석 행과 모양이 같은데,
+ * 선수 이름 칸이 비어 있어서 「선수 링크가 없는 행」으로 걸러졌다(2026-08-17 확인).
+ * 도루자(盗塁刺)는 §2-2 지표 카탈로그의 항목인데 박스스코어가 주지 않아 여기가 유일한 출처다.
+ */
+export interface RunnerEvent {
+  inning: number;
+  half: "top" | "bottom";
+  /**
+   * **직전 타석의 순번**(타석이 하나도 없었으면 0).
+   * ⚠주자 사건에는 자기 순번이 없다 — 「몇 번째 타석 언저리에서 일어났는가」로만 위치를 말한다.
+   */
+  afterSeq: number;
+  outsBefore: number;
+  bases: string;
+  runnerId: string;
+  /** `steal`=도루 성공 · `caughtStealing`=도루 실패 · `pickoff`=견제사 */
+  kind: "steal" | "caughtStealing" | "pickoff";
+  /**
+   * 원문이 말하는 루.
+   * ⚠**뜻이 종류에 따라 다르다** — 도루는 **노린 루**(`二塁盗塁成功`=2루를 훔쳤다),
+   * 견제사는 **있던 루**(`一塁牽制アウト`=1루에서 잡혔다). 하나로 뭉개면 나중에 못 되돌린다.
+   */
+  base: "1b" | "2b" | "3b" | "home";
+  /** 더블스틸의 일부인가. 원문에 `（ダブルスチール）`가 붙는다 */
+  doubleSteal: boolean;
+  /** 원문 그대로(M4). 해석이 틀렸을 때 되돌아갈 자리다 */
+  raw: string;
+}
+
 export type PlayByPlay =
-  | { status: "played"; events: PlayEvent[] }
+  | {
+      status: "played";
+      events: PlayEvent[];
+      runners: RunnerEvent[];
+      /**
+       * 읽지 못한 주자 행의 원문.
+       *
+       * ⚠**던지지 않고 여기 담는 이유는 blast radius다.** 던지면 `parsePlayByPlay` 가 통째로
+       * 실패해 **그 경기의 타석 로그 전량**(투수×타자 상대전적의 유일한 출처)이 사라진다 —
+       * 도루 표기 1건의 변화가 훨씬 큰 것을 가져간다.
+       * `tokens.ts` 도 같은 이유로 「한 셀 때문에 경기 전체를 죽이지 않는다」를 택했다.
+       *
+       * ⚠**그렇다고 조용히 넘기는 것이 아니다**(M7). 적재가 이것을 **격리에 넣고 센다** —
+       * 「멈춘다」는 목적을 경기 단위가 아니라 **적재 단위**에서 달성한다.
+       * 호출자가 이 배열을 무시하면 그때부터 조용한 실패가 된다.
+       */
+      unreadRunners: string[];
+    }
   | { status: "notPlayed"; reason: string };
+
+/** 루 표기 → 코드 */
+const BASE_TOKEN: Readonly<Record<string, RunnerEvent["base"]>> = {
+  "一塁": "1b", "二塁": "2b", "三塁": "3b", "本塁": "home",
+};
+
+/**
+ * 주자 행 본문 한 줄을 읽는다. 읽지 못하면 **null 이 아니라 예외**다(M7).
+ *
+ * ⚠실측(2026-08-17, 2024〜2026 3시즌 2,484장 · 주자 행 3,623건)으로 고유 표기는 **12종**이고
+ * 이 규칙이 전부를 덮는다. 조용히 흘리면 도루 성공률의 분모가 서서히 줄고 아무도 눈치채지 못한다.
+ */
+function runnerFactsOf(
+  text: string,
+): { kind: RunnerEvent["kind"]; base: RunnerEvent["base"]; doubleSteal: boolean } | null {
+  const doubleSteal = text.includes("（ダブルスチール）");
+  const m = /^(一塁|二塁|三塁|本塁)(盗塁成功|盗塁失敗|牽制アウト)/.exec(text);
+  // ⚠**null 은 「없다」가 아니라 「못 읽었다」**다. 호출부가 격리에 담아 세고,
+  // 적재가 임계값을 건다 — 여기서 던지면 경기 하나의 타석 로그 전량이 함께 사라진다
+  if (!m) return null;
+  const kind = m[2] === "盗塁成功" ? "steal" : m[2] === "盗塁失敗" ? "caughtStealing" : "pickoff";
+  return { kind, base: BASE_TOKEN[m[1]!]!, doubleSteal };
+}
 
 export class PlayByPlayParseError extends Error {
   readonly detail: string;
@@ -106,6 +181,9 @@ export function parsePlayByPlay(html: string): PlayByPlay {
   }
 
   const events: PlayEvent[] = [];
+  const runners: RunnerEvent[] = [];
+  /** ⚠**버리지 않고 센다**(M7). 적재가 이것을 격리에 넣는다 */
+  const unreadRunners: string[] = [];
   let inning = 0;
   let half: "top" | "bottom" = "top";
   // 표(원정 공격)에서는 홈 팀이, 리(홈 공격)에서는 원정 팀이 던진다.
@@ -154,7 +232,58 @@ export function parsePlayByPlay(html: string): PlayByPlay {
     }
 
     const batterIds = playerIdsIn(cells[2]![2]!);
-    if (batterIds.length === 0) continue; // 선수 링크가 없는 행은 타석이 아니다
+    if (batterIds.length === 0) {
+      /**
+       * 선수 이름 칸이 비었다 = 타석 행이 아니다. **주자 사건 행이 여기 온다.**
+       * ⚠예전에는 여기서 그냥 버렸다 — 도루·도루자·견제사가 통째로 사라지고 있었다.
+       */
+      const body = cells[4]![2]!;
+      const runnerText = /（走者・([\s\S]*?)）([\s\S]*)$/.exec(body);
+      /**
+       * ⚠**여기서 조용히 버리지 않는다**(M7). 이 지점은 「아웃 카운트가 있고 루 상태가 있는데
+       * 타자가 없는 행」이라, 우리가 아는 것은 주자 사건뿐이다. 모르는 형태가 오면
+       * **도루 성공률의 분모가 서서히 줄고 아무도 눈치채지 못한다** — 이 파일이 막으려는 실패 모드다.
+       *
+       * ⚠**같은 함수의 다른 분기는 전부 던진다**(루 상태 미상 · 도루 표기 미상 · 타석 0건).
+       * 여기만 `continue` 로 두면 그 비대칭이 곧 구멍이다.
+       *
+       * 실측(2026-08-17): 아카이브 playbyplay **2,732장**의 「타자 없는 5칸 행」 **3,976건이
+       * 전부** `（走者・` 를 갖는다. 임계값 0으로 걸 수 있다.
+       * (대주자 등 보조 표기는 앞의 `outs` 검사에서 이미 걸러진다.)
+       */
+      if (!runnerText) {
+        unreadRunners.push(strip(body));
+        continue;
+      }
+      {
+        const ids = playerIdsIn(runnerText[1]!);
+        if (ids.length === 0) {
+          unreadRunners.push(strip(body));
+          continue;
+        }
+        if (inning === 0) {
+          throw new PlayByPlayParseError("이닝 헤더보다 주자 행이 먼저 나왔다", `runner=${ids[0]}`);
+        }
+        const raw = strip(runnerText[2]!);
+        const facts = runnerFactsOf(raw);
+        if (facts === null) {
+          unreadRunners.push(strip(body));
+          continue;
+        }
+        runners.push({
+          inning,
+          half,
+          // ⚠**직전 타석의 순번**이다. 아직 타석이 없으면 0 — 「1번 타석 앞」과 구별해야 한다
+          afterSeq: events.length,
+          outsBefore: Number(outs[1]),
+          bases,
+          runnerId: ids[0]!,
+          ...facts,
+          raw,
+        });
+      }
+      continue;
+    }
 
     if (inning === 0) {
       throw new PlayByPlayParseError("이닝 헤더보다 타석 행이 먼저 나왔다", `batter=${batterIds[0]}`);
@@ -178,5 +307,5 @@ export function parsePlayByPlay(html: string): PlayByPlay {
   if (events.length === 0) {
     throw new PlayByPlayParseError("타석을 하나도 찾지 못했다", `length=${html.length}`);
   }
-  return { status: "played", events };
+  return { status: "played", events, runners, unreadRunners };
 }

@@ -6,7 +6,7 @@
  * 만든 값을 옮겨 담기만 한다. 여기에 산식이 생기는 순간 값이 두 벌이 된다.
  */
 import type { Db } from "@bb-app/store";
-import { battedBalls, buntValues, headToHead } from "@bb-app/aggregate";
+import { attempts, battedBalls, buntValues, headToHead, steals, successRate, timesThroughOrder } from "@bb-app/aggregate";
 import type { HeadToHead } from "@bb-app/aggregate";
 import type { BattedBallData, BuntCell } from "./player-page.ts";
 import type { BattingLine, LeagueConstants, PitchingLine, Rate } from "@bb-app/metrics";
@@ -644,13 +644,18 @@ interface ProfileRow {
   bats: string | null;
   birthDate: string | null;
   physique: string | null;
+  /** 읽는 법 **원문**. 외국인 선수는 `ルーク・ボイト (LUKE VOIT)` 꼴이다 — 정규화는 검색이 한다 */
+  kana: string | null;
+  /** 등번호. ⚠**null은 「0번」이 아니라 「지금 등록이 없다」**(M11) — 은퇴·이적 선수다 */
+  uniformNumber: string | null;
 }
 
 function loadProfiles(db: Db): Map<string, ProfileRow> {
   const rows = db.raw
     .prepare(
       `SELECT player_id AS playerId, position, throws, bats,
-              birth_date AS birthDate, physique
+              birth_date AS birthDate, physique,
+              kana, uniform_number AS uniformNumber
        FROM player`,
     )
     .all() as unknown as ProfileRow[];
@@ -904,7 +909,11 @@ function loadMonthlyEra(
  * 구단별 선수 목록. **색인 화면은 서버가 그린다** —
  * 스크립트가 죽어도 전 선수에게 도달할 수 있어야 하고, 그게 §0-1(3클릭)의 최저선이다.
  */
-function rosters(players: readonly PlayerPageData[]): TeamRoster[] {
+function rosters(
+  players: readonly PlayerPageData[],
+  /** 읽는 법은 화면 데이터에 없다 — **명부의 좁히기만 쓰는 값**이라 여기서만 꺼낸다 */
+  profiles: ReadonlyMap<string, ProfileRow>,
+): TeamRoster[] {
   const byTeam = new Map<string, RosterEntry[]>();
   for (const p of players) {
     const list = byTeam.get(p.teamCode);
@@ -918,6 +927,9 @@ function rosters(players: readonly PlayerPageData[]): TeamRoster[] {
       // ⚠**검색 드롭다운이 쓰는 것과 같은 문자열이다**(M1). 명부에만 없어서 첫 화면에
       // 숫자가 한 개도 없었다 — 값은 계속 있었고 실리는 자리가 없었을 뿐이다
       summary: p.summary,
+      // ⚠**색인(`SearchEntry.k`)과 같은 원문이다**(M1). 접기는 클라이언트 한 벌이 한다
+      kana: profiles.get(p.playerId)?.kana ?? null,
+      uniformNumber: p.uniformNumber,
     };
     if (list === undefined) byTeam.set(p.teamCode, [entry]);
     else list.push(entry);
@@ -2201,11 +2213,32 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     const cur = bbBatter.get(b.playerId);
     bbBatter.set(b.playerId, cur === undefined ? b : addBatted(cur, b));
   }
+  /**
+   * 도루 성적. ⚠**선수당 한 벌씩만 만든다**(리그를 나눠 두 번 부르면 이적 선수가 반씩 나뉜다).
+   * ⚠대회를 섞지 않는다(§2-1) — 올스타를 넣으면 2026 도루가 611이 아니라 620이 된다.
+   */
+  const stealByPlayer = new Map<string, { sb: number; cs: number; pickoff: number }>();
+  for (const st of steals(db, o.season, competition, through)) {
+    const cur = stealByPlayer.get(st.playerId);
+    stealByPlayer.set(st.playerId, {
+      sb: (cur?.sb ?? 0) + st.sb,
+      cs: (cur?.cs ?? 0) + st.cs,
+      pickoff: (cur?.pickoff ?? 0) + st.pickoff,
+    });
+  }
+
   const bbPitcher = new Map<string, BattedBallData>();
   for (const b of battedBalls(db, o.season, competition, through, true)) {
     const cur = bbPitcher.get(b.playerId);
     bbPitcher.set(b.playerId, cur === undefined ? b : addBatted(cur, b));
   }
+
+  /**
+   * 타순 순회. **NPB 전체의 값**이라 리그로 나누지 않는다 —
+   * 리그로 나누면 3순회 이후의 표본이 절반이 되고, 그건 값이 아니라 소음이다.
+   * ⚠**생존자 편향**은 화면이 말한다(`timesThroughBlock`).
+   */
+  const timesThrough = timesThroughOrder(db, o.season, competition, through);
 
   /** 리그별 번트의 득점기대값 변화. **선수의 기록이 아니라 리그 전체의 값**이다 */
   const buntByLeague = new Map<League, BuntCell[]>();
@@ -2385,6 +2418,37 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
             runs: bat.player.runs,
             rbi: bat.player.rbi,
             sb: bat.player.sb,
+            /**
+             * 走塁. ⚠**분모는 기도(성공+도루자)이고 견제사는 들어가지 않는다** —
+             * NPB 기록에서 牽制死 는 盗塁刺 가 아니다. 넣으면 전 선수의 성공률이 낮아진다.
+             * ⚠기도 0이면 값은 null 이다(M11) — 「안 뛴 사람」과 「다 실패한 사람」은 다르다.
+             */
+            steal: (() => {
+              const st = stealByPlayer.get(playerId);
+              /**
+               * ⚠**「도루자 0」과 「도루자를 세지 못했다」를 구별한다**(M11).
+               * 타석 로그의 도루 수가 박스의 `盗塁` 와 어긋나면 못 읽은 경기가 있다는 뜻이고,
+               * 그때 `cs` 를 0으로 때우면 성공률이 **1.000** 이 된다 —
+               * **분모까지 붙은 그럴듯한 거짓말**이라 분모 없는 값보다 나쁘다.
+               * 방아쇠는 이론이 아니다: `--skip-events` 는 문서화된 플래그이고 종료 코드 0이다.
+               */
+              const boxSb = bat.player.sb;
+              if ((st?.sb ?? 0) !== boxSb) return null;
+              const cs = st?.cs ?? 0;
+              /**
+               * ⚠**분자는 화면에 보이는 `盗塁` 그 값이다**(박스스코어). 타석 로그 쪽 수로
+               * 갈아타면 같은 블록에 **「盗塁 30」과 「28을 함축하는 성공률」**이 나란히 뜬다 —
+               * 값이 조금 틀린 것보다 나쁜 자기모순이다.
+               * ⚠**여기서 폴백으로 덮지 않는다.** 두 출처가 어긋나는 것은 적재가
+               * `stealMismatch` 로 격리하고 収集ログ가 말한다 — 화면이 조용히 봉합하면
+               * 어긋난 사실 자체가 사라진다(M7).
+               */
+              return {
+                cs,
+                pickoff: st?.pickoff ?? 0,
+                rate: { value: successRate({ sb: boxSb, cs }), denominator: attempts({ sb: boxSb, cs }) },
+              };
+            })(),
             line: bat.player.line,
             avg: bat.avg,
             obp: bat.obp,
@@ -2526,6 +2590,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       bats: profile?.bats ?? null,
       birthDate: profile?.birthDate ?? null,
       physique: profile?.physique ?? null,
+      uniformNumber: profile?.uniformNumber ?? null,
       role,
       batting: battingData,
       pitching: pitchingData,
@@ -2548,6 +2613,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       asOf: meta.latest,
       stints: stintsOf(playerId, role),
       bunts,
+      timesThrough,
       postseason: briefByPlayer.get(playerId) ?? [],
     });
 
@@ -2562,6 +2628,10 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       n: base.displayName,
       t: team.name,
       ...(summary === null ? {} : { s: summary }),
+      // ⚠**없으면 필드를 만들지 않는다**(M11). 빈 문자열을 넣으면 색인이 980행만큼 커지고,
+      // 검색 쪽에서 「읽는 법이 빈 사람」과 「읽는 법을 모르는 사람」이 같아진다
+      ...(profile?.kana == null ? {} : { k: profile.kana }),
+      ...(profile?.uniformNumber == null ? {} : { u: profile.uniformNumber }),
     });
   }
 
@@ -2665,7 +2735,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       playerCount: players.length,
       gameCount: meta.games,
       asOf: meta.latest,
-      teams: rosters(players),
+      teams: rosters(players, profiles),
       highlights,
     },
     ranking: {

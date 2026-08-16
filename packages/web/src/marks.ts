@@ -312,6 +312,16 @@ export function paKind(outcome: string): PaKind {
     case "walk":
     case "intentionalWalk":
     case "hitByPitch":
+    /**
+     * ⚠**방해 출루는 아웃이 아니다.** `default: return "out"` 에 떨어져 있었다 —
+     * 「타자가 죽었다」로 그려지는데 실제로는 1루에 나간 것이다.
+     * ⚠**`interferenceOut`(捕守妨)은 여기 오면 안 된다** — 그건 진짜 아웃이다.
+     *   낱말이 닮았다고 묶으면 정반대가 된다.
+     * 영향은 작다(실측 178,420타석 중 5건) — 그러나 어휘를 늘리면서 이 스위치를
+     * 안 본 것이 사실이고, 그게 다음 번에 큰 것을 놓치는 방식이다.
+     */
+    case "interference":
+    case "obstruction":
       return "walk";
     case "strikeout":
     case "strikeoutReached":

@@ -17,7 +17,7 @@ import {
   parsePlayByPlay,
   venuesByGameId,
 } from "@bb-app/parser";
-import type { PlayEvent } from "@bb-app/parser";
+import type { PlayEvent, RunnerEvent } from "@bb-app/parser";
 import { competitionFromLabel, competitionOf } from "@bb-app/domain";
 import { openDb } from "../src/db.ts";
 import { alignPaEvents } from "../src/align.ts";
@@ -28,6 +28,7 @@ import {
   D1_DAILY_WRITE_LIMIT,
   emptyBudget,
   replacePaEvents,
+  replaceRunnerEvents,
   replaceQuarantine,
   upsertBatting,
   upsertGame,
@@ -163,7 +164,9 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
   if (values.to !== undefined && meta.gameDate > values.to) continue;
 
   // ⚠예산을 넘기기 **전에** 멈춘다. 넘긴 뒤에는 D1이 쿼리를 거부하므로 복구가 번거롭다.
-  const spent = budget.players + budget.games + budget.batting + budget.pitching + budget.paEvents + budget.quarantine;
+  // ⚠**주자 사건도 쓰기다.** 합계에서 빼면 한도를 조용히 넘긴다
+  const spent = budget.players + budget.games + budget.batting + budget.pitching
+    + budget.paEvents + budget.runnerEvents + budget.quarantine;
   if (spent >= maxWrites) {
     stoppedAt = meta.gameDate;
     break;
@@ -273,6 +276,10 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
 
   // 타석 이벤트의 재료를 **쓰기 전에** 읽어둔다. 트랜잭션 안에서 파일을 기다리지 않게 한다.
   let pbpEvents: PlayEvent[] | null = null;
+  /** 주자 사건. ⚠**미성립 경기에는 아예 오지 않는다** — 파서가 `notPlayed` 를 돌려주기 때문이다 */
+  let pbpRunners: RunnerEvent[] = [];
+  /** 읽지 못한 주자 행. ⚠**파서가 던지지 않으므로 여기서 세지 않으면 조용한 실패가 된다**(M7) */
+  let pbpUnreadRunners: string[] = [];
   let runsForCompleted: number[] = [];
   const runsQuarantine: QuarantineRow[] = [];
   if (!values["skip-events"]) {
@@ -282,6 +289,8 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
       const pbp = parsePlayByPlay(pbpHtml);
       if (pbp.status === "played") {
         pbpEvents = pbp.events;
+        pbpRunners = pbp.runners;
+        pbpUnreadRunners = pbp.unreadRunners;
         // 타석별 득점을 유도하고 라인스코어로 검증한다.
         const derived = deriveRuns(meta.gameId, pbp.events.filter((e) => e.completed), parseLineScore(pbpHtml));
         runsForCompleted = derived.runsPerEvent;
@@ -311,10 +320,19 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
     venue,
   });
 
+  /**
+   * 박스가 말하는 **선수별** 도루 수. 아래에서 타석 로그와 대조한다.
+   * ⚠**경기 합계로 비교하지 않는다** — A선수 +1 / B선수 −1이면 합계는 맞는데
+   * 지키려는 불변식(한 선수의 블록 안에서 `盗塁`과 성공률 분모가 모순되지 않는다)은 깨진다.
+   */
+  const boxStealsBy = new Map<string, number>();
   for (const [side, team] of [["away", box.away], ["home", box.home]] as const) {
     for (const b of team.batters) {
       const derived = deriveBatting(meta.gameId, side, b);
       if (derived === null) continue;
+      if (derived.row.sb > 0) {
+        boxStealsBy.set(derived.row.playerId, (boxStealsBy.get(derived.row.playerId) ?? 0) + derived.row.sb);
+      }
       if (!seenPlayers.has(derived.row.playerId)) {
         seenPlayers.add(derived.row.playerId);
         budget.players += upsertPlayer(db, derived.row.playerId, b.name, nowIso);
@@ -345,6 +363,68 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
     quarantine.push(...aligned.quarantine, ...runsQuarantine);
   }
 
+  /**
+   * 주자 사건. ⚠**타석과 별개의 표다** — 타자가 없으므로 `pa_event` 에 넣으면 타석 수가 부풀어
+   * 타율의 분모가 틀린다.
+   *
+   * ⚠**`pbpEvents === null` 일 때는 손대지 않는다.** `replaceRunnerEvents` 는 첫 줄이
+   * `DELETE` 라, 빈 배열로 부르면 **이미 있던 도루 기록을 지운다.** 그리고 `pbpRunners` 는
+   * ① `--skip-events` ② playbyplay 파싱 실패 ③ 미성립 경기 셋 다 `[]` 다 —
+   * 「없었다」가 아니라 **「세지 못했다」**인데 지우면 그 구별이 사라진다(M11·M5).
+   * ①은 문서화된 플래그이고 **종료 코드 0**이라 조용히 지운다.
+   * `pa_event` 는 원래부터 이 보호가 있었다 — 두 표의 취급이 갈려 있던 것이 결함이다.
+   */
+  if (pbpEvents !== null) {
+    budget.runnerEvents += replaceRunnerEvents(
+      db,
+      meta.gameId,
+      pbpRunners.map((r, i) => ({ ...r, gameId: meta.gameId, seq: i + 1 })),
+    );
+  }
+
+  /**
+   * ⚠**박스의 `盗塁` 합계와 타석 로그의 도루 수를 대조한다.**
+   *
+   * 화면은 개수를 박스에서, 성공률의 분모를 타석 로그에서 가져온다. 둘이 어긋나면
+   * 같은 블록에 **「盗塁 30」과 「28을 함축하는 성공률」이 나란히** 뜬다 —
+   * 값 자체보다 나쁜 자기모순이다. 그러니 **읽는 쪽에서 폴백으로 덮지 말고 여기서 잡는다.**
+   *
+   * ⚠**pbp를 읽지 못한 경기는 비교하지 않는다.** 그건 「도루가 0이었다」가 아니라
+   * 「세지 못했다」이고, 0으로 비교하면 그 경기 전부가 어긋남으로 잡힌다(M11).
+   * 같은 이유로 `--skip-events` 일 때도 비교하지 않는다.
+   *
+   * 실측(2026-08-17): 2024〜2026 **2,395경기 중 어긋남 0건**이라 임계값 0으로 걸 수 있다.
+   */
+  /**
+   * ⚠**읽지 못한 주자 행을 격리에 넣는다.** 파서는 던지지 않는다 —
+   * 던지면 도루 표기 1건의 변화가 **그 경기의 타석 로그 전량**을 가져가기 때문이다.
+   * 그 대신 「멈춘다」를 여기서 한다: 쌓이면 収集ログ에 종류별로 뜬다.
+   */
+  for (const raw of pbpUnreadRunners) {
+    quarantine.push({ kind: "unreadRunner", gameId: meta.gameId, playerId: null, raw, detail: null });
+  }
+
+  if (pbpEvents !== null) {
+    const logStealsBy = new Map<string, number>();
+    for (const r of pbpRunners) {
+      if (r.kind !== "steal") continue;
+      logStealsBy.set(r.runnerId, (logStealsBy.get(r.runnerId) ?? 0) + 1);
+    }
+    // 양쪽 어디에라도 나온 선수를 전부 본다 — 한쪽에만 있는 것이 바로 어긋남이다
+    for (const playerId of new Set([...boxStealsBy.keys(), ...logStealsBy.keys()])) {
+      const box = boxStealsBy.get(playerId) ?? 0;
+      const log = logStealsBy.get(playerId) ?? 0;
+      if (box === log) continue;
+      quarantine.push({
+        kind: "stealMismatch",
+        gameId: meta.gameId,
+        playerId,
+        raw: String(box),
+        detail: `타석 로그 ${log}`,
+      });
+    }
+  }
+
   budget.quarantine += replaceQuarantine(db, meta.gameId, quarantine, nowIso);
   });
 
@@ -352,7 +432,8 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
 }
 
 budget.total =
-  budget.players + budget.games + budget.batting + budget.pitching + budget.paEvents + budget.quarantine;
+  budget.players + budget.games + budget.batting + budget.pitching
+  + budget.paEvents + budget.runnerEvents + budget.quarantine;
 
 console.log(`성립 ${played}건 · 미성립 ${notPlayed}건 · 실패 ${failed}건`);
 if (lineScoreFailed > 0) {
@@ -366,7 +447,8 @@ if (lineScoreFailed > 0) {
 console.log(
   `\n=== 쓰기 예산 (D1 무료 한도 ${D1_DAILY_WRITE_LIMIT.toLocaleString()}행/일) ===\n` +
     `선수 ${budget.players} · 경기 ${budget.games} · 타격 ${budget.batting} · ` +
-    `투구 ${budget.pitching} · 타석 ${budget.paEvents} · 격리 ${budget.quarantine}\n` +
+    `투구 ${budget.pitching} · 타석 ${budget.paEvents} · 주자 ${budget.runnerEvents} · ` +
+    `격리 ${budget.quarantine}\n` +
     `합계 ${budget.total}행 = 한도의 ${((budget.total / D1_DAILY_WRITE_LIMIT) * 100).toFixed(1)}%`,
 );
 

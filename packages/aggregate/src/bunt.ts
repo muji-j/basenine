@@ -134,7 +134,8 @@ const HITS = new Set(["single", "double", "triple", "homerun"]);
  * 하나만 적으면 타수가 부풀어 피타율이 낮게 나온다 — 실측으로 .216 대 .237의 차가 났다.
  */
 const NOT_AB = new Set([
-  "walk", "intentionalWalk", "hitByPitch", "interference",
+  // ⚠**주루방해(走妨出)는 타격방해와 다른 사건이다.** 둘 다 타수에 안 들어간다
+  "walk", "intentionalWalk", "hitByPitch", "interference", "obstruction",
   "sacFly", "sacBunt", "sacBuntError", "sacBuntFieldersChoice",
 ]);
 
@@ -147,6 +148,9 @@ const KNOWN = new Set([
   ...HITS, ...NOT_AB,
   "fieldedOut", "strikeout", "strikeoutReached", "groundedIntoDoublePlay",
   "reachedOnError", "fieldersChoice",
+  // ⚠**수비방해 아웃은 `NOT_AB` 가 아니라 여기다.** 이름이 `interference` 와 비슷하지만
+  // 타자가 아웃된 것이라 **타수에 들어간다**(박스 打数 실측으로 확정)
+  "interferenceOut",
 ]);
 
 /**

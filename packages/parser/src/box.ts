@@ -139,8 +139,53 @@ function flattenInningTables(html: string): string {
  * ⚠**평탄화는 문서 전체에 먼저 적용해야 한다.** 중첩 테이블의 `</table>`이
  * 바깥 표의 비탐욕 매칭을 먼저 끊어버리기 때문이다 — 그래서 투수표가 5번째 셀에서 잘렸다.
  */
+/**
+ * 2016~2018년경의 구형 마크업.
+ *
+ * ⚠**id 가 없다.** 표를 `<div class="scroll_wrapper table_score table_batter">` 로 감싸고
+ * 순서(원정 타자 → 원정 투수 → 홈 타자 → 홈 투수)로만 구별한다.
+ * ⚠**이 분기가 없으면 그 시즌들이 「타격표가 없다」로 예외를 던진다** — 실측 확인(2026-08-17).
+ * 백필에서 예외를 삼키는 코드가 하나라도 있으면 **3시즌이 조용히 0건**으로 들어간다.
+ */
+const LEGACY_ORDER = ["awayBatting", "awayPitching", "homeBatting", "homePitching"] as const;
+
+/** 구형 페이지인가 — 신형 id 가 없고 구형 클래스가 있으면 */
+function isLegacy(html: string): boolean {
+  return !html.includes(`<table id="${TABLE_IDS.awayBatting}"`) && html.includes("table_batter");
+}
+
+/**
+ * 구형에서 n번째 표의 본문을 꺼낸다.
+ * ⚠**순서로 구별하므로 개수를 확인한다.** 4개가 아니면 우리가 아는 구조가 아니다 —
+ * 조용히 3개만 읽으면 한 팀의 투수 성적이 통째로 사라진다.
+ */
+function legacyTable(html: string, which: (typeof LEGACY_ORDER)[number]): string {
+  const blocks = [...html.matchAll(/<div class="[^"]*table_(batter|pitcher)[^"]*">([\s\S]*?)<\/table>/g)];
+  if (blocks.length !== LEGACY_ORDER.length) {
+    throw new BoxParseError(
+      `구형 표가 ${LEGACY_ORDER.length}개가 아니다 — 구조를 다시 봐야 한다`,
+      `found=${blocks.length} length=${html.length}`,
+    );
+  }
+  const at = LEGACY_ORDER.indexOf(which);
+  const kind = at % 2 === 0 ? "batter" : "pitcher";
+  const got = blocks[at]!;
+  // ⚠**순서만 믿지 않는다.** 타자 자리에 투수표가 있으면 값이 통째로 어긋난다
+  if (got[1] !== kind) {
+    throw new BoxParseError(`구형 표의 순서가 다르다 — ${which} 자리에 ${got[1]} 표가 있다`, `at=${at}`);
+  }
+  return got[2] ?? "";
+}
+
 function tableRows(flatHtml: string, id: string): string[][] {
-  const table = new RegExp(`<table id="${id}"[^>]*>([\\s\\S]*?)</table>`).exec(flatHtml);
+  const legacy = isLegacy(flatHtml);
+  const body = legacy
+    ? legacyTable(flatHtml, (Object.keys(TABLE_IDS) as (keyof typeof TABLE_IDS)[])
+      .find((k) => TABLE_IDS[k] === id)!)
+    : null;
+  const table = legacy
+    ? ([null, body] as unknown as RegExpExecArray)
+    : new RegExp(`<table id="${id}"[^>]*>([\\s\\S]*?)</table>`).exec(flatHtml);
   if (!table) throw new BoxParseError("표를 찾지 못했다", `id=${id}`);
   const rows = [...table[1]!.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)].map((m) =>
     [...m[1]!.matchAll(/<t[hd][^>]*>([\s\S]*?)<\/t[hd]>/g)].map((c) => c[1]!),
@@ -215,7 +260,8 @@ function parseBatting(html: string, id: string): BatterRow[] {
   }
   const col = {
     position: header.findIndex((h) => h.includes("守備")),
-    name: header.findIndex((h) => h.includes("選手")),
+    // ⚠**구형(2016~2018)은 「打者」다.** 이름 하나를 못 맞히면 그 시즌이 통째로 예외가 된다
+    name: header.findIndex((h) => h.includes("選手") || h.includes("打者")),
     ab: header.findIndex((h) => h.includes("打数")),
     runs: header.findIndex((h) => h.includes("得点")),
     hits: header.findIndex((h) => h.includes("安打")),
@@ -378,7 +424,8 @@ function voidedReason(html: string): string | null {
  */
 export function parseBoxScore(rawHtml: string): BoxScore {
   const html = flattenInningTables(rawHtml);
-  const hasBattingTable = html.includes(`<table id="${TABLE_IDS.awayBatting}"`);
+  // ⚠**구형(2016~2018)도 「표가 있다」로 본다.** 안 그러면 그 시즌이 「중지」로 읽힌다
+  const hasBattingTable = html.includes(`<table id="${TABLE_IDS.awayBatting}"`) || isLegacy(html);
   if (!hasBattingTable) {
     const reason = notPlayedReason(html);
     // 표가 없는데 중지 표기도 없다 → 구조 변경을 의심해야 한다. 조용히 넘기지 않는다.

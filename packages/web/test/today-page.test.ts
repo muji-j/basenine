@@ -307,3 +307,41 @@ test("앞 경기일이 없으면(시즌 첫날) 그쪽도 링크가 아니다", 
   const out = renderTodayPage(data({ prev: null }), context());
   assert.match(out, /<span class="daystep p off">[\s\S]{0,60}?前の試合日/);
 });
+
+/**
+ * ⚠**예고가 없다고 구획을 지우지 않는다**(M12).
+ *
+ * 지우면 두 가지가 같이 사라진다:
+ * ① 「아직 발표 전」과 「화면이 고장났다」의 구별,
+ * ② **予告先発 화면으로 가는 유일한 길**(내비에 항목이 없다).
+ * 예고가 없는 날은 오프시즌·월요일·발표 전 시각이라 **드문 상태가 아니다.**
+ */
+test("⚠예고선발이 없어도 구획과 링크가 남는다 — 지우면 그 화면에 닿을 길이 없다(M12)", () => {
+  const out = renderTodayPage(data({ probables: [] }), context());
+  assert.match(out, /id="b-probable"/, "예고가 없다고 구획을 통째로 지웠다");
+  assert.match(out, /starters\.html/, "予告先発 화면으로 가는 링크가 사라졌다");
+  // 「없다」를 말로 한다 — 빈 화면은 고장으로 읽힌다
+  assert.match(out, /予告先発はまだ発表されていません/, "빈 상태를 말하지 않았다");
+});
+
+test("예고선발이 있으면 카드를 내고 문구가 바뀐다", () => {
+  const out = renderTodayPage(
+    data({
+      probables: [
+        {
+          venue: "神宮",
+          startTime: "18:00",
+          anchor: "sg-s-db",
+          sides: [
+            { shortName: "ヤクルト", color: colorOf("s"), playerId: "P1", name: "奥川", era: { value: 2.52, denominator: 354 } },
+            { shortName: "DeNA", color: colorOf("db"), playerId: null, name: null, era: null },
+          ],
+        },
+      ],
+    }),
+    context(),
+  );
+  assert.match(out, /id="b-probable"/);
+  assert.match(out, /対戦する打者の成績まで見る/, "예고가 있는데 빈 상태 문구가 나왔다");
+  assert.ok(!out.includes("まだ発表されていません"), "예고가 있는데 「발표 전」이라고 했다");
+});

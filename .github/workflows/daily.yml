@@ -117,7 +117,20 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add ops/collection-log.txt ops/collection-log.jsonl ops/archive-manifest.json
           git diff --staged --quiet || git commit -m "chore(ops): collection log"
-          git push
+          # ⚠**푸시 경합이 배포를 막는다.** 뒤의 배포 단계가 `if: success()`라
+          # 여기서 실패하면 **화면이 안 올라간 채 「수집 실패」로만 보인다** —
+          # 2026-08-16에 실제로 2건 났다(사람이 main 에 머지한 직후 크론이 밀려 들어왔다).
+          # 이 커밋은 로그 3파일뿐이라 리베이스로 항상 붙는다. 3회까지 다시 시도한다.
+          # ⚠`set -e` 아래에서 `A && exit 1` 류로 쓰지 않는다 — 어느 실패가 스텝을 죽이는지
+          # 셸 규칙에 의존하게 된다. 성공 여부를 변수로 들고 **마지막 줄에서 한 번만** 판정한다.
+          pushed=0
+          for i in 1 2 3; do
+            if git push; then pushed=1; break; fi
+            echo "푸시 경합 ${i}회 — 리베이스 후 재시도"
+            git pull --rebase --no-edit origin "${GITHUB_REF_NAME}" || true
+            sleep 5
+          done
+          [ "$pushed" = 1 ]
 
       - name: 화면 생성
         env:
