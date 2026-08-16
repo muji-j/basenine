@@ -126,12 +126,19 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
        */
       const broken = brokenLinks(all);
       if (broken.length > 0) {
-        console.error(`⚠ 깨진 내부 링크 ${broken.length}개 — 배포하지 않는다`);
-        for (const b of broken.slice(0, 20)) console.error(`   ${b.from} → ${b.href}（${b.to} 없음）`);
+        const pages = broken.filter((b) => b.kind === "page").length;
+        console.error(
+          `⚠ 깨진 내부 링크 ${broken.length}개(페이지 없음 ${pages} · 앵커 없음 ${broken.length - pages}) — 배포하지 않는다`,
+        );
+        for (const b of broken.slice(0, 20)) {
+          console.error(`   ${b.from} → ${b.href}（${b.kind === "page" ? `${b.to} 없음` : "그 앵커가 없음"}）`);
+        }
         if (broken.length > 20) console.error(`   … 그 밖에 ${broken.length - 20}개`);
         process.exitCode = 1;
       } else {
-        console.log(`링크: ${all.filter((f) => f.path.endsWith(".html")).length}장 검사 · 깨진 것 없음`);
+        console.log(
+          `링크: ${all.filter((f) => f.path.endsWith(".html")).length}장 검사(앵커 포함) · 깨진 것 없음`,
+        );
       }
       if (result.stale) {
         console.error("⚠ 데이터가 낡았다 — 수집이 멈췄는지 확인하라");

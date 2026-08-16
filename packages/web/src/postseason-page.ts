@@ -25,6 +25,21 @@ import { NEUTRAL_COLOR } from "@bb-app/domain";
 import type { TeamColor } from "@bb-app/domain";
 import type { Rate } from "@bb-app/metrics";
 
+/**
+ * 대회 전환 탭의 그룹 이름.
+ * ⚠**한 곳에서만 만든다** — 탭줄과 패널이 같은 문자열을 써야 짝이 맞는다. 갈리면 아무것도 안 열린다.
+ */
+const TAB_GROUP = "post";
+
+/**
+ * 대회가 둘 이상일 때만 패널로 감싼다.
+ * ⚠**하나뿐이면 감싸지 않는다** — 열고 닫을 것이 없는데 `hidden`을 붙이면,
+ * 스크립트가 없는 환경에서 그 하나가 통째로 안 보일 위험만 남는다.
+ */
+function wrap(many: boolean, key: string, first: boolean, body: RawHtml): RawHtml {
+  return many ? panel(TAB_GROUP, key, first, body) : body;
+}
+
 /** 한 경기 — 날짜·구장·점수. 상세 페이지가 있으면 그리로 간다 */
 export interface PostGame {
   /** 화면 링크에 쓰는 파일명 슬러그 */
@@ -146,21 +161,6 @@ export interface PostseasonBrief {
  * 우천으로 한 리그의 스테이지가 밀려 다른 스테이지와 겹치는 날, 같은 제목이 두 번 나온다.
  * 라벨로 모으면 그 가정 자체가 사라진다 — 그룹의 순서는 **첫 등장 순**이다.
  */
-/**
- * 대회 전환 탭의 그룹 이름.
- * ⚠**한 곳에서만 만든다** — 탭줄과 패널이 같은 문자열을 써야 짝이 맞는다. 갈리면 아무것도 안 열린다.
- */
-const TAB_GROUP = "post";
-
-/**
- * 대회가 둘 이상일 때만 패널로 감싼다.
- * ⚠**하나뿐이면 감싸지 않는다** — 열고 닫을 것이 없는데 `hidden`을 붙이면,
- * 스크립트가 없는 환경에서 그 하나가 통째로 안 보일 위험만 남는다.
- */
-function wrap(many: boolean, key: string, first: boolean, body: RawHtml): RawHtml {
-  return many ? panel(TAB_GROUP, key, first, body) : body;
-}
-
 function stageGroups(games: readonly PostGame[]): [string, PostGame[]][] {
   const m = new Map<string, PostGame[]>();
   for (const g of games) {
@@ -258,7 +258,19 @@ export function renderPostseasonPage(d: PostseasonPageData, ctx: RenderContext):
   </div>
 </header>
 
-${many ? tablist(TAB_GROUP, d.competitions.map((c) => ({ id: c.id, label: c.name })), true, "大会の切り替え") : raw("")}
+${many
+    /**
+     * ⚠**탭줄은 `.rail` 안에 둔다** — 이 사이트의 탭줄 5곳이 전부 그렇다.
+     * 밖에 두면 좌우 패딩이 0이라 본문만 들여쓰기된 채 탭만 화면 왼쪽 끝에 붙고,
+     * **`position:sticky` 도 안 걸린다.** CS 패널은 표가 165행이라, 스티키가 없으면
+     * 투수표를 읽다가 日本シリーズ로 바꾸려고 맨 위까지 되돌아가야 한다 —
+     * 이 화면을 탭으로 나눈 이유를 반만 이루게 된다.
+     * ⚠`scroll` 은 끄고 `.rail` 의 가로 스크롤에 맡긴다 — 둘 다 켜면 스크롤 상자가 이중이 된다.
+     */
+    ? html`<nav class="rail" aria-label="大会の表示">
+  ${tablist(TAB_GROUP, d.competitions.map((c) => ({ id: c.id, label: c.name })), false, "大会の切り替え")}
+</nav>`
+    : raw("")}
 
 ${d.competitions.length === 0
     ? html`<section class="block"><p class="empty">このシーズンのポストシーズンはまだ記録していません。</p></section>`

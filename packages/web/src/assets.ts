@@ -692,6 +692,10 @@ table.stand .dif i.n{right:50%}
 .postrow{margin:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
 .postrow>div{display:flex;flex-direction:column;gap:2px}
 .postrow dt{font-size:10.5px;letter-spacing:.12em;color:var(--tx-3)}
+/* ⚠**링크는 링크처럼 보이되 UA 기본 밑줄은 쓰지 않는다** — 이 사이트의 다른 링크와 같은 처리다.
+   빠뜨리면 이 한 곳만 파란 밑줄에 hover 무반응이 되어 「여기만 남의 화면」이 된다 */
+.postrow dt a{text-decoration:none;border-bottom:1px solid var(--hair-2)}
+.postrow dt a:hover{border-bottom-color:var(--tx-3);color:var(--tx-1)}
 .postrow dd{margin:0;font-size:15px;font-variant-numeric:tabular-nums}
 
 /* ── 카드 전체를 누르기 ──────────────────────────────────────
