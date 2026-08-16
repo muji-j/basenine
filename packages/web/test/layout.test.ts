@@ -63,6 +63,8 @@ function render(contact: string): string {
   return page({
     title: "테스트",
     base: "",
+    root: "",
+    seasons: [],
     color: NEUTRAL_COLOR,
     freshness: freshness("2026-08-14", "2026-08-15"),
     site: { name: "bb-app", contact },

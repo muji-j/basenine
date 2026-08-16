@@ -232,7 +232,7 @@ function probableCard(p: TodayProbable, base: string): RawHtml {
 }
 
 export function renderTodayPage(d: TodayPageData, ctx: RenderContext): string {
-  const base = "";
+  const { base, root, seasons } = ctx.paths("today.html");
   const isToday = d.gameDate !== null && d.gameDate === d.builtOn;
   const played = d.games.filter((g) => g.status === "played").length;
   const off = d.games.length - played;
@@ -274,6 +274,8 @@ ${d.probables.length === 0
   return page({
     title: `試合${d.gameDate === null ? "" : ` — ${fullDate(d.gameDate)}`}`,
     base,
+    root,
+    seasons,
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,

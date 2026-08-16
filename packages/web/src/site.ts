@@ -18,8 +18,8 @@ import { renderTodayPage } from "./today-page.ts";
 import { gameSlug, renderGamePage } from "./game-page.ts";
 import { renderLogPage } from "./log-page.ts";
 import type { LogPageData } from "./log-page.ts";
-import { freshness, isStale } from "./layout.ts";
-import type { SiteMeta } from "./layout.ts";
+import { freshness, isStale, pathsFor } from "./layout.ts";
+import type { RenderContext, SeasonPlan, SiteMeta } from "./layout.ts";
 import type { SiteData } from "./query.ts";
 
 export interface SiteFile {
@@ -36,36 +36,76 @@ export interface BuildResult {
   playerCount: number;
 }
 
+/**
+ * 한 시즌이 만드는 **화면 경로**(시즌 안 기준).
+ *
+ * ⚠**렌더링 전에 알아야 한다.** 시즌 전환이 「그 시즌에 같은 화면이 있는가」를 물어야 하고,
+ * 없는 곳으로 링크하면 404가 된다 — 조용하고 발견이 늦다.
+ */
+export function seasonPaths(data: SiteData, hasLog: boolean): Set<string> {
+  const out = new Set<string>([
+    "today.html",
+    "index.html",
+    "ranking.html",
+    "starters.html",
+    "matchup.html",
+    "compare.html",
+  ]);
+  if (hasLog) out.add("log.html");
+  for (const p of data.players) out.add(`players/${p.playerId}.html`);
+  for (const g of data.games) out.add(`games/${gameSlug(g.gameId)}.html`);
+  return out;
+}
+
 export function buildSite(
   data: SiteData,
   site: SiteMeta,
   builtOn: string,
   // ⚠수집 기록이 없으면 그 페이지를 만들지 않는다 — 빈 페이지를 두는 것보다 없는 편이 정직하다
   log?: LogPageData,
+  /**
+   * 전 시즌의 배치. 시즌 전환을 그리는 데 쓴다.
+   * ⚠**비우면 시즌이 하나뿐인 것으로 다룬다** — 전환 띠가 안 나온다.
+   */
+  plans: readonly SeasonPlan[] = [],
 ): BuildResult {
   const f = freshness(data.asOf, builtOn);
-  const ctx = { site, freshness: f };
+  const me = plans.find((p) => p.season === data.season);
+  const prefix = me?.prefix ?? "";
+  const ctx: RenderContext = { site, freshness: f, paths: pathsFor(plans, data.season) };
+
+  /** 시즌 접두사를 붙인다. ⚠**자산은 붙이지 않는다** — 사이트 전체가 한 벌을 쓴다 */
+  const at = (p: string): string => `${prefix}${p}`;
 
   const files: SiteFile[] = [
-    { path: "assets/site.css", content: CSS },
-    { path: "assets/site.js", content: CLIENT_JS },
-    { path: "today.html", content: renderTodayPage(data.today, ctx) },
-    { path: "index.html", content: renderIndexPage(data.index, ctx) },
-    { path: "ranking.html", content: renderRankingPage(data.ranking, ctx) },
-    { path: "starters.html", content: renderStartersPage(data.starters, ctx) },
+    /**
+     * ⚠**자산은 사이트에 한 벌이다.** 시즌마다 쓰면 같은 CSS·JS가 두 번 올라가고,
+     * 한쪽만 갱신되는 순간 시즌에 따라 화면이 다르게 동작한다.
+     * 그래서 **현재 시즌(접두사 없음)일 때만** 쓴다.
+     */
+    ...(prefix === ""
+      ? [
+          { path: "assets/site.css", content: CSS },
+          { path: "assets/site.js", content: CLIENT_JS },
+        ]
+      : []),
+    { path: at("today.html"), content: renderTodayPage(data.today, ctx) },
+    { path: at("index.html"), content: renderIndexPage(data.index, ctx) },
+    { path: at("ranking.html"), content: renderRankingPage(data.ranking, ctx) },
+    { path: at("starters.html"), content: renderStartersPage(data.starters, ctx) },
     {
-      path: "matchup.html",
+      path: at("matchup.html"),
       content: renderMatchupPage({ season: data.season, asOf: data.asOf }, ctx),
     },
     {
-      path: "compare.html",
+      path: at("compare.html"),
       content: renderComparePage({ season: data.season, asOf: data.asOf }, ctx),
     },
-    { path: "players.json", content: searchIndexJson(data.search) },
+    { path: at("players.json"), content: searchIndexJson(data.search) },
   ];
 
   if (log !== undefined) {
-    files.push({ path: "log.html", content: renderLogPage(log, ctx) });
+    files.push({ path: at("log.html"), content: renderLogPage(log, ctx) });
   }
 
   for (const p of data.players) {
@@ -74,9 +114,9 @@ export function buildSite(
     if (!/^[A-Za-z0-9_-]+$/.test(p.playerId)) {
       throw new Error(`선수 ID가 경로로 쓸 수 없는 형태다: ${JSON.stringify(p.playerId)}`);
     }
-    files.push({ path: `players/${p.playerId}.html`, content: renderPlayerPage(p, ctx) });
+    files.push({ path: at(`players/${p.playerId}.html`), content: renderPlayerPage(p, ctx) });
     // ⚠**비교용 값을 따로 계산하지 않는다**(M1) — 위 페이지가 쓰는 것과 같은 객체에서 뽑는다
-    files.push({ path: `compare/${p.playerId}.json`, content: compareCardJson(compareCard(p)) });
+    files.push({ path: at(`compare/${p.playerId}.json`), content: compareCardJson(compareCard(p)) });
   }
 
   /**
@@ -91,7 +131,7 @@ export function buildSite(
     if (!/^[A-Za-z0-9_-]+$/.test(slug)) {
       throw new Error(`경기 ID가 경로로 쓸 수 없는 형태다: ${JSON.stringify(g.gameId)}`);
     }
-    files.push({ path: `games/${slug}.html`, content: renderGamePage(g, ctx) });
+    files.push({ path: at(`games/${slug}.html`), content: renderGamePage(g, ctx) });
   }
 
   return {

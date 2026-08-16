@@ -41,8 +41,15 @@ export function buildLeagues(agg: SeasonAggregate): LeagueBundle[] {
   const out: LeagueBundle[] = [];
 
   for (const league of ["central", "pacific"] as const) {
-    const batting = agg.batting.filter((b) => b.league === league);
-    const pitching = agg.pitching.filter((p) => p.league === league);
+    /**
+     * ⚠**리그별로 나눈 쪽을 쓴다**(`*ByLeague`). 시즌 합계(`agg.batting`)를 쓰면
+     * 리그를 넘어 이적한 선수의 **반대 리그 성적까지** 이 리그의 순위와 상수에 들어간다.
+     * NPB의 개인 타이틀은 소속 리그 성적만 센다(2026-08-16 확정).
+     * 실측: 2026년 山本는 DeNA 105타석 · ソフトバンク 97타석인데,
+     * 합산 202타석이 「セントラル 순위」에 실려 있었다.
+     */
+    const batting = agg.battingByLeague.filter((b) => b.league === league);
+    const pitching = agg.pitchingByLeague.filter((p) => p.league === league);
     if (batting.length === 0 || pitching.length === 0) continue;
 
     const teamGames = Math.max(

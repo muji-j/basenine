@@ -71,6 +71,7 @@ import type { League } from "@bb-app/domain";
 import { countsAsHit } from "@bb-app/parser";
 import type { Outcome } from "@bb-app/parser";
 import { positionMark } from "./player-page.ts";
+import type { PlayerStint } from "./player-page.ts";
 import { battingProfile, pitchingProfile } from "./marks.ts";
 import type {
   BattingBlockData,
@@ -903,10 +904,15 @@ interface ProbableRow {
  * ⚠**미래 날짜를 고르지 않는다.** 페이지가 내일분을 게시하므로 `MAX(game_date)`가
  * 곧 「다음 경기일」이고, 그게 이 화면의 대상이다.
  */
-function loadProbables(db: Db): ProbableRow[] {
-  const latest = db.raw.prepare("SELECT MAX(game_date) AS d FROM probable_pitcher").get() as {
-    d: string | null;
-  };
+function loadProbables(db: Db, season: number): ProbableRow[] {
+  /**
+   * ⚠**시즌으로 거른다.** 예고선발은 「다음 경기」의 정보라 언제나 현재 시즌 것이다.
+   * 안 거르면 **2025년 화면에 2026년의 예고선발이 뜬다** — 실제로 그렇게 나왔다(2026-08-16).
+   * 게다가 방어율까지 2026년 값이라, 지난 시즌을 보는 사람에게 통째로 거짓말이 된다.
+   */
+  const latest = db.raw
+    .prepare("SELECT MAX(game_date) AS d FROM probable_pitcher WHERE game_date LIKE ?")
+    .get(`${season}-%`) as { d: string | null };
   if (latest.d === null) return [];
   return db.raw
     .prepare(
@@ -1434,6 +1440,39 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     rankingsByLeague.set(bundle.league, buildLeagueRankings(bundle, bat, pit, srcByPlayer, srpByPlayer));
   }
 
+  /**
+   * 시즌 중 소속 이력.
+   *
+   * ⚠**리그별로 나눈 집계에서 만든다.** 같은 리그 안의 이적은 합쳐지므로 여기서도 한 줄이고,
+   * 리그를 넘은 이적만 두 줄이 된다 — 그게 순위표가 나누는 기준과 같아야
+   * 「합계는 202타석인데 순위는 105타석」이 화면에서 설명된다.
+   */
+  const stintsOf = (playerId: string, role: "batter" | "pitcher"): PlayerStint[] => {
+    const rows =
+      role === "pitcher"
+        ? agg.pitchingByLeague.filter((p) => p.playerId === playerId)
+        : agg.battingByLeague.filter((b) => b.playerId === playerId);
+    if (rows.length < 2) return [];
+    return rows
+      .map((r) => {
+        // ⚠타자의 표본은 타석, 투수는 아웃 카운트다. 하나로 뭉뚱그리면 단위가 섞인다
+        const isBat = "pa" in r.line;
+        const sample = isBat ? (r.line as BattingLine).pa : (r.line as PitchingLine).outs;
+        return {
+          teamCode: r.teamCode,
+          teamName: teamOf(r.teamCode).name,
+          leagueName: LEAGUE_NAME[r.league],
+          games: r.games,
+          sample,
+          sampleText: isBat ? `${sample}打席` : `${innings(sample)}回`,
+          lastDate: r.lastDate,
+        };
+      })
+      // ⚠**시간 순으로 둔다.** 화면이 「DeNA → ソフトバンク」처럼 화살표로 잇는데,
+      // 출장 수로 정렬하면 화살표가 시간을 거스른다
+      .sort((a, b) => a.lastDate.localeCompare(b.lastDate));
+  };
+
   const players: PlayerPageData[] = [];
   const search: SearchEntry[] = [];
   const ids = new Set<string>([...battingByPlayer.keys(), ...pitchingByPlayer.keys()]);
@@ -1616,6 +1655,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       streaks: streaksByPlayer.get(playerId) ?? null,
       sparkLabel: role === "pitcher" ? "月別防御率" : "月別OPS",
       asOf: meta.latest,
+      stints: stintsOf(playerId, role),
     });
 
     search.push({ i: playerId, n: base.displayName, t: team.name });
@@ -1660,7 +1700,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   });
 
   const startersData = startersPage(
-    loadProbables(db),
+    loadProbables(db, o.season),
     o.builtOn,
     pitchingByPlayer,
     matchupsByPlayer.byPitcher,

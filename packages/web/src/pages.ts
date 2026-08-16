@@ -35,10 +35,9 @@ import type { Rate } from "@bb-app/metrics";
 import { isEmptyProfile, markLetter, markProfile } from "./marks.ts";
 import type { MarkPlayer, ProfileAxis } from "./marks.ts";
 
-export interface RenderContext {
-  site: SiteMeta;
-  freshness: Freshness;
-}
+// ⚠**타입은 `layout.ts` 한 벌만 둔다.** 세 곳에 두면 필드를 늘릴 때마다 세 곳을 고친다
+export type { RenderContext } from "./layout.ts";
+import type { RenderContext } from "./layout.ts";
 
 /**
  * 순위의 부문 — 打者 · 先発 · 救援.
@@ -136,7 +135,7 @@ function panelTable(p: RankingPanel, base: string, limit: number): RawHtml {
 }
 
 export function renderIndexPage(d: IndexPageData, ctx: RenderContext): string {
-  const base = "";
+  const { base, root, seasons } = ctx.paths("index.html");
   const body = html`<header class="idline">
   <div class="idtext">
     <span class="nm">選手一覧</span>
@@ -200,6 +199,8 @@ ${d.highlights.map((s) =>
   return page({
     title: `選手一覧 — ${ctx.site.name} ${d.season}年`,
     base,
+    root,
+    seasons,
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
@@ -305,7 +306,7 @@ function standingsTable(s: StandingsSection, base: string): RawHtml {
  * 지표 탭은 **리그별로 그리되 같은 그룹 이름을 쓴다.** 리그를 바꿔도 보고 있던 지표가 유지된다.
  */
 export function renderRankingPage(d: RankingPageData, ctx: RenderContext): string {
-  const base = "";
+  const { base, root, seasons } = ctx.paths("ranking.html");
   const leagueTabs = d.leagues.map((l) => ({ id: l.id, label: l.name.replace("・リーグ", "") }));
 
   const body = html`<header class="idline">
@@ -355,6 +356,8 @@ ${d.leagues.map((league, li) =>
   return page({
     title: `リーグ順位 — ${d.season}年`,
     base,
+    root,
+    seasons,
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
@@ -420,7 +423,7 @@ function gameKey(g: ProbableGame): string {
 }
 
 export function renderStartersPage(d: StartersPageData, ctx: RenderContext): string {
-  const base = "";
+  const { base, root, seasons } = ctx.paths("starters.html");
   const isToday = d.gameDate !== null && d.gameDate === d.builtOn;
 
   const sideBlock = (side: ProbableSide, opponent: ProbableSide): RawHtml => html`<div class="sside"
@@ -508,6 +511,8 @@ ${d.games.map((g, i) =>
   return page({
     title: `予告先発${d.gameDate === null ? "" : ` — ${fullDate(d.gameDate)}`}`,
     base,
+    root,
+    seasons,
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
@@ -532,7 +537,7 @@ export interface MatchupPageData {
  * 근거: `docs/decisions/2026-08-15-live-matchup-feasibility.md`
  */
 export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): string {
-  const base = "";
+  const { base, root, seasons } = ctx.paths("matchup.html");
   const side = (id: string, label: string, placeholder: string): RawHtml =>
     html`<div class="pickside">
     <label for="pick${id}">${label}</label>
@@ -584,6 +589,8 @@ export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): strin
   return page({
     title: `対戦を選ぶ — ${d.season}年`,
     base,
+    root,
+    seasons,
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,

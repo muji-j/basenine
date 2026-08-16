@@ -521,6 +521,21 @@ table.stand .dif i{position:absolute;bottom:3px;height:3px;width:calc(var(--w) *
 table.stand .dif i.p{left:50%}
 table.stand .dif i.n{right:50%}
 
+/* ── シーズン切り替え ────────────────────────────────────────
+   ⚠**연도 두 개만 띄우지 않는다.** 「シーズン」이라는 이름이 없으면 그게 무엇을 고르는
+   조작인지 알 수 없고, 순위표의 리그 탭과 헷갈린다. */
+.seasons{display:flex;align-items:center;gap:4px;padding:5px var(--pad);
+  border-bottom:1px solid var(--hair);background:var(--panel-2);flex-wrap:wrap}
+.slab{font-size:9.5px;letter-spacing:.16em;color:var(--tx-3);margin-right:5px}
+/* 시즌 중 이적 이력. ⚠**합계와 순위가 다른 이유**가 여기 적힌다 */
+.stint{display:block;font-size:10.5px;color:var(--tx-3);margin-top:2px}
+.seasons a{font-size:12px;padding:3px 10px;text-decoration:none;color:var(--tx-2);
+  border:1px solid transparent;transition:color var(--fast) var(--ease)}
+.seasons a:hover{color:var(--tx);border-color:var(--hair-2)}
+.seasons a[aria-current="page"]{color:var(--tx);font-weight:700;border-color:var(--tx-3);background:var(--panel)}
+/* 같은 화면이 그 시즌에 없어 다른 곳으로 보낼 때. **숨기지 않고 표시한다** */
+.seasons a i{font-style:normal;font-size:9px;color:var(--tx-3);margin-left:3px}
+
 /* ── 試合（直近の結果） ──────────────────────────────────────
    ⚠**원본 표(이닝별 스코어보드)를 재현하지 않는다**(L2). 우리가 가진 것은 R·H·E뿐이고,
    화면은 그 사실에 맞춰 만든다 — 없는 칸을 흉내 내지 않는다. */

@@ -18,6 +18,12 @@ export interface SeasonBatting {
   displayName: string;
   teamCode: string;
   league: League;
+  /**
+   * 이 소속에서의 **마지막 출장일**.
+   * ⚠소속을 「가장 최근에 뛴 팀」으로 정하는 근거이자, 화면이 이적 이력을
+   * 시간 순으로 잇는 근거다.
+   */
+  lastDate: string;
   games: number;
   /** 득점·타점·도루는 지표 산식의 입력이 아니라 표시용이라 line 밖에 둔다 */
   runs: number;
@@ -51,6 +57,12 @@ export interface SeasonPitching {
   displayName: string;
   teamCode: string;
   league: League;
+  /**
+   * 이 소속에서의 **마지막 출장일**.
+   * ⚠소속을 「가장 최근에 뛴 팀」으로 정하는 근거이자, 화면이 이적 이력을
+   * 시간 순으로 잇는 근거다.
+   */
+  lastDate: string;
   games: number;
   line: PitchingLine;
   /** 선발 등판 수 */
@@ -81,8 +93,20 @@ export interface SeasonPitching {
 
 export interface SeasonAggregate {
   season: number;
+  /**
+   * 선수별 **시즌 합계**. 리그를 넘어 이적해도 한 줄이다 — 선수 페이지가 쓴다.
+   * 「이 선수의 올 시즌 성적」은 사람이 기대하는 대로 합계다.
+   */
   batting: SeasonBatting[];
   pitching: SeasonPitching[];
+  /**
+   * 선수 × **리그**. 리그를 넘어 이적하면 두 줄이 된다 — 순위표와 리그 상수가 쓴다.
+   *
+   * ⚠**순위와 합계를 같은 배열로 만들지 않는다.** NPB의 타이틀은 소속 리그 성적만 세고,
+   * 선수 페이지가 보여줄 것은 시즌 합계다. 둘은 다른 질문이라 배열도 둘이다.
+   */
+  battingByLeague: SeasonBatting[];
+  pitchingByLeague: SeasonPitching[];
   /** 팀별 소화 경기수. 규정타석 계산에 쓴다 */
   teamGames: Map<string, number>;
   /** 스캔한 행 수(개산). D1 읽기 예산 감시용 */
@@ -101,6 +125,7 @@ SELECT b.player_id AS playerId,
        p.display_name AS displayName,
        ${TEAM_EXPR} AS teamCode,
        COUNT(*) AS games,
+       MAX(g.game_date) AS lastDate,
        SUM(b.pa) AS pa, SUM(b.ab) AS ab, SUM(b.h) AS h,
        SUM(b.d2) AS d2, SUM(b.d3) AS d3, SUM(b.hr) AS hr,
        SUM(b.bb) AS bb, SUM(b.ibb) AS ibb, SUM(b.hbp) AS hbp,
@@ -160,6 +185,7 @@ SELECT t.player_id AS playerId,
        p.display_name AS displayName,
        CASE t.side WHEN 'away' THEN g.away_code ELSE g.home_code END AS teamCode,
        COUNT(*) AS games,
+       MAX(g.game_date) AS lastDate,
        SUM(CASE WHEN ${IS_START} THEN 1 ELSE 0 END) AS starts,
        SUM(t.outs) AS outs, SUM(t.bf) AS bf, SUM(t.h) AS h, SUM(t.hr) AS hr,
        SUM(t.bb) AS bb, SUM(t.hbp) AS hbp, SUM(t.so) AS so,
@@ -213,27 +239,53 @@ interface Keyed {
   displayName: string;
   teamCode: string;
   games: number;
+  /** 이 팀에서의 **마지막 출장일**. 소속을 정하는 근거다 */
+  lastDate: string;
 }
 
 /**
- * 이적 선수의 성적을 합산하고 **소속은 출장이 가장 많은 팀**으로 둔다.
+ * 이적 선수의 성적을 합치고 **소속은 출장이 가장 많은 팀**으로 둔다.
  *
- * ⚠규칙을 코드에만 두지 않고 여기 적어둔다 — 시즌 중 이적은 매년 있고,
- * 어느 팀으로 셀지는 정답이 없는 선택이다.
+ * ⚠**리그를 넘는 이적은 리그별로 나눠 센다**(2026-08-16 확정).
+ * NPB의 개인 타이틀은 **소속 리그에서 낸 성적만** 센다. 합쳐서 한 리그에 넣으면
+ * 반대 리그에서 친 안타가 그 리그의 순위표에 들어간다 — 실측(2026): 山本가
+ * DeNA 28경기 105타석 · ソフトバンク 27경기 97타석인데, 합산 202타석이
+ * 「セントラル 순위」에 실려 있었다. 리그 상수(wOBA 기준)에도 반대 리그분이 섞였다.
+ * ⚠**시즌 중 이적은 사실상 전부 리그를 넘는다** — 실측 2025년 4명·2026년 2명 전원.
+ *
+ * ⚠**같은 리그 안의 이적은 합친다.** 그건 NPB도 한 리그의 성적으로 세고,
+ * 나누면 규정타석에 아무도 못 닿는 표가 된다.
+ *
+ * @param by 무엇을 하나로 볼 것인가. `player`면 시즌 합계, `playerLeague`면 리그별
  * @param sum 숫자 필드를 어떻게 더할지는 호출자가 안다(타자·투수 필드가 다르므로)
  */
-function mergeByPlayer<T extends Keyed>(rows: readonly T[], sum: (a: T, b: T) => T): T[] {
+function mergeByPlayer<T extends Keyed>(
+  rows: readonly T[],
+  sum: (a: T, b: T) => T,
+  by: "player" | "playerLeague" = "player",
+): T[] {
+  const keyOf = (r: T): string =>
+    by === "player" ? r.playerId : `${r.playerId}|${leagueOf(r.teamCode)}`;
+
+  /**
+   * ⚠**소속은 「가장 최근에 뛴 팀」이다.** 출장 수로 정하면 지금 있는 팀과 달라진다 —
+   * 실측(2026): 山本는 DeNA 28경기 · ソフトバンク 27경기라 출장 기준으로는 DeNA가 되는데,
+   * **지금 뛰는 곳은 ソフトバンク**다. 「소속」은 통계적 편의가 아니라 현재 상태다.
+   * 날짜가 같으면(더블헤더 중 이적 같은 비현실적 경우) 출장이 많은 쪽으로 간다.
+   */
   const primary = new Map<string, T>();
   for (const r of rows) {
-    const cur = primary.get(r.playerId);
-    if (cur === undefined || r.games > cur.games) primary.set(r.playerId, r);
+    const cur = primary.get(keyOf(r));
+    const newer =
+      cur === undefined || r.lastDate > cur.lastDate || (r.lastDate === cur.lastDate && r.games > cur.games);
+    if (newer) primary.set(keyOf(r), r);
   }
   const merged = new Map<string, T>();
   for (const r of rows) {
-    const acc = merged.get(r.playerId);
-    merged.set(r.playerId, acc === undefined ? r : sum(acc, r));
+    const acc = merged.get(keyOf(r));
+    merged.set(keyOf(r), acc === undefined ? r : sum(acc, r));
   }
-  return [...merged.values()].map((r) => ({ ...r, teamCode: primary.get(r.playerId)!.teamCode }));
+  return [...merged.values()].map((r) => ({ ...r, teamCode: primary.get(keyOf(r))!.teamCode }));
 }
 
 /**
@@ -257,32 +309,35 @@ export function aggregateSeason(
   const teamGames = new Map<string, number>();
   for (const r of teamRows) teamGames.set(r.code, (teamGames.get(r.code) ?? 0) + r.n);
 
-  const batting = mergeByPlayer(
-    batRows.map((r) => ({
+  const batBase = batRows.map((r) => ({
       playerId: String(r["playerId"]),
       displayName: String(r["displayName"]),
       teamCode: String(r["teamCode"]),
       games: Number(r["games"]),
+      lastDate: String(r["lastDate"]),
       pa: Number(r["pa"]), ab: Number(r["ab"]), h: Number(r["h"]),
       d2: Number(r["d2"]), d3: Number(r["d3"]), hr: Number(r["hr"]),
       bb: Number(r["bb"]), ibb: Number(r["ibb"]), hbp: Number(r["hbp"]),
       sf: Number(r["sf"]), sh: Number(r["sh"]), so: Number(r["so"]), roe: Number(r["roe"]),
       runs: Number(r["runs"]), rbi: Number(r["rbi"]), sb: Number(r["sb"]),
-    })),
-    (a, b) => ({
-      ...a,
-      games: a.games + b.games,
-      pa: a.pa + b.pa, ab: a.ab + b.ab, h: a.h + b.h,
-      d2: a.d2 + b.d2, d3: a.d3 + b.d3, hr: a.hr + b.hr,
-      bb: a.bb + b.bb, ibb: a.ibb + b.ibb, hbp: a.hbp + b.hbp,
-      sf: a.sf + b.sf, sh: a.sh + b.sh, so: a.so + b.so, roe: a.roe + b.roe,
-      runs: a.runs + b.runs, rbi: a.rbi + b.rbi, sb: a.sb + b.sb,
-    }),
-  ).map((r) => ({
+  }));
+  const addBat = (a: (typeof batBase)[number], b: (typeof batBase)[number]): (typeof batBase)[number] => ({
+    ...a,
+    // ⚠날짜는 더하지 않는다 — 늦은 쪽을 남긴다
+    lastDate: a.lastDate > b.lastDate ? a.lastDate : b.lastDate,
+    games: a.games + b.games,
+    pa: a.pa + b.pa, ab: a.ab + b.ab, h: a.h + b.h,
+    d2: a.d2 + b.d2, d3: a.d3 + b.d3, hr: a.hr + b.hr,
+    bb: a.bb + b.bb, ibb: a.ibb + b.ibb, hbp: a.hbp + b.hbp,
+    sf: a.sf + b.sf, sh: a.sh + b.sh, so: a.so + b.so, roe: a.roe + b.roe,
+    runs: a.runs + b.runs, rbi: a.rbi + b.rbi, sb: a.sb + b.sb,
+  });
+  const toBatting = (r: (typeof batBase)[number]): SeasonBatting => ({
     playerId: r.playerId,
     displayName: r.displayName,
     teamCode: r.teamCode,
     league: leagueOf(r.teamCode),
+    lastDate: r.lastDate,
     games: r.games,
     runs: r.runs,
     rbi: r.rbi,
@@ -291,7 +346,9 @@ export function aggregateSeason(
       pa: r.pa, ab: r.ab, h: r.h, double: r.d2, triple: r.d3, hr: r.hr,
       bb: r.bb, ibb: r.ibb, hbp: r.hbp, sf: r.sf, sh: r.sh, so: r.so, roe: r.roe,
     } satisfies BattingLine,
-  }));
+  });
+  const batting = mergeByPlayer(batBase, addBat, "player").map(toBatting);
+  const battingByLeague = mergeByPlayer(batBase, addBat, "playerLeague").map(toBatting);
 
   /** `sp_`/`rp_` 접두사가 붙은 열을 한 벌의 `PitchingLine`으로 모은다 */
   const splitLine = (r: Record<string, number>, p: "sp" | "rp"): PitchingLine => ({
@@ -305,8 +362,7 @@ export function aggregateSeason(
     er: a.er + b.er, r: a.r + b.r,
   });
 
-  const pitching = mergeByPlayer(
-    pitRows.map((r) => {
+  const pitBase = pitRows.map((r) => {
       const n = Object.fromEntries(
         Object.entries(r).map(([k, v]) => [k, typeof v === "number" ? v : 0]),
       ) as Record<string, number>;
@@ -315,6 +371,7 @@ export function aggregateSeason(
         displayName: String(r["displayName"]),
         teamCode: String(r["teamCode"]),
         games: Number(r["games"]),
+        lastDate: String(r["lastDate"]),
         starts: Number(r["starts"]),
         // ⚠**일부만 읽힌 합계는 합계가 아니다.** 전부 읽혔을 때만 값을 낸다
         pitches: partial(r["pitches"], r["pitchesN"], r["games"]),
@@ -330,9 +387,10 @@ export function aggregateSeason(
           hld: Number(r["hld"]), reliefW: Number(r["reliefW"]),
         } satisfies Decisions,
       };
-    }),
-    (a, b) => ({
+  });
+  const addPit = (a: (typeof pitBase)[number], b: (typeof pitBase)[number]): (typeof pitBase)[number] => ({
       ...a,
+      lastDate: a.lastDate > b.lastDate ? a.lastDate : b.lastDate,
       games: a.games + b.games,
       starts: a.starts + b.starts,
       pitches: a.pitches === null && b.pitches === null ? null : (a.pitches ?? 0) + (b.pitches ?? 0),
@@ -350,12 +408,13 @@ export function aggregateSeason(
         hld: a.decisions.hld + b.decisions.hld,
         reliefW: a.decisions.reliefW + b.decisions.reliefW,
       },
-    }),
-  ).map((r) => ({
+  });
+  const toPitching = (r: (typeof pitBase)[number]): SeasonPitching => ({
     playerId: r.playerId,
     displayName: r.displayName,
     teamCode: r.teamCode,
     league: leagueOf(r.teamCode),
+    lastDate: r.lastDate,
     games: r.games,
     starts: r.starts,
     pitches: r.pitches,
@@ -377,7 +436,17 @@ export function aggregateSeason(
       ibb: 0,
       hbp: r.hbp, so: r.so, er: r.er, r: r.runs,
     } satisfies PitchingLine,
-  }));
+  });
+  const pitching = mergeByPlayer(pitBase, addPit, "player").map(toPitching);
+  const pitchingByLeague = mergeByPlayer(pitBase, addPit, "playerLeague").map(toPitching);
 
-  return { season, batting, pitching, teamGames, readRows: scanned.n };
+  return {
+    season,
+    batting,
+    pitching,
+    battingByLeague,
+    pitchingByLeague,
+    teamGames,
+    readRows: scanned.n,
+  };
 }

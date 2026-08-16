@@ -298,7 +298,7 @@ export interface ComparePageData {
  * 스크립트가 죽어도 「고장난 빈 페이지」가 아니라 「고를 것이 있는 페이지」로 보여야 한다(M12).
  */
 export function renderComparePage(d: ComparePageData, ctx: RenderContext): string {
-  const base = "";
+  const { base, root, seasons } = ctx.paths("compare.html");
   const side = (id: string, label: string, placeholder: string): RawHtml =>
     html`<div class="pickside">
     <label for="cmp${id}">${label}</label>
@@ -352,6 +352,8 @@ export function renderComparePage(d: ComparePageData, ctx: RenderContext): strin
   return page({
     title: `選手をくらべる — ${d.season}年`,
     base,
+    root,
+    seasons,
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
