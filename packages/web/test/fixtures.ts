@@ -36,6 +36,7 @@ export function battingBlock(over: Partial<BattingBlockData> = {}): BattingBlock
     runs: 76,
     rbi: 76,
     sb: 5,
+    steal: { cs: 2, pickoff: 1, rate: { value: 5 / 7, denominator: 7 } },
     line: BATTING_LINE,
     avg: r(0.3167, 382),
     obp: r(0.4032, 442),

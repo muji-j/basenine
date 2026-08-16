@@ -54,6 +54,11 @@ export interface BattingBlockData {
   runs: number;
   rbi: number;
   sb: number;
+  /**
+   * 走塁 — **타석 로그에서만 나오는 값**이다. 박스스코어는 `盗塁` 만 준다.
+   * ⚠`pickoff`(견제사)는 `rate` 의 분모에 들어가지 않는다 — NPB 기록에서 盗塁刺 가 아니다.
+   */
+  steal: { cs: number; pickoff: number; rate: Rate };
   line: BattingLine;
   avg: Rate;
   obp: Rate;
@@ -624,6 +629,16 @@ function standardBatting(b: BattingBlockData): RawHtml {
         ${statCount("犠飛", b.line.sf)}
         ${statCount("犠打", b.line.sh)}
         ${statCount("敬遠", b.line.ibb)}`,
+      /**
+       * 走塁。⚠**이 단이 존재하는 이유는 분모다**(M2) — 박스스코어는 `盗塁` 만 주므로
+       * 지금까지 화면은 「30도루」라고만 말할 수 있었다. 40번 시도해 30번 성공한 것과
+       * 33번 시도해 30번 성공한 것이 같은 표시가 됐다.
+       * ⚠**견제사는 성공률의 분모가 아니다** — NPB 기록에서 牽制死 는 盗塁刺 가 아니다.
+       *   따로 세서 따로 보여준다.
+       */
+      html`${statCount("盗塁刺", b.steal.cs)}
+        ${statRate("盗塁成功率", b.steal.rate, "企図", 3)}
+        ${statCount("牽制死", b.steal.pickoff)}`,
     ),
   });
 }

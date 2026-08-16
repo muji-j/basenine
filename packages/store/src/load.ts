@@ -50,12 +50,14 @@ export interface WriteBudget {
   batting: number;
   pitching: number;
   paEvents: number;
+  /** 주자 사건(도루·도루자·견제사). 타석과 다른 계열이라 따로 센다 */
+  runnerEvents: number;
   quarantine: number;
   total: number;
 }
 
 export function emptyBudget(): WriteBudget {
-  return { players: 0, games: 0, batting: 0, pitching: 0, paEvents: 0, quarantine: 0, total: 0 };
+  return { players: 0, games: 0, batting: 0, pitching: 0, paEvents: 0, runnerEvents: 0, quarantine: 0, total: 0 };
 }
 
 /** D1 무료 플랜의 하루 쓰기 한도. 초과하면 **과금이 아니라 차단**이다. */
@@ -253,6 +255,47 @@ export function replacePaEvents(db: Db, gameId: string, rows: readonly PaEventRo
       r.gameId, r.seq, r.inning, r.half, r.outsBefore, r.bases,
       r.batterId, r.pitcherId, r.outcome, r.rbi, r.rawBox, r.rawPbp, r.status, r.runsScored,
       r.ballCount,
+    );
+  }
+  return rows.length;
+}
+
+/** 적재용 주자 사건 1행. 파서의 `RunnerEvent` 에 `gameId`·`seq` 를 붙인 것이다 */
+export interface RunnerEventRow {
+  gameId: string;
+  /** 경기 내 주자 사건 순번(1부터). ⚠타석 순번과 **다른 계열**이다 */
+  seq: number;
+  inning: number;
+  half: "top" | "bottom";
+  afterSeq: number;
+  outsBefore: number;
+  bases: string;
+  runnerId: string;
+  kind: "steal" | "caughtStealing" | "pickoff";
+  base: "1b" | "2b" | "3b" | "home";
+  doubleSteal: boolean;
+  raw: string;
+}
+
+/**
+ * 주자 사건(도루·도루자·견제사).
+ *
+ * ⚠**멱등이다**(M5) — 경기 단위로 지우고 넣는다. 재수집·재적재가 실제로 일어난다.
+ * ⚠**미성립 경기는 애초에 여기 오지 않는다.** 파서가 `notPlayed` 를 돌려주기 때문이다 —
+ * 실측으로 그 경계가 값을 갈랐다: 2024/0710 c-g-14 는 **우천 노게임**이라 기록이 무효인데
+ * 페이지에는 도루 1건이 인쇄되어 있다. 세면 시즌 합계가 838이 아니라 839가 된다.
+ */
+export function replaceRunnerEvents(db: Db, gameId: string, rows: readonly RunnerEventRow[]): number {
+  db.raw.prepare("DELETE FROM runner_event WHERE game_id = ?").run(gameId);
+  const stmt = db.raw.prepare(
+    `INSERT INTO runner_event (game_id, seq, inning, half, after_seq, outs_before, bases,
+       runner_id, kind, base, double_steal, raw)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  for (const r of rows) {
+    stmt.run(
+      r.gameId, r.seq, r.inning, r.half, r.afterSeq, r.outsBefore, r.bases,
+      r.runnerId, r.kind, r.base, r.doubleSteal ? 1 : 0, r.raw,
     );
   }
   return rows.length;

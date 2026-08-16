@@ -9,7 +9,7 @@ export {
 } from "./box.ts";
 export type { BatterRow, BoxScore, PitcherRow } from "./box.ts";
 export { PlayByPlayParseError, parsePlayByPlay } from "./playbyplay.ts";
-export type { PlayByPlay, PlayEvent } from "./playbyplay.ts";
+export type { PlayByPlay, PlayEvent, RunnerEvent } from "./playbyplay.ts";
 export { LineScoreParseError, parseLineScore } from "./linescore.ts";
 export type { LineScore } from "./linescore.ts";
 export { PlayerParseError, parseBirthDate, parsePlayerProfile, parseThrowsBats } from "./player.ts";

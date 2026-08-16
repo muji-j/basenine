@@ -49,4 +49,6 @@ export type { BattedBall } from "./batted-ball.ts";
 export { games, headToHead } from "./head-to-head.ts";
 export type { HeadToHead } from "./head-to-head.ts";
 export { buntValues, timesThroughOrder } from "./bunt.ts";
+export { attempts, steals, successRate } from "./steal.ts";
+export type { StealLine } from "./steal.ts";
 export type { BuntSituation, TimesThrough } from "./bunt.ts";

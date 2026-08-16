@@ -8,11 +8,13 @@ export { emptyBattingLine, foldOutcomes } from "./fold.ts";
 export type { OutcomeTally } from "./fold.ts";
 export { alignPaEvents } from "./align.ts";
 export type { AlignResult, PaEventRow } from "./align.ts";
+export type { RunnerEventRow } from "./load.ts";
 export {
   D1_DAILY_WRITE_LIMIT,
   emptyBudget,
   ensurePlayer,
   replacePaEvents,
+  replaceRunnerEvents,
   replaceQuarantine,
   upsertBatting,
   upsertGame,

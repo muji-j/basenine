@@ -17,7 +17,7 @@ import {
   parsePlayByPlay,
   venuesByGameId,
 } from "@bb-app/parser";
-import type { PlayEvent } from "@bb-app/parser";
+import type { PlayEvent, RunnerEvent } from "@bb-app/parser";
 import { competitionFromLabel, competitionOf } from "@bb-app/domain";
 import { openDb } from "../src/db.ts";
 import { alignPaEvents } from "../src/align.ts";
@@ -28,6 +28,7 @@ import {
   D1_DAILY_WRITE_LIMIT,
   emptyBudget,
   replacePaEvents,
+  replaceRunnerEvents,
   replaceQuarantine,
   upsertBatting,
   upsertGame,
@@ -163,7 +164,9 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
   if (values.to !== undefined && meta.gameDate > values.to) continue;
 
   // ⚠예산을 넘기기 **전에** 멈춘다. 넘긴 뒤에는 D1이 쿼리를 거부하므로 복구가 번거롭다.
-  const spent = budget.players + budget.games + budget.batting + budget.pitching + budget.paEvents + budget.quarantine;
+  // ⚠**주자 사건도 쓰기다.** 합계에서 빼면 한도를 조용히 넘긴다
+  const spent = budget.players + budget.games + budget.batting + budget.pitching
+    + budget.paEvents + budget.runnerEvents + budget.quarantine;
   if (spent >= maxWrites) {
     stoppedAt = meta.gameDate;
     break;
@@ -273,6 +276,8 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
 
   // 타석 이벤트의 재료를 **쓰기 전에** 읽어둔다. 트랜잭션 안에서 파일을 기다리지 않게 한다.
   let pbpEvents: PlayEvent[] | null = null;
+  /** 주자 사건. ⚠**미성립 경기에는 아예 오지 않는다** — 파서가 `notPlayed` 를 돌려주기 때문이다 */
+  let pbpRunners: RunnerEvent[] = [];
   let runsForCompleted: number[] = [];
   const runsQuarantine: QuarantineRow[] = [];
   if (!values["skip-events"]) {
@@ -282,6 +287,7 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
       const pbp = parsePlayByPlay(pbpHtml);
       if (pbp.status === "played") {
         pbpEvents = pbp.events;
+        pbpRunners = pbp.runners;
         // 타석별 득점을 유도하고 라인스코어로 검증한다.
         const derived = deriveRuns(meta.gameId, pbp.events.filter((e) => e.completed), parseLineScore(pbpHtml));
         runsForCompleted = derived.runsPerEvent;
@@ -345,6 +351,16 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
     quarantine.push(...aligned.quarantine, ...runsQuarantine);
   }
 
+  /**
+   * 주자 사건. ⚠**타석과 별개의 표다** — 타자가 없으므로 `pa_event` 에 넣으면 타석 수가 부풀어
+   * 타율의 분모가 틀린다. 대조 실측: 경기별 도루 수가 박스의 `盗塁` 열과 **2,395경기 중 어긋남 0건**.
+   */
+  budget.runnerEvents += replaceRunnerEvents(
+    db,
+    meta.gameId,
+    pbpRunners.map((r, i) => ({ ...r, gameId: meta.gameId, seq: i + 1 })),
+  );
+
   budget.quarantine += replaceQuarantine(db, meta.gameId, quarantine, nowIso);
   });
 
@@ -352,7 +368,8 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
 }
 
 budget.total =
-  budget.players + budget.games + budget.batting + budget.pitching + budget.paEvents + budget.quarantine;
+  budget.players + budget.games + budget.batting + budget.pitching
+  + budget.paEvents + budget.runnerEvents + budget.quarantine;
 
 console.log(`성립 ${played}건 · 미성립 ${notPlayed}건 · 실패 ${failed}건`);
 if (lineScoreFailed > 0) {
@@ -366,7 +383,8 @@ if (lineScoreFailed > 0) {
 console.log(
   `\n=== 쓰기 예산 (D1 무료 한도 ${D1_DAILY_WRITE_LIMIT.toLocaleString()}행/일) ===\n` +
     `선수 ${budget.players} · 경기 ${budget.games} · 타격 ${budget.batting} · ` +
-    `투구 ${budget.pitching} · 타석 ${budget.paEvents} · 격리 ${budget.quarantine}\n` +
+    `투구 ${budget.pitching} · 타석 ${budget.paEvents} · 주자 ${budget.runnerEvents} · ` +
+    `격리 ${budget.quarantine}\n` +
     `합계 ${budget.total}행 = 한도의 ${((budget.total / D1_DAILY_WRITE_LIMIT) * 100).toFixed(1)}%`,
 );
 

@@ -6,7 +6,7 @@
  * 만든 값을 옮겨 담기만 한다. 여기에 산식이 생기는 순간 값이 두 벌이 된다.
  */
 import type { Db } from "@bb-app/store";
-import { battedBalls, buntValues, headToHead } from "@bb-app/aggregate";
+import { attempts, battedBalls, buntValues, headToHead, steals, successRate } from "@bb-app/aggregate";
 import type { HeadToHead } from "@bb-app/aggregate";
 import type { BattedBallData, BuntCell } from "./player-page.ts";
 import type { BattingLine, LeagueConstants, PitchingLine, Rate } from "@bb-app/metrics";
@@ -2206,6 +2206,20 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     const cur = bbBatter.get(b.playerId);
     bbBatter.set(b.playerId, cur === undefined ? b : addBatted(cur, b));
   }
+  /**
+   * 도루 성적. ⚠**선수당 한 벌씩만 만든다**(리그를 나눠 두 번 부르면 이적 선수가 반씩 나뉜다).
+   * ⚠대회를 섞지 않는다(§2-1) — 올스타를 넣으면 2026 도루가 611이 아니라 620이 된다.
+   */
+  const stealByPlayer = new Map<string, { sb: number; cs: number; pickoff: number }>();
+  for (const st of steals(db, o.season, competition, through)) {
+    const cur = stealByPlayer.get(st.playerId);
+    stealByPlayer.set(st.playerId, {
+      sb: (cur?.sb ?? 0) + st.sb,
+      cs: (cur?.cs ?? 0) + st.cs,
+      pickoff: (cur?.pickoff ?? 0) + st.pickoff,
+    });
+  }
+
   const bbPitcher = new Map<string, BattedBallData>();
   for (const b of battedBalls(db, o.season, competition, through, true)) {
     const cur = bbPitcher.get(b.playerId);
@@ -2390,6 +2404,21 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
             runs: bat.player.runs,
             rbi: bat.player.rbi,
             sb: bat.player.sb,
+            /**
+             * 走塁. ⚠**분모는 기도(성공+도루자)이고 견제사는 들어가지 않는다** —
+             * NPB 기록에서 牽制死 는 盗塁刺 가 아니다. 넣으면 전 선수의 성공률이 낮아진다.
+             * ⚠기도 0이면 값은 null 이다(M11) — 「안 뛴 사람」과 「다 실패한 사람」은 다르다.
+             */
+            steal: (() => {
+              const st = stealByPlayer.get(playerId);
+              const cs = st?.cs ?? 0;
+              const sbCount = st?.sb ?? bat.player.sb;
+              return {
+                cs,
+                pickoff: st?.pickoff ?? 0,
+                rate: { value: successRate({ sb: sbCount, cs }), denominator: attempts({ sb: sbCount, cs }) },
+              };
+            })(),
             line: bat.player.line,
             avg: bat.avg,
             obp: bat.obp,
