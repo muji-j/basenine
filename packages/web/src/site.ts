@@ -95,7 +95,7 @@ export function buildSite(
     { path: at("starters.html"), content: renderStartersPage(data.starters, ctx) },
     {
       path: at("matchup.html"),
-      content: renderMatchupPage({ season: data.season, asOf: data.asOf }, ctx),
+      content: renderMatchupPage(data.matchup, ctx),
     },
     {
       path: at("compare.html"),

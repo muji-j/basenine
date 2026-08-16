@@ -39,6 +39,7 @@ function siteData(over: Partial<SiteData> = {}): SiteData {
     },
     ranking: { season: 2026, asOf: "2026-08-14", standings: [], tieRule: "同順位", leagues: [] },
     starters: { gameDate: null, builtOn: "2026-08-15", games: [] },
+    matchup: { season: 2026, asOf: "2026-08-14", pickDate: null, builtOn: "2026-08-15", games: [] },
     today: {
       gameDate: "2026-08-14",
       builtOn: "2026-08-15",

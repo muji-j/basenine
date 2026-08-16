@@ -92,6 +92,10 @@ import type {
 import type {
   IndexPageData,
   LeagueSection,
+  MatchupGame,
+  MatchupPageData,
+  MatchupPick,
+  MatchupTeam,
   ProbableGame,
   ProbableSide,
   RankingCategory,
@@ -103,7 +107,7 @@ import type {
 } from "./pages.ts";
 import type { StandingRow, StandingsSection } from "./pages.ts";
 // 予告先発 화면의 앵커. **試合 카드가 그리로 가므로 키를 두 벌 만들지 않는다**(M1)
-import { gameKey, startersAnchor } from "./pages.ts";
+import { batterPick, gameKey, pitcherPick, startersAnchor, unseenPitcherPick } from "./pages.ts";
 import type { RankDigits } from "./parts.ts";
 import { denominator, innings } from "./format.ts";
 import { readFileSync } from "node:fs";
@@ -1082,6 +1086,96 @@ function starRuleText(): string {
  * ⚠**예고선발의 짝짓기를 다시 구현하지 않는다**(M1). 予告先発 페이지가 이미 만든
  * `StartersPageData`에서 뽑아 줄인다 — 두 벌로 만들면 더블헤더에서 한쪽만 어긋난다.
  */
+/**
+ * 「対戦を選ぶ」의 빠른 선택 — **오늘 대전하는 두 팀의 선수만** 버튼으로 낸다.
+ *
+ * ⚠**라이브를 취득하는 것이 아니다.** 「누가 대전하는가」는 予告先発로 공표된 사실이고,
+ * 「지금 누가 던지고 있는가」는 여전히 화면을 보는 사람이 고른다(§6 · 라이브 취득 금지).
+ *
+ * ⚠**목록을 자르지 않는다.** 대타·중간계투가 잘리면 「내가 찾는 사람이 없다」가 되고
+ * 그 순간 이 기능은 없는 것과 같다. 정렬만 출장 순으로 해서 주전이 먼저 오게 한다.
+ * ⚠**소속은 시즌 집계의 소속(=가장 최근에 뛴 팀)을 따른다.** 이적 선수가 옛 팀 목록에
+ * 남아 있으면 오늘 나오지 않는 사람을 고르게 된다.
+ */
+function matchupPage(
+  o: LoadOptions,
+  asOf: string | null,
+  starters: StartersPageData,
+  battingByPlayer: ReadonlyMap<string, BattingEntry>,
+  pitchingByPlayer: ReadonlyMap<string, PitchingEntry>,
+): MatchupPageData {
+  /** ⚠**정렬 키는 표시 문자열에서 되읽지 않는다.** 「7.1回」를 파싱하면 7.1과 7.2가 같아진다 */
+  interface Sortable {
+    pick: MatchupPick;
+    usage: number;
+  }
+  const byTeamBat = new Map<string, Sortable[]>();
+  const byTeamPit = new Map<string, Sortable[]>();
+  const push = (m: Map<string, Sortable[]>, code: string, s: Sortable): void => {
+    const list = m.get(code);
+    if (list === undefined) m.set(code, [s]);
+    else list.push(s);
+  };
+  for (const e of battingByPlayer.values()) {
+    if (e.player.line.pa === 0) continue;
+    push(byTeamBat, e.player.teamCode, {
+      usage: e.player.line.pa,
+      // ⚠**표시 문자열을 여기서 만들지 않는다.** 입구를 하나로 두면 비율이 들어갈 자리가 없다(M2)
+      pick: batterPick(e.player.playerId, e.player.displayName, e.player.line.pa),
+    });
+  }
+  for (const e of pitchingByPlayer.values()) {
+    if (e.player.line.outs === 0) continue;
+    push(byTeamPit, e.player.teamCode, {
+      usage: e.player.line.outs,
+      pick: pitcherPick(e.player.playerId, e.player.displayName, e.player.line.outs),
+    });
+  }
+  // 출장이 많은 순. 같으면 이름 순으로 고정한다 — 빌드마다 순서가 흔들리면 diff가 못 쓰게 된다
+  const sorted = (list: readonly Sortable[]): MatchupPick[] =>
+    [...list]
+      .sort((a, b) => b.usage - a.usage || a.pick.name.localeCompare(b.pick.name, "ja"))
+      .map((s) => s.pick);
+
+  const games: MatchupGame[] = starters.games.map((g) => {
+    const team = (s: ProbableSide): MatchupTeam => {
+      // 予告先発는 맨 앞에 두고 표식을 붙인다 — 이 화면에서 가장 눌릴 확률이 높은 버튼이다
+      const pitchers = sorted(byTeamPit.get(s.teamCode) ?? []).map((p) =>
+        p.playerId === s.playerId ? { ...p, probable: true } : p,
+      );
+      // ⚠**올 시즌 등판이 없는 예고선발이 실재한다**(1군 승격·이적 직후).
+      // 목록에서 빼면 **이 화면에서 가장 눌릴 사람이 없는** 상태가 되므로 넣되,
+      // 「기록 0」이 아니라 「기록이 없다」고 쓴다(M11)
+      if (s.playerId !== null && s.name !== null && !pitchers.some((p) => p.playerId === s.playerId)) {
+        pitchers.unshift(unseenPitcherPick(s.playerId, s.name));
+      }
+      pitchers.sort((a, b) => Number(b.probable) - Number(a.probable));
+      return {
+        teamCode: s.teamCode,
+        shortName: s.shortName,
+        name: s.teamName,
+        color: s.color,
+        pitchers,
+        batters: sorted(byTeamBat.get(s.teamCode) ?? []),
+      };
+    };
+    return {
+      key: gameKey(g),
+      venue: g.venue,
+      startTime: g.startTime,
+      sides: [team(g.sides[0]), team(g.sides[1])],
+    };
+  });
+
+  return {
+    season: o.season,
+    asOf,
+    pickDate: starters.gameDate,
+    builtOn: o.builtOn,
+    games,
+  };
+}
+
 function todayPage(
   db: Db,
   o: LoadOptions,
@@ -1233,6 +1327,7 @@ export interface SiteData {
   index: IndexPageData;
   ranking: RankingPageData;
   starters: StartersPageData;
+  matchup: MatchupPageData;
   today: TodayPageData;
   /** 경기 페이지. **빌드 대상 시즌만** — 2025년은 아카이브에 있지만 화면은 아직 한 시즌이다 */
   games: GamePageData[];
@@ -1740,6 +1835,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       leagues: sections,
     },
     starters: startersData,
+    matchup: matchupPage(o, meta.latest, startersData, battingByPlayer, pitchingByPlayer),
     today: todayPage(db, o, startersData, nameOf, new Set(gameList.map((g) => g.gameId))),
     games: gameList,
   };

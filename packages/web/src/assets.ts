@@ -447,6 +447,46 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
 .go.alt{background:transparent;color:var(--tx-2);border-color:var(--hair-2);font-weight:400;margin-left:7px}
 .go.alt:hover:not(:disabled){color:var(--tx);border-color:var(--tx-3);opacity:1}
 
+/* ⚠**고른 것과 실행 버튼은 화면에서 사라지면 안 된다.** 아래의 선수 목록이 길어서
+   스크롤하면 「골랐는데 어떻게 보지?」가 된다. 레일과 같은 sticky를 쓴다 */
+.pickbar{position:sticky;top:var(--topbar);z-index:9;display:flex;align-items:center;
+  flex-wrap:wrap;gap:8px 16px;margin:0 0 14px;padding:9px 0;background:var(--panel);
+  border-bottom:1px solid var(--hair)}
+.pickbar .chosen{margin:0;display:flex;align-items:baseline;gap:7px;min-width:0}
+.pickbar .chosen span{font-size:10px;letter-spacing:.16em;color:var(--tx-3);flex:none}
+.pickbar .chosen b{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pickbar .go{margin-left:auto;flex:none}
+.picknote{margin:0 0 8px;font-size:11.5px;color:var(--tx-3)}
+.pickgames{margin:0 0 12px}
+/* 두 팀을 나란히. 좁으면 위아래로 — 어느 쪽이 어느 팀인지는 색 표식과 이름이 말한다 */
+.pickteams{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px}
+.pickteam{min-width:0}
+.picktm{margin:0 0 8px;font-size:13px;display:flex;align-items:center;gap:7px}
+.picktm i{width:10px;height:10px;background:var(--chip,#6b7280);font-style:normal;flex:none}
+.picklab{margin:10px 0 5px;font-size:10px;letter-spacing:.16em;color:var(--tx-3);
+  display:flex;align-items:baseline;gap:6px}
+.picklab s{text-decoration:none;letter-spacing:0;font-size:10.5px}
+/* ⚠**자르지 않고 상자 안에서 스크롤한다.** 상위 N만 내면 대타·중간계투가 사라지고,
+   찾는 사람이 없는 순간 이 기능은 없는 것과 같아진다 */
+.picklist{display:flex;flex-wrap:wrap;gap:4px;max-height:184px;overflow-y:auto;
+  overscroll-behavior-y:contain;padding:1px}
+.pk{font:inherit;font-size:12.5px;padding:4px 8px;cursor:pointer;background:transparent;
+  color:var(--tx-2);border:1px solid var(--hair-2);display:inline-flex;align-items:baseline;gap:5px;
+  transition:color var(--fast) var(--ease),border-color var(--fast) var(--ease)}
+.pk s{text-decoration:none;font-size:10px;color:var(--tx-3);font-variant-numeric:tabular-nums}
+.pk em{font-style:normal;font-size:9.5px;letter-spacing:.08em;color:var(--chip-ink,#fff);
+  background:var(--chip,#6b7280);padding:0 4px}
+.pk:hover{color:var(--tx);border-color:var(--tx-3)}
+/* 고른 것은 **버튼 자신이** 말한다 — 위의 pickbar만 바뀌면 목록 안에서 무엇을 눌렀는지 잃는다 */
+.pk[aria-pressed="true"]{background:var(--chip,#6b7280);color:var(--chip-ink,#fff);
+  border-color:var(--chip,#6b7280);font-weight:700}
+.pk[aria-pressed="true"] s{color:inherit;opacity:.75}
+.pk[aria-pressed="true"] em{background:var(--chip-ink,#fff);color:var(--chip,#6b7280)}
+.pickfind{margin:16px 0 0;border-top:1px solid var(--hair);padding-top:12px}
+.pickfind summary{font-size:12px;color:var(--tx-2);cursor:pointer}
+.pickfind summary:hover{color:var(--tx)}
+.pickfind .picker{margin-top:12px}
+
 /* ── 試合ページ ────────────────────────────────────────────
    ⚠**원본의 이닝별 표를 옮긴 화면이 아니다**(L2). 숫자는 우리가 타석 로그에서 조립했고,
    화면의 주역은 「어디서 점수가 났는가」와 「어느 타석이 경기를 움직였는가」다. */
@@ -1290,11 +1330,54 @@ if(pickForm){
     const go2=$("#pickGo");
     if(go2)go2.disabled=!(chosen.pitcher&&chosen.batter);
   };
-  attachPicker($("#pickPitcher"),$("#pickPitcherHits"),(p)=>{
-    const i=$("#pickPitcher");if(i)i.value=p.n;show("pitcher",p);
-  });
-  attachPicker($("#pickBatter"),$("#pickBatterHits"),(p)=>{
-    const i=$("#pickBatter");if(i)i.value=p.n;show("batter",p);
+  /* 빠른 선택 버튼의 눌림 상태. **고른 것을 목록 안에서도 보여야** 한다 —
+     위의 띠만 바뀌면 목록을 스크롤한 뒤 무엇을 눌렀는지 알 수 없다 */
+  const mark=(side)=>{
+    const id=chosen[side]?chosen[side].i:null;
+    $$('#pickToday [data-pick="'+side+'"]').forEach(b=>{
+      b.setAttribute("aria-pressed",String(id!==null&&b.dataset.i===id));
+    });
+  };
+  const setSide=(side,p)=>{
+    const i=$(side==="pitcher"?"#pickPitcher":"#pickBatter");
+    if(i)i.value=p.n;
+    show(side,p);mark(side);
+  };
+  attachPicker($("#pickPitcher"),$("#pickPitcherHits"),(p)=>setSide("pitcher",p));
+  attachPicker($("#pickBatter"),$("#pickBatterHits"),(p)=>setSide("batter",p));
+  /* 오늘 대전하는 두 팀에서 바로 고르기. 값의 모양은 검색 색인과 같아서 이후가 하나로 이어진다 */
+  $$("#pickToday [data-pick]").forEach(b=>b.addEventListener("click",()=>{
+    const side=b.dataset.pick;
+    /* 같은 것을 다시 누르면 해제한다 — 잘못 눌렀을 때 되돌릴 길이 없으면 안 된다 */
+    if(chosen[side]&&chosen[side].i===b.dataset.i){
+      const i=$(side==="pitcher"?"#pickPitcher":"#pickBatter");
+      if(i)i.value="";
+      show(side,null);mark(side);
+      return;
+    }
+    setSide(side,{i:b.dataset.i,n:b.dataset.n,t:b.dataset.t});
+  }));
+  /* ⚠**버튼 100개짜리 목록을 탭으로 하나씩 지나가게 두지 않는다.**
+     한 팀에 투수 30명·타자 40명이 실제로 나오므로, 그대로 두면 이 화면을 키보드로 빠져나가는 데만
+     탭을 140번 눌러야 한다. 목록 하나가 탭 정지 하나가 되고 안에서는 화살표로 움직인다.
+     ⚠**tabindex를 서버가 아니라 여기서 준다** — JS가 없으면 화살표도 없으니
+     그때는 전부 탭으로 닿는 편이 맞다. */
+  $$("#pickToday .picklist").forEach(list=>{
+    const items=$$("[data-pick]",list);
+    if(items.length===0)return;
+    const rove=(el)=>{items.forEach(b=>b.setAttribute("tabindex",b===el?"0":"-1"))};
+    rove(items[0]);
+    items.forEach((b,at)=>{
+      b.addEventListener("click",()=>rove(b));
+      b.addEventListener("keydown",(e)=>{
+        const step=e.key==="ArrowRight"||e.key==="ArrowDown"?at+1
+          :e.key==="ArrowLeft"||e.key==="ArrowUp"?at-1
+          :e.key==="Home"?0:e.key==="End"?items.length-1:null;
+        if(step===null)return;
+        const to=items[(step+items.length)%items.length];
+        e.preventDefault();rove(to);if(to.focus)to.focus();
+      });
+    });
   });
   const go2=$("#pickGo");
   if(go2)go2.addEventListener("click",()=>{

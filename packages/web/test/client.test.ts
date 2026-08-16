@@ -876,8 +876,32 @@ function buildPicker(): ReturnType<typeof makeDocument> {
   const go = make("button", { id: "pickGo", type: "button" });
   go.disabled = true;
   form.appendChild(go);
+
+  // 오늘 대전 두 팀의 빠른 선택 버튼. 서버가 내는 구조와 같은 모양이어야 한다
+  // (`.picklist` 상자가 있어야 화살표 이동이 어디까지인지 정해진다)
+  const today = make("div", { id: "pickToday" });
+  for (const [role, people] of [
+    ["pitcher", [["p1", "山本", "オリックス・バファローズ"], ["p2", "宮城", "オリックス・バファローズ"]]],
+    ["batter", [["b1", "佐藤", "阪神タイガース"]]],
+  ] as [string, string[][]][]) {
+    const list = make("div", { class: "picklist", role: "group" });
+    for (const [i, n, t] of people) {
+      list.appendChild(
+        make("button", { class: "pk", type: "button", "aria-pressed": "false", "data-pick": role, "data-i": i!, "data-n": n!, "data-t": t! }),
+      );
+    }
+    today.appendChild(list);
+  }
+  form.appendChild(today);
   doc.body.appendChild(form);
   return doc;
+}
+
+/** 빠른 선택 버튼 하나 */
+function pk(doc: ReturnType<typeof makeDocument>, id: string): El {
+  const b = doc.querySelectorAll("#pickToday [data-pick]").find((x) => x.dataset["i"] === id);
+  assert.notEqual(b, undefined, `${id} 버튼이 없다`);
+  return b!;
 }
 
 /** 검색창에 입력하고, 색인 fetch가 끝난 뒤 결과 목록을 돌려준다 */
@@ -906,6 +930,91 @@ test("투수와 타자를 고르면 버튼이 열리고, 타자 페이지로 상
 
   go.fire("click");
   assert.equal(location.href, `players/b1.html?vs=${encodeURIComponent("山本")}#b-matchup`);
+});
+
+/**
+ * ⚠**이 경로는 색인 fetch를 타지 않는다.** 오늘 대전하는 두 팀은 서버가 이미 알고 있어서
+ * 버튼으로 나와 있다 — 검색이 실패해도 고를 수 있어야 한다는 뜻이기도 하다.
+ */
+test("오늘 대전 팀의 버튼만으로 고르기가 끝난다 — 이름을 칠 필요도, 색인을 받을 필요도 없다", () => {
+  const doc = buildPicker();
+  const { location } = run(doc); // 색인 없음 = 취득 실패
+  const go = doc.getElementById("pickGo")!;
+
+  pk(doc, "p1").fire("click");
+  assert.equal(doc.getElementById("pick-pitcher-chosen")!.textContent, "山本（オリックス・バファローズ）");
+  assert.equal(doc.getElementById("pickPitcher")!.value, "山本", "검색창에도 반영되지 않았다");
+  assert.equal(pk(doc, "p1").getAttribute("aria-pressed"), "true", "누른 버튼이 그렇다고 말하지 않는다");
+  assert.equal(go.disabled, true, "한쪽만 골랐는데 버튼이 열렸다");
+
+  pk(doc, "b1").fire("click");
+  assert.equal(go.disabled, false);
+  go.fire("click");
+  assert.equal(location.href, `players/b1.html?vs=${encodeURIComponent("山本")}#b-matchup`);
+});
+
+test("같은 갈래에서 다른 사람을 누르면 앞의 것이 풀린다 — 둘 다 눌린 것처럼 보이면 안 된다", () => {
+  const doc = buildPicker();
+  run(doc);
+  pk(doc, "p1").fire("click");
+  pk(doc, "p2").fire("click");
+  assert.equal(pk(doc, "p1").getAttribute("aria-pressed"), "false");
+  assert.equal(pk(doc, "p2").getAttribute("aria-pressed"), "true");
+  assert.equal(doc.getElementById("pick-pitcher-chosen")!.textContent, "宮城（オリックス・バファローズ）");
+});
+
+test("⚠같은 버튼을 다시 누르면 풀린다 — 잘못 눌렀을 때 되돌릴 길이 없으면 안 된다", () => {
+  const doc = buildPicker();
+  run(doc);
+  pk(doc, "p1").fire("click");
+  pk(doc, "b1").fire("click");
+  assert.equal(doc.getElementById("pickGo")!.disabled, false);
+
+  pk(doc, "p1").fire("click");
+  assert.equal(pk(doc, "p1").getAttribute("aria-pressed"), "false");
+  assert.equal(doc.getElementById("pick-pitcher-chosen")!.textContent, "未選択");
+  assert.equal(doc.getElementById("pickPitcher")!.value, "", "검색창에 이름이 남았다");
+  assert.equal(doc.getElementById("pickGo")!.disabled, true, "한쪽을 풀었는데 버튼이 열린 채다");
+});
+
+/**
+ * ⚠**한 팀에 투수 30명·타자 40명이 실제로 나온다.** 전부 탭 정지로 두면 이 화면을
+ * 키보드로 지나가는 데만 탭을 100번 넘게 눌러야 한다. 목록 하나가 탭 정지 하나다.
+ */
+test("긴 목록은 탭 정지 하나다 — 안에서는 화살표로 움직인다", () => {
+  const doc = buildPicker();
+  run(doc);
+  const list = doc.querySelectorAll(".picklist")[0]!;
+  const items = doc.querySelectorAll('.picklist [data-pick="pitcher"]');
+  assert.deepEqual(
+    items.map((b) => b.getAttribute("tabindex")),
+    ["0", "-1"],
+    "목록의 버튼이 전부 탭 정지다",
+  );
+  assert.equal(list.getAttribute("role"), "group", "묶음이라고 말하지 않는다");
+
+  items[0]!.fire("keydown", { key: "ArrowRight" });
+  assert.deepEqual(items.map((b) => b.getAttribute("tabindex")), ["-1", "0"]);
+  // 끝에서 한 번 더 — 처음으로 돌아온다
+  items[1]!.fire("keydown", { key: "ArrowDown" });
+  assert.deepEqual(items.map((b) => b.getAttribute("tabindex")), ["0", "-1"]);
+  items[0]!.fire("keydown", { key: "End" });
+  assert.deepEqual(items.map((b) => b.getAttribute("tabindex")), ["-1", "0"]);
+});
+
+test("화살표 이동은 그 목록 안에서 끝난다 — 투수를 넘어 타자로 새지 않는다", () => {
+  const doc = buildPicker();
+  run(doc);
+  const batters = doc.querySelectorAll('.picklist [data-pick="batter"]');
+  doc.querySelectorAll('.picklist [data-pick="pitcher"]')[1]!.fire("keydown", { key: "ArrowRight" });
+  assert.deepEqual(batters.map((b) => b.getAttribute("tabindex")), ["0"], "타자 목록의 탭 정지가 움직였다");
+});
+
+test("검색으로 고르면 빠른 선택 버튼의 눌림 표시도 따라간다 — 두 경로가 어긋나면 안 된다", async () => {
+  const doc = buildPicker();
+  run(doc, { index: INDEX });
+  (await search(doc, "pickPitcher", "山"))[0]!.querySelector("a")!.fire("click");
+  assert.equal(pk(doc, "p1").getAttribute("aria-pressed"), "true", "검색으로 고른 것이 버튼에 안 비쳤다");
 });
 
 test("색인을 못 받으면 고르기 화면이 그렇다고 말한다", async () => {
