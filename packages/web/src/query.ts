@@ -6,7 +6,7 @@
  * 만든 값을 옮겨 담기만 한다. 여기에 산식이 생기는 순간 값이 두 벌이 된다.
  */
 import type { Db } from "@bb-app/store";
-import { attempts, battedBalls, buntValues, headToHead, steals, successRate } from "@bb-app/aggregate";
+import { attempts, battedBalls, buntValues, headToHead, steals, successRate, timesThroughOrder } from "@bb-app/aggregate";
 import type { HeadToHead } from "@bb-app/aggregate";
 import type { BattedBallData, BuntCell } from "./player-page.ts";
 import type { BattingLine, LeagueConstants, PitchingLine, Rate } from "@bb-app/metrics";
@@ -909,7 +909,11 @@ function loadMonthlyEra(
  * 구단별 선수 목록. **색인 화면은 서버가 그린다** —
  * 스크립트가 죽어도 전 선수에게 도달할 수 있어야 하고, 그게 §0-1(3클릭)의 최저선이다.
  */
-function rosters(players: readonly PlayerPageData[]): TeamRoster[] {
+function rosters(
+  players: readonly PlayerPageData[],
+  /** 읽는 법은 화면 데이터에 없다 — **명부의 좁히기만 쓰는 값**이라 여기서만 꺼낸다 */
+  profiles: ReadonlyMap<string, ProfileRow>,
+): TeamRoster[] {
   const byTeam = new Map<string, RosterEntry[]>();
   for (const p of players) {
     const list = byTeam.get(p.teamCode);
@@ -923,6 +927,9 @@ function rosters(players: readonly PlayerPageData[]): TeamRoster[] {
       // ⚠**검색 드롭다운이 쓰는 것과 같은 문자열이다**(M1). 명부에만 없어서 첫 화면에
       // 숫자가 한 개도 없었다 — 값은 계속 있었고 실리는 자리가 없었을 뿐이다
       summary: p.summary,
+      // ⚠**색인(`SearchEntry.k`)과 같은 원문이다**(M1). 접기는 클라이언트 한 벌이 한다
+      kana: profiles.get(p.playerId)?.kana ?? null,
+      uniformNumber: p.uniformNumber,
     };
     if (list === undefined) byTeam.set(p.teamCode, [entry]);
     else list.push(entry);
@@ -2226,6 +2233,13 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     bbPitcher.set(b.playerId, cur === undefined ? b : addBatted(cur, b));
   }
 
+  /**
+   * 타순 순회. **NPB 전체의 값**이라 리그로 나누지 않는다 —
+   * 리그로 나누면 3순회 이후의 표본이 절반이 되고, 그건 값이 아니라 소음이다.
+   * ⚠**생존자 편향**은 화면이 말한다(`timesThroughBlock`).
+   */
+  const timesThrough = timesThroughOrder(db, o.season, competition, through);
+
   /** 리그별 번트의 득점기대값 변화. **선수의 기록이 아니라 리그 전체의 값**이다 */
   const buntByLeague = new Map<League, BuntCell[]>();
   const srcByPlayer = new Map<string, { src: number; pa: number; skipped: number; srcPer600: number | null }>();
@@ -2411,6 +2425,15 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
              */
             steal: (() => {
               const st = stealByPlayer.get(playerId);
+              /**
+               * ⚠**「도루자 0」과 「도루자를 세지 못했다」를 구별한다**(M11).
+               * 타석 로그의 도루 수가 박스의 `盗塁` 와 어긋나면 못 읽은 경기가 있다는 뜻이고,
+               * 그때 `cs` 를 0으로 때우면 성공률이 **1.000** 이 된다 —
+               * **분모까지 붙은 그럴듯한 거짓말**이라 분모 없는 값보다 나쁘다.
+               * 방아쇠는 이론이 아니다: `--skip-events` 는 문서화된 플래그이고 종료 코드 0이다.
+               */
+              const boxSb = bat.player.sb;
+              if ((st?.sb ?? 0) !== boxSb) return null;
               const cs = st?.cs ?? 0;
               /**
                * ⚠**분자는 화면에 보이는 `盗塁` 그 값이다**(박스스코어). 타석 로그 쪽 수로
@@ -2420,11 +2443,10 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
                * `stealMismatch` 로 격리하고 収集ログ가 말한다 — 화면이 조용히 봉합하면
                * 어긋난 사실 자체가 사라진다(M7).
                */
-              const sbCount = bat.player.sb;
               return {
                 cs,
                 pickoff: st?.pickoff ?? 0,
-                rate: { value: successRate({ sb: sbCount, cs }), denominator: attempts({ sb: sbCount, cs }) },
+                rate: { value: successRate({ sb: boxSb, cs }), denominator: attempts({ sb: boxSb, cs }) },
               };
             })(),
             line: bat.player.line,
@@ -2591,6 +2613,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       asOf: meta.latest,
       stints: stintsOf(playerId, role),
       bunts,
+      timesThrough,
       postseason: briefByPlayer.get(playerId) ?? [],
     });
 
@@ -2712,7 +2735,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       playerCount: players.length,
       gameCount: meta.games,
       asOf: meta.latest,
-      teams: rosters(players),
+      teams: rosters(players, profiles),
       highlights,
     },
     ranking: {

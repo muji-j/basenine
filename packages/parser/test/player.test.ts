@@ -150,3 +150,29 @@ test("⚠외국인 선수의 표기를 원문 그대로 둔다 — 히라가나�
 test("⚠표제부가 없으면 멈춘다 — 조용히 빈 값을 돌려주지 않는다(M7)", () => {
   assert.throws(() => parseVitals("<html><body>표제부가 없다</body></html>"), /pc_vitals/);
 });
+
+/**
+ * ⚠**표제부가 없어도 프로필 전체를 잃지 않는다** — blast radius 를 맞춘 결과다.
+ *
+ * 처음에는 `parsePlayerProfile` 이 여기서 던졌다. M7 의 취지에는 맞지만,
+ * 던지면 `load-players.ts` 가 그 선수를 건너뛰어 **투타·생년월일까지 갱신이 스킵**되고
+ * `failed>0 → exit 1 → 배포 전면 중단`이 된다. 「읽는 법이 조용히 사라진다」를 막으려고
+ * 「화면이 안 올라간다」를 사는 거래였다.
+ *
+ * ⚠**조용히 넘기는 것이 아니다** — 적재가 커버리지를 재서 임계값(90%)을 건다.
+ * 한 명이 없는 것과 858명이 한꺼번에 없어지는 것은 거기서 갈린다.
+ */
+test("표제부가 없어도 투타는 읽는다 — 멈추는 자리는 적재의 커버리지 검사다", () => {
+  const html = `<html><section id="pc_bio"><table>
+    <tr><th>ポジション</th><td>投手</td></tr>
+    <tr><th>投打</th><td>右投右打</td></tr>
+  </table></section></html>`;
+  const p = parsePlayerProfile(html);
+  assert.equal(p.throws, "right", "표제부가 없다고 투타까지 잃었다");
+  assert.equal(p.position, "投手");
+  // 못 읽은 두 값만 null 이다(M11) — 「없다」가 아니라 「못 읽었다」
+  assert.equal(p.kana, null);
+  assert.equal(p.uniformNumber, null);
+  // 엄격한 원본은 그대로 던진다 — 커버리지 검사가 이것을 센다
+  assert.throws(() => parseVitals(html), /pc_vitals/);
+});

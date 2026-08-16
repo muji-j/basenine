@@ -57,8 +57,13 @@ export interface BattingBlockData {
   /**
    * 走塁 — **타석 로그에서만 나오는 값**이다. 박스스코어는 `盗塁` 만 준다.
    * ⚠`pickoff`(견제사)는 `rate` 의 분모에 들어가지 않는다 — NPB 기록에서 盗塁刺 가 아니다.
+   *
+   * ⚠**`null` 은 「도루자 0」이 아니라 「세지 못했다」**(M11). 타석 로그의 도루 수가
+   * 박스의 `盗塁` 와 어긋나면(=못 읽은 경기가 있다) 여기로 온다.
+   * **0으로 때우면 성공률이 `1.000` 이 되고, 분모까지 붙은 그럴듯한 거짓말이 된다** —
+   * 분모 없는 값보다 나쁘다.
    */
-  steal: { cs: number; pickoff: number; rate: Rate };
+  steal: { cs: number; pickoff: number; rate: Rate } | null;
   line: BattingLine;
   avg: Rate;
   obp: Rate;
@@ -346,6 +351,11 @@ export interface PlayerPageData {
    * ⚠새 데이터가 0이다 — 이미 있는 득점기대값 계산기가 답한다.
    */
   bunts: BuntCell[];
+  /**
+   * 타순 순회별 성적. **NPB 전체의 값**이다(이 선수의 기록이 아니다).
+   * ⚠개인 순위를 매기지 않는다 — 개인의 3순회 표본은 얇다.
+   */
+  timesThrough: TimesThroughRow[];
   matchups: MatchupRow[];
   /** 대전한 투수(또는 타자)의 총 수. `matchups`가 잘렸는지 말하기 위한 값 */
   matchupTotal: number;
@@ -636,9 +646,14 @@ function standardBatting(b: BattingBlockData): RawHtml {
        * ⚠**견제사는 성공률의 분모가 아니다** — NPB 기록에서 牽制死 는 盗塁刺 가 아니다.
        *   따로 세서 따로 보여준다.
        */
-      html`${statCount("盗塁刺", b.steal.cs)}
-        ${statRate("盗塁成功率", b.steal.rate, "企図", 3)}
-        ${statCount("牽制死", b.steal.pickoff)}`,
+      b.steal === null
+        // ⚠**「—」가 아니라 「未集計」다.** 「—」는 0으로도 읽히고, 여기서 0은 거짓이다(M12)
+        ? html`${statText("盗塁刺", "未集計")}
+          ${statText("盗塁成功率", "未集計")}
+          ${statText("牽制死", "未集計")}`
+        : html`${statCount("盗塁刺", b.steal.cs)}
+          ${statRate("盗塁成功率", b.steal.rate, "企図", 3)}
+          ${statCount("牽制死", b.steal.pickoff)}`,
     ),
   });
 }
@@ -1060,10 +1075,59 @@ function buntBlock(rows: readonly BuntCell[], leagueName: string): RawHtml {
   )}`;
 }
 
+/**
+ * 타순 순회(times through the order) 한 줄. **NPB 전체의 값**이다.
+ *
+ * ⚠**생존자 편향을 반드시 함께 말한다.** 3순회까지 가는 투수는 그날 잘 던진 투수라
+ * 실제 패널티보다 성적이 **좋게** 나온다. 이 문장 없이 내면 정반대로 오독된다.
+ */
+export interface TimesThroughRow {
+  round: number;
+  pa: number;
+  ab: number;
+  h: number;
+  hr: number;
+  bb: number;
+  so: number;
+}
+
+/** 순회별 표본이 이만큼은 있어야 줄로 낸다. 얇은 줄은 값이 아니라 소음이다 */
+const MIN_TTO_PA = 300;
+
+function timesThroughBlock(rows: readonly TimesThroughRow[]): RawHtml {
+  const shown = rows.filter((r) => r.pa >= MIN_TTO_PA);
+  if (shown.length < 2) return raw("");
+  return html`<h3>打順一巡ごと</h3>
+  ${scroller(html`<table>
+    <thead><tr>
+      <th class="l">巡</th><th>打席</th><th>${term("打率")}</th><th>本塁打</th><th>四球</th><th>三振</th>
+    </tr></thead>
+    <tbody>${shown.map(
+      (r) => html`<tr>
+      <td class="l">${r.round >= 4 ? "4巡目以降" : `${r.round}巡目`}</td>
+      <td class="b">${r.pa}</td>
+      <td class="wd">${r.ab === 0 ? NO_VALUE : avg3(r.h / r.ab)}<span class="den">${r.ab}打数</span></td>
+      <td class="b">${r.hr}</td>
+      <td class="b">${r.bb}</td>
+      <td class="b">${r.so}</td>
+    </tr>`,
+    )}</tbody>
+  </table>`)}
+  ${note(
+    "NPB全体の値です（この選手の記録ではありません）。同じ試合で同じ投手が同じ打者と" +
+      "何度目に対戦したかで分けています。" +
+      "⚠**「3巡目は打たれる」と読まないでください。** 3巡目まで投げる投手はその日good投球をしている" +
+      "投手なので、**実際の不利より成績が良く出ます**（生存者バイアス）。" +
+      `⚠個人の順位はつけません — 個人の3巡目は標本が薄すぎます。${MIN_TTO_PA}打席未満の巡は出していません。`,
+  )}`;
+}
+
 function situationBlock(
   cells: readonly SituationCell[],
   leagueName: string,
   bunts: readonly BuntCell[],
+  timesThrough: readonly TimesThroughRow[],
+  role: "batter" | "pitcher",
 ): RawHtml {
   if (cells.length === 0) {
     return block({
@@ -1095,7 +1159,7 @@ function situationBlock(
       `大きい数字は${leagueName}の得点期待値（その状況からイニング終了までに入る平均得点）で、リーグ全体の値です。` +
         `小さい数字はこの選手がその状況で立った打席数。${THIN_SITUATION_PA}打席未満は薄くしています。`,
     )}
-    ${buntBlock(bunts, leagueName)}`,
+    ${role === "pitcher" ? timesThroughBlock(timesThrough) : buntBlock(bunts, leagueName)}`,
   });
 }
 
@@ -1259,7 +1323,7 @@ function renderBlock(id: BlockId, d: PlayerPageData, base: string): RawHtml {
     case "scorebook":
       return scorebookBlock(d.scorebook, d.scorebookTotal);
     case "situation":
-      return situationBlock(d.situation, d.leagueName, d.bunts);
+      return situationBlock(d.situation, d.leagueName, d.bunts, d.timesThrough, d.role);
     case "matchup":
       return matchupBlock(d.matchups, d.matchupTotal, d.role === "pitcher" ? "打者" : "投手");
     case "ranking":

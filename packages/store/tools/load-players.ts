@@ -41,6 +41,8 @@ let updated = 0;
 let missing = 0;
 let failed = 0;
 let noHand = 0;
+/** 이번에 **읽은 페이지 중** 읽는 법을 얻은 장수. 커버리지 임계값의 분자다 */
+let kanaRead = 0;
 const unknownPlayers: string[] = [];
 
 db.transaction(() => {
@@ -59,6 +61,10 @@ db.transaction(() => {
       noHand += 1;
       unknownPlayers.push(playerId);
     }
+    // ⚠**읽은 장수 기준의 커버리지를 센다.** DB 전체(`player` 표)를 분모로 하면
+    // 「페이지를 받지 않은 선수」와 「페이지는 있는데 못 읽은 선수」가 섞여, 마크업이
+    // 바뀌어도 비율이 크게 안 움직인다 — 그러면 임계값이 아무것도 못 잡는다
+    if (profile.kana !== null) kanaRead += 1;
     stmt.run(
       profile.position,
       profile.throws,
@@ -94,5 +100,25 @@ if (unknownPlayers.length > 0) {
   console.log(`⚠투타를 읽지 못한 선수: ${unknownPlayers.slice(0, 10).join(", ")}${unknownPlayers.length > 10 ? " …" : ""}`);
 }
 
+/**
+ * ⚠**표제부는 한 장 단위로 던지지 않는다 — 여기서 집계로 멈춘다.**
+ *
+ * 파서가 한 장이라도 실패하면 던지게 두면, 선수 한 명의 페이지가 달라진 것만으로
+ * **투타·생년월일 갱신이 스킵되고 그날 배포가 통째로 멈춘다**(`failed>0 → exit 1`).
+ * 반대로 조용히 null 로 두기만 하면 마크업이 바뀐 날 **858명의 읽는 법이 한꺼번에 사라져도**
+ * 아무도 모른다. 그 사이를 커버리지 임계값이 가른다.
+ *
+ * 실측(2026-08-17): 읽은 858장 중 읽는 법 **858장(100%)**. 여유를 두고 90%로 건다 —
+ * 한두 명이 특이해도 넘어가고, 구조가 바뀌면 반드시 걸린다.
+ */
+const KANA_COVERAGE_MIN = 0.9;
+const coverage = files.length === 0 ? 1 : kanaRead / files.length;
+if (coverage < KANA_COVERAGE_MIN) {
+  console.error(
+    `⚠읽는 법 커버리지가 ${(coverage * 100).toFixed(1)}% (${kanaRead}/${files.length}장) — ` +
+      `임계값 ${KANA_COVERAGE_MIN * 100}% 미만이다. 선수 페이지의 표제부(#pc_vitals) 구조 변경을 의심하라`,
+  );
+}
+
 db.close();
-process.exitCode = failed > 0 ? 1 : 0;
+process.exitCode = failed > 0 || coverage < KANA_COVERAGE_MIN ? 1 : 0;

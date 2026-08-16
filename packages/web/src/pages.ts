@@ -79,6 +79,13 @@ export interface RosterEntry {
    *   같은 값을 두 곳에서 만들면 어느 날 한쪽만 고쳐진다.
    */
   summary: string | null;
+  /**
+   * 읽는 법 **원문**. ⚠**색인(`SearchEntry.k`)과 같은 값이다**(M1) —
+   * 여기서 다르게 만들면 「같은 이름을 쳤는데 화면에 따라 나오고 안 나오는」 상태가 된다.
+   */
+  kana: string | null;
+  /** 등번호. ⚠null은 「0번」이 아니라 「지금 등록이 없다」(M11) */
+  uniformNumber: string | null;
 }
 
 export interface TeamRoster {
@@ -184,7 +191,15 @@ ${d.teams.map(
         color: t.color,
         positionMark: p.mark,
       };
-      return html`<li data-team="${t.code}" data-name="${p.name}" data-id="${p.playerId}">
+      /**
+       * ⚠**첫 화면의 좁히기도 헤더 검색과 같은 것을 찾아야 한다.**
+       * 예전에는 이 목록이 `data-name` 부분일치만 봐서, 「やまもと」나 「18」을 치면
+       * **첫 화면에서만 0건**이 됐다 — 「등번호로 찾을 수 있다」가 화면에 따라 참·거짓이 갈렸다.
+       * ⚠접기는 클라이언트 `fold()` 한 벌이 한다(M1). 여기는 **원문만** 싣는다.
+       */
+      return html`<li data-team="${t.code}" data-name="${p.name}" data-id="${p.playerId}"${
+        p.kana === null ? raw("") : html` data-kana="${p.kana}"`
+      }${p.uniformNumber === null ? raw("") : html` data-uniform="${p.uniformNumber}"`}>
       <a href="${base}players/${p.playerId}.html">
         <span class="mkline">${isEmptyProfile(p.axes)
           ? markLetter(who, p.mark === "" ? "—" : p.mark, 18)
@@ -839,7 +854,9 @@ export interface SearchEntry {
   /**
    * uniform — 등번호. **문자열이다**(`00`이 실재한다).
    * ⚠**없으면 필드를 만들지 않는다**(M11). 없음은 「0번」이 아니라 **「지금 등록이 없다」**로,
-   * 실측 980명 중 198명이 여기 해당한다(은퇴·이적 + 프로필 미취득).
+   * **분모는 화면마다 다르다**(실측 2026-08-17): 화면에 실리는 색인은
+   * 2026년 698명 중 **0명**, 2025년 721명 중 **76명**, 2024년 702명 중 **177명**이 없음이다.
+   * (`player` 표 전체로는 980명 중 198명 — 그 수를 화면 근거로 쓰면 분모가 틀린다.)
    */
   u?: string;
 }

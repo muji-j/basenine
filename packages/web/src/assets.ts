@@ -2009,12 +2009,20 @@ if(filter||chips.length){
   let team="",onlyFav=false;
   const apply=()=>{
     const term=(filter?filter.value.trim():"");
+    /* ⚠**헤더 검색과 같은 규칙으로 찾는다.** 여기만 이름 부분일치로 두면
+       「やまもと」나 「18」이 첫 화면에서만 0건이 된다 — 같은 기능이 화면에 따라 다르게 동작한다.
+       접기는 fold() 한 벌을 그대로 쓴다(M1). */
+    const q=fold(term);
     let shown=0;
     $$(".teamgroup").forEach(g=>{
       let n=0;
       $$("li",g).forEach(li=>{
         const hit=(team===""||li.dataset.team===team)
-          &&(term===""||li.dataset.name.indexOf(term)>=0)
+          &&(term===""
+            ||li.dataset.name.indexOf(term)>=0
+            ||(li.dataset.kana&&fold(li.dataset.kana).indexOf(q)>=0)
+            /* 등번호는 완전일치 — 부분일치면 「1」이 100번대까지 끌고 온다 */
+            ||li.dataset.uniform===term)
           &&(!onlyFav||isFav(li.dataset.id));
         li.hidden=!hit;if(hit)n++;
       });

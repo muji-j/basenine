@@ -25,8 +25,6 @@ export interface StealLine {
    * 넣으면 성공률의 분모가 부풀어 전 선수의 성공률이 실제보다 낮게 나온다.
    */
   pickoff: number;
-  /** 3루 이상을 노린 도루(성공+실패). 2루 도루와 난이도가 다르다 */
-  advanced: number;
 }
 
 /**
@@ -37,7 +35,7 @@ export interface StealLine {
 const SQL = `
 SELECT r.runner_id AS playerId, p.display_name AS displayName,
        CASE r.half WHEN 'top' THEN g.away_code ELSE g.home_code END AS teamCode,
-       r.kind AS kind, r.base AS base
+       r.kind AS kind
 FROM runner_event r
 JOIN game g ON g.game_id = r.game_id
 JOIN player p ON p.player_id = r.runner_id
@@ -61,7 +59,7 @@ export function successRate(l: Pick<StealLine, "sb" | "cs">): number | null {
 /** 한 시즌의 선수별 도루 성적 */
 export function steals(db: Db, season: number, competition: string, through: string): StealLine[] {
   const rows = db.raw.prepare(SQL).all(season, competition, through) as unknown as {
-    playerId: string; displayName: string; teamCode: string; kind: string; base: string;
+    playerId: string; displayName: string; teamCode: string; kind: string;
   }[];
 
   const out = new Map<string, StealLine>();
@@ -70,7 +68,7 @@ export function steals(db: Db, season: number, competition: string, through: str
     // 팀 코드는 마지막에 본 것을 쓴다 — 표시용이고 집계의 키가 아니다
     let e = out.get(r.playerId);
     if (e === undefined) {
-      e = { playerId: r.playerId, displayName: r.displayName, teamCode: r.teamCode, sb: 0, cs: 0, pickoff: 0, advanced: 0 };
+      e = { playerId: r.playerId, displayName: r.displayName, teamCode: r.teamCode, sb: 0, cs: 0, pickoff: 0 };
       out.set(r.playerId, e);
     }
     if (r.kind === "steal") e.sb += 1;
@@ -80,7 +78,6 @@ export function steals(db: Db, season: number, competition: string, through: str
       // ⚠**모르는 종류가 오면 멈춘다**(M7). 조용히 흘리면 성공률이 서서히 틀려진다
       throw new RangeError(`모르는 주자 사건 종류 ${r.kind}`);
     }
-    if (r.kind !== "pickoff" && r.base !== "2b") e.advanced += 1;
   }
   return [...out.values()];
 }

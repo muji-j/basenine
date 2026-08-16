@@ -122,19 +122,6 @@ test("주자의 소속을 공격 측으로 잡는다", async () => {
   });
 });
 
-/** 3루 이상을 노린 도루는 난이도가 다르다 — 따로 센다. 견제사는 여기 안 들어간다 */
-test("3루 이상을 노린 기도를 따로 센다", async () => {
-  await withDb((db) => {
-    game(db, "g1", "regular", [
-      { runner: "R1", kind: "steal", base: "2b" },
-      { runner: "R1", kind: "steal", base: "3b" },
-      { runner: "R1", kind: "caughtStealing", base: "home" },
-      { runner: "R1", kind: "pickoff", base: "3b" },
-    ]);
-    assert.equal(steals(db, 2026, "regular", "9999-12-31")[0]!.advanced, 2, "견제사가 섞였거나 2루가 들어갔다");
-  });
-});
-
 /** ⚠미성립 경기의 기록은 무효다 — 2024/0710 c-g-14 는 우천 노게임인데 도루 1건이 인쇄돼 있다 */
 test("⚠미성립 경기의 도루를 세지 않는다 — 노게임 기록은 무효다", async () => {
   await withDb((db) => {

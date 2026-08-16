@@ -87,7 +87,24 @@ export interface RunnerEvent {
 }
 
 export type PlayByPlay =
-  | { status: "played"; events: PlayEvent[]; runners: RunnerEvent[] }
+  | {
+      status: "played";
+      events: PlayEvent[];
+      runners: RunnerEvent[];
+      /**
+       * 읽지 못한 주자 행의 원문.
+       *
+       * ⚠**던지지 않고 여기 담는 이유는 blast radius다.** 던지면 `parsePlayByPlay` 가 통째로
+       * 실패해 **그 경기의 타석 로그 전량**(투수×타자 상대전적의 유일한 출처)이 사라진다 —
+       * 도루 표기 1건의 변화가 훨씬 큰 것을 가져간다.
+       * `tokens.ts` 도 같은 이유로 「한 셀 때문에 경기 전체를 죽이지 않는다」를 택했다.
+       *
+       * ⚠**그렇다고 조용히 넘기는 것이 아니다**(M7). 적재가 이것을 **격리에 넣고 센다** —
+       * 「멈춘다」는 목적을 경기 단위가 아니라 **적재 단위**에서 달성한다.
+       * 호출자가 이 배열을 무시하면 그때부터 조용한 실패가 된다.
+       */
+      unreadRunners: string[];
+    }
   | { status: "notPlayed"; reason: string };
 
 /** 루 표기 → 코드 */
@@ -101,14 +118,14 @@ const BASE_TOKEN: Readonly<Record<string, RunnerEvent["base"]>> = {
  * ⚠실측(2026-08-17, 2024〜2026 3시즌 2,484장 · 주자 행 3,623건)으로 고유 표기는 **12종**이고
  * 이 규칙이 전부를 덮는다. 조용히 흘리면 도루 성공률의 분모가 서서히 줄고 아무도 눈치채지 못한다.
  */
-function runnerFactsOf(text: string): { kind: RunnerEvent["kind"]; base: RunnerEvent["base"]; doubleSteal: boolean } {
+function runnerFactsOf(
+  text: string,
+): { kind: RunnerEvent["kind"]; base: RunnerEvent["base"]; doubleSteal: boolean } | null {
   const doubleSteal = text.includes("（ダブルスチール）");
   const m = /^(一塁|二塁|三塁|本塁)(盗塁成功|盗塁失敗|牽制アウト)/.exec(text);
-  if (!m) {
-    // ⚠문구를 「주자 표기」와 다르게 둔다 — 그건 **루 상태**(`1・2塁`)를 못 읽었을 때다.
-    // 둘이 비슷하면 로그만 보고 어느 쪽이 깨졌는지 알 수 없다
-    throw new PlayByPlayParseError("도루·견제 표기를 해석하지 못했다", `value=${JSON.stringify(text)}`);
-  }
+  // ⚠**null 은 「없다」가 아니라 「못 읽었다」**다. 호출부가 격리에 담아 세고,
+  // 적재가 임계값을 건다 — 여기서 던지면 경기 하나의 타석 로그 전량이 함께 사라진다
+  if (!m) return null;
   const kind = m[2] === "盗塁成功" ? "steal" : m[2] === "盗塁失敗" ? "caughtStealing" : "pickoff";
   return { kind, base: BASE_TOKEN[m[1]!]!, doubleSteal };
 }
@@ -165,6 +182,8 @@ export function parsePlayByPlay(html: string): PlayByPlay {
 
   const events: PlayEvent[] = [];
   const runners: RunnerEvent[] = [];
+  /** ⚠**버리지 않고 센다**(M7). 적재가 이것을 격리에 넣는다 */
+  const unreadRunners: string[] = [];
   let inning = 0;
   let half: "top" | "bottom" = "top";
   // 표(원정 공격)에서는 홈 팀이, 리(홈 공격)에서는 원정 팀이 던진다.
@@ -233,20 +252,24 @@ export function parsePlayByPlay(html: string): PlayByPlay {
        * (대주자 등 보조 표기는 앞의 `outs` 검사에서 이미 걸러진다.)
        */
       if (!runnerText) {
-        throw new PlayByPlayParseError(
-          "타자가 없는 행인데 주자 표기도 아니다 — 페이지 구조 변경을 의심하라",
-          `value=${JSON.stringify(strip(body))}`,
-        );
+        unreadRunners.push(strip(body));
+        continue;
       }
       {
         const ids = playerIdsIn(runnerText[1]!);
         if (ids.length === 0) {
-          throw new PlayByPlayParseError("주자 행에 선수 링크가 없다", `value=${JSON.stringify(strip(body))}`);
+          unreadRunners.push(strip(body));
+          continue;
         }
         if (inning === 0) {
           throw new PlayByPlayParseError("이닝 헤더보다 주자 행이 먼저 나왔다", `runner=${ids[0]}`);
         }
         const raw = strip(runnerText[2]!);
+        const facts = runnerFactsOf(raw);
+        if (facts === null) {
+          unreadRunners.push(strip(body));
+          continue;
+        }
         runners.push({
           inning,
           half,
@@ -255,7 +278,7 @@ export function parsePlayByPlay(html: string): PlayByPlay {
           outsBefore: Number(outs[1]),
           bases,
           runnerId: ids[0]!,
-          ...runnerFactsOf(raw),
+          ...facts,
           raw,
         });
       }
@@ -284,5 +307,5 @@ export function parsePlayByPlay(html: string): PlayByPlay {
   if (events.length === 0) {
     throw new PlayByPlayParseError("타석을 하나도 찾지 못했다", `length=${html.length}`);
   }
-  return { status: "played", events, runners };
+  return { status: "played", events, runners, unreadRunners };
 }

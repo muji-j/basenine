@@ -1450,7 +1450,7 @@ const KANA_INDEX = [
   { i: "p1", n: "山本", t: "オリックス・バファローズ", k: "やまもと・よしのぶ", u: "18" },
   { i: "b1", n: "佐藤", t: "阪神タイガース", k: "さとう・てるあき", u: "8" },
   { i: "f1", n: "ボイト", t: "阪神タイガース", k: "ルーク・ボイト (LUKE VOIT)", u: "44" },
-  // ⚠은퇴·이적으로 **등번호가 없는 선수**. 실측 980명 중 198명이 여기 해당한다
+  // ⚠은퇴·이적으로 **등번호가 없는 선수**. 화면 색인 기준 2025년 721명 중 76명이 이것이다
   { i: "r1", n: "松山", t: "広島東洋カープ", k: "まつやま・りゅうへい" },
 ];
 
@@ -1509,4 +1509,75 @@ test("⚠등번호가 없는 선수에게 자리를 만들지 않는다 — 「�
   assert.ok(!hits[0]!.querySelector(".hu"), "등번호가 없는데 자리가 생겼다");
   const has = await search(doc, "pickPitcher", "やまもと");
   assert.equal(has[0]!.querySelector(".hu")!.textContent, "18", "등번호가 안 나온다");
+});
+
+/**
+ * 첫 화면(選手一覧)의 「名前でしぼる」.
+ *
+ * ⚠**헤더 검색과 같은 것을 찾아야 한다.** 예전에는 이 목록이 `data-name` 부분일치만 봐서
+ * 「やまもと」나 「18」을 치면 **첫 화면에서만 0건**이 됐다 —
+ * 「등번호로 찾을 수 있다」가 화면에 따라 참·거짓이 갈렸다.
+ * 접기 함수가 한 벌인 것과 **검색의 뜻이 한 벌인 것은 다르다**.
+ */
+function buildKanaRoster(): ReturnType<typeof makeDocument> {
+  const doc = makeDocument("");
+  const find = make("section", { class: "find" });
+  find.appendChild(make("input", { id: "rosterFilter", type: "search" }));
+  find.appendChild(make("p", { class: "count" }));
+  const count = make("span", { id: "rosterCount" });
+  find.appendChild(count);
+  doc.body.appendChild(find);
+
+  const group = make("section", { class: "teamgroup" });
+  const ul = make("ul", { class: "roster" });
+  for (const p of [
+    { id: "p1", name: "山本", kana: "やまもと・よしのぶ", uniform: "18" },
+    { id: "p2", name: "佐藤", kana: "さとう・てるあき", uniform: "8" },
+    { id: "p3", name: "ボイト", kana: "ルーク・ボイト (LUKE VOIT)", uniform: "44" },
+  ]) {
+    const li = make("li", {
+      "data-team": "t", "data-name": p.name, "data-id": p.id,
+      "data-kana": p.kana, "data-uniform": p.uniform,
+    });
+    ul.appendChild(li);
+  }
+  group.appendChild(ul);
+  doc.body.appendChild(group);
+  return doc;
+}
+
+/** 좁히기 후 보이는 선수 이름 */
+function rosterNames(doc: ReturnType<typeof makeDocument>): string[] {
+  return doc.querySelectorAll(".teamgroup li").filter((li) => !li.hidden)
+    .map((li) => li.dataset["name"] ?? "");
+}
+
+test("⚠첫 화면의 좁히기도 읽는 법·등번호로 찾는다 — 검색창마다 다르게 동작하면 안 된다", async () => {
+  const doc = buildKanaRoster();
+  run(doc);
+  const filter = doc.getElementById("rosterFilter")!;
+
+  filter.value = "やまもと";
+  filter.fire("input");
+  assert.deepEqual(rosterNames(doc), ["山本"], "첫 화면에서 읽는 법으로 못 찾았다");
+
+  // 카타카나 입력 → 히라가나 색인. **양쪽을 접어야만** 맞는다
+  filter.value = "ヤマモト";
+  filter.fire("input");
+  assert.deepEqual(rosterNames(doc), ["山本"], "질의어를 접지 않았다");
+
+  // 외국인 선수의 라틴 표기. 색인은 대문자다
+  filter.value = "voit";
+  filter.fire("input");
+  assert.deepEqual(rosterNames(doc), ["ボイト"], "소문자 라틴 입력이 안 맞았다");
+
+  // ⚠등번호는 완전일치 — 「8」이 18·44를 끌고 오면 안 된다
+  filter.value = "8";
+  filter.fire("input");
+  assert.deepEqual(rosterNames(doc), ["佐藤"], "등번호가 부분일치로 걸렸다");
+
+  // 이름 부분일치는 그대로 남는다
+  filter.value = "佐";
+  filter.fire("input");
+  assert.deepEqual(rosterNames(doc), ["佐藤"]);
 });

@@ -111,8 +111,29 @@ export function parsePlayerProfile(html: string): PlayerProfile {
     bats: parsed?.bats ?? null,
     birthDate: birth === undefined ? null : parseBirthDate(birth),
     physique: fields.get("身長／体重") ?? null,
-    ...parseVitals(html),
+    /**
+     * ⚠**표제부가 없어도 프로필 전체를 잃지 않는다.**
+     *
+     * 처음에는 여기서 던졌다. M7 의 취지에는 맞지만 **blast radius 가 틀렸다**:
+     * 던지면 `load-players.ts` 가 그 선수를 건너뛰어 **투타·생년월일까지 갱신이 스킵**되고,
+     * `failed > 0 → exit 1 → 배포 전면 중단`이 된다.
+     * 「읽는 법이 조용히 사라진다」를 막으려고 「화면이 안 올라간다」를 산 셈이었다.
+     *
+     * ⚠**그렇다고 조용히 넘기는 것이 아니다.** 적재가 **커버리지를 재서 임계값을 건다** —
+     * 한 명이 없는 것과 858명이 한꺼번에 없어지는 것은 거기서 갈린다(`load-players.ts`).
+     * 「멈춘다」를 **한 장 단위가 아니라 집계 단위**에서 한다.
+     */
+    ...vitalsOrNull(html),
   };
+}
+
+/** 표제부를 못 읽으면 두 값만 null 로 둔다. 판정은 호출부의 커버리지 검사가 한다 */
+function vitalsOrNull(html: string): { kana: string | null; uniformNumber: string | null } {
+  try {
+    return parseVitals(html);
+  } catch {
+    return { kana: null, uniformNumber: null };
+  }
 }
 
 /**
@@ -140,7 +161,10 @@ export function parseVitals(html: string): { kana: string | null; uniformNumber:
   }
   const body = section[1]!;
   const pick = (id: string): string | null => {
-    const m = new RegExp(`<li id="${id}">([\\s\\S]*?)</li>`).exec(body);
+    // ⚠**속성이 더 붙어도 읽는다.** `<li id="pc_v_no" class="x">` 로 바뀌는 것 하나로
+    // 858명 전원의 등번호가 `null` 이 되고 **「등록 없음」으로 조용히 표시**된다.
+    // 이 코드베이스의 다른 곳은 이미 관용적이다(`<tr[^>]*>` · `<td([^>]*)>`).
+    const m = new RegExp(`<li id="${id}"[^>]*>([\\s\\S]*?)</li>`).exec(body);
     if (!m) return null;
     const t = strip(m[1]!);
     return t === "" ? null : t;

@@ -153,6 +153,13 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
     name: "佐藤",
     summary: "打率 .317（382打数）",
     bunts: [{ bases: "1", outs: 0, n: 895, before: 0.716, delta: -0.121 }],
+    timesThrough: [
+      { round: 1, pa: 12040, ab: 10820, h: 2705, hr: 208, bb: 980, so: 2320 },
+      { round: 2, pa: 9880, ab: 8890, h: 2311, hr: 196, bb: 800, so: 1780 },
+      { round: 3, pa: 5120, ab: 4610, h: 1245, hr: 121, bb: 410, so: 860 },
+      // ⚠4순회는 표본이 얇다 — 임계값 아래라 화면에 나오지 않아야 한다
+      { round: 4, pa: 180, ab: 165, h: 47, hr: 5, bb: 12, so: 30 },
+    ],
     season: 2026,
     teamCode: "t",
     teamName: "阪神タイガース",

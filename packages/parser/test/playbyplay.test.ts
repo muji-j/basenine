@@ -184,11 +184,11 @@ test("더블스틸을 표시로 남긴다", () => {
  * 흘리면 도루 성공률의 분모가 서서히 줄고 아무도 눈치채지 못한다.
  * 실측으로 12종이 전부이므로 임계값 0으로 걸 수 있다.
  */
-test("⚠모르는 주자 표기가 오면 멈춘다 — 조용히 세지 않고 넘기지 않는다(M7)", () => {
-  assert.throws(
-    () => parsePlayByPlay(RUNNER_PBP.replace("二塁盗塁成功", "宇宙へ消えた")),
-    /도루·견제 표기를 해석하지 못했다/,
-  );
+test("⚠모르는 주자 표기를 조용히 흘리지 않는다 — 세어서 돌려준다(M7)", () => {
+  const r = parsePlayByPlay(RUNNER_PBP.replace("二塁盗塁成功", "宇宙へ消えた"));
+  if (r.status !== "played") throw new Error("played 가 아니다");
+  assert.equal(r.unreadRunners.length, 1, "모르는 표기를 세지 않았다");
+  assert.equal(r.runners.length, 2, "읽을 수 있던 주자 사건까지 잃었다");
 });
 
 /**
@@ -201,13 +201,28 @@ test("⚠모르는 주자 표기가 오면 멈춘다 — 조용히 세지 않고
  * 실측(2026-08-17): 아카이브 playbyplay **2,761장**의 「타자 없는 5칸 행」이 **전부**
  * `（走者・` 를 갖는다. 임계값 0으로 걸 수 있고, 실제로 전량 스윕에서 파싱 실패 0건이다.
  */
-test("⚠타자도 주자 표기도 없는 행이 오면 멈춘다 — 이 분기만 조용하면 그게 구멍이다(M7)", () => {
+test("⚠타자도 주자 표기도 없는 행을 버리지 않고 센다 — 그러나 경기를 죽이지도 않는다(M7)", () => {
   const broken = RUNNER_PBP.replace(
     "（走者・<a href=\"/bis/players/01005131.html\">打者一</a>）二塁盗塁成功",
     "リクエストにより判定変更",
   );
-  assert.throws(
-    () => parsePlayByPlay(broken),
-    /타자가 없는 행인데 주자 표기도 아니다/,
-  );
+  const r = parsePlayByPlay(broken);
+  assert.equal(r.status, "played");
+  if (r.status !== "played") return;
+  // ⚠**타석 로그는 살아 있어야 한다.** 도루 표기 1건이 상대전적의 유일한 출처를
+  // 가져가면 blast radius가 맞지 않는다 — `tokens.ts` 도 같은 이유로 던지지 않는다
+  assert.equal(r.events.length, 2, "주자 행 하나 때문에 타석 로그가 사라졌다");
+  // ⚠**그렇다고 조용하지도 않다.** 적재가 이것을 격리에 넣는다
+  assert.deepEqual(r.unreadRunners, ["リクエストにより判定変更"], "읽지 못한 행을 세지 않았다");
+  assert.equal(r.runners.length, 2, "읽은 주자 사건까지 잃었다");
+});
+
+/** 도루 어휘를 못 읽어도 같다 — 경기를 죽이지 않고, 대신 센다 */
+test("모르는 도루 표기도 격리로 넘긴다 — 경기를 죽이지 않는다", () => {
+  const r = parsePlayByPlay(RUNNER_PBP.replace("二塁盗塁成功", "二塁宇宙転送"));
+  if (r.status !== "played") throw new Error("played 가 아니다");
+  assert.equal(r.events.length, 2, "타석 로그가 사라졌다");
+  assert.equal(r.runners.length, 2, "읽을 수 있던 주자 사건까지 잃었다");
+  assert.equal(r.unreadRunners.length, 1, "모르는 표기를 세지 않았다");
+  assert.match(r.unreadRunners[0]!, /二塁宇宙転送/);
 });
