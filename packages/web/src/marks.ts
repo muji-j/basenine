@@ -228,7 +228,9 @@ export function markFigure(
   return html`<svg class="mkfig" viewBox="0 0 ${g.size} ${g.size}" role="group"
   aria-label="${p.name}の成績プロフィール（${sampleText}）">
   <polygon class="mf-grid" points="${g.outline}"></polygon>
-  <polygon class="mf-shape" points="${g.shape}" fill="${p.color.base}"></polygon>
+  <!-- ⚠pathLength 로 둘레를 100으로 고정한다 — 그래야 도형이 무엇이든 같은 식으로 그릴 수 있다.
+       모션은 prefers-reduced-motion 에서 꺼진다 -->
+  <polygon class="mf-shape" pathLength="100" points="${g.shape}" fill="${p.color.base}"></polygon>
   ${axes.map((a, i) => {
     // ⚠**손잡이는 바깥 둘레에, 값 표시점은 도형 위에.** 둘을 한 자리에 두면
     // 성적이 낮은 축의 점이 중앙으로 모여 서로 겹치고, 그러면 누를 수가 없다

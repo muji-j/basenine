@@ -21,12 +21,13 @@
  * 그래서 여기서 만드는 것은 **이미 계산이 끝난 표시용 문자열**이고,
  * 브라우저는 배치만 한다. 계산도, 반올림도, 등급 판정도 하지 않는다.
  */
-import { html } from "./html.ts";
+import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import { NO_VALUE, avg3, dec1, dec2, fullDate, innings, signed1 } from "./format.ts";
-import { note } from "./parts.ts";
+import { note, panel, tablist } from "./parts.ts";
 import { page } from "./layout.ts";
-import type { RenderContext } from "./pages.ts";
+import type { MatchupGame, RenderContext } from "./pages.ts";
+import { pickTeam } from "./pages.ts";
 import { NEUTRAL_COLOR, shortNameOf } from "@bb-app/domain";
 import type { Rate } from "@bb-app/metrics";
 import { SCALES, gradeOf } from "./grade.ts";
@@ -288,6 +289,14 @@ export function betterSide(a: CompareStat, b: CompareStat): "a" | "b" | null {
 export interface ComparePageData {
   season: number;
   asOf: string | null;
+  /** 빠른 선택에 쓰는 경기일. 예고가 없으면 null */
+  pickDate: string | null;
+  builtOn: string;
+  /**
+   * 오늘 대전하는 경기. **対戦を選ぶ와 같은 데이터·같은 부품을 쓴다**(M1) —
+   * 두 화면이 각자 만들면 「같은 날인데 나오는 선수가 다르다」가 된다.
+   */
+  games: MatchupGame[];
 }
 
 /**
@@ -299,6 +308,12 @@ export interface ComparePageData {
  */
 export function renderComparePage(d: ComparePageData, ctx: RenderContext): string {
   const { base, root, seasons } = ctx.paths("compare.html");
+  const isToday = d.pickDate !== null && d.pickDate === d.builtOn;
+  // ⚠**탭 그룹 이름을 対戦 화면과 다르게 둔다.** 같은 이름이면 저장된 선택이 두 화면에서 섞인다
+  const gameTabs = d.games.map((g) => ({
+    id: g.key,
+    label: `${g.sides[0].shortName} − ${g.sides[1].shortName}`,
+  }));
   const side = (id: string, label: string, placeholder: string): RawHtml =>
     html`<div class="pickside">
     <label for="cmp${id}">${label}</label>
@@ -326,9 +341,28 @@ export function renderComparePage(d: ComparePageData, ctx: RenderContext): strin
   </div>
   <p><button class="go" type="button" id="cmpGo" disabled>成績をくらべる</button>
   <button class="go alt" type="button" id="cmpSwap" disabled>入れかえ</button></p>
+
+  ${d.games.length === 0
+    ? raw("")
+    : html`<div id="cmpToday">
+    <p class="picklab">${d.pickDate === null
+      ? ""
+      : `${fullDate(d.pickDate)}${isToday ? "（本日）" : ""}の対戦から選ぶ`}<s>押した順に A → B に入ります</s></p>
+    <nav class="pickgames" aria-label="試合">${tablist("cmptoday", gameTabs, true, "試合")}</nav>
+    ${d.games.map((g, i) =>
+      panel(
+        "cmptoday",
+        g.key,
+        i === 0,
+        html`<div class="pickteams">${pickTeam(g.sides[0])}${pickTeam(g.sides[1])}</div>`,
+      ),
+    )}
+  </div>`}
+
   ${note(
     "打者どうし・投手どうしで並べられます。打者と投手は共通の指標がないため並べません。" +
-      "URLをそのまま共有すると、同じ二人を開いた状態になります。",
+      "URLをそのまま共有すると、同じ二人を開いた状態になります。" +
+      (d.games.length === 0 ? "" : "ボタンにいない選手は上の検索から選べます。"),
   )}
 </section>
 

@@ -440,7 +440,11 @@ function idLine(d: PlayerPageData): RawHtml {
   return html`<header class="idline">
   ${mark}
   <div class="idtext">
-    <span class="nm">${d.name}</span>
+    <span class="nm">${d.name}<!-- ⚠**계정 없이 되는 것만 만든다.** 이 표시는 이 브라우저에만 남고
+      서버로 가지 않는다. 스크립트가 없으면 버튼 자체를 띄우지 않는다 —
+      눌러도 아무 일이 없는 버튼을 두는 것보다 없는 편이 정직하다 -->
+      <button class="favbtn" type="button" id="favBtn" data-fav="${d.playerId}"
+        aria-pressed="false" aria-label="お気に入りに入れる" hidden>★</button></span>
     <span class="sub">${bio.join(" · ")}</span>
     <span class="asof">${d.season}年${d.asOf === null ? "" : ` · ${gameDate(d.asOf)}まで`}</span>
     ${d.stints.length < 2

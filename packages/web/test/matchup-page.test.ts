@@ -133,23 +133,34 @@ test("고른 것과 실행 버튼은 한 자리에 붙어 있다 — 목록이 �
 });
 
 /**
- * ⚠**예고가 없는 날이 실재한다**(시즌 중 이동일·오프시즌). 그때 빈 탭줄만 남기면
- * 「고장」으로 읽히므로, 이름으로 찾는 길을 **펼친 채로** 남긴다.
+ * ⚠**두 길을 나란히 둔다.** 버튼은 「오늘 대전하는 두 팀」만 담으므로,
+ * 그 밖의 선수를 찾는 길이 **접힌 채로 있으면 없는 것과 같다**(사용자 지적).
+ * 한때 details 로 접었다가 되돌린 자리다.
  */
-test("예고가 없으면 빠른 선택을 만들지 않고 이름 찾기를 펼쳐 둔다", () => {
+test("이름 검색은 항상 보인다 — 접지 않는다", () => {
+  const out = renderMatchupPage(data(), context());
+  assert.ok(!out.includes("<details"), "이름 검색이 접혀 있다");
+  assert.match(out, /名前でさがす/);
+  // 검색창 두 개가 실제로 있다
+  assert.match(out, /id="pickPitcher"/);
+  assert.match(out, /id="pickBatter"/);
+});
+
+test("예고가 없으면 빠른 선택을 만들지 않고 이름 검색만 남는다", () => {
   const out = renderMatchupPage(data({ pickDate: null, games: [] }), context());
   assert.ok(!out.includes('id="pickToday"'), "빈 빠른 선택이 남았다");
-  assert.match(out, /<details class="pickfind" open>/, "이름 찾기가 접힌 채다");
   assert.match(out, /名前でさがす/);
   assert.match(out, /予告先発がまだ発表されていない/, "왜 이 모양인지 말하지 않았다");
 });
 
-test("예고가 있으면 이름 찾기는 접어 둔다 — 쉬운 길이 먼저 보여야 한다", () => {
+test("이름 검색이 먼저, 오늘 대전 버튼이 그다음 — 어느 쪽도 접히지 않는다", () => {
   const out = renderMatchupPage(data(), context());
-  assert.match(out, /<details class="pickfind">/);
-  const quick = out.indexOf('id="pickToday"');
   const find = out.indexOf('class="pickfind"');
-  assert.ok(quick > 0 && quick < find, "이름 찾기가 빠른 선택보다 앞에 있다");
+  const quick = out.indexOf('id="pickToday"');
+  assert.ok(find > 0 && quick > 0);
+  assert.ok(find < quick, "이름 검색이 버튼 목록 아래로 내려갔다");
+  // 버튼에 없는 선수는 위에서 찾으라고 화면이 말한다
+  assert.match(out, /名前でさがす」から選べます/);
 });
 
 test("⚠경기일이 생성일과 다르면 「本日」라고 쓰지 않는다", () => {

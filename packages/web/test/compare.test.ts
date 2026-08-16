@@ -247,7 +247,7 @@ test("⚠클라이언트의 우열 판정이 서버와 같은 답을 낸다 — 
 });
 
 test("⚠비교 화면은 스크립트 없이도 고를 것이 보인다 — 빈 페이지는 고장으로 보인다(M12)", () => {
-  const out = renderComparePage({ season: 2026, asOf: "2026-08-14" }, context());
+  const out = renderComparePage({ season: 2026, asOf: "2026-08-14", pickDate: null, builtOn: "2026-08-16", games: [] }, context());
   assert.match(out, /id="cmpA"/, "선수 A 입력이 없다");
   assert.match(out, /id="cmpB"/, "선수 B 입력이 없다");
   assert.match(out, /打者と投手は共通の指標がない/, "왜 못 섞는지 설명이 없다");

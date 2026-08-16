@@ -11,6 +11,24 @@
  */
 import { GLOSSARY } from "./glossary.ts";
 
+/**
+ * 사이트 아이콘 — **우리가 그린 것**이다.
+ *
+ * ⚠**구단 로고·엠블럼을 쓰지 않는다**(CLAUDE.md §6). 로고는 상표이고, 「사실은 저작물이 아니다」의
+ * 논리가 거기까지 닿지 않는다. 그래서 제품의 시각 언어에서 가져온다 —
+ * 선수 紋과 **같은 기하**(정오각형, 꼭짓점 위)다.
+ * ⚠**테마를 따라간다.** SVG 안의 `prefers-color-scheme`가 탭 배경에 맞춰 색을 바꾼다 —
+ * 밝은 탭에 흰 도형을 그리면 아이콘이 사라진다.
+ */
+export const ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+<style>
+  .m{fill:#17171a}
+  @media (prefers-color-scheme:dark){.m{fill:#e9e8e3}}
+</style>
+<polygon class="m" points="16.0,3.0 28.4,12.0 23.6,26.5 8.4,26.5 3.6,12.0"/>
+</svg>
+`;
+
 export const CSS = `
 :root {
   --page:#fbfaf7; --tx:#17171a; --tx-2:#5d5d59; --tx-3:#8d8d87;
@@ -63,7 +81,10 @@ a{color:inherit}
 .qhits[hidden]{display:none}
 .qhits li a{display:flex;gap:8px;align-items:baseline;padding:6px 11px;text-decoration:none;font-size:13px}
 .qhits li a:hover,.qhits li[aria-selected="true"] a{background:var(--panel-2)}
+.qhits li a{flex-wrap:wrap}
 .qhits .ht{margin-left:auto;font-size:10.5px;color:var(--tx-3);white-space:nowrap}
+/* 성적은 둘째 줄에. **분모까지 붙어 있다**(M2) — 이 줄의 존재 이유가 「이 사람이 맞나」의 판단이다 */
+.qhits .hs{flex-basis:100%;font-size:10.5px;color:var(--tx-2);font-variant-numeric:tabular-nums}
 .qhits .none{padding:7px 11px;font-size:12px;color:var(--tx-3)}
 .tnav{display:flex;gap:2px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
 .tnav a{font-size:12px;padding:5px 9px;text-decoration:none;color:var(--tx-2);white-space:nowrap;
@@ -118,7 +139,8 @@ a{color:inherit}
 .mkfig{display:block;width:100%;height:auto;overflow:visible}
 .mf-grid{fill:none;stroke:var(--hair-2);stroke-width:1}
 .mf-spoke{stroke:var(--hair);stroke-width:1;transition:stroke var(--fast) var(--ease)}
-.mf-shape{fill-opacity:.42;stroke:var(--team,#6b7280);stroke-width:1.5;stroke-linejoin:round}
+.mf-shape{fill-opacity:.42;stroke:var(--team,#6b7280);stroke-width:1.5;stroke-linejoin:round;
+  animation:draw 420ms var(--ease)}
 /* ⚠보이는 점은 작아도 **판정 영역은 손가락 크기**여야 한다 — mf-hit이 그 역할이다.
    손잡이는 둘레에 고르게 있고, 값 표시점(mf-dot)은 도형 위에 따로 있다 */
 .mf-hit{fill:transparent}
@@ -231,6 +253,9 @@ a{color:inherit}
 .block>h4 .qt{letter-spacing:0;font-weight:400;color:var(--tx-3)}
 [data-panelgroup]{animation:fade var(--fast) var(--ease)}
 [data-panelgroup][hidden]{display:none}
+/* ⚠**패널에만 준다.** 레일 안의 하위 탭줄도 같은 그룹에 속하는데, 탭줄이 미끄러지면 조작이 흔들린다 */
+[data-panelgroup][role="tabpanel"][data-slide="next"]{animation:slideNext var(--mid) var(--ease)}
+[data-panelgroup][role="tabpanel"][data-slide="prev"]{animation:slidePrev var(--mid) var(--ease)}
 
 .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:0 24px}
 dl{margin:0;display:grid;grid-template-columns:auto 1fr;align-items:baseline}
@@ -482,6 +507,8 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
   border-color:var(--chip,#6b7280);font-weight:700}
 .pk[aria-pressed="true"] s{color:inherit;opacity:.75}
 .pk[aria-pressed="true"] em{background:var(--chip-ink,#fff);color:var(--chip,#6b7280)}
+/* 비교 화면에서는 **어느 자리에 들어갔는지**까지 말한다 — 채울 자리가 둘이다 */
+.pk[data-slot]::after{content:attr(data-slot);font-size:9.5px;margin-left:4px;opacity:.85}
 .pickfind{margin:16px 0 0;border-top:1px solid var(--hair);padding-top:12px}
 .pickfind summary{font-size:12px;color:var(--tx-2);cursor:pointer}
 .pickfind summary:hover{color:var(--tx)}
@@ -628,6 +655,9 @@ table.stand .dif i.n{right:50%}
 .gmore a{text-decoration:none;border-bottom:1px solid var(--hair-2)}
 .gmore a:hover{border-bottom-color:var(--tx-3)}
 
+/* 긴 표도 같은 이유로 화면에 들어올 때 그린다 — 대전 성적 146행·순위 122행이 실측이다 */
+.block .scroller{content-visibility:auto;contain-intrinsic-size:auto 420px}
+
 /* ── 카드 전체를 누르기 ──────────────────────────────────────
    ⚠**링크를 하나 더 겹치지 않는다.** 이미 있는 「この試合の詳細」의 클릭 영역을
    카드 전체로 넓힌다. 겹쳐 두면 같은 목적지가 링크 목록에 두 번 나오고 탭도 두 번 걸린다.
@@ -653,6 +683,9 @@ table.stand .dif i.n{right:50%}
    달력대로 움직이면 빈 날에 떨어진다. 그래서 날짜를 글자로 함께 낸다 — 어디로 가는지 보인다. */
 .daybar{display:flex;align-items:stretch;gap:8px;margin:0 0 4px;padding:10px var(--pad);
   border-bottom:1px solid var(--hair)}
+/* 화살표는 라벨과 **같은 줄**에 있어야 방향을 말한다 — daystep 이 세로 flex라 묶어야 한다 */
+.dayrow{display:flex;align-items:baseline;gap:5px;white-space:nowrap}
+.daystep i{font-style:normal;color:var(--tx-3)}
 .daystep,.daypick{display:flex;flex-direction:column;gap:2px;text-decoration:none;font-size:12px;
   padding:5px 10px;border:1px solid var(--hair-2);min-width:0;
   transition:border-color var(--fast) var(--ease),color var(--fast) var(--ease)}
@@ -757,6 +790,14 @@ table.stand .dif i.n{right:50%}
 .teamgroup h4{margin:0 0 8px;font-size:11px;letter-spacing:.14em;font-weight:700;
   display:flex;align-items:center;gap:8px}
 .teamgroup h4 i{width:11px;height:11px;background:var(--chip,#6b7280);font-style:normal}
+/* ⚠**화면 밖의 구단 묶음은 그리지 않는다.**
+   일람은 구단 12묶음에 선수 698명이고, 선수마다 인라인 SVG가 하나씩 붙는다
+   (실측: SVG 698개 · polygon 1,390개 · DOM 요소 7,326개).
+   전송량은 문제가 아니다 — 528KB가 brotli로 32KB가 된다. **문제는 첫 페인트의 레이아웃 비용**이다.
+   ⚠contain-intrinsic-size 에 auto 를 붙인다. 고정값을 주면 실제 높이와 어긋나 스크롤바가 튀는데,
+   auto 는 **한 번 그린 크기를 기억**해서 그 어긋남을 없앤다.
+   ⚠검색·구단 좁히기는 그대로 동작한다 — 이것은 렌더 생략이지 display:none 이 아니다. */
+.teamgroup{content-visibility:auto;contain-intrinsic-size:auto 900px}
 .roster{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:0 16px}
 .roster li[hidden]{display:none}
 .roster a{display:flex;gap:8px;align-items:baseline;padding:5px 0;text-decoration:none;border-bottom:1px solid var(--hair);
@@ -764,6 +805,18 @@ table.stand .dif i.n{right:50%}
 .roster a:hover{padding-left:4px}
 .roster .hn{font-size:13px}
 .roster .hp{margin-left:auto;font-size:10px;color:var(--tx-3)}
+/* 즐겨찾기 표식 — 순서를 바꾸지 않고 **표시만** 얹는다.
+   순서를 바꾸면 「내 선수가 어디 갔지」가 되고, 명감의 배열이 무너진다 */
+.roster li[data-favon="true"] .hn::before{content:"★";color:var(--team,#6b7280);margin-right:4px;font-size:10px}
+.chip.fav i{font-style:normal;margin-right:4px}
+.chip.fav s{text-decoration:none;margin-left:4px;font-size:10px;opacity:.8}
+.chip.fav[hidden]{display:none}
+.favbtn{font:inherit;font-size:13px;line-height:1;margin-left:8px;padding:2px 6px;cursor:pointer;
+  background:transparent;border:1px solid var(--hair-2);color:var(--tx-3);vertical-align:middle;
+  transition:color var(--fast) var(--ease),border-color var(--fast) var(--ease)}
+.favbtn:hover{color:var(--tx-2);border-color:var(--tx-3)}
+.favbtn[aria-pressed="true"]{color:var(--team,#6b7280);border-color:var(--team,#6b7280)}
+.favbtn[hidden]{display:none}
 
 .foot{padding:18px var(--pad);color:var(--tx-3);font-size:11.5px}
 .foot a{text-decoration:underline}
@@ -772,6 +825,12 @@ table.stand .dif i.n{right:50%}
 @keyframes fade{from{opacity:0}to{opacity:1}}
 @keyframes drop{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
 @keyframes grow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+/* 탭 전환에 **방향**을 준다 — fade만 두면 「어디서 어디로 갔는지」가 남지 않는다.
+   8px은 눈이 방향만 읽고 위치는 안 읽는 거리다. 크게 하면 인쇄물의 질감이 깨진다 */
+@keyframes slideNext{from{opacity:0;transform:translateX(8px)}to{opacity:1;transform:none}}
+@keyframes slidePrev{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:none}}
+/* 큰 紋을 한 번 그린다. 둘레는 pathLength 로 100에 고정돼 있다 */
+@keyframes draw{from{stroke-dasharray:0 100}to{stroke-dasharray:100 0}}
 
 /* ── 반응형 ──────────────────────────────────────────────── */
 @media (max-width:900px){
@@ -819,9 +878,22 @@ table.stand .dif i.n{right:50%}
   *,*::before,*::after{animation-duration:1ms!important;animation-delay:0ms!important;transition-duration:1ms!important}
 }
 @media print{
-  .topbar,.rail,.editor,.skip{display:none}
+  /* 조작에 쓰는 것은 종이에서 아무 일도 하지 않는다 */
+  .topbar,.rail,.editor,.skip,.seasons,.daybar,.pickbar,.pickgames,.find,.tabs{display:none}
   .block[hidden]{display:block}
+  /* ⚠**닫힌 탭도 펼친다.** 종이에는 여는 수단이 없다 — 안 펼치면 그 내용이 통째로 사라진다 */
+  [data-panelgroup][hidden]{display:block!important}
+  /* ⚠**렌더 생략을 끈다.** content-visibility 는 화면 밖을 그리지 않는데,
+     종이에는 「화면 밖」이 없다 — 켜 둔 채 인쇄하면 **빈 페이지가 나온다** */
+  .teamgroup,.block .scroller{content-visibility:visible!important}
+  /* 가로 스크롤 상자는 종이에서 잘린다 — 넘치게 두고 표를 쪼개게 맡긴다 */
+  .scroller{overflow:visible}
   .shell{grid-template-columns:0 1fr}
+  /* 링크의 목적지를 남긴다 — 종이에서는 누를 수 없다 */
+  .foot a[href^="http"]::after{content:" (" attr(href) ")";font-size:9px;color:#555}
+  .block{break-inside:avoid-page}
+  table{break-inside:auto}
+  tr{break-inside:avoid}
 }
 `;
 
@@ -858,6 +930,8 @@ const state={
   // 대전 표의 정렬. 저장된 열이 지금 표에 없으면 표를 그릴 때 기본으로 되돌린다
   matchup:(saved.matchup&&typeof saved.matchup==="object")?saved.matchup:null,
   matchupTeam:typeof saved.matchupTeam==="string"?saved.matchupTeam:"",
+  /* 즐겨찾기한 선수 ID. **이 브라우저에만 남는다** — 서버로 가지 않는다 */
+  favs:Array.isArray(saved.favs)?saved.favs.filter(x=>typeof x==="string"):[],
   grades:saved.grades!==false,
   mark:saved.mark===true,
   theme:saved.theme==="dark"||saved.theme==="light"?saved.theme:"system"
@@ -901,11 +975,31 @@ const tabHooks=[];
 /* ⚠**이번 방문에만 여는 선택.** 깊은 링크(#앵커)가 연 탭은 여기 들어간다 —
    state.tabs 에 쓰면 저장되어 다음 방문의 기본값까지 바뀐다. 사용자가 직접 탭을 누르면 지운다. */
 const transient={};
+/* 그룹별로 **직전에 몇 번째 탭이었나**. 방향을 알려면 이전 자리를 알아야 한다 */
+const lastAt={};
+/* 애니메이션을 다시 태우려면 속성을 지웠다 리플로를 한 번 강제하고 다시 붙여야 한다.
+   같은 방향으로 두 번 움직이면 값이 그대로라 브라우저가 「바뀐 것이 없다」고 보기 때문이다.
+   ⚠스텁 DOM에는 offsetWidth가 없다 — 있을 때만 읽는다 */
+function slide(el,dir){
+  if(!el.removeAttribute||!el.setAttribute)return;
+  el.removeAttribute("data-slide");
+  if(typeof el.offsetWidth==="number")void el.offsetWidth;
+  if(dir!==0)el.setAttribute("data-slide",dir>0?"next":"prev");
+}
 function showTabs(){
   Object.keys(tabGroups()).forEach(g=>{
     const cur=transient[g]!==undefined?transient[g]:state.tabs[g];
+    /* 탭줄에 적힌 순서가 방향의 기준이다 */
+    const keys=$$('[data-tabgroup="'+g+'"] [data-tab]').map(b=>b.dataset.tab);
+    const at=keys.indexOf(cur);
+    const was=lastAt[g];
+    const dir=(was===undefined||at<0||was===at)?0:(at>was?1:-1);
+    lastAt[g]=at;
     // "all"은 특별 취급 — 골라 보는 화면에서 「전부」를 뺏지 않는다
-    $$('[data-panelgroup="'+g+'"]').forEach(p=>{p.hidden=cur!=="all"&&p.dataset.panelkey!==cur});
+    $$('[data-panelgroup="'+g+'"]').forEach(p=>{
+      p.hidden=cur!=="all"&&p.dataset.panelkey!==cur;
+      if(!p.hidden)slide(p,dir);
+    });
     $$('[data-tabgroup="'+g+'"] [data-tab]').forEach(b=>{
       b.setAttribute("aria-selected",String(b.dataset.tab===cur));
     });
@@ -1321,7 +1415,11 @@ function attachPicker(input,list,onPick){
       const a=doc.createElement("a");a.href=BASE+"players/"+p.i+".html";
       const n=doc.createElement("span");n.className="hn";n.textContent=p.n;
       const t=doc.createElement("span");t.className="ht";t.textContent=p.t;
-      a.appendChild(n);a.appendChild(t);li.appendChild(a);
+      a.appendChild(n);a.appendChild(t);
+      /* 성적 한 줄. **없으면 자리도 만들지 않는다** — 빈 줄은 「0」처럼 읽힌다(M11).
+         선수명과 같은 이유로 textContent 로만 넣는다 */
+      if(p.s){const sm=doc.createElement("span");sm.className="hs";sm.textContent=p.s;a.appendChild(sm)}
+      li.appendChild(a);
       if(onPick)a.addEventListener("click",(e)=>{if(e&&e.preventDefault)e.preventDefault();onPick(p);close()});
       list.appendChild(li);
     });
@@ -1455,8 +1553,27 @@ if(cmpForm){
   };
   const setInput=(side,p)=>{const i=$("#cmp"+side.toUpperCase());if(i)i.value=p?p.n:""};
 
-  attachPicker($("#cmpA"),$("#cmpAHits"),(p)=>{setInput("a",p);show("a",p)});
-  attachPicker($("#cmpB"),$("#cmpBHits"),(p)=>{setInput("b",p);show("b",p)});
+  const markCmp=()=>{
+    $$("#cmpToday [data-pick]").forEach(b=>{
+      const id=b.dataset.i;
+      const at=(chosen.a&&chosen.a.i===id)?"A":(chosen.b&&chosen.b.i===id)?"B":"";
+      b.setAttribute("aria-pressed",String(at!==""));
+      /* **어느 쪽에 들어갔는지**를 버튼이 말한다 — 두 자리를 채우는 화면이라 「눌렀다」만으로는 부족하다 */
+      if(at==="")b.removeAttribute("data-slot");else b.setAttribute("data-slot",at);
+    });
+  };
+  const setCmp=(side,p)=>{setInput(side,p);show(side,p);markCmp()};
+  attachPicker($("#cmpA"),$("#cmpAHits"),(p)=>setCmp("a",p));
+  attachPicker($("#cmpB"),$("#cmpBHits"),(p)=>setCmp("b",p));
+  /* 오늘 대전하는 두 팀에서 바로 고르기. **누른 순서대로 A → B에 들어간다** —
+     어느 자리에 넣을지 먼저 묻는 화면으로 만들면 조작이 한 단계 늘어난다 */
+  $$("#cmpToday [data-pick]").forEach(b=>b.addEventListener("click",()=>{
+    const p={i:b.dataset.i,n:b.dataset.n,t:b.dataset.t};
+    /* 이미 고른 사람을 다시 누르면 그 자리를 비운다 — 되돌릴 길이 없으면 안 된다 */
+    if(chosen.a&&chosen.a.i===p.i){setCmp("a",null);return}
+    if(chosen.b&&chosen.b.i===p.i){setCmp("b",null);return}
+    setCmp(chosen.a?"b":"a",p);
+  }));
 
   /* 값 하나를 그린다. ⚠등급 막대는 **값 뒤**에 온다 — 분모를 모르고 본 색은 근거가 없다 */
   const cell=(st,cls,win)=>{
@@ -1641,19 +1758,56 @@ if(cmpForm){
   }
 }
 
+/* ── 즐겨찾기 ──
+   ⚠**계정 없이 되는 것만 만든다**(§0-1). localStorage 하나뿐이고 서버는 이것을 모른다.
+   ⚠**서버가 그린 목록은 건드리지 않는다.** 표시와 좁히기만 클라이언트가 얹는다 —
+   스크립트가 죽어도 전 선수 목록은 그대로 남는다. */
+const isFav=(id)=>state.favs.indexOf(id)>=0;
+function toggleFav(id){
+  const at=state.favs.indexOf(id);
+  if(at>=0)state.favs.splice(at,1);else state.favs.push(id);
+  save(state);
+}
+function paintFav(){
+  const b=$("#favBtn");
+  if(b){
+    const on=isFav(b.dataset.fav);
+    b.hidden=false;
+    b.setAttribute("aria-pressed",String(on));
+    b.setAttribute("aria-label",on?"お気に入りから外す":"お気に入りに入れる");
+  }
+  /* 일람에서는 표식만 얹는다 — 순서를 바꾸면 「내 선수가 어디 갔지」가 된다 */
+  $$(".roster li[data-id]").forEach(li=>{
+    li.setAttribute("data-favon",String(isFav(li.dataset.id)));
+  });
+  const only=$("#favOnly");
+  if(only){
+    /* ⚠**하나도 없으면 버튼을 띄우지 않는다.** 눌러도 빈 화면이 되는 조작은 고장으로 읽힌다 */
+    const n=$$(".roster li[data-id]").filter(li=>isFav(li.dataset.id)).length;
+    only.hidden=n===0;
+    const c=$("#favCount");
+    if(c)c.textContent=n>0?String(n):"";
+  }
+}
+const favBtn=$("#favBtn");
+if(favBtn)favBtn.addEventListener("click",()=>{toggleFav(favBtn.dataset.fav);paintFav()});
+
 /* ── 색인 화면의 이름·구단 좁히기 ──
    목록은 서버가 그렸다. JS는 좁히기만 한다 — 스크립트가 죽어도 전 선수 목록은 남는다. */
 const filter=$("#rosterFilter");
 const chips=$$(".chip[data-team]");
+const favOnly=$("#favOnly");
 if(filter||chips.length){
-  let team="";
+  let team="",onlyFav=false;
   const apply=()=>{
     const term=(filter?filter.value.trim():"");
     let shown=0;
     $$(".teamgroup").forEach(g=>{
       let n=0;
       $$("li",g).forEach(li=>{
-        const hit=(team===""||li.dataset.team===team)&&(term===""||li.dataset.name.indexOf(term)>=0);
+        const hit=(team===""||li.dataset.team===team)
+          &&(term===""||li.dataset.name.indexOf(term)>=0)
+          &&(!onlyFav||isFav(li.dataset.id));
         li.hidden=!hit;if(hit)n++;
       });
       g.hidden=n===0;shown+=n;
@@ -1666,12 +1820,17 @@ if(filter||chips.length){
     chips.forEach(x=>x.setAttribute("aria-pressed",String(x.dataset.team===team)));
     apply();
   }));
+  if(favOnly)favOnly.addEventListener("click",()=>{
+    onlyFav=!onlyFav;
+    favOnly.setAttribute("aria-pressed",String(onlyFav));
+    apply();
+  });
   if(filter)filter.addEventListener("input",apply);
 }
 
 press(".rail [data-preset]","preset",state.preset);
 press(".rail [data-density]","density",state.density);
-applyTheme();renderBlocks();renderEditor();showTabs();revealHash();
+applyTheme();renderBlocks();renderEditor();showTabs();paintFav();revealHash();
 })();
 `;
 

@@ -188,3 +188,45 @@ test("블록마다 CSS가 필요로 하는 id 규칙이 유지된다", () => {
   assert.match(CSS, /\.block\[hidden\]\{display:none\}/);
   for (const b of BLOCKS) assert.ok(/^[a-z]+$/.test(b.id), `${b.id}가 id로 쓸 수 없는 형태다`);
 });
+
+/**
+ * ⚠**렌더 생략과 인쇄는 정면으로 부딪힌다.**
+ * `content-visibility:auto`는 화면 밖을 그리지 않는데 종이에는 「화면 밖」이 없다 —
+ * 켜 둔 채 인쇄하면 **빈 페이지가 나온다.** 이건 마크업으로는 절대 안 잡히는 종류다.
+ */
+test("화면 밖 렌더 생략이 인쇄에서 꺼진다 — 안 끄면 빈 종이가 나온다", () => {
+  assert.match(CSS, /\.teamgroup\{content-visibility:auto;contain-intrinsic-size:auto/);
+  const at = CSS.indexOf("@media print");
+  assert.ok(at > 0, "인쇄 규칙이 없다");
+  // 인쇄 규칙은 스타일시트의 마지막 블록이다 — 끝까지 잘라 쓰면 중괄호를 셀 필요가 없다
+  const printBlock = CSS.slice(at);
+  assert.match(printBlock, /content-visibility:visible!important/, "인쇄에서 렌더 생략을 끄지 않았다");
+  assert.match(printBlock, /\[data-panelgroup\]\[hidden\]\{display:block!important\}/, "종이에서 닫힌 탭을 펼치지 않았다");
+});
+
+test("⚠크기를 기억하게 한다 — 고정값을 주면 스크롤바가 튄다", () => {
+  assert.ok(!/contain-intrinsic-size:[0-9]/.test(CSS), "고정 크기를 줬다");
+  assert.match(CSS, /contain-intrinsic-size:auto [0-9]+px/);
+});
+
+test("탭 전환에 방향이 있고, 탭줄 자체는 미끄러지지 않는다", () => {
+  // ⚠**「이름이 있는가」가 아니라 「규칙이 그것을 쓰는가」를 본다.**
+  // 키프레임 이름만 찾으면 slideNextOff 같은 것에도 매칭되어 무의미하게 통과한다.
+  // ⚠정규식 대신 문자열 포함으로 본다 — 대괄호·중괄호가 많아 이스케이프가 먼저 틀린다
+  for (const [dir, name] of [["next", "slideNext"], ["prev", "slidePrev"]] as const) {
+    assert.ok(CSS.includes(`@keyframes ${name}{`), `${name} 키프레임이 없다`);
+    // role="tabpanel" 로 좁힌다 — 레일 안의 하위 탭줄이 미끄러지면 조작이 흔들린다
+    const sel = `[data-panelgroup][role="tabpanel"][data-slide="${dir}"]{animation:${name} `;
+    assert.ok(CSS.includes(sel), `${dir} 방향 규칙이 ${name} 를 쓰지 않는다`);
+  }
+});
+
+test("새로 넣은 모션도 감소 설정에서 꺼진다 — 예외를 만들지 않는다", () => {
+  const rule = /@media \(prefers-reduced-motion:reduce\)\{([^}]*\}[^}]*)\}/.exec(CSS)?.[1] ?? "";
+  assert.match(rule, /\*,\*::before,\*::after/, "전역 가드가 아니면 새 애니메이션이 새어 나간다");
+  assert.match(rule, /animation-duration:1ms!important/);
+});
+
+test("검색 결과의 성적 줄에 자리가 있다 — 분모까지 들어가므로 한 줄을 통째로 쓴다", () => {
+  assert.match(CSS, /\.qhits \.hs\{flex-basis:100%/);
+});

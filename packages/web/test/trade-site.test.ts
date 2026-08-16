@@ -177,3 +177,19 @@ test("자격 판정은 소속 리그에서 낸 몫으로 한다 — 합계로 �
     assert.equal(plain.batting!.qualified, plain.batting!.line.pa >= plain.batting!.needPa);
   });
 });
+
+/**
+ * ⚠**검색 결과의 성적은 비율이다 — 분모 없이 내보내면 M2 위반이 색인에서 시작된다.**
+ * 화면이 아무리 조심해도 데이터가 분모를 안 들고 오면 붙일 것이 없다.
+ */
+test("검색 색인의 성적 한 줄에 분모가 붙어 있다(M2)", async () => {
+  await withSite((site) => {
+    const bat = site.search.find((x) => x.i === "PL_BAT")!;
+    assert.notEqual(bat.s, undefined, "타자에게 성적 줄이 없다");
+    assert.match(bat.s!, /^打率 \.[0-9]{3}（[0-9]+打数）$/, `분모가 없다: ${bat.s}`);
+
+    const pit = site.search.find((x) => x.i === "PL_PIT")!;
+    assert.notEqual(pit.s, undefined, "투수에게 성적 줄이 없다");
+    assert.match(pit.s!, /^防御率 [0-9.]+（[0-9.]+回）$/, `분모가 없다: ${pit.s}`);
+  });
+});

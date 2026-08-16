@@ -151,6 +151,8 @@ export interface PageOptions {
    * 그런 화면은 `false`로 두고 `aria-current="true"`(구획 안에 있다)만 낸다.
    */
   navExact?: boolean;
+  /** 링크를 펼쳤을 때의 한 줄 설명. 없으면 사이트 공통 문구 */
+  ogDescription?: string;
   /** 본문. 블록들이 여기 들어간다 */
   body: RawHtml;
   /** 클라이언트에 실어 보낼 스크립트 본문(블록 카탈로그 등) */
@@ -354,6 +356,17 @@ export function page(o: PageOptions): string {
 <title>${o.title}</title>
 <meta name="robots" content="noindex, nofollow">
 <meta name="color-scheme" content="light dark">
+<!-- 탭 아이콘·주소창 색. **우리가 그린 도형**이고 구단 로고가 아니다(§6) -->
+<link rel="icon" href="${o.root}assets/icon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#fbfaf7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#15161a" media="(prefers-color-scheme: dark)">
+<!-- ⚠**지금은 이 카드가 보이지 않는다.** 사이트가 Cloudflare Access 뒤에 있어
+     링크를 펼치는 쪽은 로그인 화면을 받는다. 공개 전환(S2) 시점에 비로소 효과가 생긴다 -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="${o.site.name}">
+<meta property="og:locale" content="ja_JP">
+<meta property="og:title" content="${o.title}">
+<meta property="og:description" content="${o.ogDescription ?? "NPBの公表記録から再計算した選手成績・順位・対戦成績。"}">
 <link rel="stylesheet" href="${o.root}assets/site.css">
 <!-- ⚠**스크립트가 없으면 탭은 조작이 아니라 벽이다.**
      탭 패널은 첫 장만 열어 두고 나머지를 hidden으로 내보내는데, 스크립트가 없으면

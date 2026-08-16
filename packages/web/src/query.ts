@@ -118,7 +118,7 @@ import type { StandingRow, StandingsSection } from "./pages.ts";
 // 予告先発 화면의 앵커. **試合 카드가 그리로 가므로 키를 두 벌 만들지 않는다**(M1)
 import { batterPick, gameKey, pitcherPick, startersAnchor, unseenPitcherPick } from "./pages.ts";
 import type { RankDigits } from "./parts.ts";
-import { denominator, innings } from "./format.ts";
+import { avg3, dec2, denominator, innings } from "./format.ts";
 import { readFileSync } from "node:fs";
 import type {
   DayIndexData,
@@ -1876,7 +1876,25 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       stints: stintsOf(playerId, role),
     });
 
-    search.push({ i: playerId, n: base.displayName, t: team.name });
+    /**
+     * 검색 결과의 성적 한 줄.
+     * ⚠**서식은 화면과 같은 함수로 만든다**(M1) — 여기서 손으로 반올림하면 값이 두 벌이 된다.
+     * ⚠타자는 타율, 투수는 방어율. 역할 판정은 위에서 이미 한 것을 그대로 쓴다.
+     */
+    const summary =
+      role === "pitcher"
+        ? pit === undefined || pit.era.value === null
+          ? null
+          : `防御率 ${dec2(pit.era.value)}（${innings(pit.era.denominator)}回）`
+        : bat === undefined || bat.avg.value === null
+          ? null
+          : `打率 ${avg3(bat.avg.value)}（${bat.avg.denominator}打数）`;
+    search.push({
+      i: playerId,
+      n: base.displayName,
+      t: team.name,
+      ...(summary === null ? {} : { s: summary }),
+    });
   }
 
   players.sort((a, b) => a.name.localeCompare(b.name, "ja"));
