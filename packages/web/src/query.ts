@@ -102,6 +102,8 @@ import type {
   TeamRoster,
 } from "./pages.ts";
 import type { StandingRow, StandingsSection } from "./pages.ts";
+// 予告先発 화면의 앵커. **試合 카드가 그리로 가므로 키를 두 벌 만들지 않는다**(M1)
+import { gameKey, startersAnchor } from "./pages.ts";
 import type { RankDigits } from "./parts.ts";
 import { denominator, innings } from "./format.ts";
 import { readFileSync } from "node:fs";
@@ -1142,6 +1144,7 @@ function todayPage(
   const probables: TodayProbable[] = starters.games.map((g) => ({
     venue: g.venue,
     startTime: g.startTime,
+    anchor: startersAnchor(gameKey(g)),
     sides: [0, 1].map((i) => {
       const s = g.sides[i]!;
       return {

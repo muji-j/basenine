@@ -14,6 +14,7 @@ import { NO_VALUE, avg3, dec2, fullDate, innings } from "./format.ts";
 import {
   block,
   denText,
+  follower,
   note,
   panel,
   rankValue,
@@ -192,7 +193,9 @@ ${d.highlights.map((s) =>
       body: html`${s.categories.map((c, ci) =>
         panel(`hicat-${s.id}`, c.id, ci === 0, categoryPanels(c, base, 5, `himetric-${s.id}`)),
       )}
-      <p class="note"><a href="${base}ranking.html">${s.name}の順位表をすべて見る</a></p>`,
+      <!-- ⚠**개인 순위는 순위표의 「個人」 갈래 안에 있다.** 그냥 ranking.html 로 보내면
+           지난번에 팀 순위를 보고 있던 사람은 개인 순위가 어디 갔는지 알 수 없다 -->
+      <p class="note"><a href="${base}ranking.html#lg-${s.id}">${s.name}の順位表をすべて見る</a></p>`,
     }),
   )}`;
 
@@ -301,25 +304,27 @@ function standingsTable(s: StandingsSection, base: string): RawHtml {
 }
 
 /**
- * 순위표 — 리그 탭 × 지표 탭.
+ * 순위표 — **チーム / 個人** 두 갈래, 그 아래 리그 탭 × 지표 탭.
  *
+ * ⚠**한 화면에 두 종류의 순위가 있다.** 팀 순위와 개인 타이틀은 읽는 목적이 다른데
+ * 세로로 이어 붙이면 개인 순위가 화면 밖에 있다는 사실 자체가 안 보인다.
+ * 갈래를 나누되 **레일 한 줄에 둔다** — 레일이 두 줄이면 둘 다 sticky라 서로를 가린다.
+ *
+ * 리그 탭은 **個人에만 붙는다.** 팀 순위는 두 리그를 함께 보는 것이 자연스럽고,
+ * 리그 탭을 공용으로 만들면 「팀에서 セ를 골랐더니 개인도 セ」가 되어 되돌리기 어렵다.
  * 지표 탭은 **리그별로 그리되 같은 그룹 이름을 쓴다.** 리그를 바꿔도 보고 있던 지표가 유지된다.
  */
 export function renderRankingPage(d: RankingPageData, ctx: RenderContext): string {
   const { base, root, seasons } = ctx.paths("ranking.html");
   const leagueTabs = d.leagues.map((l) => ({ id: l.id, label: l.name.replace("・リーグ", "") }));
+  const hasTeam = d.standings.length > 0;
+  const hasPersonal = d.leagues.length > 0;
+  // ⚠**한쪽이 없으면 갈래를 만들지 않는다.** 눌러도 아무것도 없는 탭은 고장으로 읽힌다
+  const split = hasTeam && hasPersonal;
 
-  const body = html`<header class="idline">
-  <div class="idtext">
-    <span class="nm">リーグ順位</span>
-    <span class="sub">${d.season}年 · 規定到達者に順位がつきます</span>
-  </div>
-  <span class="asof">${d.asOf === null ? "" : `${fullDate(d.asOf)}まで`}</span>
-</header>
-
-${d.standings.length === 0
-    ? raw("")
-    : html`<section class="block" id="b-standings">
+  // ⚠**탭 이름과 제목이 겹치는 것을 남겨둔다.** 우리 패널에는 `aria-labelledby`가 없어서
+  // 이 제목이 「지금 열린 것이 무엇인가」를 말하는 유일한 수단이다
+  const teamBody = html`<section class="block" id="b-standings">
   <h4>チーム順位</h4>
   ${d.standings.map(
     (s) => html`<div class="standwrap">
@@ -333,18 +338,19 @@ ${d.standings.length === 0
       `交流戦の試合もリーグ順位に含めています。${d.tieRule}` +
       `得点・失点は公表記録、打率と防御率は当サイトの再計算です。`,
   )}
-</section>`}
+</section>`;
 
-<nav class="rail" aria-label="リーグ">${tablist("rankleague", leagueTabs)}</nav>
-${d.leagues.map((league, li) =>
+  const personalBody = html`${d.leagues.map((league, li) =>
     panel(
       "rankleague",
       league.id,
       li === 0,
-      html`<section class="block">
+      html`<section class="block" id="lg-${league.id}">
       <h4>${league.name}<span class="sw">${tablist(
         "rankcat",
         league.categories.map((c) => ({ id: c.id, label: c.label })),
+        false,
+        `${league.name}の部門`,
       )}</span></h4>
       ${league.categories.map((c, ci) =>
         panel("rankcat", c.id, ci === 0, categoryPanels(c, base, RANKING_PAGE_ROWS, "rankmetric")),
@@ -352,6 +358,39 @@ ${d.leagues.map((league, li) =>
     </section>`,
     ),
   )}`;
+
+  // 갈래가 없으면 구분선도 없다 — 앞이 비어 있는 구분선은 그냥 흠집이다
+  const leagueRail = hasPersonal
+    ? html`${split ? html`<span class="div"></span>` : raw("")}${tablist("rankleague", leagueTabs, false, "リーグ")}`
+    : raw("");
+
+  const body = html`<header class="idline">
+  <div class="idtext">
+    <span class="nm">リーグ順位</span>
+    <span class="sub">${d.season}年</span>
+  </div>
+  <span class="asof">${d.asOf === null ? "" : `${fullDate(d.asOf)}まで`}</span>
+</header>
+
+${!hasTeam && !hasPersonal
+    ? html`<p class="empty">このシーズンの順位はまだ計算できていません。</p>`
+    : html`${!split && !hasPersonal
+      ? raw("")
+      : html`<nav class="rail" aria-label="順位の表示">
+  ${split
+        ? tablist(
+          "ranktype",
+          [{ id: "team", label: "チーム" }, { id: "personal", label: "個人" }],
+          false,
+          "順位の種類",
+          true,
+        )
+        : raw("")}
+  ${split ? follower("ranktype", "personal", false, leagueRail) : leagueRail}
+</nav>`}
+
+${hasTeam ? (split ? panel("ranktype", "team", true, teamBody) : teamBody) : raw("")}
+${hasPersonal ? (split ? panel("ranktype", "personal", false, personalBody) : personalBody) : raw("")}`}`;
 
   return page({
     title: `リーグ順位 — ${d.season}年`,
@@ -418,8 +457,16 @@ export interface StartersPageData {
  * ⚠**구장이나 순번이 아니라 대전 카드로 만든다.** 구장은 더블헤더에서 겹치고,
  * 순번은 다음날 다른 경기를 가리킨다 — 저장된 선택이 엉뚱한 경기로 되살아난다.
  */
-function gameKey(g: ProbableGame): string {
+export function gameKey(g: ProbableGame): string {
   return [g.sides[0].teamCode, g.sides[1].teamCode].join("-");
+}
+
+/**
+ * 予告先発 페이지에서 그 경기 구획의 id.
+ * ⚠**試合 화면의 카드가 여기로 온다.** 키를 두 곳에서 만들면 언제고 어긋나므로 `gameKey` 한 벌만 쓴다(M1).
+ */
+export function startersAnchor(key: string): string {
+  return `sg-${key}`;
 }
 
 export function renderStartersPage(d: StartersPageData, ctx: RenderContext): string {
@@ -484,7 +531,7 @@ ${d.games.map((g, i) =>
         "starters",
         gameKey(g),
         i === 0,
-        html`<section class="block">
+        html`<section class="block" id="${startersAnchor(gameKey(g))}">
       <h4>${g.sides[0].shortName} 対 ${g.sides[1].shortName}<span class="qt">${g.venue ?? ""}${g.startTime === null ? "" : ` ${g.startTime}`}</span></h4>
       <div class="starters">
         ${sideBlock(g.sides[0], g.sides[1])}

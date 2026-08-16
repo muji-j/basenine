@@ -206,3 +206,15 @@ test("예고가 없으면 버튼도 없다", () => {
   const out = renderStartersPage(data({ gameDate: null, games: [] }), context());
   assert.ok(!out.includes('class="cards"'));
 });
+
+/**
+ * ⚠**試合 화면의 予告先発 카드가 여기로 온다.** 착지점이 없으면 눌러도 페이지 맨 위에 떨어지고,
+ * 고른 경기가 아닌 첫 경기가 열린 채로 보인다 — 「눌렀는데 다른 경기」가 된다.
+ */
+test("경기마다 착지점이 있다 — 試合 화면의 카드가 그 경기로 온다", () => {
+  const out = renderStartersPage(threeGames(), context());
+  const ids = [...out.matchAll(/id="(sg-[^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(ids, ["sg-d-g", "sg-s-db", "sg-l-m"]);
+  // 착지점은 그 경기의 탭 키와 짝이어야 한다 — 어긋나면 탭이 안 열린다
+  for (const id of ids) assert.ok(out.includes(`data-tab="${id.slice(3)}"`), `${id}에 맞는 탭이 없다`);
+});

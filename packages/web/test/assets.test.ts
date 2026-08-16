@@ -162,6 +162,28 @@ test("블록 재배치 기준점이 서버 마크업과 맞는다 — 어긋나�
   assert.match(CLIENT_JS, /\$\("#blocksEnd"\)/);
 });
 
+/**
+ * ⚠**카드 전체를 누르는 장치는 CSS 두 줄이 전부다.**
+ * 하나라도 사라지면 마크업은 그대로인 채 동작만 달라지므로, 렌더 검사로는 절대 안 잡힌다.
+ * ① 덮개(`::after`)가 없으면 카드를 눌러도 아무 일이 없다 —— 기능이 통째로 사라진 것을 아무도 모른다.
+ * ② 안쪽 링크를 위로 올리지 않으면 **선수 이름을 눌러도 경기 상세로 간다** ——
+ *    누른 곳과 다른 데로 가는 것이라 더 나쁘다.
+ */
+test("⚠카드 덮개와 안쪽 링크의 층이 둘 다 있다 — 하나만 빠져도 조용히 오작동한다", () => {
+  assert.match(CSS, /\.cardlink::after\{content:"";position:absolute;inset:0/, "덮개가 없다");
+  assert.match(CSS, /\.tapcard a:not\(\.cardlink\)\{position:relative;z-index:1\}/, "안쪽 링크가 덮개 아래다");
+  assert.match(CSS, /\.tapcard\{position:relative/, "덮개의 기준 상자가 없다");
+  // 초점은 덮개에 준다 — :focus-within이면 안쪽 링크에 초점이 가도 카드가 켜진다
+  assert.match(CSS, /\.cardlink:focus-visible::after\{outline:/);
+  assert.ok(!/\.tapcard:focus-within/.test(CSS), "초점을 카드 전체로 받으면 어디에 있는지 알 수 없다");
+});
+
+test("카드의 hover는 마우스가 있는 환경에서만 — 터치에서는 눌린 뒤에도 남는다", () => {
+  const at = CSS.indexOf("@media (hover:hover)");
+  assert.ok(at > 0, "hover 가드가 없다");
+  assert.ok(CSS.slice(at, at + 220).includes(".tapcard:hover"), "카드 hover가 가드 밖에 있다");
+});
+
 test("블록마다 CSS가 필요로 하는 id 규칙이 유지된다", () => {
   assert.match(CSS, /\.block\[hidden\]\{display:none\}/);
   for (const b of BLOCKS) assert.ok(/^[a-z]+$/.test(b.id), `${b.id}가 id로 쓸 수 없는 형태다`);

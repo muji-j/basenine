@@ -189,6 +189,19 @@ a{color:inherit}
 /* 탭줄을 안는 자리도 줄어들 수 있어야 한다 — 한 곳만 막혀도 위의 규칙이 무효가 된다 */
 .rail>.tabs,.block>h4 .sw,.block>h4 .sw>.tabs{min-width:0}
 
+/* 세그먼티드 — 「둘 중 하나」인 상위 전환. 붙여 놓으면 배타성이 형태로 보인다.
+   ⚠**줄어들지 않게 flex:none.** 이 줄은 화면의 갈래 자체라 스크롤 밖으로 밀리면 안 된다 */
+.tabs.seg{gap:0;flex:none}
+/* 테두리를 겹쳐 한 줄로 만든다. 겹치면 고른 쪽 테두리가 덮이므로 위로 올린다 */
+.tabs.seg .tab+.tab{margin-left:-1px}
+.tabs.seg .tab[aria-selected="true"]{position:relative;z-index:1}
+/* 레일 안에서 상위 탭을 따라 열리고 닫히는 자리(하위 탭줄).
+   ⚠**[hidden] 규칙을 여기서 다시 쓴다** — 위쪽의 display:none 과 특이도가 같아
+   나중에 오는 이 display:flex 가 이기기 때문이다. 안 쓰면 숨겨야 할 탭줄이 계속 보인다 */
+.rail>[data-panelgroup]{display:flex;align-items:center;gap:6px;min-width:0}
+.rail>[data-panelgroup][hidden]{display:none}
+.rail .div{flex:none;align-self:stretch;width:1px;margin:-2px 2px;background:var(--hair-2)}
+
 /* ── 조립 UI ─────────────────────────────────────────────── */
 .editor{padding:14px var(--pad) 16px;border-bottom:1px solid var(--hair);background:var(--panel)}
 .editor[hidden]{display:none}
@@ -572,6 +585,27 @@ table.stand .dif i.n{right:50%}
 .gmore{margin:9px 0 0;padding-top:8px;border-top:1px solid var(--hair);font-size:11.5px}
 .gmore a{text-decoration:none;border-bottom:1px solid var(--hair-2)}
 .gmore a:hover{border-bottom-color:var(--tx-3)}
+
+/* ── 카드 전체를 누르기 ──────────────────────────────────────
+   ⚠**링크를 하나 더 겹치지 않는다.** 이미 있는 「この試合の詳細」의 클릭 영역을
+   카드 전체로 넓힌다. 겹쳐 두면 같은 목적지가 링크 목록에 두 번 나오고 탭도 두 번 걸린다.
+   ⚠**안쪽 링크를 위로 올려야 한다.** 안 올리면 선수 이름을 눌러도 경기 상세로 간다 —
+   눌린 것과 다른 곳으로 가는 것은 조용한 오작동이다. */
+.tapcard{position:relative;transition:border-color var(--fast) var(--ease)}
+.cardlink::after{content:"";position:absolute;inset:0;z-index:0}
+.tapcard a:not(.cardlink){position:relative;z-index:1}
+/* 마우스가 있는 환경에서만 hover를 준다 — 터치에서는 hover가 눌린 뒤에도 남아 있다 */
+@media (hover:hover){
+  .tapcard:hover{border-color:var(--tx-3)}
+  .tapcard:hover .gmore a{border-bottom-color:var(--tx-3)}
+}
+/* ⚠**터치의 눌림 표시는 덮개가 낸다.** 링크 글자만 반짝이면 카드를 눌렀다는 느낌이 없고,
+   article:active 는 iOS에서 링크가 아닌 요소에 걸리지 않는다 */
+.cardlink:active::after{background:var(--tx);opacity:.06}
+/* 초점은 **카드 테두리**로 낸다. 덮개에 outline을 걸면 실제로 눌리는 범위와 정확히 일치한다.
+   :focus-within 을 쓰면 안쪽 선수 링크에 초점이 갔을 때도 카드가 켜져 어디에 있는지 알 수 없다 */
+.cardlink:focus-visible{outline:none}
+.cardlink:focus-visible::after{outline:2px solid var(--tx);outline-offset:-1px}
 /* 予告先発の要約 — 상세는 予告先発 페이지가 낸다 */
 .pbcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
 .pbcard{border:1px solid var(--hair-2);padding:10px 11px}
@@ -811,6 +845,29 @@ function showTabs(){
     }));
   });
 })();
+
+/* ⚠**깊은 링크가 닫힌 탭 안을 가리킬 수 있다.**
+   탭 선택은 localStorage에 남으므로, 「セの順位表をすべて見る」로 #b-standings 에 와도
+   지난번에 個人을 보고 있었다면 그 자리는 hidden 이다. 브라우저는 아무 데도 가지 않고
+   **아무 일도 일어나지 않은 것처럼 보인다.** 조상 패널을 거슬러 올라가 전부 연다. */
+function revealHash(){
+  const id=((typeof LOC.hash==="string"?LOC.hash:"")||"").slice(1);
+  if(!id)return;
+  const el=doc.getElementById(id);
+  if(!el)return;
+  let n=el,changed=false;
+  while(n&&n!==doc.body){
+    const d=n.dataset;
+    if(d&&d.panelgroup&&d.panelkey&&state.tabs[d.panelgroup]!==d.panelkey&&state.tabs[d.panelgroup]!=="all"){
+      state.tabs[d.panelgroup]=d.panelkey;changed=true;
+    }
+    n=n.parentNode;
+  }
+  if(!changed)return;
+  save(state);showTabs();
+  if(typeof el.scrollIntoView==="function")el.scrollIntoView();
+}
+if(typeof window!=="undefined"&&window.addEventListener)window.addEventListener("hashchange",revealHash);
 
 /* ── 블록 조립 ── */
 function renderBlocks(){
@@ -1487,7 +1544,7 @@ if(filter||chips.length){
 
 press(".rail [data-preset]","preset",state.preset);
 press(".rail [data-density]","density",state.density);
-applyTheme();renderBlocks();renderEditor();showTabs();
+applyTheme();renderBlocks();renderEditor();showTabs();revealHash();
 })();
 `;
 

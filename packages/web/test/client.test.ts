@@ -158,11 +158,14 @@ interface RunOptions {
   storage?: Storage;
   /** `players.json`의 내용. 주지 않으면 취득 실패로 다룬다 */
   index?: { i: string; n: string; t: string }[];
-  /** `location` 대역. `?vs=` 처리를 보려면 필요하다 */
-  location?: { search: string; href: string };
+  /** `location` 대역. `?vs=` 처리와 `#앵커` 처리를 보려면 필요하다 */
+  location?: { search: string; href: string; hash?: string };
 }
 
-function run(doc: ReturnType<typeof makeDocument>, opts: RunOptions = {}): { location: { search: string; href: string } } {
+function run(
+  doc: ReturnType<typeof makeDocument>,
+  opts: RunOptions = {},
+): { location: { search: string; href: string; hash?: string } } {
   const win: Record<string, unknown> = {};
   const loc = opts.location ?? { search: "", href: "" };
   // 서버가 심는 것과 **같은 함수**로 만든다 — 두 벌이 되면 어긋난다
@@ -589,9 +592,31 @@ function buildRankingPage(): ReturnType<typeof makeDocument> {
   const main = make("div", { class: "main" });
   doc.body.appendChild(main);
 
+  // 레일 한 줄에 상위 갈래(チーム/個人)와 하위 리그 탭줄이 함께 놓인다.
+  // 리그 탭줄은 **패널이 아니라 따라 움직이는 자리**에 들어간다(`follower`)
   const rail = make("div", { class: "rail" });
-  rail.appendChild(tabs("rankleague", ["central", "pacific"]).list);
+  rail.appendChild(tabs("ranktype", ["team", "personal"]).list);
+  const sub = make("div", { "data-panelgroup": "ranktype", "data-panelkey": "personal" });
+  sub.hidden = true;
+  sub.appendChild(tabs("rankleague", ["central", "pacific"]).list);
+  rail.appendChild(sub);
   main.appendChild(rail);
+
+  const teamPanel = make("div", {
+    "data-panelgroup": "ranktype",
+    "data-panelkey": "team",
+    role: "tabpanel",
+  });
+  teamPanel.appendChild(make("section", { class: "block", id: "b-standings" }));
+  main.appendChild(teamPanel);
+
+  const personalPanel = make("div", {
+    "data-panelgroup": "ranktype",
+    "data-panelkey": "personal",
+    role: "tabpanel",
+  });
+  personalPanel.hidden = true;
+  main.appendChild(personalPanel);
 
   for (const [i, lg] of ["central", "pacific"].entries()) {
     const leaguePanel = make("div", {
@@ -599,8 +624,8 @@ function buildRankingPage(): ReturnType<typeof makeDocument> {
       "data-panelkey": lg,
       role: "tabpanel",
     });
-    // ⚠순위표의 블록에는 **id가 없다.** 조립 대상이 아니기 때문이다
-    const section = make("section", { class: "block" });
+    // ⚠순위표의 블록 id는 **조립 목록에 없는 id**다 — 조립 규칙이 훑으면 전부 사라진다
+    const section = make("section", { class: "block", id: `lg-${lg}` });
     const cat = tabs("rankcat", ["batter", "starter", "reliever"]);
     const h = make("h4");
     h.appendChild(cat.list);
@@ -608,7 +633,7 @@ function buildRankingPage(): ReturnType<typeof makeDocument> {
     for (const c of cat.panels) section.appendChild(c);
     leaguePanel.appendChild(section);
     if (i > 0) leaguePanel.hidden = true;
-    main.appendChild(leaguePanel);
+    personalPanel.appendChild(leaguePanel);
   }
 
   // 일람의 하이라이트 블록 — id는 있지만 **조립 목록에 없는 id**다
@@ -620,7 +645,7 @@ test("⚠순위표의 블록을 숨기지 않는다 — 선수 페이지의 조�
   const doc = buildRankingPage();
   run(doc);
   const blocks = doc.querySelectorAll(".block");
-  assert.equal(blocks.length, 3, "픽스처가 블록을 못 만들었다");
+  assert.equal(blocks.length, 4, "픽스처가 블록을 못 만들었다");
   const hiddenOnes = blocks.filter((b) => b.hidden).map((b) => b.id || "(id 없음)");
   assert.deepEqual(hiddenOnes, [], `순위표의 블록이 숨겨졌다: ${hiddenOnes.join(", ")}`);
 });
@@ -634,6 +659,63 @@ test("조립 시스템이 없는 화면에서도 탭은 동작한다 — 부문 
     .map((p) => p.dataset["panelkey"]);
   // 리그 패널이 둘이라 부문 패널도 리그마다 하나씩 열린다
   assert.deepEqual(open, ["batter", "batter"], "부문 패널이 하나도 안 열렸다");
+});
+
+/**
+ * 지금 열려 있는 **패널**의 키.
+ * ⚠`role="tabpanel"`로 거른다 — 같은 그룹에는 레일 안의 하위 탭줄(`follower`)도 붙어 있어서
+ * 거르지 않으면 한 갈래가 두 번 세어진다.
+ */
+function openKeys(doc: ReturnType<typeof makeDocument>, group: string): string[] {
+  return doc
+    .querySelectorAll(`[data-panelgroup="${group}"]`)
+    .filter((p) => !p.hidden && p.getAttribute("role") === "tabpanel")
+    .map((p) => p.dataset["panelkey"]!);
+}
+
+test("갈래를 안 고르면 팀 순위가 열린다 — 「順位」를 누른 사람이 먼저 찾는 것이다", () => {
+  const doc = buildRankingPage();
+  run(doc);
+  assert.deepEqual(openKeys(doc, "ranktype"), ["team"]);
+});
+
+/**
+ * ⚠**깊은 링크가 닫힌 탭 안을 가리키면 브라우저는 아무 일도 하지 않는다.**
+ * 탭 선택은 localStorage에 남으므로, 「セの順位表をすべて見る」를 눌러도
+ * 지난번에 팀 순위를 보고 있었다면 개인 순위는 hidden 인 채다 — **눌러도 아무 반응이 없다.**
+ */
+test("#lg-central 로 오면 그 자리를 감싼 탭을 전부 연다 — 상위 갈래까지 거슬러 올라간다", () => {
+  const doc = buildRankingPage();
+  // 저장된 선택은 「팀 순위 · パ리그」 — 링크가 가리키는 곳과 **둘 다** 어긋나 있다
+  const storage = makeStorage();
+  storage.setItem(
+    "npb-meikan-layout",
+    JSON.stringify({ tabs: { ranktype: "team", rankleague: "pacific" } }),
+  );
+  run(doc, { storage, location: { search: "", href: "", hash: "#lg-central" } });
+
+  assert.deepEqual(openKeys(doc, "ranktype"), ["personal"], "상위 갈래가 안 열렸다");
+  assert.deepEqual(openKeys(doc, "rankleague"), ["central"], "리그 탭이 안 따라왔다");
+  // 레일의 하위 탭줄도 함께 나와야 한다 — 열린 화면에 조작이 없으면 되돌아갈 수 없다
+  const sub = doc
+    .querySelectorAll('[data-panelgroup="ranktype"]')
+    .filter((p) => p.dataset["panelkey"] === "personal" && p.getAttribute("role") === null);
+  assert.equal(sub.length, 1, "레일 안의 리그 탭줄 자리가 없다");
+  assert.equal(sub[0]!.hidden, false, "리그 탭줄이 숨겨진 채다");
+});
+
+test("가리키는 자리가 이미 열려 있으면 선택을 건드리지 않는다", () => {
+  const doc = buildRankingPage();
+  const storage = makeStorage();
+  storage.setItem("npb-meikan-layout", JSON.stringify({ tabs: { ranktype: "team" } }));
+  run(doc, { storage, location: { search: "", href: "", hash: "#b-standings" } });
+  assert.deepEqual(openKeys(doc, "ranktype"), ["team"]);
+});
+
+test("없는 앵커가 와도 조용히 넘어간다 — 화면이 멈추면 안 된다", () => {
+  const doc = buildRankingPage();
+  run(doc, { location: { search: "", href: "", hash: "#nowhere" } });
+  assert.deepEqual(openKeys(doc, "ranktype"), ["team"]);
 });
 
 /** 확대한 紋의 뼈대 — 꼭짓점 5개, 항목 버튼 5개, 판독부 5벌 */

@@ -234,17 +234,32 @@ export function note(text: string): RawHtml {
  * ⚠**같은 `group`을 쓰는 탭줄은 함께 움직인다.** 순위표에서 리그를 바꿔도 보고 있던
  * 지표가 유지되는 것이 이 성질 덕분이다 — 리그마다 탭줄을 따로 그리되 그룹은 하나다.
  * @param scroll 좁은 화면에서 줄바꿈 대신 가로로 흐르게 한다
+ * @param label ⚠**한 줄에 탭줄이 둘 이상이면 반드시 다르게 준다.** 같은 이름의 탭줄이
+ *   나란히 있으면 스크린리더에서 어느 쪽인지 구별할 방법이 사라진다
+ * @param seg 세그먼티드 표시 — 「둘 중 하나」인 상위 전환에만. 형태로 배타성을 말한다
  */
 export function tablist(
   group: string,
   items: readonly { id: string; label: string }[],
   scroll = false,
+  label = "表示の切り替え",
+  seg = false,
 ): RawHtml {
-  return html`<div class="tabs${scroll ? " scroll" : ""}" role="tablist" data-tabgroup="${group}" aria-label="表示の切り替え">
+  return html`<div class="tabs${scroll ? " scroll" : ""}${seg ? " seg" : ""}" role="tablist" data-tabgroup="${group}" aria-label="${label}">
     ${items.map(
       (t, i) => html`<button class="tab" type="button" role="tab" data-tab="${t.id}" aria-selected="${i === 0 ? "true" : "false"}">${t.label}</button>`,
     )}
   </div>`;
+}
+
+/**
+ * 탭 그룹을 따라 열리고 닫히지만 **패널은 아닌** 자리 — 레일 안의 하위 탭줄처럼.
+ *
+ * ⚠`role="tabpanel"`을 붙이지 않는다. 안에 든 것이 탭줄이면 「패널을 열었더니 또 탭」이 되어
+ * 스크린리더에게 구조를 잘못 말한다. 보이고 숨는 규칙만 공유한다.
+ */
+export function follower(group: string, key: string, first: boolean, body: RawHtml): RawHtml {
+  return html`<div data-panelgroup="${group}" data-panelkey="${key}" ${raw(first ? "" : "hidden")}>${body}</div>`;
 }
 
 /**

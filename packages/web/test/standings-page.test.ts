@@ -8,9 +8,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { renderRankingPage } from "../src/pages.ts";
-import type { RankingPageData, StandingRow } from "../src/pages.ts";
+import type { LeagueSection, RankingPageData, StandingRow } from "../src/pages.ts";
 import { colorOf } from "@bb-app/domain";
-import { context } from "./fixtures.ts";
+import { context, rankingPanel } from "./fixtures.ts";
 
 function row(over: Partial<StandingRow> = {}): StandingRow {
   return {
@@ -61,12 +61,80 @@ function data(over: Partial<RankingPageData> = {}): RankingPageData {
   };
 }
 
-test("팀 순위표가 개인 순위보다 먼저 온다 — 「順位」를 누른 사람이 먼저 찾는 것이다", () => {
-  const out = renderRankingPage(data(), context());
-  const standings = out.indexOf("チーム順位");
-  const rail = out.indexOf('class="rail"');
-  assert.ok(standings > 0, "팀 순위표가 없다");
-  assert.ok(standings < rail, "개인 순위 탭이 팀 순위표보다 앞에 있다");
+/** 개인 순위 한 리그분. 갈래가 생기려면 팀·개인이 **둘 다** 있어야 한다 */
+function league(id = "central", name = "セントラル・リーグ"): LeagueSection {
+  return {
+    id,
+    name,
+    categories: [{ id: "batter", label: "打者", panels: [rankingPanel()] }],
+  };
+}
+
+const split = (): RankingPageData => data({ leagues: [league()] });
+
+/**
+ * 조작 레일 한 줄만 잘라낸다.
+ * ⚠**페이지 껍데기에도 `</nav>`가 있다.** 문서 첫 `</nav>`로 자르면 레일에 닿기 전에 끝나
+ * 「탭줄이 0개」라는 무의미한 통과/실패가 나온다(2026-08-16에 실제로 그랬다).
+ */
+function railOf(out: string): string {
+  const at = out.indexOf('class="rail"');
+  assert.ok(at > 0, "조작 레일이 없다");
+  return out.slice(at, out.indexOf("</nav>", at));
+}
+
+test("팀 순위가 먼저 열린다 — 「順位」를 누른 사람이 먼저 찾는 것이다", () => {
+  const out = renderRankingPage(split(), context());
+  const team = out.indexOf('data-tab="team"');
+  const personal = out.indexOf('data-tab="personal"');
+  assert.ok(team > 0 && personal > team, "チーム/個人 갈래가 없거나 순서가 뒤집혔다");
+  assert.match(
+    out.slice(team - 120, team + 60),
+    /data-tab="team" aria-selected="true"/,
+    "첫 화면에서 선택된 것이 팀이 아니다",
+  );
+});
+
+test("⚠갈래를 나눠도 JS 없이 팀 순위는 보인다 — 열린 패널이 팀 쪽이다", () => {
+  const out = renderRankingPage(split(), context());
+  const teamPanel = /data-panelgroup="ranktype" data-panelkey="team" role="tabpanel" >/.exec(out);
+  const personalPanel = /data-panelgroup="ranktype" data-panelkey="personal" role="tabpanel" hidden>/.exec(out);
+  assert.notEqual(teamPanel, null, "팀 패널이 열려 있지 않다");
+  assert.notEqual(personalPanel, null, "개인 패널이 닫혀 있지 않다");
+  assert.ok(teamPanel!.index < personalPanel!.index, "팀 순위표가 문서 뒤쪽에 있다");
+});
+
+test("⚠개인 순위가 없으면 갈래를 만들지 않는다 — 눌러도 빈 탭은 고장으로 읽힌다", () => {
+  const out = renderRankingPage(data(), context()); // leagues: []
+  assert.ok(!out.includes('data-tab="personal"'), "빈 개인 탭이 나왔다");
+  assert.match(out, /チーム順位/);
+});
+
+test("⚠리그 탭은 個人 안에서만 보인다 — 팀 순위는 두 리그를 함께 보는 화면이다", () => {
+  const out = renderRankingPage(split(), context());
+  const rail = railOf(out);
+  const sub = rail.indexOf('data-panelgroup="ranktype" data-panelkey="personal"');
+  assert.ok(sub > 0, "리그 탭줄이 갈래를 따라 열리고 닫히지 않는다");
+  assert.ok(rail.slice(sub).includes('data-tabgroup="rankleague"'), "리그 탭줄이 그 안에 없다");
+  assert.ok(rail.slice(sub, sub + 80).includes("hidden"), "첫 화면부터 리그 탭이 보인다");
+  // ⚠**이 자리는 패널이 아니다.** 안에 든 것이 탭줄인데 `tabpanel`이라고 하면
+  // 「패널을 열었더니 또 탭」이 되어 스크린리더에게 구조를 잘못 말한다
+  assert.ok(!rail.slice(sub, sub + 80).includes("tabpanel"), "레일의 탭줄 자리를 패널이라고 말했다");
+});
+
+test("⚠개인 순위로 바로 오는 깊은 링크가 존재한다 — 닫힌 탭 안은 스스로 열려야 한다", () => {
+  const out = renderRankingPage(split(), context());
+  assert.ok(out.includes('id="lg-central"'), "리그 구획에 링크할 자리가 없다");
+});
+
+test("⚠한 줄에 놓인 두 탭줄은 이름이 다르다 — 같으면 스크린리더가 구별할 수 없다", () => {
+  const out = renderRankingPage(split(), context());
+  const labels = [...railOf(out).matchAll(/role="tablist"[^>]*aria-label="([^"]+)"/g)].map((m) => m[1]);
+  assert.equal(labels.length, 2, `레일 안 탭줄이 ${labels.length}개`);
+  assert.notEqual(labels[0], labels[1]);
+  // ⚠**이름이 무엇을 바꾸는지 말해야 한다.** 기본값 「表示の切り替え」는 서로 다르기만 할 뿐
+  // 어느 쪽이 리그인지 알려주지 않는다
+  assert.deepEqual(labels, ["順位の種類", "リーグ"]);
 });
 
 test("⚠승률의 정의를 화면에 적는다 — 분모에 무승부가 없다는 사실이 값만으로는 안 보인다(M2)", () => {

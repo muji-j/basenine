@@ -194,6 +194,7 @@ test("예고선발 요약에 방어율과 분모가 함께 나온다(M2)", () =>
         {
           venue: "神宮",
           startTime: "18:00",
+          anchor: "sg-s-db",
           sides: [
             { shortName: "ヤクルト", color: colorOf("s"), playerId: "P1", name: "奥川", era: { value: 2.52, denominator: 354 } },
             { shortName: "DeNA", color: colorOf("db"), playerId: null, name: null, era: null },
@@ -226,4 +227,63 @@ test("경기 페이지가 있으면 링크를 낸다 — 슬래시는 파일명�
     context(),
   );
   assert.match(out, /games\/2026-0814-s-db-17\.html/);
+});
+
+/**
+ * ⚠**카드 전체를 누르게 만드는 것은 「링크를 하나 더 얹는다」가 아니다.**
+ * 겹쳐 두면 같은 곳이 링크 목록에 두 번 나오고 탭 이동도 두 번 걸린다.
+ * 이미 있는 「この試合の詳細」의 클릭 영역을 카드까지 넓히는 것이 맞는 방법이다.
+ */
+test("試合 카드는 카드 전체가 눌린다 — 링크를 겹치지 않고 있는 링크를 넓힌다", () => {
+  const out = renderTodayPage(data(), context());
+  assert.match(out, /<article class="gcard tapcard">/, "카드가 누를 수 있는 상태가 아니다");
+  assert.equal((out.match(/class="cardlink"/g) ?? []).length, 1, "덮개 링크가 카드마다 하나가 아니다");
+  // 목적지가 하나뿐이어야 한다 — 겹친 링크는 여기서 2가 된다
+  assert.equal((out.match(/href="games\//g) ?? []).length, 1);
+});
+
+test("⚠눌러도 갈 곳이 없는 카드는 눌릴 것처럼 보이지 않는다", () => {
+  const withoutPage = renderTodayPage(data({ games: [game({ hasPage: false })] }), context());
+  assert.ok(!withoutPage.includes("tapcard"), "상세가 없는데 카드가 눌릴 것처럼 보인다");
+
+  const cancelled = renderTodayPage(
+    data({ games: [game({ status: "cancelled", notPlayedReason: "雨天中止" })] }),
+    context(),
+  );
+  assert.ok(!cancelled.includes("tapcard"), "중지된 경기 카드가 눌릴 것처럼 보인다");
+});
+
+/**
+ * ⚠**보이는 글자가 접근 이름에 그대로 들어 있어야 한다**(WCAG 2.5.3 Label in Name).
+ * aria-label로 「阪神 対 巨人の詳細」이라고 덮어쓰면, 음성 조작으로
+ * 「この試合の詳細」이라고 말한 사람이 이 링크를 못 누른다.
+ */
+test("덮개 링크의 이름은 보이는 글자를 품은 채 어느 경기인지까지 말한다", () => {
+  const out = renderTodayPage(data(), context());
+  assert.ok(!out.includes('cardlink" aria-label'), "보이는 글자를 aria-label로 덮었다");
+  const at = out.indexOf('class="cardlink"');
+  const link = out.slice(at, out.indexOf("</a>", at));
+  assert.ok(link.includes("この試合の詳細"), "보이는 글자가 없다");
+  assert.match(link, /class="vh">（ロッテ 対 西武）/, "어느 경기인지 말하지 않는다");
+});
+
+test("予告先発 카드도 카드 전체가 눌리고, 그 경기 구획으로 간다", () => {
+  const out = renderTodayPage(
+    data({
+      probables: [
+        {
+          venue: "神宮",
+          startTime: "18:00",
+          anchor: "sg-s-db",
+          sides: [
+            { shortName: "ヤクルト", color: colorOf("s"), playerId: "P1", name: "奥川", era: null },
+            { shortName: "DeNA", color: colorOf("db"), playerId: null, name: null, era: null },
+          ],
+        },
+      ],
+    }),
+    context(),
+  );
+  assert.match(out, /<article class="pbcard tapcard">/);
+  assert.match(out, /href="starters\.html#sg-s-db"/, "予告先発 화면의 그 경기로 가지 않는다");
 });

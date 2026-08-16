@@ -82,6 +82,8 @@ export interface TodayProbable {
   venue: string | null;
   startTime: string | null;
   sides: [ProbableBrief, ProbableBrief];
+  /** 予告先発 페이지의 그 경기 구획을 가리키는 앵커. **키는 한 곳에서만 만든다**(M1) */
+  anchor: string;
 }
 
 export interface ProbableBrief {
@@ -190,7 +192,10 @@ function gameCard(g: TodayGame, base: string): RawHtml {
   const errs =
     g.away.errors === null || g.home.errors === null ? null : `${g.away.errors}-${g.home.errors}`;
 
-  return html`<article class="gcard">
+  // ⚠**카드 전체를 누를 수 있게 하는 것은 `.gmore`의 링크를 넓히는 것이지 링크를 하나 더 두는 것이 아니다.**
+  // 겹쳐 놓으면 스크린리더의 링크 목록에 같은 곳이 두 번 나오고, 탭 이동도 두 번 걸린다.
+  // 상세 페이지가 없는 경기는 `link`를 붙이지 않는다 — 눌러도 안 가는데 눌릴 것처럼 보이면 그것이 결함이다
+  return html`<article class="gcard${g.hasPage ? " tapcard" : ""}">
   <h5 class="gvenue">${g.venue ?? ""}${g.winner === null ? html`<span class="gtie">引き分け</span>` : null}</h5>
   <div class="gscore">
     ${scoreLine(g.away, g.winner === "away", base)}
@@ -210,7 +215,8 @@ function gameCard(g: TodayGame, base: string): RawHtml {
     </li>`,
       )}</ul>`}
   ${g.hasPage
-    ? html`<p class="gmore"><a href="${base}games/${gameSlug(g.gameId)}.html">この試合の詳細</a></p>`
+    ? html`<p class="gmore"><a class="cardlink" href="${base}games/${gameSlug(g.gameId)}.html">この試合の詳細<span
+      class="vh">（${g.away.shortName} 対 ${g.home.shortName}）</span></a></p>`
     : raw("")}
 </article>`;
 }
@@ -225,9 +231,11 @@ function probableCard(p: TodayProbable, base: string): RawHtml {
     ? html`<span class="pbe">${NO_VALUE}</span>`
     : html`<span class="pbe">防御率 ${dec2(b.era.value)}<s>${innings(b.era.denominator)}回</s></span>`}
 </div>`;
-  return html`<article class="pbcard">
+  return html`<article class="pbcard tapcard">
   <h5 class="gvenue">${p.venue ?? ""}${p.startTime === null ? "" : ` ${p.startTime}`}</h5>
   ${side(p.sides[0])}${side(p.sides[1])}
+  <p class="gmore"><a class="cardlink" href="${base}starters.html#${p.anchor}">対戦する打者まで見る<span
+    class="vh">（${p.sides[0].shortName} 対 ${p.sides[1].shortName}）</span></a></p>
 </article>`;
 }
 
