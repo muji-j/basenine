@@ -18,12 +18,27 @@
 import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import { fullDate, innings } from "./format.ts";
-import { note, scroller, term, valueWithDen } from "./parts.ts";
+import { note, panel, scroller, tablist, term, valueWithDen } from "./parts.ts";
 import { page } from "./layout.ts";
 import type { RenderContext } from "./pages.ts";
 import { NEUTRAL_COLOR } from "@bb-app/domain";
 import type { TeamColor } from "@bb-app/domain";
 import type { Rate } from "@bb-app/metrics";
+
+/**
+ * 대회 전환 탭의 그룹 이름.
+ * ⚠**한 곳에서만 만든다** — 탭줄과 패널이 같은 문자열을 써야 짝이 맞는다. 갈리면 아무것도 안 열린다.
+ */
+const TAB_GROUP = "post";
+
+/**
+ * 대회가 둘 이상일 때만 패널로 감싼다.
+ * ⚠**하나뿐이면 감싸지 않는다** — 열고 닫을 것이 없는데 `hidden`을 붙이면,
+ * 스크립트가 없는 환경에서 그 하나가 통째로 안 보일 위험만 남는다.
+ */
+function wrap(many: boolean, key: string, first: boolean, body: RawHtml): RawHtml {
+  return many ? panel(TAB_GROUP, key, first, body) : body;
+}
 
 /** 한 경기 — 날짜·구장·점수. 상세 페이지가 있으면 그리로 간다 */
 export interface PostGame {
@@ -223,6 +238,12 @@ function pitcherTable(rows: PostPitcher[], base: string): RawHtml {
 
 export function renderPostseasonPage(d: PostseasonPageData, ctx: RenderContext): string {
   const { base, root, seasons } = ctx.paths("postseason.html");
+  /**
+   * ⚠**대회가 하나뿐이면 탭을 만들지 않는다.**
+   * 2026년 8월은 올스타 2경기뿐이다. 거기에 탭줄을 그리면 「고르라」고 해 놓고 고를 것이 없다 —
+   * 형태가 내용에 대해 거짓말을 하는 것이고, 스크린리더에는 선택지 1개짜리 탭목록이 읽힌다.
+   */
+  const many = d.competitions.length > 1;
 
   const body = html`<header class="idline">
   <div class="idtext">
@@ -237,10 +258,24 @@ export function renderPostseasonPage(d: PostseasonPageData, ctx: RenderContext):
   </div>
 </header>
 
+${many
+    /**
+     * ⚠**탭줄은 `.rail` 안에 둔다** — 이 사이트의 탭줄 5곳이 전부 그렇다.
+     * 밖에 두면 좌우 패딩이 0이라 본문만 들여쓰기된 채 탭만 화면 왼쪽 끝에 붙고,
+     * **`position:sticky` 도 안 걸린다.** CS 패널은 표가 165행이라, 스티키가 없으면
+     * 투수표를 읽다가 日本シリーズ로 바꾸려고 맨 위까지 되돌아가야 한다 —
+     * 이 화면을 탭으로 나눈 이유를 반만 이루게 된다.
+     * ⚠`scroll` 은 끄고 `.rail` 의 가로 스크롤에 맡긴다 — 둘 다 켜면 스크롤 상자가 이중이 된다.
+     */
+    ? html`<nav class="rail" aria-label="大会の表示">
+  ${tablist(TAB_GROUP, d.competitions.map((c) => ({ id: c.id, label: c.name })), false, "大会の切り替え")}
+</nav>`
+    : raw("")}
+
 ${d.competitions.length === 0
     ? html`<section class="block"><p class="empty">このシーズンのポストシーズンはまだ記録していません。</p></section>`
     : html`${d.competitions.map(
-      (c) => html`<section class="block" id="pc-${c.id}">
+      (c, i) => wrap(many, c.id, i === 0, html`<section class="block" id="pc-${c.id}">
   <h4>${c.name}<span class="qt">${c.games.length}試合</span></h4>
   ${note(c.detail)}
   ${stageGroups(c.games).map(
@@ -265,7 +300,7 @@ ${d.competitions.length === 0
       "レギュラーシーズンの成績には加えていません（NPBのタイトルはレギュラーシーズンで争います）。" +
       "リーグ平均を基準にする指標（wRC+・FIP）は出していません — ポストシーズンには「そのリーグ」がありません。",
   )}`}
-</section>`,
+</section>`),
     )}`}
 
 <nav class="find" aria-label="ほかのページ">
@@ -297,8 +332,14 @@ export function postseasonBrief(rows: readonly PostseasonBrief[], base: string):
   return html`<section class="block" id="postbrief">
   <h4>ポストシーズン<span class="qt">レギュラーシーズンとは別です</span></h4>
   <dl class="postrow">${rows.map(
+    /**
+     * ⚠**대회 이름이 그 대회의 탭으로 간다.**
+     * 저쪽 화면은 이제 대회별 탭이라 첫 대회만 열려 있다 — 그냥 `postseason.html`로 보내면
+     * 日本シリーズ만 나온 선수의 링크가 **탭을 넣기 전보다 나빠진다.**
+     * 앵커가 닫힌 탭 안을 가리켜도 `revealHash`가 조상 패널을 열어 준다.
+     */
     (r) => html`<div>
-    <dt>${r.competitionName}</dt>
+    <dt><a href="${base}postseason.html#pc-${r.competitionId}">${r.competitionName}</a></dt>
     <dd>${r.line}<span class="den">${r.games}試合 ${r.sampleText}</span></dd>
   </div>`,
   )}</dl>

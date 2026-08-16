@@ -64,12 +64,25 @@ test("바깥으로 나가는 링크는 검사하지 않는다 — 우리가 만�
   assert.deepEqual(out, []);
 });
 
-test("앵커와 쿼리는 떼고 파일만 본다", () => {
+/**
+ * ⚠**쿼리는 떼고 보지만 앵커는 뗀 뒤에 따로 본다.**
+ * 쿼리는 정적 사이트에서 파일을 고르지 않는다(`?vs=` 는 스크립트가 읽는다).
+ * 앵커는 다르다 — 닫힌 탭을 여는 것이 그 일이라, 틀리면 화면은 열리는데 아무 일도 안 일어난다.
+ */
+test("쿼리는 떼고 파일만 본다 — 파일을 고르지 않기 때문이다", () => {
   const out = brokenLinks([
-    page("index.html", ["players/1.html#bat", "players/1.html?x=1"]),
+    page("index.html", ["players/1.html?x=1"]),
     { path: "players/1.html", content: "" },
   ]);
   assert.deepEqual(out, []);
+});
+
+test("앵커는 떼고 나서 그 앵커가 있는지까지 본다", () => {
+  const ok = brokenLinks([
+    page("index.html", ["players/1.html#bat"]),
+    { path: "players/1.html", content: `<section id="bat">x</section>` },
+  ]);
+  assert.deepEqual(ok, []);
 });
 
 test("디렉터리 링크는 index.html 로 읽는다", () => {
@@ -95,4 +108,52 @@ test("HTML이 아닌 파일 안의 문자열은 링크로 읽지 않는다", () 
     { path: "d.json", content: `{"tpl": "<a href=\"none.html\">"}` },
   ]);
   assert.deepEqual(out, []);
+});
+
+/**
+ * ⚠**앵커가 없는 링크는 더 조용히 실패한다.**
+ * 파일은 열리므로 404조차 아니다 — 브라우저가 맨 위에 머무르고, 누른 사람은
+ * 「아무 일도 안 일어났다」고만 안다. 타대회 화면을 대회별 탭으로 나누면서
+ * 선수 페이지가 `postseason.html#pc-<대회id>` 를 가리키게 됐고, 그 링크의 일은
+ * **닫힌 탭을 여는 것**이다. 앵커가 틀리면 그 일이 통째로 안 일어난다.
+ */
+test("파일은 있는데 앵커가 없으면 잡는다", () => {
+  const out = brokenLinks([
+    page("players/1.html", ["../postseason.html#pc-nipponSeries"]),
+    { path: "postseason.html", content: `<div id="pc-climaxSeries">x</div>` },
+  ]);
+  assert.equal(out.length, 1, "없는 앵커를 흘렸다");
+  assert.equal(out[0]!.kind, "anchor", "파일 없음과 앵커 없음을 구별하지 않는다");
+  assert.equal(out[0]!.to, "postseason.html");
+});
+
+test("앵커가 있으면 통과한다", () => {
+  const out = brokenLinks([
+    page("players/1.html", ["../postseason.html#pc-nipponSeries"]),
+    { path: "postseason.html", content: `<div id="pc-nipponSeries">x</div>` },
+  ]);
+  assert.deepEqual(out, []);
+});
+
+test("파일 자체가 없으면 앵커가 아니라 파일 없음으로 센다", () => {
+  const out = brokenLinks([page("a.html", ["nope.html#x"])]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0]!.kind, "page", "파일이 없는데 앵커 탓으로 돌렸다");
+});
+
+test("앵커를 안 물은 링크는 앵커를 따지지 않는다", () => {
+  const out = brokenLinks([page("a.html", ["b.html"]), { path: "b.html", content: "" }]);
+  assert.deepEqual(out, []);
+});
+
+/**
+ * ⚠**`id` 도 공백 뒤에 오는 것만 본다.** CSS 의 `[id="x"]` 같은 문자열을 id 로 세면
+ * 없는 앵커가 있는 것으로 통과해 버린다 — 검사기가 조용히 무력해진다.
+ */
+test("문자열 안의 id 흉내를 앵커로 세지 않는다", () => {
+  const out = brokenLinks([
+    page("a.html", ["b.html#real"]),
+    { path: "b.html", content: `.x{content:"id=\"real\""}` },
+  ]);
+  assert.equal(out.length, 1, "문자열 안의 id 를 진짜 앵커로 셌다");
 });

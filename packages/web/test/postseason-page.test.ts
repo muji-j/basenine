@@ -241,3 +241,100 @@ test("떨어져 들어온 같은 스테이지를 한 제목으로 모은다 — 
   assert.equal((out.match(/class="standname">セ CS</g) ?? []).length, 1, "같은 제목이 두 번 나왔다");
   assert.equal((out.match(/class="standname">パ CS</g) ?? []).length, 1, "같은 제목이 두 번 나왔다");
 });
+
+/** 대회 셋 — 가운데 패널이 있어야 앵커의 「안」을 위아래로 가둘 수 있다 */
+function three(): PostseasonPageData {
+  return data({
+    competitions: [
+      cs(),
+      { ...cs(), id: "nipponSeries", name: "日本シリーズ", detail: "両リーグの優勝球団が争います。" },
+      { ...cs(), id: "allStar", name: "オールスターゲーム", detail: "シーズン中の親善試合です。" },
+    ],
+  });
+}
+
+/** 대회를 둘 이상 가진 화면 — 탭이 생기는 조건이다 */
+function two(): PostseasonPageData {
+  return data({
+    competitions: [
+      cs(),
+      { ...cs(), id: "nipponSeries", name: "日本シリーズ", detail: "両リーグの優勝球団が争います。" },
+    ],
+  });
+}
+
+/**
+ * ⚠**탭줄은 `.rail` 안에 있어야 한다.** 이 사이트의 탭줄 5곳이 전부 그렇다.
+ * 밖에 두면 좌우 패딩이 0이라 본문만 들여쓰기된 채 탭만 화면 왼쪽 끝에 붙고,
+ * **`position:sticky` 도 안 걸린다**(`.rail{position:sticky}`). CS 패널은 표가 165행이라,
+ * 스티키가 없으면 투수표를 읽다가 대회를 바꾸려고 맨 위까지 되돌아가야 한다 —
+ * 이 화면을 탭으로 나눈 이유를 반만 이루게 된다.
+ */
+test("탭줄이 .rail 안에 있다 — 패딩과 sticky가 거기서 온다", () => {
+  const out = renderPostseasonPage(two(), context());
+  assert.match(
+    out,
+    /<nav class="rail"[^>]*>\s*<div class="tabs"[^>]*data-tabgroup="post"/,
+    "탭줄이 .rail 밖에 있다 — 패딩도 sticky도 안 걸린다",
+  );
+  // ⚠`.rail` 이 이미 가로 스크롤을 하므로 탭줄까지 켜면 스크롤 상자가 이중이 된다
+  assert.ok(!out.includes(`class="tabs scroll"`), "스크롤 상자가 이중이다");
+});
+
+test("대회가 둘 이상이면 대회별 탭이 생긴다", () => {
+  const out = renderPostseasonPage(two(), context());
+  assert.match(out, /role="tablist"[^>]*aria-label="大会の切り替え"/, "대회 탭줄이 없다");
+  assert.ok(out.includes(`data-tab="climaxSeries"`), "CS 탭이 없다");
+  assert.ok(out.includes(`data-tab="nipponSeries"`), "일본시리즈 탭이 없다");
+  // 첫 대회만 열려 있고 나머지는 닫혀 있다
+  assert.match(out, /data-panelkey="climaxSeries"[^>]*role="tabpanel"\s*>/, "첫 탭이 닫혀 있다");
+  assert.match(out, /data-panelkey="nipponSeries"[^>]*role="tabpanel" hidden>/, "두 번째 탭이 열려 있다");
+});
+
+/**
+ * ⚠**탭줄과 패널은 같은 그룹 문자열을 써야 짝이 맞는다.**
+ * 갈리면 눌러도 아무것도 안 열리고, 그건 화면이 고장 난 것으로 읽힌다.
+ */
+test("탭줄과 패널이 같은 그룹을 쓴다", () => {
+  const out = renderPostseasonPage(two(), context());
+  const group = /data-tabgroup="([^"]+)"/.exec(out)?.[1];
+  assert.notEqual(group, undefined, "탭 그룹을 못 찾았다");
+  assert.ok(out.includes(`data-panelgroup="${group}"`), "패널이 다른 그룹을 쓴다");
+});
+
+/**
+ * ⚠**대회가 하나뿐이면 탭을 만들지 않는다.**
+ * 2026년 8월은 올스타 2경기뿐이다. 탭줄을 그리면 「고르라」고 해 놓고 고를 것이 없고,
+ * 스크린리더에는 선택지 1개짜리 탭목록이 읽힌다. 형태가 내용에 대해 거짓말을 하는 것이다.
+ */
+test("대회가 하나뿐이면 탭을 만들지 않는다 — 고를 것이 없다", () => {
+  const out = renderPostseasonPage(data(), context());
+  assert.ok(!out.includes(`aria-label="大会の切り替え"`), "고를 것이 없는데 탭줄이 나왔다");
+  assert.ok(!out.includes(`data-panelkey="climaxSeries"`), "하나뿐인데 패널로 감쌌다");
+  // ⚠감싸지 않았으니 스크립트가 없어도 통째로 보인다
+  assert.ok(out.includes("佐藤"), "하나뿐인 대회의 내용이 사라졌다");
+});
+
+test("기록이 없는 시즌에는 탭도 없다", () => {
+  const out = renderPostseasonPage(data({ competitions: [] }), context());
+  assert.ok(!out.includes(`aria-label="大会の切り替え"`));
+  assert.match(out, /まだ記録していません/);
+});
+
+/**
+ * ⚠**앵커는 패널 안에 있어야 한다.** 선수 페이지가 `#pc-nipponSeries` 로 보내는데
+ * 그 id가 패널 밖에 있으면, 브라우저는 닫힌 탭 위로 스크롤하고 **아무 일도 안 일어난 것처럼** 보인다.
+ */
+test("대회 앵커가 그 대회 패널 안에 있다 — 깊은 링크가 탭을 연다", () => {
+  /**
+   * ⚠**마지막 패널로 검사하면 아무것도 재지 않는다.** 「다음 패널까지」로 상한을 잡는데
+   * 마지막이면 그 상한이 문서 끝이 되어, 앵커를 **패널 뒤로 빼도 통과한다**(실측으로 확인).
+   * 그래서 **가운데 패널**로 검사한다 — 위아래 양쪽에 경계가 있는 자리다.
+   */
+  const out = renderPostseasonPage(three(), context());
+  const at = out.indexOf(`data-panelkey="nipponSeries"`);
+  const end = out.indexOf(`data-panelkey=`, at + 10);
+  assert.notEqual(at, -1, "가운데 패널을 못 찾았다");
+  assert.notEqual(end, -1, "뒤에 패널이 없다 — 상한이 안 걸려 이 시험이 공회전한다");
+  assert.ok(out.slice(at, end).includes(`id="pc-nipponSeries"`), "앵커가 패널 밖에 있다");
+});

@@ -534,3 +534,29 @@ test("포스트시즌 기록이 없으면 빈 구획을 만들지 않는다", ()
   const out = renderPlayerPage(playerPage({ postseason: [] }), context());
   assert.ok(!out.includes("ポストシーズン"), "기록이 없는데 구획이 나왔다");
 });
+
+/**
+ * ⚠**타대회 화면은 이제 대회별 탭이라 첫 대회만 열려 있다.**
+ * 그냥 `postseason.html` 로 보내면 日本シリーズ만 나온 선수의 링크가 **탭을 넣기 전보다 나빠진다** —
+ * 눌러도 자기 기록이 없는 화면이 나온다. 대회 이름이 그 대회의 앵커로 간다.
+ */
+test("포스트시즌 요약의 대회 이름이 그 대회 탭으로 간다", () => {
+  const out = renderPlayerPage(
+    playerPage({
+      postseason: [
+        {
+          competitionId: "nipponSeries",
+          competitionName: "日本シリーズ",
+          games: 5,
+          sampleText: "21打席",
+          line: "6安打 2本塁打 5打点",
+        },
+      ],
+    }),
+    context(),
+  );
+  assert.ok(
+    out.includes(`postseason.html#pc-nipponSeries`),
+    "대회 이름이 그 대회 앵커로 가지 않는다 — 첫 탭만 열린 화면이 나온다",
+  );
+});
