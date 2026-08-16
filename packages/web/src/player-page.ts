@@ -37,6 +37,7 @@ import { isEmptyProfile, markFigure, markLetter, markProfile } from "./marks.ts"
 import type { MarkPlayer, ProfileAxis } from "./marks.ts";
 import { termOf } from "./glossary.ts";
 import { page } from "./layout.ts";
+import { teamPath } from "./team-page.ts";
 import type { Freshness, SiteMeta } from "./layout.ts";
 
 /** 지표별 순위. 없으면 자격 미달이거나 값이 없다 — **둘 다 「순위 없음」으로 같게 다룬다** */
@@ -1107,7 +1108,7 @@ ${catalog.map((meta) => {
   })}
 <div id="blocksEnd" hidden></div>
 <nav class="find" aria-label="ほかの選手">
-  <a href="${base}index.html">${d.teamName}の選手一覧</a> · <a href="${base}ranking.html">リーグ順位表</a>
+  <a href="${base}${teamPath(d.teamCode)}">${d.teamName}</a> · <a href="${base}index.html">選手一覧</a> · <a href="${base}ranking.html">リーグ順位表</a>
 </nav>`;
 
   return page({
@@ -1119,6 +1120,7 @@ ${catalog.map((meta) => {
     spine: `${d.teamName}　${d.name}`,
     freshness: ctx.freshness,
     site: ctx.site,
+    hasPostseason: ctx.hasPostseason === true,
     nav: "player",
     body,
     bootstrapJs: bootstrapFor(d.role),

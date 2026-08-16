@@ -302,6 +302,7 @@ ${d.scoringPlays.length === 0
     color: (winner === "home" ? d.home : d.away).color,
     freshness: ctx.freshness,
     site: ctx.site,
+    hasPostseason: ctx.hasPostseason === true,
     nav: "today",
     // 試合 구획에 있지만 이 문서는 today.html 이 아니다
     navExact: false,

@@ -26,6 +26,7 @@ import {
   term,
 } from "./parts.ts";
 import { page, pastSeasonOf } from "./layout.ts";
+import { teamPath } from "./team-page.ts";
 import type { Freshness, SiteMeta } from "./layout.ts";
 import type { MatchupRow, RankingPanel } from "./player-page.ts";
 import { NEUTRAL_COLOR } from "@bb-app/domain";
@@ -166,7 +167,7 @@ export function renderIndexPage(d: IndexPageData, ctx: RenderContext): string {
 
 ${d.teams.map(
     (t) => html`<section class="teamgroup" style="--chip:${t.color.base};--chip-ink:${t.color.ink}">
-  <h4><i></i>${t.name}<span class="qt">${t.players.length}人</span></h4>
+  <h4><i></i><a href="${base}${teamPath(t.code)}">${t.name}</a><span class="qt">${t.players.length}人</span></h4>
   <ul class="roster">${t.players.map((p) => {
       const who: MarkPlayer = {
         playerId: p.playerId,
@@ -214,6 +215,7 @@ ${d.highlights.map((s) =>
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
+    hasPostseason: ctx.hasPostseason === true,
     nav: "index",
     body,
   });
@@ -295,7 +297,9 @@ function standingsTable(s: StandingsSection, base: string): RawHtml {
     <tbody>${s.rows.map(
       (r) => html`<tr style="--chip:${r.color.base}">
         <td class="rk">${r.rank}${r.tiedRank ? html`<em>同</em>` : null}</td>
-        <td class="l tm"><i></i>${r.shortName}</td>
+        <!-- ⚠**팀명을 누르면 그 팀 화면으로 간다.** 지금까지 목적지가 없어서
+             팀을 보려면 이 한 줄과 선수 일람의 한 덩어리를 머리에서 합쳐야 했다 -->
+        <td class="l tm"><i></i><a href="${base}${teamPath(r.teamCode)}">${r.shortName}</a></td>
         <td>${r.games}</td><td class="b">${r.w}</td><td>${r.l}</td><td>${r.t}</td>
         <td class="b">${avg3(r.pct)}</td>
         <td>${r.gamesBehind === 0 ? "—" : r.gamesBehind.toFixed(1).replace(/\.0$/, "")}</td>
@@ -407,6 +411,7 @@ ${hasPersonal ? (split ? panel("ranktype", "personal", false, personalBody) : pe
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
+    hasPostseason: ctx.hasPostseason === true,
     nav: "ranking",
     body,
   });
@@ -576,6 +581,7 @@ ${d.games.map((g, i) =>
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
+    hasPostseason: ctx.hasPostseason === true,
     // ⚠予告先発은 「試合」의 자식 화면이다. 부모 항목을 켜 두지 않으면
     // 내비게이션이 「아무 데도 아님」을 가리킨다
     nav: "today",
@@ -790,6 +796,7 @@ export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): strin
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
+    hasPostseason: ctx.hasPostseason === true,
     nav: "matchup",
     body,
   });

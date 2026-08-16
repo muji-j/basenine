@@ -99,7 +99,16 @@ export interface SiteMeta {
 }
 
 /** 전역 헤더에서 지금 어디에 있는지. `aria-current`로 나간다 */
-export type NavKey = "today" | "index" | "ranking" | "matchup" | "compare" | "log" | "player";
+export type NavKey =
+  | "today"
+  | "index"
+  | "ranking"
+  | "matchup"
+  | "compare"
+  | "log"
+  | "player"
+  | "postseason"
+  | "team";
 
 /**
  * 시즌 전환의 한 칸.
@@ -151,6 +160,8 @@ export interface PageOptions {
    * 그런 화면은 `false`로 두고 `aria-current="true"`(구획 안에 있다)만 낸다.
    */
   navExact?: boolean;
+  /** 이 시즌에 ポストシーズン 기록이 있는가. 없으면 내비에 항목을 내지 않는다 */
+  hasPostseason?: boolean;
   /** 본문. 블록들이 여기 들어간다 */
   body: RawHtml;
   /** 클라이언트에 실어 보낼 스크립트 본문(블록 카탈로그 등) */
@@ -179,6 +190,11 @@ function topbar(o: PageOptions): RawHtml {
     <a href="${o.base}ranking.html"${here("ranking")}>順位</a>
     <a href="${o.base}matchup.html"${here("matchup")}>対戦</a>
     <a href="${o.base}compare.html"${here("compare")}>比較</a>
+    <!-- ⚠**기록이 있는 시즌에만 낸다.** 2026년은 아직 포스트시즌이 없다 —
+         눌러도 빈 화면이 나오는 항목은 고장으로 읽힌다 -->
+    <!-- ⚠**이름을 「PS」로 두지 않는다.** 올스타뿐인 시즌도 여기로 오므로
+         포스트시즌이라고 부르면 틀린다. 「레귤러 시즌 밖의 경기」가 이 항목이 담는 것이다 -->
+    ${o.hasPostseason === true ? html`<a href="${o.base}postseason.html"${here("postseason")}>他大会</a>` : raw("")}
     <!-- ⚠수집 로그는 시즌별이 아니라 사이트 전체다(「언제 어디서 데이터가 들어왔나」).
          과거 시즌에는 만들지 않으므로 링크는 root로 현재 시즌의 것을 가리킨다.
          base로 두면 2025 화면 2,307장이 전부 404가 된다(2026-08-16 실측 1,585종). -->
@@ -319,6 +335,12 @@ export interface RenderContext {
   freshness: Freshness;
   /** 이 페이지의 경로. **자기 경로만 말하면 나머지는 계산된다** */
   paths: (selfPath: string, fallback?: Fallback) => PagePaths;
+  /**
+   * 이 시즌에 ポストシーズン 기록이 있는가.
+   * ⚠**내비의 항목 하나를 켜고 끄는 값이다.** 기록이 없는 시즌(2026년 8월 시점)에 항목을 내면
+   * 눌러도 빈 화면이 나오고, 그건 고장으로 읽힌다.
+   */
+  hasPostseason?: boolean;
 }
 
 const LT = String.fromCharCode(0x3c);

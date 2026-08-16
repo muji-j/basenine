@@ -193,3 +193,149 @@ test("검색 색인의 성적 한 줄에 분모가 붙어 있다(M2)", async () 
     assert.match(pit.s!, /^防御率 [0-9.]+（[0-9.]+回）$/, `분모가 없다: ${pit.s}`);
   });
 });
+
+// ─── ポストシーズン의 경계 ──────────────────────────────────────────────
+
+/**
+ * ⚠**배제하지 않고 구분한다.** 데이터는 처음부터 있었는데 모든 화면이 `regular` 로 걸러
+ * 통째로 안 보여주고 있었다(실측: 2025년 CS 13경기·일본시리즈 5경기).
+ * ⚠**그렇다고 정규시즌에 더하지 않는다**(§2-1) — 여기서 지키는 것이 그 경계다.
+ */
+async function withPostseason(fn: (site: ReturnType<typeof loadSite>) => void): Promise<void> {
+  const dir = await mkdtemp(join(tmpdir(), "bb-post-"));
+  const db = openDb(join(dir, "t.sqlite"), NOW);
+  try {
+    upsertPlayer(db, "HERO", "英雄", NOW);
+    upsertPlayer(db, "ARM", "剛腕", NOW);
+    const play = (id: string, date: string, comp: string, h: number): void => {
+      upsertGame(db, {
+        gameId: id, season: 2026, gameDate: date, awayCode: "g", homeCode: "t", gameNo: 1,
+        status: "played", notPlayedReason: null, competition: comp,
+        sourceUrl: "https://npb.jp/x", fetchedAt: NOW, awayRuns: 1, homeRuns: 2,
+      });
+      upsertBatting(db, {
+        gameId: id, playerId: "HERO", side: "home", battingOrder: "3", position: "(三)",
+        pa: 4, ab: 4, h, d2: 0, d3: 0, hr: 0, bb: 0, ibb: 0, hbp: 0,
+        sf: 0, sh: 0, so: 0, roe: 0, runs: 0, rbi: h, sb: 0,
+      });
+      upsertPitching(db, {
+        gameId: id, playerId: "ARM", side: "home", decision: "○",
+        outs: 21, bf: 28, pitches: 95, h: 4, hr: 0, bb: 1, hbp: 0, so: 8, runs: 1, er: 1, wp: 0, balk: 0,
+      });
+    };
+    play("r1", "2026-04-01", "regular", 2);
+    play("r2", "2026-04-02", "regular", 1);
+    play("cs1", "2026-10-11", "climaxSeries", 3);
+    // ⚠**대회가 둘 이상이어야 「합쳐 집계」가 드러난다.** 하나뿐이면 합쳐도 같은 수가 나온다
+    play("ns1", "2026-10-25", "nipponSeries", 1);
+    /**
+     * ⚠**올스타는 팀 코드가 구단이 아니다**(`cl`/`pl` = 리그 선발).
+     * 구단 마스터에 없으므로 집계하면 예외가 난다 — 그 예외는 M7의 안전장치이고,
+     * 2025년 CS·일본시리즈 18경기가 정규시즌에 섞여 있던 것을 잡아낸 바로 그 장치다.
+     * 그래서 경기만 싣고 선수 성적은 만들지 않는다. **이 시험이 그 경계를 지킨다.**
+     */
+    upsertGame(db, {
+      gameId: "as1", season: 2026, gameDate: "2026-07-28", awayCode: "cl", homeCode: "pl", gameNo: 1,
+      status: "played", notPlayedReason: null, competition: "allStar",
+      sourceUrl: "https://npb.jp/y", fetchedAt: NOW, awayRuns: 5, homeRuns: 7,
+    });
+    upsertBatting(db, {
+      gameId: "as1", playerId: "HERO", side: "away", battingOrder: "3", position: "(三)",
+      pa: 3, ab: 3, h: 1, d2: 0, d3: 0, hr: 0, bb: 0, ibb: 0, hbp: 0,
+      sf: 0, sh: 0, so: 1, roe: 0, runs: 0, rbi: 0, sb: 0,
+    });
+    fn(loadSite(db, { season: 2026, builtOn: "2026-11-01" }));
+  } finally {
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+test("⚠포스트시즌을 정규시즌 성적에 더하지 않는다 — 섞으면 어느 규칙에도 속하지 않는 수가 된다", async () => {
+  await withPostseason((site) => {
+    const p = site.players.find((x) => x.playerId === "HERO")!;
+    // 정규 2경기 8타석 3안타. CS 1경기 4타석 3안타는 **들어가면 안 된다**
+    assert.equal(p.batting!.line.pa, 8, "포스트시즌이 시즌 합계에 섞였다");
+    assert.equal(p.batting!.line.h, 3);
+    assert.equal(p.batting!.games, 2);
+  });
+});
+
+test("포스트시즌 성적은 그 화면에 따로 있다 — 배제하지 않는다", async () => {
+  await withPostseason((site) => {
+    assert.deepEqual(
+      site.postseason.competitions.map((c) => c.id),
+      ["climaxSeries", "nipponSeries", "allStar"],
+      "대회가 통째로 사라졌거나 순서가 뒤집혔다",
+    );
+    const cs = site.postseason.competitions[0]!;
+    assert.equal(cs.games.length, 1);
+    const hero = cs.batters.find((b) => b.playerId === "HERO")!;
+    assert.equal(hero.pa, 4, "CS 몫이 아니라 다른 수가 실렸다");
+    assert.equal(hero.h, 3);
+    assert.equal(cs.pitchers.find((x) => x.playerId === "ARM")!.outs, 21);
+  });
+});
+
+/**
+ * ⚠**대회끼리도 섞지 않는다.** 클라이맥스시리즈와 일본시리즈는 다른 대회다.
+ * 하나로 합치면 그 수는 어느 대회의 기록도 아니게 된다(§2-1).
+ */
+test("⚠대회끼리도 합치지 않는다 — CS와 일본시리즈는 다른 수다", async () => {
+  await withPostseason((site) => {
+    const cs = site.postseason.competitions.find((c) => c.id === "climaxSeries")!;
+    const ns = site.postseason.competitions.find((c) => c.id === "nipponSeries")!;
+    assert.equal(cs.batters.find((b) => b.playerId === "HERO")!.h, 3, "CS 안타가 아니다");
+    assert.equal(ns.batters.find((b) => b.playerId === "HERO")!.h, 1, "일본시리즈 안타가 아니다");
+    assert.equal(ns.games.length, 1);
+  });
+});
+
+/**
+ * ⚠**올스타는 구단인 척하지 않는다.** 소속이 `cl`/`pl`(리그 선발)이라 구단이 아니고,
+ * 억지로 구단 마스터에 끼워 넣으면 「모르는 코드는 예외」라는 안전장치(M7)를 우리 손으로 무너뜨린다.
+ */
+test("올스타는 경기만 싣고 선수 성적은 만들지 않는다 — 안전장치를 무너뜨리지 않는다", async () => {
+  await withPostseason((site) => {
+    const as = site.postseason.competitions.find((c) => c.id === "allStar")!;
+    assert.equal(as.games.length, 1);
+    assert.deepEqual(as.batters, [], "구단이 아닌 소속으로 선수 성적을 만들었다");
+    assert.deepEqual(as.pitchers, []);
+    // 리그 선발이라는 것이 이름에 드러난다
+    assert.equal(as.games[0]!.away.shortName, "セ・リーグ");
+    assert.equal(as.games[0]!.home.shortName, "パ・リーグ");
+    // ⚠올스타 타석이 정규시즌에도 포스트시즌 집계에도 들어가면 안 된다
+    const p = site.players.find((x) => x.playerId === "HERO")!;
+    assert.equal(p.batting!.line.pa, 8, "올스타 타석이 시즌 합계에 섞였다");
+  });
+});
+
+test("⚠순위표에도 포스트시즌이 섞이지 않는다", async () => {
+  await withPostseason((site) => {
+    const rows = site.ranking.standings.flatMap((s) => s.rows);
+    const t = rows.find((r) => r.teamCode === "t");
+    // 정규시즌 2경기만 센다
+    assert.equal(t?.games, 2, "순위표에 포스트시즌 경기가 들어갔다");
+  });
+});
+
+test("포스트시즌의 경기 상세 페이지도 만든다 — 링크가 죽지 않는다", async () => {
+  await withPostseason((site) => {
+    const ids = site.games.map((g) => g.gameId);
+    assert.ok(ids.includes("cs1"), "포스트시즌 경기 페이지가 없다");
+    assert.ok(ids.includes("r1"), "정규시즌 경기 페이지가 사라졌다");
+    // 포스트시즌 화면의 링크가 실제로 만든 페이지를 가리킨다
+    assert.equal(site.postseason.competitions[0]!.games[0]!.hasPage, true);
+  });
+});
+
+test("팀 페이지도 정규시즌만 센다 — 12구단분이 나온다", async () => {
+  await withPostseason((site) => {
+    const t = site.teams.find((x) => x.teamCode === "t")!;
+    assert.equal(t.games, 2, "팀 페이지에 포스트시즌이 섞였다");
+    assert.equal(t.hasPostseason, true, "포스트시즌이 있는데 없다고 했다");
+    // 그 팀 선수만 실린다
+    assert.ok(t.batters.every((b) => b.playerId !== "NOBODY"));
+    assert.ok(t.batters.some((b) => b.playerId === "HERO"));
+  });
+});
