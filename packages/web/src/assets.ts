@@ -31,7 +31,7 @@ export const ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32
 
 export const CSS = `
 :root {
-  --page:#fbfaf7; --tx:#17171a; --tx-2:#5d5d59; --tx-3:#8d8d87;
+  --page:#fbfaf7; --tx:#17171a; --tx-2:#5d5d59; --tx-3:#6e6e69;
   --hair:#e0dfd8; --hair-2:#cfcec5; --panel:#ffffff; --panel-2:#f3f1ec;
   --warn:#a8452f; --ok:#3f6b4a;
   --f-body:"Yu Gothic","Hiragino Kaku Gothic ProN","Noto Sans JP","Meiryo",system-ui,sans-serif;
@@ -45,13 +45,13 @@ export const CSS = `
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --page:#15161a; --tx:#e9e8e3; --tx-2:#a5a49d; --tx-3:#7b7a74;
+    --page:#15161a; --tx:#e9e8e3; --tx-2:#a5a49d; --tx-3:#8f8e87;
     --hair:#2b2d33; --hair-2:#3b3e45; --panel:#1c1e23; --panel-2:#23262c;
     --warn:#e08a72; --ok:#8fc09c;
   }
 }
 :root[data-theme="dark"] {
-  --page:#15161a; --tx:#e9e8e3; --tx-2:#a5a49d; --tx-3:#7b7a74;
+  --page:#15161a; --tx:#e9e8e3; --tx-2:#a5a49d; --tx-3:#8f8e87;
   --hair:#2b2d33; --hair-2:#3b3e45; --panel:#1c1e23; --panel-2:#23262c;
   --warn:#e08a72; --ok:#8fc09c;
 }
@@ -116,7 +116,10 @@ a{color:inherit}
 .mk{display:block}
 .mkline{display:inline-block;vertical-align:-3px;margin-right:6px;line-height:0}
 .idtext{min-width:0;display:flex;flex-direction:column;gap:2px}
-.idline .nm{font-size:clamp(21px,5vw,26px);font-weight:700;letter-spacing:.08em;line-height:1.2}
+/* ⚠**표제는 h1 이다.** 크기는 원래 맞았는데 태그가 span 이라, 스크린리더의 헤딩 목록에
+   페이지 제목이 없었다(3,257장 중 h1 0장). 여백은 여기서 지운다 — h1 의 기본 여백이 붙으면
+   머리줄이 벌어진다 */
+.idline .nm{margin:0;font-size:clamp(21px,5vw,26px);font-weight:700;letter-spacing:.08em;line-height:1.2}
 .idline .sub{font-size:11.5px;color:var(--tx-2);letter-spacing:.06em}
 .spark{margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:2px}
 .spark svg{display:block;overflow:visible}
@@ -216,7 +219,7 @@ a{color:inherit}
     linear-gradient(to left,var(--hair-2),rgba(0,0,0,0)) right center/9px 100% no-repeat scroll}
 .tabs.scroll::-webkit-scrollbar{height:0}
 /* 탭줄을 안는 자리도 줄어들 수 있어야 한다 — 한 곳만 막혀도 위의 규칙이 무효가 된다 */
-.rail>.tabs,.block>h4 .sw,.block>h4 .sw>.tabs{min-width:0}
+.rail>.tabs,.block>h2 .sw,.block>h2 .sw>.tabs{min-width:0}
 
 /* 세그먼티드 — 「둘 중 하나」인 상위 전환. 붙여 놓으면 배타성이 형태로 보인다.
    ⚠**줄어들지 않게 flex:none.** 이 줄은 화면의 갈래 자체라 스크롤 밖으로 밀리면 안 된다 */
@@ -254,10 +257,10 @@ a{color:inherit}
 .block{padding:16px var(--pad);border-bottom:1px solid var(--hair);animation:rise var(--mid) var(--ease) both;
   animation-delay:calc(var(--i,0) * 26ms)}
 .block[hidden]{display:none}
-.block>h4{margin:0 0 9px;font-size:10.5px;letter-spacing:.19em;color:var(--tx-2);font-weight:600;
+.block>h2{margin:0 0 9px;font-size:10.5px;letter-spacing:.19em;color:var(--tx-2);font-weight:600;
   display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.block>h4 .sw{display:flex;gap:4px;margin-left:auto;flex-wrap:wrap}
-.block>h4 .qt{letter-spacing:0;font-weight:400;color:var(--tx-3)}
+.block>h2 .sw{display:flex;gap:4px;margin-left:auto;flex-wrap:wrap}
+.block>h2 .qt{letter-spacing:0;font-weight:400;color:var(--tx-3)}
 [data-panelgroup]{animation:fade var(--fast) var(--ease)}
 [data-panelgroup][hidden]{display:none}
 /* ⚠**패널에만 준다.** 레일 안의 하위 탭줄도 같은 그룹에 속하는데, 탭줄이 미끄러지면 조작이 흔들린다 */
@@ -405,7 +408,13 @@ tbody tr{transition:background var(--fast) var(--ease)}
 tbody tr:hover{background:var(--panel-2)}
 tr.me td{background:var(--team,#6b7280);color:var(--team-ink,#fff);font-weight:700}
 tr.me:hover td{background:var(--team,#6b7280)}
-tr.thin td{color:var(--tx-3)}
+/* ⚠**「얇음」을 대비 강등으로 말하지 않는다.**
+   --tx-3 이 붙는 것은 분모(.den)·자격 기준과 표본 경고(.note)·규정 미달 행인데,
+   실측(2026-08-16) 대비가 라이트 3.20:1 · 다크 4.20:1 이었다 —
+   **M2가 요구하는 바로 그 정보가 화면에서 가장 안 읽혔다.** 구단 페이지는 표의 86%가 그 색이다.
+   토큰 명도를 올리고(색상환은 그대로라 인쇄물의 질감은 남는다), 얇음은 **다른 채널**로 말한다 */
+tr.thin td{color:var(--tx-2)}
+tr.thin td:first-child{box-shadow:inset 2px 0 0 var(--hair-2)}
 /* 구단 색 칩 — **모든 표가 같은 한 벌을 쓴다**(M1의 정신).
    ⚠**셀을 flex 컨테이너로 만들지 않는다.** td{display:flex} 는 그 칸을 테이블 셀 박스에서
    빼내어, **그 열만 아래 경계선이 다른 열과 어긋난다**(2026-08-16 실측: 순위표 球団 열).
@@ -723,8 +732,8 @@ table.stand .dif i.n{right:50%}
 .trecent s{text-decoration:none;margin-left:auto;font-size:11.5px}
 .trecent a:hover{padding-left:4px}
 /* 순위표·일람의 구단명이 링크가 됐다 — 밑줄 대신 색으로만 반응한다(인쇄물의 질감) */
-.stand .tm a,.teamgroup h4 a{text-decoration:none}
-.stand .tm a:hover,.teamgroup h4 a:hover{text-decoration:underline}
+.stand .tm a,.teamgroup h2 a{text-decoration:none}
+.stand .tm a:hover,.teamgroup h2 a:hover{text-decoration:underline}
 
 /* ── ポストシーズン ────────────────────────────────────────
    ⚠**순위가 아니라 기록이다.** 표본이 13경기·5경기라 순위를 붙이면 거짓말이 된다 */
@@ -870,9 +879,9 @@ table.stand .dif i.n{right:50%}
 .count{font-size:11px;color:var(--tx-3);margin-top:10px}
 .teamgroup{padding:14px var(--pad);border-bottom:1px solid var(--hair)}
 .teamgroup[hidden]{display:none}
-.teamgroup h4{margin:0 0 8px;font-size:11px;letter-spacing:.14em;font-weight:700;
+.teamgroup h2{margin:0 0 8px;font-size:11px;letter-spacing:.14em;font-weight:700;
   display:flex;align-items:center;gap:8px}
-.teamgroup h4 i{width:11px;height:11px;background:var(--chip,#6b7280);font-style:normal;box-shadow:inset 0 0 0 1px var(--tx-2)}
+.teamgroup h2 i{width:11px;height:11px;background:var(--chip,#6b7280);font-style:normal;box-shadow:inset 0 0 0 1px var(--tx-2)}
 /* ⚠**화면 밖의 구단 묶음은 그리지 않는다.**
    일람은 구단 12묶음에 선수 698명이고, 선수마다 인라인 SVG가 하나씩 붙는다
    (실측: SVG 698개 · polygon 1,390개 · DOM 요소 7,326개).

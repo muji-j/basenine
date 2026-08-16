@@ -327,14 +327,14 @@ export function renderComparePage(d: ComparePageData, ctx: RenderContext): strin
 
   const body = html`<header class="idline">
   <div class="idtext">
-    <span class="nm">選手をくらべる</span>
+    <h1 class="nm">選手をくらべる</h1>
     <span class="sub">${d.season}年 · 二人を選ぶと成績を並べます</span>
   </div>
   <span class="asof">${d.asOf === null ? "" : `${fullDate(d.asOf)}まで`}</span>
 </header>
 
 <section class="block" id="cmpForm">
-  <h4>くらべる二人</h4>
+  <h2>くらべる二人</h2>
   <div class="picker">
     ${side("A", "選手A", "例：佐藤")}
     ${side("B", "選手B", "例：村上")}
@@ -369,7 +369,7 @@ export function renderComparePage(d: ComparePageData, ctx: RenderContext): strin
 <div id="cmpOut" aria-live="polite"></div>
 
 <section class="block">
-  <h4>この画面が「勝ち負け」を出さないことがある理由</h4>
+  <h2>この画面が「勝ち負け」を出さないことがある理由</h2>
   <p class="note" style="max-width:64ch">
     数字が大きいほうに印をつけるのは簡単ですが、<b>母数が足りない側にそれをやると嘘になります</b>。
     20打席の .400 は 500打席の .300 より優れた打者だという意味ではありません。<br>

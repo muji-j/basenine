@@ -222,7 +222,7 @@ export function renderGamePage(d: GamePageData, ctx: RenderContext): string {
 
   const body = html`<header class="idline">
   <div class="idtext">
-    <span class="nm">${fullDate(d.gameDate)}</span>
+    <h1 class="nm">${fullDate(d.gameDate)}</h1>
     <span class="sub">${d.venue ?? ""}${d.series === null ? "" : ` · ${d.series}`}</span>
   </div>
 </header>
@@ -258,7 +258,7 @@ export function renderGamePage(d: GamePageData, ctx: RenderContext): string {
 ${d.keyPlays.length === 0
     ? raw("")
     : html`<section class="block" id="b-key">
-  <h4>試合を動かした打席<span class="qt">上位${d.keyPlayLimit}打席</span></h4>
+  <h2>試合を動かした打席<span class="qt">上位${d.keyPlayLimit}打席</span></h2>
   <ul class="plays">${d.keyPlays.map((p) => playRow(p, d, base, widest))}</ul>
   ${note(
     "右の数字は、その打席で「これから入りそうな点」がどれだけ動いたかです（" +
@@ -272,14 +272,14 @@ ${d.keyPlays.length === 0
 </section>`}
 
 ${d.scoringPlays.length === 0
-    ? html`<section class="block"><h4>得点した場面</h4><p class="empty">この試合に得点はありませんでした。</p></section>`
+    ? html`<section class="block"><h2>得点した場面</h2><p class="empty">この試合に得点はありませんでした。</p></section>`
     : html`<section class="block" id="b-scoring">
-  <h4>得点した場面<span class="qt">${d.scoringPlays.length}回</span></h4>
+  <h2>得点した場面<span class="qt">${d.scoringPlays.length}回</span></h2>
   <ul class="plays">${d.scoringPlays.map((p) => playRow(p, d, base, widest))}</ul>
 </section>`}
 
 <section class="block">
-  <h4>この試合の記録について</h4>
+  <h2>この試合の記録について</h2>
   ${note(
     "当サイトは試合の全経過を転載していません。得点の場面と、得点期待値を大きく動かした打席だけを選んで載せています。" +
       "打席の表記（右越本④ など）は記録の標準的な書き方です。" +

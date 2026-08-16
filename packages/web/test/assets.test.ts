@@ -25,7 +25,7 @@ test("⚠탭줄이 줄어들 수 있다 — min-width:0이 없으면 페이지 �
   assert.match(rule, /min-width:0/, "줄어들 수 없으면 넘칠 수도 없다");
   assert.match(rule, /max-width:100%/);
   // 조상 쪽이 한 곳이라도 막히면 위의 규칙이 무효가 된다
-  assert.match(CSS, /\.block>h4 \.sw[^{]*\{min-width:0\}/);
+  assert.match(CSS, /\.block>h2 \.sw[^{]*\{min-width:0\}/);
 });
 
 test("탭줄에 「더 있다」는 신호가 있다 — 넘친 것을 말하지 않으면 없는 것과 같다", () => {

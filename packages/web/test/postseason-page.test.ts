@@ -169,10 +169,10 @@ test("올스타뿐인 시즌은 「ポストシーズン」이라고 부르지 �
     context(),
   );
   assert.match(only, /レギュラーシーズン外の試合/);
-  assert.ok(!/<span class="nm">ポストシーズン<\/span>/.test(only));
+  assert.ok(!/<h1 class="nm">ポストシーズン<\/h1>/.test(only));
 
   // CS가 있으면 그대로 ポストシーズン이다
-  assert.match(renderPostseasonPage(data(), context()), /<span class="nm">ポストシーズン<\/span>/);
+  assert.match(renderPostseasonPage(data(), context()), /<h1 class="nm">ポストシーズン<\/h1>/);
 });
 
 test("기록이 없으면 그렇다고 말한다 — 빈 화면은 고장으로 보인다(M12)", () => {

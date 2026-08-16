@@ -282,3 +282,61 @@ test("⚠구단 색 칩에 테두리가 있다 — 배경에 묻히는 팀이 24
     assert.match(r.body, /box-shadow[^;]*var\(--tx-2\)/, "칩이 배경에 묻힐 수 있다 — 테두리가 없다");
   }
 });
+
+/**
+ * 두 색의 대비비(WCAG 2.x 상대휘도). ⚠**본문은 4.5:1 이상이어야 한다.**
+ */
+function contrast(a: string, b: string): number {
+  const lum = (hex: string): number => {
+    const n = hex.replace("#", "");
+    const ch = [0, 2, 4].map((i) => Number.parseInt(n.slice(i, i + 2), 16) / 255);
+    const lin = ch.map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * lin[0]! + 0.7152 * lin[1]! + 0.0722 * lin[2]!;
+  };
+  const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p);
+  return (x! + 0.05) / (y! + 0.05);
+}
+
+/** 토큰 값을 CSS에서 꺼낸다 — 코드가 실제로 쓰는 값을 재야 의미가 있다 */
+function token(name: string, dark = false): string {
+  const block = dark
+    ? /:root\[data-theme="dark"\]\s*\{([\s\S]*?)\}/.exec(CSS)?.[1] ?? ""
+    : /:root \{([\s\S]*?)\}/.exec(CSS)?.[1] ?? "";
+  return new RegExp(`${name}:(#[0-9a-fA-F]{6})`).exec(block)?.[1] ?? "";
+}
+
+/**
+ * ⚠**M2가 요구하는 바로 그 정보가 화면에서 가장 안 읽혔다.**
+ * `--tx-3` 이 붙는 것은 **분모**(`.den`) · **자격 기준과 표본 경고**(`.note`) · 규정 미달 행이다.
+ * 실측(2026-08-16): 라이트 3.20:1 · 다크 4.20:1 로 본문 기준 4.5:1 에 미달했고,
+ * 구단 페이지는 표의 86%가 그 색이었다.
+ */
+test("⚠분모와 주석이 읽히는 대비로 그려진다(4.5:1)", () => {
+  for (const dark of [false, true]) {
+    const page = token("--page", dark);
+    const panel = token("--panel-2", dark);
+    const tx3 = token("--tx-3", dark);
+    assert.ok(page !== "" && panel !== "" && tx3 !== "", `토큰을 못 읽었다(dark=${dark})`);
+    assert.ok(
+      contrast(tx3, page) >= 4.5,
+      `${dark ? "다크" : "라이트"} 본문 위 대비 ${contrast(tx3, page).toFixed(2)}:1`,
+    );
+    assert.ok(
+      contrast(tx3, panel) >= 4.5,
+      `${dark ? "다크" : "라이트"} 패널 위 대비 ${contrast(tx3, panel).toFixed(2)}:1`,
+    );
+  }
+});
+
+/**
+ * ⚠**「얇음」을 대비 강등으로 말하지 않는다.** 그러면 규정 미달 행 전체가 읽기 어려워진다 —
+ * 구단 페이지 76행 중 65행(86%)이 그 상태였다. 다른 채널로 말한다.
+ */
+test("규정 미달 행을 색만으로 구별하지 않는다", () => {
+  const thin = rules(CSS).filter((r) => r.sel.split(",").some((one) => one.trim().startsWith("tr.thin")));
+  assert.ok(thin.length >= 2, "얇은 행 규칙이 색 하나뿐이다 — 다른 채널이 없다");
+  assert.ok(
+    thin.some((r) => /box-shadow|border|outline|font-style/.test(r.body)),
+    "색 말고 다른 채널로 얇음을 말하지 않는다",
+  );
+});

@@ -185,7 +185,7 @@ export interface BlockOptions {
 
 export function block(o: BlockOptions): RawHtml {
   return html`<section class="block" id="b-${o.id}">
-  <h4>${o.title}${o.qualifier === undefined ? null : html`<span class="qt">${o.qualifier}</span>`}${o.controls === undefined ? null : html`<span class="sw">${o.controls}</span>`}</h4>
+  <h2>${o.title}${o.qualifier === undefined ? null : html`<span class="qt">${o.qualifier}</span>`}${o.controls === undefined ? null : html`<span class="sw">${o.controls}</span>`}</h2>
   ${o.body}
 </section>`;
 }

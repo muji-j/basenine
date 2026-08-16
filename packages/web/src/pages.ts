@@ -140,7 +140,7 @@ export function renderIndexPage(d: IndexPageData, ctx: RenderContext): string {
   const { base, root, seasons } = ctx.paths("index.html");
   const body = html`<header class="idline">
   <div class="idtext">
-    <span class="nm">選手一覧</span>
+    <h1 class="nm">選手一覧</h1>
     <span class="sub">${d.season}年 · ${d.playerCount}人 · ${d.gameCount}試合</span>
   </div>
   <span class="asof">${d.asOf === null ? "" : `${fullDate(d.asOf)}まで`}</span>
@@ -167,7 +167,7 @@ export function renderIndexPage(d: IndexPageData, ctx: RenderContext): string {
 
 ${d.teams.map(
     (t) => html`<section class="teamgroup" style="--chip:${t.color.base};--chip-ink:${t.color.ink}">
-  <h4><i></i><a href="${base}${teamPath(t.code)}">${t.name}</a><span class="qt">${t.players.length}人</span></h4>
+  <h2><i></i><a href="${base}${teamPath(t.code)}">${t.name}</a><span class="qt">${t.players.length}人</span></h2>
   <ul class="roster">${t.players.map((p) => {
       const who: MarkPlayer = {
         playerId: p.playerId,
@@ -336,10 +336,10 @@ export function renderRankingPage(d: RankingPageData, ctx: RenderContext): strin
   // ⚠**탭 이름과 제목이 겹치는 것을 남겨둔다.** 우리 패널에는 `aria-labelledby`가 없어서
   // 이 제목이 「지금 열린 것이 무엇인가」를 말하는 유일한 수단이다
   const teamBody = html`<section class="block" id="b-standings">
-  <h4>チーム順位</h4>
+  <h2>チーム順位</h2>
   ${d.standings.map(
     (s) => html`<div class="standwrap">
-    <h5 class="standname">${s.name}</h5>
+    <h3 class="standname">${s.name}</h3>
     ${standingsTable(s, base)}
   </div>`,
   )}
@@ -357,12 +357,12 @@ export function renderRankingPage(d: RankingPageData, ctx: RenderContext): strin
       league.id,
       li === 0,
       html`<section class="block" id="lg-${league.id}">
-      <h4>${league.name}<span class="sw">${tablist(
+      <h2>${league.name}<span class="sw">${tablist(
         "rankcat",
         league.categories.map((c) => ({ id: c.id, label: c.label })),
         false,
         `${league.name}の部門`,
-      )}</span></h4>
+      )}</span></h2>
       ${league.categories.map((c, ci) =>
         panel("rankcat", c.id, ci === 0, categoryPanels(c, base, RANKING_PAGE_ROWS, "rankmetric")),
       )}
@@ -377,7 +377,7 @@ export function renderRankingPage(d: RankingPageData, ctx: RenderContext): strin
 
   const body = html`<header class="idline">
   <div class="idtext">
-    <span class="nm">リーグ順位</span>
+    <h1 class="nm">リーグ順位</h1>
     <span class="sub">${d.season}年</span>
   </div>
   <span class="asof">${d.asOf === null ? "" : `${fullDate(d.asOf)}まで`}</span>
@@ -489,7 +489,7 @@ export function renderStartersPage(d: StartersPageData, ctx: RenderContext): str
 
   const sideBlock = (side: ProbableSide, opponent: ProbableSide): RawHtml => html`<div class="sside"
   style="--chip:${side.color.base};--chip-ink:${side.color.ink}">
-  <h5 class="sname"><i></i>${side.shortName}</h5>
+  <h3 class="sname"><i></i>${side.shortName}</h3>
   ${side.playerId === null || side.name === null
     ? html`<p class="empty">先発はまだ発表されていません。</p>`
     : html`<p class="spitcher"><a href="${base}players/${side.playerId}.html">${side.name}</a></p>
@@ -519,7 +519,7 @@ export function renderStartersPage(d: StartersPageData, ctx: RenderContext): str
 
   const body = html`<header class="idline">
   <div class="idtext">
-    <span class="nm">予告先発</span>
+    <h1 class="nm">予告先発</h1>
     <span class="sub">${d.gameDate === null
       ? past ? "終了したシーズンです" : "発表待ち"
       : `${fullDate(d.gameDate)}${isToday ? "（本日）" : ""}の試合`}</span>
@@ -550,7 +550,7 @@ ${d.games.map((g, i) =>
         gameKey(g),
         i === 0,
         html`<section class="block" id="${startersAnchor(gameKey(g))}">
-      <h4>${g.sides[0].shortName} 対 ${g.sides[1].shortName}<span class="qt">${g.venue ?? ""}${g.startTime === null ? "" : ` ${g.startTime}`}</span></h4>
+      <h2>${g.sides[0].shortName} 対 ${g.sides[1].shortName}<span class="qt">${g.venue ?? ""}${g.startTime === null ? "" : ` ${g.startTime}`}</span></h2>
       <div class="starters">
         ${sideBlock(g.sides[0], g.sides[1])}
         ${sideBlock(g.sides[1], g.sides[0])}
@@ -560,7 +560,7 @@ ${d.games.map((g, i) =>
     )}`}
 
 <section class="block">
-  <h4>この画面について</h4>
+  <h2>この画面について</h2>
   ${note(
     "予告先発は試合の前日〜当日に公表される情報です。当サイトは1日1回の取得でこれを反映しており、" +
       "試合中の情報は取得していません。打順は試合前には分からないため、" +
@@ -686,7 +686,7 @@ export function pickTeam(t: MatchupTeam): RawHtml {
         <div class="picklist" role="toolbar" aria-orientation="horizontal"
           aria-label="${t.shortName}の${label}（左右キーで移動）">${picks.map((p) => pickButton(p, role, t))}</div>`;
   return html`<div class="pickteam" style="--chip:${t.color.base};--chip-ink:${t.color.ink}">
-  <h5 class="picktm"><i></i>${t.shortName}</h5>
+  <h3 class="picktm"><i></i>${t.shortName}</h3>
   ${list("投手", "pitcher", t.pitchers)}
   ${list("打者", "batter", t.batters)}
 </div>`;
@@ -714,14 +714,14 @@ export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): strin
 
   const body = html`<header class="idline">
   <div class="idtext">
-    <span class="nm">対戦を選ぶ</span>
+    <h1 class="nm">対戦を選ぶ</h1>
     <span class="sub">${d.season}年 · 投手と打者を選ぶと、これまでの対戦成績が出ます</span>
   </div>
   <span class="asof">${d.asOf === null ? "" : `${fullDate(d.asOf)}まで`}</span>
 </header>
 
 <section class="block" id="pickForm">
-  <h4>投手と打者</h4>
+  <h2>投手と打者</h2>
   <!-- ⚠**고른 것과 실행 버튼을 붙어 있게 두고 화면에 남긴다.** 선수 목록은 길어서
        아래로 내려가면 「골랐는데 어떻게 보지?」가 된다. 레일과 같은 sticky를 쓴다 -->
   <div class="pickbar">
@@ -773,7 +773,7 @@ export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): strin
 </section>
 
 <section class="block">
-  <h4>この画面が試合中の情報を取りに行かない理由</h4>
+  <h2>この画面が試合中の情報を取りに行かない理由</h2>
   <p class="note" style="max-width:64ch">
     進行中の試合の情報を自動で取得して表示することは、技術的にはできます。ただし
     <b>公表記録の「新しさ」を利用する形</b>になり、取得のために必要な連続アクセスも、

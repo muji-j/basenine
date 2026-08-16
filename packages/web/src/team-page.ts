@@ -190,7 +190,7 @@ export function renderTeamPage(d: TeamPageData, ctx: RenderContext): string {
 
   const body = html`<header class="idline">
   <div class="idtext">
-    <span class="nm">${d.name}</span>
+    <h1 class="nm">${d.name}</h1>
     <span class="sub">${d.season}年 · ${d.leagueName}${d.rank === null
       ? ""
       : ` · ${d.rank}位${d.tiedRank ? "（同）" : ""}`} · ${wlt(d)}</span>
@@ -199,7 +199,7 @@ export function renderTeamPage(d: TeamPageData, ctx: RenderContext): string {
 </header>
 
 <section class="block" id="b-teamsum">
-  <h4>チーム成績<span class="qt">${d.games}試合</span></h4>
+  <h2>チーム成績<span class="qt">${d.games}試合</span></h2>
   <dl class="row">
     <div><dt>${term("勝率")}</dt><dd>${d.pct === null ? "—" : avg3(d.pct)}<span class="den">${d.w + d.l}試合</span></dd></div>
     <div><dt>ゲーム差</dt><dd>${d.gamesBehind === 0 ? "—" : d.gamesBehind.toFixed(1).replace(/\.0$/, "")}</dd></div>
@@ -224,12 +224,12 @@ export function renderTeamPage(d: TeamPageData, ctx: RenderContext): string {
 ${d.months.length === 0
     ? raw("")
     : html`<section class="block" id="b-teammonth">
-  <h4>月別<span class="qt">勝-敗-分</span></h4>
+  <h2>月別<span class="qt">勝-敗-分</span></h2>
   ${monthBars(d.months)}
 </section>`}
 
 <section class="block" id="b-teambat">
-  <h4>打者<span class="qt">${d.batters.length}人</span></h4>
+  <h2>打者<span class="qt">${d.batters.length}人</span></h2>
   ${batterTable(d.batters, base)}
   ${note(
     // ⚠**이 표는 「현재 로스터」가 아니다.** `battingByTeam`은 **그 구단에서 낸 몫**이라
@@ -242,7 +242,7 @@ ${d.months.length === 0
 </section>
 
 <section class="block" id="b-teampit">
-  <h4>投手<span class="qt">${d.pitchers.length}人</span></h4>
+  <h2>投手<span class="qt">${d.pitchers.length}人</span></h2>
   ${pitcherTable(d.pitchers, base)}
   ${note(
     "この球団で登板した記録です — シーズン途中に移籍した投手も、この球団での分だけ含みます。" +
@@ -253,7 +253,7 @@ ${d.months.length === 0
 ${d.recent.length === 0
     ? raw("")
     : html`<section class="block" id="b-teamgames">
-  <h4>直近の試合</h4>
+  <h2>直近の試合</h2>
   <ul class="trecent">${d.recent.map(
     (g) => html`<li class="${g.result === "○" ? "w" : g.result === "●" ? "l" : ""}">
     <a href="${dayHref(base, g.date, d.latestDate)}"><b>${g.result}</b><span>${fullDate(g.date)}</span>
