@@ -28,6 +28,16 @@ const { values } = parseArgs({
     date: { type: "string" },
     archive: { type: "string", default: "data/archive" },
     db: { type: "string", default: "data/bb.sqlite" },
+    /**
+     * 적재 1회의 쓰기 상한.
+     *
+     * ⚠**기본값은 D1 무료 한도(10만 행)다.** 지금 화면은 정적 사이트라 D1을 쓰지 않지만,
+     * 옮길 때를 대비한 안전장치라 **기본값은 그대로 둔다.**
+     * ⚠그런데 이 작업은 **아카이브 전체를 재적재**한다(파서 수정이 옛 행에도 반영되게 하려고).
+     * 2시즌이면 169,800행이라 기본값에서는 도중에 멈추고, 매번 앞에서부터 훑으므로
+     * **영원히 끝에 도달하지 못한다.** 그래서 전체 재적재를 하는 쪽이 상한을 명시한다.
+     */
+    "max-writes": { type: "string" },
     delay: { type: "string", default: "3000" },
     /** 며칠 이상 낡으면 경고할지 */
     "stale-days": { type: "string", default: "2" },
@@ -82,6 +92,7 @@ failures += run("DB 적재", [
   "packages/store/tools/load-archive.ts",
   values.archive,
   values.db,
+  ...(values["max-writes"] === undefined ? [] : ["--max-writes", values["max-writes"]]),
 ]) === 0 ? 0 : 1;
 
 // 3. 새 선수 프로필 (이미 받은 선수는 건너뛴다)
