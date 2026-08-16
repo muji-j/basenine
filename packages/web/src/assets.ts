@@ -37,6 +37,8 @@ export const CSS = `
   --f-body:"Yu Gothic","Hiragino Kaku Gothic ProN","Noto Sans JP","Meiryo",system-ui,sans-serif;
   --f-num:"SFMono-Regular","Consolas","Menlo","Yu Gothic",monospace;
   --topbar:46px;
+  /* 탭줄 한 줄의 높이. 스크롤 여백 계산이 이 값을 쓰므로 .rail 이 실제로 이 높이여야 한다 */
+  --rail:48px;
   --ease:cubic-bezier(.2,.6,.2,1);
   --fast:120ms; --mid:200ms;
   --pad:20px;
@@ -141,6 +143,10 @@ a{color:inherit}
 .mf-spoke{stroke:var(--hair);stroke-width:1;transition:stroke var(--fast) var(--ease)}
 .mf-shape{fill-opacity:.42;stroke:var(--team,#6b7280);stroke-width:1.5;stroke-linejoin:round;
   animation:draw 420ms var(--ease)}
+/* ⚠**표본이 얇으면 속을 비운다.** 꽉 찬 도형은 「이만큼이다」라는 단정인데,
+   눈금을 맞춘 모집단(타자 50타석·투수 20이닝) 밖에서는 그 단정이 참이 아니다.
+   등급이 같은 임계값에서 색을 보류하는 것과 같은 일을 도형에서 한다 */
+.mf-shape.thin{fill-opacity:0;stroke-dasharray:4 3}
 /* ⚠보이는 점은 작아도 **판정 영역은 손가락 크기**여야 한다 — mf-hit이 그 역할이다.
    손잡이는 둘레에 고르게 있고, 값 표시점(mf-dot)은 도형 위에 따로 있다 */
 .mf-hit{fill:transparent}
@@ -180,6 +186,7 @@ a{color:inherit}
 
 /* ── 조작 레일 ───────────────────────────────────────────── */
 .rail{position:sticky;top:var(--topbar);z-index:10;display:flex;align-items:center;gap:6px;
+  min-height:var(--rail);
   padding:9px var(--pad);border-bottom:1px solid var(--hair);background:var(--panel);
   overflow-x:auto;scrollbar-width:thin;-webkit-overflow-scrolling:touch}
 .rail::-webkit-scrollbar{height:0}
@@ -368,6 +375,11 @@ dd.g-veryBad{box-shadow:inset 0 -3px 0 var(--g-vbad);background:var(--g-vbad-bg)
    들어오면 브라우저는 대상을 화면 맨 위에 두는데, 그 자리는 topbar 가 덮고 있다 —
    눌러서 왔는데 찾던 것이 안 보인다 */
 html{scroll-padding-top:calc(var(--topbar) + 10px)}
+/* 탭줄이 있는 화면은 그 높이만큼 더 비운다.
+   ⚠**topbar 만 빼면 모자란다** — 順位·타대회는 topbar 아래에 탭줄이 한 겹 더 sticky 로 얹힌다.
+   #pc-nipponSeries 로 들어오면 제목과 첫 줄이 그 탭줄 뒤로 가린 채 멈춘다.
+   :has() 를 모르는 브라우저는 위의 기본값으로 떨어질 뿐이라 더 나빠지지 않는다 */
+html:has(.rail){scroll-padding-top:calc(var(--topbar) + var(--rail) + 10px)}
 
 table{border-collapse:collapse;width:100%;font-size:12px}
 th,td{padding:5px 8px;text-align:right;font-variant-numeric:tabular-nums;border-bottom:1px solid var(--hair);white-space:nowrap}
@@ -376,6 +388,11 @@ th{font-size:10px;letter-spacing:.1em;color:var(--tx-2);font-weight:500}
    구단명 칸)까지 top:0 으로 붙어 자기 행을 떠나 화면 위에 뜬다 — 표가 고장 난 것으로 보인다.
    실측(2026-08-16): 사이트에서 scope=row 를 쓰는 표는 이닝 스코어 하나뿐이다 */
 thead th{position:sticky;top:0;z-index:2;background:var(--page)}
+/* ⚠**모서리 칸이 제일 위여야 한다.** 가로·세로 양쪽으로 고정되는 칸은 첫 열의 머리 하나뿐인데,
+   .scroller th:first-child(z-index:1)가 특이도에서 이겨 **다른 머리 칸(2)이 그 위를 지나간다** —
+   가로로 밀면 고정된 첫 열의 머리만 사라진다. 본문 칸은 멀쩡해서 더 이상하게 보인다.
+   2026-08-16 자기 수정이 만든 결함이다: 그 전에는 th 자체에 z-index 가 없어 모서리가 위였다 */
+.scroller thead th:first-child{z-index:3}
 /* 행 머리는 「머리」가 아니라 **그 행의 이름**이다. 10px 대문자 간격으로 그리면
    구단명이 열 제목처럼 작아져 옆 칸의 숫자와 크기가 어긋난다 */
 tbody th{font-size:12px;letter-spacing:0;color:var(--tx);font-weight:400}

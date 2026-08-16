@@ -9,14 +9,60 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { CSS } from "../src/assets.ts";
 
 const SRC = new URL("../src/", import.meta.url);
-const SRC_FILES = [
-  "assets.ts", "pages.ts", "player-page.ts", "team-page.ts", "postseason-page.ts",
-  "game-page.ts", "day-page.ts", "compare.ts", "today-page.ts", "log-page.ts", "parts.ts",
-];
+
+/**
+ * ⚠**목록을 손으로 적지 않는다.** 적어 두면 두 가지가 조용히 무너진다 —
+ * 없는 파일을 적어도(실제로 `day-page.ts` 가 그랬다) 아무도 모르고,
+ * **새 화면을 추가하고 목록에 넣는 것을 잊으면 그 화면의 셀 클래스가 검사에서 빠진다.**
+ * 그러면 원래 결함과 같은 종류의 버그를 이 시험이 놓치면서도 초록으로 통과한다.
+ */
+const SRC_FILES = readdirSync(SRC).filter((f) => f.endsWith(".ts"));
+
+/**
+ * 한 파일에서 셀의 `class` 속성에 나오는 클래스 이름을 줍는다.
+ *
+ * ⚠**정규식 하나로는 못 한다.** 실제 마크업에는 `class="${r.stale ? "bad" : "ok"}"` 처럼
+ * **보간 안쪽에 따옴표가 중첩**되고 `${r.quarantine > 0 ? …}` 처럼 `>` 도 들어간다.
+ * 통째로 버리면 그 칸의 클래스가 검사에서 사라지고, 대충 주우면 `stale` 같은 **변수 이름까지**
+ * 클래스로 오해해 엉뚱한 규칙을 결함이라고 한다. 그래서 손으로 훑는다 —
+ * 보간 **밖**의 맨 낱말과, 보간 **안**의 문자열 리터럴만 줍는다.
+ */
+function cellClassesIn(src: string): string[] {
+  const out: string[] = [];
+  const ok = (c: string): boolean => /^[a-zA-Z][\w-]*$/.test(c);
+  for (const tag of src.matchAll(/<(td|th)\b/g)) {
+    const at = src.indexOf('class="', tag.index);
+    if (at === -1 || at - tag.index > 120) continue;
+    let i = at + 7;
+    let depth = 0;
+    let plain = "";
+    const inner: string[] = [];
+    for (; i < src.length; i += 1) {
+      const ch = src[i]!;
+      if (depth === 0 && ch === '"') break;
+      if (ch === "$" && src[i + 1] === "{") { depth += 1; i += 1; continue; }
+      if (depth > 0) {
+        if (ch === "}") { depth -= 1; continue; }
+        // 보간 안쪽의 문자열 리터럴이 곧 클래스 이름이다
+        if (ch === '"' || ch === "'") {
+          const end = src.indexOf(ch, i + 1);
+          if (end === -1) break;
+          inner.push(src.slice(i + 1, end));
+          i = end;
+        }
+        continue;
+      }
+      plain += ch;
+    }
+    for (const c of plain.split(/\s+/)) if (ok(c)) out.push(c);
+    for (const lit of inner) for (const c of lit.split(/\s+/)) if (ok(c)) out.push(c);
+  }
+  return out;
+}
 
 /**
  * 마크업에서 **셀에 실제로 붙는 클래스**를 모은다.
@@ -28,28 +74,33 @@ const SRC_FILES = [
 function cellClasses(): Set<string> {
   const out = new Set<string>();
   for (const f of SRC_FILES) {
-    let src: string;
-    try {
-      src = readFileSync(new URL(f, SRC), "utf8");
-    } catch {
-      continue;
-    }
-    for (const m of src.matchAll(/<(td|th)[^>]*\sclass="([^"$]*)"/g)) {
-      for (const c of (m[2] ?? "").split(/\s+/)) if (c !== "") out.add(c);
-    }
+    // ⚠읽기 실패를 삼키지 않는다 — 목록을 파일시스템에서 만들었으므로 실패는 진짜 이상이다
+    const src = readFileSync(new URL(f, SRC), "utf8");
+    for (const c of cellClassesIn(src)) out.add(c);
   }
   return out;
 }
 
 const CELL_CLASSES = cellClasses();
 
-/** 이 선택자가 테이블 셀을 가리키는가 — 요소 이름으로든, 셀에 붙는 클래스로든 */
+/**
+ * 이 선택자가 테이블 셀을 가리키는가 — 요소 이름으로든, 셀에 붙는 클래스로든.
+ *
+ * ⚠**`:is()`·`:where()` 안쪽까지 본다.** `table :is(td,th){display:flex}` 는 겉보기에 클래스도
+ * 요소도 아니라서 그냥 지나쳤다 — 결함을 숨기는 가장 쉬운 형태다.
+ */
 function hitsCell(sel: string): boolean {
   const last = (sel.trim().split(/[\s>+~]+/).pop() ?? "").trim();
   if (last === "") return false;
-  const el = /^([a-z]+)/.exec(last)?.[1];
+  // `:is(a,b)` / `:where(a,b)` 를 풀어 각 가지를 따로 본다
+  const fn = /:(?:is|where|not|has)\(([^()]*)\)/g;
+  for (const m of last.matchAll(fn)) {
+    if ((m[1] ?? "").split(",").some((one) => hitsCell(one))) return true;
+  }
+  const bare = last.replace(fn, "");
+  const el = /^([a-z]+)/.exec(bare)?.[1];
   if (el === "td" || el === "th") return true;
-  return [...last.matchAll(/\.([A-Za-z0-9_-]+)/g)].some((m) => CELL_CLASSES.has(m[1] ?? ""));
+  return [...bare.matchAll(/\.([A-Za-z0-9_-]+)/g)].some((m) => CELL_CLASSES.has(m[1] ?? ""));
 }
 
 /** `선택자{본문}` 를 늘어놓는다. 미디어쿼리 안쪽도 같이 걸린다 */
@@ -64,6 +115,7 @@ function rules(css: string): { sel: string; body: string }[] {
 }
 
 test("셀에 붙는 클래스를 마크업에서 실제로 찾아낸다 — 못 찾으면 위 시험이 공회전한다", () => {
+  assert.ok(SRC_FILES.length >= 15, `소스 파일을 ${SRC_FILES.length}개밖에 못 찾았다 — 목록이 비었다`);
   assert.ok(CELL_CLASSES.size >= 5, `셀 클래스를 ${CELL_CLASSES.size}개밖에 못 찾았다`);
   for (const must of ["tm", "l"]) {
     assert.ok(CELL_CLASSES.has(must), `셀 클래스 목록에 ${must} 가 없다`);
@@ -72,7 +124,7 @@ test("셀에 붙는 클래스를 마크업에서 실제로 찾아낸다 — 못 
 
 test("⚠셀을 flex·grid 컨테이너로 만들지 않는다 — 그 열만 경계선이 어긋난다", () => {
   const bad = rules(CSS)
-    .filter((r) => /display:\s*(flex|grid|inline-flex|inline-grid)/.test(r.body))
+    .filter((r) => /display\s*:\s*(flex|grid|inline-flex|inline-grid)/.test(r.body))
     .filter((r) => r.sel.split(",").some((one) => hitsCell(one)));
   assert.deepEqual(
     bad.map((r) => r.sel),
@@ -88,7 +140,7 @@ test("⚠셀을 flex·grid 컨테이너로 만들지 않는다 — 그 열만 �
  */
 test("⚠머리 고정은 thead 에만 걸린다 — 행 머리가 자기 행을 떠나지 않는다", () => {
   const sticky = rules(CSS).filter(
-    (r) => /position:\s*sticky/.test(r.body) && /top:\s*0/.test(r.body),
+    (r) => /position\s*:\s*sticky/.test(r.body) && /top\s*:\s*0/.test(r.body),
   );
   const loose = sticky.filter((r) =>
     r.sel.split(",").some((one) => {
@@ -105,7 +157,7 @@ test("⚠머리 고정은 thead 에만 걸린다 — 행 머리가 자기 행을
  * 구단 색 칩이 **아예 그려지지 않았다.** 값이 틀린 것이 아니라 보이지 않는 결함이다.
  */
 test("⚠구단 색 칩 규칙은 표를 가리지 않는다 — 한 벌이 전부를 덮는다", () => {
-  const chip = rules(CSS).filter((r) => r.sel.split(",").some((one) => /\.tm\s+i$/.test(one.trim())));
+  const chip = rules(CSS).filter((r) => r.sel.split(",").some((one) => /\.tm\s*[>\s]\s*i$/.test(one.trim())));
   assert.ok(chip.length > 0, "칩 규칙을 찾지 못했다 — 이 시험이 공회전한다");
   for (const r of chip) {
     for (const one of r.sel.split(",")) {
@@ -114,7 +166,7 @@ test("⚠구단 색 칩 규칙은 표를 가리지 않는다 — 한 벌이 전�
         `칩 규칙이 특정 표에만 걸려 있다: ${one.trim()}`,
       );
     }
-    assert.match(r.body, /display:\s*inline-block/, "인라인 요소에 크기를 주려면 inline-block 이어야 한다");
+    assert.match(r.body, /display\s*:\s*inline-block/, "인라인 요소에 크기를 주려면 inline-block 이어야 한다");
   }
 });
 
@@ -141,4 +193,61 @@ test("구단 색 칩을 쓰는 칸은 전부 .tm 과 <i> 를 함께 갖는다", 
  */
 test("앵커가 고정 머리 아래로 들어가지 않는다", () => {
   assert.match(CSS, /html\{scroll-padding-top:calc\(var\(--topbar\)/);
+});
+
+/**
+ * ⚠**탭줄이 있는 화면은 여백이 한 겹 더 필요하다.**
+ * 順位·타대회는 topbar 아래에 탭줄이 한 겹 더 sticky 로 얹힌다.
+ * topbar 만 빼면 깊은 링크로 들어왔을 때 제목과 첫 줄이 그 탭줄 뒤로 가린 채 멈춘다 —
+ * 「눌러서 왔는데 찾던 것이 안 보인다」가 정도만 줄어든 채 남는다.
+ */
+test("탭줄이 있는 화면은 그 높이만큼 여백을 더 준다", () => {
+  assert.match(
+    CSS,
+    /html:has\(\.rail\)\{scroll-padding-top:calc\(var\(--topbar\) \+ var\(--rail\)/,
+    "탭줄 높이가 스크롤 여백에 빠져 있다",
+  );
+  // ⚠계산이 쓰는 값과 실제 높이가 갈리면 여백이 틀린다 — .rail 이 그 높이를 보장해야 한다
+  assert.match(CSS, /\.rail\{[^}]*min-height:var\(--rail\)/, ".rail 이 --rail 높이를 보장하지 않는다");
+  assert.match(CSS, /--rail:\d+px/, "--rail 토큰이 없다");
+});
+
+/**
+ * ⚠**가로·세로 양쪽으로 고정되는 칸은 첫 열의 머리 하나뿐이고, 그 칸이 제일 위여야 한다.**
+ * 2026-08-16에 `thead th{z-index:2}` 를 넣으면서 이게 뒤집혔다 —
+ * `.scroller th:first-child`(1) 가 특이도에서 이겨 **다른 머리 칸이 그 위를 지나갔다.**
+ * 본문 첫 열은 멀쩡한데 그 열의 머리만 사라지므로 더 이상하게 보인다.
+ */
+test("⚠고정된 첫 열의 머리가 다른 머리 칸보다 위에 있다", () => {
+  const z = (sel: string): number => {
+    const r = rules(CSS).filter((x) => x.sel.split(",").some((one) => one.trim() === sel));
+    const m = /z-index:\s*(-?\d+)/.exec(r.map((x) => x.body).join(";"));
+    return m === null ? 0 : Number(m[1]);
+  };
+  const corner = z(".scroller thead th:first-child");
+  const head = z("thead th");
+  assert.ok(corner > head, `모서리 머리(${corner})가 다른 머리(${head})보다 아래다`);
+});
+
+test("⚠공백을 넣어 쓴 display 도 잡는다 — 검사를 우회할 수 있으면 검사가 아니다", () => {
+  // 이 시험은 검사기 자체를 검사한다. 실제 CSS 가 아니라 가짜 문자열로 확인한다
+  const fake = "td.x{display : flex}";
+  const bad = rules(fake)
+    .filter((r) => /display\s*:\s*(flex|grid|inline-flex|inline-grid)/.test(r.body))
+    .filter((r) => r.sel.split(",").some((one) => hitsCell(one)));
+  assert.equal(bad.length, 1, "공백이 든 display 를 놓쳤다");
+});
+
+test("⚠:is() 안쪽의 셀도 잡는다", () => {
+  const fake = "table :is(td,th){display:flex}";
+  const bad = rules(fake)
+    .filter((r) => /display\s*:\s*(flex|grid)/.test(r.body))
+    .filter((r) => r.sel.split(",").some((one) => hitsCell(one)));
+  assert.equal(bad.length, 1, ":is() 안쪽의 셀을 놓쳤다");
+});
+
+test("동적 클래스가 든 칸의 리터럴 클래스도 모은다", () => {
+  // `<td class="l ${x}">` 형태가 실제로 있다. 통째로 버리면 `l` 도 함께 사라진다
+  assert.ok(CELL_CLASSES.has("ok") || CELL_CLASSES.has("bad") || CELL_CLASSES.has("sc"),
+    "동적 클래스가 섞인 칸에서 아무 클래스도 못 건졌다");
 });

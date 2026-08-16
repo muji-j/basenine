@@ -24,6 +24,7 @@ import type { RawHtml } from "./html.ts";
 import type { TeamColor } from "@bb-app/domain";
 import type { Rate } from "@bb-app/metrics";
 import { avg3, dec2, denominator, innings } from "./format.ts";
+import { BATTER_MIN, RELIEVER_MIN } from "./grade.ts";
 
 export interface MarkPlayer {
   playerId: string;
@@ -113,6 +114,17 @@ export interface ProfileAxis {
    * 값은 「낮을수록 좋다」이므로, 말하지 않으면 화면이 조용히 반대로 읽힌다.
    */
   note: string;
+  /**
+   * 이 축의 표본이 **눈금을 맞춘 모집단에 못 미치는가**.
+   *
+   * ⚠**「없음」과 「얇음」과 「낮음」은 셋 다 다르다**(M11).
+   * 없으면 대체 마크(글자), 낮으면 작은 도형 — 그 사이에 「쟀지만 믿을 수 없다」가 있다.
+   * 눈금은 타자 50타석·투수 20이닝 이상으로 맞췄는데 도형은 1타석부터 그려진다.
+   * 실측(2026-08-16): 그 바깥에서 평균 반지름 중앙값이 **타자 9.9% 대 투수 31.8%** 로
+   * 갈린다 — 눈금을 고치기 전의 격차보다 크다. 즉 **얇은 표본에서는 두 도형이 다시 딴말을 한다.**
+   * ⚠같은 임계값을 등급이 이미 쓴다(`grade.ts`). **두 벌로 두지 않는다**(M1).
+   */
+  thin: boolean;
 }
 
 /**
@@ -141,12 +153,17 @@ export function markProfile(
 
   const outline = axes.map((_, i) => point(i, 1)).join(" ");
   const shape = axes.map((a, i) => point(i, Math.max(0.06, Math.min(1, a.scaled ?? 0)))).join(" ");
+  // ⚠**얇은 표본은 속을 비운다.** 꽉 찬 도형은 「이만큼이다」라는 단정인데, 눈금 밖 표본에서는
+  // 그 단정이 참이 아니다. 같은 화면에서 등급이 색을 보류하는 것과 같은 일을 도형에서 한다
+  const thin = isThinProfile(axes);
 
   return html`<svg class="mk" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"
-  role="img" aria-label="${p.name}の成績プロフィール（${sampleText}）：${axes.map((a) => `${a.label} ${a.text}`).join("、")}">
+  role="img" aria-label="${p.name}の成績プロフィール（${sampleText}${thin ? "・標本が少ないため参考値" : ""}）：${axes.map((a) => `${a.label} ${a.text}`).join("、")}">
   <rect width="${size}" height="${size}" fill="${p.color.base}"></rect>
   <polygon points="${outline}" fill="none" stroke="${p.color.ink}" stroke-opacity=".28" stroke-width="1"></polygon>
-  <polygon points="${shape}" fill="${p.color.ink}" fill-opacity=".85"></polygon>
+  <polygon points="${shape}" fill="${p.color.ink}" fill-opacity="${thin ? "0" : ".85"}"
+    stroke="${p.color.ink}" stroke-opacity="${thin ? ".8" : "0"}" stroke-width="1"
+    stroke-dasharray="${thin ? "2 2" : "0"}"></polygon>
 </svg>`;
 }
 
@@ -226,11 +243,12 @@ export function markFigure(
   const c = g.center;
 
   return html`<svg class="mkfig" viewBox="0 0 ${g.size} ${g.size}" role="group"
-  aria-label="${p.name}の成績プロフィール（${sampleText}）">
+  aria-label="${p.name}の成績プロフィール（${sampleText}${isThinProfile(axes) ? "・標本が少ないため参考値" : ""}）">
   <polygon class="mf-grid" points="${g.outline}"></polygon>
   <!-- ⚠pathLength 로 둘레를 100으로 고정한다 — 그래야 도형이 무엇이든 같은 식으로 그릴 수 있다.
        모션은 prefers-reduced-motion 에서 꺼진다 -->
-  <polygon class="mf-shape" pathLength="100" points="${g.shape}" fill="${p.color.base}"></polygon>
+  <polygon class="mf-shape${isThinProfile(axes) ? " thin" : ""}" pathLength="100" points="${g.shape}"
+    fill="${p.color.base}"></polygon>
   ${axes.map((a, i) => {
     // ⚠**손잡이는 바깥 둘레에, 값 표시점은 도형 위에.** 둘을 한 자리에 두면
     // 성적이 낮은 축의 점이 중앙으로 모여 서로 겹치고, 그러면 누를 수가 없다
@@ -313,13 +331,22 @@ export function paKind(outcome: string): PaKind {
  * **분포의 쏠림이 도형의 크기가 된다.** 야구 지표는 대부분 오른쪽으로 꼬리가 길어서,
  * 「높을수록 좋다」인 축(타자)은 중앙값이 한가운데보다 **안쪽**에 오고,
  * 「낮을수록 좋다」를 뒤집은 축(투수)은 중앙값이 **바깥쪽**에 온다.
- * 그 결과 실측(2026-08-16)으로 **중앙값 타자의 평균 반지름 48.1%(면적 23%) 대
- * 중앙값 투수 75.0%(면적 56%)** — 투수 도형이 2.4배 넓었다.
+ * 실측(2026-08-16 · 아래 기준 모집단 · 옛 두 점 앵커): **중앙값 타자의 평균 반지름 37.6% 대
+ * 중앙값 투수 65.7%** — 면적으로 **3.05배**였다.
+ * (규정 도달자만으로 좁혀 재면 48.1% 대 75.0%가 나온다. **어느 모집단인지 적지 않으면
+ * 아무도 재현할 수 없다** — 두 수가 다른 것은 모집단이 다르기 때문이다.)
  * 같은 화면에 나란히 놓이는 두 도형이 같은 뜻을 갖지 않으면 그 자체로 거짓말이다.
  * 중앙을 앵커로 넣으면 **양쪽 모두 중앙값이 정확히 절반**에 온다.
  *
- * ⚠**기준 모집단을 적어 둔다** — 2025·2026 정규시즌, 도형이 실제로 그려지는 표본
- * (타자 50타석 이상 458명 · 투수 20이닝 이상 407명). 시즌이 쌓이면 다시 재고 여기를 고친다.
+ * ⚠**기준 모집단을 적어 둔다** — 2025·2026 정규시즌 중 도형이 실제로 그려지는 표본:
+ * 타자 50타석 이상 **458 선수-시즌**(실인원 293명) · 투수 20이닝 이상 **407 선수-시즌**(실인원 276명).
+ * 「명」이 아니라 선수-시즌이다 — 두 시즌을 각각 세므로 사람 수보다 1.5배쯤 크다.
+ *
+ * ⚠**2026은 아직 진행 중이다**(팀당 101~110경기 / 143). 진행 중 시즌은 표본이 얇아 꼬리가 넓고,
+ * 지금 상수는 그 넓은 꼬리를 절반 물고 있다(2025 단독 ISO p90 .170 대 2026 .203).
+ * **재측정 시점을 여기서 정한다: 2026 시즌 종료 후 한 번, 그 뒤로는 2027 종료 후.**
+ * 재측정하면 도형이 조금 달라진다 — 그때는 「무엇을 언제 다시 쟀는지」를 이 주석에 남긴다.
+ * 재측정 도구는 `packages/web/tools/anchors.ts`다.
  */
 export const PROFILE_ANCHORS = {
   avg: [0.182, 0.238, 0.284],
@@ -338,6 +365,13 @@ export const PROFILE_ANCHORS = {
  * ⚠양 끝은 자른다. 상위 10%보다 잘해도 도형은 더 커지지 않는다 —
  * 눈금 없는 도형에서 바깥으로 무한히 뻗으면 모양이 값을 과장한다.
  */
+/**
+ * ⚠**중앙에서 기울기가 꺾인다.** 위아래 구간의 폭이 다르므로 같은 값 차이가
+ * 중앙 아래에서는 최대 **1.5배** 크게 보인다(실측: ISO 1.50 · BB/9 1.51 · 방어율 1.47).
+ * 순서는 보존되므로 「누가 더 나은가」는 틀리지 않지만 「얼마나 더」는 위치에 따라 다르다.
+ * 대체한 문제(면적 3.05배)보다 훨씬 작아서 받아들인 거래다.
+ * ⚠**끝단 해상도도 내줬다** — 상·하위 10%는 서로 구별되지 않는다(축의 약 20%가 0 또는 1로 잘린다).
+ */
 function scale(value: number | null, [lo, mid, hi]: readonly [number, number, number]): number | null {
   if (value === null || !Number.isFinite(value)) return null;
   if (value <= mid) {
@@ -348,6 +382,19 @@ function scale(value: number | null, [lo, mid, hi]: readonly [number, number, nu
   return Math.max(0.5, Math.min(1, 0.5 + (0.5 * (value - mid)) / (hi - mid)));
 }
 
+/**
+ * ⚠**앵커가 오름차순이 아니면 멈춘다.**
+ * 주석에만 적어 두면 아무도 안 지킨다 — 뒤집힌 축을 「좋은 순」으로 적는 실수가 이 파일에서
+ * 가장 저지르기 쉽고, 그렇게 적어도 `scale()` 은 던지지 않고 **조용히 0.5를 낸다.**
+ * 制球 축이 대부분의 투수에서 0.5로 굳는데 도형은 그럴듯하게 그려진다(M7).
+ */
+function assertAscending(name: string, a: Readonly<Record<string, readonly [number, number, number]>>): void {
+  for (const [k, v] of Object.entries(a)) {
+    if (!(v[0] < v[1] && v[1] < v[2])) {
+      throw new RangeError(`${name}.${k} 앵커가 오름차순이 아니다: ${v.join(" ")} — 좋은 방향은 scaleInverted 한 곳에서만 뒤집는다`);
+    }
+  }
+}
 export interface BattingProfileInput {
   avg: Rate;
   obp: Rate;
@@ -363,26 +410,28 @@ const INVERTED_NOTE =
 export function battingProfile(b: BattingProfileInput): ProfileAxis[] {
   // ⚠접촉률은 K%의 뒤집힌 값이다. **분모는 K%의 것을 그대로 쓴다** — 같은 타석에서 나온다
   const contact = b.kRate.value === null ? null : 1 - b.kRate.value;
+  // ⚠**임계값을 여기서 새로 정하지 않는다**(M1) — 등급이 색을 보류하는 그 값을 그대로 쓴다
+  const thin = b.obp.denominator < BATTER_MIN;
   return [
     {
       label: "打率", scaled: scale(b.avg.value, PROFILE_ANCHORS.avg), text: avg3(b.avg.value),
-      sample: denominator(b.avg.denominator, "打数"), term: "avg", note: "",
+      sample: denominator(b.avg.denominator, "打数"), term: "avg", note: "", thin,
     },
     {
       label: "出塁", scaled: scale(b.obp.value, PROFILE_ANCHORS.obp), text: avg3(b.obp.value),
-      sample: denominator(b.obp.denominator, "打席"), term: "obp", note: "",
+      sample: denominator(b.obp.denominator, "打席"), term: "obp", note: "", thin,
     },
     {
       label: "長打", scaled: scale(b.iso.value, PROFILE_ANCHORS.iso), text: avg3(b.iso.value),
-      sample: denominator(b.iso.denominator, "打数"), term: "iso", note: "",
+      sample: denominator(b.iso.denominator, "打数"), term: "iso", note: "", thin,
     },
     {
       label: "選球", scaled: scale(b.bbRate.value, PROFILE_ANCHORS.bbRate), text: avg3(b.bbRate.value),
-      sample: denominator(b.bbRate.denominator, "打席"), term: "bbRate", note: "",
+      sample: denominator(b.bbRate.denominator, "打席"), term: "bbRate", note: "", thin,
     },
     {
       label: "接触", scaled: scale(contact, PROFILE_ANCHORS.contact), text: avg3(contact),
-      sample: denominator(b.kRate.denominator, "打席"), term: "kRate",
+      sample: denominator(b.kRate.denominator, "打席"), term: "kRate", thin,
       // ⚠**표시하는 수가 K%가 아니다.** 말하지 않으면 삼진율을 .735로 읽는다
       note: "三振にならなかった打席の割合（1 − K%）です。K%そのものではありません。",
     },
@@ -435,26 +484,28 @@ function innsOf(r: Rate): string {
 }
 
 export function pitchingProfile(p: PitchingProfileInput): ProfileAxis[] {
+  // ⚠등급과 같은 임계값을 쓴다(M1). 분모는 아웃 카운트다
+  const thin = p.era.denominator < RELIEVER_MIN;
   return [
     {
       label: "奪三振", scaled: scale(p.k9.value, PITCHING_ANCHORS.k9), text: dec2(p.k9.value),
-      sample: innsOf(p.k9), term: "k9", note: "",
+      sample: innsOf(p.k9), term: "k9", note: "", thin,
     },
     {
       label: "制球", scaled: scaleInverted(p.bb9.value, PITCHING_ANCHORS.bb9), text: dec2(p.bb9.value),
-      sample: innsOf(p.bb9), term: "bb9", note: INVERTED_NOTE,
+      sample: innsOf(p.bb9), term: "bb9", note: INVERTED_NOTE, thin,
     },
     {
       label: "被弾", scaled: scaleInverted(p.hr9.value, PITCHING_ANCHORS.hr9), text: dec2(p.hr9.value),
-      sample: innsOf(p.hr9), term: "hr9", note: INVERTED_NOTE,
+      sample: innsOf(p.hr9), term: "hr9", note: INVERTED_NOTE, thin,
     },
     {
       label: "抑制", scaled: scaleInverted(p.whip.value, PITCHING_ANCHORS.whip), text: dec2(p.whip.value),
-      sample: innsOf(p.whip), term: "whip", note: INVERTED_NOTE,
+      sample: innsOf(p.whip), term: "whip", note: INVERTED_NOTE, thin,
     },
     {
       label: "失点", scaled: scaleInverted(p.era.value, PITCHING_ANCHORS.era), text: dec2(p.era.value),
-      sample: innsOf(p.era), term: "era", note: INVERTED_NOTE,
+      sample: innsOf(p.era), term: "era", note: INVERTED_NOTE, thin,
     },
   ];
 }
@@ -474,7 +525,21 @@ export function markLetter(p: MarkPlayer, letter: string, size = 46): RawHtml {
 </svg>`;
 }
 
+// ⚠**두 앵커가 다 선언된 뒤에 검사한다.** 위에서 부르면 선언 전 참조가 된다
+assertAscending("PROFILE_ANCHORS", PROFILE_ANCHORS);
+assertAscending("PITCHING_ANCHORS", PITCHING_ANCHORS);
+
 /** 축이 전부 값 없음인가 — 대체 마크로 갈지 판정한다 */
 export function isEmptyProfile(axes: readonly ProfileAxis[]): boolean {
   return axes.length === 0 || axes.every((a) => a.scaled === null);
+}
+
+/**
+ * 표본이 눈금을 맞춘 모집단에 못 미치는가.
+ *
+ * ⚠**이걸로 도형을 지우지는 않는다.** 값은 진짜다 — 믿을 수 없는 것은 **비교**다.
+ * 그래서 등급이 하는 것과 같은 일을 한다: 수는 보여주고 **단정을 보류**한다(속을 비운다).
+ */
+export function isThinProfile(axes: readonly ProfileAxis[]): boolean {
+  return axes.length > 0 && axes.some((a) => a.thin);
 }
