@@ -116,6 +116,8 @@ export interface SeasonLink {
   current: boolean;
   /** 같은 화면이 없어서 다른 곳으로 보내는가 */
   fallback: boolean;
+  /** 보내는 곳의 이름. ⚠**어디로 가는지 말하지 않는 링크는 눌러 보기 전에는 알 수 없다** */
+  fallbackTo: string;
 }
 
 export interface PageOptions {
@@ -203,7 +205,7 @@ function seasonBar(o: PageOptions): RawHtml {
     (s) =>
       html`<a href="${s.href}"${s.current ? raw(' aria-current="page"') : raw("")}
       ${s.fallback
-        ? raw(` aria-label="${s.season}年（この選手・試合の${s.season}年の記録はありません。選手一覧へ移動します）"`)
+        ? raw(` aria-label="${s.season}年（このページの${s.season}年版はありません。${s.fallbackTo}へ移動します）"`)
         : raw("")}>${s.season}年${s.fallback ? html`<i aria-hidden="true">→</i>` : null}</a>`,
   )}
 </nav>`;
@@ -217,6 +219,19 @@ function seasonBar(o: PageOptions): RawHtml {
  * 깊이를 직접 썼는데, 시즌 접두사가 붙는 순간 그 상수들이 전부 조용히 어긋난다.
  * **자기 경로만 말하면 깊이는 여기서 센다.**
  */
+/**
+ * 그 시즌에 같은 화면이 없을 때 보낼 곳.
+ *
+ * ⚠**날짜 화면을 選手一覧으로 보내지 않는다.** 2026-08-13은 2025년에 없지만
+ * 「그 시즌의 날짜 일람」은 있다 — 가장 가까운 곳으로 보내는 편이 덜 놀랍다.
+ */
+export interface Fallback {
+  path: string;
+  label: string;
+}
+
+const DEFAULT_FALLBACK: Fallback = { path: "index.html", label: "選手一覧" };
+
 export interface PagePaths {
   base: string;
   root: string;
@@ -241,11 +256,11 @@ export interface SeasonPlan {
 export function pathsFor(
   plans: readonly SeasonPlan[],
   current: number,
-): (selfPath: string) => PagePaths {
+): (selfPath: string, fallback?: Fallback) => PagePaths {
   const me = plans.find((p) => p.season === current);
   const prefixDepth = me === undefined || me.prefix === "" ? 0 : me.prefix.split("/").filter(Boolean).length;
 
-  return (selfPath: string): PagePaths => {
+  return (selfPath: string, fallback: Fallback = DEFAULT_FALLBACK): PagePaths => {
     const depth = selfPath.split("/").length - 1;
     const base = "../".repeat(depth);
     const root = "../".repeat(depth + prefixDepth);
@@ -254,15 +269,19 @@ export function pathsFor(
       root,
       seasons: plans.map((p) => {
         if (p.season === current) {
-          return { season: p.season, href: `${base}${selfPath}`, current: true, fallback: false };
+          return {
+            season: p.season, href: `${base}${selfPath}`, current: true,
+            fallback: false, fallbackTo: fallback.label,
+          };
         }
         // ⚠**없는 화면으로 링크하지 않는다.** 2026에만 있는 선수의 2025 페이지는 없다
         const has = p.paths.has(selfPath);
         return {
           season: p.season,
-          href: `${root}${p.prefix}${has ? selfPath : "index.html"}`,
+          href: `${root}${p.prefix}${has ? selfPath : fallback.path}`,
           current: false,
           fallback: !has,
+          fallbackTo: fallback.label,
         };
       }),
     };
@@ -279,7 +298,7 @@ export interface RenderContext {
   site: SiteMeta;
   freshness: Freshness;
   /** 이 페이지의 경로. **자기 경로만 말하면 나머지는 계산된다** */
-  paths: (selfPath: string) => PagePaths;
+  paths: (selfPath: string, fallback?: Fallback) => PagePaths;
 }
 
 const LT = String.fromCharCode(0x3c);

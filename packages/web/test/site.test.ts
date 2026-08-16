@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildSite } from "../src/site.ts";
+import { buildSite, seasonPaths } from "../src/site.ts";
 import { searchIndexJson } from "../src/pages.ts";
 import type { SiteData } from "../src/query.ts";
 import { playerPage } from "./fixtures.ts";
@@ -48,7 +48,11 @@ function siteData(over: Partial<SiteData> = {}): SiteData {
       probables: [],
       starRule: "3安打以上",
       starLimit: 6,
+      prev: null,
+      dayCount: 1,
     },
+    days: [],
+    dayIndex: { season: 2026, latestDate: "2026-08-14", days: [] },
     games: [],
     ...over,
   };
@@ -64,6 +68,7 @@ test("사이트는 정해진 파일 집합을 만든다", () => {
     "assets/site.js",
     "compare.html",
     "compare/41045153.json",
+    "days.html",
     "index.html",
     "matchup.html",
     "players.json",
@@ -110,4 +115,37 @@ test("CSS와 클라이언트 스크립트는 파일로 나간다 — 페이지�
   const player = out.files.find((f) => f.path.startsWith("players/"))!;
   assert.ok(player.content.includes('href="../assets/site.css"'), "상대 경로가 어긋난다");
   assert.ok(!player.content.includes("--page:"), "CSS가 페이지에 인라인됐다");
+});
+
+/** 날짜 화면 하나 */
+function day(date: string) {
+  return {
+    date, builtOn: "2026-08-15", games: [], starRule: "3安打以上", starLimit: 6,
+    prev: null, next: null, latestDate: "2026-08-14", dayCount: 2,
+  };
+}
+
+/**
+ * ⚠**최신 경기일의 날짜 페이지는 만들지 않는다.** `today.html`이 같은 내용을 이미 내고 있어서,
+ * 두 주소에 같은 화면이 생기면 「어느 쪽이 진짜인가」가 생긴다.
+ * ⚠**파일 목록과 시즌 경로 목록이 같은 규칙을 봐야 한다** — 어긋나면 시즌 전환이 404로 간다.
+ */
+test("최신 경기일의 날짜 페이지는 만들지 않는다 — 그 날은 today.html이 맡는다", () => {
+  const data = siteData({ days: [day("2026-08-13"), day("2026-08-14")] });
+  const paths = buildSite(data, SITE, "2026-08-15").files.map((f) => f.path);
+  assert.ok(paths.includes("days/2026-08-13.html"));
+  assert.ok(!paths.includes("days/2026-08-14.html"), "최신 경기일이 두 주소에 생겼다");
+
+  const known = seasonPaths(data, false);
+  assert.ok(known.has("days.html"), "날짜 일람이 시즌 경로 목록에 없다");
+  assert.ok(known.has("days/2026-08-13.html"));
+  assert.ok(!known.has("days/2026-08-14.html"), "만들지 않는 날짜를 시즌 전환이 가리킨다");
+});
+
+test("시즌 경로 목록과 실제로 만든 파일이 어긋나지 않는다 — 어긋난 만큼이 404다", () => {
+  const data = siteData({ days: [day("2026-08-13"), day("2026-08-14")] });
+  const made = new Set(buildSite(data, SITE, "2026-08-15").files.map((f) => f.path));
+  for (const p of seasonPaths(data, false)) {
+    assert.ok(made.has(p), `${p} 를 만든다고 해놓고 안 만들었다`);
+  }
 });

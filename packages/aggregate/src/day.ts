@@ -281,6 +281,42 @@ export function dayResults(db: Db, season: number, date: string): DayGame[] {
  * ⚠**「중지된 날」도 경기일이다.** 전 경기가 비로 날아간 날을 건너뛰면 화면이
  * 「그날은 아무 일도 없었다」가 아니라 「그날이 없었다」고 말하게 된다.
  */
+/** 하루 요약 — 날짜 일람에 쓴다 */
+export interface GameDay {
+  date: string;
+  /** 그날 편성된 경기 수 */
+  scheduled: number;
+  /** 그중 실제로 치른 수. **`scheduled`와 다르면 중지가 있었다**(M11) */
+  played: number;
+}
+
+/**
+ * 그 시즌의 **경기일 전부**(오름차순).
+ *
+ * ⚠**`status`로 거르지 않는다.** 전 경기가 우천 중지된 날도 경기일이다 —
+ * 빼면 「그날이 없었던 것」이 되고, 날짜를 짚어 온 사람에게 404가 된다.
+ */
+export function gameDates(
+  db: Db,
+  season: number,
+  through = "9999-12-31",
+  competition = "regular",
+): GameDay[] {
+  const rows = db.raw
+    .prepare(
+      `SELECT game_date AS date,
+              COUNT(*) AS scheduled,
+              SUM(CASE WHEN status = 'played' THEN 1 ELSE 0 END) AS played
+       FROM game
+       WHERE season = ? AND game_date <= ? AND competition = ?
+       GROUP BY game_date
+       ORDER BY game_date`,
+    )
+    .all(season, through, competition) as unknown as GameDay[];
+  // ⚠**node:sqlite는 프로토타입 없는 객체를 준다.** 그대로 흘리면 전개·비교에서 조용히 어긋난다
+  return rows.map((r) => ({ date: r.date, scheduled: r.scheduled, played: r.played }));
+}
+
 export function latestGameDate(db: Db, season: number, through = "9999-12-31"): string | null {
   // ⚠**`status`로 거르지 않는다.** 이 함수의 존재 이유가 그것이다 —
   // 신선도(`asOf`)는 실시 기준이 맞지만, 「어제 무슨 일이 있었나」는 중지도 포함해야 한다

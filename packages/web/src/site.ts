@@ -14,7 +14,7 @@ import {
 } from "./pages.ts";
 import { renderPlayerPage } from "./player-page.ts";
 import { compareCard, compareCardJson, renderComparePage } from "./compare.ts";
-import { renderTodayPage } from "./today-page.ts";
+import { renderDayIndexPage, renderDayPage, renderTodayPage } from "./today-page.ts";
 import { gameSlug, renderGamePage } from "./game-page.ts";
 import { renderLogPage } from "./log-page.ts";
 import type { LogPageData } from "./log-page.ts";
@@ -42,6 +42,16 @@ export interface BuildResult {
  * ⚠**렌더링 전에 알아야 한다.** 시즌 전환이 「그 시즌에 같은 화면이 있는가」를 물어야 하고,
  * 없는 곳으로 링크하면 404가 된다 — 조용하고 발견이 늦다.
  */
+/**
+ * 실제로 만들어지는 날짜 화면.
+ *
+ * ⚠**최신 경기일은 `today.html`이 맡는다.** 그 날의 `days/` 페이지는 만들지 않으므로,
+ * **파일 목록과 시즌 경로 목록이 같은 규칙을 봐야 한다** — 어긋나면 시즌 전환이 404로 간다.
+ */
+function pastDays(data: SiteData): SiteData["days"] {
+  return data.days.filter((d) => d.date !== data.today.gameDate);
+}
+
 export function seasonPaths(data: SiteData, hasLog: boolean): Set<string> {
   const out = new Set<string>([
     "today.html",
@@ -50,8 +60,10 @@ export function seasonPaths(data: SiteData, hasLog: boolean): Set<string> {
     "starters.html",
     "matchup.html",
     "compare.html",
+    "days.html",
   ]);
   if (hasLog) out.add("log.html");
+  for (const d of pastDays(data)) out.add(`days/${d.date}.html`);
   for (const p of data.players) out.add(`players/${p.playerId}.html`);
   for (const g of data.games) out.add(`games/${gameSlug(g.gameId)}.html`);
   return out;
@@ -90,6 +102,8 @@ export function buildSite(
         ]
       : []),
     { path: at("today.html"), content: renderTodayPage(data.today, ctx) },
+    { path: at("days.html"), content: renderDayIndexPage(data.dayIndex, ctx) },
+    ...pastDays(data).map((d) => ({ path: at(`days/${d.date}.html`), content: renderDayPage(d, ctx) })),
     { path: at("index.html"), content: renderIndexPage(data.index, ctx) },
     { path: at("ranking.html"), content: renderRankingPage(data.ranking, ctx) },
     { path: at("starters.html"), content: renderStartersPage(data.starters, ctx) },

@@ -31,9 +31,10 @@ export {
   STAR_RBI,
   STAR_SO,
   dayResults,
+  gameDates,
   latestGameDate,
 } from "./day.ts";
-export type { DayGame, DayPitcherRef, DaySide, DayStar } from "./day.ts";
+export type { DayGame, DayPitcherRef, DaySide, DayStar, GameDay } from "./day.ts";
 export { RECENT_GAMES, gamesBehind, teamStandings, winPct } from "./standings.ts";
 export type { TeamRecord } from "./standings.ts";
 export { KEY_PLAY_LIMIT, gameDetails } from "./game.ts";

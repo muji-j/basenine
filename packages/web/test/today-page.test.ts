@@ -52,6 +52,8 @@ function data(over: Partial<TodayPageData> = {}): TodayPageData {
     probables: [],
     starRule: "打者は3安打以上・本塁打・4打点以上、投手は6回以上を自責2以内、または10奪三振以上",
     starLimit: 6,
+    prev: "2026-08-13",
+    dayCount: 104,
     ...over,
   };
 }
@@ -286,4 +288,21 @@ test("予告先発 카드도 카드 전체가 눌리고, 그 경기 구획으로
   );
   assert.match(out, /<article class="pbcard tapcard">/);
   assert.match(out, /href="starters\.html#sg-s-db"/, "予告先発 화면의 그 경기로 가지 않는다");
+});
+
+/**
+ * ⚠**「오늘」 화면은 최신 경기일 그 자체다.** 그러니 「다음 경기일」은 없고,
+ * 그 자리에 링크를 두면 갈 곳 없는 링크가 된다.
+ */
+test("試合 화면에서 지난 날짜로 거슬러 갈 수 있다 — 다음 날은 없다", () => {
+  const out = renderTodayPage(data(), context());
+  assert.match(out, /href="days\/2026-08-13\.html"/, "앞 경기일로 가는 길이 없다");
+  assert.match(out, /前の試合日<s>2026年8月13日<\/s>/);
+  assert.match(out, /<span class="daystep n off">次の試合日<\/span>/, "최신인데 다음 날 링크가 있다");
+  assert.match(out, /href="days\.html">日付をえらぶ<s>104日<\/s>/, "날짜 일람으로 가는 길이 없다");
+});
+
+test("앞 경기일이 없으면(시즌 첫날) 그쪽도 링크가 아니다", () => {
+  const out = renderTodayPage(data({ prev: null }), context());
+  assert.match(out, /<span class="daystep p off">前の試合日<\/span>/);
 });

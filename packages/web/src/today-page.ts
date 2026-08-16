@@ -108,6 +108,64 @@ export interface TodayPageData {
   starRule: string;
   /** 한 경기에 싣는 최대 인원 */
   starLimit: number;
+  /** 하나 앞의 **경기일**. 달력의 어제가 아니다 — 월요일은 대개 경기가 없다 */
+  prev: string | null;
+  /** 이 시즌의 경기일 수. 날짜 일람 링크에 붙인다 */
+  dayCount: number;
+}
+
+/** 지난 날짜 화면. `today.html`과 **같은 카드**를 쓴다(M1) */
+export interface DayPageData {
+  date: string;
+  builtOn: string;
+  games: TodayGame[];
+  starRule: string;
+  starLimit: number;
+  prev: string | null;
+  next: string | null;
+  /** 최신 경기일. **그 날만 `today.html`이 맡는다** */
+  latestDate: string | null;
+  dayCount: number;
+}
+
+/** 그 시즌의 경기일 일람 */
+export interface DayIndexData {
+  season: number;
+  latestDate: string | null;
+  days: { date: string; scheduled: number; played: number }[];
+}
+
+/**
+ * 날짜 하나가 어느 주소인가.
+ *
+ * ⚠**최신 경기일만 `today.html`이다.** 같은 내용을 두 주소에 두면 「어느 쪽이 진짜인가」가 생기므로
+ * 그 날의 `days/` 페이지는 아예 만들지 않는다. 그러니 **링크를 만드는 곳이 한 군데여야** 한다 —
+ * 여기서 갈리지 않으면 어딘가는 반드시 404가 된다.
+ */
+export function dayHref(base: string, date: string, latestDate: string | null): string {
+  return date === latestDate ? `${base}today.html` : `${base}days/${date}.html`;
+}
+
+/**
+ * 앞뒤 경기일과 일람으로 가는 띠.
+ *
+ * ⚠**없는 방향은 링크가 아니라 지워진 글자로 둔다.** `href` 없는 `<a>`는 초점도 안 받고
+ * 눌러도 아무 일이 없어서, 「끝에 왔다」를 조용히 거짓말하지 않는다.
+ */
+function dayBar(
+  base: string,
+  o: { prev: string | null; next: string | null; latestDate: string | null; dayCount: number },
+): RawHtml {
+  const step = (date: string | null, label: string, cls: string): RawHtml =>
+    date === null
+      ? html`<span class="daystep ${cls} off">${label}</span>`
+      : html`<a class="daystep ${cls}" href="${dayHref(base, date, o.latestDate)}"
+          >${label}<s>${fullDate(date)}</s></a>`;
+  return html`<nav class="daybar" aria-label="日付">
+  ${step(o.prev, "前の試合日", "p")}
+  <a class="daypick" href="${base}days.html">日付をえらぶ<s>${o.dayCount}日</s></a>
+  ${step(o.next, "次の試合日", "n")}
+</nav>`;
 }
 
 function scoreLine(side: TodaySide, won: boolean, base: string): RawHtml {
@@ -255,6 +313,8 @@ export function renderTodayPage(d: TodayPageData, ctx: RenderContext): string {
   <span class="asof">${fullDate(d.builtOn)}生成</span>
 </header>
 
+${dayBar(base, { prev: d.prev, next: null, latestDate: d.gameDate, dayCount: d.dayCount })}
+
 ${d.probables.length === 0
     ? raw("")
     : html`<section class="block" id="b-probable">
@@ -281,6 +341,124 @@ ${d.probables.length === 0
 
   return page({
     title: `試合${d.gameDate === null ? "" : ` — ${fullDate(d.gameDate)}`}`,
+    base,
+    root,
+    seasons,
+    color: NEUTRAL_COLOR,
+    freshness: ctx.freshness,
+    site: ctx.site,
+    nav: "today",
+    body,
+  });
+}
+
+/**
+ * 지난 경기일 화면.
+ *
+ * ⚠**카드도 「눈에 띈 기록」의 기준도 `today.html`과 같은 것을 쓴다**(M1).
+ * 두 벌이 되면 어느 날 한쪽만 고쳐져서 「같은 경기인데 날짜 페이지와 오늘 페이지가 다르다」가 된다.
+ * ⚠**予告先発는 싣지 않는다.** 지난 날짜에 「次の予告先発」를 붙이면 그 날의 예고처럼 읽힌다.
+ */
+export function renderDayPage(d: DayPageData, ctx: RenderContext): string {
+  // ⚠**시즌을 바꿀 때 選手一覧으로 보내지 않는다.** 2026-08-13은 2025년에 없지만
+  // 「그 시즌의 날짜 일람」은 있다 — 가장 가까운 곳으로 보내는 편이 덜 놀랍다
+  const { base, root, seasons } = ctx.paths(`days/${d.date}.html`, {
+    path: "days.html",
+    label: "日付一覧",
+  });
+  const played = d.games.filter((g) => g.status === "played").length;
+  const off = d.games.length - played;
+
+  const body = html`<header class="idline">
+  <div class="idtext">
+    <span class="nm">${fullDate(d.date)}の試合</span>
+    <span class="sub">${d.games.length === 0
+      ? "この日の記録がありません"
+      : `${played}試合${off > 0 ? ` · 中止${off}試合` : ""}`}</span>
+  </div>
+  <span class="asof">${fullDate(d.builtOn)}生成</span>
+</header>
+
+${dayBar(base, d)}
+
+<section class="block" id="b-results">
+  <h4>${fullDate(d.date)}の結果</h4>
+  ${d.games.length === 0
+    ? html`<p class="empty">この日の試合は取り込んでいません。</p>`
+    : html`<div class="gcards">${d.games.map((g) => gameCard(g, base))}</div>`}
+  ${note(
+    `各試合の下に出るのは「${d.starRule}」に当てはまった記録です。多いときは1試合${d.starLimit}人までにしています。` +
+      "得点・安打・失策はその試合の公表記録、投手成績は当サイトの再計算です。",
+  )}
+</section>
+
+<nav class="find" aria-label="ほかのページ">
+  <a href="${base}today.html">最新の試合</a> · <a href="${base}index.html">選手一覧</a> · <a href="${base}ranking.html">リーグ順位表</a>
+</nav>`;
+
+  return page({
+    title: `${fullDate(d.date)}の試合`,
+    base,
+    root,
+    seasons,
+    color: NEUTRAL_COLOR,
+    freshness: ctx.freshness,
+    site: ctx.site,
+    nav: "today",
+    body,
+  });
+}
+
+/**
+ * 경기일 일람 — 「날짜를 지정해서 본다」의 착지점.
+ *
+ * ⚠**중지만 있었던 날도 남긴다**(M11). 빼면 그 날이 없었던 것이 되고,
+ * 「그날 왜 경기가 없었지?」에 답할 수 없다. 편성과 실시가 다르면 그 사실을 적는다.
+ * ⚠**JS에 기대지 않는다.** 여기가 링크 목록인 이유가 그것이다 —
+ * 날짜 입력칸으로 만들면 스크립트가 막힌 환경에서 날짜를 지정할 길이 사라진다.
+ */
+export function renderDayIndexPage(d: DayIndexData, ctx: RenderContext): string {
+  const { base, root, seasons } = ctx.paths("days.html");
+  // 최근이 위로 온다 — 찾는 날은 대개 최근이다
+  const desc = [...d.days].reverse();
+  const months = new Map<string, typeof desc>();
+  for (const day of desc) {
+    const key = day.date.slice(0, 7);
+    const list = months.get(key);
+    if (list === undefined) months.set(key, [day]);
+    else list.push(day);
+  }
+  const played = d.days.reduce((n, x) => n + x.played, 0);
+  const off = d.days.reduce((n, x) => n + x.scheduled - x.played, 0);
+
+  const body = html`<header class="idline">
+  <div class="idtext">
+    <span class="nm">日付をえらぶ</span>
+    <span class="sub">${d.season}年 · ${d.days.length}日 · ${played}試合${off > 0 ? ` · 中止${off}試合` : ""}</span>
+  </div>
+</header>
+
+${d.days.length === 0
+    ? html`<section class="block"><p class="empty">このシーズンの試合はまだありません。</p></section>`
+    : html`${[...months].map(
+      ([month, list]) => html`<section class="block">
+  <h4>${Number(month.slice(5))}月<span class="qt">${list.length}日</span></h4>
+  <div class="daygrid">${list.map(
+        (day) => html`<a class="dayc${day.date === d.latestDate ? " now" : ""}"
+      href="${dayHref(base, day.date, d.latestDate)}">
+      <b>${Number(day.date.slice(8))}</b>
+      <s>${day.played}試合${day.scheduled > day.played ? html`<em>中止${day.scheduled - day.played}</em>` : null}</s>
+    </a>`,
+      )}</div>
+</section>`,
+    )}`}
+
+<nav class="find" aria-label="ほかのページ">
+  <a href="${base}today.html">最新の試合</a> · <a href="${base}index.html">選手一覧</a>
+</nav>`;
+
+  return page({
+    title: `日付をえらぶ — ${d.season}年`,
     base,
     root,
     seasons,

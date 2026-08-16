@@ -44,6 +44,7 @@ import {
   computeSrc,
   computeSrp,
   dayResults,
+  gameDates,
   gameDetails,
   latestGameDate,
   entriesOfRole,
@@ -59,6 +60,7 @@ import {
 import type {
   BattingEntry,
   DayGame,
+  GameDay,
   GamePlay,
   LeagueBundle,
   PitcherRole,
@@ -112,6 +114,8 @@ import type { RankDigits } from "./parts.ts";
 import { denominator, innings } from "./format.ts";
 import { readFileSync } from "node:fs";
 import type {
+  DayIndexData,
+  DayPageData,
   PlayerRef,
   TodayGame,
   TodayPageData,
@@ -1176,27 +1180,21 @@ function matchupPage(
   };
 }
 
-function todayPage(
+/**
+ * 하루치 경기 카드.
+ *
+ * ⚠**「오늘」 화면과 과거 날짜 화면이 같은 함수를 쓴다**(M1). 두 벌이 되면 어느 날 한쪽만
+ * 고쳐져서 「같은 경기인데 어제 페이지와 오늘 페이지의 내용이 다르다」가 된다.
+ */
+function dayGames(
   db: Db,
   o: LoadOptions,
-  starters: StartersPageData,
+  date: string,
   nameOf: (playerId: string) => string | null,
   /** 실제로 만들어진 경기 페이지의 ID. ⚠**없는 페이지로 링크하면 404다** */
   gamePageIds: ReadonlySet<string>,
-): TodayPageData {
+): TodayGame[] {
   const competition = o.competition ?? "regular";
-  /**
-   * ⚠**이 화면의 대상일은 「최신 실시 경기일」이 아니라 「최신 경기일」이다.**
-   *
-   * 전 경기가 우천 중지된 날이 최신이면, 실시 기준으로 고르면 그 전날을 보여주고
-   * **중지를 한 마디도 하지 않는다** — 「그날이 없었던 것」이 된다.
-   * 신선도 띠(`asOf`)는 실시 기준 그대로다. 「데이터가 언제까지 들어왔나」와
-   * 「어제 무슨 일이 있었나」는 다른 질문이다.
-   * (2026-08-16 이중 검토에서 두 정의가 어긋나 있다는 지적을 받았다.)
-   */
-  const latestDate = latestGameDate(db, o.season, o.through ?? "9999-12-31");
-  const raw: DayGame[] = latestDate === null ? [] : dayResults(db, o.season, latestDate);
-
   const ref = (p: { playerId: string; teamCode: string } | null): PlayerRef | null => {
     if (p === null) return null;
     const name = nameOf(p.playerId);
@@ -1213,27 +1211,87 @@ function todayPage(
     errors: s.errors,
   });
 
-  const games: TodayGame[] = raw
-    // 다른 대회(오픈전·교류전 표기 등)를 섞지 않는다(§2-1)
-    .filter((g) => g.competition === competition)
-    .map((g) => ({
-      gameId: g.gameId,
-      venue: g.venue,
-      status: g.status,
-      notPlayedReason: g.notPlayedReason,
-      away: side(g.away),
-      home: side(g.home),
-      winner: g.winner,
-      win: ref(g.winPitcher),
-      lose: ref(g.losePitcher),
-      save: ref(g.savePitcher),
-      stars: g.stars.flatMap((s) => {
-        const name = nameOf(s.playerId);
-        if (name === null) return [];
-        return [{ ...s, name }];
-      }),
-      hasPage: gamePageIds.has(g.gameId),
+  return (
+    dayResults(db, o.season, date)
+      // 다른 대회(오픈전·교류전 표기 등)를 섞지 않는다(§2-1)
+      .filter((g) => g.competition === competition)
+      .map((g) => ({
+        gameId: g.gameId,
+        venue: g.venue,
+        status: g.status,
+        notPlayedReason: g.notPlayedReason,
+        away: side(g.away),
+        home: side(g.home),
+        winner: g.winner,
+        win: ref(g.winPitcher),
+        lose: ref(g.losePitcher),
+        save: ref(g.savePitcher),
+        stars: g.stars.flatMap((s) => {
+          const name = nameOf(s.playerId);
+          if (name === null) return [];
+          return [{ ...s, name }];
+        }),
+        hasPage: gamePageIds.has(g.gameId),
+      }))
+  );
+}
+
+/**
+ * 날짜별 화면.
+ *
+ * ⚠**최신 경기일의 페이지는 만들지 않는다.** 그 날은 `today.html`이 이미 보여주고 있어서,
+ * 같은 내용이 두 주소에 생기면 「어느 쪽이 진짜인가」가 생긴다.
+ * 대신 링크가 그 날만 `today.html`을 가리킨다(`dayHref`).
+ *
+ * ⚠**여기의 `filter`는 안전장치가 아니라 헛일을 줄이는 것이다.** 실제로 파일이 나가는 것을 막는 것은
+ * `site.ts`의 `pastDays`이고, 그쪽이 시즌 경로 목록과 **같은 규칙**을 본다 —
+ * 두 목록이 어긋나면 시즌 전환이 404로 간다.
+ */
+function dayPages(
+  db: Db,
+  o: LoadOptions,
+  days: readonly GameDay[],
+  latestDate: string | null,
+  nameOf: (playerId: string) => string | null,
+  gamePageIds: ReadonlySet<string>,
+): DayPageData[] {
+  return days
+    .filter((d) => d.date !== latestDate)
+    .map((d, i, list) => ({
+      date: d.date,
+      builtOn: o.builtOn,
+      games: dayGames(db, o, d.date, nameOf, gamePageIds),
+      starRule: starRuleText(),
+      starLimit: STAR_LIMIT,
+      // ⚠앞뒤는 **달력의 하루 전후가 아니라 경기가 있었던 날**이다. 월요일은 대개 경기가 없다
+      prev: i === 0 ? null : list[i - 1]!.date,
+      next: i === list.length - 1 ? (latestDate ?? null) : list[i + 1]!.date,
+      latestDate,
+      dayCount: days.length,
     }));
+}
+
+function todayPage(
+  db: Db,
+  o: LoadOptions,
+  starters: StartersPageData,
+  nameOf: (playerId: string) => string | null,
+  gamePageIds: ReadonlySet<string>,
+  days: readonly GameDay[],
+): TodayPageData {
+  /**
+   * ⚠**이 화면의 대상일은 「최신 실시 경기일」이 아니라 「최신 경기일」이다.**
+   *
+   * 전 경기가 우천 중지된 날이 최신이면, 실시 기준으로 고르면 그 전날을 보여주고
+   * **중지를 한 마디도 하지 않는다** — 「그날이 없었던 것」이 된다.
+   * 신선도 띠(`asOf`)는 실시 기준 그대로다. 「데이터가 언제까지 들어왔나」와
+   * 「어제 무슨 일이 있었나」는 다른 질문이다.
+   * (2026-08-16 이중 검토에서 두 정의가 어긋나 있다는 지적을 받았다.)
+   */
+  const latestDate = latestGameDate(db, o.season, o.through ?? "9999-12-31");
+  const games: TodayGame[] =
+    latestDate === null ? [] : dayGames(db, o, latestDate, nameOf, gamePageIds);
+  const at = days.findIndex((d) => d.date === latestDate);
 
   const probables: TodayProbable[] = starters.games.map((g) => ({
     venue: g.venue,
@@ -1259,6 +1317,9 @@ function todayPage(
     probables,
     starRule: starRuleText(),
     starLimit: STAR_LIMIT,
+    // 최신 경기일이 목록의 끝이므로 「다음 날」은 없다
+    prev: at > 0 ? days[at - 1]!.date : null,
+    dayCount: days.length,
   };
 }
 
@@ -1329,6 +1390,9 @@ export interface SiteData {
   starters: StartersPageData;
   matchup: MatchupPageData;
   today: TodayPageData;
+  /** 지난 경기일 화면. **최신 경기일은 빠져 있다** — 그 날은 `today.html`이 맡는다 */
+  days: DayPageData[];
+  dayIndex: DayIndexData;
   /** 경기 페이지. **빌드 대상 시즌만** — 2025년은 아카이브에 있지만 화면은 아직 한 시즌이다 */
   games: GamePageData[];
   search: SearchEntry[];
@@ -1812,6 +1876,11 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
 
   // ⚠**만들어진 경기 페이지를 먼저 안다.** 試合 화면이 없는 페이지로 링크하면 404가 된다
   const gameList = gamePages(db, o, reFull, nameOf);
+  const gamePageIds = new Set(gameList.map((g) => g.gameId));
+  // ⚠**경기일 목록도 먼저 만든다.** 「앞뒤 경기일」이 이 목록에서 나오므로,
+  // 날짜 화면과 오늘 화면이 서로 다른 목록을 보면 링크가 끊긴다
+  const days = gameDates(db, o.season, through, competition);
+  const latestDay = latestGameDate(db, o.season, through);
 
   return {
     season: o.season,
@@ -1836,7 +1905,9 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     },
     starters: startersData,
     matchup: matchupPage(o, meta.latest, startersData, battingByPlayer, pitchingByPlayer),
-    today: todayPage(db, o, startersData, nameOf, new Set(gameList.map((g) => g.gameId))),
+    today: todayPage(db, o, startersData, nameOf, gamePageIds, days),
+    days: dayPages(db, o, days, latestDay, nameOf, gamePageIds),
+    dayIndex: { season: o.season, latestDate: latestDay, days: [...days] },
     games: gameList,
   };
 }

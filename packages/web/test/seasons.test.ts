@@ -65,7 +65,7 @@ test("시즌이 하나면 전환 띠를 그리지 않는다 — 고를 것 없�
   const out = renderTodayPage(
     {
       gameDate: "2026-08-14", builtOn: "2026-08-16", games: [], probableDate: null,
-      probables: [], starRule: "x", starLimit: 6,
+      probables: [], starRule: "x", starLimit: 6, prev: null, dayCount: 1,
     },
     context(),
   );
@@ -76,7 +76,7 @@ test("시즌이 둘이면 「シーズン」이라는 이름과 함께 그린다
   const out = renderTodayPage(
     {
       gameDate: "2026-08-14", builtOn: "2026-08-16", games: [], probableDate: null,
-      probables: [], starRule: "x", starLimit: 6,
+      probables: [], starRule: "x", starLimit: 6, prev: null, dayCount: 1,
     },
     seasonContext(["today.html"]),
   );

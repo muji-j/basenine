@@ -646,6 +646,39 @@ table.stand .dif i.n{right:50%}
    :focus-within 을 쓰면 안쪽 선수 링크에 초점이 갔을 때도 카드가 켜져 어디에 있는지 알 수 없다 */
 .cardlink:focus-visible{outline:none}
 .cardlink:focus-visible::after{outline:2px solid var(--tx);outline-offset:-1px}
+/* ── 날짜 이동 ────────────────────────────────────────────
+   ⚠**앞뒤는 달력의 어제·내일이 아니라 「경기가 있었던 날」이다.** 월요일은 대개 경기가 없어서
+   달력대로 움직이면 빈 날에 떨어진다. 그래서 날짜를 글자로 함께 낸다 — 어디로 가는지 보인다. */
+.daybar{display:flex;align-items:stretch;gap:8px;margin:0 0 4px;padding:10px var(--pad);
+  border-bottom:1px solid var(--hair)}
+.daystep,.daypick{display:flex;flex-direction:column;gap:2px;text-decoration:none;font-size:12px;
+  padding:5px 10px;border:1px solid var(--hair-2);min-width:0;
+  transition:border-color var(--fast) var(--ease),color var(--fast) var(--ease)}
+.daystep s,.daypick s{text-decoration:none;font-size:10px;color:var(--tx-3);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.daystep:hover,.daypick:hover{border-color:var(--tx-3);color:var(--tx)}
+.daystep.n{margin-left:auto;text-align:right}
+.daypick{margin:0 auto;text-align:center}
+/* ⚠**끝에 왔으면 링크가 아니다.** href 없는 a 는 초점도 안 받고 눌러도 아무 일이 없어서,
+   「더 있다」고 조용히 거짓말하지 않는다 */
+.daystep.off{color:var(--tx-3);border-style:dashed;opacity:.5}
+.daystep.n.off{margin-left:auto}
+@media (max-width:520px){
+  .daybar{flex-wrap:wrap}
+  .daypick{order:3;width:100%;margin:0}
+}
+/* 날짜 일람 — 달마다 한 덩어리 */
+.daygrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(76px,1fr));gap:5px}
+.dayc{display:flex;flex-direction:column;align-items:center;gap:2px;padding:7px 4px;
+  text-decoration:none;border:1px solid var(--hair-2);
+  transition:border-color var(--fast) var(--ease),background var(--fast) var(--ease)}
+.dayc b{font-size:16px;font-variant-numeric:tabular-nums;color:var(--tx)}
+.dayc s{text-decoration:none;font-size:9.5px;color:var(--tx-3);display:flex;gap:4px;align-items:baseline}
+.dayc em{font-style:normal;color:var(--tx-2);border:1px solid var(--hair-2);padding:0 3px}
+.dayc:hover{border-color:var(--tx-3);background:var(--panel-2)}
+/* 지금 보고 있는 최신 경기일 */
+.dayc.now{border-color:var(--tx);background:var(--panel-2)}
+
 /* 予告先発の要約 — 상세는 予告先発 페이지가 낸다 */
 .pbcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
 .pbcard{border:1px solid var(--hair-2);padding:10px 11px}
