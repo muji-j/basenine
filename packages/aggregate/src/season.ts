@@ -139,6 +139,21 @@ function splitSum(col: string, alias: string): string {
        SUM(CASE WHEN ${IS_START} THEN 0 ELSE t.${col} END) AS rp_${alias}`;
 }
 
+/**
+ * 일부 등판만 읽힌 합계는 **합계가 아니다**(M11).
+ *
+ * ⚠SQL의 `SUM`은 NULL 행을 건너뛰므로, 10등판 중 3등판의 열을 못 읽었어도
+ * 7등판의 합이 돌아온다. 그걸 시즌 합계로 쓰면 **분자와 분모의 표본이 다른 비율**이 나온다
+ * (球数/アウト의 분모는 아웃이고 그건 10등판분이다).
+ * 「모른다」를 「작다」로 바꾸지 않는다.
+ *
+ * @param sum `SUM(x)` · @param count `COUNT(x)`(non-null) · @param total 전체 행 수
+ */
+function partial(sum: unknown, count: unknown, total: unknown): number | null {
+  if (sum === null || sum === undefined) return null;
+  return Number(count) === Number(total) ? Number(sum) : null;
+}
+
 const PITCHING_SQL = `
 WITH ${STARTER_CTE}
 SELECT t.player_id AS playerId,
@@ -149,7 +164,13 @@ SELECT t.player_id AS playerId,
        SUM(t.outs) AS outs, SUM(t.bf) AS bf, SUM(t.h) AS h, SUM(t.hr) AS hr,
        SUM(t.bb) AS bb, SUM(t.hbp) AS hbp, SUM(t.so) AS so,
        SUM(t.runs) AS runs, SUM(t.er) AS er,
-       SUM(t.pitches) AS pitches, SUM(t.wp) AS wp, SUM(t.balk) AS balk,
+       -- ⚠SUM은 NULL 행을 **건너뛴다.** 10등판 중 3등판의 투구수를 못 읽었으면
+       -- 7등판의 합이 「완전한 시즌 합계」처럼 나오고, 분모(아웃)는 10등판분이라
+       -- 球数/アウト가 **분자와 분모의 표본이 다른 비율**이 된다.
+       -- 그래서 non-null 개수를 함께 세어, 하나라도 빠졌으면 값을 내지 않는다(M11)
+       SUM(t.pitches) AS pitches, COUNT(t.pitches) AS pitchesN,
+       SUM(t.wp) AS wp, COUNT(t.wp) AS wpN,
+       SUM(t.balk) AS balk, COUNT(t.balk) AS balkN,
        ${splitSum("outs", "outs")},
        ${splitSum("bf", "bf")},
        ${splitSum("h", "h")},
@@ -295,9 +316,10 @@ export function aggregateSeason(
         teamCode: String(r["teamCode"]),
         games: Number(r["games"]),
         starts: Number(r["starts"]),
-        pitches: r["pitches"] === null ? null : Number(r["pitches"]),
-        wp: r["wp"] === null ? null : Number(r["wp"]),
-        balk: r["balk"] === null ? null : Number(r["balk"]),
+        // ⚠**일부만 읽힌 합계는 합계가 아니다.** 전부 읽혔을 때만 값을 낸다
+        pitches: partial(r["pitches"], r["pitchesN"], r["games"]),
+        wp: partial(r["wp"], r["wpN"], r["games"]),
+        balk: partial(r["balk"], r["balkN"], r["games"]),
         outs: Number(r["outs"]), bf: Number(r["bf"]), h: Number(r["h"]), hr: Number(r["hr"]),
         bb: Number(r["bb"]), hbp: Number(r["hbp"]), so: Number(r["so"]),
         runs: Number(r["runs"]), er: Number(r["er"]),

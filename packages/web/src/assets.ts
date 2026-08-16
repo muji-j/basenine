@@ -472,6 +472,9 @@ table.iscore .tot{font-weight:700;border-left:1px solid var(--hair-2)}
 .pres{font-size:13px;color:var(--tx-2);min-width:0;display:flex;align-items:baseline;gap:6px}
 .pres em{font-style:normal;font-size:11px;font-weight:700;color:var(--tx);
   border-left:3px solid var(--chip,#6b7280);padding-left:5px;flex:none}
+/* ⚠**타점 없는 득점은 타자가 낸 점이 아니다.** 굵게 두면 그 타석의 성과로 읽힌다 */
+.pres em.norbi{font-weight:400;color:var(--tx-2);border-left-color:var(--hair-2)}
+.pres em.norbi s{text-decoration:none;font-size:9.5px;color:var(--tx-3);margin-left:4px}
 .psc{font-size:12px;color:var(--tx-3);font-variant-numeric:tabular-nums;text-align:right}
 .pswing{position:relative;text-align:right;font-variant-numeric:tabular-nums;font-size:13px;padding-bottom:6px}
 .pswing.none{color:var(--tx-3)}
@@ -506,6 +509,10 @@ table.stand .rk em{font-style:normal;font-size:9px;color:var(--tx-3);margin-left
 table.stand .tm{display:flex;align-items:center;gap:6px}
 table.stand .tm i{width:9px;height:9px;background:var(--chip,#6b7280);flex:none}
 table.stand td.b{font-weight:700}
+/* ⚠**타율과 방어율에도 분모를 붙인다**(M2). 勝率의 분모는 옆의 勝·敗 열 자체이지만,
+   打率의 분모는 打数지 試合이 아니다 — 「인접」으로 지켜지지 않으므로 값에 붙인다 */
+table.stand td.wd{line-height:1.2}
+table.stand td.wd .den{display:block;font-size:9.5px;color:var(--tx-3);margin-top:1px}
 /* 得失点差 — **우리가 만든 그림**. 눈금은 없고, 정확한 값은 바로 옆 숫자에 있다 */
 table.stand .dif{position:relative;min-width:64px}
 table.stand .dif b{font-weight:400}
@@ -1267,7 +1274,10 @@ if(cmpForm){
     if(!a||!b)return"";
     if(a.dir===0||a.min===null)return"";
     if(a.n===null||b.n===null)return"";
-    if(a.s<a.min||b.s<a.min)return"";
+    /* ⚠각자 **자기** 기준으로 잰다. b에게 a의 최소 표본을 대면 선발↔구원 비교에서
+       「入れかえ」 한 번에 판정이 뒤집힌다 */
+    if(b.min===null)return"";
+    if(a.s<a.min||b.s<b.min)return"";
     if(a.n===b.n)return"";
     return (a.dir===1?a.n>b.n:a.n<b.n)?"a":"b";
   };

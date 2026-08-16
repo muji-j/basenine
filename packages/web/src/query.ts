@@ -45,6 +45,7 @@ import {
   computeSrp,
   dayResults,
   gameDetails,
+  latestGameDate,
   entriesOfRole,
   matchups,
   pitchingEntries,
@@ -1076,11 +1077,22 @@ function starRuleText(): string {
 function todayPage(
   db: Db,
   o: LoadOptions,
-  latestDate: string | null,
   starters: StartersPageData,
   nameOf: (playerId: string) => string | null,
+  /** 실제로 만들어진 경기 페이지의 ID. ⚠**없는 페이지로 링크하면 404다** */
+  gamePageIds: ReadonlySet<string>,
 ): TodayPageData {
   const competition = o.competition ?? "regular";
+  /**
+   * ⚠**이 화면의 대상일은 「최신 실시 경기일」이 아니라 「최신 경기일」이다.**
+   *
+   * 전 경기가 우천 중지된 날이 최신이면, 실시 기준으로 고르면 그 전날을 보여주고
+   * **중지를 한 마디도 하지 않는다** — 「그날이 없었던 것」이 된다.
+   * 신선도 띠(`asOf`)는 실시 기준 그대로다. 「데이터가 언제까지 들어왔나」와
+   * 「어제 무슨 일이 있었나」는 다른 질문이다.
+   * (2026-08-16 이중 검토에서 두 정의가 어긋나 있다는 지적을 받았다.)
+   */
+  const latestDate = latestGameDate(db, o.season, o.through ?? "9999-12-31");
   const raw: DayGame[] = latestDate === null ? [] : dayResults(db, o.season, latestDate);
 
   const ref = (p: { playerId: string; teamCode: string } | null): PlayerRef | null => {
@@ -1118,6 +1130,7 @@ function todayPage(
         if (name === null) return [];
         return [{ ...s, name }];
       }),
+      hasPage: gamePageIds.has(g.gameId),
     }));
 
   const probables: TodayProbable[] = starters.games.map((g) => ({
@@ -1400,15 +1413,17 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   for (const bundle of bundles) {
     bundleByLeague.set(bundle.league, bundle);
     const codes = TEAMS.filter((t) => t.league === bundle.league).map((t) => t.code);
-    const re = buildRunExpectancy(db, o.season, bundle.league, codes, competition);
+    // ⚠**RE 행렬도 `through`로 거른다.** 안 거르면 「7월 말 기준」 빌드에서
+    // 득점기대치만 8월 데이터로 계산되어 같은 화면의 기준일이 갈린다
+    const re = buildRunExpectancy(db, o.season, bundle.league, codes, competition, through);
     reByLeague.set(bundle.league, re.matrix);
     reFull.set(bundle.league, re);
 
-    for (const s of computeSrc(db, re, codes, competition)) {
+    for (const s of computeSrc(db, re, codes, competition, through)) {
       srcByPlayer.set(s.playerId, { src: s.src, pa: s.pa, skipped: s.skipped, srcPer600: s.srcPer600 });
     }
     // ⚠투수는 같은 커널의 부호 반대다. 같은 리그 RE 행렬을 쓴다
-    for (const s of computeSrp(db, re, codes, competition)) {
+    for (const s of computeSrp(db, re, codes, competition, through)) {
       srpByPlayer.set(s.playerId, { srp: s.srp, bf: s.bf, skipped: s.skipped, srpPer9: s.srpPer9 });
     }
 
@@ -1657,6 +1672,9 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     pitchingByPlayer.get(playerId)?.player.displayName ??
     null;
 
+  // ⚠**만들어진 경기 페이지를 먼저 안다.** 試合 화면이 없는 페이지로 링크하면 404가 된다
+  const gameList = gamePages(db, o, reFull, nameOf);
+
   return {
     season: o.season,
     asOf: meta.latest,
@@ -1679,7 +1697,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       leagues: sections,
     },
     starters: startersData,
-    today: todayPage(db, o, meta.latest, startersData, nameOf),
-    games: gamePages(db, o, reFull, nameOf),
+    today: todayPage(db, o, startersData, nameOf, new Set(gameList.map((g) => g.gameId))),
+    games: gameList,
   };
 }

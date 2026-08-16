@@ -176,11 +176,42 @@ test("투수를 먼저 세운다 — 호투는 그 경기의 뼈대다", async (
   });
 });
 
-test(`한 경기 ${STAR_LIMIT}명까지만 낸다 — 자른 사실은 화면이 말한다`, async () => {
+/**
+ * ⚠**상한을 상수로만 재면 아무 값이나 통과한다.** 예전 이 시험은 `STAR_LIMIT + 4`명을 넣고
+ * `STAR_LIMIT`을 기대해서, 상한을 99로 바꿔도 통과했다(2026-08-16 변이 검사에서 생존).
+ * **실제 수를 못 박는다.**
+ */
+test("한 경기 6명까지만 낸다 — 자른 사실은 화면이 말한다", async () => {
+  await withDb((db) => {
+    assert.equal(STAR_LIMIT, 6, "상한이 바뀌었다 — 화면 문구와 이 시험을 함께 고쳐라");
+    game(db);
+    for (let i = 0; i < 12; i += 1) bat(db, `B${i}`, { h: 3 });
+    assert.equal(dayResults(db, 2026, DATE)[0]!.stars.length, 6);
+  });
+});
+
+/**
+ * ⚠**「눈에 띈 기록」의 기준을 실제 수로 못 박는다.** 상수만 참조하면 임계값을 바꿔도
+ * 시험이 통과해서, 화면 문구와 코드가 조용히 갈라진다(2026-08-16 변이 검사에서 생존).
+ */
+test("호투 기준은 6이닝·자책2다 — 5.2이닝은 들어가지 않는다", async () => {
   await withDb((db) => {
     game(db);
-    for (let i = 0; i < STAR_LIMIT + 4; i += 1) bat(db, `B${i}`, { h: 3 });
-    assert.equal(dayResults(db, 2026, DATE)[0]!.stars.length, STAR_LIMIT);
+    pit(db, "SIX", { outs: 18, er: 2, so: 3 });
+    // 5와 3분의 2이닝(17아웃) — 한 아웃 모자라다
+    pit(db, "FIVE_TWO", { outs: 17, er: 0, so: 3 });
+    const ids = dayResults(db, 2026, DATE)[0]!.stars.map((s) => s.playerId);
+    assert.deepEqual(ids, ["SIX"], "6이닝 기준이 흔들렸다");
+  });
+});
+
+test("탈삼진 기준은 10이다 — 9탈삼진은 들어가지 않는다", async () => {
+  await withDb((db) => {
+    game(db);
+    pit(db, "K10", { outs: 6, er: 5, so: 10 });
+    pit(db, "K9", { outs: 6, er: 5, so: 9 });
+    const ids = dayResults(db, 2026, DATE)[0]!.stars.map((s) => s.playerId);
+    assert.deepEqual(ids, ["K10"], "탈삼진 기준이 흔들렸다");
   });
 });
 
@@ -203,6 +234,12 @@ test("⚠중지 경기의 선수 기록은 스타로 세지 않는다 — 애초
   });
 });
 
+/**
+ * ⚠**「신선도의 기준일」과 「試合 화면의 대상일」은 다른 값이다**(2026-08-16 이중 검토).
+ * 신선도는 「데이터가 언제까지 들어왔나」라 실시 기준이 맞고,
+ * 이 함수는 「어제 무슨 일이 있었나」라 중지도 포함해야 한다.
+ * 둘을 같은 값으로 쓰면 전 경기 우천 중지인 날이 화면에서 통째로 사라진다.
+ */
 test("⚠최신 경기일은 전 경기가 중지된 날도 센다 — 그날이 없었던 것으로 만들지 않는다", async () => {
   await withDb((db) => {
     game(db);
@@ -220,5 +257,18 @@ test("그날 경기가 없으면 빈 배열이다 — 던지지 않는다", asyn
   await withDb((db) => {
     game(db);
     assert.deepEqual(dayResults(db, 2026, "2026-08-13"), []);
+  });
+});
+
+test("⚠최신 경기일에 포스트시즌을 섞지 않는다 — CS가 있으면 정규시즌 화면이 10월을 가리킨다", async () => {
+  await withDb((db) => {
+    game(db);
+    upsertGame(db, {
+      gameId: "cs1", season: 2026, gameDate: "2026-10-11",
+      awayCode: "g", homeCode: "db", gameNo: 1,
+      status: "played", notPlayedReason: null, competition: "climaxSeries",
+      sourceUrl: "https://npb.jp/z", fetchedAt: NOW,
+    });
+    assert.equal(latestGameDate(db, 2026), DATE, "CS 경기일이 정규시즌의 최신일로 나왔다");
   });
 });

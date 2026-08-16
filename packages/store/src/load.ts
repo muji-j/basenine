@@ -169,6 +169,15 @@ export function upsertGame(db: Db, g: GameRow): number {
              OR game.not_played_reason IS NOT excluded.not_played_reason
              OR game.away_runs IS NOT excluded.away_runs
              OR game.home_runs IS NOT excluded.home_runs
+             -- ⚠**안타↔실책 판정은 경기 뒤에 바뀐다.** 공식 기록원의 정정은 야구에서 흔하고,
+             -- 그때 우리 화면의 안타 수가 조용히 달라진다. revision이 안 오르면
+             -- 「어제 본 숫자와 다른데?」에 답할 수 없다(M4). BABIP처럼 안타를 쓰는 지표도 움직인다
+             OR game.away_hits IS NOT excluded.away_hits
+             OR game.home_hits IS NOT excluded.home_hits
+             OR game.away_errors IS NOT excluded.away_errors
+             OR game.home_errors IS NOT excluded.home_errors
+             -- 구장 정정(지방 개최 변경 등)도 구장별 스플릿을 움직인다
+             OR game.venue IS NOT excluded.venue
              -- ⚠구분이 바뀌는 것도 정정이다. 정규시즌이던 경기가 CS로 바뀌면
              -- 그 선수의 시즌 성적이 통째로 달라진다
              OR game.competition IS NOT excluded.competition

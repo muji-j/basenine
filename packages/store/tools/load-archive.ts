@@ -116,6 +116,18 @@ const seenPlayers = new Set<string>();
 let played = 0;
 let notPlayed = 0;
 let failed = 0;
+/**
+ * ⚠**라인스코어만 못 읽은 경기.**
+ *
+ * 박스스코어는 멀쩡한데 라인스코어(R·H·E)만 파싱에 실패하면, 그 경기는 **적재는 되지만
+ * 득점이 null이 된다.** 그러면 순위표(`standings.ts`)와 경기 페이지(`game.ts`)가
+ * `away_runs IS NOT NULL` 조건으로 그 경기를 **조용히 빼 버린다** —
+ * 팀의 경기 수가 하나 줄고 승패가 어긋나는데, 요약은 「성립」이라고 말한다.
+ * 이 프로젝트가 가장 두려워하는 「조용한 죽음」의 전형이라 따로 센다.
+ * (2026-08-16 이중 검토에서 지적.)
+ */
+let lineScoreFailed = 0;
+const lineScoreFailedIds: string[] = [];
 const quarantineKinds = new Map<string, number>();
 
 let stoppedAt: string | null = null;
@@ -252,6 +264,10 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
       awayErrors: ls.awayErrors, homeErrors: ls.homeErrors,
     };
   } catch (err) {
+    // ⚠**실패를 세지 않으면 아무도 모른다.** 이 경기는 적재되지만 득점이 없고,
+    // 순위표와 경기 페이지에서 조용히 빠진다
+    lineScoreFailed += 1;
+    lineScoreFailedIds.push(meta.gameId);
     console.error(`라인스코어 ERROR ${meta.gameId} — ${err instanceof Error ? err.message : String(err)}`);
   }
 
@@ -307,8 +323,13 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
       quarantine.push(...derived.quarantine);
     }
     for (const p of team.pitchers) {
-      const row = derivePitching(meta.gameId, side, p);
-      if (row === null) continue;
+      const derived = derivePitching(meta.gameId, side, p);
+      if (derived === null) continue;
+      quarantine.push(...derived.quarantine);
+      // ⚠**읽지 못한 등판은 넣지 않는다.** 0으로 넣으면 그 등판이 사라진 채
+      // 방어율만 부풀어 오른다 — 격리에 남았으므로 화면이 말해 준다
+      if (derived.row === null) continue;
+      const row = derived.row;
       if (!seenPlayers.has(row.playerId)) {
         seenPlayers.add(row.playerId);
         budget.players += upsertPlayer(db, row.playerId, p.name, nowIso);
@@ -334,6 +355,14 @@ budget.total =
   budget.players + budget.games + budget.batting + budget.pitching + budget.paEvents + budget.quarantine;
 
 console.log(`성립 ${played}건 · 미성립 ${notPlayed}건 · 실패 ${failed}건`);
+if (lineScoreFailed > 0) {
+  // ⚠**「성립」 안에 숨어 있던 부분 실패를 드러낸다.** 이 경기들은 득점이 없어
+  // 순위표·경기 페이지에서 빠진다 — 요약만 보면 정상으로 보인다
+  console.log(
+    `⚠ 라인스코어를 못 읽은 경기 ${lineScoreFailed}건 — 득점·안타·실책이 없어 순위표와 경기 화면에서 빠진다`,
+  );
+  for (const id of lineScoreFailedIds.slice(0, 20)) console.log(`   ${id}`);
+}
 console.log(
   `\n=== 쓰기 예산 (D1 무료 한도 ${D1_DAILY_WRITE_LIMIT.toLocaleString()}행/일) ===\n` +
     `선수 ${budget.players} · 경기 ${budget.games} · 타격 ${budget.batting} · ` +
@@ -353,4 +382,6 @@ if (quarantineKinds.size === 0) console.log("없음");
 for (const [kind, n] of quarantineKinds) console.log(`${String(n).padStart(6)}  ${kind}`);
 
 db.close();
-process.exitCode = failed > 0 ? 1 : 0;
+// ⚠**부분 실패도 실패다.** 조용히 0으로 끝내면 크론이 「성공」으로 보고하고,
+// 그 사이 순위표에서 경기가 사라진 채로 배포된다
+process.exitCode = failed > 0 || lineScoreFailed > 0 ? 1 : 0;

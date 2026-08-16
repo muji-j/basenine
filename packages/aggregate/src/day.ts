@@ -282,6 +282,8 @@ export function dayResults(db: Db, season: number, date: string): DayGame[] {
  * 「그날은 아무 일도 없었다」가 아니라 「그날이 없었다」고 말하게 된다.
  */
 export function latestGameDate(db: Db, season: number, through = "9999-12-31"): string | null {
+  // ⚠**`status`로 거르지 않는다.** 이 함수의 존재 이유가 그것이다 —
+  // 신선도(`asOf`)는 실시 기준이 맞지만, 「어제 무슨 일이 있었나」는 중지도 포함해야 한다
   const row = db.raw
     .prepare(
       `SELECT MAX(game_date) AS d FROM game WHERE season = ? AND game_date <= ? AND competition = 'regular'`,

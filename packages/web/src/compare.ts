@@ -274,7 +274,12 @@ export function compareCardJson(card: CompareCard): string {
 export function betterSide(a: CompareStat, b: CompareStat): "a" | "b" | null {
   if (a.dir === 0 || a.min === null) return null;
   if (a.n === null || b.n === null) return null;
-  if (a.s < a.min || b.s < a.min) return null;
+  // ⚠**각자 자기 기준으로 잰다.** `b`에게 `a`의 최소 표본을 적용하면
+  // 선발(90아웃)과 구원(60아웃)을 비교할 때 **入れかえ 버튼 하나로 판정이 뒤집힌다** —
+  // 23이닝 선발이 21이닝 구원에게 「졌다」고 나오는데 정작 자기 등급 색은 없다.
+  // (2026-08-16 이중 검토에서 지적. 서버·클라 대조 테스트가 **양쪽이 같은 방식으로 틀려서** 못 잡았다.)
+  if (b.min === null) return null;
+  if (a.s < a.min || b.s < b.min) return null;
   if (a.n === b.n) return null;
   const aWins = a.dir === 1 ? a.n > b.n : a.n < b.n;
   return aWins ? "a" : "b";
@@ -333,7 +338,7 @@ export function renderComparePage(d: ComparePageData, ctx: RenderContext): strin
   <h4>この画面が「勝ち負け」を出さないことがある理由</h4>
   <p class="note" style="max-width:64ch">
     数字が大きいほうに印をつけるのは簡単ですが、<b>母数が足りない側にそれをやると嘘になります</b>。
-    20打席の .400 は 500打席の .300 より good な打者だという意味ではありません。<br>
+    20打席の .400 は 500打席の .300 より優れた打者だという意味ではありません。<br>
     そこで当サイトは、<b>両方が色づけの最低母数に届いたときだけ</b>どちらが上かを示します。
     届かないときは二つの数字を並べるだけにして、判断は見る人にお返しします。
     安打数や本塁打数のような「積み上がる数」にも印はつけません — 出場機会が違うからです。

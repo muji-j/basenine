@@ -284,3 +284,32 @@ test("표기가 없으면 null이다 — 호출자가 「구조 변경」으로 
   assert.equal(parseCompetitionLabel("<div>표제가 없는 문서</div>"), null);
   assert.equal(parseCompetitionLabel(`<div class="game_tit"><h3>표기 없는 표제</h3></div>`), null);
 });
+
+/**
+ * ⚠**`5+`는 「5이닝을 던지고 다음 이닝에서 아웃 없이 강판」이다.**
+ * NPB 박스스코어의 표기이고 아웃 수로는 15다.
+ *
+ * 실측(2026-08-16 외부 대조): 이 표기를 못 읽어 **투수 39명의 시즌 투구회가 모자랐다.**
+ * 篠木는 67이닝이어야 하는데 57이닝이었고 방어율이 4.57 대신 5.37로 나왔다.
+ * 검산: 그 경기의 팀 합계가 27아웃인데 다른 투수들이 12아웃이므로 篠木는 15아웃이다.
+ */
+test("⚠「5+」를 15아웃으로 읽는다 — 못 읽으면 그 등판이 통째로 사라진다", () => {
+  assert.equal(inningsToOuts("5+"), 15);
+  assert.equal(inningsToOuts("0+"), 0);
+  // 분수와 함께 와도 아웃은 분수까지만 센다
+  assert.equal(inningsToOuts("5.1+"), 16);
+});
+
+test("보통의 이닝 표기", () => {
+  assert.equal(inningsToOuts("6"), 18);
+  assert.equal(inningsToOuts("6.2"), 20);
+  assert.equal(inningsToOuts("0.1"), 1);
+});
+
+test("⚠읽을 수 없으면 null이다 — 0을 돌려주면 「던지지 않았다」가 된다(M7)", () => {
+  assert.equal(inningsToOuts(""), null);
+  assert.equal(inningsToOuts("-"), null);
+  assert.equal(inningsToOuts("5.3"), null, "3분의 3은 없다");
+  assert.equal(inningsToOuts("5 1/3"), null);
+  assert.equal(inningsToOuts("あ"), null);
+});

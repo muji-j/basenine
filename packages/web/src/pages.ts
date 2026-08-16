@@ -28,6 +28,8 @@ import { page } from "./layout.ts";
 import type { Freshness, SiteMeta } from "./layout.ts";
 import type { MatchupRow, RankingPanel } from "./player-page.ts";
 import { NEUTRAL_COLOR } from "@bb-app/domain";
+// ⚠**「直近10」을 화면에 손으로 적지 않는다.** 상수를 8로 바꾸면 화면만 거짓말한다
+import { RECENT_GAMES } from "@bb-app/aggregate";
 import type { TeamColor } from "@bb-app/domain";
 import type { Rate } from "@bb-app/metrics";
 import { isEmptyProfile, markLetter, markProfile } from "./marks.ts";
@@ -277,7 +279,7 @@ function standingsTable(s: StandingsSection, base: string): RawHtml {
       <th>順位</th><th class="l">球団</th><th>試合</th><th>勝</th><th>敗</th><th>分</th>
       <th>勝率</th><th>差</th><th>得点</th><th>失点</th><th>得失差</th>
       <th>${term("打率")}</th><th>${term("防御率")}</th>
-      <th>ホーム</th><th>ビジター</th><th>直近${10}</th>
+      <th>ホーム</th><th>ビジター</th><th>直近${RECENT_GAMES}</th>
     </tr></thead>
     <tbody>${s.rows.map(
       (r) => html`<tr style="--chip:${r.color.base}">
@@ -289,7 +291,8 @@ function standingsTable(s: StandingsSection, base: string): RawHtml {
         <td>${r.rf}</td><td>${r.ra}</td>
         <td class="dif"><b>${diff(r.rf, r.ra)}</b><i class="${r.rf >= r.ra ? "p" : "n"}"
           style="--w:${((Math.abs(r.rf - r.ra) / widest) * 100).toFixed(1)}"></i></td>
-        <td>${avg3(r.avg.value)}</td><td>${dec2(r.era.value)}</td>
+        <td class="wd">${avg3(r.avg.value)}<span class="den">${r.avg.denominator}打数</span></td>
+        <td class="wd">${dec2(r.era.value)}<span class="den">${innings(r.era.denominator)}回</span></td>
         <td>${wlt(r.home)}</td><td>${wlt(r.away)}</td><td>${wlt(r.last10)}</td>
       </tr>`,
     )}</tbody>

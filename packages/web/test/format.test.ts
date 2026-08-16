@@ -86,3 +86,42 @@ test("투타 표기 — 미상은 값 없음", () => {
   assert.equal(throwsBats("both", "both"), "両投両打");
   assert.equal(throwsBats(null, "left"), NO_VALUE);
 });
+
+// ── 반올림 ──────────────────────────────────────────────────────────────
+
+/**
+ * ⚠**`toFixed`는 야구 관례대로 반올림하지 않는다.** 이진 부동소수 때문에 정확히 반이 되는
+ * 값이 내림된다. 실측(2026-08-16 외부 대조): 中込의 방어율 `11×27÷40 = 7.425`를
+ * `toFixed(2)`가 **7.42**로 냈고, npb.jp를 포함한 모든 공표는 **7.43**이었다.
+ *
+ * 0.01 차이는 작지만 **다른 사이트와 다른 숫자를 내는 것 자체가 신뢰 문제**다.
+ */
+test("⚠정확히 반인 값을 올린다 — toFixed는 내린다", () => {
+  assert.equal(dec2(7.425), "7.43", `toFixed는 ${(7.425).toFixed(2)}를 낸다`);
+  assert.equal(dec2(2.675), "2.68", `toFixed는 ${(2.675).toFixed(2)}를 낸다`);
+  assert.equal(dec2(1.005), "1.01", `toFixed는 ${(1.005).toFixed(2)}를 낸다`);
+});
+
+test("음수도 절댓값 기준으로 올린다", () => {
+  assert.equal(dec2(-7.425), "-7.43");
+  assert.equal(signed1(-1.25), "-1.3");
+});
+
+test("반이 아닌 값은 그대로 반올림한다 — 보정이 값을 밀지 않는다", () => {
+  assert.equal(dec2(2.93), "2.93");
+  assert.equal(dec2(2.934), "2.93");
+  assert.equal(dec2(2.936), "2.94");
+  assert.equal(avg3(0.3167), ".317");
+  assert.equal(avg3(0.3164), ".316");
+});
+
+test("큰 값에서도 보정이 통한다 — EPSILON은 1.0 근처의 절대 오차다", () => {
+  assert.equal(dec1(227.05), "227.1");
+  assert.equal(dec1(1234.55), "1234.6");
+});
+
+test("0과 아주 작은 값", () => {
+  assert.equal(dec2(0), "0.00");
+  assert.equal(avg3(0), ".000");
+  assert.equal(signed1(0), "+0.0");
+});

@@ -142,6 +142,12 @@ export interface StreakBlockData {
   hitless: StreakData;
   /** 센 경기 수. **분모다**(M2) */
   games: number;
+  /**
+   * 마지막으로 나온 경기일.
+   * ⚠**「今」이 언제 기준인지 말하려면 이게 필요하다** — 없으면 석 달 전에 끝난 기록이
+   * 지금 이어지는 것처럼 보인다(실측 21명).
+   */
+  lastGameDate: string | null;
 }
 
 export type SplitAxisId = "hand" | "base" | "homeAway" | "month" | "order" | "venue";
@@ -697,13 +703,24 @@ function advancedPitching(p: PitchingBlockData): RawHtml {
  * 이어지는 것처럼 보인다 — 연속 기록에서 가장 흔한 오독이다.
  * ⚠**「通算」이라고 쓰지 않는다.** 소급 범위가 2시즌뿐이라 통산이 될 수 없다(§2-1).
  */
-function streakBlock(s: StreakBlockData, season: number): RawHtml {
+function streakBlock(s: StreakBlockData, season: number, asOf: string | null): RawHtml {
+  /**
+   * ⚠**「今」은 그 선수가 **마지막 경기일에 나왔을 때만** 쓴다.**
+   * 5월 22일 이후 출장이 없는 선수의 `current`는 5월 22일 값 그대로다.
+   * 그걸 「今」이라고 쓰면 석 달 전에 끝난 기록이 지금 이어지는 것처럼 보인다
+   * (2026-08-16 이중 검토에서 배포물의 21명이 그 상태였다).
+   */
+  const current =
+    s.lastGameDate !== null && asOf !== null && s.lastGameDate !== asOf
+      ? `${gameDate(s.lastGameDate)}時点`
+      : "今";
+
   const row = (label: string, v: StreakData, unit = "試合"): RawHtml => {
     const span =
       v.bestFrom === null || v.bestTo === null
         ? null
         : html`<span class="den">${gameDate(v.bestFrom)}〜${gameDate(v.bestTo)}</span>`;
-    return html`<dt>${term(label)}</dt><dd class="v">${v.current}${unit}<span class="den">今</span></dd>
+    return html`<dt>${term(label)}</dt><dd class="v">${v.current}${unit}<span class="den">${current}</span></dd>
       <dt class="sub2">今季最長</dt><dd class="v">${v.best}${unit}${span}</dd>`;
   };
   return block({
@@ -716,7 +733,10 @@ function streakBlock(s: StreakBlockData, season: number): RawHtml {
       row("連続無安打", s.hitless),
     )}
     ${note(
-      "「今」はいま続いている記録、「今季最長」はこの1年でいちばん長かった記録です。" +
+      (current === "今"
+        ? "「今」はいま続いている記録、"
+        : `この選手の最後の出場は${gameDate(s.lastGameDate!)}です。左の数字はその時点で続いていた記録で、いまも続いているとは限りません。`) +
+        "「今季最長」はこの1年でいちばん長かった記録です。" +
         "⚠打席のなかった試合（代走・守備固めだけ）は数えません — 数えると連続記録が理不尽に途切れます。" +
         `⚠${season}年のなかだけで数えています。当サイトは2025年からの記録しか持っていないので「通算」ではありません。`,
     )}`,
@@ -996,7 +1016,7 @@ function renderBlock(id: BlockId, d: PlayerPageData, base: string): RawHtml {
       if (d.pitching !== null) return roleSplitBlock(d.pitching);
       return block({ id: "rolesplit", title: "先発・救援別", body: html`<p class="empty">登板がありません。</p>` });
     case "streak":
-      if (d.streaks !== null) return streakBlock(d.streaks, d.season);
+      if (d.streaks !== null) return streakBlock(d.streaks, d.season, d.asOf);
       return block({ id: "streak", title: "連続記録", body: html`<p class="empty">打席がありません。</p>` });
     case "splits":
       return splitsBlock(d.splits);

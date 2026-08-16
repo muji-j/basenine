@@ -56,7 +56,18 @@ export interface PitchingRow {
 
 /** 격리 대상. **버리지 않는다.** */
 export interface QuarantineRow {
-  kind: "unknownToken" | "paMismatch" | "hitMismatch" | "abMismatch" | "runsMismatch";
+  /**
+   * ⚠**격리 종류를 늘릴 때는 화면(`log-page.ts`)도 함께 본다.** 종류가 늘었는데
+   * 화면이 모르면, 격리는 쌓이는데 아무도 안 보는 상태가 된다.
+   */
+  kind:
+    | "unknownToken"
+    | "paMismatch"
+    | "hitMismatch"
+    | "abMismatch"
+    | "runsMismatch"
+    /** 투구회를 읽지 못했다. **0으로 때우면 그 등판이 사라진 채 방어율만 부풀어 오른다** */
+    | "unreadableInnings";
   gameId: string;
   playerId: string | null;
   raw: string;
@@ -133,19 +144,47 @@ export function deriveBatting(
   return { row: out, quarantine: q };
 }
 
+/**
+ * 투수 1행을 센다.
+ *
+ * ⚠**투구회를 못 읽었으면 0으로 때우지 않는다**(M7·M11). 0은 「던지지 않았다」는 뜻이고,
+ * 그 등판이 통째로 사라진 채 방어율만 부풀어 오른다 — 값이 그럴듯해서 눈으로는 안 잡힌다.
+ *
+ * 실측(2026-08-16 외부 대조): `5+` 표기를 못 읽어 **투수 39명의 시즌 투구회가 모자랐고**
+ * 방어율이 전부 부풀어 있었다(篠木 5.37 vs 공표 4.57). 파싱은 고쳤지만,
+ * **다음에 또 읽지 못하는 표기가 나와도 조용히 0이 되지 않도록** 이 경로를 격리로 바꾼다.
+ */
 export function derivePitching(
   gameId: string,
   side: "away" | "home",
   row: PitcherRow,
-): PitchingRow | null {
+): { row: PitchingRow | null; quarantine: QuarantineRow[] } | null {
   if (row.isTeamTotal) return null;
   if (row.playerId === null) return null;
-  return {
+
+  if (row.outs === null) {
+    // ⚠**이 등판은 적재하지 않는다.** 0으로 넣으면 시즌 합계가 조용히 틀리고,
+    // 격리에 남기면 수집 로그 화면이 「판단이 필요하다」고 말해 준다
+    return {
+      row: null,
+      quarantine: [
+        {
+          kind: "unreadableInnings",
+          gameId,
+          playerId: row.playerId,
+          raw: row.name,
+          detail: `打者${row.battersFaced ?? "?"}人を相手にしたが投球回を読めなかった`,
+        },
+      ],
+    };
+  }
+
+  const out: PitchingRow = {
     gameId,
     playerId: row.playerId,
     side,
     decision: row.decision === "" ? null : row.decision,
-    outs: row.outs ?? 0,
+    outs: row.outs,
     bf: row.battersFaced,
     pitches: row.pitches,
     h: row.hits ?? 0,
@@ -159,4 +198,6 @@ export function derivePitching(
     wp: row.wildPitches,
     balk: row.balks,
   };
+
+  return { row: out, quarantine: [] };
 }

@@ -140,6 +140,21 @@ export function winPct(w: number, l: number): number | null {
   return w + l === 0 ? null : w / (w + l);
 }
 
+/**
+ * 순위 비교에 쓰는 **표시 자릿수의 승률**.
+ *
+ * ⚠**배정밀도로 비교하면 화면에 같은 `.563`인 두 팀이 코드에서는 다른 값이 된다.**
+ * 그러면 「同」 표시 없이 순서가 갈리고, 독자는 같은 승률인데 왜 위아래인지 알 수 없다.
+ * NPB의 표시·판정 단위는 소수 3자리이므로 **그 자리에서 비교한다.**
+ *
+ * ⚠**협약이 반올림 후 비교인지 원값 비교인지는 확인하지 못했다**(2026-08-16 미결).
+ * 확인 전까지는 「화면과 같은 기준으로 가른다」를 규칙으로 삼는다 — 적어도 화면이 모순되지 않는다.
+ * 실측: 2025·2026 × 2리그에서 이 차이로 순위가 갈린 사례 **0건**.
+ */
+export function pctKey(pct: number | null): number | null {
+  return pct === null ? null : Math.round(pct * 1000) / 1000;
+}
+
 /** ゲーム差 = ((1위 승 − 승) + (패 − 1위 패)) ÷ 2 */
 export function gamesBehind(top: Tally, me: Tally): number {
   return (top.w - me.w + (me.l - top.l)) / 2;
@@ -243,8 +258,10 @@ export function teamStandings(
   for (const league of [...new Set(rows.map((r) => r.league))]) {
     const group = rows.filter((r) => r.league === league);
     group.sort((a, b) => {
-      const pa = a.pct ?? -1;
-      const pb = b.pct ?? -1;
+      // ⚠**표시 자릿수로 비교한다.** 배정밀도로 가르면 화면에 같은 .563인 두 팀의
+      // 순서가 보이지 않는 소수점 뒤에서 갈린다
+      const pa = pctKey(a.pct) ?? -1;
+      const pb = pctKey(b.pct) ?? -1;
       if (pa !== pb) return pb - pa;
       // ⚠동률의 1단계는 **당사자 간 대전 성적**이다(NPB 협약)
       const h = headToHead(head, a.teamCode, b.teamCode);
@@ -259,9 +276,12 @@ export function teamStandings(
       r.gamesBehind = top === undefined ? 0 : gamesBehind({ w: top.w, l: top.l, t: top.t }, { w: r.w, l: r.l, t: r.t });
       // 동률이면 같은 순위를 준다
       const prev = group[i - 1];
-      r.rank = prev !== undefined && prev.pct === r.pct && headToHead(head, prev.teamCode, r.teamCode) === 0
-        ? prev.rank
-        : i + 1;
+      r.rank =
+        prev !== undefined &&
+        pctKey(prev.pct) === pctKey(r.pct) &&
+        headToHead(head, prev.teamCode, r.teamCode) === 0
+          ? prev.rank
+          : i + 1;
       r.tiedRank = false;
     }
     // ⚠**같은 순위가 둘 이상일 때만 「同」이라고 말한다.** 한 팀에만 붙이면 뜻이 없다

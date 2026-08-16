@@ -38,6 +38,7 @@ function game(over: Partial<TodayGame> = {}): TodayGame {
     lose: { playerId: "PL", name: "小島", teamCode: "m" },
     save: null,
     stars: [star()],
+    hasPage: true,
     ...over,
   };
 }
@@ -206,4 +207,23 @@ test("예고선발 요약에 방어율과 분모가 함께 나온다(M2)", () =>
   assert.match(out, /118回/, "방어율만 있고 투구회가 없다");
   // ⚠미발표는 「投手なし」가 아니다(M11)
   assert.match(out, /発表待ち/);
+});
+
+/**
+ * ⚠**경기 페이지가 없는데 링크를 내면 404다.** 라인스코어만 못 읽어 득점이 null인 경기가
+ * 정확히 이 구멍에 빠진다 — 카드에는 「—」가 뜨고 링크는 죽는다.
+ * (2026-08-16 이중 검토에서 지적. 현 데이터 해당 0건이지만 경로는 실재한다.)
+ */
+test("⚠경기 페이지가 없으면 「詳細」 링크를 내지 않는다 — 죽은 링크는 조용하다", () => {
+  const out = renderTodayPage(data({ games: [game({ hasPage: false })] }), context());
+  assert.ok(!out.includes("この試合の詳細"), "만들어지지 않은 페이지로 링크했다");
+  assert.ok(!out.includes("games/"), "경기 페이지 경로가 남아 있다");
+});
+
+test("경기 페이지가 있으면 링크를 낸다 — 슬래시는 파일명으로 바뀐다", () => {
+  const out = renderTodayPage(
+    data({ games: [game({ gameId: "2026/0814/s-db-17" })] }),
+    context(),
+  );
+  assert.match(out, /games\/2026-0814-s-db-17\.html/);
 });

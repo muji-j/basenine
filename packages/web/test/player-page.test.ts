@@ -436,3 +436,32 @@ test("성적이 아예 없으면 빈 상태를 말한다 — 0으로 채우지 �
   assert.match(out, /打席記録がありません/);
   assert.match(out, /対戦記録がありません/);
 });
+
+/**
+ * ⚠**「今」이 석 달 전에 끝나 있었다**(2026-08-16 이중 검토에서 배포물의 21명 확인).
+ * `streakOf`는 그 선수의 **자기 출장 목록**만 훑으므로, 5월 22일 이후 출장이 없으면
+ * `current`는 그때 값 그대로 남는다. 화면이 그걸 「今」이라고 쓰면 거짓말이 된다.
+ */
+test("⚠최신 경기일에 안 나온 선수의 연속 기록은 「今」이 아니라 시점을 적는다", () => {
+  const out = renderPlayerPage(
+    playerPage({
+      asOf: "2026-08-14",
+      streaks: {
+        hitting: { current: 8, best: 8, bestFrom: "2026-05-09", bestTo: "2026-05-22" },
+        onBase: { current: 8, best: 8, bestFrom: "2026-05-09", bestTo: "2026-05-22" },
+        hitless: { current: 0, best: 2, bestFrom: null, bestTo: null },
+        games: 30,
+        lastGameDate: "2026-05-22",
+      },
+    }),
+    context(),
+  );
+  assert.match(out, /5月22日時点/, "석 달 전 기록을 「今」이라고 했다");
+  assert.match(out, /最後の出場は5月22日/, "왜 그런지 말하지 않았다");
+});
+
+test("최신 경기일에 나온 선수는 「今」이다 — 전부 시점 표기로 바꾸면 뜻이 없어진다", () => {
+  const out = renderPlayerPage(playerPage({ asOf: "2026-08-14" }), context());
+  assert.match(out, /<span class="den">今<\/span>/);
+  assert.ok(!out.includes("時点"), "최신 경기에 나온 선수에게 시점 표기가 붙었다");
+});

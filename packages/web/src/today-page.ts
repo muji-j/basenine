@@ -67,6 +67,14 @@ export interface TodayGame {
   lose: PlayerRef | null;
   save: PlayerRef | null;
   stars: TodayStar[];
+  /**
+   * ⚠**경기 페이지가 실제로 만들어졌는가.**
+   *
+   * 경기 페이지는 득점이 있는 경기만 만든다. 라인스코어만 못 읽어 득점이 null인 경기는
+   * 카드에는 「—」로 나오는데 링크는 **404**가 된다 — 조용하고 발견이 늦다.
+   * 만들어졌을 때만 링크를 낸다(2026-08-16 이중 검토에서 지적).
+   */
+  hasPage: boolean;
 }
 
 /** 다음 경기의 예고선발 — **요약만**. 상세는 予告先発 페이지가 낸다 */
@@ -201,7 +209,9 @@ function gameCard(g: TodayGame, base: string): RawHtml {
       ${s.decision === null ? null : html`<em class="gsd">${DECISION_LABEL[s.decision] ?? s.decision}</em>`}
     </li>`,
       )}</ul>`}
-  <p class="gmore"><a href="${base}games/${gameSlug(g.gameId)}.html">この試合の詳細</a></p>
+  ${g.hasPage
+    ? html`<p class="gmore"><a href="${base}games/${gameSlug(g.gameId)}.html">この試合の詳細</a></p>`
+    : raw("")}
 </article>`;
 }
 

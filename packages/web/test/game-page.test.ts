@@ -97,10 +97,19 @@ test("⚠복원이 어긋나면 표보다 먼저 말한다 — 조용히 틀린 
   assert.ok(!good.includes("一致していません"), "맞는데 경고가 나왔다");
 });
 
-test("⚠이닝별 득점이 우리가 조립한 값임을 밝힌다(L2·M4)", () => {
+/**
+ * ⚠**「원본을 옮긴 것이 아니다」라고 쓰지 않는다**(2026-08-16 이중 검토에서 지적).
+ * 이닝별 득점은 계산 구조상 라인스코어와 **항상 같은 수**가 된다 —
+ * 반이닝의 마지막 타석을 라인스코어로 닫기 때문이다.
+ * 검증되지 않은 안전 주장을 화면에 두면, 나중에 그 문장을 근거로 판단할 때 판단이 틀린다.
+ */
+test("⚠하지 않는 일을 했다고 쓰지 않는다 — 우리가 하는 것은 「대조」다(L2·M4)", () => {
   const out = renderGamePage(data(), context());
-  assert.match(out, /打席ごとの記録から組み直したもの/);
-  assert.match(out, /原本の表を写したものではありません/);
+  assert.match(out, /組み直した合計と.*一致するか/s, "무엇을 하는지 말하지 않았다");
+  assert.ok(
+    !out.includes("原本の表を写したものではありません"),
+    "검증되지 않은 안전 주장이 남아 있다 — 이 값은 실제로 공표값과 같은 수다",
+  );
 });
 
 test("⚠원본으로 가는 링크를 둔다 — 대체하는 것이 아니라 가리킨다(L3)", () => {
@@ -137,7 +146,9 @@ test("주자 표기가 일본어 야구 표기다", () => {
 test("⚠득점기대치가 실력이 아니라는 것을 말한다 — SRC와 같은 주의가 붙는다", () => {
   const out = renderGamePage(data(), context());
   assert.match(out, /選手の実力を表すものではありません/);
-  assert.match(out, /守備や走塁も含みません/);
+  assert.match(out, /守備の貢献は含みません/);
+  // ⚠주루가 섞여 들어간다는 사실도 같은 자리에서 말한다(분리할 수 없으므로)
+  assert.match(out, /走塁（暴投・盗塁など）で入った点も同じ欄に入ります/);
 });
 
 test("자른 사실을 말한다 — 「上位5打席」", () => {
@@ -187,4 +198,29 @@ test("선수 이름을 모르면 그 자리를 비운다 — 숫자 ID를 화면
   const out = renderGamePage(data({ keyPlays: blank, scoringPlays: blank }), context());
   assert.ok(!out.includes("B1"), "선수 ID가 화면에 나왔다");
   assert.ok(!out.includes("P1"), "투수 ID가 화면에 나왔다");
+});
+
+/**
+ * ⚠**「三振 2点」이 배포물에 실제로 있었다**(2026-08-16 이중 검토에서 발견).
+ * 그 점은 타석 중에 일어난 주루(폭투 등)로 들어온 것인데, 화면은 타자가 낸 것처럼 보여 줬다.
+ * 원천 기록에 주루가 별도 행으로 없어 **분리할 수 없으므로**, 숨기는 대신 표시한다.
+ */
+test("⚠타점 없이 들어온 점은 타자가 낸 점이 아니라고 말한다", () => {
+  const out = renderGamePage(
+    data({
+      scoringPlays: [play({ rawBox: "三振", rbi: 0, runsScored: 2 })],
+      keyPlays: [play({ rawBox: "三振", rbi: 0, runsScored: 2 })],
+    }),
+    context(),
+  );
+  assert.match(out, /打点なし/, "타점 없는 득점에 표시가 없다");
+  assert.match(out, /em class="norbi"/, "타자의 성과처럼 강조됐다");
+  assert.match(out, /走塁/, "왜 그런지 설명하지 않았다");
+});
+
+test("타점이 있는 득점에는 그 표시를 붙이지 않는다 — 붙으면 뜻이 없어진다", () => {
+  const out = renderGamePage(data(), context());
+  // ⚠설명문에는 「打点なし」라는 말이 나오므로, **표시 자체**로 확인한다
+  assert.ok(!out.includes('em class="norbi"'), "타점 4점짜리 만루 홈런이 「타자가 낸 점이 아님」으로 표시됐다");
+  assert.ok(!/<s>打点なし<\/s>/.test(out), "타점이 있는데 「打点なし」가 붙었다");
 });

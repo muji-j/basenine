@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb, upsertGame } from "@bb-app/store";
 import type { Db } from "@bb-app/store";
-import { RECENT_GAMES, gamesBehind, teamStandings, winPct } from "../src/standings.ts";
+import { RECENT_GAMES, gamesBehind, pctKey, teamStandings, winPct } from "../src/standings.ts";
 
 const NOW = "2026-08-16T00:00:00.000Z";
 
@@ -244,4 +244,25 @@ test("경기가 하나도 없으면 빈 배열이다", async () => {
   await withDb((db) => {
     assert.deepEqual(teamStandings(db, 2026, leagueOf), []);
   });
+});
+
+/**
+ * ⚠**화면에 같은 `.563`인 두 팀이 코드에서는 다른 값일 수 있다.**
+ * 배정밀도로 가르면 「同」 표시 없이 순서가 갈리고, 독자는 같은 승률인데 왜 위아래인지 모른다.
+ * (2026-08-16 이중 검토에서 지적. 현 데이터에서 발생 0건이지만 경로는 실재한다.)
+ */
+test("⚠승률은 표시 자릿수(3자리)로 비교한다 — 보이지 않는 소수점 뒤에서 순위를 가르지 않는다", () => {
+  // 45승35패 = .56250 · 58승45패 = .56311 — **다른 수인데 화면에는 둘 다 .563**
+  const a = winPct(45, 35)!;
+  const b = winPct(58, 45)!;
+  assert.notEqual(a, b, "시험 데이터가 배정밀도로는 같다 — 이러면 아무것도 안 잰다");
+  assert.equal(pctKey(a), pctKey(b), "표시 자릿수로는 같아야 한다");
+});
+
+test("표시 자릿수로도 다르면 그대로 가른다", () => {
+  assert.notEqual(pctKey(winPct(60, 40)), pctKey(winPct(59, 41)));
+});
+
+test("값이 없으면 키도 없다 — 0으로 때우지 않는다(M11)", () => {
+  assert.equal(pctKey(null), null);
 });

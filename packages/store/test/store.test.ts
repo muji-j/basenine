@@ -165,11 +165,27 @@ test("⚠투수 팀 합계 행은 적재 대상이 아니다", () => {
 });
 
 test("투수 행을 아웃 카운트로 적재한다", () => {
-  const r = derivePitching("g", "away", PITCHER);
-  assert.ok(r);
-  assert.equal(r.outs, 20);
-  assert.equal(r.er, 2);
-  assert.equal(r.decision, "○");
+  const d = derivePitching("g", "away", PITCHER);
+  assert.ok(d);
+  assert.ok(d.row);
+  assert.equal(d.row.outs, 20);
+  assert.equal(d.row.er, 2);
+  assert.equal(d.row.decision, "○");
+  assert.deepEqual(d.quarantine, []);
+});
+
+/**
+ * ⚠**투구회를 못 읽었을 때 0으로 넣으면 그 등판이 사라진 채 방어율만 부풀어 오른다.**
+ * 실측(2026-08-16 외부 대조): `5+` 표기를 못 읽어 투수 39명의 시즌 투구회가 모자랐고,
+ * 篠木의 방어율이 공표 4.57 대신 5.37로 나왔다. **값이 그럴듯해서 눈으로는 안 잡힌다.**
+ */
+test("⚠투구회를 못 읽으면 0으로 넣지 않고 격리한다(M7·M11)", () => {
+  const d = derivePitching("g", "away", { ...PITCHER, outs: null });
+  assert.ok(d);
+  assert.equal(d.row, null, "읽지 못한 등판을 적재했다");
+  assert.equal(d.quarantine.length, 1);
+  assert.equal(d.quarantine[0]!.kind, "unreadableInnings");
+  assert.equal(d.quarantine[0]!.playerId, PITCHER.playerId);
 });
 
 // ---- 적재 ---------------------------------------------------------------
@@ -198,6 +214,47 @@ test("상태가 바뀌면 revision이 오른다", async () => {
     upsertGame(db, { ...GAME, status: "notPlayed", notPlayedReason: "中止" });
     const r = db.raw.prepare("SELECT revision FROM game").get() as { revision: number };
     assert.equal(r.revision, 2);
+  });
+});
+
+/**
+ * ⚠**안타↔실책 판정은 경기 뒤에 바뀐다.** 공식 기록원의 정정은 야구에서 흔하고,
+ * 그때 우리 화면의 안타 수가 조용히 달라진다. revision이 안 오르면
+ * 「어제 본 숫자와 다른데?」에 답할 수 없다(M4) — 버그와 정정을 구별할 방법이 사라진다.
+ * (2026-08-16 이중 검토에서 지적.)
+ */
+test("⚠안타·실책 정정이 revision을 올린다 — 안 오르면 버그와 정정을 구별할 수 없다(M4)", async () => {
+  await withDb((db) => {
+    upsertGame(db, { ...GAME, awayHits: 8, homeHits: 9, awayErrors: 1, homeErrors: 0 });
+    // 기록원이 안타 하나를 실책으로 정정했다 — 득점은 그대로다
+    upsertGame(db, { ...GAME, awayHits: 7, homeHits: 9, awayErrors: 1, homeErrors: 1 });
+    const r = db.raw.prepare("SELECT revision, away_hits, home_errors FROM game").get() as {
+      revision: number;
+      away_hits: number;
+      home_errors: number;
+    };
+    assert.equal(r.away_hits, 7, "정정이 반영되지 않았다");
+    assert.equal(r.home_errors, 1);
+    assert.equal(r.revision, 2, "값이 바뀌었는데 revision이 그대로다");
+  });
+});
+
+test("구장 정정도 revision을 올린다 — 구장별 스플릿이 움직인다", async () => {
+  await withDb((db) => {
+    upsertGame(db, { ...GAME, venue: "甲子園" });
+    upsertGame(db, { ...GAME, venue: "京セラD大阪" });
+    const r = db.raw.prepare("SELECT revision FROM game").get() as { revision: number };
+    assert.equal(r.revision, 2);
+  });
+});
+
+test("정정이 없으면 revision은 그대로다 — 재적재로 오르면 뜻이 없어진다", async () => {
+  await withDb((db) => {
+    const g = { ...GAME, awayHits: 8, homeHits: 9, awayErrors: 1, homeErrors: 0, venue: "甲子園" };
+    upsertGame(db, g);
+    upsertGame(db, { ...g, fetchedAt: "2026-09-01T00:00:00.000Z" });
+    const r = db.raw.prepare("SELECT revision FROM game").get() as { revision: number };
+    assert.equal(r.revision, 1);
   });
 });
 

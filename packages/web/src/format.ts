@@ -13,32 +13,53 @@ import type { Rate } from "@bb-app/metrics";
 /** 값이 없음. **0과 구별한다**(M11). */
 export const NO_VALUE = "—";
 
+/**
+ * 야구 관례의 반올림 — **사사오입**(round half up).
+ *
+ * ⚠**`toFixed`를 그대로 쓰면 안 된다.** 이진 부동소수 때문에 정확히 반이 되는 값이
+ * 내림된다. 실측(2026-08-16 외부 대조): 中込의 방어율이 `11×27÷40 = 7.425`인데
+ * `(7.425).toFixed(2)`는 **`"7.42"`**를 낸다(저장된 double이 7.42499999…이므로).
+ * npb.jp를 포함한 모든 공표는 **7.43**이다.
+ *
+ * 0.01 차이는 작지만, **다른 사이트와 다른 숫자를 내는 것이 곧 신뢰 문제**다.
+ * 그리고 「우리가 계산한다」는 이 서비스의 근거가 반올림 하나로 흔들릴 이유가 없다.
+ *
+ * @param digits 소수 자릿수
+ */
+export function fixed(value: number, digits: number): string {
+  const f = 10 ** digits;
+  const scaled = value * f;
+  // ⚠상대 오차로 보정한다. `Number.EPSILON`은 1.0 근처의 절대 오차라 큰 값에서는 모자란다
+  const nudged = scaled + Math.sign(scaled) * Math.abs(scaled) * Number.EPSILON * 4;
+  return (Math.round(nudged) / f).toFixed(digits);
+}
+
 /** 타율·출루율·장타율 — 소수 3자리, 선행 0 없음. `.317` */
 export function avg3(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return NO_VALUE;
-  const s = value.toFixed(3);
+  const s = fixed(value, 3);
   return s.startsWith("0.") ? s.slice(1) : s.startsWith("-0.") ? `-${s.slice(2)}` : s;
 }
 
 /** 방어율·WHIP — 소수 2자리. 선행 0을 **남긴다**(`0.98`은 그대로 읽는 게 관례) */
 export function dec2(value: number | null): string {
-  return value === null || !Number.isFinite(value) ? NO_VALUE : value.toFixed(2);
+  return value === null || !Number.isFinite(value) ? NO_VALUE : fixed(value, 2);
 }
 
 /** wRC+ 같은 지수 — 소수 1자리 */
 export function dec1(value: number | null): string {
-  return value === null || !Number.isFinite(value) ? NO_VALUE : value.toFixed(1);
+  return value === null || !Number.isFinite(value) ? NO_VALUE : fixed(value, 1);
 }
 
 /** 부호를 항상 붙인다. SRC·wRAA처럼 0이 기준인 값에 쓴다 */
 export function signed1(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return NO_VALUE;
-  return (value >= 0 ? "+" : "") + value.toFixed(1);
+  return (value >= 0 ? "+" : "") + fixed(value, 1);
 }
 
 /** 백분율 — 소수 1자리 */
 export function pct1(value: number | null): string {
-  return value === null || !Number.isFinite(value) ? NO_VALUE : `${(value * 100).toFixed(1)}%`;
+  return value === null || !Number.isFinite(value) ? NO_VALUE : `${fixed(value * 100, 1)}%`;
 }
 
 export function int(value: number | null): string {

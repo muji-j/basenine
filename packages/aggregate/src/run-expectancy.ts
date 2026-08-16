@@ -43,6 +43,7 @@ FROM pa_event e
 JOIN game g ON g.game_id = e.game_id
 JOIN player b ON b.player_id = e.batter_id
 WHERE g.season = ? AND g.status = 'played' AND g.competition = ?
+  AND g.game_date <= ?
   AND e.status = 'final'
   AND (CASE e.half WHEN 'top' THEN g.away_code ELSE g.home_code END) IN (SELECT code FROM league_team)
 ORDER BY e.game_id, e.inning, e.half, e.seq
@@ -75,9 +76,14 @@ export function buildRunExpectancy(
   league: string,
   teamCodes: readonly string[],
   competition = "regular",
+  /**
+   * ⚠**여기까지의 경기로만 만든다.** 안 거르면 「7월 말 기준」으로 만든 사이트의
+   * 득점기대치만 8월 데이터로 계산되어, 같은 화면 안에서 기준일이 갈린다.
+   */
+  through = "9999-12-31",
 ): RunExpectancy {
   const rows = withLeagueTeams(db, teamCodes, () =>
-    db.raw.prepare(SQL).all(season, competition),
+    db.raw.prepare(SQL).all(season, competition, through),
   ) as {
     gameId: string;
     inning: number;

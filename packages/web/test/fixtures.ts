@@ -239,6 +239,8 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
       onBase: { current: 8, best: 21, bestFrom: "2026-04-20", bestTo: "2026-05-17" },
       hitless: { current: 0, best: 3, bestFrom: "2026-06-01", bestTo: "2026-06-04" },
       games: 104,
+      // 픽스처는 **최신 경기일에 나온 선수**다 — `asOf`와 같으므로 「今」이 붙는다
+      lastGameDate: "2026-08-14",
     },
     sparkLabel: "月別OPS",
     asOf: "2026-08-14",

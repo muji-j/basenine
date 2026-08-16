@@ -46,6 +46,7 @@ FROM pa_event e
 JOIN game g ON g.game_id = e.game_id
 JOIN player b ON b.player_id = e.batter_id
 WHERE g.season = ? AND g.status = 'played' AND g.competition = ?
+  AND g.game_date <= ?
   AND e.status = 'final'
   AND (CASE e.half WHEN 'top' THEN g.away_code ELSE g.home_code END) IN (SELECT code FROM league_team)
 ORDER BY e.game_id, e.inning, e.half, e.seq
@@ -73,9 +74,11 @@ export function computeSrc(
   re: RunExpectancy,
   teamCodes: readonly string[],
   competition = "regular",
+  /** ⚠**RE 행렬과 같은 기준일을 써야 한다.** 어긋나면 SRC의 기준이 화면과 달라진다 */
+  through = "9999-12-31",
 ): SrcEntry[] {
   const rows = withLeagueTeams(db, teamCodes, () =>
-    db.raw.prepare(SQL).all(re.season, competition),
+    db.raw.prepare(SQL).all(re.season, competition, through),
   ) as {
     gameId: string;
     inning: number;
@@ -186,6 +189,7 @@ FROM pa_event e
 JOIN game g ON g.game_id = e.game_id
 JOIN player p ON p.player_id = e.pitcher_id
 WHERE g.season = ? AND g.status = 'played' AND g.competition = ?
+  AND g.game_date <= ?
   AND e.status = 'final' AND e.pitcher_id IS NOT NULL
   AND (CASE e.half WHEN 'top' THEN g.home_code ELSE g.away_code END) IN (SELECT code FROM league_team)
 ORDER BY e.game_id, e.inning, e.half, e.seq
@@ -197,6 +201,7 @@ SELECT t.player_id AS pitcherId, SUM(t.outs) AS outs
 FROM pitching_line t
 JOIN game g ON g.game_id = t.game_id
 WHERE g.season = ? AND g.status = 'played' AND g.competition = ?
+  AND g.game_date <= ?
   AND (CASE t.side WHEN 'away' THEN g.away_code ELSE g.home_code END) IN (SELECT code FROM league_team)
 GROUP BY t.player_id
 `;
@@ -212,9 +217,11 @@ export function computeSrp(
   re: RunExpectancy,
   teamCodes: readonly string[],
   competition = "regular",
+  /** ⚠**RE 행렬과 같은 기준일을 써야 한다** */
+  through = "9999-12-31",
 ): SrpEntry[] {
   const { rows, outsRows } = withLeagueTeams(db, teamCodes, () => ({
-    rows: db.raw.prepare(SRP_SQL).all(re.season, competition) as {
+    rows: db.raw.prepare(SRP_SQL).all(re.season, competition, through) as {
       gameId: string;
       inning: number;
       half: string;
@@ -225,7 +232,7 @@ export function computeSrp(
       pitcherId: string;
       pitcherName: string;
     }[],
-    outsRows: db.raw.prepare(SRP_OUTS_SQL).all(re.season, competition) as {
+    outsRows: db.raw.prepare(SRP_OUTS_SQL).all(re.season, competition, through) as {
       pitcherId: string;
       outs: number;
     }[],

@@ -58,6 +58,36 @@ test("한쪽만 얇아도 말하지 않는다 — 이긴 쪽이 두꺼워도 근
   assert.equal(betterSide(stat({ n: 0.32, s: 500 }), stat({ n: 0.28, s: 10 })), null);
 });
 
+/**
+ * ⚠**선발과 구원은 최소 표본이 다르다**(90아웃 vs 60아웃). 상대에게 내 기준을 대면
+ * 「자기 기준으로는 표본 미달이라 등급 색도 없는 선수」에게 패배 표시만 붙는다.
+ * 그리고 `入れかえ` 버튼 한 번에 판정이 뒤집힌다 — 화면이 스스로 모순된다.
+ *
+ * ⚠**서버·클라 대조 테스트가 이걸 못 잡았다.** 두 구현이 **같은 방식으로** 틀렸기 때문이다.
+ * 대조는 「두 벌이 어긋나는 것」을 잡지 「둘 다 틀린 것」은 못 잡는다 —
+ * 그래서 `min`이 서로 다른 케이스를 여기서 따로 고정한다.
+ * (2026-08-16 이중 검토에서 지적.)
+ */
+test("⚠최소 표본은 각자 자기 것으로 잰다 — 남의 기준을 대면 入れかえ로 판정이 뒤집힌다", () => {
+  const reliever = stat({ k: "era", dir: -1, n: 2.4, s: 65, min: 60 });
+  const starter = stat({ k: "era", dir: -1, n: 3.9, s: 70, min: 90 });
+  // 선발은 자기 기준(90)에 못 미친다 → 우열을 말하면 안 된다
+  assert.equal(betterSide(reliever, starter), null, "상대의 표본 미달을 자기 기준으로 덮었다");
+  assert.equal(betterSide(starter, reliever), null, "방향을 바꾸면 답이 달라진다");
+});
+
+test("각자 기준에 둘 다 닿으면 판정한다 — 기준이 달라도 막지는 않는다", () => {
+  const reliever = stat({ k: "era", dir: -1, n: 2.4, s: 65, min: 60 });
+  const starter = stat({ k: "era", dir: -1, n: 3.9, s: 100, min: 90 });
+  assert.equal(betterSide(reliever, starter), "a");
+  assert.equal(betterSide(starter, reliever), "b", "⚠뒤집어도 같은 답이어야 한다");
+});
+
+test("한쪽만 등급 척도가 없으면 말하지 않는다", () => {
+  assert.equal(betterSide(stat({ n: 0.32 }), stat({ n: 0.28, min: null })), null);
+  assert.equal(betterSide(stat({ n: 0.32, min: null }), stat({ n: 0.28 })), null);
+});
+
 test("방향이 없는 지표에는 우열이 없다 — BABIP·안타 수", () => {
   assert.equal(betterSide(stat({ dir: 0, n: 5 }), stat({ dir: 0, n: 1 })), null);
 });
@@ -200,6 +230,11 @@ test("⚠클라이언트의 우열 판정이 서버와 같은 답을 낸다 — 
     [stat({ min: null, n: 40 }), stat({ min: null, n: 10 })],
     [stat({ n: null, v: null }), stat({ n: 0.28 })],
     [stat({ n: 0.3 }), stat({ n: 0.3 })],
+    // ⚠**min이 서로 다른 케이스.** 이게 없어서 「상대에게 내 기준을 대는」 결함이 두 벌 모두
+    // 같은 방식으로 틀린 채 대조를 통과했다(2026-08-16)
+    [stat({ k: "era", dir: -1, n: 2.4, s: 65, min: 60 }), stat({ k: "era", dir: -1, n: 3.9, s: 70, min: 90 })],
+    [stat({ k: "era", dir: -1, n: 3.9, s: 70, min: 90 }), stat({ k: "era", dir: -1, n: 2.4, s: 65, min: 60 })],
+    [stat({ n: 0.32 }), stat({ n: 0.28, min: null })],
   ];
   for (const [a, b] of cases) {
     // 클라이언트는 「없음」을 빈 문자열로 낸다(DOM 클래스에 그대로 쓰이기 때문)

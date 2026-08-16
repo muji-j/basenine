@@ -94,9 +94,14 @@ export class MonthlyScheduleCache {
 }
 
 /** 하위 페이지 1장을 보존한다. */
-export async function archivePage(ref: GameRef, page: GamePage, deps: ArchiveDeps): Promise<PageResult> {
-  const key = pageKey(ref, page);
-  const url = pageUrl(ref, page);
+/**
+ * URL 하나를 예의 있게 받아 보존한다.
+ *
+ * ⚠**멱등·revision 규칙을 여기 한 벌만 둔다**(M5). 「304」·「내용이 같은 200」·「404」·「실패」의
+ * 구별과 revision 증가 조건은 미묘해서, 두 벌로 만들면 한쪽만 고쳐진 채로 남는다.
+ * 경기 페이지도 공표 성적표도 이 함수를 지난다.
+ */
+export async function archiveUrl(key: string, url: string, deps: ArchiveDeps): Promise<PageResult> {
   const prev = await deps.sink.readMeta(key);
 
   try {
@@ -134,6 +139,11 @@ export async function archivePage(ref: GameRef, page: GamePage, deps: ArchiveDep
   } catch (err) {
     return { key, url, outcome: "failed", status: null, error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+/** 경기의 한 페이지를 보존한다. 경로 규칙만 얹고 나머지는 `archiveUrl`이 한다 */
+export async function archivePage(ref: GameRef, page: GamePage, deps: ArchiveDeps): Promise<PageResult> {
+  return archiveUrl(pageKey(ref, page), pageUrl(ref, page), deps);
 }
 
 /** 경기 1건의 전 하위 페이지를 보존한다. */

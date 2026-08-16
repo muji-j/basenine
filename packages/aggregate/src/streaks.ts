@@ -33,6 +33,15 @@ export interface PlayerStreaks {
   hitless: Streak;
   /** 센 경기 수. **분모다**(M2) */
   games: number;
+  /**
+   * 이 선수가 **마지막으로 나온 경기일**. 없으면 null.
+   *
+   * ⚠**「지금 이어지는 중」이 언제 기준인지 말하려면 이게 필요하다.** 5월 22일 이후
+   * 출장이 없는 선수의 `current`는 5월 22일 값 그대로인데, 화면이 그걸 「今」이라고 쓰면
+   * 석 달 전에 끝난 기록이 지금 이어지는 것처럼 보인다.
+   * (2026-08-16 이중 검토에서 배포물의 21명이 그 상태로 확인됐다.)
+   */
+  lastGameDate: string | null;
 }
 
 const EMPTY: Streak = { current: 0, best: 0, bestFrom: null, bestTo: null };
@@ -53,7 +62,9 @@ function streakOf(days: readonly { date: string; hit: boolean }[]): Streak {
     if (d.hit) {
       if (current === 0) from = d.date;
       current += 1;
-      if (current > best) {
+      // ⚠**같은 길이면 나중 구간으로 갱신한다**(`>=`). 지금 이어지는 기록이 최장과 동률일 때
+      // 앞 구간의 날짜가 남으면, 독자는 지금의 기록이 그때 시작했다고 읽는다
+      if (current >= best) {
         best = current;
         bestFrom = from;
         bestTo = d.date;
@@ -70,9 +81,19 @@ function streakOf(days: readonly { date: string; hit: boolean }[]): Streak {
  * ⚠**타석이 없는 경기는 세지 않는다.** 박스스코어에 이름은 있는데 타석이 0인 경우
  * (대주자·수비 교대)를 「무안타 경기」로 세면 연속 안타가 억울하게 끊긴다.
  * NPB·MLB의 관례도 같다.
+ *
+ * ⚠**「경기」로 묶는다. 「날짜」로 묶으면 더블헤더가 한 경기가 된다.**
+ *
+ * 날짜로 묶으면 1차전 무안타·2차전 안타인 날이 「안타 있는 날」이 되어, **끊겼어야 할
+ * 연속 안타가 이어진 것으로 계산된다.** 값이 그럴듯하게 커질 뿐이라 눈으로는 발견되지 않는다.
+ * (2026-08-16 이중 검토에서 지적. 2025~2026 정규시즌에 더블헤더가 **0건**이라 아직
+ * 틀린 값을 낸 적은 없지만, 첫 더블헤더에 조용히 터진다.)
+ *
+ * ⚠**정렬은 날짜 → 경기 번호 순이다.** 같은 날 두 경기의 순서는 `game_no`가 정한다.
  */
 const SQL = `
 SELECT b.player_id AS playerId,
+       b.game_id AS gameId,
        g.game_date AS date,
        SUM(b.h) AS hits,
        SUM(b.h + b.bb + b.hbp) AS onBase,
@@ -81,9 +102,9 @@ FROM batting_line b
 JOIN game g ON g.game_id = b.game_id
 WHERE g.season = ? AND g.status = 'played' AND g.competition = ?
   AND g.game_date <= ?
-GROUP BY b.player_id, g.game_date
+GROUP BY b.player_id, b.game_id
 HAVING SUM(b.pa) > 0
-ORDER BY b.player_id, g.game_date
+ORDER BY b.player_id, g.game_date, g.game_no
 `;
 
 export function battingStreaks(
@@ -94,12 +115,14 @@ export function battingStreaks(
 ): Map<string, PlayerStreaks> {
   const rows = db.raw.prepare(SQL).all(season, competition, through) as unknown as {
     playerId: string;
+    gameId: string;
     date: string;
     hits: number;
     onBase: number;
     pa: number;
   }[];
 
+  // ⚠한 칸이 한 **경기**다. 더블헤더면 같은 날짜가 두 칸 들어온다
   const byPlayer = new Map<string, { date: string; hits: number; onBase: number }[]>();
   for (const r of rows) {
     const list = byPlayer.get(r.playerId);
@@ -108,13 +131,14 @@ export function battingStreaks(
   }
 
   const out = new Map<string, PlayerStreaks>();
-  for (const [playerId, days] of byPlayer) {
+  for (const [playerId, games] of byPlayer) {
     out.set(playerId, {
       playerId,
-      hitting: streakOf(days.map((d) => ({ date: d.date, hit: d.hits > 0 }))),
-      onBase: streakOf(days.map((d) => ({ date: d.date, hit: d.onBase > 0 }))),
-      hitless: streakOf(days.map((d) => ({ date: d.date, hit: d.hits === 0 }))),
-      games: days.length,
+      hitting: streakOf(games.map((d) => ({ date: d.date, hit: d.hits > 0 }))),
+      onBase: streakOf(games.map((d) => ({ date: d.date, hit: d.onBase > 0 }))),
+      hitless: streakOf(games.map((d) => ({ date: d.date, hit: d.hits === 0 }))),
+      games: games.length,
+      lastGameDate: games.at(-1)?.date ?? null,
     });
   }
   return out;
@@ -122,5 +146,5 @@ export function battingStreaks(
 
 /** 등판이 없는 선수를 위한 빈 값. ⚠0과 「없음」을 섞지 않기 위해 호출자가 명시적으로 쓴다 */
 export function emptyStreaks(playerId: string): PlayerStreaks {
-  return { playerId, hitting: EMPTY, onBase: EMPTY, hitless: EMPTY, games: 0 };
+  return { playerId, hitting: EMPTY, onBase: EMPTY, hitless: EMPTY, games: 0, lastGameDate: null };
 }
