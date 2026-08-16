@@ -634,3 +634,28 @@ test("표본이 얇은 축은 그리지 않는다 — 축마다 분모가 다르
   assert.ok(!out.includes("引っ張り側"), "20타구짜리 방향 비율을 냈다");
   assert.ok(!out.includes("内野安打率"), "4타구짜리 내야안타율을 냈다");
 });
+
+/**
+ * ⚠**「번트는 손해다」가 결론이 아니다.** 상황별로 갈리는 것이 결론이고,
+ * 무엇보다 **득점기대값은 승리기대값이 아니다** — 동점 9회말에 1점만 필요하면
+ * RE가 내려가는 선택이 옳을 수 있다. 우리는 승리기대값을 신뢰도 있게 만들 수 없으므로
+ * 거기까지만 말한다. 이 문장이 빠지면 화면이 과한 주장을 하게 된다.
+ */
+test("번트의 득점기대값을 내되, 승리기대값이 아니라고 말한다", () => {
+  const out = renderPlayerPage(playerPage(), context());
+  assert.ok(out.includes("犠打"), "번트 표가 없다");
+  assert.ok(out.includes("-0.121"), "기대값 변화가 없다");
+  assert.ok(out.includes("勝利期待値ではありません"), "RE와 WE를 구별하지 않는다");
+  assert.ok(out.includes("「バントは損」が結論ではありません"), "과한 주장을 막는 문장이 없다");
+  // ⚠**분모가 붙는다**(M2) — 6건짜리 평균과 895건짜리 평균은 다른 값이다
+  assert.match(out, /<td class="b">895<\/td>/, "번트 수(분모)가 없다");
+});
+
+/** ⚠**표본이 얇은 상황은 내지 않는다.** 6건짜리 평균은 값이 아니라 소음이다 */
+test("번트가 적은 상황은 표에 넣지 않는다", () => {
+  const out = renderPlayerPage(
+    playerPage({ bunts: [{ bases: "3", outs: 1, n: 6, before: 0.869, delta: 0.208 }] }),
+    context(),
+  );
+  assert.ok(!out.includes("0.208"), "6건짜리 상황을 값으로 냈다");
+});

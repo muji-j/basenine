@@ -331,6 +331,11 @@ export interface PlayerPageData {
   /** 이 선수의 전체 타석 수. `scorebook`이 잘렸는지 말하기 위한 값 */
   scorebookTotal: number;
   situation: SituationCell[];
+  /**
+   * 상황별 번트의 득점기대값 변화. **리그 전체의 값**이다(이 선수의 기록이 아니다).
+   * ⚠새 데이터가 0이다 — 이미 있는 득점기대값 계산기가 답한다.
+   */
+  bunts: BuntCell[];
   matchups: MatchupRow[];
   /** 대전한 투수(또는 타자)의 총 수. `matchups`가 잘렸는지 말하기 위한 값 */
   matchupTotal: number;
@@ -961,7 +966,56 @@ function scorebookBlock(rows: readonly ScorebookRow[], total: number): RawHtml {
   return block({ id: "scorebook", title: "打席記録", body });
 }
 
-function situationBlock(cells: readonly SituationCell[], leagueName: string): RawHtml {
+/**
+ * 상황별 번트의 득점기대값 변화. **리그 전체의 값**이다(이 선수의 값이 아니다).
+ *
+ * ⚠**「번트는 손해다」가 결론이 아니다** — 상황별로 갈리는 것이 결론이다.
+ * ⚠**득점기대값은 승리기대값이 아니다.** 동점 9회말에 1점만 필요하면 RE 손해여도 옳을 수 있다.
+ */
+export interface BuntCell {
+  bases: string;
+  outs: number;
+  /** 이 상황의 번트 수. **분모다**(M2) */
+  n: number;
+  before: number;
+  delta: number;
+}
+
+/** 번트를 몇 건 이상 대야 값을 낼 것인가. 6건짜리 평균은 값이 아니라 소음이다 */
+const MIN_BUNT = 30;
+
+function buntBlock(rows: readonly BuntCell[], leagueName: string): RawHtml {
+  const shown = rows.filter((r) => r.n >= MIN_BUNT);
+  if (shown.length === 0) return raw("");
+  return html`${scroller(html`<table>
+    <thead><tr>
+      <th class="l">状況</th><th>犠打</th><th>直前の期待値</th><th>期待値の変化</th>
+    </tr></thead>
+    <tbody>${shown.map(
+      (r) => html`<tr>
+      <td class="l">${BASE_LABEL[r.bases === "" ? "" : r.bases] ?? r.bases}　${r.outs}死</td>
+      <td class="b">${r.n}</td>
+      <td class="wd">${r.before.toFixed(3)}</td>
+      <td class="wd">${r.delta >= 0 ? "+" : ""}${r.delta.toFixed(3)}</td>
+    </tr>`,
+    )}</tbody>
+  </table>`)}
+  ${note(
+    `${leagueName}全体の値です（この選手の記録ではありません）。` +
+      "**「バントは損」が結論ではありません** — 状況によって変わることが結論です。" +
+      "⚠**得点期待値は勝利期待値ではありません。** 同点9回裏で1点だけ必要な場面では、" +
+      "得点期待値が下がる選択が正しいことがあります。当サイトは勝利期待値を信頼できる形で作れないため、" +
+      "**得点期待値の話までしかしません。** " +
+      `また、バントを任される打者は平均以下であることが多く、比較対象は「リーグ平均打者の強攻」ではありません。` +
+      `犠打${MIN_BUNT}件未満の状況は出していません。`,
+  )}`;
+}
+
+function situationBlock(
+  cells: readonly SituationCell[],
+  leagueName: string,
+  bunts: readonly BuntCell[],
+): RawHtml {
   if (cells.length === 0) {
     return block({
       id: "situation",
@@ -991,7 +1045,8 @@ function situationBlock(cells: readonly SituationCell[], leagueName: string): Ra
     ${note(
       `大きい数字は${leagueName}の得点期待値（その状況からイニング終了までに入る平均得点）で、リーグ全体の値です。` +
         `小さい数字はこの選手がその状況で立った打席数。${THIN_SITUATION_PA}打席未満は薄くしています。`,
-    )}`,
+    )}
+    ${buntBlock(bunts, leagueName)}`,
   });
 }
 
@@ -1155,7 +1210,7 @@ function renderBlock(id: BlockId, d: PlayerPageData, base: string): RawHtml {
     case "scorebook":
       return scorebookBlock(d.scorebook, d.scorebookTotal);
     case "situation":
-      return situationBlock(d.situation, d.leagueName);
+      return situationBlock(d.situation, d.leagueName, d.bunts);
     case "matchup":
       return matchupBlock(d.matchups, d.matchupTotal, d.role === "pitcher" ? "打者" : "投手");
     case "ranking":

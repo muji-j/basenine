@@ -6,9 +6,9 @@
  * 만든 값을 옮겨 담기만 한다. 여기에 산식이 생기는 순간 값이 두 벌이 된다.
  */
 import type { Db } from "@bb-app/store";
-import { battedBalls, headToHead } from "@bb-app/aggregate";
+import { battedBalls, buntValues, headToHead } from "@bb-app/aggregate";
 import type { HeadToHead } from "@bb-app/aggregate";
-import type { BattedBallData } from "./player-page.ts";
+import type { BattedBallData, BuntCell } from "./player-page.ts";
 import type { BattingLine, LeagueConstants, PitchingLine, Rate } from "@bb-app/metrics";
 import {
   babip,
@@ -2207,6 +2207,8 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     bbPitcher.set(b.playerId, cur === undefined ? b : addBatted(cur, b));
   }
 
+  /** 리그별 번트의 득점기대값 변화. **선수의 기록이 아니라 리그 전체의 값**이다 */
+  const buntByLeague = new Map<League, BuntCell[]>();
   const srcByPlayer = new Map<string, { src: number; pa: number; skipped: number; srcPer600: number | null }>();
   // ⚠9이닝 환산의 분모는 **아웃**이다. 상대 타자 수(bf)는 표본 표기용이라 둘 다 들고 있어야 한다
   const srpByPlayer = new Map<string, { srp: number; bf: number; skipped: number; outs: number; srpPer9: number | null }>();
@@ -2227,6 +2229,8 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     const re = buildRunExpectancy(db, o.season, bundle.league, codes, competition, through);
     reByLeague.set(bundle.league, re.matrix);
     reFull.set(bundle.league, re);
+    // ⚠**리그별로 낸다.** 득점환경이 다르므로 두 리그를 섞은 하나의 번트 가치는 뜻이 흐려진다
+    buntByLeague.set(bundle.league, buntValues(db, o.season, competition, through, re));
 
     // ⚠**더하고 덮어쓰지 않는다.** SRC는 그 리그의 득점기대 행렬로 잰 **런 수**라 리그를 넘어도
     // 더하는 것이 맞다. 덮어쓰면 리그를 넘은 선수의 절반이 사라진다(2026-08-16 이중 검토 P0)
@@ -2442,6 +2446,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
 
     const reMatrix = reByLeague.get(base.league);
     const statePa = statePaByPlayer.get(playerId);
+    const bunts = buntByLeague.get(base.league) ?? [];
     const situation: SituationCell[] =
       reMatrix === undefined || role === "pitcher"
         ? []
@@ -2542,6 +2547,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       sparkLabel: role === "pitcher" ? "月別防御率" : "月別OPS",
       asOf: meta.latest,
       stints: stintsOf(playerId, role),
+      bunts,
       postseason: briefByPlayer.get(playerId) ?? [],
     });
 

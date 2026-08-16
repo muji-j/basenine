@@ -151,6 +151,7 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
     playerId: "41045153",
     name: "佐藤",
     summary: "打率 .317（382打数）",
+    bunts: [{ bases: "1", outs: 0, n: 895, before: 0.716, delta: -0.121 }],
     season: 2026,
     teamCode: "t",
     teamName: "阪神タイガース",
