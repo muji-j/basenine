@@ -364,15 +364,35 @@ dd.g-veryBad{box-shadow:inset 0 -3px 0 var(--g-vbad);background:var(--g-vbad-bg)
 .scroller th:first-child,.scroller td:first-child{position:sticky;left:0;z-index:1;background:var(--page)}
 .scroller tr.me td:first-child{background:var(--team,#6b7280)}
 .scroller tbody tr:hover td:first-child{background:var(--panel-2)}
+/* ⚠**앵커가 고정 머리 아래로 들어가지 않게 한다.** #pc-nipponSeries 처럼 깊은 링크로
+   들어오면 브라우저는 대상을 화면 맨 위에 두는데, 그 자리는 topbar 가 덮고 있다 —
+   눌러서 왔는데 찾던 것이 안 보인다 */
+html{scroll-padding-top:calc(var(--topbar) + 10px)}
+
 table{border-collapse:collapse;width:100%;font-size:12px}
 th,td{padding:5px 8px;text-align:right;font-variant-numeric:tabular-nums;border-bottom:1px solid var(--hair);white-space:nowrap}
-th{font-size:10px;letter-spacing:.1em;color:var(--tx-2);font-weight:500;position:sticky;top:0;background:var(--page)}
+th{font-size:10px;letter-spacing:.1em;color:var(--tx-2);font-weight:500}
+/* ⚠**머리 고정은 thead 에만 건다.** th 전체에 걸면 tbody 의 **행 머리**(이닝 스코어의
+   구단명 칸)까지 top:0 으로 붙어 자기 행을 떠나 화면 위에 뜬다 — 표가 고장 난 것으로 보인다.
+   실측(2026-08-16): 사이트에서 scope=row 를 쓰는 표는 이닝 스코어 하나뿐이다 */
+thead th{position:sticky;top:0;z-index:2;background:var(--page)}
+/* 행 머리는 「머리」가 아니라 **그 행의 이름**이다. 10px 대문자 간격으로 그리면
+   구단명이 열 제목처럼 작아져 옆 칸의 숫자와 크기가 어긋난다 */
+tbody th{font-size:12px;letter-spacing:0;color:var(--tx);font-weight:400}
 td.l,th.l{text-align:left}
 tbody tr{transition:background var(--fast) var(--ease)}
 tbody tr:hover{background:var(--panel-2)}
 tr.me td{background:var(--team,#6b7280);color:var(--team-ink,#fff);font-weight:700}
 tr.me:hover td{background:var(--team,#6b7280)}
 tr.thin td{color:var(--tx-3)}
+/* 구단 색 칩 — **모든 표가 같은 한 벌을 쓴다**(M1의 정신).
+   ⚠**셀을 flex 컨테이너로 만들지 않는다.** td{display:flex} 는 그 칸을 테이블 셀 박스에서
+   빼내어, **그 열만 아래 경계선이 다른 열과 어긋난다**(2026-08-16 실측: 순위표 球団 열).
+   ⚠전에는 이 규칙이 .stand·.iscore 안에만 있어서 **ポストシーズン 표의 칩은
+   아예 그려지지 않았다** — <i> 는 인라인이라 width/height 가 먹지 않는다.
+   네 화면(順位·イニングスコア·ポストシーズン 타자표·투수표)이 이 한 벌을 쓴다 */
+.tm i{display:inline-block;width:9px;height:9px;margin-right:6px;vertical-align:middle;
+  background:var(--chip,#6b7280)}
 td a{text-decoration:none;box-shadow:inset 0 -1px 0 var(--hair-2)}
 td a:hover{box-shadow:inset 0 -1px 0 currentColor}
 
@@ -530,8 +550,7 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
 table.iscore{font-variant-numeric:tabular-nums;margin-top:13px}
 table.iscore th,table.iscore td{text-align:center;padding:5px 9px;white-space:nowrap}
 table.iscore th.l{text-align:left}
-table.iscore .tm{display:flex;align-items:center;gap:6px;font-weight:400}
-table.iscore .tm i{width:9px;height:9px;background:var(--chip,#6b7280);flex:none}
+
 table.iscore td.sc{font-weight:700;color:var(--tx);background:var(--panel-2)}
 /* ⚠「x」는 0이 아니다 — 공격이 없었다는 뜻이다. 흐리게 두어 숫자와 섞이지 않게 한다 */
 table.iscore td.x{color:var(--tx-3)}
@@ -584,8 +603,7 @@ table.stand{font-variant-numeric:tabular-nums}
 table.stand td,table.stand th{white-space:nowrap}
 table.stand .rk{font-weight:700}
 table.stand .rk em{font-style:normal;font-size:9px;color:var(--tx-3);margin-left:2px}
-table.stand .tm{display:flex;align-items:center;gap:6px}
-table.stand .tm i{width:9px;height:9px;background:var(--chip,#6b7280);flex:none}
+
 table.stand td.b{font-weight:700}
 /* ⚠**타율과 방어율에도 분모를 붙인다**(M2). 勝率의 분모는 옆의 勝·敗 열 자체이지만,
    打率의 분모는 打数지 試合이 아니다 — 「인접」으로 지켜지지 않으므로 값에 붙인다 */

@@ -132,8 +132,8 @@ test("축이 3개 미만이면 그리지 않는다 — 다각형이 되지 않�
 });
 
 test("앵커를 코드 밖에서 확인할 수 있다 — 표시 배율이지 지표가 아니다", () => {
-  assert.deepEqual(PROFILE_ANCHORS.iso, [0, 0.3]);
-  assert.deepEqual(PROFILE_ANCHORS.contact, [0.6, 1]);
+  assert.deepEqual(PROFILE_ANCHORS.iso, [0.038, 0.098, 0.188]);
+  assert.deepEqual(PROFILE_ANCHORS.contact, [0.701, 0.801, 0.872]);
 });
 
 // ── 투수 축 ───────────────────────────────────────────────────────────────
@@ -159,8 +159,60 @@ test("⚠좋은 투수가 큰 도형이 된다 — 네 축이 뒤집혀 있지 �
 });
 
 test("투수 앵커를 코드 밖에서 확인할 수 있다", () => {
-  assert.deepEqual(PITCHING_ANCHORS.era, [2, 5.5]);
-  assert.deepEqual(PITCHING_ANCHORS.k9, [4, 12]);
+  assert.deepEqual(PITCHING_ANCHORS.era, [1.643, 2.869, 4.673]);
+  assert.deepEqual(PITCHING_ANCHORS.k9, [5.358, 7.613, 10.255]);
+});
+
+/**
+ * ⚠**두 도형은 같은 뜻이어야 한다.** 같은 화면에 나란히 놓이는데 한쪽만 크게 나오면,
+ * 보는 사람은 그것을 「이 선수가 더 낫다」로 읽는다.
+ *
+ * 실측(2026-08-16): 두 점 앵커일 때 **중앙값 타자의 평균 반지름 48.1%(면적 23%) 대
+ * 중앙값 투수 75.0%(면적 56%)** — 투수 도형이 2.4배 넓었다.
+ * 원인은 분포의 쏠림이다. 야구 지표는 오른쪽 꼬리가 길어서, 「높을수록 좋다」인 축은
+ * 중앙값이 안쪽으로, 그것을 뒤집은 축은 바깥쪽으로 간다.
+ * **중앙을 앵커로 넣으면** 양쪽 모두 중앙값이 정확히 절반에 온다.
+ */
+test("⚠중앙값 선수는 타자든 투수든 절반 크기다 — 두 도형이 같은 뜻이 되는 조건", () => {
+  // 2025·2026 정규시즌의 중앙값(타자 50타석 이상 458명 · 투수 20이닝 이상 407명)
+  const median = bp({ avg: 0.238, obp: 0.3, iso: 0.098, bbRate: 0.067, kRate: 1 - 0.801 });
+  for (const a of median) {
+    assert.ok(
+      Math.abs(a.scaled! - 0.5) < 0.005,
+      `${a.label} 축의 중앙값이 절반이 아니다(${a.scaled})`,
+    );
+  }
+  const medianP = pp({ k9: 7.613, bb9: 2.656, hr9: 0.643, whip: 1.19, era: 2.869 });
+  for (const a of medianP) {
+    assert.ok(
+      Math.abs(a.scaled! - 0.5) < 0.005,
+      `${a.label} 축의 중앙값이 절반이 아니다(${a.scaled})`,
+    );
+  }
+});
+
+test("⚠하위 10%는 양쪽 다 0, 상위 10%는 양쪽 다 1 — 눈금이 같다", () => {
+  const low = bp({ avg: 0.182, obp: 0.238, iso: 0.038, bbRate: 0.03, kRate: 1 - 0.701 });
+  const high = bp({ avg: 0.284, obp: 0.355, iso: 0.188, bbRate: 0.113, kRate: 1 - 0.872 });
+  for (const a of low) assert.ok(a.scaled! < 0.005, `${a.label} 하위 앵커가 0이 아니다(${a.scaled})`);
+  for (const a of high) assert.ok(a.scaled! > 0.995, `${a.label} 상위 앵커가 1이 아니다(${a.scaled})`);
+
+  // 투수는 네 축이 뒤집혀 있으므로 「나쁜 값」이 0이다
+  const lowP = pp({ k9: 5.358, bb9: 4.229, hr9: 1.249, whip: 1.504, era: 4.673 });
+  const highP = pp({ k9: 10.255, bb9: 1.612, hr9: 0.227, whip: 0.945, era: 1.643 });
+  for (const a of lowP) assert.ok(a.scaled! < 0.005, `${a.label} 하위 앵커가 0이 아니다(${a.scaled})`);
+  for (const a of highP) assert.ok(a.scaled! > 0.995, `${a.label} 상위 앵커가 1이 아니다(${a.scaled})`);
+});
+
+/**
+ * ⚠**양 끝은 자른다.** 눈금 없는 도형에서 바깥으로 무한히 뻗으면 모양이 값을 과장한다.
+ * 상위 10%보다 훨씬 잘해도 도형은 더 커지지 않는다 — 정확한 값은 옆의 숫자에 있다.
+ */
+test("앵커 밖의 값은 잘린다 — 도형이 값을 과장하지 않는다", () => {
+  const monster = bp({ avg: 0.45, obp: 0.55, iso: 0.5, bbRate: 0.3, kRate: 0.02 });
+  for (const a of monster) assert.equal(a.scaled, 1, `${a.label}이 1을 넘었다`);
+  const awful = bp({ avg: 0.05, obp: 0.08, iso: 0, bbRate: 0, kRate: 0.6 });
+  for (const a of awful) assert.equal(a.scaled, 0, `${a.label}이 0 아래로 갔다`);
 });
 
 test("등판이 없으면 축이 전부 값 없음이고, 대체 마크로 간다(M11)", () => {

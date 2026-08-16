@@ -304,23 +304,48 @@ export function paKind(outcome: string): PaKind {
 }
 
 /**
- * 정규화 기준.
+ * 정규화 기준 — **세 점**(하위 10% · 중앙 · 상위 10%)이다.
  *
- * ⚠**이것은 표시 배율이지 지표가 아니다.** 리그 백분위로 잡으면 매일 기준이 움직여
- * 「어제와 모양이 다른데 성적은 같다」가 생긴다. 고정 앵커를 쓰고 여기 적어 둔다.
+ * ⚠**이것은 표시 배율이지 지표가 아니다.** 리그 백분위를 매번 다시 계산하면 기준이 매일 움직여
+ * 「어제와 모양이 다른데 성적은 같다」가 생긴다. **한 번 재서 상수로 박고** 여기 적어 둔다.
+ *
+ * ⚠**왜 두 점이 아니라 세 점인가.** 두 점(하한·상한)으로 선형 사상하면
+ * **분포의 쏠림이 도형의 크기가 된다.** 야구 지표는 대부분 오른쪽으로 꼬리가 길어서,
+ * 「높을수록 좋다」인 축(타자)은 중앙값이 한가운데보다 **안쪽**에 오고,
+ * 「낮을수록 좋다」를 뒤집은 축(투수)은 중앙값이 **바깥쪽**에 온다.
+ * 그 결과 실측(2026-08-16)으로 **중앙값 타자의 평균 반지름 48.1%(면적 23%) 대
+ * 중앙값 투수 75.0%(면적 56%)** — 투수 도형이 2.4배 넓었다.
+ * 같은 화면에 나란히 놓이는 두 도형이 같은 뜻을 갖지 않으면 그 자체로 거짓말이다.
+ * 중앙을 앵커로 넣으면 **양쪽 모두 중앙값이 정확히 절반**에 온다.
+ *
+ * ⚠**기준 모집단을 적어 둔다** — 2025·2026 정규시즌, 도형이 실제로 그려지는 표본
+ * (타자 50타석 이상 458명 · 투수 20이닝 이상 407명). 시즌이 쌓이면 다시 재고 여기를 고친다.
  */
 export const PROFILE_ANCHORS = {
-  avg: [0.15, 0.35],
-  obp: [0.25, 0.45],
-  iso: [0.0, 0.3],
-  bbRate: [0.0, 0.2],
-  /** 삼진은 **적을수록 좋다** — 뒤집어서 넣는다 */
-  contact: [0.6, 1.0],
+  avg: [0.182, 0.238, 0.284],
+  obp: [0.238, 0.300, 0.355],
+  iso: [0.038, 0.098, 0.188],
+  bbRate: [0.03, 0.067, 0.113],
+  /** 삼진은 **적을수록 좋다** — 1 − K% 로 뒤집어 넣는다 */
+  contact: [0.701, 0.801, 0.872],
 } as const;
 
-function scale(value: number | null, [lo, hi]: readonly [number, number]): number | null {
+/**
+ * 세 점 사이를 이어 0~1로 만든다.
+ *
+ * ⚠**중앙은 반드시 0.5로 간다.** 그것이 이 함수의 존재 이유다 —
+ * 「바깥쪽일수록 좋다」가 타자와 투수에서 같은 뜻이 되려면 중앙이 같은 자리여야 한다.
+ * ⚠양 끝은 자른다. 상위 10%보다 잘해도 도형은 더 커지지 않는다 —
+ * 눈금 없는 도형에서 바깥으로 무한히 뻗으면 모양이 값을 과장한다.
+ */
+function scale(value: number | null, [lo, mid, hi]: readonly [number, number, number]): number | null {
   if (value === null || !Number.isFinite(value)) return null;
-  return Math.max(0, Math.min(1, (value - lo) / (hi - lo)));
+  if (value <= mid) {
+    if (mid === lo) return value < mid ? 0 : 0.5;
+    return Math.max(0, Math.min(0.5, (0.5 * (value - lo)) / (mid - lo)));
+  }
+  if (hi === mid) return 1;
+  return Math.max(0.5, Math.min(1, 0.5 + (0.5 * (value - mid)) / (hi - mid)));
 }
 
 export interface BattingProfileInput {
@@ -365,26 +390,31 @@ export function battingProfile(b: BattingProfileInput): ProfileAxis[] {
 }
 
 /**
- * 투수용 앵커.
+ * 투수용 앵커 — 타자와 **같은 규칙**으로 잰 세 점이다(2025·2026 정규시즌 · 20이닝 이상 407명).
  *
  * ⚠**네 축이 「낮을수록 좋다」**라서 뒤집어 넣는다. 그대로 넣으면 좋은 투수가 작은 도형이 되고,
  * 모양의 뜻이 타자와 정반대가 된다 — 같은 화면에 나란히 놓으면 그 자체로 거짓말이다.
+ * ⚠**뒤집는 축도 앵커는 오름차순으로 적는다** — 「값의 크기」 순이지 「좋은 순」이 아니다.
+ * 좋은 방향은 `scaleInverted` 한 곳에서만 뒤집는다.
  */
 export const PITCHING_ANCHORS = {
-  k9: [4, 12],
+  k9: [5.358, 7.613, 10.255],
   /** BB/9 — 뒤집는다 */
-  bb9: [1.5, 5],
+  bb9: [1.612, 2.656, 4.229],
   /** HR/9 — 뒤집는다 */
-  hr9: [0.3, 1.8],
+  hr9: [0.227, 0.643, 1.249],
   /** WHIP — 뒤집는다 */
-  whip: [1, 1.7],
+  whip: [0.945, 1.19, 1.504],
   /** 방어율 — 뒤집는다 */
-  era: [2, 5.5],
+  era: [1.643, 2.869, 4.673],
 } as const;
 
 /** 「낮을수록 좋다」를 0~1로 뒤집는다 */
-function scaleInverted(value: number | null, [lo, hi]: readonly [number, number]): number | null {
-  const s = scale(value, [lo, hi]);
+function scaleInverted(
+  value: number | null,
+  anchors: readonly [number, number, number],
+): number | null {
+  const s = scale(value, anchors);
   return s === null ? null : 1 - s;
 }
 
