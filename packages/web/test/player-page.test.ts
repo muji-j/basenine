@@ -560,3 +560,37 @@ test("포스트시즌 요약의 대회 이름이 그 대회 탭으로 간다", (
     "대회 이름이 그 대회 앵커로 가지 않는다 — 첫 탭만 열린 화면이 나온다",
   );
 });
+
+/**
+ * ⚠**지표 카탈로그에 「퀄리티스타트」가 적혀 있는데 구현이 0곳이었다**(2026-08-16 확인) —
+ * 규약과 코드의 명시적 불일치였다. 그리고 **공표값과 대조 가능한 몇 안 되는 신규 지표**다.
+ */
+test("선발 투수에게 QS·완투를 낸다 — 분모는 선발 등판 수다(M2)", () => {
+  const out = renderPlayerPage(playerPage({ role: "pitcher", batting: null, pitching: pitchingBlock(), mark: pitcherMark(), streaks: null }), context());
+  assert.ok(out.includes("QS"), "QS가 없다");
+  assert.ok(out.includes("完投"), "완투가 없다");
+  // ⚠**비율에는 분모가 붙는다.** QS율의 분모는 시합수가 아니라 **선발 등판 수**다
+  assert.ok(out.includes('<span class="den">22先発</span>'), "QS율의 분모가 없거나 틀렸다");
+  // ⚠완투를 어떻게 셌는지 화면이 말한다 — 아웃 27개로 세면 값이 달라진다
+  assert.ok(out.includes("この1人だけ"), "완투를 어떻게 셌는지 말하지 않는다");
+});
+
+/**
+ * ⚠**구원 투수에게 「QS 0」은 「못 했다」로 읽힌다**(M11).
+ * 선발이 0경기면 그 줄 자체가 없어야 한다 — 0과 해당없음은 다르다.
+ */
+test("선발이 0경기면 QS 줄을 그리지 않는다 — 0과 해당없음은 다르다(M11)", () => {
+  const relief = pitchingBlock();
+  const out = renderPlayerPage(
+    playerPage({
+      role: "pitcher",
+      batting: null,
+      mark: pitcherMark(),
+      streaks: null,
+      pitching: { ...relief, quality: { starts: 0, qs: 0, hqs: 0, cg: 0, sho: 0 } },
+    }),
+    context(),
+  );
+  assert.ok(!out.includes("QS率"), "선발이 없는데 QS율을 냈다");
+  assert.ok(!out.includes("完封勝"), "선발이 없는데 완봉승을 냈다");
+});

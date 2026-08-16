@@ -61,6 +61,7 @@ export function pitchingBlock(over: Partial<PitchingBlockData> = {}): PitchingBl
     games: 18,
     line: PITCHING_LINE,
     decisions: { w: 9, l: 4, sv: 0, hld: 0, reliefW: 0 },
+  quality: { starts: 22, qs: 14, hqs: 7, cg: 1, sho: 0 },
     era: r(2.7, 300),
     whip: r(1.1, 300),
     fip: r(2.9, 300),

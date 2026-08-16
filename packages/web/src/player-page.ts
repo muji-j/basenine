@@ -104,6 +104,11 @@ export interface PitchingBlockData {
   /** 이 투수의 역할에 해당하는 자격선(아웃 카운트) */
   needOuts: number;
   /**
+   * 선발 등판의 내용 — QS · HQS · 완투 · 완봉승.
+   * ⚠**선발이 0경기면 이 줄을 그리지 않는다** — 구원 투수에게 「QS 0」은 「못 했다」로 읽힌다(M11).
+   */
+  quality: { starts: number; qs: number; hqs: number; cg: number; sho: number };
+  /**
    * 선발형인가 구원형인가. **아웃 카운트가 많은 쪽**이다(`@bb-app/aggregate`가 정한다).
    * 순위표의 어느 부문에 서는지와, 어떤 분포로 색을 칠하는지를 이 값이 정한다.
    */
@@ -631,6 +636,21 @@ function standardPitching(p: PitchingBlockData): RawHtml {
         ${statCount("暴投", p.wp)}
         ${statCount("ボーク", p.balk)}`,
     )}
+    ${p.quality.starts === 0
+      ? raw("")
+      : html`${columns(
+        html`${statRate("QS率", { value: p.quality.qs / p.quality.starts, denominator: p.quality.starts }, "先発", 3, rk(p.ranks, "qsRate"), "starter")}
+          ${statCount("QS", p.quality.qs, rk(p.ranks, "qs"))}`,
+        html`${statCount("HQS", p.quality.hqs)}
+          ${statCount("完投", p.quality.cg)}
+          ${statCount("完封勝", p.quality.sho)}`,
+      )}
+      ${note(
+        "QS は先発して6回以上を自責点3以内、HQS は7回以上を自責点2以内です。" +
+          "**完投は「その試合でその球団の投手がこの1人だけ」で数えています** — " +
+          "アウト27個で数えると、ホームが勝って9回裏がなかった試合のビジター先発（8回完投）が漏れます。" +
+          "完封勝は完投・無失点・勝利投手のすべてを満たしたものです。",
+      )}`}
     ${note(
       `この投手は${ROLE_LABEL[p.role]}として扱っています（先発${p.starts}試合 / 救援${p.games - p.starts}試合、` +
         `投球回の多いほうを役割としています）。順位も水準の色も${ROLE_LABEL[p.role]}投手の分布と比べたものです — ` +

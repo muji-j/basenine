@@ -2318,6 +2318,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
             line: pit.player.line,
             // ⚠집계가 세어 둔 것을 그대로 쓴다 — 여기서 다시 세면 두 벌이 된다(M1)
             decisions: pit.player.decisions,
+            quality: pit.player.quality,
             era: pit.era,
             whip: pit.whip,
             fip: pit.fip,
