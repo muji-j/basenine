@@ -57,11 +57,11 @@ export interface GradeScale {
 }
 
 /** 타자 표본은 타석·타수, 투수 표본은 **아웃 카운트**다 */
-const BATTER_MIN = 50;
+export const BATTER_MIN = 50;
 /** 30이닝 */
 const STARTER_MIN = 90;
 /** 20이닝. 구원 투수에게 30이닝을 요구하면 대부분이 색을 잃는다 */
-const RELIEVER_MIN = 60;
+export const RELIEVER_MIN = 60;
 
 /**
  * ⚠**투수 지표는 대부분 「낮을수록 좋다」.** 이걸 놓치면 좋은 투수가 나쁜 색으로 칠해진다 —

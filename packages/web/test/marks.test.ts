@@ -1,12 +1,14 @@
 import { test } from "node:test";
 import { r } from "./fixtures.ts";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { toString } from "../src/html.ts";
 import {
   PITCHING_ANCHORS,
   PROFILE_ANCHORS,
   battingProfile,
   isEmptyProfile,
+  isThinProfile,
   markLetter,
   markFigure,
   markProfile,
@@ -128,12 +130,12 @@ test("분모가 접근성 라벨에 들어간다(M2)", () => {
 });
 
 test("축이 3개 미만이면 그리지 않는다 — 다각형이 되지 않는다", () => {
-  assert.equal(toString(markProfile(player(), [{ label: "a", scaled: 1, text: "1", sample: "10打席", term: "avg", note: "" }], "10打席")), "");
+  assert.equal(toString(markProfile(player(), [{ label: "a", scaled: 1, text: "1", sample: "10打席", term: "avg", note: "", thin: false }], "10打席")), "");
 });
 
 test("앵커를 코드 밖에서 확인할 수 있다 — 표시 배율이지 지표가 아니다", () => {
-  assert.deepEqual(PROFILE_ANCHORS.iso, [0, 0.3]);
-  assert.deepEqual(PROFILE_ANCHORS.contact, [0.6, 1]);
+  assert.deepEqual(PROFILE_ANCHORS.iso, [0.038, 0.098, 0.188]);
+  assert.deepEqual(PROFILE_ANCHORS.contact, [0.701, 0.801, 0.872]);
 });
 
 // ── 투수 축 ───────────────────────────────────────────────────────────────
@@ -159,8 +161,60 @@ test("⚠좋은 투수가 큰 도형이 된다 — 네 축이 뒤집혀 있지 �
 });
 
 test("투수 앵커를 코드 밖에서 확인할 수 있다", () => {
-  assert.deepEqual(PITCHING_ANCHORS.era, [2, 5.5]);
-  assert.deepEqual(PITCHING_ANCHORS.k9, [4, 12]);
+  assert.deepEqual(PITCHING_ANCHORS.era, [1.643, 2.869, 4.673]);
+  assert.deepEqual(PITCHING_ANCHORS.k9, [5.358, 7.613, 10.255]);
+});
+
+/**
+ * ⚠**두 도형은 같은 뜻이어야 한다.** 같은 화면에 나란히 놓이는데 한쪽만 크게 나오면,
+ * 보는 사람은 그것을 「이 선수가 더 낫다」로 읽는다.
+ *
+ * 실측(2026-08-16): 두 점 앵커일 때 **중앙값 타자의 평균 반지름 48.1%(면적 23%) 대
+ * 중앙값 투수 75.0%(면적 56%)** — 투수 도형이 2.4배 넓었다.
+ * 원인은 분포의 쏠림이다. 야구 지표는 오른쪽 꼬리가 길어서, 「높을수록 좋다」인 축은
+ * 중앙값이 안쪽으로, 그것을 뒤집은 축은 바깥쪽으로 간다.
+ * **중앙을 앵커로 넣으면** 양쪽 모두 중앙값이 정확히 절반에 온다.
+ */
+test("⚠중앙값 선수는 타자든 투수든 절반 크기다 — 두 도형이 같은 뜻이 되는 조건", () => {
+  // 2025·2026 정규시즌의 중앙값(타자 50타석 이상 458명 · 투수 20이닝 이상 407명)
+  const median = bp({ avg: 0.238, obp: 0.3, iso: 0.098, bbRate: 0.067, kRate: 1 - 0.801 });
+  for (const a of median) {
+    assert.ok(
+      Math.abs(a.scaled! - 0.5) < 0.005,
+      `${a.label} 축의 중앙값이 절반이 아니다(${a.scaled})`,
+    );
+  }
+  const medianP = pp({ k9: 7.613, bb9: 2.656, hr9: 0.643, whip: 1.19, era: 2.869 });
+  for (const a of medianP) {
+    assert.ok(
+      Math.abs(a.scaled! - 0.5) < 0.005,
+      `${a.label} 축의 중앙값이 절반이 아니다(${a.scaled})`,
+    );
+  }
+});
+
+test("⚠하위 10%는 양쪽 다 0, 상위 10%는 양쪽 다 1 — 눈금이 같다", () => {
+  const low = bp({ avg: 0.182, obp: 0.238, iso: 0.038, bbRate: 0.03, kRate: 1 - 0.701 });
+  const high = bp({ avg: 0.284, obp: 0.355, iso: 0.188, bbRate: 0.113, kRate: 1 - 0.872 });
+  for (const a of low) assert.ok(a.scaled! < 0.005, `${a.label} 하위 앵커가 0이 아니다(${a.scaled})`);
+  for (const a of high) assert.ok(a.scaled! > 0.995, `${a.label} 상위 앵커가 1이 아니다(${a.scaled})`);
+
+  // 투수는 네 축이 뒤집혀 있으므로 「나쁜 값」이 0이다
+  const lowP = pp({ k9: 5.358, bb9: 4.229, hr9: 1.249, whip: 1.504, era: 4.673 });
+  const highP = pp({ k9: 10.255, bb9: 1.612, hr9: 0.227, whip: 0.945, era: 1.643 });
+  for (const a of lowP) assert.ok(a.scaled! < 0.005, `${a.label} 하위 앵커가 0이 아니다(${a.scaled})`);
+  for (const a of highP) assert.ok(a.scaled! > 0.995, `${a.label} 상위 앵커가 1이 아니다(${a.scaled})`);
+});
+
+/**
+ * ⚠**양 끝은 자른다.** 눈금 없는 도형에서 바깥으로 무한히 뻗으면 모양이 값을 과장한다.
+ * 상위 10%보다 훨씬 잘해도 도형은 더 커지지 않는다 — 정확한 값은 옆의 숫자에 있다.
+ */
+test("앵커 밖의 값은 잘린다 — 도형이 값을 과장하지 않는다", () => {
+  const monster = bp({ avg: 0.45, obp: 0.55, iso: 0.5, bbRate: 0.3, kRate: 0.02 });
+  for (const a of monster) assert.equal(a.scaled, 1, `${a.label}이 1을 넘었다`);
+  const awful = bp({ avg: 0.05, obp: 0.08, iso: 0, bbRate: 0, kRate: 0.6 });
+  for (const a of awful) assert.equal(a.scaled, 0, `${a.label}이 0 아래로 갔다`);
 });
 
 test("등판이 없으면 축이 전부 값 없음이고, 대체 마크로 간다(M11)", () => {
@@ -338,4 +392,72 @@ test("세 안 모두 구단 색을 쓴다 — 배면과 같은 정체성", () =>
     assert.ok(svg.includes(colorOf("t").base), "구단 바탕색이 없다");
     assert.ok(svg.includes(colorOf("t").ink), "구단 글자색이 없다");
   }
+});
+
+/**
+ * ⚠**「없음」과 「얇음」과 「낮음」은 셋 다 다르다**(M11).
+ * 눈금은 타자 50타석·투수 20이닝 이상으로 맞췄는데 도형은 1타석부터 그려진다.
+ * 실측(2026-08-16): 그 바깥에서 평균 반지름 중앙값이 **타자 9.9% 대 투수 31.8%** 로 갈린다 —
+ * **눈금을 고치기 전의 격차보다 크다.** 즉 얇은 표본에서는 두 도형이 다시 딴말을 한다.
+ *
+ * 값은 진짜다. 믿을 수 없는 것은 **비교**다 — 그래서 지우지 않고 **속을 비운다.**
+ * 같은 화면의 등급이 같은 임계값에서 색을 보류하는 것과 같은 일이다.
+ */
+test("⚠표본이 눈금 모집단에 못 미치면 얇음으로 표시한다(M11)", () => {
+  const thick = battingProfile({
+    avg: r(0.28, 300), obp: r(0.35, 350), iso: r(0.15, 300), bbRate: r(0.09, 350), kRate: r(0.18, 350),
+  });
+  assert.equal(isThinProfile(thick), false, "충분한 표본을 얇다고 했다");
+
+  // 49타석 — 등급이 색을 보류하는 그 경계 바로 아래다
+  const thin = battingProfile({
+    avg: r(0.28, 44), obp: r(0.35, 49), iso: r(0.15, 44), bbRate: r(0.09, 49), kRate: r(0.18, 49),
+  });
+  assert.equal(isThinProfile(thin), true, "얇은 표본을 얇다고 하지 않았다");
+});
+
+test("투수도 같은 경계를 쓴다 — 임계값이 두 벌이면 언젠가 갈린다(M1)", () => {
+  const thick = pitchingProfile({
+    k9: r(8, 300), bb9: r(2.5, 300), hr9: r(0.6, 300), whip: r(1.1, 300), era: r(2.8, 300),
+  });
+  assert.equal(isThinProfile(thick), false);
+  // 59아웃 — 19.2이닝. 20이닝 경계 바로 아래
+  const thin = pitchingProfile({
+    k9: r(8, 59), bb9: r(2.5, 59), hr9: r(0.6, 59), whip: r(1.1, 59), era: r(2.8, 59),
+  });
+  assert.equal(isThinProfile(thin), true);
+});
+
+test("⚠얇은 표본의 도형은 속이 비고, 화면 낭독도 그렇게 말한다", () => {
+  const thin = battingProfile({
+    avg: r(0.28, 44), obp: r(0.35, 49), iso: r(0.15, 44), bbRate: r(0.09, 49), kRate: r(0.18, 49),
+  });
+  const out = toString(markProfile(player(), thin, "49打席"));
+  assert.match(out, /fill-opacity="0"/, "얇은데 속을 채웠다");
+  assert.match(out, /stroke-dasharray="2 2"/, "얇음을 구별할 표시가 없다");
+  assert.match(out, /標本が少ないため参考値/, "낭독이 얇음을 말하지 않는다");
+
+  const thick = battingProfile({
+    avg: r(0.28, 300), obp: r(0.35, 350), iso: r(0.15, 300), bbRate: r(0.09, 350), kRate: r(0.18, 350),
+  });
+  const full = toString(markProfile(player(), thick, "350打席"));
+  assert.match(full, /fill-opacity="\.85"/, "충분한 표본인데 속이 비었다");
+  assert.ok(!full.includes("標本が少ないため"), "충분한 표본을 얇다고 말했다");
+});
+
+/**
+ * ⚠**앵커가 오름차순이 아니면 멈춰야 한다.** 뒤집힌 축을 「좋은 순」으로 적는 실수가
+ * 이 파일에서 가장 저지르기 쉬운데, 그렇게 적어도 `scale()` 은 던지지 않고 **조용히 0.5** 를 낸다 —
+ * 制球 축이 대부분의 투수에서 0.5로 굳는데 도형은 그럴듯하게 그려진다(M7).
+ */
+test("⚠앵커가 오름차순인지 코드가 스스로 검사한다", () => {
+  for (const [name, group] of [["타자", PROFILE_ANCHORS], ["투수", PITCHING_ANCHORS]] as const) {
+    for (const [k, v] of Object.entries(group)) {
+      assert.ok(v[0] < v[1] && v[1] < v[2], `${name} ${k} 앵커가 오름차순이 아니다: ${v.join(" ")}`);
+    }
+  }
+  // 그리고 그 검사가 **코드에** 있다 — 주석에만 있으면 아무도 안 지킨다
+  const src = readFileSync(new URL("../src/marks.ts", import.meta.url), "utf8");
+  assert.match(src, /assertAscending\("PROFILE_ANCHORS"/, "타자 앵커 검사가 없다");
+  assert.match(src, /assertAscending\("PITCHING_ANCHORS"/, "투수 앵커 검사가 없다");
 });
