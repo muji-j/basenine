@@ -277,3 +277,21 @@ export function seasonContext(paths2025: readonly string[] = []): RenderContext 
     ),
   });
 }
+
+/**
+ * **지난 시즌**의 문맥 — 2025 화면을 그리는 상황.
+ *
+ * ⚠끝난 시즌의 화면이 「発表待ち」·「いま投げている投手」처럼 현재형으로 말하는지 보려면
+ * 이것이 필요하다. `seasonContext`(현재 시즌 쪽)와 방향이 반대다.
+ */
+export function pastSeasonContext(paths2025: readonly string[] = []): RenderContext {
+  return context({
+    paths: pathsFor(
+      [
+        { season: 2026, prefix: "", paths: new Set<string>() },
+        { season: 2025, prefix: "2025/", paths: new Set(paths2025) },
+      ],
+      2025,
+    ),
+  });
+}

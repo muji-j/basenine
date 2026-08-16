@@ -25,7 +25,7 @@ import {
   tablist,
   term,
 } from "./parts.ts";
-import { page } from "./layout.ts";
+import { page, pastSeasonOf } from "./layout.ts";
 import type { Freshness, SiteMeta } from "./layout.ts";
 import type { MatchupRow, RankingPanel } from "./player-page.ts";
 import { NEUTRAL_COLOR } from "@bb-app/domain";
@@ -472,6 +472,8 @@ export function startersAnchor(key: string): string {
 export function renderStartersPage(d: StartersPageData, ctx: RenderContext): string {
   const { base, root, seasons } = ctx.paths("starters.html");
   const isToday = d.gameDate !== null && d.gameDate === d.builtOn;
+  // ⚠**끝난 시즌에 「発表待ち」라고 쓰지 않는다.** 기다리는 것이 아니라 끝난 것이다
+  const past = pastSeasonOf(seasons);
 
   const sideBlock = (side: ProbableSide, opponent: ProbableSide): RawHtml => html`<div class="sside"
   style="--chip:${side.color.base};--chip-ink:${side.color.ink}">
@@ -506,13 +508,17 @@ export function renderStartersPage(d: StartersPageData, ctx: RenderContext): str
   const body = html`<header class="idline">
   <div class="idtext">
     <span class="nm">予告先発</span>
-    <span class="sub">${d.gameDate === null ? "発表待ち" : `${fullDate(d.gameDate)}${isToday ? "（本日）" : ""}の試合`}</span>
+    <span class="sub">${d.gameDate === null
+      ? past ? "終了したシーズンです" : "発表待ち"
+      : `${fullDate(d.gameDate)}${isToday ? "（本日）" : ""}の試合`}</span>
   </div>
   <span class="asof">成績は${fullDate(d.builtOn)}生成時点</span>
 </header>
 
 ${d.gameDate === null || d.games.length === 0
-    ? html`<section class="block"><p class="empty">予告先発はまだ発表されていません。発表は前日〜当日です。</p></section>`
+    ? html`<section class="block"><p class="empty">${past
+      ? "このシーズンの予告先発は記録していません。予告先発の保存を始めたのが今シーズンからです。"
+      : "予告先発はまだ発表されていません。発表は前日〜当日です。"}</p></section>`
     : html`<nav class="cards" role="tablist" data-tabgroup="starters" aria-label="試合">
     ${d.games.map(
       (g, i) => html`<button class="card" type="button" role="tab" data-tab="${gameKey(g)}"
@@ -566,6 +572,8 @@ ${d.games.map((g, i) =>
     // ⚠予告先発은 「試合」의 자식 화면이다. 부모 항목을 켜 두지 않으면
     // 내비게이션이 「아무 데도 아님」을 가리킨다
     nav: "today",
+    // 予告先発는 試合 구획이지만 today.html 은 아니다
+    navExact: false,
     body,
   });
 }
@@ -662,9 +670,8 @@ function pickTeam(t: MatchupTeam): RawHtml {
     picks.length === 0
       ? html`<p class="picklab">${label}</p><p class="empty">今季の記録がありません。</p>`
       : html`<p class="picklab">${label}<s>${picks.length}人</s></p>
-        <div class="picklist" role="group" aria-label="${t.shortName}の${label}">${picks.map((p) =>
-          pickButton(p, role, t),
-        )}</div>`;
+        <div class="picklist" role="toolbar" aria-orientation="horizontal"
+          aria-label="${t.shortName}の${label}（左右キーで移動）">${picks.map((p) => pickButton(p, role, t))}</div>`;
   return html`<div class="pickteam" style="--chip:${t.color.base};--chip-ink:${t.color.ink}">
   <h5 class="picktm"><i></i>${t.shortName}</h5>
   ${list("投手", "pitcher", t.pitchers)}
@@ -685,6 +692,8 @@ export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): strin
   </div>`;
 
   const isToday = d.pickDate !== null && d.pickDate === d.builtOn;
+  // ⚠끝난 시즌에서 「いま投げている投手を選ぶと」는 거짓말이다. 그 시즌에 진행 중인 경기는 없다
+  const past = pastSeasonOf(seasons);
   const gameTabs = d.games.map((g) => ({
     id: g.key,
     label: `${g.sides[0].shortName} − ${g.sides[1].shortName}`,
@@ -734,10 +743,14 @@ export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): strin
   </details>
 
   ${note(
-    "試合を見ながら使う画面です。いま投げている投手と打っている打者を選ぶと、" +
-      "その二人のこれまでの対戦成績（と打者のスプリット）が開きます。" +
+    (past
+      ? `${d.season}年は終了したシーズンです。投手と打者を選ぶと、そのシーズンの対戦成績（と打者のスプリット）が開きます。`
+      : "試合を見ながら使う画面です。いま投げている投手と打っている打者を選ぶと、" +
+        "その二人のこれまでの対戦成績（と打者のスプリット）が開きます。") +
       (d.games.length === 0
-        ? "予告先発がまだ発表されていないため、名前でさがす形になっています。"
+        ? past
+          ? "このシーズンの予告先発は記録していないため、名前でさがす形になっています。"
+          : "予告先発がまだ発表されていないため、名前でさがす形になっています。"
         : "ボタンに出しているのは今季その球団で記録のある選手です。並びは出場の多い順で、数字は打席数・投球回です。"),
   )}
 </section>

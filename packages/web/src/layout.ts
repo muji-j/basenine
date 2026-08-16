@@ -142,6 +142,15 @@ export interface PageOptions {
   freshness: Freshness;
   site: SiteMeta;
   nav: NavKey;
+  /**
+   * 이 화면이 그 내비 항목의 **바로 그 페이지**인가.
+   *
+   * ⚠**`aria-current="page"`는 「이 링크가 지금 문서다」라는 뜻이다.** 試合 구획에 속하지만
+   * `today.html`이 아닌 화면(경기 상세·날짜별·予告先発)에서 그 링크에 `page`를 붙이면
+   * **다른 문서를 가리키는 링크를 「지금 여기」라고 말하는 것**이 된다.
+   * 그런 화면은 `false`로 두고 `aria-current="true"`(구획 안에 있다)만 낸다.
+   */
+  navExact?: boolean;
   /** 본문. 블록들이 여기 들어간다 */
   body: RawHtml;
   /** 클라이언트에 실어 보낼 스크립트 본문(블록 카탈로그 등) */
@@ -156,7 +165,7 @@ export interface PageOptions {
  */
 function topbar(o: PageOptions): RawHtml {
   const here = (key: NavKey): RawHtml =>
-    o.nav === key ? raw(' aria-current="page"') : raw("");
+    o.nav === key ? raw(o.navExact === false ? ' aria-current="true"' : ' aria-current="page"') : raw("");
   return html`<header class="topbar">
   <a class="brand" href="${o.base}index.html">${o.site.name}<b>by Lunomel</b></a>
   <div class="qbox">
@@ -194,7 +203,18 @@ function topbar(o: PageOptions): RawHtml {
  * `seasons`는 새 시즌이 앞이므로, 첫 칸이 현재 페이지가 아니면 지난 시즌이다.
  */
 function isPastSeason(o: PageOptions): boolean {
-  return o.seasons.length > 1 && o.seasons[0]?.current === false;
+  return pastSeasonOf(o.seasons);
+}
+
+/**
+ * 지난 시즌의 화면인가 — **본문을 짓는 쪽에서도 알아야 한다.**
+ *
+ * ⚠신선도 띠만 고치는 것으로는 부족했다. 끝난 시즌의 予告先発 화면이
+ * 「発表待ち · 発表は前日〜当日です」라고, 対戦 화면이 「いま投げている投手を選ぶと」라고
+ * **현재형으로** 말하고 있었다(2026-08-16 이중 검토 P2).
+ */
+export function pastSeasonOf(seasons: readonly SeasonLink[]): boolean {
+  return seasons.length > 1 && seasons[0]?.current === false;
 }
 
 function seasonBar(o: PageOptions): RawHtml {
@@ -335,6 +355,13 @@ export function page(o: PageOptions): string {
 <meta name="robots" content="noindex, nofollow">
 <meta name="color-scheme" content="light dark">
 <link rel="stylesheet" href="${o.root}assets/site.css">
+<!-- ⚠**스크립트가 없으면 탭은 조작이 아니라 벽이다.**
+     탭 패널은 첫 장만 열어 두고 나머지를 hidden으로 내보내는데, 스크립트가 없으면
+     여는 수단이 사라져 그 내용에 **도달할 방법이 아예 없다.**
+     2026-08-16 이중 검토에서 실제로 걸렸다 — 順位를 チーム/個人으로 나눈 순간
+     개인 타이틀 전체(2리그 × 3부문 × 8지표)가 JS 없이는 닿을 수 없게 됐다.
+     스크립트가 없으면 **전부 펼친다.** 길어지는 것이 닿지 못하는 것보다 낫다. -->
+<noscript><style>[data-panelgroup][hidden]{display:block!important}</style></noscript>
 </head>
 <body style="${style}">
 <a class="skip" href="#main">本文へ</a>

@@ -6,7 +6,7 @@
  * 만든 값을 옮겨 담기만 한다. 여기에 산식이 생기는 순간 값이 두 벌이 된다.
  */
 import type { Db } from "@bb-app/store";
-import type { BattingLine, PitchingLine, Rate } from "@bb-app/metrics";
+import type { BattingLine, LeagueConstants, PitchingLine, Rate } from "@bb-app/metrics";
 import {
   babip,
   battingAverage,
@@ -36,6 +36,8 @@ import {
   STAR_SO,
   aggregateSeason,
   battingEntries,
+  battingEntryOf,
+  blendConstants,
   battingSplits,
   battingStreaks,
   pitchingSplits,
@@ -43,6 +45,10 @@ import {
   buildRunExpectancy,
   computeSrc,
   computeSrp,
+  addSrc,
+  addSrp,
+  srcPer600Of,
+  srpPer9Of,
   dayResults,
   gameDates,
   gameDetails,
@@ -50,6 +56,7 @@ import {
   entriesOfRole,
   matchups,
   pitchingEntries,
+  pitchingEntryOf,
   qualifyingOuts,
   rankBatters,
   rankPitchers,
@@ -1288,7 +1295,7 @@ function todayPage(
    * 「어제 무슨 일이 있었나」는 다른 질문이다.
    * (2026-08-16 이중 검토에서 두 정의가 어긋나 있다는 지적을 받았다.)
    */
-  const latestDate = latestGameDate(db, o.season, o.through ?? "9999-12-31");
+  const latestDate = latestGameDate(db, o.season, o.through ?? "9999-12-31", o.competition ?? "regular");
   const games: TodayGame[] =
     latestDate === null ? [] : dayGames(db, o, latestDate, nameOf, gamePageIds);
   const at = days.findIndex((d) => d.date === latestDate);
@@ -1573,9 +1580,15 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   // 여기서 다시 만들지 않는다 — 같은 시즌을 두 번 훑는 것도, 값이 갈라지는 것도 피한다(M1)
   const reFull = new Map<string, RunExpectancy>();
   const srcByPlayer = new Map<string, { src: number; pa: number; skipped: number; srcPer600: number | null }>();
-  const srpByPlayer = new Map<string, { srp: number; bf: number; skipped: number; srpPer9: number | null }>();
+  // ⚠9이닝 환산의 분모는 **아웃**이다. 상대 타자 수(bf)는 표본 표기용이라 둘 다 들고 있어야 한다
+  const srpByPlayer = new Map<string, { srp: number; bf: number; skipped: number; outs: number; srpPer9: number | null }>();
+  // 화면이 쓰는 **시즌 합계**. 리그를 넘어도 한 줄이다
   const battingByPlayer = new Map<string, BattingEntry>();
   const pitchingByPlayer = new Map<string, PitchingEntry>();
+  // ⚠**자격 판정(규정타석)에 쓰는 리그별 몫.** 타이틀은 소속 리그에서 낸 성적으로만 겨룬다 —
+  // 합계 타석을 한쪽 리그 기준에 대면 자격이 없는 사람이 자격자가 된다. 키는 `선수|리그`
+  const leagueBatting = new Map<string, BattingEntry>();
+  const leaguePitching = new Map<string, PitchingEntry>();
   const bundleByLeague = new Map<League, LeagueBundle>();
 
   for (const bundle of bundles) {
@@ -1587,19 +1600,55 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     reByLeague.set(bundle.league, re.matrix);
     reFull.set(bundle.league, re);
 
+    // ⚠**더하고 덮어쓰지 않는다.** SRC는 그 리그의 득점기대 행렬로 잰 **런 수**라 리그를 넘어도
+    // 더하는 것이 맞다. 덮어쓰면 리그를 넘은 선수의 절반이 사라진다(2026-08-16 이중 검토 P0)
     for (const s of computeSrc(db, re, codes, competition, through)) {
-      srcByPlayer.set(s.playerId, { src: s.src, pa: s.pa, skipped: s.skipped, srcPer600: s.srcPer600 });
+      // 환산값은 합계가 정해진 뒤에 낸다(아래)
+      srcByPlayer.set(s.playerId, { ...addSrc(srcByPlayer.get(s.playerId), s), srcPer600: null });
     }
     // ⚠투수는 같은 커널의 부호 반대다. 같은 리그 RE 행렬을 쓴다
     for (const s of computeSrp(db, re, codes, competition, through)) {
-      srpByPlayer.set(s.playerId, { srp: s.srp, bf: s.bf, skipped: s.skipped, srpPer9: s.srpPer9 });
+      srpByPlayer.set(s.playerId, { ...addSrp(srpByPlayer.get(s.playerId), s), srpPer9: null });
     }
 
     const bat = battingEntries(bundle);
     const pit = pitchingEntries(bundle);
-    for (const e of bat) battingByPlayer.set(e.player.playerId, e);
-    for (const e of pit) pitchingByPlayer.set(e.player.playerId, e);
+    // ⚠**리그별 항목은 리그별 지도에 넣는다.** 예전에는 `playerId` 하나를 키로 덮어써서,
+    // 리그를 넘어 이적한 선수는 **나중에 도는 리그가 이겼다** — 파→세 이적이면
+    // 지금 뛰지 않는 옛 팀이 소속으로 나오고 현재 팀 로스터에서 사라졌다
+    for (const e of bat) leagueBatting.set(`${e.player.playerId}|${bundle.league}`, e);
+    for (const e of pit) leaguePitching.set(`${e.player.playerId}|${bundle.league}`, e);
     rankingsByLeague.set(bundle.league, buildLeagueRankings(bundle, bat, pit, srcByPlayer, srpByPlayer));
+  }
+
+  // ⚠**비율은 합계가 정해진 뒤에 낸다.** 리그별로 낸 환산값을 더하면 분모가 두 번 세어진다.
+  // 환산식은 집계 패키지 한 벌을 쓴다(M1) — 여기서 다시 쓰면 언젠가 한쪽만 고쳐진다
+  for (const [id, s] of srcByPlayer) srcByPlayer.set(id, { ...s, srcPer600: srcPer600Of(s.src, s.pa) });
+  for (const [id, s] of srpByPlayer) srpByPlayer.set(id, { ...s, srpPer9: srpPer9Of(s.srp, s.outs) });
+
+  /**
+   * 화면이 쓰는 **시즌 합계**.
+   *
+   * ⚠**리그 상수를 표본으로 가중해 합계 라인에 적용한다**(`blendConstants`).
+   * wOBA가 타석 가중 평균이라 `wRAA(합계, 가중상수) = wRAA(セ) + wRAA(パ)`가 정확히 성립한다 —
+   * 날조가 아니라 증명 가능한 일반화다. 리그를 넘지 않은 선수에게는 아무 일도 하지 않는다.
+   */
+  const constantsFor = (playerId: string, weightOf: (lg: League) => number): LeagueConstants =>
+    blendConstants(bundles.map((b) => ({ constants: b.constants, weight: weightOf(b.league) })));
+
+  for (const player of agg.batting) {
+    const lc = constantsFor(
+      player.playerId,
+      (lg) => leagueBatting.get(`${player.playerId}|${lg}`)?.player.line.pa ?? 0,
+    );
+    battingByPlayer.set(player.playerId, battingEntryOf(player, lc));
+  }
+  for (const player of agg.pitching) {
+    const lc = constantsFor(
+      player.playerId,
+      (lg) => leaguePitching.get(`${player.playerId}|${lg}`)?.player.line.outs ?? 0,
+    );
+    pitchingByPlayer.set(player.playerId, pitchingEntryOf(player, lc));
   }
 
   /**
@@ -1648,6 +1697,13 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     const bundle = bundleByLeague.get(base.league);
     if (bundle === undefined) continue;
     const rankings = rankingsByLeague.get(base.league)!;
+    /**
+     * ⚠**자격 판정은 소속 리그에서 낸 몫으로 한다.**
+     * 타이틀은 그 리그의 성적으로만 겨루므로, 리그를 넘은 선수의 **합계 타석**을 한쪽 리그의
+     * 규정타석에 대면 자격이 없는 사람이 자격자로 나온다. 리그를 넘지 않은 선수는 합계와 같다.
+     */
+    const batPart = leagueBatting.get(`${playerId}|${base.league}`);
+    const pitPart = leaguePitching.get(`${playerId}|${base.league}`);
     const profile = profiles.get(playerId);
     const team = teamOf(base.teamCode);
 
@@ -1676,7 +1732,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
             bbRate: walkRate(bat.player.line),
             src: srcByPlayer.get(playerId) ?? null,
             ranks: ranksFor(rankings.batting, playerId),
-            qualified: bat.player.line.pa >= qualifiedBatterPa(bundle.teamGames),
+            qualified: (batPart?.player.line.pa ?? 0) >= qualifiedBatterPa(bundle.teamGames),
             needPa: qualifiedBatterPa(bundle.teamGames),
           };
 
@@ -1700,7 +1756,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
               pit.player.role === "reliever" ? rankings.reliever : rankings.starter,
               playerId,
             ),
-            qualified: pit.player.line.outs >= qualifyingOuts(bundle, pit.player.role),
+            qualified: (pitPart?.player.line.outs ?? 0) >= qualifyingOuts(bundle, pit.player.role),
             needOuts: qualifyingOuts(bundle, pit.player.role),
             role: pit.player.role,
             starts: pit.player.starts,
@@ -1880,7 +1936,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   // ⚠**경기일 목록도 먼저 만든다.** 「앞뒤 경기일」이 이 목록에서 나오므로,
   // 날짜 화면과 오늘 화면이 서로 다른 목록을 보면 링크가 끊긴다
   const days = gameDates(db, o.season, through, competition);
-  const latestDay = latestGameDate(db, o.season, through);
+  const latestDay = latestGameDate(db, o.season, through, competition);
 
   return {
     season: o.season,

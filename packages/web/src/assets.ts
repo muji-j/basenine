@@ -582,6 +582,8 @@ table.stand .dif i.n{right:50%}
 .slab{font-size:9.5px;letter-spacing:.16em;color:var(--tx-3);margin-right:5px}
 /* 시즌 중 이적 이력. ⚠**합계와 순위가 다른 이유**가 여기 적힌다 */
 .stint{display:block;font-size:10.5px;color:var(--tx-3);margin-top:2px}
+/* 「합계와 순위의 수가 왜 다른가」 — 이적 이력 바로 아래에 붙는다 */
+.stint em{display:block;font-style:normal;font-size:10px;color:var(--tx-3);opacity:.85}
 .seasons a{font-size:12px;padding:3px 10px;text-decoration:none;color:var(--tx-2);
   border:1px solid transparent;transition:color var(--fast) var(--ease)}
 .seasons a:hover{color:var(--tx);border-color:var(--hair-2)}
@@ -896,9 +898,12 @@ function tabGroups(){
   return groups;
 }
 const tabHooks=[];
+/* ⚠**이번 방문에만 여는 선택.** 깊은 링크(#앵커)가 연 탭은 여기 들어간다 —
+   state.tabs 에 쓰면 저장되어 다음 방문의 기본값까지 바뀐다. 사용자가 직접 탭을 누르면 지운다. */
+const transient={};
 function showTabs(){
   Object.keys(tabGroups()).forEach(g=>{
-    const cur=state.tabs[g];
+    const cur=transient[g]!==undefined?transient[g]:state.tabs[g];
     // "all"은 특별 취급 — 골라 보는 화면에서 「전부」를 뺏지 않는다
     $$('[data-panelgroup="'+g+'"]').forEach(p=>{p.hidden=cur!=="all"&&p.dataset.panelkey!==cur});
     $$('[data-tabgroup="'+g+'"] [data-tab]').forEach(b=>{
@@ -914,6 +919,8 @@ function showTabs(){
     const keys=buttons.map(b=>b.dataset.tab);
     if(keys.indexOf(state.tabs[g])<0)state.tabs[g]=keys[0];
     buttons.forEach(b=>b.addEventListener("click",()=>{
+      /* 직접 고른 것이 임시 선택을 이긴다 — 그리고 그때는 저장한다 */
+      delete transient[g];
       state.tabs[g]=b.dataset.tab;save(state);showTabs();
     }));
   });
@@ -932,12 +939,16 @@ function revealHash(){
   while(n&&n!==doc.body){
     const d=n.dataset;
     if(d&&d.panelgroup&&d.panelkey&&state.tabs[d.panelgroup]!==d.panelkey&&state.tabs[d.panelgroup]!=="all"){
-      state.tabs[d.panelgroup]=d.panelkey;changed=true;
+      transient[d.panelgroup]=d.panelkey;changed=true;
     }
     n=n.parentNode;
   }
   if(!changed)return;
-  save(state);showTabs();
+  /* ⚠**저장하지 않는다.** 이 방문에만 연다.
+     저장하면 「セの順位表をすべて見る」를 한 번 누른 뒤로 상단 내비의 「順位」가
+     영원히 개인 순위부터 열린다 — 링크 한 번이 사용자의 기본값을 바꿔 버린다.
+     ?vs= 처리도 같은 이유로 저장하지 않는다(한 파일 안에서 규칙을 둘로 두지 않는다). */
+  showTabs();
   if(typeof el.scrollIntoView==="function")el.scrollIntoView();
 }
 if(typeof window!=="undefined"&&window.addEventListener)window.addEventListener("hashchange",revealHash);

@@ -93,26 +93,76 @@ export interface PitchingEntry {
   fip: Rate;
 }
 
-export function battingEntries(bundle: LeagueBundle): BattingEntry[] {
-  return bundle.batting.map((player) => ({
+/**
+ * 성적 한 줄에서 지표를 낸다. **여기가 유일한 입구다**(M1).
+ *
+ * ⚠**상수를 인자로 받는다.** 예전에는 번들에 묶여 있어서 「번들 밖의 성적」을 잴 방법이 없었고,
+ * 그래서 리그를 넘어 이적한 선수의 **시즌 합계를 화면에 낼 수 없었다**(2026-08-16 이중 검토 P0).
+ */
+export function battingEntryOf(player: SeasonBatting, lc: LeagueConstants): BattingEntry {
+  return {
     player,
     avg: battingAverage(player.line),
     obp: onBasePercentage(player.line),
     slg: sluggingPercentage(player.line),
     ops: ops(player.line),
     woba: woba(player.line),
-    wraa: wraa(player.line, bundle.constants),
-    wrcPlus: wrcPlus(player.line, bundle.constants),
-  }));
+    wraa: wraa(player.line, lc),
+    wrcPlus: wrcPlus(player.line, lc),
+  };
 }
 
-export function pitchingEntries(bundle: LeagueBundle): PitchingEntry[] {
-  return bundle.pitching.map((player) => ({
+export function pitchingEntryOf(player: SeasonPitching, lc: LeagueConstants): PitchingEntry {
+  return {
     player,
     era: earnedRunAverage(player.line),
     whip: whip(player.line),
-    fip: fip(player.line, bundle.constants),
-  }));
+    fip: fip(player.line, lc),
+  };
+}
+
+export function battingEntries(bundle: LeagueBundle): BattingEntry[] {
+  return bundle.batting.map((player) => battingEntryOf(player, bundle.constants));
+}
+
+export function pitchingEntries(bundle: LeagueBundle): PitchingEntry[] {
+  return bundle.pitching.map((player) => pitchingEntryOf(player, bundle.constants));
+}
+
+/**
+ * 표본으로 가중한 리그 상수 — **리그를 넘어 이적한 선수의 시즌 합계**를 재기 위한 것.
+ *
+ * ⚠**이것은 날조가 아니라 증명 가능한 일반화다.**
+ * wOBA는 타석 가중 평균이므로 `wOBA(합계)×PA(합계) = Σ wOBA(리그i)×PA(리그i)` 가 항등식이다.
+ * 따라서 평균 wOBA를 **타석으로 가중**하면
+ * `wRAA(합계, 가중상수) = wRAA(セ) + wRAA(パ)` 가 **정확히** 성립한다.
+ * FIP도 같다 — raw FIP가 아웃 가중 평균이므로 `cFip`를 아웃으로 가중하면 리그별 FIP의 아웃 가중 평균이 된다.
+ * wRC+의 기준선(`runsPerPa`)도 같은 이유로 타석 가중이다.
+ *
+ * ⚠**리그를 넘지 않은 선수에게는 아무 일도 하지 않는다** — 가중치가 한쪽으로 무너져 그 리그의 상수 그대로다.
+ * 실측 2025·2026 두 시즌에서 리그를 넘은 이적은 7명이다.
+ *
+ * @param parts 리그별 (상수, 표본). 표본은 타자면 타석, 투수면 아웃
+ */
+export function blendConstants(
+  parts: readonly { constants: LeagueConstants; weight: number }[],
+): LeagueConstants {
+  const usable = parts.filter((p) => p.weight > 0);
+  // ⚠표본이 0이면 가중할 것이 없다. 첫 상수를 그대로 쓴다 — 나눗셈으로 NaN을 만들지 않는다
+  if (usable.length === 0) return parts[0]!.constants;
+  if (usable.length === 1) return usable[0]!.constants;
+  const total = usable.reduce((n, p) => n + p.weight, 0);
+  const mean = (of: (c: LeagueConstants) => number): number =>
+    usable.reduce((n, p) => n + of(p.constants) * p.weight, 0) / total;
+  // 가장 표본이 많은 쪽의 이름을 남긴다 — 어느 리그 기준인지 물으면 답할 수 있어야 한다
+  const primary = usable.reduce((a, b) => (b.weight > a.weight ? b : a)).constants;
+  return {
+    season: primary.season,
+    league: primary.league,
+    averageWoba: mean((c) => c.averageWoba),
+    cFip: mean((c) => c.cFip),
+    runsPerPa: mean((c) => c.runsPerPa),
+  };
 }
 
 /**

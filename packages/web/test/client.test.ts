@@ -704,6 +704,62 @@ test("#lg-central 로 오면 그 자리를 감싼 탭을 전부 연다 — 상�
   assert.equal(sub[0]!.hidden, false, "리그 탭줄이 숨겨진 채다");
 });
 
+/**
+ * ⚠**깊은 링크가 사용자의 기본값을 바꾸면 안 된다.**
+ * 「セの順位表をすべて見る」를 한 번 누른 뒤로 상단 내비의 「順位」가 영원히 개인 순위부터
+ * 열리면, 링크 한 번이 사용자의 설정을 뒤집은 것이다(2026-08-16 이중 검토 P2).
+ * 이번 방문에만 열고 **저장하지 않는다.**
+ */
+test("⚠깊은 링크로 연 탭은 저장되지 않는다 — 다음 방문의 기본값을 바꾸지 않는다", () => {
+  const doc = buildRankingPage();
+  const storage = makeStorage();
+  storage.setItem("npb-meikan-layout", JSON.stringify({ tabs: { ranktype: "team", rankleague: "pacific" } }));
+  run(doc, { storage, location: { search: "", href: "", hash: "#lg-central" } });
+
+  // 이 방문에서는 열린다
+  assert.deepEqual(openKeys(doc, "ranktype"), ["personal"]);
+  // 그러나 저장된 것은 그대로여야 한다
+  const saved = JSON.parse(storage.getItem("npb-meikan-layout")!);
+  assert.equal(saved.tabs.ranktype, "team", "링크 한 번이 저장된 기본값을 바꿨다");
+  assert.equal(saved.tabs.rankleague, "pacific");
+});
+
+test("직접 누른 탭은 임시 선택을 이기고, 그때는 저장된다", () => {
+  const doc = buildRankingPage();
+  const storage = makeStorage();
+  storage.setItem("npb-meikan-layout", JSON.stringify({ tabs: { ranktype: "team" } }));
+  run(doc, { storage, location: { search: "", href: "", hash: "#lg-central" } });
+  assert.deepEqual(openKeys(doc, "ranktype"), ["personal"]);
+
+  const teamTab = doc
+    .querySelectorAll('[data-tabgroup="ranktype"] [data-tab]')
+    .find((b) => b.dataset["tab"] === "team")!;
+  teamTab.fire("click");
+  assert.deepEqual(openKeys(doc, "ranktype"), ["team"], "직접 누른 것이 임시 선택에 졌다");
+  assert.equal(JSON.parse(storage.getItem("npb-meikan-layout")!).tabs.ranktype, "team");
+});
+
+/**
+ * ⚠**저장은 다른 조작에 딸려서 일어난다.** 깊은 링크가 `state`를 더럽혀 두면,
+ * 사용자가 **전혀 다른 탭**을 누른 순간 그 값까지 함께 저장된다 — 한 박자 늦게 새어 나간다.
+ */
+test("⚠다른 탭을 눌러 저장이 일어나도 깊은 링크의 선택은 새어 나가지 않는다", () => {
+  const doc = buildRankingPage();
+  const storage = makeStorage();
+  storage.setItem("npb-meikan-layout", JSON.stringify({ tabs: { ranktype: "team", rankcat: "batter" } }));
+  run(doc, { storage, location: { search: "", href: "", hash: "#lg-central" } });
+
+  // 관계없는 그룹(부문 탭)을 누른다 → 여기서 save 가 일어난다
+  const other = doc
+    .querySelectorAll('[data-tabgroup="rankcat"] [data-tab]')
+    .find((b) => b.dataset["tab"] === "starter")!;
+  other.fire("click");
+
+  const saved = JSON.parse(storage.getItem("npb-meikan-layout")!);
+  assert.equal(saved.tabs.rankcat, "starter", "누른 탭이 저장되지 않았다");
+  assert.equal(saved.tabs.ranktype, "team", "깊은 링크가 연 탭이 다른 조작에 딸려 저장됐다");
+});
+
 test("가리키는 자리가 이미 열려 있으면 선택을 건드리지 않는다", () => {
   const doc = buildRankingPage();
   const storage = makeStorage();
@@ -884,7 +940,7 @@ function buildPicker(): ReturnType<typeof makeDocument> {
     ["pitcher", [["p1", "山本", "オリックス・バファローズ"], ["p2", "宮城", "オリックス・バファローズ"]]],
     ["batter", [["b1", "佐藤", "阪神タイガース"]]],
   ] as [string, string[][]][]) {
-    const list = make("div", { class: "picklist", role: "group" });
+    const list = make("div", { class: "picklist", role: "toolbar", "aria-orientation": "horizontal" });
     for (const [i, n, t] of people) {
       list.appendChild(
         make("button", { class: "pk", type: "button", "aria-pressed": "false", "data-pick": role, "data-i": i!, "data-n": n!, "data-t": t! }),
@@ -991,7 +1047,10 @@ test("긴 목록은 탭 정지 하나다 — 안에서는 화살표로 움직인
     ["0", "-1"],
     "목록의 버튼이 전부 탭 정지다",
   );
-  assert.equal(list.getAttribute("role"), "group", "묶음이라고 말하지 않는다");
+  // ⚠**`group`이 아니라 `toolbar`다.** roving tabindex(화살표로 이동)를 규정하는 롤이 toolbar이고,
+  // group 은 그걸 함의하지 않는다 — 「여기서 화살표를 쓰라」는 신호가 어디에도 없게 된다
+  assert.equal(list.getAttribute("role"), "toolbar", "화살표로 움직이는 묶음이라고 말하지 않는다");
+  assert.equal(list.getAttribute("aria-orientation"), "horizontal");
 
   items[0]!.fire("keydown", { key: "ArrowRight" });
   assert.deepEqual(items.map((b) => b.getAttribute("tabindex")), ["-1", "0"]);

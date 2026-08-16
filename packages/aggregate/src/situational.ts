@@ -132,7 +132,7 @@ export function computeSrc(
   }
 
   for (const e of acc.values()) {
-    e.srcPer600 = e.pa === 0 ? null : (e.src / e.pa) * 600;
+    e.srcPer600 = srcPer600Of(e.src, e.pa);
   }
   return [...acc.values()];
 }
@@ -283,7 +283,7 @@ export function computeSrp(
   }
 
   for (const e of acc.values()) {
-    e.srpPer9 = e.outs === 0 ? null : (e.srp * 27) / e.outs;
+    e.srpPer9 = srpPer9Of(e.srp, e.outs);
   }
   return [...acc.values()];
 }
@@ -293,4 +293,52 @@ export function missingStates(re: RunExpectancy, states: Iterable<{ bases: strin
   let n = 0;
   for (const s of states) if (!re.matrix.has(stateKey(s.bases, s.outs))) n += 1;
   return n;
+}
+
+/**
+ * 600타석 환산 SRC. ⚠**여기가 유일한 정의다**(M1).
+ *
+ * 리그를 넘어 이적한 선수는 리그별로 잰 SRC를 **더한 뒤** 이 함수를 다시 통과시킨다 —
+ * 리그별로 낸 환산값을 더하면 분모가 두 번 세어진다.
+ */
+export function srcPer600Of(src: number, pa: number): number | null {
+  return pa === 0 ? null : (src / pa) * 600;
+}
+
+/** 9이닝 환산 SRP. 분모는 **아웃**이지 상대 타자 수가 아니다 */
+export function srpPer9Of(srp: number, outs: number): number | null {
+  return outs === 0 ? null : (srp * 27) / outs;
+}
+
+/** 리그별로 잰 SRC의 합계. 환산값(`srcPer600`)은 합친 **뒤에** 낸다 */
+export interface SrcTotals {
+  src: number;
+  pa: number;
+  skipped: number;
+}
+
+/** 리그별로 잰 SRP의 합계. 9이닝 환산의 분모는 아웃이므로 함께 든다 */
+export interface SrpTotals {
+  srp: number;
+  bf: number;
+  skipped: number;
+  outs: number;
+}
+
+/**
+ * ⚠**리그를 넘어도 더한다. 덮어쓰지 않는다.**
+ *
+ * SRC는 그 리그의 득점기대 행렬로 잰 **런 수**라, 리그가 달라도 단위가 같고 더하는 것이 맞다.
+ * 덮어쓰면 리그를 넘어 이적한 선수의 **절반이 조용히 사라진다**(2026-08-16 이중 검토 P0).
+ */
+export function addSrc(a: SrcTotals | undefined, b: SrcTotals): SrcTotals {
+  return a === undefined
+    ? { src: b.src, pa: b.pa, skipped: b.skipped }
+    : { src: a.src + b.src, pa: a.pa + b.pa, skipped: a.skipped + b.skipped };
+}
+
+export function addSrp(a: SrpTotals | undefined, b: SrpTotals): SrpTotals {
+  return a === undefined
+    ? { srp: b.srp, bf: b.bf, skipped: b.skipped, outs: b.outs }
+    : { srp: a.srp + b.srp, bf: a.bf + b.bf, skipped: a.skipped + b.skipped, outs: a.outs + b.outs };
 }

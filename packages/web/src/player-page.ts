@@ -447,7 +447,12 @@ function idLine(d: PlayerPageData): RawHtml {
       ? null
       : html`<span class="stint">${d.stints
           .map((t) => `${t.teamName}${t.games}試合`)
-          .join(" → ")}</span>`}
+          .join(" → ")}<em>${
+            // ⚠**수가 두 종류인 이유를 여기서 말한다.** 이 줄의 존재 이유가 그것이다.
+            // 아래 성적은 시즌 합계이고 順位는 소속 리그에서 낸 몫으로만 매긴다(NPBの規定) —
+            // 적지 않으면 「어느 쪽이 맞지?」가 된다
+            `成績は今季の合計。順位は${d.stints.at(-1)!.leagueName}での${d.stints.at(-1)!.sampleText}で計算`
+          }</em></span>`}
   </div>
   ${sparkline(d.spark, d.sparkLabel)}
 </header>

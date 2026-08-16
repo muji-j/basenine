@@ -312,3 +312,24 @@ test("through 를 넘긴 날은 목록에 없다 — 「7월 말 기준」 빌�
     assert.deepEqual(gameDates(db, 2026, "2026-08-13"), []);
   });
 });
+
+/**
+ * ⚠**`latestGameDate`와 `gameDates`는 같은 계약이어야 한다.**
+ * 한쪽만 대회를 고정해 두면, 대회를 바꿔 빌드했을 때 「최신 경기일」이 날짜 목록에 없는 날이 되어
+ * 앞뒤 이동이 통째로 사라지고 그 화면이 빈 채로 나간다(2026-08-16 이중 검토 P2).
+ */
+test("최신 경기일도 대회를 인자로 받는다 — 날짜 목록과 규칙이 어긋나지 않는다", async () => {
+  await withDb((db) => {
+    game(db);
+    upsertGame(db, {
+      gameId: "cs3", season: 2026, gameDate: "2026-10-11",
+      awayCode: "g", homeCode: "db", gameNo: 1,
+      status: "played", notPlayedReason: null, competition: "climaxSeries",
+      sourceUrl: "https://npb.jp/z", fetchedAt: NOW,
+    });
+    assert.equal(latestGameDate(db, 2026, "9999-12-31", "climaxSeries"), "2026-10-11");
+    // 그 대회의 날짜 목록에 반드시 들어 있어야 한다 — 없으면 앞뒤 이동이 끊긴다
+    const days = gameDates(db, 2026, "9999-12-31", "climaxSeries").map((d) => d.date);
+    assert.ok(days.includes(latestGameDate(db, 2026, "9999-12-31", "climaxSeries")!));
+  });
+});

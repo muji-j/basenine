@@ -115,8 +115,8 @@ export interface SeasonAggregate {
 
 /**
  * 선수의 소속 구단은 `game`의 원정/홈 코드와 `side`로 정해진다.
- * ⚠**한 시즌에 이적하면 두 팀 행이 생긴다.** 지금은 **출장이 가장 많은 팀**을 소속으로 본다 —
- * 이 규칙을 코드에만 두지 않고 여기 적어둔다.
+ * ⚠**한 시즌에 이적하면 두 팀 행이 생긴다.** 소속은 **가장 최근에 뛴 팀**이다
+ * (출장 수가 아니다 — `mergeByPlayer` 참조). 이 규칙을 코드에만 두지 않고 여기 적어둔다.
  */
 const TEAM_EXPR = `CASE b.side WHEN 'away' THEN g.away_code ELSE g.home_code END`;
 
@@ -272,12 +272,17 @@ function mergeByPlayer<T extends Keyed>(
    * 실측(2026): 山本는 DeNA 28경기 · ソフトバンク 27경기라 출장 기준으로는 DeNA가 되는데,
    * **지금 뛰는 곳은 ソフトバンク**다. 「소속」은 통계적 편의가 아니라 현재 상태다.
    * 날짜가 같으면(더블헤더 중 이적 같은 비현실적 경우) 출장이 많은 쪽으로 간다.
+   * ⚠**그것도 같으면 구단 코드로 가른다.** SQL에 `ORDER BY`가 없어 그룹 산출 순서에 기대게 되고,
+   * 인덱스나 데이터가 바뀌면 소속이 조용히 뒤집힌다(2026-08-16 이중 검토 P2).
    */
   const primary = new Map<string, T>();
   for (const r of rows) {
     const cur = primary.get(keyOf(r));
     const newer =
-      cur === undefined || r.lastDate > cur.lastDate || (r.lastDate === cur.lastDate && r.games > cur.games);
+      cur === undefined ||
+      r.lastDate > cur.lastDate ||
+      (r.lastDate === cur.lastDate &&
+        (r.games > cur.games || (r.games === cur.games && r.teamCode < cur.teamCode)));
     if (newer) primary.set(keyOf(r), r);
   }
   const merged = new Map<string, T>();
@@ -285,6 +290,8 @@ function mergeByPlayer<T extends Keyed>(
     const acc = merged.get(keyOf(r));
     merged.set(keyOf(r), acc === undefined ? r : sum(acc, r));
   }
+  // ⚠**리그 필드는 여기서 만들지 않는다.** 호출자의 매퍼(`toBatting`/`toPitching`)가
+  // 이 뒤에 `leagueOf(teamCode)`로 도출하므로, 여기서 또 정하면 두 벌이 된다(M1)
   return [...merged.values()].map((r) => ({ ...r, teamCode: primary.get(keyOf(r))!.teamCode }));
 }
 

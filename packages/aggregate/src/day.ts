@@ -317,13 +317,20 @@ export function gameDates(
   return rows.map((r) => ({ date: r.date, scheduled: r.scheduled, played: r.played }));
 }
 
-export function latestGameDate(db: Db, season: number, through = "9999-12-31"): string | null {
+export function latestGameDate(
+  db: Db,
+  season: number,
+  through = "9999-12-31",
+  // ⚠**`gameDates`와 같은 계약이어야 한다.** 여기만 'regular'로 박아 두면, 대회를 바꿔 빌드했을 때
+  // 「최신 경기일」이 날짜 목록에 없는 날이 되어 앞뒤 이동이 통째로 사라진다(2026-08-16 이중 검토 P2)
+  competition = "regular",
+): string | null {
   // ⚠**`status`로 거르지 않는다.** 이 함수의 존재 이유가 그것이다 —
   // 신선도(`asOf`)는 실시 기준이 맞지만, 「어제 무슨 일이 있었나」는 중지도 포함해야 한다
   const row = db.raw
     .prepare(
-      `SELECT MAX(game_date) AS d FROM game WHERE season = ? AND game_date <= ? AND competition = 'regular'`,
+      `SELECT MAX(game_date) AS d FROM game WHERE season = ? AND game_date <= ? AND competition = ?`,
     )
-    .get(season, through) as unknown as { d: string | null } | undefined;
+    .get(season, through, competition) as unknown as { d: string | null } | undefined;
   return row?.d ?? null;
 }

@@ -8,9 +8,12 @@ export type {
 } from "./season.ts";
 export {
   battingEntries,
+  battingEntryOf,
+  blendConstants,
   buildLeagues,
   entriesOfRole,
   pitchingEntries,
+  pitchingEntryOf,
   qualifyingOuts,
   rankBatters,
   rankPitchers,
@@ -19,8 +22,8 @@ export {
 export type { BattingEntry, LeagueBundle, PitchingEntry } from "./leaderboard.ts";
 export { ALL_STATES, buildRunExpectancy, paValue, stateKey } from "./run-expectancy.ts";
 export type { RunExpectancy, StateKey } from "./run-expectancy.ts";
-export { computeSrc, computeSrp, missingStates } from "./situational.ts";
-export type { SrcEntry, SrpEntry } from "./situational.ts";
+export { addSrc, addSrp, computeSrc, computeSrp, missingStates, srcPer600Of, srpPer9Of } from "./situational.ts";
+export type { SrcEntry, SrcTotals, SrpEntry, SrpTotals } from "./situational.ts";
 export { battingSplits, matchups, pitchingSplits } from "./splits.ts";
 export type { Matchup, PlayerSplits, SplitDimension, SplitLine } from "./splits.ts";
 export {

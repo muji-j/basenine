@@ -405,6 +405,8 @@ ${dayBar(base, d)}
     freshness: ctx.freshness,
     site: ctx.site,
     nav: "today",
+    // 試合 구획에 있지만 이 문서는 today.html 이 아니다
+    navExact: false,
     body,
   });
 }
@@ -466,6 +468,7 @@ ${d.days.length === 0
     freshness: ctx.freshness,
     site: ctx.site,
     nav: "today",
+    navExact: false,
     body,
   });
 }

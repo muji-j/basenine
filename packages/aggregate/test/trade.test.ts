@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb, upsertBatting, upsertGame, upsertPitching, upsertPlayer } from "@bb-app/store";
 import type { BattingRow, Db } from "@bb-app/store";
-import { aggregateSeason, buildLeagues } from "../src/index.ts";
+import { addSrc, addSrp, aggregateSeason, buildLeagues, srcPer600Of, srpPer9Of } from "../src/index.ts";
 
 const NOW = "2026-08-16T00:00:00.000Z";
 
@@ -165,4 +165,56 @@ test("순위표는 리그별로 나눈 쪽을 쓴다 — 양쪽 리그에 각각
       assert.equal(rows[0]!.line.pa, bundle.league === "central" ? 8 : 4, `${bundle.league}에 합계가 실렸다`);
     }
   });
+});
+
+/**
+ * ⚠**날짜도 출장 수도 같으면 무엇으로 가르는가** — 구단 코드로 가른다.
+ *
+ * ⚠**이 규칙에는 시험을 붙이지 않았고, 그 이유를 적어 둔다.**
+ * 시험을 써 봤더니 **고치기 전 코드에서도 통과했다** — SQLite의 `GROUP BY`가
+ * 사실상 키 순서로 돌려주므로 「먼저 온 행이 남는다」와 「구단 코드가 작은 쪽이 남는다」가
+ * 이 경로에서는 같은 답을 낸다. 통과하든 말든 상관없는 시험을 남기는 것은
+ * 「무의미하게 통과하는 시험」을 하나 더 만드는 일이라 넣지 않았다.
+ * 규칙 자체는 남긴다 — 인덱스나 쿼리가 바뀌면 순서 의존이 드러나기 때문이다.
+ */
+
+/**
+ * 리그별로 잰 SRC·SRP를 **더한다.**
+ *
+ * ⚠**덮어쓰면 리그를 넘어 이적한 선수의 절반이 조용히 사라진다**(2026-08-16 이중 검토 P0).
+ * SRC는 그 리그의 득점기대 행렬로 잰 **런 수**라 리그가 달라도 단위가 같다 — 더하는 것이 맞다.
+ * ⚠**환산값은 여기서 내지 않는다.** 리그별로 낸 600타석 환산을 더하면 분모가 두 번 세어진다.
+ */
+test("리그별 SRC를 더한다 — 나중 리그가 앞의 것을 지우지 않는다", () => {
+  const cl = { src: 3.5, pa: 105, skipped: 2 };
+  const pl = { src: -1.25, pa: 97, skipped: 1 };
+  assert.deepEqual(addSrc(addSrc(undefined, cl), pl), { src: 2.25, pa: 202, skipped: 3 });
+  // 한 리그뿐이면 그대로다
+  assert.deepEqual(addSrc(undefined, cl), cl);
+});
+
+test("리그별 SRP도 더하고, 9이닝 환산의 분모(아웃)를 함께 든다", () => {
+  const a = { srp: 2, bf: 100, skipped: 1, outs: 72 };
+  const b = { srp: -0.5, bf: 40, skipped: 0, outs: 30 };
+  assert.deepEqual(addSrp(addSrp(undefined, a), b), { srp: 1.5, bf: 140, skipped: 1, outs: 102 });
+});
+
+test("⚠환산은 합계에서 한 번만 낸다 — 리그별 환산을 더하면 분모가 두 번 세어진다", () => {
+  // 105타석 3.5런 + 97타석 -1.25런 = 202타석 2.25런
+  const total = addSrc(addSrc(undefined, { src: 3.5, pa: 105, skipped: 0 }), { src: -1.25, pa: 97, skipped: 0 });
+  const right = srcPer600Of(total.src, total.pa)!;
+  const wrong = srcPer600Of(3.5, 105)! + srcPer600Of(-1.25, 97)!;
+  assert.ok(Math.abs(right - (2.25 / 202) * 600) < 1e-9);
+  assert.ok(Math.abs(right - wrong) > 1, `분모를 두 번 센 값(${wrong})과 구별되지 않는다`);
+});
+
+test("아웃이 0이면 9이닝 환산은 null이다 — 0으로 때우지 않는다(M11)", () => {
+  assert.equal(srpPer9Of(0, 0), null);
+  assert.equal(srcPer600Of(0, 0), null);
+});
+
+test("9이닝 환산의 분모는 아웃 27개다 — 이닝도 타자 수도 아니다", () => {
+  // 54아웃 = 18이닝. 2런을 막았으면 9이닝당 1런이다
+  assert.equal(srpPer9Of(2, 54), 1);
+  assert.equal(srcPer600Of(3, 300), 6);
 });

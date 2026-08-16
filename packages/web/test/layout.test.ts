@@ -11,6 +11,8 @@ import {
   stateNote,
 } from "../src/layout.ts";
 import { NEUTRAL_COLOR } from "@bb-app/domain";
+import { renderTodayPage } from "../src/today-page.ts";
+import { context } from "./fixtures.ts";
 import { html } from "../src/html.ts";
 
 test("신선도는 경기일과 생성일의 간격으로 정해진다", () => {
@@ -93,4 +95,28 @@ test("페이지는 구단 색을 CSS 변수로만 싣는다", () => {
 
 test("검색 엔진에 올리지 않는다 — S1은 지인한정이다", () => {
   assert.match(render(""), /name="robots" content="noindex, nofollow"/);
+});
+
+/**
+ * ⚠**스크립트가 없으면 탭은 조작이 아니라 벽이다.**
+ * 탭 패널은 첫 장만 열어 두고 나머지를 `hidden`으로 내보내므로, 여는 수단이 사라지면
+ * 그 내용에 **도달할 방법이 아예 없다.** 2026-08-16에 실제로 걸렸다 —
+ * 順位를 チーム/個人으로 나눈 순간 개인 타이틀 전체가 JS 없이는 닿을 수 없게 됐다.
+ */
+test("스크립트가 없으면 닫힌 탭 패널을 전부 펼친다 — 길어지는 것이 닿지 못하는 것보다 낫다", () => {
+  const out = renderTodayPage(
+    {
+      gameDate: "2026-08-14", builtOn: "2026-08-16", games: [], probableDate: null,
+      probables: [], starRule: "x", starLimit: 6, prev: null, dayCount: 1,
+    },
+    context(),
+  );
+  const at = out.indexOf("<noscript>");
+  assert.ok(at > 0, "noscript 폴백이 없다");
+  assert.ok(at < out.indexOf("</head>"), "폴백이 head 밖에 있다");
+  assert.match(
+    out.slice(at, at + 200),
+    /\[data-panelgroup\]\[hidden\]\{display:block!important\}/,
+    "닫힌 탭 패널을 펼치는 규칙이 아니다",
+  );
 });

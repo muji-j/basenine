@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { batterPick, pitcherPick, renderMatchupPage, unseenPitcherPick } from "../src/pages.ts";
 import type { MatchupPageData, MatchupPick, MatchupTeam } from "../src/pages.ts";
 import { colorOf, shortNameOf, teamOf } from "@bb-app/domain";
-import { context } from "./fixtures.ts";
+import { context, pastSeasonContext } from "./fixtures.ts";
 
 function pick(name: string, usage: string, probable = false): MatchupPick {
   return { playerId: `P_${name}`, name, usage, probable };
@@ -115,8 +115,13 @@ test("빠른 선택은 세는 값만 받는 입구를 지난다", () => {
 
 test("긴 목록은 묶음이라고 말하고, 어느 팀의 무엇인지도 말한다", () => {
   const out = renderMatchupPage(data(), context());
-  const labels = [...out.matchAll(/class="picklist" role="group" aria-label="([^"]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(labels, ["ヤクルトの投手", "ヤクルトの打者", "DeNAの投手", "DeNAの打者"]);
+  const labels = [...out.matchAll(/class="picklist" role="toolbar"[\s\S]{0,60}?aria-label="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(labels, [
+    "ヤクルトの投手（左右キーで移動）",
+    "ヤクルトの打者（左右キーで移動）",
+    "DeNAの投手（左右キーで移動）",
+    "DeNAの打者（左右キーで移動）",
+  ]);
 });
 
 test("고른 것과 실행 버튼은 한 자리에 붙어 있다 — 목록이 길어도 화면에서 사라지지 않는다", () => {
@@ -161,4 +166,22 @@ test("버튼이 넘기는 값은 검색 색인과 같은 모양이다 — 뒤가
   assert.match(btn, /data-n="村上"/);
   assert.match(btn, /data-t="東京ヤクルトスワローズ"/, "구단 표기가 검색 색인과 다르다");
   assert.match(btn, /aria-pressed="false"/, "눌림 상태를 말하지 않는다");
+});
+
+/**
+ * ⚠**끝난 시즌에서 「いま投げている投手を選ぶと」는 거짓말이다.**
+ * 그 시즌에 진행 중인 경기는 없다. 시즌 전환 띠로 실제로 갈 수 있는 화면이라 눈에 띈다.
+ */
+test("끝난 시즌의 対戦 화면은 「지금 던지고 있는 투수」라고 말하지 않는다", () => {
+  const out = renderMatchupPage(
+    data({ season: 2025, pickDate: null, games: [] }),
+    pastSeasonContext(["matchup.html"]),
+  );
+  assert.ok(!out.includes("いま投げている投手"), "끝난 시즌에 진행 중인 경기가 있는 것처럼 말했다");
+  assert.match(out, /2025年は終了したシーズンです/);
+});
+
+test("진행 중인 시즌에서는 지금까지대로 말한다", () => {
+  const out = renderMatchupPage(data(), context());
+  assert.match(out, /いま投げている投手/);
 });
