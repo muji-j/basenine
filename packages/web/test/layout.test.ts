@@ -120,3 +120,39 @@ test("스크립트가 없으면 닫힌 탭 패널을 전부 펼친다 — 길어
     "닫힌 탭 패널을 펼치는 규칙이 아니다",
   );
 });
+
+const shell = (): string =>
+  renderTodayPage(
+    {
+      gameDate: "2026-08-14", builtOn: "2026-08-16", games: [], probableDate: null,
+      probables: [], starRule: "x", starLimit: 6, prev: null, dayCount: 1,
+    },
+    context(),
+  );
+
+/**
+ * ⚠**구단 로고를 쓰지 않는다**(§6). 로고는 상표이고, 「사실은 저작물이 아니다」의 논리가
+ * 거기까지 닿지 않는다. 탭 아이콘도 **우리가 그린 것**이어야 한다.
+ */
+test("탭 아이콘은 우리가 그린 도형이고 자산으로 나간다", () => {
+  const out = shell();
+  assert.match(out, /<link rel="icon" href="assets\/icon\.svg" type="image\/svg\+xml">/);
+  assert.ok(!out.includes("npb.jp/img"), "외부 이미지를 참조했다");
+});
+
+test("주소창 색을 라이트·다크 양쪽으로 준다 — 한쪽만 주면 반대 테마에서 어긋난다", () => {
+  const out = shell();
+  assert.match(out, /theme-color" content="#fbfaf7" media="\(prefers-color-scheme: light\)"/);
+  assert.match(out, /theme-color" content="#15161a" media="\(prefers-color-scheme: dark\)"/);
+});
+
+/**
+ * ⚠**지금 이 카드는 보이지 않는다.** 사이트가 Cloudflare Access 뒤에 있어 링크를 펼치는 쪽은
+ * 로그인 화면을 받는다. 공개 전환(S2) 시점에 비로소 효과가 생긴다 — 그때 잊지 않으려고 지금 넣는다.
+ */
+test("링크 카드 정보를 싣는다 — 제목은 페이지 제목과 같다", () => {
+  const out = shell();
+  assert.match(out, /property="og:title" content="試合 — 2026年8月14日"/);
+  assert.match(out, /property="og:site_name" content="bb-app"/);
+  assert.match(out, /property="og:locale" content="ja_JP"/);
+});

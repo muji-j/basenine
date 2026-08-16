@@ -154,6 +154,13 @@ export function renderIndexPage(d: IndexPageData, ctx: RenderContext): string {
         style="--chip:${t.color.base};--chip-ink:${t.color.ink}">${t.shortName}</button>`,
     )}
   </div>
+  <!-- ⚠**계정 없이 되는 것만 만든다**(§0-1). 이 표시는 이 브라우저에만 남고 서버로 가지 않는다.
+       ⚠**서버는 즐겨찾기를 모른다.** 그래서 이 버튼은 스크립트가 있을 때만 뜻이 있고,
+       스크립트가 없으면 목록은 전 선수 그대로다 — 좁히기가 사라질 뿐 잃는 것이 없다 -->
+  <div class="chips" role="group" aria-label="お気に入りでしぼる">
+    <button class="chip fav" type="button" id="favOnly" aria-pressed="false" hidden>
+      <i aria-hidden="true">★</i>お気に入り<s id="favCount"></s></button>
+  </div>
   <p class="count"><span id="rosterCount">${d.playerCount}人</span>を表示中</p>
 </section>
 
@@ -168,7 +175,7 @@ ${d.teams.map(
         color: t.color,
         positionMark: p.mark,
       };
-      return html`<li data-team="${t.code}" data-name="${p.name}">
+      return html`<li data-team="${t.code}" data-name="${p.name}" data-id="${p.playerId}">
       <a href="${base}players/${p.playerId}.html">
         <span class="mkline">${isEmptyProfile(p.axes)
           ? markLetter(who, p.mark === "" ? "—" : p.mark, 18)
@@ -650,7 +657,7 @@ export interface MatchupPageData {
  * 근거: `docs/decisions/2026-08-15-live-matchup-feasibility.md`
  */
 /** 빠른 선택 버튼 한 줄. `data-*`는 검색 색인과 **같은 모양**이라 이후 처리가 하나로 이어진다 */
-function pickButton(p: MatchupPick, role: "pitcher" | "batter", team: MatchupTeam): RawHtml {
+export function pickButton(p: MatchupPick, role: "pitcher" | "batter", team: MatchupTeam): RawHtml {
   return html`<button class="pk" type="button" aria-pressed="false"
     data-pick="${role}" data-i="${p.playerId}" data-n="${p.name}" data-t="${team.name}">${p.name}<s>${p.usage}</s>${
     p.probable ? html`<em>予告</em>` : null
@@ -665,7 +672,7 @@ function pickButton(p: MatchupPick, role: "pitcher" | "batter", team: MatchupTea
  * ⚠**자른 목록을 만들지 않는다.** 대타·중간계투가 잘려 나가면 「내가 찾는 사람이 없다」가 되고,
  * 그 순간 이 기능은 없는 것과 같아진다. 대신 상자 안에서 스크롤한다.
  */
-function pickTeam(t: MatchupTeam): RawHtml {
+export function pickTeam(t: MatchupTeam): RawHtml {
   const list = (label: string, role: "pitcher" | "batter", picks: MatchupPick[]): RawHtml =>
     picks.length === 0
       ? html`<p class="picklab">${label}</p><p class="empty">今季の記録がありません。</p>`
@@ -717,6 +724,17 @@ export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): strin
     <button class="go" type="button" id="pickGo" disabled>対戦成績を見る</button>
   </div>
 
+  <!-- ⚠**이름 검색을 접지 않는다.** 한때 details 로 접었다가 되돌렸다 —
+       버튼은 「오늘 대전하는 두 팀」만 담으므로, 그 밖의 선수를 찾는 길이 **접힌 채로 있으면
+       없는 것과 같다.** 두 길을 나란히 두고, 둘 다 같은 선택 상태(위의 띠)로 모인다. -->
+  <div class="pickfind">
+    <p class="picklab">名前でさがす<s>どの選手でも</s></p>
+    <div class="picker">
+      ${side("Pitcher", "投手", "例：山本")}
+      ${side("Batter", "打者", "例：佐藤")}
+    </div>
+  </div>
+
   ${d.games.length === 0
     ? raw("")
     : html`<div id="pickToday">
@@ -734,14 +752,6 @@ export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): strin
     )}
   </div>`}
 
-  <details class="pickfind"${d.games.length === 0 ? raw(" open") : raw("")}>
-    <summary>名前でさがす</summary>
-    <div class="picker">
-      ${side("Pitcher", "投手", "例：山本")}
-      ${side("Batter", "打者", "例：佐藤")}
-    </div>
-  </details>
-
   ${note(
     (past
       ? `${d.season}年は終了したシーズンです。投手と打者を選ぶと、そのシーズンの対戦成績（と打者のスプリット）が開きます。`
@@ -749,9 +759,10 @@ export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): strin
         "その二人のこれまでの対戦成績（と打者のスプリット）が開きます。") +
       (d.games.length === 0
         ? past
-          ? "このシーズンの予告先発は記録していないため、名前でさがす形になっています。"
-          : "予告先発がまだ発表されていないため、名前でさがす形になっています。"
-        : "ボタンに出しているのは今季その球団で記録のある選手です。並びは出場の多い順で、数字は打席数・投球回です。"),
+          ? "このシーズンの予告先発は記録していないため、名前でさがす形だけになっています。"
+          : "予告先発がまだ発表されていないため、名前でさがす形だけになっています。"
+        : "ボタンに出しているのは今季その球団で記録のある選手です。並びは出場の多い順で、数字は打席数・投球回です。" +
+          "そこにいない選手は上の「名前でさがす」から選べます。"),
   )}
 </section>
 
@@ -792,6 +803,14 @@ export interface SearchEntry {
   n: string;
   /** team */
   t: string;
+  /**
+   * summary — 대표 성적 한 줄.
+   *
+   * ⚠**분모를 반드시 붙인다**(M2). 검색창에서 「이 사람이 맞나」를 판단하려고 보는 값인데,
+   * 10타석 .400과 400타석 .400을 구별하지 못하면 판단을 돕는 대신 오해를 만든다.
+   * 성적이 없으면 넣지 않는다 — 「0」이 아니라 「없다」이므로 필드 자체를 뺀다(M11).
+   */
+  s?: string;
 }
 
 export function searchIndexJson(entries: readonly SearchEntry[]): string {

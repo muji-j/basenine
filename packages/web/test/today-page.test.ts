@@ -297,12 +297,13 @@ test("予告先発 카드도 카드 전체가 눌리고, 그 경기 구획으로
 test("試合 화면에서 지난 날짜로 거슬러 갈 수 있다 — 다음 날은 없다", () => {
   const out = renderTodayPage(data(), context());
   assert.match(out, /href="days\/2026-08-13\.html"/, "앞 경기일로 가는 길이 없다");
-  assert.match(out, /前の試合日<s>2026年8月13日<\/s>/);
-  assert.match(out, /<span class="daystep n off">次の試合日<\/span>/, "최신인데 다음 날 링크가 있다");
+  assert.match(out, /<i aria-hidden="true">←<\/i>前の試合日<\/span><s>2026年8月13日<\/s>/);
+  assert.match(out, /<span class="daystep n off">[\s\S]{0,60}?次の試合日/, "최신인데 다음 날 링크가 있다");
+  assert.ok(!/<a class="daystep n"/.test(out), "최신인데 다음 날 링크가 있다");
   assert.match(out, /href="days\.html">日付をえらぶ<s>104日<\/s>/, "날짜 일람으로 가는 길이 없다");
 });
 
 test("앞 경기일이 없으면(시즌 첫날) 그쪽도 링크가 아니다", () => {
   const out = renderTodayPage(data({ prev: null }), context());
-  assert.match(out, /<span class="daystep p off">前の試合日<\/span>/);
+  assert.match(out, /<span class="daystep p off">[\s\S]{0,60}?前の試合日/);
 });

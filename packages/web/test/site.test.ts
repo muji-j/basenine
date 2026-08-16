@@ -64,6 +64,7 @@ test("사이트는 정해진 파일 집합을 만든다", () => {
   const out = buildSite(siteData(), SITE, "2026-08-15");
   const paths = out.files.map((f) => f.path).sort();
   assert.deepEqual(paths, [
+    "assets/icon.svg",
     "assets/site.css",
     "assets/site.js",
     "compare.html",

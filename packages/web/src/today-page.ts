@@ -156,11 +156,21 @@ function dayBar(
   base: string,
   o: { prev: string | null; next: string | null; latestDate: string | null; dayCount: number },
 ): RawHtml {
-  const step = (date: string | null, label: string, cls: string): RawHtml =>
-    date === null
-      ? html`<span class="daystep ${cls} off">${label}</span>`
+  // ⚠**방향을 애니메이션이 아니라 형태로 낸다.** 앞뒤 이동은 문서가 바뀌는 이동이라
+  // 화면 전환으로 방향을 말하려면 브라우저를 가린다. 화살표는 어디서나 보이고 인쇄에도 남는다
+  const step = (date: string | null, label: string, cls: string): RawHtml => {
+    const arrow = cls === "p" ? "←" : "→";
+    // ⚠**화살표와 라벨을 한 줄로 묶는다.** daystep 은 세로 flex라 묶지 않으면
+    // 화살표가 라벨 위 줄로 올라간다(2026-08-16 실물에서 확인)
+    const body =
+      cls === "p"
+        ? html`<span class="dayrow"><i aria-hidden="true">${arrow}</i>${label}</span>`
+        : html`<span class="dayrow">${label}<i aria-hidden="true">${arrow}</i></span>`;
+    return date === null
+      ? html`<span class="daystep ${cls} off">${body}</span>`
       : html`<a class="daystep ${cls}" href="${dayHref(base, date, o.latestDate)}"
-          >${label}<s>${fullDate(date)}</s></a>`;
+          >${body}<s>${fullDate(date)}</s></a>`;
+  };
   return html`<nav class="daybar" aria-label="日付">
   ${step(o.prev, "前の試合日", "p")}
   <a class="daypick" href="${base}days.html">日付をえらぶ<s>${o.dayCount}日</s></a>

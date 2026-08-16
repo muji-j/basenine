@@ -354,6 +354,19 @@ export function page(o: PageOptions): string {
 <title>${o.title}</title>
 <meta name="robots" content="noindex, nofollow">
 <meta name="color-scheme" content="light dark">
+<!-- 탭 아이콘·주소창 색. **우리가 그린 도형**이고 구단 로고가 아니다(§6) -->
+<link rel="icon" href="${o.root}assets/icon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#fbfaf7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#15161a" media="(prefers-color-scheme: dark)">
+<!-- ⚠**지금은 이 카드가 보이지 않는다.** 사이트가 Cloudflare Access 뒤에 있어
+     링크를 펼치는 쪽은 로그인 화면을 받는다. 공개 전환(S2) 시점에 비로소 효과가 생긴다 -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="${o.site.name}">
+<meta property="og:locale" content="ja_JP">
+<meta property="og:title" content="${o.title}">
+<!-- ⚠**화면별 설명을 받는 자리를 만들었다가 뺐다.** 부르는 곳이 하나도 없어서
+     「나중에 쓰겠지」로 남는 죽은 선택지가 됐다 — 필요해지면 그때 만든다 -->
+<meta property="og:description" content="NPBの公表記録から再計算した選手成績・順位・対戦成績。">
 <link rel="stylesheet" href="${o.root}assets/site.css">
 <!-- ⚠**스크립트가 없으면 탭은 조작이 아니라 벽이다.**
      탭 패널은 첫 장만 열어 두고 나머지를 hidden으로 내보내는데, 스크립트가 없으면

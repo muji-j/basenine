@@ -4,7 +4,7 @@
  * ⚠**파일을 쓰지 않는다.** 경로와 내용의 쌍을 돌려줄 뿐이고, 실제 쓰기는 `tools/build.ts`가 한다.
  * 그래야 「무엇이 만들어지는가」를 디스크 없이 테스트할 수 있다.
  */
-import { CLIENT_JS, CSS } from "./assets.ts";
+import { CLIENT_JS, CSS, ICON_SVG } from "./assets.ts";
 import {
   renderIndexPage,
   renderMatchupPage,
@@ -99,6 +99,7 @@ export function buildSite(
       ? [
           { path: "assets/site.css", content: CSS },
           { path: "assets/site.js", content: CLIENT_JS },
+          { path: "assets/icon.svg", content: ICON_SVG },
         ]
       : []),
     { path: at("today.html"), content: renderTodayPage(data.today, ctx) },
@@ -113,7 +114,18 @@ export function buildSite(
     },
     {
       path: at("compare.html"),
-      content: renderComparePage({ season: data.season, asOf: data.asOf }, ctx),
+      // ⚠**대전 화면과 같은 데이터를 쓴다**(M1) — 두 화면이 각자 만들면
+      // 「같은 날인데 나오는 선수가 다르다」가 된다
+      content: renderComparePage(
+        {
+          season: data.season,
+          asOf: data.asOf,
+          pickDate: data.matchup.pickDate,
+          builtOn: data.matchup.builtOn,
+          games: data.matchup.games,
+        },
+        ctx,
+      ),
     },
     { path: at("players.json"), content: searchIndexJson(data.search) },
   ];

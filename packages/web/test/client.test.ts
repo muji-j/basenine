@@ -157,7 +157,7 @@ function buildPage(): ReturnType<typeof makeDocument> {
 interface RunOptions {
   storage?: Storage;
   /** `players.json`의 내용. 주지 않으면 취득 실패로 다룬다 */
-  index?: { i: string; n: string; t: string }[];
+  index?: { i: string; n: string; t: string; s?: string }[];
   /** `location` 대역. `?vs=` 처리와 `#앵커` 처리를 보려면 필요하다 */
   location?: { search: string; href: string; hash?: string };
 }
@@ -1111,4 +1111,299 @@ test("대전이 없는 조합이면 빈 표가 아니라 그렇다고 말한다(
   run(doc, { location: { search: `?vs=${encodeURIComponent("存在しない投手")}`, href: "" } });
   assert.equal(doc.getElementById("matchupCount")!.textContent, "0件");
   assert.equal(doc.getElementById("matchupEmpty")!.hidden, false);
+});
+
+// ─── 즐겨찾기 ───────────────────────────────────────────────────────────
+
+/**
+ * ⚠**계정 없이 되는 것만 만든다**(§0-1). 서버는 즐겨찾기를 모르고, 표시는 이 브라우저에만 남는다.
+ * ⚠**서버가 그린 목록의 순서를 바꾸지 않는다.** 순서를 바꾸면 「내 선수가 어디 갔지」가 되고,
+ * 명감의 배열이 무너진다 — 표식과 좁히기만 얹는다.
+ */
+function buildRoster(): ReturnType<typeof makeDocument> {
+  const doc = makeDocument();
+  const main = make("div", { class: "main" });
+  doc.body.appendChild(main);
+
+  const find = make("section", { class: "find" });
+  find.appendChild(make("input", { id: "rosterFilter", type: "search" }));
+  const chips = make("div", { class: "chips" });
+  for (const code of ["t", "g"]) {
+    chips.appendChild(make("button", { class: "chip", "data-team": code, "aria-pressed": "false" }));
+  }
+  find.appendChild(chips);
+  const fav = make("button", { class: "chip fav", id: "favOnly", "aria-pressed": "false" });
+  fav.hidden = true;
+  find.appendChild(fav);
+  find.appendChild(make("s", { id: "favCount" }));
+  find.appendChild(make("span", { id: "rosterCount" }));
+  main.appendChild(find);
+
+  for (const [code, ids] of [["t", ["p1", "p2"]], ["g", ["p3"]]] as [string, string[]][]) {
+    const g = make("section", { class: "teamgroup" });
+    const ul = make("ul", { class: "roster" });
+    for (const id of ids) {
+      ul.appendChild(make("li", { "data-team": code, "data-name": id, "data-id": id }));
+    }
+    g.appendChild(ul);
+    main.appendChild(g);
+  }
+  return doc;
+}
+
+/** 선수 페이지의 즐겨찾기 버튼만 있는 최소 문서 */
+function buildFavBtn(id = "p1"): ReturnType<typeof makeDocument> {
+  const doc = makeDocument();
+  const b = make("button", { class: "favbtn", id: "favBtn", "data-fav": id, "aria-pressed": "false" });
+  b.hidden = true;
+  doc.body.appendChild(b);
+  return doc;
+}
+
+test("즐겨찾기는 이 브라우저에만 남는다 — 저장되고 다시 열어도 살아 있다", () => {
+  const storage = makeStorage();
+  const first = buildFavBtn();
+  run(first, { storage });
+  const btn = first.getElementById("favBtn")!;
+  assert.equal(btn.hidden, false, "스크립트가 있는데 버튼이 숨겨진 채다");
+  assert.equal(btn.getAttribute("aria-pressed"), "false");
+
+  btn.fire("click");
+  assert.equal(btn.getAttribute("aria-pressed"), "true");
+  assert.match(btn.getAttribute("aria-label")!, /外す/, "누른 뒤에도 「넣는다」라고 말한다");
+
+  // 다시 연다
+  const second = buildFavBtn();
+  run(second, { storage });
+  assert.equal(second.getElementById("favBtn")!.getAttribute("aria-pressed"), "true");
+});
+
+test("⚠스크립트가 없으면 버튼을 띄우지 않는다 — 눌러도 아무 일이 없는 버튼을 두지 않는다", () => {
+  const doc = buildFavBtn();
+  // run 하지 않는다 = 스크립트가 없는 상태
+  assert.equal(doc.getElementById("favBtn")!.hidden, true);
+});
+
+test("일람에서 즐겨찾기로 좁힌다 — 순서는 그대로 두고 표식만 얹는다", () => {
+  const storage = makeStorage();
+  storage.setItem("npb-meikan-layout", JSON.stringify({ favs: ["p2"] }));
+  const doc = buildRoster();
+  run(doc, { storage });
+
+  const li = doc.querySelectorAll(".roster li[data-id]");
+  assert.deepEqual(
+    li.map((x) => x.getAttribute("data-favon")),
+    ["false", "true", "false"],
+    "표식이 즐겨찾기한 선수에만 붙지 않았다",
+  );
+  // 순서는 서버가 그린 그대로다
+  assert.deepEqual(li.map((x) => x.dataset["id"]), ["p1", "p2", "p3"]);
+
+  const only = doc.getElementById("favOnly")!;
+  assert.equal(only.hidden, false, "즐겨찾기가 있는데 버튼이 숨겨져 있다");
+  only.fire("click");
+  assert.deepEqual(
+    doc.querySelectorAll(".roster li[data-id]").filter((x) => !x.hidden).map((x) => x.dataset["id"]),
+    ["p2"],
+  );
+  assert.equal(doc.getElementById("rosterCount")!.textContent, "1人");
+});
+
+test("⚠하나도 없으면 좁히기 버튼을 띄우지 않는다 — 눌러도 빈 화면이 되는 조작은 고장으로 읽힌다", () => {
+  const doc = buildRoster();
+  run(doc);
+  assert.equal(doc.getElementById("favOnly")!.hidden, true);
+});
+
+test("즐겨찾기 좁히기는 이름·구단 좁히기와 함께 걸린다", () => {
+  const storage = makeStorage();
+  storage.setItem("npb-meikan-layout", JSON.stringify({ favs: ["p1", "p3"] }));
+  const doc = buildRoster();
+  run(doc, { storage });
+  doc.getElementById("favOnly")!.fire("click");
+  // 阪神(t)만 남기면 p1 하나다
+  doc.querySelectorAll(".chip[data-team]").find((b) => b.dataset["team"] === "t")!.fire("click");
+  assert.deepEqual(
+    doc.querySelectorAll(".roster li[data-id]").filter((x) => !x.hidden).map((x) => x.dataset["id"]),
+    ["p1"],
+  );
+});
+
+// ─── 탭 전환의 방향 ─────────────────────────────────────────────────────
+
+/**
+ * ⚠**방향은 「어디서 어디로 갔는가」다.** 탭줄에 적힌 순서가 기준이고,
+ * 앞으로 가면 next·뒤로 가면 prev다. 방향이 없으면 fade만 남아 이동이 순간이동이 된다.
+ */
+test("탭을 앞으로 넘기면 next, 뒤로 넘기면 prev 가 붙는다", () => {
+  const doc = buildRankingPage();
+  run(doc);
+  const open = () =>
+    doc
+      .querySelectorAll('[data-panelgroup="rankcat"]')
+      .filter((p) => !p.hidden)[0]!;
+  const tab = (key: string) =>
+    doc.querySelectorAll('[data-tabgroup="rankcat"] [data-tab]').find((b) => b.dataset["tab"] === key)!;
+
+  tab("starter").fire("click");
+  assert.equal(open().getAttribute("data-slide"), "next", "앞으로 갔는데 방향이 없다");
+  tab("batter").fire("click");
+  assert.equal(open().getAttribute("data-slide"), "prev", "뒤로 갔는데 방향이 앞이다");
+});
+
+test("첫 그리기에는 방향이 없다 — 어디서 왔는지가 없기 때문이다", () => {
+  const doc = buildRankingPage();
+  run(doc);
+  const open = doc.querySelectorAll('[data-panelgroup="rankcat"]').filter((p) => !p.hidden)[0]!;
+  assert.equal(open.getAttribute("data-slide"), null);
+});
+
+// ─── 검색 결과의 성적 ───────────────────────────────────────────────────
+
+/**
+ * ⚠**분모까지 나와야 뜻이 있다**(M2). 이 줄의 존재 이유가 「이 사람이 맞나」의 판단인데,
+ * 10타석 .400과 400타석 .400을 구별하지 못하면 판단을 돕는 대신 오해를 만든다.
+ */
+test("검색 결과에 성적 한 줄이 분모와 함께 나온다", async () => {
+  const doc = buildPicker();
+  run(doc, {
+    index: [
+      { i: "p1", n: "山本", t: "オリックス・バファローズ", s: "防御率 1.82（193回）" },
+      { i: "b1", n: "佐藤", t: "阪神タイガース" },
+    ],
+  });
+  const hits = await search(doc, "pickPitcher", "山");
+  const line = hits[0]!.querySelectorAll(".hs");
+  assert.equal(line.length, 1, "성적 줄이 없다");
+  assert.equal(line[0]!.textContent, "防御率 1.82（193回）");
+  assert.match(line[0]!.textContent, /（[0-9.]+回）/, "분모가 없다");
+});
+
+test("성적이 없는 선수에게는 빈 줄을 만들지 않는다 — 빈 줄은 「0」처럼 읽힌다(M11)", async () => {
+  const doc = buildPicker();
+  run(doc, { index: [{ i: "b1", n: "佐藤", t: "阪神タイガース" }] });
+  const hits = await search(doc, "pickBatter", "佐");
+  assert.equal(hits[0]!.querySelectorAll(".hs").length, 0);
+});
+
+// ─── 비교 화면의 빠른 선택 ──────────────────────────────────────────────
+
+/**
+ * ⚠**이 화면에는 한동안 실행되는 시험이 0건이었다**(2026-08-16 이중 검토).
+ * 그 사이에 두 결함이 지나갔다 — 로빙 tabindex 미적용(탭 정지 129개인데 화살표가 안 먹었다)과
+ * **화면과 동작이 반대로 읽히는 표시 미갱신**.
+ */
+function buildCompare(): ReturnType<typeof makeDocument> {
+  const doc = makeDocument();
+  const form = make("section", { class: "block", id: "cmpForm" });
+  for (const [id, key] of [["A", "a"], ["B", "b"]] as [string, string][]) {
+    form.appendChild(make("input", { id: `cmp${id}`, type: "search", "aria-expanded": "false" }));
+    form.appendChild(make("ul", { id: `cmp${id}Hits`, role: "listbox" }));
+    form.appendChild(make("b", { id: `cmp-${key}-chosen` }));
+  }
+  const go = make("button", { id: "cmpGo", type: "button" });
+  go.disabled = true;
+  form.appendChild(go);
+  const swap = make("button", { id: "cmpSwap", type: "button" });
+  swap.disabled = true;
+  form.appendChild(swap);
+
+  const today = make("div", { id: "cmpToday" });
+  const list = make("div", { class: "picklist", role: "toolbar", "aria-orientation": "horizontal" });
+  for (const [i, n] of [["p1", "山本"], ["p2", "宮城"], ["b1", "佐藤"]] as [string, string][]) {
+    list.appendChild(
+      make("button", {
+        class: "pk", type: "button", "aria-pressed": "false",
+        "data-pick": i === "b1" ? "batter" : "pitcher", "data-i": i, "data-n": n, "data-t": "チーム",
+      }),
+    );
+  }
+  today.appendChild(list);
+  form.appendChild(today);
+  doc.body.appendChild(form);
+  form.appendChild(make("div", { id: "cmpOut" }));
+  return doc;
+}
+
+const cpk = (doc: ReturnType<typeof makeDocument>, id: string): El =>
+  doc.querySelectorAll("#cmpToday [data-pick]").find((b) => b.dataset["i"] === id)!;
+
+test("누른 순서대로 A → B에 들어가고, 버튼이 어느 자리인지 말한다", () => {
+  const doc = buildCompare();
+  run(doc);
+  cpk(doc, "p1").fire("click");
+  assert.equal(doc.getElementById("cmp-a-chosen")!.textContent, "山本（チーム）");
+  assert.equal(cpk(doc, "p1").getAttribute("data-slot"), "A", "어느 자리인지 말하지 않는다");
+  assert.equal(doc.getElementById("cmpGo")!.disabled, true, "한쪽만 골랐는데 열렸다");
+
+  cpk(doc, "b1").fire("click");
+  assert.equal(cpk(doc, "b1").getAttribute("data-slot"), "B");
+  assert.equal(doc.getElementById("cmpGo")!.disabled, false);
+});
+
+test("같은 버튼을 다시 누르면 그 자리가 비워진다 — 되돌릴 길이 없으면 안 된다", () => {
+  const doc = buildCompare();
+  run(doc);
+  cpk(doc, "p1").fire("click");
+  cpk(doc, "p1").fire("click");
+  assert.equal(doc.getElementById("cmp-a-chosen")!.textContent, "未選択");
+  assert.equal(cpk(doc, "p1").getAttribute("data-slot"), null);
+  assert.equal(cpk(doc, "p1").getAttribute("aria-pressed"), "false");
+});
+
+/**
+ * ⚠**화면이 「안 눌림」인데 누르면 해제되는 상태를 만들지 않는다.**
+ * 선택이 바뀌는 곳은 셋(직접 고르기·入れかえ·공유 링크 복원)인데 다시 그리는 곳이 하나뿐이면
+ * 나머지 둘에서 **버튼이 실제 상태와 반대로 읽힌다.**
+ */
+test("入れかえ 하면 버튼의 A·B 표시도 따라 바뀐다", () => {
+  const doc = buildCompare();
+  run(doc);
+  cpk(doc, "p1").fire("click");
+  cpk(doc, "b1").fire("click");
+  assert.deepEqual(
+    [cpk(doc, "p1").getAttribute("data-slot"), cpk(doc, "b1").getAttribute("data-slot")],
+    ["A", "B"],
+  );
+
+  doc.getElementById("cmpSwap")!.fire("click");
+  assert.deepEqual(
+    [cpk(doc, "p1").getAttribute("data-slot"), cpk(doc, "b1").getAttribute("data-slot")],
+    ["B", "A"],
+    "자리를 바꿨는데 버튼은 옛 자리를 말한다",
+  );
+});
+
+test("공유 링크로 들어와도 버튼이 눌린 것으로 보인다 — 안 그러면 누르는 순간 해제된다", async () => {
+  const doc = buildCompare();
+  run(doc, {
+    index: [
+      { i: "p1", n: "山本", t: "チーム" },
+      { i: "b1", n: "佐藤", t: "チーム" },
+    ],
+    location: { search: "?a=p1&b=b1", href: "" },
+  });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(
+    [cpk(doc, "p1").getAttribute("data-slot"), cpk(doc, "b1").getAttribute("data-slot")],
+    ["A", "B"],
+    "공유 링크로 복원했는데 버튼이 안 눌린 것으로 보인다",
+  );
+});
+
+/**
+ * ⚠**부품을 공유하면 그 부품을 살리는 처리도 공유해야 한다.**
+ * aria-label 이 「左右キーで移動」라고 말하는데 화살표가 안 먹으면 라벨이 거짓말이 된다.
+ */
+test("비교 화면의 긴 목록도 탭 정지 하나다 — 대전 화면과 같은 약속을 지킨다", () => {
+  const doc = buildCompare();
+  run(doc);
+  const items = doc.querySelectorAll("#cmpToday [data-pick]");
+  assert.deepEqual(
+    items.map((b) => b.getAttribute("tabindex")),
+    ["0", "-1", "-1"],
+    "비교 화면의 목록이 전부 탭 정지다",
+  );
+  items[0]!.fire("keydown", { key: "ArrowRight" });
+  assert.deepEqual(items.map((b) => b.getAttribute("tabindex")), ["-1", "0", "-1"]);
 });

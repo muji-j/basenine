@@ -11,6 +11,7 @@ import { betterSide, compareCard, compareCardJson, renderComparePage } from "../
 import type { CompareStat } from "../src/compare.ts";
 import { CLIENT_JS } from "../src/assets.ts";
 import { GLOSSARY } from "../src/glossary.ts";
+import { colorOf } from "@bb-app/domain";
 import { SCALES } from "../src/grade.ts";
 import {
   battingBlock,
@@ -247,9 +248,80 @@ test("⚠클라이언트의 우열 판정이 서버와 같은 답을 낸다 — 
 });
 
 test("⚠비교 화면은 스크립트 없이도 고를 것이 보인다 — 빈 페이지는 고장으로 보인다(M12)", () => {
-  const out = renderComparePage({ season: 2026, asOf: "2026-08-14" }, context());
+  const out = renderComparePage({ season: 2026, asOf: "2026-08-14", pickDate: null, builtOn: "2026-08-16", games: [] }, context());
   assert.match(out, /id="cmpA"/, "선수 A 입력이 없다");
   assert.match(out, /id="cmpB"/, "선수 B 입력이 없다");
   assert.match(out, /打者と投手は共通の指標がない/, "왜 못 섞는지 설명이 없다");
   assert.match(out, /母数/, "母数를 말하지 않는다 — 이 화면이 우열을 참는 이유가 사라진다");
+});
+
+// ─── 오늘 대전에서 고르기 ────────────────────────────────────────────────
+
+/**
+ * ⚠**이 분기에는 한동안 시험이 0건이었다**(2026-08-16 이중 검토).
+ * 유일한 렌더 시험이 `games: []`를 넘겨서, 이 커밋이 만든 `games.length > 0` 쪽이
+ * **어떤 시험에서도 렌더되지 않았다.** 그 사이에 P1(로빙 미적용)·P2(표시 미갱신)가 지나갔다.
+ */
+function withGames() {
+  const pick = (name: string, usage: string) => ({
+    playerId: `P_${name}`, name, usage, probable: false,
+  });
+  const team = (code: string, short: string, full: string) => ({
+    teamCode: code, shortName: short, name: full, color: colorOf(code),
+    pitchers: [pick(`${short}投`, "100回")], batters: [pick(`${short}打`, "400打席")],
+  });
+  return {
+    season: 2026, asOf: "2026-08-14", pickDate: "2026-08-16", builtOn: "2026-08-16",
+    games: [
+      {
+        key: "s-db", venue: "神宮", startTime: "18:00",
+        sides: [team("s", "ヤクルト", "東京ヤクルトスワローズ"), team("db", "DeNA", "横浜DeNAベイスターズ")] as [
+          ReturnType<typeof team>,
+          ReturnType<typeof team>,
+        ],
+      },
+    ],
+  };
+}
+
+test("오늘 대전하는 두 팀에서 바로 고를 수 있다 — 이름을 칠 필요가 없다", () => {
+  const out = renderComparePage(withGames(), context());
+  assert.match(out, /id="cmpToday"/);
+  assert.match(out, /2026年8月16日（本日）の対戦から選ぶ/);
+  for (const n of ["ヤクルト投", "ヤクルト打", "DeNA投", "DeNA打"]) {
+    assert.ok(out.includes(`data-n="${n}"`), `${n} 버튼이 없다`);
+  }
+  // 어느 자리에 들어가는지 화면이 먼저 말한다 — 두 자리를 채우는 화면이다
+  assert.match(out, /押した順に A → B に入ります/);
+});
+
+/**
+ * ⚠**탭 그룹 이름이 対戦 화면과 달라야 한다.** 같으면 저장된 선택이 두 화면에서 섞여,
+ * 비교 화면에서 고른 경기가 대전 화면에 되살아난다.
+ */
+test("탭 그룹 이름을 対戦 화면과 나눈다 — 저장된 선택이 섞이지 않는다", () => {
+  const out = renderComparePage(withGames(), context());
+  assert.match(out, /data-tabgroup="cmptoday"/);
+  assert.ok(!out.includes('data-tabgroup="picktoday"'), "대전 화면과 같은 그룹 이름을 썼다");
+});
+
+/**
+ * ⚠**부품을 공유하면 그 부품을 살리는 처리도 공유해야 한다.**
+ * 목록은 `pickTeam` 한 벌이고 aria-label 이 「左右キーで移動」라고 말한다 —
+ * 로빙 tabindex 가 이 화면에도 걸리지 않으면 그 라벨이 거짓말이 된다.
+ */
+test("긴 목록의 이름표가 대전 화면과 같은 약속을 한다", () => {
+  const out = renderComparePage(withGames(), context());
+  assert.match(out, /class="picklist" role="toolbar"/);
+  assert.match(out, /（左右キーで移動）/);
+});
+
+test("예고가 없으면 빠른 선택을 만들지 않는다 — 검색은 그대로 남는다", () => {
+  const out = renderComparePage(
+    { season: 2026, asOf: "2026-08-14", pickDate: null, builtOn: "2026-08-16", games: [] },
+    context(),
+  );
+  assert.ok(!out.includes('id="cmpToday"'));
+  assert.match(out, /id="cmpA"/);
+  assert.match(out, /id="cmpB"/);
 });

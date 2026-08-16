@@ -65,8 +65,8 @@ test("앞뒤 경기일로 이동한다 — 링크가 어느 날로 가는지도 
   assert.match(out, /href="\.\.\/days\/2026-08-12\.html"/, "앞날 링크가 없다");
   assert.match(out, /href="\.\.\/days\/2026-08-14\.html"/, "뒷날 링크가 없다");
   // ⚠어디로 가는지 글자로도 말한다 — 「前の試合日」만으로는 며칠 전인지 알 수 없다
-  assert.match(out, /前の試合日<s>2026年8月12日<\/s>/);
-  assert.match(out, /次の試合日<s>2026年8月14日<\/s>/);
+  assert.match(out, /<i aria-hidden="true">←<\/i>前の試合日<\/span><s>2026年8月12日<\/s>/, "앞 방향 화살표와 날짜가 함께 있지 않다");
+  assert.match(out, /次の試合日<i aria-hidden="true">→<\/i><\/span><s>2026年8月14日<\/s>/, "뒤 방향 화살표와 날짜가 함께 있지 않다");
 });
 
 /**
@@ -82,13 +82,13 @@ test("최신 경기일로 가는 링크만 today.html이다", () => {
   const out = renderDayPage(data({ next: "2026-08-15" }), context());
   assert.match(out, /次の試合日/);
   assert.ok(!out.includes("days/2026-08-15.html"), "만들지 않는 페이지로 링크했다");
-  assert.match(out, /href="\.\.\/today\.html"[^>]*>次の試合日/);
+  assert.match(out, /href="\.\.\/today\.html"[\s\S]{0,40}?次の試合日/);
 });
 
 test("⚠끝에 오면 링크가 아니라 지워진 글자다 — 눌러도 아무 일이 없는 링크를 두지 않는다", () => {
   const out = renderDayPage(data({ prev: null }), context());
-  assert.match(out, /<span class="daystep p off">前の試合日<\/span>/);
-  assert.ok(!/href="[^"]*"[^>]*>前の試合日/.test(out), "없는 방향에 링크가 남았다");
+  assert.match(out, /<span class="daystep p off">[\s\S]{0,60}?前の試合日/, "끝인데 링크가 아닌 표시가 아니다");
+  assert.ok(!/<a class="daystep p"/.test(out), "없는 방향에 링크가 남았다");
 });
 
 test("⚠지난 날짜에 「次の予告先発」를 붙이지 않는다 — 그 날의 예고처럼 읽힌다", () => {
