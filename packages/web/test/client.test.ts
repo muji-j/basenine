@@ -1407,3 +1407,32 @@ test("비교 화면의 긴 목록도 탭 정지 하나다 — 대전 화면과 �
   items[0]!.fire("keydown", { key: "ArrowRight" });
   assert.deepEqual(items.map((b) => b.getAttribute("tabindex")), ["-1", "0", "-1"]);
 });
+
+/**
+ * ⚠**「읽는 중」과 「없음」은 다르다**(M12의 4상태).
+ * 실패와 0건에는 문구가 있는데 로딩만 없어서, 인덱스가 오는 동안 목록이 숨겨진 채 남았다 —
+ * 느린 회선에서는 「검색이 고장났다」로 읽힌다. M12가 4상태를 요구하는 이유가 정확히 이것인데
+ * 이 화면만 3상태였다.
+ */
+test("⚠검색에 「읽는 중」 상태가 있다 — 「아직 안 침」과 구별된다", () => {
+  const draw = /const draw=\(items,failed\)=>\{([\s\S]*?)\n  \};/.exec(CLIENT_JS);
+  assert.notEqual(draw, null, "그리기 함수를 못 찾았다 — 이 시험이 공회전한다");
+  const body = draw![1] ?? "";
+  assert.match(body, /読み込み中/, "로딩 문구가 없다");
+  assert.match(body, /items===null/, "로딩을 0건과 구별하지 않는다");
+
+  // 그리고 실제로 그 상태로 그린다 — 문구만 있고 부르는 곳이 없으면 죽은 코드다
+  const run = /const run=\(\)=>\{([\s\S]*?)\n  \};/.exec(CLIENT_JS);
+  assert.notEqual(run, null, "검색 실행부를 못 찾았다");
+  assert.match(run![1] ?? "", /draw\(null,false\)/, "인덱스를 기다리는 동안 아무것도 안 그린다");
+});
+
+/**
+ * ⚠**늦게 온 응답이 새 입력을 덮어쓰지 않는다.**
+ * 인덱스를 기다리는 사이에 글자를 더 치면, 먼저 걸어 둔 콜백이 나중에 돌아와
+ * **옛 검색어의 결과**를 그린다. 로딩 상태를 넣으면서 대기 경로가 늘었으므로 함께 막는다.
+ */
+test("늦게 온 결과가 새 검색어를 덮지 않는다", () => {
+  const run = /const run=\(\)=>\{([\s\S]*?)\n  \};/.exec(CLIENT_JS);
+  assert.match(run![1] ?? "", /input\.value\.trim\(\)!==term/, "옛 검색어의 결과를 그대로 그린다");
+});

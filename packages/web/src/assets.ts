@@ -387,7 +387,11 @@ th{font-size:10px;letter-spacing:.1em;color:var(--tx-2);font-weight:500}
 /* ⚠**머리 고정은 thead 에만 건다.** th 전체에 걸면 tbody 의 **행 머리**(이닝 스코어의
    구단명 칸)까지 top:0 으로 붙어 자기 행을 떠나 화면 위에 뜬다 — 표가 고장 난 것으로 보인다.
    실측(2026-08-16): 사이트에서 scope=row 를 쓰는 표는 이닝 스코어 하나뿐이다 */
-thead th{position:sticky;top:0;z-index:2;background:var(--page)}
+thead th{position:sticky;top:var(--topbar);z-index:2;background:var(--page)}
+/* ⚠**상단 띠 아래에 세운다.** top:0 으로 두면 상단 띠(z-index 20)가 겹침에서 이겨
+   **열 이름이 그 띠 뒤로 완전히 가려진다** — 147행짜리 대전표에서 40행쯤 내려가면
+   「三振」과 「打点」을 구별할 방법이 없다. 탭줄이 있는 화면은 그만큼 더 내린다 */
+html:has(.rail) thead th{top:calc(var(--topbar) + var(--rail))}
 /* ⚠**모서리 칸이 제일 위여야 한다.** 가로·세로 양쪽으로 고정되는 칸은 첫 열의 머리 하나뿐인데,
    .scroller th:first-child(z-index:1)가 특이도에서 이겨 **다른 머리 칸(2)이 그 위를 지나간다** —
    가로로 밀면 고정된 첫 열의 머리만 사라진다. 본문 칸은 멀쩡해서 더 이상하게 보인다.
@@ -409,7 +413,7 @@ tr.thin td{color:var(--tx-3)}
    아예 그려지지 않았다** — <i> 는 인라인이라 width/height 가 먹지 않는다.
    네 화면(順位·イニングスコア·ポストシーズン 타자표·투수표)이 이 한 벌을 쓴다 */
 .tm i{display:inline-block;width:9px;height:9px;margin-right:6px;vertical-align:middle;
-  background:var(--chip,#6b7280)}
+  background:var(--chip,#6b7280);box-shadow:inset 0 0 0 1px var(--tx-2)}
 td a{text-decoration:none;box-shadow:inset 0 -1px 0 var(--hair-2)}
 td a:hover{box-shadow:inset 0 -1px 0 currentColor}
 
@@ -843,6 +847,10 @@ table.stand .dif i.n{right:50%}
 .cmprow .vb .g{margin-left:0;margin-right:5px}
 .cmpwarn{margin:0 0 12px;padding:9px 11px;font-size:12px;line-height:1.6;color:var(--tx-2);
   border-left:3px solid var(--g-bad);background:var(--panel-2);max-width:64ch}
+/* 「나란히 못 놓는다」로 끝내지 않고 갈 곳을 준다 */
+.cmpgo{display:inline-block;margin-top:10px;font-size:13px;padding:6px 12px;
+  border:1px solid var(--hair-2);text-decoration:none}
+.cmpgo:hover{border-color:var(--tx-2);background:var(--panel-2)}
 @media (max-width:560px){
   .cmprow{grid-template-columns:1fr 6.4em 1fr}
   .cmprow .va,.cmprow .vb{font-size:15px}
@@ -864,7 +872,7 @@ table.stand .dif i.n{right:50%}
 .teamgroup[hidden]{display:none}
 .teamgroup h4{margin:0 0 8px;font-size:11px;letter-spacing:.14em;font-weight:700;
   display:flex;align-items:center;gap:8px}
-.teamgroup h4 i{width:11px;height:11px;background:var(--chip,#6b7280);font-style:normal}
+.teamgroup h4 i{width:11px;height:11px;background:var(--chip,#6b7280);font-style:normal;box-shadow:inset 0 0 0 1px var(--tx-2)}
 /* ⚠**화면 밖의 구단 묶음은 그리지 않는다.**
    일람은 구단 12묶음에 선수 698명이고, 선수마다 인라인 SVG가 하나씩 붙는다
    (실측: SVG 698개 · polygon 1,390개 · DOM 요소 7,326개).
@@ -1498,12 +1506,16 @@ function attachPicker(input,list,onPick){
   if(!input||!list)return null;
   let rows=[],active=-1;
   const close=()=>{list.hidden=true;input.setAttribute("aria-expanded","false");active=-1};
+  /* @param items 배열이면 결과, **null 이면 아직 읽는 중**이다 */
   const draw=(items,failed)=>{
     list.textContent="";
     const one=(text)=>{const li=doc.createElement("li");li.className="none";li.textContent=text;list.appendChild(li)};
     if(failed)one("選手一覧を読み込めませんでした。再読み込みしてください。");
+    /* ⚠**「읽는 중」과 「없음」은 다르다**(M12의 4상태). 실패와 0건에는 문구가 있는데
+       로딩만 없어서, 느린 회선에서는 목록이 안 뜨는 동안 「검색이 고장났다」로 읽힌다 */
+    else if(items===null)one("読み込み中…");
     else if(!items.length)one("該当なし");
-    else items.forEach((p,i)=>{
+    else (items||[]).forEach((p,i)=>{
       const li=doc.createElement("li");
       // combobox의 목록 항목은 role=option이어야 aria-selected가 뜻을 갖는다
       li.setAttribute("role","option");
@@ -1524,7 +1536,10 @@ function attachPicker(input,list,onPick){
   const run=()=>{
     const term=input.value.trim();
     if(term===""){close();return}
+    /* 인덱스가 아직 안 왔으면 **그렇다고 말하고** 기다린다 — 잠자코 있지 않는다 */
+    if(!INDEX&&!indexError)draw(null,false);
     withIndex(idx=>{
+      if(input.value.trim()!==term)return;
       if(!idx){draw([],true);return}
       rows=idx.filter(p=>p.n.indexOf(term)>=0||p.t.indexOf(term)>=0).slice(0,20);
       active=-1;draw(rows,false);
@@ -1756,6 +1771,14 @@ if(cmpForm){
       wrap.appendChild(warn("打者と投手は共通の指標がないため並べられません。"+
         "打者どうし、または投手どうしを選んでください。（"+A.name+"＝"+
         (A.role==="batter"?"打者":"投手")+"／"+B.name+"＝"+(B.role==="batter"?"打者":"投手")+"）"));
+      /* ⚠**되돌려보내면서 길을 알려준다.** 이 조합이야말로 답이 있는 조합이다 —
+         투수 대 타자를 다루는 화면이 이미 있는데, 지금까지는 거절만 하고 끝났다 */
+      const bat=A.role==="batter"?A:B, pit=A.role==="batter"?B:A;
+      const go=doc.createElement("a");
+      go.className="cmpgo";
+      go.href=BASE+"players/"+bat.id+".html?vs="+encodeURIComponent(pit.name)+"#b-matchup";
+      go.textContent="この二人の対戦成績を見る";
+      wrap.appendChild(go);
       out.appendChild(wrap);return;
     }
 

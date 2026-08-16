@@ -251,3 +251,34 @@ test("동적 클래스가 든 칸의 리터럴 클래스도 모은다", () => {
   assert.ok(CELL_CLASSES.has("ok") || CELL_CLASSES.has("bad") || CELL_CLASSES.has("sc"),
     "동적 클래스가 섞인 칸에서 아무 클래스도 못 건졌다");
 });
+
+/**
+ * ⚠**고정된 표 머리는 상단 띠 아래에 선다.**
+ * `top:0` 으로 두면 상단 띠(z-index 20)가 겹침에서 이겨 **열 이름이 통째로 가려진다** —
+ * 147행짜리 대전표에서 40행쯤 내려가면 「三振」과 「打点」을 구별할 방법이 없다.
+ * 탭줄이 있는 화면은 그 높이만큼 더 내려야 같은 일이 안 난다.
+ */
+test("⚠고정된 표 머리가 상단 띠 뒤에 숨지 않는다", () => {
+  const head = rules(CSS).find((r) => r.sel.split(",").some((one) => one.trim() === "thead th"));
+  assert.notEqual(head, undefined, "thead th 규칙을 못 찾았다 — 이 시험이 공회전한다");
+  assert.match(head!.body, /position\s*:\s*sticky/);
+  assert.match(head!.body, /top\s*:\s*var\(--topbar\)/, "머리가 상단 띠 뒤로 들어간다");
+  assert.match(
+    CSS,
+    /html:has\(\.rail\) thead th\{top:calc\(var\(--topbar\) \+ var\(--rail\)\)\}/,
+    "탭줄이 있는 화면에서 머리가 탭줄 뒤로 들어간다",
+  );
+});
+
+/**
+ * ⚠**로고를 금지했으므로 이 9×9 사각형이 유일한 팀 식별 그래픽이다.**
+ * 그런데 배경 대비가 24조합 중 11개에서 3:1 미만이다(阪神 1.54 · 다크의 オリックス 1.17).
+ * 테두리 하나면 어느 테마에서도 보인다.
+ */
+test("⚠구단 색 칩에 테두리가 있다 — 배경에 묻히는 팀이 24조합 중 11개다", () => {
+  const chip = rules(CSS).filter((r) => r.sel.split(",").some((one) => /\.tm\s*[>\s]\s*i$/.test(one.trim())));
+  assert.ok(chip.length > 0, "칩 규칙을 못 찾았다");
+  for (const r of chip) {
+    assert.match(r.body, /box-shadow[^;]*var\(--tx-2\)/, "칩이 배경에 묻힐 수 있다 — 테두리가 없다");
+  }
+});
