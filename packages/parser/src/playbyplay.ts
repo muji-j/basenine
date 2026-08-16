@@ -220,7 +220,25 @@ export function parsePlayByPlay(html: string): PlayByPlay {
        */
       const body = cells[4]![2]!;
       const runnerText = /（走者・([\s\S]*?)）([\s\S]*)$/.exec(body);
-      if (runnerText) {
+      /**
+       * ⚠**여기서 조용히 버리지 않는다**(M7). 이 지점은 「아웃 카운트가 있고 루 상태가 있는데
+       * 타자가 없는 행」이라, 우리가 아는 것은 주자 사건뿐이다. 모르는 형태가 오면
+       * **도루 성공률의 분모가 서서히 줄고 아무도 눈치채지 못한다** — 이 파일이 막으려는 실패 모드다.
+       *
+       * ⚠**같은 함수의 다른 분기는 전부 던진다**(루 상태 미상 · 도루 표기 미상 · 타석 0건).
+       * 여기만 `continue` 로 두면 그 비대칭이 곧 구멍이다.
+       *
+       * 실측(2026-08-17): 아카이브 playbyplay **2,732장**의 「타자 없는 5칸 행」 **3,976건이
+       * 전부** `（走者・` 를 갖는다. 임계값 0으로 걸 수 있다.
+       * (대주자 등 보조 표기는 앞의 `outs` 검사에서 이미 걸러진다.)
+       */
+      if (!runnerText) {
+        throw new PlayByPlayParseError(
+          "타자가 없는 행인데 주자 표기도 아니다 — 페이지 구조 변경을 의심하라",
+          `value=${JSON.stringify(strip(body))}`,
+        );
+      }
+      {
         const ids = playerIdsIn(runnerText[1]!);
         if (ids.length === 0) {
           throw new PlayByPlayParseError("주자 행에 선수 링크가 없다", `value=${JSON.stringify(strip(body))}`);

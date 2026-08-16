@@ -2412,7 +2412,15 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
             steal: (() => {
               const st = stealByPlayer.get(playerId);
               const cs = st?.cs ?? 0;
-              const sbCount = st?.sb ?? bat.player.sb;
+              /**
+               * ⚠**분자는 화면에 보이는 `盗塁` 그 값이다**(박스스코어). 타석 로그 쪽 수로
+               * 갈아타면 같은 블록에 **「盗塁 30」과 「28을 함축하는 성공률」**이 나란히 뜬다 —
+               * 값이 조금 틀린 것보다 나쁜 자기모순이다.
+               * ⚠**여기서 폴백으로 덮지 않는다.** 두 출처가 어긋나는 것은 적재가
+               * `stealMismatch` 로 격리하고 収集ログ가 말한다 — 화면이 조용히 봉합하면
+               * 어긋난 사실 자체가 사라진다(M7).
+               */
+              const sbCount = bat.player.sb;
               return {
                 cs,
                 pickoff: st?.pickoff ?? 0,

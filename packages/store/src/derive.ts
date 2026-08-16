@@ -66,6 +66,13 @@ export interface QuarantineRow {
     | "hitMismatch"
     | "abMismatch"
     | "runsMismatch"
+    /**
+     * 박스스코어의 `盗塁` 합계와 타석 로그에서 센 도루 수가 다르다.
+     * ⚠**둘이 어긋나면 화면이 자기모순을 낸다** — 같은 블록에 「盗塁 30」과
+     * 「28을 함축하는 성공률」이 나란히 뜬다. 어느 쪽이 맞는지는 사람이 판단한다.
+     * 실측(2026-08-17): 2,395경기 중 어긋남 **0건**이라 임계값 0으로 걸 수 있다.
+     */
+    | "stealMismatch"
     /** 투구회를 읽지 못했다. **0으로 때우면 그 등판이 사라진 채 방어율만 부풀어 오른다** */
     | "unreadableInnings";
   gameId: string;

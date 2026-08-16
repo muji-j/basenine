@@ -317,10 +317,13 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
     venue,
   });
 
+  // 박스가 말하는 이 경기의 도루 수. **아래에서 타석 로그와 대조한다**
+  let boxSteals = 0;
   for (const [side, team] of [["away", box.away], ["home", box.home]] as const) {
     for (const b of team.batters) {
       const derived = deriveBatting(meta.gameId, side, b);
       if (derived === null) continue;
+      boxSteals += derived.row.sb;
       if (!seenPlayers.has(derived.row.playerId)) {
         seenPlayers.add(derived.row.playerId);
         budget.players += upsertPlayer(db, derived.row.playerId, b.name, nowIso);
@@ -353,13 +356,39 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
 
   /**
    * 주자 사건. ⚠**타석과 별개의 표다** — 타자가 없으므로 `pa_event` 에 넣으면 타석 수가 부풀어
-   * 타율의 분모가 틀린다. 대조 실측: 경기별 도루 수가 박스의 `盗塁` 열과 **2,395경기 중 어긋남 0건**.
+   * 타율의 분모가 틀린다.
    */
   budget.runnerEvents += replaceRunnerEvents(
     db,
     meta.gameId,
     pbpRunners.map((r, i) => ({ ...r, gameId: meta.gameId, seq: i + 1 })),
   );
+
+  /**
+   * ⚠**박스의 `盗塁` 합계와 타석 로그의 도루 수를 대조한다.**
+   *
+   * 화면은 개수를 박스에서, 성공률의 분모를 타석 로그에서 가져온다. 둘이 어긋나면
+   * 같은 블록에 **「盗塁 30」과 「28을 함축하는 성공률」이 나란히** 뜬다 —
+   * 값 자체보다 나쁜 자기모순이다. 그러니 **읽는 쪽에서 폴백으로 덮지 말고 여기서 잡는다.**
+   *
+   * ⚠**pbp를 읽지 못한 경기는 비교하지 않는다.** 그건 「도루가 0이었다」가 아니라
+   * 「세지 못했다」이고, 0으로 비교하면 그 경기 전부가 어긋남으로 잡힌다(M11).
+   * 같은 이유로 `--skip-events` 일 때도 비교하지 않는다.
+   *
+   * 실측(2026-08-17): 2024〜2026 **2,395경기 중 어긋남 0건**이라 임계값 0으로 걸 수 있다.
+   */
+  if (pbpEvents !== null) {
+    const logSteals = pbpRunners.filter((r) => r.kind === "steal").length;
+    if (logSteals !== boxSteals) {
+      quarantine.push({
+        kind: "stealMismatch",
+        gameId: meta.gameId,
+        playerId: null,
+        raw: String(boxSteals),
+        detail: `타석 로그 ${logSteals}`,
+      });
+    }
+  }
 
   budget.quarantine += replaceQuarantine(db, meta.gameId, quarantine, nowIso);
   });
