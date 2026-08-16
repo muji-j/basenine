@@ -44,3 +44,5 @@ export { KEY_PLAY_LIMIT, gameDetails } from "./game.ts";
 export type { GameDetail, GamePlay, HalfInning } from "./game.ts";
 export { battingStreaks, emptyStreaks } from "./streaks.ts";
 export type { PlayerStreaks, Streak } from "./streaks.ts";
+export { battedBalls } from "./batted-ball.ts";
+export type { BattedBall } from "./batted-ball.ts";

@@ -6,6 +6,8 @@
  * 만든 값을 옮겨 담기만 한다. 여기에 산식이 생기는 순간 값이 두 벌이 된다.
  */
 import type { Db } from "@bb-app/store";
+import { battedBalls } from "@bb-app/aggregate";
+import type { BattedBallData } from "./player-page.ts";
 import type { BattingLine, LeagueConstants, PitchingLine, Rate } from "@bb-app/metrics";
 import {
   babip,
@@ -2083,6 +2085,22 @@ export function loadLog(db: Db, o: LoadOptions & LogOptions): LogPageData {
   };
 }
 
+/** 타구 로그가 없는 선수. ⚠**0이 아니라 「그릴 것이 없음」이다** — 화면이 그 줄을 뺀다 */
+const EMPTY_BATTED: BattedBallData = {
+  groundOuts: 0, airOuts: 0, left: 0, center: 0, right: 0,
+  infield: 0, infieldHits: 0, swinging: 0, looking: 0,
+};
+
+/** 같은 선수가 두 구단에서 낸 타구를 합친다 — 이적해도 선수 페이지는 시즌 합계다 */
+function addBatted(a: BattedBallData, b: BattedBallData): BattedBallData {
+  return {
+    groundOuts: a.groundOuts + b.groundOuts, airOuts: a.airOuts + b.airOuts,
+    left: a.left + b.left, center: a.center + b.center, right: a.right + b.right,
+    infield: a.infield + b.infield, infieldHits: a.infieldHits + b.infieldHits,
+    swinging: a.swinging + b.swinging, looking: a.looking + b.looking,
+  };
+}
+
 export function loadSite(db: Db, o: LoadOptions): SiteData {
   const competition = o.competition ?? "regular";
   const through = o.through ?? "9999-12-31";
@@ -2118,6 +2136,22 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   // ⚠경기 페이지는 **행렬만이 아니라 `RunExpectancy` 자체**가 필요하다(`paValue`가 그걸 받는다).
   // 여기서 다시 만들지 않는다 — 같은 시즌을 두 번 훑는 것도, 값이 갈라지는 것도 피한다(M1)
   const reFull = new Map<string, RunExpectancy>();
+  /**
+   * 타구 성향 — **타석 로그 원문에서 읽는다.**
+   * ⚠**선수당 한 벌씩만 만든다**(리그를 나눠 두 번 부르면 이적 선수가 반씩 나뉜다).
+   * ⚠모르는 표기가 있으면 집계가 던진다(M7) — 조용히 흘리면 타구 성향이 서서히 틀려진다.
+   */
+  const bbBatter = new Map<string, BattedBallData>();
+  for (const b of battedBalls(db, o.season, competition, through)) {
+    const cur = bbBatter.get(b.playerId);
+    bbBatter.set(b.playerId, cur === undefined ? b : addBatted(cur, b));
+  }
+  const bbPitcher = new Map<string, BattedBallData>();
+  for (const b of battedBalls(db, o.season, competition, through, true)) {
+    const cur = bbPitcher.get(b.playerId);
+    bbPitcher.set(b.playerId, cur === undefined ? b : addBatted(cur, b));
+  }
+
   const srcByPlayer = new Map<string, { src: number; pa: number; skipped: number; srcPer600: number | null }>();
   // ⚠9이닝 환산의 분모는 **아웃**이다. 상대 타자 수(bf)는 표본 표기용이라 둘 다 들고 있어야 한다
   const srpByPlayer = new Map<string, { srp: number; bf: number; skipped: number; outs: number; srpPer9: number | null }>();
@@ -2308,6 +2342,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
             ranks: ranksFor(rankings.batting, playerId),
             qualified: (batPart?.player.line.pa ?? 0) >= qualifiedBatterPa(bundle.teamGames),
             needPa: qualifiedBatterPa(bundle.teamGames),
+            batted: bbBatter.get(playerId) ?? EMPTY_BATTED,
           };
 
     const pitchingData: PitchingBlockData | null =
@@ -2319,6 +2354,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
             // ⚠집계가 세어 둔 것을 그대로 쓴다 — 여기서 다시 세면 두 벌이 된다(M1)
             decisions: pit.player.decisions,
             quality: pit.player.quality,
+            batted: bbPitcher.get(playerId) ?? EMPTY_BATTED,
             era: pit.era,
             whip: pit.whip,
             fip: pit.fip,

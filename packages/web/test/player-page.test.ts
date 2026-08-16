@@ -594,3 +594,43 @@ test("선발이 0경기면 QS 줄을 그리지 않는다 — 0과 해당없음�
   assert.ok(!out.includes("QS率"), "선발이 없는데 QS율을 냈다");
   assert.ok(!out.includes("完封勝"), "선발이 없는데 완봉승을 냈다");
 });
+
+/**
+ * ⚠**이름을 정확히 붙이는 것이 이 지표의 절반이다.**
+ * 땅볼 비율을 「GB%」라고 부르면 거짓말이 된다 — GB%는 안타를 포함한 전 타구가 분모인데
+ * 비홈런 안타에는 타구 종류 표기가 없어(실측 27.5%) 우리는 그걸 **모른다**.
+ * 그리고 방향은 「타구가 떨어진 지점」이 아니라 **「처리한 야수 기준」**이다.
+ */
+test("타구 성향을 내되, 무엇을 센 것인지 화면이 말한다", () => {
+  const out = renderPlayerPage(playerPage(), context());
+  assert.ok(out.includes("ゴロアウト率"), "타구 성향이 없다");
+  // ⚠**라벨로 쓰였는지**를 본다. 설명문이 「GB%와 분모가 다르다」고 말하는 것은 옳은 등장이다
+  assert.ok(!/<dt[^>]*>[^<]*GB%/.test(out), "GB% 를 지표 이름으로 썼다 — 분모가 달라 거짓말이 된다");
+  assert.ok(out.includes("一般的なGB%とは分母が違います"), "GB% 와 어떻게 다른지 말하지 않는다");
+  assert.ok(out.includes("処理した野手の位置"), "방향의 뜻을 말하지 않는다");
+  assert.ok(out.includes("分母はアウトだけ"), "땅볼 비율의 분모를 말하지 않는다");
+  assert.ok(out.includes("三振の内訳"), "삼진 내역을 헛스윙률로 오해할 수 있다");
+  // ⚠분모가 값에 인접한다(M2). 축마다 분모가 다르다
+  assert.ok(out.includes('<span class="den">230アウト</span>'), "땅볼 비율의 분모가 없다");
+  assert.ok(out.includes('<span class="den">360打球</span>'), "방향의 분모가 없다");
+});
+
+/**
+ * ⚠**얇은 표본에서 방향 비율은 값이 아니라 소음이다.**
+ * 20타구짜리 「좌측 70%」를 내면 M2가 막으라는 바로 그것을 하게 된다.
+ */
+test("표본이 얇은 축은 그리지 않는다 — 축마다 분모가 다르므로 임계값도 다르다", () => {
+  const thin = playerPage({
+    batting: {
+      ...playerPage().batting!,
+      batted: {
+        groundOuts: 5, airOuts: 5, left: 8, center: 6, right: 6,
+        infield: 4, infieldHits: 1, swinging: 6, looking: 2,
+      },
+    },
+  });
+  const out = renderPlayerPage(thin, context());
+  assert.ok(!out.includes("ゴロアウト率"), "10아웃짜리 땅볼 비율을 냈다");
+  assert.ok(!out.includes("引っ張り側"), "20타구짜리 방향 비율을 냈다");
+  assert.ok(!out.includes("内野安打率"), "4타구짜리 내야안타율을 냈다");
+});

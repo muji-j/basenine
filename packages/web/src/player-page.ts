@@ -72,6 +72,8 @@ export interface BattingBlockData {
   qualified: boolean;
   /** 규정타석 */
   needPa: number;
+  /** 타구 성향. 표본이 얇으면 그 줄을 그리지 않는다 */
+  batted: BattedBallData;
 }
 
 /**
@@ -86,6 +88,27 @@ export interface RoleLine {
   era: Rate;
   whip: Rate;
   k9: Rate;
+}
+
+/**
+ * 타구 성향 — 땅볼/뜬공 · 방향 · 내야안타 · 삼진 내역.
+ *
+ * ⚠**이름을 정확히 붙이는 것이 절반이다.**
+ * - 땅볼 비율은 **「GB%」가 아니다.** GB%는 안타를 포함한 전 타구가 분모인데
+ *   비홈런 안타에는 타구 종류 표기가 없어(실측 27.5%) 우리는 그걸 모른다. **아웃만**을 분모로 한다.
+ * - 삼진 내역은 **「헛스윙 유도율」이 아니다.** 그건 투구 단위 데이터가 필요하고 우리에겐 없다.
+ * - 방향은 **「처리한 야수 기준」**이다. 타구가 떨어진 지점이 아니다 — 시프트·호수비가 섞인다.
+ */
+export interface BattedBallData {
+  groundOuts: number;
+  airOuts: number;
+  left: number;
+  center: number;
+  right: number;
+  infield: number;
+  infieldHits: number;
+  swinging: number;
+  looking: number;
 }
 
 export interface PitchingBlockData {
@@ -108,6 +131,8 @@ export interface PitchingBlockData {
    * ⚠**선발이 0경기면 이 줄을 그리지 않는다** — 구원 투수에게 「QS 0」은 「못 했다」로 읽힌다(M11).
    */
   quality: { starts: number; qs: number; hqs: number; cg: number; sho: number };
+  /** 타구 성향. 표본이 얇으면 그 줄을 그리지 않는다 */
+  batted: BattedBallData;
   /**
    * 선발형인가 구원형인가. **아웃 카운트가 많은 쪽**이다(`@bb-app/aggregate`가 정한다).
    * 순위표의 어느 부문에 서는지와, 어떤 분포로 색을 칠하는지를 이 값이 정한다.
@@ -701,6 +726,43 @@ function roleSplitBlock(p: PitchingBlockData): RawHtml {
   });
 }
 
+/** 아웃 중 땅볼 비율. ⚠**분모가 아웃이라는 것을 라벨이 말한다** */
+const GROUND_LABEL = "ゴロアウト率";
+
+/**
+ * 타구 성향 한 줄.
+ *
+ * ⚠**표본이 얇으면 그리지 않는다**(M2·M11). 20타구짜리 「좌측 70%」는 값이 아니라 소음이다.
+ */
+function battedBallRow(d: BattedBallData): RawHtml {
+  const outs = d.groundOuts + d.airOuts;
+  const dir = d.left + d.center + d.right;
+  const so = d.swinging + d.looking;
+  if (outs < MIN_BATTED && dir < MIN_DIRECTION && so < MIN_STRIKEOUT) return raw("");
+  return html`${columns(
+    outs < MIN_BATTED
+      ? raw("")
+      : html`${statRate(GROUND_LABEL, { value: d.groundOuts / outs, denominator: outs }, "アウト", 3)}`,
+    dir < MIN_DIRECTION
+      ? raw("")
+      : html`${statRate("引っ張り側", { value: d.left / dir, denominator: dir }, "打球", 3)}
+          ${statRate("センター", { value: d.center / dir, denominator: dir }, "打球", 3)}
+          ${statRate("逆方向側", { value: d.right / dir, denominator: dir }, "打球", 3)}`,
+    d.infield < MIN_INFIELD
+      ? raw("")
+      : html`${statRate("内野安打率", { value: d.infieldHits / d.infield, denominator: d.infield }, "内野打球", 3)}`,
+    so < MIN_STRIKEOUT
+      ? raw("")
+      : html`${statRate("空振り三振の割合", { value: d.swinging / so, denominator: so }, "三振", 3)}`,
+  )}
+  ${note(
+    "打球の方向は**打球が落ちた地点ではなく、処理した野手の位置**です — シフトや好守が混ざります。" +
+      "左右は守備位置で分けており、**二塁手は右側**に入れています（当サイトの定義）。" +
+      "**ゴロアウト率の分母はアウトだけ**です — 本塁打以外の安打には打球の種類が公表されないため、" +
+      "一般的なGB%とは分母が違います。**空振り三振の割合は三振の内訳**であって、空振り率ではありません。",
+  )}`;
+}
+
 function advancedBatting(b: BattingBlockData): RawHtml {
   const src = b.src;
   return block({
@@ -719,6 +781,7 @@ function advancedBatting(b: BattingBlockData): RawHtml {
         : html`${statSigned("SRC", src.src, src.pa, "打席", rk(b.ranks, "src"))}
             ${statSigned("SRC/600", src.srcPer600, src.pa, "打席")}`,
     )}
+    ${battedBallRow(b.batted)}
     ${note(
       "SRC（状況得点貢献）は、打席ごとに得点期待値をどれだけ動かしたかを合計した自前の指標です。" +
         "打撃だけを測り、守備・走塁・ポジション補正は含みません。WARではなく、WARと比較できません。" +
@@ -743,6 +806,7 @@ function advancedPitching(p: PitchingBlockData): RawHtml {
         : html`${statSigned("SRP", srp.srp, srp.bf, "対戦打者", rk(p.ranks, "srp"))}
             ${statSigned("SRP/9", srp.srpPer9, srp.bf, "対戦打者")}`,
     )}
+    ${battedBallRow(p.batted)}
     ${note(
       "FIPは本塁打・四死球・奪三振だけから防御率の目盛りに換算した値です。守備の影響を切り離す代わりに、打球の質は測っていません。",
     )}
@@ -1159,6 +1223,18 @@ ${postseasonBrief(d.postseason, base)}
 }
 
 /** 임계값을 코드에만 두지 않는다 — 테스트가 이 값을 고정한다. */
+/**
+ * 타구 성향의 최소 표본.
+ *
+ * ⚠**분모가 축마다 다르므로 임계값도 축마다 다르다**(M2). 아웃·타구·내야타구·삼진은 서로 다른 표본이다.
+ * 값은 「이보다 얇으면 모양이 요동친다」는 실측 감각에서 잡았고, 순위를 매기지 않으므로
+ * 자격 기준(M3)이 아니라 **표시 임계값**이다.
+ */
+const MIN_BATTED = 100;
+const MIN_DIRECTION = 150;
+const MIN_INFIELD = 60;
+const MIN_STRIKEOUT = 50;
+
 export const THRESHOLDS = { situationPa: THIN_SITUATION_PA, matchupPa: THIN_MATCHUP_PA };
 
 export { BASE_LABEL, BASE_ORDER };

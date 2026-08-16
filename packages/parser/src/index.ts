@@ -20,3 +20,5 @@ export { normalizeVenue, parseScheduleVenues, venuesByGameId } from "./schedule.
 export type { VenueByPath } from "./schedule.ts";
 export { StatsParseError, normalizePlayerName, parseTeamBatting, parseTeamPitching } from "./stats.ts";
 export type { PublishedBatting, PublishedPitching } from "./stats.ts";
+export { isInfield, readPbp, sideOf, unknownTokens } from "./pbp.ts";
+export type { Field, PbpFacts, StrikeoutKind, Trajectory } from "./pbp.ts";

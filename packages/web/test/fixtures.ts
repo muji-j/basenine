@@ -51,7 +51,11 @@ export function battingBlock(over: Partial<BattingBlockData> = {}): BattingBlock
     src: { src: 44.2, pa: 442, skipped: 0, srcPer600: 60.0 },
     ranks: { avg: 1, obp: 1, slg: 1, ops: 1, hr: 2, rbi: 1, sb: 16, wrcPlus: 1, src: 1 },
     qualified: true,
-    needPa: 332,
+    batted: {
+    groundOuts: 120, airOuts: 110, left: 140, center: 120, right: 100,
+    infield: 90, infieldHits: 8, swinging: 70, looking: 25,
+  },
+  needPa: 332,
     ...over,
   };
 }
@@ -61,6 +65,10 @@ export function pitchingBlock(over: Partial<PitchingBlockData> = {}): PitchingBl
     games: 18,
     line: PITCHING_LINE,
     decisions: { w: 9, l: 4, sv: 0, hld: 0, reliefW: 0 },
+  batted: {
+    groundOuts: 120, airOuts: 110, left: 140, center: 120, right: 100,
+    infield: 90, infieldHits: 8, swinging: 70, looking: 25,
+  },
   quality: { starts: 22, qs: 14, hqs: 7, cg: 1, sho: 0 },
     era: r(2.7, 300),
     whip: r(1.1, 300),
