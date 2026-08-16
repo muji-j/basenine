@@ -151,8 +151,6 @@ export interface PageOptions {
    * 그런 화면은 `false`로 두고 `aria-current="true"`(구획 안에 있다)만 낸다.
    */
   navExact?: boolean;
-  /** 링크를 펼쳤을 때의 한 줄 설명. 없으면 사이트 공통 문구 */
-  ogDescription?: string;
   /** 본문. 블록들이 여기 들어간다 */
   body: RawHtml;
   /** 클라이언트에 실어 보낼 스크립트 본문(블록 카탈로그 등) */
@@ -366,7 +364,9 @@ export function page(o: PageOptions): string {
 <meta property="og:site_name" content="${o.site.name}">
 <meta property="og:locale" content="ja_JP">
 <meta property="og:title" content="${o.title}">
-<meta property="og:description" content="${o.ogDescription ?? "NPBの公表記録から再計算した選手成績・順位・対戦成績。"}">
+<!-- ⚠**화면별 설명을 받는 자리를 만들었다가 뺐다.** 부르는 곳이 하나도 없어서
+     「나중에 쓰겠지」로 남는 죽은 선택지가 됐다 — 필요해지면 그때 만든다 -->
+<meta property="og:description" content="NPBの公表記録から再計算した選手成績・順位・対戦成績。">
 <link rel="stylesheet" href="${o.root}assets/site.css">
 <!-- ⚠**스크립트가 없으면 탭은 조작이 아니라 벽이다.**
      탭 패널은 첫 장만 열어 두고 나머지를 hidden으로 내보내는데, 스크립트가 없으면

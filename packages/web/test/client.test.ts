@@ -1285,3 +1285,125 @@ test("성적이 없는 선수에게는 빈 줄을 만들지 않는다 — 빈 �
   const hits = await search(doc, "pickBatter", "佐");
   assert.equal(hits[0]!.querySelectorAll(".hs").length, 0);
 });
+
+// ─── 비교 화면의 빠른 선택 ──────────────────────────────────────────────
+
+/**
+ * ⚠**이 화면에는 한동안 실행되는 시험이 0건이었다**(2026-08-16 이중 검토).
+ * 그 사이에 두 결함이 지나갔다 — 로빙 tabindex 미적용(탭 정지 129개인데 화살표가 안 먹었다)과
+ * **화면과 동작이 반대로 읽히는 표시 미갱신**.
+ */
+function buildCompare(): ReturnType<typeof makeDocument> {
+  const doc = makeDocument();
+  const form = make("section", { class: "block", id: "cmpForm" });
+  for (const [id, key] of [["A", "a"], ["B", "b"]] as [string, string][]) {
+    form.appendChild(make("input", { id: `cmp${id}`, type: "search", "aria-expanded": "false" }));
+    form.appendChild(make("ul", { id: `cmp${id}Hits`, role: "listbox" }));
+    form.appendChild(make("b", { id: `cmp-${key}-chosen` }));
+  }
+  const go = make("button", { id: "cmpGo", type: "button" });
+  go.disabled = true;
+  form.appendChild(go);
+  const swap = make("button", { id: "cmpSwap", type: "button" });
+  swap.disabled = true;
+  form.appendChild(swap);
+
+  const today = make("div", { id: "cmpToday" });
+  const list = make("div", { class: "picklist", role: "toolbar", "aria-orientation": "horizontal" });
+  for (const [i, n] of [["p1", "山本"], ["p2", "宮城"], ["b1", "佐藤"]] as [string, string][]) {
+    list.appendChild(
+      make("button", {
+        class: "pk", type: "button", "aria-pressed": "false",
+        "data-pick": i === "b1" ? "batter" : "pitcher", "data-i": i, "data-n": n, "data-t": "チーム",
+      }),
+    );
+  }
+  today.appendChild(list);
+  form.appendChild(today);
+  doc.body.appendChild(form);
+  form.appendChild(make("div", { id: "cmpOut" }));
+  return doc;
+}
+
+const cpk = (doc: ReturnType<typeof makeDocument>, id: string): El =>
+  doc.querySelectorAll("#cmpToday [data-pick]").find((b) => b.dataset["i"] === id)!;
+
+test("누른 순서대로 A → B에 들어가고, 버튼이 어느 자리인지 말한다", () => {
+  const doc = buildCompare();
+  run(doc);
+  cpk(doc, "p1").fire("click");
+  assert.equal(doc.getElementById("cmp-a-chosen")!.textContent, "山本（チーム）");
+  assert.equal(cpk(doc, "p1").getAttribute("data-slot"), "A", "어느 자리인지 말하지 않는다");
+  assert.equal(doc.getElementById("cmpGo")!.disabled, true, "한쪽만 골랐는데 열렸다");
+
+  cpk(doc, "b1").fire("click");
+  assert.equal(cpk(doc, "b1").getAttribute("data-slot"), "B");
+  assert.equal(doc.getElementById("cmpGo")!.disabled, false);
+});
+
+test("같은 버튼을 다시 누르면 그 자리가 비워진다 — 되돌릴 길이 없으면 안 된다", () => {
+  const doc = buildCompare();
+  run(doc);
+  cpk(doc, "p1").fire("click");
+  cpk(doc, "p1").fire("click");
+  assert.equal(doc.getElementById("cmp-a-chosen")!.textContent, "未選択");
+  assert.equal(cpk(doc, "p1").getAttribute("data-slot"), null);
+  assert.equal(cpk(doc, "p1").getAttribute("aria-pressed"), "false");
+});
+
+/**
+ * ⚠**화면이 「안 눌림」인데 누르면 해제되는 상태를 만들지 않는다.**
+ * 선택이 바뀌는 곳은 셋(직접 고르기·入れかえ·공유 링크 복원)인데 다시 그리는 곳이 하나뿐이면
+ * 나머지 둘에서 **버튼이 실제 상태와 반대로 읽힌다.**
+ */
+test("入れかえ 하면 버튼의 A·B 표시도 따라 바뀐다", () => {
+  const doc = buildCompare();
+  run(doc);
+  cpk(doc, "p1").fire("click");
+  cpk(doc, "b1").fire("click");
+  assert.deepEqual(
+    [cpk(doc, "p1").getAttribute("data-slot"), cpk(doc, "b1").getAttribute("data-slot")],
+    ["A", "B"],
+  );
+
+  doc.getElementById("cmpSwap")!.fire("click");
+  assert.deepEqual(
+    [cpk(doc, "p1").getAttribute("data-slot"), cpk(doc, "b1").getAttribute("data-slot")],
+    ["B", "A"],
+    "자리를 바꿨는데 버튼은 옛 자리를 말한다",
+  );
+});
+
+test("공유 링크로 들어와도 버튼이 눌린 것으로 보인다 — 안 그러면 누르는 순간 해제된다", async () => {
+  const doc = buildCompare();
+  run(doc, {
+    index: [
+      { i: "p1", n: "山本", t: "チーム" },
+      { i: "b1", n: "佐藤", t: "チーム" },
+    ],
+    location: { search: "?a=p1&b=b1", href: "" },
+  });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(
+    [cpk(doc, "p1").getAttribute("data-slot"), cpk(doc, "b1").getAttribute("data-slot")],
+    ["A", "B"],
+    "공유 링크로 복원했는데 버튼이 안 눌린 것으로 보인다",
+  );
+});
+
+/**
+ * ⚠**부품을 공유하면 그 부품을 살리는 처리도 공유해야 한다.**
+ * aria-label 이 「左右キーで移動」라고 말하는데 화살표가 안 먹으면 라벨이 거짓말이 된다.
+ */
+test("비교 화면의 긴 목록도 탭 정지 하나다 — 대전 화면과 같은 약속을 지킨다", () => {
+  const doc = buildCompare();
+  run(doc);
+  const items = doc.querySelectorAll("#cmpToday [data-pick]");
+  assert.deepEqual(
+    items.map((b) => b.getAttribute("tabindex")),
+    ["0", "-1", "-1"],
+    "비교 화면의 목록이 전부 탭 정지다",
+  );
+  items[0]!.fire("keydown", { key: "ArrowRight" });
+  assert.deepEqual(items.map((b) => b.getAttribute("tabindex")), ["-1", "0", "-1"]);
+});

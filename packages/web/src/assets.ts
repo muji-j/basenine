@@ -510,8 +510,6 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
 /* 비교 화면에서는 **어느 자리에 들어갔는지**까지 말한다 — 채울 자리가 둘이다 */
 .pk[data-slot]::after{content:attr(data-slot);font-size:9.5px;margin-left:4px;opacity:.85}
 .pickfind{margin:16px 0 0;border-top:1px solid var(--hair);padding-top:12px}
-.pickfind summary{font-size:12px;color:var(--tx-2);cursor:pointer}
-.pickfind summary:hover{color:var(--tx)}
 .pickfind .picker{margin-top:12px}
 
 /* ── 試合ページ ────────────────────────────────────────────
@@ -655,8 +653,10 @@ table.stand .dif i.n{right:50%}
 .gmore a{text-decoration:none;border-bottom:1px solid var(--hair-2)}
 .gmore a:hover{border-bottom-color:var(--tx-3)}
 
-/* 긴 표도 같은 이유로 화면에 들어올 때 그린다 — 대전 성적 146행·순위 122행이 실측이다 */
-.block .scroller{content-visibility:auto;contain-intrinsic-size:auto 420px}
+/* ⚠**긴 표에는 걸지 않는다.** 한때 걸었다가 뺐다 — 실측으로 순위 화면의 scroller 80개 중
+   실제로 렌더되는 것은 **2개**뿐이었다(나머지는 닫힌 탭 패널 안이라 이미 display:none 이다).
+   그 2개는 대개 첫 화면 안에 있어 생략할 것이 없고, contain 의 부작용만 남는다.
+   근거로 들었던 「대전 146행·순위 122행」은 전부 탭 패널 안이라 이 규칙이 애초에 안 닿는다. */
 
 /* ── 카드 전체를 누르기 ──────────────────────────────────────
    ⚠**링크를 하나 더 겹치지 않는다.** 이미 있는 「この試合の詳細」의 클릭 영역을
@@ -795,7 +795,9 @@ table.stand .dif i.n{right:50%}
    (실측: SVG 698개 · polygon 1,390개 · DOM 요소 7,326개).
    전송량은 문제가 아니다 — 528KB가 brotli로 32KB가 된다. **문제는 첫 페인트의 레이아웃 비용**이다.
    ⚠contain-intrinsic-size 에 auto 를 붙인다. 고정값을 주면 실제 높이와 어긋나 스크롤바가 튀는데,
-   auto 는 **한 번 그린 크기를 기억**해서 그 어긋남을 없앤다.
+   auto 는 **한 번 그린 크기를 기억**한다.
+   ⚠**단 그 기억은 이 문서가 살아 있는 동안만이다** — 뒤로가기로 다시 읽히면 12묶음이
+   전부 900px 추정에서 시작한다. 스크롤 복원이 어긋나는지는 **실기 확인 전에는 모른다**(미검증).
    ⚠검색·구단 좁히기는 그대로 동작한다 — 이것은 렌더 생략이지 display:none 이 아니다. */
 .teamgroup{content-visibility:auto;contain-intrinsic-size:auto 900px}
 .roster{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:0 16px}
@@ -879,19 +881,38 @@ table.stand .dif i.n{right:50%}
 }
 @media print{
   /* 조작에 쓰는 것은 종이에서 아무 일도 하지 않는다 */
-  .topbar,.rail,.editor,.skip,.seasons,.daybar,.pickbar,.pickgames,.find,.tabs{display:none}
+  .topbar,.rail,.editor,.skip,.seasons,.daybar,.pickbar,.pickgames{display:none}
   .block[hidden]{display:block}
-  /* ⚠**닫힌 탭도 펼친다.** 종이에는 여는 수단이 없다 — 안 펼치면 그 내용이 통째로 사라진다 */
-  [data-panelgroup][hidden]{display:block!important}
+  /*
+     ⚠**닫힌 탭을 펼치지 않는다.** 한때 펼쳤다가 되돌렸다 — 실측으로 순위 화면이
+     14행에서 **2,432행**이 됐고(패널 78개), 그 표들에는 **이름이 없었다.**
+     탭줄을 조작으로 보고 함께 숨겼기 때문이다. 패널의 유일한 라벨이 그 탭줄이다.
+     종이에는 여는 수단이 없지만 **고르는 것은 인쇄 전에 할 수 있다** — 보고 있는 것을 찍는다.
+  */
+  /* ⚠**탭줄은 조작이면서 「고른 것의 이름」이다.** 통째로 숨기면 표에서 이름이 사라진다 —
+     고른 것만 글자로 남기고 버튼 모양은 지운다 */
+  .tab{border:0;background:transparent!important;color:inherit!important;padding:0 8px 0 0;font-weight:700}
+  .tab:not([aria-selected="true"]):not([aria-pressed="true"]){display:none}
   /* ⚠**렌더 생략을 끈다.** content-visibility 는 화면 밖을 그리지 않는데,
      종이에는 「화면 밖」이 없다 — 켜 둔 채 인쇄하면 **빈 페이지가 나온다** */
-  .teamgroup,.block .scroller{content-visibility:visible!important}
-  /* 가로 스크롤 상자는 종이에서 잘린다 — 넘치게 두고 표를 쪼개게 맡긴다 */
+  .teamgroup{content-visibility:visible!important}
+  /* ⚠**좁혀서 인쇄한 종이는 그 사실을 말해야 한다**(작업규칙 7의 종이판).
+     좁히기 조작은 지우되 「몇 명을 보고 있는가」는 남긴다 — 없으면 나중에 그 종이를 보는 사람이
+     「이 구단에 3명뿐인가」로 읽는다 */
+  .find label,.find input,.find .chips{display:none}
+  .find{padding-top:0}
+  /* 가로로 넘치는 표는 종이에서 잘린다.
+     ⚠**「쪼개진다」고 쓰지 않는다** — 주요 엔진은 표를 가로로 쪼개지 않는다.
+     여기서 하는 일은 잘림 위치를 상자 폭에서 종이 폭으로 옮기는 것뿐이고,
+     오른쪽 열이 남는지는 **실제로 인쇄해 보기 전에는 모른다**(미검증) */
   .scroller{overflow:visible}
+  /* 고정 열은 스크롤이 없는 종이에서 위치만 어긋난다 */
+  .scroller th,.scroller td{position:static!important}
   .shell{grid-template-columns:0 1fr}
   /* 링크의 목적지를 남긴다 — 종이에서는 누를 수 없다 */
   .foot a[href^="http"]::after{content:" (" attr(href) ")";font-size:9px;color:#555}
-  .block{break-inside:avoid-page}
+  /* ⚠블록에는 break-inside 를 걸지 않는다 — 한 페이지보다 큰 블록에는 엔진이 지킬 수 없어
+     무시하거나 앞에 빈 여백을 남긴다. 행 단위만 지킨다 */
   table{break-inside:auto}
   tr{break-inside:avoid}
 }
@@ -1499,28 +1520,6 @@ if(pickForm){
     }
     setSide(side,{i:b.dataset.i,n:b.dataset.n,t:b.dataset.t});
   }));
-  /* ⚠**버튼 100개짜리 목록을 탭으로 하나씩 지나가게 두지 않는다.**
-     한 팀에 투수 30명·타자 40명이 실제로 나오므로, 그대로 두면 이 화면을 키보드로 빠져나가는 데만
-     탭을 140번 눌러야 한다. 목록 하나가 탭 정지 하나가 되고 안에서는 화살표로 움직인다.
-     ⚠**tabindex를 서버가 아니라 여기서 준다** — JS가 없으면 화살표도 없으니
-     그때는 전부 탭으로 닿는 편이 맞다. */
-  $$("#pickToday .picklist").forEach(list=>{
-    const items=$$("[data-pick]",list);
-    if(items.length===0)return;
-    const rove=(el)=>{items.forEach(b=>b.setAttribute("tabindex",b===el?"0":"-1"))};
-    rove(items[0]);
-    items.forEach((b,at)=>{
-      b.addEventListener("click",()=>rove(b));
-      b.addEventListener("keydown",(e)=>{
-        const step=e.key==="ArrowRight"||e.key==="ArrowDown"?at+1
-          :e.key==="ArrowLeft"||e.key==="ArrowUp"?at-1
-          :e.key==="Home"?0:e.key==="End"?items.length-1:null;
-        if(step===null)return;
-        const to=items[(step+items.length)%items.length];
-        e.preventDefault();rove(to);if(to.focus)to.focus();
-      });
-    });
-  });
   const go2=$("#pickGo");
   if(go2)go2.addEventListener("click",()=>{
     if(!chosen.pitcher||!chosen.batter)return;
@@ -1528,6 +1527,35 @@ if(pickForm){
     go(BASE+"players/"+chosen.batter.i+".html?vs="+encodeURIComponent(chosen.pitcher.n)+"#b-matchup");
   });
 }
+
+/* ── 긴 선택 목록의 키보드 이동 ──
+   ⚠**버튼 100개짜리 목록을 탭으로 하나씩 지나가게 두지 않는다.**
+   한 팀에 투수 30명·타자 40명이 실제로 나오므로, 그대로 두면 이 화면을 키보드로 빠져나가는 데만
+   탭을 140번 눌러야 한다. 목록 하나가 탭 정지 하나가 되고 안에서는 화살표로 움직인다.
+   ⚠**tabindex를 서버가 아니라 여기서 준다** — JS가 없으면 화살표도 없으니
+   그때는 전부 탭으로 닿는 편이 맞다.
+
+   ⚠**이 처리는 pickForm 블록 밖에 있어야 한다.** 안에 두면 対戦 화면에서만 돌고,
+   같은 부품(pickTeam)을 쓰는 비교 화면은 **탭 정지 129개에 화살표가 안 먹는** 채로 남는다 —
+   그런데 aria-label 은 「左右キーで移動」라고 읽어 준다. 라벨이 거짓말을 하게 된다.
+   (2026-08-16 이중 검토에서 잡혔고, 셀렉터만 넓히는 첫 수정은 이 위치 때문에 듣지 않았다.) */
+$$(".picklist").forEach(list=>{
+  const items=$$("[data-pick]",list);
+  if(items.length===0)return;
+  const rove=(el)=>{items.forEach(b=>b.setAttribute("tabindex",b===el?"0":"-1"))};
+  rove(items[0]);
+  items.forEach((b,at)=>{
+    b.addEventListener("click",()=>rove(b));
+    b.addEventListener("keydown",(e)=>{
+      const step=e.key==="ArrowRight"||e.key==="ArrowDown"?at+1
+        :e.key==="ArrowLeft"||e.key==="ArrowUp"?at-1
+        :e.key==="Home"?0:e.key==="End"?items.length-1:null;
+      if(step===null)return;
+      const to=items[(step+items.length)%items.length];
+      e.preventDefault();rove(to);if(to.focus)to.focus();
+    });
+  });
+});
 
 /* ── 選手をくらべる ──
    ⚠**여기서 지표를 계산하지 않는다**(M1). 서버가 이미 계산·반올림·등급 판정을 끝낸
@@ -1550,10 +1578,15 @@ if(cmpForm){
     const both=!!(chosen.a&&chosen.b);
     if(g)g.disabled=!both;
     if(s)s.disabled=!both;
+    markCmp();
   };
   const setInput=(side,p)=>{const i=$("#cmp"+side.toUpperCase());if(i)i.value=p?p.n:""};
 
-  const markCmp=()=>{
+  /* ⚠**선택이 바뀌는 곳은 셋인데(직접 고르기·入れかえ·공유 링크 복원) 다시 그리는 곳이
+     하나뿐이었다.** 그래서 화면과 동작이 반대로 읽혔다 — 버튼은 「안 눌림」인데 누르면 해제됐다.
+     show 가 chosen 을 바꾸는 유일한 함수이므로 **거기서** 다시 그린다.
+     함수 선언으로 두는 것은 show 보다 뒤에 있어도 되게 하기 위해서다(호이스팅) */
+  function markCmp(){
     $$("#cmpToday [data-pick]").forEach(b=>{
       const id=b.dataset.i;
       const at=(chosen.a&&chosen.a.i===id)?"A":(chosen.b&&chosen.b.i===id)?"B":"";
@@ -1561,8 +1594,8 @@ if(cmpForm){
       /* **어느 쪽에 들어갔는지**를 버튼이 말한다 — 두 자리를 채우는 화면이라 「눌렀다」만으로는 부족하다 */
       if(at==="")b.removeAttribute("data-slot");else b.setAttribute("data-slot",at);
     });
-  };
-  const setCmp=(side,p)=>{setInput(side,p);show(side,p);markCmp()};
+  }
+  const setCmp=(side,p)=>{setInput(side,p);show(side,p)};
   attachPicker($("#cmpA"),$("#cmpAHits"),(p)=>setCmp("a",p));
   attachPicker($("#cmpB"),$("#cmpBHits"),(p)=>setCmp("b",p));
   /* 오늘 대전하는 두 팀에서 바로 고르기. **누른 순서대로 A → B에 들어간다** —
@@ -1764,9 +1797,18 @@ if(cmpForm){
    스크립트가 죽어도 전 선수 목록은 그대로 남는다. */
 const isFav=(id)=>state.favs.indexOf(id)>=0;
 function toggleFav(id){
-  const at=state.favs.indexOf(id);
-  if(at>=0)state.favs.splice(at,1);else state.favs.push(id);
-  save(state);
+  /* ⚠**filter 로 지운다.** splice 는 저장값이 손상돼 같은 id 가 두 번 들어 있으면
+     하나만 지워서 별이 안 꺼진다 — 두 번 눌러야 하는 상태가 된다 */
+  state.favs=isFav(id)?state.favs.filter(x=>x!==id):state.favs.concat([id]);
+  /* ⚠**state 전체를 쓰지 않는다.** initTabs 가 「지금 페이지에 없는 탭 키」를 메모리에서
+     첫 키로 되돌려 놓은 상태라, 여기서 통째로 저장하면 **다른 화면의 탭 기본값이 덮어써진다.**
+     실측: pranking 그룹의 키 집합이 타자/선발/구원에서 서로 다르다.
+     ★ 하나 누른 것이 다른 화면의 설정을 바꾸면 안 된다 */
+  try{
+    const cur=load()||{};
+    cur.favs=state.favs;
+    localStorage.setItem(KEY,JSON.stringify(cur));
+  }catch(e){}
 }
 function paintFav(){
   const b=$("#favBtn");
@@ -1776,9 +1818,21 @@ function paintFav(){
     b.setAttribute("aria-pressed",String(on));
     b.setAttribute("aria-label",on?"お気に入りから外す":"お気に入りに入れる");
   }
-  /* 일람에서는 표식만 얹는다 — 순서를 바꾸면 「내 선수가 어디 갔지」가 된다 */
+  /* 일람에서는 표식만 얹는다 — 순서를 바꾸면 「내 선수가 어디 갔지」가 된다.
+     ⚠**별은 CSS 로 그리지만 뜻은 글자로 말한다.** content 로 그린 ★만 있으면
+     스크린리더가 「별」이라고만 읽고 무엇인지 말하지 않는다 */
   $$(".roster li[data-id]").forEach(li=>{
-    li.setAttribute("data-favon",String(isFav(li.dataset.id)));
+    const on=isFav(li.dataset.id);
+    li.setAttribute("data-favon",String(on));
+    const a=$("a",li);
+    if(!a)return;
+    let tag=$(".favtag",a);
+    if(on&&!tag){
+      tag=doc.createElement("span");tag.className="favtag vh";tag.textContent="お気に入り";
+      a.appendChild(tag);
+    }else if(!on&&tag&&tag.parentNode&&tag.parentNode.removeChild){
+      tag.parentNode.removeChild(tag);
+    }
   });
   const only=$("#favOnly");
   if(only){

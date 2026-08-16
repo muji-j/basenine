@@ -38,14 +38,20 @@ function lineAt(text: string, at: number): { no: number; text: string; comment: 
   const no = before.split("\n").length;
   const line = text.slice(before.lastIndexOf("\n") + 1, text.indexOf("\n", at));
   const t = line.trim();
-  return { no, text: t, comment: t.startsWith("*") || t.startsWith("//") || t.startsWith("/*") || t.includes("⚠") };
+  // ⚠`*,*::before` 같은 CSS 셀렉터를 주석으로 오판하지 않는다 — 틀린 메시지가 나온다
+  const isComment = /^\*\s/.test(t) || t.startsWith("//") || t.startsWith("/*") || t.includes("⚠");
+  return { no, text: t, comment: isComment };
 }
 
 /**
  * 템플릿이 **끝나야 할 곳에서 끝나는가.**
  *
- * CSS는 스타일시트의 마지막 `}` 뒤에서, 클라이언트 스크립트는 `})();` 뒤에서 끝난다.
  * 주석 줄에서 끝났다면 그 줄의 백틱이 범인이다 — 메시지가 그 줄을 그대로 보여준다.
+ *
+ * ⚠**「무엇으로 끝나는가」만 보면 부족하다.** CSS 구역의 끝을 「}로 끝난다」로 보면
+ * CSS가 `}`로 가득하므로 사실상 아무것도 안 보는 것이 된다 — 실제로 뮤테이션 5본 중
+ * 「닫는 중괄호 바로 뒤에 백틱」 1본이 살아남았다(2026-08-16 이중 검토).
+ * 그래서 **닫는 백틱이 있어야 할 자리 자체**를 본다: 줄의 첫 비공백 문자이고 바로 뒤가 `;`다.
  */
 const REGIONS: { name: string; open: string; endsWith: string }[] = [
   { name: "CSS", open: "export const CSS = " + TICK, endsWith: "}" },
@@ -69,5 +75,35 @@ test("템플릿 리터럴이 주석 줄에서 끊기지 않는다 — 안쪽 주
       body.endsWith(r.endsWith),
       `${r.name}가 예정된 자리에서 끝나지 않았다 — 끝: ${JSON.stringify(body.slice(-40))}`,
     );
+    // ⚠**닫는 백틱은 줄의 처음에 홀로 서고 바로 뒤에 세미콜론이 온다.**
+    // 이 조건이 없으면 닫는 중괄호 바로 뒤에 붙은 백틱이 그냥 통과한다
+    assert.equal(src[at - 1], "\n", `${r.name}의 닫는 백틱이 줄 처음에 있지 않다 (assets.ts:${line.no})`);
+    assert.equal(src[at + 1], ";", `${r.name}의 닫는 백틱 뒤가 세미콜론이 아니다 (assets.ts:${line.no})`);
+  }
+});
+
+/**
+ * ⚠**구역을 헷갈려 코드를 엉뚱한 템플릿에 넣는 사고가 실제로 났다**(2026-08-16).
+ * JS 한 덩어리를 CSS 구역에 꽂았는데 **타입체크는 통과했다** — 둘 다 문자열이기 때문이다.
+ * `new Function(CLIENT_JS)`는 스크립트 쪽만 보므로 CSS에 들어간 JS는 아무도 못 봤다.
+ *
+ * 두 구역은 서로의 문법을 갖지 않는다. 그 사실을 **아주 성긴 그물**로 확인한다 —
+ * 정교하게 만들면 오탐으로 죽는다. 실제로 밟은 형태만 잡으면 된다.
+ */
+test("CSS 구역에 스크립트가 섞이지 않는다 — 둘 다 문자열이라 타입체크가 못 본다", () => {
+  const src = readFileSync(SRC, "utf8");
+  const open = "export const CSS = " + TICK;
+  const css = src.slice(src.indexOf(open) + open.length, closingTick(src, open));
+  for (const sign of ["addEventListener(", "=>{", "querySelectorAll(", "const "]) {
+    assert.ok(!css.includes(sign), `CSS 구역에 스크립트가 섞였다 — ${JSON.stringify(sign)} 이 있다`);
+  }
+});
+
+test("스크립트 구역에 스타일시트가 섞이지 않는다", () => {
+  const src = readFileSync(SRC, "utf8");
+  const open = "CLIENT_JS_TEMPLATE = " + TICK;
+  const js = src.slice(src.indexOf(open) + open.length, closingTick(src, open));
+  for (const sign of ["@media ", "@keyframes "]) {
+    assert.ok(!js.includes(sign), `스크립트 구역에 스타일시트가 섞였다 — ${JSON.stringify(sign)} 이 있다`);
   }
 });

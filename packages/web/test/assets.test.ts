@@ -193,15 +193,58 @@ test("블록마다 CSS가 필요로 하는 id 규칙이 유지된다", () => {
  * ⚠**렌더 생략과 인쇄는 정면으로 부딪힌다.**
  * `content-visibility:auto`는 화면 밖을 그리지 않는데 종이에는 「화면 밖」이 없다 —
  * 켜 둔 채 인쇄하면 **빈 페이지가 나온다.** 이건 마크업으로는 절대 안 잡히는 종류다.
+ *
+ * ⚠**「문자열이 있는가」로 재지 않는다.** 그러면 내일 누가 새 셀렉터에 렌더 생략을 걸어도
+ * 통과하고, 그때 나오는 것이 이 시험 제목이 말하는 빈 종이다.
+ * **렌더 생략을 쓰는 셀렉터를 전부 뽑아** 각각이 인쇄에서 꺼지는지 센다.
  */
-test("화면 밖 렌더 생략이 인쇄에서 꺼진다 — 안 끄면 빈 종이가 나온다", () => {
-  assert.match(CSS, /\.teamgroup\{content-visibility:auto;contain-intrinsic-size:auto/);
+test("렌더 생략을 쓰는 셀렉터가 전부 인쇄에서 꺼진다 — 하나라도 남으면 빈 종이가 나온다", () => {
   const at = CSS.indexOf("@media print");
   assert.ok(at > 0, "인쇄 규칙이 없다");
-  // 인쇄 규칙은 스타일시트의 마지막 블록이다 — 끝까지 잘라 쓰면 중괄호를 셀 필요가 없다
-  const printBlock = CSS.slice(at);
-  assert.match(printBlock, /content-visibility:visible!important/, "인쇄에서 렌더 생략을 끄지 않았다");
-  assert.match(printBlock, /\[data-panelgroup\]\[hidden\]\{display:block!important\}/, "종이에서 닫힌 탭을 펼치지 않았다");
+  // ⚠**주석을 먼저 걷어낸다.** 안 걷으면 규칙 위의 설명문이 셀렉터로 잡힌다
+  const screen = CSS.slice(0, at).replace(/\/\*[\s\S]*?\*\//g, "");
+  const printBlock = CSS.slice(at); // 인쇄 규칙은 스타일시트의 마지막 블록이다
+
+  // 화면 쪽에서 content-visibility:auto 를 켜는 셀렉터를 전부 모은다
+  const targets = [...screen.matchAll(/(^|\})([^{}]+)\{[^{}]*content-visibility:auto/g)].flatMap((m) =>
+    m[2]!.split(",").map((x) => x.trim()).filter((x) => x !== "" && !x.startsWith("@") && !x.startsWith("/*")),
+  );
+  assert.ok(targets.length > 0, "렌더 생략을 쓰는 곳이 하나도 없다 — 규칙이 사라졌나?");
+
+  const off = printBlock.slice(0, printBlock.indexOf("content-visibility:visible") + 40);
+  for (const t of targets) {
+    assert.ok(off.includes(t), `${t} 가 인쇄에서 꺼지지 않는다 — 그 부분이 빈 종이가 된다`);
+  }
+});
+
+/**
+ * ⚠**닫힌 탭을 인쇄에서 펼치지 않는다.** 한때 펼쳤다가 되돌렸다 —
+ * 순위 화면이 14행에서 2,432행이 됐고, 그 표들에는 이름이 없었다(탭줄을 함께 숨겼기 때문).
+ */
+test("인쇄는 보고 있는 것을 찍는다 — 닫힌 탭을 펼치지 않고, 고른 탭의 이름은 남긴다", () => {
+  const printBlock = CSS.slice(CSS.indexOf("@media print"));
+  assert.ok(
+    !printBlock.includes("[data-panelgroup][hidden]{display:block"),
+    "닫힌 탭을 전부 펼치면 순위 화면이 2,432행이 되고 표에 이름이 없어진다",
+  );
+  // 탭줄 자체를 숨기면 고른 것의 이름이 사라진다 — 고르지 않은 것만 지운다
+  assert.ok(!/\.tabs\{display:none\}/.test(printBlock), "탭줄을 통째로 숨겼다");
+  assert.match(
+    printBlock,
+    /\.tab:not\(\[aria-selected="true"\]\):not\(\[aria-pressed="true"\]\)\{display:none\}/,
+    "고르지 않은 탭만 지우는 규칙이 없다",
+  );
+});
+
+/**
+ * ⚠**좁혀서 인쇄한 종이는 그 사실을 말해야 한다**(작업규칙 7의 종이판).
+ * 「お気に入り」로 3명만 남기고 인쇄하면, 나중에 그 종이를 보는 사람은
+ * 「이 구단에 3명뿐인가」로 읽는다.
+ */
+test("좁히기 조작은 지우되 「몇 명을 보고 있는가」는 종이에 남는다", () => {
+  const printBlock = CSS.slice(CSS.indexOf("@media print"));
+  assert.ok(!/[^-]\.find\{display:none\}/.test(printBlock), "분모까지 통째로 지웠다");
+  assert.match(printBlock, /\.find label,\.find input,\.find \.chips\{display:none\}/);
 });
 
 test("⚠크기를 기억하게 한다 — 고정값을 주면 스크롤바가 튄다", () => {
