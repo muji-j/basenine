@@ -670,7 +670,8 @@ function loadScorebook(
 ): Map<string, ScorebookRow[]> {
   const rows = db.raw
     .prepare(
-      `SELECT e.batter_id AS playerId, g.game_date AS date, g.away_code AS away, g.home_code AS home,
+      `SELECT e.batter_id AS playerId, e.game_id AS gameId,
+              g.game_date AS date, g.away_code AS away, g.home_code AS home,
               e.half AS half, e.inning AS inning, e.outs_before AS outs, e.bases AS bases,
               e.outcome AS outcome, e.rbi AS rbi, e.raw_box AS rawBox
        FROM pa_event e
@@ -681,6 +682,7 @@ function loadScorebook(
     )
     .all(season, competition, through) as {
     playerId: string;
+    gameId: string;
     date: string;
     away: string;
     home: string;
@@ -702,6 +704,9 @@ function loadScorebook(
     const team = TEAMS.find((t) => t.code === opponentCode);
     const row: ScorebookRow = {
       date: r.date,
+      // ⚠**슬러그로 바꿔서 넘긴다.** 화면이 `/` 를 파일명에 쓸 수 없다 —
+      // 렌더러가 다시 변환하게 두면 그 규칙이 두 벌이 된다(M1)
+      gameSlug: gameSlug(r.gameId),
       opponent: team?.name ?? opponentCode.toUpperCase(),
       inning: r.inning,
       half: r.half === "top" ? "top" : "bottom",

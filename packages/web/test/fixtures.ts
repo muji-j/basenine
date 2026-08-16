@@ -209,6 +209,7 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
     scorebook: [
       {
         date: "2026-08-14",
+        gameSlug: "2026-0814-t-g-17",
         opponent: "読売ジャイアンツ",
         inning: 1,
         half: "bottom",

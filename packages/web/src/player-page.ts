@@ -224,6 +224,11 @@ export interface SplitAxisData {
 
 export interface ScorebookRow {
   date: string;
+  /**
+   * 그 경기 페이지의 슬러그. **여기서 만들지 않는다**(M1) — `gameSlug()` 한 벌이 만든다.
+   * ⚠링크가 깨지면 빌드가 멈춘다(`link-check.ts`) — 조용히 404가 되는 길을 막아 둔 것이다.
+   */
+  gameSlug: string;
   opponent: string;
   inning: number;
   half: "top" | "bottom";
@@ -1002,7 +1007,7 @@ function splitsBlock(axes: readonly SplitAxisData[]): RawHtml {
   });
 }
 
-function scorebookBlock(rows: readonly ScorebookRow[], total: number): RawHtml {
+function scorebookBlock(rows: readonly ScorebookRow[], total: number, base: string): RawHtml {
   const body =
     rows.length === 0
       ? html`<p class="empty">打席記録がありません。</p>`
@@ -1013,7 +1018,10 @@ function scorebookBlock(rows: readonly ScorebookRow[], total: number): RawHtml {
           </tr></thead>
           <tbody>${rows.map(
             (r) => html`<tr>
-              <td class="l">${gameDate(r.date)}</td>
+              <!-- ⚠**타석에서 그 경기로 갈 수 있어야 한다.** 「이 안타가 어떤 경기였나」는
+                   이 표를 보는 사람이 가장 자주 하는 질문인데, 지금까지는 날짜만 있고
+                   경기 페이지로 가는 길이 없어서 試合 화면에서 날짜를 다시 찾아야 했다 -->
+              <td class="l"><a href="${base}games/${r.gameSlug}.html">${gameDate(r.date)}</a></td>
               <td class="l">${r.opponent}</td>
               <td>${r.inning}${r.half === "top" ? "表" : "裏"}</td>
               <td class="l">${BASE_LABEL[r.bases] ?? r.bases} ${r.outs}死</td>
@@ -1332,7 +1340,7 @@ function renderBlock(id: BlockId, d: PlayerPageData, base: string): RawHtml {
     case "splits":
       return splitsBlock(d.splits);
     case "scorebook":
-      return scorebookBlock(d.scorebook, d.scorebookTotal);
+      return scorebookBlock(d.scorebook, d.scorebookTotal, base);
     case "situation":
       return situationBlock(d.situation, d.leagueName, d.bunts);
     case "timesthrough":
