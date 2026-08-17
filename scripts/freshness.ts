@@ -62,6 +62,160 @@ if (latest.d === null) {
   }
 }
 
+/**
+ * **통산 기록이 며칠 낡았는가.**
+ *
+ * ⚠**이것이 없어서 사고가 났다**(2026-08-17). 선수 페이지를 8/15에 받고 다시 안 받았는데
+ * 이 감시는 `MAX(game_date)` 만 보고 있어서 열흘 내내 「데이터 나이 1일」로 초록이었다.
+ * 낡은 것은 경기가 아니라 **통산**이었고, 그것을 보는 눈이 아예 없었다.
+ * 그 결과 원인을 **남 탓(「NPB 가 늦다」)으로 오진**하고 엉뚱한 처방까지 얹었다.
+ *
+ * ⚠**재취득이 조용히 멈추는 길은 여럿이다** — 목록 생성 실패 · 상한 잠식 · 404 누적 ·
+ * 사이드카 미갱신. 어느 길로 멈춰도 여기서 잡힌다. **원인마다 감시를 두지 않고 결과를 잰다.**
+ * ⚠취득 시각이 **NULL 인 선수**(사이드카를 못 읽은 경우)도 「낡음」으로 센다 — 「모른다」는 안전하지 않다(M11).
+ *
+ * ⚠**최근 출장한 선수만 본다.** 전원을 보면 「NPB 를 떠나 페이지를 받을 수 없는 선수」가
+ * 영원히 「낡음」으로 잡혀 감시가 늘 빨갛게 되고, 결국 아무도 안 본다.
+ * ⚠**`MAX`(가장 최근)가 아니라 `MIN`(가장 오래된)을 본다.** 한 장만 새로 받아도 초록이 되면
+ * 감시가 아니다 — 재취득이 멈추면 **가장 오래된 쪽부터** 밀린다.
+ */
+const career = db.prepare(`
+  WITH appearance AS (
+    SELECT b.player_id AS id, MAX(g.game_date) AS last
+      FROM batting_line b JOIN game g ON g.game_id = b.game_id
+     WHERE g.status = 'played' GROUP BY b.player_id
+    UNION ALL
+    SELECT t.player_id AS id, MAX(g.game_date) AS last
+      FROM pitching_line t JOIN game g ON g.game_id = t.game_id
+     WHERE g.status = 'played' GROUP BY t.player_id
+  ),
+  last_seen AS (SELECT id, MAX(last) AS last FROM appearance GROUP BY id),
+  fetched AS (
+    SELECT player_id AS id,
+           MAX(SUBSTR(datetime(fetched_at, '+9 hours'), 1, 10)) AS day
+      FROM (SELECT player_id, fetched_at FROM career_batting
+            UNION ALL
+            SELECT player_id, fetched_at FROM career_pitching)
+     GROUP BY player_id
+  )
+  SELECT COUNT(*) AS players,
+         SUM(f.day IS NULL) AS unknown,
+         MIN(f.day) AS oldest,
+         MAX(f.day) AS newest
+    FROM fetched f
+    JOIN last_seen l ON l.id = f.id
+   WHERE l.last >= (SELECT DATE(MAX(game_date), '-400 days') FROM game WHERE status = 'played')
+`).get() as { players: number; unknown: number; oldest: string | null; newest: string | null };
+
+if (career.players === 0) {
+  console.log("통산 기록 없음 — 아직 선수 페이지를 적재하지 않았다");
+} else {
+  const careerAge = career.oldest === null
+    ? null
+    : Math.floor((Date.parse(`${todayJst}T00:00:00Z`) - Date.parse(`${career.oldest}T00:00:00Z`)) / 86_400_000);
+  console.log(
+    `통산 기록(최근 출장자) ${career.players}명 · 취득일 ${career.oldest ?? "?"}〜${career.newest ?? "?"}` +
+      `(가장 오래된 것이 ${careerAge ?? "?"}일 전) · 취득일 모름 ${career.unknown}명`,
+  );
+  /**
+   * ⚠**경기 데이터보다 넉넉하다.** 선수 페이지는 하루 상한(기본 400명)으로 나눠 받으므로
+   * 전원이 같은 날일 수 없고, 긴 중단 뒤에는 따라잡는 데 며칠 걸린다(980명이면 3일).
+   * 그래도 **가장 오래된 것**이 이보다 밀리면 재취득이 멈춘 것이다.
+   */
+  const careerStaleDays = staleDays + 5;
+  if (careerAge === null || careerAge > careerStaleDays) {
+    console.error(
+      `⚠**통산 기록이 낡았다** — 가장 오래된 취득이 ${careerAge ?? "알 수 없는 시점"}일 전이다` +
+        `(허용 ${careerStaleDays}일). 선수 페이지 재취득이 멈췄을 수 있다.\n` +
+        `   확인: node packages/store/tools/emit-stale-player-ids.ts ${dbPath} --limit 400`,
+    );
+    stale = true;
+  }
+  if (career.unknown > 0) {
+    console.error(
+      `⚠취득일을 모르는 선수 ${career.unknown}명 — 아카이브 사이드카(*.meta.json)가 없거나 깨졌다.\n` +
+        `   화면이 그 선수의 통산에 「取得日は記録がありません」이라고 적는다.`,
+    );
+  }
+}
+
+/**
+ * **予告先発이 따라오고 있는가.**
+ *
+ * ⚠**이 자료만 「거르면 영영 못 받는다」**(`update.ts`) — 페이지가 하루치만 보여주므로
+ * 어제 것을 오늘 받을 방법이 없다. 그런데 감시가 **아예 없었다**(2026-08-17 점검).
+ * ⚠**「행이 없다」로 판정하면 안 된다.** 월요일처럼 **경기가 없는 날**이 정상적으로 존재한다
+ *   (실측: 2026-08-17은 월요일이라 페이지가 「試合が予定されていません」이었다).
+ *   그래서 **일정과 대조**해서 「경기가 있는데 예고가 없다」만 잡는다.
+ */
+const starters = db.prepare(`
+  SELECT
+    (SELECT MAX(game_date) FROM probable_pitcher) AS latest,
+    (SELECT COUNT(*) FROM probable_pitcher
+      WHERE game_date = (SELECT MAX(game_date) FROM probable_pitcher)) AS teams,
+    (SELECT COUNT(*) FROM probable_pitcher
+      WHERE game_date = (SELECT MAX(game_date) FROM probable_pitcher)
+        AND player_id IS NOT NULL) AS named
+`).get() as { latest: string | null; teams: number; named: number };
+
+/** 오늘(JST) 이후로 **가장 가까운 경기일**. 없으면 시즌이 끝났거나 일정을 못 받은 것이다 */
+const nextGameDay = (db.prepare(
+  "SELECT MIN(game_date) AS d FROM game WHERE game_date >= ?",
+).get(todayJst) as { d: string | null }).d;
+
+/**
+ * **일정에 기대지 않는 값**: 마지막으로 받은 시각(JST 날짜).
+ * ⚠블록 밖에 둔다 — 아래 JSONL 기록이 이 값을 쓴다.
+ */
+const startersFetched = (db.prepare(
+  "SELECT MAX(SUBSTR(datetime(fetched_at, '+9 hours'), 1, 10)) AS d FROM probable_pitcher",
+).get() as { d: string | null }).d;
+
+if (starters.latest === null) {
+  console.log("予告先発 기록 없음");
+} else {
+  console.log(
+    `予告先発 최신 ${starters.latest} · 그 날 ${starters.teams}팀 중 발표 ${starters.named}팀` +
+      ` · 다음 경기일 ${nextGameDay ?? "없음"}`,
+  );
+  /**
+   * ⚠**다음 경기일보다 뒤처져 있으면 수집이 멈춘 것이다.**
+   * 예고는 **전날 저녁**에 나오므로, 다음 경기일이 오늘이면 그날치가 이미 있어야 한다.
+   * ⚠**다음 경기일이 내일 이후면 아직 안 나왔을 수 있다** — 그건 정상이라 안 잡는다.
+   *
+   * ⚠**지금 이 검사는 사실상 안 돈다.** 일일 배치가 **어제 하루치만** 받아서
+   * `game` 표에 **미래 경기가 한 건도 없다**(실측 2026-08-17: `MAX(game_date)` = 어제).
+   * 월간 일정 페이지에는 앞으로의 경기가 **들어 있는데** 파서가 점수 링크가 붙은 것만 뽑는다 —
+   * CLAUDE.md §2-2-1 의 「받고 있는데 안 읽던 것」이 또 나온 것이다.
+   * → 그래서 아래에 **일정에 기대지 않는 검사**를 함께 둔다.
+   */
+  if (nextGameDay !== null && nextGameDay <= todayJst && starters.latest < nextGameDay) {
+    console.error(
+      `⚠**予告先発이 뒤처졌다** — 다음 경기일이 ${nextGameDay}인데 예고는 ${starters.latest}까지다.\n` +
+        `   이 자료는 **거르면 영영 못 받는다**(페이지가 하루치만 보여준다).`,
+    );
+    stale = true;
+  }
+  /**
+   * **일정에 기대지 않는 검사**: 마지막으로 받은 시각이 며칠 전인가.
+   *
+   * ⚠**경기가 없는 날에도 받는다**(페이지 자체는 매일 있다). 그래서 「받은 지 며칠」은
+   * 경기 유무와 무관하게 성립하고, **수집이 멈춘 것을 직접 잡는다.**
+   * ⚠이것이 위 검사보다 먼저 필요하다 — 위 검사는 미래 일정이 들어와야 비로소 돈다.
+   */
+  const startersAge = startersFetched === null
+    ? null
+    : Math.floor((Date.parse(`${todayJst}T00:00:00Z`) - Date.parse(`${startersFetched}T00:00:00Z`)) / 86_400_000);
+  console.log(`  予告先発 마지막 취득 ${startersFetched ?? "?"} (${startersAge ?? "?"}일 전)`);
+  if (startersAge === null || startersAge > staleDays) {
+    console.error(
+      `⚠**予告先発 수집이 멈췄다** — 마지막 취득이 ${startersAge ?? "알 수 없는 시점"}일 전이다(허용 ${staleDays}일).\n` +
+        `   페이지가 하루치만 보여주므로 **거른 날은 영영 못 받는다.**`,
+    );
+    stale = true;
+  }
+}
+
 if (counts.quarantine > 0) {
   console.error(`⚠격리 ${counts.quarantine}건 — 버그가 아니라 판단 요청이다. 원문을 보고 규칙을 정하라`);
   for (const r of db.prepare("SELECT kind, COUNT(*) AS n FROM quarantine GROUP BY kind").all() as {
@@ -100,6 +254,16 @@ if (jsonAt >= 0) {
       players: counts.players,
       noHand: counts.noHand,
       quarantine: counts.quarantine,
+      // ⚠**통산 신선도도 남긴다** — 이 값이 없어서 「열흘 내내 초록」이었던 것을 나중에 증명할 수 없었다
+      careerPlayers: career.players,
+      careerOldest: career.oldest,
+      careerNewest: career.newest,
+      careerUnknown: career.unknown,
+      startersLatest: starters.latest,
+      startersFetched,
+      startersTeams: starters.teams,
+      startersNamed: starters.named,
+      nextGameDay,
       stale,
     };
     appendFileSync(path, `${JSON.stringify(record)}\n`, "utf8");

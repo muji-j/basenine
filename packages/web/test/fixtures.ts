@@ -177,12 +177,12 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
     draft: "2016年ドラフト1位",
     career: {
       batting: [
-        { year: 2024, team: "阪神", games: 100, faced: 400, line: ".280（350打数）· 98安打 12本 55打点 3盗塁1刺",
+        { year: 2024, team: "阪神",  games: 100, faced: 400, line: ".280（350打数）· 98安打 12本 55打点 3盗塁1刺",
           sort: { games: 100, pa: 400, h: 98, hr: 12, rbi: 55, sb: 3 } },
         // ⚠**같은 해에 두 줄** — 시즌 도중 이적. 「몇 시즌」을 셀 때 행 수로 세면 틀린다
-        { year: 2025, team: "阪神", games: 60, faced: 240, line: ".300（200打数）· 60安打 8本 30打点 1盗塁0刺",
+        { year: 2025, team: "阪神",  games: 60, faced: 240, line: ".300（200打数）· 60安打 8本 30打点 1盗塁0刺",
           sort: { games: 60, pa: 240, h: 60, hr: 8, rbi: 30, sb: 1 } },
-        { year: 2025, team: "巨人", games: 40, faced: 160, line: ".250（140打数）· 35安打 4本 20打点 0盗塁0刺",
+        { year: 2025, team: "巨人",  games: 40, faced: 160, line: ".250（140打数）· 35安打 4本 20打点 0盗塁0刺",
           sort: { games: 40, pa: 160, h: 35, hr: 4, rbi: 20, sb: 0 } },
       ],
       pitching: [],
@@ -193,6 +193,7 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
       from: 2024,
       to: 2025,
       source: "npb.jp/bis/players (年度別成績)",
+      asOf: "2026-08-17",
     },
     uniformNumber: "18",
     role: "batter",

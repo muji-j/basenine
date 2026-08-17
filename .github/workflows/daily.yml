@@ -85,10 +85,22 @@ jobs:
         run: node scripts/update.ts --max-writes 5000000
 
       - name: 수집 후 재검증
+        id: guard
         # 수집이 아카이브를 줄이는 일은 없어야 한다. 줄었다면 올리기 전에 멈춘다
+        # ⚠**수집이 실패해도 돈다.** 부분 수집분을 지키려면 먼저 검증부터 해야 한다
+        if: always()
         run: node scripts/archive-guard.ts check data/archive ops/archive-manifest.json
 
       - name: 보관소에 올림
+        # ⚠**수집이 실패해도 그날 받은 것은 올린다.**
+        #   아카이브는 **소급 불가능한 자산**이다 — 오늘 못 받은 경기 페이지는 내일도 못 받는다.
+        #   그런데 이 스텝이 앞 스텝의 성공에 매달려 있어서, 선수 페이지 400건 중 1건이
+        #   일과성 오류로 실패하기만 해도 **그날 수집한 경기 전부가 버려졌다**(2026-08-17 재검토 P1).
+        #   재취득이 매일 300건을 보내게 되면서 그 확률이 무시할 수 없게 됐다.
+        # ⚠**단 검증은 통과해야 한다.** 아카이브가 줄어든 상태를 올리면 보관소가 오염된다 —
+        #   그때는 올리지 않는 쪽이 맞다. 그래서 `guard` 결과에만 매단다.
+        # ⚠**잡 전체는 여전히 실패로 끝난다** — 배포는 `success()` 라 막히고, 사람이 알아챈다.
+        if: always() && steps.guard.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

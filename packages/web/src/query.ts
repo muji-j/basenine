@@ -1971,7 +1971,8 @@ const CAREER_MILESTONES: Readonly<Record<string, readonly number[]>> = {
  *
  * ⚠**한 줄은 한 출처여야 한다.** 처음에는 「통산」을 NPB 공표치에서, 「今季」를 우리
  * 경기 데이터에서 가져왔다. 두 출처의 **기준일이 다르다** — 실측(2026-08-17 이중 검토):
- * 선수 페이지의 年度別成績은 **8/14까지**를 반영하는데(우리 값과 616/616 일치) 우리 경기
+ * ⚠**아래 서술은 낡았다.** 「선수 페이지가 8/14까지만 반영한다」고 읽혔던 것은 npb.jp 의 성질이 아니라
+ * **우리가 그날 경기 전에 받기 때문**이다(자세히는 이 함수 아래 주석). 그래도 결론은 같다 — 우리 경기
  * 데이터는 **8/16까지**다. 그래서 화면에 `통산 90 · 今季 13` 이 나란히 서고
  * **90 − 13 = 77** 인데 그 선수의 작년까지 통산은 78이었다 — **한 줄 안에서 뺄셈이
  * 성립하지 않았다.** 마디까지 남은 수도 하루치만큼 틀렸다.
@@ -1986,7 +1987,20 @@ function milestonesOf(
   chip: (code: string) => { teamCode: string; shortName: string; color: TeamColor },
   teamOf: (id: string) => string,
 ): HomeMilestone[] {
-  /** `그 시즌까지의 합계` 와 `그 시즌분` 을 **같은 표에서** 함께 낸다 */
+  /**
+   * **통산도 今季도 같은 표(年度別成績)에서 가져온다.**
+   *
+   * ⚠**한 줄은 한 출처여야 한다.** 통산을 NPB, 今季를 우리 경기 데이터로 하면 기준일이 달라
+   * **한 줄 안에서 뺄셈이 안 맞는다**(실측: 통산 90 · 今季 13 인데 작년까지가 78이었다).
+   *
+   * ⚠**한때 「今季만 우리 집계로」 이어 붙였다가 되돌렸다**(2026-08-17). 근거였던
+   * 「NPB 가 우리보다 늦다」가 오진이었다 — 늦은 것은 **우리 아카이브**였다.
+   * 실측: 아카이브의 2026 행을 「취득 JST 날짜 −1일까지의 우리 집계」와 맞추니
+   * **698/698(100.0%) 완전 일치**했다. 늦은 것은 npb.jp 가 아니라 우리다.
+   * 처방은 이어 붙이기가 아니라 **다시 받는 것**이다.
+   *
+   * ⚠**`year <= ?` 다.** 아카이브 시즌 화면(`/2024/` 등)이 오늘의 통산을 실으면 안 된다.
+   */
   const rows = db.raw
     .prepare(
       `SELECT c.player_id AS playerId, p.display_name AS name,
@@ -2388,25 +2402,64 @@ const HOME_MILESTONE_ROWS = 8;
  * 그래야 사이트 안에서 打率 을 내는 곳이 한 벌이다.
  * ⚠**분모를 문자열 안에 넣는다**(M2) — 값만 떼어 쓸 수 없게.
  */
-function careerOf(db: Db, playerId: string): CareerData | null {
+function careerOf(
+  db: Db,
+  playerId: string,
+  /**
+   * **이 화면이 서 있는 시즌.** 그 해까지만 싣는다.
+   *
+   * ⚠**뒤 연도를 실으면 안 된다.** 배포는 `2026,2025,2024,2023` **네 시즌을 같은 코드로** 돌린다 —
+   * 조건이 없으면 2023년 화면이 2026년 행까지 싣는다(예전에는 연도 조건이 아예 없었다).
+   *
+   * ⚠**한때 「올해만 우리 집계로 갈아끼우는」 코드가 여기 있었다. 되돌렸다**(2026-08-17).
+   * 근거로 삼았던 「NPB 선수 페이지가 우리보다 며칠 늦다」가 **틀린 진단**이었다 —
+   * 늦은 것은 npb.jp 가 아니라 **우리 아카이브**였다(선수 페이지를 한 번 받고 다시 안 받았다).
+   * ⚠**처음 낸 수치(76.3%)는 틀렸다** — 비교 기준일을 하루 잘못 잡았다. 다시 재면 이렇다.
+   * 실측(외부 요청 0회): 아카이브의 2026 행을 **「취득 JST 날짜 −1일」까지의 우리 집계**와 맞추니
+   * **698/698(100.0%) 완전 일치**, 어긋남 0. 같은 날짜까지로 맞추면 79.9%, 이틀 전까지면 82.1%다.
+   * ⚠**「npb.jp 가 당일치까지 싣는다」는 뜻이 아니다.** 우리가 **그날 경기가 시작되기 전**
+   * (08~13시 JST)에 받기 때문에 전날까지가 들어오는 것이다. 이 인과를 잘못 잡으면
+   * 재취득 조건도 하루씩 어긋난다.
+   * → 처방은 이어 붙이기가 아니라 **다시 받는 것**이다(`scripts/update.ts` 의 선수 프로필 갱신).
+   */
+  season: number,
+): CareerData | null {
   const bat = db.raw
     .prepare(
-      `SELECT year, team, games, pa, ab, h, hr, rbi, sb, cs, bb, so, source
-         FROM career_batting WHERE player_id = ? ORDER BY year, seq`,
+      `SELECT year, team, games, pa, ab, h, hr, rbi, sb, cs, bb, so, source,
+              -- JST 로 낸다(§2-1). fetched_at 은 ISO UTC 라 그냥 자르면 하루 어긋난다
+              SUBSTR(datetime(fetched_at, '+9 hours'), 1, 10) AS fetchedAt
+         FROM career_batting WHERE player_id = ? AND year <= ? ORDER BY year, seq`,
     )
-    .all(playerId) as unknown as {
+    .all(playerId, season) as unknown as {
       year: number; team: string; games: number; pa: number; ab: number; h: number;
-      hr: number; rbi: number; sb: number; cs: number; bb: number; so: number; source: string;
+      hr: number; rbi: number; sb: number; cs: number; bb: number; so: number;
+      source: string; fetchedAt: string | null;
     }[];
   const pit = db.raw
     .prepare(
-      `SELECT year, team, games, w, l, sv, hld, bf, outs, so, er, bb, source
-         FROM career_pitching WHERE player_id = ? ORDER BY year, seq`,
+      `SELECT year, team, games, w, l, sv, hld, bf, outs, so, er, bb, source, SUBSTR(datetime(fetched_at, '+9 hours'), 1, 10) AS fetchedAt
+         FROM career_pitching WHERE player_id = ? AND year <= ? ORDER BY year, seq`,
     )
-    .all(playerId) as unknown as {
+    .all(playerId, season) as unknown as {
       year: number; team: string; games: number; w: number; l: number; sv: number; hld: number;
-      bf: number; outs: number; so: number; er: number; bb: number; source: string;
+      bf: number; outs: number; so: number; er: number; bb: number;
+      source: string; fetchedAt: string | null;
     }[];
+  /**
+   * ⚠**여기서 올해 행을 우리 집계로 갈아끼우지 않는다**(2026-08-17 이중 검토에서 되돌렸다).
+   * 갈아끼웠더니 한 라운드에 거짓말이 셋 나왔다:
+   * · **`試合` 은 정의가 다르다** — 우리 `games` 는 「타석이 있던 경기」, NPB 는 「출장 경기」다.
+   *   끝난 시즌 1,777쌍에서 **569쌍(32.0%)이 어긋났고 전부 NPB 가 컸다**(합계 8,009경기).
+   *   대수비·대주자 전문 선수가 `65試合` → `4試合` 이 됐다.
+   * · **盗塁刺가 사라졌다** — 「박스스코어에 없으니 우리에겐 없다」고 썼는데 **틀렸다.**
+   *   주자 행에서 뽑고 있고(`runner_event`) 같은 페이지 위쪽이 이미 표시한다.
+   * · **작년까지의 통산 행이 없는 선수**에게
+   *   「それ以前は当サイト集計の公表値です」라는 말이 안 되는 문장이 나갔다.
+   *   ⚠처음에 이것을 「올해 데뷔 113명」이라고 적었는데 **틀린 서술이었다** —
+   *   그 113명은 **마지막 출장이 2023년인 이탈 선수**이고, 2026 출장자 중 통산 행이 없는 사람은 0명이다.
+   * → 한 출처로 둔다. **신선도는 다시 받아서 지킨다**(이어 붙여서가 아니라).
+   */
   if (bat.length === 0 && pit.length === 0) return null;
 
   const avg = (h: number, ab: number): string => (ab === 0 ? NO_VALUE : avg3(h / ab));
@@ -2420,7 +2473,8 @@ function careerOf(db: Db, playerId: string): CareerData | null {
     team: r.team,
     games: r.games,
     faced: r.pa,
-    line: `${avg(r.h, r.ab)}（${r.ab}打数）· ${r.h}安打 ${r.hr}本 ${r.rbi}打点 ${r.sb}盗塁${r.cs}刺`,
+    line: `${avg(r.h, r.ab)}（${r.ab}打数）· ${r.h}安打 ${r.hr}本 ${r.rbi}打点 ` +
+      `${r.sb}盗塁${r.cs}刺`,
     sort: { games: r.games, pa: r.pa, h: r.h, hr: r.hr, rbi: r.rbi, sb: r.sb },
   }));
   const pitching: CareerRow[] = pit.map((r) => ({
@@ -2441,7 +2495,12 @@ function careerOf(db: Db, playerId: string): CareerData | null {
   const sum = <T,>(rows: readonly T[], key: keyof T): number =>
     Number(careerTotal(rows, [key])[String(key)] ?? 0);
 
-  // ⚠**우리가 더한다.** NPB 는 합계 행을 싣지 않는다 — 남의 계산값이 아니다
+  /**
+   * ⚠**합계는 우리가 더한다** — 남의 계산값을 빌려오지 않는다(CLAUDE.md §2-2).
+   * ⚠**NPB 도 합계 행을 싣는다**(`<tfoot>` 의 `通　算`, 980/980). 우리는 그것을 **표시에 쓰지 않고
+   * 대조에만 쓴다**(`parser/career.ts`) — 어긋나면 그 선수의 취입을 멈춘다.
+   * (예전 주석은 「NPB 는 합계 행을 싣지 않는다」였는데 **틀린 판정이었다**.)
+   */
   const bTotal = bat.length === 0
     ? null
     : `${sum(bat, "games")}試合 ${sum(bat, "pa")}打席 · ` +
@@ -2468,6 +2527,14 @@ function careerOf(db: Db, playerId: string): CareerData | null {
     from: years.length === 0 ? null : Math.min(...years),
     to: years.length === 0 ? null : Math.max(...years),
     source: bat[0]?.source ?? pit[0]?.source ?? "選手ページ",
+    /**
+     * **이 표가 언제 받아온 것인가**(M4). ⚠**화면에 반드시 낸다.**
+     *
+     * 이 값이 없어서 사고가 났다: 선수 페이지를 8/15 에 받고 다시 안 받았는데,
+     * 화면에는 그 사실이 어디에도 없어서 **「NPB 가 늦다」고 오진**했다.
+     * 날짜가 보이면 낡은 것이 낡은 채로 조용히 있지 못한다.
+     */
+    asOf: bat[0]?.fetchedAt ?? pit[0]?.fetchedAt ?? null,
   };
 }
 
@@ -3455,7 +3522,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       birthDate: profile?.birthDate ?? null,
       physique: profile?.physique ?? null,
       draft: profile?.draft ?? null,
-      career: careerOf(db, playerId),
+      career: careerOf(db, playerId, o.season),
       uniformNumber: profile?.uniformNumber ?? null,
       role,
       batting: battingData,

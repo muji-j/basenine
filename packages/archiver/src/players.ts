@@ -38,7 +38,20 @@ export async function archivePlayer(playerId: string, deps: ArchivePlayersDeps):
   try {
     const res = await deps.fetcher.get(url, prev ?? undefined);
 
-    if (res.status === 304) return { key, url, outcome: "unchanged", status: 304, error: null };
+    /**
+     * ⚠**「안 바뀌었다」도 「봤다」로 남긴다**(2026-08-17 재검토 P1).
+     * 안 남기면 `fetchedAt` 이 「마지막으로 바뀐 시각」에 멈추고, 재취득 선정이 그것을
+     * 「아직 안 받았다」로 읽어 **같은 페이지를 매일 다시 친다**(L1). 화면의 취득일도 실제보다 낡게 나온다.
+     * ⚠본문은 다시 쓰지 않는다 — 바뀐 게 없으므로 `revision` 도 올리지 않는다(M5).
+     */
+    const seen = async (status: number): Promise<PageResult> => {
+      if (prev !== null) {
+        await deps.sink.writeMeta(key, { ...prev, checkedAt: deps.clock.now().toISOString() });
+      }
+      return { key, url, outcome: "unchanged", status, error: null };
+    };
+
+    if (res.status === 304) return await seen(304);
     if (res.status === 404 || res.status === 410) {
       return { key, url, outcome: "absent", status: res.status, error: null };
     }
@@ -48,7 +61,7 @@ export async function archivePlayer(playerId: string, deps: ArchivePlayersDeps):
 
     const digest = sha256(res.body);
     if (prev && prev.sha256 === digest) {
-      return { key, url, outcome: "unchanged", status: res.status, error: null };
+      return await seen(res.status);
     }
 
     const meta: BlobMeta = {
@@ -60,6 +73,8 @@ export async function archivePlayer(playerId: string, deps: ArchivePlayersDeps):
       sha256: digest,
       byteLength: res.body.byteLength,
       revision: (prev?.revision ?? 0) + 1,
+      // 새로 받은 것이니 「본 시각」도 같다
+      checkedAt: deps.clock.now().toISOString(),
     };
     await deps.sink.write(key, res.body, meta);
     return { key, url, outcome: "stored", status: res.status, error: null };

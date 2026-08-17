@@ -26,12 +26,29 @@ export interface BlobMeta {
   byteLength: number;
   /** 내용이 실제로 바뀔 때만 증가한다. 재수집만으로는 오르지 않는다 */
   revision: number;
+  /**
+   * **마지막으로 확인한 시각**(ISO8601). 내용이 안 바뀌어도 갱신된다.
+   *
+   * ⚠**`fetchedAt` 과 뜻이 다르다.** `fetchedAt` 은 「내용이 마지막으로 **바뀐**」 취득 시각이고
+   * 이것은 「마지막으로 **본**」 시각이다. 둘을 섞으면 두 가지가 동시에 망가진다(2026-08-17 재검토):
+   * · 화면이 「N時点に取得」이라고 실제보다 낡은 날짜를 말한다
+   * · 재취득 선정이 「아직 안 받았다」고 오판해 **같은 페이지를 매일 다시 친다**(L1)
+   * ⚠옛 사이드카에는 이 필드가 없다 — 읽는 쪽이 `?? fetchedAt` 으로 떨어뜨린다(하위호환).
+   */
+  checkedAt?: string;
 }
 
 export interface Sink {
   readMeta(key: string): Promise<BlobMeta | null>;
   readBody(key: string): Promise<Uint8Array | null>;
   write(key: string, body: Uint8Array, meta: BlobMeta): Promise<void>;
+  /**
+   * 메타만 갱신한다(본문은 그대로).
+   *
+   * ⚠**내용이 안 바뀌었을 때 「봤다」를 남기기 위한 것이다.** 본문을 다시 쓰면 낭비이고,
+   * 안 남기면 「마지막으로 본 시각」을 영영 알 수 없다.
+   */
+  writeMeta(key: string, meta: BlobMeta): Promise<void>;
 }
 
 export function sha256(bytes: Uint8Array): string {
@@ -77,7 +94,13 @@ export class LocalSink implements Sink {
     const bodyPath = this.bodyPath(key);
     await mkdir(dirname(bodyPath), { recursive: true });
     await writeFile(bodyPath, gzipSync(body));
-    await writeFile(this.metaPath(key), `${JSON.stringify(meta, null, 2)}\n`, "utf8");
+    await this.writeMeta(key, meta);
+  }
+
+  async writeMeta(key: string, meta: BlobMeta): Promise<void> {
+    const p = this.metaPath(key);
+    await mkdir(dirname(p), { recursive: true });
+    await writeFile(p, `${JSON.stringify(meta, null, 2)}\n`, "utf8");
   }
 }
 
@@ -87,6 +110,8 @@ export class MemorySink implements Sink {
   readonly metas = new Map<string, BlobMeta>();
   /** write가 실제로 호출된 횟수 — 멱등성 검증에 쓴다 */
   writeCount = 0;
+  /** 메타만 갱신한 횟수 — 「봤지만 안 바뀌었다」를 센다 */
+  metaWriteCount = 0;
 
   async readMeta(key: string): Promise<BlobMeta | null> {
     return this.metas.get(key) ?? null;
@@ -100,6 +125,12 @@ export class MemorySink implements Sink {
     this.bodies.set(key, body);
     this.metas.set(key, meta);
     this.writeCount += 1;
+  }
+
+  /** ⚠**`writeCount` 를 올리지 않는다** — 멱등성 시험이 세는 것은 「본문을 다시 썼는가」다 */
+  async writeMeta(key: string, meta: BlobMeta): Promise<void> {
+    this.metas.set(key, meta);
+    this.metaWriteCount += 1;
   }
 }
 
