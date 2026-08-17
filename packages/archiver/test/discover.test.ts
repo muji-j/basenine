@@ -54,6 +54,18 @@ test("⚠M7: 링크가 0건이면 빈 배열이 아니라 예외를 던진다", 
   assert.throws(() => discoverGames(changed, "https://npb.jp/x"), NoGamesFoundError);
 });
 
+/**
+ * ⚠**「경기가 없는 달」과 「페이지가 바뀌었다」는 다른 사실이다**(M11 · 2026-08-18 감사 P2).
+ * 둘을 같이 던지면 12~2월 넉 달 동안 매일 배치가 통째로 죽는다 — 배포도 기록 커밋도 함께.
+ */
+test("⚠오프시즌: 날짜 행은 있는데 경기가 0건이면 던지지 않는다", () => {
+  const offseason =
+    `<table><tr id="date1201"><th>12/1（火）</th><td>&nbsp;</td></tr>` +
+    `<tr id="date1202"><th>12/2（水）</th><td>&nbsp;</td></tr></table>`;
+  const games = discoverGames(offseason, "https://npb.jp/games/2026/schedule_12_detail.html");
+  assert.deepEqual(games, [], "경기가 없는 달은 빈 배열이다 — 예외가 아니다");
+});
+
 test("⚠M7: 예외에 진단 정보가 담긴다", () => {
   try {
     discoverGames("<html></html>", "https://npb.jp/x");

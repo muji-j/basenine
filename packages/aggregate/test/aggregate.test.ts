@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { openDb, upsertBatting, upsertGame, upsertPitching, upsertPlayer } from "@bb-app/store";
 import type { Db } from "@bb-app/store";
 import { aggregateSeason } from "../src/season.ts";
-import { buildLeagues, battingEntries, rankBatters } from "../src/leaderboard.ts";
+import { buildLeagues, battingEntries, rankBatters, teamGamesOf } from "../src/leaderboard.ts";
+import { qualifiedBatterPa } from "@bb-app/metrics";
 import type { BattingEntry } from "../src/leaderboard.ts";
 
 const NOW = "2026-08-15T00:00:00.000Z";
@@ -159,5 +160,75 @@ test("스캔 행 수를 함께 낸다 — D1 읽기 예산 감시", async () => 
     seedBatter(db, "g1", "1001", "away", 2);
     seedPitcher(db, "g1", "2001", "home", 27, 1);
     assert.equal(aggregateSeason(db, 2026).readRows, 2);
+  });
+});
+
+/**
+ * ⚠**규정타석의 분모는 「그 선수의 소속 구단」 시합수다**(NPB 규칙 · `docs/metrics` §5).
+ *
+ * 예전에는 **리그 최다 팀**의 시합수를 전원에게 썼다. 그러면 **적게 치른 팀의 선수가
+ * 규정을 채웠는데도 탈락**한다 — 실측(2026-08-18): 최다 111경기 대 최소 102경기로 9경기 차,
+ * 규정타석이 **345 대 317 로 28타석** 벌어졌다.
+ * 그리고 화면은 그 판정을 **「NPB公式」이라고 적고 있었다**(2026-08-18 다방면 감사 P1).
+ *
+ * ⚠**시험 1,221본이 이것을 하나도 못 잡았다.** 리그 안의 팀들이 **같은 경기 수**를 치른
+ * 픽스처만 있었기 때문이다 — 이 시험은 **일부러 다르게** 만든다.
+ */
+test("⚠규정타석 분모는 소속 구단 시합수다 — 리그 최다가 아니다", async () => {
+  await withDb((db) => {
+    // 阪神(t)·巨人(g) 는 10경기, 中日(d)·広島(c) 는 6경기를 치른다
+    for (let i = 1; i <= 10; i += 1) {
+      const id = `tg${i}`;
+      seedGame(db, id, `2026-04-${String(i).padStart(2, "0")}`, "t", "g");
+      seedBatter(db, id, "1001", "away", 3, 1); // 阪神 소속: 30타석
+      seedPitcher(db, id, "2001", "home", 27, 1);
+    }
+    for (let i = 1; i <= 6; i += 1) {
+      const id = `dc${i}`;
+      seedGame(db, id, `2026-05-${String(i).padStart(2, "0")}`, "d", "c");
+      seedBatter(db, id, "1002", "away", 3, 1); // 中日 소속: 18타석
+      seedPitcher(db, id, "2002", "home", 27, 1);
+    }
+
+    const bundle = buildLeagues(aggregateSeason(db, 2026)).find((b) => b.league === "central")!;
+
+    // ⚠**분모가 팀마다 다르다.** 阪神 10경기 → 31타석 · 中日 6경기 → 19타석
+    assert.equal(teamGamesOf(bundle, "t"), 10, "阪神 시합수가 다르다");
+    assert.equal(teamGamesOf(bundle, "d"), 6, "中日 시합수가 다르다");
+    assert.equal(bundle.teamGames, 10, "리그 최다는 그대로 10이어야 한다");
+
+    const ranked = rankBatters(bundle, battingEntries(bundle), (e: BattingEntry) => e.avg);
+    const tiger = ranked.find((r) => r.item.player.playerId === "1001");
+    const dragon = ranked.find((r) => r.item.player.playerId === "1002");
+    assert.ok(tiger && dragon);
+
+    /**
+     * ⚠**여기가 급소다.** 中日 선수는 18타석이고,
+     * · 옳은 분모(6경기 → 19타석)로도 미달이지만,
+     * · 리그 최다(10경기 → 31타석)를 쓰면 **훨씬 더 크게** 미달로 밀린다.
+     * 그래서 「자격선 자체」를 재서 고정한다 — 순위만 보면 두 규칙이 같은 답을 낼 수 있다.
+     */
+    assert.equal(qualifiedBatterPa(teamGamesOf(bundle, "t")), 31, "阪神 규정타석이 다르다");
+    assert.equal(qualifiedBatterPa(teamGamesOf(bundle, "d")), 19, "中日 규정타석이 다르다");
+    assert.notEqual(
+      qualifiedBatterPa(teamGamesOf(bundle, "d")),
+      qualifiedBatterPa(bundle.teamGames),
+      "팀별 분모가 리그 최다와 같아져 버렸다 — 이 시험이 아무것도 재지 못한다",
+    );
+  });
+});
+
+/**
+ * ⚠**모르는 구단 코드는 리그 최다로 떨어진다**(M11).
+ * 조용히 0이 되면 `ceil(0 × 3.1) = 0` 이라 **전원이 자격을 얻는다** — 10타석 .400 이 1위가 된다.
+ */
+test("⚠모르는 구단 코드는 0이 아니라 리그 최다로 떨어진다", async () => {
+  await withDb((db) => {
+    seedGame(db, "g1", "2026-04-01", "t", "g");
+    seedBatter(db, "g1", "1001", "away", 1);
+    seedPitcher(db, "g1", "2001", "home", 27, 1);
+    const bundle = buildLeagues(aggregateSeason(db, 2026)).find((b) => b.league === "central")!;
+    assert.equal(teamGamesOf(bundle, "존재하지않는코드"), bundle.teamGames);
+    assert.notEqual(teamGamesOf(bundle, "존재하지않는코드"), 0, "0으로 떨어지면 전원이 자격을 얻는다");
   });
 });

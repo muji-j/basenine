@@ -5,6 +5,7 @@
  * 값은 선수 페이지와 같은 객체에서 나오므로 틀릴 여지가 적다. 반대로 승자 표시는
  * 이 화면이 **새로 만들어내는 주장**이라, 붙이면 안 되는 자리에 붙는 것이 유일한 큰 위험이다.
  */
+import type { MatchupDay } from "../src/pages.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -279,7 +280,7 @@ test("⚠클라이언트의 우열 판정이 서버와 같은 답을 낸다 — 
 });
 
 test("⚠비교 화면은 스크립트 없이도 고를 것이 보인다 — 빈 페이지는 고장으로 보인다(M12)", () => {
-  const out = renderComparePage({ season: 2026, asOf: "2026-08-14", pickDate: null, builtOn: "2026-08-16", games: [] }, context());
+  const out = renderComparePage({ season: 2026, asOf: "2026-08-14", builtOn: "2026-08-16", days: [{ date: "2026-08-16", state: "unknown" as const, hasProbable: false, games: [] }, { date: "2026-08-17", state: "unknown" as const, hasProbable: false, games: [] }] as [MatchupDay, MatchupDay] }, context());
   assert.match(out, /id="cmpA"/, "선수 A 입력이 없다");
   assert.match(out, /id="cmpB"/, "선수 B 입력이 없다");
   assert.match(out, /打者と投手は共通の指標がない/, "왜 못 섞는지 설명이 없다");
@@ -302,23 +303,31 @@ function withGames() {
     pitchers: [pick(`${short}投`, "100回")], batters: [pick(`${short}打`, "400打席")],
   });
   return {
-    season: 2026, asOf: "2026-08-14", pickDate: "2026-08-16", builtOn: "2026-08-16",
-    games: [
-      {
-        key: "s-db", venue: "神宮", startTime: "18:00",
-        sides: [team("s", "ヤクルト", "東京ヤクルトスワローズ"), team("db", "DeNA", "横浜DeNAベイスターズ")] as [
-          ReturnType<typeof team>,
-          ReturnType<typeof team>,
-        ],
-      },
-    ],
+    season: 2026, asOf: "2026-08-14", builtOn: "2026-08-16",
+    days: [{
+      date: "2026-08-16",
+      state: "games" as const,
+      hasProbable: true,
+      games: [
+        {
+          key: "s-db", venue: "神宮", startTime: "18:00",
+          sides: [team("s", "ヤクルト", "東京ヤクルトスワローズ"), team("db", "DeNA", "横浜DeNAベイスターズ")] as [
+            ReturnType<typeof team>,
+            ReturnType<typeof team>,
+          ],
+        },
+      ],
+    }, { date: "2026-08-17", state: "noGames" as const, hasProbable: false, games: [] }] as [MatchupDay, MatchupDay],
   };
 }
 
 test("오늘 대전하는 두 팀에서 바로 고를 수 있다 — 이름을 칠 필요가 없다", () => {
   const out = renderComparePage(withGames(), context());
   assert.match(out, /id="cmpToday"/);
-  assert.match(out, /2026年8月16日（本日）の対戦から選ぶ/);
+  // ⚠**「本日」는 이제 날짜 탭의 라벨에 있다**(2026-08-17: 토글이 늘 오늘·내일 두 칸이 되면서
+  //   같은 말을 두 번 쓰지 않게 됐다). 두 곳을 각각 잰다
+  assert.match(out, /本日（2026年8月16日）/, "탭 라벨에 「本日」가 없다");
+  assert.match(out, /2026年8月16日の対戦から選ぶ/, "그 날 설명이 없다");
   for (const n of ["ヤクルト投", "ヤクルト打", "DeNA投", "DeNA打"]) {
     assert.ok(out.includes(`data-n="${n}"`), `${n} 버튼이 없다`);
   }
@@ -332,8 +341,10 @@ test("오늘 대전하는 두 팀에서 바로 고를 수 있다 — 이름을 �
  */
 test("탭 그룹 이름을 対戦 화면과 나눈다 — 저장된 선택이 섞이지 않는다", () => {
   const out = renderComparePage(withGames(), context());
-  assert.match(out, /data-tabgroup="cmptoday"/);
-  assert.ok(!out.includes('data-tabgroup="picktoday"'), "대전 화면과 같은 그룹 이름을 썼다");
+  // ⚠**이름이 달라야 한다**는 것이 이 시험의 뜻이다. 이름 자체는 2026-08-17 에 바뀌었다
+  //   (날짜 토글이 생겨 `cmpday` · `cmpgame-<날짜>` 로 나뉘었다)
+  assert.match(out, /data-tabgroup="cmpgame-2026-08-16"/);
+  assert.ok(!/data-tabgroup="pick/.test(out), "대전 화면과 같은 그룹 이름을 썼다");
 });
 
 /**
@@ -349,10 +360,12 @@ test("긴 목록의 이름표가 대전 화면과 같은 약속을 한다", () =
 
 test("예고가 없으면 빠른 선택을 만들지 않는다 — 검색은 그대로 남는다", () => {
   const out = renderComparePage(
-    { season: 2026, asOf: "2026-08-14", pickDate: null, builtOn: "2026-08-16", games: [] },
+    { season: 2026, asOf: "2026-08-14", builtOn: "2026-08-16", days: [{ date: "2026-08-16", state: "unknown" as const, hasProbable: false, games: [] }, { date: "2026-08-17", state: "unknown" as const, hasProbable: false, games: [] }] as [MatchupDay, MatchupDay] },
     context(),
   );
-  assert.ok(!out.includes('id="cmpToday"'));
+  // ⚠**블록은 남는다** — 사라지면 「없다」는 말까지 사라진다(2026-08-17)
+  assert.ok(out.includes('id="cmpToday"'));
+  assert.match(out, /この日の日程はまだ取り込んでいません/);
   assert.match(out, /id="cmpA"/);
   assert.match(out, /id="cmpB"/);
 });

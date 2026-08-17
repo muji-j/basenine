@@ -60,7 +60,7 @@ export const GLOSSARY: Readonly<Record<string, Term>> = {
     label: "wRC+",
     short: "打撃でどれだけ得点を生んだかを、リーグ平均100として指数化したもの。",
     how: "wRAA/打席 と リーグの打席あたり得点 から算出",
-    caveat: "⚠球場補正は入れていません（原データが2025年分からのため信頼できる係数を作れません）。",
+    caveat: "⚠球場補正は入れていません（当サイトはまだ球場係数を出していません）。",
   },
   wraa: {
     label: "wRAA",

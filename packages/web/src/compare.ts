@@ -268,6 +268,13 @@ export function compareCard(p: PlayerPageData): CompareCard {
  *
  * ⚠**대가는 전송량이다**(실측 2026-08-17): 카드 1장 2,542B/gzip 983B →
  * 최대 샤드 212,806B/gzip 25,116B. **첫 비교 왕복이 1.9KB → 49KB gzip(26배)**다.
+ * ⚠**2026-08-18 감사가 이것을 P2로 다시 올렸다(「카드 2,357B 를 그리려고 198KB」).**
+ * 비압축 바이트로 센 수치다 — 실측하면 최대 샤드가 **gzip 25KB · brotli 17KB** 이고
+ * Cloudflare 는 브로틀리로 보낸다. 샤드를 64개로 쪼개면 brotli 약 3KB 가 되지만,
+ * 그 대신 **파일이 +270개 늘고**(Pages 상한 20,000 의 1.4%p) **규칙이 두 벌인 자리**가
+ * 더 복잡해진다(아래 문단이 그 단순함을 일부러 고른 이유를 적어 뒀다).
+ * → **바꾸지 않는다.** 바꾼다면 「선수 ID % 64」처럼 여전히 한 줄로 읽히는 규칙이어야 하고,
+ *   compare.test.ts 의 규칙 대조 시험을 반드시 함께 고쳐라.
  * 한 번 받으면 그 샤드의 선수 전부가 캐시되므로 두 번째 비교부터는 줄어든다.
  *
  * ⚠**균형은 실측으로 골랐다**(2026-08-17, 2025시즌 721명):
@@ -339,17 +346,18 @@ export function betterSide(a: CompareStat, b: CompareStat): "a" | "b" | null {
   return aWins ? "a" : "b";
 }
 
+import { dayStateNote } from "./pages.ts";
+import type { MatchupDay } from "./pages.ts";
+
 export interface ComparePageData {
   season: number;
   asOf: string | null;
-  /** 빠른 선택에 쓰는 경기일. 예고가 없으면 null */
-  pickDate: string | null;
   builtOn: string;
   /**
-   * 오늘 대전하는 경기. **対戦を選ぶ와 같은 데이터·같은 부품을 쓴다**(M1) —
+   * 고를 수 있는 날. **対戦を選ぶ와 같은 데이터·같은 부품을 쓴다**(M1) —
    * 두 화면이 각자 만들면 「같은 날인데 나오는 선수가 다르다」가 된다.
    */
-  games: MatchupGame[];
+  days: [MatchupDay, MatchupDay];
 }
 
 /**
@@ -361,12 +369,17 @@ export interface ComparePageData {
  */
 export function renderComparePage(d: ComparePageData, ctx: RenderContext): string {
   const { base, root, seasons } = ctx.paths("compare.html");
-  const isToday = d.pickDate !== null && d.pickDate === d.builtOn;
-  // ⚠**탭 그룹 이름을 対戦 화면과 다르게 둔다.** 같은 이름이면 저장된 선택이 두 화면에서 섞인다
-  const gameTabs = d.games.map((g) => ({
-    id: g.key,
-    label: `${g.sides[0].shortName} − ${g.sides[1].shortName}`,
-  }));
+  /**
+   * 그 날을 사람 말로. ⚠**생성일 기준이다**(M6) — 보는 시각이 아니라 화면을 만든 날이라
+   * 상대 표현과 날짜를 **함께** 낸다.
+   */
+  const dayLabel = (date: string): string => {
+    const days = Math.round(
+      (Date.parse(`${date}T00:00:00Z`) - Date.parse(`${d.builtOn}T00:00:00Z`)) / 86_400_000,
+    );
+    const rel = days === 0 ? "本日" : days === 1 ? "明日" : null;
+    return rel === null ? fullDate(date) : `${rel}（${fullDate(date)}）`;
+  };
   const side = (id: string, label: string, placeholder: string): RawHtml =>
     html`<div class="pickside">
     <label for="cmp${id}">${label}</label>
@@ -395,19 +408,46 @@ export function renderComparePage(d: ComparePageData, ctx: RenderContext): strin
   <p><button class="go" type="button" id="cmpGo" disabled>成績をくらべる</button>
   <button class="go alt" type="button" id="cmpSwap" disabled>入れかえ</button></p>
 
-  ${d.games.length === 0
-    ? raw("")
-    : html`<div id="cmpToday">
-    <p class="picklab">${d.pickDate === null
-      ? ""
-      : `${fullDate(d.pickDate)}${isToday ? "（本日）" : ""}の対戦から選ぶ`}<s>押した順に A → B に入ります</s></p>
-    <nav class="pickgames" aria-label="試合">${tablist("cmptoday", gameTabs, true, "試合")}</nav>
-    ${d.games.map((g, i) =>
+  <!-- ⚠**경기가 없어도 이 블록을 그린다**(2026-08-17 유저 지적).
+       예전에는 고를 경기가 하나도 없으면 블록째 사라졌고, 그러면
+       **「없다」는 말까지 함께 사라졌다** — 요청은 정확히 그 반대였다.
+       날짜 두 칸은 늘 있고, 각 칸이 자기 상태를 말한다(M12). -->
+  ${html`<div id="cmpToday">
+    <!-- ⚠**하루밖에 없을 때 그 이유를 말한다**(M12). 「내일 경기가 없다」와
+         「내일 일정을 아직 안 받았다」는 다른 말인데 화면에서는 똑같이 보인다. -->
+    <!-- ⚠**자리는 늘 오늘·내일 두 칸이다**(2026-08-17 유저 지적) -->
+    <!-- ⚠**이름을 여기 두지 않는다**(2026-08-18 감사 P3). 안쪽 tablist 가 같은 이름을 갖고 있어서
+         낭독기가 「日にち ナビゲーション · 日にち タブリスト」처럼 두 번 말했다.
+         이름은 **위젯 쪽**에 남긴다 — 조작하는 것이 그쪽이다. -->
+    <nav class="pickday">${tablist(
+      "cmpday",
+      d.days.map((x) => ({ id: x.date, label: dayLabel(x.date) })),
+      true,
+      "日にち",
+    )}</nav>
+    ${d.days.map((day, di) =>
       panel(
-        "cmptoday",
-        g.key,
-        i === 0,
-        html`<div class="pickteams">${pickTeam(g.sides[0])}${pickTeam(g.sides[1])}</div>`,
+        "cmpday",
+        day.date,
+        di === 0,
+        html`<p class="picklab${day.state === "games" ? "" : " pmiss"}">${
+          day.games.length === 0 ? "" : `${fullDate(day.date)}の対戦から選ぶ　`
+        }${dayStateNote(day)}<s>押した順に A → B に入ります</s></p>
+    <!-- ⚠**탭 그룹 이름을 対戦 화면과 다르게 둔다.** 같은 이름이면 저장된 선택이 두 화면에서 섞인다 -->
+    <nav class="pickgames" aria-label="試合">${tablist(
+          `cmpgame-${day.date}`,
+          day.games.map((g) => ({ id: g.key, label: `${g.sides[0].shortName} − ${g.sides[1].shortName}` })),
+          true,
+          "試合",
+        )}</nav>
+    ${day.games.map((g, i) =>
+          panel(
+            `cmpgame-${day.date}`,
+            g.key,
+            i === 0,
+            html`<div class="pickteams">${pickTeam(g.sides[0])}${pickTeam(g.sides[1])}</div>`,
+          ),
+        )}`,
       ),
     )}
   </div>`}
@@ -415,7 +455,7 @@ export function renderComparePage(d: ComparePageData, ctx: RenderContext): strin
   ${note(
     "打者どうし・投手どうしで並べられます。打者と投手は共通の指標がないため並べません。" +
       "URLをそのまま共有すると、同じ二人を開いた状態になります。" +
-      (d.games.length === 0 ? "" : "ボタンにいない選手は上の検索から選べます。"),
+      (d.days.some((x) => x.games.length > 0) ? "ボタンにいない選手は上の検索から選べます。" : ""),
   )}
 </section>
 

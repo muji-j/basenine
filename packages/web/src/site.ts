@@ -26,6 +26,51 @@ import type { RenderContext, SeasonPlan, SiteMeta } from "./layout.ts";
 import type { SiteData } from "./query.ts";
 import { renderHomePage } from "./home-page.ts";
 
+/**
+ * Cloudflare Pages 의 응답 헤더(`_headers`).
+ *
+ * ⚠**XSS 방어층이 html.ts 의 이스케이프 하나뿐이었다**(2026-08-18 감사 P2).
+ * 그 한 겹이 뚫리면 막을 것이 없었다 — 이 사이트의 글자는 **전부 외부 사이트에서 긁어온 것**이라
+ * (선수명·구장명·경기 결과 문장) 신뢰할 수 없는 입력이 화면까지 오는 경로가 실재한다.
+ *
+ * ⚠**script-src 를 unsafe-inline 없이 닫았다.** 그러려고 선수 페이지의 인라인 부트스트랩을
+ * `type="application/json"` **데이터 블록**으로 바꿨다(layout.ts / player-page.ts).
+ * 실측(2026-08-18): dist 표본에서 **실행되는 인라인 script 0개 · on* 속성 0개 · form 0개**.
+ * ⚠**style-src 에는 unsafe-inline 이 필요하다** — 구단 색을 `style="--team:…"` 인라인 속성으로
+ * 나르고(로고를 못 쓰는 자리에서 팀을 말하는 유일한 수단 · §6) 화면마다 작은 `<style>` 이 하나 있다.
+ * 속성·스타일은 스크립트를 실행하지 않으므로 방어의 본체(script-src)는 닫힌 채로 남는다.
+ * ⚠**frame-ancestors 'none'** — 남의 프레임에 넣어 자기 것처럼 보이게 하는 것을 막는다(§2-5 3층).
+ * ⚠**form-action 'none'** — 이 사이트에 `<form>` 이 0개다. 생기면 여기도 같이 고쳐라.
+ *
+ * ⚠**빌드가 이 파일을 검사하지 않는다** — Pages 가 배포 시에 읽는 파일이라 링크 검사에 안 걸리고,
+ * 문법이 틀리면 **조용히 무시된다.** 바꾼 뒤에는 배포된 응답 헤더를 실제로 확인하라.
+ */
+const HEADERS = [
+  "/*",
+  "  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'",
+  "  X-Content-Type-Options: nosniff",
+  "  Referrer-Policy: strict-origin-when-cross-origin",
+  "  Cross-Origin-Opener-Policy: same-origin",
+  "",
+].join("\n");
+
+/**
+ * **경로가 되는 문자열은 형태를 검사한다.**
+ *
+ * ⚠**같은 파일이 같은 위험을 두 번은 막고 두 번은 안 막고 있었다**(2026-08-18 감사 P3).
+ * 선수 ID·경기 ID 에는 검사가 있는데 **구단 코드와 경기일에는 없었다** —
+ * 둘 다 똑같이 외부(npb.jp)에서 온 문자열이고 똑같이 파일 경로가 된다.
+ * 검사를 **한 곳으로 모아** 다음에 경로가 늘 때 빠뜨릴 자리를 없앤다.
+ *
+ * ⚠**조용히 정규화하지 않는다** — `..` 를 지우고 계속 가면 어느 파일에 썼는지 아무도 모른다.
+ */
+function safeSegment(value: string, what: string): string {
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) {
+    throw new Error(`${what}가 경로로 쓸 수 없는 형태다: ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+
 export interface SiteFile {
   /** 출력 루트 기준 상대 경로. 항상 `/` 구분자 */
   path: string;
@@ -92,7 +137,7 @@ export function buildSite(
 ): BuildResult {
   // ⚠**신선도는 대회를 가리지 않는다.** 정규시즌만 보면 포스트시즌 기간에
   // 사이트 전체가 「취득 실패」라고 거짓말하고, 빌드가 매일 실패로 끝난다
-  const f = freshness(data.latestAnyGameDate ?? data.asOf, builtOn, data.asOf);
+  const f = freshness(data.latestAnyGameDate ?? data.asOf, builtOn, data.asOf, data.heldSeasons);
   const me = plans.find((p) => p.season === data.season);
   const prefix = me?.prefix ?? "";
   const ctx: RenderContext = {
@@ -118,6 +163,7 @@ export function buildSite(
           { path: "assets/site.css", content: CSS },
           { path: "assets/site.js", content: CLIENT_JS },
           { path: "assets/icon.svg", content: ICON_SVG },
+          { path: "_headers", content: HEADERS },
         ]
       : []),
     { path: at("today.html"), content: renderTodayPage(data.today, ctx) },
@@ -126,8 +172,8 @@ export function buildSite(
     ...(data.postseason.competitions.length === 0
       ? []
       : [{ path: at("postseason.html"), content: renderPostseasonPage(data.postseason, ctx) }]),
-    ...data.teams.map((t) => ({ path: at(teamPath(t.teamCode)), content: renderTeamPage(t, ctx) })),
-    ...pastDays(data).map((d) => ({ path: at(`days/${d.date}.html`), content: renderDayPage(d, ctx) })),
+    ...data.teams.map((t) => ({ path: at(teamPath(safeSegment(t.teamCode, "구단 코드"))), content: renderTeamPage(t, ctx) })),
+    ...pastDays(data).map((d) => ({ path: at(`days/${safeSegment(d.date, "경기일")}.html`), content: renderDayPage(d, ctx) })),
     // ⚠**루트가 대시보드다**(2026-08-17). Cloudflare Pages 는 사이트 루트를 index.html 로 주므로,
     // 「홈 화면」이 되려면 이 자리여야 한다
     { path: at("index.html"), content: renderHomePage(data.home, ctx) },
@@ -146,9 +192,8 @@ export function buildSite(
         {
           season: data.season,
           asOf: data.asOf,
-          pickDate: data.matchup.pickDate,
           builtOn: data.matchup.builtOn,
-          games: data.matchup.games,
+          days: data.matchup.days,
         },
         ctx,
       ),

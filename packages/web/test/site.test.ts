@@ -1,3 +1,4 @@
+import { colorOf } from "@bb-app/domain";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildSite, seasonPaths } from "../src/site.ts";
@@ -54,7 +55,10 @@ function siteData(over: Partial<SiteData> = {}): SiteData {
     },
     ranking: { season: 2026, asOf: "2026-08-14", standings: [], tieRule: "同順位", leagues: [] },
     starters: { gameDate: null, builtOn: "2026-08-15", games: [] },
-    matchup: { season: 2026, asOf: "2026-08-14", pickDate: null, builtOn: "2026-08-15", games: [] },
+    matchup: { season: 2026, asOf: "2026-08-14", builtOn: "2026-08-15", days: [
+      { date: "2026-08-15", state: "unknown" as const, hasProbable: false, games: [] },
+      { date: "2026-08-16", state: "unknown" as const, hasProbable: false, games: [] },
+    ] },
     today: {
       gameDate: "2026-08-14",
       builtOn: "2026-08-15",
@@ -68,6 +72,7 @@ function siteData(over: Partial<SiteData> = {}): SiteData {
     },
     days: [],
     dayIndex: { season: 2026, latestDate: "2026-08-14", days: [] },
+    heldSeasons: { from: 2022, to: 2026 },
     latestAnyGameDate: "2026-08-14",
     postseason: { season: 2026, competitions: [] },
     teams: [],
@@ -82,6 +87,12 @@ test("사이트는 정해진 파일 집합을 만든다", () => {
   const out = buildSite(siteData(), SITE, "2026-08-15");
   const paths = out.files.map((f) => f.path).sort();
   assert.deepEqual(paths, [
+    /**
+     * ⚠**Cloudflare Pages 가 배포할 때 읽는 헤더 파일**(2026-08-18 감사 P2 대응).
+     * 화면이 아니라서 링크 검사에도 안 걸리고, 문법이 틀리면 **조용히 무시된다** —
+     * 그래서 「있는지」만이라도 여기서 못 박는다. 내용은 `site.ts` HEADERS.
+     */
+    "_headers",
     "assets/icon.svg",
     "assets/site.css",
     "assets/site.js",
@@ -204,6 +215,37 @@ test("만든 화면이 전부 시즌 경로 목록에 있다 — 빠진 만큼�
       {
         season: 2026, teamCode: "t", name: "阪神タイガース", shortName: "阪神",
         color: { base: "#f2c800", ink: "#17170f" }, leagueName: "セントラル・リーグ",
+    calendar: {
+      teamCode: "t",
+      shortName: "阪神",
+      color: colorOf("t"),
+      today: "2026-08-17",
+      upcoming: 1,
+      upcomingAsOf: "2026-08-17",
+      seasonOver: false,
+      months: [
+        {
+          key: "2026-08",
+          year: 2026,
+          month: 8,
+          // 2026-08-01 은 토요일(요일 계산은 순수 함수로 낸다)
+          firstWeekday: 6,
+          days: 31,
+          byDay: new Map([
+            [16, [{
+              date: "2026-08-16", slug: "2026-0816-t-g-15", opponent: "巨人", opponentCode: "g",
+              home: true, result: "win" as const, runsFor: 5, runsAgainst: 2,
+              startTime: null, venue: "", upcoming: false,
+            }]],
+            [18, [{
+              date: "2026-08-18", slug: null, opponent: "DeNA", opponentCode: "db",
+              home: false, result: null, runsFor: null, runsAgainst: null,
+              startTime: "17:45", venue: "横浜", upcoming: true,
+            }]],
+          ]),
+        },
+      ],
+    },
         asOf: "2026-08-14", rank: 1, tiedRank: false, games: 1, w: 1, l: 0, t: 0,
         pct: 1, gamesBehind: 0, rf: 1, ra: 0,
         avg: { value: null, denominator: 0 }, era: { value: null, denominator: 0 },

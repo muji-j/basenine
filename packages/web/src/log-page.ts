@@ -14,7 +14,7 @@ import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import { fullDate } from "./format.ts";
 import { block, note, scroller } from "./parts.ts";
-import { page, ROSTER_PATH } from "./layout.ts";
+import { heldRange, page, ROSTER_PATH } from "./layout.ts";
 import type { Freshness, SiteMeta } from "./layout.ts";
 import { NEUTRAL_COLOR } from "@bb-app/domain";
 
@@ -198,7 +198,7 @@ export function renderLogPage(d: LogPageData, ctx: RenderContext): string {
 </header>
 
 <section class="block">
-  <h2>いまの中身<span class="qt">アーカイブ全体（2025年〜・ポストシーズン含む）</span></h2>
+  <h2>いまの中身<span class="qt">アーカイブ全体（${heldRange(ctx.freshness) || "全シーズン"}・ポストシーズン含む）</span></h2>
   <div class="cols">
     <dl>
       <dt>試合</dt><dd class="v">${d.totals.games.toLocaleString()}</dd>
@@ -216,7 +216,7 @@ export function renderLogPage(d: LogPageData, ctx: RenderContext): string {
   ${note(
     // ⚠**여기의 수는 시즌·대회로 거르지 않은 「아카이브 전체」다.** 표제가 「2026年」이라
     // 같은 화면의 順位(629試合)와 2.4배 어긋나 보였다 — 수를 바꾸지 말고 무엇을 센 수인지 적는다
-    "上の数は当サイトが保管している記録の全体です — 2025年からの全シーズン・" +
+    "上の数は当サイトが保管している記録の全体です — 保管している全シーズン・" +
       "ポストシーズン・オールスターを含みます。リーグ順位や個人成績のページはこのうち" +
       `${d.season}年の公式戦だけを使うので、試合数はそちらのほうが少なくなります。` +
       (a === null

@@ -45,6 +45,21 @@ function currentValues(html: string): string[] {
   return [...head[0].matchAll(/aria-current="([^"]+)"/g)].map((m) => m[1]!);
 }
 
+/**
+ * ⚠**「dist 가 없어서 안 돌았다」가 합격으로 읽히면 안 된다**(작업규칙 8).
+ * 위 주석은 `cwd` 문제만 고쳤을 뿐, **dist 자체가 없는 곳**(빌드 전 · CI)에서는
+ * 여전히 3본이 조용히 skip 되고 종료 코드가 0이었다(2026-08-18 감사 P3).
+ *
+ * → **`BB_REQUIRE_DIST=1` 이면 던진다.** CI 는 빌드 뒤에 이 값을 켜고 시험을 돌리므로,
+ *   거기서는 skip 이 불가능하다. 사람이 로컬에서 빌드 없이 돌릴 때만 skip 이 남는다.
+ */
+const REQUIRE_DIST = process.env["BB_REQUIRE_DIST"] === "1";
+if (REQUIRE_DIST && !existsSync(DIST)) {
+  throw new Error(
+    `BB_REQUIRE_DIST=1 인데 ${DIST} 가 없다 — 빌드 뒤에 돌려라. skip 으로 넘기면 「합격」으로 읽힌다`,
+  );
+}
+
 const pages = existsSync(DIST)
   ? readdirSync(DIST).filter((f) => f.endsWith(".html"))
   : [];

@@ -8,6 +8,20 @@
  * **쿼리가 스캔한 행**이다. 그래서 여기 쿼리는 시즌 1회 스캔으로 끝나도록 짠다.
  * 스캔량을 `readRows`로 함께 돌려주므로 예산을 눈으로 볼 수 있다.
  */
+
+/**
+ * ⚠**같은 pa_event 를 네 계열이 각각 다시 읽는다 — 알고 남겨 둔다**(2026-08-18 감사 P2 · 보류).
+ *
+ * 실측: 시즌·리그마다 RE(득점기대치) · 번트 · SRC · SRP 가 **각자 pa_event 를 훑어**
+ * 5시즌 빌드에서 **60회 · 합계 5,943ms** 가 든다(전체 집계 41.5초의 약 14%).
+ *
+ * ⚠**한 번만 읽고 나눠 쓰는 것이 맞다**(M1 의 정신이기도 하다). 다만 네 계열의 SQL 이
+ * **집계 축과 필터가 서로 다르고**(주자상황 · 타순 · 좌우 · 이닝) 각자 시험이 붙어 있어서,
+ * 하나로 합치는 것은 **집계 레이어의 구조 변경**이다.
+ * ⚠**빌드 시간만의 문제다** — 사용자 화면에는 나타나지 않고, CI 45분 상한에도 여유가 크다.
+ * → 배포 직전에 손댈 곳이 아니라고 판단했다. 다음에 집계를 손볼 때 함께 한다.
+ */
+
 import type { Db } from "@bb-app/store";
 import type { BattingLine, PitchingLine } from "@bb-app/metrics";
 import { leagueOf } from "@bb-app/domain";
@@ -186,9 +200,20 @@ GROUP BY b.player_id, teamCode
  */
 const STARTER_CTE = `
 starter AS (
+  -- ⚠**시즌으로 좁힌다.** 예전에는 필터가 없어 pa_event **전 시즌**(31만 행)을 매번 GROUP BY 했다 —
+  --   실측 5시즌 loadSite 49.6초 중 **10.0초(20.2%)** 로 단일 최대 항목이었다(2026-08-18 감사 P1).
+  --   쓰이는 것은 대상 시즌 경기의 첫 타석뿐이라 **값은 하나도 바뀌지 않는다.**
+  -- ⚠**파라미터가 앞에 둘 늘었다.** CTE 가 SQL 맨 앞이므로 바인딩의 **첫 두 자리**가 이것이다 —
+  --   순서를 틀리면 조용히 빈 결과가 나온다.
   SELECT e.game_id AS game_id, e.pitcher_id AS pitcher_id
   FROM pa_event e
-  JOIN (SELECT game_id, half, MIN(seq) AS s FROM pa_event GROUP BY game_id, half) m
+  JOIN (
+    SELECT e2.game_id AS game_id, e2.half AS half, MIN(e2.seq) AS s
+      FROM pa_event e2
+      JOIN game g2 ON g2.game_id = e2.game_id
+     WHERE g2.season = ? AND g2.competition = ?
+     GROUP BY e2.game_id, e2.half
+  ) m
     ON m.game_id = e.game_id AND m.half = e.half AND m.s = e.seq
   WHERE e.pitcher_id IS NOT NULL
 ),
@@ -377,7 +402,10 @@ export function aggregateSeason(
   from = "0000-01-01",
 ): SeasonAggregate {
   const batRows = db.raw.prepare(BATTING_SQL).all(season, competition, through, from) as Record<string, number | string>[];
-  const pitRows = db.raw.prepare(PITCHING_SQL).all(season, competition, through, from) as Record<string, number | string>[];
+  // ⚠**앞의 두 개는 STARTER_CTE 몫이다**(CTE 가 SQL 맨 앞에 온다). 순서를 바꾸면 조용히 빈다
+  const pitRows = db.raw
+    .prepare(PITCHING_SQL)
+    .all(season, competition, season, competition, through, from) as Record<string, number | string>[];
   const teamRows = db.raw
     .prepare(TEAM_GAMES_SQL)
     .all(season, competition, through, from, season, competition, through, from) as { code: string; n: number }[];

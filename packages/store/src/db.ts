@@ -21,6 +21,8 @@ export interface Db {
    * 예외가 나면 롤백하므로 **부분 적재된 경기가 남지 않는다**(부분 실패 대응).
    */
   transaction<T>(fn: () => T): T;
+  /** 중첩 가능한 부분 롤백. ⚠예외를 되돌린 뒤 **그대로 던진다** */
+  savepoint<T>(name: string, fn: () => T): T;
   close(): void;
 }
 
@@ -69,6 +71,29 @@ export function openDb(path: string, nowIso: string): Db {
         return out;
       } catch (err) {
         raw.exec("ROLLBACK");
+        throw err;
+      }
+    },
+    /**
+     * **중첩 가능한 부분 롤백**(SQLite SAVEPOINT).
+     *
+     * ⚠**「한 건이 실패해도 나머지는 살린다」를 실제로 하려면 이것이 필요하다.**
+     * 예외를 잡아 세기만 하면 **그 건이 도중까지 쓴 것이 그대로 커밋된다** —
+     * 실제로 선수 통산이 `DELETE` 만 되고 `INSERT` 가 끊긴 채 커밋되는 경로가 있었다
+     * (2026-08-18 다방면 감사 P1: 「통산이 조용히 잘린다」).
+     * ⚠**이름이 겹치면 안 된다** — 중첩될 수 있으므로 호출자가 고유한 이름을 준다.
+     * ⚠**예외를 삼키지 않는다.** 되돌린 뒤 그대로 던진다 — 셀지 말지는 호출자가 정한다.
+     */
+    savepoint<T>(name: string, fn: () => T): T {
+      const sp = `sp_${name.replace(/[^A-Za-z0-9_]/g, "_")}`;
+      raw.exec(`SAVEPOINT ${sp}`);
+      try {
+        const out = fn();
+        raw.exec(`RELEASE ${sp}`);
+        return out;
+      } catch (err) {
+        raw.exec(`ROLLBACK TO ${sp}`);
+        raw.exec(`RELEASE ${sp}`);
         throw err;
       }
     },

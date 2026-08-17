@@ -44,10 +44,19 @@ export const CSS = `
      즉 완전히 같은 색이 됐다(2026-08-17 디자인 감사). 자기가 적어 둔 규칙을 자기가 깼다.
      → **파랑↔주황 발산 배색**을 쓰고 명도도 벌려 흑백에서도 순서가 남게 한다.
      ⚠득실차 글자는 4.5:1 이 필요하다(14px 굵은 글씨는 WCAG「큰 텍스트」가 아니다). */
-  --up:#1b6ca8; --dn:#a85a17;
-  /* 승패 띠의 세 조각. ⚠**무승부는 승도 패도 아니라는 것이 곧 그 뜻**이라 중립색이다.
-     ⚠단 **보이기는 해야 한다** — 이웃 조각과 3:1 을 확보한다(감사 지적: 1.94:1 이었다). */
-  --bar-w:#1b6ca8; --bar-l:#c9762a; --bar-t:#6f6e68;
+  /* ⚠**--dn 은 #a85a17 이었다** — --panel 위에서는 5.073:1 인데 --panel-2(hover) 위에서는
+     **4.494:1** 로 4.5 에 0.006 모자랐다(2026-08-18 감사 P3). 「거의 통과」는 통과가 아니다.
+     #9e5415 는 panel 6.541 · panel-2 4.984 로 **두 바탕 모두 여유가 있다.** */
+  --up:#1b6ca8; --dn:#9e5415;
+  /* 승패 띠의 세 조각.
+     ⚠**세 쌍이 전부 3:1 이어야 한다.** 이웃만 보면 부족하다 — **무승부가 0인 팀에서는
+     승과 패가 직접 맞닿는다**(대부분의 팀이 그렇다). 처음에 이웃만 보고 골랐다가
+     승|무 1.09 · 무|패 1.49 · 승|패 1.63 이 됐고, **주석에는 3:1 이라고 적혀 있었다**
+     (2026-08-18 다방면 감사 P1).
+     ⚠**색만으로 벌릴 수 없어 명도를 크게 벌렸다** — 아주 어두운 파랑 / 밝은 회색 / 주황.
+     탐색으로 찾은 값이고 실측 대비는 **승|무 12.19 · 무|패 3.54 · 승|패 3.44** 다.
+     ⚠파랑↔주황은 유지한다(색각 안전 · 아래 「수준 색」과 같은 이유). */
+  --bar-w:#062a47; --bar-t:#eceae2; --bar-l:#b8651f;
   --f-body:"Yu Gothic","Hiragino Kaku Gothic ProN","Noto Sans JP","Meiryo",system-ui,sans-serif;
   --f-num:"SFMono-Regular","Consolas","Menlo","Yu Gothic",monospace;
   --topbar:46px;
@@ -64,7 +73,8 @@ export const CSS = `
     --warn:#e08a72; --ok:#8fc09c;
     /* ⚠어두운 바탕에서는 같은 색이 탁해진다 — 밝기를 올려 대비를 지킨다 */
     --up:#5fa8dd; --dn:#d98f4a;
-    --bar-w:#5fa8dd; --bar-l:#d98f4a; --bar-t:#9a998f;
+    /* 실측 대비 승|무 9.98 · 무|패 3.22 · 승|패 3.09 */
+  --bar-w:#bfe0f7; --bar-t:#2b2d33; --bar-l:#b8651f;
   }
 }
 :root[data-theme="dark"] {
@@ -73,7 +83,8 @@ export const CSS = `
   --warn:#e08a72; --ok:#8fc09c;
   /* ⚠어두운 바탕에서는 같은 색이 탁해진다 — 밝기를 올려 대비를 지킨다 */
   --up:#5fa8dd; --dn:#d98f4a;
-  --bar-w:#5fa8dd; --bar-l:#d98f4a; --bar-t:#9a998f;
+  /* 실측 대비 승|무 9.98 · 무|패 3.22 · 승|패 3.09 */
+  --bar-w:#bfe0f7; --bar-t:#2b2d33; --bar-l:#b8651f;
 }
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
@@ -299,10 +310,15 @@ a{color:inherit}
    이 화면 구조에서 성립하지 않는다. */
 /* ⚠**영역 구분을 더 세게**(2026-08-17 유저 지적: 「각각의 영역별 구분이 너무 약하다」).
    선 하나로는 스크롤 중에 구획이 바뀐 것을 못 알아챈다.
-   ⚠**카드로 만들지 않는다**(§6: 균질한 카드 그리드 금지). 대신 **면을 갈라** 구분한다 —
-   본문 바탕(--page)과 다른 면(--panel)을 번갈아 두지 않고, **구획마다 같은 면**을 주고
-   그 사이를 페이지 바탕이 가른다. 위치에 기대지 않으므로 탭을 바꿔도 무늬가 흔들리지 않는다
-   (예전 nth-of-type 줄무늬가 그래서 깨졌다). */
+   ⚠**카드로 만들지 않는다**(§6: 균질한 카드 그리드 금지).
+   ⚠**「면을 갈라 구분한다」고 적어 놨는데 그 면이 안 갈라진다**(2026-08-18 감사 P3에서 정정).
+   --page #fbfaf7 대 --panel #ffffff 는 **1.044:1** 이고, 이 파일 스스로 다른 곳에
+   「1.04:1 은 감지 한계 이하」라고 적어 뒀다. 자기가 세운 기준을 자기가 어긴 서술이었다.
+   ⚠**색을 더 벌릴 수도 없다** — --page 를 #f4f2ec 까지 어둡게 하면 1.119 로 겨우 오르는데
+   그 값이 --panel-2(#f3f1ec)와 **1.006** 이 되어 hover 배경이 사라진다(실측).
+   → **실제로 가르는 것은 테두리다**: 1px --hair-2 + 좌측 3px + 사이 16px 여백.
+   면은 **거드는 것**이지 근거가 아니다. 구획마다 같은 면을 주므로 탭을 바꿔도 무늬가
+   흔들리지 않는다는 이점은 그대로다(예전 nth-of-type 줄무늬가 그래서 깨졌다). */
 /* ⚠**패딩을 토큰으로 둔다.** 예전에는 여기에 값을 직접 적었는데,
    밀도 전환 스크립트가 el.style.paddingTop 으로 **인라인 덮어쓰기**를 해서
    이 값이 **한 번도 렌더되지 않았다**(2026-08-17 디자인 감사 P1).
@@ -310,7 +326,12 @@ a{color:inherit}
 .block{padding:var(--block-pad-y, 22px) var(--pad) calc(var(--block-pad-y, 22px) + 4px);background:var(--panel);
   /* ⚠**테두리를 이전보다 흐리게 만들면 안 된다.** 바꾸기 전이 2px --hair-2(1.51:1)였는데
      1px --hair(1.28:1)로 오히려 **약해졌다**(감사 P2 실측). 요청은 「더 강하게」였다. */
-  border:1px solid var(--hair-2);border-left:3px solid var(--chip,var(--team,var(--tx-3)));
+  /* ⚠**여기에 구단색을 쓰지 않는다**(2026-08-18 감사 P2). 선수·구단 화면에서는 바로 왼쪽에
+     .spine 이 **같은 --team 색**으로 서 있어서, 3px 막대가 기둥에 녹아 신호가 사라졌다.
+     게다가 블록 사이 16px 틈마다 색이 끊겨 기둥에 **톱니 모서리**가 생겼다.
+     ⚠**구단색은 h2::before 가 계속 나른다** — 그쪽은 var(--pad) 만큼 안쪽이라 기둥과 안 겹친다.
+     여기서는 굵기(3px)만 남겨 「구획이 여기서 시작한다」를 말한다. */
+  border:1px solid var(--hair-2);border-left:3px solid var(--hair-2);
   margin-bottom:16px;
   animation:rise var(--mid) var(--ease) both;animation-delay:calc(var(--i,0) * 26ms)}
 .block[hidden]{display:none}
@@ -445,6 +466,7 @@ dd.g-veryBad{box-shadow:inset 0 -3px 0 var(--g-vbad);background:var(--g-vbad-bg)
 
 /* ⚠좁은 화면에서 표를 옆으로 밀면 **누구의 행인지**가 먼저 사라진다.
    첫 열을 고정해서 이름이 남게 한다. 오른쪽 끝의 그늘은 「더 있다」는 신호다. */
+.scroller:focus-visible{outline:2px solid var(--tx);outline-offset:-2px}
 .scroller{overflow-x:auto;-webkit-overflow-scrolling:touch;position:relative;
   background:linear-gradient(to left,var(--page),rgba(0,0,0,0) 24px) right center / 24px 100% no-repeat}
 .scroller table{background:var(--page)}
@@ -658,6 +680,18 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
 .picklab{margin:10px 0 5px;font-size:10px;letter-spacing:.16em;color:var(--tx-3);
   display:flex;align-items:baseline;gap:6px}
 .picklab s{text-decoration:none;letter-spacing:0;font-size:10.5px}
+/* ── 「데이터가 없다」는 평범한 캡션과 달라야 한다 ─────────────────
+   ⚠**클래스만 붙고 규칙이 0건이었다**(2026-08-18 감사 P2). M12 의 4상태를 가르려고
+   .pmiss 를 붙여 놨는데 CSS 가 없어서, 「이 날은 아직 발표가 없습니다」가
+   바로 옆의 안내문과 **글자 하나 다르지 않게** 그려졌다 — 가르려고 만든 표시가 안 갈랐다.
+   ⚠**비교 화면은 더 나빴다**: .picklab 이 10px·자간 .16em 의 마이크로 라벨이라
+   경고가 같은 줄의 힌트(10.5px)보다 **작았다.** 그래서 여기서 자간과 크기를 되돌린다.
+   ⚠**빨강으로 칠하지 않는다** — 「없음」은 고장이 아니다. 색이 아니라 **형태**로 가른다. */
+.pmiss{letter-spacing:0;font-size:12px;color:var(--tx-2);
+  border-left:3px solid var(--hair-2);padding:4px 0 4px 9px;background:var(--panel-2)}
+.picklab.pmiss{letter-spacing:0;font-size:12px}
+/* 고를 것이 없으면 「누르는 법」도 필요 없다 */
+.pmiss s{display:none}
 /* ── 通算成績 ──
    ⚠**태그 기본값에 기대지 않는다.** h3 는 기본 1.17em 이라 **구획 제목(h2, 11px)보다 커진다** —
    이 저장소가 이미 한 번 밟은 함정이다(위 .standname 주석 참조).
@@ -728,6 +762,71 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
 .hgames s{text-decoration:none;color:var(--tx-3);font-size:11px}
 .more{margin:8px 0 0;font-size:11.5px}
 
+/* ── 일정 캘린더 ────────────────────────────────────────────────
+   ⚠**격자를 카드로 만들지 않는다**(§6). 달력은 이미 격자라, 칸마다 그림자와 둥근 모서리를
+   더하면 그 순간 「AI가 만든 대시보드」가 된다. 선과 여백만으로 짓는다.
+   ⚠**승패를 색으로만 말하지 않는다** — 글자(○●△中)가 먼저이고 색은 보조다.
+   ⚠**날짜를 큼직하게 두지 않는다.** 이 화면에서 읽을 것은 날짜가 아니라 **상대와 결과**다. */
+.calwrap{display:flex;flex-direction:column;gap:22px}
+.cal{width:100%;border-collapse:collapse;table-layout:fixed}
+/* ⚠**구획 제목(.block>h2 = 12.5px/700)보다 크면 안 된다.** 13px/700 이었다 —
+   이 파일이 이미 두 번 적어 둔 함정을 세 번째로 밟았다(2026-08-18 감사 P2).
+   달 이름은 구획 안의 **소제목**이지 구획 제목이 아니다. */
+.cal caption{text-align:left;font-size:11.5px;font-weight:700;letter-spacing:.1em;
+  padding:0 0 8px;color:var(--tx-2)}
+.cal th{font-size:10px;font-weight:400;letter-spacing:.1em;color:var(--tx-3);
+  padding:0 0 6px;text-align:center;border:0}
+.cal th abbr{text-decoration:none;border:0}
+/* 일요일은 조금 진하게. ⚠빨강을 쓰지 않는다 — 「나쁨」으로 읽힌다 */
+.cal .cw0,.cal .cw6{color:var(--tx-2)}
+.cal td{border:1px solid var(--hair);vertical-align:top;padding:4px;height:62px;
+  background:var(--panel)}
+/* 그 달에 없는 칸. ⚠**지우지 않고 비운다** — 없애면 요일이 밀린다 */
+.cal td.cpad{background:transparent;border-color:transparent}
+.cday{display:block;font-family:var(--f-num);font-size:10px;color:var(--tx-3);
+  line-height:1;margin-bottom:3px}
+/* 오늘. ⚠바탕을 칠하지 않고 테두리로 말한다 — 칠하면 「선택됨」으로 읽힌다
+   ⚠**구단색만으로는 안 된다**(2026-08-18 감사 P2). 12구단 전부가 라이트·다크 중
+   한쪽에서 3:1 을 못 넘고 최악은 **1.08:1** 이다 — 그 팀 페이지에서는 오늘 칸이 그냥 안 보인다.
+   같은 함정의 대책이 이 파일 .hteam i 에 이미 있었는데 여기에는 안 왔다.
+   ⚠**중립색 테두리를 한 겹 더 둔다** — 구단색이 안 보여도 **사각형은 남는다.**
+   안쪽 2px 이 구단색, 그 바깥 1px 이 중립색이다(inset 은 먼저 쓴 것이 위에 그려진다). */
+.cal td.ctoday{box-shadow:inset 0 0 0 2px var(--team,var(--tx-3)),inset 0 0 0 3px var(--tx-3)}
+.cal td.ctoday .cday{color:var(--tx);font-weight:700}
+
+/* 한 칸 안의 경기. 지난 경기는 링크, 앞으로의 경기는 그냥 글자 */
+.cg{display:block;text-decoration:none;color:var(--tx);font-size:11px;line-height:1.35;
+  padding:3px 4px;border-left:2px solid var(--hair-2);
+  transition:background var(--fast) var(--ease),border-color var(--fast) var(--ease)}
+.cg + .cg{margin-top:3px}
+a.cg:hover{background:var(--panel-2);border-left-color:var(--team,var(--tx-3))}
+a.cg:focus-visible{outline:2px solid var(--tx);outline-offset:1px}
+.cvs{display:block;font-size:11px;color:var(--tx-2);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
+.cscore{display:inline-block;font-family:var(--f-num);font-variant-numeric:tabular-nums;
+  font-size:12.5px;font-weight:700;margin-right:4px}
+.cmark{font-size:12px;font-weight:700}
+.cmark.win{color:var(--up)}
+.cmark.loss{color:var(--dn)}
+.cmark.draw,.cmark.notPlayed{color:var(--tx-3)}
+/* 앞으로의 경기 — **확정이 아니다**(M9). 점선으로 그렇게 말한다 */
+.cgup{border-left-style:dashed;background:transparent}
+.ctime{display:block;font-family:var(--f-num);font-size:10.5px;color:var(--tx-3)}
+
+@media (max-width:680px){
+  /* ⚠좁은 화면에서는 칸이 작아진다 — 그래도 **가로로 밀지 않는다**.
+     달력을 옆으로 스크롤하면 「몇째 주인지」를 잃는다 */
+  .cal td{height:auto;min-height:44px;padding:3px}
+  /* ⚠**팀명을 자르지 않는다**(2026-08-18 감사 P2). 353px 화면에서 한 칸은 약 44px 이라
+     nowrap+말줄임이면 「@ヤ…」처럼 **2글자만 남았다** — 이 화면이 읽으라고 만든
+     바로 그 정보다. 줄을 바꾸는 쪽이 낫다: 칸 높이는 늘어나도 뜻은 남는다. */
+  .cvs{font-size:10px;white-space:normal;overflow:visible;text-overflow:clip;
+    overflow-wrap:anywhere;line-height:1.25}
+  .cg{padding:2px 3px}
+  .cscore{font-size:11px}
+  .calwrap{gap:16px}
+}
+
 /* ── 순위표: 승패를 눈으로 비교할 수 있게 ─────────────────────────
    ⚠**수를 그림으로 바꾸지 않는다** — 수 옆에 띠를 둔다(2026-08-17 유저 지적).
    ⚠**띠의 승 비율과 승률은 일부러 다르다** — 무승부가 승률의 분모에서 빠지기 때문이다(NPB 규정).
@@ -768,9 +867,12 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
    부모(.main)에 **가로 패딩이 0**이라 상쇄할 것이 없었다 — 문서 전체에 가로 스크롤 20px 이 생기고
    왼쪽으로 삐져나간 배경이 .spine 의 구단색 기둥을 파냈다(2026-08-17 디자인 감사 P1).
    ⚠**부모의 패딩을 확인하지 않고 음수 마진을 쓰면 이렇게 된다.** */
+/* ⚠**좌우 패딩이 없어 칩이 구단색 기둥에 딱 붙어 있었다**(2026-08-18 감사 P2).
+   .block 은 좌우로 var(--pad) 를 두는데 이 줄만 0 이라, 페이지에서 **유일하게 정렬선을 벗어난
+   요소**가 됐다. 음수 마진 사고(바로 위 문단) 뒤에 0 으로 되돌리면서 같이 빠졌다. */
 .hjump{position:sticky;top:var(--topbar);z-index:8;
   display:flex;flex-wrap:nowrap;gap:6px;margin:0 0 10px;
-  padding:8px 0;
+  padding:8px var(--pad);
   background:var(--page);border-bottom:1px solid var(--hair);
   overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin;
   scroll-snap-type:x proximity}
@@ -802,6 +904,16 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
 }
 /* ⚠**앵커로 뛸 때 sticky 두 겹에 가리지 않게** 여백을 더 준다 */
 html:has(.hjump){scroll-padding-top:calc(var(--topbar) + 52px)}
+/* ⚠**≤480px 에서는 --topbar 가 실제 높이가 아니다**(2026-08-18 감사 P3).
+   .topbar 가 height:auto 로 접혀 **최소 75.65px** 인데(검색칸이 flex-basis:100%)
+   scroll-padding 은 토큰값(46px) 그대로여서, 앵커로 뛰면 구획 머리가 **22~30px 잠겼다.**
+   sticky 는 위에서 껐는데 여백 계산은 안 따라왔다 — 같은 사실을 두 곳에 적은 대가다.
+   ⚠**:root 를 붙여 특정성을 올린다** — 위의 무조건 규칙들과 같으면 소스 순서 싸움이 된다. */
+@media (max-width:480px){
+  html:root{scroll-padding-top:86px}
+  html:root:has(.rail){scroll-padding-top:calc(86px + var(--rail))}
+  html:root:has(.hjump){scroll-padding-top:86px}
+}
 
 /* 先週の顔 — **순위 번호를 크게 쓰지 않는다.** 한 주짜리 순위를 시즌 순위와
    같은 무게로 그리면 그렇게 읽힌다 */
@@ -1354,10 +1466,20 @@ const SUPPORTS_UNTIL_FOUND=(()=>{
     return d.getAttribute("hidden")==="until-found"&&"onbeforematch" in d;
   }catch(e){return false}
 })();
-const BLOCKS=window.__BLOCKS__||[];
+/* ⚠**window 전역이 아니라 데이터 블록에서 읽는다**(2026-08-18 감사 P2).
+   예전에는 서버가 window 전역(__BLOCKS__ · __PRESETS__)을 **인라인 스크립트**로 심었는데, 그 한 줄 때문에
+   CSP 의 script-src 를 닫을 수 없었다. 지금은 실행되지 않는 JSON 블록이다.
+   ⚠**없어도 돈다** — 선수 페이지 말고는 이 블록이 없다(§0-1). */
+const BOOT=(function(){
+  try{
+    const n=doc.getElementById("bb-boot");
+    return n?JSON.parse(n.textContent||"{}"):{};
+  }catch(e){return {}}
+})();
+const BLOCKS=BOOT.blocks||[];
 /* 용어집. 서버와 같은 정의 한 벌을 쓴다(M1) */
 const GLOSSARY=__GLOSSARY__;
-const PRESETS=window.__PRESETS__||{};
+const PRESETS=BOOT.presets||{};
 
 const saved=load()||{};
 const state={
@@ -1473,6 +1595,31 @@ function showTabs(){
       delete transient[g];
       state.tabs[g]=b.dataset.tab;save(state);showTabs();
     }));
+    /* ⚠**role=tab 을 붙였으면 화살표가 돌아야 한다**(2026-08-18 감사 P2).
+       aria-selected 와 role 만 붙어 있고 **키보드 규약은 없었다** — 낭독기는
+       「タブ 1/4」라고 안내하는데 화살표를 눌러도 아무 일도 일어나지 않았다.
+       ⚠**새로 만든 날짜 토글(오늘·내일)도 이 위에 얹혀 있다.**
+       ⚠tabindex 는 여기서 준다 — JS 가 없으면 화살표도 없으니 그때는 전부 탭으로 닿는 편이 맞다
+       (바로 아래 .picklist 가 쓰는 것과 같은 방침). */
+    const rove=(el)=>{buttons.forEach(b=>b.setAttribute("tabindex",b===el?"0":"-1"))};
+    const sel=buttons.filter(b=>b.dataset.tab===state.tabs[g])[0]||buttons[0];
+    if(sel)rove(sel);
+    buttons.forEach((b,at)=>{
+      b.addEventListener("click",()=>rove(b));
+      b.addEventListener("keydown",(e)=>{
+        const step=e.key==="ArrowRight"||e.key==="ArrowDown"?at+1
+          :e.key==="ArrowLeft"||e.key==="ArrowUp"?at-1
+          :e.key==="Home"?0:e.key==="End"?buttons.length-1:null;
+        if(step===null)return;
+        const to=buttons[(step+buttons.length)%buttons.length];
+        e.preventDefault();
+        /* ⚠**이동하면 그 탭을 연다**(자동 활성화). 이 탭들은 이미 그려진 패널을 여닫을 뿐이라
+           여는 비용이 없고, 수동 활성화(Enter 를 또 눌러야 함)는 여기서 손만 늘린다. */
+        delete transient[g];
+        state.tabs[g]=to.dataset.tab;save(state);showTabs();
+        rove(to);if(to.focus)to.focus();
+      });
+    });
   });
 })();
 
@@ -1534,6 +1681,12 @@ function renderBlocks(){
   (function(){
     const nav=document.querySelector(".hjump");
     if(!nav||!("IntersectionObserver" in window))return;
+    /* ⚠**이 함수는 두 번 이상 불린다**(밀도 전환 · 블록 재배치). 예전에는 그때마다
+       IntersectionObserver 를 **새로 만들고 이전 것을 끊지 않아**, 관찰자가 계속 쌓였다 —
+       같은 스크롤 한 번에 mark() 가 N 번 돌고, 떼어낸 노드를 잡은 관찰자가 남는다.
+       지금은 도달 불가라 증상이 없지만(2026-08-18 감사 P3: 잠복), 잠복은 잠복이지 부재가 아니다.
+       ⚠**만들기 전에 앞의 것을 끊는다.** 창(window)에 손잡이를 하나 두는 것이 가장 단순하다. */
+    if(window.__bbSpy&&window.__bbSpy.disconnect)window.__bbSpy.disconnect();
     const links=Array.from(nav.querySelectorAll("a[href^='#']"));
     const byId=new Map(links.map(a=>[a.getAttribute("href").slice(1),a]));
     const targets=links.map(a=>document.getElementById(a.getAttribute("href").slice(1))).filter(Boolean);
@@ -1565,6 +1718,52 @@ function renderBlocks(){
       mark();
     },{rootMargin:topInset()+"px 0px -55% 0px"});
     targets.forEach(t=>io.observe(t));
+    window.__bbSpy=io;
+  })();
+  /**
+   * ⚠**가로로 넘치는 표를 키보드로도 밀 수 있게 한다**(WCAG 2.1.1 Keyboard · Level A).
+   *
+   * 실측(2026-08-18 다방면 감사 P1): 스크롤 영역 120개 중 **13개가 키보드로 도달 불가**였다 —
+   * 순위표 10열 중 3~10열(승률·게임차·득실차)이 키보드·스위치 사용자에게 **존재하지 않는 것과 같았다.**
+   * 화면 어디에도 「오른쪽에 더 있다」는 표시가 없어 **침묵성**이기도 하다.
+   *
+   * ⚠**전부에 붙이지 않는다.** 순위 화면에만 스크롤 영역이 82개다 — 무조건 붙이면
+   *   탭 정지와 랜드마크가 82개 늘어 오히려 못 쓰게 된다.
+   *   **실제로 넘치고**(뷰포트에 따라 다르다) **안에 포커스 갈 것이 없는** 것만 고른다.
+   * ⚠**리사이즈에 따라 다시 판정한다** — 창을 좁히면 넘치기 시작한다.
+   * ⚠**스크립트가 없으면 지금과 같다**(§0-1) — 나빠지지 않는다. 정적으로는
+   *   「넘치는가」를 알 수 없어 여기서 한다.
+   */
+  (function(){
+    const FOCUSABLE="a[href],button,input,select,textarea,[tabindex]";
+    const mark=()=>{
+      $$(".scroller").forEach(el=>{
+        /* ⚠크기를 모르는 환경(시험 스텁)에서는 아무것도 하지 않는다 — 없는 정보로 판정하지 않는다 */
+        if(typeof el.scrollWidth!=="number"||typeof el.clientWidth!=="number")return;
+        const overflows=el.scrollWidth>el.clientWidth+1;
+        const hasFocus=el.querySelector(FOCUSABLE)!==null;
+        if(overflows&&!hasFocus){
+          if(!el.hasAttribute("tabindex")){
+            el.setAttribute("tabindex","0");
+            el.setAttribute("role","region");
+            if(!el.hasAttribute("aria-label")){
+              const cap=el.querySelector("caption,th");
+              el.setAttribute("aria-label",(cap&&cap.textContent?cap.textContent.trim():"表")+"（横スクロール）");
+            }
+          }
+        }else if(el.getAttribute("role")==="region"&&el.getAttribute("tabindex")==="0"){
+          /* 넘치지 않게 됐으면 탭 정지를 도로 없앤다 — 쓸모없는 정지를 남기지 않는다 */
+          el.removeAttribute("tabindex");el.removeAttribute("role");el.removeAttribute("aria-label");
+        }
+      });
+    };
+    mark();
+    /* ⚠**리사이즈 배선은 있을 때만 건다.** 창 크기가 바뀌면 넘침 여부가 달라지는데,
+       스크립트 환경에 addEventListener 가 없을 수도 있다(시험 스텁 등) — 없으면 조용히 넘어간다 */
+    if(typeof addEventListener==="function"){
+      let t=0;
+      addEventListener("resize",()=>{clearTimeout(t);t=setTimeout(mark,150)},{passive:true});
+    }
   })();
   $$(".block").forEach((el,i)=>{el.style.setProperty("--block-pad-y",pad);el.style.setProperty("--i",String(i))});
 }
