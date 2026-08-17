@@ -47,6 +47,13 @@ export interface HomeStanding {
   t: number;
   pct: number | null;
   gamesBehind: number;
+  /**
+   * 득점·실점과 **그 분모**(읽을 수 있었던 경기 수).
+   * ⚠득점을 못 읽은 경기는 빠져 있으므로 `played` 와 다를 수 있다 — 그래서 분모를 따로 든다(M2).
+   */
+  rf: number;
+  ra: number;
+  runGames: number;
   /** 소화 경기(`status='played'` 기준) */
   played: number;
   /** 남은 경기. **음수가 되면 표시하지 않는다** — 143을 넘긴 시즌은 우리가 모르는 시즌이다 */
@@ -243,20 +250,61 @@ function streakText(n: number): string {
   return n > 0 ? `${n}連勝` : `${-n}連敗`;
 }
 
+/**
+ * 승패를 **한 줄의 띠**로 그린다.
+ *
+ * ⚠**숫자만 늘어놓으면 팀 간 비교가 눈으로 안 된다**(2026-08-17 유저 지적:
+ * 「승패무 표시하는 곳의 디자인과 표시 방식이 너무 직관적이지가 않다」).
+ * 58勝46敗1分 을 세 칸에 나눠 적으면 읽는 사람이 머릿속에서 다시 비율로 바꿔야 한다.
+ * ⚠**띠는 값을 대신하지 않는다** — 수를 그대로 두고 띠를 **옆에** 놓는다.
+ *   그림만 남기면 정확한 수를 못 읽고, 수만 남기면 비교가 안 된다.
+ * ⚠**폭은 백분율이지 승률이 아니다.** 무승부가 승률의 분모에서 빠지므로(NPB 규정)
+ *   띠의 승 비율과 표시된 승률은 **일부러 다르다**. 무승부가 눈에 보여야 그 차이가 설명된다.
+ */
+function wlBar(r: HomeStanding): RawHtml {
+  const total = r.w + r.l + r.t;
+  if (total === 0) return raw("");
+  const pc = (n: number): string => ((n / total) * 100).toFixed(2);
+  return html`<span class="wlbar" role="img"
+    aria-label="${r.w}勝${r.l}敗${r.t}分（${total}試合）">
+    <i class="ww" style="width:${pc(r.w)}%"></i><i class="wt" style="width:${pc(r.t)}%"></i><i class="wl" style="width:${pc(r.l)}%"></i>
+  </span>`;
+}
+
+/**
+ * 득실차. ⚠**부호를 문자로 쓴다** — 색만으로 +−를 구별하면 색각 이상에서 사라진다.
+ * ⚠**분모(경기 수)를 같이 낸다**(M2). 100경기의 +50과 20경기의 +50은 다른 이야기다.
+ */
+function runDiff(r: HomeStanding): RawHtml {
+  if (r.runGames === 0) return html`${NO_VALUE}`;
+  const d = r.rf - r.ra;
+  const sign = d > 0 ? "+" : d < 0 ? "−" : "±";
+  const cls = d > 0 ? "up" : d < 0 ? "dn" : "";
+  return html`<b class="rdiff ${cls}">${sign}${Math.abs(d)}</b>`;
+}
+
 function standingsTable(l: HomeLeague, base: string): RawHtml {
   return scroller(html`<table class="hstand">
   <thead><tr>
     <th>順位</th>
-    <th class="l">球団</th><th>勝</th><th>敗</th><th>分</th><th>${term("勝率")}</th><th>ゲーム差</th>
+    <th class="l">球団</th>
+    <th class="l">勝敗分</th>
+    <th>${term("勝率")}</th><th>ゲーム差</th>
+    <th class="l">得失</th>
     <th>直近10</th><th>連続</th><th>残り</th><th class="l">全勝〜全敗の勝率</th>
   </tr></thead>
   <tbody>${l.rows.map(
     (r) => html`<tr style="--chip:${r.color.base}" class="${r.rank === 1 ? "lead" : ""}">
     <td class="hrank">${r.rank === null ? NO_VALUE : r.rank}${r.tiedRank ? html`<s>同</s>` : null}</td>
     <td class="l">${teamChip(r.teamCode, r.shortName, r.color, base)}</td>
-    <td>${r.w}</td><td>${r.l}</td><td>${r.t}</td>
+    <!-- ⚠**수와 띠를 같이 낸다.** 띠만으로는 정확한 수를 못 읽고, 수만으로는 비교가 안 된다 -->
+    <td class="l wl3"><span class="wlnum">${r.w}<s>勝</s>${r.l}<s>敗</s>${r.t}<s>分</s></span>${wlBar(r)}</td>
     <td class="b">${pctText(r.pct)}</td>
     <td>${r.gamesBehind === 0 ? NO_VALUE : r.gamesBehind.toFixed(1).replace(/\.0$/, "")}</td>
+    <!-- ⚠**득실차를 주역으로, 득점·실점을 분모처럼 뒤에 붙인다** — 「어느 쪽이 얼마나」가 한 눈에 -->
+    <td class="l wd">${runDiff(r)}${r.runGames === 0
+      ? null
+      : html`<span class="den">${r.rf}得 ${r.ra}失 · ${r.runGames}試合</span>`}</td>
     <td>${r.last10.w}-${r.last10.l}-${r.last10.t}</td>
     <td>${streakText(r.streak)}</td>
     <td>${r.remaining < 0 ? NO_VALUE : r.remaining}</td>
@@ -266,6 +314,28 @@ function standingsTable(l: HomeLeague, base: string): RawHtml {
   </tr>`,
   )}</tbody>
 </table>`);
+}
+
+/**
+ * 이 화면 안의 구획으로 뛰는 내비.
+ *
+ * ⚠**존재하는 구획만 낸다.** 대시보드는 데이터에 따라 구획이 통째로 빠진다(M12) —
+ * 없는 곳으로 보내는 링크는 고장으로 읽힌다.
+ * ⚠**`id` 를 이 함수와 마크업 두 곳에 손으로 적지 않는다** — 한 벌로 만들고 둘 다 여기서 쓴다(M1).
+ */
+function jumpNav(d: HomePageData): RawHtml {
+  const items: { id: string; label: string }[] = [];
+  if (d.latest !== null) items.push({ id: "b-hlatest", label: "直近の結果" });
+  for (const l of d.leagues) items.push({ id: `b-hstand-${l.id}`, label: l.name.replace(/・リーグ$/, "") });
+  if (d.week !== null) items.push({ id: "b-hweek", label: "先週の顔" });
+  if (d.paces.length > 0) items.push({ id: "b-hpace", label: "ペース" });
+  if (d.milestones.length > 0) items.push({ id: "b-hmile", label: "記録に近づいている" });
+  if (d.streaks.length > 0) items.push({ id: "b-hstreak", label: "続いている記録" });
+  // ⚠**하나뿐이면 그리지 않는다** — 뛸 곳이 하나면 내비가 아니라 장식이다
+  if (items.length < 2) return raw("");
+  return html`<nav class="hjump" aria-label="このページの中の移動">
+  ${items.map((x) => html`<a href="#${x.id}">${x.label}</a>`)}
+</nav>`;
 }
 
 export function renderHomePage(d: HomePageData, ctx: RenderContext): string {
@@ -279,18 +349,13 @@ export function renderHomePage(d: HomePageData, ctx: RenderContext): string {
   </div>
 </header>
 
-<!-- ⚠**첫 화면에서 갈 곳을 먼저 보여준다**(2026-08-17 유저 요청).
-     맨 아래 링크 줄만 있으면 스크롤 끝까지 가야 알 수 있다.
-     ⚠**시즌에 따라 있고 없고 하는 화면은 넣지 않는다** — 포스트시즌은 기록이 있을 때만
-     상단 내비가 내므로, 여기서 또 내면 「눌러도 빈 화면」이 생긴다(M12). -->
-<nav class="hnav" aria-label="主なページ">
-  <a href="${base}ranking.html">リーグ順位表<s>全指標</s></a>
-  <a href="${base}${ROSTER_PATH}">選手一覧<s>球団別</s></a>
-  <a href="${base}today.html">試合<s>結果と予告</s></a>
-  <a href="${base}matchup.html">対戦<s>投手×打者</s></a>
-  <a href="${base}compare.html">くらべる<s>2人</s></a>
-  <a href="${base}days.html">日付から<s>過去の試合</s></a>
-</nav>
+<!-- ⚠**이 줄은 「이 화면 안의 어디로」다**(2026-08-17 유저 요청으로 바뀜).
+     예전에는 다른 화면으로 가는 링크였는데, **그건 상단 탭에 이미 있다** —
+     같은 것을 두 번 두면 자리만 먹고 진짜 필요한 것(세로로 긴 대시보드 안의 이동)이 없어진다.
+     ⚠**없는 구획은 링크하지 않는다**(M12) — 「눌러도 아무 데도 안 가는」 항목을 만들지 않는다.
+     ⚠**앵커는 실제 id 와 같아야 한다.** 어긋나면 조용히 아무 일도 안 일어난다 —
+     링크 검사가 앵커까지 보므로 빌드가 잡는다. -->
+${jumpNav(d)}
 
 ${d.latest === null
     ? raw("")
@@ -453,6 +518,9 @@ ${d.streaks.length === 0
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
+    // ⚠**이걸 안 넘겨서 홈만 탭이 하나 모자랐다**(2026-08-17 유저 지적).
+    //   타입이 선택값(`hasPostseason?`)이라 빠뜨려도 컴파일된다 — 시험이 잡는다
+    hasPostseason: ctx.hasPostseason,
     nav: "home",
     body,
   });

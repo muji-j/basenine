@@ -1842,6 +1842,42 @@ function playedByTeam(db: Db, season: number, competition: string, through: stri
 }
 
 /**
+ * 팀별 득점·실점.
+ *
+ * ⚠**우리가 가진 것은 경기 최종 스코어뿐이다** — 이닝별 득점(스코어보드)은 재현하지 않는다(L2).
+ * ⚠**득점을 못 읽은 경기는 빼고 센다**(M11). `runs IS NULL` 을 0으로 때우면
+ *   그 경기가 「0점 경기」가 되어 실점이 과소, 득점이 과소로 동시에 틀어진다.
+ * ⚠**분모를 같이 낸다** — 몇 경기분의 득실인지 모르면 팀 간 비교가 성립하지 않는다(M2).
+ */
+function runsByTeam(
+  db: Db,
+  season: number,
+  competition: string,
+  through: string,
+): Map<string, { rf: number; ra: number; games: number }> {
+  const rows = db.raw
+    .prepare(
+      `SELECT code, SUM(rf) AS rf, SUM(ra) AS ra, SUM(n) AS games FROM (
+         SELECT away_code AS code, SUM(away_runs) AS rf, SUM(home_runs) AS ra, COUNT(*) AS n
+           FROM game
+          WHERE season = ? AND competition = ? AND status = 'played' AND game_date <= ?
+            AND away_runs IS NOT NULL AND home_runs IS NOT NULL
+          GROUP BY away_code
+         UNION ALL
+         SELECT home_code AS code, SUM(home_runs) AS rf, SUM(away_runs) AS ra, COUNT(*) AS n
+           FROM game
+          WHERE season = ? AND competition = ? AND status = 'played' AND game_date <= ?
+            AND away_runs IS NOT NULL AND home_runs IS NOT NULL
+          GROUP BY home_code
+       ) GROUP BY code`,
+    )
+    .all(season, competition, through, season, competition, through) as unknown as {
+      code: string; rf: number; ra: number; games: number;
+    }[];
+  return new Map(rows.map((r) => [r.code, { rf: r.rf, ra: r.ra, games: r.games }]));
+}
+
+/**
  * 팀의 연승·연패 — **직전 경기부터 이어진 것만**.
  *
  * ⚠**무승부에서 끊는다**(NPB 관례). 「3連勝」이라고 쓰는데 사이에 무승부가 있으면
@@ -2090,6 +2126,7 @@ function homePage(
   const through = o.through ?? "9999-12-31";
   const played = playedByTeam(db, o.season, competition, through);
   const streak = streakByTeam(db, o.season, competition, through);
+  const runs = runsByTeam(db, o.season, competition, through);
 
   const leagues: HomeLeague[] = standings.map((sec) => ({
     id: sec.id,
@@ -2111,6 +2148,10 @@ function homePage(
         t: r.t,
         pct: r.pct,
         gamesBehind: r.gamesBehind,
+        // ⚠**득실은 「읽을 수 있었던 경기」의 합이다** — 분모를 같이 들고 다닌다(M2)
+        rf: runs.get(r.teamCode)?.rf ?? 0,
+        ra: runs.get(r.teamCode)?.ra ?? 0,
+        runGames: runs.get(r.teamCode)?.games ?? 0,
         played: p,
         remaining,
         bestPct: best,
