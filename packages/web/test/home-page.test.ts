@@ -30,6 +30,10 @@ function team(code: string, over: Record<string, unknown> = {}) {
     worstPct: 58 / (58 + 46 + 38),
     streak: 3,
     last10: { w: 6, l: 4, t: 0 },
+    // ⚠**분모가 `played` 와 다르다** — 득점을 못 읽은 경기가 있으면 그만큼 적다(M2·M11)
+    rf: 452,
+    ra: 401,
+    runGames: 104,
     ...over,
   };
 }
@@ -264,20 +268,66 @@ test("게임차 열의 이름이 「ゲーム差」다", () => {
 });
 
 /**
- * ⚠**첫 화면에서 갈 곳이 보여야 한다**(2026-08-17 유저 요청).
- * 맨 아래 링크 줄만 있으면 스크롤 끝까지 가야 알 수 있다.
- * ⚠**시즌마다 있고 없고 하는 화면은 넣지 않는다** — 눌러도 빈 화면이 되면 고장으로 읽힌다(M12).
+ * ⚠**대시보드 안의 이동이 필요하다**(2026-08-17 유저 지적: 「대쉬보드가 세로로 기니까
+ * 해당 부분으로 바로 점프하는 네비게이션」).
+ *
+ * ⚠**다른 화면으로 가는 링크가 아니다.** 그건 상단 탭에 이미 있고, 같은 것을 두 번 두면
+ * 자리만 먹는다 — 유저가 그 점을 명시했다(「다른 탭으로 가는건 상단에 바로 보여서 필요없어」).
+ * ⚠**앵커가 실제 구획 id 와 맞아야 한다.** 어긋나면 눌러도 조용히 아무 일이 없다.
  */
-test("⚠첫 화면 위쪽에 주요 페이지로 가는 길이 있다", () => {
+test("⚠대시보드 안의 구획으로 뛰는 내비가 있고, 앵커가 실제 id 와 맞는다", () => {
   const out = renderHomePage(data(), context());
-  const nav = /<nav class="hnav"[\s\S]*?<\/nav>/.exec(out)?.[0] ?? "";
+  const nav = /<nav class="hjump"[\s\S]*?<\/nav>/.exec(out)?.[0] ?? "";
   assert.ok(nav.length > 0, "내비가 없다");
-  for (const path of ["ranking.html", "players.html", "today.html", "matchup.html", "compare.html", "days.html"]) {
-    assert.ok(nav.includes(path), `${path} 로 가는 길이 없다`);
+
+  const anchors = [...nav.matchAll(/href="#([^"]+)"/g)].map((m) => m[1]!);
+  assert.ok(anchors.length >= 4, `뛸 곳이 너무 적다: ${anchors.length}`);
+  for (const a of anchors) {
+    assert.ok(out.includes(`id="${a}"`), `#${a} 로 뛰는데 그 id 가 화면에 없다`);
   }
+
+  // ⚠**다른 화면으로 가는 링크가 섞이면 안 된다** — 그게 이 변경의 이유다
+  assert.ok(!/href="[^#][^"]*\.html"/.test(nav), "다른 화면 링크가 섞였다");
+
   // 머리(h1)보다 뒤, 첫 구획보다 앞이다
-  assert.ok(out.indexOf('class="hnav"') > out.indexOf("<h1"), "내비가 표제보다 앞에 왔다");
-  assert.ok(out.indexOf('class="hnav"') < out.indexOf('class="block"'), "내비가 첫 구획보다 뒤에 있다");
+  assert.ok(out.indexOf('class="hjump"') > out.indexOf("<h1"), "내비가 표제보다 앞에 왔다");
+  assert.ok(out.indexOf('class="hjump"') < out.indexOf('class="block"'), "내비가 첫 구획보다 뒤에 있다");
+});
+
+/**
+ * ⚠**없는 구획으로 뛰게 하지 않는다**(M12). 대시보드는 데이터에 따라 구획이 통째로 빠진다.
+ */
+test("⚠데이터가 없는 구획은 내비에도 없다(M12)", () => {
+  const out = renderHomePage(data({ week: null, milestones: [], streaks: [] }), context());
+  const nav = /<nav class="hjump"[\s\S]*?<\/nav>/.exec(out)?.[0] ?? "";
+  assert.ok(!nav.includes("#b-hweek"), "없는 「先週の顔」로 뛰게 했다");
+  assert.ok(!nav.includes("#b-hmile"), "없는 마디 구획으로 뛰게 했다");
+  assert.ok(!nav.includes("#b-hstreak"), "없는 연속기록 구획으로 뛰게 했다");
+  // 남아 있는 것은 여전히 뛸 수 있다
+  assert.ok(nav.includes("#b-hlatest"), "있는 구획까지 사라졌다");
+});
+
+/**
+ * ⚠**승패를 띠로도 보여준다**(2026-08-17 유저 지적: 「승패무 표시가 직관적이지 않다」).
+ * ⚠**수를 없애고 띠만 두지 않는다** — 그러면 정확한 값을 못 읽는다.
+ * ⚠**띠의 승 비율과 승률은 일부러 다르다** — 무승부가 승률의 분모에서 빠지기 때문이다(NPB 규정).
+ */
+test("⚠순위표가 승패를 수와 띠로 함께 낸다", () => {
+  const out = renderHomePage(data(), context());
+  assert.match(out, /<span class="wlnum">/, "수 표기가 없다");
+  assert.match(out, /class="wlbar"/, "띠가 없다");
+  // 띠는 스크린리더에 그림으로 읽히되 값을 말한다
+  assert.match(out, /aria-label="58勝46敗1分（105試合）"/, "띠가 값을 말하지 않는다");
+});
+
+/**
+ * ⚠**득실차는 부호를 문자로 쓴다** — 색만으로 +− 를 구별하면 색각 이상에서 사라진다.
+ * ⚠**분모를 같이 낸다**(M2) — 100경기의 +50과 20경기의 +50은 다른 이야기다.
+ */
+test("⚠득실차에 부호와 분모가 있다", () => {
+  const out = renderHomePage(data(), context());
+  assert.match(out, /class="rdiff up">\+51/, "득실차가 부호와 함께 나오지 않는다");
+  assert.match(out, /452得 401失 · 104試合/, "득점·실점과 분모가 없다");
 });
 
 /**

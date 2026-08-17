@@ -613,12 +613,26 @@ test("테마는 자동 → 밝게 → 어둡게로 돌고 저장된다", () => {
   assert.equal(again.documentElement.getAttribute("data-theme"), "light");
 });
 
-test("밀도를 바꾸면 블록 여백이 바뀐다", () => {
+/**
+ * ⚠**패딩을 인라인으로 덮지 않는다 — 토큰만 바꾼다.**
+ *
+ * 예전에는 `el.style.paddingTop` 을 직접 넣었는데, 그러면 **스타일시트의 설계값이
+ * 한 번도 렌더되지 않는다**(인라인이 이긴다). 실제로 `.block` 에 적은 22px/26px 가
+ * 스크립트가 도는 순간 16px/16px 로 덮여, 첫 페인트 뒤 블록마다 레이아웃이 튀었다
+ * (2026-08-17 디자인 감사 P1).
+ * ⚠**이 시험이 그 잘못된 계약을 고정하고 있었다** — 인라인 패딩을 검사했기 때문에
+ *   토큰으로 옮기자 빨개졌다. 시험이 구현을 붙잡고 있으면 고칠 수가 없다.
+ *   그래서 「무엇을 하는가」(여백이 바뀐다)를 재되, **어떻게 하는가는 토큰으로** 고정한다.
+ */
+test("밀도를 바꾸면 블록 여백 토큰이 바뀐다 — 인라인 패딩으로 덮지 않는다", () => {
   const doc = buildPage();
   run(doc);
-  assert.equal(doc.querySelector(".block")!.style["paddingTop"], "16px");
+  const el = doc.querySelector(".block")!;
+  assert.equal(el.style.getPropertyValue("--block-pad-y"), "22px");
   press(doc, "density", "compact");
-  assert.equal(doc.querySelector(".block")!.style["paddingTop"], "9px");
+  assert.equal(el.style.getPropertyValue("--block-pad-y"), "11px");
+  // ⚠**인라인 패딩이 다시 들어오면 안 된다** — 그게 원래 결함이다
+  assert.equal(el.style["paddingTop"] ?? "", "", "인라인 패딩이 되살아났다");
 });
 
 test("저장된 설정이 깨져 있어도 기본값으로 돌아간다", () => {

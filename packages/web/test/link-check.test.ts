@@ -57,9 +57,33 @@ test("바깥으로 나가는 링크는 검사하지 않는다 — 우리가 만�
       // ⚠슬래시 두 개도 절대 링크다. 놓치면 외부 링크를 내부로 오해한다
       "//npb.jp/",
       "mailto:a@b.c",
-      "#top",
       "",
     ]),
+  ]);
+  assert.deepEqual(out, []);
+});
+
+/**
+ * ⚠**같은 페이지 안의 앵커는 「바깥」이 아니다.**
+ *
+ * 예전에는 `#` 으로 시작하면 외부로 보고 **통째로 건너뛰었다** — 그래서 대시보드의 점프 내비가
+ * 없는 구획을 가리켜도 조용히 아무 일이 없었다(M12). 게다가 커밋 메시지에
+ * 「빌드가 앵커를 본다」고 적었는데 **그 문장이 거짓이었다**(2026-08-17 검토 P1).
+ * ⚠**이 시험이 그 잘못된 동작을 고정하고 있었다** — `"#top"` 을 넣고 `[]` 를 기대했다.
+ *   시험이 구현을 붙잡고 있으면 고칠 수가 없다.
+ */
+test("⚠같은 페이지 안의 앵커도 검사한다 — 없는 곳을 가리키면 잡는다", () => {
+  const out = brokenLinks([
+    { path: "index.html", content: '<a href="#nope">x</a><section id="here"></section>' },
+  ]);
+  assert.equal(out.length, 1, "없는 앵커를 놓쳤다");
+  assert.equal(out[0]!.href, "#nope");
+  assert.equal(out[0]!.kind, "anchor");
+});
+
+test("같은 페이지 안의 앵커가 실제로 있으면 통과한다", () => {
+  const out = brokenLinks([
+    { path: "index.html", content: '<a href="#here">x</a><section id="here"></section>' },
   ]);
   assert.deepEqual(out, []);
 });

@@ -34,6 +34,20 @@ export const CSS = `
   --page:#fbfaf7; --tx:#17171a; --tx-2:#5d5d59; --tx-3:#6e6e69;
   --hair:#e0dfd8; --hair-2:#cfcec5; --panel:#ffffff; --panel-2:#f3f1ec;
   --warn:#a8452f; --ok:#3f6b4a;
+  /* ⚠**비비드는 「채도를 올린다」가 아니라 「한 곳에 몰아준다」다**(2026-08-17 유저 요청).
+     화면 전체를 물들이면 팀 색이 죽고 수치가 안 읽힌다 — 이 서비스는 숫자가 내용이다(§6).
+     그래서 강조색은 **좋음/나쁨·상승/하강처럼 뜻이 있는 자리에만** 쓴다.
+     ⚠--ok/--warn 보다 **한 단계 진하다** — 그 둘은 문장 안의 조용한 신호이고,
+     이쪽은 표 안에서 눈을 끌어야 하는 자리다. */
+  /* ⚠**빨강↔초록을 쓰지 않는다**(이 파일이 이미 세워 둔 규칙 · 아래 「수준 색」 참조).
+     처음에 초록↔빨강으로 넣었다가 되돌렸다 — 색각 시뮬레이션에서 두 색이 **1.00:1**,
+     즉 완전히 같은 색이 됐다(2026-08-17 디자인 감사). 자기가 적어 둔 규칙을 자기가 깼다.
+     → **파랑↔주황 발산 배색**을 쓰고 명도도 벌려 흑백에서도 순서가 남게 한다.
+     ⚠득실차 글자는 4.5:1 이 필요하다(14px 굵은 글씨는 WCAG「큰 텍스트」가 아니다). */
+  --up:#1b6ca8; --dn:#a85a17;
+  /* 승패 띠의 세 조각. ⚠**무승부는 승도 패도 아니라는 것이 곧 그 뜻**이라 중립색이다.
+     ⚠단 **보이기는 해야 한다** — 이웃 조각과 3:1 을 확보한다(감사 지적: 1.94:1 이었다). */
+  --bar-w:#1b6ca8; --bar-l:#c9762a; --bar-t:#6f6e68;
   --f-body:"Yu Gothic","Hiragino Kaku Gothic ProN","Noto Sans JP","Meiryo",system-ui,sans-serif;
   --f-num:"SFMono-Regular","Consolas","Menlo","Yu Gothic",monospace;
   --topbar:46px;
@@ -48,12 +62,18 @@ export const CSS = `
     --page:#15161a; --tx:#e9e8e3; --tx-2:#a5a49d; --tx-3:#8f8e87;
     --hair:#2b2d33; --hair-2:#3b3e45; --panel:#1c1e23; --panel-2:#23262c;
     --warn:#e08a72; --ok:#8fc09c;
+    /* ⚠어두운 바탕에서는 같은 색이 탁해진다 — 밝기를 올려 대비를 지킨다 */
+    --up:#5fa8dd; --dn:#d98f4a;
+    --bar-w:#5fa8dd; --bar-l:#d98f4a; --bar-t:#9a998f;
   }
 }
 :root[data-theme="dark"] {
   --page:#15161a; --tx:#e9e8e3; --tx-2:#a5a49d; --tx-3:#8f8e87;
   --hair:#2b2d33; --hair-2:#3b3e45; --panel:#1c1e23; --panel-2:#23262c;
   --warn:#e08a72; --ok:#8fc09c;
+  /* ⚠어두운 바탕에서는 같은 색이 탁해진다 — 밝기를 올려 대비를 지킨다 */
+  --up:#5fa8dd; --dn:#d98f4a;
+  --bar-w:#5fa8dd; --bar-l:#d98f4a; --bar-t:#9a998f;
 }
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
@@ -96,7 +116,16 @@ a{color:inherit}
 .tnav a{font-size:12px;padding:5px 9px;text-decoration:none;color:var(--tx-2);white-space:nowrap;
   transition:color var(--fast) var(--ease),background var(--fast) var(--ease)}
 .tnav a:hover{color:var(--tx);background:var(--panel-2)}
+/* ⚠**「지금 여기」가 어느 화면에서나 같은 방식으로 보여야 한다**(2026-08-17 유저 지적:
+   「홈화면에 있을때랑 탭이 활성화 되어 있을때 헤더 디자인이 다르다」).
+   ⚠**두 단계가 있다** — page(바로 이 화면) 와 true(이 구획 안이지만 다른 화면).
+   예전에는 page 만 스타일이 있어서 days.html·starters.html 이 **아무것도 선택돼 보이지 않았다**
+   (마크업은 맞고 화면만 비어 있었다). */
 .tnav a[aria-current="page"]{color:var(--tx);font-weight:700;box-shadow:inset 0 -2px 0 var(--team,#6b7280)}
+.tnav a[aria-current="true"]{color:var(--tx);box-shadow:inset 0 -2px 0 var(--hair-2)}
+/* ⚠**홈에서는 표시가 브랜드에 붙는다** — 탭 줄에는 홈 항목이 없기 때문이다.
+   여기에 규칙이 없어서 홈만 「아무 데도 안 있는」 것처럼 보였다. 탭과 같은 언어로 표시한다. */
+.brand[aria-current="page"]{box-shadow:inset 0 -2px 0 var(--team,#6b7280)}
 .tbtn{font:inherit;font-size:13px;line-height:1;padding:6px 8px;cursor:pointer;background:transparent;
   color:var(--tx-2);border:1px solid transparent;transition:color var(--fast) var(--ease)}
 .tbtn:hover{color:var(--tx);border-color:var(--hair-2)}
@@ -268,15 +297,31 @@ a{color:inherit}
    **탭을 바꿀 때마다 줄무늬가 달라졌다**(成績 탭에는 있고 打者 탭에는 없음).
    선수 페이지는 사용자가 블록을 켜고 끄므로 더 심하다 — 위치에 기대는 장식은
    이 화면 구조에서 성립하지 않는다. */
-.block{padding:20px var(--pad);border-bottom:2px solid var(--hair-2);
+/* ⚠**영역 구분을 더 세게**(2026-08-17 유저 지적: 「각각의 영역별 구분이 너무 약하다」).
+   선 하나로는 스크롤 중에 구획이 바뀐 것을 못 알아챈다.
+   ⚠**카드로 만들지 않는다**(§6: 균질한 카드 그리드 금지). 대신 **면을 갈라** 구분한다 —
+   본문 바탕(--page)과 다른 면(--panel)을 번갈아 두지 않고, **구획마다 같은 면**을 주고
+   그 사이를 페이지 바탕이 가른다. 위치에 기대지 않으므로 탭을 바꿔도 무늬가 흔들리지 않는다
+   (예전 nth-of-type 줄무늬가 그래서 깨졌다). */
+/* ⚠**패딩을 토큰으로 둔다.** 예전에는 여기에 값을 직접 적었는데,
+   밀도 전환 스크립트가 el.style.paddingTop 으로 **인라인 덮어쓰기**를 해서
+   이 값이 **한 번도 렌더되지 않았다**(2026-08-17 디자인 감사 P1).
+   첫 페인트와 스크립트 뒤가 달라 블록마다 레이아웃이 튀기도 했다. */
+.block{padding:var(--block-pad-y, 22px) var(--pad) calc(var(--block-pad-y, 22px) + 4px);background:var(--panel);
+  /* ⚠**테두리를 이전보다 흐리게 만들면 안 된다.** 바꾸기 전이 2px --hair-2(1.51:1)였는데
+     1px --hair(1.28:1)로 오히려 **약해졌다**(감사 P2 실측). 요청은 「더 강하게」였다. */
+  border:1px solid var(--hair-2);border-left:3px solid var(--chip,var(--team,var(--tx-3)));
+  margin-bottom:16px;
   animation:rise var(--mid) var(--ease) both;animation-delay:calc(var(--i,0) * 26ms)}
 .block[hidden]{display:none}
 /* ⚠**구획 머리를 더 또렷하게**(2026-08-17 유저 요청: 가시성·영역 구분).
    카드·그림자·둥근 모서리는 쓰지 않는다(§6) — 대신 **짧은 색 막대**와 글자 무게로 가른다.
    막대 색은 그 화면의 구단 색(--chip)이고, 없으면 본문 색이라 어디서든 보인다. */
-.block>h2{margin:0 0 10px;font-size:11px;letter-spacing:.19em;color:var(--tx);font-weight:700;
+.block>h2{margin:0 0 14px;font-size:12.5px;letter-spacing:.16em;color:var(--tx);font-weight:700;
   display:flex;align-items:center;gap:10px;flex-wrap:wrap;
-  padding-left:11px;position:relative}
+  padding:0 0 10px 11px;position:relative;
+  /* ⚠**머리 아래에 실선을 둔다** — 제목과 내용의 경계가 없으면 표가 제목에 붙어 읽힌다 */
+  border-bottom:1px solid var(--hair)}
 /* ⚠**구단 색이 여기까지 온다.** body 에 --team 이 이미 있고(선수·구단 페이지는 그 팀 색,
    그 밖은 중립색), 로고를 못 쓰는 자리에서 팀을 말하는 것이 색이다(§6).
    ⚠**--chip 이 있으면 그쪽이 이긴다** — 구단별 묶음 안에서는 그 구단 색이어야 한다 */
@@ -630,8 +675,32 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
    ⚠**카드 그리드를 만들지 않는다** — 균질한 카드 격자는 「AI틱함」 금지 목록에 있다.
    이 화면은 표와 목록으로 간다: 순위는 표가 가장 빨리 읽히고, 주간은 짧은 순서 목록이다. */
 .hteam{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
-.hteam i{width:9px;height:9px;background:var(--chip,#6b7280);flex:none}
+/* ⚠**색만으로는 안 된다.** 구단 12색 중 다크 바탕에서 3:1 을 못 넘는 것이 7색이다
+   (실측 2026-08-17: 가장 낮은 것이 1.17:1). 표를 가로로 밀면 팀명이 화면 밖으로 나가
+   **이 칩이 유일한 식별자**가 되는데, 그때 칩이 안 보이면 누구의 줄인지 알 수 없다.
+   ⚠**테두리로 형태를 준다** — 색이 안 보여도 사각형은 남는다(.tm i 가 이미 쓰는 수법). */
+.hteam i{width:9px;height:9px;background:var(--chip,#6b7280);flex:none;
+  box-shadow:inset 0 0 0 1px var(--tx-3)}
 .hteam:hover i{outline:1px solid var(--tx-3);outline-offset:1px}
+/* ⚠**고정되는 열이 「이름」이어야 한다**(2026-08-17 디자인 감사 P1).
+   .scroller 의 기본 규칙은 첫 열만 고정하는데, 이 표의 첫 열은 **순위 숫자**다 —
+   오른쪽 절반을 볼 때 「3」만 남고 **누구의 줄인지 알 수 없다.**
+   得失 를 더해 10열이 되면서 확실히 넘치게 됐다(최소폭 약 787px vs 스마트폰 353px).
+   ⚠**두 열을 함께 고정한다.** 두 번째 열의 left 는 첫 열의 실제 폭과 같아야 한다 —
+   그래서 순위 열에 고정 폭을 준다(어긋나면 겹치거나 틈이 벌어진다). */
+.hstand td.hrank,.hstand th:first-child{width:44px;min-width:44px}
+.hstand th:nth-child(2),.hstand td:nth-child(2){position:sticky;left:44px;z-index:2;
+  background:var(--panel)}
+.hstand thead th:nth-child(2){z-index:3}
+/* 고정 열의 오른쪽 끝을 표시한다 — 어디까지가 고정인지 모르면 스크롤이 혼란스럽다 */
+.hstand th:nth-child(2)::after,.hstand td:nth-child(2)::after{content:"";position:absolute;
+  top:0;bottom:0;right:0;width:1px;background:var(--hair-2)}
+
+/* ⚠**得失 셀을 두 줄로 접는다.** 한 줄이면 약 158px 로 이 표에서 가장 넓은 칸이 된다 —
+   「득실차를 주역으로, 득점·실점을 뒤에」라는 위계도 한 줄에서는 성립하지 않는다.
+   기존 .den 규칙이 table.stand 만 겨냥해 이 표에 안 닿고 있었다(감사 P2). */
+.hstand td.wd .den{display:block;font-size:10px;color:var(--tx-3);white-space:nowrap}
+.hstand td.wd{white-space:normal}
 /* 순위표는 숫자가 줄맞춰야 읽힌다 */
 .hstand td,.hstand th{font-variant-numeric:tabular-nums}
 .hstand .b{font-weight:700}
@@ -658,17 +727,81 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
 .hgames b{font-size:15px;font-weight:700}
 .hgames s{text-decoration:none;color:var(--tx-3);font-size:11px}
 .more{margin:8px 0 0;font-size:11.5px}
-/* ⚠**첫 화면에서 어디로 갈 수 있는지 보이게 한다**(2026-08-17 유저 요청).
-   본문 맨 아래 링크 줄만 있으면 스크롤 끝까지 가야 알 수 있다.
-   ⚠**균질한 카드 격자를 만들지 않는다**(§6) — 글자 줄로 두되 누를 수 있게 크기만 준다 */
-.hnav{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 4px}
-.hnav a{display:inline-flex;align-items:baseline;gap:6px;padding:7px 11px;
+
+/* ── 순위표: 승패를 눈으로 비교할 수 있게 ─────────────────────────
+   ⚠**수를 그림으로 바꾸지 않는다** — 수 옆에 띠를 둔다(2026-08-17 유저 지적).
+   ⚠**띠의 승 비율과 승률은 일부러 다르다** — 무승부가 승률의 분모에서 빠지기 때문이다(NPB 규정).
+   그 차이를 설명하는 것이 이 띠의 무승부 조각이다. */
+.wl3{white-space:nowrap;min-width:150px}
+.wlnum{font-family:var(--f-num);font-variant-numeric:tabular-nums;font-size:13px;font-weight:700}
+.wlnum s{text-decoration:none;font-size:9.5px;font-weight:400;color:var(--tx-3);margin:0 2px 0 1px}
+.wlbar{display:flex;height:5px;margin-top:5px;width:100%;min-width:110px;
+  background:var(--hair);overflow:hidden}
+/* ⚠**0 이 아니면 보여야 한다.** 무승부 1경기는 폭 0.94% = 약 1px 이라 사실상 사라졌다 —
+   「띠의 승 비율과 승률이 다른 이유」를 설명하는 조각이 그 설명을 못 했다(감사 P2). */
+.wlbar i{display:block;height:100%}
+.wlbar i.wt{min-width:2px}
+.wlbar .ww{background:var(--bar-w)}
+.wlbar .wl{background:var(--bar-l)}
+.wlbar .wt{background:var(--bar-t)}
+
+/* 득실차. ⚠**부호를 문자로 쓴다** — 색만으로 +− 를 구별하면 색각 이상에서 사라진다 */
+.rdiff{font-family:var(--f-num);font-variant-numeric:tabular-nums;font-size:14px;font-weight:700}
+.rdiff.up{color:var(--up)}
+.rdiff.dn{color:var(--dn)}
+
+/* 1위 줄.
+   ⚠**바탕을 칠하지 않는다** — 표 안에서 한 줄만 바탕이 다르면 「선택됨」으로 읽힌다.
+   ⚠처음에 넣은 강조 셋이 **전부 무효였다**(2026-08-17 감사 P2):
+   바탕(--panel)은 표 바탕과 1.04:1 이라 감지 한계 이하였고,
+   좌측 그림자는 이미 있는 ::before(4px, 같은 색) 아래에 완전히 덮였다.
+   → **굵기와 크기로만** 말한다. 색이 아니라 형태라 어느 테마·어느 색각에서도 남는다. */
+.hstand tr.lead .wlnum{font-size:15px}
+.hstand tr.lead .hrank{font-weight:800;font-size:15px}
+.hstand tr.lead td{border-top:2px solid var(--tx-3);border-bottom:2px solid var(--tx-3)}
+/* ⚠**이 화면 안의 이동**(2026-08-17 유저 지적: 「대쉬보드가 세로로 기니까 해당 부분으로
+   바로 점프하는 네비게이션」). 예전에는 다른 화면으로 가는 줄이었는데 **그건 상단 탭에 있다.**
+   ⚠**따라 붙는다**(sticky). 세로로 긴 화면에서 맨 위로 돌아가야 쓸 수 있는 내비는 안 쓰인다.
+   ⚠**한 줄로 굴린다** — 구획이 늘어도 머리가 두 줄이 되지 않는다.
+   ⚠**균질한 카드 격자를 만들지 않는다**(§6) — 글자 줄로 두되 누를 수 있게 크기만 준다. */
+/* ⚠**음수 마진을 쓰지 않는다.** full-bleed 로 만들려고 좌우 −var(--pad) 를 줬는데
+   부모(.main)에 **가로 패딩이 0**이라 상쇄할 것이 없었다 — 문서 전체에 가로 스크롤 20px 이 생기고
+   왼쪽으로 삐져나간 배경이 .spine 의 구단색 기둥을 파냈다(2026-08-17 디자인 감사 P1).
+   ⚠**부모의 패딩을 확인하지 않고 음수 마진을 쓰면 이렇게 된다.** */
+.hjump{position:sticky;top:var(--topbar);z-index:8;
+  display:flex;flex-wrap:nowrap;gap:6px;margin:0 0 10px;
+  padding:8px 0;
+  background:var(--page);border-bottom:1px solid var(--hair);
+  overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin;
+  scroll-snap-type:x proximity}
+.hjump::-webkit-scrollbar{height:6px}
+.hjump::-webkit-scrollbar-thumb{background:var(--hair-2);border-radius:3px}
+.hjump a{flex:0 0 auto;scroll-snap-align:start;
+  display:inline-flex;align-items:center;padding:6px 11px;
   border:1px solid var(--hair-2);background:var(--panel);color:var(--tx);
-  font-size:12.5px;text-decoration:none;
-  transition:border-color var(--fast) var(--ease),background var(--fast) var(--ease)}
-.hnav a:hover{border-color:var(--tx-3);background:var(--panel-2)}
-.hnav a s{text-decoration:none;font-size:10px;letter-spacing:.1em;color:var(--tx-3)}
-@media (pointer:coarse){.hnav a{padding:9px 13px}}
+  font-size:12.5px;text-decoration:none;white-space:nowrap;
+  transition:border-color var(--fast) var(--ease),background var(--fast) var(--ease),color var(--fast) var(--ease)}
+.hjump a:hover{border-color:var(--team,var(--tx-3));background:var(--panel-2)}
+/* ⚠**지금 보고 있는 구획을 표시한다.** 스크롤 위치를 자바스크립트가 알려 준다 —
+   안 켜지면 그냥 링크 줄로 남는다(§0-1: 스크립트 없이도 동작해야 한다) */
+.hjump a[aria-current="true"]{border-color:var(--team,var(--tx));font-weight:700;
+  background:var(--panel-2)}
+@media (pointer:coarse){.hjump a{padding:8px 13px}}
+/* ⚠**좁은 화면에서는 따라 붙지 않는다.**
+   ≤480px 에서 .topbar 는 height:auto 로 접혀 **실제 높이가 --topbar(44px)보다 크다**
+   (검색칸이 flex-basis:100% 라 반드시 2행 이상 · 최소 75.65px). 그런데 .hjump 는
+   top:var(--topbar) 로 붙으므로 **헤더 뒤로 잠긴다** — 누를 곳이 사라진다.
+   ⚠.rail 이 이미 같은 이유로 ≤680px 에서 static 이다. 새로 만든 이 줄만 그 교훈을 안 받았다.
+   ⚠고정을 포기해도 기능은 남는다 — 화면 맨 위의 링크 줄로 동작한다. */
+@media (max-width:680px){
+  .hjump{position:static}
+  /* ⚠**특정성을 한 단계 올린다.** 아래 무조건 규칙과 특정성이 같으면
+     **소스 순서가 뒤인 그쪽이 이겨서** 이 보정이 한 번도 적용되지 않는다 —
+     실제로 그 상태로 커밋했다(2026-08-17 검토 P2). 미디어쿼리는 특정성을 올려 주지 않는다. */
+  html:root:has(.hjump){scroll-padding-top:calc(var(--topbar) + 10px)}
+}
+/* ⚠**앵커로 뛸 때 sticky 두 겹에 가리지 않게** 여백을 더 준다 */
+html:has(.hjump){scroll-padding-top:calc(var(--topbar) + 52px)}
 
 /* 先週の顔 — **순위 번호를 크게 쓰지 않는다.** 한 주짜리 순위를 시즌 순위와
    같은 무게로 그리면 그렇게 읽힌다 */
@@ -800,9 +933,20 @@ table.stand .dif i.n{right:50%}
 /* ── シーズン切り替え ────────────────────────────────────────
    ⚠**연도 두 개만 띄우지 않는다.** 「シーズン」이라는 이름이 없으면 그게 무엇을 고르는
    조작인지 알 수 없고, 순위표의 리그 탭과 헷갈린다. */
+/* ⚠**한 줄로 두고 가로로 굴린다**(2026-08-17 유저 요청).
+   시즌이 늘수록 줄바꿈이 생겨 머리가 두세 줄이 됐다 — 본문이 그만큼 아래로 밀린다.
+   ⚠**flex-wrap:wrap 을 지우는 것만으로는 부족하다** — 넘친 것을 **잡을 수 있어야** 한다.
+   ⚠**스크롤바를 숨기지 않는다.** 숨기면 더 있다는 것을 알 방법이 마우스 유저에게 없다. */
 .seasons{display:flex;align-items:center;gap:4px;padding:5px var(--pad);
-  border-bottom:1px solid var(--hair);background:var(--panel-2);flex-wrap:wrap}
-.slab{font-size:9.5px;letter-spacing:.16em;color:var(--tx-3);margin-right:5px}
+  border-bottom:1px solid var(--hair);background:var(--panel-2);
+  flex-wrap:nowrap;overflow-x:auto;overscroll-behavior-x:contain;
+  scrollbar-width:thin;scroll-snap-type:x proximity}
+.seasons::-webkit-scrollbar{height:6px}
+.seasons::-webkit-scrollbar-thumb{background:var(--hair-2);border-radius:3px}
+/* ⚠**라벨은 굴러 나가지 않는다** — 무엇을 고르는 줄인지가 사라지면 안 된다 */
+.slab{font-size:9.5px;letter-spacing:.16em;color:var(--tx-3);margin-right:5px;
+  position:sticky;left:0;z-index:1;background:var(--panel-2);padding-right:6px;flex:0 0 auto}
+.seasons a{flex:0 0 auto;scroll-snap-align:start}
 /* 시즌 중 이적 이력. ⚠**합계와 순위가 다른 이유**가 여기 적힌다 */
 .stint{display:block;font-size:10.5px;color:var(--tx-3);margin-top:2px}
 /* 「합계와 순위의 수가 왜 다른가」 — 이적 이력 바로 아래에 붙는다 */
@@ -1381,8 +1525,48 @@ function renderBlocks(){
       el.hidden=state.order.indexOf(el.id.slice(2))<0;
     });
   }
-  const pad=state.density==="compact"?"9px":"16px";
-  $$(".block").forEach((el,i)=>{el.style.paddingTop=pad;el.style.paddingBottom=pad;el.style.setProperty("--i",String(i))});
+  /* ⚠**인라인 스타일로 덮지 않는다** — 스타일시트의 설계값이 죽는다(감사 P1).
+     토큰만 바꾸고, 실제 값과 아래쪽 여백 계산은 CSS 한 곳에 둔다(M1). */
+  const pad=state.density==="compact"?"11px":"22px";
+  /* ⚠**지금 보고 있는 구획을 내비가 표시한다.**
+     ⚠**스크립트가 없어도 링크는 동작한다**(§0-1) — 여기서 하는 일은 표시뿐이다.
+     ⚠IntersectionObserver 가 없으면 조용히 아무 것도 안 한다(옛 브라우저). */
+  (function(){
+    const nav=document.querySelector(".hjump");
+    if(!nav||!("IntersectionObserver" in window))return;
+    const links=Array.from(nav.querySelectorAll("a[href^='#']"));
+    const byId=new Map(links.map(a=>[a.getAttribute("href").slice(1),a]));
+    const targets=links.map(a=>document.getElementById(a.getAttribute("href").slice(1))).filter(Boolean);
+    if(targets.length===0)return;
+    /* ⚠**가려지는 높이를 실측한다.** 상수로 두면 CSS 의 scroll-padding 과 갈리고,
+       모바일에서 .topbar 가 접히면 **가려진 구획이 「현재」로 표시된다**(감사 P2 · M1). */
+    const topInset=()=>{
+      const bar=document.querySelector(".topbar");
+      const jump=document.querySelector(".hjump");
+      const h=(bar?bar.getBoundingClientRect().height:0)
+        +(jump&&getComputedStyle(jump).position==="sticky"?jump.getBoundingClientRect().height:0);
+      return -Math.round(h+8);
+    };
+    const seen=new Set();
+    const mark=()=>{
+      /* 화면에 걸친 것 중 **가장 위**를 현재로 삼는다 */
+      let best=null,bestTop=Infinity;
+      for(const id of seen){
+        const el=document.getElementById(id);if(!el)continue;
+        const t=el.getBoundingClientRect().top;
+        if(t<bestTop){bestTop=t;best=id}
+      }
+      for(const [id,a] of byId){
+        if(id===best)a.setAttribute("aria-current","true");else a.removeAttribute("aria-current");
+      }
+    };
+    const io=new IntersectionObserver((es)=>{
+      for(const e of es){ if(e.isIntersecting)seen.add(e.target.id); else seen.delete(e.target.id); }
+      mark();
+    },{rootMargin:topInset()+"px 0px -55% 0px"});
+    targets.forEach(t=>io.observe(t));
+  })();
+  $$(".block").forEach((el,i)=>{el.style.setProperty("--block-pad-y",pad);el.style.setProperty("--i",String(i))});
 }
 function renderEditor(){
   const host=$("#blockList");if(!host)return;host.textContent="";
