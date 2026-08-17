@@ -133,17 +133,83 @@ test("고른 것과 실행 버튼은 한 자리에 붙어 있다 — 목록이 �
 });
 
 /**
+ * `<details>…</details>` 구간들.
+ *
+ * ⚠**중첩이 생기면 이 훑기는 조용히 거짓말을 한다.** `indexOf("</details>")`는 **가장 가까운**
+ * 닫힘을 잡으므로, 바깥 A 안에 안쪽 B가 있으면 A의 구간이 B의 닫힘에서 끝나고
+ * **A 안에서 B 뒤에 있는 내용은 어느 구간에도 안 들어간다.** 그러면 「검색이 접혀 있다」를
+ * 못 본 채 초록이 된다 — 이 시험이 막으려던 회귀 그 자체다.
+ * 그래서 **주석으로 전제하지 않고 단언한다**(2026-08-17 이중 검토 지적).
+ */
+function foldedRegions(html: string): string[] {
+  const out: string[] = [];
+  let at = 0;
+  for (;;) {
+    const from = html.indexOf("<details", at);
+    if (from === -1) break;
+    const to = html.indexOf("</details>", from);
+    assert.notEqual(to, -1, "닫히지 않은 details 가 있다");
+    const region = html.slice(from, to);
+    assert.ok(
+      !region.includes("<details", 1),
+      "details 가 중첩됐다 — 이 훑기는 더 이상 유효하지 않다(안쪽 뒤의 내용을 못 본다)",
+    );
+    out.push(region);
+    at = to + 1;
+  }
+  return out;
+}
+
+/**
  * ⚠**두 길을 나란히 둔다.** 버튼은 「오늘 대전하는 두 팀」만 담으므로,
  * 그 밖의 선수를 찾는 길이 **접힌 채로 있으면 없는 것과 같다**(사용자 지적).
  * 한때 details 로 접었다가 되돌린 자리다.
+ *
+ * ⚠**단언을 좁혔다**(2026-08-17). 예전에는 `<details` 가 페이지에 **하나도 없을 것**을
+ * 요구했는데, 그건 지키려는 불변식보다 넓다 — 빠른 선택 목록을 접는 것까지 막았다.
+ * (그 목록은 유저 요청으로 접었고, 접힌 채로도 요약에 「投手 28人」이 남아 길이 보인다.)
+ * 지금 재는 것은 **검색이 접혀 있지 않은가** 하나다.
  */
 test("이름 검색은 항상 보인다 — 접지 않는다", () => {
   const out = renderMatchupPage(data(), context());
-  assert.ok(!out.includes("<details"), "이름 검색이 접혀 있다");
   assert.match(out, /名前でさがす/);
   // 검색창 두 개가 실제로 있다
   assert.match(out, /id="pickPitcher"/);
   assert.match(out, /id="pickBatter"/);
+  for (const folded of foldedRegions(out)) {
+    for (const needle of ["名前でさがす", 'id="pickPitcher"', 'id="pickBatter"']) {
+      assert.ok(!folded.includes(needle), `${needle} 가 접힌 자리 안에 있다`);
+    }
+  }
+});
+
+/**
+ * ⚠**빠른 선택은 기본이 접힘이다**(2026-08-17 유저 지적).
+ * 한 경기를 고르면 구단 2개 × 投手/打者 = **네 목록**이 한꺼번에 펼쳐진다.
+ * 실측(2026-08-16 자 데이터): 対戦·比較 각각 **문서 전체 815개 / 한 화면 129개**.
+ * ⚠**815는 화면 수가 아니다** — 경기 패널 6개 중 첫 경기만 열려 있다.
+ *
+ * ⚠**접혔어도 「무엇이 몇 명」은 보인다.** 그렇지 않으면 위 시험이 지키는 것과 같은 실패
+ * (「접힌 채로 있으면 없는 것과 같다」)를 이쪽에서 되풀이한다.
+ * ⚠**`details` 여야 한다** — JS 로 접으면 스크립트가 없을 때 영영 닫힌다(§0-1).
+ */
+test("⚠빠른 선택의 네 목록은 접힌 채로 나오고, 접힌 채로도 인원이 보인다", () => {
+  const out = renderMatchupPage(data(), context());
+  const folds = foldedRegions(out).filter((f) => f.startsWith('<details class="pickfold">'));
+  assert.ok(folds.length > 0, "빠른 선택이 접히지 않았다");
+  // 열린 채로 나오는 것이 없어야 한다
+  assert.ok(!/<details class="pickfold" open/.test(out), "일부가 펼쳐진 채로 나온다");
+  for (const folded of folds) {
+    // ⚠**요약 **안**에 인원이 있는지 잰다.** 구간 전체에서 `<s>N人</s>` 를 찾으면
+    // 같은 구간의 `pickButton` 이 내는 `<s>${usage}</s>` 에 걸릴 수 있다 —
+    // 지금 usage 는 「N打席 / N回 / 今季登板なし」뿐이라 겹치지 않지만,
+    // 그 포맷이 바뀌는 날 **요약이 사라져도 초록**이 된다(2026-08-17 이중 검토 지적).
+    assert.match(
+      folded,
+      /<summary class="picklab">[^<]*<s>\d+人<\/s><\/summary>/,
+      "접힌 채로 「무엇이 몇 명」이 안 보인다 — 요약 안에 인원이 없다",
+    );
+  }
 });
 
 test("예고가 없으면 빠른 선택을 만들지 않고 이름 검색만 남는다", () => {
@@ -153,7 +219,10 @@ test("예고가 없으면 빠른 선택을 만들지 않고 이름 검색만 남
   assert.match(out, /予告先発がまだ発表されていない/, "왜 이 모양인지 말하지 않았다");
 });
 
-test("이름 검색이 먼저, 오늘 대전 버튼이 그다음 — 어느 쪽도 접히지 않는다", () => {
+// ⚠제목에서 「어느 쪽도 접히지 않는다」를 뺐다(2026-08-17) — 본문이 재는 것은 **순서**뿐인데
+// 제목이 접힘까지 지키는 척했고, 빠른 선택을 접은 지금은 그 말이 거짓이 됐다.
+// 접힘은 위 두 시험이 각각 나눠 잰다.
+test("이름 검색이 먼저, 오늘 대전 버튼이 그다음", () => {
   const out = renderMatchupPage(data(), context());
   const find = out.indexOf('class="pickfind"');
   const quick = out.indexOf('id="pickToday"');

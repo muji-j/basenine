@@ -562,6 +562,30 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
 .pickteam{min-width:0}
 .picktm{margin:0 0 8px;font-size:13px;display:flex;align-items:center;gap:7px}
 .picktm i{width:10px;height:10px;background:var(--chip,#6b7280);font-style:normal;flex:none}
+/* ⚠**접힌 채로도 무엇이 몇 명인지 보여야 한다.** 요약이 라벨 노릇을 그대로 한다.
+   ⚠**기본 화살표를 지우고 우리 표식을 쓴다** — 브라우저마다 모양이 달라 줄이 흔들린다 */
+.pickfold{margin:10px 0 0}
+.pickfold>summary{cursor:pointer;list-style:none;display:flex;align-items:baseline;gap:6px}
+.pickfold>summary::-webkit-details-marker{display:none}
+/* ⚠**글리프에 빈 대체텍스트를 붙인다.** details/summary 는 접힘·펼침을 이미 네이티브로 알리는데,
+   그 위에 생성 콘텐츠를 얹으면 낭독기가 「검은 오른쪽 삼각형」을 덧붙여 읽는다 */
+.pickfold>summary::after{content:"▸" / "";margin-left:auto;font-size:11px;color:var(--tx-3);
+  transition:transform var(--fast) var(--ease)}
+.pickfold[open]>summary::after{transform:rotate(90deg)}
+/* 눌리는 자리임을 손에 알린다 — 라벨만으로는 눌러도 되는지 알 수 없다.
+   ⚠**토큰 이름을 지어내지 마라.** 여기 처음 var(--tx-1) 이라고 썼는데 **그런 토큰은 없다**
+   (있는 것은 --tx · --tx-2 · --tx-3). 정의 없는 var() 는 선언 전체를 무효로 만들고,
+   무효가 된 자리는 상속으로 메워져 **얼추 맞아 보인다** — 그래서 눈으로는 안 잡힌다.
+   아래 focus 규칙에서는 같은 실수가 훨씬 나쁘게 끝났다(2026-08-17 이중 검토) */
+.pickfold>summary:hover{color:var(--tx)}
+/* ⚠**이 한 줄이 포커스 링을 없앴었다.** var(--tx-1)(미정의)로 outline 숏핸드가 무효가 되면
+   outline-style 이 initial(=none)로 떨어지는데, 이 선택자의 특이도(0,2,1)가
+   전역 :focus-visible(0,1,0)을 이긴다 — **안 썼으면 나왔을 링이 쓴 탓에 사라진다.**
+   접힌 목록을 여는 유일한 수단이라 키보드 사용자가 여기서 길을 잃는다.
+   ⚠**둥근 모서리도 뺐다** — 이 스타일시트에 border-radius 는 그 한 줄뿐이었고,
+   파일 머리말이 「둥근 모서리를 쓰지 않는다」고 적어 둔 그것이다 */
+.pickfold>summary:focus-visible{outline:2px solid var(--tx);outline-offset:2px}
+.pickfold .picklist{margin-top:5px}
 .picklab{margin:10px 0 5px;font-size:10px;letter-spacing:.16em;color:var(--tx-3);
   display:flex;align-items:baseline;gap:6px}
 .picklab s{text-decoration:none;letter-spacing:0;font-size:10.5px}
@@ -771,7 +795,9 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
 /* ⚠**링크는 링크처럼 보이되 UA 기본 밑줄은 쓰지 않는다** — 이 사이트의 다른 링크와 같은 처리다.
    빠뜨리면 이 한 곳만 파란 밑줄에 hover 무반응이 되어 「여기만 남의 화면」이 된다 */
 .postrow dt a{text-decoration:none;border-bottom:1px solid var(--hair-2)}
-.postrow dt a:hover{border-bottom-color:var(--tx-3);color:var(--tx-1)}
+/* ⚠여기도 var(--tx-1)(미정의)이었다 — 이번 검토에서 같이 드러났다(2026-08-17).
+   무효 선언이라 상속으로 메워져 「대충 진해지긴」 했지만 의도한 값이 아니었다 */
+.postrow dt a:hover{border-bottom-color:var(--tx-3);color:var(--tx)}
 .postrow dd{margin:0;font-size:15px;font-variant-numeric:tabular-nums}
 
 /* ── 카드 전체를 누르기 ──────────────────────────────────────
@@ -1000,13 +1026,24 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
   .mv{padding:6px 11px}
   .tnav a{padding:9px 10px}
   .roster a,.qhits li a{padding-top:8px;padding-bottom:8px}
+  /* ⚠**접힘 손잡이도 여기 든다.** 글자가 10px이라 손가락으로는 높이 16px 남짓인데,
+     이게 목록을 여는 유일한 자리다 — 빠뜨리면 그 화면이 휴대폰에서 안 열린다 */
+  .pickfold>summary{padding:6px 0}
 }
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:1ms!important;animation-delay:0ms!important;transition-duration:1ms!important}
 }
 @media print{
   /* 조작에 쓰는 것은 종이에서 아무 일도 하지 않는다 */
-  .topbar,.rail,.editor,.skip,.seasons,.daybar,.pickbar,.pickgames{display:none}
+  .topbar,.editor,.skip,.seasons,.daybar,.pickbar,.pickgames{display:none}
+  /* ⚠**레일은 지우지 않는다 — 지우면 아래 규칙이 닿기도 전에 이름이 사라진다.**
+     여기 있던 .rail 의 display:none 이 그 일을 하고 있었다(2026-08-17 이중 검토).
+     바로 밑 주석이 「탭줄은 조작이면서 고른 것의 이름이다」라고 적어 두고,
+     .tab:not([aria-selected]) 로 안 고른 것만 지우는데 — 그 규칙이 붙는 대상이
+     통째로 없어져 있었다. **적어 둔 의도가 실제로는 한 번도 실행되지 않았다.**
+     레일을 쓰는 화면은 順位·選手·ポストシーズン·球団 넷이다(실측).
+     ⚠고정·괘선·가로 스크롤은 종이에서 뜻이 없으므로 벗긴다 */
+  .rail{position:static;overflow:visible;background:transparent;border:0;padding:8px 0 0;min-height:0}
   .block[hidden]{display:block}
   /*
      ⚠**닫힌 탭을 펼치지 않는다.** 한때 펼쳤다가 되돌렸다 — 실측으로 순위 화면이
@@ -1655,8 +1692,11 @@ if(pickForm){
     const go2=$("#pickGo");
     if(go2)go2.disabled=!(chosen.pitcher&&chosen.batter);
   };
-  /* 빠른 선택 버튼의 눌림 상태. **고른 것을 목록 안에서도 보여야** 한다 —
-     위의 띠만 바뀌면 목록을 스크롤한 뒤 무엇을 눌렀는지 알 수 없다 */
+  /* 빠른 선택 버튼의 눌림 상태. **목록을 연 동안** 고른 것이 목록 안에서도 보여야 한다 —
+     스크롤한 뒤 무엇을 눌렀는지 알 수 없어지기 때문이다.
+     ⚠**접혀 있는 동안은 이 표시가 안 보인다**(2026-08-17 기본 접힘이 되면서).
+     그때 고른 것을 말하는 것은 위의 pickbar(그리고 비교 화면의 #cmp-a-chosen)뿐이고,
+     그쪽은 sticky 라 화면에서 사라지지 않는다 — 정보가 없어지는 것은 아니다. */
   const mark=(side)=>{
     const id=chosen[side]?chosen[side].i:null;
     $$('#pickToday [data-pick="'+side+'"]').forEach(b=>{

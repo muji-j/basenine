@@ -130,6 +130,52 @@ test("키보드 초점이 보인다", () => {
   assert.match(CSS, /:focus-visible\{outline:/);
 });
 
+/**
+ * ⚠**없는 토큰을 쓰면 그 선언은 무효가 된다 — 그런데 화면은 얼추 맞아 보인다.**
+ *
+ * 2026-08-17 이중 검토에서 실제로 났다. `var(--tx-1)` 이라고 썼는데 그런 토큰은 없다
+ * (있는 것은 `--tx` · `--tx-2` · `--tx-3`). 정의 없는 `var()` 는 **선언 전체**를
+ * invalid-at-computed-value-time 으로 만들고, 각 롱핸드가 `unset` 으로 떨어진다.
+ * · `color` 는 상속 프로퍼티라 부모 색을 물려받아 **그럴듯하게 보인다**
+ * · `outline` 은 비상속이라 `outline-style:none` 이 된다 — **포커스 링이 사라진다.**
+ *   더 나쁜 것은 그 선택자의 특이도가 전역 `:focus-visible` 을 이겨서,
+ *   **그 줄을 안 썼으면 나왔을 링이 쓴 탓에 없어진다**는 점이다.
+ *
+ * ⚠**바로 위 시험이 이걸 못 잡는다.** 「초점이 보인다」가 재는 것은
+ * `:focus-visible{outline:` 이라는 **글자가 어딘가 있는가**뿐이라, 그 글자를 남긴 채
+ * 링을 없애는 이번 같은 회귀는 통과한다. 이름이 주장하는 것과 재는 것이 달랐다.
+ *
+ * ⚠**폴백이 있는 `var(--x, 기본값)` 은 뺀다** — 그건 없어도 되도록 쓴 것이다.
+ * ⚠**정의처는 CSS 만이 아니다** — `--chip` 처럼 HTML 인라인 style 로 넣는 토큰이 있어
+ * `src/` 전체에서 `--이름:` 을 모은다.
+ */
+test("⚠CSS가 쓰는 토큰은 전부 어딘가에 정의돼 있다 — 없는 이름은 선언을 통째로 무효로 만든다", async () => {
+  const { readdir, readFile } = await import("node:fs/promises");
+  const dir = new URL("../src/", import.meta.url);
+  const names = (await readdir(dir)).filter((f) => f.endsWith(".ts"));
+  assert.ok(names.length > 0, "소스를 하나도 못 읽었다 — 이 시험은 아무것도 재지 않았다");
+  const sources = await Promise.all(names.map((f) => readFile(new URL(f, dir), "utf8")));
+
+  // ⚠**주석을 먼저 걷어낸다.** 이 시험을 처음 돌렸을 때 잡힌 것이 **바로 위 주석에 적어 둔
+  // `var(--tx-1)` 이라는 글자**였다 — CSS 주석은 스타일시트에 그대로 실려 나가므로
+  // 「고치지 마라」고 적은 문장이 「안 고쳤다」로 읽힌다.
+  const strip = (t: string): string => t.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  const defined = new Set<string>();
+  for (const src of sources) {
+    for (const m of strip(src).matchAll(/(--[a-z0-9-]+)\s*:/gi)) defined.add(m[1] ?? "");
+  }
+  // 폴백 없는 참조만 — `var(--x,기본값)` 은 정의가 없어도 그 기본값으로 동작한다
+  const used = new Map<string, number>();
+  for (const m of strip(CSS).matchAll(/var\(\s*(--[a-z0-9-]+)\s*\)/gi)) {
+    const n = m[1] ?? "";
+    used.set(n, (used.get(n) ?? 0) + 1);
+  }
+  assert.ok(used.size > 0, "토큰 참조를 하나도 못 찾았다 — 정규식이 안 맞는다");
+  const missing = [...used.keys()].filter((n) => !defined.has(n)).sort();
+  assert.deepEqual(missing, [], `정의되지 않은 토큰 ${missing.length}종: ${missing.join(", ")}`);
+});
+
 test("넓은 표는 자기 컨테이너 안에서만 가로 스크롤한다", () => {
   assert.match(CSS, /\.scroller\{overflow-x:auto/);
 });
@@ -229,6 +275,14 @@ test("인쇄는 보고 있는 것을 찍는다 — 닫힌 탭을 펼치지 않�
   );
   // 탭줄 자체를 숨기면 고른 것의 이름이 사라진다 — 고르지 않은 것만 지운다
   assert.ok(!/\.tabs\{display:none\}/.test(printBlock), "탭줄을 통째로 숨겼다");
+  // ⚠**감싸는 것을 지워도 결과는 같다.** 이 시험은 `.tabs` 만 봤는데, 실제로 지워지고
+  // 있던 것은 그것을 감싼 `.rail` 이었다 — 그래서 아래 「고른 탭만 남긴다」 규칙이
+  // 붙을 대상 자체가 없었고, **의도는 적혀 있는데 한 번도 실행되지 않았다**(2026-08-17).
+  // 레일을 쓰는 화면: 順位 · 選手 · ポストシーズン · 球団.
+  for (const box of [".rail", ".tabs"]) {
+    const hidden = new RegExp(`(^|[,{}])[^{}]*\\${box}\\b[^{}]*\\{[^}]*display:none`).test(printBlock);
+    assert.ok(!hidden, `${box} 를 인쇄에서 숨겼다 — 고른 탭의 이름이 종이에서 사라진다`);
+  }
   assert.match(
     printBlock,
     /\.tab:not\(\[aria-selected="true"\]\):not\(\[aria-pressed="true"\]\)\{display:none\}/,
