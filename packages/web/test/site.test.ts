@@ -13,6 +13,16 @@ function siteData(over: Partial<SiteData> = {}): SiteData {
     gameCount: 630,
     players: [p],
     search: [{ i: p.playerId, n: p.name, t: p.teamName }],
+    home: {
+      season: 2026,
+      asOf: "2026-08-14",
+      latestDate: "2026-08-14",
+      latest: null,
+      leagues: [],
+      paces: [],
+      streaks: [],
+      hasPostseason: false,
+    },
     index: {
       season: 2026,
       playerCount: 1,
@@ -81,6 +91,8 @@ test("사이트는 정해진 파일 집합을 만든다", () => {
     "days.html",
     "index.html",
     "matchup.html",
+    // ⚠**루트는 대시보드, 선수 일람은 players.html**(2026-08-17)
+    "players.html",
     "players.json",
     "players/41045153.html",
     "ranking.html",
@@ -219,7 +231,8 @@ test("만든 화면이 전부 시즌 경로 목록에 있다 — 빠진 만큼�
  */
 test("⚠명부의 각 행이 성적을 한 줄 보여준다 — 분모까지 함께(M2)", () => {
   const out = buildSite(siteData(), SITE, "2026-08-16");
-  const idx = out.files.find((f) => f.path === "index.html");
+  // ⚠**루트가 아니라 選手一覧 화면을 본다**(2026-08-17부터 루트는 대시보드다)
+  const idx = out.files.find((f) => f.path === "players.html");
   assert.notEqual(idx, undefined, "일람 화면이 없다");
   assert.ok(idx!.content.includes("打率 .317（382打数）"), "명부에 성적이 없다");
   // ⚠**분모가 문자열 안에 있다** — 명부의 성적 줄은 하나도 빠짐없이 분모를 동반해야 한다(M2)

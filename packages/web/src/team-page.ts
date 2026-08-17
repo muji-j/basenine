@@ -15,7 +15,7 @@ import { NO_VALUE, avg3, fullDate, innings } from "./format.ts";
 import { buttonGroup, columns, note, panel, scroller, tablist, term, valueWithDen } from "./parts.ts";
 import { sortAttr, stableTable } from "./table.ts";
 import type { SortColumn } from "./table.ts";
-import { page } from "./layout.ts";
+import { page, ROSTER_PATH } from "./layout.ts";
 import type { RenderContext } from "./pages.ts";
 import { dayHref } from "./today-page.ts";
 import type { TeamColor } from "@bb-app/domain";
@@ -361,7 +361,7 @@ function monthBars(months: TeamMonth[]): RawHtml {
 export function renderTeamPage(d: TeamPageData, ctx: RenderContext): string {
   // ⚠시즌을 바꿀 때 選手一覧이 아니라 **그 시즌의 같은 팀**으로 간다 — 팀은 시즌을 넘어 존재한다
   const { base, root, seasons } = ctx.paths(teamPath(d.teamCode), {
-    path: "index.html",
+    path: ROSTER_PATH,
     label: "選手一覧",
   });
 
@@ -504,7 +504,7 @@ ${panel(TEAM_TABS, "vs", false, d.vs.length === 0
 </section>`)}
 
 <nav class="find" aria-label="ほかのページ">
-  <a href="${base}ranking.html">リーグ順位表</a> · <a href="${base}index.html">選手一覧</a> · <a href="${base}today.html">試合</a>
+  <a href="${base}ranking.html">リーグ順位表</a> · <a href="${base}${ROSTER_PATH}">選手一覧</a> · <a href="${base}today.html">試合</a>
 </nav>`;
 
   return page({

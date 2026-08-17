@@ -6,8 +6,10 @@
  * 만든 값을 옮겨 담기만 한다. 여기에 산식이 생기는 순간 값이 두 벌이 된다.
  */
 import type { Db } from "@bb-app/store";
-import { attempts, battedBalls, buntValues, headToHead, steals, successRate, timesThroughOrder } from "@bb-app/aggregate";
-import type { HeadToHead } from "@bb-app/aggregate";
+import { attempts, battedBalls, buntValues, headToHead, steals, successRate, timesThroughOrder, winPct } from "@bb-app/aggregate";
+import type { HeadToHead, PlayerStreaks } from "@bb-app/aggregate";
+import { REGULAR_SEASON_GAMES } from "./home-page.ts";
+import type { HomeLeague, HomePace, HomePageData, HomeStreak } from "./home-page.ts";
 import type { BattedBallData, BuntCell } from "./player-page.ts";
 import type { BattingLine, LeagueConstants, PitchingLine, Rate } from "@bb-app/metrics";
 import {
@@ -1723,6 +1725,299 @@ function srpOf(m: ReadonlyMap<string, { srp: number; bf: number }>, id: string):
   return s === undefined ? { value: null, denominator: 0 } : { value: s.srp, denominator: s.bf };
 }
 
+/**
+ * 마디(節目) 값 — **화면에 그대로 적는 기준**(M3의 정신).
+ *
+ * ⚠**「기록에 도전 중」의 기준이 코드에만 있으면 「왜 이 선수가 없지?」에 답할 수 없다.**
+ * 여기 적힌 수가 곧 화면의 규칙이다.
+ * ⚠**통산이 아니라 시즌 기준이다.** 우리는 2023년부터의 기록만 가지고 있어서
+ * 통산 마디(2000안타 등)는 애초에 말할 수 없다.
+ */
+const MILESTONES: Readonly<Record<string, readonly number[]>> = {
+  本塁打: [10, 20, 30, 40, 50],
+  打点: [50, 80, 100, 120],
+  安打: [100, 150, 180, 200],
+  盗塁: [10, 20, 30, 40, 50],
+  奪三振: [100, 150, 200, 250],
+  勝利: [10, 15, 20],
+  セーブ: [20, 30, 40],
+  ホールド: [20, 30, 40],
+};
+
+/** 다음 마디. 이미 최고 마디를 넘었으면 null */
+function nextMilestone(label: string, count: number): { next: number; toNext: number } | null {
+  const xs = MILESTONES[label];
+  if (xs === undefined) return null;
+  for (const x of xs) {
+    if (count < x) return { next: x, toNext: x - count };
+  }
+  return null;
+}
+
+/**
+ * 143경기 환산.
+ *
+ * ⚠**예측이 아니라 환산이다.** 「지금 비율이 끝까지 이어지면」이라는 계산이고,
+ * 화면이 그 말을 그대로 쓴다.
+ * ⚠**정수로 내림한다** — 홈런 「43.7본」은 존재하지 않는 수다.
+ * ⚠**분모는 그 팀의 소화 경기**다. 선수 출장 수로 나누면 결장이 많은 선수의 환산이 폭주한다
+ *   (10경기 5홈런 → 71본). 팀 경기로 나누면 「팀이 143경기 할 때 이 선수가 몇 개」가 된다.
+ */
+function paceOf(count: number, teamGames: number): number {
+  if (teamGames <= 0) return 0;
+  return Math.floor((count / teamGames) * REGULAR_SEASON_GAMES);
+}
+
+/**
+ * 팀별 소화 경기(`status='played'`).
+ *
+ * ⚠**행 수로 세면 안 된다.** 우천 중지는 `notPlayed` 행으로 남고 재편성 경기가 또 한 행이라,
+ * 행 수는 팀당 144~153이 된다(2023·2025 실측). 그대로 143에서 빼면 잔여가 음수가 된다.
+ */
+function playedByTeam(db: Db, season: number, competition: string, through: string): Map<string, number> {
+  const rows = db.raw
+    .prepare(
+      `SELECT code, SUM(n) AS played FROM (
+         SELECT away_code AS code, COUNT(*) AS n FROM game
+          WHERE season = ? AND competition = ? AND status = 'played' AND game_date <= ?
+          GROUP BY away_code
+         UNION ALL
+         SELECT home_code AS code, COUNT(*) AS n FROM game
+          WHERE season = ? AND competition = ? AND status = 'played' AND game_date <= ?
+          GROUP BY home_code
+       ) GROUP BY code`,
+    )
+    .all(season, competition, through, season, competition, through) as unknown as {
+      code: string;
+      played: number;
+    }[];
+  return new Map(rows.map((r) => [r.code, r.played]));
+}
+
+/**
+ * 팀의 연승·연패 — **직전 경기부터 이어진 것만**.
+ *
+ * ⚠**무승부에서 끊는다**(NPB 관례). 「3連勝」이라고 쓰는데 사이에 무승부가 있으면
+ * 사람들이 아는 그 수가 아니게 된다.
+ * ⚠**득점을 못 읽은 경기는 세지 않는다**(M11) — 0대0으로 때우면 무승부가 늘어난다.
+ */
+function streakByTeam(db: Db, season: number, competition: string, through: string): Map<string, number> {
+  const rows = db.raw
+    .prepare(
+      `SELECT game_date, away_code, home_code, away_runs, home_runs FROM game
+        WHERE season = ? AND competition = ? AND status = 'played'
+          AND game_date <= ? AND away_runs IS NOT NULL AND home_runs IS NOT NULL
+        ORDER BY game_date DESC, game_id DESC`,
+    )
+    .all(season, competition, through) as unknown as {
+      game_date: string;
+      away_code: string;
+      home_code: string;
+      away_runs: number;
+      home_runs: number;
+    }[];
+  const out = new Map<string, number>();
+  const done = new Set<string>();
+  for (const g of rows) {
+    for (const side of ["away", "home"] as const) {
+      const code = side === "away" ? g.away_code : g.home_code;
+      if (done.has(code)) continue;
+      const mine = side === "away" ? g.away_runs : g.home_runs;
+      const theirs = side === "away" ? g.home_runs : g.away_runs;
+      const cur = out.get(code) ?? 0;
+      if (mine === theirs) {
+        // 무승부에서 끊는다 — 여기까지가 그 팀의 연속이다
+        done.add(code);
+        continue;
+      }
+      const won = mine > theirs;
+      if (cur === 0) out.set(code, won ? 1 : -1);
+      else if (won && cur > 0) out.set(code, cur + 1);
+      else if (!won && cur < 0) out.set(code, cur - 1);
+      else done.add(code);
+    }
+    if (done.size >= TEAMS.length) break;
+  }
+  return out;
+}
+
+/**
+ * 대시보드 데이터.
+ *
+ * ⚠**여기서 지표를 새로 계산하지 않는다**(M1) — 순위·연속기록·시즌 합계는 이미 만들어 둔 것을
+ * 옮겨 담는다. 새로 세는 것은 **소화 경기·연승연패·환산값**뿐이고, 셋 다 이 파일 위쪽의
+ * 도우미 한 벌이 한다.
+ */
+function homePage(
+  db: Db,
+  o: LoadOptions,
+  standings: readonly StandingsSection[],
+  agg: SeasonAggregate,
+  streaksByPlayer: ReadonlyMap<string, PlayerStreaks>,
+  asOf: string | null,
+  latestDate: string | null,
+  latestGames: HomePageData["latest"],
+  hasPostseason: boolean,
+): HomePageData {
+  const competition = o.competition ?? "regular";
+  const through = o.through ?? "9999-12-31";
+  const played = playedByTeam(db, o.season, competition, through);
+  const streak = streakByTeam(db, o.season, competition, through);
+
+  const leagues: HomeLeague[] = standings.map((sec) => ({
+    id: sec.id,
+    name: sec.name,
+    rows: sec.rows.map((r) => {
+      const p = played.get(r.teamCode) ?? 0;
+      const remaining = REGULAR_SEASON_GAMES - p;
+      // ⚠**전승·전패 승률의 분모도 `勝+敗`다.** 무승부는 여기서도 빠진다
+      const best = remaining > 0 ? winPct(r.w + remaining, r.l) : r.pct;
+      const worst = remaining > 0 ? winPct(r.w, r.l + remaining) : r.pct;
+      return {
+        teamCode: r.teamCode,
+        shortName: r.shortName,
+        color: r.color,
+        rank: r.rank,
+        tiedRank: r.tiedRank,
+        w: r.w,
+        l: r.l,
+        t: r.t,
+        pct: r.pct,
+        gamesBehind: r.gamesBehind,
+        played: p,
+        remaining,
+        bestPct: best,
+        worstPct: worst,
+        streak: streak.get(r.teamCode) ?? 0,
+        last10: r.last10,
+      };
+    }),
+  }));
+
+  /** 팀 소화 경기 — 환산의 분모다 */
+  const teamGamesOf = (code: string): number => played.get(code) ?? 0;
+  /**
+   * 이름·구단은 **시즌 집계가 이미 들고 있다**(M10: ID로 찾아 이름을 붙인다).
+   * ⚠**이름 문자열로 조인하지 않는다** — 동명이인이 실재한다(「小島」 2명).
+   */
+  const nameOf = (id: string): string =>
+    agg.batting.find((b) => b.playerId === id)?.displayName ??
+      agg.pitching.find((x) => x.playerId === id)?.displayName ?? id;
+  const teamCodeOf = (id: string): string =>
+    agg.batting.find((b) => b.playerId === id)?.teamCode ??
+      agg.pitching.find((x) => x.playerId === id)?.teamCode ?? "";
+  const chip = (code: string) => ({
+    teamCode: code,
+    shortName: shortNameOf(code),
+    color: colorOf(code),
+  });
+
+  /**
+   * 「이 페이스라면」에 실을 항목.
+   *
+   * ⚠**개수 지표만 넣는다.** 율은 환산이라는 말 자체가 성립하지 않는다 —
+   * 타율을 143경기로 환산할 수는 없다.
+   * ⚠**마디에 가까운 순으로 낸다.** 「1위부터」로 내면 이미 마디를 넘긴 사람이 위를 채워
+   * 「도전 중」이라는 제목과 화면이 어긋난다.
+   */
+  const paceRows: HomePace[] = [];
+  const addPace = (
+    label: string,
+    items: readonly { playerId: string; teamCode: string; count: number }[],
+  ): void => {
+    for (const it of items) {
+      if (it.count <= 0) continue;
+      const tg = teamGamesOf(it.teamCode);
+      if (tg <= 0) continue;
+      const m = nextMilestone(label, it.count);
+      paceRows.push({
+        playerId: it.playerId,
+        name: nameOf(it.playerId),
+        ...chip(it.teamCode),
+        label,
+        count: it.count,
+        teamGames: tg,
+        pace: paceOf(it.count, tg),
+        toNext: m === null ? null : m.toNext,
+        next: m === null ? null : m.next,
+      });
+    }
+  };
+
+  addPace(
+    "本塁打",
+    agg.batting.map((b) => ({ playerId: b.playerId, teamCode: b.teamCode, count: b.line.hr })),
+  );
+  addPace(
+    "盗塁",
+    agg.batting.map((b) => ({ playerId: b.playerId, teamCode: b.teamCode, count: b.sb })),
+  );
+  addPace(
+    "打点",
+    agg.batting.map((b) => ({ playerId: b.playerId, teamCode: b.teamCode, count: b.rbi })),
+  );
+  addPace(
+    "奪三振",
+    agg.pitching.map((x) => ({ playerId: x.playerId, teamCode: x.teamCode, count: x.line.so })),
+  );
+
+  /**
+   * ⚠**마디까지 남은 수가 적은 순.** 같으면 지금 개수가 많은 쪽을 먼저 낸다.
+   * 마디가 없는(이미 최고 마디를 넘긴) 사람은 뒤로 보낸다 — 「도전 중」이 아니다.
+   */
+  const paces = paceRows
+    .filter((x) => x.toNext !== null && x.toNext <= HOME_PACE_NEAR)
+    .sort((a, b) => (a.toNext ?? 0) - (b.toNext ?? 0) || b.count - a.count || a.playerId.localeCompare(b.playerId))
+    .slice(0, HOME_PACE_ROWS);
+
+  /**
+   * 이어지고 있는 기록.
+   *
+   * ⚠**마지막 출장일을 반드시 함께 낸다.** 최신 경기일보다 오래됐으면 「継続中」이 아니다 —
+   * 화면이 그 판단을 할 수 있도록 날짜를 그대로 넘긴다.
+   * ⚠**최신 경기일에 출장한 선수만 싣는다.** 그렇지 않으면 5월에 끊긴 기록이
+   * 「지금 이어지는 중」으로 8월 화면에 남는다.
+   */
+  const streaks: HomeStreak[] = [];
+  for (const [playerId, st] of streaksByPlayer) {
+    if (latestDate !== null && st.lastGameDate !== latestDate) continue;
+    const code = teamCodeOf(playerId);
+    if (code === "") continue;
+    if (st.hitting.current >= HOME_STREAK_MIN) {
+      streaks.push({
+        playerId, name: nameOf(playerId), ...chip(code),
+        kind: "hitting", games: st.hitting.current, lastGameDate: st.lastGameDate,
+      });
+    } else if (st.onBase.current >= HOME_STREAK_MIN) {
+      streaks.push({
+        playerId, name: nameOf(playerId), ...chip(code),
+        kind: "onBase", games: st.onBase.current, lastGameDate: st.lastGameDate,
+      });
+    }
+  }
+  streaks.sort((a, b) => b.games - a.games || a.playerId.localeCompare(b.playerId));
+
+  return {
+    season: o.season,
+    asOf,
+    latestDate,
+    latest: latestGames,
+    leagues,
+    paces,
+    streaks: streaks.slice(0, HOME_STREAK_ROWS),
+    hasPostseason,
+  };
+}
+
+/**
+ * 대시보드의 자르는 기준. ⚠**화면에도 적는다** — 기준이 코드에만 있으면
+ * 「왜 이 선수가 없지?」에 답할 수 없다(M3의 정신).
+ */
+const HOME_PACE_NEAR = 5;
+const HOME_PACE_ROWS = 12;
+const HOME_STREAK_MIN = 5;
+const HOME_STREAK_ROWS = 10;
+
 function teamPages(
   db: Db,
   o: LoadOptions,
@@ -2059,6 +2354,8 @@ export interface SiteData {
   asOf: string | null;
   gameCount: number;
   players: PlayerPageData[];
+  /** 사이트 루트(대시보드). ⚠**`index` 는 선수 일람이다** — 이름이 헷갈리는 자리다 */
+  home: HomePageData;
   index: IndexPageData;
   ranking: RankingPageData;
   starters: StartersPageData;
@@ -2811,6 +3108,12 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     )
     .get(o.season, through) as unknown as { d: string | null } | undefined)?.d ?? null;
 
+  /**
+   * 試合 화면. ⚠**대시보드도 이것을 그대로 쓴다**(M1) — 따로 조회하면
+   * 「홈과 試合가 다른 경기를 보여준다」가 언젠가 난다.
+   */
+  const todayData = todayPage(db, o, startersData, nameOf, gamePageIds, days);
+
   return {
     season: o.season,
     asOf: meta.latest,
@@ -2835,9 +3138,37 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       tieRule: TIE_RULE,
       leagues: sections,
     },
+    /**
+     * 대시보드.
+     * ⚠**최신 경기 요약을 새로 조회하지 않는다**(M1) — `todayPage` 가 이미 만든 것을 옮긴다.
+     *   따로 조회하면 「試合 화면과 홈이 다른 경기를 보여준다」가 언젠가 난다.
+     */
+    home: homePage(
+      db,
+      o,
+      standings,
+      agg,
+      streaksByPlayer,
+      meta.latest,
+      latestDay,
+      todayData.gameDate === null
+        ? null
+        : {
+          date: todayData.gameDate,
+          games: todayData.games.map((g) => ({
+            away: g.away.shortName,
+            home: g.home.shortName,
+            awayCode: g.away.teamCode,
+            homeCode: g.home.teamCode,
+            awayRuns: g.away.runs,
+            homeRuns: g.home.runs,
+          })),
+        },
+      postseasonData.competitions.some((c) => c.id !== "allStar"),
+    ),
     starters: startersData,
     matchup: matchupPage(o, meta.latest, startersData, battingByPlayer, pitchingByPlayer),
-    today: todayPage(db, o, startersData, nameOf, gamePageIds, days),
+    today: todayData,
     days: dayPages(db, o, days, latestDay, nameOf, gamePageIds),
     dayIndex: { season: o.season, latestDate: latestDay, days: [...days] },
     postseason: postseasonData,

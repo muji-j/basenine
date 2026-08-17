@@ -25,7 +25,7 @@ import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import { NO_VALUE, avg3, dec1, dec2, fullDate, innings, signed1 } from "./format.ts";
 import { note, panel, tablist } from "./parts.ts";
-import { page } from "./layout.ts";
+import { page, ROSTER_PATH } from "./layout.ts";
 import type { MatchupGame, RenderContext } from "./pages.ts";
 import { pickTeam } from "./pages.ts";
 import { NEUTRAL_COLOR, shortNameOf } from "@bb-app/domain";
@@ -433,7 +433,7 @@ export function renderComparePage(d: ComparePageData, ctx: RenderContext): strin
 </section>
 
 <nav class="find" aria-label="ほかのページ">
-  <a href="${base}index.html">選手一覧</a> · <a href="${base}ranking.html">リーグ順位表</a> · <a href="${base}matchup.html">対戦を選ぶ</a>
+  <a href="${base}${ROSTER_PATH}">選手一覧</a> · <a href="${base}ranking.html">リーグ順位表</a> · <a href="${base}matchup.html">対戦を選ぶ</a>
 </nav>`;
 
   return page({

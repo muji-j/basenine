@@ -37,7 +37,7 @@ import { NO_VALUE, avg3, gameDate, innings, throwsBats } from "./format.ts";
 import { isEmptyProfile, markFigure, markLetter, markProfile } from "./marks.ts";
 import type { MarkPlayer, ProfileAxis } from "./marks.ts";
 import { termOf } from "./glossary.ts";
-import { page } from "./layout.ts";
+import { page, ROSTER_PATH } from "./layout.ts";
 import { teamPath } from "./team-page.ts";
 import { postseasonBrief } from "./postseason-page.ts";
 import type { PostseasonBrief } from "./postseason-page.ts";
@@ -1414,7 +1414,7 @@ ${catalog.map((meta) => {
      ⚠**위 성적에 포함되지 않는다는 것을 그 구획이 스스로 말한다**(§2-1). -->
 ${postseasonBrief(d.postseason, base)}
 <nav class="find" aria-label="ほかの選手">
-  <a href="${base}${teamPath(d.teamCode)}">${d.teamName}</a> · <a href="${base}index.html">選手一覧</a> · <a href="${base}ranking.html">リーグ順位表</a>
+  <a href="${base}${teamPath(d.teamCode)}">${d.teamName}</a> · <a href="${base}${ROSTER_PATH}">選手一覧</a> · <a href="${base}ranking.html">リーグ順位表</a>
 </nav>`;
 
   return page({

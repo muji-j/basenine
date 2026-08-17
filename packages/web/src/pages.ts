@@ -25,7 +25,7 @@ import {
   tablist,
   term,
 } from "./parts.ts";
-import { page, pastSeasonOf } from "./layout.ts";
+import { page, pastSeasonOf, ROSTER_PATH } from "./layout.ts";
 import { teamPath } from "./team-page.ts";
 import type { Freshness, SiteMeta } from "./layout.ts";
 import type { MatchupRow, RankingPanel, RankingRow } from "./player-page.ts";
@@ -197,7 +197,7 @@ function panelTable(p: RankingPanel, base: string, limit: number): RawHtml {
 }
 
 export function renderIndexPage(d: IndexPageData, ctx: RenderContext): string {
-  const { base, root, seasons } = ctx.paths("index.html");
+  const { base, root, seasons } = ctx.paths(ROSTER_PATH);
   const body = html`<header class="idline">
   <div class="idtext">
     <h1 class="nm">選手一覧</h1>
@@ -639,7 +639,7 @@ ${d.games.map((g, i) =>
 </section>
 
 <nav class="find" aria-label="ほかのページ">
-  <a href="${base}matchup.html">対戦を選ぶ</a> · <a href="${base}index.html">選手一覧</a> · <a href="${base}ranking.html">リーグ順位表</a>
+  <a href="${base}matchup.html">対戦を選ぶ</a> · <a href="${base}${ROSTER_PATH}">選手一覧</a> · <a href="${base}ranking.html">リーグ順位表</a>
 </nav>`;
 
   return page({
@@ -872,7 +872,7 @@ export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): strin
 </section>
 
 <nav class="find" aria-label="ほかのページ">
-  <a href="${base}index.html">選手一覧</a> · <a href="${base}ranking.html">リーグ順位表</a>
+  <a href="${base}${ROSTER_PATH}">選手一覧</a> · <a href="${base}ranking.html">リーグ順位表</a>
 </nav>`;
 
   return page({

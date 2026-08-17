@@ -19,7 +19,7 @@ import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import { fullDate, innings } from "./format.ts";
 import { note, panel, scroller, tablist, term, valueWithDen } from "./parts.ts";
-import { page } from "./layout.ts";
+import { page, ROSTER_PATH } from "./layout.ts";
 import type { RenderContext } from "./pages.ts";
 import { NEUTRAL_COLOR } from "@bb-app/domain";
 import type { TeamColor } from "@bb-app/domain";
@@ -304,7 +304,7 @@ ${d.competitions.length === 0
     )}`}
 
 <nav class="find" aria-label="ほかのページ">
-  <a href="${base}today.html">試合</a> · <a href="${base}ranking.html">リーグ順位表</a> · <a href="${base}index.html">選手一覧</a>
+  <a href="${base}today.html">試合</a> · <a href="${base}ranking.html">リーグ順位表</a> · <a href="${base}${ROSTER_PATH}">選手一覧</a>
 </nav>`;
 
   return page({

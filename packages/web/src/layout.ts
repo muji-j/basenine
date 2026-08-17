@@ -118,8 +118,18 @@ export interface SiteMeta {
 }
 
 /** 전역 헤더에서 지금 어디에 있는지. `aria-current`로 나간다 */
+/**
+ * 選手一覧의 경로. **한 곳에서만 만든다**(M1) — 갈리면 어딘가는 404다.
+ *
+ * ⚠**사이트 루트(`index.html`)는 2026-08-17부터 대시보드다.** 그전에는 여기가 선수 일람이었고,
+ * 12곳이 `index.html` 을 「선수 일람」이라는 뜻으로 가리키고 있었다. 상수로 모아 두지 않으면
+ * 다음에 또 옮길 때 몇 군데가 조용히 남는다 — `teamPath` 와 같은 이유다.
+ */
+export const ROSTER_PATH = "players.html";
+
 export type NavKey =
   | "today"
+  | "home"
   | "index"
   | "ranking"
   | "matchup"
@@ -197,7 +207,8 @@ function topbar(o: PageOptions): RawHtml {
   const here = (key: NavKey): RawHtml =>
     o.nav === key ? raw(o.navExact === false ? ' aria-current="true"' : ' aria-current="page"') : raw("");
   return html`<header class="topbar">
-  <a class="brand" href="${o.base}index.html">${o.site.name}<b>by Lunomel</b></a>
+  <!-- ⚠**브랜드는 홈으로 간다.** 2026-08-17부터 홈은 대시보드이고, 선수 일람은 위 ROSTER_PATH 다 -->
+  <a class="brand" href="${o.base}index.html"${here("home")}>${o.site.name}<b>by Lunomel</b></a>
   <div class="qbox">
     <input id="q" type="search" autocomplete="off" placeholder="選手を検索"
       aria-label="選手を検索" role="combobox" aria-expanded="false" aria-controls="qhits" aria-autocomplete="list">
@@ -205,7 +216,7 @@ function topbar(o: PageOptions): RawHtml {
   </div>
   <nav class="tnav" aria-label="主要ページ">
     <a href="${o.base}today.html"${here("today")}>試合</a>
-    <a href="${o.base}index.html"${here("index")}>一覧</a>
+    <a href="${o.base}${ROSTER_PATH}"${here("index")}>一覧</a>
     <a href="${o.base}ranking.html"${here("ranking")}>順位</a>
     <a href="${o.base}matchup.html"${here("matchup")}>対戦</a>
     <a href="${o.base}compare.html"${here("compare")}>比較</a>
@@ -285,7 +296,7 @@ export interface Fallback {
   label: string;
 }
 
-const DEFAULT_FALLBACK: Fallback = { path: "index.html", label: "選手一覧" };
+const DEFAULT_FALLBACK: Fallback = { path: ROSTER_PATH, label: "選手一覧" };
 
 export interface PagePaths {
   base: string;
