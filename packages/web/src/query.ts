@@ -120,6 +120,7 @@ import type {
 import type {
   IndexPageData,
   LeagueSection,
+  MatchupDay,
   MatchupGame,
   MatchupPageData,
   MatchupPick,
@@ -1254,6 +1255,7 @@ function starRuleText(): string {
  * 남아 있으면 오늘 나오지 않는 사람을 고르게 된다.
  */
 function matchupPage(
+  db: Db,
   o: LoadOptions,
   asOf: string | null,
   starters: StartersPageData,
@@ -1323,12 +1325,79 @@ function matchupPage(
     };
   });
 
+  const days: MatchupDay[] = [];
+  /**
+   * ⚠**지난 날은 넣지 않는다.** 予告先発 페이지는 마지막으로 경기가 있던 날에 머무르므로,
+   * 월요일(경기 없음)에 만들면 **어제 날짜**가 그대로 남는다 — 실측 2026-08-17(월):
+   * 예고 최신이 8/16 이라 「2026年8月16日の対戦から選ぶ」가 나왔다.
+   * 지난 날을 고르는 화면에 두면 **지금 대전하는 것처럼** 읽힌다.
+   * ⚠**대신 화면이 비지 않는다** — 앞으로의 일정에서 다음 경기일이 들어온다.
+   */
+  if (starters.gameDate !== null && starters.gameDate >= o.builtOn && games.length > 0) {
+    days.push({ date: starters.gameDate, hasProbable: true, games });
+  }
+
+  /**
+   * **또 하루** — 일정에서 두 팀만 아는 날.
+   *
+   * ⚠**予告先発 페이지는 한 날짜만 보여준다**(실측 2026-08-17: 아침엔 오늘, 저녁엔 내일).
+   * 그래서 예고가 붙는 날은 하나뿐이고, 나머지 날은 **누가 던질지 모른다** —
+   * 그 사실을 숨기고 목록만 내면 「예고가 있는 것처럼」 보인다(M11).
+   * ⚠**예고가 있는 날은 건너뛴다** — 같은 날을 두 번 내면 토글의 뜻이 없어진다.
+   */
+  const other = db.raw
+    .prepare(
+      `SELECT game_date AS date, home_code AS home, away_code AS away, venue,
+              start_time AS startTime
+         FROM upcoming_game
+        WHERE season = ? AND game_date >= ? AND game_date <> ?
+        ORDER BY game_date, start_time
+        LIMIT 12`,
+    )
+    .all(o.season, o.builtOn, starters.gameDate ?? "") as unknown as {
+      date: string; home: string; away: string; venue: string; startTime: string | null;
+    }[];
+  /** ⚠**가장 가까운 하루만** 낸다. 여러 날을 한 화면에 쌓으면 고르는 일이 도로 어려워진다 */
+  const nextDate = other[0]?.date ?? null;
+  if (nextDate !== null) {
+    const teamOfCode = (code: string): MatchupTeam => ({
+      teamCode: code,
+      shortName: shortNameOf(code),
+      name: teamOf(code).name,
+      color: colorOf(code),
+      pitchers: sorted(byTeamPit.get(code) ?? []),
+      batters: sorted(byTeamBat.get(code) ?? []),
+    });
+    days.push({
+      date: nextDate,
+      hasProbable: false,
+      games: other
+        .filter((g) => g.date === nextDate)
+        .map((g) => ({
+          // ⚠키가 겹치면 탭이 서로를 연다 — 날짜를 넣어 가른다
+          key: `u-${g.date}-${g.home}-${g.away}`,
+          venue: g.venue,
+          startTime: g.startTime,
+          sides: [teamOfCode(g.home), teamOfCode(g.away)] as [MatchupTeam, MatchupTeam],
+        })),
+    });
+  }
+
+  /**
+   * ⚠**「앞으로의 일정을 아예 안 받았다」와 「받았는데 그 날 경기가 없다」를 가른다**(M12).
+   * 시즌 전체에 미래 경기가 0건이면 전자다 — 그때 화면이 「明日は試合がありません」이라고 하면
+   * **거짓말**이 된다.
+   */
+  const scheduleLoaded = ((db.raw
+    .prepare("SELECT COUNT(*) AS n FROM upcoming_game WHERE season = ? AND game_date >= ?")
+    .get(o.season, o.builtOn)) as unknown as { n: number }).n > 0;
+
   return {
     season: o.season,
     asOf,
-    pickDate: starters.gameDate,
     builtOn: o.builtOn,
-    games,
+    days,
+    scheduleLoaded,
   };
 }
 
@@ -3920,7 +3989,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       postseasonData.competitions.some((c) => c.id !== "allStar"),
     ),
     starters: startersData,
-    matchup: matchupPage(o, meta.latest, startersData, battingByPlayer, pitchingByPlayer),
+    matchup: matchupPage(db, o, meta.latest, startersData, battingByPlayer, pitchingByPlayer),
     today: todayData,
     days: dayPages(db, o, days, latestDay, nameOf, gamePageIds),
     dayIndex: { season: o.season, latestDate: latestDay, days: [...days] },

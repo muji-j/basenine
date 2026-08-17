@@ -697,14 +697,41 @@ export interface MatchupGame {
   sides: [MatchupTeam, MatchupTeam];
 }
 
+/**
+ * 빠른 선택에 쓰는 **하루**.
+ *
+ * ⚠**두 날을 나란히 둔다**(2026-08-17 유저 요청: 「오늘, 내일을 토글」).
+ * 予告先発 페이지는 **한 날짜만** 보여주므로(실측: 아침엔 오늘, 저녁엔 내일),
+ * 예고가 붙는 날은 하나뿐이다. 나머지 날은 **일정에서 두 팀만** 안다 —
+ * 그 차이를 화면이 말해야 한다(M11: 「예고가 없다」와 「경기가 없다」는 다르다).
+ */
+export interface MatchupDay {
+  /** `YYYY-MM-DD` */
+  date: string;
+  /** 이 날에 予告先発이 붙어 있는가. 없으면 팀 목록에서 고른다 */
+  hasProbable: boolean;
+  games: MatchupGame[];
+}
+
 export interface MatchupPageData {
   season: number;
   asOf: string | null;
-  /** 빠른 선택에 쓰는 경기일. 예고가 없으면 null */
-  pickDate: string | null;
-  /** 사이트 생성일. 「本日」인지 판정한다 */
+  /** 사이트 생성일. 「本日」·「明日」를 판정한다 */
   builtOn: string;
-  games: MatchupGame[];
+  /**
+   * 고를 수 있는 날. **0~2일**.
+   * ⚠첫 번째가 처음 열리는 날이다 — 예고가 있는 날을 앞에 둔다.
+   */
+  days: MatchupDay[];
+  /**
+   * **앞으로의 일정을 받아 두었는가.**
+   *
+   * ⚠**「내일 경기가 없다」와 「내일 일정을 모른다」는 다른 말이다**(M12의 4상태 ·
+   * 2026-08-17 유저 지적: 「수집된 내용이 없는 경우에 없다고 정확히 명시되게 해줘」).
+   * 월요일처럼 **정말 경기가 없는 날**이 있고, 아직 그 달 일정을 안 받은 경우가 있다 —
+   * 둘 다 화면에서는 「하루밖에 없음」으로 보이므로, 이 값이 없으면 구별할 수 없다.
+   */
+  scheduleLoaded: boolean;
 }
 
 /**
@@ -775,13 +802,21 @@ export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): strin
     </div>
   </div>`;
 
-  const isToday = d.pickDate !== null && d.pickDate === d.builtOn;
   // ⚠끝난 시즌에서 「いま投げている投手を選ぶと」는 거짓말이다. 그 시즌에 진행 중인 경기는 없다
   const past = pastSeasonOf(seasons);
-  const gameTabs = d.games.map((g) => ({
-    id: g.key,
-    label: `${g.sides[0].shortName} − ${g.sides[1].shortName}`,
-  }));
+  /**
+   * 그 날을 사람 말로.
+   * ⚠**「本日」·「明日」는 생성일 기준이다**(M6 — 주입된 `builtOn`). 보는 시각이 아니라
+   * **화면을 만든 날**이라, 그 사실을 날짜와 함께 낸다. 날짜가 없으면 어제 만든 화면을
+   * 오늘 보는 사람이 「明日」를 오늘로 읽는다.
+   */
+  const dayLabel = (date: string): string => {
+    const t = Date.parse(`${date}T00:00:00Z`) - Date.parse(`${d.builtOn}T00:00:00Z`);
+    const days = Math.round(t / 86_400_000);
+    const rel = days === 0 ? "本日" : days === 1 ? "明日" : null;
+    return rel === null ? fullDate(date) : `${rel}（${fullDate(date)}）`;
+  };
+  const hasDays = d.days.length > 0;
 
   const body = html`<header class="idline">
   <div class="idtext">
@@ -812,19 +847,50 @@ export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): strin
     </div>
   </div>
 
-  ${d.games.length === 0
+  ${!hasDays
     ? raw("")
     : html`<div id="pickToday">
-    <p class="picknote">${d.pickDate === null ? "" : `${fullDate(d.pickDate)}${isToday ? "（本日）" : ""}の対戦から選ぶ`}</p>
+    <!-- ⚠**날짜 토글**(2026-08-17 유저 요청). 予告先発 페이지는 한 날짜만 보여주므로
+         예고가 붙는 날은 하나뿐이고, 다른 날은 **두 팀만** 안다 — 화면이 그 차이를 말한다. -->
+    <!-- ⚠**하루밖에 없을 때 그 이유를 말한다**(M12). 「내일 경기가 없다」와
+         「내일 일정을 아직 안 받았다」는 다른 말인데, 둘 다 화면에서는 똑같이 보인다. -->
+    ${d.days.length >= 2
+      ? raw("")
+      : html`<p class="picknote pmiss">${d.scheduleLoaded
+          ? "この先の日程では、次の試合日はこの1日だけです。"
+          : "⚠**この先の日程はまだ取り込んでいません** — 「明日の試合が無い」という意味ではありません。"}</p>`}
+    ${d.days.length < 2
+      ? raw("")
+      : html`<nav class="pickday" aria-label="日にち">${tablist(
+          "pickday",
+          d.days.map((x) => ({ id: x.date, label: dayLabel(x.date) })),
+          true,
+          "日にち",
+        )}</nav>`}
+    ${d.days.map((day, di) =>
+      panel(
+        "pickday",
+        day.date,
+        di === 0,
+        html`<p class="picknote">${fullDate(day.date)}${day.date === d.builtOn ? "（本日）" : ""}の対戦から選ぶ${
+          day.hasProbable ? "" : "　※この日の予告先発はまだ発表されていません"
+        }</p>
     <!-- ⚠**여기에 sticky를 걸지 않는다.** 바로 위의 pickbar가 이미 sticky라
          둘 다 붙으면 같은 자리를 두고 겹친다. 경기 고르기는 한 번 하고 끝나는 조작이다 -->
-    <nav class="pickgames" aria-label="試合">${tablist("picktoday", gameTabs, true, "試合")}</nav>
-    ${d.games.map((g, i) =>
-      panel(
-        "picktoday",
-        g.key,
-        i === 0,
-        html`<div class="pickteams">${pickTeam(g.sides[0])}${pickTeam(g.sides[1])}</div>`,
+    <nav class="pickgames" aria-label="試合">${tablist(
+          `pickgame-${day.date}`,
+          day.games.map((g) => ({ id: g.key, label: `${g.sides[0].shortName} − ${g.sides[1].shortName}` })),
+          true,
+          "試合",
+        )}</nav>
+    ${day.games.map((g, i) =>
+          panel(
+            `pickgame-${day.date}`,
+            g.key,
+            i === 0,
+            html`<div class="pickteams">${pickTeam(g.sides[0])}${pickTeam(g.sides[1])}</div>`,
+          ),
+        )}`,
       ),
     )}
   </div>`}
@@ -834,12 +900,17 @@ export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): strin
       ? `${d.season}年は終了したシーズンです。投手と打者を選ぶと、そのシーズンの対戦成績（と打者のスプリット）が開きます。`
       : "試合を見ながら使う画面です。いま投げている投手と打っている打者を選ぶと、" +
         "その二人のこれまでの対戦成績（と打者のスプリット）が開きます。") +
-      (d.games.length === 0
+      (!hasDays
         ? past
           ? "このシーズンの予告先発は記録していないため、名前でさがす形だけになっています。"
-          : "予告先発がまだ発表されていないため、名前でさがす形だけになっています。"
+          : "予告先発も先の日程もまだ取り込めていないため、名前でさがす形だけになっています。"
         : "ボタンに出しているのは今季その球団で記録のある選手です。並びは出場の多い順で、数字は打席数・投球回です。" +
-          "そこにいない選手は上の「名前でさがす」から選べます。"),
+          "そこにいない選手は上の「名前でさがす」から選べます。" +
+          (d.days.length >= 2
+            ? "日にちを切り替えると、その日に対戦する球団に変わります。" +
+              "**予告先発が出ているのは1日分だけ**です — NPBの発表ページが1日分しか載せないためで、" +
+              "もう1日は**球団だけ**が分かっています。"
+            : "")),
   )}
 </section>
 

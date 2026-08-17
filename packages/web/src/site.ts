@@ -146,9 +146,9 @@ export function buildSite(
         {
           season: data.season,
           asOf: data.asOf,
-          pickDate: data.matchup.pickDate,
           builtOn: data.matchup.builtOn,
-          games: data.matchup.games,
+          days: data.matchup.days,
+          scheduleLoaded: data.matchup.scheduleLoaded,
         },
         ctx,
       ),

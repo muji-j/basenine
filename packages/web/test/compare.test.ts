@@ -279,7 +279,7 @@ test("⚠클라이언트의 우열 판정이 서버와 같은 답을 낸다 — 
 });
 
 test("⚠비교 화면은 스크립트 없이도 고를 것이 보인다 — 빈 페이지는 고장으로 보인다(M12)", () => {
-  const out = renderComparePage({ season: 2026, asOf: "2026-08-14", pickDate: null, builtOn: "2026-08-16", games: [] }, context());
+  const out = renderComparePage({ season: 2026, asOf: "2026-08-14", builtOn: "2026-08-16", days: [], scheduleLoaded: false }, context());
   assert.match(out, /id="cmpA"/, "선수 A 입력이 없다");
   assert.match(out, /id="cmpB"/, "선수 B 입력이 없다");
   assert.match(out, /打者と投手は共通の指標がない/, "왜 못 섞는지 설명이 없다");
@@ -302,16 +302,22 @@ function withGames() {
     pitchers: [pick(`${short}投`, "100回")], batters: [pick(`${short}打`, "400打席")],
   });
   return {
-    season: 2026, asOf: "2026-08-14", pickDate: "2026-08-16", builtOn: "2026-08-16",
-    games: [
-      {
-        key: "s-db", venue: "神宮", startTime: "18:00",
-        sides: [team("s", "ヤクルト", "東京ヤクルトスワローズ"), team("db", "DeNA", "横浜DeNAベイスターズ")] as [
-          ReturnType<typeof team>,
-          ReturnType<typeof team>,
-        ],
-      },
-    ],
+    season: 2026, asOf: "2026-08-14", builtOn: "2026-08-16",
+    /** ⚠**「일정을 받았는가」는 「그 날 경기가 있는가」와 다르다**(M12) */
+    scheduleLoaded: true,
+    days: [{
+      date: "2026-08-16",
+      hasProbable: true,
+      games: [
+        {
+          key: "s-db", venue: "神宮", startTime: "18:00",
+          sides: [team("s", "ヤクルト", "東京ヤクルトスワローズ"), team("db", "DeNA", "横浜DeNAベイスターズ")] as [
+            ReturnType<typeof team>,
+            ReturnType<typeof team>,
+          ],
+        },
+      ],
+    }],
   };
 }
 
@@ -332,8 +338,10 @@ test("오늘 대전하는 두 팀에서 바로 고를 수 있다 — 이름을 �
  */
 test("탭 그룹 이름을 対戦 화면과 나눈다 — 저장된 선택이 섞이지 않는다", () => {
   const out = renderComparePage(withGames(), context());
-  assert.match(out, /data-tabgroup="cmptoday"/);
-  assert.ok(!out.includes('data-tabgroup="picktoday"'), "대전 화면과 같은 그룹 이름을 썼다");
+  // ⚠**이름이 달라야 한다**는 것이 이 시험의 뜻이다. 이름 자체는 2026-08-17 에 바뀌었다
+  //   (날짜 토글이 생겨 `cmpday` · `cmpgame-<날짜>` 로 나뉘었다)
+  assert.match(out, /data-tabgroup="cmpgame-2026-08-16"/);
+  assert.ok(!/data-tabgroup="pick/.test(out), "대전 화면과 같은 그룹 이름을 썼다");
 });
 
 /**
@@ -349,7 +357,7 @@ test("긴 목록의 이름표가 대전 화면과 같은 약속을 한다", () =
 
 test("예고가 없으면 빠른 선택을 만들지 않는다 — 검색은 그대로 남는다", () => {
   const out = renderComparePage(
-    { season: 2026, asOf: "2026-08-14", pickDate: null, builtOn: "2026-08-16", games: [] },
+    { season: 2026, asOf: "2026-08-14", builtOn: "2026-08-16", days: [], scheduleLoaded: false },
     context(),
   );
   assert.ok(!out.includes('id="cmpToday"'));

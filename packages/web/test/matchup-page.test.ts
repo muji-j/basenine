@@ -27,23 +27,26 @@ function team(code: string, pitchers: MatchupPick[], batters: MatchupPick[]): Ma
   };
 }
 
+const SAMPLE_GAMES = [
+  {
+    key: "s-db",
+    venue: "神宮",
+    startTime: "18:00",
+    sides: [
+      team("s", [pick("奥川", "118回", true), pick("木澤", "40.1回")], [pick("村上", "412打席")]),
+      team("db", [pick("東", "140回", true)], [pick("牧", "440打席"), pick("佐野", "300打席")]),
+    ] as [ReturnType<typeof team>, ReturnType<typeof team>],
+  },
+];
+
 function data(over: Partial<MatchupPageData> = {}): MatchupPageData {
   return {
     season: 2026,
     asOf: "2026-08-15",
-    pickDate: "2026-08-16",
     builtOn: "2026-08-16",
-    games: [
-      {
-        key: "s-db",
-        venue: "神宮",
-        startTime: "18:00",
-        sides: [
-          team("s", [pick("奥川", "118回", true), pick("木澤", "40.1回")], [pick("村上", "412打席")]),
-          team("db", [pick("東", "140回", true)], [pick("牧", "440打席"), pick("佐野", "300打席")]),
-        ],
-      },
-    ],
+    /** ⚠**「일정을 받았는가」는 「그 날 경기가 있는가」와 다르다**(M12) */
+    scheduleLoaded: true,
+    days: [{ date: "2026-08-16", hasProbable: true, games: SAMPLE_GAMES }],
     ...over,
   };
 }
@@ -212,11 +215,46 @@ test("⚠빠른 선택의 네 목록은 접힌 채로 나오고, 접힌 채로�
   }
 });
 
-test("예고가 없으면 빠른 선택을 만들지 않고 이름 검색만 남는다", () => {
-  const out = renderMatchupPage(data({ pickDate: null, games: [] }), context());
+test("예고도 일정도 없으면 빠른 선택을 만들지 않고 이름 검색만 남는다", () => {
+  const out = renderMatchupPage(data({ days: [], scheduleLoaded: false }), context());
   assert.ok(!out.includes('id="pickToday"'), "빈 빠른 선택이 남았다");
   assert.match(out, /名前でさがす/);
-  assert.match(out, /予告先発がまだ発表されていない/, "왜 이 모양인지 말하지 않았다");
+  assert.match(out, /予告先発も先の日程もまだ取り込めていない/, "왜 이 모양인지 말하지 않았다");
+});
+
+/**
+ * ⚠**「내일 경기가 없다」와 「내일 일정을 모른다」는 다른 말이다**(M12 · 2026-08-17 유저 지적:
+ * 「수집된 내용이 없는 경우에 없다고 정확히 명시되게 해줘」).
+ * 월요일처럼 정말 경기가 없는 날이 있고, 아직 그 달 일정을 안 받은 경우가 있다 —
+ * 둘 다 화면에서는 「하루밖에 없음」으로 보인다.
+ */
+test("⚠하루밖에 없을 때, 「일정을 안 받았다」와 「그 날뿐이다」를 구별해 말한다(M12)", () => {
+  const notLoaded = renderMatchupPage(data({ scheduleLoaded: false }), context());
+  assert.match(notLoaded, /この先の日程はまだ取り込んでいません/, "안 받았다는 말이 없다");
+  assert.match(notLoaded, /「明日の試合が無い」という意味ではありません/, "오독을 막는 말이 없다");
+
+  const loaded = renderMatchupPage(data({ scheduleLoaded: true }), context());
+  assert.match(loaded, /次の試合日はこの1日だけです/, "받았는데 그 날뿐이라는 말이 없다");
+  assert.ok(!loaded.includes("まだ取り込んでいません"), "받았는데 안 받았다고 말한다");
+});
+
+/** ⚠두 날이 있으면 토글이 나오고, 예고가 없는 날은 그렇게 말한다 */
+test("⚠두 날을 토글할 수 있고, 예고가 없는 날은 그 사실을 적는다", () => {
+  const out = renderMatchupPage(
+    data({
+      days: [
+        { date: "2026-08-16", hasProbable: true, games: SAMPLE_GAMES },
+        { date: "2026-08-17", hasProbable: false, games: SAMPLE_GAMES },
+      ],
+    }),
+    context(),
+  );
+  assert.match(out, /data-tabgroup="pickday"/, "날짜 토글이 없다");
+  assert.match(out, /本日（2026年8月16日）/, "「本日」 표기가 없다");
+  assert.match(out, /明日（2026年8月17日）/, "「明日」 표기가 없다");
+  assert.match(out, /この日の予告先発はまだ発表されていません/, "예고가 없는 날을 말하지 않는다");
+  // 하루뿐일 때의 안내는 나오지 않는다
+  assert.ok(!out.includes("次の試合日はこの1日だけです"));
 });
 
 // ⚠제목에서 「어느 쪽도 접히지 않는다」를 뺐다(2026-08-17) — 본문이 재는 것은 **순서**뿐인데
@@ -233,7 +271,7 @@ test("이름 검색이 먼저, 오늘 대전 버튼이 그다음", () => {
 });
 
 test("⚠경기일이 생성일과 다르면 「本日」라고 쓰지 않는다", () => {
-  const out = renderMatchupPage(data({ pickDate: "2026-08-17" }), context());
+  const out = renderMatchupPage(data({ days: [{ date: "2026-08-17", hasProbable: true, games: SAMPLE_GAMES }] }), context());
   assert.match(out, /2026年8月17日の対戦から選ぶ/);
   assert.ok(!out.includes("（本日）"));
 });
@@ -254,7 +292,7 @@ test("버튼이 넘기는 값은 검색 색인과 같은 모양이다 — 뒤가
  */
 test("끝난 시즌의 対戦 화면은 「지금 던지고 있는 투수」라고 말하지 않는다", () => {
   const out = renderMatchupPage(
-    data({ season: 2025, pickDate: null, games: [] }),
+    data({ season: 2025, days: [], scheduleLoaded: false }),
     pastSeasonContext(["matchup.html"]),
   );
   assert.ok(!out.includes("いま投げている投手"), "끝난 시즌에 진행 중인 경기가 있는 것처럼 말했다");
