@@ -195,6 +195,7 @@ test("만든 화면이 전부 시즌 경로 목록에 있다 — 빠진 만큼�
         avg: { value: null, denominator: 0 }, era: { value: null, denominator: 0 },
         home: { w: 1, l: 0, t: 0 }, away: { w: 0, l: 0, t: 0 }, last10: { w: 1, l: 0, t: 0 },
         months: [], batters: [], pitchers: [], recent: [], vs: [], latestDate: "2026-08-14",
+        batQualifier: "規定打席 4", pitQualifier: "先発は規定投球回 1回",
         hasPostseason: false,
       },
     ],

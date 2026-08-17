@@ -403,6 +403,29 @@ function pitcherQualifier(bundle: LeagueBundle, role: PitcherRole): string {
   return `救援投手には公式の規定投球回がないため、当サイトは規定投球回の3分の1（${rounded}回）を基準にしています。これはNPBの基準ではありません。同率は同じ順位で、次の順位を飛ばします。`;
 }
 
+/**
+ * 구단 페이지의 자격 문구 — **짧은 판**.
+ *
+ * ⚠**순위 화면의 문구와 뜻이 갈리면 안 된다**(M3). 그래서 **같은 함수에서 값을 얻고**
+ * 문장만 짧게 만든다. 값을 여기서 다시 계산하면 어느 날 한쪽만 고쳐진다.
+ * ⚠**「規定到達のみ」 버튼이 무엇을 자르는지 말하는 글**이므로, 기준을 숨기면
+ * 「왜 이 선수가 사라졌지?」에 답할 수 없다.
+ */
+function batterQualifierShort(bundle: LeagueBundle): string {
+  return `規定打席 ${qualifiedBatterPa(bundle.teamGames)}（チーム${bundle.teamGames}試合 × 3.1、小数切り上げ）`;
+}
+
+/**
+ * ⚠**한 표에 선발과 구원이 함께 있다.** 기준이 역할마다 다르므로 **둘 다 적는다** —
+ * 하나만 적으면 나머지 절반의 「規定到達」이 근거 없는 표시가 된다.
+ * ⚠**구원 기준은 NPB의 것이 아니다.** 같은 문장으로 쓰면 자체 기준이 공식으로 읽힌다.
+ */
+function pitcherQualifierShort(bundle: LeagueBundle): string {
+  const st = Math.round((qualifyingOuts(bundle, "starter") / 3) * 10) / 10;
+  const rl = Math.round((qualifyingOuts(bundle, "reliever") / 3) * 10) / 10;
+  return `先発は規定投球回 ${st}回（NPB公式）、救援はその3分の1 ${rl}回（当サイトの基準でNPBのものではありません）`;
+}
+
 interface LeagueRankings {
   league: League;
   batting: MetricRanking[];
@@ -1665,6 +1688,21 @@ function h2hOf(db: Db, o: LoadOptions): HeadToHead[] {
   return headToHead(db, o.season, o.competition ?? "regular", o.through ?? "9999-12-31");
 }
 
+/**
+ * SRC 를 `Rate` 로. ⚠**없으면 `null`**(M11) — 타석 로그가 없는 선수를 「기여 0」으로 만들지 않는다.
+ * ⚠분모는 **타석**이다. 값만 내면 「몇 타석에서 낸 것인가」가 사라진다(M2).
+ */
+function srcOf(m: ReadonlyMap<string, { src: number; pa: number }>, id: string): Rate {
+  const s = m.get(id);
+  return s === undefined ? { value: null, denominator: 0 } : { value: s.src, denominator: s.pa };
+}
+
+/** SRP 를 `Rate` 로. 분모는 **상대 타자 수**다 */
+function srpOf(m: ReadonlyMap<string, { srp: number; bf: number }>, id: string): Rate {
+  const s = m.get(id);
+  return s === undefined ? { value: null, denominator: 0 } : { value: s.srp, denominator: s.bf };
+}
+
 function teamPages(
   db: Db,
   o: LoadOptions,
@@ -1673,6 +1711,12 @@ function teamPages(
   leagueBatting: ReadonlyMap<string, BattingEntry>,
   leaguePitching: ReadonlyMap<string, PitchingEntry>,
   bundleByLeague: ReadonlyMap<League, LeagueBundle>,
+  /**
+   * SRC·SRP. ⚠**여기서 다시 계산하지 않는다**(M1) — 순위 화면이 쓰는 것과 **같은 지도**를
+   * 그대로 받는다. 팀 페이지에서 따로 산출하면 같은 선수의 SRC가 두 화면에서 갈린다.
+   */
+  srcByPlayer: ReadonlyMap<string, { src: number; pa: number }>,
+  srpByPlayer: ReadonlyMap<string, { srp: number; bf: number }>,
   asOf: string | null,
   hasPostseason: boolean,
   latestDate: string | null,
@@ -1742,6 +1786,11 @@ function teamPages(
             obp: e.obp,
             slg: e.slg,
             ops: e.ops,
+            woba: e.woba,
+            wrcPlus: e.wrcPlus,
+            wraa: e.wraa,
+            // ⚠**타석 로그가 없는 선수는 `null` 이다**(M11) — 0으로 메우면 「기여 0」이 된다
+            src: srcOf(srcByPlayer, r.playerId),
             qualified: (part?.player.line.pa ?? 0) >= qualifiedBatterPa(bundle.teamGames),
           };
         })
@@ -1767,10 +1816,24 @@ function teamPages(
             so: r.line.so,
             era: e.era,
             whip: e.whip,
+            fip: e.fip,
+            k9: strikeoutsPer9(r.line),
+            bb9: walksPer9(r.line),
+            srp: srpOf(srpByPlayer, r.playerId),
+            qs: r.quality.qs,
+            pitches: r.pitches,
+            // ⚠**투구수를 못 읽은 경기가 있으면 `null` 이다**(M11). 0으로 메우면 효율이 최고가 된다
+            pitchesPerOut:
+              r.pitches === null || r.line.outs === 0
+                ? { value: null, denominator: r.line.outs }
+                : { value: r.pitches / r.line.outs, denominator: r.line.outs },
             qualified: (part?.player.line.outs ?? 0) >= qualifyingOuts(bundle, r.role),
           };
         })
         .sort((a, b) => b.outs - a.outs || a.name.localeCompare(b.name, "ja") || a.playerId.localeCompare(b.playerId));
+
+      const batQualifier = batterQualifierShort(bundle);
+      const pitQualifier = pitcherQualifierShort(bundle);
 
       const byMonth = new Map<string, TeamMonth>();
       for (const m of monthRows.all(code, o.season, competition, through, code, code) as unknown as {
@@ -1838,6 +1901,8 @@ function teamPages(
         months: [...byMonth.values()].sort((a, b) => a.month.localeCompare(b.month)),
         batters,
         pitchers,
+        batQualifier,
+        pitQualifier,
         recent,
         /**
          * 상대 구단별 전적. ⚠**자기 자신은 뺀다** — 「阪神 대 阪神」은 없는 경기다.
@@ -2764,6 +2829,8 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       leagueBatting,
       leaguePitching,
       bundleByLeague,
+      srcByPlayer,
+      srpByPlayer,
       meta.latest,
       // ⚠**「기록이 있다」와 「포스트시즌이 있다」는 다른 말이다.** 올스타뿐인 시즌(2026)에
       // 「ポストシーズンは別の画面にあります」라고 쓰면 없는 것을 있다고 안내하는 것이 된다.

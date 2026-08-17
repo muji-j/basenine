@@ -12,7 +12,9 @@
 import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import { NO_VALUE, avg3, fullDate, innings } from "./format.ts";
-import { columns, note, panel, scroller, tablist, term, valueWithDen } from "./parts.ts";
+import { buttonGroup, columns, note, panel, scroller, tablist, term, valueWithDen } from "./parts.ts";
+import { sortAttr, stableTable } from "./table.ts";
+import type { SortColumn } from "./table.ts";
 import { page } from "./layout.ts";
 import type { RenderContext } from "./pages.ts";
 import { dayHref } from "./today-page.ts";
@@ -34,6 +36,15 @@ export interface TeamBatter {
   obp: Rate;
   slg: Rate;
   ops: Rate;
+  /**
+   * 세이버 지표 — **순위 화면이 내는 것과 같은 값**(M1).
+   * 여기서 다시 계산하지 않고 `battingEntryOf` 한 입구를 그대로 쓴다.
+   * ⚠SRC 만 별도 산출이라 없을 수 있다(그 선수의 타석 로그가 없으면 null).
+   */
+  woba: Rate;
+  wrcPlus: Rate;
+  wraa: Rate;
+  src: Rate;
   /** 규정타석에 닿았는가. **닿지 않아도 목록에는 남는다**(M11) */
   qualified: boolean;
 }
@@ -52,6 +63,19 @@ export interface TeamPitcher {
   so: number;
   era: Rate;
   whip: Rate;
+  /**
+   * 세이버 지표 — 순위 화면과 같은 값(M1).
+   * ⚠**투구수는 없을 수 있다**(M11) — 박스스코어에 실리지 않은 경기가 있다.
+   * 0으로 메우면 「적게 던졌다」가 되므로 `null` 그대로 들고 다닌다.
+   */
+  fip: Rate;
+  k9: Rate;
+  bb9: Rate;
+  srp: Rate;
+  qs: number;
+  pitches: number | null;
+  /** 아웃 하나당 투구수. **낮을수록 좋다** — 다른 개수 지표와 방향이 반대다 */
+  pitchesPerOut: Rate;
   qualified: boolean;
 }
 
@@ -92,6 +116,12 @@ export interface TeamPageData {
   months: TeamMonth[];
   batters: TeamBatter[];
   pitchers: TeamPitcher[];
+  /**
+   * 「規定到達のみ」가 무엇을 자르는지 적는 글(M3).
+   * ⚠**여기서 만들지 않고 받는다** — 순위 화면의 기준과 같은 함수에서 나와야 한다(M1).
+   */
+  batQualifier: string;
+  pitQualifier: string;
   /**
    * 최근 경기(새 것이 앞). 날짜 화면으로 보낸다.
    * ⚠**주소를 데이터에 담지 않는다.** 이 화면은 `teams/` 아래(깊이 1)에 있는데
@@ -148,45 +178,165 @@ function wlt(x: { w: number; l: number; t: number }): string {
  */
 const rate = valueWithDen;
 
-function batterTable(rows: TeamBatter[], base: string): RawHtml {
+/**
+ * 지표를 두 벌로 나눈다 — **한 표에 다 넣으면 打者 15열 · 投手 18열**이 된다.
+ *
+ * ⚠**「기본」이 먼저 열린다.** 이 화면에 오는 사람의 대부분은 안타·홈런·방어율을 보러 오고,
+ * 세이버 지표는 **찾아서 보는 것**이다. 순서를 뒤집으면 이 화면이 전문가용이 된다.
+ * ⚠**두 표는 같은 선수 집합이다** — 한쪽에만 있는 선수를 만들지 않는다.
+ *   그렇지 않으면 「기본에는 있는데 세이버에는 없다」가 「기록이 없다」로 읽힌다(M11).
+ */
+const BAT_TABS = "teambat";
+const PIT_TABS = "teampit";
+
+/** 규정 도달 여부를 행에 싣는다 — 좁히기와 「薄く」가 **같은 근거**를 쓰게 한다 */
+const qualAttr = (q: boolean): RawHtml => raw(q ? ' data-qualified="1"' : ' data-qualified="0"');
+
+/**
+ * 타자 표 한 벌.
+ *
+ * ⚠**정렬용 `data-*` 와 화면의 `<td>` 는 다른 값이다.** 화면은 `.286` 이고 정렬은 `0.2860` 이며,
+ * 「기록 없음」은 화면에 `—` 이지만 정렬에는 **속성 자체가 없어야** 한다(M11).
+ * `sortAttr` 한 벌이 그 규칙을 지킨다.
+ */
+function batterTable(rows: TeamBatter[], base: string, saber: boolean, qualifier: string): RawHtml {
   if (rows.length === 0) return html`<p class="empty">打者の記録がありません。</p>`;
-  return scroller(html`<table>
-    <thead><tr>
-      <th class="l">選手</th><th>試合</th><th>${term("打席")}</th><th>安打</th><th>本塁打</th>
-      <th>打点</th><th>盗塁</th><th>${term("打率")}</th><th>${term("出塁率")}</th><th>${term("長打率")}</th><th>${term("OPS")}</th>
-    </tr></thead>
-    <tbody>${rows.map(
-      (r) => html`<tr class="${r.qualified ? "" : "thin"}">
-      <td class="l"><a href="${base}players/${r.playerId}.html">${r.name}</a></td>
-      <td>${r.games}</td><td class="b">${r.pa}</td><td>${r.h}</td><td>${r.hr}</td>
+  const cols: SortColumn[] = saber
+    ? [
+      { key: "name", label: "選手", left: true, text: true },
+      { key: "pa", label: "打席" },
+      { key: "wrcplus", label: "wRC+", rate: true },
+      { key: "woba", label: "wOBA", rate: true },
+      { key: "wraa", label: "wRAA", rate: true },
+      { key: "src", label: "SRC", rate: true },
+      { key: "ops", label: "OPS", rate: true },
+    ]
+    : [
+      { key: "name", label: "選手", left: true, text: true },
+      { key: "games", label: "試合" },
+      { key: "pa", label: "打席" },
+      { key: "h", label: "安打" },
+      { key: "hr", label: "本塁打" },
+      { key: "rbi", label: "打点" },
+      { key: "sb", label: "盗塁" },
+      { key: "avg", label: "打率", rate: true },
+      { key: "obp", label: "出塁率", rate: true },
+      { key: "slg", label: "長打率", rate: true },
+      { key: "ops", label: "OPS", rate: true },
+    ];
+
+  const body = (r: TeamBatter): RawHtml =>
+    saber
+      // ⚠**머리와 칸 수가 같아야 한다.** 여기 `打席` 칸이 빠져 있었고(머리는 있었다),
+      // 그 결과 **모든 값이 한 칸씩 왼쪽으로 밀려** wOBA 자리에 wRAA 가 그려졌다.
+      // 값이 틀린 것이 아니라 **머리가 거짓말을 하는** 상태라 눈으로는 잡히지 않는다 —
+      // 순위 화면과 표시값을 대조해서야 나왔다(2026-08-17).
+      ? html`<td class="b">${r.pa}</td>
+      <td class="wd">${rate(r.wrcPlus, "打席", 1)}</td>
+      <td class="wd">${rate(r.woba, "打席", 3)}</td>
+      <td class="wd">${rate(r.wraa, "打席", 1)}</td>
+      <td class="wd">${rate(r.src, "打席", 1)}</td>
+      <td class="wd">${rate(r.ops, "打席", 3)}</td>`
+      : html`<td>${r.games}</td><td class="b">${r.pa}</td><td>${r.h}</td><td>${r.hr}</td>
       <td>${r.rbi}</td><td>${r.sb}</td>
       <td class="wd">${rate(r.avg, "打数", 3)}</td>
       <td class="wd">${rate(r.obp, "打席", 3)}</td>
       <td class="wd">${rate(r.slg, "打数", 3)}</td>
-      <td class="wd">${rate(r.ops, "打席", 3)}</td>
+      <td class="wd">${rate(r.ops, "打席", 3)}</td>`;
+
+  return stableTable({
+    id: saber ? "teambatsaber" : "teambat",
+    columns: cols,
+    sortKey: "pa",
+    findLabel: "名前でしぼる",
+    findPlaceholder: "例：佐藤",
+    onlyQualified: { label: "規定到達のみ", qualifier },
+    total: rows.length,
+    unit: "人",
+    emptyText: "この条件の打者はいません。",
+    rows: html`${rows.map(
+      (r) => html`<tr class="${r.qualified ? "" : "thin"}" data-name="${r.name}"${qualAttr(r.qualified)}
+      ${raw(sortAttr("games", r.games))}${raw(sortAttr("pa", r.pa))}${raw(sortAttr("h", r.h))}${raw(sortAttr("hr", r.hr))}
+      ${raw(sortAttr("rbi", r.rbi))}${raw(sortAttr("sb", r.sb))}
+      ${raw(sortAttr("avg", r.avg.value, 4))}${raw(sortAttr("obp", r.obp.value, 4))}
+      ${raw(sortAttr("slg", r.slg.value, 4))}${raw(sortAttr("ops", r.ops.value, 4))}
+      ${raw(sortAttr("woba", r.woba.value, 4))}${raw(sortAttr("wrcplus", r.wrcPlus.value, 1))}
+      ${raw(sortAttr("wraa", r.wraa.value, 2))}${raw(sortAttr("src", r.src.value, 2))}>
+      <td class="l"><a href="${base}players/${r.playerId}.html">${r.name}</a></td>
+      ${body(r)}
     </tr>`,
-    )}</tbody>
-  </table>`);
+    )}`,
+  });
 }
 
-function pitcherTable(rows: TeamPitcher[], base: string): RawHtml {
+function pitcherTable(rows: TeamPitcher[], base: string, saber: boolean, qualifier: string): RawHtml {
   if (rows.length === 0) return html`<p class="empty">投手の記録がありません。</p>`;
-  return scroller(html`<table>
-    <thead><tr>
-      <th class="l">選手</th><th>役割</th><th>登板</th><th>投球回</th>
-      <th>勝</th><th>敗</th><th>S</th><th>H</th><th>奪三振</th><th>${term("防御率")}</th><th>${term("WHIP")}</th>
-    </tr></thead>
-    <tbody>${rows.map(
-      (r) => html`<tr class="${r.qualified ? "" : "thin"}">
-      <td class="l"><a href="${base}players/${r.playerId}.html">${r.name}</a></td>
-      <td>${r.role === "starter" ? "先発" : "救援"}</td>
+  const cols: SortColumn[] = saber
+    ? [
+      { key: "name", label: "選手", left: true, text: true },
+      { key: "outs", label: "投球回" },
+      { key: "fip", label: "FIP", rate: true },
+      { key: "k9", label: "K/9", rate: true },
+      { key: "bb9", label: "BB/9", rate: true },
+      { key: "srp", label: "SRP", rate: true },
+      { key: "qs", label: "QS" },
+      { key: "ppo", label: "球数/アウト", rate: true },
+    ]
+    : [
+      { key: "name", label: "選手", left: true, text: true },
+      { key: "role", label: "役割", left: true, text: true },
+      { key: "games", label: "登板" },
+      { key: "outs", label: "投球回" },
+      { key: "w", label: "勝" },
+      { key: "l", label: "敗" },
+      { key: "sv", label: "S" },
+      { key: "hld", label: "H" },
+      { key: "so", label: "奪三振" },
+      { key: "era", label: "防御率", rate: true },
+      { key: "whip", label: "WHIP", rate: true },
+    ];
+
+  const body = (r: TeamPitcher): RawHtml =>
+    saber
+      ? html`<td class="b">${innings(r.outs)}</td>
+      <td class="wd">${rate(r.fip, "回", 2)}</td>
+      <td class="wd">${rate(r.k9, "回", 2)}</td>
+      <td class="wd">${rate(r.bb9, "回", 2)}</td>
+      ${/* ⚠**자릿수도 순위 화면과 맞춘다.** 여기만 1자리로 냈더니 같은 SRP 가
+           순위에서 5.83, 구단에서 5.8 로 보였다 — 같은 값이 화면에 따라 달라 보이면
+           어느 쪽이 맞는지 묻게 된다(2026-08-17 대조에서 발견) */ null}
+      <td class="wd">${rate(r.srp, "打者", 2)}</td>
+      <td>${r.qs}</td>
+      <td class="wd">${rate(r.pitchesPerOut, "アウト", 2)}</td>`
+      : html`<td class="l">${r.role === "starter" ? "先発" : "救援"}</td>
       <td>${r.games}</td><td class="b">${innings(r.outs)}</td>
       <td>${r.w}</td><td>${r.l}</td><td>${r.sv}</td><td>${r.hld}</td><td>${r.so}</td>
       <td class="wd">${rate(r.era, "回", 2)}</td>
-      <td class="wd">${rate(r.whip, "回", 2)}</td>
+      <td class="wd">${rate(r.whip, "回", 2)}</td>`;
+
+  return stableTable({
+    id: saber ? "teampitsaber" : "teampit",
+    columns: cols,
+    sortKey: "outs",
+    findLabel: "名前でしぼる",
+    findPlaceholder: "例：山本",
+    onlyQualified: { label: "規定到達のみ", qualifier },
+    total: rows.length,
+    unit: "人",
+    emptyText: "この条件の投手はいません。",
+    rows: html`${rows.map(
+      (r) => html`<tr class="${r.qualified ? "" : "thin"}" data-name="${r.name}"${qualAttr(r.qualified)}
+      data-role="${r.role === "starter" ? "先発" : "救援"}"
+      ${raw(sortAttr("games", r.games))}${raw(sortAttr("outs", r.outs))}${raw(sortAttr("w", r.w))}${raw(sortAttr("l", r.l))}
+      ${raw(sortAttr("sv", r.sv))}${raw(sortAttr("hld", r.hld))}${raw(sortAttr("so", r.so))}${raw(sortAttr("qs", r.qs))}
+      ${raw(sortAttr("era", r.era.value, 3))}${raw(sortAttr("whip", r.whip.value, 3))}${raw(sortAttr("fip", r.fip.value, 3))}
+      ${raw(sortAttr("k9", r.k9.value, 3))}${raw(sortAttr("bb9", r.bb9.value, 3))}${raw(sortAttr("srp", r.srp.value, 2))}
+      ${raw(sortAttr("ppo", r.pitchesPerOut.value, 3))}>
+      <td class="l"><a href="${base}players/${r.playerId}.html">${r.name}</a></td>
+      ${body(r)}
     </tr>`,
-    )}</tbody>
-  </table>`);
+    )}`,
+  });
 }
 
 /**
@@ -291,24 +441,36 @@ ${d.recent.length === 0
 </section>`}`)}
 
 ${panel(TEAM_TABS, "bat", false, html`<section class="block" id="b-teambat">
-  <h2>打者<span class="qt">${d.batters.length}人</span></h2>
-  ${batterTable(d.batters, base)}
+  <h2>打者<span class="qt">${d.batters.length}人</span><span class="sw">${buttonGroup(
+    BAT_TABS,
+    [{ id: "basic", label: "基本" }, { id: "saber", label: "セイバー" }],
+    "打者の指標",
+  )}</span></h2>
+  ${panel(BAT_TABS, "basic", true, batterTable(d.batters, base, false, d.batQualifier))}
+  ${panel(BAT_TABS, "saber", false, batterTable(d.batters, base, true, d.batQualifier))}
   ${note(
     // ⚠**이 표는 「현재 로스터」가 아니다.** `battingByTeam`은 **그 구단에서 낸 몫**이라
     // 시즌 도중 떠난 선수도 남는다(실측 2026-08-16: 2026년 3구단·2025년 4구단).
     // 一覧 화면의 구단 묶음은 최신 소속 기준이라, 말하지 않으면 두 화면이 같은 로스터를
     // 다르게 말하게 된다 — 숫자가 아니라 **무엇을 세었는지**를 적어서 맞춘다
     "この球団で出場した記録です — シーズン途中に移籍した選手も、この球団での分だけ含みます。" +
-      "打席の多い順で、規定打席に届いていない選手は薄く表示しています — 値は小さな標本のものです。",
+      "見出しを押すと並べ替わります（もう一度押すと逆順）。" +
+      `${d.batQualifier}に届いていない選手は薄く表示しています — 値は小さな標本のものです。`,
   )}
 </section>`)}
 
 ${panel(TEAM_TABS, "pit", false, html`<section class="block" id="b-teampit">
-  <h2>投手<span class="qt">${d.pitchers.length}人</span></h2>
-  ${pitcherTable(d.pitchers, base)}
+  <h2>投手<span class="qt">${d.pitchers.length}人</span><span class="sw">${buttonGroup(
+    PIT_TABS,
+    [{ id: "basic", label: "基本" }, { id: "saber", label: "セイバー" }],
+    "投手の指標",
+  )}</span></h2>
+  ${panel(PIT_TABS, "basic", true, pitcherTable(d.pitchers, base, false, d.pitQualifier))}
+  ${panel(PIT_TABS, "saber", false, pitcherTable(d.pitchers, base, true, d.pitQualifier))}
   ${note(
     "この球団で登板した記録です — シーズン途中に移籍した投手も、この球団での分だけ含みます。" +
-      "投球回の多い順で、規定投球回に届いていない投手は薄く表示しています。",
+      "見出しを押すと並べ替わります（もう一度押すと逆順）。" +
+      `${d.pitQualifier}。届いていない投手は薄く表示しています。`,
   )}
 </section>`)}
 
