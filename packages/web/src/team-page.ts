@@ -445,6 +445,7 @@ ${panel(TEAM_TABS, "bat", false, html`<section class="block" id="b-teambat">
     BAT_TABS,
     [{ id: "basic", label: "基本" }, { id: "saber", label: "セイバー" }],
     "打者の指標",
+    true,
   )}</span></h2>
   ${panel(BAT_TABS, "basic", true, batterTable(d.batters, base, false, d.batQualifier))}
   ${panel(BAT_TABS, "saber", false, batterTable(d.batters, base, true, d.batQualifier))}
@@ -464,6 +465,7 @@ ${panel(TEAM_TABS, "pit", false, html`<section class="block" id="b-teampit">
     PIT_TABS,
     [{ id: "basic", label: "基本" }, { id: "saber", label: "セイバー" }],
     "投手の指標",
+    true,
   )}</span></h2>
   ${panel(PIT_TABS, "basic", true, pitcherTable(d.pitchers, base, false, d.pitQualifier))}
   ${panel(PIT_TABS, "saber", false, pitcherTable(d.pitchers, base, true, d.pitQualifier))}

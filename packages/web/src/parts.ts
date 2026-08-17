@@ -260,9 +260,32 @@ export function tablist(
 ): RawHtml {
   return html`<div class="tabs${scroll ? " scroll" : ""}${seg ? " seg" : ""}" role="tablist" data-tabgroup="${group}" aria-label="${label}">
     ${items.map(
-      (t, i) => html`<button class="tab" type="button" role="tab" data-tab="${t.id}" aria-selected="${i === 0 ? "true" : "false"}">${t.label}</button>`,
+      (t, i) => html`<button class="tab" type="button" role="tab"
+        id="${tabId(group, t.id)}" aria-controls="${panelId(group, t.id)}"
+        data-tab="${t.id}" aria-selected="${i === 0 ? "true" : "false"}">${t.label}</button>`,
     )}
   </div>`;
+}
+
+/**
+ * 탭과 패널을 잇는 id.
+ *
+ * ⚠**`data-tabgroup`/`data-panelgroup` 은 우리 스크립트만 읽는다.** 낭독기는 그것을 모르고,
+ * 표준으로 「이 탭이 저 패널을 연다」를 말하려면 `aria-controls`/`aria-labelledby` 가 있어야 한다
+ * (WAI-ARIA 탭 패턴). 예전에는 둘 다 없어서 **탭을 눌러도 어느 패널이 열렸는지**가
+ * 접근성 트리에 나타나지 않았다(2026-08-17 이중 검토 지적, 보류했다가 처리).
+ *
+ * ⚠**id 는 한 곳에서만 만든다**(M1) — 탭 쪽과 패널 쪽이 따로 만들면 어느 날 갈리고,
+ * 갈리면 `aria-controls` 가 **존재하지 않는 id** 를 가리켜 조용히 무의미해진다.
+ * ⚠**HTML id 로 쓸 수 있는 글자만 온다** — 그룹은 코드가 정한 상수이고
+ * 키는 `^[a-z0-9+-]+$` 꼴이라(순위 지표 id 포함) 안전하다.
+ */
+export function tabId(group: string, key: string): string {
+  return `tb-${group}-${key}`;
+}
+
+export function panelId(group: string, key: string): string {
+  return `pn-${group}-${key}`;
 }
 
 /**
@@ -286,15 +309,28 @@ export function buttonGroup(
   group: string,
   items: readonly { id: string; label: string }[],
   label: string,
+  /**
+   * 이 버튼줄이 **패널을 여는가**.
+   *
+   * ⚠**켜지 않으면 패널의 `aria-labelledby` 가 존재하지 않는 id 를 가리킨다.**
+   * 실측(2026-08-17): 구단 페이지의 패널 8개 중 **4개가 없는 탭을 가리키고 있었다** —
+   * 깨진 ARIA 참조는 없는 것보다 나쁘다(접근성 트리에 거짓이 들어간다).
+   * ⚠**반대도 마찬가지다.** 패널이 없는 버튼줄(最少打席 같은 좁히기)에 `aria-controls` 를
+   * 붙이면 그쪽이 없는 것을 가리킨다 — 그래서 **기본은 끔**이다.
+   */
+  controlsPanels = false,
 ): RawHtml {
   return html`<div class="tabs" role="group" data-tabgroup="${group}" aria-label="${label}">
     ${items.map(
-      (t, i) => html`<button class="tab" type="button" data-tab="${t.id}" aria-pressed="${i === 0 ? "true" : "false"}">${t.label}</button>`,
+      (t, i) => html`<button class="tab" type="button" data-tab="${t.id}"
+        ${raw(controlsPanels ? ` id="${tabId(group, t.id)}" aria-controls="${panelId(group, t.id)}"` : "")}
+        aria-pressed="${i === 0 ? "true" : "false"}">${t.label}</button>`,
     )}
   </div>`;
 }
 
 /** 탭에 대응하는 패널. **첫 번째만 열어둔다** — JS가 없어도 뭔가는 보인다 */
 export function panel(group: string, key: string, first: boolean, body: RawHtml): RawHtml {
-  return html`<div data-panelgroup="${group}" data-panelkey="${key}" role="tabpanel" ${raw(first ? "" : "hidden")}>${body}</div>`;
+  return html`<div data-panelgroup="${group}" data-panelkey="${key}" role="tabpanel"
+  id="${panelId(group, key)}" aria-labelledby="${tabId(group, key)}" ${raw(first ? "" : "hidden")}>${body}</div>`;
 }

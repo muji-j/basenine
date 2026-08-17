@@ -24,3 +24,5 @@ export { StatsParseError, normalizePlayerName, parseTeamBatting, parseTeamPitchi
 export type { PublishedBatting, PublishedPitching } from "./stats.ts";
 export { isInfield, readPbp, sideOf, unknownTokens } from "./pbp.ts";
 export type { Field, PbpFacts, StrikeoutKind, Trajectory } from "./pbp.ts";
+export { CareerParseError, careerTotal, parseCareer, seasonsPlayed } from "./career.ts";
+export type { Career, CareerBattingSeason, CareerPitchingSeason } from "./career.ts";

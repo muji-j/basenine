@@ -22,7 +22,7 @@ import type { RawHtml } from "./html.ts";
 import { NO_VALUE, avg3, fullDate } from "./format.ts";
 import { ROSTER_PATH, page } from "./layout.ts";
 import type { RenderContext } from "./layout.ts";
-import { note, scroller } from "./parts.ts";
+import { note, scroller, term } from "./parts.ts";
 import { teamPath } from "./team-page.ts";
 import { dayHref } from "./today-page.ts";
 import { NEUTRAL_COLOR } from "@bb-app/domain";
@@ -154,6 +154,34 @@ export interface HomeWeek {
   teams: HomeWeekTeam[];
 }
 
+/**
+ * 통산 마디에 다가선 선수.
+ *
+ * ⚠**이 구획만 출처가 다르다**(M4). 통산은 **NPB 가 선수 페이지에 공표한 연도별 합계**이고,
+ * 이 사이트의 다른 수치는 우리가 경기에서 쌓은 것이다. 화면이 그렇게 적는다.
+ * ⚠**NPB 기록만이다.** 해외 리그 기간은 그 표에 없다 — 「통산 안타」가 세간의 수와 다를 수 있고,
+ * 그 이유를 화면이 말해야 한다.
+ * ⚠**지금 등록된 선수만 볼 수 있다.** 선수 페이지를 받을 수 있는 것이 현역뿐이라,
+ * 은퇴 선수는 여기 없다 — 「전체 순위」가 아니다.
+ */
+export interface HomeMilestone {
+  playerId: string;
+  name: string;
+  teamCode: string;
+  shortName: string;
+  color: TeamColor;
+  /** `通算安打` 등 */
+  label: string;
+  /** 지금까지의 통산 */
+  count: number;
+  /** 다음 마디 */
+  next: number;
+  /** 남은 수 */
+  toNext: number;
+  /** 이 시즌에 그 항목으로 낸 수. **올해 페이스로 닿는가**를 읽는 근거다 */
+  thisSeason: number;
+}
+
 export interface HomePageData {
   season: number;
   asOf: string | null;
@@ -167,6 +195,8 @@ export interface HomePageData {
   /** 지난주(월~일)의 베스트. 완결된 주가 없으면 null */
   week: HomeWeek | null;
   paces: HomePace[];
+  /** 통산 마디에 다가선 선수들 */
+  milestones: HomeMilestone[];
   streaks: HomeStreak[];
   /** 이 시즌에 ポストシーズン 기록이 있는가 */
   hasPostseason: boolean;
@@ -216,11 +246,13 @@ function streakText(n: number): string {
 function standingsTable(l: HomeLeague, base: string): RawHtml {
   return scroller(html`<table class="hstand">
   <thead><tr>
-    <th class="l">球団</th><th>勝</th><th>敗</th><th>分</th><th>勝率</th><th>差</th>
+    <th>順位</th>
+    <th class="l">球団</th><th>勝</th><th>敗</th><th>分</th><th>${term("勝率")}</th><th>ゲーム差</th>
     <th>直近10</th><th>連続</th><th>残り</th><th class="l">全勝〜全敗の勝率</th>
   </tr></thead>
   <tbody>${l.rows.map(
-    (r) => html`<tr>
+    (r) => html`<tr style="--chip:${r.color.base}" class="${r.rank === 1 ? "lead" : ""}">
+    <td class="hrank">${r.rank === null ? NO_VALUE : r.rank}${r.tiedRank ? html`<s>同</s>` : null}</td>
     <td class="l">${teamChip(r.teamCode, r.shortName, r.color, base)}</td>
     <td>${r.w}</td><td>${r.l}</td><td>${r.t}</td>
     <td class="b">${pctText(r.pct)}</td>
@@ -247,6 +279,19 @@ export function renderHomePage(d: HomePageData, ctx: RenderContext): string {
   </div>
 </header>
 
+<!-- ⚠**첫 화면에서 갈 곳을 먼저 보여준다**(2026-08-17 유저 요청).
+     맨 아래 링크 줄만 있으면 스크롤 끝까지 가야 알 수 있다.
+     ⚠**시즌에 따라 있고 없고 하는 화면은 넣지 않는다** — 포스트시즌은 기록이 있을 때만
+     상단 내비가 내므로, 여기서 또 내면 「눌러도 빈 화면」이 생긴다(M12). -->
+<nav class="hnav" aria-label="主なページ">
+  <a href="${base}ranking.html">リーグ順位表<s>全指標</s></a>
+  <a href="${base}${ROSTER_PATH}">選手一覧<s>球団別</s></a>
+  <a href="${base}today.html">試合<s>結果と予告</s></a>
+  <a href="${base}matchup.html">対戦<s>投手×打者</s></a>
+  <a href="${base}compare.html">くらべる<s>2人</s></a>
+  <a href="${base}days.html">日付から<s>過去の試合</s></a>
+</nav>
+
 ${d.latest === null
     ? raw("")
     : html`<section class="block" id="b-hlatest">
@@ -272,6 +317,7 @@ ${d.leagues.map(
 ${note(
     `残り試合は ${REGULAR_SEASON_GAMES}試合 から消化済み（中止を除く）を引いた数です。` +
       "「全勝〜全敗の勝率」は残りを全部勝った場合と全部負けた場合の勝率で、**予想ではなく計算できる範囲**です。" +
+      "順位が並んだ球団には「同」を付けています — 当該球団間の対戦成績で決めた上で、それでも並ぶ場合です。" +
       "引き分けは勝率の分母に入りません（NPBの規定）。" +
       "マジックナンバーは出していません — NPBは勝率で順位を決め、残りの対戦相手も当サイトは持っていないため、" +
       "同じ名前で違う数字を出すことになるからです。",
@@ -325,10 +371,48 @@ ${d.paces.length === 0
     )}</tbody>
   </table>`)}
   ${note(
-    "換算は「今の割合がシーズン終了まで続いたら」という**計算**で、予想ではありません。" +
+    "**各部門の上位3人**です — 部門ごとに分けて選んでいます。" +
+      "まとめて選ぶと数の大きい部門（打点・奪三振）が全部を占めて、盗塁が消えるからです。" +
+      "換算は「今の割合がシーズン終了まで続いたら」という**計算**で、予想ではありません。" +
       "分母はその球団の消化試合数です — 消化が少ない球団の選手ほど換算値は動きやすくなります。" +
-      "当サイトは2023年からの記録しか持たないため、**通算記録は扱いません**。",
+      // ⚠**「통산을 다루지 않는다」고 쓰면 안 된다** — 바로 아래 구획이 통산이다.
+      //   화면이 자기 자신과 모순됐다(2026-08-17 검토 지적). 이 표가 무엇인지만 말한다
+      "**この表はシーズン記録だけ**です — 通算は下の「記録に近づいている」にあります。",
   )}
+</section>`}
+
+${d.milestones.length === 0
+    ? raw("")
+    : html`<section class="block" id="b-hmile">
+  <h2>記録に近づいている<span class="qt">通算</span></h2>
+  ${scroller(html`<table>
+    <thead><tr>
+      <th class="l">選手</th><th class="l">球団</th><th class="l">記録</th>
+      <th>通算</th><th class="l">節目まで</th><th>今季</th>
+    </tr></thead>
+    <tbody>${d.milestones.map(
+      (x) => html`<tr>
+      <td class="l"><a href="${base}players/${x.playerId}.html">${x.name}</a></td>
+      <td class="l">${teamChip(x.teamCode, x.shortName, x.color, base)}</td>
+      <td class="l">${x.label}</td>
+      <td class="b">${x.count}</td>
+      <td class="l">${x.next}まであと<b>${x.toNext}</b></td>
+      <td>${x.thisSeason}</td>
+    </tr>`,
+    )}</tbody>
+  </table>`)}
+  ${note(
+      "⚠**この表だけ出典が違います** — 通算は選手ページの**年度別成績（NPBの公表値）**を当サイトが足したものです（NPBが載せている合計行と毎回突き合わせています）。" +
+        "ほかの数字は当サイトが試合記録から積み上げた値で、混ぜていません。" +
+        "**NPBの記録だけ**です — 海外リーグの期間はこの表に入りません。" +
+        "**今、選手ページがある選手だけ**が対象です（引退した選手は含みません）ので、通算の順位ではありません。" +
+        "**節目までの残りが少ない順**に8人までです。" +
+        // ⚠**「今季」도 같은 표에서 가져온다.** 우리 경기 데이터와 섞으면 기준일이 달라
+        //   한 줄 안에서 뺄셈이 안 맞는다(실측: 통산 90 · 今季 13 인데 작년까지가 78이었다)
+        "**「通算」も「今季」も同じ年度別成績から取っています** — 出典が違う数字を並べると、" +
+        "引き算が合わなくなるからです。当サイトが試合から積み上げた数字とは日付の基準が違うことがあります。" +
+        "今季まだ0の項目は出していません。",
+    )}
 </section>`}
 
 ${d.streaks.length === 0

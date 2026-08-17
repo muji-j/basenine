@@ -260,15 +260,39 @@ a{color:inherit}
 .fixed-note b{color:var(--warn)}
 
 /* ── 블록 ────────────────────────────────────────────────── */
-.block{padding:16px var(--pad);border-bottom:1px solid var(--hair);animation:rise var(--mid) var(--ease) both;
-  animation-delay:calc(var(--i,0) * 26ms)}
+/* ⚠**영역 구분을 더 또렷하게**(2026-08-17 유저 요청). 괘선 하나만으로는 구획이 이어져 보인다.
+   카드·그림자·둥근 모서리는 쓰지 않으므로(§6), **여백과 괘선의 무게**로 가른다.
+
+   ⚠**한 칸 걸러 바탕을 바꾸는 방식은 버렸다.** nth-of-type(even) 은 **같은 부모 안의
+   형제**를 세는데, 구단 페이지는 구획이 탭 패널 안에 흩어져 있어
+   **탭을 바꿀 때마다 줄무늬가 달라졌다**(成績 탭에는 있고 打者 탭에는 없음).
+   선수 페이지는 사용자가 블록을 켜고 끄므로 더 심하다 — 위치에 기대는 장식은
+   이 화면 구조에서 성립하지 않는다. */
+.block{padding:20px var(--pad);border-bottom:2px solid var(--hair-2);
+  animation:rise var(--mid) var(--ease) both;animation-delay:calc(var(--i,0) * 26ms)}
 .block[hidden]{display:none}
-.block>h2{margin:0 0 9px;font-size:10.5px;letter-spacing:.19em;color:var(--tx-2);font-weight:600;
-  display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+/* ⚠**구획 머리를 더 또렷하게**(2026-08-17 유저 요청: 가시성·영역 구분).
+   카드·그림자·둥근 모서리는 쓰지 않는다(§6) — 대신 **짧은 색 막대**와 글자 무게로 가른다.
+   막대 색은 그 화면의 구단 색(--chip)이고, 없으면 본문 색이라 어디서든 보인다. */
+.block>h2{margin:0 0 10px;font-size:11px;letter-spacing:.19em;color:var(--tx);font-weight:700;
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding-left:11px;position:relative}
+/* ⚠**구단 색이 여기까지 온다.** body 에 --team 이 이미 있고(선수·구단 페이지는 그 팀 색,
+   그 밖은 중립색), 로고를 못 쓰는 자리에서 팀을 말하는 것이 색이다(§6).
+   ⚠**--chip 이 있으면 그쪽이 이긴다** — 구단별 묶음 안에서는 그 구단 색이어야 한다 */
+.block>h2::before{content:"";position:absolute;left:0;top:-.05em;bottom:-.05em;width:4px;
+  background:var(--chip,var(--team,var(--tx)))}
 .block>h2 .sw{display:flex;gap:4px;margin-left:auto;flex-wrap:wrap}
 .block>h2 .qt{letter-spacing:0;font-weight:400;color:var(--tx-3)}
 [data-panelgroup]{animation:fade var(--fast) var(--ease)}
+/* ⚠**until-found 는 display:none 이면 동작하지 않는다.**
+   브라우저 내 찾기(Ctrl+F)가 숨은 패널의 글자를 찾아 **스스로 펼치게** 하려면
+   그 상태가 content-visibility:hidden 이어야 한다 — 렌더 트리에는 있고 화면에는 없는 상태다.
+   display:none 은 그 기회를 아예 없앤다.
+   ⚠**boolean hidden 은 지금까지대로 display:none** 이다. 두 값을 구별해서 쓴다.
+   ⚠**이 규칙은 바깥 패널에만 넣는다** — 레일 안의 하위 패널은 접힌 채로 두는 것이 맞다 */
 [data-panelgroup][hidden]{display:none}
+[data-panelgroup][hidden="until-found"]{display:block;content-visibility:hidden}
 /* ⚠**패널에만 준다.** 레일 안의 하위 탭줄도 같은 그룹에 속하는데, 탭줄이 미끄러지면 조작이 흔들린다 */
 [data-panelgroup][role="tabpanel"][data-slide="next"]{animation:slideNext var(--mid) var(--ease)}
 [data-panelgroup][role="tabpanel"][data-slide="prev"]{animation:slidePrev var(--mid) var(--ease)}
@@ -589,6 +613,18 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
 .picklab{margin:10px 0 5px;font-size:10px;letter-spacing:.16em;color:var(--tx-3);
   display:flex;align-items:baseline;gap:6px}
 .picklab s{text-decoration:none;letter-spacing:0;font-size:10.5px}
+/* ── 通算成績 ──
+   ⚠**태그 기본값에 기대지 않는다.** h3 는 기본 1.17em 이라 **구획 제목(h2, 11px)보다 커진다** —
+   이 저장소가 이미 한 번 밟은 함정이다(위 .standname 주석 참조).
+   ⚠**통산 한 줄이 이 블록의 주역**이다. 연도별은 근거이고, 먼저 읽혀야 하는 것은 합계다. */
+.cyr{margin:14px 0 6px;font-size:10.5px;letter-spacing:.16em;color:var(--tx-2);font-weight:600;
+  display:flex;align-items:baseline;gap:8px}
+.cyr:first-child{margin-top:0}
+.cyr .qt{letter-spacing:0;font-weight:400;color:var(--tx-3);font-size:10.5px}
+.ctot{margin:0 0 8px;font-size:13.5px;font-variant-numeric:tabular-nums;
+  padding:7px 0 7px 11px;border-left:3px solid var(--chip,var(--team,var(--tx)))}
+.ctot b{font-size:10px;letter-spacing:.16em;color:var(--tx-3);font-weight:600;margin-right:8px;
+  vertical-align:.08em}
 /* ── ホーム(대시보드) ──
    ⚠**로고를 쓰지 않는다**(§6). 구단을 구별하는 것은 **우리가 고른 색**과 이름이다.
    ⚠**카드 그리드를 만들지 않는다** — 균질한 카드 격자는 「AI틱함」 금지 목록에 있다.
@@ -599,6 +635,18 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
 /* 순위표는 숫자가 줄맞춰야 읽힌다 */
 .hstand td,.hstand th{font-variant-numeric:tabular-nums}
 .hstand .b{font-weight:700}
+/* ⚠**구단 색을 행에 세운다.** 로고를 못 쓰는 자리에서 팀을 구별하는 것은 색과 이름이고(§6),
+   9px 칩 하나로는 표에서 팀이 안 읽힌다는 지적이 있었다(2026-08-17 「조금 더 비비드하게」).
+   ⚠**색만으로 전하지 않는다** — 팀 이름이 바로 옆에 그대로 있다 */
+.hstand tbody td:first-child{position:relative;padding-left:12px}
+.hstand tbody td:first-child::before{content:"";position:absolute;left:0;top:2px;bottom:2px;width:4px;
+  background:var(--chip,transparent)}
+.hstand .hrank{font-weight:700;font-size:14px}
+.hstand .hrank s{text-decoration:none;font-size:9.5px;color:var(--tx-3);margin-left:2px}
+/* 1위 행만 조금 더 무겁게 — 「지금 누가 위인가」가 이 표의 첫 질문이다 */
+.hstand tr.lead td{background:var(--panel)}
+.hstand tr.lead .hrank{color:var(--tx)}
+.hstand tbody tr:hover td{background:var(--panel)}
 
 /* 그 날의 결과 — 한 줄에 「팀 점수 - 점수 팀」. 표로 만들면 두 줄이 되어 밀도가 떨어진다 */
 .hgames{list-style:none;margin:0;padding:0;display:grid;
@@ -610,6 +658,17 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
 .hgames b{font-size:15px;font-weight:700}
 .hgames s{text-decoration:none;color:var(--tx-3);font-size:11px}
 .more{margin:8px 0 0;font-size:11.5px}
+/* ⚠**첫 화면에서 어디로 갈 수 있는지 보이게 한다**(2026-08-17 유저 요청).
+   본문 맨 아래 링크 줄만 있으면 스크롤 끝까지 가야 알 수 있다.
+   ⚠**균질한 카드 격자를 만들지 않는다**(§6) — 글자 줄로 두되 누를 수 있게 크기만 준다 */
+.hnav{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 4px}
+.hnav a{display:inline-flex;align-items:baseline;gap:6px;padding:7px 11px;
+  border:1px solid var(--hair-2);background:var(--panel);color:var(--tx);
+  font-size:12.5px;text-decoration:none;
+  transition:border-color var(--fast) var(--ease),background var(--fast) var(--ease)}
+.hnav a:hover{border-color:var(--tx-3);background:var(--panel-2)}
+.hnav a s{text-decoration:none;font-size:10px;letter-spacing:.1em;color:var(--tx-3)}
+@media (pointer:coarse){.hnav a{padding:9px 13px}}
 
 /* 先週の顔 — **순위 번호를 크게 쓰지 않는다.** 한 주짜리 순위를 시즌 순위와
    같은 무게로 그리면 그렇게 읽힌다 */
@@ -1142,6 +1201,15 @@ const go=(url)=>{LOC.href=url};
 const KEY="npb-meikan-layout";
 const load=()=>{try{return JSON.parse(localStorage.getItem(KEY)||"null")}catch(e){return null}};
 const save=(s)=>{try{localStorage.setItem(KEY,JSON.stringify(s))}catch(e){}};
+/* ⚠**「until-found 를 아는 브라우저인가」를 기능으로 묻는다.** 사용자 에이전트 문자열로
+   가르면 반드시 틀린다. hidden 프로퍼티가 문자열을 받아들이는지로 판정한다. */
+const SUPPORTS_UNTIL_FOUND=(()=>{
+  try{
+    const d=doc.createElement("div");
+    d.setAttribute("hidden","until-found");
+    return d.getAttribute("hidden")==="until-found"&&"onbeforematch" in d;
+  }catch(e){return false}
+})();
 const BLOCKS=window.__BLOCKS__||[];
 /* 용어집. 서버와 같은 정의 한 벌을 쓴다(M1) */
 const GLOSSARY=__GLOSSARY__;
@@ -1232,7 +1300,16 @@ function showTabs(){
     lastAt[g]=at;
     // "all"은 특별 취급 — 골라 보는 화면에서 「전부」를 뺏지 않는다
     $$('[data-panelgroup="'+g+'"]').forEach(p=>{
-      p.hidden=cur!=="all"&&p.dataset.panelkey!==cur;
+      /* ⚠**닫을 때는 "until-found" 로 닫는다.** 그래야 Ctrl+F 가 그 안의 글자를 찾고,
+         찾으면 브라우저가 스스로 펼친다(아래 beforematch 가 탭줄도 맞춘다).
+         지원하지 않는 브라우저는 이 값을 **그냥 hidden 으로 읽으므로** 지금까지와 같다 —
+         잃는 것이 없다(§0-1). */
+      const shut=cur!=="all"&&p.dataset.panelkey!==cur;
+      /* ⚠**프로퍼티를 먼저 둔다.** 실제 DOM 은 hidden 프로퍼티와 속성이 이어져 있지만,
+         setAttribute 만 쓰면 프로퍼티를 읽는 코드·시험이 옛 값을 본다.
+         지원하는 브라우저에서만 속성값을 until-found 로 덮는다 — 프로퍼티는 true 그대로다. */
+      p.hidden=shut;
+      if(shut&&SUPPORTS_UNTIL_FOUND&&p.setAttribute)p.setAttribute("hidden","until-found");
       if(!p.hidden)slide(p,dir);
     });
     $$('[data-tabgroup="'+g+'"] [data-tab]').forEach(b=>{
@@ -1664,6 +1741,20 @@ $$("[data-stable]").forEach(box=>{
       if(state.order.indexOf("matchup")<0)state.order=state.order.concat(["matchup"]);
     }
   }
+});
+
+/* ── 찾기로 펼쳐진 패널의 탭을 맞춘다 ──
+
+   ⚠**브라우저가 패널을 펼쳐도 탭줄은 그대로다.** 그러면 「投手 탭이 눌려 있는데
+   화면은 打者」가 되어 화면이 자기 자신과 모순된다. 찾기로 열렸을 때 탭도 함께 옮긴다.
+   ⚠**저장하지 않는다** — 찾다가 스친 것을 「이 사람이 고른 탭」으로 기억하면 안 된다. */
+$$("[data-panelgroup]").forEach(p=>{
+  p.addEventListener("beforematch",()=>{
+    const g=p.dataset.panelgroup,k=p.dataset.panelkey;
+    if(!g||!k)return;
+    transient[g]=k;
+    showTabs();
+  });
 });
 
 /* ── 순위표의 「規定到達のみ / 全員」 ──

@@ -7,6 +7,8 @@
  */
 import type { Db } from "@bb-app/store";
 import { attempts, battedBalls, buntValues, headToHead, steals, successRate, timesThroughOrder, winPct } from "@bb-app/aggregate";
+// ⚠**통산 합계·시즌 수는 파서 쪽 한 벌을 쓴다**(M1) — 여기에 다시 쓰면 시험이 붙은 쪽이 죽는다
+import { careerTotal, seasonsPlayed } from "@bb-app/parser";
 import type { HeadToHead, PlayerStreaks } from "@bb-app/aggregate";
 import { REGULAR_SEASON_GAMES } from "./home-page.ts";
 import type {
@@ -17,8 +19,9 @@ import type {
   HomeWeek,
   HomeWeekPlayer,
   HomeWeekTeam,
+  HomeMilestone,
 } from "./home-page.ts";
-import type { BattedBallData, BuntCell } from "./player-page.ts";
+import type { BattedBallData, BuntCell, CareerData, CareerRow } from "./player-page.ts";
 import type { BattingLine, LeagueConstants, PitchingLine, Rate } from "@bb-app/metrics";
 import {
   babip,
@@ -133,7 +136,7 @@ import type { StandingRow, StandingsSection } from "./pages.ts";
 // 予告先発 화면의 앵커. **試合 카드가 그리로 가므로 키를 두 벌 만들지 않는다**(M1)
 import { batterPick, gameKey, pitcherPick, startersAnchor, unseenPitcherPick } from "./pages.ts";
 import type { RankDigits } from "./parts.ts";
-import { avg3, dec2, denominator, innings } from "./format.ts";
+import { NO_VALUE, avg3, dec2, denominator, innings } from "./format.ts";
 import { readFileSync } from "node:fs";
 import type {
   TeamBatter,
@@ -1948,6 +1951,108 @@ export function lastCompleteWeek(latest: string | null): { from: string; to: str
 }
 
 /**
+ * 통산 마디.
+ *
+ * ⚠**화면에 그대로 적는 기준이다**(M3의 정신). 2000안타·200승·250세이브는
+ * 名球会 의 기준이라 이 도메인에서 특별한 수다 — 그래서 목록에 넣는다.
+ * ⚠**우리가 정한 수라는 것을 숨기지 않는다.** NPB 가 「마디」를 공표하는 것이 아니다.
+ */
+const CAREER_MILESTONES: Readonly<Record<string, readonly number[]>> = {
+  通算安打: [500, 1000, 1500, 2000],
+  通算本塁打: [100, 200, 300, 400, 500],
+  通算盗塁: [100, 200, 300, 400],
+  通算勝利: [50, 100, 150, 200],
+  通算奪三振: [500, 1000, 1500, 2000, 2500],
+  通算セーブ: [50, 100, 200, 250, 300],
+};
+
+/**
+ * 통산 마디에 다가선 선수. **남은 수가 적은 순** — 이 구획의 뜻이 곧 근접이다.
+ *
+ * ⚠**한 줄은 한 출처여야 한다.** 처음에는 「통산」을 NPB 공표치에서, 「今季」를 우리
+ * 경기 데이터에서 가져왔다. 두 출처의 **기준일이 다르다** — 실측(2026-08-17 이중 검토):
+ * 선수 페이지의 年度別成績은 **8/14까지**를 반영하는데(우리 값과 616/616 일치) 우리 경기
+ * 데이터는 **8/16까지**다. 그래서 화면에 `통산 90 · 今季 13` 이 나란히 서고
+ * **90 − 13 = 77** 인데 그 선수의 작년까지 통산은 78이었다 — **한 줄 안에서 뺄셈이
+ * 성립하지 않았다.** 마디까지 남은 수도 하루치만큼 틀렸다.
+ * → 今季도 **같은 표(年度別)의 그 해 행**에서 가져온다. 그러면 줄 안이 자기 자신과 맞는다.
+ *
+ * ⚠**과거 시즌 화면에는 그 시즌까지의 통산을 낸다.** 연도 조건이 없으면 2023년 화면에도
+ * **오늘의 통산**이 실린다 — 빌드는 시즌마다 돌기 때문이다(2026-08-17 지적).
+ */
+function milestonesOf(
+  db: Db,
+  season: number,
+  chip: (code: string) => { teamCode: string; shortName: string; color: TeamColor },
+  teamOf: (id: string) => string,
+): HomeMilestone[] {
+  /** `그 시즌까지의 합계` 와 `그 시즌분` 을 **같은 표에서** 함께 낸다 */
+  const rows = db.raw
+    .prepare(
+      `SELECT c.player_id AS playerId, p.display_name AS name,
+              SUM(c.h) AS h, SUM(c.hr) AS hr, SUM(c.sb) AS sb,
+              SUM(CASE WHEN c.year = ? THEN c.h ELSE 0 END) AS yh,
+              SUM(CASE WHEN c.year = ? THEN c.hr ELSE 0 END) AS yhr,
+              SUM(CASE WHEN c.year = ? THEN c.sb ELSE 0 END) AS ysb
+         FROM career_batting c JOIN player p ON p.player_id = c.player_id
+        WHERE c.year <= ?
+        GROUP BY c.player_id`,
+    )
+    .all(season, season, season, season) as unknown as {
+      playerId: string; name: string; h: number; hr: number; sb: number;
+      yh: number; yhr: number; ysb: number;
+    }[];
+  const prows = db.raw
+    .prepare(
+      `SELECT c.player_id AS playerId, p.display_name AS name,
+              SUM(c.w) AS w, SUM(c.so) AS so, SUM(c.sv) AS sv,
+              SUM(CASE WHEN c.year = ? THEN c.w ELSE 0 END) AS yw,
+              SUM(CASE WHEN c.year = ? THEN c.so ELSE 0 END) AS yso,
+              SUM(CASE WHEN c.year = ? THEN c.sv ELSE 0 END) AS ysv
+         FROM career_pitching c JOIN player p ON p.player_id = c.player_id
+        WHERE c.year <= ?
+        GROUP BY c.player_id`,
+    )
+    .all(season, season, season, season) as unknown as {
+      playerId: string; name: string; w: number; so: number; sv: number;
+      yw: number; yso: number; ysv: number;
+    }[];
+
+  const out: HomeMilestone[] = [];
+  const add = (id: string, name: string, label: string, count: number, thisSeason: number): void => {
+    const xs = CAREER_MILESTONES[label];
+    if (xs === undefined || count <= 0) return;
+    const next = xs.find((x) => count < x);
+    if (next === undefined) return;
+    const code = teamOf(id);
+    if (code === "") return;
+    out.push({ playerId: id, name, ...chip(code), label, count, next, toNext: next - count, thisSeason });
+  };
+  for (const r of rows) {
+    add(r.playerId, r.name, "通算安打", r.h, r.yh);
+    add(r.playerId, r.name, "通算本塁打", r.hr, r.yhr);
+    add(r.playerId, r.name, "通算盗塁", r.sb, r.ysb);
+  }
+  for (const r of prows) {
+    add(r.playerId, r.name, "通算勝利", r.w, r.yw);
+    add(r.playerId, r.name, "通算奪三振", r.so, r.yso);
+    add(r.playerId, r.name, "通算セーブ", r.sv, r.ysv);
+  }
+
+  /**
+   * ⚠**근접이 이 구획의 정의다 — 그러니 근접으로만 고른다.**
+   * 처음에 「남은 수 ≤ 올해 쌓은 수 × 2」를 걸었다가 **西川(350도루까지 6개)** 처럼
+   * 올해가 더딘 선수가 잘려 나갔다.
+   * ⚠**그 시즌에 한 번도 안 나온 항목은 뺀다** — 「다가서는 중」이 아니라 멈춰 있는 것이다.
+   */
+  return out
+    .filter((x) => x.thisSeason > 0)
+    .sort((a, b) => a.toNext - b.toNext || b.count - a.count || a.playerId.localeCompare(b.playerId))
+    .slice(0, HOME_MILESTONE_ROWS);
+}
+
+
+/**
  * 대시보드 데이터.
  *
  * ⚠**여기서 지표를 새로 계산하지 않는다**(M1) — 순위·연속기록·시즌 합계는 이미 만들어 둔 것을
@@ -2070,13 +2175,26 @@ function homePage(
   );
 
   /**
-   * ⚠**마디까지 남은 수가 적은 순.** 같으면 지금 개수가 많은 쪽을 먼저 낸다.
-   * 마디가 없는(이미 최고 마디를 넘긴) 사람은 뒤로 보낸다 — 「도전 중」이 아니다.
+   * **부문마다 상위 몇 명씩.**
+   *
+   * ⚠**처음에는 「마디까지 5개 이내」로 걸렀다가 화면이 통째로 헛돌았다**(2026-08-17 유저 지적).
+   * 실측: 도루 1위 浦田(31)·홈런 1위 栗原(32)·타점 1위 近藤(87)·탈삼진 1위 才木(150)이
+   * **한 명도 화면에 없었고**, 대신 **홈런 9개인 선수 7명**이 자리를 채웠다 —
+   * 9는 다음 마디(10)까지 1개라 통과하고, 31은 다음 마디(40)까지 9개라 잘렸기 때문이다.
+   * **제목이 「今シーズンのペース」인데 페이스가 좋은 사람이 없는 화면**이었다.
+   *
+   * → 부문별로 **개수 상위**를 뽑는다. 마디까지 남은 수는 **거르는 조건이 아니라 덧붙이는 정보**다.
+   * ⚠**부문을 섞어서 자르지 않는다.** 한 덩어리로 자르면 수가 큰 부문(打点·奪三振)이
+   *   전부를 차지하고 도루가 사라진다 — 「盗塁 31」이 「打点 40」보다 작은 수이기 때문이다.
    */
-  const paces = paceRows
-    .filter((x) => x.toNext !== null && x.toNext <= HOME_PACE_NEAR)
-    .sort((a, b) => (a.toNext ?? 0) - (b.toNext ?? 0) || b.count - a.count || a.playerId.localeCompare(b.playerId))
-    .slice(0, HOME_PACE_ROWS);
+  const paces: HomePace[] = [];
+  for (const label of PACE_LABELS) {
+    const mine = paceRows
+      .filter((x) => x.label === label)
+      .sort((a, b) => b.count - a.count || b.pace - a.pace || a.playerId.localeCompare(b.playerId))
+      .slice(0, HOME_PACE_PER_LABEL);
+    paces.push(...mine);
+  }
 
   /**
    * 이어지고 있는 기록.
@@ -2228,6 +2346,9 @@ function homePage(
     latest: latestGames,
     leagues,
     week,
+    // ⚠**구단은 이미 있는 teamCodeOf 를 쓴다**(M1). 따로 만든 질의가 ORDER BY 없이
+    //   LIMIT 1 이라 **이적 선수 282명 중 9명에게 옛 구단**이 붙었다(2026-08-17 실측)
+    milestones: milestonesOf(db, o.season, chip, teamCodeOf),
     paces,
     streaks: streaks.slice(0, HOME_STREAK_ROWS),
     hasPostseason,
@@ -2238,7 +2359,15 @@ function homePage(
  * 대시보드의 자르는 기준. ⚠**화면에도 적는다** — 기준이 코드에만 있으면
  * 「왜 이 선수가 없지?」에 답할 수 없다(M3의 정신).
  */
-const HOME_PACE_NEAR = 5;
+/**
+ * 페이스 구획에 내는 부문과 인원.
+ *
+ * ⚠**부문마다 따로 자른다** — 한 덩어리로 자르면 수가 큰 부문이 전부를 차지한다.
+ * ⚠**화면에도 적는다**(M3의 정신) — 「각 부문 상위 3명」이라고 쓰지 않으면
+ * 「왜 4위가 없지?」에 답할 수 없다.
+ */
+const PACE_LABELS = ["本塁打", "打点", "盗塁", "奪三振"] as const;
+const HOME_PACE_PER_LABEL = 3;
 /**
  * 주간 베스트의 최소 표본. ⚠**화면에도 적는다**(M3의 정신).
  * 대타 한 타석으로 SRC 가 튀어 1위가 되는 것을 막되, 너무 높이면 그 주에 쉬었다 나온
@@ -2247,9 +2376,100 @@ const HOME_PACE_NEAR = 5;
 const HOME_WEEK_MIN_PA = 10;
 const HOME_WEEK_MIN_BF = 12;
 const HOME_WEEK_ROWS = 5;
-const HOME_PACE_ROWS = 12;
 const HOME_STREAK_MIN = 5;
 const HOME_STREAK_ROWS = 10;
+/** 통산 마디 구획의 행 수 */
+const HOME_MILESTONE_ROWS = 8;
+
+/**
+ * 年度別成績을 화면 모양으로.
+ *
+ * ⚠**비율은 여기서 낸다**(M1) — DB 에 담지 않고 개수에서 다시 만든다.
+ * 그래야 사이트 안에서 打率 을 내는 곳이 한 벌이다.
+ * ⚠**분모를 문자열 안에 넣는다**(M2) — 값만 떼어 쓸 수 없게.
+ */
+function careerOf(db: Db, playerId: string): CareerData | null {
+  const bat = db.raw
+    .prepare(
+      `SELECT year, team, games, pa, ab, h, hr, rbi, sb, cs, bb, so, source
+         FROM career_batting WHERE player_id = ? ORDER BY year, seq`,
+    )
+    .all(playerId) as unknown as {
+      year: number; team: string; games: number; pa: number; ab: number; h: number;
+      hr: number; rbi: number; sb: number; cs: number; bb: number; so: number; source: string;
+    }[];
+  const pit = db.raw
+    .prepare(
+      `SELECT year, team, games, w, l, sv, hld, bf, outs, so, er, bb, source
+         FROM career_pitching WHERE player_id = ? ORDER BY year, seq`,
+    )
+    .all(playerId) as unknown as {
+      year: number; team: string; games: number; w: number; l: number; sv: number; hld: number;
+      bf: number; outs: number; so: number; er: number; bb: number; source: string;
+    }[];
+  if (bat.length === 0 && pit.length === 0) return null;
+
+  const avg = (h: number, ab: number): string => (ab === 0 ? NO_VALUE : avg3(h / ab));
+  const era = (er: number, outs: number): string =>
+    outs === 0 ? NO_VALUE : dec2((er * 27) / outs);
+  const ip = (outs: number): string =>
+    `${Math.floor(outs / 3)}${outs % 3 === 0 ? "" : `.${outs % 3}`}`;
+
+  const batting: CareerRow[] = bat.map((r) => ({
+    year: r.year,
+    team: r.team,
+    games: r.games,
+    faced: r.pa,
+    line: `${avg(r.h, r.ab)}（${r.ab}打数）· ${r.h}安打 ${r.hr}本 ${r.rbi}打点 ${r.sb}盗塁${r.cs}刺`,
+    sort: { games: r.games, pa: r.pa, h: r.h, hr: r.hr, rbi: r.rbi, sb: r.sb },
+  }));
+  const pitching: CareerRow[] = pit.map((r) => ({
+    year: r.year,
+    team: r.team,
+    games: r.games,
+    faced: r.bf,
+    line: `${era(r.er, r.outs)}（${ip(r.outs)}回）· ${r.w}勝${r.l}敗 ${r.sv}S ${r.hld}H ${r.so}奪三振`,
+    sort: { games: r.games, outs: r.outs, w: r.w, so: r.so },
+  }));
+
+  /**
+   * ⚠**합계는 파서 쪽 한 벌을 쓴다**(M1). 여기에 reduce 를 또 쓰고 있었고,
+   * 시험이 붙은 쪽(`careerTotal`)은 **아무도 안 부르는 죽은 코드**였다 —
+   * 즉 배포되는 계산에는 시험이 없고, 시험이 있는 계산은 배포되지 않았다
+   * (2026-08-17 이중 검토 지적).
+   */
+  const sum = <T,>(rows: readonly T[], key: keyof T): number =>
+    Number(careerTotal(rows, [key])[String(key)] ?? 0);
+
+  // ⚠**우리가 더한다.** NPB 는 합계 행을 싣지 않는다 — 남의 계산값이 아니다
+  const bTotal = bat.length === 0
+    ? null
+    : `${sum(bat, "games")}試合 ${sum(bat, "pa")}打席 · ` +
+      `${avg(sum(bat, "h"), sum(bat, "ab"))}（${sum(bat, "ab")}打数）· ` +
+      `${sum(bat, "h")}安打 ${sum(bat, "hr")}本 ${sum(bat, "rbi")}打点 ` +
+      `${sum(bat, "sb")}盗塁${sum(bat, "cs")}刺`;
+  const pTotal = pit.length === 0
+    ? null
+    : `${sum(pit, "games")}登板 ${ip(sum(pit, "outs"))}回 · ` +
+      `${era(sum(pit, "er"), sum(pit, "outs"))} · ` +
+      `${sum(pit, "w")}勝${sum(pit, "l")}敗 ${sum(pit, "sv")}S ` +
+      `${sum(pit, "hld")}H ${sum(pit, "so")}奪三振`;
+
+  const years = [...bat.map((x) => x.year), ...pit.map((x) => x.year)];
+  return {
+    batting,
+    pitching,
+    // ⚠**행 수가 아니라 연도 수다** — 이적하면 한 해에 여러 줄이다
+    // ⚠**행 수가 아니라 연도 수다**(이적하면 한 해에 여러 줄). 파서 쪽 한 벌을 쓴다(M1)
+    battingSeasons: seasonsPlayed(bat),
+    pitchingSeasons: seasonsPlayed(pit),
+    battingTotal: bTotal,
+    pitchingTotal: pTotal,
+    from: years.length === 0 ? null : Math.min(...years),
+    to: years.length === 0 ? null : Math.max(...years),
+    source: bat[0]?.source ?? pit[0]?.source ?? "選手ページ",
+  };
+}
 
 function teamPages(
   db: Db,
@@ -3235,6 +3455,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       birthDate: profile?.birthDate ?? null,
       physique: profile?.physique ?? null,
       draft: profile?.draft ?? null,
+      career: careerOf(db, playerId),
       uniformNumber: profile?.uniformNumber ?? null,
       role,
       batting: battingData,

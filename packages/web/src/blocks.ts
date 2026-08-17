@@ -20,6 +20,7 @@ export type BlockId =
   | "timesthrough"
   | "streak"
   | "matchup"
+  | "career"
   | "ranking";
 
 export interface BlockMeta {
@@ -40,6 +41,11 @@ export const BLOCKS: readonly BlockMeta[] = [
   { id: "timesthrough", name: "打順一巡", desc: "投手のみ。NPB全体の巡目別成績（この選手の記録ではありません）" },
   { id: "streak", name: "連続記録", desc: "打者のみ。連続安打・連続出塁" },
   { id: "matchup", name: "対戦成績", desc: "投手別。打席数の多い順" },
+  /**
+   * ⚠**출처가 다른 유일한 블록이다**(M4). 다른 블록은 우리가 경기에서 쌓은 값이고,
+   * 이것은 **NPB 공표치**다 — 화면이 그렇게 말한다.
+   */
+  { id: "career", name: "通算成績", desc: "デビューからの年度別と、その合計（出典：選手ページ）" },
   { id: "ranking", name: "リーグ順位", desc: "指標を切り替えて上位と自分の位置" },
 ];
 
@@ -54,7 +60,7 @@ export interface PresetMeta {
 export const PRESETS: readonly PresetMeta[] = [
   // `rolesplit`은 타자 페이지에서 걸러진다(`presetsFor`) — 투수에게만 기본으로 켜진다
   { id: "standard", name: "標準", blocks: ["standard", "rolesplit", "advanced", "splits", "ranking"] },
-  { id: "record", name: "記録", blocks: ["standard", "streak", "scorebook", "splits", "matchup"] },
+  { id: "record", name: "記録", blocks: ["standard", "career", "streak", "scorebook", "splits", "matchup"] },
   { id: "analysis", name: "分析", blocks: ["advanced", "rolesplit", "situation", "timesthrough", "splits", "matchup", "ranking"] },
   { id: "simple", name: "簡易", blocks: ["standard"] },
 ];
@@ -83,6 +89,7 @@ const PITCHER_BLOCKS = new Set<BlockId>([
   "splits",
   "scorebook",
   "matchup",
+  "career",
   "ranking",
 ]);
 
@@ -101,6 +108,7 @@ const BATTER_BLOCKS = new Set<BlockId>([
   "scorebook",
   "situation",
   "matchup",
+  "career",
   "ranking",
 ]);
 

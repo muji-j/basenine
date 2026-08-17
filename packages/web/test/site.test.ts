@@ -21,6 +21,7 @@ function siteData(over: Partial<SiteData> = {}): SiteData {
       leagues: [],
       week: null,
       paces: [],
+      milestones: [],
       streaks: [],
       hasPostseason: false,
     },

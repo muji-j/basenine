@@ -327,3 +327,52 @@ test("새로 넣은 모션도 감소 설정에서 꺼진다 — 예외를 만들
 test("검색 결과의 성적 줄에 자리가 있다 — 분모까지 들어가므로 한 줄을 통째로 쓴다", () => {
   assert.match(CSS, /\.qhits \.hs\{flex-basis:100%/);
 });
+
+/**
+ * ⚠**숨은 탭의 글자를 브라우저 내 찾기(Ctrl+F)가 찾을 수 있어야 한다.**
+ *
+ * 구단 페이지는 打者 46행 + 投手 30행이 탭 뒤에 있고, 순위 화면은 숨은 패널이 80개다.
+ * 그 상태에서 선수 이름을 Ctrl+F 로 찾으면 **아무것도 안 나온다** — 탭으로 나눈 대가였다.
+ * `hidden="until-found"` 는 그 글자를 찾게 하고, 찾으면 브라우저가 스스로 펼친다.
+ *
+ * ⚠**`display:none` 이면 동작하지 않는다.** 그 상태는 `content-visibility:hidden` 이어야 한다.
+ * ⚠**boolean `hidden` 은 지금까지대로 `display:none`** 이다 — 두 값을 구별해서 쓴다.
+ * ⚠**모르는 브라우저는 이 값을 그냥 hidden 으로 읽는다** — 지금까지와 같고 잃는 것이 없다(§0-1).
+ */
+test("⚠until-found 로 닫힌 패널은 화면 밖이되 찾기의 대상이다", () => {
+  const nc = CSS.replace(/\/\*[\s\S]*?\*\//g, " ");
+  // boolean hidden 은 그대로 display:none
+  assert.match(nc, /\[data-panelgroup\]\[hidden\]\{display:none\}/, "boolean hidden 이 안 숨는다");
+  // until-found 는 렌더 트리에 남아야 한다
+  assert.match(
+    nc,
+    /\[data-panelgroup\]\[hidden="until-found"\]\{[^}]*content-visibility:hidden/,
+    "until-found 가 content-visibility:hidden 이 아니다",
+  );
+  assert.ok(
+    !/\[data-panelgroup\]\[hidden="until-found"\]\{[^}]*display:none/.test(nc),
+    "until-found 를 display:none 으로 숨겼다 — 그러면 찾기가 못 찾는다",
+  );
+});
+
+/**
+ * ⚠**찾기로 펼쳐졌는데 탭줄이 그대로면 화면이 자기 자신과 모순된다.**
+ * 「投手 탭이 눌려 있는데 화면은 打者」가 된다. `beforematch` 로 탭도 함께 옮긴다.
+ * ⚠**저장하지 않는다** — 찾다가 스친 것을 「이 사람이 고른 탭」으로 기억하면 안 된다.
+ */
+test("⚠찾기로 펼쳐지면 탭줄도 따라간다 — 저장은 하지 않는다", () => {
+  assert.match(CLIENT_JS, /addEventListener\("beforematch"/, "beforematch 를 듣지 않는다");
+  const at = CLIENT_JS.indexOf('addEventListener("beforematch"');
+  const body = CLIENT_JS.slice(at, at + 260);
+  assert.match(body, /transient\[/, "일시적인 자리에 넣지 않는다");
+  assert.ok(!body.includes("save("), "찾다가 스친 탭을 저장했다");
+});
+
+/**
+ * ⚠**지원 여부를 사용자 에이전트 문자열로 가르지 않는다.** 반드시 틀린다 —
+ * 기능이 있는지를 직접 물어야 한다.
+ */
+test("⚠until-found 지원을 기능으로 판정한다 — UA 문자열로 가르지 않는다", () => {
+  assert.match(CLIENT_JS, /onbeforematch" in /, "기능 판정이 없다");
+  assert.ok(!/navigator\.userAgent/.test(CLIENT_JS), "UA 문자열로 갈랐다");
+});
