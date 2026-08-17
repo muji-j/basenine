@@ -109,3 +109,19 @@
 予告先発 최신 2026-08-18 · 그 날 12팀 중 발표 12팀 · 다음 경기일 2026-08-18
   予告先発 마지막 취득 2026-08-18 (0일 전)
 --- 2026-08-17T18:03:02Z ---
+file:///home/runner/work/bb-app/bb-app/scripts/freshness.ts:22
+const db = new DatabaseSync(dbPath);
+           ^
+
+Error: unable to open database file
+    at file:///home/runner/work/bb-app/bb-app/scripts/freshness.ts:22:12
+    at ModuleJob.run (node:internal/modules/esm/module_job:439:25)
+    at async node:internal/modules/esm/loader:643:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {
+  code: 'ERR_SQLITE_ERROR',
+  errcode: 14,
+  errstr: 'unable to open database file'
+}
+
+Node.js v24.19.0
+--- 2026-08-17T18:37:29Z ---
