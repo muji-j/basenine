@@ -11,8 +11,8 @@
  */
 import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
-import { avg3, fullDate, innings } from "./format.ts";
-import { note, scroller, term, valueWithDen } from "./parts.ts";
+import { NO_VALUE, avg3, fullDate, innings } from "./format.ts";
+import { columns, note, panel, scroller, tablist, term, valueWithDen } from "./parts.ts";
 import { page } from "./layout.ts";
 import type { RenderContext } from "./pages.ts";
 import { dayHref } from "./today-page.ts";
@@ -117,6 +117,26 @@ export function teamPath(code: string): string {
   return `teams/${code}.html`;
 }
 
+/**
+ * 탭 그룹 이름.
+ *
+ * ⚠**「화면마다 다른 이름」이 아니다.** 처음 그렇게 적었는데 `parts.ts`의 `tablist`가
+ * 정반대를 기능으로 문서화하고 있다 — **같은 그룹을 쓰는 탭줄은 함께 움직인다**.
+ * 순위표가 두 리그 구획에서 같은 그룹을 공유하는 것이 그 예다.
+ * 진짜 규칙은 **뜻이 다른 탭줄에 같은 이름을 주지 마라**이다(2026-08-17 이중 검토).
+ *
+ * ⚠**선택은 그룹 이름 하나로 localStorage에 남는다**(`state.tabs[group]`).
+ * 즉 이 이름이 **12구단 × 전 시즌의 구단 페이지 전부에서 공유**된다 —
+ * 阪神에서 「投手」를 고르면 巨人 페이지도 「投手」로 열린다. **의도한 동작이다**:
+ * 구단을 옮겨 다니며 같은 항목을 비교하는 것이 이 화면의 주 용법이다.
+ *
+ * 충돌 검사(2026-08-17 실측): 쓰이는 그룹 이름은
+ * cmptoday · picktoday · starters · splits · pranking · rankleague · rankcat ·
+ * ranktype · rankmetric · hicat-* · himetric-* · matchupMin · post · team — 겹침 0건.
+ * (`ranktype`의 **패널 키**가 `"team"`이지만 키는 그룹 안으로만 스코프된다.)
+ */
+const TEAM_TABS = "team";
+
 function wlt(x: { w: number; l: number; t: number }): string {
   return `${x.w}-${x.l}-${x.t}`;
 }
@@ -205,20 +225,43 @@ export function renderTeamPage(d: TeamPageData, ctx: RenderContext): string {
   </div>
 </header>
 
-<section class="block" id="b-teamsum">
+<!-- ⚠**세로로 너무 길었다**(2026-08-17 유저 지적). 6구획이 한 줄로 이어져 있었고
+     打者 46행 + 投手 30행이 대부분이었다 — 팀 성적을 보러 온 사람이 선수 76행을 지나야
+     直近の試合에 닿았다. 세부 탭으로 나눈다.
+     ⚠**탭 줄은 구단·시즌에 상관없이 늘 네 개다.** 있다 없다 하면 같은 자리를 눌러도
+     다른 것이 열려 손이 기억한 자리가 깨진다.
+     ⚠**그 대신 「탭은 있는데 안이 비었다」가 생긴다** — 눌렀는데 아무 말도 없는 화면은
+     고장으로 읽힌다. 그래서 対戦은 비면 「対戦成績がありません」이라고 **말한다**(M12).
+     탭 안에 든 구획(月別·直近)은 예전처럼 자리를 비우는 쪽이 맞다 — 옆에 チーム成績이
+     남아 있어 화면이 통째로 비지 않기 때문이다. -->
+<nav class="rail" aria-label="表示の切り替え">${tablist(
+    TEAM_TABS,
+    [
+      { id: "sum", label: "成績" },
+      { id: "bat", label: "打者" },
+      { id: "pit", label: "投手" },
+      { id: "vs", label: "対戦" },
+    ],
+    true,
+    "球団ページの表示",
+  )}</nav>
+
+${panel(TEAM_TABS, "sum", true, html`<section class="block" id="b-teamsum">
   <h2>チーム成績<span class="qt">${d.games}試合</span></h2>
-  <dl class="row">
-    <div><dt>${term("勝率")}</dt><dd>${d.pct === null ? "—" : avg3(d.pct)}<span class="den">${d.w + d.l}試合</span></dd></div>
-    <div><dt>ゲーム差</dt><dd>${d.gamesBehind === 0 ? "—" : d.gamesBehind.toFixed(1).replace(/\.0$/, "")}</dd></div>
-    <div><dt>得点</dt><dd>${d.rf}<span class="den">${d.games}試合</span></dd></div>
-    <div><dt>失点</dt><dd>${d.ra}<span class="den">${d.games}試合</span></dd></div>
-    <div><dt>得失点差</dt><dd>${d.rf - d.ra >= 0 ? "+" : ""}${d.rf - d.ra}</dd></div>
-    <div><dt>${term("打率")}</dt><dd>${rate(d.avg, "打数", 3)}</dd></div>
-    <div><dt>${term("防御率")}</dt><dd>${rate(d.era, "回", 2)}</dd></div>
-    <div><dt>ホーム</dt><dd>${wlt(d.home)}</dd></div>
-    <div><dt>ビジター</dt><dd>${wlt(d.away)}</dd></div>
-    <div><dt>直近10試合</dt><dd>${wlt(d.last10)}</dd></div>
-  </dl>
+  ${columns(
+    html`<dt>${term("勝率")}</dt><dd>${d.pct === null ? NO_VALUE : avg3(d.pct)}<span class="den">${d.w + d.l}試合</span></dd>
+      <dt>ゲーム差</dt><dd>${d.gamesBehind === 0 ? NO_VALUE : d.gamesBehind.toFixed(1).replace(/\.0$/, "")}</dd>`,
+    html`<dt>得点</dt><dd>${d.rf}<span class="den">${d.games}試合</span></dd>
+      <dt>失点</dt><dd>${d.ra}<span class="den">${d.games}試合</span></dd>
+      <dt>得失点差</dt><dd>${d.rf - d.ra >= 0 ? "+" : ""}${d.rf - d.ra}</dd>`,
+    html`<dt>${term("打率")}</dt><dd>${rate(d.avg, "打数", 3)}</dd>
+      <dt>${term("防御率")}</dt><dd>${rate(d.era, "回", 2)}</dd>`,
+    // ⚠**승패 문자열은 수치와 다른 종류다.** 한 줄에 섞으면 자릿수가 안 맞아 표가 흔들린다 —
+    // 그래서 같은 종류끼리 한 단으로 모은다
+    html`<dt>ホーム</dt><dd>${wlt(d.home)}</dd>
+      <dt>ビジター</dt><dd>${wlt(d.away)}</dd>
+      <dt>直近10試合</dt><dd>${wlt(d.last10)}</dd>`,
+  )}
   ${note(
     // ⚠**무엇을 세고 무엇을 안 세는지 적는다**(M3의 정신)
     `勝率は 勝 ÷（勝＋敗）で、引き分けは分母に入れません（NPBの規定）。` +
@@ -235,8 +278,49 @@ ${d.months.length === 0
   ${monthBars(d.months)}
 </section>`}
 
-${d.vs.length === 0
+${d.recent.length === 0
     ? raw("")
+    : html`<section class="block" id="b-teamgames">
+  <h2>直近の試合</h2>
+  <ul class="trecent">${d.recent.map(
+      (g) => html`<li class="${g.result === "○" ? "w" : g.result === "●" ? "l" : ""}">
+    <a href="${dayHref(base, g.date, d.latestDate)}"><b>${g.result}</b><span>${fullDate(g.date)}</span>
+    <s>${g.home ? "対" : "＠"}${g.opponent}</s></a>
+  </li>`,
+    )}</ul>
+</section>`}`)}
+
+${panel(TEAM_TABS, "bat", false, html`<section class="block" id="b-teambat">
+  <h2>打者<span class="qt">${d.batters.length}人</span></h2>
+  ${batterTable(d.batters, base)}
+  ${note(
+    // ⚠**이 표는 「현재 로스터」가 아니다.** `battingByTeam`은 **그 구단에서 낸 몫**이라
+    // 시즌 도중 떠난 선수도 남는다(실측 2026-08-16: 2026년 3구단·2025년 4구단).
+    // 一覧 화면의 구단 묶음은 최신 소속 기준이라, 말하지 않으면 두 화면이 같은 로스터를
+    // 다르게 말하게 된다 — 숫자가 아니라 **무엇을 세었는지**를 적어서 맞춘다
+    "この球団で出場した記録です — シーズン途中に移籍した選手も、この球団での分だけ含みます。" +
+      "打席の多い順で、規定打席に届いていない選手は薄く表示しています — 値は小さな標本のものです。",
+  )}
+</section>`)}
+
+${panel(TEAM_TABS, "pit", false, html`<section class="block" id="b-teampit">
+  <h2>投手<span class="qt">${d.pitchers.length}人</span></h2>
+  ${pitcherTable(d.pitchers, base)}
+  ${note(
+    "この球団で登板した記録です — シーズン途中に移籍した投手も、この球団での分だけ含みます。" +
+      "投球回の多い順で、規定投球回に届いていない投手は薄く表示しています。",
+  )}
+</section>`)}
+
+${panel(TEAM_TABS, "vs", false, d.vs.length === 0
+    // ⚠**제목을 붙인다.** 이것만 h2 가 없어서 「제목 없는 괘선 상자에 회색 한 줄」이었다 —
+    // 打者·投手의 빈 상태는 제목이 무엇이 비었는지 말해 주는데 여기만 말하지 않았다.
+    // noscript 로 넷이 다 펼쳐질 때는 直近の試合 과 打者 사이에 정체불명의 한 줄이 낀다.
+    // ⚠id 는 붙이지 않는다 — `b-vs` 는 「표가 있다」는 뜻으로 쓰이고 있다(빈 표 금지 시험)
+    ? html`<section class="block">
+  <h2>対戦成績<span class="qt">レギュラーシーズン</span></h2>
+  <p class="empty">対戦成績がありません。</p>
+</section>`
     : html`<section class="block" id="b-vs">
   <h2>対戦成績<span class="qt">レギュラーシーズン</span></h2>
   <div class="scroller"><table class="vs">
@@ -255,41 +339,7 @@ ${d.vs.length === 0
     "レギュラーシーズンのみです。**引き分けは勝率の分母に入りません**（NPBの規定）。" +
       "バーは勝った試合の割合で、目盛りはありません — 正確な数は左の勝・敗・分にあります。",
   )}
-</section>`}
-
-<section class="block" id="b-teambat">
-  <h2>打者<span class="qt">${d.batters.length}人</span></h2>
-  ${batterTable(d.batters, base)}
-  ${note(
-    // ⚠**이 표는 「현재 로스터」가 아니다.** `battingByTeam`은 **그 구단에서 낸 몫**이라
-    // 시즌 도중 떠난 선수도 남는다(실측 2026-08-16: 2026년 3구단·2025년 4구단).
-    // 一覧 화면의 구단 묶음은 최신 소속 기준이라, 말하지 않으면 두 화면이 같은 로스터를
-    // 다르게 말하게 된다 — 숫자가 아니라 **무엇을 세었는지**를 적어서 맞춘다
-    "この球団で出場した記録です — シーズン途中に移籍した選手も、この球団での分だけ含みます。" +
-      "打席の多い順で、規定打席に届いていない選手は薄く表示しています — 値は小さな標本のものです。",
-  )}
-</section>
-
-<section class="block" id="b-teampit">
-  <h2>投手<span class="qt">${d.pitchers.length}人</span></h2>
-  ${pitcherTable(d.pitchers, base)}
-  ${note(
-    "この球団で登板した記録です — シーズン途中に移籍した投手も、この球団での分だけ含みます。" +
-      "投球回の多い順で、規定投球回に届いていない投手は薄く表示しています。",
-  )}
-</section>
-
-${d.recent.length === 0
-    ? raw("")
-    : html`<section class="block" id="b-teamgames">
-  <h2>直近の試合</h2>
-  <ul class="trecent">${d.recent.map(
-    (g) => html`<li class="${g.result === "○" ? "w" : g.result === "●" ? "l" : ""}">
-    <a href="${dayHref(base, g.date, d.latestDate)}"><b>${g.result}</b><span>${fullDate(g.date)}</span>
-    <s>${g.home ? "対" : "＠"}${g.opponent}</s></a>
-  </li>`,
-  )}</ul>
-</section>`}
+</section>`)}
 
 <nav class="find" aria-label="ほかのページ">
   <a href="${base}ranking.html">リーグ順位表</a> · <a href="${base}index.html">選手一覧</a> · <a href="${base}today.html">試合</a>

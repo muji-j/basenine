@@ -703,12 +703,30 @@ export function pickButton(p: MatchupPick, role: "pitcher" | "batter", team: Mat
  * 그 순간 이 기능은 없는 것과 같아진다. 대신 상자 안에서 스크롤한다.
  */
 export function pickTeam(t: MatchupTeam): RawHtml {
+  /**
+   * ⚠**기본은 접힘이다**(2026-08-17 유저 지적).
+   * 한 경기를 고르면 **구단 2개 × 投手/打者 = 네 목록**이 한꺼번에 펼쳐진다 —
+   * 고르러 온 사람이 먼저 벽을 만난다.
+   * 접어 두면 화면에는 「어느 구단의 무엇이 몇 명」만 남고, 필요한 하나만 연다.
+   *
+   * ⚠**분모를 정확히 적는다**(작업규칙 7). 처음 여기에 「한 화면에 815개」라고 썼는데
+   * **815는 문서 전체(경기 6개분)의 수**다. 경기 패널은 첫 경기만 열려 있으므로
+   * 실제로 한 번에 보이는 것은 **한 경기분**이다 — 2026-08-16 자 실측으로
+   * 対戦·比較 각각 **문서 815개 / 화면 129개 · 접히는 목록 4개**였다.
+   * 815든 129든 접을 이유는 그대로지만, 틀린 수를 근거로 남기면 다음 사람이 그걸 믿는다.
+   *
+   * ⚠**`details` 를 쓴다 — 스크립트가 죽어도 열린다**(§0-1).
+   * JS 로 접으면 스크립트가 없는 브라우저에서 **영영 닫힌 채**가 되어 이 화면이 통째로 죽는다.
+   * ⚠**사람 수를 요약에 남긴다.** 접힌 채로도 「28人」이 보여야 열지 말지 판단할 수 있다.
+   */
   const list = (label: string, role: "pitcher" | "batter", picks: MatchupPick[]): RawHtml =>
     picks.length === 0
       ? html`<p class="picklab">${label}</p><p class="empty">今季の記録がありません。</p>`
-      : html`<p class="picklab">${label}<s>${picks.length}人</s></p>
+      : html`<details class="pickfold">
+        <summary class="picklab">${label}<s>${picks.length}人</s></summary>
         <div class="picklist" role="toolbar" aria-orientation="horizontal"
-          aria-label="${t.shortName}の${label}（左右キーで移動）">${picks.map((p) => pickButton(p, role, t))}</div>`;
+          aria-label="${t.shortName}の${label}（左右キーで移動）">${picks.map((p) => pickButton(p, role, t))}</div>
+      </details>`;
   return html`<div class="pickteam" style="--chip:${t.color.base};--chip-ink:${t.color.ink}">
   <h3 class="picktm"><i></i>${t.shortName}</h3>
   ${list("投手", "pitcher", t.pitchers)}

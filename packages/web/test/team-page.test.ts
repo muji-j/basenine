@@ -209,3 +209,61 @@ test("상대가 없으면 표를 만들지 않는다 — 빈 표는 고장으로
   const out = renderTeamPage(data({ vs: [] }), context());
   assert.ok(!out.includes(`id="b-vs"`), "상대가 없는데 빈 표를 냈다");
 });
+
+/**
+ * ⚠**세로로 너무 길었다**(2026-08-17 유저 지적). 한 줄로 이어진 6구획 중
+ * 打者·投手 표가 76행을 먹어, 팀 성적을 보러 온 사람이 그걸 다 지나야 直近の試合에 닿았다.
+ *
+ * ⚠**탭 줄은 늘 네 개다.** 구단·시즌에 따라 탭이 생겼다 없어지면 같은 자리를 눌러도
+ * 다른 것이 열린다. 그래서 「기록이 없으면 탭도 없앤다」로 고치지 마라 —
+ * 없는 것은 **탭 안에서 말한다**(아래 시험).
+ */
+test("⚠구단 페이지는 네 탭으로 갈린다 — 한 화면에 76행을 쌓지 않는다", () => {
+  const out = renderTeamPage(data(), context());
+  const tabs = [...out.matchAll(/role="tab"[^>]*>([^<]+)</g)].map((m) => m[1]);
+  assert.deepEqual(tabs, ["成績", "打者", "投手", "対戦"], "탭 구성이 달라졌다");
+  // 처음 열리는 것은 하나뿐이다 — 두 개가 열려 있으면 나눈 뜻이 없다
+  assert.equal((out.match(/role="tabpanel"(?![^>]*hidden)/g) ?? []).length, 1, "펼쳐진 패널이 하나가 아니다");
+  // 무거운 두 표는 각각 다른 패널에 들어가 있다
+  const panelOf = (id: string): number => {
+    const at = out.indexOf(`id="b-${id}"`);
+    assert.notEqual(at, -1, `${id} 구획이 없다`);
+    return out.lastIndexOf('role="tabpanel"', at);
+  };
+  assert.notEqual(panelOf("teambat"), panelOf("teampit"), "打者와 投手가 같은 패널에 있다");
+  assert.notEqual(panelOf("teamsum"), panelOf("teambat"), "チーム成績이 打者표와 같은 패널에 있다");
+  // 直近の試合은 選手 표 뒤가 아니라 成績 쪽으로 옮겼다
+  assert.equal(panelOf("teamgames"), panelOf("teamsum"), "直近の試合이 成績 탭에 없다");
+});
+
+/**
+ * ⚠**탭이 있는데 안이 비면 고장으로 읽힌다.** 예전에는 対戦 구획을 통째로 빼면 그만이었지만,
+ * 탭으로 나눈 뒤에는 **누를 자리는 남고 안만 빈다.** 그래서 말로 채운다(M12).
+ */
+test("⚠対戦이 비어도 탭은 남고, 비었다고 화면이 말한다(M12)", () => {
+  const out = renderTeamPage(data({ vs: [] }), context());
+  assert.match(out, /role="tab"[^>]*>対戦</, "기록이 없다고 탭까지 사라졌다");
+  // ⚠**요소로 잰다.** `includes("対戦成績がありません")` 로 쟀더니 **소스 주석의 같은 글자**에
+  // 걸려 뮤턴트를 놓쳤다(2026-08-17). 화면에 보이는 것은 마크업이지 주석이 아니다
+  assert.match(out, /<p class="empty">対戦成績がありません。<\/p>/, "눌러도 아무 말이 없다");
+});
+
+/**
+ * ⚠**「보기 힘들고 난잡하다」**(2026-08-17 유저 지적)의 실체는 배치가 아니라 **없는 CSS**였다.
+ * 10개 항목을 `<dl class="row">` 로 감쌌는데 `.row` 규칙이 **한 줄도 없어서**,
+ * `dl{display:grid;grid-template-columns:auto 1fr}` 이 그대로 걸려
+ * 10개 묶음이 좁은 칸·넓은 칸에 번갈아 떨어졌다.
+ * → 이미 있는 `columns()` 로 바꾼다. **뜻이 같은 것끼리 한 단**에 모은다.
+ */
+test("⚠チーム成績은 뜻이 같은 것끼리 단으로 묶는다 — 규칙 없는 class 에 기대지 않는다", () => {
+  const out = renderTeamPage(data(), context());
+  assert.ok(!out.includes('class="row"'), "CSS 규칙이 없는 class 로 되돌아갔다");
+  const sum = out.slice(out.indexOf('id="b-teamsum"'), out.indexOf("</section>", out.indexOf('id="b-teamsum"')));
+  assert.equal((sum.match(/<dl>/g) ?? []).length, 4, "단이 네 개가 아니다");
+  // 得点·失点·得失点差는 한 단 안에 함께 있다 — 흩어지면 비교가 안 된다
+  const cols = sum.split("<dl>").slice(1);
+  const runs = cols.find((c) => c.includes("得点"));
+  assert.ok(runs !== undefined && runs.includes("失点") && runs.includes("得失点差"), "득점 계열이 흩어졌다");
+  // 단으로 옮기면서 분모를 흘리지 않았다(M2) — 58-46-1 이므로 승률의 분모는 104(105 아님)
+  assert.match(sum, /勝率<\/dt><dd>[.\d]+<span class="den">104試合<\/span>/, "승률에 분모가 없다");
+});
