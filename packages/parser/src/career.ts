@@ -270,7 +270,7 @@ export function parseCareer(html: string): Career {
 }
 
 /** 통산 합계. ⚠**우리가 더한다** — NPB 는 합계 행을 싣지 않는다 */
-export function careerTotal<T extends Record<string, unknown>>(
+export function careerTotal<T>(
   rows: readonly T[],
   numeric: readonly (keyof T)[],
 ): Record<string, number> {
