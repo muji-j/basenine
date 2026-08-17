@@ -285,7 +285,14 @@ a{color:inherit}
 .block>h2 .sw{display:flex;gap:4px;margin-left:auto;flex-wrap:wrap}
 .block>h2 .qt{letter-spacing:0;font-weight:400;color:var(--tx-3)}
 [data-panelgroup]{animation:fade var(--fast) var(--ease)}
+/* ⚠**until-found 는 display:none 이면 동작하지 않는다.**
+   브라우저 내 찾기(Ctrl+F)가 숨은 패널의 글자를 찾아 **스스로 펼치게** 하려면
+   그 상태가 content-visibility:hidden 이어야 한다 — 렌더 트리에는 있고 화면에는 없는 상태다.
+   display:none 은 그 기회를 아예 없앤다.
+   ⚠**boolean hidden 은 지금까지대로 display:none** 이다. 두 값을 구별해서 쓴다.
+   ⚠**이 규칙은 바깥 패널에만 넣는다** — 레일 안의 하위 패널은 접힌 채로 두는 것이 맞다 */
 [data-panelgroup][hidden]{display:none}
+[data-panelgroup][hidden="until-found"]{display:block;content-visibility:hidden}
 /* ⚠**패널에만 준다.** 레일 안의 하위 탭줄도 같은 그룹에 속하는데, 탭줄이 미끄러지면 조작이 흔들린다 */
 [data-panelgroup][role="tabpanel"][data-slide="next"]{animation:slideNext var(--mid) var(--ease)}
 [data-panelgroup][role="tabpanel"][data-slide="prev"]{animation:slidePrev var(--mid) var(--ease)}
@@ -1182,6 +1189,15 @@ const go=(url)=>{LOC.href=url};
 const KEY="npb-meikan-layout";
 const load=()=>{try{return JSON.parse(localStorage.getItem(KEY)||"null")}catch(e){return null}};
 const save=(s)=>{try{localStorage.setItem(KEY,JSON.stringify(s))}catch(e){}};
+/* ⚠**「until-found 를 아는 브라우저인가」를 기능으로 묻는다.** 사용자 에이전트 문자열로
+   가르면 반드시 틀린다. hidden 프로퍼티가 문자열을 받아들이는지로 판정한다. */
+const SUPPORTS_UNTIL_FOUND=(()=>{
+  try{
+    const d=doc.createElement("div");
+    d.setAttribute("hidden","until-found");
+    return d.getAttribute("hidden")==="until-found"&&"onbeforematch" in d;
+  }catch(e){return false}
+})();
 const BLOCKS=window.__BLOCKS__||[];
 /* 용어집. 서버와 같은 정의 한 벌을 쓴다(M1) */
 const GLOSSARY=__GLOSSARY__;
@@ -1272,7 +1288,16 @@ function showTabs(){
     lastAt[g]=at;
     // "all"은 특별 취급 — 골라 보는 화면에서 「전부」를 뺏지 않는다
     $$('[data-panelgroup="'+g+'"]').forEach(p=>{
-      p.hidden=cur!=="all"&&p.dataset.panelkey!==cur;
+      /* ⚠**닫을 때는 "until-found" 로 닫는다.** 그래야 Ctrl+F 가 그 안의 글자를 찾고,
+         찾으면 브라우저가 스스로 펼친다(아래 beforematch 가 탭줄도 맞춘다).
+         지원하지 않는 브라우저는 이 값을 **그냥 hidden 으로 읽으므로** 지금까지와 같다 —
+         잃는 것이 없다(§0-1). */
+      const shut=cur!=="all"&&p.dataset.panelkey!==cur;
+      /* ⚠**프로퍼티를 먼저 둔다.** 실제 DOM 은 hidden 프로퍼티와 속성이 이어져 있지만,
+         setAttribute 만 쓰면 프로퍼티를 읽는 코드·시험이 옛 값을 본다.
+         지원하는 브라우저에서만 속성값을 until-found 로 덮는다 — 프로퍼티는 true 그대로다. */
+      p.hidden=shut;
+      if(shut&&SUPPORTS_UNTIL_FOUND&&p.setAttribute)p.setAttribute("hidden","until-found");
       if(!p.hidden)slide(p,dir);
     });
     $$('[data-tabgroup="'+g+'"] [data-tab]').forEach(b=>{
@@ -1704,6 +1729,20 @@ $$("[data-stable]").forEach(box=>{
       if(state.order.indexOf("matchup")<0)state.order=state.order.concat(["matchup"]);
     }
   }
+});
+
+/* ── 찾기로 펼쳐진 패널의 탭을 맞춘다 ──
+
+   ⚠**브라우저가 패널을 펼쳐도 탭줄은 그대로다.** 그러면 「投手 탭이 눌려 있는데
+   화면은 打者」가 되어 화면이 자기 자신과 모순된다. 찾기로 열렸을 때 탭도 함께 옮긴다.
+   ⚠**저장하지 않는다** — 찾다가 스친 것을 「이 사람이 고른 탭」으로 기억하면 안 된다. */
+$$("[data-panelgroup]").forEach(p=>{
+  p.addEventListener("beforematch",()=>{
+    const g=p.dataset.panelgroup,k=p.dataset.panelkey;
+    if(!g||!k)return;
+    transient[g]=k;
+    showTabs();
+  });
 });
 
 /* ── 순위표의 「規定到達のみ / 全員」 ──
