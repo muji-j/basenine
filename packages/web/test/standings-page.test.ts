@@ -11,7 +11,8 @@ import { renderRankingPage } from "../src/pages.ts";
 import type { LeagueSection, RankingPageData, StandingRow } from "../src/pages.ts";
 import { colorOf } from "@bb-app/domain";
 import { context, rankingPanel } from "./fixtures.ts";
-import type { RankingPanel } from "../src/player-page.ts";
+import type { RankingPanel, RankingRow } from "../src/player-page.ts";
+import { rankingRowsFor } from "../src/query.ts";
 
 function row(over: Partial<StandingRow> = {}): StandingRow {
   return {
@@ -283,4 +284,68 @@ test("⚠자격 기준이 없는 지표에는 전환 버튼을 두지 않는다 
   };
   const out = withPanel(noQual);
   assert.ok(!out.includes('data-rankonly="hr"'), "기준이 없는데 전환 버튼을 냈다");
+});
+
+/**
+ * ⚠**「全員」으로 바꿨을 때 표가 순위 순으로 읽혀야 한다.**
+ *
+ * 두 결함이 겹쳐 있었다(2026-08-17 1차 검토 · 실측으로 재현):
+ * 1. **상위 N을 먼저 자른 뒤** 그 안에서 「전원 상위 N」을 뽑고 있었다 —
+ *    그래서 전원 순위 1~10위가 애초에 실리지 않았다(打率 패널이 **11위부터** 시작했다).
+ * 2. 규정 도달자를 앞에 몰고 미달자를 뒤에 붙여서, 「全員」이
+ *    11, 18, 19, … 87, 12, 13 순으로 읽혔다 — **순위표가 순위 순이 아니었다.**
+ *
+ * 고침: 자르기 **전에** 합집합을 고르고, 최종 정렬을 **전원 순위** 기준으로 둔다.
+ * 규정 도달자만 남겨도 그 부분집합의 상대 순서는 그대로다(두 순위가 같은 값을
+ * 같은 규칙으로 줄 세운 것이라 어긋날 수 없다).
+ *
+ * ⚠**여기서 재는 것은 고르는 함수 자체다.** 렌더러는 이제 받은 순서대로 그리기만 하므로,
+ * 렌더 결과를 재면 픽스처가 정한 순서를 확인하는 꼴이 된다(한 번 그렇게 썼다가 알아챘다).
+ */
+function rankRow(over: Partial<RankingRow> & { playerId: string }): RankingRow {
+  return {
+    rank: null, rankAll: null, name: over.playerId, teamCode: "t",
+    value: { value: 1, denominator: 100 }, isMe: false, ...over,
+  };
+}
+
+test("⚠고른 행이 전원 순위 오름차순이고, 규정 도달자만 남겨도 오름차순이다", () => {
+  // 규정 도달자 20명(전원 순위는 3부터) + 미달자 2명이 전원 1·2위
+  const rows: RankingRow[] = [
+    ...Array.from({ length: 20 }, (_, i) => rankRow({ playerId: `q${i}`, rank: i + 1, rankAll: i + 3 })),
+    rankRow({ playerId: "sub1", rankAll: 1 }),
+    rankRow({ playerId: "sub2", rankAll: 2 }),
+  ];
+  const got = rankingRowsFor(rows, 5);
+  assert.ok(got.length > 5, `${got.length}행뿐이다 — 두 세계에서 각각 뽑지 않았다`);
+
+  const all = got.map((r) => r.rankAll ?? Number.MAX_SAFE_INTEGER);
+  assert.deepEqual([...all].sort((a, b) => a - b), all, "전원 순위가 오름차순이 아니다");
+  assert.equal(all[0], 1, "전원 1위가 안 실렸다 — 자르기 전에 고르지 않았다");
+
+  const q = got.filter((r) => r.rank !== null).map((r) => r.rank ?? 0);
+  assert.deepEqual([...q].sort((a, b) => a - b), q, "규정 순위가 오름차순이 아니다");
+  assert.equal(q[0], 1, "규정 1위가 안 실렸다");
+  assert.equal(q.length, 5, "규정 도달자를 상위 5명으로 자르지 않았다");
+});
+
+/** ⚠**값이 없는 지표는 예전대로 앞에서부터 자른다** — 「없음」 행이라도 보여야 한다(M11) */
+test("값이 하나도 없는 지표는 행을 잃지 않는다", () => {
+  const rows: RankingRow[] = Array.from({ length: 4 }, (_, i) => rankRow({ playerId: `n${i}` }));
+  assert.equal(rankingRowsFor(rows, 3).length, 3);
+});
+
+/**
+ * ⚠**「該当 N人」은 자르기 전의 수다**(작업규칙 7). 자른 뒤의 수를 쓰면
+ * 「上位30人のみ表示（該当 30人）」처럼 **자른 적 없는 것처럼** 보인다.
+ */
+test("⚠「該当 N人」이 자르기 전의 규정 도달자 수다", () => {
+  const base = rankingPanel();
+  const p: RankingPanel = {
+    ...base,
+    rows: base.rows.map((r, i) => ({ ...r, rank: i + 1, rankAll: i + 1 })),
+    qualifiedCount: 137,
+    allCount: 240,
+  };
+  assert.match(withPanel(p), /該当 137人/, "자르기 전 수가 아니다");
 });

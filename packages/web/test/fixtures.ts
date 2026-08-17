@@ -134,6 +134,8 @@ export function rankingPanel(over: Partial<RankingPanel> = {}): RankingPanel {
     unit: "打席",
     denAsInnings: false,
     qualifier: "規定打席 332 に達した選手だけに順位がつきます。",
+    qualifiedCount: 10,
+    allCount: 10,
     rows: Array.from({ length: 10 }, (_, i) => ({
       rank: i + 1,
       rankAll: i + 1,

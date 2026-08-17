@@ -28,6 +28,17 @@ import { paValue, stateKey } from "./run-expectancy.ts";
 export interface SrcEntry {
   playerId: string;
   displayName: string;
+  /**
+   * 그 기록을 낸 **구단**.
+   *
+   * ⚠**시즌 도중 이적하면 선수 하나가 여러 줄이 된다** — 구단 페이지가 「이 구단에서 낸 몫」만
+   * 실으려면 이 갈래가 있어야 한다. 처음에는 선수 ID 하나로만 묶었는데, 그러면
+   * **같은 SRC 가 두 구단 페이지에 그대로 실렸다**(실측 2026: 선수 23125136 이 DeNA 105타석
+   * 페이지와 ソフトバンク 101타석 페이지에 **둘 다 13.31**). 같은 행 안에서 打席 는 팀 몫이고
+   * SRC 는 시즌 합계라 **분모가 두 종류**가 됐다(2026-08-17 2차 검토 지적).
+   * ⚠**순위는 시즌 합계를 써야 한다** — 부르는 쪽이 선수 단위로 더한다(M1: 여기서 두 벌 만들지 않는다).
+   */
+  teamCode: string;
   /** 상황득점공헌 합계. 평균 대비 득점 */
   src: number;
   /** 계산에 쓰인 타석 수. **분모다**(M2) */
@@ -41,7 +52,8 @@ export interface SrcEntry {
 const SQL = `
 SELECT e.game_id AS gameId, e.inning AS inning, e.half AS half, e.seq AS seq,
        e.bases AS bases, e.outs_before AS outs, e.runs_scored AS runs,
-       e.batter_id AS batterId, b.display_name AS batterName
+       e.batter_id AS batterId, b.display_name AS batterName,
+       (CASE e.half WHEN 'top' THEN g.away_code ELSE g.home_code END) AS teamCode
 FROM pa_event e
 JOIN game g ON g.game_id = e.game_id
 JOIN player b ON b.player_id = e.batter_id
@@ -95,8 +107,11 @@ export function computeSrc(
     runs: number;
     batterId: string;
     batterName: string;
+    teamCode: string;
   }[];
 
+  // ⚠**키가 「선수」가 아니라 「선수 × 구단」이다.** 이적 선수를 한 줄로 묶으면
+  //   구단 페이지가 남의 팀 몫까지 싣는다(2026-08-17 2차 검토 지적)
   const acc = new Map<string, SrcEntry>();
 
   for (let i = 0; i < rows.length; i += 1) {
@@ -115,17 +130,19 @@ export function computeSrc(
       cur.runs,
     );
 
-    let entry = acc.get(cur.batterId);
+    const key = `${cur.batterId}|${cur.teamCode}`;
+    let entry = acc.get(key);
     if (entry === undefined) {
       entry = {
         playerId: cur.batterId,
         displayName: cur.batterName,
+        teamCode: cur.teamCode,
         src: 0,
         pa: 0,
         skipped: 0,
         srcPer600: null,
       };
-      acc.set(cur.batterId, entry);
+      acc.set(key, entry);
     }
 
     if (value === null) {
@@ -175,6 +192,17 @@ export function computeSrc(
 export interface SrpEntry {
   playerId: string;
   displayName: string;
+  /**
+   * 그 기록을 낸 **구단**.
+   *
+   * ⚠**시즌 도중 이적하면 선수 하나가 여러 줄이 된다** — 구단 페이지가 「이 구단에서 낸 몫」만
+   * 실으려면 이 갈래가 있어야 한다. 처음에는 선수 ID 하나로만 묶었는데, 그러면
+   * **같은 SRC 가 두 구단 페이지에 그대로 실렸다**(실측 2026: 선수 23125136 이 DeNA 105타석
+   * 페이지와 ソフトバンク 101타석 페이지에 **둘 다 13.31**). 같은 행 안에서 打席 는 팀 몫이고
+   * SRC 는 시즌 합계라 **분모가 두 종류**가 됐다(2026-08-17 2차 검토 지적).
+   * ⚠**순위는 시즌 합계를 써야 한다** — 부르는 쪽이 선수 단위로 더한다(M1: 여기서 두 벌 만들지 않는다).
+   */
+  teamCode: string;
   /** 상황실점억제 합계. 평균 대비 **막아낸** 득점 */
   srp: number;
   /** 계산에 쓰인 상대 타자 수. **분모다**(M2) */
@@ -190,7 +218,8 @@ export interface SrpEntry {
 const SRP_SQL = `
 SELECT e.game_id AS gameId, e.inning AS inning, e.half AS half, e.seq AS seq,
        e.bases AS bases, e.outs_before AS outs, e.runs_scored AS runs,
-       e.pitcher_id AS pitcherId, p.display_name AS pitcherName
+       e.pitcher_id AS pitcherId, p.display_name AS pitcherName,
+       (CASE e.half WHEN 'top' THEN g.home_code ELSE g.away_code END) AS teamCode
 FROM pa_event e
 JOIN game g ON g.game_id = e.game_id
 JOIN player p ON p.player_id = e.pitcher_id
@@ -203,13 +232,15 @@ ORDER BY e.game_id, e.inning, e.half, e.seq
 
 /** 9이닝 환산에 쓸 아웃 수. **타석 로그에서 세지 않는다** — 투수표가 이미 정확히 갖고 있다 */
 const SRP_OUTS_SQL = `
-SELECT t.player_id AS pitcherId, SUM(t.outs) AS outs
+SELECT t.player_id AS pitcherId,
+       (CASE t.side WHEN 'away' THEN g.away_code ELSE g.home_code END) AS teamCode,
+       SUM(t.outs) AS outs
 FROM pitching_line t
 JOIN game g ON g.game_id = t.game_id
 WHERE g.season = ? AND g.status = 'played' AND g.competition = ?
-  AND g.game_date <= ?
+  AND g.game_date <= ? AND g.game_date >= ?
   AND (CASE t.side WHEN 'away' THEN g.away_code ELSE g.home_code END) IN (SELECT code FROM league_team)
-GROUP BY t.player_id
+GROUP BY t.player_id, teamCode
 `;
 
 /**
@@ -239,14 +270,22 @@ export function computeSrp(
       runs: number;
       pitcherId: string;
       pitcherName: string;
+      teamCode: string;
     }[],
-    outsRows: db.raw.prepare(SRP_OUTS_SQL).all(re.season, competition, through) as {
+    /* ⚠**아웃도 같은 기간이어야 한다.** 처음에 여기만 from 을 안 넘겼는데,
+         그러면 srp/bf 는 그 주 것이고 outs 는 시즌 누적이라 srpPer9 가
+         「한 주의 SRP ÷ 시즌 아웃」이 된다 — 화면에는 안 나오지만 공개 함수라
+         다음 호출자가 조용히 틀린 수를 쓴다(2026-08-17 1차 검토 지적) */
+    outsRows: db.raw.prepare(SRP_OUTS_SQL).all(re.season, competition, through, from) as {
       pitcherId: string;
+      teamCode: string;
       outs: number;
     }[],
   }));
 
-  const outsBy = new Map(outsRows.map((r) => [r.pitcherId, r.outs]));
+  // ⚠**아웃도 「선수 × 구단」이다** — 이적 투수의 아웃을 한 팀에 몰아 주면
+  //   그 팀 페이지의 9이닝 환산이 부풀거나 줄어든다
+  const outsBy = new Map(outsRows.map((r) => [`${r.pitcherId}|${r.teamCode}`, r.outs]));
   const acc = new Map<string, SrpEntry>();
 
   for (let i = 0; i < rows.length; i += 1) {
@@ -266,18 +305,20 @@ export function computeSrp(
       cur.runs,
     );
 
-    let entry = acc.get(cur.pitcherId);
+    const key = cur.pitcherId + "|" + cur.teamCode;
+    let entry = acc.get(key);
     if (entry === undefined) {
       entry = {
         playerId: cur.pitcherId,
         displayName: cur.pitcherName,
+        teamCode: cur.teamCode,
         srp: 0,
         bf: 0,
         skipped: 0,
-        outs: outsBy.get(cur.pitcherId) ?? 0,
+        outs: outsBy.get(key) ?? 0,
         srpPer9: null,
       };
-      acc.set(cur.pitcherId, entry);
+      acc.set(key, entry);
     }
 
     if (value === null) {

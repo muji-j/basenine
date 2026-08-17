@@ -646,7 +646,9 @@ function pitcherRankings(
  * 상위 10명만 자르면 그 답이 사라진다.
  */
 export function panelsForPlayer(
-  rankings: readonly RankingPanel[],
+  // ⚠**총수 두 개는 여기서 만든다.** 부르는 쪽(MetricRanking)은 그 값을 갖고 있지 않고,
+  // 선수 페이지의 순위 블록에는 「規定到達のみ」 전환이 없어서 화면에도 안 쓰인다
+  rankings: readonly Omit<RankingPanel, "qualifiedCount" | "allCount">[],
   playerId: string,
   limit = RANKING_ROWS,
 ): RankingPanel[] {
@@ -664,9 +666,39 @@ export function panelsForPlayer(
       denAsInnings: m.denAsInnings,
       valueAsInnings: m.valueAsInnings === true,
       rows: top,
+      qualifiedCount: m.rows.filter((r) => r.rank !== null).length,
+      allCount: m.rows.filter((r) => r.rankAll !== null).length,
       qualifier: m.qualifier,
     };
   });
+}
+
+/**
+ * 화면에 실을 행을 고른다 — **두 세계에서 각각 상위 N을 뽑아 합친다.**
+ *
+ * ⚠**자르기 전에 골라야 한다.** 처음에는 `rows.slice(0, limit)` 로 **먼저 자른 뒤**
+ * 그 안에서 「전원 상위 N」을 뽑았다. 그러면 전원 순위 1~10위가 애초에 잘려 나가서,
+ * 「全員」으로 바꿔도 **정작 1위가 화면에 없다**(2026-08-17 실측: 打率 패널의 전원 순위가
+ * 11위부터 시작했다). 골라 담는 순서가 뒤바뀌면 기능이 통째로 헛돈다.
+ *
+ * ⚠**최종 정렬은 「전원 순위」다.** 규정 도달자를 앞에 몰고 미달자를 뒤에 붙이면,
+ * 「全員」으로 바꿨을 때 표가 11, 18, 19, … 87, 12, 13 순으로 읽힌다 — **순위표가
+ * 순위 순이 아니게 된다.** 전원 순위로 정렬해 두면 두 모드 다 오름차순이 된다:
+ * 규정 도달자만 남겨도 그 부분집합의 상대 순서는 그대로이기 때문이다
+ * (두 순위가 **같은 값**을 같은 규칙으로 줄 세운 것이라 순서가 어긋날 수 없다).
+ */
+export function rankingRowsFor(rows: readonly RankingRow[], limit: number): RankingRow[] {
+  const withValue = rows.filter((r) => r.rankAll !== null);
+  // 값이 하나도 없는 지표는 예전대로 앞에서부터 자른다 — 「없음」 행이라도 보여야 한다(M11)
+  if (withValue.length === 0) return rows.slice(0, limit);
+
+  const head = rows.filter((r) => r.rank !== null).slice(0, limit);
+  const seen = new Set(head.map((r) => r.playerId));
+  const byAll = [...withValue]
+    .sort((a, b) => (a.rankAll ?? 0) - (b.rankAll ?? 0))
+    .slice(0, limit)
+    .filter((r) => !seen.has(r.playerId));
+  return [...head, ...byAll].sort((a, b) => (a.rankAll ?? 0) - (b.rankAll ?? 0));
 }
 
 function panelsForPage(rankings: readonly MetricRanking[], limit: number): RankingPanel[] {
@@ -677,7 +709,10 @@ function panelsForPage(rankings: readonly MetricRanking[], limit: number): Ranki
     unit: m.unit,
     denAsInnings: m.denAsInnings,
     valueAsInnings: m.valueAsInnings === true,
-    rows: m.rows.slice(0, limit),
+    rows: rankingRowsFor(m.rows, limit),
+    // ⚠**자르기 전 수를 센다** — 「該当 N人」이 자른 뒤의 수면 그것도 거짓말이다
+    qualifiedCount: m.rows.filter((r) => r.rank !== null).length,
+    allCount: m.rows.filter((r) => r.rankAll !== null).length,
     qualifier: m.qualifier,
   }));
 }
@@ -1857,7 +1892,7 @@ function streakByTeam(db: Db, season: number, competition: string, through: stri
  * 그래도 `Date` 를 아예 쓰지 않는 편이 안전하다 — 타임존이 끼어들 자리를 없앤다.
  * 아래는 그레고리력의 순수 산술이고 JST/UTC 어느 쪽에서도 같은 값을 낸다.
  */
-function toDayNumber(iso: string): number {
+export function toDayNumber(iso: string): number {
   const y = Number(iso.slice(0, 4));
   const m = Number(iso.slice(5, 7));
   const d = Number(iso.slice(8, 10));
@@ -1870,7 +1905,7 @@ function toDayNumber(iso: string): number {
   return era * 146097 + doe - 719468;
 }
 
-function fromDayNumber(n: number): string {
+export function fromDayNumber(n: number): string {
   let z = n + 719468;
   const era = Math.floor(z / 146097);
   const doe = z - era * 146097;
@@ -1886,11 +1921,11 @@ function fromDayNumber(n: number): string {
 }
 
 /** 0=일 … 6=토. 1970-01-01 은 목요일(4) */
-function dayOfWeek(iso: string): number {
+export function dayOfWeek(iso: string): number {
   return (((toDayNumber(iso) + 4) % 7) + 7) % 7;
 }
 
-function addDays(iso: string, n: number): string {
+export function addDays(iso: string, n: number): string {
   return fromDayNumber(toDayNumber(iso) + n);
 }
 
@@ -1904,7 +1939,7 @@ function addDays(iso: string, n: number): string {
  * ⚠NPB 는 월요일에 대개 경기가 없다(실측: 최근 경기일 24일 중 월요일 2일).
  *   그래서 「월~일」의 실체는 대개 화~일이고, 화면은 **그 주에 열린 경기일 수**를 함께 낸다.
  */
-function lastCompleteWeek(latest: string | null): { from: string; to: string } | null {
+export function lastCompleteWeek(latest: string | null): { from: string; to: string } | null {
   if (latest === null) return null;
   const dow = dayOfWeek(latest);
   // 일요일(0)이면 그 날이 주말, 아니면 직전 일요일
@@ -2228,8 +2263,12 @@ function teamPages(
    * SRC·SRP. ⚠**여기서 다시 계산하지 않는다**(M1) — 순위 화면이 쓰는 것과 **같은 지도**를
    * 그대로 받는다. 팀 페이지에서 따로 산출하면 같은 선수의 SRC가 두 화면에서 갈린다.
    */
-  srcByPlayer: ReadonlyMap<string, { src: number; pa: number }>,
-  srpByPlayer: ReadonlyMap<string, { srp: number; bf: number }>,
+  /**
+   * **선수 × 구단** 키(`선수ID|구단코드`)의 SRC/SRP.
+   * ⚠**시즌 합계가 아니다** — 이 표는 「이 구단에서 낸 몫」만 싣는다.
+   */
+  srcByTeam: ReadonlyMap<string, { src: number; pa: number }>,
+  srpByTeam: ReadonlyMap<string, { srp: number; bf: number }>,
   asOf: string | null,
   hasPostseason: boolean,
   latestDate: string | null,
@@ -2303,7 +2342,8 @@ function teamPages(
             wrcPlus: e.wrcPlus,
             wraa: e.wraa,
             // ⚠**타석 로그가 없는 선수는 `null` 이다**(M11) — 0으로 메우면 「기여 0」이 된다
-            src: srcOf(srcByPlayer, r.playerId),
+            // ⚠**키가 「선수|구단」이다** — 선수 ID 하나로 찾으면 시즌 합계가 실린다
+            src: srcOf(srcByTeam, `${r.playerId}|${code}`),
             qualified: (part?.player.line.pa ?? 0) >= qualifiedBatterPa(bundle.teamGames),
           };
         })
@@ -2332,7 +2372,7 @@ function teamPages(
             fip: e.fip,
             k9: strikeoutsPer9(r.line),
             bb9: walksPer9(r.line),
-            srp: srpOf(srpByPlayer, r.playerId),
+            srp: srpOf(srpByTeam, `${r.playerId}|${code}`),
             qs: r.quality.qs,
             pitches: r.pitches,
             // ⚠**투구수를 못 읽은 경기가 있으면 `null` 이다**(M11). 0으로 메우면 효율이 최고가 된다
@@ -2831,6 +2871,18 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   // ⚠9이닝 환산의 분모는 **아웃**이다. 상대 타자 수(bf)는 표본 표기용이라 둘 다 들고 있어야 한다
   const srpByPlayer = new Map<string, { srp: number; bf: number; skipped: number; outs: number; srpPer9: number | null }>();
   // 화면이 쓰는 **시즌 합계**. 리그를 넘어도 한 줄이다
+  /**
+   * **선수 × 구단**의 SRC/SRP. 구단 페이지가 쓴다.
+   *
+   * ⚠**시즌 합계를 구단 표에 실으면 안 된다.** 이적 선수의 SRC 가 두 구단 페이지에
+   * 그대로 실려, 같은 행 안에서 打席 는 팀 몫이고 SRC 는 시즌 합계가 된다 —
+   * **분모가 두 종류**가 되는 것이다(2026-08-17 2차 검토 · 실측 2명).
+   * ⚠**순위는 반대로 시즌 합계여야 한다** — 아래 `srcByPlayer` 가 그 몫이고,
+   * 같은 행들을 선수 단위로 더해서 만든다(M1: 계산은 한 벌, 묶는 단위만 다르다).
+   */
+  const srcByTeam = new Map<string, { src: number; pa: number }>();
+  const srpByTeam = new Map<string, { srp: number; bf: number }>();
+
   const battingByPlayer = new Map<string, BattingEntry>();
   const pitchingByPlayer = new Map<string, PitchingEntry>();
   // ⚠**자격 판정(규정타석)에 쓰는 리그별 몫.** 타이틀은 소속 리그에서 낸 성적으로만 겨룬다 —
@@ -2855,10 +2907,17 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     for (const s of computeSrc(db, re, codes, competition, through)) {
       // 환산값은 합계가 정해진 뒤에 낸다(아래)
       srcByPlayer.set(s.playerId, { ...addSrc(srcByPlayer.get(s.playerId), s), srcPer600: null });
+      // ⚠**같은 행을 두 단위로 묶는다.** 선수 단위(순위)와 선수×구단 단위(구단 페이지)
+      const tk = `${s.playerId}|${s.teamCode}`;
+      const tp = srcByTeam.get(tk);
+      srcByTeam.set(tk, { src: (tp?.src ?? 0) + s.src, pa: (tp?.pa ?? 0) + s.pa });
     }
     // ⚠투수는 같은 커널의 부호 반대다. 같은 리그 RE 행렬을 쓴다
     for (const s of computeSrp(db, re, codes, competition, through)) {
       srpByPlayer.set(s.playerId, { ...addSrp(srpByPlayer.get(s.playerId), s), srpPer9: null });
+      const pk = `${s.playerId}|${s.teamCode}`;
+      const pp = srpByTeam.get(pk);
+      srpByTeam.set(pk, { srp: (pp?.srp ?? 0) + s.srp, bf: (pp?.bf ?? 0) + s.bf });
     }
 
     const bat = battingEntries(bundle);
@@ -3380,8 +3439,8 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       leagueBatting,
       leaguePitching,
       bundleByLeague,
-      srcByPlayer,
-      srpByPlayer,
+      srcByTeam,
+      srpByTeam,
       meta.latest,
       // ⚠**「기록이 있다」와 「포스트시즌이 있다」는 다른 말이다.** 올스타뿐인 시즌(2026)에
       // 「ポストシーズンは別の画面にあります」라고 쓰면 없는 것을 있다고 안내하는 것이 된다.

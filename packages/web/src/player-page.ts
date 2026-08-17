@@ -296,6 +296,14 @@ export interface RankingPanel {
    */
   valueAsInnings?: boolean;
   rows: RankingRow[];
+  /**
+   * **자르기 전** 규정 도달자 수. ⚠`rows.length` 로 세면 안 된다 —
+   * `rows` 는 상위 N만 담고, 거기에 「전원」용 미달자까지 섞여 있다.
+   * 화면의 「該当 N人」이 이 값을 쓴다(작업규칙 7: 자른 것을 말한다).
+   */
+  qualifiedCount: number;
+  /** **자르기 전** 값이 있는 선수 수(자격 무관). 「全員」의 분모다 */
+  allCount: number;
   /** 자격 기준 설명. **규칙이 곧 값이다**(M3) */
   qualifier: string;
 }

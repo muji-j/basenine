@@ -129,29 +129,10 @@ function categoryPanels(c: RankingCategory, base: string, limit: number, prefix:
   ${c.panels.map((p, pi) => panel(group, p.id, pi === 0, panelTable(p, base, limit)))}`;
 }
 
-/**
- * 상위 N을 **두 세계에서 각각** 뽑아 합친다.
- *
- * ⚠**「全員」으로 바꿨을 때 나올 사람이 애초에 실려 있어야 한다.** 규정 도달자 상위 30명만
- * 실으면, 전환해도 화면에 새로 나타날 사람이 없어 **버튼이 아무 일도 안 하는 것처럼 보인다.**
- * 打率처럼 규정 미달자가 상위를 채우는 지표에서는 두 목록이 거의 겹치지 않는다.
- * ⚠**합친 뒤에도 기본 정렬은 「규정 순위」다** — 처음 보이는 화면은 지금까지와 같아야 한다.
- */
-function rankingRowsFor(p: RankingPanel, limit: number): { rows: RankingRow[]; qualifiedCount: number } {
-  const byQualified = p.rows.filter((r) => r.rank !== null);
-  const head = byQualified.slice(0, limit);
-  const seen = new Set(head.map((r) => r.playerId));
-  const byAll = p.rows
-    .filter((r) => r.rankAll !== null)
-    .sort((a, b) => (a.rankAll ?? 0) - (b.rankAll ?? 0))
-    .slice(0, limit)
-    .filter((r) => !seen.has(r.playerId));
-  return { rows: [...head, ...byAll], qualifiedCount: byQualified.length };
-}
-
 function panelTable(p: RankingPanel, base: string, limit: number): RawHtml {
-  const { rows, qualifiedCount } = rankingRowsFor(p, limit);
+  const rows = p.rows;
   if (rows.length === 0) return html`<p class="empty">順位を計算できていません。</p>`;
+  const qualifiedCount = p.qualifiedCount;
   const truncated = qualifiedCount > limit;
   /**
    * 자격 기준이 실제로 누군가를 자르고 있는가.
@@ -191,7 +172,10 @@ function panelTable(p: RankingPanel, base: string, limit: number): RawHtml {
   ${hasQualifier
     ? note(
       "「規定到達のみ」を外すと、規定に届いていない選手も同じ指標で並べた順位で表示します — " +
-        "母数の小さい選手が上位に来ます。母数は右端の列にあります。",
+        "母数の小さい選手が上位に来ます。母数は右端の列にあります。" +
+        // ⚠**「全員」도 잘려 있다.** 안 적으면 「전원이 나온다」로 읽힌다(작업규칙 7).
+        //    를 계산해 놓고 화면에서 한 번도 쓰지 않던 자리다(2026-08-17 2차 검토)
+        (p.allCount > limit ? `全員でも上位${limit}人までです（この指標で記録がある選手 ${p.allCount}人）。` : ""),
     )
     : null}`;
 }
