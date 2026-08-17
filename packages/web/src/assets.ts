@@ -396,13 +396,29 @@ table{border-collapse:collapse;width:100%;font-size:12px}
 th,td{padding:5px 8px;text-align:right;font-variant-numeric:tabular-nums;border-bottom:1px solid var(--hair);white-space:nowrap}
 th{font-size:10px;letter-spacing:.1em;color:var(--tx-2);font-weight:500}
 /* ⚠**머리 고정은 thead 에만 건다.** th 전체에 걸면 tbody 의 **행 머리**(이닝 스코어의
-   구단명 칸)까지 top:0 으로 붙어 자기 행을 떠나 화면 위에 뜬다 — 표가 고장 난 것으로 보인다.
-   실측(2026-08-16): 사이트에서 scope=row 를 쓰는 표는 이닝 스코어 하나뿐이다 */
-thead th{position:sticky;top:var(--topbar);z-index:2;background:var(--page)}
-/* ⚠**상단 띠 아래에 세운다.** top:0 으로 두면 상단 띠(z-index 20)가 겹침에서 이겨
-   **열 이름이 그 띠 뒤로 완전히 가려진다** — 147행짜리 대전표에서 40행쯤 내려가면
-   「三振」과 「打点」을 구별할 방법이 없다. 탭줄이 있는 화면은 그만큼 더 내린다 */
-html:has(.rail) thead th{top:calc(var(--topbar) + var(--rail))}
+   구단명 칸)까지 붙어 자기 행을 떠난다 — 표가 고장 난 것으로 보인다.
+   실측(2026-08-16): 사이트에서 scope=row 를 쓰는 표는 이닝 스코어 하나뿐이다.
+
+   ⚠**세로 오프셋(top)을 주지 않는다. 주면 헤더가 표 안으로 내려앉는다.**
+
+   2026-08-16 에 top:var(--topbar)(탭줄이 있으면 +var(--rail))를 걸었는데,
+   그것이 **유저가 본 「헤더가 내용 중간에 끼거나 겹친다」의 원인**이었다(2026-08-17 지적).
+
+   이유: 우리 표는 전부 .scroller 안에 있고 .scroller 는 overflow-x:auto 다.
+   한 축이 visible 이 아니면 **다른 축도 auto 로 계산**되므로 .scroller 는
+   **세로로도 스크롤 컨테이너**가 된다. position:sticky 의 기준(scrollport)은
+   **화면이 아니라 가장 가까운 스크롤 컨테이너**이므로:
+     · 화면을 굴려도 머리는 붙지 않는다 — 의도한 효과는 **처음부터 없었다**
+     · 대신 머리가 그 상자의 위에서 46px(탭줄이 있으면 94px) **아래로 밀려** 본문 행을 덮는다
+
+   실측(2026-08-17): 검사한 121개 표가 **121/121 .scroller 안**이다.
+   즉 이 오프셋은 이득이 0이고 손해만 있었다.
+
+   ⚠**그래도 position:sticky 는 남긴다** — 첫 열 머리가 left:0 으로 **가로** 고정되어야 하고
+   (.scroller th:first-child), 배경·쌓임 순서도 여기서 나온다.
+   세로 고정을 진짜로 되살리려면 .scroller 에 높이를 주고 표 안쪽에서 굴리게 해야 하는데,
+   그건 화면 설계를 바꾸는 일이라 별도 판단이 필요하다 */
+thead th{position:sticky;z-index:2;background:var(--page)}
 /* ⚠**모서리 칸이 제일 위여야 한다.** 가로·세로 양쪽으로 고정되는 칸은 첫 열의 머리 하나뿐인데,
    .scroller th:first-child(z-index:1)가 특이도에서 이겨 **다른 머리 칸(2)이 그 위를 지나간다** —
    가로로 밀면 고정된 첫 열의 머리만 사라진다. 본문 칸은 멀쩡해서 더 이상하게 보인다.
@@ -1711,7 +1727,11 @@ const cmpForm=$("#cmpForm");
 if(cmpForm){
   const out=$("#cmpOut");
   const chosen={a:null,b:null};
-  const cache={};
+  /* ⚠**프로토타입 없는 지도를 쓴다.** 예전에는 우리가 넘긴 id 하나만 키였는데,
+     이제 **샤드 JSON 의 키를 그대로 대입**한다. 키가 __proto__ 면 own 프로퍼티가 아니라
+     프로토타입 설정이 되어, 이후 조회가 카드 대신 Object.prototype(truthy)을 돌려준다.
+     현재 ID 는 8자리 숫자라 0건이지만, ID 검사 정규식은 그 이름을 허용한다 */
+  const cache=Object.create(null);
   const el=(tag,cls,text)=>{const n=doc.createElement(tag);if(cls)n.className=cls;
     if(text!==undefined&&text!==null)n.textContent=text;return n};
 
@@ -1890,25 +1910,70 @@ if(cmpForm){
     if(typeof bindTerms==="function")bindTerms(wrap);
   };
 
+  /* 받아 둔 샤드의 약속. ⚠**실패한 것은 지운다** — 남겨 두면 다시 눌러도 영영 같은 오류가 난다 */
+  const shards={};
+  /* ⚠**샤드 규칙은 서버(compare.ts 의 compareShardOf)와 같아야 한다 — 선수 ID의 첫 글자다.**
+     빌드가 파일을 놓고 여기가 찾으므로 규칙이 두 벌일 수밖에 없다(M1이 경계하는 모양).
+     그래서 해시가 아니라 **틀릴 수 없을 만큼 단순한 규칙**을 쓴다.
+     assets-source.test.ts 가 이 줄이 사라지지 않았는지 글자로 확인한다. */
+  const shardOf=(id)=>String(id).charAt(0);
   const load=(id)=>{
     if(cache[id])return Promise.resolve(cache[id]);
     if(typeof fetch!=="function")return Promise.reject(new Error("no fetch"));
-    return fetch(BASE+"compare/"+id+".json").then(r=>{
-      if(!r.ok)throw new Error("http "+r.status);
-      return r.json();
-    }).then(j=>{cache[id]=j;return j});
+    const s=shardOf(id);
+    if(!shards[s]){
+      shards[s]=fetch(BASE+"compare/"+s+".json").then(r=>{
+        if(!r.ok)throw new Error("http "+r.status);
+        return r.json();
+      }).then(j=>{
+        /* 한 번 받으면 그 샤드의 선수 전부가 캐시된다 — 같은 글자끼리는 두 번째부터 요청 0 */
+        for(const k in j)cache[k]=j[k];
+        return j;
+      }).catch(e=>{delete shards[s];throw e});
+    }
+    return shards[s].then(j=>{
+      /* ⚠**샤드는 받았는데 그 선수가 없는 경우를 조용히 넘기지 않는다** —
+         빈 카드로 그리면 「성적 0」처럼 보인다(M11).
+         ⚠**「못 받았다」와 구별해서 표시한다**(M12). 이건 통신 문제가 아니라
+         **화면과 데이터의 판이 어긋난 것**(배포 스큐 · 샤드 규칙 갈림)이라,
+         「통신을 확인하고 다시」라고 말하면 사용자가 영영 낫지 않는 행동을 반복한다 —
+         샤드는 이미 성공 캐시라 다시 눌러도 요청조차 안 나간다. */
+      if(!j[id]){
+        const e=new Error("no card "+id);
+        e.kind="nocard";
+        throw e;
+      }
+      return j[id];
+    });
   };
 
+  /* 비교 요청의 세대. 마지막으로 누른 것만 그린다 */
+  let cmpGen=0;
   const run=()=>{
     if(!chosen.a||!chosen.b||!out)return;
     out.textContent="";
     const wait=el("section","cmpwrap");wait.appendChild(el("p","empty","読み込んでいます…"));
     out.appendChild(wait);
-    Promise.all([load(chosen.a.i),load(chosen.b.i)]).then(r=>render(r[0],r[1])).catch(()=>{
+    /* ⚠**늦게 온 응답이 새 비교를 덮어쓰지 않게 한다.**
+       샤드로 묶은 뒤로 「이미 받은 샤드는 즉시 · 새 샤드는 왕복」이라는 **지연 비대칭**이 생겼다.
+       그래서 A를 누르고 곧바로 B를 누르면 B가 먼저 그려진 뒤 A가 늦게 도착해 화면을 되돌린다 —
+       사용자가 마지막에 고른 것과 다른 것이 보이는 상태다. 세대 번호로 낡은 응답을 버린다. */
+    const mine=++cmpGen;
+    Promise.all([load(chosen.a.i),load(chosen.b.i)]).then(r=>{
+      if(mine!==cmpGen)return;
+      render(r[0],r[1]);
+    }).catch((err)=>{
+      if(mine!==cmpGen)return;
+      /* ⚠**삼키지 않는다.** 배포 스큐는 화면 문구 말고는 남는 흔적이 없다 */
+      if(typeof console!=="undefined"&&console.error)console.error("compare:",err);
       out.textContent="";
       const e=el("section","cmpwrap");
-      /* ⚠**빈 화면으로 두지 않는다**(M12) — 「데이터 없음」과 「읽지 못함」은 다른 상태다 */
-      e.appendChild(warn("成績を読み込めませんでした。通信を確認して、もう一度お試しください。"));
+      /* ⚠**빈 화면으로 두지 않는다**(M12) — 「데이터 없음」과 「읽지 못함」은 다른 상태다.
+         ⚠그리고 그 둘을 **같은 문구로 뭉개지 않는다** — 시키는 행동이 다르다 */
+      e.appendChild(warn(err&&err.kind==="nocard"
+        ? "この選手の比較データが見つかりませんでした。データの更新中かもしれません。"+
+          "しばらくしてからページを再読み込みしてください。"
+        : "成績を読み込めませんでした。通信を確認して、もう一度お試しください。"));
       out.appendChild(e);
     });
     /* 공유할 수 있는 주소로 바꾼다. **뒤로가기 이력을 더럽히지 않는다** — 비교는 이동이 아니다 */

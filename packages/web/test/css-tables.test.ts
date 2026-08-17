@@ -253,20 +253,28 @@ test("동적 클래스가 든 칸의 리터럴 클래스도 모은다", () => {
 });
 
 /**
- * ⚠**고정된 표 머리는 상단 띠 아래에 선다.**
- * `top:0` 으로 두면 상단 띠(z-index 20)가 겹침에서 이겨 **열 이름이 통째로 가려진다** —
- * 147행짜리 대전표에서 40행쯤 내려가면 「三振」과 「打点」을 구별할 방법이 없다.
- * 탭줄이 있는 화면은 그 높이만큼 더 내려야 같은 일이 안 난다.
+ * ⚠**이 시험은 예전에 정반대를 지키고 있었다**(2026-08-17 정정).
+ *
+ * 「머리가 상단 띠 뒤에 숨지 않게 top:var(--topbar) 를 걸어야 한다」고 못 박고 있었는데,
+ * **그 규칙이 유저가 본 「각종 표에서 헤더가 내용 중간에 끼거나 겹친다」의 원인**이었다.
+ *
+ * 전제가 틀렸다: 우리 표는 전부 스크롤 상자 안이라 머리가 **화면에 붙은 적이 없다.**
+ * 붙지도 않으면서 상자 안에서 46px(탭줄이 있으면 94px) 아래로 밀리기만 했다.
+ * 그러니 「상단 띠 뒤로 숨는다」는 걱정 자체가 이 구조에서는 성립하지 않았다.
+ *
+ * ⚠**틀린 믿음을 지키는 시험은 결함을 굳힌다.** 이 시험이 초록인 동안 그 CSS 는 고쳐질 수 없었다.
  */
-test("⚠고정된 표 머리가 상단 띠 뒤에 숨지 않는다", () => {
+test("표 머리는 sticky 지만 세로 오프셋은 없다 — 가로 고정과 쌓임 순서만 여기서 나온다", () => {
   const head = rules(CSS).find((r) => r.sel.split(",").some((one) => one.trim() === "thead th"));
   assert.notEqual(head, undefined, "thead th 규칙을 못 찾았다 — 이 시험이 공회전한다");
-  assert.match(head!.body, /position\s*:\s*sticky/);
-  assert.match(head!.body, /top\s*:\s*var\(--topbar\)/, "머리가 상단 띠 뒤로 들어간다");
-  assert.match(
-    CSS,
-    /html:has\(\.rail\) thead th\{top:calc\(var\(--topbar\) \+ var\(--rail\)\)\}/,
-    "탭줄이 있는 화면에서 머리가 탭줄 뒤로 들어간다",
+  // 첫 열 머리의 가로 고정(`left:0`)과 배경·쌓임이 여기서 나온다 — sticky 를 지우면 그것들이 죽는다
+  assert.match(head!.body, /position\s*:\s*sticky/, "thead th 의 sticky 가 사라졌다");
+  assert.match(head!.body, /background/, "머리에 배경이 없으면 가로로 밀 때 아래 글자가 비쳐 보인다");
+  assert.match(CSS, /\.scroller thead th:first-child\{[^}]*z-index\s*:\s*3/, "모서리 칸이 제일 위가 아니다");
+  // ⚠예전 규칙이 되살아나지 않았는지 이름으로도 확인한다
+  assert.ok(
+    !/html:has\(\.rail\) thead th\{[^}]*top/.test(CSS),
+    "탭줄 화면용 top 오프셋이 되살아났다 — 머리가 표 안으로 94px 내려앉는다",
   );
 });
 
@@ -395,3 +403,47 @@ test("⚠명부의 성적 줄에 규칙이 있다 — 없으면 이름보다 커
   assert.match(r[0]!.body, /font-size:\s*\d/, "크기가 없다");
   assert.match(r[0]!.body, /color:\s*var\(--tx/, "색이 없다");
 });
+
+/**
+ * ⚠**스크롤 상자 안의 머리 칸에 세로 오프셋(top)을 주면 머리가 표 안으로 내려앉는다.**
+ *
+ * 2026-08-16 에 `thead th{position:sticky;top:var(--topbar)}` 를 넣었고, 그것이
+ * 유저가 본 **「각종 표에서 헤더가 내용 중간에 끼거나 겹친다」**의 원인이었다(2026-08-17).
+ *
+ * 원리: 우리 표는 전부 `.scroller` 안에 있고 `.scroller` 는 `overflow-x:auto` 다.
+ * 한 축이 `visible` 이 아니면 **다른 축도 `auto` 로 계산**되어 `.scroller` 가 세로로도
+ * 스크롤 컨테이너가 된다. `sticky` 의 기준은 화면이 아니라 **가장 가까운 스크롤 컨테이너**이므로
+ * 머리는 화면에 붙지 못하고, 대신 그 상자 위에서 `top` 만큼 **아래로 밀려** 본문을 덮는다.
+ *
+ * ⚠**「눈으로만 보이는」 결함이다** — 타입·값·링크 검사 어느 것도 못 잡았고,
+ * 사이트를 직접 본 사람이 잡았다. 그래서 CSS 를 글자로 읽어 막는다.
+ */
+test("⚠표 머리에 세로 sticky 오프셋을 주지 않는다 — 주면 머리가 표 안으로 내려앉는다", () => {
+  /** `thead th` 를 선택자로 갖는 규칙들의 선언부를 전부 모은다 */
+  const blocks = [...CSS.matchAll(/([^{}]*thead[^{}]*th[^{}]*)\{([^}]*)\}/g)];
+  assert.ok(blocks.length > 0, "thead th 규칙을 하나도 못 찾았다 — 이 검사가 대상을 놓치고 있다");
+
+  const offenders = blocks
+    .map(([, sel, body]) => ({ sel: sel!.trim(), body: body!.trim() }))
+    // `top:auto` 는 무효화이므로 문제가 아니다
+    .filter((r) => /(^|;)\s*top\s*:\s*(?!auto\b)[^;]+/.test(r.body));
+
+  assert.deepEqual(
+    offenders.map((r) => `${r.sel} { ${r.body} }`),
+    [],
+    "표 머리에 top 이 걸려 있다. 우리 표는 전부 .scroller(overflow-x:auto) 안이라 " +
+      "이 값은 머리를 화면에 붙이지 못하고 표 안으로 밀어 넣기만 한다",
+  );
+});
+
+/**
+ * ⚠**위 검사가 성립하는 전제를 함께 고정한다.**
+ * 「표가 전부 스크롤 상자 안에 있다」가 깨지면 위 결론(top 이 무해하지 않다)도 달라진다 —
+ * 전제가 조용히 바뀌는 것을 막는다. 실측(2026-08-17): 검사한 121개 표가 121/121 `.scroller` 안.
+ */
+test("표를 감싸는 상자가 여전히 가로 스크롤 컨테이너다 — 위 검사의 전제", () => {
+  const m = /\.scroller\{([^}]*)\}/.exec(CSS);
+  assert.notEqual(m, null, ".scroller 규칙이 없다");
+  assert.match(m![1]!, /overflow-x\s*:\s*auto/, ".scroller 가 더는 가로 스크롤 상자가 아니다");
+});
+

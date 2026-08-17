@@ -74,7 +74,10 @@ test("사이트는 정해진 파일 집합을 만든다", () => {
     "assets/site.css",
     "assets/site.js",
     "compare.html",
-    "compare/41045153.json",
+    // ⚠**선수마다가 아니라 ID 첫 글자로 묶는다**(`41045153` → `4`).
+    // 예전엔 선수마다 파일이었고, 그 2.5KB짜리들이 4시즌 산출물의 29%(2,797개)를 차지해
+    // Cloudflare Pages 배포 상한(20,000)을 먹고 있었다
+    "compare/4.json",
     "days.html",
     "index.html",
     "matchup.html",

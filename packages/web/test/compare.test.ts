@@ -7,7 +7,13 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { betterSide, compareCard, compareCardJson, renderComparePage } from "../src/compare.ts";
+import {
+  betterSide,
+  compareCard,
+  compareShardJson,
+  compareShardOf,
+  renderComparePage,
+} from "../src/compare.ts";
 import type { CompareStat } from "../src/compare.ts";
 import { CLIENT_JS } from "../src/assets.ts";
 import { GLOSSARY } from "../src/glossary.ts";
@@ -200,7 +206,32 @@ test("성적이 없는 선수는 紋이 null이다 — 점 하나를 그려 「�
 
 test("JSON은 그대로 되읽힌다", () => {
   const c = compareCard(BATTER);
-  assert.deepEqual(JSON.parse(compareCardJson(c)), JSON.parse(JSON.stringify(c)));
+  const shard = JSON.parse(compareShardJson(new Map([["41045153", c]])));
+  assert.deepEqual(shard["41045153"], JSON.parse(JSON.stringify(c)));
+});
+
+/**
+ * ⚠**샤드 규칙은 빌드와 클라이언트 양쪽에 있다**(빌드는 파일을 놓고 클라는 찾는다) —
+ * M1이 경계하는 「같은 규칙의 두 벌 구현」이 불가피한 자리다.
+ * 그래서 **틀릴 수 없을 만큼 단순한 규칙**(첫 글자)을 쓰고, 여기서 그 규칙을 고정한다.
+ * 클라이언트 쪽에 같은 규칙이 남아 있는지는 `assets-source.test.ts` 가 글자로 본다.
+ */
+test("샤드는 선수 ID의 첫 글자다", () => {
+  assert.equal(compareShardOf("41045153"), "4");
+  assert.equal(compareShardOf("01005134"), "0");
+  // ⚠빈 ID를 조용히 넘기면 `compare/.json` 같은 파일이 생긴다
+  assert.throws(() => compareShardOf(""), /선수 ID가 비어 있다/);
+});
+
+/**
+ * ⚠**지도(`{id: card}`)로 낸다.** 배열이면 받은 쪽이 매번 훑어야 하고,
+ * 그러면 「받았는데 그 선수가 없다」를 구별하기도 번거로워진다.
+ */
+test("샤드는 선수 ID로 바로 집을 수 있는 지도다", () => {
+  const a = compareCard(BATTER);
+  const json = JSON.parse(compareShardJson(new Map([["41045153", a], ["41045199", a]])));
+  assert.deepEqual(Object.keys(json).sort(), ["41045153", "41045199"]);
+  assert.equal(json["41045153"].name, a.name);
 });
 
 /**
@@ -344,4 +375,90 @@ test("⚠타자×투수를 고르면 대전 성적으로 가는 길을 준다", 
   // ⚠**만들기만 하고 붙이지 않으면 화면에 없는 것과 같다**
   assert.match(body, /wrap\.appendChild\(go\)/, "링크를 만들어 놓고 화면에 붙이지 않는다");
   assert.match(body, /go\.textContent=/, "링크에 글자가 없다 — 누를 것이 안 보인다");
+});
+
+/**
+ * ⚠**샤드 규칙이 빌드와 클라이언트에 두 벌 있다** — 빌드(`compareShardOf`)는 파일을 놓고,
+ * 클라이언트(`shardOf`)는 찾는다. M1이 경계하는 「같은 규칙의 두 벌 구현」이 불가피한 자리다.
+ *
+ * ⚠**갈리면 전 선수의 比較가 404가 된다.** 그런데 그것을 막는 자동 검사가
+ * **한동안 0건이었다** — 주석에는 「여기서 글자로 확인한다」고 적혀 있었는데
+ * 실제로는 백틱·길이·`&lt;/script&gt;` 세 가지만 보고 있었다(2026-08-17 이중 검토 지적).
+ * **없는 안전장치를 있다고 적은 주석은 없는 것보다 나쁘다.**
+ *
+ * 그래서 **문자열 존재가 아니라 실행 결과를 대조한다** —
+ * 클라이언트 소스에서 규칙 한 줄을 뽑아 실제로 돌리고, 빌드 쪽 함수와 같은 답이 나오는지 본다.
+ *
+ * ⚠**`assets-source.test.ts` 가 아니라 여기 둔다.** 그 파일은 「어떤 상황에서도 실행된다」가
+ * 존재 이유이고, 그 근거가 **아무것도 import 하지 않는 것**이다. 거기서 `compare.ts` 를
+ * 부르면 그 체인(10여 모듈) 중 하나만 깨져도 그 파일이 FAIL 이 아니라 **ERROR** 로 죽는다
+ * (작업규칙 8이 경계하는 모양). 이 파일은 이미 `CLIENT_JS` 를 import 하므로 손해가 없다.
+ */
+function clientShardOf(): (id: string) => string {
+  const m = /const shardOf=\(id\)=>([^;]+);/.exec(CLIENT_JS);
+  assert.notEqual(
+    m,
+    null,
+    "클라이언트에서 shardOf 규칙을 찾지 못했다 — 사라졌거나 모양이 바뀌었다. " +
+      "바꿨다면 이 검사도 함께 고쳐라(그래야 두 벌이 갈리는 것을 계속 막는다)",
+  );
+  /**
+   * ⚠**만들다 실패하면 FAIL 로 끝낸다.** 규칙이 블록 본문(`(id)=>{…}`)으로 바뀌면
+   * 위 정규식이 반쪽만 잡아 `new Function` 이 **SyntaxError** 를 던지는데,
+   * 그건 FAIL 이 아니라 ERROR 라서 「검사가 돌았다」로 오독된다(작업규칙 8).
+   */
+  try {
+    return new Function("id", `return (${m![1]!});`) as (id: string) => string;
+  } catch {
+    assert.fail(
+      `클라이언트 shardOf 규칙을 실행할 수 없다: ${JSON.stringify(m![1])} — ` +
+        "모양이 바뀌었다면 이 검사의 추출식도 함께 고쳐라",
+    );
+  }
+}
+
+test("⚠샤드 규칙이 빌드와 클라이언트에서 같은 답을 낸다 — 갈리면 전 선수의 比較가 404다", () => {
+  const client = clientShardOf();
+  /**
+   * ⚠**틀린 규칙을 골라내도록 고른 입력이다.**
+   * · `01005134` 는 첫 글자 `0`·끝 글자 `4` — 「끝 글자」로 바꾸면 여기서 갈린다
+   * · `A1` 은 소문자화를 넣으면 갈린다
+   * · `9` 는 한 글자짜리(잘라내기 실수를 잡는다)
+   */
+  /**
+   * ⚠**실재하는 형태(숫자 시작)로만 대조한다.** 빌드는 문자로 시작하는 ID를 **거부**하고
+   * (대소문자만 다른 샤드가 같은 파일로 덮이는 것을 막는다) 클라는 그냥 첫 글자를 쓴다 —
+   * 그 비대칭은 아래에서 따로 고정한다.
+   */
+  for (const id of ["01005134", "41045153", "61965131", "73175159", "9", "0", "500"]) {
+    assert.equal(client(id), compareShardOf(id), `${id} 에서 빌드와 클라이언트의 샤드가 갈렸다`);
+  }
+});
+
+/**
+ * ⚠**빌드가 더 엄격한 것은 의도다** — 그리고 그 비대칭을 적어 둔다.
+ *
+ * 대소문자만 다른 첫 글자(`A1234` / `a1234`)는 `compare/A.json` 과 `compare/a.json` 이 되어
+ * **대소문자를 무시하는 파일시스템에서 같은 파일**로 덮인다. 그 샤드의 절반이 사라지는데
+ * 빌드는 아무 말도 안 한다. 그래서 빌드 쪽에서 **먼저 멈춘다.**
+ * ⚠실측(2026-08-17): 선수 2,793명 중 문자로 시작하는 ID **0명** — 지금 성질을 고정하는 것이다.
+ */
+test("빌드는 숫자로 시작하지 않는 ID를 거부한다 — 대소문자만 다른 샤드가 덮이는 것을 막는다", () => {
+  for (const id of ["A1234", "a1234", "_x", "-y"]) {
+    assert.throws(() => compareShardOf(id), /숫자로 시작하지 않는다/, `${id} 를 통과시켰다`);
+  }
+  // 클라는 그런 판단을 하지 않는다 — 서버가 애초에 그 파일을 만들지 않으므로 404 로 간다
+  assert.equal(clientShardOf()("A1234"), "A");
+});
+
+/**
+ * ⚠**빈 ID 에서는 두 규칙이 일부러 다르다** — 그 사실을 고정해 둔다.
+ * 빌드는 던지고(빈 이름의 파일을 만들지 않는다), 클라는 `""` 를 내 404 로 간다.
+ * 위 시험의 제목이 「같은 답을 낸다」이므로, 다른 자리를 적어 두지 않으면
+ * **제목이 실제보다 넓게 약속**하는 상태가 된다(2026-08-17 이중 검토 지적).
+ * ⚠도달 경로는 현재 0곳이다(선수 ID는 `data-i`·검색 색인에서 오고, 공유 링크 복원도 빈 값을 막는다).
+ */
+test("빈 ID에서 빌드는 멈추고 클라는 못 찾는다 — 의도된 비대칭", () => {
+  assert.throws(() => compareShardOf(""), /선수 ID가 비어 있다/);
+  assert.equal(clientShardOf()(""), "", "클라 규칙이 빈 ID에서 다른 값을 냈다");
 });

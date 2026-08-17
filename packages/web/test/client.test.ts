@@ -17,6 +17,8 @@ const BATTER_PRESETS = presetsFor("batter");
 const BATTER_BLOCKS = blocksFor("batter");
 import { bootstrapFor } from "../src/player-page.ts";
 import { El, make, makeDocument, makeStorage } from "./dom-stub.ts";
+import { compareCard } from "../src/compare.ts";
+import { playerPage } from "./fixtures.ts";
 
 /** 정렬 가능한 열. 서버(`player-page.ts`)의 목록과 같은 키여야 한다 */
 const MATCHUP_COLUMNS: { key: string; label: string; type: "text" | "num"; rate?: true }[] = [
@@ -160,6 +162,20 @@ interface RunOptions {
   index?: { i: string; n: string; t: string; s?: string }[];
   /** `location` 대역. `?vs=` 처리와 `#앵커` 처리를 보려면 필요하다 */
   location?: { search: string; href: string; hash?: string };
+  /**
+   * URL 조각 → 응답 본문. `compare/p.json` 처럼 **부분 일치**로 고른다.
+   * ⚠**요청 URL을 보는 스텁이 필요했다** — 예전 스텁은 URL을 무시하고 `index` 를 돌려줬다.
+   * 그래서 「어느 파일을 몇 번 받는가」를 재는 시험을 쓸 수 없었다.
+   */
+  routes?: Record<string, unknown>;
+  /**
+   * 응답을 늦출 URL 조각 → 풀어 줄 함수를 받는 곳.
+   * ⚠**지연 차를 만들 수 있어야 경합을 잴 수 있다** — 모든 응답이 같은 틱에 오면
+   * 「늦게 온 응답이 새 화면을 덮어쓴다」를 재현할 방법이 없다.
+   */
+  hold?: Record<string, (release: () => void) => void>;
+  /** 요청한 URL이 순서대로 쌓인다. 캐시가 도는지 세는 데 쓴다 */
+  requested?: string[];
 }
 
 function run(
@@ -170,10 +186,21 @@ function run(
   const loc = opts.location ?? { search: "", href: "" };
   // 서버가 심는 것과 **같은 함수**로 만든다 — 두 벌이 되면 어긋난다
   new Function("window", `${bootstrapFor("batter")}`)(win);
-  const fetchImpl =
-    opts.index === undefined
-      ? () => Promise.reject(new Error("no network"))
-      : () => Promise.resolve({ json: () => Promise.resolve(opts.index) });
+  const fetchImpl = (url: string): Promise<unknown> => {
+    opts.requested?.push(String(url));
+    for (const [fragment, body] of Object.entries(opts.routes ?? {})) {
+      if (String(url).includes(fragment)) {
+        const res = { ok: true, json: () => Promise.resolve(body) };
+        const holder = Object.entries(opts.hold ?? {}).find(([f]) => String(url).includes(f))?.[1];
+        if (holder === undefined) return Promise.resolve(res);
+        return new Promise((resolve) => holder(() => resolve(res)));
+      }
+    }
+    if (opts.index !== undefined && String(url).includes("players.json")) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(opts.index) });
+    }
+    return Promise.reject(new Error("no network"));
+  };
   new Function("document", "localStorage", "window", "fetch", "location", CLIENT_JS)(
     doc,
     opts.storage ?? makeStorage(),
@@ -1580,4 +1607,203 @@ test("⚠첫 화면의 좁히기도 읽는 법·등번호로 찾는다 — 검�
   filter.value = "佐";
   filter.fire("input");
   assert.deepEqual(rosterNames(doc), ["佐藤"]);
+});
+
+/**
+ * 比較 데이터의 샤딩.
+ *
+ * ⚠**예전에는 선수마다 파일 하나였다**(시즌당 ~700개). 그 2.5KB짜리들이 4시즌 산출물의
+ * **29%(2,797개)**를 차지해 Cloudflare Pages의 배포당 파일 상한(20,000)을 먹고 있었다.
+ * 이제 **선수 ID의 첫 글자**로 묶는다 — 시즌당 ~700 → 10개.
+ *
+ * ⚠**규칙이 빌드와 클라 양쪽에 있다**(M1이 경계하는 모양). 그래서 여기서 **실행해서** 잰다:
+ * 어느 파일을 받는가 · 같은 샤드면 두 번째부터 안 받는가 · 없는 선수를 빈 카드로 그리지 않는가.
+ */
+/**
+ * ⚠**서버가 실제로 내는 카드를 쓴다.** 손으로 만든 최소 객체를 넘기면 렌더가 요구하는 필드가
+ * 빠져도 시험이 통과하고, 그러면 「샤드에서 꺼냈다」만 재고 「그려진다」는 못 재게 된다.
+ * (실제로 그렇게 만들었다가 렌더가 조용히 오류 경로로 빠졌다.)
+ */
+/**
+ * ⚠**紋이 있는 선수를 쓴다.**
+ *
+ * 처음에는 `mark:{axes:[]}` 로 紋을 없앴고, 그 이유를 「대역에 `createElementNS` 가 없어서」라고
+ * 적었다. 그런데 **같은 커밋이 그 대역을 고쳤으므로 그 주석은 쓰는 순간 거짓**이었고,
+ * 결과적으로 대역에 넣은 `createElementNS` 를 **1,106개 시험 중 0건이 밟는** 상태가 됐다
+ * (2026-08-17 이중 검토가 호출 횟수를 계측해 지적).
+ *
+ * 「고쳤다」고 적어 놓고 아무도 안 지나가는 길을 만드는 것이 이 프로젝트가 반복해 온 실패다.
+ * 紋을 살려 **比較 화면의 시각적 주역(겹쳐 그리는 오각형)이 실제로 그려지는지**까지 잰다.
+ */
+function card(playerId: string, name: string): unknown {
+  return JSON.parse(JSON.stringify(compareCard(playerPage({ playerId, name }))));
+}
+
+test("⚠比較는 선수 ID 첫 글자의 샤드를 받는다 — 선수마다 파일을 만들지 않는다", async () => {
+  const doc = buildCompare();
+  const requested: string[] = [];
+  run(doc, { requested, routes: { "compare/p.json": { p1: card("p1", "山本"), p2: card("p2", "宮城") } } });
+
+  cpk(doc, "p1").fire("click");
+  cpk(doc, "p2").fire("click");
+  doc.getElementById("cmpGo")!.fire("click");
+  await new Promise((r) => setTimeout(r, 0));
+
+  const compareCalls = requested.filter((u) => u.includes("compare/"));
+  // ⚠**같은 샤드의 두 선수는 요청 1회다.** 선수마다 파일이면 2회가 된다
+  assert.deepEqual(compareCalls, ["compare/p.json"], `받은 것: ${JSON.stringify(compareCalls)}`);
+  const out = doc.getElementById("cmpOut")!;
+  assert.ok(!out.textContent.includes("読み込めませんでした"), "샤드를 받았는데 오류로 그렸다");
+  /**
+   * ⚠**요청 수만 세면 부족하다.** 샤드를 통째로 돌려줘도 요청 수는 같다 —
+   * **그 선수의 카드가 나왔는지**를 봐야 「지도에서 ID로 집었다」가 확인된다.
+   */
+  assert.match(out.textContent, /山本/, "A 자리의 선수가 안 그려졌다");
+  assert.match(out.textContent, /宮城/, "B 자리의 선수가 안 그려졌다");
+  /**
+   * ⚠**紋까지 그려지는지 본다.** 이 경로는 SVG(`createElementNS`)를 쓰는데,
+   * 대역에 그것이 없던 동안 **렌더 전체가 조용히 오류로 빠지고 있었다** —
+   * 시험은 초록인데 재는 것이 「오류 화면이 나왔다」였다.
+   */
+  assert.equal(doc.querySelectorAll("svg").length, 1, "겹친 紋이 그려지지 않았다 — SVG 경로가 죽었다");
+  // ⚠**두 선수의 도형이 한 그림에 겹쳐야** 비교가 된다. 눈금 1개 + 선수 2개 = 3개 이상
+  assert.ok(
+    doc.querySelectorAll("polygon").length >= 3,
+    `紋의 도형이 모자란다(${doc.querySelectorAll("polygon").length}개) — 겹쳐 그리지 않았다`,
+  );
+});
+
+test("샤드가 다르면 각각 받고, 같은 샤드는 두 번째부터 안 받는다", async () => {
+  const doc = buildCompare();
+  const requested: string[] = [];
+  run(doc, {
+    requested,
+    routes: { "compare/p.json": { p1: card("p1", "山本"), p2: card("p2", "宮城") }, "compare/b.json": { b1: card("b1", "佐藤") } },
+  });
+
+  cpk(doc, "p1").fire("click");
+  cpk(doc, "b1").fire("click");
+  doc.getElementById("cmpGo")!.fire("click");
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(
+    requested.filter((u) => u.includes("compare/")).sort(),
+    ["compare/b.json", "compare/p.json"],
+  );
+
+  // 두 번째 비교 — `p2` 는 이미 받은 샤드 안에 있으므로 새 요청이 없어야 한다
+  const before = requested.filter((u) => u.includes("compare/")).length;
+  cpk(doc, "b1").fire("click"); // B 자리를 비운다
+  cpk(doc, "p2").fire("click");
+  doc.getElementById("cmpGo")!.fire("click");
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(
+    requested.filter((u) => u.includes("compare/")).length,
+    before,
+    "이미 받은 샤드를 다시 받았다 — 캐시가 안 돈다",
+  );
+});
+
+/**
+ * ⚠**샤드는 받았는데 그 선수가 없는 경우를 조용히 넘기지 않는다.**
+ * 빈 카드로 그리면 「성적 0」처럼 보인다(M11) — 「없다」와 「못 읽었다」는 다른 상태다(M12).
+ *
+ * ⚠**이 시험은 `load` 의 명시적 검사를 「단독으로」 잡지 못한다**(뮤테이션으로 확인).
+ * 그 검사를 빼도 `render` 가 `undefined` 를 만나 예외로 빠지므로 **화면 결과가 같다** —
+ * 동등 변이체다. 그래도 검사를 남기는 이유는 **렌더 내부 동작에 기대지 않기 위해서**다.
+ * 언젠가 `render` 가 빈 값을 견디게 바뀌면 그때 이 검사만이 빈 카드를 막는다.
+ */
+test("⚠샤드에 없는 선수를 빈 카드로 그리지 않는다", async () => {
+  const doc = buildCompare();
+  // `p2` 를 일부러 빼 둔다
+  run(doc, { routes: { "compare/p.json": { p1: card("p1", "山本") } } });
+
+  cpk(doc, "p1").fire("click");
+  cpk(doc, "p2").fire("click");
+  doc.getElementById("cmpGo")!.fire("click");
+  await new Promise((r) => setTimeout(r, 0));
+
+  /**
+   * ⚠**「못 받았다」와 같은 문구로 뭉개지 않는다**(M12) — 시키는 행동이 다르다.
+   * 샤드는 이미 성공 캐시라 **다시 눌러도 요청조차 안 나간다** — 「통신을 확인하고 다시」는
+   * 원리적으로 절대 낫지 않는 안내다(2026-08-17 이중 검토 지적).
+   */
+  const out = doc.getElementById("cmpOut")!.textContent;
+  assert.match(out, /見つかりませんでした/, "없는 선수를 「못 찾았다」로 말하지 않았다");
+  assert.ok(!out.includes("通信を確認"), "낫지 않는 행동(통신 확인·재시도)을 시켰다");
+});
+
+/** 진짜 취득 실패는 여전히 「통신을 확인하라」다 — 두 상태가 서로를 덮지 않는다 */
+test("취득 실패와 「그 선수가 없다」를 다른 문구로 말한다", async () => {
+  const doc = buildCompare();
+  run(doc); // routes 없음 = 진짜 취득 실패
+  cpk(doc, "p1").fire("click");
+  cpk(doc, "p2").fire("click");
+  doc.getElementById("cmpGo")!.fire("click");
+  await new Promise((r) => setTimeout(r, 0));
+  const out = doc.getElementById("cmpOut")!.textContent;
+  assert.match(out, /通信を確認/, "취득 실패인데 통신을 확인하라고 하지 않았다");
+  assert.ok(!out.includes("見つかりませんでした"), "취득 실패를 「없다」로 말했다");
+});
+
+/** ⚠실패한 샤드를 캐시에 남기면 **다시 눌러도 영영 같은 오류**가 난다 */
+test("⚠샤드 취득에 실패해도 다시 시도할 수 있다", async () => {
+  const doc = buildCompare();
+  const requested: string[] = [];
+  run(doc, { requested }); // routes 없음 = 전부 실패
+
+  cpk(doc, "p1").fire("click");
+  cpk(doc, "p2").fire("click");
+  doc.getElementById("cmpGo")!.fire("click");
+  await new Promise((r) => setTimeout(r, 0));
+  const first = requested.filter((u) => u.includes("compare/")).length;
+  assert.ok(first > 0, "요청을 아예 안 했다");
+
+  doc.getElementById("cmpGo")!.fire("click");
+  await new Promise((r) => setTimeout(r, 0));
+  assert.ok(
+    requested.filter((u) => u.includes("compare/")).length > first,
+    "실패한 샤드가 캐시에 남아 재시도가 요청을 내지 않았다",
+  );
+});
+
+/**
+ * ⚠**늦게 온 응답이 새 비교를 덮어쓰지 않는다.**
+ *
+ * 샤드로 묶은 뒤로 「이미 받은 샤드는 즉시 · 새 샤드는 왕복」이라는 **지연 비대칭**이 생겼다.
+ * 그래서 A를 누르고 곧바로 B를 누르면, B가 먼저 그려진 뒤 A가 늦게 도착해 화면을 되돌린다 —
+ * **사용자가 마지막에 고른 것과 다른 것이 보이는 상태**다.
+ * (경합 자체는 예전부터 있었지만, 지연 차를 구조적으로 만든 것은 샤딩이다.)
+ */
+test("⚠늦게 도착한 비교 결과가 새 비교를 덮어쓰지 않는다", async () => {
+  const doc = buildCompare();
+  let releaseSlow: (() => void) | null = null;
+  run(doc, {
+    routes: {
+      "compare/p.json": { p1: card("p1", "山本"), p2: card("p2", "宮城") },
+      "compare/b.json": { b1: card("b1", "佐藤") },
+    },
+    // `b` 샤드만 붙잡아 둔다 — 첫 비교가 늦게 도착하게 만든다
+    hold: { "compare/b.json": (release) => { releaseSlow = release; } },
+  });
+
+  // ① 느린 샤드가 걸린 비교(山本 × 佐藤)를 요청한다
+  cpk(doc, "p1").fire("click");
+  cpk(doc, "b1").fire("click");
+  doc.getElementById("cmpGo")!.fire("click");
+  await new Promise((r) => setTimeout(r, 0));
+
+  // ② 기다리지 않고 다른 비교(山本 × 宮城)로 바꿔 다시 누른다 — 이쪽은 캐시라 즉시 그려진다
+  cpk(doc, "b1").fire("click"); // B 자리를 비운다
+  cpk(doc, "p2").fire("click");
+  doc.getElementById("cmpGo")!.fire("click");
+  await new Promise((r) => setTimeout(r, 0));
+  assert.match(doc.getElementById("cmpOut")!.textContent, /宮城/, "새 비교가 안 그려졌다");
+
+  // ③ 이제 느린 응답이 도착한다. **화면이 되돌아가면 안 된다**
+  assert.notEqual(releaseSlow, null, "느린 응답을 붙잡지 못했다 — 시험이 경합을 만들지 못했다");
+  releaseSlow!();
+  await new Promise((r) => setTimeout(r, 0));
+  const out = doc.getElementById("cmpOut")!.textContent;
+  assert.match(out, /宮城/, "늦게 온 응답이 새 비교를 덮어썼다");
+  assert.ok(!out.includes("佐藤"), "낡은 비교가 화면을 되돌렸다");
 });

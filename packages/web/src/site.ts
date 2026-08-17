@@ -13,7 +13,8 @@ import {
   searchIndexJson,
 } from "./pages.ts";
 import { renderPlayerPage } from "./player-page.ts";
-import { compareCard, compareCardJson, renderComparePage } from "./compare.ts";
+import { compareCard, compareShardJson, compareShardOf, renderComparePage } from "./compare.ts";
+import type { CompareCard } from "./compare.ts";
 import { renderDayIndexPage, renderDayPage, renderTodayPage } from "./today-page.ts";
 import { renderPostseasonPage } from "./postseason-page.ts";
 import { renderTeamPage, teamPath } from "./team-page.ts";
@@ -153,6 +154,8 @@ export function buildSite(
     files.push({ path: at("log.html"), content: renderLogPage(log, ctx) });
   }
 
+  /** 比較 데이터. **선수마다가 아니라 ID 첫 글자로 묶는다**(`compareShardOf`) */
+  const compareShards = new Map<string, Map<string, CompareCard>>();
   for (const p of data.players) {
     // ⚠**선수 ID는 외부에서 온 문자열이고, 여기서 파일 경로가 된다.**
     // `../`가 섞이면 출력 디렉터리 밖에 쓴다 — 조용히 정규화하지 말고 던진다.
@@ -160,8 +163,20 @@ export function buildSite(
       throw new Error(`선수 ID가 경로로 쓸 수 없는 형태다: ${JSON.stringify(p.playerId)}`);
     }
     files.push({ path: at(`players/${p.playerId}.html`), content: renderPlayerPage(p, ctx) });
-    // ⚠**비교용 값을 따로 계산하지 않는다**(M1) — 위 페이지가 쓰는 것과 같은 객체에서 뽑는다
-    files.push({ path: at(`compare/${p.playerId}.json`), content: compareCardJson(compareCard(p)) });
+    /**
+     * ⚠**비교용 값을 따로 계산하지 않는다**(M1) — 위 페이지가 쓰는 것과 같은 객체에서 뽑는다.
+     * ⚠**선수마다 파일을 만들지 않는다.** 예전엔 그렇게 했고, 그 결과 이 2.5KB짜리들이
+     * 산출물 파일의 29%(4시즌 2,797개)를 차지해 Pages 배포 상한을 먹고 있었다.
+     */
+    const shard = compareShardOf(p.playerId);
+    const bucket = compareShards.get(shard) ?? new Map<string, CompareCard>();
+    bucket.set(p.playerId, compareCard(p));
+    compareShards.set(shard, bucket);
+  }
+
+  // ⚠**빈 시즌이면 샤드도 0개다** — 「파일은 있는데 안이 비었다」를 만들지 않는다(M11)
+  for (const [shard, cards] of compareShards) {
+    files.push({ path: at(`compare/${shard}.json`), content: compareShardJson(cards) });
   }
 
   /**

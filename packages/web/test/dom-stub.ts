@@ -184,6 +184,13 @@ export interface StubDocument {
   documentElement: El;
   body: El;
   createElement(tag: string): El;
+  /**
+   * SVG 요소. ⚠**태그만 만들고 이름공간은 무시한다** — 이 대역이 재는 것은 구조이지
+   * 렌더링이 아니다. 없으면 紋을 그리는 경로가 통째로 **오류로 빠져** 시험이 엉뚱한 것을 재게 된다.
+   */
+  createElementNS(ns: string, tag: string): El;
+  /** 글자 노드. 용어집에 없는 라벨이 이 경로로 그려진다 */
+  createTextNode(text: string): El;
   getElementById(id: string): El | null;
   querySelector(sel: string): El | null;
   querySelectorAll(sel: string): El[];
@@ -203,6 +210,12 @@ export function makeDocument(base = ""): StubDocument {
     documentElement: root,
     body,
     createElement: (tag) => new El(tag),
+    createElementNS: (_ns, tag) => new El(tag),
+    createTextNode: (text) => {
+      const t = new El("#text");
+      t.textContent = text;
+      return t;
+    },
     getElementById: (id) => root.descendants().find((el) => el.id === id) ?? null,
     querySelector: (sel) => root.querySelector(sel),
     querySelectorAll: (sel) => root.querySelectorAll(sel),
