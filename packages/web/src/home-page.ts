@@ -31,7 +31,7 @@ import type { RenderContext } from "./layout.ts";
 import { note, scroller, term } from "./parts.ts";
 import { teamPath } from "./team-page.ts";
 import { dayHref } from "./today-page.ts";
-import { NEUTRAL_COLOR, REGULAR_SEASON_GAMES } from "@bb-app/domain";
+import { NEUTRAL_COLOR, REGULAR_SEASON_GAMES, regularSeasonGames } from "@bb-app/domain";
 import type { TeamColor } from "@bb-app/domain";
 
 /**
@@ -41,7 +41,7 @@ import type { TeamColor } from "@bb-app/domain";
  * 캘린더가 같은 사실을 다시 필요로 하면서 **두 벌이 될 뻔했다**(2026-08-18).
  * 여기서는 화면이 쓰기 편하도록 다시 내보내기만 한다 — 숫자는 옮겨 적지 않는다.
  */
-export { REGULAR_SEASON_GAMES };
+export { REGULAR_SEASON_GAMES, regularSeasonGames };
 
 /**
  * 순위 다툼 한 줄.
@@ -428,7 +428,7 @@ ${d.leagues.map(
 </section>`,
   )}
 ${note(
-    `残り試合は ${REGULAR_SEASON_GAMES}試合 から消化済み（中止を除く）を引いた数です。` +
+    `残り試合は ${regularSeasonGames(d.season)}試合 から消化済み（中止を除く）を引いた数です。` +
       "「全勝〜全敗の勝率」は残りを全部勝った場合と全部負けた場合の勝率で、**予想ではなく計算できる範囲**です。" +
       "順位が並んだ球団には「同」を付けています — 当該球団間の対戦成績で決めた上で、それでも並ぶ場合です。" +
       "引き分けは勝率の分母に入りません（NPBの規定）。" +
@@ -464,11 +464,11 @@ ${d.week === null
 ${d.paces.length === 0
     ? raw("")
     : html`<section class="block" id="b-hpace">
-  <h2>今シーズンのペース<span class="qt">${REGULAR_SEASON_GAMES}試合換算</span></h2>
+  <h2>今シーズンのペース<span class="qt">${regularSeasonGames(d.season)}試合換算</span></h2>
   ${scroller(html`<table>
     <thead><tr>
       <th class="l">選手</th><th class="l">球団</th><th class="l">項目</th>
-      <th>現在</th><th>${REGULAR_SEASON_GAMES}試合換算</th><th class="l">次の節目</th>
+      <th>現在</th><th>${regularSeasonGames(d.season)}試合換算</th><th class="l">次の節目</th>
     </tr></thead>
     <tbody>${d.paces.map(
       (x) => html`<tr>

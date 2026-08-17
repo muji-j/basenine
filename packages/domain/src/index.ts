@@ -2,6 +2,7 @@
   NON_TEAM_CODES,
   REGULAR_SEASON_GAMES,
   TEAMS,
+  regularSeasonGames,
   competitionFromLabel,
   competitionOf,
   isTeamShortName,
