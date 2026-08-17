@@ -8,6 +8,7 @@
  */
 import { readdir } from "node:fs/promises";
 import { readFileSync } from "node:fs";
+import { fetchedAtOf } from "../src/meta.ts";
 import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
 import { parseCareer, parsePlayerProfile } from "@bb-app/parser";
@@ -61,6 +62,7 @@ const insPit = db.raw.prepare(
 let careerBat = 0;
 let careerPit = 0;
 let careerFailed = 0;
+let metaMissing = 0;
 
 let updated = 0;
 let missing = 0;
@@ -73,6 +75,9 @@ const unknownPlayers: string[] = [];
 db.transaction(() => {
   for (const f of files) {
     const playerId = f.replace(/\.html\.gz$/, "");
+    // ⚠**취득 시각은 아카이브가 갖고 있다** — 적재 시각(`nowIso`)과 다르다
+    const fetchedAt = fetchedAtOf(join(dir, `${playerId}.meta.json`));
+    if (fetchedAt === null) metaMissing += 1;
     let profile;
     let html = "";
     try {
@@ -127,13 +132,13 @@ db.transaction(() => {
       delPit.run(playerId);
       for (const [i, r] of career.batting.entries()) {
         insBat.run(playerId, r.year, r.team, r.games, r.pa, r.ab, r.runs, r.h, r.d2, r.d3, r.hr,
-          r.tb, r.rbi, r.sb, r.cs, r.sh, r.sf, r.bb, r.hbp, r.so, r.gidp, CAREER_SOURCE, nowIso, i);
+          r.tb, r.rbi, r.sb, r.cs, r.sh, r.sf, r.bb, r.hbp, r.so, r.gidp, CAREER_SOURCE, fetchedAt ?? nowIso, i);
         careerBat += 1;
       }
       for (const [i, r] of career.pitching.entries()) {
         insPit.run(playerId, r.year, r.team, r.games, r.w, r.l, r.sv, r.hld, r.hp, r.cg, r.sho,
           r.nbb, r.bf, r.outs, r.h, r.hr, r.bb, r.hbp, r.so, r.wp, r.balk, r.runs, r.er,
-          CAREER_SOURCE, nowIso, i);
+          CAREER_SOURCE, fetchedAt ?? nowIso, i);
         careerPit += 1;
       }
     } catch (err) {
@@ -146,7 +151,7 @@ db.transaction(() => {
 
 /** ⚠**세어 두고 안 쓰면 그것도 침묵이다.** 통산이 몇 줄 들어왔는지 보고한다 */
 console.error(
-  `年度別成績 타격 ${careerBat}행 · 투구 ${careerPit}행 · 실패 ${careerFailed}명`,
+  `年度別成績 타격 ${careerBat}행 · 투구 ${careerPit}행 · 실패 ${careerFailed}명 · 취득시각 결손 ${metaMissing}명`,
 );
 
 const total = (db.raw.prepare("SELECT COUNT(*) AS n FROM player").get() as { n: number }).n;
@@ -188,4 +193,9 @@ if (coverage < KANA_COVERAGE_MIN) {
 }
 
 db.close();
-process.exitCode = failed > 0 || coverage < KANA_COVERAGE_MIN ? 1 : 0;
+/**
+ * ⚠**`careerFailed` 를 넣는다**(2026-08-17 이중 검토 지적).
+ * 年度別成績 파싱이 깨지면 그 선수의 취입만 멈추고 **파이프라인은 성공으로 끝나고 있었다** —
+ * 화면은 「1つでも合わなければ取り込みを止めます」라고 말하는데 절반만 사실이었다(M7).
+ */
+process.exitCode = failed > 0 || careerFailed > 0 || coverage < KANA_COVERAGE_MIN ? 1 : 0;

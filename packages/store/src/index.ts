@@ -23,3 +23,4 @@ export {
   upsertProbablePitcher,
 } from "./load.ts";
 export type { GameRow, ProbablePitcherRow, WriteBudget } from "./load.ts";
+export { fetchedAtOf } from "./meta.ts";

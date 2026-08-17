@@ -364,7 +364,7 @@ function outsToInningsNumber(outs: number): number {
   return Number(`${Math.floor(outs / 3)}.${outs % 3}`);
 }
 
-/** 통산 합계. ⚠**우리가 더한다** — NPB 는 합계 행을 싣지 않는다 */
+/** 통산 합계. ⚠**우리가 더한다** — NPB 도 싣지만(980/980) 그건 대조용으로만 쓴다 */
 export function careerTotal<T>(
   rows: readonly T[],
   numeric: readonly (keyof T)[],

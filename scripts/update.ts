@@ -41,6 +41,16 @@ const { values } = parseArgs({
     delay: { type: "string", default: "3000" },
     /** 며칠 이상 낡으면 경고할지 */
     "stale-days": { type: "string", default: "2" },
+    /**
+     * 하루에 다시 받을 선수 페이지 수의 상한.
+     *
+     * ⚠**상한이 있어야 한다.** 「전원이 낡은」 날이 실재한다(백필 직후·장기 중단 후) —
+     * 그날 980요청을 한 번에 보내면 L1 의 정신에서 벗어난다.
+     * ⚠**기본 400은 실측 기반이다**: 정상 운용에서 하루에 낡는 선수가 약 300명이고
+     * (그날 출장한 선수만 바뀐다), 3초 간격이면 약 20분이다.
+     * 밀린 몫은 다음 날 받는다 — 넘친 수는 로그에 낸다(조용히 자르지 않는다).
+     */
+    "player-limit": { type: "string", default: "400" },
   },
 });
 
@@ -95,7 +105,42 @@ failures += run("DB 적재", [
   ...(values["max-writes"] === undefined ? [] : ["--max-writes", values["max-writes"]]),
 ]) === 0 ? 0 : 1;
 
-// 3. 새 선수 프로필 (이미 받은 선수는 건너뛴다)
+/**
+ * 3. 선수 프로필.
+ *
+ * ⚠**두 단계다. 순서가 중요하다.**
+ * 3-1) **낡은 페이지를 다시 받는다**(`--refresh`). 여기가 통산 기록의 신선도를 지키는 자리다.
+ * 3-2) 그 다음 **아직 한 번도 못 받은 페이지**를 받는다(기존 파일은 건너뛴다).
+ *
+ * ⚠**3-1 이 없어서 통산이 조용히 낡았다**(2026-08-17). 아카이버는 `skipExisting` 이 기본이라
+ * 한 번 받은 선수 페이지를 **다시 받지 않았다** — 실측 당시 698장이 8/15에 멈춰 있었고
+ * 이미 안타 213·홈런 25가 밀려 있었다. 화면은 그것을 **「NPB 가 늦다」고 오진**했다.
+ * ⚠**순서를 바꾸면 같은 선수를 하루에 두 번 받는다**(L1) — 3-1 이 먼저 받아 두면
+ * 3-2 의 `skipExisting` 이 그것을 건너뛴다.
+ */
+const staleFile = join(ROOT, "data", "stale-player-ids.txt");
+const stale = spawnSync(
+  process.execPath,
+  ["packages/store/tools/emit-stale-player-ids.ts", values.db, "--limit", values["player-limit"]],
+  { cwd: ROOT, encoding: "utf8" },
+);
+if (stale.stderr) console.log(`  낡은 선수 페이지: ${stale.stderr.trim()}`);
+if (stale.status === 0 && stale.stdout.trim() !== "") {
+  const { writeFileSync } = await import("node:fs");
+  writeFileSync(staleFile, stale.stdout, "utf8");
+  failures += run("낡은 선수 프로필 재취득", [
+    "packages/archiver/src/cli-players.ts",
+    "--ids", staleFile,
+    "--out", values.archive,
+    "--contact", contact,
+    "--delay", values.delay,
+    "--refresh",
+  ]) === 0 ? 0 : 1;
+} else if (stale.status !== 0) {
+  console.error("낡은 선수 목록을 만들지 못했다 — 재취득을 건너뛴다");
+  failures += 1;
+}
+
 const idsFile = join(ROOT, "data", "player-ids.txt");
 const emit = spawnSync(process.execPath, ["packages/store/tools/emit-player-ids.ts", values.db], {
   cwd: ROOT,
