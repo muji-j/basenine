@@ -1919,12 +1919,23 @@ if(cmpForm){
     });
   };
 
+  /* 비교 요청의 세대. 마지막으로 누른 것만 그린다 */
+  let cmpGen=0;
   const run=()=>{
     if(!chosen.a||!chosen.b||!out)return;
     out.textContent="";
     const wait=el("section","cmpwrap");wait.appendChild(el("p","empty","読み込んでいます…"));
     out.appendChild(wait);
-    Promise.all([load(chosen.a.i),load(chosen.b.i)]).then(r=>render(r[0],r[1])).catch(()=>{
+    /* ⚠**늦게 온 응답이 새 비교를 덮어쓰지 않게 한다.**
+       샤드로 묶은 뒤로 「이미 받은 샤드는 즉시 · 새 샤드는 왕복」이라는 **지연 비대칭**이 생겼다.
+       그래서 A를 누르고 곧바로 B를 누르면 B가 먼저 그려진 뒤 A가 늦게 도착해 화면을 되돌린다 —
+       사용자가 마지막에 고른 것과 다른 것이 보이는 상태다. 세대 번호로 낡은 응답을 버린다. */
+    const mine=++cmpGen;
+    Promise.all([load(chosen.a.i),load(chosen.b.i)]).then(r=>{
+      if(mine!==cmpGen)return;
+      render(r[0],r[1]);
+    }).catch(()=>{
+      if(mine!==cmpGen)return;
       out.textContent="";
       const e=el("section","cmpwrap");
       /* ⚠**빈 화면으로 두지 않는다**(M12) — 「데이터 없음」과 「읽지 못함」은 다른 상태다 */

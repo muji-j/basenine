@@ -168,6 +168,12 @@ interface RunOptions {
    * 그래서 「어느 파일을 몇 번 받는가」를 재는 시험을 쓸 수 없었다.
    */
   routes?: Record<string, unknown>;
+  /**
+   * 응답을 늦출 URL 조각 → 풀어 줄 함수를 받는 곳.
+   * ⚠**지연 차를 만들 수 있어야 경합을 잴 수 있다** — 모든 응답이 같은 틱에 오면
+   * 「늦게 온 응답이 새 화면을 덮어쓴다」를 재현할 방법이 없다.
+   */
+  hold?: Record<string, (release: () => void) => void>;
   /** 요청한 URL이 순서대로 쌓인다. 캐시가 도는지 세는 데 쓴다 */
   requested?: string[];
 }
@@ -184,7 +190,10 @@ function run(
     opts.requested?.push(String(url));
     for (const [fragment, body] of Object.entries(opts.routes ?? {})) {
       if (String(url).includes(fragment)) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+        const res = { ok: true, json: () => Promise.resolve(body) };
+        const holder = Object.entries(opts.hold ?? {}).find(([f]) => String(url).includes(f))?.[1];
+        if (holder === undefined) return Promise.resolve(res);
+        return new Promise((resolve) => holder(() => resolve(res)));
       }
     }
     if (opts.index !== undefined && String(url).includes("players.json")) {
@@ -1724,4 +1733,46 @@ test("⚠샤드 취득에 실패해도 다시 시도할 수 있다", async () =>
     requested.filter((u) => u.includes("compare/")).length > first,
     "실패한 샤드가 캐시에 남아 재시도가 요청을 내지 않았다",
   );
+});
+
+/**
+ * ⚠**늦게 온 응답이 새 비교를 덮어쓰지 않는다.**
+ *
+ * 샤드로 묶은 뒤로 「이미 받은 샤드는 즉시 · 새 샤드는 왕복」이라는 **지연 비대칭**이 생겼다.
+ * 그래서 A를 누르고 곧바로 B를 누르면, B가 먼저 그려진 뒤 A가 늦게 도착해 화면을 되돌린다 —
+ * **사용자가 마지막에 고른 것과 다른 것이 보이는 상태**다.
+ * (경합 자체는 예전부터 있었지만, 지연 차를 구조적으로 만든 것은 샤딩이다.)
+ */
+test("⚠늦게 도착한 비교 결과가 새 비교를 덮어쓰지 않는다", async () => {
+  const doc = buildCompare();
+  let releaseSlow: (() => void) | null = null;
+  run(doc, {
+    routes: {
+      "compare/p.json": { p1: card("p1", "山本"), p2: card("p2", "宮城") },
+      "compare/b.json": { b1: card("b1", "佐藤") },
+    },
+    // `b` 샤드만 붙잡아 둔다 — 첫 비교가 늦게 도착하게 만든다
+    hold: { "compare/b.json": (release) => { releaseSlow = release; } },
+  });
+
+  // ① 느린 샤드가 걸린 비교(山本 × 佐藤)를 요청한다
+  cpk(doc, "p1").fire("click");
+  cpk(doc, "b1").fire("click");
+  doc.getElementById("cmpGo")!.fire("click");
+  await new Promise((r) => setTimeout(r, 0));
+
+  // ② 기다리지 않고 다른 비교(山本 × 宮城)로 바꿔 다시 누른다 — 이쪽은 캐시라 즉시 그려진다
+  cpk(doc, "b1").fire("click"); // B 자리를 비운다
+  cpk(doc, "p2").fire("click");
+  doc.getElementById("cmpGo")!.fire("click");
+  await new Promise((r) => setTimeout(r, 0));
+  assert.match(doc.getElementById("cmpOut")!.textContent, /宮城/, "새 비교가 안 그려졌다");
+
+  // ③ 이제 느린 응답이 도착한다. **화면이 되돌아가면 안 된다**
+  assert.notEqual(releaseSlow, null, "느린 응답을 붙잡지 못했다 — 시험이 경합을 만들지 못했다");
+  releaseSlow!();
+  await new Promise((r) => setTimeout(r, 0));
+  const out = doc.getElementById("cmpOut")!.textContent;
+  assert.match(out, /宮城/, "늦게 온 응답이 새 비교를 덮어썼다");
+  assert.ok(!out.includes("佐藤"), "낡은 비교가 화면을 되돌렸다");
 });
