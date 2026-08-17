@@ -1,3 +1,4 @@
+import { colorOf } from "@bb-app/domain";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildSite, seasonPaths } from "../src/site.ts";
@@ -204,6 +205,36 @@ test("만든 화면이 전부 시즌 경로 목록에 있다 — 빠진 만큼�
       {
         season: 2026, teamCode: "t", name: "阪神タイガース", shortName: "阪神",
         color: { base: "#f2c800", ink: "#17170f" }, leagueName: "セントラル・リーグ",
+    calendar: {
+      teamCode: "t",
+      shortName: "阪神",
+      color: colorOf("t"),
+      today: "2026-08-17",
+      upcoming: 1,
+      upcomingAsOf: "2026-08-17",
+      months: [
+        {
+          key: "2026-08",
+          year: 2026,
+          month: 8,
+          // 2026-08-01 은 토요일(요일 계산은 순수 함수로 낸다)
+          firstWeekday: 6,
+          days: 31,
+          byDay: new Map([
+            [16, [{
+              date: "2026-08-16", slug: "2026-0816-t-g-15", opponent: "巨人", opponentCode: "g",
+              home: true, result: "win" as const, runsFor: 5, runsAgainst: 2,
+              startTime: null, venue: "", upcoming: false,
+            }]],
+            [18, [{
+              date: "2026-08-18", slug: null, opponent: "DeNA", opponentCode: "db",
+              home: false, result: null, runsFor: null, runsAgainst: null,
+              startTime: "17:45", venue: "横浜", upcoming: true,
+            }]],
+          ]),
+        },
+      ],
+    },
         asOf: "2026-08-14", rank: 1, tiedRank: false, games: 1, w: 1, l: 0, t: 0,
         pct: 1, gamesBehind: 0, rf: 1, ra: 0,
         avg: { value: null, denominator: 0 }, era: { value: null, denominator: 0 },

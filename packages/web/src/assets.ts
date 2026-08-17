@@ -728,6 +728,58 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
 .hgames s{text-decoration:none;color:var(--tx-3);font-size:11px}
 .more{margin:8px 0 0;font-size:11.5px}
 
+/* ── 일정 캘린더 ────────────────────────────────────────────────
+   ⚠**격자를 카드로 만들지 않는다**(§6). 달력은 이미 격자라, 칸마다 그림자와 둥근 모서리를
+   더하면 그 순간 「AI가 만든 대시보드」가 된다. 선과 여백만으로 짓는다.
+   ⚠**승패를 색으로만 말하지 않는다** — 글자(○●△中)가 먼저이고 색은 보조다.
+   ⚠**날짜를 큼직하게 두지 않는다.** 이 화면에서 읽을 것은 날짜가 아니라 **상대와 결과**다. */
+.calwrap{display:flex;flex-direction:column;gap:22px}
+.cal{width:100%;border-collapse:collapse;table-layout:fixed}
+.cal caption{text-align:left;font-size:13px;font-weight:700;letter-spacing:.1em;
+  padding:0 0 8px;color:var(--tx)}
+.cal th{font-size:10px;font-weight:400;letter-spacing:.1em;color:var(--tx-3);
+  padding:0 0 6px;text-align:center;border:0}
+.cal th abbr{text-decoration:none;border:0}
+/* 일요일은 조금 진하게. ⚠빨강을 쓰지 않는다 — 「나쁨」으로 읽힌다 */
+.cal .cw0,.cal .cw6{color:var(--tx-2)}
+.cal td{border:1px solid var(--hair);vertical-align:top;padding:4px;height:62px;
+  background:var(--panel)}
+/* 그 달에 없는 칸. ⚠**지우지 않고 비운다** — 없애면 요일이 밀린다 */
+.cal td.cpad{background:transparent;border-color:transparent}
+.cday{display:block;font-family:var(--f-num);font-size:10px;color:var(--tx-3);
+  line-height:1;margin-bottom:3px}
+/* 오늘. ⚠바탕을 칠하지 않고 테두리로 말한다 — 칠하면 「선택됨」으로 읽힌다 */
+.cal td.ctoday{box-shadow:inset 0 0 0 2px var(--team,var(--tx-3))}
+.cal td.ctoday .cday{color:var(--tx);font-weight:700}
+
+/* 한 칸 안의 경기. 지난 경기는 링크, 앞으로의 경기는 그냥 글자 */
+.cg{display:block;text-decoration:none;color:var(--tx);font-size:11px;line-height:1.35;
+  padding:3px 4px;border-left:2px solid var(--hair-2);
+  transition:background var(--fast) var(--ease),border-color var(--fast) var(--ease)}
+.cg + .cg{margin-top:3px}
+a.cg:hover{background:var(--panel-2);border-left-color:var(--team,var(--tx-3))}
+a.cg:focus-visible{outline:2px solid var(--tx);outline-offset:1px}
+.cvs{display:block;font-size:11px;color:var(--tx-2);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
+.cscore{display:inline-block;font-family:var(--f-num);font-variant-numeric:tabular-nums;
+  font-size:12.5px;font-weight:700;margin-right:4px}
+.cmark{font-size:12px;font-weight:700}
+.cmark.win{color:var(--up)}
+.cmark.loss{color:var(--dn)}
+.cmark.draw,.cmark.notPlayed{color:var(--tx-3)}
+/* 앞으로의 경기 — **확정이 아니다**(M9). 점선으로 그렇게 말한다 */
+.cgup{border-left-style:dashed;background:transparent}
+.ctime{display:block;font-family:var(--f-num);font-size:10.5px;color:var(--tx-3)}
+
+@media (max-width:680px){
+  /* ⚠좁은 화면에서는 칸이 작아진다 — 그래도 **가로로 밀지 않는다**.
+     달력을 옆으로 스크롤하면 「몇째 주인지」를 잃는다 */
+  .cal td{height:auto;min-height:44px;padding:3px}
+  .cvs{font-size:10px}
+  .cscore{font-size:11px}
+  .calwrap{gap:16px}
+}
+
 /* ── 순위표: 승패를 눈으로 비교할 수 있게 ─────────────────────────
    ⚠**수를 그림으로 바꾸지 않는다** — 수 옆에 띠를 둔다(2026-08-17 유저 지적).
    ⚠**띠의 승 비율과 승률은 일부러 다르다** — 무승부가 승률의 분모에서 빠지기 때문이다(NPB 규정).

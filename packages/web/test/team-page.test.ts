@@ -22,6 +22,36 @@ function data(over: Partial<TeamPageData> = {}): TeamPageData {
     shortName: "阪神",
     color: colorOf("t"),
     leagueName: "セントラル・リーグ",
+    calendar: {
+      teamCode: "t",
+      shortName: "阪神",
+      color: colorOf("t"),
+      today: "2026-08-17",
+      upcoming: 1,
+      upcomingAsOf: "2026-08-17",
+      months: [
+        {
+          key: "2026-08",
+          year: 2026,
+          month: 8,
+          // 2026-08-01 은 토요일(요일 계산은 순수 함수로 낸다)
+          firstWeekday: 6,
+          days: 31,
+          byDay: new Map([
+            [16, [{
+              date: "2026-08-16", slug: "2026-0816-t-g-15", opponent: "巨人", opponentCode: "g",
+              home: true, result: "win" as const, runsFor: 5, runsAgainst: 2,
+              startTime: null, venue: "", upcoming: false,
+            }]],
+            [18, [{
+              date: "2026-08-18", slug: null, opponent: "DeNA", opponentCode: "db",
+              home: false, result: null, runsFor: null, runsAgainst: null,
+              startTime: "17:45", venue: "横浜", upcoming: true,
+            }]],
+          ]),
+        },
+      ],
+    },
     asOf: "2026-08-15",
     rank: 1,
     tiedRank: false,
@@ -278,10 +308,12 @@ test("상대가 없으면 표를 만들지 않는다 — 빈 표는 고장으로
  * 다른 것이 열린다. 그래서 「기록이 없으면 탭도 없앤다」로 고치지 마라 —
  * 없는 것은 **탭 안에서 말한다**(아래 시험).
  */
-test("⚠구단 페이지는 네 탭으로 갈린다 — 한 화면에 76행을 쌓지 않는다", () => {
+test("⚠구단 페이지는 다섯 탭으로 갈린다 — 한 화면에 76행을 쌓지 않는다", () => {
   const out = renderTeamPage(data(), context());
   const tabs = [...out.matchAll(/role="tab"[^>]*>([^<]+)</g)].map((m) => m[1]);
-  assert.deepEqual(tabs, ["成績", "打者", "投手", "対戦"], "탭 구성이 달라졌다");
+  // ⚠**日程 이 2026-08-17 에 추가됐다**(유저 요청: 구단별 일정 캘린더).
+  //   탭 수는 구단·시즌과 무관하게 늘 같아야 한다 — 있다 없다 하면 손이 기억한 자리가 깨진다
+  assert.deepEqual(tabs, ["成績", "日程", "打者", "投手", "対戦"], "탭 구성이 달라졌다");
   // 처음 열리는 것은 하나뿐이다 — 두 개가 열려 있으면 나눈 뜻이 없다.
   // ⚠**이 탭줄(`team`)만 센다.** 안쪽에 基本/セイバー 패널이 또 있어서, 전부 세면
   // 「어느 층이 열렸는가」가 뭉개진다(2026-08-17)

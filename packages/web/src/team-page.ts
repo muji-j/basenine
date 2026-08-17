@@ -88,6 +88,9 @@ export interface TeamMonth {
   t: number;
 }
 
+import { calendarBlock } from "./calendar.ts";
+import type { CalendarData } from "./calendar.ts";
+
 export interface TeamPageData {
   season: number;
   teamCode: string;
@@ -96,6 +99,11 @@ export interface TeamPageData {
   color: TeamColor;
   leagueName: string;
   asOf: string | null;
+  /**
+   * 일정 캘린더 — **지난 경기와 앞으로의 경기를 한 장에**.
+   * ⚠지난 것은 우리가 수집한 확정, 앞으로의 것은 NPB 공표 예정이다. 화면이 그 차이를 말한다.
+   */
+  calendar: CalendarData;
   /** 순위. 경기가 없으면 null */
   rank: number | null;
   tiedRank: boolean;
@@ -388,6 +396,7 @@ export function renderTeamPage(d: TeamPageData, ctx: RenderContext): string {
     TEAM_TABS,
     [
       { id: "sum", label: "成績" },
+      { id: "cal", label: "日程" },
       { id: "bat", label: "打者" },
       { id: "pit", label: "投手" },
       { id: "vs", label: "対戦" },
@@ -439,6 +448,11 @@ ${d.recent.length === 0
   </li>`,
     )}</ul>
 </section>`}`)}
+
+${panel(TEAM_TABS, "cal", false, html`<section class="block" id="b-teamcal">
+  <h2>日程<span class="qt">${d.calendar.months.length}か月</span></h2>
+  ${calendarBlock(d.calendar, base)}
+</section>`)}
 
 ${panel(TEAM_TABS, "bat", false, html`<section class="block" id="b-teambat">
   <h2>打者<span class="qt">${d.batters.length}人</span><span class="sw">${buttonGroup(

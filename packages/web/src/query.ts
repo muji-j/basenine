@@ -93,6 +93,7 @@ import type {
   SeasonAggregate,
   SplitDimension,
 } from "@bb-app/aggregate";
+import type { CalendarData, CalendarGame, CalendarMonth } from "./calendar.ts";
 import { NEUTRAL_COLOR, NON_TEAM_CODES, TEAMS, colorOf, leagueOf, shortNameOf, teamOf } from "@bb-app/domain";
 import type { Competition, League, TeamColor } from "@bb-app/domain";
 import { countsAsHit } from "@bb-app/parser";
@@ -2579,6 +2580,158 @@ function careerOf(
   };
 }
 
+/**
+ * 구단 캘린더 — **지난 경기 + 앞으로의 경기**.
+ *
+ * ⚠**두 출처를 합치지만 뜻을 섞지 않는다.** 지난 것은 `game`(우리가 수집한 확정),
+ * 앞으로의 것은 `upcoming_game`(NPB 공표 예정)이다 — 예정은 바뀐다(M9의 정신).
+ * ⚠**중지 경기(`notPlayed`)를 빼지 않는다.** 「그 날 경기가 있었는데 안 열렸다」는
+ * 캘린더에서 말해야 하는 사실이다 — 빼면 빈 칸이 되어 「원래 없던 날」과 구별되지 않는다(M11).
+ * ⚠**요일은 순수 계산으로 낸다**(M6) — 시계를 읽지 않는다.
+ */
+function calendarOf(
+  db: Db,
+  season: number,
+  competition: string,
+  teamCode: string,
+  today: string,
+  chip: (code: string) => { shortName: string; color: TeamColor },
+  /**
+   * **실제로 만들어지는 경기 페이지의 slug 집합.**
+   *
+   * ⚠**조건을 여기서 다시 쓰지 않는다**(M1). 경기 페이지는 「치러졌고 **득점을 읽은**」 경기에만
+   * 만들어지는데(`GAME_SQL`), 그 조건을 캘린더에 베끼면 한쪽이 바뀔 때 조용히 갈린다 —
+   * 실제로 처음에 베끼지 않고 「지난 경기면 링크」로 했다가 **284개 링크가 깨졌다**(빌드가 잡았다).
+   * 그래서 **만들어진 목록 자체**를 받는다.
+   */
+  builtGameIds: ReadonlySet<string>,
+): CalendarData {
+  const past = db.raw
+    .prepare(
+      `SELECT game_id AS gameId, game_date AS date, home_code AS home, away_code AS away,
+              status, away_runs AS ar, home_runs AS hr
+         FROM game
+        WHERE season = ? AND competition = ? AND (home_code = ? OR away_code = ?)
+        ORDER BY game_date`,
+    )
+    .all(season, competition, teamCode, teamCode) as unknown as {
+      gameId: string; date: string; home: string; away: string;
+      status: string; ar: number | null; hr: number | null;
+    }[];
+
+  const upcoming = db.raw
+    .prepare(
+      `SELECT game_date AS date, home_code AS home, away_code AS away, venue,
+              start_time AS startTime,
+              SUBSTR(datetime(fetched_at, '+9 hours'), 1, 10) AS asOf
+         FROM upcoming_game
+        WHERE season = ? AND (home_code = ? OR away_code = ?) AND game_date >= ?
+        ORDER BY game_date`,
+    )
+    .all(season, teamCode, teamCode, today) as unknown as {
+      date: string; home: string; away: string; venue: string;
+      startTime: string | null; asOf: string | null;
+    }[];
+
+  const games: CalendarGame[] = [];
+  for (const g of past) {
+    const isHome = g.home === teamCode;
+    const rf = isHome ? g.hr : g.ar;
+    const ra = isHome ? g.ar : g.hr;
+    /**
+     * ⚠**득점을 못 읽었으면 승패도 모른다**(M11). 0대0으로 때우면 무승부가 늘어난다 —
+     * 이 리포가 `streakByTeam` 에서 이미 세워 둔 규칙이다.
+     */
+    const result: CalendarGame["result"] = g.status !== "played"
+      ? "notPlayed"
+      : rf === null || ra === null
+        ? null
+        : rf > ra ? "win" : rf < ra ? "loss" : "draw";
+    /**
+     * ⚠**페이지가 없는 경기에는 링크를 걸지 않는다**(M12). 중지 경기와
+     * 득점을 못 읽은 경기가 그렇다 — 걸면 404 가 되고 그건 고장으로 읽힌다.
+     */
+    games.push({
+      date: g.date,
+      slug: builtGameIds.has(g.gameId) ? gameSlug(g.gameId) : null,
+      opponent: chip(isHome ? g.away : g.home).shortName,
+      opponentCode: isHome ? g.away : g.home,
+      home: isHome,
+      result,
+      runsFor: rf,
+      runsAgainst: ra,
+      startTime: null,
+      venue: "",
+      upcoming: false,
+    });
+  }
+  for (const u of upcoming) {
+    const isHome = u.home === teamCode;
+    games.push({
+      date: u.date,
+      slug: null,
+      opponent: chip(isHome ? u.away : u.home).shortName,
+      opponentCode: isHome ? u.away : u.home,
+      home: isHome,
+      result: null,
+      runsFor: null,
+      runsAgainst: null,
+      startTime: u.startTime,
+      venue: u.venue,
+      upcoming: true,
+    });
+  }
+
+  /** 달별로 모은다. ⚠**경기가 하나도 없는 달은 만들지 않는다** — 빈 격자는 화면만 늘린다 */
+  const byMonth = new Map<string, Map<number, CalendarGame[]>>();
+  for (const g of games) {
+    const key = g.date.slice(0, 7);
+    const day = Number(g.date.slice(8, 10));
+    const m = byMonth.get(key) ?? new Map<number, CalendarGame[]>();
+    byMonth.set(key, m);
+    m.set(day, [...(m.get(day) ?? []), g]);
+  }
+
+  const months: CalendarMonth[] = [...byMonth.entries()]
+    .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+    .map(([key, byDay]) => {
+      const year = Number(key.slice(0, 4));
+      const month = Number(key.slice(5, 7));
+      return {
+        key,
+        year,
+        month,
+        firstWeekday: dayOfWeekOfDate(`${key}-01`),
+        days: daysInMonth(year, month),
+        byDay,
+      };
+    });
+
+  const c = chip(teamCode);
+  return {
+    teamCode,
+    shortName: c.shortName,
+    color: c.color,
+    months,
+    today,
+    upcoming: upcoming.length,
+    upcomingAsOf: upcoming[0]?.asOf ?? null,
+  };
+}
+
+/**
+ * 그 달의 날 수. ⚠**윤년을 손으로 쓰지 않는다** — 다음 달 0일이 이번 달 마지막 날이다.
+ * ⚠`Date` 를 만들지만 **시계를 읽지 않는다**(M6은 「지금」을 읽는 것을 막는 것이다).
+ */
+function daysInMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+/** `YYYY-MM-DD` 의 요일(0=일). ⚠순수 계산이다 — 로컬 타임존에 기대지 않는다(§2-1) */
+function dayOfWeekOfDate(iso: string): number {
+  return new Date(`${iso}T00:00:00Z`).getUTCDay();
+}
+
 function teamPages(
   db: Db,
   o: LoadOptions,
@@ -2600,6 +2753,8 @@ function teamPages(
   asOf: string | null,
   hasPostseason: boolean,
   latestDate: string | null,
+  /** 실제로 만들어지는 경기 페이지의 gameId. 캘린더가 「누를 수 있는 날」을 이걸로 정한다 */
+  builtGameIds: ReadonlySet<string>,
 ): TeamPageData[] {
   const competition = o.competition ?? "regular";
   const through = o.through ?? "9999-12-31";
@@ -2647,6 +2802,15 @@ function teamPages(
        * ⚠**자격 판정은 소속 리그 몫으로 한다** — 팀 몫이 아니다. 타이틀은 리그에서 겨루고,
        * 같은 리그 안에서 이적한 선수의 규정타석은 두 팀분을 합쳐 센다.
        */
+      /**
+       * ⚠**오늘을 주입한다**(M6). `builtOn` 은 사이트를 만든 날이고, 캘린더의 「오늘」이 그것이다 —
+       * 여기서 시계를 읽으면 빌드마다 다른 화면이 나오고 재현이 안 된다.
+       */
+      const calendar = calendarOf(db, o.season, competition, code, o.builtOn, (c) => ({
+        shortName: shortNameOf(c),
+        color: colorOf(c),
+      }), builtGameIds);
+
       const batters: TeamBatter[] = agg.battingByTeam
         .filter((r) => r.teamCode === code && r.line.pa > 0)
         .map((r) => {
@@ -2764,6 +2928,7 @@ function teamPages(
         color: r.color,
         leagueName: section.name,
         asOf,
+        calendar,
         rank: r.rank,
         tiedRank: r.tiedRank,
         games: r.games,
@@ -3776,6 +3941,9 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       // 내비 항목은 기록이 있으면 내지만, 이 문구는 진짜 포스트시즌일 때만이다
       postseasonData.competitions.some((c) => c.id !== "allStar"),
       latestDay,
+      // ⚠**만들어진 목록 자체를 넘긴다**(M1) — 「어느 경기에 페이지가 있는가」의 조건을
+      //   캘린더에 베끼면 한쪽이 바뀔 때 조용히 갈린다
+      gamePageIds,
     ),
     games: [...gameList, ...postGameList],
   };
