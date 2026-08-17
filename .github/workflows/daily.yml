@@ -72,12 +72,30 @@ jobs:
         # ⚠**수집하기 전에 본다** — 올린 뒤에 알면 늦다.
         env:
           GH_TOKEN: ${{ github.token }}
+        # ⚠**흔들리는 네트워크 호출을 소급 불가 파이프라인 앞의 하드 게이트로 두면 안 된다.**
+        #   처음에 `gh repo view --json visibility`(**GraphQL**)를 재시도 없이 썼다가,
+        #   GitHub 장애일 때 **503 한 번에 그날 수집이 통째로 막혔다**(run 32055778604 · 21초 만에 실패).
+        #   지키려던 것은 「공개로 뒤집힌 것을 놓치지 않는다」인데, 실제로 일어난 일은
+        #   「API 가 흔들려서 오늘 경기를 못 받았다」였다 — 되돌릴 수 없는 쪽이 손해가 크다.
+        # ⚠**REST 로 묻는다.** 같은 밤에 GraphQL 이 503 일 때 REST 는 답하고 있었다.
+        # ⚠**그래도 「모른다」를 「비공개다」로 읽지 않는다** — 세 번 물어 다 실패하면 멈춘다.
+        #   자동으로 통과시키면 이 게이트는 있으나 마나가 된다.
         run: |
           set -euo pipefail
-          vis=$(gh repo view --json visibility --jq .visibility)
-          echo "리포 공개 범위: ${vis}"
-          if [ "$vis" != "PRIVATE" ]; then
-            echo "::error::L6 위반 — 이 리포가 ${vis} 다. 원시 아카이브(npb.jp 원본)가 공개된다."
+          priv=""
+          for i in 1 2 3; do
+            if priv=$(gh api repos/${GITHUB_REPOSITORY} --jq .private 2>/dev/null); then break; fi
+            echo "공개 범위 조회 ${i}회 실패 — 20초 뒤 재시도"
+            sleep 20
+            priv=""
+          done
+          if [ -z "$priv" ]; then
+            echo "::error::리포의 공개 범위를 확인하지 못했다(GitHub API 응답 없음). L6 를 확인할 수 없으므로 멈춘다."
+            exit 1
+          fi
+          echo "리포 비공개 여부: ${priv}"
+          if [ "$priv" != "true" ]; then
+            echo "::error::L6 위반 — 이 리포가 공개다. 원시 아카이브(npb.jp 원본)가 공개된다."
             echo "공개로 전환하려면 먼저 릴리스 자산에서 아카이브를 내리고 CLAUDE.md §2-5 를 다시 판정하라."
             exit 1
           fi
@@ -92,6 +110,16 @@ jobs:
             # ⚠실패를 삼키지 않는다. 릴리스가 있는데 못 받았다면 그것은 사고다
             gh release download "$DATA_TAG" --dir /tmp/store --clobber
             tar -xf /tmp/store/archive.tar -C data
+            # ⚠**덧붙이는 자산도 푼다**(`archive-2021.tar` 같은 것).
+            #   소급 시즌은 **로컬에서 백필한 뒤 따로 올린다** — 본 자산(183MB)을 내려받아
+            #   합쳐서 다시 올리는 것보다 안전하고 훨씬 싸다. 겹쳐 풀어도 같은 파일이라 문제없다.
+            #   ⚠**다음 실행이 알아서 하나로 만든다** — 「보관소에 올림」이 data/archive 를 통째로
+            #   다시 tar 하므로, 한 번 돌고 나면 이 자산은 본 자산 안에 들어간다(그때 지워도 된다).
+            for extra in /tmp/store/archive-*.tar; do
+              [ -e "$extra" ] || continue
+              echo "덧붙임 자산 전개: $(basename "$extra")"
+              tar -xf "$extra" -C data
+            done
             # ⚠**DB 가 없어도 계속 간다**(2026-08-18 감사 P3). DB 는 아카이브에서 **다시 만들 수 있는**
             #   파생물이지만, 아카이브는 소급 불가 자산이다 — 둘을 같은 무게로 다루면 안 된다.
             #   예전에는 `set -e` 아래에서 그냥 풀어서, 자산 2개를 올리는 도중에 잡이 죽어
@@ -218,7 +246,7 @@ jobs:
         # ⚠**시즌을 늘리기 전에 보관소에 그 시즌의 아카이브가 있어야 한다.**
         # DB는 매 실행 아카이브 전체를 다시 훑어 만들어지므로, 아카이브에 없는 시즌을
         # 여기 적으면 **그 시즌이 빈 화면으로 생성된다**(2024·2023은 2026-08-17에 올렸다).
-        run: node packages/web/tools/build.ts data/bb.sqlite dist 2026,2025,2024,2023,2022
+        run: node packages/web/tools/build.ts data/bb.sqlite dist 2026,2025,2024,2023,2022,2021
 
       - name: 시험
         # ⚠**CI 가 `npm test` 를 한 번도 돌리지 않고 있었다**(2026-08-18 감사 P3).
