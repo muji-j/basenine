@@ -287,8 +287,11 @@ test("대회가 둘 이상이면 대회별 탭이 생긴다", () => {
   assert.ok(out.includes(`data-tab="climaxSeries"`), "CS 탭이 없다");
   assert.ok(out.includes(`data-tab="nipponSeries"`), "일본시리즈 탭이 없다");
   // 첫 대회만 열려 있고 나머지는 닫혀 있다
-  assert.match(out, /data-panelkey="climaxSeries"[^>]*role="tabpanel"\s*>/, "첫 탭이 닫혀 있다");
-  assert.match(out, /data-panelkey="nipponSeries"[^>]*role="tabpanel" hidden>/, "두 번째 탭이 열려 있다");
+  // ⚠**속성 순서에 기대지 않는다** — 여는 태그에 hidden 이 없는가만 본다
+  const csTag = /<div[^>]*data-panelkey="climaxSeries"[^>]*>/.exec(out)?.[0] ?? "";
+  assert.ok(csTag.length > 0 && !csTag.includes("hidden"), "첫 탭이 닫혀 있다");
+  const nsTag = /<div[^>]*data-panelkey="nipponSeries"[^>]*role="tabpanel"[^>]*>/.exec(out)?.[0] ?? "";
+  assert.ok(nsTag.length > 0 && nsTag.includes("hidden"), "두 번째 탭이 열려 있다");
 });
 
 /**

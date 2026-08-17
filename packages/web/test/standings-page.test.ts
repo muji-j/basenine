@@ -99,11 +99,23 @@ test("팀 순위가 먼저 열린다 — 「順位」를 누른 사람이 먼저
 
 test("⚠갈래를 나눠도 JS 없이 팀 순위는 보인다 — 열린 패널이 팀 쪽이다", () => {
   const out = renderRankingPage(split(), context());
-  const teamPanel = /data-panelgroup="ranktype" data-panelkey="team" role="tabpanel" >/.exec(out);
-  const personalPanel = /data-panelgroup="ranktype" data-panelkey="personal" role="tabpanel" hidden>/.exec(out);
-  assert.notEqual(teamPanel, null, "팀 패널이 열려 있지 않다");
-  assert.notEqual(personalPanel, null, "개인 패널이 닫혀 있지 않다");
-  assert.ok(teamPanel!.index < personalPanel!.index, "팀 순위표가 문서 뒤쪽에 있다");
+  // ⚠**속성 순서에 기대지 않는다.** 여는 태그에 hidden 이 있는가만 본다 —
+  // aria-controls/aria-labelledby 를 더했을 때 이 시험이 깨졌는데, 재려던 것(열림 여부)은
+  // 그대로였다(2026-08-17). 속성이 늘 때마다 깨지는 시험은 무엇도 지키지 못한다
+  const find = (key: string): { tag: string; at: number } => {
+    // ⚠**role="tabpanel" 로 좁힌다** — 같은 그룹을 쓰는 follower(패널이 아닌 추종 자리)가
+    // 있어서, 그것까지 잡으면 엉뚱한 div 의 위치를 재게 된다
+    const m = new RegExp(
+      `<div[^>]*data-panelgroup="ranktype"[^>]*data-panelkey="${key}"[^>]*role="tabpanel"[^>]*>`,
+    ).exec(out);
+    assert.notEqual(m, null, `${key} 패널이 없다`);
+    return { tag: m![0], at: m!.index };
+  };
+  const team = find("team");
+  const personal = find("personal");
+  assert.ok(!team.tag.includes("hidden"), "팀 패널이 열려 있지 않다");
+  assert.ok(personal.tag.includes("hidden"), "개인 패널이 닫혀 있지 않다");
+  assert.ok(team.at < personal.at, "팀 순위표가 문서 뒤쪽에 있다");
 });
 
 test("⚠개인 순위가 없으면 갈래를 만들지 않는다 — 눌러도 빈 탭은 고장으로 읽힌다", () => {

@@ -390,3 +390,37 @@ test("⚠기록이 없는 값은 —로 그리고, 정렬 속성 자체를 만�
   // 화면에는 값이 아니라 「없음」이 나온다
   assert.match(out, new RegExp(`${NO_VALUE}`), "없음 표시가 화면에 없다");
 });
+
+/**
+ * ⚠**가리키는 id 가 실재해야 한다.**
+ *
+ * `aria-controls`/`aria-labelledby` 를 붙이면서 **패널 8개 중 4개가 없는 탭을 가리켰다**
+ * (2026-08-17 실측). `tablist()` 는 id 를 내는데 `buttonGroup()` 은 안 냈기 때문이다.
+ * **깨진 ARIA 참조는 없는 것보다 나쁘다** — 접근성 트리에 거짓이 들어가고,
+ * 화면에는 아무 표시도 나지 않아 눈으로는 영영 못 잡는다.
+ *
+ * ⚠**반대 방향도 잰다** — 패널이 없는 버튼줄에 `aria-controls` 를 붙이면 허공을 가리킨다.
+ */
+test("⚠ARIA 참조가 실재하는 id 를 가리킨다 — 깨진 참조는 화면에 안 보인다", () => {
+  const out = renderTeamPage(data(), context());
+  const ids = new Set([...out.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1] ?? ""));
+  const refs = [...out.matchAll(/aria-(?:controls|labelledby)="([^"]+)"/g)];
+  assert.ok(refs.length >= 8, `ARIA 참조가 ${refs.length}개뿐이다 — 이 시험이 공회전한다`);
+  for (const m of refs) {
+    assert.ok(ids.has(m[1] ?? ""), `${m[0]} 가 가리키는 id 가 없다`);
+  }
+});
+
+/**
+ * ⚠**탭과 패널이 서로를 가리킨다.** 한쪽만 있으면 반쪽짜리다 —
+ * 낭독기가 「이 패널은 어느 탭의 것인가」에 답할 수 없다.
+ */
+test("⚠탭↔패널이 양방향으로 이어져 있다", () => {
+  const out = renderTeamPage(data(), context());
+  for (const m of out.matchAll(/<button[^>]*id="([^"]+)"[^>]*aria-controls="([^"]+)"/g)) {
+    const panel = new RegExp(`id="${m[2]}"[^>]*aria-labelledby="([^"]+)"`).exec(out)
+      ?? new RegExp(`aria-labelledby="([^"]+)"[^>]*id="${m[2]}"`).exec(out);
+    assert.notEqual(panel, null, `${m[2]} 패널이 자기 탭을 가리키지 않는다`);
+    assert.equal(panel?.[1], m[1], `${m[2]} 가 다른 탭을 가리킨다`);
+  }
+});
