@@ -147,3 +147,27 @@ export function teamByName(name: string): Team {
   if (!t) throw new RangeError(`모르는 구단 표기: ${JSON.stringify(name)}. 구단 마스터를 갱신하라`);
   return t;
 }
+
+const BY_SHORT = new Map(Object.entries(SHORT_NAME).map(([code, short]) => [short, code]));
+
+/**
+ * **약칭**으로 구단 코드를 찾는다. 월간 일정 표처럼 `巨人`·`DeNA` 로만 오는 소스에 쓴다.
+ *
+ * ⚠**`teamByName` 과 다른 표다.** 저쪽은 정식 표기(`阪神タイガース`), 이쪽은 약칭(`阪神`)이다 —
+ * 같은 함수로 합치면 「어느 표기까지 받아 주는가」가 흐려지고, 표기가 흔들릴 때 조용히 틀린 팀에 붙는다.
+ * ⚠**모르면 던진다**(M7). 일정 표에는 올스타의 `セ・リーグ`·`パ・リーグ` 처럼 구단이 아닌 것도 나온다 —
+ * 그건 호출자가 걸러야 하고, 여기서 조용히 넘기면 **경기가 통째로 사라진다.**
+ * ⚠**부분 일치·정규화를 하지 않는다**(위 함수와 같은 이유).
+ */
+export function teamCodeByShortName(short: string): string {
+  const code = BY_SHORT.get(short);
+  if (code === undefined) {
+    throw new RangeError(`모르는 구단 약칭: ${JSON.stringify(short)}. 구단 마스터를 갱신하라`);
+  }
+  return code;
+}
+
+/** 구단 약칭인가. **던지지 않고 묻는다** — 올스타 행처럼 구단이 아닌 것을 거를 때 쓴다 */
+export function isTeamShortName(short: string): boolean {
+  return BY_SHORT.has(short);
+}

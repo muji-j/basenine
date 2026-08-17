@@ -3,9 +3,11 @@
   TEAMS,
   competitionFromLabel,
   competitionOf,
+  isTeamShortName,
   leagueOf,
   shortNameOf,
   teamByName,
+  teamCodeByShortName,
   teamOf,
 } from "./teams.ts";
 export type { Competition, League, Team } from "./teams.ts";
