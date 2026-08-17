@@ -10,7 +10,7 @@ import { attempts, battedBalls, buntValues, headToHead, steals, successRate, tim
 // ⚠**통산 합계·시즌 수는 파서 쪽 한 벌을 쓴다**(M1) — 여기에 다시 쓰면 시험이 붙은 쪽이 죽는다
 import { careerTotal, seasonsPlayed } from "@bb-app/parser";
 import type { HeadToHead, PlayerStreaks } from "@bb-app/aggregate";
-import { REGULAR_SEASON_GAMES } from "./home-page.ts";
+import { regularSeasonGames } from "./home-page.ts";
 import type {
   HomeLeague,
   HomePace,
@@ -1915,9 +1915,13 @@ function nextMilestone(label: string, count: number): { next: number; toNext: nu
  * ⚠**분모는 그 팀의 소화 경기**다. 선수 출장 수로 나누면 결장이 많은 선수의 환산이 폭주한다
  *   (10경기 5홈런 → 71본). 팀 경기로 나누면 「팀이 143경기 할 때 이 선수가 몇 개」가 된다.
  */
-function paceOf(count: number, teamGames: number): number {
+function paceOf(count: number, teamGames: number, season: number): number {
   if (teamGames <= 0) return 0;
-  return Math.floor((count / teamGames) * REGULAR_SEASON_GAMES);
+  /**
+   * ⚠**시즌마다 기준이 다르다**(2026-08-18). 2020년은 120경기였다 —
+   * 143으로 환산하면 그 시즌 화면이 **존재하지 않는 기준**으로 말하게 된다.
+   */
+  return Math.floor((count / teamGames) * regularSeasonGames(season));
 }
 
 /**
@@ -2238,7 +2242,8 @@ function homePage(
     name: sec.name,
     rows: sec.rows.map((r) => {
       const p = played.get(r.teamCode) ?? 0;
-      const remaining = REGULAR_SEASON_GAMES - p;
+      // ⚠**시즌마다 기준이 다르다** — 143 고정이면 2020년(120경기)에서 잔여가 음수로 나온다
+      const remaining = regularSeasonGames(o.season) - p;
       // ⚠**전승·전패 승률의 분모도 `勝+敗`다.** 무승부는 여기서도 빠진다
       const best = remaining > 0 ? winPct(r.w + remaining, r.l) : r.pct;
       const worst = remaining > 0 ? winPct(r.w, r.l + remaining) : r.pct;
@@ -2310,7 +2315,7 @@ function homePage(
         label,
         count: it.count,
         teamGames: tg,
-        pace: paceOf(it.count, tg),
+        pace: paceOf(it.count, tg, o.season),
         toNext: m === null ? null : m.toNext,
         next: m === null ? null : m.next,
       });
@@ -2817,7 +2822,7 @@ function calendarOf(
         startTime: string | null; asOf: string | null;
       }[],
       past.filter((g) => g.status === "played").length,
-      REGULAR_SEASON_GAMES,
+      regularSeasonGames(season),
     );
 
   const games: CalendarGame[] = [];

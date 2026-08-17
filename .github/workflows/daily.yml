@@ -246,7 +246,7 @@ jobs:
         # ⚠**시즌을 늘리기 전에 보관소에 그 시즌의 아카이브가 있어야 한다.**
         # DB는 매 실행 아카이브 전체를 다시 훑어 만들어지므로, 아카이브에 없는 시즌을
         # 여기 적으면 **그 시즌이 빈 화면으로 생성된다**(2024·2023은 2026-08-17에 올렸다).
-        run: node packages/web/tools/build.ts data/bb.sqlite dist 2026,2025,2024,2023,2022,2021
+        run: node packages/web/tools/build.ts data/bb.sqlite dist 2026,2025,2024,2023,2022,2021,2020
 
       - name: 시험
         # ⚠**CI 가 `npm test` 를 한 번도 돌리지 않고 있었다**(2026-08-18 감사 P3).

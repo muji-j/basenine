@@ -11,7 +11,7 @@
   "scripts": {
     "test": "node --test \"packages/*/test/*.test.ts\"",
     "typecheck": "tsc -p tsconfig.json",
-    "build:web": "node packages/web/tools/build.ts data/bb.sqlite dist 2026,2025,2024,2023,2022,2021",
+    "build:web": "node packages/web/tools/build.ts data/bb.sqlite dist 2026,2025,2024,2023,2022,2021,2020",
     "preview": "node scripts/preview.ts dist 4173",
     "marks": "node packages/web/tools/marks.ts data/bb.sqlite docs/mockups/2026-08-15-identity-marks.html 2026",
     "archive": "node packages/archiver/src/cli.ts",
