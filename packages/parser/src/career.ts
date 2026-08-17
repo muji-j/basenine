@@ -5,8 +5,14 @@
  * 파서가 `pc_bio` 를 읽으면서 **`pc_stats` 는 통째로 지나쳤다.** 실측: 아카이브 980장 중
  * 打撃成績 표 **980장** · 投手成績 표 **514장** · 시즌 행 합계 **8,127행** · 수록 연도 **2002~2026**.
  *
- * ⚠**「通算」 합계 행은 없다**(실측 0/980). NPB 는 연도별만 싣는다 —
- * 그래서 통산은 **우리가 더한다.** 남의 계산값을 빌리는 것이 아니다.
+ * ⚠**「通算」 합계 행은 있다** — 처음에 「없다(실측 0/980)」고 적었는데 **틀린 판정이었다**.
+ * `<td>通算</td>` 를 찾았지만 실제로는 `<tfoot>` 안의 `<th class="team">通　算</th>` 이고
+ * 사이에 **전각 공백**이 있다. 다시 재니 **980/980** 이다(2026-08-17 이중 검토 지적).
+ *
+ * ⚠**그래도 통산은 우리가 더한다.** 남의 계산값을 그대로 싣지 않는다는 원칙은 그대로다.
+ * 대신 그 합계 행을 **검산에 쓴다** — 우리 합과 어긋나면 던진다.
+ * 이것이 이 파서에서 가장 싼 안전장치다: 열 이름이 바뀌어 한 지표가 0이 되든,
+ * 행이 잘려 몇 해가 사라지든 **그 자리에서 걸린다.**
  *
  * ⚠**이 값의 출처는 우리 타석 로그가 아니라 NPB 공표치다**(M4). 우리가 경기에서 쌓은 값과
  * **같은 열에 섞지 마라** — 「어디서 온 숫자인가」에 답할 수 없게 된다.
@@ -213,19 +219,30 @@ function parseTable<T>(
   id: string,
   keys: Readonly<Record<string, string>>,
   make: (year: number, team: string, get: (label: string) => number | null, cellOf: (label: string) => string) => T,
-): T[] {
+): { rows: T[]; head: string[]; foot: Map<string, number> | null } {
   const table = new RegExp(`<table id="${id}">([\\s\\S]*?)</table>\\s*(?:</div>|<div)`).exec(html)
     ?? new RegExp(`<table id="${id}">([\\s\\S]*)`).exec(html);
-  if (table === null) return [];
+  if (table === null) return { rows: [], head: [], foot: null };
   const { head, body } = rowsOf(table[0]);
   if (head.length === 0) {
     throw new CareerParseError(`${id} 의 머리를 읽지 못했다`, `head=0 body=${body.length}`);
   }
-  const known = head.filter((x) => x in keys).length;
-  if (known < Object.keys(keys).length / 2) {
+  /**
+   * ⚠**하나라도 없으면 던진다.**
+   *
+   * 처음에는 「아는 열이 절반 미만이면」이었다. 실제 마크업 변경은 **한두 칸**이므로
+   * 그 가드는 아무것도 못 물었다 — 실측(2026-08-17 이중 검토):
+   * `年度` 한 낱말만 바꾸면 **행 0건**, `本塁打` 한 낱말만 바꾸면 **통산 홈런 0**,
+   * `盗塁刺` 한 낱말만 바꾸면 **도루자 51 → 0**. **셋 다 오류 없이** 그렇게 됐다.
+   * 파일 머리에 「조용히 0으로 나가는 것이 이 도메인에서 가장 나쁜 실패」라고 적어 두고
+   * 가드가 그 실패를 막지 못했다.
+   */
+  const need = ["年度", "所属球団", ...Object.keys(keys)];
+  const missing = need.filter((x) => !head.includes(x));
+  if (missing.length > 0) {
     throw new CareerParseError(
-      `${id} 의 열 이름이 아는 것과 너무 다르다 — 페이지 구조 변경을 의심하라`,
-      `known=${known}/${head.length} head=${head.slice(0, 8).join(",")}`,
+      `${id} 에 있어야 할 열이 없다 — 페이지 구조 변경을 의심하라`,
+      `missing=${missing.join(",")} head=${head.join(",")}`,
     );
   }
 
@@ -242,11 +259,66 @@ function parseTable<T>(
     };
     out.push(make(year, team, (label) => num(cellOf(label)), cellOf));
   }
+  return { rows: out, head, foot: footTotals(table[0], head) };
+}
+
+/**
+ * 표의 **`<tfoot>` 합계 행**.
+ *
+ * ⚠**모양이 본문 행과 다르다** — `<td>` 가 아니라 `<th>` 이고, 첫 칸(年度)이 비어 있으며
+ * 구단 칸에 `通　算`(전각 공백)이 들어간다. 그래서 `<td>通算</td>` 로 찾으면 0건이 나온다.
+ */
+function footTotals(tableHtml: string, head: readonly string[]): Map<string, number> | null {
+  const foot = /<tfoot>([\s\S]*?)<\/tfoot>/.exec(tableHtml)?.[1];
+  if (foot === undefined) return null;
+  const cells = topCells(foot);
+  if (cells.length !== head.length) return null;
+  const out = new Map<string, number>();
+  for (let i = 0; i < head.length; i += 1) {
+    const label = head[i] ?? "";
+    const v = num(cells[i] ?? "");
+    if (v !== null) out.set(label, v);
+  }
   return out;
 }
 
+/**
+ * 우리 합과 NPB 합계 행을 맞대 본다.
+ *
+ * ⚠**표시에는 쓰지 않는다.** 남의 계산값을 그대로 싣지 않는다는 원칙은 그대로다 —
+ * 여기서 하는 일은 **검산**뿐이고, 화면에 나가는 통산은 우리가 더한 값이다.
+ * ⚠**어긋나면 던진다.** 조용히 넘기면 이 검산이 있으나 마나다(M7).
+ */
+function checkAgainstFoot(
+  id: string,
+  head: readonly string[],
+  foot: Map<string, number> | null,
+  keys: Readonly<Record<string, string>>,
+  rows: readonly Record<string, unknown>[],
+  extra: Readonly<Record<string, number>> = {},
+): void {
+  if (foot === null) return;
+  const bad: string[] = [];
+  for (const [label, key] of Object.entries(keys)) {
+    const want = foot.get(label);
+    if (want === undefined) continue;
+    const got = rows.reduce((a, r) => a + Number(r[key] ?? 0), 0);
+    if (got !== want) bad.push(`${label} 우리 ${got} vs 공표 ${want}`);
+  }
+  for (const [label, got] of Object.entries(extra)) {
+    const want = foot.get(label);
+    if (want !== undefined && got !== want) bad.push(`${label} 우리 ${got} vs 공표 ${want}`);
+  }
+  if (bad.length > 0) {
+    throw new CareerParseError(
+      `${id} 의 합계가 NPB 공표 합계와 어긋난다 — 행이나 칸을 놓쳤을 수 있다`,
+      `${bad.slice(0, 4).join(" / ")} (열 ${head.length}개)`,
+    );
+  }
+}
+
 export function parseCareer(html: string): Career {
-  const batting = parseTable<CareerBattingSeason>(html, "tablefix_b", BAT_KEYS, (year, team, get) => {
+  const bat = parseTable<CareerBattingSeason>(html, "tablefix_b", BAT_KEYS, (year, team, get) => {
     const row = { year, team } as CareerBattingSeason;
     for (const [label, key] of Object.entries(BAT_KEYS)) {
       // ⚠**못 읽은 칸은 0으로 둔다** — 이 표에서 빈 칸은 「그 항목이 그 해에 없었다」가 아니라
@@ -257,7 +329,7 @@ export function parseCareer(html: string): Career {
     return row;
   });
 
-  const pitching = parseTable<CareerPitchingSeason>(html, "tablefix_p", PIT_KEYS, (year, team, get, cellOf) => {
+  const pit = parseTable<CareerPitchingSeason>(html, "tablefix_p", PIT_KEYS, (year, team, get, cellOf) => {
     const row = { year, team } as CareerPitchingSeason;
     for (const [label, key] of Object.entries(PIT_KEYS)) {
       (row as unknown as Record<string, number>)[key] = get(label) ?? 0;
@@ -266,7 +338,30 @@ export function parseCareer(html: string): Career {
     return row;
   });
 
-  return { batting, pitching };
+  /**
+   * ⚠**여기서 검산한다.** 우리가 더한 합이 NPB 공표 합계와 어긋나면 던진다 —
+   * 열 이름이 바뀌어 한 지표가 0이 되든, 행이 잘려 몇 해가 사라지든 그 자리에서 걸린다.
+   * ⚠**投球回는 별도로 잰다** — 이닝 칸이 중첩 표라 키 맵에 없다.
+   */
+  checkAgainstFoot("tablefix_b", bat.head, bat.foot, BAT_KEYS, bat.rows as unknown as Record<string, unknown>[]);
+  const footOuts = pit.foot === null ? undefined : pit.foot.get("投球回");
+  checkAgainstFoot(
+    "tablefix_p", pit.head, pit.foot, PIT_KEYS, pit.rows as unknown as Record<string, unknown>[],
+    // ⚠**공표 합계는 이닝(`1043.2`)이고 우리는 아웃이다** — 아웃을 이닝 표기로 되돌려 견준다
+    footOuts === undefined ? {} : { 投球回: outsToInningsNumber(pit.rows.reduce((a, r) => a + r.outs, 0)) },
+  );
+
+  return { batting: bat.rows, pitching: pit.rows };
+}
+
+/**
+ * 아웃 → 이닝 **수치**(`86` → `28.2`).
+ *
+ * ⚠**소수가 아니다.** `.1`·`.2` 는 ⅓·⅔이고, 그래서 `86/3 = 28.67` 이 아니라 `28.2` 다.
+ * 공표 합계와 견주려면 그쪽 표기로 되돌려야 한다.
+ */
+function outsToInningsNumber(outs: number): number {
+  return Number(`${Math.floor(outs / 3)}.${outs % 3}`);
 }
 
 /** 통산 합계. ⚠**우리가 더한다** — NPB 는 합계 행을 싣지 않는다 */

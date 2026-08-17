@@ -613,6 +613,18 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
 .picklab{margin:10px 0 5px;font-size:10px;letter-spacing:.16em;color:var(--tx-3);
   display:flex;align-items:baseline;gap:6px}
 .picklab s{text-decoration:none;letter-spacing:0;font-size:10.5px}
+/* ── 通算成績 ──
+   ⚠**태그 기본값에 기대지 않는다.** h3 는 기본 1.17em 이라 **구획 제목(h2, 11px)보다 커진다** —
+   이 저장소가 이미 한 번 밟은 함정이다(위 .standname 주석 참조).
+   ⚠**통산 한 줄이 이 블록의 주역**이다. 연도별은 근거이고, 먼저 읽혀야 하는 것은 합계다. */
+.cyr{margin:14px 0 6px;font-size:10.5px;letter-spacing:.16em;color:var(--tx-2);font-weight:600;
+  display:flex;align-items:baseline;gap:8px}
+.cyr:first-child{margin-top:0}
+.cyr .qt{letter-spacing:0;font-weight:400;color:var(--tx-3);font-size:10.5px}
+.ctot{margin:0 0 8px;font-size:13.5px;font-variant-numeric:tabular-nums;
+  padding:7px 0 7px 11px;border-left:3px solid var(--chip,var(--team,var(--tx)))}
+.ctot b{font-size:10px;letter-spacing:.16em;color:var(--tx-3);font-weight:600;margin-right:8px;
+  vertical-align:.08em}
 /* ── ホーム(대시보드) ──
    ⚠**로고를 쓰지 않는다**(§6). 구단을 구별하는 것은 **우리가 고른 색**과 이름이다.
    ⚠**카드 그리드를 만들지 않는다** — 균질한 카드 격자는 「AI틱함」 금지 목록에 있다.

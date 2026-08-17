@@ -50,13 +50,13 @@ const delBat = db.raw.prepare("DELETE FROM career_batting WHERE player_id = ?");
 const delPit = db.raw.prepare("DELETE FROM career_pitching WHERE player_id = ?");
 const insBat = db.raw.prepare(
   `INSERT INTO career_batting (player_id, year, team, games, pa, ab, runs, h, d2, d3, hr, tb, rbi,
-     sb, cs, sh, sf, bb, hbp, so, gidp, source, fetched_at)
-   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     sb, cs, sh, sf, bb, hbp, so, gidp, source, fetched_at, seq)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 );
 const insPit = db.raw.prepare(
   `INSERT INTO career_pitching (player_id, year, team, games, w, l, sv, hld, hp, cg, sho, nbb, bf,
-     outs, h, hr, bb, hbp, so, wp, balk, runs, er, source, fetched_at)
-   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     outs, h, hr, bb, hbp, so, wp, balk, runs, er, source, fetched_at, seq)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 );
 let careerBat = 0;
 let careerPit = 0;
@@ -105,6 +105,17 @@ db.transaction(() => {
       playerId,
     );
     /**
+     * ⚠**여기서 바로 센다.** 아래 통산 INSERT 가 끼어들면 `changes()` 가 **그쪽**을 읽는다 —
+     * SQLite 의 `changes()` 는 「가장 최근 완료된 INSERT/UPDATE/DELETE」의 행 수다.
+     * 전 선수가 타격 행을 가지므로 값이 **항상 1**이 되어, 「DB에 없는 선수」가
+     * 영원히 0으로 보고된다(2026-08-17 이중 검토 지적).
+     * 지금은 실제로도 0이라 **틀린 것과 안 재는 것이 구별되지 않는다** — 작업규칙 7이 막는 상태다.
+     */
+    const changed = (db.raw.prepare("SELECT changes() AS n").get() as { n: number }).n;
+    if (changed === 0) missing += 1;
+    else updated += 1;
+
+    /**
      * 年度別成績.
      * ⚠**프로필과 같은 페이지를 두 번 읽지 않는다** — 이미 문자열을 갖고 있다.
      * ⚠**여기서 실패해도 프로필은 살린다**(blast radius) — 한 선수의 표 하나 때문에
@@ -114,15 +125,15 @@ db.transaction(() => {
       const career = parseCareer(html);
       delBat.run(playerId);
       delPit.run(playerId);
-      for (const r of career.batting) {
+      for (const [i, r] of career.batting.entries()) {
         insBat.run(playerId, r.year, r.team, r.games, r.pa, r.ab, r.runs, r.h, r.d2, r.d3, r.hr,
-          r.tb, r.rbi, r.sb, r.cs, r.sh, r.sf, r.bb, r.hbp, r.so, r.gidp, CAREER_SOURCE, nowIso);
+          r.tb, r.rbi, r.sb, r.cs, r.sh, r.sf, r.bb, r.hbp, r.so, r.gidp, CAREER_SOURCE, nowIso, i);
         careerBat += 1;
       }
-      for (const r of career.pitching) {
+      for (const [i, r] of career.pitching.entries()) {
         insPit.run(playerId, r.year, r.team, r.games, r.w, r.l, r.sv, r.hld, r.hp, r.cg, r.sho,
           r.nbb, r.bf, r.outs, r.h, r.hr, r.bb, r.hbp, r.so, r.wp, r.balk, r.runs, r.er,
-          CAREER_SOURCE, nowIso);
+          CAREER_SOURCE, nowIso, i);
         careerPit += 1;
       }
     } catch (err) {
@@ -130,11 +141,13 @@ db.transaction(() => {
       console.error(`CAREER ERROR ${playerId} — ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    const changes = db.raw.prepare("SELECT changes() AS n").get() as { n: number };
-    if (changes.n === 0) missing += 1;
-    else updated += 1;
   }
 });
+
+/** ⚠**세어 두고 안 쓰면 그것도 침묵이다.** 통산이 몇 줄 들어왔는지 보고한다 */
+console.error(
+  `年度別成績 타격 ${careerBat}행 · 투구 ${careerPit}행 · 실패 ${careerFailed}명`,
+);
 
 const total = (db.raw.prepare("SELECT COUNT(*) AS n FROM player").get() as { n: number }).n;
 const withHand = (
