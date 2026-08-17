@@ -8,14 +8,25 @@
  */
 
 export interface StubStyle {
-  [property: string]: string | ((name: string, value: string) => void);
+  [property: string]: string | ((name: string, value: string) => void) | ((name: string) => string) | undefined;
   setProperty(name: string, value: string): void;
+  /**
+   * ⚠**실제 DOM 에는 있는데 스텁에 없었다.** 사용자 정의 속성(`--x`)은
+   * `style["--x"]` 로는 못 읽는 것이 표준이고 `getPropertyValue` 로 읽는다 —
+   * 스텁이 그 짝을 안 갖고 있어서, 그렇게 읽는 시험이 조용히 `undefined` 를 받았다.
+   * **스텁이 실제와 다르면 시험은 실제를 재지 않는다**(2026-08-17).
+   */
+  getPropertyValue(name: string): string;
 }
 
 function makeStyle(): StubStyle {
   const style = {
     setProperty(name: string, value: string): void {
       style[name] = value;
+    },
+    getPropertyValue(name: string): string {
+      const v = style[name];
+      return typeof v === "string" ? v : "";
     },
   } as StubStyle;
   return style;
