@@ -172,7 +172,7 @@ SELECT b.player_id AS playerId,
 FROM batting_line b
 JOIN game g ON g.game_id = b.game_id
 JOIN player p ON p.player_id = b.player_id
-WHERE g.season = ? AND g.status = 'played' AND g.competition = ? AND g.game_date <= ?
+WHERE g.season = ? AND g.status = 'played' AND g.competition = ? AND g.game_date <= ? AND g.game_date >= ?
 GROUP BY b.player_id, teamCode
 `;
 
@@ -267,17 +267,17 @@ JOIN game g ON g.game_id = t.game_id
 JOIN player p ON p.player_id = t.player_id
 LEFT JOIN starter s ON s.game_id = t.game_id AND s.pitcher_id = t.player_id
 LEFT JOIN solo so2 ON so2.game_id = t.game_id AND so2.side = t.side
-WHERE g.season = ? AND g.status = 'played' AND g.competition = ? AND g.game_date <= ?
+WHERE g.season = ? AND g.status = 'played' AND g.competition = ? AND g.game_date <= ? AND g.game_date >= ?
 GROUP BY t.player_id, teamCode
 `;
 
 const TEAM_GAMES_SQL = `
 SELECT away_code AS code, COUNT(*) AS n FROM game
-WHERE season = ? AND status = 'played' AND competition = ? AND game_date <= ?
+WHERE season = ? AND status = 'played' AND competition = ? AND game_date <= ? AND game_date >= ?
 GROUP BY away_code
 UNION ALL
 SELECT home_code AS code, COUNT(*) AS n FROM game
-WHERE season = ? AND status = 'played' AND competition = ? AND game_date <= ?
+WHERE season = ? AND status = 'played' AND competition = ? AND game_date <= ? AND game_date >= ?
 GROUP BY home_code
 `;
 
@@ -369,12 +369,18 @@ export function aggregateSeason(
   season: number,
   competition = "regular",
   through = "9999-12-31",
+  /**
+   * ⚠**기간의 시작일**(포함). 기본은 시즌 전체다.
+   * 「지난주」처럼 **구간**을 재려고 더했다(2026-08-17) — 뺄셈으로 흉내 내면
+   * 같은 계산을 두 번 돌리게 되고, 어느 쪽 기준일이 무엇인지 읽는 사람이 알 수 없다.
+   */
+  from = "0000-01-01",
 ): SeasonAggregate {
-  const batRows = db.raw.prepare(BATTING_SQL).all(season, competition, through) as Record<string, number | string>[];
-  const pitRows = db.raw.prepare(PITCHING_SQL).all(season, competition, through) as Record<string, number | string>[];
+  const batRows = db.raw.prepare(BATTING_SQL).all(season, competition, through, from) as Record<string, number | string>[];
+  const pitRows = db.raw.prepare(PITCHING_SQL).all(season, competition, through, from) as Record<string, number | string>[];
   const teamRows = db.raw
     .prepare(TEAM_GAMES_SQL)
-    .all(season, competition, through, season, competition, through) as { code: string; n: number }[];
+    .all(season, competition, through, from, season, competition, through, from) as { code: string; n: number }[];
   const scanned = db.raw.prepare(SCANNED_SQL).get() as { n: number };
 
   const teamGames = new Map<string, number>();

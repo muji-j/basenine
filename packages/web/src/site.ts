@@ -21,9 +21,10 @@ import { renderTeamPage, teamPath } from "./team-page.ts";
 import { gameSlug, renderGamePage } from "./game-page.ts";
 import { renderLogPage } from "./log-page.ts";
 import type { LogPageData } from "./log-page.ts";
-import { freshness, isStale, pathsFor } from "./layout.ts";
+import { ROSTER_PATH, freshness, isStale, pathsFor } from "./layout.ts";
 import type { RenderContext, SeasonPlan, SiteMeta } from "./layout.ts";
 import type { SiteData } from "./query.ts";
+import { renderHomePage } from "./home-page.ts";
 
 export interface SiteFile {
   /** 출력 루트 기준 상대 경로. 항상 `/` 구분자 */
@@ -58,7 +59,9 @@ function pastDays(data: SiteData): SiteData["days"] {
 export function seasonPaths(data: SiteData, hasLog: boolean): Set<string> {
   const out = new Set<string>([
     "today.html",
+    // ⚠**루트는 대시보드, 선수 일람은 따로다**(2026-08-17). 둘 다 시즌마다 있다
     "index.html",
+    ROSTER_PATH,
     "ranking.html",
     "starters.html",
     "matchup.html",
@@ -125,7 +128,10 @@ export function buildSite(
       : [{ path: at("postseason.html"), content: renderPostseasonPage(data.postseason, ctx) }]),
     ...data.teams.map((t) => ({ path: at(teamPath(t.teamCode)), content: renderTeamPage(t, ctx) })),
     ...pastDays(data).map((d) => ({ path: at(`days/${d.date}.html`), content: renderDayPage(d, ctx) })),
-    { path: at("index.html"), content: renderIndexPage(data.index, ctx) },
+    // ⚠**루트가 대시보드다**(2026-08-17). Cloudflare Pages 는 사이트 루트를 index.html 로 주므로,
+    // 「홈 화면」이 되려면 이 자리여야 한다
+    { path: at("index.html"), content: renderHomePage(data.home, ctx) },
+    { path: at(ROSTER_PATH), content: renderIndexPage(data.index, ctx) },
     { path: at("ranking.html"), content: renderRankingPage(data.ranking, ctx) },
     { path: at("starters.html"), content: renderStartersPage(data.starters, ctx) },
     {

@@ -14,7 +14,7 @@ import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import { fullDate } from "./format.ts";
 import { block, note, scroller } from "./parts.ts";
-import { page } from "./layout.ts";
+import { page, ROSTER_PATH } from "./layout.ts";
 import type { Freshness, SiteMeta } from "./layout.ts";
 import { NEUTRAL_COLOR } from "@bb-app/domain";
 
@@ -262,7 +262,7 @@ ${block({
 </section>
 
 <nav class="find" aria-label="ほかのページ">
-  <a href="${base}index.html">選手一覧</a> · <a href="${base}ranking.html">リーグ順位</a>
+  <a href="${base}${ROSTER_PATH}">選手一覧</a> · <a href="${base}ranking.html">リーグ順位</a>
 </nav>`;
 
   return page({

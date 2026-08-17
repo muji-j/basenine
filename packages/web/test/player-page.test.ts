@@ -773,3 +773,20 @@ test("도루자를 셌으면 값과 분모가 나온다", () => {
   assert.match(out, /37企図/, "분모가 안 붙었다(M2)");
   assert.ok(!out.includes("未集計"), "센 값인데 未集計라고 했다");
 });
+
+/**
+ * ⚠**드래프트는 「어디서 왔는가」라 표제 줄의 맨 뒤다.**
+ * 앞쪽은 「지금 이 선수가 누구인가」(구단·배번·포지션·투타)가 차지한다.
+ * ⚠**없으면 항목째 빠진다**(M11) — 「―」를 넣으면 결손이 성적처럼 보인다.
+ */
+test("⚠드래프트가 표제 줄에 나오고, 없으면 항목째 빠진다", () => {
+  const withD = renderPlayerPage(playerPage(), context());
+  assert.match(withD, /2016年ドラフト1位/, "드래프트가 표제에 안 나온다");
+  // 맨 뒤다 — 체격 뒤에 온다
+  const sub = /<span class="sub">([^<]*)<\/span>/.exec(withD)?.[1] ?? "";
+  assert.ok(sub.indexOf("ドラフト") > sub.indexOf("cm"), "드래프트가 체격보다 앞에 왔다");
+
+  const noD = renderPlayerPage(playerPage({ draft: null }), context());
+  assert.doesNotMatch(noD, /ドラフト/, "드래프트가 없는데 항목이 그려졌다");
+  assert.match(noD, /背番号/, "드래프트가 없다고 다른 항목까지 사라졌다");
+});

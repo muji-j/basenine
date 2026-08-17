@@ -33,7 +33,7 @@ try {
 const db = openDb(dbPath, nowIso);
 const stmt = db.raw.prepare(
   `UPDATE player SET position = ?, throws = ?, bats = ?, birth_date = ?, physique = ?,
-     kana = ?, uniform_number = ?, profile_fetched_at = ?
+     draft = ?, kana = ?, uniform_number = ?, profile_fetched_at = ?
    WHERE player_id = ?`,
 );
 
@@ -71,6 +71,7 @@ db.transaction(() => {
       profile.bats,
       profile.birthDate,
       profile.physique,
+      profile.draft,
       profile.kana,
       profile.uniformNumber,
       nowIso,

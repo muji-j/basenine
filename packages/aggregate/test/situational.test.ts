@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openDb, replacePaEvents, upsertGame, upsertPlayer } from "@bb-app/store";
+import { openDb, replacePaEvents, upsertGame, upsertPitching, upsertPlayer } from "@bb-app/store";
 import type { Db, PaEventRow } from "@bb-app/store";
 import { buildRunExpectancy, stateKey } from "../src/run-expectancy.ts";
 import type { RunExpectancy } from "../src/run-expectancy.ts";
@@ -222,5 +222,95 @@ test("9이닝 환산은 아웃이 없으면 null이다 — 0으로 나누지 않
     assert.ok(e);
     assert.equal(e.outs, 0);
     assert.equal(e.srpPer9, null);
+  });
+});
+
+/**
+ * ⚠**기간을 좁히면 `srp`·`bf`·`outs` 가 같은 기간이어야 한다.**
+ *
+ * 처음에 `from` 을 더할 때 SRP 본체 SQL 에만 걸고 **아웃 합산 SQL 에는 안 걸었다**.
+ * 그러면 `srp`·`bf` 는 그 기간 것인데 `outs` 는 시즌 누적이라
+ * `srpPer9` 가 「그 기간의 SRP ÷ 시즌 아웃」이 된다 — 값이 조용히 무의미해진다.
+ * 화면에는 아직 안 나오지만 이건 **공개 함수**라 다음 호출자가 그대로 쓴다(M1).
+ * (2026-08-17 1차 검토 지적)
+ *
+ * ⚠**빈 구간으로는 이걸 못 잰다.** 처음에 그렇게 썼다가 뮤테이션을 놓쳤다 —
+ * 타석이 0이면 항목 자체가 안 만들어져서 아웃 SQL 이 무엇을 하든 결과가 같다.
+ * **두 날짜에 경기를 두고 한쪽만 남겨야** 어긋남이 드러난다.
+ */
+test("⚠기간을 좁히면 SRP도 아웃도 그 기간만 센다 — 한쪽만 좁히면 9이닝 환산이 무의미해진다", async () => {
+  await withDb((db) => {
+    for (const [id, date] of [["g1", "2026-04-01"], ["g2", "2026-04-08"]] as const) {
+      upsertGame(db, {
+        gameId: id, season: 2026, gameDate: date, awayCode: "t", homeCode: "g", gameNo: 1,
+        status: "played", notPlayedReason: null, competition: "regular",
+        sourceUrl: "https://npb.jp/x", fetchedAt: NOW,
+      });
+      upsertPlayer(db, "B1", "타자", NOW);
+      upsertPlayer(db, "P1", "투수", NOW);
+      replacePaEvents(db, id, [ev({ gameId: id, seq: 1, batterId: "B1", outsBefore: 0, bases: "1" })]);
+      // 경기마다 9아웃씩 — 두 경기면 18, 한 경기만 남기면 9여야 한다
+      upsertPitching(db, {
+        gameId: id, playerId: "P1", side: "home", decision: null, outs: 9, bf: 12, pitches: null,
+        h: 3, hr: 0, bb: 1, hbp: 0, so: 5, runs: 1, er: 1, wp: null, balk: null,
+      });
+    }
+
+    const both = computeSrp(db, FIXED_RE, ["t", "g"]);
+    const p2 = both.find((x) => x.playerId === "P1");
+    assert.notEqual(p2, undefined, "투수 항목이 없다 — 이 시험이 아무것도 안 재고 있다");
+    assert.equal(p2?.outs, 18, "두 경기분 아웃이 안 잡힌다");
+
+    // 둘째 경기만 남긴다
+    const only2 = computeSrp(db, FIXED_RE, ["t", "g"], "regular", "2026-04-08", "2026-04-08");
+    const q = only2.find((x) => x.playerId === "P1");
+    assert.notEqual(q, undefined, "좁혔더니 투수가 통째로 사라졌다");
+    assert.equal(q?.outs, 9, "아웃이 기간을 안 본다 — SRP는 한 경기분인데 아웃은 시즌 누적이다");
+
+    // 기본값은 동작을 바꾸지 않는다
+    const again = computeSrp(db, FIXED_RE, ["t", "g"], "regular", "9999-12-31", "0000-01-01");
+    assert.deepEqual(
+      again.map((x) => [x.playerId, x.outs, x.bf]),
+      both.map((x) => [x.playerId, x.outs, x.bf]),
+      "기본값이 동작을 바꿨다",
+    );
+  });
+});
+
+/**
+ * ⚠**SRC/SRP 는 「선수 × 구단」 단위로 나온다.**
+ *
+ * 처음에는 선수 ID 하나로만 묶었는데, 그러면 시즌 도중 이적한 선수의 **같은 SRC 가
+ * 두 구단 페이지에 그대로 실린다** — 실측(2026): 선수 23125136 이 DeNA 105타석 페이지와
+ * ソフトバンク 101타석 페이지에 **둘 다 13.31** 이었다. 같은 행 안에서 打席 는 팀 몫이고
+ * SRC 는 시즌 합계라 **분모가 두 종류**가 된다(2026-08-17 2차 검토 지적).
+ *
+ * ⚠**순위는 반대로 시즌 합계여야 한다** — 부르는 쪽이 선수 단위로 더한다.
+ * 나눠 두면 더할 수 있지만, 합쳐 두면 나눌 수 없다.
+ */
+test("⚠이적하면 SRC 가 구단마다 갈린다 — 같은 값이 두 구단 페이지에 실리지 않는다", async () => {
+  await withDb((db) => {
+    upsertPlayer(db, "B1", "타자", NOW);
+    // 같은 타자가 두 경기에서 **다른 팀 소속**으로 친다(원정/홈을 바꿔 소속을 가른다)
+    upsertGame(db, {
+      gameId: "g1", season: 2026, gameDate: "2026-04-01", awayCode: "t", homeCode: "g", gameNo: 1,
+      status: "played", notPlayedReason: null, competition: "regular",
+      sourceUrl: "https://npb.jp/x", fetchedAt: NOW,
+    });
+    upsertGame(db, {
+      gameId: "g2", season: 2026, gameDate: "2026-04-08", awayCode: "g", homeCode: "t", gameNo: 1,
+      status: "played", notPlayedReason: null, competition: "regular",
+      sourceUrl: "https://npb.jp/x", fetchedAt: NOW,
+    });
+    // half=top 이면 공격은 원정팀 — g1 은 t, g2 는 g 가 된다
+    replacePaEvents(db, "g1", [ev({ gameId: "g1", seq: 1, batterId: "B1", outsBefore: 0, bases: "1" })]);
+    replacePaEvents(db, "g2", [ev({ gameId: "g2", seq: 1, batterId: "B1", outsBefore: 0, bases: "" })]);
+
+    const out = computeSrc(db, FIXED_RE, ["t", "g"]).filter((x) => x.playerId === "B1");
+    assert.equal(out.length, 2, "구단별로 갈리지 않았다 — 이적 선수의 몫이 한 줄로 뭉쳤다");
+    assert.deepEqual(out.map((x) => x.teamCode).sort(), ["g", "t"], "구단 코드가 붙지 않았다");
+    for (const x of out) assert.equal(x.pa, 1, `${x.teamCode}: 타석이 팀 몫이 아니다`);
+    // 두 줄의 값이 서로 다르다 — 같은 값이 두 번 실리던 것이 이 시험이 막는 것이다
+    assert.notEqual(out[0]?.src, out[1]?.src, "구단이 달라도 같은 값이 나왔다");
   });
 });

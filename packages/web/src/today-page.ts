@@ -13,7 +13,7 @@ import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import { NO_VALUE, dec2, fullDate, innings } from "./format.ts";
 import { note } from "./parts.ts";
-import { page, pastSeasonOf } from "./layout.ts";
+import { page, pastSeasonOf, ROSTER_PATH } from "./layout.ts";
 import type { RenderContext } from "./pages.ts";
 import { NEUTRAL_COLOR, shortNameOf } from "@bb-app/domain";
 import { gameSlug } from "./game-page.ts";
@@ -356,7 +356,7 @@ ${dayBar(base, { prev: d.prev, next: null, latestDate: d.gameDate, dayCount: d.d
 </section>
 
 <nav class="find" aria-label="ほかのページ">
-  <a href="${base}index.html">選手一覧</a> · <a href="${base}ranking.html">リーグ順位表</a> · <a href="${base}compare.html">選手をくらべる</a>
+  <a href="${base}${ROSTER_PATH}">選手一覧</a> · <a href="${base}ranking.html">リーグ順位表</a> · <a href="${base}compare.html">選手をくらべる</a>
 </nav>`;
 
   return page({
@@ -414,7 +414,7 @@ ${dayBar(base, d)}
 </section>
 
 <nav class="find" aria-label="ほかのページ">
-  <a href="${base}today.html">最新の試合</a> · <a href="${base}index.html">選手一覧</a> · <a href="${base}ranking.html">リーグ順位表</a>
+  <a href="${base}today.html">最新の試合</a> · <a href="${base}${ROSTER_PATH}">選手一覧</a> · <a href="${base}ranking.html">リーグ順位表</a>
 </nav>`;
 
   return page({
@@ -478,7 +478,7 @@ ${d.days.length === 0
     )}`}
 
 <nav class="find" aria-label="ほかのページ">
-  <a href="${base}today.html">最新の試合</a> · <a href="${base}index.html">選手一覧</a>
+  <a href="${base}today.html">最新の試合</a> · <a href="${base}${ROSTER_PATH}">選手一覧</a>
 </nav>`;
 
   return page({

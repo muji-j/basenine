@@ -31,12 +31,13 @@ import {
   term,
   termAttr,
 } from "./parts.ts";
+import { stableTable } from "./table.ts";
 import type { BarRow, RankDigits } from "./parts.ts";
 import { NO_VALUE, avg3, gameDate, innings, throwsBats } from "./format.ts";
 import { isEmptyProfile, markFigure, markLetter, markProfile } from "./marks.ts";
 import type { MarkPlayer, ProfileAxis } from "./marks.ts";
 import { termOf } from "./glossary.ts";
-import { page } from "./layout.ts";
+import { page, ROSTER_PATH } from "./layout.ts";
 import { teamPath } from "./team-page.ts";
 import { postseasonBrief } from "./postseason-page.ts";
 import type { PostseasonBrief } from "./postseason-page.ts";
@@ -269,6 +270,15 @@ export interface RankingRow {
   teamCode: string;
   value: Rate;
   isMe: boolean;
+  /**
+   * **전원 기준 순위** — 자격 기준을 걸지 않고 매긴 순위. 값이 없으면 null.
+   *
+   * ⚠**「規定到達のみ / 全員」 전환을 위해 두 순위를 함께 싣는다.** 클라이언트가
+   * 다시 매기면 동률 규칙이 서버와 갈릴 수 있다(M3: 규칙이 곧 값이다) —
+   * **같은 `rankBy` 한 벌**로 서버에서 두 번 매겨 둘 다 보낸다(M1).
+   * ⚠개수 지표(홈런·탈삼진)에는 자격 기준이 없어 `rank` 와 같은 값이 된다.
+   */
+  rankAll: number | null;
 }
 
 export interface RankingPanel {
@@ -286,6 +296,14 @@ export interface RankingPanel {
    */
   valueAsInnings?: boolean;
   rows: RankingRow[];
+  /**
+   * **자르기 전** 규정 도달자 수. ⚠`rows.length` 로 세면 안 된다 —
+   * `rows` 는 상위 N만 담고, 거기에 「전원」용 미달자까지 섞여 있다.
+   * 화면의 「該当 N人」이 이 값을 쓴다(작업규칙 7: 자른 것을 말한다).
+   */
+  qualifiedCount: number;
+  /** **자르기 전** 값이 있는 선수 수(자격 무관). 「全員」의 분모다 */
+  allCount: number;
   /** 자격 기준 설명. **규칙이 곧 값이다**(M3) */
   qualifier: string;
 }
@@ -337,6 +355,14 @@ export interface PlayerPageData {
   bats: string | null;
   birthDate: string | null;
   physique: string | null;
+  /**
+   * 드래프트 지명. `2000年ドラフト5位` **원문 그대로**(M4).
+   *
+   * ⚠**우리가 이미 받아 두던 선수 페이지에 있던 것**이고, 파서가 `pc_bio` 를 읽으면서도
+   * 이 칸만 버리고 있었다(2026-08-17 · 아카이브 980장 중 980장에서 읽힌다).
+   * ⚠**연도와 순위로 쪼개지 않는다** — `育成ドラフト` 가 섞여 있어 쪼개면 구별이 사라진다.
+   */
+  draft: string | null;
   /**
    * 등번호. ⚠**null은 「0번」이 아니라 「지금 등록이 없다」**(M11) — 은퇴·이적 선수다.
    * 그래서 없으면 「―」로 채우지 않고 **자리 자체를 만들지 않는다**.
@@ -511,6 +537,9 @@ function idLine(d: PlayerPageData): RawHtml {
     throwsBats(d.throws, d.bats),
     d.birthDate === null ? null : `${d.birthDate.slice(0, 4)}年生`,
     d.physique,
+    // ⚠**맨 뒤에 둔다.** 이 줄은 「지금 이 선수가 누구인가」를 먼저 말하는 자리이고,
+    // 드래프트는 **어디서 왔는가**라 그 다음이다. 없으면 항목째 빠진다(M11)
+    d.draft,
   ].filter((s): s is string => s !== null && s !== "" && s !== NO_VALUE);
 
   return html`<header class="idline">
@@ -1234,34 +1263,43 @@ function matchupBlock(rows: readonly MatchupRow[], total: number, opponent: stri
     "最少打席でしぼる",
   );
 
-  const head = MATCHUP_COLUMNS.map(
-    (c) => html`<th class="${c.align === "l" ? "l" : ""}" scope="col" aria-sort="${c.key === "pa" ? "descending" : "none"}">
-      <button class="sortable" type="button" data-sortkey="${c.key}" data-sorttype="${c.type}"
-        ${raw(termAttr(c.label))}${raw(c.rate === true ? ' data-sortrate="1"' : "")}>${c.label === "" ? opponent : c.label}<i></i></button>
-    </th>`,
-  );
-
   // 구단 선택지는 **실제로 대전한 구단만** 낸다 — 없는 구단을 고르게 하면 0건 화면이 된다
   const counts = new Map<string, number>();
   for (const r of rows) counts.set(r.opponentTeam, (counts.get(r.opponentTeam) ?? 0) + 1);
-  const teams = TEAMS.filter((t) => counts.has(t.code));
 
-  const body = html`<div class="mfind">
-  <label for="matchupFilter">${opponent}名でしぼる</label>
-  <input id="matchupFilter" type="search" autocomplete="off" placeholder="例：山本">
-  <label for="matchupTeam">球団</label>
-  <select id="matchupTeam">
-    <option value="">すべての球団</option>
-    ${teams.map(
-      (t) => html`<option value="${t.code}">${shortNameOf(t.code)}（${counts.get(t.code)}）</option>`,
-    )}
-  </select>
-  <span class="count"><span id="matchupCount">${rows.length}件</span> / 全${total}件</span>
-</div>
-${scroller(html`<table id="matchupTable">
-  <thead><tr>${head}</tr></thead>
-  <tbody>${rows.map(
-    (r) => html`<tr class="${r.line.pa < THIN_MATCHUP_PA ? "thin" : ""}"
+  const body = stableTable({
+    id: "matchup",
+    columns: MATCHUP_COLUMNS.map((c) => ({
+      key: c.key,
+      label: c.label,
+      ...(c.align === "l" ? { left: true as const } : {}),
+      ...(c.type === "text" ? { text: true as const } : {}),
+      ...(c.rate === true ? { rate: true as const } : {}),
+      ...(c.label === "" ? { head: opponent } : {}),
+    })),
+    sortKey: "pa",
+    findLabel: `${opponent}名でしぼる`,
+    findPlaceholder: "例：山本",
+    select: {
+      id: "matchupTeam",
+      field: "teamcode",
+      label: "球団",
+      options: [
+        { value: "", label: "すべての球団" },
+        ...TEAMS.filter((t) => counts.has(t.code)).map((t) => ({
+          value: t.code,
+          label: `${shortNameOf(t.code)}（${counts.get(t.code) ?? 0}）`,
+        })),
+      ],
+    },
+    thin: { field: "pa", min: THIN_MATCHUP_PA, unit: "打席" },
+    minGroup: "matchupMin",
+    minField: "pa",
+    total,
+    unit: "件",
+    emptyText: "この条件の対戦記録はありません。",
+    rows: html`${rows.map(
+      (r) => html`<tr class="${r.line.pa < THIN_MATCHUP_PA ? "thin" : ""}"
       data-name="${r.opponentName}" data-team="${shortNameOf(r.opponentTeam)}" data-teamcode="${r.opponentTeam}"
       data-pa="${r.line.pa}" data-ab="${r.line.ab}" data-h="${r.line.h}" data-hr="${r.line.hr}"
       data-bb="${r.line.bb}" data-so="${r.line.so}" data-rbi="${r.rbi}"
@@ -1272,15 +1310,13 @@ ${scroller(html`<table id="matchupTable">
       <td>${r.line.bb}</td><td>${r.line.so}</td><td>${r.rbi}</td>
       <td>${avg3(r.avg.value)}</td>
     </tr>`,
-  )}</tbody>
-</table>`)}
-<p class="empty" id="matchupEmpty" hidden role="status">この条件の対戦記録はありません。</p>
-<p class="note" id="matchupStatus" role="status">打席の多い順</p>
-${note(
-    `見出しを押すと並べ替わります（もう一度押すと逆順）。${THIN_MATCHUP_PA}打席未満は薄く表示しています — ` +
-      `対戦成績は大半が一桁打席で、率で並べると少ない打席が先頭に来ます。` +
-      `並び順と絞り込みは上の行に出ています。${opponent}名を押すとその選手のページに移ります。`,
-  )}`;
+    )}`,
+    note: note(
+      `見出しを押すと並べ替わります（もう一度押すと逆順）。${THIN_MATCHUP_PA}打席未満は薄く表示しています — ` +
+        `対戦成績は大半が一桁打席で、率で並べると少ない打席が先頭に来ます。` +
+        `並び順と絞り込みは上の行に出ています。${opponent}名を押すとその選手のページに移ります。`,
+    ),
+  });
 
   return block({ id: "matchup", title: "対戦成績", controls, body });
 }
@@ -1397,7 +1433,7 @@ ${catalog.map((meta) => {
      ⚠**위 성적에 포함되지 않는다는 것을 그 구획이 스스로 말한다**(§2-1). -->
 ${postseasonBrief(d.postseason, base)}
 <nav class="find" aria-label="ほかの選手">
-  <a href="${base}${teamPath(d.teamCode)}">${d.teamName}</a> · <a href="${base}index.html">選手一覧</a> · <a href="${base}ranking.html">リーグ順位表</a>
+  <a href="${base}${teamPath(d.teamCode)}">${d.teamName}</a> · <a href="${base}${ROSTER_PATH}">選手一覧</a> · <a href="${base}ranking.html">リーグ順位表</a>
 </nav>`;
 
   return page({

@@ -26,6 +26,15 @@ export interface PlayerProfile {
   /** `186cm／92kg` 원문 */
   physique: string | null;
   /**
+   * 드래프트. `2000年ドラフト5位` **원문 그대로**(M4).
+   *
+   * ⚠**연도와 순위로 쪼개지 않는다.** 실측(980장)에는 `2016年育成ドラフト3位` 처럼
+   * 육성 지명이 섞여 있고, 쪼개면 그 구별이 사라진다. 표시가 필요한 것은 원문이다.
+   * ⚠**null 은 「지명 없음」이 아니라 「그 칸이 없었다」**(M11) — 육성·독립리그 출신은
+   * 표기가 다를 수 있다.
+   */
+  draft: string | null;
+  /**
    * 읽는 법. **원문 그대로 둔다**(M4).
    *
    * ⚠**「히라가나」가 아니다.** 실측 858장 중 737장이 `たかはし・こうや` 꼴이지만
@@ -111,6 +120,7 @@ export function parsePlayerProfile(html: string): PlayerProfile {
     bats: parsed?.bats ?? null,
     birthDate: birth === undefined ? null : parseBirthDate(birth),
     physique: fields.get("身長／体重") ?? null,
+    draft: fields.get("ドラフト") ?? null,
     /**
      * ⚠**표제부가 없어도 프로필 전체를 잃지 않는다.**
      *

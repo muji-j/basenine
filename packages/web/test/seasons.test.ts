@@ -50,7 +50,9 @@ test("⚠그 시즌에 없는 화면이면 선수 일람으로 보낸다 — 404
   // A는 2026에만 있다
   const s = pathsFor(PLANS, 2026)("players/A.html").seasons;
   const past = s.find((x) => x.season === 2025)!;
-  assert.equal(past.href, "../2025/index.html");
+  // ⚠**대체 목적지는 選手一覧이다.** 2026-08-17부터 루트는 대시보드라
+  // 그 주소가 index.html 에서 players.html 로 옮겨졌다 — 뜻은 그대로다
+  assert.equal(past.href, "../2025/players.html");
   assert.equal(past.fallback, true, "대체로 보낸다는 사실을 표시하지 않았다");
 });
 

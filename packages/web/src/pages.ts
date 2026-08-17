@@ -25,10 +25,10 @@ import {
   tablist,
   term,
 } from "./parts.ts";
-import { page, pastSeasonOf } from "./layout.ts";
+import { page, pastSeasonOf, ROSTER_PATH } from "./layout.ts";
 import { teamPath } from "./team-page.ts";
 import type { Freshness, SiteMeta } from "./layout.ts";
-import type { MatchupRow, RankingPanel } from "./player-page.ts";
+import type { MatchupRow, RankingPanel, RankingRow } from "./player-page.ts";
 import { NEUTRAL_COLOR } from "@bb-app/domain";
 // ⚠**「直近10」을 화면에 손으로 적지 않는다.** 상수를 8로 바꾸면 화면만 거짓말한다
 import { RECENT_GAMES } from "@bb-app/aggregate";
@@ -130,14 +130,34 @@ function categoryPanels(c: RankingCategory, base: string, limit: number, prefix:
 }
 
 function panelTable(p: RankingPanel, base: string, limit: number): RawHtml {
-  const rows = p.rows.slice(0, limit);
+  const rows = p.rows;
   if (rows.length === 0) return html`<p class="empty">順位を計算できていません。</p>`;
-  const truncated = p.rows.length > limit;
-  return html`${scroller(html`<table>
+  const qualifiedCount = p.qualifiedCount;
+  const truncated = qualifiedCount > limit;
+  /**
+   * 자격 기준이 실제로 누군가를 자르고 있는가.
+   * ⚠**개수 지표(홈런·탈삼진)에는 자격 기준이 없다** — 거기에 전환 버튼을 두면
+   * 눌러도 아무것도 사라지지 않아 「고장난 버튼」이 된다.
+   */
+  const hasQualifier = p.rows.some((r) => r.rank === null && r.rankAll !== null);
+  return html`${hasQualifier
+    ? html`<div class="mfind rankonly">
+    <button class="tab" type="button" data-rankonly="${p.id}" aria-pressed="true"
+      title="${p.qualifier}">規定到達のみ</button>
+    <span class="count"><span data-rankcount="${p.id}">${Math.min(qualifiedCount, limit)}人</span>を表示中</span>
+  </div>`
+    : null}
+  ${scroller(html`<table>
     <thead><tr><th>順位</th><th class="l">選手</th><th class="l">球団</th><th>${term(p.label)}</th><th>${term("母数")}</th></tr></thead>
     <tbody>${rows.map(
-      (r) => html`<tr class="${r.isMe ? "me" : ""}">
-        <td>${r.rank === null ? NO_VALUE : r.rank}</td>
+      // ⚠**기본은 「규정 도달자만」이므로 미달 행은 처음부터 숨어 있다.**
+      // 스크립트가 없으면 그대로 숨은 채인데, 그것이 **지금까지와 같은 화면**이다 —
+      // 전환은 더해지는 기능이고, 없다고 잃는 것은 없다(§0-1).
+      (r) => html`<tr class="${r.isMe ? "me" : ""}" data-qualified="${r.rank === null ? "0" : "1"}"
+        ${raw(r.rank === null ? "hidden" : "")}>
+        <td><b data-rankq>${r.rank === null ? NO_VALUE : r.rank}</b><b data-ranka hidden>${
+        r.rankAll === null ? NO_VALUE : r.rankAll
+      }</b></td>
         <td class="l"><a href="${base}players/${r.playerId}.html">${r.name}</a></td>
         <td class="l">${r.teamCode.toUpperCase()}</td>
         <td>${rankValue(r.value.value, p.digits, p.valueAsInnings === true)}</td>
@@ -147,12 +167,21 @@ function panelTable(p: RankingPanel, base: string, limit: number): RawHtml {
   </table>`)}
   ${note(
     // ⚠**자른 것을 말한다.** 상위 N만 보여주면서 「전부」처럼 보이면 그것도 거짓말이다
-    truncated ? `${p.qualifier} 上位${limit}人のみ表示（該当 ${p.rows.length}人）。` : p.qualifier,
-  )}`;
+    truncated ? `${p.qualifier} 上位${limit}人のみ表示（該当 ${qualifiedCount}人）。` : p.qualifier,
+  )}
+  ${hasQualifier
+    ? note(
+      "「規定到達のみ」を外すと、規定に届いていない選手も同じ指標で並べた順位で表示します — " +
+        "母数の小さい選手が上位に来ます。母数は右端の列にあります。" +
+        // ⚠**「全員」도 잘려 있다.** 안 적으면 「전원이 나온다」로 읽힌다(작업규칙 7).
+        //    를 계산해 놓고 화면에서 한 번도 쓰지 않던 자리다(2026-08-17 2차 검토)
+        (p.allCount > limit ? `全員でも上位${limit}人までです（この指標で記録がある選手 ${p.allCount}人）。` : ""),
+    )
+    : null}`;
 }
 
 export function renderIndexPage(d: IndexPageData, ctx: RenderContext): string {
-  const { base, root, seasons } = ctx.paths("index.html");
+  const { base, root, seasons } = ctx.paths(ROSTER_PATH);
   const body = html`<header class="idline">
   <div class="idtext">
     <h1 class="nm">選手一覧</h1>
@@ -594,7 +623,7 @@ ${d.games.map((g, i) =>
 </section>
 
 <nav class="find" aria-label="ほかのページ">
-  <a href="${base}matchup.html">対戦を選ぶ</a> · <a href="${base}index.html">選手一覧</a> · <a href="${base}ranking.html">リーグ順位表</a>
+  <a href="${base}matchup.html">対戦を選ぶ</a> · <a href="${base}${ROSTER_PATH}">選手一覧</a> · <a href="${base}ranking.html">リーグ順位表</a>
 </nav>`;
 
   return page({
@@ -827,7 +856,7 @@ export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): strin
 </section>
 
 <nav class="find" aria-label="ほかのページ">
-  <a href="${base}index.html">選手一覧</a> · <a href="${base}ranking.html">リーグ順位表</a>
+  <a href="${base}${ROSTER_PATH}">選手一覧</a> · <a href="${base}ranking.html">リーグ順位表</a>
 </nav>`;
 
   return page({
