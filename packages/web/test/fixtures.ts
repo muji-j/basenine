@@ -172,6 +172,7 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
     bats: "left",
     birthDate: "1999-03-13",
     physique: "187cm／96kg",
+    draft: "2016年ドラフト1位",
     uniformNumber: "18",
     role: "batter",
     batting: battingBlock(),

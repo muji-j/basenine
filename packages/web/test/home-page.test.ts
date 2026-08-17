@@ -66,6 +66,9 @@ function data(over: Partial<HomePageData> = {}): HomePageData {
           runs: 3.0, faced: 24, line: "7回 5奪三振 自責0",
         },
       ],
+      teams: [
+        { teamCode: "t", shortName: "阪神", color: colorOf("t"), w: 5, l: 1, t: 0, rf: 31, ra: 14 },
+      ],
     },
     paces: [
       {

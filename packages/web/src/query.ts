@@ -9,7 +9,15 @@ import type { Db } from "@bb-app/store";
 import { attempts, battedBalls, buntValues, headToHead, steals, successRate, timesThroughOrder, winPct } from "@bb-app/aggregate";
 import type { HeadToHead, PlayerStreaks } from "@bb-app/aggregate";
 import { REGULAR_SEASON_GAMES } from "./home-page.ts";
-import type { HomeLeague, HomePace, HomePageData, HomeStreak, HomeWeek, HomeWeekPlayer } from "./home-page.ts";
+import type {
+  HomeLeague,
+  HomePace,
+  HomePageData,
+  HomeStreak,
+  HomeWeek,
+  HomeWeekPlayer,
+  HomeWeekTeam,
+} from "./home-page.ts";
 import type { BattedBallData, BuntCell } from "./player-page.ts";
 import type { BattingLine, LeagueConstants, PitchingLine, Rate } from "@bb-app/metrics";
 import {
@@ -689,6 +697,7 @@ interface ProfileRow {
   bats: string | null;
   birthDate: string | null;
   physique: string | null;
+  draft: string | null;
   /** 읽는 법 **원문**. 외국인 선수는 `ルーク・ボイト (LUKE VOIT)` 꼴이다 — 정규화는 검색이 한다 */
   kana: string | null;
   /** 등번호. ⚠**null은 「0번」이 아니라 「지금 등록이 없다」**(M11) — 은퇴·이적 선수다 */
@@ -699,7 +708,7 @@ function loadProfiles(db: Db): Map<string, ProfileRow> {
   const rows = db.raw
     .prepare(
       `SELECT player_id AS playerId, position, throws, bats,
-              birth_date AS birthDate, physique,
+              birth_date AS birthDate, physique, draft,
               kana, uniform_number AS uniformNumber
        FROM player`,
     )
@@ -2134,9 +2143,46 @@ function homePage(
       return `${ip}回 ${x.line.so}奪三振 自責${x.line.er}`;
     });
 
+    /**
+     * 그 주의 구단 성적.
+     * ⚠**득점을 못 읽은 경기는 세지 않는다**(M11) — 0대0으로 때우면 무승부가 늘어난다.
+     * ⚠**주간 승률을 만들지 않는다** — 5~6경기의 「.833」은 시즌 승률과 같은 무게로 읽힌다.
+     */
+    const wkTeam = new Map<string, HomeWeekTeam>();
+    const wkGames = db.raw
+      .prepare(
+        `SELECT away_code, home_code, away_runs, home_runs FROM game
+          WHERE season = ? AND competition = ? AND status = 'played'
+            AND game_date BETWEEN ? AND ?
+            AND away_runs IS NOT NULL AND home_runs IS NOT NULL`,
+      )
+      .all(o.season, competition, span.from, span.to) as unknown as {
+        away_code: string;
+        home_code: string;
+        away_runs: number;
+        home_runs: number;
+      }[];
+    for (const g of wkGames) {
+      for (const side of ["away", "home"] as const) {
+        const code = side === "away" ? g.away_code : g.home_code;
+        const mine = side === "away" ? g.away_runs : g.home_runs;
+        const theirs = side === "away" ? g.home_runs : g.away_runs;
+        const cur = wkTeam.get(code) ?? { ...chip(code), w: 0, l: 0, t: 0, rf: 0, ra: 0 };
+        cur.rf += mine;
+        cur.ra += theirs;
+        if (mine > theirs) cur.w += 1;
+        else if (mine < theirs) cur.l += 1;
+        else cur.t += 1;
+        wkTeam.set(code, cur);
+      }
+    }
+    const teams = [...wkTeam.values()].sort(
+      (a, b) => b.w - a.w || a.l - b.l || (b.rf - b.ra) - (a.rf - a.ra) || a.teamCode.localeCompare(b.teamCode),
+    );
+
     // ⚠**경기가 없던 주는 내지 않는다** — 빈 표가 「기록이 없다」로 읽힌다(M12)
     if (gameDays > 0 && (batters.length > 0 || pitchers.length > 0)) {
-      week = { from: span.from, to: span.to, gameDays, batters, pitchers };
+      week = { from: span.from, to: span.to, gameDays, batters, pitchers, teams };
     }
   }
 
@@ -3129,6 +3175,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       bats: profile?.bats ?? null,
       birthDate: profile?.birthDate ?? null,
       physique: profile?.physique ?? null,
+      draft: profile?.draft ?? null,
       uniformNumber: profile?.uniformNumber ?? null,
       role,
       batting: battingData,

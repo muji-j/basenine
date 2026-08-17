@@ -176,3 +176,28 @@ test("표제부가 없어도 투타는 읽는다 — 멈추는 자리는 적재�
   // 엄격한 원본은 그대로 던진다 — 커버리지 검사가 이것을 센다
   assert.throws(() => parseVitals(html), /pc_vitals/);
 });
+
+/**
+ * ⚠**드래프트는 우리가 이미 받아 두던 페이지에 있었다**(2026-08-17).
+ * 파서가 `pc_bio` 를 읽으면서도 이 칸만 버리고 있었다 — 아카이브 980장 중 **980장**에서 읽힌다.
+ *
+ * ⚠**연도와 순위로 쪼개지 않는다.** 실측 980명 중 **114명이 `育成選手ドラフト`** 이고,
+ * 쪼개면 그 구별이 사라진다. 원문 그대로 두는 것이 M4(출처 추적성)에도 맞는다.
+ */
+test("⚠드래프트를 원문 그대로 읽는다 — 育成 지명을 뭉개지 않는다", () => {
+  const p = parsePlayerProfile(FIXTURE);
+  assert.equal(typeof p.draft, "string");
+  assert.match(p.draft ?? "", /^\d{4}年.*ドラフト.*位$/);
+
+  // 육성 지명도 그대로 남는다
+  const ikusei = FIXTURE.replace(/(<th[^>]*>\s*ドラフト\s*<\/th>\s*<td[^>]*>)[^<]*/, "$12021年育成選手ドラフト1位");
+  assert.equal(parsePlayerProfile(ikusei).draft, "2021年育成選手ドラフト1位");
+});
+
+/** ⚠**칸이 없으면 null 이다** — 「지명 없음」이 아니라 「못 읽었다」(M11) */
+test("⚠드래프트 칸이 없으면 null 이고, 다른 항목은 살아남는다", () => {
+  const without = FIXTURE.replace(/<tr[^>]*>(?:(?!<\/tr>)[\s\S])*?ドラフト[\s\S]*?<\/tr>/, "");
+  const p = parsePlayerProfile(without);
+  assert.equal(p.draft, null);
+  assert.notEqual(p.throws, null, "드래프트가 없다고 프로필 전체를 잃었다");
+});

@@ -348,6 +348,14 @@ export interface PlayerPageData {
   birthDate: string | null;
   physique: string | null;
   /**
+   * 드래프트 지명. `2000年ドラフト5位` **원문 그대로**(M4).
+   *
+   * ⚠**우리가 이미 받아 두던 선수 페이지에 있던 것**이고, 파서가 `pc_bio` 를 읽으면서도
+   * 이 칸만 버리고 있었다(2026-08-17 · 아카이브 980장 중 980장에서 읽힌다).
+   * ⚠**연도와 순위로 쪼개지 않는다** — `育成ドラフト` 가 섞여 있어 쪼개면 구별이 사라진다.
+   */
+  draft: string | null;
+  /**
    * 등번호. ⚠**null은 「0번」이 아니라 「지금 등록이 없다」**(M11) — 은퇴·이적 선수다.
    * 그래서 없으면 「―」로 채우지 않고 **자리 자체를 만들지 않는다**.
    */
@@ -521,6 +529,9 @@ function idLine(d: PlayerPageData): RawHtml {
     throwsBats(d.throws, d.bats),
     d.birthDate === null ? null : `${d.birthDate.slice(0, 4)}年生`,
     d.physique,
+    // ⚠**맨 뒤에 둔다.** 이 줄은 「지금 이 선수가 누구인가」를 먼저 말하는 자리이고,
+    // 드래프트는 **어디서 왔는가**라 그 다음이다. 없으면 항목째 빠진다(M11)
+    d.draft,
   ].filter((s): s is string => s !== null && s !== "" && s !== NO_VALUE);
 
   return html`<header class="idline">

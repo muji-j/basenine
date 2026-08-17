@@ -123,6 +123,24 @@ export interface HomeWeekPlayer {
   line: string;
 }
 
+/**
+ * 지난주의 한 구단.
+ *
+ * ⚠**주간 승률을 내지 않는다.** 한 주는 5~6경기라 「.833」 같은 수가 나오고,
+ * 그 자릿수는 시즌 승률과 같은 무게로 읽힌다 — 승·패·분 그대로가 정직하다(M2).
+ */
+export interface HomeWeekTeam {
+  teamCode: string;
+  shortName: string;
+  color: TeamColor;
+  w: number;
+  l: number;
+  t: number;
+  /** 득점·실점. **차이만 내지 않는다** — 「+12」가 8-(-4)인지 20-8인지 다르다 */
+  rf: number;
+  ra: number;
+}
+
 export interface HomeWeek {
   /** 월요일 */
   from: string;
@@ -132,6 +150,8 @@ export interface HomeWeek {
   gameDays: number;
   batters: HomeWeekPlayer[];
   pitchers: HomeWeekPlayer[];
+  /** 그 주의 구단 성적. 이긴 수가 많은 쪽부터 */
+  teams: HomeWeekTeam[];
 }
 
 export interface HomePageData {
@@ -265,6 +285,14 @@ ${d.week === null
     ${weekList("打者", d.week.batters, "SRC", base)}
     ${weekList("投手", d.week.pitchers, "SRP", base)}
   </div>
+  ${d.week.teams.length === 0 ? null : html`<p class="wklab">球団<s>勝-敗-分 · 得点/失点</s></p>
+  <ul class="wkteams">${d.week.teams.map(
+      (t) => html`<li>
+    ${teamChip(t.teamCode, t.shortName, t.color, base)}
+    <b>${t.w}-${t.l}-${t.t}</b>
+    <em>${t.rf}/${t.ra}<s>${t.rf - t.ra >= 0 ? "+" : ""}${t.rf - t.ra}</s></em>
+  </li>`,
+    )}</ul>`}
   ${note(
       "**月曜から日曜まで**を1週間として、**終わった週だけ**を出します — 途中の週を出すと、" +
         "試合数の違う選手が同じ表に並びます。" +

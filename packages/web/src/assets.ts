@@ -589,6 +589,46 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
 .picklab{margin:10px 0 5px;font-size:10px;letter-spacing:.16em;color:var(--tx-3);
   display:flex;align-items:baseline;gap:6px}
 .picklab s{text-decoration:none;letter-spacing:0;font-size:10.5px}
+/* ── ホーム(대시보드) ──
+   ⚠**로고를 쓰지 않는다**(§6). 구단을 구별하는 것은 **우리가 고른 색**과 이름이다.
+   ⚠**카드 그리드를 만들지 않는다** — 균질한 카드 격자는 「AI틱함」 금지 목록에 있다.
+   이 화면은 표와 목록으로 간다: 순위는 표가 가장 빨리 읽히고, 주간은 짧은 순서 목록이다. */
+.hteam{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.hteam i{width:9px;height:9px;background:var(--chip,#6b7280);flex:none}
+.hteam:hover i{outline:1px solid var(--tx-3);outline-offset:1px}
+/* 순위표는 숫자가 줄맞춰야 읽힌다 */
+.hstand td,.hstand th{font-variant-numeric:tabular-nums}
+.hstand .b{font-weight:700}
+
+/* 그 날의 결과 — 한 줄에 「팀 점수 - 점수 팀」. 표로 만들면 두 줄이 되어 밀도가 떨어진다 */
+.hgames{list-style:none;margin:0;padding:0;display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:2px 18px}
+.hgames li{display:flex;align-items:baseline;gap:6px;padding:4px 0;
+  border-bottom:1px solid var(--hair);font-variant-numeric:tabular-nums}
+.hgames .hg-t{font-size:12px;color:var(--tx-2);flex:1 1 0;min-width:0}
+.hgames li .hg-t:last-child{text-align:right}
+.hgames b{font-size:15px;font-weight:700}
+.hgames s{text-decoration:none;color:var(--tx-3);font-size:11px}
+.more{margin:8px 0 0;font-size:11.5px}
+
+/* 先週の顔 — **순위 번호를 크게 쓰지 않는다.** 한 주짜리 순위를 시즌 순위와
+   같은 무게로 그리면 그렇게 읽힌다 */
+.wkcol{min-width:0}
+.wklab{margin:0 0 6px;font-size:10px;letter-spacing:.16em;color:var(--tx-3);
+  display:flex;align-items:baseline;gap:6px}
+.wklab s{text-decoration:none;letter-spacing:0;font-size:10.5px}
+.wklist{list-style:none;margin:0;padding:0;counter-reset:wk}
+.wklist li{display:grid;grid-template-columns:auto auto 1fr;gap:3px 7px;align-items:baseline;
+  padding:6px 0;border-bottom:1px solid var(--hair)}
+.wklist li::before{counter-increment:wk;content:counter(wk);grid-row:span 2;
+  font-size:10px;color:var(--tx-3);width:11px;font-variant-numeric:tabular-nums}
+.wklist a{font-size:13.5px}
+.wklist b{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;margin-left:auto}
+.wklist s{text-decoration:none;font-size:9.5px;letter-spacing:.1em;color:var(--tx-3)}
+/* 성적 줄은 다음 줄 전체를 쓴다 — 분모가 잘리면 M2 를 어긴 화면이 된다 */
+.wklist em{grid-column:2 / -1;font-style:normal;font-size:11px;color:var(--tx-2);
+  font-variant-numeric:tabular-nums}
+
 /* 순위표의 전환 줄. ⚠**「지금 몇 명을 보고 있는가」를 늘 낸다**(M2) —
    전환했는데 인원이 안 보이면 무엇이 늘고 줄었는지 알 수 없다 */
 .rankonly{margin:0 0 8px}
