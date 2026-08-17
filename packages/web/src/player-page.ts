@@ -345,6 +345,14 @@ export interface CareerRow {
   year: number;
   /** 소속 구단 **원문**. 옛 구단명이 그대로 남는다 */
   team: string;
+  /**
+   * 이 줄이 **우리 집계**인가.
+   *
+   * ⚠**한 표에 두 출처가 섞인다.** 지난 시즌까지는 NPB 공표치, 올해는 우리가 쌓은 값이다 —
+   * NPB 페이지가 우리보다 며칠 늦기 때문이고, **끝난 시즌에서는 두 값이 완전히 같다**는 것을
+   * 실측으로 확인한 뒤에 한 일이다(2026-08-17). 화면이 줄마다 그 사실을 말한다(M4).
+   */
+  ours: boolean;
   games: number;
   /** 타자면 打席, 투수면 打者 */
   faced: number;
@@ -1387,7 +1395,10 @@ function careerBlock(c: CareerData | null): RawHtml {
       ${scroller(html`<table>
         <thead><tr><th>年度</th><th class="l">球団</th><th>試合</th><th>${unit}</th><th class="l">成績</th></tr></thead>
         <tbody>${rows.map(
-          (r) => html`<tr><td class="b">${r.year}</td><td class="l">${r.team}</td>
+          // ⚠**줄마다 출처를 말한다**(M4). 지난 시즌까지는 NPB 공표치이고 올해는 우리 집계다 —
+          //   NPB 페이지가 며칠 늦기 때문이고, 끝난 시즌에서는 두 값이 완전히 같다(실측)
+          (r) => html`<tr class="${r.ours ? "cours" : ""}"><td class="b">${r.year}</td>
+          <td class="l">${r.team}${r.ours ? html`<s>当サイト</s>` : null}</td>
           <td>${r.games}</td><td>${r.faced}</td><td class="l wd">${r.line}</td></tr>`,
         )}</tbody>
       </table>`)}`;
@@ -1399,10 +1410,15 @@ function careerBlock(c: CareerData | null): RawHtml {
     body: html`${table(c.batting, "打撃", "打席", c.battingTotal, c.battingSeasons)}
 ${table(c.pitching, "投球", "打者", c.pitchingTotal, c.pitchingSeasons)}
 ${note(
-      `⚠**この表だけ出典が違います** — ${c.source} の公表値です。` +
-        "ほかのブロックは当サイトが試合記録から積み上げた値で、**混ぜていません**。" +
+      // ⚠**두 출처를 이어 붙였다는 것을 그대로 적는다**(M4). 왜 그래도 되는지까지 적는다 —
+      //   근거 없이 「섞었다」고만 하면 읽는 사람이 값을 못 믿는다
+      `**${c.to}年（今シーズン）は当サイトの集計**、それ以前は${c.source}の公表値です。` +
+        "NPBの選手ページは当サイトより**数日遅れて**更新されるため、今シーズンだけ当サイトの数字を使います。" +
+        "**終わったシーズンでは両者が完全に一致すること**を確かめてあります" +
+        "（2023〜2025年で打撃1,777件・投球983件、食い違い0件）。" +
         "**通算は当サイトが足した値**です — 他サイトの計算を借りたものではありません。" +
         "NPBが載せている合計行とは**毎回突き合わせていて**、1つでも合わなければ取り込みを止めます。" +
+        "⚠**盗塁刺は今シーズンの行にはありません** — ボックススコアに無い値だからで、0という意味ではありません。" +
         "シーズン途中に移籍した年は球団ごとに1行になります。",
     )}`,
   });

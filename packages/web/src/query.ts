@@ -1983,40 +1983,70 @@ const CAREER_MILESTONES: Readonly<Record<string, readonly number[]>> = {
 function milestonesOf(
   db: Db,
   season: number,
+  competition: string,
+  through: string,
   chip: (code: string) => { teamCode: string; shortName: string; color: TeamColor },
   teamOf: (id: string) => string,
 ): HomeMilestone[] {
-  /** `그 시즌까지의 합계` 와 `그 시즌분` 을 **같은 표에서** 함께 낸다 */
+  /**
+   * **작년까지는 NPB 공표치, 올해는 우리 집계.**
+   *
+   * ⚠**NPB 선수 페이지가 우리보다 며칠 늦다.** 통산까지 NPB 것으로 맞추면 정합성은 얻지만
+   * **최신성을 잃는다** — 어제 친 홈런이 통산에 안 들어간다.
+   * ⚠**그래서 이어 붙인다.** 끝난 시즌에서는 두 출처가 **완전히 같다**는 것을 실측했다
+   * (2023~2025 타격 1,777건·투구 983건, 어긋남 0). 경계에서 값이 튀지 않는다.
+   * ⚠**우리 쪽 누락이 없다는 것도 쟀다** — 2026년 대조에서 NPB 쪽이 큰 경우 **0명**이었다.
+   * ⚠**뺄셈은 그대로 성립한다**: `통산 − 올해 = 작년까지(NPB)`.
+   */
   const rows = db.raw
     .prepare(
       `SELECT c.player_id AS playerId, p.display_name AS name,
-              SUM(c.h) AS h, SUM(c.hr) AS hr, SUM(c.sb) AS sb,
-              SUM(CASE WHEN c.year = ? THEN c.h ELSE 0 END) AS yh,
-              SUM(CASE WHEN c.year = ? THEN c.hr ELSE 0 END) AS yhr,
-              SUM(CASE WHEN c.year = ? THEN c.sb ELSE 0 END) AS ysb
+              SUM(c.h) AS h, SUM(c.hr) AS hr, SUM(c.sb) AS sb
          FROM career_batting c JOIN player p ON p.player_id = c.player_id
-        WHERE c.year <= ?
+        WHERE c.year < ?
         GROUP BY c.player_id`,
     )
-    .all(season, season, season, season) as unknown as {
-      playerId: string; name: string; h: number; hr: number; sb: number;
-      yh: number; yhr: number; ysb: number;
-    }[];
+    .all(season) as unknown as { playerId: string; name: string; h: number; hr: number; sb: number }[];
   const prows = db.raw
     .prepare(
       `SELECT c.player_id AS playerId, p.display_name AS name,
-              SUM(c.w) AS w, SUM(c.so) AS so, SUM(c.sv) AS sv,
-              SUM(CASE WHEN c.year = ? THEN c.w ELSE 0 END) AS yw,
-              SUM(CASE WHEN c.year = ? THEN c.so ELSE 0 END) AS yso,
-              SUM(CASE WHEN c.year = ? THEN c.sv ELSE 0 END) AS ysv
+              SUM(c.w) AS w, SUM(c.so) AS so, SUM(c.sv) AS sv
          FROM career_pitching c JOIN player p ON p.player_id = c.player_id
-        WHERE c.year <= ?
+        WHERE c.year < ?
         GROUP BY c.player_id`,
     )
-    .all(season, season, season, season) as unknown as {
-      playerId: string; name: string; w: number; so: number; sv: number;
-      yw: number; yso: number; ysv: number;
-    }[];
+    .all(season) as unknown as { playerId: string; name: string; w: number; so: number; sv: number }[];
+
+  /**
+   * 올해 몫 — **우리 집계**.
+   * ⚠`decision` 은 `○`·`●`·`S`·`H` 다. 예전 코드가 `'W'`/`'S'` 로 세고 있었는데
+   *   `'W'` 는 아예 없는 값이라 **승리가 늘 0**이었다(2026-08-17 대조에서 드러났다).
+   */
+  const yb = new Map<string, { h: number; hr: number; sb: number }>();
+  for (const r of db.raw
+    .prepare(
+      `SELECT b.player_id AS id, SUM(b.h) AS h, SUM(b.hr) AS hr, SUM(b.sb) AS sb
+         FROM batting_line b JOIN game g ON g.game_id = b.game_id
+        WHERE g.season = ? AND g.competition = ? AND g.status = 'played' AND g.game_date <= ?
+        GROUP BY b.player_id`,
+    )
+    .all(season, competition, through) as unknown as { id: string; h: number; hr: number; sb: number }[]) {
+    yb.set(r.id, { h: r.h, hr: r.hr, sb: r.sb });
+  }
+  const yp = new Map<string, { w: number; so: number; sv: number }>();
+  for (const r of db.raw
+    .prepare(
+      `SELECT t.player_id AS id,
+              SUM(CASE WHEN t.decision = '○' THEN 1 ELSE 0 END) AS w,
+              SUM(CASE WHEN t.decision = 'S' THEN 1 ELSE 0 END) AS sv,
+              SUM(t.so) AS so
+         FROM pitching_line t JOIN game g ON g.game_id = t.game_id
+        WHERE g.season = ? AND g.competition = ? AND g.status = 'played' AND g.game_date <= ?
+        GROUP BY t.player_id`,
+    )
+    .all(season, competition, through) as unknown as { id: string; w: number; so: number; sv: number }[]) {
+    yp.set(r.id, { w: r.w, so: r.so, sv: r.sv });
+  }
 
   const out: HomeMilestone[] = [];
   const add = (id: string, name: string, label: string, count: number, thisSeason: number): void => {
@@ -2028,15 +2058,21 @@ function milestonesOf(
     if (code === "") return;
     out.push({ playerId: id, name, ...chip(code), label, count, next, toNext: next - count, thisSeason });
   };
+  // ⚠**「올해」가 없는 선수도 통산은 있다** — 그 경우 올해 몫은 0이고, 아래 필터가 걸러낸다
+  const seen = new Set<string>();
   for (const r of rows) {
-    add(r.playerId, r.name, "通算安打", r.h, r.yh);
-    add(r.playerId, r.name, "通算本塁打", r.hr, r.yhr);
-    add(r.playerId, r.name, "通算盗塁", r.sb, r.ysb);
+    seen.add(r.playerId);
+    const y = yb.get(r.playerId) ?? { h: 0, hr: 0, sb: 0 };
+    add(r.playerId, r.name, "通算安打", r.h + y.h, y.h);
+    add(r.playerId, r.name, "通算本塁打", r.hr + y.hr, y.hr);
+    add(r.playerId, r.name, "通算盗塁", r.sb + y.sb, y.sb);
   }
   for (const r of prows) {
-    add(r.playerId, r.name, "通算勝利", r.w, r.yw);
-    add(r.playerId, r.name, "通算奪三振", r.so, r.yso);
-    add(r.playerId, r.name, "通算セーブ", r.sv, r.ysv);
+    seen.add(r.playerId);
+    const y = yp.get(r.playerId) ?? { w: 0, so: 0, sv: 0 };
+    add(r.playerId, r.name, "通算勝利", r.w + y.w, y.w);
+    add(r.playerId, r.name, "通算奪三振", r.so + y.so, y.so);
+    add(r.playerId, r.name, "通算セーブ", r.sv + y.sv, y.sv);
   }
 
   /**
@@ -2348,7 +2384,7 @@ function homePage(
     week,
     // ⚠**구단은 이미 있는 teamCodeOf 를 쓴다**(M1). 따로 만든 질의가 ORDER BY 없이
     //   LIMIT 1 이라 **이적 선수 282명 중 9명에게 옛 구단**이 붙었다(2026-08-17 실측)
-    milestones: milestonesOf(db, o.season, chip, teamCodeOf),
+    milestones: milestonesOf(db, o.season, competition, through, chip, teamCodeOf),
     paces,
     streaks: streaks.slice(0, HOME_STREAK_ROWS),
     hasPostseason,
@@ -2388,25 +2424,69 @@ const HOME_MILESTONE_ROWS = 8;
  * 그래야 사이트 안에서 打率 을 내는 곳이 한 벌이다.
  * ⚠**분모를 문자열 안에 넣는다**(M2) — 값만 떼어 쓸 수 없게.
  */
-function careerOf(db: Db, playerId: string): CareerData | null {
+/** 우리 집계라는 표시. ⚠**출처를 줄마다 들고 다닌다**(M4) — 한 표에 두 출처가 섞이기 때문이다 */
+const OURS = "当サイト集計（試合記録から）";
+
+function careerOf(
+  db: Db,
+  playerId: string,
+  /**
+   * **지금 만들고 있는 시즌.** 그 해만은 우리 집계로 갈아끼운다.
+   *
+   * ⚠**NPB 공표치가 우리보다 늦다.** 실측(2026-08-17): 선수 페이지의 年度別成績은
+   * 우리보다 며칠 뒤처진다 — 2026년 대조에서 **타격 617명 중 182명, 투구 358명 중 90명**이
+   * 우리 쪽이 크고, **NPB 쪽이 큰 경우는 0명**이었다(우리 누락 없음).
+   * ⚠**끝난 시즌에서는 두 출처가 완전히 같다** — 2023~2025 대조에서
+   * **타격 1,777건·투구 983건 전부 일치**. 그래서 「작년까지는 NPB, 올해는 우리」로
+   * 이어 붙여도 경계에서 값이 튀지 않는다. 이 실측이 없으면 해서는 안 되는 일이다.
+   */
+  season: number,
+  current: {
+    batting: readonly { teamCode: string; games: number; pa: number; ab: number; h: number; hr: number; rbi: number; sb: number; bb: number; so: number }[];
+    pitching: readonly { teamCode: string; games: number; w: number; l: number; sv: number; hld: number; bf: number; outs: number; so: number; er: number; bb: number }[];
+  },
+  teamName: (code: string) => string,
+): CareerData | null {
   const bat = db.raw
     .prepare(
       `SELECT year, team, games, pa, ab, h, hr, rbi, sb, cs, bb, so, source
-         FROM career_batting WHERE player_id = ? ORDER BY year, seq`,
+         FROM career_batting WHERE player_id = ? AND year < ? ORDER BY year, seq`,
     )
-    .all(playerId) as unknown as {
+    .all(playerId, season) as unknown as {
       year: number; team: string; games: number; pa: number; ab: number; h: number;
       hr: number; rbi: number; sb: number; cs: number; bb: number; so: number; source: string;
     }[];
   const pit = db.raw
     .prepare(
       `SELECT year, team, games, w, l, sv, hld, bf, outs, so, er, bb, source
-         FROM career_pitching WHERE player_id = ? ORDER BY year, seq`,
+         FROM career_pitching WHERE player_id = ? AND year < ? ORDER BY year, seq`,
     )
-    .all(playerId) as unknown as {
+    .all(playerId, season) as unknown as {
       year: number; team: string; games: number; w: number; l: number; sv: number; hld: number;
       bf: number; outs: number; so: number; er: number; bb: number; source: string;
     }[];
+  /**
+   * ⚠**올해 행은 우리 집계로 만든다.** 그러면 같은 페이지의 基本成績과 이 표의 올해 행이
+   * **같은 수**가 된다 — 예전에는 한 페이지에 2026년이 두 번, 다른 수로 있었다.
+   * ⚠**구단 표기가 섞인다**(NPB 는 `阪 神`, 우리는 `阪神`). 그래서 그 행에는 출처를 적는다.
+   */
+  for (const b of current.batting) {
+    if (b.pa === 0 && b.games === 0) continue;
+    bat.push({
+      year: season, team: teamName(b.teamCode), games: b.games, pa: b.pa, ab: b.ab,
+      h: b.h, hr: b.hr, rbi: b.rbi, sb: b.sb,
+      // ⚠**도루자는 우리에게 없다**(박스스코어에 없는 값) — 0 이 아니라 「모른다」로 두어야 하는데
+      //   이 표는 수를 요구한다. 그래서 **올해 행의 盗塁刺는 내지 않는다**(아래 표기에서 뺀다)
+      cs: -1, bb: b.bb, so: b.so, source: OURS,
+    });
+  }
+  for (const x of current.pitching) {
+    if (x.games === 0) continue;
+    pit.push({
+      year: season, team: teamName(x.teamCode), games: x.games, w: x.w, l: x.l, sv: x.sv,
+      hld: x.hld, bf: x.bf, outs: x.outs, so: x.so, er: x.er, bb: x.bb, source: OURS,
+    });
+  }
   if (bat.length === 0 && pit.length === 0) return null;
 
   const avg = (h: number, ab: number): string => (ab === 0 ? NO_VALUE : avg3(h / ab));
@@ -2418,14 +2498,19 @@ function careerOf(db: Db, playerId: string): CareerData | null {
   const batting: CareerRow[] = bat.map((r) => ({
     year: r.year,
     team: r.team,
+    ours: r.source === OURS,
     games: r.games,
     faced: r.pa,
-    line: `${avg(r.h, r.ab)}（${r.ab}打数）· ${r.h}安打 ${r.hr}本 ${r.rbi}打点 ${r.sb}盗塁${r.cs}刺`,
+    // ⚠**盗塁刺는 박스스코어에 없다** — 올해 행에는 그 값이 없으므로 **쓰지 않는다**(M11).
+    //   0 으로 적으면 「올해는 한 번도 안 잡혔다」가 되어 거짓이 된다
+    line: `${avg(r.h, r.ab)}（${r.ab}打数）· ${r.h}安打 ${r.hr}本 ${r.rbi}打点 ` +
+      (r.cs < 0 ? `${r.sb}盗塁` : `${r.sb}盗塁${r.cs}刺`),
     sort: { games: r.games, pa: r.pa, h: r.h, hr: r.hr, rbi: r.rbi, sb: r.sb },
   }));
   const pitching: CareerRow[] = pit.map((r) => ({
     year: r.year,
     team: r.team,
+    ours: r.source === OURS,
     games: r.games,
     faced: r.bf,
     line: `${era(r.er, r.outs)}（${ip(r.outs)}回）· ${r.w}勝${r.l}敗 ${r.sv}S ${r.hld}H ${r.so}奪三振`,
@@ -2447,7 +2532,8 @@ function careerOf(db: Db, playerId: string): CareerData | null {
     : `${sum(bat, "games")}試合 ${sum(bat, "pa")}打席 · ` +
       `${avg(sum(bat, "h"), sum(bat, "ab"))}（${sum(bat, "ab")}打数）· ` +
       `${sum(bat, "h")}安打 ${sum(bat, "hr")}本 ${sum(bat, "rbi")}打点 ` +
-      `${sum(bat, "sb")}盗塁${sum(bat, "cs")}刺`;
+      // ⚠**올해 몫에 도루자가 없으므로 합계에도 안 쓴다** — 반쪽짜리 합계를 내지 않는다
+      `${sum(bat, "sb")}盗塁${bat.some((x) => x.cs < 0) ? "" : `${sum(bat, "cs")}刺`}`;
   const pTotal = pit.length === 0
     ? null
     : `${sum(pit, "games")}登板 ${ip(sum(pit, "outs"))}回 · ` +
@@ -3455,7 +3541,28 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       birthDate: profile?.birthDate ?? null,
       physique: profile?.physique ?? null,
       draft: profile?.draft ?? null,
-      career: careerOf(db, playerId),
+      career: careerOf(
+        db,
+        playerId,
+        o.season,
+        {
+          // ⚠**「그 구단에서 낸 몫」을 쓴다** — 이적하면 구단마다 한 줄이 되어 NPB 표와 모양이 같다
+          batting: agg.battingByTeam
+            .filter((b) => b.playerId === playerId)
+            .map((b) => ({
+              teamCode: b.teamCode, games: b.games, pa: b.line.pa, ab: b.line.ab,
+              h: b.line.h, hr: b.line.hr, rbi: b.rbi, sb: b.sb, bb: b.line.bb, so: b.line.so,
+            })),
+          pitching: agg.pitchingByTeam
+            .filter((x) => x.playerId === playerId)
+            .map((x) => ({
+              teamCode: x.teamCode, games: x.games, w: x.decisions.w, l: x.decisions.l,
+              sv: x.decisions.sv, hld: x.decisions.hld, bf: x.line.bf ?? 0, outs: x.line.outs,
+              so: x.line.so, er: x.line.er, bb: x.line.bb,
+            })),
+        },
+        shortNameOf,
+      ),
       uniformNumber: profile?.uniformNumber ?? null,
       role,
       batting: battingData,
