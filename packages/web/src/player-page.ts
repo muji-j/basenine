@@ -31,6 +31,7 @@ import {
   term,
   termAttr,
 } from "./parts.ts";
+import { stableTable } from "./table.ts";
 import type { BarRow, RankDigits } from "./parts.ts";
 import { NO_VALUE, avg3, gameDate, innings, throwsBats } from "./format.ts";
 import { isEmptyProfile, markFigure, markLetter, markProfile } from "./marks.ts";
@@ -1234,34 +1235,43 @@ function matchupBlock(rows: readonly MatchupRow[], total: number, opponent: stri
     "最少打席でしぼる",
   );
 
-  const head = MATCHUP_COLUMNS.map(
-    (c) => html`<th class="${c.align === "l" ? "l" : ""}" scope="col" aria-sort="${c.key === "pa" ? "descending" : "none"}">
-      <button class="sortable" type="button" data-sortkey="${c.key}" data-sorttype="${c.type}"
-        ${raw(termAttr(c.label))}${raw(c.rate === true ? ' data-sortrate="1"' : "")}>${c.label === "" ? opponent : c.label}<i></i></button>
-    </th>`,
-  );
-
   // 구단 선택지는 **실제로 대전한 구단만** 낸다 — 없는 구단을 고르게 하면 0건 화면이 된다
   const counts = new Map<string, number>();
   for (const r of rows) counts.set(r.opponentTeam, (counts.get(r.opponentTeam) ?? 0) + 1);
-  const teams = TEAMS.filter((t) => counts.has(t.code));
 
-  const body = html`<div class="mfind">
-  <label for="matchupFilter">${opponent}名でしぼる</label>
-  <input id="matchupFilter" type="search" autocomplete="off" placeholder="例：山本">
-  <label for="matchupTeam">球団</label>
-  <select id="matchupTeam">
-    <option value="">すべての球団</option>
-    ${teams.map(
-      (t) => html`<option value="${t.code}">${shortNameOf(t.code)}（${counts.get(t.code)}）</option>`,
-    )}
-  </select>
-  <span class="count"><span id="matchupCount">${rows.length}件</span> / 全${total}件</span>
-</div>
-${scroller(html`<table id="matchupTable">
-  <thead><tr>${head}</tr></thead>
-  <tbody>${rows.map(
-    (r) => html`<tr class="${r.line.pa < THIN_MATCHUP_PA ? "thin" : ""}"
+  const body = stableTable({
+    id: "matchup",
+    columns: MATCHUP_COLUMNS.map((c) => ({
+      key: c.key,
+      label: c.label,
+      ...(c.align === "l" ? { left: true as const } : {}),
+      ...(c.type === "text" ? { text: true as const } : {}),
+      ...(c.rate === true ? { rate: true as const } : {}),
+      ...(c.label === "" ? { head: opponent } : {}),
+    })),
+    sortKey: "pa",
+    findLabel: `${opponent}名でしぼる`,
+    findPlaceholder: "例：山本",
+    select: {
+      id: "matchupTeam",
+      field: "teamcode",
+      label: "球団",
+      options: [
+        { value: "", label: "すべての球団" },
+        ...TEAMS.filter((t) => counts.has(t.code)).map((t) => ({
+          value: t.code,
+          label: `${shortNameOf(t.code)}（${counts.get(t.code) ?? 0}）`,
+        })),
+      ],
+    },
+    thin: { field: "pa", min: THIN_MATCHUP_PA, unit: "打席" },
+    minGroup: "matchupMin",
+    minField: "pa",
+    total,
+    unit: "件",
+    emptyText: "この条件の対戦記録はありません。",
+    rows: html`${rows.map(
+      (r) => html`<tr class="${r.line.pa < THIN_MATCHUP_PA ? "thin" : ""}"
       data-name="${r.opponentName}" data-team="${shortNameOf(r.opponentTeam)}" data-teamcode="${r.opponentTeam}"
       data-pa="${r.line.pa}" data-ab="${r.line.ab}" data-h="${r.line.h}" data-hr="${r.line.hr}"
       data-bb="${r.line.bb}" data-so="${r.line.so}" data-rbi="${r.rbi}"
@@ -1272,15 +1282,13 @@ ${scroller(html`<table id="matchupTable">
       <td>${r.line.bb}</td><td>${r.line.so}</td><td>${r.rbi}</td>
       <td>${avg3(r.avg.value)}</td>
     </tr>`,
-  )}</tbody>
-</table>`)}
-<p class="empty" id="matchupEmpty" hidden role="status">この条件の対戦記録はありません。</p>
-<p class="note" id="matchupStatus" role="status">打席の多い順</p>
-${note(
-    `見出しを押すと並べ替わります（もう一度押すと逆順）。${THIN_MATCHUP_PA}打席未満は薄く表示しています — ` +
-      `対戦成績は大半が一桁打席で、率で並べると少ない打席が先頭に来ます。` +
-      `並び順と絞り込みは上の行に出ています。${opponent}名を押すとその選手のページに移ります。`,
-  )}`;
+    )}`,
+    note: note(
+      `見出しを押すと並べ替わります（もう一度押すと逆順）。${THIN_MATCHUP_PA}打席未満は薄く表示しています — ` +
+        `対戦成績は大半が一桁打席で、率で並べると少ない打席が先頭に来ます。` +
+        `並び順と絞り込みは上の行に出ています。${opponent}名を押すとその選手のページに移ります。`,
+    ),
+  });
 
   return block({ id: "matchup", title: "対戦成績", controls, body });
 }

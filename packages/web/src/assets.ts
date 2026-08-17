@@ -1110,9 +1110,16 @@ const state={
   preset:typeof saved.preset==="string"?saved.preset:"standard",
   density:saved.density==="compact"?"compact":"normal",
   tabs:(saved.tabs&&typeof saved.tabs==="object")?saved.tabs:{},
-  // 대전 표의 정렬. 저장된 열이 지금 표에 없으면 표를 그릴 때 기본으로 되돌린다
-  matchup:(saved.matchup&&typeof saved.matchup==="object")?saved.matchup:null,
-  matchupTeam:typeof saved.matchupTeam==="string"?saved.matchupTeam:"",
+  /* 표별 정렬·선택. ⚠**여기에 등록하지 않으면 저장이 조용히 안 된다** —
+     이 초기화는 저장값을 통째로 받는 것이 아니라 **키를 하나씩 되살린다.**
+     예전에 대전 표 전용으로 matchup · matchupTeam 두 자리가 있었고,
+     표가 늘면서 자리도 표마다 하나씩 필요해졌다(2026-08-17).
+     저장된 열이 지금 표에 없으면 표를 그릴 때 기본으로 되돌린다. */
+  sort:(saved.sort&&typeof saved.sort==="object")?saved.sort:{},
+  /* 「기준 도달자만 보기」가 켜진 표들 */
+  only:(saved.only&&typeof saved.only==="object")?saved.only:{},
+  /* select 로 좁힌 값(구단 등) */
+  picked:(saved.picked&&typeof saved.picked==="object")?saved.picked:{},
   /* 즐겨찾기한 선수 ID. **이 브라우저에만 남는다** — 서버로 가지 않는다 */
   favs:Array.isArray(saved.favs)?saved.favs.filter(x=>typeof x==="string"):[],
   grades:saved.grades!==false,
@@ -1451,9 +1458,17 @@ if(gradeBtn){
   applyGrades();
 }
 
-/* ── 상대전적 좁히기·정렬 ──
+/* ── 정렬·좁히기가 되는 표 (한 벌) ──
+
+   ⚠**예전에는 이 동작이 #matchupTable 하나에만 붙어 있었다.** 구단 打者/投手·순위표에도
+   같은 것이 필요해졌는데, 표마다 복붙하면 「이 표는 결측을 뒤로 보내고 저 표는 안 보낸다」가
+   생긴다. 마크업 쪽 한 벌은 src/table.ts 이고 여기가 그 짝이다(M1).
+
    ⚠**막지 않고 말한다.** 대전 표본은 대부분 한 자릿수라 율로 정렬하면 적은 타석이 위로 온다.
-   정렬 자체를 막는 대신, **지금 무엇으로 정렬돼 있고 얇은 행이 몇 개 섞였는지**를 늘 낸다. */
+   정렬 자체를 막는 대신, **지금 무엇으로 정렬돼 있고 얇은 행이 몇 개 섞였는지**를 늘 낸다.
+
+   ⚠**정렬 상태의 저장 자리가 state.matchup 에서 state.sort[id] 로 옮겨졌다.**
+   예전에 저장해 둔 대전 정렬은 한 번 기본값으로 돌아간다 — 잃는 것은 없다. */
 const THIN_MATCHUP_PA=10;
 /* 질의문자열 vs=山本 — 「対戦を選ぶ」에서 넘어온 상대 이름 */
 function vsParam(){
@@ -1461,16 +1476,22 @@ function vsParam(){
   if(!m)return "";
   try{return decodeURIComponent(m[1].replace(/\\+/g," "))}catch(e){return ""}
 }
-const mtable=$("#matchupTable");
-if(mtable){
-  const tbody=$("tbody",mtable);
+
+if(!state.sort||typeof state.sort!=="object")state.sort={};
+if(!state.only||typeof state.only!=="object")state.only={};
+
+$$("[data-stable]").forEach(box=>{
+  const id=box.dataset.stable;
+  const table=$("table",box);
+  if(!table)return;
+  const tbody=$("tbody",table);
+  if(!tbody)return;
   const all=$$("tr",tbody);
-  const mfilter=$("#matchupFilter");
-  const mteam=$("#matchupTeam");
-  const empty=$("#matchupEmpty");
-  const status=$("#matchupStatus");
-  const heads=$$("th",mtable);
-  const buttons=$$(".sortable",mtable);
+  const heads=$$("th",table);
+  const buttons=$$(".sortable",table);
+  if(buttons.length===0)return;
+
+  const unit=box.dataset.unit||"件";
   const labelOf={},typeOf={},rateOf={};
   buttons.forEach(b=>{
     labelOf[b.dataset.sortkey]=b.textContent;
@@ -1478,9 +1499,27 @@ if(mtable){
     rateOf[b.dataset.sortkey]=b.dataset.sortrate==="1";
   });
 
-  if(!state.matchup||typeof state.matchup!=="object"||!labelOf[state.matchup.key]){
-    state.matchup={key:"pa",dir:"desc"};
-  }
+  const def=String(box.dataset.sortdefault||"").split(":");
+  const fallback={key:def[0],dir:def[1]==="asc"?"asc":"desc"};
+  /* 저장된 열이 지금 표에 없으면 기본으로 — 표 구성이 바뀌어도 아무 표도 안 열리는 일이 없게 */
+  const cur=state.sort[id];
+  if(!cur||typeof cur!=="object"||!labelOf[cur.key])state.sort[id]=fallback;
+
+  const finder=$("[data-stable-filter]",box);
+  const picker=$("[data-stable-select]",box);
+  const onlyBtn=$("[data-stable-only]",box);
+  const countEl=$("[data-stable-count]",box);
+  const empty=$("[data-stable-empty]",box);
+  const status=$("[data-stable-status]",box);
+
+  /* 얇은 표본의 기준. 없으면 이 표에는 그런 개념이 없다 */
+  const thinField=box.dataset.thinfield;
+  const thinMin=Number(box.dataset.thinmin||"0");
+  const thinUnit=box.dataset.thinunit||"";
+
+  /* 임계값 버튼줄(예: 最少打席). 탭 구조를 그대로 쓰므로 상태는 state.tabs 에 있다 */
+  const minGroup=box.dataset.mingroup;
+  const minField=box.dataset.minfield;
 
   /* ⚠**값이 없는 행은 방향과 무관하게 뒤로 보낸다.** 오름차순에서 「기록 없음」이 1위가 되면
      비어 있다는 사실이 성적처럼 읽힌다(M11). */
@@ -1491,29 +1530,34 @@ if(mtable){
   };
 
   const apply=()=>{
-    const key=state.matchup.key,dir=state.matchup.dir;
-    const min=Number(state.tabs.matchupMin||"1");
-    const term=mfilter?mfilter.value.trim():"";
-    const team=mteam?mteam.value:"";
+    const key=state.sort[id].key,dir=state.sort[id].dir;
+    const min=minGroup?Number(state.tabs[minGroup]||"1"):1;
+    const term=finder?finder.value.trim():"";
+    const pick=picker?picker.value:"";
+    const field=picker?picker.dataset.field:"";
+    const only=onlyBtn?state.only[id]===true:false;
     const sign=dir==="asc"?1:-1;
+    /* 같은 값이면 기본 열로 가른다 — 순서가 브라우저 정렬의 안정성에만 기대지 않게 */
+    const tie=fallback.key;
 
     const sorted=all.slice().sort((a,b)=>{
       const miss=(a.dataset[key]===undefined?1:0)-(b.dataset[key]===undefined?1:0);
       if(miss!==0)return miss;
-      return sign*compare(a,b,key)||(Number(b.dataset.pa)-Number(a.dataset.pa));
+      return sign*compare(a,b,key)||(Number(b.dataset[tie])-Number(a.dataset[tie]))||0;
     });
 
     let n=0,thin=0;
     sorted.forEach(tr=>{
       tbody.appendChild(tr);
-      const hit=Number(tr.dataset.pa)>=min
-        &&(term===""||tr.dataset.name.indexOf(term)>=0)
-        &&(team===""||tr.dataset.teamcode===team);
+      const hit=(!minField||Number(tr.dataset[minField])>=min)
+        &&(term===""||String(tr.dataset.name||"").indexOf(term)>=0)
+        &&(pick===""||!field||tr.dataset[field]===pick)
+        &&(!only||tr.dataset.qualified==="1");
       tr.hidden=!hit;
-      if(hit){n++;if(Number(tr.dataset.pa)<THIN_MATCHUP_PA)thin++}
+      if(hit){n++;if(thinField&&Number(tr.dataset[thinField])<thinMin)thin++}
     });
 
-    const c=$("#matchupCount");if(c)c.textContent=n+"件";
+    if(countEl)countEl.textContent=n+unit;
     /* ⚠**0건을 빈 표로 두지 않는다.** 「대전이 없다」와 「고장났다」가 같은 화면이면 결함이다(M12) */
     if(empty)empty.hidden=n!==0;
 
@@ -1523,14 +1567,17 @@ if(mtable){
       th.setAttribute("aria-sort",on?(dir==="asc"?"ascending":"descending"):"none");
     });
 
+    if(onlyBtn)onlyBtn.setAttribute("aria-pressed",String(only));
+
     if(status){
       let text=typeOf[key]==="text"
         ?labelOf[key]+(dir==="asc"?" 昇順":" 降順")
         :labelOf[key]+(dir==="asc"?"の少ない順":"の多い順");
-      if(team!==""&&mteam)text+=" · "+mteam.options[mteam.selectedIndex].textContent;
-      if(min>1)text+=" · "+min+"打席以上";
-      if(rateOf[key]&&min<THIN_MATCHUP_PA&&thin>0){
-        text+=" · ⚠"+THIN_MATCHUP_PA+"打席未満が"+thin+"件混ざっています（率は標本が小さいほど揺れます）";
+      if(pick!==""&&picker)text+=" · "+picker.options[picker.selectedIndex].textContent;
+      if(min>1)text+=" · "+min+thinUnit+"以上";
+      if(only&&onlyBtn)text+=" · "+onlyBtn.textContent;
+      if(rateOf[key]&&thinField&&min<thinMin&&thin>0){
+        text+=" · ⚠"+thinMin+thinUnit+"未満が"+thin+unit+"混ざっています（率は標本が小さいほど揺れます）";
       }
       status.textContent=text;
     }
@@ -1540,27 +1587,39 @@ if(mtable){
      이름·구단은 오름차순, 수치는 내림차순 */
   buttons.forEach(b=>b.addEventListener("click",()=>{
     const key=b.dataset.sortkey;
-    state.matchup=state.matchup.key===key
-      ?{key:key,dir:state.matchup.dir==="desc"?"asc":"desc"}
+    state.sort[id]=state.sort[id].key===key
+      ?{key:key,dir:state.sort[id].dir==="desc"?"asc":"desc"}
       :{key:key,dir:typeOf[key]==="text"?"asc":"desc"};
     save(state);apply();
   }));
-  if(mfilter)mfilter.addEventListener("input",apply);
-  if(mteam)mteam.addEventListener("change",()=>{state.matchupTeam=mteam.value;save(state);apply()});
-  /* 저장된 구단이 이 선수의 선택지에 없으면 「すべて」로 되돌린다 — 0건 화면이 되지 않게 */
-  if(mteam&&typeof state.matchupTeam==="string"){
-    const ok=Array.prototype.some.call(mteam.options,o=>o.value===state.matchupTeam);
-    mteam.value=ok?state.matchupTeam:"";
+  if(finder)finder.addEventListener("input",apply);
+  if(onlyBtn)onlyBtn.addEventListener("click",()=>{
+    state.only[id]=state.only[id]!==true;save(state);apply();
+  });
+  if(picker){
+    picker.addEventListener("change",()=>{
+      if(!state.picked||typeof state.picked!=="object")state.picked={};
+      state.picked[id]=picker.value;save(state);apply();
+    });
+    /* 저장된 선택지가 이 표에 없으면 「すべて」로 되돌린다 — 0건 화면이 되지 않게 */
+    const saved=state.picked&&typeof state.picked==="object"?state.picked[id]:undefined;
+    if(typeof saved==="string"){
+      const ok=Array.prototype.some.call(picker.options,o=>o.value===saved);
+      picker.value=ok?saved:"";
+    }
   }
   tabHooks.push(apply);
 
-  const vs=vsParam();
-  if(vs!==""&&mfilter){
-    mfilter.value=vs;
-    /* 대전 블록이 꺼져 있으면 이번 방문에만 켠다 — 사용자의 저장된 구성은 건드리지 않는다 */
-    if(state.order.indexOf("matchup")<0)state.order=state.order.concat(["matchup"]);
+  /* 대전 표만의 사정: 「対戦を選ぶ」에서 ?vs= 로 넘어온 이름을 좁히기에 미리 넣는다 */
+  if(id==="matchup"&&finder){
+    const vs=vsParam();
+    if(vs!==""){
+      finder.value=vs;
+      /* 대전 블록이 꺼져 있으면 이번 방문에만 켠다 — 사용자의 저장된 구성은 건드리지 않는다 */
+      if(state.order.indexOf("matchup")<0)state.order=state.order.concat(["matchup"]);
+    }
   }
-}
+});
 
 /* ── 검색어 접기 ──
    ⚠**이 함수는 한 벌뿐이다**(M1). 색인의 읽는 법과 질의어를 **같은 규칙으로** 접어야

@@ -96,8 +96,28 @@ function buildPage(): ReturnType<typeof makeDocument> {
       }
       h.appendChild(min);
       section.appendChild(h);
-      section.appendChild(make("input", { id: "matchupFilter", type: "search" }));
-      const sel = make("select", { id: "matchupTeam" });
+
+      /**
+       * ⚠**여기부터가 「정렬·좁히기가 되는 표」의 계약이다**(src/table.ts).
+       * 손으로 짓는 픽스처라 실제 마크업과 어긋날 수 있어서,
+       * `stable-contract.test.ts` 가 **진짜 렌더 결과에 이 갈고리들이 다 있는지** 따로 잰다.
+       * 그 시험이 없으면 이 픽스처는 「우리가 상상한 마크업」을 재는 것이 된다
+       * (2016년 박스 픽스처에서 이미 밟은 함정이다).
+       */
+      const stable = make("div", {
+        class: "stable",
+        "data-stable": "matchup",
+        "data-sortdefault": "pa:desc",
+        "data-thinfield": "pa",
+        "data-thinmin": "10",
+        "data-thinunit": "打席",
+        "data-mingroup": "matchupMin",
+        "data-minfield": "pa",
+        "data-unit": "件",
+      });
+      section.appendChild(stable);
+      stable.appendChild(make("input", { id: "matchupFilter", type: "search", "data-stable-filter": "" }));
+      const sel = make("select", { id: "matchupTeam", "data-stable-select": "", "data-field": "teamcode" });
       const all = make("option", { value: "" });
       all.textContent = "すべての球団";
       sel.appendChild(all);
@@ -106,9 +126,9 @@ function buildPage(): ReturnType<typeof makeDocument> {
         o.textContent = code;
         sel.appendChild(o);
       }
-      section.appendChild(sel);
-      section.appendChild(make("span", { id: "matchupCount" }));
-      section.appendChild(make("p", { id: "matchupStatus" }));
+      stable.appendChild(sel);
+      stable.appendChild(make("span", { id: "matchupCount", "data-stable-count": "" }));
+      stable.appendChild(make("p", { id: "matchupStatus", "data-stable-status": "" }));
 
       const table = make("table", { id: "matchupTable" });
       const thead = make("thead");
@@ -143,10 +163,10 @@ function buildPage(): ReturnType<typeof makeDocument> {
         tbody.appendChild(make("tr", attrs));
       }
       table.appendChild(tbody);
-      section.appendChild(table);
-      const empty = make("p", { class: "empty", id: "matchupEmpty" });
+      stable.appendChild(table);
+      const empty = make("p", { class: "empty", id: "matchupEmpty", "data-stable-empty": "" });
       empty.hidden = true;
-      section.appendChild(empty);
+      stable.appendChild(empty);
     }
     main.appendChild(section);
   }
@@ -556,7 +576,9 @@ test("정렬 선택도 저장된다", () => {
 
 test("저장된 정렬 열이 지금 표에 없으면 기본으로 돌아간다", () => {
   const storage = makeStorage();
-  storage.setItem("npb-meikan-layout", JSON.stringify({ matchup: { key: "存在しない", dir: "asc" } }));
+  // ⚠저장 자리가 `state.matchup` 에서 `state.sort.matchup` 으로 옮겨졌다(표마다 하나씩 두므로).
+  // 옛 자리에 넣어 두면 「없는 열」이 아니라 「아무것도 저장 안 된 상태」를 재게 된다.
+  storage.setItem("npb-meikan-layout", JSON.stringify({ sort: { matchup: { key: "存在しない", dir: "asc" } } }));
   const doc = buildPage();
   assert.doesNotThrow(() => run(doc, { storage }));
   assert.deepEqual(order(doc), ["今永", "山本", "森下", "戸郷", "大勢"]);
