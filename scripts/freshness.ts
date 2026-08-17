@@ -101,31 +101,60 @@ const career = db.prepare(`
   SELECT COUNT(*) AS players,
          SUM(f.day IS NULL) AS unknown,
          MIN(f.day) AS oldest,
-         MAX(f.day) AS newest
+         MAX(f.day) AS newest,
+         /**
+          * ⚠**이것이 진짜 지표다** — 「아직 못 받은 선수 중, 가장 오래전에 뛴 사람의 그 경기일」.
+          *
+          * 「가장 오래된 취득일」로 재면 **헛경보가 난다**: 부상으로 한 달 쉬는 선수는
+          * 페이지가 바뀔 리 없어 다시 받지 않는데, 취득일만 계속 늙는다.
+          * 반대로 여기 걸리는 선수는 **뛰었는데도 아직 못 받은** 사람이라, 재취득이 멈추면
+          * 그 날짜가 하루씩 뒤로 밀린다 — 멈춤을 직접 가리킨다.
+          * ⚠재취득이 정상이면 이 값은 **NULL**(대상 0명)이거나 어제다.
+          */
+         (SELECT MIN(l2.last) FROM last_seen l2
+            LEFT JOIN fetched f2 ON f2.id = l2.id
+           WHERE (f2.day IS NULL OR f2.day <= l2.last)
+             AND l2.last >= (SELECT DATE(MAX(game_date), '-400 days') FROM game WHERE status = 'played')
+         ) AS stalestPlayed
     FROM fetched f
     JOIN last_seen l ON l.id = f.id
    WHERE l.last >= (SELECT DATE(MAX(game_date), '-400 days') FROM game WHERE status = 'played')
-`).get() as { players: number; unknown: number; oldest: string | null; newest: string | null };
+`).get() as {
+  players: number; unknown: number; oldest: string | null; newest: string | null;
+  stalestPlayed: string | null;
+};
 
 if (career.players === 0) {
   console.log("통산 기록 없음 — 아직 선수 페이지를 적재하지 않았다");
 } else {
-  const careerAge = career.oldest === null
-    ? null
-    : Math.floor((Date.parse(`${todayJst}T00:00:00Z`) - Date.parse(`${career.oldest}T00:00:00Z`)) / 86_400_000);
+  /**
+   * ⚠**「아직 못 받은 선수가 마지막으로 뛴 날」로 잰다** — 「가장 오래된 취득일」이 아니다.
+   * 후자는 부상으로 쉬는 선수 때문에 헛경보가 난다(그 페이지는 바뀔 리 없어 다시 받을 이유가 없다).
+   */
+  const careerAge = career.stalestPlayed === null
+    ? 0
+    : Math.floor((Date.parse(`${todayJst}T00:00:00Z`) - Date.parse(`${career.stalestPlayed}T00:00:00Z`)) / 86_400_000);
   console.log(
     `통산 기록(최근 출장자) ${career.players}명 · 취득일 ${career.oldest ?? "?"}〜${career.newest ?? "?"}` +
-      `(가장 오래된 것이 ${careerAge ?? "?"}일 전) · 취득일 모름 ${career.unknown}명`,
+      ` · 취득일 모름 ${career.unknown}명 · ` +
+      (career.stalestPlayed === null
+        ? "**아직 못 받은 선수 없음**"
+        : `아직 못 받은 선수의 마지막 출장 ${career.stalestPlayed}(${careerAge}일 전)`),
   );
   /**
    * ⚠**경기 데이터보다 넉넉하다.** 선수 페이지는 하루 상한(기본 400명)으로 나눠 받으므로
    * 전원이 같은 날일 수 없고, 긴 중단 뒤에는 따라잡는 데 며칠 걸린다(980명이면 3일).
    * 그래도 **가장 오래된 것**이 이보다 밀리면 재취득이 멈춘 것이다.
    */
-  const careerStaleDays = staleDays + 5;
-  if (careerAge === null || careerAge > careerStaleDays) {
+  /**
+   * ⚠**경기 데이터보다 조금 넉넉하다.** 하루 상한(기본 400명)으로 나눠 받으므로
+   * 밀린 몫이 하루이틀 남을 수 있다. 그래도 그 이상 밀리면 재취득이 멈춘 것이다.
+   * ⚠**임계를 크게 잡지 않는다** — 이번 사고가 「열흘 내내 아무도 몰랐다」였다.
+   */
+  const careerStaleDays = staleDays + 2;
+  if (careerAge > careerStaleDays) {
     console.error(
-      `⚠**통산 기록이 낡았다** — 가장 오래된 취득이 ${careerAge ?? "알 수 없는 시점"}일 전이다` +
+      `⚠**통산 기록이 낡았다** — 아직 못 받은 선수가 ${careerAge}일 전에 뛰었다` +
         `(허용 ${careerStaleDays}일). 선수 페이지 재취득이 멈췄을 수 있다.\n` +
         `   확인: node packages/store/tools/emit-stale-player-ids.ts ${dbPath} --limit 400`,
     );
@@ -259,6 +288,7 @@ if (jsonAt >= 0) {
       careerOldest: career.oldest,
       careerNewest: career.newest,
       careerUnknown: career.unknown,
+      careerStalestPlayed: career.stalestPlayed,
       startersLatest: starters.latest,
       startersFetched,
       startersTeams: starters.teams,

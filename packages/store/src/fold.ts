@@ -96,6 +96,9 @@ export function foldOutcomes(tallies: Iterable<OutcomeTally>): { line: BattingLi
       case "interference":
       case "obstruction":
       case "interferenceOut":
+      // ⚠**규칙 위반 아웃은 더 셀 것이 없다** — 타수는 `countsAsAtBat` 이 이미 세고,
+      //   안타·사사구·희생 어디에도 안 들어간다. 여기서 `break` 가 곧 「아웃일 뿐」이다
+      case "ruleViolationOut":
       case "fieldersChoice":
       case "groundedIntoDoublePlay":
       case "fieldedOut":
