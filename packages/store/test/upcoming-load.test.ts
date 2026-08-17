@@ -133,3 +133,61 @@ test("⚠팀 칸을 못 읽으면 종료 코드가 1이다(M7)", async () => {
     },
   );
 });
+
+/**
+ * ⚠**마크업이 바뀌면 「경기가 없다」가 아니라 실패여야 한다**(M7).
+ *
+ * 일정 표의 클래스 이름이 바뀌면 `team1` 칸 자체가 사라져 **「못 읽은 행」으로도 안 잡힌다** —
+ * 파서는 0건을 돌려주고 적재는 DELETE 만 한 뒤 **종료 코드 0으로 끝났다.**
+ * 그러면 화면이 「앞으로의 경기가 없습니다」라고 말한다. 조용한 0 그 자체다.
+ * 반증자가 실제로 재현했다: 마크업을 바꾸자 upcoming_game 이 **8행 → 0행**(2026-08-18 감사 P1).
+ */
+test("⚠일정 마크업이 바뀌면 실패로 끝난다 — 조용한 0을 내지 않는다(M7)", async () => {
+  await withLoad(
+    { "08": '<tr id="date0818"><td><div class="TEAM-A">DeNA</div><div class="TEAM-B">巨人</div></td></tr>' },
+    (_db, _out, err, code) => {
+      assert.equal(code, 1, "마크업이 바뀌었는데 성공으로 끝냈다");
+      assert.match(err, /경기 행을 하나도 못 읽은 달/);
+    },
+  );
+});
+
+/**
+ * ⚠**감지에 성공해도 데이터를 지켜야 한다.**
+ * 처음에는 종료 코드만 1로 두었는데, 그 시점에 **DELETE 는 이미 커밋**돼 표가 빈 채로 남았다 —
+ * 「감지기가 데이터를 못 지킨다」. 던져서 트랜잭션을 되돌린다.
+ */
+test("⚠실패할 때 기존 일정을 지우지 않는다 — 트랜잭션을 되돌린다", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "bb-upcoming-keep-"));
+  const games = join(dir, "archive", "npb", "games", "2026");
+  await mkdir(games, { recursive: true });
+  const write = async (body: string): Promise<void> => {
+    await writeFile(join(games, "schedule_08.html.gz"), gzipSync(`<table>${body}</table>`));
+    await writeFile(join(games, "schedule_08.meta.json"), JSON.stringify({ checkedAt: "2026-08-18T00:00:00.000Z" }));
+  };
+  const dbPath = join(dir, "t.sqlite");
+  openDb(dbPath, NOW).close();
+  try {
+    // 1) 정상 마크업으로 넣는다
+    await write(row("0818", "DeNA", "巨人", "横　浜", "17:45") + row("0819", "巨人", "阪神", "東京ドーム", "18:00"));
+    let r = spawnSync(process.execPath, [TOOL, join(dir, "archive"), dbPath, "2026"], { encoding: "utf8" });
+    assert.equal(r.status, 0, `첫 적재가 실패했다: ${r.stdout}${r.stderr}`);
+    const db1 = openDb(dbPath, NOW);
+    const before = (db1.raw.prepare("SELECT COUNT(*) n FROM upcoming_game").get() as unknown as { n: number }).n;
+    db1.close();
+    assert.equal(before, 2);
+
+    // 2) 마크업이 바뀐다
+    await write('<tr id="date0820"><td><div class="TEAM-A">DeNA</div></td></tr>');
+    r = spawnSync(process.execPath, [TOOL, join(dir, "archive"), dbPath, "2026"], { encoding: "utf8" });
+    assert.equal(r.status, 1, "마크업이 바뀌었는데 성공으로 끝냈다");
+
+    // 3) ⚠**기존 일정이 남아 있어야 한다**
+    const db2 = openDb(dbPath, NOW);
+    const after = (db2.raw.prepare("SELECT COUNT(*) n FROM upcoming_game").get() as unknown as { n: number }).n;
+    db2.close();
+    assert.equal(after, before, "감지에는 성공했는데 기존 일정을 지워 버렸다");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

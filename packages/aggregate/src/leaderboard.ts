@@ -34,7 +34,21 @@ export interface LeagueBundle {
   batting: SeasonBatting[];
   pitching: SeasonPitching[];
   /** 이 리그에서 가장 많이 소화한 팀 경기수. 자격 기준의 분모 */
+  /**
+   * ⚠**리그 최다 팀의 시합수다. 자격 판정에 쓰지 마라** — 그 용도로는 `teamGamesOf` 를 쓴다.
+   * 화면이 「이 리그는 지금 몇 경기째인가」를 말할 때만 쓴다.
+   */
   teamGames: number;
+  /**
+   * **구단별 소화 시합수.** 자격 기준의 분모다.
+   *
+   * ⚠**규정타석은 「팀 시합수 × 3.1」이다**(NPB 규칙 · `docs/metrics` §5).
+   * 리그 최다 팀의 수를 전원에게 쓰면 **적게 치른 팀의 선수가 부당하게 탈락한다** —
+   * 실측(2026-08-18): 최다 111경기(日本ハム) 대 최소 102경기(広島)로 **9경기 차**이고,
+   * 규정타석이 **345 대 317로 28타석** 벌어진다. 히로시마 선수는 규정을 채웠는데도
+   * 순위에서 빠졌고, 화면은 그것을 **「NPB公式」이라고 적고 있었다**(2026-08-18 다방면 감사 P1).
+   */
+  teamGamesByCode: ReadonlyMap<string, number>;
 }
 
 export function buildLeagues(agg: SeasonAggregate): LeagueBundle[] {
@@ -52,13 +66,14 @@ export function buildLeagues(agg: SeasonAggregate): LeagueBundle[] {
     const pitching = agg.pitchingByLeague.filter((p) => p.league === league);
     if (batting.length === 0 || pitching.length === 0) continue;
 
-    const teamGames = Math.max(
-      ...TEAMS.filter((t) => t.league === league).map((t) => agg.teamGames.get(t.code) ?? 0),
-    );
+    const codes = TEAMS.filter((t) => t.league === league).map((t) => t.code);
+    const teamGames = Math.max(...codes.map((c) => agg.teamGames.get(c) ?? 0));
+    const teamGamesByCode = new Map(codes.map((c) => [c, agg.teamGames.get(c) ?? 0]));
 
     out.push({
       league,
       teamGames,
+      teamGamesByCode,
       batting,
       pitching,
       constants: leagueConstants({
@@ -192,14 +207,32 @@ function rankQualified<T>(
   return [...ranked, ...unqualified];
 }
 
+/**
+ * 그 선수의 **소속 구단** 소화 시합수. 자격 기준의 분모다.
+ *
+ * ⚠**리그 최다가 아니다**(2026-08-18 감사 P1). NPB 규칙은 「소속 구단의 시합수」이고,
+ * 팀마다 소화 수가 다르다 — 실측 2026-08-18 에 9경기(규정타석 28) 벌어져 있었다.
+ * ⚠**소속은 「가장 최근에 뛴 팀」이다** — 이 리포가 이미 세워 둔 규칙(`SeasonBatting.lastDate`).
+ *   시즌 중 이적한 선수의 정확한 NPB 취급은 공표된 형태로 확인할 수 없어, 그 규칙을 따른다.
+ *   ⚠**표본이 적다**(2026 리그 내 이적 소수) — 이 한계를 화면이 말해야 하면 그때 적는다.
+ * ⚠**모르는 코드면 리그 최다로 떨어진다** — 조용히 0이 되면 **전원이 자격을 얻는다**(M11).
+ */
+export function teamGamesOf(bundle: LeagueBundle, teamCode: string): number {
+  return bundle.teamGamesByCode.get(teamCode) ?? bundle.teamGames;
+}
+
 export function rankBatters(
   bundle: LeagueBundle,
   entries: readonly BattingEntry[],
   pick: (e: BattingEntry) => Rate,
   higherIsBetter = true,
 ): Ranked<BattingEntry>[] {
-  const need = qualifiedBatterPa(bundle.teamGames);
-  return rankQualified(entries, pick, (e) => e.player.line.pa >= need, higherIsBetter);
+  return rankQualified(
+    entries,
+    pick,
+    (e) => e.player.line.pa >= qualifiedBatterPa(teamGamesOf(bundle, e.player.teamCode)),
+    higherIsBetter,
+  );
 }
 
 export function rankPitchers(
@@ -208,8 +241,12 @@ export function rankPitchers(
   pick: (e: PitchingEntry) => Rate,
   higherIsBetter = false,
 ): Ranked<PitchingEntry>[] {
-  const need = qualifiedPitcherOuts(bundle.teamGames);
-  return rankQualified(entries, pick, (e) => e.player.line.outs >= need, higherIsBetter);
+  return rankQualified(
+    entries,
+    pick,
+    (e) => e.player.line.outs >= qualifiedPitcherOuts(teamGamesOf(bundle, e.player.teamCode)),
+    higherIsBetter,
+  );
 }
 
 /** 이 역할의 투수만 남긴다. **부문이 다르면 애초에 같은 표에 올리지 않는다** */
@@ -226,10 +263,9 @@ export function entriesOfRole(
  * ⚠이 차이를 화면이 말해야 한다 — 공식 기준과 자체 기준을 같은 얼굴로 내보내면
  * 「NPB가 그렇게 정했다」는 오해가 생긴다.
  */
-export function qualifyingOuts(bundle: LeagueBundle, role: PitcherRole): number {
-  return role === "starter"
-    ? qualifiedPitcherOuts(bundle.teamGames)
-    : qualifiedRelieverOuts(bundle.teamGames);
+export function qualifyingOuts(bundle: LeagueBundle, role: PitcherRole, teamCode?: string): number {
+  const games = teamCode === undefined ? bundle.teamGames : teamGamesOf(bundle, teamCode);
+  return role === "starter" ? qualifiedPitcherOuts(games) : qualifiedRelieverOuts(games);
 }
 
 /**

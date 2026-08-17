@@ -46,8 +46,26 @@ const ins = db.raw.prepare(
 );
 
 let months = 0, kept = 0, playedRows = 0, nonTeam = 0, unreadable = 0;
+/**
+ * ⚠**아무 행도 나오지 않은 달.** 여기가 M7 의 급소다.
+ *
+ * 일정 표의 마크업이 바뀌면 `team1` 칸 자체가 사라지므로 **「못 읽은 행」으로도 안 잡힌다** —
+ * 파서는 0건을 돌려주고, 적재는 DELETE 만 하고 **종료 코드 0으로 끝난다.**
+ * 그러면 화면이 「앞으로의 경기가 없습니다」라고 말한다. 조용한 0 그 자체다.
+ * 반증자가 실제로 재현했다: 마크업을 바꾸자 `upcoming_game` 이 **8행 → 0행**(2026-08-18 감사 P1).
+ * ⚠**월간 일정 페이지에는 반드시 경기 행이 있다**(치러진 것이든 앞으로의 것이든) —
+ * 아카이브에 있는 달이 0행이면 그건 「경기가 없다」가 아니라 **「못 읽었다」**다.
+ */
+const emptyMonths: string[] = [];
 const files = readdirSync(dir).filter((f) => /^schedule_\d{2}\.html\.gz$/.test(f)).sort();
 
+/**
+ * ⚠**던져서 트랜잭션을 되돌린다.** 여기서 그냥 종료 코드만 1로 두면
+ * **DELETE 는 이미 커밋돼** 표가 빈 채로 남는다 — 감지기가 데이터를 못 지킨다.
+ */
+class ScheduleShapeError extends Error {}
+
+try {
 db.transaction(() => {
   del.run(season);
   /** ⚠**같은 날 같은 카드의 번호.** 더블헤더가 아니어도 키를 채워야 한다 */
@@ -59,6 +77,7 @@ db.transaction(() => {
     const r = parseUpcoming(html, season);
     nonTeam += r.nonTeamRows;
     unreadable += r.unreadableRows;
+    if (r.games.length + r.nonTeamRows + r.unreadableRows === 0) emptyMonths.push(f);
     for (const g of r.games) {
       if (g.played) { playedRows += 1; continue; }
       const key = `${g.date}|${g.homeCode}|${g.awayCode}`;
@@ -68,7 +87,21 @@ db.transaction(() => {
       kept += 1;
     }
   }
+  if (emptyMonths.length > 0) {
+    throw new ScheduleShapeError(
+      `일정 표에서 경기 행을 하나도 못 읽은 달이 있다: ${emptyMonths.join("·")}\n` +
+        `  마크업이 바뀌었을 가능성이 높다. **기존 일정을 지우지 않고 멈춘다**(M7).`,
+    );
+  }
 });
+} catch (err) {
+  if (err instanceof ScheduleShapeError) {
+    console.error(`⚠${err.message}`);
+    db.close();
+    process.exit(1);
+  }
+  throw err;
+}
 
 console.log(
   `일정 ${months}개월분 · 앞으로의 경기 ${kept}건 적재 · 치러진 행 ${playedRows}건 제외` +
