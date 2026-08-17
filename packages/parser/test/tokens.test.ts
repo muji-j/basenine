@@ -150,3 +150,38 @@ test("수비방해의 접두어를 고정하지 않는다", () => {
   assert.equal(parsePaCell("一守妨")?.outcome, "interferenceOut");
   assert.equal(parsePaCell("二守妨")?.outcome, "interferenceOut");
 });
+
+/**
+ * ⚠**`犠失` 을 전부 번트로 읽으면 안 된다** — 번트는 외야로 가지 않는다.
+ * 외야로 간 희생타는 **플라이**이고, 그 구별이 없으면 그 타석이 `犠飛` 가 아니라 `犠打` 로
+ * 세어져 **출루율의 분모가 하나 줄고** 출루율이 실제보다 높게 나온다.
+ *
+ * 외부 대조가 실제로 잡았다(2024 ヤクルト 2명 — 우리 .234/.316 대 공표 .229/.315).
+ * 실측(2023~2026): 이 규칙이 타석 로그 원문(`犠牲フライ` / `犠牲バント`)과
+ * **5,860건 전부 일치 · 예외 0건**. `犠失` 134건 중 외야는 2건이었고 둘 다 플라이였다.
+ */
+test("⚠외야로 간 犠失은 희생플라이다 — 전부 번트로 읽으면 출루율이 높아진다", () => {
+  /**
+   * ⚠**실재하는 표기로 고정한다.** 처음에는 `左中間犠失` 을 넣었는데 그건 **타석 로그 쪽 표기**이고,
+   * 박스 178,420행에서 `左中間`·`右中間` 은 **0건**이다 — 실재하지 않는 문자열을 고정하는
+   * 단언은 아무것도 재지 않는다(2026-08-17 이중 검토 지적).
+   * 박스의 중간 방향은 `左中`·`右中` 이다(접두어로 4,740건).
+   * ⚠실측된 `sacFlyError` 2건은 **둘 다 `中犠失①`** 이므로, 아래 무마커 4건은
+   *   「규칙이 있는가」를 재고 실재 형태는 다음 테스트가 잰다.
+   */
+  for (const raw of ["右犠失", "中犠失", "左犠失", "左中犠失", "右中犠失"]) {
+    assert.equal(parsePaCell(raw)?.outcome, "sacFlyError", `${raw} 를 번트로 읽었다`);
+  }
+  for (const raw of ["投犠失", "捕犠失", "一犠失", "三犠失"]) {
+    assert.equal(parsePaCell(raw)?.outcome, "sacBuntError", `${raw} 를 플라이로 읽었다`);
+  }
+  // 둘 다 희생타이므로 타수에 들어가지 않는다
+  assert.equal(countsAsAtBat("sacFlyError"), false);
+  assert.equal(countsAsAtBat("sacBuntError"), false);
+});
+
+/** 타점 표기(丸数字)가 붙어도 같다 — 실측된 2건이 전부 `①` 을 달고 있었다 */
+test("犠失의 위치 판정이 타점 표기에 흔들리지 않는다", () => {
+  assert.equal(parsePaCell("中犠失①")?.outcome, "sacFlyError");
+  assert.equal(parsePaCell("投犠失①")?.outcome, "sacBuntError");
+});

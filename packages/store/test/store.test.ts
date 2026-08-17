@@ -89,11 +89,36 @@ test("타석 셀에서 볼넷·삼진·장타를 센다", () => {
   assert.equal(d.quarantine.length, 0);
 });
 
-test("⚠희생번트 3종이 전부 sh로 모인다", () => {
+test("⚠내야 희생번트 3종이 전부 sh로 모인다", () => {
   const d = deriveBatting("g", "away", batter(["投犠打", "投犠野", "投犠失"], { ab: 0 }));
   assert.ok(d);
   assert.equal(d.row.sh, 3);
   assert.equal(d.row.ab, 0, "희생타는 타수가 아니다");
+});
+
+/**
+ * ⚠**외야로 간 `犠失` 은 `sh` 가 아니라 `sf` 다.** 번트는 외야로 가지 않는다.
+ *
+ * 이 한 줄이 없으면 `fold.ts` 에서 `sacFlyError` 를 번트 쪽으로 되돌려도
+ * **전 테스트가 초록으로 남는다** — 실제로 그 상태였고, 잡은 것은 공표값 대조뿐이었다.
+ * 그때 나오는 증상은 「출루율이 조금 높다」이고(분모인 犠飛가 하나 줄어서),
+ * 값이 그럴듯해서 사람 눈으로는 안 보인다.
+ * 실측: 2024 ヤクルト 2명 — 우리 .234/.316 대 공표 .229/.315.
+ */
+test("⚠외야 犠失은 sf로 간다 — sh로 접으면 출루율이 조용히 높아진다", () => {
+  const d = deriveBatting("g", "away", batter(["中犠失", "右犠失", "左犠失"], { ab: 0 }));
+  assert.ok(d);
+  assert.equal(d.row.sf, 3, "외야 犠失을 희생플라이로 세지 않았다");
+  assert.equal(d.row.sh, 0, "외야 犠失이 희생번트에 섞였다");
+  assert.equal(d.row.ab, 0, "희생타는 타수가 아니다");
+});
+
+/** 내야와 외야가 한 줄에 섞여도 각각 제 자리로 간다 */
+test("한 선수의 내야·외야 犠失이 각각 sh·sf로 갈린다", () => {
+  const d = deriveBatting("g", "away", batter(["投犠失", "中犠失"], { ab: 0 }));
+  assert.ok(d);
+  assert.equal(d.row.sh, 1);
+  assert.equal(d.row.sf, 1);
 });
 
 test("⚠고의사구는 bb에도 ibb에도 들어간다", () => {

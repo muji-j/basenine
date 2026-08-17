@@ -112,6 +112,27 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
       }
       const result = current!;
 
+      /**
+       * ⚠**목록에 적었는데 데이터가 없는 시즌을 조용히 배포하지 않는다.**
+       *
+       * DB는 매 실행 아카이브 전체를 다시 훑어 만들어지므로, **아카이브에 없는 시즌을
+       * 시즌 목록에 적으면 그 시즌이 빈 화면으로 생성된다.** 그런데 그것을 막는 것이
+       * 아무것도 없었다 — 신선도 검사는 **현재 시즌만** 보고, 링크 검사는 선수가 0명이면
+       * 링크도 0개라 통과한다. 로그에 `선수 0명` 한 줄이 찍히고 배포는 그대로 진행된다
+       * (2026-08-17 이중 검토 지적).
+       *
+       * ⚠**0명은 「없다」가 아니라 「잘못 적었다」로 본다**(M12) — 시즌을 목록에 적는 것은
+       * 사람의 선언이고, 그 선언이 데이터와 어긋나면 그건 사고다.
+       */
+      const emptySeasons = loaded.filter((l) => l.data.players.length === 0).map((l) => l.season);
+      if (emptySeasons.length > 0) {
+        console.error(
+          `⚠시즌 목록에 있는데 선수가 0명이다: ${emptySeasons.join("·")} — ` +
+            "보관소 아카이브에 그 시즌이 있는지 확인하라. **빈 화면을 배포하지 않는다**",
+        );
+        process.exitCode = 1;
+      }
+
       const mb = (bytes / 1024 / 1024).toFixed(1);
       console.log(`생성: ${fileCount}파일 / ${mb}MB / 시즌 ${seasons.join("·")}`);
       console.log(`집계: ${loadMs.toFixed(0)}ms · 최신 경기일 ${result.latestGameDate ?? "없음"} · 생성일 ${builtOn}`);

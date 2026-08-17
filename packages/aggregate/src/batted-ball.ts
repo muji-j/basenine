@@ -13,6 +13,8 @@
  */
 import { isInfield, readPbp, sideOf, unknownTokens } from "@bb-app/parser";
 import type { Db } from "@bb-app/store";
+import { isOutcome } from "@bb-app/parser";
+import type { Outcome } from "@bb-app/parser";
 
 export interface BattedBall {
   playerId: string;
@@ -59,7 +61,7 @@ const SQL_PITCHER = SQL
  * `homeRun` 으로 쓰면 그 분기가 죽은 코드가 되고, 나중에 재사용할 때 조용히 틀린다.
  * 같은 실수를 `bunt.ts` 가 먼저 겪었다(피타율 .216 대 .237).
  */
-const HIT = new Set(["single", "double", "triple", "homerun"]);
+const HIT: ReadonlySet<Outcome> = new Set<Outcome>(["single", "double", "triple", "homerun"]);
 
 /**
  * 한 시즌의 타구 성향을 센다.
@@ -115,7 +117,8 @@ export function battedBalls(
       else e.right += 1;
     }
 
-    const isHit = HIT.has(r.outcome);
+    // ⚠**모르는 문자열은 안타가 아니다** — 좁히기로 그 판단을 명시한다(캐스트로 밀지 않는다)
+    const isHit = isOutcome(r.outcome) && HIT.has(r.outcome);
     /**
      * ⚠**「방향 토큰으로 시작한다」만으로는 M7이 안 지켜진다.**
      * `unknownTokens` 는 접두어만 보므로 `センター大飛球` 처럼 **종류 어휘만 바뀌면 통과**한다.

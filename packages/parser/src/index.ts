@@ -1,4 +1,4 @@
-export { countsAsAtBat, countsAsHit, parsePaCell } from "./tokens.ts";
+export { OUTCOMES, countsAsAtBat, countsAsHit, isOutcome, parsePaCell } from "./tokens.ts";
 export type { Outcome, PaResult } from "./tokens.ts";
 export {
   BoxParseError,
