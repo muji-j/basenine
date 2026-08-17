@@ -17,6 +17,7 @@ import type {
   HomeWeek,
   HomeWeekPlayer,
   HomeWeekTeam,
+  HomeMilestone,
 } from "./home-page.ts";
 import type { BattedBallData, BuntCell, CareerData, CareerRow } from "./player-page.ts";
 import type { BattingLine, LeagueConstants, PitchingLine, Rate } from "@bb-app/metrics";
@@ -1948,6 +1949,126 @@ export function lastCompleteWeek(latest: string | null): { from: string; to: str
 }
 
 /**
+ * 통산 마디.
+ *
+ * ⚠**화면에 그대로 적는 기준이다**(M3의 정신). 2000안타·200승·250세이브는
+ * 名球会 의 기준이라 이 도메인에서 특별한 수다 — 그래서 목록에 넣는다.
+ * ⚠**우리가 정한 수라는 것을 숨기지 않는다.** NPB 가 「마디」를 공표하는 것이 아니다.
+ */
+const CAREER_MILESTONES: Readonly<Record<string, readonly number[]>> = {
+  通算安打: [500, 1000, 1500, 2000],
+  通算本塁打: [100, 200, 300, 400, 500],
+  通算盗塁: [100, 200, 300, 400],
+  通算勝利: [50, 100, 150, 200],
+  通算奪三振: [500, 1000, 1500, 2000, 2500],
+  通算セーブ: [50, 100, 200, 250, 300],
+};
+
+/** 통산 마디에 다가선 선수. **남은 수가 적은 순** — 이 구획의 뜻이 곧 근접이다 */
+function milestonesOf(
+  db: Db,
+  season: number,
+  competition: string,
+  through: string,
+  chip: (code: string) => { teamCode: string; shortName: string; color: TeamColor },
+): HomeMilestone[] {
+  const rows = db.raw
+    .prepare(
+      `SELECT c.player_id AS playerId, p.display_name AS name,
+              SUM(c.h) AS h, SUM(c.hr) AS hr, SUM(c.sb) AS sb
+         FROM career_batting c JOIN player p ON p.player_id = c.player_id
+        GROUP BY c.player_id`,
+    )
+    .all() as unknown as { playerId: string; name: string; h: number; hr: number; sb: number }[];
+  const prows = db.raw
+    .prepare(
+      `SELECT c.player_id AS playerId, p.display_name AS name,
+              SUM(c.w) AS w, SUM(c.so) AS so, SUM(c.sv) AS sv
+         FROM career_pitching c JOIN player p ON p.player_id = c.player_id
+        GROUP BY c.player_id`,
+    )
+    .all() as unknown as { playerId: string; name: string; w: number; so: number; sv: number }[];
+
+  /** 올해 그 항목으로 얼마나 쌓았나 — 「닿을 수 있는가」를 읽는 근거다 */
+  const thisYear = new Map<string, { h: number; hr: number; sb: number; w: number; so: number; sv: number }>();
+  for (const r of db.raw
+    .prepare(
+      `SELECT b.player_id AS id, SUM(b.h) AS h, SUM(b.hr) AS hr, SUM(b.sb) AS sb
+         FROM batting_line b JOIN game g USING(game_id)
+        WHERE g.season = ? AND g.competition = ? AND g.game_date <= ? GROUP BY b.player_id`,
+    )
+    .all(season, competition, through) as unknown as { id: string; h: number; hr: number; sb: number }[]) {
+    thisYear.set(r.id, { h: r.h, hr: r.hr, sb: r.sb, w: 0, so: 0, sv: 0 });
+  }
+  for (const r of db.raw
+    .prepare(
+      `SELECT t.player_id AS id, SUM(t.so) AS so,
+              SUM(CASE WHEN t.decision = 'W' THEN 1 ELSE 0 END) AS w,
+              SUM(CASE WHEN t.decision = 'S' THEN 1 ELSE 0 END) AS sv
+         FROM pitching_line t JOIN game g USING(game_id)
+        WHERE g.season = ? AND g.competition = ? AND g.game_date <= ? GROUP BY t.player_id`,
+    )
+    .all(season, competition, through) as unknown as { id: string; so: number; w: number; sv: number }[]) {
+    const cur = thisYear.get(r.id) ?? { h: 0, hr: 0, sb: 0, w: 0, so: 0, sv: 0 };
+    thisYear.set(r.id, { ...cur, so: r.so, w: r.w, sv: r.sv });
+  }
+
+  const out: HomeMilestone[] = [];
+  const add = (id: string, name: string, label: string, count: number, season2: number): void => {
+    const xs = CAREER_MILESTONES[label];
+    if (xs === undefined || count <= 0) return;
+    const next = xs.find((x) => count < x);
+    if (next === undefined) return;
+    const code = teamCodeOfPlayer(db, id);
+    if (code === "") return;
+    out.push({
+      playerId: id, name, ...chip(code), label,
+      count, next, toNext: next - count, thisSeason: season2,
+    });
+  };
+  for (const r of rows) {
+    const y = thisYear.get(r.playerId);
+    add(r.playerId, r.name, "通算安打", r.h, y?.h ?? 0);
+    add(r.playerId, r.name, "通算本塁打", r.hr, y?.hr ?? 0);
+    add(r.playerId, r.name, "通算盗塁", r.sb, y?.sb ?? 0);
+  }
+  for (const r of prows) {
+    const y = thisYear.get(r.playerId);
+    add(r.playerId, r.name, "通算勝利", r.w, y?.w ?? 0);
+    add(r.playerId, r.name, "通算奪三振", r.so, y?.so ?? 0);
+    add(r.playerId, r.name, "通算セーブ", r.sv, y?.sv ?? 0);
+  }
+
+  /**
+   * ⚠**근접이 이 구획의 정의다 — 그러니 근접으로만 고른다.**
+   * 처음에 「남은 수 ≤ 올해 쌓은 수 × 2」를 걸었다가 **西川(350도루까지 6개)** 처럼
+   * 올해가 더딘 선수가 잘려 나갔다. 페이스 구획에서 이미 한 번 밟은 함정을
+   * 그대로 되풀이할 뻔했다(2026-08-17).
+   * ⚠**올해 한 번도 안 나온 항목은 뺀다** — 그건 「다가서는 중」이 아니라 멈춰 있는 것이다.
+   * ⚠**하나도 안 남으면 구획을 통째로 비운다**(M12).
+   */
+  return out
+    .filter((x) => x.thisSeason > 0)
+    .sort((a, b) => a.toNext - b.toNext || b.count - a.count || a.playerId.localeCompare(b.playerId))
+    .slice(0, HOME_MILESTONE_ROWS);
+}
+
+/** 그 선수의 현재 구단. ⚠**통산 표에는 옛 구단명이 있어 쓸 수 없다** */
+function teamCodeOfPlayer(db: Db, id: string): string {
+  const r = db.raw
+    .prepare(
+      `SELECT CASE t.side WHEN 'away' THEN g.away_code ELSE g.home_code END AS code
+         FROM batting_line t JOIN game g USING(game_id) WHERE t.player_id = ?
+        UNION ALL
+       SELECT CASE t.side WHEN 'away' THEN g.away_code ELSE g.home_code END
+         FROM pitching_line t JOIN game g USING(game_id) WHERE t.player_id = ?
+        LIMIT 1`,
+    )
+    .get(id, id) as unknown as { code: string } | undefined;
+  return r?.code ?? "";
+}
+
+/**
  * 대시보드 데이터.
  *
  * ⚠**여기서 지표를 새로 계산하지 않는다**(M1) — 순위·연속기록·시즌 합계는 이미 만들어 둔 것을
@@ -2241,6 +2362,7 @@ function homePage(
     latest: latestGames,
     leagues,
     week,
+    milestones: milestonesOf(db, o.season, competition, through, chip),
     paces,
     streaks: streaks.slice(0, HOME_STREAK_ROWS),
     hasPostseason,
@@ -2270,6 +2392,8 @@ const HOME_WEEK_MIN_BF = 12;
 const HOME_WEEK_ROWS = 5;
 const HOME_STREAK_MIN = 5;
 const HOME_STREAK_ROWS = 10;
+/** 통산 마디 구획의 행 수 */
+const HOME_MILESTONE_ROWS = 8;
 
 /**
  * 年度別成績을 화면 모양으로.

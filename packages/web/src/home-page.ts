@@ -154,6 +154,34 @@ export interface HomeWeek {
   teams: HomeWeekTeam[];
 }
 
+/**
+ * 통산 마디에 다가선 선수.
+ *
+ * ⚠**이 구획만 출처가 다르다**(M4). 통산은 **NPB 가 선수 페이지에 공표한 연도별 합계**이고,
+ * 이 사이트의 다른 수치는 우리가 경기에서 쌓은 것이다. 화면이 그렇게 적는다.
+ * ⚠**NPB 기록만이다.** 해외 리그 기간은 그 표에 없다 — 「통산 안타」가 세간의 수와 다를 수 있고,
+ * 그 이유를 화면이 말해야 한다.
+ * ⚠**지금 등록된 선수만 볼 수 있다.** 선수 페이지를 받을 수 있는 것이 현역뿐이라,
+ * 은퇴 선수는 여기 없다 — 「전체 순위」가 아니다.
+ */
+export interface HomeMilestone {
+  playerId: string;
+  name: string;
+  teamCode: string;
+  shortName: string;
+  color: TeamColor;
+  /** `通算安打` 등 */
+  label: string;
+  /** 지금까지의 통산 */
+  count: number;
+  /** 다음 마디 */
+  next: number;
+  /** 남은 수 */
+  toNext: number;
+  /** 이 시즌에 그 항목으로 낸 수. **올해 페이스로 닿는가**를 읽는 근거다 */
+  thisSeason: number;
+}
+
 export interface HomePageData {
   season: number;
   asOf: string | null;
@@ -167,6 +195,8 @@ export interface HomePageData {
   /** 지난주(월~일)의 베스트. 완결된 주가 없으면 null */
   week: HomeWeek | null;
   paces: HomePace[];
+  /** 통산 마디에 다가선 선수들 */
+  milestones: HomeMilestone[];
   streaks: HomeStreak[];
   /** 이 시즌에 ポストシーズン 기록이 있는가 */
   hasPostseason: boolean;
@@ -347,6 +377,35 @@ ${d.paces.length === 0
       "分母はその球団の消化試合数です — 消化が少ない球団の選手ほど換算値は動きやすくなります。" +
       "当サイトは2023年からの記録しか持たないため、**通算記録は扱いません**。",
   )}
+</section>`}
+
+${d.milestones.length === 0
+    ? raw("")
+    : html`<section class="block" id="b-hmile">
+  <h2>記録に近づいている<span class="qt">通算</span></h2>
+  ${scroller(html`<table>
+    <thead><tr>
+      <th class="l">選手</th><th class="l">球団</th><th class="l">記録</th>
+      <th>通算</th><th class="l">節目まで</th><th>今季</th>
+    </tr></thead>
+    <tbody>${d.milestones.map(
+      (x) => html`<tr>
+      <td class="l"><a href="${base}players/${x.playerId}.html">${x.name}</a></td>
+      <td class="l">${teamChip(x.teamCode, x.shortName, x.color, base)}</td>
+      <td class="l">${x.label}</td>
+      <td class="b">${x.count}</td>
+      <td class="l">${x.next}まであと<b>${x.toNext}</b></td>
+      <td>${x.thisSeason}</td>
+    </tr>`,
+    )}</tbody>
+  </table>`)}
+  ${note(
+      "⚠**この表だけ出典が違います** — 通算は選手ページの**年度別成績（NPBの公表値）**を当サイトが足したものです。" +
+        "ほかの数字は当サイトが試合記録から積み上げた値で、混ぜていません。" +
+        "**NPBの記録だけ**です — 海外リーグの期間はこの表に入りません。" +
+        "**今、選手ページがある選手だけ**が対象です（引退した選手は含みません）ので、通算の順位ではありません。" +
+        "**節目までの残りが少ない順**に8人までです。「今季」はその項目で今シーズンに積んだ数で、届くかを読む手がかりになります — 今季まだ0の項目は出していません。",
+    )}
 </section>`}
 
 ${d.streaks.length === 0

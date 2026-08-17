@@ -87,6 +87,12 @@ function data(over: Partial<HomePageData> = {}): HomePageData {
         label: "奪三振", count: 150, teamGames: 106, pace: 202, toNext: null, next: null,
       },
     ],
+    milestones: [
+      {
+        playerId: "B6", name: "西川", teamCode: "f", shortName: "日本ハム", color: colorOf("f"),
+        label: "通算盗塁", count: 344, next: 350, toNext: 6, thisSeason: 12,
+      },
+    ],
     streaks: [
       {
         playerId: "B3", name: "森下", teamCode: "t", shortName: "阪神", color: colorOf("t"),
@@ -266,4 +272,47 @@ test("⚠첫 화면 위쪽에 주요 페이지로 가는 길이 있다", () => {
   // 머리(h1)보다 뒤, 첫 구획보다 앞이다
   assert.ok(out.indexOf('class="hnav"') > out.indexOf("<h1"), "내비가 표제보다 앞에 왔다");
   assert.ok(out.indexOf('class="hnav"') < out.indexOf('class="block"'), "내비가 첫 구획보다 뒤에 있다");
+});
+
+/**
+ * ⚠**통산 마디는 이 사이트에서 유일하게 출처가 다른 수다**(M4).
+ * NPB 가 선수 페이지에 공표한 연도별을 **우리가 더한** 값이고,
+ * 다른 수치는 우리가 경기에서 쌓은 것이다 — 화면이 그 구별을 말해야 한다.
+ *
+ * ⚠**세 가지를 더 말해야 한다.**
+ * 1. NPB 기록만이다 — 해외 리그 기간이 빠져 세간의 통산과 다를 수 있다
+ * 2. 지금 선수 페이지가 있는 선수만이다 — 은퇴 선수가 없으므로 **통산 순위가 아니다**
+ * 3. 무엇으로 골랐는지 — 「남은 수가 적은 순 8명」
+ */
+test("⚠통산 마디 구획이 출처와 한계를 말한다(M4)", () => {
+  const out = renderHomePage(data(), context());
+  assert.match(out, /記録に近づいている/);
+  assert.match(out, />西川</, "마디에 다가선 선수가 없다");
+  assert.match(out, /350まであと<b>6<\/b>/, "남은 수가 안 나온다");
+  // 출처와 한계
+  assert.match(out, /この表だけ出典が違います/, "출처가 다르다는 말이 없다");
+  assert.match(out, /NPBの記録だけ/, "해외 리그가 빠진다는 말이 없다");
+  assert.match(out, /通算の順位ではありません/, "은퇴 선수가 없다는 말이 없다");
+  assert.match(out, /残りが少ない順/, "무엇으로 골랐는지 말하지 않는다");
+});
+
+/** ⚠**마디가 없으면 구획을 통째로 비운다** — 빈 표는 고장으로 읽힌다(M12) */
+test("⚠다가선 선수가 없으면 「記録に近づいている」 구획을 만들지 않는다(M12)", () => {
+  const out = renderHomePage(data({ milestones: [] }), context());
+  assert.ok(!out.includes("b-hmile"), "빈 마디 구획을 남겼다");
+});
+
+/**
+ * ⚠**통산 블록도 출처를 적는다.** 선수 페이지에서 이 블록만 NPB 공표치다.
+ * ⚠**통산은 우리가 더한 값**이라는 것도 적는다 — 남의 계산을 빌린 것이 아니다.
+ */
+test("⚠선수 페이지의 通算 블록이 출처와 「우리가 더했다」를 말한다(M4)", async () => {
+  const { renderPlayerPage } = await import("../src/player-page.ts");
+  const { playerPage } = await import("./fixtures.ts");
+  const out = renderPlayerPage(playerPage(), context());
+  assert.match(out, /通算成績/);
+  assert.match(out, /この表だけ出典が違います/, "출처가 다르다는 말이 없다");
+  assert.match(out, /通算は当サイトが足した値/, "우리가 더했다는 말이 없다");
+  // ⚠**시즌 수는 행 수가 아니다** — 픽스처에 2025년 두 줄(이적)이 들어 있다
+  assert.match(out, /2シーズン/, "이적한 해를 두 시즌으로 셌다");
 });
