@@ -19,6 +19,7 @@ function siteData(over: Partial<SiteData> = {}): SiteData {
       latestDate: "2026-08-14",
       latest: null,
       leagues: [],
+      week: null,
       paces: [],
       streaks: [],
       hasPostseason: false,

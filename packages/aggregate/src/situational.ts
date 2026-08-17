@@ -46,7 +46,7 @@ FROM pa_event e
 JOIN game g ON g.game_id = e.game_id
 JOIN player b ON b.player_id = e.batter_id
 WHERE g.season = ? AND g.status = 'played' AND g.competition = ?
-  AND g.game_date <= ?
+  AND g.game_date <= ? AND g.game_date >= ?
   AND e.status = 'final'
   AND (CASE e.half WHEN 'top' THEN g.away_code ELSE g.home_code END) IN (SELECT code FROM league_team)
 ORDER BY e.game_id, e.inning, e.half, e.seq
@@ -76,9 +76,15 @@ export function computeSrc(
   competition = "regular",
   /** ⚠**RE 행렬과 같은 기준일을 써야 한다.** 어긋나면 SRC의 기준이 화면과 달라진다 */
   through = "9999-12-31",
+  /**
+   * ⚠**기간의 시작일**(포함). 기본은 시즌 전체다.
+   * 「지난주」처럼 **구간**을 재려고 더했다(2026-08-17) — 뺄셈으로 흉내 내면
+   * 같은 계산을 두 번 돌리게 되고, 어느 쪽 기준일이 무엇인지 읽는 사람이 알 수 없다.
+   */
+  from = "0000-01-01",
 ): SrcEntry[] {
   const rows = withLeagueTeams(db, teamCodes, () =>
-    db.raw.prepare(SQL).all(re.season, competition, through),
+    db.raw.prepare(SQL).all(re.season, competition, through, from),
   ) as {
     gameId: string;
     inning: number;
@@ -189,7 +195,7 @@ FROM pa_event e
 JOIN game g ON g.game_id = e.game_id
 JOIN player p ON p.player_id = e.pitcher_id
 WHERE g.season = ? AND g.status = 'played' AND g.competition = ?
-  AND g.game_date <= ?
+  AND g.game_date <= ? AND g.game_date >= ?
   AND e.status = 'final' AND e.pitcher_id IS NOT NULL
   AND (CASE e.half WHEN 'top' THEN g.home_code ELSE g.away_code END) IN (SELECT code FROM league_team)
 ORDER BY e.game_id, e.inning, e.half, e.seq
@@ -219,9 +225,11 @@ export function computeSrp(
   competition = "regular",
   /** ⚠**RE 행렬과 같은 기준일을 써야 한다** */
   through = "9999-12-31",
+  /** ⚠**기간의 시작일**(포함). SRC 와 같은 이유로 더했다(2026-08-17) */
+  from = "0000-01-01",
 ): SrpEntry[] {
   const { rows, outsRows } = withLeagueTeams(db, teamCodes, () => ({
-    rows: db.raw.prepare(SRP_SQL).all(re.season, competition, through) as {
+    rows: db.raw.prepare(SRP_SQL).all(re.season, competition, through, from) as {
       gameId: string;
       inning: number;
       half: string;

@@ -100,6 +100,40 @@ export interface HomeStreak {
   lastGameDate: string | null;
 }
 
+/**
+ * 지난주의 한 사람.
+ *
+ * ⚠**순위의 근거는 「런」이다.** 한 주의 표본은 20~30타석이라 율로 줄 세우면
+ * 「7타수 4안타」가 1위가 된다 — 이 도메인의 1급 함정(M2)을 주간 단위가 그대로 재현한다.
+ * 그래서 **SRC/SRP**(상황을 감안한 득점 기여, 단위가 런이고 더할 수 있는 값)로 세운다.
+ * ⚠**그래도 표본은 늘 함께 낸다** — 「몇 타석에서 낸 것인가」가 빠지면 같은 잘못이다.
+ * ⚠**우리가 만든 지표라는 것을 화면이 말한다.** WAR 처럼 남이 쓰는 이름을 빌리지 않는다.
+ */
+export interface HomeWeekPlayer {
+  playerId: string;
+  name: string;
+  teamCode: string;
+  shortName: string;
+  color: TeamColor;
+  /** 순위의 근거. 타자는 SRC, 투수는 SRP — 둘 다 **런** 단위다 */
+  runs: number;
+  /** 표본(타자는 타석, 투수는 상대 타자). **분모다**(M2) */
+  faced: number;
+  /** 그 주의 성적을 사람이 읽는 한 줄로. 이미 분모를 품고 있다 */
+  line: string;
+}
+
+export interface HomeWeek {
+  /** 월요일 */
+  from: string;
+  /** 일요일 */
+  to: string;
+  /** 그 주에 실제로 열린 경기일 수. **0이면 그 주를 내지 않는다** */
+  gameDays: number;
+  batters: HomeWeekPlayer[];
+  pitchers: HomeWeekPlayer[];
+}
+
 export interface HomePageData {
   season: number;
   asOf: string | null;
@@ -110,6 +144,8 @@ export interface HomePageData {
     games: { away: string; home: string; awayCode: string; homeCode: string; awayRuns: number | null; homeRuns: number | null }[];
   } | null;
   leagues: HomeLeague[];
+  /** 지난주(월~일)의 베스트. 완결된 주가 없으면 null */
+  week: HomeWeek | null;
   paces: HomePace[];
   streaks: HomeStreak[];
   /** 이 시즌에 ポストシーズン 기록이 있는가 */
@@ -117,6 +153,33 @@ export interface HomePageData {
 }
 
 const pctText = (v: number | null): string => (v === null ? NO_VALUE : avg3(v));
+
+/** `2026-08-10` → `8/10`. ⚠**연도를 떼는 것은 같은 줄에 두 날짜가 나올 때만** */
+function monthDay(iso: string): string {
+  const [, m, d] = iso.split("-");
+  return `${Number(m)}/${Number(d)}`;
+}
+
+/**
+ * 지난주 상위 몇 사람.
+ *
+ * ⚠**순위 숫자를 크게 쓰지 않는다.** 한 주짜리 순위는 시즌 순위와 무게가 다르고,
+ * 같은 모양으로 그리면 그렇게 읽힌다.
+ */
+function weekList(label: string, xs: readonly HomeWeekPlayer[], metric: string, base: string): RawHtml {
+  if (xs.length === 0) return html`<div><dt>${label}</dt><dd class="empty">記録がありません。</dd></div>`;
+  return html`<div class="wkcol">
+  <p class="wklab">${label}<s>${metric}順</s></p>
+  <ol class="wklist">${xs.map(
+    (x) => html`<li>
+    <a href="${base}players/${x.playerId}.html">${x.name}</a>
+    ${teamChip(x.teamCode, x.shortName, x.color, base)}
+    <b>${x.runs >= 0 ? "+" : ""}${x.runs.toFixed(1)}</b><s>${metric}</s>
+    <em>${x.line}</em>
+  </li>`,
+  )}</ol>
+</div>`;
+}
 
 /** 구단 색 칩 + 짧은 이름. **로고를 쓰지 않는다**(§6) */
 function teamChip(code: string, shortName: string, color: TeamColor, base: string): RawHtml {
@@ -193,6 +256,23 @@ ${note(
       "マジックナンバーは出していません — NPBは勝率で順位を決め、残りの対戦相手も当サイトは持っていないため、" +
       "同じ名前で違う数字を出すことになるからです。",
   )}
+
+${d.week === null
+    ? raw("")
+    : html`<section class="block" id="b-hweek">
+  <h2>先週の顔<span class="qt">${monthDay(d.week.from)}〜${monthDay(d.week.to)} · ${d.week.gameDays}日</span></h2>
+  <div class="cols">
+    ${weekList("打者", d.week.batters, "SRC", base)}
+    ${weekList("投手", d.week.pitchers, "SRP", base)}
+  </div>
+  ${note(
+      "**月曜から日曜まで**を1週間として、**終わった週だけ**を出します — 途中の週を出すと、" +
+        "試合数の違う選手が同じ表に並びます。" +
+        "並べ方は当サイトの**SRC・SRP**（その場面でどれだけ得点を動かしたか。単位は「点」）です。" +
+        "1週間は20〜30打席しかないので、**率で並べると「7打数4安打」が1位になります** — " +
+        "だから点で並べ、打席数も必ず併記しています。",
+    )}
+</section>`}
 
 ${d.paces.length === 0
     ? raw("")

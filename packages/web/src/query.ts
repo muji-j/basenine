@@ -9,7 +9,7 @@ import type { Db } from "@bb-app/store";
 import { attempts, battedBalls, buntValues, headToHead, steals, successRate, timesThroughOrder, winPct } from "@bb-app/aggregate";
 import type { HeadToHead, PlayerStreaks } from "@bb-app/aggregate";
 import { REGULAR_SEASON_GAMES } from "./home-page.ts";
-import type { HomeLeague, HomePace, HomePageData, HomeStreak } from "./home-page.ts";
+import type { HomeLeague, HomePace, HomePageData, HomeStreak, HomeWeek, HomeWeekPlayer } from "./home-page.ts";
 import type { BattedBallData, BuntCell } from "./player-page.ts";
 import type { BattingLine, LeagueConstants, PitchingLine, Rate } from "@bb-app/metrics";
 import {
@@ -1842,6 +1842,68 @@ function streakByTeam(db: Db, season: number, competition: string, through: stri
 }
 
 /**
+ * 날짜 문자열 산술 — **시계를 읽지 않는다**(M6).
+ *
+ * ⚠`new Date()` 는 금지지만, **주어진 날짜 문자열을 계산하는 것**은 시계를 읽는 것이 아니다.
+ * 그래도 `Date` 를 아예 쓰지 않는 편이 안전하다 — 타임존이 끼어들 자리를 없앤다.
+ * 아래는 그레고리력의 순수 산술이고 JST/UTC 어느 쪽에서도 같은 값을 낸다.
+ */
+function toDayNumber(iso: string): number {
+  const y = Number(iso.slice(0, 4));
+  const m = Number(iso.slice(5, 7));
+  const d = Number(iso.slice(8, 10));
+  // Howard Hinnant 의 days-from-civil. 1970-01-01 = 0
+  const yy = m <= 2 ? y - 1 : y;
+  const era = Math.floor(yy / 400);
+  const yoe = yy - era * 400;
+  const doy = Math.floor((153 * (m + (m > 2 ? -3 : 9)) + 2) / 5) + d - 1;
+  const doe = yoe * 365 + Math.floor(yoe / 4) - Math.floor(yoe / 100) + doy;
+  return era * 146097 + doe - 719468;
+}
+
+function fromDayNumber(n: number): string {
+  let z = n + 719468;
+  const era = Math.floor(z / 146097);
+  const doe = z - era * 146097;
+  const yoe = Math.floor((doe - Math.floor(doe / 1460) + Math.floor(doe / 36524) - Math.floor(doe / 146096)) / 365);
+  const y = yoe + era * 400;
+  const doy = doe - (365 * yoe + Math.floor(yoe / 4) - Math.floor(yoe / 100));
+  const mp = Math.floor((5 * doy + 2) / 153);
+  const d = doy - Math.floor((153 * mp + 2) / 5) + 1;
+  const m = mp + (mp < 10 ? 3 : -9);
+  const yy = m <= 2 ? y + 1 : y;
+  const pad = (x: number): string => String(x).padStart(2, "0");
+  return `${yy}-${pad(m)}-${pad(d)}`;
+}
+
+/** 0=일 … 6=토. 1970-01-01 은 목요일(4) */
+function dayOfWeek(iso: string): number {
+  return (((toDayNumber(iso) + 4) % 7) + 7) % 7;
+}
+
+function addDays(iso: string, n: number): string {
+  return fromDayNumber(toDayNumber(iso) + n);
+}
+
+/**
+ * **끝난 주**(월~일)를 고른다.
+ *
+ * ⚠**진행 중인 주를 「지난주」라고 부르지 않는다.** 수요일까지밖에 없는 주를 내면
+ * 3경기 나온 선수와 6경기 나온 선수가 같은 표에 선다 — 그 표는 아무것도 말하지 않는다.
+ * ⚠**최신 경기일이 일요일이면 그 주가 끝난 주다.** 그 하루 때문에 한 주를 통째로
+ *   묵히면 일요일 밤에 화면이 일주일 낡아 보인다.
+ * ⚠NPB 는 월요일에 대개 경기가 없다(실측: 최근 경기일 24일 중 월요일 2일).
+ *   그래서 「월~일」의 실체는 대개 화~일이고, 화면은 **그 주에 열린 경기일 수**를 함께 낸다.
+ */
+function lastCompleteWeek(latest: string | null): { from: string; to: string } | null {
+  if (latest === null) return null;
+  const dow = dayOfWeek(latest);
+  // 일요일(0)이면 그 날이 주말, 아니면 직전 일요일
+  const to = dow === 0 ? latest : addDays(latest, -dow);
+  return { from: addDays(to, -6), to };
+}
+
+/**
  * 대시보드 데이터.
  *
  * ⚠**여기서 지표를 새로 계산하지 않는다**(M1) — 순위·연속기록·시즌 합계는 이미 만들어 둔 것을
@@ -1854,6 +1916,8 @@ function homePage(
   standings: readonly StandingsSection[],
   agg: SeasonAggregate,
   streaksByPlayer: ReadonlyMap<string, PlayerStreaks>,
+  /** 리그별 RE 행렬 — 주간 SRC/SRP 를 **시즌과 같은 커널**로 재기 위해 받는다(M1) */
+  reByLeague: ReadonlyMap<string, RunExpectancy>,
   asOf: string | null,
   latestDate: string | null,
   latestGames: HomePageData["latest"],
@@ -1997,12 +2061,92 @@ function homePage(
   }
   streaks.sort((a, b) => b.games - a.games || a.playerId.localeCompare(b.playerId));
 
+  /**
+   * 지난주(월~일)의 베스트.
+   *
+   * ⚠**끝난 주만 낸다.** 진행 중인 주를 내면 3경기 나온 선수와 6경기 나온 선수가
+   * 같은 표에 선다.
+   * ⚠**율이 아니라 런으로 세운다.** 한 주는 20~30타석이라 율로 줄 세우면
+   * 「7타수 4안타」가 1위가 된다 — M2 가 막는 바로 그것이 주간 단위에서 되살아난다.
+   * ⚠**시즌과 같은 RE 행렬을 쓴다**(M1). 주간만 따로 행렬을 만들면 한 주의 득점환경으로
+   *   재게 되어 같은 타석이 시즌 화면과 다른 값을 갖는다.
+   */
+  const span = lastCompleteWeek(latestDate);
+  let week: HomeWeek | null = null;
+  if (span !== null) {
+    const wk = aggregateSeason(db, o.season, competition, span.to, span.from);
+    const gameDays = (db.raw
+      .prepare(
+        `SELECT COUNT(DISTINCT game_date) AS n FROM game
+          WHERE season = ? AND competition = ? AND status = 'played'
+            AND game_date BETWEEN ? AND ?`,
+      )
+      .get(o.season, competition, span.from, span.to) as unknown as { n: number } | undefined)?.n ?? 0;
+
+    const wkSrc = new Map<string, { runs: number; faced: number }>();
+    const wkSrp = new Map<string, { runs: number; faced: number }>();
+    for (const [league, re] of reByLeague) {
+      // ⚠**리그별로 그 리그 팀만 넣는다** — 섞으면 다른 리그의 득점환경으로 재게 된다
+      const codes = TEAMS.filter((t) => String(t.league) === league).map((t) => t.code);
+      for (const x of computeSrc(db, re, codes, competition, span.to, span.from)) {
+        const cur = wkSrc.get(x.playerId) ?? { runs: 0, faced: 0 };
+        wkSrc.set(x.playerId, { runs: cur.runs + x.src, faced: cur.faced + x.pa });
+      }
+      for (const x of computeSrp(db, re, codes, competition, span.to, span.from)) {
+        const cur = wkSrp.get(x.playerId) ?? { runs: 0, faced: 0 };
+        wkSrp.set(x.playerId, { runs: cur.runs + x.srp, faced: cur.faced + x.bf });
+      }
+    }
+
+    const batLine = new Map(wk.batting.map((b) => [b.playerId, b]));
+    const pitLine = new Map(wk.pitching.map((x) => [x.playerId, x]));
+
+    const pick = (
+      m: ReadonlyMap<string, { runs: number; faced: number }>,
+      minFaced: number,
+      line: (id: string) => string | null,
+    ): HomeWeekPlayer[] =>
+      [...m.entries()]
+        .filter(([, v]) => v.faced >= minFaced)
+        .map(([id, v]) => ({ id, v, text: line(id) }))
+        .filter((x) => x.text !== null)
+        .sort((a, b) => b.v.runs - a.v.runs || b.v.faced - a.v.faced || a.id.localeCompare(b.id))
+        .slice(0, HOME_WEEK_ROWS)
+        .map((x) => ({
+          playerId: x.id,
+          name: nameOf(x.id),
+          ...chip(teamCodeOf(x.id)),
+          runs: x.v.runs,
+          faced: x.v.faced,
+          line: x.text ?? "",
+        }));
+
+    const batters = pick(wkSrc, HOME_WEEK_MIN_PA, (id) => {
+      const b = batLine.get(id);
+      if (b === undefined || b.line.pa === 0) return null;
+      // ⚠**분모를 문자열 안에 넣는다**(M2) — 값만 떼어 쓸 수 없게
+      return `${b.line.pa}打席 ${b.line.h}安打 ${b.line.hr}本 ${b.rbi}打点`;
+    });
+    const pitchers = pick(wkSrp, HOME_WEEK_MIN_BF, (id) => {
+      const x = pitLine.get(id);
+      if (x === undefined || x.line.outs === 0) return null;
+      const ip = `${Math.floor(x.line.outs / 3)}${x.line.outs % 3 === 0 ? "" : `.${x.line.outs % 3}`}`;
+      return `${ip}回 ${x.line.so}奪三振 自責${x.line.er}`;
+    });
+
+    // ⚠**경기가 없던 주는 내지 않는다** — 빈 표가 「기록이 없다」로 읽힌다(M12)
+    if (gameDays > 0 && (batters.length > 0 || pitchers.length > 0)) {
+      week = { from: span.from, to: span.to, gameDays, batters, pitchers };
+    }
+  }
+
   return {
     season: o.season,
     asOf,
     latestDate,
     latest: latestGames,
     leagues,
+    week,
     paces,
     streaks: streaks.slice(0, HOME_STREAK_ROWS),
     hasPostseason,
@@ -2014,6 +2158,14 @@ function homePage(
  * 「왜 이 선수가 없지?」에 답할 수 없다(M3의 정신).
  */
 const HOME_PACE_NEAR = 5;
+/**
+ * 주간 베스트의 최소 표본. ⚠**화면에도 적는다**(M3의 정신).
+ * 대타 한 타석으로 SRC 가 튀어 1위가 되는 것을 막되, 너무 높이면 그 주에 쉬었다 나온
+ * 선수가 통째로 빠진다 — 6경기 주의 절반쯤을 나온 사람이 남는 선이다.
+ */
+const HOME_WEEK_MIN_PA = 10;
+const HOME_WEEK_MIN_BF = 12;
+const HOME_WEEK_ROWS = 5;
 const HOME_PACE_ROWS = 12;
 const HOME_STREAK_MIN = 5;
 const HOME_STREAK_ROWS = 10;
@@ -3149,6 +3301,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       standings,
       agg,
       streaksByPlayer,
+      reFull,
       meta.latest,
       latestDay,
       todayData.gameDate === null
