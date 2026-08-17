@@ -284,7 +284,14 @@ function wlBar(r: HomeStanding): RawHtml {
 }
 
 /**
- * 득실차. ⚠**부호를 문자로 쓴다** — 색만으로 +−를 구별하면 색각 이상에서 사라진다.
+ * 득실차.
+ *
+ * ⚠**무엇을 나타내는 수인지 화면이 말한다**(2026-08-18 유저 지적: 「이해가 안 됨」).
+ * 예전에는 「得失」이라는 열 이름 아래에 `+64` 만 있었다 — 열 이름은 **득점·실점**을 말하는데
+ * 주역인 수는 **그 차이**여서, 둘이 어긋난 채로 읽는 사람에게 떠넘기고 있었다.
+ * 이제 값 바로 옆에 `点差` 를 붙인다(라벨은 값에 인접시킨다 · CLAUDE.md §6의 도메인 예외).
+ *
+ * ⚠**부호를 문자로 쓴다** — 색만으로 +−를 구별하면 색각 이상에서 사라진다.
  * ⚠**분모(경기 수)를 같이 낸다**(M2). 100경기의 +50과 20경기의 +50은 다른 이야기다.
  */
 function runDiff(r: HomeStanding): RawHtml {
@@ -292,17 +299,45 @@ function runDiff(r: HomeStanding): RawHtml {
   const d = r.rf - r.ra;
   const sign = d > 0 ? "+" : d < 0 ? "−" : "±";
   const cls = d > 0 ? "up" : d < 0 ? "dn" : "";
-  return html`<b class="rdiff ${cls}">${sign}${Math.abs(d)}</b>`;
+  return html`<b class="rdiff ${cls}">${sign}${Math.abs(d)}</b><s class="rdlab">点差</s>`;
+}
+
+/**
+ * 득실차의 **좌우 발산 띠** — 가운데가 0이고, 오른쪽이 플러스다.
+ *
+ * ⚠**승패 띠와 짝이 되게 만든다**(2026-08-18 유저 요청: 「전체적인 디자인을 다시」).
+ * 바로 왼쪽 칸은 수와 띠를 같이 내는데 이 칸만 수뿐이라, 같은 표 안에서 두 칸의 무게가 달랐다.
+ *
+ * ⚠**색만으로 전하지 않는다** — `--up`/`--dn` 은 명도가 거의 같아서(실측 1.01:1)
+ * 흑백·색각 이상에서 구별되지 않는다. 그래서 **뜻을 나르는 것은 색이 아니라 방향**이다:
+ * 가운데 선의 어느 쪽으로 뻗는가. 부호가 붙은 수도 바로 위에 있다.
+ * ⚠**트랙과의 대비는 잰다** — `--up`/`--dn` 대 `--hair` 가 라이트 4.18/4.21 · 다크 5.33/5.23 이다.
+ *
+ * ⚠**자를 리그 안에서 정한다.** 고정 척도를 쓰면 어떤 해에는 전원이 짧고 어떤 해에는 전원이 꽉 찬다.
+ * @param maxAbs 그 리그에서 가장 큰 |득실차|. 0이면 띠를 그리지 않는다(나눌 수 없다).
+ *
+ * ⚠**낭독기에는 숨긴다** — 같은 사실이 바로 옆에 글자로 이미 있다. 두 번 읽으면 소음이다.
+ */
+function runDiffBar(r: HomeStanding, maxAbs: number): RawHtml {
+  if (r.runGames === 0 || maxAbs === 0) return raw("");
+  const d = r.rf - r.ra;
+  if (d === 0) return html`<span class="rdbar" aria-hidden="true"></span>`;
+  /** 절반이 최대치다 — 가운데에서 한쪽 끝까지가 50% */
+  const w = (Math.abs(d) / maxAbs) * 50;
+  const style = d > 0 ? `left:50%;width:${w.toFixed(2)}%` : `right:50%;width:${w.toFixed(2)}%`;
+  return html`<span class="rdbar" aria-hidden="true"><i class="${d > 0 ? "up" : "dn"}" style="${style}"></i></span>`;
 }
 
 function standingsTable(l: HomeLeague, base: string): RawHtml {
+  /** 득실차 띠의 자 — **그 리그 안에서** 가장 큰 폭에 맞춘다 */
+  const maxAbs = l.rows.reduce((m, x) => (x.runGames === 0 ? m : Math.max(m, Math.abs(x.rf - x.ra))), 0);
   return scroller(html`<table class="hstand">
   <thead><tr>
     <th>順位</th>
     <th class="l">球団</th>
     <th class="l">勝敗分</th>
     <th>${term("勝率")}</th><th>ゲーム差</th>
-    <th class="l">得失</th>
+    <th class="l">得失点</th>
     <th>直近10</th><th>連続</th><th>残り</th><th class="l">全勝〜全敗の勝率</th>
   </tr></thead>
   <tbody>${l.rows.map(
@@ -313,10 +348,11 @@ function standingsTable(l: HomeLeague, base: string): RawHtml {
     <td class="l wl3"><span class="wlnum">${r.w}<s>勝</s>${r.l}<s>敗</s>${r.t}<s>分</s></span>${wlBar(r)}</td>
     <td class="b">${pctText(r.pct)}</td>
     <td>${r.gamesBehind === 0 ? NO_VALUE : r.gamesBehind.toFixed(1).replace(/\.0$/, "")}</td>
-    <!-- ⚠**득실차를 주역으로, 득점·실점을 분모처럼 뒤에 붙인다** — 「어느 쪽이 얼마나」가 한 눈에 -->
-    <td class="l wd">${runDiff(r)}${r.runGames === 0
+    <!-- ⚠**득실차를 주역으로, 득점·실점을 분모처럼 뒤에 붙인다** — 「어느 쪽이 얼마나」가 한 눈에.
+         ⚠**주역이 무엇인지 라벨로 말한다**(点差) — 열 이름만으로는 어긋난다 -->
+    <td class="l wd">${runDiff(r)}${runDiffBar(r, maxAbs)}${r.runGames === 0
       ? null
-      : html`<span class="den">${r.rf}得 ${r.ra}失 · ${r.runGames}試合</span>`}</td>
+      : html`<span class="den">${r.rf}<s>得</s> ${r.ra}<s>失</s><em>${r.runGames}試合</em></span>`}</td>
     <td>${r.last10.w}-${r.last10.l}-${r.last10.t}</td>
     <td>${streakText(r.streak)}</td>
     <td>${r.remaining < 0 ? NO_VALUE : r.remaining}</td>
