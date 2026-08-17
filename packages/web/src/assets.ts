@@ -1727,7 +1727,11 @@ const cmpForm=$("#cmpForm");
 if(cmpForm){
   const out=$("#cmpOut");
   const chosen={a:null,b:null};
-  const cache={};
+  /* ⚠**프로토타입 없는 지도를 쓴다.** 예전에는 우리가 넘긴 id 하나만 키였는데,
+     이제 **샤드 JSON 의 키를 그대로 대입**한다. 키가 __proto__ 면 own 프로퍼티가 아니라
+     프로토타입 설정이 되어, 이후 조회가 카드 대신 Object.prototype(truthy)을 돌려준다.
+     현재 ID 는 8자리 숫자라 0건이지만, ID 검사 정규식은 그 이름을 허용한다 */
+  const cache=Object.create(null);
   const el=(tag,cls,text)=>{const n=doc.createElement(tag);if(cls)n.className=cls;
     if(text!==undefined&&text!==null)n.textContent=text;return n};
 
@@ -1929,8 +1933,16 @@ if(cmpForm){
     }
     return shards[s].then(j=>{
       /* ⚠**샤드는 받았는데 그 선수가 없는 경우를 조용히 넘기지 않는다** —
-         빈 카드로 그리면 「성적 0」처럼 보인다(M11) */
-      if(!j[id])throw new Error("no card "+id);
+         빈 카드로 그리면 「성적 0」처럼 보인다(M11).
+         ⚠**「못 받았다」와 구별해서 표시한다**(M12). 이건 통신 문제가 아니라
+         **화면과 데이터의 판이 어긋난 것**(배포 스큐 · 샤드 규칙 갈림)이라,
+         「통신을 확인하고 다시」라고 말하면 사용자가 영영 낫지 않는 행동을 반복한다 —
+         샤드는 이미 성공 캐시라 다시 눌러도 요청조차 안 나간다. */
+      if(!j[id]){
+        const e=new Error("no card "+id);
+        e.kind="nocard";
+        throw e;
+      }
       return j[id];
     });
   };
@@ -1950,12 +1962,18 @@ if(cmpForm){
     Promise.all([load(chosen.a.i),load(chosen.b.i)]).then(r=>{
       if(mine!==cmpGen)return;
       render(r[0],r[1]);
-    }).catch(()=>{
+    }).catch((err)=>{
       if(mine!==cmpGen)return;
+      /* ⚠**삼키지 않는다.** 배포 스큐는 화면 문구 말고는 남는 흔적이 없다 */
+      if(typeof console!=="undefined"&&console.error)console.error("compare:",err);
       out.textContent="";
       const e=el("section","cmpwrap");
-      /* ⚠**빈 화면으로 두지 않는다**(M12) — 「데이터 없음」과 「읽지 못함」은 다른 상태다 */
-      e.appendChild(warn("成績を読み込めませんでした。通信を確認して、もう一度お試しください。"));
+      /* ⚠**빈 화면으로 두지 않는다**(M12) — 「데이터 없음」과 「읽지 못함」은 다른 상태다.
+         ⚠그리고 그 둘을 **같은 문구로 뭉개지 않는다** — 시키는 행동이 다르다 */
+      e.appendChild(warn(err&&err.kind==="nocard"
+        ? "この選手の比較データが見つかりませんでした。データの更新中かもしれません。"+
+          "しばらくしてからページを再読み込みしてください。"
+        : "成績を読み込めませんでした。通信を確認して、もう一度お試しください。"));
       out.appendChild(e);
     });
     /* 공유할 수 있는 주소로 바꾼다. **뒤로가기 이력을 더럽히지 않는다** — 비교는 이동이 아니다 */

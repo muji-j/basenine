@@ -1624,15 +1624,19 @@ test("⚠첫 화면의 좁히기도 읽는 법·등번호로 찾는다 — 검�
  * 빠져도 시험이 통과하고, 그러면 「샤드에서 꺼냈다」만 재고 「그려진다」는 못 재게 된다.
  * (실제로 그렇게 만들었다가 렌더가 조용히 오류 경로로 빠졌다.)
  */
+/**
+ * ⚠**紋이 있는 선수를 쓴다.**
+ *
+ * 처음에는 `mark:{axes:[]}` 로 紋을 없앴고, 그 이유를 「대역에 `createElementNS` 가 없어서」라고
+ * 적었다. 그런데 **같은 커밋이 그 대역을 고쳤으므로 그 주석은 쓰는 순간 거짓**이었고,
+ * 결과적으로 대역에 넣은 `createElementNS` 를 **1,106개 시험 중 0건이 밟는** 상태가 됐다
+ * (2026-08-17 이중 검토가 호출 횟수를 계측해 지적).
+ *
+ * 「고쳤다」고 적어 놓고 아무도 안 지나가는 길을 만드는 것이 이 프로젝트가 반복해 온 실패다.
+ * 紋을 살려 **比較 화면의 시각적 주역(겹쳐 그리는 오각형)이 실제로 그려지는지**까지 잰다.
+ */
 function card(playerId: string, name: string): unknown {
-  /**
-   * ⚠**紋이 없는 선수를 쓴다.** 紋을 그리려면 SVG가 필요한데 `dom-stub.ts` 에는
-   * `createElementNS` 가 없어서, 있으면 렌더가 오류 경로로 빠진다 —
-   * **제품의 결함이 아니라 시험 대역의 한계**다(실측으로 확인). 여기서 재는 것은 샤딩이다.
-   */
-  return JSON.parse(
-    JSON.stringify(compareCard(playerPage({ playerId, name, mark: { axes: [], sampleText: "0打席" } }))),
-  );
+  return JSON.parse(JSON.stringify(compareCard(playerPage({ playerId, name }))));
 }
 
 test("⚠比較는 선수 ID 첫 글자의 샤드를 받는다 — 선수마다 파일을 만들지 않는다", async () => {
@@ -1656,6 +1660,17 @@ test("⚠比較는 선수 ID 첫 글자의 샤드를 받는다 — 선수마다 
    */
   assert.match(out.textContent, /山本/, "A 자리의 선수가 안 그려졌다");
   assert.match(out.textContent, /宮城/, "B 자리의 선수가 안 그려졌다");
+  /**
+   * ⚠**紋까지 그려지는지 본다.** 이 경로는 SVG(`createElementNS`)를 쓰는데,
+   * 대역에 그것이 없던 동안 **렌더 전체가 조용히 오류로 빠지고 있었다** —
+   * 시험은 초록인데 재는 것이 「오류 화면이 나왔다」였다.
+   */
+  assert.equal(doc.querySelectorAll("svg").length, 1, "겹친 紋이 그려지지 않았다 — SVG 경로가 죽었다");
+  // ⚠**두 선수의 도형이 한 그림에 겹쳐야** 비교가 된다. 눈금 1개 + 선수 2개 = 3개 이상
+  assert.ok(
+    doc.querySelectorAll("polygon").length >= 3,
+    `紋의 도형이 모자란다(${doc.querySelectorAll("polygon").length}개) — 겹쳐 그리지 않았다`,
+  );
 });
 
 test("샤드가 다르면 각각 받고, 같은 샤드는 두 번째부터 안 받는다", async () => {
@@ -1707,11 +1722,27 @@ test("⚠샤드에 없는 선수를 빈 카드로 그리지 않는다", async ()
   doc.getElementById("cmpGo")!.fire("click");
   await new Promise((r) => setTimeout(r, 0));
 
-  assert.match(
-    doc.getElementById("cmpOut")!.textContent,
-    /読み込めませんでした/,
-    "없는 선수를 오류로 말하지 않았다",
-  );
+  /**
+   * ⚠**「못 받았다」와 같은 문구로 뭉개지 않는다**(M12) — 시키는 행동이 다르다.
+   * 샤드는 이미 성공 캐시라 **다시 눌러도 요청조차 안 나간다** — 「통신을 확인하고 다시」는
+   * 원리적으로 절대 낫지 않는 안내다(2026-08-17 이중 검토 지적).
+   */
+  const out = doc.getElementById("cmpOut")!.textContent;
+  assert.match(out, /見つかりませんでした/, "없는 선수를 「못 찾았다」로 말하지 않았다");
+  assert.ok(!out.includes("通信を確認"), "낫지 않는 행동(통신 확인·재시도)을 시켰다");
+});
+
+/** 진짜 취득 실패는 여전히 「통신을 확인하라」다 — 두 상태가 서로를 덮지 않는다 */
+test("취득 실패와 「그 선수가 없다」를 다른 문구로 말한다", async () => {
+  const doc = buildCompare();
+  run(doc); // routes 없음 = 진짜 취득 실패
+  cpk(doc, "p1").fire("click");
+  cpk(doc, "p2").fire("click");
+  doc.getElementById("cmpGo")!.fire("click");
+  await new Promise((r) => setTimeout(r, 0));
+  const out = doc.getElementById("cmpOut")!.textContent;
+  assert.match(out, /通信を確認/, "취득 실패인데 통신을 확인하라고 하지 않았다");
+  assert.ok(!out.includes("見つかりませんでした"), "취득 실패를 「없다」로 말했다");
 });
 
 /** ⚠실패한 샤드를 캐시에 남기면 **다시 눌러도 영영 같은 오류**가 난다 */
