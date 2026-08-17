@@ -396,13 +396,29 @@ table{border-collapse:collapse;width:100%;font-size:12px}
 th,td{padding:5px 8px;text-align:right;font-variant-numeric:tabular-nums;border-bottom:1px solid var(--hair);white-space:nowrap}
 th{font-size:10px;letter-spacing:.1em;color:var(--tx-2);font-weight:500}
 /* ⚠**머리 고정은 thead 에만 건다.** th 전체에 걸면 tbody 의 **행 머리**(이닝 스코어의
-   구단명 칸)까지 top:0 으로 붙어 자기 행을 떠나 화면 위에 뜬다 — 표가 고장 난 것으로 보인다.
-   실측(2026-08-16): 사이트에서 scope=row 를 쓰는 표는 이닝 스코어 하나뿐이다 */
-thead th{position:sticky;top:var(--topbar);z-index:2;background:var(--page)}
-/* ⚠**상단 띠 아래에 세운다.** top:0 으로 두면 상단 띠(z-index 20)가 겹침에서 이겨
-   **열 이름이 그 띠 뒤로 완전히 가려진다** — 147행짜리 대전표에서 40행쯤 내려가면
-   「三振」과 「打点」을 구별할 방법이 없다. 탭줄이 있는 화면은 그만큼 더 내린다 */
-html:has(.rail) thead th{top:calc(var(--topbar) + var(--rail))}
+   구단명 칸)까지 붙어 자기 행을 떠난다 — 표가 고장 난 것으로 보인다.
+   실측(2026-08-16): 사이트에서 scope=row 를 쓰는 표는 이닝 스코어 하나뿐이다.
+
+   ⚠**세로 오프셋(top)을 주지 않는다. 주면 헤더가 표 안으로 내려앉는다.**
+
+   2026-08-16 에 top:var(--topbar)(탭줄이 있으면 +var(--rail))를 걸었는데,
+   그것이 **유저가 본 「헤더가 내용 중간에 끼거나 겹친다」의 원인**이었다(2026-08-17 지적).
+
+   이유: 우리 표는 전부 .scroller 안에 있고 .scroller 는 overflow-x:auto 다.
+   한 축이 visible 이 아니면 **다른 축도 auto 로 계산**되므로 .scroller 는
+   **세로로도 스크롤 컨테이너**가 된다. position:sticky 의 기준(scrollport)은
+   **화면이 아니라 가장 가까운 스크롤 컨테이너**이므로:
+     · 화면을 굴려도 머리는 붙지 않는다 — 의도한 효과는 **처음부터 없었다**
+     · 대신 머리가 그 상자의 위에서 46px(탭줄이 있으면 94px) **아래로 밀려** 본문 행을 덮는다
+
+   실측(2026-08-17): 검사한 121개 표가 **121/121 .scroller 안**이다.
+   즉 이 오프셋은 이득이 0이고 손해만 있었다.
+
+   ⚠**그래도 position:sticky 는 남긴다** — 첫 열 머리가 left:0 으로 **가로** 고정되어야 하고
+   (.scroller th:first-child), 배경·쌓임 순서도 여기서 나온다.
+   세로 고정을 진짜로 되살리려면 .scroller 에 높이를 주고 표 안쪽에서 굴리게 해야 하는데,
+   그건 화면 설계를 바꾸는 일이라 별도 판단이 필요하다 */
+thead th{position:sticky;z-index:2;background:var(--page)}
 /* ⚠**모서리 칸이 제일 위여야 한다.** 가로·세로 양쪽으로 고정되는 칸은 첫 열의 머리 하나뿐인데,
    .scroller th:first-child(z-index:1)가 특이도에서 이겨 **다른 머리 칸(2)이 그 위를 지나간다** —
    가로로 밀면 고정된 첫 열의 머리만 사라진다. 본문 칸은 멀쩡해서 더 이상하게 보인다.
