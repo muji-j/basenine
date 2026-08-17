@@ -19,10 +19,20 @@ export function fetchedAtOf(metaPath: string): string | null {
   } catch {
     return null;
   }
+  let m: { fetchedAt?: unknown; checkedAt?: unknown };
   try {
-    const m = JSON.parse(raw) as { fetchedAt?: unknown };
-    return typeof m.fetchedAt === "string" && m.fetchedAt !== "" ? m.fetchedAt : null;
+    m = JSON.parse(raw) as { fetchedAt?: unknown; checkedAt?: unknown };
   } catch {
     return null;
   }
+  const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
+  /**
+   * ⚠**`checkedAt`(마지막으로 본 시각)이 먼저다.**
+   * `fetchedAt` 은 「내용이 마지막으로 **바뀐**」 시각이라, 안 바뀐 페이지에서는 영영 안 움직인다.
+   * 그것을 쓰면 ⑴ 화면이 실제보다 낡은 날짜를 말하고 ⑵ 재취득 선정이 「아직 안 받았다」로 오판해
+   * **같은 페이지를 매일 다시 친다**(L1). 우리가 답해야 하는 질문은 「이 값이 언제 것인가」이고,
+   * 그 답은 **마지막으로 확인한 시각**이다.
+   * ⚠옛 사이드카에는 `checkedAt` 이 없다 — 그때는 `fetchedAt` 이 곧 확인 시각이었으므로 그대로 떨어뜨린다.
+   */
+  return str(m.checkedAt) ?? str(m.fetchedAt);
 }

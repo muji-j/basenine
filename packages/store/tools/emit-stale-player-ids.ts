@@ -60,7 +60,14 @@ const rows = db.raw
      ),
      last_seen AS (SELECT id, MAX(last) AS last FROM appearance GROUP BY id),
      fetched AS (
-       SELECT player_id AS id, MAX(SUBSTR(fetched_at, 1, 10)) AS day
+       /**
+        * JST 로 맞춘다(§2-1). fetched_at 은 ISO UTC 이고 game_date 는 JST 경기일이다.
+        * 그냥 앞 10글자를 자르면 JST 00:00~08:59 에 받은 페이지가 하루 이르게 기록된다.
+        * 지금 크론은 17:00 UTC(=02:00 JST)라 우연히 안전한 쪽으로만 어긋나지만,
+        * 손으로 다른 시각에 돌리면 그 우연이 깨진다 — 우연에 기대지 않는다.
+        * fetched_at 이 NULL 이면 datetime() 도 NULL 이다 — 「모른다」가 그대로 흐른다(M11).
+        */
+       SELECT player_id AS id, MAX(SUBSTR(datetime(fetched_at, '+9 hours'), 1, 10)) AS day
          FROM (SELECT player_id, fetched_at FROM career_batting
                UNION ALL
                SELECT player_id, fetched_at FROM career_pitching)
@@ -70,16 +77,66 @@ const rows = db.raw
        FROM player p
        JOIN last_seen l ON l.id = p.player_id
        LEFT JOIN fetched f ON f.id = p.player_id
-      WHERE f.day IS NULL OR f.day < l.last
-      ORDER BY (f.day IS NULL) DESC, l.last DESC, p.player_id`,
+      /**
+       * 최근에 뛴 선수만 본다.
+       *
+       * ⚠**이 조건이 없으면 「받을 수 없는 선수」가 매일 몫의 앞자리를 먹는다**(2026-08-17 재검토 P1).
+       * 실측: 취득 기록이 없는 113명은 전원 **마지막 출장이 2023년**인 NPB 이탈 선수다
+       * (2026 출장자 중 통산 행이 없는 사람은 **0명**이다 — 「데뷔 선수」가 아니었다).
+       * 선수 페이지는 **현재 등록 선수만** 받을 수 있으므로 이들은 받아도 안 온다.
+       * 소급 시즌을 넣을수록 이 무리가 시즌당 100~160명씩 늘어 상한을 통째로 잠식한다.
+       * ⚠**그건 백필의 일이지 「신선도 유지」의 일이 아니다.** 여기서는 빼고, 몇 명 뺐는지 로그에 낸다.
+       * ⚠**벽시계가 아니라 데이터 기준이다**(M6) — 우리가 가진 마지막 경기일에서 센다.
+       */
+      WHERE (f.day IS NULL OR f.day <= l.last)
+        AND l.last >= (SELECT DATE(MAX(game_date), '-400 days') FROM game WHERE status = 'played')
+      ORDER BY l.last DESC, p.player_id`,
   )
   .all() as unknown as { id: string; last: string; day: string | null }[];
 
+/**
+ * ⚠**두 무리를 「최근에 뛴 순」 하나로 줄 세운다.**
+ *
+ * 처음에는 「한 번도 못 받은 선수」에게 **절대 우선**을 줬는데(`ORDER BY (day IS NULL) DESC`),
+ * 그 무리가 상한을 넘는 날에는 「받았지만 낡은」 선수가 그날 **한 명도 못 들어간다**
+ * (2026-08-17 재검토 P2). 개막 직후처럼 신인이 대거 등록되는 날이 그렇다.
+ * ⚠`l.last DESC` 하나로 세우면 두 무리가 **섞여서** 들어가므로 어느 쪽도 굶지 않는다 —
+ * 그리고 「가장 최근에 뛴 선수부터」가 곧 「화면에서 가장 눈에 띌 선수부터」다.
+ */
 for (const r of rows.slice(0, limit)) console.log(r.id);
 
 const never = rows.filter((r) => r.day === null).length;
+const sent = rows.slice(0, limit);
+const sentNever = sent.filter((r) => r.day === null).length;
+/**
+ * ⚠**제외한 수도 낸다**(§3-7: 「0건」과 「안 쟀음」을 구별한다).
+ * 400일 조건으로 빠진 선수가 몇 명인지 안 보이면, 어느 날 그 무리가 커져도 아무도 모른다.
+ */
+const excluded = (
+  db.raw
+    .prepare(
+      `WITH appearance AS (
+         SELECT b.player_id AS id, MAX(g.game_date) AS last
+           FROM batting_line b JOIN game g ON g.game_id = b.game_id
+          WHERE g.status = 'played' GROUP BY b.player_id
+         UNION ALL
+         SELECT t.player_id AS id, MAX(g.game_date) AS last
+           FROM pitching_line t JOIN game g ON g.game_id = t.game_id
+          WHERE g.status = 'played' GROUP BY t.player_id
+       ),
+       last_seen AS (SELECT id, MAX(last) AS last FROM appearance GROUP BY id)
+       SELECT COUNT(*) AS n FROM player p JOIN last_seen l ON l.id = p.player_id
+        WHERE l.last < (SELECT DATE(MAX(game_date), '-400 days') FROM game WHERE status = 'played')`,
+    )
+    .get() as unknown as { n: number }
+).n;
 console.error(
-  `다시 받을 선수 ${rows.length}명(취득기록 없음 ${never}명) 중 ${Math.min(rows.length, limit)}명 출력` +
-    (rows.length > limit ? ` — ⚠**${rows.length - limit}명이 오늘 몫에서 밀렸다**(다음 실행에서 받는다)` : ""),
+  `다시 받을 선수 ${rows.length}명(취득기록 없음 ${never}명) 중 ${sent.length}명 출력` +
+    `(그중 취득기록 없음 ${sentNever}명) · 최근 400일 미출장이라 제외 ${excluded}명` +
+    // ⚠**밀린 수를 반드시 낸다** — 조용히 자르면 「전부 했음」으로 읽힌다(§3-7)
+    (rows.length > limit
+      ? ` — ⚠**${rows.length - limit}명이 오늘 몫에서 밀렸다**` +
+        `(취득기록 없음 ${never - sentNever}명 포함 · 다음 실행에서 받는다)`
+      : ""),
 );
 db.close();

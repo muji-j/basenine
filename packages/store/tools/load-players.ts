@@ -75,7 +75,13 @@ const unknownPlayers: string[] = [];
 db.transaction(() => {
   for (const f of files) {
     const playerId = f.replace(/\.html\.gz$/, "");
-    // ⚠**취득 시각은 아카이브가 갖고 있다** — 적재 시각(`nowIso`)과 다르다
+    /**
+     * ⚠**취득 시각은 아카이브가 갖고 있다** — 적재 시각(`nowIso`)과 다르다.
+     * ⚠**모르면 `null` 그대로 넣는다. 적재 시각으로 메우지 마라**(M11 · 2026-08-17 재검토 P1).
+     *   메우면 두 가지가 동시에 망가진다: 화면이 그 날짜를 「진짜 취득일」이라 말하고,
+     *   재취득 선정이 그것을 「가장 신선함」으로 읽어 **그 선수를 영영 다시 안 받는다.**
+     *   그게 바로 이 커밋이 고치려던 사고다.
+     */
     const fetchedAt = fetchedAtOf(join(dir, `${playerId}.meta.json`));
     if (fetchedAt === null) metaMissing += 1;
     let profile;
@@ -132,13 +138,13 @@ db.transaction(() => {
       delPit.run(playerId);
       for (const [i, r] of career.batting.entries()) {
         insBat.run(playerId, r.year, r.team, r.games, r.pa, r.ab, r.runs, r.h, r.d2, r.d3, r.hr,
-          r.tb, r.rbi, r.sb, r.cs, r.sh, r.sf, r.bb, r.hbp, r.so, r.gidp, CAREER_SOURCE, fetchedAt ?? nowIso, i);
+          r.tb, r.rbi, r.sb, r.cs, r.sh, r.sf, r.bb, r.hbp, r.so, r.gidp, CAREER_SOURCE, fetchedAt, i);
         careerBat += 1;
       }
       for (const [i, r] of career.pitching.entries()) {
         insPit.run(playerId, r.year, r.team, r.games, r.w, r.l, r.sv, r.hld, r.hp, r.cg, r.sho,
           r.nbb, r.bf, r.outs, r.h, r.hr, r.bb, r.hbp, r.so, r.wp, r.balk, r.runs, r.er,
-          CAREER_SOURCE, fetchedAt ?? nowIso, i);
+          CAREER_SOURCE, fetchedAt, i);
         careerPit += 1;
       }
     } catch (err) {
