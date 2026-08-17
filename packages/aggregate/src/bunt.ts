@@ -11,6 +11,8 @@
 import { paValue, stateKey, withLeagueTeams } from "./run-expectancy.ts";
 import type { RunExpectancy } from "./run-expectancy.ts";
 import type { Db } from "@bb-app/store";
+import { isOutcome } from "@bb-app/parser";
+import type { Outcome } from "@bb-app/parser";
 
 export interface BuntSituation {
   /** 주자 상태(`1` `12` …)와 아웃 카운트 */
@@ -126,14 +128,14 @@ ORDER BY e.game_id, e.seq
  * ⚠**어휘를 추측하지 않는다.** `homerun` 은 소문자 r 이다(실측) — `homeRun` 으로 쓰면
  * 홈런이 안타에서도 타수에서도 조용히 빠진다.
  */
-const HITS = new Set(["single", "double", "triple", "homerun"]);
+const HITS: ReadonlySet<Outcome> = new Set(["single", "double", "triple", "homerun"]);
 
 /**
  * 타수에 들어가지 않는 결과.
  * ⚠**희생번트 계열이 셋이다**(`sacBunt` · `sacBuntError` · `sacBuntFieldersChoice`).
  * 하나만 적으면 타수가 부풀어 피타율이 낮게 나온다 — 실측으로 .216 대 .237의 차가 났다.
  */
-const NOT_AB = new Set([
+const NOT_AB: ReadonlySet<Outcome> = new Set<Outcome>([
   // ⚠**주루방해(走妨出)는 타격방해와 다른 사건이다.** 둘 다 타수에 안 들어간다
   "walk", "intentionalWalk", "hitByPitch", "interference", "obstruction",
   // ⚠**`sacFlyError` 는 희생플라이 쪽이다**(외야로 간 `犠失`) — 번트 계열이 아니다
@@ -145,7 +147,7 @@ const NOT_AB = new Set([
  * ⚠**모르는 값이 오면 멈춘다**(M7). 조용히 「타수도 안타도 아님」으로 흘리면
  * 새 어휘가 생긴 날 피타율이 서서히 틀려지고 아무도 눈치채지 못한다.
  */
-const KNOWN = new Set([
+const KNOWN: ReadonlySet<Outcome> = new Set<Outcome>([
   ...HITS, ...NOT_AB,
   "fieldedOut", "strikeout", "strikeoutReached", "groundedIntoDoublePlay",
   "reachedOnError", "fieldersChoice",
@@ -181,15 +183,20 @@ export function timesThroughOrder(
     seen.set(key, nth);
     const round = Math.min(4, nth);
     const e = acc.get(round) ?? { round, pa: 0, ab: 0, h: 0, hr: 0, bb: 0, so: 0 };
-    if (!KNOWN.has(r.outcome)) {
+    /**
+     * ⚠**DB의 문자열을 캐스트로 밀어 넣지 않는다.** 좁히기가 곧 M7 검사다 —
+     * 옛 파서가 넣은 값이든 새 어휘든 여기서 멈춘다.
+     */
+    if (!isOutcome(r.outcome) || !KNOWN.has(r.outcome)) {
       throw new RangeError(`모르는 타석 결과 ${r.outcome} — 어휘가 늘었다. 타수 판정을 고쳐라`);
     }
+    const outcome: Outcome = r.outcome;
     e.pa += 1;
     // ⚠**타석 로그의 결과로 센다.** 경기 단위 박스 합계를 쓰면 같은 값이 여러 번 더해진다
-    if (!NOT_AB.has(r.outcome)) e.ab += 1;
-    if (HITS.has(r.outcome)) e.h += 1;
-    if (r.outcome === "homerun") e.hr += 1;
-    if (r.outcome === "walk" || r.outcome === "intentionalWalk") e.bb += 1;
+    if (!NOT_AB.has(outcome)) e.ab += 1;
+    if (HITS.has(outcome)) e.h += 1;
+    if (outcome === "homerun") e.hr += 1;
+    if (outcome === "walk" || outcome === "intentionalWalk") e.bb += 1;
     if (r.outcome === "strikeout" || r.outcome === "strikeoutReached") e.so += 1;
     acc.set(round, e);
   }

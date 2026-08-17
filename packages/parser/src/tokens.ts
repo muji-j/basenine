@@ -34,7 +34,11 @@ export type Outcome =
    * ⚠**`犠失` 을 전부 번트로 읽으면 안 된다.** 번트는 외야로 가지 않는다 —
    * 외야 위치가 앞에 붙은 `犠失` 은 희생플라이다. 이 구별이 없으면 그 타석이
    * **犠飛가 아니라 犠打로 세어져 출루율의 분모가 하나 줄고**, 출루율이 실제보다 높게 나온다.
-   * 외부 대조가 실제로 잡았다(2024 ヤクルト 2명: 우리 .234/.316 대 공표 .229/.315).
+   *
+   * 외부 대조가 잡았다 — 2024 ヤクルト **두 선수의 출루율**이 이렇게 갈렸다:
+   * 北村拓 **.234 → .229** · 中村 **.316 → .315**(둘 다 고친 뒤 공표값과 일치).
+   * ⚠**타율은 움직이지 않는다** — 두 분류 다 타수가 아니라 `AB`·`H` 가 그대로다.
+   *   「.234/.316」을 한 선수의 타율/출루율로 읽으면 없는 결함을 쫓게 된다.
    */
   | "sacFlyError"
   /** 타격방해 출루(打妨出). 타수에 들어가지 않는다 */
@@ -60,6 +64,33 @@ export type Outcome =
   | "groundedIntoDoublePlay"
   | "fieldedOut"
   | "unknown";
+
+/**
+ * `Outcome` 전량. **유니온과 이 목록이 갈리면 컴파일이 멈춘다**(바로 아래 검사).
+ *
+ * ⚠**왜 유니온을 이 배열에서 파생시키지 않는가**: 유니온 쪽의 항목별 주석이
+ * 이 프로젝트의 자산이다(「捕守妨는 왜 타수인가」·「走妨出은 왜 다른 사건인가」).
+ * 배열로 옮기면 그 지식이 흩어진다. 그래서 **둘을 두고, 갈리는 것을 타입이 막는다.**
+ */
+export const OUTCOMES = [
+  "single", "double", "triple", "homerun",
+  "walk", "intentionalWalk", "hitByPitch",
+  "strikeout", "strikeoutReached",
+  "sacFly", "sacFlyError", "sacBunt", "sacBuntFieldersChoice", "sacBuntError",
+  "interference", "obstruction", "interferenceOut",
+  "reachedOnError", "fieldersChoice", "groundedIntoDoublePlay", "fieldedOut",
+  "unknown",
+] as const satisfies readonly Outcome[];
+
+// ⚠**양쪽으로 검사한다.** 유니온에만 있는 것도, 배열에만 있는 것도 여기서 멈춘다
+type _MissingFromList = Exclude<Outcome, (typeof OUTCOMES)[number]>;
+const _listCoversUnion: _MissingFromList extends never ? true : never = true;
+void _listCoversUnion;
+
+/** DB·외부에서 온 문자열이 우리가 아는 분류인가. **모르면 좁히지 않는다**(M11) */
+export function isOutcome(value: string): value is Outcome {
+  return (OUTCOMES as readonly string[]).includes(value);
+}
 
 export interface PaResult {
   /** 정규화한 원문(공백 제거). 격리·감사에 쓴다 */
@@ -104,14 +135,22 @@ const RULES: readonly (readonly [RegExp, Outcome])[] = [
   [/犠打$/, "sacBunt"],
   [/犠野$/, "sacBuntFieldersChoice"],
   /**
-   * ⚠**`犠失` 은 위치로 갈린다.** 외야(左·中·右·左中間·右中間)로 간 희생타는 **플라이**이고,
+   * ⚠**`犠失` 은 위치로 갈린다.** 외야로 간 희생타는 **플라이**이고,
    * 내야(投·捕·一·二·三·遊)로 간 것은 **번트**다 — 번트는 외야로 가지 않는다.
    *
    * 실측(2026-08-17, 2023~2026): 이 규칙이 타석 로그 원문(`犠牲フライ` / `犠牲バント`)과
    * **5,860건 전부 일치 · 예외 0건**. `犠失` 134건 중 외야는 2건이었고 둘 다 플라이였다.
    * ⚠**순서가 뜻을 갖는다** — 외야 규칙을 먼저 둔다.
+   *
+   * ⚠**박스는 중간 방향을 `左中`·`右中` 으로 쓴다**(2026-08-17 이중 검토 지적).
+   * 처음에 `左中間`·`右中間` 이라고 썼는데 그건 **타석 로그 쪽 표기**이고,
+   * 박스 178,420행에서 `左中間`·`右中間` 은 **0건**이다(실제 접두어는 `左中`·`右中` 4,740건).
+   * 죽은 분기였을 뿐 아니라 **재발 경로**였다 — `左中犠失` 이 나오면 아래 `犠失$` 로 떨어져
+   * 이 커밋이 고치려던 바로 그 오분류(희생번트)가 된다.
+   * ⚠**두 글자 대안을 한 글자보다 먼저** 둔다. 뒤에 두면 `左` 가 먼저 먹고 안 맞는다.
+   * (실측상 `犠` 계열의 접두어는 投·一·捕·中·三·左·右 한 글자뿐이라 지금 이 분기는 안 밟힌다.)
    */
-  [/^(左中間|右中間|[左中右])犠失$/, "sacFlyError"],
+  [/^(左中|右中|[左中右])犠失$/, "sacFlyError"],
   [/犠失$/, "sacBuntError"],
   // 실책·야수선택은 아웃 계열보다 먼저 본다. `三ゴ失`가 `ゴロ`로 잡히면 안 된다.
   [/失$/, "reachedOnError"],
@@ -172,12 +211,40 @@ export function countsAsAtBat(outcome: Outcome): boolean {
     case "obstruction":
     case "unknown":
       return false;
-    default:
-      // 振逃·失·野選은 타수에 들어간다.
-      // ⚠**수비방해 아웃(`interferenceOut`)도 여기다** — 아웃이므로 타수다.
-      // 이름이 비슷한 `interference`·`obstruction` 은 위에서 false 로 갈린다.
+    // 振逃·失·野選은 타수에 들어간다.
+    // ⚠**수비방해 아웃(`interferenceOut`)도 여기다** — 아웃이므로 타수다.
+    // 이름이 비슷한 `interference`·`obstruction` 은 위에서 false 로 갈린다.
+    case "single":
+    case "double":
+    case "triple":
+    case "homerun":
+    case "strikeout":
+    case "strikeoutReached":
+    case "interferenceOut":
+    case "reachedOnError":
+    case "fieldersChoice":
+    case "groundedIntoDoublePlay":
+    case "fieldedOut":
       return true;
+    default:
+      return assertHandled(outcome, "countsAsAtBat");
   }
+}
+
+/**
+ * **새 `Outcome` 을 만들면 컴파일이 여기서 멈춘다.**
+ *
+ * ⚠예전에는 이 자리가 `default: return true` 였다. 그래서 새 분류를 더할 때
+ * **손으로 세 곳(`countsAsAtBat`·`fold.ts`·`bunt.ts`)을 다 고쳐야 하는데,
+ * 하나를 빠뜨려도 타입도 테스트도 아무 말을 하지 않았다** — 조용히 타수에 들어가거나
+ * 조용히 `pa` 만 늘었다. 실제로 하루에 새 분류를 셋(`obstruction`·`interferenceOut`·
+ * `sacFlyError`) 더했고, 맞춘 것은 검증이 아니라 결과였다(2026-08-17 이중 검토 지적).
+ *
+ * ⚠**런타임 분기가 아니라 타입 그물이다.** 실행 중에 여기 오는 일은 없어야 하지만,
+ * 소스가 새 어휘를 내면(파서는 그것을 `unknown` 으로 돌린다) 안전하게 던진다.
+ */
+function assertHandled(outcome: never, where: string): never {
+  throw new RangeError(`${where}: 다루지 않은 결과 분류 ${JSON.stringify(outcome)}`);
 }
 
 /** 이 결과가 안타(安打)인가. */
