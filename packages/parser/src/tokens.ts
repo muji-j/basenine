@@ -59,6 +59,20 @@ export type Outcome =
    * 이름을 같게 하면 「방해」라는 낱말 하나 때문에 정반대 규칙이 한 칸에 들어간다.
    */
   | "interferenceOut"
+  /**
+   * 규칙 위반 아웃(`違反`). 반칙 타구 등으로 **타자가 아웃**된 것이고, **타수에 들어간다**.
+   *
+   * ⚠**2022 아카이브에서 나왔다.** `2022/0723/t-db-15` 의 嶺井 —
+   * 타석 로그가 `規則違反アウト` 이고 박스 결과 셀은 `違反` 한 단어다.
+   * 어휘에 없어서 `unknown` 으로 격리됐고 **도출 타수 2 대 박스 3** 으로 어긋났다.
+   * ⚠**근거의 분모는 1건이다.** 박스가 打数 3 이라고 적은 것이 유일한 관측이다 —
+   *   「실측으로 확정」이라는 말이 표본 1을 가리지 않게 적어 둔다.
+   * ⚠**`interferenceOut`(수비방해 아웃)과 묶지 않는다.** 결과는 같아도 규칙이 다르다.
+   *   이름을 같게 하면 나중에 「방해였나 반칙이었나」를 물을 수 없다.
+   * ⚠**소급 시즌에는 지금 어휘에 없는 표기가 더 있다** — 격리가 그것을 잡는 장치이므로
+   *   격리 0건을 목표로 어휘를 넓히되, **모르는 것을 아는 것으로 바꾸지는 않는다.**
+   */
+  | "ruleViolationOut"
   | "reachedOnError"
   | "fieldersChoice"
   | "groundedIntoDoublePlay"
@@ -77,7 +91,7 @@ export const OUTCOMES = [
   "walk", "intentionalWalk", "hitByPitch",
   "strikeout", "strikeoutReached",
   "sacFly", "sacFlyError", "sacBunt", "sacBuntFieldersChoice", "sacBuntError",
-  "interference", "obstruction", "interferenceOut",
+  "interference", "obstruction", "interferenceOut", "ruleViolationOut",
   "reachedOnError", "fieldersChoice", "groundedIntoDoublePlay", "fieldedOut",
   "unknown",
 ] as const satisfies readonly Outcome[];
@@ -128,6 +142,9 @@ const RULES: readonly (readonly [RegExp, Outcome])[] = [
   //   (테스트의 `一守妨`·`二守妨`는 우리가 만든 문자열이다). 다른 위치가 나와도 타자 아웃이라
   //   위험은 낮지만, 「실측으로 확정」이라는 말이 표본 1을 가리지 않게 적어 둔다.
   [/守妨$/, "interferenceOut"],
+  // ⚠**규칙 위반 아웃.** 방해와 나란히 두되 **다른 분류**다(위 유니온 주석 참조).
+  //   접미어가 겹치는 다른 어휘가 없어 순서에 민감하지 않다.
+  [/違反$/, "ruleViolationOut"],
   // ⚠**희생(犠) 계열을 가장 먼저 본다.** 뒤에 失·野選이 붙어도 **희생타로 기록되어
   // 타수에 들어가지 않는다.** `投犠失`를 `失$` 규칙으로 먼저 잡으면 타수가 1 늘어난다
   // (아카이브 대조에서 실제로 19건이 이 원인이었다).
@@ -221,6 +238,8 @@ export function countsAsAtBat(outcome: Outcome): boolean {
     case "strikeout":
     case "strikeoutReached":
     case "interferenceOut":
+    // ⚠**규칙 위반 아웃도 타수다.** 근거는 표본 1건(2022/0723 t-db-15 박스 打数 3)
+    case "ruleViolationOut":
     case "reachedOnError":
     case "fieldersChoice":
     case "groundedIntoDoublePlay":

@@ -185,3 +185,29 @@ test("犠失의 위치 판정이 타점 표기에 흔들리지 않는다", () =>
   assert.equal(parsePaCell("中犠失①")?.outcome, "sacFlyError");
   assert.equal(parsePaCell("投犠失①")?.outcome, "sacBuntError");
 });
+
+/**
+ * ⚠**`規則違反アウト`** — 2022 아카이브에서 나왔다.
+ *
+ * 실측(2026-08-17): `2022/0723/t-db-15` 의 嶺井. 타석 로그가 `規則違反アウト` 이고
+ * 박스 결과 셀은 `違反` 한 단어다. 어휘에 없어서 `unknown` 으로 격리됐고,
+ * 그 결과 **도출 타수 2 대 박스 3** 으로 어긋났다(`abMismatch`).
+ *
+ * ⚠**아웃이고 타수에 들어간다.** 반칙 타구는 타자 아웃이고 타수로 기록된다 —
+ * 박스가 打数 3 이라고 적은 것이 근거다. **표본 1건**이라는 것도 같이 적어 둔다.
+ * ⚠**`interferenceOut`(수비방해 아웃)과 묶지 않는다.** 결과는 같아도 규칙이 다르고,
+ * 이름을 같게 하면 나중에 구별할 수 없다(이 파일의 `走妨出` 주석과 같은 이유).
+ */
+test("⚠`違反`(規則違反アウト)은 아웃이고 타수에 들어간다", () => {
+  const r = parsePaCell("違反");
+  assert.notEqual(r, null);
+  assert.equal(r!.outcome, "ruleViolationOut", "모르는 어휘로 떨어진다");
+  assert.equal(countsAsAtBat(r!.outcome), true, "타수에 안 들어간다 — 박스와 어긋난다");
+  assert.equal(countsAsHit(r!.outcome), false, "안타로 셌다");
+});
+
+test("⚠타점이 붙은 형태도 읽는다 — 丸数字 처리가 공통 경로다", () => {
+  const r = parsePaCell("違反①");
+  assert.equal(r!.outcome, "ruleViolationOut");
+  assert.equal(r!.rbi, 1);
+});
