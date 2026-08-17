@@ -94,15 +94,88 @@ function cellsOf(rowHtml: string): string[] {
   );
 }
 
-function rowsOf(html: string): string[] {
-  const tbl = /<table class="tablefix2">([\s\S]*?)<\/table>/.exec(html);
+/**
+ * 성적표의 행들을 **칸 배열로** 돌려준다.
+ *
+ * ⚠**2023~2024는 마크업이 다르다**(2026-08-17 실측). `class="tablefix2"` 가 없고,
+ * 열 순서는 같지만 세 가지가 다르다:
+ *   · 표 맨 위에 주석 행이 하나 있다(`* 左打 + 左右打`) — 칸이 1개뿐이다
+ *   · **모든 행 앞에 빈 칸이 하나 더** 있다(좌우 마커 자리)
+ *   · 헤더 글자에 공백이 섞인다(`選 手` · `試 合`) — `<br />` 를 벗긴 흔적이다
+ *
+ * 이 분기가 없으면 소급 시즌을 **공표값과 대조할 수 없다** — 백필의 검증 수단이 사라진다.
+ * (박스 파서가 2016~2018에서 겪은 것과 같은 문제다.)
+ */
+function rowsOf(html: string): string[][] {
+  const modern = /<table class="tablefix2">([\s\S]*?)<\/table>/.exec(html);
+  // ⚠구형은 `border="0"` 뿐이라 특징이 약하다 — 그래서 **신형을 먼저** 본다
+  const legacyTbl = modern === null ? /<table border="0"[^>]*>([\s\S]*?)<\/table>/.exec(html) : null;
+  const tbl = modern ?? legacyTbl;
   if (tbl === null) {
     throw new StatsParseError(
-      "성적표(table.tablefix2)를 찾지 못했다 — 페이지 구조 변경을 의심하라",
+      "성적표를 찾지 못했다(신형 table.tablefix2 · 구형 table[border=0] 둘 다 없다)",
       `length=${html.length}`,
     );
   }
-  return [...tbl[1]!.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)].map((m) => m[1]!);
+  const legacy = modern === null;
+  const rows = [...tbl[1]!.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)]
+    .map((m) => cellsOf(m[1]!))
+    .map((c) => (legacy ? c.slice(1) : c))
+    /**
+     * 주석·범례 행을 버린다. ⚠**칸 수로 거른다** — 문구로 거르면 문구가 바뀌는 날 조용히 섞인다.
+     * ⚠**빈 칸을 뗀 「뒤에」 거른다.** 구형 투구표의 범례 행은 칸이 2개라
+     * (`ホール：ホールド` · `ＨＰ：…`) 떼기 전에 거르면 살아남아 헤더 자리를 차지한다.
+     */
+    .filter((c) => c.length > 1);
+  return mergeSplitColumns(rows);
+}
+
+/**
+ * 헤더 비교용 정규화. **값 칸에는 쓰지 않는다**(이름의 공백은 뜻이 있다).
+ *
+ * 구형(2023~2024)이 다른 점 셋:
+ *   · `<br />` 를 벗긴 자리에 공백이 남는다 — `選 手` · `試 合`
+ *   · 장음을 **세로쓰기용 전각 세로줄** `｜`(U+FF5C)로 쓴다 — `セ｜ブ` · `ホ｜ル` · `ボ｜ク`
+ *   · 투수 이름 열을 `投手` 라고 부른다(신형은 `選手`)
+ */
+function headerKey(cell: string): string {
+  return cell
+    .replace(/[\s\u3000]/g, "")
+    // ⚠**세로줄을 장음으로 되돌린다.** 안 하면 `セ｜ブ` 가 `セーブ` 와 안 맞아
+    // 「열이 없다」로 멈춘다 — 구형 3열이 통째로 사라진다
+    .replace(/\uFF5C/g, "ー")
+    .replace(/^投手$/, "選手")
+    // ⚠구형은 홀드를 **축약**한다(`ホ｜ル`). 위에서 장음을 되돌리면 `ホール` 이 되는데
+    // 신형은 `ホールド` 다 — 한 글자 차이로 열이 통째로 안 잡힌다.
+    // 실측(2026-08-17): 정규화 후 24열 중 **이 한 자리만** 다르다
+    .replace(/^ホール$/, "ホールド");
+}
+
+/**
+ * 헤더가 빈 열을 **앞 열에 합친다.**
+ *
+ * ⚠구형 투구표는 **투구회를 두 칸으로 쪼갠다** — `106` 과 `.1` 로 나뉘고
+ * 헤더 쪽은 `投球回` 다음이 빈 칸이다. 합치지 않으면 열이 하나 밀려
+ * 그 뒤의 안타·홈런·사사구가 **전부 옆 칸 값**이 된다.
+ * ⚠구형 타격표에는 빈 헤더가 없으므로(실측) 이 처리는 투구표에만 걸린다.
+ */
+function mergeSplitColumns(rows: string[][]): string[][] {
+  const header = rows[0];
+  if (header === undefined) return rows;
+  const drop: number[] = [];
+  for (let i = 1; i < header.length; i += 1) if (headerKey(header[i]!) === "") drop.push(i);
+  if (drop.length === 0) return rows;
+  return rows.map((cells) => {
+    const out = [...cells];
+    // 뒤에서부터 지운다 — 앞에서 지우면 남은 인덱스가 밀린다
+    for (const i of [...drop].reverse()) {
+      if (i < out.length) {
+        out[i - 1] = `${out[i - 1] ?? ""}${out[i] ?? ""}`;
+        out.splice(i, 1);
+      }
+    }
+    return out;
+  });
 }
 
 /**
@@ -134,7 +207,7 @@ function num(cell: string | undefined, label: string, rawName: string): number {
  */
 export function parseTeamBatting(html: string): PublishedBatting[] {
   const rows = rowsOf(html);
-  const header = cellsOf(rows[0] ?? "");
+  const header = (rows[0] ?? []).map(headerKey);
   if (header.length !== BATTING_HEADER.length || header.some((h, i) => h !== BATTING_HEADER[i])) {
     throw new StatsParseError(
       "타격 성적표의 헤더가 예상과 다르다 — 컬럼이 바뀌었는지 확인하라",
@@ -143,8 +216,7 @@ export function parseTeamBatting(html: string): PublishedBatting[] {
   }
 
   const out: PublishedBatting[] = [];
-  for (const row of rows.slice(1)) {
-    const c = cellsOf(row);
+  for (const c of rows.slice(1)) {
     if (c.length === 0) continue;
     if (c.length !== BATTING_HEADER.length) {
       throw new StatsParseError(
@@ -191,7 +263,7 @@ export function parseTeamBatting(html: string): PublishedBatting[] {
  */
 export function parseTeamPitching(html: string): PublishedPitching[] {
   const rows = rowsOf(html);
-  const header = cellsOf(rows[0] ?? "");
+  const header = (rows[0] ?? []).map(headerKey);
   const at = (label: string): number => {
     const i = header.indexOf(label);
     if (i < 0) {
@@ -226,8 +298,7 @@ export function parseTeamPitching(html: string): PublishedPitching[] {
   const iEra = at("防御率");
 
   const out: PublishedPitching[] = [];
-  for (const row of rows.slice(1)) {
-    const c = cellsOf(row);
+  for (const c of rows.slice(1)) {
     if (c.length === 0) continue;
     if (c.length !== header.length) {
       throw new StatsParseError(

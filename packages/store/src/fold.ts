@@ -45,7 +45,12 @@ export function foldOutcomes(tallies: Iterable<OutcomeTally>): { line: BattingLi
       case "walk": line.bb += t.count; break;
       case "intentionalWalk": line.bb += t.count; line.ibb += t.count; break;
       case "hitByPitch": line.hbp += t.count; break;
-      case "sacFly": line.sf += t.count; break;
+      // ⚠**외야로 간 `犠失` 은 희생플라이다** — 번트는 외야로 가지 않는다.
+      // `sh` 로 세면 출루율의 분모가 하나 줄어 값이 실제보다 높게 나온다(외부 대조가 잡았다)
+      case "sacFly":
+      case "sacFlyError":
+        line.sf += t.count;
+        break;
       case "sacBunt":
       case "sacBuntFieldersChoice":
       case "sacBuntError":

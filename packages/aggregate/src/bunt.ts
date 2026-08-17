@@ -136,7 +136,8 @@ const HITS = new Set(["single", "double", "triple", "homerun"]);
 const NOT_AB = new Set([
   // ⚠**주루방해(走妨出)는 타격방해와 다른 사건이다.** 둘 다 타수에 안 들어간다
   "walk", "intentionalWalk", "hitByPitch", "interference", "obstruction",
-  "sacFly", "sacBunt", "sacBuntError", "sacBuntFieldersChoice",
+  // ⚠**`sacFlyError` 는 희생플라이 쪽이다**(외야로 간 `犠失`) — 번트 계열이 아니다
+  "sacFly", "sacFlyError", "sacBunt", "sacBuntError", "sacBuntFieldersChoice",
 ]);
 
 /**

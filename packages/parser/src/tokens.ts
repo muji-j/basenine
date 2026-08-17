@@ -28,6 +28,15 @@ export type Outcome =
   | "sacBuntFieldersChoice"
   /** 희생번트 중 실책이 나온 것(犠失). 희생타로 기록되므로 타수 아님 */
   | "sacBuntError"
+  /**
+   * **희생플라이** 중 실책이 나온 것(외야로 간 `犠失`). 타수 아님.
+   *
+   * ⚠**`犠失` 을 전부 번트로 읽으면 안 된다.** 번트는 외야로 가지 않는다 —
+   * 외야 위치가 앞에 붙은 `犠失` 은 희생플라이다. 이 구별이 없으면 그 타석이
+   * **犠飛가 아니라 犠打로 세어져 출루율의 분모가 하나 줄고**, 출루율이 실제보다 높게 나온다.
+   * 외부 대조가 실제로 잡았다(2024 ヤクルト 2명: 우리 .234/.316 대 공표 .229/.315).
+   */
+  | "sacFlyError"
   /** 타격방해 출루(打妨出). 타수에 들어가지 않는다 */
   | "interference"
   /**
@@ -94,6 +103,15 @@ const RULES: readonly (readonly [RegExp, Outcome])[] = [
   [/犠飛$/, "sacFly"],
   [/犠打$/, "sacBunt"],
   [/犠野$/, "sacBuntFieldersChoice"],
+  /**
+   * ⚠**`犠失` 은 위치로 갈린다.** 외야(左·中·右·左中間·右中間)로 간 희생타는 **플라이**이고,
+   * 내야(投·捕·一·二·三·遊)로 간 것은 **번트**다 — 번트는 외야로 가지 않는다.
+   *
+   * 실측(2026-08-17, 2023~2026): 이 규칙이 타석 로그 원문(`犠牲フライ` / `犠牲バント`)과
+   * **5,860건 전부 일치 · 예외 0건**. `犠失` 134건 중 외야는 2건이었고 둘 다 플라이였다.
+   * ⚠**순서가 뜻을 갖는다** — 외야 규칙을 먼저 둔다.
+   */
+  [/^(左中間|右中間|[左中右])犠失$/, "sacFlyError"],
   [/犠失$/, "sacBuntError"],
   // 실책·야수선택은 아웃 계열보다 먼저 본다. `三ゴ失`가 `ゴロ`로 잡히면 안 된다.
   [/失$/, "reachedOnError"],
@@ -149,6 +167,7 @@ export function countsAsAtBat(outcome: Outcome): boolean {
     case "sacBunt":
     case "sacBuntFieldersChoice":
     case "sacBuntError":
+    case "sacFlyError":
     case "interference":
     case "obstruction":
     case "unknown":

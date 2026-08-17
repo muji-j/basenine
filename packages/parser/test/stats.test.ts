@@ -7,6 +7,8 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { gunzipSync } from "node:zlib";
 import {
   StatsParseError,
   normalizePlayerName,
@@ -133,4 +135,52 @@ test("수로 읽을 수 없는 칸이 있으면 던진다 — 조용히 NaN을 �
     () => parseTeamBatting(html),
     (e: unknown) => e instanceof StatsParseError && /수로 읽을 수 없는 칸/.test(e.message),
   );
+});
+
+/**
+ * 구형(2023~2024) 공표 성적표 — **실물로 검증한다.**
+ *
+ * ⚠**이 분기가 없으면 소급 시즌을 공표값과 대조할 수 없다** — 백필의 검증 수단이 사라진다.
+ * 실제로 2024를 대조하자 **결함 후보 6건**이 나왔고, 그것이 `犠失` 오분류였다
+ * (외야로 간 희생타를 번트로 읽어 출루율이 높게 나왔다).
+ *
+ * 구형이 다른 점(실측 2026-08-17):
+ *   · `class="tablefix2"` 가 없다
+ *   · 표 맨 위에 주석 행, **모든 행 앞에 빈 칸이 하나 더**
+ *   · 헤더에 공백(`選 手`) · 장음이 전각 세로줄(`セ｜ブ`) · 홀드가 축약형(`ホ｜ル`)
+ *   · **투구회가 두 칸으로 쪼개진다**(`106` + `.1`)
+ */
+const LEGACY_BATTING = gunzipSync(
+  readFileSync(new URL("./fixtures/2024-stats-batting.html.gz", import.meta.url)),
+).toString("utf8");
+const LEGACY_PITCHING = gunzipSync(
+  readFileSync(new URL("./fixtures/2024-stats-pitching.html.gz", import.meta.url)),
+).toString("utf8");
+
+test("⚠구형 공표 타격 성적표를 읽는다 — 없으면 백필을 대조할 수 없다", () => {
+  const rows = parseTeamBatting(LEGACY_BATTING);
+  assert.ok(rows.length > 20, `행이 너무 적다: ${rows.length}`);
+  const first = rows[0]!;
+  // ⚠**빈 칸을 떼지 않으면 여기서 이름이 비고 열이 전부 하나씩 밀린다**
+  assert.ok(first.name.length > 0, "선수명 자리가 비었다 — 앞의 빈 칸을 떼지 않았다");
+  assert.ok(Number.isFinite(first.games), "試合를 수로 읽지 못했다");
+  assert.ok(Number.isFinite(first.gidp), "併殺打를 수로 읽지 못했다(열이 밀렸다)");
+  // 합계가 말이 되는가 — 타수는 타석 이하다
+  for (const r of rows) {
+    if (Number.isFinite(r.ab) && Number.isFinite(r.pa)) {
+      assert.ok(r.ab <= r.pa, `${r.name}: 타수 ${r.ab} > 타석 ${r.pa} — 열이 밀렸다`);
+    }
+  }
+});
+
+test("⚠구형 공표 투구 성적표를 읽는다 — 투구회가 두 칸으로 쪼개져 있다", () => {
+  const rows = parseTeamPitching(LEGACY_PITCHING);
+  assert.ok(rows.length > 10, `행이 너무 적다: ${rows.length}`);
+  const first = rows[0]!;
+  assert.ok(first.name.length > 0, "선수명 자리가 비었다");
+  // ⚠**두 칸을 합치지 않으면 `106` 만 남고 그 뒤의 열이 전부 하나씩 밀린다**
+  assert.match(first.innings, /^\d+(\.\d)?$/, `투구회를 합치지 못했다: ${JSON.stringify(first.innings)}`);
+  assert.ok(Number.isFinite(first.era ? Number(first.era) : Number.NaN), "방어율 자리가 수가 아니다 — 열이 밀렸다");
+  // 홀드 열이 잡혔는가(구형은 `ホ｜ル` 로 축약된다)
+  assert.ok(rows.every((r) => Number.isFinite(r.hld)), "홀드 열을 못 찾았다");
 });
