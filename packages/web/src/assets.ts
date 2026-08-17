@@ -260,12 +260,16 @@ a{color:inherit}
 .fixed-note b{color:var(--warn)}
 
 /* ── 블록 ────────────────────────────────────────────────── */
-/* ⚠**구획을 한 칸씩 걸러 바탕을 바꾼다.** 괘선 하나만으로는 구획이 이어져 보인다는
-   지적이 있었다(2026-08-17). 전면 띠는 인쇄물의 관용구이고 **카드가 아니다** —
-   금지 목록의 「균질한 카드 그리드」와는 다른 것이다. */
-.block{padding:17px var(--pad);border-bottom:1px solid var(--hair-2);animation:rise var(--mid) var(--ease) both;
-  animation-delay:calc(var(--i,0) * 26ms)}
-.block:nth-of-type(even){background:var(--panel-2)}
+/* ⚠**영역 구분을 더 또렷하게**(2026-08-17 유저 요청). 괘선 하나만으로는 구획이 이어져 보인다.
+   카드·그림자·둥근 모서리는 쓰지 않으므로(§6), **여백과 괘선의 무게**로 가른다.
+
+   ⚠**한 칸 걸러 바탕을 바꾸는 방식은 버렸다.** nth-of-type(even) 은 **같은 부모 안의
+   형제**를 세는데, 구단 페이지는 구획이 탭 패널 안에 흩어져 있어
+   **탭을 바꿀 때마다 줄무늬가 달라졌다**(成績 탭에는 있고 打者 탭에는 없음).
+   선수 페이지는 사용자가 블록을 켜고 끄므로 더 심하다 — 위치에 기대는 장식은
+   이 화면 구조에서 성립하지 않는다. */
+.block{padding:20px var(--pad);border-bottom:2px solid var(--hair-2);
+  animation:rise var(--mid) var(--ease) both;animation-delay:calc(var(--i,0) * 26ms)}
 .block[hidden]{display:none}
 /* ⚠**구획 머리를 더 또렷하게**(2026-08-17 유저 요청: 가시성·영역 구분).
    카드·그림자·둥근 모서리는 쓰지 않는다(§6) — 대신 **짧은 색 막대**와 글자 무게로 가른다.
@@ -273,8 +277,11 @@ a{color:inherit}
 .block>h2{margin:0 0 10px;font-size:11px;letter-spacing:.19em;color:var(--tx);font-weight:700;
   display:flex;align-items:center;gap:10px;flex-wrap:wrap;
   padding-left:11px;position:relative}
-.block>h2::before{content:"";position:absolute;left:0;top:.15em;bottom:.15em;width:3px;
-  background:var(--chip,var(--tx))}
+/* ⚠**구단 색이 여기까지 온다.** body 에 --team 이 이미 있고(선수·구단 페이지는 그 팀 색,
+   그 밖은 중립색), 로고를 못 쓰는 자리에서 팀을 말하는 것이 색이다(§6).
+   ⚠**--chip 이 있으면 그쪽이 이긴다** — 구단별 묶음 안에서는 그 구단 색이어야 한다 */
+.block>h2::before{content:"";position:absolute;left:0;top:-.05em;bottom:-.05em;width:4px;
+  background:var(--chip,var(--team,var(--tx)))}
 .block>h2 .sw{display:flex;gap:4px;margin-left:auto;flex-wrap:wrap}
 .block>h2 .qt{letter-spacing:0;font-weight:400;color:var(--tx-3)}
 [data-panelgroup]{animation:fade var(--fast) var(--ease)}
