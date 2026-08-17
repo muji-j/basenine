@@ -148,7 +148,6 @@ export function buildSite(
           asOf: data.asOf,
           builtOn: data.matchup.builtOn,
           days: data.matchup.days,
-          scheduleLoaded: data.matchup.scheduleLoaded,
         },
         ctx,
       ),

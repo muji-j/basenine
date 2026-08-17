@@ -339,6 +339,7 @@ export function betterSide(a: CompareStat, b: CompareStat): "a" | "b" | null {
   return aWins ? "a" : "b";
 }
 
+import { dayStateNote } from "./pages.ts";
 import type { MatchupDay } from "./pages.ts";
 
 export interface ComparePageData {
@@ -349,9 +350,7 @@ export interface ComparePageData {
    * 고를 수 있는 날. **対戦を選ぶ와 같은 데이터·같은 부품을 쓴다**(M1) —
    * 두 화면이 각자 만들면 「같은 날인데 나오는 선수가 다르다」가 된다.
    */
-  days: MatchupDay[];
-  /** 앞으로의 일정을 받아 두었는가. ⚠「경기가 없다」와 「모른다」를 가른다(M12) */
-  scheduleLoaded: boolean;
+  days: [MatchupDay, MatchupDay];
 }
 
 /**
@@ -402,32 +401,28 @@ export function renderComparePage(d: ComparePageData, ctx: RenderContext): strin
   <p><button class="go" type="button" id="cmpGo" disabled>成績をくらべる</button>
   <button class="go alt" type="button" id="cmpSwap" disabled>入れかえ</button></p>
 
-  ${d.days.length === 0
-    ? raw("")
-    : html`<div id="cmpToday">
+  <!-- ⚠**경기가 없어도 이 블록을 그린다**(2026-08-17 유저 지적).
+       예전에는 고를 경기가 하나도 없으면 블록째 사라졌고, 그러면
+       **「없다」는 말까지 함께 사라졌다** — 요청은 정확히 그 반대였다.
+       날짜 두 칸은 늘 있고, 각 칸이 자기 상태를 말한다(M12). -->
+  ${html`<div id="cmpToday">
     <!-- ⚠**하루밖에 없을 때 그 이유를 말한다**(M12). 「내일 경기가 없다」와
          「내일 일정을 아직 안 받았다」는 다른 말인데 화면에서는 똑같이 보인다. -->
-    ${d.days.length >= 2
-      ? raw("")
-      : html`<p class="picknote pmiss">${d.scheduleLoaded
-          ? "この先の日程では、次の試合日はこの1日だけです。"
-          : "⚠**この先の日程はまだ取り込んでいません** — 「明日の試合が無い」という意味ではありません。"}</p>`}
-    ${d.days.length < 2
-      ? raw("")
-      : html`<nav class="pickday" aria-label="日にち">${tablist(
-          "cmpday",
-          d.days.map((x) => ({ id: x.date, label: dayLabel(x.date) })),
-          true,
-          "日にち",
-        )}</nav>`}
+    <!-- ⚠**자리는 늘 오늘·내일 두 칸이다**(2026-08-17 유저 지적) -->
+    <nav class="pickday" aria-label="日にち">${tablist(
+      "cmpday",
+      d.days.map((x) => ({ id: x.date, label: dayLabel(x.date) })),
+      true,
+      "日にち",
+    )}</nav>
     ${d.days.map((day, di) =>
       panel(
         "cmpday",
         day.date,
         di === 0,
-        html`<p class="picklab">${fullDate(day.date)}${day.date === d.builtOn ? "（本日）" : ""}の対戦から選ぶ${
-          day.hasProbable ? "" : "　※この日の予告先発はまだ発表されていません"
-        }<s>押した順に A → B に入ります</s></p>
+        html`<p class="picklab${day.state === "games" ? "" : " pmiss"}">${
+          day.games.length === 0 ? "" : `${fullDate(day.date)}の対戦から選ぶ　`
+        }${dayStateNote(day)}<s>押した順に A → B に入ります</s></p>
     <!-- ⚠**탭 그룹 이름을 対戦 화면과 다르게 둔다.** 같은 이름이면 저장된 선택이 두 화면에서 섞인다 -->
     <nav class="pickgames" aria-label="試合">${tablist(
           `cmpgame-${day.date}`,
@@ -450,7 +445,7 @@ export function renderComparePage(d: ComparePageData, ctx: RenderContext): strin
   ${note(
     "打者どうし・投手どうしで並べられます。打者と投手は共通の指標がないため並べません。" +
       "URLをそのまま共有すると、同じ二人を開いた状態になります。" +
-      (d.days.length === 0 ? "" : "ボタンにいない選手は上の検索から選べます。"),
+      (d.days.some((x) => x.games.length > 0) ? "ボタンにいない選手は上の検索から選べます。" : ""),
   )}
 </section>
 

@@ -1325,79 +1325,91 @@ function matchupPage(
     };
   });
 
-  const days: MatchupDay[] = [];
   /**
-   * ⚠**지난 날은 넣지 않는다.** 予告先発 페이지는 마지막으로 경기가 있던 날에 머무르므로,
-   * 월요일(경기 없음)에 만들면 **어제 날짜**가 그대로 남는다 — 실측 2026-08-17(월):
-   * 예고 최신이 8/16 이라 「2026年8月16日の対戦から選ぶ」가 나왔다.
-   * 지난 날을 고르는 화면에 두면 **지금 대전하는 것처럼** 읽힌다.
-   * ⚠**대신 화면이 비지 않는다** — 앞으로의 일정에서 다음 경기일이 들어온다.
-   */
-  if (starters.gameDate !== null && starters.gameDate >= o.builtOn && games.length > 0) {
-    days.push({ date: starters.gameDate, hasProbable: true, games });
-  }
-
-  /**
-   * **또 하루** — 일정에서 두 팀만 아는 날.
+   * **오늘과 내일. 늘 두 칸이다.**
    *
-   * ⚠**予告先発 페이지는 한 날짜만 보여준다**(실측 2026-08-17: 아침엔 오늘, 저녁엔 내일).
-   * 그래서 예고가 붙는 날은 하나뿐이고, 나머지 날은 **누가 던질지 모른다** —
-   * 그 사실을 숨기고 목록만 내면 「예고가 있는 것처럼」 보인다(M11).
-   * ⚠**예고가 있는 날은 건너뛴다** — 같은 날을 두 번 내면 토글의 뜻이 없어진다.
+   * ⚠**자리를 데이터에 맡기지 않는다**(2026-08-17 유저 지적). 예전에는
+   * 「예고가 가리키는 날 + 다음 경기일」이라 **탭의 뜻이 데이터에 따라 움직였다** —
+   * 월요일에는 어제가 나오고, 어떤 날은 토글이 통째로 사라졌다.
+   * 자리를 고정하고 **각 칸이 자기 상태를 말하게** 한다.
    */
-  const other = db.raw
+  const nextDay = (iso: string): string => {
+    /** ⚠순수 계산이다. 로컬 타임존에 기대지 않는다(§2-1) */
+    const t = new Date(`${iso}T00:00:00Z`);
+    t.setUTCDate(t.getUTCDate() + 1);
+    return t.toISOString().slice(0, 10);
+  };
+
+  const teamOfCode = (code: string): MatchupTeam => ({
+    teamCode: code,
+    shortName: shortNameOf(code),
+    name: teamOf(code).name,
+    color: colorOf(code),
+    pitchers: sorted(byTeamPit.get(code) ?? []),
+    batters: sorted(byTeamBat.get(code) ?? []),
+  });
+
+  const upcomingRows = db.raw
     .prepare(
-      `SELECT game_date AS date, home_code AS home, away_code AS away, venue,
-              start_time AS startTime
-         FROM upcoming_game
-        WHERE season = ? AND game_date >= ? AND game_date <> ?
-        ORDER BY game_date, start_time
-        LIMIT 12`,
+      `SELECT game_date AS date, home_code AS home, away_code AS away, venue, start_time AS startTime
+         FROM upcoming_game WHERE season = ? AND game_date IN (?, ?)
+        ORDER BY game_date, start_time`,
     )
-    .all(o.season, o.builtOn, starters.gameDate ?? "") as unknown as {
+    .all(o.season, o.builtOn, nextDay(o.builtOn)) as unknown as {
       date: string; home: string; away: string; venue: string; startTime: string | null;
     }[];
-  /** ⚠**가장 가까운 하루만** 낸다. 여러 날을 한 화면에 쌓으면 고르는 일이 도로 어려워진다 */
-  const nextDate = other[0]?.date ?? null;
-  if (nextDate !== null) {
-    const teamOfCode = (code: string): MatchupTeam => ({
-      teamCode: code,
-      shortName: shortNameOf(code),
-      name: teamOf(code).name,
-      color: colorOf(code),
-      pitchers: sorted(byTeamPit.get(code) ?? []),
-      batters: sorted(byTeamBat.get(code) ?? []),
-    });
-    days.push({
-      date: nextDate,
-      hasProbable: false,
-      games: other
-        .filter((g) => g.date === nextDate)
-        .map((g) => ({
+
+  /**
+   * 우리가 가진 일정이 **이 날 이후까지 이어지는가.**
+   *
+   * ⚠**「그 날 경기가 없다」고 말하려면 그 날 일정을 안다는 근거가 있어야 한다**(M12).
+   * 그 날보다 **뒤의** 경기를 알고 있다면 그 달 일정을 받은 것이고, 그러면
+   * 「이 날은 비었다」가 사실이다. 아무것도 모르면 「없다」가 아니라 **「모른다」**다.
+   */
+  const knowsBeyond = (date: string): boolean =>
+    ((db.raw
+      .prepare("SELECT COUNT(*) AS n FROM upcoming_game WHERE season = ? AND game_date > ?")
+      .get(o.season, date)) as unknown as { n: number }).n > 0;
+
+  const competition = o.competition ?? "regular";
+
+  /** 그 날 경기가 이미 치러졌는가 */
+  const alreadyPlayed = (date: string): boolean =>
+    ((db.raw
+      .prepare("SELECT COUNT(*) AS n FROM game WHERE season = ? AND competition = ? AND game_date = ?")
+      .get(o.season, competition, date)) as unknown as { n: number }).n > 0;
+
+  const dayOf = (date: string): MatchupDay => {
+    // 예고가 이 날을 가리키면 그쪽을 쓴다 — 투수 표식이 붙어 있다
+    if (starters.gameDate === date && games.length > 0) {
+      return { date, state: "games", hasProbable: true, games };
+    }
+    const rows = upcomingRows.filter((r) => r.date === date);
+    if (rows.length > 0) {
+      return {
+        date,
+        state: "games",
+        hasProbable: false,
+        games: rows.map((g) => ({
           // ⚠키가 겹치면 탭이 서로를 연다 — 날짜를 넣어 가른다
           key: `u-${g.date}-${g.home}-${g.away}`,
           venue: g.venue,
           startTime: g.startTime,
           sides: [teamOfCode(g.home), teamOfCode(g.away)] as [MatchupTeam, MatchupTeam],
         })),
-    });
-  }
+      };
+    }
+    if (alreadyPlayed(date)) return { date, state: "played", hasProbable: false, games: [] };
+    return { date, state: knowsBeyond(date) ? "noGames" : "unknown", hasProbable: false, games: [] };
+  };
 
-  /**
-   * ⚠**「앞으로의 일정을 아예 안 받았다」와 「받았는데 그 날 경기가 없다」를 가른다**(M12).
-   * 시즌 전체에 미래 경기가 0건이면 전자다 — 그때 화면이 「明日は試合がありません」이라고 하면
-   * **거짓말**이 된다.
-   */
-  const scheduleLoaded = ((db.raw
-    .prepare("SELECT COUNT(*) AS n FROM upcoming_game WHERE season = ? AND game_date >= ?")
-    .get(o.season, o.builtOn)) as unknown as { n: number }).n > 0;
+  const days: [MatchupDay, MatchupDay] = [dayOf(o.builtOn), dayOf(nextDay(o.builtOn))];
 
   return {
     season: o.season,
     asOf,
     builtOn: o.builtOn,
     days,
-    scheduleLoaded,
   };
 }
 
