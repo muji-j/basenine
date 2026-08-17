@@ -28,7 +28,7 @@ import {
 import { page, pastSeasonOf } from "./layout.ts";
 import { teamPath } from "./team-page.ts";
 import type { Freshness, SiteMeta } from "./layout.ts";
-import type { MatchupRow, RankingPanel } from "./player-page.ts";
+import type { MatchupRow, RankingPanel, RankingRow } from "./player-page.ts";
 import { NEUTRAL_COLOR } from "@bb-app/domain";
 // ⚠**「直近10」을 화면에 손으로 적지 않는다.** 상수를 8로 바꾸면 화면만 거짓말한다
 import { RECENT_GAMES } from "@bb-app/aggregate";
@@ -129,15 +129,54 @@ function categoryPanels(c: RankingCategory, base: string, limit: number, prefix:
   ${c.panels.map((p, pi) => panel(group, p.id, pi === 0, panelTable(p, base, limit)))}`;
 }
 
+/**
+ * 상위 N을 **두 세계에서 각각** 뽑아 합친다.
+ *
+ * ⚠**「全員」으로 바꿨을 때 나올 사람이 애초에 실려 있어야 한다.** 규정 도달자 상위 30명만
+ * 실으면, 전환해도 화면에 새로 나타날 사람이 없어 **버튼이 아무 일도 안 하는 것처럼 보인다.**
+ * 打率처럼 규정 미달자가 상위를 채우는 지표에서는 두 목록이 거의 겹치지 않는다.
+ * ⚠**합친 뒤에도 기본 정렬은 「규정 순위」다** — 처음 보이는 화면은 지금까지와 같아야 한다.
+ */
+function rankingRowsFor(p: RankingPanel, limit: number): { rows: RankingRow[]; qualifiedCount: number } {
+  const byQualified = p.rows.filter((r) => r.rank !== null);
+  const head = byQualified.slice(0, limit);
+  const seen = new Set(head.map((r) => r.playerId));
+  const byAll = p.rows
+    .filter((r) => r.rankAll !== null)
+    .sort((a, b) => (a.rankAll ?? 0) - (b.rankAll ?? 0))
+    .slice(0, limit)
+    .filter((r) => !seen.has(r.playerId));
+  return { rows: [...head, ...byAll], qualifiedCount: byQualified.length };
+}
+
 function panelTable(p: RankingPanel, base: string, limit: number): RawHtml {
-  const rows = p.rows.slice(0, limit);
+  const { rows, qualifiedCount } = rankingRowsFor(p, limit);
   if (rows.length === 0) return html`<p class="empty">順位を計算できていません。</p>`;
-  const truncated = p.rows.length > limit;
-  return html`${scroller(html`<table>
+  const truncated = qualifiedCount > limit;
+  /**
+   * 자격 기준이 실제로 누군가를 자르고 있는가.
+   * ⚠**개수 지표(홈런·탈삼진)에는 자격 기준이 없다** — 거기에 전환 버튼을 두면
+   * 눌러도 아무것도 사라지지 않아 「고장난 버튼」이 된다.
+   */
+  const hasQualifier = p.rows.some((r) => r.rank === null && r.rankAll !== null);
+  return html`${hasQualifier
+    ? html`<div class="mfind rankonly">
+    <button class="tab" type="button" data-rankonly="${p.id}" aria-pressed="true"
+      title="${p.qualifier}">規定到達のみ</button>
+    <span class="count"><span data-rankcount="${p.id}">${Math.min(qualifiedCount, limit)}人</span>を表示中</span>
+  </div>`
+    : null}
+  ${scroller(html`<table>
     <thead><tr><th>順位</th><th class="l">選手</th><th class="l">球団</th><th>${term(p.label)}</th><th>${term("母数")}</th></tr></thead>
     <tbody>${rows.map(
-      (r) => html`<tr class="${r.isMe ? "me" : ""}">
-        <td>${r.rank === null ? NO_VALUE : r.rank}</td>
+      // ⚠**기본은 「규정 도달자만」이므로 미달 행은 처음부터 숨어 있다.**
+      // 스크립트가 없으면 그대로 숨은 채인데, 그것이 **지금까지와 같은 화면**이다 —
+      // 전환은 더해지는 기능이고, 없다고 잃는 것은 없다(§0-1).
+      (r) => html`<tr class="${r.isMe ? "me" : ""}" data-qualified="${r.rank === null ? "0" : "1"}"
+        ${raw(r.rank === null ? "hidden" : "")}>
+        <td><b data-rankq>${r.rank === null ? NO_VALUE : r.rank}</b><b data-ranka hidden>${
+        r.rankAll === null ? NO_VALUE : r.rankAll
+      }</b></td>
         <td class="l"><a href="${base}players/${r.playerId}.html">${r.name}</a></td>
         <td class="l">${r.teamCode.toUpperCase()}</td>
         <td>${rankValue(r.value.value, p.digits, p.valueAsInnings === true)}</td>
@@ -147,8 +186,14 @@ function panelTable(p: RankingPanel, base: string, limit: number): RawHtml {
   </table>`)}
   ${note(
     // ⚠**자른 것을 말한다.** 상위 N만 보여주면서 「전부」처럼 보이면 그것도 거짓말이다
-    truncated ? `${p.qualifier} 上位${limit}人のみ表示（該当 ${p.rows.length}人）。` : p.qualifier,
-  )}`;
+    truncated ? `${p.qualifier} 上位${limit}人のみ表示（該当 ${qualifiedCount}人）。` : p.qualifier,
+  )}
+  ${hasQualifier
+    ? note(
+      "「規定到達のみ」を外すと、規定に届いていない選手も同じ指標で並べた順位で表示します — " +
+        "母数の小さい選手が上位に来ます。母数は右端の列にあります。",
+    )
+    : null}`;
 }
 
 export function renderIndexPage(d: IndexPageData, ctx: RenderContext): string {

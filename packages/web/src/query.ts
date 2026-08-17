@@ -20,6 +20,7 @@ import {
   ops,
   qualifiedBatterPa,
   qualifiedPitcherOuts,
+  rankBy,
   rate,
   sluggingPercentage,
   strikeoutRate,
@@ -295,10 +296,27 @@ function toMetricRanking(
   ranked: readonly RankedLike[],
   denAsInnings = false,
   valueAsInnings = false,
+  /** 높을수록 좋은 지표인가. **전원 순위를 매기는 방향**이다 */
+  higherIsBetter = true,
 ): MetricRanking {
+  /**
+   * 전원 기준 순위.
+   *
+   * ⚠**여기서 직접 매기지 않고 `rankBy` 한 벌을 부른다**(M1/M3).
+   * 동률은 같은 순위를 받고 다음을 건너뛰는데, 그 규칙을 두 곳에 쓰면 어느 날 갈린다.
+   * ⚠**값이 없는 선수는 여기서도 순위가 없다** — `rankBy` 가 그렇게 한다(M11).
+   * ⚠`minDenominator: 0` 이므로 **1타석 1안타가 打率 1위로 올라온다.**
+   *   그것이 「全員」이 뜻하는 바이고, 그래서 화면이 **母数를 늘 함께** 낸다(M2).
+   */
+  const allRank = new Map<string, number | null>();
+  for (const r of rankBy(ranked, (x) => x.rate, { minDenominator: 0, higherIsBetter })) {
+    allRank.set(r.item.playerId, r.rank);
+  }
+
   const rows: RankingRow[] = ranked
     .map((r) => ({
       rank: r.rank,
+      rankAll: allRank.get(r.playerId) ?? null,
       playerId: r.playerId,
       name: r.name,
       teamCode: r.teamCode,
@@ -534,10 +552,12 @@ function pitcherRankings(
     higherIsBetter = false,
   ): MetricRanking =>
     // ⚠투수 지표의 `Rate.denominator`는 **아웃 카운트**다. 이닝으로 바꿔 표기한다.
+    // ⚠**방향을 끝까지 넘긴다.** 「전원 순위」도 같은 방향으로 매겨야 한다 —
+    // 안 넘기면 방어율 전원 순위가 **나쁜 순**이 되어 1위가 최악의 투수가 된다
     toMetricRanking(
       id, label, 2, "投球回", pq,
       asRanked(rankPitchersInRole(bundle, pit, role, pick, higherIsBetter)),
-      true,
+      true, false, higherIsBetter,
     );
   const count = (id: string, label: string, of: (e: PitchingEntry) => number): MetricRanking =>
     countRanking(

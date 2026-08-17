@@ -11,6 +11,7 @@ import { renderRankingPage } from "../src/pages.ts";
 import type { LeagueSection, RankingPageData, StandingRow } from "../src/pages.ts";
 import { colorOf } from "@bb-app/domain";
 import { context, rankingPanel } from "./fixtures.ts";
+import type { RankingPanel } from "../src/player-page.ts";
 
 function row(over: Partial<StandingRow> = {}): StandingRow {
   return {
@@ -212,4 +213,74 @@ test("홈·원정·직전10경기를 승패무 세 자리로 낸다 — 무승�
 test("팀 순위표가 없으면 그 자리를 통째로 비운다 — 빈 표를 남기지 않는다", () => {
   const out = renderRankingPage(data({ standings: [] }), context());
   assert.ok(!out.includes("チーム順位"));
+});
+
+/**
+ * ⚠**「規定到達のみ / 全員」 전환**(2026-08-17 유저 요청).
+ *
+ * 지키는 것 넷:
+ * 1. **기본은 지금까지와 같은 화면**이다 — 미달 행은 서버가 `hidden` 으로 보낸다.
+ *    스크립트가 없으면 그대로 숨은 채이고, 그것이 오늘까지의 순위표다(§0-1).
+ * 2. **전환하면 실제로 나올 사람이 실려 있어야 한다.** 규정 도달자 상위 N만 실으면
+ *    눌러도 아무도 안 나타나 「고장난 버튼」이 된다 — 打率처럼 미달자가 상위를 채우는
+ *    지표에서는 두 목록이 거의 겹치지 않는다.
+ * 3. **두 순위를 서버가 다 보낸다.** 클라이언트가 다시 매기면 동률 규칙이 갈린다(M3).
+ * 4. **자격 기준이 없는 지표에는 버튼을 두지 않는다.** 홈런왕에 규정타석은 걸리지 않으므로
+ *    눌러도 아무것도 안 사라진다.
+ */
+function panelWithUnqualified(id = "wrcPlus"): RankingPanel {
+  const base = rankingPanel();
+  return {
+    ...base,
+    id,
+    rows: [
+      ...base.rows.map((r, i) => ({ ...r, rank: i + 1, rankAll: i + 2 })),
+      // 규정 미달인데 값은 더 좋다 — 전원 순위에서는 1위
+      {
+        rank: null, rankAll: 1, playerId: "sub", name: "代打",
+        teamCode: "g", value: { value: 999, denominator: 12 }, isMe: false,
+      },
+    ],
+  };
+}
+
+function withPanel(p: RankingPanel): string {
+  return renderRankingPage(
+    data({
+      leagues: [{ id: "central", name: "セントラル・リーグ", categories: [{ id: "batter", label: "打者", panels: [p] }] }],
+    }),
+    context(),
+  );
+}
+
+test("⚠규정 미달 행은 처음부터 숨어 있다 — 스크립트가 없으면 지금까지와 같은 화면이다", () => {
+  const out = withPanel(panelWithUnqualified());
+  assert.match(out, /data-qualified="0"\s+hidden>/, "미달 행이 숨겨져 있지 않다");
+  assert.ok(!/data-qualified="1"\s+hidden/.test(out), "도달자까지 숨겼다");
+});
+
+test("⚠전환 버튼이 있고, 눌렀을 때 나올 사람이 실제로 실려 있다", () => {
+  const out = withPanel(panelWithUnqualified());
+  assert.match(out, /data-rankonly="wrcPlus"/, "전환 버튼이 없다");
+  assert.match(out, />代打</, "전환하면 나올 사람이 아예 안 실렸다 — 버튼이 아무 일도 안 한다");
+});
+
+test("⚠두 순위를 다 싣는다 — 클라이언트가 다시 매기지 않는다(M3)", () => {
+  const out = withPanel(panelWithUnqualified());
+  const at = out.indexOf(">代打<");
+  assert.notEqual(at, -1);
+  const row = out.slice(out.lastIndexOf("<tr", at), out.indexOf("</tr>", at));
+  assert.match(row, /<b data-rankq>—<\/b>/, "규정 순위 자리가 「없음」이 아니다");
+  assert.match(row, /<b data-ranka hidden>1<\/b>/, "전원 순위가 안 실렸다");
+});
+
+test("⚠자격 기준이 없는 지표에는 전환 버튼을 두지 않는다 — 눌러도 아무것도 안 사라진다", () => {
+  const base = rankingPanel();
+  const noQual: RankingPanel = {
+    ...base,
+    id: "hr",
+    rows: base.rows.map((r, i) => ({ ...r, rank: i + 1, rankAll: i + 1 })),
+  };
+  const out = withPanel(noQual);
+  assert.ok(!out.includes('data-rankonly="hr"'), "기준이 없는데 전환 버튼을 냈다");
 });

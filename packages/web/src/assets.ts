@@ -589,6 +589,9 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
 .picklab{margin:10px 0 5px;font-size:10px;letter-spacing:.16em;color:var(--tx-3);
   display:flex;align-items:baseline;gap:6px}
 .picklab s{text-decoration:none;letter-spacing:0;font-size:10.5px}
+/* 순위표의 전환 줄. ⚠**「지금 몇 명을 보고 있는가」를 늘 낸다**(M2) —
+   전환했는데 인원이 안 보이면 무엇이 늘고 줄었는지 알 수 없다 */
+.rankonly{margin:0 0 8px}
 /* ⚠**자르지 않고 상자 안에서 스크롤한다.** 상위 N만 내면 대타·중간계투가 사라지고,
    찾는 사람이 없는 순간 이 기능은 없는 것과 같아진다 */
 .picklist{display:flex;flex-wrap:wrap;gap:4px;max-height:184px;overflow-y:auto;
@@ -1118,6 +1121,8 @@ const state={
   sort:(saved.sort&&typeof saved.sort==="object")?saved.sort:{},
   /* 「기준 도달자만 보기」가 켜진 표들 */
   only:(saved.only&&typeof saved.only==="object")?saved.only:{},
+  /* 순위표에서 「全員」으로 본 지표들. ⚠**여기 등록하지 않으면 저장이 조용히 안 된다** */
+  rankAll:(saved.rankAll&&typeof saved.rankAll==="object")?saved.rankAll:{},
   /* select 로 좁힌 값(구단 등) */
   picked:(saved.picked&&typeof saved.picked==="object")?saved.picked:{},
   /* 즐겨찾기한 선수 ID. **이 브라우저에만 남는다** — 서버로 가지 않는다 */
@@ -1619,6 +1624,46 @@ $$("[data-stable]").forEach(box=>{
       if(state.order.indexOf("matchup")<0)state.order=state.order.concat(["matchup"]);
     }
   }
+});
+
+/* ── 순위표의 「規定到達のみ / 全員」 ──
+
+   ⚠**여기서 다시 순위를 매기지 않는다**(M1/M3). 서버가 **같은 rankBy 한 벌**로
+   두 번 매겨 두 순위를 다 보냈다. 클라이언트가 매기면 동률 규칙이 갈릴 수 있고,
+   순위는 규칙이 곧 값이다.
+
+   ⚠**기본은 「규정 도달자만」이고, 미달 행은 서버가 이미 hidden 으로 보낸다.**
+   스크립트가 없으면 지금까지와 똑같은 화면이 나온다 — 이 기능은 더해지는 쪽이다. */
+$$("[data-rankonly]").forEach(btn=>{
+  const id=btn.dataset.rankonly;
+  const box=btn.closest?btn.closest(".block"):null;
+  const scope=box||doc;
+  /* 같은 화면에 지표 패널이 여럿이라 **이 패널의 표만** 잡아야 한다 */
+  const panel=btn.parentNode&&btn.parentNode.parentNode?btn.parentNode.parentNode:scope;
+  const rows=$$("tbody tr",panel);
+  const countEl=$('[data-rankcount="'+id+'"]',panel);
+  if(rows.length===0)return;
+  if(!state.rankAll||typeof state.rankAll!=="object")state.rankAll={};
+
+  const apply=()=>{
+    const all=state.rankAll[id]===true;
+    let n=0;
+    rows.forEach(tr=>{
+      const q=tr.dataset.qualified==="1";
+      tr.hidden=!all&&!q;
+      if(!tr.hidden)n++;
+      /* 순위 칸을 바꿔 넣는다 — 두 값이 다 실려 있으므로 고르기만 한다 */
+      const a=$("[data-rankq]",tr),b=$("[data-ranka]",tr);
+      if(a)a.hidden=all;
+      if(b)b.hidden=!all;
+    });
+    btn.setAttribute("aria-pressed",String(!all));
+    if(countEl)countEl.textContent=n+"人";
+  };
+  btn.addEventListener("click",()=>{
+    state.rankAll[id]=state.rankAll[id]!==true;save(state);apply();
+  });
+  apply();
 });
 
 /* ── 검색어 접기 ──

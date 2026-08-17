@@ -10,6 +10,7 @@ function withMe(rank: number | null, at: "inside" | "outside") {
   const base = rankingPanel();
   const mine = {
     rank,
+    rankAll: rank,
     playerId: ME,
     name: "佐藤",
     teamCode: "t",

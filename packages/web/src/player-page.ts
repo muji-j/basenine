@@ -270,6 +270,15 @@ export interface RankingRow {
   teamCode: string;
   value: Rate;
   isMe: boolean;
+  /**
+   * **전원 기준 순위** — 자격 기준을 걸지 않고 매긴 순위. 값이 없으면 null.
+   *
+   * ⚠**「規定到達のみ / 全員」 전환을 위해 두 순위를 함께 싣는다.** 클라이언트가
+   * 다시 매기면 동률 규칙이 서버와 갈릴 수 있다(M3: 규칙이 곧 값이다) —
+   * **같은 `rankBy` 한 벌**로 서버에서 두 번 매겨 둘 다 보낸다(M1).
+   * ⚠개수 지표(홈런·탈삼진)에는 자격 기준이 없어 `rank` 와 같은 값이 된다.
+   */
+  rankAll: number | null;
 }
 
 export interface RankingPanel {
