@@ -795,7 +795,10 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
    ⚠고정을 포기해도 기능은 남는다 — 화면 맨 위의 링크 줄로 동작한다. */
 @media (max-width:680px){
   .hjump{position:static}
-  html:has(.hjump){scroll-padding-top:calc(var(--topbar) + 10px)}
+  /* ⚠**특정성을 한 단계 올린다.** 아래 무조건 규칙과 특정성이 같으면
+     **소스 순서가 뒤인 그쪽이 이겨서** 이 보정이 한 번도 적용되지 않는다 —
+     실제로 그 상태로 커밋했다(2026-08-17 검토 P2). 미디어쿼리는 특정성을 올려 주지 않는다. */
+  html:root:has(.hjump){scroll-padding-top:calc(var(--topbar) + 10px)}
 }
 /* ⚠**앵커로 뛸 때 sticky 두 겹에 가리지 않게** 여백을 더 준다 */
 html:has(.hjump){scroll-padding-top:calc(var(--topbar) + 52px)}

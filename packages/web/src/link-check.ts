@@ -43,10 +43,16 @@ export interface BrokenLink {
  * 밖으로 나가는 링크인가. **검사 대상이 아니다** — 우리가 만드는 파일이 아니다.
  * ⚠`//example.com` 도 절대 링크다. 슬래시 두 개를 놓치면 외부 링크를 내부로 오해한다.
  */
+/**
+ * ⚠**`#앵커` 는 여기에 넣지 않는다.** 예전에는 외부로 보고 통째로 건너뛰었는데,
+ * 그러면 **같은 페이지 안의 앵커가 아무 검사도 안 받는다** — 대시보드의 점프 내비가
+ * 없는 구획을 가리켜도 조용히 아무 일이 없다(M12).
+ * 실제로 커밋 메시지에 「빌드가 앵커를 본다」고 적었는데 **거짓이었다**(2026-08-17 검토 P1).
+ * 지금은 아래 루프가 `#` 만 있는 링크를 **그 파일 자신의 id** 와 대조한다.
+ */
 function isExternal(href: string): boolean {
   return (
     href === "" ||
-    href.startsWith("#") ||
     href.startsWith("//") ||
     href.startsWith("http:") ||
     href.startsWith("https:") ||
@@ -106,7 +112,18 @@ export function brokenLinks(files: readonly OutFile[]): BrokenLink[] {
       const hash = href.indexOf("#");
       const frag = hash === -1 ? "" : href.slice(hash + 1);
       const clean = href.split("#")[0]?.split("?")[0] ?? "";
-      if (clean === "") continue;
+      /**
+       * **같은 페이지 안의 앵커**(`#b-hweek`). 경로가 없으므로 **이 파일 자신**과 대조한다.
+       * ⚠`clean === ""` 로 그냥 넘기면 검사가 통째로 빠진다 — 그게 예전 상태였다.
+       */
+      if (clean === "") {
+        if (frag === "" || ids.get(f.path)?.has(frag) === true) continue;
+        const selfKey = `${f.path} ${href}`;
+        if (seen.has(selfKey)) continue;
+        seen.add(selfKey);
+        out.push({ from: f.path, href, to: f.path, kind: "anchor" });
+        continue;
+      }
       const target = resolvePath(dir, clean.endsWith("/") ? `${clean}index.html` : clean);
       const kind: "page" | "anchor" = have.has(target) ? "anchor" : "page";
       // 파일이 있고, 앵커를 안 물었거나 그 앵커가 있으면 통과다

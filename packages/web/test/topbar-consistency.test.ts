@@ -13,9 +13,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const DIST = "dist";
+/**
+ * ⚠**`cwd` 에 기대지 않는다.** 처음에 `"dist"` 라고만 적었더니
+ * `packages/web` 에서 `npm test` 를 돌릴 때 **매번 조용히 skip** 됐다 —
+ * 출력은 `pass 0 / fail 0 / skipped 3` 인데 종료 코드는 0이라 **「합격」으로 읽힌다.**
+ * CLAUDE.md 작업규칙 8 이 경고하는 그 패턴이다(「E2E 5본이 전부 실행 불가인 채 0건=합격으로 오독」).
+ * 이 파일 위치에서 저장소 루트를 거슬러 올라가 **어디서 돌려도 같은 곳을 본다.**
+ */
+const DIST = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "dist");
 
 /** 그 화면의 탭 목록(순서 포함) */
 function tabsOf(html: string): string[] {
