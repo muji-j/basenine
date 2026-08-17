@@ -427,12 +427,17 @@ dd.g-veryBad{box-shadow:inset 0 -3px 0 var(--g-vbad);background:var(--g-vbad-bg)
 :root[data-grades="off"] dd.v{box-shadow:none;background:transparent}
 
 /* 범례 — 색이 무엇을 뜻하는지 말한다. 말하지 않으면 색은 장식이다 */
-.legend{display:flex;align-items:center;gap:11px;flex-wrap:wrap;
+.legend{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
   padding:6px var(--pad);border-bottom:1px solid var(--hair);background:var(--panel-2);
   font-size:10.5px;color:var(--tx-2)}
+/* ⚠**첫 색 블록이 「水準」의 것처럼 읽혔다**(2026-08-18 유저 지적).
+   묶음 안쪽 간격(5px)과 바깥 간격(11px)이 너무 비슷해서, 라벨 다음에 오는
+   とても悪い 의 견본이 **라벨에 붙은 블록**으로 보였다.
+   → 라벨과 눈금 사이에 **세로선**을 넣어 「여기부터가 눈금」임을 형태로 말한다. */
 .legend .lg{letter-spacing:.16em;color:var(--tx-3);white-space:nowrap}
+.legend .lg:first-child{border-right:1px solid var(--hair-2);padding-right:11px}
 .legend .tail{margin-left:auto}
-.legend .sw{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.legend .sw{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
 .legend .sw b{font-weight:400}
 .legend .sw i{width:15px;height:4px;background:var(--g-avg)}
 .legend .sw.g-veryGood i{background:var(--g-vgood)}
@@ -741,7 +746,15 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
 /* ⚠**구단 색을 행에 세운다.** 로고를 못 쓰는 자리에서 팀을 구별하는 것은 색과 이름이고(§6),
    9px 칩 하나로는 표에서 팀이 안 읽힌다는 지적이 있었다(2026-08-17 「조금 더 비비드하게」).
    ⚠**색만으로 전하지 않는다** — 팀 이름이 바로 옆에 그대로 있다 */
-.hstand tbody td:first-child{position:relative;padding-left:12px}
+/* ⚠**여기서 순위 열의 고정이 죽어 있었다**(2026-08-18 유저 지적).
+   .scroller td:first-child 가 position:sticky 를 주는데(특이도 0,2,1),
+   구단 색 막대를 붙이면서 여기에 **position:relative** 를 썼고 이쪽이 (0,2,2)로 이겨서
+   **순위 열만 같이 안 따라왔다** — 팀명 열은 left:44px 에 붙어 있는데 그 왼쪽 44px 이
+   비면서 스크롤이 이상하게 보였다. 바로 위 주석이 「두 열을 함께 고정한다」고 적어 둔
+   그 약속이 CSS 에서는 지켜지지 않고 있었다(자기 수정이 만든 결함 · CLAUDE.md 작업규칙 10).
+   ⚠**sticky 도 「위치가 정해진 요소」다** — ::before 의 기준으로 relative 와 똑같이 동작한다. */
+.hstand tbody td:first-child{position:sticky;left:0;z-index:2;padding-left:12px}
+.hstand thead th:first-child{position:sticky;left:0;z-index:3;background:var(--page)}
 .hstand tbody td:first-child::before{content:"";position:absolute;left:0;top:2px;bottom:2px;width:4px;
   background:var(--chip,transparent)}
 .hstand .hrank{font-weight:700;font-size:14px}
@@ -848,6 +861,25 @@ a.cg:focus-visible{outline:2px solid var(--tx);outline-offset:1px}
 .rdiff{font-family:var(--f-num);font-variant-numeric:tabular-nums;font-size:14px;font-weight:700}
 .rdiff.up{color:var(--up)}
 .rdiff.dn{color:var(--dn)}
+/* ⚠**주역이 무엇인지 값 옆에서 말한다**(2026-08-18 유저 지적: 「이해가 안 됨」).
+   열 이름은 得失点 인데 큰 수는 그 **차이**여서 둘이 어긋나 있었다. */
+.hstand .rdlab{text-decoration:none;font-size:9.5px;letter-spacing:.14em;
+  color:var(--tx-3);margin-left:5px}
+/* 득실차의 좌우 발산 띠 — 가운데가 0. ⚠**뜻을 나르는 것은 색이 아니라 방향**이다
+   (--up 과 --dn 은 명도가 거의 같다 · 실측 1.01:1). 부호가 붙은 수가 바로 위에 있다.
+   ⚠트랙 대비는 잰 값이다 — --up/--dn 대 --hair 가 라이트 4.18/4.21 · 다크 5.33/5.23. */
+.hstand .rdbar{display:block;position:relative;height:5px;margin-top:5px;
+  width:100%;min-width:104px;background:var(--hair);overflow:hidden}
+/* 0 자리를 눈에 보이게 — 어디가 기준인지 모르면 방향이 뜻을 못 나른다 */
+.hstand .rdbar::before{content:"";position:absolute;left:50%;top:0;bottom:0;
+  width:1px;background:var(--tx-3);opacity:.55;z-index:1}
+.hstand .rdbar i{position:absolute;top:0;bottom:0;display:block}
+.hstand .rdbar i.up{background:var(--up)}
+.hstand .rdbar i.dn{background:var(--dn)}
+/* 득점·실점 줄. ⚠**단위를 수보다 작게** 두고, 분모(경기 수)는 한 단계 더 뒤로 물린다 */
+.hstand td.wd .den s{text-decoration:none;font-size:9px;color:var(--tx-3);margin:0 1px 0 0}
+.hstand td.wd .den em{font-style:normal;color:var(--tx-3);opacity:.8;margin-left:6px}
+.hstand td.wd .den em::before{content:"·";margin-right:6px;opacity:.7}
 
 /* 1위 줄.
    ⚠**바탕을 칠하지 않는다** — 표 안에서 한 줄만 바탕이 다르면 「선택됨」으로 읽힌다.
@@ -1049,15 +1081,28 @@ table.stand .dif i.n{right:50%}
    시즌이 늘수록 줄바꿈이 생겨 머리가 두세 줄이 됐다 — 본문이 그만큼 아래로 밀린다.
    ⚠**flex-wrap:wrap 을 지우는 것만으로는 부족하다** — 넘친 것을 **잡을 수 있어야** 한다.
    ⚠**스크롤바를 숨기지 않는다.** 숨기면 더 있다는 것을 알 방법이 마우스 유저에게 없다. */
+/* ⚠**스냅이 연도를 라벨 밑에 세운다**(2026-08-18 유저 지적: 「시즌 텍스트와 2026년이 겹침」).
+   .seasons a 에 scroll-snap-align:start 가 있고 .slab 은 sticky left:0 이라,
+   스냅이 끝나면 연도 하나가 **정확히 라벨이 있는 자리**에 와서 멈춘다 — 겹치는 것이 당연하다.
+   ⚠**scroll-padding-left 로 스냅 기준선을 라벨 오른쪽으로 민다.**
+   라벨 폭(약 50px)+여백보다 넉넉하게 잡는다 — 모자라면 다시 겹친다. */
 .seasons{display:flex;align-items:center;gap:4px;padding:5px var(--pad);
   border-bottom:1px solid var(--hair);background:var(--panel-2);
   flex-wrap:nowrap;overflow-x:auto;overscroll-behavior-x:contain;
-  scrollbar-width:thin;scroll-snap-type:x proximity}
+  scrollbar-width:thin;scroll-snap-type:x proximity;
+  scroll-padding-left:76px}
 .seasons::-webkit-scrollbar{height:6px}
 .seasons::-webkit-scrollbar-thumb{background:var(--hair-2);border-radius:3px}
 /* ⚠**라벨은 굴러 나가지 않는다** — 무엇을 고르는 줄인지가 사라지면 안 된다 */
-.slab{font-size:9.5px;letter-spacing:.16em;color:var(--tx-3);margin-right:5px;
-  position:sticky;left:0;z-index:1;background:var(--panel-2);padding-right:6px;flex:0 0 auto}
+/* ⚠**라벨이 덮는 넓이가 자기 글자만큼뿐이었다.** align-items:center 라 높이가 글자 높이였고,
+   gap 4px + margin 5px 는 배경이 없다 — 그 틈과 위아래로 **지나가는 연도가 그대로 보였다.**
+   → 세로로 늘려 칸을 꽉 채우고, 오른쪽으로 배경을 더 뻗어 gap 까지 덮는다.
+   ⚠**그림자로 「밑으로 지나간다」를 말한다** — 안 그러면 글자가 갑자기 사라지는 것으로 보인다. */
+.slab{font-size:9.5px;letter-spacing:.16em;color:var(--tx-3);
+  position:sticky;left:0;z-index:3;background:var(--panel-2);
+  align-self:stretch;display:flex;align-items:center;
+  margin-right:0;padding-right:10px;flex:0 0 auto;
+  box-shadow:6px 0 0 0 var(--panel-2),12px 0 10px -8px rgba(0,0,0,.28)}
 .seasons a{flex:0 0 auto;scroll-snap-align:start}
 /* 시즌 중 이적 이력. ⚠**합계와 순위가 다른 이유**가 여기 적힌다 */
 .stint{display:block;font-size:10.5px;color:var(--tx-3);margin-top:2px}
@@ -1578,8 +1623,16 @@ function showTabs(){
       if(shut&&SUPPORTS_UNTIL_FOUND&&p.setAttribute)p.setAttribute("hidden","until-found");
       if(!p.hidden)slide(p,dir);
     });
+    /* ⚠**두 종류의 위젯이 같은 배선을 쓴다**(2026-08-18 유저 지적).
+       패널을 여는 것은 role=tablist + aria-selected,
+       표를 좁히기만 하는 버튼줄(buttonGroup)은 role=group + **aria-pressed** 다.
+       그런데 여기서 aria-selected 만 갱신해서, 구단 페이지에서 セイバー 를 눌러도
+       **基本 버튼이 눌린 채로 남았다** — 서버가 심은 aria-pressed 를 아무도 안 껐다.
+       ⚠**어느 속성을 쓰는지는 버튼 자신이 안다.** 여기서 role 을 다시 판정하지 않는다. */
     $$('[data-tabgroup="'+g+'"] [data-tab]').forEach(b=>{
-      b.setAttribute("aria-selected",String(b.dataset.tab===cur));
+      const on=String(b.dataset.tab===cur);
+      if(b.hasAttribute("aria-pressed"))b.setAttribute("aria-pressed",on);
+      else b.setAttribute("aria-selected",on);
     });
   });
   tabHooks.forEach(f=>f());
@@ -1595,16 +1648,21 @@ function showTabs(){
       delete transient[g];
       state.tabs[g]=b.dataset.tab;save(state);showTabs();
     }));
-    /* ⚠**role=tab 을 붙였으면 화살표가 돌아야 한다**(2026-08-18 감사 P2).
+    /* ⚠**tablist 에만 건다**(2026-08-18 유저 지적으로 좁혔다). 처음에는 모든 data-tabgroup 에
+       걸었는데, 그중에는 **패널을 열지 않는 버튼줄**(role=group · buttonGroup)이 섞여 있다 —
+       거기서 로빙 tabindex 를 쓰면 Tab 으로 닿던 버튼들이 **하나만 남고 사라진다.**
+       화살표 규약은 tablist 의 것이지 버튼 묶음의 것이 아니다.
+       ⚠**role=tab 을 붙였으면 화살표가 돌아야 한다**(2026-08-18 감사 P2).
        aria-selected 와 role 만 붙어 있고 **키보드 규약은 없었다** — 낭독기는
        「タブ 1/4」라고 안내하는데 화살표를 눌러도 아무 일도 일어나지 않았다.
        ⚠**새로 만든 날짜 토글(오늘·내일)도 이 위에 얹혀 있다.**
        ⚠tabindex 는 여기서 준다 — JS 가 없으면 화살표도 없으니 그때는 전부 탭으로 닿는 편이 맞다
        (바로 아래 .picklist 가 쓰는 것과 같은 방침). */
-    const rove=(el)=>{buttons.forEach(b=>b.setAttribute("tabindex",b===el?"0":"-1"))};
+    const isTablist=groups[g].some(l=>l.getAttribute&&l.getAttribute("role")==="tablist");
+    const rove=(el)=>{if(isTablist)buttons.forEach(b=>b.setAttribute("tabindex",b===el?"0":"-1"))};
     const sel=buttons.filter(b=>b.dataset.tab===state.tabs[g])[0]||buttons[0];
     if(sel)rove(sel);
-    buttons.forEach((b,at)=>{
+    if(isTablist)buttons.forEach((b,at)=>{
       b.addEventListener("click",()=>rove(b));
       b.addEventListener("keydown",(e)=>{
         const step=e.key==="ArrowRight"||e.key==="ArrowDown"?at+1

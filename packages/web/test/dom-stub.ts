@@ -102,6 +102,16 @@ export class El {
     return this.attrs[k] ?? null;
   }
 
+  /**
+   * ⚠**스텁에 없어서 클라이언트가 터졌다**(2026-08-18). 실제 DOM 에는 있는 메서드인데
+   * 여기 없으면 **브라우저에서는 되는 코드가 시험에서만 죽는다** — 반대 방향의 거짓말이라
+   * 알아채기는 쉽지만, 그때마다 「시험을 피해 코드를 고치는」 유혹이 생긴다.
+   * 스텁이 실물에서 멀어질수록 시험이 지키는 것이 줄어든다.
+   */
+  hasAttribute(k: string): boolean {
+    return this.attrs[k] !== undefined;
+  }
+
   removeAttribute(k: string): void {
     delete this.attrs[k];
     if (k.startsWith("data-")) {
