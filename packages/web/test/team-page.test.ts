@@ -29,6 +29,7 @@ function data(over: Partial<TeamPageData> = {}): TeamPageData {
       today: "2026-08-17",
       upcoming: 1,
       upcomingAsOf: "2026-08-17",
+      seasonOver: false,
       months: [
         {
           key: "2026-08",

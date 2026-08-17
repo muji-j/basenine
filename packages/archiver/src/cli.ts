@@ -73,6 +73,36 @@ await archiveDates(dates, { fetcher, sink, clock, schedule }, (day) => {
   }
 });
 
+/**
+ * **다음 달 일정을 한 장 더 받는다.**
+ *
+ * ⚠**월말마다 「앞으로의 경기」가 비었다**(2026-08-18 감사 P2). 월간 일정 페이지는 **그 달만** 담는데,
+ * 우리는 **수집 대상 날짜의 달**만 받는다 — 8/30 에 8월 일정을 받으면 거기 남은 미래는 8/31 하루뿐이고,
+ * 9월분은 9/1 이 되어야 들어온다. 즉 **월말 이틀은 캘린더의 앞날이 통째로 비고**,
+ * 화면은 그것을 「일정을 아직 안 받았다」로 그린다 — 사실은 시즌이 한창인데도.
+ *
+ * ⚠**비용은 하루 1요청이다**(L1: 1req/2~5초 · 하루 1회 배치). 조건부 요청이 걸리므로
+ * 달이 바뀌지 않는 한 대부분 304 다(L7).
+ * ⚠**실패해도 종료 코드를 더럽히지 않는다** — 이건 앞을 내다보려는 덤이지, 그날 수집의 일부가 아니다.
+ *   12월에 다음 해 1월을 물으면 404 인 것이 정상이다.
+ */
+const last = dates[dates.length - 1];
+if (last !== undefined) {
+  const y = Number(last.slice(0, 4));
+  const m = Number(last.slice(5, 7));
+  const nextY = m === 12 ? y + 1 : y;
+  const nextM = m === 12 ? 1 : m + 1;
+  try {
+    const found = await schedule.get(nextY, nextM, { fetcher, sink, clock });
+    console.error(`다음 달 일정(${nextY}-${String(nextM).padStart(2, "0")}) 확보 · 경기 ${found.length}건`);
+  } catch (err) {
+    console.error(
+      `다음 달 일정(${nextY}-${String(nextM).padStart(2, "0")}) 은 못 받았다 — ` +
+        `${err instanceof Error ? err.message : String(err)}（오프시즌이면 정상）`,
+    );
+  }
+}
+
 const total = summarize(all);
 console.error(
   `\n합계: ${dates.length}일 중 ${dates.length - daysFailed}일 처리 (경기 있는 날 ${daysWithGames}일) · ` +

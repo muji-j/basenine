@@ -79,9 +79,17 @@ test("⚠수준 색은 빨강↔초록이 아니다 — 가장 흔한 색각 이
   assert.equal(hue(bad), "orange", `나쁜 쪽이 주황이어야 한다: ${bad}`);
 });
 
-test("클라이언트는 서버가 심는 전역만 읽는다", () => {
-  assert.match(CLIENT_JS, /window\.__BLOCKS__/);
-  assert.match(CLIENT_JS, /window\.__PRESETS__/);
+/**
+ * ⚠**이름이 「전역」이었지만 이제 전역이 아니다**(2026-08-18).
+ * 서버가 심던 인라인 스크립트(`window.__BLOCKS__=…`)를 `type="application/json"` 데이터 블록으로
+ * 옮겼다 — 그래야 CSP 의 `script-src` 를 `unsafe-inline` 없이 닫을 수 있다(site.ts HEADERS).
+ * ⚠**전역을 다시 쓰면 CSP 가 조용히 사이트를 깨뜨린다** — 그래서 여기서 못 박는다.
+ */
+test("클라이언트는 서버가 심는 데이터 블록에서 읽는다 — 인라인 스크립트를 되살리지 않는다", () => {
+  assert.match(CLIENT_JS, /getElementById\("bb-boot"\)/);
+  assert.doesNotMatch(CLIENT_JS, /window\.__BLOCKS__/, "인라인 전역이 되살아났다 — CSP 가 깨진다");
+  assert.doesNotMatch(CLIENT_JS, /window\.__PRESETS__/, "인라인 전역이 되살아났다 — CSP 가 깨진다");
+  assert.match(CLIENT_JS, /BOOT\.presets/);
   assert.match(CLIENT_JS, /PRESETS\.standard/);
   assert.ok(
     PRESETS.some((p) => p.id === "standard"),

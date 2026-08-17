@@ -151,8 +151,13 @@ export function stableTable(o: StableOptions): RawHtml {
 </div>`;
 
   return html`<div class="stable" data-stable="${o.id}" data-sortdefault="${o.sortKey}:${dir}"
-  ${raw(o.thin === undefined ? "" : ` data-thinfield="${o.thin.field}" data-thinmin="${o.thin.min}" data-thinunit="${o.thin.unit}"`)}
-  ${raw(o.minGroup === undefined ? "" : ` data-mingroup="${o.minGroup}" data-minfield="${o.minField ?? ""}"`)}
+  <!-- ⚠**속성을 문자열로 짓지 않는다**(2026-08-18 감사 P3). 예전에는 raw() 안에서
+       따옴표까지 손으로 붙였는데, 그 안의 값은 **이스케이프를 거치지 않는다** —
+       지금 들어오는 것이 우리 리터럴이라 사고는 없었지만, 타입도 린트도 시험도
+       「검사한 값」과 「깜빡한 값」을 구별할 방법이 없었다.
+       html 태그드 템플릿을 쓰면 보간되는 값이 반드시 escapeHtml 을 지난다(따옴표 포함). -->
+  ${o.thin === undefined ? raw("") : html` data-thinfield="${o.thin.field}" data-thinmin="${o.thin.min}" data-thinunit="${o.thin.unit}"`}
+  ${o.minGroup === undefined ? raw("") : html` data-mingroup="${o.minGroup}" data-minfield="${o.minField ?? ""}"`}
   data-unit="${o.unit}">
 ${controls}
 ${scroller(html`<table id="${domId(o.id, "Table")}">

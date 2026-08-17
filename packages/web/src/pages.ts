@@ -8,6 +8,24 @@
  * ⚠**순위표를 위아래로 늘어놓지 않는다.** 지표 15종 × 리그 2개를 쌓으면 30개 표가 되고,
  * 그건 목록이지 순위표가 아니다. 리그와 지표를 **골라서** 본다.
  */
+
+/**
+ * ⚠**순위 화면이 무겁다 — 알고 남겨 둔다**(2026-08-18 다방면 감사 P2 · 보류).
+ *
+ * 실측(2026-08-18): `ranking.html` 이 **822KB · DOM 25,851요소**이고 그 대부분이
+ * **첫 화면에 안 보이는 패널**이다(지표마다 표를 미리 다 그려 두고 탭으로 여닫는다).
+ *
+ * ⚠**전송량은 문제가 아니었다.** 감사는 비압축 822KB 로 셌지만 Cloudflare 는 브로틀리로 보낸다 —
+ * **실측 gzip 53KB · brotli 32KB** 다. 같은 이유로 比較 샤드도 208KB 가 아니라 **brotli 17KB** 다.
+ * 남는 진짜 비용은 **DOM 요소 수**(파싱·레이아웃·메모리)이고 그건 압축으로 줄지 않는다.
+ *
+ * ⚠**그래도 지금 고치지 않는다.** 고치려면 「숨은 패널을 지연 생성」으로 구조를 바꿔야 하는데,
+ * 그러면 **§0-1(스크립트 없이도 동작한다)**과 정면으로 부딪힌다 — 지금은 JS 가 죽어도
+ * 모든 지표가 문서 안에 있다. 그 교환을 배포 직전에 급히 결정할 일이 아니다.
+ * → **다음 단계의 과제로 남긴다.** 손대려면 §0-1 을 어떻게 지킬지부터 정하라
+ *   (예: `hidden until-found` 를 유지한 채 상위 N명만 그리고 나머지는 「もっと見る」로).
+ */
+
 import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import { NO_VALUE, avg3, dec2, fullDate, innings } from "./format.ts";
@@ -712,7 +730,7 @@ export interface MatchupGame {
  * · `noGames`   — 일정을 받았고, 그 날은 **정말로** 경기가 없다(월요일 등)
  * · `unknown`   — 그 날 일정을 **아직 안 받았다**. 「없다」가 아니다
  */
-export type MatchupDayState = "games" | "played" | "noGames" | "unknown";
+export type MatchupDayState = "games" | "played" | "noGames" | "unknown" | "seasonOver";
 
 export interface MatchupDay {
   /** `YYYY-MM-DD` */
@@ -765,6 +783,13 @@ export function dayStateNote(day: MatchupDay): string {
       return "この日は試合がありません。";
     case "unknown":
       return "⚠この日の日程はまだ取り込んでいません — 「試合が無い」という意味ではありません。";
+    case "seasonOver":
+      /**
+       * ⚠**끝난 시즌에 「아직 안 받았다」라고 쓰면 거짓말이다**(2026-08-18 감사 P1).
+       * 2022 시즌 화면이 2026년 날짜를 고르라고 내밀고 있었다 —
+       * 같은 페이지의 머리띠는 「終了したシーズンです」라고 말하는데.
+       */
+      return "このシーズンは終了しています。上のシーズン切り替えで今季に移れます。";
   }
 }
 
@@ -883,7 +908,10 @@ export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): strin
          예고가 붙는 날은 하나뿐이고, 다른 날은 **두 팀만** 안다 — 화면이 그 차이를 말한다. -->
     <!-- ⚠**자리는 늘 오늘·내일 두 칸이다.** 데이터에 따라 칸이 바뀌면
          같은 자리를 눌러도 다른 것이 열려 손이 기억한 자리가 깨진다. -->
-    <nav class="pickday" aria-label="日にち">${tablist(
+    <!-- ⚠**이름을 여기 두지 않는다**(2026-08-18 감사 P3). 안쪽 tablist 가 같은 이름을 갖고 있어서
+         낭독기가 「日にち ナビゲーション · 日にち タブリスト」처럼 두 번 말했다.
+         이름은 **위젯 쪽**에 남긴다 — 조작하는 것이 그쪽이다. -->
+    <nav class="pickday">${tablist(
       "pickday",
       d.days.map((x) => ({ id: x.date, label: dayLabel(x.date) })),
       true,

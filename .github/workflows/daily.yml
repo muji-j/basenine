@@ -14,11 +14,19 @@
 #   · R2          — 계정·API 토큰·시크릿이 늘어난다. 무료 한도는 넉넉하다
 #   · Actions 캐시 — **7일 미사용이면 삭제된다.** 소급 불가 자산을 둘 곳이 아니다
 #   · 릴리스 자산  — 추가 계정 0 · 추가 시크릿 0(`GITHUB_TOKEN`) · 파일당 2GB
-# 아카이브는 **154MB**(4시즌 · 2026-08-17)이고 릴리스 자산 상한은 파일당 2GB라 아직 여유가 크다.
+# 아카이브는 **190MB**(5시즌 · 2026-08-18)이고 릴리스 자산 상한은 파일당 2GB라 아직 여유가 크다.
 # ⚠시즌을 더 소급하면 시즌당 +40MB 정도씩 는다 — R2로 옮길 시점을 여기서 재라.
 #
 # ⚠**아카이브는 소급 불가능한 자산이다.** 복원이 조용히 실패한 채 덮어쓰면
 # 한 번에 사라지고 로그에는 「정상 종료」가 남는다. `archive-guard`가 **줄어들면 멈춘다.**
+#
+# ## 왜 액션을 커밋 SHA 로 고정하는가
+#
+# 이 잡은 `contents: write` 와 **Cloudflare 배포 토큰**을 들고 돈다.
+# `@v4` 는 **움직이는 태그**라 상류에서 태그를 옮기면(또는 상류 계정이 뚫리면)
+# 우리 승인 없이 새 코드가 그 토큰들과 같은 프로세스에서 돈다 — tj-actions/changed-files 사건이
+# 정확히 그 형태였다. 태그명은 뒤에 주석으로 남겨 사람이 읽을 수 있게 한다(2026-08-18 감사 P3).
+# ⚠**갱신은 손으로 한다** — `gh api repos/<owner>/<repo>/git/ref/tags/v4 --jq .object.sha`.
 
 name: daily collection
 
@@ -46,14 +54,33 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24"
 
       - name: 의존성 설치
         run: npm ci --no-audit --no-fund
+
+      - name: L6 확인 — 리포가 공개면 여기서 멈춘다
+        # ⚠**L6(원시 아카이브는 내부 보관)의 유일한 근거가 「이 리포가 비공개다」인데,
+        #   그것을 확인하는 코드가 한 줄도 없었다**(2026-08-18 감사 P2).
+        #   설정을 한 번 뒤집으면 **154MB 의 npb.jp 원본**이 릴리스 자산째로 공개된다 —
+        #   §2-5 의 2층(편집물로서의 DB)·3층(데드카피)에 정면으로 걸리는 상태가 되고,
+        #   그걸 알아챌 장치가 없었다. 되돌릴 수 없는 종류의 사고다.
+        # ⚠**수집하기 전에 본다** — 올린 뒤에 알면 늦다.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          vis=$(gh repo view --json visibility --jq .visibility)
+          echo "리포 공개 범위: ${vis}"
+          if [ "$vis" != "PRIVATE" ]; then
+            echo "::error::L6 위반 — 이 리포가 ${vis} 다. 원시 아카이브(npb.jp 원본)가 공개된다."
+            echo "공개로 전환하려면 먼저 릴리스 자산에서 아카이브를 내리고 CLAUDE.md §2-5 를 다시 판정하라."
+            exit 1
+          fi
 
       - name: 아카이브·DB 복원
         env:
@@ -65,8 +92,17 @@ jobs:
             # ⚠실패를 삼키지 않는다. 릴리스가 있는데 못 받았다면 그것은 사고다
             gh release download "$DATA_TAG" --dir /tmp/store --clobber
             tar -xf /tmp/store/archive.tar -C data
-            gunzip -c /tmp/store/bb.sqlite.gz > data/bb.sqlite
-            echo "복원 완료"
+            # ⚠**DB 가 없어도 계속 간다**(2026-08-18 감사 P3). DB 는 아카이브에서 **다시 만들 수 있는**
+            #   파생물이지만, 아카이브는 소급 불가 자산이다 — 둘을 같은 무게로 다루면 안 된다.
+            #   예전에는 `set -e` 아래에서 그냥 풀어서, 자산 2개를 올리는 도중에 잡이 죽어
+            #   `bb.sqlite.gz` 만 빠진 릴리스가 남으면 **그 다음부터 매일 여기서 죽었다.**
+            #   적재는 아카이브 전체를 다시 훑으므로 DB 는 저절로 복구된다(느릴 뿐이다).
+            if [ -f /tmp/store/bb.sqlite.gz ]; then
+              gunzip -c /tmp/store/bb.sqlite.gz > data/bb.sqlite
+              echo "복원 완료"
+            else
+              echo "⚠보관소에 bb.sqlite.gz 가 없다 — 아카이브에서 다시 만든다(이번 실행은 느리다)"
+            fi
           else
             echo "보관소 릴리스가 없다 — 첫 실행으로 본다"
           fi
@@ -116,10 +152,23 @@ jobs:
 
       - name: 기록 갱신과 커밋
         # ⚠이 커밋이 리포 활동을 갱신해 60일 자동 비활성화를 막는다. 자기 문제를 자기가 푼다.
+        # ⚠**수집이 실패해도 돈다**(2026-08-18 다방면 감사 P1).
+        #   예전에는 앞 스텝이 실패하면 통째로 건너뛰어져서 ⑴ 収集ログ 화면이 그날을
+        #   「크론이 안 돈 날」로 그렸고(실제로는 돌았고 부분 성공했다 — 사용자에게 거짓말),
+        #   ⑵ archive-manifest 가 실패 연속일수만큼 뒤처져 「줄어들면 멈춘다」 가드의 기준선이 낡았고,
+        #   ⑶ 60일 자동 비활성화를 막는 커밋이 안 남았다.
+        # ⚠**매니페스트 write 만은 검증 통과에 매단다** — 줄어든 상태를 기준선으로 굳히면 안 된다.
+        # ⚠잡 전체는 여전히 실패로 끝난다(배포는 `if: success()` 라 막힌다).
+        if: always()
         run: |
           set -euo pipefail
           mkdir -p ops
-          node scripts/archive-guard.ts write data/archive ops/archive-manifest.json
+          # ⚠검증이 통과했을 때만 기준선을 갱신한다 — 줄어든 상태를 정상으로 굳히지 않는다
+          if [ "${{ steps.guard.outcome }}" = "success" ]; then
+            node scripts/archive-guard.ts write data/archive ops/archive-manifest.json
+          else
+            echo "⚠아카이브 검증이 통과하지 않아 매니페스트를 갱신하지 않는다"
+          fi
           # ⚠**구조화 기록(JSONL)이 화면의 근거다.** 사람이 읽는 산문 로그는 그대로 두되,
           # 화면이 산문을 파싱하게 만들지 않는다 — 문구를 다듬는 순간 조용히 0이 나오는 길이 생긴다.
           # ⚠경기 0건인 날과 크론이 안 돈 날은 DB만으로는 구별되지 않는다. 이 줄이 그 둘을 가른다.
@@ -156,6 +205,15 @@ jobs:
         # 여기 적으면 **그 시즌이 빈 화면으로 생성된다**(2024·2023은 2026-08-17에 올렸다).
         run: node packages/web/tools/build.ts data/bb.sqlite dist 2026,2025,2024,2023,2022
 
+      - name: 시험
+        # ⚠**CI 가 `npm test` 를 한 번도 돌리지 않고 있었다**(2026-08-18 감사 P3).
+        #   화면 대조 시험(`topbar-consistency`)은 `dist` 를 읽으므로 **생성 뒤**에 와야 한다.
+        # ⚠`BB_REQUIRE_DIST=1` 이 핵심이다 — 이것이 없으면 `dist` 가 없을 때 **조용히 skip 되고
+        #   종료 코드는 0**이라 「합격」으로 읽힌다(작업규칙 8).
+        env:
+          BB_REQUIRE_DIST: "1"
+        run: npm test
+
       - name: 배포
         # ⚠**`success()`가 핵심이다.** 신선도가 낡으면 앞의 생성 단계가 종료 코드 1을 낸다.
         # 그때도 배포하면 **낡은 화면이 조용히 올라간다** — 실패는 실패로 끝낸다.
@@ -163,13 +221,20 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx wrangler@4 pages deploy dist --project-name bb-app --branch main
+        # ⚠**`npx wrangler@4` 였다** — 매일 최신 4.x 를 받아 `CLOUDFLARE_API_TOKEN` 이 든
+        #   환경에서 실행했다(2026-08-18 감사 P2). 이 잡에서 락파일 밖의 코드가 도는 곳은 여기뿐이었다.
+        #   지금은 `devDependencies` 에 있고 `npm ci` 가 **락파일의 integrity 로** 설치한다.
+        run: npx --no-install wrangler pages deploy dist --project-name bb-app --branch main
 
       - name: 산출물 보관
-        # ⚠실패했을 때도 남긴다. 「무엇이 만들어졌는데 안 올라갔는가」를 봐야 원인을 안다
-        if: always()
-        uses: actions/upload-artifact@v4
+        # ⚠**성공한 날에는 올리지 않는다**(2026-08-18 감사 P2). 성공하면 같은 것이 Pages 에 올라가
+        #   **볼 수 있는 곳이 이미 있다** — 아티팩트는 그때 아무도 안 본다.
+        #   그런데 dist 는 **522MB · 8,611파일**이고 7일 보관이라 매일 그만큼을 태우고 있었다.
+        #   원래 의도(「무엇이 만들어졌는데 안 올라갔는가」)는 **실패한 날에만** 필요하다.
+        # ⚠`failure()` 만으로는 부족하다 — 취소된 실행도 남긴다. 그래서 `|| cancelled()` 다.
+        if: ${{ failure() || cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: site
           path: dist
-          retention-days: 7
+          retention-days: 3

@@ -72,6 +72,7 @@ function siteData(over: Partial<SiteData> = {}): SiteData {
     },
     days: [],
     dayIndex: { season: 2026, latestDate: "2026-08-14", days: [] },
+    heldSeasons: { from: 2022, to: 2026 },
     latestAnyGameDate: "2026-08-14",
     postseason: { season: 2026, competitions: [] },
     teams: [],
@@ -86,6 +87,12 @@ test("사이트는 정해진 파일 집합을 만든다", () => {
   const out = buildSite(siteData(), SITE, "2026-08-15");
   const paths = out.files.map((f) => f.path).sort();
   assert.deepEqual(paths, [
+    /**
+     * ⚠**Cloudflare Pages 가 배포할 때 읽는 헤더 파일**(2026-08-18 감사 P2 대응).
+     * 화면이 아니라서 링크 검사에도 안 걸리고, 문법이 틀리면 **조용히 무시된다** —
+     * 그래서 「있는지」만이라도 여기서 못 박는다. 내용은 `site.ts` HEADERS.
+     */
+    "_headers",
     "assets/icon.svg",
     "assets/site.css",
     "assets/site.js",
@@ -215,6 +222,7 @@ test("만든 화면이 전부 시즌 경로 목록에 있다 — 빠진 만큼�
       today: "2026-08-17",
       upcoming: 1,
       upcomingAsOf: "2026-08-17",
+      seasonOver: false,
       months: [
         {
           key: "2026-08",

@@ -33,7 +33,8 @@ try {
 
 const db = openDb(dbPath, nowIso);
 const stmt = db.raw.prepare(
-  `UPDATE player SET position = ?, throws = ?, bats = ?, birth_date = ?, physique = ?,
+  // ⚠**연도만 남긴다**(L5 데이터 최소화 · 2026-08-18 감사 P3). 화면이 쓰는 것이 연도뿐이다
+  `UPDATE player SET position = ?, throws = ?, bats = ?, birth_year = ?, physique = ?,
      draft = ?, kana = ?, uniform_number = ?, profile_fetched_at = ?
    WHERE player_id = ?`,
 );
@@ -107,7 +108,8 @@ db.transaction(() => {
       profile.position,
       profile.throws,
       profile.bats,
-      profile.birthDate,
+      // ⚠**월·일을 버린다** — 파서는 원문대로 읽고, 무엇을 남길지는 여기서 정한다
+      profile.birthDate === null ? null : Number(profile.birthDate.slice(0, 4)),
       profile.physique,
       profile.draft,
       profile.kana,
@@ -133,6 +135,14 @@ db.transaction(() => {
      *   투타·읽는 법까지 잃으면 배포가 통째로 멈춘다. 대신 **센다**.
      */
     try {
+      /**
+       * ⚠**이 선수분만 되돌릴 수 있게 감싼다**(2026-08-18 감사 P1).
+       * 예전에는 예외를 잡아 세기만 해서, `DELETE` 는 되고 `INSERT` 가 끊긴 상태가
+       * **그대로 커밋**됐다 — 그 선수의 통산이 조용히 잘리고,
+       * 화면에는 「데이터 없음」이 아니라 **정상적인 작은 수**로 보인다(M11·M2).
+       * 이제 실패하면 **어제 값 그대로** 남는다 — 주석이 약속한 blast radius 가 실제로 성립한다.
+       */
+      db.savepoint(`career_${playerId}`, () => {
       const career = parseCareer(html);
       delBat.run(playerId);
       delPit.run(playerId);
@@ -147,6 +157,7 @@ db.transaction(() => {
           CAREER_SOURCE, fetchedAt, i);
         careerPit += 1;
       }
+      });
     } catch (err) {
       careerFailed += 1;
       console.error(`CAREER ERROR ${playerId} — ${err instanceof Error ? err.message : String(err)}`);

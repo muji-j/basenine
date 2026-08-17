@@ -45,12 +45,25 @@ export class NoGamesFoundError extends Error {
 
 const GAME_HREF = /\/scores\/(\d{4})\/(\d{2})(\d{2})\/([a-z0-9]+(?:-[a-z0-9]+)+)\//g;
 
+/**
+ * **그 달의 날짜 행**. 「경기가 0건」과 「페이지가 바뀌었다」를 가르는 근거다.
+ *
+ * ⚠**이 둘을 못 가르면 오프시즌에 파이프라인이 통째로 멈춘다**(2026-08-18 감사 P2).
+ * NPB 는 12~2월에도 월간 일정 페이지를 내놓는데 **경기 링크가 0건**이다. 그때
+ * `NoGamesFoundError` 를 던지면 그 달의 배치가 통째로 실패하고, 배포도 기록 커밋도
+ * 같이 멈춘다 — 넉 달 동안 매일.
+ * ⚠**그렇다고 0건을 그냥 넘기면 M7 이 죽는다.** 그래서 **구조가 살아 있는지**를 따로 본다:
+ * 날짜 행이 있으면 페이지는 읽힌 것이고 0건은 사실이다. 날짜 행조차 없으면 구조가 바뀐 것이다.
+ */
+const DATE_ROW = /<tr[^>]*\sid=["']date\d{4}["']/g;
+
 
 
 /**
  * 월간 일정 HTML에서 경기 참조를 추출한다.
  *
- * @throws {NoGamesFoundError} 링크가 0건일 때. 호출자가 삼키지 마라.
+ * @throws {NoGamesFoundError} 링크가 0건이고 **날짜 행조차 없을 때**. 호출자가 삼키지 마라.
+ *   ⚠날짜 행이 있는데 경기가 0건이면 **오프시즌이므로 빈 배열을 돌려준다**(위 `DATE_ROW` 참조).
  */
 export function discoverGames(html: string, sourceUrl: string): GameRef[] {
   // ⚠구장 추출은 parser 한 벌만 쓴다(M1) — 수집기와 적재기가 다른 값을 내면 안 된다
@@ -73,7 +86,14 @@ export function discoverGames(html: string, sourceUrl: string): GameRef[] {
     });
   }
 
-  if (out.length === 0) throw new NoGamesFoundError(sourceUrl, html.length);
+  if (out.length === 0) {
+    /**
+     * ⚠**날짜 행이 살아 있으면 「경기가 없는 달」이다** — 12~2월이 실제로 그렇다.
+     * 던지면 오프시즌 내내 배치가 죽는다(§0-3 의 자동 최신화가 통째로 멈춘다).
+     */
+    const rows = html.match(DATE_ROW)?.length ?? 0;
+    if (rows === 0) throw new NoGamesFoundError(sourceUrl, html.length);
+  }
   return out;
 }
 

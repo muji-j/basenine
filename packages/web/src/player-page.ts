@@ -402,7 +402,8 @@ export interface PlayerPageData {
   position: string | null;
   throws: string | null;
   bats: string | null;
-  birthDate: string | null;
+  /** 태어난 해. ⚠**월·일은 보관하지 않는다**(L5) — 화면이 쓰는 것이 연도뿐이다 */
+  birthYear: number | null;
   physique: string | null;
   /**
    * 通算成績. 이 선수 페이지에 표가 없으면 null.
@@ -589,7 +590,7 @@ function idLine(d: PlayerPageData): RawHtml {
     d.uniformNumber === null ? null : `背番号 ${d.uniformNumber}`,
     d.position ?? "ポジション不明",
     throwsBats(d.throws, d.bats),
-    d.birthDate === null ? null : `${d.birthDate.slice(0, 4)}年生`,
+    d.birthYear === null ? null : `${d.birthYear}年生`,
     d.physique,
     // ⚠**맨 뒤에 둔다.** 이 줄은 「지금 이 선수가 누구인가」를 먼저 말하는 자리이고,
     // 드래프트는 **어디서 왔는가**라 그 다음이다. 없으면 항목째 빠진다(M11)
@@ -990,7 +991,11 @@ function advancedPitching(p: PitchingBlockData): RawHtml {
  *
  * ⚠**「今」과 「今季最長」을 나란히 둔다.** 하나만 내면 어제 끊긴 기록이 오늘도
  * 이어지는 것처럼 보인다 — 연속 기록에서 가장 흔한 오독이다.
- * ⚠**「通算」이라고 쓰지 않는다.** 소급 범위가 2시즌뿐이라 통산이 될 수 없다(§2-1).
+ * ⚠**「通算」이라고 쓰지 않는다.** 이 블록은 **그 시즌 안에서만** 센 값이다(§2-1) —
+ * 통산은 아래 `通算成績`(출처 NPB)에 따로 있다.
+ * ⚠예전에는 이유를 「우리는 2025년부터의 기록만 갖고 있다」고 적었는데 **낡은 거짓말**이었다
+ * (실측 1,864/3,510장 · 2026-08-18 감사 P2). 보유 범위를 문장에 박지 않는다 —
+ * 백필할 때마다 사람이 고쳐야 하고, 그래서 안 고쳐진다.
  */
 function streakBlock(s: StreakBlockData, season: number, asOf: string | null): RawHtml {
   /**
@@ -1027,7 +1032,7 @@ function streakBlock(s: StreakBlockData, season: number, asOf: string | null): R
         : `この選手の最後の出場は${gameDate(s.lastGameDate!)}です。左の数字はその時点で続いていた記録で、いまも続いているとは限りません。`) +
         "「今季最長」はこの1年でいちばん長かった記録です。" +
         "⚠打席のなかった試合（代走・守備固めだけ）は数えません — 数えると連続記録が理不尽に途切れます。" +
-        `⚠${season}年のなかだけで数えています。当サイトは2025年からの記録しか持っていないので「通算」ではありません。`,
+        `⚠${season}年のなかだけで数えています。「通算」は下の<b>通算成績</b>（出典：NPB）にあります。`,
     )}`,
   });
 }
@@ -1527,12 +1532,19 @@ function hidden(rendered: RawHtml): RawHtml {
 /**
  * 클라이언트에 실을 카탈로그. **서버가 그린 것과 같은 목록**이어야 한다.
  * @see blocks.ts — 목록은 거기 1벌만 있다
+ *
+ * ⚠**실행되는 스크립트가 아니라 데이터다**(2026-08-18 감사 P2 대응).
+ * 예전에는 `window.__BLOCKS__=[…]` 라는 **인라인 스크립트**를 페이지마다 심었는데,
+ * 그것 하나 때문에 CSP 의 `script-src` 를 닫을 수 없었다 — 내용이 페이지마다 달라
+ * 해시로 허용할 수도 없고, `unsafe-inline` 을 열면 CSP 를 넣는 뜻이 사라진다.
+ * → `<script type="application/json">` 은 **브라우저가 실행하지 않는 데이터 블록**이라
+ *   `script-src 'self'` 아래에서도 그대로 남는다. 이제 인라인 실행 스크립트가 0개다.
  */
 export function bootstrapFor(role: "batter" | "pitcher"): string {
   const blocks = blocksFor(role).map((b) => ({ id: b.id, name: b.name, desc: b.desc }));
   const presets: Record<string, string[]> = {};
   for (const p of presetsFor(role)) presets[p.id] = [...p.blocks];
-  return `window.__BLOCKS__=${JSON.stringify(blocks)};window.__PRESETS__=${JSON.stringify(presets)};`;
+  return JSON.stringify({ blocks, presets });
 }
 
 export function renderPlayerPage(d: PlayerPageData, ctx: RenderContext): string {

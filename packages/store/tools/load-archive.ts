@@ -64,16 +64,33 @@ const nowIso = new Date().toISOString();
  *   일정 페이지를 찾으려다 **0건이 조용히 돌아왔다.** 무엇을 찾는지 호출자가 매번 말한다.
  */
 async function* walk(dir: string, leaf: string): AsyncGenerator<string> {
-  for (const e of await readdir(dir, { withFileTypes: true })) {
+  for (const e of await sortedEntries(dir)) {
     const p = join(dir, e.name);
     if (e.isDirectory()) yield* walk(p, leaf);
     else if (e.name === leaf) yield p;
   }
 }
 
+/**
+ * **이름순으로 정렬해서 돌려준다.**
+ *
+ * ⚠**`readdir` 의 순서는 파일시스템이 정한다**(ext4 는 해시 순서다 — 이름순도 생성순도 아니다).
+ * 그런데 쓰기 상한에 걸렸을 때 이 도구가 안내하는 재개 지점은 `--from {날짜}` 다
+ * (2026-08-18 감사 P3). 순회가 날짜순이 아니면 **그 안내를 그대로 따랐을 때
+ * 아직 안 읽은 경기를 건너뛴다** — 그리고 로그에는 아무것도 안 남는다.
+ *
+ * ⚠**경로가 `.../{시즌}/{MMDD}/{슬러그}/` 라서 이름순 = 날짜순이다.**
+ * 그래서 각 층을 이름으로 정렬하는 것만으로 순회 전체가 시간순이 된다.
+ * ⚠덤으로 **적재가 재현 가능해진다** — 같은 아카이브면 같은 순서로 읽는다.
+ */
+async function sortedEntries(dir: string): Promise<{ name: string; isDirectory(): boolean }[]> {
+  const es = await readdir(dir, { withFileTypes: true });
+  return es.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
 /** 일정 페이지는 `schedule_08.html.gz`처럼 달마다 이름이 다르다 */
 async function* walkSchedules(dir: string): AsyncGenerator<string> {
-  for (const e of await readdir(dir, { withFileTypes: true })) {
+  for (const e of await sortedEntries(dir)) {
     const p = join(dir, e.name);
     if (e.isDirectory()) yield* walkSchedules(p);
     else if (/^schedule_\d{2}\.html\.gz$/.test(e.name)) yield p;
@@ -349,6 +366,20 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
   // ⚠경기 1건의 쓰기를 한 트랜잭션으로 묶는다. 개별 커밋은 느릴 뿐 아니라
   // 도중에 죽으면 **절반만 적재된 경기**를 남긴다.
   db.transaction(() => {
+  /**
+   * ⚠**재적재가 「줄어드는 방향」으로는 멱등이 아니었다**(M5 · 2026-08-18 감사 P2).
+   * `upsertBatting`/`upsertPitching` 은 `(game_id, player_id)` 충돌 시 **갱신**만 한다 —
+   * 즉 **이번에 안 나온 선수의 행은 영원히 남는다.** 미성립 경기 경로에는 이 삭제가
+   * 이미 있었는데(위 254~257행) 실시 경로에는 없었다.
+   *
+   * ⚠**이건 「언젠가 생길 수 있는 문제」가 아니다.** 이 리포는 파서를 계속 고치고 있고
+   * (規則違反アウト · 구형 박스 · 주자 행), 적재는 **아카이브 전체를 매번 다시 훑는다.**
+   * 잘못 뽑힌 선수 행이 한 번 들어가면 파서를 고쳐도 **유령 행이 영구히 성적에 남는다.**
+   * ⚠**pa_event 는 여기서 지우지 않는다** — 아래 자기 트랜잭션에서 삭제 후 삽입한다.
+   */
+  db.raw.prepare("DELETE FROM batting_line WHERE game_id = ?").run(meta.gameId);
+  db.raw.prepare("DELETE FROM pitching_line WHERE game_id = ?").run(meta.gameId);
+
   budget.games += upsertGame(db, {
     ...meta,
     status: "played",

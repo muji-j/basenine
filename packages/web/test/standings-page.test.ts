@@ -41,7 +41,7 @@ function row(over: Partial<StandingRow> = {}): StandingRow {
 
 const TIE_RULE =
   "勝率が同じ場合は当該球団間の対戦成績で上位を決めます。それでも並ぶときは同順位として表示します" +
-  "（NPBの規定では次に前年度順位を使いますが、当サイトは2025年からのデータしか持たないため使えません）。";
+  "（NPBの規定では次に前年度順位を使いますが、当サイトはそこまでは判定していません）。";
 
 function data(over: Partial<RankingPageData> = {}): RankingPageData {
   return {

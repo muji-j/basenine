@@ -35,7 +35,15 @@ if (!existsSync(dir)) {
   process.exit(1);
 }
 
-const SOURCE = `npb.jp/games/${season}/schedule_MM_detail`;
+/**
+ * 이 행이 **어느 페이지에서 왔는가**(M4).
+ *
+ * ⚠**`MM` 을 치환하지 않은 템플릿을 그대로 넣고 있었다**(2026-08-18 감사 P3).
+ * 그래서 모든 행이 `schedule_MM_detail` 이라는 **존재하지 않는 페이지**를 가리켰고,
+ * 「이 예정은 어디서 왔나」에 답할 수 없었다 — 달마다 페이지가 다른데도.
+ */
+const sourceOf = (file: string): string =>
+  `npb.jp/games/${season}/${file.replace(/\.html\.gz$/, "_detail")}`;
 const nowIso = new Date().toISOString();
 const db = openDb(dbPath, nowIso);
 
@@ -83,7 +91,7 @@ db.transaction(() => {
       const key = `${g.date}|${g.homeCode}|${g.awayCode}`;
       const seq = seqOf.get(key) ?? 0;
       seqOf.set(key, seq + 1);
-      ins.run(season, g.date, g.homeCode, g.awayCode, seq, g.venue, g.startTime, SOURCE, fetchedAt);
+      ins.run(season, g.date, g.homeCode, g.awayCode, seq, g.venue, g.startTime, sourceOf(f), fetchedAt);
       kept += 1;
     }
   }

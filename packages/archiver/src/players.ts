@@ -53,6 +53,21 @@ export async function archivePlayer(playerId: string, deps: ArchivePlayersDeps):
 
     if (res.status === 304) return await seen(304);
     if (res.status === 404 || res.status === 410) {
+      /**
+       * ⚠**「없다」도 기록한다**(2026-08-18 다방면 감사 P1).
+       * 예전에는 아무것도 안 남겨서, 다음 날 「아직 안 받았다」로 다시 뽑혔다 —
+       * **성공할 수 없는 요청 246건을 매일 영구히** 보내고 있었다(L1 위반이 매일 누적).
+       * 소급 시즌을 넣을수록 이 수가 는다.
+       * ⚠**본문은 없으므로 메타만 남긴다.** `absentAt` 이 있으면 선정에서 뺄 수 있다.
+       * ⚠**영구 제외가 아니다** — 1군에 올라오면 페이지가 생긴다. 선정 쪽이 기간을 정한다.
+       */
+      await deps.sink.writeMeta(key, {
+        ...(prev ?? { url, fetchedAt: "", lastModified: null, etag: null, sha256: "", byteLength: 0, revision: 0 }),
+        url,
+        status: res.status,
+        checkedAt: deps.clock.now().toISOString(),
+        absentAt: deps.clock.now().toISOString(),
+      });
       return { key, url, outcome: "absent", status: res.status, error: null };
     }
     if (res.body === null) {
@@ -84,6 +99,15 @@ export async function archivePlayer(playerId: string, deps: ArchivePlayersDeps):
 }
 
 /**
+ * 「없다」고 확인된 페이지를 다시 치기까지의 간격(일).
+ *
+ * ⚠**너무 길면** 1군에 올라온 선수의 페이지를 오래 못 받는다.
+ * ⚠**너무 짧으면** 성공할 수 없는 요청을 계속 보낸다(L1).
+ * 7일이면 등록 주기(보통 주 단위)와 맞고, 246명 기준 하루 35건으로 줄어든다.
+ */
+export const ABSENT_RETRY_DAYS = 7;
+
+/**
  * 여러 선수를 순서대로 보존한다.
  *
  * ⚠**이미 받아둔 선수를 건너뛸 수 있게 한다.** 900명을 3초 간격으로 받으면 45분이다 —
@@ -96,7 +120,23 @@ export async function archivePlayers(
 ): Promise<PageResult[]> {
   const out: PageResult[] = [];
   for (const [index, id] of playerIds.entries()) {
-    if (opts.skipExisting === true && (await deps.sink.readMeta(playerKey(id))) !== null) {
+    /**
+     * ⚠**「없다고 확인된」 선수는 한동안 다시 치지 않는다**(2026-08-18 다방면 감사 P1).
+     * 404 에 사이드카를 안 남기던 때는 **성공할 수 없는 요청 246건을 매일 영구히** 보냈다(L1).
+     * ⚠**영구 제외가 아니다** — 1군에 올라오면 페이지가 생긴다. 그래서 **기간**을 둔다.
+     * ⚠간격을 벽시계가 아니라 **주입된 시계**로 잰다(M6).
+     */
+    const prevMeta = await deps.sink.readMeta(playerKey(id));
+    if (prevMeta?.absentAt !== undefined) {
+      const days = (deps.clock.now().getTime() - Date.parse(prevMeta.absentAt)) / 86_400_000;
+      if (days < ABSENT_RETRY_DAYS) {
+        const skipped: PageResult = { key: playerKey(id), url: playerUrl(id), outcome: "unchanged", status: null, error: null };
+        out.push(skipped);
+        opts.onEach?.(skipped, index, playerIds.length);
+        continue;
+      }
+    }
+    if (opts.skipExisting === true && prevMeta !== null) {
       const skipped: PageResult = {
         key: playerKey(id),
         url: playerUrl(id),

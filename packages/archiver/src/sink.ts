@@ -9,7 +9,7 @@
  */
 import { createHash } from "node:crypto";
 import { gunzipSync, gzipSync } from "node:zlib";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 /** 저장된 블롭의 메타데이터 (CLAUDE.md M4: source · fetched_at · as_of · revision). */
@@ -36,6 +36,15 @@ export interface BlobMeta {
    * ⚠옛 사이드카에는 이 필드가 없다 — 읽는 쪽이 `?? fetchedAt` 으로 떨어뜨린다(하위호환).
    */
   checkedAt?: string;
+  /**
+   * **없다고 확인한 시각**(404/410). 있으면 그 URL 은 그때 존재하지 않았다.
+   *
+   * ⚠**「아직 안 받았다」와 「받으려 했는데 없다」는 다른 말이다**(M11).
+   * 구별하지 않으면 **성공할 수 없는 요청을 매일 영구히** 보낸다 —
+   * 실측 246명이 그 상태였다(2026-08-18 감사 P1).
+   * ⚠**영구 제외의 근거가 아니다** — 1군에 올라오면 페이지가 생긴다. 기간은 선정 쪽이 정한다.
+   */
+  absentAt?: string;
 }
 
 export interface Sink {
@@ -90,18 +99,43 @@ export class LocalSink implements Sink {
     }
   }
 
+  /**
+   * ⚠**본문을 먼저 쓰고 사이드카를 나중에 쓴다** — 그 순서가 뜻을 갖는다.
+   * 사이드카가 먼저 있으면 「받아 뒀다」고 믿고 **본문 없이 건너뛰게** 된다.
+   * 반대 순서(본문만 남고 사이드카 없음)는 다음 실행이 그냥 다시 받는다 — 회복 가능한 쪽이다.
+   */
   async write(key: string, body: Uint8Array, meta: BlobMeta): Promise<void> {
     const bodyPath = this.bodyPath(key);
     await mkdir(dirname(bodyPath), { recursive: true });
-    await writeFile(bodyPath, gzipSync(body));
+    await writeAtomic(bodyPath, gzipSync(body));
     await this.writeMeta(key, meta);
   }
 
   async writeMeta(key: string, meta: BlobMeta): Promise<void> {
     const p = this.metaPath(key);
     await mkdir(dirname(p), { recursive: true });
-    await writeFile(p, `${JSON.stringify(meta, null, 2)}\n`, "utf8");
+    await writeAtomic(p, Buffer.from(`${JSON.stringify(meta, null, 2)}\n`, "utf8"));
   }
+}
+
+/**
+ * **임시 파일에 쓰고 옮긴다.**
+ *
+ * ⚠**본문 쓰기가 비원자적이었다**(2026-08-18 감사 P2). `writeFile` 은 대상 파일을 먼저 비우고
+ * 조금씩 채우므로, 그 사이에 죽으면 **잘린 `.gz`** 가 남는다.
+ * 그리고 다음 실행은 그 파일을 **「있다」로 보고 건너뛰거나**, 사이드카의 sha256/ETag 로
+ * 304 를 받아 **영구히 고착**한다 — 로그에는 「변경없음」이라고 남는다.
+ * ⚠**아카이브는 소급 불가 자산이다** — 조용히 깨진 채 남는 것이 가장 나쁜 결과다.
+ *
+ * ⚠**`rename` 은 같은 파일시스템 안에서 원자적이다.** 그래서 임시 파일을 **같은 디렉터리**에 만든다
+ * (`/tmp` 에 만들면 다른 마운트일 수 있고 그때는 복사 + 삭제라 원자성이 사라진다).
+ * ⚠**임시 이름에 pid 를 넣는다** — 같은 키를 두 프로세스가 동시에 쓰면 서로의 임시 파일을 깬다.
+ *   (동시 실행은 워크플로 `concurrency` 로 막지만, 손으로 돌리는 백필이 겹칠 수 있다.)
+ */
+async function writeAtomic(path: string, data: Uint8Array): Promise<void> {
+  const tmp = `${path}.${process.pid}.tmp`;
+  await writeFile(tmp, data);
+  await rename(tmp, path);
 }
 
 /** 테스트용 인메모리 구현. */

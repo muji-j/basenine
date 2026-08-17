@@ -187,10 +187,46 @@ const starters = db.prepare(`
         AND player_id IS NOT NULL) AS named
 `).get() as { latest: string | null; teams: number; named: number };
 
-/** 오늘(JST) 이후로 **가장 가까운 경기일**. 없으면 시즌이 끝났거나 일정을 못 받은 것이다 */
+/**
+ * 오늘(JST) 이후로 **가장 가까운 경기일**. 없으면 시즌이 끝났거나 일정을 못 받은 것이다.
+ *
+ * ⚠**`game` 만 보면 이 값은 언제나 「오늘 아니면 없음」이다**(2026-08-18 감사 P3).
+ * 일일 배치는 **치러진 경기**만 넣으므로 그 표에는 미래가 한 건도 없다 —
+ * 그래서 이 값을 근거로 삼는 아래 검사가 **사실상 죽어 있었다.**
+ * 지금은 `upcoming_game`(NPB 공표 예정)이 있으므로 **둘 중 이른 쪽**을 쓴다.
+ * ⚠**예정 표가 비어 있어도 동작한다** — 그때는 예전과 같은 값이 나온다(퇴행 없음).
+ */
 const nextGameDay = (db.prepare(
-  "SELECT MIN(game_date) AS d FROM game WHERE game_date >= ?",
-).get(todayJst) as { d: string | null }).d;
+  `SELECT MIN(d) AS d FROM (
+     SELECT MIN(game_date) AS d FROM game WHERE game_date >= ?
+     UNION ALL
+     SELECT MIN(game_date) FROM upcoming_game WHERE game_date >= ?
+   )`,
+).get(todayJst, todayJst) as { d: string | null }).d;
+
+/**
+ * **앞으로의 일정을 얼마나 들고 있는가.**
+ *
+ * ⚠**주 감시 장치가 이 표를 전혀 안 보고 있었다**(2026-08-18 감사 P3).
+ * 캘린더와 오늘·내일 토글이 이것으로 그려지는데, 비어도 아무도 몰랐다 —
+ * 화면에는 「일정을 아직 안 받았다」라고만 뜨고 그것이 정상인지 사고인지 구별되지 않는다(M12).
+ * ⚠**월말이 특히 위험하다** — 월간 페이지는 그 달만 담아서, 다음 달을 안 받으면 앞날이 0이 된다.
+ */
+const upcoming = db.prepare(
+  `SELECT COUNT(*) AS n, MAX(game_date) AS last,
+          MAX(SUBSTR(datetime(fetched_at, '+9 hours'), 1, 10)) AS fetched
+     FROM upcoming_game WHERE game_date >= ?`,
+).get(todayJst) as { n: number; last: string | null; fetched: string | null };
+console.log(
+  `앞으로의 일정 ${upcoming.n}件` +
+    (upcoming.last === null ? "" : ` · ${upcoming.last} まで · 取得 ${upcoming.fetched ?? "?"}`),
+);
+if (upcoming.n === 0) {
+  console.error(
+    "⚠**앞으로의 일정이 0건이다** — 캘린더와 오늘·내일 토글이 「予定なし」로 그려진다.\n" +
+      "   시즌 중이라면 월간 일정 페이지를 못 받았거나 파서가 못 읽은 것이다(§2-2-1).",
+  );
+}
 
 /**
  * **일정에 기대지 않는 값**: 마지막으로 받은 시각(JST 날짜).
@@ -212,11 +248,11 @@ if (starters.latest === null) {
    * 예고는 **전날 저녁**에 나오므로, 다음 경기일이 오늘이면 그날치가 이미 있어야 한다.
    * ⚠**다음 경기일이 내일 이후면 아직 안 나왔을 수 있다** — 그건 정상이라 안 잡는다.
    *
-   * ⚠**지금 이 검사는 사실상 안 돈다.** 일일 배치가 **어제 하루치만** 받아서
-   * `game` 표에 **미래 경기가 한 건도 없다**(실측 2026-08-17: `MAX(game_date)` = 어제).
-   * 월간 일정 페이지에는 앞으로의 경기가 **들어 있는데** 파서가 점수 링크가 붙은 것만 뽑는다 —
-   * CLAUDE.md §2-2-1 의 「받고 있는데 안 읽던 것」이 또 나온 것이다.
-   * → 그래서 아래에 **일정에 기대지 않는 검사**를 함께 둔다.
+   * ⚠**예전에는 이 검사가 사실상 안 돌았다**(2026-08-18 정정). `game` 표에는 미래가 없어서
+   * `nextGameDay` 가 언제나 오늘이거나 없음이었다 — CLAUDE.md §2-2-1 의
+   * 「받고 있는데 안 읽던 것」이 여기서도 나왔다.
+   * 지금은 `nextGameDay` 가 `upcoming_game` 도 보므로 **실제로 앞을 본다.**
+   * ⚠그래도 아래 **일정에 기대지 않는 검사**는 남긴다 — 일정 자체를 못 받은 날이 있기 때문이다.
    */
   if (nextGameDay !== null && nextGameDay <= todayJst && starters.latest < nextGameDay) {
     console.error(

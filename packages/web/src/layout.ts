@@ -38,6 +38,17 @@ export interface Freshness {
   latestGameDate: string | null;
   /** 이 사이트를 만든 날 `YYYY-MM-DD`. **주입된 시계에서 온다**(M6) */
   builtOn: string;
+  /**
+   * **우리가 실제로 보유한 시즌 범위.**
+   *
+   * ⚠**화면이 이것을 하드코딩하고 있었다.** 「当サイトは2025年からの記録しか持っていない」이
+   * 코드 4곳·주석 5곳에 박혀 있었는데 실제로는 **2022~2026 5시즌**이다 —
+   * 실측 **1,864/3,510장**의 선수 페이지가 그 거짓말을 싣고 있었다(2026-08-18 다방면 감사 P2).
+   * 백필할 때마다 사람이 문구를 고쳐야 하는 구조였고, 그래서 안 고쳐졌다.
+   * ⚠**데이터에서 받는다** — 다음 백필에는 저절로 맞는다.
+   */
+  heldFrom: number;
+  heldTo: number;
   /** 경기일과 생성일의 간격(일). null이면 경기가 하나도 없다 */
   lagDays: number | null;
   /**
@@ -68,13 +79,31 @@ export function freshness(
   latestGameDate: string | null,
   builtOn: string,
   regularGameDate: string | null = latestGameDate,
+  /**
+   * 보유 시즌 범위. ⚠**기본값을 두지 않는다면 좋겠지만** 호출자가 여럿이라 뒀다 —
+   * 대신 **0이 아니라 「모른다」로 읽히는 값**을 쓴다(M11). 화면은 0이면 범위를 말하지 않는다.
+   */
+  held: { from: number; to: number } = { from: 0, to: 0 },
 ): Freshness {
   return {
     latestGameDate,
     builtOn,
     lagDays: latestGameDate === null ? null : daysBetween(latestGameDate, builtOn),
     regularGameDate,
+    heldFrom: held.from,
+    heldTo: held.to,
   };
+}
+
+/**
+ * 보유 범위를 사람이 읽는 한 줄로. 모르면 빈 문자열이다(M11 — 0을 「0년」이라 쓰지 않는다).
+ *
+ * ⚠**이 문장을 하드코딩하지 마라.** 백필할 때마다 사람이 고쳐야 하는 구조였고, 그래서 안 고쳐졌다 —
+ * 실측 1,864장이 「2025年から」라는 낡은 거짓말을 싣고 있었다(2026-08-18 감사 P2).
+ */
+export function heldRange(f: Freshness): string {
+  if (f.heldFrom === 0 || f.heldTo === 0) return "";
+  return f.heldFrom === f.heldTo ? `${f.heldFrom}年` : `${f.heldFrom}〜${f.heldTo}年`;
 }
 
 /**
@@ -193,7 +222,10 @@ export interface PageOptions {
   hasPostseason?: boolean;
   /** 본문. 블록들이 여기 들어간다 */
   body: RawHtml;
-  /** 클라이언트에 실어 보낼 스크립트 본문(블록 카탈로그 등) */
+  /**
+   * 클라이언트에 실어 보낼 **데이터**(블록 카탈로그 등). JSON 문자열이다.
+   * ⚠**이름은 `bootstrapJs` 지만 이제 JS 가 아니다** — `type="application/json"` 데이터 블록으로 나간다.
+   */
   bootstrapJs?: string;
 }
 
@@ -230,7 +262,11 @@ function topbar(o: PageOptions): RawHtml {
          base로 두면 2025 화면 2,307장이 전부 404가 된다(2026-08-16 실측 1,585종). -->
     <a href="${o.root}log.html"${here("log")}>記録</a>
   </nav>
-  <button class="tbtn" type="button" id="themeBtn" aria-label="表示テーマ">自動</button>
+  <!-- ⚠**보이는 글자가 이름 안에 있어야 한다**(WCAG 2.5.3 label-in-name · 2026-08-18 감사 P3).
+       예전 초기값은 이름이 「表示テーマ」인데 보이는 글자는 「自動」이라, 음성으로
+       「自動」이라고 말해도 눌리지 않았다. JS 가 뜨면 스스로 고쳤지만 **그 전까지가 틀렸다.**
+       서버가 처음부터 JS 와 같은 문장을 쓴다(assets.ts applyTheme 과 같은 형식). -->
+  <button class="tbtn" type="button" id="themeBtn" aria-label="表示テーマ：自動（切り替え）">自動</button>
 </header>`;
 }
 
@@ -248,6 +284,22 @@ function topbar(o: PageOptions): RawHtml {
  *
  * `seasons`는 새 시즌이 앞이므로, 첫 칸이 현재 페이지가 아니면 지난 시즌이다.
  */
+/**
+ * 푸터의 날짜 도장.
+ *
+ * ⚠**끝난 시즌에 「오늘 생성」을 찍지 않는다.** 정보가 아닐 뿐 아니라
+ * **그 한 글자 때문에 매일 전 페이지가 새 파일이 된다** — 내용이 하나도 안 바뀐
+ * 과거 시즌 6,800여 장(약 410MB)을 매일 다시 업로드하고 있었다(2026-08-18 다방면 감사 P1).
+ * `wrangler pages deploy` 는 내용 해시로 건너뛸 수 있는데, 그 여지를 우리가 없앤 것이다.
+ * ⚠**대신 데이터 기준일을 찍는다** — M4 가 요구하는 것도 「언제까지의 데이터인가」다.
+ * ⚠**현재 시즌은 그대로 생성일이다.** 매일 바뀌는 것이 맞고, 사람이 그것을 본다.
+ */
+function footStamp(o: PageOptions): string {
+  if (!isPastSeason(o)) return `${fullDate(o.freshness.builtOn)} 生成`;
+  const asOf = o.freshness.regularGameDate ?? o.freshness.latestGameDate;
+  return asOf === null ? "終了したシーズン" : `${fullDate(asOf)}までのデータ`;
+}
+
 function isPastSeason(o: PageOptions): boolean {
   return pastSeasonOf(o.seasons);
 }
@@ -397,8 +449,17 @@ export function safeScript(js: string): string {
 
 export function page(o: PageOptions): string {
   const style = `--team:${o.color.base};--team-ink:${o.color.ink}`;
+  /**
+   * ⚠**실행 스크립트가 아니다**(2026-08-18 감사 P2). `type="application/json"` 은 브라우저가
+   * 실행하지 않으므로 CSP 의 `script-src 'self'` 에 걸리지 않는다 — 그 덕에 이 사이트는
+   * **인라인 실행 스크립트 0개**가 되어 CSP 를 `unsafe-inline` 없이 닫을 수 있다(`site.ts` HEADERS).
+   * ⚠`safeScript` 는 그대로 쓴다 — `<` 를 `\u003c` 로 바꾸는 것은 **JSON 문자열 안에서도 유효**하고,
+   * 데이터 안의 `</script>` 가 태그를 끊는 것을 막는다.
+   */
   const boot =
-    o.bootstrapJs === undefined ? raw("") : html`<script>${raw(safeScript(o.bootstrapJs))}</script>`;
+    o.bootstrapJs === undefined
+      ? raw("")
+      : html`<script type="application/json" id="bb-boot">${raw(safeScript(o.bootstrapJs))}</script>`;
 
   const doc = html`<!doctype html>
 <html lang="ja" data-base="${o.base}">
@@ -444,7 +505,7 @@ ${seasonBar(o)}
       本ページの数値は公表記録をもとに<b>当サイトが独自に再計算</b>したものです。原本の表を再現するものではありません。<br>
       選手の写真・球団ロゴは<b>使用していません</b>（記録は事実ですが、写真とロゴは別の権利です）。<br>
       掲載内容の削除・訂正のご依頼は ${o.site.contact === "" ? html`<b>連絡先が未設定です（公開前に設定してください）</b>` : o.site.contact} まで。<br>
-      ${o.site.name} by Lunomel · ${fullDate(o.freshness.builtOn)} 生成
+      ${o.site.name} by Lunomel · ${raw(footStamp(o))}
     </footer>
   </main>
 </div>

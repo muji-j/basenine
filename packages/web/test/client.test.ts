@@ -204,8 +204,19 @@ function run(
 ): { location: { search: string; href: string; hash?: string } } {
   const win: Record<string, unknown> = {};
   const loc = opts.location ?? { search: "", href: "" };
-  // 서버가 심는 것과 **같은 함수**로 만든다 — 두 벌이 되면 어긋난다
-  new Function("window", `${bootstrapFor("batter")}`)(win);
+  /**
+   * 서버가 심는 것과 **같은 함수**로 만든다 — 두 벌이 되면 어긋난다.
+   *
+   * ⚠**실행하지 않는다**(2026-08-18). 예전에는 `new Function("window", bootstrapFor(...))` 로
+   * **JS 처럼 돌렸는데**, 지금 그것은 `type="application/json"` 데이터 블록의 내용이라 JSON 이다
+   * (CSP 의 script-src 를 unsafe-inline 없이 닫으려고 바꿨다 · site.ts HEADERS).
+   * 하네스도 **브라우저와 같은 방식**으로, 문서에 데이터 블록을 심어서 넘긴다.
+   */
+  const boot = doc.createElement("script");
+  boot.id = "bb-boot";
+  boot.setAttribute("type", "application/json");
+  boot.textContent = bootstrapFor("batter");
+  doc.body.appendChild(boot);
   const fetchImpl = (url: string): Promise<unknown> => {
     opts.requested?.push(String(url));
     for (const [fragment, body] of Object.entries(opts.routes ?? {})) {

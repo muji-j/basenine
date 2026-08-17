@@ -1,5 +1,6 @@
 ﻿export {
   NON_TEAM_CODES,
+  REGULAR_SEASON_GAMES,
   TEAMS,
   competitionFromLabel,
   competitionOf,
