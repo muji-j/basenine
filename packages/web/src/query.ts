@@ -18,7 +18,7 @@ import type {
   HomeWeekPlayer,
   HomeWeekTeam,
 } from "./home-page.ts";
-import type { BattedBallData, BuntCell } from "./player-page.ts";
+import type { BattedBallData, BuntCell, CareerData, CareerRow } from "./player-page.ts";
 import type { BattingLine, LeagueConstants, PitchingLine, Rate } from "@bb-app/metrics";
 import {
   babip,
@@ -133,7 +133,7 @@ import type { StandingRow, StandingsSection } from "./pages.ts";
 // 予告先発 화면의 앵커. **試合 카드가 그리로 가므로 키를 두 벌 만들지 않는다**(M1)
 import { batterPick, gameKey, pitcherPick, startersAnchor, unseenPitcherPick } from "./pages.ts";
 import type { RankDigits } from "./parts.ts";
-import { avg3, dec2, denominator, innings } from "./format.ts";
+import { NO_VALUE, avg3, dec2, denominator, innings } from "./format.ts";
 import { readFileSync } from "node:fs";
 import type {
   TeamBatter,
@@ -2271,6 +2271,89 @@ const HOME_WEEK_ROWS = 5;
 const HOME_STREAK_MIN = 5;
 const HOME_STREAK_ROWS = 10;
 
+/**
+ * 年度別成績을 화면 모양으로.
+ *
+ * ⚠**비율은 여기서 낸다**(M1) — DB 에 담지 않고 개수에서 다시 만든다.
+ * 그래야 사이트 안에서 打率 을 내는 곳이 한 벌이다.
+ * ⚠**분모를 문자열 안에 넣는다**(M2) — 값만 떼어 쓸 수 없게.
+ */
+function careerOf(db: Db, playerId: string): CareerData | null {
+  const bat = db.raw
+    .prepare(
+      `SELECT year, team, games, pa, ab, h, hr, rbi, sb, cs, bb, so, source
+         FROM career_batting WHERE player_id = ? ORDER BY year, team`,
+    )
+    .all(playerId) as unknown as {
+      year: number; team: string; games: number; pa: number; ab: number; h: number;
+      hr: number; rbi: number; sb: number; cs: number; bb: number; so: number; source: string;
+    }[];
+  const pit = db.raw
+    .prepare(
+      `SELECT year, team, games, w, l, sv, hld, bf, outs, so, er, bb, source
+         FROM career_pitching WHERE player_id = ? ORDER BY year, team`,
+    )
+    .all(playerId) as unknown as {
+      year: number; team: string; games: number; w: number; l: number; sv: number; hld: number;
+      bf: number; outs: number; so: number; er: number; bb: number; source: string;
+    }[];
+  if (bat.length === 0 && pit.length === 0) return null;
+
+  const avg = (h: number, ab: number): string => (ab === 0 ? NO_VALUE : avg3(h / ab));
+  const era = (er: number, outs: number): string =>
+    outs === 0 ? NO_VALUE : dec2((er * 27) / outs);
+  const ip = (outs: number): string =>
+    `${Math.floor(outs / 3)}${outs % 3 === 0 ? "" : `.${outs % 3}`}`;
+
+  const batting: CareerRow[] = bat.map((r) => ({
+    year: r.year,
+    team: r.team,
+    games: r.games,
+    faced: r.pa,
+    line: `${avg(r.h, r.ab)}（${r.ab}打数）· ${r.h}安打 ${r.hr}本 ${r.rbi}打点 ${r.sb}盗塁${r.cs}刺`,
+    sort: { games: r.games, pa: r.pa, h: r.h, hr: r.hr, rbi: r.rbi, sb: r.sb },
+  }));
+  const pitching: CareerRow[] = pit.map((r) => ({
+    year: r.year,
+    team: r.team,
+    games: r.games,
+    faced: r.bf,
+    line: `${era(r.er, r.outs)}（${ip(r.outs)}回）· ${r.w}勝${r.l}敗 ${r.sv}S ${r.hld}H ${r.so}奪三振`,
+    sort: { games: r.games, outs: r.outs, w: r.w, so: r.so },
+  }));
+
+  const sum = <T,>(rows: readonly T[], pick: (x: T) => number): number =>
+    rows.reduce((a, x) => a + pick(x), 0);
+
+  // ⚠**우리가 더한다.** NPB 는 합계 행을 싣지 않는다 — 남의 계산값이 아니다
+  const bTotal = bat.length === 0
+    ? null
+    : `${sum(bat, (x) => x.games)}試合 ${sum(bat, (x) => x.pa)}打席 · ` +
+      `${avg(sum(bat, (x) => x.h), sum(bat, (x) => x.ab))}（${sum(bat, (x) => x.ab)}打数）· ` +
+      `${sum(bat, (x) => x.h)}安打 ${sum(bat, (x) => x.hr)}本 ${sum(bat, (x) => x.rbi)}打点 ` +
+      `${sum(bat, (x) => x.sb)}盗塁${sum(bat, (x) => x.cs)}刺`;
+  const pTotal = pit.length === 0
+    ? null
+    : `${sum(pit, (x) => x.games)}登板 ${ip(sum(pit, (x) => x.outs))}回 · ` +
+      `${era(sum(pit, (x) => x.er), sum(pit, (x) => x.outs))} · ` +
+      `${sum(pit, (x) => x.w)}勝${sum(pit, (x) => x.l)}敗 ${sum(pit, (x) => x.sv)}S ` +
+      `${sum(pit, (x) => x.hld)}H ${sum(pit, (x) => x.so)}奪三振`;
+
+  const years = [...bat.map((x) => x.year), ...pit.map((x) => x.year)];
+  return {
+    batting,
+    pitching,
+    // ⚠**행 수가 아니라 연도 수다** — 이적하면 한 해에 여러 줄이다
+    battingSeasons: new Set(bat.map((x) => x.year)).size,
+    pitchingSeasons: new Set(pit.map((x) => x.year)).size,
+    battingTotal: bTotal,
+    pitchingTotal: pTotal,
+    from: years.length === 0 ? null : Math.min(...years),
+    to: years.length === 0 ? null : Math.max(...years),
+    source: bat[0]?.source ?? pit[0]?.source ?? "選手ページ",
+  };
+}
+
 function teamPages(
   db: Db,
   o: LoadOptions,
@@ -3255,6 +3338,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       birthDate: profile?.birthDate ?? null,
       physique: profile?.physique ?? null,
       draft: profile?.draft ?? null,
+      career: careerOf(db, playerId),
       uniformNumber: profile?.uniformNumber ?? null,
       role,
       batting: battingData,

@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import { BLOCKS, PRESETS, blocksFor, presetsFor } from "../src/blocks.ts";
 
 test("블록 수를 고정한다 — 하나 빠지면 조립 UI에서 조용히 사라진다", () => {
-  assert.equal(BLOCKS.length, 10);
-  assert.equal(new Set(BLOCKS.map((b) => b.id)).size, 10);
+  // 2026-08-17: 通算成績(career) 추가로 10 → 11
+  assert.equal(BLOCKS.length, 11);
+  assert.equal(new Set(BLOCKS.map((b) => b.id)).size, 11);
 });
 
 test("모든 블록에 이름과 설명이 있다 — 이름만으로는 고를 수 없다", () => {

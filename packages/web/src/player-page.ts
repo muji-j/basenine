@@ -336,6 +336,41 @@ export interface MarkData {
   sampleText: string;
 }
 
+/**
+ * 年度別成績 한 줄. **NPB 공표치**이고 우리가 경기에서 쌓은 값이 아니다(M4).
+ *
+ * ⚠**비율은 담지 않는다.** 우리가 다시 낸다(M1) — 그래야 사이트 안에서 계산이 한 벌이다.
+ */
+export interface CareerRow {
+  year: number;
+  /** 소속 구단 **원문**. 옛 구단명이 그대로 남는다 */
+  team: string;
+  games: number;
+  /** 타자면 打席, 투수면 打者 */
+  faced: number;
+  /** 사람이 읽는 한 줄. ⚠**이미 분모를 품고 있다**(M2) */
+  line: string;
+  /** 정렬용 값들 */
+  sort: Readonly<Record<string, number | null>>;
+}
+
+export interface CareerData {
+  /** 타자표와 투수표 중 이 선수에게 있는 것 */
+  batting: CareerRow[];
+  pitching: CareerRow[];
+  /** 뛴 시즌 수. ⚠**행 수가 아니다** — 이적하면 한 해에 여러 줄이다 */
+  battingSeasons: number;
+  pitchingSeasons: number;
+  /** 통산 합계를 사람이 읽는 한 줄로. **우리가 더한 값**이다 */
+  battingTotal: string | null;
+  pitchingTotal: string | null;
+  /** 첫 시즌·마지막 시즌 */
+  from: number | null;
+  to: number | null;
+  /** M4: 어디서 왔는가 */
+  source: string;
+}
+
 export interface PlayerPageData {
   /**
    * 목록·검색에 쓰는 한 줄 성적(`打率 .260（104打数）`). 값이 없으면 null.
@@ -355,6 +390,11 @@ export interface PlayerPageData {
   bats: string | null;
   birthDate: string | null;
   physique: string | null;
+  /**
+   * 通算成績. 이 선수 페이지에 표가 없으면 null.
+   * ⚠**출처가 다르다**(M4) — 우리가 경기에서 쌓은 다른 블록과 **같은 표에 섞지 마라**.
+   */
+  career: CareerData | null;
   /**
    * 드래프트 지명. `2000年ドラフト5位` **원문 그대로**(M4).
    *
@@ -1321,6 +1361,52 @@ function matchupBlock(rows: readonly MatchupRow[], total: number, opponent: stri
   return block({ id: "matchup", title: "対戦成績", controls, body });
 }
 
+/**
+ * 通算成績.
+ *
+ * ⚠**이 블록만 출처가 다르다**(M4). 다른 블록은 우리가 박스스코어·타석 로그에서 쌓은 값이고
+ * 여기는 **NPB 가 선수 페이지에 공표한 연도별 수치**다. 화면이 그 사실을 적는다 —
+ * 적지 않으면 「어제 본 숫자와 다른데?」에 답할 수 없다.
+ *
+ * ⚠**합계는 우리가 더한 값이다.** NPB 는 합계 행을 싣지 않는다(실측 0/980) —
+ * 남의 계산값을 빌리는 것이 아니다.
+ *
+ * ⚠**우리 보유 범위(2023~)를 넘는 해가 들어 있다.** 그래서 이 표의 연도를 눌러도
+ * 그 시즌 화면으로 보내지 않는다 — 없는 곳으로 보내면 404다.
+ */
+function careerBlock(c: CareerData | null): RawHtml {
+  if (c === null || (c.batting.length === 0 && c.pitching.length === 0)) {
+    return block({ id: "career", title: "通算成績", body: html`<p class="empty">年度別成績がありません。</p>` });
+  }
+
+  const table = (rows: readonly CareerRow[], label: string, unit: string, total: string | null, seasons: number): RawHtml =>
+    rows.length === 0
+      ? raw("")
+      : html`<h3 class="cyr">${label}<span class="qt">${seasons}シーズン</span></h3>
+      ${total === null ? null : html`<p class="ctot"><b>通算</b>${total}</p>`}
+      ${scroller(html`<table>
+        <thead><tr><th>年度</th><th class="l">球団</th><th>試合</th><th>${unit}</th><th class="l">成績</th></tr></thead>
+        <tbody>${rows.map(
+          (r) => html`<tr><td class="b">${r.year}</td><td class="l">${r.team}</td>
+          <td>${r.games}</td><td>${r.faced}</td><td class="l wd">${r.line}</td></tr>`,
+        )}</tbody>
+      </table>`)}`;
+
+  return block({
+    id: "career",
+    title: "通算成績",
+    ...(c.from === null ? {} : { qualifier: `${c.from}〜${c.to}` }),
+    body: html`${table(c.batting, "打撃", "打席", c.battingTotal, c.battingSeasons)}
+${table(c.pitching, "投球", "打者", c.pitchingTotal, c.pitchingSeasons)}
+${note(
+      `⚠**この表だけ出典が違います** — ${c.source} の公表値です。` +
+        "ほかのブロックは当サイトが試合記録から積み上げた値で、**混ぜていません**。" +
+        "**通算は当サイトが足した値**です — NPBは合計行を載せていないためで、他サイトの計算を借りたものではありません。" +
+        "シーズン途中に移籍した年は球団ごとに1行になります。",
+    )}`,
+  });
+}
+
 function rankingBlock(panels: readonly RankingPanel[], base: string): RawHtml {
   if (panels.length === 0) {
     return block({ id: "ranking", title: "リーグ順位", body: html`<p class="empty">順位を計算できていません。</p>` });
@@ -1383,6 +1469,8 @@ function renderBlock(id: BlockId, d: PlayerPageData, base: string): RawHtml {
       return timesThroughBlock(d.timesThrough);
     case "matchup":
       return matchupBlock(d.matchups, d.matchupTotal, d.role === "pitcher" ? "打者" : "投手");
+    case "career":
+      return careerBlock(d.career);
     case "ranking":
       return rankingBlock(d.ranking, base);
   }

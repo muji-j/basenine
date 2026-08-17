@@ -10,7 +10,7 @@ import { readdir } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
-import { parsePlayerProfile } from "@bb-app/parser";
+import { parseCareer, parsePlayerProfile } from "@bb-app/parser";
 import { openDb } from "../src/db.ts";
 
 const [archiveRoot, dbPath] = process.argv.slice(2);
@@ -37,6 +37,31 @@ const stmt = db.raw.prepare(
    WHERE player_id = ?`,
 );
 
+/**
+ * 年度別成績.
+ *
+ * ⚠**우리 경기 데이터와 다른 표에 넣는다**(M4) — 출처가 NPB 공표치라 섞으면
+ * 「어디서 온 숫자인가」에 답할 수 없다.
+ * ⚠**갈아끼운다**(선수 단위 DELETE 후 INSERT). 이적으로 행이 늘거나 줄 수 있고,
+ * UPSERT 만 하면 **없어진 행이 남는다** — 옛 구단 줄이 영원히 붙어 다닌다.
+ */
+const CAREER_SOURCE = "npb.jp/bis/players (年度別成績)";
+const delBat = db.raw.prepare("DELETE FROM career_batting WHERE player_id = ?");
+const delPit = db.raw.prepare("DELETE FROM career_pitching WHERE player_id = ?");
+const insBat = db.raw.prepare(
+  `INSERT INTO career_batting (player_id, year, team, games, pa, ab, runs, h, d2, d3, hr, tb, rbi,
+     sb, cs, sh, sf, bb, hbp, so, gidp, source, fetched_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+);
+const insPit = db.raw.prepare(
+  `INSERT INTO career_pitching (player_id, year, team, games, w, l, sv, hld, hp, cg, sho, nbb, bf,
+     outs, h, hr, bb, hbp, so, wp, balk, runs, er, source, fetched_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+);
+let careerBat = 0;
+let careerPit = 0;
+let careerFailed = 0;
+
 let updated = 0;
 let missing = 0;
 let failed = 0;
@@ -49,9 +74,11 @@ db.transaction(() => {
   for (const f of files) {
     const playerId = f.replace(/\.html\.gz$/, "");
     let profile;
+    let html = "";
     try {
       // 트랜잭션 안이라 동기 읽기를 쓴다 — await 하면 트랜잭션이 열린 채로 이벤트 루프가 돈다.
-      profile = parsePlayerProfile(gunzipSync(readFileSync(join(dir, f))).toString("utf8"));
+      html = gunzipSync(readFileSync(join(dir, f))).toString("utf8");
+      profile = parsePlayerProfile(html);
     } catch (err) {
       failed += 1;
       console.error(`PARSE ERROR ${playerId} — ${err instanceof Error ? err.message : String(err)}`);
@@ -77,6 +104,32 @@ db.transaction(() => {
       nowIso,
       playerId,
     );
+    /**
+     * 年度別成績.
+     * ⚠**프로필과 같은 페이지를 두 번 읽지 않는다** — 이미 문자열을 갖고 있다.
+     * ⚠**여기서 실패해도 프로필은 살린다**(blast radius) — 한 선수의 표 하나 때문에
+     *   투타·읽는 법까지 잃으면 배포가 통째로 멈춘다. 대신 **센다**.
+     */
+    try {
+      const career = parseCareer(html);
+      delBat.run(playerId);
+      delPit.run(playerId);
+      for (const r of career.batting) {
+        insBat.run(playerId, r.year, r.team, r.games, r.pa, r.ab, r.runs, r.h, r.d2, r.d3, r.hr,
+          r.tb, r.rbi, r.sb, r.cs, r.sh, r.sf, r.bb, r.hbp, r.so, r.gidp, CAREER_SOURCE, nowIso);
+        careerBat += 1;
+      }
+      for (const r of career.pitching) {
+        insPit.run(playerId, r.year, r.team, r.games, r.w, r.l, r.sv, r.hld, r.hp, r.cg, r.sho,
+          r.nbb, r.bf, r.outs, r.h, r.hr, r.bb, r.hbp, r.so, r.wp, r.balk, r.runs, r.er,
+          CAREER_SOURCE, nowIso);
+        careerPit += 1;
+      }
+    } catch (err) {
+      careerFailed += 1;
+      console.error(`CAREER ERROR ${playerId} — ${err instanceof Error ? err.message : String(err)}`);
+    }
+
     const changes = db.raw.prepare("SELECT changes() AS n").get() as { n: number };
     if (changes.n === 0) missing += 1;
     else updated += 1;
