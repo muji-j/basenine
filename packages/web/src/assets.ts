@@ -1890,13 +1890,33 @@ if(cmpForm){
     if(typeof bindTerms==="function")bindTerms(wrap);
   };
 
+  /* 받아 둔 샤드의 약속. ⚠**실패한 것은 지운다** — 남겨 두면 다시 눌러도 영영 같은 오류가 난다 */
+  const shards={};
+  /* ⚠**샤드 규칙은 서버(compare.ts 의 compareShardOf)와 같아야 한다 — 선수 ID의 첫 글자다.**
+     빌드가 파일을 놓고 여기가 찾으므로 규칙이 두 벌일 수밖에 없다(M1이 경계하는 모양).
+     그래서 해시가 아니라 **틀릴 수 없을 만큼 단순한 규칙**을 쓴다.
+     assets-source.test.ts 가 이 줄이 사라지지 않았는지 글자로 확인한다. */
+  const shardOf=(id)=>String(id).charAt(0);
   const load=(id)=>{
     if(cache[id])return Promise.resolve(cache[id]);
     if(typeof fetch!=="function")return Promise.reject(new Error("no fetch"));
-    return fetch(BASE+"compare/"+id+".json").then(r=>{
-      if(!r.ok)throw new Error("http "+r.status);
-      return r.json();
-    }).then(j=>{cache[id]=j;return j});
+    const s=shardOf(id);
+    if(!shards[s]){
+      shards[s]=fetch(BASE+"compare/"+s+".json").then(r=>{
+        if(!r.ok)throw new Error("http "+r.status);
+        return r.json();
+      }).then(j=>{
+        /* 한 번 받으면 그 샤드의 선수 전부가 캐시된다 — 같은 글자끼리는 두 번째부터 요청 0 */
+        for(const k in j)cache[k]=j[k];
+        return j;
+      }).catch(e=>{delete shards[s];throw e});
+    }
+    return shards[s].then(j=>{
+      /* ⚠**샤드는 받았는데 그 선수가 없는 경우를 조용히 넘기지 않는다** —
+         빈 카드로 그리면 「성적 0」처럼 보인다(M11) */
+      if(!j[id])throw new Error("no card "+id);
+      return j[id];
+    });
   };
 
   const run=()=>{

@@ -66,7 +66,7 @@ export interface CompareStat {
   min: number | null;
 }
 
-/** 비교용 선수 카드 — `compare/{id}.json`의 내용 */
+/** 비교용 선수 카드 — `compare/{첫글자}.json` 안의 한 항목(`{선수ID: 카드}`) */
 export interface CompareCard {
   id: string;
   name: string;
@@ -250,8 +250,42 @@ export function compareCard(p: PlayerPageData): CompareCard {
   };
 }
 
-export function compareCardJson(card: CompareCard): string {
-  return JSON.stringify(card);
+/**
+ * 比較 데이터를 담을 파일 이름 — **선수 ID의 첫 글자**.
+ *
+ * ## 왜 나누는가
+ * 예전에는 **선수마다 파일 하나**였다(시즌당 ~700개). 그 하나가 2.5KB인데,
+ * 4시즌이면 **2,797개로 전체 산출물의 29%**를 차지했다 —
+ * Cloudflare Pages의 **배포당 파일 상한 20,000개**를 먹는 가장 큰 항목이었다.
+ * 10개로 묶으면 시즌당 **약 711개**가 줄고, 상한까지의 여유가 4시즌 → 7시즌이 된다.
+ *
+ * ## 왜 하필 「첫 글자」인가
+ * ⚠**이 규칙은 빌드와 클라이언트 양쪽에 있어야 한다**(빌드는 파일을 놓고, 클라는 찾는다).
+ * 즉 M1이 경계하는 「같은 규칙의 두 벌 구현」이 불가피하다.
+ * 그래서 **틀릴 수 없을 만큼 단순한 규칙**을 고른다 — 해시나 나머지 연산은 한쪽만 바뀌면
+ * 조용히 안 맞지만, 「첫 글자」는 그럴 여지가 없다.
+ * (`assets-source.test.ts` 가 클라이언트 쪽에 같은 규칙이 있는지 글자로 확인한다.)
+ *
+ * ⚠**균형은 실측으로 골랐다**(2026-08-17, 2025시즌 721명):
+ * 앞 1자리 → 10샤드 · 66~79명(가장 고름) · 끝 1자리 → 40~100명 · 앞 2자리 → 1~63명.
+ *
+ * ⚠**파일 이름이 되므로 안전한 글자여야 한다.** 호출부(`site.ts`)가 선수 ID 전체를
+ * `[A-Za-z0-9_-]+` 로 검사하므로 첫 글자도 그 안에 든다.
+ */
+export function compareShardOf(playerId: string): string {
+  const first = playerId.charAt(0);
+  if (first === "") throw new Error("선수 ID가 비어 있다 — 比較 샤드를 정할 수 없다");
+  return first;
+}
+
+/**
+ * 한 샤드의 내용 — `{ 선수ID: 카드 }`.
+ *
+ * ⚠**배열이 아니라 지도로 둔다.** 클라이언트가 ID로 바로 집어야 하고,
+ * 배열이면 받은 쪽이 매번 훑어야 한다.
+ */
+export function compareShardJson(cards: ReadonlyMap<string, CompareCard>): string {
+  return JSON.stringify(Object.fromEntries(cards));
 }
 
 /**

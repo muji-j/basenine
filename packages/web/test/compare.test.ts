@@ -7,7 +7,13 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { betterSide, compareCard, compareCardJson, renderComparePage } from "../src/compare.ts";
+import {
+  betterSide,
+  compareCard,
+  compareShardJson,
+  compareShardOf,
+  renderComparePage,
+} from "../src/compare.ts";
 import type { CompareStat } from "../src/compare.ts";
 import { CLIENT_JS } from "../src/assets.ts";
 import { GLOSSARY } from "../src/glossary.ts";
@@ -200,7 +206,32 @@ test("성적이 없는 선수는 紋이 null이다 — 점 하나를 그려 「�
 
 test("JSON은 그대로 되읽힌다", () => {
   const c = compareCard(BATTER);
-  assert.deepEqual(JSON.parse(compareCardJson(c)), JSON.parse(JSON.stringify(c)));
+  const shard = JSON.parse(compareShardJson(new Map([["41045153", c]])));
+  assert.deepEqual(shard["41045153"], JSON.parse(JSON.stringify(c)));
+});
+
+/**
+ * ⚠**샤드 규칙은 빌드와 클라이언트 양쪽에 있다**(빌드는 파일을 놓고 클라는 찾는다) —
+ * M1이 경계하는 「같은 규칙의 두 벌 구현」이 불가피한 자리다.
+ * 그래서 **틀릴 수 없을 만큼 단순한 규칙**(첫 글자)을 쓰고, 여기서 그 규칙을 고정한다.
+ * 클라이언트 쪽에 같은 규칙이 남아 있는지는 `assets-source.test.ts` 가 글자로 본다.
+ */
+test("샤드는 선수 ID의 첫 글자다", () => {
+  assert.equal(compareShardOf("41045153"), "4");
+  assert.equal(compareShardOf("01005134"), "0");
+  // ⚠빈 ID를 조용히 넘기면 `compare/.json` 같은 파일이 생긴다
+  assert.throws(() => compareShardOf(""), /선수 ID가 비어 있다/);
+});
+
+/**
+ * ⚠**지도(`{id: card}`)로 낸다.** 배열이면 받은 쪽이 매번 훑어야 하고,
+ * 그러면 「받았는데 그 선수가 없다」를 구별하기도 번거로워진다.
+ */
+test("샤드는 선수 ID로 바로 집을 수 있는 지도다", () => {
+  const a = compareCard(BATTER);
+  const json = JSON.parse(compareShardJson(new Map([["41045153", a], ["41045199", a]])));
+  assert.deepEqual(Object.keys(json).sort(), ["41045153", "41045199"]);
+  assert.equal(json["41045153"].name, a.name);
 });
 
 /**
