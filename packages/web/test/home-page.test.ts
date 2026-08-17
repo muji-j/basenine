@@ -75,6 +75,17 @@ function data(over: Partial<HomePageData> = {}): HomePageData {
         playerId: "B2", name: "栗原", teamCode: "h", shortName: "ソフトバンク", color: colorOf("h"),
         label: "本塁打", count: 32, teamGames: 107, pace: 42, toNext: 8, next: 40,
       },
+      // ⚠**도루 1위가 반드시 있어야 한다.** 예전 필터가 「마디까지 5개 이내」였을 때
+      // 이 사람(31 → 다음 마디 40까지 9개)이 통째로 잘려 나갔다
+      {
+        playerId: "B4", name: "浦田", teamCode: "g", shortName: "巨人", color: colorOf("g"),
+        label: "盗塁", count: 31, teamGames: 107, pace: 41, toNext: 9, next: 40,
+      },
+      // 마디가 남지 않은 사람도 실린다 — 「도전 중」이 아니라 「지금 어떤가」가 이 구획이다
+      {
+        playerId: "B5", name: "才木", teamCode: "t", shortName: "阪神", color: colorOf("t"),
+        label: "奪三振", count: 150, teamGames: 106, pace: 202, toNext: null, next: null,
+      },
     ],
     streaks: [
       {
@@ -196,4 +207,63 @@ test("⚠주간 구단 성적은 승패분과 득실을 그대로 내고, 주간
   assert.match(out, /31\/14<s>\+17<\/s>/, "득점·실점과 차이가 함께 나오지 않는다");
   // 주간 승률(.833)을 만들지 않았다
   assert.ok(!out.includes(".833"), "주간 승률을 만들었다");
+});
+
+/**
+ * ⚠**부문의 실제 상위가 화면에 있어야 한다**(2026-08-17 유저 지적 · 실측으로 재현).
+ *
+ * 예전에는 「마디까지 5개 이내」로 걸렀는데, 그러면
+ * **도루 1위 浦田(31)·홈런 1위 栗原(32)·타점 1위 近藤(87)·탈삼진 1위 才木(150)이
+ * 한 명도 화면에 없고**, 대신 「10홈런까지 1개 남은」 9홈런 선수 7명이 자리를 채웠다.
+ * 제목이 「今シーズンのペース」인데 페이스가 좋은 사람이 없는 화면이었다.
+ */
+test("⚠부문 상위가 마디 거리 때문에 잘리지 않는다", () => {
+  const out = renderHomePage(data(), context());
+  assert.match(out, />浦田</, "도루 1위가 페이스 구획에 없다 — 마디까지 9개라 잘렸다");
+  assert.match(out, />栗原</, "홈런 1위가 없다");
+  // 마디가 남지 않은 사람도 남는다
+  assert.match(out, />才木</, "다음 마디가 없다고 목록에서 뺐다");
+});
+
+/** ⚠**무엇을 골랐는지 화면이 말한다**(M3의 정신) — 「왜 4위가 없지?」에 답할 수 있어야 한다 */
+test("⚠페이스 구획이 「각 부문 상위 3명」이라고 말한다", () => {
+  assert.match(renderHomePage(data(), context()), /各部門の上位3人/);
+});
+
+/**
+ * ⚠**사이트 첫 화면의 순위표에 순위가 없었다**(2026-08-17 2차 검토 지적).
+ * 順位 열이 없으면 **동률 표시(同)도 함께 사라진다** — M3 가 요구하는 동률 규칙이
+ * 화면에서 없어지는 것이다. `ranking.html` 은 지키는데 첫 화면만 안 지켰다.
+ */
+test("⚠순위 열이 있고 동률이 「同」으로 나온다(M3)", () => {
+  const out = renderHomePage(data(), context());
+  assert.match(out, /<th>順位<\/th>/, "순위 열이 없다");
+  const tied = renderHomePage(
+    data({ leagues: [{ id: "central", name: "セ", rows: [team("t", { tiedRank: true }), team("g", { rank: 2 })] }] }),
+    context(),
+  );
+  assert.match(tied, /<s>同<\/s>/, "동률인데 표시가 없다");
+  assert.match(tied, /当該球団間の対戦成績/, "동률을 어떻게 가르는지 말하지 않는다");
+});
+
+/** ⚠**「差」가 무엇의 차인지 적는다** — 축약하면 승차인지 승률차인지 알 수 없다 */
+test("게임차 열의 이름이 「ゲーム差」다", () => {
+  assert.match(renderHomePage(data(), context()), /<th>ゲーム差<\/th>/);
+});
+
+/**
+ * ⚠**첫 화면에서 갈 곳이 보여야 한다**(2026-08-17 유저 요청).
+ * 맨 아래 링크 줄만 있으면 스크롤 끝까지 가야 알 수 있다.
+ * ⚠**시즌마다 있고 없고 하는 화면은 넣지 않는다** — 눌러도 빈 화면이 되면 고장으로 읽힌다(M12).
+ */
+test("⚠첫 화면 위쪽에 주요 페이지로 가는 길이 있다", () => {
+  const out = renderHomePage(data(), context());
+  const nav = /<nav class="hnav"[\s\S]*?<\/nav>/.exec(out)?.[0] ?? "";
+  assert.ok(nav.length > 0, "내비가 없다");
+  for (const path of ["ranking.html", "players.html", "today.html", "matchup.html", "compare.html", "days.html"]) {
+    assert.ok(nav.includes(path), `${path} 로 가는 길이 없다`);
+  }
+  // 머리(h1)보다 뒤, 첫 구획보다 앞이다
+  assert.ok(out.indexOf('class="hnav"') > out.indexOf("<h1"), "내비가 표제보다 앞에 왔다");
+  assert.ok(out.indexOf('class="hnav"') < out.indexOf('class="block"'), "내비가 첫 구획보다 뒤에 있다");
 });

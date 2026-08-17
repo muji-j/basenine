@@ -2070,13 +2070,26 @@ function homePage(
   );
 
   /**
-   * ⚠**마디까지 남은 수가 적은 순.** 같으면 지금 개수가 많은 쪽을 먼저 낸다.
-   * 마디가 없는(이미 최고 마디를 넘긴) 사람은 뒤로 보낸다 — 「도전 중」이 아니다.
+   * **부문마다 상위 몇 명씩.**
+   *
+   * ⚠**처음에는 「마디까지 5개 이내」로 걸렀다가 화면이 통째로 헛돌았다**(2026-08-17 유저 지적).
+   * 실측: 도루 1위 浦田(31)·홈런 1위 栗原(32)·타점 1위 近藤(87)·탈삼진 1위 才木(150)이
+   * **한 명도 화면에 없었고**, 대신 **홈런 9개인 선수 7명**이 자리를 채웠다 —
+   * 9는 다음 마디(10)까지 1개라 통과하고, 31은 다음 마디(40)까지 9개라 잘렸기 때문이다.
+   * **제목이 「今シーズンのペース」인데 페이스가 좋은 사람이 없는 화면**이었다.
+   *
+   * → 부문별로 **개수 상위**를 뽑는다. 마디까지 남은 수는 **거르는 조건이 아니라 덧붙이는 정보**다.
+   * ⚠**부문을 섞어서 자르지 않는다.** 한 덩어리로 자르면 수가 큰 부문(打点·奪三振)이
+   *   전부를 차지하고 도루가 사라진다 — 「盗塁 31」이 「打点 40」보다 작은 수이기 때문이다.
    */
-  const paces = paceRows
-    .filter((x) => x.toNext !== null && x.toNext <= HOME_PACE_NEAR)
-    .sort((a, b) => (a.toNext ?? 0) - (b.toNext ?? 0) || b.count - a.count || a.playerId.localeCompare(b.playerId))
-    .slice(0, HOME_PACE_ROWS);
+  const paces: HomePace[] = [];
+  for (const label of PACE_LABELS) {
+    const mine = paceRows
+      .filter((x) => x.label === label)
+      .sort((a, b) => b.count - a.count || b.pace - a.pace || a.playerId.localeCompare(b.playerId))
+      .slice(0, HOME_PACE_PER_LABEL);
+    paces.push(...mine);
+  }
 
   /**
    * 이어지고 있는 기록.
@@ -2238,7 +2251,15 @@ function homePage(
  * 대시보드의 자르는 기준. ⚠**화면에도 적는다** — 기준이 코드에만 있으면
  * 「왜 이 선수가 없지?」에 답할 수 없다(M3의 정신).
  */
-const HOME_PACE_NEAR = 5;
+/**
+ * 페이스 구획에 내는 부문과 인원.
+ *
+ * ⚠**부문마다 따로 자른다** — 한 덩어리로 자르면 수가 큰 부문이 전부를 차지한다.
+ * ⚠**화면에도 적는다**(M3의 정신) — 「각 부문 상위 3명」이라고 쓰지 않으면
+ * 「왜 4위가 없지?」에 답할 수 없다.
+ */
+const PACE_LABELS = ["本塁打", "打点", "盗塁", "奪三振"] as const;
+const HOME_PACE_PER_LABEL = 3;
 /**
  * 주간 베스트의 최소 표본. ⚠**화면에도 적는다**(M3의 정신).
  * 대타 한 타석으로 SRC 가 튀어 1위가 되는 것을 막되, 너무 높이면 그 주에 쉬었다 나온
@@ -2247,7 +2268,6 @@ const HOME_PACE_NEAR = 5;
 const HOME_WEEK_MIN_PA = 10;
 const HOME_WEEK_MIN_BF = 12;
 const HOME_WEEK_ROWS = 5;
-const HOME_PACE_ROWS = 12;
 const HOME_STREAK_MIN = 5;
 const HOME_STREAK_ROWS = 10;
 

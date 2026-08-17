@@ -260,11 +260,21 @@ a{color:inherit}
 .fixed-note b{color:var(--warn)}
 
 /* ── 블록 ────────────────────────────────────────────────── */
-.block{padding:16px var(--pad);border-bottom:1px solid var(--hair);animation:rise var(--mid) var(--ease) both;
+/* ⚠**구획을 한 칸씩 걸러 바탕을 바꾼다.** 괘선 하나만으로는 구획이 이어져 보인다는
+   지적이 있었다(2026-08-17). 전면 띠는 인쇄물의 관용구이고 **카드가 아니다** —
+   금지 목록의 「균질한 카드 그리드」와는 다른 것이다. */
+.block{padding:17px var(--pad);border-bottom:1px solid var(--hair-2);animation:rise var(--mid) var(--ease) both;
   animation-delay:calc(var(--i,0) * 26ms)}
+.block:nth-of-type(even){background:var(--panel-2)}
 .block[hidden]{display:none}
-.block>h2{margin:0 0 9px;font-size:10.5px;letter-spacing:.19em;color:var(--tx-2);font-weight:600;
-  display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+/* ⚠**구획 머리를 더 또렷하게**(2026-08-17 유저 요청: 가시성·영역 구분).
+   카드·그림자·둥근 모서리는 쓰지 않는다(§6) — 대신 **짧은 색 막대**와 글자 무게로 가른다.
+   막대 색은 그 화면의 구단 색(--chip)이고, 없으면 본문 색이라 어디서든 보인다. */
+.block>h2{margin:0 0 10px;font-size:11px;letter-spacing:.19em;color:var(--tx);font-weight:700;
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding-left:11px;position:relative}
+.block>h2::before{content:"";position:absolute;left:0;top:.15em;bottom:.15em;width:3px;
+  background:var(--chip,var(--tx))}
 .block>h2 .sw{display:flex;gap:4px;margin-left:auto;flex-wrap:wrap}
 .block>h2 .qt{letter-spacing:0;font-weight:400;color:var(--tx-3)}
 [data-panelgroup]{animation:fade var(--fast) var(--ease)}
@@ -599,6 +609,18 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
 /* 순위표는 숫자가 줄맞춰야 읽힌다 */
 .hstand td,.hstand th{font-variant-numeric:tabular-nums}
 .hstand .b{font-weight:700}
+/* ⚠**구단 색을 행에 세운다.** 로고를 못 쓰는 자리에서 팀을 구별하는 것은 색과 이름이고(§6),
+   9px 칩 하나로는 표에서 팀이 안 읽힌다는 지적이 있었다(2026-08-17 「조금 더 비비드하게」).
+   ⚠**색만으로 전하지 않는다** — 팀 이름이 바로 옆에 그대로 있다 */
+.hstand tbody td:first-child{position:relative;padding-left:12px}
+.hstand tbody td:first-child::before{content:"";position:absolute;left:0;top:2px;bottom:2px;width:4px;
+  background:var(--chip,transparent)}
+.hstand .hrank{font-weight:700;font-size:14px}
+.hstand .hrank s{text-decoration:none;font-size:9.5px;color:var(--tx-3);margin-left:2px}
+/* 1위 행만 조금 더 무겁게 — 「지금 누가 위인가」가 이 표의 첫 질문이다 */
+.hstand tr.lead td{background:var(--panel)}
+.hstand tr.lead .hrank{color:var(--tx)}
+.hstand tbody tr:hover td{background:var(--panel)}
 
 /* 그 날의 결과 — 한 줄에 「팀 점수 - 점수 팀」. 표로 만들면 두 줄이 되어 밀도가 떨어진다 */
 .hgames{list-style:none;margin:0;padding:0;display:grid;
@@ -610,6 +632,17 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
 .hgames b{font-size:15px;font-weight:700}
 .hgames s{text-decoration:none;color:var(--tx-3);font-size:11px}
 .more{margin:8px 0 0;font-size:11.5px}
+/* ⚠**첫 화면에서 어디로 갈 수 있는지 보이게 한다**(2026-08-17 유저 요청).
+   본문 맨 아래 링크 줄만 있으면 스크롤 끝까지 가야 알 수 있다.
+   ⚠**균질한 카드 격자를 만들지 않는다**(§6) — 글자 줄로 두되 누를 수 있게 크기만 준다 */
+.hnav{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 4px}
+.hnav a{display:inline-flex;align-items:baseline;gap:6px;padding:7px 11px;
+  border:1px solid var(--hair-2);background:var(--panel);color:var(--tx);
+  font-size:12.5px;text-decoration:none;
+  transition:border-color var(--fast) var(--ease),background var(--fast) var(--ease)}
+.hnav a:hover{border-color:var(--tx-3);background:var(--panel-2)}
+.hnav a s{text-decoration:none;font-size:10px;letter-spacing:.1em;color:var(--tx-3)}
+@media (pointer:coarse){.hnav a{padding:9px 13px}}
 
 /* 先週の顔 — **순위 번호를 크게 쓰지 않는다.** 한 주짜리 순위를 시즌 순위와
    같은 무게로 그리면 그렇게 읽힌다 */
