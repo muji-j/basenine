@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb, upsertGame } from "@bb-app/store";
 import type { Db } from "@bb-app/store";
-import { RECENT_GAMES, gamesBehind, pctKey, teamStandings, winPct } from "../src/standings.ts";
+import { RECENT_GAMES, bestPct, gamesBehind, pctKey, teamStandings, winPct, worstPct } from "../src/standings.ts";
 
 const NOW = "2026-08-16T00:00:00.000Z";
 
@@ -75,6 +75,45 @@ test("⚠승률의 분모에서 무승부를 뺀다 — NPB 규칙이다", () =>
 
 test("⚠결판난 경기가 없으면 승률은 null이다 — 「0할」이 아니다(M11)", () => {
   assert.equal(winPct(0, 0), null, "무승부만 있는 팀이 전패로 정렬된다");
+});
+
+// ─── 전승·전패 승률(「全勝〜全敗の勝率」) ─────────────────────────────────────
+
+/**
+ * ⚠**이 자리를 재는 시험이 저장소 전체에 0건이었다**(2026-08-19 재리뷰 Important B).
+ * 사본 3벌이던 것을 여기 한 벌로 올려(M1) 홈 순위표(`query.ts`)와 우승 경쟁(`race.ts`)이 같이 쓰게 만들었는데,
+ * **공개 API 로 만들면서 시험을 같이 올리지 않았다.**
+ * 실측: `bestPct` 를 `winPct(w + remaining, l)` 로 바꿔도(가드 삭제) **1313본이 전부 통과**했다.
+ */
+test("잔여가 양수면 전승·전패를 잔여만큼 더한다", () => {
+  // 70승60패 · 잔여 10 → 전승 80/140 · 전패 70/140
+  assert.equal(bestPct(70, 60, 10), 80 / 140);
+  assert.equal(worstPct(70, 60, 10), 70 / 140);
+});
+
+/**
+ * ⚠**음수 잔여가 승수·패수를 깎으면 안 된다.** 소화를 행 수로 세면 팀당 144~153 이 나오던 실측이 있고
+ * (`home-page.ts:15`), 그러면 잔여가 음수가 된다. 가드가 없으면 `bestPct` 가 `65/125 = .520` 이 되어
+ * **자기 최선을 실제보다 낮게** 잡고 「우승 가능성 소멸」이 거짓으로 켜진다(1차 리뷰 I4).
+ *
+ * ⚠**가드를 재는 자리는 여기뿐이다** — 잔여 0 으로는 못 잰다.
+ * 가드를 지워도 `bestPct(w,l,0) = winPct(w+0, l)` 로 값이 같기 때문이다(실측 확인).
+ */
+test("⚠음수 잔여는 승수·패수를 깎지 않는다 — 지금 승률 그대로다", () => {
+  assert.equal(bestPct(70, 60, -5), 70 / 130, "음수 잔여가 승수를 깎았다(65/125 = .520)");
+  assert.equal(worstPct(70, 60, -5), 70 / 130, "음수 잔여가 패수를 깎았다(70/125 = .560)");
+});
+
+/** 잔여 0 = 시즌 종료. 더할 것이 없으므로 지금 승률 그대로다 */
+test("잔여가 0 이면 전승·전패 승률이 지금 승률과 같다", () => {
+  assert.equal(bestPct(70, 60, 0), 70 / 130);
+  assert.equal(worstPct(70, 60, 0), 70 / 130);
+});
+
+/** ⚠**결판난 경기가 없으면 여기서도 `null` 이다**(M11) — `winPct` 한 벌을 그대로 탄다 */
+test("⚠결판난 경기가 없고 잔여도 없으면 전승·전패 승률도 null 이다", () => {
+  assert.equal(bestPct(0, 0, 0), null, "「0할」로 흘렀다");
+  assert.equal(worstPct(0, 0, 0), null, "「0할」로 흘렀다");
 });
 
 test("게임 차 = ((1위 승 − 승) + (패 − 1위 패)) ÷ 2", () => {

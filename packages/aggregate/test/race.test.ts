@@ -170,6 +170,12 @@ test("잔여는 규정 경기수에서 소화를 뺀 값이다", () => {
   const r = seasonRace({ season: 2026, teams: teams(MID()), leagueOf, playedPairs: MID() });
   assert.equal(r.basis, "confirmed");
   assert.equal(r.teams.get("g")!.remaining, 143 - MID_GAMES);
+  /**
+   * ⚠**판정이 선 시즌에는 어긋난 팀이 하나도 없다.**
+   * 이 줄이 「`disagreed` 를 항상 채우기」를 잡는다 — 아래 어긋난 픽스처의 단언과 짝이다.
+   */
+  assert.deepEqual(r.disagreed, []);
+  assert.deepEqual(r.series, { intra: 25, inter: 3 });
 });
 
 /**
@@ -195,10 +201,22 @@ test("⚠유도가 안 되면 판정하지 않는다 — null 을 채우지 않�
   assert.equal(r.teams.get("g")!.selfPossible, null);
   assert.equal(r.teams.get("g")!.magic, null);
   assert.equal(r.teams.get("g")!.eliminated, null);
-  // ⚠**잔여는 여전히 안다** — 그건 규정 경기수와 소화만으로 나온다
+  /**
+   * ⚠**잔여는 여전히 안다** — 그건 규정 경기수와 소화만으로 나온다.
+   * ⚠**이 자리가 「`unknown` 이면 전부 `null`」을 막는다**(재리뷰 Important A).
+   * 교류전이 안 끝나 유도를 못 하는 것뿐이고 성적은 스스로 앞뒤가 맞는다
+   * (`w + l + t === games` · `0 ≤ 56 ≤ 143`) — 그러면 잔여는 **아는 값**이다.
+   */
   assert.equal(r.teams.get("g")!.remaining, 143 - (10 * 5 + 1 * 6));
   // ⚠**상대별 잔여는 모른다** — 규정 대전수를 모르면 뺄 대상이 없다
   assert.equal(r.teams.get("g")!.h2hLeft.size, 0);
+  /**
+   * ⚠**「아직 모름(정상)」의 모양을 못 박는다**(재리뷰 Important C).
+   * 유도 자체가 실패했으므로 `series` 는 `null` 이고 어긋난 팀은 없다.
+   * 이것이 아래 「입력이 어긋남(버그)」과 반환값에서 구별돼야 한다.
+   */
+  assert.equal(r.series, null);
+  assert.deepEqual(r.disagreed, [], "어긋난 팀이 없는데 이름이 올라왔다");
 });
 
 /**
@@ -439,7 +457,14 @@ test("⚠대전표와 성적이 어긋나면 시즌 전체를 판정하지 않�
   for (const c of ALL) over[c] = { w: 60, l: 60, t: 0, games: 120 };
   const r = seasonRace({ season: 2026, teams: teams(MID(), over), leagueOf, playedPairs: MID() });
   assert.equal(r.basis, "unknown", "합 25 · 잔여 23 인데 판정했다");
-  assert.equal(r.series, null);
+  /**
+   * ⚠**여기가 「입력이 어긋남(버그)」의 모양이다**(재리뷰 Important C).
+   * 이전 판은 `series` 를 `null` 로 덮어써서 **유도는 성공했다는 사실까지 지웠고**,
+   * 그 결과 5월(정상 미유도)과 파이프라인 버그가 반환값에서 완전히 같은 모양이었다.
+   * 유도는 됐다 — 어긋난 것은 성적 쪽이고, `disagreed` 가 그것을 가리킨다.
+   */
+  assert.deepEqual(r.series, { intra: 25, inter: 3 }, "유도는 성공했는데 그 사실을 지웠다");
+  assert.deepEqual(r.disagreed, [...ALL].sort(), "어긋난 팀을 못 가리킨다");
   for (const c of ALL) {
     const tr = r.teams.get(c)!;
     assert.equal(tr.selfPossible, null, `${c}`);
@@ -448,7 +473,11 @@ test("⚠대전표와 성적이 어긋나면 시즌 전체를 판정하지 않�
     // ⚠**틀린 잔여를 흘리지 않는다** — 조용한 오답이 예외보다 나쁘다
     assert.equal(tr.h2hLeft.size, 0, `${c}: 어긋난 대전표의 잔여를 그대로 내보냈다`);
   }
-  // 잔여 자체는 규정 경기수와 소화만으로 나온다
+  /**
+   * ⚠**잔여 자체는 규정 경기수와 소화만으로 나온다.**
+   * 여기서 성적은 스스로 앞뒤가 맞는다(`60 + 60 + 0 = 120` · `0 ≤ 120 ≤ 143`) —
+   * 어긋난 것은 **대전표와의 대조**뿐이다. 그러니 잔여까지 `null` 로 만들면 아는 것을 버리는 것이다.
+   */
   assert.equal(r.teams.get("g")!.remaining, 143 - 120);
 });
 
@@ -468,6 +497,21 @@ test("⚠승·패·무의 합이 소화 경기와 다르면 판정하지 않는�
   });
   assert.equal(r.basis, "unknown", "117 경기치 성적을 118 경기라고 하는데 판정했다");
   assert.equal(r.teams.get("t")!.selfPossible, null, "어긋난 것은 g 인데 t 를 판정했다");
+  /**
+   * ⚠**한 팀만 어긋났으면 한 팀만 가리킨다.** 판정은 시즌 전체를 접지만
+   * **어디를 봐야 하는지는 정확히 알려야 한다**(재리뷰 Important C).
+   * 이 시험이 「`disagreed` 를 항상 전 팀으로 채우기」와 「항상 빈 배열」을 동시에 잡는다.
+   */
+  assert.deepEqual(r.disagreed, ["g"]);
+  assert.deepEqual(r.series, { intra: 25, inter: 3 }, "유도는 성공했다");
+  /**
+   * ⚠**잔여도 어긋난 팀만 `null` 이다**(재리뷰 Important A · M11).
+   * `g` 는 성적이 스스로 안 맞으니(`59 + 58 + 0 = 117 ≠ 118`) 잔여를 **모른다**.
+   * `t` 는 자기 성적만 보면 멀쩡하니(`59 + 59 + 0 = 118`) 잔여를 **안다**.
+   * ⚠이 두 줄이 짝이다 — 한쪽만 있으면 「전부 null」이나 「전부 숫자」로 눌러도 통과한다.
+   */
+  assert.equal(r.teams.get("g")!.remaining, null, "어긋난 성적으로 잔여를 계산했다");
+  assert.equal(r.teams.get("t")!.remaining, 143 - 118, "멀쩡한 팀의 잔여까지 버렸다");
 });
 
 /**
@@ -475,9 +519,10 @@ test("⚠승·패·무의 합이 소화 경기와 다르면 판정하지 않는�
  * 팀당 144~153 이 나온 실측이 있다. 음수 잔여를 승수에 그대로 더하면 **자기 최선을 깎아**
  * 소멸이 거짓으로 켜진다.
  *
- * ⚠이 상태는 **Σ 검사가 잡는다** — 상대별 잔여는 절대 음수가 될 수 없으므로(유도 상수 ≥ 치른 수)
- * Σ 는 항상 `≥ 0` 인데 `total − games` 는 음수다. 그래서 `games > total` 을 따로 검사하지 않는다.
- * 검사를 하나 더 두면 **어느 시험으로도 단독으로 잴 수 없는 죽은 가지**가 된다.
+ * ⚠**판정(`basis`)을 접는 것은 Σ 검사다** — 상대별 잔여는 절대 음수가 될 수 없으므로(유도 상수 ≥ 치른 수)
+ * Σ 는 항상 `≥ 0` 인데 `total − games` 는 음수다. 그래서 `agrees` 쪽에는 `games > total` 이 없다.
+ * **잔여(`remaining`) 쪽에는 그 검사가 살아 있다** — 그쪽은 유도가 실패해 Σ 검사가 아예 안 도는
+ * 경로(교류전 미완)도 통과해야 하므로 중복이 아니다.
  */
 test("⚠소화가 규정 경기수를 넘으면 판정하지 않는다 — 잔여가 음수다", () => {
   const pp = pairs(25, 3);
@@ -487,6 +532,18 @@ test("⚠소화가 규정 경기수를 넘으면 판정하지 않는다 — 잔�
   assert.equal(r.basis, "unknown");
   assert.equal(r.teams.get("g")!.selfPossible, null);
   assert.equal(r.teams.get("g")!.eliminated, null);
+  /**
+   * ⚠**이 시험의 이름이 말하는 값을 못 박는다**(재리뷰 Important A · Minor d).
+   * 이전 판은 여기서 **`remaining: −5`** 를 그대로 내보냈고 아무도 그걸 단언하지 않았다.
+   * 소비자가 `残り${remaining}試合` 를 쓰면 「残り −5試合」가 화면에 나간다 —
+   * 이 저장소는 음수 잔여를 화면까지 내보낸 전례가 이미 있다(`home-page.ts:15`).
+   */
+  for (const c of ALL) {
+    assert.equal(r.teams.get(c)!.remaining, null, `${c}: 믿을 수 없다고 판정한 입력으로 잔여를 냈다`);
+  }
+  // 유도는 성공했다 — 어긋난 것은 성적 쪽이고 전 팀이 어긋났다
+  assert.deepEqual(r.series, { intra: 25, inter: 3 });
+  assert.deepEqual(r.disagreed, [...ALL].sort());
 });
 
 // ─── 0으로 나누지 않는다(M11) ────────────────────────────────────────────────

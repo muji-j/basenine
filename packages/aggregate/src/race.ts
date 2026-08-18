@@ -92,11 +92,21 @@ export interface TeamRaceInput {
 export interface TeamRace {
   teamCode: string;
   /**
-   * 잔여 경기. **규정 경기수 − 소화** — 유도가 안 돼도 이건 안다.
-   * ⚠**`basis` 가 `unknown` 이면 음수일 수 있다**(소화가 규정을 넘게 세어진 입력).
-   * 그 자체가 신호다 — `unknown` 인 시즌의 이 값을 화면에 그대로 쓰지 마라.
+   * 잔여 경기. **규정 경기수 − 소화.** 판정 불가면 `null`(M11).
+   *
+   * ⚠**이전 판은 `number` 였고 음수를 그대로 내보냈다**(2026-08-19 재리뷰 Important A).
+   * 실측 재현: 전 팀 `{w:75, l:70, t:3, games:148}` → `basis "unknown"` · `remaining −5`.
+   * 숫자라는 것은 **「안다」는 선언**이다 — 방금 「믿을 수 없다」고 판정한 입력으로 계산한 값을
+   * 숫자로 내보내면 안 된다. 주석에 「화면에 그대로 쓰지 마라」라고 적는 것은 타입이 아니다.
+   * 소비자가 `残り${remaining}試合` 를 쓰거나 `Math.max(0, remaining)` 로 접으면 **조용히 틀린다.**
+   * ⚠이 저장소는 음수 잔여를 화면까지 내보낸 전례가 이미 있다(`home-page.ts:15` — 팀당 144~153).
+   *
+   * ⚠**`basis` 가 `unknown` 이라고 해서 `null` 인 것은 아니다.** 숫자가 되는 조건은
+   * **그 팀의 성적만 보고 답할 수 있는 것**뿐이다 — `w + l + t === games` 이고 `0 ≤ games ≤ 규정`.
+   * 교류전이 안 끝나 규정 대전수를 유도하지 못하는 5월에는 시즌이 `unknown` 이어도
+   * 잔여는 정말로 안다(`143 − 56 = 87`). 그 자리까지 `null` 로 만들면 아는 것을 버리는 것이다.
    */
-  remaining: number;
+  remaining: number | null;
   /** 상대별 잔여. **리그를 가르지 않는다**(교류전 잔여도 잔여다). 유도가 안 되면 빈 지도 */
   h2hLeft: Map<string, number>;
   /** 자력우승 가능. 판정 불가면 `null`(M11) */
@@ -111,9 +121,41 @@ export interface SeasonRace {
   /**
    * `confirmed` 면 판정이 서 있다.
    * `unknown` 이면 **규정 대전수를 모르거나 입력이 스스로 어긋난다** — 그때는 판정을 내지 않는다.
+   *
+   * ⚠**`unknown` 만으로는 「아직 모름(정상)」과 「입력이 어긋남(버그)」을 못 가른다.**
+   * 어느 쪽인지는 `series` 와 `disagreed` 로 읽는다 — 아래 표를 보라.
    */
   basis: "confirmed" | "unknown";
+  /**
+   * 유도된 규정 대전 수. **유도 자체가 실패했을 때만 `null` 이다.**
+   *
+   * ⚠**어긋난 입력 때문에 `null` 로 덮어쓰지 않는다**(2026-08-19 재리뷰 Important C).
+   * 이전 판은 `agrees === false` 일 때 이 값을 지워서 **유도는 성공했다는 사실까지 없앴다** —
+   * 그래서 반환값만 보면 5월(정상)과 파이프라인 버그가 **완전히 같은 모양**이었다.
+   * M7 의 절반(빈 값으로 흘리지 않기)은 지켰는데 나머지 절반(**알아챌 수 있게 하기**)이 없었다.
+   * ⚠이 저장소는 「조용히 사라진 것을 그 시즌은 원래 그렇다로 읽는」 사고를 이미 겪었다
+   * (2018 오릭스 148경기가 「모르는 팀 코드」로 실패 — 그대로 뒀으면 성적이 화면에서 사라진 채였다).
+   *
+   * ```
+   * basis      series  disagreed   무엇인가
+   * confirmed  값       []          판정이 서 있다
+   * unknown    null    []          아직 유도할 수 없다(교류전 미완 등) — **정상**
+   * unknown    값       [코드…]     성적과 대전표가 어긋난다 — **버그. 파이프라인을 봐라**
+   * ```
+   */
   series: SeriesLengths | null;
+  /**
+   * 성적(`w/l/t/games`)과 대전표(`playedPairs`)가 어긋난 팀 코드. **사전순으로 정렬한다**(결정적으로).
+   *
+   * ⚠**비어 있음 = 「어긋난 팀이 없다」이지 「판정이 섰다」가 아니다.** 유도 실패도 비어 있다.
+   * 판정이 섰는지는 `basis` 로 읽는다.
+   *
+   * ⚠**유도가 실패하면(`series === null`) 이 배열은 항상 비어 있다** — 대조할 대전표가 없기 때문이다.
+   * 그 상태에서도 `w + l + t !== games` 인 팀은 있을 수 있고, **그건 여기가 아니라
+   * 그 팀의 `remaining === null` 로 나온다.** 즉 `disagreed` 가 비었다고 「성적은 다 멀쩡하다」로 읽지 마라 —
+   * 팀별 판정은 `remaining` 을 같이 봐야 한다(2026-08-19 · 이 경계는 의도한 것이고 보고서에 올렸다).
+   */
+  disagreed: readonly string[];
   teams: Map<string, TeamRace>;
 }
 
@@ -135,6 +177,25 @@ export interface SeasonRace {
  * 배정밀도로 가르면 순위표는 「同」이라고 쓰는데 옆 배지는 「消滅」이라고 쓰는 상태가 된다.
  * 실측: `g` 최선 `80/138 = .57971` · `t` 최악 `83/143 = .58042` → **둘 다 `.580` 인데
  * 원값 비교에서는 `g.eliminated = true`** 가 나왔다. 규칙은 `standings.ts` 의 `pctKey` 한 벌이다(M1).
+ *
+ * ---
+ * ⚠**`eliminated === false` 는 「가능성이 있다」가 아니다.**
+ * 이 판정은 **쌍별(pairwise)** 이다 — 「나를 넘을 수 있는 상대가 한 팀도 없다」만 본다.
+ * 그런데 라이벌들끼리도 맞붙기 때문에 **「누구도 혼자서는 나를 못 넘지만 그들끼리의 경기에서
+ * 누군가는 반드시 이겨서 결국 넘는다」**는 상태가 실재한다. 정확한 판정은 **최대유량**이 필요하다.
+ * 즉 `false` 의 정확한 뜻은 **「쌍별로는 소멸이 증명되지 않았다」**이고,
+ * `true` 만 단정이다(쌍별로 넘기는 상대가 하나라도 있으면 그것은 확실한 소멸이다).
+ * 브리프가 이 알고리즘을 지정했으므로 결함이 아니다 — 다만 **화면은 「消滅」만 단정하고
+ * 반대편은 단정하지 않는다.** SRC/SRP 를 WAR 과 다른 이름으로 부른 것과 같은 원칙이다.
+ * (화면 문구 반영은 매직을 실제로 화면에 내는 태스크로 이월 — 재리뷰 Minor c.)
+ *
+ * ---
+ * ⚠**입력 계약: `teams[].games` 와 `playedPairs` 는 같은 질의·같은 `through` 필터에서 나와야 한다.**
+ * 둘은 별개 입력이고, 한쪽만 「어제까지」이고 다른 쪽이 「오늘까지」면 Σ 검사가 전 팀을 어긋난 것으로
+ * 판정해 **시즌 전체가 `unknown` 이 되고 화면 패널이 통째로 빈다.**
+ * 프로덕션 호출자가 아직 0건이라(2026-08-19 grep 확인: `index.ts` 의 export 와 시험뿐)
+ * 배선하는 쪽이 이걸 모르고 다른 필터를 물릴 위험이 실재한다.
+ * 그때 나오는 신호는 `basis: "unknown"` · `series !== null` · `disagreed` 가 **전 팀**이다.
  */
 export function seasonRace(o: {
   season: number;
@@ -177,35 +238,51 @@ export function seasonRace(o: {
    * 1. `w + l + t === games` — 공짜 검산이다. 지금까지 `t` 는 선언만 되고 아무 데서도 안 읽혔다.
    * 2. `Σ 상대별 잔여 === total − games` — 어긋나면 대전표와 성적이 다른 세계의 것이다.
    *
-   * ⚠**`games > total`(잔여 음수)을 따로 검사하지 않는다.** 2번이 이미 잡기 때문이다 —
+   * ⚠**`games > total`(잔여 음수)을 여기서 따로 검사하지 않는다.** 2번이 이미 잡기 때문이다 —
    * 상대별 잔여는 음수가 될 수 없고(`deriveSeriesLengths` 가 「유도 상수를 넘긴 쌍」을 거른다)
    * 각 쌍의 잔여가 규정을 못 넘으므로 `0 ≤ Σ ≤ total` 이다. 따라서 2번이 성립하면
-   * `0 ≤ games ≤ total` 도 성립한다. 검사를 하나 더 두면 **어떤 시험으로도 단독으로 잴 수 없는
-   * 죽은 가지**가 된다 — 이 라운드가 정확히 「아무것도 안 재는 코드」를 걷어내는 라운드다.
+   * `0 ≤ games ≤ total` 도 성립한다. **중복 검사는 죽은 가지가 된다** — 아래 「죽은 가지 규칙」의
+   * 「이미 다른 검사가 잡는 중복이면 뺀다」에 해당한다.
+   * (`remaining` 쪽에는 같은 검사가 **살아서** 있다 — 그쪽은 유도가 실패해 2번이 안 도는 경로도
+   * 통과해야 하므로 중복이 아니다. 조건이 갈리는 자리가 다르다.)
    *
    * ⚠**어긋난 팀만 `null` 로 두지 않는다.** 그 팀의 틀린 h2h·최대승수가 다른 팀 판정의 입력으로
    * 들어가기 때문에 **시즌 전체**를 `unknown` 으로 떨어뜨린다(M11 — 모르는 것을 아는 척하지 않는다).
+   * 대신 **누가 어긋났는지는 남긴다**(`disagreed`) — 「아직 모름(정상)」과 구별할 수 있어야 한다(M7).
    */
-  const agrees =
-    derived !== null &&
-    o.teams.every((x) => {
-      if (x.w + x.l + x.t !== x.games) return false;
+  const disagreed: string[] = [];
+  if (derived !== null) {
+    for (const x of o.teams) {
+      if (x.w + x.l + x.t !== x.games) {
+        disagreed.push(x.teamCode);
+        continue;
+      }
       let sum = 0;
       for (const v of h2hByTeam.get(x.teamCode)!.values()) sum += v;
-      return sum === total - x.games;
-    });
-  const series = agrees ? derived : null;
+      if (sum !== total - x.games) disagreed.push(x.teamCode);
+    }
+    // 팀 순서가 호출자에 따라 달라져도 같은 값이 나오게 한다
+    disagreed.sort();
+  }
+  /** 판정을 내도 되는가. ⚠**`series` 와 다르다** — `series` 는 유도 결과를 그대로 들고 있다 */
+  const confirmed = derived !== null && disagreed.length === 0;
 
   for (const me of o.teams) {
-    const remaining = total - me.games;
+    /**
+     * ⚠**그 팀의 성적만으로 답할 수 있을 때만 숫자다**(M11). 대전표·유도와는 무관하다 —
+     * 교류전이 안 끝나 시즌이 `unknown` 이어도 잔여는 정말로 안다.
+     * 반대로 `games` 가 규정을 넘으면 **잔여가 음수**이고, 그건 아는 값이 아니라 어긋난 입력이다.
+     */
+    const recordSane = me.w + me.l + me.t === me.games && me.games >= 0 && me.games <= total;
+    const remaining = recordSane ? total - me.games : null;
     // ⚠유도가 안 됐거나 입력이 어긋나면 **빈 지도**다 — 틀린 잔여를 흘리는 것이 최악이다(M7)
-    const h2hLeft = series !== null ? h2hByTeam.get(me.teamCode)! : new Map<string, number>();
+    const h2hLeft = confirmed ? h2hByTeam.get(me.teamCode)! : new Map<string, number>();
 
     let selfPossible: boolean | null = null;
     let eliminated: boolean | null = null;
-    const mine = pctKey(bestPct(me.w, me.l, remaining));
+    const mine = remaining === null ? null : pctKey(bestPct(me.w, me.l, remaining));
 
-    if (series !== null && mine !== null) {
+    if (confirmed && mine !== null) {
       selfPossible = true;
       eliminated = false;
       for (const other of codes) {
@@ -213,7 +290,22 @@ export function seasonRace(o: {
         // ⚠**다른 리그는 우승 경쟁 상대가 아니다** — 이걸 안 걸러 센트럴 6팀이 전부 소멸로 나왔다
         if (o.leagueOf(other) !== o.leagueOf(me.teamCode)) continue;
         const b = byCode.get(other)!;
-        const h = h2hLeft.get(other) ?? 0;
+        const h = h2hLeft.get(other);
+        /**
+         * ⚠**없으면 `0` 으로 메우지 않는다**(M7·M11). 0 으로 흘리면 아래 `bMaxWins` 가
+         * 상대의 최대 승수를 **과대평가**해서 내 자력이 조용히 죽는다 — 조용한 오답이 예외보다 나쁘다.
+         * ⑴증명: `confirmed` 경로에서 `h2hByTeam` 은 `codes` 전부(자신 제외)로 채워지고
+         *   이 루프도 **같은 `codes`** 를 돈다 → 지금은 도달 불가다.
+         *   ⚠**그래서 어떤 픽스처로도 이 가지를 못 태운다**(2026-08-19 실측: 공개 API 로는 재현 불가).
+         * ⑵막는 것: 위의 「조용히 죽는 자력」.
+         * ⑶살아나는 때: h2h 의 출처가 `codes` 가 아니게 되는 순간 —
+         *   예컨대 상대별 잔여를 **실제 일정에서 세도록** 바꾸면 中止 재편성으로 빠지는 쌍이 생긴다.
+         */
+        if (h === undefined) {
+          selfPossible = null;
+          eliminated = null;
+          break;
+        }
         /**
          * ⚠**내가 전승하면 상대는 나와의 잔여를 전패한다.** 그걸 빼지 않으면
          * 상대의 최대 승수를 실제보다 크게 잡아 자력을 과소평가한다.
@@ -239,18 +331,43 @@ export function seasonRace(o: {
    * 조건을 안 지킨 수를 「マジック」라고 부르면 그건 다른 것이고, 이 저장소는
    * 자체 지표에 공식과 다른 이름을 쓰기로 이미 정해 뒀다(SRC·SRP).
    *
-   * ⚠**내 자력이 살아 있는지도 본다.** 리그 안에서 「다른 전원이 자력소멸이면 나는 자력이 산다」가
-   * 성립하기는 한다 — 최선승률이 가장 높은 팀은 다른 팀에게 자력소멸당할 수 없고,
-   * 그 팀을 소멸시킬 수 있는 것은 나뿐이므로 내 최선이 그 팀보다 높아지기 때문이다.
-   * 그래도 **명시적으로 검사한다**: 이 성질은 비교식(동률 규칙·향후 타이브레이커)에 의존하고,
-   * 깨졌을 때 나오는 것이 「소멸한 팀의 매직」이라는 최악의 거짓말이기 때문이다.
+   * ---
+   * ⚠**죽은 가지 규칙**(2026-08-19 확정 · 이 파일 전체에 적용).
+   * > 도달 불가가 증명된 가지는, 그것이 없을 때 **「틀린 값이 나가는」** 것이면 남기고,
+   * > **「이미 다른 검사가 잡는 중복」**이면 뺀다.
+   * > 남긴 것에는 ⑴증명의 요지 ⑵무엇을 막는가 ⑶언제 살아나는가를 **반드시** 적는다.
+   *
+   * 이 규칙으로 이 파일의 세 가지를 판정했다.
+   * - 아래 **자력 검사**·**`others.length === 0`** → 남긴다(⑴⑵⑶ 각 자리에 적었다).
+   * - 위쪽 **`h === undefined`** → 남긴다(같은 형식으로 적었다).
+   * - `agrees` 의 **`games > total`** → 뺐다(Σ 검사가 잡는 중복 — 그 자리에 이유를 적었다).
    */
-  if (series !== null) {
+  if (confirmed) {
     for (const me of o.teams) {
       const mineRace = out.get(me.teamCode)!;
+      /**
+       * ⚠**내 자력이 살아 있는지도 본다.**
+       * ⑴증명: 리그 안에서 `pctKey(bestPct)` 가 최대인 팀은 누구에게도 자력소멸당하지 않는다 —
+       *   `Σ h2hLeft = remaining` 이고 각 h2h ≥ 0 이므로 상대 X 가 「나에게 전패」한 채 얻는 최선은
+       *   `pctKey(bestPct(X))` 를 못 넘는다. 따라서 「다른 전원이 자력소멸」이면 남는 것은 나뿐이다.
+       *   실측(2026-08-19 리뷰어 프로브): 무작위 40만 시즌에서 이 가지 발동 **0회**
+       *   (반대로 「전원 자력소멸」 성립은 101,601회).
+       * ⑵막는 것: 「**소멸한 팀의 매직**」 — 이 도메인에서 나올 수 있는 최악의 거짓말이다.
+       * ⑶살아나는 때: 비교식이 바뀌는 순간. **NPB 협약 ① 当該球団間の対戦成績**(맞대결 성적)을
+       *   타이브레이커로 넣으면 「최선승률 최대 = 아무에게도 안 죽는다」의 단조성이 깨진다 —
+       *   승률이 같아도 맞대결에서 지면 아래가 되므로, 최선승률 최대인 팀도 자력이 죽을 수 있다.
+       */
       if (mineRace.selfPossible !== true) continue;
       const others = codes.filter((c) => c !== me.teamCode && o.leagueOf(c) === o.leagueOf(me.teamCode));
-      // ⚠`every` 는 빈 배열에서 참이다 — 상대가 없는데 「우승 확정(매직 0)」이 나가면 안 된다
+      /**
+       * ⚠**`every` 는 빈 배열에서 참이다.**
+       * ⑴증명: `confirmed` ⇒ `deriveSeriesLengths` 가 12팀·리그별 6팀을 요구했다
+       *   ⇒ `others.length === 5` 항상. 지금은 도달 불가다.
+       * ⑵막는 것: **상대가 없는데 「우승 확정(매직 0)」이 켜지는 것** — 공허참으로 켜진 매직이다.
+       *   원식의 `Math.max` 초기값이 `-Infinity` 라 클램프를 타고 정확히 `0` 이 나간다.
+       * ⑶살아나는 때: 리그 구성이 6팀이 아니게 되거나(구단 확장·2군 리그 적용),
+       *   `deriveSeriesLengths` 의 12팀·6:6 요구가 완화되는 순간.
+       */
       if (others.length === 0) continue;
       if (!others.every((c) => out.get(c)!.selfPossible === false)) continue;
       /**
@@ -269,5 +386,7 @@ export function seasonRace(o: {
     }
   }
 
-  return { basis: series === null ? "unknown" : "confirmed", series, teams: out };
+  // ⚠**`series` 는 유도 결과를 그대로 돌려준다** — 어긋난 입력 때문에 지우지 않는다(Important C).
+  // 「유도도 못 했다」와 「유도는 했는데 입력이 어긋났다」가 같은 모양이면 아무도 원인을 못 찾는다.
+  return { basis: confirmed ? "confirmed" : "unknown", series: derived, disagreed, teams: out };
 }
