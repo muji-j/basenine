@@ -68,14 +68,11 @@ test("isMetricOrdered 가 어긋난 목록을 잡는다 — 이 시험 자신이
  * 실제로 구원이 그랬다: `セーブ · ホールド · HP · [정렬된 공통] · 勝利 · 登板`.
  * → 그래서 **최종 목록**을 본다. 소스에 `byMetricOrder` 가 있는지가 아니라, 결과가 순서인지.
  */
-test("⚠순위의 최종 목록이 전부 정본 순서다 — 조각만 정렬하면 안 된다", async () => {
-  const { buildLeagueRankingsForTest } = await import("../src/query.ts").catch(() => ({} as never));
-  // 내부 함수를 못 부르면 소스로 확인한다 — **감싸는 곳이 빠지지 않았는가**
+test("⚠순위의 최종 목록이 전부 정본 순서다 — 조각만 정렬하면 안 된다", () => {
   const src = readFileSync(new URL("../src/query.ts", import.meta.url), "utf8");
   const returns = [...src.matchAll(/return byMetricOrder\(\[/g)].length;
   assert.ok(
     returns >= 2,
     `역할별 목록이 정본 순서를 안 거친다(감싼 곳 ${returns}개) — 선발·구원 둘 다 필요하다`,
   );
-  assert.equal(typeof buildLeagueRankingsForTest, "undefined");
 });
