@@ -322,8 +322,11 @@ function seasonBar(o: PageOptions): RawHtml {
   ${o.seasons.map(
     (s) =>
       html`<a href="${s.href}"${s.current ? raw(' aria-current="page"') : raw("")}
+      ${/* ⚠**속성을 raw() 안에서 문자열로 짓지 않는다**(2026-08-18 감사 P3).
+           그 안의 값은 이스케이프를 거치지 않는다 — 따옴표 하나로 속성이 끊긴다.
+           table.ts 에서 같은 형태를 없앤 뒤 여기 한 곳이 남아 있었다. */ ""}
       ${s.fallback
-        ? raw(` aria-label="${s.season}年（このページの${s.season}年版はありません。${s.fallbackTo}へ移動します）"`)
+        ? html` aria-label="${`${s.season}年（このページの${s.season}年版はありません。${s.fallbackTo}へ移動します）`}"`
         : raw("")}>${s.season}年${s.fallback ? html`<i aria-hidden="true">→</i>` : null}</a>`,
   )}
 </nav>`;

@@ -30,6 +30,21 @@ const PITCHING_KEYS = [
   "outs", "bf", "h", "hr", "bb", "ibb", "hbp", "so", "er", "r",
 ] as const;
 
+/**
+ * ⚠**키 목록이 타입과 어긋나면 여기서 컴파일이 멈춘다**(2026-08-18 감사 P3).
+ *
+ * 아래 두 함수는 `as unknown as` 로 타입 검사를 꺼 두었다. 그래서 `BattingLine` 에
+ * 필드를 하나 더하고 이 목록에 안 적으면, 리그 합계에 그 필드가 **`undefined`** 로 들어가고
+ * 거기에 수를 더하면 **`NaN`** 이 된다 — 그리고 아무것도 말하지 않는다.
+ * 리그 상수는 wOBA·wRC+·FIP 의 기준선이라 그 하나가 **전 지표를 조용히 무너뜨린다.**
+ *
+ * ⚠**런타임 비용 0이다.** 타입만 계산한다 — 빠진 키가 있으면 `Exclude` 가 never 가 아니게 되어
+ * 이 별칭 자체가 오류가 된다.
+ */
+type AssertNoMissing<T extends never> = T;
+type _NoMissingBatting = AssertNoMissing<Exclude<keyof BattingLine, (typeof BATTING_KEYS)[number]>>;
+type _NoMissingPitching = AssertNoMissing<Exclude<keyof PitchingLine, (typeof PITCHING_KEYS)[number]>>;
+
 export function sumBatting(lines: readonly BattingLine[]): BattingLine {
   const out = Object.fromEntries(BATTING_KEYS.map((k) => [k, 0])) as unknown as BattingLine;
   for (const line of lines) for (const k of BATTING_KEYS) out[k] += line[k];
