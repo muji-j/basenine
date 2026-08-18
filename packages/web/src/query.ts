@@ -6,7 +6,17 @@
  * 만든 값을 옮겨 담기만 한다. 여기에 산식이 생기는 순간 값이 두 벌이 된다.
  */
 import type { Db } from "@bb-app/store";
-import { attempts, battedBalls, buntValues, headToHead, steals, successRate, timesThroughOrder, winPct } from "@bb-app/aggregate";
+import {
+  attempts,
+  battedBalls,
+  bestPct,
+  buntValues,
+  headToHead,
+  steals,
+  successRate,
+  timesThroughOrder,
+  worstPct,
+} from "@bb-app/aggregate";
 // ⚠**통산 합계·시즌 수는 파서 쪽 한 벌을 쓴다**(M1) — 여기에 다시 쓰면 시험이 붙은 쪽이 죽는다
 import { careerTotal, seasonsPlayed } from "@bb-app/parser";
 import type { HeadToHead, PlayerStreaks } from "@bb-app/aggregate";
@@ -2349,9 +2359,11 @@ function homePage(
       const p = played.get(r.teamCode) ?? 0;
       // ⚠**시즌마다 기준이 다르다** — 143 고정이면 2020년(120경기)에서 잔여가 음수로 나온다
       const remaining = regularSeasonGames(o.season) - p;
-      // ⚠**전승·전패 승률의 분모도 `勝+敗`다.** 무승부는 여기서도 빠진다
-      const best = remaining > 0 ? winPct(r.w + remaining, r.l) : r.pct;
-      const worst = remaining > 0 ? winPct(r.w, r.l + remaining) : r.pct;
+      // ⚠**전승·전패 승률의 분모도 `勝+敗`다.** 무승부는 여기서도 빠진다.
+      // ⚠**여기서 다시 쓰지 않는다**(M1) — 우승 경쟁 판정(`race.ts`)이 같은 함수를 쓴다.
+      // 사본이던 시절 두 벌의 거동이 달랐다(이쪽만 잔여 음수 가드가 있었다).
+      const best = bestPct(r.w, r.l, remaining);
+      const worst = worstPct(r.w, r.l, remaining);
       return {
         teamCode: r.teamCode,
         shortName: r.shortName,

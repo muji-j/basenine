@@ -143,6 +143,26 @@ export function winPct(w: number, l: number): number | null {
 }
 
 /**
+ * 잔여를 **전승**했을 때의 최종 승률.
+ *
+ * ⚠**한 벌이다**(M1). 홈 순위표의 「全勝〜全敗の勝率」와 우승 경쟁 판정(`race.ts`)이
+ * 같은 화면에 나란히 놓인다 — 사본이 두 벌이면 **같은 팀의 최선 승률이 두 값**이 된다.
+ * 실제로 2026-08-18 리뷰에서 사본 3벌이 발견됐고 그 중 하나만 아래 가드가 있었다.
+ *
+ * ⚠**잔여가 0 이하면 지금 승률 그대로다.** 음수 잔여를 그대로 더하면 `w + (음수)` 가 되어
+ * **승수를 깎는다** — 자기 최선을 실제보다 낮게 잡아 「우승 가능성 소멸」이 거짓으로 켜진다.
+ * 소화 경기를 행 수로 세면 팀당 144~153 이 나오던 실측이 있다(home-page.ts).
+ */
+export function bestPct(w: number, l: number, remaining: number): number | null {
+  return remaining > 0 ? winPct(w + remaining, l) : winPct(w, l);
+}
+
+/** 잔여를 **전패**했을 때의 최종 승률. 가드 이유는 `bestPct` 와 같다 */
+export function worstPct(w: number, l: number, remaining: number): number | null {
+  return remaining > 0 ? winPct(w, l + remaining) : winPct(w, l);
+}
+
+/**
  * 순위 비교에 쓰는 **표시 자릿수의 승률**.
  *
  * ⚠**배정밀도로 비교하면 화면에 같은 `.563`인 두 팀이 코드에서는 다른 값이 된다.**

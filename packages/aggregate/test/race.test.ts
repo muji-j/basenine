@@ -8,7 +8,8 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { deriveSeriesLengths, pairKey } from "../src/race.ts";
+import { deriveSeriesLengths, pairKey, seasonRace } from "../src/race.ts";
+import type { TeamRaceInput } from "../src/race.ts";
 
 const CENTRAL = ["g", "t", "db", "c", "d", "s"];
 const PACIFIC = ["h", "f", "m", "l", "e", "b"];
@@ -29,17 +30,28 @@ function pairs(intra: number, inter: number): Map<string, number> {
 }
 
 /**
- * 그 대전표에서 나오는 소화 경기 수.
+ * 그 대전표에서 나오는 **팀별** 소화 경기 수.
  *
- * ⚠**픽스처가 스스로 모순되지 않게 한다.** 소화를 손으로 적으면 대전표와 어긋나고,
- * 그러면 「Σ 상대별 잔여 = 잔여」 같은 불변식을 잴 수 없다 —
- * 실제로 이 계획의 첫 판이 그래서 통과 불가능한 시험이 됐다(2026-08-18).
+ * ⚠**픽스처가 스스로 모순되지 않게 하는 유일한 방법이다.** 소화를 손으로 적으면 대전표와 어긋나고,
+ * 이제 그건 시험 실패가 아니라 **시즌 통째로 `basis: "unknown"`** 이 된다 — 즉 그 시험이 재려던 것을
+ * 아무것도 안 재고 조용히 통과한다(2026-08-19 수정 라운드).
  *
- * ⚠**이 헬퍼는 그 불변식 시험에서만 쓴다.** 다른 시험의 `games` 는 `teams()` 기본값(120)이거나
- * 임의로 override 한 값이고, 일부러 「시즌 중간의 어떤 상태」를 흉내낸 것이다 —
- * 대전표와의 정합은 그 시험들이 재는 대상이 아니다.
+ * ⚠**옛 `gamesFor(intra, inter) = intra*5 + inter*6` 을 지웠다.** 대전표가 균일하지 않은 픽스처
+ * (예: `g`-`t` 만 덜 치른 경우)에서 그 식이 대전표와 갈리기 때문이다. 소화는 **대전표에서만** 나온다.
  */
-const gamesFor = (intra: number, inter: number): number => intra * 5 + inter * 6;
+function gamesFromPairs(pp: ReadonlyMap<string, number>): Map<string, number> {
+  const m = new Map<string, number>(ALL.map((c) => [c, 0]));
+  for (let i = 0; i < ALL.length; i += 1) {
+    for (let j = i + 1; j < ALL.length; j += 1) {
+      const a = ALL[i]!;
+      const b = ALL[j]!;
+      const n = pp.get(pairKey(a, b)) ?? 0;
+      m.set(a, m.get(a)! + n);
+      m.set(b, m.get(b)! + n);
+    }
+  }
+  return m;
+}
 
 test("143경기 시즌은 리그내 25 · 교류전 3으로 유도된다", () => {
   const r = deriveSeriesLengths({ season: 2026, teams: ALL, leagueOf, playedPairs: pairs(25, 3) });
@@ -111,133 +123,402 @@ test("pairKey 는 순서에 무관하다 — 같은 쌍이 두 키가 되면 수
   assert.equal(pairKey("t", "g"), pairKey("g", "t"));
 });
 
-import { seasonRace } from "../src/race.ts";
-import type { TeamRaceInput } from "../src/race.ts";
+// ─── 우승 경쟁 판정 ──────────────────────────────────────────────────────────
 
-/** 12팀을 만든다. `over` 로 특정 팀만 바꾼다 */
-function teams(over: Record<string, Partial<TeamRaceInput>> = {}): TeamRaceInput[] {
-  return ALL.map((c) => ({
-    teamCode: c,
-    w: 60, l: 60, t: 0, games: 120,
-    ...(over[c] ?? {}),
-  }));
+/**
+ * 팀별 override. **없는 값은 대전표에서 유도한다** — 그래서 픽스처가 스스로 모순되지 않는다.
+ *
+ * - `games` 를 안 주면 대전표에서 나온 소화 경기 수
+ * - `l` 을 안 주면 `games − w − t` (즉 `w + l + t === games` 가 공짜로 성립)
+ * - `w` 를 안 주면 반타작
+ *
+ * ⚠**`games`·`l` 을 명시하는 것은 「일부러 어긋내는」 시험뿐이다.**
+ */
+interface Over {
+  w?: number;
+  l?: number;
+  t?: number;
+  games?: number;
 }
 
+/** 12팀을 만든다. `over` 로 특정 팀만 바꾼다 */
+function teams(pp: ReadonlyMap<string, number>, over: Record<string, Over> = {}): TeamRaceInput[] {
+  const derived = gamesFromPairs(pp);
+  return ALL.map((c) => {
+    const o = over[c] ?? {};
+    const games = o.games ?? derived.get(c) ?? 0;
+    const t = o.t ?? 0;
+    const w = o.w ?? Math.floor((games - t) / 2);
+    const l = o.l ?? games - w - t;
+    return { teamCode: c, w, l, t, games };
+  });
+}
+
+/**
+ * 대부분의 픽스처가 쓰는 **시즌 중간** 상태.
+ * 리그내 25전 중 20전 · 교류전 3전 전부 소화 → 팀당 `20×5 + 3×6 = 118` 경기, 잔여 25.
+ * 상대별 잔여는 **같은 리그 5팀에 각 5경기** · 교류전 0 → 합 25 = 잔여 ✓
+ *
+ * ⚠**옛 픽스처는 `pairs(25, 3)` + `games: 120` 이었다** — 대전표는 143경기를 다 치렀다고 하는데
+ * 성적은 120경기라고 하는 모순이었고, 그 상태에서는 Σ 불변식(I3)이 시즌을 `unknown` 으로 떨어뜨린다.
+ */
+const MID = (): Map<string, number> => pairs(20, 3);
+/** 위 픽스처의 팀당 소화 경기 수 */
+const MID_GAMES = 118;
+
 test("잔여는 규정 경기수에서 소화를 뺀 값이다", () => {
-  const r = seasonRace({ season: 2026, teams: teams(), leagueOf, playedPairs: pairs(25, 3) });
+  const r = seasonRace({ season: 2026, teams: teams(MID()), leagueOf, playedPairs: MID() });
   assert.equal(r.basis, "confirmed");
-  assert.equal(r.teams.get("g")!.remaining, 143 - 120);
+  assert.equal(r.teams.get("g")!.remaining, 143 - MID_GAMES);
 });
 
 /**
- * ⚠**Σ 직접대결 잔여 = 잔여 경기 수** 가 자동으로 성립해야 한다.
- * 안 성립하면 규정 대전수를 잘못 유도한 것이고, 그 위의 판정이 전부 틀린다.
+ * ⚠**Σ 직접대결 잔여 = 잔여 경기 수.**
+ * 안 성립하면 규정 대전수를 잘못 유도했거나 성적과 대전표가 다른 세계의 것이고, 그 위의 판정이 전부 틀린다.
  */
 test("⚠상대별 잔여의 합이 잔여 경기 수와 같다 — 이게 어긋나면 판정이 전부 틀린다", () => {
-  // ⚠games 를 손으로 118 처럼 적지 않는다 — gamesFor(20,3) 가 대전표(pairs(20,3))에서 그 값을 유도한다.
-  // 손으로 적으면 다음 사람이 「왜 이 수인가」를 모른다(2026-08-18, 코디네이터 지적).
-  const played = { games: gamesFor(20, 3) };
-  const r = seasonRace({
-    season: 2026,
-    teams: teams(Object.fromEntries(ALL.map((c) => [c, played]))),
-    leagueOf,
-    playedPairs: pairs(20, 3),
-  });
+  const r = seasonRace({ season: 2026, teams: teams(MID()), leagueOf, playedPairs: MID() });
   // ⚠이 assert 가 없으면 유도 실패 시 h2hLeft 가 빈 지도(합 0)·remaining 도 0 이 되어 시험이 공회전 통과한다.
   assert.equal(r.basis, "confirmed");
   for (const [code, tr] of r.teams) {
     const sum = [...tr.h2hLeft.values()].reduce((n, x) => n + x, 0);
     assert.equal(sum, tr.remaining, `${code}: 합 ${sum} · 잔여 ${tr.remaining}`);
+    // ⚠**교류전 잔여도 잔여다** — h2hLeft 는 리그를 가르지 않고 11팀 전부를 담는다
+    assert.equal(tr.h2hLeft.size, 11, `${code}: 상대가 11팀이 아니다`);
   }
 });
 
 test("⚠유도가 안 되면 판정하지 않는다 — null 을 채우지 않는다(M11)", () => {
-  const r = seasonRace({ season: 2026, teams: teams(), leagueOf, playedPairs: pairs(10, 1) });
+  const pp = pairs(10, 1);
+  const r = seasonRace({ season: 2026, teams: teams(pp), leagueOf, playedPairs: pp });
   assert.equal(r.basis, "unknown");
   assert.equal(r.teams.get("g")!.selfPossible, null);
   assert.equal(r.teams.get("g")!.magic, null);
   assert.equal(r.teams.get("g")!.eliminated, null);
   // ⚠**잔여는 여전히 안다** — 그건 규정 경기수와 소화만으로 나온다
-  assert.equal(r.teams.get("g")!.remaining, 143 - 120);
+  assert.equal(r.teams.get("g")!.remaining, 143 - (10 * 5 + 1 * 6));
+  // ⚠**상대별 잔여는 모른다** — 규정 대전수를 모르면 뺄 대상이 없다
+  assert.equal(r.teams.get("g")!.h2hLeft.size, 0);
 });
 
 /**
  * ⚠**압도적 1위는 자력우승이 남아 있다.**
- * 巨人이 전승하면 .888, 나머지는 전패해도 아무도 못 넘는다.
+ * 巨人이 잔여 25를 전승하면 `125/143 = .874`, 리그의 나머지는 전승해도 `79/143 = .552` 다.
  */
 test("압도적 1위는 자력우승 가능이다", () => {
   const r = seasonRace({
     season: 2026,
-    teams: teams({ g: { w: 100, l: 20, t: 0, games: 120 } }),
+    teams: teams(MID(), { g: { w: 100 } }),
     leagueOf,
-    playedPairs: pairs(25, 3),
+    playedPairs: MID(),
   });
   assert.equal(r.teams.get("g")!.selfPossible, true);
+  assert.equal(r.teams.get("g")!.eliminated, false);
 });
 
 /**
- * ⚠**Step 5 뮤테이션 검사용 픽스처** — `bMaxWins` 의 `- h` 를 지워도 위의 시험들은 하나도 안 떨어졌다.
- * 원인: 위 시험은 전부 `pairs(25, 3)` 를 쓴다 — 모든 대전이 이미 규정만큼 다 치러진 픽스처라
- * **누구와도 직접대결 잔여(h)가 0** 이다. h=0 이면 `- h` 를 지우든 말든 값이 똑같아서 뮤테이션이 숨는다.
- * → 직접대결이 남아 있는(h>0) 픽스처가 있어야 이 줄을 실제로 잰다.
- * g·t 는 25전 중 5전만 치러 h2hLeft(g,t)=20 을 만든다 — g 가 전승하면 이 20경기는 t 의 확정패다.
- * 그걸 안 빼면(뮤테이션) t 의 최선이 부풀어 g 의 자력우승이 거짓으로 사라진다
- * (실측: mine=0.7902 · 정상 selfPossible=true · 뮤테이션 selfPossible=false, t 의 bBest=0.8037 > mine).
+ * ⚠**Step 5 뮤테이션 검사용 픽스처** — `bMaxWins` 의 `- h` 를 지워도 다른 시험은 하나도 안 떨어진다.
+ * 원인: 다른 시험은 리그내 대전이 5경기씩만 남아 h 가 작다. **직접대결이 크게 남은 픽스처**가 있어야 잰다.
+ *
+ * `g`-`t` 는 **한 경기도 안 치렀다**(다른 쌍은 20전) → 둘 다 소화 98 · 잔여 45 · h2hLeft(g,t) = 25.
+ * 실측: `g` 최선 `105/143 = .734` ·
+ *   정상 `t` 최선 `(80+45−25)/143 = 100/143 = .699` → `g.selfPossible = true`
+ *   뮤테이션(−h 제거) `t` 최선 `125/168 = .744` → **`.744 > .734` 로 `g.selfPossible = false`**.
  */
 test("⚠직접대결 잔여를 반영해야 자력우승이 정확하다 — 안 빼면 상대를 과대평가한다", () => {
-  const pp = pairs(25, 3);
-  pp.set(pairKey("g", "t"), 5); // g-t 는 25전 중 5전만 치렀다 → h2hLeft(g,t) = 20
+  const pp = MID();
+  pp.set(pairKey("g", "t"), 0);
   const r = seasonRace({
     season: 2026,
-    teams: teams({ g: { w: 90, l: 30, t: 0, games: 120 }, t: { w: 108, l: 12, t: 0, games: 120 } }),
+    teams: teams(pp, { g: { w: 60 }, t: { w: 80 } }),
     leagueOf,
     playedPairs: pp,
   });
+  assert.equal(r.basis, "confirmed");
+  assert.equal(r.teams.get("g")!.h2hLeft.get("t"), 25);
   assert.equal(r.teams.get("g")!.selfPossible, true);
 });
 
 /**
  * ⚠**꼴찌는 전승해도 못 따라잡으면 소멸이다.**
  * 상대가 **잔여를 전패해도** 내 최선을 넘으면 그것이 소멸이다.
+ * `t` 최선 `45/143 = .315` · `g` 최악 `105/143 = .734`.
  */
 test("전승해도 1위의 최악을 못 넘으면 우승 가능성 소멸이다", () => {
   const r = seasonRace({
     season: 2026,
-    teams: teams({ g: { w: 110, l: 10, t: 0, games: 120 }, t: { w: 20, l: 100, t: 0, games: 120 } }),
+    teams: teams(MID(), { g: { w: 105 }, t: { w: 20 } }),
     leagueOf,
-    playedPairs: pairs(25, 3),
+    playedPairs: MID(),
   });
   assert.equal(r.teams.get("t")!.eliminated, true);
   assert.equal(r.teams.get("t")!.selfPossible, false);
   assert.equal(r.teams.get("g")!.eliminated, false);
 });
 
+// ─── 리그 분리 ────────────────────────────────────────────────────────────────
+
 /**
- * ⚠**매직의 점등 조건은 「다른 모든 팀의 자력 소멸」이다.**
- * 조건을 안 지킨 수를 「マジック」라고 부르면 거짓말이 된다 — SRC/SRP 와 같은 원칙이다.
+ * ⚠**페넌트는 리그별이다.** 12팀 전체로 비교하면 한 리그의 독주팀이 다른 리그 전체를 소멸시킨다.
+ *
+ * 실측(2026-08-19, 리그 필터가 없던 판): 퍼시픽 `h` 가 독주하면
+ * **센트럴 6팀이 전부 `self false · elim true · magic null`** 로 나왔다 —
+ * 센트럴 선두 옆에 「消滅」이라고 쓰는 화면이다.
+ *
+ * 이 픽스처: `h`(퍼시픽) 95승23패 · `g`(센트럴 선두) 65승53패 · 나머지 59승59패.
+ * `g` 최선 `90/143 = .629` 인데 `h` 최악은 `95/143 = .664` 다 —
+ * **리그를 안 가르면 `.664 > .629` 로 `g` 가 소멸**하고, `h` 최선 `120/143 = .839` 로 자력도 죽는다.
  */
-test("⚠다른 팀의 자력이 살아 있으면 매직은 켜지지 않는다", () => {
-  const r = seasonRace({ season: 2026, teams: teams(), leagueOf, playedPairs: pairs(25, 3) });
-  assert.equal(r.teams.get("g")!.magic, null, "전원 자력이 살아 있는데 매직이 켜졌다");
-});
-
-test("⚠다른 모든 팀의 자력이 소멸하면 매직이 켜진다", () => {
-  // 巨人만 압도적. 나머지는 전승해도 巨人의 전패 성적을 못 넘는다
-  const over: Record<string, Partial<TeamRaceInput>> = { g: { w: 130, l: 5, t: 0, games: 135 } };
-  for (const c of ALL) if (c !== "g") over[c] = { w: 20, l: 115, t: 0, games: 135 };
-  const r = seasonRace({ season: 2026, teams: teams(over), leagueOf, playedPairs: pairs(25, 3) });
-  const g = r.teams.get("g")!;
-  assert.equal(g.magic !== null, true, "점등 조건을 채웠는데 매직이 null 이다");
-  assert.ok(g.magic! >= 0, `매직이 음수다: ${g.magic}`);
-});
-
-/** ⚠**무승부는 승률 분모에서 빠진다**(NPB). 0으로 나누지 않는다 */
-test("⚠경기가 없어도 죽지 않는다 — 0으로 나누지 않는다", () => {
+test("⚠다른 리그의 독주팀은 내 판정에 들어오지 않는다 — 안 가르면 센트럴 전멸이다", () => {
   const r = seasonRace({
     season: 2026,
-    teams: teams(Object.fromEntries(ALL.map((c) => [c, { w: 0, l: 0, t: 0, games: 0 }]))),
+    teams: teams(MID(), { h: { w: 95 }, g: { w: 65 } }),
     leagueOf,
-    playedPairs: new Map(),
+    playedPairs: MID(),
   });
+  assert.equal(r.basis, "confirmed");
+  assert.equal(r.teams.get("g")!.selfPossible, true, "다른 리그 독주팀이 센트럴 선두의 자력을 죽였다");
+  for (const c of CENTRAL) {
+    assert.equal(r.teams.get(c)!.eliminated, false, `${c}: 다른 리그 때문에 소멸로 나왔다`);
+  }
+  // 독주팀 자신은 정상이어야 한다(이 시험이 「전부 false」로 눌러 통과하는 것을 막는다)
+  assert.equal(r.teams.get("h")!.selfPossible, true);
+  assert.equal(r.teams.get("h")!.eliminated, false);
+});
+
+/**
+ * ⚠**매직의 점등 조건도 리그 안에서 센다.**
+ * 센트럴은 `g` 가 이미 우승을 확정했는데(다른 5팀 전부 자력소멸) 퍼시픽은 6팀 전부 자력이 살아 있다.
+ * 12팀으로 세면 `allGone` 이 영원히 거짓이라 **센트럴 1위의 매직이 절대 안 켜진다.**
+ *
+ * `g` 100승18패 · 센트럴 나머지 45승73패 · 퍼시픽 59승59패(전원 자력 생존).
+ * 센트럴 최대 승수는 `45 + 25 = 70` 으로 `g` 의 현재 100승보다 낮다 → **매직 0(우승 확정)**.
+ */
+test("⚠매직 점등은 같은 리그 안에서만 센다 — 다른 리그의 생존자가 막으면 안 된다", () => {
+  const over: Record<string, Over> = { g: { w: 100 } };
+  for (const c of CENTRAL) if (c !== "g") over[c] = { w: 45 };
+  const r = seasonRace({ season: 2026, teams: teams(MID(), over), leagueOf, playedPairs: MID() });
+  assert.equal(r.basis, "confirmed");
+  assert.equal(r.teams.get("g")!.magic, 0, "센트럴은 전원 자력소멸인데 매직이 안 켜졌다");
+  // 퍼시픽은 전원 자력 생존이므로 아무도 매직이 없다 — 「12팀으로 세면 g 가 못 켠다」의 반대편 증거
+  for (const c of PACIFIC) assert.equal(r.teams.get(c)!.magic, null, `${c}: 자력 생존자만 있는데 매직이 켜졌다`);
+});
+
+// ─── 매직 값 ─────────────────────────────────────────────────────────────────
+
+/**
+ * ⚠**매직의 「값」을 잰다.** 이전 판은 `magic !== null` 과 `magic >= 0` 둘뿐이었는데
+ * `magic` 은 `0` 으로 초기화된 뒤 `Math.max` 로만 누적됐으므로 **`>= 0` 은 어떤 식을 넣어도 참**이었다.
+ * 실측(2026-08-19): 그 픽스처가 받던 값은 `0` 이고 원식은 `20 + 8 − 130 + 1 = −101` 이었다 —
+ * 즉 `+1`→`+100` · `Math.max`→`Math.min` · `− me.w`→`− me.l` 뮤테이션이 **전부 통과**했다.
+ *
+ * 이 픽스처는 **매직이 양수로 나오는** 상태를 만든다.
+ * 리그내 23전씩 소화(잔여 10 · 직접대결 잔여 2) ·
+ * `g` 95승38패 · 2위 `t` 88승45패(최대 98승) · 나머지는 그보다 낮다.
+ * ```
+ * 매직 = 2위 최대 승수 − 내 현재 승수 + 1 = (88 + 10) − 95 + 1 = 4
+ * ```
+ * 센트럴 나머지 5팀은 전부 자력소멸이다(`g` 의 최선 `103/143 = .720` 이 각 팀 최선보다 높다 —
+ * `t` `98/143 = .685` · `db` `.629` · `c` `.594` · `d` `.559` · `s` `.490`).
+ */
+test("⚠매직은 「2위의 최대 승수 − 내 승수 + 1」이다 — 값을 못 박는다", () => {
+  const pp = pairs(23, 3);
+  const r = seasonRace({
+    season: 2026,
+    teams: teams(pp, {
+      g: { w: 95 },
+      t: { w: 88 },
+      db: { w: 80 },
+      c: { w: 75 },
+      d: { w: 70 },
+      s: { w: 60 },
+    }),
+    leagueOf,
+    playedPairs: pp,
+  });
+  assert.equal(r.basis, "confirmed");
+  assert.equal(r.teams.get("g")!.remaining, 10);
+  assert.equal(r.teams.get("g")!.magic, 4);
+  // 2위에게는 매직이 없다 — 매직은 「다른 전원이 자력소멸」인 팀에게만 붙는다
+  assert.equal(r.teams.get("t")!.magic, null);
+});
+
+/**
+ * ⚠**매직은 음수로 나가지 않는다.** 이미 따라잡힐 수 없는 상태에서는 원식이 음수가 되고,
+ * 그대로 내보내면 화면에 「マジック −54」가 나간다. 0 = **우승 확정**이다.
+ *
+ * ⚠이 시험이 클램프(`Math.max(0, magic)`)를 **실제로 잰다** — 초기값을 `-Infinity` 로 바꾼 뒤로는
+ * 클램프를 지우면 이 시험이 `-54` 를 받는다. 초기값이 `0` 이던 시절에는 클램프가 죽은 코드라
+ * 지워도 아무 시험도 안 떨어졌다.
+ *
+ * 리그내 24전 소화(잔여 5) · `g` 110승28패 · 나머지 50승88패(최대 55승) →
+ * 원식 `55 − 110 + 1 = −54` → **0**.
+ */
+test("⚠매직은 음수로 나가지 않는다 — 이미 확정이면 0 이다", () => {
+  const pp = pairs(24, 3);
+  const over: Record<string, Over> = { g: { w: 110 } };
+  for (const c of CENTRAL) if (c !== "g") over[c] = { w: 50 };
+  const r = seasonRace({ season: 2026, teams: teams(pp, over), leagueOf, playedPairs: pp });
+  assert.equal(r.basis, "confirmed");
+  assert.equal(r.teams.get("g")!.magic, 0);
+});
+
+/**
+ * ⚠**매직의 점등 조건은 「같은 리그 다른 모든 팀의 자력 소멸」이다.**
+ * 조건을 안 지킨 수를 「マジック」라고 부르면 거짓말이 된다 — SRC/SRP 와 같은 원칙이다.
+ * 이 픽스처는 전원 59승59패라 아무도 자력이 죽지 않는다(각자 최선 `.587` · 상대 최선 `.552`).
+ */
+test("⚠다른 팀의 자력이 살아 있으면 매직은 켜지지 않는다", () => {
+  const r = seasonRace({ season: 2026, teams: teams(MID()), leagueOf, playedPairs: MID() });
+  for (const c of ALL) {
+    assert.equal(r.teams.get(c)!.selfPossible, true, `${c}: 전원 동률인데 자력이 죽었다`);
+    assert.equal(r.teams.get(c)!.magic, null, `${c}: 전원 자력이 살아 있는데 매직이 켜졌다`);
+  }
+});
+
+// ─── 동률 경계(M3) ────────────────────────────────────────────────────────────
+
+/**
+ * ⚠**동률은 「가능성 있음」이고, 동률인지는 표시 자릿수(소수 3자리)에서 가른다.**
+ * 배정밀도로 가르면 순위표는 「同」이라고 쓰는데 옆 배지는 「消滅」이라고 쓰는 상태가 된다.
+ * 규칙은 `standings.ts` 의 `pctKey` 한 벌이다(M1).
+ *
+ * 자력(`selfPossible`) 쪽 경계:
+ * `g` 55승58패5분(소화 118 · 잔여 25) 최선 `80/138 = .57971` ·
+ * `d` 63승55패 최선 `(63+25−5)/143 = 83/143 = .58042` → **둘 다 `.580`**.
+ * 원값으로 가르면 `.58042 > .57971` 이라 `g` 의 자력이 조용히 죽는다.
+ */
+test("⚠동률이면 자력은 살아 있다 — 표시 자릿수에서 가른다(pctKey)", () => {
+  const r = seasonRace({
+    season: 2026,
+    teams: teams(MID(), { g: { w: 55, t: 5 }, d: { w: 63 } }),
+    leagueOf,
+    playedPairs: MID(),
+  });
+  assert.equal(r.basis, "confirmed");
+  assert.equal(r.teams.get("g")!.selfPossible, true, "표시 자릿수로는 동률인데 자력이 죽었다");
+  assert.equal(r.teams.get("g")!.eliminated, false);
+});
+
+/**
+ * 소멸(`eliminated`) 쪽 경계. **두 뮤테이션을 동시에 잡는다.**
+ *
+ * `g` 55승58패5분 최선 `80/138 = .57971` → `.580` ·
+ * `t` 83승35패 최악 `83/(35+25+83) = 83/143 = .58042` → `.580`.
+ * - `pctKey` 를 빼고 원값으로 비교하면 `.58042 > .57971` → `eliminated = true`
+ * - `bWorst > mine` 을 `>=` 로 바꾸면 `.580 >= .580` → `eliminated = true`
+ *
+ * ⚠**소멸과 자력소멸은 다른 것이다.** 같은 픽스처에서 `g` 의 자력은 죽어 있다
+ * (`t` 최선 `103/143 = .720` > `.580`) — 「아직 가능성은 있지만 남의 손에 달렸다」가 정확한 상태다.
+ */
+test("⚠상대의 최악이 내 최선과 동률이면 소멸이 아니다 — 동률은 「가능성 있음」", () => {
+  const r = seasonRace({
+    season: 2026,
+    teams: teams(MID(), { g: { w: 55, t: 5 }, t: { w: 83 } }),
+    leagueOf,
+    playedPairs: MID(),
+  });
+  assert.equal(r.basis, "confirmed");
+  assert.equal(r.teams.get("g")!.eliminated, false, "동률인데 소멸로 나왔다");
+  assert.equal(r.teams.get("g")!.selfPossible, false, "자력은 죽어 있어야 한다 — 소멸과 다른 것이다");
+});
+
+// ─── 입력이 스스로 어긋나는 경우(M7·M11) ─────────────────────────────────────
+
+/**
+ * ⚠**「Σ 잔여 = 잔여」는 자동으로 성립하지 않는다.** 성적(`games`)과 대전표(`playedPairs`)는
+ * 별개 입력이라 어긋날 수 있고, 이 태스크의 첫 판이 정확히 그 반례로 반려됐다.
+ * 中止 재편성으로 실측 어긋남도 관측돼 있다(中日 +3 · 阪神 +1 · 広島 −1).
+ *
+ * 대전표는 118경기(`20×5 + 3×6`)라고 하는데 성적은 120경기라고 한다 →
+ * 합 25 대 잔여 23. 어긋난 h2h 로 계산한 최대 승수가 **다른 팀 판정에도 섞이므로**
+ * 그 팀만이 아니라 **시즌 전체**를 `unknown` 으로 떨어뜨린다.
+ */
+test("⚠대전표와 성적이 어긋나면 시즌 전체를 판정하지 않는다(M7·M11)", () => {
+  const over: Record<string, Over> = {};
+  for (const c of ALL) over[c] = { w: 60, l: 60, t: 0, games: 120 };
+  const r = seasonRace({ season: 2026, teams: teams(MID(), over), leagueOf, playedPairs: MID() });
+  assert.equal(r.basis, "unknown", "합 25 · 잔여 23 인데 판정했다");
+  assert.equal(r.series, null);
+  for (const c of ALL) {
+    const tr = r.teams.get(c)!;
+    assert.equal(tr.selfPossible, null, `${c}`);
+    assert.equal(tr.eliminated, null, `${c}`);
+    assert.equal(tr.magic, null, `${c}`);
+    // ⚠**틀린 잔여를 흘리지 않는다** — 조용한 오답이 예외보다 나쁘다
+    assert.equal(tr.h2hLeft.size, 0, `${c}: 어긋난 대전표의 잔여를 그대로 내보냈다`);
+  }
+  // 잔여 자체는 규정 경기수와 소화만으로 나온다
+  assert.equal(r.teams.get("g")!.remaining, 143 - 120);
+});
+
+/**
+ * ⚠**`w + l + t === games` 는 공짜 검산이다.** 이전 판은 `TeamRaceInput.t` 를 선언만 하고
+ * 어디에서도 읽지 않아 이 검산을 버렸다.
+ *
+ * 이 픽스처는 대전표와는 앞뒤가 맞고(118 = 118, 그래서 Σ 검사는 통과한다) **성적만** 어긋난다 —
+ * `59 + 58 + 0 = 117 ≠ 118`. 그러니까 이 시험이 떨어지는 이유는 `w+l+t` 검사 하나뿐이다.
+ */
+test("⚠승·패·무의 합이 소화 경기와 다르면 판정하지 않는다", () => {
+  const r = seasonRace({
+    season: 2026,
+    teams: teams(MID(), { g: { w: 59, l: 58, t: 0 } }),
+    leagueOf,
+    playedPairs: MID(),
+  });
+  assert.equal(r.basis, "unknown", "117 경기치 성적을 118 경기라고 하는데 판정했다");
+  assert.equal(r.teams.get("t")!.selfPossible, null, "어긋난 것은 g 인데 t 를 판정했다");
+});
+
+/**
+ * ⚠**소화가 규정을 넘으면 잔여가 음수가 된다.** `home-page.ts` 가 소화를 행 수로 세던 시절
+ * 팀당 144~153 이 나온 실측이 있다. 음수 잔여를 승수에 그대로 더하면 **자기 최선을 깎아**
+ * 소멸이 거짓으로 켜진다.
+ *
+ * ⚠이 상태는 **Σ 검사가 잡는다** — 상대별 잔여는 절대 음수가 될 수 없으므로(유도 상수 ≥ 치른 수)
+ * Σ 는 항상 `≥ 0` 인데 `total − games` 는 음수다. 그래서 `games > total` 을 따로 검사하지 않는다.
+ * 검사를 하나 더 두면 **어느 시험으로도 단독으로 잴 수 없는 죽은 가지**가 된다.
+ */
+test("⚠소화가 규정 경기수를 넘으면 판정하지 않는다 — 잔여가 음수다", () => {
+  const pp = pairs(25, 3);
+  const over: Record<string, Over> = {};
+  for (const c of ALL) over[c] = { w: 75, l: 70, t: 3, games: 148 };
+  const r = seasonRace({ season: 2026, teams: teams(pp, over), leagueOf, playedPairs: pp });
+  assert.equal(r.basis, "unknown");
+  assert.equal(r.teams.get("g")!.selfPossible, null);
+  assert.equal(r.teams.get("g")!.eliminated, null);
+});
+
+// ─── 0으로 나누지 않는다(M11) ────────────────────────────────────────────────
+
+/**
+ * ⚠**무승부는 승률 분모에서 빠진다**(NPB). 143경기가 **전부 무승부**면 `勝 + 敗 = 0` 이라
+ * 승률이 `null` 이고, 그러면 **판정을 낼 수 없다** — 0 으로 두면 「전패」로 읽힌다.
+ *
+ * ⚠이전 판의 같은 이름 시험은 `basis === "unknown"` 한 줄뿐이라 **나눗셈 경로를 밟지도 않았다**
+ * (대전표가 비면 유도 단계에서 멈춘다). `winPct` 의 `w + l === 0` 가지를 지워도 전부 통과했다.
+ * 이 픽스처는 그 가지를 실제로 밟는다 — 지우면 `mine` 이 `NaN` 이 되어 `null` 검사를 통과하고
+ * `selfPossible` 이 `true` 로 나온다.
+ */
+test("⚠전 경기가 무승부면 판정하지 않는다 — 0으로 나누지 않는다", () => {
+  const pp = pairs(25, 3);
+  const over: Record<string, Over> = {};
+  for (const c of ALL) over[c] = { w: 0, l: 0, t: 143 };
+  const r = seasonRace({ season: 2026, teams: teams(pp, over), leagueOf, playedPairs: pp });
+  // 대전표와 성적은 앞뒤가 맞는다 — 유도는 성공한다
+  assert.equal(r.basis, "confirmed");
+  assert.equal(r.teams.get("g")!.remaining, 0);
+  assert.equal(r.teams.get("g")!.selfPossible, null, "승률이 없는데 자력을 판정했다");
+  assert.equal(r.teams.get("g")!.eliminated, null, "승률이 없는데 소멸을 판정했다");
+  assert.equal(r.teams.get("g")!.magic, null, "승률이 없는데 매직을 켰다");
+});
+
+/** ⚠**대전표가 비면 규정 대전수를 유도할 수 없다** — `(143 − 0) / 5 = 28.6` 은 정수가 아니다 */
+test("⚠대전표가 비면 유도하지 않는다", () => {
+  const r = seasonRace({ season: 2026, teams: teams(new Map()), leagueOf, playedPairs: new Map() });
   assert.equal(r.basis, "unknown", "경기가 하나도 없는데 유도했다");
+  assert.equal(r.teams.get("g")!.selfPossible, null);
+  assert.equal(r.teams.get("g")!.eliminated, null);
+  assert.equal(r.teams.get("g")!.magic, null);
+  assert.equal(r.teams.get("g")!.remaining, 143);
 });
