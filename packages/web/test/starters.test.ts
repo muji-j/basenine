@@ -13,7 +13,7 @@ function side(over: Partial<ProbableSide> = {}): ProbableSide {
     color: colorOf("d"),
     playerId: "63165134",
     name: "柳",
-    summary: { games: 19, outs: 354, era: r(2.52, 354), whip: r(1.12, 354), fip: r(3.12, 354), so: 96 },
+    summary: { games: 19, outs: 354, era: r(2.52, 354), whip: r(1.12, 354), fip: r(3.12, 354), so: 96, srp: r(8.4, 461) },
     opponents: [
       {
         opponentId: "71575132",
@@ -30,6 +30,20 @@ function side(over: Partial<ProbableSide> = {}): ProbableSide {
         line: { pa: 3, ab: 3, h: 3, double: 0, triple: 0, hr: 0, bb: 0, ibb: 0, hbp: 0, sf: 0, sh: 0, so: 0, roe: 0 },
         avg: r(1, 3),
         rbi: 1,
+      },
+    ],
+    /**
+     * ⚠**통산은 시즌보다 넓다** — 같은 상대가 더 많은 타석으로 나온다.
+     *   두 표가 **정말 다른 값**을 내는지 시험이 보려면 값이 달라야 한다.
+     */
+    opponentsCareer: [
+      {
+        opponentId: "71575132",
+        opponentName: "泉口",
+        opponentTeam: "g",
+        line: { pa: 24, ab: 22, h: 8, double: 2, triple: 0, hr: 2, bb: 2, ibb: 0, hbp: 0, sf: 0, sh: 0, so: 5, roe: 0 },
+        avg: r(8 / 22, 22),
+        rbi: 6,
       },
     ],
     ...over,
@@ -114,12 +128,40 @@ test("표본이 얇은 행은 시각적 무게를 뺀다 — 값은 남는다", 
   assert.match(out, /1\.000/);
 });
 
+/**
+ * ⚠**「없다」는 今季와 通算이 **둘 다** 비었을 때만이다**(2026-08-18 토글 도입).
+ * 한쪽만 비었으면 그건 「없다」가 아니라 「그 범위에는 없다」이고,
+ * 그때는 토글을 남겨 다른 범위를 볼 수 있게 해야 한다(M12).
+ */
 test("대전 이력이 없으면 없다고 말한다", () => {
+  const out = renderStartersPage(
+    data({ games: [game({ sides: [side({ opponents: [], opponentsCareer: [] }), pending()] })] }),
+    context(),
+  );
+  assert.match(out, /巨人の打者との対戦記録はまだありません/);
+});
+
+test("⚠今季만 비면 「없다」가 아니라 통산 쪽을 남긴다 — 범위가 다르면 다른 사실이다", () => {
   const out = renderStartersPage(
     data({ games: [game({ sides: [side({ opponents: [] }), pending()] })] }),
     context(),
   );
-  assert.match(out, /巨人の打者との対戦記録はまだありません/);
+  assert.ok(!out.includes("巨人の打者との対戦記録はまだありません"), "통산이 있는데 「없다」고 말했다");
+  assert.match(out, /今季の対戦はまだありません/, "今季가 비었다는 말이 없다");
+  assert.match(out, /通算/, "통산으로 넘어갈 방법이 없다");
+});
+
+/**
+ * ⚠**통산은 시즌보다 넓다.** 두 표가 같은 값을 내면 토글이 아무 일도 안 하는 것이고,
+ * 그건 「있는 척하는 조작」이다 — 실제로 다른 값이 나오는지 못 박는다.
+ */
+test("⚠今季와 通算이 서로 다른 값을 낸다 — 토글이 실제로 무언가를 바꾼다", () => {
+  const out = renderStartersPage(data(), context());
+  assert.match(out, /data-panelkey="season"/, "今季 패널이 없다");
+  assert.match(out, /data-panelkey="career"/, "通算 패널이 없다");
+  // 今季 6타석 · 통산 24타석 — 픽스처가 일부러 다르게 잡혀 있다
+  assert.match(out, /<td>6<\/td>/, "今季 타석수가 없다");
+  assert.match(out, /<td>24<\/td>/, "통산 타석수가 없다");
 });
 
 test("라인업을 아는 척하지 않는다고 화면이 밝힌다", () => {

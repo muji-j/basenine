@@ -227,6 +227,15 @@ export function matchups(
   minPa = 1,
   competition = "regular",
   through = "9999-12-31",
+  /**
+   * **어느 시즌부터 셀 것인가.** 기본은 `season` 자체 — 즉 그 시즌만.
+   *
+   * ⚠**통산을 낼 때는 「보고 있는 시즌까지」다**(2026-08-18 유저 요청으로 추가).
+   * 2022년 화면에서 2026년 대전 성적을 더하면 그 화면이 **미래를 말하게 된다** —
+   * 이 리포가 `careerOf` 에서 이미 같은 이유로 `year <= season` 을 쓴다.
+   * ⚠**대회는 그대로 분리한다**(§2-1) — 통산이라고 CS·일본시리즈를 섞지 않는다.
+   */
+  fromSeason = season,
 ): Matchup[] {
   const rows = db.raw
     .prepare(`
@@ -237,11 +246,11 @@ export function matchups(
       JOIN game g ON g.game_id = e.game_id
       JOIN player pp ON pp.player_id = e.pitcher_id
       JOIN player pb ON pb.player_id = e.batter_id
-      WHERE g.season = ? AND g.status = 'played' AND g.competition = ?
+      WHERE g.season BETWEEN ? AND ? AND g.status = 'played' AND g.competition = ?
         AND g.game_date <= ? AND e.status = 'final' AND e.pitcher_id IS NOT NULL
       GROUP BY e.pitcher_id, e.batter_id, e.outcome
     `)
-    .all(season, competition, through) as {
+    .all(fromSeason, season, competition, through) as {
     pitcherId: string;
     pitcherName: string;
     batterId: string;

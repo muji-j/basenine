@@ -908,9 +908,16 @@ a.cg:focus-visible{outline:2px solid var(--tx);outline-offset:1px}
 /* ⚠**좌우 패딩이 없어 칩이 구단색 기둥에 딱 붙어 있었다**(2026-08-18 감사 P2).
    .block 은 좌우로 var(--pad) 를 두는데 이 줄만 0 이라, 페이지에서 **유일하게 정렬선을 벗어난
    요소**가 됐다. 음수 마진 사고(바로 위 문단) 뒤에 0 으로 되돌리면서 같이 빠졌다. */
+/* ⚠**가로 스크롤 컨테이너의 왼쪽 패딩은 스크롤하면 사라진다**(2026-08-18 유저 지적:
+   「가장 왼쪽의 버튼이 왼쪽 디자인 요소랑 겹쳐져 있다」).
+   .hjump a 에 scroll-snap-align:start 가 있어서, 스냅이 끝나면 칩 하나가
+   **스크롤포트 왼쪽 끝**에 와서 멈춘다 — 그 자리는 바로 옆이 .spine(구단색 기둥)이다.
+   시즌 띠에서 이미 같은 함정을 밟았는데 이 줄만 교훈을 못 받았다.
+   ⚠**scroll-padding-left 로 스냅 기준선을 안쪽으로 민다.** 패딩만으로는 안 된다 —
+   패딩은 스크롤과 함께 밀려나지만 scroll-padding 은 스크롤포트에 붙어 있다. */
 .hjump{position:sticky;top:var(--topbar);z-index:8;
   display:flex;flex-wrap:nowrap;gap:6px;margin:0 0 10px;
-  padding:8px var(--pad);
+  padding:8px var(--pad);scroll-padding-left:var(--pad);
   background:var(--page);border-bottom:1px solid var(--hair);
   overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin;
   scroll-snap-type:x proximity}
@@ -955,7 +962,14 @@ html:has(.hjump){scroll-padding-top:calc(var(--topbar) + 52px)}
 
 /* 先週の顔 — **순위 번호를 크게 쓰지 않는다.** 한 주짜리 순위를 시즌 순위와
    같은 무게로 그리면 그렇게 읽힌다 */
-.wkcol{min-width:0}
+/* ⚠**묶음 사이가 항목 사이와 비슷하면 어디서 바뀌는지 모른다**(2026-08-18 유저 지적).
+   打者 → 投手 로 넘어가는 자리가 사람과 사람 사이와 같은 간격이었다. */
+/* 予告先発 의 상대 타자 표 — 今季 / 通算 전환.
+   ⚠**전환 줄을 표에서 떼어 놓는다** — 붙어 있으면 표 머리처럼 읽힌다. */
+.muwrap{margin-top:10px}
+.muswitch{display:flex;margin:0 0 7px}
+.wkcol{min-width:0;padding-bottom:6px}
+.cols > .wkcol + .wkcol{margin-top:6px}
 /* ⚠**이 목록에 CSS 가 한 줄도 없었다**(2026-08-18 유저 지적: 「득실점 쪽은 뭘 말하고 싶은지 모르겠음」).
    그래서 득실차를 감싼 <s> 태그가 **브라우저 기본 취소선**으로 그려졌다 —
    25/6+19 의 +19 에 줄이 그어져 「무효」처럼 보였다. 화면이 정반대를 말하고 있었다.
@@ -982,12 +996,21 @@ html:has(.hjump){scroll-padding-top:calc(var(--topbar) + 52px)}
   background:var(--tx-3)}
 .wklab s{text-decoration:none;letter-spacing:0;font-size:10.5px;font-weight:400;color:var(--tx-3)}
 .wklist{list-style:none;margin:0;padding:0;counter-reset:wk}
-.wklist li{display:grid;grid-template-columns:auto auto 1fr;gap:3px 7px;align-items:baseline;
-  padding:6px 0;border-bottom:1px solid var(--hair)}
+/* ⚠**패딩을 늘려 항목을 갈랐다**(2026-08-18 유저 지적: 「경계가 약하거나 패딩이 좁거나
+   일정하지 않아서 구분이 모호」). 6px 은 한 항목이 세 줄(이름·값·성적)인 목록에서
+   **줄 간격과 구별되지 않는다** — 어디까지가 한 사람인지가 안 보였다. */
+.wklist li{display:grid;grid-template-columns:auto auto 1fr;gap:4px 7px;align-items:baseline;
+  padding:10px 0;border-bottom:1px solid var(--hair-2)}
+.wklist li:last-child{border-bottom:0}
 .wklist li::before{counter-increment:wk;content:counter(wk);grid-row:span 2;
   font-size:10px;color:var(--tx-3);width:11px;font-variant-numeric:tabular-nums}
 .wklist a{font-size:13.5px}
-.wklist b{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;margin-left:auto}
+/* ⚠**margin-left:auto 가 값을 이름 길이에 따라 움직이게 하고 있었다**(2026-08-18 유저 지적).
+   이 격자의 2번째 열은 폭이 auto 라 **그 열에서 가장 넓은 것**(=선수 이름)이 폭을 정한다.
+   거기에 값을 오른쪽 정렬로 붙였으니, 이름이 두 글자인 사람과 세 글자인 사람의
+   +7.7 · +5.7 이 **서로 다른 x 에서 시작**했다 — 세로로 훑을 때 눈이 걸린다.
+   → 왼쪽 정렬로 되돌린다. 숫자 폭은 tabular-nums 가 이미 맞춰 준다. */
+.wklist b{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}
 .wklist s{text-decoration:none;font-size:9.5px;letter-spacing:.1em;color:var(--tx-3)}
 /* 성적 줄은 다음 줄 전체를 쓴다 — 분모가 잘리면 M2 를 어긴 화면이 된다 */
 .wklist em{grid-column:2 / -1;font-style:normal;font-size:11px;color:var(--tx-2);

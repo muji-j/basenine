@@ -931,7 +931,17 @@ function advancedBatting(b: BattingBlockData, bats: string | null): RawHtml {
   return block({
     id: "advanced",
     title: "セイバーメトリクス",
+    /**
+     * ⚠**SRC 가 맨 앞이다**(2026-08-18 유저 요청: 「SRP·SRC 는 세이버 중에선 항상 최우선」).
+     * 이 사이트가 **직접 만든 지표**이고, wOBA·wRC+ 는 어디서나 볼 수 있다 —
+     * 앞세우는 것을 뒤에 두면 화면이 그 순서로 「덜 중요하다」고 말하게 된다.
+     * ⚠**순서는 전 화면이 같아야 한다** — 구단 페이지 표와 予告先発 카드도 같이 옮겼다.
+     */
     body: html`${columns(
+      src === null
+        ? html`${statText("SRC", NO_VALUE)}`
+        : html`${statSigned("SRC", src.src, src.pa, "打席", rk(b.ranks, "src"))}
+            ${statSigned("SRC/600", src.srcPer600, src.pa, "打席")}`,
       html`${statRate("wOBA", b.woba, "打席", 3, rk(b.ranks, "woba"))}
         ${statRate("wRC+", b.wrcPlus, "打席", 1, rk(b.ranks, "wrcPlus"))}
         ${statSigned("wRAA", b.wraa.value, b.wraa.denominator, "打席", rk(b.ranks, "wraa"))}`,
@@ -939,10 +949,6 @@ function advancedBatting(b: BattingBlockData, bats: string | null): RawHtml {
         ${statRate("BABIP", b.babip, "打球", 3)}`,
       html`${statRate("K%", b.kRate, "打席", 3)}
         ${statRate("BB%", b.bbRate, "打席", 3)}`,
-      src === null
-        ? html`${statText("SRC", NO_VALUE)}`
-        : html`${statSigned("SRC", src.src, src.pa, "打席", rk(b.ranks, "src"))}
-            ${statSigned("SRC/600", src.srcPer600, src.pa, "打席")}`,
     )}
     ${battedBallRow(b.batted, bats)}
     ${note(
@@ -958,16 +964,17 @@ function advancedPitching(p: PitchingBlockData): RawHtml {
   return block({
     id: "advanced",
     title: "セイバーメトリクス",
+    /** ⚠**SRP 가 맨 앞이다** — 위 타자 블록과 같은 이유(2026-08-18) */
     body: html`${columns(
+      srp === null
+        ? html`${statText("SRP", NO_VALUE)}`
+        : html`${statSigned("SRP", srp.srp, srp.bf, "対戦打者", rk(p.ranks, "srp"))}
+            ${statSigned("SRP/9", srp.srpPer9, srp.bf, "対戦打者")}`,
       html`${statRateOuts("FIP", p.fip, 2, rk(p.ranks, "fip"), p.role)}
         ${statRateOuts("WHIP", p.whip, 2, rk(p.ranks, "whip"), p.role)}`,
       html`${statRateOuts("K/9", p.k9, 2, rk(p.ranks, "k9"), p.role)}
         ${statRateOuts("BB/9", p.bb9, 2, rk(p.ranks, "bb9"), p.role)}
         ${statRateOuts("HR/9", p.hr9, 2, null, p.role)}`,
-      srp === null
-        ? html`${statText("SRP", NO_VALUE)}`
-        : html`${statSigned("SRP", srp.srp, srp.bf, "対戦打者", rk(p.ranks, "srp"))}
-            ${statSigned("SRP/9", srp.srpPer9, srp.bf, "対戦打者")}`,
     )}
     ${battedBallRow(p.batted, null)}
     ${note(
