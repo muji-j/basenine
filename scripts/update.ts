@@ -18,6 +18,7 @@
  */
 import { parseArgs } from "node:util";
 import { spawnSync } from "node:child_process";
+import { JST_TODAY_FROM_HOUR, targetDates } from "./date-window.ts";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -52,6 +53,14 @@ const { values } = parseArgs({
      * 밀린 몫은 다음 날 받는다 — 넘친 수는 로그에 낸다(조용히 자르지 않는다).
      */
     "player-limit": { type: "string", default: "400" },
+    /**
+     * 오늘 경기를 **지금** 받는다(시각 판정을 넘긴다).
+     *
+     * ⚠**손으로 돌릴 때를 위한 것**이지 크론용이 아니다. 크론은 시각으로 판정한다 —
+     * 어느 슬롯인지를 워크플로가 인자로 알려 주게 하면, 크론 표현식을 고칠 때
+     * **인자를 같이 안 고쳐서** 조용히 어긋난다.
+     */
+    today: { type: "boolean" },
   },
 });
 
@@ -88,15 +97,22 @@ if (!contact) {
  * ⚠**어제를 계속 받는 이유**: 연장·서스펜디드·늦게 끝난 경기가 있으면 그날 밤 실행이
  *   `inProgress` 로 건너뛴다. 다음 실행이 그것을 메운다. **거르면 영영 안 들어온다.**
  * ⚠**요청이 두 배가 되지 않는다**(L7): 어제 경기는 이미 받아 둔 것이라 조건부 요청으로 304 가 돌아온다.
+ *
+ * ⚠**판정 자체는 `scripts/date-window.ts` 한 벌**이고 **거기에 시험이 붙어 있다.**
+ * 여기 두면 이 파일이 import 하는 순간 수집을 시작해서 시험할 수가 없다 —
+ * 실제로 그래서 이 판단이 한 번도 검증된 적이 없었다(2026-08-18).
  */
-function jstDate(offsetDays: number): string {
-  const jst = new Date(Date.now() + 9 * 60 * 60 * 1000 + offsetDays * 24 * 60 * 60 * 1000);
-  return jst.toISOString().slice(0, 10);
-}
-const targetDates = values.date === undefined ? [jstDate(-1), jstDate(0)] : [values.date];
+const dates = targetDates(new Date(), {
+  ...(values.date === undefined ? {} : { date: values.date }),
+  ...(values.today === true ? { forceToday: true } : {}),
+});
 console.log(
-  `대상 경기일 ${targetDates.join(" · ")}` +
-    (values.date === undefined ? " (기본값: 어제와 오늘 JST · 끝나지 않은 경기는 저장하지 않는다)" : ""),
+  `대상 경기일 ${dates.join(" · ")}` +
+    (values.date !== undefined
+      ? ""
+      : dates.length > 1
+        ? " (어제와 오늘 JST · 끝나지 않은 경기는 저장하지 않는다)"
+        : ` (어제 JST · 오늘 것은 ${JST_TODAY_FROM_HOUR}시 이후 실행에서 받는다)`),
 );
 
 function run(label: string, args: string[]): number {
@@ -110,7 +126,7 @@ let failures = 0;
 
 // 1. 경기 페이지
 // ⚠**날짜마다 따로 센다.** 한 날이 실패해도 다른 날은 받는다 — 부분 실패를 전체 실패로 만들지 않는다
-for (const d of targetDates) {
+for (const d of dates) {
   failures += run(`경기 아카이브 ${d}`, [
     "packages/archiver/src/cli.ts",
     "--date", d,
@@ -202,7 +218,7 @@ failures += run("앞으로의 일정 적재", [
   values.archive,
   values.db,
   // ⚠**가장 늦은 대상일의 해**를 쓴다. 연말에 어제와 오늘의 해가 갈릴 수 있다
-  targetDates[targetDates.length - 1]!.slice(0, 4),
+  dates[dates.length - 1]!.slice(0, 4),
 ]) === 0 ? 0 : 1;
 
 // 5. 予告先発 — 하루 1요청. ⚠거르면 그날 예고는 영영 못 받는다(페이지가 하루치만 보여준다)
