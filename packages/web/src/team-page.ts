@@ -213,10 +213,13 @@ function batterTable(rows: TeamBatter[], base: string, saber: boolean, qualifier
     ? [
       { key: "name", label: "選手", left: true, text: true },
       { key: "pa", label: "打席" },
+      // ⚠**SRC 가 세이버의 맨 앞이다**(2026-08-18 유저 요청: 「SRP·SRC 는 세이버 중에선 항상 최우선」).
+      //   이 사이트가 직접 만든 지표이고, wRC+·wOBA 는 어디서나 볼 수 있다.
+      //   ⚠분모(打席)를 바로 왼쪽에 둔 채로 옮긴다 — 값과 분모는 떨어지면 안 된다(M2).
+      { key: "src", label: "SRC", rate: true },
       { key: "wrcplus", label: "wRC+", rate: true },
       { key: "woba", label: "wOBA", rate: true },
       { key: "wraa", label: "wRAA", rate: true },
-      { key: "src", label: "SRC", rate: true },
       { key: "ops", label: "OPS", rate: true },
     ]
     : [
@@ -283,10 +286,11 @@ function pitcherTable(rows: TeamPitcher[], base: string, saber: boolean, qualifi
     ? [
       { key: "name", label: "選手", left: true, text: true },
       { key: "outs", label: "投球回" },
+      // ⚠**SRP 가 세이버의 맨 앞이다**(위 타자 표와 같은 이유 · 2026-08-18)
+      { key: "srp", label: "SRP", rate: true },
       { key: "fip", label: "FIP", rate: true },
       { key: "k9", label: "K/9", rate: true },
       { key: "bb9", label: "BB/9", rate: true },
-      { key: "srp", label: "SRP", rate: true },
       { key: "qs", label: "QS" },
       { key: "ppo", label: "球数/アウト", rate: true },
     ]

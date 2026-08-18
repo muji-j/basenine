@@ -938,6 +938,12 @@ function loadMatchups(
   competition: string,
   through: string,
   teamOf: Map<string, string>,
+  /**
+   * 어느 시즌부터 셀 것인가. 기본은 그 시즌만.
+   *
+   * ⚠**통산은 「보고 있는 시즌까지」다** — 과거 시즌 화면이 미래를 말하지 않게 한다.
+   */
+  fromSeason = season,
 ): { byBatter: Map<string, MatchupRow[]>; byPitcher: Map<string, MatchupRow[]> } {
   const byBatter = new Map<string, MatchupRow[]>();
   const byPitcher = new Map<string, MatchupRow[]>();
@@ -948,7 +954,7 @@ function loadMatchups(
     else list.push(row);
   };
 
-  for (const m of matchups(db, season, 1, competition, through)) {
+  for (const m of matchups(db, season, 1, competition, through, fromSeason)) {
     const avg = battingAverage(m.line);
     push(byBatter, m.batterId, {
       opponentId: m.pitcherId,
@@ -1096,6 +1102,10 @@ function startersPage(
   builtOn: string,
   pitchingByPlayer: Map<string, PitchingEntry>,
   matchupsByPitcher: Map<string, MatchupRow[]>,
+  /** ⚠**시즌 집계와 같은 한 벌을 쓴다**(M1) — 여기서 SRP 를 다시 계산하지 않는다 */
+  srpByPlayer: ReadonlyMap<string, { srp: number; bf: number }>,
+  /** 통산 대전. **같은 모양의 지도**라 화면이 두 벌을 같은 부품으로 그린다 */
+  careerByPitcher: ReadonlyMap<string, MatchupRow[]>,
 ): StartersPageData {
   if (rows.length === 0) return { gameDate: null, builtOn, games: [] };
 
@@ -1124,9 +1134,20 @@ function startersPage(
               whip: entry.whip,
               fip: entry.fip,
               so: entry.player.line.so,
+              /** ⚠**분모가 0이면 값을 내지 않는다**(M2·M11) — 「0.0」과 「아직 없음」은 다르다 */
+              srp: ((): { value: number; denominator: number } | null => {
+                const v = r.playerId === null ? undefined : srpByPlayer.get(r.playerId);
+                return v === undefined || v.bf === 0 ? null : { value: v.srp, denominator: v.bf };
+              })(),
             },
       // 상대 팀 타자만 남긴다 — 다른 팀 상대 기록은 오늘의 경기와 무관하다
       opponents: all.filter((m) => m.opponentTeam === opponentCode),
+      /**
+       * ⚠**같은 필터를 통산에도 그대로 건다.** 그래서 「지금 그 팀에 있는 선수」만 남는다 —
+       * 유저가 요청한 「현재 활동 중인 선수로 한정」이 이 한 줄로 성립한다(2026-08-18).
+       */
+      opponentsCareer: (r.playerId === null ? [] : (careerByPitcher.get(r.playerId) ?? []))
+        .filter((m) => m.opponentTeam === opponentCode),
     };
   };
 
@@ -3525,6 +3546,22 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   for (const b of agg.batting) teamOfPlayer.set(b.playerId, b.teamCode);
   for (const p of agg.pitching) if (!teamOfPlayer.has(p.playerId)) teamOfPlayer.set(p.playerId, p.teamCode);
   const matchupsByPlayer = loadMatchups(db, o.season, competition, through, teamOfPlayer);
+  /**
+   * **통산 대전**(보유 첫 시즌 ~ 보고 있는 시즌).
+   *
+   * ⚠**현역 한정은 여기서 따로 걸지 않는다** — `teamOf` 가 **그 시즌의 소속**만 담고 있어서,
+   * 은퇴·이적으로 지금 그 팀에 없는 선수는 `opponentTeam` 이 빈 문자열이 되어
+   * 상대 팀 필터(`m.opponentTeam === opponentCode`)에서 저절로 빠진다.
+   * 실측으로 확인한다 — 이 사실이 깨지면 통산 표에 은퇴 선수가 섞인다.
+   */
+  const careerMatchups = loadMatchups(
+    db,
+    o.season,
+    competition,
+    through,
+    teamOfPlayer,
+    heldSeasonsOf(db).from || o.season,
+  );
 
   const rankingsByLeague = new Map<League, LeagueRankings>();
   const reByLeague = new Map<League, Map<string, number>>();
@@ -4027,6 +4064,8 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     o.builtOn,
     pitchingByPlayer,
     matchupsByPlayer.byPitcher,
+    srpByPlayer,
+    careerMatchups.byPitcher,
   );
 
   // 선수명은 시즌 집계에서 온다 — **이름 문자열로 조인하지 않는다**(M10). ID로 찾아 이름을 붙인다

@@ -29,7 +29,7 @@
 import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import { NO_VALUE, avg3, dec2, fullDate, innings } from "./format.ts";
-import { block, denText, follower, note, panel, rankValue, runCell, scroller, statCount, statRateOuts, statText, tablist, term, widestRunDiff, wlCell } from "./parts.ts";
+import { block, denText, follower, note, panel, rankValue, runCell, scroller, statCount, statRateOuts, statSigned, statText, tablist, term, widestRunDiff, wlCell } from "./parts.ts";
 import { page, pastSeasonOf, ROSTER_PATH } from "./layout.ts";
 import { teamPath } from "./team-page.ts";
 import type { Freshness, SiteMeta } from "./layout.ts";
@@ -492,6 +492,15 @@ export interface StarterSummary {
   whip: Rate;
   fip: Rate;
   so: number;
+  /**
+   * **SRP(状況失点抑制)** — 이 사이트가 직접 만든 지표.
+   *
+   * ⚠**선수 성적을 내는 자리에는 반드시 넣는다**(2026-08-18 유저 요청).
+   * 이 화면은 「내일 누가 던지는가」를 보러 오는 자리인데, 정작 이 사이트가
+   * 가장 앞세우는 지표가 빠져 있었다 — 방어율·WHIP·FIP 는 어디에나 있는 값이다.
+   * ⚠**분모(상대한 타자 수)를 함께 든다**(M2). 없으면 렌더링하지 않는다.
+   */
+  srp: Rate | null;
 }
 
 export interface ProbableSide {
@@ -505,6 +514,14 @@ export interface ProbableSide {
   summary: StarterSummary | null;
   /** 이 투수가 상대한 **상대 팀** 타자들. 타석수 순 */
   opponents: MatchupRow[];
+  /**
+   * 같은 것의 **통산**(보유 첫 시즌 ~ 보고 있는 시즌).
+   *
+   * ⚠**현역 한정이 이미 걸려 있다**(2026-08-18 유저 요청). 상대 팀 소속으로 거르는데
+   * 그 소속은 **그 시즌의 것**이라, 은퇴·이적한 선수는 저절로 빠진다.
+   * ⚠**시즌을 넘겨 더하지만 대회는 안 섞는다**(§2-1) — 정규시즌끼리만 더한다.
+   */
+  opponentsCareer: MatchupRow[];
 }
 
 export interface ProbableGame {
@@ -564,6 +581,11 @@ export function renderStartersPage(d: StartersPageData, ctx: RenderContext): str
       ${side.summary === null
         ? html`<p class="empty">今季の登板記録がありません。</p>`
         : html`<dl class="srow">
+            <!-- ⚠**SRP 가 맨 앞이다**(2026-08-18 유저 요청: 「SRP·SRC 는 세이버 중에선 항상 최우선」).
+                 이 사이트가 직접 만든 지표이고, 방어율·WHIP·FIP 는 어디서나 볼 수 있다. -->
+            ${side.summary.srp === null
+              ? statText("SRP", NO_VALUE)
+              : statSigned("SRP", side.summary.srp.value, side.summary.srp.denominator, "対戦打者")}
             ${statRateOuts("防御率", side.summary.era, 2)}
             ${statRateOuts("WHIP", side.summary.whip, 2)}
             ${statRateOuts("FIP", side.summary.fip, 2)}
@@ -571,19 +593,57 @@ export function renderStartersPage(d: StartersPageData, ctx: RenderContext): str
             ${statCount("登板", side.summary.games)}
             ${statCount("奪三振", side.summary.so)}
           </dl>`}
-      ${side.opponents.length === 0
-        ? html`<p class="empty">${opponent.shortName}の打者との対戦記録はまだありません。</p>`
-        : html`${scroller(html`<table>
-            <thead><tr><th class="l">${opponent.shortName}の打者</th><th>打席</th><th>安打</th><th>本塁打</th><th>三振</th><th>打率</th></tr></thead>
-            <tbody>${side.opponents.map(
-              (m) => html`<tr class="${m.line.pa < 10 ? "thin" : ""}">
-                <td class="l"><a href="${base}players/${m.opponentId}.html?vs=${encodeURIComponent(side.name ?? "")}#b-matchup">${m.opponentName}</a></td>
-                <td>${m.line.pa}</td><td>${m.line.h}</td><td>${m.line.hr}</td><td>${m.line.so}</td>
-                <td>${avg3(m.avg.value)}</td>
-              </tr>`,
-            )}</tbody>
-          </table>`)}`}`}
+      ${matchupSection(side, opponent)}`}
 </div>`;
+
+  /**
+   * 상대 타자 표 한 벌.
+   *
+   * ⚠**같은 표를 두 번 쓰지 않는다**(M1) — 今季와 通算이 모양이 같으므로 부품 하나로 그린다.
+   * 두 벌로 두면 언젠가 한쪽만 고쳐진다.
+   */
+  const matchupRows = (list: readonly MatchupRow[], side: ProbableSide, opponent: ProbableSide): RawHtml =>
+    scroller(html`<table>
+    <thead><tr><th class="l">${opponent.shortName}の打者</th><th>打席</th><th>安打</th><th>本塁打</th><th>三振</th><th>打率</th></tr></thead>
+    <tbody>${list.map(
+      (m) => html`<tr class="${m.line.pa < 10 ? "thin" : ""}">
+        <td class="l"><a href="${base}players/${m.opponentId}.html?vs=${encodeURIComponent(side.name ?? "")}#b-matchup">${m.opponentName}</a></td>
+        <td>${m.line.pa}</td><td>${m.line.h}</td><td>${m.line.hr}</td><td>${m.line.so}</td>
+        <td>${avg3(m.avg.value)}</td>
+      </tr>`,
+    )}</tbody>
+  </table>`);
+
+  /**
+   * **今季 ↔ 通算** 전환.
+   *
+   * ⚠**표시하는 선수는 현역으로 한정된다**(2026-08-18 유저 요청). 상대 팀 소속으로 거르는데
+   * 그 소속은 **그 시즌의 것**이라, 은퇴·이적한 선수는 목록에 들어오지 못한다 —
+   * 통산 쪽에도 같은 필터가 걸려 있다(`query.ts` 의 `opponentsCareer`).
+   * ⚠**통산은 「보고 있는 시즌까지」다.** 2022년 화면이 2026년 기록을 더하면 미래를 말하게 된다.
+   * ⚠**대회는 안 섞는다**(§2-1) — 정규시즌끼리만 더한다.
+   * ⚠**둘 다 비면 토글을 만들지 않는다**(M12) — 누를 것이 없는 조작은 고장으로 읽힌다.
+   */
+  const matchupSection = (side: ProbableSide, opponent: ProbableSide): RawHtml => {
+    if (side.opponents.length === 0 && side.opponentsCareer.length === 0) {
+      return html`<p class="empty">${opponent.shortName}の打者との対戦記録はまだありません。</p>`;
+    }
+    const group = `mu-${side.teamCode}-${opponent.teamCode}`;
+    return html`<div class="muwrap">
+      <nav class="muswitch">${tablist(
+      group,
+      [{ id: "season", label: "今季" }, { id: "career", label: "通算" }],
+      false,
+      "集計する範囲",
+    )}</nav>
+      ${panel(group, "season", true, side.opponents.length === 0
+      ? html`<p class="empty">今季の対戦はまだありません。</p>`
+      : matchupRows(side.opponents, side, opponent))}
+      ${panel(group, "career", false, side.opponentsCareer.length === 0
+      ? html`<p class="empty">通算の対戦記録がありません。</p>`
+      : matchupRows(side.opponentsCareer, side, opponent))}
+    </div>`;
+  };
 
   const body = html`<header class="idline">
   <div class="idtext">
