@@ -10,8 +10,8 @@
  * ⚠**시계는 여기서 한 번만 읽는다**(M6). 아래로 내려가는 것은 `YYYY-MM-DD` 문자열이다.
  */
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { brokenLinks } from "../src/link-check.ts";
-import type { OutFile } from "../src/link-check.ts";
+import { brokenLinksIn, linkIndex } from "../src/link-check.ts";
+import type { LinkIndex } from "../src/link-check.ts";
 import { dirname, join, resolve } from "node:path";
 import { openDb } from "@bb-app/store";
 import { systemClock, toJstDateString } from "@bb-app/archiver";
@@ -93,8 +93,13 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
       let bytes = 0;
       let fileCount = 0;
       let current: BuildResult | null = null;
-      // ⚠**링크 검사는 전 시즌을 모은 뒤에 한다** — `../2025/…` 처럼 시즌을 넘는 링크가 있다
-      const all: OutFile[] = [];
+      /**
+       * ⚠**링크 검사는 전 시즌을 모은 뒤에 한다** — `../2025/…` 처럼 시즌을 넘는 링크가 있다.
+       * ⚠**그렇다고 본문을 들고 있으면 안 된다**(2026-08-18 실측). 15,434장의 본문이
+       * 약 900MB 라 CI 러너의 기본 힙(약 2GB)에서 **9시즌째에 OOM 으로 죽었다**(run 32126443819).
+       * 검사가 실제로 보는 것은 `id` 집합과 링크·ARIA 참조뿐이라, **쓰자마자 색인만 남기고 버린다.**
+       */
+      const all: LinkIndex[] = [];
       for (const l of loaded) {
         const r = buildSite(l.data, site, builtOn, l.season === season ? log : undefined, plans);
         if (l.season === season) current = r;
@@ -104,7 +109,7 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
           writeFileSync(path, f.content, "utf8");
           bytes += Buffer.byteLength(f.content, "utf8");
           fileCount += 1;
-          all.push(f);
+          all.push(linkIndex(f));
         }
         console.log(
           `  ${l.season}年${l.prefix === "" ? "(現行)" : ` → /${l.prefix}`} : ${r.files.length}파일 · 선수 ${r.playerCount}명 · 최신 ${r.latestGameDate ?? "없음"}`,
@@ -145,7 +150,7 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
        * 실제로 구단 페이지를 만들며 240개가 한 번에 404가 된 적이 있고(2026-08-16),
        * 그건 타입도 시험도 못 잡았다. 문자열이 문자열로 맞았기 때문이다.
        */
-      const broken = brokenLinks(all);
+      const broken = brokenLinksIn(all);
       if (broken.length > 0) {
         const pages = broken.filter((b) => b.kind === "page").length;
         console.error(

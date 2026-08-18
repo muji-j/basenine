@@ -20,7 +20,46 @@ const ID_RE = /\sid="([^"]*)"/g;
  * 다른 요소의 `id` 를 가리키는 ARIA 속성.
  * ⚠**`aria-label` 은 여기 없다** — 그건 글자이지 참조가 아니다.
  */
+const REF_RE = /\s(?:href|src)="([^"]*)"/g;
+
 const ARIA_REF_RE = /\s(aria-(?:labelledby|controls|describedby|owns|details|errormessage|flowto))="([^"]*)"/g;
+
+/**
+ * 링크 검사에 **필요한 것만** 뽑아 둔 한 장.
+ *
+ * ⚠**본문을 들고 있으면 시즌이 늘 때 힙이 터진다**(2026-08-18 실측).
+ * 링크 검사는 **전 시즌을 모은 뒤에** 해야 하는데(`../2025/…` 처럼 시즌을 넘는 링크가 있다),
+ * 그러려고 15,434장의 **본문 전체**를 배열에 쌓고 있었다 — 약 900MB 다.
+ * CI 러너의 기본 힙(약 2GB)에서 **9시즌째에 OOM 으로 죽었다**(run 32126443819).
+ * ⚠**힙만 늘리면 벽이 옮겨질 뿐이다.** 들고 있는 것을 줄인다 —
+ * 검사가 실제로 보는 것은 `id` 집합과 링크·ARIA 참조 목록뿐이다.
+ */
+export interface LinkIndex {
+  path: string;
+  /** 이 문서 안의 `id`. HTML 이 아니면 빈 집합 */
+  ids: Set<string>;
+  /** `href`·`src` 원문 */
+  refs: string[];
+  /** ARIA 참조. `[속성명, 값]` */
+  aria: [string, string][];
+}
+
+/**
+ * 파일 한 장에서 검사에 쓸 것만 뽑는다. **본문은 여기서 버려진다.**
+ *
+ * ⚠**HTML 이 아닌 파일도 넣는다** — 경로가 있어야 「그 파일이 있는가」를 판정한다.
+ */
+export function linkIndex(f: OutFile): LinkIndex {
+  if (!f.path.endsWith(".html")) {
+    return { path: f.path, ids: new Set(), refs: [], aria: [] };
+  }
+  return {
+    path: f.path,
+    ids: new Set([...f.content.matchAll(ID_RE)].map((m) => m[1] ?? "")),
+    refs: [...f.content.matchAll(REF_RE)].map((m) => m[1] ?? ""),
+    aria: [...f.content.matchAll(ARIA_REF_RE)].map((m) => [m[1] ?? "", m[2] ?? ""] as [string, string]),
+  };
+}
 
 /** 생성될 파일 한 장 */
 export interface OutFile {
@@ -92,6 +131,13 @@ function resolvePath(dir: string, href: string): string {
  * ⚠**디렉터리 링크(`foo/`)는 `foo/index.html` 로 읽는다.**
  */
 export function brokenLinks(files: readonly OutFile[]): BrokenLink[] {
+  return brokenLinksIn(files.map(linkIndex));
+}
+
+/**
+ * 색인만 받아 검사한다. **빌드는 이쪽을 쓴다** — 본문을 안 들고 있어도 되게.
+ */
+export function brokenLinksIn(files: readonly LinkIndex[]): BrokenLink[] {
   const have = new Set(files.map((f) => f.path));
   /**
    * 파일마다 그 안에 있는 `id`.
@@ -102,18 +148,14 @@ export function brokenLinks(files: readonly OutFile[]): BrokenLink[] {
    * 앵커의 일이므로, 앵커가 틀리면 화면은 열리는데 아무 일도 일어나지 않는다.
    */
   const ids = new Map<string, Set<string>>();
-  for (const f of files) {
-    if (!f.path.endsWith(".html")) continue;
-    ids.set(f.path, new Set([...f.content.matchAll(ID_RE)].map((m) => m[1] ?? "")));
-  }
+  for (const f of files) ids.set(f.path, f.ids);
   const out: BrokenLink[] = [];
   const seen = new Set<string>();
   for (const f of files) {
     if (!f.path.endsWith(".html")) continue;
     const slash = f.path.lastIndexOf("/");
     const dir = slash === -1 ? "" : f.path.slice(0, slash);
-    for (const m of f.content.matchAll(/\s(?:href|src)="([^"]*)"/g)) {
-      const href = m[1] ?? "";
+    for (const href of f.refs) {
       if (isExternal(href)) continue;
       const hash = href.indexOf("#");
       const frag = hash === -1 ? "" : href.slice(hash + 1);
@@ -153,13 +195,13 @@ export function brokenLinks(files: readonly OutFile[]): BrokenLink[] {
      * ⚠**공백 구분 목록을 받는 속성이 있다**(`aria-controls` 는 여러 패널을 가리킬 수 있다).
      */
     const own = ids.get(f.path);
-    for (const m of f.content.matchAll(ARIA_REF_RE)) {
-      for (const ref of (m[2] ?? "").split(/\s+/)) {
+    for (const [attr, value] of f.aria) {
+      for (const ref of value.split(/\s+/)) {
         if (ref === "" || own?.has(ref) === true) continue;
         const key = `${f.path} aria ${ref}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        out.push({ from: f.path, href: `${m[1]}="${ref}"`, to: f.path, kind: "aria" });
+        out.push({ from: f.path, href: `${attr}="${ref}"`, to: f.path, kind: "aria" });
       }
     }
   }
