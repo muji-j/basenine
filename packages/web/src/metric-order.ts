@@ -36,7 +36,7 @@ const ORDER: readonly string[] = [
   // ── 5. 누적 개수 ──────────────────────────────────────
   "h", "double", "triple", "hr", "rbi", "runs", "sb", "cs",
   "bb", "ibb", "hbp", "so", "sf", "sh",
-  "w", "l", "sv", "hld", "qs", "pitches", "wp", "balk",
+  "w", "l", "sv", "hld", "hp", "starts", "qs", "pitches", "wp", "balk",
 ];
 
 const RANK = new Map(ORDER.map((k, i) => [k, i]));

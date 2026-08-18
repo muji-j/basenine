@@ -627,22 +627,27 @@ function pitcherRankings(
     inningsRanking(),
   ], (x) => x.id);
 
+  /**
+   * ⚠**최종 목록을 정렬한다 — `common` 만 정렬해서는 안 된다**(2026-08-18 유저 지적).
+   * 역할별 지표를 앞뒤로 이어 붙이면 **정렬된 `common` 이 중간에 끼어** 전체 순서가 깨진다.
+   * 실제로 구원이 그랬다: `セーブ · ホールド · HP · [정렬된 공통] · 勝利 · 登板` —
+   * 그래서 **SRP 가 세 번째 뒤로 밀려** 있었다. 한 화면만 순서가 다르면 그 화면부터 의심받는다.
+   *
+   * ⚠**첫 지표가 그 화면의 주장이다.** 선발의 첫 지표는 한때 「勝利」였다 —
+   * FIP·WHIP·SRP를 자체 산출하는 사이트가 승수를 앞세우는 것은 자기모순이고,
+   * 승수는 타선과 구원진이 절반을 정한다. **투수 자신을 재는 값**이 먼저다.
+   * 그 판단은 이제 `metric-order.ts` 가 한 벌로 들고 있다.
+   */
   if (role === "starter") {
-    /**
-     * ⚠**첫 지표가 그 화면의 주장이다.** 여기가 「勝利」였다 —
-     * FIP·WHIP·SRP를 자체 산출하는 사이트의 선발 첫 화면이 승수인 것은 자기모순이고,
-     * 승수는 타선과 구원진이 절반을 정한다. **투수 자신을 재는 값**을 먼저 놓는다.
-     * (`common` 의 첫 항목이 방어율이므로 그것이 기본값이 된다.)
-     */
-    return [
+    return byMetricOrder([
       ...common,
       count("w", "勝利", (e) => e.player.decisions.w),
       count("l", "敗戦", (e) => e.player.decisions.l),
       count("starts", "先発", (e) => e.player.starts),
       count("qs", "QS", (e) => e.player.quality.qs),
-    ];
+    ], (x) => x.id);
   }
-  return [
+  return byMetricOrder([
     count("sv", "セーブ", (e) => e.player.decisions.sv),
     count("hld", "ホールド", (e) => e.player.decisions.hld),
     // HP(홀드포인트) = 홀드 + 구원승. NPB 最優秀中継ぎ의 정의다
@@ -650,7 +655,7 @@ function pitcherRankings(
     ...common,
     count("w", "勝利", (e) => e.player.decisions.w),
     count("games", "登板", (e) => e.player.games),
-  ];
+  ], (x) => x.id);
 }
 
 /**

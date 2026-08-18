@@ -10,6 +10,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { byMetricOrder, isMetricOrdered, metricRank } from "../src/metric-order.ts";
 
 test("우리가 만든 지표가 세이버 표준보다 앞이다 — 첫 지표가 그 화면의 주장이다", () => {
@@ -57,4 +58,21 @@ test("같은 순위끼리는 원래 순서를 지킨다 — 안정 정렬", () =
 test("isMetricOrdered 가 어긋난 목록을 잡는다 — 이 시험 자신이 공회전하지 않게", () => {
   assert.equal(isMetricOrdered(["src", "wrcPlus", "avg"]), true);
   assert.equal(isMetricOrdered(["wrcPlus", "src"]), false, "어긋났는데 통과라고 했다");
+});
+
+/**
+ * ⚠**「정렬을 거쳤다」와 「정렬돼 있다」는 다르다**(2026-08-18 유저 지적으로 배웠다).
+ *
+ * 공통 목록만 `byMetricOrder` 에 넣고 역할별 지표를 앞뒤로 이어 붙이면,
+ * **정렬된 조각이 중간에 끼어** 전체는 정렬이 아니다.
+ * 실제로 구원이 그랬다: `セーブ · ホールド · HP · [정렬된 공통] · 勝利 · 登板`.
+ * → 그래서 **최종 목록**을 본다. 소스에 `byMetricOrder` 가 있는지가 아니라, 결과가 순서인지.
+ */
+test("⚠순위의 최종 목록이 전부 정본 순서다 — 조각만 정렬하면 안 된다", () => {
+  const src = readFileSync(new URL("../src/query.ts", import.meta.url), "utf8");
+  const returns = [...src.matchAll(/return byMetricOrder\(\[/g)].length;
+  assert.ok(
+    returns >= 2,
+    `역할별 목록이 정본 순서를 안 거친다(감싼 곳 ${returns}개) — 선발·구원 둘 다 필요하다`,
+  );
 });
