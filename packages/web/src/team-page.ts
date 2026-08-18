@@ -10,6 +10,7 @@
  * ⚠**순위는 정규시즌만이다**(§2-1). 포스트시즌 성적은 여기 없고, 그 사실을 화면이 말한다.
  */
 import { html, raw } from "./html.ts";
+import { byMetricOrder } from "./metric-order.ts";
 import type { RawHtml } from "./html.ts";
 import { NO_VALUE, avg3, fullDate, innings } from "./format.ts";
 import { buttonGroup, columns, note, panel, scroller, tablist, term, valueWithDen } from "./parts.ts";
@@ -175,6 +176,21 @@ export function teamPath(code: string): string {
  */
 const TEAM_TABS = "team";
 
+/**
+ * 열을 **정본 순서**로 세운다.
+ *
+ * ⚠**순서를 화면마다 손으로 적지 않는다**(M1 · 2026-08-18 유저 요청).
+ * 같은 지표가 순위 탭과 구단 페이지에서 다른 자리에 있으면 읽는 사람이 두 번 배운다.
+ * ⚠**이름표 열은 지표가 아니다** — `name`·`role` 은 정렬에서 빼고 원래 자리를 지킨다.
+ *   그것들까지 정렬에 넣으면 「選手」가 표 한가운데로 간다.
+ */
+function orderCols(cols: readonly SortColumn[]): SortColumn[] {
+  const LABELS = new Set(["name", "role"]);
+  const head = cols.filter((c) => LABELS.has(c.key));
+  const rest = byMetricOrder(cols.filter((c) => !LABELS.has(c.key)), (c) => c.key);
+  return [...head, ...rest];
+}
+
 function wlt(x: { w: number; l: number; t: number }): string {
   return `${x.w}-${x.l}-${x.t}`;
 }
@@ -209,7 +225,13 @@ const qualAttr = (q: boolean): RawHtml => raw(q ? ' data-qualified="1"' : ' data
  */
 function batterTable(rows: TeamBatter[], base: string, saber: boolean, qualifier: string): RawHtml {
   if (rows.length === 0) return html`<p class="empty">打者の記録がありません。</p>`;
-  const cols: SortColumn[] = saber
+  /**
+   * ⚠**순서는 metric-order.ts 한 벌이 정한다**(M1 · 2026-08-18 유저 요청).
+   * 화면마다 순서가 달라서 같은 지표를 매번 다른 자리에서 찾아야 했다.
+   * ⚠**첫 열(選手)은 지표가 아니라 이름표다** — 정렬에서 빼고 늘 맨 앞에 둔다.
+   */
+  const cols: SortColumn[] = orderCols(
+    saber
     ? [
       { key: "name", label: "選手", left: true, text: true },
       { key: "pa", label: "打席" },
@@ -234,7 +256,8 @@ function batterTable(rows: TeamBatter[], base: string, saber: boolean, qualifier
       { key: "obp", label: "出塁率", rate: true },
       { key: "slg", label: "長打率", rate: true },
       { key: "ops", label: "OPS", rate: true },
-    ];
+    ]
+  );
 
   const body = (r: TeamBatter): RawHtml =>
     saber
@@ -282,7 +305,8 @@ function batterTable(rows: TeamBatter[], base: string, saber: boolean, qualifier
 
 function pitcherTable(rows: TeamPitcher[], base: string, saber: boolean, qualifier: string): RawHtml {
   if (rows.length === 0) return html`<p class="empty">投手の記録がありません。</p>`;
-  const cols: SortColumn[] = saber
+  const cols: SortColumn[] = orderCols(
+    saber
     ? [
       { key: "name", label: "選手", left: true, text: true },
       { key: "outs", label: "投球回" },
@@ -306,7 +330,8 @@ function pitcherTable(rows: TeamPitcher[], base: string, saber: boolean, qualifi
       { key: "so", label: "奪三振" },
       { key: "era", label: "防御率", rate: true },
       { key: "whip", label: "WHIP", rate: true },
-    ];
+    ]
+  );
 
   const body = (r: TeamPitcher): RawHtml =>
     saber

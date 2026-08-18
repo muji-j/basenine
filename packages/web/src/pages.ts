@@ -532,8 +532,40 @@ export interface ProbableGame {
 }
 
 export interface StartersPageData {
+  /**
+   * **우리가 실제로 보유한 첫 시즌.**
+   *
+   * ⚠**「通算」이라고 쓰면 거짓말이 된다**(2026-08-18 유저 지적으로 정정).
+   * 이 화면의 넓은 쪽 집계는 **우리가 가진 시즌의 합계**이지 그 선수의 통산이 아니다.
+   * CLAUDE.md 가 「우리 보유분을 합산해 통산이라고 부르는 것은 금지」라고 적어 뒀는데
+   * 내가 그걸 어겼다 — 라벨을 **실제 범위**로 바꾸고, 그 범위를 데이터에서 받는다.
+   * ⚠**하드코딩하지 않는다** — 백필하면 저절로 맞는다.
+   */
+  heldFrom: number;
   /** 예고가 나와 있는 경기일. 없으면 null */
   gameDate: string | null;
+  /**
+   * **앞뒤 날짜.** 없으면 null(그 방향 끝이다).
+   *
+   * ⚠**하루치만 보여주고 있었다**(2026-08-18 유저 지적). `loadProbables` 가
+   * `MAX(game_date)` 한 줄만 읽어서, 새 예고가 들어오는 순간 **어제 것을 볼 방법이 사라졌다** —
+   * 「이전」을 눌러도 그 화면에는 예고가 아예 없었다.
+   * 예고는 **경기 전에만 존재하는 유일한 정보**라 지나가면 다시 못 받는다(그래서 매일 받는다).
+   * 받아 놓고 못 보게 두는 것은 그 수집을 헛되게 하는 것이다.
+   */
+  prev: string | null;
+  next: string | null;
+  /** 우리가 예고를 가진 날 수. 「며칠분이 있는가」를 화면이 말한다 */
+  dayCount: number;
+  /** 기본으로 열리는 날(= `starters.html` 이 그리는 날). 링크가 어느 주소로 갈지 정한다 */
+  defaultDate: string | null;
+  /**
+   * 이 데이터가 **날짜별 화면**(`starters/YYYY-MM-DD.html`)의 것인가.
+   *
+   * ⚠**깊이가 다르면 상대 링크가 전부 어긋난다.** 화면이 자기 경로를 스스로 말해야
+   * `ctx.paths` 가 올바른 base 를 계산한다 — 안 그러면 링크 361개가 한 번에 깨진다(실측).
+   */
+  isDayPage?: boolean;
   /** 사이트를 만든 날. 「本日」인지 판정하는 데 쓴다 */
   builtOn: string;
   games: ProbableGame[];
@@ -566,8 +598,45 @@ export function startersAnchor(key: string): string {
   return `sg-${key}`;
 }
 
+/**
+ * 予告先発의 날짜 이동.
+ *
+ * ⚠**`days/` 의 어법을 그대로 쓴다**(2026-08-18) — 같은 「앞뒤로 넘긴다」인데 모양이 다르면
+ * 사용자가 두 번 배워야 한다. 화살표는 형태로 방향을 말하므로 인쇄·색각에서도 남는다.
+ * ⚠**끝에서는 누를 수 없게 두되 자리는 남긴다** — 사라지면 줄이 흔들린다.
+ */
+function startersBar(base: string, d: StartersPageData): RawHtml {
+  const step = (date: string | null, label: string, cls: string): RawHtml => {
+    const arrow = cls === "p" ? "←" : "→";
+    const body = cls === "p"
+      ? html`<span class="dayrow"><i aria-hidden="true">${arrow}</i>${label}</span>`
+      : html`<span class="dayrow">${label}<i aria-hidden="true">${arrow}</i></span>`;
+    /**
+     * ⚠**기본 날짜는 `starters.html` 이지 `starters/그날.html` 이 아니다**(2026-08-18).
+     * 기본 날짜의 페이지는 두 주소에 같은 화면이 생기지 않게 **만들지 않는다** —
+     * 그래서 그쪽으로 가는 링크는 최상위를 가리켜야 한다. 빌드가 깨진 링크 1개로 잡았다.
+     */
+    const href = date === d.defaultDate ? `${base}starters.html` : `${base}starters/${date}.html`;
+    return date === null
+      ? html`<span class="daystep ${cls} off">${body}</span>`
+      : html`<a class="daystep ${cls}" href="${href}">${body}<s>${fullDate(date)}</s></a>`;
+  };
+  return html`<nav class="daybar" aria-label="予告先発の日付">
+  ${step(d.prev, "前の予告", "p")}
+  <span class="daypick off">${d.dayCount}日分</span>
+  ${step(d.next, "次の予告", "n")}
+</nav>`;
+}
+
 export function renderStartersPage(d: StartersPageData, ctx: RenderContext): string {
-  const { base, root, seasons } = ctx.paths("starters.html");
+  /**
+   * ⚠**자기 경로를 스스로 말한다**(2026-08-18). 날짜별 화면은 `starters/YYYY-MM-DD.html` 로
+   * **한 단계 깊은 곳**에 있는데 여기서 "starters.html" 로 고정하고 있었다 —
+   * 그러면 상대 링크가 전부 `starters/players/…` 로 해석된다.
+   * 빌드의 링크 검사가 **361건**을 잡았다(2026-08-18 실측). 잡아 준 덕에 배포 전에 알았다.
+   */
+  const self = d.isDayPage && d.gameDate !== null ? `starters/${d.gameDate}.html` : "starters.html";
+  const { base, root, seasons } = ctx.paths(self);
   const isToday = d.gameDate !== null && d.gameDate === d.builtOn;
   // ⚠**끝난 시즌에 「発表待ち」라고 쓰지 않는다.** 기다리는 것이 아니라 끝난 것이다
   const past = pastSeasonOf(seasons);
@@ -620,7 +689,10 @@ export function renderStartersPage(d: StartersPageData, ctx: RenderContext): str
    * ⚠**표시하는 선수는 현역으로 한정된다**(2026-08-18 유저 요청). 상대 팀 소속으로 거르는데
    * 그 소속은 **그 시즌의 것**이라, 은퇴·이적한 선수는 목록에 들어오지 못한다 —
    * 통산 쪽에도 같은 필터가 걸려 있다(`query.ts` 의 `opponentsCareer`).
-   * ⚠**통산은 「보고 있는 시즌까지」다.** 2022년 화면이 2026년 기록을 더하면 미래를 말하게 된다.
+   * ⚠**「通算」이 아니다.** 우리가 가진 시즌(`heldFrom`~)의 합계일 뿐이고,
+   *   그 이전의 대전은 들어 있지 않다 — 그래서 라벨이 「2019年〜」처럼 **범위를 말한다**.
+   *   CLAUDE.md 가 금지하는 「우리 보유분을 통산이라고 부르기」를 처음에 그대로 했다가 고쳤다.
+   * ⚠**끝은 「보고 있는 시즌까지」다.** 2022년 화면이 2026년 기록을 더하면 미래를 말하게 된다.
    * ⚠**대회는 안 섞는다**(§2-1) — 정규시즌끼리만 더한다.
    * ⚠**둘 다 비면 토글을 만들지 않는다**(M12) — 누를 것이 없는 조작은 고장으로 읽힌다.
    */
@@ -632,7 +704,11 @@ export function renderStartersPage(d: StartersPageData, ctx: RenderContext): str
     return html`<div class="muwrap">
       <nav class="muswitch">${tablist(
       group,
-      [{ id: "season", label: "今季" }, { id: "career", label: "通算" }],
+      [
+        { id: "season", label: "今季" },
+        // ⚠**「通算」이라고 쓰지 않는다** — 우리가 가진 시즌의 합계일 뿐이다
+        { id: "career", label: `${d.heldFrom}年〜` },
+      ],
       false,
       "集計する範囲",
     )}</nav>
@@ -640,7 +716,7 @@ export function renderStartersPage(d: StartersPageData, ctx: RenderContext): str
       ? html`<p class="empty">今季の対戦はまだありません。</p>`
       : matchupRows(side.opponents, side, opponent))}
       ${panel(group, "career", false, side.opponentsCareer.length === 0
-      ? html`<p class="empty">通算の対戦記録がありません。</p>`
+      ? html`<p class="empty">${d.heldFrom}年以降の対戦記録がありません。</p>`
       : matchupRows(side.opponentsCareer, side, opponent))}
     </div>`;
   };
@@ -654,6 +730,8 @@ export function renderStartersPage(d: StartersPageData, ctx: RenderContext): str
   </div>
   <span class="asof">成績は${fullDate(d.builtOn)}生成時点</span>
 </header>
+
+${d.dayCount <= 1 ? raw("") : startersBar(base, d)}
 
 ${d.gameDate === null || d.games.length === 0
     ? html`<section class="block"><p class="empty">${past

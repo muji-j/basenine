@@ -118,6 +118,9 @@ export function seasonPaths(data: SiteData, hasLog: boolean): Set<string> {
   if (data.postseason.competitions.length > 0) out.add("postseason.html");
   for (const t of data.teams) out.add(teamPath(t.teamCode));
   for (const d of pastDays(data)) out.add(`days/${d.date}.html`);
+  for (const d of data.starterDays) {
+    if (d.gameDate !== null) out.add(`starters/${d.gameDate}.html`);
+  }
   for (const p of data.players) out.add(`players/${p.playerId}.html`);
   for (const g of data.games) out.add(`games/${gameSlug(g.gameId)}.html`);
   return out;
@@ -180,6 +183,16 @@ export function buildSite(
     { path: at(ROSTER_PATH), content: renderIndexPage(data.index, ctx) },
     { path: at("ranking.html"), content: renderRankingPage(data.ranking, ctx) },
     { path: at("starters.html"), content: renderStartersPage(data.starters, ctx) },
+    /**
+     * 날짜별 予告先発.
+     * ⚠**앞뒤 링크의 대상이다** — 링크만 만들고 페이지를 안 만들면 빌드가 멈춘다.
+     */
+    ...data.starterDays
+      .filter((d) => d.gameDate !== null)
+      .map((d) => ({
+        path: at(`starters/${safeSegment(d.gameDate!, "예고일")}.html`),
+        content: renderStartersPage(d, ctx),
+      })),
     {
       path: at("matchup.html"),
       content: renderMatchupPage(data.matchup, ctx),

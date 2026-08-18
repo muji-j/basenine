@@ -74,7 +74,8 @@ function game(over: Partial<ProbableGame> = {}): ProbableGame {
 }
 
 function data(over: Partial<StartersPageData> = {}): StartersPageData {
-  return { gameDate: "2026-08-16", builtOn: "2026-08-15", games: [game()], ...over };
+  return {
+    heldFrom: 2019, defaultDate: "2026-08-16", prev: "2026-08-15", next: null, dayCount: 3, gameDate: "2026-08-16", builtOn: "2026-08-15", games: [game()], ...over };
 }
 
 test("경기와 구장·시각을 낸다", () => {
@@ -148,7 +149,12 @@ test("⚠今季만 비면 「없다」가 아니라 통산 쪽을 남긴다 — 
   );
   assert.ok(!out.includes("巨人の打者との対戦記録はまだありません"), "통산이 있는데 「없다」고 말했다");
   assert.match(out, /今季の対戦はまだありません/, "今季가 비었다는 말이 없다");
-  assert.match(out, /通算/, "통산으로 넘어갈 방법이 없다");
+  /**
+   * ⚠**「通算」이라고 쓰지 않는다** — 우리가 가진 시즌의 합계일 뿐이다(2026-08-18 유저 지적).
+   * 라벨이 **실제 범위**를 말하는지 못 박는다.
+   */
+  assert.match(out, /2019年〜/, "넓은 쪽의 범위를 말하지 않는다");
+  assert.ok(!out.includes(">通算<"), "우리 보유분을 「通算」이라고 불렀다");
 });
 
 /**

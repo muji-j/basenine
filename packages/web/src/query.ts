@@ -11,6 +11,7 @@ import { attempts, battedBalls, buntValues, headToHead, steals, successRate, tim
 import { careerTotal, seasonsPlayed } from "@bb-app/parser";
 import type { HeadToHead, PlayerStreaks } from "@bb-app/aggregate";
 import { regularSeasonGames } from "./home-page.ts";
+import { byMetricOrder } from "./metric-order.ts";
 import type {
   HomeLeague,
   HomePace,
@@ -505,9 +506,15 @@ function buildLeagueRankings(
     true,
   );
 
-  const batting: MetricRanking[] = [
-    toMetricRanking("wrcPlus", "wRC+", 1, "打席", bq, asRanked(rankBatters(bundle, bat, (e) => e.wrcPlus), bid)),
+  /**
+   * ⚠**순서는 여기서 정하지 않는다**(M1 · 2026-08-18 유저 요청).
+   * 목록은 자유롭게 쓰고, 마지막에 `byMetricOrder` 로 **정본 순서**에 맞춘다 —
+   * 화면마다 순서가 달라서 같은 지표를 매번 다른 자리에서 찾아야 했다.
+   * 무엇을 보여줄지는 여기가, 어느 순서로 놓을지는 `metric-order.ts` 가 정한다.
+   */
+  const batting: MetricRanking[] = byMetricOrder([
     toMetricRanking("src", "SRC", 1, "打席", bq, asRanked(srcRanked, bid)),
+    toMetricRanking("wrcPlus", "wRC+", 1, "打席", bq, asRanked(rankBatters(bundle, bat, (e) => e.wrcPlus), bid)),
     toMetricRanking("ops", "OPS", 3, "打席", bq, asRanked(rankBatters(bundle, bat, (e) => e.ops), bid)),
     toMetricRanking("avg", "打率", 3, "打数", bq, asRanked(rankBatters(bundle, bat, (e) => e.avg), bid)),
     toMetricRanking("obp", "出塁率", 3, "打席", bq, asRanked(rankBatters(bundle, bat, (e) => e.obp), bid)),
@@ -532,7 +539,7 @@ function buildLeagueRankings(
       "打席",
       bat.map((e) => ({ ...bid(e), count: e.player.sb, sample: e.player.line.pa })),
     ),
-  ];
+  ], (x) => x.id);
 
   return {
     league: bundle.league,
@@ -597,17 +604,18 @@ function pitcherRankings(
       true,
     );
 
-  const common: MetricRanking[] = [
-    rate("era", "防御率", (e) => e.era),
-    rate("fip", "FIP", (e) => e.fip),
-    rate("whip", "WHIP", (e) => e.whip),
-    rate("k9", "K/9", (e) => strikeoutsPer9(e.player.line), true),
-    rate("bb9", "BB/9", (e) => walksPer9(e.player.line)),
+  /** ⚠**순서는 `metric-order.ts` 가 정한다**(위 타자 목록과 같은 이유) */
+  const common: MetricRanking[] = byMetricOrder([
     // ⚠SRP는 **높을수록 좋다.** 다른 투수 비율과 방향이 반대다
     rate("srp", "SRP", (e) => {
       const v = srpByPlayer.get(e.player.playerId);
       return v === undefined ? { value: null, denominator: 0 } : { value: v.srp, denominator: v.bf };
     }, true),
+    rate("era", "防御率", (e) => e.era),
+    rate("fip", "FIP", (e) => e.fip),
+    rate("whip", "WHIP", (e) => e.whip),
+    rate("k9", "K/9", (e) => strikeoutsPer9(e.player.line), true),
+    rate("bb9", "BB/9", (e) => walksPer9(e.player.line)),
     count("so", "奪三振", (e) => e.player.line.so),
     // ⚠球数/アウト는 **낮을수록 좋다.** 다른 투수 개수 지표와 성격이 다르다
     rate("pitchesPerOut", "球数/アウト", (e) =>
@@ -617,7 +625,7 @@ function pitcherRankings(
     ),
     count("pitches", "投球数", (e) => e.player.pitches ?? 0),
     inningsRanking(),
-  ];
+  ], (x) => x.id);
 
   if (role === "starter") {
     /**
@@ -1072,23 +1080,51 @@ interface ProbableRow {
  * ⚠**미래 날짜를 고르지 않는다.** 페이지가 내일분을 게시하므로 `MAX(game_date)`가
  * 곧 「다음 경기일」이고, 그게 이 화면의 대상이다.
  */
-function loadProbables(db: Db, season: number): ProbableRow[] {
+function loadProbables(db: Db, season: number, date?: string): ProbableRow[] {
   /**
    * ⚠**시즌으로 거른다.** 예고선발은 「다음 경기」의 정보라 언제나 현재 시즌 것이다.
    * 안 거르면 **2025년 화면에 2026년의 예고선발이 뜬다** — 실제로 그렇게 나왔다(2026-08-16).
    * 게다가 방어율까지 2026년 값이라, 지난 시즌을 보는 사람에게 통째로 거짓말이 된다.
    */
-  const latest = db.raw
-    .prepare("SELECT MAX(game_date) AS d FROM probable_pitcher WHERE game_date LIKE ?")
-    .get(`${season}-%`) as { d: string | null };
-  if (latest.d === null) return [];
+  const dates = probableDates(db, season);
+  if (dates.length === 0) return [];
+  const pick = date ?? dates[dates.length - 1]!;
   return db.raw
     .prepare(
       `SELECT game_date AS gameDate, team_code AS teamCode, opponent_code AS opponentCode,
               player_id AS playerId, venue, start_time AS startTime, league
        FROM probable_pitcher WHERE game_date = ?`,
     )
-    .all(latest.d) as unknown as ProbableRow[];
+    .all(pick) as unknown as ProbableRow[];
+}
+
+/**
+ * 우리가 **예고를 가진 모든 날**. 오래된 것부터.
+ *
+ * ⚠**하루치만 읽고 있었다**(2026-08-18 유저 지적). `MAX(game_date)` 한 줄만 봐서,
+ * 새 예고가 들어오는 순간 어제 것을 볼 방법이 사라졌다 — 「이전」을 눌러도 그 화면에는
+ * 예고가 아예 없었다. 예고는 **경기 전에만 존재하는 정보**라 지나가면 다시 못 받는다.
+ * 그래서 매일 받아 두는데, 받아 놓고 못 보게 두면 그 수집이 헛된 것이 된다.
+ */
+export function probableDates(db: Db, season: number): string[] {
+  return (db.raw
+    .prepare(
+      "SELECT DISTINCT game_date AS d FROM probable_pitcher WHERE game_date LIKE ? ORDER BY d",
+    )
+    .all(`${season}-%`) as unknown as { d: string }[]).map((r) => r.d);
+}
+
+/**
+ * 기본으로 열 날짜.
+ *
+ * ⚠**「당일」이 기본이다**(2026-08-18 유저 요청: 「당일의 시합 결과가 모두 들어오기 전까지
+ * 해당 탭의 디폴트는 당일 예고 선발로」). 예고는 전날 저녁에 다음날 것이 붙으므로,
+ * 아무 생각 없이 `MAX` 를 쓰면 **오늘 경기를 보러 온 사람에게 내일 것을 내민다.**
+ * ⚠**오늘 것이 없으면 가장 최근으로 떨어진다** — 없는 날을 가리키지 않는다(M12).
+ */
+export function defaultProbableDate(dates: readonly string[], builtOn: string): string | null {
+  if (dates.length === 0) return null;
+  return dates.includes(builtOn) ? builtOn : dates[dates.length - 1]!;
 }
 
 /**
@@ -1106,8 +1142,19 @@ function startersPage(
   srpByPlayer: ReadonlyMap<string, { srp: number; bf: number }>,
   /** 통산 대전. **같은 모양의 지도**라 화면이 두 벌을 같은 부품으로 그린다 */
   careerByPitcher: ReadonlyMap<string, MatchupRow[]>,
+  /** 우리가 예고를 가진 모든 날(오래된 것부터). 앞뒤 이동의 근거다 */
+  allDates: readonly string[],
+  /** 기본으로 열리는 날 — 그 날로 가는 링크만 `starters.html` 을 가리킨다 */
+  defaultDate: string | null,
+  /** 우리가 보유한 첫 시즌. ⚠**화면이 「通算」이라고 말하지 않게 하는 근거다** */
+  heldFrom: number,
 ): StartersPageData {
-  if (rows.length === 0) return { gameDate: null, builtOn, games: [] };
+  if (rows.length === 0) return { heldFrom, gameDate: null, defaultDate: null, prev: null, next: null, dayCount: 0, builtOn, games: [] };
+
+  const at = allDates.indexOf(rows[0]!.gameDate);
+  const prev = at > 0 ? allDates[at - 1]! : null;
+  const next = at >= 0 && at < allDates.length - 1 ? allDates[at + 1]! : null;
+  const dayCount = allDates.length;
 
   const byTeam = new Map(rows.map((r) => [r.teamCode, r]));
   const seen = new Set<string>();
@@ -1166,7 +1213,7 @@ function startersPage(
   }
 
   games.sort((a, b) => (a.startTime ?? "").localeCompare(b.startTime ?? "") || a.league.localeCompare(b.league));
-  return { gameDate: rows[0]!.gameDate, builtOn, games };
+  return { heldFrom, gameDate: rows[0]!.gameDate, defaultDate, prev, next, dayCount, builtOn, games };
 }
 
 /**
@@ -3304,6 +3351,15 @@ export interface SiteData {
   index: IndexPageData;
   ranking: RankingPageData;
   starters: StartersPageData;
+  /**
+   * **기본 날짜가 아닌 나머지 예고일.** 날짜별 페이지가 여기서 나온다.
+   *
+   * ⚠**앞뒤 링크를 만들었으면 그 대상도 만들어야 한다**(2026-08-18).
+   * 링크만 넣고 페이지를 안 만들면 빌드의 링크 검사가 멈춘다 — 그건 다행이지만,
+   * **CI 에서만 터진다**(로컬은 예고가 하루치뿐이라 줄 자체가 안 그려진다).
+   * 로컬에서 못 보는 결함을 만들지 않는다.
+   */
+  starterDays: StartersPageData[];
   matchup: MatchupPageData;
   today: TodayPageData;
   /** 지난 경기일 화면. **최신 경기일은 빠져 있다** — 그 날은 `today.html`이 맡는다 */
@@ -4059,14 +4115,44 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     };
   });
 
+  /**
+   * ⚠**「당일」을 기본으로 연다**(2026-08-18 유저 요청). 예고는 전날 저녁에 다음날 것이 붙어서,
+   * MAX 를 그냥 쓰면 오늘 경기를 보러 온 사람에게 **내일 것을 내민다.**
+   */
+  const probDates = probableDates(db, o.season);
+  /**
+   * 날짜별 予告先発.
+   *
+   * ⚠**기본 날짜는 여기서 뺀다** — `starters.html` 이 이미 그 날을 그린다.
+   *   두 주소에 같은 화면이 생기면 「어느 쪽이 진짜인가」가 생긴다(날짜 화면과 같은 규칙).
+   */
+  const startersFor = (date: string): StartersPageData =>
+    startersPage(
+      loadProbables(db, o.season, date),
+      o.builtOn,
+      pitchingByPlayer,
+      matchupsByPlayer.byPitcher,
+      srpByPlayer,
+      careerMatchups.byPitcher,
+      probableDates(db, o.season),
+      defaultProbableDate(probableDates(db, o.season), o.builtOn),
+      heldSeasonsOf(db).from || o.season,
+    );
+
   const startersData = startersPage(
-    loadProbables(db, o.season),
+    loadProbables(db, o.season, defaultProbableDate(probDates, o.builtOn) ?? undefined),
     o.builtOn,
     pitchingByPlayer,
     matchupsByPlayer.byPitcher,
     srpByPlayer,
     careerMatchups.byPitcher,
+    probDates,
+    defaultProbableDate(probDates, o.builtOn),
+    heldSeasonsOf(db).from || o.season,
   );
+  const starterDays = probDates
+    .filter((d) => d !== startersData.gameDate)
+    .map((d) => ({ ...startersFor(d), isDayPage: true }));
 
   // 선수명은 시즌 집계에서 온다 — **이름 문자열로 조인하지 않는다**(M10). ID로 찾아 이름을 붙인다
   const nameOf = (playerId: string): string | null =>
@@ -4170,6 +4256,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       postseasonData.competitions.some((c) => c.id !== "allStar"),
     ),
     starters: startersData,
+    starterDays,
     matchup: matchupPage(db, o, meta.latest, startersData, battingByPlayer, pitchingByPlayer),
     today: todayData,
     days: dayPages(db, o, days, latestDay, nameOf, gamePageIds),

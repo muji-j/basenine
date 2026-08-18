@@ -323,7 +323,11 @@ a{color:inherit}
    밀도 전환 스크립트가 el.style.paddingTop 으로 **인라인 덮어쓰기**를 해서
    이 값이 **한 번도 렌더되지 않았다**(2026-08-17 디자인 감사 P1).
    첫 페인트와 스크립트 뒤가 달라 블록마다 레이아웃이 튀기도 했다. */
-.block{padding:var(--block-pad-y, 22px) var(--pad) calc(var(--block-pad-y, 22px) + 4px);background:var(--panel);
+/* ⚠**아래 패딩을 위와 같게 둔다**(2026-08-18 유저 지적: 「밑쪽 여백이 불필요하게 길다」).
+   예전에는 + 4px 였는데, 구획의 마지막 요소는 대개 .note(작은 글씨)라
+   그 아래 여백이 실제보다 더 넓어 보였다 — 글자가 작을수록 빈 공간이 크게 읽힌다.
+   ⚠**전 화면에 걸리는 값이다.** 여기만 고치면 모든 구획의 아래가 같이 정돈된다. */
+.block{padding:var(--block-pad-y, 22px) var(--pad);background:var(--panel);
   /* ⚠**테두리를 이전보다 흐리게 만들면 안 된다.** 바꾸기 전이 2px --hair-2(1.51:1)였는데
      1px --hair(1.28:1)로 오히려 **약해졌다**(감사 P2 실측). 요청은 「더 강하게」였다. */
   /* ⚠**여기에 구단색을 쓰지 않는다**(2026-08-18 감사 P2). 선수·구단 화면에서는 바로 왼쪽에
@@ -962,28 +966,32 @@ html:has(.hjump){scroll-padding-top:calc(var(--topbar) + 52px)}
 
 /* 先週の顔 — **순위 번호를 크게 쓰지 않는다.** 한 주짜리 순위를 시즌 순위와
    같은 무게로 그리면 그렇게 읽힌다 */
-<<<<<<< HEAD
-/* ⚠**묶음 사이가 항목 사이와 비슷하면 어디서 바뀌는지 모른다**(2026-08-18 유저 지적).
-   打者 → 投手 로 넘어가는 자리가 사람과 사람 사이와 같은 간격이었다. */
-/* 予告先発 의 상대 타자 표 — 今季 / 通算 전환.
+/* 予告先発 의 상대 타자 표 — 今季 / 범위 전환.
    ⚠**전환 줄을 표에서 떼어 놓는다** — 붙어 있으면 표 머리처럼 읽힌다. */
 .muwrap{margin-top:10px}
 .muswitch{display:flex;margin:0 0 7px}
-.wkcol{min-width:0;padding-bottom:6px}
-.cols > .wkcol + .wkcol{margin-top:6px}
-=======
+/* ⚠**묶음 사이가 항목 사이와 비슷하면 어디서 바뀌는지 모른다**(2026-08-18 유저 지적).
+   打者 → 投手 로 넘어가는 자리가 사람과 사람 사이와 같은 간격이었다.
+   ⚠**아래 패딩을 여기서 또 주지 않는다** — 구획 자체가 이미 아래 여백을 갖는다.
+   「묶음 사이를 벌린다」고 넣은 것이 구획 아래에서 이중으로 쌓이고 있었다. */
 .wkcol{min-width:0}
->>>>>>> origin/main
+.cols > .wkcol + .wkcol{margin-top:10px}
 /* ⚠**이 목록에 CSS 가 한 줄도 없었다**(2026-08-18 유저 지적: 「득실점 쪽은 뭘 말하고 싶은지 모르겠음」).
    그래서 득실차를 감싼 <s> 태그가 **브라우저 기본 취소선**으로 그려졌다 —
    25/6+19 의 +19 에 줄이 그어져 「무효」처럼 보였다. 화면이 정반대를 말하고 있었다.
    ⚠**순위표와 같은 어법으로 맞춘다** — 값 옆에 点差 라벨, 부호는 글자, 색은 --up/--dn. */
 .wkteams{list-style:none;margin:0;padding:0;
   display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:0 18px}
-.wkteams li{display:flex;align-items:baseline;gap:8px;padding:5px 0;
+.wkteams li{display:flex;align-items:baseline;gap:10px;padding:6px 0;
   border-bottom:1px solid var(--hair);font-variant-numeric:tabular-nums}
+/* 마지막 줄의 밑줄은 지운다 — 구획 테두리와 이중선이 된다 */
+.wkteams li:last-child{border-bottom:0}
 .wkteams b{font-family:var(--f-num);font-size:13.5px;font-weight:700;white-space:nowrap}
-.wkteams em{font-style:normal;font-size:11px;color:var(--tx-3);margin-left:auto;white-space:nowrap}
+/* ⚠**margin-left:auto 로 오른쪽 끝에 붙이지 않는다**(2026-08-18 유저 지적).
+   한 줄에 한 팀만 들어가는 폭에서는 팀명과 성적 사이가 화면 폭만큼 벌어져,
+   **같은 줄인데 따로 노는** 모양이 된다 — 눈이 두 번 움직여야 한 팀을 읽는다.
+   → 붙여 놓고 gap 으로만 띄운다. 숫자 자리는 tabular-nums 가 맞춘다. */
+.wkteams em{font-style:normal;font-size:11px;color:var(--tx-3);white-space:nowrap}
 .wkteams em s{text-decoration:none;font-family:var(--f-num);font-weight:700;font-size:12px;margin-left:5px}
 .wkteams em s.up{color:var(--up)}
 .wkteams em s.dn{color:var(--dn)}
