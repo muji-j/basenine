@@ -345,8 +345,13 @@ ${dayBar(base, { prev: d.prev, next: null, latestDate: d.gameDate, dayCount: d.d
 
 <section class="block" id="b-results">
   <h2>${d.gameDate === null ? "試合結果" : `${fullDate(d.gameDate)}の結果`}</h2>
+  ${/* ⚠**가리킬 「이 날」이 없는데 「이 날」이라고 쓰지 않는다**(M12 · 2026-08-18 감사 P3).
+       경기가 하나도 없는 시즌에서는 `gameDate` 자체가 null 이라 「この日」가 가리킬 곳이 없다 —
+       그때 「まだ取り込んでいません」이라고 쓰면 **「데이터 없음」과 「수집 실패」가 한 문장에 뭉친다.** */ ""}
   ${d.games.length === 0
-    ? html`<p class="empty">この日の試合はまだ取り込んでいません。</p>`
+    ? html`<p class="empty">${d.gameDate === null
+      ? "このシーズンの試合はまだ取り込んでいません。"
+      : "この日の試合はまだ取り込んでいません。"}</p>`
     : html`<div class="gcards">${d.games.map((g) => gameCard(g, base))}</div>`}
   ${note(
     // ⚠**기준을 화면에 적는다.** 「왜 이 선수가 없지?」에 답할 수 없으면 목록이 아니라 인상이다
