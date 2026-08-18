@@ -221,6 +221,12 @@ starter AS (
  * 그 경기 그 팀의 투수 수. **완투 판정이 여기서 나온다.**
  * ⚠아웃 27개로 세면 홈팀이 이겨 9회말이 없던 경기의 원정 선발(8이닝 완투)을 놓친다.
  */
+-- ⚠**여기만 시즌 필터가 없다**(2026-08-18 감사 P3 · 미수정으로 남긴다).
+--   위 starter CTE 는 같은 이유로 고쳐졌는데 이건 남아 있다. 고치려면 파라미터 3개가
+--   **이 자리에** 끼어들어야 하는데, 이 SQL 은 위치 인자라 순서를 하나만 어긋내도
+--   조용히 다른 시즌을 집계한다 — 배포 직전에 넣을 위험 대비 이득이 낮다고 판단했다.
+--   실측 빌드 집계 시간은 9시즌에 103초이고 아직 여유가 있다.
+--   ⚠**다음 백필 전에는 고쳐라** — 시즌이 늘수록 이 스캔만 선형으로 커진다.
 solo AS (
   SELECT game_id, side, COUNT(*) AS pitchers FROM pitching_line GROUP BY game_id, side
 )`;
@@ -503,9 +509,16 @@ export function aggregateSeason(
       lastDate: a.lastDate > b.lastDate ? a.lastDate : b.lastDate,
       games: a.games + b.games,
       starts: a.starts + b.starts,
-      pitches: a.pitches === null && b.pitches === null ? null : (a.pitches ?? 0) + (b.pitches ?? 0),
-      wp: a.wp === null && b.wp === null ? null : (a.wp ?? 0) + (b.wp ?? 0),
-      balk: a.balk === null && b.balk === null ? null : (a.balk ?? 0) + (b.balk ?? 0),
+      /**
+       * ⚠**한쪽이라도 「모른다」면 합계도 「모른다」다**(M11 · 2026-08-18 감사 P3).
+       * 예전에는 `a === null && b === null` 일 때만 null 이라, **한쪽만 모르면
+       * 나머지 한쪽만 더한 수를 완전한 합계처럼** 돌려줬다 — 이적 투수의 투구수가
+       * 절반만 실린 채 「그 시즌 투구수」로 화면에 나간다.
+       * 이 파일 자신이 「모른다를 작다로 바꾸지 않는다」고 위에 적어 뒀는데 여기서 어겼다.
+       */
+      pitches: a.pitches === null || b.pitches === null ? null : a.pitches + b.pitches,
+      wp: a.wp === null || b.wp === null ? null : a.wp + b.wp,
+      balk: a.balk === null || b.balk === null ? null : a.balk + b.balk,
       outs: a.outs + b.outs, bf: a.bf + b.bf, h: a.h + b.h, hr: a.hr + b.hr,
       bb: a.bb + b.bb, hbp: a.hbp + b.hbp, so: a.so + b.so,
       runs: a.runs + b.runs, er: a.er + b.er,
