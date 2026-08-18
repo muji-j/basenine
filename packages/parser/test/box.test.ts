@@ -14,7 +14,20 @@ import {
  * 실제 npb.jp 마크업을 축약한 픽스처.
  * 컬럼 구성·표 id·팀 합계 행은 실측(2026-08-15) 그대로다.
  */
-function fixture(opts: { battingHeader?: string; battingRows?: string; cancelled?: boolean } = {}): string {
+/**
+ * 끝난 경기의 안내문. **실물 그대로**다(2026-08-16 阪神-広島).
+ *
+ * ⚠**픽스처에 이게 없어서 시험이 통째로 무너졌다**(2026-08-18). 종료 판정을 넣자
+ * 합성 픽스처의 박스가 전부 「진행 중」이 됐다 — 실물에는 **6시즌 4,900건 전부** 있는 줄인데
+ * 축약 픽스처에서만 빠져 있었던 것이다. CLAUDE.md 가 적어 둔 「합성 픽스처로는 검증되지 않는다」의 재판.
+ */
+const GAME_INFO_FINISHED =
+  `<div id="game_stats"><div class="line-score"><p class="game_info">` +
+  `【試合終了】 ◇開始 18:00 ◇終了 21:05 ◇試合時間 3時間5分 ◇入場者 31,645人</p></div></div>`;
+
+function fixture(
+  opts: { battingHeader?: string; battingRows?: string; cancelled?: boolean; unfinished?: true } = {},
+): string {
   if (opts.cancelled) {
     return `<html><table id="tablefix_ls"><tr><td>1</td></tr></table><div class="state">中止</div></html>`;
   }
@@ -30,6 +43,7 @@ function fixture(opts: { battingHeader?: string; battingRows?: string; cancelled
     <tr><td>○</td><td class="player"><a href="/bis/players/03005150.html">荘司</a></td><td>105</td><td>28</td><td><table class="table_inning"><tbody><tr><th>6</th><td>.2</td></tr></tbody></table></td><td>5</td><td>1</td><td>2</td><td>1</td><td>7</td><td>0</td><td>0</td><td>3</td><td>2</td></tr>
     <tr><td>&nbsp;</td><td>チーム計</td><td>105</td><td>28</td><td><table class="table_inning"><tbody><tr><th>6</th><td>.2</td></tr></tbody></table></td><td>5</td><td>1</td><td>2</td><td>1</td><td>7</td><td>0</td><td>0</td><td>3</td><td>2</td></tr>`;
   return `<html>
+    ${opts.unfinished === true ? "" : GAME_INFO_FINISHED}
     <table id="tablefix_t_b">${battingHeader}${battingRows}</table>
     <table id="tablefix_t_p">${pitching}</table>
     <table id="tablefix_b_b">${battingHeader}${battingRows}</table>
@@ -239,12 +253,42 @@ test("⚠남의 경기가 중지여도 이 경기는 실시다 — 페이지에 
   assert.equal(box.status, "played", "남의 경기 표기에 끌려갔다");
 });
 
-test("サスペンデッド는 무효가 아니다 — 이어서 하는 경기라 기록이 살아남는다", () => {
-  const html = fixture().replace(
+/**
+ * ⚠**サスペンデッド는 「무효」가 아니지만 「확정」도 아니다**(2026-08-18 에 뜻을 정밀화했다).
+ *
+ * 예전 판정은 `played` 였다 — ノーゲーム(처음부터 다시)과 달리 **기록이 살아남는다**는 도메인 사실 때문이다.
+ * 그 사실은 지금도 맞다. 다만 그 기록은 **재개해서 끝난 뒤에** 확정된다.
+ * 중단된 시점의 박스를 확정으로 저장하면 **끝나지 않은 경기의 성적이 최종 성적 얼굴로** 화면에 나가고,
+ * 재개 후 값이 달라졌을 때 버그인지 정정인지 구별할 수 없다(M9·M4).
+ *
+ * → 중단 중에는 `inProgress`(저장하지 않는다). 재개해서 끝나면 박스에 `試合時間` 이 붙고 `played` 가 된다.
+ *   **기록은 여전히 살아남는다 — 우리가 기다릴 뿐이다.**
+ * ⚠**대가를 적어 둔다**: 재개되지 않은 채 남는 경기가 있으면 우리는 영영 안 받는다.
+ *   실측 6시즌 4,900박스에 サスペンデッド 는 **0건**이었고,
+ *   `sweep-archive` 가 「종료 표시 없음」을 세어 주므로 **조용히 사라지지는 않는다.**
+ */
+test("⚠サスペンデッド는 확정이 아니다 — 재개해서 끝난 뒤에 확정된다", () => {
+  const html = fixture({ unfinished: true }).replace(
     "<html>",
     '<html><div id="game_stats"><div class="line-score"><p class="game_info">【サスペンデッドゲーム】</p></div></div>',
   );
-  assert.equal(parseBoxScore(html).status, "played");
+  assert.equal(parseBoxScore(html).status, "inProgress", "중단된 경기를 확정으로 저장한다");
+
+  // ⚠**무효(ノーゲーム)와는 여전히 다르다** — 그쪽은 기록이 남지 않는다
+  const voided = fixture().replace(
+    "<html>",
+    '<html><div id="game_stats"><div class="line-score"><p class="game_info">【雨天のためノーゲーム】</p></div></div>',
+  );
+  assert.equal(parseBoxScore(voided).status, "notPlayed", "ノーゲーム과 サスペンデッド를 같게 다뤘다");
+});
+
+/**
+ * ⚠**끝났다고 소스가 말할 때만 확정이다**(M9 · 2026-08-18).
+ * 이것이 없으면 진행 중인 경기의 3타수 1안타가 **그 경기의 최종 성적**으로 저장된다.
+ */
+test("⚠종료 표시가 없으면 표가 멀쩡해도 확정으로 읽지 않는다", () => {
+  assert.equal(parseBoxScore(fixture({ unfinished: true })).status, "inProgress");
+  assert.equal(parseBoxScore(fixture()).status, "played", "끝난 경기까지 막았다");
 });
 
 // ── 대회 구분 표기 ───────────────────────────────────────────────────────
@@ -327,6 +371,12 @@ test("⚠읽을 수 없으면 null이다 — 0을 돌려주면 「던지지 않�
  * 열 이름도 다르다 — 신형 `選手` 대 구형 `打者`.
  */
 const LEGACY_BOX = `
+${/* ⚠**구형에도 종료 표시가 있다** — 실물 2016 픽스처로 확인했다(형식만 조금 다르다:
+     「◇終了」가 없고 「◇開始 18時00分 ◇試合時間 3時間35分」이다).
+     그래서 종료 판정이 `終了` 가 아니라 **`試合時間`** 을 본다 —
+     `終了` 를 봤으면 2016~2018 이 통째로 「진행 중」이 됐을 것이다. */ ""}
+<div id="game_stats"><div class="line-score"><p class="game_info">
+【試合終了】 ◇開始 18時00分 ◇試合時間 3時間35分 ◇入場者 30,313人</p></div></div>
 <div class="wrap"><section><h4>広島東洋カープ</h4>
 <div class="scroll_wrapper table_score table_batter"><table>
 <thead><tr><th>&nbsp;</th><th>守備</th><th>打者</th><th>打数</th><th>得点</th><th>安打</th><th>打点</th><th>盗塁</th></tr></thead>

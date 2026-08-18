@@ -62,23 +62,42 @@ if (!contact) {
 }
 
 /**
- * ⚠**기본 대상은 오늘이 아니라 「어제」다.**
+ * ⚠**「어제만」이었던 것을 「어제와 오늘」로 넓혔다**(2026-08-18).
  *
- * 진행 중인 경기를 받으면 미확정 성적이 `final`로 저장된다(M9 위반).
- * npb.jp의 경기 페이지에는 **그 경기 자신의 종료 여부를 가리키는 안정된 표시가 없다**
- * (헤더의 「試合終了」는 그날 전 경기 목록이라 구별되지 않는다).
- * 감지기를 추측으로 만드는 대신 **구조적으로 안전한 시각**을 쓴다 —
- * 자정 이후에 돌리면 어제 경기는 확실히 끝나 있다.
+ * ## 왜 어제만이었나
  *
- * 만약 진행 중에 받아버려도 **수집은 멱등이고 내용 해시로 판정하므로**
- * 다음 실행에서 확정판으로 갱신된다. 낡은 값이 몇 시간 보일 뿐 영구 오염은 아니다.
+ * 진행 중인 경기를 받으면 미확정 성적이 확정으로 저장된다(M9 위반).
+ * 「경기가 끝났는가」를 판정할 방법이 없다고 보고, 대신 **구조적으로 안전한 시각**을 썼다 —
+ * 자정 이후에 돌리면 어제 경기는 확실히 끝나 있다. 대가는 **경기 결과가 최대 9시간 늦는 것**이었다.
+ *
+ * ## 왜 바뀌었나
+ *
+ * ⚠**판정 방법이 실재했다.** 「종료 표시가 없다」는 것은 **일정 페이지 헤더** 얘기였고,
+ * **개별 경기의 박스스코어**에는 그 경기 자신의 종료 표시가 있다:
+ *
+ * ```
+ * 【試合終了】 ◇開始 18:00 ◇終了 21:05 ◇試合時間 3時間5分 ◇入場者 31,645人
+ * ```
+ *
+ * 실측(2026-08-18 · 외부 접속 0회 · 아카이브 전수 **9시즌 7,630박스**): 라벨 없는 박스 **0건**.
+ * `試合時間` 은 `終了 − 開始` 이라 경기가 끝나기 전에는 존재할 수 없다.
+ * 파서가 그것을 보고 **끝나지 않은 박스를 `inProgress` 로 돌려주며**(M9 를 타입으로 지킨다),
+ * 적재는 그것을 **저장하지 않는다.** 그래서 오늘 것을 받아도 잠정값이 섞이지 않는다.
+ *
+ * ⚠**날짜를 명시하면 그 하루만 받는다** — 소급 수집·재수집의 어법을 바꾸지 않는다.
+ * ⚠**어제를 계속 받는 이유**: 연장·서스펜디드·늦게 끝난 경기가 있으면 그날 밤 실행이
+ *   `inProgress` 로 건너뛴다. 다음 실행이 그것을 메운다. **거르면 영영 안 들어온다.**
+ * ⚠**요청이 두 배가 되지 않는다**(L7): 어제 경기는 이미 받아 둔 것이라 조건부 요청으로 304 가 돌아온다.
  */
-function yesterdayJst(): string {
-  const jst = new Date(Date.now() + 9 * 60 * 60 * 1000 - 24 * 60 * 60 * 1000);
+function jstDate(offsetDays: number): string {
+  const jst = new Date(Date.now() + 9 * 60 * 60 * 1000 + offsetDays * 24 * 60 * 60 * 1000);
   return jst.toISOString().slice(0, 10);
 }
-const targetDate = values.date ?? yesterdayJst();
-console.log(`대상 경기일 ${targetDate}${values.date === undefined ? " (기본값: 어제 JST)" : ""}`);
+const targetDates = values.date === undefined ? [jstDate(-1), jstDate(0)] : [values.date];
+console.log(
+  `대상 경기일 ${targetDates.join(" · ")}` +
+    (values.date === undefined ? " (기본값: 어제와 오늘 JST · 끝나지 않은 경기는 저장하지 않는다)" : ""),
+);
 
 function run(label: string, args: string[]): number {
   console.log(`\n── ${label} ──`);
@@ -90,13 +109,16 @@ function run(label: string, args: string[]): number {
 let failures = 0;
 
 // 1. 경기 페이지
-failures += run("경기 아카이브", [
-  "packages/archiver/src/cli.ts",
-  "--date", targetDate,
-  "--out", values.archive,
-  "--contact", contact,
-  "--delay", values.delay,
-]) === 0 ? 0 : 1;
+// ⚠**날짜마다 따로 센다.** 한 날이 실패해도 다른 날은 받는다 — 부분 실패를 전체 실패로 만들지 않는다
+for (const d of targetDates) {
+  failures += run(`경기 아카이브 ${d}`, [
+    "packages/archiver/src/cli.ts",
+    "--date", d,
+    "--out", values.archive,
+    "--contact", contact,
+    "--delay", values.delay,
+  ]) === 0 ? 0 : 1;
+}
 
 // 2. 적재
 failures += run("DB 적재", [
@@ -179,7 +201,8 @@ failures += run("앞으로의 일정 적재", [
   "packages/store/tools/load-upcoming.ts",
   values.archive,
   values.db,
-  targetDate.slice(0, 4),
+  // ⚠**가장 늦은 대상일의 해**를 쓴다. 연말에 어제와 오늘의 해가 갈릴 수 있다
+  targetDates[targetDates.length - 1]!.slice(0, 4),
 ]) === 0 ? 0 : 1;
 
 // 5. 予告先発 — 하루 1요청. ⚠거르면 그날 예고는 영영 못 받는다(페이지가 하루치만 보여준다)

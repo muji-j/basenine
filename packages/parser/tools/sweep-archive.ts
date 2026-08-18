@@ -35,6 +35,8 @@ let games = 0;
 let batters = 0;
 let parseErrors = 0;
 let notPlayed = 0;
+/** 종료 표시가 없는 박스. 아카이브에는 원래 없어야 한다 — 있으면 그 자체가 신호다 */
+let unfinished = 0;
 
 const playerIds = new Set<string>();
 const missingId = new Map<string, number>();
@@ -77,6 +79,15 @@ for await (const file of walk(root)) {
     notPlayed += 1;
     continue;
   }
+  /**
+   * ⚠**끝나지 않은 경기는 대조하지 않는다**(M9). 진행 중이면 합계가 아직 안 맞을 수 있고,
+   * 그걸 「컬럼이 밀렸다」로 보고하면 진짜 구조 변경이 소음에 묻힌다.
+   * 아카이브에는 원래 없어야 하는 것이라 **세어서 보여준다** — 있으면 그 자체가 신호다.
+   */
+  if (box.status === "inProgress") {
+    unfinished += 1;
+    continue;
+  }
   games += 1;
   const short = file.slice(root.length + 1);
   for (const b of box.away.batters) checkBatter(short, "away", b);
@@ -99,7 +110,8 @@ for await (const file of walk(root)) {
 }
 
 console.log(
-  `성립 경기 ${games}건 · 미성립(중지 등) ${notPlayed}건 · 타자 행 ${batters}건 · 파싱 오류 ${parseErrors}건`,
+  `성립 경기 ${games}건 · 미성립(중지 등) ${notPlayed}건 · 타자 행 ${batters}건 · 파싱 오류 ${parseErrors}건` +
+    (unfinished > 0 ? ` · ⚠종료 표시 없음 ${unfinished}건` : ""),
 );
 
 console.log(

@@ -134,6 +134,8 @@ const budget = emptyBudget();
 const seenPlayers = new Set<string>();
 let played = 0;
 let notPlayed = 0;
+/** 아직 끝나지 않은 경기. **실패가 아니다**(M11) — 다음 실행이 받는다 */
+let inProgress = 0;
 let failed = 0;
 /**
  * ⚠**라인스코어만 못 읽은 경기.**
@@ -245,6 +247,22 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
   }
 
   const venue = venueByGameId.get(meta.gameId) ?? null;
+
+  /**
+   * ⚠**끝나지 않은 경기는 저장하지 않는다**(M9 · 2026-08-18).
+   *
+   * 소스가 「試合終了」를 말하기 전의 박스는 **잠정값**이다. 저장하면 진행 중인 경기의
+   * 3타수 1안타가 그 경기의 **최종 성적**과 똑같은 얼굴로 화면에 나가고,
+   * 다음날 값이 달라졌을 때 **버그인지 정정인지 구별할 수 없다**(M4 가 막으려는 것).
+   *
+   * ⚠**여기서 지우지도 않는다.** 이 경기에 대해 우리가 아는 것이 없을 뿐이고,
+   * 예전에 확정으로 받아 둔 것이 있다면 그쪽이 더 낫다.
+   * ⚠**실패가 아니다**(M11) — 세어서 보여주고 다음 실행이 다시 받는다.
+   */
+  if (box.status === "inProgress") {
+    inProgress += 1;
+    continue;
+  }
 
   if (box.status === "notPlayed") {
     notPlayed += 1;
@@ -534,7 +552,11 @@ budget.total =
   budget.players + budget.games + budget.batting + budget.pitching
   + budget.paEvents + budget.runnerEvents + budget.quarantine;
 
-console.log(`성립 ${played}건 · 미성립 ${notPlayed}건 · 실패 ${failed}건`);
+console.log(
+  `성립 ${played}건 · 미성립 ${notPlayed}건 · 실패 ${failed}건` +
+    // ⚠**세어서 보여준다.** 안 보이면 「왜 오늘 경기가 없지?」에 답할 수 없다(M11·M12)
+    (inProgress > 0 ? ` · 아직 진행 중 ${inProgress}건` : ""),
+);
 // ⚠**분모를 같이 낸다.** 「보충 122명」만 내면 그것이 전부인지 일부인지 모른다
 console.log(
   `명단 ${rosterFiles}장(실패 ${rosterFailed}) · 선수 ${rosterLatest.size}명 · ` +
