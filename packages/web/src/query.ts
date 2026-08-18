@@ -32,8 +32,6 @@ import {
   iso,
   onBasePercentage,
   ops,
-  qualifiedBatterPa,
-  qualifiedPitcherOuts,
   rankBy,
   rate,
   sluggingPercentage,
@@ -73,13 +71,17 @@ import {
   latestGameDate,
   entriesOfRole,
   matchups,
+  neededOuts,
+  neededOutsRange,
+  neededPa,
+  neededPaRange,
   pitchingEntries,
   pitchingEntryOf,
-  qualifyingOuts,
   rankBatters,
   rankPitchers,
   rankPitchersInRole,
   stateKey,
+  teamGamesOf,
   teamStandings,
 } from "@bb-app/aggregate";
 import type {
@@ -418,9 +420,16 @@ function roleLine(line: PitchingLine, games: number): RoleLine | null {
   };
 }
 
+/**
+ * ⚠**하나의 수로 말하면 그 문장이 거짓이 된다**(2026-08-18 감사 P1 · 내가 만든 결함).
+ * 「規定打席 345」라고 적어 놓고 **333타석 선수에게 순위를 붙이고 있었다** —
+ * 기준은 소속 구단의 소화 경기수로 정해지는데 문구만 리그 최다를 대표로 썼기 때문이다.
+ * → 구단마다 다르다는 사실 자체를 문장이 말한다. 같으면 범위가 아니라 한 수로 나온다.
+ */
 function batterQualifier(bundle: LeagueBundle): string {
-  const need = qualifiedBatterPa(bundle.teamGames);
-  return `規定打席 ${need}（チーム${bundle.teamGames}試合 × 3.1、小数切り上げ）に達した選手だけに順位がつきます。同率は同じ順位で、次の順位を飛ばします。`;
+  const { min, max } = neededPaRange(bundle);
+  const need = min === max ? `${min}` : `${min}〜${max}`;
+  return `規定打席 ${need}（所属球団の試合数 × 3.1、小数切り上げ）に達した選手だけに順位がつきます。球団ごとに消化試合数が違うため基準も異なります。同率は同じ順位で、次の順位を飛ばします。`;
 }
 
 /**
@@ -430,12 +439,13 @@ function batterQualifier(bundle: LeagueBundle): string {
  * 자체 기준이 공식 기준으로 읽힌다 — 그건 출처를 속이는 것과 같다(§0-10 출처 추적성).
  */
 function pitcherQualifier(bundle: LeagueBundle, role: PitcherRole): string {
-  const need = qualifyingOuts(bundle, role) / 3;
-  const rounded = Math.round(need * 10) / 10;
+  const { min, max } = neededOutsRange(bundle, role);
+  const one = (outs: number): number => Math.round((outs / 3) * 10) / 10;
+  const need = min === max ? `${one(min)}回` : `${one(min)}〜${one(max)}回`;
   if (role === "starter") {
-    return `規定投球回 ${rounded}回（チーム${bundle.teamGames}試合 × 1回・NPB公式）に達した先発投手だけに順位がつきます。同率は同じ順位で、次の順位を飛ばします。`;
+    return `規定投球回 ${need}（所属球団の試合数 × 1回・NPB公式）に達した先発投手だけに順位がつきます。球団ごとに消化試合数が違うため基準も異なります。同率は同じ順位で、次の順位を飛ばします。`;
   }
-  return `救援投手には公式の規定投球回がないため、当サイトは規定投球回の3分の1（${rounded}回）を基準にしています。これはNPBの基準ではありません。同率は同じ順位で、次の順位を飛ばします。`;
+  return `救援投手には公式の規定投球回がないため、当サイトは規定投球回の3分の1（${need}）を基準にしています。これはNPBの基準ではありません。同率は同じ順位で、次の順位を飛ばします。`;
 }
 
 /**
@@ -446,8 +456,9 @@ function pitcherQualifier(bundle: LeagueBundle, role: PitcherRole): string {
  * ⚠**「規定到達のみ」 버튼이 무엇을 자르는지 말하는 글**이므로, 기준을 숨기면
  * 「왜 이 선수가 사라졌지?」에 답할 수 없다.
  */
-function batterQualifierShort(bundle: LeagueBundle): string {
-  return `規定打席 ${qualifiedBatterPa(bundle.teamGames)}（チーム${bundle.teamGames}試合 × 3.1、小数切り上げ）`;
+function batterQualifierShort(bundle: LeagueBundle, teamCode: string): string {
+  const games = teamGamesOf(bundle, teamCode);
+  return `規定打席 ${neededPa(bundle, teamCode)}（この球団の${games}試合 × 3.1、小数切り上げ）`;
 }
 
 /**
@@ -455,10 +466,10 @@ function batterQualifierShort(bundle: LeagueBundle): string {
  * 하나만 적으면 나머지 절반의 「規定到達」이 근거 없는 표시가 된다.
  * ⚠**구원 기준은 NPB의 것이 아니다.** 같은 문장으로 쓰면 자체 기준이 공식으로 읽힌다.
  */
-function pitcherQualifierShort(bundle: LeagueBundle): string {
-  const st = Math.round((qualifyingOuts(bundle, "starter") / 3) * 10) / 10;
-  const rl = Math.round((qualifyingOuts(bundle, "reliever") / 3) * 10) / 10;
-  return `先発は規定投球回 ${st}回（NPB公式）、救援はその3分の1 ${rl}回（当サイトの基準でNPBのものではありません）`;
+function pitcherQualifierShort(bundle: LeagueBundle, teamCode: string): string {
+  const st = Math.round((neededOuts(bundle, teamCode, "starter") / 3) * 10) / 10;
+  const rl = Math.round((neededOuts(bundle, teamCode, "reliever") / 3) * 10) / 10;
+  return `先発は規定投球回 ${st}回（この球団の試合数 × 1回・NPB公式）、救援はその3分の1 ${rl}回（当サイトの基準でNPBのものではありません）`;
 }
 
 interface LeagueRankings {
@@ -1130,6 +1141,27 @@ export function probableDates(db: Db, season: number): string[] {
 export function defaultProbableDate(dates: readonly string[], builtOn: string): string | null {
   if (dates.length === 0) return null;
   return dates.includes(builtOn) ? builtOn : dates[dates.length - 1]!;
+}
+
+/**
+ * 그 예고일을 **「次の」라고 불러도 되는가**.
+ *
+ * ⚠**끝난 날을 「次の」라고 부르지 않는다**(2026-08-18 감사 P1).
+ * 배포물이 위 구획에서 「次の予告先発 8月16日」이라 쓰고 아래 구획에서
+ * 「8月16日の結果」라고 썼다 — **한 페이지가 같은 날을 예정이자 종료로 동시에 선언**했다.
+ * 양쪽 다 그럴듯해서 오류로 보이지 않고, 읽는 사람은 **끝난 경기의 선발을 예습한다.**
+ * 원인은 당일 예고를 못 받은 날에 **무조건 마지막 예고일로 떨어지는** 기본값이고,
+ * 그 마지막 예고일이 이미 치러진 날이었다.
+ *
+ * ⚠**해결을 새 상태로 만들지 않는다**(M12). 「예고일이 과거다」를 5번째 상태로 두는 대신
+ * **없는 것으로 떨어뜨려** 기존 「まだ発表されていません」 분기로 흘린다 — 사실 그대로다.
+ * ⚠**지난 예고 자체를 지우는 것이 아니다.** 그건 날짜별 예고 화면(아카이브)의 일이고,
+ *   여기는 「다음」 구획이다.
+ * ⚠**같은 날이면 「다음」이 아니다.** 그날 경기는 이미 우리 기록에 들어와 있다.
+ */
+export function isNextProbable(probableDate: string | null, latestGameDate: string | null): boolean {
+  if (probableDate === null) return false;
+  return latestGameDate === null || probableDate > latestGameDate;
 }
 
 /**
@@ -3102,7 +3134,9 @@ function teamPages(
             // ⚠**타석 로그가 없는 선수는 `null` 이다**(M11) — 0으로 메우면 「기여 0」이 된다
             // ⚠**키가 「선수|구단」이다** — 선수 ID 하나로 찾으면 시즌 합계가 실린다
             src: srcOf(srcByTeam, `${r.playerId}|${code}`),
-            qualified: (part?.player.line.pa ?? 0) >= qualifiedBatterPa(bundle.teamGames),
+            // ⚠**순위를 매긴 함수와 같은 기준을 쓴다**(M1 · 2026-08-18 감사 P1).
+            //   리그 최다 팀을 분모로 쓰던 탓에 순위표와 이 뱃지가 서로를 부정했다
+            qualified: (part?.player.line.pa ?? 0) >= neededPa(bundle, code),
           };
         })
         // ⚠**마지막 갈래는 선수 ID다.** 동명이인이 실재하므로(「小島」 2명) 이름으로 끝내면
@@ -3138,13 +3172,13 @@ function teamPages(
               r.pitches === null || r.line.outs === 0
                 ? { value: null, denominator: r.line.outs }
                 : { value: r.pitches / r.line.outs, denominator: r.line.outs },
-            qualified: (part?.player.line.outs ?? 0) >= qualifyingOuts(bundle, r.role),
+            qualified: (part?.player.line.outs ?? 0) >= neededOuts(bundle, code, r.role),
           };
         })
         .sort((a, b) => b.outs - a.outs || a.name.localeCompare(b.name, "ja") || a.playerId.localeCompare(b.playerId));
 
-      const batQualifier = batterQualifierShort(bundle);
-      const pitQualifier = pitcherQualifierShort(bundle);
+      const batQualifier = batterQualifierShort(bundle, code);
+      const pitQualifier = pitcherQualifierShort(bundle, code);
 
       const byMonth = new Map<string, TeamMonth>();
       for (const m of monthRows.all(code, o.season, competition, through, code, code) as unknown as {
@@ -3275,12 +3309,14 @@ function todayPage(
     }) as [TodayProbable["sides"][0], TodayProbable["sides"][1]],
   }));
 
+  const probableIsNext = isNextProbable(starters.gameDate, latestDate);
+
   return {
     gameDate: latestDate,
     builtOn: o.builtOn,
     games,
-    probableDate: starters.gameDate,
-    probables,
+    probableDate: probableIsNext ? starters.gameDate : null,
+    probables: probableIsNext ? probables : [],
     starRule: starRuleText(),
     starLimit: STAR_LIMIT,
     // 최신 경기일이 목록의 끝이므로 「다음 날」은 없다
@@ -3849,6 +3885,13 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
      */
     const batPart = leagueBatting.get(`${playerId}|${base.league}`);
     const pitPart = leaguePitching.get(`${playerId}|${base.league}`);
+    /**
+     * 자격선의 분모가 되는 구단.
+     * ⚠**순위를 매긴 쪽이 본 것과 같은 값이어야 한다** — `rankBatters` 는 리그 몫 엔트리의
+     * `player.teamCode` 를 쓴다. 여기서 다른 것을 보면 두 화면이 다시 갈린다(M1).
+     */
+    const batTeam = batPart?.player.teamCode ?? bat?.player.teamCode ?? base.teamCode;
+    const pitTeam = pitPart?.player.teamCode ?? pit?.player.teamCode ?? base.teamCode;
     const profile = profiles.get(playerId);
     const team = teamOf(base.teamCode);
 
@@ -3908,8 +3951,14 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
             bbRate: walkRate(bat.player.line),
             src: srcByPlayer.get(playerId) ?? null,
             ranks: ranksFor(rankings.batting, playerId),
-            qualified: (batPart?.player.line.pa ?? 0) >= qualifiedBatterPa(bundle.teamGames),
-            needPa: qualifiedBatterPa(bundle.teamGames),
+            /**
+             * ⚠**순위를 매긴 함수와 같은 기준을 쓴다**(M1 · 2026-08-18 감사 P1).
+             * 여기가 리그 최다 팀 기준이던 탓에, 순위표가 「打率21位」라고 쓴 선수의
+             * **이 페이지가 같은 시각에 「順位がつきません」**이라고 썼다(浅村 · 333/345).
+             * 한 사람에 대해 두 화면이 정반대를 말하면 어느 쪽도 믿을 수 없게 된다.
+             */
+            qualified: (batPart?.player.line.pa ?? 0) >= neededPa(bundle, batTeam),
+            needPa: neededPa(bundle, batTeam),
             batted: bbBatter.get(playerId) ?? EMPTY_BATTED,
           };
 
@@ -3935,8 +3984,8 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
               pit.player.role === "reliever" ? rankings.reliever : rankings.starter,
               playerId,
             ),
-            qualified: (pitPart?.player.line.outs ?? 0) >= qualifyingOuts(bundle, pit.player.role),
-            needOuts: qualifyingOuts(bundle, pit.player.role),
+            qualified: (pitPart?.player.line.outs ?? 0) >= neededOuts(bundle, pitTeam, pit.player.role),
+            needOuts: neededOuts(bundle, pitTeam, pit.player.role),
             role: pit.player.role,
             starts: pit.player.starts,
             pitches: pit.player.pitches,

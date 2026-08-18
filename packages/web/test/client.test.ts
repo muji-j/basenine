@@ -1854,3 +1854,58 @@ test("⚠늦게 도착한 비교 결과가 새 비교를 덮어쓰지 않는다"
   assert.match(out, /宮城/, "늦게 온 응답이 새 비교를 덮어썼다");
   assert.ok(!out.includes("佐藤"), "낡은 비교가 화면을 되돌렸다");
 });
+
+/**
+ * ⚠**가로로 넘치는 표에 키보드가 닿는가**(WCAG 2.1.1 Keyboard · Level A).
+ *
+ * ⚠**「포커스 갈 것이 있으면 건너뛴다」로 판정하던 것이 순위표를 통째로 놓쳤다**
+ * (2026-08-18 재감사 P1). 순위표의 **유일한 링크가 sticky 로 고정된 2열의 팀명**이라
+ * 포커스를 받아도 상자가 1px 도 안 밀린다 — 그런데 판정은 「포커스 있음 → 안 붙임」이었다.
+ * 실측 dist/index.html 5/5 · dist/ranking.html 82/82 가 그렇게 빠져서, 그 수정이 고친 것이 0개였다.
+ *
+ * ⚠**이 시험이 여태 없었던 이유가 스텁에 기하가 없어서**다 — `scrollWidth` 가 없으니
+ * 코드가 첫 줄에서 조기 반환했고, 무엇을 넣든 초록이었다. 그래서 스텁에 폭을 넣었다.
+ */
+function scrollerCase(scrollWidth: number, clientWidth: number, linkLeft: number, linkWidth: number): El {
+  const sc = make("div", { class: "scroller" });
+  sc.scrollWidth = scrollWidth;
+  sc.clientWidth = clientWidth;
+  const table = make("table", {});
+  const th = make("th", {});
+  th.textContent = "順位表";
+  table.appendChild(th);
+  const a = make("a", { href: "teams/t.html" });
+  a.offsetLeft = linkLeft;
+  a.offsetWidth = linkWidth;
+  table.appendChild(a);
+  sc.appendChild(table);
+  return sc;
+}
+
+test("⚠sticky 열에 링크가 갇힌 넓은 표는 키보드 스크롤을 얻는다", () => {
+  const doc = buildPage();
+  // 순위표의 실제 모양: 최소폭 787px · 스마트폰 353px · 링크는 왼쪽 고정 열(offsetLeft 8)
+  const stuck = scrollerCase(787, 353, 8, 90);
+  doc.body.appendChild(stuck);
+  run(doc);
+  assert.equal(stuck.getAttribute("tabindex"), "0", "키보드로 밀 방법이 없는 표에 탭 정지가 안 붙었다");
+  assert.equal(stuck.getAttribute("role"), "region");
+  assert.match(stuck.getAttribute("aria-label") ?? "", /横スクロール/);
+});
+
+test("⚠포커스로 오른쪽 끝까지 밀 수 있으면 탭 정지를 늘리지 않는다", () => {
+  const doc = buildPage();
+  // 마지막 링크가 오른쪽 끝에 닿는다 — Tab 만으로 전부 볼 수 있으므로 정지를 더할 이유가 없다
+  const reachable = scrollerCase(787, 353, 700, 87);
+  doc.body.appendChild(reachable);
+  run(doc);
+  assert.equal(reachable.getAttribute("tabindex"), null, "쓸모없는 탭 정지가 늘었다");
+});
+
+test("⚠넘치지 않으면 아무것도 붙이지 않는다", () => {
+  const doc = buildPage();
+  const fits = scrollerCase(340, 353, 8, 90);
+  doc.body.appendChild(fits);
+  run(doc);
+  assert.equal(fits.getAttribute("tabindex"), null, "넘치지도 않는데 탭 정지가 붙었다");
+});

@@ -177,6 +177,17 @@ export function teamPath(code: string): string {
 const TEAM_TABS = "team";
 
 /**
+ * 열 하나 = **머리와 칸을 같이** 들고 있는 것.
+ *
+ * ⚠**이 타입이 있는 이유가 사고 하나다**(2026-08-18 감사 P0 · 내가 만든 결함).
+ * 열 순서를 `metric-order.ts` 로 옮기면서 `orderCols` 가 **머리만** 재정렬했고,
+ * `<td>` 는 그 옆에 손으로 적힌 **옛 순서** 그대로였다. 칸 수는 같으니 표는 안 깨지고
+ * **라벨만 거짓말을 했다** — 「打率 104」·「打席 0」처럼. 구단 4개 표 전부, 모든 시즌에서.
+ * → 순서를 정하는 곳과 칸을 그리는 곳을 **하나로 묶는다**. 이제 따로 놀 자리가 없다.
+ */
+type Cell<T> = SortColumn & { cell: (r: T) => RawHtml };
+
+/**
  * 열을 **정본 순서**로 세운다.
  *
  * ⚠**순서를 화면마다 손으로 적지 않는다**(M1 · 2026-08-18 유저 요청).
@@ -184,7 +195,7 @@ const TEAM_TABS = "team";
  * ⚠**이름표 열은 지표가 아니다** — `name`·`role` 은 정렬에서 빼고 원래 자리를 지킨다.
  *   그것들까지 정렬에 넣으면 「選手」가 표 한가운데로 간다.
  */
-function orderCols(cols: readonly SortColumn[]): SortColumn[] {
+function orderCols<C extends SortColumn>(cols: readonly C[]): C[] {
   const LABELS = new Set(["name", "role"]);
   const head = cols.filter((c) => LABELS.has(c.key));
   const rest = byMetricOrder(cols.filter((c) => !LABELS.has(c.key)), (c) => c.key);
@@ -230,53 +241,36 @@ function batterTable(rows: TeamBatter[], base: string, saber: boolean, qualifier
    * 화면마다 순서가 달라서 같은 지표를 매번 다른 자리에서 찾아야 했다.
    * ⚠**첫 열(選手)은 지표가 아니라 이름표다** — 정렬에서 빼고 늘 맨 앞에 둔다.
    */
-  const cols: SortColumn[] = orderCols(
+  const name = (r: TeamBatter): RawHtml =>
+    html`<td class="l"><a href="${base}players/${r.playerId}.html">${r.name}</a></td>`;
+
+  const cols: Cell<TeamBatter>[] = orderCols(
     saber
     ? [
-      { key: "name", label: "選手", left: true, text: true },
-      { key: "pa", label: "打席" },
+      { key: "name", label: "選手", left: true, text: true, cell: name },
+      { key: "pa", label: "打席", cell: (r) => html`<td class="b">${r.pa}</td>` },
       // ⚠**SRC 가 세이버의 맨 앞이다**(2026-08-18 유저 요청: 「SRP·SRC 는 세이버 중에선 항상 최우선」).
       //   이 사이트가 직접 만든 지표이고, wRC+·wOBA 는 어디서나 볼 수 있다.
-      //   ⚠분모(打席)를 바로 왼쪽에 둔 채로 옮긴다 — 값과 분모는 떨어지면 안 된다(M2).
-      { key: "src", label: "SRC", rate: true },
-      { key: "wrcplus", label: "wRC+", rate: true },
-      { key: "woba", label: "wOBA", rate: true },
-      { key: "wraa", label: "wRAA", rate: true },
-      { key: "ops", label: "OPS", rate: true },
+      { key: "src", label: "SRC", rate: true, cell: (r) => html`<td class="wd">${rate(r.src, "打席", 1)}</td>` },
+      { key: "wrcplus", label: "wRC+", rate: true, cell: (r) => html`<td class="wd">${rate(r.wrcPlus, "打席", 1)}</td>` },
+      { key: "woba", label: "wOBA", rate: true, cell: (r) => html`<td class="wd">${rate(r.woba, "打席", 3)}</td>` },
+      { key: "wraa", label: "wRAA", rate: true, cell: (r) => html`<td class="wd">${rate(r.wraa, "打席", 1)}</td>` },
+      { key: "ops", label: "OPS", rate: true, cell: (r) => html`<td class="wd">${rate(r.ops, "打席", 3)}</td>` },
     ]
     : [
-      { key: "name", label: "選手", left: true, text: true },
-      { key: "games", label: "試合" },
-      { key: "pa", label: "打席" },
-      { key: "h", label: "安打" },
-      { key: "hr", label: "本塁打" },
-      { key: "rbi", label: "打点" },
-      { key: "sb", label: "盗塁" },
-      { key: "avg", label: "打率", rate: true },
-      { key: "obp", label: "出塁率", rate: true },
-      { key: "slg", label: "長打率", rate: true },
-      { key: "ops", label: "OPS", rate: true },
+      { key: "name", label: "選手", left: true, text: true, cell: name },
+      { key: "games", label: "試合", cell: (r) => html`<td>${r.games}</td>` },
+      { key: "pa", label: "打席", cell: (r) => html`<td class="b">${r.pa}</td>` },
+      { key: "h", label: "安打", cell: (r) => html`<td>${r.h}</td>` },
+      { key: "hr", label: "本塁打", cell: (r) => html`<td>${r.hr}</td>` },
+      { key: "rbi", label: "打点", cell: (r) => html`<td>${r.rbi}</td>` },
+      { key: "sb", label: "盗塁", cell: (r) => html`<td>${r.sb}</td>` },
+      { key: "avg", label: "打率", rate: true, cell: (r) => html`<td class="wd">${rate(r.avg, "打数", 3)}</td>` },
+      { key: "obp", label: "出塁率", rate: true, cell: (r) => html`<td class="wd">${rate(r.obp, "打席", 3)}</td>` },
+      { key: "slg", label: "長打率", rate: true, cell: (r) => html`<td class="wd">${rate(r.slg, "打数", 3)}</td>` },
+      { key: "ops", label: "OPS", rate: true, cell: (r) => html`<td class="wd">${rate(r.ops, "打席", 3)}</td>` },
     ]
   );
-
-  const body = (r: TeamBatter): RawHtml =>
-    saber
-      // ⚠**머리와 칸 수가 같아야 한다.** 여기 `打席` 칸이 빠져 있었고(머리는 있었다),
-      // 그 결과 **모든 값이 한 칸씩 왼쪽으로 밀려** wOBA 자리에 wRAA 가 그려졌다.
-      // 값이 틀린 것이 아니라 **머리가 거짓말을 하는** 상태라 눈으로는 잡히지 않는다 —
-      // 순위 화면과 표시값을 대조해서야 나왔다(2026-08-17).
-      ? html`<td class="b">${r.pa}</td>
-      <td class="wd">${rate(r.wrcPlus, "打席", 1)}</td>
-      <td class="wd">${rate(r.woba, "打席", 3)}</td>
-      <td class="wd">${rate(r.wraa, "打席", 1)}</td>
-      <td class="wd">${rate(r.src, "打席", 1)}</td>
-      <td class="wd">${rate(r.ops, "打席", 3)}</td>`
-      : html`<td>${r.games}</td><td class="b">${r.pa}</td><td>${r.h}</td><td>${r.hr}</td>
-      <td>${r.rbi}</td><td>${r.sb}</td>
-      <td class="wd">${rate(r.avg, "打数", 3)}</td>
-      <td class="wd">${rate(r.obp, "打席", 3)}</td>
-      <td class="wd">${rate(r.slg, "打数", 3)}</td>
-      <td class="wd">${rate(r.ops, "打席", 3)}</td>`;
 
   return stableTable({
     id: saber ? "teambatsaber" : "teambat",
@@ -296,8 +290,7 @@ function batterTable(rows: TeamBatter[], base: string, saber: boolean, qualifier
       ${raw(sortAttr("slg", r.slg.value, 4))}${raw(sortAttr("ops", r.ops.value, 4))}
       ${raw(sortAttr("woba", r.woba.value, 4))}${raw(sortAttr("wrcplus", r.wrcPlus.value, 1))}
       ${raw(sortAttr("wraa", r.wraa.value, 2))}${raw(sortAttr("src", r.src.value, 2))}>
-      <td class="l"><a href="${base}players/${r.playerId}.html">${r.name}</a></td>
-      ${body(r)}
+      ${cols.map((c) => c.cell(r))}
     </tr>`,
     )}`,
   });
@@ -305,51 +298,41 @@ function batterTable(rows: TeamBatter[], base: string, saber: boolean, qualifier
 
 function pitcherTable(rows: TeamPitcher[], base: string, saber: boolean, qualifier: string): RawHtml {
   if (rows.length === 0) return html`<p class="empty">投手の記録がありません。</p>`;
-  const cols: SortColumn[] = orderCols(
+  const name = (r: TeamPitcher): RawHtml =>
+    html`<td class="l"><a href="${base}players/${r.playerId}.html">${r.name}</a></td>`;
+
+  /**
+   * ⚠**자릿수도 순위 화면과 맞춘다.** 여기만 1자리로 냈더니 같은 SRP 가
+   * 순위에서 5.83, 구단에서 5.8 로 보였다 — 같은 값이 화면에 따라 달라 보이면
+   * 어느 쪽이 맞는지 묻게 된다(2026-08-17 대조에서 발견).
+   */
+  const cols: Cell<TeamPitcher>[] = orderCols(
     saber
     ? [
-      { key: "name", label: "選手", left: true, text: true },
-      { key: "outs", label: "投球回" },
+      { key: "name", label: "選手", left: true, text: true, cell: name },
+      { key: "outs", label: "投球回", cell: (r) => html`<td class="b">${innings(r.outs)}</td>` },
       // ⚠**SRP 가 세이버의 맨 앞이다**(위 타자 표와 같은 이유 · 2026-08-18)
-      { key: "srp", label: "SRP", rate: true },
-      { key: "fip", label: "FIP", rate: true },
-      { key: "k9", label: "K/9", rate: true },
-      { key: "bb9", label: "BB/9", rate: true },
-      { key: "qs", label: "QS" },
-      { key: "ppo", label: "球数/アウト", rate: true },
+      { key: "srp", label: "SRP", rate: true, cell: (r) => html`<td class="wd">${rate(r.srp, "打者", 2)}</td>` },
+      { key: "fip", label: "FIP", rate: true, cell: (r) => html`<td class="wd">${rate(r.fip, "回", 2)}</td>` },
+      { key: "k9", label: "K/9", rate: true, cell: (r) => html`<td class="wd">${rate(r.k9, "回", 2)}</td>` },
+      { key: "bb9", label: "BB/9", rate: true, cell: (r) => html`<td class="wd">${rate(r.bb9, "回", 2)}</td>` },
+      { key: "qs", label: "QS", cell: (r) => html`<td>${r.qs}</td>` },
+      { key: "ppo", label: "球数/アウト", rate: true, cell: (r) => html`<td class="wd">${rate(r.pitchesPerOut, "アウト", 2)}</td>` },
     ]
     : [
-      { key: "name", label: "選手", left: true, text: true },
-      { key: "role", label: "役割", left: true, text: true },
-      { key: "games", label: "登板" },
-      { key: "outs", label: "投球回" },
-      { key: "w", label: "勝" },
-      { key: "l", label: "敗" },
-      { key: "sv", label: "S" },
-      { key: "hld", label: "H" },
-      { key: "so", label: "奪三振" },
-      { key: "era", label: "防御率", rate: true },
-      { key: "whip", label: "WHIP", rate: true },
+      { key: "name", label: "選手", left: true, text: true, cell: name },
+      { key: "role", label: "役割", left: true, text: true, cell: (r) => html`<td class="l">${r.role === "starter" ? "先発" : "救援"}</td>` },
+      { key: "games", label: "登板", cell: (r) => html`<td>${r.games}</td>` },
+      { key: "outs", label: "投球回", cell: (r) => html`<td class="b">${innings(r.outs)}</td>` },
+      { key: "w", label: "勝", cell: (r) => html`<td>${r.w}</td>` },
+      { key: "l", label: "敗", cell: (r) => html`<td>${r.l}</td>` },
+      { key: "sv", label: "S", cell: (r) => html`<td>${r.sv}</td>` },
+      { key: "hld", label: "H", cell: (r) => html`<td>${r.hld}</td>` },
+      { key: "so", label: "奪三振", cell: (r) => html`<td>${r.so}</td>` },
+      { key: "era", label: "防御率", rate: true, cell: (r) => html`<td class="wd">${rate(r.era, "回", 2)}</td>` },
+      { key: "whip", label: "WHIP", rate: true, cell: (r) => html`<td class="wd">${rate(r.whip, "回", 2)}</td>` },
     ]
   );
-
-  const body = (r: TeamPitcher): RawHtml =>
-    saber
-      ? html`<td class="b">${innings(r.outs)}</td>
-      <td class="wd">${rate(r.fip, "回", 2)}</td>
-      <td class="wd">${rate(r.k9, "回", 2)}</td>
-      <td class="wd">${rate(r.bb9, "回", 2)}</td>
-      ${/* ⚠**자릿수도 순위 화면과 맞춘다.** 여기만 1자리로 냈더니 같은 SRP 가
-           순위에서 5.83, 구단에서 5.8 로 보였다 — 같은 값이 화면에 따라 달라 보이면
-           어느 쪽이 맞는지 묻게 된다(2026-08-17 대조에서 발견) */ null}
-      <td class="wd">${rate(r.srp, "打者", 2)}</td>
-      <td>${r.qs}</td>
-      <td class="wd">${rate(r.pitchesPerOut, "アウト", 2)}</td>`
-      : html`<td class="l">${r.role === "starter" ? "先発" : "救援"}</td>
-      <td>${r.games}</td><td class="b">${innings(r.outs)}</td>
-      <td>${r.w}</td><td>${r.l}</td><td>${r.sv}</td><td>${r.hld}</td><td>${r.so}</td>
-      <td class="wd">${rate(r.era, "回", 2)}</td>
-      <td class="wd">${rate(r.whip, "回", 2)}</td>`;
 
   return stableTable({
     id: saber ? "teampitsaber" : "teampit",
@@ -369,8 +352,7 @@ function pitcherTable(rows: TeamPitcher[], base: string, saber: boolean, qualifi
       ${raw(sortAttr("era", r.era.value, 3))}${raw(sortAttr("whip", r.whip.value, 3))}${raw(sortAttr("fip", r.fip.value, 3))}
       ${raw(sortAttr("k9", r.k9.value, 3))}${raw(sortAttr("bb9", r.bb9.value, 3))}${raw(sortAttr("srp", r.srp.value, 2))}
       ${raw(sortAttr("ppo", r.pitchesPerOut.value, 3))}>
-      <td class="l"><a href="${base}players/${r.playerId}.html">${r.name}</a></td>
-      ${body(r)}
+      ${cols.map((c) => c.cell(r))}
     </tr>`,
     )}`,
   });

@@ -108,7 +108,13 @@ export interface ProbablePitcherRow {
   startTime: string | null;
   league: string;
   sourceUrl: string;
-  fetchedAt: string;
+  /**
+   * ⚠**아카이브 사이드카의 시각이다. 적재 시각을 넣지 마라**(M4 · 2026-08-18 감사 P1).
+   * 적재는 매일 돌고 아카이브 전체를 다시 훑으므로, 적재 시각을 쓰면 8월 15일에 받은 페이지가
+   * **매일 「오늘 받은 것」**이 되어 「予告先発 수집이 멈췄다」 감시가 영영 발화하지 못한다.
+   * ⚠**못 읽으면 `null` 이다** — 「모른다」를 「오늘」로 바꾸지 않는다(M11 · 마이그레이션 017).
+   */
+  fetchedAt: string | null;
 }
 
 /**

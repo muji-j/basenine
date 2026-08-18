@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { renderStartersPage } from "../src/pages.ts";
+import { isNextProbable } from "../src/query.ts";
 import type { ProbableGame, ProbableSide, StartersPageData } from "../src/pages.ts";
 import { colorOf } from "@bb-app/domain";
 import { context, pastSeasonContext, r } from "./fixtures.ts";
@@ -288,4 +289,28 @@ test("진행 중인 시즌에서는 지금까지대로 말한다", () => {
   const out = renderStartersPage(data({ gameDate: null, games: [] }), context());
   assert.match(out, /発表は前日〜当日です/);
   assert.match(out, /発表待ち/);
+});
+
+/**
+ * ⚠**한 페이지가 같은 날을 「예정」이자 「종료」로 동시에 선언했다**(2026-08-18 감사 P1).
+ *
+ * 배포물 `today.html` 이 위에서 「次の予告先発 2026年8月16日」, 아래에서 「2026年8月16日の結果」.
+ * 당일 예고를 못 받은 날에 기본값이 **무조건 마지막 예고일로 떨어졌고**, 그 날은 이미 치러진 날이었다.
+ * 양쪽 다 그럴듯해서 오류로 보이지 않고, 읽는 사람은 **끝난 경기의 선발을 예습한다** —
+ * 침묵 오류 중에서도 눈에 안 띄는 쪽이다.
+ */
+test("⚠끝난 날을 「次の予告先発」이라고 부르지 않는다", () => {
+  // 실제로 났던 상태: 예고도 최신 경기일도 8/16
+  assert.equal(isNextProbable("2026-08-16", "2026-08-16"), false, "같은 날을 「다음」이라고 했다");
+  assert.equal(isNextProbable("2026-08-15", "2026-08-16"), false, "지난 날을 「다음」이라고 했다");
+  assert.equal(isNextProbable("2026-08-17", "2026-08-16"), true, "진짜 다음 날을 감췄다");
+  assert.equal(isNextProbable(null, "2026-08-16"), false);
+});
+
+/**
+ * ⚠**시즌 첫 경기 전에는 최신 경기일이 없다.** 그때 「없으니까 다음도 없다」로 떨어뜨리면
+ * 개막 전날에 予告先発이 통째로 사라진다 — 정작 가장 보고 싶은 날이다.
+ */
+test("⚠최신 경기일이 없으면(개막 전) 예고는 그대로 「다음」이다", () => {
+  assert.equal(isNextProbable("2026-03-27", null), true, "개막 전날의 예고를 감췄다");
 });

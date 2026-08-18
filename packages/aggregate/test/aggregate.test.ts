@@ -6,9 +6,17 @@ import { join } from "node:path";
 import { openDb, upsertBatting, upsertGame, upsertPitching, upsertPlayer } from "@bb-app/store";
 import type { Db } from "@bb-app/store";
 import { aggregateSeason } from "../src/season.ts";
-import { buildLeagues, battingEntries, rankBatters, teamGamesOf } from "../src/leaderboard.ts";
+import {
+  buildLeagues,
+  battingEntries,
+  neededOuts,
+  pitchingEntries,
+  rankBatters,
+  rankPitchersInRole,
+  teamGamesOf,
+} from "../src/leaderboard.ts";
 import { qualifiedBatterPa } from "@bb-app/metrics";
-import type { BattingEntry } from "../src/leaderboard.ts";
+import type { BattingEntry, PitchingEntry } from "../src/leaderboard.ts";
 
 const NOW = "2026-08-15T00:00:00.000Z";
 
@@ -214,6 +222,67 @@ test("⚠규정타석 분모는 소속 구단 시합수다 — 리그 최다가 
       qualifiedBatterPa(teamGamesOf(bundle, "d")),
       qualifiedBatterPa(bundle.teamGames),
       "팀별 분모가 리그 최다와 같아져 버렸다 — 이 시험이 아무것도 재지 못한다",
+    );
+  });
+});
+
+/**
+ * ⚠**타자만 고쳤고 투수는 그대로였다**(2026-08-18 감사 P1 · 하루 뒤에 잡혔다).
+ *
+ * 위 시험이 타자 쪽을 고정한 그 커밋에서 `rankPitchersInRole` 은 **자격선을 미리 한 번**
+ * 계산해 전원에게 쓰고 있었고, 그 분모가 **리그 최다 팀**이었다.
+ * 실측 2026년 기준 早川·エスピノーザ·星·ハーン·藤平 **5명**이 자기 팀 기준을 채우고도
+ * 순위에서 통째로 사라졌다 — 예외도 로그도 없이 「順位なし」로만 보이므로
+ * 「아직 이닝이 모자라구나」로 읽힌다. 그 위의 등수도 전부 한 칸씩 밀렸다.
+ *
+ * ⚠**「같은 규칙을 두 곳에 쓰면 절반만 고쳐진다」의 실증**이라 여기 남긴다.
+ */
+test("⚠규정투구회 분모도 소속 구단 시합수다 — 자격자를 순위에서 지우지 않는다", async () => {
+  await withDb((db) => {
+    // 阪神(t)·巨人(g) 는 10경기, 中日(d)·広島(c) 는 6경기
+    for (let i = 1; i <= 10; i += 1) {
+      const id = `tg${i}`;
+      seedGame(db, id, `2026-04-${String(i).padStart(2, "0")}`, "t", "g");
+      // ⚠타자가 0명이면 `buildLeagues` 가 그 리그를 통째로 건너뛴다
+      seedBatter(db, id, "1001", "away", 3, 1);
+      seedPitcher(db, id, "2001", "home", 2, 0); // 巨人: 20아웃
+    }
+    for (let i = 1; i <= 6; i += 1) {
+      const id = `dc${i}`;
+      seedGame(db, id, `2026-05-${String(i).padStart(2, "0")}`, "d", "c");
+      seedBatter(db, id, "1002", "away", 3, 1);
+      seedPitcher(db, id, "2002", "home", 3, 1); // 広島: 18아웃
+    }
+    /**
+     * ⚠**여기가 급소다.** 中日 구원 8아웃 —
+     * · 옳은 분모(6경기 → 6아웃)로는 **자격이 있고**,
+     * · 리그 최다(10경기 → 10아웃)를 쓰면 **미달**이 된다.
+     * 두 규칙이 정반대 답을 내는 구간을 일부러 골랐다.
+     */
+    for (let i = 1; i <= 2; i += 1) seedPitcher(db, `dc${i}`, "2003", "away", 4, 1);
+
+    const bundle = buildLeagues(aggregateSeason(db, 2026)).find((b) => b.league === "central")!;
+    const entries = pitchingEntries(bundle);
+    const mine = entries.find((e) => e.player.playerId === "2003");
+    assert.ok(mine, "픽스처의 투수가 집계에 없다 — 이 시험이 아무것도 안 재고 있다");
+    assert.equal(mine.player.role, "reliever", "역할이 바뀌었다 — 자격선 기준이 달라진다");
+    assert.equal(mine.player.line.outs, 8, "아웃 수가 바뀌었다 — 판정 구간을 벗어난다");
+
+    assert.equal(neededOuts(bundle, "d", "reliever"), 6, "中日 기준이 다르다");
+    assert.equal(neededOuts(bundle, "t", "reliever"), 10, "리그 최다 기준이 다르다");
+    assert.notEqual(
+      neededOuts(bundle, "d", "reliever"),
+      neededOuts(bundle, "t", "reliever"),
+      "두 기준이 같아졌다 — 이 시험이 아무것도 재지 못한다",
+    );
+
+    const ranked = rankPitchersInRole(bundle, entries, "reliever", (e: PitchingEntry) => e.era);
+    const row = ranked.find((r) => r.item.player.playerId === "2003");
+    assert.ok(row, "순위 목록에서 사라졌다 — 자격 미달도 목록에는 남아야 한다(M11)");
+    assert.notEqual(
+      row.rank,
+      null,
+      "자기 구단 기준(6아웃)을 채운 8아웃 투수가 순위에서 빠졌다 — 리그 최다 기준을 쓰고 있다",
     );
   });
 });

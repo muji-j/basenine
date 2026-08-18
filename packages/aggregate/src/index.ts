@@ -12,12 +12,18 @@ export {
   blendConstants,
   buildLeagues,
   entriesOfRole,
+  isQualifiedBatter,
+  isQualifiedPitcher,
+  neededOuts,
+  neededOutsRange,
+  neededPa,
+  neededPaRange,
   pitchingEntries,
   pitchingEntryOf,
-  qualifyingOuts,
   rankBatters,
   rankPitchers,
   rankPitchersInRole,
+  teamGamesOf,
 } from "./leaderboard.ts";
 export type { BattingEntry, LeagueBundle, PitchingEntry } from "./leaderboard.ts";
 export { ALL_STATES, buildRunExpectancy, paValue, stateKey } from "./run-expectancy.ts";

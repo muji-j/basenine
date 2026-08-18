@@ -457,3 +457,88 @@ test("⚠탭↔패널이 양방향으로 이어져 있다", () => {
     assert.equal(panel?.[1], m[1], `${m[2]} 가 다른 탭을 가리킨다`);
   }
 });
+
+/**
+ * ⚠**개수가 같아도 라벨이 거짓말을 할 수 있다**(2026-08-18 감사 P0 · 내가 만든 결함).
+ *
+ * 위의 「머리 수 = 칸 수」 시험은 **이 결함을 통과시켰다.** 순서를 `metric-order.ts` 로 옮기면서
+ * `orderCols` 가 머리만 재정렬했고 `<td>` 는 옛 순서 그대로였다 — 개수는 그대로니까.
+ * 실물 `dist/teams/g.html` 에서 「打率 104」·「打席 0」이 그려지고 있었다.
+ * 4개 표 전부, 모든 구단·모든 시즌에서.
+ *
+ * → **위치별 항등성**을 본다. 지표마다 다른 표식값을 주고,
+ *   `data-sortkey` 머리 i 번째 아래의 칸이 그 지표의 값을 담고 있는지 대조한다.
+ * ⚠**분모도 칸에 들어간다**(M2). 그래서 「담고 있는가」로 본다 — 「같은가」로 보면 분모 때문에 늘 실패한다.
+ *   표식값을 전부 다르게 잡았으므로 두 열이 뒤바뀌면 **적어도 한쪽이 반드시 걸린다.**
+ */
+const MARK_BAT: Record<string, string> = {
+  games: "811", pa: "822", h: "844", hr: "855", rbi: "866", sb: "877",
+  avg: ".401", obp: ".402", slg: ".403", ops: ".404",
+  woba: ".405", wrcplus: "91.1", wraa: "92.2", src: "93.3",
+  name: "識別",
+};
+const MARK_PIT: Record<string, string> = {
+  games: "711", outs: "241", w: "733", l: "744", sv: "755", hld: "766", so: "777", qs: "788",
+  era: "5.11", whip: "5.22", fip: "5.33", k9: "5.44", bb9: "5.55", srp: "5.66", ppo: "5.77",
+  name: "識別", role: "先発",
+};
+
+function marked(): TeamPageData {
+  return data({
+    batters: [{
+      playerId: "U1", name: "識別", games: 811, pa: 822, ab: 833, h: 844, hr: 855, rbi: 866, sb: 877,
+      avg: { value: 0.401, denominator: 833 },
+      obp: { value: 0.402, denominator: 822 },
+      slg: { value: 0.403, denominator: 833 },
+      ops: { value: 0.404, denominator: 822 },
+      woba: { value: 0.405, denominator: 822 },
+      wrcPlus: { value: 91.1, denominator: 822 },
+      wraa: { value: 92.2, denominator: 822 },
+      src: { value: 93.3, denominator: 822 },
+      qualified: true,
+    }],
+    pitchers: [{
+      playerId: "U2", name: "識別", role: "starter", games: 711, outs: 723,
+      w: 733, l: 744, sv: 755, hld: 766, so: 777, qs: 788, pitches: 799,
+      era: { value: 5.11, denominator: 723 },
+      whip: { value: 5.22, denominator: 723 },
+      fip: { value: 5.33, denominator: 723 },
+      k9: { value: 5.44, denominator: 723 },
+      bb9: { value: 5.55, denominator: 723 },
+      srp: { value: 5.66, denominator: 799 },
+      pitchesPerOut: { value: 5.77, denominator: 723 },
+      qualified: true,
+    }],
+  });
+}
+
+test("⚠머리 i번째 아래에 그 지표의 값이 있다 — 개수만 세면 라벨이 거짓말을 한다", () => {
+  const out = renderTeamPage(marked(), context());
+  const tables = [...out.matchAll(/<table id="(team[^"]*)">([\s\S]*?)<\/table>/g)];
+  const seen = new Set(tables.map((t) => t[1] ?? ""));
+  for (const want of ["teambatTable", "teambatsaberTable", "teampitTable", "teampitsaberTable"]) {
+    assert.ok(seen.has(want), `${want} 를 못 찾았다 — 이 시험이 아무것도 안 재고 있다`);
+  }
+  let checked = 0;
+  for (const t of tables) {
+    const id = t[1] ?? "";
+    const inner = t[2] ?? "";
+    const keys = [...inner.matchAll(/data-sortkey="([^"]+)"/g)].map((m) => m[1] ?? "");
+    const body = /<tbody>([\s\S]*?)<\/tbody>/.exec(inner)?.[1] ?? "";
+    const cells = [...body.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map((m) =>
+      (m[1] ?? "").replace(/<[^>]*>/g, ""),
+    );
+    assert.equal(cells.length, keys.length, `${id}: 머리 ${keys.length} · 칸 ${cells.length}`);
+    const marks = id.startsWith("teambat") ? MARK_BAT : MARK_PIT;
+    keys.forEach((k, i) => {
+      const mark = marks[k];
+      assert.notEqual(mark, undefined, `${id}: 「${k}」의 표식값을 이 시험이 안 갖고 있다`);
+      assert.ok(
+        (cells[i] ?? "").includes(mark ?? ""),
+        `${id}: 머리 ${i}번째가 「${k}」인데 그 칸은 「${cells[i]}」다 — ${mark} 가 없다`,
+      );
+      checked += 1;
+    });
+  }
+  assert.ok(checked >= 34, `${checked}칸밖에 안 쟀다 — 4개 표가 다 안 걸렸다`);
+});

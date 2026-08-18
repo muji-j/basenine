@@ -221,20 +221,74 @@ export function teamGamesOf(bundle: LeagueBundle, teamCode: string): number {
   return bundle.teamGamesByCode.get(teamCode) ?? bundle.teamGames;
 }
 
+/**
+ * **「이 선수가 규정을 채웠는가」는 여기 한 벌뿐이다**(M1 · 2026-08-18 감사 P1).
+ *
+ * ⚠**같은 규칙이 네 곳에 복제돼 있었고, 어제 그중 절반만 고쳤다.**
+ * 순위는 소속 구단 기준으로 매겨지는데 선수 페이지의 「規定」 뱃지는 리그 최다 기준이라,
+ * **순위표가 「打率21位」라고 쓴 선수의 페이지가 같은 시각에 「順位がつきません」**이라고 썼다
+ * (실측: 浅村 楽天 333타석 · 팀기준 326 · 리그최다기준 345).
+ * 투수는 그 절반 수정에서 통째로 빠져 **자격을 채운 5명이 순위에서 사라져 있었다.**
+ * → 판정과 표기가 **같은 함수**에서 나온다. 다음에 절반만 고쳐질 자리를 없앴다.
+ *
+ * ⚠**분모는 소속 구단의 소화 경기수다**(NPB 규칙). 리그 최다를 전원에게 쓰면
+ * 적게 치른 팀의 선수가 부당하게 탈락한다.
+ */
+export function neededPa(bundle: LeagueBundle, teamCode: string): number {
+  return qualifiedBatterPa(teamGamesOf(bundle, teamCode));
+}
+
+/** 그 선수의 자격선(아웃). **선발은 NPB 공식, 구원은 우리 기준**이다 */
+export function neededOuts(bundle: LeagueBundle, teamCode: string, role: PitcherRole): number {
+  const games = teamGamesOf(bundle, teamCode);
+  return role === "starter" ? qualifiedPitcherOuts(games) : qualifiedRelieverOuts(games);
+}
+
+export function isQualifiedBatter(bundle: LeagueBundle, e: BattingEntry): boolean {
+  return e.player.line.pa >= neededPa(bundle, e.player.teamCode);
+}
+
+export function isQualifiedPitcher(bundle: LeagueBundle, e: PitchingEntry): boolean {
+  return e.player.line.outs >= neededOuts(bundle, e.player.teamCode, e.player.role);
+}
+
+/**
+ * 리그 전체를 향해 말할 때의 **범위**.
+ *
+ * ⚠**하나의 수로 말할 수 없다.** 기준이 구단마다 다른데 리그 최다 하나를 대표로 적으면
+ * 그 문장이 **사실이 아니게 된다** — 「規定打席 345」라고 써 놓고 333타석 선수에게
+ * 순위를 붙이고 있었다(2026-08-18 감사 P1).
+ */
+export function neededPaRange(bundle: LeagueBundle): { min: number; max: number } {
+  const v = [...bundle.teamGamesByCode.values()].map(qualifiedBatterPa);
+  return { min: Math.min(...v), max: Math.max(...v) };
+}
+
+export function neededOutsRange(
+  bundle: LeagueBundle,
+  role: PitcherRole,
+): { min: number; max: number } {
+  const f = role === "starter" ? qualifiedPitcherOuts : qualifiedRelieverOuts;
+  const v = [...bundle.teamGamesByCode.values()].map(f);
+  return { min: Math.min(...v), max: Math.max(...v) };
+}
+
 export function rankBatters(
   bundle: LeagueBundle,
   entries: readonly BattingEntry[],
   pick: (e: BattingEntry) => Rate,
   higherIsBetter = true,
 ): Ranked<BattingEntry>[] {
-  return rankQualified(
-    entries,
-    pick,
-    (e) => e.player.line.pa >= qualifiedBatterPa(teamGamesOf(bundle, e.player.teamCode)),
-    higherIsBetter,
-  );
+  return rankQualified(entries, pick, (e) => isQualifiedBatter(bundle, e), higherIsBetter);
 }
 
+/**
+ * 역할을 나누지 않은 투수 순위.
+ *
+ * ⚠**여기는 전원에게 선발 기준(NPB 공식 규정투구회)을 건다** — 역할별 기준을 섞으면
+ * 구원이 1/3 기준으로 같은 표에 올라와 선발과 나란히 서게 된다.
+ * 화면이 쓰는 것은 `rankPitchersInRole` 쪽이고, 이 함수는 도구용이다.
+ */
 export function rankPitchers(
   bundle: LeagueBundle,
   entries: readonly PitchingEntry[],
@@ -258,17 +312,6 @@ export function entriesOfRole(
 }
 
 /**
- * 역할별 자격선(아웃 카운트). **선발은 NPB 공식 규정투구회, 구원은 우리 기준**이다.
- *
- * ⚠이 차이를 화면이 말해야 한다 — 공식 기준과 자체 기준을 같은 얼굴로 내보내면
- * 「NPB가 그렇게 정했다」는 오해가 생긴다.
- */
-export function qualifyingOuts(bundle: LeagueBundle, role: PitcherRole, teamCode?: string): number {
-  const games = teamCode === undefined ? bundle.teamGames : teamGamesOf(bundle, teamCode);
-  return role === "starter" ? qualifiedPitcherOuts(games) : qualifiedRelieverOuts(games);
-}
-
-/**
  * 역할 안에서 순위를 매긴다.
  *
  * ⚠**전체 성적으로 줄 세우되, 줄은 역할마다 따로 세운다.** 선발 등판분만 떼어 재지 않는 것은
@@ -283,11 +326,17 @@ export function rankPitchersInRole(
   pick: (e: PitchingEntry) => Rate,
   higherIsBetter = false,
 ): Ranked<PitchingEntry>[] {
-  const need = qualifyingOuts(bundle, role);
+  /**
+   * ⚠**자격선을 미리 한 번 계산해 전원에게 쓰면 안 된다**(2026-08-18 감사 P1).
+   * 여기가 `qualifyingOuts(bundle, role)` 로 **리그 최다 팀**을 분모로 한 값을
+   * 전원에게 걸고 있었다. 실측으로 早川·エスピノーザ·星·ハーン·藤平 **5명**이
+   * 자기 팀 기준을 채우고도 순위에서 통째로 빠졌고, 그 위의 등수가 전부 한 칸씩 밀렸다.
+   * 화면은 그것을 「NPB公式」이라고 적고 있었다.
+   */
   return rankQualified(
     entriesOfRole(entries, role),
     pick,
-    (e) => e.player.line.outs >= need,
+    (e) => isQualifiedPitcher(bundle, e),
     higherIsBetter,
   );
 }

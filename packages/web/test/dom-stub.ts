@@ -45,6 +45,18 @@ export class El {
   checked = false;
   disabled = false;
   type = "";
+  /**
+   * 기하(幾何). ⚠**스텁에는 레이아웃이 없으므로 시험이 손으로 넣는다.**
+   *
+   * ⚠**기본값 0은 「아무 일도 안 일어남」이다** — `scrollWidth > clientWidth+1` 이 거짓이라
+   * 넘침 판정이 발동하지 않는다. 즉 이 값을 안 쓰는 기존 시험의 뜻은 그대로다.
+   * 여태 이 속성들이 아예 없어서 가로스크롤 접근성 코드가 **한 번도 실행되지 않았다**
+   * (`typeof el.scrollWidth!=="number"` 에서 조기 반환) — 그래서 감사 전까지 결함이 살아 있었다.
+   */
+  scrollWidth = 0;
+  clientWidth = 0;
+  offsetLeft = 0;
+  offsetWidth = 0;
   #text = "";
   #value: string | null = null;
 
@@ -168,6 +180,19 @@ export class El {
   }
 
   querySelectorAll(sel: string): El[] {
+    /**
+     * ⚠**쉼표 목록을 지원한다.** `a[href],button,input,…` 처럼 「어느 하나라도」를 묻는
+     * 선택자가 실제 코드에 있는데 스텁이 예외를 던져서, 그 코드가 **시험에서 통째로 죽어 있었다**
+     * (2026-08-18 감사 P1의 가로스크롤 접근성 경로가 정확히 그랬다 —
+     * 무엇을 넣어도 초록이었으니 결함이 살아남았다).
+     * ⚠**중복을 지우고 문서 순서를 지킨다** — 브라우저가 그렇고,
+     * 「가장 오른쪽 포커스 지점」 같은 판정이 순서에 기댄다.
+     */
+    const groups = sel.split(",").map((s) => s.trim()).filter((s) => s !== "");
+    if (groups.length > 1) {
+      const hit = new Set(groups.flatMap((g) => this.querySelectorAll(g)));
+      return this.descendants().filter((el) => hit.has(el));
+    }
     const parts = sel.trim().split(/\s+/);
     // ⚠**빈 결과가 아니라 예외로 알린다.** 지원하지 않는 선택자가 조용히 0건을 내면
     // 「클라이언트가 아무것도 안 했다」와 「스텁이 못 찾았다」가 구별되지 않는다.

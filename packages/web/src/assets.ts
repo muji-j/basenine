@@ -707,6 +707,17 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
 .picklab.pmiss{letter-spacing:0;font-size:12px}
 /* 고를 것이 없으면 「누르는 법」도 필요 없다 */
 .pmiss s{display:none}
+/* ── 収集ログ의 상태 칸 ──
+   ⚠**바로 위 .pmiss 와 같은 사고가 収集ログ 에서 또 났다**(2026-08-18 감사 P1).
+   log-page.ts 가 .ok / .bad 를 붙이고 있는데 **CSS 규칙이 0건**이라,
+   「取得済み」와 「打席ログN試合ぶん未取得」이 **글자색 하나 다르지 않게** 그려졌다.
+   --ok·--warn 토큰은 이미 있었다 — 잇지 않았을 뿐이다.
+   이 화면은 조용한 실패를 사람이 눈으로 찾는 유일한 자리라, 훑어서 안 보이면 존재 이유가 없다.
+   ⚠**색만으로 가르지 않는다**(§0-1·1.4.1). 글자 자체가 이미 다르고(取得済み/未取得 · 正常/古い),
+   여기서는 굵기를 더해 색을 못 보는 경우에도 결함 행이 튀게 한다.
+   ⚠**선택자를 td 로 묶는다.** .ok / .bad 는 흔한 이름이라 전역으로 두면 언젠가 남의 칸을 물들인다. */
+td.ok{color:var(--ok)}
+td.bad{color:var(--warn);font-weight:700}
 /* ── 通算成績 ──
    ⚠**태그 기본값에 기대지 않는다.** h3 는 기본 1.17em 이라 **구획 제목(h2, 11px)보다 커진다** —
    이 저장소가 이미 한 번 밟은 함정이다(위 .standname 주석 참조).
@@ -1857,10 +1868,19 @@ function renderBlocks(){
    *
    * ⚠**전부에 붙이지 않는다.** 순위 화면에만 스크롤 영역이 82개다 — 무조건 붙이면
    *   탭 정지와 랜드마크가 82개 늘어 오히려 못 쓰게 된다.
-   *   **실제로 넘치고**(뷰포트에 따라 다르다) **안에 포커스 갈 것이 없는** 것만 고른다.
+   *   **실제로 넘치고** 포커스만으로는 **오른쪽 끝까지 못 미는** 것만 고른다.
    * ⚠**리사이즈에 따라 다시 판정한다** — 창을 좁히면 넘치기 시작한다.
    * ⚠**스크립트가 없으면 지금과 같다**(§0-1) — 나빠지지 않는다. 정적으로는
    *   「넘치는가」를 알 수 없어 여기서 한다.
+   *
+   * ⚠**「포커스 갈 것이 있으면 건너뛴다」로는 순위표가 안 걸렸다**(2026-08-18 재감사 P1).
+   * 그 판정의 전제는 「Tab 이 자식으로 들어가면 상자가 따라 굴러간다」인데,
+   * 순위표의 **유일한 링크가 sticky 로 고정된 2열의 팀명**이라 포커스를 받아도 1px 도 안 민다.
+   * 실측: dist/index.html 5/5 · dist/ranking.html 82/82 가 「포커스 있음」으로 판정돼
+   * **한 개도 tabindex 를 못 받았다** — 즉 그 수정이 이 두 화면에서 고친 것이 0개였다.
+   * 고쳤다고 위에 적어 둔 바로 그 표가 안 고쳐져 있었다.
+   * → **「포커스로 오른쪽 끝에 닿는가」로 판정한다.** offsetLeft 는 sticky 여도 문서상 위치라
+   *   고정 열은 작은 값에 머문다.
    */
   (function(){
     const FOCUSABLE="a[href],button,input,select,textarea,[tabindex]";
@@ -1869,7 +1889,14 @@ function renderBlocks(){
         /* ⚠크기를 모르는 환경(시험 스텁)에서는 아무것도 하지 않는다 — 없는 정보로 판정하지 않는다 */
         if(typeof el.scrollWidth!=="number"||typeof el.clientWidth!=="number")return;
         const overflows=el.scrollWidth>el.clientWidth+1;
-        const hasFocus=el.querySelector(FOCUSABLE)!==null;
+        let reach=0,n=0;
+        $$(FOCUSABLE,el).forEach(f=>{
+          n++;
+          /* 크기를 모르는 요소는 「끝까지 민다」의 근거가 될 수 없다 — 0으로 둔다 */
+          const r=(typeof f.offsetLeft==="number"?f.offsetLeft:0)+(typeof f.offsetWidth==="number"?f.offsetWidth:0);
+          if(r>reach)reach=r;
+        });
+        const hasFocus=n>0&&reach>=el.scrollWidth-1;
         if(overflows&&!hasFocus){
           if(!el.hasAttribute("tabindex")){
             el.setAttribute("tabindex","0");
@@ -1892,6 +1919,10 @@ function renderBlocks(){
       let t=0;
       addEventListener("resize",()=>{clearTimeout(t);t=setTimeout(mark,150)},{passive:true});
     }
+    /* ⚠**숨어 있던 패널은 폭이 0이라 판정에서 빠진다.** 이 함수는 showTabs() 앞에 도는데,
+       그때 hidden 이던 탭 안의 표는 scrollWidth === clientWidth === 0 이라 「안 넘친다」로 읽힌다.
+       순위 화면의 리그·지표 탭이 전부 여기 해당한다 — 탭이 바뀔 때 다시 잰다. */
+    tabHooks.push(mark);
   })();
   $$(".block").forEach((el,i)=>{el.style.setProperty("--block-pad-y",pad);el.style.setProperty("--i",String(i))});
 }

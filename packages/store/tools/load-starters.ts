@@ -17,6 +17,7 @@ import { teamByName } from "@bb-app/domain";
 import { STARTERS_URL } from "@bb-app/archiver";
 import { openDb } from "../src/db.ts";
 import { ensurePlayer, upsertProbablePitcher } from "../src/load.ts";
+import { fetchedAtOf } from "../src/meta.ts";
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -67,6 +68,17 @@ function resolveGameDate(fetchedDate: string, monthDay: string): string | null {
 
 for (const file of files) {
   const fetchedDate = file.replace(/\.html\.gz$/, "");
+  /**
+   * ⚠**언제 받았는가는 사이드카가 안다. 적재 시각을 넣지 마라**(M4 · 2026-08-18 감사 P1).
+   *
+   * 여기가 `nowIso`(적재 시각)를 넣고 있었다. 적재는 매일 돌면서 아카이브 **전체**를 다시 훑으므로
+   * 8월 15일에 받은 페이지가 매일 「오늘 받은 것」이 됐고, `scripts/freshness.ts` 의
+   * 「予告先発 수집이 멈췄다」 검사가 `MAX(fetched_at)` 을 보는 탓에 **한 번도 발화할 수 없었다.**
+   * 같은 사고를 통산 기록에서 이미 겪고 `meta.ts` 에 그 교훈을 적어 뒀는데(2026-08-17),
+   * 이 파일만 그 함수를 부르지 않고 있었다.
+   * ⚠하필 이 자료가 **거르면 영영 못 받는 것**이다 — 손실을 알아챌 장치가 그만큼 중요하다.
+   */
+  const fetchedAt = fetchedAtOf(join(dir, `${fetchedDate}.meta.json`));
   let parsed;
   try {
     const html = gunzipSync(readFileSync(join(dir, file))).toString("utf8");
@@ -125,7 +137,7 @@ for (const file of files) {
           startTime: game.startTime,
           league: game.league,
           sourceUrl: STARTERS_URL,
-          fetchedAt: nowIso,
+          fetchedAt,
         });
       });
       games += 1;
