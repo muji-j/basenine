@@ -1367,6 +1367,9 @@ function matchupBlock(rows: readonly MatchupRow[], total: number, opponent: stri
     rows: html`${rows.map(
       (r) => html`<tr class="${r.line.pa < THIN_MATCHUP_PA ? "thin" : ""}"
       data-name="${r.opponentName}" data-team="${shortNameOf(r.opponentTeam)}" data-teamcode="${r.opponentTeam}"
+      ${/* ⚠**이름이 아니라 ID 로 못 박는다**(M10 · 2026-08-18 감사 P2).
+           「対戦を選ぶ」에서 이름으로 넘기면 동명이인(이 저장소에 「小島」가 둘)이 함께 걸린다 */ ""}
+      data-oppid="${r.opponentId}"
       data-pa="${r.line.pa}" data-ab="${r.line.ab}" data-h="${r.line.h}" data-hr="${r.line.hr}"
       data-bb="${r.line.bb}" data-so="${r.line.so}" data-rbi="${r.rbi}"
       ${raw(r.avg.value === null ? "" : `data-avg="${r.avg.value.toFixed(4)}"`)}>

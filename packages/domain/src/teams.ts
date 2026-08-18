@@ -140,7 +140,8 @@ export function competitionOf(awayCode: string, homeCode: string): string {
   const kinds = [awayCode, homeCode].map((code) => {
     const special = NON_TEAM_CODES[code];
     if (special !== undefined) return special;
-    if (BY_CODE.has(code)) return "regular";
+    // ⚠**옛 슬러그도 구단이다**(오릭스 `bs`, 2018 시즌까지) — 아니면 그 시즌이 통째로 실패한다
+    if (BY_CODE.has(canonicalTeamCode(code))) return "regular";
     throw new RangeError(`모르는 팀 코드: ${code}. 구단 마스터나 비구단 코드 표를 갱신하라`);
   });
   // ⚠양쪽이 같은 종류여야 한다. 구단 대 리그선발 같은 조합은 존재하지 않으므로
@@ -153,9 +154,34 @@ export function competitionOf(awayCode: string, homeCode: string): string {
 
 const BY_CODE = new Map(TEAMS.map((t) => [t.code, t]));
 
+/**
+ * **옛 슬러그 → 지금 슬러그.**
+ *
+ * ⚠**npb.jp 의 URL 슬러그는 불변이 아니다**(2026-08-18 백필에서 실측으로 알았다).
+ * 오릭스는 **2018 시즌까지 `bs`, 2019 시즌부터 `b`** 다.
+ * 실측(아카이브 전수 · 2018~2026): 2018 `bs` **148경기** · `b` 0 / 2019 이후 `bs` 0 · `b` 147~159.
+ * 그 밖의 미지 코드는 **0건**이다.
+ *
+ * ⚠**이걸 모른 채 백필하면 그 구단이 통째로 사라진다** — 실제로 2018 적재에서
+ * **148경기가 「모르는 팀 코드」로 실패**했고, 그대로 뒀으면 2018 오릭스의 성적이
+ * 화면에서 사라진 채 「그 시즌은 원래 그렇다」로 읽혔을 것이다.
+ * ⚠**조용히 넘기지 않는 설계가 이걸 잡았다** — 예외를 던지지 않았다면 못 봤다(M7).
+ * ⚠**별칭은 「우리가 확인한 것」만 넣는다.** 모르는 코드는 계속 예외여야 한다 —
+ *   여기에 폭넓은 규칙을 넣는 순간 다음 슬러그 변경이 조용히 흡수된다.
+ */
+export const TEAM_CODE_ALIASES: Readonly<Record<string, string>> = {
+  /** オリックス・バファローズ — 2018 시즌까지의 슬러그 */
+  bs: "b",
+};
+
+/** 옛 슬러그를 지금 코드로. **모르는 코드는 그대로 돌려준다**(판정은 부르는 쪽이 한다) */
+export function canonicalTeamCode(code: string): string {
+  return TEAM_CODE_ALIASES[code] ?? code;
+}
+
 /** 모르는 코드는 **조용히 넘기지 않는다** — 팀이 하나 빠지면 그 선수 전원이 집계에서 사라진다. */
 export function teamOf(code: string): Team {
-  const t = BY_CODE.get(code);
+  const t = BY_CODE.get(canonicalTeamCode(code));
   if (!t) throw new RangeError(`모르는 구단 코드: ${code}. 구단 마스터를 갱신하라`);
   return t;
 }
@@ -177,7 +203,8 @@ const SHORT_NAME: Readonly<Record<string, string>> = {
 
 /** 모르는 코드는 정식 표기로 되돌린다(그것도 없으면 코드 자체). **던지지 않는다** — 표시용이다 */
 export function shortNameOf(code: string): string {
-  return SHORT_NAME[code] ?? BY_CODE.get(code)?.name ?? code.toUpperCase();
+  const c = canonicalTeamCode(code);
+  return SHORT_NAME[c] ?? BY_CODE.get(c)?.name ?? c.toUpperCase();
 }
 
 const BY_NAME = new Map(TEAMS.map((t) => [t.name, t]));

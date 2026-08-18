@@ -8,7 +8,7 @@
  * `ink`는 그 색 위에 올릴 글자색이다. **대비를 눈대중하지 마라** —
  * 阪神의 노랑처럼 밝은 색에는 어두운 글자, 中日의 감색에는 밝은 글자가 필요하다.
  */
-import { TEAMS } from "./teams.ts";
+import { TEAMS, canonicalTeamCode } from "./teams.ts";
 
 export interface TeamColor {
   /** 배면·배지에 쓰는 바탕색 */
@@ -36,7 +36,8 @@ const COLORS: Readonly<Record<string, TeamColor>> = {
 export const NEUTRAL_COLOR: TeamColor = { base: "#6b7280", ink: "#f7f8f9" };
 
 export function colorOf(code: string): TeamColor {
-  return COLORS[code] ?? NEUTRAL_COLOR;
+  // ⚠**옛 슬러그도 그 구단의 색이다**(오릭스 `bs`) — 아니면 2018 화면만 회색이 된다
+  return COLORS[canonicalTeamCode(code)] ?? NEUTRAL_COLOR;
 }
 
 /** 구단 마스터와 색표가 어긋나지 않게 — 테스트가 이걸 고정한다. */

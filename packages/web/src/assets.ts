@@ -2198,6 +2198,10 @@ $$("[data-stable]").forEach(box=>{
     const min=minGroup?Number(state.tabs[minGroup]||"1"):1;
     const term=finder?finder.value.trim():"";
     const pick=picker?picker.value:"";
+    /* ⚠**이름이 아니라 선수 ID 로 못 박는다**(M10 · 2026-08-18 감사 P2).
+       「対戦を選ぶ」에서 넘어올 때 이름을 넘기면 **동명이인이 함께 걸린다** —
+       이 저장소에 「小島」가 실제로 둘 있다. 이름은 화면에 보여 줄 때만 쓴다. */
+    const pinId=box.dataset.pinid||"";
     const field=picker?picker.dataset.field:"";
     const only=onlyBtn?state.only[id]===true:false;
     const sign=dir==="asc"?1:-1;
@@ -2214,6 +2218,7 @@ $$("[data-stable]").forEach(box=>{
     sorted.forEach(tr=>{
       tbody.appendChild(tr);
       const hit=(!minField||Number(tr.dataset[minField])>=min)
+        &&(pinId===""||tr.dataset.oppid===pinId)
         &&(term===""||String(tr.dataset.name||"").indexOf(term)>=0)
         &&(pick===""||!field||tr.dataset[field]===pick)
         &&(!only||tr.dataset.qualified==="1");
@@ -2274,11 +2279,35 @@ $$("[data-stable]").forEach(box=>{
   }
   tabHooks.push(apply);
 
-  /* 대전 표만의 사정: 「対戦を選ぶ」에서 ?vs= 로 넘어온 이름을 좁히기에 미리 넣는다 */
+  /* 대전 표만의 사정: 「対戦を選ぶ」에서 ?vs= 로 넘어온 **선수 ID** 로 그 한 행만 남긴다.
+     ⚠**예전에는 이름을 넘겨 좁히기 칸에 넣었다**(2026-08-18 감사 P2). 그러면 동명이인이
+     함께 걸리고 부분일치까지 걸려, 「이 투수와의 성적」이라며 **남의 기록이 섞인 표**를 보여 준다.
+     ⚠**이름은 화면에 보여 줄 때만 쓴다** — 좁히기 칸에는 그 행의 이름을 넣어 무엇이 걸렸는지 말하되,
+     실제 판정은 ID 로 한다.
+     ⚠**옛 링크(이름)를 버리지 않는다** — ID 로 걸리는 행이 없으면 지금까지대로 이름 좁히기로 흘린다.
+     ⚠**「ID 처럼 생겼는가」로 판정하지 않는다.** 처음에 정규식으로 숫자인지 봤는데
+        (ㄱ) 이 파일은 템플릿 리터럴이라 소스에 쓴 숙자 클래스 이스케이프가
+             클라이언트에서는 글자 d 로 죽어 있었다 — 판정이 조용히 뒤집혀 있었다
+             (이 파일의 역따옴표 함정과 같은 부류다),
+        (ㄴ) ID 의 모양은 우리가 정한 것이 아니라 소스가 정한다.
+        **그냥 찾아보고 없으면 이름으로 다룬다** — 모양을 가정하지 않는 편이 짧고 안전하다. */
   if(id==="matchup"&&finder){
     const vs=vsParam();
     if(vs!==""){
-      finder.value=vs;
+      const byId=$$("tbody tr",box).filter(tr=>tr.dataset.oppid===vs)[0];
+      if(byId){
+        box.dataset.pinid=vs;
+        finder.value=String(byId.dataset.name||"");
+        /* ⚠**칸을 건드리면 못 박기를 푼다.** 안 그러면 지운 뒤에도 한 행만 남아
+           「대전 기록이 하나뿐인 선수」로 보인다 */
+        /* ⚠**지우고 다시 그린다.** 이미 등록된 input 핸들러가 먼저 돌아
+           못 박기가 살아있는 채로 걸러진다 — 순서에 기대지 않고 여기서 다시 적용한다 */
+        finder.addEventListener("input",()=>{
+          if(box.dataset.pinid!==undefined){delete box.dataset.pinid;apply()}
+        });
+      }else{
+        finder.value=vs;
+      }
       /* 대전 블록이 꺼져 있으면 이번 방문에만 켠다 — 사용자의 저장된 구성은 건드리지 않는다 */
       if(state.order.indexOf("matchup")<0)state.order=state.order.concat(["matchup"]);
     }
@@ -2503,7 +2532,7 @@ if(pickForm){
   if(go2)go2.addEventListener("click",()=>{
     if(!chosen.pitcher||!chosen.batter)return;
     // 타자 페이지에서 보는 것을 기본으로 한다 — 「이 타자가 이 투수에게」가 보통 찾는 방향이다
-    go(BASE+"players/"+chosen.batter.i+".html?vs="+encodeURIComponent(chosen.pitcher.n)+"#b-matchup");
+    go(BASE+"players/"+chosen.batter.i+".html?vs="+encodeURIComponent(chosen.pitcher.i)+"#b-matchup");
   });
 }
 
@@ -2669,7 +2698,7 @@ if(cmpForm){
       const bat=A.role==="batter"?A:B, pit=A.role==="batter"?B:A;
       const go=doc.createElement("a");
       go.className="cmpgo";
-      go.href=BASE+"players/"+bat.id+".html?vs="+encodeURIComponent(pit.name)+"#b-matchup";
+      go.href=BASE+"players/"+bat.id+".html?vs="+encodeURIComponent(pit.id)+"#b-matchup";
       go.textContent="この二人の対戦成績を見る";
       wrap.appendChild(go);
       out.appendChild(wrap);return;

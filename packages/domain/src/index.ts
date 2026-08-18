@@ -2,6 +2,8 @@
   NON_TEAM_CODES,
   REGULAR_SEASON_GAMES,
   TEAMS,
+  TEAM_CODE_ALIASES,
+  canonicalTeamCode,
   regularSeasonGames,
   competitionFromLabel,
   competitionOf,

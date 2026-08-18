@@ -22,7 +22,7 @@
  * 그래서 `batted` 플래그를 들고 다니고, 화면은 그것을 `x`로 그린다.
  */
 import type { Db } from "@bb-app/store";
-import { paValue } from "./run-expectancy.ts";
+import { afterStateOf, paValue } from "./run-expectancy.ts";
 import type { RunExpectancy } from "./run-expectancy.ts";
 
 export interface HalfInning {
@@ -213,15 +213,25 @@ export function gameDetails(
     for (let i = 0; i < rows.length; i += 1) {
       const cur = rows[i]!;
       const next = rows[i + 1];
-      const sameHalf = next !== undefined && next.inning === cur.inning && next.half === cur.half;
+      /**
+       * ⚠**중간 타석이 걸러졌으면 계산하지 않는다**(2026-08-18 감사 P2 · `afterStateOf` 참조).
+       * ⚠여기 `rows` 는 이미 경기 단위로 묶여 있어 전부 같은 `gameId` 다 — 그래서 상수로 넘긴다.
+       */
+      const gid = g.gameId;
+      const after = afterStateOf(
+        { gameId: gid, inning: cur.inning, half: cur.half, seq: cur.seq },
+        next === undefined
+          ? undefined
+          : { gameId: gid, inning: next.inning, half: next.half, seq: next.seq },
+      );
       // ⚠**같은 커널을 쓴다**(M1). 여기서 식을 새로 쓰면 SRC와 값이 어긋난다
       const swing =
-        re === undefined
+        re === undefined || after === null
           ? null
           : paValue(
               re,
               { bases: cur.bases, outs: cur.outsBefore },
-              sameHalf ? { bases: next.bases, outs: next.outsBefore } : null,
+              after.use === "next" ? { bases: next!.bases, outs: next!.outsBefore } : null,
               cur.runsScored,
             );
 

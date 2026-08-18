@@ -19,7 +19,7 @@ import {
   venuesByGameId,
 } from "@bb-app/parser";
 import type { PlayEvent, RunnerEvent } from "@bb-app/parser";
-import { competitionFromLabel, competitionOf } from "@bb-app/domain";
+import { canonicalTeamCode, competitionFromLabel, competitionOf } from "@bb-app/domain";
 import { openDb } from "../src/db.ts";
 import { alignPaEvents } from "../src/align.ts";
 import { deriveRuns } from "../src/runs.ts";
@@ -123,8 +123,15 @@ function gameFromPath(file: string): {
     gameId: `${season}/${mm}${dd}/${slug}`,
     season: Number(season),
     gameDate: `${season}-${mm}-${dd}`,
-    awayCode: parts.slice(1, -1).join("-"),
-    homeCode: parts[0]!,
+    /**
+     * ⚠**옛 슬러그를 지금 코드로 바꿔서 넣는다**(2026-08-18 · 2018 백필에서 알았다).
+     * 오릭스는 2018 시즌까지 `bs` 였다. 그대로 저장하면 리그 필터·구단 페이지·색이
+     * 전부 그 구단을 못 찾아 **2018 오릭스가 조용히 사라진다.**
+     * ⚠`gameId` 는 **슬러그 원문 그대로** 둔다 — 아카이브 경로와의 대응이 끊기면
+     * 「이 수치가 어느 파일에서 왔나」에 답할 수 없다(§0-10).
+     */
+    awayCode: canonicalTeamCode(parts.slice(1, -1).join("-")),
+    homeCode: canonicalTeamCode(parts[0]!),
     gameNo,
   };
 }

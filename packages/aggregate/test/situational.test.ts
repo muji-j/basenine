@@ -314,3 +314,72 @@ test("⚠이적하면 SRC 가 구단마다 갈린다 — 같은 값이 두 구�
     assert.notEqual(out[0]?.src, out[1]?.src, "구단이 달라도 같은 값이 나왔다");
   });
 });
+
+/**
+ * ⚠**「이후 상태」를 인접 행에 기대는 것이 이 계열의 급소다**(2026-08-18 감사 P2).
+ *
+ * SRP 의 SQL 은 `pitcher_id IS NOT NULL` 로 행을 **걸러낸 뒤** 정렬한다.
+ * 귀속 없는 타석이 하나 끼면 `rows[i + 1]` 은 **그 다음다음 타석**이 되고,
+ * 그러면 **두 타석분의 RE 변화가 한 타석의 값**이 된다.
+ *
+ * ⚠**값이 빠지는 게 아니라 남은 값이 틀린다.** 분모(bf)도 skipped 도 안 늘어나므로
+ * 화면에는 그럴듯한 수가 나가고 아무도 눈치채지 못한다.
+ *
+ * ⚠**지금 보유 시즌에서는 안 밟힌다**(`pitcher_id IS NULL` 0건 실측) —
+ * 그러니 이 시험이 없으면 **소급 시즌을 넣는 날 조용히 틀린 값이 들어온다.**
+ * CLAUDE.md §2-2 가 2016년 표본에서 투수 ID 34/88(39%)을 기록해 뒀다.
+ */
+test("⚠투수 미상 타석이 끼면 그 앞 타석의 SRP를 계산하지 않는다 — 두 타석분을 한 타석에 얹지 않는다", async () => {
+  await withDb((db) => {
+    seedGame(db, "g1");
+    upsertPlayer(db, "B1", "타자", NOW);
+    /**
+     * 같은 하프이닝 3타석. **가운데 타석만 투수 미상**이다.
+     * · seq 1: 무사주자없음(0.4) → (가운데가 걸러지므로 이후 상태를 모른다)
+     * · seq 2: 투수 미상 — SRP 대상에서 빠진다
+     * · seq 3: 1루 1아웃(0.5) → 이닝 종료 0
+     */
+    replacePaEvents(db, "g1", [
+      ev({ gameId: "g1", seq: 1, batterId: "B1", outsBefore: 0, bases: "" }),
+      ev({ gameId: "g1", seq: 2, batterId: "B1", outsBefore: 0, bases: "1", pitcherId: null }),
+      ev({ gameId: "g1", seq: 3, batterId: "B1", outsBefore: 1, bases: "1" }),
+    ]);
+    const [e] = computeSrp(db, FIXED_RE, ["t", "g"]);
+    assert.ok(e, "SRP 가 한 줄도 안 나왔다 — 이 시험이 아무것도 안 재고 있다");
+
+    /**
+     * ⚠**여기가 급소다.** 고치기 전에는 seq 1 의 이후 상태로 **seq 3**(1루 1아웃 0.5)을 써서
+     * `0.5 − 0.4 = +0.1` → SRP 는 부호를 뒤집어 **−0.1** 이 더해졌다.
+     * 지금은 seq 1 을 계산하지 않으므로 seq 3 의 몫(`0 − 0.5 = −0.5` → SRP **+0.5**)만 남는다.
+     */
+    assert.ok(Math.abs(e.srp - 0.5) < 1e-9, `SRP 가 ${e.srp} 다 — 걸러진 타석을 건너뛰고 이었다`);
+    assert.equal(e.bf, 1, "계산한 타석 수가 다르다 — 분모가 사실과 어긋난다(M2)");
+    assert.equal(e.skipped, 1, "건너뛴 것을 세지 않았다 — 숨기면 「0건」과 구별되지 않는다(M11)");
+  });
+});
+
+/**
+ * ⚠**하프이닝이 끝난 것과 「다음 타석이 걸러진 것」은 다르다.**
+ * 전자의 이후 상태는 0(아웃 3개)이고 후자는 **모른다.**
+ * 둘을 같게 다루면 마지막 타석이 조용히 큰 마이너스가 된다.
+ */
+test("⚠하프이닝의 마지막 타석은 그대로 0으로 닫는다 — 건너뛴 것으로 세지 않는다", async () => {
+  await withDb((db) => {
+    seedGame(db, "g1");
+    upsertPlayer(db, "B1", "타자", NOW);
+    replacePaEvents(db, "g1", [
+      ev({ gameId: "g1", seq: 1, batterId: "B1", inning: 1, half: "top", outsBefore: 1, bases: "1" }),
+      ev({ gameId: "g1", seq: 2, batterId: "B1", inning: 1, half: "bottom", outsBefore: 0, bases: "" }),
+    ]);
+    /**
+     * ⚠**두 줄로 갈린다** — 하프가 바뀌면 던지는 팀이 바뀌므로 `선수|구단` 키가 둘이 된다.
+     * 그래서 **합계로 잰다**: 어느 줄에 들어갔는지가 아니라 「몇 타석을 계산했는가」가 요점이다.
+     */
+    const all = computeSrp(db, FIXED_RE, ["t", "g"]);
+    assert.equal(all.length, 2, "하프가 바뀌면 구단이 갈린다 — 픽스처 전제가 깨졌다");
+    const skipped = all.reduce((n, x) => n + x.skipped, 0);
+    const bf = all.reduce((n, x) => n + x.bf, 0);
+    assert.equal(skipped, 0, "이닝이 바뀐 것을 「걸러졌다」로 셌다");
+    assert.equal(bf, 2, "두 타석 다 계산해야 한다");
+  });
+});

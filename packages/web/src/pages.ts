@@ -676,7 +676,7 @@ export function renderStartersPage(d: StartersPageData, ctx: RenderContext): str
     <thead><tr><th class="l">${opponent.shortName}の打者</th><th>打席</th><th>安打</th><th>本塁打</th><th>三振</th><th>打率</th></tr></thead>
     <tbody>${list.map(
       (m) => html`<tr class="${m.line.pa < 10 ? "thin" : ""}">
-        <td class="l"><a href="${base}players/${m.opponentId}.html?vs=${encodeURIComponent(side.name ?? "")}#b-matchup">${m.opponentName}</a></td>
+        <td class="l"><a href="${base}players/${m.opponentId}.html?vs=${encodeURIComponent(side.playerId ?? "")}#b-matchup">${m.opponentName}</a></td>
         <td>${m.line.pa}</td><td>${m.line.h}</td><td>${m.line.hr}</td><td>${m.line.so}</td>
         <td>${avg3(m.avg.value)}</td>
       </tr>`,

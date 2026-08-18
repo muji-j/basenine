@@ -56,10 +56,21 @@ on:
     - cron: "0 22 * * *"
     - cron: "0 5 * * *"
     - cron: "30 14 * * *"
+    # ── 재시도 슬롯 (각 정시 +1시간) ────────────────────────────────
+    # ⚠**직전 실행이 실패했을 때만 돈다.** 성공했으면 아래 `decide` 잡이 10초 만에 끝난다.
+    #   무조건 돌리면 수집이 하루 6회가 되어 L1 의 「하루 1회 배치가 기본」에서 더 멀어진다.
+    # ⚠**왜 필요한가**: 予告先発은 **거르면 영영 못 받는다**(페이지가 하루치만 게시).
+    #   경기 결과는 다음 슬롯이 메우지만 예고는 그 사이에 넘어가 버린다.
+    #   08:00 JST · 15:00 JST · 00:30 JST
+    - cron: "0 23 * * *"
+    - cron: "0 6 * * *"
+    - cron: "30 15 * * *"
   workflow_dispatch:
 
 permissions:
   contents: write
+  # 재시도 판정이 직전 실행의 결론을 읽는다. **읽기만** 한다
+  actions: read
 
 concurrency:
   # ⚠중복 기동을 막는다. 수집기는 멱등이지만 동시 실행은 D1 쓰기 예산을 두 배로 태우고,
@@ -72,7 +83,49 @@ env:
   DATA_TAG: data-store
 
 jobs:
+  # ─────────────────────────────────────────────────────────────────
+  # 이 실행을 돌릴 것인가.
+  #
+  # ⚠**재시도 슬롯은 「직전 실행이 실패했을 때만」 돈다.** 무조건 돌리면 수집이 하루 6회가 되고,
+  #   L1 의 「하루 1회 배치가 기본」에서 그만큼 더 멀어진다. 성공한 날에는 이 잡만 돌고 끝난다.
+  # ⚠**슬롯을 인자가 아니라 크론 표현식으로 판정한다** — 인자로 넘기면 크론을 고칠 때
+  #   인자를 같이 안 고쳐서 조용히 어긋난다.
+  # ⚠**모르면 돈다.** API 가 답을 못 주는 날에 수집을 거르는 것보다, 한 번 더 도는 편이 낫다 —
+  #   수집기는 멱등이고(M5) 조건부 요청이 붙어 있다(L7).
+  # ─────────────────────────────────────────────────────────────────
+  decide:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - name: 재시도 슬롯인가 · 직전 실행이 실패했는가
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SCHEDULE: ${{ github.event.schedule }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          case "${SCHEDULE:-}" in
+            "0 23 * * *"|"0 6 * * *"|"30 15 * * *") ;;
+            *)
+              echo "정시 슬롯(또는 수동) — 그대로 돈다"
+              echo "run=true" >> "$GITHUB_OUTPUT"; exit 0 ;;
+          esac
+          prev=$(gh api "repos/$REPO/actions/workflows/daily.yml/runs?status=completed&per_page=1" --jq '.workflow_runs[0].conclusion // "unknown"' 2>/dev/null || echo "unknown")
+          echo "재시도 슬롯 — 직전 완료 실행의 결론: $prev"
+          if [ "$prev" = "success" ]; then
+            echo "직전이 성공했다. 이번 재시도는 건너뛴다"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "직전이 성공이 아니다. 재시도한다"
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
   collect:
+    needs: decide
+    if: needs.decide.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -268,7 +321,7 @@ jobs:
         # ⚠**시즌을 늘리기 전에 보관소에 그 시즌의 아카이브가 있어야 한다.**
         # DB는 매 실행 아카이브 전체를 다시 훑어 만들어지므로, 아카이브에 없는 시즌을
         # 여기 적으면 **그 시즌이 빈 화면으로 생성된다**(2024·2023은 2026-08-17에 올렸다).
-        run: node packages/web/tools/build.ts data/bb.sqlite dist 2026,2025,2024,2023,2022,2021,2020,2019
+        run: node packages/web/tools/build.ts data/bb.sqlite dist 2026,2025,2024,2023,2022,2021,2020,2019,2018
 
       - name: 시험
         # ⚠**CI 가 `npm test` 를 한 번도 돌리지 않고 있었다**(2026-08-18 감사 P3).

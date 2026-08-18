@@ -23,7 +23,7 @@
  */
 import type { Db } from "@bb-app/store";
 import type { RunExpectancy } from "./run-expectancy.ts";
-import { paValue, stateKey } from "./run-expectancy.ts";
+import { afterStateOf, paValue, stateKey } from "./run-expectancy.ts";
 
 export interface SrcEntry {
   playerId: string;
@@ -61,7 +61,11 @@ WHERE g.season = ? AND g.status = 'played' AND g.competition = ?
   AND g.game_date <= ? AND g.game_date >= ?
   AND e.status = 'final'
   AND (CASE e.half WHEN 'top' THEN g.away_code ELSE g.home_code END) IN (SELECT code FROM league_team)
-ORDER BY e.game_id, e.inning, e.half, e.seq
+-- ⚠**시간 순은 seq 다.** half 열로 정렬하면 문자열이라 **bottom 이 top 보다 먼저** 온다 —
+-- 한 이닝 안에서 말이 먼저 오는 순서가 되고, 「다음 행」이 시간상 다음 타석이 아니게 된다.
+-- (하프 경계를 넘는 값을 쓰지는 않았으므로 지금까지 값은 맞았지만, seq 연속성으로 판정하려면
+--  정렬 자체가 시간 순이어야 한다 — 2026-08-18)
+ORDER BY e.game_id, e.seq
 `;
 
 function withLeagueTeams<T>(db: Db, codes: readonly string[], fn: () => T): T {
@@ -117,18 +121,20 @@ export function computeSrc(
   for (let i = 0; i < rows.length; i += 1) {
     const cur = rows[i]!;
     const next = rows[i + 1];
-    const sameHalf =
-      next !== undefined &&
-      next.gameId === cur.gameId &&
-      next.inning === cur.inning &&
-      next.half === cur.half;
-
-    const value = paValue(
-      re,
-      { bases: cur.bases, outs: cur.outs },
-      sameHalf ? { bases: next.bases, outs: next.outs } : null,
-      cur.runs,
-    );
+    /**
+     * ⚠**「같은 하프이닝」만으로는 부족하다**(2026-08-18 감사 P2 · `afterStateOf` 주석 참조).
+     * 이 SQL 은 선수 이너조인·`status='final'` 로 행을 걸러낸 뒤 정렬하므로,
+     * 중간 타석 하나가 빠지면 다음 행이 **그 다음다음 타석**이 된다.
+     */
+    const after = afterStateOf(cur, next);
+    const value = after === null
+      ? null
+      : paValue(
+        re,
+        { bases: cur.bases, outs: cur.outs },
+        after.use === "next" ? { bases: next!.bases, outs: next!.outs } : null,
+        cur.runs,
+      );
 
     const key = `${cur.batterId}|${cur.teamCode}`;
     let entry = acc.get(key);
@@ -227,7 +233,11 @@ WHERE g.season = ? AND g.status = 'played' AND g.competition = ?
   AND g.game_date <= ? AND g.game_date >= ?
   AND e.status = 'final' AND e.pitcher_id IS NOT NULL
   AND (CASE e.half WHEN 'top' THEN g.home_code ELSE g.away_code END) IN (SELECT code FROM league_team)
-ORDER BY e.game_id, e.inning, e.half, e.seq
+-- ⚠**시간 순은 seq 다.** half 열로 정렬하면 문자열이라 **bottom 이 top 보다 먼저** 온다 —
+-- 한 이닝 안에서 말이 먼저 오는 순서가 되고, 「다음 행」이 시간상 다음 타석이 아니게 된다.
+-- (하프 경계를 넘는 값을 쓰지는 않았으므로 지금까지 값은 맞았지만, seq 연속성으로 판정하려면
+--  정렬 자체가 시간 순이어야 한다 — 2026-08-18)
+ORDER BY e.game_id, e.seq
 `;
 
 /** 9이닝 환산에 쓸 아웃 수. **타석 로그에서 세지 않는다** — 투수표가 이미 정확히 갖고 있다 */
@@ -291,19 +301,22 @@ export function computeSrp(
   for (let i = 0; i < rows.length; i += 1) {
     const cur = rows[i]!;
     const next = rows[i + 1];
-    const sameHalf =
-      next !== undefined &&
-      next.gameId === cur.gameId &&
-      next.inning === cur.inning &&
-      next.half === cur.half;
-
+    /**
+     * ⚠**여기가 가장 밟기 쉬운 자리다**(2026-08-18 감사 P2). 이 SQL 은
+     * `pitcher_id IS NOT NULL` 로 행을 걸러낸 뒤 정렬하는데, **소급 시즌은 투수 귀속이 얇다**
+     * (CLAUDE.md §2-2: 2016년 표본 34/88 = 39%). 귀속 없는 타석이 하나 끼면
+     * 다음 행이 그 다음다음 타석이 되어 **두 타석분의 RE 변화가 한 타석 값이 된다.**
+     */
+    const after = afterStateOf(cur, next);
     // ⚠**타자와 같은 커널을 쓴다.** 여기서 식을 새로 쓰면 두 지표가 서로 어긋난다(M1)
-    const value = paValue(
-      re,
-      { bases: cur.bases, outs: cur.outs },
-      sameHalf ? { bases: next.bases, outs: next.outs } : null,
-      cur.runs,
-    );
+    const value = after === null
+      ? null
+      : paValue(
+        re,
+        { bases: cur.bases, outs: cur.outs },
+        after.use === "next" ? { bases: next!.bases, outs: next!.outs } : null,
+        cur.runs,
+      );
 
     const key = cur.pitcherId + "|" + cur.teamCode;
     let entry = acc.get(key);

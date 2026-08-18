@@ -116,11 +116,17 @@ test("상대 타자 표는 상대 팀 이름을 머리에 쓴다", () => {
   assert.match(out, /<th class="l">巨人の打者<\/th>/);
 });
 
-test("상대 타자 링크는 이 투수와의 대전을 연 채로 간다", () => {
+/**
+ * ⚠ **넘기는 것은 이름이 아니라 선수 ID 다**(M10 · 2026-08-18 감사 P2).
+ * 이름으로 넘기면 그 페이지의 대전 표가 **동명이인을 함께** 걸어,
+ * 「이 투수와의 성적」이라며 남의 기록이 섞인 표를 보여 준다.
+ */
+test("⚠상대 타자 링크는 이 투수를 ID로 지목한다 — 동명이인이 섞이지 않게", () => {
   const out = renderStartersPage(data(), context());
-  assert.match(
-    out,
-    new RegExp(`players/71575132\\.html\\?vs=${encodeURIComponent("柳")}#b-matchup`),
+  assert.match(out, /players\/71575132\.html\?vs=63165134#b-matchup/);
+  assert.ok(
+    !out.includes(`vs=${encodeURIComponent("柳")}`),
+    "아직 이름으로 넘기는 링크가 남아 있다",
   );
 });
 

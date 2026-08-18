@@ -8,7 +8,7 @@
  * ⚠**득점기대값은 승리기대값이 아니다.** 동점 9회말에 1점만 필요하면 RE 손해여도 옳을 수 있다.
  *   우리는 승리기대값을 신뢰도 있게 만들 수 없으므로(상태당 중앙값 6타석) 거기까지만 말한다.
  */
-import { paValue, stateKey, withLeagueTeams } from "./run-expectancy.ts";
+import { afterStateOf, paValue, stateKey, withLeagueTeams } from "./run-expectancy.ts";
 import type { RunExpectancy } from "./run-expectancy.ts";
 import type { Db } from "@bb-app/store";
 import { isOutcome } from "@bb-app/parser";
@@ -51,7 +51,11 @@ WHERE g.season = ? AND g.status = 'played' AND g.competition = ? AND g.game_date
   -- ⚠**공격 팀으로 거른다.** 안 거르면 리그마다 부르는 호출이 전 시즌 번트를 매번 다 세어
   -- **표본이 정확히 2배로 부풀고**, 파 리그의 번트가 센트럴 RE로 평가된다(2026-08-17 이중 검토 P0)
   AND (CASE e.half WHEN 'top' THEN g.away_code ELSE g.home_code END) IN (SELECT code FROM league_team)
-ORDER BY e.game_id, e.inning, e.half, e.seq
+-- ⚠**시간 순은 seq 다.** half 열로 정렬하면 문자열이라 **bottom 이 top 보다 먼저** 온다 —
+-- 한 이닝 안에서 말이 먼저 오는 순서가 되고, 「다음 행」이 시간상 다음 타석이 아니게 된다.
+-- (하프 경계를 넘는 값을 쓰지는 않았으므로 지금까지 값은 맞았지만, seq 연속성으로 판정하려면
+--  정렬 자체가 시간 순이어야 한다 — 2026-08-18)
+ORDER BY e.game_id, e.seq
 `;
 
 /**
@@ -84,15 +88,17 @@ export function buntValues(
     const cur = rows[i]!;
     if (cur.outcome !== "sacBunt") continue;
     const next = rows[i + 1];
-    const sameHalf =
-      next !== undefined && next.gameId === cur.gameId && next.inning === cur.inning && next.half === cur.half;
+    // ⚠**중간 타석이 걸러졌으면 계산하지 않는다**(2026-08-18 감사 P2 · `afterStateOf` 참조)
+    const after = afterStateOf(cur, next);
     // ⚠**SRC·SRP와 같은 커널을 쓴다**(M1). 여기서 식을 새로 쓰면 두 지표가 서로 어긋난다
-    const v = paValue(
-      re,
-      { bases: cur.bases, outs: cur.outs },
-      sameHalf ? { bases: next.bases, outs: next.outs } : null,
-      cur.runs,
-    );
+    const v = after === null
+      ? null
+      : paValue(
+        re,
+        { bases: cur.bases, outs: cur.outs },
+        after.use === "next" ? { bases: next!.bases, outs: next!.outs } : null,
+        cur.runs,
+      );
     if (v === null) continue;
     const key = `${cur.bases}|${cur.outs}`;
     const e = acc.get(key) ?? { n: 0, sum: 0, bases: cur.bases, outs: cur.outs };

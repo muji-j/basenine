@@ -30,12 +30,12 @@ const MATCHUP_COLUMNS: { key: string; label: string; type: "text" | "num"; rate?
 ];
 
 /** 대전 성적 표의 행. 정렬·좁히기 테스트의 입력. `avg: null`은 타수 0 */
-const MATCHUPS: { name: string; team: string; pa: number; hr: number; avg: number | null }[] = [
-  { name: "山本", team: "B", pa: 14, hr: 1, avg: 0.333 },
-  { name: "戸郷", team: "G", pa: 5, hr: 2, avg: 0.6 },
-  { name: "今永", team: "DB", pa: 22, hr: 0, avg: 0.25 },
-  { name: "森下", team: "C", pa: 9, hr: 3, avg: 0.5 },
-  { name: "大勢", team: "G", pa: 2, hr: 0, avg: null },
+const MATCHUPS: { id: string; name: string; team: string; pa: number; hr: number; avg: number | null }[] = [
+  { id: "11", name: "山本", team: "B", pa: 14, hr: 1, avg: 0.333 },
+  { id: "22", name: "戸郷", team: "G", pa: 5, hr: 2, avg: 0.6 },
+  { id: "33", name: "今永", team: "DB", pa: 22, hr: 0, avg: 0.25 },
+  { id: "44", name: "森下", team: "C", pa: 9, hr: 3, avg: 0.5 },
+  { id: "55", name: "大勢", team: "G", pa: 2, hr: 0, avg: null },
 ];
 
 /** 탭 한 줄 + 대응 패널. 서버의 `tablist`/`panel`과 같은 모양이어야 한다 */
@@ -152,6 +152,8 @@ function buildPage(): ReturnType<typeof makeDocument> {
       for (const r of MATCHUPS) {
         const attrs: Record<string, string> = {
           "data-name": r.name,
+          // ⚠**못 박기는 ID 로 한다**(M10) — 이름은 화면에 보여 줄 때만 쓴다
+          "data-oppid": r.id,
           // 정렬은 표기(사람이 읽는 이름), 좁히기는 코드로 한다
           "data-team": r.team,
           "data-teamcode": r.team,
@@ -1059,7 +1061,8 @@ test("투수와 타자를 고르면 버튼이 열리고, 타자 페이지로 상
   assert.equal(go.disabled, false);
 
   go.fire("click");
-  assert.equal(location.href, `players/b1.html?vs=${encodeURIComponent("山本")}#b-matchup`);
+  // ⚠**이름이 아니라 선수 ID 를 넘긴다**(M10 · 2026-08-18 감사 P2) — 동명이인이 함께 걸리지 않게
+  assert.equal(location.href, "players/b1.html?vs=p1#b-matchup");
 });
 
 /**
@@ -1080,7 +1083,8 @@ test("오늘 대전 팀의 버튼만으로 고르기가 끝난다 — 이름을 
   pk(doc, "b1").fire("click");
   assert.equal(go.disabled, false);
   go.fire("click");
-  assert.equal(location.href, `players/b1.html?vs=${encodeURIComponent("山本")}#b-matchup`);
+  // ⚠**이름이 아니라 선수 ID 를 넘긴다**(M10 · 2026-08-18 감사 P2) — 동명이인이 함께 걸리지 않게
+  assert.equal(location.href, "players/b1.html?vs=p1#b-matchup");
 });
 
 test("같은 갈래에서 다른 사람을 누르면 앞의 것이 풀린다 — 둘 다 눌린 것처럼 보이면 안 된다", () => {
@@ -1156,6 +1160,46 @@ test("색인을 못 받으면 고르기 화면이 그렇다고 말한다", async
   const items = await search(doc, "pickPitcher", "山");
   assert.equal(items.length, 1);
   assert.match(items[0]!.textContent, /読み込めませんでした/);
+});
+
+/**
+ * ⚠**이름으로 넘기면 동명이인이 함께 걸린다**(M10 · 2026-08-18 감사 P2).
+ * 이 저장소에 「小島」가 실제로 둘 있다. 「이 투수와의 성적」이라며 **남의 기록이 섞인 표**를
+ * 보여 주는 것은 분모 없는 비율만큼 나쁘다 — 숫자가 그럴듯해서 의심조차 안 된다.
+ */
+function withHomonyms(doc: ReturnType<typeof makeDocument>): void {
+  const tbody = doc.querySelectorAll("#matchupTable tbody")[0]!;
+  for (const [id, team] of [["66", "M"], ["77", "T"]] as const) {
+    tbody.appendChild(make("tr", {
+      "data-name": "小島", "data-oppid": id, "data-team": team, "data-teamcode": team,
+      // ⚠**최소 타석 문턱(10)을 넘겨 둔다** — 안 그러면 못 박기와 무관하게 걸러져
+      //   이 시험이 「못 박기가 되는가」가 아니라 「문턱이 도는가」를 재게 된다
+      "data-pa": "20", "data-hr": "0", "data-avg": "0.2",
+    }));
+  }
+}
+
+const shownIds = (doc: ReturnType<typeof makeDocument>): string[] =>
+  doc.querySelectorAll("#matchupTable tbody tr").filter((r) => !r.hidden)
+    .map((r) => String(r.dataset["oppid"]));
+
+test("⚠?vs= 는 선수 ID다 — 동명이인 중 그 한 사람만 남는다", () => {
+  const doc = buildPage();
+  withHomonyms(doc);
+  run(doc, { location: { search: "?vs=66", href: "" } });
+  assert.deepEqual(shownIds(doc), ["66"], "동명이인이 함께 걸렸다 — 남의 대전 기록이 섞인다");
+  // ⚠**무엇이 걸렸는지 화면이 말한다** — 못 박기는 ID로 하되 사람이 읽는 것은 이름이다
+  assert.equal(doc.getElementById("matchupFilter")!.value, "小島");
+});
+
+test("⚠좁히기 칸을 건드리면 못 박기가 풀린다 — 지웠는데 한 행만 남으면 고장으로 보인다", () => {
+  const doc = buildPage();
+  withHomonyms(doc);
+  run(doc, { location: { search: "?vs=66", href: "" } });
+  const input = doc.getElementById("matchupFilter")!;
+  input.value = "";
+  input.fire("input");
+  assert.ok(shownIds(doc).length > 1, `못 박기가 안 풀렸다 — ${shownIds(doc).length}행만 남았다`);
 });
 
 test("?vs= 로 오면 상대가 미리 채워지고 대전 블록이 열린다", () => {
