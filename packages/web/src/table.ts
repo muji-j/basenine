@@ -150,15 +150,23 @@ export function stableTable(o: StableOptions): RawHtml {
   <span class="count"><span id="${domId(o.id, "Count")}" data-stable-count>${o.total}${o.unit}</span> / 全${o.total}${o.unit}</span>
 </div>`;
 
-  return html`<div class="stable" data-stable="${o.id}" data-sortdefault="${o.sortKey}:${dir}"
-  <!-- ⚠**속성을 문자열로 짓지 않는다**(2026-08-18 감사 P3). 예전에는 raw() 안에서
-       따옴표까지 손으로 붙였는데, 그 안의 값은 **이스케이프를 거치지 않는다** —
-       지금 들어오는 것이 우리 리터럴이라 사고는 없었지만, 타입도 린트도 시험도
-       「검사한 값」과 「깜빡한 값」을 구별할 방법이 없었다.
-       html 태그드 템플릿을 쓰면 보간되는 값이 반드시 escapeHtml 을 지난다(따옴표 포함). -->
-  ${o.thin === undefined ? raw("") : html` data-thinfield="${o.thin.field}" data-thinmin="${o.thin.min}" data-thinunit="${o.thin.unit}"`}
-  ${o.minGroup === undefined ? raw("") : html` data-mingroup="${o.minGroup}" data-minfield="${o.minField ?? ""}"`}
-  data-unit="${o.unit}">
+  /*
+   * ⚠**속성을 문자열로 짓지 않는다**(2026-08-18 감사 P3). 예전에는 raw() 안에서
+   * 따옴표까지 손으로 붙였는데, 그 안의 값은 **이스케이프를 거치지 않는다**.
+   * html 태그드 템플릿을 쓰면 보간되는 값이 반드시 escapeHtml 을 지난다(따옴표 포함).
+   *
+   * ⚠**주석을 여는 태그 안에 넣지 마라**(2026-08-18 유저 지적으로 발견 · 내가 만든 결함).
+   * 위 설명을 `<!-- … -->` 로 `<div` 와 `>` **사이에** 써 뒀더니, 파서가 `-->` 의 `>` 를
+   * **태그의 끝**으로 읽어 div 가 거기서 닫혔다 — 그 뒤의 `data-thinfield="pa" …` 가
+   * 통째로 **화면에 글자로 나왔다**(対戦 탭 스크린샷).
+   * HTML 주석은 **마크업 수준**에서만 주석이다. 태그 안에서는 그냥 문자다.
+   * → 설명은 이렇게 **TS 주석**으로 태그 밖에 둔다.
+   */
+  return html`<div class="stable" data-stable="${o.id}" data-sortdefault="${o.sortKey}:${dir}"${
+    o.thin === undefined ? raw("") : html` data-thinfield="${o.thin.field}" data-thinmin="${o.thin.min}" data-thinunit="${o.thin.unit}"`
+  }${
+    o.minGroup === undefined ? raw("") : html` data-mingroup="${o.minGroup}" data-minfield="${o.minField ?? ""}"`
+  } data-unit="${o.unit}">
 ${controls}
 ${scroller(html`<table id="${domId(o.id, "Table")}">
   <thead><tr>${head}</tr></thead>

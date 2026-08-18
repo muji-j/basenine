@@ -85,11 +85,24 @@ test("⚠선발 순위의 기본 지표는 승수가 아니다 — 투수 자신
   assert.ok(body.includes("QS"), "QS 를 순위에 안 실었다");
 });
 
-/** `common` 의 첫 항목이 곧 선발의 기본 지표가 된다 — 그것이 방어율이어야 한다 */
-test("투수 공통 지표의 첫 항목은 방어율이다", () => {
+/**
+ * ⚠**순서를 소스에서 읽어 못 박던 시험이었다**(첫 항목 = 防御率).
+ *
+ * 2026-08-18 에 순서를 **한 벌**(`metric-order.ts`)로 옮기면서 지키는 것도 옮긴다 —
+ * 「첫 항목이 무엇인가」가 아니라 **「정본 순서를 거치는가」**를 본다.
+ * 그래야 지표가 늘거나 순서 방침이 바뀌어도 이 시험이 계속 뜻을 갖는다.
+ * ⚠**순서 자체의 옳고 그름은 `metric-order.test.ts` 가 본다** — 여기서 두 벌로 만들지 않는다.
+ */
+test("순위의 지표 목록이 정본 순서를 거친다 — 화면마다 다른 순서를 만들지 않는다", () => {
   const src = readFileSync(new URL("../src/query.ts", import.meta.url), "utf8");
-  const m = /const common: MetricRanking\[\] = \[([\s\S]*?)\n  \];/.exec(src);
-  assert.notEqual(m, null, "공통 지표 목록을 못 찾았다");
-  const first = (m![1] ?? "").split(/\r?\n/).map((x) => x.trim()).filter((x) => x !== "")[0] ?? "";
-  assert.ok(first.includes("防御率"), `공통 지표의 첫 항목이 방어율이 아니다: ${first}`);
+  assert.match(
+    src,
+    /const common: MetricRanking\[\] = byMetricOrder\(\[/,
+    "투수 지표 목록이 정본 순서를 거치지 않는다",
+  );
+  assert.match(
+    src,
+    /const batting: MetricRanking\[\] = byMetricOrder\(\[/,
+    "타자 지표 목록이 정본 순서를 거치지 않는다",
+  );
 });
