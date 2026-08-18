@@ -962,6 +962,7 @@ html:has(.hjump){scroll-padding-top:calc(var(--topbar) + 52px)}
 
 /* 先週の顔 — **순위 번호를 크게 쓰지 않는다.** 한 주짜리 순위를 시즌 순위와
    같은 무게로 그리면 그렇게 읽힌다 */
+<<<<<<< HEAD
 /* ⚠**묶음 사이가 항목 사이와 비슷하면 어디서 바뀌는지 모른다**(2026-08-18 유저 지적).
    打者 → 投手 로 넘어가는 자리가 사람과 사람 사이와 같은 간격이었다. */
 /* 予告先発 의 상대 타자 표 — 今季 / 通算 전환.
@@ -970,6 +971,9 @@ html:has(.hjump){scroll-padding-top:calc(var(--topbar) + 52px)}
 .muswitch{display:flex;margin:0 0 7px}
 .wkcol{min-width:0;padding-bottom:6px}
 .cols > .wkcol + .wkcol{margin-top:6px}
+=======
+.wkcol{min-width:0}
+>>>>>>> origin/main
 /* ⚠**이 목록에 CSS 가 한 줄도 없었다**(2026-08-18 유저 지적: 「득실점 쪽은 뭘 말하고 싶은지 모르겠음」).
    그래서 득실차를 감싼 <s> 태그가 **브라우저 기본 취소선**으로 그려졌다 —
    25/6+19 의 +19 에 줄이 그어져 「무효」처럼 보였다. 화면이 정반대를 말하고 있었다.
