@@ -437,16 +437,22 @@ dd.g-veryBad{box-shadow:inset 0 -3px 0 var(--g-vbad);background:var(--g-vbad-bg)
 .legend .lg{letter-spacing:.16em;color:var(--tx-3);white-space:nowrap}
 .legend .lg:first-child{border-right:1px solid var(--hair-2);padding-right:11px}
 .legend .tail{margin-left:auto}
-.legend .sw{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
-.legend .sw b{font-weight:400}
-.legend .sw i{width:15px;height:4px;background:var(--g-avg)}
-.legend .sw.g-veryGood i{background:var(--g-vgood)}
-.legend .sw.g-good i{background:var(--g-good)}
-.legend .sw.g-bad i{background:var(--g-bad)}
-.legend .sw.g-veryBad i{background:var(--g-vbad)}
+/* ⚠**눈금은 이어져 있어야 눈금으로 읽힌다**(2026-08-18 유저 지적).
+   예전에는 색과 글자가 번갈아 놓여서 ⑴ 첫 색이 「水準」에 붙은 것으로 읽히고
+   ⑵ 다섯 칸이 **한 축**이라는 것이 보이지 않았다.
+   → 양 끝에만 글자를 두고 가운데 색을 **틈 없이** 붙인다. */
+.legend .scale{display:inline-flex;align-items:center;gap:7px;white-space:nowrap}
+.legend .send{font-weight:400;color:var(--tx-2)}
+.legend .bar{display:inline-flex;height:9px;border:1px solid var(--hair-2)}
+/* ⚠**틈을 두지 않는다** — 틈이 있으면 다섯 개의 점이지 하나의 축이 아니다 */
+.legend .bar i{display:block;width:17px;height:100%;background:var(--g-avg)}
+.legend .bar i.g-veryGood{background:var(--g-vgood)}
+.legend .bar i.g-good{background:var(--g-good)}
+.legend .bar i.g-bad{background:var(--g-bad)}
+.legend .bar i.g-veryBad{background:var(--g-vbad)}
 .legend #gradeBtn{font-size:11px;padding:2px 8px}
 /* 색을 끄면 범례의 견본도 함께 죽는다 — 안 쓰는 안내가 남아 있으면 그것도 거짓말이다 */
-:root[data-grades="off"] .legend .sw{opacity:.3}
+:root[data-grades="off"] .legend .bar{opacity:.3}
 @media (max-width:620px){.legend .tail{display:none}}
 /* 좁은 화면 — 가운데 세 칸의 글자를 접고 견본만 남긴다. 양 끝(とても悪い↔とても良い)이
    남으므로 눈금의 뜻은 그대로 읽힌다. 다섯 줄을 다 늘어놓으면 성적이 화면 밖으로 밀린다 */
@@ -950,9 +956,31 @@ html:has(.hjump){scroll-padding-top:calc(var(--topbar) + 52px)}
 /* 先週の顔 — **순위 번호를 크게 쓰지 않는다.** 한 주짜리 순위를 시즌 순위와
    같은 무게로 그리면 그렇게 읽힌다 */
 .wkcol{min-width:0}
-.wklab{margin:0 0 6px;font-size:10px;letter-spacing:.16em;color:var(--tx-3);
-  display:flex;align-items:baseline;gap:6px}
-.wklab s{text-decoration:none;letter-spacing:0;font-size:10.5px}
+/* ⚠**이 목록에 CSS 가 한 줄도 없었다**(2026-08-18 유저 지적: 「득실점 쪽은 뭘 말하고 싶은지 모르겠음」).
+   그래서 득실차를 감싼 <s> 태그가 **브라우저 기본 취소선**으로 그려졌다 —
+   25/6+19 의 +19 에 줄이 그어져 「무효」처럼 보였다. 화면이 정반대를 말하고 있었다.
+   ⚠**순위표와 같은 어법으로 맞춘다** — 값 옆에 点差 라벨, 부호는 글자, 색은 --up/--dn. */
+.wkteams{list-style:none;margin:0;padding:0;
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:0 18px}
+.wkteams li{display:flex;align-items:baseline;gap:8px;padding:5px 0;
+  border-bottom:1px solid var(--hair);font-variant-numeric:tabular-nums}
+.wkteams b{font-family:var(--f-num);font-size:13.5px;font-weight:700;white-space:nowrap}
+.wkteams em{font-style:normal;font-size:11px;color:var(--tx-3);margin-left:auto;white-space:nowrap}
+.wkteams em s{text-decoration:none;font-family:var(--f-num);font-weight:700;font-size:12px;margin-left:5px}
+.wkteams em s.up{color:var(--up)}
+.wkteams em s.dn{color:var(--dn)}
+.wkteams em i{font-style:normal;font-size:9px;letter-spacing:.14em;color:var(--tx-3);margin-left:3px}
+/* ⚠**서브타이틀이 내용보다 작았다**(2026-08-18 유저 지적).
+   10px 자간 .16em 회색이라 바로 아래 12~15px 내용에 묻혔고, 그래서
+   「어디서 내용이 바뀌는지」가 안 보였다 — 打者 / 投手 / 球団 을 가르는 유일한 표시인데도.
+   → **본문보다 크게 하지는 않되**(§6: 숫자가 주역) 무게·색·구분선으로 확실히 가른다. */
+.wklab{margin:0 0 8px;font-size:12px;font-weight:700;letter-spacing:.1em;color:var(--tx);
+  display:flex;align-items:baseline;gap:8px;
+  padding:0 0 5px 9px;position:relative;border-bottom:1px solid var(--hair)}
+/* 구획 제목과 같은 어법의 짧은 색 막대 — 「여기서 새 묶음이 시작한다」 */
+.wklab::before{content:"";position:absolute;left:0;top:1px;bottom:6px;width:3px;
+  background:var(--tx-3)}
+.wklab s{text-decoration:none;letter-spacing:0;font-size:10.5px;font-weight:400;color:var(--tx-3)}
 .wklist{list-style:none;margin:0;padding:0;counter-reset:wk}
 .wklist li{display:grid;grid-template-columns:auto auto 1fr;gap:3px 7px;align-items:baseline;
   padding:6px 0;border-bottom:1px solid var(--hair)}
@@ -1090,7 +1118,7 @@ table.stand .dif i.n{right:50%}
   border-bottom:1px solid var(--hair);background:var(--panel-2);
   flex-wrap:nowrap;overflow-x:auto;overscroll-behavior-x:contain;
   scrollbar-width:thin;scroll-snap-type:x proximity;
-  scroll-padding-left:76px}
+  scroll-padding-left:84px}
 .seasons::-webkit-scrollbar{height:6px}
 .seasons::-webkit-scrollbar-thumb{background:var(--hair-2);border-radius:3px}
 /* ⚠**라벨은 굴러 나가지 않는다** — 무엇을 고르는 줄인지가 사라지면 안 된다 */
@@ -1098,11 +1126,18 @@ table.stand .dif i.n{right:50%}
    gap 4px + margin 5px 는 배경이 없다 — 그 틈과 위아래로 **지나가는 연도가 그대로 보였다.**
    → 세로로 늘려 칸을 꽉 채우고, 오른쪽으로 배경을 더 뻗어 gap 까지 덮는다.
    ⚠**그림자로 「밑으로 지나간다」를 말한다** — 안 그러면 글자가 갑자기 사라지는 것으로 보인다. */
+/* ⚠**라벨과 첫 연도가 붙어 보였다**(2026-08-18 유저 지적: 「선택 박스가 시즌 텍스트 영역에 가려짐」).
+   그림자를 12px 이나 뻗어 놔서 **고른 연도의 테두리 위로 그늘이 졌고**, 구분선이 없어
+   어디까지가 라벨인지도 애매했다.
+   → **세로선으로 가른다**(범례와 같은 수법). 그림자는 스크롤 중에만 뜻이 있으므로 짧게 줄인다. */
 .slab{font-size:9.5px;letter-spacing:.16em;color:var(--tx-3);
   position:sticky;left:0;z-index:3;background:var(--panel-2);
   align-self:stretch;display:flex;align-items:center;
-  margin-right:0;padding-right:10px;flex:0 0 auto;
-  box-shadow:6px 0 0 0 var(--panel-2),12px 0 10px -8px rgba(0,0,0,.28)}
+  margin-right:0;padding-right:12px;flex:0 0 auto;
+  border-right:1px solid var(--hair-2);
+  box-shadow:4px 0 0 0 var(--panel-2),7px 0 6px -6px rgba(0,0,0,.20)}
+/* 구분선 오른쪽으로 첫 연도가 바로 붙지 않게 한다 */
+.seasons .slab + a{margin-left:6px}
 .seasons a{flex:0 0 auto;scroll-snap-align:start}
 /* 시즌 중 이적 이력. ⚠**합계와 순위가 다른 이유**가 여기 적힌다 */
 .stint{display:block;font-size:10.5px;color:var(--tx-3);margin-top:2px}

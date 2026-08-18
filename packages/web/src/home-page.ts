@@ -28,7 +28,7 @@ import type { RawHtml } from "./html.ts";
 import { NO_VALUE, avg3, fullDate } from "./format.ts";
 import { ROSTER_PATH, page } from "./layout.ts";
 import type { RenderContext } from "./layout.ts";
-import { note, scroller, term } from "./parts.ts";
+import { note, runCell, scroller, term, widestRunDiff, wlCell } from "./parts.ts";
 import { teamPath } from "./team-page.ts";
 import { dayHref } from "./today-page.ts";
 import { NEUTRAL_COLOR, REGULAR_SEASON_GAMES, regularSeasonGames } from "@bb-app/domain";
@@ -263,74 +263,14 @@ function streakText(n: number): string {
 }
 
 /**
- * 승패를 **한 줄의 띠**로 그린다.
- *
- * ⚠**숫자만 늘어놓으면 팀 간 비교가 눈으로 안 된다**(2026-08-17 유저 지적:
- * 「승패무 표시하는 곳의 디자인과 표시 방식이 너무 직관적이지가 않다」).
- * 58勝46敗1分 을 세 칸에 나눠 적으면 읽는 사람이 머릿속에서 다시 비율로 바꿔야 한다.
- * ⚠**띠는 값을 대신하지 않는다** — 수를 그대로 두고 띠를 **옆에** 놓는다.
- *   그림만 남기면 정확한 수를 못 읽고, 수만 남기면 비교가 안 된다.
- * ⚠**폭은 백분율이지 승률이 아니다.** 무승부가 승률의 분모에서 빠지므로(NPB 규정)
- *   띠의 승 비율과 표시된 승률은 **일부러 다르다**. 무승부가 눈에 보여야 그 차이가 설명된다.
+ * ⚠**승패 띠·득실 칸을 여기서 그리지 않는다**(M1 · 2026-08-18 유저 요청으로 통합).
+ * 順位 탭과 **같은 부품**(parts.ts 의 wlCell·runCell)을 쓴다 —
+ * 예전에는 두 화면이 각자 그렸고, 그래서 홈에만 띠가 있고 順位 탭에는 없었다.
+ * 같은 사실을 두 어법으로 말하면 읽는 사람이 매번 다시 배워야 한다.
  */
-function wlBar(r: HomeStanding): RawHtml {
-  const total = r.w + r.l + r.t;
-  if (total === 0) return raw("");
-  const pc = (n: number): string => ((n / total) * 100).toFixed(2);
-  return html`<span class="wlbar" role="img"
-    aria-label="${r.w}勝${r.l}敗${r.t}分（${total}試合）">
-    <i class="ww" style="width:${pc(r.w)}%"></i><i class="wt" style="width:${pc(r.t)}%"></i><i class="wl" style="width:${pc(r.l)}%"></i>
-  </span>`;
-}
-
-/**
- * 득실차.
- *
- * ⚠**무엇을 나타내는 수인지 화면이 말한다**(2026-08-18 유저 지적: 「이해가 안 됨」).
- * 예전에는 「得失」이라는 열 이름 아래에 `+64` 만 있었다 — 열 이름은 **득점·실점**을 말하는데
- * 주역인 수는 **그 차이**여서, 둘이 어긋난 채로 읽는 사람에게 떠넘기고 있었다.
- * 이제 값 바로 옆에 `点差` 를 붙인다(라벨은 값에 인접시킨다 · CLAUDE.md §6의 도메인 예외).
- *
- * ⚠**부호를 문자로 쓴다** — 색만으로 +−를 구별하면 색각 이상에서 사라진다.
- * ⚠**분모(경기 수)를 같이 낸다**(M2). 100경기의 +50과 20경기의 +50은 다른 이야기다.
- */
-function runDiff(r: HomeStanding): RawHtml {
-  if (r.runGames === 0) return html`${NO_VALUE}`;
-  const d = r.rf - r.ra;
-  const sign = d > 0 ? "+" : d < 0 ? "−" : "±";
-  const cls = d > 0 ? "up" : d < 0 ? "dn" : "";
-  return html`<b class="rdiff ${cls}">${sign}${Math.abs(d)}</b><s class="rdlab">点差</s>`;
-}
-
-/**
- * 득실차의 **좌우 발산 띠** — 가운데가 0이고, 오른쪽이 플러스다.
- *
- * ⚠**승패 띠와 짝이 되게 만든다**(2026-08-18 유저 요청: 「전체적인 디자인을 다시」).
- * 바로 왼쪽 칸은 수와 띠를 같이 내는데 이 칸만 수뿐이라, 같은 표 안에서 두 칸의 무게가 달랐다.
- *
- * ⚠**색만으로 전하지 않는다** — `--up`/`--dn` 은 명도가 거의 같아서(실측 1.01:1)
- * 흑백·색각 이상에서 구별되지 않는다. 그래서 **뜻을 나르는 것은 색이 아니라 방향**이다:
- * 가운데 선의 어느 쪽으로 뻗는가. 부호가 붙은 수도 바로 위에 있다.
- * ⚠**트랙과의 대비는 잰다** — `--up`/`--dn` 대 `--hair` 가 라이트 4.18/4.21 · 다크 5.33/5.23 이다.
- *
- * ⚠**자를 리그 안에서 정한다.** 고정 척도를 쓰면 어떤 해에는 전원이 짧고 어떤 해에는 전원이 꽉 찬다.
- * @param maxAbs 그 리그에서 가장 큰 |득실차|. 0이면 띠를 그리지 않는다(나눌 수 없다).
- *
- * ⚠**낭독기에는 숨긴다** — 같은 사실이 바로 옆에 글자로 이미 있다. 두 번 읽으면 소음이다.
- */
-function runDiffBar(r: HomeStanding, maxAbs: number): RawHtml {
-  if (r.runGames === 0 || maxAbs === 0) return raw("");
-  const d = r.rf - r.ra;
-  if (d === 0) return html`<span class="rdbar" aria-hidden="true"></span>`;
-  /** 절반이 최대치다 — 가운데에서 한쪽 끝까지가 50% */
-  const w = (Math.abs(d) / maxAbs) * 50;
-  const style = d > 0 ? `left:50%;width:${w.toFixed(2)}%` : `right:50%;width:${w.toFixed(2)}%`;
-  return html`<span class="rdbar" aria-hidden="true"><i class="${d > 0 ? "up" : "dn"}" style="${style}"></i></span>`;
-}
-
 function standingsTable(l: HomeLeague, base: string): RawHtml {
   /** 득실차 띠의 자 — **그 리그 안에서** 가장 큰 폭에 맞춘다 */
-  const maxAbs = l.rows.reduce((m, x) => (x.runGames === 0 ? m : Math.max(m, Math.abs(x.rf - x.ra))), 0);
+  const maxAbs = widestRunDiff(l.rows.filter((x) => x.runGames > 0));
   return scroller(html`<table class="hstand">
   <thead><tr>
     <th>順位</th>
@@ -345,14 +285,12 @@ function standingsTable(l: HomeLeague, base: string): RawHtml {
     <td class="hrank">${r.rank === null ? NO_VALUE : r.rank}${r.tiedRank ? html`<s>同</s>` : null}</td>
     <td class="l">${teamChip(r.teamCode, r.shortName, r.color, base)}</td>
     <!-- ⚠**수와 띠를 같이 낸다.** 띠만으로는 정확한 수를 못 읽고, 수만으로는 비교가 안 된다 -->
-    <td class="l wl3"><span class="wlnum">${r.w}<s>勝</s>${r.l}<s>敗</s>${r.t}<s>分</s></span>${wlBar(r)}</td>
+    <td class="l wl3">${wlCell(r)}</td>
     <td class="b">${pctText(r.pct)}</td>
     <td>${r.gamesBehind === 0 ? NO_VALUE : r.gamesBehind.toFixed(1).replace(/\.0$/, "")}</td>
     <!-- ⚠**득실차를 주역으로, 득점·실점을 분모처럼 뒤에 붙인다** — 「어느 쪽이 얼마나」가 한 눈에.
          ⚠**주역이 무엇인지 라벨로 말한다**(点差) — 열 이름만으로는 어긋난다 -->
-    <td class="l wd">${runDiff(r)}${runDiffBar(r, maxAbs)}${r.runGames === 0
-      ? null
-      : html`<span class="den">${r.rf}<s>得</s> ${r.ra}<s>失</s><em>${r.runGames}試合</em></span>`}</td>
+    <td class="l wd">${runCell(r, maxAbs, r.runGames)}</td>
     <td>${r.last10.w}-${r.last10.l}-${r.last10.t}</td>
     <td>${streakText(r.streak)}</td>
     <td>${r.remaining < 0 ? NO_VALUE : r.remaining}</td>
@@ -449,7 +387,11 @@ ${d.week === null
       (t) => html`<li>
     ${teamChip(t.teamCode, t.shortName, t.color, base)}
     <b>${t.w}-${t.l}-${t.t}</b>
-    <em>${t.rf}/${t.ra}<s>${t.rf - t.ra >= 0 ? "+" : ""}${t.rf - t.ra}</s></em>
+    <!-- ⚠**순위표와 같은 어법으로 말한다**(2026-08-18 유저 지적).
+         예전에는 득실차를 <s> 로만 감싸 뒀는데 이 목록에 CSS 가 없어
+         **브라우저 기본 취소선**이 그어졌다 — +19 에 줄이 가서 「무효」로 보였다. -->
+    <em>${t.rf}<i>得</i> ${t.ra}<i>失</i><s class="${t.rf - t.ra > 0 ? "up" : t.rf - t.ra < 0 ? "dn" : ""}">${
+      t.rf - t.ra > 0 ? "+" : t.rf - t.ra < 0 ? "−" : "±"}${Math.abs(t.rf - t.ra)}</s><i>点差</i></em>
   </li>`,
     )}</ul>`}
   ${note(
