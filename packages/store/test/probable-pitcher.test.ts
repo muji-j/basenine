@@ -65,7 +65,8 @@ test("⚠투수가 바뀌면 revision이 오른다 — 예고는 실제로 바�
     ensurePlayer(db, "63165134", "柳　裕也", NOW);
     ensurePlayer(db, "71575132", "小笠原　慎之介", NOW);
     upsertProbablePitcher(db, row());
-    upsertProbablePitcher(db, row({ playerId: "71575132", sourceName: "小笠原　慎之介" }));
+    // 정정은 「나중에 받은 판」이다 — 같은 시각의 두 판은 애초에 존재하지 않는다
+    upsertProbablePitcher(db, row({ playerId: "71575132", sourceName: "小笠原　慎之介", fetchedAt: LATER }));
     const r = read(db)!;
     assert.equal(r.playerId, "71575132");
     assert.equal(r.revision, 2);
@@ -77,7 +78,7 @@ test("⚠미발표 → 발표도 변화로 센다 — NULL 비교를 놓치면 �
     ensurePlayer(db, "63165134", "柳　裕也", NOW);
     upsertProbablePitcher(db, row({ playerId: null, sourceName: null }));
     assert.equal(read(db)!.revision, 1);
-    upsertProbablePitcher(db, row());
+    upsertProbablePitcher(db, row({ fetchedAt: LATER }));
     const r = read(db)!;
     assert.equal(r.playerId, "63165134");
     assert.equal(r.revision, 2, "NULL → 값 전이가 변화로 세어지지 않았다");
@@ -126,5 +127,42 @@ test("한 팀은 하루에 한 번만 예고된다 — 키가 (경기일, 팀)�
       .prepare("SELECT COUNT(*) AS n FROM probable_pitcher WHERE game_date = ? AND team_code = ?")
       .get("2026-08-16", "d") as { n: number };
     assert.equal(n.n, 1);
+  });
+});
+
+/**
+ * ⚠**낡은 판이 새 판을 덮어쓰면 revision 이 뜻을 잃는다**(M5·M4 · 2026-08-18 감사 P2).
+ *
+ * 적재는 아카이브 **전체**를 매번 훑는데 한 경기일이 여러 파일에 걸린다 —
+ * 페이지가 하루 중에 다음날치로 넘어가기 때문이다. 겹친 두 판의 투수가 다르면
+ * **실행마다 old→new→old→new** 로 오가며 revision 만 매일 올랐다.
+ * 종착값은 그대로인데 「몇 번째 정정인가」가 아무 뜻도 없는 수가 된다.
+ */
+test("⚠낡은 판은 새 판을 덮어쓰지 않는다 — 재적재로 revision 이 오르지 않는다", async () => {
+  await withDb((db) => {
+    ensurePlayer(db, "63165134", "柳　裕也", NOW);
+    ensurePlayer(db, "71575132", "小笠原　慎之介", NOW);
+    // 새 판(LATER)이 먼저 들어오고, 뒤이어 **낡은 판**(NOW)이 들어온다
+    upsertProbablePitcher(db, row({ playerId: "71575132", sourceName: "小笠原", fetchedAt: LATER }));
+    upsertProbablePitcher(db, row({ fetchedAt: NOW }));
+    const r = read(db)!;
+    assert.equal(r.playerId, "71575132", "낡은 판이 새 판을 덮어썼다");
+    assert.equal(r.revision, 1, "덮어쓰지도 않았는데 revision 이 올랐다");
+    assert.equal(r.fetchedAt, LATER, "취득 시각이 과거로 되돌아갔다");
+  });
+});
+
+/**
+ * ⚠**「모른다」를 「최신」으로 대접하지 않는다**(M11).
+ * 사이드카를 못 읽어 취득 시각이 없는 판이 확정된 값을 밀어내면 안 된다.
+ */
+test("⚠취득 시각을 모르는 판은 아는 판을 덮어쓰지 않는다", async () => {
+  await withDb((db) => {
+    ensurePlayer(db, "63165134", "柳　裕也", NOW);
+    upsertProbablePitcher(db, row({ fetchedAt: LATER }));
+    upsertProbablePitcher(db, row({ playerId: null, sourceName: null, fetchedAt: null }));
+    const r = read(db)!;
+    assert.equal(r.playerId, "63165134", "모르는 판이 아는 판을 지웠다");
+    assert.equal(r.fetchedAt, LATER);
   });
 });

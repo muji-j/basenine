@@ -122,6 +122,19 @@ export interface ProbablePitcherRow {
  *
  * ⚠`IS NOT`은 SQLite에서 NULL 안전 비교다. `<>`를 쓰면 미발표(NULL) → 발표 전이가
  * 조용히 「변화 없음」이 되어 revision이 멈춘다.
+ *
+ * ⚠**낡은 판이 새 판을 덮어쓰지 못하게 한다**(M5 · 2026-08-18 감사 P2).
+ *
+ * 적재는 아카이브 **전체**를 매번 훑는데, **한 경기일이 여러 파일에 걸린다** —
+ * 페이지가 하루 중에 다음날치로 넘어가기 때문이다(실측: `2026-08-16.html.gz` 와
+ * `2026-08-17.html.gz` 가 둘 다 8月17日 로 떨어진다).
+ * 겹친 두 판의 투수가 다르면 **한 번의 실행 안에서 old→new 로 1 오르고,
+ * 다음 실행이 new→old→new 로 2 오른다.** 종착값은 안 변하는데 `revision` 만 매일 증가한다 —
+ * 그러면 「몇 번째 정정인가」가 아무 뜻도 없는 수가 된다(M4 무의미화).
+ *
+ * → `WHERE excluded.fetched_at > probable_pitcher.fetched_at` 로 **더 새 판만 이긴다.**
+ * ⚠**취득 시각을 모르면(`NULL`) 덮어쓰지 않는다** — 모르는 것을 「최신」으로 대접하지 않는다(M11).
+ *   단 기존 행의 시각이 NULL 이면(마이그레이션 017 이전에 들어온 행) 새 값이 이긴다 — 채워야 하니까.
  */
 export function upsertProbablePitcher(db: Db, r: ProbablePitcherRow): number {
   db.raw
@@ -140,7 +153,10 @@ export function upsertProbablePitcher(db: Db, r: ProbablePitcherRow): number {
          source_url    = excluded.source_url,
          fetched_at    = excluded.fetched_at,
          revision      = probable_pitcher.revision
-                         + (probable_pitcher.player_id IS NOT excluded.player_id)`,
+                         + (probable_pitcher.player_id IS NOT excluded.player_id)
+       WHERE probable_pitcher.fetched_at IS NULL
+          OR (excluded.fetched_at IS NOT NULL
+              AND excluded.fetched_at > probable_pitcher.fetched_at)`,
     )
     .run(
       r.gameDate, r.teamCode, r.opponentCode, r.playerId, r.sourceName,

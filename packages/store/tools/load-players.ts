@@ -34,8 +34,17 @@ try {
 const db = openDb(dbPath, nowIso);
 const stmt = db.raw.prepare(
   // ⚠**연도만 남긴다**(L5 데이터 최소화 · 2026-08-18 감사 P3). 화면이 쓰는 것이 연도뿐이다
-  `UPDATE player SET position = ?, throws = ?, bats = ?, birth_year = ?, physique = ?,
-     draft = ?, kana = ?, uniform_number = ?, profile_fetched_at = ?
+  //
+  // ⚠**못 읽은 값이 이미 있는 값을 지우지 않게 한다**(M11 · 2026-08-18 감사 P3).
+  //   예전에는 무조건 덮어써서, 프로필에서 投打 를 못 읽으면 **경기별 명단이 채워 둔 값이
+  //   NULL 로 되돌아갔다.** update.ts 는 명단(2단계) → 프로필(3단계) 순이라
+  //   **마지막에 도는 이쪽이 언제나 이겼다.** 「못 읽었다」와 「없다」를 같은 NULL 로 쓰면 안 된다.
+  //   ⚠`COALESCE(?, col)` = 읽었으면 그 값, 못 읽었으면 **지금 값 그대로**.
+  //   ⚠**권위는 여전히 여기다** — 읽은 값은 그대로 덮어쓴다(M1). 못 읽었을 때만 양보한다.
+  `UPDATE player SET position = COALESCE(?, position), throws = COALESCE(?, throws),
+     bats = COALESCE(?, bats), birth_year = COALESCE(?, birth_year),
+     physique = COALESCE(?, physique), draft = COALESCE(?, draft), kana = COALESCE(?, kana),
+     uniform_number = COALESCE(?, uniform_number), profile_fetched_at = ?
    WHERE player_id = ?`,
 );
 

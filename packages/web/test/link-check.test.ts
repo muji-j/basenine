@@ -181,3 +181,64 @@ test("문자열 안의 id 흉내를 앵커로 세지 않는다", () => {
   ]);
   assert.equal(out.length, 1, "문자열 안의 id 를 진짜 앵커로 셌다");
 });
+
+/**
+ * ⚠**ARIA 참조도 링크다**(2026-08-18 감사 P2).
+ *
+ * 予告先発 화면에서 패널 **6개 전부**가 존재하지 않는 탭 id 를 가리키고 있었는데
+ * 화면은 멀쩡했고 빌드도 시험도 배포도 통과했다 — **낭독기 사용자에게만** 깨져 있었다.
+ * ⚠**깨진 참조는 없는 것보다 나쁘다**: 「이 패널의 이름은 저기」라고 말해 놓고
+ * 그 자리가 비어 있으면, 낭독기는 이름 없는 패널을 이름 있는 척 읽는다.
+ */
+test("⚠존재하지 않는 id 를 가리키는 aria-labelledby 를 잡는다", () => {
+  const out = brokenLinks([
+    { path: "a.html", content: `<div role="tabpanel" aria-labelledby="tb-x"></div>` },
+  ]);
+  assert.equal(out.length, 1, "깨진 ARIA 참조를 못 잡았다");
+  assert.equal(out[0]?.kind, "aria");
+  assert.match(out[0]?.href ?? "", /aria-labelledby="tb-x"/);
+});
+
+test("실재하는 id 를 가리키면 통과한다", () => {
+  const out = brokenLinks([
+    { path: "a.html", content: `<button id="tb-x"></button><div aria-labelledby="tb-x"></div>` },
+  ]);
+  assert.deepEqual(out, [], "멀쩡한 참조를 깨졌다고 했다");
+});
+
+/**
+ * ⚠**`aria-controls` 는 공백 구분 목록을 받는다** — 「すべて」 탭이 패널 여럿을 가리킨다.
+ * 목록을 통째로 하나의 id 로 보면 멀쩡한 마크업이 전부 깨진 것으로 나온다.
+ */
+test("⚠aria-controls 의 공백 구분 목록을 하나씩 본다", () => {
+  const ok = brokenLinks([
+    { path: "a.html", content: `<i id="p1"></i><i id="p2"></i><b aria-controls="p1 p2"></b>` },
+  ]);
+  assert.deepEqual(ok, [], "목록을 통째로 한 id 로 봤다");
+
+  const bad = brokenLinks([
+    { path: "a.html", content: `<i id="p1"></i><b aria-controls="p1 p2"></b>` },
+  ]);
+  assert.equal(bad.length, 1, "목록 중 하나만 깨진 것을 놓쳤다");
+  assert.match(bad[0]?.href ?? "", /p2/);
+});
+
+/**
+ * ⚠**`aria-label` 은 참조가 아니라 글자다.** 그것까지 id 로 찾으면
+ * 멀쩡한 화면이 전부 「깨졌다」로 나와 검사기 자체가 무시당한다.
+ */
+test("⚠aria-label 은 참조가 아니다 — 글자를 id 로 찾지 않는다", () => {
+  const out = brokenLinks([{ path: "a.html", content: `<nav aria-label="試合"></nav>` }]);
+  assert.deepEqual(out, []);
+});
+
+/**
+ * ⚠**ARIA 의 id 참조는 문서를 넘지 않는다.** 옆 페이지에 그 id 가 있어도 소용없다.
+ */
+test("⚠같은 문서 안에서만 찾는다 — 옆 페이지의 id 는 답이 아니다", () => {
+  const out = brokenLinks([
+    { path: "a.html", content: `<div aria-labelledby="tb-x"></div>` },
+    { path: "b.html", content: `<button id="tb-x"></button>` },
+  ]);
+  assert.equal(out.length, 1, "다른 문서의 id 로 통과시켰다");
+});

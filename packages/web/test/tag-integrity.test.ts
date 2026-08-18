@@ -68,3 +68,46 @@ test("⚠data-* 속성이 화면에 글자로 나오지 않는다", {
     assert.equal(leaked.length, 0, `${f}: 속성이 본문에 보인다 — ${leaked.slice(0, 3).join(" ")}`);
   }
 });
+
+/**
+ * ⚠**CSP `script-src 'self'` 를 지키는 회귀 감시가 하나도 없었다**(2026-08-18 감사 P2).
+ *
+ * 「인라인 실행 스크립트 0개」는 **1회 실측**이었고, 다시 들어와도 빌드·시험·배포가 전부 통과했다.
+ * 인라인 스크립트가 하나 생기면 두 갈래로 나쁘다:
+ *  · CSP 가 그것을 막아 **그 화면의 기능이 조용히 죽거나**,
+ *  · 막으려고 `unsafe-inline` 을 여는 순간 **CSP 가 있으나 마나가 된다.**
+ * ⚠**`type="application/json"` 은 실행되지 않는다** — 그건 데이터 블록이라 허용이다.
+ *   그래서 `script-src 'self'` 로도 부트 데이터를 실을 수 있다(그 설계의 근거다).
+ */
+const scriptPages = existsSync(DIST)
+  ? [
+    "index.html", "ranking.html", "matchup.html", "compare.html", "starters.html",
+    ...readdirSync(join(DIST, "players")).slice(0, 3).map((f) => join("players", f)),
+    ...readdirSync(join(DIST, "teams")).slice(0, 2).map((f) => join("teams", f)),
+  ].filter((f) => existsSync(join(DIST, f)))
+  : [];
+
+test("⚠실행되는 인라인 스크립트가 없다 — CSP 가 script-src 'self' 로 닫혀 있다", {
+  skip: scriptPages.length === 0 ? "dist 없음" : false,
+}, () => {
+  assert.ok(scriptPages.length >= 5, `표본이 ${scriptPages.length}장뿐이다 — 이 시험이 공회전한다`);
+  let checked = 0;
+  for (const f of scriptPages) {
+    const html = readFileSync(join(DIST, f), "utf8");
+    for (const m of html.matchAll(/<script\b([^>]*)>/g)) {
+      const attrs = m[1] ?? "";
+      checked += 1;
+      const external = /\ssrc="/.test(attrs);
+      const dataBlock = /\stype="application\/json"/.test(attrs);
+      assert.ok(
+        external || dataBlock,
+        `${f}: 실행되는 인라인 스크립트가 있다 — CSP 가 막는다 <script${attrs}>`,
+      );
+    }
+    // ⚠**인라인 이벤트 핸들러도 CSP 가 막는다**(`onclick=` 등). 붙이면 그 조작이 조용히 죽는다
+    const onAttr = /\son(?:click|load|error|change|input|submit|focus|blur|mouseover)=/.exec(html);
+    assert.equal(onAttr, null, `${f}: 인라인 이벤트 핸들러가 있다 — ${onAttr?.[0]}`);
+    assert.ok(!html.includes('href="javascript:'), `${f}: javascript: 링크가 있다`);
+  }
+  assert.ok(checked >= 5, `<script> 를 ${checked}개밖에 안 봤다 — 표본이 부트 블록을 안 덮는다`);
+});

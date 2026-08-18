@@ -148,7 +148,13 @@ a{color:inherit}
 
 /* 상태 띠 — 4상태(M12) 중 「수집실패·낡음」을 여기서 말한다 */
 .state{padding:7px var(--pad);font-size:12px;border-bottom:1px solid var(--hair)}
-.state.stale{background:var(--warn);color:#fff}
+/* ⚠**채움 배경에 흰 글자를 하드코딩하지 않는다**(2026-08-18 감사 P2).
+   --warn 은 라이트에서 어두운 벽돌색(#a8452f)이지만 **다크에서는 밝은 살구색**(#e08a72)이라,
+   흰 글자를 얹으면 대비가 **2.61:1** 로 떨어진다(AA 본문 4.5:1 은커녕 큰 글자 3:1 도 미달).
+   이 파일의 다른 --warn 용례는 전부 「옅은 바탕 위의 글자색」이고 여기만 풀-배경이었다.
+   → **글자를 페이지 배경색으로 둔다.** --warn 과 --page 는 언제나 명암이 반대라
+   두 모드 다 통과한다 — 실측 라이트 **5.66:1** · 다크 **6.93:1**. */
+.state.stale{background:var(--warn);color:var(--page)}
 .state.fresh{color:var(--tx-3)}
 .state b{font-weight:700}
 
@@ -899,8 +905,13 @@ a.cg:focus-visible{outline:2px solid var(--tx);outline-offset:1px}
 .hstand .rdbar i.dn{background:var(--dn)}
 /* 득점·실점 줄. ⚠**단위를 수보다 작게** 두고, 분모(경기 수)는 한 단계 더 뒤로 물린다 */
 .hstand td.wd .den s{text-decoration:none;font-size:9px;color:var(--tx-3);margin:0 1px 0 0}
-.hstand td.wd .den em{font-style:normal;color:var(--tx-3);opacity:.8;margin-left:6px}
-.hstand td.wd .den em::before{content:"·";margin-right:6px;opacity:.7}
+/* ⚠**분모에 opacity 를 얹지 않는다**(2026-08-18 감사 P2에서 시험이 잡았다).
+   0.8 이면 대비가 라이트 **3.32:1** · 다크 3.97:1 로 AA(4.5:1) 미달이다.
+   하필 이 자리가 **분모**다 — 이 서비스가 「분모 없는 비율을 금지한다」고 말해 놓고
+   그 분모를 못 읽게 그리면 규칙을 지킨 척만 하는 것이 된다(M2).
+   ⚠**뒤로 물리는 것은 크기와 색으로 한다** — 그건 이미 --tx-3 과 9px 이 하고 있다. */
+.hstand td.wd .den em{font-style:normal;color:var(--tx-3);margin-left:6px}
+.hstand td.wd .den em::before{content:"·";margin-right:6px}
 
 /* 1위 줄.
    ⚠**바탕을 칠하지 않는다** — 표 안에서 한 줄만 바탕이 다르면 「선택됨」으로 읽힌다.
@@ -1056,7 +1067,9 @@ html:has(.hjump){scroll-padding-top:calc(var(--topbar) + 52px)}
 /* 고른 것은 **버튼 자신이** 말한다 — 위의 pickbar만 바뀌면 목록 안에서 무엇을 눌렀는지 잃는다 */
 .pk[aria-pressed="true"]{background:var(--chip,#6b7280);color:var(--chip-ink,#fff);
   border-color:var(--chip,#6b7280);font-weight:700}
-.pk[aria-pressed="true"] s{color:inherit;opacity:.75}
+/* ⚠**여기도 opacity 를 뺐다**(위와 같은 이유). 눌린 칩의 잉크는 구단 색에 맞춰 고른 값이라
+   그 위에 투명도를 얹으면 **대비를 계산한 의미가 없어진다.** 크기가 이미 부제임을 말한다. */
+.pk[aria-pressed="true"] s{color:inherit}
 .pk[aria-pressed="true"] em{background:var(--chip-ink,#fff);color:var(--chip,#6b7280)}
 /* 비교 화면에서는 **어느 자리에 들어갔는지**까지 말한다 — 채울 자리가 둘이다 */
 .pk[data-slot]::after{content:attr(data-slot);font-size:9.5px;margin-left:4px;opacity:.85}
@@ -1188,7 +1201,8 @@ table.stand .dif i.n{right:50%}
 /* 시즌 중 이적 이력. ⚠**합계와 순위가 다른 이유**가 여기 적힌다 */
 .stint{display:block;font-size:10.5px;color:var(--tx-3);margin-top:2px}
 /* 「합계와 순위의 수가 왜 다른가」 — 이적 이력 바로 아래에 붙는다 */
-.stint em{display:block;font-style:normal;font-size:10px;color:var(--tx-3);opacity:.85}
+/* ⚠**opacity 를 뺐다**(위 .den em 과 같은 이유 · 2026-08-18). 뒤로 물리는 것은 크기와 색이 한다 */
+.stint em{display:block;font-style:normal;font-size:10px;color:var(--tx-3)}
 .seasons a{font-size:12px;padding:3px 10px;text-decoration:none;color:var(--tx-2);
   border:1px solid transparent;transition:color var(--fast) var(--ease)}
 .seasons a:hover{color:var(--tx);border-color:var(--hair-2)}
@@ -1322,7 +1336,12 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
 .daypick{margin:0 auto;text-align:center}
 /* ⚠**끝에 왔으면 링크가 아니다.** href 없는 a 는 초점도 안 받고 눌러도 아무 일이 없어서,
    「더 있다」고 조용히 거짓말하지 않는다 */
-.daystep.off{color:var(--tx-3);border-style:dashed;opacity:.5}
+/* ⚠**opacity 로 「없음」을 말하지 않는다**(2026-08-18 감사 P3).
+   0.5 를 얹으면 --tx-3 의 대비가 라이트 **1.99:1** · 다크 **2.31:1** 로 떨어진다 —
+   4.5:1 의 절반도 안 된다. 이건 span 이라 「비활성 컨트롤」 예외도 못 받는다.
+   ⚠**뜻은 색이 아니라 형태로 말한다** — 점선 테두리가 이미 「누를 수 없다」를 말하고 있다.
+   실측(opacity 없이): 라이트 4.91:1 · 다크 5.50:1. */
+.daystep.off{color:var(--tx-3);border-style:dashed}
 .daystep.n.off{margin-left:auto}
 @media (max-width:520px){
   .daybar{flex-wrap:wrap}

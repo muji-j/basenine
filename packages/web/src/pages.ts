@@ -29,7 +29,7 @@
 import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import { NO_VALUE, avg3, dec2, fullDate, innings } from "./format.ts";
-import { block, denText, follower, note, panel, rankValue, runCell, scroller, statCount, statRateOuts, statSigned, statText, tablist, term, widestRunDiff, wlCell } from "./parts.ts";
+import { block, denText, follower, note, panel, panelId, rankValue, runCell, scroller, statCount, statRateOuts, statSigned, statText, tabId, tablist, term, widestRunDiff, wlCell } from "./parts.ts";
 import { page, pastSeasonOf, ROSTER_PATH } from "./layout.ts";
 import { teamPath } from "./team-page.ts";
 import type { Freshness, SiteMeta } from "./layout.ts";
@@ -739,14 +739,25 @@ ${d.gameDate === null || d.games.length === 0
       : "予告先発はまだ発表されていません。発表は前日〜当日です。"}</p></section>`
     : html`<nav class="cards" role="tablist" data-tabgroup="starters" aria-label="試合">
     ${d.games.map(
+      /**
+       * ⚠**id 와 aria-controls 를 여기서 빠뜨렸었다**(2026-08-18 감사 P2).
+       * 짝이 되는 패널은 `panel()` 이 만들고 그것은 무조건 `aria-labelledby` 를 붙이므로,
+       * 여기에 `id` 가 없으면 **패널이 존재하지 않는 id 를 가리킨다** — 실측 6/6 전부 깨져 있었다.
+       * ⚠**깨진 ARIA 참조는 없는 것보다 나쁘다**(parts.ts 가 같은 사고를 이미 적어 뒀다).
+       * ⚠**id 를 여기서 새로 만들지 않는다**(M1) — `tabId`/`panelId` 한 벌만 쓴다.
+       */
       (g, i) => html`<button class="card" type="button" role="tab" data-tab="${gameKey(g)}"
+        id="${tabId("starters", gameKey(g))}" aria-controls="${panelId("starters", gameKey(g))}"
         aria-selected="${i === 0 ? "true" : "false"}">
       <span class="cbar"><i style="background:${g.sides[0].color.base}"></i><i style="background:${g.sides[1].color.base}"></i></span>
       <span class="ctxt"><b>${g.sides[0].shortName} − ${g.sides[1].shortName}</b>
         <s>${g.startTime ?? ""}${g.venue === null ? "" : ` ${g.venue}`}</s></span>
     </button>`,
     )}
-    <button class="card all" type="button" role="tab" data-tab="all" aria-selected="false">
+    ${/* ⚠**「すべて」는 패널이 하나가 아니다** — `aria-controls` 는 공백 구분 id 목록을 받는다 */ ""}
+    <button class="card all" type="button" role="tab" data-tab="all" aria-selected="false"
+      id="${tabId("starters", "all")}"
+      aria-controls="${d.games.map((g) => panelId("starters", gameKey(g))).join(" ")}">
       <span class="ctxt"><b>すべて</b><s>${d.games.length}試合</s></span>
     </button>
   </nav>

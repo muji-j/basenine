@@ -529,23 +529,34 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
 }
 
 /**
- * ⚠**빈 자리만 채운다.** `WHERE throws IS NULL` 이 그 계약이고, 그래서 선수 페이지가
- * 언제나 이깁니다 — 출처가 둘이 되면 어느 날 갈린다(M1).
+ * ⚠**빈 자리만 채운다.** 그래야 선수 페이지가 언제나 이긴다 —
+ * 출처가 둘이 되면 어느 날 갈린다(M1).
  * 배번도 같다: 페이지는 **현재** 번호, 명단은 **그 경기 시점**의 번호다.
  * 실측 782명 중 10명이 어긋났고 전부 실제 변경이었다(育成 `122` → 支配下 `64` 등).
+ *
+ * ⚠**주석이 말하는 계약과 실제 SQL 이 달랐다**(2026-08-18 감사 P3).
+ * `WHERE (throws IS NULL OR bats IS NULL)` 인데 `SET` 은 **둘 다** 쓰고 있었다 —
+ * 그래서 `bats` 만 비어 있으면 **이미 확정된 `throws` 까지 명단 값으로 덮어썼다.**
+ * 「빈 자리만 채운다」고 적어 놓고 정반대를 하는 코드는, 다음 사람이 주석을 믿는 만큼 위험하다.
+ * → **컬럼마다 따로 채운다**(배번이 이미 그렇게 돼 있었다).
  */
 let filledHand = 0;
 let filledNumber = 0;
 if (rosterLatest.size > 0) {
-  const hand = db.raw.prepare(
-    "UPDATE player SET throws = ?, bats = ? WHERE player_id = ? AND (throws IS NULL OR bats IS NULL)",
+  const throwsFill = db.raw.prepare(
+    "UPDATE player SET throws = ? WHERE player_id = ? AND throws IS NULL",
+  );
+  const batsFill = db.raw.prepare(
+    "UPDATE player SET bats = ? WHERE player_id = ? AND bats IS NULL",
   );
   const num = db.raw.prepare(
     "UPDATE player SET uniform_number = ? WHERE player_id = ? AND uniform_number IS NULL",
   );
   db.transaction(() => {
     for (const [playerId, r] of rosterLatest) {
-      hand.run(r.throws, r.bats, playerId);
+      throwsFill.run(r.throws, playerId);
+      filledHand += (db.raw.prepare("SELECT changes() AS n").get() as { n: number }).n;
+      batsFill.run(r.bats, playerId);
       filledHand += (db.raw.prepare("SELECT changes() AS n").get() as { n: number }).n;
       if (r.uniformNumber !== null) {
         num.run(r.uniformNumber, playerId);
@@ -599,4 +610,12 @@ for (const [kind, n] of quarantineKinds) console.log(`${String(n).padStart(6)}  
 db.close();
 // ⚠**부분 실패도 실패다.** 조용히 0으로 끝내면 크론이 「성공」으로 보고하고,
 // 그 사이 순위표에서 경기가 사라진 채로 배포된다
-process.exitCode = failed > 0 || lineScoreFailed > 0 ? 1 : 0;
+/**
+ * ⚠**「전부 훑지 못했다」는 성공이 아니다**(2026-08-18 감사 P2).
+ *
+ * 쓰기 예산 상한에 걸려 도중에 멈춰도 종료 코드가 0 이었다. 그래서 `update.ts` 가
+ * 실패로 세지 않고 **「정상 종료」를 찍었다** — 화면에는 그날 이후 경기가 통째로 없는데
+ * 로그는 아무 말도 하지 않는다. 이 프로젝트가 가장 두려워하는 「조용한 죽음」의 형태다.
+ * ⚠**메시지는 이미 찍고 있었다**(재개 지점까지). 종료 코드만 그 사실을 안 말했다.
+ */
+process.exitCode = failed > 0 || lineScoreFailed > 0 || stoppedAt !== null ? 1 : 0;

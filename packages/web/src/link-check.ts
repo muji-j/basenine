@@ -16,6 +16,12 @@
 /** 페이지 안의 `id` 를 줍는다. ⚠공백 뒤에 오는 것만 본다 — `[href=...]` 같은 문자열을 피한다 */
 const ID_RE = /\sid="([^"]*)"/g;
 
+/**
+ * 다른 요소의 `id` 를 가리키는 ARIA 속성.
+ * ⚠**`aria-label` 은 여기 없다** — 그건 글자이지 참조가 아니다.
+ */
+const ARIA_REF_RE = /\s(aria-(?:labelledby|controls|describedby|owns|details|errormessage|flowto))="([^"]*)"/g;
+
 /** 생성될 파일 한 장 */
 export interface OutFile {
   /** 출력 루트 기준 경로. `players/123.html` · `2025/teams/t.html` */
@@ -36,7 +42,7 @@ export interface BrokenLink {
    * ⚠**둘을 구별한다.** 앵커가 없는 링크는 파일이 열리기는 해서 **더 조용히 실패한다** —
    * 브라우저는 맨 위에 머무르고, 누른 사람은 「아무 일도 안 일어났다」고만 안다.
    */
-  kind: "page" | "anchor";
+  kind: "page" | "anchor" | "aria";
 }
 
 /**
@@ -133,6 +139,28 @@ export function brokenLinks(files: readonly OutFile[]): BrokenLink[] {
       if (seen.has(key)) continue;
       seen.add(key);
       out.push({ from: f.path, href, to: target, kind });
+    }
+
+    /**
+     * **ARIA 참조도 링크다.**
+     *
+     * ⚠**이 결함은 사람 눈으로 안 보인다**(2026-08-18 감사 P2). 予告先発 화면에서
+     * 패널 **6개 전부**가 존재하지 않는 탭 id 를 가리키고 있었는데, 화면은 멀쩡했고
+     * 빌드도 시험도 배포도 전부 통과했다 — 낭독기 사용자에게만 깨져 있었다.
+     * ⚠**깨진 ARIA 참조는 없는 것보다 나쁘다**: 「이 패널의 이름은 저기」라고 말해 놓고
+     * 그 자리가 비어 있으면, 낭독기는 이름 없는 패널을 이름 있는 척 읽는다.
+     * ⚠**같은 문서 안에서만 본다** — ARIA 의 id 참조는 문서를 넘지 않는다.
+     * ⚠**공백 구분 목록을 받는 속성이 있다**(`aria-controls` 는 여러 패널을 가리킬 수 있다).
+     */
+    const own = ids.get(f.path);
+    for (const m of f.content.matchAll(ARIA_REF_RE)) {
+      for (const ref of (m[2] ?? "").split(/\s+/)) {
+        if (ref === "" || own?.has(ref) === true) continue;
+        const key = `${f.path} aria ${ref}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ from: f.path, href: `${m[1]}="${ref}"`, to: f.path, kind: "aria" });
+      }
     }
   }
   return out;

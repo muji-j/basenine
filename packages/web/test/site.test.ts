@@ -298,3 +298,34 @@ test("성적이 없는 선수는 빈 줄을 만들지 않는다", () => {
   const idx = out.files.find((f) => f.path === "index.html")!;
   assert.ok(!idx.content.includes(`class="hs"`), "값이 없는데 자리를 만들었다");
 });
+
+/**
+ * ⚠**`_headers` 는 「경로가 있다」만 확인하고 내용은 한 글자도 안 봤다**(2026-08-18 감사 P2).
+ *
+ * 이 파일은 Cloudflare Pages 가 **배포 시에** 읽는 것이라 링크 검사에도 안 걸리고,
+ * 문법이 틀리면 **조용히 무시된다.** 즉 헤더가 통째로 사라져도 아무도 모른다.
+ * ⚠**형태까지 못 박는다** — 첫 줄이 경로, 이후 줄은 두 칸 들여쓰기 + `이름: 값`.
+ */
+test("⚠_headers 가 CSP 를 unsafe-inline 없이 닫는다 — 내용까지 본다", () => {
+  const f = buildSite(siteData(), SITE, "2026-08-15").files.find((x) => x.path === "_headers");
+  assert.notEqual(f, undefined, "_headers 가 없다");
+  const lines = (f?.content ?? "").split("\n").filter((l) => l !== "");
+  assert.equal(lines[0], "/*", "첫 줄이 경로 패턴이 아니다 — Pages 가 통째로 무시한다");
+  for (const l of lines.slice(1)) {
+    assert.match(l, /^ {2}[A-Za-z-]+: .+$/, `헤더 줄의 형태가 다르다: ${JSON.stringify(l)}`);
+  }
+  const csp = lines.find((l) => l.includes("Content-Security-Policy"));
+  assert.notEqual(csp, undefined, "CSP 헤더가 없다");
+  assert.match(csp ?? "", /script-src 'self'/, "script-src 가 self 로 닫혀 있지 않다");
+  /**
+   * ⚠**style-src 의 unsafe-inline 은 의도된 것이다**(구단 색을 인라인 속성으로 나른다).
+   * 그러니 「unsafe-inline 이 없다」가 아니라 **「script-src 에 없다」**를 봐야 한다 —
+   * 통째로 금지하면 이 시험이 곧 거짓이 되어 누군가 지운다.
+   */
+  const scriptSrc = /script-src ([^;]*)/.exec(csp ?? "")?.[1] ?? "";
+  assert.ok(!scriptSrc.includes("unsafe-inline"), `script-src 가 열려 있다: ${scriptSrc}`);
+  assert.ok(!scriptSrc.includes("unsafe-eval"), `script-src 에 unsafe-eval 이 있다: ${scriptSrc}`);
+  for (const must of ["frame-ancestors 'none'", "object-src 'none'", "base-uri 'none'"]) {
+    assert.ok((csp ?? "").includes(must), `CSP 에 ${must} 가 없다`);
+  }
+});
