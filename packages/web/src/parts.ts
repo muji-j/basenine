@@ -161,16 +161,86 @@ export function statText(label: string, text: string, rank: number | null = null
  * 색인지 말하지 않으면 같은 색이 두 뜻을 갖게 된다.
  */
 export function gradeLegend(group: GradeGroup = "batter"): RawHtml {
+  const order = gradeOrder();
+  const first = order[0];
+  const last = order[order.length - 1];
+  /**
+   * ⚠**눈금은 이어져 있어야 눈금으로 읽힌다**(2026-08-18 유저 지적).
+   * 예전에는 `[색] 라벨 [색] 라벨 …` 처럼 **색과 글자가 번갈아** 놓여 있어서,
+   * 첫 색이 바로 앞의 「水準」에 붙은 것으로 읽혔고 다섯 칸이 한 축이라는 것도 보이지 않았다.
+   * → **양 끝에만 글자**(とても悪い … とても良い)를 두고 **가운데는 색을 이어 붙인다.**
+   * 나쁨에서 좋음으로 가는 **한 줄의 축**이라는 것이 형태로 드러난다.
+   * ⚠**색만으로 전하지 않는다** — 양 끝 글자가 방향을 말하고, 각 칸에는 이름이 숨은 글자로 남는다.
+   */
   return html`<div class="legend">
     <span class="lg">水準</span>
-    ${gradeOrder().map(
-      // ⚠글자를 감싸 둔다 — 좁은 화면에서 **가운데 세 칸의 글자만** 접어 양 끝 라벨을 남긴다.
-      // 다섯 개를 전부 늘어놓으면 모바일에서 두 줄을 먹고, 성적이 화면 밖으로 밀린다
-      (g) => html`<span class="sw ${gradeClass(g)}"><i></i><b>${GRADE_LABEL[g]}</b></span>`,
-    )}
+    <span class="scale">
+      <b class="send">${GRADE_LABEL[first!]}</b>
+      <span class="bar">${order.map(
+    (g) => html`<i class="${gradeClass(g)}"><span class="vh">${GRADE_LABEL[g]}</span></i>`,
+  )}</span>
+      <b class="send">${GRADE_LABEL[last!]}</b>
+    </span>
     <span class="lg tail">${GROUP_BASIS[group]}と比較。母数が少ない値には色をつけていません</span>
     <button class="tab" type="button" id="gradeBtn" aria-pressed="true">色分け</button>
   </div>`;
+}
+
+/**
+ * 순위표의 **승패분 칸** — 수와 띠를 같이 낸다.
+ *
+ * ⚠**홈과 順位 탭이 같은 한 벌을 쓴다**(M1 · 2026-08-18 유저 요청:
+ * 「항상 같은 디자인일 수 있게 디자인 요소 통합하는 게 좋을 듯」).
+ * 예전에는 두 화면이 각자 그렸고, 그래서 홈에만 띠가 있고 順位 탭에는 없었다 —
+ * 같은 사실을 두 어법으로 말하면 읽는 사람이 매번 다시 배워야 한다.
+ * ⚠**띠만으로는 정확한 수를 못 읽고, 수만으로는 비교가 안 된다.** 둘 다 낸다.
+ */
+export function wlCell(r: { w: number; l: number; t: number }): RawHtml {
+  const total = r.w + r.l + r.t;
+  const pc = (n: number): string => (total === 0 ? "0" : ((n / total) * 100).toFixed(2));
+  return html`<span class="wlnum">${r.w}<s>勝</s>${r.l}<s>敗</s>${r.t}<s>分</s></span>${
+    total === 0
+      ? raw("")
+      : html`<span class="wlbar" role="img" aria-label="${r.w}勝${r.l}敗${r.t}分（${total}試合）">
+    <i class="ww" style="width:${pc(r.w)}%"></i><i class="wt" style="width:${pc(r.t)}%"></i><i class="wl" style="width:${pc(r.l)}%"></i>
+  </span>`}`;
+}
+
+/**
+ * 순위표의 **득실점 칸** — 点差를 주역으로, 得/失과 분모를 뒤에.
+ *
+ * ⚠**무엇을 나타내는 수인지 값 옆에서 말한다**(2026-08-18 유저 지적: 「이해가 안 됨」).
+ * 열 이름은 得失点 인데 큰 수는 **그 차이**여서 둘이 어긋난 채로 읽는 사람에게 떠넘기고 있었다.
+ * ⚠**띠는 가운데가 0이고 방향이 뜻이다** — `--up`/`--dn` 은 명도가 거의 같아(실측 1.01:1)
+ * 색으로는 구별되지 않는다. 부호가 붙은 수가 바로 위에 있다.
+ * @param maxAbs 그 리그에서 가장 큰 |득실차|. 0이면 띠를 그리지 않는다(나눌 수 없다).
+ * @param denominator 득점·실점을 읽을 수 있었던 경기 수. **0이면 값 자체를 내지 않는다**(M11).
+ */
+export function runCell(
+  r: { rf: number; ra: number },
+  maxAbs: number,
+  denominator: number,
+): RawHtml {
+  if (denominator === 0) return html`${NO_VALUE}`;
+  const d = r.rf - r.ra;
+  const sign = d > 0 ? "+" : d < 0 ? "−" : "±";
+  const cls = d > 0 ? "up" : d < 0 ? "dn" : "";
+  const w = maxAbs === 0 ? 0 : (Math.abs(d) / maxAbs) * 50;
+  /** ⚠**낭독기에는 숨긴다** — 같은 사실이 바로 옆에 글자로 이미 있다 */
+  const bar = maxAbs === 0
+    ? raw("")
+    : d === 0
+      ? html`<span class="rdbar" aria-hidden="true"></span>`
+      : html`<span class="rdbar" aria-hidden="true"><i class="${cls}" style="${
+        d > 0 ? `left:50%;width:${w.toFixed(2)}%` : `right:50%;width:${w.toFixed(2)}%`
+      }"></i></span>`;
+  return html`<b class="rdiff ${cls}">${sign}${Math.abs(d)}</b><s class="rdlab">点差</s>${bar}<span class="den">${
+    r.rf}<s>得</s> ${r.ra}<s>失</s><em>${denominator}試合</em></span>`;
+}
+
+/** 그 구간에서 가장 큰 |득실차| — 띠의 자다. **리그 안에서 정한다** */
+export function widestRunDiff(rows: readonly { rf: number; ra: number }[]): number {
+  return rows.reduce((m, x) => Math.max(m, Math.abs(x.rf - x.ra)), 0);
 }
 
 export interface BlockOptions {

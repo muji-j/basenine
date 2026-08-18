@@ -192,18 +192,31 @@ test("동률이면 「同」을 붙인다 — 같은 순위가 둘 있다는 사
     }),
     context(),
   );
-  assert.equal(out.match(/<em>同<\/em>/g)?.length, 2, "동률 표시가 두 팀에 붙지 않았다");
+  /**
+   * ⚠**홈의 순위표와 통합하면서 어법이 `<s>` 로 바뀌었다**(2026-08-18 유저 요청).
+   * 태그가 아니라 **「동률이 두 팀에 보인다」**가 이 시험이 지키는 것이다.
+   */
+  assert.equal(out.match(/<s>同<\/s>/g)?.length, 2, "동률 표시가 두 팀에 붙지 않았다");
 });
 
 test("동률이 아니면 「同」이 없다", () => {
   const out = renderRankingPage(data(), context());
-  assert.ok(!out.includes("<em>同</em>"));
+  assert.ok(!out.includes("<s>同</s>"));
 });
 
 test("⚠구단 로고를 쓰지 않는다 — 기록은 사실이지만 로고는 상표다", () => {
   const out = renderRankingPage(data(), context());
   assert.ok(!/<img/.test(out), "이미지 태그가 들어갔다");
-  assert.match(out, /class="l tm"><i><\/i><a href="teams\/t\.html">阪神<\/a>/, "색 마크로 구단을 구별하지 않는다");
+  /**
+   * ⚠**홈과 같은 칩(`.hteam`)을 쓴다**(2026-08-18 유저 요청으로 통합).
+   * 지키는 것은 「로고가 아니라 **우리가 고른 색**으로 구단을 구별한다」이고,
+   * 그 색이 인라인 커스텀 속성으로 실제로 실렸는지까지 본다.
+   */
+  assert.match(
+    out,
+    /class="hteam" href="teams\/t\.html"[\s\S]{0,80}?--chip:#[0-9a-f]{6}[\s\S]{0,40}?<i><\/i>阪神/,
+    "색 마크로 구단을 구별하지 않는다",
+  );
 });
 
 /**

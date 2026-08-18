@@ -29,20 +29,7 @@
 import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import { NO_VALUE, avg3, dec2, fullDate, innings } from "./format.ts";
-import {
-  block,
-  denText,
-  follower,
-  note,
-  panel,
-  rankValue,
-  scroller,
-  statCount,
-  statRateOuts,
-  statText,
-  tablist,
-  term,
-} from "./parts.ts";
+import { block, denText, follower, note, panel, rankValue, runCell, scroller, statCount, statRateOuts, statText, tablist, term, widestRunDiff, wlCell } from "./parts.ts";
 import { page, pastSeasonOf, ROSTER_PATH } from "./layout.ts";
 import { teamPath } from "./team-page.ts";
 import type { Freshness, SiteMeta } from "./layout.ts";
@@ -357,26 +344,36 @@ function diff(rf: number, ra: number): string {
  */
 function standingsTable(s: StandingsSection, base: string): RawHtml {
   if (s.rows.length === 0) return html`<p class="empty">まだ順位を計算できていません。</p>`;
-  const widest = Math.max(1, ...s.rows.map((r) => Math.abs(r.rf - r.ra)));
-  return scroller(html`<table class="stand">
+  const maxAbs = widestRunDiff(s.rows);
+  /**
+   * ⚠**홈의 순위표와 같은 어법으로 그린다**(2026-08-18 유저 요청:
+   * 「홈 쪽에 있는 순위 표에 맞춰서 · 항상 같은 디자인일 수 있게 디자인 요소 통합」).
+   * 표 클래스에 `hstand` 를 함께 준다 — 고정 열·구단 색 막대·1위 강조가 그쪽 한 벌에서 온다.
+   * 승패분과 득실점은 **같은 부품**(`wlCell`·`runCell`)을 쓴다(M1).
+   *
+   * ⚠**열을 줄였다.** 勝/敗/分 세 열과 得点/失点/得失差 세 열이 각각 한 칸으로 합쳐졌다 —
+   * 같은 사실을 홈은 한 칸, 여기는 세 칸으로 말하고 있었고 그 차이에 뜻이 없었다.
+   * 잃은 정보는 없다: 승·패·분은 칸 안에 그대로 있고, 得/失 도 分母와 함께 그대로 있다.
+   */
+  return scroller(html`<table class="stand hstand">
     <thead><tr>
-      <th>順位</th><th class="l">球団</th><th>試合</th><th>勝</th><th>敗</th><th>分</th>
-      <th>勝率</th><th>差</th><th>得点</th><th>失点</th><th>得失差</th>
+      <th>順位</th><th class="l">球団</th><th>試合</th>
+      <th class="l">勝敗分</th><th>勝率</th><th>差</th><th class="l">得失点</th>
       <th>${term("打率")}</th><th>${term("防御率")}</th>
       <th>ホーム</th><th>ビジター</th><th>直近${RECENT_GAMES}</th>
     </tr></thead>
     <tbody>${s.rows.map(
-      (r) => html`<tr style="--chip:${r.color.base}">
-        <td class="rk">${r.rank}${r.tiedRank ? html`<em>同</em>` : null}</td>
+      (r) => html`<tr style="--chip:${r.color.base}" class="${r.rank === 1 ? "lead" : ""}">
+        <td class="hrank">${r.rank}${r.tiedRank ? html`<s>同</s>` : null}</td>
         <!-- ⚠**팀명을 누르면 그 팀 화면으로 간다.** 지금까지 목적지가 없어서
              팀을 보려면 이 한 줄과 선수 일람의 한 덩어리를 머리에서 합쳐야 했다 -->
-        <td class="l tm"><i></i><a href="${base}${teamPath(r.teamCode)}">${r.shortName}</a></td>
-        <td>${r.games}</td><td class="b">${r.w}</td><td>${r.l}</td><td>${r.t}</td>
+        <td class="l"><a class="hteam" href="${base}${teamPath(r.teamCode)}"
+          style="--chip:${r.color.base};--chip-ink:${r.color.ink}"><i></i>${r.shortName}</a></td>
+        <td>${r.games}</td>
+        <td class="l wl3">${wlCell(r)}</td>
         <td class="b">${avg3(r.pct)}</td>
         <td>${r.gamesBehind === 0 ? "—" : r.gamesBehind.toFixed(1).replace(/\.0$/, "")}</td>
-        <td>${r.rf}</td><td>${r.ra}</td>
-        <td class="dif"><b>${diff(r.rf, r.ra)}</b><i class="${r.rf >= r.ra ? "p" : "n"}"
-          style="--w:${((Math.abs(r.rf - r.ra) / widest) * 100).toFixed(1)}"></i></td>
+        <td class="l wd">${runCell(r, maxAbs, r.games)}</td>
         <td class="wd">${avg3(r.avg.value)}<span class="den">${r.avg.denominator}打数</span></td>
         <td class="wd">${dec2(r.era.value)}<span class="den">${innings(r.era.denominator)}回</span></td>
         <td>${wlt(r.home)}</td><td>${wlt(r.away)}</td><td>${wlt(r.last10)}</td>
