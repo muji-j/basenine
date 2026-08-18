@@ -26,6 +26,8 @@ export {
   teamGamesOf,
 } from "./leaderboard.ts";
 export type { BattingEntry, LeagueBundle, PitchingEntry } from "./leaderboard.ts";
+export { deriveSeriesLengths, pairKey, seasonRace } from "./race.ts";
+export type { SeasonRace, SeriesLengths, TeamRace, TeamRaceInput } from "./race.ts";
 export { ALL_STATES, buildRunExpectancy, paValue, stateKey } from "./run-expectancy.ts";
 export type { RunExpectancy, StateKey } from "./run-expectancy.ts";
 export { addSrc, addSrp, computeSrc, computeSrp, missingStates, srcPer600Of, srpPer9Of } from "./situational.ts";

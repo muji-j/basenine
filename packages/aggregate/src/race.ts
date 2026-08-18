@@ -73,3 +73,132 @@ export function deriveSeriesLengths(o: {
   if (maxIntra > intra) return null;
   return { intra, inter };
 }
+
+export interface TeamRaceInput {
+  teamCode: string;
+  w: number;
+  l: number;
+  t: number;
+  /** 소화 경기 수 */
+  games: number;
+}
+
+export interface TeamRace {
+  teamCode: string;
+  /** 잔여 경기. **규정 경기수 − 소화** — 유도가 안 돼도 이건 안다 */
+  remaining: number;
+  /** 상대별 잔여. 유도가 안 되면 빈 지도 */
+  h2hLeft: Map<string, number>;
+  /** 자력우승 가능. 판정 불가면 `null`(M11) */
+  selfPossible: boolean | null;
+  /** 매직 넘버. **점등 조건을 못 채우면 `null`** */
+  magic: number | null;
+  /** 우승 가능성 소멸. 판정 불가면 `null` */
+  eliminated: boolean | null;
+}
+
+export interface SeasonRace {
+  /** `confirmed` 면 판정이 서 있다. `unknown` 이면 규정 대전수를 아직 모른다 */
+  basis: "confirmed" | "unknown";
+  series: SeriesLengths | null;
+  teams: Map<string, TeamRace>;
+}
+
+/**
+ * 勝率. ⚠**분모는 `勝 + 敗`** 다 — NPB 는 무승부를 뺀다.
+ * 결정된 경기가 없으면 `null`(M11) — 0 으로 두면 「전패」로 읽힌다.
+ */
+function pct(w: number, l: number): number | null {
+  return w + l === 0 ? null : w / (w + l);
+}
+
+/**
+ * 우승 경쟁을 판정한다.
+ *
+ * ⚠**승률로 판정하고 매직만 승수식을 쓴다.** NPB 순위는 승률(`勝/(勝+敗)`)로 정하는데
+ * 매직 넘버는 관례가 승수식이다. 그 차이를 **화면이 말해야 한다**(M3).
+ */
+export function seasonRace(o: {
+  season: number;
+  teams: readonly TeamRaceInput[];
+  leagueOf: (code: string) => string;
+  playedPairs: ReadonlyMap<string, number>;
+}): SeasonRace {
+  const total = regularSeasonGames(o.season);
+  const codes = o.teams.map((x) => x.teamCode);
+  const series = deriveSeriesLengths({
+    season: o.season,
+    teams: codes,
+    leagueOf: o.leagueOf,
+    playedPairs: o.playedPairs,
+  });
+
+  const byCode = new Map(o.teams.map((x) => [x.teamCode, x]));
+  const out = new Map<string, TeamRace>();
+
+  /** 그 팀이 잔여를 전승했을 때의 최종 승률 */
+  const bestPct = (x: TeamRaceInput): number | null => pct(x.w + (total - x.games), x.l);
+  /** 그 팀이 잔여를 전패했을 때의 최종 승률 */
+  const worstPct = (x: TeamRaceInput): number | null => pct(x.w, x.l + (total - x.games));
+
+  for (const me of o.teams) {
+    const remaining = total - me.games;
+    const h2hLeft = new Map<string, number>();
+    if (series !== null) {
+      for (const other of codes) {
+        if (other === me.teamCode) continue;
+        const full = o.leagueOf(other) === o.leagueOf(me.teamCode) ? series.intra : series.inter;
+        h2hLeft.set(other, full - (o.playedPairs.get(pairKey(me.teamCode, other)) ?? 0));
+      }
+    }
+
+    let selfPossible: boolean | null = null;
+    let eliminated: boolean | null = null;
+    const mine = bestPct(me);
+
+    if (series !== null && mine !== null) {
+      selfPossible = true;
+      eliminated = false;
+      for (const other of codes) {
+        if (other === me.teamCode) continue;
+        const b = byCode.get(other)!;
+        const h = h2hLeft.get(other) ?? 0;
+        /**
+         * ⚠**내가 전승하면 상대는 나와의 잔여를 전패한다.** 그걸 빼지 않으면
+         * 상대의 최대 승수를 실제보다 크게 잡아 자력을 과소평가한다.
+         */
+        const bMaxWins = b.w + (total - b.games) - h;
+        const bBest = pct(bMaxWins, b.l + h);
+        if (bBest !== null && bBest > mine) selfPossible = false;
+        // 상대가 **전패해도** 내 최선을 넘으면 소멸이다
+        const bWorst = worstPct(b);
+        if (bWorst !== null && bWorst > mine) eliminated = true;
+      }
+    }
+
+    out.set(me.teamCode, { teamCode: me.teamCode, remaining, h2hLeft, selfPossible, magic: null, eliminated });
+  }
+
+  /**
+   * 매직 넘버.
+   *
+   * ⚠**점등 조건은 「다른 모든 팀의 자력우승 소멸」이다.** 그것이 매직의 정의다 —
+   * 조건을 안 지킨 수를 「マジック」라고 부르면 그건 다른 것이고, 이 저장소는
+   * 자체 지표에 공식과 다른 이름을 쓰기로 이미 정해 뒀다(SRC·SRP).
+   */
+  if (series !== null) {
+    for (const me of o.teams) {
+      const others = codes.filter((c) => c !== me.teamCode);
+      const allGone = others.every((c) => out.get(c)!.selfPossible === false);
+      if (!allGone) continue;
+      let magic = 0;
+      for (const c of others) {
+        const b = byCode.get(c)!;
+        magic = Math.max(magic, b.w + (total - b.games) - me.w + 1);
+      }
+      out.get(me.teamCode)!.magic = Math.max(0, magic);
+    }
+  }
+
+  return { basis: series === null ? "unknown" : "confirmed", series, teams: out };
+}
