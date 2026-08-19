@@ -77,6 +77,8 @@ function siteData(over: Partial<SiteData> = {}): SiteData {
     latestAnyGameDate: "2026-08-14",
     postseason: { season: 2026, competitions: [] },
     teams: [],
+    // ⚠**정상은 빈 배열이다.** 비지 않으면 빌드가 종료 코드 1을 낸다(`tools/build.ts` · 검토 m2)
+    raceDisagreed: [],
     games: [],
     ...over,
   };

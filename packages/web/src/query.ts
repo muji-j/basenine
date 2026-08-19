@@ -3074,7 +3074,7 @@ function teamPages(
    * 따로 읽으면 「구단 페이지만 다른 날의 예고를 말한다」가 언젠가 난다.
    */
   starters: StartersPageData,
-): TeamPageData[] {
+): TeamPagesResult {
   const competition = o.competition ?? "regular";
   const through = o.through ?? "9999-12-31";
   const h2h = h2hOf(db, o);
@@ -3363,7 +3363,51 @@ function teamPages(
       });
     }
   }
-  return out;
+
+  /**
+   * ⚠**M7 의 나머지 절반 — 여기서도 알아챌 수 있게 한다**(2026-08-19 검토 Important).
+   *
+   * 화면은 予告先発이 없으면 「発表待ち」라고 쓴다. 그런데 그 문장은 **두 가지**를 뜻한다:
+   * ⒜아직 발표되지 않았다(정상) ⒝우리가 받지 못했다(수집 결함).
+   * 실측(2026-08-19 검토): `dist/starters.html` 의 대상일이 **2026-08-16** 인데 빌드일은
+   * **2026-08-19** 였고, 12구단 전부의 다음 경기가 8/19 라 **12/12 가 「発表待ち」**였다.
+   * NPB 予告先発은 **전날** 발표되므로 그 예고는 현실에 존재했다 — 화면이 말한 이유가
+   * 사실이 아니었고, 진짜 이유(**우리 데이터가 3일 낡았다**)는 아무 데도 안 나왔다.
+   * ⚠**화면 문구는 바꾸지 않는다.** 방문자가 알아야 할 것이 아니라 운영자가 알아야 할 것이다 —
+   * 위의 `disagreed` 경고와 같은 자리·같은 형식으로 빌드 로그에 낸다.
+   *
+   * ⚠**「발표 전(정상)」에는 울리지 않는다.** 기준일보다 **이전**일 때만이다 —
+   * 기준일 당일의 예고를 갖고 있는데 다음 날 것이 아직 없는 것은 정상이고, 그때는
+   * 화면의 「発表待ち」가 사실이다.
+   * ⚠**가리킬 경기가 없으면 울리지 않는다.** 소급 시즌(2018~2025)은 `probable_pitcher` 에
+   * 행이 아예 없어(실측 2026-08-19: **2026-08-16 하루치 12행**이 전부) 늘 `null` 인데,
+   * 다음 경기도 없으므로 화면은 「発表待ち」라고 말하지 않는다 — 거짓말이 성립하지 않는다.
+   * 9시즌 빌드에서 8시즌이 매번 울리면 **진짜 신호가 소음에 묻힌다**(daily.yml 이 이미 적어 둔 함정).
+   */
+  const waiting = out.filter((t) => t.now.next !== null && t.now.probable === null).length;
+  if (waiting > 0 && (starters.gameDate === null || starters.gameDate < o.builtOn)) {
+    console.warn(
+      `⚠ ${o.season}: 予告先発が古い — 画面は「発表待ち」と書きますが、実際には` +
+        `**取り込めていない**可能性があります（${waiting}/${out.length}球団 · ` +
+        `予告の対象日=${starters.gameDate ?? "1日も持っていない"} · 生成日=${o.builtOn}）`,
+    );
+  }
+
+  return { pages: out, disagreed: race.disagreed };
+}
+
+/**
+ * `teamPages` 의 산출.
+ *
+ * ⚠**판정이 사라진 사실을 화면 밖으로 들고 나온다**(2026-08-19 검토 m2).
+ * `disagreed` 가 비지 않으면 12구단의 우승 판정이 통째로 없어지는데 **화면 문구는 정직하다**
+ * (「まだ判定できません」) — 그래서 눈으로는 발견되지 않고, `console.warn` 은 아무도 안 읽는다.
+ * 배포를 세우는 판단은 `tools/build.ts` 가 한다(`emptySeasons`·`stale` 과 같은 형식).
+ */
+interface TeamPagesResult {
+  pages: TeamPageData[];
+  /** 성적과 대전표가 어긋난 구단 코드. **비어 있지 않으면 파이프라인 결함이다** */
+  disagreed: readonly string[];
 }
 
 /**
@@ -3562,6 +3606,19 @@ export interface SiteData {
   postseason: PostseasonPageData;
   /** 球団ページ. 순위표에서 팀명을 누르면 여기로 온다 */
   teams: TeamPageData[];
+  /**
+   * 성적(`w/l/t/games`)과 대전표가 어긋난 구단 코드. **비어 있는 것이 정상이다.**
+   *
+   * ⚠**비어 있지 않으면 배포하지 않는다**(2026-08-19 검토 m2 · `tools/build.ts`).
+   * 그때 12구단의 우승 판정이 통째로 사라지는데 **화면 문구는 정직하다**
+   * (「優勝争いはまだ判定できません」) — 눈으로는 발견되지 않는다. M7 의 「실패로」에
+   * `console.warn` 만으로는 반쯤밖에 못 닿는다(CI 가 stderr 를 읽지 않으면 아무도 모른다).
+   *
+   * ⚠**`basis: "unknown"` 전체가 아니라 이것만이 결함이다.** 교류전이 안 끝난 4~5월에는
+   * 규정 대전수를 유도할 수 없어 `unknown` 이 **정상 상태**다(실측: 2026 타임라인에서
+   * 06-01 부터 `confirmed`). 둘을 가르는 것이 이 배열이다 — `race.ts` 의 조합표를 보라.
+   */
+  raceDisagreed: readonly string[];
   /** 경기 페이지. **빌드 대상 시즌만** — 2025년은 아카이브에 있지만 화면은 아직 한 시즌이다 */
   games: GamePageData[];
   search: SearchEntry[];
@@ -4396,6 +4453,33 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
    */
   const todayData = todayPage(db, o, startersData, nameOf, gamePageIds, days);
 
+  /**
+   * ⚠**여기서 한 번만 부른다.** 우승 판정이 어긋났다는 사실(`disagreed`)을 화면과 함께
+   * 들고 나와야 배포를 세울 수 있다(M7 · 검토 m2). 반환 객체 안에서 부르면 그 값을 못 받는다.
+   */
+  const teamData = teamPages(
+    db,
+    o,
+    standings,
+    agg,
+    leagueBatting,
+    leaguePitching,
+    bundleByLeague,
+    srcByTeam,
+    srpByTeam,
+    meta.latest,
+    // ⚠**「기록이 있다」와 「포스트시즌이 있다」는 다른 말이다.** 올스타뿐인 시즌(2026)에
+    // 「ポストシーズンは別の画面にあります」라고 쓰면 없는 것을 있다고 안내하는 것이 된다.
+    // 내비 항목은 기록이 있으면 내지만, 이 문구는 진짜 포스트시즌일 때만이다
+    postseasonData.competitions.some((c) => c.id !== "allStar"),
+    latestDay,
+    // ⚠**만들어진 목록 자체를 넘긴다**(M1) — 「어느 경기에 페이지가 있는가」의 조건을
+    //   캘린더에 베끼면 한쪽이 바뀔 때 조용히 갈린다
+    gamePageIds,
+    // ⚠**予告先発도 같은 한 벌이다**(M1) — 試合 화면·予告先発 화면이 쓰는 것을 그대로 넘긴다
+    startersData,
+  );
+
   return {
     season: o.season,
     asOf: meta.latest,
@@ -4457,28 +4541,8 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     days: dayPages(db, o, days, latestDay, nameOf, gamePageIds),
     dayIndex: { season: o.season, latestDate: latestDay, days: [...days] },
     postseason: postseasonData,
-    teams: teamPages(
-      db,
-      o,
-      standings,
-      agg,
-      leagueBatting,
-      leaguePitching,
-      bundleByLeague,
-      srcByTeam,
-      srpByTeam,
-      meta.latest,
-      // ⚠**「기록이 있다」와 「포스트시즌이 있다」는 다른 말이다.** 올스타뿐인 시즌(2026)에
-      // 「ポストシーズンは別の画面にあります」라고 쓰면 없는 것을 있다고 안내하는 것이 된다.
-      // 내비 항목은 기록이 있으면 내지만, 이 문구는 진짜 포스트시즌일 때만이다
-      postseasonData.competitions.some((c) => c.id !== "allStar"),
-      latestDay,
-      // ⚠**만들어진 목록 자체를 넘긴다**(M1) — 「어느 경기에 페이지가 있는가」의 조건을
-      //   캘린더에 베끼면 한쪽이 바뀔 때 조용히 갈린다
-      gamePageIds,
-      // ⚠**予告先発도 같은 한 벌이다**(M1) — 試合 화면·予告先発 화면이 쓰는 것을 그대로 넘긴다
-      startersData,
-    ),
+    teams: teamData.pages,
+    raceDisagreed: teamData.disagreed,
     games: [...gameList, ...postGameList],
   };
 }

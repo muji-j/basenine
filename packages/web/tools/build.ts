@@ -138,6 +138,30 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
         process.exitCode = 1;
       }
 
+      /**
+       * ⚠**우승 판정이 통째로 사라진 채 배포하지 않는다**(2026-08-19 검토 m2).
+       *
+       * 성적(`w/l/t/games`)과 대전표가 어긋나면 `seasonRace` 가 시즌 전체를 `unknown` 으로
+       * 떨어뜨려 **12구단 페이지의 판정이 한꺼번에 없어진다.** 그런데 화면 문구는 정직하고
+       * (「優勝争いはまだ判定できません」) 신호는 `console.warn` 하나뿐이었다 —
+       * CI 가 stderr 를 안 읽으면 아무도 모른다. **M7 의 「실패로」에 반쯤만 닿아 있었다.**
+       *
+       * ⚠**`basis: "unknown"` 전체를 막는 것이 아니다.** 교류전이 안 끝난 4~5월의 `unknown` 은
+       * **정상 상태**다(실측: 2026 타임라인에서 06-01 부터 `confirmed`). 여기서 보는 것은
+       * 「성적과 대전표가 서로 다른 세계의 것이다」뿐이고, 그건 언제나 파이프라인 결함이다.
+       * ⚠**산출물은 남긴다** — `stale`·`emptySeasons` 와 같은 형식이다. 배포만 막는다.
+       */
+      const disagreedSeasons = loaded.filter((l) => l.data.raceDisagreed.length > 0);
+      if (disagreedSeasons.length > 0) {
+        console.error(
+          "⚠ 성적과 대전표가 어긋난다 — 우승 경쟁 판정이 통째로 사라진 채 나갈 뻔했다. 배포하지 않는다",
+        );
+        for (const l of disagreedSeasons) {
+          console.error(`   ${l.season}: ${l.data.raceDisagreed.length}구단 — ${l.data.raceDisagreed.join(" ")}`);
+        }
+        process.exitCode = 1;
+      }
+
       const mb = (bytes / 1024 / 1024).toFixed(1);
       console.log(`생성: ${fileCount}파일 / ${mb}MB / 시즌 ${seasons.join("·")}`);
       console.log(`집계: ${loadMs.toFixed(0)}ms · 최신 경기일 ${result.latestGameDate ?? "없음"} · 생성일 ${builtOn}`);
