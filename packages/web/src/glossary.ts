@@ -217,7 +217,7 @@ export const GLOSSARY: Readonly<Record<string, Term>> = {
   innings: { label: "投球回", short: "投げたイニング数。6.2 は6回3分の2を表します。" },
   qualifiedBatter: {
     label: "規定打席",
-    short: "率の順位がつく最低ライン。チーム試合数 × 3.1（小数切り上げ）です。",
+    short: "率の順位がつく最低ライン。チーム試合数 × 3.1（端数は四捨五入）です。",
     caveat: "⚠届かない選手にも成績はあります。順位がつかないだけです。",
   },
   qualifiedPitcher: {

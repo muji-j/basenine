@@ -449,7 +449,7 @@ function roleLine(line: PitchingLine, games: number): RoleLine | null {
 function batterQualifier(bundle: LeagueBundle): string {
   const { min, max } = neededPaRange(bundle);
   const need = min === max ? `${min}` : `${min}〜${max}`;
-  return `規定打席 ${need}（所属球団の試合数 × 3.1、小数切り上げ）に達した選手だけに順位がつきます。球団ごとに消化試合数が違うため基準も異なります。同率は同じ順位で、次の順位を飛ばします。`;
+  return `規定打席 ${need}（所属球団の試合数 × 3.1、端数は四捨五入）に達した選手だけに順位がつきます。球団ごとに消化試合数が違うため基準も異なります。同率は同じ順位で、次の順位を飛ばします。`;
 }
 
 /**
@@ -478,7 +478,7 @@ function pitcherQualifier(bundle: LeagueBundle, role: PitcherRole): string {
  */
 function batterQualifierShort(bundle: LeagueBundle, teamCode: string): string {
   const games = teamGamesOf(bundle, teamCode);
-  return `規定打席 ${neededPa(bundle, teamCode)}（この球団の${games}試合 × 3.1、小数切り上げ）`;
+  return `規定打席 ${neededPa(bundle, teamCode)}（この球団の${games}試合 × 3.1、端数は四捨五入）`;
 }
 
 /**

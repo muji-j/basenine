@@ -187,7 +187,7 @@ function data(over: Partial<TeamPageData> = {}): TeamPageData {
         qualified: false,
       },
     ],
-    batQualifier: "規定打席 338（チーム109試合 × 3.1、小数切り上げ）",
+    batQualifier: "規定打席 338（チーム109試合 × 3.1、端数は四捨五入）",
     pitQualifier: "先発は規定投球回 109回（NPB公式）、救援はその3分の1 36.3回（当サイトの基準でNPBのものではありません）",
     vs: [
     { code: "g", shortName: "巨人", color: colorOf("g"), w: 13, l: 7, t: 0 },
