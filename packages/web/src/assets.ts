@@ -59,6 +59,15 @@ export const CSS = `
   --bar-w:#062a47; --bar-t:#eceae2; --bar-l:#b8651f;
   --f-body:"Yu Gothic","Hiragino Kaku Gothic ProN","Noto Sans JP","Meiryo",system-ui,sans-serif;
   --f-num:"SFMono-Regular","Consolas","Menlo","Yu Gothic",monospace;
+  /* ⚠**이 값은 .topbar 의 「실제」 높이여야 한다.** .rail·.hjump·.pickbar 의 sticky 오프셋과
+     scroll-padding-top 이 전부 이 하나를 읽는다 — 어긋나면 앵커가 헤더 뒤로 숨는다.
+     ⚠**한때 어긋나 있었다**(2026-08-19 감사 P1 · 2026-08-20 수정). .topbar 가 height 고정인데
+     .tnav{flex-wrap:wrap} 이라 탭 8개가 **481~770px 에서 2행**이 됐고, 바 높이는 안 따라왔다.
+     실측(step 4 · 400~1000px · 151점): **72점에서 탭줄이 바 밖으로** 나갔다 —
+     768px 에서 탭줄이 top:-7.1 ~ bottom:52.1(바는 0~46)이라 첫 행이 화면 위로 잘리고
+     아랫행이 시즌 띠를 배경 없이 덮었다. 손가락(pointer:coarse)에서는 더 넓어 **484~784px · 76점**이었다.
+     → 지금은 **바가 실제로 이 높이가 되도록** 폭 구간마다 값을 바꾼다(아래 반응형 참조).
+     ⚠**값을 바꿀 때는 tools/measure-topbar.ts 로 실측하라.** 눈대중이 이 결함을 못 잡았다. */
   --topbar:46px;
   /* 탭줄 한 줄의 높이. 스크롤 여백 계산이 이 값을 쓰므로 .rail 이 실제로 이 높이여야 한다 */
   --rail:48px;
@@ -99,9 +108,16 @@ a{color:inherit}
 /* ── 전역 헤더 ─────────────────────────────────────────────
    ⚠검색과 이동이 **어느 화면에서나 손에 닿아야 한다.** 최하단에만 두면
    1000행짜리 순위표 아래에 묻힌다. */
+/* ⚠**height 가 아니라 min-height 다.** 고정 높이는 안에 든 것이 넘칠 때 **말없이 넘친다** —
+   그게 2026-08-19 감사가 잡은 결함의 형태였다(탭줄이 바 위아래로 삐져나가 첫 행이 화면 밖으로 잘렸다).
+   min-height 면 최악의 경우 바가 **자란다**. 자라는 것은 눈에 보이고, 넘치는 것은 안 보인다.
+   ⚠**그렇다고 자라도 된다는 뜻은 아니다** — --topbar 를 읽는 곳이 다섯이라 자라면 그쪽이 어긋난다.
+   아래 .tnav{flex-wrap:nowrap} 과 반응형의 --topbar 재정의가 **실제로 자라지 않게** 붙든다. */
 .topbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px;
-  height:var(--topbar);padding:0 12px 0 var(--pad);background:var(--panel);border-bottom:1px solid var(--hair-2)}
-.brand{font-size:13px;font-weight:700;letter-spacing:.14em;text-decoration:none;white-space:nowrap}
+  min-height:var(--topbar);padding:0 12px 0 var(--pad);background:var(--panel);border-bottom:1px solid var(--hair-2)}
+/* ⚠**줄지 않는다.** 기본 flex 항목은 내용보다 작아질 수 있어, 좁은 화면에서 워드마크가
+   제 상자를 넘어 옆 것과 겹친다. 줄어드는 몫은 검색칸(≥681px)과 탭줄(≤680px)이 진다 */
+.brand{flex:0 0 auto;font-size:13px;font-weight:700;letter-spacing:.14em;text-decoration:none;white-space:nowrap}
 .brand b{color:var(--tx-3);font-weight:400;letter-spacing:.04em;font-size:10px;margin-left:5px}
 @media (max-width:560px){.brand b{display:none}}
 .qbox{position:relative;flex:1 1 auto;max-width:340px;min-width:0}
@@ -123,8 +139,29 @@ a{color:inherit}
 /* 성적은 둘째 줄에. **분모까지 붙어 있다**(M2) — 이 줄의 존재 이유가 「이 사람이 맞나」의 판단이다 */
 .qhits .hs{flex-basis:100%;font-size:10.5px;color:var(--tx-2);font-variant-numeric:tabular-nums}
 .qhits .none{padding:7px 11px;font-size:12px;color:var(--tx-3)}
-.tnav{display:flex;gap:2px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
-.tnav a{font-size:12px;padding:5px 9px;text-decoration:none;color:var(--tx-2);white-space:nowrap;
+/* ⚠**탭줄은 접히지 않는다 — 한 줄로 남고 모자라면 옆으로 굴린다.**
+   탭이 8개(球団 試合 一覧 順位 対戦 比較 他大会 記録)라 flex-wrap:wrap 이면 좁은 폭에서 2행이 되는데,
+   바는 --topbar 높이라 **2행이 들어갈 자리가 없다.** 실측 파손 구간 481~770px(손가락 481~784px).
+   ⚠**flex:0 0 auto 가 짝이다**(≥681px). 안 그러면 flex 축소가 검색칸과 탭줄에 **비례 배분**되어
+   자리가 남는데도 탭줄이 먼저 잘린다 — 실측으로 681px 에서 탭줄이 305px 로 줄어 굴림이 생겼다.
+   여기서는 검색칸만 줄고(→최소 107px) 탭 8개는 온전히 남는다.
+   ⚠**≤680px 에서는 뒤집는다** — 검색칸이 제 줄로 내려가므로 탭줄이 줄어드는 쪽이 된다(반응형 참조).
+   ⚠overflow-x 는 「그래도 모자랄 때」의 안전판이다. 한 축이 visible 이 아니면 다른 축도
+   스크롤 컨테이너가 되므로(이 파일이 표에서 이미 데인 성질) overflow-y:hidden 을 명시하고,
+   포커스 링(2px + offset 1px)이 잘리지 않게 위아래 3px 을 비워 둔다.
+   ⚠**여기만 스크롤바를 감춘다 — 바로 아래 .seasons 와 반대다.** .seasons 의 주석은
+   「숨기면 더 있다는 것을 알 방법이 마우스 유저에게 없다」고 적었고 그건 거기서 옳다.
+   여기서 반대로 하는 이유는 하나뿐이다: **이 상자의 높이가 --topbar 라는 계약이기 때문**이다.
+   ⚠**실측이 이걸 잡았다**(2026-08-20). headless 크로뮴은 오버레이 스크롤바라 자리를 안 먹는데,
+   **화면이 붙은 크로뮴(Windows)은 scrollbar-width:thin 이 9px 을 실제로 차지한다** —
+   같은 페이지에서 탭줄 33 → **44px**, 바 88 → **96.6px** 이 됐고 토큰은 88 인 채였다.
+   즉 headless 로만 쟀으면 **고친 줄 알고 같은 결함을 다시 냈다.**
+   ⚠**더 있다는 신호는 잘린 탭 자체가 낸다** — 마지막 탭이 글자 중간에서 끊긴다(실측 420px 에서 「記」).
+   그리고 바로 아래 시즌 띠가 같은 어법으로 스크롤바를 보여 주므로 패턴은 화면에 남아 있다. */
+.tnav{display:flex;gap:2px;margin-left:auto;flex-wrap:nowrap;flex:0 0 auto;justify-content:flex-end;
+  min-width:0;padding:3px 0;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scrollbar-width:none}
+.tnav::-webkit-scrollbar{display:none}
+.tnav a{flex:0 0 auto;font-size:12px;padding:5px 9px;text-decoration:none;color:var(--tx-2);white-space:nowrap;
   transition:color var(--fast) var(--ease),background var(--fast) var(--ease)}
 .tnav a:hover{color:var(--tx);background:var(--panel-2)}
 /* ⚠**「지금 여기」가 어느 화면에서나 같은 방식으로 보여야 한다**(2026-08-17 유저 지적:
@@ -137,7 +174,12 @@ a{color:inherit}
 /* ⚠**홈에서는 표시가 브랜드에 붙는다** — 탭 줄에는 홈 항목이 없기 때문이다.
    여기에 규칙이 없어서 홈만 「아무 데도 안 있는」 것처럼 보였다. 탭과 같은 언어로 표시한다. */
 .brand[aria-current="page"]{box-shadow:inset 0 -2px 0 var(--team,#6b7280)}
-.tbtn{font:inherit;font-size:13px;line-height:1;padding:6px 8px;cursor:pointer;background:transparent;
+/* ⚠**「自動」이 「自/動」으로 접혔다**(2026-08-19 감사 P1). 이 버튼은 flex 항목인데
+   flex 도 white-space 도 없어서, 자리가 모자라면 **글자에서 줄바꿈**을 했다 —
+   실측 43.8×27 → 34.4×**40**. 40px 은 바(44~46px)를 거의 다 먹는다.
+   ⚠글자가 두 자라 「줄이면 되겠지」로 보이지만, 줄어드는 것은 폭이 아니라 **높이**다. */
+.tbtn{flex:0 0 auto;white-space:nowrap;
+  font:inherit;font-size:13px;line-height:1;padding:6px 8px;cursor:pointer;background:transparent;
   color:var(--tx-2);border:1px solid transparent;transition:color var(--fast) var(--ease)}
 .tbtn:hover{color:var(--tx);border-color:var(--hair-2)}
 
@@ -961,11 +1003,13 @@ a.cg:focus-visible{outline:2px solid var(--tx);outline-offset:1px}
   background:var(--panel-2)}
 @media (pointer:coarse){.hjump a{padding:8px 13px}}
 /* ⚠**좁은 화면에서는 따라 붙지 않는다.**
-   ≤480px 에서 .topbar 는 height:auto 로 접혀 **실제 높이가 --topbar(44px)보다 크다**
-   (검색칸이 flex-basis:100% 라 반드시 2행 이상 · 최소 75.65px). 그런데 .hjump 는
-   top:var(--topbar) 로 붙으므로 **헤더 뒤로 잠긴다** — 누를 곳이 사라진다.
-   ⚠.rail 이 이미 같은 이유로 ≤680px 에서 static 이다. 새로 만든 이 줄만 그 교훈을 안 받았다.
-   ⚠고정을 포기해도 기능은 남는다 — 화면 맨 위의 링크 줄로 동작한다. */
+   ≤680px 에서 .topbar 는 2행으로 접혀 화면의 큰 몫을 이미 먹는다 — 그 아래에 링크 줄까지
+   붙이면 본문이 사라진다. .rail 이 같은 이유로 ≤680px 에서 static 이다.
+   ⚠고정을 포기해도 기능은 남는다 — 화면 맨 위의 링크 줄로 동작한다.
+   ⚠**높이 어긋남은 더 이상 여기서 다루지 않는다**(2026-08-20). 예전에는 「≤480 에서 --topbar 가
+   실제 높이가 아니다」를 이 근처와 아래 두 곳에 나눠 적고 **86px 를 손으로 박았는데**,
+   그 86 조차 실측 113~115px 에 28px 모자랐다. 지금은 --topbar 자체가 폭 구간마다
+   실제 높이로 정의되므로(반응형 §), 이 계산들은 그냥 맞는다. */
 @media (max-width:680px){
   .hjump{position:static}
   /* ⚠**특정성을 한 단계 올린다.** 아래 무조건 규칙과 특정성이 같으면
@@ -975,16 +1019,6 @@ a.cg:focus-visible{outline:2px solid var(--tx);outline-offset:1px}
 }
 /* ⚠**앵커로 뛸 때 sticky 두 겹에 가리지 않게** 여백을 더 준다 */
 html:has(.hjump){scroll-padding-top:calc(var(--topbar) + 52px)}
-/* ⚠**≤480px 에서는 --topbar 가 실제 높이가 아니다**(2026-08-18 감사 P3).
-   .topbar 가 height:auto 로 접혀 **최소 75.65px** 인데(검색칸이 flex-basis:100%)
-   scroll-padding 은 토큰값(46px) 그대로여서, 앵커로 뛰면 구획 머리가 **22~30px 잠겼다.**
-   sticky 는 위에서 껐는데 여백 계산은 안 따라왔다 — 같은 사실을 두 곳에 적은 대가다.
-   ⚠**:root 를 붙여 특정성을 올린다** — 위의 무조건 규칙들과 같으면 소스 순서 싸움이 된다. */
-@media (max-width:480px){
-  html:root{scroll-padding-top:86px}
-  html:root:has(.rail){scroll-padding-top:calc(86px + var(--rail))}
-  html:root:has(.hjump){scroll-padding-top:86px}
-}
 
 /* 先週の顔 — **순위 번호를 크게 쓰지 않는다.** 한 주짜리 순위를 시즌 순위와
    같은 무게로 그리면 그렇게 읽힌다 */
@@ -1125,7 +1159,18 @@ table.iscore .tot{font-weight:700;border-left:1px solid var(--hair-2)}
 /* 주자 다이아몬드 — **우리 데이터로 그린 우리 그림**(로고·사진 금지의 대체물) */
 .dia{display:block;overflow:visible}
 .dia .db{fill:none;stroke:var(--tx-3);stroke-width:1.2}
-.dia .db.on{fill:var(--chip,#6b7280);stroke:var(--chip,#6b7280)}
+/* ⚠**윤곽선까지 구단 색으로 칠하면 「주자 있음」이 「베이스가 없음」으로 보인다**
+   (2026-08-19 감사 P1 · 2026-08-20 수정 · 경기 페이지 7,502장 = 사이트의 49%).
+   빈 베이스는 --tx-3 테두리로 **6.67:1** 이라 확실히 보이는데, 찬 베이스는 면과 선이 같은 색이라
+   대비가 낮은 구단에서 **둘 다 한꺼번에 사라졌다.** WCAG 1.4.11(비텍스트 3:1) 기준으로
+   **12구단 전부가 한쪽 테마에서 미달**이었다(라이트: 阪神 1.61 등 / 다크: オリックス 1.08 등).
+   ⚠**색을 밝게 고르는 것으로는 못 고친다** — 어느 색이든 한쪽 테마에서 무너진다.
+   → **면만 구단 색, 윤곽과 굵기는 중립 고대비.** 색이 안 보여도 「두꺼운 마름모」가 남는다.
+   --tx 는 어느 바탕에서도 실측 라이트 15.85~17.89 · 다크 12.36~14.74 다. 굵기 1.2→2.0 이 형태 채널이고,
+   이 파일이 .hteam i · .cal td.ctoday 에서 이미 쓴 수법이다.
+   ⚠**game-page.ts 의 주석이 「명도 차이로도 읽힌다」고 적어 뒀는데 그건 실측에 반박당했다** —
+   같이 고쳤다. 두 곳에 적은 사실은 두 곳 다 고쳐야 한다. */
+.dia .db.on{fill:var(--chip,#6b7280);stroke:var(--tx);stroke-width:2}
 .dia .do{fill:none;stroke:var(--tx-3);stroke-width:1}
 .dia .do.on{fill:var(--tx-2);stroke:var(--tx-2)}
 @media (max-width:600px){
@@ -1299,7 +1344,18 @@ table.stand .dif i.n{right:50%}
 .trecent a{display:flex;align-items:baseline;gap:8px;padding:5px 0;text-decoration:none;
   border-bottom:1px solid var(--hair)}
 .trecent b{font-size:13px;width:1.2em;text-align:center;color:var(--tx-3)}
-.trecent li.w b{color:var(--team,#6b7280)}
+/* ⚠**이겼다는 표식에 구단 색을 쓰지 않는다**(2026-08-19 감사 P1 · 2026-08-20 수정).
+   배경에 쓸 때는 --team-ink 가 짝이 되어 대비가 보장되는데 **글자색에는 짝이 없다.**
+   실측(13px 본문 · 4.5:1 필요 · --page 기준) — **12구단 전부가 한쪽 테마에서 미달**이었다:
+     라이트 미달  阪神 1.61 · ソフトバンク 1.64 · ヤクルト 2.72 · 巨人 2.79
+     다크 미달    オリックス 1.08 · ロッテ 1.10 · 中日 1.35 · 西武 1.46 ·
+                  楽天 1.74 · 日本ハム 2.40 · DeNA 2.54 · 広島 2.83
+   ⚠**결과가 뜻과 반대였다** — 진 경기(--tx-2 · 6.6:1)만 또렷해서 최근 10경기를 훑으면
+   팀이 실제보다 나쁘게 읽혔다. 이긴 경기가 안 보이는 승패 목록은 목록이 아니다.
+   → 이 파일이 이미 세워 둔 「뜻이 있는 자리의 강조색」(--up/--dn)을 쓴다. --up 은 어느 바탕에서도
+   통과한다 — 실측 라이트 4.95(--panel-2)~5.59(--panel) · 다크 5.87~7.00. 구단 색은 이 화면의 다른 자리
+   (월별 막대 .tbar .w · 표제 밑줄)가 이미 배경으로 말하고 있다. */
+.trecent li.w b{color:var(--up);font-weight:700}
 .trecent li.l b{color:var(--tx-2)}
 .trecent span{font-size:11.5px;color:var(--tx-2)}
 .trecent s{text-decoration:none;margin-left:auto;font-size:11.5px}
@@ -1580,13 +1636,35 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
   .bar{grid-template-columns:76px 1fr 118px;gap:8px}
 }
 @media (max-width:680px){
-  :root{--pad:13px;--topbar:44px}
+  /* ⚠**여기서 헤더가 2행이 된다** — 브랜드·탭줄·테마가 윗줄, 검색칸이 아랫줄.
+     그래서 --topbar 도 **2행의 실제 높이**로 바꾼다. 이 한 줄이 .rail·.hjump·.pickbar·
+     scroll-padding-top·.shell 을 **전부 한꺼번에** 맞춘다 — 예전에는 여기가 44px 인 채
+     scroll-padding-top:86px 를 ≤480 에 따로 박아 뒀고, 그 86 조차 실측 **113~115px** 에
+     28px 모자랐다(2026-08-20 계측).
+     ⚠**실측값이다**(step 4 · 400~680px · 마우스): 내용 높이가 **86.2px**(≤420px · 탭 글자 11px)와
+     **87.7px**(421~680px · 12px) 둘뿐이라, 큰 쪽을 덮는 **88px** 로 잡는다.
+     min-height 라서 작은 쪽도 88px 로 채워진다 — 즉 ≤680px 전 구간에서 바가 정확히 88px 이다.
+     ⚠**작게 잡으면 안 된다**: 86px 로 뒀더니 421~680px 에서 바가 87.7px 로 자라 토큰이 다시 거짓이 됐다. */
+  :root{--pad:13px;--topbar:88px}
+  /* ⚠**검색칸을 아랫줄로 내린다.** 브랜드·탭 8개·테마가 이미 윗줄을 다 쓴다 —
+     한 줄에 넣으면 검색칸이 100px 아래로 찌부러져 무엇을 치는지 안 보인다.
+     ⚠**탭줄은 여기서 줄어드는 쪽이 된다**(기본값 flex:0 0 auto 를 되돌린다). 아랫줄이 없어졌으니
+     모자라면 옆으로 굴린다 — 실측으로 680px 은 8개가 다 보이고, 굴림이 필요한 것은 약 560px 아래다. */
+  .topbar{flex-wrap:wrap;padding:6px 10px 8px;gap:6px}
+  .qbox{order:3;flex-basis:100%;max-width:none}
+  /* ⚠**flex-basis 를 0 으로 만드는 것이 핵심이다**(실측으로 배웠다 · 2026-08-20).
+     줄바꿈은 **줄이기 전의 크기**로 결정된다 — flex:0 1 auto 로 두면 탭줄의 기준 크기가
+     내용 폭(약 330px)이라 400px 화면에서 **탭줄이 제 줄로 밀려나** 헤더가 3행 119.2px 이 됐다.
+     기준을 0 으로 두면 줄바꿈을 유발하지 않고, 윗줄의 남는 폭을 받아 그 안에서 굴린다.
+     ⚠**넘칠 때는 왼쪽 정렬이어야 한다.** justify-content:flex-end 로 넘치면 앞쪽 탭이
+     스크롤로 닿지 않는 자리(시작 방향)로 밀려난다. 그래서 기본을 flex-start 로 두고,
+     아는 브라우저에만 safe flex-end 를 준다 — 모르는 브라우저는 앞 줄에 남아 안전한 쪽으로 떨어진다. */
+  .tnav{flex:1 1 0;margin:0;justify-content:flex-start;justify-content:safe flex-end}
   .shell{grid-template-columns:7px 1fr}
   .spine{padding:0}
   .spine .vt{display:none}
   /* 화면이 좁으면 레일까지 고정하면 본문이 사라진다 — 헤더만 남긴다 */
   .rail{position:static}
-  .qbox{max-width:none}
   .tnav a{padding:5px 7px}
   .idline{gap:11px;padding-top:13px}
   .mark .mk{width:42px;height:42px}
@@ -1598,13 +1676,9 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
   .roster{grid-template-columns:1fr}
   th,td{padding:6px 7px}
 }
-@media (max-width:480px){
-  /* 링크가 4개가 되면 한 줄에 브랜드·검색·내비·테마가 다 들어가지 않는다.
-     검색창을 아랫줄로 내린다 — 줄이는 것보다 두 줄이 낫다 */
-  .topbar{height:auto;flex-wrap:wrap;padding:6px 10px 8px;gap:6px}
-  .qbox{order:3;flex-basis:100%;max-width:none}
-  .tnav{margin-left:auto}
-}
+/* ⚠**≤480 에 있던 헤더 접기를 ≤680 으로 올렸다**(2026-08-20).
+   접는 이유(「한 줄에 브랜드·검색·내비·테마가 다 안 들어간다」)는 480 이 아니라 **680 부터** 참이었다 —
+   481~680 에서는 접지 않은 채 탭줄만 2행이 되어 바 밖으로 샜다. 규칙을 옮겼을 뿐 뜻은 그대로다. */
 @media (max-width:420px){
   .brand{font-size:12px;letter-spacing:.08em}
   .tnav a{font-size:11px;padding:5px 6px}
@@ -1618,6 +1692,17 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
   /* ⚠**접힘 손잡이도 여기 든다.** 글자가 10px이라 손가락으로는 높이 16px 남짓인데,
      이게 목록을 여는 유일한 자리다 — 빠뜨리면 그 화면이 휴대폰에서 안 열린다 */
   .pickfold>summary{padding:6px 0}
+}
+/* ⚠**손가락에서는 헤더가 더 두껍다 — --topbar 도 따라가야 한다.**
+   바로 위 .tnav a{padding:9px 10px} 이 탭 높이를 27.0 → 36.6px 으로 올린다.
+   접힌 헤더(≤680px)에서는 그게 그대로 바 높이가 되므로, 86px 로 두면 바가 **94.6px** 로 자라고
+   --topbar 가 다시 거짓이 된다 — 즉 이 결함의 재발이다.
+   ⚠**폭 조건을 반드시 붙인다.** pointer:coarse 만으로 걸면 터치 노트북의 1200px 화면에서도
+   96px 이 되는데 거기 바는 46px 이다(반대 방향으로 어긋난다).
+   실측(step 4 · 400~680px · 손가락): 내용 높이 **95.0px**(≤420px)와 **95.7px**(421~680px) →
+   큰 쪽을 덮는 96px. ≥684px 은 손가락에서도 42.6px 이라 46px 안에 들어간다(실측 바 46.0). */
+@media (pointer:coarse) and (max-width:680px){
+  :root{--topbar:96px}
 }
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:1ms!important;animation-delay:0ms!important;transition-duration:1ms!important}

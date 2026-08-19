@@ -12,6 +12,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { TEAMS, colorOf } from "@bb-app/domain";
 import { CSS } from "../src/assets.ts";
 
 /** WCAG 상대 휘도 */
@@ -104,19 +105,17 @@ for (const scope of ["light", "dark"] as const) {
  */
 test("⚠구단 색(--team)을 글자색으로 쓰지 않는다 — 어느 테마에서든 한쪽이 무너진다", () => {
   /**
-   * ⚠**알려진 예외 3건 — 전부 이번 작업 이전부터 있던 것이라 기록만 남긴다**(2026-08-19 발견).
-   * 셋 다 「이 구단의 것」이라는 표시를 글자색으로 하고 있고, 그래서 阪神·ソフトバンク의 라이트와
+   * ⚠**알려진 예외 2건 — 둘 다 이 규칙이 생기기 전부터 있던 것이라 기록만 남긴다**(2026-08-19 발견).
+   * 둘 다 「이 구단의 것」이라는 표시를 글자색으로 하고 있고, 그래서 阪神·ソフトバンク의 라이트와
    * ロッテ·オリックス의 다크에서 대비가 무너진다.
-   * · `.trecent li.w b` — 直近の試合의 `○`. 승패는 글자로도 나오므로 정보는 안 사라진다
    * · `.roster li[data-favon="true"] .hn::before` — 즐겨찾기 `★`(10px)
    * · `.favbtn[aria-pressed="true"]` — 즐겨찾기 버튼의 눌림 상태(테두리도 같이 바뀐다)
+   * ⚠**`.trecent li.w b` 는 2026-08-20 에 여기서 빠졌다** — 예외가 아니라 **고쳤다.**
+   * 直近の試合의 `○` 는 이제 `--up`(라이트 4.95~5.59 · 다크 5.87~7.00)이다.
+   * 아래 「구단 색에 기대지 않는다」 시험이 그 자리를 12구단 × 2테마로 계속 잰다.
    * ⚠**여기 더 넣지 마라.** 새 자리가 생기면 그건 고칠 것이지 예외로 둘 것이 아니다.
    */
-  const KNOWN = new Set([
-    ".trecent li.w b",
-    '.roster li[data-favon="true"] .hn::before',
-    '.favbtn[aria-pressed="true"]',
-  ]);
+  const KNOWN = new Set(['.roster li[data-favon="true"] .hn::before', '.favbtn[aria-pressed="true"]']);
   // ⚠**주석을 먼저 지운다** — 안 지우면 규칙 바로 앞의 주석까지 선택자로 잡혀
   // 예외 목록이 맞아떨어지지 않는다(첫 판이 그렇게 헛돌았다)
   const css = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
@@ -129,10 +128,112 @@ test("⚠구단 색(--team)을 글자색으로 쓰지 않는다 — 어느 테�
     bad.push(sel);
   }
   assert.deepEqual(bad, [], `구단 색을 글자색으로 썼다: ${bad.join(" / ")}`);
-  // ⚠**예외 목록이 낡으면 이 시험이 조용히 헐거워진다** — 실재하는지 매번 확인한다
+  /**
+   * ⚠**예외 목록이 낡으면 이 시험이 조용히 헐거워진다.**
+   * 예전에는 「선택자가 CSS 에 있는가」만 봤는데, 그러면 **고친 뒤에도 예외가 남는다** —
+   * 실제로 `.trecent li.w b` 가 그럴 뻔했다(선택자는 남고 색만 바뀐다).
+   * → **그 규칙이 지금도 구단 색을 글자색으로 쓰고 있는가**를 본다. 안 쓰면 목록에서 빼라는 뜻이다.
+   */
   for (const k of KNOWN) {
-    assert.ok(css.includes(`${k}{`), `예외로 적어 둔 ${k} 가 CSS 에 없다 — 목록에서 빼라`);
+    const rule = new RegExp(`${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\{([^{}]*)\\}`).exec(css);
+    assert.ok(rule !== null, `예외로 적어 둔 ${k} 가 CSS 에 없다 — 목록에서 빼라`);
+    assert.ok(
+      /(^|;)\s*color:\s*var\(--team[,)]/.test(rule![1]!),
+      `${k} 는 이제 구단 색을 글자색으로 쓰지 않는다 — 고쳐진 것이니 예외 목록에서 빼라`,
+    );
   }
+});
+
+/**
+ * ⚠**구단 색에 「보이는지」를 걸지 마라.**
+ *
+ * 이 시험은 **CSS 가 지금 선언한 값을 그대로 읽어** 12구단 × 2테마 = 24조합을 잰다.
+ * 구단 색으로 되돌리면 24 중 12 가 떨어진다(어느 색이든 한쪽 테마에서 무너지므로).
+ * 토큰(`--up`·`--tx`)이면 구단과 무관하게 24조합이 다 통과한다 — 그게 이 수정의 요지다.
+ *
+ * ⚠**두 자리 다 실제 결함이었다**(2026-08-19 감사 P1 · 2026-08-20 수정):
+ * · `.trecent li.w b`(13px 글자 · 4.5:1 필요) — 이긴 경기 `○` 가 구단 색이라 **12/12 가 한쪽 테마에서 미달**.
+ *   진 경기(`--tx-2` · 6.6:1)만 또렷해 팀이 실제보다 나쁘게 읽혔다.
+ * · `.dia .db.on`(비텍스트 3:1 · WCAG 1.4.11) — 주자 있는 베이스가 **면과 선 둘 다** 구단 색이라
+ *   대비가 낮으면 통째로 사라졌다. 「주자 있음」이 「베이스가 아예 없음」으로 보였다.
+ *   경기 페이지 7,502장 = 사이트의 49%.
+ *
+ * ⚠**바탕은 `--panel` 이다**(실측 2026-08-20 · 브라우저에서 두 자리 모두 `.block` = `--panel` 위였다).
+ * 눈대중이 아니라 `getComputedStyle` 로 확인한 값이다.
+ */
+const TEAM_MARKS: readonly { sel: string; prop: "color" | "stroke"; need: number; what: string }[] = [
+  { sel: ".trecent li.w b", prop: "color", need: 4.5, what: "直近の試合의 이긴 경기 표식(13px)" },
+  { sel: ".dia .db.on", prop: "stroke", need: 3.0, what: "주자 있는 베이스의 윤곽(비텍스트)" },
+];
+
+for (const scope of ["light", "dark"] as const) {
+  for (const mark of TEAM_MARKS) {
+    test(`⚠${scope}: ${mark.sel} 는 구단 색에 기대지 않는다 — ${mark.what}`, () => {
+      const css = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
+      const rule = new RegExp(`${mark.sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\{([^{}]*)\\}`).exec(css);
+      assert.ok(rule !== null, `${mark.sel} 규칙이 CSS 에 없다 — 이 시험이 공회전한다`);
+      const decl = new RegExp(`(?:^|;)\\s*${mark.prop}:\\s*([^;]+)`).exec(rule![1]!);
+      assert.ok(decl !== null, `${mark.sel} 에 ${mark.prop} 선언이 없다 — 이 시험이 공회전한다`);
+      const raw = decl![1]!.trim();
+      const t = tokens(scope);
+      const bg = t.get("panel");
+      assert.ok(bg !== undefined, "--panel 을 못 읽었다");
+
+      /**
+       * 선언값을 색으로 푼다.
+       * ⚠**모르는 형태는 통과시키지 않고 던진다** — 못 푼 것을 「괜찮다」로 흘리면 시험이 죽는다.
+       */
+      const resolve = (teamHex: string): string => {
+        const v = /^var\(\s*--([a-z0-9-]+)/.exec(raw);
+        if (v === null) {
+          assert.ok(/^#[0-9a-fA-F]{6}$/.test(raw), `${mark.sel} 의 ${mark.prop} 값을 못 읽었다: ${raw}`);
+          return raw.toLowerCase();
+        }
+        const name = v[1]!;
+        // 구단 색이면 그 구단의 실제 색으로 푼다 — 24조합이 여기서 갈린다
+        if (name === "team" || name === "chip") return teamHex;
+        const tok = t.get(name);
+        assert.ok(tok !== undefined, `${mark.sel} 이 모르는 토큰 --${name} 을 쓴다`);
+        return tok!;
+      };
+
+      const failed: string[] = [];
+      for (const team of TEAMS) {
+        const hex = colorOf(team.code).base.toLowerCase();
+        const r = contrast(resolve(hex), bg!);
+        if (r < mark.need) failed.push(`${team.code} ${r.toFixed(2)}`);
+      }
+      assert.deepEqual(
+        failed,
+        [],
+        `${mark.sel} 의 ${mark.prop}(${raw})가 ${mark.need}:1 에 미달하는 구단: ${failed.join(" / ")}`,
+      );
+    });
+  }
+}
+
+/**
+ * ⚠**`stroke` 는 얇아서 `color` 보다 더 위험한데, 위의 금지 규칙이 `color` 만 본다.**
+ *
+ * 그래서 **구단 색을 선 색으로 쓰는 자리를 통째로 세어 못 박는다.** 새 자리가 생기면 여기서 걸린다.
+ * ⚠**지금 남은 둘은 「고쳐야 할 것」이지 「괜찮은 것」이 아니다**(2026-08-20 · 이번 작업 범위 밖).
+ * 成績の紋(레이더)의 윤곽과 꼭짓점이고, `.dia` 와 **정확히 같은 병**이다 —
+ * ロッテ·オリックス의 다크에서 선이 바탕에 묻힌다. 차트라서 손대려면 dataviz 기준부터 봐야 하고,
+ * 그건 이 수정의 범위가 아니다. **design-auditor 가 판정할 항목으로 남긴다.**
+ * ⚠**여기 늘리지 마라.** 늘어나면 그건 같은 결함이 한 자리 더 생겼다는 뜻이다.
+ */
+test("⚠구단 색을 선 색(stroke)으로 쓰는 자리가 늘지 않는다", () => {
+  const css = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
+  const found: string[] = [];
+  for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (!/(^|;)\s*stroke:\s*var\(--(team|chip)[,)]/.test(m[2] ?? "")) continue;
+    found.push((m[1] ?? "").trim());
+  }
+  assert.deepEqual(
+    found.sort(),
+    [".mf-dot", ".mf-shape"],
+    `구단 색을 선 색으로 쓰는 자리가 바뀌었다: ${found.join(" / ")}`,
+  );
 });
 
 test("⚠글자색과 opacity 를 같은 규칙에 함께 쓰지 않는다", () => {
