@@ -30,6 +30,7 @@ import {
 import type { Db } from "@bb-app/store";
 import { regularSeasonGames } from "@bb-app/domain";
 import { loadSite } from "../src/query.ts";
+import { contactGate } from "../src/layout.ts";
 
 const NOW = "2026-08-19T00:00:00.000Z";
 /** 빌드 기준일. **주입한다**(M6) — 시험이 시계를 읽으면 날마다 다른 시험이 된다 */
@@ -296,5 +297,86 @@ test("⚠중복 id 가 있으면 빌드가 실패한다 — 앵커 검사가 통
     region,
     /process\.exitCode = 1/,
     "중복 id 를 보긴 하는데 종료 코드를 안 바꾼다 — 경고만으로는 그대로 배포된다",
+  );
+});
+
+// ── 연락처(L4). **화면이 조용하지 않은데 빌드는 조용했다** ────────────────────
+
+/**
+ * ⚠**빈 연락처는 「표시가 없다」가 아니라 「개발자 지시문이 나간다」다**(2026-08-20 감사 ④).
+ * 꼬리말이 방문자에게 「連絡先が未設定です（公開前に設定してください）」라고 말하고,
+ * 그 꼬리말은 **15,340장 전부**에 있다. L4(삭제·정정 요청 창구)도 그 순간 없는 것이 된다.
+ * 그런데 신호는 `console.warn` 하나뿐이라 **종료 코드가 0**이었다 —
+ * `emptySeasons`·`stale`·`raceDisagreed` 와 같은 등급이어야 하는데 혼자 경고였다.
+ *
+ * ⚠**지금 배포본에는 이 문구가 없다.** CI 가 `secrets.BB_CONTACT` 를 넘기고 있고
+ * 배포 로그에 `BB_CONTACT: ***` 가 찍힌다. 감사가 잰 것은 **시크릿 없는 로컬 빌드**였다.
+ * 막는 것은 「지금 나가는 결함」이 아니라 **시크릿이 비는 날**이다.
+ *
+ * ⚠**로컬을 막으면 안 된다** — 연락처는 시크릿 스토어에만 있으니 개발자 머신에서는
+ * **항상 비어 있는 것이 정상**이고, 매번 실패하면 진짜 신호가 소음에 묻힌다.
+ * 그래서 `BB_REQUIRE_CONTACT=1` 을 **CI 만** 켠다(`BB_REQUIRE_DIST`·`BB_REQUIRE_DB` 와 같은 형식).
+ *
+ * ⚠**여기는 소스를 글자로 읽지 않는다.** 위 두 시험과 달리 판정이 `layout.ts` 의 순수 함수로
+ * 나와 있어 **양방향으로 직접 태울 수 있다**(작업규칙 9).
+ */
+test("⚠연락처가 있으면 아무 소리도 내지 않는다 — 늘 우는 게이트는 게이트가 아니다", () => {
+  for (const require of [undefined, "1"]) {
+    const g = contactGate("hello@example.com", require);
+    assert.deepEqual(
+      g,
+      { missing: false, fatal: false, message: "" },
+      `연락처가 있는데 무언가 말했다(BB_REQUIRE_CONTACT=${String(require)})`,
+    );
+  }
+});
+
+test("⚠연락처가 없고 BB_REQUIRE_CONTACT=1 이면 빌드가 실패한다", () => {
+  const g = contactGate("", "1");
+  assert.equal(g.fatal, true, "CI 조건인데 종료 코드를 안 바꾼다 — 개발자 지시문이 그대로 배포된다");
+  assert.equal(g.missing, true);
+  // 로그가 **무엇이 화면에 나가는지**를 말해야 한다 — 「미설정」만으로는 심각도가 안 보인다
+  assert.match(g.message, /BB_CONTACT/, "무슨 값이 없는지 안 말한다");
+  assert.match(g.message, /連絡先が未設定です/, "화면에 무엇이 나가는지 안 말한다");
+});
+
+test("⚠연락처가 없어도 스위치가 없으면 경고로 끝난다 — 로컬 빌드를 막지 않는다", () => {
+  for (const require of [undefined, "", "0", "true"]) {
+    const g = contactGate("", require);
+    assert.equal(g.missing, true, `연락처가 없는데 없다고 안 한다(BB_REQUIRE_CONTACT=${String(require)})`);
+    assert.equal(g.fatal, false, `로컬 빌드를 세웠다(BB_REQUIRE_CONTACT=${String(require)})`);
+    assert.match(g.message, /BB_REQUIRE_CONTACT/, "CI 에서 어떻게 막는지 안 알려준다");
+  }
+});
+
+/**
+ * ⚠**스위치를 만들고 CI 에서 안 켜면 아무것도 안 고친 것이다.**
+ * 이 리포에는 그 전례가 있다 — `BB_REQUIRE_DIST` 가 없어 시험이 조용히 skip 되고
+ * 종료 코드 0으로 「합격」이 됐다(2026-08-18 감사 P3).
+ */
+test("⚠daily.yml 이 화면 생성 단계에서 BB_REQUIRE_CONTACT 를 켠다", () => {
+  const yml = readFileSync(
+    join(import.meta.dirname, "..", "..", "..", ".github", "workflows", "daily.yml"),
+    "utf8",
+  );
+  const at = yml.indexOf("BB_CONTACT: ${{ secrets.BB_CONTACT }}");
+  assert.notEqual(at, -1, "daily.yml 이 BB_CONTACT 를 아예 안 넘긴다");
+  // ⚠**같은 env 블록 안**이어야 한다. 다른 단계에 켜 두면 빌드가 안 보는 값이 된다
+  assert.match(
+    yml.slice(at, at + 900),
+    /BB_REQUIRE_CONTACT:\s*"?1"?/,
+    "시크릿은 넘기는데 스위치를 안 켰다 — 시크릿이 비는 날 그대로 배포된다",
+  );
+});
+
+/** ⚠**빌드가 그 판정을 실제로 쓰는가.** 순수 함수만 맞고 호출부가 없으면 아무 일도 안 일어난다 */
+test("⚠빌드가 contactGate 의 판정으로 종료 코드를 바꾼다", () => {
+  const src = readFileSync(join(import.meta.dirname, "..", "tools", "build.ts"), "utf8");
+  const at = src.indexOf("contactGate(site.contact");
+  assert.notEqual(at, -1, "빌드가 contactGate 를 안 부른다");
+  assert.match(
+    src.slice(at, at + 400),
+    /process\.exitCode = 1/,
+    "판정만 받고 종료 코드를 안 바꾼다 — 경고만으로는 그대로 배포된다",
   );
 });

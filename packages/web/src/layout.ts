@@ -146,6 +146,51 @@ export interface SiteMeta {
   contact: string;
 }
 
+/** `contactGate` 의 판정. `fatal` 이면 호출자가 종료 코드를 세운다 */
+export interface ContactGate {
+  /** 창구가 비어 화면에 **개발자 지시문**이 나가는 상태인가 */
+  missing: boolean;
+  /** 빌드를 실패로 만들 것인가 */
+  fatal: boolean;
+  /** 로그에 낼 문장. `missing` 이 false 면 빈 문자열 */
+  message: string;
+}
+
+/**
+ * **연락처가 없는 채로 배포되는 것을 막는다**(L4 · 2026-08-20).
+ *
+ * ⚠**빈 값일 때 화면이 조용하지 않다** — 꼬리말이
+ * 「連絡先が未設定です（公開前に設定してください）」라고 **개발자에게 하는 말**을 방문자에게 낸다.
+ * 그 꼬리말은 15,340장 전부에 있으므로, 시크릿이 비는 날 **제품 문면이 통째로 그렇게 나간다.**
+ * 그런데 신호는 `console.warn` 하나뿐이라 종료 코드가 0이었다 — `emptySeasons`·`stale`·
+ * `raceDisagreed` 와 같은 등급이어야 하는데 혼자 경고였다(M7 의 「알아챌 수 있게」에 반만 닿음).
+ *
+ * ⚠**로컬 빌드를 막지 않는다.** 연락처는 시크릿 스토어에만 있어(코드·리포에 두지 않는다 · §6)
+ * 개발자 머신에서는 **항상 비어 있는 것이 정상**이다. 여기서 무조건 세우면 로컬 빌드가
+ * 매번 실패하고, 그러면 **진짜 신호가 소음에 묻힌다**(daily.yml 이 이미 적어 둔 함정).
+ *
+ * ⚠**그래서 「배포하는 쪽만」 켠다** — `BB_REQUIRE_CONTACT=1`.
+ * `BB_REQUIRE_DIST`·`BB_REQUIRE_DB` 와 **같은 형식**이다: 기본은 조용하고, CI 가 켠다.
+ * 켜는 자리는 `.github/workflows/daily.yml` 의 「화면 생성」 단계이고, 그 단계가
+ * `secrets.BB_CONTACT` 를 넘기는 바로 그 자리다 — 시크릿이 사라지면 같은 줄에서 걸린다.
+ *
+ * @param contact `BB_CONTACT` 를 거친 뒤의 값(미설정이면 빈 문자열)
+ * @param requireContact `process.env["BB_REQUIRE_CONTACT"]`
+ */
+export function contactGate(contact: string, requireContact: string | undefined): ContactGate {
+  if (contact !== "") return { missing: false, fatal: false, message: "" };
+  const fatal = requireContact === "1";
+  return {
+    missing: true,
+    fatal,
+    message: fatal
+      ? "⚠ BB_CONTACT 미설정 — 꼬리말에 「連絡先が未設定です（公開前に設定してください）」가 " +
+        "전 화면에 그대로 나간다(L4). BB_REQUIRE_CONTACT=1 이므로 배포하지 않는다"
+      : "⚠ BB_CONTACT 미설정 — 삭제·정정 요청 창구가 화면에 나오지 않는다(공개 전 필수). " +
+        "로컬 빌드라 실패로 만들지 않는다 — CI 는 BB_REQUIRE_CONTACT=1 로 막는다",
+  };
+}
+
 /**
  * 選手一覧의 경로. **한 곳에서만 만든다**(M1) — 갈리면 어딘가는 404다.
  *

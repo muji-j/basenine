@@ -11,6 +11,8 @@
  */
 import { html, raw } from "./html.ts";
 import { byMetricOrder } from "./metric-order.ts";
+// ⚠**분모 단위의 정본**(M1) — 화면이 문자열을 직접 적지 않는다
+import { denUnit } from "./glossary.ts";
 import type { RawHtml } from "./html.ts";
 import { NO_VALUE, avg3, fullDate, innings } from "./format.ts";
 import { block, buttonGroup, columns, note, panel, scroller, tablist, term, valueWithDen } from "./parts.ts";
@@ -349,11 +351,14 @@ function batterTable(rows: TeamBatter[], base: string, saber: boolean, qualifier
       { key: "pa", label: "打席", cell: (r) => html`<td class="b">${r.pa}</td>` },
       // ⚠**SRC 가 세이버의 맨 앞이다**(2026-08-18 유저 요청: 「SRP·SRC 는 세이버 중에선 항상 최우선」).
       //   이 사이트가 직접 만든 지표이고, wRC+·wOBA 는 어디서나 볼 수 있다.
-      { key: "src", label: "SRC", rate: true, cell: (r) => html`<td class="wd">${rate(r.src, "打席", 1)}</td>` },
-      { key: "wrcplus", label: "wRC+", rate: true, cell: (r) => html`<td class="wd">${rate(r.wrcPlus, "打席", 1)}</td>` },
-      { key: "woba", label: "wOBA", rate: true, cell: (r) => html`<td class="wd">${rate(r.woba, "打席", 3)}</td>` },
-      { key: "wraa", label: "wRAA", rate: true, cell: (r) => html`<td class="wd">${rate(r.wraa, "打席", 1)}</td>` },
-      { key: "ops", label: "OPS", rate: true, cell: (r) => html`<td class="wd">${rate(r.ops, "打席", 3)}</td>` },
+      // ⚠**분모 단위는 `glossary.ts` 의 `den` 이 정본이다**(M1 · 2026-08-20) — 여기서 적지 않는다.
+      //   `打席` 라고 적어 두었던 wOBA 의 실제 분모는 `打数+四球−敬遠+死球+犠飛` 였고,
+      //   같은 표의 `打席` 열과 다른 수인데 이름이 같았다.
+      { key: "src", label: "SRC", rate: true, cell: (r) => html`<td class="wd">${rate(r.src, denUnit("src"), 1)}</td>` },
+      { key: "wrcplus", label: "wRC+", rate: true, cell: (r) => html`<td class="wd">${rate(r.wrcPlus, denUnit("wrcPlus"), 1)}</td>` },
+      { key: "woba", label: "wOBA", rate: true, cell: (r) => html`<td class="wd">${rate(r.woba, denUnit("woba"), 3)}</td>` },
+      { key: "wraa", label: "wRAA", rate: true, cell: (r) => html`<td class="wd">${rate(r.wraa, denUnit("wraa"), 1)}</td>` },
+      { key: "ops", label: "OPS", rate: true, cell: (r) => html`<td class="wd">${rate(r.ops, denUnit("ops"), 3)}</td>` },
     ]
     : [
       { key: "name", label: "選手", left: true, text: true, cell: name },
@@ -363,10 +368,10 @@ function batterTable(rows: TeamBatter[], base: string, saber: boolean, qualifier
       { key: "hr", label: "本塁打", cell: (r) => html`<td>${r.hr}</td>` },
       { key: "rbi", label: "打点", cell: (r) => html`<td>${r.rbi}</td>` },
       { key: "sb", label: "盗塁", cell: (r) => html`<td>${r.sb}</td>` },
-      { key: "avg", label: "打率", rate: true, cell: (r) => html`<td class="wd">${rate(r.avg, "打数", 3)}</td>` },
-      { key: "obp", label: "出塁率", rate: true, cell: (r) => html`<td class="wd">${rate(r.obp, "打席", 3)}</td>` },
-      { key: "slg", label: "長打率", rate: true, cell: (r) => html`<td class="wd">${rate(r.slg, "打数", 3)}</td>` },
-      { key: "ops", label: "OPS", rate: true, cell: (r) => html`<td class="wd">${rate(r.ops, "打席", 3)}</td>` },
+      { key: "avg", label: "打率", rate: true, cell: (r) => html`<td class="wd">${rate(r.avg, denUnit("avg"), 3)}</td>` },
+      { key: "obp", label: "出塁率", rate: true, cell: (r) => html`<td class="wd">${rate(r.obp, denUnit("obp"), 3)}</td>` },
+      { key: "slg", label: "長打率", rate: true, cell: (r) => html`<td class="wd">${rate(r.slg, denUnit("slg"), 3)}</td>` },
+      { key: "ops", label: "OPS", rate: true, cell: (r) => html`<td class="wd">${rate(r.ops, denUnit("ops"), 3)}</td>` },
     ]
   );
 
@@ -410,11 +415,19 @@ function pitcherTable(rows: TeamPitcher[], base: string, saber: boolean, qualifi
       { key: "name", label: "選手", left: true, text: true, cell: name },
       { key: "outs", label: "投球回", cell: (r) => html`<td class="b">${innings(r.outs)}</td>` },
       // ⚠**SRP 가 세이버의 맨 앞이다**(위 타자 표와 같은 이유 · 2026-08-18)
-      { key: "srp", label: "SRP", rate: true, cell: (r) => html`<td class="wd">${rate(r.srp, "打者", 2)}</td>` },
-      { key: "fip", label: "FIP", rate: true, cell: (r) => html`<td class="wd">${rate(r.fip, "回", 2)}</td>` },
-      { key: "k9", label: "K/9", rate: true, cell: (r) => html`<td class="wd">${rate(r.k9, "回", 2)}</td>` },
-      { key: "bb9", label: "BB/9", rate: true, cell: (r) => html`<td class="wd">${rate(r.bb9, "回", 2)}</td>` },
+      // ⚠**SRP 의 분모는 `打者` 가 아니라 `対戦打者` 다**(M1 · 2026-08-20) — 선수 페이지가
+      //   `対戦打者` 라고 쓰는데 여기와 `compare/*.json` 은 `打者` 라 **356명**이 어긋나 있었다.
+      { key: "srp", label: "SRP", rate: true, cell: (r) => html`<td class="wd">${rate(r.srp, denUnit("srp"), 2)}</td>` },
+      { key: "fip", label: "FIP", rate: true, cell: (r) => html`<td class="wd">${rate(r.fip, denUnit("fip"), 2)}</td>` },
+      { key: "k9", label: "K/9", rate: true, cell: (r) => html`<td class="wd">${rate(r.k9, denUnit("k9"), 2)}</td>` },
+      { key: "bb9", label: "BB/9", rate: true, cell: (r) => html`<td class="wd">${rate(r.bb9, denUnit("bb9"), 2)}</td>` },
       { key: "qs", label: "QS", cell: (r) => html`<td>${r.qs}</td>` },
+      /**
+       * ⚠**球数/アウト만 용어집을 거치지 않는다** — 여기는 `415アウト`, 선수·比較 화면은
+       * `138.1回` 로 갈려 있는데 **둘 다 참인 같은 수**다. 「사실과 다른 라벨」이 아니라
+       * 어느 쪽을 정본으로 할지의 표시 판단이라, 이번 수정에서 혼자 정하지 않고 그대로 뒀다.
+       * 정하면 `glossary.ts` 의 `den` 에 적고 여기도 `denUnit("pitchesPerOut")` 으로 바꿔라.
+       */
       { key: "ppo", label: "球数/アウト", rate: true, cell: (r) => html`<td class="wd">${rate(r.pitchesPerOut, "アウト", 2)}</td>` },
     ]
     : [
@@ -824,8 +837,8 @@ ${panel(TEAM_TABS, "sum", true, html`<section class="block" id="b-teamsum">
     html`<dt>得点</dt><dd>${d.rf}<span class="den">${d.games}試合</span></dd>
       <dt>失点</dt><dd>${d.ra}<span class="den">${d.games}試合</span></dd>
       <dt>得失点差</dt><dd>${d.rf - d.ra >= 0 ? "+" : ""}${d.rf - d.ra}</dd>`,
-    html`<dt>${term("打率")}</dt><dd>${rate(d.avg, "打数", 3)}</dd>
-      <dt>${term("防御率")}</dt><dd>${rate(d.era, "回", 2)}</dd>`,
+    html`<dt>${term("打率")}</dt><dd>${rate(d.avg, denUnit("avg"), 3)}</dd>
+      <dt>${term("防御率")}</dt><dd>${rate(d.era, denUnit("era"), 2)}</dd>`,
     // ⚠**승패 문자열은 수치와 다른 종류다.** 한 줄에 섞으면 자릿수가 안 맞아 표가 흔들린다 —
     // 그래서 같은 종류끼리 한 단으로 모은다
     html`<dt>ホーム</dt><dd>${wlt(d.home)}</dd>

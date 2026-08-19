@@ -512,13 +512,15 @@ test("⚠세이버 지표의 자릿수가 순위 화면과 같다", () => {
   const out = renderTeamPage(data(), context());
   // wRC+ 1자리 · wOBA 3자리 · wRAA 1자리 · SRC 1자리
   assert.match(out, />142\.3<span class="den">420打席</, "wRC+ 가 1자리가 아니다");
-  assert.match(out, />\.381<span class="den">420打席</, "wOBA 가 3자리가 아니다");
+  // ⚠**wOBA 의 분모는 打席이 아니다**(`打数+四球−敬遠+死球+犠飛`) — 2026-08-20 에 단위를 고쳤다
+  assert.match(out, />\.381<span class="den">420wOBA機会</, "wOBA 가 3자리가 아니다");
   assert.match(out, />24\.6<span class="den">420打席</, "wRAA 가 1자리가 아니다");
   assert.match(out, />11\.2<span class="den">420打席</, "SRC 가 1자리가 아니다");
   // 투수 비율은 전부 2자리
   // ⚠분모는 **아웃을 이닝으로 옮긴 값**이라 여기서 자릿수를 단정하지 않는다 — 재는 것은 값 쪽이다
   assert.match(out, />2\.65<span class="den">\d/, "FIP 가 2자리가 아니다");
-  assert.match(out, />18\.40<span class="den">520打者</, "SRP 가 2자리가 아니다");
+  // ⚠**SRP 의 단위는 `対戦打者` 다** — 선수 페이지와 갈려 있던 것을 2026-08-20 에 맞췄다
+  assert.match(out, />18\.40<span class="den">520対戦打者</, "SRP 가 2자리가 아니다");
 });
 
 /**

@@ -64,8 +64,17 @@ export function steals(db: Db, season: number, competition: string, through: str
 
   const out = new Map<string, StealLine>();
   for (const r of rows) {
-    // ⚠**선수당 한 벌이다**(팀을 키에 넣으면 이적 선수가 반씩 나뉜다).
-    // 팀 코드는 마지막에 본 것을 쓴다 — 표시용이고 집계의 키가 아니다
+    /**
+     * ⚠**선수당 한 벌이다**(팀을 키에 넣으면 이적 선수가 반씩 나뉜다).
+     *
+     * 팀 코드는 **처음 본 것**이 그대로 남는다 — 엔트리를 만들 때 한 번만 넣고 갱신하지 않는다.
+     * ⚠**「마지막에 본 것을 쓴다」고 적혀 있었는데 그건 사실이 아니었다**(2026-08-20).
+     * 코드가 그렇게 동작한 적이 없고(아래 `if (e === undefined)` 안에서만 넣는다),
+     * `SQL` 에 `ORDER BY` 도 없어서 **애초에 「마지막」이라는 것이 정의되지 않는다.**
+     * 지금은 무해하다 — 웹 계층이 `playerId` 로만 다시 묶어 쓰기 때문이다.
+     * ⚠**다음 사람이 이 주석을 믿고 「이적 후 팀이 나온다」고 가정하면 틀린다.**
+     * 시즌 중 이적한 선수의 표시 팀을 이 값으로 정하려면 `ORDER BY` 부터 넣어야 한다.
+     */
     let e = out.get(r.playerId);
     if (e === undefined) {
       e = { playerId: r.playerId, displayName: r.displayName, teamCode: r.teamCode, sb: 0, cs: 0, pickoff: 0 };

@@ -24,6 +24,7 @@ import type { RawHtml } from "./html.ts";
 import type { TeamColor } from "@bb-app/domain";
 import type { Rate } from "@bb-app/metrics";
 import { avg3, dec2, denominator, innings } from "./format.ts";
+import { denUnit } from "./glossary.ts";
 import { BATTER_MIN, RELIEVER_MIN } from "./grade.ts";
 
 export interface MarkPlayer {
@@ -96,8 +97,10 @@ export interface ProfileAxis {
   /**
    * 이 축의 **분모**. ⚠값과 반드시 함께 나간다(M2).
    *
-   * 축마다 다르다 — 打率는 打数, 出塁는 打席, 투수는 전부 投球回다.
+   * 축마다 다르다 — 打率는 打数, 出塁는 **出塁機会**(`打数+四球+死球+犠飛`), 투수는 전부 投球回다.
    * 그래서 하나의 「표본」으로 뭉뚱그리지 않고 축이 자기 분모를 들고 다닌다.
+   * ⚠**단위 문자열은 `glossary.ts` 의 `den` 이 정본이다**(M1) — 여기서 적으면 화면마다 갈린다.
+   *   실제로 「出塁」 축이 `打席` 라고 쓰고 있었는데 그 수는 打席보다 犠打만큼 적었다(2026-08-20).
    */
   sample: string;
   /**
@@ -425,23 +428,25 @@ export function battingProfile(b: BattingProfileInput): ProfileAxis[] {
   return [
     {
       label: "打率", scaled: scale(b.avg.value, PROFILE_ANCHORS.avg), text: avg3(b.avg.value),
-      sample: denominator(b.avg.denominator, "打数"), term: "avg", note: "", thin,
+      sample: denominator(b.avg.denominator, denUnit("avg")), term: "avg", note: "", thin,
     },
     {
+      // ⚠**「出塁」 축의 분모는 打席이 아니다**(2026-08-20) — `打数+四球+死球+犠飛` 다.
+      //   축이 `term` 을 들고 다니는 것과 같은 이유로 **단위도 지표에서 가져온다**(M1).
       label: "出塁", scaled: scale(b.obp.value, PROFILE_ANCHORS.obp), text: avg3(b.obp.value),
-      sample: denominator(b.obp.denominator, "打席"), term: "obp", note: "", thin,
+      sample: denominator(b.obp.denominator, denUnit("obp")), term: "obp", note: "", thin,
     },
     {
       label: "長打", scaled: scale(b.iso.value, PROFILE_ANCHORS.iso), text: avg3(b.iso.value),
-      sample: denominator(b.iso.denominator, "打数"), term: "iso", note: "", thin,
+      sample: denominator(b.iso.denominator, denUnit("iso")), term: "iso", note: "", thin,
     },
     {
       label: "選球", scaled: scale(b.bbRate.value, PROFILE_ANCHORS.bbRate), text: avg3(b.bbRate.value),
-      sample: denominator(b.bbRate.denominator, "打席"), term: "bbRate", note: "", thin,
+      sample: denominator(b.bbRate.denominator, denUnit("bbRate")), term: "bbRate", note: "", thin,
     },
     {
       label: "接触", scaled: scale(contact, PROFILE_ANCHORS.contact), text: avg3(contact),
-      sample: denominator(b.kRate.denominator, "打席"), term: "kRate", thin,
+      sample: denominator(b.kRate.denominator, denUnit("kRate")), term: "kRate", thin,
       // ⚠**표시하는 수가 K%가 아니다.** 말하지 않으면 삼진율을 .735로 읽는다
       note: "三振にならなかった打席の割合（1 − K%）です。K%そのものではありません。",
     },

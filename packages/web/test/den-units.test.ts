@@ -21,6 +21,7 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { GLOSSARY } from "../src/glossary.ts";
 
 const DIST = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "dist");
 
@@ -51,9 +52,19 @@ interface RateSpec {
 const RATES: Readonly<Record<string, RateSpec>> = {
   打率: { unit: "打数", neighbors: ["打数"], why: "安打 ÷ 打数" },
   長打率: { unit: "打数", neighbors: ["打数"], why: "塁打 ÷ 打数" },
-  // ⚠**打席 열을 분모로 인정하지 않는다** — 犠打만큼 어긋난다(실측 465 vs 464)
-  出塁率: { unit: "打席", neighbors: [], why: "(安打+四球+死球) ÷ (打数+四球+死球+犠飛)" },
-  OPS: { unit: "打席", neighbors: [], why: "出塁率 + 長打率 — 표본은 出塁率 쪽 분모로 말한다" },
+  /**
+   * ⚠**打席 열을 분모로 인정하지 않는다** — 犠打만큼 어긋난다(실측 465 vs 464).
+   * ⚠**2026-08-20 에 단위 자체를 고쳤다.** 예전에는 `打席` 라고 **불렀는데** 그 수가 打席이 아니라,
+   * 같은 화면에 뜻이 다른 「打席」이 두 개 있었다(中野拓夢: 打席 열 434 · 出塁率 분모 414).
+   */
+  出塁率: { unit: "出塁機会", neighbors: [], why: "(安打+四球+死球) ÷ (打数+四球+死球+犠飛) = 打席 − 犠打" },
+  // ⚠**OPS 는 정말 打席이다** — `ops()` 가 `denominator: line.pa` 를 낸다(metrics/batting.ts).
+  //   出塁率 쪽 분모가 아니다. 그래서 같은 행에서 出塁率과 다른 수가 나오는 것이 정상이다
+  OPS: { unit: "打席", neighbors: [], why: "出塁率 + 長打率 — 표본은 打席으로 말한다(metrics/batting.ts)" },
+  // ⚠아래 셋은 `率` 로 끝나지 않아 `looksLikeRate` 의 어미 규칙에 안 걸린다. **표에 있으면 걸린다**
+  wOBA: { unit: "wOBA機会", neighbors: [], why: "가중 출루 ÷ (打数+四球−敬遠+死球+犠飛) = 出塁機会 − 敬遠" },
+  BABIP: { unit: "インプレー打球", neighbors: [], why: "(安打−本塁打) ÷ (打数−三振−本塁打+犠飛)" },
+  SRP: { unit: "対戦打者", neighbors: [], why: "打席마다 재는 값이라 분모는 아웃이 아니라 상대 타자 수다" },
   // ⚠**投球回 열은 분모를 「回」 없이 숫자로만 낸다.** 값에 붙이거나 母数 열이 말해야 한다
   防御率: { unit: "回", neighbors: [], why: "自責点 × 9 ÷ 投球回" },
   WHIP: { unit: "回", neighbors: [], why: "(被安打 + 与四球) ÷ 投球回" },
@@ -66,9 +77,13 @@ const RATES: Readonly<Record<string, RateSpec>> = {
   "全勝〜全敗の勝率": { unit: "試合", neighbors: ["勝敗分", "残り"], why: "(勝 + 残り) ÷ (勝 + 敗 + 残り) 〜 勝 ÷ (勝 + 敗 + 残り)" },
 };
 
-/** 머리가 비율처럼 보이는데 위 표에 없으면 거부한다 */
+/**
+ * 머리가 비율처럼 보이는데 위 표에 없으면 거부한다.
+ * ⚠**표에 있는 이름도 전부 본다** — `wOBA`·`BABIP`·`SRP` 는 어미가 `率` 가 아니라
+ * 어미 규칙만으로는 영영 안 걸렸다. 표에 넣는 것이 곧 검사 대상에 넣는 것이다.
+ */
 function looksLikeRate(head: string): boolean {
-  return head.endsWith("率") || head === "OPS" || head === "WHIP";
+  return head.endsWith("率") || head === "OPS" || head === "WHIP" || head in RATES;
 }
 
 function textOf(fragment: string): string {
@@ -186,4 +201,147 @@ test("⚠비율 옆의 분모가 그 지표의 정의 분모다 — 화면마다
   assert.ok(seen.size >= 5, `본 비율 지표가 ${seen.size}종뿐이다 — ${[...seen.keys()].join("·")}`);
 
   assert.deepEqual(problems, [], `분모가 어긋난 비율 ${problems.length}건 / 검사한 비율 열 ${checked}개`);
+});
+
+// ── 같은 지표, 다른 화면 ────────────────────────────────────────────────────
+
+/**
+ * ⚠**같은 지표의 분모 단위가 화면마다 달랐다**(2026-08-20 감사 P2 · 배포물 실측).
+ *
+ * 위 시험은 「한 행 안에서 분모가 맞는가」를 본다. 그런데 **화면과 화면 사이**는 아무도 안 봤다:
+ *
+ * | 지표 | 선수 페이지 | `compare/*.json` | 어긋난 선수 |
+ * |---|---|---|---|
+ * | BABIP | `打球` | **`打数`** | 342명 |
+ * | SRP | `対戦打者` | **`打者`** | 356명 |
+ *
+ * ⚠**BABIP 는 어긋난 정도가 아니라 거짓이었다** — 中野拓夢의 카드가 `317打数` 라고 썼는데
+ * 그 사람의 打数는 **380** 이다(317 = `打数−三振−本塁打+犠飛`).
+ * ⚠**값은 7,664건 전수 일치였다.** 틀린 것이 말뿐이라 **타입도 린트도 값 대조도 못 잡는다** —
+ * 배포물의 **글자**를 직접 보는 수밖에 없다.
+ *
+ * ⚠**정본은 `glossary.ts` 의 `den` 이다**(M1). 그래서 이 시험은 두 화면이 서로 같은지와
+ * **둘 다 정의서와 같은지**를 동시에 묻는다 — 앞의 것만 물으면 「둘 다 똑같이 틀린」 상태를 통과시킨다.
+ */
+
+/** `414出塁機会` → `出塁機会` · `138.1回` → `回`. **수를 떼고 단위만 남긴다** */
+function unitOf(den: string): string {
+  return den.replace(/^[\d.,]+/, "");
+}
+
+/** 용어집이 분모 단위를 선언한 지표만 본다. 나머지는 이 시험의 대상이 아니다 */
+function declared(key: string): string | null {
+  return GLOSSARY[key]?.den ?? null;
+}
+
+function addUnit(into: Map<string, Set<string>>, key: string, unit: string): void {
+  let s = into.get(key);
+  if (s === undefined) {
+    s = new Set();
+    into.set(key, s);
+  }
+  s.add(unit);
+}
+
+/**
+ * 선수 페이지의 `<dt>지표</dt><dd>값<span class="den">분모</span></dd>`.
+ *
+ * ⚠**라벨이 아니라 `data-term`(용어집 키)으로 짚는다.** 라벨로 짚으면 `打率`/`被打率` 처럼
+ * 뜻이 반대인 것이 섞이고, 라벨을 바꾼 날 이 시험이 조용히 0건이 된다.
+ */
+function playerPageUnits(): { units: Map<string, Set<string>>; pages: number } {
+  const dir = join(DIST, "players");
+  const units = new Map<string, Set<string>>();
+  if (!existsSync(dir)) return { units, pages: 0 };
+  const files = readdirSync(dir).filter((f) => f.endsWith(".html"));
+  for (const f of files) {
+    const html = readFileSync(join(dir, f), "utf8");
+    const re = /<dt>(?:<button[^>]*data-term="([A-Za-z0-9]+)"[^>]*>)?[^<]*(?:<\/button>)?<\/dt><dd[^>]*>([\s\S]*?)<\/dd>/g;
+    for (const m of html.matchAll(re)) {
+      const key = m[1];
+      if (key === undefined || declared(key) === null) continue;
+      const den = /<span class="den">([^<]*)<\/span>/.exec(m[2] ?? "");
+      if (den === null) continue;
+      addUnit(units, key, unitOf(den[1] ?? ""));
+    }
+  }
+  return { units, pages: files.length };
+}
+
+/** 比較 데이터(`compare/{첫글자}.json`)의 `d` 필드 */
+function compareUnits(): { units: Map<string, Set<string>>; cards: number } {
+  const dir = join(DIST, "compare");
+  const units = new Map<string, Set<string>>();
+  let cards = 0;
+  if (!existsSync(dir)) return { units, cards };
+  for (const f of readdirSync(dir).filter((x) => x.endsWith(".json"))) {
+    const shard = JSON.parse(readFileSync(join(dir, f), "utf8")) as
+      Record<string, { stats: { k: string; d: string | null }[] }>;
+    for (const card of Object.values(shard)) {
+      cards += 1;
+      for (const s of card.stats) {
+        if (s.d === null || declared(s.k) === null) continue;
+        addUnit(units, s.k, unitOf(s.d));
+      }
+    }
+  }
+  return { units, cards };
+}
+
+/**
+ * ⚠**이 넷이 안 보이면 시험이 헛돈 것이다.** 감사가 잡은 지표들이라, 표본에서 사라지면
+ * 「통과」가 아니라 「안 쟀음」이다(작업규칙 8). 두 출처 **양쪽**에서 요구한다.
+ */
+const MUST_APPEAR = ["obp", "woba", "babip", "srp"] as const;
+
+test("⚠같은 지표의 분모 단위가 선수 페이지와 比較 데이터에서 같고, 용어집과도 같다", {
+  skip: PAGES.length === 0 ? "dist 없음" : false,
+}, () => {
+  const player = playerPageUnits();
+  const compare = compareUnits();
+
+  assert.ok(player.pages > 100, `선수 페이지를 ${player.pages}장밖에 못 읽었다 — 이 시험이 공회전한다`);
+  assert.ok(compare.cards > 100, `比較 카드를 ${compare.cards}건밖에 못 읽었다 — 이 시험이 공회전한다`);
+
+  const problems: string[] = [];
+  const checkedAgainstGlossary: string[] = [];
+
+  for (const [source, units] of [["선수 페이지", player.units], ["compare/*.json", compare.units]] as const) {
+    for (const [key, seenUnits] of units) {
+      const want = declared(key);
+      if (want === null) continue;
+      checkedAgainstGlossary.push(`${source}:${key}`);
+      const wrong = [...seenUnits].filter((u) => u !== want);
+      if (wrong.length > 0) {
+        problems.push(`${source} 의 ${key} 가 「${wrong.join("·")}」로 나간다 — 정의서는 「${want}」다`);
+      }
+    }
+  }
+
+  // ⚠**두 화면을 직접 맞대 본다.** 위 검사만 두면 정의서를 느슨하게 하는 순간 이 축이 사라진다
+  for (const key of new Set([...player.units.keys(), ...compare.units.keys()])) {
+    const a = player.units.get(key);
+    const b = compare.units.get(key);
+    if (a === undefined || b === undefined) continue;
+    const av = [...a].sort().join("·");
+    const bv = [...b].sort().join("·");
+    if (av !== bv) problems.push(`${key}: 선수 페이지는 「${av}」인데 比較 데이터는 「${bv}」다`);
+  }
+
+  for (const key of MUST_APPEAR) {
+    assert.ok(player.units.has(key), `선수 페이지에서 ${key} 의 분모를 한 번도 못 봤다 — 이 시험이 그 지표를 안 재고 있다`);
+    assert.ok(compare.units.has(key), `比較 데이터에서 ${key} 의 분모를 한 번도 못 봤다 — 이 시험이 그 지표를 안 재고 있다`);
+  }
+
+  // 지표 종류가 줄면 표본이 한쪽으로 쏠린 것이다(2026-08-20 실측: 선수 20종 + 比較 19종)
+  assert.ok(
+    checkedAgainstGlossary.length >= 30,
+    `정의서와 맞대 본 (출처×지표)가 ${checkedAgainstGlossary.length}건뿐이다 — 이 시험이 공회전한다`,
+  );
+
+  assert.deepEqual(
+    problems,
+    [],
+    `분모 단위가 어긋난 곳 ${problems.length}건 / 선수 ${player.pages}장 · 比較 ${compare.cards}건`,
+  );
 });

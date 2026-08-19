@@ -46,7 +46,7 @@ test("비율에는 반드시 분모가 붙는다(M2)", () => {
   // 값 바로 뒤에 분모 span이 오는지 — 떨어져 있으면 M2 위반이다
   for (const [value, den] of [
     [".317", "382打数"],
-    [".403", "442打席"],
+    [".403", "442出塁機会"],
     [".620", "382打数"],
   ]) {
     assert.ok(
@@ -386,7 +386,7 @@ test("⚠紋의 값에도 분모가 붙는다(M2) — 축마다 분모가 다르
   const panel = /<section class="markpanel"[\s\S]*?<\/section>/.exec(out)?.[0] ?? "";
   assert.ok(panel.length > 0, "紋 패널이 없다");
   assert.ok(panel.includes(`.317<span class="den">382打数</span>`), "打率에 打数가 안 붙었다");
-  assert.ok(panel.includes(`.403<span class="den">442打席</span>`), "出塁에 打席이 안 붙었다");
+  assert.ok(panel.includes(`.403<span class="den">442出塁機会</span>`), "出塁에 出塁機会가 안 붙었다");
   // 값이 나오는 자리 전부에 분모가 따라온다
   const values = [...panel.matchAll(/<em>([^<]*)<span class="den">([^<]*)<\/span>/g)];
   assert.equal(values.length, 5);

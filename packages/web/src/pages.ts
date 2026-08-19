@@ -31,6 +31,7 @@ import type { RawHtml } from "./html.ts";
 import { NO_VALUE, avg3, dec2, fullDate, innings } from "./format.ts";
 import { block, denText, follower, note, panel, panelId, rankValue, runCell, scopedGroup, scroller, statCount, statRateOuts, statSigned, statText, subGroup, tabId, tablist, term, valueWithDen, widestRunDiff, wlCell } from "./parts.ts";
 import type { TabGroupRef } from "./parts.ts";
+import { denUnit } from "./glossary.ts";
 import { page, pastSeasonOf, ROSTER_PATH } from "./layout.ts";
 import { teamPath } from "./team-page.ts";
 import type { Freshness, SiteMeta } from "./layout.ts";
@@ -676,7 +677,7 @@ export function renderStartersPage(d: StartersPageData, ctx: RenderContext): str
                  이 사이트가 직접 만든 지표이고, 방어율·WHIP·FIP 는 어디서나 볼 수 있다. -->
             ${side.summary.srp === null
               ? statText("SRP", NO_VALUE)
-              : statSigned("SRP", side.summary.srp.value, side.summary.srp.denominator, "対戦打者")}
+              : statSigned("SRP", side.summary.srp.value, side.summary.srp.denominator, denUnit("srp"))}
             ${statRateOuts("防御率", side.summary.era, 2)}
             ${statRateOuts("WHIP", side.summary.whip, 2)}
             ${statRateOuts("FIP", side.summary.fip, 2)}

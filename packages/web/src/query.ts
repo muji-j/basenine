@@ -161,6 +161,8 @@ import type { RankDigits } from "./parts.ts";
 // ⚠**동률 규칙 문장은 구단 목록과 공유한다**(M1) — 두 화면이 같은 사실을 다르게 공시하고 있었다
 import { TIE_RULE } from "./parts.ts";
 import { NO_VALUE, avg3, dec2, denominator, innings } from "./format.ts";
+// ⚠**분모 단위의 정본**(M1) — 화면이 문자열을 직접 적지 않는다
+import { denUnit } from "./glossary.ts";
 import { readFileSync } from "node:fs";
 // ⚠**한도는 화면 파일에 산다** — 각주가 그 수를 그대로 쓰기 때문이다(M3의 정신).
 //   여기 두면 상수와 화면 문장이 조용히 갈린다
@@ -558,14 +560,20 @@ function buildLeagueRankings(
    * 무엇을 보여줄지는 여기가, 어느 순서로 놓을지는 `metric-order.ts` 가 정한다.
    */
   const batting: MetricRanking[] = byMetricOrder([
-    toMetricRanking("src", "SRC", 1, "打席", bq, asRanked(srcRanked, bid)),
-    toMetricRanking("wrcPlus", "wRC+", 1, "打席", bq, asRanked(rankBatters(bundle, bat, (e) => e.wrcPlus), bid)),
-    toMetricRanking("ops", "OPS", 3, "打席", bq, asRanked(rankBatters(bundle, bat, (e) => e.ops), bid)),
-    toMetricRanking("avg", "打率", 3, "打数", bq, asRanked(rankBatters(bundle, bat, (e) => e.avg), bid)),
-    toMetricRanking("obp", "出塁率", 3, "打席", bq, asRanked(rankBatters(bundle, bat, (e) => e.obp), bid)),
-    toMetricRanking("slg", "長打率", 3, "打数", bq, asRanked(rankBatters(bundle, bat, (e) => e.slg), bid)),
-    toMetricRanking("woba", "wOBA", 3, "打席", bq, asRanked(rankBatters(bundle, bat, (e) => e.woba), bid)),
-    toMetricRanking("wraa", "wRAA", 1, "打席", bq, asRanked(rankBatters(bundle, bat, (e) => e.wraa), bid)),
+    /**
+     * ⚠**분모의 단위를 여기서 적지 않는다**(M1 · 2026-08-20) — `glossary.ts` 의 `den` 이 정본이다.
+     * 화면마다 적었더니 出塁率·wOBA 가 `打席` 로 나갔는데 **둘 다 打席이 아니다**
+     * (出塁率 = 打席 − 犠打 · wOBA = 거기서 敬遠까지 뺀 수). 그래서 같은 표에서
+     * `打席` 열과 「出塁率의 分母」가 서로 다른 수를 가리키고 있었다.
+     */
+    toMetricRanking("src", "SRC", 1, denUnit("src"), bq, asRanked(srcRanked, bid)),
+    toMetricRanking("wrcPlus", "wRC+", 1, denUnit("wrcPlus"), bq, asRanked(rankBatters(bundle, bat, (e) => e.wrcPlus), bid)),
+    toMetricRanking("ops", "OPS", 3, denUnit("ops"), bq, asRanked(rankBatters(bundle, bat, (e) => e.ops), bid)),
+    toMetricRanking("avg", "打率", 3, denUnit("avg"), bq, asRanked(rankBatters(bundle, bat, (e) => e.avg), bid)),
+    toMetricRanking("obp", "出塁率", 3, denUnit("obp"), bq, asRanked(rankBatters(bundle, bat, (e) => e.obp), bid)),
+    toMetricRanking("slg", "長打率", 3, denUnit("slg"), bq, asRanked(rankBatters(bundle, bat, (e) => e.slg), bid)),
+    toMetricRanking("woba", "wOBA", 3, denUnit("woba"), bq, asRanked(rankBatters(bundle, bat, (e) => e.woba), bid)),
+    toMetricRanking("wraa", "wRAA", 1, denUnit("wraa"), bq, asRanked(rankBatters(bundle, bat, (e) => e.wraa), bid)),
     countRanking(
       "hr",
       "本塁打",
@@ -671,7 +679,7 @@ function pitcherRankings(
     rate("srp", "SRP", (e) => {
       const v = srpByLeague.get(`${e.player.playerId}|${bundle.league}`);
       return v === undefined ? { value: null, denominator: 0 } : { value: v.srp, denominator: v.bf };
-    }, true, { unit: "対戦打者", asInnings: false }),
+    }, true, { unit: denUnit("srp"), asInnings: false }),
     rate("era", "防御率", (e) => e.era),
     rate("fip", "FIP", (e) => e.fip),
     rate("whip", "WHIP", (e) => e.whip),

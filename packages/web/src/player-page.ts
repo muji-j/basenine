@@ -36,7 +36,7 @@ import type { BarRow, RankDigits } from "./parts.ts";
 import { NO_VALUE, avg3, gameDate, innings, throwsBats } from "./format.ts";
 import { isEmptyProfile, markFigure, markLetter, markProfile } from "./marks.ts";
 import type { MarkPlayer, ProfileAxis } from "./marks.ts";
-import { termOf } from "./glossary.ts";
+import { denUnit, termOf } from "./glossary.ts";
 import { page, ROSTER_PATH } from "./layout.ts";
 import { teamPath } from "./team-page.ts";
 import { postseasonBrief } from "./postseason-page.ts";
@@ -520,9 +520,16 @@ const BASE_LABEL: Readonly<Record<string, string>> = {
 
 const BASE_ORDER = ["-", "1", "2", "3", "12", "13", "23", "123"];
 
-/** 표본이 이보다 적은 칸은 시각적 무게를 뺀다. 값은 그대로 보인다 */
-const THIN_SITUATION_PA = 10;
-const THIN_MATCHUP_PA = 10;
+/**
+ * 표본이 이보다 적은 칸은 시각적 무게를 뺀다. 값은 그대로 보인다.
+ *
+ * ⚠**정의서(`docs/metrics/README.md` §5-A)가 이 수를 그대로 싣는다** — 그래서 내보낸다.
+ * 문서에는 「좌우 상대 **100타석**(잠정)」이라고 적혀 있었고 코드는 30/10/10 이었다
+ * (2026-08-20 정정). 문서와 코드가 갈리는 것을 막는 유일한 방법은 **시험이 둘을 맞대는 것**이다
+ * (`packages/web/test/thin-thresholds.test.ts`).
+ */
+export const THIN_SITUATION_PA = 10;
+export const THIN_MATCHUP_PA = 10;
 /** 선수 페이지 순위표에 싣는 상위 인원. `query.ts`와 같은 값이어야 한다 */
 const RANKING_TOP = 10;
 
@@ -682,7 +689,7 @@ function editor(): RawHtml {
   <p>表示するブロックと並び順を決めます。設定はこの端末に保存されます。</p>
   <div class="blocks" id="blockList"></div>
   <div class="fixed-note">
-    <b>消せない表示があります。</b>比率の横の母数（打席数・打数）は設定で消せません。
+    <b>消せない表示があります。</b>比率の横の母数（打席数・打数・出塁機会など）は設定で消せません。
     10打席の .400 を順位として見せないための決まりで、好みの問題ではないからです。
   </div>
 </section>`;
@@ -708,10 +715,17 @@ function standardBatting(b: BattingBlockData): RawHtml {
     title: "基本成績",
     qualifier: qualifierText(b.qualified, b.line.pa, b.needPa, "打席"),
     body: columns(
-      html`${statRate("打率", b.avg, "打数", 3, rk(b.ranks, "avg"))}
-        ${statRate("出塁率", b.obp, "打席", 3, rk(b.ranks, "obp"))}
-        ${statRate("長打率", b.slg, "打数", 3, rk(b.ranks, "slg"))}
-        ${statRate("OPS", b.ops, "打席", 3, rk(b.ranks, "ops"))}`,
+      /**
+       * ⚠**분모 단위를 여기서 쓰지 않는다**(M1 · 2026-08-20). 화면마다 적었더니
+       * 같은 지표가 화면에 따라 다른 단위로 나갔고, 出塁率은 **아예 사실이 아닌 단위**였다:
+       * `打席` 라고 썼지만 분모는 `打数+四球+死球+犠飛`(= 打席 − 犠打)라
+       * **한 화면에 「打席」이 두 개** 떴다 — 실측(dist/players/41445153.html 中野拓夢)에서
+       * 打席 열 **434** 옆에 出塁率 분모 **414**. 2026 정규 타자 617명 중 **205명**이 이 상태였다.
+       */
+      html`${statRate("打率", b.avg, denUnit("avg"), 3, rk(b.ranks, "avg"))}
+        ${statRate("出塁率", b.obp, denUnit("obp"), 3, rk(b.ranks, "obp"))}
+        ${statRate("長打率", b.slg, denUnit("slg"), 3, rk(b.ranks, "slg"))}
+        ${statRate("OPS", b.ops, denUnit("ops"), 3, rk(b.ranks, "ops"))}`,
       html`${statCount("試合", b.games)}
         ${statCount("打席", b.line.pa)}
         ${statCount("打数", b.line.ab)}
@@ -741,7 +755,7 @@ function standardBatting(b: BattingBlockData): RawHtml {
           ${statText("盗塁成功率", "未集計")}
           ${statText("牽制死", "未集計")}`
         : html`${statCount("盗塁刺", b.steal.cs)}
-          ${statRate("盗塁成功率", b.steal.rate, "企図", 3)}
+          ${statRate("盗塁成功率", b.steal.rate, denUnit("stealRate"), 3)}
           ${statCount("牽制死", b.steal.pickoff)}`,
     ),
   });
@@ -940,15 +954,19 @@ function advancedBatting(b: BattingBlockData, bats: string | null): RawHtml {
     body: html`${columns(
       src === null
         ? html`${statText("SRC", NO_VALUE)}`
-        : html`${statSigned("SRC", src.src, src.pa, "打席", rk(b.ranks, "src"))}
-            ${statSigned("SRC/600", src.srcPer600, src.pa, "打席")}`,
-      html`${statRate("wOBA", b.woba, "打席", 3, rk(b.ranks, "woba"))}
-        ${statRate("wRC+", b.wrcPlus, "打席", 1, rk(b.ranks, "wrcPlus"))}
-        ${statSigned("wRAA", b.wraa.value, b.wraa.denominator, "打席", rk(b.ranks, "wraa"))}`,
-      html`${statRate("ISO", b.iso, "打数", 3)}
-        ${statRate("BABIP", b.babip, "打球", 3)}`,
-      html`${statRate("K%", b.kRate, "打席", 3)}
-        ${statRate("BB%", b.bbRate, "打席", 3)}`,
+        : html`${statSigned("SRC", src.src, src.pa, denUnit("src"), rk(b.ranks, "src"))}
+            ${statSigned("SRC/600", src.srcPer600, src.pa, denUnit("srcPer600"))}`,
+      /**
+       * ⚠**wOBA 의 분모도 打席이 아니다** — `打数+四球−敬遠+死球+犠飛` 다(metrics/woba.ts).
+       * 실측(2026-08-20 中野拓夢): 打席 434 · wOBA 분모 **414**. 617명 중 **249명**이 어긋나 있었다.
+       */
+      html`${statRate("wOBA", b.woba, denUnit("woba"), 3, rk(b.ranks, "woba"))}
+        ${statRate("wRC+", b.wrcPlus, denUnit("wrcPlus"), 1, rk(b.ranks, "wrcPlus"))}
+        ${statSigned("wRAA", b.wraa.value, b.wraa.denominator, denUnit("wraa"), rk(b.ranks, "wraa"))}`,
+      html`${statRate("ISO", b.iso, denUnit("iso"), 3)}
+        ${statRate("BABIP", b.babip, denUnit("babip"), 3)}`,
+      html`${statRate("K%", b.kRate, denUnit("kRate"), 3)}
+        ${statRate("BB%", b.bbRate, denUnit("bbRate"), 3)}`,
     )}
     ${battedBallRow(b.batted, bats)}
     ${note(
@@ -968,8 +986,8 @@ function advancedPitching(p: PitchingBlockData): RawHtml {
     body: html`${columns(
       srp === null
         ? html`${statText("SRP", NO_VALUE)}`
-        : html`${statSigned("SRP", srp.srp, srp.bf, "対戦打者", rk(p.ranks, "srp"))}
-            ${statSigned("SRP/9", srp.srpPer9, srp.bf, "対戦打者")}`,
+        : html`${statSigned("SRP", srp.srp, srp.bf, denUnit("srp"), rk(p.ranks, "srp"))}
+            ${statSigned("SRP/9", srp.srpPer9, srp.bf, denUnit("srpPer9"))}`,
       html`${statRateOuts("FIP", p.fip, 2, rk(p.ranks, "fip"), p.role)}
         ${statRateOuts("WHIP", p.whip, 2, rk(p.ranks, "whip"), p.role)}`,
       html`${statRateOuts("K/9", p.k9, 2, rk(p.ranks, "k9"), p.role)}

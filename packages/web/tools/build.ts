@@ -17,6 +17,8 @@ import { openDb } from "@bb-app/store";
 import { systemClock, toJstDateString } from "@bb-app/archiver";
 import { buildSite, seasonPaths } from "../src/site.ts";
 import type { BuildResult } from "../src/site.ts";
+// ⚠**연락처 게이트의 판정은 한 벌이다**(M1) — 조건을 여기서 다시 쓰지 않는다
+import { contactGate } from "../src/layout.ts";
 import { loadLog, loadSite } from "../src/query.ts";
 
 const [dbArg, outArg, seasonArg, throughArg] = process.argv.slice(2);
@@ -165,8 +167,20 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
       const mb = (bytes / 1024 / 1024).toFixed(1);
       console.log(`생성: ${fileCount}파일 / ${mb}MB / 시즌 ${seasons.join("·")}`);
       console.log(`집계: ${loadMs.toFixed(0)}ms · 최신 경기일 ${result.latestGameDate ?? "없음"} · 생성일 ${builtOn}`);
-      if (site.contact === "") {
-        console.warn("⚠ BB_CONTACT 미설정 — 삭제·정정 요청 창구가 화면에 나오지 않는다(공개 전 필수)");
+      /**
+       * ⚠**연락처가 없으면 화면이 조용하지 않다**(L4 · 2026-08-20).
+       * 꼬리말이 「連絡先が未設定です（公開前に設定してください）」라는 **개발자 지시문**을
+       * 방문자에게 낸다 — 그것도 15,340장 전부에서. 예전에는 `console.warn` 하나뿐이라
+       * 종료 코드가 0이었고, `emptySeasons`·`stale`·`raceDisagreed` 와 **등급이 달랐다**.
+       * ⚠**판정은 `layout.ts` 의 `contactGate` 가 한다** — 여기서 조건을 다시 쓰면 두 벌이 된다.
+       *   로컬을 막지 않는 이유와 `BB_REQUIRE_CONTACT` 를 켜는 자리도 거기에 적혀 있다.
+       */
+      const contact = contactGate(site.contact, process.env["BB_REQUIRE_CONTACT"]);
+      if (contact.fatal) {
+        console.error(contact.message);
+        process.exitCode = 1;
+      } else if (contact.missing) {
+        console.warn(contact.message);
       }
       /**
        * ⚠**깨진 링크로 배포하지 않는다.**
