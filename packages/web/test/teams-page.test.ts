@@ -13,6 +13,7 @@ import { TEAMS, colorOf, shortNameOf, teamOf } from "@bb-app/domain";
 import type { League } from "@bb-app/domain";
 import { renderTeamsPage } from "../src/teams-page.ts";
 import type { TeamsCard, TeamsPageData } from "../src/teams-page.ts";
+import { TIE_RULE } from "../src/parts.ts";
 import { teamPath } from "../src/team-page.ts";
 import { context } from "./fixtures.ts";
 
@@ -97,6 +98,17 @@ function noteOf(out: string): string {
   return (/<p class="note">[\s\S]*?<\/p>/.exec(out) ?? [""])[0];
 }
 
+/**
+ * 빈 상태 문구만.
+ *
+ * ⚠**페이지 전체에서 「まだ」를 찾으면 내일 거짓이 된다**(2026-08-19 검토 ⓔ).
+ * 오늘은 정직하게 떨어지지만, 신선도 띠나 새 각주에 그 두 글자가 들어오는 날
+ * **문구를 통째로 지워도 통과하는 단언**이 된다. 재는 자리를 좁혀 둔다.
+ */
+function emptyOf(out: string): string {
+  return (/<p class="empty">[\s\S]*?<\/p>/.exec(out) ?? [""])[0];
+}
+
 test("12구단이 리그별로 나온다", () => {
   const out = renderTeamsPage(teamsData(), context());
   assert.equal((out.match(/class="tcard"/g) ?? []).length, 12);
@@ -124,11 +136,16 @@ test("⚠각 구단 카드가 그 구단 페이지로 간다", () => {
   assert.deepEqual(missing, [], `구단 페이지로 가는 길이 없는 카드: ${missing.join(" ")}`);
 });
 
+/**
+ * ⚠**「12개 이상」이 아니라 「12개」다**(2026-08-19 검토 ⓔ).
+ * 예전 형태(`assert.equal(… >= 12, true)`)는 불리언을 비교하는 것이라 **13개여도 통과**했고,
+ * 실패했을 때 메시지도 「false !== true」뿐이라 무엇이 몇 개인지 말하지 않았다.
+ */
 test("최애 지정 버튼이 12개 있고 초기값은 눌리지 않은 상태다", () => {
   const out = renderTeamsPage(teamsData(), context());
-  const btns = out.match(/data-favteam="[a-z]+"/g) ?? [];
-  assert.equal(btns.length, 12);
-  assert.equal((out.match(/aria-pressed="false"/g) ?? []).length >= 12, true);
+  const list = listOf(out);
+  assert.equal((list.match(/data-favteam="[a-z]+"/g) ?? []).length, 12);
+  assert.equal((list.match(/aria-pressed="false"/g) ?? []).length, 12);
 });
 
 /**
@@ -218,7 +235,8 @@ test("⚠다음 경기 줄은 12개 전부 남는다 — 끝난 시즌과 미취
     },
     context(),
   );
-  assert.equal((out.match(/次の試合/g) ?? []).length, 12, "다음 경기 줄이 사라진 카드가 있다");
+  // ⚠**목록 안에서만 센다** — 각주나 다른 구획이 같은 말을 쓰는 날 12가 저절로 채워진다
+  assert.equal((listOf(out).match(/次の試合/g) ?? []).length, 12, "다음 경기 줄이 사라진 카드가 있다");
   assert.match(out, /このシーズンは終了しています/);
   assert.match(out, /予定はありません/);
 });
@@ -257,14 +275,43 @@ test("최근 10경기가 카드마다 나온다", () => {
  * ⚠**「지금 어디에 있는가」가 어느 화면에서나 보여야 한다.**
  *
  * `topbar-consistency.test.ts` 가 **dist 로** 재는 규칙인데, 그건 빌드한 뒤에만 돈다 —
- * 여기서 먼저 잡는다. ⚠**T8 이 내비에 `球団` 을 넣으면 이 화면의 `nav` 를
- * `"team"`(navExact 기본값)으로 바꿔라** — 그때도 이 시험이 그대로 통과한다.
+ * 여기서 먼저 잡는다.
  */
 test("⚠헤더가 「지금 여기」를 말한다 — 표시 없는 화면을 만들지 않는다", () => {
   const out = renderTeamsPage(teamsData(), context());
   const head = /<header class="topbar"[\s\S]*?<\/header>/.exec(out);
   assert.notEqual(head, null, "헤더가 없다");
   assert.match(head![0], /aria-current="/, "현재 위치 표시가 없다");
+});
+
+/**
+ * ⚠**위 시험만으로는 부족하다** — 「`aria-current` 가 있는가」는 **어느 항목에 붙었든** 통과한다.
+ *
+ * T7 은 내비에 `球団` 항목이 없어서 `nav: "ranking"`(navExact:false)으로 두고 있었다.
+ * 그 상태에서도 위 시험은 초록이었다(順位에 `aria-current="true"` 가 붙으므로).
+ * **이 화면은 `teams.html` 그 자체**이므로 표시는 `球団` 링크에 `page` 로 붙어야 한다 —
+ * 다른 항목에 붙으면 「지금 여기」가 틀린 자리를 가리킨다.
+ */
+test("⚠teams.html 은 球団 링크에 aria-current=page 를 낸다 — 표시가 옆 항목에 붙지 않는다", () => {
+  const nav = /<nav class="tnav"[\s\S]*?<\/nav>/.exec(renderTeamsPage(teamsData(), context()))![0];
+  const item = /<a\s[^>]*href="[^"]*teams\.html"[^>]*>/.exec(nav);
+  assert.notEqual(item, null, "내비에 구단 링크가 없다");
+  assert.match(item![0], /aria-current="page"/, `구단 링크가 「지금 이 문서」라고 말하지 않는다: ${item![0]}`);
+  // ⚠**표시는 한 곳뿐이다** — 둘에 붙으면 어느 쪽이 지금인지 알 수 없다
+  assert.equal((nav.match(/aria-current="/g) ?? []).length, 1, "내비에 현재 표시가 두 개 이상이다");
+});
+
+/**
+ * ⚠**같은 사실을 두 화면이 다른 말로 공시하지 않는다**(M1·M3).
+ *
+ * 예전에는 순위표만 「NPB의 규정에는 다음 단계(前年度順位)가 있지만 우리는 거기까지 판정하지 않는다」를
+ * 밝히고 이 화면은 그 괄호를 빼고 있었다 — **같은 규칙이 화면마다 다르게 읽혔다.**
+ * 다른 사이트와 순위가 어긋났을 때 버그와 구별할 수 없게 되는 자리다.
+ */
+test("⚠동률 규칙을 순위표와 같은 한 문장으로 쓴다(M1) — 쓰지 않는 단계까지", () => {
+  const n = noteOf(renderTeamsPage(teamsData(), context()));
+  assert.ok(n.includes(TIE_RULE), `각주가 공유 문장을 쓰지 않는다:\n  ${n}`);
+  assert.match(n, /前年度順位/, "쓰지 않는 규칙과 그 이유를 말하지 않았다");
 });
 
 /**
@@ -324,9 +371,16 @@ test("⚠순위를 아직 못 매기면 「모름」을 낸다 — 0位라고 �
   assert.ok(list.includes("<b>—</b>"), "모르는 순위를 빈칸으로 흘렸다");
 });
 
-/** 리그가 아직 없으면(경기 0인 시즌) 화면이 그렇게 말한다 — 빈 화면은 고장으로 읽힌다(M12) */
+/**
+ * 리그가 아직 없으면(경기 0인 시즌) 화면이 그렇게 말한다 — 빈 화면은 고장으로 읽힌다(M12).
+ *
+ * ⚠**재는 자리는 빈 상태 문구 안이다.** 페이지 전체에서 「まだ」를 찾으면
+ * 언젠가 다른 문구가 그 두 글자를 들여와 **어떤 코드에서도 통과하는 단언**이 된다.
+ */
 test("리그가 하나도 없으면 그렇다고 말한다", () => {
   const out = renderTeamsPage(teamsData({ leagues: [] }), context());
-  assert.match(out, /まだ/);
+  const empty = emptyOf(out);
+  assert.notEqual(empty, "", "빈 상태 문구가 없다 — 빈 화면은 고장으로 읽힌다(M12)");
+  assert.match(empty, /まだ/, `아직 계산되지 않았다는 사실을 말하지 않는다: ${empty}`);
   assert.equal((out.match(/class="tcard"/g) ?? []).length, 0);
 });

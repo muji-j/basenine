@@ -909,6 +909,13 @@ ${panel(TEAM_TABS, "vs", false, d.vs.length === 0
     site: ctx.site,
     hasPostseason: ctx.hasPostseason,
     nav: "team",
+    /**
+     * ⚠**이 화면은 `球団` 구획 안에 있지만 그 링크가 가리키는 문서가 아니다.**
+     * 기본값(`aria-current="page"`)으로 두면 **다른 문서(구단 목록)를 「지금 여기」라고
+     * 말하는 것**이 된다 — 경기 상세가 `試合` 에서 이미 밟은 자리와 같은 결함이다.
+     * (내비에 `球団` 항목이 생긴 2026-08-19 부터 실제로 나던 증상이다.)
+     */
+    navExact: false,
     body,
   });
 }

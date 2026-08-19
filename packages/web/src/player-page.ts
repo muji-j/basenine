@@ -1589,7 +1589,17 @@ ${postseasonBrief(d.postseason, base)}
     freshness: ctx.freshness,
     site: ctx.site,
     hasPostseason: ctx.hasPostseason,
-    nav: "player",
+    /**
+     * ⚠**선수 페이지는 `選手一覧` 구획 안이다.**
+     *
+     * 예전에는 `nav: "player"` 였는데 내비에 `選手` 항목이 없어서 **어느 링크에도
+     * `aria-current` 가 붙지 않았다** — 이 화면들만 「지금 어디에 있는가」가 통째로 빈 채였다.
+     * 실측(2026-08-19): dist 6,207장. `topbar-consistency` 가 최상위 11장만 보고 있어서
+     * 아무도 못 봤고, 재귀시키자 드러났다.
+     * ⚠**`page` 가 아니라 `true` 다** — 이 화면은 選手一覧 그 자체가 아니다(navExact:false).
+     */
+    nav: "index",
+    navExact: false,
     body,
     bootstrapJs: bootstrapFor(d.role),
   });

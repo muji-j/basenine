@@ -154,6 +154,8 @@ import type { StandingRow, StandingsSection } from "./pages.ts";
 // 予告先発 화면의 앵커. **試合 카드가 그리로 가므로 키를 두 벌 만들지 않는다**(M1)
 import { batterPick, gameKey, pitcherPick, startersAnchor, unseenPitcherPick } from "./pages.ts";
 import type { RankDigits } from "./parts.ts";
+// ⚠**동률 규칙 문장은 구단 목록과 공유한다**(M1) — 두 화면이 같은 사실을 다르게 공시하고 있었다
+import { TIE_RULE } from "./parts.ts";
 import { NO_VALUE, avg3, dec2, denominator, innings } from "./format.ts";
 import { readFileSync } from "node:fs";
 // ⚠**한도는 화면 파일에 산다** — 각주가 그 수를 그대로 쓰기 때문이다(M3의 정신).
@@ -3589,16 +3591,6 @@ function todayPage(
     dayCount: days.length,
   };
 }
-
-/**
- * 동률 처리 규칙의 문장. ⚠**화면에 적는다**(M3) — 규칙이 코드에만 있으면 아무도 검증할 수 없다.
- *
- * ⚠NPB 협약의 2단계(前年度順位)를 쓰지 않는 이유까지 적는다. 「우리 규칙이 다르다」를
- * 숨기면, 다른 사이트와 순위가 어긋났을 때 버그와 구별할 수 없다.
- */
-const TIE_RULE =
-  "勝率が同じ場合は当該球団間の対戦成績で上位を決めます。それでも並ぶときは同順位として表示します" +
-  "（NPBの規定では次に前年度順位を使いますが、当サイトはそこまでは判定していません）。";
 
 function standingsSections(db: Db, o: LoadOptions): StandingsSection[] {
   const rows = teamStandings(db, o.season, leagueOf, o.competition ?? "regular", o.through ?? "9999-12-31");

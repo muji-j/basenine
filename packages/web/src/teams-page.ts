@@ -19,21 +19,16 @@
 import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import { NO_VALUE, fullDate } from "./format.ts";
-import { note, valueWithDen } from "./parts.ts";
+// ⚠**동률 규칙 문장은 순위표와 공유한다**(M1) — 두 화면이 같은 사실을 다르게 말하지 않게
+import { TIE_RULE, note, valueWithDen } from "./parts.ts";
 import { page } from "./layout.ts";
 import type { RenderContext } from "./layout.ts";
-import { ROSTER_PATH } from "./layout.ts";
+// ⚠**경로는 `layout.ts` 한 곳에서 나온다**(M1) — 내비도 같은 값을 쓴다
+import { ROSTER_PATH, TEAMS_PATH } from "./layout.ts";
 import { gamesBehindText, nextGameText, teamPath } from "./team-page.ts";
 import type { TeamNextGame } from "./team-page.ts";
 import { NEUTRAL_COLOR } from "@bb-app/domain";
 import type { TeamColor } from "@bb-app/domain";
-
-/**
- * 이 화면의 파일 경로. **한 곳에서만 만든다**(M1) — `teamPath` 와 같은 이유다.
- * ⚠`site.ts` 의 파일 목록과 `seasonPaths` 가 **같은 이 값을 봐야 한다.**
- * 갈리면 시즌 전환이 없는 페이지를 가리키고, 그건 404이며 조용하다.
- */
-export const TEAMS_PATH = "teams.html";
 
 /**
  * 한 구단의 칸.
@@ -127,7 +122,11 @@ function teamRow(c: TeamsCard, base: string): RawHtml {
   return html`<li class="tcard"${
     // ⚠**순위를 마크업에도 남긴다.** 1위 강조가 `:first-child` 로는 틀린다 — 동률 1위가 둘일 수 있다.
     //   ⚠`class` 에 붙이지 않는다: 이 줄을 세는 시험이 `class="tcard"` 를 본다.
-    raw(c.rank === null ? "" : ` data-rank="${c.rank}"`)
+    //   ⚠**속성을 raw() 안에서 문자열로 짓지 않는다**(2026-08-18 감사 P3 · layout.ts 가 같은 말을 적어 뒀다).
+    //   그 안의 값은 이스케이프를 거치지 않는다 — 따옴표 하나로 속성이 끊긴다.
+    //   지금은 `rank: number | null` 이라 타입이 막지만, **다음 사람이 문자열 필드를 얹으면 뚫린다.**
+    //   조각째 `html` 에 넘기면 그 자리가 영구히 이스케이프를 거친다.
+    c.rank === null ? raw("") : html` data-rank="${c.rank}"`
   } style="--chip:${c.color.base}">
   <p class="tcr">${c.rank === null
     ? html`<b>${NO_VALUE}</b>`
@@ -173,8 +172,12 @@ ${d.leagues.length === 0
 ${note(
     // ⚠**규칙이 코드에만 있으면 아무도 검증할 수 없다**(M3). 무엇으로 줄을 세웠는지,
     //   승률이 무엇을 세고 무엇을 안 세는지, 그리고 최애가 어디에 남는지를 화면이 말한다
-    "並びは**順位順**です。順位は**勝率**（勝÷（勝＋敗）・引き分けは分母に入れません・NPBの規定）で決まり、" +
-      "同じ勝率のときは当該球団間の対戦成績で決めます。それでも並ぶときは**同順位**として「（同）」を付けます。" +
+    // ⚠**동률 규칙은 순위표와 같은 한 벌을 쓴다**(M1 · 2026-08-19 T7 검토 ⓓ).
+    //   여기에 다시 쓰면 두 화면이 같은 사실을 다르게 공시한다 — 실제로 그랬다
+    //   (이 화면만 「前年度順位는 판정하지 않는다」를 빠뜨리고 있었다).
+    "並びは**順位順**です。順位は**勝率**（勝÷（勝＋敗）・引き分けは分母に入れません・NPBの規定）で決まります。" +
+      TIE_RULE +
+      "この画面では同順位に「（同）」を付けています。" +
       "数字は**レギュラーシーズン**のものです。" +
       "「ひいき球団」を選ぶと**上のメニューの一番左**がその球団になります — " +
       "この設定は**このブラウザにだけ**残り、サーバーには送られません（JavaScript が必要です）。",
@@ -195,15 +198,13 @@ ${note(
     site: ctx.site,
     hasPostseason: ctx.hasPostseason,
     /**
-     * ⚠**아직 내비에 `球団` 항목이 없다**(T8 이 넣는다). 그래서 `nav: "team"` 으로 두면
-     * 헤더의 어느 링크에도 `aria-current` 가 붙지 않아 **「지금 여기」가 사라진다** —
-     * `topbar-consistency.test.ts` 가 dist 로 재는 규칙이고, 이 화면만 그걸 어긴다.
-     * 지금은 이 화면에 닿는 유일한 길이 順位(순위표의 팀명)이므로 그 구획에 속한다고 말한다.
-     * ⚠**T8 이 내비 항목을 넣으면 `nav: "team"` 으로 바꾸고 `navExact` 는 지워라**
-     *   — 그때는 이 화면이 그 링크의 **바로 그 문서**다.
+     * ⚠**이 화면이 `球団` 항목의 바로 그 문서다** — 그래서 `navExact` 를 두지 않는다
+     * (기본값이 `aria-current="page"`).
+     *
+     * T7 은 내비에 항목이 없던 동안 `nav: "ranking"`(navExact:false)으로 임시로 두고 있었다.
+     * 그대로 두면 「지금 여기」가 **順位** 를 가리켜, 이 화면에 있는 사람에게 틀린 자리를 알려준다.
      */
-    nav: "ranking",
-    navExact: false,
+    nav: "team",
     body,
   });
 }

@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { THRESHOLDS, bootstrapFor, renderPlayerPage } from "../src/player-page.ts";
+// ⚠**경로를 손으로 적지 않는다**(M1) — 화면과 시험이 같은 상수를 봐야 한다
+import { ROSTER_PATH } from "../src/layout.ts";
 import {
   battingBlock,
   context,
@@ -17,6 +19,26 @@ test("이름과 팀이 제목·배면·본문에 들어간다", () => {
   assert.match(out, /<title>佐藤 — 阪神タイガース 2026年<\/title>/);
   assert.match(out, /class="vt">阪神タイガース　佐藤</);
   assert.match(out, /class="nm">佐藤</);
+});
+
+/**
+ * ⚠**선수 페이지만 「지금 어디에 있는가」가 통째로 없었다**(2026-08-19 실측: dist 6,207장).
+ *
+ * `nav: "player"` 였는데 내비에 `選手` 항목이 없어서 **어느 링크에도 표시가 안 붙었다.**
+ * `topbar-consistency` 는 dist 최상위 11장만 봐서 이걸 못 봤다 — 재귀시키자 드러났다.
+ * ⚠**`page` 는 아니다.** 이 화면은 選手一覧 그 자체가 아니라 그 구획 안의 다른 문서다
+ * (경기 상세·날짜별이 `試合` 에서 쓰는 것과 같은 어법).
+ */
+test("⚠헤더가 「지금 여기」를 말한다 — 선수 페이지만 표시가 없었다", () => {
+  const nav = /<nav class="tnav"[\s\S]*?<\/nav>/.exec(renderPlayerPage(playerPage(), context()))![0];
+  // ⚠상수를 정규식에 넣을 때는 `.` 을 죽인다 — 안 그러면 `playersXhtml` 도 맞는다
+  const item = new RegExp(`<a\\s[^>]*href="[^"]*${ROSTER_PATH.replace(/\./g, "\\.")}"[^>]*>`).exec(nav);
+  assert.notEqual(item, null, `내비에 ${ROSTER_PATH} 링크가 없다`);
+  assert.match(item![0], /aria-current="true"/, `현재 구획 표시가 없다: ${item![0]}`);
+  assert.ok(
+    !nav.includes('aria-current="page"'),
+    "선수 페이지는 選手一覧 그 자체가 아니다 — 다른 문서를 「지금 이 문서」라고 말했다",
+  );
 });
 
 test("비율에는 반드시 분모가 붙는다(M2)", () => {

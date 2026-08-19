@@ -212,6 +212,26 @@ test("팀 경로는 한 곳에서만 만든다 — 갈리면 어딘가는 404다
   assert.equal(teamPath("db"), "teams/db.html");
 });
 
+/**
+ * ⚠**「이 구획 안에 있다」와 「지금 이 문서다」는 다른 말이다.**
+ *
+ * 구단 상세는 `球団` 구획에 속하지만 `teams.html` 그 자체가 아니다 —
+ * 거기에 `aria-current="page"` 를 붙이면 **다른 문서를 가리키는 링크를 「지금 여기」라고
+ * 말하는 것**이 된다(경기 상세가 `試合` 에서 이미 밟은 자리라 `navExact:false` 가 있다).
+ * ⚠**이 결함은 `topbar-consistency` 가 못 잡던 것이다** — 그 시험이 dist 최상위만 보고
+ * `teams/` 아래를 재귀하지 않았다(2026-08-19 T7 검토 ⓑ).
+ */
+test("⚠구단 상세는 「구획 안」이라고만 말한다 — 목록 문서를 「지금 여기」라 부르지 않는다", () => {
+  const nav = /<nav class="tnav"[\s\S]*?<\/nav>/.exec(renderTeamPage(data(), context()))![0];
+  const item = /<a\s[^>]*href="[^"]*teams\.html"[^>]*>/.exec(nav);
+  assert.notEqual(item, null, "내비에 구단 링크가 없다");
+  assert.ok(
+    !item![0].includes('aria-current="page"'),
+    `다른 문서(구단 목록)를 「지금 이 문서」라고 말한다: ${item![0]}`,
+  );
+  assert.match(item![0], /aria-current="true"/, `구획 표시가 아예 없다: ${item![0]}`);
+});
+
 test("팀의 지금 상태가 머리에 나온다 — 순위·승패·리그", () => {
   const out = renderTeamPage(data(), context());
   assert.match(out, /阪神タイガース/);

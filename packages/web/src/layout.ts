@@ -146,7 +146,6 @@ export interface SiteMeta {
   contact: string;
 }
 
-/** 전역 헤더에서 지금 어디에 있는지. `aria-current`로 나간다 */
 /**
  * 選手一覧의 경로. **한 곳에서만 만든다**(M1) — 갈리면 어딘가는 404다.
  *
@@ -156,6 +155,25 @@ export interface SiteMeta {
  */
 export const ROSTER_PATH = "players.html";
 
+/**
+ * 球団一覧의 경로. **한 곳에서만 만든다**(M1) — 갈리면 어딘가는 404다.
+ *
+ * ⚠**여기 있는 이유는 내비가 이 값을 쓰기 때문이다**(`ROSTER_PATH`와 같은 사정).
+ * 원래는 `teams-page.ts`에 있었는데, 내비가 그쪽을 import 하면 **layout ↔ teams-page 순환**이 된다.
+ * ⚠`site.ts`의 파일 목록과 `seasonPaths`가 **같은 이 값을 봐야 한다.**
+ * 갈리면 시즌 전환이 없는 페이지를 가리키고, 그건 404이며 조용하다.
+ */
+export const TEAMS_PATH = "teams.html";
+
+/**
+ * 전역 헤더에서 지금 어디에 있는지. `aria-current`로 나간다.
+ *
+ * ⚠**내비에 자리가 없는 키를 만들지 마라.** 그 키를 쓴 화면은 헤더에 「지금 여기」가
+ * 하나도 없는 채로 나간다 — `"player"` 가 정확히 그랬고, 그 상태로 dist 6,207장이
+ * 배포돼 있었다(2026-08-19). 선수 페이지는 `選手一覧` 구획(`"index"` + navExact:false)에 속한다.
+ * ⚠**여기서 지운 이유는 컴파일이 막아 주기 때문이다** — 시험보다 이르고 확실하다.
+ * (`"home"` 은 예외다: 탭줄이 아니라 **브랜드 링크**가 그 표시를 받는다.)
+ */
 export type NavKey =
   | "today"
   | "home"
@@ -164,7 +182,6 @@ export type NavKey =
   | "matchup"
   | "compare"
   | "log"
-  | "player"
   | "postseason"
   | "team";
 
@@ -247,6 +264,15 @@ function topbar(o: PageOptions): RawHtml {
     <ul class="qhits" id="qhits" role="listbox" aria-label="検索結果" hidden></ul>
   </div>
   <nav class="tnav" aria-label="主要ページ">
+    ${/* ⚠**첫 자리다**(2026-08-18 유저 요청). 최애를 지정하면 클라이언트가 라벨과 링크를
+         그 구단으로 바꾼다(data-navteam 이 그 표식이다). **서버는 항상 「球団」을 그린다** —
+         JS 가 없어도 구단으로 가는 길이 있어야 하고(§0-1), 지금까지는 그 길이 아예 없었다
+         (순위표에서 팀명을 눌러야만 닿았다).
+         ⚠**HTML 주석으로 쓰지 않는다.** 이 헤더는 전 페이지에 실린다 — 실측으로 이 주석 하나가
+            424B 이고 15,340장이면 약 6.5MB 를 매 배포마다 나른다. teams-page.ts 가 같은 이유로
+            정한 규칙이 있다: 왜는 소스에 남기고 나가는 것은 마크업만 남긴다.
+         ⚠**아래 세 개는 아직 HTML 주석이다**(합계 733B/장 ≈ 11MB). 같이 옮길지는 별건이다. */ ""}
+    <a href="${o.base}${TEAMS_PATH}" data-navteam${here("team")}>球団</a>
     <a href="${o.base}today.html"${here("today")}>試合</a>
     <a href="${o.base}${ROSTER_PATH}"${here("index")}>一覧</a>
     <a href="${o.base}ranking.html"${here("ranking")}>順位</a>

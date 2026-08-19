@@ -13,6 +13,12 @@ import { colorOf } from "@bb-app/domain";
 import { context, rankingPanel } from "./fixtures.ts";
 import type { RankingPanel, RankingRow } from "../src/player-page.ts";
 import { rankingRowsFor } from "../src/query.ts";
+/**
+ * ⚠**세 벌째를 만들지 않는다**(2026-08-19 T7 검토 ⓓ). 동률 규칙 문장은 `parts.ts` 에 한 벌 있고
+ * 순위표(`query.ts`)와 구단 목록(`teams-page.ts`)이 그것을 쓴다 —
+ * 픽스처가 자기 사본을 들면 **본문이 바뀌어도 이 시험은 옛 문장을 지킨다.**
+ */
+import { TIE_RULE } from "../src/parts.ts";
 
 function row(over: Partial<StandingRow> = {}): StandingRow {
   return {
@@ -38,10 +44,6 @@ function row(over: Partial<StandingRow> = {}): StandingRow {
     ...over,
   };
 }
-
-const TIE_RULE =
-  "勝率が同じ場合は当該球団間の対戦成績で上位を決めます。それでも並ぶときは同順位として表示します" +
-  "（NPBの規定では次に前年度順位を使いますが、当サイトはそこまでは判定していません）。";
 
 function data(over: Partial<RankingPageData> = {}): RankingPageData {
   return {

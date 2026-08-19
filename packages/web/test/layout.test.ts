@@ -140,6 +140,34 @@ test("탭 아이콘은 우리가 그린 도형이고 자산으로 나간다", ()
   assert.ok(!out.includes("npb.jp/img"), "외부 이미지를 참조했다");
 });
 
+/**
+ * ⚠**JS 가 없어도 구단으로 가는 길이 있어야 한다**(§0-1).
+ *
+ * 최애를 지정하면 클라이언트가 이 항목의 라벨과 링크를 그 구단으로 바꾸지만,
+ * **항목 자체는 서버가 그린다.** 지금까지 구단 페이지는 순위표에서 팀명을 눌러야만 닿았고,
+ * 스크립트가 죽은 브라우저에서는 사실상 닿을 수 없었다.
+ * ⚠**첫 자리여야 한다**(2026-08-18 유저 요청) — 최애 구단이 앉을 자리다.
+ */
+test("⚠내비 첫 항목이 球団이고 구단 목록으로 간다 — 서버가 항상 그린다(§0-1)", () => {
+  const nav = /<nav class="tnav"[\s\S]*?<\/nav>/.exec(shell());
+  assert.notEqual(nav, null, "내비가 없다");
+  const first = /<a\s[^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>/.exec(nav![0]);
+  assert.notEqual(first, null, "내비에 링크가 하나도 없다");
+  assert.equal(first![2], "球団", `첫 항목이 「${first![2]}」다`);
+  assert.match(first![1]!, /(^|\/)teams\.html$/, `첫 항목이 구단 목록으로 가지 않는다: ${first![1]}`);
+});
+
+/**
+ * ⚠**T9 의 클라이언트가 이 표식으로 항목을 찾는다.** 없으면 최애를 지정해도
+ * 내비가 그대로 「球団」인 채 남는다 — 화면은 멀쩡히 그려지므로 눈으로는 안 잡힌다.
+ */
+test("⚠球団 항목에 클라이언트가 잡을 표식이 있다 — T9 이 라벨을 바꾼다", () => {
+  const nav = /<nav class="tnav"[\s\S]*?<\/nav>/.exec(shell())![0];
+  const item = /<a\s[^>]*href="[^"]*teams\.html"[^>]*>/.exec(nav);
+  assert.notEqual(item, null, "내비에 구단 링크가 없다");
+  assert.match(item![0], /\bdata-navteam\b/, `표식이 없다: ${item![0]}`);
+});
+
 test("주소창 색을 라이트·다크 양쪽으로 준다 — 한쪽만 주면 반대 테마에서 어긋난다", () => {
   const out = shell();
   assert.match(out, /theme-color" content="#fbfaf7" media="\(prefers-color-scheme: light\)"/);
