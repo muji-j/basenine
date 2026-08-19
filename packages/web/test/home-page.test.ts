@@ -104,6 +104,9 @@ function data(over: Partial<HomePageData> = {}): HomePageData {
       },
     ],
     hasPostseason: false,
+    // ⚠**기본은 진행 중 시즌이다** — 대부분의 시험이 「지금」을 그리는 화면을 재기 때문이다.
+    // 끝난 시즌(과거형)은 `data({ seasonOver: true })`로 개별 시험에서만 켠다.
+    seasonOver: false,
     ...over,
   };
 }
@@ -515,4 +518,51 @@ test("⚠「NPB가 합계를 안 싣는다」는 거짓말을 하지 않는다",
   const out = renderHomePage(data(), context());
   assert.ok(!out.includes("合計行を載せていない"), "사실이 아닌 말이 화면에 있다");
   assert.match(out, /合計行と毎回突き合わせています/, "검산한다는 사실을 말하지 않는다");
+});
+
+// ── 끝난 시즌의 시제 ─────────────────────────────────────────────────────────
+
+/**
+ * ⚠**구단 페이지는 이미 갈랐는데 홈은 안 갈렸다**(2026-08-20 team-page.ts 수정에서 구현자가
+ * 스스로 신고). 끝난 시즌(예: 2018년)의 아카이브 홈이 「続いている記録」·「記録に近づいている」
+ * 라고 **현재형**으로 말하면, 그 시즌이 **지금도** 이어지는 것처럼 읽힌다.
+ *
+ * ⚠**구단 페이지와 같은 근거(`calendar.seasonOver`)를 쓴다**(M1) — 다른 판정을 새로 만들지 않는다.
+ * ⚠**제목 문자열은 `home-page.ts` 가 내보내는 함수 한 벌**(`streakSectionTitle`·
+ * `milestoneSectionTitle`)에서 나온다 — 구단 페이지도 이 함수를 그대로 쓴다.
+ * 두 곳에 같은 문자열을 손으로 복사하면 언젠가 한쪽만 고쳐진다(이 브랜치가 방금 그걸 겪었다).
+ *
+ * ⚠**양방향으로 잰다.** 과거형만 재면 「늘 과거형」 구현이 통과하고,
+ * 현재형만 재면 고치기 전 코드가 통과한다.
+ */
+test("⚠끝난 시즌의 홈은 「続いていた記録」・「記録に近づいていた」로 과거형이다", () => {
+  const out = renderHomePage(data({ seasonOver: true }), context());
+  const streakSection = /<section class="block" id="b-hstreak">[\s\S]*?<\/section>/.exec(out)?.[0] ?? "";
+  assert.match(streakSection, /続いていた記録/, "끝난 시즌인데 제목이 과거형이 아니다");
+  assert.ok(!streakSection.includes("続いている記録"), "끝난 시즌 화면이 현재형으로 말했다");
+
+  const mileSection = /<section class="block" id="b-hmile">[\s\S]*?<\/section>/.exec(out)?.[0] ?? "";
+  assert.match(mileSection, /記録に近づいていた/, "끝난 시즌인데 제목이 과거형이 아니다");
+  assert.ok(!mileSection.includes("記録に近づいている"), "끝난 시즌 화면이 현재형으로 말했다");
+
+  // ⚠**내비 라벨도 같이 갈린다** — 라벨만 현재형으로 남으면 눌러서 간 구획과 말이 어긋난다
+  const nav = /<nav class="hjump"[\s\S]*?<\/nav>/.exec(out)?.[0] ?? "";
+  assert.match(nav, /続いていた記録/, "내비 라벨이 과거형이 아니다");
+  assert.match(nav, /記録に近づいていた/, "내비 라벨이 과거형이 아니다");
+});
+
+/** ⚠**진행 중인 시즌(2026)의 홈은 현재형 그대로여야 한다** — 이게 없으면 「늘 과거형」 구현이 통과한다 */
+test("⚠진행 중인 시즌의 홈은 「続いている記録」・「記録に近づいている」로 현재형이다", () => {
+  const out = renderHomePage(data({ seasonOver: false }), context());
+  const streakSection = /<section class="block" id="b-hstreak">[\s\S]*?<\/section>/.exec(out)?.[0] ?? "";
+  assert.match(streakSection, /続いている記録/, "진행 중인데 제목이 현재형이 아니다");
+  assert.ok(!streakSection.includes("続いていた"), "진행 중인 시즌을 과거형으로 말했다");
+
+  const mileSection = /<section class="block" id="b-hmile">[\s\S]*?<\/section>/.exec(out)?.[0] ?? "";
+  assert.match(mileSection, /記録に近づいている/, "진행 중인데 제목이 현재형이 아니다");
+  assert.ok(!mileSection.includes("近づいていた"), "진행 중인 시즌을 과거형으로 말했다");
+
+  const nav = /<nav class="hjump"[\s\S]*?<\/nav>/.exec(out)?.[0] ?? "";
+  assert.match(nav, /続いている記録/, "내비 라벨이 현재형이 아니다");
+  assert.match(nav, /記録に近づいている/, "내비 라벨이 현재형이 아니다");
 });

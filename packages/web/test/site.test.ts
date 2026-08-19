@@ -25,6 +25,7 @@ function siteData(over: Partial<SiteData> = {}): SiteData {
       milestones: [],
       streaks: [],
       hasPostseason: false,
+      seasonOver: false,
     },
     index: {
       season: 2026,

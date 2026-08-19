@@ -231,6 +231,30 @@ export interface HomePageData {
   streaks: HomeStreak[];
   /** 이 시즌에 ポストシーズン 기록이 있는가 */
   hasPostseason: boolean;
+  /**
+   * **이 시즌이 이미 끝났는가**(`query.ts` 의 `seasonIsOver` 와 같은 근거 · M1).
+   *
+   * ⚠**끝난 시즌의 홈에 현재형을 쓰면 거짓말이 된다** — 「続いている記録」는
+   * 2018년 화면에서 「지금 이어지고 있다」로 읽힌다. 구단 페이지(`team-page.ts`)가
+   * `calendar.seasonOver`로 이미 이 판정을 하고 있고, 여기서는 **같은 판정**을
+   * 다른 값으로 받는다(2026-08-20 team-page.ts 수정에서 홈이 안 갈렸다고 신고됨).
+   */
+  seasonOver: boolean;
+}
+
+/**
+ * 「続いている記録」구획 제목 — 시즌이 끝났으면 과거형(M1).
+ *
+ * ⚠**홈·구단 페이지가 같은 함수로 같은 문장을 낸다.** 각자 손으로 적으면
+ * 화면마다 다르게 말하는 균열이 또 난다(팀 페이지만 먼저 과거형으로 고쳐졌던 사고 · 2026-08-20).
+ */
+export function streakSectionTitle(seasonOver: boolean): string {
+  return seasonOver ? "続いていた記録" : "続いている記録";
+}
+
+/** 「記録に近づいている」구획 제목 — 같은 규칙(M1). `streakSectionTitle` 과 짝이다. */
+export function milestoneSectionTitle(seasonOver: boolean): string {
+  return seasonOver ? "記録に近づいていた" : "記録に近づいている";
 }
 
 const pctText = (v: number | null): string => (v === null ? NO_VALUE : avg3(v));
@@ -327,8 +351,8 @@ function jumpNav(d: HomePageData): RawHtml {
   for (const l of d.leagues) items.push({ id: `b-hstand-${l.id}`, label: l.name.replace(/・リーグ$/, "") });
   if (d.week !== null) items.push({ id: "b-hweek", label: "先週の顔" });
   if (d.paces.length > 0) items.push({ id: "b-hpace", label: "ペース" });
-  if (d.milestones.length > 0) items.push({ id: "b-hmile", label: "記録に近づいている" });
-  if (d.streaks.length > 0) items.push({ id: "b-hstreak", label: "続いている記録" });
+  if (d.milestones.length > 0) items.push({ id: "b-hmile", label: milestoneSectionTitle(d.seasonOver) });
+  if (d.streaks.length > 0) items.push({ id: "b-hstreak", label: streakSectionTitle(d.seasonOver) });
   // ⚠**하나뿐이면 그리지 않는다** — 뛸 곳이 하나면 내비가 아니라 장식이다
   if (items.length < 2) return raw("");
   return html`<nav class="hjump" aria-label="このページの中の移動">
@@ -461,7 +485,7 @@ ${d.paces.length === 0
 ${d.milestones.length === 0
     ? raw("")
     : html`<section class="block" id="b-hmile">
-  <h2>記録に近づいている<span class="qt">通算</span></h2>
+  <h2>${milestoneSectionTitle(d.seasonOver)}<span class="qt">通算</span></h2>
   ${scroller(html`<table>
     <thead><tr>
       <th class="l">選手</th><th class="l">球団</th><th class="l">記録</th>
@@ -496,7 +520,7 @@ ${d.milestones.length === 0
 ${d.streaks.length === 0
     ? raw("")
     : html`<section class="block" id="b-hstreak">
-  <h2>続いている記録</h2>
+  <h2>${streakSectionTitle(d.seasonOver)}</h2>
   ${scroller(html`<table>
     <thead><tr><th class="l">選手</th><th class="l">球団</th><th class="l">記録</th><th>試合</th><th class="l">最後の出場</th></tr></thead>
     <tbody>${d.streaks.map(

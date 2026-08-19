@@ -24,6 +24,9 @@ import type { Rate } from "@bb-app/metrics";
 import type { TeamRace } from "@bb-app/aggregate";
 // ⚠**여기서 다시 계산하지 않는다**(M1) — 홈 화면과 같은 한 벌을 팀으로 거른다(query.ts)
 import type { HomeMilestone, HomeStreak } from "./home-page.ts";
+// ⚠**제목 문자열도 홈 화면과 한 벌을 쓴다**(M1) — 손으로 복사하면 한쪽만 고쳐지는 사고가 난다
+// (2026-08-20에 이 파일만 과거형으로 고쳐지고 홈이 안 갈린 사고가 실제로 났다)
+import { milestoneSectionTitle, streakSectionTitle } from "./home-page.ts";
 
 /**
  * 구단 페이지의 「続いている記録」·「記録に近づいている」에 싣는 행 수 — **홈의 한도와 별개다.**
@@ -687,7 +690,7 @@ function nowBlock(d: TeamPageData, base: string): RawHtml {
 function streakBlock(rows: readonly HomeStreak[], seasonOver: boolean): RawHtml {
   return block({
     id: "tstreak",
-    title: seasonOver ? "続いていた記録" : "続いている記録",
+    title: streakSectionTitle(seasonOver),
     body: rows.length === 0
       ? seasonOver
         ? html`<p class="empty">この球団に、シーズン終了時点で続いていた記録はありません。</p>`
@@ -729,7 +732,7 @@ function streakBlock(rows: readonly HomeStreak[], seasonOver: boolean): RawHtml 
 function milestoneBlock(rows: readonly HomeMilestone[], seasonOver: boolean): RawHtml {
   return block({
     id: "tmile",
-    title: seasonOver ? "記録に近づいていた" : "記録に近づいている",
+    title: milestoneSectionTitle(seasonOver),
     qualifier: "通算",
     body: rows.length === 0
       ? seasonOver

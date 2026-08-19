@@ -2658,6 +2658,9 @@ function homePage(
       paces,
       streaks: streaks.slice(0, HOME_STREAK_ROWS),
       hasPostseason,
+      // ⚠**구단 페이지와 같은 판정을 쓴다**(M1) — `calendarOf` 가 쓰는 것과 같은 함수다.
+      // 「続いている記録」가 끝난 시즌에서 현재형으로 거짓말하는 것을 막는다(2026-08-20).
+      seasonOver: seasonIsOver(db, o.season),
     },
     allStreaks: streaks,
     allMilestones: milestones,
