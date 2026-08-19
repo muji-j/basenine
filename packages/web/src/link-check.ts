@@ -11,6 +11,11 @@
  *
  * ⚠**배포 파이프라인에 다른 그물이 없다.** `daily.yml`은 테스트도 타입체크도 돌리지 않고
  * 빌드 뒤 바로 배포한다. 여기서 안 잡으면 404가 그대로 공개된다.
+ *
+ * ⚠**그물에 구멍이 있었다**(2026-08-19). 이 검사는 「가리키는 곳이 있는가」만 보고
+ * 「그곳이 **하나인가**」는 안 봤다 — `id` 를 `Set` 으로 담았기 때문이다.
+ * 중복 id 는 앵커 검사도 ARIA 검사도 전부 통과하지만 브라우저는 **먼저 나온 하나**만 연다.
+ * 그래서 `duplicateIds()` 를 함께 둔다(아래).
  */
 
 /** 페이지 안의 `id` 를 줍는다. ⚠공백 뒤에 오는 것만 본다 — `[href=...]` 같은 문자열을 피한다 */
@@ -38,6 +43,17 @@ export interface LinkIndex {
   path: string;
   /** 이 문서 안의 `id`. HTML 이 아니면 빈 집합 */
   ids: Set<string>;
+  /**
+   * 이 문서에서 **두 번 이상** 나온 `id`. 정상이면 빈 배열이라 힙에도 거의 안 남는다.
+   *
+   * ⚠**`ids` 가 `Set` 이라 중복은 원리적으로 안 보였다**(2026-08-19 감사).
+   * 두 번 나온 id 도 「있다」로만 보이므로 앵커 검사·ARIA 검사가 **전부 통과**한다 —
+   * 그런데 브라우저의 `getElementById` 는 **문서에서 먼저 나온 하나**만 준다.
+   * 실측: `ranking.html` 9장에 중복 id **86종 / 172노드**가 있었고,
+   * `#pn-rankmetric-starter-era` 로 들어가면 언제나 セ 사본이 열려
+   * **パ의 개인 지표를 URL 로 가리킬 수 없었다.**
+   */
+  dupIds: string[];
   /** `href`·`src` 원문 */
   refs: string[];
   /** ARIA 참조. `[속성명, 값]` */
@@ -51,14 +67,50 @@ export interface LinkIndex {
  */
 export function linkIndex(f: OutFile): LinkIndex {
   if (!f.path.endsWith(".html")) {
-    return { path: f.path, ids: new Set(), refs: [], aria: [] };
+    return { path: f.path, ids: new Set(), dupIds: [], refs: [], aria: [] };
+  }
+  /**
+   * ⚠**한 번 훑으면서 둘 다 만든다.** 매치 배열을 통째로 펼쳐 두면 그만큼이 힙에 남는데,
+   * 이 파일은 9시즌 빌드에서 이미 한 번 OOM 을 낸 자리다(위 주석 참조).
+   * 여기서 들고 있는 것은 **id 집합과 중복 목록뿐**이고, 중복은 정상이면 0개다.
+   */
+  const ids = new Set<string>();
+  const dup = new Set<string>();
+  for (const m of f.content.matchAll(ID_RE)) {
+    const id = m[1] ?? "";
+    if (ids.has(id)) dup.add(id);
+    else ids.add(id);
   }
   return {
     path: f.path,
-    ids: new Set([...f.content.matchAll(ID_RE)].map((m) => m[1] ?? "")),
+    ids,
+    dupIds: [...dup],
     refs: [...f.content.matchAll(REF_RE)].map((m) => m[1] ?? ""),
     aria: [...f.content.matchAll(ARIA_REF_RE)].map((m) => [m[1] ?? "", m[2] ?? ""] as [string, string]),
   };
+}
+
+/** 같은 문서에 두 번 이상 나온 `id` 한 건 */
+export interface DuplicateId {
+  path: string;
+  id: string;
+}
+
+/**
+ * 같은 문서 안의 중복 `id` 를 모은다. **문서를 넘어선 중복은 중복이 아니다** —
+ * 모든 페이지가 `id="q"`(헤더 검색창)를 갖는 것이 정상이다.
+ *
+ * ⚠**깨진 링크와 따로 센다.** 중복 id 는 링크가 가리키는 곳이 **없는** 것이 아니라
+ * **둘인** 것이라, 같은 목록에 섞으면 「깨진 링크 N개」라는 수가 거짓말이 된다(작업규칙 7).
+ * ⚠**이것이 앵커 검사의 사각지대였다**: `ids.has(frag)` 는 중복이어도 참이라,
+ * 앵커도 ARIA 도 전부 통과시키면서 실제로는 다른 곳을 열고 있었다.
+ */
+export function duplicateIds(files: readonly LinkIndex[]): DuplicateId[] {
+  const out: DuplicateId[] = [];
+  for (const f of files) {
+    for (const id of f.dupIds) out.push({ path: f.path, id });
+  }
+  return out;
 }
 
 /** 생성될 파일 한 장 */

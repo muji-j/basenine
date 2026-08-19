@@ -328,26 +328,80 @@ export function note(text: string): RawHtml {
 }
 
 /**
+ * 탭 그룹 — **함께 움직이는 단위**와 **id 이름공간**을 나눠 든다.
+ *
+ * ⚠**둘을 한 문자열로 묶어 뒀던 것이 P1 결함의 원인이었다**(2026-08-19 감사 실측).
+ * 순위표는 부문 탭(`rankcat`)과 지표 탭(`rankmetric-*`)을 **セ 패널 안과 パ 패널 안에
+ * 그대로 두 번** 그린다 — 함께 움직여야 하니까 그룹 이름이 같아야 하는데,
+ * 그 이름으로 id 까지 지으니 **id 도 같아졌다.** 결과: `dist` 15,340장 중 `ranking.html`
+ * **9장**(시즌별 8 + 현행 1)에 중복 id **86종 / 172노드**.
+ * 브라우저의 `getElementById` 는 먼저 나온 하나만 주므로
+ * `ranking.html#pn-rankmetric-starter-era` 로 들어가면 열린 리그 패널이 **`['central']`** 이었다 —
+ * **パ의 어떤 개인 지표도 URL 로 가리킬 수 없었다.**
+ *
+ * ⚠**「그룹을 리그별로 나눈다」로 고치지 마라.** 그러면 중복은 사라지지만
+ * 「리그를 바꿔도 보고 있던 지표가 남는다」가 함께 사라진다. **id 만 나눈다.**
+ */
+export interface TabGroup {
+  /** 클라이언트가 읽는 이름(`data-tabgroup`/`data-panelgroup`). **같으면 함께 움직인다** */
+  group: string;
+  /** `id` 접두사. **한 문서 안에서 유일해야 한다** */
+  ns: string;
+}
+
+/** 그룹 이름과 id 이름공간이 같으면 문자열 하나로 충분하다(대부분이 그렇다) */
+export type TabGroupRef = string | TabGroup;
+
+function groupOf(g: TabGroupRef): string {
+  return typeof g === "string" ? g : g.group;
+}
+
+function nsOf(g: TabGroupRef): string {
+  return typeof g === "string" ? g : g.ns;
+}
+
+/**
+ * 같은 탭 그룹을 **한 문서에 두 번 이상** 그릴 때. 움직임은 함께, id 는 따로.
+ * @param scope 그 사본을 가르는 이름(리그 id 등). id 에만 들어간다
+ */
+export function scopedGroup(group: string, scope: string): TabGroup {
+  return { group, ns: `${group}-${scope}` };
+}
+
+/**
+ * 그룹을 한 단계 더 나눈다(부문별 지표 그룹처럼).
+ *
+ * ⚠**양쪽을 같은 방식으로 늘린다.** 한쪽만 늘리면 서로 다른 그룹이 같은 id 를 쓰게 되어
+ * 지금 고친 결함이 그대로 되돌아온다.
+ */
+export function subGroup(g: TabGroupRef, suffix: string): TabGroup {
+  return { group: `${groupOf(g)}-${suffix}`, ns: `${nsOf(g)}-${suffix}` };
+}
+
+/**
  * 탭 한 줄.
  *
  * ⚠**같은 `group`을 쓰는 탭줄은 함께 움직인다.** 순위표에서 리그를 바꿔도 보고 있던
  * 지표가 유지되는 것이 이 성질 덕분이다 — 리그마다 탭줄을 따로 그리되 그룹은 하나다.
+ * ⚠**그때 `id` 는 반드시 갈라야 한다** — `scopedGroup()` 을 쓴다(위 `TabGroup` 주석).
  * @param scroll 좁은 화면에서 줄바꿈 대신 가로로 흐르게 한다
  * @param label ⚠**한 줄에 탭줄이 둘 이상이면 반드시 다르게 준다.** 같은 이름의 탭줄이
  *   나란히 있으면 스크린리더에서 어느 쪽인지 구별할 방법이 사라진다
  * @param seg 세그먼티드 표시 — 「둘 중 하나」인 상위 전환에만. 형태로 배타성을 말한다
  */
 export function tablist(
-  group: string,
+  group: TabGroupRef,
   items: readonly { id: string; label: string }[],
   scroll = false,
   label = "表示の切り替え",
   seg = false,
 ): RawHtml {
-  return html`<div class="tabs${scroll ? " scroll" : ""}${seg ? " seg" : ""}" role="tablist" data-tabgroup="${group}" aria-label="${label}">
+  const g = groupOf(group);
+  const ns = nsOf(group);
+  return html`<div class="tabs${scroll ? " scroll" : ""}${seg ? " seg" : ""}" role="tablist" data-tabgroup="${g}" aria-label="${label}">
     ${items.map(
       (t, i) => html`<button class="tab" type="button" role="tab"
-        id="${tabId(group, t.id)}" aria-controls="${panelId(group, t.id)}"
+        id="${tabId(ns, t.id)}" aria-controls="${panelId(ns, t.id)}"
         data-tab="${t.id}" aria-selected="${i === 0 ? "true" : "false"}">${t.label}</button>`,
     )}
   </div>`;
@@ -365,13 +419,16 @@ export function tablist(
  * 갈리면 `aria-controls` 가 **존재하지 않는 id** 를 가리켜 조용히 무의미해진다.
  * ⚠**HTML id 로 쓸 수 있는 글자만 온다** — 그룹은 코드가 정한 상수이고
  * 키는 `^[a-z0-9+-]+$` 꼴이라(순위 지표 id 포함) 안전하다.
+ *
+ * ⚠**여기 오는 것은 `TabGroup.ns`(id 이름공간)이지 `group`(움직임의 단위)이 아니다.**
+ * 대부분은 둘이 같지만, 한 문서에 같은 그룹을 두 번 그리는 자리(순위표의 セ/パ)에서는 다르다.
  */
-export function tabId(group: string, key: string): string {
-  return `tb-${group}-${key}`;
+export function tabId(ns: string, key: string): string {
+  return `tb-${ns}-${key}`;
 }
 
-export function panelId(group: string, key: string): string {
-  return `pn-${group}-${key}`;
+export function panelId(ns: string, key: string): string {
+  return `pn-${ns}-${key}`;
 }
 
 /**
@@ -380,8 +437,9 @@ export function panelId(group: string, key: string): string {
  * ⚠`role="tabpanel"`을 붙이지 않는다. 안에 든 것이 탭줄이면 「패널을 열었더니 또 탭」이 되어
  * 스크린리더에게 구조를 잘못 말한다. 보이고 숨는 규칙만 공유한다.
  */
-export function follower(group: string, key: string, first: boolean, body: RawHtml): RawHtml {
-  return html`<div data-panelgroup="${group}" data-panelkey="${key}" ${raw(first ? "" : "hidden")}>${body}</div>`;
+export function follower(group: TabGroupRef, key: string, first: boolean, body: RawHtml): RawHtml {
+  // ⚠**id 를 내지 않는다** — 그래서 이름공간이 아니라 그룹 이름만 필요하다
+  return html`<div data-panelgroup="${groupOf(group)}" data-panelkey="${key}" ${raw(first ? "" : "hidden")}>${body}</div>`;
 }
 
 /**
@@ -392,7 +450,7 @@ export function follower(group: string, key: string, first: boolean, body: RawHt
  * 선택 상태의 저장은 탭과 같은 구조를 쓰므로 `data-tabgroup`/`data-tab`은 그대로 둔다.
  */
 export function buttonGroup(
-  group: string,
+  group: TabGroupRef,
   items: readonly { id: string; label: string }[],
   label: string,
   /**
@@ -406,7 +464,9 @@ export function buttonGroup(
    */
   controlsPanels = false,
 ): RawHtml {
-  return html`<div class="tabs" role="group" data-tabgroup="${group}" aria-label="${label}">
+  const g = groupOf(group);
+  const ns = nsOf(group);
+  return html`<div class="tabs" role="group" data-tabgroup="${g}" aria-label="${label}">
     ${items.map(
       (t, i) => html`<button class="tab" type="button" data-tab="${t.id}"
         ${
@@ -419,7 +479,7 @@ export function buttonGroup(
           //   실측(2026-08-19 · 2026 한 시즌 1,499장 재생성 후 바이트 대조):
           //   밖에 두면 **707장**이 달라지고, 여기 안이면 **0장**이다.
           controlsPanels
-            ? html` id="${tabId(group, t.id)}" aria-controls="${panelId(group, t.id)}"`
+            ? html` id="${tabId(ns, t.id)}" aria-controls="${panelId(ns, t.id)}"`
             : raw("")
         }
         aria-pressed="${i === 0 ? "true" : "false"}">${t.label}</button>`,
@@ -428,7 +488,9 @@ export function buttonGroup(
 }
 
 /** 탭에 대응하는 패널. **첫 번째만 열어둔다** — JS가 없어도 뭔가는 보인다 */
-export function panel(group: string, key: string, first: boolean, body: RawHtml): RawHtml {
-  return html`<div data-panelgroup="${group}" data-panelkey="${key}" role="tabpanel"
-  id="${panelId(group, key)}" aria-labelledby="${tabId(group, key)}" ${raw(first ? "" : "hidden")}>${body}</div>`;
+export function panel(group: TabGroupRef, key: string, first: boolean, body: RawHtml): RawHtml {
+  const g = groupOf(group);
+  const ns = nsOf(group);
+  return html`<div data-panelgroup="${g}" data-panelkey="${key}" role="tabpanel"
+  id="${panelId(ns, key)}" aria-labelledby="${tabId(ns, key)}" ${raw(first ? "" : "hidden")}>${body}</div>`;
 }

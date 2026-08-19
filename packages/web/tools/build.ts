@@ -10,7 +10,7 @@
  * ⚠**시계는 여기서 한 번만 읽는다**(M6). 아래로 내려가는 것은 `YYYY-MM-DD` 문자열이다.
  */
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { brokenLinksIn, linkIndex } from "../src/link-check.ts";
+import { brokenLinksIn, duplicateIds, linkIndex } from "../src/link-check.ts";
 import type { LinkIndex } from "../src/link-check.ts";
 import { dirname, join, resolve } from "node:path";
 import { openDb } from "@bb-app/store";
@@ -189,6 +189,29 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
         console.log(
           `링크: ${all.filter((f) => f.path.endsWith(".html")).length}장 검사(앵커 포함) · 깨진 것 없음`,
         );
+      }
+
+      /**
+       * ⚠**중복 id 로 배포하지 않는다.**
+       *
+       * 링크 검사는 「가리키는 곳이 있는가」만 봤고 「그곳이 **하나인가**」는 못 봤다 —
+       * `LinkIndex.ids` 가 `Set` 이었기 때문이다. 그래서 **그물이 있는데 구멍이 있었다**:
+       * 순위표 9장(시즌별 8 + 현행 1)에 중복 id **86종 / 172노드**가 있었는데
+       * 앵커 검사도 ARIA 검사도 전부 통과했다(2026-08-19 감사 실측).
+       * 그동안 `ranking.html#pn-rankmetric-starter-era` 로 들어가면
+       * 브라우저가 먼저 나온 セ 사본을 열어 **パ의 개인 지표에 도달하는 URL 이 없었다.**
+       * ⚠**id 가 겹치면 앵커·ARIA 검사 자체가 무의미해진다** — 그래서 링크 검사보다
+       * 약한 신호가 아니라 **같은 등급의 배포 차단**이다.
+       */
+      const dups = duplicateIds(all);
+      if (dups.length > 0) {
+        const pages = new Set(dups.map((d) => d.path));
+        console.error(
+          `⚠ 같은 문서에 중복된 id ${dups.length}종 / ${pages.size}장 — 그 자리로 가는 URL 이 다른 곳을 연다. 배포하지 않는다`,
+        );
+        for (const d of dups.slice(0, 20)) console.error(`   ${d.path} → id="${d.id}"`);
+        if (dups.length > 20) console.error(`   … 그 밖에 ${dups.length - 20}종`);
+        process.exitCode = 1;
       }
       if (result.stale) {
         console.error("⚠ 데이터가 낡았다 — 수집이 멈췄는지 확인하라");

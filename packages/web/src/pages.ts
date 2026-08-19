@@ -29,7 +29,8 @@
 import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import { NO_VALUE, avg3, dec2, fullDate, innings } from "./format.ts";
-import { block, denText, follower, note, panel, panelId, rankValue, runCell, scroller, statCount, statRateOuts, statSigned, statText, tabId, tablist, term, valueWithDen, widestRunDiff, wlCell } from "./parts.ts";
+import { block, denText, follower, note, panel, panelId, rankValue, runCell, scopedGroup, scroller, statCount, statRateOuts, statSigned, statText, subGroup, tabId, tablist, term, valueWithDen, widestRunDiff, wlCell } from "./parts.ts";
+import type { TabGroupRef } from "./parts.ts";
 import { page, pastSeasonOf, ROSTER_PATH } from "./layout.ts";
 import { teamPath } from "./team-page.ts";
 import type { Freshness, SiteMeta } from "./layout.ts";
@@ -121,11 +122,12 @@ const RANKING_PAGE_ROWS = 30;
  * ⚠**지표 탭 그룹을 부문마다 나눈다.** 하나로 묶으면 「打者」에서 고른 `wRC+`가
  * 「先発」로 옮겼을 때 사라져, 아무 표도 안 열린 화면이 된다.
  */
-function categoryPanels(c: RankingCategory, base: string, limit: number, prefix: string): RawHtml {
+function categoryPanels(c: RankingCategory, base: string, limit: number, prefix: TabGroupRef): RawHtml {
   if (c.panels.length === 0) return html`<p class="empty">この部門の順位を計算できていません。</p>`;
   // ⚠페이지마다 접두사를 다르게 준다 — 저장된 탭 상태를 공유하면 5행짜리 일람과
   // 30행짜리 순위표가 서로의 선택을 덮어쓴다
-  const group = `${prefix}-${c.id}`;
+  // ⚠**그룹 이름과 id 이름공간을 함께 늘린다**(`subGroup`) — 한쪽만 늘리면 id 가 다시 겹친다
+  const group = subGroup(prefix, c.id);
   return html`${tablist(
     group,
     c.panels.map((p) => ({ id: p.id, label: p.label })),
@@ -425,24 +427,38 @@ export function renderRankingPage(d: RankingPageData, ctx: RenderContext): strin
   )}
 </section>`;
 
-  const personalBody = html`${d.leagues.map((league, li) =>
-    panel(
+  /**
+   * ⚠**부문·지표 탭은 리그마다 한 벌씩 그려진다 — 그룹은 공유, id 는 나눈다.**
+   *
+   * 예전에는 그룹 이름으로 id 까지 지어서 **セ 사본과 パ 사본의 id 가 같았다.**
+   * 실측(2026-08-19 감사): `dist` 15,340장 중 `ranking.html` **9장**(시즌별 8 + 현행 1)에
+   * 중복 id **86종 / 172노드**. `ranking.html#pn-rankmetric-starter-era` 로 들어가면
+   * `getElementById` 가 セ 사본을 반환해 `revealHash()` 가 그쪽 조상만 폈고,
+   * 열린 리그 패널이 **`['central']`** — **パ의 어떤 개인 지표도 URL 로 가리킬 수 없었다.**
+   * 낭독기에는 「パ의 打者 탭이 セ의 패널을 조작한다」고 들렸다(ARIA 참조 20/20이 セ 쪽).
+   *
+   * ⚠**그룹까지 나누면 안 된다** — 「리그를 바꿔도 보고 있던 지표가 남는다」가 사라진다.
+   */
+  const personalBody = html`${d.leagues.map((league, li) => {
+    const catGroup = scopedGroup("rankcat", league.id);
+    const metricGroup = scopedGroup("rankmetric", league.id);
+    return panel(
       "rankleague",
       league.id,
       li === 0,
       html`<section class="block" id="lg-${league.id}">
       <h2>${league.name}<span class="sw">${tablist(
-        "rankcat",
+        catGroup,
         league.categories.map((c) => ({ id: c.id, label: c.label })),
         false,
         `${league.name}の部門`,
       )}</span></h2>
       ${league.categories.map((c, ci) =>
-        panel("rankcat", c.id, ci === 0, categoryPanels(c, base, RANKING_PAGE_ROWS, "rankmetric")),
+        panel(catGroup, c.id, ci === 0, categoryPanels(c, base, RANKING_PAGE_ROWS, metricGroup)),
       )}
     </section>`,
-    ),
-  )}`;
+    );
+  })}`;
 
   // 갈래가 없으면 구분선도 없다 — 앞이 비어 있는 구분선은 그냥 흠집이다
   const leagueRail = hasPersonal

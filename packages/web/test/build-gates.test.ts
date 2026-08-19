@@ -270,3 +270,31 @@ test("⚠다음 경기가 없으면 予告先発을 못 받았어도 경고하�
     );
   });
 });
+
+// ── 중복 id. **그물이 있는데 그 그물에 구멍이 있었다** ─────────────────────────
+
+/**
+ * ⚠**T8 과 같은 모양의 실패다**(「그물이 있는데 그 크기를 아무도 안 쟀다」).
+ *
+ * 링크 검사는 앵커와 ARIA 참조를 전수로 보는데, `LinkIndex.ids` 가 `Set` 이라
+ * **같은 id 가 두 번 있어도 「있다」로만** 보였다 — 검사 통과, 브라우저는 다른 곳.
+ * 실측(2026-08-19 감사): `dist` 15,340장 중 `ranking.html` **9장**에 중복 id
+ * **86종 / 172노드** · `#pn-rankmetric-starter-era` 로 들어갔을 때 열린 리그 패널이
+ * **`['central']`** — パ의 개인 지표에 도달하는 URL 이 존재하지 않았다.
+ *
+ * ⚠**이 검사는 소스를 글자로 읽는다.** 위 `raceDisagreed` 시험과 같은 이유다 —
+ * `build.ts` 는 import 만으로 실행되는 스크립트라 그 가지만 태울 수 없고,
+ * 종료 코드로 재려 해도 낡은 데이터·빈 시즌·깨진 링크가 **전부 같은 `1`** 이라 구별되지 않는다.
+ * 검출 로직 자체는 `link-check.test.ts` 가 값으로 잰다.
+ */
+test("⚠중복 id 가 있으면 빌드가 실패한다 — 앵커 검사가 통과하는 종류의 결함이다", () => {
+  const src = readFileSync(join(import.meta.dirname, "..", "tools", "build.ts"), "utf8");
+  const at = src.indexOf("duplicateIds(all)");
+  assert.notEqual(at, -1, "빌드가 중복 id 를 아예 안 본다");
+  const region = src.slice(at, at + 800);
+  assert.match(
+    region,
+    /process\.exitCode = 1/,
+    "중복 id 를 보긴 하는데 종료 코드를 안 바꾼다 — 경고만으로는 그대로 배포된다",
+  );
+});
