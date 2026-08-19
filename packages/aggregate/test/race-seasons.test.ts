@@ -210,15 +210,47 @@ function championCodes(s: SeasonRows, league: string): readonly string[] {
  * 2022 퍼시픽처럼 승패무가 완전히 같은 해에는 **집합에 우승팀이 들어 있는지**까지만 본다.
  * (실측: 2022 `b` 대 `h` 맞대결 25경기에서 `b` 15승 10패 — 협약 ①이 오릭스를 가렸다.)
  */
-const PENNANT: ReadonlyMap<number, Readonly<Record<(typeof LEAGUES)[number], string>>> = new Map([
-  [2018, { central: "c", pacific: "l" }], // 広島 / 西武
-  [2019, { central: "g", pacific: "l" }], // 巨人 / 西武
-  [2020, { central: "g", pacific: "h" }], // 巨人 / ソフトバンク
-  [2021, { central: "s", pacific: "b" }], // ヤクルト / オリックス
-  [2022, { central: "s", pacific: "b" }], // ヤクルト / オリックス(⚠ソフトバンクと 76-65-2 동률 · 협약 ①로 결정)
-  [2023, { central: "t", pacific: "b" }], // 阪神 / オリックス
-  [2024, { central: "g", pacific: "h" }], // 巨人 / ソフトバンク
-  [2025, { central: "t", pacific: "h" }], // 阪神 / ソフトバンク
+interface Champion {
+  /** 그 리그 우승팀의 팀 코드 */
+  code: string;
+  /**
+   * 우승팀의 **승-패-무**. 리그·시즌당 **3수치**를 외부 사실과 대조한다(2026-08-19 검토 지적 m2).
+   *
+   * ⚠**왜 코드만으로는 부족한가.** 코드는 리그·시즌당 **1비트**라, 전 팀 승수가 같은 방향으로
+   * 치우치는 **순서를 보존하는 계통 오차**는 그대로 통과한다 — 순서가 안 바뀌니 우승팀도 안 바뀐다.
+   * Σ 불변식(ΣW=ΣL 등)이 상당 부분을 덮지만 **「값이 실제 기록과 같은가」는 아무도 안 쟀다.**
+   *
+   * ⚠**`null` = 「내가 이 시즌의 정확한 기록을 모른다」이지 「대조할 것이 없다」가 아니다**(M11).
+   * **DB 에서 읽어 채우면 안 된다** — 그 순간 자기 검산이 되어 이 표의 존재 이유가 사라진다.
+   * 추측해서 적는 것은 더 나쁘다: 틀린 「사실」 하나가 **이 대조표 전체를 거짓으로 만든다.**
+   */
+  wlt: readonly [number, number, number] | null;
+}
+
+const PENNANT: ReadonlyMap<number, Readonly<Record<(typeof LEAGUES)[number], Champion>>> = new Map([
+  // 広島 / 西武
+  [2018, { central: { code: "c", wlt: [82, 59, 2] }, pacific: { code: "l", wlt: [88, 53, 2] } }],
+  // 巨人 / 西武
+  [2019, { central: { code: "g", wlt: [77, 64, 2] }, pacific: { code: "l", wlt: [80, 62, 1] } }],
+  // 巨人 / ソフトバンク ⚠**120경기 시즌**이다(코로나) — 143 로 검산하면 안 맞는다
+  [2020, { central: { code: "g", wlt: [67, 45, 8] }, pacific: { code: "h", wlt: [73, 42, 5] } }],
+  // ヤクルト / オリックス(⚠무승부 18 · 승수 2위 阪神 77승 — 매직 승수식·승률식이 갈리는 그 시즌)
+  [2021, { central: { code: "s", wlt: [73, 52, 18] }, pacific: { code: "b", wlt: [70, 55, 18] } }],
+  // ヤクルト / オリックス(⚠ソフトバンクと 76-65-2 완전 동률 · 협약 ①로 결정)
+  [2022, { central: { code: "s", wlt: [80, 59, 4] }, pacific: { code: "b", wlt: [76, 65, 2] } }],
+  // 阪神 / オリックス
+  [2023, { central: { code: "t", wlt: [85, 53, 5] }, pacific: { code: "b", wlt: [86, 53, 4] } }],
+  // 巨人 / ソフトバンク
+  [2024, { central: { code: "g", wlt: [77, 59, 7] }, pacific: { code: "h", wlt: [91, 49, 3] } }],
+  /**
+   * 阪神 / ソフトバンク — ⚠**승-패-무를 일부러 비웠다**(2026-08-19).
+   * 우승팀이 어디인지는 확실하지만 **정확한 승-패-무에 대한 내 확신이 부족하다**(阪神이 85승인지
+   * 86승인지 갈린다). 이 표의 값은 **DB 밖 사실**이어야 의미가 있는데, 확신 없는 수치를 적으면
+   * ⑴틀렸을 때 이 표 전체가 거짓이 되고 ⑵맞았는지 확인하려고 DB 를 보는 순간 자기 검산이 된다.
+   * → **모른다고 적는다**(M11). 아래 시험이 「미기입」으로 세어 실패 메시지에 남긴다.
+   * ⚠**채울 때는 npb.jp 등 외부 공표 기록에서 가져온다 — DB 값을 옮겨 적지 마라.**
+   */
+  [2025, { central: { code: "t", wlt: null }, pacific: { code: "h", wlt: null } }],
 ]);
 
 test("⚠완결 시즌이 충분히 있다 — 없으면 아래 검산이 전부 공회전한다", {
@@ -271,8 +303,39 @@ test("⚠완결 시즌: 판정이 서 있고 성적과 대전표가 어긋나지
       `${s.season}: 성적과 대전표가 어긋난 팀이 있다 — ${race.disagreed.join(" ")}. 파이프라인을 봐라`,
     );
     assert.equal(race.basis, "confirmed", `${s.season}: 완결 시즌인데 유도가 안 됐다`);
-    // 완결 시즌은 `confirmed` 이므로 유도가 성공했다 — `series` 가 `null` 이면 그 자체가 모순이다
-    assert.notEqual(race.series, null, `${s.season}: confirmed 인데 series 가 null 이다`);
+    /**
+     * ⚠**여기 있던 `assert.notEqual(race.series, null)` 은 절대 실패할 수 없었다**
+     * (2026-08-19 검토 지적 m1). 바로 윗줄이 `basis === "confirmed"` 를 확인했고
+     * `confirmed = derived !== null && …` · `series = derived` 이므로 **정의상 항상 참**이다.
+     * 이 저장소는 「항상 참인 단언이 뮤테이션을 하나도 못 잡음」을 이미 밟았다(매직 `>= 0`).
+     * → **값을 재는 불변식**으로 바꾼다: 유도된 대전수는 규정 경기수를 실제로 재구성해야 한다.
+     *   `intra × 5 + inter × 6 === 규정 경기수` (같은 리그 5팀 · 다른 리그 6팀).
+     *   시즌마다 `intra`/`inter` 가 달라도 성립한다 — 2020 은 `24×5 + 0×6 = 120` 이다.
+     *
+     * ⚠**뮤테이션 실측 결과를 그대로 적는다 — 검토가 지정한 뮤턴트는 여기까지 오지 못했다.**
+     * `deriveSeriesLengths` 의 `intra` 를 `+1` 한 뮤턴트를 실제로 돌려 보니(2026-08-19)
+     * **이 줄이 아니라 두 줄 위의 `disagreed` 단언이 먼저 떨어진다**
+     * (`2018: 성적과 대전표가 어긋난 팀이 있다 — b c d db e f g h l m s t`).
+     * 이유는 이 불변식이 **완결 시즌에서는 `disagreed === []` 로부터 따라 나오기** 때문이다:
+     * ```
+     * load() 가 games 와 pairs 를 같은 행에서 만든다     → Σ_상대 치른수 = games
+     * race.ts 의 Σ 검사: Σ_상대(규정 − 치른수) = total − games
+     * 리그가 6:6 이다                                    → Σ_상대 규정 = intra×5 + inter×6
+     * ⇒ intra×5 + inter×6 − games = total − games       ⇒ intra×5 + inter×6 = total
+     * ```
+     * 즉 **이 자리에서 완전히 독립적인 측정은 원리적으로 만들 수 없다**(대전 수를 실제로 독립 대조하는
+     * 것은 아래 「30쌍·36쌍」 시험이다). 그래도 `notEqual(null)` 보다는 낫다 —
+     * 그쪽은 **함수 자신의 정의로 참**이라 어떤 뮤턴트도 못 잡지만, 이쪽은 **주변 보증이 무너지면 떨어진다.**
+     * 실측으로 그 차이를 확인했다: `intra+1` **과** Σ 검사 무력화를 **같이** 넣은 이중 뮤턴트에서
+     * `notEqual(null)` 은 그대로 통과했고 이 단언은 `리그내 26×5 + 교류전 3×6 = 148 ≠ 143` 으로 떨어졌다.
+     */
+    const series = race.series;
+    assert.ok(series !== null, `${s.season}: confirmed 인데 series 가 null 이다`);
+    assert.equal(
+      series.intra * 5 + series.inter * 6,
+      s.total,
+      `${s.season}: 유도된 대전수(리그내 ${series.intra}×5 + 교류전 ${series.inter}×6 = ${series.intra * 5 + series.inter * 6})가 규정 ${s.total}경기와 다르다`,
+    );
   }
 });
 
@@ -365,18 +428,70 @@ test("⚠완결 시즌: pctKey 최상위 집합에 실제 리그 우승팀이 �
       const champs = championCodes(s, league);
       const teams = s.teams.filter((t) => leagueOf(t.teamCode) === league);
       const line = teams.map((t) => `${t.teamCode} ${t.w}-${t.l}-${t.t}`).join(" · ");
+      // ⚠**타입을 명시한다.** `assert.ok` 는 assertion function 이라, 그 인자로 쓰이는 지역변수가
+      // 타입 표기 없이 추론되면 TS7022(`자기 초기화식을 순환 참조`)가 난다 — 실측 확인.
+      const code: string = want[league].code;
       assert.ok(
-        champs.includes(want[league]),
-        `${s.season} ${league}: 실제 우승팀은 ${want[league]} 인데 pctKey 최상위는 [${champs.join(",")}] 이다 — ${line}`,
+        champs.includes(code),
+        `${s.season} ${league}: 실제 우승팀은 ${code} 인데 pctKey 최상위는 [${champs.join(",")}] 이다 — ${line}`,
       );
       // 동률이 아니면 집합이 **정확히** 우승팀 하나여야 한다
       if (champs.length === 1) {
-        assert.deepEqual(champs, [want[league]], `${s.season} ${league}: 단독 최상위가 ${champs[0]} 인데 실제 우승팀은 ${want[league]} 다`);
+        assert.deepEqual(champs, [code], `${s.season} ${league}: 단독 최상위가 ${champs[0]} 인데 실제 우승팀은 ${code} 다`);
         single += 1;
       }
     }
   }
   assert.ok(single > 0, `단독 우승 갈래가 ${single}번 돌았다 — 아무것도 안 쟀다`);
+});
+
+/**
+ * ⚠**우승팀의 승-패-무 자체를 외부 사실과 맞춘다**(2026-08-19 검토 지적 m2).
+ *
+ * 위 시험은 리그·시즌당 **1비트**(누가 우승했나)만 대조한다. 그래서 **순서를 보존하는 계통 오차**
+ * — 예컨대 어떤 대회가 통째로 섞여 전 팀 승수가 같은 방향으로 부풀거나, 무승부 판정이 한쪽으로
+ * 쏠리거나, 어떤 상태의 경기가 통째로 빠지는 종류 — 는 우승팀을 안 바꾸므로 그냥 통과한다.
+ * 여기서 **수치를 직접** 맞춘다.
+ *
+ * ⚠**이 시험이 붉어지면 둘 중 하나다**: ⑴적재가 틀렸다 ⑵`PENNANT` 의 수치가 틀렸다.
+ * **통과시키려고 DB 값을 옮겨 적지 마라** — 그러면 이 시험은 그날부터 아무것도 안 재는 껍데기가 된다.
+ * 실패 메시지에 양쪽 값을 다 넣는 것은 어느 쪽을 조사할지 바로 정하라는 뜻이다.
+ *
+ * ⚠**공회전 방지**: 대조한 수치가 0건이면 실패한다. `wlt: null` 인 시즌은 **세어서 메시지에 남긴다** —
+ * 「안 쟀음」이 「0건 통과」로 읽히지 않게 한다(작업규칙 7).
+ */
+test("⚠완결 시즌: 리그 우승팀의 승-패-무가 실제 기록과 같다", {
+  skip: HAS_DB ? false : "data/bb.sqlite 없음",
+}, () => {
+  let checked = 0;
+  const unknown: string[] = [];
+  for (const s of finished()) {
+    const want = PENNANT.get(s.season);
+    assert.ok(
+      want !== undefined,
+      `${s.season} 의 리그 우승팀을 모른다 — 백필로 시즌이 늘었으면 이 파일의 PENNANT 표를 갱신하라`,
+    );
+    for (const league of LEAGUES) {
+      // ⚠타입 표기가 필요한 이유는 위 시험의 `code` 와 같다(assertion function + TS7022)
+      const champ: Champion = want[league];
+      if (champ.wlt === null) {
+        unknown.push(`${s.season} ${league}(${champ.code})`);
+        continue;
+      }
+      const row = s.teams.find((x) => x.teamCode === champ.code);
+      assert.ok(row !== undefined, `${s.season} ${league}: 우승팀 ${champ.code} 가 DB 에 없다 — 팀 코드가 바뀌었을 수 있다`);
+      assert.deepEqual(
+        [row.w, row.l, row.t],
+        [champ.wlt[0], champ.wlt[1], champ.wlt[2]],
+        `${s.season} ${league} ${champ.code}: 적재된 성적이 ${row.w}-${row.l}-${row.t} 인데 실제 기록은 ${champ.wlt.join("-")} 다 — 적재가 틀렸거나 PENNANT 의 수치가 틀렸다. DB 값으로 표를 고쳐 통과시키지 마라`,
+      );
+      checked += 1;
+    }
+  }
+  assert.ok(
+    checked > 0,
+    `대조한 수치가 0건이다 — 이 시험이 공회전한다(승-패-무 미기입: ${unknown.join(" · ") || "없음"})`,
+  );
 });
 
 /**
