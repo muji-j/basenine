@@ -63,8 +63,23 @@ function playedBoth(db: Db, date: string, home: string, away: string): void {
  * ⚠**`playedBoth`로는 「홈 상위 N에서 밀려난다」를 못 만든다.** 팀당 타자가 하나뿐이면
  * 후보가 최대 12명이라 홈의 상위 10명 안에 거의 다 들어가기 때문이다. 팀별 자르기를 재려면
  * **홈 한도를 넘길 만큼의 후보**가 있어야 한다.
+ *
+ * ⚠**홈/원정에 다른 인원을 줄 수 있다**(`awayBatters` 생략 시 `batters`와 같다 — 기존 호출은
+ * 그대로 동작한다). 2026-08-19 검토에서 **「양 팀에 8명씩 균등 배분」로는 `TEAM_STREAK_ROWS`의
+ * 하한(10)을 못 박지 못한다**는 것이 뮤테이션으로 드러났다 — playerId 오름차순 타이브레이크 때문에
+ * 홈 상위 10이 두 팀에 8/2로 쪼개져, 「구단 페이지 행 수 ≥ 홈이 그 팀에 대해 낸 행 수」가
+ * 최대 8만 요구하게 된다(`TEAM_STREAK_ROWS`를 10→8로 낮춰도 관련 시험 51본이 그대로 통과했다).
+ * 하한 10을 실제로 요구하려면 **홈 상위 10 전부가 한 팀에 쏠려야** 한다 — 그러려면 그 팀 혼자
+ * 10명 이상의 후보를 갖고, playerId가 상대 팀보다 전부 앞서야 한다.
  */
-function playedWide(db: Db, date: string, home: string, away: string, batters: number): void {
+function playedWide(
+  db: Db,
+  date: string,
+  home: string,
+  away: string,
+  batters: number,
+  awayBatters: number = batters,
+): void {
   seq += 1;
   const gameId = `g${seq}`;
   upsertGame(db, {
@@ -72,8 +87,11 @@ function playedWide(db: Db, date: string, home: string, away: string, batters: n
     status: "played", notPlayedReason: null, competition: "regular",
     sourceUrl: "https://npb.jp/x", fetchedAt: NOW, awayRuns: 1, homeRuns: 2,
   });
-  for (const [side, code] of [["home", home], ["away", away]] as const) {
-    for (let i = 0; i < batters; i += 1) {
+  for (const [side, code, n] of [
+    ["home", home, batters],
+    ["away", away, awayBatters],
+  ] as const) {
+    for (let i = 0; i < n; i += 1) {
       upsertBatting(db, {
         gameId, playerId: `BAT_${code}_${i}`, side, battingOrder: String(i + 1), position: "(遊)",
         pa: 4, ab: 4, h: 1, d2: 0, d3: 0, hr: 0, bb: 0, ibb: 0, hbp: 0,
@@ -207,32 +225,43 @@ test("팀 페이지의 연속 기록은 홈 화면 것을 거른 것과 값이 �
  *
  * ⚠**뮤테이션(실측 확인)**:
  * ⒜ 팀별 상위 N → 홈 배열 필터로 복귀 → ⑵·⑶이 떨어진다.
- * ⒝ 팀별 한도를 1로 → ⑴이 떨어진다(홈에 8행을 가진 구단이 1행이 된다).
+ * ⒝ 팀별 한도를 1로 → ⑴이 떨어진다(홈에 10행을 가진 구단이 1행이 된다).
+ * ⒞ `TEAM_STREAK_ROWS`를 10→9로 낮추면 → ⑴이 떨어진다(g: 구단 페이지 9행 < 홈이 낸 10행) —
+ *   **이 하한(10)을 실제로 못 박는 것은 연속 쪽 픽스처뿐이다**(2026-08-19 검토 반영).
+ *   근접 쪽은 `TEAM_MILESTONE_ROWS`를 8→7로 낮추면 이미 g 에서 같은 방식으로 떨어진다.
  */
 test("⚠홈 상위 N에 못 든 구단 선수도 구단 페이지에는 나온다 — 팀별로 상위 N을 뽑는다", async () => {
   await withDb((db) => {
     /**
-     * 센트럴 t·g 에 **각 8명**씩 — 후보 16명이라 홈의 상위 10명을 넘긴다.
-     * 홈 정렬은 `경기 수 내림차순 → playerId 오름차순`이고 여기선 전원이 5경기라
-     * `BAT_g_*` 8명이 먼저 차고 `BAT_t_*` 는 2명만 홈에 남는다.
+     * 센트럴 **g 에 10명 · t 에 8명** — 일부러 비대칭이다.
+     * 홈 정렬은 `경기 수 내림차순 → playerId 오름차순`이고 전원이 5경기라 결국 playerId 순인데,
+     * `BAT_g_*` < `BAT_t_*`(문자 비교)라 **g 10명이 홈 상위 10을 전부 채우고 t 는 한 명도 못 든다**.
+     * ⚠**「각 8명씩 균등 배분」이었을 때는 이 하한(10)을 못 박지 못했다**(2026-08-19 검토에서
+     * 뮤테이션으로 발견 — `TEAM_STREAK_ROWS`를 10→8로 낮춰도 51본이 그대로 통과했다).
+     * 원인: 16명을 8/8로 나누면 홈 상위 10이 두 팀에 8/2로 쪼개져, 「구단 페이지 행 수 ≥ 홈이
+     * 그 팀에 대해 낸 행 수」가 최대 8만 요구했다. 하한 10을 실제로 요구하려면 **홈 상위 10 전부가
+     * 한 팀에 쏠려야** 하므로, 그 팀 혼자 10명 이상을 갖고 상대보다 playerId가 전부 앞서야 한다.
      */
-    for (const c of ["t", "g"]) {
-      for (let i = 0; i < 8; i += 1) upsertPlayer(db, `BAT_${c}_${i}`, `${c}球団の続巻${i}`, NOW);
-      upsertPlayer(db, `PIT_${c}`, `${c}球団投手`, NOW);
-    }
+    for (let i = 0; i < 10; i += 1) upsertPlayer(db, `BAT_g_${i}`, `g球団の続巻${i}`, NOW);
+    upsertPlayer(db, "PIT_g", "g球団投手", NOW);
+    for (let i = 0; i < 8; i += 1) upsertPlayer(db, `BAT_t_${i}`, `t球団の続巻${i}`, NOW);
+    upsertPlayer(db, "PIT_t", "t球団投手", NOW);
     for (const c of ["l", "m"]) {
       upsertPlayer(db, `BAT_${c}_0`, `${c}球団の打者`, NOW);
       upsertPlayer(db, `PIT_${c}`, `${c}球団投手`, NOW);
     }
 
     const dates = ["2026-08-11", "2026-08-12", "2026-08-13", "2026-08-14", "2026-08-15"];
-    for (const d of dates) playedWide(db, d, "t", "g", 8);
+    // home=t(8명) · away=g(10명) — g 가 문자순으로 앞서므로 홈 상위 10을 전부 g 가 차지한다
+    for (const d of dates) playedWide(db, d, "t", "g", 8, 10);
     // 파 리그는 리그 번들이 비지 않게 하는 목적뿐이다 — 2경기라 연속 기록 하한(5경기)에 못 미친다
     for (const d of dates.slice(0, 2)) playedWide(db, d, "l", "m", 1);
 
     /**
      * 통산 마디 — **g 8명이 근접, t 8명은 멀다.** 근접 정렬(남은 수 오름차순)에서
      * 홈 상위 8명이 **전부 g**가 되므로, t 는 홈에 **한 명도** 못 든다.
+     * ⚠**근접은 연속과 다른 인원(g·t 각 8명)을 그대로 쓴다** — 이쪽은 이미 `TEAM_MILESTONE_ROWS`를
+     * 7로 낮추면 정확히 떨어져 하한 8을 못 박고 있었다(검토자 실측). 손대지 않는다.
      */
     for (let i = 0; i < 8; i += 1) {
       career(db, `BAT_g_${i}`, 480 - i, 15); // 통산 495~488 → 500까지 5~12
