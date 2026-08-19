@@ -675,13 +675,23 @@ function nowBlock(d: TeamPageData, base: string): RawHtml {
  * ⚠**「継続中」이라는 말을 쓰지 않는다**(M1 · 홈 화면과 같은 규칙). 마지막 출장일만 그대로
  * 보여주고, 그 판단은 독자에게 맡긴다 — 화면이 대신 「継続中」이라 말하면 끊긴 기록이
  * 이어지는 것처럼 보일 수 있다.
+ *
+ * ⚠**끝난 시즌에 현재형으로 말하지 않는다**(2026-08-20 최종 검토 ③ · `nowBlock` 과 같은 규칙).
+ * 바로 위 요약 띠는 `seasonOver` 로 「シーズンの結果」와 「いまの状況」을 갈랐는데
+ * **그 옆줄인 이 구획은 안 갈렸다** — 작업규칙 10(자기 수정을 다시 읽는다)이 잡았어야 할 자리다.
+ * 실측(2026-08-20 · `dist` 전수): 구단 페이지 **108장 중 96장이 끝난 시즌**인데
+ * 제목은 **108/108 이 현재형**이었고, 그중 **77장**이 「この球団の続いている記録はありません」이라고
+ * 썼다. 2018 화면이 **「지금 이어지고 있는 기록은 없습니다」**라고 말한 것이다.
+ * ⚠**각주는 손대지 않는다** — 「最後の出場日を必ず併記しています」는 시제와 무관하게 참이다.
  */
-function streakBlock(rows: readonly HomeStreak[]): RawHtml {
+function streakBlock(rows: readonly HomeStreak[], seasonOver: boolean): RawHtml {
   return block({
     id: "tstreak",
-    title: "続いている記録",
+    title: seasonOver ? "続いていた記録" : "続いている記録",
     body: rows.length === 0
-      ? html`<p class="empty">この球団の続いている記録はありません。</p>`
+      ? seasonOver
+        ? html`<p class="empty">この球団に、シーズン終了時点で続いていた記録はありません。</p>`
+        : html`<p class="empty">この球団の続いている記録はありません。</p>`
       : html`${scroller(html`<table>
     <thead><tr><th class="l">選手</th><th class="l">記録</th><th>試合</th><th class="l">最後の出場</th></tr></thead>
     <tbody>${rows.map(
@@ -708,14 +718,23 @@ function streakBlock(rows: readonly HomeStreak[]): RawHtml {
  *
  * ⚠**출처가 다른 표다**(M4·홈 화면과 같은 주석) — 통산은 선수 페이지의 年度別成績(NPB 공표치)를
  * 당사이트가 더한 것이고, 이 화면의 다른 수는 우리 경기 기록에서 쌓은 값이다. 섞지 않는다.
+ *
+ * ⚠**여기도 끝난 시즌에 현재형으로 말하지 않는다**(2026-08-20 최종 검토 ③ · `streakBlock` 과 같은 규칙).
+ * 실측으로 이 제목은 `dist` **108/108 이 현재형**이었다(끝난 시즌 96장 포함).
+ * ⚠**과거형이 사실인 근거는 데이터 쪽에 있다** — `milestonesOf` 의 SQL 이 `WHERE c.year <= ?` 라
+ * 이 값은 **그 시즌 종료 시점의 통산**이지 오늘의 통산이 아니다(query.ts). 「오늘 다가서 있다」가
+ * 아니라 **「그때 다가서 있었다」**가 맞는 말이다.
+ * ⚠**각주는 손대지 않는다** — 「今、選手ページがある選手だけ」는 대상 선정 규칙이라 시제와 무관하다.
  */
-function milestoneBlock(rows: readonly HomeMilestone[]): RawHtml {
+function milestoneBlock(rows: readonly HomeMilestone[], seasonOver: boolean): RawHtml {
   return block({
     id: "tmile",
-    title: "記録に近づいている",
+    title: seasonOver ? "記録に近づいていた" : "記録に近づいている",
     qualifier: "通算",
     body: rows.length === 0
-      ? html`<p class="empty">この球団に記録に近づいている選手はありません。</p>`
+      ? seasonOver
+        ? html`<p class="empty">この球団に、シーズン終了時点で記録に近づいていた選手はありません。</p>`
+        : html`<p class="empty">この球団に記録に近づいている選手はありません。</p>`
       : html`${scroller(html`<table>
     <thead><tr><th class="l">選手</th><th class="l">記録</th><th>通算</th><th class="l">節目まで</th><th>今季</th></tr></thead>
     <tbody>${rows.map(
@@ -766,9 +785,11 @@ ${nowBlock(d, base)}
 
 <!-- ⚠**연속 기록·기록 근접도 탭 밖에 둔다** — 요약 띠와 같은 이유다. 홈 화면이 만든 배열을
      팀으로 거른 것뿐이고(M1 · query.ts), 여기서 다시 계산하지 않는다.
-     ⚠**0건이어도 지우지 않는다**(M12) — 두 함수가 그 규칙을 지킨다. -->
-${streakBlock(d.streaks)}
-${milestoneBlock(d.milestones)}
+     ⚠**0건이어도 지우지 않는다**(M12) — 두 함수가 그 규칙을 지킨다.
+     ⚠**seasonOver 를 넘긴다** — 위 요약 띠와 같은 근거를 쓴다(M1). 끝난 시즌에
+     「続いている」·「近づいている」이라고 쓰면 2018 화면이 현재형으로 거짓을 말한다. -->
+${streakBlock(d.streaks, d.calendar.seasonOver)}
+${milestoneBlock(d.milestones, d.calendar.seasonOver)}
 
 <!-- ⚠**세로로 너무 길었다**(2026-08-17 유저 지적). 6구획이 한 줄로 이어져 있었고
      打者 46행 + 投手 30행이 대부분이었다 — 팀 성적을 보러 온 사람이 선수 76행을 지나야

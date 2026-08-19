@@ -2158,6 +2158,53 @@ test("⚠구단 목록에 서면 낡은 사본을 고친다 — 틀린 이름을
 });
 
 /**
+ * ⚠**위 시험의 짝 — 「모르면 손대지 않는다」쪽이 시험 밖이었다**(2026-08-20 최종 검토 ②).
+ *
+ * `refreshFavTeam` 은 눈앞의 정본으로 낡은 사본을 고치는데, **정본을 못 읽었을 때는 손대지 않는다**
+ * (`if(fresh===null…)return;`). 배포 전 HTML 을 캐시에 들고 있는 브라우저의 버튼에는
+ * `data-favpath` 가 없어 `readFavTeam` 이 `null`(**모른다**)을 내기 때문이다 — 그 `null` 을
+ * 「없다」로 쓰면 이미 지정해 둔 최애가 조용히 지워진다(M11).
+ *
+ * ⚠**그 가지를 1건도 안 재고 있었다.** 실측(2026-08-20 리뷰어): `fresh===null` 일 때
+ * `state.favTeam = null` 로 바꿔도 **806/806 이 그대로 초록**이었다. 아래 클릭 경로 시험
+ * (「경로를 모르는 버튼을 눌러도 …」)은 **저장이 `g` 인데 화면 버튼이 `t`** 라
+ * `if(!b)return` 에서 빠져 이 가지를 한 번도 안 태운다.
+ * → 여기서는 **저장과 버튼의 코드를 `t` 로 맞춰** 가지를 태우고, 그 버튼에서 `data-favpath` 만 뺀다.
+ *
+ * ⚠**낡은 이름이 그대로 남는 것이 정답이다.** 「그 구단이 사라졌다」와 「지금 이 화면에서 못 읽었다」를
+ * 구별할 수 없으므로, 지우면 사용자 설정을 우리 추측으로 날리는 것이 된다.
+ * ⚠**뮤테이션 확인(2026-08-20 실측 · 둘 다 이 한 본만 떨어진다)**:
+ * ⑴ `fresh===null` 일 때 `state.favTeam=null` → `packages/web/test` **807본 중 FAIL 1 · ERROR 0**
+ *    (라벨 단언이 잡는다: `球団` !== `旧タイガース`).
+ * ⑵ 화면은 그대로 두고 **저장만** 지우는 판 → `client.test.ts` 108본 중 FAIL 1 · ERROR 0
+ *    (아래 저장 단언이 잡는다 — 그래서 저장 단언은 라벨 단언의 중복이 아니다).
+ */
+test("⚠경로를 못 읽으면 최애를 손대지 않는다 — 「모른다」로 알던 것을 지우지 않는다(M11)", () => {
+  const storage = makeStorage();
+  storage.setItem(
+    "npb-meikan-layout",
+    JSON.stringify({ favTeam: { code: "t", name: "旧タイガース", path: "old/t.html" } }),
+  );
+  const doc = buildPage();
+  navTeamLink(doc, null);
+  // ⚠**저장과 같은 코드(`t`)의 버튼이다** — 그래야 `refreshFavTeam` 이 `if(!b)return` 에서 안 빠진다.
+  //   그리고 **`data-favpath` 가 없다** — 배포 전 HTML 을 들고 있는 브라우저의 모양 그대로다
+  doc.body.appendChild(make("button", { "data-favteam": "t", "data-favname": "阪神", "aria-pressed": "false" }));
+  run(doc, { storage });
+
+  const a = doc.querySelectorAll("[data-navteam]")[0]!;
+  assert.equal(a.textContent, "旧タイガース", "못 읽은 정본이 알던 이름을 지웠다");
+  assert.match(a.getAttribute("href") ?? "", /old\/t\.html$/, "못 읽은 정본이 알던 링크를 지웠다");
+
+  // ⚠**저장까지 남아 있는지 본다** — 화면만 버텨도 다음 방문에 사라지면 같은 결함이다
+  const saved = JSON.parse(storage.getItem("npb-meikan-layout") ?? "{}") as {
+    favTeam?: { name?: string; path?: string } | null;
+  };
+  assert.equal(saved.favTeam?.name, "旧タイガース", "저장된 최애가 지워졌다");
+  assert.equal(saved.favTeam?.path, "old/t.html", "저장된 경로가 지워졌다");
+});
+
+/**
  * ⚠**저장이 막힐 수 있다**(프라이빗 모드 등). 기존 `load`/`save`/`toggleFav` 와 같은 규칙 —
  * 저장은 조용히 실패하되 **이번 방문 동안의 화면은 돈다.**
  */
