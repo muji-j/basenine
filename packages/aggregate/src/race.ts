@@ -141,19 +141,24 @@ export interface SeasonRace {
    * confirmed  값       []          판정이 서 있다
    * unknown    null    []          아직 유도할 수 없다(교류전 미완 등) — **정상**
    * unknown    값       [코드…]     성적과 대전표가 어긋난다 — **버그. 파이프라인을 봐라**
+   * unknown    null    [코드…]     유도도 안 되고 성적도 스스로 어긋난다 — **복합 실패.
+   *                                교류전 미완(정상)과 팀별 자체 모순(버그)이 겹쳤다**
+   *                                (2026-08-19 3차 재리뷰 Important — 리뷰 프로브로 재현)
    * ```
    */
   series: SeriesLengths | null;
   /**
-   * 성적(`w/l/t/games`)과 대전표(`playedPairs`)가 어긋난 팀 코드. **사전순으로 정렬한다**(결정적으로).
+   * 성적(`w/l/t/games`)이 스스로 어긋나거나(`w+l+t≠games`) 대전표(`playedPairs`)와 어긋난
+   * 팀 코드. **사전순으로 정렬 + 중복 제거한다**(결정적으로) — `teamCode` 중복 입력이 있어도
+   * 같은 코드가 두 번 들어가지 않는다(2026-08-19 3차 재리뷰 Minor m1).
    *
-   * ⚠**비어 있음 = 「어긋난 팀이 없다」이지 「판정이 섰다」가 아니다.** 유도 실패도 비어 있다.
-   * 판정이 섰는지는 `basis` 로 읽는다.
+   * ⚠**비어 있음 = 「어긋난 팀이 없다」이지 「판정이 섰다」가 아니다.** 유도 실패도 비어 있을 수 있다
+   * (교류전 미완처럼 성적 자체는 멀쩡한 경우). 판정이 섰는지는 `basis` 로 읽는다.
    *
-   * ⚠**유도가 실패하면(`series === null`) 이 배열은 항상 비어 있다** — 대조할 대전표가 없기 때문이다.
-   * 그 상태에서도 `w + l + t !== games` 인 팀은 있을 수 있고, **그건 여기가 아니라
-   * 그 팀의 `remaining === null` 로 나온다.** 즉 `disagreed` 가 비었다고 「성적은 다 멀쩡하다」로 읽지 마라 —
-   * 팀별 판정은 `remaining` 을 같이 봐야 한다(2026-08-19 · 이 경계는 의도한 것이고 보고서에 올렸다).
+   * ⚠**유도가 실패해도(`series === null`) 이 배열이 채워질 수 있다**(2026-08-19 3차 재리뷰
+   * Important — 이전 판은 `w+l+t≠games` 검사를 유도 성공 시에만 돌려서 이 조합이 항상
+   * `disagreed: []` 로 숨었다). Σ 검사(대전표 대조)는 유도가 됐을 때만 돌지만,
+   * `w+l+t≠games` 자체 모순 검사는 유도 여부와 무관하게 항상 돈다 — 위 조합표의 네 번째 갈래.
    */
   disagreed: readonly string[];
   teams: Map<string, TeamRace>;
@@ -196,6 +201,11 @@ export interface SeasonRace {
  * 프로덕션 호출자가 아직 0건이라(2026-08-19 grep 확인: `index.ts` 의 export 와 시험뿐)
  * 배선하는 쪽이 이걸 모르고 다른 필터를 물릴 위험이 실재한다.
  * 그때 나오는 신호는 `basis: "unknown"` · `series !== null` · `disagreed` 가 **전 팀**이다.
+ *
+ * ⚠**입력 계약: `teams[].teamCode` 는 서로 유일해야 한다**(2026-08-19 3차 재리뷰 Minor m1).
+ * 중복은 타입으로 막히지 않는다 — 위반하면 `byCode` 맵 키 충돌(나중 항목이 이전 항목을 덮어씀)처럼
+ * 더 근본적인 문제가 생긴다. `disagreed` 는 `Set` 을 거쳐 중복 코드가 두 번 들어가지 않게는 하지만,
+ * 그건 표시를 결정적으로 만드는 방어일 뿐 고유성 위반 자체를 고쳐 주지 않는다.
  */
 export function seasonRace(o: {
   season: number;
@@ -236,7 +246,11 @@ export function seasonRace(o: {
    *
    * 둘을 본다.
    * 1. `w + l + t === games` — 공짜 검산이다. 지금까지 `t` 는 선언만 되고 아무 데서도 안 읽혔다.
+   *    ⚠**`derived` 유무와 무관하게 항상 돈다**(2026-08-19 재리뷰 Important). 이 검사는 대전표를
+   *    전혀 안 쓰는데 옛 판은 유도가 됐을 때만(`if (derived !== null)` 안에서) 돌렸다 —
+   *    「유도 실패(교류전 미완) + 팀별 자체 모순」이 겹치면 그 모순이 `disagreed` 에서 사라졌다.
    * 2. `Σ 상대별 잔여 === total − games` — 어긋나면 대전표와 성적이 다른 세계의 것이다.
+   *    이쪽은 대전표 대조가 필요하므로 **유도가 됐을 때만** 돈다(지금대로 유지).
    *
    * ⚠**`games > total`(잔여 음수)을 여기서 따로 검사하지 않는다.** 2번이 이미 잡기 때문이다 —
    * 상대별 잔여는 음수가 될 수 없고(`deriveSeriesLengths` 가 「유도 상수를 넘긴 쌍」을 거른다)
@@ -250,20 +264,28 @@ export function seasonRace(o: {
    * 들어가기 때문에 **시즌 전체**를 `unknown` 으로 떨어뜨린다(M11 — 모르는 것을 아는 척하지 않는다).
    * 대신 **누가 어긋났는지는 남긴다**(`disagreed`) — 「아직 모름(정상)」과 구별할 수 있어야 한다(M7).
    */
-  const disagreed: string[] = [];
-  if (derived !== null) {
-    for (const x of o.teams) {
-      if (x.w + x.l + x.t !== x.games) {
-        disagreed.push(x.teamCode);
-        continue;
-      }
-      let sum = 0;
-      for (const v of h2hByTeam.get(x.teamCode)!.values()) sum += v;
-      if (sum !== total - x.games) disagreed.push(x.teamCode);
+  /**
+   * ⚠**`Set` 경유로 dedup 한다**(2026-08-19 재리뷰 Minor m1). `teamCode` 는 입력 계약상
+   * 유일해야 하지만(아래 함수 JSDoc) 타입으로는 강제되지 않는다 — 중복 입력 시 같은 코드가
+   * 두 번 들어가면 `disagreed` 가 호출자마다 다른 모양이 되어 결정적이지 않다.
+   */
+  const disagreedSet = new Set<string>();
+  for (const x of o.teams) {
+    // ⚠**`derived` 유무와 무관하게 항상 돈다**(2026-08-19 재리뷰 Important). 이 검사는 `derived`
+    // 를 전혀 안 쓰는데도 옛 판은 `if (derived !== null)` 안에 갇혀 있었다 — 그래서 「유도 실패(교류전
+    // 미완) + 팀별 자체 모순」이 겹치면 `disagreed` 가 비어서 그 모순이 안 보였다(프로브로 재현·확인).
+    if (x.w + x.l + x.t !== x.games) {
+      disagreedSet.add(x.teamCode);
+      continue;
     }
-    // 팀 순서가 호출자에 따라 달라져도 같은 값이 나오게 한다
-    disagreed.sort();
+    // Σ 검사는 대전표 대조가 필요하므로 유도가 됐을 때만 돈다(지금대로 유지)
+    if (derived === null) continue;
+    let sum = 0;
+    for (const v of h2hByTeam.get(x.teamCode)!.values()) sum += v;
+    if (sum !== total - x.games) disagreedSet.add(x.teamCode);
   }
+  // 팀 순서가 호출자에 따라 달라져도 같은 값이 나오게 한다(정렬은 dedup 뒤에도 유지)
+  const disagreed = [...disagreedSet].sort();
   /** 판정을 내도 되는가. ⚠**`series` 와 다르다** — `series` 는 유도 결과를 그대로 들고 있다 */
   const confirmed = derived !== null && disagreed.length === 0;
 

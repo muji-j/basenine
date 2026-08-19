@@ -579,3 +579,68 @@ test("⚠대전표가 비면 유도하지 않는다", () => {
   assert.equal(r.teams.get("g")!.magic, null);
   assert.equal(r.teams.get("g")!.remaining, 143);
 });
+
+// ─── 3차 재리뷰 수정(Important · Minor m1 · Minor m2) ──────────────────────
+
+/**
+ * ⚠**유도 실패와 팀별 자체 모순이 겹치면 `disagreed` 가 비면 안 된다**(3차 재리뷰 Important).
+ * 리뷰 프로브 그대로: 교류전이 안 끝나(대전표가 빔) 유도가 실패한 상태에서 `g` 만 `w+l+t≠games` 로
+ * 자체 모순이다. 이전 판은 `x.w+x.l+x.t!==x.games` 검사가 `if (derived !== null)` 블록 안에
+ * 갇혀 있어서 유도 실패 경로에서는 **전혀 안 돌았다** — 「대전표는 아직 못 세는데 파이프라인이
+ * 성적을 망가뜨린」 상태가 `disagreed: []` 로 숨었다(`g.remaining === null` 로만 드러났다).
+ *
+ * ⚠**뮤테이션**: 이 검사를 다시 `if (derived !== null)` 안으로 넣으면 이 시험이 떨어진다
+ * (`disagreed` 가 `[]` 로 돌아간다).
+ */
+test("⚠유도 실패 + 팀별 자체 모순이 겹치면 disagreed 가 비지 않는다(3차 재리뷰 Important)", () => {
+  const pp = new Map<string, number>(); // 교류전 미완 재현 — 빈 대전표(유도 자체가 실패한다)
+  const over: Record<string, Over> = { g: { w: 10, l: 10, t: 0, games: 21 } }; // 20 ≠ 21 자체 모순
+  const r = seasonRace({ season: 2026, teams: teams(pp, over), leagueOf, playedPairs: pp });
+  assert.equal(r.basis, "unknown");
+  assert.equal(r.series, null, "빈 대전표인데 유도됐다");
+  assert.deepEqual(r.disagreed, ["g"], "유도 실패 때문에 팀별 자체 모순이 안 잡혔다");
+  assert.equal(r.teams.get("g")!.remaining, null, "20 ≠ 21 인 입력으로 잔여를 계산했다");
+});
+
+/**
+ * ⚠**팀코드가 중복 입력되면 `disagreed` 는 dedup 돼야 한다**(3차 재리뷰 Minor m1).
+ * `teamCode` 는 입력 계약상 유일해야 하지만 타입으로는 강제되지 않는다 — 위반 시에도
+ * `disagreed` 만은 결정적(중복 없이)이어야 한다.
+ *
+ * `h` 를 두 번 넣고 **둘 다** 자체 모순(`w+l+t≠games`)이 되게 한다 — dedup 이 없으면
+ * `disagreed` 에 `"h"` 가 두 번 들어간다.
+ *
+ * ⚠**뮤테이션**: `Set` 경유 dedup 을 지우고 배열에 그대로 push 하면 `hCount` 가 2 가 되어 떨어진다.
+ */
+test("⚠팀코드가 중복 입력되면 disagreed 가 dedup 된다(3차 재리뷰 Minor m1)", () => {
+  const pp = MID();
+  const base = teams(pp, { h: { w: 1, l: 1, t: 0, games: 5 } }); // 1+1+0=2≠5 자체 모순
+  const dupH: TeamRaceInput = { teamCode: "h", w: 2, l: 2, t: 0, games: 9 }; // 2+2+0=4≠9 자체 모순
+  const withDup = [...base, dupH];
+  const r = seasonRace({ season: 2026, teams: withDup, leagueOf, playedPairs: pp });
+  const hCount = r.disagreed.filter((c) => c === "h").length;
+  assert.equal(hCount, 1, "중복 팀코드가 disagreed 에 중복으로 들어갔다 — dedup 이 안 됐다");
+});
+
+/**
+ * ⚠**2020(120경기 · 교류전 0)에서도 잔여·매직이 옳아야 한다**(3차 재리뷰 Minor m2).
+ * `deriveSeriesLengths` 단위 시험은 2020 을 재지만, `seasonRace` 종단(잔여·Σ 검사·매직)이
+ * `total = regularSeasonGames(2020) = 120` 에 실제로 의존하는 것을 재는 시험이 없었다.
+ *
+ * ⚠**뮤테이션**: `total` 을 143 으로 고정하면 `(143 − 0)/5 = 28.6` 이 정수가 아니라
+ * 유도 자체가 실패해 `series` 가 `null` 이 되므로 `assert.deepEqual(r.series, ...)` 에서 떨어진다.
+ */
+test("⚠2020(120경기 · 교류전 0)에서도 잔여·매직이 옳다(3차 재리뷰 Minor m2)", () => {
+  const pp = pairs(20, 0); // 리그내 24전 중 20전 소화 · 교류전 0(2020 은 애초에 0)
+  const over: Record<string, Over> = { g: { w: 70, l: 30, t: 0, games: 100 } }; // 압도적 1위
+  const r = seasonRace({ season: 2020, teams: teams(pp, over), leagueOf, playedPairs: pp });
+  assert.equal(r.basis, "confirmed");
+  assert.deepEqual(r.series, { intra: 24, inter: 0 }, "2020 은 교류전이 없다");
+  assert.equal(r.teams.get("g")!.remaining, 20, "120경기 규정을 143 기준으로 계산했다");
+  let sum = 0;
+  for (const v of r.teams.get("g")!.h2hLeft.values()) sum += v;
+  assert.equal(sum, 20, "Σ h2hLeft 가 120경기 기준 잔여와 다르다");
+  assert.equal(r.teams.get("g")!.selfPossible, true);
+  assert.equal(r.teams.get("g")!.eliminated, false);
+  assert.equal(r.teams.get("g")!.magic, 1, "매직이 120경기 기준으로 옳게 나오지 않았다");
+});
