@@ -18,6 +18,7 @@ import type { CompareCard } from "./compare.ts";
 import { renderDayIndexPage, renderDayPage, renderTodayPage } from "./today-page.ts";
 import { renderPostseasonPage } from "./postseason-page.ts";
 import { renderTeamPage, teamPath } from "./team-page.ts";
+import { TEAMS_PATH, renderTeamsPage } from "./teams-page.ts";
 import { gameSlug, renderGamePage } from "./game-page.ts";
 import { renderLogPage } from "./log-page.ts";
 import type { LogPageData } from "./log-page.ts";
@@ -112,6 +113,11 @@ export function seasonPaths(data: SiteData, hasLog: boolean): Set<string> {
     "matchup.html",
     "compare.html",
     "days.html",
+    /**
+     * 球団一覧. ⚠**다른 시즌으로 전환할 때 같은 화면으로 가야 한다.**
+     * 여기에 빠뜨리면 시즌 전환이 이 화면을 「그 시즌에는 없다」고 보고 선수 일람으로 튀긴다.
+     */
+    TEAMS_PATH,
   ]);
   if (hasLog) out.add("log.html");
   // ⚠**기록이 있는 시즌에만 넣는다.** 없는 화면을 시즌 전환이 가리키면 404가 된다
@@ -182,6 +188,12 @@ export function buildSite(
     { path: at("index.html"), content: renderHomePage(data.home, ctx) },
     { path: at(ROSTER_PATH), content: renderIndexPage(data.index, ctx) },
     { path: at("ranking.html"), content: renderRankingPage(data.ranking, ctx) },
+    /**
+     * 球団一覧. ⚠**구단으로 가는 길이다** — 지금까지 구단 페이지는
+     * 순위표에서 팀명을 눌러야만 닿았다. 경기가 없는 시즌에도 만든다 —
+     * 화면이 「아직 순위를 못 매겼다」고 말하고(M12), 시즌 전환의 목적지가 끊기지 않는다.
+     */
+    { path: at(TEAMS_PATH), content: renderTeamsPage(data.teamsPage, ctx) },
     { path: at("starters.html"), content: renderStartersPage(data.starters, ctx) },
     /**
      * 날짜별 予告先発.

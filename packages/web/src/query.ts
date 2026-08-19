@@ -167,6 +167,7 @@ import type {
   TeamPageData,
   TeamPitcher,
 } from "./team-page.ts";
+import type { TeamsCard, TeamsPageData } from "./teams-page.ts";
 import type {
   PostBatter,
   PostCompetition,
@@ -3636,6 +3637,62 @@ function standingsSections(db: Db, o: LoadOptions): StandingsSection[] {
     .filter((s) => s.rows.length > 0);
 }
 
+/**
+ * 球団一覧 화면.
+ *
+ * ⚠**여기서 아무것도 다시 계산하지 않는다**(M1). 순위·승패·승률·게임차·최근10 은
+ * 순위표(`standingsSections`)가 만든 값이고, 다음 경기와 시즌 종료 여부는 구단 페이지
+ * (`teamPages`)가 만든 값이다 — **둘을 구단 코드로 잇기만 한다**(M10: 이름이 아니라 코드다).
+ * ⚠**리그 구분과 순위 순서도 순위표에서 온다.** 여기서 다시 정렬하면 두 화면의 순서가
+ * 언젠가 갈리고, 그때 어느 쪽이 맞는지 말할 수 없다.
+ */
+function teamsPage(
+  season: number,
+  asOf: string | null,
+  standings: readonly StandingsSection[],
+  pages: readonly TeamPageData[],
+): TeamsPageData {
+  const byCode = new Map(pages.map((p) => [p.teamCode, p]));
+  /**
+   * ⚠**빠진 구단이 있으면 알아챌 수 있게 한다**(M7). `teamPages` 는 이 순위표를 그대로
+   * 훑으므로 정상적으로는 0건이다 — 0건이 아니라는 것은 한쪽이 바뀌었다는 뜻이고,
+   * 그때 화면은 **12구단 전부가 「予定はありません」**이 되어 수집 실패처럼 보인다.
+   */
+  const missing = standings.flatMap((s) => s.rows.filter((r) => !byCode.has(r.teamCode)).map((r) => r.teamCode));
+  if (missing.length > 0) {
+    console.warn(
+      `⚠ ${season}: 球団一覧が球団ページと噛み合っていない — 次の試合を出せない球団 ${missing.length}件（${missing.join(" ")}）`,
+    );
+  }
+  const toCard = (r: StandingRow): TeamsCard => {
+    const p = byCode.get(r.teamCode);
+    return {
+      teamCode: r.teamCode,
+      name: r.name,
+      shortName: r.shortName,
+      color: r.color,
+      rank: r.rank,
+      tiedRank: r.tiedRank,
+      games: r.games,
+      w: r.w,
+      l: r.l,
+      t: r.t,
+      pct: r.pct,
+      gamesBehind: r.gamesBehind,
+      last10: r.last10,
+      // ⚠**없으면 `null` 이다**(M11) — 0 이나 빈 문자열로 메우면 「예정 없음」과 구별되지 않는다
+      next: p?.now.next ?? null,
+      // ⚠**모르면 「끝났다」고 하지 않는다.** 끝났다고 단정하는 쪽이 되돌리기 어려운 거짓말이다
+      seasonOver: p?.calendar.seasonOver ?? false,
+    };
+  };
+  return {
+    season,
+    asOf,
+    leagues: standings.map((s) => ({ id: s.id, name: s.name, teams: s.rows.map(toCard) })),
+  };
+}
+
 // ─── 조립 ────────────────────────────────────────────────────────────────
 
 export interface LoadOptions {
@@ -3685,6 +3742,11 @@ export interface SiteData {
   postseason: PostseasonPageData;
   /** 球団ページ. 순위표에서 팀명을 누르면 여기로 온다 */
   teams: TeamPageData[];
+  /**
+   * 球団一覧. **구단으로 가는 길이 여기다** — 지금까지는 순위표를 거쳐야만 닿았다.
+   * ⚠**`teams` 와 같은 한 벌에서 나온다**(M1) — 여기서 다시 조회하지 않는다.
+   */
+  teamsPage: TeamsPageData;
   /**
    * 성적(`w/l/t/games`)과 대전표가 어긋난 구단 코드. **비어 있는 것이 정상이다.**
    *
@@ -4635,6 +4697,8 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     dayIndex: { season: o.season, latestDate: latestDay, days: [...days] },
     postseason: postseasonData,
     teams: teamData.pages,
+    // ⚠**순위표와 구단 페이지를 잇기만 한다**(M1) — 여기서 다시 조회하면 두 화면이 갈린다
+    teamsPage: teamsPage(o.season, meta.latest, standings, teamData.pages),
     raceDisagreed: teamData.disagreed,
     games: [...gameList, ...postGameList],
   };

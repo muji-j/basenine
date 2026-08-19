@@ -77,6 +77,8 @@ function siteData(over: Partial<SiteData> = {}): SiteData {
     latestAnyGameDate: "2026-08-14",
     postseason: { season: 2026, competitions: [] },
     teams: [],
+    // ⚠**경기가 없어도 만든다** — 시즌 전환의 목적지이고, 화면이 「아직 못 매겼다」고 말한다(M12)
+    teamsPage: { season: 2026, asOf: "2026-08-14", leagues: [] },
     // ⚠**정상은 빈 배열이다.** 비지 않으면 빌드가 종료 코드 1을 낸다(`tools/build.ts` · 검토 m2)
     raceDisagreed: [],
     games: [],
@@ -113,6 +115,11 @@ test("사이트는 정해진 파일 집합을 만든다", () => {
     "players/41045153.html",
     "ranking.html",
     "starters.html",
+    /**
+     * ⚠**구단으로 가는 길**(2026-08-19 Task 7). 시즌마다 한 장이고,
+     * `seasonPaths` 에도 같은 이름이 들어 있어야 시즌 전환이 튕기지 않는다.
+     */
+    "teams.html",
     "today.html",
   ]);
   assert.equal(out.playerCount, 1);

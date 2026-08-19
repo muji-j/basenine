@@ -549,6 +549,40 @@ function raceVerdict(r: TeamRace): string {
 }
 
 /**
+ * 게임차 한 마디.
+ *
+ * ⚠**1위에게 「0.0ゲーム差」라고 쓰지 않는다.** 동률 2위도 0.0 이 나오므로 둘을 가른다.
+ * ⚠**두 화면이 쓴다**(M1 · 구단 페이지 · 구단 목록). 같은 사실을 두 어법으로 말하면
+ * 읽는 사람이 매번 다시 배운다 — 그래서 문장을 만드는 자리를 하나로 둔다.
+ */
+export function gamesBehindText(rank: number | null, gamesBehind: number): string {
+  if (rank === null) return NO_VALUE;
+  if (rank === 1) return "首位";
+  return gamesBehind === 0 ? "首位とゲーム差なし" : `首位と${gamesBehind.toFixed(1)}ゲーム差`;
+}
+
+/**
+ * 다음 경기 한 마디.
+ *
+ * ⚠**없어도 줄을 지우지 않는다**(M12).
+ * ⚠**「아직 안 받았다」와 「끝났다」는 다른 말이다** — 캘린더가 이미 세워 둔 규칙을 따른다
+ * (calendar.ts: 실측 48/48장이 끝난 시즌에 「まだ取り込んでいません」이라고 말하던 결함).
+ * ⚠**두 화면이 쓴다**(M1 · 구단 페이지 · 구단 목록). 한쪽만 고치면 같은 경기가
+ * 두 화면에서 다른 문장이 된다.
+ */
+export function nextGameText(next: TeamNextGame | null, seasonOver: boolean): string {
+  if (next === null) {
+    return seasonOver
+      ? "このシーズンは終了しています"
+      : "予定はありません（日程をまだ取り込んでいない場合もあります）";
+  }
+  return (
+    `${fullDate(next.date)}${next.startTime === null ? "" : ` ${next.startTime}`}` +
+    ` ${next.home ? "対" : "＠"}${next.opponentName}${next.venue === null ? "" : `（${next.venue}）`}`
+  );
+}
+
+/**
  * 「지금 이 팀」.
  *
  * ⚠**이 화면에 오는 사람이 가장 먼저 묻는 것**이 여기 있어야 한다 —
@@ -560,14 +594,7 @@ function raceVerdict(r: TeamRace): string {
 function nowBlock(d: TeamPageData, base: string): RawHtml {
   const n = d.now;
 
-  /** ⚠**1위에게 「0.0ゲーム差」라고 쓰지 않는다.** 동률 2위도 0.0 이 나오므로 둘을 가른다 */
-  const gbText = d.rank === null
-    ? NO_VALUE
-    : d.rank === 1
-      ? "首位"
-      : d.gamesBehind === 0
-        ? "首位とゲーム差なし"
-        : `首位と${d.gamesBehind.toFixed(1)}ゲーム差`;
+  const gbText = gamesBehindText(d.rank, d.gamesBehind);
 
   /**
    * 잔여 경기. ⚠**`null` 은 「모른다」이지 빈칸이 아니다**(M11·M12).
@@ -578,17 +605,8 @@ function nowBlock(d: TeamPageData, base: string): RawHtml {
     ? "残りの試合数はわかりません"
     : `残り ${n.race.remaining}試合`;
 
-  /**
-   * 다음 경기. ⚠**없어도 줄을 지우지 않는다**(M12).
-   * ⚠**「아직 안 받았다」와 「끝났다」는 다른 말이다** — 캘린더가 이미 세워 둔 규칙을 따른다
-   * (calendar.ts: 실측 48/48장이 끝난 시즌에 「まだ取り込んでいません」이라고 말하던 결함).
-   */
-  const nextText = n.next === null
-    ? d.calendar.seasonOver
-      ? "このシーズンは終了しています"
-      : "予定はありません（日程をまだ取り込んでいない場合もあります）"
-    : `${fullDate(n.next.date)}${n.next.startTime === null ? "" : ` ${n.next.startTime}`}` +
-      ` ${n.next.home ? "対" : "＠"}${n.next.opponentName}${n.next.venue === null ? "" : `（${n.next.venue}）`}`;
+  /** 다음 경기. **문장을 만드는 자리는 위의 `nextGameText` 하나다**(M1) */
+  const nextText = nextGameText(n.next, d.calendar.seasonOver);
 
   /**
    * 予告先発. ⚠**「投手なし」가 아니라 「発表待ち」다**(M11).

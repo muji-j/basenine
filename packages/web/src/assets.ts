@@ -1308,6 +1308,65 @@ table.stand .dif i.n{right:50%}
 .stand .tm a,.teamgroup h2 a{text-decoration:none}
 .stand .tm a:hover,.teamgroup h2 a:hover{text-decoration:underline}
 
+/* ── 球団一覧 ──────────────────────────────────────────────
+   ⚠**격자로 만들지 않는다**(§6 「AI틱함」 금지 목록의 「균질한 카드 그리드」).
+   이 화면이 나르는 것은 12개의 동등한 타일이 아니라 **두 리그 × 순위 순서**이고,
+   격자는 그 순서를 지운다. 한 구단 = 한 줄기로 세우고, 가르는 것은 칸이 아니라 괘선과 여백이다
+   (순위표 .hstand · 최근 경기 .trecent 와 같은 어법).
+   ⚠**로고를 쓸 수 없는 자리에서 팀을 구별하는 것은 구단 색과 이름이다**(§6). */
+.tlist{list-style:none;margin:0;padding:0}
+.tcard{display:grid;grid-template-columns:46px 1fr auto;column-gap:12px;align-items:start;
+  padding:10px var(--pad);margin:0 calc(var(--pad) * -1);border-bottom:1px solid var(--hair)}
+.tcard:last-child{border-bottom:0}
+/* ⚠**1위를 색으로 말하지 않는다.** 구단 색을 칠하면 어느 구단이든 한쪽 테마에서 무너진다
+   (구단 페이지가 실측으로 이미 밟은 자리 · 阪神 라이트 1.61:1 · ロッテ 다크 1.10:1).
+   바탕을 한 단 올리는 것은 순위표의 tr.lead 가 이미 쓰는 수법이다 — 같은 어법으로 말한다. */
+.tcard[data-rank="1"]{background:var(--panel-2)}
+/* 순위 — 이 화면에서 가장 먼저 읽히는 값. 왼쪽 끝에 고정 폭으로 세워 세로로 훑을 수 있게 한다 */
+.tcr{grid-column:1;grid-row:1/span 3;margin:0;text-align:right;font-variant-numeric:tabular-nums}
+.tcr b{font-style:normal;font-weight:600;font-size:21px;line-height:1.05;color:var(--tx)}
+.tcr s{text-decoration:none;display:block;font-size:9.5px;color:var(--tx-3);margin-top:1px}
+.tcn{grid-column:2;grid-row:1;margin:0;min-width:0}
+.tcn a{display:inline-flex;align-items:center;gap:7px;text-decoration:none;
+  font-size:14.5px;font-weight:600;color:var(--tx)}
+/* ⚠**색만으로는 안 된다** — 구단 12색 중 다크 바탕에서 3:1 을 못 넘는 것이 7색이다.
+   테두리로 형태를 준다: 색이 안 보여도 사각형은 남는다(.hteam i 와 같은 수법). */
+.tcn a i{width:10px;height:10px;background:var(--chip,#6b7280);flex:none;
+  box-shadow:inset 0 0 0 1px var(--tx-3)}
+.tcn a:hover{text-decoration:underline}
+.tcn a:hover i{outline:1px solid var(--tx-3);outline-offset:1px}
+/* 성적 한 줄 — ⚠**값이 주역이고 라벨은 그 옆에 붙는다**(§6의 도메인 예외).
+   다만 분모는 값에서 떼지 않는다(M2) — .den 이 값 바로 뒤에 붙어 나온다. */
+.tcs{grid-column:2;grid-row:2;margin:3px 0 0;display:flex;flex-wrap:wrap;gap:2px 14px;
+  font-size:12px;color:var(--tx-2);font-variant-numeric:tabular-nums}
+.tcv{display:inline-flex;align-items:baseline;gap:5px;min-width:0}
+.tcv s{text-decoration:none;font-size:9.5px;letter-spacing:.1em;color:var(--tx-3);flex:none}
+.tcv b{font-style:normal;font-weight:600;color:var(--tx)}
+/* ⚠**분모까지 굵어지지 않게 한다.** 분모는 값에 붙어 있어야 하지만(M2) 값과 같은 무게로
+   읽히면 「.562 105試合」이 한 덩어리의 수처럼 보인다 — .den 은 무게를 지정하지 않아
+   .tcv b 의 600 을 그대로 상속한다. 여기서만 되돌린다. */
+.tcv .den{font-weight:400}
+/* 다음 경기 — ⚠**없어도 줄을 지우지 않는다**(M12). 그래서 자리를 늘 차지한다 */
+.tcx{grid-column:2;grid-row:3;margin:3px 0 0;display:flex;align-items:baseline;gap:6px;
+  font-size:11.5px;color:var(--tx-2)}
+.tcx s{text-decoration:none;font-size:9.5px;letter-spacing:.1em;color:var(--tx-3);flex:none}
+.tcx b{font-style:normal;font-weight:400;color:var(--tx-2)}
+.tcf{grid-column:3;grid-row:1/span 3;margin:0;align-self:center}
+/* ⚠**눌린 상태를 색만으로 말하지 않는다** — ★와 굵기가 색 없이도 남는다.
+   구단 색을 쓰지 않는 이유는 위 .tcard[data-rank="1"] 주석과 같다. */
+.favt{font:inherit;font-size:11.5px;line-height:1;padding:6px 10px;cursor:pointer;white-space:nowrap;
+  background:transparent;border:1px solid var(--hair-2);color:var(--tx-3);
+  transition:color var(--fast) var(--ease),border-color var(--fast) var(--ease)}
+.favt:hover{color:var(--tx-2);border-color:var(--tx-3)}
+.favt[aria-pressed="true"]{color:var(--tx);border-color:var(--tx-3);font-weight:700}
+.favt[aria-pressed="true"]::before{content:"★";margin-right:4px}
+/* 좁은 화면에서는 버튼을 아래로 내린다 — 옆에 두면 구단명이 밀려 두 줄이 된다 */
+@media (max-width:560px){
+  .tcard{grid-template-columns:38px 1fr}
+  .tcr b{font-size:18px}
+  .tcf{grid-column:2;grid-row:4;margin-top:7px;align-self:start}
+}
+
 /* 상대전적 — 이긴 비율의 띠. 눈금은 없고 정확한 수는 옆 칸에 있다 */
 table.vs .vsbar{display:inline-block;width:88px;height:6px;background:var(--hair);vertical-align:middle}
 table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);background:var(--chip,#6b7280)}
