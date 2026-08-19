@@ -22,6 +22,8 @@ import { dayHref } from "./today-page.ts";
 import type { TeamColor } from "@bb-app/domain";
 import type { Rate } from "@bb-app/metrics";
 import type { TeamRace } from "@bb-app/aggregate";
+// ⚠**여기서 다시 계산하지 않는다**(M1) — 홈 화면이 만든 것을 팀으로 거르기만 한다(query.ts)
+import type { HomeMilestone, HomeStreak } from "./home-page.ts";
 
 /** 그 팀 소속 한 선수의 한 줄. ⚠**비율에는 분모가 붙는다**(M2) */
 export interface TeamBatter {
@@ -185,6 +187,21 @@ export interface TeamPageData {
   hasPostseason: boolean;
   /** 맨 위 요약 띠. **이 화면에 오는 사람이 가장 먼저 묻는 것** */
   now: TeamNow;
+  /**
+   * 이 팀의 연속 기록.
+   *
+   * ⚠**여기서 다시 계산하지 않는다**(M1) — 홈 화면(`home-page.ts`)이 만든 `HomeStreak[]`를
+   * `teamCode`로 거른 것뿐이다(query.ts). 여기서 다시 계산하면 홈과 이 화면의 값이 갈린다.
+   * ⚠**0건이어도 구획을 지우지 않는다**(M12) — 「없다」와 「고장」이 같은 화면이면 결함이다.
+   */
+  streaks: HomeStreak[];
+  /**
+   * 이 팀의 기록 근접(통산 마디).
+   *
+   * ⚠**같은 이유로 여기서 다시 만들지 않는다**(M1) — 홈 화면의 `HomeMilestone[]`를
+   * `teamCode`로 거른 것뿐이다.
+   */
+  milestones: HomeMilestone[];
 }
 
 /** 팀 페이지의 파일 경로. **한 곳에서만 만든다**(M1) — 갈리면 어딘가는 404다 */
@@ -577,6 +594,76 @@ function nowBlock(d: TeamPageData, base: string): RawHtml {
   });
 }
 
+/**
+ * 이 팀의 연속 기록.
+ *
+ * ⚠**홈 화면과 같은 부품을 쓰지 않는다** — `teamChip`이 `home-page.ts`에서 내보내지 않아서다.
+ * 이 화면은 이미 「이 팀」이므로 구단 칩이 필요 없다(다른 표들도 마찬가지다).
+ * ⚠**0건이어도 구획을 지우지 않는다**(M12). 「이 팀은 없다」와 「고장」을 구별해야 한다.
+ * ⚠**「継続中」이라는 말을 쓰지 않는다**(M1 · 홈 화면과 같은 규칙). 마지막 출장일만 그대로
+ * 보여주고, 그 판단은 독자에게 맡긴다 — 화면이 대신 「継続中」이라 말하면 끊긴 기록이
+ * 이어지는 것처럼 보일 수 있다.
+ */
+function streakBlock(rows: readonly HomeStreak[]): RawHtml {
+  return block({
+    id: "tstreak",
+    title: "続いている記録",
+    body: rows.length === 0
+      ? html`<p class="empty">この球団の続いている記録はありません。</p>`
+      : html`${scroller(html`<table>
+    <thead><tr><th class="l">選手</th><th class="l">記録</th><th>試合</th><th class="l">最後の出場</th></tr></thead>
+    <tbody>${rows.map(
+        (x) => html`<tr>
+      <td class="l">${x.name}</td>
+      <td class="l">${x.kind === "hitting" ? "連続安打" : "連続出塁"}</td>
+      <td class="b">${x.games}</td>
+      <td class="l">${x.lastGameDate === null ? NO_VALUE : fullDate(x.lastGameDate)}</td>
+    </tr>`,
+      )}</tbody>
+  </table>`)}
+  ${note(
+        "**最後の出場日を必ず併記しています** — その日より後に試合があれば、記録はもう途切れているか、" +
+          "本人が出ていないかのどちらかです。連続記録は「試合」単位で数えます（NPB・MLBの慣例）。" +
+          "代走だけで出た試合は数えません。",
+      )}`,
+  });
+}
+
+/**
+ * 이 팀의 기록 근접(통산 마디).
+ *
+ * ⚠**출처가 다른 표다**(M4·홈 화면과 같은 주석) — 통산은 선수 페이지의 年度別成績(NPB 공표치)를
+ * 당사이트가 더한 것이고, 이 화면의 다른 수는 우리 경기 기록에서 쌓은 값이다. 섞지 않는다.
+ */
+function milestoneBlock(rows: readonly HomeMilestone[]): RawHtml {
+  return block({
+    id: "tmile",
+    title: "記録に近づいている",
+    qualifier: "通算",
+    body: rows.length === 0
+      ? html`<p class="empty">この球団に記録に近づいている選手はありません。</p>`
+      : html`${scroller(html`<table>
+    <thead><tr><th class="l">選手</th><th class="l">記録</th><th>通算</th><th class="l">節目まで</th><th>今季</th></tr></thead>
+    <tbody>${rows.map(
+        (x) => html`<tr>
+      <td class="l">${x.name}</td>
+      <td class="l">${x.label}</td>
+      <td class="b">${x.count}</td>
+      <td class="l">${x.next}まであと<b>${x.toNext}</b></td>
+      <td>${x.thisSeason}</td>
+    </tr>`,
+      )}</tbody>
+  </table>`)}
+  ${note(
+        "⚠**この表だけ出典が違います** — 通算は選手ページの**年度別成績（NPBの公表値）**を当サイトが足したものです。" +
+          "ほかの数字は当サイトが試合記録から積み上げた値で、混ぜていません。" +
+          "**NPBの記録だけ**です — 海外リーグの期間はこの表に入りません。" +
+          "**今、選手ページがある選手だけ**が対象です（引退した選手は含みません）。" +
+          "**通算も今季も同じ年度別成績から取っています** — 出典が違う数字を並べると、引き算が合わなくなるからです。",
+      )}`,
+  });
+}
+
 export function renderTeamPage(d: TeamPageData, ctx: RenderContext): string {
   // ⚠시즌을 바꿀 때 選手一覧이 아니라 **그 시즌의 같은 팀**으로 간다 — 팀은 시즌을 넘어 존재한다
   const { base, root, seasons } = ctx.paths(teamPath(d.teamCode), {
@@ -599,6 +686,12 @@ export function renderTeamPage(d: TeamPageData, ctx: RenderContext): string {
      ⚠**여기서 우승 경쟁 판정이 처음으로 화면에 나온다.** 값의 뜻은 race.ts 가 증명해서
      정했고, 그 뜻을 문장으로 옮기는 자리는 raceVerdict 한 곳뿐이다(M1). -->
 ${nowBlock(d, base)}
+
+<!-- ⚠**연속 기록·기록 근접도 탭 밖에 둔다** — 요약 띠와 같은 이유다. 홈 화면이 만든 배열을
+     팀으로 거른 것뿐이고(M1 · query.ts), 여기서 다시 계산하지 않는다.
+     ⚠**0건이어도 지우지 않는다**(M12) — 두 함수가 그 규칙을 지킨다. -->
+${streakBlock(d.streaks)}
+${milestoneBlock(d.milestones)}
 
 <!-- ⚠**세로로 너무 길었다**(2026-08-17 유저 지적). 6구획이 한 줄로 이어져 있었고
      打者 46행 + 投手 30행이 대부분이었다 — 팀 성적을 보러 온 사람이 선수 76행을 지나야

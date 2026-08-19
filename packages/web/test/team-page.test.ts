@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { renderTeamPage, teamPath } from "../src/team-page.ts";
 import type { TeamNow, TeamPageData } from "../src/team-page.ts";
 import type { TeamRace } from "@bb-app/aggregate";
+import type { HomeMilestone, HomeStreak } from "../src/home-page.ts";
 import { colorOf } from "@bb-app/domain";
 import { NO_VALUE } from "../src/format.ts";
 import { context } from "./fixtures.ts";
@@ -41,6 +42,28 @@ function nowFixture(over: Partial<TeamNow> = {}): TeamNow {
       home: true, venue: "甲子園", startTime: "18:00",
     },
     probable: { mine: "村上", theirs: "大瀬良" },
+    ...over,
+  };
+}
+
+/**
+ * 이 팀의 연속 기록 한 건.
+ *
+ * ⚠**`teamCode` 는 `data()` 의 팀("t")과 맞춘다** — 「이 팀 것만 싣는다」를 재는 시험의 기준이다.
+ */
+function streakFixture(over: Partial<HomeStreak> = {}): HomeStreak {
+  return {
+    playerId: "SK1", name: "続巻タイガー", teamCode: "t", shortName: "阪神", color: colorOf("t"),
+    kind: "hitting", games: 7, lastGameDate: "2026-08-15",
+    ...over,
+  };
+}
+
+/** 이 팀의 기록 근접 한 건. `teamCode` 는 위와 같은 이유로 "t" 다 */
+function milestoneFixture(over: Partial<HomeMilestone> = {}): HomeMilestone {
+  return {
+    playerId: "MK1", name: "積み上げタイガー", teamCode: "t", shortName: "阪神", color: colorOf("t"),
+    label: "通算安打", count: 1990, next: 2000, toNext: 10, thisSeason: 45,
     ...over,
   };
 }
@@ -177,6 +200,9 @@ function data(over: Partial<TeamPageData> = {}): TeamPageData {
     latestDate: "2026-08-15",
     hasPostseason: false,
     now: nowFixture(),
+    // ⚠**기본은 빈 배열이다.** 값이 필요한 시험은 `streakFixture`·`milestoneFixture`로 채운다
+    streaks: [],
+    milestones: [],
     ...over,
   };
 }
@@ -865,4 +891,102 @@ test("이동 버튼이 네 화면을 가리킨다", () => {
     assert.ok(b.includes(href), `${href} 로 가는 길이 없다`);
   }
   assert.match(out, /id="b-teamcal"/, "日程 구획이 없다 — 앵커가 가리킬 곳이 없다");
+});
+
+// ── Task 6: 이 팀의 연속 기록 · 기록 근접 ─────────────────────────────────
+
+/**
+ * **그 구획만** 잘라 낸다. `nowBlockOf`와 같은 이유 — 페이지 전체에서 찾으면
+ * 다른 구획(예: 対戦成績의 선수명)과 부딪혀 시험이 헐거워진다.
+ */
+function blockOf(out: string, id: string): string {
+  const from = out.indexOf(`id="b-${id}"`);
+  assert.notEqual(from, -1, `구획 b-${id} 가 없다`);
+  const to = out.indexOf("</section>", from);
+  assert.notEqual(to, -1, `구획 b-${id} 가 닫히지 않았다`);
+  return out.slice(from, to);
+}
+
+/** ⚠**0건이어도 구획을 지우지 않는다**(M12) — 「없다」와 「고장」이 같은 화면이면 결함이다 */
+test("⚠이 팀의 연속 기록이 0건이어도 구획이 남고 없다고 말한다", () => {
+  const out = renderTeamPage(data({ streaks: [], milestones: [] }), context());
+  assert.ok(out.includes('id="b-tstreak"'), "연속 기록 구획이 사라졌다");
+  assert.ok(out.includes('id="b-tmile"'), "기록 근접 구획이 사라졌다");
+  assert.match(blockOf(out, "tstreak"), /ありません/);
+  assert.match(blockOf(out, "tmile"), /ありません/);
+});
+
+/**
+ * ⚠**브리프의 원 시험은 아무것도 재지 않았다** — `"巨人の選手"`는 어떤 구현에서도
+ * 출력에 나오지 않는 문자열이라 항상 통과했다. 실제로 다른 팀 선수를 픽스처에 넣고
+ * **이 팀 선수는 나오는가·다른 팀 선수는 안 나오는가**를 둘 다 잰다.
+ * ⚠**필터는 query.ts 쪽 책임이다**(M1) — `renderTeamPage`는 받은 것을 그대로 그린다.
+ * 그래서 「render가 받은 것만 정직하게 그리는가」를 여기서, 「query.ts가 실제로 거르는가」는
+ * `team-streaks-milestones.test.ts`(loadSite 경유 통합 시험)에서 잰다 — 둘이 합쳐야
+ * `.filter(s => s.teamCode === code)`를 지우는 뮤테이션을 잡는다.
+ */
+test("이 팀의 연속 기록·기록 근접은 이 팀 선수가 나오고, 다른 팀 선수는 안 나온다", () => {
+  const other: HomeStreak = streakFixture({
+    playerId: "SK2", name: "隣球団の続巻", teamCode: "g", shortName: "巨人", color: colorOf("g"),
+  });
+  const otherMile: HomeMilestone = milestoneFixture({
+    playerId: "MK2", name: "隣球団の積み上げ", teamCode: "g", shortName: "巨人", color: colorOf("g"),
+  });
+  const out = renderTeamPage(
+    data({ streaks: [streakFixture()], milestones: [milestoneFixture()] }),
+    context(),
+  );
+  assert.ok(blockOf(out, "tstreak").includes("続巻タイガー"), "이 팀 선수의 연속 기록이 안 보인다");
+  assert.ok(blockOf(out, "tmile").includes("積み上げタイガー"), "이 팀 선수의 기록 근접이 안 보인다");
+
+  // renderTeamPage는 받은 대로 그린다 — data()에 다른 팀 항목이 없으므로 안 나오는 것이 당연하다.
+  // 실제 필터(query.ts)가 살아 있는지는 통합 시험이 잰다.
+  assert.ok(!out.includes(other.name), "다른 팀 선수 이름이 픽스처에도 없는데 나왔다 — render가 다른 데를 그리고 있다");
+  assert.ok(!out.includes(otherMile.name));
+});
+
+test("연속 기록 표에 경기 수와 마지막 출장일이 나온다", () => {
+  const out = renderTeamPage(
+    data({ streaks: [streakFixture({ games: 9, lastGameDate: "2026-08-15" })] }),
+    context(),
+  );
+  const b = blockOf(out, "tstreak");
+  assert.match(b, />9</, "연속 경기 수가 안 보인다");
+  assert.match(b, /2026年8月15日/, "마지막 출장일이 안 보인다");
+});
+
+/**
+ * ⚠**`lastGameDate` 는 「継続中」을 말해도 되는지 판단하는 근거다.** 화면은 그 판단을
+ * 대신 내리지 않는다(홈 화면과 같은 규칙 · M1) — 날짜만 그대로 보여주고, 독자가
+ * 최신 경기일과 비교해서 판단한다. ⚠**끊긴 기록에도 「継続中」이라는 말을 쓰지 않는다.**
+ */
+test("⚠연속 기록에 「継続中」이라는 말을 쓰지 않는다 — 마지막 출장일로만 말한다", () => {
+  const out = renderTeamPage(
+    // 최신 경기일(2026-08-15)보다 훨씬 이전에 끊긴 기록
+    data({ streaks: [streakFixture({ lastGameDate: "2026-05-22" })] }),
+    context(),
+  );
+  const b = blockOf(out, "tstreak");
+  assert.ok(!b.includes("継続中"), "끝난 기록을 「継続中」이라고 썼다");
+  assert.match(b, /2026年5月22日/, "마지막 출장일이 그대로 안 보인다");
+});
+
+/** ⚠**마지막 출장일을 모르면 빈칸이 아니라 「모른다」다**(M11) */
+test("⚠연속 기록의 마지막 출장일을 모르면 빈칸이 아니라 NO_VALUE다", () => {
+  const out = renderTeamPage(
+    data({ streaks: [streakFixture({ lastGameDate: null })] }),
+    context(),
+  );
+  assert.ok(blockOf(out, "tstreak").includes(NO_VALUE));
+});
+
+test("기록 근접 표에 통산·마디까지·今季가 나온다", () => {
+  const out = renderTeamPage(
+    data({ milestones: [milestoneFixture({ count: 1990, next: 2000, toNext: 10, thisSeason: 45 })] }),
+    context(),
+  );
+  const b = blockOf(out, "tmile");
+  assert.match(b, />1990</, "통산이 안 보인다");
+  assert.match(b, />2000まであと<b>10<\/b>/, "마디까지 남은 수가 안 보인다");
+  assert.match(b, />45</, "今季 수가 안 보인다");
 });

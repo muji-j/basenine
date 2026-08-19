@@ -3074,6 +3074,12 @@ function teamPages(
    * 따로 읽으면 「구단 페이지만 다른 날의 예고를 말한다」가 언젠가 난다.
    */
   starters: StartersPageData,
+  /**
+   * 연속 기록·기록 근접 — **홈 화면이 이미 만든 배열**(M1). 여기서 다시 계산하지 않고
+   * `teamCode`로 거르기만 한다. 홈이 산출한 값과 갈리지 않게 하려면 이 한 벌만 써야 한다.
+   */
+  homeStreaks: readonly HomeStreak[],
+  homeMilestones: readonly HomeMilestone[],
 ): TeamPagesResult {
   const competition = o.competition ?? "regular";
   const through = o.through ?? "9999-12-31";
@@ -3360,6 +3366,12 @@ function teamPages(
         latestDate,
         hasPostseason,
         now,
+        /**
+         * ⚠**여기서 다시 계산하지 않는다**(M1) — 홈 화면이 만든 배열을 `teamCode`로 거르기만 한다.
+         * 따로 계산하면 홈의 「続いている記録」와 이 화면의 값이 갈릴 수 있다.
+         */
+        streaks: homeStreaks.filter((s) => s.teamCode === code),
+        milestones: homeMilestones.filter((m) => m.teamCode === code),
       });
     }
   }
@@ -4470,6 +4482,39 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   const todayData = todayPage(db, o, startersData, nameOf, gamePageIds, days);
 
   /**
+   * 대시보드.
+   *
+   * ⚠**여기서 먼저 부른다**(2026-08-19 Task 6). 팀 페이지의 「続いている記録」·「記録に近づいている」가
+   * 이 결과를 `teamCode`로 거르기만 하므로(M1), `teamPages`보다 먼저 있어야 한다.
+   * ⚠**최신 경기 요약을 새로 조회하지 않는다**(M1) — `todayPage`가 이미 만든 것을 옮긴다.
+   *   따로 조회하면 「試合 화면과 홈이 다른 경기를 보여준다」가 언젠가 난다.
+   */
+  const homeData = homePage(
+    db,
+    o,
+    standings,
+    agg,
+    streaksByPlayer,
+    reFull,
+    meta.latest,
+    latestDay,
+    todayData.gameDate === null
+      ? null
+      : {
+        date: todayData.gameDate,
+        games: todayData.games.map((g) => ({
+          away: g.away.shortName,
+          home: g.home.shortName,
+          awayCode: g.away.teamCode,
+          homeCode: g.home.teamCode,
+          awayRuns: g.away.runs,
+          homeRuns: g.home.runs,
+        })),
+      },
+    postseasonData.competitions.some((c) => c.id !== "allStar"),
+  );
+
+  /**
    * ⚠**여기서 한 번만 부른다.** 우승 판정이 어긋났다는 사실(`disagreed`)을 화면과 함께
    * 들고 나와야 배포를 세울 수 있다(M7 · 검토 m2). 반환 객체 안에서 부르면 그 값을 못 받는다.
    */
@@ -4494,6 +4539,9 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     gamePageIds,
     // ⚠**予告先発도 같은 한 벌이다**(M1) — 試合 화면·予告先発 화면이 쓰는 것을 그대로 넘긴다
     startersData,
+    // ⚠**연속 기록·기록 근접도 같은 한 벌이다**(M1 · Task 6) — 여기서 다시 계산하지 않는다
+    homeData.streaks,
+    homeData.milestones,
   );
 
   return {
@@ -4521,35 +4569,8 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       tieRule: TIE_RULE,
       leagues: sections,
     },
-    /**
-     * 대시보드.
-     * ⚠**최신 경기 요약을 새로 조회하지 않는다**(M1) — `todayPage` 가 이미 만든 것을 옮긴다.
-     *   따로 조회하면 「試合 화면과 홈이 다른 경기를 보여준다」가 언젠가 난다.
-     */
-    home: homePage(
-      db,
-      o,
-      standings,
-      agg,
-      streaksByPlayer,
-      reFull,
-      meta.latest,
-      latestDay,
-      todayData.gameDate === null
-        ? null
-        : {
-          date: todayData.gameDate,
-          games: todayData.games.map((g) => ({
-            away: g.away.shortName,
-            home: g.home.shortName,
-            awayCode: g.away.teamCode,
-            homeCode: g.home.teamCode,
-            awayRuns: g.away.runs,
-            homeRuns: g.home.runs,
-          })),
-        },
-      postseasonData.competitions.some((c) => c.id !== "allStar"),
-    ),
+    // ⚠**위에서 이미 만들었다** — `teamPages`가 그 결과를 거르므로 여기서 다시 부르면 두 벌이 된다(M1)
+    home: homeData,
     starters: startersData,
     starterDays,
     matchup: matchupPage(db, o, meta.latest, startersData, battingByPlayer, pitchingByPlayer),

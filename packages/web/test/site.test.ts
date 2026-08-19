@@ -266,6 +266,8 @@ test("만든 화면이 전부 시즌 경로 목록에 있다 — 빠진 만큼�
           next: null,
           probable: null,
         },
+        streaks: [],
+        milestones: [],
       },
     ],
   });
