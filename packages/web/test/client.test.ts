@@ -1619,6 +1619,129 @@ test("⚠등번호는 완전일치다 — 부분일치면 「1」이 100번대�
   assert.deepEqual(names(await search(doc, "pickPitcher", "18")), ["山本"]);
 });
 
+// ─── 검색이 자르는 것을 말하는가 ────────────────────────────────────────
+
+/**
+ * ⚠**20건에서 조용히 잘리고 있었다**(2026-08-19 감사 P1 · HTTP 서빙 실측).
+ *
+ * 색인 698명에서 「田」 **81건 중 20** · 「中」 **86건 중 20** · 「山」 **48건 중 20** 이
+ * 표시됐고, 「N건 중 20건」도 「더 보기」도 없었다. 「佐」는 11건이라 전부 나왔다 —
+ * 즉 **잘린 화면과 안 잘린 화면이 똑같이 생겼다.** 21번째 선수는 「이 사이트에 없는 사람」이 된다.
+ * §0-1(3클릭 이내 도달)의 **주 경로가 침묵으로 실패**하는 것이고,
+ * 이 프로젝트가 순위표에는 「이 지표로 기록이 있는 선수 256人」까지 적으면서
+ * **가장 많이 쓰는 조작에만** 그 규율이 없었다(작업규칙 7).
+ */
+const MANY_INDEX = Array.from({ length: 25 }, (_, i) => ({
+  i: `t${i}`,
+  n: `田${i}`,
+  t: "チーム",
+}));
+
+/** 헤더 검색(`#q` → `#qhits`)의 뼈대. 목록 id 가 「Hits」가 아니라 `qhits` 다 */
+function buildHeaderSearch(): ReturnType<typeof makeDocument> {
+  const doc = makeDocument("");
+  const box = make("div", { class: "qbox" });
+  box.appendChild(make("input", { id: "q", type: "search", role: "combobox", "aria-expanded": "false" }));
+  box.appendChild(make("ul", { class: "qhits", id: "qhits", role: "listbox" }));
+  doc.body.appendChild(box);
+  return doc;
+}
+
+async function searchIn(
+  doc: ReturnType<typeof makeDocument>,
+  inputId: string,
+  listId: string,
+  term: string,
+): Promise<El[]> {
+  const input = doc.getElementById(inputId)!;
+  input.fire("focus");
+  input.value = term;
+  input.fire("input");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  return doc.querySelectorAll(`#${listId} li`);
+}
+
+/** 결과 항목만. 꼬리의 안내줄은 결과가 아니다 */
+function picks(items: El[]): El[] {
+  return items.filter((li) => li.className !== "more");
+}
+
+test("⚠검색이 20건에서 자른 것을 말한다 — 잠자코 자르면 21번째 선수가 「없는 사람」이 된다", async () => {
+  // ⚠**대상 질의가 실제로 20건을 넘는지 먼저 단언한다.** 안 넘으면 이 시험은 조용히 통과한다
+  assert.ok(
+    MANY_INDEX.filter((p) => p.n.includes("田")).length > 20,
+    "20건을 넘는 질의가 없다 — 이 시험이 공회전한다",
+  );
+  const doc = buildHeaderSearch();
+  run(doc, { index: MANY_INDEX });
+  const items = await searchIn(doc, "q", "qhits", "田");
+
+  assert.equal(picks(items).length, 20, "그리는 인원이 20명이 아니다");
+  const tail = items.at(-1)!;
+  assert.equal(tail.getAttribute("class"), "more", "목록 끝에 안내줄이 없다");
+  assert.match(tail.textContent, /25人中20人を表示/, "「몇 명 중 몇 명」을 말하지 않는다");
+  // ⚠**자르기 전 수여야 한다.** 자른 뒤에 세면 「20人中20人」이 되어 아무 말도 안 한 것과 같다
+  assert.ok(!tail.textContent.includes("20人中"), "자른 뒤의 수를 총건수라고 말했다");
+});
+
+/**
+ * ⚠**보내는 곳이 실제로 그 질의를 받는지 확인하고 링크를 만들었다.**
+ * `players.html` 은 서버가 전 선수를 그려 두고 클라이언트가 좁히기만 얹는 화면이라,
+ * `?q=` 를 읽어 좁힌 상태로 열 수 있다. 받지 못하는 곳이었다면 문구만 냈어야 한다.
+ */
+test("⚠꼬리는 選手一覧으로 그 질의를 달고 간다 — 다시 치게 하면 안내가 빈말이 된다", async () => {
+  const doc = buildHeaderSearch();
+  run(doc, { index: MANY_INDEX });
+  const tail = (await searchIn(doc, "q", "qhits", "田")).at(-1)!;
+  const a = tail.querySelector("a");
+  assert.notEqual(a, null, "갈 곳이 없다");
+  assert.equal(a!.getAttribute("href"), `players.html?q=${encodeURIComponent("田")}`);
+  /**
+   * ⚠**이 줄은 실기가 잡은 결함이다**(2026-08-19 Playwright). 처음 만들 때 안내줄에
+   * `role="option" aria-disabled="true"` 를 붙였는데, 그러면 그 안의 링크가
+   * **「disabled」로 판정돼 눌리지 않는다** — 「여기로 가라」고 써 놓고 「못 쓴다」고 말하는 꼴이다.
+   * 읽기로는 안 잡혔고 브라우저가 잡았다.
+   */
+  assert.equal(tail.getAttribute("aria-disabled"), null, "갈 수 있는 줄을 「쓸 수 없다」고 표시했다");
+});
+
+test("⚠20건 이하면 안내줄을 만들지 않는다 — 안 자른 것을 잘랐다고 하면 그것도 거짓말이다", async () => {
+  const doc = buildHeaderSearch();
+  run(doc, { index: MANY_INDEX });
+  // 「田1」은 田1·田10〜田19 = 11건. 20 이하다
+  const items = await searchIn(doc, "q", "qhits", "田1");
+  assert.equal(picks(items).length, 11, "표본이 11건이 아니다 — 이 시험이 재는 것이 바뀌었다");
+  assert.equal(items.length, 11, "자르지 않았는데 안내줄이 붙었다");
+});
+
+/**
+ * ⚠**「対戦を選ぶ」의 검색창은 고르는 중이다.** 여기서 선수 일람으로 보내면 반대쪽 선택이
+ * 날아간다 — 안내는 하되 페이지를 떠나는 링크는 만들지 않는다.
+ */
+test("⚠고르는 중인 검색창은 안내만 하고 화면을 떠나지 않는다", async () => {
+  const doc = buildPicker();
+  run(doc, { index: MANY_INDEX });
+  const items = await searchIn(doc, "pickPitcher", "pickPitcherHits", "田");
+  const tail = items.at(-1)!;
+  assert.match(tail.textContent, /25人中20人を表示/, "고르는 화면에서는 총건수를 안 말한다");
+  assert.equal(tail.querySelector("a"), null, "고르는 중인데 화면을 떠나는 링크를 놓았다");
+});
+
+/**
+ * ⚠**화살표 이동이 안내줄에 멈추지 않는다.** 멈추면 Enter 로 아무 데도 못 가는 상태가 되고,
+ * 마지막 선수 다음에 「고를 수 없는 것」이 하나 낀 것처럼 보인다.
+ */
+test("⚠안내줄은 골라지지 않는다 — 화살표가 스무 번째에서 멈춘다", async () => {
+  const doc = buildHeaderSearch();
+  const { location } = run(doc, { index: MANY_INDEX });
+  const input = doc.getElementById("q")!;
+  await searchIn(doc, "q", "qhits", "田");
+  for (let n = 0; n < 25; n += 1) input.fire("keydown", { key: "ArrowDown" });
+  input.fire("keydown", { key: "Enter" });
+  // 20번째(= 田19)에서 멈춘다. 안내줄이 골라졌다면 여기서 아무 데도 안 가거나 딴 곳으로 간다
+  assert.equal(location.href, "players/t19.html", "화살표 끝이 스무 번째 선수가 아니다");
+});
+
 test("⚠등번호가 없는 선수에게 자리를 만들지 않는다 — 「―」로 채우면 198줄이 같은 기호가 된다", async () => {
   const doc = buildPicker();
   run(doc, { index: KANA_INDEX });
@@ -1698,6 +1821,49 @@ test("⚠첫 화면의 좁히기도 읽는 법·등번호로 찾는다 — 검�
   filter.value = "佐";
   filter.fire("input");
   assert.deepEqual(rosterNames(doc), ["佐藤"]);
+});
+
+/**
+ * ⚠**헤더 검색의 「선수一覧ですべて見る」가 닿는 곳이 여기다.**
+ * 그 링크는 `?q=` 를 달고 오는데 이 화면이 안 읽으면, 안내를 따라온 사람은
+ * **698명 목록 앞에서 처음부터 다시** 쳐야 한다 — 안내가 빈말이 된다.
+ * ⚠**서버는 이 값을 모른다.** 목록은 전원이 그려져 있고 좁히기만 얹으므로,
+ * 스크립트가 없으면 전 선수 목록이 그대로 나온다(§0-1) — 그래서 문구도 「すべて見る」다.
+ */
+test("⚠?q= 로 들어오면 그 말로 좁힌 상태에서 열린다", () => {
+  const doc = buildKanaRoster();
+  run(doc, { location: { search: `?q=${encodeURIComponent("やまもと")}`, href: "" } });
+  assert.deepEqual(rosterNames(doc), ["山本"], "?q= 를 안 읽었다");
+  assert.equal(doc.getElementById("rosterFilter")!.value, "やまもと", "검색창이 무엇으로 좁혔는지 안 말한다");
+  assert.equal(doc.getElementById("rosterCount")!.textContent, "1人", "몇 명이 남았는지 안 고쳤다");
+});
+
+test("⚠?q= 가 아닌 것으로는 좁히지 않는다 — 첫 방문이 빈 화면이 되면 안 된다", () => {
+  const doc = buildKanaRoster();
+  run(doc);
+  assert.equal(rosterNames(doc).length, 3, "질의어가 없는데 좁혔다");
+  assert.equal(doc.getElementById("rosterFilter")!.value, "");
+
+  /**
+   * ⚠**다른 화면이 쓰는 파라미터로 좁히면 안 된다.** `?vs=` 는 선수 페이지에서 **상대 투수를
+   * ID 로 못 박는 값**이라(M10), 그것으로 이름 좁히기를 걸면 선수 일람이 통째로 0건이 된다.
+   */
+  const other = buildKanaRoster();
+  run(other, { location: { search: `?vs=${encodeURIComponent("山本")}`, href: "" } });
+  assert.equal(rosterNames(other).length, 3, "?q= 가 아닌 값으로 좁혔다");
+  assert.equal(other.getElementById("rosterFilter")!.value, "");
+});
+
+/**
+ * ⚠**`decodeURIComponent` 는 깨진 % 열에서 던진다.** 여기서 던지면 그 뒤의 초기화가
+ * 통째로 죽어 화면 전체가 조용히 고장난다 — 주소창 한 글자로 일어날 수 있는 일이다.
+ */
+test("⚠깨진 ?q= 로도 화면이 죽지 않는다", () => {
+  const doc = buildKanaRoster();
+  run(doc, { location: { search: "?q=%E5%B1%B1%", href: "" } });
+  // 못 푸는 값은 원문 그대로 쓴다. 결과가 0건이어도 **화면은 살아 있다**
+  assert.equal(doc.getElementById("rosterFilter")!.value, "%E5%B1%B1%");
+  assert.equal(doc.getElementById("rosterCount")!.textContent, "0人");
 });
 
 /**

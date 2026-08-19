@@ -139,6 +139,15 @@ a{color:inherit}
 /* 성적은 둘째 줄에. **분모까지 붙어 있다**(M2) — 이 줄의 존재 이유가 「이 사람이 맞나」의 판단이다 */
 .qhits .hs{flex-basis:100%;font-size:10.5px;color:var(--tx-2);font-variant-numeric:tabular-nums}
 .qhits .none{padding:7px 11px;font-size:12px;color:var(--tx-3)}
+/* 「몇 명 중 몇 명을 보고 있는가」. ⚠**결과가 아니라 결과에 대한 설명이므로 선을 그어 가른다** —
+   같은 모양으로 두면 21번째 선수처럼 보인다. 눌러서 가는 곳(選手一覧)이 있을 때만 링크가 된다.
+   ⚠「.qhits li a」보다 클래스가 하나 많아 특이도에서 이긴다(0,2,1 대 0,1,2).
+   ⚠**이 파일은 통째로 템플릿 리터럴이다 — 주석에 역따옴표를 쓰면 타입체크가 깨진다**
+   (2026-08-19 이 주석을 쓰다가 실제로 깼다. 코드 인용은 「」로 감싼다) */
+.qhits .more{border-top:1px solid var(--hair);margin-top:4px;padding-top:3px}
+.qhits .more a,.qhits .more span{display:block;padding:6px 11px;font-size:11px;
+  color:var(--tx-2);text-decoration:none}
+.qhits .more a:hover{background:var(--panel-2);color:var(--tx)}
 /* ⚠**탭줄은 접히지 않는다 — 한 줄로 남고 모자라면 옆으로 굴린다.**
    탭이 8개(球団 試合 一覧 順位 対戦 比較 他大会 記録)라 flex-wrap:wrap 이면 좁은 폭에서 2행이 되는데,
    바는 --topbar 높이라 **2행이 들어갈 자리가 없다.** 실측 파손 구간 481~770px(손가락 481~784px).
@@ -2633,12 +2642,20 @@ function fetchIndex(){
   });
 }
 
+/* 드롭다운에 그리는 최대 인원.
+   ⚠**여기서 자른다는 사실을 화면이 말해야 한다**(작업규칙 7 · M2). 잘라 놓고 잠자코 있으면
+   「그 선수는 이 사이트에 없다」로 읽힌다 — 순위표는 「이 지표로 기록이 있는 선수 256人」까지
+   말하는데 **가장 많이 쓰는 조작에만** 그 규율이 없었다(2026-08-19 감사 P1).
+   실측(색인 698명): 「田」 81건 · 「中」 86건 · 「山」 48건이 전부 20건으로 보였다. */
+const SEARCH_LIMIT=20;
+
 /* ── 선수 고르기 ──
    헤더 검색과 「対戦を選ぶ」 화면이 **같은 구현**을 쓴다. 두 벌로 나누면 키보드 조작이
    한쪽에만 붙는 식으로 어긋난다. */
 function attachPicker(input,list,onPick){
   if(!input||!list)return null;
-  let rows=[],active=-1;
+  /* hits = **자르기 전** 일치 수 · asked = 그 수를 낸 질의어(「一覧」으로 넘길 때 쓴다) */
+  let rows=[],active=-1,hits=0,asked="";
   const close=()=>{list.hidden=true;input.setAttribute("aria-expanded","false");active=-1};
   /* @param items 배열이면 결과, **null 이면 아직 읽는 중**이다 */
   const draw=(items,failed)=>{
@@ -2668,6 +2685,37 @@ function attachPicker(input,list,onPick){
       if(onPick)a.addEventListener("click",(e)=>{if(e&&e.preventDefault)e.preventDefault();onPick(p);close()});
       list.appendChild(li);
     });
+    /* ⚠**자른 것을 말한다.** 20건에서 조용히 끊으면 21번째 선수는 「없는 사람」이 된다 —
+       §0-1(3클릭 이내 도달)의 주 경로가 침묵으로 실패하는 것이라 이 화면에서 제일 나쁜 결함이다.
+       ⚠**갈래를 나눈다**: 헤더 검색은 「이동」이라 選手一覧으로 보내도 잃는 것이 없지만,
+       「対戦を選ぶ」·「比較」의 검색창은 **고르는 중**이라 페이지를 떠나면 반대쪽 선택이 날아간다.
+       ⚠**role 을 주지 않는다 — 「該当なし」·「読み込み中…」과 같은 자리다.**
+       처음에 role="option" aria-disabled="true" 로 만들었다가 **실기에서 잡혔다**(Playwright):
+       그 안의 링크가 「disabled」로 판정돼 눌리지 않는 상태가 됐다 —
+       **「여기로 가라」고 써 놓고 「이건 못 쓴다」고 말하는** 자기모순이었다.
+       ⚠**대신 남는 한계를 적어 둔다**: 포커스 모드의 스크린리더는 listbox 안의 롤 없는 항목을
+       읽지 않으므로, 이 줄은 **화면으로만** 전해진다(브라우즈 모드와 Tab 이동에서는 읽힌다).
+       「.none」이 같은 한계를 이미 갖고 있다 — 고칠 때 **둘을 같이** 고쳐야지 여기만 손대면
+       같은 목록 안에서 어떤 줄은 읽히고 어떤 줄은 안 읽히는 상태가 된다.
+       ⚠rows 에는 넣지 않는다 — 화살표 이동이 마지막 선수에서 멈춘다. */
+    if(items&&items.length&&hits>items.length){
+      const li=doc.createElement("li");
+      li.className="more";
+      const text=hits+"人中"+items.length+"人を表示";
+      if(onPick){
+        const s=doc.createElement("span");
+        s.textContent=text+" — 文字を足すとしぼれます";
+        li.appendChild(s);
+      }else{
+        const a=doc.createElement("a");
+        /* ⚠**JS 가 죽어 있어도 참인 문구를 쓴다**(§0-1). 選手一覧은 서버가 전원을 그려 두므로
+           「すべて見る」는 어느 쪽이든 맞다 — 좁혀진 상태로 열리는 것은 JS 가 살아 있을 때의 덤이다 */
+        a.href=BASE+"players.html?q="+encodeURIComponent(asked);
+        a.textContent=text+" — 選手一覧ですべて見る";
+        li.appendChild(a);
+      }
+      list.appendChild(li);
+    }
     list.hidden=false;input.setAttribute("aria-expanded","true");
   };
   const run=()=>{
@@ -2681,8 +2729,11 @@ function attachPicker(input,list,onPick){
       /* ⚠**등번호는 완전일치다.** 부분일치로 두면 「1」이 1·10〜19·100번대를 전부 끌고 와
          이름 검색 결과를 밀어낸다. 「34」로 34번을 찾는 것이 이 기능의 전부다 */
       var q=fold(term);
-      rows=idx.filter(p=>p.n.indexOf(term)>=0||p.t.indexOf(term)>=0
-        ||(p.kf&&p.kf.indexOf(q)>=0)||p.u===term).slice(0,20);
+      var all=idx.filter(p=>p.n.indexOf(term)>=0||p.t.indexOf(term)>=0
+        ||(p.kf&&p.kf.indexOf(q)>=0)||p.u===term);
+      /* ⚠**자르기 전에 센다.** 자른 뒤에 세면 언제나 20이 되어 「81人中」이 「20人中」이 된다 */
+      hits=all.length;asked=term;
+      rows=all.slice(0,SEARCH_LIMIT);
       active=-1;draw(rows,false);
     });
   };
@@ -3272,6 +3323,23 @@ if(filter||chips.length){
     apply();
   });
   if(filter)filter.addEventListener("input",apply);
+
+  /* ?q= 로 들어오면 그 말로 좁힌 상태에서 시작한다.
+     ⚠**헤더 검색이 「81人中20人を表示 — 選手一覧ですべて見る」라고 말한 뒤 보내는 곳이 여기다.**
+     여기서 처음부터 다시 치게 하면 그 안내가 빈말이 된다.
+     ⚠**서버는 이 값을 모른다** — 전 선수 목록은 그대로 그려져 있고 좁히기만 얹는다(§0-1).
+     ⚠**질의어가 없으면 아무것도 하지 않는다.** 여기서 무조건 apply() 를 부르면
+     스크립트가 있을 때만 빈 구단 구획이 사라져, 같은 화면이 JS 유무로 달라진다.
+     ⚠**깨진 % 열이 와도 죽지 않는다** — decodeURIComponent 는 그때 던진다. 원문을 그대로 쓴다. */
+  if(filter){
+    const qm=/[?&]q=([^&#]*)/.exec(LOC.search||"");
+    if(qm){
+      const raw=(qm[1]||"").split("+").join(" ");
+      let q0=raw;
+      try{q0=decodeURIComponent(raw)}catch(e){q0=raw}
+      if(q0.trim()!==""){filter.value=q0;apply()}
+    }
+  }
 }
 
 press(".rail [data-preset]","preset",state.preset);

@@ -96,6 +96,23 @@ export class El {
     this.attrs["id"] = v;
   }
 
+  /**
+   * 링크 주소.
+   *
+   * ⚠**실제 DOM 에서 `a.href = x` 는 속성에 반영된다.** 스텁에 그 짝이 없어서, 클라이언트가
+   * 만든 링크의 **목적지를 시험이 읽을 방법이 없었다**(`getAttribute("href")` 가 늘 `null`).
+   * `className`·`id` 와 같은 종류의 구멍이다 — 실물과 다른 만큼 시험이 지키는 것이 줄어든다.
+   * ⚠**한 가지는 실물과 다르다**: 브라우저의 `a.href` 게터는 **절대 URL** 을 돌려주고
+   * 원문은 `getAttribute("href")` 가 돌려준다. 여기서는 둘 다 원문이다 —
+   * 이 대역이 재는 것은 「어디를 가리키는가」이지 URL 해석이 아니다.
+   */
+  get href(): string {
+    return this.attrs["href"] ?? "";
+  }
+  set href(v: string) {
+    this.attrs["href"] = v;
+  }
+
   get textContent(): string {
     return this.children.length === 0 ? this.#text : this.children.map((c) => c.textContent).join("");
   }

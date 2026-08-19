@@ -29,7 +29,7 @@
 import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import { NO_VALUE, avg3, dec2, fullDate, innings } from "./format.ts";
-import { block, denText, follower, note, panel, panelId, rankValue, runCell, scroller, statCount, statRateOuts, statSigned, statText, tabId, tablist, term, widestRunDiff, wlCell } from "./parts.ts";
+import { block, denText, follower, note, panel, panelId, rankValue, runCell, scroller, statCount, statRateOuts, statSigned, statText, tabId, tablist, term, valueWithDen, widestRunDiff, wlCell } from "./parts.ts";
 import { page, pastSeasonOf, ROSTER_PATH } from "./layout.ts";
 import { teamPath } from "./team-page.ts";
 import type { Freshness, SiteMeta } from "./layout.ts";
@@ -676,6 +676,19 @@ export function renderStartersPage(d: StartersPageData, ctx: RenderContext): str
    *
    * ⚠**같은 표를 두 번 쓰지 않는다**(M1) — 今季와 通算이 모양이 같으므로 부품 하나로 그린다.
    * 두 벌로 두면 언젠가 한쪽만 고쳐진다.
+   *
+   * ⚠**打率에는 분모(打数)를 붙인다**(M2 · 2026-08-19 감사 P1 · 배포물 실측).
+   * 예전에는 `avg3(m.avg.value)` 만 찍어서 `dist/starters.html` 전체에 「打数」가 **0회**였다.
+   * 그런데 이 표에는 `打席`과 `安打`가 나란히 있어서, 읽는 사람이 그 둘을 나누면 표시값과
+   * 어긋난다 — 실측 `万波 9打席 2安打 .250`(= 2/8) · `郡司 8打席 3安打 .429`(= 3/7).
+   * **「분모 없음」이 아니라 「틀린 분모가 인접」한 상태**라 더 나쁘다.
+   * ⚠**「打数」 열을 더하는 것이 아니라 값에 붙인다** — `assets.ts` 가 順位表에서 같은 판단을
+   * 적어 뒀다(「인접」으로는 지켜지지 않으므로 값에 붙인다). 이 표는 좁은 화면에서 옆으로
+   * 굴러가는 표라 열을 늘리면 打率 자체가 화면 밖으로 밀린다.
+   * (선수 페이지의 対戦成績은 반대로 「打数」 열을 갖는다 — 거기는 정렬·좁히기가 되는 넓은 표라
+   *  열이 하나 더 들어가고, 그래서 `den-units.test.ts` 가 두 갈래를 모두 인정한다.)
+   * ⚠**분모는 `m.avg.denominator`(= `line.ab`)다.** `line.pa` 를 쓰면 값은 그대로인 채
+   * 분모만 틀려서, 지금보다 **더 그럴듯한 거짓말**이 된다(`den-units.test.ts` 가 잡는다).
    */
   const matchupRows = (list: readonly MatchupRow[], side: ProbableSide, opponent: ProbableSide): RawHtml =>
     scroller(html`<table>
@@ -684,7 +697,7 @@ export function renderStartersPage(d: StartersPageData, ctx: RenderContext): str
       (m) => html`<tr class="${m.line.pa < 10 ? "thin" : ""}">
         <td class="l"><a href="${base}players/${m.opponentId}.html?vs=${encodeURIComponent(side.playerId ?? "")}#b-matchup">${m.opponentName}</a></td>
         <td>${m.line.pa}</td><td>${m.line.h}</td><td>${m.line.hr}</td><td>${m.line.so}</td>
-        <td>${avg3(m.avg.value)}</td>
+        <td class="wd">${valueWithDen(m.avg, "打数", 3)}</td>
       </tr>`,
     )}</tbody>
   </table>`);
