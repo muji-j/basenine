@@ -109,6 +109,9 @@ function wlt(x: { w: number; l: number; t: number }): string {
  * - **다음 경기** — ⚠없어도 줄을 지우지 않는다(M12). 문장은 구단 페이지와 같은 한 벌이다(M1).
  * - **최애 버튼** — ⚠`data-favname` 을 반드시 붙인다. 클라이언트는 구단 마스터를 모르고,
  *   없으면 내비 라벨이 코드 대문자(「T」)로 떨어진다 — 화면은 멀쩡해서 눈으로는 안 잡힌다.
+ *   ⚠**`data-favpath` 도 같이 붙인다**(2026-08-19 T9). 경로는 `teamPath()` 한 곳에서만 나오는데
+ *   (M1 · 「갈리면 어딘가는 404다」) **번들은 그 함수 밖에 있다.** 클라이언트가 코드로 경로를
+ *   이어 붙이면 경로 규칙이 바뀌는 날 내비만 조용히 404 가 된다 — 서버가 만든 값을 실어 보낸다.
  *   ⚠**`hidden` 으로 두지 않는다.** 선수 페이지의 즐겨찾기 버튼은 스크립트가 켜 주지만
  *   이쪽은 켜 주는 코드가 없다 — 숨기면 기능이 통째로 죽은 채 조용히 남는다.
  *   그 대신 **각주가 「이 브라우저에만 남는다 · JS 가 필요하다」고 말한다.**
@@ -140,7 +143,7 @@ function teamRow(c: TeamsCard, base: string): RawHtml {
   </p>
   <p class="tcx"><s>次の試合</s><b>${nextGameText(c.next, c.seasonOver)}</b></p>
   <p class="tcf"><button class="favt" type="button"
-    data-favteam="${c.teamCode}" data-favname="${c.shortName}"
+    data-favteam="${c.teamCode}" data-favname="${c.shortName}" data-favpath="${teamPath(c.teamCode)}"
     aria-pressed="false">ひいき球団<span class="vh"> ${c.shortName}</span></button></p>
 </li>`;
 }

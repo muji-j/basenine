@@ -1712,6 +1712,20 @@ const BLOCKS=BOOT.blocks||[];
 const GLOSSARY=__GLOSSARY__;
 const PRESETS=BOOT.presets||{};
 
+/* 저장된 최애 구단 하나를 읽는다.
+   ⚠**셋이 다 있어야 최애다**(M11). 코드·약칭·경로 중 하나라도 없으면 「미지정」으로 본다 —
+   반쪽짜리를 받으면 내비 라벨이 코드(「T」)로 떨어지거나 링크를 아예 만들 수 없다.
+   ⚠**경로는 상대경로만 받는다.** 저장값이 상하거나 남이 심어도 이 링크가 바깥으로 나가지 않는다. */
+function readFavTeam(v){
+  if(!v||typeof v!=="object")return null;
+  const code=typeof v.code==="string"?v.code:"";
+  const name=typeof v.name==="string"?v.name:"";
+  const path=typeof v.path==="string"?v.path:"";
+  if(code===""||name===""||path==="")return null;
+  if(path.indexOf(":")>=0||path.charAt(0)==="/")return null;
+  return {code:code,name:name,path:path};
+}
+
 const saved=load()||{};
 const state={
   order:Array.isArray(saved.order)&&saved.order.length?saved.order:(PRESETS.standard||[]).slice(),
@@ -1732,6 +1746,8 @@ const state={
   picked:(saved.picked&&typeof saved.picked==="object")?saved.picked:{},
   /* 즐겨찾기한 선수 ID. **이 브라우저에만 남는다** — 서버로 가지 않는다 */
   favs:Array.isArray(saved.favs)?saved.favs.filter(x=>typeof x==="string"):[],
+  /* 최애 구단 **하나**. 선수 즐겨찾기(favs)와는 다른 개념이다 — 아래 「최애 구단」 구역 참조 */
+  favTeam:readFavTeam(saved.favTeam),
   grades:saved.grades!==false,
   mark:saved.mark===true,
   theme:saved.theme==="dark"||saved.theme==="light"?saved.theme:"system"
@@ -3016,6 +3032,80 @@ function paintFav(){
 const favBtn=$("#favBtn");
 if(favBtn)favBtn.addEventListener("click",()=>{toggleFav(favBtn.dataset.fav);paintFav()});
 
+/* ── 최애 구단 ──
+   ⚠**위의 선수 즐겨찾기와 다른 개념이다.** 최애는 **하나**뿐이다 — 내비의 첫 자리가
+   하나이기 때문이고, state.favs(선수 여럿)는 여기서 건드리지 않는다.
+   ⚠**서버는 어느 화면에서나 球団 을 그린다**(§0-1). 여기서 하는 일은 라벨과 링크를 바꾸는 것뿐이라
+   JS 가 없어도 구단 목록으로 가는 길이 남는다.
+   ⚠**경로를 손으로 짓지 않는다**(M1). teamPath() 가 「한 곳에서만 만든다 — 갈리면 어딘가는 404다」로
+   선언된 함수인데 번들은 그 밖에 있다 — 그래서 버튼이 data-favpath 로 서버가 만든 값을 실어 오고,
+   우리는 그 앞에 이 화면의 BASE 만 붙인다(서버가 하는 것과 같은 조립이다).
+   ⚠**이름과 경로를 저장에 함께 남긴다.** 버튼은 구단 목록 화면에만 있는데 내비는 **전 페이지**에 있다 —
+   코드만 남기면 다른 화면에서 라벨이 「T」로 떨어지고 링크를 만들 방법이 없다. */
+const navTeamLinks=$$("[data-navteam]");
+/* ⚠**서버가 그린 것을 그대로 되돌린다.** 해제했을 때 쓸 경로·라벨·현재위치를 여기서 다시 짓지 않는다 —
+   경로는 M1 이 한 곳으로 못 박았고 라벨은 i18n 대상이라(§7), 두 벌이 되면 언젠가 갈린다 */
+const navTeamBack=navTeamLinks.map(a=>({href:a.getAttribute("href")||"",text:a.textContent,here:a.getAttribute("aria-current")}));
+function paintFavTeam(){
+  const fav=state.favTeam;
+  /* 빈 문자열은 어느 구단 코드와도 같지 않다 — 미지정이면 12개가 전부 눌리지 않은 상태가 된다 */
+  press("[data-favteam]","favteam",fav===null?"":fav.code);
+  navTeamLinks.forEach((a,i)=>{
+    const back=navTeamBack[i];
+    if(fav===null){
+      a.setAttribute("href",back.href);
+      a.textContent=back.text;
+      if(back.here===null)a.removeAttribute("aria-current");
+      else a.setAttribute("aria-current",back.here);
+      return;
+    }
+    a.setAttribute("href",BASE+fav.path);
+    a.textContent=fav.name;
+    /* ⚠**「이 문서」라고 말하면 거짓말이 된다.** 구단 목록 화면에서 서버는 page 를 적어 두는데
+       링크는 이제 구단 페이지로 간다 — 같은 구획 안이라는 뜻의 true 로 낮춘다
+       (구단 상세 화면이 서버에서 이미 쓰는 값이라 CSS 도 이미 있다).
+       서버가 아무 말도 안 한 화면에서는 우리도 아무 말도 하지 않는다. */
+    if(back.here==="page")a.setAttribute("aria-current","true");
+  });
+}
+/* ⚠**저장값은 서버 데이터의 사본이다** — 그리고 그 사본은 이 브라우저에만 있어 **서버가 못 고친다.**
+   약칭이 바뀌면 내비가 틀린 구단 이름을 조용히 보여주고(404 조차 안 난다), 경로 규칙이 바뀌면
+   내비만 404 로 간다. ⚠**경로 규칙은 바뀔 예정이다**(Pages 파일 상한 · CLAUDE.md §2-2).
+   → 정본이 눈앞에 있는 화면(구단 목록)에 서 있을 때 사본을 고친다. 그 밖의 화면에는 버튼이 없으므로
+   아무 일도 일어나지 않는다.
+   ⚠**코드가 화면에 없으면 손대지 않는다** — 「그 구단이 사라졌다」와 「지금 이 화면에 없다」를
+   구별할 수 없어서다. 지우면 사용자 설정을 우리 추측으로 날리는 것이 된다. */
+function refreshFavTeam(){
+  const fav=state.favTeam;
+  if(fav===null)return;
+  const b=$$("[data-favteam]").filter(x=>x.dataset.favteam===fav.code)[0];
+  if(!b)return;
+  const fresh=readFavTeam({code:b.dataset.favteam,name:b.dataset.favname,path:b.dataset.favpath});
+  if(fresh===null||(fresh.name===fav.name&&fresh.path===fav.path))return;
+  state.favTeam=fresh;
+  try{
+    const cur=load()||{};
+    cur.favTeam=fresh;
+    localStorage.setItem(KEY,JSON.stringify(cur));
+  }catch(e){}
+}
+refreshFavTeam();
+
+$$("[data-favteam]").forEach(b=>b.addEventListener("click",()=>{
+  const on=state.favTeam!==null&&state.favTeam.code===b.dataset.favteam;
+  state.favTeam=on?null:readFavTeam({code:b.dataset.favteam,name:b.dataset.favname,path:b.dataset.favpath});
+  /* ⚠**state 전체를 쓰지 않는다** — 바로 위 toggleFav 와 같은 이유다.
+     initTabs 가 「지금 화면에 없는 탭 키」를 메모리에서 첫 키로 되돌려 놓은 상태라,
+     여기서 통째로 저장하면 다른 화면의 탭 기본값이 덮어써진다.
+     ⚠**저장이 막혀도**(프라이빗 모드) 이번 방문 동안의 화면은 돌아야 한다 */
+  try{
+    const cur=load()||{};
+    cur.favTeam=state.favTeam;
+    localStorage.setItem(KEY,JSON.stringify(cur));
+  }catch(e){}
+  paintFavTeam();
+}));
+
 /* ── 색인 화면의 이름·구단 좁히기 ──
    목록은 서버가 그렸다. JS는 좁히기만 한다 — 스크립트가 죽어도 전 선수 목록은 남는다. */
 const filter=$("#rosterFilter");
@@ -3062,7 +3152,7 @@ if(filter||chips.length){
 
 press(".rail [data-preset]","preset",state.preset);
 press(".rail [data-density]","density",state.density);
-applyTheme();renderBlocks();renderEditor();showTabs();paintFav();revealHash();
+applyTheme();renderBlocks();renderEditor();showTabs();paintFav();paintFavTeam();revealHash();
 })();
 `;
 

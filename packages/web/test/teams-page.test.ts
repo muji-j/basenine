@@ -171,6 +171,26 @@ test("⚠최애 버튼이 구단 이름을 들고 있다 — 12개 전부(T9 가
 });
 
 /**
+ * ⚠**경로는 `teamPath()` 한 곳에서만 나온다**(M1) — 「갈리면 어딘가는 404다」가
+ * 그 함수에 적힌 말이다. 그런데 **클라이언트는 그 함수 밖에 있다**(번들은 도메인을 모른다).
+ * 손으로 이어 붙이면 경로 규칙이 바뀌는 날 내비만 조용히 404 가 된다 —
+ * 그래서 **서버가 만든 값을 버튼이 실어 보내고**, 클라이언트는 앞에 BASE 만 붙인다.
+ * ⚠**같은 카드의 이름 링크와 같은 값이어야 한다** — 여기서 그 일치를 못 박는다.
+ */
+test("⚠최애 버튼이 구단 페이지 경로를 들고 있다 — 12개 전부(M1 · T9 가 이걸 읽는다)", () => {
+  const out = renderTeamsPage(teamsData(), context());
+  const btns = favButtons(out);
+  assert.equal(btns.length, 12, "최애 버튼이 12개가 아니다");
+  const bad: string[] = [];
+  for (const b of btns) {
+    const code = attr(b, "data-favteam") ?? "";
+    const path = attr(b, "data-favpath");
+    if (path !== teamPath(code)) bad.push(`${code}=${path ?? "없음"}`);
+  }
+  assert.deepEqual(bad, [], `teamPath() 와 어긋나는 구단: ${bad.join(" ")}`);
+});
+
+/**
  * ⚠**같은 이름의 버튼 12개는 낭독기에서 구별되지 않는다.**
  * 「ひいき球団」만 열두 번 들리면 어느 구단의 버튼인지 알 수 없다 —
  * 보이는 글자는 그대로 두고 **숨은 글자로 구단을 덧붙인다**(WCAG 2.5.3 label-in-name).

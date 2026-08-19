@@ -1953,3 +1953,205 @@ test("⚠넘치지 않으면 아무것도 붙이지 않는다", () => {
   run(doc);
   assert.equal(fits.getAttribute("tabindex"), null, "넘치지도 않는데 탭 정지가 붙었다");
 });
+
+// ─── 최애 구단 ──────────────────────────────────────────────────────────
+/**
+ * ⚠**최애는 하나다.** 「내비의 가장 첫 자리」가 하나이기 때문이다.
+ * 선수 즐겨찾기(`state.favs`)는 다른 개념이라 건드리지 않는다.
+ *
+ * ⚠**서버는 어느 화면에서나 「球団」을 그린다**(§0-1). 스크립트가 하는 일은
+ * 라벨과 링크를 바꾸는 것뿐이고, JS 가 없으면 구단 목록으로 간다 — 길이 끊기지 않는다.
+ */
+function favTeamButton(): El {
+  return make("button", {
+    "data-favteam": "t",
+    "data-favname": "阪神",
+    /**
+     * ⚠**경로를 클라이언트가 짓지 않는다**(M1). `teamPath()` 가 「한 곳에서만 만든다 —
+     * 갈리면 어딘가는 404다」로 선언된 함수인데 클라이언트는 그 밖에 있다.
+     * → **서버가 만든 값**을 버튼이 실어 온다(`teams-page.test.ts` 가 그 일치를 잰다).
+     */
+    "data-favpath": "teams/t.html",
+    "aria-pressed": "false",
+  });
+}
+
+/**
+ * 내비 한 줄. `aria-current` 는 서버가 「이 문서」에만 적는다.
+ *
+ * ⚠**서버가 그리는 그대로 짓는다** — 라벨 `球団` 과 `teams.html` 링크가 여기 있어야 한다.
+ * 클라이언트는 해제할 때 **서버가 그린 것을 되돌릴 뿐** 라벨을 스스로 짓지 않기 때문이다
+ * (경로는 M1 이 `teamPath()` 로 못 박았고 라벨은 i18n 대상이다 · §7).
+ * ⚠**이 픽스처가 실물과 어긋나면 시험은 실물을 재지 않는다.** 실물 쪽은
+ * `layout.test.ts` 의 「내비 첫 항목이 球団이고 구단 목록으로 간다」가 따로 못 박는다.
+ */
+function navTeamLink(doc: ReturnType<typeof makeDocument>, current: string | null): El {
+  const nav = make("nav", { class: "tnav" });
+  const attrs: Record<string, string> = { href: "../teams.html", "data-navteam": "" };
+  if (current !== null) attrs["aria-current"] = current;
+  const a = make("a", attrs);
+  a.textContent = "球団";
+  nav.appendChild(a);
+  doc.body.appendChild(nav);
+  return a;
+}
+
+/** 구단 목록 화면의 최소 모양 — 내비 + 최애 버튼 */
+function withNavAndFav(current: string | null = "page"): ReturnType<typeof makeDocument> {
+  const doc = buildPage();
+  navTeamLink(doc, current);
+  doc.body.appendChild(favTeamButton());
+  return doc;
+}
+
+/**
+ * 구단 목록 **밖의** 화면 — 내비는 있고 최애 버튼은 없다.
+ *
+ * ⚠**이쪽이 거의 전부다**(dist 15,443장 중 구단 목록은 시즌당 1장뿐이다).
+ * 클라이언트가 구단 이름·경로를 **버튼에서만** 읽으면 여기서 조용히 열화한다.
+ */
+function withNavOnly(): ReturnType<typeof makeDocument> {
+  const doc = buildPage();
+  navTeamLink(doc, null);
+  return doc;
+}
+
+test("⚠최애를 지정하면 내비 첫 항목이 그 구단이 된다", () => {
+  const doc = withNavAndFav();
+  run(doc, { storage: makeStorage() });
+  doc.querySelectorAll("[data-favteam]")[0]!.fire("click");
+  const a = doc.querySelectorAll("[data-navteam]")[0]!;
+  assert.match(a.getAttribute("href") ?? "", /teams\/t\.html$/);
+  assert.equal(a.textContent, "阪神");
+  assert.equal(doc.querySelectorAll("[data-favteam]")[0]!.getAttribute("aria-pressed"), "true");
+});
+
+test("⚠다시 누르면 해제되고 내비가 球団으로 돌아온다", () => {
+  const doc = withNavAndFav();
+  run(doc, { storage: makeStorage() });
+  const btn = doc.querySelectorAll("[data-favteam]")[0]!;
+  btn.fire("click");
+  btn.fire("click");
+  const a = doc.querySelectorAll("[data-navteam]")[0]!;
+  assert.match(a.getAttribute("href") ?? "", /teams\.html$/);
+  assert.equal(a.textContent, "球団");
+  assert.equal(btn.getAttribute("aria-pressed"), "false");
+});
+
+test("최애는 이 브라우저에 남는다 — 다시 열어도 살아 있다", () => {
+  const storage = makeStorage();
+  const first = withNavAndFav();
+  run(first, { storage });
+  first.querySelectorAll("[data-favteam]")[0]!.fire("click");
+  const second = withNavAndFav();
+  run(second, { storage });
+  assert.match(second.querySelectorAll("[data-navteam]")[0]!.getAttribute("href") ?? "", /teams\/t\.html$/);
+  assert.equal(second.querySelectorAll("[data-favteam]")[0]!.getAttribute("aria-pressed"), "true");
+});
+
+/**
+ * ⚠**여기가 이 기능의 진짜 시험이다.**
+ *
+ * 최애 버튼은 **구단 목록 화면에만** 있는데 내비는 **전 페이지**에 있다.
+ * 이름을 버튼에서만 읽으면 다른 화면에서는 읽을 것이 없어 코드 대문자(「T」)로 떨어지고,
+ * 경로도 만들 수 없다. **화면은 멀쩡히 그려지므로 눈으로는 안 잡힌다.**
+ * → 지정할 때 이름과 경로를 함께 남긴다.
+ */
+test("⚠구단 목록 밖의 화면에서도 이름이 나온다 — 「T」로 떨어지지 않는다", () => {
+  const storage = makeStorage();
+  const list = withNavAndFav();
+  run(list, { storage });
+  list.querySelectorAll("[data-favteam]")[0]!.fire("click");
+
+  const other = withNavOnly();
+  run(other, { storage });
+  const a = other.querySelectorAll("[data-navteam]")[0]!;
+  assert.equal(a.textContent, "阪神", "최애 버튼이 없는 화면에서 내비 라벨이 코드로 떨어졌다");
+  assert.match(a.getAttribute("href") ?? "", /teams\/t\.html$/);
+});
+
+/**
+ * ⚠**「이 문서」라고 말하면 거짓말이 된다.**
+ *
+ * 구단 목록 화면에서 서버는 이 링크에 `aria-current="page"` 를 적는다 — 링크가 이 문서를
+ * 가리키기 때문이다. 최애가 걸리면 링크는 **구단 페이지**로 가므로 그 말이 틀린다.
+ * 같은 구획 안이라는 뜻의 `true` 로 낮춘다(구단 상세 화면이 이미 쓰는 값이다).
+ */
+test("⚠최애가 걸리면 내비는 「이 문서」가 아니다 — aria-current 를 낮춘다", () => {
+  const doc = withNavAndFav("page");
+  run(doc, { storage: makeStorage() });
+  const a = doc.querySelectorAll("[data-navteam]")[0]!;
+  assert.equal(a.getAttribute("aria-current"), "page", "서버가 적은 값이 지정 전에 이미 바뀌었다");
+  const btn = doc.querySelectorAll("[data-favteam]")[0]!;
+  btn.fire("click");
+  assert.equal(a.getAttribute("aria-current"), "true");
+  btn.fire("click");
+  assert.equal(a.getAttribute("aria-current"), "page", "해제했는데 서버가 적은 값으로 안 돌아왔다");
+});
+
+/**
+ * ⚠**최애는 하나다** — 「내비의 첫 자리」가 하나이기 때문이다.
+ * 다른 구단을 누르면 **갈아타는** 것이지 늘어나는 것이 아니다(선수 즐겨찾기와 갈리는 지점).
+ * 실제 화면에는 버튼이 12개 있는데 앞의 시험들은 하나짜리 픽스처라 이 규칙을 못 잰다.
+ */
+test("⚠다른 구단을 누르면 갈아탄다 — 최애가 둘이 되지 않는다", () => {
+  const doc = buildPage();
+  navTeamLink(doc, null);
+  doc.body.appendChild(favTeamButton());
+  doc.body.appendChild(
+    make("button", {
+      "data-favteam": "g",
+      "data-favname": "巨人",
+      "data-favpath": "teams/g.html",
+      "aria-pressed": "false",
+    }),
+  );
+  run(doc, { storage: makeStorage() });
+  const [tigers, giants] = doc.querySelectorAll("[data-favteam]");
+  tigers!.fire("click");
+  giants!.fire("click");
+  assert.equal(giants!.getAttribute("aria-pressed"), "true");
+  assert.equal(tigers!.getAttribute("aria-pressed"), "false", "최애가 둘이 됐다");
+  const a = doc.querySelectorAll("[data-navteam]")[0]!;
+  assert.equal(a.textContent, "巨人");
+  assert.match(a.getAttribute("href") ?? "", /teams\/g\.html$/);
+});
+
+/**
+ * ⚠**저장값은 서버 데이터의 사본이다.**
+ *
+ * 약칭이 바뀌거나 경로 규칙이 바뀌면 사본만 옛 값을 들고 남는데, **그 사본은 이 브라우저에만
+ * 있어 서버가 고칠 방법이 없다.** 경로가 낡으면 404 라도 나지만 **약칭이 낡으면 아무 일도 안 난다** —
+ * 내비가 **틀린 구단 이름을 조용히** 보여준다. 이 저장소가 가장 싫어하는 모양이다.
+ * ⚠**경로 규칙은 바뀔 예정이다** — Pages 파일 상한 때문에 파일 수를 줄이는 안이 대기 중이다
+ * (CLAUDE.md §2-2 「2시즌만 더 넣으면 벽이다」).
+ * → 정본이 눈앞에 있는 화면(구단 목록)에서 사본을 고친다.
+ */
+test("⚠구단 목록에 서면 낡은 사본을 고친다 — 틀린 이름을 조용히 들고 있지 않는다", () => {
+  const storage = makeStorage();
+  storage.setItem(
+    "npb-meikan-layout",
+    JSON.stringify({ favTeam: { code: "t", name: "旧タイガース", path: "old/t.html" } }),
+  );
+  const doc = withNavAndFav(null);
+  run(doc, { storage });
+  const a = doc.querySelectorAll("[data-navteam]")[0]!;
+  assert.equal(a.textContent, "阪神", "눈앞의 정본으로 안 고쳤다");
+  assert.match(a.getAttribute("href") ?? "", /teams\/t\.html$/);
+
+  // ⚠**화면만 고치면 다음 화면에서 다시 낡은 값이 나온다** — 저장까지 갔는지 본다
+  const other = withNavOnly();
+  run(other, { storage });
+  assert.equal(other.querySelectorAll("[data-navteam]")[0]!.textContent, "阪神", "사본이 안 고쳐졌다");
+});
+
+/**
+ * ⚠**저장이 막힐 수 있다**(프라이빗 모드 등). 기존 `load`/`save`/`toggleFav` 와 같은 규칙 —
+ * 저장은 조용히 실패하되 **이번 방문 동안의 화면은 돈다.**
+ */
+test("저장이 막혀도 최애 지정은 이번 방문 동안 동작한다", () => {
+  const doc = withNavAndFav();
+  run(doc, { storage: makeStorage(true) });
+  doc.querySelectorAll("[data-favteam]")[0]!.fire("click");
+  assert.equal(doc.querySelectorAll("[data-navteam]")[0]!.textContent, "阪神");
+});
