@@ -610,6 +610,13 @@ test("⚠유도 실패 + 팀별 자체 모순이 겹치면 disagreed 가 비지 
  * `h` 를 두 번 넣고 **둘 다** 자체 모순(`w+l+t≠games`)이 되게 한다 — dedup 이 없으면
  * `disagreed` 에 `"h"` 가 두 번 들어간다.
  *
+ * ⚠**이 시험은 「정상 시즌에서의 중복」을 재지 않는다**(2026-08-19 4차 재리뷰 Minor 2로 명시).
+ * `h` 를 13번째 엔트리로 밀어넣어 총 13팀이 되므로 `deriveSeriesLengths` 가
+ * `teams.length !== 12` 에서 **즉시 `null`** 을 낸다 — 즉 이 픽스처는 유도가 애초에 실패하는
+ * 가지(`derived === null`)에서만 dedup 을 잰다. 술어 자체(`isRecordSane`)는 유도 성공 여부와
+ * 무관하게 항상 도므로 dedup 이 정상 시즌에서도 똑같이 동작하지만, **이 시험만으로는 그걸
+ * 증명하지 않는다.**
+ *
  * ⚠**뮤테이션**: `Set` 경유 dedup 을 지우고 배열에 그대로 push 하면 `hCount` 가 2 가 되어 떨어진다.
  */
 test("⚠팀코드가 중복 입력되면 disagreed 가 dedup 된다(3차 재리뷰 Minor m1)", () => {
@@ -627,8 +634,15 @@ test("⚠팀코드가 중복 입력되면 disagreed 가 dedup 된다(3차 재리
  * `deriveSeriesLengths` 단위 시험은 2020 을 재지만, `seasonRace` 종단(잔여·Σ 검사·매직)이
  * `total = regularSeasonGames(2020) = 120` 에 실제로 의존하는 것을 재는 시험이 없었다.
  *
- * ⚠**뮤테이션**: `total` 을 143 으로 고정하면 `(143 − 0)/5 = 28.6` 이 정수가 아니라
- * 유도 자체가 실패해 `series` 가 `null` 이 되므로 `assert.deepEqual(r.series, ...)` 에서 떨어진다.
+ * ⚠**뮤테이션 주석 정정(2026-08-19 4차 재리뷰 Minor 1)**: 아래 문장은 틀렸었다.
+ * 「`total` 을 143 으로 고정하면 유도 자체가 실패해 `series` 가 `null` 이 되어
+ * `assert.deepEqual(r.series, ...)` 에서 떨어진다」— **아니다.** `seasonRace` 내부의 `const total`
+ * 을 143 으로 고정해도 `deriveSeriesLengths` 는 `o.season` 을 **따로** 받아 `regularSeasonGames`
+ * 를 별도로 부르므로 영향받지 않고 `series` 는 `{ intra: 24, inter: 0 }` 그대로다.
+ * **실제로 떨어지는 자리는 그 앞줄 `assert.equal(r.basis, "confirmed")` 다** — 잘못된 `total`(143)
+ * 이 Σ 검사(`sum !== total − games`)에 쓰여 `20 ≠ 43`(143−100) 으로 전 팀이 `disagreed` 가 되고,
+ * `confirmed` 가 거짓이 되어 `basis` 가 `"unknown"` 으로 떨어진다. 시험이 이 뮤테이션을 잡는다는
+ * 결론 자체는 옳다 — 틀린 것은 인과(어느 단언이 · 왜 떨어지는가)뿐이었다.
  */
 test("⚠2020(120경기 · 교류전 0)에서도 잔여·매직이 옳다(3차 재리뷰 Minor m2)", () => {
   const pp = pairs(20, 0); // 리그내 24전 중 20전 소화 · 교류전 0(2020 은 애초에 0)
@@ -643,4 +657,34 @@ test("⚠2020(120경기 · 교류전 0)에서도 잔여·매직이 옳다(3차 �
   assert.equal(r.teams.get("g")!.selfPossible, true);
   assert.equal(r.teams.get("g")!.eliminated, false);
   assert.equal(r.teams.get("g")!.magic, 1, "매직이 120경기 기준으로 옳게 나오지 않았다");
+});
+
+// ─── 4차 재리뷰 수정(형제 구멍) ──────────────────────────────────────────────
+
+/**
+ * ⚠**형제 구멍 — `games > total` 이 유도 실패 가지에서 안 잡혔다**(2026-08-19 4차 재리뷰 본체).
+ * `disagreed` 자체 검사가 `w+l+t===games` 하나뿐이던 판은 「Σ 검사(대전표 대조)가 이미 잡으니
+ * 중복」이라는 이유로 `games>total` 을 따로 안 봤다 — 하지만 그 논증은 `derived !== null`
+ * (Σ 검사가 도는 경로)에서만 참이다. 교류전이 안 끝나 `derived === null` 이면 Σ 검사 자체가
+ * 안 돌아서, 그 가지에서는 `games>total` 인 자체 모순이 아닌 어긋난 입력이
+ * **「아직 유도할 수 없다(정상)」와 완전히 같은 모양**(`disagreed: []`)으로 새 나갔다 —
+ * `remaining: null` 로만 드러났다(재리뷰 지적 그대로 재현).
+ *
+ * `playedPairs = pairs(10, 1)`(교류전 미완 → 유도 실패) · `g = {w:80, l:65, t:3, games:148}`
+ * (`w+l+t === games` 라 옛 검사로는 자체 모순이 아니었다. `148 > 143` 만 어긋난다).
+ *
+ * ⚠**뮤테이션**: `isRecordSane` 대신 다시 `x.w + x.l + x.t === x.games` 만 보게 되돌리면
+ * 이 시험이 떨어진다(`disagreed` 가 `["g"]` 대신 `[]` 로 돌아간다) — 직접 확인했다.
+ */
+test("⚠유도 실패 가지에서도 games>total 어긋남이 disagreed 에 잡힌다(4차 재리뷰 형제 구멍)", () => {
+  const pp = pairs(10, 1); // 교류전 미완 → 유도 실패(derived === null)
+  const over: Record<string, Over> = { g: { w: 80, l: 65, t: 3, games: 148 } }; // 148 > total(143)
+  const r = seasonRace({ season: 2026, teams: teams(pp, over), leagueOf, playedPairs: pp });
+  assert.equal(r.basis, "unknown");
+  assert.equal(r.series, null, "교류전 미완인데 유도됐다 — 유도는 여전히 실패해야 한다");
+  assert.deepEqual(r.disagreed, ["g"], "games>total 인 팀이 disagreed 에 안 잡혔다 — 형제 구멍이 남아 있다");
+  assert.equal(r.teams.get("g")!.remaining, null, "믿을 수 없다고 판정한 입력으로 잔여를 냈다");
+  // ⚠`deepEqual(r.disagreed, ["g"])` 가 이미 「g 하나만」을 못 박는다 — 「전 팀 오염」으로 눌러
+  // 통과하는 것과 「아무도 안 잡힘」으로 눌러 통과하는 것을 둘 다 막는다.
+  assert.equal(r.teams.get("t")!.remaining, 143 - 56, "어긋나지 않은 팀의 잔여까지 버렸다");
 });

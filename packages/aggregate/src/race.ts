@@ -148,9 +148,13 @@ export interface SeasonRace {
    */
   series: SeriesLengths | null;
   /**
-   * 성적(`w/l/t/games`)이 스스로 어긋나거나(`w+l+t≠games`) 대전표(`playedPairs`)와 어긋난
-   * 팀 코드. **사전순으로 정렬 + 중복 제거한다**(결정적으로) — `teamCode` 중복 입력이 있어도
+   * 성적(`w/l/t/games`)이 스스로 어긋나거나(`w+l+t≠games` **또는** `games` 가 `0..regularSeasonGames`
+   * 범위를 벗어난다 — `isRecordSane` 한 벌) 대전표(`playedPairs`)와 어긋난 팀 코드.
+   * **사전순으로 정렬 + 중복 제거한다**(결정적으로) — `teamCode` 중복 입력이 있어도
    * 같은 코드가 두 번 들어가지 않는다(2026-08-19 3차 재리뷰 Minor m1).
+   * ⚠**이 술어는 `remaining` 을 정하는 술어와 한 벌이다**(2026-08-19 4차 재리뷰 — `isRecordSane`,
+   * M1). 둘이 갈리면 유도 실패 가지(`derived === null`)에서 `games > total` 인 어긋난 입력이
+   * `disagreed` 에는 안 잡히고 `remaining: null` 로만 드러나는 「형제 구멍」이 생긴다.
    *
    * ⚠**비어 있음 = 「어긋난 팀이 없다」이지 「판정이 섰다」가 아니다.** 유도 실패도 비어 있을 수 있다
    * (교류전 미완처럼 성적 자체는 멀쩡한 경우). 판정이 섰는지는 `basis` 로 읽는다.
@@ -162,6 +166,19 @@ export interface SeasonRace {
    */
   disagreed: readonly string[];
   teams: Map<string, TeamRace>;
+}
+
+/**
+ * 그 팀의 성적(`w/l/t/games`)만 보고 「믿을 수 있다」고 답할 수 있는가.
+ * 대전표(`playedPairs`)·유도(`derived`)와는 무관하다 — 그 팀 혼자만으로 답이 나온다.
+ *
+ * ⚠**`disagreed` 판정과 `remaining` 판정이 반드시 이 한 벌을 같이 쓴다**(M1 · 2026-08-19 4차 재리뷰).
+ * 전에는 `disagreed` 쪽이 `w+l+t===games` 만 보고 `games` 의 상한(`0..total`)을 안 봤다 —
+ * `derived === null`(유도 실패) 가지에서는 `Σ` 검사도 안 돌아서, `games > total` 인 어긋난 입력이
+ * `disagreed` 에는 안 잡히고 `remaining: null` 로만(즉 조합표의 「유도 실패(정상)」과 같은 모양으로) 드러났다.
+ */
+function isRecordSane(x: { w: number; l: number; t: number; games: number }, total: number): boolean {
+  return x.w + x.l + x.t === x.games && x.games >= 0 && x.games <= total;
 }
 
 /**
@@ -245,20 +262,20 @@ export function seasonRace(o: {
    * (2026-08-18: 中日 +3 · 阪神 +1 · 広島 −1).
    *
    * 둘을 본다.
-   * 1. `w + l + t === games` — 공짜 검산이다. 지금까지 `t` 는 선언만 되고 아무 데서도 안 읽혔다.
+   * 1. `isRecordSane`(`w+l+t===games` **그리고** `0≤games≤total`) — 공짜 검산이다. `t` 는
+   *    선언만 되고 안 읽혔었고, `games>total`(잔여 음수)도 예전엔 이 자리에서 안 잡혔다.
    *    ⚠**`derived` 유무와 무관하게 항상 돈다**(2026-08-19 재리뷰 Important). 이 검사는 대전표를
    *    전혀 안 쓰는데 옛 판은 유도가 됐을 때만(`if (derived !== null)` 안에서) 돌렸다 —
    *    「유도 실패(교류전 미완) + 팀별 자체 모순」이 겹치면 그 모순이 `disagreed` 에서 사라졌다.
    * 2. `Σ 상대별 잔여 === total − games` — 어긋나면 대전표와 성적이 다른 세계의 것이다.
    *    이쪽은 대전표 대조가 필요하므로 **유도가 됐을 때만** 돈다(지금대로 유지).
    *
-   * ⚠**`games > total`(잔여 음수)을 여기서 따로 검사하지 않는다.** 2번이 이미 잡기 때문이다 —
-   * 상대별 잔여는 음수가 될 수 없고(`deriveSeriesLengths` 가 「유도 상수를 넘긴 쌍」을 거른다)
-   * 각 쌍의 잔여가 규정을 못 넘으므로 `0 ≤ Σ ≤ total` 이다. 따라서 2번이 성립하면
-   * `0 ≤ games ≤ total` 도 성립한다. **중복 검사는 죽은 가지가 된다** — 아래 「죽은 가지 규칙」의
-   * 「이미 다른 검사가 잡는 중복이면 뺀다」에 해당한다.
-   * (`remaining` 쪽에는 같은 검사가 **살아서** 있다 — 그쪽은 유도가 실패해 2번이 안 도는 경로도
-   * 통과해야 하므로 중복이 아니다. 조건이 갈리는 자리가 다르다.)
+   * ⚠**`games > total` 를 1번에서 따로 검사한다 — 「2번이 이미 잡으니 죽은 가지」는 틀린 논증이었다**
+   * (2026-08-19 4차 재리뷰 「형제 구멍」). 그 논증은 `derived !== null`(2번이 도는 경로) 에서만
+   * 참이다. `derived === null` 이면 2번 자체가 안 돌아서, `w+l+t===games` 만으로는 자체 모순이
+   * 아닌 `games>total` 입력이 `disagreed` 를 그냥 통과했다 — 조합표의 「아직 유도할 수 없다(정상)」
+   * 행과 완전히 같은 모양이 되어 `remaining: null` 로만 드러났다(그런데 그건 M11 이 막으려던
+   * 「불충분한 신호」다). `total` 은 유도와 무관하게 항상 알므로 이 검사는 공짜다.
    *
    * ⚠**어긋난 팀만 `null` 로 두지 않는다.** 그 팀의 틀린 h2h·최대승수가 다른 팀 판정의 입력으로
    * 들어가기 때문에 **시즌 전체**를 `unknown` 으로 떨어뜨린다(M11 — 모르는 것을 아는 척하지 않는다).
@@ -271,10 +288,12 @@ export function seasonRace(o: {
    */
   const disagreedSet = new Set<string>();
   for (const x of o.teams) {
-    // ⚠**`derived` 유무와 무관하게 항상 돈다**(2026-08-19 재리뷰 Important). 이 검사는 `derived`
+    // ⚠**`derived` 유무와 무관하게 항상 돈다**(2026-08-19 재리뷰 Important). `isRecordSane` 은 `derived`
     // 를 전혀 안 쓰는데도 옛 판은 `if (derived !== null)` 안에 갇혀 있었다 — 그래서 「유도 실패(교류전
     // 미완) + 팀별 자체 모순」이 겹치면 `disagreed` 가 비어서 그 모순이 안 보였다(프로브로 재현·확인).
-    if (x.w + x.l + x.t !== x.games) {
+    // ⚠**`games>total` 도 여기서 잡는다**(2026-08-19 4차 재리뷰 「형제 구멍」) — `remaining` 이 쓰는
+    // 것과 **같은 술어**(`isRecordSane`, M1)라 유도 실패 가지에서도 놓치지 않는다.
+    if (!isRecordSane(x, total)) {
       disagreedSet.add(x.teamCode);
       continue;
     }
@@ -294,9 +313,9 @@ export function seasonRace(o: {
      * ⚠**그 팀의 성적만으로 답할 수 있을 때만 숫자다**(M11). 대전표·유도와는 무관하다 —
      * 교류전이 안 끝나 시즌이 `unknown` 이어도 잔여는 정말로 안다.
      * 반대로 `games` 가 규정을 넘으면 **잔여가 음수**이고, 그건 아는 값이 아니라 어긋난 입력이다.
+     * ⚠**`disagreed` 판정과 같은 술어(`isRecordSane`)를 쓴다**(M1) — 갈리면 형제 구멍이 생긴다.
      */
-    const recordSane = me.w + me.l + me.t === me.games && me.games >= 0 && me.games <= total;
-    const remaining = recordSane ? total - me.games : null;
+    const remaining = isRecordSane(me, total) ? total - me.games : null;
     // ⚠유도가 안 됐거나 입력이 어긋나면 **빈 지도**다 — 틀린 잔여를 흘리는 것이 최악이다(M7)
     const h2hLeft = confirmed ? h2hByTeam.get(me.teamCode)! : new Map<string, number>();
 
@@ -359,10 +378,14 @@ export function seasonRace(o: {
    * > **「이미 다른 검사가 잡는 중복」**이면 뺀다.
    * > 남긴 것에는 ⑴증명의 요지 ⑵무엇을 막는가 ⑶언제 살아나는가를 **반드시** 적는다.
    *
-   * 이 규칙으로 이 파일의 세 가지를 판정했다.
+   * 이 규칙으로 이 파일의 가지들을 판정했다.
    * - 아래 **자력 검사**·**`others.length === 0`** → 남긴다(⑴⑵⑶ 각 자리에 적었다).
    * - 위쪽 **`h === undefined`** → 남긴다(같은 형식으로 적었다).
-   * - `agrees` 의 **`games > total`** → 뺐다(Σ 검사가 잡는 중복 — 그 자리에 이유를 적었다).
+   * ⚠**`disagreed` 의 `games > total`(구 `agrees`)은 「Σ 검사가 잡는 중복」이 아니었다**
+   *   (2026-08-19 4차 재리뷰 「형제 구멍」로 정정). `derived === null` 이면 Σ 검사 자체가
+   *   안 돌아서 중복이 성립하지 않았다 — 그래서 **뺀 것이 아니라 `isRecordSane` 에 넣어 살렸다**
+   *   (위쪽 disagreed 루프를 보라). 이 규칙표는 「중복이면 뺀다」가 실제로는 조건부(`derived !== null`
+   *   에서만)였다는 사례로 남긴다 — 죽은 가지 판정도 전제 조건을 명시해야 한다.
    */
   if (confirmed) {
     for (const me of o.teams) {
