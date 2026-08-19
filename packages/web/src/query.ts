@@ -3383,12 +3383,28 @@ function teamPages(
    * 행이 아예 없어(실측 2026-08-19: **2026-08-16 하루치 12행**이 전부) 늘 `null` 인데,
    * 다음 경기도 없으므로 화면은 「発表待ち」라고 말하지 않는다 — 거짓말이 성립하지 않는다.
    * 9시즌 빌드에서 8시즌이 매번 울리면 **진짜 신호가 소음에 묻힌다**(daily.yml 이 이미 적어 둔 함정).
+   *
+   * ⚠**「가장 최근 예고일 < 빌드일」은 휴식일에 오탐한다**(2026-08-19 재검토).
+   * DB 실측(2026-07-01~08-19 · 50일): **10일이 경기 없는 날**(월요일 4 · 7/28~30 올스타
+   * 브레이크 3 · 8/17~19 3). 월요일 07:00 빌드라면 `gameDate = 일요일 < 월요일` 이고
+   * 각 팀의 `next` 가 화요일(≠null)이라 무조건 발화하는데, **화요일 예고는 월요일 13시경에
+   * 나온다** — 그 시점(월요일 07:00)의 「発表待ち」는 정상이고 사실이다.
+   * ⚠**「예고가 있어야 할 창」으로 좁힌다** — 팀마다 `starters.gameDate < 그 팀의 next.date`
+   * (그 경기의 예고를 아직 못 받았다) **이면서** `그 팀의 next.date <= o.builtOn`
+   * (그 경기는 오늘이거나 이미 지나서 예고가 나왔어야 할 시점이다)일 때만 잡는다.
+   * ⚠**`starters.gameDate === null`(예고를 한 번도 못 받음)은 이 창을 적용하지 않는다** —
+   * 그건 날짜 어긋남이 아니라 **수집 자체가 없었다**는 뜻이라 무조건 경고한다
+   * (`build-gates.test.ts` 의 「予告先発을 하나도 못 받았는데」가 이 분기를 고정한다).
    */
-  const waiting = out.filter((t) => t.now.next !== null && t.now.probable === null).length;
-  if (waiting > 0 && (starters.gameDate === null || starters.gameDate < o.builtOn)) {
+  const staleTeams = out.filter((t) => {
+    if (t.now.next === null || t.now.probable !== null) return false;
+    if (starters.gameDate === null) return true;
+    return starters.gameDate < t.now.next.date && t.now.next.date <= o.builtOn;
+  });
+  if (staleTeams.length > 0) {
     console.warn(
       `⚠ ${o.season}: 予告先発が古い — 画面は「発表待ち」と書きますが、実際には` +
-        `**取り込めていない**可能性があります（${waiting}/${out.length}球団 · ` +
+        `**取り込めていない**可能性があります（${staleTeams.length}/${out.length}球団 · ` +
         `予告の対象日=${starters.gameDate ?? "1日も持っていない"} · 生成日=${o.builtOn}）`,
     );
   }
