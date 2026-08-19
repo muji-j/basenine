@@ -12,6 +12,8 @@ import {
   bestPct,
   buntValues,
   headToHead,
+  pairKey,
+  seasonRace,
   steals,
   successRate,
   timesThroughOrder,
@@ -19,7 +21,7 @@ import {
 } from "@bb-app/aggregate";
 // ⚠**통산 합계·시즌 수는 파서 쪽 한 벌을 쓴다**(M1) — 여기에 다시 쓰면 시험이 붙은 쪽이 죽는다
 import { careerTotal, seasonsPlayed } from "@bb-app/parser";
-import type { HeadToHead, PlayerStreaks } from "@bb-app/aggregate";
+import type { HeadToHead, PlayerStreaks, TeamRace, TeamRaceInput } from "@bb-app/aggregate";
 import { regularSeasonGames } from "./home-page.ts";
 import { byMetricOrder } from "./metric-order.ts";
 import type {
@@ -157,6 +159,8 @@ import { readFileSync } from "node:fs";
 import type {
   TeamBatter,
   TeamMonth,
+  TeamNextGame,
+  TeamNow,
   TeamPageData,
   TeamPitcher,
 } from "./team-page.ts";
@@ -3065,10 +3069,53 @@ function teamPages(
   latestDate: string | null,
   /** 실제로 만들어지는 경기 페이지의 gameId. 캘린더가 「누를 수 있는 날」을 이걸로 정한다 */
   builtGameIds: ReadonlySet<string>,
+  /**
+   * 予告先発. ⚠**여기서 다시 조회하지 않는다**(M1) — 試合 화면·予告先発 화면과 같은 한 벌을 받는다.
+   * 따로 읽으면 「구단 페이지만 다른 날의 예고를 말한다」가 언젠가 난다.
+   */
+  starters: StartersPageData,
 ): TeamPageData[] {
   const competition = o.competition ?? "regular";
   const through = o.through ?? "9999-12-31";
   const h2h = h2hOf(db, o);
+
+  /**
+   * **우승 경쟁 판정 — 시즌에 한 번만 부른다**(M1). 리그별이 아니라 시즌 단위다.
+   *
+   * ⚠**`games` 와 `playedPairs` 는 같은 모집단이어야 한다**(`seasonRace` 의 입력 계약).
+   * 어긋나면 Σ 검사가 **전 시즌을 `unknown`** 으로 떨어뜨려 12구단 페이지의 판정이 통째로 사라진다.
+   * 여기서는 둘 다 **같은 WHERE** 에서 나온다 — 순위표의 소화 경기 수는 `standings.ts` 의
+   * `SIDES_SQL`, 대전표는 `head-to-head.ts` 의 SQL 인데
+   * (`season` · `competition` · `status='played'` · `game_date <=` · 양 득점 `IS NOT NULL`)
+   * 다섯 조건이 글자까지 같다(2026-08-19 대조).
+   * ⚠**「같아 보이는 것」과 「같은 것」은 다르다** — 한쪽만 바뀌면 아래 경고가 빌드 로그에 뜬다.
+   */
+  const playedPairs = new Map<string, number>();
+  for (const x of h2h) {
+    // ⚠**한 경기가 두 줄이다**(양 팀 관점) — 한 방향만 세지 않으면 대전 수가 두 배가 된다
+    if (x.teamCode >= x.opponentCode) continue;
+    playedPairs.set(pairKey(x.teamCode, x.opponentCode), x.w + x.l + x.t);
+  }
+  const raceInputs: TeamRaceInput[] = standings.flatMap((s) =>
+    s.rows.map((r) => ({ teamCode: r.teamCode, w: r.w, l: r.l, t: r.t, games: r.games })),
+  );
+  const race = seasonRace({ season: o.season, teams: raceInputs, leagueOf, playedPairs });
+  /**
+   * ⚠**M7 의 나머지 절반 — 알아챌 수 있게 한다.**
+   *
+   * `basis: "unknown"` 은 ⒜교류전 미완(정상)과 ⒝성적과 대전표가 어긋남(버그) 둘 다인데,
+   * 반환값만 보면 두 가지가 거의 같은 모양이다. 가르는 것이 `disagreed` 다 —
+   * **비어 있지 않으면 파이프라인 문제**이고, 그때 화면은 조용히 판정을 감춘다.
+   * ⚠**화면에는 이유를 쓰지 않는다.** 방문자가 알아야 할 것이 아니라 운영자가 알아야 할 것이다.
+   */
+  if (race.disagreed.length > 0) {
+    console.warn(
+      `⚠ ${o.season}: 成績と対戦表が食い違う — 優勝争いの判定を出しません（${race.disagreed.length}球団: ` +
+        `${race.disagreed.join(" ")}）· 規定対戦数=${race.series === null
+          ? "導出できず"
+          : `リーグ内${race.series.intra}/交流戦${race.series.inter}`}`,
+    );
+  }
 
   /** 월별 승패. ⚠**분모(경기 수)를 함께 낸다** — 「4월 12승」만으로는 몇 경기 중인지 모른다 */
   const monthRows = db.raw
@@ -3120,6 +3167,41 @@ function teamPages(
         shortName: shortNameOf(c),
         color: colorOf(c),
       }), builtGameIds, through);
+
+      /**
+       * **다음 경기 — 캘린더가 이미 들고 있는 것을 읽는다.**
+       *
+       * ⚠**새로 조회하지 않는다**(§2-2-1 「받고 있는데 안 읽던 것」 · M1). 여기서 따로 질의하면
+       * 캘린더가 그리는 「次」와 이 띠가 말하는 「次」가 언젠가 갈린다.
+       * ⚠**대회를 섞지 않는다**(§2-1) — 캘린더의 예정은 `regularSeasonUpcoming` 이 이미
+       * 포스트시즌 슬롯을 잘라 낸 뒤의 것이라 CS·일본시리즈가 들어오지 않는다.
+       * ⚠`upcoming` 은 `game_date >= today` 로 이미 걸러져 있다 — 지난 경기가 「다음」이 될 수 없다.
+       */
+      const upcomingGames = calendar.months
+        .flatMap((m) => [...m.byDay.values()].flat())
+        .filter((g) => g.upcoming)
+        // 같은 날 두 경기(더블헤더)면 순서가 흔들리지 않게 상대 코드까지 본다
+        .sort((a, b) => a.date.localeCompare(b.date) || a.opponentCode.localeCompare(b.opponentCode));
+      const first = upcomingGames[0];
+      const next: TeamNextGame | null = first === undefined
+        ? null
+        : {
+          date: first.date,
+          opponentCode: first.opponentCode,
+          opponentName: first.opponent,
+          home: first.home,
+          // ⚠**빈 문자열은 「없음」이지 구장 이름이 아니다**(M11)
+          venue: first.venue === "" ? null : first.venue,
+          startTime: first.startTime,
+        };
+      const now: TeamNow = {
+        // ⚠**없을 수 없지만 없을 때 거짓말하지 않는다**(M11). 순위표와 같은 입력에서 만들었으므로
+        //   지금은 반드시 있지만, 입력이 갈리는 날에 「모른다」가 아니라 예외로 죽는 편이 낫지도
+        //   않고 0 으로 메우는 것은 더 나쁘다 — 판정을 내지 않는 값을 준다
+        race: race.teams.get(code) ?? unknownRace(code),
+        next,
+        probable: next === null ? null : probableOf(starters, code, next),
+      };
 
       const batters: TeamBatter[] = agg.battingByTeam
         .filter((r) => r.teamCode === code && r.line.pa > 0)
@@ -3277,10 +3359,57 @@ function teamPages(
           .sort((a, b) => b.w - a.w || a.l - b.l || a.code.localeCompare(b.code)),
         latestDate,
         hasPostseason,
+        now,
       });
     }
   }
   return out;
+}
+
+/**
+ * 판정을 내지 않는 `TeamRace`.
+ *
+ * ⚠**0 으로 메우지 않는다**(M11). 잔여 `0` 은 「시즌이 끝났다」는 단정이고,
+ * `eliminated: false` 는 「아직 가능성이 있다」로 읽힌다 — 둘 다 모르는 것을 아는 척하는 것이다.
+ * 화면은 이 값을 받으면 「まだ判定できません」이라고 쓴다.
+ */
+function unknownRace(teamCode: string): TeamRace {
+  return {
+    teamCode,
+    remaining: null,
+    h2hLeft: new Map(),
+    selfPossible: null,
+    magic: null,
+    eliminated: null,
+  };
+}
+
+/**
+ * 그 팀의 **다음 경기**에 대한 予告先発.
+ *
+ * ⚠**다음 경기의 것일 때만 붙인다.** 예고일이 다음 경기일과 다르면 그것은 다른 경기의 예고이고,
+ * 그걸 「次の」라고 부르는 것이 이 리포가 이미 밟은 결함이다(`isNextProbable` 의 주석 —
+ * 한 페이지가 같은 날을 예정이자 종료로 동시에 선언했다).
+ * ⚠**상대 팀까지 맞춘다** — 더블헤더·재편성에서 같은 날 다른 경기를 집을 수 있다.
+ * ⚠**못 찾으면 `null`**(= 発表待ち)이다. 「投手なし」가 아니다(M11).
+ *
+ * ⚠**export 는 시험을 위해서다**(`isNextProbable`·`foldThinVenues` 와 같은 이유).
+ * 이 함수가 조용히 늘 `null` 을 내면 12구단 페이지가 **영원히 「発表待ち」**가 되는데,
+ * 그건 화면상 정상으로 보이는 침묵 실패다 — 실데이터로는 오늘 확인할 수 없다
+ * (2026-08-19 실측: DB 의 예고일이 `2026-08-16` 하나뿐이고 그 날은 이미 치러졌다).
+ */
+export function probableOf(
+  starters: StartersPageData,
+  code: string,
+  next: TeamNextGame,
+): { mine: string | null; theirs: string | null } | null {
+  if (starters.gameDate !== next.date) return null;
+  for (const g of starters.games) {
+    const [a, b] = g.sides;
+    if (a.teamCode === code && b.teamCode === next.opponentCode) return { mine: a.name, theirs: b.name };
+    if (b.teamCode === code && a.teamCode === next.opponentCode) return { mine: b.name, theirs: a.name };
+  }
+  return null;
 }
 
 function todayPage(
@@ -4347,6 +4476,8 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       // ⚠**만들어진 목록 자체를 넘긴다**(M1) — 「어느 경기에 페이지가 있는가」의 조건을
       //   캘린더에 베끼면 한쪽이 바뀔 때 조용히 갈린다
       gamePageIds,
+      // ⚠**予告先発도 같은 한 벌이다**(M1) — 試合 화면·予告先発 화면이 쓰는 것을 그대로 넘긴다
+      startersData,
     ),
     games: [...gameList, ...postGameList],
   };

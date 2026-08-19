@@ -254,6 +254,16 @@ test("만든 화면이 전부 시즌 경로 목록에 있다 — 빠진 만큼�
         months: [], batters: [], pitchers: [], recent: [], vs: [], latestDate: "2026-08-14",
         batQualifier: "規定打席 4", pitQualifier: "先発は規定投球回 1回",
         hasPostseason: false,
+        // ⚠**판정이 안 선 상태를 픽스처의 기본으로 둔다**(M11) — 이 시험이 재는 것은 경로 목록이지
+        // 우승 경쟁이 아니고, 그렇다면 「모른다」가 가장 정직한 입력이다
+        now: {
+          race: {
+            teamCode: "t", remaining: null, h2hLeft: new Map(),
+            selfPossible: null, magic: null, eliminated: null,
+          },
+          next: null,
+          probable: null,
+        },
       },
     ],
   });

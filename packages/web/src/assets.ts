@@ -1255,6 +1255,33 @@ table.stand .dif i.n{right:50%}
 /* ── 球団ページ ────────────────────────────────────────────
    ⚠**로고를 쓸 수 없는 자리에서 팀을 구별하는 것은 구단 색과 이름이다**(§6).
    월별 막대는 우리가 계산한 값으로 만든 우리 그림이다. */
+/* 「いまの状況」 — 이 화면에서 가장 먼저 읽히는 줄.
+   ⚠**값이 주역이고 라벨은 그 옆에 붙는다**(§6의 도메인 예외). 다만 분모는 값에서 떼지 않는다(M2).
+   ⚠**칸으로 감싸지 않는다** — 카드 그리드 금지(§6). 가르는 것은 여백과 괘선이다. */
+.tnow{margin:0 0 5px;display:flex;flex-wrap:wrap;align-items:baseline;gap:3px 12px;
+  font-size:12.5px;color:var(--tx-2);font-variant-numeric:tabular-nums}
+.tnow b{font-style:normal;font-weight:600;color:var(--tx)}
+/* 라벨 — 값보다 작게 두되 폭을 맞춰 세 줄이 같은 자리에서 시작하게 한다 */
+.tnow s{text-decoration:none;font-size:10.5px;letter-spacing:.1em;color:var(--tx-3);
+  min-width:5.4em;flex:none}
+.tnow.head{gap:3px 14px;margin-bottom:9px}
+/* ⚠**순위 숫자를 구단 색으로 칠하지 않는다**(2026-08-19 실측). 배경으로 쓸 때는 --team-ink 가
+   짝이 되지만 글자색에는 짝이 없고, **어느 구단 색이든 한쪽 테마에서 무너진다** —
+   阪神 #f2c800 은 라이트 1.61:1, ロッテ #22262b 는 다크 1.10:1 이다.
+   구단 색은 이 화면에 이미 .spine 과 .idline 의 3px 밑줄로 들어와 있다. */
+.tnow.head b{font-size:22px;line-height:1.1;color:var(--tx)}
+/* 우승 경쟁 한 줄.
+   ⚠**글자만으로 말한다.** 「消滅」을 붉게 칠하면 판정의 세기가 색으로 과장되고,
+   색각 특성에 따라 아예 전달되지 않는다(이 화면의 승패 표기와 같은 규칙).
+   ⚠괘선도 구단 색을 쓰지 않는다 — 위와 같은 이유로 ロッテ·オリックス의 다크에서
+   패널 바탕과 1.1:1 이라 **선이 통째로 사라진다.** 가르는 것은 여백과 괘선이다. */
+.tnow.race{margin:11px 0 0;font-size:14px;color:var(--tx);
+  border-left:3px solid var(--hair-2);padding-left:9px}
+/* 이동 버튼 — 이 띠에서 각 상세로 뛴다. 탭이 아니므로 탭처럼 보이지 않게 한다 */
+.tgo{margin:12px 0 0;display:flex;flex-wrap:wrap;gap:6px 8px;font-size:11.5px}
+.tgo a{text-decoration:none;padding:4px 10px;border:1px solid var(--hair-2);color:var(--tx-2);
+  transition:color var(--fast) var(--ease),border-color var(--fast) var(--ease)}
+.tgo a:hover{color:var(--tx);border-color:var(--tx-3)}
 .tmonths{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:10px}
 .tmonth{display:flex;flex-direction:column;gap:3px;min-width:0}
 .tmonth b{font-size:11px;color:var(--tx-2);font-weight:400}

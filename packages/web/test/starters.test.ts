@@ -1,8 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { renderStartersPage } from "../src/pages.ts";
-import { isNextProbable } from "../src/query.ts";
+import { isNextProbable, probableOf } from "../src/query.ts";
 import type { ProbableGame, ProbableSide, StartersPageData } from "../src/pages.ts";
+import type { TeamNextGame } from "../src/team-page.ts";
 import { colorOf } from "@bb-app/domain";
 import { context, pastSeasonContext, r } from "./fixtures.ts";
 
@@ -319,4 +320,53 @@ test("⚠끝난 날을 「次の予告先発」이라고 부르지 않는다", (
  */
 test("⚠최신 경기일이 없으면(개막 전) 예고는 그대로 「다음」이다", () => {
   assert.equal(isNextProbable("2026-03-27", null), true, "개막 전날의 예고를 감췄다");
+});
+
+// ── 구단 페이지의 「予告先発」 고르기 ──────────────────────────────────────
+//
+// ⚠**이 함수가 조용히 늘 `null` 을 내면 12구단 페이지가 영원히 「発表待ち」다.**
+// 화면상 정상으로 보이는 침묵 실패라 눈으로는 못 잡는다(M7).
+// ⚠**실데이터로는 오늘 확인할 수 없다** — 2026-08-19 실측으로 DB 의 예고일은
+// `2026-08-16` 하나뿐이고 그 날은 이미 치러졌다(다음 경기는 8/19). 그래서 여기서 잰다.
+
+function next(over: Partial<TeamNextGame> = {}): TeamNextGame {
+  return { date: "2026-08-16", opponentCode: "g", opponentName: "巨人", home: true, venue: null, startTime: null, ...over };
+}
+
+test("⚠다음 경기와 같은 날의 예고만 붙인다 — 다른 날 것을 「次の」라고 부르지 않는다", () => {
+  const d = data();
+  assert.notEqual(probableOf(d, "d", next()), null, "같은 날인데 못 찾았다 — 이 시험이 공회전한다");
+  assert.equal(probableOf(d, "d", next({ date: "2026-08-19" })), null, "다른 날의 예고를 붙였다");
+});
+
+test("⚠상대 팀까지 맞춘다 — 같은 날 다른 경기를 집으면 남의 선발이 실린다", () => {
+  assert.equal(
+    probableOf(data(), "d", next({ opponentCode: "t" })),
+    null,
+    "상대가 다른 경기의 예고를 붙였다",
+  );
+});
+
+/** 어느 쪽이 `sides[0]` 인지는 정해져 있지 않다 — 「내 것」이 언제나 `mine` 이어야 한다 */
+test("⚠sides 의 순서가 뒤집혀도 「내 선발」이 mine 이다", () => {
+  const forward = probableOf(data(), "d", next());
+  assert.deepEqual(forward, { mine: "柳", theirs: null });
+
+  const flipped = data({ games: [game({ sides: [pending(), side()] })] });
+  assert.deepEqual(
+    probableOf(flipped, "d", next()),
+    { mine: "柳", theirs: null },
+    "sides 순서에 따라 내 선발과 상대 선발이 바뀌었다",
+  );
+  assert.deepEqual(
+    probableOf(flipped, "g", next({ opponentCode: "d", opponentName: "中日" })),
+    { mine: null, theirs: "柳" },
+    "상대 쪽에서 봤을 때가 뒤집히지 않았다",
+  );
+});
+
+/** 그 팀의 경기가 아예 없으면 `null`(= 発表待ち)이다. 「投手なし」가 아니다(M11) */
+test("⚠그 팀의 예고가 없으면 null 이다 — 0 이나 빈 이름으로 메우지 않는다", () => {
+  assert.equal(probableOf(data(), "t", next({ opponentCode: "s" })), null);
+  assert.equal(probableOf(data({ gameDate: null, games: [] }), "d", next()), null);
 });

@@ -9,10 +9,41 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { renderTeamPage, teamPath } from "../src/team-page.ts";
-import type { TeamPageData } from "../src/team-page.ts";
+import type { TeamNow, TeamPageData } from "../src/team-page.ts";
+import type { TeamRace } from "@bb-app/aggregate";
 import { colorOf } from "@bb-app/domain";
 import { NO_VALUE } from "../src/format.ts";
 import { context } from "./fixtures.ts";
+
+/**
+ * 우승 경쟁 판정 한 벌.
+ *
+ * ⚠**기본값은 「판정이 서 있고 아직 다투는 중」**이다 — 자력 가능·매직 미점등·소멸 아님.
+ * 각 시험은 재려는 조합만 덮어쓴다.
+ */
+function race(over: Partial<TeamRace> = {}): TeamRace {
+  return {
+    teamCode: "t",
+    remaining: 37,
+    h2hLeft: new Map([["g", 8]]),
+    selfPossible: true,
+    magic: null,
+    eliminated: false,
+    ...over,
+  };
+}
+
+function nowFixture(over: Partial<TeamNow> = {}): TeamNow {
+  return {
+    race: race(),
+    next: {
+      date: "2026-08-18", opponentCode: "c", opponentName: "広島",
+      home: true, venue: "甲子園", startTime: "18:00",
+    },
+    probable: { mine: "村上", theirs: "大瀬良" },
+    ...over,
+  };
+}
 
 function data(over: Partial<TeamPageData> = {}): TeamPageData {
   return {
@@ -145,6 +176,7 @@ function data(over: Partial<TeamPageData> = {}): TeamPageData {
     ],
     latestDate: "2026-08-15",
     hasPostseason: false,
+    now: nowFixture(),
     ...over,
   };
 }
@@ -541,4 +573,228 @@ test("⚠머리 i번째 아래에 그 지표의 값이 있다 — 개수만 세�
     });
   }
   assert.ok(checked >= 34, `${checked}칸밖에 안 쟀다 — 4개 표가 다 안 걸렸다`);
+});
+
+// ── 「いまの状況」 요약 띠 ──────────────────────────────────────────────────
+//
+// ⚠**이 구획이 우승 경쟁 판정(자력·소멸·매직)을 화면에 내는 첫 자리다.**
+// `packages/aggregate/src/race.ts` 가 그 값들의 뜻을 **증명해서** 정했다 —
+// 화면이 뜻을 틀리게 옮기면 그 증명이 통째로 무의미해진다.
+
+/**
+ * **그 구획만** 잘라 낸다.
+ *
+ * ⚠**페이지 전체에서 찾으면 시험이 헐거워진다.** 「勝率」은 チーム成績 구획에도 있어서
+ * `out` 을 통째로 보면 요약 띠가 비어 있어도 통과한다.
+ */
+function nowBlockOf(out: string): string {
+  const from = out.indexOf('id="b-tnow"');
+  assert.notEqual(from, -1, "「いまの状況」 구획이 없다");
+  const to = out.indexOf("</section>", from);
+  assert.notEqual(to, -1, "「いまの状況」 구획이 닫히지 않았다");
+  return out.slice(from, to);
+}
+
+/**
+ * **우승 경쟁 판정 한 줄만** 잘라 낸다.
+ *
+ * ⚠**각주와 부딪힌다.** 각주는 「優勝が決まりました」·「自力優勝」이 **무슨 뜻인지**를
+ * 설명하느라 그 문구를 인용한다 — 구획 전체에서 찾으면 판정이 무엇이든 통과한다.
+ * 실제로 그렇게 썼다가 이 시험 하나가 **어떤 코드에서도 떨어지는** 상태가 됐다(2026-08-19 실측).
+ */
+function raceLineOf(out: string): string {
+  const m = /<p class="tnow race">([^<]*)<\/p>/.exec(nowBlockOf(out));
+  assert.notEqual(m, null, "우승 경쟁 판정 줄이 없다");
+  return m![1]!;
+}
+
+/**
+ * ⚠**팬이 가장 먼저 보는 줄이다.** 순위·승률·잔여·다음 경기가 한 자리에 있어야
+ * 「지금 우리 팀이 어떤가」에 답한다.
+ * ⚠**모든 비율에 분모를 붙인다**(M2) — 승률에는 `(勝+敗)`.
+ */
+test("⚠구단 페이지 맨 위에 「지금 이 팀」이 온다 — 분모를 달고", () => {
+  const out = renderTeamPage(data(), context());
+  const now = out.indexOf('id="b-tnow"');
+  // ⚠**실재하는 구획과 대본다.** 브리프는 `b-tstat` 와 비교했는데 그런 id 는 이 화면에 없어
+  // 그 단언은 무엇을 넣어도 참이었다(항상 참인 단언 금지 — 작업규칙 9)
+  const stat = out.indexOf('id="b-teamsum"');
+  assert.ok(now >= 0, "「지금 이 팀」 구획이 없다");
+  assert.notEqual(stat, -1, "チーム成績 구획을 못 찾았다 — 이 시험이 순서를 안 재고 있다");
+  assert.ok(now < stat, "「지금 이 팀」이 チーム成績보다 뒤에 있다");
+
+  const b = nowBlockOf(out);
+  assert.match(b, /<span class="den">104試合<\/span>/, "승률에 분모(勝+敗)가 없다");
+  assert.match(b, /残り\s*37試合/, "잔여 경기가 안 나온다");
+  assert.match(b, /5-5-0/, "直近10 이 안 나온다");
+});
+
+/**
+ * ⚠**판정 불가를 숨기지 않는다**(M11·M12).
+ * ⚠**그런데 이유를 단정하지도 않는다.** `basis: "unknown"` 은 ⒜교류전 미완(정상)과
+ * ⒝입력이 어긋남(버그) **둘 다**라서, 「今季の対戦数が確定していません」이라고 쓰면
+ * ⒝일 때 **틀린 이유를 말하는 것**이 된다(브리프의 문구가 그랬다).
+ * 운영자가 알아야 할 것은 화면이 아니라 빌드 로그로 간다(`query.ts` 의 `disagreed` 경고).
+ */
+test("⚠우승 경쟁을 판정할 수 없으면 그렇게 말한다 — 이유는 단정하지 않는다", () => {
+  const out = renderTeamPage(
+    data({ now: nowFixture({ race: race({ selfPossible: null, magic: null, eliminated: null }) }) }),
+    context(),
+  );
+  assert.match(raceLineOf(out), /まだ判定できません/);
+  assert.ok(!nowBlockOf(out).includes("対戦数が確定"), "판정 불가의 이유를 화면이 단정했다");
+});
+
+/**
+ * ⚠**`magic === 0` 은 「매직 0」이 아니라 「우승 확정」이다.**
+ * `race.ts` 가 증명해서 정한 값이다(타팀 전원 소멸 ⇒ 내 최악 > 전원의 최선).
+ * 그대로 숫자로 흘리면 **이미 우승한 팀 옆에 「マジック 0」**이 붙는다.
+ */
+test("⚠매직 0 은 「マジック 0」이 아니라 우승 확정이다", () => {
+  const out = renderTeamPage(
+    data({ now: nowFixture({ race: race({ magic: 0, selfPossible: true, eliminated: false }) }) }),
+    context(),
+  );
+  // ⚠**판정 줄만 본다.** 각주가 「優勝が決まりました」의 뜻을 설명하느라 그 문구를 인용하므로,
+  //   구획 전체에서 찾으면 판정이 무엇이든 통과한다(실제로 그 상태를 만들었다가 실측으로 잡았다)
+  assert.equal(raceLineOf(out), "優勝が決まりました");
+  assert.ok(!/マジック\s*0/.test(nowBlockOf(out)), "「マジック 0」이 그대로 나왔다");
+});
+
+/** 매직이 양수면 그 값을 낸다 — 「승수식」이라는 것을 각주가 말한다(M3) */
+test("⚠매직이 양수면 값을 내고, 승수식임을 화면이 말한다", () => {
+  const out = renderTeamPage(
+    data({ now: nowFixture({ race: race({ magic: 12, selfPossible: true, eliminated: false }) }) }),
+    context(),
+  );
+  assert.match(raceLineOf(out), /マジック\s*12/);
+  // M3 — 순위는 승률, 매직은 승수. 규칙이 코드에만 있으면 아무도 검증할 수 없다
+  const b = nowBlockOf(out);
+  assert.match(b, /勝率/, "순위가 승률로 정해진다는 것을 안 쓴다");
+  assert.match(b, /勝数/, "매직이 승수식이라는 것을 안 쓴다");
+});
+
+/**
+ * ⚠**`eliminated === false` 는 「가능성 있음」이 아니다.**
+ * 판정이 **쌍별(pairwise)**이라 「쌍별로는 소멸이 증명되지 않았다」는 뜻이다
+ * (정확한 판정에는 최대유량이 필요하다 — `race.ts` 의 JSDoc).
+ * → 「消滅」쪽만 단정하고 반대편은 단정하지 않는다.
+ */
+test("⚠자력 소멸은 단정하되 「まだ可能性がある」는 단정하지 않는다", () => {
+  const out = renderTeamPage(
+    data({ now: nowFixture({ race: race({ selfPossible: false, magic: null, eliminated: false }) }) }),
+    context(),
+  );
+  const line = raceLineOf(out);
+  assert.match(line, /自力優勝(が|は)?消滅/, "자력 소멸을 말하지 않는다");
+  assert.ok(!line.includes("可能性があります"), "쌍별 판정으로 증명되지 않은 것을 단정했다");
+});
+
+/** 잔여가 남은 동안에는 자력 가능을 단정한다 — 그건 증명되기 때문이다 */
+test("⚠자력 가능은 단정한다", () => {
+  assert.equal(raceLineOf(renderTeamPage(data(), context())), "自力優勝の可能性があります");
+});
+
+/**
+ * ⚠**끝난 레이스에 「가능성」이라고 쓰지 않는다.**
+ * 실측(2026-08-19 전 시즌 빌드): **2022 퍼시픽의 `h`·`b` 가 76-65-2 로 완전히 같아**
+ * 둘 다 `selfPossible true · magic null · eliminated false` 로 끝났고, 화면이
+ * 「シーズンの結果」라는 제목 아래 **현재형으로** 「自力優勝の可能性があります」라고 말했다.
+ * 잔여 0 에서 그 상태가 뜻하는 것은 **「어떤 팀도 승률로 나를 넘을 수 없다」**이고,
+ * 우승이라고는 못 한다(동률이 남아 있고 그건 당사자 간 대전 성적으로 가른다).
+ */
+test("⚠잔여 0 의 동률을 현재형으로 말하지 않는다", () => {
+  const out = renderTeamPage(
+    data({
+      now: nowFixture({
+        next: null,
+        probable: null,
+        race: race({ remaining: 0, selfPossible: true, magic: null, eliminated: false }),
+      }),
+    }),
+    context(),
+  );
+  const line = raceLineOf(out);
+  assert.ok(!line.includes("可能性があります"), "끝난 레이스를 현재형으로 말했다");
+  assert.match(line, /勝率で上回る球団はありません/, "무엇이 증명됐는지 말하지 않는다");
+  assert.ok(!line.includes("優勝が決まりました"), "동률인데 우승을 단정했다");
+});
+
+test("⚠소멸이 증명되면 그것은 단정한다", () => {
+  const out = renderTeamPage(
+    data({ now: nowFixture({ race: race({ selfPossible: false, magic: null, eliminated: true }) }) }),
+    context(),
+  );
+  assert.match(raceLineOf(out), /優勝の可能性が(なくなり|消滅し)ました/);
+});
+
+/**
+ * ⚠**`remaining` 은 `number | null` 이다**(2026-08-19 재리뷰 Important A).
+ * `null` 을 그대로 템플릿에 넣으면 `html` 이 빈 문자열로 렌더해 **「残り 試合」**이 나간다 —
+ * 그건 「모른다」가 아니라 **아무 말도 안 한 것**이다(M11·M12).
+ */
+test("⚠잔여를 모르면 빈칸이 아니라 「모른다」를 낸다", () => {
+  const out = renderTeamPage(
+    data({ now: nowFixture({ race: race({ remaining: null }) }) }),
+    context(),
+  );
+  const b = nowBlockOf(out);
+  assert.match(b, /残りの試合数はわかりません/, "잔여를 모른다고 말하지 않는다");
+  assert.ok(!/残り\s*(試合|<)/.test(b), "잔여 자리가 빈칸으로 나갔다");
+});
+
+/** ⚠**予告先発이 없으면 「投手なし」가 아니라 「発表待ち」다**(M11) */
+test("⚠予告先発이 아직 없으면 発表待ち라고 쓴다", () => {
+  const out = renderTeamPage(data({ now: nowFixture({ probable: null }) }), context());
+  const b = nowBlockOf(out);
+  assert.match(b, /発表待ち/);
+  assert.ok(!b.includes("投手なし"));
+});
+
+/** 한쪽만 발표되는 일이 있다 — 있는 쪽은 내고, 없는 쪽을 「없다」고 하지 않는다(M11) */
+test("⚠予告先発이 한쪽만 나왔으면 그쪽만 낸다", () => {
+  const out = renderTeamPage(
+    data({ now: nowFixture({ probable: { mine: "村上", theirs: null } }) }),
+    context(),
+  );
+  const b = nowBlockOf(out);
+  assert.match(b, /村上/);
+  assert.ok(!b.includes("投手なし"));
+});
+
+/** ⚠**다음 경기가 없어도 줄을 지우지 않는다**(M12) */
+test("⚠다음 경기가 없으면 그렇다고 말한다 — 줄을 지우지 않는다", () => {
+  const out = renderTeamPage(data({ now: nowFixture({ next: null, probable: null }) }), context());
+  const b = nowBlockOf(out);
+  assert.match(b, /次の試合/);
+  assert.match(b, /予定はありません|シーズンは終了/);
+});
+
+/**
+ * ⚠**끝난 시즌에 「発表待ち」라고 쓰지 않는다.** 기다리는 것이 아니라 끝난 것이다 —
+ * 이 리포가 予告先発·対戦 화면에서 이미 밟은 결함이다(2026-08-16 이중 검토 P2).
+ */
+test("⚠끝난 시즌에 「発表待ち」라고 쓰지 않는다", () => {
+  const base = data();
+  const out = renderTeamPage(
+    data({
+      calendar: { ...base.calendar, seasonOver: true, upcoming: 0 },
+      now: nowFixture({ next: null, probable: null }),
+    }),
+    context(),
+  );
+  const b = nowBlockOf(out);
+  assert.match(b, /シーズンは終了/);
+  assert.ok(!b.includes("発表待ち"), "끝난 시즌에 현재형으로 말했다");
+});
+
+test("이동 버튼이 네 화면을 가리킨다", () => {
+  const out = renderTeamPage(data(), context());
+  const b = nowBlockOf(out);
+  // ⚠**日程의 id 는 `b-teamcal` 이다.** 브리프는 `b-tcal` 이라고 썼는데 그런 구획은 없다 —
+  // 그대로 두면 빌드의 링크 검사가 잡는다(같은 페이지 앵커도 대조한다)
+  for (const href of ["starters.html", "ranking.html#stand-t", "players.html#hi-t", "#b-teamcal"]) {
+    assert.ok(b.includes(href), `${href} 로 가는 길이 없다`);
+  }
+  assert.match(out, /id="b-teamcal"/, "日程 구획이 없다 — 앵커가 가리킬 곳이 없다");
 });

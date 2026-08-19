@@ -13,7 +13,7 @@ import { html, raw } from "./html.ts";
 import { byMetricOrder } from "./metric-order.ts";
 import type { RawHtml } from "./html.ts";
 import { NO_VALUE, avg3, fullDate, innings } from "./format.ts";
-import { buttonGroup, columns, note, panel, scroller, tablist, term, valueWithDen } from "./parts.ts";
+import { block, buttonGroup, columns, note, panel, scroller, tablist, term, valueWithDen } from "./parts.ts";
 import { sortAttr, stableTable } from "./table.ts";
 import type { SortColumn } from "./table.ts";
 import { page, ROSTER_PATH } from "./layout.ts";
@@ -21,6 +21,7 @@ import type { RenderContext } from "./pages.ts";
 import { dayHref } from "./today-page.ts";
 import type { TeamColor } from "@bb-app/domain";
 import type { Rate } from "@bb-app/metrics";
+import type { TeamRace } from "@bb-app/aggregate";
 
 /** 그 팀 소속 한 선수의 한 줄. ⚠**비율에는 분모가 붙는다**(M2) */
 export interface TeamBatter {
@@ -92,6 +93,39 @@ export interface TeamMonth {
 import { calendarBlock } from "./calendar.ts";
 import type { CalendarData } from "./calendar.ts";
 
+/** 다음 경기 한 건. 없으면 `TeamNow.next` 가 `null` 이다 */
+export interface TeamNextGame {
+  /** `YYYY-MM-DD`(JST) */
+  date: string;
+  opponentCode: string;
+  /** 짧은 표기(「広島」). 좁은 줄에 들어간다 */
+  opponentName: string;
+  /** 이 팀이 홈인가 */
+  home: boolean;
+  /** ⚠**빈 문자열은 「없음」이지 구장 이름이 아니다**(M11) — 없으면 `null` */
+  venue: string | null;
+  /** 미정이면 `null`(M11) */
+  startTime: string | null;
+}
+
+/**
+ * 「지금 이 팀」 — 구단 페이지 맨 위의 요약 띠가 쓰는 것.
+ *
+ * ⚠**`race` 의 각 필드는 뜻이 미묘하다.** `@bb-app/aggregate` 의 `TeamRace` JSDoc 이 정본이고,
+ * 이 파일의 `raceVerdict` 가 그 뜻을 화면 문장으로 옮기는 **유일한 자리**다(M1).
+ */
+export interface TeamNow {
+  race: TeamRace;
+  /** 다음 경기. 없으면 `null`(시즌 종료 · 일정 미취득) */
+  next: TeamNextGame | null;
+  /**
+   * 그 경기의 予告先発. 아직 없으면 `null` — **「投手なし」가 아니라 「発表待ち」다**(M11).
+   * ⚠**`next` 의 경기에 대한 것만 들어온다.** 다른 날의 예고를 여기 넣으면
+   * 화면이 끝난 경기의 선발을 「次の」라고 부르게 된다(`isNextProbable` 이 막던 결함).
+   */
+  probable: { mine: string | null; theirs: string | null } | null;
+}
+
 export interface TeamPageData {
   season: number;
   teamCode: string;
@@ -149,6 +183,8 @@ export interface TeamPageData {
   latestDate: string | null;
   /** 이 시즌에 ポストシーズン 기록이 있는가 */
   hasPostseason: boolean;
+  /** 맨 위 요약 띠. **이 화면에 오는 사람이 가장 먼저 묻는 것** */
+  now: TeamNow;
 }
 
 /** 팀 페이지의 파일 경로. **한 곳에서만 만든다**(M1) — 갈리면 어딘가는 404다 */
@@ -377,6 +413,139 @@ function monthBars(months: TeamMonth[]): RawHtml {
   })}</div>`;
 }
 
+/**
+ * 우승 경쟁 한 줄 — **`TeamRace` 의 뜻을 화면 문장으로 옮기는 유일한 자리**(M1).
+ *
+ * ⚠**단정할 수 있는 것만 단정한다.** 값의 뜻은 `packages/aggregate/src/race.ts` 가
+ * **증명해서** 정한 것이고, 그 증명보다 넓게 말하면 화면이 거짓말을 한다.
+ *
+ * - **`magic === 0` 은 「매직 0」이 아니라 「우승 확정」이다.** 같은 리그의 타팀이 전원 소멸이면
+ *   「내 최악 > 전원의 최선」이 따라 나온다(race.ts 의 증명). 그대로 숫자로 흘리면
+ *   **이미 우승한 팀 옆에 「マジック 0」**이 붙는다.
+ * - **`magic === null` 의 뜻은 둘이다** — ⑴점등 조건 미충족(같은 리그에 자력이 살아 있는 팀이 있다)
+ *   ⑵점등은 했는데 **승수식으로는 표현할 수 없다**(무승부가 많아 승수식과 승률식이 갈릴 때).
+ *   ⚠**`null` 을 「점등 안 됨」으로만 읽지 마라.** 화면은 둘을 구별하지 않는다 —
+ *   어느 쪽이든 「매직을 낼 수 없다」이고, 그때 말할 수 있는 것은 아래 자력·소멸 쪽이다.
+ * - **`eliminated === false` 는 「가능성 있음」이 아니다.** 판정이 **쌍별(pairwise)**이라
+ *   「쌍별로는 소멸이 증명되지 않았다」는 뜻이다 — 라이벌끼리도 맞붙기 때문에
+ *   「누구도 혼자서는 나를 못 넘지만 그들 중 누군가는 반드시 이겨서 결국 넘는」 상태가 실재한다.
+ *   정확한 판정에는 **최대유량**이 필요하다. → **「消滅」쪽만 단정하고 반대편은 단정하지 않는다.**
+ * - **`selfPossible === true` 는 단정해도 된다.** `Σ h2hLeft = remaining` 이므로
+ *   잔여를 전승하면 적어도 1위와 나란히 선다 — 이건 증명된다.
+ * - ⚠**잔여가 0 이면 「自力優勝の可能性があります」라고 쓰지 않는다**(2026-08-19 전 시즌 빌드에서 발견).
+ *   실측: **2022 퍼시픽의 `h`·`b` 가 76-65-2 로 완전히 같아** 둘 다 `selfPossible true · magic null ·
+ *   eliminated false` 로 끝났고, 화면이 「シーズンの結果」라는 제목 아래 **현재형으로**
+ *   「自力優勝の可能性があります」라고 말했다 — 이 리포가 予告先発·対戦 화면에서 이미 두 번 밟은 결함이다.
+ *   잔여 0 에서 그 상태가 뜻하는 것은 **「어떤 팀도 승률로 나를 넘을 수 없다」**이다(증명:
+ *   내 잔여가 0 이면 `Σ h2hLeft = 0` 이라 각 h2h 도 0 이고, 그러면 `selfPossible` 판정에 쓰인
+ *   상대의 최선이 곧 **상대의 진짜 최선**이다 — 그게 내 승률을 넘은 적이 없다는 뜻).
+ *   ⚠**그렇다고 「우승」이라고는 못 한다** — `magic === null` 이므로 동률이 남아 있고,
+ *   NPB 는 그때 **당사자 간 대전 성적**으로 가른다(이 계산은 `standings.ts` 가 하고 여기는 안 한다).
+ *   그래서 **시제가 없는 사실**만 쓴다.
+ * - **`selfPossible === null` 이면 판정 자체가 안 섰다.** ⚠**이유는 화면이 말하지 않는다** —
+ *   「아직 유도 못 함(정상)」과 「입력이 어긋남(버그)」이 같은 신호라, 단정하면 틀린 이유를 말하게 된다.
+ *   후자는 **빌드 로그**로 보낸다(`query.ts` 의 `disagreed` 경고 · M7의 나머지 절반).
+ */
+function raceVerdict(r: TeamRace): string {
+  if (r.selfPossible === null) return "優勝争いはまだ判定できません";
+  if (r.magic === 0) return "優勝が決まりました";
+  if (r.magic !== null) return `優勝マジック ${r.magic}`;
+  if (r.eliminated === true) return "優勝の可能性がなくなりました";
+  // ⚠**잔여 0 에서는 「가능성」이라는 말을 쓰지 않는다**(위 JSDoc의 2022 퍼시픽 동률).
+  //   `remaining === null` 이면 `selfPossible` 도 `null` 이라 이 줄에 오지 않는다(race.ts).
+  if (r.remaining === 0) return "勝率で上回る球団はありません — 同率のときは当該球団間の対戦成績で順位が決まります";
+  if (r.selfPossible) return "自力優勝の可能性があります";
+  return "自力優勝は消滅しました";
+}
+
+/**
+ * 「지금 이 팀」.
+ *
+ * ⚠**이 화면에 오는 사람이 가장 먼저 묻는 것**이 여기 있어야 한다 —
+ * 지금 몇 위인가, 얼마나 남았는가, 다음은 누구인가.
+ * ⚠**모든 비율에 분모를 붙인다**(M2) — 승률의 분모는 `勝+敗`(무승부는 빠진다).
+ * ⚠**탭 밖에 둔다.** 안에 넣으면 다른 탭을 골라 둔 사람에게는 이 띠가 안 보인다 —
+ * 요약이 조건부로 사라지면 요약이 아니다.
+ */
+function nowBlock(d: TeamPageData, base: string): RawHtml {
+  const n = d.now;
+
+  /** ⚠**1위에게 「0.0ゲーム差」라고 쓰지 않는다.** 동률 2위도 0.0 이 나오므로 둘을 가른다 */
+  const gbText = d.rank === null
+    ? NO_VALUE
+    : d.rank === 1
+      ? "首位"
+      : d.gamesBehind === 0
+        ? "首位とゲーム差なし"
+        : `首位と${d.gamesBehind.toFixed(1)}ゲーム差`;
+
+  /**
+   * 잔여 경기. ⚠**`null` 은 「모른다」이지 빈칸이 아니다**(M11·M12).
+   * 그대로 템플릿에 넣으면 `html` 이 빈 문자열로 렌더해 **「残り 試合」**이 나간다 —
+   * 그건 「모른다」가 아니라 **아무 말도 안 한 것**이다.
+   */
+  const remainingText = n.race.remaining === null
+    ? "残りの試合数はわかりません"
+    : `残り ${n.race.remaining}試合`;
+
+  /**
+   * 다음 경기. ⚠**없어도 줄을 지우지 않는다**(M12).
+   * ⚠**「아직 안 받았다」와 「끝났다」는 다른 말이다** — 캘린더가 이미 세워 둔 규칙을 따른다
+   * (calendar.ts: 실측 48/48장이 끝난 시즌에 「まだ取り込んでいません」이라고 말하던 결함).
+   */
+  const nextText = n.next === null
+    ? d.calendar.seasonOver
+      ? "このシーズンは終了しています"
+      : "予定はありません（日程をまだ取り込んでいない場合もあります）"
+    : `${fullDate(n.next.date)}${n.next.startTime === null ? "" : ` ${n.next.startTime}`}` +
+      ` ${n.next.home ? "対" : "＠"}${n.next.opponentName}${n.next.venue === null ? "" : `（${n.next.venue}）`}`;
+
+  /**
+   * 予告先発. ⚠**「投手なし」가 아니라 「発表待ち」다**(M11).
+   * ⚠**끝난 시즌에 「発表待ち」라고 쓰지 않는다** — 기다리는 것이 아니라 끝난 것이다
+   * (予告先発·対戦 화면이 이미 밟은 결함 · 2026-08-16 이중 검토 P2).
+   * **다음 경기가 없으면 가리킬 경기 자체가 없으므로** 「기다린다」고 말할 자리가 아니다.
+   */
+  const probableText = n.next === null
+    ? NO_VALUE
+    : n.probable === null || (n.probable.mine === null && n.probable.theirs === null)
+      ? "発表待ち"
+      : `${n.probable.mine ?? "発表待ち"} ─ ${n.probable.theirs ?? "発表待ち"}`;
+
+  return block({
+    // ⚠끝난 시즌에 「いまの状況」이라고 쓰지 않는다 — 이 화면은 2018년도 그린다
+    id: "tnow",
+    title: d.calendar.seasonOver ? "シーズンの結果" : "いまの状況",
+    body: html`<p class="tnow head">
+    <b>${d.rank === null ? NO_VALUE : `${d.rank}位${d.tiedRank ? "（同）" : ""}`}</b>
+    <span>${wlt(d)}</span>
+    <span>勝率 ${valueWithDen({ value: d.pct, denominator: d.w + d.l }, "試合", 3)}</span>
+    <span>${gbText}</span>
+    <span>${remainingText}</span>
+  </p>
+  <p class="tnow"><s>直近10試合</s><b>${wlt(d.last10)}</b></p>
+  <p class="tnow"><s>次の試合</s><b>${nextText}</b></p>
+  <p class="tnow"><s>予告先発</s><b>${probableText}</b></p>
+  <p class="tnow race">${raceVerdict(n.race)}</p>
+  ${note(
+      // ⚠**규칙이 코드에만 있으면 아무도 검증할 수 없다**(M3). 승률식(순위)과 승수식(매직)이
+      // 갈린다는 것, 그리고 우리가 **무엇을 단정하지 않는지**를 화면이 말한다
+      "順位は**勝率**（勝÷（勝＋敗）・引き分けは分母に入りません）で決まります。" +
+        "マジックナンバーだけは慣例に従って**勝数**で数えるので、勝率の順位とずれることがあります。" +
+        "「優勝が決まりました」は、残りを全部落としても順位が動かないことを計算で確かめた場合だけ出します。" +
+        "「自力優勝」は残りを全部勝てば1位に並べるという意味です。" +
+        "消滅していない場合でも、当サイトは**優勝の可能性があるとは言いません** — " +
+        "相手どうしの対戦まで数え切る計算をしていないためです。",
+    )}
+  <p class="tgo">
+    <a href="${base}ranking.html#stand-${d.teamCode}">順位表で見る</a>
+    <a href="#b-teamcal">日程を見る</a>
+    <a href="${base}${ROSTER_PATH}#hi-${d.teamCode}">選手一覧で見る</a>
+    <a href="${base}starters.html">予告先発を見る</a>
+  </p>`,
+  });
+}
+
 export function renderTeamPage(d: TeamPageData, ctx: RenderContext): string {
   // ⚠시즌을 바꿀 때 選手一覧이 아니라 **그 시즌의 같은 팀**으로 간다 — 팀은 시즌을 넘어 존재한다
   const { base, root, seasons } = ctx.paths(teamPath(d.teamCode), {
@@ -393,6 +562,12 @@ export function renderTeamPage(d: TeamPageData, ctx: RenderContext): string {
     <span class="asof">${d.asOf === null ? "" : `${fullDate(d.asOf)}まで`}</span>
   </div>
 </header>
+
+<!-- ⚠**요약 띠는 탭 밖에 둔다.** 안에 넣으면 지난번에 「打者」를 골라 둔 사람에게는
+     이 띠가 안 보인다 — 조건부로 사라지는 요약은 요약이 아니다.
+     ⚠**여기서 우승 경쟁 판정이 처음으로 화면에 나온다.** 값의 뜻은 race.ts 가 증명해서
+     정했고, 그 뜻을 문장으로 옮기는 자리는 raceVerdict 한 곳뿐이다(M1). -->
+${nowBlock(d, base)}
 
 <!-- ⚠**세로로 너무 길었다**(2026-08-17 유저 지적). 6구획이 한 줄로 이어져 있었고
      打者 46행 + 投手 30행이 대부분이었다 — 팀 성적을 보러 온 사람이 선수 76행을 지나야
