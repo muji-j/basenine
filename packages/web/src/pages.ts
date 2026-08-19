@@ -215,7 +215,11 @@ export function renderIndexPage(d: IndexPageData, ctx: RenderContext): string {
 </section>
 
 ${d.teams.map(
-    (t) => html`<section class="teamgroup" style="--chip:${t.color.base};--chip-ink:${t.color.ink}">
+    // ⚠**구단 페이지에서 이 구획으로 바로 오는 앵커**(hi = highlight). id 를 별도로 검사하지 않는다 —
+    // `t.code`는 `TEAMS`(domain/teams.ts)의 닫힌 12개 코드 중 하나이고, 같은 줄의 `teamPath(t.code)`도
+    // 이미 검사 없이 그대로 쓰인다. 게다가 `html` 태그드 템플릿이 값을 자동 이스케이프하므로
+    // 속성 밖으로 빠져나가는 문자도 만들 수 없다(html.ts).
+    (t) => html`<section class="teamgroup" id="hi-${t.code}" style="--chip:${t.color.base};--chip-ink:${t.color.ink}">
   <h2><i></i><a href="${base}${teamPath(t.code)}">${t.name}</a><span class="qt">${t.players.length}人</span></h2>
   <ul class="roster">${t.players.map((p) => {
       const who: MarkPlayer = {
@@ -363,7 +367,9 @@ function standingsTable(s: StandingsSection, base: string): RawHtml {
       <th>ホーム</th><th>ビジター</th><th>直近${RECENT_GAMES}</th>
     </tr></thead>
     <tbody>${s.rows.map(
-      (r) => html`<tr style="--chip:${r.color.base}" class="${r.rank === 1 ? "lead" : ""}">
+      // ⚠**구단 페이지에서 이 행으로 바로 오는 앵커**(stand = standings). 위 teamgroup 의 `hi-` 와
+      // 같은 이유로 별도 검사를 두지 않는다 — `r.teamCode` 도 닫힌 12개 구단 코드 중 하나다.
+      (r) => html`<tr id="stand-${r.teamCode}" style="--chip:${r.color.base}" class="${r.rank === 1 ? "lead" : ""}">
         <td class="hrank">${r.rank}${r.tiedRank ? html`<s>同</s>` : null}</td>
         <!-- ⚠**팀명을 누르면 그 팀 화면으로 간다.** 지금까지 목적지가 없어서
              팀을 보려면 이 한 줄과 선수 일람의 한 덩어리를 머리에서 합쳐야 했다 -->
