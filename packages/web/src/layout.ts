@@ -235,6 +235,20 @@ export interface PageOptions {
    * 그런 화면은 `false`로 두고 `aria-current="true"`(구획 안에 있다)만 낸다.
    */
   navExact?: boolean;
+  /**
+   * 이 화면이 **어느 구단의 상세**인가. 구단 상세가 아니면 넘기지 않는다.
+   *
+   * ⚠**클라이언트가 `aria-current` 를 다시 재는 유일한 근거다**(2026-08-19 T9 검토 ④).
+   * 최애를 지정하면 클라이언트가 내비 첫 항목의 목적지를 `teams.html` → `teams/{최애}.html` 로
+   * 바꾼다. 그러면 서버가 적어 둔 말이 그 링크에 대해 더는 참이 아닐 수 있는데,
+   * **「지금 이 화면이 바로 그 구단의 문서인가」는 서버만 안다.**
+   * 이 값이 없으면 巨人 화면에서 「阪神」이라고 적힌 링크가 `aria-current="true"` 를 달고 남는다 —
+   * 현재 항목이 아닌 것을 현재라고 말하는 것이다.
+   * ⚠**전 페이지에 실리는 헤더다** — 그래서 구단 상세가 아니면 `data-navteam` 을 값 없이 둔다.
+   * 실측 분모: 구단 상세는 **108장**(12구단 × 9시즌)이고 나머지 **15,232장**은 값이 없다 —
+   * 거기에 `=""` 를 적으면 3B × 15,232 를 매 배포마다 더 나른다.
+   */
+  navTeam?: string;
   /** 이 시즌에 ポストシーズン 기록이 있는가. 없으면 내비에 항목을 내지 않는다 */
   hasPostseason?: boolean;
   /** 본문. 블록들이 여기 들어간다 */
@@ -255,6 +269,14 @@ export interface PageOptions {
 function topbar(o: PageOptions): RawHtml {
   const here = (key: NavKey): RawHtml =>
     o.nav === key ? raw(o.navExact === false ? ' aria-current="true"' : ' aria-current="page"') : raw("");
+  /**
+   * 구단 항목의 표식. 값은 **이 화면이 어느 구단의 상세인가**이고, 구단 상세가 아니면 값이 없다.
+   *
+   * ⚠**속성을 `raw()` 안에서 문자열로 짓지 않는다**(2026-08-18 감사 P3 · teams-page.ts 가 같은 말을
+   * 적어 뒀다). 그 안의 값은 이스케이프를 거치지 않아 따옴표 하나로 속성이 끊긴다 —
+   * 조각째 `html` 에 넘기면 그 자리가 영구히 이스케이프를 거친다.
+   */
+  const teamMark = o.navTeam === undefined ? raw(" data-navteam") : html` data-navteam="${o.navTeam}"`;
   return html`<header class="topbar">
   <!-- ⚠**브랜드는 홈으로 간다.** 2026-08-17부터 홈은 대시보드이고, 선수 일람은 위 ROSTER_PATH 다 -->
   <a class="brand" href="${o.base}index.html"${here("home")}>${o.site.name}<b>by Lunomel</b></a>
@@ -272,7 +294,7 @@ function topbar(o: PageOptions): RawHtml {
             424B 이고 15,340장이면 약 6.5MB 를 매 배포마다 나른다. teams-page.ts 가 같은 이유로
             정한 규칙이 있다: 왜는 소스에 남기고 나가는 것은 마크업만 남긴다.
          ⚠**아래 세 개는 아직 HTML 주석이다**(합계 733B/장 ≈ 11MB). 같이 옮길지는 별건이다. */ ""}
-    <a href="${o.base}${TEAMS_PATH}" data-navteam${here("team")}>球団</a>
+    <a href="${o.base}${TEAMS_PATH}"${teamMark}${here("team")}>球団</a>
     <a href="${o.base}today.html"${here("today")}>試合</a>
     <a href="${o.base}${ROSTER_PATH}"${here("index")}>一覧</a>
     <a href="${o.base}ranking.html"${here("ranking")}>順位</a>

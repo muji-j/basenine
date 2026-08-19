@@ -16,7 +16,7 @@ import { NO_VALUE, avg3, fullDate, innings } from "./format.ts";
 import { block, buttonGroup, columns, note, panel, scroller, tablist, term, valueWithDen } from "./parts.ts";
 import { sortAttr, stableTable } from "./table.ts";
 import type { SortColumn } from "./table.ts";
-import { page, ROSTER_PATH } from "./layout.ts";
+import { page, ROSTER_PATH, TEAMS_PATH } from "./layout.ts";
 import type { RenderContext } from "./pages.ts";
 import { dayHref } from "./today-page.ts";
 import type { TeamColor } from "@bb-app/domain";
@@ -650,6 +650,18 @@ function nowBlock(d: TeamPageData, base: string): RawHtml {
     <a href="#b-teamcal">日程を見る</a>
     <a href="${base}${ROSTER_PATH}#hi-${d.teamCode}">選手一覧で見る</a>
     <a href="${base}starters.html">予告先発を見る</a>
+    ${/* ⚠**최애를 해제할 수 있는 유일한 화면으로 돌아가는 길이다**(2026-08-19 T9 검토 ①).
+          실측으로 `teams.html` 로 가는 링크는 **사이트 전체에서 내비 항목 하나뿐**이었다
+          (앞 4,000장 전수 · 45개 디렉터리 표본 1장씩 · 전부 참조 1회). 그런데 최애를 지정하면
+          **바로 그 하나가 구단 상세로 바뀐다** — 해제 버튼이 있는 화면에 갈 방법이 사라졌다.
+          세션 안에서는 뒤로가기가 있지만 다음 방문에는 그것도 없다.
+          ⚠**refreshFavTeam(낡은 사본 자기정정)도 같이 무력화되고 있었다** — 그건 구단 목록에
+          서 있을 때만 도는데, 최애를 지정한 사용자는 그 화면에 다시 가지 못했다.
+          경로 규칙이 바뀌는 날 고칠 기회가 오지 않는다.
+          ⚠**HTML 주석으로 쓰지 않는다** — 구단 상세 108장에 매번 실린다(layout.ts 와 같은 규칙).
+          ⚠**「もどる」라고 쓰지 않는다.** 여기 오는 길은 순위표·선수 페이지에도 있어서
+          목록에서 온 사람이 아닐 수 있다 — 옆의 네 개와 같은 「〜を見る」로 맞춘다. */ ""}
+    <a href="${base}${TEAMS_PATH}">球団一覧を見る</a>
   </p>`,
   });
 }
@@ -916,6 +928,13 @@ ${panel(TEAM_TABS, "vs", false, d.vs.length === 0
      * (내비에 `球団` 항목이 생긴 2026-08-19 부터 실제로 나던 증상이다.)
      */
     navExact: false,
+    /**
+     * ⚠**이 화면이 어느 구단의 상세인가를 내비에 실어 보낸다**(2026-08-19 T9 검토 ④).
+     * 최애를 지정하면 클라이언트가 그 링크의 목적지를 `teams/{최애}.html` 로 바꾸는데,
+     * **바뀐 목적지가 이 문서인지**는 이 값 없이는 판정할 수 없다 —
+     * 없으면 巨人 화면에서 「阪神」이라고 적힌 링크가 `aria-current="true"` 를 단 채 남는다.
+     */
+    navTeam: d.teamCode,
     body,
   });
 }

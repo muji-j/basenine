@@ -1712,17 +1712,37 @@ const BLOCKS=BOOT.blocks||[];
 const GLOSSARY=__GLOSSARY__;
 const PRESETS=BOOT.presets||{};
 
+/* 최애 구단 경로에 허용하는 글자 — 영숫자와 「-」「_」「/」「.」뿐이다.
+   ⚠**정규식으로 쓰지 않는다.** 이 파일은 통째로 템플릿 리터럴이라 정규식 이스케이프가
+   런타임에 조용히 사라진다 — 글자를 하나씩 본다. */
+const FAV_PATH_CHARS="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_/.";
+/* 저장된 경로가 **이 사이트 안의 상대경로**인가.
+   ⚠**막을 것을 세는 대신 허용할 것만 센다**(2026-08-19 검토 ③). 예전 검사는 「:」와 선행 「/」
+   둘뿐이었는데, 브라우저 URL 파서는 **역슬래시를 「/」로 정규화**하고 **선행 공백을 버린다** —
+   실측으로 역슬래시 두 개로 시작하는 경로와 공백 뒤에 「//」가 오는 경로가 **그대로 href 에
+   들어갔다**(BASE 가 빈 문자열인 화면이 dist 에 91장 있다).
+   ⚠악용에는 동일 출처 스크립트 실행이 필요해 실질 위험은 낮았다 — 고친 이유는
+   **바로 위 주석이 코드보다 강하게 말하고 있었기 때문**이다. */
+function favPathOk(p){
+  /* 선행 「/」는 사이트 루트다 — 우리가 만드는 경로가 아니다(상대경로만 받는다) */
+  if(p.charAt(0)==="/")return false;
+  /* 우리가 만드는 경로는 전부 .html 이다(teamPath) */
+  if(p.length<6||p.slice(-5)!==".html")return false;
+  for(let i=0;i<p.length;i++)if(FAV_PATH_CHARS.indexOf(p.charAt(i))<0)return false;
+  return true;
+}
 /* 저장된 최애 구단 하나를 읽는다.
    ⚠**셋이 다 있어야 최애다**(M11). 코드·약칭·경로 중 하나라도 없으면 「미지정」으로 본다 —
    반쪽짜리를 받으면 내비 라벨이 코드(「T」)로 떨어지거나 링크를 아예 만들 수 없다.
-   ⚠**경로는 상대경로만 받는다.** 저장값이 상하거나 남이 심어도 이 링크가 바깥으로 나가지 않는다. */
+   ⚠**여기서 내는 null 은 「없다」가 아니라 「모른다」다**(M11). 부르는 쪽이 그 둘을 섞으면
+   알던 최애가 조용히 지워진다 — 실제로 그랬다(아래 클릭 처리 참조). */
 function readFavTeam(v){
   if(!v||typeof v!=="object")return null;
   const code=typeof v.code==="string"?v.code:"";
   const name=typeof v.name==="string"?v.name:"";
   const path=typeof v.path==="string"?v.path:"";
   if(code===""||name===""||path==="")return null;
-  if(path.indexOf(":")>=0||path.charAt(0)==="/")return null;
+  if(!favPathOk(path))return null;
   return {code:code,name:name,path:path};
 }
 
@@ -3061,11 +3081,21 @@ function paintFavTeam(){
     }
     a.setAttribute("href",BASE+fav.path);
     a.textContent=fav.name;
-    /* ⚠**「이 문서」라고 말하면 거짓말이 된다.** 구단 목록 화면에서 서버는 page 를 적어 두는데
-       링크는 이제 구단 페이지로 간다 — 같은 구획 안이라는 뜻의 true 로 낮춘다
-       (구단 상세 화면이 서버에서 이미 쓰는 값이라 CSS 도 이미 있다).
-       서버가 아무 말도 안 한 화면에서는 우리도 아무 말도 하지 않는다. */
-    if(back.here==="page")a.setAttribute("aria-current","true");
+    /* ⚠**서버가 적은 aria-current 는 「teams.html 로 가는 링크」에 대한 말이다.**
+       목적지를 우리가 바꿨으니 다시 잰다(2026-08-19 검토 ④ · 처음에는 page 만 다뤄서
+       구단 상세의 true 가 그대로 남아 있었다):
+         ⑴ 바뀐 목적지가 이 문서다(구단 상세 = 최애)      → page
+         ⑵ 이 문서가 구단 목록이다(목록 → 그 안의 한 장)  → true (같은 구획 안이지만 이 문서는 아니다)
+         ⑶ 그 밖(다른 구단의 상세 등)                     → 아무 말도 하지 않는다
+       ⑶ 이 핵심이다 — 巨人 화면에서 라벨이 「阪神」인 링크에 true 가 남으면
+       **현재 항목이 아닌 것을 현재라고 말하는 것**이 된다. ⑵ 를 남기는 근거는 포함관계다:
+       구단 목록은 그 링크가 가리키는 문서를 **담고 있는** 화면이지만, 다른 구단의 상세는
+       그 문서와 아무 관계가 없다.
+       ⚠**어느 구단의 화면인가는 서버만 안다** — data-navteam 의 값이 그것이다(구단 상세만 값을 갖는다). */
+    const mine=a.dataset.navteam||"";
+    if(mine!==""&&mine===fav.code)a.setAttribute("aria-current","page");
+    else if(back.here==="page")a.setAttribute("aria-current","true");
+    else a.removeAttribute("aria-current");
   });
 }
 /* ⚠**저장값은 서버 데이터의 사본이다** — 그리고 그 사본은 이 브라우저에만 있어 **서버가 못 고친다.**
@@ -3093,7 +3123,16 @@ refreshFavTeam();
 
 $$("[data-favteam]").forEach(b=>b.addEventListener("click",()=>{
   const on=state.favTeam!==null&&state.favTeam.code===b.dataset.favteam;
-  state.favTeam=on?null:readFavTeam({code:b.dataset.favteam,name:b.dataset.favname,path:b.dataset.favpath});
+  const next=readFavTeam({code:b.dataset.favteam,name:b.dataset.favname,path:b.dataset.favpath});
+  /* ⚠**「모른다」로 알던 것을 지우지 않는다**(M11 · 2026-08-19 검토 ②).
+     배포 전 HTML 을 캐시에 들고 있는 브라우저의 버튼에는 data-favpath 가 없어 readFavTeam 이
+     null(모른다)을 낸다. 예전에는 그 null 이 그대로 들어가 **「미지정」과 같은 값**이 됐고,
+     실측으로 fav=巨人 인 사람이 그런 버튼을 누르면 라벨이 球団 으로, 저장이 favTeam:null 이 됐다.
+     ⚠**바로 위 refreshFavTeam 은 정반대로 짜여 있었다**(fresh===null 이면 손대지 않는다) —
+     같은 상황에 두 경로가 다른 규칙을 쓰고 있었다(M1). 여기를 refresh 쪽에 맞춘다.
+     ⚠**해제는 막지 않는다** — on 이면 사용자가 지금 걸려 있는 것을 끄겠다는 뜻이라 경로가 필요 없다. */
+  if(!on&&next===null)return;
+  state.favTeam=on?null:next;
   /* ⚠**state 전체를 쓰지 않는다** — 바로 위 toggleFav 와 같은 이유다.
      initTabs 가 「지금 화면에 없는 탭 키」를 메모리에서 첫 키로 되돌려 놓은 상태라,
      여기서 통째로 저장하면 다른 화면의 탭 기본값이 덮어써진다.
