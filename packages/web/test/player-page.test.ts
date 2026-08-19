@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { THRESHOLDS, bootstrapFor, renderPlayerPage } from "../src/player-page.ts";
 // ⚠**경로를 손으로 적지 않는다**(M1) — 화면과 시험이 같은 상수를 봐야 한다
 import { ROSTER_PATH } from "../src/layout.ts";
+// ⚠**정의의 정본은 용어집이다**(M1) — 시험이 문장을 다시 쓰지 않고 거기 있는 것을 본다
+import { termOf } from "../src/glossary.ts";
 import {
   battingBlock,
   context,
@@ -791,7 +793,14 @@ test("도루자를 셌으면 값과 분모가 나온다", () => {
     playerPage({
       batting: battingBlock({
         sb: 30,
-        steal: { cs: 7, pickoff: 2, rate: { value: 30 / 37, denominator: 37 } },
+        steal: {
+          cs: 7,
+          pickoff: 2,
+          rate: { value: 30 / 37, denominator: 37 },
+          byBase: [{ label: "二盗", sb: 30, cs: 7, rate: { value: 30 / 37, denominator: 37 } }],
+          pickoffByBase: [{ label: "一塁", n: 2 }],
+          doubleSteal: 0,
+        },
       }),
     }),
     context(),
@@ -799,6 +808,143 @@ test("도루자를 셌으면 값과 분모가 나온다", () => {
   assert.match(out, /\.811/, "성공률이 안 나온다");
   assert.match(out, /37企図/, "분모가 안 붙었다(M2)");
   assert.ok(!out.includes("未集計"), "센 값인데 未集計라고 했다");
+});
+
+// ─── 走塁の内訳 (루별 도루 · 견제사 · 더블스틸) ─────────────────────────────
+//
+// ⚠**`runner_event.base` 와 `double_steal` 은 저장만 되고 읽는 코드가 0곳이었다**(2026-08-20).
+
+/**
+ * ⚠**뭉치면 사라지는 사실이 있다.** 9시즌 정규시즌 실측: 본루는 도루 성공 **47** 인데
+ * 도루자가 **146** 으로 실패가 3배 많다. 총계 성공률 하나로 내면 이 사실이 묻힌다.
+ * ⚠**루가 다르면 성공률도 다르다** — 표가 그것을 보여야 존재 이유가 있다.
+ */
+test("⚠루별 도루 내역이 나오고, 루마다 분모가 따로 붙는다(M2)", () => {
+  const out = renderPlayerPage(
+    playerPage({
+      batting: battingBlock({
+        sb: 12,
+        steal: {
+          cs: 5,
+          pickoff: 1,
+          rate: { value: 12 / 17, denominator: 17 },
+          byBase: [
+            { label: "二盗", sb: 10, cs: 2, rate: { value: 10 / 12, denominator: 12 } },
+            { label: "三盗", sb: 2, cs: 2, rate: { value: 0.5, denominator: 4 } },
+            { label: "本盗", sb: 0, cs: 1, rate: { value: 0, denominator: 1 } },
+          ],
+          pickoffByBase: [{ label: "一塁", n: 1 }],
+          doubleSteal: 2,
+        },
+      }),
+    }),
+    context(),
+  );
+  assert.match(out, /二盗/, "루별 표가 없다");
+  assert.match(out, /三盗/);
+  assert.match(out, /本盗/);
+  // 루마다 분모가 따로 붙는다 — 총계 17企図 하나로 때우지 않는다
+  assert.match(out, /<span class="den">12企図<\/span>/, "2루의 분모가 없다");
+  assert.match(out, /<span class="den">4企図<\/span>/, "3루의 분모가 없다");
+  assert.match(out, /<span class="den">1企図<\/span>/, "본루의 분모가 없다");
+  // ⚠**본루는 0성공 1실패다** — `.000` 을 「값 없음」으로 만들면 안 된다(M11)
+  assert.match(out, /\.000/, "0성공을 값 없음으로 만들었다");
+  assert.match(out, /ダブルスチール/, "더블스틸이 안 나온다");
+});
+
+/**
+ * ⚠**`base` 의 뜻이 종류마다 다르다**(마이그레이션 010). 도루는 **노린 루**,
+ * 견제사는 **있던 루**다. 하나의 표로 그리면 「一塁」 줄이
+ * 「1루를 훔치려다 잡혔다」로 읽히는데 그런 일은 일어나지 않는다.
+ */
+test("⚠견제사를 도루와 다른 표로 그린다 — 같은 열에 넣으면 루의 뜻이 뒤집힌다", () => {
+  const out = renderPlayerPage(
+    playerPage({
+      batting: battingBlock({
+        sb: 3,
+        steal: {
+          cs: 1,
+          pickoff: 2,
+          rate: { value: 0.75, denominator: 4 },
+          byBase: [{ label: "二盗", sb: 3, cs: 1, rate: { value: 0.75, denominator: 4 } }],
+          pickoffByBase: [{ label: "一塁", n: 2 }],
+          doubleSteal: 0,
+        },
+      }),
+    }),
+    context(),
+  );
+  /**
+   * 두 표가 정말 나뉘어 있다 — **머리가 서로 다른 말을 하는 표가 하나씩** 있어야 한다.
+   *
+   * ⚠**낱말이 있는지만 보면 안 잡힌다**(2026-08-20 뮤테이션 검사에서 실제로 안 잡혔다).
+   * 각주가 「盗塁は狙った塁、牽制死はいた塁です」라고 같은 말을 하고 있어서,
+   * 두 표를 **같은 머리로 합쳐 버려도** `match(/いた塁/)` 는 그대로 참이었다.
+   * → `<th>` 로 좁히고 **각각 정확히 1개**를 요구한다.
+   */
+  const stolenHead = out.match(/<th class="l">狙った塁<\/th>/g) ?? [];
+  const pickoffHead = out.match(/<th class="l">いた塁<\/th>/g) ?? [];
+  assert.equal(stolenHead.length, 1, "도루 표의 머리가 「노린 루」가 아니거나 여러 개다");
+  assert.equal(pickoffHead.length, 1, "견제사 표의 머리가 「있던 루」가 아니거나 여러 개다");
+  // ⚠견제사는 도루 성공률의 분모 밖이다(NPB 기록) — 총계 분모는 4(3+1)이지 6이 아니다
+  assert.match(out, /<span class="den">4企図<\/span>/, "견제사가 기도의 분모에 들어갔다");
+});
+
+/**
+ * ⚠**총계를 세지 못했으면 내역도 내지 않는다.** 내역만 나오면 「합이 안 맞는 화면」이 되고,
+ * 그건 「모른다」보다 나쁘다(M11·M12).
+ */
+test("⚠도루를 세지 못했으면 루별 내역도 없다 — 합이 안 맞는 표를 만들지 않는다", () => {
+  const out = renderPlayerPage(
+    playerPage({ batting: battingBlock({ sb: 30, steal: null }) }),
+    context(),
+  );
+  assert.ok(!out.includes("狙った塁"), "총계가 未集計인데 루별 표가 나왔다");
+  assert.ok(!out.includes("ダブルスチール"), "총계가 未集計인데 더블스틸이 나왔다");
+});
+
+/** 기도도 견제사도 없으면 표 자체를 그리지 않는다 — 빈 표는 「기록이 없다」로 읽힌다(M12) */
+test("주자 사건이 하나도 없으면 루별 표를 그리지 않는다", () => {
+  const out = renderPlayerPage(
+    playerPage({
+      batting: battingBlock({
+        sb: 0,
+        steal: { cs: 0, pickoff: 0, rate: { value: null, denominator: 0 }, byBase: [], pickoffByBase: [], doubleSteal: 0 },
+      }),
+    }),
+    context(),
+  );
+  assert.ok(!out.includes("狙った塁"), "빈 표를 그렸다");
+});
+
+// ─── 併殺打 ──────────────────────────────────────────────────────────────
+
+/**
+ * ⚠**§2-2 지표 카탈로그의 항목인데 사이트 전체 출현이 0회였다**(2026-08-20 실측).
+ * ⚠**「0」과 「세지 못했다」를 구별한다**(M11) — 0으로 때우면 「병살이 없는 타자」가 된다.
+ */
+test("⚠併殺打가 기본 성적에 나오고, 세지 못했으면 0이 아니다(M11)", () => {
+  const shown = renderPlayerPage(playerPage({ batting: battingBlock({ gidp: 14 }) }), context());
+  assert.match(shown, /併殺打/, "併殺打 항목이 없다");
+  assert.match(shown, /data-term="gidp"/, "설명이 안 붙었다 — 뜻을 오해하기 쉬운 지표다(M3)");
+  assert.match(shown, /併殺打<\/button><\/dt><dd class="v">14</, "값이 안 나온다");
+
+  const unknown = renderPlayerPage(playerPage({ batting: battingBlock({ gidp: null }) }), context());
+  assert.match(unknown, /併殺打<\/button><\/dt><dd class="v">—/, "세지 못한 것을 0으로 냈다");
+});
+
+/**
+ * ⚠**「이 타자가 나쁘다」로 읽히는 지표라 경계를 화면이 말해야 한다**(M3).
+ * 병살의 책임 배분은 재지 않는다 — 주자의 발, 앞 타자의 출루 성향이 전부 섞인다.
+ */
+test("⚠併殺打의 설명이 「무엇을 재지 않는가」를 말한다", () => {
+  const t = termOf("gidp");
+  assert.ok(t !== undefined, "용어집에 併殺打가 없다");
+  assert.match(t.caveat ?? "", /責任配分/, "책임 배분을 재지 않는다는 말이 없다");
+  // ⚠**분모(打席)를 함께 보라고 말한다**(M2) — 개수만 보면 「많이 나가는 타자」와 구별이 안 된다
+  assert.match(t.caveat ?? "", /打席/, "분모를 말하지 않는다");
+  // ⚠**`併失` 을 포함한다는 사실**은 값의 정의라 화면에서 확인할 수 있어야 한다
+  assert.match(t.how ?? "", /併失/, "併殺崩れの失策를 포함한다는 사실이 정의에 없다");
 });
 
 /**

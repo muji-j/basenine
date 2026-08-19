@@ -365,7 +365,10 @@ function standingsTable(s: StandingsSection, base: string): RawHtml {
   return scroller(html`<table class="stand hstand">
     <thead><tr>
       <th>順位</th><th class="l">球団</th><th>試合</th>
-      <th class="l">勝敗分</th><th>勝率</th><th>差</th><th class="l">得失点</th>
+      <!-- ⚠**勝率도 용어집에 있다**(2026-08-20 winPct 등록). 여기만 맨 문자열이면
+           같은 순위표인데 홈 화면(term 을 쓴다)에는 설명이 뜨고 이쪽에는 안 뜬다.
+           ⚠주석 안에 백틱을 쓰지 마라 — 이 자리는 템플릿 리터럴이라 문자열이 그 자리에서 끊긴다 -->
+      <th class="l">勝敗分</th><th>${term("勝率")}</th><th>差</th><th class="l">得失点</th>
       <th>${term("打率")}</th><th>${term("防御率")}</th>
       <th>ホーム</th><th>ビジター</th><th>直近${RECENT_GAMES}</th>
     </tr></thead>

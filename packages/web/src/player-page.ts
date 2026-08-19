@@ -30,6 +30,7 @@ import {
   tablist,
   term,
   termAttr,
+  valueWithDen,
 } from "./parts.ts";
 import { stableTable } from "./table.ts";
 import type { BarRow, RankDigits } from "./parts.ts";
@@ -50,6 +51,22 @@ function rk(ranks: Ranks, key: string): number | null {
   return ranks[key] ?? null;
 }
 
+/**
+ * 루별 도루 한 줄.
+ *
+ * ⚠**라벨을 화면이 만들지 않는다** — `base` 의 뜻이 사건 종류마다 다르기 때문이다
+ * (도루는 「노린 루」, 견제사는 「있던 루」 · 마이그레이션 010). 어느 쪽인지 아는 곳에서
+ * 이름을 붙여 넘긴다.
+ */
+export interface StealBaseRow {
+  /** `二盗` · `三盗` · `本盗` */
+  label: string;
+  sb: number;
+  cs: number;
+  /** 그 루의 성공률. **분모는 그 루의 기도(성공 + 盗塁刺)**이고 견제사는 들어가지 않는다 */
+  rate: Rate;
+}
+
 export interface BattingBlockData {
   games: number;
   runs: number;
@@ -63,8 +80,28 @@ export interface BattingBlockData {
    * 박스의 `盗塁` 와 어긋나면(=못 읽은 경기가 있다) 여기로 온다.
    * **0으로 때우면 성공률이 `1.000` 이 되고, 분모까지 붙은 그럴듯한 거짓말이 된다** —
    * 분모 없는 값보다 나쁘다.
+   *
+   * ⚠**루별 내역도 이 안에 있다.** 밖에 두면 총계가 「未集計」인데 내역만 나오는 화면이 된다.
    */
-  steal: { cs: number; pickoff: number; rate: Rate } | null;
+  steal: {
+    cs: number;
+    pickoff: number;
+    rate: Rate;
+    /**
+     * **노린 루**별 내역. 기도가 있는 루만 담는다 — 전부 0인 줄은 정보가 아니라 잡음이다.
+     * ⚠본루는 9시즌 정규시즌에서 성공 47 대 도루자 146 이다. 뭉치면 그 사실이 사라진다.
+     */
+    byBase: StealBaseRow[];
+    /** **있던 루**별 견제사. 위와 뜻이 다른 열이라 표를 나눈다 */
+    pickoffByBase: { label: string; n: number }[];
+    /** 더블스틸에 관여한 도루 수. **도루의 내수**다(따로 더하지 않는다) */
+    doubleSteal: number;
+  } | null;
+  /**
+   * 併殺打. ⚠**`null` 은 「0」이 아니라 「세지 못했다」**(M11) —
+   * 그 선수의 타석 로그가 없으면 여기로 온다. 0으로 때우면 「병살 없는 타자」가 된다.
+   */
+  gidp: number | null;
   line: BattingLine;
   avg: Rate;
   obp: Rate;
@@ -709,12 +746,74 @@ function qualifierText(qualified: boolean, have: number, need: number, unit: str
     : `規定未満（${have}${unit} / ${need}${unit}）— 率の指標には順位がつきません`;
 }
 
+/**
+ * 走塁の内訳 — **루별 도루 · 견제사 · 더블스틸**.
+ *
+ * ⚠**`runner_event.base` 와 `double_steal` 은 저장만 되고 읽는 코드가 0곳이었다**(2026-08-20).
+ *
+ * ⚠**표를 둘로 나눈다 — 열 이름이 같아도 뜻이 다르기 때문이다.**
+ * 도루의 루는 **노린 루**(`二塁盗塁成功`), 견제사의 루는 **있던 루**(`一塁牽制アウト`)다.
+ * 한 표에 넣으면 「一塁」 줄이 「1루를 훔치려다 잡혔다」로 읽히는데 그런 일은 일어나지 않는다.
+ *
+ * ⚠**뭉치면 사라지는 사실이 있다.** 9시즌 정규시즌 실측(2026-08-20):
+ * 도루는 2루 7,471 · 3루 288 · 본루 **47** 인데 도루자는 2루 3,238 · 3루 128 · 본루 **146** 이다 —
+ * **본루만 실패가 성공의 3배**다. 성공률 하나로 내면 이 사실이 총계에 묻힌다.
+ *
+ * ⚠**기도가 있는 루만 그린다**(`battedBallRow` 와 같은 판단) — 0만 늘어선 줄은 정보가 아니다.
+ *
+ * ⚠**HTML 주석에 화면 낱말을 그대로 쓰지 마라.** 주석은 산출물에 남으므로,
+ * 「그 낱말이 없다」를 확인하는 시험을 조용히 거짓으로 만든다 — 이 블록을 만들면서
+ * 실제로 한 번 밟았다(`未集計` 를 주석에 썼더니 시험이 붉어졌다).
+ * 같은 이유로 이 파일의 시험도 낱말이 아니라 `<th>` 로 좁혀서 센다.
+ */
+function stealDetail(s: NonNullable<BattingBlockData["steal"]>): RawHtml {
+  // 도루도 견제사도 없으면 그릴 것이 없다. ⚠**빈 표를 그리면 「기록이 없다」로 읽힌다**(M12)
+  if (s.byBase.length === 0 && s.pickoffByBase.length === 0) return raw("");
+  const stolen = s.byBase.length === 0
+    ? raw("")
+    : html`${scroller(html`<table>
+      <thead><tr>
+        <th class="l">狙った塁</th><th>企図</th><th>盗塁</th><th>${term("盗塁刺")}</th><th>${term("盗塁成功率")}</th>
+      </tr></thead>
+      <tbody>${s.byBase.map(
+        (r) => html`<tr>
+        <td class="l">${r.label}</td>
+        <td class="b">${r.rate.denominator}</td>
+        <td>${r.sb}</td>
+        <td>${r.cs}</td>
+        <!-- ⚠**분모를 값에 붙인다**(M2). 옆의 「企図」 열과 같은 수이지만, 값만 떼어
+             다른 화면에 실릴 때 분모가 따라가야 한다 -->
+        <td class="wd">${valueWithDen(r.rate, denUnit("stealRate"), 3)}</td>
+      </tr>`,
+      )}</tbody>
+    </table>`)}`;
+  const pickoffs = s.pickoffByBase.length === 0
+    ? raw("")
+    : html`${scroller(html`<table>
+      <thead><tr><th class="l">いた塁</th><th>${term("牽制死")}</th></tr></thead>
+      <tbody>${s.pickoffByBase.map(
+        (r) => html`<tr><td class="l">${r.label}</td><td class="b">${r.n}</td></tr>`,
+      )}</tbody>
+    </table>`)}`;
+  return html`${stolen}${pickoffs}
+  ${columns(html`${statCount("ダブルスチール", s.doubleSteal)}`)}
+  ${note(
+    "⚠**塁の意味が2つの表で違います。** 盗塁は**狙った塁**、牽制死は**いた塁**です。" +
+      "**牽制死は盗塁成功率の分母に入りません**（NPBの記録で盗塁刺とは別のためです）。" +
+      "**ダブルスチールは盗塁の内数**で、1回のダブルスチールは走者2人分として数えられるため、" +
+      "ここに出るのはこの選手が関わった盗塁の数です。" +
+      "⚠**本盗はリーグ全体でもめったに起きません** — 当サイトの9シーズン（レギュラーシーズン）で" +
+      "成功47・盗塁刺146と、**失敗のほうが3倍多い**プレーです。1回の成否から傾向は読めません。" +
+      "また成功47のうち40はダブルスチールの一部でした。",
+  )}`;
+}
+
 function standardBatting(b: BattingBlockData): RawHtml {
   return block({
     id: "standard",
     title: "基本成績",
     qualifier: qualifierText(b.qualified, b.line.pa, b.needPa, "打席"),
-    body: columns(
+    body: html`${columns(
       /**
        * ⚠**분모 단위를 여기서 쓰지 않는다**(M1 · 2026-08-20). 화면마다 적었더니
        * 같은 지표가 화면에 따라 다른 단위로 나갔고, 出塁率은 **아예 사실이 아닌 단위**였다:
@@ -738,7 +837,15 @@ function standardBatting(b: BattingBlockData): RawHtml {
         ${statCount("盗塁", b.sb, rk(b.ranks, "sb"))}
         ${statCount("四球", b.line.bb)}
         ${statCount("死球", b.line.hbp)}`,
+      /**
+       * ⚠**併殺打는 §2-2 카탈로그의 항목인데 사이트 전체 출현이 0회였다**(2026-08-20 실측).
+       * ⚠**`null` 은 「0」이 아니다**(M11) — `statCount` 가 `null` 을 `—` 로 낸다.
+       *   0으로 때우면 「병살이 한 번도 없는 타자」라는 거짓이 된다.
+       * ⚠자리는 三振 다음이다 — 「타석이 나쁘게 끝난 방식」끼리 모아 둔다.
+       *   순서의 정본은 `metric-order.ts` 이고 거기서도 `so` 다음이다.
+       */
       html`${statCount("三振", b.line.so)}
+        ${statCount("併殺打", b.gidp)}
         ${statCount("犠飛", b.line.sf)}
         ${statCount("犠打", b.line.sh)}
         ${statCount("敬遠", b.line.ibb)}`,
@@ -757,7 +864,9 @@ function standardBatting(b: BattingBlockData): RawHtml {
         : html`${statCount("盗塁刺", b.steal.cs)}
           ${statRate("盗塁成功率", b.steal.rate, denUnit("stealRate"), 3)}
           ${statCount("牽制死", b.steal.pickoff)}`,
-    ),
+    )}
+    <!-- ⚠**총계를 세지 못했으면 내역도 내지 않는다** — 합이 안 맞는 화면이 된다 -->
+    ${b.steal === null ? raw("") : stealDetail(b.steal)}`,
   });
 }
 

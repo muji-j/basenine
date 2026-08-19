@@ -129,7 +129,7 @@ function data(over: Partial<TeamPageData> = {}): TeamPageData {
     ],
     batters: [
       {
-        playerId: "B1", name: "佐藤", games: 100, pa: 420, ab: 380, h: 110, hr: 22, rbi: 70, sb: 3,
+        playerId: "B1", name: "佐藤", games: 100, pa: 420, ab: 380, h: 110, hr: 22, rbi: 70, sb: 3, gidp: 12,
         avg: { value: 110 / 380, denominator: 380 },
         obp: { value: 0.36, denominator: 420 },
         slg: { value: 0.52, denominator: 380 },
@@ -141,7 +141,8 @@ function data(over: Partial<TeamPageData> = {}): TeamPageData {
         qualified: true,
       },
       {
-        playerId: "B2", name: "控え", games: 12, pa: 20, ab: 18, h: 4, hr: 0, rbi: 1, sb: 0,
+        // ⚠**`null` 은 「0」이 아니다**(M11) — 타석 로그가 없는 선수를 이 픽스처가 대표한다
+        playerId: "B2", name: "控え", games: 12, pa: 20, ab: 18, h: 4, hr: 0, rbi: 1, sb: 0, gidp: null,
         avg: { value: 4 / 18, denominator: 18 },
         obp: { value: 0.25, denominator: 20 },
         slg: { value: 0.28, denominator: 18 },
@@ -280,9 +281,20 @@ test("⚠팀 타율·방어율에 분모가 붙는다(M2)", () => {
   assert.match(out, /<span class="den">931回<\/span>/, "팀 방어율에 이닝이 없다(2793아웃=931이닝)");
 });
 
-test("⚠승률의 분모는 勝+敗다 — 무승부가 빠진다는 사실이 값만으로는 안 보인다", () => {
+/**
+ * ⚠**수는 맞았는데 낱말이 거짓이었다**(2026-08-20 · 배포물 실측).
+ * 이 시험은 원래 `104試合` 를 요구했다 — 104(=勝+敗)라는 **수는 옳다.**
+ * 그런데 그 팀이 치른 경기는 **105**(58-46-1)라서 「104試合」이라는 **말이 사실이 아니었다.**
+ * 실물에서도 그랬다: `dist/teams/t.html` 이 `.562` 옆에 `105試合` 이라고 썼는데
+ * 阪神은 그 시점에 **106경기**를 치렀다(59-46-1). 2026 정규시즌 12구단 중 **11구단**이 이 상태였고,
+ * 무승부가 0인 구단만 우연히 맞았다.
+ * → 낱말을 `決着`(勝+敗)로 바꿨다. 直前 라운드의 出塁率(`打席`이 아닌데 `打席`)과 같은 종류다.
+ */
+test("⚠승률의 분모는 勝+敗다 — 그리고 그 수를 「試合」라고 부르면 거짓이 된다", () => {
   const out = renderTeamPage(data(), context());
-  assert.match(out, /<span class="den">104試合<\/span>/, "승률의 분모가 105경기로 나왔다");
+  assert.match(out, /<span class="den">104決着<\/span>/, "승률의 분모가 105경기로 나왔거나 단위가 바뀌었다");
+  // ⚠**수가 맞아도 낱말이 틀리면 안 된다** — 58-46-1 이라 실제 경기 수는 105다
+  assert.ok(!out.includes("104試合"), "勝+敗 를 「試合」라고 부르고 있다 — 이 팀은 105경기를 했다");
   assert.match(out, /引き分けは分母に入れません/);
 });
 
@@ -475,7 +487,9 @@ test("⚠チーム成績은 뜻이 같은 것끼리 단으로 묶는다 — 규�
   const runs = cols.find((c) => c.includes("得点"));
   assert.ok(runs !== undefined && runs.includes("失点") && runs.includes("得失点差"), "득점 계열이 흩어졌다");
   // 단으로 옮기면서 분모를 흘리지 않았다(M2) — 58-46-1 이므로 승률의 분모는 104(105 아님)
-  assert.match(sum, /勝率<\/dt><dd>[.\d]+<span class="den">104試合<\/span>/, "승률에 분모가 없다");
+  // ⚠**단위는 `決着` 다** — 그 104를 「試合」라고 부르면 실제 경기 수(105)와 다른 거짓이 된다
+  // ⚠라벨이 용어집에 들어가면서 `<dt>` 안이 버튼이 됐다(툴팁) — 그래서 `</dt>` 앞을 느슨하게 본다
+  assert.match(sum, /勝率<\/button><\/dt><dd>[.\d]+<span class="den">104決着<\/span>/, "승률에 분모가 없다");
 });
 
 /**
@@ -588,7 +602,7 @@ test("⚠탭↔패널이 양방향으로 이어져 있다", () => {
  *   표식값을 전부 다르게 잡았으므로 두 열이 뒤바뀌면 **적어도 한쪽이 반드시 걸린다.**
  */
 const MARK_BAT: Record<string, string> = {
-  games: "811", pa: "822", h: "844", hr: "855", rbi: "866", sb: "877",
+  games: "811", pa: "822", h: "844", hr: "855", rbi: "866", sb: "877", gidp: "888",
   avg: ".401", obp: ".402", slg: ".403", ops: ".404",
   woba: ".405", wrcplus: "91.1", wraa: "92.2", src: "93.3",
   name: "識別",
@@ -602,7 +616,7 @@ const MARK_PIT: Record<string, string> = {
 function marked(): TeamPageData {
   return data({
     batters: [{
-      playerId: "U1", name: "識別", games: 811, pa: 822, ab: 833, h: 844, hr: 855, rbi: 866, sb: 877,
+      playerId: "U1", name: "識別", games: 811, pa: 822, ab: 833, h: 844, hr: 855, rbi: 866, sb: 877, gidp: 888,
       avg: { value: 0.401, denominator: 833 },
       obp: { value: 0.402, denominator: 822 },
       slg: { value: 0.403, denominator: 833 },
@@ -722,7 +736,7 @@ test("⚠구단 페이지 맨 위에 「지금 이 팀」이 온다 — 분모�
   assert.ok(now < stat, "「지금 이 팀」이 チーム成績보다 뒤에 있다");
 
   const b = nowBlockOf(out);
-  assert.match(b, /<span class="den">104試合<\/span>/, "승률에 분모(勝+敗)가 없다");
+  assert.match(b, /<span class="den">104決着<\/span>/, "승률에 분모(勝+敗)가 없다");
   assert.match(b, /残り\s*37試合/, "잔여 경기가 안 나온다");
   assert.match(b, /5-5-0/, "直近10 이 안 나온다");
 });

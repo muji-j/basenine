@@ -14,7 +14,7 @@ import { byMetricOrder } from "./metric-order.ts";
 // ⚠**분모 단위의 정본**(M1) — 화면이 문자열을 직접 적지 않는다
 import { denUnit } from "./glossary.ts";
 import type { RawHtml } from "./html.ts";
-import { NO_VALUE, avg3, fullDate, innings } from "./format.ts";
+import { NO_VALUE, avg3, fullDate, innings, int } from "./format.ts";
 import { block, buttonGroup, columns, note, panel, scroller, tablist, term, valueWithDen } from "./parts.ts";
 import { sortAttr, stableTable } from "./table.ts";
 import type { SortColumn } from "./table.ts";
@@ -81,6 +81,11 @@ export interface TeamBatter {
   hr: number;
   rbi: number;
   sb: number;
+  /**
+   * 併殺打. ⚠**`null` 은 「0」이 아니라 「세지 못했다」**(M11) —
+   * 그 선수의 타석 로그가 이 구단 몫으로 없으면 여기로 온다.
+   */
+  gidp: number | null;
   avg: Rate;
   obp: Rate;
   slg: Rate;
@@ -368,6 +373,13 @@ function batterTable(rows: TeamBatter[], base: string, saber: boolean, qualifier
       { key: "hr", label: "本塁打", cell: (r) => html`<td>${r.hr}</td>` },
       { key: "rbi", label: "打点", cell: (r) => html`<td>${r.rbi}</td>` },
       { key: "sb", label: "盗塁", cell: (r) => html`<td>${r.sb}</td>` },
+      /**
+       * ⚠**§2-2 지표 카탈로그의 항목인데 사이트 전체 출현이 0회였다**(2026-08-20 실측).
+       * ⚠**「0」과 「세지 못했다」를 구별한다**(M11) — `int()` 가 `null` 을 `—` 로 낸다.
+       *   0으로 때우면 「병살이 한 번도 없는 타자」라는 거짓이 된다.
+       * ⚠분모는 같은 표의 `打席` 열이다(M2) — 개수 지표라 자격 기준은 걸리지 않는다.
+       */
+      { key: "gidp", label: "併殺打", cell: (r) => html`<td>${int(r.gidp)}</td>` },
       { key: "avg", label: "打率", rate: true, cell: (r) => html`<td class="wd">${rate(r.avg, denUnit("avg"), 3)}</td>` },
       { key: "obp", label: "出塁率", rate: true, cell: (r) => html`<td class="wd">${rate(r.obp, denUnit("obp"), 3)}</td>` },
       { key: "slg", label: "長打率", rate: true, cell: (r) => html`<td class="wd">${rate(r.slg, denUnit("slg"), 3)}</td>` },
@@ -388,7 +400,7 @@ function batterTable(rows: TeamBatter[], base: string, saber: boolean, qualifier
     rows: html`${rows.map(
       (r) => html`<tr class="${r.qualified ? "" : "thin"}" data-name="${r.name}"${qualAttr(r.qualified)}
       ${raw(sortAttr("games", r.games))}${raw(sortAttr("pa", r.pa))}${raw(sortAttr("h", r.h))}${raw(sortAttr("hr", r.hr))}
-      ${raw(sortAttr("rbi", r.rbi))}${raw(sortAttr("sb", r.sb))}
+      ${raw(sortAttr("rbi", r.rbi))}${raw(sortAttr("sb", r.sb))}${raw(sortAttr("gidp", r.gidp))}
       ${raw(sortAttr("avg", r.avg.value, 4))}${raw(sortAttr("obp", r.obp.value, 4))}
       ${raw(sortAttr("slg", r.slg.value, 4))}${raw(sortAttr("ops", r.ops.value, 4))}
       ${raw(sortAttr("woba", r.woba.value, 4))}${raw(sortAttr("wrcplus", r.wrcPlus.value, 1))}
@@ -643,7 +655,10 @@ function nowBlock(d: TeamPageData, base: string): RawHtml {
     body: html`<p class="tnow head">
     <b>${d.rank === null ? NO_VALUE : `${d.rank}位${d.tiedRank ? "（同）" : ""}`}</b>
     <span>${wlt(d)}</span>
-    <span>勝率 ${valueWithDen({ value: d.pct, denominator: d.w + d.l }, "試合", 3)}</span>
+    <!-- ⚠**「試合」이 아니다.** 분모는 勝+敗 라 무승부만큼 실제 경기 수보다 적다 —
+         2026 정규시즌 12구단 중 11구단이 어긋나 있었다(阪神: 표기 105 · 실제 106경기).
+         단위의 정본은 glossary.ts 의 den 이다(M1) -->
+    <span>勝率 ${valueWithDen({ value: d.pct, denominator: d.w + d.l }, denUnit("winPct"), 3)}</span>
     <span>${gbText}</span>
     <span>${remainingText}</span>
   </p>
@@ -832,7 +847,10 @@ ${milestoneBlock(d.milestones, d.calendar.seasonOver)}
 ${panel(TEAM_TABS, "sum", true, html`<section class="block" id="b-teamsum">
   <h2>チーム成績<span class="qt">${d.games}試合</span></h2>
   ${columns(
-    html`<dt>${term("勝率")}</dt><dd>${d.pct === null ? NO_VALUE : avg3(d.pct)}<span class="den">${d.w + d.l}試合</span></dd>
+    // ⚠**분모를 손으로 만들지 않는다**(M2·M1). `valueWithDen` 한 벌이 값과 분모를 붙여 두므로
+    //   떼어 쓸 자리가 없고, 단위는 `glossary.ts` 가 정한다 — 예전에는 여기서 `試合`이라고
+    //   적었는데 그 수는 `勝+敗` 라 무승부만큼 실제 경기 수와 달랐다
+    html`<dt>${term("勝率")}</dt><dd>${rate({ value: d.pct, denominator: d.w + d.l }, denUnit("winPct"), 3)}</dd>
       <dt>ゲーム差</dt><dd>${d.gamesBehind === 0 ? NO_VALUE : d.gamesBehind.toFixed(1).replace(/\.0$/, "")}</dd>`,
     html`<dt>得点</dt><dd>${d.rf}<span class="den">${d.games}試合</span></dd>
       <dt>失点</dt><dd>${d.ra}<span class="den">${d.games}試合</span></dd>

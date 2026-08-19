@@ -36,7 +36,22 @@ export function battingBlock(over: Partial<BattingBlockData> = {}): BattingBlock
     runs: 76,
     rbi: 76,
     sb: 5,
-    steal: { cs: 2, pickoff: 1, rate: { value: 5 / 7, denominator: 7 } },
+    /**
+     * ⚠**루별 내역의 합이 총계와 맞아야 한다** — 도루 5(2루 4 · 3루 1) · 도루자 2(2루 1 · 3루 1).
+     * 픽스처가 어긋나 있으면 화면 시험이 「합이 안 맞는 표」를 정상으로 고정한다.
+     */
+    steal: {
+      cs: 2,
+      pickoff: 1,
+      rate: { value: 5 / 7, denominator: 7 },
+      byBase: [
+        { label: "二盗", sb: 4, cs: 1, rate: { value: 0.8, denominator: 5 } },
+        { label: "三盗", sb: 1, cs: 1, rate: { value: 0.5, denominator: 2 } },
+      ],
+      pickoffByBase: [{ label: "一塁", n: 1 }],
+      doubleSteal: 1,
+    },
+    gidp: 9,
     line: BATTING_LINE,
     avg: r(0.3167, 382),
     obp: r(0.4032, 442),

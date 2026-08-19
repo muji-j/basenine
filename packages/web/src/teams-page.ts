@@ -21,6 +21,8 @@ import type { RawHtml } from "./html.ts";
 import { NO_VALUE, fullDate } from "./format.ts";
 // ⚠**동률 규칙 문장은 순위표와 공유한다**(M1) — 두 화면이 같은 사실을 다르게 말하지 않게
 import { TIE_RULE, note, valueWithDen } from "./parts.ts";
+// ⚠**분모 단위의 정본**(M1) — 화면이 문자열을 직접 적지 않는다
+import { denUnit } from "./glossary.ts";
 import { page } from "./layout.ts";
 import type { RenderContext } from "./layout.ts";
 // ⚠**경로는 `layout.ts` 한 곳에서 나온다**(M1) — 내비도 같은 값을 쓴다
@@ -137,7 +139,8 @@ function teamRow(c: TeamsCard, base: string): RawHtml {
   <p class="tcn"><a href="${base}${teamPath(c.teamCode)}"><i></i>${c.name}</a></p>
   <p class="tcs">
     <span class="tcv"><s>勝敗分</s><b>${wlt(c)}</b></span>
-    <span class="tcv"><s>勝率</s><b>${valueWithDen({ value: c.pct, denominator: c.w + c.l }, "試合", 3)}</b></span>
+    <!-- ⚠**「試合」이 아니다** — 분모는 勝+敗 다(무승부 제외). 단위의 정본은 glossary.ts 다(M1) -->
+    <span class="tcv"><s>勝率</s><b>${valueWithDen({ value: c.pct, denominator: c.w + c.l }, denUnit("winPct"), 3)}</b></span>
     <span class="tcv"><s>ゲーム差</s><b>${gamesBehindText(c.rank, c.gamesBehind)}</b></span>
     <span class="tcv"><s>直近10試合</s><b>${wlt(c.last10)}</b></span>
   </p>

@@ -14,14 +14,19 @@ import {
   headToHead,
   pairKey,
   seasonRace,
+  STEAL_BASES,
   steals,
+  groundedIntoDoublePlays,
   successRate,
   timesThroughOrder,
+  // ⚠**勝率 산식은 한 벌이다**(M1). 구단 순위와 투수 개인 순위가 같은 함수를 쓴다 —
+  //   `勝 ÷ (勝 + 敗)` 를 여기서 다시 쓰면 무승부·노디시전 처리가 언젠가 갈린다
+  winPct,
   worstPct,
 } from "@bb-app/aggregate";
 // ⚠**통산 합계·시즌 수는 파서 쪽 한 벌을 쓴다**(M1) — 여기에 다시 쓰면 시험이 붙은 쪽이 죽는다
 import { careerTotal, seasonsPlayed } from "@bb-app/parser";
-import type { HeadToHead, PlayerStreaks, TeamRace, TeamRaceInput } from "@bb-app/aggregate";
+import type { HeadToHead, PlayerStreaks, StealBase, StealLine, TeamRace, TeamRaceInput } from "@bb-app/aggregate";
 import { regularSeasonGames } from "./home-page.ts";
 import { byMetricOrder } from "./metric-order.ts";
 import type {
@@ -34,7 +39,7 @@ import type {
   HomeWeekTeam,
   HomeMilestone,
 } from "./home-page.ts";
-import type { BattedBallData, BuntCell, CareerData, CareerRow } from "./player-page.ts";
+import type { BattedBallData, BuntCell, CareerData, CareerRow, StealBaseRow } from "./player-page.ts";
 import type { BattingLine, LeagueConstants, PitchingLine, Rate } from "@bb-app/metrics";
 import {
   babip,
@@ -574,6 +579,19 @@ function buildLeagueRankings(
     toMetricRanking("slg", "長打率", 3, denUnit("slg"), bq, asRanked(rankBatters(bundle, bat, (e) => e.slg), bid)),
     toMetricRanking("woba", "wOBA", 3, denUnit("woba"), bq, asRanked(rankBatters(bundle, bat, (e) => e.woba), bid)),
     toMetricRanking("wraa", "wRAA", 1, denUnit("wraa"), bq, asRanked(rankBatters(bundle, bat, (e) => e.wraa), bid)),
+    /**
+     * **最多安打** — NPB 공식 타이틀 6개 중 **유일하게 빠져 있던 것**이다
+     * (2026-08-20 실측: `dist/ranking.html` 에서 「安打」 출현 0회).
+     * 값은 `BattingEntry.player.line.h` 로 이미 계산돼 있었고 부르는 곳만 없었다.
+     *
+     * ⚠**개수라 자격 기준이 없다**(NPB 공식도 없다) — `countRanking` 이 그 문장을 낸다.
+     */
+    countRanking(
+      "h",
+      "安打",
+      "打席",
+      bat.map((e) => ({ ...bid(e), count: e.player.line.h, sample: e.player.line.pa })),
+    ),
     countRanking(
       "hr",
       "本塁打",
@@ -641,11 +659,16 @@ function pitcherRankings(
      * 분모를 붙이는 것만으로는 M2 를 지킨 것이 아니고 **맞는 분모**여야 한다.
      */
     den: { unit: string; asInnings: boolean } = { unit: "投球回", asInnings: true },
+    /**
+     * 소수 자릿수. 투수 비율은 대개 2자리(`3.20`)지만 **勝率은 3자리**(`.625`)다 —
+     * 야구 관례이고, 2자리로 내면 동률이 없는데 있는 것처럼 보인다.
+     */
+    digits: RankDigits = 2,
   ): MetricRanking =>
     // ⚠**방향을 끝까지 넘긴다.** 「전원 순위」도 같은 방향으로 매겨야 한다 —
     // 안 넘기면 방어율 전원 순위가 **나쁜 순**이 되어 1위가 최악의 투수가 된다
     toMetricRanking(
-      id, label, 2, den.unit, pq,
+      id, label, digits, den.unit, pq,
       asRanked(rankPitchersInRole(bundle, pit, role, pick, higherIsBetter)),
       den.asInnings, false, higherIsBetter,
     );
@@ -714,6 +737,30 @@ function pitcherRankings(
       count("l", "敗戦", (e) => e.player.decisions.l),
       count("starts", "先発", (e) => e.player.starts),
       count("qs", "QS", (e) => e.player.quality.qs),
+      /**
+       * **最高勝率** — NPB 공식 타이틀인데 개인 순위가 없었다
+       * (2026-08-20 실측: `dist/ranking.html` 의 「勝率」 4회는 전부 **팀 순위표의 각주**다).
+       *
+       * ⚠**분모는 決着数(勝 + 敗)다** — 무승부도 노디시전도 들어가지 않는다(NPB 규칙).
+       *   투구회가 아니므로 `asInnings` 를 끈다. 켜 두면 `12決着` 이 `4回` 로 나간다
+       *   (SRP 가 정확히 그 함정을 밟아 123행 전부가 어긋나 있었다).
+       * ⚠**선발 목록에만 둔다.** 最高勝率의 자격은 **NPB 규정투구회**인데,
+       *   구원 쪽 목록의 자격선은 그 3분의 1인 **우리 기준**이라 NPB 것이 아니다.
+       *   같은 타이틀 이름에 다른 자격을 붙이면 자체 기준이 공식으로 읽힌다(§0-10).
+       * ⚠**목록의 맨 뒤다** — 자리는 `metric-order.ts` 가 정한다. 승패는 타선과 구원진이
+       *   절반을 정하므로, 그 값들을 자체 산출하는 사이트가 앞세울 값이 아니다.
+       */
+      rate(
+        "winPct",
+        "勝率",
+        (e) => {
+          const d = e.player.decisions;
+          return { value: winPct(d.w, d.l), denominator: d.w + d.l };
+        },
+        true,
+        { unit: denUnit("winPct"), asInnings: false },
+        3,
+      ),
     ], (x) => x.id);
   }
   return byMetricOrder([
@@ -3216,6 +3263,11 @@ function teamPages(
    */
   srcByTeam: ReadonlyMap<string, { src: number; pa: number }>,
   srpByTeam: ReadonlyMap<string, { srp: number; bf: number }>,
+  /**
+   * 併殺打도 **선수 × 구단** 키다(위와 같은 이유). ⚠**여기서 다시 세지 않는다**(M1) —
+   * 선수 페이지가 쓰는 것과 같은 한 벌에서 나온다.
+   */
+  gidpByTeam: ReadonlyMap<string, number>,
   asOf: string | null,
   hasPostseason: boolean,
   latestDate: string | null,
@@ -3395,6 +3447,9 @@ function teamPages(
             hr: r.line.hr,
             rbi: r.rbi,
             sb: r.sb,
+            // ⚠**키가 「선수|구단」이다** — 선수 ID 하나로 찾으면 이적 선수의 시즌 합계가 실린다
+            //   (바로 아래 SRC 가 같은 함정을 밟았던 자리다). 없으면 `null`(M11)
+            gidp: gidpByTeam.get(`${r.playerId}|${code}`) ?? null,
             avg: e.avg,
             obp: e.obp,
             slg: e.slg,
@@ -4026,6 +4081,53 @@ const EMPTY_BATTED: BattedBallData = {
   infield: 0, infieldHits: 0, swinging: 0, looking: 0,
 };
 
+/**
+ * 도루 합계 — 루별 내역까지.
+ *
+ * ⚠**이적해도 선수 페이지는 시즌 합계다**(`addBatted` 와 같은 이유). 루별 표도 함께 더하지 않으면
+ * 총계와 내역이 어긋나고, 화면은 그것을 「그 루는 0」이라고 말한다.
+ */
+type StealTotals = Pick<
+  StealLine,
+  "sb" | "cs" | "pickoff" | "sbByBase" | "csByBase" | "pickoffByBase" | "doubleSteal"
+>;
+
+function addByBase(
+  a: Readonly<Record<StealBase, number>> | undefined,
+  b: Readonly<Record<StealBase, number>>,
+): Record<StealBase, number> {
+  const out = {} as Record<StealBase, number>;
+  for (const base of STEAL_BASES) out[base] = (a?.[base] ?? 0) + b[base];
+  return out;
+}
+
+function addSteal(a: StealTotals | undefined, b: StealLine): StealTotals {
+  return {
+    sb: (a?.sb ?? 0) + b.sb,
+    cs: (a?.cs ?? 0) + b.cs,
+    pickoff: (a?.pickoff ?? 0) + b.pickoff,
+    sbByBase: addByBase(a?.sbByBase, b.sbByBase),
+    csByBase: addByBase(a?.csByBase, b.csByBase),
+    pickoffByBase: addByBase(a?.pickoffByBase, b.pickoffByBase),
+    doubleSteal: (a?.doubleSteal ?? 0) + b.doubleSteal,
+  };
+}
+
+/**
+ * 루 이름 — **표마다 다르다.**
+ *
+ * ⚠도루의 `base` 는 **노린 루**라 「二盗」로 읽고, 견제사의 `base` 는 **있던 루**라
+ * 「二塁」로 읽는다(마이그레이션 010). 하나의 표로 쓰면 1루 견제사가
+ * 「1루를 훔치려다 잡혔다」로 읽히는데, 그런 일은 일어나지 않는다.
+ * ⚠`一盗` 는 실측 0건이지만 표에서 지우지 않는다 — 나오면 **보여야** 이상한 줄 안다(M7의 정신).
+ */
+const STEAL_BASE_LABEL: Readonly<Record<StealBase, string>> = {
+  "1b": "一盗", "2b": "二盗", "3b": "三盗", home: "本盗",
+};
+const PICKOFF_BASE_LABEL: Readonly<Record<StealBase, string>> = {
+  "1b": "一塁", "2b": "二塁", "3b": "三塁", home: "本塁",
+};
+
 /** 같은 선수가 두 구단에서 낸 타구를 합친다 — 이적해도 선수 페이지는 시즌 합계다 */
 function addBatted(a: BattedBallData, b: BattedBallData): BattedBallData {
   return {
@@ -4134,14 +4236,24 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
    * 도루 성적. ⚠**선수당 한 벌씩만 만든다**(리그를 나눠 두 번 부르면 이적 선수가 반씩 나뉜다).
    * ⚠대회를 섞지 않는다(§2-1) — 올스타를 넣으면 2026 도루가 611이 아니라 620이 된다.
    */
-  const stealByPlayer = new Map<string, { sb: number; cs: number; pickoff: number }>();
+  const stealByPlayer = new Map<string, StealTotals>();
   for (const st of steals(db, o.season, competition, through)) {
     const cur = stealByPlayer.get(st.playerId);
-    stealByPlayer.set(st.playerId, {
-      sb: (cur?.sb ?? 0) + st.sb,
-      cs: (cur?.cs ?? 0) + st.cs,
-      pickoff: (cur?.pickoff ?? 0) + st.pickoff,
-    });
+    stealByPlayer.set(st.playerId, addSteal(cur, st));
+  }
+
+  /**
+   * 併殺打. ⚠**선수당 한 벌과 「선수|구단」 두 벌을 같이 만든다** —
+   * 선수 페이지는 시즌 합계를, 구단 표는 **그 구단에서 낸 것만**을 쓴다.
+   * 합계를 구단 표에 실으면 이적 선수의 옛 팀 몫이 새 팀 표에 실리고, 같은 화면의
+   * 打席 열(그 팀만의 打席)과 어긋난다.
+   * ⚠대회를 섞지 않는다(§2-1).
+   */
+  const gidpByPlayer = new Map<string, number>();
+  const gidpByTeam = new Map<string, number>();
+  for (const r of groundedIntoDoublePlays(db, o.season, competition, through)) {
+    gidpByPlayer.set(r.playerId, (gidpByPlayer.get(r.playerId) ?? 0) + r.gidp);
+    gidpByTeam.set(`${r.playerId}|${r.teamCode}`, (gidpByTeam.get(`${r.playerId}|${r.teamCode}`) ?? 0) + r.gidp);
   }
 
   const bbPitcher = new Map<string, BattedBallData>();
@@ -4392,7 +4504,28 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
               if ((st?.sb ?? 0) !== boxSb) return null;
               const cs = st?.cs ?? 0;
               /**
-               * ⚠**분자는 화면에 보이는 `盗塁` 그 값이다**(박스스코어). 타석 로그 쪽 수로
+               * 루별 내역. ⚠**기도가 있는 루만 담는다** — 전부 0인 줄은 정보가 아니라 잡음이다
+               * (`battedBallRow` 가 표본 얇은 축을 빼는 것과 같은 판단).
+               * ⚠**여기 분자는 타석 로그 쪽 수다.** 총계는 박스의 `盗塁` 를 쓰는데,
+               * 위 가드가 **두 수가 같을 때만** 여기까지 오게 하므로 합이 어긋나지 않는다.
+               * ⚠**견제사는 이 표에 없다** — 기도의 분모가 아니고 루의 뜻도 다르다.
+               */
+              const byBase: StealBaseRow[] = [];
+              for (const base of STEAL_BASES) {
+                const one = { sb: st?.sbByBase[base] ?? 0, cs: st?.csByBase[base] ?? 0 };
+                if (attempts(one) === 0) continue;
+                byBase.push({
+                  label: STEAL_BASE_LABEL[base],
+                  sb: one.sb,
+                  cs: one.cs,
+                  rate: { value: successRate(one), denominator: attempts(one) },
+                });
+              }
+              const pickoffByBase = STEAL_BASES
+                .map((base) => ({ label: PICKOFF_BASE_LABEL[base], n: st?.pickoffByBase[base] ?? 0 }))
+                .filter((x) => x.n > 0);
+              /**
+               * ⚠**총계의 분자는 화면에 보이는 `盗塁` 그 값이다**(박스스코어). 타석 로그 쪽 수로
                * 갈아타면 같은 블록에 **「盗塁 30」과 「28을 함축하는 성공률」**이 나란히 뜬다 —
                * 값이 조금 틀린 것보다 나쁜 자기모순이다.
                * ⚠**여기서 폴백으로 덮지 않는다.** 두 출처가 어긋나는 것은 적재가
@@ -4403,8 +4536,16 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
                 cs,
                 pickoff: st?.pickoff ?? 0,
                 rate: { value: successRate({ sb: boxSb, cs }), denominator: attempts({ sb: boxSb, cs }) },
+                byBase,
+                pickoffByBase,
+                doubleSteal: st?.doubleSteal ?? 0,
               };
             })(),
+            /**
+             * 併殺打. ⚠**행이 없으면 `null` 이다**(M11) — 그 선수의 타석 로그가 없다는 뜻이고,
+             * 0으로 때우면 「병살이 한 번도 없는 타자」라는 거짓이 된다.
+             */
+            gidp: gidpByPlayer.get(playerId) ?? null,
             line: bat.player.line,
             avg: bat.avg,
             obp: bat.obp,
@@ -4770,6 +4911,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     bundleByLeague,
     srcByTeam,
     srpByTeam,
+    gidpByTeam,
     meta.latest,
     // ⚠**「기록이 있다」와 「포스트시즌이 있다」는 다른 말이다.** 올스타뿐인 시즌(2026)에
     // 「ポストシーズンは別の画面にあります」라고 쓰면 없는 것을 있다고 안내하는 것이 된다.
