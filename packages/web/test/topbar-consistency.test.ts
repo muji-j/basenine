@@ -29,21 +29,55 @@ import { fileURLToPath } from "node:url";
  * CLAUDE.md 작업규칙 8 이 경고하는 그 패턴이다(「E2E 5본이 전부 실행 불가인 채 0건=합격으로 오독」).
  * 이 파일 위치에서 저장소 루트를 거슬러 올라가 **어디서 돌려도 같은 곳을 본다.**
  */
-const DIST = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "dist");
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+const DIST = join(ROOT, "dist");
 
 /**
  * 한 디렉터리에서 몇 장까지 열 것인가.
  *
- * ⚠**전수는 비싸다 — 실측했다**(2026-08-19): dist 는 **15,340장 · 924MB** 이고,
- * 머리만 잘라 읽어도 파일 하나를 여는 비용이 지배해 **한 바퀴에 23~34초**다.
- * 전체 시험 스위트가 49초이므로 이 한 파일이 스위트를 1.5~1.7배로 만든다.
- * ⚠**그래서 「재귀는 하되 디렉터리마다 상한」**을 둔다 — 헤더는 **렌더러 × 시즌**으로만
+ * ⚠**전수 비용을 상수처럼 적지 마라 — 환경에 따라 6배 이상 갈린다**(2026-08-19 검토 ③).
+ * 여기 「22.8초」라고 한 줄로 적혀 있었는데, 검토자의 실측은 **149초**였다.
+ * 지배 인자는 계산이 아니라 **파일 하나를 여는 비용**이고, 그건 OS·디스크·백신·페이지 캐시가 정한다.
+ * **같은 기계·같은 날·같은 명령**으로도 이렇게 벌어진다(Windows 11 · dist 15,340장 · 약 1GB):
+ *
+ * ```
+ *   이 파일만        차가운 캐시 110초 · 따뜻한 캐시 16.7초 (표본은 5.0초 · 0.9초)
+ *   npm test 전체    표본 5회 = 50~60초 · 전수 6회 = 50~238초
+ * ```
+ *
+ * → **「몇 초」라고 단정하지 마라.** 지배 인자는 계산이 아니라 **페이지 캐시 상태**이고,
+ *   dist 가 1GB 라 반복 실행만으로도 밀려난다. 검토자의 149초도 이 폭 안이다.
+ * ⚠**CI 는 따뜻한 쪽이어야 한다** — 바로 앞 단계가 그 15,340장을 **방금 쓴다.**
+ *   그래서 배포 잡은 `BB_FULL_SCAN=1` 로 돌린다(daily.yml 「시험」 단계).
+ *   ⚠**CI 에서는 아직 안 쟀다** — 위 값은 전부 로컬이다.
+ *
+ * ⚠**로컬 기본값이 표본인 이유**는 비용이지 정확성이 아니다. 헤더는 **렌더러 × 시즌**으로만
  * 갈리므로(데이터가 아니라) 디렉터리 45개를 전부 밟으면 그 조합은 다 밟힌다.
- * 실측 표본 **523장 / 45디렉터리**이고 1초 안에 끝난다.
- * ⚠**전수가 필요하면 `BB_FULL_SCAN=1`** — 그때는 15,340장을 전부 연다(CI·검증용).
+ * 실측 표본 **523장 / 45디렉터리**.
+ * ⚠**그래도 표본은 표본이다** — 검토자가 표본 **밖**의 `dist/players/23325159.html` 에서
+ * `aria-current="true"` 를 지우고 돌리자 **기본 실행이 통과했다**(그때 pass 4 · fail 0).
+ * 이 변경 뒤에 같은 실험을 다시 했고 결과가 같다(2026-08-19 재현):
+ * 기본 **pass 6 · fail 0**(못 본다) · `BB_FULL_SCAN=1` **pass 5 · fail 1**
+ * (「현재 위치 표시가 없는 화면 1장(15340장 / 디렉터리 45개(전수)): players/23325159.html」).
+ * **로컬 통과를 안전으로 읽지 마라.**
  */
 const PER_DIR = 12;
 const FULL = process.env["BB_FULL_SCAN"] === "1";
+
+/**
+ * 한 디렉터리의 표본 — **앞 6 + 뒤 6**.
+ *
+ * ⚠**앞에서 12장만 자르면 「디렉터리당 렌더러 1개」를 암묵 전제하게 된다**(2026-08-19 검토 ⑤).
+ * 파일 이름순 앞쪽만 보므로, 새 렌더러가 **기존 디렉터리에 이름이 뒤로 가는 파일**을 쓰면
+ * 그 렌더러는 표본에 한 장도 안 들어온다 — 그리고 그 사실이 아무 데도 안 나온다.
+ * 오늘은 디렉터리 하나에 렌더러 하나라 성립하지만, 그건 **지금의 우연**이지 규약이 아니다.
+ * → 같은 12장 비용으로 **양 끝**을 본다. 12장 이하인 디렉터리는 전부 본다(겹치지 않는다).
+ */
+function sample(files: readonly string[]): string[] {
+  if (files.length <= PER_DIR) return [...files];
+  const half = PER_DIR / 2;
+  return [...files.slice(0, half), ...files.slice(-half)];
+}
 
 /**
  * 헤더가 확실히 들어가는 크기.
@@ -132,7 +166,7 @@ interface Screen {
 }
 
 const dirs = existsSync(DIST) ? byDirectory(DIST) : new Map<string, string[]>();
-const picked = [...dirs.values()].flatMap((fs) => (FULL ? fs : fs.slice(0, PER_DIR)));
+const picked = [...dirs.values()].flatMap((fs) => (FULL ? fs : sample(fs)));
 const screens: Screen[] = picked.map((f) => {
   const head = headOf(f);
   const rel = relative(DIST, f).split(sep).join("/");
@@ -149,12 +183,51 @@ const screens: Screen[] = picked.map((f) => {
 const SCOPE = `${screens.length}장 / 디렉터리 ${dirs.size}개${FULL ? "(전수)" : `(디렉터리당 최대 ${PER_DIR}장)`}`;
 
 /**
+ * ⚠**그물의 크기 자체를 못 박는다**(2026-08-19 검토 ②).
+ *
+ * 범위와 관련된 유일한 하한이 아래의 `withTabs.length >= 5` 였다.
+ * 그런데 **선수 페이지 6,207장에 `aria-current` 가 하나도 없던 그 상태**의 분모가
+ * 정확히 **11장 · 디렉터리 1개**였고, `11 >= 5` 라 그때도 초록이었다.
+ * 즉 누군가 `byDirectory` 를 옛 `readdirSync(DIST)`(최상위만)로 되돌려도 **아무 단언도 안 떨어진다.**
+ * 재귀한다는 사실이 코드에만 있고, 그것을 지키는 것이 하나도 없었다.
+ *
+ * → **분모를 값으로 못 박는다.** 실측(2026-08-19): **45디렉터리 / 523장**.
+ * ⚠**하한은 실측보다 낮게** 둔다 — 시즌이 줄거나 렌더러가 빠지는 것은 정상이고,
+ *   그때마다 빨개지면 사람이 하한을 지운다. 다만 **최상위만 보는 상태(1개 / 11장)와는
+ *   자릿수가 다르게** 둔다. 이 단언이 막는 것은 정확히 그 회귀 하나다.
+ * ⚠**개수만으로는 부족하다.** 선수 페이지가 통째로 빠져도 다른 디렉터리가 수를 채워 준다 —
+ *   그런데 이 시험이 실제로 결함을 찾아낸 곳이 바로 그 디렉터리다. **이름으로도 본다.**
+ */
+test(
+  "⚠검사 범위가 dist 전체다 — 최상위만 보던 동안 선수 페이지 6,207장이 숨어 있었다",
+  { skip: screens.length === 0 ? "dist 없음" : false },
+  () => {
+    assert.ok(
+      dirs.size >= 40,
+      `디렉터리가 ${dirs.size}개뿐이다(실측 기준 45) — 재귀가 끊겼거나 dist 가 전 시즌 빌드가 아니다. ` +
+        "`npm run build:web` 로 다시 만들어라",
+    );
+    assert.ok(
+      screens.length >= 500,
+      `검사 대상이 ${screens.length}장뿐이다(실측 기준 523) — ${SCOPE}`,
+    );
+    const players = screens.filter((s) => s.file.startsWith("players/"));
+    assert.ok(
+      players.length > 0,
+      `선수 페이지가 표본에 한 장도 없다 — 2026-08-19 에 잡은 결함이 있던 자리다(${SCOPE})`,
+    );
+  },
+);
+
+/**
  * ⚠**시즌 안에서 비교한다.** `他大会` 탭만이 시즌에 따라 있고 없다 —
  * 그 하나 때문에 전 시즌을 한 덩어리로 비교하면, 포스트시즌 기록이 아직 없는 시즌이
  * 통째로 빨개진다(2026년은 실제로 그런 시기가 있었다).
  */
 test("⚠모든 화면의 탭 목록이 같다 — 홈만 하나 모자라던 결함", { skip: screens.length === 0 ? "dist 없음" : false }, () => {
   const withTabs = screens.filter((s) => s.tabs.length > 0);
+  // ⚠**이 하한은 「탭이 있는 화면이 존재하는가」만 본다.** 범위(분모)를 지키는 것은
+  //   위의 「검사 범위가 dist 전체다」다 — 여기 `>= 5` 는 최상위 11장에서도 참이었다
   assert.ok(withTabs.length >= 5, `검사한 화면이 너무 적다: ${withTabs.length}(${SCOPE})`);
   const bad: string[] = [];
   const wantOf = new Map<string, { file: string; tabs: string[] }>();
@@ -220,4 +293,36 @@ test("⚠쓰이는 aria-current 값마다 CSS 규칙이 있다 — 보이지 않
   const css = readFileSync(join(DIST, "assets", "site.css"), "utf8");
   const missing = [...used].filter((v) => !css.includes(`[aria-current="${v}"]`));
   assert.deepEqual(missing, [], `CSS 규칙이 없는 값: ${missing.join(", ")}(쓰이는 값: ${[...used].join(", ")})`);
+});
+
+/**
+ * ⚠**「CI 는 전수로 돈다」도 코드에만 있는 약속이었다**(2026-08-19 검토 ①).
+ *
+ * 위 시험들이 기본값에서 강제하는 분모는 **523/15,340 = 3.4%** 다. 나머지 96.6%는
+ * `daily.yml` 의 「시험」 단계가 `BB_FULL_SCAN=1` 을 주기 때문에만 밟힌다 —
+ * 그 한 줄이 지워지면 **아무것도 안 떨어지고**, 배포는 3.4% 짜리 그물로 계속 나간다.
+ * ⚠**같은 종류의 구멍이 `BB_REQUIRE_DIST`·`BB_REQUIRE_DB` 에도 있다** — 둘 다
+ * 「없으면 skip 되고 종료 코드 0」을 막는 값이라, 지워지면 **초록인 채로 아무것도 안 잰다.**
+ * 셋을 한자리에서 못 박는다.
+ *
+ * ⚠**YAML 을 파싱하지 않는다** — 파서를 들이면 그 의존이 이 시험의 새 실패 원인이 된다.
+ * 「시험」 단계의 글자를 잘라 보는 것으로 충분하고, 형식이 바뀌면 여기가 먼저 빨개진다.
+ */
+test("⚠배포 잡의 시험 단계가 전수로 돈다 — 3.4% 짜리 그물로 배포하지 않는다", () => {
+  const wf = join(ROOT, ".github", "workflows", "daily.yml");
+  const src = readFileSync(wf, "utf8").replace(/\r/g, "");
+  // ⚠**「하나뿐인가」까지 본다** — 여럿이면 첫 번째만 재고 나머지는 그대로 새어 나간다
+  const heads = [...src.matchAll(/^ +- name: 시험$/gm)];
+  assert.equal(heads.length, 1, `daily.yml 의 「시험」 단계가 ${heads.length}개다 — 어느 것을 재는지 모른다: ${wf}`);
+  const at = heads[0]!.index;
+  const next = src.indexOf("- name: ", at + 10);
+  const step = src.slice(at, next < 0 ? src.length : next);
+  assert.match(step, /^ +run: npm test$/m, "「시험」 단계가 npm test 를 돌리지 않는다");
+  for (const key of ["BB_REQUIRE_DIST", "BB_REQUIRE_DB", "BB_FULL_SCAN"]) {
+    assert.match(
+      step,
+      new RegExp(`^ +${key}: "1"$`, "m"),
+      `daily.yml 「시험」 단계에 ${key}: "1" 이 없다 — 그 값이 없으면 시험이 초록인 채로 덜 잰다`,
+    );
+  }
 });

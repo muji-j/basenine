@@ -409,7 +409,19 @@ export function buttonGroup(
   return html`<div class="tabs" role="group" data-tabgroup="${group}" aria-label="${label}">
     ${items.map(
       (t, i) => html`<button class="tab" type="button" data-tab="${t.id}"
-        ${raw(controlsPanels ? ` id="${tabId(group, t.id)}" aria-controls="${panelId(group, t.id)}"` : "")}
+        ${
+          // ⚠**속성을 raw() 안에서 문자열로 짓지 않는다**(2026-08-18 감사 P3 · layout.ts 가 같은 말을 적어 뒀다).
+          //   그 안의 값은 이스케이프를 거치지 않는다 — 따옴표 하나로 속성이 끊긴다.
+          //   지금은 `tabId`/`panelId` 가 상수 접두사 + 코드가 정한 키라 안전하지만,
+          //   **다음 사람이 문자열 필드를 얹으면 뚫린다.** 조각째 `html` 에 넘기면 그 자리가
+          //   영구히 이스케이프를 거친다. 이 규칙은 `test/raw-attributes.test.ts` 가 소스에서 센다.
+          // ⚠**주석을 `${…}` 밖에 두지 마라** — 한 줄 늘어난 만큼 **산출물의 공백이 바뀐다**.
+          //   실측(2026-08-19 · 2026 한 시즌 1,499장 재생성 후 바이트 대조):
+          //   밖에 두면 **707장**이 달라지고, 여기 안이면 **0장**이다.
+          controlsPanels
+            ? html` id="${tabId(group, t.id)}" aria-controls="${panelId(group, t.id)}"`
+            : raw("")
+        }
         aria-pressed="${i === 0 ? "true" : "false"}">${t.label}</button>`,
     )}
   </div>`;

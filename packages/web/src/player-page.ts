@@ -1372,7 +1372,15 @@ function matchupBlock(rows: readonly MatchupRow[], total: number, opponent: stri
       data-oppid="${r.opponentId}"
       data-pa="${r.line.pa}" data-ab="${r.line.ab}" data-h="${r.line.h}" data-hr="${r.line.hr}"
       data-bb="${r.line.bb}" data-so="${r.line.so}" data-rbi="${r.rbi}"
-      ${raw(r.avg.value === null ? "" : `data-avg="${r.avg.value.toFixed(4)}"`)}>
+      ${
+        // ⚠**속성을 raw() 안에서 문자열로 짓지 않는다**(2026-08-18 감사 P3 · layout.ts 가 같은 말을 적어 뒀다).
+        //   그 안의 값은 이스케이프를 거치지 않는다 — 따옴표 하나로 속성이 끊긴다.
+        //   지금은 `toFixed(4)` 라 숫자만 나오지만, **다음 사람이 문자열 필드를 얹으면 뚫린다.**
+        //   조각째 `html` 에 넘기면 그 자리가 영구히 이스케이프를 거친다.
+        //   이 규칙은 `test/raw-attributes.test.ts` 가 소스에서 센다.
+        // ⚠**주석은 `${…}` 안에 둔다** — 밖에 두면 한 줄 늘어난 만큼 산출물의 공백이 바뀐다.
+        r.avg.value === null ? raw("") : html`data-avg="${r.avg.value.toFixed(4)}"`
+      }>
       <td class="l"><a href="${r.opponentId}.html">${r.opponentName}</a></td>
       <td class="l">${shortNameOf(r.opponentTeam)}</td>
       <td>${r.line.pa}</td><td>${r.line.ab}</td><td>${r.line.h}</td><td>${r.line.hr}</td>
