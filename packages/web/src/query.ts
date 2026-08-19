@@ -156,6 +156,9 @@ import { batterPick, gameKey, pitcherPick, startersAnchor, unseenPitcherPick } f
 import type { RankDigits } from "./parts.ts";
 import { NO_VALUE, avg3, dec2, denominator, innings } from "./format.ts";
 import { readFileSync } from "node:fs";
+// ⚠**한도는 화면 파일에 산다** — 각주가 그 수를 그대로 쓰기 때문이다(M3의 정신).
+//   여기 두면 상수와 화면 문장이 조용히 갈린다
+import { TEAM_MILESTONE_ROWS, TEAM_STREAK_ROWS } from "./team-page.ts";
 import type {
   TeamBatter,
   TeamMonth,
@@ -2322,11 +2325,19 @@ function milestonesOf(
    * 처음에 「남은 수 ≤ 올해 쌓은 수 × 2」를 걸었다가 **西川(350도루까지 6개)** 처럼
    * 올해가 더딘 선수가 잘려 나갔다.
    * ⚠**그 시즌에 한 번도 안 나온 항목은 뺀다** — 「다가서는 중」이 아니라 멈춰 있는 것이다.
+   *
+   * ⚠**여기서 자르지 않는다 — 자르는 것은 호출자의 몫이다**(2026-08-19 Task 6 수정).
+   * 예전에는 여기서 `slice(0, HOME_MILESTONE_ROWS)` 했고, 구단 페이지가 **그 잘린 배열**을
+   * 팀으로 거르기만 했다. 결과가 실측으로 이랬다 —
+   * `b 1 · c 0 · d 0 · db 0 · e 2 · f 0 · g 0 · h 3 · l 2 · m 0 · s 1 · t 1`
+   * → **12팀 중 6팀이 0건 · 합계 10건(= 홈 상위 10명 전부)**. 화면은 「ありません」이라고
+   * 썼지만 실제로는 있었다 — **M11이 금지하는 「없음」과 「안 쟀음」의 혼동**이다.
+   * → 전체를 정렬해서 돌려주고, **홈은 홈의 한도로 · 구단 페이지는 구단의 한도로** 자른다.
+   *   계산은 여전히 한 벌이다(M1) — 자르는 위치만 옮겼다.
    */
   return out
     .filter((x) => x.thisSeason > 0)
-    .sort((a, b) => a.toNext - b.toNext || b.count - a.count || a.playerId.localeCompare(b.playerId))
-    .slice(0, HOME_MILESTONE_ROWS);
+    .sort((a, b) => a.toNext - b.toNext || b.count - a.count || a.playerId.localeCompare(b.playerId));
 }
 
 
@@ -2349,7 +2360,7 @@ function homePage(
   latestDate: string | null,
   latestGames: HomePageData["latest"],
   hasPostseason: boolean,
-): HomePageData {
+): HomePageResult {
   const competition = o.competition ?? "regular";
   const through = o.through ?? "9999-12-31";
   const played = playedByTeam(db, o.season, competition, through);
@@ -2625,20 +2636,49 @@ function homePage(
     }
   }
 
+  /**
+   * ⚠**구단은 이미 있는 teamCodeOf 를 쓴다**(M1). 따로 만든 질의가 ORDER BY 없이
+   * LIMIT 1 이라 **이적 선수 282명 중 9명에게 옛 구단**이 붙었다(2026-08-17 실측).
+   * ⚠**여기 있는 것이 「자르기 전 전부」다** — 구단 페이지가 이걸 받아 팀별로 다시 자른다.
+   */
+  const milestones = milestonesOf(db, o.season, chip, teamCodeOf);
+
   return {
-    season: o.season,
-    asOf,
-    latestDate,
-    latest: latestGames,
-    leagues,
-    week,
-    // ⚠**구단은 이미 있는 teamCodeOf 를 쓴다**(M1). 따로 만든 질의가 ORDER BY 없이
-    //   LIMIT 1 이라 **이적 선수 282명 중 9명에게 옛 구단**이 붙었다(2026-08-17 실측)
-    milestones: milestonesOf(db, o.season, chip, teamCodeOf),
-    paces,
-    streaks: streaks.slice(0, HOME_STREAK_ROWS),
-    hasPostseason,
+    page: {
+      season: o.season,
+      asOf,
+      latestDate,
+      latest: latestGames,
+      leagues,
+      week,
+      milestones: milestones.slice(0, HOME_MILESTONE_ROWS),
+      paces,
+      streaks: streaks.slice(0, HOME_STREAK_ROWS),
+      hasPostseason,
+    },
+    allStreaks: streaks,
+    allMilestones: milestones,
   };
+}
+
+/**
+ * 대시보드 데이터 **+ 자르기 전 전체 배열**.
+ *
+ * ⚠**왜 전체를 같이 들고 나오는가**(2026-08-19 Task 6 수정). 구단 페이지의 「続いている記録」·
+ * 「記録に近づいている」는 **같은 계산을 재사용해야 하는데**(M1), 홈이 상위 N으로 자른 뒤의
+ * 배열을 팀으로 거르면 **리그 상위 N에 못 든 구단이 통째로 0건**이 된다.
+ * 실측(2026-08-19 배포물): `b 1 · c 0 · d 0 · db 0 · e 2 · f 0 · g 0 · h 3 · l 2 · m 0 · s 1 · t 1`
+ * → **12팀 중 6팀이 0건 · 최대 3건 · 합계 10건**. 「ありません」이 거짓말이었다(M11).
+ * → **계산은 한 벌 · 자르기는 화면마다.** 이 구조가 그것을 강제한다 —
+ *   자르기 전 배열이 여기 말고는 없으므로, 구단 페이지가 다시 계산할 길이 없다.
+ * ⚠**`page.streaks`/`page.milestones` 는 이미 잘린 것이다.** 팀별 자르기에 그걸 쓰면
+ *   고치기 전과 똑같아진다 — 반드시 `allStreaks`/`allMilestones` 를 넘겨라.
+ */
+interface HomePageResult {
+  page: HomePageData;
+  /** 홈의 상위 N으로 **자르기 전** 전체(정렬은 끝난 상태) */
+  allStreaks: readonly HomeStreak[];
+  allMilestones: readonly HomeMilestone[];
 }
 
 /**
@@ -3075,11 +3115,15 @@ function teamPages(
    */
   starters: StartersPageData,
   /**
-   * 연속 기록·기록 근접 — **홈 화면이 이미 만든 배열**(M1). 여기서 다시 계산하지 않고
-   * `teamCode`로 거르기만 한다. 홈이 산출한 값과 갈리지 않게 하려면 이 한 벌만 써야 한다.
+   * 연속 기록·기록 근접 — **홈 화면이 만든 것과 같은 한 벌**(M1). 여기서 다시 계산하지 않는다.
+   *
+   * ⚠**「자르기 전」 배열이어야 한다.** 홈이 상위 N으로 자른 뒤의 배열을 받으면
+   * 구단 페이지가 리그 상위 N의 부분집합이 되어 **대부분의 구단이 0건**이 된다
+   * (실측은 `HomePageResult` 주석 참고). 그래서 `homeData.page.streaks` 가 아니라
+   * `homeData.allStreaks` 를 받는다.
    */
-  homeStreaks: readonly HomeStreak[],
-  homeMilestones: readonly HomeMilestone[],
+  allStreaks: readonly HomeStreak[],
+  allMilestones: readonly HomeMilestone[],
 ): TeamPagesResult {
   const competition = o.competition ?? "regular";
   const through = o.through ?? "9999-12-31";
@@ -3367,11 +3411,18 @@ function teamPages(
         hasPostseason,
         now,
         /**
-         * ⚠**여기서 다시 계산하지 않는다**(M1) — 홈 화면이 만든 배열을 `teamCode`로 거르기만 한다.
+         * ⚠**여기서 다시 계산하지 않는다**(M1) — 홈 화면과 같은 배열을 `teamCode`로 거른다.
          * 따로 계산하면 홈의 「続いている記録」와 이 화면의 값이 갈릴 수 있다.
+         *
+         * ⚠**자르는 것은 「거른 뒤」다**(2026-08-19 수정). 반대로 하면 — 즉 홈이 이미
+         * 상위 N으로 자른 배열을 거르면 — **12팀 중 6팀이 0건**이 된다(실측:
+         * `b 1 · c 0 · d 0 · db 0 · e 2 · f 0 · g 0 · h 3 · l 2 · m 0 · s 1 · t 1` · 합계 10건).
+         * ⚠**정렬은 홈과 같은 것을 그대로 쓴다**(M1) — 받은 배열이 이미 정렬돼 있고
+         * `filter` 는 순서를 보존하므로, 여기서 다시 `sort` 하지 않는다.
+         *   다시 정렬하는 순간 두 화면의 「상위」가 다른 뜻이 된다.
          */
-        streaks: homeStreaks.filter((s) => s.teamCode === code),
-        milestones: homeMilestones.filter((m) => m.teamCode === code),
+        streaks: allStreaks.filter((s) => s.teamCode === code).slice(0, TEAM_STREAK_ROWS),
+        milestones: allMilestones.filter((m) => m.teamCode === code).slice(0, TEAM_MILESTONE_ROWS),
       });
     }
   }
@@ -4485,7 +4536,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
    * 대시보드.
    *
    * ⚠**여기서 먼저 부른다**(2026-08-19 Task 6). 팀 페이지의 「続いている記録」·「記録に近づいている」가
-   * 이 결과를 `teamCode`로 거르기만 하므로(M1), `teamPages`보다 먼저 있어야 한다.
+   * 이 결과(**자르기 전 배열**)를 `teamCode`로 거르므로(M1), `teamPages`보다 먼저 있어야 한다.
    * ⚠**최신 경기 요약을 새로 조회하지 않는다**(M1) — `todayPage`가 이미 만든 것을 옮긴다.
    *   따로 조회하면 「試合 화면과 홈이 다른 경기를 보여준다」가 언젠가 난다.
    */
@@ -4539,9 +4590,14 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     gamePageIds,
     // ⚠**予告先発도 같은 한 벌이다**(M1) — 試合 화면·予告先発 화면이 쓰는 것을 그대로 넘긴다
     startersData,
-    // ⚠**연속 기록·기록 근접도 같은 한 벌이다**(M1 · Task 6) — 여기서 다시 계산하지 않는다
-    homeData.streaks,
-    homeData.milestones,
+    /**
+     * ⚠**연속 기록·기록 근접도 같은 한 벌이다**(M1 · Task 6) — 여기서 다시 계산하지 않는다.
+     * ⚠**`homeData.page.streaks` 가 아니라 `allStreaks` 다**(2026-08-19 수정). 홈이 상위 N으로
+     * 자른 뒤의 배열을 넘기면 구단 페이지가 **12팀 중 6팀 0건**이 된다 —
+     * 이 파일의 `HomePageResult` 주석에 실측이 있다.
+     */
+    homeData.allStreaks,
+    homeData.allMilestones,
   );
 
   return {
@@ -4569,8 +4625,8 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       tieRule: TIE_RULE,
       leagues: sections,
     },
-    // ⚠**위에서 이미 만들었다** — `teamPages`가 그 결과를 거르므로 여기서 다시 부르면 두 벌이 된다(M1)
-    home: homeData,
+    // ⚠**위에서 이미 만들었다** — `teamPages`가 같은 한 벌을 쓰므로 여기서 다시 부르면 두 벌이 된다(M1)
+    home: homeData.page,
     starters: startersData,
     starterDays,
     matchup: matchupPage(db, o, meta.latest, startersData, battingByPlayer, pitchingByPlayer),
