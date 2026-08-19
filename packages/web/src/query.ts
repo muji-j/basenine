@@ -107,6 +107,10 @@ import type {
   RunExpectancy,
   SeasonAggregate,
   SplitDimension,
+  SrcEntry,
+  SrcTotals,
+  SrpEntry,
+  SrpTotals,
 } from "@bb-app/aggregate";
 import { regularSeasonUpcoming } from "./calendar.ts";
 import type { CalendarData, CalendarGame, CalendarMonth } from "./calendar.ts";
@@ -505,8 +509,18 @@ function buildLeagueRankings(
   bundle: LeagueBundle,
   bat: readonly BattingEntry[],
   pit: readonly PitchingEntry[],
-  srcByPlayer: Map<string, { src: number; pa: number }>,
-  srpByPlayer: Map<string, { srp: number; bf: number }>,
+  /**
+   * `선수ID|리그` 키의 SRC/SRP. ⚠**시즌 합계를 넘기지 마라.**
+   *
+   * 이 표의 다른 지표는 전부 `agg.battingByLeague`/`pitchingByLeague`(리그별)에서 나온다
+   * (`leaderboard.ts` 의 `buildLeagues` — NPB 의 개인 타이틀은 소속 리그 성적만 센다).
+   * SRC/SRP 만 시즌 합계면 **같은 표 안에서 분모가 두 종류**가 된다.
+   * 실측(2026-08-20 · 고치기 전 `dist`): 山本(23125136)의 퍼시픽 SRC 행이
+   * **13.3 / 206打席**(시즌 합계)인데 같은 표의 다른 행은 전부 `101打席 / 90打数`였고,
+   * 소프트뱅크 구단 페이지는 같은 선수를 **13.5** 로 쓰고 있었다.
+   */
+  srcByLeague: ReadonlyMap<string, { src: number; pa: number }>,
+  srpByLeague: ReadonlyMap<string, { srp: number; bf: number }>,
 ): LeagueRankings {
   const bq = batterQualifier(bundle);
 
@@ -531,7 +545,7 @@ function buildLeagueRankings(
     bundle,
     bat,
     (e) => {
-      const s = srcByPlayer.get(e.player.playerId);
+      const s = srcByLeague.get(`${e.player.playerId}|${bundle.league}`);
       return s === undefined ? rate(0, 0) : { value: s.src, denominator: s.pa };
     },
     true,
@@ -575,8 +589,8 @@ function buildLeagueRankings(
   return {
     league: bundle.league,
     batting,
-    starter: pitcherRankings(bundle, pit, "starter", pid, srpByPlayer),
-    reliever: pitcherRankings(bundle, pit, "reliever", pid, srpByPlayer),
+    starter: pitcherRankings(bundle, pit, "starter", pid, srpByLeague),
+    reliever: pitcherRankings(bundle, pit, "reliever", pid, srpByLeague),
   };
 }
 
@@ -593,7 +607,7 @@ function pitcherRankings(
   pit: readonly PitchingEntry[],
   role: PitcherRole,
   pid: (e: PitchingEntry) => { playerId: string; name: string; teamCode: string },
-  srpByPlayer: Map<string, { srp: number; bf: number }>,
+  srpByLeague: ReadonlyMap<string, { srp: number; bf: number }>,
 ): MetricRanking[] {
   const pq = pitcherQualifier(bundle, role);
   const mine = entriesOfRole(pit, role);
@@ -604,14 +618,28 @@ function pitcherRankings(
     label: string,
     pick: (e: PitchingEntry) => Rate,
     higherIsBetter = false,
+    /**
+     * 분모가 **무엇을 센 것인가.** 기본은 아웃 카운트이고 화면에는 이닝으로 나간다.
+     *
+     * ⚠**기본값을 그대로 쓰면 안 되는 지표가 있다** — SRP 의 분모는 아웃이 아니라
+     * **상대 타자 수**다. 그런데도 기본값을 받아 `bf/3` 을 「投球回」로 그리고 있었다
+     * (2026-08-20 실측 · `dist/ranking.html` 의 SRP 행 **123건 중 123건**이 어긋났다):
+     * 村上(13315153) 화면 **179.2回** 대 실제 **138.1回**(415아웃 · BF 539) ·
+     * 達(01205155) **122.2回** 대 **89.2回** · 大津(01305157) **147.2回** 대 **112.1回**.
+     * (⚠감사 보고의 「414아웃」은 반올림이 어긋난 값이다 — 138.1回 = **415아웃**이고,
+     *  고치기 전 코드에 되돌려 실측한 결과도 415였다.)
+     * 선수 페이지는 같은 값을 **539対戦打者**로 쓰고 있었으므로, 한 페이지 안에서
+     * 같은 분모가 두 얼굴을 하고 있었다 — `parts.ts` 의 `statRateOuts` 가 적어 둔 그대로,
+     * 분모를 붙이는 것만으로는 M2 를 지킨 것이 아니고 **맞는 분모**여야 한다.
+     */
+    den: { unit: string; asInnings: boolean } = { unit: "投球回", asInnings: true },
   ): MetricRanking =>
-    // ⚠투수 지표의 `Rate.denominator`는 **아웃 카운트**다. 이닝으로 바꿔 표기한다.
     // ⚠**방향을 끝까지 넘긴다.** 「전원 순위」도 같은 방향으로 매겨야 한다 —
     // 안 넘기면 방어율 전원 순위가 **나쁜 순**이 되어 1위가 최악의 투수가 된다
     toMetricRanking(
-      id, label, 2, "投球回", pq,
+      id, label, 2, den.unit, pq,
       asRanked(rankPitchersInRole(bundle, pit, role, pick, higherIsBetter)),
-      true, false, higherIsBetter,
+      den.asInnings, false, higherIsBetter,
     );
   const count = (id: string, label: string, of: (e: PitchingEntry) => number): MetricRanking =>
     countRanking(
@@ -638,10 +666,12 @@ function pitcherRankings(
   /** ⚠**순서는 `metric-order.ts` 가 정한다**(위 타자 목록과 같은 이유) */
   const common: MetricRanking[] = byMetricOrder([
     // ⚠SRP는 **높을수록 좋다.** 다른 투수 비율과 방향이 반대다
+    // ⚠**분모는 상대 타자 수다**(아웃이 아니다). 단위를 선수 페이지(`対戦打者`)와 맞춘다 —
+    //   두 화면이 같은 이름으로 다른 것을 가리키면 그 자체가 거짓말이 된다(M1·M2)
     rate("srp", "SRP", (e) => {
-      const v = srpByPlayer.get(e.player.playerId);
+      const v = srpByLeague.get(`${e.player.playerId}|${bundle.league}`);
       return v === undefined ? { value: null, denominator: 0 } : { value: v.srp, denominator: v.bf };
-    }, true),
+    }, true, { unit: "対戦打者", asInnings: false }),
     rate("era", "防御率", (e) => e.era),
     rate("fip", "FIP", (e) => e.fip),
     rate("whip", "WHIP", (e) => e.whip),
@@ -2000,6 +2030,74 @@ function srcOf(m: ReadonlyMap<string, { src: number; pa: number }>, id: string):
 function srpOf(m: ReadonlyMap<string, { srp: number; bf: number }>, id: string): Rate {
   const s = m.get(id);
   return s === undefined ? { value: null, denominator: 0 } : { value: s.srp, denominator: s.bf };
+}
+
+/**
+ * 리그별로 잰 SRC/SRP 를 **세 단위로 묶은 것.**
+ *
+ * ⚠**세 단위는 서로 대신할 수 없다.** 어느 화면이 어느 단위를 쓰는지가 곧 그 지표의 정의다.
+ */
+export interface SituationalFold<T> {
+  /** 시즌 합계. **선수 페이지 · 비교 · 予告先発**이 쓴다 — 리그를 넘어도 한 줄이다 */
+  byPlayer: Map<string, T>;
+  /**
+   * `선수ID|리그`. **순위가 쓴다.**
+   *
+   * ⚠**타이틀은 소속 리그에서 낸 성적으로만 겨룬다** — 순위표의 다른 지표가 전부
+   * `battingByLeague`/`pitchingByLeague` 에서 나오는 것과 같은 규칙이다.
+   */
+  byLeague: Map<string, T>;
+  /** `선수ID|구단코드`. 구단 페이지가 쓴다 — 「이 구단에서 낸 몫」만 싣는다 */
+  byTeam: Map<string, T>;
+}
+
+/**
+ * ⚠**리그를 다 돈 뒤에 접는다 — 이 함수가 존재하는 이유가 그것이다**(2026-08-20 P1).
+ *
+ * 예전에는 리그 루프 **안에서** 지도를 쌓으면서 **같은 루프 안에서 순위까지 만들었다.**
+ * 그래서 먼저 도는 센트럴은 리그별 값을, 나중 도는 퍼시픽은 두 리그 합계를 받았다 —
+ * **두 리그가 다른 정의를 쓴 것**이고, 번들 순서를 바꾸면 조용히 뒤집혔다.
+ * 실측(고치기 전 `dist`): 尾形(61365136)의 센트럴 SRP 분모 214(=리그별)와
+ * 山本(23125136)의 퍼시픽 SRC 분모 206(=시즌 합계)이 **같은 사이트에 공존**했다.
+ *
+ * ⚠**입력 순서에 결과가 기대지 않는다** — 리그마다 자기 키를 쓰고, 합은 교환법칙을 따른다.
+ * ⚠**합치는 규칙은 `addSrc` 한 벌이다**(M1). 여기서 `+` 를 다시 쓰면 어느 날 한쪽만 고쳐진다.
+ */
+export function foldSrc(
+  perLeague: readonly { league: League; entries: readonly SrcEntry[] }[],
+): SituationalFold<SrcTotals> {
+  const byPlayer = new Map<string, SrcTotals>();
+  const byLeague = new Map<string, SrcTotals>();
+  const byTeam = new Map<string, SrcTotals>();
+  for (const { league, entries } of perLeague) {
+    for (const s of entries) {
+      byPlayer.set(s.playerId, addSrc(byPlayer.get(s.playerId), s));
+      const lk = `${s.playerId}|${league}`;
+      byLeague.set(lk, addSrc(byLeague.get(lk), s));
+      const tk = `${s.playerId}|${s.teamCode}`;
+      byTeam.set(tk, addSrc(byTeam.get(tk), s));
+    }
+  }
+  return { byPlayer, byLeague, byTeam };
+}
+
+/** 투수 쪽. **타자와 같은 모양으로 접는다** — 갈래가 다르면 한쪽만 고쳐진다(`foldSrc` 참조) */
+export function foldSrp(
+  perLeague: readonly { league: League; entries: readonly SrpEntry[] }[],
+): SituationalFold<SrpTotals> {
+  const byPlayer = new Map<string, SrpTotals>();
+  const byLeague = new Map<string, SrpTotals>();
+  const byTeam = new Map<string, SrpTotals>();
+  for (const { league, entries } of perLeague) {
+    for (const s of entries) {
+      byPlayer.set(s.playerId, addSrp(byPlayer.get(s.playerId), s));
+      const lk = `${s.playerId}|${league}`;
+      byLeague.set(lk, addSrp(byLeague.get(lk), s));
+      const tk = `${s.playerId}|${s.teamCode}`;
+      byTeam.set(tk, addSrp(byTeam.get(tk), s));
+    }
+  }
+  return { byPlayer, byLeague, byTeam };
 }
 
 /**
@@ -4053,21 +4151,13 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
 
   /** 리그별 번트의 득점기대값 변화. **선수의 기록이 아니라 리그 전체의 값**이다 */
   const buntByLeague = new Map<League, BuntCell[]>();
-  const srcByPlayer = new Map<string, { src: number; pa: number; skipped: number; srcPer600: number | null }>();
-  // ⚠9이닝 환산의 분모는 **아웃**이다. 상대 타자 수(bf)는 표본 표기용이라 둘 다 들고 있어야 한다
-  const srpByPlayer = new Map<string, { srp: number; bf: number; skipped: number; outs: number; srpPer9: number | null }>();
-  // 화면이 쓰는 **시즌 합계**. 리그를 넘어도 한 줄이다
   /**
-   * **선수 × 구단**의 SRC/SRP. 구단 페이지가 쓴다.
-   *
-   * ⚠**시즌 합계를 구단 표에 실으면 안 된다.** 이적 선수의 SRC 가 두 구단 페이지에
-   * 그대로 실려, 같은 행 안에서 打席 는 팀 몫이고 SRC 는 시즌 합계가 된다 —
-   * **분모가 두 종류**가 되는 것이다(2026-08-17 2차 검토 · 실측 2명).
-   * ⚠**순위는 반대로 시즌 합계여야 한다** — 아래 `srcByPlayer` 가 그 몫이고,
-   * 같은 행들을 선수 단위로 더해서 만든다(M1: 계산은 한 벌, 묶는 단위만 다르다).
+   * 리그별로 잰 SRC/SRP 의 **원재료.** ⚠**여기서 묶지 않는다** — 묶는 것은 `foldSrc`/`foldSrp` 가
+   * 리그를 다 돈 뒤에 한 번에 한다. 루프 안에서 묶으면서 같은 루프에서 순위까지 만들면
+   * 먼저 도는 리그와 나중 도는 리그가 **다른 정의**를 쓰게 된다(2026-08-20 P1).
    */
-  const srcByTeam = new Map<string, { src: number; pa: number }>();
-  const srpByTeam = new Map<string, { srp: number; bf: number }>();
+  const srcPerLeague: { league: League; entries: readonly SrcEntry[] }[] = [];
+  const srpPerLeague: { league: League; entries: readonly SrpEntry[] }[] = [];
 
   const battingByPlayer = new Map<string, BattingEntry>();
   const pitchingByPlayer = new Map<string, PitchingEntry>();
@@ -4076,6 +4166,11 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   const leagueBatting = new Map<string, BattingEntry>();
   const leaguePitching = new Map<string, PitchingEntry>();
   const bundleByLeague = new Map<League, LeagueBundle>();
+  /**
+   * 순위를 만들 재료. ⚠**루프 안에서 순위를 만들지 않는다** — SRC/SRP 의 정의는
+   * 리그를 다 돌고 접은 뒤에야 정해진다(`foldSrc`).
+   */
+  const rankingInput: { bundle: LeagueBundle; bat: BattingEntry[]; pit: PitchingEntry[] }[] = [];
 
   for (const bundle of bundles) {
     bundleByLeague.set(bundle.league, bundle);
@@ -4090,21 +4185,10 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
 
     // ⚠**더하고 덮어쓰지 않는다.** SRC는 그 리그의 득점기대 행렬로 잰 **런 수**라 리그를 넘어도
     // 더하는 것이 맞다. 덮어쓰면 리그를 넘은 선수의 절반이 사라진다(2026-08-16 이중 검토 P0)
-    for (const s of computeSrc(db, re, codes, competition, through)) {
-      // 환산값은 합계가 정해진 뒤에 낸다(아래)
-      srcByPlayer.set(s.playerId, { ...addSrc(srcByPlayer.get(s.playerId), s), srcPer600: null });
-      // ⚠**같은 행을 두 단위로 묶는다.** 선수 단위(순위)와 선수×구단 단위(구단 페이지)
-      const tk = `${s.playerId}|${s.teamCode}`;
-      const tp = srcByTeam.get(tk);
-      srcByTeam.set(tk, { src: (tp?.src ?? 0) + s.src, pa: (tp?.pa ?? 0) + s.pa });
-    }
+    // ⚠**다만 더하는 것은 나중이다** — 접기는 리그를 다 돈 뒤에 한다(`foldSrc`)
+    srcPerLeague.push({ league: bundle.league, entries: computeSrc(db, re, codes, competition, through) });
     // ⚠투수는 같은 커널의 부호 반대다. 같은 리그 RE 행렬을 쓴다
-    for (const s of computeSrp(db, re, codes, competition, through)) {
-      srpByPlayer.set(s.playerId, { ...addSrp(srpByPlayer.get(s.playerId), s), srpPer9: null });
-      const pk = `${s.playerId}|${s.teamCode}`;
-      const pp = srpByTeam.get(pk);
-      srpByTeam.set(pk, { srp: (pp?.srp ?? 0) + s.srp, bf: (pp?.bf ?? 0) + s.bf });
-    }
+    srpPerLeague.push({ league: bundle.league, entries: computeSrp(db, re, codes, competition, through) });
 
     const bat = battingEntries(bundle);
     const pit = pitchingEntries(bundle);
@@ -4113,13 +4197,40 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     // 지금 뛰지 않는 옛 팀이 소속으로 나오고 현재 팀 로스터에서 사라졌다
     for (const e of bat) leagueBatting.set(`${e.player.playerId}|${bundle.league}`, e);
     for (const e of pit) leaguePitching.set(`${e.player.playerId}|${bundle.league}`, e);
-    rankingsByLeague.set(bundle.league, buildLeagueRankings(bundle, bat, pit, srcByPlayer, srpByPlayer));
+    rankingInput.push({ bundle, bat, pit });
   }
+
+  const srcFold = foldSrc(srcPerLeague);
+  const srpFold = foldSrp(srpPerLeague);
+  /**
+   * **선수 × 구단**의 SRC/SRP. 구단 페이지가 쓴다.
+   *
+   * ⚠**시즌 합계를 구단 표에 실으면 안 된다.** 이적 선수의 SRC 가 두 구단 페이지에
+   * 그대로 실려, 같은 행 안에서 打席 는 팀 몫이고 SRC 는 시즌 합계가 된다 —
+   * **분모가 두 종류**가 되는 것이다(2026-08-17 2차 검토 · 실측 2명).
+   */
+  const srcByTeam = srcFold.byTeam;
+  const srpByTeam = srpFold.byTeam;
 
   // ⚠**비율은 합계가 정해진 뒤에 낸다.** 리그별로 낸 환산값을 더하면 분모가 두 번 세어진다.
   // 환산식은 집계 패키지 한 벌을 쓴다(M1) — 여기서 다시 쓰면 언젠가 한쪽만 고쳐진다
-  for (const [id, s] of srcByPlayer) srcByPlayer.set(id, { ...s, srcPer600: srcPer600Of(s.src, s.pa) });
-  for (const [id, s] of srpByPlayer) srpByPlayer.set(id, { ...s, srpPer9: srpPer9Of(s.srp, s.outs) });
+  /** 화면이 쓰는 **시즌 합계**. 리그를 넘어도 한 줄이다 */
+  const srcByPlayer = new Map<string, { src: number; pa: number; skipped: number; srcPer600: number | null }>();
+  for (const [id, s] of srcFold.byPlayer) srcByPlayer.set(id, { ...s, srcPer600: srcPer600Of(s.src, s.pa) });
+  // ⚠9이닝 환산의 분모는 **아웃**이다. 상대 타자 수(bf)는 표본 표기용이라 둘 다 들고 있어야 한다
+  const srpByPlayer = new Map<string, { srp: number; bf: number; skipped: number; outs: number; srpPer9: number | null }>();
+  for (const [id, s] of srpFold.byPlayer) srpByPlayer.set(id, { ...s, srpPer9: srpPer9Of(s.srp, s.outs) });
+
+  /**
+   * ⚠**순위는 접기가 끝난 뒤에 만든다.** 리그 루프 안에서 만들면 먼저 도는 리그는 리그별 값을,
+   * 나중 도는 리그는 시즌 합계를 받는다 — 같은 순위표가 리그마다 다른 정의를 쓰게 된다.
+   */
+  for (const w of rankingInput) {
+    rankingsByLeague.set(
+      w.bundle.league,
+      buildLeagueRankings(w.bundle, w.bat, w.pit, srcFold.byLeague, srpFold.byLeague),
+    );
+  }
 
   /**
    * 화면이 쓰는 **시즌 합계**.
