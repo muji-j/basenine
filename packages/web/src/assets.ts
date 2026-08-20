@@ -2757,7 +2757,12 @@ $$("[data-rankonly]").forEach(btn=>{
     if(countEl)countEl.textContent=n+"人";
     if(minWrap)minWrap.hidden=!all;
     if(minBox){
-      if(!typing)minBox.value=rankMinText(min,asOuts);
+      /* ⚠**칸의 값을 되돌려 놓으면 「못 읽었다」도 같이 사라져야 한다**(2026-08-21 최종 검토 P3).
+         bad 는 사본마다 따로인데 칸의 값은 **다른 사본의 조작으로도** 덮어써진다 —
+         A 에 「-5」를 친 채 B 의 「規定到達のみ」를 누르면 A 의 칸은 유효한 수로 돌아가는데
+         aria-invalid 와 경고문만 A 에 남아 **「값은 정상인데 오류라고 말하는 칸」**이 됐다.
+         ⚠typing 인 사본(지금 치고 있는 칸)은 값을 안 건드리므로 bad 도 그대로 둔다. */
+      if(!typing){minBox.value=rankMinText(min,asOuts);bad=false}
       minBox.setAttribute("aria-invalid",String(bad));
     }
     if(badEl)badEl.hidden=!bad;
@@ -2830,6 +2835,11 @@ function fetchIndex(){
    실측(색인 698명): 「田」 81건 · 「中」 86건 · 「山」 48건이 전부 20건으로 보였다. */
 const SEARCH_LIMIT=20;
 
+/* 결과 수를 **소리로** 낼 때 모으는 시간(ms).
+   ⚠미루는 것은 **낭독뿐**이다 — 목록은 키를 칠 때마다 즉시 다시 그린다.
+   창 크기 디바운스와 같은 값을 쓴다(이 파일 위쪽 150ms). */
+const SAY_DELAY=150;
+
 /* ── 선수 고르기 ──
    헤더 검색과 「対戦を選ぶ」 화면이 **같은 구현**을 쓴다. 두 벌로 나누면 키보드 조작이
    한쪽에만 붙는 식으로 어긋난다. */
@@ -2838,12 +2848,28 @@ function attachPicker(input,list,onPick){
   /* 결과 수를 **소리로** 내는 자리. 서버가 미리 그려 둔다(라이브 영역은 갱신 전에 DOM 에 있어야 읽힌다).
      ⚠**목록 자체를 라이브로 만들지 않는다** — 키를 칠 때마다 스무 명을 통째로 읽는다. */
   const status=list.parentNode?$("[data-hitstatus]",list.parentNode):null;
-  const say=(text)=>{if(status&&status.textContent!==text)status.textContent=text};
+  /* ⚠**한 글자마다 낭독하지 않는다**(2026-08-21 최종 검토 P3).
+     role=status 는 폴라이트 라이브 영역이라 **인원수가 바뀔 때마다 낭독이 쌓인다** —
+     IME 로 「たなか」를 치는 구간이 그렇다(화살표 이동은 문구가 안 바뀌어 원래 조용하다).
+     SAY_DELAY 만 모으고, **화면은 안 미룬다** — 미루면 조작감이 바뀐다.
+     ⚠**닫을 때는 미룬 것을 버리고 즉시 지운다** — 닫힌 목록의 인원이 뒤늦게 들리면 더 나쁘다. */
+  let sayTimer=null,sayWanted=null;
+  const sayApply=(text)=>{sayWanted=null;if(status&&status.textContent!==text)status.textContent=text};
+  const sayStop=()=>{if(sayTimer!==null){clearTimeout(sayTimer);sayTimer=null}};
+  const say=(text)=>{
+    if(!status)return;
+    /* 이미 그 말을 하고 있거나 하려던 참이면 아무것도 하지 않는다 — 같은 문구의 재낭독을 막는다 */
+    if(sayWanted===null?status.textContent===text:sayWanted===text)return;
+    sayWanted=text;sayStop();
+    sayTimer=setTimeout(()=>{sayTimer=null;sayApply(text)},SAY_DELAY);
+  };
+  /* 미룬 것을 버리고 지금 말한다 */
+  const sayAtOnce=(text)=>{sayStop();sayApply(text)};
   /* hits = **자르기 전** 일치 수 · asked = 그 수를 낸 질의어(「一覧」으로 넘길 때 쓴다) */
   let rows=[],active=-1,hits=0,asked="";
   /* ⚠**닫을 때 소리도 지운다** — 닫힌 목록의 인원을 낭독기가 계속 들고 있으면
      다음에 같은 수가 나왔을 때 아무 말도 안 하게 된다 */
-  const close=()=>{list.hidden=true;say("");active=-1};
+  const close=()=>{list.hidden=true;sayAtOnce("");active=-1};
   /* @param items 배열이면 결과, **null 이면 아직 읽는 중**이다 */
   const draw=(items,failed)=>{
     list.textContent="";

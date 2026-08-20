@@ -1672,6 +1672,19 @@ async function searchIn(
   return doc.querySelectorAll(`#${listId} li`);
 }
 
+/**
+ * **낭독 영역이 실제로 말한 것.**
+ *
+ * ⚠**`role="status"` 갱신은 150ms 모아서 낸다**(2026-08-21 · `assets.ts` 의 `SAY_DELAY`).
+ * 폴라이트 라이브 영역이라 한 글자마다 인원수가 바뀌면 그만큼 낭독이 쌓이기 때문이다 —
+ * IME 로 「たなか」를 치는 구간이 그렇다. **화면(목록)은 안 미룬다**, 그래서 `searchIn` 은 그대로다.
+ * ⚠**여기서만 기다린다** — `searchIn` 에 150ms 를 넣으면 검색 시험 전체가 그만큼 느려진다.
+ */
+async function said(doc: ReturnType<typeof makeDocument>): Promise<string> {
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  return doc.querySelector("[data-hitstatus]")!.textContent;
+}
+
 /** 결과 항목만. 꼬리의 안내줄은 결과가 아니다 */
 function picks(items: El[]): El[] {
   return items.filter((li) => li.className !== "more");
@@ -1810,23 +1823,41 @@ test("⚠Esc 로 닫힌다 — 롤을 빼는 것이지 조작을 빼는 게 아�
 test("⚠결과 수를 소리로 낸다 — combobox 를 그만둔 자리를 이것이 받는다", async () => {
   const doc = buildHeaderSearch();
   run(doc, { index: MANY_INDEX });
-  const status = doc.querySelector("[data-hitstatus]")!;
   await searchIn(doc, "q", "qhits", "田1");
-  assert.match(status.textContent, /11/, "고른 인원을 말하지 않는다");
+  assert.match(await said(doc), /11/, "고른 인원을 말하지 않는다");
   await searchIn(doc, "q", "qhits", "田");
-  assert.match(status.textContent, /25/, "자르기 전 인원을 말하지 않는다");
-  assert.match(status.textContent, /20/, "그리는 인원을 말하지 않는다");
+  const many = await said(doc);
+  assert.match(many, /25/, "자르기 전 인원을 말하지 않는다");
+  assert.match(many, /20/, "그리는 인원을 말하지 않는다");
   await searchIn(doc, "q", "qhits", "존재하지않음");
-  assert.match(status.textContent, /該当なし/, "0건을 말하지 않는다");
+  assert.match(await said(doc), /該当なし/, "0건을 말하지 않는다");
+});
+
+/**
+ * ⚠**목록은 안 미룬다.** 낭독만 모으는 것이라, 화면은 키를 칠 때마다 바로 바뀌어야 한다 —
+ * 안 그러면 「검색이 느려졌다」가 되고 그건 §0-1 의 주 경로다.
+ */
+test("⚠낭독을 모아도 목록은 즉시 바뀐다 — 미루는 것은 소리뿐이다", async () => {
+  const doc = buildHeaderSearch();
+  run(doc, { index: MANY_INDEX });
+  const items = await searchIn(doc, "q", "qhits", "田1");
+  assert.ok(picks(items).length > 0, "목록이 즉시 안 그려졌다 — 화면까지 미뤘다");
+  // 그 시점에는 아직 소리가 안 났다(모으는 중이다)
+  assert.equal(
+    doc.querySelector("[data-hitstatus]")!.textContent,
+    "",
+    "키 입력 즉시 낭독 영역을 갱신했다 — 한 글자마다 낭독이 쌓인다",
+  );
+  assert.match(await said(doc), /11/, "모은 뒤에도 결국 말하지 않는다");
 });
 
 test("⚠읽지 못했을 때도 소리로 낸다 — 「없다」와 「못 읽었다」는 다르다(M12)", async () => {
   const doc = buildHeaderSearch();
   run(doc); // 색인을 주지 않는다 = 취득 실패
-  const status = doc.querySelector("[data-hitstatus]")!;
   await searchIn(doc, "q", "qhits", "田");
-  assert.ok(status.textContent !== "", "실패를 말하지 않는다");
-  assert.ok(!status.textContent.includes("該当なし"), "취득 실패를 「없다」라고 말한다");
+  const text = await said(doc);
+  assert.ok(text !== "", "실패를 말하지 않는다");
+  assert.ok(!text.includes("該当なし"), "취득 실패를 「없다」라고 말한다");
 });
 
 test("⚠닫으면 소리도 지운다 — 닫힌 목록의 인원을 낭독기가 계속 들고 있으면 안 된다", async () => {
@@ -1835,9 +1866,12 @@ test("⚠닫으면 소리도 지운다 — 닫힌 목록의 인원을 낭독기�
   const input = doc.getElementById("q")!;
   const status = doc.querySelector("[data-hitstatus]")!;
   await searchIn(doc, "q", "qhits", "田");
-  assert.ok(status.textContent !== "");
+  assert.ok((await said(doc)) !== "");
   input.fire("keydown", { key: "Escape" });
+  // ⚠**즉시** 지운다 — 모으는 시간을 기다리지 않는다(닫힌 목록의 인원이 뒤늦게 들리면 더 나쁘다)
   assert.equal(status.textContent, "", "닫았는데 결과 수가 남아 있다");
+  // ⚠**미뤄 둔 낭독이 뒤늦게 되살아나지 않는가** — 이게 디바운스를 넣을 때의 진짜 함정이다
+  assert.equal(await said(doc), "", "닫은 뒤에 미뤄 둔 인원수가 되살아났다");
 });
 
 test("⚠등번호가 없는 선수에게 자리를 만들지 않는다 — 「―」로 채우면 198줄이 같은 기호가 된다", async () => {
@@ -2858,4 +2892,45 @@ test("⚠같은 지표의 사본이 함께 움직인다 — 한쪽만 갱신하�
   const all = doc.querySelectorAll("tr");
   assert.equal(all.filter((r) => !r.hidden).length, 4, "사본 쪽 표가 따라오지 않았다");
   assert.equal(inputs[1]!.value, "250", "사본의 입력칸이 저장된 값을 안 보여준다");
+});
+
+/**
+ * ⚠**못 읽은 입력의 상태가 사본 간에 어긋났다**(2026-08-21 최종 검토 P3).
+ *
+ * `bad` 는 사본마다 따로 있는데 **칸의 값은 다른 사본의 조작으로도 덮어써진다.**
+ * A 에 「-5」를 친 채 B 의 버튼을 누르면 A 의 칸은 유효한 수로 돌아가는데
+ * `aria-invalid="true"` 와 경고문만 A 에 남아 **「값은 정상인데 오류라고 말하는 칸」**이 된다.
+ * ⚠**낭독기에는 그게 전부다** — 화면에서 눈으로 값을 보는 사람만 모순을 알아챌 수 있다.
+ */
+test("⚠못 읽은 입력을 사본 쪽 조작이 되돌려 놓으면 오류 표시도 같이 사라진다", () => {
+  const { doc } = rankingPanelDom("avg", DENS);
+  const second = make("div", { "data-panelgroup": "rankmetric", "data-panelkey": "avg2" });
+  const twin = rankingPanelDom("avg", DENS);
+  for (const c of [...twin.doc.body.children]) second.appendChild(c);
+  doc.body.appendChild(second);
+  run(doc);
+
+  const btns = doc.querySelectorAll('[data-rankonly="avg"]');
+  const inputs = doc.querySelectorAll('[data-rankmin="avg"]');
+  const bads = doc.querySelectorAll('[data-rankbad="avg"]');
+  assert.equal(btns.length, 2, "사본이 둘이 아니다 — 이 시험이 공회전한다");
+
+  btns[0]!.fire("click"); // 「全員」으로
+  inputs[0]!.value = "-5";
+  inputs[0]!.fire("input");
+  // 먼저 **못 읽었다고 말하는가**를 확인한다 — 아니면 아래가 아무것도 안 재는 것이다
+  assert.equal(inputs[0]!.getAttribute("aria-invalid"), "true", "못 읽은 입력을 못 읽었다고 안 한다");
+  assert.equal(bads[0]!.hidden, false, "못 읽은 입력인데 경고문이 안 나온다");
+
+  // **사본 쪽**을 두 번 눌러 같은 표시 상태로 되돌린다(그 사이 A 의 칸은 유효값으로 덮어써진다)
+  btns[1]!.fire("click");
+  btns[1]!.fire("click");
+
+  assert.equal(inputs[0]!.value, "0", "사본 조작이 A 의 칸을 안 되돌렸다 — 이 시험이 다른 것을 재고 있다");
+  assert.equal(
+    inputs[0]!.getAttribute("aria-invalid"),
+    "false",
+    "값은 정상으로 돌아갔는데 칸이 여전히 오류라고 말한다",
+  );
+  assert.equal(bads[0]!.hidden, true, "값은 정상으로 돌아갔는데 경고문이 남아 있다");
 });
