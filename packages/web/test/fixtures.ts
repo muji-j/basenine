@@ -45,8 +45,8 @@ export function battingBlock(over: Partial<BattingBlockData> = {}): BattingBlock
       pickoff: 1,
       rate: { value: 5 / 7, denominator: 7 },
       byBase: [
-        { label: "二盗", sb: 4, cs: 1, rate: { value: 0.8, denominator: 5 } },
-        { label: "三盗", sb: 1, cs: 1, rate: { value: 0.5, denominator: 2 } },
+        { label: "二盗", base: "2b", sb: 4, cs: 1, rate: { value: 0.8, denominator: 5 } },
+        { label: "三盗", base: "3b", sb: 1, cs: 1, rate: { value: 0.5, denominator: 2 } },
       ],
       pickoffByBase: [{ label: "一塁", n: 1 }],
       doubleSteal: 1,

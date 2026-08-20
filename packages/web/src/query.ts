@@ -3448,8 +3448,10 @@ function teamPages(
             rbi: r.rbi,
             sb: r.sb,
             // ⚠**키가 「선수|구단」이다** — 선수 ID 하나로 찾으면 이적 선수의 시즌 합계가 실린다
-            //   (바로 아래 SRC 가 같은 함정을 밟았던 자리다). 없으면 `null`(M11)
-            gidp: gidpByTeam.get(`${r.playerId}|${code}`) ?? null,
+            //   (바로 아래 SRC 가 같은 함정을 밟았던 자리다).
+            // ⚠**0打席이면 0이고, 打席가 있는데 행이 없을 때만 `null`(모름)이다**(M11) —
+            //   선수 페이지와 같은 규칙이다. 자세한 근거는 그쪽 주석에 있다
+            gidp: gidpByTeam.get(`${r.playerId}|${code}`) ?? (r.line.pa === 0 ? 0 : null),
             avg: e.avg,
             obp: e.obp,
             slg: e.slg,
@@ -4516,6 +4518,8 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
                 if (attempts(one) === 0) continue;
                 byBase.push({
                   label: STEAL_BASE_LABEL[base],
+                  // ⚠**화면이 라벨 문자열로 루를 판정하지 않게 한다** — 각주의 本盗 분기가 이걸 본다
+                  base,
                   sb: one.sb,
                   cs: one.cs,
                   rate: { value: successRate(one), denominator: attempts(one) },
@@ -4542,10 +4546,19 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
               };
             })(),
             /**
-             * 併殺打. ⚠**행이 없으면 `null` 이다**(M11) — 그 선수의 타석 로그가 없다는 뜻이고,
-             * 0으로 때우면 「병살이 한 번도 없는 타자」라는 거짓이 된다.
+             * 併殺打.
+             *
+             * ⚠**「0打席이라 정의상 0」과 「세지 못했다」를 가른다**(M11 · 2026-08-20 이중 검토 지적).
+             * 처음에는 행이 없으면 무조건 `null` 이었는데, 실측으로 **`pa_event` 에 행이 없는 타자는
+             * 9시즌 전 시즌에서 예외 없이 `打席 0` 이었다**(1,257명 중 打席>0 인 사람 **0명**).
+             * 즉 그 `null` 은 결측이 아니라 **알 수 있는 0** 이었고, 같은 블록이 그 선수에게
+             * `打席 0`·`安打 0`·`本塁打 0` 은 숫자로 내면서 併殺打만 `—` 를 내고 있었다
+             * (선수 페이지 3,998장 중 **535장**).
+             * ⚠**M11 은 「모르면 —」이 아니라 「0과 결측을 구별하라」다.** 알 수 있는 0을 결측으로
+             * 강등하면, 진짜 결측(타석 로그 파싱 실패)이 났을 때 **같은 화면이라 구별할 수 없다.**
+             * → 打席가 0이면 **0**, 打席가 있는데 행이 없으면 그때가 진짜 `null` 이다.
              */
-            gidp: gidpByPlayer.get(playerId) ?? null,
+            gidp: gidpByPlayer.get(playerId) ?? (bat.player.line.pa === 0 ? 0 : null),
             line: bat.player.line,
             avg: bat.avg,
             obp: bat.obp,

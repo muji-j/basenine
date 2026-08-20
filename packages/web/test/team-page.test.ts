@@ -673,6 +673,43 @@ test("⚠머리 i번째 아래에 그 지표의 값이 있다 — 개수만 세�
   assert.ok(checked >= 34, `${checked}칸밖에 안 쟀다 — 4개 표가 다 안 걸렸다`);
 });
 
+/**
+ * ⚠**위 시험은 「열이 사라진 것」을 못 잡는다**(2026-08-20 이중 검토 P2 · 뮤테이션 실측).
+ *
+ * 위 시험은 **렌더된 머리를 순회**하므로, 열 정의를 통째로 지우면 그 열이 검사 대상에서
+ * **조용히 빠진다.** 실제로 `team-page.ts` 의 併殺打 열 정의 1줄을 지우고 돌렸더니
+ * `team-page.test.ts` **53본이 전부 통과**했다(`checked` 도 34 밑으로 안 내려갔다).
+ * 「부르는 곳이 0곳」을 고치는 것이 이번 작업의 주제인데, **다시 0곳이 돼도 아무도 모르는** 상태다.
+ *
+ * → 그래서 **있어야 할 열의 집합**을 따로 못박는다. 위 시험이 「자리」를, 이 시험이 「존재」를 본다.
+ * ⚠**늘어난 것도 잡는다**(`deepEqual`) — 열이 슬쩍 생기면 순서와 라벨을 다시 봐야 한다.
+ */
+const EXPECTED_COLS: Readonly<Record<string, readonly string[]>> = {
+  // 순서는 `metric-order.ts` 가 정한다 — 여기 적힌 것은 **그 결과**다
+  teambatTable: ["name", "avg", "obp", "slg", "ops", "games", "pa", "h", "hr", "rbi", "sb", "gidp"],
+  teambatsaberTable: ["name", "src", "wrcplus", "woba", "wraa", "ops", "pa"],
+  teampitTable: ["name", "role", "whip", "era", "games", "outs", "so", "w", "l", "sv", "hld"],
+  teampitsaberTable: ["name", "srp", "fip", "k9", "bb9", "ppo", "outs", "qs"],
+};
+
+test("⚠구단 표의 열 집합이 그대로다 — 열이 통째로 사라져도 위 시험은 안 떨어진다", () => {
+  const out = renderTeamPage(marked(), context());
+  const tables = [...out.matchAll(/<table id="(team[^"]*)">([\s\S]*?)<\/table>/g)];
+  const got: Record<string, string[]> = {};
+  for (const t of tables) {
+    const id = t[1] ?? "";
+    if (!(id in EXPECTED_COLS)) continue;
+    got[id] = [...(t[2] ?? "").matchAll(/data-sortkey="([^"]+)"/g)].map((m) => m[1] ?? "");
+  }
+  assert.deepEqual(
+    got,
+    Object.fromEntries(Object.entries(EXPECTED_COLS).map(([k, v]) => [k, [...v]])),
+    "구단 표의 열이 바뀌었다 — 지웠으면 이 표도 고치고, 늘렸으면 metric-order.ts 의 자리를 확인해라",
+  );
+  // ⚠**併殺打는 이번에 넣은 열이다.** 이름을 직접 짚어 두어 「그 열이 있는가」가 눈에 보이게 한다
+  assert.ok(got["teambatTable"]?.includes("gidp"), "기본 타자 표에서 併殺打 열이 사라졌다");
+});
+
 // ── 「いまの状況」 요약 띠 ──────────────────────────────────────────────────
 //
 // ⚠**이 구획이 우승 경쟁 판정(자력·소멸·매직)을 화면에 내는 첫 자리다.**

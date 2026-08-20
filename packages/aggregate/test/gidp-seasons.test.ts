@@ -6,20 +6,30 @@
  * 여기에만 있다: `career_batting.gidp` 는 **선수 페이지에서 받아 온 NPB 공표치**이고
  * 우리 `pa_event` 와 **출처가 다르다**(M4).
  *
+ * ⚠**출하 코드를 부른다 — 판정식을 베끼지 않는다**(2026-08-20 이중 검토 P2에서 고쳤다).
+ * 처음에는 `gidp.ts` 의 SQL 을 문자열로 복사해 갖고 있었다. 그래서 **`gidp.ts` 에서 `併失` 분기를
+ * 지워도 이 파일은 두 시험 다 초록**이었다 — 즉 정의서가 이 지표에 붙인 **T1 등급의 근거가 되는
+ * 시험이 출하 코드를 한 번도 실행하지 않았다.** `competition`·`status='played'`·`e.status='final'`
+ * 같은 경계가 어긋나도 마찬가지였다.
+ * → 우리 값은 **`groundedIntoDoublePlays()` 에서 받고**, 복사한 SQL 은 아래 두 번째 시험
+ *   (「`併失` 을 빼면 어긋나는가」)에만 남긴다. 거기서는 **일부러 다른 판정**을 써야 하기 때문이다.
+ *
  * ⚠**DB 가 없으면 건너뛴다**(개발자 머신마다 상태가 다르다). CI 는 `BB_REQUIRE_DB=1` 로 막는다 —
  * 「0건 통과」와 「안 쟀음」을 가른다(작업규칙 7·8).
  *
  * ⚠**`career_batting` 은 현재 등록 선수만 담는다.** 그래서 이 대조는 리그 전량이 아니다 —
- * 9시즌 併殺打 10,068건 중 대조 가능한 것은 선수-시즌 3,177건이다(2026-08-20 실측).
+ * 9시즌 **정규시즌** 併殺打 **9,887건** 중 대조된 몫은 **8,066건**(선수-시즌 3,177건)이다.
+ * ⚠전 대회 합계 10,068 과 섞어 적지 마라(§2-1) — 이 시험은 `competition='regular'` 만 본다.
  * 은퇴·이적으로 NPB 를 떠난 선수는 공표치 쪽 행이 아예 없어서 여기서 빠진다.
- * **그 사실을 적어 두지 않으면 「전 시즌 전량 대조」로 읽힌다.**
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DatabaseSync } from "node:sqlite";
+import { openDb } from "@bb-app/store";
+import type { Db } from "@bb-app/store";
+import { groundedIntoDoublePlays } from "../src/gidp.ts";
 
 const DB = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "data", "bb.sqlite");
 const HAS_DB = existsSync(DB);
@@ -27,27 +37,54 @@ if (process.env["BB_REQUIRE_DB"] === "1" && !HAS_DB) {
   throw new Error(`BB_REQUIRE_DB=1 인데 ${DB} 가 없다`);
 }
 
+/** ⚠**`through` 를 열어 둔다** — 이 시험은 시즌 전량을 본다 */
+const THROUGH = "9999-12-31";
+
+function seasonsOf(db: Db): number[] {
+  return (
+    db.raw
+      .prepare(
+        `SELECT DISTINCT season FROM game
+         WHERE status = 'played' AND competition = 'regular' ORDER BY season`,
+      )
+      .all() as { season: number }[]
+  ).map((r) => r.season);
+}
+
 /**
- * 우리 값. **`gidp.ts` 의 판정식과 같은 것을 쓴다** — 여기서 다른 식을 쓰면
- * 「두 개의 내 계산이 서로 같다」밖에 증명하지 못한다.
+ * **출하 코드가 내는 값**. 선수 × 구단으로 나오므로 선수로 접는다 —
+ * 공표치가 연도로 묶여 있기 때문이다(시즌 도중 이적하면 여러 줄).
  */
-const OURS = `
+function shipped(db: Db, seasons: readonly number[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const season of seasons) {
+    for (const r of groundedIntoDoublePlays(db, season, "regular", THROUGH)) {
+      const k = `${season}|${r.playerId}`;
+      out.set(k, (out.get(k) ?? 0) + r.gidp);
+    }
+  }
+  return out;
+}
+
+/**
+ * ⚠**`併失` 을 뺀 판정.** 아래 두 번째 시험에서만 쓴다 — 거기서는 **출하 코드와 다른 판정**을
+ * 일부러 써야 하므로 SQL 을 직접 쓴다. 위 시험은 이것을 쓰지 않는다.
+ */
+const WITHOUT_ERROR_DP = `
 SELECT g.season AS season, e.batter_id AS pid,
-       SUM(CASE WHEN e.outcome = 'groundedIntoDoublePlay' OR e.raw_box LIKE '%併失%' THEN 1 ELSE 0 END) AS gidp
+       SUM(CASE WHEN e.outcome = 'groundedIntoDoublePlay' THEN 1 ELSE 0 END) AS gidp
 FROM pa_event e
 JOIN game g ON g.game_id = e.game_id
 WHERE g.status = 'played' AND g.competition = 'regular' AND e.status = 'final'
 GROUP BY g.season, e.batter_id
 `;
 
-/** 併失 을 뺀 판정. **이 시험이 실제로 그 함정을 재고 있는지**를 확인하는 데만 쓴다 */
-const WITHOUT_ERROR_DP = OURS.replace(" OR e.raw_box LIKE '%併失%'", "");
+function withoutErrorDp(db: Db): Map<string, number> {
+  const rows = db.raw.prepare(WITHOUT_ERROR_DP).all() as unknown as
+    { season: number; pid: string; gidp: number }[];
+  return new Map(rows.map((r) => [`${r.season}|${r.pid}`, Number(r.gidp)]));
+}
 
-/**
- * NPB 공표치. ⚠**연도로 묶는다** — 시즌 도중 이적하면 `(선수, 연도, 구단)` 으로 여러 줄이다.
- * ⚠**포스트시즌을 담지 않는다**(선수 페이지의 年度別成績은 정규시즌이다) — 그래서 우리 쪽도
- * `competition = 'regular'` 로 자른다. 섞으면 CS·일본시리즈 몫만큼 우리가 많아진다.
- */
 const OFFICIAL = `SELECT year, player_id AS pid, SUM(gidp) AS gidp FROM career_batting GROUP BY year, player_id`;
 
 interface Compared {
@@ -56,15 +93,13 @@ interface Compared {
   bySeason: Map<number, number>;
 }
 
-function compare(db: DatabaseSync, sql: string): Compared {
-  const ours = db.prepare(sql).all() as unknown as { season: number; pid: string; gidp: number }[];
-  const official = db.prepare(OFFICIAL).all() as unknown as { year: number; pid: string; gidp: number }[];
-  const mine = new Map(ours.map((r) => [`${r.season}|${r.pid}`, Number(r.gidp)]));
+function compare(db: Db, mine: ReadonlyMap<string, number>): Compared {
+  const official = db.raw.prepare(OFFICIAL).all() as unknown as
+    { year: number; pid: string; gidp: number }[];
 
   const out: Compared = { compared: 0, mismatches: [], bySeason: new Map() };
   for (const r of official) {
-    const key = `${r.year}|${r.pid}`;
-    const got = mine.get(key);
+    const got = mine.get(`${r.year}|${r.pid}`);
     // 우리 아카이브에 그 시즌의 타석 로그가 없는 선수(=보유 시즌 밖)는 대조 대상이 아니다
     if (got === undefined) continue;
     out.compared += 1;
@@ -77,9 +112,11 @@ function compare(db: DatabaseSync, sql: string): Compared {
 }
 
 test("⚠併殺打가 NPB 공표치와 일치한다 — 출처가 다른 두 값을 맞댄다", { skip: HAS_DB ? false : "DB 없음" }, () => {
-  const db = new DatabaseSync(DB, { readOnly: true });
+  const db = openDb(DB, "1970-01-01T00:00:00.000Z");
   try {
-    const got = compare(db, OURS);
+    const seasons = seasonsOf(db);
+    assert.ok(seasons.length >= 9, `정규시즌이 ${seasons.length}개뿐이다 — 이 시험이 공회전한다`);
+    const got = compare(db, shipped(db, seasons));
 
     /**
      * ⚠**공회전 방지.** 대조 대상이 0명이면 `mismatches` 도 0이라 이 시험은
@@ -109,9 +146,9 @@ test("⚠併殺打가 NPB 공표치와 일치한다 — 출처가 다른 두 값
  * 실측(2026-08-20): 어긋나는 선수-시즌 **14건**(2022:3 · 2023:6 · 2024:3 · 2025:1 · 2026:1).
  */
 test("⚠`併失` 을 빼면 공표치와 어긋난다 — 위 시험이 이 함정을 재고 있다는 증거", { skip: HAS_DB ? false : "DB 없음" }, () => {
-  const db = new DatabaseSync(DB, { readOnly: true });
+  const db = openDb(DB, "1970-01-01T00:00:00.000Z");
   try {
-    const without = compare(db, WITHOUT_ERROR_DP);
+    const without = compare(db, withoutErrorDp(db));
     assert.ok(without.compared >= 3000, `대조한 선수-시즌이 ${without.compared}건뿐이다 — 이 시험이 공회전한다`);
     assert.ok(
       without.mismatches.length > 0,

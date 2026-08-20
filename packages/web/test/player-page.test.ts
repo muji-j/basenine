@@ -797,7 +797,7 @@ test("도루자를 셌으면 값과 분모가 나온다", () => {
           cs: 7,
           pickoff: 2,
           rate: { value: 30 / 37, denominator: 37 },
-          byBase: [{ label: "二盗", sb: 30, cs: 7, rate: { value: 30 / 37, denominator: 37 } }],
+          byBase: [{ label: "二盗", base: "2b", sb: 30, cs: 7, rate: { value: 30 / 37, denominator: 37 } }],
           pickoffByBase: [{ label: "一塁", n: 2 }],
           doubleSteal: 0,
         },
@@ -829,9 +829,9 @@ test("⚠루별 도루 내역이 나오고, 루마다 분모가 따로 붙는다
           pickoff: 1,
           rate: { value: 12 / 17, denominator: 17 },
           byBase: [
-            { label: "二盗", sb: 10, cs: 2, rate: { value: 10 / 12, denominator: 12 } },
-            { label: "三盗", sb: 2, cs: 2, rate: { value: 0.5, denominator: 4 } },
-            { label: "本盗", sb: 0, cs: 1, rate: { value: 0, denominator: 1 } },
+            { label: "二盗", base: "2b", sb: 10, cs: 2, rate: { value: 10 / 12, denominator: 12 } },
+            { label: "三盗", base: "3b", sb: 2, cs: 2, rate: { value: 0.5, denominator: 4 } },
+            { label: "本盗", base: "home", sb: 0, cs: 1, rate: { value: 0, denominator: 1 } },
           ],
           pickoffByBase: [{ label: "一塁", n: 1 }],
           doubleSteal: 2,
@@ -866,7 +866,7 @@ test("⚠견제사를 도루와 다른 표로 그린다 — 같은 열에 넣으
           cs: 1,
           pickoff: 2,
           rate: { value: 0.75, denominator: 4 },
-          byBase: [{ label: "二盗", sb: 3, cs: 1, rate: { value: 0.75, denominator: 4 } }],
+          byBase: [{ label: "二盗", base: "2b", sb: 3, cs: 1, rate: { value: 0.75, denominator: 4 } }],
           pickoffByBase: [{ label: "一塁", n: 2 }],
           doubleSteal: 0,
         },
@@ -962,4 +962,100 @@ test("⚠드래프트가 표제 줄에 나오고, 없으면 항목째 빠진다"
   const noD = renderPlayerPage(playerPage({ draft: null }), context());
   assert.doesNotMatch(noD, /ドラフト/, "드래프트가 없는데 항목이 그려졌다");
   assert.match(noD, /背番号/, "드래프트가 없다고 다른 항목까지 사라졌다");
+});
+
+
+/**
+ * ⚠**각주가 그 페이지에 실제로 그려진 것만 말해야 한다**(2026-08-20 이중 검토 P1).
+ *
+ * 처음에는 표가 몇 개든 늘 같은 문장을 냈다. 배포물 실측: 각주가 실린 선수 페이지 **1,808장 중**
+ * 두 표가 다 있는 것은 **385장**뿐인데 「**塁の意味が2つの表で違います**」라고 쓰고 있었다 —
+ * **1,423장(79%)에서 거짓**이다. 本盗 설명도 **1,633장(90%)에 本盗 행이 없는데** 실렸다.
+ * ⚠이번 커밋이 고친 `105試合`(수는 맞는데 낱말이 거짓)과 **같은 종류**다.
+ */
+test("⚠표가 하나뿐이면 각주가 「2つの表」라고 말하지 않는다", () => {
+  const onlyStolen = renderPlayerPage(
+    playerPage({
+      batting: battingBlock({
+        sb: 3,
+        steal: {
+          cs: 1,
+          pickoff: 0,
+          rate: { value: 0.75, denominator: 4 },
+          byBase: [{ label: "二盗", base: "2b", sb: 3, cs: 1, rate: { value: 0.75, denominator: 4 } }],
+          pickoffByBase: [],
+          doubleSteal: 0,
+        },
+      }),
+    }),
+    context(),
+  );
+  assert.ok(!onlyStolen.includes("2つの表"), "표가 하나뿐인데 「2つの表」라고 했다");
+  assert.match(onlyStolen, /狙った塁/, "무슨 루인지 말하지 않았다");
+  assert.ok(!onlyStolen.includes("いた塁"), "견제사 표가 없는데 「있던 루」를 설명했다");
+
+  const onlyPickoff = renderPlayerPage(
+    playerPage({
+      batting: battingBlock({
+        sb: 0,
+        steal: {
+          cs: 0,
+          pickoff: 2,
+          rate: { value: null, denominator: 0 },
+          byBase: [],
+          pickoffByBase: [{ label: "一塁", n: 2 }],
+          doubleSteal: 0,
+        },
+      }),
+    }),
+    context(),
+  );
+  assert.ok(!onlyPickoff.includes("2つの表"), "견제사 표만 있는데 「2つの表」라고 했다");
+  assert.ok(!onlyPickoff.includes("狙った塁"), "도루 표가 없는데 「노린 루」를 설명했다");
+  assert.match(onlyPickoff, /いた塁/, "무슨 루인지 말하지 않았다");
+});
+
+/**
+ * ⚠**리그 전체의 本盗 수치는 本盗 행이 있는 페이지에만 낸다.**
+ * 없는 페이지에 실으면 그 각주가 무엇을 설명하는지 알 수 없고, 실측 1,808장 중 1,633장이 그 상태였다.
+ */
+test("⚠本盗 행이 없으면 리그 전체의 本盗 수치를 내지 않는다", () => {
+  const without = renderPlayerPage(
+    playerPage({
+      batting: battingBlock({
+        sb: 3,
+        steal: {
+          cs: 1,
+          pickoff: 0,
+          rate: { value: 0.75, denominator: 4 },
+          byBase: [{ label: "二盗", base: "2b", sb: 3, cs: 1, rate: { value: 0.75, denominator: 4 } }],
+          pickoffByBase: [],
+          doubleSteal: 0,
+        },
+      }),
+    }),
+    context(),
+  );
+  assert.ok(!without.includes("本盗はリーグ全体でも"), "本盗 행이 없는데 本盗 설명을 냈다");
+  assert.ok(!without.includes("盗塁刺146"), "本盗 행이 없는데 리그 수치를 냈다");
+
+  const withHome = renderPlayerPage(
+    playerPage({
+      batting: battingBlock({
+        sb: 1,
+        steal: {
+          cs: 1,
+          pickoff: 0,
+          rate: { value: 0.5, denominator: 2 },
+          byBase: [{ label: "本盗", base: "home", sb: 1, cs: 1, rate: { value: 0.5, denominator: 2 } }],
+          pickoffByBase: [],
+          doubleSteal: 0,
+        },
+      }),
+    }),
+    context(),
+  );
+  assert.match(withHome, /本盗はリーグ全体でも/, "本盗 행이 있는데 그 드묾을 말하지 않았다");
+  // ⚠**리그 수치는 실DB 시험이 고정한다**(steal-seasons.test.ts) — 백필하면 거기서 떨어진다
+  assert.match(withHome, /成功47・盗塁刺146/, "리그 수치가 사라졌다");
 });
