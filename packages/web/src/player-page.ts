@@ -1315,17 +1315,36 @@ function advancedPitching(p: PitchingBlockData): RawHtml {
  * (실측 1,864/3,510장 · 2026-08-18 감사 P2). 보유 범위를 문장에 박지 않는다 —
  * 백필할 때마다 사람이 고쳐야 하고, 그래서 안 고쳐진다.
  */
-function streakBlock(s: StreakBlockData, season: number, asOf: string | null): RawHtml {
+function streakBlock(s: StreakBlockData, season: number, asOf: string | null, seasonPast: boolean): RawHtml {
   /**
-   * ⚠**「今」은 그 선수가 **마지막 경기일에 나왔을 때만** 쓴다.**
-   * 5월 22일 이후 출장이 없는 선수의 `current`는 5월 22일 값 그대로다.
-   * 그걸 「今」이라고 쓰면 석 달 전에 끝난 기록이 지금 이어지는 것처럼 보인다
-   * (2026-08-16 이중 검토에서 배포물의 21명이 그 상태였다).
+   * ⚠**「今」은 두 조건이 **동시에** 참일 때만 쓴다.**
+   *
+   * ⑴ **그 시즌이 아직 진행 중일 것.** 2018년 화면에 「今」이라고 쓰면 8년 전에 끝난 기록이
+   *    지금 이어지는 것이 된다. 실측(2026-08-21 · `dist` 전수 6,207장): 연속기록 구획이 있는
+   *    3,459장 중 **아카이브 시즌 259장**이 그 상태였다(2018:50 · 2019:23 · 2020:30 · 2021:29 ·
+   *    2022:29 · 2023:20 · 2024:27 · 2025:51).
+   * ⑵ **그 선수가 그 시즌의 최신 경기일에 나왔을 것.** `streakOf`는 그 선수의 **자기 출장 목록**만
+   *    훑으므로 5월 22일 이후 출장이 없으면 `current`는 그때 값 그대로 남는다
+   *    (2026-08-16 이중 검토에서 배포물의 21명이 그 상태였다).
+   *
+   * ⚠**둘 중 하나만으로는 못 가른다 — 두 기준이 실제로 갈라지는 페이지가 463장이다**(같은 실측).
+   * ⑵만 보면 위의 아카이브 **259장**이 현재형이 되고, ⑴만 보면 진행 중 시즌에서 5월에 끊긴
+   * 기록까지 「今」이 된다 — 2026 쪽 **204장**이 그 상태다. 겹치는 **135장**만이 정말 「今」이다.
+   *
+   * ⚠**구단 페이지·홈과 문자열을 맞추지 않는다**(그쪽은 `streakSectionTitle(seasonOver)`).
+   * 뜻이 다르기 때문이다 — 그 표들은 **선수마다 最後の出場 열을 나란히 싣고 「継続中」이라는 말을
+   * 아예 쓰지 않으므로** 시즌 종료만으로 시제가 정해진다. 이 화면의 「今」은 **한 선수에 대한
+   * 단정**이라 ⑵가 추가로 필요하다. 같은 문자열을 억지로 쓰면 그 차이가 사라진다(M1은
+   * 「같은 사실을 다르게 쓰지 마라」이지 「다른 사실을 같게 쓰라」가 아니다).
    */
-  const current =
-    s.lastGameDate !== null && asOf !== null && s.lastGameDate !== asOf
-      ? `${gameDate(s.lastGameDate)}時点`
-      : "今";
+  const stillNow = !seasonPast && asOf !== null && s.lastGameDate !== null && s.lastGameDate === asOf;
+  const current = stillNow
+    ? "今"
+    : s.lastGameDate === null
+      // ⚠**언제 기준인지 모르면 「今」으로 때우지 않는다**(M11). 실측 6,207장에서 0건이지만,
+      //   `StreakBlockData.lastGameDate` 가 `string | null` 인 이상 화면이 답을 갖고 있어야 한다
+      ? NO_VALUE
+      : `${gameDate(s.lastGameDate)}時点`;
 
   const row = (label: string, v: StreakData, unit = "試合"): RawHtml => {
     const span =
@@ -1345,12 +1364,21 @@ function streakBlock(s: StreakBlockData, season: number, asOf: string | null): R
       row("連続無安打", s.hitless),
     )}
     ${note(
-      (current === "今"
+      /**
+       * ⚠**네 상태를 각각 다른 말로 낸다**(M12).
+       * ⚠**끝난 시즌에 「いまも続いているとは限りません」이라고 쓰지 않는다** — 「그럴지도 모른다」가
+       *   아니라 **그 시즌은 이미 끝났다.** 「~とは限りません」은 진행 중 시즌에서만 참인 유보다.
+       */
+      (stillNow
         ? "「今」はいま続いている記録、"
-        : `この選手の最後の出場は${gameDate(s.lastGameDate!)}です。左の数字はその時点で続いていた記録で、いまも続いているとは限りません。`) +
+        : s.lastGameDate === null
+          ? "左の数字がいつの時点のものかがわかりません。"
+          : seasonPast
+            ? `この選手の最後の出場は${gameDate(s.lastGameDate)}で、このシーズンはすでに終わっています。左の数字はその時点で続いていた記録です。`
+            : `この選手の最後の出場は${gameDate(s.lastGameDate)}です。左の数字はその時点で続いていた記録で、いまも続いているとは限りません。`) +
         "「今季最長」はこの1年でいちばん長かった記録です。" +
         "⚠打席のなかった試合（代走・守備固めだけ）は数えません — 数えると連続記録が理不尽に途切れます。" +
-        `⚠${season}年のなかだけで数えています。「通算」は下の<b>通算成績</b>（出典：NPB）にあります。`,
+`⚠${season}年のなかだけで数えています。「通算」は下の<b>通算成績</b>（出典：NPB）にあります。`,
     )}`,
   });
 }
@@ -1952,7 +1980,31 @@ function reliefBlock(r: ReliefBlockData): RawHtml {
 
 // ─── 페이지 ──────────────────────────────────────────────────────────────
 
-function renderBlock(id: BlockId, d: PlayerPageData, base: string): RawHtml {
+/**
+ * **이 시즌이 이미 끝났는가** — 근거는 「더 새로운 시즌의 경기가 아카이브에 있다」 하나다.
+ *
+ * ⚠**`true` 는 증명이고 `false` 는 「모른다」다**(M11). 시즌은 겹치지 않으므로
+ * `season < heldTo` 면 그 시즌은 **반드시** 끝났다. 반대는 성립하지 않는다 —
+ * `false` 는 「끝나지 않았다」가 아니라 **「이 근거로는 못 가른다」**이고,
+ * 그래서 이 값은 「今」을 **막는 쪽으로만** 쓴다(막지 못한 곳에서는 ⑵가 여전히 판정한다).
+ *
+ * ⚠**`heldTo === 0` 은 「하나도 없다」가 아니라 「모른다」다**(`freshness()` 의 기본값 · layout.ts).
+ * 모르는 값으로 시제를 뒤집지 않는다 — **0 은 어떤 실제 시즌보다도 작으므로 비교가 이미
+ * 안전한 쪽(`false`)으로 떨어진다.** 그래서 `heldTo !== 0` 를 따로 쓰지 않는다:
+ * 처음에는 썼는데 **뮤테이션 검사에서 그 조건을 지워도 시험이 하나도 안 떨어졌다**(2026-08-21) —
+ * 어떤 입력으로도 도달하지 않는 가지였다. 뜻은 여기 적고 코드에서는 지운다(작업규칙 9).
+ *
+ * ⚠**남은 구멍 하나**: 가장 새로운 시즌이 끝나고 다음 시즌 첫 경기가 들어오기 전(11월~이듬해 3월)
+ * 에는 `heldTo` 가 그대로라 이 함수가 `false` 를 낸다. 그 창에서는 최종전에 나온 선수의 기록이
+ * 계속 「今」이 된다(2026-08-21 실측 기준 그 대상은 135장). 그것을 닫으려면
+ * `query.ts` 의 `seasonIsOver(db, season)` 가 `PlayerPageData` 까지 와야 한다 —
+ * **여기서 대신 날짜로 어림하지 않는다.** 어림하면 수집 지연과 시즌 종료가 같은 신호가 된다.
+ */
+export function seasonSurelyOver(season: number, heldTo: number): boolean {
+  return season < heldTo;
+}
+
+function renderBlock(id: BlockId, d: PlayerPageData, base: string, seasonPast: boolean): RawHtml {
   switch (id) {
     case "standard":
       if (d.role === "pitcher" && d.pitching !== null) return standardPitching(d.pitching);
@@ -1966,7 +2018,7 @@ function renderBlock(id: BlockId, d: PlayerPageData, base: string): RawHtml {
       if (d.pitching !== null) return roleSplitBlock(d.pitching);
       return block({ id: "rolesplit", title: "先発・救援別", body: html`<p class="empty">登板がありません。</p>` });
     case "streak":
-      if (d.streaks !== null) return streakBlock(d.streaks, d.season, d.asOf);
+      if (d.streaks !== null) return streakBlock(d.streaks, d.season, d.asOf, seasonPast);
       return block({ id: "streak", title: "連続記録", body: html`<p class="empty">打席がありません。</p>` });
     case "splits":
       return splitsBlock(d.splits);
@@ -2047,12 +2099,17 @@ export function renderPlayerPage(d: PlayerPageData, ctx: RenderContext): string 
   const { base, root, seasons } = ctx.paths(`players/${d.playerId}.html`);
   const catalog = blocksFor(d.role);
   const initial = new Set(presetsFor(d.role).find((p) => p.id === "standard")?.blocks ?? []);
+  /**
+   * ⚠**연속기록의 「今」이 이것에 걸린다.** 근거는 `freshness` 하나이고 페이지 데이터가 아니다 —
+   * `heldTo` 는 `SELECT MAX(season) FROM game`(query.ts `heldSeasonsOf`)이라 **시즌을 안 가린다.**
+   */
+  const seasonPast = seasonSurelyOver(d.season, ctx.freshness.heldTo);
 
   const body = html`${idLine(d)}
 ${rail(d)}
 ${editor()}
 ${catalog.map((meta) => {
-    const rendered = renderBlock(meta.id, d, base);
+    const rendered = renderBlock(meta.id, d, base, seasonPast);
     // JS가 없어도 「標準」은 보인다. 나머지는 조립에서 켜면 나온다.
     return initial.has(meta.id) ? rendered : hidden(rendered);
   })}
