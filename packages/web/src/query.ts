@@ -36,6 +36,8 @@ import type {
   ReliefLine,
   ReliefScan,
   SeasonDrawLine,
+  SeasonRace,
+  SeriesLengths,
   StealBase,
   StealLine,
   TeamRace,
@@ -3810,7 +3812,8 @@ function teamPages(
     );
   }
 
-  return { pages: out, disagreed: race.disagreed };
+  // ⚠**한 번 부른 `seasonRace` 의 결과를 그대로 들고 나간다**(M1) — 밖에서 다시 판정하지 않는다
+  return { pages: out, disagreed: race.disagreed, basis: race.basis, series: race.series };
 }
 
 /**
@@ -3825,6 +3828,14 @@ interface TeamPagesResult {
   pages: TeamPageData[];
   /** 성적과 대전표가 어긋난 구단 코드. **비어 있지 않으면 파이프라인 결함이다** */
   disagreed: readonly string[];
+  /**
+   * 우승 판정이 섰는가. ⚠**`disagreed` 와 같은 한 벌(`seasonRace` 한 번의 결과)에서 나온다**(M1).
+   * `unknown` 은 4~5월이면 정상이고 **끝난 시즌이면 결함**이다 — 그 판단은 `SiteData.raceStatus` 를
+   * 받는 `tools/build.ts` 가 한다.
+   */
+  basis: SeasonRace["basis"];
+  /** 유도된 규정 대전 수. `null` 이면 유도 자체가 실패했다 */
+  series: SeriesLengths | null;
 }
 
 /**
@@ -4180,6 +4191,21 @@ export interface SiteData {
    */
   raceDisagreed: readonly string[];
   /**
+   * **우승 경쟁 판정이 섰는가 · 그 시즌이 이미 끝났는가.**
+   *
+   * ⚠**`raceDisagreed` 가 못 보는 구멍이 있다**(2026-08-21 검토 ①). `deriveSeriesLengths` 가
+   * 실패하는 경로 — **팀 코드가 12개가 아니게 되는 것**(2018 오릭스 `bs` 슬러그 사고가 정확히
+   * 그 모양이다 · CLAUDE.md §2-2) — 는 `disagreed` 를 **비운 채** 12구단 판정을 전멸시킨다.
+   * 조합표의 「`unknown` · `series: null` · `disagreed: []`」 갈래이고, 그건 4~5월에는 **정상**이라
+   * 무조건 막을 수 없다. 가르는 것이 **시즌이 끝났는가**다.
+   *
+   * ⚠**끝난 시즌인데 `unknown` 이면 배포하지 않는다**(`tools/build.ts` · `raceDisagreed`·
+   * `wobaDerivation` 과 같은 등급). 그때 화면 문구는 정직하고(「優勝争いはまだ判定できません」)
+   * 신호는 `console.warn` 조차 없다 — 눈으로는 영원히 안 보인다.
+   * ⚠**판정 조건의 정본은 여기다**(M1) — `build.ts` 는 이 값을 읽기만 한다.
+   */
+  raceStatus: RaceStatus;
+  /**
    * **wOBA 계수를 리그마다 제대로 유도했는가.** ⚠셋 다 「0/false 인 것이 정상」이다.
    *
    * ⚠**비정상이면 배포하지 않는다**(`tools/build.ts` · `raceDisagreed` 와 같은 등급).
@@ -4193,6 +4219,42 @@ export interface SiteData {
   /** 경기 페이지. **빌드 대상 시즌만** — 2025년은 아카이브에 있지만 화면은 아직 한 시즌이다 */
   games: GamePageData[];
   search: SearchEntry[];
+}
+
+/**
+ * 그 시즌의 **우승 경쟁 판정 상태**. ⚠**「정상」이 시기에 따라 다르다** — 그래서 세 값을 같이 낸다.
+ *
+ * ```
+ * seasonOver  basis      무엇인가
+ * false       confirmed  판정이 서 있다
+ * false       unknown    아직 유도할 수 없다(교류전 미완 등) — **정상**
+ * true        confirmed  판정이 서 있다
+ * true        unknown    **결함.** 끝난 시즌인데 12구단 판정이 통째로 없다 — 배포하지 않는다
+ * ```
+ *
+ * ⚠**네 번째 줄이 조용하다는 것이 이 구조의 존재 이유다.** 화면 문구는 정직하고
+ * (「優勝争いはまだ判定できません」) `disagreed` 도 비어 있어서 기존 게이트에 안 걸린다.
+ * ⚠**실측(2026-08-21 · 로컬 DB 9시즌 전수)**: 2018~2026 전부 `confirmed` ·
+ * `disagreed` 0구단 · `series` 는 2020 만 24/0 이고 나머지 8시즌 25/3 · `seasonOver` 는
+ * 2026 만 false. **즉 이 게이트는 지금 발화하지 않는다** — 「0건」이 계속 참인지를 매 배포마다 확인한다.
+ */
+export interface RaceStatus {
+  /** 판정이 섰는가. ⚠**`unknown` 자체는 결함이 아니다** — `seasonOver` 와 같이 읽어라 */
+  basis: SeasonRace["basis"];
+  /**
+   * 유도된 규정 대전 수. `null` = 유도 실패.
+   * ⚠**`series !== null` 인데 `basis === "unknown"` 이면 성적과 대전표가 어긋난 것**이고,
+   * 그건 `raceDisagreed` 가 잡는다(시기와 무관하게 언제나 결함).
+   */
+  series: SeriesLengths | null;
+  /**
+   * **이 시즌이 이미 끝났는가.** 판정은 `seasonIsOver` 한 벌이다(M1) — 구단 캘린더의
+   * `calendar.seasonOver` 와 **같은 함수**에서 나온다. 두 벌이 되면 화면과 게이트가 갈린다.
+   * ⚠**「끝났다」의 정의는 「더 나중 시즌의 경기가 있다」**이다(`seasonIsOver` 주석).
+   *   그래서 오프시즌의 최신 시즌은 여기서 `false` 이고, 그건 의도한 거동이다 —
+   *   그때는 아직 「다음 시즌 일정을 안 받았다」가 사실이라 판정 부재를 결함이라고 단정할 수 없다.
+   */
+  seasonOver: boolean;
 }
 
 /**
@@ -5612,6 +5674,16 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     // ⚠**순위표와 구단 페이지를 잇기만 한다**(M1) — 여기서 다시 조회하면 두 화면이 갈린다
     teamsPage: teamsPage(o.season, meta.latest, standings, teamData.pages),
     raceDisagreed: teamData.disagreed,
+    /**
+     * ⚠**`teamPages` 가 한 번 부른 `seasonRace` 의 결과다**(M1) — 여기서 다시 판정하지 않는다.
+     * ⚠**`seasonOver` 는 구단 캘린더와 같은 함수**(`seasonIsOver`)에서 나온다 — 두 벌로 두면
+     *   화면이 「시즌 종료」라고 쓰는 동안 게이트는 아니라고 판단하는 날이 온다.
+     */
+    raceStatus: {
+      basis: teamData.basis,
+      series: teamData.series,
+      seasonOver: seasonIsOver(db, o.season),
+    },
     // ⚠**위 루프가 잰 것을 그대로 들고 나간다** — 여기서 다시 판정하지 않는다(M1)
     wobaDerivation,
     games: [...gameList, ...postGameList],

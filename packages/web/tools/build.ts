@@ -198,6 +198,45 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
       }
 
       /**
+       * ⚠**끝난 시즌인데 우승 판정이 없는 채로 배포하지 않는다**(2026-08-21 검토 ①).
+       *
+       * 위 게이트는 `disagreed` 만 본다. 그런데 `deriveSeriesLengths` 가 실패하는 경로는
+       * **`disagreed` 를 비운 채** 12구단 판정을 전멸시킨다 — 조합표의
+       * 「`unknown` · `series: null` · `disagreed: []`」 갈래다(`race.ts`).
+       * 유도는 **순위표에 12구단이 정확히 6:6 으로 있을 것**을 요구하므로,
+       * 팀 코드가 하나라도 새거나 빠지면 그대로 이 갈래로 떨어진다.
+       * ⚠**CLAUDE.md §2-2 의 2018 오릭스 `bs` 슬러그 사고가 정확히 그 모양이다** —
+       * 148경기가 「모르는 팀 코드」로 실패했고, 그대로 뒀으면 **그 시즌 성적이 화면에서 사라진 채
+       * 「그 시즌은 원래 그렇다」로 읽혔을 것**이다.
+       *
+       * ⚠**무조건 막을 수는 없다.** 교류전이 안 끝난 4~5월의 `unknown` 은 **정상**이다
+       * (실측: 2026 타임라인에서 06-01 부터 `confirmed`). 가르는 것은 **시즌이 끝났는가**다 —
+       * 끝난 시즌은 「아직 모른다」가 성립할 수 없다.
+       * ⚠**판정 조건의 정본은 `query.ts` 다**(M1). 여기서 조건을 다시 쓰지 않고 그 결과만 읽는다 —
+       *   아래 wOBA 계수 게이트와 같은 형식이다.
+       * ⚠**실측(2026-08-21 · 로컬 DB 9시즌 전수): 2018~2026 전부 `confirmed` 라 발화 0건이다.**
+       *   「0건」과 「안 쟀음」은 다르다 — 이 게이트가 있어야 그 0건이 매 배포마다 다시 확인된다.
+       */
+      const raceMissing = loaded.filter(
+        (l) => l.data.raceStatus.seasonOver && l.data.raceStatus.basis === "unknown",
+      );
+      if (raceMissing.length > 0) {
+        console.error(
+          `⚠ 이미 끝난 시즌인데 우승 판정이 서지 않았다 — ${raceMissing.length}시즌. 배포하지 않는다`,
+        );
+        for (const l of raceMissing) {
+          const s = l.data.raceStatus;
+          console.error(
+            `   ${l.season}: 규정 대전수 ${s.series === null
+              ? "유도 실패（순위표의 팀 코드가 12개·6:6 인지 먼저 봐라）"
+              : `リーグ内${s.series.intra}/交流戦${s.series.inter}`}` +
+              ` · 어긋난 구단 ${l.data.raceDisagreed.length}개`,
+          );
+        }
+        process.exitCode = 1;
+      }
+
+      /**
        * ⚠**wOBA 계수를 제대로 유도하지 못한 채 배포하지 않는다**(2026-08-21 최종 검토 P2-②·③).
        *
        * 셋 다 **화면에 한 글자도 안 드러난다**:

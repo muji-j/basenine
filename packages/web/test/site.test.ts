@@ -82,6 +82,8 @@ function siteData(over: Partial<SiteData> = {}): SiteData {
     teamsPage: { season: 2026, asOf: "2026-08-14", leagues: [] },
     // ⚠**정상은 빈 배열이다.** 비지 않으면 빌드가 종료 코드 1을 낸다(`tools/build.ts` · 검토 m2)
     raceDisagreed: [],
+    // ⚠**끝난 시즌인데 `unknown` 이면 빌드가 종료 코드 1**(`tools/build.ts` · 검토 ①)
+    raceStatus: { basis: "confirmed", series: { intra: 25, inter: 3 }, seasonOver: false },
     // ⚠**리그가 실려 있고 셋 다 0/false 인 것이 정상이다** — 하나라도 어긋나면 빌드가 종료 코드 1
     wobaDerivation: [
       { league: "central", fellBack: false, skipped: 0, unrecognized: 0 },
