@@ -17,3 +17,13 @@
 export type { Competition, League, Team } from "./teams.ts";
 export { NEUTRAL_COLOR, colorOf, coloredTeamCodes } from "./colors.ts";
 export type { TeamColor } from "./colors.ts";
+export {
+  VENUES,
+  homeVenueKind,
+  isHomeVenue,
+  knownVenueNames,
+  primaryVenue,
+  venueById,
+  venueOf,
+} from "./venues.ts";
+export type { HomeVenueKind, Venue, VenueHome, VenueName } from "./venues.ts";
