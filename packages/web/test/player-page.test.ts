@@ -9,6 +9,7 @@ import {
   battingBlock,
   context,
   EMPTY_MARK,
+  LEAGUE_HOME,
   mixedPitchingBlock,
   pitcherMark,
   pitchingBlock,
@@ -490,9 +491,16 @@ test("최신 경기일에 나온 선수는 「今」이다 — 전부 시점 표
   /**
    * ⚠**「時点」만으로 찾으면 안 된다.** 通算 블록이 자기 취득일(`2026-08-17時点`)을 적기 시작하면서
    * 이 검사가 그것에 걸렸다 — 연속기록과 아무 상관이 없는 문자열이다.
-   * 연속기록이 쓰는 모양(`5月22日時点`)만 노린다.
+   *
+   * ⚠**`\d+月\d+日時点` 로 좁힌 것도 부족했다**(2026-08-20 · 두 번째). 등급 범례가
+   * 「2026年8月15日時点で100打席以上…」이라고 **기준일을 적기 시작하자 여기가 또 걸렸다.**
+   * 페이지 전체에서 날짜꼴을 찾는 한 이 검사는 **다른 블록이 날짜를 적을 때마다** 붉어진다.
+   * → **연속기록이 실제로 쓰는 자리**(`<span class="den">…時点</span>`)만 본다.
    */
-  assert.ok(!/\d+月\d+日時点/.test(out), "최신 경기에 나온 선수에게 시점 표기가 붙었다");
+  assert.ok(
+    !/<span class="den">\d+月\d+日時点<\/span>/.test(out),
+    "최신 경기에 나온 선수에게 시점 표기가 붙었다",
+  );
 });
 
 /**
@@ -800,6 +808,7 @@ test("도루자를 셌으면 값과 분모가 나온다", () => {
           byBase: [{ label: "二盗", base: "2b", sb: 30, cs: 7, rate: { value: 30 / 37, denominator: 37 } }],
           pickoffByBase: [{ label: "一塁", n: 2 }],
           doubleSteal: 0,
+          leagueHome: LEAGUE_HOME,
         },
       }),
     }),
@@ -835,6 +844,7 @@ test("⚠루별 도루 내역이 나오고, 루마다 분모가 따로 붙는다
           ],
           pickoffByBase: [{ label: "一塁", n: 1 }],
           doubleSteal: 2,
+          leagueHome: LEAGUE_HOME,
         },
       }),
     }),
@@ -869,6 +879,7 @@ test("⚠견제사를 도루와 다른 표로 그린다 — 같은 열에 넣으
           byBase: [{ label: "二盗", base: "2b", sb: 3, cs: 1, rate: { value: 0.75, denominator: 4 } }],
           pickoffByBase: [{ label: "一塁", n: 2 }],
           doubleSteal: 0,
+          leagueHome: LEAGUE_HOME,
         },
       }),
     }),
@@ -909,7 +920,7 @@ test("주자 사건이 하나도 없으면 루별 표를 그리지 않는다", (
     playerPage({
       batting: battingBlock({
         sb: 0,
-        steal: { cs: 0, pickoff: 0, rate: { value: null, denominator: 0 }, byBase: [], pickoffByBase: [], doubleSteal: 0 },
+        steal: { cs: 0, pickoff: 0, rate: { value: null, denominator: 0 }, byBase: [], pickoffByBase: [], doubleSteal: 0, leagueHome: LEAGUE_HOME },
       }),
     }),
     context(),
@@ -985,6 +996,7 @@ test("⚠표가 하나뿐이면 각주가 「2つの表」라고 말하지 않�
           byBase: [{ label: "二盗", base: "2b", sb: 3, cs: 1, rate: { value: 0.75, denominator: 4 } }],
           pickoffByBase: [],
           doubleSteal: 0,
+          leagueHome: LEAGUE_HOME,
         },
       }),
     }),
@@ -1005,6 +1017,7 @@ test("⚠표가 하나뿐이면 각주가 「2つの表」라고 말하지 않�
           byBase: [],
           pickoffByBase: [{ label: "一塁", n: 2 }],
           doubleSteal: 0,
+          leagueHome: LEAGUE_HOME,
         },
       }),
     }),
@@ -1031,13 +1044,14 @@ test("⚠本盗 행이 없으면 리그 전체의 本盗 수치를 내지 않는
           byBase: [{ label: "二盗", base: "2b", sb: 3, cs: 1, rate: { value: 0.75, denominator: 4 } }],
           pickoffByBase: [],
           doubleSteal: 0,
+          leagueHome: LEAGUE_HOME,
         },
       }),
     }),
     context(),
   );
   assert.ok(!without.includes("本盗はリーグ全体でも"), "本盗 행이 없는데 本盗 설명을 냈다");
-  assert.ok(!without.includes("盗塁刺146"), "本盗 행이 없는데 리그 수치를 냈다");
+  assert.ok(!without.includes("盗塁刺120"), "本盗 행이 없는데 리그 수치를 냈다");
 
   const withHome = renderPlayerPage(
     playerPage({
@@ -1050,12 +1064,49 @@ test("⚠本盗 행이 없으면 리그 전체의 本盗 수치를 내지 않는
           byBase: [{ label: "本盗", base: "home", sb: 1, cs: 1, rate: { value: 0.5, denominator: 2 } }],
           pickoffByBase: [],
           doubleSteal: 0,
+          leagueHome: LEAGUE_HOME,
         },
       }),
     }),
     context(),
   );
   assert.match(withHome, /本盗はリーグ全体でも/, "本盗 행이 있는데 그 드묾을 말하지 않았다");
-  // ⚠**리그 수치는 실DB 시험이 고정한다**(steal-seasons.test.ts) — 백필하면 거기서 떨어진다
-  assert.match(withHome, /成功47・盗塁刺146/, "리그 수치가 사라졌다");
+  /**
+   * ⚠**픽스처 값이 그대로 나와야 한다** — 그것이 「화면이 DB 에서 읽는다」의 증거다.
+   * 예전에는 이 수가 `player-page.ts` 에 문자열로 박혀 있어서 **경기가 하나 늘 때마다
+   * 사람이 고쳐야** 했고, 안 고치면 배포물 1,808장이 한꺼번에 거짓을 말했다(2026-08-20).
+   * ⚠픽스처는 일부러 실제와 다른 수(2011〜2019 · 40 · 120 · 33)다 — 소스에 다시 박으면 여기서 떨어진다.
+   */
+  assert.match(withHome, /2011〜2019年のレギュラーシーズンで成功40・盗塁刺120/, "리그 수치가 픽스처에서 오지 않는다");
+  // ⚠**「3倍」도 값에서 만든다** — 120 ÷ 40 = 3.0
+  // ⚠`**…**` 는 `note()` 가 `<b>` 로 바꾸므로 별표로 찾지 않는다(2026-08-20에 한 번 밟았다)
+  assert.match(withHome, /<b>失敗のほうが3\.0倍多い<\/b>/, "실패 배율을 값에서 만들지 않았다");
+  assert.match(withHome, /成功40のうち33はダブルスチール/, "더블스틸 수가 픽스처에서 오지 않는다");
+});
+
+/**
+ * ⚠**리그 수치를 못 셌으면 그 문장을 아예 내지 않는다**(M11·M12).
+ * 「成功0・盗塁刺0」은 「本盗가 한 번도 없었다」로 읽히는데, 실제로는 **주자 사건을 못 읽은 것**이다.
+ */
+test("⚠리그 本盗 수치가 없으면 그 각주를 내지 않는다 — 0으로 때우지 않는다", () => {
+  const out = renderPlayerPage(
+    playerPage({
+      batting: battingBlock({
+        sb: 1,
+        steal: {
+          cs: 1,
+          pickoff: 0,
+          rate: { value: 0.5, denominator: 2 },
+          byBase: [{ label: "本盗", base: "home", sb: 1, cs: 1, rate: { value: 0.5, denominator: 2 } }],
+          pickoffByBase: [],
+          doubleSteal: 0,
+          leagueHome: null,
+        },
+      }),
+    }),
+    context(),
+  );
+  assert.ok(!out.includes("本盗はリーグ全体でも"), "리그 수치를 모르는데 그 각주를 냈다");
+  // 표 자체는 그대로 나온다 — 사라지는 것은 각주뿐이다
+  assert.match(out, /本盗/, "本盗 행까지 사라졌다");
 });

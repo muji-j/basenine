@@ -31,6 +31,16 @@ export const PITCHING_LINE: PitchingLine = {
   outs: 300, bf: 400, h: 85, hr: 8, bb: 25, ibb: 1, hbp: 3, so: 110, er: 30, r: 33,
 };
 
+/**
+ * 각주가 쓰는 **리그 전체 本盗** — 픽스처 값.
+ *
+ * ⚠**일부러 실제와 다른 수를 쓴다.** 화면이 예전처럼 「47・146」을 소스에 박아 두면
+ * 이 픽스처로 렌더링해도 그 수가 나오므로 **시험이 통과해 버린다.**
+ * 여기 수가 그대로 화면에 나오는 것이 「DB 에서 읽는다」의 증거다(작업규칙 9).
+ * 실제 수는 `steal-seasons.test.ts` 가 실DB 로 잰다.
+ */
+export const LEAGUE_HOME = { from: 2011, to: 2019, sb: 40, cs: 120, doubleSteal: 33 };
+
 export function battingBlock(over: Partial<BattingBlockData> = {}): BattingBlockData {
   return {
     games: 104,
@@ -51,6 +61,7 @@ export function battingBlock(over: Partial<BattingBlockData> = {}): BattingBlock
       ],
       pickoffByBase: [{ label: "一塁", n: 1 }],
       doubleSteal: 1,
+      leagueHome: LEAGUE_HOME,
     },
     gidp: 9,
     line: BATTING_LINE,
