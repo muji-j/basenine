@@ -4961,8 +4961,16 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
    * 화면이 쓰는 **시즌 합계**.
    *
    * ⚠**리그 상수를 표본으로 가중해 합계 라인에 적용한다**(`blendConstants`).
-   * wOBA가 타석 가중 평균이라 `wRAA(합계, 가중상수) = wRAA(セ) + wRAA(パ)`가 정확히 성립한다 —
-   * 날조가 아니라 증명 가능한 일반화다. 리그를 넘지 않은 선수에게는 아무 일도 하지 않는다.
+   * 리그를 넘지 않은 선수에게는 아무 일도 하지 않는다.
+   *
+   * ⚠**여기 「`wRAA(합계, 가중상수) = wRAA(セ) + wRAA(パ)` 가 **정확히** 성립한다 — 증명 가능한
+   * 일반화다」라고 적혀 있었고 그건 낡았다**(2026-08-21 최종 검토 P3). 그 등식은 **계수가 양 리그
+   * 공통일 때**의 이야기이고, 2026-08-20 에 계수를 리그×시즌 유도값으로 바꾸면서 **정확 → 근사**로
+   * 내려갔다. 정본 서술과 근거는 `blendConstants`(aggregate/leaderboard.ts) 주석에 있다 —
+   * **여기서 다시 설명하지 않는다**(M1: 같은 사실을 두 벌로 적으면 어느 날 한쪽만 고쳐진다).
+   * ⚠**수는 무해하다** — 9시즌 실측(2026-08-21)으로 리그를 넘은 타자는 **32명**이고
+   * `|Δ wRAA|` 는 중앙 **0.021** · 최대 **0.184**득점(2025 · 275타석)이다.
+   * **결함은 크기가 아니라 두 문장이 서로를 부정하고 있었다는 것이다.**
    */
   const constantsFor = (playerId: string, weightOf: (lg: League) => number): LeagueConstants =>
     blendConstants(bundles.map((b) => ({ constants: b.constants, weight: weightOf(b.league) })));

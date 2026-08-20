@@ -967,7 +967,16 @@ function stealDetail(s: NonNullable<BattingBlockData["steal"]>): RawHtml {
             ? `と、**失敗のほうが${(s.leagueHome.cs / s.leagueHome.sb).toFixed(1)}倍多い**プレーです。`
             : "で、**成功例がありません**。") +
           "1回の成否から傾向は読めません。" +
-          `また成功${s.leagueHome.sb}のうち${s.leagueHome.doubleSteal}はダブルスチールの一部でした。`
+          /**
+           * ⚠**성공이 0이면 이 문장을 안 낸다**(2026-08-21 최종 검토 P3).
+           * 바로 앞이 「成功例がありません。」인데 뒤에 「また成功**0**のうち**0**はダブルスチール…」이
+           * 그대로 붙어서 **없는 것의 내역을 말하는 문장**이 됐다.
+           * ⚠**지금 데이터로는 안 밟힌다** — 그래서 더 위험하다. 밟히는 것은
+           * **보유 시즌이 1개인 DB**(초기 구축 · 개막 직후)이고, 그건 이 리포가 실제로 지나온 상태다.
+           */
+          (s.leagueHome.sb > 0
+            ? `また成功${s.leagueHome.sb}のうち${s.leagueHome.doubleSteal}はダブルスチールの一部でした。`
+            : "")
         : ""),
   )}`;
 }

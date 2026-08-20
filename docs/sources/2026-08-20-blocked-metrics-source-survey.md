@@ -275,7 +275,7 @@
 | 소스 | 조사 방법 | 결과 | 판정 |
 |---|---|---|---|
 | **HuggingFace** `search=NPB` | API 실측 | **8건.** 야구 관련 3건: ⑯ · ⑰ · `yasumorishima/npb-stats`(Marcel/Bayes **예측치** + 모델 pkl · license None) | ⑯⑰ 불가 · 나머지 **대상외** |
-| **Kaggle** `search=NPB` | API 실측 | **11건 전수 확인.** 최대 NPB 전용 데이터가 `ygagarin/npb-19902025`(**13,870바이트** · MIT · 시즌 단위 세이버 지표). 나머지는 선수 명단 · 연봉 · 순위 · 유튜브 채널. `yasunorim/japan-mlb-pitchers-batters-statcast` 는 **MLB Statcast**(NPB 아님) | **대상외** — **A/B/C/D 0건.** ⚠**「못 찾았다」가 아니라 「없다」다**(API 전수) |
+| **Kaggle** `search=NPB` | API 실측 | **11건 전수 확인.** 최대 NPB 전용 데이터가 `ygagarin/npb-19902025`(**13,870바이트** · MIT · 시즌 단위 세이버 지표). 나머지는 선수 명단 · 연봉 · 순위 · 유튜브 채널. `yasunorim/japan-mlb-pitchers-batters-statcast` 는 **MLB Statcast**(NPB 아님) | **대상외** — **A/B/C/D 0건.** ⚠**「없다」가 아니라 「`search=NPB` 한 질의의 전수를 봤고 거기엔 0건」이다**(2026-08-21 정정). 친 것은 `NPB` 와 `プロ野球` 두 질의뿐이고 `japanese baseball` · `nippon professional` 등은 **안 쳤다** — 「0건」과 「안 쟀음」을 구별해 쓴다(작업규칙 7). ⚠**정하는 법**: 질의 3~4개 추가(0엔 · 10분) |
 | **Kaggle** `search=プロ野球` | API 실측 | **1건**(유튜브 채널 데이터) | **대상외** |
 | **GitHub** `NPB baseball data` | API 실측(126건 중 최근 15건) | 전부 **npb.jp 또는 집계 사이트 스크레이퍼**. `pluckhahn/yakyuu`(63MB SQLite)는 README 원문이 「compiled from **publicly available sources**」 · 「**The author makes no representations about the legality of data use**」 · 라이선스 없음 | **불가**(권리 미정리 개인 컴파일 · 우리가 이미 가진 npb.jp 파생) |
 
