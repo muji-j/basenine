@@ -17,6 +17,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -39,28 +40,73 @@ const BUILT_ON = "2026-08-19";
 let seq = 0;
 
 /**
+ * 픽스처 선수 ID.
+ *
+ * ⚠**숫자로 시작해야 한다.** `compareShardOf` 가 ID 첫 글자로 比較 샤드를 정하고
+ * 숫자가 아니면 **던진다** — 실측(2026-08-21): 옛 `BAT_t` 픽스처로 `build.ts` 를 자식 프로세스로
+ * 태우면 `buildSite` 가 「比較 샤드를 정할 수 없다」로 죽어서 게이트까지 가지도 못했다.
+ * 아래 자식 프로세스 시험이 **같은 픽스처**를 쓰려면 여기가 숫자여야 한다(M1 — 픽스처를 두 벌로 두지 않는다).
+ */
+const CODES: readonly string[] = ["g", "t", "db", "c", "d", "s", "h", "f", "m", "l", "e", "b"];
+const batId = (code: string): string => String(9_000_000 + CODES.indexOf(code) * 10 + 1);
+const pitId = (code: string): string => String(9_000_000 + CODES.indexOf(code) * 10 + 2);
+
+/**
  * 치러진 경기 한 개.
  *
  * ⚠**양 리그에 선수를 남긴다.** 리그 번들이 없으면 `teamPages` 가 그 리그의 팀을 통째로
  * 건너뛰어서, 「発表待ち」를 세는 자리 자체가 안 돈다.
  */
-function played(db: Db, date: string, home: string, away: string): void {
+function played(db: Db, date: string, home: string, away: string, season = 2026): void {
   seq += 1;
   const gameId = `g${seq}`;
   upsertGame(db, {
-    gameId, season: 2026, gameDate: date, awayCode: away, homeCode: home, gameNo: 1,
+    gameId, season, gameDate: date, awayCode: away, homeCode: home, gameNo: 1,
     status: "played", notPlayedReason: null, competition: "regular",
     sourceUrl: "https://npb.jp/x", fetchedAt: NOW, awayRuns: 1, homeRuns: 2,
   });
   upsertBatting(db, {
-    gameId, playerId: `BAT_${home}`, side: "home", battingOrder: "1", position: "(遊)",
+    gameId, playerId: batId(home), side: "home", battingOrder: "1", position: "(遊)",
     pa: 4, ab: 4, h: 1, d2: 0, d3: 0, hr: 0, bb: 0, ibb: 0, hbp: 0,
     sf: 0, sh: 0, so: 0, roe: 0, runs: 0, rbi: 0, sb: 0,
   });
   upsertPitching(db, {
-    gameId, playerId: `PIT_${away}`, side: "away", decision: null,
+    gameId, playerId: pitId(away), side: "away", decision: null,
     outs: 21, bf: 28, pitches: 90, h: 5, hr: 0, bb: 2, hbp: 0, so: 7, runs: 1, er: 1, wp: 0, balk: 0,
   });
+}
+
+/** 12구단 전부의 선수를 남긴다. 경기가 없는 팀은 화면에 안 나오므로 이것만으로는 아무 일도 안 난다 */
+function roster(db: Db): void {
+  for (const c of CODES) {
+    upsertPlayer(db, batId(c), `${c}打者`, NOW);
+    upsertPlayer(db, pitId(c), `${c}投手`, NOW);
+  }
+}
+
+/**
+ * **규정 대전수를 유도할 수 있는 최소 시즌**(→ `basis: "confirmed"`).
+ *
+ * `deriveSeriesLengths` 는 순위표에 **12구단이 정확히 6:6** 으로 있을 것을 요구하고,
+ * 교류전 최대 관측값에서 리그내 대전수를 역산한다 — 143경기 시즌에서 정수가 나오는 것은
+ * 교류전이 **3** 일 때뿐이라(`(143 − 3×6) / 5 = 25`), 한 쌍만 3경기를 치르면 유도가 선다.
+ * 리그내 최대는 1이라 25 이하 조건도 만족한다. **9경기로 `confirmed` 가 된다.**
+ */
+function confirmableSeason(db: Db, season: number): void {
+  const plan: readonly [string, string, number][] = [
+    // 교류전 최대치 3 — 이게 유도의 열쇠다
+    ["t", "l", 3],
+    // 나머지 10구단을 리그 안에서 한 경기씩 등장시킨다
+    ["g", "c", 1], ["d", "s", 1], ["db", "t", 1],
+    ["m", "h", 1], ["b", "f", 1], ["e", "l", 1],
+  ];
+  let day = 1;
+  for (const [home, away, n] of plan) {
+    for (let i = 0; i < n; i += 1) {
+      played(db, `${season}-04-${String(day).padStart(2, "0")}`, home, away, season);
+      day += 1;
+    }
+  }
 }
 
 /** 예정 경기 한 개. `game` 표가 아니라 `upcoming_game` 이다(마이그레이션 015의 이유) */
@@ -73,24 +119,27 @@ function upcoming(db: Db, date: string, home: string, away: string): void {
     .run(2026, date, home, away, NOW);
 }
 
-/**
- * @param games 팀당 치를 경기 수. `regularSeasonGames(2026) + 1` 을 주면
- *   성적이 스스로 어긋나 `disagreed` 가 채워진다(`isRecordSane` 의 상한 검사)
- */
-async function withSite(
-  o: { games: number; upcomingDate: string | null; probableDate: string | null },
-  fn: (site: ReturnType<typeof loadSite>, warnings: string[]) => void,
-): Promise<void> {
-  const dir = await mkdtemp(join(tmpdir(), "bb-build-gates-"));
-  const db = openDb(join(dir, "t.sqlite"), NOW);
-  const original = console.warn;
-  const warnings: string[] = [];
-  try {
-    // 세 리그(t·g)와 파 리그(l·m) 양쪽에 선수를 남긴다
-    for (const c of ["t", "g", "l", "m"]) {
-      upsertPlayer(db, `BAT_${c}`, `${c}打者`, NOW);
-      upsertPlayer(db, `PIT_${c}`, `${c}投手`, NOW);
-    }
+interface Fixture {
+  /**
+   * 팀당 치를 경기 수. `regularSeasonGames(2026) + 1` 을 주면
+   * 성적이 스스로 어긋나 `disagreed` 가 채워진다(`isRecordSane` 의 상한 검사)
+   */
+  games: number;
+  upcomingDate: string | null;
+  probableDate: string | null;
+  /**
+   * **더 나중 시즌의 경기를 넣는다** → `seasonIsOver(2026)` 이 참이 된다.
+   * ⚠「끝났다」의 정의가 **「더 나중 시즌의 경기가 있다」**라서(`seasonIsOver`) 이렇게 만든다.
+   */
+  laterSeason?: boolean;
+  /** 2026 을 **12구단 6:6 · 유도 가능** 시즌으로 만든다 → `basis: "confirmed"` */
+  confirmable?: boolean;
+}
+
+function seed(db: Db, o: Fixture): void {
+  roster(db);
+  if (o.confirmable === true) confirmableSeason(db, 2026);
+  else {
     for (let i = 0; i < o.games; i += 1) {
       // 4월 1일부터 하루 한 경기씩. 144경기라도 8월 안에 들어간다
       const d = new Date(Date.UTC(2026, 3, 1) + i * 86_400_000).toISOString().slice(0, 10);
@@ -99,19 +148,33 @@ async function withSite(
       //   잴 수 있고, 144경기를 두 벌 만들지 않아 시험이 10초 이상 빨라진다(실측)
       if (i < 3) played(db, d, "l", "m");
     }
-    if (o.upcomingDate !== null) {
-      upcoming(db, o.upcomingDate, "t", "g");
-      upcoming(db, o.upcomingDate, "l", "m");
+  }
+  if (o.laterSeason === true) played(db, "2027-04-01", "t", "g", 2027);
+  if (o.upcomingDate !== null) {
+    upcoming(db, o.upcomingDate, "t", "g");
+    upcoming(db, o.upcomingDate, "l", "m");
+  }
+  if (o.probableDate !== null) {
+    for (const [me, you, league] of [["t", "g", "central"], ["g", "t", "central"]] as const) {
+      upsertProbablePitcher(db, {
+        gameDate: o.probableDate, teamCode: me, opponentCode: you, playerId: pitId(me),
+        sourceName: `${me}投手`, venue: "甲子園", startTime: "18:00", league,
+        sourceUrl: "https://npb.jp/games/", fetchedAt: NOW,
+      });
     }
-    if (o.probableDate !== null) {
-      for (const [me, you, league] of [["t", "g", "central"], ["g", "t", "central"]] as const) {
-        upsertProbablePitcher(db, {
-          gameDate: o.probableDate, teamCode: me, opponentCode: you, playerId: `PIT_${me}`,
-          sourceName: `${me}投手`, venue: "甲子園", startTime: "18:00", league,
-          sourceUrl: "https://npb.jp/games/", fetchedAt: NOW,
-        });
-      }
-    }
+  }
+}
+
+async function withSite(
+  o: Fixture,
+  fn: (site: ReturnType<typeof loadSite>, warnings: string[]) => void,
+): Promise<void> {
+  const dir = await mkdtemp(join(tmpdir(), "bb-build-gates-"));
+  const db = openDb(join(dir, "t.sqlite"), NOW);
+  const original = console.warn;
+  const warnings: string[] = [];
+  try {
+    seed(db, o);
     console.warn = (...args: unknown[]): void => {
       warnings.push(args.map((a) => String(a)).join(" "));
     };
@@ -124,6 +187,84 @@ async function withSite(
     await rm(dir, { recursive: true, force: true });
   }
 }
+
+/**
+ * **`build.ts` 를 자식 프로세스로 실제로 돌린다.**
+ *
+ * ⚠**소스를 글자로 읽는 검사는 「그 코드에 닿는가」를 못 잰다.** 이 저장소는
+ * 「소스 문자열 검사가 도달 불가능한 죽은 코드를 GREEN 으로 통과시킨」 사례를 이미 갖고 있다.
+ * 여기서는 진짜로 돌려서 **stderr 문구**로 어느 게이트가 울렸는지 가른다.
+ *
+ * ⚠**종료 코드로는 어느 게이트인지 못 가른다**(실측 2026-08-21 · 이 픽스처 1회 실행에서
+ * `raceStatus`·`wobaDerivation`·`stale` **3개**가 동시에 `exitCode = 1` 을 세웠다).
+ * 픽스처에 타석 로그가 0건이면 wOBA 는 반드시 폴백이고, `stale` 은 `systemClock` 을 직접 읽는
+ * `builtOn` 과 비교하므로 **주입점이 없다.** 그래서 종료 코드는 「1이다」까지만 보고
+ * **귀속은 문구로** 한다. 「그 줄이 종료 코드를 세우는가」는 아래 `gate()` 소스 검사가 맡는다.
+ */
+async function withBuild(
+  seasonArg: string,
+  seedFn: (db: Db) => void,
+  fn: (r: { status: number | null; stdout: string; stderr: string }) => void,
+): Promise<void> {
+  const dir = await mkdtemp(join(tmpdir(), "bb-build-run-"));
+  const dbPath = join(dir, "t.sqlite");
+  const db = openDb(dbPath, NOW);
+  try {
+    seedFn(db);
+  } finally {
+    db.close();
+  }
+  try {
+    const r = spawnSync(
+      process.execPath,
+      [join(import.meta.dirname, "..", "tools", "build.ts"), dbPath, join(dir, "dist"), seasonArg],
+      {
+        encoding: "utf8",
+        cwd: join(import.meta.dirname, "..", "..", ".."),
+        /**
+         * ⚠**연락처 스위치를 꺼서 넘긴다.** CI 가 `BB_REQUIRE_CONTACT=1` 을 켜 둔 채로
+         * 이 시험이 돌면 연락처 게이트가 끼어들어 종료 코드의 뜻이 또 하나 늘어난다.
+         */
+        env: { ...process.env, BB_CONTACT: "", BB_REQUIRE_CONTACT: "" },
+      },
+    );
+    fn({ status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * `build.ts` 에서 그 게이트의 **`if` 블록만** 잘라 낸다.
+ *
+ * ⚠**고정 폭 창은 옆 게이트를 삼킨다**(2026-08-21 검토 ②). 예전에는 마커부터 800자를 잘라
+ * `process.exitCode = 1` 이 그 안에 있는지만 봤다 — **블록 순서를 바꾸면 다음 게이트의
+ * 종료 코드가 우연히 창에 들어와 없는 게이트가 통과**한다. 지금은 마커 다음의 첫 `if (` 부터
+ * **중괄호를 세어** 그 블록만 본다: 창 밖의 코드는 어떤 순서로 놓여도 들어오지 않는다.
+ *
+ * `head` = 마커부터 블록이 열리기 전까지(= **판정식**) · `block` = 그 `if` 의 몸통(= **효과**).
+ * 둘을 나누는 이유는, 무엇을 보고 판단하는가와 그래서 무엇을 하는가가 다른 질문이기 때문이다.
+ */
+function gate(src: string, marker: string): { head: string; block: string } {
+  const at = src.indexOf(marker);
+  assert.notEqual(at, -1, `빌드가 ${marker} 를 아예 안 본다`);
+  const ifAt = src.indexOf("if (", at);
+  assert.notEqual(ifAt, -1, `${marker} 뒤에 판정하는 if 가 없다`);
+  const open = src.indexOf("{", ifAt);
+  assert.notEqual(open, -1, `${marker} 의 게이트 블록이 열리지 않는다`);
+  let depth = 0;
+  for (let i = open; i < src.length; i += 1) {
+    if (src[i] === "{") depth += 1;
+    else if (src[i] === "}") {
+      depth -= 1;
+      if (depth === 0) return { head: src.slice(at, open), block: src.slice(open, i + 1) };
+    }
+  }
+  assert.fail(`${marker} 의 게이트 블록이 닫히지 않았다`);
+}
+
+const buildSrc = (): string =>
+  readFileSync(join(import.meta.dirname, "..", "tools", "build.ts"), "utf8");
 
 // ── m2. 성적과 대전표가 어긋나면 **배포하지 않는다** ───────────────────────────
 
@@ -160,21 +301,182 @@ test("⚠정상 데이터에서는 어긋난 구단이 없다", async () => {
  * `console.warn` 만으로는 CI 가 stderr 를 읽지 않는 한 아무도 모른다 —
  * 「M7 의 실패로」에 반쯤만 닿아 있었다.
  *
- * ⚠**이 검사는 소스를 글자로 읽는다.** `build.ts` 는 import 만으로 실행되는 스크립트라
- * 시험에서 그 가지만 태울 수 없고, 종료 코드로 재려 해도 **낡은 데이터·빈 시즌·깨진 링크가
- * 전부 같은 `1`** 이라 무엇 때문에 1인지 구별되지 않는다(픽스처 DB 는 반드시 낡았다).
+ * ⚠**이 검사는 소스를 글자로 읽는다.** 종료 코드로 재려 해도 **낡은 데이터·빈 시즌·깨진 링크가
+ * 전부 같은 `1`** 이라 무엇 때문에 1인지 구별되지 않는다(픽스처 DB 는 반드시 낡았다 —
+ * 실측 2026-08-21: 자식 프로세스 1회 실행에서 3개 게이트가 동시에 1을 세웠다).
  * 같은 이유로 이 리포에는 이미 글자로 읽는 검사가 있다(`assets-source.test.ts`).
+ * ⚠**단 창을 고정 폭으로 두지 않는다**(검토 ②) — `gate()` 가 그 `if` 블록만 잘라 준다.
  */
 test("⚠어긋난 구단이 있으면 빌드가 실패한다 — 경고로 끝내지 않는다", () => {
-  const src = readFileSync(join(import.meta.dirname, "..", "tools", "build.ts"), "utf8");
-  const at = src.indexOf("raceDisagreed");
-  assert.notEqual(at, -1, "빌드가 raceDisagreed 를 아예 안 본다");
-  // 그 가지 안에서 종료 코드를 바꾸는가. `emptySeasons`·`stale` 과 같은 형식이다
-  const region = src.slice(at, at + 800);
+  // 그 가지 **안에서** 종료 코드를 바꾸는가. `emptySeasons`·`stale` 과 같은 형식이다
   assert.match(
-    region,
+    gate(buildSrc(), "raceDisagreed").block,
     /process\.exitCode = 1/,
     "raceDisagreed 를 보긴 하는데 종료 코드를 안 바꾼다 — 경고만으로는 그대로 배포된다",
+  );
+});
+
+// ── ①. **끝난 시즌인데 우승 판정이 없다** — `disagreed` 가 못 보는 갈래 ──────────
+
+/**
+ * ⚠**위 게이트는 `disagreed` 만 본다.** 그런데 `deriveSeriesLengths` 가 실패하는 경로는
+ * **`disagreed` 를 비운 채** 12구단 판정을 전멸시킨다 — 조합표의
+ * 「`unknown` · `series: null` · `disagreed: []`」 갈래이고, 그건 4~5월에는 **정상**이다.
+ *
+ * ⚠**CLAUDE.md §2-2 의 2018 오릭스 `bs` 슬러그 사고가 정확히 이 모양이다.** 148경기가
+ * 「모르는 팀 코드」로 실패했고, 그대로 뒀으면 그 시즌 성적이 화면에서 사라진 채
+ * 「그 시즌은 원래 그렇다」로 읽혔을 것이다. 유도는 **순위표에 12구단이 6:6** 일 것을 요구하므로,
+ * 팀 코드가 하나만 새도 여기로 떨어진다.
+ *
+ * 이 픽스처는 4구단뿐이라 유도가 서지 않는다 — **사고와 같은 모양을 만드는 가장 싼 방법**이다.
+ */
+test("⚠끝난 시즌인데 판정이 없으면 그 사실이 SiteData 까지 나온다 — disagreed 는 비어 있다", async () => {
+  await withSite(
+    { games: 3, upcomingDate: null, probableDate: null, laterSeason: true },
+    (site) => {
+      assert.deepEqual(
+        site.raceDisagreed,
+        [],
+        "이 갈래는 disagreed 가 비어 있다 — 그래서 기존 게이트가 못 본다. 비어 있지 않으면 다른 것을 재고 있다",
+      );
+      assert.deepEqual(site.raceStatus, { basis: "unknown", series: null, seasonOver: true });
+    },
+  );
+});
+
+/**
+ * ⚠**반대편을 잰다 — 4~5월의 `unknown` 은 정상이다.** 교류전이 안 끝나면 규정 대전수를
+ * 유도할 수 없고(실측: 2026 타임라인에서 06-01 부터 `confirmed`), 그때 막으면
+ * **시즌 초 두 달 동안 매일 배포가 거부된다.** 가르는 것은 `seasonOver` 하나다.
+ */
+test("⚠시즌이 안 끝났으면 unknown 이어도 정상이다 — 게이트가 4~5월을 막지 않는다", async () => {
+  await withSite({ games: 3, upcomingDate: null, probableDate: null }, (site) => {
+    assert.deepEqual(site.raceStatus, { basis: "unknown", series: null, seasonOver: false });
+  });
+});
+
+/**
+ * ⚠**「늘 unknown 인 픽스처」로 위 두 시험을 하면 아무것도 안 재는 것이다.**
+ * 12구단이 6:6 으로 있고 교류전 최대가 3이면 유도가 서고(`(143 − 18) / 5 = 25`)
+ * 판정이 `confirmed` 가 된다 — **9경기면 된다.**
+ */
+test("⚠12구단이 갖춰지면 판정이 선다 — 위 시험이 「늘 unknown」을 재고 있지 않다는 증거", async () => {
+  await withSite(
+    { games: 0, upcomingDate: null, probableDate: null, confirmable: true },
+    (site) => {
+      assert.deepEqual(site.raceDisagreed, []);
+      assert.deepEqual(site.raceStatus, {
+        basis: "confirmed",
+        series: { intra: 25, inter: 3 },
+        seasonOver: false,
+      });
+    },
+  );
+});
+
+/**
+ * ⚠**빌드를 실제로 돌려서 「그 코드에 닿는가」까지 잰다**(검토 ② 의 대안).
+ *
+ * 소스를 글자로 읽는 검사는 **도달 불가능한 죽은 코드도 GREEN 으로** 통과시킨다 —
+ * 이 저장소에는 그 실측 사례가 2건 있다. 그래서 이 게이트만큼은 자식 프로세스로 태운다.
+ *
+ * **한 번의 실행으로 진리표 전부를 잰다**(실측 비용: 1회 약 0.7~1초):
+ * ```
+ * 2024  12구단 6:6 → confirmed · 뒤 시즌이 있으니 seasonOver   → 막지 않는다
+ * 2025  4구단      → unknown   · 뒤 시즌이 있으니 seasonOver   → **여기만 막는다**
+ * 2026  4구단      → unknown   · 마지막 시즌이라 아직 안 끝남  → 막지 않는다(4~5월의 정상 상태)
+ * ```
+ * ⚠**「1시즌」이라는 수 자체가 판정식 양쪽을 다 재는 단언이다** — `seasonOver` 를 빼면 2026 이,
+ * `basis` 를 뒤집으면 2024 가 같이 잡혀서 수가 달라진다.
+ */
+test("⚠빌드를 실제로 돌리면 끝난 시즌의 판정 부재만 막는다 — 죽은 코드가 아니다", async () => {
+  await withBuild(
+    "2026,2025,2024",
+    (db) => {
+      roster(db);
+      confirmableSeason(db, 2024);
+      for (const season of [2025, 2026]) {
+        for (let i = 0; i < 3; i += 1) {
+          const d = `${season}-04-0${i + 1}`;
+          played(db, d, "t", "g", season);
+          played(db, d, "l", "m", season);
+        }
+      }
+    },
+    (r) => {
+      // ⚠**빌드가 게이트까지 갔는가부터 확인한다.** 도중에 죽으면 아래 「안 났다」가 공허해진다
+      assert.match(r.stdout, /생성: \d+파일/, `빌드가 게이트까지 가지도 못했다:\n${r.stderr}`);
+      assert.match(
+        r.stderr,
+        /이미 끝난 시즌인데 우승 판정이 서지 않았다 — 1시즌/,
+        `끝난 시즌의 판정 부재를 안 막았다(또는 몇 시즌인지가 다르다):\n${r.stderr}`,
+      );
+      assert.match(r.stderr, /\n\s+2025: 규정 대전수 유도 실패/, "어느 시즌인지 안 말한다");
+      assert.doesNotMatch(r.stderr, /\n\s+2024: 규정 대전수/, "판정이 선 시즌까지 막았다");
+      assert.doesNotMatch(r.stderr, /\n\s+2026: 규정 대전수/, "아직 안 끝난 시즌까지 막았다");
+      assert.equal(r.status, 1, "배포를 세우지 않았다");
+    },
+  );
+});
+
+/**
+ * ⚠**「막는가」는 위에서 쟀다. 여기서는 「그 줄이 종료 코드를 세우는가」를 잰다.**
+ * 자식 프로세스로는 그것을 못 가른다 — 실측(2026-08-21)으로 한 번의 실행에서
+ * `raceStatus`·`wobaDerivation`·`stale` **3개**가 동시에 1을 세웠기 때문이다.
+ * ⚠**창은 그 `if` 블록이다**(검토 ②) — 고정 폭이면 옆 게이트의 종료 코드가 들어온다.
+ */
+test("⚠끝난 시즌의 판정 부재가 종료 코드를 바꾼다 — 경고로 끝내지 않는다", () => {
+  const g = gate(buildSrc(), "raceMissing");
+  // 판정식이 **양쪽을 다 본다** — 하나만 보면 4~5월을 막거나 판정이 선 시즌을 막는다
+  assert.match(g.head, /seasonOver/, "빌드가 시즌 종료 여부를 안 본다");
+  assert.match(g.head, /basis/, "빌드가 판정 근거를 안 본다");
+  assert.match(
+    g.block,
+    /process\.exitCode = 1/,
+    "보긴 하는데 종료 코드를 안 바꾼다 — 경고만으로는 그대로 배포된다",
+  );
+});
+
+// ── wOBA 계수 유도. **세어 놓고 아무도 안 읽던 자리** ──────────────────────────
+
+/**
+ * ⚠**이 픽스처에는 타석 로그(`pa_event`)가 없다** — 박스스코어만 있다.
+ * 그건 **폴백 계수로 떨어지는 조건 그 자체**라, 여기서 그 상태를 값으로 잡을 수 있다.
+ *
+ * ⚠**폴백은 화면에 한 글자도 안 드러난다.** 값이 사라지는 게 아니라 **눈금이 밀리고**
+ * (자격자 중앙 약 1 wRC+), 그러는 동안 용어집은
+ * 「係数は当サイトがリーグ・シーズンごとに算出」이라고 쓴다 — **화면이 거짓말을 한다.**
+ * 예전 신호는 `console.warn` 하나뿐이라 종료 코드가 0이었다(2026-08-21 검토 P2-③).
+ */
+test("⚠타석 로그가 없으면 폴백으로 떨어진 사실이 SiteData 까지 나온다", async () => {
+  await withSite({ games: 3, upcomingDate: null, probableDate: null }, (site) => {
+    assert.deepEqual(
+      [...site.wobaDerivation].sort((a, b) => a.league.localeCompare(b.league)),
+      [
+        { league: "central", fellBack: true, skipped: 0, unrecognized: 0 },
+        { league: "pacific", fellBack: true, skipped: 0, unrecognized: 0 },
+      ],
+      "타석 로그가 0건인데 폴백으로 떨어졌다고 말하지 않는다",
+    );
+  });
+});
+
+/**
+ * ⚠**빌드를 세우는 것까지가 이 지적의 내용이다**(P2-②·③).
+ * `deriveRunValues` 는 `skipped`(M11)·`unrecognized`(M7)를 세는데
+ * **유일한 프로덕션 소비자가 `.runValues` 만 꺼내 나머지를 그 줄에서 버리고 있었다.**
+ * ⚠소스를 글자로 읽는 이유는 위 `raceDisagreed` 시험과 같다.
+ */
+test("⚠wOBA 계수 유도가 온전하지 않으면 빌드가 실패한다 — 경고로 끝내지 않는다", () => {
+  const g = gate(buildSrc(), "wobaDerivation");
+  // 셋을 **전부** 판정식에서 본다 — 하나만 보면 나머지 둘이 다시 조용해진다
+  for (const key of ["fellBack", "skipped", "unrecognized"]) {
+    assert.match(g.head, new RegExp(key), `빌드의 판정식이 ${key} 를 안 본다`);
+  }
+  assert.match(
+    g.block,
+    /process\.exitCode = 1/,
+    "wobaDerivation 을 보긴 하는데 종료 코드를 안 바꾼다 — 경고만으로는 그대로 배포된다",
   );
 });
 
@@ -289,12 +591,8 @@ test("⚠다음 경기가 없으면 予告先発을 못 받았어도 경고하�
  * 검출 로직 자체는 `link-check.test.ts` 가 값으로 잰다.
  */
 test("⚠중복 id 가 있으면 빌드가 실패한다 — 앵커 검사가 통과하는 종류의 결함이다", () => {
-  const src = readFileSync(join(import.meta.dirname, "..", "tools", "build.ts"), "utf8");
-  const at = src.indexOf("duplicateIds(all)");
-  assert.notEqual(at, -1, "빌드가 중복 id 를 아예 안 본다");
-  const region = src.slice(at, at + 800);
   assert.match(
-    region,
+    gate(buildSrc(), "duplicateIds(all)").block,
     /process\.exitCode = 1/,
     "중복 id 를 보긴 하는데 종료 코드를 안 바꾼다 — 경고만으로는 그대로 배포된다",
   );
@@ -308,10 +606,7 @@ test("⚠중복 id 가 있으면 빌드가 실패한다 — 앵커 검사가 통
  * ⚠**시험이 소스를 글자로 읽는다** — 위 시험과 같은 이유다(`build.ts` 는 import 만으로 실행된다).
  */
 test("⚠중복 id 의 수를 「종」이라고 부르지 않는다 — 그 수는 (문서, id) 쌍이다", () => {
-  const src = readFileSync(join(import.meta.dirname, "..", "tools", "build.ts"), "utf8");
-  const at = src.indexOf("duplicateIds(all)");
-  assert.notEqual(at, -1, "빌드가 중복 id 를 아예 안 본다");
-  const region = src.slice(at, at + 1200);
+  const region = gate(buildSrc(), "duplicateIds(all)").block;
   assert.doesNotMatch(
     region,
     /\$\{dups\.length\}종/,
@@ -397,11 +692,8 @@ test("⚠daily.yml 이 화면 생성 단계에서 BB_REQUIRE_CONTACT 를 켠다"
 
 /** ⚠**빌드가 그 판정을 실제로 쓰는가.** 순수 함수만 맞고 호출부가 없으면 아무 일도 안 일어난다 */
 test("⚠빌드가 contactGate 의 판정으로 종료 코드를 바꾼다", () => {
-  const src = readFileSync(join(import.meta.dirname, "..", "tools", "build.ts"), "utf8");
-  const at = src.indexOf("contactGate(site.contact");
-  assert.notEqual(at, -1, "빌드가 contactGate 를 안 부른다");
   assert.match(
-    src.slice(at, at + 400),
+    gate(buildSrc(), "contactGate(site.contact").block,
     /process\.exitCode = 1/,
     "판정만 받고 종료 코드를 안 바꾼다 — 경고만으로는 그대로 배포된다",
   );

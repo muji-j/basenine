@@ -1001,8 +1001,11 @@ function buildPicker(): ReturnType<typeof makeDocument> {
     ["Pitcher", "pitcher"],
     ["Batter", "batter"],
   ]) {
-    form.appendChild(make("input", { id: `pick${id}`, type: "search", "aria-expanded": "false" }));
-    form.appendChild(make("ul", { id: `pick${id}Hits`, role: "listbox" }));
+    const qbox = make("div", { class: "qbox" });
+    qbox.appendChild(make("input", { id: `pick${id}`, type: "search" }));
+    qbox.appendChild(make("ul", { id: `pick${id}Hits`, role: "list", "aria-label": "候補" }));
+    qbox.appendChild(make("p", { class: "vh", "data-hitstatus": "", role: "status" }));
+    form.appendChild(qbox);
     form.appendChild(make("b", { id: `pick-${key}-chosen` }));
   }
   const go = make("button", { id: "pickGo", type: "button" });
@@ -1415,8 +1418,11 @@ function buildCompare(): ReturnType<typeof makeDocument> {
   const doc = makeDocument();
   const form = make("section", { class: "block", id: "cmpForm" });
   for (const [id, key] of [["A", "a"], ["B", "b"]] as [string, string][]) {
-    form.appendChild(make("input", { id: `cmp${id}`, type: "search", "aria-expanded": "false" }));
-    form.appendChild(make("ul", { id: `cmp${id}Hits`, role: "listbox" }));
+    const qbox = make("div", { class: "qbox" });
+    qbox.appendChild(make("input", { id: `cmp${id}`, type: "search" }));
+    qbox.appendChild(make("ul", { id: `cmp${id}Hits`, role: "list", "aria-label": "候補" }));
+    qbox.appendChild(make("p", { class: "vh", "data-hitstatus": "", role: "status" }));
+    form.appendChild(qbox);
     form.appendChild(make("b", { id: `cmp-${key}-chosen` }));
   }
   const go = make("button", { id: "cmpGo", type: "button" });
@@ -1637,12 +1643,17 @@ const MANY_INDEX = Array.from({ length: 25 }, (_, i) => ({
   t: "チーム",
 }));
 
-/** 헤더 검색(`#q` → `#qhits`)의 뼈대. 목록 id 가 「Hits」가 아니라 `qhits` 다 */
+/**
+ * 헤더 검색(`#q` → `#qhits`)의 뼈대. 목록 id 가 「Hits」가 아니라 `qhits` 다.
+ * ⚠**listbox / combobox 를 쓰지 않는다**(2026-08-20) — 서버 마크업과 같은 모양이어야 한다.
+ * 그 일치는 `layout.test.ts` 가 실제 렌더 결과에서 따로 잰다.
+ */
 function buildHeaderSearch(): ReturnType<typeof makeDocument> {
   const doc = makeDocument("");
   const box = make("div", { class: "qbox" });
-  box.appendChild(make("input", { id: "q", type: "search", role: "combobox", "aria-expanded": "false" }));
-  box.appendChild(make("ul", { class: "qhits", id: "qhits", role: "listbox" }));
+  box.appendChild(make("input", { id: "q", type: "search" }));
+  box.appendChild(make("ul", { class: "qhits", id: "qhits", role: "list", "aria-label": "検索結果" }));
+  box.appendChild(make("p", { class: "vh", "data-hitstatus": "", role: "status" }));
   doc.body.appendChild(box);
   return doc;
 }
@@ -1659,6 +1670,19 @@ async function searchIn(
   input.fire("input");
   await new Promise((resolve) => setTimeout(resolve, 0));
   return doc.querySelectorAll(`#${listId} li`);
+}
+
+/**
+ * **낭독 영역이 실제로 말한 것.**
+ *
+ * ⚠**`role="status"` 갱신은 150ms 모아서 낸다**(2026-08-21 · `assets.ts` 의 `SAY_DELAY`).
+ * 폴라이트 라이브 영역이라 한 글자마다 인원수가 바뀌면 그만큼 낭독이 쌓이기 때문이다 —
+ * IME 로 「たなか」를 치는 구간이 그렇다. **화면(목록)은 안 미룬다**, 그래서 `searchIn` 은 그대로다.
+ * ⚠**여기서만 기다린다** — `searchIn` 에 150ms 를 넣으면 검색 시험 전체가 그만큼 느려진다.
+ */
+async function said(doc: ReturnType<typeof makeDocument>): Promise<string> {
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  return doc.querySelector("[data-hitstatus]")!.textContent;
 }
 
 /** 결과 항목만. 꼬리의 안내줄은 결과가 아니다 */
@@ -1740,6 +1764,122 @@ test("⚠안내줄은 골라지지 않는다 — 화살표가 스무 번째에�
   input.fire("keydown", { key: "Enter" });
   // 20번째(= 田19)에서 멈춘다. 안내줄이 골라졌다면 여기서 아무 데도 안 가거나 딴 곳으로 간다
   assert.equal(location.href, "players/t19.html", "화살표 끝이 스무 번째 선수가 아니다");
+});
+
+// ── 롤을 뺀 뒤에도 남아야 하는 것 ─────────────────────────────────────────
+
+/**
+ * ⚠**롤을 빼는 것이지 조작을 빼는 게 아니다**(2026-08-20).
+ * `role="option"`/`aria-selected` 를 지우면 **어디를 고르고 있는지 보여 주던 표시**가
+ * 같이 사라진다 — 화살표는 도는데 화면이 안 움직이면 「키보드가 안 먹는다」가 된다.
+ * ⚠**ARIA 로 되돌리지 않는다.** 그건 방금 뺀 것을 다시 넣는 것이다 — 표시는 우리 클래스로 한다.
+ */
+test("⚠결과 줄에 option 롤도 aria-selected 도 없다 — 그 안의 링크가 「못 쓴다」로 판정된 자리다", async () => {
+  const doc = buildHeaderSearch();
+  run(doc, { index: MANY_INDEX });
+  const items = await searchIn(doc, "q", "qhits", "田");
+  assert.ok(items.length > 1, `줄이 ${items.length}개뿐이다 — 이 시험이 공회전한다`);
+  for (const li of items) {
+    assert.equal(li.getAttribute("role"), null, "결과 줄에 롤이 남아 있다");
+    assert.equal(li.getAttribute("aria-selected"), null, "결과 줄에 aria-selected 가 남아 있다");
+    assert.equal(li.getAttribute("aria-disabled"), null, "링크를 「못 쓴다」고 표시했다");
+  }
+});
+
+test("⚠화살표가 고른 자리는 눈에 보인다 — 표시가 없으면 「키보드가 안 먹는다」가 된다", async () => {
+  const doc = buildHeaderSearch();
+  run(doc, { index: MANY_INDEX });
+  const input = doc.getElementById("q")!;
+  await searchIn(doc, "q", "qhits", "田1");
+  const on = (): number[] =>
+    doc.querySelectorAll("#qhits li").map((li, i) => (li.className.split(/\s+/).includes("on") ? i : -1))
+      .filter((i) => i >= 0);
+  assert.deepEqual(on(), [], "아무것도 안 골랐는데 표시가 있다");
+  input.fire("keydown", { key: "ArrowDown" });
+  assert.deepEqual(on(), [0], "첫 줄이 안 골라진다");
+  input.fire("keydown", { key: "ArrowDown" });
+  assert.deepEqual(on(), [1], "표시가 하나만 움직이지 않는다");
+  input.fire("keydown", { key: "ArrowUp" });
+  assert.deepEqual(on(), [0], "위로 못 올라간다");
+});
+
+test("⚠Esc 로 닫힌다 — 롤을 빼는 것이지 조작을 빼는 게 아니다", async () => {
+  const doc = buildHeaderSearch();
+  run(doc, { index: MANY_INDEX });
+  const input = doc.getElementById("q")!;
+  const list = doc.getElementById("qhits")!;
+  await searchIn(doc, "q", "qhits", "田");
+  assert.equal(list.hidden, false, "목록이 안 열렸다 — 이 시험이 공회전한다");
+  input.fire("keydown", { key: "Escape" });
+  assert.equal(list.hidden, true, "Esc 로 안 닫힌다");
+});
+
+/**
+ * ⚠**combobox 를 그만두면 「열렸다」를 말해 주던 것이 통째로 사라진다.**
+ * 그 자리를 `role="status"` 한 줄이 받는다 — 안 넣으면 낭독기 사용자는 **입력에 아무 반응이 없는**
+ * 화면을 쓰게 된다(§0-1 의 주 경로다).
+ * ⚠**목록 자체를 live 로 만들지 않는다** — 키를 칠 때마다 스무 명을 통째로 읽는다.
+ */
+test("⚠결과 수를 소리로 낸다 — combobox 를 그만둔 자리를 이것이 받는다", async () => {
+  const doc = buildHeaderSearch();
+  run(doc, { index: MANY_INDEX });
+  await searchIn(doc, "q", "qhits", "田1");
+  assert.match(await said(doc), /11/, "고른 인원을 말하지 않는다");
+  await searchIn(doc, "q", "qhits", "田");
+  const many = await said(doc);
+  assert.match(many, /25/, "자르기 전 인원을 말하지 않는다");
+  assert.match(many, /20/, "그리는 인원을 말하지 않는다");
+  await searchIn(doc, "q", "qhits", "존재하지않음");
+  assert.match(await said(doc), /該当なし/, "0건을 말하지 않는다");
+});
+
+/**
+ * ⚠**목록은 안 미룬다.** 낭독만 모으는 것이라, 화면은 키를 칠 때마다 바로 바뀌어야 한다 —
+ * 안 그러면 「검색이 느려졌다」가 되고 그건 §0-1 의 주 경로다.
+ */
+test("⚠낭독을 모아도 목록은 즉시 바뀐다 — 미루는 것은 소리뿐이다", async () => {
+  const doc = buildHeaderSearch();
+  run(doc, { index: MANY_INDEX });
+  const t0 = Date.now();
+  const items = await searchIn(doc, "q", "qhits", "田1");
+  assert.ok(picks(items).length > 0, "목록이 즉시 안 그려졌다 — 화면까지 미뤘다");
+  /**
+   * ⚠**「아직 안 났다」는 시간에 기대는 판정이다.** 하네스가 150ms 이상 걸렸다면
+   * 이 시험은 디바운스를 잰 것이 아니라 **자기 느림을 잰 것**이므로, 그걸 「고장」으로
+   * 읽히게 두지 않는다 — 무엇 때문에 떨어졌는지 메시지가 말하게 한다(작업규칙 8).
+   */
+  const elapsed = Date.now() - t0;
+  assert.ok(elapsed < 100, `하네스가 ${elapsed}ms 걸려 디바운스(150ms)를 잴 수 없었다 — 다시 돌려라`);
+  // 그 시점에는 아직 소리가 안 났다(모으는 중이다)
+  assert.equal(
+    doc.querySelector("[data-hitstatus]")!.textContent,
+    "",
+    "키 입력 즉시 낭독 영역을 갱신했다 — 한 글자마다 낭독이 쌓인다",
+  );
+  assert.match(await said(doc), /11/, "모은 뒤에도 결국 말하지 않는다");
+});
+
+test("⚠읽지 못했을 때도 소리로 낸다 — 「없다」와 「못 읽었다」는 다르다(M12)", async () => {
+  const doc = buildHeaderSearch();
+  run(doc); // 색인을 주지 않는다 = 취득 실패
+  await searchIn(doc, "q", "qhits", "田");
+  const text = await said(doc);
+  assert.ok(text !== "", "실패를 말하지 않는다");
+  assert.ok(!text.includes("該当なし"), "취득 실패를 「없다」라고 말한다");
+});
+
+test("⚠닫으면 소리도 지운다 — 닫힌 목록의 인원을 낭독기가 계속 들고 있으면 안 된다", async () => {
+  const doc = buildHeaderSearch();
+  run(doc, { index: MANY_INDEX });
+  const input = doc.getElementById("q")!;
+  const status = doc.querySelector("[data-hitstatus]")!;
+  await searchIn(doc, "q", "qhits", "田");
+  assert.ok((await said(doc)) !== "");
+  input.fire("keydown", { key: "Escape" });
+  // ⚠**즉시** 지운다 — 모으는 시간을 기다리지 않는다(닫힌 목록의 인원이 뒤늦게 들리면 더 나쁘다)
+  assert.equal(status.textContent, "", "닫았는데 결과 수가 남아 있다");
+  // ⚠**미뤄 둔 낭독이 뒤늦게 되살아나지 않는가** — 이게 디바운스를 넣을 때의 진짜 함정이다
+  assert.equal(await said(doc), "", "닫은 뒤에 미뤄 둔 인원수가 되살아났다");
 });
 
 test("⚠등번호가 없는 선수에게 자리를 만들지 않는다 — 「―」로 채우면 198줄이 같은 기호가 된다", async () => {
@@ -2492,4 +2632,313 @@ test("⚠최애 구단의 상세에서는 「이 문서」다 — true 로 두�
   const a = doc.querySelectorAll("[data-navteam]")[0]!;
   assert.equal(a.textContent, "阪神");
   assert.equal(a.getAttribute("aria-current"), "page");
+});
+
+// ── 순위표의 「全員」 + 최소 표본 ──────────────────────────────────────────
+
+/**
+ * ⚠**여기서 재는 것은 「입력이 실제로 행을 줄이는가」다** — 입력값이 아니라 **출력**이다.
+ * 「그 코드가 있다」로 「그 코드가 효력이 있다」를 확인했다고 믿는 것이 이 저장소가
+ * 두 번 데인 자리다(CLAUDE.md §2-2 의 합성 픽스처).
+ *
+ * ⚠**마크업의 일치는 `standings-page.test.ts` 의 「클라이언트가 읽는 갈고리」가 따로 본다.**
+ * 여기 픽스처는 손으로 짓기 때문에, 서버가 내는 속성 이름이 바뀌어도 이 시험은 옛 이름을
+ * 들고 초록으로 남는다 — 그러면 시험은 전부 통과하는데 실물은 아무것도 안 걸러진다.
+ */
+function rankingPanelDom(
+  id: string,
+  dens: readonly (number | null)[],
+  opts: { outs?: true } = {},
+): { doc: ReturnType<typeof makeDocument>; rows: El[] } {
+  const doc = makeDocument("");
+  const panel = make("div", { "data-panelgroup": "rankmetric", "data-panelkey": id });
+  const bar = make("div", { class: "mfind rankonly" });
+  bar.appendChild(make("button", { class: "tab", "data-rankonly": id, "aria-pressed": "true" }));
+  const label = make("label", { class: "rankmin" });
+  label.hidden = true;
+  const input = make("input", { type: "text", "data-rankmin": id, value: "0", ...(opts.outs === true ? { "data-rankouts": "" } : {}) });
+  label.appendChild(input);
+  bar.appendChild(label);
+  const count = make("span", { class: "count" });
+  count.appendChild(make("span", { "data-rankcount": id }));
+  bar.appendChild(count);
+  panel.appendChild(bar);
+
+  const bad = make("p", { class: "empty", "data-rankbad": id });
+  bad.hidden = true;
+  panel.appendChild(bad);
+
+  const table = make("table");
+  const tbody = make("tbody");
+  const rows = dens.map((den, i) => {
+    // ⚠**분모가 규정 이상이면 도달자**로 둔다 — 서버가 내는 것과 같은 관계여야 한다
+    const qualified = den !== null && den >= 100;
+    const tr = make("tr", { "data-qualified": qualified ? "1" : "0", ...(den === null ? {} : { "data-den": String(den) }) });
+    tr.hidden = !qualified;
+    const td = make("td");
+    td.appendChild(make("b", { "data-rankq": "" }));
+    const all = make("b", { "data-ranka": "" });
+    all.hidden = true;
+    td.appendChild(all);
+    tr.appendChild(td);
+    tr.appendChild(make("td", { class: "l" }, [make("a", { href: `players/p${i}.html` })]));
+    tbody.appendChild(tr);
+    return tr;
+  });
+  table.appendChild(tbody);
+  panel.appendChild(table);
+
+  const empty = make("p", { class: "empty", "data-rankempty": id });
+  empty.hidden = true;
+  panel.appendChild(empty);
+
+  doc.body.appendChild(panel);
+  return { doc, rows };
+}
+
+const shown = (rows: readonly El[]): number => rows.filter((r) => !r.hidden).length;
+
+function rankParts(doc: ReturnType<typeof makeDocument>, id: string) {
+  return {
+    btn: doc.querySelector(`[data-rankonly="${id}"]`)!,
+    input: doc.querySelector(`[data-rankmin="${id}"]`)!,
+    count: doc.querySelector(`[data-rankcount="${id}"]`)!,
+    bad: doc.querySelector(`[data-rankbad="${id}"]`)!,
+    empty: doc.querySelector(`[data-rankempty="${id}"]`)!,
+  };
+}
+
+/** 규정 도달 3명(400·300·200打席) + 미달 3명(90·50·10打席) */
+const DENS = [400, 300, 200, 90, 50, 10];
+
+test("⚠최소 표본이 실제로 행을 줄인다 — 입력을 잰 게 아니라 출력을 잰다", () => {
+  const { doc, rows } = rankingPanelDom("avg", DENS);
+  run(doc);
+  const { btn, input } = rankParts(doc, "avg");
+  assert.equal(shown(rows), 3, "처음에는 규정 도달자만 보여야 한다");
+  btn.fire("click");
+  assert.equal(shown(rows), 6, "「全員」으로 바꿨는데 전원이 안 나온다");
+  input.value = "100";
+  input.fire("input");
+  assert.equal(shown(rows), 3, "100打席 미만이 안 걸러졌다");
+  input.value = "250";
+  input.fire("input");
+  assert.equal(shown(rows), 2, "250打席 미만이 안 걸러졌다");
+});
+
+test("⚠0이면 전원이다 — 되돌릴 수 없으면 그건 되돌릴 수 없는 필터다", () => {
+  const { doc, rows } = rankingPanelDom("avg", DENS);
+  run(doc);
+  const { btn, input } = rankParts(doc, "avg");
+  btn.fire("click");
+  input.value = "250";
+  input.fire("input");
+  assert.equal(shown(rows), 2);
+  input.value = "0";
+  input.fire("input");
+  assert.equal(shown(rows), 6, "0을 넣었는데 전원으로 안 돌아온다");
+});
+
+test("⚠개수 표시가 분모와 함께 움직인다 — 자른 결과를 말하지 않으면 M2 를 안 지킨 것이다", () => {
+  const { doc } = rankingPanelDom("avg", DENS);
+  run(doc);
+  const { btn, input, count } = rankParts(doc, "avg");
+  assert.equal(count.textContent, "3人");
+  btn.fire("click");
+  assert.equal(count.textContent, "6人");
+  input.value = "250";
+  input.fire("input");
+  assert.equal(count.textContent, "2人", "거른 뒤의 인원을 말하지 않는다");
+});
+
+test("⚠「規定到達のみ」 동안에는 입력칸을 숨긴다 — 눌러도 아무 일이 없는 조작을 두지 않는다", () => {
+  const { doc } = rankingPanelDom("avg", DENS);
+  run(doc);
+  const { btn, input } = rankParts(doc, "avg");
+  assert.equal(input.parentNode!.hidden, true, "규정 도달자만 보는데 입력칸이 나와 있다");
+  btn.fire("click");
+  assert.equal(input.parentNode!.hidden, false, "「全員」인데 입력칸이 안 나온다");
+  btn.fire("click");
+  assert.equal(input.parentNode!.hidden, true, "규정으로 돌아왔는데 입력칸이 남아 있다");
+});
+
+test("⚠규정 도달자만 볼 때는 최소 표본을 걸지 않는다 — 숨긴 칸이 몰래 자르면 그게 최악이다", () => {
+  const { doc, rows } = rankingPanelDom("avg", DENS);
+  run(doc);
+  const { btn, input } = rankParts(doc, "avg");
+  btn.fire("click");
+  input.value = "350";
+  input.fire("input");
+  assert.equal(shown(rows), 1);
+  btn.fire("click");
+  assert.equal(shown(rows), 3, "숨긴 입력칸이 규정 목록까지 자르고 있다");
+});
+
+test("⚠못 읽은 값은 조용히 0이 되지 않는다 — 안 먹었으면 그게 보여야 한다", () => {
+  const { doc, rows } = rankingPanelDom("avg", DENS);
+  run(doc);
+  const { btn, input, bad } = rankParts(doc, "avg");
+  btn.fire("click");
+  input.value = "250";
+  input.fire("input");
+  assert.equal(bad.hidden, true, "정상값에 경고가 떴다");
+  // ⚠**7자리는 못 읽는 값으로 본다** — NPB 의 어떤 분모도 그 자리에 닿지 않는다.
+  //   막는 것이 아니라 **말한다**: 잠자코 0으로 바꾸면 친 값이 사라진 것을 알 수 없다
+  for (const junk of ["-5", "あ", "3.5", "1e9", "1234567", "２５０"]) {
+    input.value = junk;
+    input.fire("input");
+    assert.equal(bad.hidden, false, `「${junk}」를 잠자코 받았다`);
+    assert.equal(input.getAttribute("aria-invalid"), "true", `「${junk}」가 낭독기에 정상으로 들린다`);
+    assert.equal(shown(rows), 2, `「${junk}」로 걸러진 결과가 바뀌었다 — 직전 값이 그대로여야 한다`);
+  }
+  input.value = "0";
+  input.fire("input");
+  assert.equal(bad.hidden, true, "고쳤는데 경고가 남아 있다");
+  assert.equal(input.getAttribute("aria-invalid"), "false");
+});
+
+/**
+ * ⚠**칸을 비우는 것은 「못 읽은 값」이 아니라 「하한 없음」이다.**
+ * 입력마다 판정하므로, 지우고 다시 치는 그 한순간을 오류로 부르면 **정상 조작 중에
+ * 경고가 번쩍인다.** 게다가 결과가 화면에 그대로 보이므로(전원으로 돌아온다)
+ * 조용히 삼키는 것과 구별된다.
+ */
+test("칸을 비우면 하한이 없어진다 — 지우고 다시 치는 도중에 경고가 번쩍이지 않는다", () => {
+  const { doc, rows } = rankingPanelDom("avg", DENS);
+  run(doc);
+  const { btn, input, bad } = rankParts(doc, "avg");
+  btn.fire("click");
+  input.value = "250";
+  input.fire("input");
+  input.value = "";
+  input.fire("input");
+  assert.equal(bad.hidden, true, "칸을 비웠다고 오류라고 말한다");
+  assert.equal(shown(rows), 6, "칸을 비웠는데 하한이 남아 있다");
+});
+
+test("⚠아무도 안 남으면 그렇다고 말한다 — 머리줄만 남은 표는 고장으로 읽힌다(M12)", () => {
+  const { doc, rows } = rankingPanelDom("avg", DENS);
+  run(doc);
+  const { btn, input, empty, count } = rankParts(doc, "avg");
+  btn.fire("click");
+  assert.equal(empty.hidden, true);
+  input.value = "9999";
+  input.fire("input");
+  assert.equal(shown(rows), 0);
+  assert.equal(empty.hidden, false, "0건인데 빈 표만 남았다");
+  assert.equal(count.textContent, "0人");
+});
+
+/**
+ * ⚠**분모가 아웃 카운트인 패널**(방어율·WHIP)은 화면의 母数 칸이 `138.1回` 라는 야구 표기다.
+ * 거기 보이는 수를 그대로 칠 수 있어야 하고, 50 을 **50아웃**으로 읽으면 3배로 자른다.
+ */
+test("⚠投球回는 이닝으로 받는다 — 50을 50아웃으로 읽으면 3배로 자른다", () => {
+  // 415아웃(138.1回) · 300아웃(100回) · 150아웃(50回) · 90아웃(30回)
+  const { doc, rows } = rankingPanelDom("era", [415, 300, 150, 90], { outs: true });
+  run(doc);
+  const { btn, input } = rankParts(doc, "era");
+  btn.fire("click");
+  input.value = "50";
+  input.fire("input");
+  assert.equal(shown(rows), 3, "50回 이상이 3명이 아니다 — 아웃으로 읽고 있다");
+  input.value = "138.1";
+  input.fire("input");
+  assert.equal(shown(rows), 1, "138.1回 = 415아웃의 경계가 안 맞는다");
+  input.value = "138.2";
+  input.fire("input");
+  assert.equal(shown(rows), 0, "138.2回 = 416아웃인데 415아웃이 남았다");
+});
+
+test("⚠이닝 표기에 3 이상의 소수는 없다 — 138.3 은 못 읽는 값이다", () => {
+  const { doc } = rankingPanelDom("era", [415, 300], { outs: true });
+  run(doc);
+  const { btn, input, bad } = rankParts(doc, "era");
+  btn.fire("click");
+  input.value = "138.3";
+  input.fire("input");
+  assert.equal(bad.hidden, false, "있을 수 없는 이닝 표기를 잠자코 받았다");
+});
+
+test("⚠최소 표본이 저장된다 — 다시 열었을 때 사라지면 「저장된다」가 거짓이 된다", () => {
+  const storage = makeStorage();
+  const first = rankingPanelDom("avg", DENS);
+  run(first.doc, { storage });
+  const a = rankParts(first.doc, "avg");
+  a.btn.fire("click");
+  a.input.value = "250";
+  a.input.fire("input");
+
+  const second = rankingPanelDom("avg", DENS);
+  run(second.doc, { storage });
+  const b = rankParts(second.doc, "avg");
+  assert.equal(shown(second.rows), 2, "다시 열었더니 최소 표본이 사라졌다");
+  assert.equal(b.input.value, "250", "입력칸이 저장된 값을 안 보여준다");
+});
+
+/**
+ * ⚠**같은 지표가 セ·パ 두 벌로 그려지고 상태는 한 벌이다**(`data-rankonly` 가 리그로
+ * 갈라져 있지 않다 — 실측 2026-08-20 `dist/ranking.html`: `data-rankonly="avg"` 가 2건,
+ * 투수 지표는 선발·구원까지 4건). 누른 쪽만 갱신하면 반대쪽 표가 저장된 상태와 어긋난 채
+ * 남아, **새로고침해야 맞는 화면**이 된다.
+ */
+test("⚠같은 지표의 사본이 함께 움직인다 — 한쪽만 갱신하면 새로고침해야 맞는 화면이 된다", () => {
+  const { doc, rows } = rankingPanelDom("avg", DENS);
+  const second = make("div", { "data-panelgroup": "rankmetric", "data-panelkey": "avg2" });
+  const twin = rankingPanelDom("avg", DENS);
+  for (const c of [...twin.doc.body.children]) second.appendChild(c);
+  doc.body.appendChild(second);
+  run(doc);
+
+  const both = doc.querySelectorAll('[data-rankonly="avg"]');
+  assert.equal(both.length, 2, "사본이 둘이 아니다 — 이 시험이 공회전한다");
+  both[0]!.fire("click");
+  const inputs = doc.querySelectorAll('[data-rankmin="avg"]');
+  inputs[0]!.value = "250";
+  inputs[0]!.fire("input");
+
+  const all = doc.querySelectorAll("tr");
+  assert.equal(all.filter((r) => !r.hidden).length, 4, "사본 쪽 표가 따라오지 않았다");
+  assert.equal(inputs[1]!.value, "250", "사본의 입력칸이 저장된 값을 안 보여준다");
+});
+
+/**
+ * ⚠**못 읽은 입력의 상태가 사본 간에 어긋났다**(2026-08-21 최종 검토 P3).
+ *
+ * `bad` 는 사본마다 따로 있는데 **칸의 값은 다른 사본의 조작으로도 덮어써진다.**
+ * A 에 「-5」를 친 채 B 의 버튼을 누르면 A 의 칸은 유효한 수로 돌아가는데
+ * `aria-invalid="true"` 와 경고문만 A 에 남아 **「값은 정상인데 오류라고 말하는 칸」**이 된다.
+ * ⚠**낭독기에는 그게 전부다** — 화면에서 눈으로 값을 보는 사람만 모순을 알아챌 수 있다.
+ */
+test("⚠못 읽은 입력을 사본 쪽 조작이 되돌려 놓으면 오류 표시도 같이 사라진다", () => {
+  const { doc } = rankingPanelDom("avg", DENS);
+  const second = make("div", { "data-panelgroup": "rankmetric", "data-panelkey": "avg2" });
+  const twin = rankingPanelDom("avg", DENS);
+  for (const c of [...twin.doc.body.children]) second.appendChild(c);
+  doc.body.appendChild(second);
+  run(doc);
+
+  const btns = doc.querySelectorAll('[data-rankonly="avg"]');
+  const inputs = doc.querySelectorAll('[data-rankmin="avg"]');
+  const bads = doc.querySelectorAll('[data-rankbad="avg"]');
+  assert.equal(btns.length, 2, "사본이 둘이 아니다 — 이 시험이 공회전한다");
+
+  btns[0]!.fire("click"); // 「全員」으로
+  inputs[0]!.value = "-5";
+  inputs[0]!.fire("input");
+  // 먼저 **못 읽었다고 말하는가**를 확인한다 — 아니면 아래가 아무것도 안 재는 것이다
+  assert.equal(inputs[0]!.getAttribute("aria-invalid"), "true", "못 읽은 입력을 못 읽었다고 안 한다");
+  assert.equal(bads[0]!.hidden, false, "못 읽은 입력인데 경고문이 안 나온다");
+
+  // **사본 쪽**을 두 번 눌러 같은 표시 상태로 되돌린다(그 사이 A 의 칸은 유효값으로 덮어써진다)
+  btns[1]!.fire("click");
+  btns[1]!.fire("click");
+
+  assert.equal(inputs[0]!.value, "0", "사본 조작이 A 의 칸을 안 되돌렸다 — 이 시험이 다른 것을 재고 있다");
+  assert.equal(
+    inputs[0]!.getAttribute("aria-invalid"),
+    "false",
+    "값은 정상으로 돌아갔는데 칸이 여전히 오류라고 말한다",
+  );
+  assert.equal(bads[0]!.hidden, true, "값은 정상으로 돌아갔는데 경고문이 남아 있다");
 });

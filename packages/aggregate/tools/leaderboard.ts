@@ -6,9 +6,20 @@
  * ⚠**분모를 항상 함께 낸다.** 「.400」만 보여주는 출력은 만들지 않는다(M2).
  */
 import { openDb } from "@bb-app/store";
-import { aggregateSeason, battingEntries, buildLeagues, pitchingEntries, rankBatters, rankPitchers } from "../src/index.ts";
+import {
+  aggregateSeason,
+  battingEntries,
+  buildLeagues,
+  buildRunExpectancy,
+  deriveRunValues,
+  pitchingEntries,
+  rankBatters,
+  rankPitchers,
+} from "../src/index.ts";
 import type { BattingEntry, PitchingEntry } from "../src/index.ts";
-import type { Rate } from "@bb-app/metrics";
+import { TEAMS } from "@bb-app/domain";
+import type { League } from "@bb-app/domain";
+import type { Rate, WobaWeights } from "@bb-app/metrics";
 import { qualifiedBatterPa, qualifiedPitcherOuts } from "@bb-app/metrics";
 
 const [dbPath, seasonArg] = process.argv.slice(2);
@@ -19,7 +30,20 @@ if (!dbPath || !seasonArg) {
 
 const db = openDb(dbPath, "1970-01-01T00:00:00.000Z");
 const agg = aggregateSeason(db, Number(seasonArg));
-const leagues = buildLeagues(agg);
+
+/**
+ * ⚠**계수를 화면과 같은 방법으로 유도한다**(2026-08-20 · M1).
+ * 안 주면 `buildLeagues` 가 **폴백 계수**로 떨어지고, 그러면 이 도구가 내는 wOBA·wRC+ 가
+ * 사이트와 **조용히 다른 수**가 된다 — 도구는 대조용이므로 그건 최악의 실패다.
+ */
+const runValues = new Map<League, WobaWeights>();
+for (const league of ["central", "pacific"] as const) {
+  const codes = TEAMS.filter((t) => t.league === league).map((t) => t.code);
+  const re = buildRunExpectancy(db, agg.season, league, codes);
+  if (re.totalPa === 0) continue;
+  runValues.set(league, deriveRunValues(db, re, codes).runValues);
+}
+const leagues = buildLeagues(agg, (lg) => runValues.get(lg));
 
 const fmt = (r: Rate, digits = 3, stripZero = false): string => {
   if (r.value === null) return "—";

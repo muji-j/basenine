@@ -130,7 +130,9 @@ a{color:inherit}
   animation:drop var(--fast) var(--ease)}
 .qhits[hidden]{display:none}
 .qhits li a{display:flex;gap:8px;align-items:baseline;padding:6px 11px;text-decoration:none;font-size:13px}
-.qhits li a:hover,.qhits li[aria-selected="true"] a{background:var(--panel-2)}
+/* 화살표가 고른 자리. ⚠**aria-selected 로 표시하지 않는다**(2026-08-20) — 이 목록은 listbox 가
+   아니고, listbox 밖의 aria-selected 는 낭독기에 깨진 구조로 들린다. 표시는 우리 클래스로 한다 */
+.qhits li a:hover,.qhits li.on a{background:var(--panel-2)}
 .qhits li a{flex-wrap:wrap}
 .qhits .ht{margin-left:auto;font-size:10.5px;color:var(--tx-3);white-space:nowrap}
 /* 등번호. **고정폭 자리를 준다** — 한 자리와 세 자리가 섞이면 이름의 시작선이 들쭉날쭉해진다.
@@ -246,7 +248,21 @@ a{color:inherit}
 .mkfig{display:block;width:100%;height:auto;overflow:visible}
 .mf-grid{fill:none;stroke:var(--hair-2);stroke-width:1}
 .mf-spoke{stroke:var(--hair);stroke-width:1;transition:stroke var(--fast) var(--ease)}
-.mf-shape{fill-opacity:.42;stroke:var(--team,#6b7280);stroke-width:1.5;stroke-linejoin:round;
+/* ⚠**윤곽은 구단 색이 아니라 글자색 토큰이다**(2026-08-21 감사 P1 · .dia .db.on 과 같은 수술).
+   구단 색을 선으로 쓰면 **24조합(12구단 x 2테마) 중 12가 3:1 에 미달**했다:
+   라이트 4 — ヤクルト 2.72 / 阪神 1.61 / 巨人 2.79 / ソフトバンク 1.64
+   다크 8 — 中日 1.35 / 日本ハム 2.40 / DeNA 2.54 / 西武 1.46 / オリックス 1.08 /
+            ロッテ 1.10 / 楽天 1.74 / 広島 2.83. 미달 구단의 합집합은 **12/12** 다.
+   ⚠**살이 구제하지 못한다** — fill-opacity .42 를 합성한 뒤에도 **0/24 만 3:1 도달**이고,
+   thin 은 fill-opacity 가 0 이라 **점선 윤곽 하나가 도형의 전부**다(배포물 2,314/5,666장).
+   --tx-2 는 라이트 6.61 · 다크 6.67 이라 24/24 가 통과한다.
+   ⚠**「구단 색을 지켰다」가 아니다 — 살에만 남겼고 그 살은 3:1 을 못 넘는다.**
+   그래도 남기는 이유: 이 제품은 **선수 사진도 구단 로고도 엠블럼도 쓸 수 없고**(CLAUDE.md §6),
+   대체로 정해 둔 것이 「우리가 계산한 값으로 만든 우리 그림 + 구단 색 마크」다.
+   구단 색은 **우리에게 허용된 유일한 신원 신호**라, 대비를 못 벌더라도 살에는 남긴다.
+   ⚠더 정직한 안(구단 색을 紋에서 아예 뺀다)도 감사에서 제시됐다. 고르지 않은 것은
+   브랜드 규칙 쪽을 우선했기 때문이지, 그 안이 틀려서가 아니다. */
+.mf-shape{fill-opacity:.42;stroke:var(--tx-2);stroke-width:1.5;stroke-linejoin:round;
   animation:draw 420ms var(--ease)}
 /* ⚠**표본이 얇으면 속을 비운다.** 꽉 찬 도형은 「이만큼이다」라는 단정인데,
    눈금을 맞춘 모집단(타자 50타석·투수 20이닝) 밖에서는 그 단정이 참이 아니다.
@@ -255,7 +271,14 @@ a{color:inherit}
 /* ⚠보이는 점은 작아도 **판정 영역은 손가락 크기**여야 한다 — mf-hit이 그 역할이다.
    손잡이는 둘레에 고르게 있고, 값 표시점(mf-dot)은 도형 위에 따로 있다 */
 .mf-hit{fill:transparent}
-.mf-dot{fill:var(--panel);stroke:var(--team,#6b7280);stroke-width:2;
+/* ⚠**이 점은 차트가 아니라 조작 요소다** — 감싸는 .mf-ax 가 role="button" tabindex="0" 이고
+   이 점이 **유일한 시각 어포던스**다. 그런데 채움이 --panel(바탕과 같은 색)이라
+   선이 곧 전부인데, 그 선이 구단 색이면 다크 オリックス 1.08 · ロッテ 1.10 에서
+   **누를 수 있는 것이 화면에 없다.** WCAG 1.4.11 의 user interface components 에는
+   「글자로도 제공되면 예외」 조항이 없다 — 판단이 아니라 요구사항이다.
+   → 링은 --tx-2 로 고정(24/24 통과). 고른 축의 **채움은 구단 색으로 남긴다** —
+   링이 3:1 경계를 만들어 주므로 채움이 어두워도 점 자체는 보인다. */
+.mf-dot{fill:var(--panel);stroke:var(--tx-2);stroke-width:2;
   transform-box:fill-box;transform-origin:center;
   transition:transform var(--fast) var(--ease),fill var(--fast) var(--ease)}
 .mf-lab{font-family:var(--f-body);font-size:11px;fill:var(--tx-2);letter-spacing:.06em;
@@ -462,7 +485,18 @@ th .term{cursor:help}
 }
 .term:active{border-bottom-color:var(--tx);border-bottom-style:solid}
 
-#tip{position:absolute;z-index:40;max-width:min(30ch,86vw);padding:9px 11px;
+/* ⚠**넘치면 잘라서 굴린다.** 예전에는 max-height 도 overflow 도 없었고 자리잡기가 아래를
+   클램프하지 않아서, 가장 긴 설명(火消し率 555px)이 **6/6 뷰포트에서 화면 밖으로** 나갔다.
+   실측(2026-08-21 · 한 선수 페이지에서 열리는 용어 27개 · 중앙값 153px · 200px 초과 8/27):
+   320x568 에서 358px 초과 · 280x653 316 · 360x640 322 · 390x844 220 · 768x700 271 · 1280x900 171.
+   폭이 min(30ch,86vw) 라 **좁을수록 세로로 길어진다** — 280px 폭에서도 폭은 200px 로 풀린다.
+   ⚠**실제 max-height 는 스크립트가 자리마다 계산해 얹는다**(위/아래 중 넓은 쪽이 다르다).
+   여기 값은 스크립트가 못 도는 경우의 바닥이다.
+   ⚠**overscroll-behavior 로 안쪽 스크롤을 가둔다** — 안 그러면 설명 끝에서 페이지가 따라 움직인다.
+   ⚠**4문장짜리 caveat 는 툴팁이 담을 그릇이 아니다**(2026-08-21 감사 지적). 제대로 된 답은
+   용어집 페이지를 따로 두는 것이지만 그건 범위가 다른 별개 결정이다 — 여기서는 읽을 수 있게만 한다. */
+#tip{position:absolute;z-index:40;max-width:min(30ch,86vw);max-height:70vh;padding:9px 11px;
+  overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;
   background:var(--tx);color:var(--page);font-size:12px;line-height:1.5;
   box-shadow:0 2px 10px rgba(0,0,0,.22);animation:drop var(--fast) var(--ease)}
 #tip[hidden]{display:none}
@@ -1124,6 +1158,23 @@ html:has(.hjump){scroll-padding-top:calc(var(--topbar) + 52px)}
 /* 순위표의 전환 줄. ⚠**「지금 몇 명을 보고 있는가」를 늘 낸다**(M2) —
    전환했는데 인원이 안 보이면 무엇이 늘고 줄었는지 알 수 없다 */
 .rankonly{margin:0 0 8px}
+/* 「全員」일 때만 나오는 최소 표본 칸.
+   ⚠**display 를 주면 [hidden] 을 다시 적어야 한다** — 안 적으면 브라우저 기본의
+   [hidden]{display:none} 을 이겨 버려서 **숨긴 것이 안 숨는다.** 서버는 이 칸을 hidden 으로 내고
+   (스크립트가 없으면 못 쓰는 조작이므로) 클라이언트가 「全員」에서만 연다 */
+.rankmin{display:inline-flex;align-items:center;gap:6px}
+.rankmin[hidden]{display:none}
+/* ⚠**위의 .mfind input 을 순서가 아니라 특이도로 이긴다** — 저쪽은 width:170px 이고
+   680px 이하에서 다시 width:auto 로 바뀐다. 순서에 기대면 규칙 하나가 옮겨진 날 조용히 어긋난다.
+   ⚠**이 주석에 역따옴표를 쓰지 마라** — 이 파일은 통째로 템플릿 리터럴이라 거기서 끊긴다 */
+.mfind .rankmin input{width:5.4em;text-align:right;letter-spacing:normal;
+  font-variant-numeric:tabular-nums}
+/* ⚠**색으로만 말하지 않는다** — 못 읽은 값을 알리는 본체는 아래의 글(data-rankbad)이고 이건 거드는 표시다 */
+.mfind .rankmin input[aria-invalid="true"]{border-color:var(--warn)}
+/* 못 읽은 값을 알리는 글. ⚠**보통 안내문과 같은 회색으로 두지 않는다** — 「친 값이 안 먹었다」는
+   말이라 눈에 걸려야 한다. .empty 의 color 를 특이도로 이긴다(0,2,0 대 0,1,0).
+   ⚠--warn 이 --page 위에서 AA 를 넘는 것은 css-contrast.test.ts 가 두 테마 다 잰다 */
+.empty[data-rankbad]{color:var(--warn);padding-left:7px;box-shadow:inset 2px 0 0 var(--warn)}
 /* ⚠**자르지 않고 상자 안에서 스크롤한다.** 상위 N만 내면 대타·중간계투가 사라지고,
    찾는 사람이 없는 순간 이 기능은 없는 것과 같아진다 */
 .picklist{display:flex;flex-wrap:wrap;gap:4px;max-height:184px;overflow-y:auto;
@@ -1570,13 +1621,23 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
 /* 겹친 紋 — 두 선수를 같은 판에 그린다. 색만으로 구별하지 않고 범례를 붙인다 */
 .cmpfig{max-width:300px;margin:14px auto 4px}
 .cmpfig svg{display:block;width:100%;height:auto;overflow:visible}
-.cmpfig .cf-a{fill-opacity:.30;stroke-width:1.8;stroke-linejoin:round}
-.cmpfig .cf-b{fill-opacity:0;stroke-width:1.8;stroke-linejoin:round;stroke-dasharray:4 3}
+/* ⚠**여기 선 색은 CSS 가 아니라 클라이언트가 얹고 있었다**(2026-08-21 감사 P2).
+   compare 화면은 브라우저가 표를 조립하므로 setAttribute("stroke", 구단색) 으로 칠했고,
+   그래서 **CSS 문자열만 훑는 대비 시험이 이 자리를 원리적으로 못 봤다.**
+   실측: 라이트·다크 **양쪽 다** A=#1d1f4e / B=#22262b(테마와 무관하게 같은 값) ·
+   다크에서 --panel 기준 **1.08 / 1.10** · 두 도형끼리 **1.02**.
+   .cf-b 는 fill-opacity 가 0 이라 **점선 하나가 그 선수의 전부**이고, 같은 색이
+   범례에도 들어가 solid/dashed 범례 자체가 안 보였다.
+   → 선은 토큰으로 고정한다. **누가 누구인지는 solid/dashed 와 이름이 말한다** — 색이 아니다.
+   ⚠**살(fill)만 구단 색으로 남는다**(.mf-shape 와 같은 결정). B 는 fill-opacity 가 0 이라
+   결과적으로 구단 색이 안 보이는데, 그건 겹친 도형을 읽히게 하려는 원래 설계다. */
+.cmpfig .cf-a{fill-opacity:.30;stroke:var(--tx);stroke-width:1.8;stroke-linejoin:round}
+.cmpfig .cf-b{fill-opacity:0;stroke:var(--tx-2);stroke-width:1.8;stroke-linejoin:round;stroke-dasharray:4 3}
 .cmpkey{display:flex;gap:14px;justify-content:center;font-size:11px;color:var(--tx-2);margin:2px 0 0}
 .cmpkey span{display:inline-flex;align-items:center;gap:5px}
 .cmpkey i{width:16px;height:0;border-top-width:2px;font-style:normal}
-.cmpkey .ka i{border-top-style:solid}
-.cmpkey .kb i{border-top-style:dashed}
+.cmpkey .ka i{border-top-style:solid;border-top-color:var(--tx)}
+.cmpkey .kb i{border-top-style:dashed;border-top-color:var(--tx-2)}
 /* 값 표 — 라벨을 가운데 두고 값을 양쪽으로 민다. 어느 쪽 열인지 눈이 헤매지 않는다 */
 .cmprow{display:grid;grid-template-columns:1fr 8.5em 1fr;align-items:baseline;gap:0 8px;
   padding:7px 0;border-bottom:1px solid var(--hair)}
@@ -1915,6 +1976,10 @@ const state={
   only:(saved.only&&typeof saved.only==="object")?saved.only:{},
   /* 순위표에서 「全員」으로 본 지표들. ⚠**여기 등록하지 않으면 저장이 조용히 안 된다** */
   rankAll:(saved.rankAll&&typeof saved.rankAll==="object")?saved.rankAll:{},
+  /* 「全員」일 때의 **최소 표본**(지표별). 0이면 거르지 않는다 = 전원.
+     ⚠**분모의 원시 단위로 담는다** — 방어율 계열은 아웃 카운트다(화면 입력은 이닝이고
+     환산은 순위표 구역이 한다). 여기 등록하지 않으면 저장이 조용히 안 된다 */
+  rankMin:(saved.rankMin&&typeof saved.rankMin==="object")?saved.rankMin:{},
   /* select 로 좁힌 값(구단 등) */
   picked:(saved.picked&&typeof saved.picked==="object")?saved.picked:{},
   /* 즐겨찾기한 선수 ID. **이 브라우저에만 남는다** — 서버로 가지 않는다 */
@@ -2274,6 +2339,8 @@ if(eb)eb.addEventListener("click",()=>{
    조립하므로, 최초 1회만 훑으면 그 표의 용어에는 설명이 조용히 안 뜬다. */
 let bindTerms=null;
 const tip=$("#tip");
+/* 설명이 상단 바 밑으로 들어가지 않게 하는 한계선. 자리잡기가 매번 읽는다 */
+const topbar=$(".topbar");
 if(tip&&typeof GLOSSARY!=="undefined"){
   let current=null;
   const hide=()=>{
@@ -2310,20 +2377,41 @@ if(tip&&typeof GLOSSARY!=="undefined"){
     current=btn;btn.setAttribute("aria-expanded","true");
     place(btn);
   };
-  /* 화면 밖으로 나가지 않게 가로 위치를 접는다. 세로는 자리가 없으면 위로 올린다 */
+  /* 화면 밖으로 나가지 않게 가로 위치를 접고, **세로도 클램프한다.**
+     ⚠예전에는 가로만 접고 세로는 「위에 자리가 있으면 위」로만 골랐다. 그래서 긴 설명이
+     아래로 흘러 화면 밖으로 나갔다 — 실측 6/6 뷰포트(火消し率 555px · 320x568 에서 358px 초과).
+     들어갈 자리 자체가 없는 구간도 있다: 320x568 가용 480 · 360x640 가용 552 대 필요 555.
+     → ⑴ 들어가는 쪽을 고르고(둘 다 안 되면 넓은 쪽) ⑵ 그 쪽 가용 높이를 max-height 로 얹어
+       **넘치는 만큼은 툴팁 안에서 굴리게** 한다 ⑶ 위 한계는 상단 바 아래다(가리면 못 읽는다).
+     ⚠**높이는 max-height 를 푼 뒤에 재야 한다** — 안 그러면 지난번에 잘린 높이를 다시 쓴다. */
   const place=(btn)=>{
     if(!btn.getBoundingClientRect||!tip.getBoundingClientRect)return;
+    const keep=tip.scrollTop||0;
+    tip.style.maxHeight="";
     const r=btn.getBoundingClientRect();
-    const w=tip.offsetWidth||260,h=tip.offsetHeight||90;
-    const vw=(doc.documentElement&&doc.documentElement.clientWidth)||w;
+    const de=doc.documentElement;
+    const vw=(de&&de.clientWidth)||tip.offsetWidth||260;
+    const vh=(de&&de.clientHeight)||0;
     const sx=(typeof window!=="undefined"&&window.scrollX)||0;
     const sy=(typeof window!=="undefined"&&window.scrollY)||0;
-    let x=r.left+sx;
-    if(x+w>sx+vw-8)x=sx+vw-w-8;
-    if(x<sx+8)x=sx+8;
-    const above=r.top>h+12;
-    tip.style.left=x+"px";
-    tip.style.top=(above?r.top+sy-h-8:r.bottom+sy+8)+"px";
+    const bar=topbar&&topbar.getBoundingClientRect?topbar.getBoundingClientRect().bottom:0;
+    const gap=8;
+    const top0=(bar>0?bar:0)+4;
+    const bot0=vh>0?vh-8:0;
+    const need=tip.offsetHeight||90;
+    const up=r.top-gap-top0,down=bot0-r.bottom-gap;
+    /* 들어가는 쪽 우선, 둘 다 되면 위(예전 기본값), 둘 다 안 되면 넓은 쪽 */
+    const above=vh<=0?r.top>need+12:(need<=up?true:(need<=down?false:up>down));
+    if(vh>0)tip.style.maxHeight=Math.max(above?up:down,88)+"px";
+    const w=tip.offsetWidth||260,h=tip.offsetHeight||90;
+    let x=r.left;
+    if(x+w>vw-8)x=vw-w-8;
+    if(x<8)x=8;
+    let y=above?r.top-gap-h:r.bottom+gap;
+    if(vh>0){if(y+h>bot0)y=bot0-h;if(y<top0)y=top0}
+    tip.style.left=(x+sx)+"px";
+    tip.style.top=(y+sy)+"px";
+    tip.scrollTop=keep;
   };
   /* ⚠**정렬 버튼에는 탭으로 열지 않는다.** 표 헤더를 누르는 것은 「정렬」이라는 뜻이고,
      같은 탭이 설명도 열면 어느 쪽이 일어난 건지 알 수 없다. 호버·포커스만 받는다.
@@ -2337,10 +2425,30 @@ if(tip&&typeof GLOSSARY!=="undefined"){
       btn.addEventListener("focus",()=>show(btn));
       btn.addEventListener("blur",hide);
       if(!tapToOpen)return;
-      /* 터치: 같은 것을 다시 누르면 닫는다 */
+      /* ⚠**닫을지 열지는 「누르기 시작한 순간」의 상태로 정한다.**
+         터치의 한 번 탭은 브라우저가 click 앞에 mouseenter 와 focus 를 **합성**하는데,
+         그 둘이 이미 설명을 열어 놓으므로 click 시점에 current===btn 을 보면
+         **방금 자기가 연 것을 자기가 닫는다.** 실측(Chromium 151 · hasTouch:true · 390x844):
+         탭1 false · 탭2 true · 탭3 false — 즉 **첫 탭이 아무 일도 안 한 것처럼 보였다.**
+         ⚠**mouseenter 를 떼는 것만으로는 안 낫는다.** 같은 조건에서 mouseenter/mouseleave 를
+         matchMedia("(hover: hover) and (pointer: fine)") 로 막고 다시 재도 **탭1 은 여전히 false** 였다
+         (그때는 focus 가 대신 연다). 그래서 **여는 쪽이 아니라 토글의 기준**을 고친다.
+         ⚠**하이브리드(터치+마우스 노트북)에서도 같다** — 그 기기는 matchMedia 가 「마우스」로
+         분류하므로 게이트 방식이면 손가락 탭이 그대로 깨진다. 여기 방식은 기기가 아니라
+         **그 순간의 상태**를 보므로 마우스·터치·하이브리드가 같은 규칙 하나로 맞는다.
+         ⚠**mouseenter 를 남겨 두는 이유는 따로 있다**: 정렬 버튼에는 click 이 안 붙는데,
+         구단 페이지 108장에서 obp·slg·ops·pa·gidp·src·wrcPlus·woba·wraa·whip·innings·srp·
+         fip·k9·bb9·pitchesPerOut **16개 용어의 설명 경로가 정렬 버튼뿐**이다(배포물 전수).
+         호버를 마우스 전용으로 좁히면 손가락에서 그 16개가 통째로 닿을 수 없게 된다 —
+         §0-1(설치·계정 없이 URL 만으로) 쪽이 더 무겁다.
+         ⚠포인터 없이 온 click(키보드 Enter/Space)은 downOpen 이 null 이라 지금 상태로 토글한다. */
+      let downOpen=null;
+      btn.addEventListener("pointerdown",()=>{downOpen=current===btn});
       btn.addEventListener("click",(e)=>{
         if(e&&e.preventDefault)e.preventDefault();
-        if(current===btn)hide();else show(btn);
+        const wasOpen=downOpen===null?current===btn:downOpen;
+        downOpen=null;
+        if(wasOpen)hide();else show(btn);
       });
     });
   };
@@ -2351,8 +2459,32 @@ if(tip&&typeof GLOSSARY!=="undefined"){
     while(n){if(n===tip||(n.getAttribute&&n.getAttribute("data-term")))return;n=n.parentNode}
     hide();
   });
-  /* ⚠표를 가로로 밀면 설명만 제자리에 남는다 — 좌표를 문서 기준으로 잡기 때문이다. 닫는다 */
-  doc.addEventListener("scroll",hide,true);
+  /* ⚠**스크롤에 닫지 않는다 — 자리를 다시 잡는다.**
+     옛 주석이 말한 문제(「표를 가로로 밀면 설명만 제자리에 남는다」)는 **위치 문제**이지
+     닫아야 할 이유가 아니었다. 닫으면 **포커스로 여는 길이 통째로 막힌다** —
+     포커스가 스크롤을 유발하면 그 스크롤이 방금 연 설명을 닫기 때문이다.
+     실측(2026-08-21 · 한 선수 페이지의 용어 54개 · 같은 요소로 A/B):
+     최상단에서 focus() **3/54** 대 scrollIntoView 뒤 focus() **54/54**.
+     즉 실패한 51건은 전부 「스크롤을 유발한 포커스」였고, 그건 곧
+     **아직 못 본 용어에 처음 도달하는** 정지다.
+     ⚠capture 라 가로 스크롤과 컨테이너 스크롤(표 래퍼·탭줄)까지 잡는다 — 그쪽이야말로
+     자리를 다시 잡아야 하는 쪽이다.
+     ⚠**툴팁 안을 굴린 것은 무시한다** — 안 그러면 긴 설명을 읽으려고 굴릴 때마다 자리가 다시 잡힌다.
+     ⚠**한 프레임에 한 번만 계산한다** — 스크롤마다 재면 레이아웃을 강제로 다시 만든다.
+     ⚠**「휠로 굴리면 닫힌다」는 감각은 남는다** — 페이지가 움직이면 포인터 아래에서 용어가
+     빠져나가 mouseleave 가 나기 때문이다(실측: 호버로 연 뒤 휠 260px → 닫힘).
+     닫히지 않게 되는 것은 **키보드·터치로 연 경우**뿐이고, 그건 원래 닫히면 안 되는 쪽이다. */
+  let placing=0;
+  doc.addEventListener("scroll",(e)=>{
+    if(!current)return;
+    let n=e&&e.target;
+    while(n&&n.nodeType===1){if(n===tip)return;n=n.parentNode}
+    /* ⚠window 를 떼어내 부르지 않는다 — 브라우저에서 Illegal invocation 이 난다 */
+    const w=typeof window!=="undefined"?window:null;
+    if(!w||!w.requestAnimationFrame){place(current);return}
+    if(placing)return;
+    placing=w.requestAnimationFrame(()=>{placing=0;if(current)place(current)});
+  },true);
 }
 
 /* ── 成績の紋 ──
@@ -2646,7 +2778,53 @@ $$("[data-panelgroup]").forEach(p=>{
    순위는 규칙이 곧 값이다.
 
    ⚠**기본은 「규정 도달자만」이고, 미달 행은 서버가 이미 hidden 으로 보낸다.**
-   스크립트가 없으면 지금까지와 똑같은 화면이 나온다 — 이 기능은 더해지는 쪽이다. */
+   스크립트가 없으면 지금까지와 똑같은 화면이 나온다 — 이 기능은 더해지는 쪽이다.
+
+   ⚠**「全員」일 때만 최소 표본을 받는다**(2026-08-20). 「全員」은 minDenominator: 0 이라
+   1타석 1안타가 打率 1위로 올라오는 세계이고, 그래서 하한을 유저가 직접 넣을 수 있어야 한다.
+   規定 도달자만 보는 동안에는 규정 자체가 이미 하한이라 이 칸이 아무것도 안 자르므로,
+   **칸째로 숨긴다** — 눌러도 아무 일이 없는 조작을 두지 않는 이 패널의 규칙(서버 쪽
+   hasQualifier 가 같은 이유로 버튼 자체를 없앤다)과 같다.
+   ⚠**거르기만 하고 다시 번호를 매기지 않는다**(위와 같은 이유 · M1/M3). 그래서 번호가
+   띄엄띄엄해지는데, **그 이유는 표 아래 글이 말한다** — 안 적으면 「순위가 이상하다」로 읽힌다. */
+
+/* 최소 표본 입력을 읽는다.
+   ⚠**못 읽으면 0으로 만들지 않는다**(침묵 오류). 조용히 0이 되면 「친 값이 안 먹었다」가
+   화면에서 사라져, 사용자는 거르기가 고장난 줄 안다. 못 읽었다는 사실을 돌려주고 화면이 말한다.
+   ⚠**asOuts 는 분모가 아웃 카운트인 패널**(방어율·WHIP·K/9…)이다. 그 표의 母数 칸은
+   138.1回 라는 **야구 표기**로 쓰여 있으므로 거기 보이는 수를 그대로 칠 수 있어야 한다 —
+   138.1 은 138과 3분의 1이닝이라 415아웃이고, 소수점 아래에 3 이상은 존재하지 않는다.
+   50 을 50아웃으로 읽으면 **3배로 자른다.**
+   ⚠**정규식에 역슬래시를 쓰지 않았다** — 이 파일은 통째로 템플릿 리터럴이라 한 겹 벗겨진다.
+   그래서 [0-9] 와 [.] 로만 적는다(이 저장소가 여러 번 데인 자리다). */
+const RANK_MIN_PLAIN=/^[0-9]{1,6}$/;
+const RANK_MIN_INNINGS=/^([0-9]{1,6})(?:[.]([0-9]))?$/;
+function rankMinRead(text,asOuts){
+  /* 빈 칸은 **「하한 없음」**이지 못 읽은 값이 아니다 — 지우고 다시 치는 도중에
+     경고가 번쩍이면 정상 조작이 오류처럼 보인다. 결과(전원으로 돌아옴)가 화면에 그대로 보인다 */
+  const s=String(text==null?"":text).trim();
+  if(s==="")return {ok:true,value:0};
+  if(!asOuts)return RANK_MIN_PLAIN.test(s)?{ok:true,value:Number(s)}:{ok:false,value:0};
+  const m=RANK_MIN_INNINGS.exec(s);
+  if(!m||(m[2]!==undefined&&Number(m[2])>2))return {ok:false,value:0};
+  return {ok:true,value:Number(m[1])*3+(m[2]===undefined?0:Number(m[2]))};
+}
+/* 저장된 값을 입력칸으로 되돌린다 — **저장은 원시 분모(아웃), 보이는 것은 이닝**이다.
+   ⚠format.ts 의 innings() 와 같은 규칙이다. 서버 모듈을 부를 수 없어 여기 한 벌을 두지만,
+   **뜻이 갈리면 입력과 母数 칸이 다른 수를 가리키게 된다** — 바꿀 때 양쪽을 같이 본다 */
+function rankMinText(value,asOuts){
+  if(!asOuts)return String(value);
+  const whole=Math.floor(value/3),rest=value%3;
+  return rest===0?String(whole):whole+"."+rest;
+}
+
+if(!state.rankAll||typeof state.rankAll!=="object")state.rankAll={};
+if(!state.rankMin||typeof state.rankMin!=="object")state.rankMin={};
+/* 같은 지표가 **여러 벌로 그려지고 상태는 한 벌**이다 — data-rankonly 는 리그로 갈라져
+   있지 않다(실측 2026-08-20 dist/ranking.html: avg 가 2건 · 투수 지표는 선발·구원까지 4건).
+   ⚠**그러면 다시 그리는 것도 다 같이 해야 한다.** 누른 쪽만 갱신하면 반대 리그의 표가
+   저장된 상태와 어긋난 채 남아, **새로고침해야 맞는 화면**이 된다. */
+const rankViews={};
 $$("[data-rankonly]").forEach(btn=>{
   const id=btn.dataset.rankonly;
   const box=btn.closest?btn.closest(".block"):null;
@@ -2654,16 +2832,30 @@ $$("[data-rankonly]").forEach(btn=>{
   /* 같은 화면에 지표 패널이 여럿이라 **이 패널의 표만** 잡아야 한다 */
   const panel=btn.parentNode&&btn.parentNode.parentNode?btn.parentNode.parentNode:scope;
   const rows=$$("tbody tr",panel);
-  const countEl=$('[data-rankcount="'+id+'"]',panel);
   if(rows.length===0)return;
-  if(!state.rankAll||typeof state.rankAll!=="object")state.rankAll={};
+  const countEl=$('[data-rankcount="'+id+'"]',panel);
+  const minBox=$('[data-rankmin="'+id+'"]',panel);
+  const minWrap=minBox&&minBox.parentNode?minBox.parentNode:null;
+  const badEl=$('[data-rankbad="'+id+'"]',panel);
+  const emptyEl=$('[data-rankempty="'+id+'"]',panel);
+  const asOuts=minBox&&minBox.hasAttribute?minBox.hasAttribute("data-rankouts"):false;
+  /* 못 읽은 입력. ⚠**저장하지 않는다** — 다음 방문에 되살릴 값이 아니다 */
+  let bad=false;
 
-  const apply=()=>{
+  /* @param typing 지금 이 칸에 치고 있는 중인가. 그러면 **입력값을 덮어쓰지 않는다** */
+  const apply=(typing)=>{
     const all=state.rankAll[id]===true;
+    const saved=state.rankMin[id];
+    /* 「規定到達のみ」 동안에는 하한을 걸지 않는다 — **숨긴 칸이 몰래 자르면 그게 최악이다** */
+    const min=all&&typeof saved==="number"&&saved>0?saved:0;
     let n=0;
     rows.forEach(tr=>{
       const q=tr.dataset.qualified==="1";
-      tr.hidden=!all&&!q;
+      /* ⚠**분모가 안 실린 행은 하한이 걸리는 순간 빠진다**(M11) — 「0」이 아니라 「모름」이라
+         「300타석 이상」에 넣을 근거가 없다. 하한이 0이면 아무도 안 뺀다 */
+      const den=tr.dataset.den;
+      const wide=min===0||(den!==undefined&&Number(den)>=min);
+      tr.hidden=(!all&&!q)||!wide;
       if(!tr.hidden)n++;
       /* 순위 칸을 바꿔 넣는다 — 두 값이 다 실려 있으므로 고르기만 한다 */
       const a=$("[data-rankq]",tr),b=$("[data-ranka]",tr);
@@ -2672,11 +2864,38 @@ $$("[data-rankonly]").forEach(btn=>{
     });
     btn.setAttribute("aria-pressed",String(!all));
     if(countEl)countEl.textContent=n+"人";
+    if(minWrap)minWrap.hidden=!all;
+    if(minBox){
+      /* ⚠**칸의 값을 되돌려 놓으면 「못 읽었다」도 같이 사라져야 한다**(2026-08-21 최종 검토 P3).
+         bad 는 사본마다 따로인데 칸의 값은 **다른 사본의 조작으로도** 덮어써진다 —
+         A 에 「-5」를 친 채 B 의 「規定到達のみ」를 누르면 A 의 칸은 유효한 수로 돌아가는데
+         aria-invalid 와 경고문만 A 에 남아 **「값은 정상인데 오류라고 말하는 칸」**이 됐다.
+         ⚠typing 인 사본(지금 치고 있는 칸)은 값을 안 건드리므로 bad 도 그대로 둔다. */
+      if(!typing){minBox.value=rankMinText(min,asOuts);bad=false}
+      minBox.setAttribute("aria-invalid",String(bad));
+    }
+    if(badEl)badEl.hidden=!bad;
+    /* ⚠**0건을 빈 표로 두지 않는다**(M12). 못 읽은 입력일 때는 **거르지 않았으므로**
+       이 말을 하지 않는다 — 그때 할 말은 badEl 이 한다 */
+    if(emptyEl)emptyEl.hidden=!(all&&!bad&&n===0);
   };
+  const views=(rankViews[id]=rankViews[id]||[]);
+  views.push(apply);
+  /* @param from 지금 조작 중인 사본. 그 하나만 입력값을 그대로 두고 나머지는 맞춘다 */
+  const refresh=(from)=>views.forEach(f=>f(f===from));
+
   btn.addEventListener("click",()=>{
-    state.rankAll[id]=state.rankAll[id]!==true;save(state);apply();
+    state.rankAll[id]=state.rankAll[id]!==true;save(state);refresh(null);
   });
-  apply();
+  if(minBox)minBox.addEventListener("input",()=>{
+    const got=rankMinRead(minBox.value,asOuts);
+    bad=!got.ok;
+    /* 못 읽은 값이면 **직전에 먹던 하한을 그대로 둔다.** 0으로 되돌리면 표가 갑자기 넓어져
+       「값이 먹었다」로 보인다 — 그것이 침묵 오류의 모양이다 */
+    if(got.ok){state.rankMin[id]=got.value;save(state)}
+    refresh(apply);
+  });
+  apply(false);
 });
 
 /* ── 검색어 접기 ──
@@ -2725,18 +2944,45 @@ function fetchIndex(){
    실측(색인 698명): 「田」 81건 · 「中」 86건 · 「山」 48건이 전부 20건으로 보였다. */
 const SEARCH_LIMIT=20;
 
+/* 결과 수를 **소리로** 낼 때 모으는 시간(ms).
+   ⚠미루는 것은 **낭독뿐**이다 — 목록은 키를 칠 때마다 즉시 다시 그린다.
+   창 크기 디바운스와 같은 값을 쓴다(이 파일 위쪽 150ms). */
+const SAY_DELAY=150;
+
 /* ── 선수 고르기 ──
    헤더 검색과 「対戦を選ぶ」 화면이 **같은 구현**을 쓴다. 두 벌로 나누면 키보드 조작이
    한쪽에만 붙는 식으로 어긋난다. */
 function attachPicker(input,list,onPick){
   if(!input||!list)return null;
+  /* 결과 수를 **소리로** 내는 자리. 서버가 미리 그려 둔다(라이브 영역은 갱신 전에 DOM 에 있어야 읽힌다).
+     ⚠**목록 자체를 라이브로 만들지 않는다** — 키를 칠 때마다 스무 명을 통째로 읽는다. */
+  const status=list.parentNode?$("[data-hitstatus]",list.parentNode):null;
+  /* ⚠**한 글자마다 낭독하지 않는다**(2026-08-21 최종 검토 P3).
+     role=status 는 폴라이트 라이브 영역이라 **인원수가 바뀔 때마다 낭독이 쌓인다** —
+     IME 로 「たなか」를 치는 구간이 그렇다(화살표 이동은 문구가 안 바뀌어 원래 조용하다).
+     SAY_DELAY 만 모으고, **화면은 안 미룬다** — 미루면 조작감이 바뀐다.
+     ⚠**닫을 때는 미룬 것을 버리고 즉시 지운다** — 닫힌 목록의 인원이 뒤늦게 들리면 더 나쁘다. */
+  let sayTimer=null,sayWanted=null;
+  const sayApply=(text)=>{sayWanted=null;if(status&&status.textContent!==text)status.textContent=text};
+  const sayStop=()=>{if(sayTimer!==null){clearTimeout(sayTimer);sayTimer=null}};
+  const say=(text)=>{
+    if(!status)return;
+    /* 이미 그 말을 하고 있거나 하려던 참이면 아무것도 하지 않는다 — 같은 문구의 재낭독을 막는다 */
+    if(sayWanted===null?status.textContent===text:sayWanted===text)return;
+    sayWanted=text;sayStop();
+    sayTimer=setTimeout(()=>{sayTimer=null;sayApply(text)},SAY_DELAY);
+  };
+  /* 미룬 것을 버리고 지금 말한다 */
+  const sayAtOnce=(text)=>{sayStop();sayApply(text)};
   /* hits = **자르기 전** 일치 수 · asked = 그 수를 낸 질의어(「一覧」으로 넘길 때 쓴다) */
   let rows=[],active=-1,hits=0,asked="";
-  const close=()=>{list.hidden=true;input.setAttribute("aria-expanded","false");active=-1};
+  /* ⚠**닫을 때 소리도 지운다** — 닫힌 목록의 인원을 낭독기가 계속 들고 있으면
+     다음에 같은 수가 나왔을 때 아무 말도 안 하게 된다 */
+  const close=()=>{list.hidden=true;sayAtOnce("");active=-1};
   /* @param items 배열이면 결과, **null 이면 아직 읽는 중**이다 */
   const draw=(items,failed)=>{
     list.textContent="";
-    const one=(text)=>{const li=doc.createElement("li");li.className="none";li.textContent=text;list.appendChild(li)};
+    const one=(text)=>{const li=doc.createElement("li");li.className="none";li.textContent=text;list.appendChild(li);say(text)};
     if(failed)one("選手一覧を読み込めませんでした。再読み込みしてください。");
     /* ⚠**「읽는 중」과 「없음」은 다르다**(M12의 4상태). 실패와 0건에는 문구가 있는데
        로딩만 없어서, 느린 회선에서는 목록이 안 뜨는 동안 「검색이 고장났다」로 읽힌다 */
@@ -2744,9 +2990,14 @@ function attachPicker(input,list,onPick){
     else if(!items.length)one("該当なし");
     else (items||[]).forEach((p,i)=>{
       const li=doc.createElement("li");
-      // combobox의 목록 항목은 role=option이어야 aria-selected가 뜻을 갖는다
-      li.setAttribute("role","option");
-      li.setAttribute("aria-selected",String(i===active));
+      /* ⚠**롤도 aria-selected 도 주지 않는다**(2026-08-20). 이 목록은 listbox 가 아니고
+         (섞여 있는 안내줄에 롤을 붙였다가 그 안의 링크가 안 눌렸다 · 아래 꼬리줄 참조),
+         listbox 가 아닌 곳의 option 은 낭독기에 **깨진 구조**로 들린다.
+         ⚠**화살표가 고른 자리는 우리 클래스로 표시한다** — 표시까지 없애면 화면이 안 움직여
+         「키보드가 안 먹는다」가 된다. aria-activedescendant 는 예전에도 없었으므로
+         낭독기가 화살표를 따라오던 적은 애초에 없다(잃는 것이 없다).
+         ⚠이 주석에 역따옴표를 쓰지 마라 — 이 파일은 통째로 템플릿 리터럴이라 거기서 끊긴다 */
+      if(i===active)li.className="on";
       const a=doc.createElement("a");a.href=BASE+"players/"+p.i+".html";
       /* 등번호. ⚠**없으면 자리도 만들지 않는다** — 「―」를 넣으면 은퇴 선수 198명 줄이
          전부 같은 기호로 채워져 시선만 먹는다(M11) */
@@ -2769,15 +3020,18 @@ function attachPicker(input,list,onPick){
        처음에 role="option" aria-disabled="true" 로 만들었다가 **실기에서 잡혔다**(Playwright):
        그 안의 링크가 「disabled」로 판정돼 눌리지 않는 상태가 됐다 —
        **「여기로 가라」고 써 놓고 「이건 못 쓴다」고 말하는** 자기모순이었다.
-       ⚠**대신 남는 한계를 적어 둔다**: 포커스 모드의 스크린리더는 listbox 안의 롤 없는 항목을
-       읽지 않으므로, 이 줄은 **화면으로만** 전해진다(브라우즈 모드와 Tab 이동에서는 읽힌다).
-       「.none」이 같은 한계를 이미 갖고 있다 — 고칠 때 **둘을 같이** 고쳐야지 여기만 손대면
-       같은 목록 안에서 어떤 줄은 읽히고 어떤 줄은 안 읽히는 상태가 된다.
+       ⚠**여기 있던 「남는 한계」는 2026-08-20 에 해소됐다**(그래서 지웠다).
+       그때는 목록이 listbox 였고, 포커스 모드의 낭독기는 listbox 안의 롤 없는 항목을 읽지 않아
+       이 줄이 화면으로만 전해졌다. 지금은 **목록을 listbox 라고 부르지 않으므로**
+       이 줄도 「該当なし」도 그냥 목록 항목이고 전부 읽힌다.
        ⚠rows 에는 넣지 않는다 — 화살표 이동이 마지막 선수에서 멈춘다. */
     if(items&&items.length&&hits>items.length){
       const li=doc.createElement("li");
       li.className="more";
       const text=hits+"人中"+items.length+"人を表示";
+      /* ⚠**소리로도 자른 사실을 말한다** — 화면에만 적으면 낭독기 사용자에게는
+         21번째 선수가 여전히 「없는 사람」이다 */
+      say(text);
       if(onPick){
         const s=doc.createElement("span");
         s.textContent=text+" — 文字を足すとしぼれます";
@@ -2791,8 +3045,8 @@ function attachPicker(input,list,onPick){
         li.appendChild(a);
       }
       list.appendChild(li);
-    }
-    list.hidden=false;input.setAttribute("aria-expanded","true");
+    }else if(items&&items.length)say(items.length+"人");
+    list.hidden=false;
   };
   const run=()=>{
     const term=input.value.trim();
@@ -3008,10 +3262,13 @@ if(cmpForm){
     svg.setAttribute("aria-label",A.name+"と"+B.name+"の成績プロフィールの重ね合わせ。"+
       A.mark.labels.map(l=>l.text+" "+A.name+" "+l.value+"、"+B.name+" "+
         (B.mark.labels.filter(x=>x.text===l.text)[0]||{value:"—"}).value).join("。"));
+    /* ⚠**선 색은 여기서 얹지 않는다** — CSS 의 .cf-a / .cf-b 가 토큰으로 갖는다.
+       예전에는 stroke 도 구단 색으로 칠했고, 그래서 다크에서 두 도형이 바탕에 묻혔다
+       (--panel 기준 1.08 / 1.10 · 두 도형끼리 1.02). 살만 구단 색으로 남긴다. */
     const poly=(pts,cls,color)=>{
       const p=doc.createElementNS(NS,"polygon");
       p.setAttribute("points",pts);p.setAttribute("class",cls);
-      if(color){p.setAttribute("fill",color);p.setAttribute("stroke",color)}
+      if(color)p.setAttribute("fill",color);
       return p;
     };
     svg.appendChild(poly(A.mark.outline,"mf-grid"));
@@ -3026,10 +3283,11 @@ if(cmpForm){
     });
     box.appendChild(svg);
     const key=el("p","cmpkey");
-    const one=(cls,c,name)=>{const s=el("span",cls);const i=el("i");i.style.borderTopColor=c;
-      s.appendChild(i);s.appendChild(doc.createTextNode(name));return s};
-    key.appendChild(one("ka",A.color.base,A.name));
-    key.appendChild(one("kb",B.color.base,B.name));
+    /* ⚠**범례 선도 구단 색을 안 쓴다** — 도형과 같은 토큰이어야 범례가 범례 노릇을 한다 */
+    const one=(cls,name)=>{const s=el("span",cls);s.appendChild(el("i"));
+      s.appendChild(doc.createTextNode(name));return s};
+    key.appendChild(one("ka",A.name));
+    key.appendChild(one("kb",B.name));
     box.appendChild(key);
     return box;
   };

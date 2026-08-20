@@ -36,6 +36,8 @@ import type {
   ReliefLine,
   ReliefScan,
   SeasonDrawLine,
+  SeasonRace,
+  SeriesLengths,
   StealBase,
   StealLine,
   TeamRace,
@@ -65,7 +67,7 @@ import type {
   ReliefTotals,
   StealBaseRow,
 } from "./player-page.ts";
-import type { BattingLine, LeagueConstants, PitchingLine, Rate } from "@bb-app/metrics";
+import type { BattingLine, LeagueConstants, PitchingLine, Rate, WobaWeights } from "@bb-app/metrics";
 import {
   babip,
   battingAverage,
@@ -102,6 +104,7 @@ import {
   pitchingSplits,
   buildLeagues,
   buildRunExpectancy,
+  deriveRunValues,
   computeSrc,
   computeSrp,
   addSrc,
@@ -265,8 +268,12 @@ const EMPTY_PITCHING: PitchingLine = {
 const SCOREBOOK_LIMIT = 40;
 /** 선수 페이지 안의 순위표에 싣는 상위 인원 */
 const RANKING_ROWS = 10;
-/** 순위표 페이지에 싣는 상위 인원 */
-const RANKING_PAGE_ROWS = 30;
+/**
+ * 순위표 페이지에 싣는 **각 세계의** 상위 인원(규정 상위 N · 전원 상위 N).
+ * ⚠**내보내는 이유는 시험 때문이다** — 「어느 하한에서도 상위 N」을 재려면 시험이
+ * 화면과 **같은 수**로 골라 봐야 한다. 시험이 30을 손으로 적으면 여기를 바꿔도 초록으로 남는다.
+ */
+export const RANKING_PAGE_ROWS = 30;
 /** 収集ログ에 싣는 경기일 수. 한 달이면 구멍이 보인다 */
 const COVERAGE_DAYS = 30;
 /** 収集ログ에 싣는 실행 기록 수 */
@@ -826,7 +833,7 @@ function pitcherRankings(
 export function panelsForPlayer(
   // ⚠**총수 두 개는 여기서 만든다.** 부르는 쪽(MetricRanking)은 그 값을 갖고 있지 않고,
   // 선수 페이지의 순위 블록에는 「規定到達のみ」 전환이 없어서 화면에도 안 쓰인다
-  rankings: readonly Omit<RankingPanel, "qualifiedCount" | "allCount">[],
+  rankings: readonly Omit<RankingPanel, "qualifiedCount" | "allCount" | "minTop">[],
   playerId: string,
   limit = RANKING_ROWS,
 ): RankingPanel[] {
@@ -846,13 +853,22 @@ export function panelsForPlayer(
       rows: top,
       qualifiedCount: m.rows.filter((r) => r.rank !== null).length,
       allCount: m.rows.filter((r) => r.rankAll !== null).length,
+      /**
+       * ⚠**선수 페이지의 순위 블록에는 「規定到達のみ」 전환도 최소 표본 입력도 없다.**
+       * 그래서 **약속 자체가 없다** — null 이다(M11: 「0명 보장」이 아니라 「그런 기능이 없다」).
+       * ⚠여기에 수를 넣으면 **지키지 못할 약속**이 된다: 이 블록은 상위 10 + 본인만 싣고
+       * `rankingRowsFor` 를 거치지 않는다. 언젠가 이 블록에 입력을 붙인다면 **그때 같이 고쳐라.**
+       */
+      minTop: null,
       qualifier: m.qualifier,
     };
   });
 }
 
 /**
- * 화면에 실을 행을 고른다 — **두 세계에서 각각 상위 N을 뽑아 합친다.**
+ * 화면에 실을 행을 고른다 — **세 벌의 합집합**이다.
+ * ⑴ 규정 도달자 상위 N · ⑵ 전원 상위 N · ⑶ **어느 하한에서도 상위 `RANKING_MIN_TOP` 에 들 수 있는 행**(`everTop`).
+ * ⑶ 은 최소 표본 입력이 붙는 패널에만 붙는다.
  *
  * ⚠**자르기 전에 골라야 한다.** 처음에는 `rows.slice(0, limit)` 로 **먼저 자른 뒤**
  * 그 안에서 「전원 상위 N」을 뽑았다. 그러면 전원 순위 1~10위가 애초에 잘려 나가서,
@@ -870,13 +886,109 @@ export function rankingRowsFor(rows: readonly RankingRow[], limit: number): Rank
   // 값이 하나도 없는 지표는 예전대로 앞에서부터 자른다 — 「없음」 행이라도 보여야 한다(M11)
   if (withValue.length === 0) return rows.slice(0, limit);
 
-  const head = rows.filter((r) => r.rank !== null).slice(0, limit);
-  const seen = new Set(head.map((r) => r.playerId));
-  const byAll = [...withValue]
-    .sort((a, b) => (a.rankAll ?? 0) - (b.rankAll ?? 0))
-    .slice(0, limit)
-    .filter((r) => !seen.has(r.playerId));
-  return [...head, ...byAll].sort((a, b) => (a.rankAll ?? 0) - (b.rankAll ?? 0));
+  /**
+   * ⚠**들어온 순서에 기대지 않는다.** 예전에는 `m.rows` 가 규정 순위순으로 정렬돼 있다는
+   * 사실에 기대 그냥 앞에서 잘랐다. 그러면 **같은 입력을 다시 넣으면 답이 달라질 수 있고**
+   * (계측·시험이 정확히 그렇게 부른다), 그건 「고르는 규칙」이 함수 밖에 반쯤 있는 것이다.
+   */
+  const head = rows
+    .filter((r) => r.rank !== null)
+    .sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0))
+    .slice(0, limit);
+  const picked = new Map(head.map((r) => [r.playerId, r]));
+  const byAll = [...withValue].sort((a, b) => (a.rankAll ?? 0) - (b.rankAll ?? 0)).slice(0, limit);
+  for (const r of byAll) if (!picked.has(r.playerId)) picked.set(r.playerId, r);
+  /**
+   * ⚠**여기가 「최소 표본」을 실제로 성립시키는 자리다**(2026-08-20).
+   * 위 두 벌만으로는 이런 선수가 **두 화면 어디에도 없다**: 규정에 못 미쳐 규정 상위 N 밖이고,
+   * 표본이 작은 선수들에게 밀려 전원 상위 N 에도 못 든다. 하한은 **실린 행 안에서만** 거르므로
+   * 그 선수는 하한을 아무리 올려도 안 나온다 — **하한 기능이 노리던 바로 그 선수다.**
+   * 실측(2026-08-20 · 9시즌 18 리그-시즌 · 하한을 실재 분모 전량으로 훑음):
+   * 입력이 붙는 23개 지표가 **전부** 걸렸고, 최대 **상위 10 중 6명**이 화면에 없었다.
+   */
+  const k = minTopFor(rows, limit);
+  if (k !== null) {
+    for (const r of everTop(withValue, k)) {
+      if (!picked.has(r.playerId)) picked.set(r.playerId, r);
+    }
+  }
+  return [...picked.values()].sort((a, b) => (a.rankAll ?? 0) - (b.rankAll ?? 0));
+}
+
+/**
+ * **어느 최소 표본을 넣어도 상위 몇 명까지는 표 안에 있는가.** 입력칸이 안 붙는 패널이면 null.
+ *
+ * ⚠**정본은 여기다**(M1). 화면은 `RankingPanel.minTop` 를 그대로 읽는다 —
+ * 예전에는 렌더러가 **고른 뒤의 행**으로 「입력칸을 붙일까」를 다시 판정했고,
+ * 그러면 「고르기가 무엇을 남겼는가」에 따라 조작이 붙었다 안 붙었다 할 수 있었다.
+ * ⚠**개수 지표(홈런·세이브·도루…)에는 자격 기준이 없어 null 이다.** 그 패널에는
+ * 입력칸 자체가 안 그려지므로 **행을 넓혀도 아무 조작으로 닿을 수 없다** — 그래서 안 넓힌다.
+ * ⚠**표보다 큰 약속을 하지 않는다** — 5행짜리 일람의 하이라이트에서 그보다 큰 수를 보장하면
+ * 그 표가 10행 넘게 부푼다. 약속은 **그 표의 크기까지**다.
+ */
+export function minTopFor(rows: readonly RankingRow[], limit: number): number | null {
+  if (!rows.some((r) => r.rank === null && r.rankAll !== null)) return null;
+  return Math.min(RANKING_MIN_TOP, limit);
+}
+
+/**
+ * **어느 최소 표본을 넣어도 상위 몇 명까지 보장하는가**(순위표 페이지 기준).
+ *
+ * ⚠**이 수를 올리는 것은 공짜가 아니다 — 재고 올려라.** 실측(2026-08-20 · 9시즌 전 패널 ·
+ * `scripts/ranking-cut-measure.ts --ksweep`):
+ * ```
+ *  k    평균행  최대행   밴드 없는 상태 대비 행
+ *  0    34.3    52    —            ← 밴드 없음(= 고치기 전)
+ * 10    34.6    52    +1.0%         ← 지금
+ * 15    35.7    53    +4.3%
+ * 20    37.6    60    +9.7%
+ * 30    42.8    72   +25.0%
+ * ```
+ * **30 은 실제로 빌드해서 바이트를 재 보았다**: `ranking.html` 이 지금보다
+ * **시즌별 +16.0 ~ +22.6 %p**(2024: 981,449 → 1,202,787바이트). 상한을 넘어 보류했다.
+ *
+ * ⚠**올리면 시험이 먼저 떨어진다**(`ranking-min-sample.test.ts` 의 행 천장) —
+ * 그것은 고장이 아니라 **비용을 다시 재라는 물음**이다. 재고 천장을 같이 고쳐라.
+ */
+export const RANKING_MIN_TOP = 10;
+
+/**
+ * **어느 하한에서도 상위 k 에 들 수 있는 행 전부** — 그 이상도 이하도 아니다.
+ *
+ * 행 r 이 어떤 하한에서 상위 k 에 들려면 **가장 너그러운 하한(T = r 자신의 분모)** 에서
+ * 들어야 한다. T 를 더 내리면 경쟁자만 늘고, 더 올리면 r 자신이 빠지기 때문이다.
+ * 그 하한에서 r 보다 앞서는 것은 **「분모가 r 이상이면서 전원 순위가 더 좋은」 행**뿐이므로,
+ * → **그런 행이 k 개 미만인 행 전부**가 답이고, k 개 이상인 행은 **어느 하한에서도 못 든다.**
+ *
+ * ⚠**새 순위를 만드는 것이 아니다**(M1/M3). 쓰는 것은 행이 이미 들고 있는 두 값
+ * (전원 순위 · 분모)뿐이고, 정렬도 동률 규칙도 서버가 매긴 그대로다. **싣는 행만 넓힌다.**
+ *
+ * 분모 큰 쪽부터 훑으면서 「지금까지 본 전원 순위 중 가장 좋은 k 개」만 들고 다닌다 —
+ * 그 k 번째가 나보다 좋으면 나를 밀어낸 것이 이미 k 개라는 뜻이다. O(n·k).
+ * ⚠**같은 분모끼리도 서로를 밀어낸다**(조건이 「분모 ≥」이므로). 그래서 분모가 같으면
+ * 전원 순위가 좋은 쪽을 먼저 놓아, 그 행이 뒤 행의 계산에 이미 들어가 있게 한다.
+ */
+function everTop(rows: readonly RankingRow[], k: number): RankingRow[] {
+  const byDen = rows
+    .filter((r) => r.rankAll !== null)
+    .sort((a, b) => b.value.denominator - a.value.denominator || (a.rankAll ?? 0) - (b.rankAll ?? 0));
+  const out: RankingRow[] = [];
+  /** 지금까지 본 행의 전원 순위 중 **가장 좋은 k 개**. 오름차순 */
+  const best: number[] = [];
+  for (const r of byDen) {
+    const mine = r.rankAll ?? 0;
+    // ⚠**같은 순위는 밀어내지 못한다**(동률은 같은 하한에서 함께 산다) — 그래서 `>=` 다
+    if (best.length < k || best[k - 1]! >= mine) out.push(r);
+    let p = best.length;
+    best.push(mine);
+    while (p > 0 && best[p - 1]! > mine) {
+      best[p] = best[p - 1]!;
+      p -= 1;
+    }
+    best[p] = mine;
+    if (best.length > k) best.length = k;
+  }
+  return out;
 }
 
 function panelsForPage(rankings: readonly MetricRanking[], limit: number): RankingPanel[] {
@@ -891,6 +1003,7 @@ function panelsForPage(rankings: readonly MetricRanking[], limit: number): Ranki
     // ⚠**자르기 전 수를 센다** — 「該当 N人」이 자른 뒤의 수면 그것도 거짓말이다
     qualifiedCount: m.rows.filter((r) => r.rank !== null).length,
     allCount: m.rows.filter((r) => r.rankAll !== null).length,
+    minTop: minTopFor(m.rows, limit),
     qualifier: m.qualifier,
   }));
 }
@@ -3699,7 +3812,8 @@ function teamPages(
     );
   }
 
-  return { pages: out, disagreed: race.disagreed };
+  // ⚠**한 번 부른 `seasonRace` 의 결과를 그대로 들고 나간다**(M1) — 밖에서 다시 판정하지 않는다
+  return { pages: out, disagreed: race.disagreed, basis: race.basis, series: race.series };
 }
 
 /**
@@ -3714,6 +3828,14 @@ interface TeamPagesResult {
   pages: TeamPageData[];
   /** 성적과 대전표가 어긋난 구단 코드. **비어 있지 않으면 파이프라인 결함이다** */
   disagreed: readonly string[];
+  /**
+   * 우승 판정이 섰는가. ⚠**`disagreed` 와 같은 한 벌(`seasonRace` 한 번의 결과)에서 나온다**(M1).
+   * `unknown` 은 4~5월이면 정상이고 **끝난 시즌이면 결함**이다 — 그 판단은 `SiteData.raceStatus` 를
+   * 받는 `tools/build.ts` 가 한다.
+   */
+  basis: SeasonRace["basis"];
+  /** 유도된 규정 대전 수. `null` 이면 유도 자체가 실패했다 */
+  series: SeriesLengths | null;
 }
 
 /**
@@ -3970,6 +4092,25 @@ export function buildCareerContext(db: Db, o: CareerContextOptions): CareerConte
   };
 }
 
+/**
+ * 통산 스캔을 **그 시즌까지로 자른다**.
+ *
+ * ⚠**두 필드를 같은 칼로 자른다**(2026-08-21 검토 ③). 예전에는 이 자리가 인라인 객체였고
+ * `entries` 만 `season <=` 로 자른 뒤 **`unknownPitcher` 는 전 범위 값을 그대로 복사**했다 —
+ * 같은 객체 안에서 두 필드가 다른 범위를 뜻했다. 화면에 안 나가고 실데이터가 0이라
+ * 무해했지만(실측 2026-08-21: 정규시즌 `status='final'` **552,563행 중 0행**),
+ * ⚠**「실데이터 0」과 「안전」은 다르다.**
+ *
+ * ⚠**export 는 시험을 위해서다**(`isNextProbable`·`foldThinVenues` 와 같은 이유) —
+ * 이 값은 `SiteData` 에 안 드러나므로 화면으로는 어긋남을 잡을 수 없다.
+ */
+export function sliceRelief(scan: ReliefScan, season: number): ReliefScan {
+  return {
+    entries: scan.entries.filter((e) => e.season <= season),
+    unknownPitcher: new Map([...scan.unknownPitcher].filter(([s]) => s <= season)),
+  };
+}
+
 export interface LoadOptions {
   season: number;
   competition?: string;
@@ -3980,6 +4121,16 @@ export interface LoadOptions {
    * 시즌을 넘는 계산을 미리 만들어 둔 것. ⚠**없어도 된다** — 그때는 여기서 만든다(느릴 뿐 답은 같다).
    */
   career?: CareerContext;
+  /**
+   * 순위표 패널에 싣는 행 수의 상한.
+   *
+   * ⚠**화면은 이 값을 주지 않는다** — 기본값(`RANKING_PAGE_ROWS`)이 정본이다.
+   * 이 구멍은 **계측·시험이 「고르기 전 전량」을 받기 위한 것**이고, 그러라고 있다:
+   * 「어느 최소 표본에서도 상위 N 이 화면에 있는가」는 **고른 뒤의 표만 봐서는 답할 수 없다**
+   * — 없는 선수가 왜 없는지 표 안에는 안 적혀 있기 때문이다.
+   * `Number.POSITIVE_INFINITY` 를 주면 값이 있는 행이 전부 온다.
+   */
+  rankingRows?: number;
 }
 
 export interface SiteData {
@@ -4039,9 +4190,98 @@ export interface SiteData {
    * 06-01 부터 `confirmed`). 둘을 가르는 것이 이 배열이다 — `race.ts` 의 조합표를 보라.
    */
   raceDisagreed: readonly string[];
+  /**
+   * **우승 경쟁 판정이 섰는가 · 그 시즌이 이미 끝났는가.**
+   *
+   * ⚠**`raceDisagreed` 가 못 보는 구멍이 있다**(2026-08-21 검토 ①). `deriveSeriesLengths` 가
+   * 실패하는 경로 — **팀 코드가 12개가 아니게 되는 것**(2018 오릭스 `bs` 슬러그 사고가 정확히
+   * 그 모양이다 · CLAUDE.md §2-2) — 는 `disagreed` 를 **비운 채** 12구단 판정을 전멸시킨다.
+   * 조합표의 「`unknown` · `series: null` · `disagreed: []`」 갈래이고, 그건 4~5월에는 **정상**이라
+   * 무조건 막을 수 없다. 가르는 것이 **시즌이 끝났는가**다.
+   *
+   * ⚠**끝난 시즌인데 `unknown` 이면 배포하지 않는다**(`tools/build.ts` · `raceDisagreed`·
+   * `wobaDerivation` 과 같은 등급). 그때 화면 문구는 정직하고(「優勝争いはまだ判定できません」)
+   * 신호는 `console.warn` 조차 없다 — 눈으로는 영원히 안 보인다.
+   * ⚠**판정 조건의 정본은 여기다**(M1) — `build.ts` 는 이 값을 읽기만 한다.
+   */
+  raceStatus: RaceStatus;
+  /**
+   * **wOBA 계수를 리그마다 제대로 유도했는가.** ⚠셋 다 「0/false 인 것이 정상」이다.
+   *
+   * ⚠**비정상이면 배포하지 않는다**(`tools/build.ts` · `raceDisagreed` 와 같은 등급).
+   * 세 가지가 **전부 화면에 안 드러나는 종류**라 여기로 들고 나오는 것 말고는 알 길이 없다:
+   * 폴백은 값만 조금 밀리고, `skipped`·`unrecognized` 는 아예 아무 데도 안 나온다.
+   *
+   * ⚠**리그가 안 실려 있으면 「그 리그에 타자가 없다」는 뜻**이다 — 그때는 화면에
+   * 그 리그의 wOBA 자체가 없으므로 판정할 것이 없다.
+   */
+  wobaDerivation: readonly WobaDerivationStatus[];
   /** 경기 페이지. **빌드 대상 시즌만** — 2025년은 아카이브에 있지만 화면은 아직 한 시즌이다 */
   games: GamePageData[];
   search: SearchEntry[];
+}
+
+/**
+ * 그 시즌의 **우승 경쟁 판정 상태**. ⚠**「정상」이 시기에 따라 다르다** — 그래서 세 값을 같이 낸다.
+ *
+ * ```
+ * seasonOver  basis      무엇인가
+ * false       confirmed  판정이 서 있다
+ * false       unknown    아직 유도할 수 없다(교류전 미완 등) — **정상**
+ * true        confirmed  판정이 서 있다
+ * true        unknown    **결함.** 끝난 시즌인데 12구단 판정이 통째로 없다 — 배포하지 않는다
+ * ```
+ *
+ * ⚠**네 번째 줄이 조용하다는 것이 이 구조의 존재 이유다.** 화면 문구는 정직하고
+ * (「優勝争いはまだ判定できません」) `disagreed` 도 비어 있어서 기존 게이트에 안 걸린다.
+ * ⚠**실측(2026-08-21 · 로컬 DB 9시즌 전수)**: 2018~2026 전부 `confirmed` ·
+ * `disagreed` 0구단 · `series` 는 2020 만 24/0 이고 나머지 8시즌 25/3 · `seasonOver` 는
+ * 2026 만 false. **즉 이 게이트는 지금 발화하지 않는다** — 「0건」이 계속 참인지를 매 배포마다 확인한다.
+ */
+export interface RaceStatus {
+  /** 판정이 섰는가. ⚠**`unknown` 자체는 결함이 아니다** — `seasonOver` 와 같이 읽어라 */
+  basis: SeasonRace["basis"];
+  /**
+   * 유도된 규정 대전 수. `null` = 유도 실패.
+   * ⚠**`series !== null` 인데 `basis === "unknown"` 이면 성적과 대전표가 어긋난 것**이고,
+   * 그건 `raceDisagreed` 가 잡는다(시기와 무관하게 언제나 결함).
+   */
+  series: SeriesLengths | null;
+  /**
+   * **이 시즌이 이미 끝났는가.** 판정은 `seasonIsOver` 한 벌이다(M1) — 구단 캘린더의
+   * `calendar.seasonOver` 와 **같은 함수**에서 나온다. 두 벌이 되면 화면과 게이트가 갈린다.
+   * ⚠**「끝났다」의 정의는 「더 나중 시즌의 경기가 있다」**이다(`seasonIsOver` 주석).
+   *   그래서 오프시즌의 최신 시즌은 여기서 `false` 이고, 그건 의도한 거동이다 —
+   *   그때는 아직 「다음 시즌 일정을 안 받았다」가 사실이라 판정 부재를 결함이라고 단정할 수 없다.
+   */
+  seasonOver: boolean;
+}
+
+/**
+ * 리그 하나의 wOBA 계수 유도 상태. **전부 「0/false 가 정상」이다.**
+ *
+ * ⚠**「0건」과 「안 쟀음」을 구별한다**(작업규칙 7). 이 줄이 있다는 것 자체가 「쟀다」이고,
+ * 리그가 아예 안 실려 있으면 그 리그에는 잴 타자가 없었다는 뜻이다.
+ */
+export interface WobaDerivationStatus {
+  league: League;
+  /**
+   * **폴백 계수로 떨어졌는가.** 박스스코어는 있는데 타석 로그가 통째로 없을 때 그렇게 된다.
+   * ⚠그때 화면의 용어집이 「係数は当サイトがリーグ・シーズンごとに算出」이라고 **거짓말을 한다** —
+   * 값이 사라지는 게 아니라 **눈금이 밀린다**(실측 자격자 중앙 약 1 wRC+).
+   */
+  fellBack: boolean;
+  /**
+   * 득점가치를 계산하지 못해 유도에서 빠진 타석 수(M11). **0 이 정상이다.**
+   * ⚠0 이 아니면 **하프이닝 중간의 타석이 걸러졌다**는 뜻이고, 그때는 값이 빠지는 게 아니라
+   * **남은 값이 틀린다**(`afterStateOf` 주석 참조) — 분모로도 결측 카운터로도 안 드러난다.
+   */
+  skipped: number;
+  /**
+   * 우리가 모르는 결과 문자열의 수(M7). **0 이 정상이다.**
+   * ⚠0 이 아니면 파서의 어휘가 DB 보다 낡았다는 뜻이다.
+   */
+  unrecognized: number;
 }
 
 /**
@@ -4457,7 +4697,58 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     .get(o.season, competition, through) as { games: number; latest: string | null };
 
   const agg = aggregateSeason(db, o.season, competition, through);
-  const bundles = buildLeagues(agg);
+
+  /**
+   * **득점기대치(RE) 행렬을 리그 상수보다 먼저 만든다**(2026-08-20).
+   *
+   * ⚠**순서가 뒤집힌 이유**: wOBA 계수를 이제 **RE 에서 유도**한다. 예전에는 계수가 모듈 상수
+   * 1세트(남의 공개값)라 순서가 상관없었지만, 지금은 **RE 없이는 리그 상수를 만들 수 없다.**
+   * ⚠**같은 `through` 로 만든다** — 어긋나면 계수의 기준일과 화면의 기준일이 갈린다.
+   * ⚠**여기서 만든 행렬을 아래 루프가 다시 쓴다.** 두 번 만들면 시즌을 두 번 훑는 것도,
+   * 값이 갈라지는 것도 일어난다(M1).
+   */
+  const reMade = new Map<League, RunExpectancy>();
+  const runValuesByLeague = new Map<League, WobaWeights>();
+  const wobaDerivation: WobaDerivationStatus[] = [];
+  for (const league of ["central", "pacific"] as const) {
+    const codes = TEAMS.filter((t) => t.league === league).map((t) => t.code);
+    const re = buildRunExpectancy(db, o.season, league, codes, competition, through);
+    // ⚠**행렬은 비어 있어도 넣는다.** 아래 루프가 SRC·SRP·번트에 그대로 쓰고,
+    //   그것들은 「비면 비는」 것이 원래 거동이다 — 여기서 던지면 거동이 바뀐다
+    reMade.set(league, re);
+    /**
+     * ⚠**타석 로그가 없으면 계수를 지어내지 않는다.** 그 리그는 폴백 계수로 떨어지고,
+     * 폴백은 리그·시즌을 모르는 값이라 **출루율 눈금이 밀린다**(중앙 약 1 wRC+).
+     * 조용히 넘기지 않는다 — 박스스코어는 있는데 타석 로그가 통째로 없다는 뜻이고,
+     * 그때는 SRC·SRP·번트·카운트가 **다 같이** 비어 있을 것이다.
+     *
+     * ⚠**타자가 한 명도 없는 리그는 폴백이 아니다** — `buildLeagues` 가 그 리그를 통째로
+     * 건너뛰므로 화면에 나가는 wOBA 자체가 없다. 「없는 것」과 「틀린 자로 잰 것」은 다르다.
+     */
+    if (re.totalPa === 0) {
+      if (agg.battingByLeague.some((b) => b.league === league)) {
+        wobaDerivation.push({ league, fellBack: true, skipped: 0, unrecognized: 0 });
+      }
+      continue;
+    }
+    /**
+     * ⚠**세어 둔 것을 버리지 않는다**(2026-08-21 최종 검토 P2-②).
+     * `deriveRunValues` 는 `skipped`(값을 계산 못 한 타석 · M11)와
+     * `unrecognized`(모르는 결과 문자열 · M7)를 세는데, 예전에는 이 줄이 `.runValues` 만
+     * 꺼내서 **유일한 프로덕션 소비자가 그 둘을 그 자리에서 버렸다.**
+     * 세는 코드가 있는데 아무도 안 읽으면 그건 감시 장치가 아니다.
+     */
+    const derived = deriveRunValues(db, re, codes, competition, through);
+    runValuesByLeague.set(league, derived.runValues);
+    wobaDerivation.push({
+      league,
+      fellBack: false,
+      skipped: derived.skipped,
+      unrecognized: derived.unrecognized,
+    });
+  }
+
+  const bundles = buildLeagues(agg, (lg) => runValuesByLeague.get(lg));
 
   const profiles = loadProfiles(db);
   const splitsByPlayer = loadSplits(db, o.season, competition, through);
@@ -4607,9 +4898,16 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   for (const bundle of bundles) {
     bundleByLeague.set(bundle.league, bundle);
     const codes = TEAMS.filter((t) => t.league === bundle.league).map((t) => t.code);
-    // ⚠**RE 행렬도 `through`로 거른다.** 안 거르면 「7월 말 기준」 빌드에서
-    // 득점기대치만 8월 데이터로 계산되어 같은 화면의 기준일이 갈린다
-    const re = buildRunExpectancy(db, o.season, bundle.league, codes, competition, through);
+    /**
+     * ⚠**위에서 이미 만들었다.** RE 행렬이 wOBA 계수의 재료가 되면서 리그 상수보다 먼저
+     * 만들어야 했다 — 여기서 다시 만들면 같은 시즌을 두 번 훑고, 두 벌이 갈릴 여지가 생긴다(M1).
+     * ⚠**없으면 던진다.** 번들이 있는데 행렬이 없다는 것은 위 루프와 조건이 어긋났다는 뜻이고,
+     * 조용히 넘기면 그 리그의 SRC·SRP·번트가 통째로 사라진다.
+     */
+    const re = reMade.get(bundle.league);
+    if (re === undefined) {
+      throw new Error(`${o.season} ${bundle.league}: 리그 번들은 있는데 RE 행렬이 없다`);
+    }
     reByLeague.set(bundle.league, re.matrix);
     reFull.set(bundle.league, re);
     // ⚠**리그별로 낸다.** 득점환경이 다르므로 두 리그를 섞은 하나의 번트 가치는 뜻이 흐려진다
@@ -4671,10 +4969,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   const reliefScan: ReliefScan =
     o.career === undefined
       ? midInningEntries(db, competition, through, heldFrom, o.season)
-      : {
-          entries: o.career.reliefScan.entries.filter((e) => e.season <= o.season),
-          unknownPitcher: o.career.reliefScan.unknownPitcher,
-        };
+      : sliceRelief(o.career.reliefScan, o.season);
   /**
    * 등판 시점 RE. ⚠**행렬은 `buildRunExpectancy` 한 벌뿐이다**(M1) — 여기서 다시 만들지 않고
    * **시즌·리그마다 한 번씩만** 부른다(실측 1회 76ms).
@@ -4744,8 +5039,16 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
    * 화면이 쓰는 **시즌 합계**.
    *
    * ⚠**리그 상수를 표본으로 가중해 합계 라인에 적용한다**(`blendConstants`).
-   * wOBA가 타석 가중 평균이라 `wRAA(합계, 가중상수) = wRAA(セ) + wRAA(パ)`가 정확히 성립한다 —
-   * 날조가 아니라 증명 가능한 일반화다. 리그를 넘지 않은 선수에게는 아무 일도 하지 않는다.
+   * 리그를 넘지 않은 선수에게는 아무 일도 하지 않는다.
+   *
+   * ⚠**여기 「`wRAA(합계, 가중상수) = wRAA(セ) + wRAA(パ)` 가 **정확히** 성립한다 — 증명 가능한
+   * 일반화다」라고 적혀 있었고 그건 낡았다**(2026-08-21 최종 검토 P3). 그 등식은 **계수가 양 리그
+   * 공통일 때**의 이야기이고, 2026-08-20 에 계수를 리그×시즌 유도값으로 바꾸면서 **정확 → 근사**로
+   * 내려갔다. 정본 서술과 근거는 `blendConstants`(aggregate/leaderboard.ts) 주석에 있다 —
+   * **여기서 다시 설명하지 않는다**(M1: 같은 사실을 두 벌로 적으면 어느 날 한쪽만 고쳐진다).
+   * ⚠**수는 무해하다** — 9시즌 실측(2026-08-21)으로 리그를 넘은 타자는 **32명**이고
+   * `|Δ wRAA|` 는 중앙 **0.021** · 최대 **0.184**득점(2025 · 275타석)이다.
+   * **결함은 크기가 아니라 두 문장이 서로를 부정하고 있었다는 것이다.**
    */
   const constantsFor = (playerId: string, weightOf: (lg: League) => number): LeagueConstants =>
     blendConstants(bundles.map((b) => ({ constants: b.constants, weight: weightOf(b.league) })));
@@ -5151,7 +5454,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   const sections: LeagueSection[] = bundles.map((bundle) => ({
     id: bundle.league,
     name: LEAGUE_NAME[bundle.league],
-    categories: categoriesOf(rankingsByLeague.get(bundle.league)!, RANKING_PAGE_ROWS),
+    categories: categoriesOf(rankingsByLeague.get(bundle.league)!, o.rankingRows ?? RANKING_PAGE_ROWS),
   }));
 
   // 일람의 하이라이트는 **부문마다 대표 지표 몇 개씩**만 낸다.
@@ -5371,6 +5674,18 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     // ⚠**순위표와 구단 페이지를 잇기만 한다**(M1) — 여기서 다시 조회하면 두 화면이 갈린다
     teamsPage: teamsPage(o.season, meta.latest, standings, teamData.pages),
     raceDisagreed: teamData.disagreed,
+    /**
+     * ⚠**`teamPages` 가 한 번 부른 `seasonRace` 의 결과다**(M1) — 여기서 다시 판정하지 않는다.
+     * ⚠**`seasonOver` 는 구단 캘린더와 같은 함수**(`seasonIsOver`)에서 나온다 — 두 벌로 두면
+     *   화면이 「시즌 종료」라고 쓰는 동안 게이트는 아니라고 판단하는 날이 온다.
+     */
+    raceStatus: {
+      basis: teamData.basis,
+      series: teamData.series,
+      seasonOver: seasonIsOver(db, o.season),
+    },
+    // ⚠**위 루프가 잰 것을 그대로 들고 나간다** — 여기서 다시 판정하지 않는다(M1)
+    wobaDerivation,
     games: [...gameList, ...postGameList],
   };
 }

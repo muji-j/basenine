@@ -952,6 +952,101 @@ test("⚠소멸이 증명되면 그것은 단정한다", () => {
   assert.match(raceLineOf(out), /優勝の可能性が(なくなり|消滅し)ました/);
 });
 
+// ── リーグ優勝 한 줄 ───────────────────────────────────────────────────────
+//
+// ⚠**출처가 위와 다르다.** 매직·자력·소멸은 `race.ts` 에서 오고, 이 줄은 `standings.ts` 의
+// `rank`·`tiedRank` 에서만 온다. `race.ts` 는 당사자 간 대전 성적을 계산하지 않으므로
+// 동률이 남은 채 끝난 시즌에서 우승을 단정할 수 없고 **그 선을 지키는 것이 옳다**(M11).
+// 그런데 같은 페이지 머리는 이미 `1位` 라고 쓴다 — 결과적으로 실측(2026-08-21 · `dist` 전수)
+// **끝난 시즌의 1위 페이지 16장 중 15장**이 우승을 말하고 **2022 퍼시픽 오릭스 1장만** 안 말했다.
+
+/** **リーグ優勝 줄만** 잘라 낸다. 없으면 `null` — 위의 `raceLineOf` 와 다른 줄이다 */
+function pennantLineOf(out: string): string | null {
+  const m = /<p class="tnow race pennant">([^<]*)<\/p>/.exec(nowBlockOf(out));
+  return m === null ? null : m[1]!;
+}
+
+/**
+ * **2022 퍼시픽 재현.** 오릭스와 소프트뱅크가 76-65-2 로 완전히 같았고
+ * `race.ts` 는 `selfPossible true · magic null · eliminated false · remaining 0` 에서 멈췄다.
+ * 순위를 가른 것은 `standings.ts` 의 당사자 간 대전 성적이고, 그게 `tiedRank === false` 다.
+ */
+function pennantData(over: Partial<TeamPageData> = {}): TeamPageData {
+  const base = data();
+  return data({
+    calendar: { ...base.calendar, seasonOver: true, upcoming: 0 },
+    rank: 1,
+    tiedRank: false,
+    now: nowFixture({
+      next: null,
+      probable: null,
+      race: race({ remaining: 0, selfPossible: true, magic: null, eliminated: false }),
+    }),
+    ...over,
+  });
+}
+
+/**
+ * ⚠**「1位」라고 쓰면서 우승을 말하지 않는 페이지가 하나 있었다.**
+ * ⚠**`raceVerdict` 를 넓히는 것으로 고치지 않는다** — 그건 증명 밖의 말이 된다(M11).
+ * 다른 출처(`standings`)의 사실을 **다른 줄로** 얹는다.
+ */
+test("⚠끝난 시즌의 단독 1위는 リーグ優勝이라고 말한다 — 출처는 順位表다", () => {
+  const out = renderTeamPage(pennantData(), context());
+  assert.equal(pennantLineOf(out), "リーグ優勝", "1位라고 써 놓고 우승을 말하지 않는다");
+  // ⚠**`raceVerdict` 는 그대로다.** 이 줄이 얹혀도 위 줄의 증명 범위는 넓어지지 않는다
+  assert.equal(
+    raceLineOf(out),
+    "リーグに勝率で上回る球団はありません — 同率のときは当該球団間の対戦成績で順位が決まります",
+    "우승 경쟁 판정 줄이 같이 바뀌었다 — 두 출처가 섞였다",
+  );
+  // ⚠**출처가 다르다는 것을 화면이 말한다**(M1·M3)
+  assert.match(noteOf(out), /「リーグ優勝」だけは.*最終順位/, "어디서 온 줄인지 화면이 말하지 않는다");
+});
+
+/**
+ * ⚠**대조군을 같이 그린다.** 「나오지 않는다」만 단언하면 그 시험은 **고치기 전 코드에서도
+ * 통과한다**(작업규칙 9). 나오는 쪽을 옆에 두어야 조건을 실제로 재는 시험이 된다.
+ */
+test("⚠동률 1위에는 リーグ優勝이라고 쓰지 않는다 — 順位表도 가르지 못한 자리다", () => {
+  const tied = renderTeamPage(pennantData({ tiedRank: true }), context());
+  assert.equal(pennantLineOf(tied), null, "가르지 못한 동률을 우승이라고 단정했다");
+  assert.equal(pennantLineOf(renderTeamPage(pennantData(), context())), "リーグ優勝", "대조군이 죽었다");
+});
+
+test("⚠진행 중인 시즌에는 リーグ優勝이라고 쓰지 않는다 — 1位는 매일 바뀐다", () => {
+  const base = data();
+  const running = renderTeamPage(
+    pennantData({ calendar: { ...base.calendar, seasonOver: false, upcoming: 1 } }),
+    context(),
+  );
+  assert.equal(pennantLineOf(running), null, "시즌 도중에 우승을 단정했다");
+  assert.equal(pennantLineOf(renderTeamPage(pennantData(), context())), "リーグ優勝", "대조군이 죽었다");
+});
+
+test("⚠1위가 아니면 リーグ優勝이라고 쓰지 않는다", () => {
+  // 2022 퍼시픽의 소프트뱅크 — 전적이 완전히 같은데 대전 성적에서 밀렸다
+  const second = renderTeamPage(pennantData({ rank: 2 }), context());
+  assert.equal(pennantLineOf(second), null, "2위에 우승을 붙였다");
+  assert.equal(pennantLineOf(renderTeamPage(pennantData(), context())), "リーグ優勝", "대조군이 죽었다");
+});
+
+/**
+ * ⚠**같은 말을 두 번 하지 않는다.** 끝난 시즌의 1위 16장 중 15장은 `raceVerdict` 가 이미
+ * 「優勝が決まりました」라고 말한다 — 거기에 「リーグ優勝」을 더하면 한 구획이 우승을 두 번 말한다.
+ */
+test("⚠이미 「優勝が決まりました」면 リーグ優勝을 겹쳐 쓰지 않는다", () => {
+  const decided = renderTeamPage(
+    pennantData({ now: nowFixture({ next: null, probable: null, race: race({ magic: 0, selfPossible: true, eliminated: false }) }) }),
+    context(),
+  );
+  assert.equal(raceLineOf(decided), "優勝が決まりました");
+  assert.equal(pennantLineOf(decided), null, "한 구획이 우승을 두 번 말한다");
+  // 각주도 따라 빠진다 — 나오지도 않는 줄을 설명하지 않는다
+  assert.ok(!noteOf(decided).includes("「リーグ優勝」"), "없는 줄을 각주가 설명한다");
+  assert.equal(pennantLineOf(renderTeamPage(pennantData(), context())), "リーグ優勝", "대조군이 죽었다");
+});
+
 /**
  * ⚠**`remaining` 은 `number | null` 이다**(2026-08-19 재리뷰 Important A).
  * `null` 을 그대로 템플릿에 넣으면 `html` 이 빈 문자열로 렌더해 **「残り 試合」**이 나간다 —

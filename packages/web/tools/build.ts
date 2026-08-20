@@ -65,13 +65,18 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
         ...(throughArg === undefined ? {} : { through: throughArg }),
       });
       /**
-       * ⚠**투수를 모르는 타석은 火消し 를 조용히 줄인다**(M11). 지금 아카이브는 0건이지만,
-       * CLAUDE.md §2-2 가 「소급 시즌은 투수 귀속이 얇을 수 있다」고 적어 뒀다 —
-       * 백필이 그 창을 열면 여기가 먼저 말한다. **배포는 막지 않는다**(값이 없어지는 게 아니라 얇아진다).
+       * ⚠**투수를 모르는 타석은 火消し 를 조용히 줄인다**(M11). 실측(2026-08-21)으로
+       * 정규시즌 `status='final'` **552,563행 중 0행**이지만, CLAUDE.md §2-2 가
+       * 「소급 시즌은 투수 귀속이 얇을 수 있다」고 적어 뒀다 — 백필이 그 창을 열면 여기가 먼저 말한다.
+       * **배포는 막지 않는다**(값이 없어지는 게 아니라 얇아진다).
+       * ⚠**어느 시즌인지까지 말한다** — 합계만으로는 어느 백필을 되짚어야 하는지 모른다.
        */
-      if (career.reliefScan.unknownPitcher > 0) {
+      const unknownBySeason = [...career.reliefScan.unknownPitcher].sort((a, b) => a[0] - b[0]);
+      const unknownPa = unknownBySeason.reduce((sum, [, n]) => sum + n, 0);
+      if (unknownPa > 0) {
         console.warn(
-          `⚠ 투수를 모르는 타석 ${career.reliefScan.unknownPitcher}건 — 火消し 의 교대 판정이 그만큼 성립하지 않는다`,
+          `⚠ 투수를 모르는 타석 ${unknownPa}건（${unknownBySeason.map(([s, n]) => `${s}:${n}`).join(" ")}）` +
+            " — 火消し 의 교대 판정이 그만큼 성립하지 않는다",
         );
       }
       /**
@@ -188,6 +193,79 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
         );
         for (const l of disagreedSeasons) {
           console.error(`   ${l.season}: ${l.data.raceDisagreed.length}구단 — ${l.data.raceDisagreed.join(" ")}`);
+        }
+        process.exitCode = 1;
+      }
+
+      /**
+       * ⚠**끝난 시즌인데 우승 판정이 없는 채로 배포하지 않는다**(2026-08-21 검토 ①).
+       *
+       * 위 게이트는 `disagreed` 만 본다. 그런데 `deriveSeriesLengths` 가 실패하는 경로는
+       * **`disagreed` 를 비운 채** 12구단 판정을 전멸시킨다 — 조합표의
+       * 「`unknown` · `series: null` · `disagreed: []`」 갈래다(`race.ts`).
+       * 유도는 **순위표에 12구단이 정확히 6:6 으로 있을 것**을 요구하므로,
+       * 팀 코드가 하나라도 새거나 빠지면 그대로 이 갈래로 떨어진다.
+       * ⚠**CLAUDE.md §2-2 의 2018 오릭스 `bs` 슬러그 사고가 정확히 그 모양이다** —
+       * 148경기가 「모르는 팀 코드」로 실패했고, 그대로 뒀으면 **그 시즌 성적이 화면에서 사라진 채
+       * 「그 시즌은 원래 그렇다」로 읽혔을 것**이다.
+       *
+       * ⚠**무조건 막을 수는 없다.** 교류전이 안 끝난 4~5월의 `unknown` 은 **정상**이다
+       * (실측: 2026 타임라인에서 06-01 부터 `confirmed`). 가르는 것은 **시즌이 끝났는가**다 —
+       * 끝난 시즌은 「아직 모른다」가 성립할 수 없다.
+       * ⚠**판정 조건의 정본은 `query.ts` 다**(M1). 여기서 조건을 다시 쓰지 않고 그 결과만 읽는다 —
+       *   아래 wOBA 계수 게이트와 같은 형식이다.
+       * ⚠**실측(2026-08-21 · 로컬 DB 9시즌 전수): 2018~2026 전부 `confirmed` 라 발화 0건이다.**
+       *   「0건」과 「안 쟀음」은 다르다 — 이 게이트가 있어야 그 0건이 매 배포마다 다시 확인된다.
+       */
+      const raceMissing = loaded.filter(
+        (l) => l.data.raceStatus.seasonOver && l.data.raceStatus.basis === "unknown",
+      );
+      if (raceMissing.length > 0) {
+        console.error(
+          `⚠ 이미 끝난 시즌인데 우승 판정이 서지 않았다 — ${raceMissing.length}시즌. 배포하지 않는다`,
+        );
+        for (const l of raceMissing) {
+          const s = l.data.raceStatus;
+          console.error(
+            `   ${l.season}: 규정 대전수 ${s.series === null
+              ? "유도 실패（순위표의 팀 코드가 12개·6:6 인지 먼저 봐라）"
+              : `リーグ内${s.series.intra}/交流戦${s.series.inter}`}` +
+              ` · 어긋난 구단 ${l.data.raceDisagreed.length}개`,
+          );
+        }
+        process.exitCode = 1;
+      }
+
+      /**
+       * ⚠**wOBA 계수를 제대로 유도하지 못한 채 배포하지 않는다**(2026-08-21 최종 검토 P2-②·③).
+       *
+       * 셋 다 **화면에 한 글자도 안 드러난다**:
+       * ⑴ `fellBack` — 폴백 계수로 떨어져도 값만 조금 밀린다(자격자 중앙 약 1 wRC+).
+       *    그런데 용어집은 「係数は当サイトがリーグ・シーズンごとに算出」이라고 쓴다 — **화면이 거짓말을 한다.**
+       * ⑵ `skipped` — 하프이닝 중간의 타석이 걸러졌다는 뜻이고, 그때는 값이 빠지는 게 아니라
+       *    **남은 값이 틀린다.** 분모로도 결측 카운터로도 안 드러난다.
+       * ⑶ `unrecognized` — 파서 어휘가 DB 보다 낡았다(M7).
+       *
+       * ⚠**예전에는 ⑴ 이 `console.warn` 하나였고 ⑵⑶ 은 아무도 안 읽었다.** 그래서 종료 코드가
+       * 0이었고 `emptySeasons`·`stale`·`raceDisagreed` 와 **등급이 달랐다** — 연락처 게이트와 같은 모양이다.
+       * ⚠**판정 조건의 정본은 `query.ts` 다**(M1). 여기서 조건을 다시 쓰지 않고 그 결과만 읽는다.
+       * ⚠**실측(2026-08-21): 18/18 리그-시즌에서 셋 다 0이다.** 「0건」과 「안 쟀음」은 다르다 —
+       *    이 게이트가 있어야 「0건」이 계속 참인지 매 배포마다 확인된다.
+       */
+      const wobaBad = loaded.flatMap((l) =>
+        l.data.wobaDerivation
+          .filter((w) => w.fellBack || w.skipped > 0 || w.unrecognized > 0)
+          .map((w) => ({ season: l.season, ...w })),
+      );
+      if (wobaBad.length > 0) {
+        console.error(
+          `⚠ wOBA 계수 유도가 온전하지 않다 — ${wobaBad.length}개 리그-시즌. 배포하지 않는다`,
+        );
+        for (const w of wobaBad) {
+          const why = w.fellBack
+            ? "타석 로그가 0건이라 폴백 계수로 떨어졌다（화면은 「当サイトが算出」이라고 말한다）"
+            : `미계산 타석 ${w.skipped}건 · 모르는 결과 문자열 ${w.unrecognized}건`;
+          console.error(`   ${w.season} ${w.league}: ${why}`);
         }
         process.exitCode = 1;
       }

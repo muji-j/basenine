@@ -13,7 +13,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { TEAMS, colorOf } from "@bb-app/domain";
-import { CSS } from "../src/assets.ts";
+import { CLIENT_JS, CSS } from "../src/assets.ts";
 
 /** WCAG 상대 휘도 */
 function luminance(hex: string): number {
@@ -164,13 +164,33 @@ test("⚠구단 색(--team)을 글자색으로 쓰지 않는다 — 어느 테�
 const TEAM_MARKS: readonly { sel: string; prop: "color" | "stroke"; need: number; what: string }[] = [
   { sel: ".trecent li.w b", prop: "color", need: 4.5, what: "直近の試合의 이긴 경기 표식(13px)" },
   { sel: ".dia .db.on", prop: "stroke", need: 3.0, what: "주자 있는 베이스의 윤곽(비텍스트)" },
+  /**
+   * ⚠**成績の紋도 같은 병이었다**(2026-08-21 감사 P1 · 같은 날 수정).
+   * · `.mf-shape` — 도형의 윤곽. 구단 색일 때 **24조합 중 12 미달**(라이트 4 · 다크 8)이고
+   *   **미달 구단의 합집합이 12/12** 다. 살(fill-opacity .42)을 합성해도 **0/24** 만 3:1 도달이고,
+   *   `.thin` 은 fill-opacity 가 0 이라 **점선 윤곽 하나가 도형의 전부**다(배포물 2,314/5,666장).
+   * · `.mf-dot` — 이것은 차트가 아니라 **조작 요소**다. 감싸는 `.mf-ax` 가
+   *   `role="button" tabindex="0"` 이고 이 점이 유일한 시각 어포던스인데, 채움이 `--panel`
+   *   (바탕과 같은 색)이라 **선이 곧 전부**다. 다크 オリックス 1.08 · ロッテ 1.10 에서
+   *   누를 수 있는 것이 화면에 없었다. WCAG 1.4.11 에는 「글자로도 제공되면 예외」가 없다.
+   * ⚠**고른 축의 채움(`.mf-ax.on .mf-dot`)은 구단 색으로 남는다** — 링이 3:1 경계를 만든다.
+   * 그래서 여기서 재는 것은 `stroke` 뿐이다.
+   */
+  { sel: ".mf-shape", prop: "stroke", need: 3.0, what: "成績の紋 도형의 윤곽(비텍스트)" },
+  { sel: ".mf-dot", prop: "stroke", need: 3.0, what: "成績の紋 꼭짓점의 링 — 조작 요소의 유일한 어포던스" },
 ];
 
 for (const scope of ["light", "dark"] as const) {
   for (const mark of TEAM_MARKS) {
     test(`⚠${scope}: ${mark.sel} 는 구단 색에 기대지 않는다 — ${mark.what}`, () => {
       const css = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
-      const rule = new RegExp(`${mark.sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\{([^{}]*)\\}`).exec(css);
+      /**
+       * ⚠**규칙의 시작에 붙인다.** 안 붙이면 `.mf-dot` 이 `.mf-ax.on .mf-dot{…}` 에도 걸려,
+       * 어느 규칙을 쟀는지가 **CSS 안의 순서에 달리게 된다.**
+       */
+      const rule = new RegExp(
+        `(?:^|[\\n}])\\s*${mark.sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\{([^{}]*)\\}`,
+      ).exec(css);
       assert.ok(rule !== null, `${mark.sel} 규칙이 CSS 에 없다 — 이 시험이 공회전한다`);
       const decl = new RegExp(`(?:^|;)\\s*${mark.prop}:\\s*([^;]+)`).exec(rule![1]!);
       assert.ok(decl !== null, `${mark.sel} 에 ${mark.prop} 선언이 없다 — 이 시험이 공회전한다`);
@@ -216,11 +236,13 @@ for (const scope of ["light", "dark"] as const) {
  * ⚠**`stroke` 는 얇아서 `color` 보다 더 위험한데, 위의 금지 규칙이 `color` 만 본다.**
  *
  * 그래서 **구단 색을 선 색으로 쓰는 자리를 통째로 세어 못 박는다.** 새 자리가 생기면 여기서 걸린다.
- * ⚠**지금 남은 둘은 「고쳐야 할 것」이지 「괜찮은 것」이 아니다**(2026-08-20 · 이번 작업 범위 밖).
- * 成績の紋(레이더)의 윤곽과 꼭짓점이고, `.dia` 와 **정확히 같은 병**이다 —
- * ロッテ·オリックス의 다크에서 선이 바탕에 묻힌다. 차트라서 손대려면 dataviz 기준부터 봐야 하고,
- * 그건 이 수정의 범위가 아니다. **design-auditor 가 판정할 항목으로 남긴다.**
+ * ⚠**남아 있던 둘(`.mf-shape`·`.mf-dot`)은 2026-08-21 에 고쳤다** — 예외로 둔 것이 아니다.
+ * 둘 다 `--tx-2` 로 바뀌었고, 위의 `TEAM_MARKS` 가 그 자리를 12구단 × 2테마로 계속 잰다.
+ * 이제 **기대값은 빈 목록**이다.
  * ⚠**여기 늘리지 마라.** 늘어나면 그건 같은 결함이 한 자리 더 생겼다는 뜻이다.
+ * ⚠**이 시험은 CSS 문자열만 본다** — 클라이언트 스크립트가 `setAttribute("stroke", …)` 로
+ * 얹는 자리는 **원리적으로 못 본다.** 실제로 비교 화면의 겹친 紋이 그랬다(2026-08-21 감사 P2).
+ * 아래 시험이 그 구멍을 따로 막는다.
  */
 test("⚠구단 색을 선 색(stroke)으로 쓰는 자리가 늘지 않는다", () => {
   const css = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
@@ -229,11 +251,25 @@ test("⚠구단 색을 선 색(stroke)으로 쓰는 자리가 늘지 않는다",
     if (!/(^|;)\s*stroke:\s*var\(--(team|chip)[,)]/.test(m[2] ?? "")) continue;
     found.push((m[1] ?? "").trim());
   }
-  assert.deepEqual(
-    found.sort(),
-    [".mf-dot", ".mf-shape"],
-    `구단 색을 선 색으로 쓰는 자리가 바뀌었다: ${found.join(" / ")}`,
-  );
+  assert.deepEqual(found.sort(), [], `구단 색을 선 색으로 쓰는 자리가 바뀌었다: ${found.join(" / ")}`);
+});
+
+/**
+ * ⚠**클라이언트가 얹는 선 색은 CSS 검사가 못 본다.**
+ *
+ * 비교 화면의 겹친 紋은 브라우저가 조립하므로 색이 `setAttribute` 로 붙는다.
+ * 그래서 위의 CSS 검사가 **영원히 통과하는 채로** 라이트·다크 양쪽에서
+ * `cf-a=#1d1f4e` · `cf-b=#22262b`(테마 무관)가 나가고 있었다 —
+ * 다크 `--panel` 기준 **1.08 / 1.10**, 두 도형끼리 **1.02**.
+ * `.cf-b` 는 `fill-opacity:0` 이라 **점선 하나가 그 선수의 전부**였다.
+ * → **선 색을 스크립트에서 얹지 않는다**를 글자로 못 박는다. 채움(fill)은 허용한다.
+ */
+test("⚠클라이언트 스크립트가 폴리곤의 선 색을 얹지 않는다 — 얹으면 대비 검사가 못 본다", () => {
+  const js = CLIENT_JS.replace(/\/\*[\s\S]*?\*\//g, "");
+  const bad = [...js.matchAll(/setAttribute\(\s*"stroke"/g)].map((m) => m[0]);
+  assert.deepEqual(bad, [], `선 색을 스크립트가 얹는다(${bad.length}건) — CSS 토큰으로 옮겨라`);
+  // ⚠**공회전 방지**: 채움은 실제로 얹고 있다. 이 자리가 통째로 사라지면 위 단언이 무의미해진다.
+  assert.ok(/setAttribute\(\s*"fill"/.test(js), 'setAttribute("fill") 이 없다 — 이 시험이 공회전한다');
 });
 
 test("⚠글자색과 opacity 를 같은 규칙에 함께 쓰지 않는다", () => {

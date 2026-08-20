@@ -69,11 +69,22 @@ export interface ReliefEntry {
 export interface ReliefScan {
   entries: ReliefEntry[];
   /**
-   * 투수를 몰라 판정하지 않은 타석 수. ⚠**0 으로 때우지 않는다**(M11).
-   * 지금 아카이브는 `pitcher_id IS NULL` 0건이지만, CLAUDE.md §2-2 는 소급 시즌의 투수 귀속이
-   * 얇을 수 있다고 적어 뒀다 — 그 창이 열리면 이 수가 말한다.
+   * 투수를 몰라 판정하지 않은 타석 수 — **시즌별**로 센다. ⚠**0 으로 때우지 않는다**(M11).
+   * 지금 아카이브는 `pitcher_id IS NULL` **0건**이지만(실측 2026-08-21 · 정규시즌 `status='final'`
+   * **552,563행 중 0행**), CLAUDE.md §2-2 는 소급 시즌의 투수 귀속이 얇을 수 있다고 적어 뒀다 —
+   * 그 창이 열리면 이 수가 말한다. **어느 시즌이 얇은지**까지 말해야 백필을 되짚을 수 있다.
+   *
+   * ⚠**시즌별인 이유는 「자를 수 있어야 하기」 때문이다**(2026-08-21 검토 ③).
+   * 예전에는 합계 하나(`number`)였고, `query.ts` 가 통산 스캔을 시즌 화면용으로 자를 때
+   * **`entries` 만 `season <=` 로 자르고 이 수는 전 범위 값을 그대로 복사**했다 —
+   * 같은 객체 안에서 두 필드의 범위가 달랐다(실데이터가 0이라 드러나지 않았을 뿐이다).
+   * 시즌 키가 있으면 같은 칼로 자를 수 있고, 못 자르는 모양 자체가 사라진다.
+   *
+   * ⚠**여기 없는 시즌은 「그 범위 안에서 0건」이다.** 범위 자체는 `midInningEntries` 의
+   * `fromSeason`·`toSeason` 이 정한다 — **범위 밖 시즌을 이 지도만 보고 0 이라고 읽지 마라**
+   * (「0건」과 「안 쟀음」은 다르다 · 작업규칙 7).
    */
-  unknownPitcher: number;
+  unknownPitcher: ReadonlyMap<number, number>;
 }
 
 /**
@@ -117,11 +128,17 @@ WHERE ev.prevGameId = ev.gameId AND ev.prevInning = ev.inning AND ev.prevHalf = 
 ORDER BY ev.gameId, ev.seq
 `;
 
+/**
+ * ⚠**시즌별로 센다** — 합계 하나로는 시즌 화면용으로 자를 수 없다(`ReliefScan.unknownPitcher` 주석).
+ * ⚠**0인 시즌은 행이 안 나온다.** 그게 「그 범위 안에서 0건」의 표현이다.
+ */
 const UNKNOWN_SQL = `
-SELECT COUNT(*) AS n
+SELECT g.season AS season, COUNT(*) AS n
 FROM pa_event e JOIN game g ON g.game_id = e.game_id
 WHERE g.status = 'played' AND g.competition = ? AND g.game_date <= ?
   AND g.season BETWEEN ? AND ? AND e.status = 'final' AND e.pitcher_id IS NULL
+GROUP BY g.season
+ORDER BY g.season
 `;
 
 /**
@@ -143,8 +160,11 @@ export function midInningEntries(
     .all(competition, through, fromSeason, toSeason) as unknown as ReliefEntry[];
   const unknown = db.raw
     .prepare(UNKNOWN_SQL)
-    .get(competition, through, fromSeason, toSeason) as { n: number };
-  return { entries, unknownPitcher: Number(unknown.n) };
+    .all(competition, through, fromSeason, toSeason) as unknown as { season: number; n: number }[];
+  return {
+    entries,
+    unknownPitcher: new Map(unknown.map((r) => [Number(r.season), Number(r.n)])),
+  };
 }
 
 export interface ReliefLine {

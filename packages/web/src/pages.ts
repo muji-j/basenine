@@ -114,16 +114,13 @@ export interface IndexPageData {
   highlights: LeagueSection[];
 }
 
-/** 순위표 페이지에 싣는 상위 인원 */
-const RANKING_PAGE_ROWS = 30;
-
 /**
  * 한 부문의 지표 탭줄과 표들.
  *
  * ⚠**지표 탭 그룹을 부문마다 나눈다.** 하나로 묶으면 「打者」에서 고른 `wRC+`가
  * 「先発」로 옮겼을 때 사라져, 아무 표도 안 열린 화면이 된다.
  */
-function categoryPanels(c: RankingCategory, base: string, limit: number, prefix: TabGroupRef): RawHtml {
+function categoryPanels(c: RankingCategory, base: string, prefix: TabGroupRef): RawHtml {
   if (c.panels.length === 0) return html`<p class="empty">この部門の順位を計算できていません。</p>`;
   // ⚠페이지마다 접두사를 다르게 준다 — 저장된 탭 상태를 공유하면 5행짜리 일람과
   // 30행짜리 순위표가 서로의 선택을 덮어쓴다
@@ -134,26 +131,65 @@ function categoryPanels(c: RankingCategory, base: string, limit: number, prefix:
     c.panels.map((p) => ({ id: p.id, label: p.label })),
     true,
   )}
-  ${c.panels.map((p, pi) => panel(group, p.id, pi === 0, panelTable(p, base, limit)))}`;
+  ${c.panels.map((p, pi) => panel(group, p.id, pi === 0, panelTable(p, base)))}`;
 }
 
-function panelTable(p: RankingPanel, base: string, limit: number): RawHtml {
+function panelTable(p: RankingPanel, base: string): RawHtml {
   const rows = p.rows;
   if (rows.length === 0) return html`<p class="empty">順位を計算できていません。</p>`;
   const qualifiedCount = p.qualifiedCount;
-  const truncated = qualifiedCount > limit;
   /**
-   * 자격 기준이 실제로 누군가를 자르고 있는가.
+   * **「規定到達のみ」에서 실제로 보이는 행 수.**
+   *
+   * ⚠**`limit` 로 갈음하지 마라**(2026-08-20). 최소 표본이 걸리는 패널에는
+   * 「어느 하한에서도 상위 N」을 위해 규정 상위 `limit` 밖의 **자격자**가 들어오는 일이 있다
+   * (실측: 9시즌 756 패널-리그-시즌 중 **8건**). 그때 「上位30人のみ表示」는 거짓이 된다.
+   */
+  const shownQualified = rows.filter((r) => r.rank !== null).length;
+  const truncated = qualifiedCount > shownQualified;
+  /**
+   * 자격 기준이 실제로 누군가를 자르고 있는가 — **서버가 이미 판정해서 보낸다**(M1).
    * ⚠**개수 지표(홈런·탈삼진)에는 자격 기준이 없다** — 거기에 전환 버튼을 두면
    * 눌러도 아무것도 사라지지 않아 「고장난 버튼」이 된다.
+   * ⚠**여기서 다시 세지 않는 이유**: 고른 뒤의 행으로 판정하면 「고르기가 무엇을 남겼는가」에
+   * 따라 조작이 붙었다 안 붙었다 한다. 판정의 정본은 `minTopFor`(query.ts) 한 곳이다.
    */
-  const hasQualifier = p.rows.some((r) => r.rank === null && r.rankAll !== null);
+  const hasQualifier = p.minTop !== null;
+  /**
+   * 「全員」에서 쓰는 **최소 표본**의 단위.
+   *
+   * ⚠**그 패널이 이미 쓰는 분모를 그대로 쓴다**(M2 · `denText` 와 같은 값). 打席으로 자르고
+   * 打数를 보여주면 화면이 자기 자신과 모순된다 — 이 표에서 出塁率의 분모는 打席이 아니고
+   * (`出塁機会`) wOBA는 또 다르다(`wOBA機会`). 여기서 단위를 새로 짓지 않는 이유가 그것이다.
+   * ⚠**단위 문자열의 정본은 `glossary.ts` 의 `den`** 이고 `p.unit` 이 그것을 받아 온 값이다.
+   */
+  const minUnit = p.unit;
+  /**
+   * 못 읽은 입력에 대고 할 말. **서버가 미리 적는다** — 클라이언트가 문장을 조립하면
+   * 문구가 두 벌이 되고(M1), 이닝 표기의 규칙을 클라이언트가 다시 설명하게 된다.
+   * ⚠**조용히 0으로 만들지 않는다**(침묵 오류). 값이 안 먹었으면 그것이 보여야 한다.
+   */
+  const badHint = p.denAsInnings
+    ? `最少${minUnit}は 50 や 138.1 のように入れてください（小数は 0・1・2 だけです）。`
+    : `最少${minUnit}は数字で入れてください。`;
   return html`${hasQualifier
     ? html`<div class="mfind rankonly">
     <button class="tab" type="button" data-rankonly="${p.id}" aria-pressed="true"
       title="${p.qualifier}">規定到達のみ</button>
-    <span class="count"><span data-rankcount="${p.id}">${Math.min(qualifiedCount, limit)}人</span>を表示中</span>
-  </div>`
+    ${
+      // ⚠**서버는 숨겨서 낸다**(§0-1). 스크립트가 없으면 이 칸은 아무 일도 못 하고,
+      //   눌러도 아무것도 안 일어나는 조작을 남기지 않는 것이 이 패널의 규칙이다
+      //   (바로 위 `hasQualifier` 가 같은 이유로 버튼 자체를 없앤다).
+      // ⚠**`type="number"` 를 쓰지 않는다** — 브라우저가 못 읽은 값을 **빈 문자열로 바꿔 버려서**
+      //   「무엇을 쳤는지」가 사라진다. 우리가 읽고 우리가 말해야 한다.
+      // ⚠**id 를 붙이지 않는다** — 같은 `p.id` 가 セ·パ 두 벌로 그려지므로 id 가 겹친다
+      //   (2026-08-19 감사가 잡은 중복 id 86종과 같은 모양). 그래서 `label` 로 감싼다.
+      html`<label class="rankmin" hidden>最少${minUnit}<input type="text" inputmode="numeric"
+      autocomplete="off" size="5" value="0" data-rankmin="${p.id}"${raw(p.denAsInnings ? " data-rankouts" : "")}></label>`
+    }
+    <span class="count"><span data-rankcount="${p.id}">${shownQualified}人</span> / 全${rows.length}人</span>
+  </div>
+  <p class="empty" data-rankbad="${p.id}" hidden role="status">${badHint}</p>`
     : null}
   ${scroller(html`<table>
     <thead><tr><th>順位</th><th class="l">選手</th><th class="l">球団</th><th>${term(p.label)}</th><th>${term("母数")}</th></tr></thead>
@@ -161,7 +197,14 @@ function panelTable(p: RankingPanel, base: string, limit: number): RawHtml {
       // ⚠**기본은 「규정 도달자만」이므로 미달 행은 처음부터 숨어 있다.**
       // 스크립트가 없으면 그대로 숨은 채인데, 그것이 **지금까지와 같은 화면**이다 —
       // 전환은 더해지는 기능이고, 없다고 잃는 것은 없다(§0-1).
-      (r) => html`<tr class="${r.isMe ? "me" : ""}" data-qualified="${r.rank === null ? "0" : "1"}"
+      // ⚠**`data-den` 은 「최소 표본」이 있는 패널에만 싣는다.** 母数 칸은 `138.1回` 같은
+      //   **글자**라 수로 비교할 수 없어서 이 속성이 필요한데, 거를 일이 없는 개수 지표
+      //   (홈런·탈삼진)에까지 실으면 안 쓰는 바이트를 전 페이지가 나른다.
+      // ⚠**여기 담기는 것은 원시 분모다** — 아웃 카운트인 패널은 아웃 그대로이고,
+      //   이닝 표기(`138.1`)로의 환산은 클라이언트가 입력 쪽에서 한다.
+      (r) => html`<tr class="${r.isMe ? "me" : ""}" data-qualified="${r.rank === null ? "0" : "1"}"${
+        hasQualifier ? html` data-den="${r.value.denominator}"` : raw("")
+      }
         ${raw(r.rank === null ? "hidden" : "")}>
         <td><b data-rankq>${r.rank === null ? NO_VALUE : r.rank}</b><b data-ranka hidden>${
         r.rankAll === null ? NO_VALUE : r.rankAll
@@ -173,19 +216,44 @@ function panelTable(p: RankingPanel, base: string, limit: number): RawHtml {
       </tr>`,
     )}</tbody>
   </table>`)}
+  ${
+    // ⚠**0건을 빈 표로 두지 않는다**(M12 · `table.ts` 의 `data-stable-empty` 와 같은 이유).
+    //   최소 표본을 크게 잡으면 한 사람도 안 남을 수 있는데, 머리줄만 있는 표는
+    //   「아무도 없다」와 「고장났다」가 같은 화면이 된다.
+    hasQualifier
+      ? html`<p class="empty" data-rankempty="${p.id}" hidden role="status">指定した最少${minUnit}を満たす選手は、この表にはいません。</p>`
+      : null
+  }
   ${note(
     // ⚠**자른 것을 말한다.** 상위 N만 보여주면서 「전부」처럼 보이면 그것도 거짓말이다
-    truncated ? `${p.qualifier} 上位${limit}人のみ表示（該当 ${qualifiedCount}人）。` : p.qualifier,
+    // ⚠**「上位N人」이라고 안 쓴다** — 최소 표본이 걸리는 패널에는 규정 상위 N 밖의 자격자가
+    //   섞이는 일이 있어(위 `shownQualified`) 그때 「上位」가 참이 아니게 된다
+    truncated ? `${p.qualifier} 該当 ${qualifiedCount}人のうち ${shownQualified}人を表示。` : p.qualifier,
   )}
-  ${hasQualifier
-    ? note(
-      "「規定到達のみ」を外すと、規定に届いていない選手も同じ指標で並べた順位で表示します — " +
-        "母数の小さい選手が上位に来ます。母数は右端の列にあります。" +
-        // ⚠**「全員」도 잘려 있다.** 안 적으면 「전원이 나온다」로 읽힌다(작업규칙 7).
-        //    를 계산해 놓고 화면에서 한 번도 쓰지 않던 자리다(2026-08-17 2차 검토)
-        (p.allCount > limit ? `全員でも上位${limit}人までです（この指標で記録がある選手 ${p.allCount}人）。` : ""),
-    )
-    : null}`;
+  ${
+    // ⚠**행이 늘면 이 문장도 같이 바뀌어야 한다**(2026-08-20). 예전에는 여기가
+    //   「絞り込みが効くのは、この表に載っているN人の中だけです」 하나였는데,
+    //   그건 **하한을 올려도 답이 안 나오는 상태**를 그대로 설명한 문장이었다.
+    //   지금은 「어느 하한에서도 상위 minTop 은 반드시 있다」가 참이므로 **그것을 말한다** —
+    //   한계가 남은 자리(minTop 아래)도 같은 문장이 계속 말한다.
+    hasQualifier
+      ? note(
+        "「規定到達のみ」を外すと、規定に届いていない選手も同じ指標で並べた順位で表示します — " +
+          "母数の小さい選手が上位に来ます。母数は右端の列にあります。" +
+          // ⚠**번호가 띄엄띄엄해지는 이유를 화면이 말한다.** 거르기만 하고 다시 매기지 않는 것은
+          //   동률 규칙을 두 벌로 만들지 않기 위해서인데(M1·M3), 그 사정을 안 적으면
+          //   「順位が飛んでいる = 고장」으로 읽힌다.
+          `「全員」の間は**最少${minUnit}**を指定できます（0なら絞りません）。` +
+          "⚠**順位はリーグ全体のもので、絞り込んでも振り直しません** — 番号が飛び飛びになるのはそのためです。" +
+          // ⚠**한계가 사라진 패널에 「일부만 걸러집니다」를 남기지 않는다** — 그게 거짓말이다.
+          //   기록이 있는 선수를 전부 싣고 있으면 좁히기에 사각지대가 없다
+          (rows.length >= p.allCount
+            ? `この指標で記録がある選手 ${p.allCount}人は、全員この表に載っています。`
+            : `どの最少${minUnit}を指定しても**上位${p.minTop}人は必ずこの表にいます**。` +
+              `それより下の順位は、この表に載っている${rows.length}人（記録がある選手 ${p.allCount}人のうち）の範囲です。`),
+      )
+      : null
+  }`;
 }
 
 export function renderIndexPage(d: IndexPageData, ctx: RenderContext): string {
@@ -264,7 +332,7 @@ ${d.highlights.map((s) =>
         s.categories.map((c) => ({ id: c.id, label: c.label })),
       ),
       body: html`${s.categories.map((c, ci) =>
-        panel(`hicat-${s.id}`, c.id, ci === 0, categoryPanels(c, base, 5, `himetric-${s.id}`)),
+        panel(`hicat-${s.id}`, c.id, ci === 0, categoryPanels(c, base, `himetric-${s.id}`)),
       )}
       <!-- ⚠**개인 순위는 순위표의 「個人」 갈래 안에 있다.** 그냥 ranking.html 로 보내면
            지난번에 팀 순위를 보고 있던 사람은 개인 순위가 어디 갔는지 알 수 없다 -->
@@ -543,7 +611,7 @@ ${d.draws.length === 0
         `${league.name}の部門`,
       )}</span></h2>
       ${league.categories.map((c, ci) =>
-        panel(catGroup, c.id, ci === 0, categoryPanels(c, base, RANKING_PAGE_ROWS, metricGroup)),
+        panel(catGroup, c.id, ci === 0, categoryPanels(c, base, metricGroup)),
       )}
     </section>`,
     );
@@ -1114,13 +1182,15 @@ export function pickTeam(t: MatchupTeam): RawHtml {
 
 export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): string {
   const { base, root, seasons } = ctx.paths("matchup.html");
+  // ⚠**listbox/combobox 를 쓰지 않는 이유는 `layout.ts` 의 검색 상자에 적혀 있다**(한 벌만 적는다).
+  //   여기·`compare.ts`·`layout.ts` 세 곳이 같은 구조이고, `layout.test.ts` 가 소스 전체를 센다.
   const side = (id: string, label: string, placeholder: string): RawHtml =>
     html`<div class="pickside">
     <label for="pick${id}">${label}</label>
     <div class="qbox">
-      <input id="pick${id}" type="search" autocomplete="off" placeholder="${placeholder}"
-        role="combobox" aria-expanded="false" aria-controls="pick${id}Hits" aria-autocomplete="list">
-      <ul class="qhits" id="pick${id}Hits" role="listbox" aria-label="${label}の候補" hidden></ul>
+      <input id="pick${id}" type="search" autocomplete="off" placeholder="${placeholder}">
+      <ul class="qhits" id="pick${id}Hits" role="list" aria-label="${label}の候補" hidden></ul>
+      <p class="vh" data-hitstatus role="status"></p>
     </div>
   </div>`;
 

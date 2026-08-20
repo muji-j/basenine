@@ -34,6 +34,13 @@ function makeStyle(): StubStyle {
 
 export class El {
   readonly tagName: string;
+  /**
+   * ⚠**실제 DOM 에는 있는데 스텁에 없었다.** 이벤트의 `target` 에서 조상을 거슬러 올라가며
+   * 「이 노드가 요소인가」를 묻는 코드가 있는데(용어 설명이 스크롤에 자리를 다시 잡을 때
+   * **툴팁 안을 굴린 것인지** 가리는 자리), 스텁에서는 `undefined === 1` 이 되어
+   * **그 분기가 통째로 안 돌았다.** 스텁이 실물과 다르면 시험은 실물을 재지 않는다.
+   */
+  readonly nodeType = 1;
   readonly children: El[] = [];
   readonly attrs: Record<string, string> = {};
   readonly dataset: Record<string, string> = {};

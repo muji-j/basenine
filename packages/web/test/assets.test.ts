@@ -50,9 +50,25 @@ test("⚠정렬 헤더는 탭으로 열지 않는다 — 같은 탭이 정렬과
   assert.match(CLIENT_JS, /tapToOpen/, "탭으로 여는 것은 .term뿐이어야 한다");
 });
 
-test("설명은 Escape·바깥클릭·스크롤로 닫힌다 — 열린 채 남으면 화면을 가린다", () => {
+/**
+ * ⚠**「스크롤로 닫힌다」는 요구가 아니었다**(2026-08-21 감사 P1 ②로 정정).
+ *
+ * 예전 이 시험은 `doc.addEventListener("scroll",hide,true)` 를 글자로 못 박고 있었는데,
+ * 그 배선은 **포커스로 여는 길을 통째로 막았다** — 포커스가 스크롤을 유발하면
+ * 그 스크롤이 방금 연 설명을 닫는다(실기 A/B: 최상단 focus() **3/54** 대
+ * scrollIntoView 뒤 focus() **54/54**). 원래 의도는 「가로로 밀면 설명만 제자리에 남는다」는
+ * **위치 문제**였고, 답은 닫기가 아니라 자리를 다시 잡는 것이다.
+ * → 여기서 지키는 것은 **닫는 길이 남아 있는가**(Escape · 바깥 클릭)이고,
+ *   스크롤 때 무엇을 하는가는 `term-tip.test.ts` 가 실행해서 잰다.
+ * ⚠**「hide 로 되돌리기」를 여기서 다시 못 박지 마라.** 그것이 결함이었다.
+ */
+test("설명은 Escape·바깥클릭으로 닫힌다 — 열린 채 남으면 화면을 가린다", () => {
   assert.match(CLIENT_JS, /"Escape"/);
-  assert.match(CLIENT_JS, /doc\.addEventListener\("scroll",hide,true\)/);
+  assert.match(CLIENT_JS, /doc\.addEventListener\("click"/, "바깥 클릭으로 닫는 길이 없다");
+  assert.ok(
+    !/doc\.addEventListener\("scroll",hide/.test(CLIENT_JS),
+    "스크롤에 닫고 있다 — 포커스로 여는 길이 막힌다(감사 P1 ②)",
+  );
 });
 
 test("수준 색은 끌 수 있고, 분모는 끌 수 없다", () => {

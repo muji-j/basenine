@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync, readdirSync } from "node:fs";
 import { toString } from "../src/html.ts";
 import {
   STALE_AFTER_DAYS,
@@ -245,4 +246,100 @@ test("정규시즌이 뒤처져 있으면 띠가 두 날짜를 다 말한다", (
 test("두 날짜가 같으면 괄호를 달지 않는다 — 같은 말을 두 번 하지 않는다", () => {
   const out = toString(freshnessBar(freshness("2026-08-14", "2026-08-15", "2026-08-14")));
   assert.ok(!out.includes("レギュラーシーズンは"), "같은 날짜인데 괄호가 나왔다");
+});
+
+// ── 검색 드롭다운의 롤 ────────────────────────────────────────────────────
+
+/**
+ * ⚠**listbox / option 을 쓰지 않는다**(2026-08-20 유저 결정).
+ *
+ * 이 목록에는 **결과가 아닌 줄**이 섞인다 — 「該当なし」·「読み込み中…」과, 끝의
+ * 「25人中20人を表示 — 選手一覧ですべて見る」이다. 그 줄에 `role="option"` 을 붙였다가
+ * **그 안의 링크가 눌리지 않는 것이 실기에서 잡혔고**(2026-08-19 Playwright),
+ * 롤을 빼면 이번에는 **포커스 모드의 낭독기가 그 줄을 못 읽는다**는 한계가 남았다.
+ * → **목록을 listbox 로 부르는 것 자체를 그만둔다.** 그러면 전부 그냥 링크가 되어
+ *   눌리고 읽히고 Tab 으로 닿는다.
+ *
+ * ⚠**반쪽으로 남기지 않는다.** `role="combobox"` 는 「팝업이 listbox 다」라는 약속이라,
+ * 목록의 롤만 빼면 `aria-expanded`·`aria-controls` 가 **없는 것을 가리키는 약속**이 된다 —
+ * 깨진 ARIA 는 없는 것보다 나쁘다(`parts.ts` 의 `aria-labelledby` 사건과 같은 모양).
+ *
+ * ⚠**대신 결과 수를 소리로 낸다.** combobox 를 그만두면 「목록이 열렸다」를 말해 주던 것이
+ * 통째로 사라진다 — 그 자리를 `role="status"` 한 줄이 받는다(§0-1 의 주 경로다).
+ */
+test("⚠검색 드롭다운을 listbox 라고 부르지 않는다 — 결과가 아닌 줄이 섞이는 목록이다", () => {
+  const out = shell();
+  const box = /<div class="qbox">[\s\S]*?<\/div>/.exec(out);
+  assert.notEqual(box, null, "헤더 검색 상자를 못 찾았다 — 이 시험이 공회전한다");
+  assert.ok(!box![0].includes('role="listbox"'), "목록을 아직 listbox 라고 부른다");
+  assert.ok(!box![0].includes('role="combobox"'), "입력만 combobox 로 남아 없는 팝업을 가리킨다");
+  assert.ok(!box![0].includes("aria-controls"), "combobox 를 그만뒀는데 aria-controls 가 남았다");
+  assert.ok(!box![0].includes("aria-autocomplete"), "combobox 를 그만뒀는데 aria-autocomplete 가 남았다");
+  assert.ok(!box![0].includes("aria-expanded"), "combobox 를 그만뒀는데 aria-expanded 가 남았다");
+});
+
+/**
+ * ⚠**`aria-label` 은 남기되 `role="list"` 를 붙인다.**
+ *
+ * 이 목록은 `list-style:none` 인데(`.qhits`), **Safari 는 그 스타일이 붙은 `<ul>` 에서
+ * 목록 시맨틱을 떼어 버린다.** 롤이 사라지면 계산된 롤이 generic 이 되고,
+ * generic 에는 이름이 붙지 않아 `aria-label="検索結果"` 가 **조용히 안 읽힌다.**
+ * 명시적으로 `list` 라고 적으면 이름도 항목 수도 그대로 남는다 —
+ * `listbox` 와 달리 `list` 는 조작을 약속하지 않으므로 위의 결함이 돌아오지 않는다.
+ */
+test("⚠목록은 list 로 남고 이름도 남는다 — list-style:none 이 Safari 에서 시맨틱을 떼어 간다", () => {
+  const box = /<div class="qbox">[\s\S]*?<\/div>/.exec(shell())![0];
+  assert.match(box, /<ul class="qhits" id="qhits" role="list" aria-label="検索結果"/, "목록의 이름이나 롤이 없다");
+});
+
+test("⚠결과 수를 소리로 낼 자리가 서버 마크업에 있다 — 나중에 만들면 첫 갱신을 놓친다", () => {
+  const box = /<div class="qbox">[\s\S]*?<\/div>/.exec(shell())![0];
+  assert.match(box, /data-hitstatus/, "결과 수를 말할 자리가 없다");
+  assert.match(box, /role="status"/, "그 자리가 낭독 대상이 아니다");
+  // ⚠**보이지 않는 글자로 둔다** — 화면에는 목록 자체와 꼬리줄이 이미 같은 말을 하고 있다
+  assert.match(box, /class="vh"[^>]*data-hitstatus|data-hitstatus[^>]*class="vh"/, "화면에도 같은 말이 두 번 나온다");
+});
+
+/**
+ * ⚠**세 곳이 같은 구현을 쓴다**(헤더 검색 · 対戦を選ぶ · 比較). 한 곳만 고치면
+ * 「어떤 검색창은 눌리고 어떤 것은 안 눌리는」 상태가 되고, 그건 지금보다 나쁘다.
+ * ⚠**말로 적은 규칙은 지켜지지 않는다 — 세는 것만 지켜진다**(`raw-attributes.test.ts`).
+ */
+test("⚠소스 어디에도 listbox·combobox 롤이 남아 있지 않다 — 한 곳만 고치면 화면마다 갈린다", () => {
+  const dir = new URL("../src/", import.meta.url);
+  const files = readdirSync(dir).filter((f) => f.endsWith(".ts"));
+  assert.ok(files.length > 20, `소스가 ${files.length}개뿐이다 — 이 시험이 공회전한다`);
+  /**
+   * ⚠**「그 롤을 쓰는 모양」만 본다 — 낱말이 아니라.** 낱말로 세면 **왜 안 쓰는지 적어 둔 주석**이
+   * 전부 걸려서, 이유를 적을수록 시험이 빨개진다. 그러면 다음 사람이 주석을 지운다.
+   * 서버가 짓는 형태(`role="…"`)와 클라이언트가 붙이는 형태(`setAttribute("role","…")`) 둘 다 본다.
+   *
+   * ⚠**주석은 대상이 아니다**(`source-figures.test.ts` 와 같은 판단) — 사람이 읽는 기록이고,
+   * 여기 남은 `role="option"` 은 **2026-08-19 에 그것 때문에 링크가 안 눌렸다는 이력**이다.
+   */
+  const BAD = ['role="listbox"', 'role="combobox"', 'role="option"', '"role","option"', "aria-autocomplete"];
+  const strip = (src: string): string =>
+    src.replace(/\/\*[\s\S]*?\*\//g, "").split("\n").filter((l) => !/^\s*\/\//.test(l)).join("\n");
+  const hitsIn = (src: string): string[] => BAD.filter((b) => strip(src).includes(b));
+
+  // ⚠먼저 **잡히는지**를 보인다 — 「0건」은 검사기가 죽어 있을 때도 나오는 값이다(작업규칙 7)
+  assert.deepEqual(
+    hitsIn('<ul role="listbox"><li role="option"></li></ul>').sort(),
+    ['role="listbox"', 'role="option"'],
+    "검사기가 옛 형태를 못 잡는다 — 그물이 죽어 있다",
+  );
+  assert.deepEqual(hitsIn('li.setAttribute("role","option");'), ['"role","option"'], "클라이언트 형태를 못 잡는다");
+  // ⚠**주석만 지우고 코드는 남긴다** — 주석을 지우다가 같은 줄의 코드까지 지우면 그물이 헐거워진다
+  assert.deepEqual(
+    hitsIn('/* role="option" 은 안 쓴다 */\n' + 'const x = \'role="listbox"\';'),
+    ['role="listbox"'],
+    "주석을 지우면서 코드까지 지웠거나, 주석을 안 지웠다",
+  );
+  assert.deepEqual(hitsIn("// listbox 라고 부르지 않는다"), [], "설명 주석까지 위반이라고 부른다");
+
+  const left: string[] = [];
+  for (const f of files) {
+    for (const b of hitsIn(readFileSync(new URL(f, dir), "utf8"))) left.push(`${f}: ${b}`);
+  }
+  assert.deepEqual(left, [], "listbox/combobox/option 이 아직 남아 있다");
 });

@@ -1,8 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { THRESHOLDS, bootstrapFor, renderPlayerPage } from "../src/player-page.ts";
+import { THRESHOLDS, bootstrapFor, renderPlayerPage, seasonSurelyOver } from "../src/player-page.ts";
 // ⚠**경로를 손으로 적지 않는다**(M1) — 화면과 시험이 같은 상수를 봐야 한다
-import { ROSTER_PATH } from "../src/layout.ts";
+import { ROSTER_PATH, freshness } from "../src/layout.ts";
+import { NO_VALUE } from "../src/format.ts";
 // ⚠**정의의 정본은 용어집이다**(M1) — 시험이 문장을 다시 쓰지 않고 거기 있는 것을 본다
 import { termOf } from "../src/glossary.ts";
 import {
@@ -501,6 +502,168 @@ test("최신 경기일에 나온 선수는 「今」이다 — 전부 시점 표
     !/<span class="den">\d+月\d+日時点<\/span>/.test(out),
     "최신 경기에 나온 선수에게 시점 표기가 붙었다",
   );
+});
+
+// ── 「今」의 두 번째 조건 — 그 시즌이 아직 진행 중인가 ────────────────────────
+//
+// ⚠**위 두 시험은 조건 ⑵(그 선수가 최신 경기일에 나왔는가)만 쟀다.** 그것만으로는
+// 아카이브 시즌이 통째로 새어 나간다 — 2018년 페이지의 「今」은 8년 전에 끝난 기록이다.
+// 실측(2026-08-21 · `dist` 전수 6,207장 중 연속기록 구획이 있는 3,459장):
+// 아카이브 **259장**이 현재형이었다(2018:50 · 2019:23 · 2020:30 · 2021:29 · 2022:29 ·
+// 2023:20 · 2024:27 · 2025:51).
+// ⚠**그렇다고 「시즌이 끝났으면 과거형」 하나로 바꾸면 반대쪽이 샌다** — 진행 중인 2026 에서
+// 5월에 끊긴 기록까지 「今」이 된다(같은 실측으로 **204장**). 두 기준이 갈라지는 페이지는
+// **463장**이고, 겹치는 **135장**만이 정말 「今」이다. **두 조건을 모두 본다.**
+
+/**
+ * **連続記録 구획만** 잘라 낸다.
+ *
+ * ⚠**페이지 전체에서 「時点」을 찾으면 다른 블록에 걸린다** — 通算 블록이 취득일을,
+ * 등급 범례가 기준일을 적는다(바로 위 시험이 두 번 밟은 자리다).
+ */
+function streakBlockOf(out: string): string {
+  const from = out.indexOf('id="b-streak"');
+  assert.notEqual(from, -1, "連続記録 구획이 없다");
+  const to = out.indexOf("</section>", from);
+  assert.notEqual(to, -1, "連続記録 구획이 닫히지 않았다");
+  return out.slice(from, to);
+}
+
+/**
+ * 그 구획의 **「언제 시점인가」 라벨 세 개**(연속안타·연속출루·연속무안타).
+ *
+ * ⚠**같은 자리에 `今季最長` 의 기간(`5月9日〜5月22日`)도 `den` 으로 들어간다.**
+ * 그쪽은 `${from}〜${to}` 라 **구조적으로 반드시 `〜` 를 품는다** — 그것으로 가른다.
+ * ⚠**개수를 단언한다.** 셋이 안 나오면 이 시험이 공회전하고 있는 것이다.
+ */
+function streakAsOfLabels(out: string): string[] {
+  const all = [...streakBlockOf(out).matchAll(/<dd class="v">[^<]*<span class="den">([^<]*)<\/span><\/dd>/g)]
+    .map((m) => m[1]!)
+    .filter((s) => !s.includes("〜"));
+  assert.equal(all.length, 3, `시점 라벨이 3개가 아니다(${all.length}) — 마크업이 바뀌었다`);
+  return all;
+}
+
+/** `heldTo` 만 다른 문맥. **이 값이 「이 시즌이 끝났는가」의 유일한 근거다** */
+function heldContext(heldTo: number) {
+  return context({ freshness: freshness("2026-08-14", "2026-08-15", "2026-08-14", { from: 2018, to: heldTo }) });
+}
+
+/** 2018년 페이지 한 장. **그 선수는 그 시즌 최종전(10月13日)에 나왔다** — 조건 ⑵는 참이다 */
+function archived(over: Partial<Parameters<typeof playerPage>[0]> = {}) {
+  return playerPage({
+    season: 2018,
+    asOf: "2018-10-13",
+    streaks: {
+      hitting: { current: 5, best: 9, bestFrom: "2018-06-01", bestTo: "2018-06-12" },
+      onBase: { current: 5, best: 9, bestFrom: "2018-06-01", bestTo: "2018-06-12" },
+      hitless: { current: 0, best: 2, bestFrom: null, bestTo: null },
+      games: 130,
+      lastGameDate: "2018-10-13",
+      ...(over.streaks ?? {}),
+    },
+    ...over,
+  });
+}
+
+/**
+ * ⚠**아카이브 259장이 「今」이라고 말하고 있었다.** 조건 ⑵(최신 경기일에 나왔다)는 참인데
+ * 그 「최신」이 2018년 10월 13일이다 — 지금 이어지는 기록이 아니다.
+ */
+test("⚠끝난 시즌의 연속 기록은 「今」이 아니다 — 최종전에 나온 선수여도 그렇다", () => {
+  const out = renderPlayerPage(archived(), heldContext(2026));
+  assert.deepEqual(streakAsOfLabels(out), ["10月13日時点", "10月13日時点", "10月13日時点"]);
+  assert.ok(!streakBlockOf(out).includes(">今<"), "8년 전 기록을 「今」이라고 했다");
+  // ⚠**「~とは限りません」은 진행 중 시즌에서만 참인 유보다** — 끝난 시즌에는 그렇게 쓰지 않는다
+  assert.match(streakBlockOf(out), /このシーズンはすでに終わっています/, "왜 「今」이 아닌지 말하지 않았다");
+  assert.ok(!streakBlockOf(out).includes("いまも続いているとは限りません"), "끝난 시즌을 유보형으로 말했다");
+});
+
+/** 진행 중인 시즌은 그대로 「今」이다 — 위 수정이 여기까지 삼키면 라벨의 뜻이 사라진다 */
+test("⚠진행 중인 시즌에서 최신 경기일에 나온 선수는 여전히 「今」이다", () => {
+  const out = renderPlayerPage(playerPage({ asOf: "2026-08-14" }), heldContext(2026));
+  assert.deepEqual(streakAsOfLabels(out), ["今", "今", "今"]);
+  assert.match(streakBlockOf(out), /「今」はいま続いている記録/);
+});
+
+/**
+ * ⚠**「시즌이 끝났으니 과거형」 하나로는 못 가른다.** 진행 중인 시즌에도 5월에 끊긴 기록이 있고,
+ * 그건 「지금 이어지고 있다」가 아니다 — 실측으로 2026 쪽 204장이 그 상태다.
+ */
+test("⚠진행 중인 시즌이라도 최신 경기일에 안 나왔으면 「今」이 아니다", () => {
+  const out = renderPlayerPage(
+    playerPage({
+      asOf: "2026-08-14",
+      streaks: {
+        hitting: { current: 8, best: 8, bestFrom: "2026-05-09", bestTo: "2026-05-22" },
+        onBase: { current: 8, best: 8, bestFrom: "2026-05-09", bestTo: "2026-05-22" },
+        hitless: { current: 0, best: 2, bestFrom: null, bestTo: null },
+        games: 30,
+        lastGameDate: "2026-05-22",
+      },
+    }),
+    heldContext(2026),
+  );
+  assert.deepEqual(streakAsOfLabels(out), ["5月22日時点", "5月22日時点", "5月22日時点"]);
+  // ⚠**이쪽은 유보가 맞다** — 시즌이 남아 있으므로 다시 나올 수 있다
+  assert.match(streakBlockOf(out), /いまも続いているとは限りません/);
+  assert.ok(!streakBlockOf(out).includes("すでに終わっています"), "진행 중인 시즌을 끝났다고 했다");
+});
+
+/**
+ * ⚠**각주에 `<b>` 를 직접 적으면 화면에 글자로 찍힌다.** `note()` 는 문자열을 이스케이프하고
+ * 강조는 **별표 두 개**로만 만든다(`emphasis.ts` 가 그 규칙의 정본 · M1).
+ * 실측(2026-08-21 · `dist` 전수)으로 연속기록 구획이 있는 **3,459 / 6,207장**이
+ * 「下の&lt;b&gt;通算成績&lt;/b&gt;（出典：NPB）」라고 쓰고 있었다 —
+ * ⚠**소스만 읽어서는 안 보인다**(문법은 멀쩡하다). 실기로 열어야 보인다.
+ */
+test("⚠연속기록 각주의 강조가 태그가 아니라 굵은 글씨로 나간다", () => {
+  const blk = streakBlockOf(renderPlayerPage(playerPage({ asOf: "2026-08-14" }), heldContext(2026)));
+  assert.ok(!blk.includes("&lt;b&gt;"), "화면에 <b> 가 글자로 찍힌다");
+  assert.match(blk, /「通算」は下の<b>通算成績<\/b>（出典：NPB）/, "강조가 굵은 글씨로 나가지 않는다");
+});
+
+/**
+ * ⚠**마지막 출장일을 모르면 「今」으로 때우지 않는다**(M11).
+ * 실측(2026-08-21 · `dist` 6,207장)으로는 **0건**이지만 `lastGameDate` 가 `string | null` 인 이상
+ * 화면이 답을 갖고 있어야 한다 — 「0건」과 「일어날 수 없다」는 다른 말이다(작업규칙 7).
+ */
+test("⚠마지막 출장일을 모르면 「今」이 아니라 「모른다」를 낸다", () => {
+  const out = renderPlayerPage(
+    playerPage({
+      asOf: "2026-08-14",
+      streaks: {
+        hitting: { current: 0, best: 0, bestFrom: null, bestTo: null },
+        onBase: { current: 0, best: 0, bestFrom: null, bestTo: null },
+        hitless: { current: 0, best: 0, bestFrom: null, bestTo: null },
+        games: 0,
+        lastGameDate: null,
+      },
+    }),
+    heldContext(2026),
+  );
+  assert.deepEqual(streakAsOfLabels(out), [NO_VALUE, NO_VALUE, NO_VALUE]);
+  assert.ok(!streakBlockOf(out).includes(">今<"), "언제 기준인지도 모르면서 「今」이라고 했다");
+  assert.match(streakBlockOf(out), /いつの時点のものかがわかりません/);
+});
+
+/**
+ * ⚠**`true` 는 증명이고 `false` 는 「모른다」다**(M11). 시즌은 겹치지 않으므로
+ * 더 새로운 시즌의 경기가 있으면 이 시즌은 **반드시** 끝났다 — 그 반대는 성립하지 않는다.
+ */
+test("⚠시즌 종료 판정은 「더 새로운 시즌이 있는가」 하나로만 낸다", () => {
+  assert.equal(seasonSurelyOver(2018, 2026), true, "더 새로운 시즌이 있는데 안 끝났다고 했다");
+  assert.equal(seasonSurelyOver(2025, 2026), true);
+  // 가장 새로운 시즌은 이 근거로 못 가른다 — 「끝났다」고 단정하지 않는다
+  assert.equal(seasonSurelyOver(2026, 2026), false);
+  assert.equal(seasonSurelyOver(2027, 2026), false);
+  /**
+   * ⚠**`heldTo === 0` 은 「0년까지 보유」가 아니라 「모른다」다**(freshness() 의 기본값 · M11).
+   * ⚠**이 줄은 가지를 재는 것이 아니라 계약을 재는 것이다** — 0 이 어떤 실제 시즌보다 작아서
+   * 비교가 저절로 안전한 쪽으로 떨어진다. 그 성질이 뒤집히면(`heldTo === 0 || …` 같은 식으로)
+   * 여기가 떨어진다.
+   */
+  assert.equal(seasonSurelyOver(2018, 0), false, "모르는 값으로 시제를 뒤집었다");
 });
 
 /**
@@ -1109,4 +1272,40 @@ test("⚠리그 本盗 수치가 없으면 그 각주를 내지 않는다 — 0�
   assert.ok(!out.includes("本盗はリーグ全体でも"), "리그 수치를 모르는데 그 각주를 냈다");
   // 표 자체는 그대로 나온다 — 사라지는 것은 각주뿐이다
   assert.match(out, /本盗/, "本盗 행까지 사라졌다");
+});
+
+/**
+ * ⚠**리그 本盗 성공이 0이면 「그 0의 내역」을 말하지 않는다**(2026-08-21 최종 검토 P3).
+ *
+ * 「成功例がありません。」 바로 뒤에 「また成功**0**のうち**0**はダブルスチールの一部でした。」가
+ * 그대로 붙어서 **없는 것의 내역을 말하는 문장**이 됐다.
+ * ⚠**지금 데이터로는 안 밟힌다**(9시즌 本盗 성공 44) — 그래서 더 위험하다.
+ * 밟히는 것은 **보유 시즌이 1개인 DB**(초기 구축 · 개막 직후)이고 그건 이 리포가 지나온 상태다.
+ */
+test("⚠리그 本盗 성공이 0이면 「成功0のうち0はダブルスチール」을 붙이지 않는다", () => {
+  const out = renderPlayerPage(
+    playerPage({
+      batting: battingBlock({
+        sb: 1,
+        steal: {
+          cs: 1,
+          pickoff: 0,
+          rate: { value: 0.5, denominator: 2 },
+          byBase: [{ label: "本盗", base: "home", sb: 1, cs: 1, rate: { value: 0.5, denominator: 2 } }],
+          pickoffByBase: [],
+          doubleSteal: 0,
+          // ⚠성공 0 · 도루자 3 — 「한 시즌치 DB」에서 실제로 나오는 모양이다
+          leagueHome: { from: 2026, to: 2026, sb: 0, cs: 3, doubleSteal: 0 },
+        },
+      }),
+    }),
+    context(),
+  );
+  // 각주 자체는 나온다 — 사라지는 것은 마지막 한 문장뿐이다
+  assert.match(out, /本盗はリーグ全体でも/, "성공이 0이라고 각주를 통째로 없앴다");
+  assert.match(out, /<b>成功例がありません<\/b>/, "성공 0 인데 그렇게 말하지 않았다");
+  assert.ok(
+    !out.includes("ダブルスチールの一部でした"),
+    "「成功例がありません」 뒤에 「成功0のうち0はダブルスチール…」을 그대로 붙였다",
+  );
 });
