@@ -554,9 +554,17 @@ function monthBars(months: TeamMonth[]): RawHtml {
  *   「아직 유도 못 함(정상)」과 「입력이 어긋남(버그)」이 같은 신호라, 단정하면 틀린 이유를 말하게 된다.
  *   후자는 **빌드 로그**로 보낸다(`query.ts` 의 `disagreed` 경고 · M7의 나머지 절반).
  */
+/**
+ * 「우승이 확정됐다」를 `raceVerdict` 가 내는 문장.
+ *
+ * ⚠**상수로 두는 이유는 아래 `pennantText` 가 이것과 겹치지 않으려고 이 값을 보기 때문**이다.
+ * 글자로 두 곳에 적으면 한쪽만 고쳐지는 날 **같은 페이지가 우승을 두 번 말한다.**
+ */
+const TITLE_DECIDED = "優勝が決まりました";
+
 function raceVerdict(r: TeamRace): string {
   if (r.selfPossible === null) return "優勝争いはまだ判定できません";
-  if (r.magic === 0) return "優勝が決まりました";
+  if (r.magic === 0) return TITLE_DECIDED;
   if (r.magic !== null) return `優勝マジック ${r.magic}`;
   if (r.eliminated === true) return "優勝の可能性がなくなりました";
   // ⚠**잔여 0 에서는 「가능성」이라는 말을 쓰지 않는다**(위 JSDoc의 2022 퍼시픽 동률).
@@ -578,6 +586,52 @@ function raceVerdict(r: TeamRace): string {
   //   내 손에 남은 것이 없고, 결과는 다른 구단의 경기로만 정해진다.
   if (r.remaining === 0) return "残り試合はありません — 他球団の結果次第です";
   return "自力優勝は消滅しました";
+}
+
+/**
+ * リーグ優勝 한 줄 — ⚠**출처가 `raceVerdict` 와 다르다**(M1·M4).
+ *
+ * ## 왜 별도의 줄인가
+ *
+ * `race.ts` 는 **당사자 간 대전 성적을 계산하지 않는다.** 그래서 동률이 남은 채 시즌이 끝나면
+ * `raceVerdict` 는 우승을 단정할 수 없고, **그 선을 지키는 것이 옳다**(M11 — 증명 밖을 말하지 않는다).
+ * 그런데 같은 페이지 머리는 이미 `standings` 가 낸 **`1位`** 를 쓰고 있다.
+ * 실측(2026-08-21 · `dist` 전수 108장): 끝난 시즌의 1위 페이지 **16장 중 15장**이
+ * 「優勝が決まりました」라고 말했고, **2022 퍼시픽의 오릭스(`dist/2022/teams/b.html`) 한 장만**
+ * 「リーグに勝率で上回る球団はありません — 同率のときは…」에서 멈췄다.
+ * 76-65-2 로 소프트뱅크와 완전히 같았고 **당사자 간 대전 성적으로 갈린** 시즌이다.
+ *
+ * ## ⚠이 줄은 `race.ts` 값에서 유도하지 않는다
+ *
+ * 근거는 **`standings.ts` 의 `rank`·`tiedRank` 뿐**이다. 그 모듈은 NPB 협약 ①
+ * **当該球団間の対戦成績**까지 적용해서 순위를 매기고, **가르지 못했을 때만** `tiedRank` 를 켠다.
+ * 따라서 `rank === 1 && !tiedRank` 는 「리그에서 유일한 1위」가 **그 규칙으로 증명됐다**는 뜻이다.
+ * ⚠**`localeCompare` 폴백이 여기 섞이지 않는다** — 그 폴백은 **표시 순서**만 정하고
+ * `rank` 는 여전히 앞 팀과 같은 값을 받으므로, 그때는 `tiedRank` 가 켜져 이 줄이 안 나온다.
+ * ⚠**`raceVerdict` 는 그대로다.** 매직·자력·소멸은 계속 `race.ts` 에서만 나온다 —
+ * 두 출처를 한 함수에 섞으면 어느 쪽이 틀렸는지 다시는 말할 수 없다.
+ *
+ * ## 같은 말을 두 번 하지 않는다
+ *
+ * `raceVerdict` 가 이미 `TITLE_DECIDED` 를 냈으면 **이 줄을 내지 않는다.**
+ * 그쪽이 더 강한 진술(「남은 걸 다 져도 순위가 안 움직인다」)이고, 나란히 두면 장황해진다.
+ * ⚠**진행 중인 시즌에는 절대 나오지 않는다** — 1위는 매일 바뀐다.
+ *
+ * @returns 낼 문장. 낼 근거가 없으면 `null`(M11 — 빈 문자열로 흘리지 않는다)
+ */
+export function pennantText(o: {
+  seasonOver: boolean;
+  rank: number | null;
+  tiedRank: boolean;
+  /** `raceVerdict` 가 낸 문장. **그것이 이미 우승을 말했는지**만 본다 */
+  verdict: string;
+}): string | null {
+  if (!o.seasonOver) return null;
+  if (o.rank !== 1 || o.tiedRank) return null;
+  if (o.verdict === TITLE_DECIDED) return null;
+  // ⚠**「1位」를 되풀이하지 않는다** — 바로 위 머리줄이 이미 쓰고 있다.
+  //   여기서 새로 말하는 것은 **그 1位가 리그 우승이라는 것** 하나다.
+  return "リーグ優勝";
 }
 
 /**
@@ -652,6 +706,21 @@ function nowBlock(d: TeamPageData, base: string): RawHtml {
       ? "発表待ち"
       : `${n.probable.mine ?? "発表待ち"} ─ ${n.probable.theirs ?? "発表待ち"}`;
 
+  /**
+   * 우승 경쟁 판정과 **リーグ優勝**.
+   *
+   * ⚠**두 줄의 출처가 다르다**(M1·M4) — 위는 `race.ts`(매직·자력·소멸), 아래는
+   * `standings.ts`(최종 순위 + NPB 협약 ①). 그래서 함수를 나눠 두고, 아래 줄은
+   * **위 줄이 이미 우승을 말했는지**만 보고 겹칠 때 스스로 빠진다.
+   */
+  const verdict = raceVerdict(n.race);
+  const pennant = pennantText({
+    seasonOver: d.calendar.seasonOver,
+    rank: d.rank,
+    tiedRank: d.tiedRank,
+    verdict,
+  });
+
   return block({
     // ⚠끝난 시즌에 「いまの状況」이라고 쓰지 않는다 — 이 화면은 2018년도 그린다
     id: "tnow",
@@ -669,7 +738,8 @@ function nowBlock(d: TeamPageData, base: string): RawHtml {
   <p class="tnow"><s>直近10試合</s><b>${wlt(d.last10)}</b></p>
   <p class="tnow"><s>次の試合</s><b>${nextText}</b></p>
   <p class="tnow"><s>予告先発</s><b>${probableText}</b></p>
-  <p class="tnow race">${raceVerdict(n.race)}</p>
+  <p class="tnow race">${verdict}</p>
+  ${pennant === null ? raw("") : html`<p class="tnow race pennant">${pennant}</p>`}
   ${note(
       // ⚠**규칙이 코드에만 있으면 아무도 검증할 수 없다**(M3). 승률식(순위)과 승수식(매직)이
       // 갈린다는 것, 그리고 우리가 **무엇을 단정하지 않는지**를 화면이 말한다
@@ -677,6 +747,12 @@ function nowBlock(d: TeamPageData, base: string): RawHtml {
         "マジックナンバーだけは慣例に従って**勝数**で数えるので、勝率の順位とずれることがあります。" +
         "「優勝が決まりました」は、残りを全部落としても順位が動かないことを計算で確かめた場合だけ出します。" +
         "「自力優勝」は残りを全部勝てば1位に並べるという意味です。" +
+        // ⚠**출처가 다르다는 것을 화면이 말한다**(M1·M3). 이 줄이 나온 페이지에서만 적는다 —
+        //   나오지도 않는 문구를 108장 전부에 싣지 않는다
+        (pennant === null
+          ? ""
+          : "「リーグ優勝」だけは**最終順位**から出しています — マジックの計算ではなく、" +
+            "同率のときはNPBの規定どおり当該球団間の対戦成績で決めた順位です。") +
         "消滅していない場合でも、当サイトは**優勝の可能性があるとは言いません** — " +
         "相手どうしの対戦まで数え切る計算をしていないためです。",
     )}
