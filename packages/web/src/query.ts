@@ -4081,6 +4081,25 @@ export function buildCareerContext(db: Db, o: CareerContextOptions): CareerConte
   };
 }
 
+/**
+ * 통산 스캔을 **그 시즌까지로 자른다**.
+ *
+ * ⚠**두 필드를 같은 칼로 자른다**(2026-08-21 검토 ③). 예전에는 이 자리가 인라인 객체였고
+ * `entries` 만 `season <=` 로 자른 뒤 **`unknownPitcher` 는 전 범위 값을 그대로 복사**했다 —
+ * 같은 객체 안에서 두 필드가 다른 범위를 뜻했다. 화면에 안 나가고 실데이터가 0이라
+ * 무해했지만(실측 2026-08-21: 정규시즌 `status='final'` **552,563행 중 0행**),
+ * ⚠**「실데이터 0」과 「안전」은 다르다.**
+ *
+ * ⚠**export 는 시험을 위해서다**(`isNextProbable`·`foldThinVenues` 와 같은 이유) —
+ * 이 값은 `SiteData` 에 안 드러나므로 화면으로는 어긋남을 잡을 수 없다.
+ */
+export function sliceRelief(scan: ReliefScan, season: number): ReliefScan {
+  return {
+    entries: scan.entries.filter((e) => e.season <= season),
+    unknownPitcher: new Map([...scan.unknownPitcher].filter(([s]) => s <= season)),
+  };
+}
+
 export interface LoadOptions {
   season: number;
   competition?: string;
@@ -4888,10 +4907,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   const reliefScan: ReliefScan =
     o.career === undefined
       ? midInningEntries(db, competition, through, heldFrom, o.season)
-      : {
-          entries: o.career.reliefScan.entries.filter((e) => e.season <= o.season),
-          unknownPitcher: o.career.reliefScan.unknownPitcher,
-        };
+      : sliceRelief(o.career.reliefScan, o.season);
   /**
    * 등판 시점 RE. ⚠**행렬은 `buildRunExpectancy` 한 벌뿐이다**(M1) — 여기서 다시 만들지 않고
    * **시즌·리그마다 한 번씩만** 부른다(실측 1회 76ms).

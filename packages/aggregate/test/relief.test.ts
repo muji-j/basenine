@@ -130,7 +130,8 @@ test("⚠투수를 모르는 행에서 교대를 추측하지 않는다(M11) —
     ]);
     const scan = midInningEntries(db, "regular", "9999-12-31", 2000, 2100);
     assert.deepEqual(scan.entries, [], "투수 미상 행을 사이에 두고 교대를 단정했다");
-    assert.equal(scan.unknownPitcher, 1, "투수 미상 행을 조용히 버렸다");
+    // ⚠**시즌별로 센다** — 합계 하나면 시즌 화면용으로 자를 수가 없다(`ReliefScan` 주석 · 검토 ③)
+    assert.deepEqual([...scan.unknownPitcher], [[2026, 1]], "투수 미상 행을 조용히 버렸다");
   });
 });
 
@@ -146,6 +147,46 @@ test("⚠대회를 섞지 않는다(§2-1)", async () => {
     ], "allStar");
     assert.equal(midInningEntries(db, "regular", "9999-12-31", 2000, 2100).entries.length, 1);
     assert.equal(midInningEntries(db, "allStar", "9999-12-31", 2000, 2100).entries.length, 1);
+  });
+});
+
+/**
+ * ⚠**투수 미상 수도 시즌으로 갈려야 한다**(2026-08-21 검토 ③).
+ *
+ * 예전에는 합계 하나(`number`)였고, `query.ts` 가 통산 스캔을 시즌 화면용으로 자를 때
+ * **`entries` 만 `season <=` 로 자르고 이 수는 전 범위 값을 그대로 복사**했다 —
+ * 같은 객체 안에서 두 필드가 다른 범위를 뜻했다. **실데이터가 0이라 안 드러났을 뿐이다**
+ * (실측 2026-08-21: 정규시즌 `status='final'` **552,563행 중 0행**).
+ * ⚠**「실데이터 0」과 「안전」은 다르다** — 자를 수 있는 모양으로 두는 것이 고친 내용이다.
+ */
+test("⚠투수 미상 타석을 시즌별로 센다 — 자를 수 있어야 두 뜻이 안 생긴다", async () => {
+  await withDb((db) => {
+    game(db, "g1", [
+      { inning: 7, half: "top", pitcher: "P1", bases: "", outs: 0 },
+      { inning: 7, half: "top", pitcher: null, bases: "1", outs: 1 },
+    ], "regular", 2024);
+    game(db, "g2", [
+      { inning: 7, half: "top", pitcher: "P1", bases: "", outs: 0 },
+      { inning: 7, half: "top", pitcher: null, bases: "1", outs: 1 },
+      { inning: 7, half: "top", pitcher: null, bases: "12", outs: 2 },
+    ], "regular", 2026);
+    assert.deepEqual(
+      [...midInningEntries(db, "regular", "9999-12-31", 2018, 2026).unknownPitcher],
+      [[2024, 1], [2026, 2]],
+      "시즌을 뭉개서 합계 하나로 냈다 — 그러면 시즌 화면용으로 자를 수가 없다",
+    );
+    // ⚠**범위로도 잘린다** — 조회 자체가 시즌을 자르는 쪽도 같은 답이어야 한다
+    assert.deepEqual(
+      [...midInningEntries(db, "regular", "9999-12-31", 2018, 2024).unknownPitcher],
+      [[2024, 1]],
+      "조회 범위를 좁혔는데 범위 밖 시즌이 딸려 왔다",
+    );
+    // ⚠**0인 시즌은 행이 없다**(「그 범위 안에서 0건」) — 0을 지어내지 않는다(M11)
+    assert.deepEqual(
+      [...midInningEntries(db, "regular", "9999-12-31", 2019, 2019).unknownPitcher],
+      [],
+      "미상이 0인 시즌에 0 을 지어냈다",
+    );
   });
 });
 

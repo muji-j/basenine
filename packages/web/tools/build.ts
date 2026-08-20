@@ -65,13 +65,18 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
         ...(throughArg === undefined ? {} : { through: throughArg }),
       });
       /**
-       * ⚠**투수를 모르는 타석은 火消し 를 조용히 줄인다**(M11). 지금 아카이브는 0건이지만,
-       * CLAUDE.md §2-2 가 「소급 시즌은 투수 귀속이 얇을 수 있다」고 적어 뒀다 —
-       * 백필이 그 창을 열면 여기가 먼저 말한다. **배포는 막지 않는다**(값이 없어지는 게 아니라 얇아진다).
+       * ⚠**투수를 모르는 타석은 火消し 를 조용히 줄인다**(M11). 실측(2026-08-21)으로
+       * 정규시즌 `status='final'` **552,563행 중 0행**이지만, CLAUDE.md §2-2 가
+       * 「소급 시즌은 투수 귀속이 얇을 수 있다」고 적어 뒀다 — 백필이 그 창을 열면 여기가 먼저 말한다.
+       * **배포는 막지 않는다**(값이 없어지는 게 아니라 얇아진다).
+       * ⚠**어느 시즌인지까지 말한다** — 합계만으로는 어느 백필을 되짚어야 하는지 모른다.
        */
-      if (career.reliefScan.unknownPitcher > 0) {
+      const unknownBySeason = [...career.reliefScan.unknownPitcher].sort((a, b) => a[0] - b[0]);
+      const unknownPa = unknownBySeason.reduce((sum, [, n]) => sum + n, 0);
+      if (unknownPa > 0) {
         console.warn(
-          `⚠ 투수를 모르는 타석 ${career.reliefScan.unknownPitcher}건 — 火消し 의 교대 판정이 그만큼 성립하지 않는다`,
+          `⚠ 투수를 모르는 타석 ${unknownPa}건（${unknownBySeason.map(([s, n]) => `${s}:${n}`).join(" ")}）` +
+            " — 火消し 의 교대 판정이 그만큼 성립하지 않는다",
         );
       }
       /**
