@@ -13,6 +13,7 @@ import { colorOf } from "@bb-app/domain";
 import { context, rankingPanel } from "./fixtures.ts";
 import type { RankingPanel, RankingRow } from "../src/player-page.ts";
 import { rankingRowsFor } from "../src/query.ts";
+import { CLIENT_JS } from "../src/assets.ts";
 /**
  * ⚠**세 벌째를 만들지 않는다**(2026-08-19 T7 검토 ⓓ). 동률 규칙 문장은 `parts.ts` 에 한 벌 있고
  * 순위표(`query.ts`)와 구단 목록(`teams-page.ts`)이 그것을 쓴다 —
@@ -296,10 +297,20 @@ function withPanel(p: RankingPanel): string {
   );
 }
 
+/**
+ * ⚠**여는 태그를 떠서 본다 — 「바로 옆에 hidden 이 붙었는가」가 아니다**(2026-08-20).
+ * 예전에는 `data-qualified="0"\s+hidden>` 로 봤는데, 그 둘 사이에 속성이 하나 끼자
+ * (`data-den`) **동작은 그대로인데 시험만 떨어졌다.** 재는 것은 「미달 행이 숨어 있는가」이지
+ * 속성의 나열 순서가 아니다.
+ */
 test("⚠규정 미달 행은 처음부터 숨어 있다 — 스크립트가 없으면 지금까지와 같은 화면이다", () => {
   const out = withPanel(panelWithUnqualified());
-  assert.match(out, /data-qualified="0"\s+hidden>/, "미달 행이 숨겨져 있지 않다");
-  assert.ok(!/data-qualified="1"\s+hidden/.test(out), "도달자까지 숨겼다");
+  const tags = [...out.matchAll(/<tr\b[^>]*data-qualified="([01])"[^>]*>/g)];
+  assert.ok(tags.length > 1, `순위 행을 ${tags.length}개밖에 못 읽었다 — 이 시험이 공회전한다`);
+  assert.ok(tags.some((t) => t[1] === "0"), "미달 행이 표본에 없다 — 이 시험이 공회전한다");
+  for (const t of tags) {
+    assert.equal(/\bhidden\b/.test(t[0]), t[1] === "0", `data-qualified="${t[1]}" 행의 hidden 이 어긋난다`);
+  }
 });
 
 test("⚠전환 버튼이 있고, 눌렀을 때 나올 사람이 실제로 실려 있다", () => {
@@ -390,4 +401,94 @@ test("⚠「該当 N人」이 자르기 전의 규정 도달자 수다", () => {
     allCount: 240,
   };
   assert.match(withPanel(p), /該当 137人/, "자르기 전 수가 아니다");
+});
+
+// ── 「全員」의 최소 표본 입력칸 ────────────────────────────────────────────
+
+/**
+ * ⚠**「全員」으로 바꾸면 1타석 1안타가 打率 1위로 올라온다** — 그것이 「全員」의 뜻이고
+ * (`toMetricRanking` 의 `minDenominator: 0`), 그래서 **표본 하한을 유저가 직접 넣을 수 있어야
+ * 한다**(2026-08-20 유저 요청 · 0이면 거르지 않는다).
+ *
+ * 서버가 지키는 것 여섯:
+ * 1. **거를 값이 행에 실려 있다.** 화면의 `母数` 칸은 글자(`138.1回`)라 클라이언트가 수로
+ *    비교할 수 없다 — `data-den` 이 그 수를 나른다.
+ * 2. **단위는 그 패널이 이미 쓰는 분모다**(M2). 打率을 打席으로 자르고 打数를 보여주면
+ *    화면이 자기 자신과 모순된다.
+ * 3. **아웃 카운트가 분모인 패널은 그렇다고 표시한다** — 50을 50아웃으로 읽으면 3배로 자른다.
+ * 4. **개수 표시에 분모를 병기한다**(작업규칙 7 · M2) — 「N人」만으로는 몇 명 중인지 모른다.
+ * 5. **스크립트가 없으면 입력칸이 나오지 않는다**(§0-1). 눌러도 아무 일도 없는 칸을 남기지
+ *    않는다 — 「고장난 버튼」을 두지 않는다는 이 패널의 규칙과 같다.
+ * 6. **거르기만 하고 다시 번호를 매기지 않으므로 번호가 띄엄띄엄해진다**(M1·M3).
+ *    그 이유를 화면이 말하지 않으면 「순위가 이상하다」로 읽힌다.
+ */
+test("⚠거를 값이 행에 실려 있다 — 母数 칸은 글자라 수로 비교할 수 없다", () => {
+  const out = withPanel(panelWithUnqualified());
+  const at = out.indexOf(">代打<");
+  const row = out.slice(out.lastIndexOf("<tr", at), out.indexOf("</tr>", at));
+  assert.match(row, /data-den="12"/, "행에 분모 값이 없다 — 최소 표본으로 거를 수 없다");
+});
+
+test("⚠최소 표본의 단위가 그 패널의 분모다(M2) — 다른 단위로 자르면 화면이 자기모순이다", () => {
+  const out = withPanel({ ...panelWithUnqualified(), unit: "出塁機会" });
+  assert.match(out, /最少出塁機会/, "패널의 분모 단위를 쓰지 않았다");
+  assert.ok(!out.includes("最少打席"), "쓰지 않는 단위가 섞였다");
+});
+
+test("⚠아웃 카운트가 분모인 패널은 그렇다고 표시한다 — 50回를 50아웃으로 읽으면 3배로 자른다", () => {
+  const outs = withPanel({ ...panelWithUnqualified(), unit: "投球回", denAsInnings: true });
+  assert.match(outs, /data-rankmin="wrcPlus" data-rankouts/, "이닝 입력임을 표시하지 않았다");
+  assert.ok(!withPanel(panelWithUnqualified()).includes("data-rankouts"), "打席 분모인데 이닝이라고 했다");
+});
+
+test("⚠개수 표시에 분모를 병기한다 — 「N人」만으로는 몇 명 중인지 모른다(작업규칙 7)", () => {
+  // 픽스처는 규정 도달 10명 + 미달 1명 = 이 표가 들고 있는 11명
+  assert.match(
+    withPanel(panelWithUnqualified()),
+    /data-rankcount="wrcPlus">10人<\/span> \/ 全11人/,
+    "전체 대비로 말하지 않는다",
+  );
+});
+
+test("⚠입력칸은 서버가 숨겨서 낸다 — 스크립트가 없으면 못 쓰는 칸을 보여주지 않는다(§0-1)", () => {
+  const out = withPanel(panelWithUnqualified());
+  assert.match(out, /<label class="rankmin"[^>]*hidden>/, "입력칸이 처음부터 보인다");
+  assert.match(out, /data-rankmin="wrcPlus"/, "클라이언트가 잡을 갈고리가 없다");
+});
+
+test("⚠순위를 다시 매기지 않는다는 것을 화면이 말한다 — 안 적으면 「순위가 이상하다」로 읽힌다", () => {
+  const out = withPanel(panelWithUnqualified());
+  assert.match(out, /順位はリーグ全体のもの/, "번호가 띄엄띄엄해지는 이유를 화면이 말하지 않는다");
+  assert.match(out, /振り直しません/, "다시 매기지 않는다는 말이 없다");
+});
+
+test("⚠자격 기준이 없는 지표에는 입력칸도 두지 않는다 — 전환 버튼과 같은 이유다", () => {
+  const base = rankingPanel();
+  const out = withPanel({ ...base, id: "hr", rows: base.rows.map((r, i) => ({ ...r, rank: i + 1, rankAll: i + 1 })) });
+  assert.ok(!out.includes("data-rankmin"), "기준이 없는데 최소 표본 칸을 냈다");
+  assert.ok(!out.includes("data-den="), "거를 일이 없는데 분모 값을 실었다");
+});
+
+/**
+ * ⚠**양쪽을 맞대 본다**(`stable-contract.test.ts` 와 같은 이유).
+ *
+ * `client.test.ts` 의 순위표 픽스처는 **손으로 짓는다.** 서버가 내는 속성 이름이 바뀌어도
+ * 그 픽스처는 옛 이름을 그대로 들고 **초록으로 남는다** — 그러면 시험은 전부 통과하는데
+ * 실물은 아무것도 안 걸러지는 상태가 된다. 이 저장소는 같은 함정을 이미 밟았다
+ * (합성 픽스처에 「타석 결과 칸이 0개」여서 구형 파서가 늘 빈 배열이어도 전부 초록 · §2-2).
+ */
+test("⚠클라이언트가 읽는 갈고리가 서버 마크업에 전부 있다 — 한쪽에만 있으면 조용히 안 걸러진다", () => {
+  // 이닝 분모 패널에서만 나오는 갈고리가 있어서 두 모양을 다 그린다
+  const out = withPanel(panelWithUnqualified())
+    + withPanel({ ...panelWithUnqualified(), unit: "投球回", denAsInnings: true });
+  const client = CLIENT_JS;
+  for (const hook of ["data-rankonly=", "data-rankcount=", "data-rankmin=", "data-rankbad=", "data-rankempty=", "data-den=", "data-rankouts"]) {
+    assert.ok(out.includes(hook), `서버가 「${hook}」를 안 낸다`);
+    // 클라이언트는 같은 속성을 dataset 로도 읽으므로 두 표기를 다 인정한다
+    const camel = hook.replace(/^data-/, "").replace(/=$/, "");
+    assert.ok(
+      client.includes(hook) || client.includes(`dataset.${camel}`) || client.includes(`"${hook.replace(/=$/, "")}"`),
+      `클라이언트가 「${hook}」를 안 읽는다 — 서버만 내고 아무도 안 보는 속성이다`,
+    );
+  }
 });

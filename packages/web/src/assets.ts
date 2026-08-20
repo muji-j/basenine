@@ -1124,6 +1124,23 @@ html:has(.hjump){scroll-padding-top:calc(var(--topbar) + 52px)}
 /* 순위표의 전환 줄. ⚠**「지금 몇 명을 보고 있는가」를 늘 낸다**(M2) —
    전환했는데 인원이 안 보이면 무엇이 늘고 줄었는지 알 수 없다 */
 .rankonly{margin:0 0 8px}
+/* 「全員」일 때만 나오는 최소 표본 칸.
+   ⚠**display 를 주면 [hidden] 을 다시 적어야 한다** — 안 적으면 브라우저 기본의
+   [hidden]{display:none} 을 이겨 버려서 **숨긴 것이 안 숨는다.** 서버는 이 칸을 hidden 으로 내고
+   (스크립트가 없으면 못 쓰는 조작이므로) 클라이언트가 「全員」에서만 연다 */
+.rankmin{display:inline-flex;align-items:center;gap:6px}
+.rankmin[hidden]{display:none}
+/* ⚠**위의 .mfind input 을 순서가 아니라 특이도로 이긴다** — 저쪽은 width:170px 이고
+   680px 이하에서 다시 width:auto 로 바뀐다. 순서에 기대면 규칙 하나가 옮겨진 날 조용히 어긋난다.
+   ⚠**이 주석에 역따옴표를 쓰지 마라** — 이 파일은 통째로 템플릿 리터럴이라 거기서 끊긴다 */
+.mfind .rankmin input{width:5.4em;text-align:right;letter-spacing:normal;
+  font-variant-numeric:tabular-nums}
+/* ⚠**색으로만 말하지 않는다** — 못 읽은 값을 알리는 본체는 아래의 글(data-rankbad)이고 이건 거드는 표시다 */
+.mfind .rankmin input[aria-invalid="true"]{border-color:var(--warn)}
+/* 못 읽은 값을 알리는 글. ⚠**보통 안내문과 같은 회색으로 두지 않는다** — 「친 값이 안 먹었다」는
+   말이라 눈에 걸려야 한다. .empty 의 color 를 특이도로 이긴다(0,2,0 대 0,1,0).
+   ⚠--warn 이 --page 위에서 AA 를 넘는 것은 css-contrast.test.ts 가 두 테마 다 잰다 */
+.empty[data-rankbad]{color:var(--warn);padding-left:7px;box-shadow:inset 2px 0 0 var(--warn)}
 /* ⚠**자르지 않고 상자 안에서 스크롤한다.** 상위 N만 내면 대타·중간계투가 사라지고,
    찾는 사람이 없는 순간 이 기능은 없는 것과 같아진다 */
 .picklist{display:flex;flex-wrap:wrap;gap:4px;max-height:184px;overflow-y:auto;
@@ -1915,6 +1932,10 @@ const state={
   only:(saved.only&&typeof saved.only==="object")?saved.only:{},
   /* 순위표에서 「全員」으로 본 지표들. ⚠**여기 등록하지 않으면 저장이 조용히 안 된다** */
   rankAll:(saved.rankAll&&typeof saved.rankAll==="object")?saved.rankAll:{},
+  /* 「全員」일 때의 **최소 표본**(지표별). 0이면 거르지 않는다 = 전원.
+     ⚠**분모의 원시 단위로 담는다** — 방어율 계열은 아웃 카운트다(화면 입력은 이닝이고
+     환산은 순위표 구역이 한다). 여기 등록하지 않으면 저장이 조용히 안 된다 */
+  rankMin:(saved.rankMin&&typeof saved.rankMin==="object")?saved.rankMin:{},
   /* select 로 좁힌 값(구단 등) */
   picked:(saved.picked&&typeof saved.picked==="object")?saved.picked:{},
   /* 즐겨찾기한 선수 ID. **이 브라우저에만 남는다** — 서버로 가지 않는다 */
@@ -2646,7 +2667,53 @@ $$("[data-panelgroup]").forEach(p=>{
    순위는 규칙이 곧 값이다.
 
    ⚠**기본은 「규정 도달자만」이고, 미달 행은 서버가 이미 hidden 으로 보낸다.**
-   스크립트가 없으면 지금까지와 똑같은 화면이 나온다 — 이 기능은 더해지는 쪽이다. */
+   스크립트가 없으면 지금까지와 똑같은 화면이 나온다 — 이 기능은 더해지는 쪽이다.
+
+   ⚠**「全員」일 때만 최소 표본을 받는다**(2026-08-20). 「全員」은 minDenominator: 0 이라
+   1타석 1안타가 打率 1위로 올라오는 세계이고, 그래서 하한을 유저가 직접 넣을 수 있어야 한다.
+   規定 도달자만 보는 동안에는 규정 자체가 이미 하한이라 이 칸이 아무것도 안 자르므로,
+   **칸째로 숨긴다** — 눌러도 아무 일이 없는 조작을 두지 않는 이 패널의 규칙(서버 쪽
+   hasQualifier 가 같은 이유로 버튼 자체를 없앤다)과 같다.
+   ⚠**거르기만 하고 다시 번호를 매기지 않는다**(위와 같은 이유 · M1/M3). 그래서 번호가
+   띄엄띄엄해지는데, **그 이유는 표 아래 글이 말한다** — 안 적으면 「순위가 이상하다」로 읽힌다. */
+
+/* 최소 표본 입력을 읽는다.
+   ⚠**못 읽으면 0으로 만들지 않는다**(침묵 오류). 조용히 0이 되면 「친 값이 안 먹었다」가
+   화면에서 사라져, 사용자는 거르기가 고장난 줄 안다. 못 읽었다는 사실을 돌려주고 화면이 말한다.
+   ⚠**asOuts 는 분모가 아웃 카운트인 패널**(방어율·WHIP·K/9…)이다. 그 표의 母数 칸은
+   138.1回 라는 **야구 표기**로 쓰여 있으므로 거기 보이는 수를 그대로 칠 수 있어야 한다 —
+   138.1 은 138과 3분의 1이닝이라 415아웃이고, 소수점 아래에 3 이상은 존재하지 않는다.
+   50 을 50아웃으로 읽으면 **3배로 자른다.**
+   ⚠**정규식에 역슬래시를 쓰지 않았다** — 이 파일은 통째로 템플릿 리터럴이라 한 겹 벗겨진다.
+   그래서 [0-9] 와 [.] 로만 적는다(이 저장소가 여러 번 데인 자리다). */
+const RANK_MIN_PLAIN=/^[0-9]{1,6}$/;
+const RANK_MIN_INNINGS=/^([0-9]{1,6})(?:[.]([0-9]))?$/;
+function rankMinRead(text,asOuts){
+  /* 빈 칸은 **「하한 없음」**이지 못 읽은 값이 아니다 — 지우고 다시 치는 도중에
+     경고가 번쩍이면 정상 조작이 오류처럼 보인다. 결과(전원으로 돌아옴)가 화면에 그대로 보인다 */
+  const s=String(text==null?"":text).trim();
+  if(s==="")return {ok:true,value:0};
+  if(!asOuts)return RANK_MIN_PLAIN.test(s)?{ok:true,value:Number(s)}:{ok:false,value:0};
+  const m=RANK_MIN_INNINGS.exec(s);
+  if(!m||(m[2]!==undefined&&Number(m[2])>2))return {ok:false,value:0};
+  return {ok:true,value:Number(m[1])*3+(m[2]===undefined?0:Number(m[2]))};
+}
+/* 저장된 값을 입력칸으로 되돌린다 — **저장은 원시 분모(아웃), 보이는 것은 이닝**이다.
+   ⚠format.ts 의 innings() 와 같은 규칙이다. 서버 모듈을 부를 수 없어 여기 한 벌을 두지만,
+   **뜻이 갈리면 입력과 母数 칸이 다른 수를 가리키게 된다** — 바꿀 때 양쪽을 같이 본다 */
+function rankMinText(value,asOuts){
+  if(!asOuts)return String(value);
+  const whole=Math.floor(value/3),rest=value%3;
+  return rest===0?String(whole):whole+"."+rest;
+}
+
+if(!state.rankAll||typeof state.rankAll!=="object")state.rankAll={};
+if(!state.rankMin||typeof state.rankMin!=="object")state.rankMin={};
+/* 같은 지표가 **여러 벌로 그려지고 상태는 한 벌**이다 — data-rankonly 는 리그로 갈라져
+   있지 않다(실측 2026-08-20 dist/ranking.html: avg 가 2건 · 투수 지표는 선발·구원까지 4건).
+   ⚠**그러면 다시 그리는 것도 다 같이 해야 한다.** 누른 쪽만 갱신하면 반대 리그의 표가
+   저장된 상태와 어긋난 채 남아, **새로고침해야 맞는 화면**이 된다. */
+const rankViews={};
 $$("[data-rankonly]").forEach(btn=>{
   const id=btn.dataset.rankonly;
   const box=btn.closest?btn.closest(".block"):null;
@@ -2654,16 +2721,30 @@ $$("[data-rankonly]").forEach(btn=>{
   /* 같은 화면에 지표 패널이 여럿이라 **이 패널의 표만** 잡아야 한다 */
   const panel=btn.parentNode&&btn.parentNode.parentNode?btn.parentNode.parentNode:scope;
   const rows=$$("tbody tr",panel);
-  const countEl=$('[data-rankcount="'+id+'"]',panel);
   if(rows.length===0)return;
-  if(!state.rankAll||typeof state.rankAll!=="object")state.rankAll={};
+  const countEl=$('[data-rankcount="'+id+'"]',panel);
+  const minBox=$('[data-rankmin="'+id+'"]',panel);
+  const minWrap=minBox&&minBox.parentNode?minBox.parentNode:null;
+  const badEl=$('[data-rankbad="'+id+'"]',panel);
+  const emptyEl=$('[data-rankempty="'+id+'"]',panel);
+  const asOuts=minBox&&minBox.hasAttribute?minBox.hasAttribute("data-rankouts"):false;
+  /* 못 읽은 입력. ⚠**저장하지 않는다** — 다음 방문에 되살릴 값이 아니다 */
+  let bad=false;
 
-  const apply=()=>{
+  /* @param typing 지금 이 칸에 치고 있는 중인가. 그러면 **입력값을 덮어쓰지 않는다** */
+  const apply=(typing)=>{
     const all=state.rankAll[id]===true;
+    const saved=state.rankMin[id];
+    /* 「規定到達のみ」 동안에는 하한을 걸지 않는다 — **숨긴 칸이 몰래 자르면 그게 최악이다** */
+    const min=all&&typeof saved==="number"&&saved>0?saved:0;
     let n=0;
     rows.forEach(tr=>{
       const q=tr.dataset.qualified==="1";
-      tr.hidden=!all&&!q;
+      /* ⚠**분모가 안 실린 행은 하한이 걸리는 순간 빠진다**(M11) — 「0」이 아니라 「모름」이라
+         「300타석 이상」에 넣을 근거가 없다. 하한이 0이면 아무도 안 뺀다 */
+      const den=tr.dataset.den;
+      const wide=min===0||(den!==undefined&&Number(den)>=min);
+      tr.hidden=(!all&&!q)||!wide;
       if(!tr.hidden)n++;
       /* 순위 칸을 바꿔 넣는다 — 두 값이 다 실려 있으므로 고르기만 한다 */
       const a=$("[data-rankq]",tr),b=$("[data-ranka]",tr);
@@ -2672,11 +2753,33 @@ $$("[data-rankonly]").forEach(btn=>{
     });
     btn.setAttribute("aria-pressed",String(!all));
     if(countEl)countEl.textContent=n+"人";
+    if(minWrap)minWrap.hidden=!all;
+    if(minBox){
+      if(!typing)minBox.value=rankMinText(min,asOuts);
+      minBox.setAttribute("aria-invalid",String(bad));
+    }
+    if(badEl)badEl.hidden=!bad;
+    /* ⚠**0건을 빈 표로 두지 않는다**(M12). 못 읽은 입력일 때는 **거르지 않았으므로**
+       이 말을 하지 않는다 — 그때 할 말은 badEl 이 한다 */
+    if(emptyEl)emptyEl.hidden=!(all&&!bad&&n===0);
   };
+  const views=(rankViews[id]=rankViews[id]||[]);
+  views.push(apply);
+  /* @param from 지금 조작 중인 사본. 그 하나만 입력값을 그대로 두고 나머지는 맞춘다 */
+  const refresh=(from)=>views.forEach(f=>f(f===from));
+
   btn.addEventListener("click",()=>{
-    state.rankAll[id]=state.rankAll[id]!==true;save(state);apply();
+    state.rankAll[id]=state.rankAll[id]!==true;save(state);refresh(null);
   });
-  apply();
+  if(minBox)minBox.addEventListener("input",()=>{
+    const got=rankMinRead(minBox.value,asOuts);
+    bad=!got.ok;
+    /* 못 읽은 값이면 **직전에 먹던 하한을 그대로 둔다.** 0으로 되돌리면 표가 갑자기 넓어져
+       「값이 먹었다」로 보인다 — 그것이 침묵 오류의 모양이다 */
+    if(got.ok){state.rankMin[id]=got.value;save(state)}
+    refresh(apply);
+  });
+  apply(false);
 });
 
 /* ── 검색어 접기 ──
