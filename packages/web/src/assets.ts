@@ -248,7 +248,21 @@ a{color:inherit}
 .mkfig{display:block;width:100%;height:auto;overflow:visible}
 .mf-grid{fill:none;stroke:var(--hair-2);stroke-width:1}
 .mf-spoke{stroke:var(--hair);stroke-width:1;transition:stroke var(--fast) var(--ease)}
-.mf-shape{fill-opacity:.42;stroke:var(--team,#6b7280);stroke-width:1.5;stroke-linejoin:round;
+/* ⚠**윤곽은 구단 색이 아니라 글자색 토큰이다**(2026-08-21 감사 P1 · .dia .db.on 과 같은 수술).
+   구단 색을 선으로 쓰면 **24조합(12구단 x 2테마) 중 12가 3:1 에 미달**했다:
+   라이트 4 — ヤクルト 2.72 / 阪神 1.61 / 巨人 2.79 / ソフトバンク 1.64
+   다크 8 — 中日 1.35 / 日本ハム 2.40 / DeNA 2.54 / 西武 1.46 / オリックス 1.08 /
+            ロッテ 1.10 / 楽天 1.74 / 広島 2.83. 미달 구단의 합집합은 **12/12** 다.
+   ⚠**살이 구제하지 못한다** — fill-opacity .42 를 합성한 뒤에도 **0/24 만 3:1 도달**이고,
+   thin 은 fill-opacity 가 0 이라 **점선 윤곽 하나가 도형의 전부**다(배포물 2,314/5,666장).
+   --tx-2 는 라이트 6.61 · 다크 6.67 이라 24/24 가 통과한다.
+   ⚠**「구단 색을 지켰다」가 아니다 — 살에만 남겼고 그 살은 3:1 을 못 넘는다.**
+   그래도 남기는 이유: 이 제품은 **선수 사진도 구단 로고도 엠블럼도 쓸 수 없고**(CLAUDE.md §6),
+   대체로 정해 둔 것이 「우리가 계산한 값으로 만든 우리 그림 + 구단 색 마크」다.
+   구단 색은 **우리에게 허용된 유일한 신원 신호**라, 대비를 못 벌더라도 살에는 남긴다.
+   ⚠더 정직한 안(구단 색을 紋에서 아예 뺀다)도 감사에서 제시됐다. 고르지 않은 것은
+   브랜드 규칙 쪽을 우선했기 때문이지, 그 안이 틀려서가 아니다. */
+.mf-shape{fill-opacity:.42;stroke:var(--tx-2);stroke-width:1.5;stroke-linejoin:round;
   animation:draw 420ms var(--ease)}
 /* ⚠**표본이 얇으면 속을 비운다.** 꽉 찬 도형은 「이만큼이다」라는 단정인데,
    눈금을 맞춘 모집단(타자 50타석·투수 20이닝) 밖에서는 그 단정이 참이 아니다.
@@ -257,7 +271,14 @@ a{color:inherit}
 /* ⚠보이는 점은 작아도 **판정 영역은 손가락 크기**여야 한다 — mf-hit이 그 역할이다.
    손잡이는 둘레에 고르게 있고, 값 표시점(mf-dot)은 도형 위에 따로 있다 */
 .mf-hit{fill:transparent}
-.mf-dot{fill:var(--panel);stroke:var(--team,#6b7280);stroke-width:2;
+/* ⚠**이 점은 차트가 아니라 조작 요소다** — 감싸는 .mf-ax 가 role="button" tabindex="0" 이고
+   이 점이 **유일한 시각 어포던스**다. 그런데 채움이 --panel(바탕과 같은 색)이라
+   선이 곧 전부인데, 그 선이 구단 색이면 다크 オリックス 1.08 · ロッテ 1.10 에서
+   **누를 수 있는 것이 화면에 없다.** WCAG 1.4.11 의 user interface components 에는
+   「글자로도 제공되면 예외」 조항이 없다 — 판단이 아니라 요구사항이다.
+   → 링은 --tx-2 로 고정(24/24 통과). 고른 축의 **채움은 구단 색으로 남긴다** —
+   링이 3:1 경계를 만들어 주므로 채움이 어두워도 점 자체는 보인다. */
+.mf-dot{fill:var(--panel);stroke:var(--tx-2);stroke-width:2;
   transform-box:fill-box;transform-origin:center;
   transition:transform var(--fast) var(--ease),fill var(--fast) var(--ease)}
 .mf-lab{font-family:var(--f-body);font-size:11px;fill:var(--tx-2);letter-spacing:.06em;
@@ -1600,13 +1621,23 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
 /* 겹친 紋 — 두 선수를 같은 판에 그린다. 색만으로 구별하지 않고 범례를 붙인다 */
 .cmpfig{max-width:300px;margin:14px auto 4px}
 .cmpfig svg{display:block;width:100%;height:auto;overflow:visible}
-.cmpfig .cf-a{fill-opacity:.30;stroke-width:1.8;stroke-linejoin:round}
-.cmpfig .cf-b{fill-opacity:0;stroke-width:1.8;stroke-linejoin:round;stroke-dasharray:4 3}
+/* ⚠**여기 선 색은 CSS 가 아니라 클라이언트가 얹고 있었다**(2026-08-21 감사 P2).
+   compare 화면은 브라우저가 표를 조립하므로 setAttribute("stroke", 구단색) 으로 칠했고,
+   그래서 **CSS 문자열만 훑는 대비 시험이 이 자리를 원리적으로 못 봤다.**
+   실측: 라이트·다크 **양쪽 다** A=#1d1f4e / B=#22262b(테마와 무관하게 같은 값) ·
+   다크에서 --panel 기준 **1.08 / 1.10** · 두 도형끼리 **1.02**.
+   .cf-b 는 fill-opacity 가 0 이라 **점선 하나가 그 선수의 전부**이고, 같은 색이
+   범례에도 들어가 solid/dashed 범례 자체가 안 보였다.
+   → 선은 토큰으로 고정한다. **누가 누구인지는 solid/dashed 와 이름이 말한다** — 색이 아니다.
+   ⚠**살(fill)만 구단 색으로 남는다**(.mf-shape 와 같은 결정). B 는 fill-opacity 가 0 이라
+   결과적으로 구단 색이 안 보이는데, 그건 겹친 도형을 읽히게 하려는 원래 설계다. */
+.cmpfig .cf-a{fill-opacity:.30;stroke:var(--tx);stroke-width:1.8;stroke-linejoin:round}
+.cmpfig .cf-b{fill-opacity:0;stroke:var(--tx-2);stroke-width:1.8;stroke-linejoin:round;stroke-dasharray:4 3}
 .cmpkey{display:flex;gap:14px;justify-content:center;font-size:11px;color:var(--tx-2);margin:2px 0 0}
 .cmpkey span{display:inline-flex;align-items:center;gap:5px}
 .cmpkey i{width:16px;height:0;border-top-width:2px;font-style:normal}
-.cmpkey .ka i{border-top-style:solid}
-.cmpkey .kb i{border-top-style:dashed}
+.cmpkey .ka i{border-top-style:solid;border-top-color:var(--tx)}
+.cmpkey .kb i{border-top-style:dashed;border-top-color:var(--tx-2)}
 /* 값 표 — 라벨을 가운데 두고 값을 양쪽으로 민다. 어느 쪽 열인지 눈이 헤매지 않는다 */
 .cmprow{display:grid;grid-template-columns:1fr 8.5em 1fr;align-items:baseline;gap:0 8px;
   padding:7px 0;border-bottom:1px solid var(--hair)}
@@ -3231,10 +3262,13 @@ if(cmpForm){
     svg.setAttribute("aria-label",A.name+"と"+B.name+"の成績プロフィールの重ね合わせ。"+
       A.mark.labels.map(l=>l.text+" "+A.name+" "+l.value+"、"+B.name+" "+
         (B.mark.labels.filter(x=>x.text===l.text)[0]||{value:"—"}).value).join("。"));
+    /* ⚠**선 색은 여기서 얹지 않는다** — CSS 의 .cf-a / .cf-b 가 토큰으로 갖는다.
+       예전에는 stroke 도 구단 색으로 칠했고, 그래서 다크에서 두 도형이 바탕에 묻혔다
+       (--panel 기준 1.08 / 1.10 · 두 도형끼리 1.02). 살만 구단 색으로 남긴다. */
     const poly=(pts,cls,color)=>{
       const p=doc.createElementNS(NS,"polygon");
       p.setAttribute("points",pts);p.setAttribute("class",cls);
-      if(color){p.setAttribute("fill",color);p.setAttribute("stroke",color)}
+      if(color)p.setAttribute("fill",color);
       return p;
     };
     svg.appendChild(poly(A.mark.outline,"mf-grid"));
@@ -3249,10 +3283,11 @@ if(cmpForm){
     });
     box.appendChild(svg);
     const key=el("p","cmpkey");
-    const one=(cls,c,name)=>{const s=el("span",cls);const i=el("i");i.style.borderTopColor=c;
-      s.appendChild(i);s.appendChild(doc.createTextNode(name));return s};
-    key.appendChild(one("ka",A.color.base,A.name));
-    key.appendChild(one("kb",B.color.base,B.name));
+    /* ⚠**범례 선도 구단 색을 안 쓴다** — 도형과 같은 토큰이어야 범례가 범례 노릇을 한다 */
+    const one=(cls,name)=>{const s=el("span",cls);s.appendChild(el("i"));
+      s.appendChild(doc.createTextNode(name));return s};
+    key.appendChild(one("ka",A.name));
+    key.appendChild(one("kb",B.name));
     box.appendChild(key);
     return box;
   };
