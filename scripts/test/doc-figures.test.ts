@@ -18,12 +18,26 @@
  * ⚠**여기서 못 박는 것은 「진행 중 시즌이 섞여 자라는 수」다.**
  * 완결 시즌만 인용한 수(파크팩터 2018~2025 · RPW 2025 · 특정 경기일 실측)는 자라지 않으므로
  * 대상이 아니다 — 넓히면 시험이 잡음으로 부풀고, 부푼 시험은 아무도 안 읽는다.
+ *
+ * ## ⚠고치려던 병을 처음 판에서 스스로 앓았다 (2026-08-21 최종 검토 P2-④)
+ *
+ * 이 시험은 **진행 중 시즌을 포함한 수**를 문서에 요구했다. 같은 브랜치가 走塁 각주를
+ * 완결 시즌으로 바꾸며 「경기가 하나 들어올 때마다 이 문서가 낡는다 … 시즌 중에는 매일 그렇게 된다 …
+ * 지속 가능한 구조가 아니었다」고 적어 놓고, **여기서 정반대를 했다.**
+ * → **문서에 요구하는 수는 완결 시즌만**으로 좁혔다(`completedSeasons`).
+ *
+ * ⚠**전칭 명제는 약해지지 않는다.** 「번트를 뺀 안타는 **전 보유 시즌** 전건이 타구 종류 없음」과
+ * 「미분류율이 20%를 넘는다」는 **진행 중 시즌까지 포함해** 계속 검사한다 —
+ * 그 둘은 **자라는 수를 문서에 요구하지 않으므로** 매일 낡지 않는다.
+ * ⚠**완결 판정은 손으로 적지 않는다** — 12구단 전부가 `regularSeasonGames(시즌)` 을 치렀는가로 잰다.
+ * 2026 이 끝나는 날 이 수들은 **한 번** 바뀌고, 그때 문서를 고치는 것이 맞는 일이다.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { openDb } from "@bb-app/store";
+import { regularSeasonGames } from "@bb-app/domain";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const DB = `${ROOT}data/bb.sqlite`;
@@ -55,6 +69,8 @@ const NOT_IN_PLAY = [
 ];
 
 interface Figures {
+  /** 실제로 센 시즌. **분모의 분모다**(작업규칙 7) */
+  seasons: number[];
   pa: number;
   inPlay: number;
   unclassified: number;
@@ -70,15 +86,52 @@ interface Figures {
   multiPosPct: string;
 }
 
-function measure(): Figures {
+/**
+ * **완결 시즌** — 12구단 전부가 그 시즌의 규정 경기수를 치렀는가.
+ *
+ * ⚠**「최근 시즌을 뺀다」로 쓰지 마라.** 그러면 2026 이 끝난 뒤에도 영원히 빠진다.
+ * ⚠**2020 은 120경기다** — `regularSeasonGames` 가 시즌별 표를 갖고 있으므로 여기서 143을 쓰지 않는다.
+ */
+function completedSeasons(db: ReturnType<typeof openDb>): Set<number> {
+  const rows = db.raw
+    .prepare(
+      `SELECT season, MIN(n) AS fewest FROM (
+         SELECT season, code, COUNT(*) AS n FROM (
+           SELECT season, home_code AS code FROM game
+            WHERE competition = 'regular' AND status = 'played'
+           UNION ALL
+           SELECT season, away_code AS code FROM game
+            WHERE competition = 'regular' AND status = 'played'
+         ) GROUP BY season, code
+       ) GROUP BY season`,
+    )
+    .all() as { season: number; fewest: number }[];
+  return new Set(rows.filter((r) => r.fewest >= regularSeasonGames(r.season)).map((r) => r.season));
+}
+
+/** 같은 스캔을 시험마다 다시 하지 않는다 — 타석 로그가 50만 행이다 */
+const cache = new Map<string, Figures>();
+
+/**
+ * @param only 셀 시즌. `null` 이면 **보유 전부**(전칭 명제를 검사할 때).
+ *   완결 시즌 집합을 주면 **문서에 요구하는, 자라지 않는 수**가 나온다.
+ */
+function measure(only: ReadonlySet<number> | null): Figures {
+  const key = only === null ? "all" : [...only].sort((a, b) => a - b).join(",");
+  const hit = cache.get(key);
+  if (hit !== undefined) return hit;
+
   const db = openDb(DB, "1970-01-01T00:00:00.000Z");
   try {
-    const rows = db.raw
-      .prepare(
-        `SELECT g.season AS season, p.outcome AS outcome, p.raw_box AS raw
-           FROM pa_event p JOIN game g USING (game_id)`,
-      )
-      .all() as { season: number; outcome: string; raw: string }[];
+    const take = (s: number): boolean => only === null || only.has(s);
+    const rows = (
+      db.raw
+        .prepare(
+          `SELECT g.season AS season, p.outcome AS outcome, p.raw_box AS raw
+             FROM pa_event p JOIN game g USING (game_id)`,
+        )
+        .all() as { season: number; outcome: string; raw: string }[]
+    ).filter((r) => take(r.season));
     assert.ok(rows.length > 400_000, `타석 로그가 ${rows.length}행뿐이다 — 이 시험이 공회전한다`);
 
     const skip = new Set(NOT_IN_PLAY);
@@ -102,12 +155,14 @@ function measure(): Figures {
 
     const pcts = [...per.values()].map((e) => (e.uncl / e.inPlay) * 100).sort((a, b) => a - b);
 
-    const bg = db.raw
-      .prepare(
-        `SELECT b.position AS pos FROM batting_line b JOIN game g USING (game_id)
-          WHERE g.competition = 'regular' AND g.status = 'played'`,
-      )
-      .all() as { pos: string | null }[];
+    const bg = (
+      db.raw
+        .prepare(
+          `SELECT g.season AS season, b.position AS pos FROM batting_line b JOIN game g USING (game_id)
+            WHERE g.competition = 'regular' AND g.status = 'played'`,
+        )
+        .all() as { season: number; pos: string | null }[]
+    ).filter((r) => take(r.season));
     const TOKENS = "投捕一二三遊左中右指打走";
     let multiPos = 0;
     for (const r of bg) {
@@ -115,7 +170,8 @@ function measure(): Figures {
       if (t.length >= 2) multiPos += 1;
     }
 
-    return {
+    const out: Figures = {
+      seasons: [...per.keys()].sort((a, b) => a - b),
       pa: rows.length,
       inPlay,
       unclassified: uncl,
@@ -130,18 +186,33 @@ function measure(): Figures {
       multiPos,
       multiPosPct: ((multiPos / bg.length) * 100).toFixed(1),
     };
+    cache.set(key, out);
+    return out;
   } finally {
     db.close();
   }
 }
 
+/** 문서가 요구하는 수는 **완결 시즌만**이다 — 진행 중 시즌을 넣으면 매일 낡는다 */
+function completed(): Figures {
+  const db = openDb(DB, "1970-01-01T00:00:00.000Z");
+  let only: Set<number>;
+  try {
+    only = completedSeasons(db);
+  } finally {
+    db.close();
+  }
+  assert.ok(only.size >= 8, `완결 시즌이 ${only.size}개뿐이다 — 이 시험이 공회전한다`);
+  return measure(only);
+}
+
 /** 문서 안에 있어야 하는 글자들. **하나라도 없으면 그 문서가 낡은 것이다** */
 function required(f: Figures): { text: string; what: string }[] {
   return [
-    { text: group(f.pa), what: "9시즌 총 타석" },
+    { text: group(f.pa), what: `완결 ${f.seasons.length}시즌 총 타석` },
     { text: group(f.inPlay), what: "인플레이 타구" },
     { text: group(f.unclassified), what: "타구 종류 미분류" },
-    { text: `${f.pctAll}%`, what: "미분류율(전 시즌)" },
+    { text: `${f.pctAll}%`, what: "미분류율(완결 시즌 전체)" },
     { text: group(f.single), what: "미분류 単打" },
     { text: group(f.double), what: "미분류 二塁打" },
     { text: group(f.triple), what: "미분류 三塁打" },
@@ -151,8 +222,8 @@ function required(f: Figures): { text: string; what: string }[] {
   ];
 }
 
-test("⚠xFIP 사유의 수치가 DB 와 같다 — 2026 이 자라면 여기가 먼저 떨어진다", { skip: HAS_DB ? false : "DB 없음" }, () => {
-  const f = measure();
+test("⚠xFIP 사유의 수치가 DB 와 같다 — 완결 시즌만 센다(진행 중 시즌을 넣으면 매일 낡는다)", { skip: HAS_DB ? false : "DB 없음" }, () => {
+  const f = completed();
   const miss: string[] = [];
   for (const rel of Object.values(DOCS)) {
     const src = read(rel);
@@ -163,14 +234,16 @@ test("⚠xFIP 사유의 수치가 DB 와 같다 — 2026 이 자라면 여기가
   assert.deepEqual(
     miss,
     [],
-    "문서가 말하는 수치와 DB 가 갈렸다. **DB 가 정본이다** — 위에 적힌 값으로 문서를 고쳐라.\n" +
+    `문서가 말하는 수치와 DB 가 갈렸다(잰 시즌: ${f.seasons.join("·")}). ` +
+      "**DB 가 정본이다** — 위에 적힌 값으로 문서를 고쳐라.\n" +
       "⚠세 문서가 같은 말을 해야 한다(M1): CLAUDE.md §2-2 · docs/metrics/README.md §6 · " +
-      "docs/sources/2026-08-20-war-xfip-recheck.md",
+      "docs/sources/2026-08-20-war-xfip-recheck.md\n" +
+      "⚠**이 수는 완결 시즌만 센다.** 진행 중 시즌이 자라서 떨어진 것이라면 그건 이 시험의 결함이다",
   );
 });
 
-test("⚠「번트를 뺀 안타는 전건이 종류 없음」이 아직 참이다 — 이게 무너지면 xFIP 판정이 통째로 바뀐다", { skip: HAS_DB ? false : "DB 없음" }, () => {
-  const f = measure();
+test("⚠「번트를 뺀 안타는 전건이 종류 없음」이 아직 참이다 — **진행 중 시즌까지 본다**", { skip: HAS_DB ? false : "DB 없음" }, () => {
+  const f = measure(null);
   // 미분류의 결과는 単打·二塁打·三塁打 셋뿐이고 그 합이 미분류 전체다
   assert.equal(
     f.single + f.double + f.triple,
@@ -185,8 +258,8 @@ test("⚠「번트를 뺀 안타는 전건이 종류 없음」이 아직 참이�
   );
 });
 
-test("⚠Positional 사유의 수치가 DB 와 같다 — 타자 WAR 불가 판정의 근거다", { skip: HAS_DB ? false : "DB 없음" }, () => {
-  const f = measure();
+test("⚠Positional 사유의 수치가 DB 와 같다 — 완결 시즌만 센다", { skip: HAS_DB ? false : "DB 없음" }, () => {
+  const f = completed();
   const miss: string[] = [];
   for (const rel of [DOCS.claude, DOCS.metrics, DOCS.recheck]) {
     const src = read(rel);
