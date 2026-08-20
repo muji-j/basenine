@@ -40,7 +40,6 @@ import {
   buildRunExpectancy,
   deriveRunValues,
 } from "@bb-app/aggregate";
-import { sumBatting, wobaRawWith } from "@bb-app/metrics";
 import type { LeagueConstants, WobaWeights } from "@bb-app/metrics";
 import { BATTER_MIN, SCALES } from "../packages/web/src/grade.ts";
 
@@ -57,13 +56,15 @@ export const BASIS = { season: 2026, through: "2026-08-15", minPa: 100 } as cons
 export const BASIS_LABEL_DATE = `${Number(BASIS.through.slice(0, 4))}年${Number(BASIS.through.slice(5, 7))}月${Number(BASIS.through.slice(8, 10))}日`;
 
 /**
- * **1.02 공개 계수** — 2026-08-20 이전의 화면이 쓰던 값.
- * ⚠**대조에만 쓴다.** 이 값으로 무언가를 계산해 내보내지 않는다(§6-C 로 의존을 끊었다).
+ * ⚠**옛 계수(1.02 공개값)를 여기 적지 않는다.**
+ *
+ * 그 값으로 잰 「고치기 전 화면」의 수는 **`docs/metrics/README.md` §6-A 에 한 번만** 적혀 있다
+ * (M4 — 「어제 본 숫자와 다른데?」에 답하기 위한 기록). 그 수를 다시 내려면 계수 7종을
+ * 이 파일에 박아야 하는데, 그건 2026-08-20 에 **사용자가 끊기로 정한 의존을 되살리는 것**이다
+ * (§6-C · 「1.02 는 산식만 읽고 값은 **대조용으로도** 안 쓴다」).
+ * → **이 스크립트는 우리 데이터만으로 도는 것만 잰다**: 지금 계수로 뽑은 분위수와,
+ *   우리 옛 임계값 대 지금 임계값의 차이.
  */
-const OLD_WEIGHTS: WobaWeights = {
-  bb: 0.692, hbp: 0.73, roe: 0.966, single: 0.865, double: 1.334, triple: 1.725, hr: 2.065,
-};
-const OLD_SCALE = 1.24;
 
 /** 2026-08-15 에 정한 임계값. **대조용 역사 기록**이다 — 지금 값은 `SCALES` 에서 읽는다 */
 export const THRESHOLDS_2026_08_15 = {
@@ -109,18 +110,8 @@ export interface BasisRow {
   wrcPlus: { value: number; denominator: number };
 }
 
-/**
- * 한 시즌의 타자 성적을 **화면과 같은 상수**로 계산한다.
- *
- * @param weights `undefined` 면 그 리그·시즌에서 유도한 계수(=지금 화면).
- *   주면 그 계수로 덮어쓴다(=옛 화면 재현).
- */
-export function seasonRows(
-  db: Db,
-  season: number,
-  through: string,
-  weights?: { weights: WobaWeights; scale: number },
-): BasisRow[] {
+/** 한 시즌의 타자 성적을 **화면과 같은 상수**(그 리그·시즌에서 유도한 계수)로 계산한다 */
+export function seasonRows(db: Db, season: number, through: string): BasisRow[] {
   const agg = aggregateSeason(db, season, "regular", through);
   const runValues = new Map<League, WobaWeights>();
   for (const league of ["central", "pacific"] as const) {
@@ -131,21 +122,7 @@ export function seasonRows(
   }
   const bundles = buildLeagues(agg, (lg) => runValues.get(lg));
 
-  const constants = new Map<League, LeagueConstants>();
-  for (const b of bundles) {
-    if (weights === undefined) {
-      constants.set(b.league, b.constants);
-      continue;
-    }
-    // ⚠**리그 평균 wOBA 도 같이 갈아야 한다** — wRC+ 의 기준선이라 한쪽만 갈면 단위가 어긋난다
-    const leagueLine = sumBatting(b.batting.map((x) => x.line));
-    constants.set(b.league, {
-      ...b.constants,
-      averageWoba: wobaRawWith(leagueLine, weights.weights)!,
-      wobaWeights: weights.weights,
-      wobaScale: weights.scale,
-    });
-  }
+  const constants = new Map<League, LeagueConstants>(bundles.map((b) => [b.league, b.constants]));
 
   // ⚠**리그를 넘은 선수는 상수를 섞는다** — `loadSite` 의 `constantsFor` 와 같은 규칙이다(M1)
   const paBy = new Map<string, number>();
@@ -169,8 +146,8 @@ export function seasonRows(
 }
 
 /** 기준 모집단(2026 · `through` 고정 · 100타석 이상)의 분포 */
-export function basisRows(db: Db, weights?: { weights: WobaWeights; scale: number }): BasisRow[] {
-  return seasonRows(db, BASIS.season, BASIS.through, weights).filter((r) => r.pa >= BASIS.minPa);
+export function basisRows(db: Db): BasisRow[] {
+  return seasonRows(db, BASIS.season, BASIS.through).filter((r) => r.pa >= BASIS.minPa);
 }
 
 /** 기준 모집단에서 다시 뽑은 임계값. **`grade.ts` 에 적히는 수가 이것이다** */
@@ -217,71 +194,82 @@ if (isCli) {
     const fmtW = (xs: readonly number[]): string => xs.map((x) => x.toFixed(4)).join(" ");
     const fmtR = (xs: readonly number[]): string => xs.map((x) => x.toFixed(1)).join(" ");
 
-    const oldBasis = basisRows(db, { weights: OLD_WEIGHTS, scale: OLD_SCALE });
     const d = derivedThresholds(db);
     console.log(`기준 모집단: ${BASIS.season} 정규 · ${BASIS.through} 시점 · ${BASIS.minPa}타석 이상 **${d.n}명**`);
-    console.log(`  옛 계수(1.02) 분위수   wOBA ${fmtW(quantiles(oldBasis.map((r) => r.woba.value)))} · wRC+ ${fmtR(quantiles(oldBasis.map((r) => r.wrcPlus.value)))}`);
-    console.log(`  새 계수(유도) 분위수   wOBA ${fmtW(d.raw.woba)} · wRC+ ${fmtR(d.raw.wrcPlus)}`);
+    console.log(`  지금 계수로 뽑은 분위수 wOBA ${fmtW(d.raw.woba)} · wRC+ ${fmtR(d.raw.wrcPlus)}`);
     console.log(`  옛 임계값             wOBA ${fmtW(THRESHOLDS_2026_08_15.woba)} · wRC+ ${fmtR(THRESHOLDS_2026_08_15.wrcPlus)}`);
     console.log(`  새 임계값(반올림 후)   wOBA ${fmtW(d.rounded.woba)} · wRC+ ${fmtR(d.rounded.wrcPlus)}`);
     console.log(`  지금 grade.ts        wOBA ${fmtW(SCALES.batter["woba"]!.thresholds)} · wRC+ ${fmtR(SCALES.batter["wrcPlus"]!.thresholds)}`);
 
+    /**
+     * ⚠**임계값이 자기 정의를 지키는가** — 이것이 임계값을 바꾸는 근거다.
+     * 「20/40/60/80 백분위」라고 부르면서 다른 곳에서 자르고 있으면 색이 거짓말을 한다.
+     */
+    const rows = basisRows(db);
+    console.log(`
+각 임계값이 실제로 자르는 백분위 (목표 20 / 40 / 60 / 80 · n=${rows.length})`);
+    for (const key of ["woba", "wrcPlus"] as const) {
+      const xs = rows.map((r) => r[key].value).filter(Number.isFinite);
+      const pct = (t: number): string => ((xs.filter((v) => v < t).length / xs.length) * 100).toFixed(1);
+      const bucket = (T: readonly number[]): string => {
+        const c = [0, 0, 0, 0, 0];
+        for (const v of xs) {
+          let step = 0;
+          for (const t of T) if (v >= t) step += 1;
+          c[step]! += 1;
+        }
+        return c.join("/");
+      };
+      for (const [label, T] of [
+        ["옛", THRESHOLDS_2026_08_15[key] as readonly number[]],
+        ["새", SCALES.batter[key]!.thresholds as readonly number[]],
+      ] as const) {
+        console.log(
+          `  ${key === "woba" ? "wOBA" : "wRC+"} ${label} ${T.join("/")} → ${T.map(pct).join(" / ")} %  5분할 ${bucket(T)}  (이상적 ≈ ${Math.round(rows.length / 5)} 씩)`,
+        );
+      }
+    }
+
     if (!basisOnly) {
       /**
-       * **화면이 실제로 색칠하는 집단**에서 등급이 몇 명 바뀌는가.
+       * **화면이 실제로 색칠하는 집단**에서 임계값 변경이 몇 명의 색을 바꾸는가.
        * ⚠기준 모집단(100타석)이 아니라 **표본 하한(BATTER_MIN)** 이 화면의 조건이다.
+       * ⚠**계수는 양쪽 다 지금 것**이다 — 옛 계수로 잰 수는 여기서 안 낸다(위 주석 참조).
        */
       const seasons = (
         db.raw
           .prepare("SELECT DISTINCT season AS s FROM game WHERE competition='regular' AND status='played' ORDER BY s")
           .all() as { s: number }[]
       ).map((r) => r.s);
-      console.log(`\n등급이 바뀐 인원 — 전 시즌(${seasons.join("·")}) · 정규 · 표본 ${BATTER_MIN} 이상`);
-      console.log("시즌     분모   ①옛계수·옛임계 → ②새계수·옛임계   ②→③새임계   ①→③(유저가 겪은 것)");
-      const total = { n: 0, a: 0, b: 0, c: 0, wn: 0, wa: 0, wb: 0, wc: 0 };
+      console.log(`\n임계값을 바꿔 색이 달라지는 인원 — 전 시즌(${seasons.join("·")}) · 정규 · 표본 ${BATTER_MIN} 이상`);
+      console.log("시즌     지표   분모   바뀜");
+      const total: Record<string, { n: number; moved: number }> = {
+        woba: { n: 0, moved: 0 }, wrcPlus: { n: 0, moved: 0 },
+      };
       for (const season of seasons) {
-        const now = seasonRows(db, season, "9999-12-31");
-        const was = seasonRows(db, season, "9999-12-31", { weights: OLD_WEIGHTS, scale: OLD_SCALE });
-        const byId = new Map(was.map((r) => [r.playerId, r]));
-        let n = 0, a = 0, b = 0, c = 0, wn = 0, wa = 0, wb = 0, wc = 0;
-        for (const r of now) {
-          const o = byId.get(r.playerId);
-          if (o === undefined) continue;
-          for (const key of ["woba", "wrcPlus"] as const) {
-            const oldT = THRESHOLDS_2026_08_15[key];
-            const newT = SCALES.batter[key]!.thresholds;
-            const g1 = gradeIndex(o[key].value, oldT, o[key].denominator);
-            const g2 = gradeIndex(r[key].value, oldT, r[key].denominator);
-            const g3 = gradeIndex(r[key].value, newT, r[key].denominator);
-            if (g1 === null || g2 === null || g3 === null) continue;
-            if (key === "woba") {
-              wn += 1;
-              if (g1 !== g2) wa += 1;
-              if (g2 !== g3) wb += 1;
-              if (g1 !== g3) wc += 1;
-            } else {
-              n += 1;
-              if (g1 !== g2) a += 1;
-              if (g2 !== g3) b += 1;
-              if (g1 !== g3) c += 1;
-            }
+        const rows = seasonRows(db, season, "9999-12-31");
+        for (const key of ["woba", "wrcPlus"] as const) {
+          let n = 0;
+          let moved = 0;
+          for (const r of rows) {
+            const before = gradeIndex(r[key].value, THRESHOLDS_2026_08_15[key], r[key].denominator);
+            const after = gradeIndex(r[key].value, SCALES.batter[key]!.thresholds, r[key].denominator);
+            if (before === null || after === null) continue;
+            n += 1;
+            if (before !== after) moved += 1;
           }
+          total[key]!.n += n;
+          total[key]!.moved += moved;
+          console.log(
+            `${season}   ${key === "woba" ? "wOBA" : "wRC+"}  ${String(n).padStart(5)}  ${String(moved).padStart(5)}`,
+          );
         }
-        total.n += n; total.a += a; total.b += b; total.c += c;
-        total.wn += wn; total.wa += wa; total.wb += wb; total.wc += wc;
+      }
+      for (const key of ["woba", "wrcPlus"] as const) {
         console.log(
-          `${season}  wOBA ${String(wn).padStart(4)}   ${String(wa).padStart(4)}          ${String(wb).padStart(4)}        ${String(wc).padStart(4)}`,
-        );
-        console.log(
-          `        wRC+ ${String(n).padStart(4)}   ${String(a).padStart(4)}          ${String(b).padStart(4)}        ${String(c).padStart(4)}`,
+          `합계     ${key === "woba" ? "wOBA" : "wRC+"}  ${String(total[key]!.n).padStart(5)}  ${String(total[key]!.moved).padStart(5)}`,
         );
       }
-      console.log(
-        `합계    wOBA ${String(total.wn).padStart(4)}   ${String(total.wa).padStart(4)}          ${String(total.wb).padStart(4)}        ${String(total.wc).padStart(4)}`,
-      );
-      console.log(
-        `        wRC+ ${String(total.n).padStart(4)}   ${String(total.a).padStart(4)}          ${String(total.b).padStart(4)}        ${String(total.c).padStart(4)}`,
-      );
     }
   } finally {
     db.close();
