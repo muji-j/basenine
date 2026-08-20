@@ -18,7 +18,7 @@
  *
  * ⚠**대회를 섞지 않는다**(§2-1) — 정규시즌만 낸다. 전 대회 수치도 같이 낸다(분모를 적기 위해).
  */
-import { openDb } from "@bb-app/store";
+import { DatabaseSync } from "node:sqlite";
 import { regularSeasonGames } from "@bb-app/domain";
 
 const dbPath = process.argv[2];
@@ -27,8 +27,11 @@ if (dbPath === undefined) {
   process.exit(2);
 }
 
-/** ⚠시계를 직접 읽지 않는다(M6). 읽기만 한다 */
-const db = openDb(dbPath, "1970-01-01T00:00:00.000Z");
+/**
+ * ⚠**읽기 전용으로 연다.** `openDb` 는 **미적용 마이그레이션을 적용한다** — 즉 쓴다.
+ * 계측이 DB 를 바꾸면 「잰 것」과 「있던 것」이 갈리고, 이 워크트리는 여러 에이전트가 함께 쓴다.
+ */
+const db = new DatabaseSync(dbPath, { readOnly: true });
 
 /**
  * **완결 시즌** — 12구단 전부가 `regularSeasonGames(시즌)` 을 치렀는가.
@@ -37,7 +40,7 @@ const db = openDb(dbPath, "1970-01-01T00:00:00.000Z");
  */
 const settled = new Set(
   (
-    db.raw
+    db
       .prepare(
         `SELECT season, MIN(n) AS fewest FROM (
            SELECT season, code, COUNT(*) AS n FROM (
@@ -61,7 +64,7 @@ for (const [label, where] of [
   ["보유 전 시즌 · 정규 · played (진행 중 포함 — 자란다)", `g.competition = 'regular' AND g.status = 'played'`],
   ["보유 전 시즌 · 전 대회 · played", `g.status = 'played'`],
 ] as const) {
-  const row = db.raw
+  const row = db
     .prepare(
       `SELECT
          COUNT(*) AS total,
@@ -94,7 +97,7 @@ for (const [label, where] of [
  * `after_seq − 1` 의 타석이 그 주자 사건과 같은 이닝·표리라면 **`after_seq` 가 다음 타석을 가리킨** 것이다.
  * ⚠**이 스크립트는 어느 쪽이 옳은지 판정하지 않는다** — 「둘이 갈린다」까지가 여기서 말할 수 있는 것이다.
  */
-const offByOne = db.raw
+const offByOne = db
   .prepare(
     `SELECT COUNT(*) AS mismatched,
             SUM(CASE WHEN q.inning = r.inning AND q.half = r.half THEN 1 ELSE 0 END) AS prevMatches
@@ -113,7 +116,7 @@ console.log(
 console.log("");
 
 /** ⚠**어긋난 실례를 낸다** — 「일부 불일치」로 적지 않는다(작업규칙 7) */
-const samples = db.raw
+const samples = db
   .prepare(
     `SELECT r.game_id AS gameId, r.seq AS rseq, r.after_seq AS afterSeq, r.inning AS rInning,
             r.half AS rHalf, r.kind AS kind, p.inning AS pInning, p.half AS pHalf
@@ -138,7 +141,7 @@ if (samples.length === 0) console.log("  없음");
  * ⚠**「타석 순번이 이닝 안에서 다시 시작하는가」** — 두 계열이 갈리는 가장 흔한 원인.
  * 경기 단위 통번이면 `MAX(seq)` 가 타석 수와 같다.
  */
-const seqShape = db.raw
+const seqShape = db
   .prepare(
     `SELECT COUNT(*) AS games,
             SUM(CASE WHEN maxSeq = n THEN 1 ELSE 0 END) AS gameWide
@@ -154,7 +157,7 @@ console.log(
     `(MAX(seq) == 타석 수)`,
 );
 
-const rseqShape = db.raw
+const rseqShape = db
   .prepare(
     `SELECT COUNT(*) AS games,
             SUM(CASE WHEN maxSeq = n THEN 1 ELSE 0 END) AS gameWide

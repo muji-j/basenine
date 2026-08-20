@@ -14,7 +14,7 @@
  * ⚠**득점이 NULL 인 경기는 분모에서도 뺀다**(M11) — 0점으로 때우면 그 리그가 투수 친화로 보인다.
  * ⚠**진행 중 시즌은 별표로 낸다** — 경기가 들어올 때마다 값이 움직인다.
  */
-import { openDb } from "@bb-app/store";
+import { DatabaseSync } from "node:sqlite";
 import { leagueOf, regularSeasonGames } from "@bb-app/domain";
 import { runsPerWin, sumRunEnvironments } from "@bb-app/metrics";
 import type { RunEnvironment } from "@bb-app/metrics";
@@ -25,8 +25,11 @@ if (dbPath === undefined) {
   process.exit(2);
 }
 
-/** ⚠시계를 직접 읽지 않는다(M6). 이 스크립트는 읽기만 한다 */
-const db = openDb(dbPath, "1970-01-01T00:00:00.000Z");
+/**
+ * ⚠**읽기 전용으로 연다.** `openDb` 는 **미적용 마이그레이션을 적용한다** — 즉 쓴다.
+ * 계측이 DB 를 바꾸면 「잰 것」과 「있던 것」이 갈리고, 이 워크트리는 여러 에이전트가 함께 쓴다.
+ */
+const db = new DatabaseSync(dbPath, { readOnly: true });
 
 interface GameRow {
   season: number;
@@ -36,7 +39,7 @@ interface GameRow {
 }
 
 const games = (
-  db.raw
+  db
     .prepare(
       `SELECT season, away_code AS awayCode, home_code AS homeCode,
               CASE WHEN away_runs IS NULL OR home_runs IS NULL THEN NULL

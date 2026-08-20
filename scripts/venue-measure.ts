@@ -16,8 +16,13 @@
  *   문서에 적을 수 없는 수가 된다(`scripts/test/doc-figures.test.ts` 가 같은 규약).
  */
 import { parseArgs } from "node:util";
-import { openDb } from "@bb-app/store";
-import { regularSeasonGames } from "@bb-app/domain";
+import { DatabaseSync } from "node:sqlite";
+/**
+ * ⚠**패키지 진입점(`@bb-app/domain`)이 아니라 파일을 직접 가리킨다.**
+ * 진입점은 `venues.ts` 를 재수출하므로, 그걸 쓰면 **정본 표가 깨진 상태에서 `--raw` 가 안 돈다** —
+ * 아래 「표는 `--raw` 뒤에 읽는다」가 거짓말이 된다. 스스로 다시 읽다가 잡았다(작업규칙 10).
+ */
+import { regularSeasonGames } from "../packages/domain/src/teams.ts";
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -33,8 +38,14 @@ if (dbPath === undefined) {
   process.exit(2);
 }
 
-/** ⚠시계를 직접 읽지 않는다(M6). 마이그레이션 기록용이고 이 스크립트는 쓰기를 하지 않는다 */
-const db = openDb(dbPath, "1970-01-01T00:00:00.000Z");
+/**
+ * ⚠**읽기 전용으로 연다.** `openDb` 는 **미적용 마이그레이션을 적용한다** — 즉 쓴다.
+ * 계측이 DB 를 바꾸면 「잰 것」과 「있던 것」이 갈리고, 이 워크트리는 여러 에이전트가 함께 쓴다.
+ * ⚠덤으로 **의존이 끊긴다**: `@bb-app/store` 는 파서를 거쳐 `@bb-app/domain` 진입점을 끌어오고,
+ *   그 진입점이 정본 표를 재수출하므로 **표가 깨지면 `--raw` 조차 못 돈다** —
+ *   바로 위 주석이 거짓말이 될 뻔했고, **스스로 다시 읽다가 잡았다**(작업규칙 10).
+ */
+const db = new DatabaseSync(dbPath, { readOnly: true });
 
 const WHERE = `competition = 'regular' AND status = 'played'`;
 
@@ -59,7 +70,7 @@ interface Row {
   runsUnknown: number;
 }
 
-const rows = db.raw
+const rows = db
   .prepare(
     `SELECT venue, season, home_code AS homeCode, COUNT(*) AS games,
             SUM(CASE WHEN away_runs IS NULL OR home_runs IS NULL THEN 0
@@ -73,7 +84,7 @@ const rows = db.raw
   .all() as unknown as Row[];
 
 const nullVenue = (
-  db.raw.prepare(`SELECT COUNT(*) AS n FROM game WHERE ${WHERE} AND venue IS NULL`).get() as {
+  db.prepare(`SELECT COUNT(*) AS n FROM game WHERE ${WHERE} AND venue IS NULL`).get() as {
     n: number;
   }
 ).n;
@@ -117,7 +128,7 @@ for (const [label, where] of [
   ["전 대회 · 전 상태", `1 = 1`],
 ] as const) {
   const n = (
-    db.raw
+    db
       .prepare(`SELECT COUNT(DISTINCT venue) AS n FROM game WHERE ${where} AND venue IS NOT NULL`)
       .get() as { n: number }
   ).n;
@@ -132,7 +143,7 @@ for (const [label, where] of [
  * 정규·실시 57종에 안 들어가고, 표에서 빠지면 그 경기를 그리는 순간 던진다.
  */
 const allNames = (
-  db.raw.prepare(`SELECT DISTINCT venue FROM game WHERE venue IS NOT NULL`).all() as unknown as {
+  db.prepare(`SELECT DISTINCT venue FROM game WHERE venue IS NOT NULL`).all() as unknown as {
     venue: string;
   }[]
 ).map((r) => r.venue);
@@ -253,7 +264,7 @@ if (values.pf) {
    * ⚠**2020 은 120경기다.**
    */
   const counted = new Map<number, Map<string, number>>();
-  for (const r of db.raw
+  for (const r of db
     .prepare(
       `SELECT season, code, COUNT(*) AS n FROM (
          SELECT season, home_code AS code FROM game WHERE ${WHERE}
