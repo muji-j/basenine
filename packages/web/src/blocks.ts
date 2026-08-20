@@ -18,6 +18,8 @@ export type BlockId =
   | "situation"
   | "rolesplit"
   | "timesthrough"
+  | "count"
+  | "relief"
   | "streak"
   | "matchup"
   | "career"
@@ -39,6 +41,16 @@ export const BLOCKS: readonly BlockMeta[] = [
   { id: "situation", name: "得点期待値", desc: "24状況の期待値と、立った打席数" },
   { id: "rolesplit", name: "先発・救援別", desc: "投手のみ。役割ごとに分けた成績" },
   { id: "timesthrough", name: "打順一巡", desc: "投手のみ。NPB全体の巡目別成績（この選手の記録ではありません）" },
+  /**
+   * ⚠**재료는 계속 있었다** — `pa_event.ball_count` 563,833행이 채워진 채 읽는 코드가 0곳이었다.
+   * ⚠**독창이 아니다**(nf3·データパーク 등이 이미 낸다). 화면 문구가 그렇게 말한다.
+   */
+  { id: "count", name: "カウント別", desc: "追い込まれ率・2ストライク後の成績・初球決着率" },
+  /**
+   * ⚠**용어집에 `inheritedRunner` 가 있는데 그것을 재는 지표가 없었다.** 여기가 그 구멍을 닫는다.
+   * ⚠**통산 전용이다** — 한 시즌으로는 1인당 4회 남짓이라 값이 아니라 소음이다(M3).
+   */
+  { id: "relief", name: "火消し", desc: "投手のみ。走者を背負って登板した場面と、その結果（通算）" },
   { id: "streak", name: "連続記録", desc: "打者のみ。連続安打・連続出塁" },
   { id: "matchup", name: "対戦成績", desc: "投手別。打席数の多い順" },
   /**
@@ -61,7 +73,8 @@ export const PRESETS: readonly PresetMeta[] = [
   // `rolesplit`은 타자 페이지에서 걸러진다(`presetsFor`) — 투수에게만 기본으로 켜진다
   { id: "standard", name: "標準", blocks: ["standard", "rolesplit", "advanced", "splits", "ranking"] },
   { id: "record", name: "記録", blocks: ["standard", "career", "streak", "scorebook", "splits", "matchup"] },
-  { id: "analysis", name: "分析", blocks: ["advanced", "rolesplit", "situation", "timesthrough", "splits", "matchup", "ranking"] },
+  // ⚠`count` 는 타자·투수 양쪽, `relief` 는 투수에게만 남는다(`presetsFor` 가 거른다)
+  { id: "analysis", name: "分析", blocks: ["advanced", "rolesplit", "count", "relief", "situation", "timesthrough", "splits", "matchup", "ranking"] },
   { id: "simple", name: "簡易", blocks: ["standard"] },
 ];
 
@@ -86,6 +99,9 @@ const PITCHER_BLOCKS = new Set<BlockId>([
    *   개인 순위를 매기지 않는다(개인의 3순회 표본은 얇다).
    */
   "timesthrough",
+  "count",
+  /** ⚠**투수 전용이다** — 타자에게는 뜻이 없다. `rolesplit` 과 같은 이유로 양쪽 목록에 명시한다 */
+  "relief",
   "splits",
   "scorebook",
   "matchup",
@@ -104,6 +120,7 @@ const BATTER_BLOCKS = new Set<BlockId>([
   "standard",
   "streak",
   "advanced",
+  "count",
   "splits",
   "scorebook",
   "situation",

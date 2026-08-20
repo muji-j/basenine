@@ -26,6 +26,12 @@
 const ORDER: readonly string[] = [
   // ── 1. 우리가 만든 지표 ────────────────────────────────
   "src", "srcPer600", "srp", "srpPer9",
+  /**
+   * 火消し(継投引き継ぎ) — **무료 NPB 소스 검색 0건인 자체 지표**라 여기가 자리다.
+   * ⚠**지금 이 넷을 `byMetricOrder` 에 넘기는 화면은 없다**(선수 페이지의 블록은 손으로 늘어놓는다).
+   *   그래도 등록해 둔다 — 나중에 순위표에 실을 때 **말없이 맨 뒤로 가는 것**을 막는다.
+   */
+  "doused", "enteringRe", "inheritedAppearance", "inheritedRunners",
   // ── 2. 세이버 표준 ────────────────────────────────────
   "wrcPlus", "wrcplus", "woba", "wraa",
   "fip", "whip", "iso", "babip",
@@ -34,7 +40,14 @@ const ORDER: readonly string[] = [
   // ⚠`pct` 를 쓰는 화면은 **한 곳도 없다**(2026-08-20 실측 — 이 파일 밖에서 출현 0회).
   //   투수 개인 승률은 `winPct` 이고 그룹 6에 있다. 지우지 않고 남겨 두면 다음 사람이
   //   「승률은 여기」라고 읽고 group 3 에 등록할 위험이 있으므로, 그 사실을 여기 적는다
-  "avg", "obp", "slg", "ops", "era", "pct",
+  "avg", "obp", "slg", "ops", "era", "pct", "allowedAvg", "allowedOps",
+  /**
+   * カウント別 — **표준 지표다**(nf3·データパーク 등이 이미 낸다). 우리가 만든 것이 아니므로
+   * 그룹 1이 아니고, 해석이 필요 없는 전통 비율도 아니라 여기 뒤에 둔다.
+   */
+  "twoStrikeAgainst", "twoStrikeGained", "firstPitchDecided", "fullCountReached", "threeBallReached",
+  /** 引き分け — **구단 화면의 값**이지 선수의 값이 아니다 */
+  "drawRate", "extraDecided",
   // ── 4. 표본(분모) ─────────────────────────────────────
   "games", "pa", "ab", "outs", "innings", "bf", "role",
   // ── 5. 누적 개수 ──────────────────────────────────────

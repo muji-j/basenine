@@ -26,7 +26,18 @@ import {
 } from "@bb-app/aggregate";
 // ⚠**통산 합계·시즌 수는 파서 쪽 한 벌을 쓴다**(M1) — 여기에 다시 쓰면 시험이 붙은 쪽이 죽는다
 import { careerTotal, seasonsPlayed } from "@bb-app/parser";
-import type { HeadToHead, PlayerStreaks, StealBase, StealLine, TeamRace, TeamRaceInput } from "@bb-app/aggregate";
+import type {
+  CountLine,
+  HeadToHead,
+  PlayerStreaks,
+  ReliefLine,
+  ReliefScan,
+  SeasonDrawLine,
+  StealBase,
+  StealLine,
+  TeamRace,
+  TeamRaceInput,
+} from "@bb-app/aggregate";
 import { regularSeasonGames } from "./home-page.ts";
 import { byMetricOrder } from "./metric-order.ts";
 import type {
@@ -39,7 +50,17 @@ import type {
   HomeWeekTeam,
   HomeMilestone,
 } from "./home-page.ts";
-import type { BattedBallData, BuntCell, CareerData, CareerRow, StealBaseRow } from "./player-page.ts";
+import type {
+  BattedBallData,
+  BuntCell,
+  CareerData,
+  CareerRow,
+  CountBlockData,
+  CountSplitRow,
+  ReliefBlockData,
+  ReliefTotals,
+  StealBaseRow,
+} from "./player-page.ts";
 import type { BattingLine, LeagueConstants, PitchingLine, Rate } from "@bb-app/metrics";
 import {
   babip,
@@ -61,6 +82,7 @@ import {
 } from "@bb-app/metrics";
 import {
   ALL_STATES,
+  MIN_INHERITED_FOR_RATE,
   STAR_ER,
   STAR_HITS,
   STAR_LIMIT,
@@ -100,6 +122,22 @@ import {
   stateKey,
   teamGamesOf,
   teamStandings,
+  // ⚠**カウント別**(2026-08-20) — `pa_event.ball_count` 는 채워진 채 읽는 코드가 0곳이었다
+  addCount,
+  countLines,
+  firstPitchRate,
+  fullCountRate,
+  threeBallRate,
+  twoStrikeRate,
+  // ⚠**火消し**(2026-08-20) — 용어집에 `inheritedRunner` 가 있는데 재는 지표가 없었다
+  averageEnteringRe,
+  dousedRate,
+  foldRelief,
+  midInningEntries,
+  // ⚠**引き分けの解剖**(2026-08-20) — NPB 특유의 축
+  drawRate,
+  extraDecidedRate,
+  seasonDraws,
 } from "@bb-app/aggregate";
 import type {
   BattingEntry,
@@ -143,6 +181,7 @@ import type {
   SplitRow,
 } from "./player-page.ts";
 import type {
+  DrawSeasonRow,
   IndexPageData,
   LeagueSection,
   MatchupDay,
@@ -3868,12 +3907,75 @@ function teamsPage(
 
 // ─── 조립 ────────────────────────────────────────────────────────────────
 
+/**
+ * 여러 시즌을 한 번에 만들 때 **시즌마다 다시 계산할 이유가 없는 것**.
+ *
+ * ⚠**여기 있는 둘은 시즌 수의 제곱으로 늘어난다**(2026-08-20 실측 · 9시즌):
+ * 火消し 의 이닝 도중 등판 조회가 시즌마다 **보유 첫 시즌부터 다시** 훑어 누계 **26.3초**,
+ * 등판 시점 RE 행렬이 (시즌 × 리그) 조합마다 만들어져 **90회 · 14.8초**.
+ * 한 번만 만들어 넘기면 각각 **2.5초 · 18회**다.
+ * ⚠**CLAUDE.md 가 이미 백필의 벽을 두 번 적었다**(빌드 메모리 · Pages 파일 수).
+ * 시즌 수의 제곱은 그 다음 벽이 되기 딱 좋은 모양이라 지금 없앤다.
+ *
+ * ⚠**모듈 전역에 두지 않는다**(CLAUDE.md §6) — 호출자가 만들어 넘긴다.
+ * ⚠**안 넘겨도 된다.** 그때는 `loadSite` 가 스스로 만든다 — **느릴 뿐 답은 같다.**
+ *   그 「답이 같다」를 `relief-seasons.test.ts` 가 실DB로 고정한다.
+ */
+export interface CareerContext {
+  /**
+   * ⚠**어떤 조건으로 만들었는가.** 이걸 안 들고 다니면 **다른 대회·다른 기준일로 만든 것을
+   * 조용히 쓰게 된다** — 값이 그럴듯하게 틀리는 모양이라 분모로도 결측으로도 안 드러난다.
+   * `loadSite` 가 어긋나면 **던진다**(M7).
+   */
+  competition: string;
+  through: string;
+  /** ⚠**보유 전 시즌 몫**이다. 시즌마다 `season <= o.season` 으로 걸러 쓴다 */
+  reliefScan: ReliefScan;
+  /** `${시즌}|${리그}` → RE 행렬 */
+  runExpectancy: ReadonlyMap<string, RunExpectancy>;
+}
+
+export interface CareerContextOptions {
+  competition?: string;
+  through?: string;
+  from: number;
+  to: number;
+}
+
+/**
+ * 시즌을 넘는 계산을 한 번에 만든다.
+ *
+ * ⚠**`buildSite` 가 아니라 호출자(`tools/build.ts`)가 부른다** — 시즌 목록을 아는 것이 거기다.
+ * ⚠**`loadSite` 가 스스로 만드는 것과 같은 인자로 만든다** — 다르면 같은 화면 안에서 값이 갈린다.
+ */
+export function buildCareerContext(db: Db, o: CareerContextOptions): CareerContext {
+  const competition = o.competition ?? "regular";
+  const through = o.through ?? "9999-12-31";
+  const re = new Map<string, RunExpectancy>();
+  for (let season = o.from; season <= o.to; season += 1) {
+    for (const league of ["central", "pacific"] as const) {
+      const codes = TEAMS.filter((t) => t.league === league).map((t) => t.code);
+      re.set(`${season}|${league}`, buildRunExpectancy(db, season, league, codes, competition, through));
+    }
+  }
+  return {
+    competition,
+    through,
+    reliefScan: midInningEntries(db, competition, through, o.from, o.to),
+    runExpectancy: re,
+  };
+}
+
 export interface LoadOptions {
   season: number;
   competition?: string;
   through?: string;
   /** 사이트를 만든 날 `YYYY-MM-DD`(JST). **주입한다**(M6) */
   builtOn: string;
+  /**
+   * 시즌을 넘는 계산을 미리 만들어 둔 것. ⚠**없어도 된다** — 그때는 여기서 만든다(느릴 뿐 답은 같다).
+   */
+  career?: CareerContext;
 }
 
 export interface SiteData {
@@ -4163,6 +4265,73 @@ function summaryOf(
 }
 
 /**
+ * カウント별 블록 데이터.
+ *
+ * ⚠**비율 산식을 여기서 쓰지 않는다**(M1) — `@bb-app/aggregate` 의 함수가 낸 `Rate` 를 옮겨 담는다.
+ * ⚠**타석 로그가 없으면 `null`** — 「0」이 아니라 「그릴 근거가 없다」다(M11·M12).
+ *   격리분만 있고 읽은 타석이 0인 경우도 마찬가지다(비율의 분모가 0이라 전부 「—」가 된다).
+ */
+function countBlockOf(c: CountLine | undefined): CountBlockData | null {
+  if (c === undefined || c.pa === 0) return null;
+  const row = (label: string, line: BattingLine): CountSplitRow => ({
+    label,
+    line,
+    avg: battingAverage(line),
+    ops: ops(line),
+  });
+  return {
+    pa: c.pa,
+    quarantined: c.quarantined,
+    twoStrike: twoStrikeRate(c),
+    firstPitch: firstPitchRate(c),
+    fullCount: fullCountRate(c),
+    threeBall: threeBallRate(c),
+    rows: [
+      row("2ストライク前", c.beforeTwoStrikeLine),
+      row("2ストライク後", c.twoStrikeLine),
+    ],
+  };
+}
+
+/** 火消し의 개수 부분. ⚠**통산과 시즌이 같은 모양을 쓴다** — 두 벌로 적으면 어긋난다 */
+function reliefTotalsOf(l: ReliefLine | undefined): ReliefTotals {
+  return {
+    midInning: l?.midInning ?? 0,
+    inherited: l?.inherited ?? 0,
+    inheritedRunners: l?.inheritedRunners ?? 0,
+    doused: l?.doused ?? 0,
+  };
+}
+
+/**
+ * 火消し 블록 데이터.
+ *
+ * ⚠**이닝 도중 등판이 한 번도 없으면 `null`** — 「0회」를 늘어놓는 블록은 정보가 아니다(M12).
+ * ⚠**자격선 미만이면 비율을 `null` 로 낸다**(M3) — 화면이 「N登板未満」이라고 적는다.
+ *   `.000` 이나 `—` 로 내면 「실패했다」와 구별되지 않는다(M11).
+ */
+function reliefBlockOf(
+  career: ReliefLine | undefined,
+  season: ReliefLine | undefined,
+  from: number,
+  to: number,
+): ReliefBlockData | null {
+  if (career === undefined || career.midInning === 0) return null;
+  const totals = reliefTotalsOf(career);
+  return {
+    from,
+    to,
+    career: totals,
+    season: reliefTotalsOf(season),
+    dousedRate:
+      totals.inherited >= MIN_INHERITED_FOR_RATE ? dousedRate(career) : null,
+    enteringRe: averageEnteringRe(career),
+    reMissing: career.reMissing,
+    minForRate: MIN_INHERITED_FOR_RATE,
+  };
+}
+
+/**
  * 우리가 실제로 보유한 시즌 범위.
  * ⚠**하나도 없으면 0/0 이다** — 「0년부터」라고 쓰지 않게 화면이 그것을 「모른다」로 읽는다(M11).
  */
@@ -4176,6 +4345,18 @@ function heldSeasonsOf(db: Db): { from: number; to: number } {
 export function loadSite(db: Db, o: LoadOptions): SiteData {
   const competition = o.competition ?? "regular";
   const through = o.through ?? "9999-12-31";
+
+  /**
+   * ⚠**조건이 어긋나면 던진다**(M7) — **아무것도 읽기 전에.**
+   * 다른 대회로 만든 `CareerContext` 를 조용히 쓰면 **올스타 등판이 정규시즌 火消し 에 섞이는**
+   * 식으로 틀리는데, 그건 화면 어디에도 드러나지 않는다.
+   */
+  if (o.career !== undefined && (o.career.competition !== competition || o.career.through !== through)) {
+    throw new Error(
+      `CareerContext 의 조건이 다르다: ${o.career.competition}/${o.career.through} vs ${competition}/${through} — ` +
+        "같은 조건으로 만든 것만 넘겨라",
+    );
+  }
 
   const meta = db.raw
     .prepare(
@@ -4256,6 +4437,19 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   for (const r of groundedIntoDoublePlays(db, o.season, competition, through)) {
     gidpByPlayer.set(r.playerId, (gidpByPlayer.get(r.playerId) ?? 0) + r.gidp);
     gidpByTeam.set(`${r.playerId}|${r.teamCode}`, (gidpByTeam.get(`${r.playerId}|${r.teamCode}`) ?? 0) + r.gidp);
+  }
+
+  /**
+   * カウント別成績. ⚠**선수당 한 벌씩만 만든다**(리그를 나눠 두 번 부르면 이적 선수가 반씩 나뉜다).
+   * ⚠대회를 섞지 않는다(§2-1).
+   */
+  const countByBatter = new Map<string, CountLine>();
+  for (const c of countLines(db, o.season, competition, through)) {
+    countByBatter.set(c.playerId, addCount(countByBatter.get(c.playerId), c));
+  }
+  const countByPitcher = new Map<string, CountLine>();
+  for (const c of countLines(db, o.season, competition, through, true)) {
+    countByPitcher.set(c.playerId, addCount(countByPitcher.get(c.playerId), c));
   }
 
   const bbPitcher = new Map<string, BattedBallData>();
@@ -4342,6 +4536,82 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   // ⚠9이닝 환산의 분모는 **아웃**이다. 상대 타자 수(bf)는 표본 표기용이라 둘 다 들고 있어야 한다
   const srpByPlayer = new Map<string, { srp: number; bf: number; skipped: number; outs: number; srpPer9: number | null }>();
   for (const [id, s] of srpFold.byPlayer) srpByPlayer.set(id, { ...s, srpPer9: srpPer9Of(s.srp, s.outs) });
+
+  /**
+   * 火消し(継投引き継ぎ) — **통산이다.**
+   *
+   * ⚠**보고 있는 시즌까지로 자른다.** 2018 년 화면에 2026 년 등판을 실으면 그건 시간 여행이다 —
+   * 통산 대전(`careerMatchups`)이 이미 같은 규약을 쓴다.
+   * ⚠**한 시즌 표본으로는 순위가 성립하지 않는다**(M3 · 실측 1인당 4.17회) —
+   * 시즌 쪽은 **개수만** 낸다.
+   */
+  const heldFrom = heldSeasonsOf(db).from || o.season;
+  /**
+   * ⚠**미리 만들어 둔 것이 있으면 시즌으로 걸러 쓴다.** 조회는 시즌 범위로 자르나
+   * 전 범위를 뽑아 거르나 **같은 답이다** — 하프이닝 안의 인접만 보고, 경기는 시즌을 넘지 않는다.
+   * 실측(2026-08-20)으로 2018·2021·2024·2026 네 지점에서 **전건 일치**를 확인했고,
+   * `relief-seasons.test.ts` 가 그것을 고정한다.
+   */
+  const reliefScan: ReliefScan =
+    o.career === undefined
+      ? midInningEntries(db, competition, through, heldFrom, o.season)
+      : {
+          entries: o.career.reliefScan.entries.filter((e) => e.season <= o.season),
+          unknownPitcher: o.career.reliefScan.unknownPitcher,
+        };
+  /**
+   * 등판 시점 RE. ⚠**행렬은 `buildRunExpectancy` 한 벌뿐이다**(M1) — 여기서 다시 만들지 않고
+   * **시즌·리그마다 한 번씩만** 부른다(실측 1회 76ms).
+   * ⚠**현재 시즌 몫은 위에서 이미 만든 것을 그대로 쓴다** — 두 번 만들면 같은 화면 안에서
+   * 값이 갈릴 수 있다.
+   */
+  const reCache = new Map<string, RunExpectancy | undefined>();
+  if (o.career !== undefined) for (const [k, re] of o.career.runExpectancy) reCache.set(k, re);
+  // ⚠**현재 시즌은 위에서 이미 만든 것이 이긴다** — 같은 인자로 만든 같은 값이지만,
+  //   같은 화면 안에서 두 벌을 쓰지 않는다는 것이 M1 이다
+  for (const [league, re] of reFull) reCache.set(`${o.season}|${league}`, re);
+  const reForEntry = (e: { season: number; offenseCode: string }): RunExpectancy | undefined => {
+    /**
+     * ⚠**RE 의 리그를 정하는 것은 공격 측이다**(`run-expectancy.ts` 가 그렇게 만든다).
+     * ⚠**올스타는 구단 코드가 `cl`/`pl` 이라 리그가 없다** — `leagueOf` 가 던지므로 먼저 거른다.
+     *   여기서 `undefined` 를 내면 `foldRelief` 가 그 등판을 `reMissing` 으로 세고
+     *   **화면이 그 수를 말한다**(M11) — 0 으로 때우지 않는다.
+     */
+    if (NON_TEAM_CODES[e.offenseCode] !== undefined) return undefined;
+    const league = leagueOf(e.offenseCode);
+    const key = `${e.season}|${league}`;
+    if (!reCache.has(key)) {
+      const codes = TEAMS.filter((t) => t.league === league).map((t) => t.code);
+      reCache.set(key, buildRunExpectancy(db, e.season, league, codes, competition, through));
+    }
+    return reCache.get(key);
+  };
+  /**
+   * 引き分けの解剖. ⚠**보고 있는 시즌까지로 자른다**(통산 대전과 같은 규약) —
+   * 2018 년 화면에 2021 년 무승부를 실으면 그건 시간 여행이다.
+   * ⚠**수를 화면에 하드코딩하지 않는다** — 직전 라운드가 리그 실측치를 1,808장에 박았다.
+   */
+  const drawRows: DrawSeasonRow[] = seasonDraws(db, competition, through, heldFrom, o.season).map((r) => ({
+    season: r.season,
+    current: r.season === o.season,
+    games: r.games,
+    draws: r.draws,
+    drawRate: drawRate(r),
+    extra: r.extra,
+    extraDrawn: r.extraDrawn,
+    extraDecided: extraDecidedRate(r),
+    regulationDrawn: r.regulationDrawn,
+    maxInning: r.maxInning,
+    inningUnknown: r.inningUnknown,
+  }));
+
+  const reliefCareer = new Map<string, ReliefLine>();
+  for (const l of foldRelief(reliefScan.entries, reForEntry)) reliefCareer.set(l.pitcherId, l);
+  // ⚠**시즌 몫은 같은 목록을 걸러 만든다** — 다시 조회하면 두 수가 갈릴 수 있다(M1)
+  const reliefSeason = new Map<string, ReliefLine>();
+  for (const l of foldRelief(reliefScan.entries.filter((e) => e.season === o.season), reForEntry)) {
+    reliefSeason.set(l.pitcherId, l);
+  }
 
   /**
    * ⚠**순위는 접기가 끝난 뒤에 만든다.** 리그 루프 안에서 만들면 먼저 도는 리그는 리그별 값을,
@@ -4727,6 +4997,16 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       mark,
       spark,
       streaks: streaksByPlayer.get(playerId) ?? null,
+      /**
+       * カウント別. ⚠**투수 페이지는 투수 쪽 집계를 본다** — 투수도 타석에 서지만
+       * 이 블록의 주역은 「이 사람이 던진 타석」이다.
+       */
+      count: countBlockOf(role === "pitcher" ? countByPitcher.get(playerId) : countByBatter.get(playerId)),
+      /** 火消し. ⚠**투수 페이지에만** — 타자에게는 뜻이 없다(`blocks.ts` 가 그것을 강제한다) */
+      relief:
+        role === "pitcher"
+          ? reliefBlockOf(reliefCareer.get(playerId), reliefSeason.get(playerId), heldFrom, o.season)
+          : null,
       sparkLabel: role === "pitcher" ? "月別防御率" : "月別OPS",
       asOf: meta.latest,
       stints: stintsOf(playerId, role),
@@ -4969,6 +5249,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       asOf: meta.latest,
       standings,
       tieRule: TIE_RULE,
+      draws: drawRows,
       leagues: sections,
     },
     // ⚠**위에서 이미 만들었다** — `teamPages`가 같은 한 벌을 쓰므로 여기서 다시 부르면 두 벌이 된다(M1)

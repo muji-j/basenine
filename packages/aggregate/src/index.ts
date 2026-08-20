@@ -61,4 +61,32 @@ export { STEAL_BASES, attempts, steals, successRate } from "./steal.ts";
 export type { StealBase, StealLine } from "./steal.ts";
 export { groundedIntoDoublePlays } from "./gidp.ts";
 export type { GidpLine } from "./gidp.ts";
+export {
+  MAX_BALLS,
+  MAX_STRIKES,
+  addCount,
+  countLines,
+  firstPitchRate,
+  fullCountRate,
+  parseBallCount,
+  threeBallRate,
+  twoStrikeRate,
+} from "./count.ts";
+export type { BallCount, CountLine } from "./count.ts";
+export {
+  MIN_INHERITED_FOR_RATE,
+  averageEnteringRe,
+  dousedRate,
+  foldRelief,
+  midInningEntries,
+} from "./relief.ts";
+export type { ReliefEntry, ReliefLine, ReliefScan } from "./relief.ts";
+export {
+  REGULATION_INNINGS,
+  drawRate,
+  extraDecidedRate,
+  extraRate,
+  seasonDraws,
+} from "./draw.ts";
+export type { SeasonDrawLine } from "./draw.ts";
 export type { BuntSituation, TimesThrough } from "./bunt.ts";

@@ -60,6 +60,8 @@ function data(over: Partial<RankingPageData> = {}): RankingPageData {
       },
     ],
     tieRule: TIE_RULE,
+    /** ⚠**기본은 비어 있다** — 引き分けの解剖 구획은 그것을 시험하는 곳에서만 켠다 */
+    draws: [],
     leagues: [],
     ...over,
   };

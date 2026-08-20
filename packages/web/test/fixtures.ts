@@ -13,6 +13,7 @@ import type {
   PitchingBlockData,
   PlayerPageData,
   RankingPanel,
+  ReliefBlockData,
   RenderContext,
 } from "../src/player-page.ts";
 import { freshness, pathsFor } from "../src/layout.ts";
@@ -135,6 +136,26 @@ export function pitcherMark(): { axes: ProfileAxis[]; sampleText: string } {
       whip: r(1.1, 300), era: r(2.7, 300),
     }),
     sampleText: "100回",
+  };
+}
+
+/**
+ * 火消し 블록.
+ *
+ * ⚠**기본값은 자격선을 넘긴 투수다** — 넘기지 못한 쪽(`{ dousedRate: null }`)은
+ * 시험이 따로 만든다. 둘 다 화면 분기가 있으므로 하나만 두면 절반이 안 그려진다.
+ */
+export function reliefBlock(over: Partial<ReliefBlockData> = {}): ReliefBlockData {
+  return {
+    from: 2018,
+    to: 2026,
+    career: { midInning: 51, inherited: 44, inheritedRunners: 78, doused: 28 },
+    season: { midInning: 8, inherited: 7, inheritedRunners: 12, doused: 5 },
+    dousedRate: r(28 / 44, 44),
+    enteringRe: r(0.94, 44),
+    reMissing: 0,
+    minForRate: 10,
+    ...over,
   };
 }
 
@@ -304,6 +325,34 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
       lastGameDate: "2026-08-14",
     },
     sparkLabel: "月別OPS",
+    /**
+     * カウント別. ⚠**격리분이 0이 아닌 픽스처**를 기본으로 둔다 —
+     * 0이면 「격리 수를 말하는 줄」이 영영 그려지지 않아 그 분기를 아무도 안 본다.
+     */
+    count: {
+      pa: 442,
+      quarantined: 1,
+      twoStrike: r(0.52, 442),
+      firstPitch: r(0.117, 442),
+      fullCount: r(0.121, 442),
+      threeBall: r(0.151, 442),
+      rows: [
+        {
+          label: "2ストライク前",
+          line: { ...BATTING_LINE, pa: 212, ab: 190, h: 68 },
+          avg: r(0.358, 190),
+          ops: r(0.98, 212),
+        },
+        {
+          label: "2ストライク後",
+          line: { ...BATTING_LINE, pa: 230, ab: 214, h: 44, so: 88 },
+          avg: r(0.206, 214),
+          ops: r(0.58, 230),
+        },
+      ],
+    },
+    // 기본 픽스처는 타자다 — 火消し는 투수만 (`pitcherPage()` 가 채운다)
+    relief: null,
     asOf: "2026-08-14",
     // 기본 픽스처는 **이적하지 않은 선수**다 — 이력이 비어 있으면 화면에 안 나온다
     stints: [],

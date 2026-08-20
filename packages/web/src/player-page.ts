@@ -237,6 +237,73 @@ export interface StreakBlockData {
   lastGameDate: string | null;
 }
 
+/**
+ * カウント別成績의 한 줄(2ストライク前 / 2ストライク後).
+ *
+ * ⚠**두 줄을 나란히 놓는 것이 이 블록의 뜻이다.** 하나만 내면 「.180 は低い」로 읽히는데,
+ * 追い込まれてからの打率はリーグ全体で低い — 비교 대상이 옆에 있어야 값이 뜻을 갖는다.
+ */
+export interface CountSplitRow {
+  label: string;
+  line: BattingLine;
+  avg: Rate;
+  ops: Rate;
+}
+
+/**
+ * カウント別 — **타석이 끝난 볼카운트**에서 나오는 값.
+ *
+ * ⚠**投球単位のデータではない.** 파울·헛스윙·투구 수는 여전히 모른다 —
+ * 화면이 그 경계를 말한다(`countBlock` 의 각주).
+ */
+export interface CountBlockData {
+  /** 읽을 수 있었던 타석. ⚠**이 블록 전 비율의 분모다**(M2) */
+  pa: number;
+  /**
+   * 읽지 못해 격리한 타석. ⚠**0이 아니면 화면이 그 수를 말한다**(M11) —
+   * 분모에서 빠졌다는 사실을 숨기면 비율이 조용히 달라 보인다.
+   */
+  quarantined: number;
+  twoStrike: Rate;
+  firstPitch: Rate;
+  fullCount: Rate;
+  threeBall: Rate;
+  rows: CountSplitRow[];
+}
+
+/** 火消し의 한 벌. 통산과 시즌이 같은 모양을 쓴다 */
+export interface ReliefTotals {
+  /** 이닝 도중 등판(주자 유무 불문) */
+  midInning: number;
+  /** 주자를 안고 한 이닝 도중 등판. ⚠**火消し率의 분모다** */
+  inherited: number;
+  inheritedRunners: number;
+  doused: number;
+}
+
+/**
+ * 火消し(継投引き継ぎ) — 투수 전용.
+ *
+ * ⚠**통산이 주역이다**(M3). 한 시즌으로는 1인당 4회 남짓이라 비율이 값이 아니라 소음이다.
+ * 시즌 쪽은 **개수만** 낸다.
+ */
+export interface ReliefBlockData {
+  /** 통산 범위. ⚠**화면이 「2018〜2026」이라고 말한다** — 「통산」이라는 말만으로는 거짓이다 */
+  from: number;
+  to: number;
+  career: ReliefTotals;
+  /** 보고 있는 시즌만. ⚠**비율을 내지 않는다** */
+  season: ReliefTotals;
+  /** 火消し率. 자격선 미만이면 null */
+  dousedRate: Rate | null;
+  /** 등판 시점 평균 득점기대치. RE 를 못 구했으면 분모가 줄어든다 */
+  enteringRe: Rate;
+  /** RE 행렬에 없어 세지 못한 등판. ⚠**0으로 때우지 않는다**(M11) */
+  reMissing: number;
+  /** 비율을 낼 수 있는 최소 引き継ぎ登板. **화면이 이 수를 적는다**(M3) */
+  minForRate: number;
+}
+
 export type SplitAxisId = "hand" | "base" | "homeAway" | "month" | "order" | "venue";
 
 export interface SplitRow {
@@ -497,6 +564,17 @@ export interface PlayerPageData {
   sparkLabel: string;
   /** 연속 기록. 타자만. 타석이 하나도 없으면 null */
   streaks: StreakBlockData | null;
+  /**
+   * カウント別成績. 타석 로그가 하나도 없으면 null(M12 — 화면이 「모름」을 낸다).
+   * ⚠**타자·투수 양쪽에 있다** — 같은 타석 로그를 반대편에서 읽은 값이다.
+   */
+  count: CountBlockData | null;
+  /**
+   * 火消し. **투수만.** 이닝 도중 등판이 한 번도 없으면 null.
+   * ⚠**null 은 「0회」가 아니라 「이 블록을 그릴 근거가 없다」**로 쓴다(M11) —
+   *   화면은 그때 「該当なし」라고 적는다.
+   */
+  relief: ReliefBlockData | null;
   /** 반영 기준 경기일 */
   asOf: string | null;
   /**
@@ -975,7 +1053,18 @@ function standardPitching(p: PitchingBlockData): RawHtml {
     ${note(
       `この投手は${ROLE_LABEL[p.role]}として扱っています（先発${p.starts}試合 / 救援${p.games - p.starts}試合、` +
         `投球回の多いほうを役割としています）。順位も水準の色も${ROLE_LABEL[p.role]}投手の分布と比べたものです — ` +
-        `先発と救援では防御率の分布が違うためです。`,
+        `先発と救援では防御率の分布が違うためです。` +
+        /**
+         * ⚠**「ない」ことに理由を書く**(M11·M12 · 2026-08-20).
+         * 救援投手には勝率の順位を出していないのだが、その理由がどこにも書かれていなかった —
+         * 유저에게는 **「없는 것」과 「빠뜨린 것」이 구별되지 않는다.**
+         * 판단 자체는 `query.ts` 의 `metricsFor` 에 적혀 있었다(자격선이 NPB 것이 아니다).
+         */
+        (p.role === "reliever"
+          ? "⚠**救援投手には勝率の順位をつけていません**（出していないのであって、抜けているのではありません） — " +
+            "最高勝率はNPBの規定投球回が資格ですが、当サイトの救援の資格線はその3分の1の**当サイト基準**で、" +
+            "同じ名前で違う資格をつけると自前の基準が公式のものとして読まれてしまうためです。"
+          : ""),
     )}`,
   });
 }
@@ -1657,6 +1746,141 @@ function rankingBlock(panels: readonly RankingPanel[], base: string): RawHtml {
   return block({ id: "ranking", title: "リーグ順位", controls, body: html`${body}` });
 }
 
+/**
+ * カウント別成績.
+ *
+ * ⚠**投球単位のデータではない — 각주가 그것을 먼저 말한다.** 이 블록을 보는 사람은
+ * 반드시 「초구 스트라이크율은?」을 떠올리는데, 우리는 그것을 **영영 낼 수 없다**
+ * (투구 단위 기록이 공개되지 않는다). 없는 것을 없다고 먼저 말하지 않으면
+ * 「아직 안 만들었나 보다」로 읽힌다(M12).
+ *
+ * ⚠**독창인 척하지 않는다** — nf3·データパーク 등이 이미 내는 표준 지표다.
+ * 이 사이트가 한 일은 **가지고 있으면서 안 읽던 값을 읽은 것**이다.
+ *
+ * ⚠**타자와 투수가 같은 표를 쓰되 이름이 다르다.** 追い込まれ率 ↔ 追い込み率,
+ * 打率 ↔ 被打率. 같은 라벨을 쓰면 투수 화면이 타자 설명을 낸다(용어집이 그 함정을 적어 뒀다).
+ */
+function countBlock(c: CountBlockData, role: "batter" | "pitcher"): RawHtml {
+  const forPitcher = role === "pitcher";
+  /**
+   * ⚠**투수 화면에 타자 이름을 쓰지 않는다.** 「打率 .358」이 투수 페이지에 있으면
+   * 그건 이 투수가 친 것으로 읽힌다 — 용어집이 `avg`/`allowedAvg` 를 나눠 둔 이유와 같다.
+   */
+  const avgKey = forPitcher ? "allowedAvg" : "avg";
+  const opsKey = forPitcher ? "allowedOps" : "ops";
+  const hitLabel = forPitcher ? "被安打" : "安打";
+  const soLabel = forPitcher ? "奪三振" : "三振";
+  const rows = c.rows.filter((r) => r.line.pa > 0);
+  const table = rows.length === 0
+    ? raw("")
+    : scroller(html`<table>
+    <thead><tr>
+      <th class="l">カウント</th><th>${term("打席")}</th><th>${term("打数")}</th>
+      <th>${hitLabel}</th><th>${soLabel}</th>
+      <th>${term(termOf(avgKey)!.label)}</th><th>${term(termOf(opsKey)!.label)}</th>
+    </tr></thead>
+    <tbody>${rows.map(
+      (r) => html`<tr>
+      <td class="l">${r.label}</td>
+      <td class="b">${r.line.pa}</td>
+      <td>${r.line.ab}</td>
+      <td>${r.line.h}</td>
+      <td>${r.line.so}</td>
+      <!-- ⚠**분모를 값에 붙인다**(M2). 옆의 打数 열과 같은 수이지만, 값만 떼어
+           다른 화면에 실릴 때 분모가 따라가야 한다 -->
+      <td class="wd">${valueWithDen(r.avg, denUnit(avgKey), 3)}</td>
+      <td class="wd">${valueWithDen(r.ops, denUnit(opsKey), 3)}</td>
+    </tr>`,
+    )}</tbody>
+  </table>`);
+
+  return block({
+    id: "count",
+    title: "カウント別",
+    qualifier: `${c.pa}打席`,
+    body: html`${columns(
+      html`${statRate(forPitcher ? "追い込み率" : "追い込まれ率", c.twoStrike, denUnit(forPitcher ? "twoStrikeGained" : "twoStrikeAgainst"), 3)}
+        ${statRate("初球決着率", c.firstPitch, denUnit("firstPitchDecided"), 3)}`,
+      html`${statRate("フルカウント率", c.fullCount, denUnit("fullCountReached"), 3)}
+        ${statRate("3ボール率", c.threeBall, denUnit("threeBallReached"), 3)}`,
+      /**
+       * ⚠**격리한 타석이 있으면 그 수를 낸다**(M11). 없으면 줄 자체를 만들지 않는다 —
+       * 늘 `0` 이 서 있으면 아무도 안 읽고, 어느 날 1이 되어도 눈에 안 띈다.
+       */
+      c.quarantined === 0
+        ? raw("")
+        : html`${statCount("カウント不明", c.quarantined)}`,
+    )}
+    ${table}
+    ${note(
+      "⚠**投球単位のデータではありません。** 分かるのは「打席の最後の1球を投げたときのカウント」だけで、" +
+        "ファウル・空振り・初球ストライク率・投げさせた球数は数えられません" +
+        "（公表されている記録に1球ごとの情報がないためです）。" +
+        "⚠ボールもストライクも打席の中で減らないので、終了時のカウントで**到達**は正確に言えます — " +
+        "2ストライクで終わった打席は必ず途中で追い込まれています。" +
+        "⚠**初球決着率から申告敬遠は除いています**（記録上は 0-0 ですが1球も投げていません）。" +
+        (c.quarantined === 0
+          ? ""
+          : `⚠カウントを読めなかった打席が${c.quarantined}件あり、上の母数から外しています。`) +
+        "⚠この指標自体は当サイト独自のものではありません — 材料が手元にあったので出しています。",
+    )}`,
+  });
+}
+
+/**
+ * 火消し(継投引き継ぎ) — **「この投手は他人の火を消す人か、きれいなイニングだけ受け取る人か」**.
+ *
+ * ⚠**MLB の IS%(引き継ぎ走者の生還率)ではない — 각주가 그것을 명시한다.**
+ * `bases` 는 **점유만** 말하고 주자의 **신원**을 말하지 않으므로, 우리가 셀 수 있는 것은
+ * 「그 이후 그 이닝에 들어온 점」이다. 이름을 IS% 처럼 붙이면 그 이름 자체가 거짓말이 된다.
+ *
+ * ⚠**시즌 쪽에는 비율을 내지 않는다**(M3). 실측으로 한 시즌 1인당 4회 남짓이다.
+ */
+function reliefBlock(r: ReliefBlockData): RawHtml {
+  const span = r.from === r.to ? `${r.from}年` : `${r.from}〜${r.to}年`;
+  return block({
+    id: "relief",
+    title: "火消し",
+    qualifier: `通算 ${span}`,
+    body: html`${columns(
+      html`${statCount("引き継ぎ登板", r.career.inherited)}
+        ${statCount("背負った走者", r.career.inheritedRunners)}`,
+      html`${statCount("火消し成功", r.career.doused)}
+        ${
+          /**
+           * ⚠**자격선 미만이면 비율 자리를 「—」로 채우지 않는다**(M11·M12).
+           * 「まだ出せません」이라고 적어 **「0.000」과 구별**한다.
+           */
+          r.dousedRate === null
+            ? statText("火消し率", `${r.minForRate}登板未満`)
+            : statRate("火消し率", r.dousedRate, denUnit("doused"), 3)
+        }`,
+      html`${statRate("登板時得点期待値", r.enteringRe, denUnit("enteringRe"), 2)}
+        ${statCount("イニング途中の登板", r.career.midInning)}`,
+      /** 시즌 쪽. ⚠**개수만** */
+      html`${statCount(`${r.to}年の引き継ぎ登板`, r.season.inherited)}
+        ${statCount(`${r.to}年の火消し成功`, r.season.doused)}`,
+    )}
+    ${note(
+      `上の数字は当サイトが保有する${span}レギュラーシーズンの**通算**です` +
+        "（このページのほかのブロックはシーズン成績です）。" +
+        "**イニングの途中で前の投手から代わり、そのとき塁上に走者がいた登板**を数えています — " +
+        "イニングの間の交代は入りません（当サイトの9シーズンで交代の約85%はイニングの間です）。" +
+        "⚠**「引き継いだ走者が何人生還したか」ではありません（MLBのIS%とは別物です）。** " +
+        "記録に残っているのは「どの塁が埋まっていたか」だけで走者が誰かは分からないため、" +
+        "当サイトが数えられるのは**そのイニングにその後入った点**だけで、" +
+        "そこには自分が出した走者の得点も混ざります。" +
+        "⚠**そのイニングが終わるまで**を見るので、同じイニングでさらに交代があった場合は" +
+        "次の投手が出した点も入ります（9シーズンで引き継ぎ登板の8.0%、判定が変わるのは1.3%）。" +
+        `⚠**1シーズンでは1人あたり4回ほどしかない場面**なので、率は通算で${r.minForRate}登板以上のときだけ出し、` +
+        "シーズン順位はつけていません。" +
+        (r.reMissing === 0
+          ? ""
+          : `⚠得点期待値を出せなかった登板が${r.reMissing}件あり、その平均の母数から外しています。`),
+    )}`,
+  });
+}
+
 // ─── 페이지 ──────────────────────────────────────────────────────────────
 
 function renderBlock(id: BlockId, d: PlayerPageData, base: string): RawHtml {
@@ -1683,6 +1907,18 @@ function renderBlock(id: BlockId, d: PlayerPageData, base: string): RawHtml {
       return situationBlock(d.situation, d.leagueName, d.bunts);
     case "timesthrough":
       return timesThroughBlock(d.timesThrough);
+    case "count":
+      if (d.count !== null) return countBlock(d.count, d.role);
+      // ⚠**「0」이 아니라 「기록이 없다」다**(M11·M12) — 이 선수의 타석 로그가 없다는 뜻이다
+      return block({ id: "count", title: "カウント別", body: html`<p class="empty">打席の記録がありません。</p>` });
+    case "relief":
+      if (d.relief !== null) return reliefBlock(d.relief);
+      return block({
+        id: "relief",
+        title: "火消し",
+        // ⚠**「0回」로 쓰지 않는다** — 이 투수는 아예 이닝 도중 등판을 한 적이 없다는 사실이다
+        body: html`<p class="empty">イニング途中からの登板がありません（先発だけ、または回のはじめからの登板だけです）。</p>`,
+      });
     case "matchup":
       return matchupBlock(d.matchups, d.matchupTotal, d.role === "pitcher" ? "打者" : "投手");
     case "career":

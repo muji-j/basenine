@@ -19,7 +19,7 @@ import { buildSite, seasonPaths } from "../src/site.ts";
 import type { BuildResult } from "../src/site.ts";
 // ⚠**연락처 게이트의 판정은 한 벌이다**(M1) — 조건을 여기서 다시 쓰지 않는다
 import { contactGate } from "../src/layout.ts";
-import { loadLog, loadSite } from "../src/query.ts";
+import { buildCareerContext, loadLog, loadSite } from "../src/query.ts";
 
 const [dbArg, outArg, seasonArg, throughArg] = process.argv.slice(2);
 
@@ -48,6 +48,33 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
     try {
       const t0 = process.hrtime.bigint();
       /**
+       * ⚠**시즌을 넘는 계산은 한 번만 한다.**
+       *
+       * 火消し 의 이닝 도중 등판 조회와 등판 시점 RE 행렬은 **보유 첫 시즌부터** 필요하다.
+       * 시즌마다 만들면 **시즌 수의 제곱**으로 늘어난다 — 9시즌 실측(2026-08-20)으로
+       * 조회 누계 26.3초 · RE 90회 14.8초였고, 한 번씩만 만들면 2.5초 · 18회다.
+       * ⚠**`loadSite` 는 이것 없이도 돈다**(스스로 만든다) — 여기서 넘기는 것은 **속도뿐**이고,
+       *   답이 같다는 것을 `relief-seasons.test.ts` 가 실DB로 고정한다.
+       */
+      const held = db.raw
+        .prepare("SELECT MIN(season) AS lo, MAX(season) AS hi FROM game")
+        .get() as { lo: number | null; hi: number | null };
+      const career = buildCareerContext(db, {
+        from: held.lo ?? Math.min(...seasons),
+        to: held.hi ?? Math.max(...seasons),
+        ...(throughArg === undefined ? {} : { through: throughArg }),
+      });
+      /**
+       * ⚠**투수를 모르는 타석은 火消し 를 조용히 줄인다**(M11). 지금 아카이브는 0건이지만,
+       * CLAUDE.md §2-2 가 「소급 시즌은 투수 귀속이 얇을 수 있다」고 적어 뒀다 —
+       * 백필이 그 창을 열면 여기가 먼저 말한다. **배포는 막지 않는다**(값이 없어지는 게 아니라 얇아진다).
+       */
+      if (career.reliefScan.unknownPitcher > 0) {
+        console.warn(
+          `⚠ 투수를 모르는 타석 ${career.reliefScan.unknownPitcher}건 — 火消し 의 교대 판정이 그만큼 성립하지 않는다`,
+        );
+      }
+      /**
        * ⚠**전 시즌을 먼저 읽는다.** 시즌 전환이 「그 시즌에 같은 화면이 있는가」를 물어야 하고,
        * 그건 렌더링 **전에** 알아야 한다 — 없는 곳으로 링크하면 404가 되고 조용하다.
        */
@@ -57,6 +84,7 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
         data: loadSite(db, {
           season: s,
           builtOn,
+          career,
           ...(throughArg === undefined ? {} : { through: throughArg }),
         }),
       }));

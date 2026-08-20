@@ -321,6 +321,33 @@ export interface StandingsSection {
   rows: StandingRow[];
 }
 
+/**
+ * 引き分けの解剖 한 줄.
+ *
+ * ⚠**이 표의 값은 「그 해의 연장 규정」이 데이터에 남긴 자국이다** — 구단의 성질이 아니다.
+ * ⚠**수를 화면에 하드코딩하지 않는다.** 직전 라운드가 리그 실측치를 1,808장에 박았고,
+ *   **DB 에서 다시 세어 대조하는 시험**으로 고쳤다. 여기도 전부 데이터에서 온다.
+ */
+export interface DrawSeasonRow {
+  season: number;
+  /** 보고 있는 시즌인가. 화면이 그 줄을 강조한다 */
+  current: boolean;
+  games: number;
+  draws: number;
+  drawRate: Rate;
+  /** 연장(10회 이상)에 들어간 경기 */
+  extra: number;
+  extraDrawn: number;
+  /** 연장에 들어가 결착이 난 비율. ⚠**연장이 0인 해는 값이 없다**(M11) */
+  extraDecided: Rate;
+  /** 9회 이내에 끝난 무승부. ⚠**연장이 있는 해에 0이 아니면 콜드 게임이다** */
+  regulationDrawn: number;
+  /** 그 해에 실제로 도달한 최대 이닝 */
+  maxInning: number | null;
+  /** 이닝을 모르는 경기. ⚠**9회로 때우지 않는다**(M11) */
+  inningUnknown: number;
+}
+
 export interface RankingPageData {
   season: number;
   asOf: string | null;
@@ -328,7 +355,44 @@ export interface RankingPageData {
   standings: StandingsSection[];
   /** 동률 처리 규칙. ⚠**화면에 적는다**(M3) */
   tieRule: string;
+  /**
+   * 引き分けの解剖. **보유 첫 시즌 ~ 보고 있는 시즌**.
+   * ⚠**미래 시즌을 과거 화면에 싣지 않는다** — 통산 대전과 같은 규약이다.
+   * 비어 있으면 구획을 그리지 않는다.
+   */
+  draws: DrawSeasonRow[];
   leagues: LeagueSection[];
+}
+
+/**
+ * 引き分けの解剖.
+ *
+ * ⚠**なぜここか** — 順位表の`引分`列を見た人が次に持つ疑問がこれだからだ。
+ *   勝率の分母から引き分けを抜くという NPB の規定も、この表の隣にあってはじめて意味を持つ。
+ * ⚠**球団別に出さない。** 引き分けは2球団に同時に付く事象で、それを球団の性質として読ませると
+ *   根拠のない話になる（`draw.ts` の「무엇을 재지 않는가」）。
+ */
+function drawsTable(rows: readonly DrawSeasonRow[]): RawHtml {
+  return scroller(html`<table>
+  <thead><tr>
+    <th class="l">シーズン</th><th>試合</th><th>引き分け</th><th>${term("引分率")}</th>
+    <th>延長</th><th>延長引分</th><th>${term("延長決着率")}</th><th>9回引分</th><th>最長イニング</th>
+  </tr></thead>
+  <tbody>${rows.map(
+    (r) => html`<tr class="${r.current ? "me" : ""}">
+    <td class="l">${r.season}年</td>
+    <td class="b">${r.games}</td>
+    <td>${r.draws}</td>
+    <!-- ⚠**분모를 값에 붙인다**(M2) — 시즌마다 경기 수가 다르다(2020년은 120試合制) -->
+    <td class="wd">${valueWithDen(r.drawRate, denUnit("drawRate"), 3)}</td>
+    <td>${r.extra}</td>
+    <td>${r.extraDrawn}</td>
+    <td class="wd">${valueWithDen(r.extraDecided, denUnit("extraDecided"), 3)}</td>
+    <td>${r.regulationDrawn}</td>
+    <td>${r.maxInning === null ? NO_VALUE : `${r.maxInning}回`}</td>
+  </tr>`,
+  )}</tbody>
+</table>`);
 }
 
 /** 승패무 표기 `25-24-1`. 무승부가 0이어도 자리를 비우지 않는다 — 열이 흔들린다 */
@@ -429,7 +493,28 @@ export function renderRankingPage(d: RankingPageData, ctx: RenderContext): strin
       `交流戦の試合もリーグ順位に含めています。${d.tieRule}` +
       `得点・失点は公表記録、打率と防御率は当サイトの再計算です。`,
   )}
-</section>`;
+</section>
+${d.draws.length === 0
+    ? raw("")
+    : html`<section class="block" id="b-draws">
+  <h2>引き分けの解剖<span class="qt">${d.draws[0]!.season}〜${d.draws[d.draws.length - 1]!.season}年</span></h2>
+  ${drawsTable(d.draws)}
+  ${note(
+      "上の順位表で勝率の分母から抜いている**引き分け**が、どういう試合だったのかを分解しています。" +
+        "**「延長」は10回以降に入った試合**、「9回引分」は9回までで引き分けになった試合です — " +
+        "延長のある年に9回引分があれば、それは雨などのコールドゲームです。" +
+        "⚠**引き分けの多さは球団の性質ではなく、その年の延長規定でほぼ決まります。** " +
+        "当サイトが保有するシーズンでも規定は何度も変わっていて、それがこの表にそのまま残っています。" +
+        "⚠**球団別には出していません** — 引き分けは2球団に同時に付く事象なので、" +
+        "それを球団の強さとして読むと根拠のない話になります。" +
+        "⚠**「引き分けが順位にどれだけ影響したか」も測っていません**（NPBの勝率は引き分けを分母から抜くだけで、" +
+        "当サイトはそれ以上の換算をしません）。" +
+        (d.draws.some((r) => r.inningUnknown > 0)
+          ? `⚠イニングが分からない試合が${d.draws.reduce((a, r) => a + r.inningUnknown, 0)}試合あり、` +
+            "「延長」にも「9回引分」にも数えていません。"
+          : ""),
+    )}
+</section>`}`;
 
   /**
    * ⚠**부문·지표 탭은 리그마다 한 벌씩 그려진다 — 그룹은 공유, id 는 나눈다.**

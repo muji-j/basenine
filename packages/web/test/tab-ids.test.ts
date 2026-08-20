@@ -80,6 +80,7 @@ function twoLeagues(): RankingPageData {
       { id: "central", name: "セントラル・リーグ", rows: [standingRow()] },
     ],
     tieRule: TIE_RULE,
+    draws: [],
     leagues: [league("central", "セントラル・リーグ"), league("pacific", "パシフィック・リーグ")],
   };
 }
