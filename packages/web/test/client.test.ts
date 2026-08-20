@@ -1840,8 +1840,16 @@ test("⚠결과 수를 소리로 낸다 — combobox 를 그만둔 자리를 이
 test("⚠낭독을 모아도 목록은 즉시 바뀐다 — 미루는 것은 소리뿐이다", async () => {
   const doc = buildHeaderSearch();
   run(doc, { index: MANY_INDEX });
+  const t0 = Date.now();
   const items = await searchIn(doc, "q", "qhits", "田1");
   assert.ok(picks(items).length > 0, "목록이 즉시 안 그려졌다 — 화면까지 미뤘다");
+  /**
+   * ⚠**「아직 안 났다」는 시간에 기대는 판정이다.** 하네스가 150ms 이상 걸렸다면
+   * 이 시험은 디바운스를 잰 것이 아니라 **자기 느림을 잰 것**이므로, 그걸 「고장」으로
+   * 읽히게 두지 않는다 — 무엇 때문에 떨어졌는지 메시지가 말하게 한다(작업규칙 8).
+   */
+  const elapsed = Date.now() - t0;
+  assert.ok(elapsed < 100, `하네스가 ${elapsed}ms 걸려 디바운스(150ms)를 잴 수 없었다 — 다시 돌려라`);
   // 그 시점에는 아직 소리가 안 났다(모으는 중이다)
   assert.equal(
     doc.querySelector("[data-hitstatus]")!.textContent,
