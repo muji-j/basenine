@@ -59,6 +59,11 @@ const { positionals, values } = parseArgs({
     band: { type: "string", default: "10" },
     /** `--case pacific/starter/era@429` — 그 하한에서 빠지는 사람을 이름으로 낸다 */
     case: { type: "string" },
+    /**
+     * `--ksweep 10,15,20,25,30` — **보증 수 k 마다 몇 행이 실리는가**를 한 번에 재다.
+     * ⚠`loadSite` 가 시즌당 약 20초라 k 마다 다시 도는 것은 낭비다. 한 번 읽고 k 만 바꿔 센다.
+     */
+    ksweep: { type: "string" },
   },
 });
 const dbPath = positionals[0] ?? "data/bb.sqlite";
@@ -103,6 +108,10 @@ function trueTop(rows: readonly RankingRow[], min: number, k: number): RankingRo
     .sort((a, b) => (a.rankAll ?? 0) - (b.rankAll ?? 0))
     .slice(0, k);
 }
+
+/** `--ksweep` 이 모으는 것: k → 패널마다의 행 수 */
+const KSWEEP: number[] = (values.ksweep ?? "").split(",").filter((x) => x !== "").map(Number);
+const ksweepRows = new Map<number, number[]>();
 
 interface PanelResult {
   season: number;
@@ -159,6 +168,25 @@ function measurePanel(
   const qualifiedExtra = [...band].filter(
     (id) => !headIds.has(id) && all.find((r) => r.playerId === id)?.rank != null,
   ).length;
+
+  /**
+   * ⚠**k 를 바꿔 가며 재는 것은 「실릴 행 수」뿐이다.** 「규정 상위 N ∪ 전원 상위 N」은 k 와
+   * 무관하고, 스카이밴드는 k 에 대해 단조증가라 `now ∪ skyband(k)` 가 곯 그 k 에서의 화면이다.
+   */
+  /**
+   * ⚠**`now` 에서 재면 안 된다** — 지금 코드가 이미 밴드를 포함하고 있어서
+   * `now ∪ skyband(k)` 가 k 와 무관하게 같아진다(한 번 그렇게 재서 전부 +0.0% 가 나왔다).
+   * 밴드를 **뺀** 바닥(규정 상위 N ∪ 전원 상위 N)을 여기서 다시 만들어 그 위에 올린다.
+   */
+  const baseHead = [...all].filter((r) => r.rank !== null)
+    .sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0)).slice(0, PAGE_ROWS);
+  const baseAll = [...withValue].sort((a, b) => (a.rankAll ?? 0) - (b.rankAll ?? 0)).slice(0, PAGE_ROWS);
+  const baseIds = new Set([...baseHead, ...baseAll].map((r) => r.playerId));
+  for (const k of KSWEEP) {
+    const cur = ksweepRows.get(k) ?? [];
+    cur.push(filterable ? new Set([...baseIds, ...skyband(withValue, k)]).size : baseIds.size);
+    ksweepRows.set(k, cur);
+  }
 
   const mins = [...new Set(withValue.map((r) => r.value.denominator))].sort((a, b) => a - b);
   let badThresholds = 0, missTotal = 0, missWorst = 0, worstMin = 0, bandBad = 0;
@@ -298,6 +326,20 @@ console.log(`지금 평균 행: ${(results.reduce((a, r) => a + r.nowRows, 0) / 
 console.log(`대조 평균 행: ${(results.reduce((a, r) => a + r.bandRows, 0) / results.length).toFixed(1)}`);
 console.log(`대조 최대 행: ${Math.max(...results.map((r) => r.bandRows))}`);
 console.log(`대조안에서 답 못 내는 하한: ${results.reduce((a, r) => a + r.bandBad, 0)}`);
+
+if (KSWEEP.length > 0) {
+  console.log("\n# 보증 수 k 마다의 행 수 — **k 를 올리면 페이지가 그만큼 커진다**");
+  console.log(pad("k", 5) + rpad("평균행", 8) + rpad("최대행", 8) + rpad("합계행", 9) + rpad("첫 k 대비", 12));
+  const kbase = ksweepRows.get(KSWEEP[0]!)!.reduce((a, b) => a + b, 0);
+  for (const k of KSWEEP) {
+    const rs = ksweepRows.get(k)!;
+    const sum = rs.reduce((a, b) => a + b, 0);
+    console.log(
+      pad(String(k), 5) + rpad((sum / rs.length).toFixed(1), 8) + rpad(String(Math.max(...rs)), 8) +
+        rpad(String(sum), 9) + rpad(`+${(((sum / kbase) - 1) * 100).toFixed(1)}%`, 12),
+    );
+  }
+}
 
 console.log("\n# 시즌별 행 수(패널 합계 — 페이지 크기의 대리 지표)");
 for (const s of SEASONS) {
