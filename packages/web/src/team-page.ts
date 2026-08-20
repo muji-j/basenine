@@ -505,6 +505,17 @@ function monthBars(months: TeamMonth[]): RawHtml {
 }
 
 /**
+ * 「우승이 확정됐다」를 `raceVerdict` 가 내는 문장.
+ *
+ * ⚠**상수로 두는 이유는 아래 `pennantText` 가 이것과 겹치지 않으려고 이 값을 보기 때문**이다.
+ * 글자로 두 곳에 적으면 한쪽만 고쳐지는 날 **같은 페이지가 우승을 두 번 말한다.**
+ * ⚠**`raceVerdict` 의 JSDoc 앞에 둔다** — 처음에는 그 주석과 함수 사이에 끼워 넣어서
+ * **레이스 판정을 통째로 설명하는 그 주석이 이 문자열 상수의 문서가 됐다**(2026-08-21 ·
+ * 작업규칙 10 의 「자기 수정을 다시 읽는다」가 잡았다). 타입도 시험도 안 잡는 종류다.
+ */
+const TITLE_DECIDED = "優勝が決まりました";
+
+/**
  * 우승 경쟁 한 줄 — **`TeamRace` 의 뜻을 화면 문장으로 옮기는 유일한 자리**(M1).
  *
  * ⚠**단정할 수 있는 것만 단정한다.** 값의 뜻은 `packages/aggregate/src/race.ts` 가
@@ -554,14 +565,6 @@ function monthBars(months: TeamMonth[]): RawHtml {
  *   「아직 유도 못 함(정상)」과 「입력이 어긋남(버그)」이 같은 신호라, 단정하면 틀린 이유를 말하게 된다.
  *   후자는 **빌드 로그**로 보낸다(`query.ts` 의 `disagreed` 경고 · M7의 나머지 절반).
  */
-/**
- * 「우승이 확정됐다」를 `raceVerdict` 가 내는 문장.
- *
- * ⚠**상수로 두는 이유는 아래 `pennantText` 가 이것과 겹치지 않으려고 이 값을 보기 때문**이다.
- * 글자로 두 곳에 적으면 한쪽만 고쳐지는 날 **같은 페이지가 우승을 두 번 말한다.**
- */
-const TITLE_DECIDED = "優勝が決まりました";
-
 function raceVerdict(r: TeamRace): string {
   if (r.selfPossible === null) return "優勝争いはまだ判定できません";
   if (r.magic === 0) return TITLE_DECIDED;
