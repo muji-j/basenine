@@ -464,7 +464,18 @@ th .term{cursor:help}
 }
 .term:active{border-bottom-color:var(--tx);border-bottom-style:solid}
 
-#tip{position:absolute;z-index:40;max-width:min(30ch,86vw);padding:9px 11px;
+/* ⚠**넘치면 잘라서 굴린다.** 예전에는 max-height 도 overflow 도 없었고 자리잡기가 아래를
+   클램프하지 않아서, 가장 긴 설명(火消し率 555px)이 **6/6 뷰포트에서 화면 밖으로** 나갔다.
+   실측(2026-08-21 · 한 선수 페이지에서 열리는 용어 27개 · 중앙값 153px · 200px 초과 8/27):
+   320x568 에서 358px 초과 · 280x653 316 · 360x640 322 · 390x844 220 · 768x700 271 · 1280x900 171.
+   폭이 min(30ch,86vw) 라 **좁을수록 세로로 길어진다** — 280px 폭에서도 폭은 200px 로 풀린다.
+   ⚠**실제 max-height 는 스크립트가 자리마다 계산해 얹는다**(위/아래 중 넓은 쪽이 다르다).
+   여기 값은 스크립트가 못 도는 경우의 바닥이다.
+   ⚠**overscroll-behavior 로 안쪽 스크롤을 가둔다** — 안 그러면 설명 끝에서 페이지가 따라 움직인다.
+   ⚠**4문장짜리 caveat 는 툴팁이 담을 그릇이 아니다**(2026-08-21 감사 지적). 제대로 된 답은
+   용어집 페이지를 따로 두는 것이지만 그건 범위가 다른 별개 결정이다 — 여기서는 읽을 수 있게만 한다. */
+#tip{position:absolute;z-index:40;max-width:min(30ch,86vw);max-height:70vh;padding:9px 11px;
+  overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;
   background:var(--tx);color:var(--page);font-size:12px;line-height:1.5;
   box-shadow:0 2px 10px rgba(0,0,0,.22);animation:drop var(--fast) var(--ease)}
 #tip[hidden]{display:none}
@@ -2297,6 +2308,8 @@ if(eb)eb.addEventListener("click",()=>{
    조립하므로, 최초 1회만 훑으면 그 표의 용어에는 설명이 조용히 안 뜬다. */
 let bindTerms=null;
 const tip=$("#tip");
+/* 설명이 상단 바 밑으로 들어가지 않게 하는 한계선. 자리잡기가 매번 읽는다 */
+const topbar=$(".topbar");
 if(tip&&typeof GLOSSARY!=="undefined"){
   let current=null;
   const hide=()=>{
@@ -2333,20 +2346,41 @@ if(tip&&typeof GLOSSARY!=="undefined"){
     current=btn;btn.setAttribute("aria-expanded","true");
     place(btn);
   };
-  /* 화면 밖으로 나가지 않게 가로 위치를 접는다. 세로는 자리가 없으면 위로 올린다 */
+  /* 화면 밖으로 나가지 않게 가로 위치를 접고, **세로도 클램프한다.**
+     ⚠예전에는 가로만 접고 세로는 「위에 자리가 있으면 위」로만 골랐다. 그래서 긴 설명이
+     아래로 흘러 화면 밖으로 나갔다 — 실측 6/6 뷰포트(火消し率 555px · 320x568 에서 358px 초과).
+     들어갈 자리 자체가 없는 구간도 있다: 320x568 가용 480 · 360x640 가용 552 대 필요 555.
+     → ⑴ 들어가는 쪽을 고르고(둘 다 안 되면 넓은 쪽) ⑵ 그 쪽 가용 높이를 max-height 로 얹어
+       **넘치는 만큼은 툴팁 안에서 굴리게** 한다 ⑶ 위 한계는 상단 바 아래다(가리면 못 읽는다).
+     ⚠**높이는 max-height 를 푼 뒤에 재야 한다** — 안 그러면 지난번에 잘린 높이를 다시 쓴다. */
   const place=(btn)=>{
     if(!btn.getBoundingClientRect||!tip.getBoundingClientRect)return;
+    const keep=tip.scrollTop||0;
+    tip.style.maxHeight="";
     const r=btn.getBoundingClientRect();
-    const w=tip.offsetWidth||260,h=tip.offsetHeight||90;
-    const vw=(doc.documentElement&&doc.documentElement.clientWidth)||w;
+    const de=doc.documentElement;
+    const vw=(de&&de.clientWidth)||tip.offsetWidth||260;
+    const vh=(de&&de.clientHeight)||0;
     const sx=(typeof window!=="undefined"&&window.scrollX)||0;
     const sy=(typeof window!=="undefined"&&window.scrollY)||0;
-    let x=r.left+sx;
-    if(x+w>sx+vw-8)x=sx+vw-w-8;
-    if(x<sx+8)x=sx+8;
-    const above=r.top>h+12;
-    tip.style.left=x+"px";
-    tip.style.top=(above?r.top+sy-h-8:r.bottom+sy+8)+"px";
+    const bar=topbar&&topbar.getBoundingClientRect?topbar.getBoundingClientRect().bottom:0;
+    const gap=8;
+    const top0=(bar>0?bar:0)+4;
+    const bot0=vh>0?vh-8:0;
+    const need=tip.offsetHeight||90;
+    const up=r.top-gap-top0,down=bot0-r.bottom-gap;
+    /* 들어가는 쪽 우선, 둘 다 되면 위(예전 기본값), 둘 다 안 되면 넓은 쪽 */
+    const above=vh<=0?r.top>need+12:(need<=up?true:(need<=down?false:up>down));
+    if(vh>0)tip.style.maxHeight=Math.max(above?up:down,88)+"px";
+    const w=tip.offsetWidth||260,h=tip.offsetHeight||90;
+    let x=r.left;
+    if(x+w>vw-8)x=vw-w-8;
+    if(x<8)x=8;
+    let y=above?r.top-gap-h:r.bottom+gap;
+    if(vh>0){if(y+h>bot0)y=bot0-h;if(y<top0)y=top0}
+    tip.style.left=(x+sx)+"px";
+    tip.style.top=(y+sy)+"px";
+    tip.scrollTop=keep;
   };
   /* ⚠**정렬 버튼에는 탭으로 열지 않는다.** 표 헤더를 누르는 것은 「정렬」이라는 뜻이고,
      같은 탭이 설명도 열면 어느 쪽이 일어난 건지 알 수 없다. 호버·포커스만 받는다.
@@ -2360,10 +2394,30 @@ if(tip&&typeof GLOSSARY!=="undefined"){
       btn.addEventListener("focus",()=>show(btn));
       btn.addEventListener("blur",hide);
       if(!tapToOpen)return;
-      /* 터치: 같은 것을 다시 누르면 닫는다 */
+      /* ⚠**닫을지 열지는 「누르기 시작한 순간」의 상태로 정한다.**
+         터치의 한 번 탭은 브라우저가 click 앞에 mouseenter 와 focus 를 **합성**하는데,
+         그 둘이 이미 설명을 열어 놓으므로 click 시점에 current===btn 을 보면
+         **방금 자기가 연 것을 자기가 닫는다.** 실측(Chromium 151 · hasTouch:true · 390x844):
+         탭1 false · 탭2 true · 탭3 false — 즉 **첫 탭이 아무 일도 안 한 것처럼 보였다.**
+         ⚠**mouseenter 를 떼는 것만으로는 안 낫는다.** 같은 조건에서 mouseenter/mouseleave 를
+         matchMedia("(hover: hover) and (pointer: fine)") 로 막고 다시 재도 **탭1 은 여전히 false** 였다
+         (그때는 focus 가 대신 연다). 그래서 **여는 쪽이 아니라 토글의 기준**을 고친다.
+         ⚠**하이브리드(터치+마우스 노트북)에서도 같다** — 그 기기는 matchMedia 가 「마우스」로
+         분류하므로 게이트 방식이면 손가락 탭이 그대로 깨진다. 여기 방식은 기기가 아니라
+         **그 순간의 상태**를 보므로 마우스·터치·하이브리드가 같은 규칙 하나로 맞는다.
+         ⚠**mouseenter 를 남겨 두는 이유는 따로 있다**: 정렬 버튼에는 click 이 안 붙는데,
+         구단 페이지 108장에서 obp·slg·ops·pa·gidp·src·wrcPlus·woba·wraa·whip·innings·srp·
+         fip·k9·bb9·pitchesPerOut **16개 용어의 설명 경로가 정렬 버튼뿐**이다(배포물 전수).
+         호버를 마우스 전용으로 좁히면 손가락에서 그 16개가 통째로 닿을 수 없게 된다 —
+         §0-1(설치·계정 없이 URL 만으로) 쪽이 더 무겁다.
+         ⚠포인터 없이 온 click(키보드 Enter/Space)은 downOpen 이 null 이라 지금 상태로 토글한다. */
+      let downOpen=null;
+      btn.addEventListener("pointerdown",()=>{downOpen=current===btn});
       btn.addEventListener("click",(e)=>{
         if(e&&e.preventDefault)e.preventDefault();
-        if(current===btn)hide();else show(btn);
+        const wasOpen=downOpen===null?current===btn:downOpen;
+        downOpen=null;
+        if(wasOpen)hide();else show(btn);
       });
     });
   };
@@ -2374,8 +2428,32 @@ if(tip&&typeof GLOSSARY!=="undefined"){
     while(n){if(n===tip||(n.getAttribute&&n.getAttribute("data-term")))return;n=n.parentNode}
     hide();
   });
-  /* ⚠표를 가로로 밀면 설명만 제자리에 남는다 — 좌표를 문서 기준으로 잡기 때문이다. 닫는다 */
-  doc.addEventListener("scroll",hide,true);
+  /* ⚠**스크롤에 닫지 않는다 — 자리를 다시 잡는다.**
+     옛 주석이 말한 문제(「표를 가로로 밀면 설명만 제자리에 남는다」)는 **위치 문제**이지
+     닫아야 할 이유가 아니었다. 닫으면 **포커스로 여는 길이 통째로 막힌다** —
+     포커스가 스크롤을 유발하면 그 스크롤이 방금 연 설명을 닫기 때문이다.
+     실측(2026-08-21 · 한 선수 페이지의 용어 54개 · 같은 요소로 A/B):
+     최상단에서 focus() **3/54** 대 scrollIntoView 뒤 focus() **54/54**.
+     즉 실패한 51건은 전부 「스크롤을 유발한 포커스」였고, 그건 곧
+     **아직 못 본 용어에 처음 도달하는** 정지다.
+     ⚠capture 라 가로 스크롤과 컨테이너 스크롤(표 래퍼·탭줄)까지 잡는다 — 그쪽이야말로
+     자리를 다시 잡아야 하는 쪽이다.
+     ⚠**툴팁 안을 굴린 것은 무시한다** — 안 그러면 긴 설명을 읽으려고 굴릴 때마다 자리가 다시 잡힌다.
+     ⚠**한 프레임에 한 번만 계산한다** — 스크롤마다 재면 레이아웃을 강제로 다시 만든다.
+     ⚠**「휠로 굴리면 닫힌다」는 감각은 남는다** — 페이지가 움직이면 포인터 아래에서 용어가
+     빠져나가 mouseleave 가 나기 때문이다(실측: 호버로 연 뒤 휠 260px → 닫힘).
+     닫히지 않게 되는 것은 **키보드·터치로 연 경우**뿐이고, 그건 원래 닫히면 안 되는 쪽이다. */
+  let placing=0;
+  doc.addEventListener("scroll",(e)=>{
+    if(!current)return;
+    let n=e&&e.target;
+    while(n&&n.nodeType===1){if(n===tip)return;n=n.parentNode}
+    /* ⚠window 를 떼어내 부르지 않는다 — 브라우저에서 Illegal invocation 이 난다 */
+    const w=typeof window!=="undefined"?window:null;
+    if(!w||!w.requestAnimationFrame){place(current);return}
+    if(placing)return;
+    placing=w.requestAnimationFrame(()=>{placing=0;if(current)place(current)});
+  },true);
 }
 
 /* ── 成績の紋 ──
