@@ -5,7 +5,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { brokenLinks } from "../src/link-check.ts";
+import { brokenLinks, duplicateIds, linkIndex } from "../src/link-check.ts";
 
 const page = (path: string, hrefs: string[]): { path: string; content: string } => ({
   path,
@@ -241,4 +241,52 @@ test("⚠같은 문서 안에서만 찾는다 — 옆 페이지의 id 는 답이
     { path: "b.html", content: `<button id="tb-x"></button>` },
   ]);
   assert.equal(out.length, 1, "다른 문서의 id 로 통과시켰다");
+});
+
+/**
+ * ⚠**중복 id 는 이 검사기의 사각지대였다**(2026-08-19 감사).
+ * `LinkIndex.ids` 가 `Set` 이라 두 번 나온 id 도 「있다」로만 보였고,
+ * 앵커 검사와 ARIA 검사가 **둘 다 통과**하는 동안 브라우저는 먼저 나온 사본만 열었다.
+ * 실측: `dist/ranking.html` 9장에 중복 id **86종 / 172노드** ·
+ * `#pn-rankmetric-starter-era` 로 들어가면 열린 리그 패널이 언제나 `['central']`.
+ */
+test("⚠같은 문서에 id 가 두 번 있으면 잡는다 — 브라우저는 먼저 나온 하나만 연다", () => {
+  const out = duplicateIds([
+    linkIndex({ path: "a.html", content: `<div id="x"></div><div id="y"></div><div id="x"></div>` }),
+  ]);
+  assert.deepEqual(out, [{ path: "a.html", id: "x" }]);
+});
+
+/** ⚠**반대편도 잰다** — 늘 잡히는 검사면 위 시험은 아무것도 안 재는 것이다 */
+test("id 가 전부 다르면 아무것도 잡지 않는다", () => {
+  const out = duplicateIds([
+    linkIndex({ path: "a.html", content: `<div id="x"></div><div id="y"></div>` }),
+  ]);
+  assert.deepEqual(out, []);
+});
+
+/**
+ * ⚠**문서를 넘어선 중복은 중복이 아니다.** 모든 페이지가 헤더 검색창 `id="q"` 를 갖는 것이
+ * 정상인데 문서를 뭉쳐서 세면 전 화면이 「깨졌다」로 나와 검사기 자체가 무시당한다.
+ */
+test("⚠다른 문서에 같은 id 가 있는 것은 정상이다 — 문서 안에서만 센다", () => {
+  const out = duplicateIds([
+    linkIndex({ path: "a.html", content: `<input id="q">` }),
+    linkIndex({ path: "b.html", content: `<input id="q">` }),
+  ]);
+  assert.deepEqual(out, []);
+});
+
+/** 세 번 나와도 **한 건**으로 보고한다 — 같은 사실을 여러 번 말하지 않는다 */
+test("같은 id 가 세 번 나와도 한 건이다", () => {
+  const out = duplicateIds([
+    linkIndex({ path: "a.html", content: `<b id="x"></b><b id="x"></b><b id="x"></b>` }),
+  ]);
+  assert.deepEqual(out, [{ path: "a.html", id: "x" }]);
+});
+
+/** HTML 이 아닌 파일은 색인에 본문이 없다 — 중복도 없다 */
+test("HTML 이 아닌 파일에서는 id 를 세지 않는다", () => {
+  const out = duplicateIds([linkIndex({ path: "a.css", content: `#x{} #x{}` })]);
+  assert.deepEqual(out, []);
 });

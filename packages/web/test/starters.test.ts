@@ -1,8 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { renderStartersPage } from "../src/pages.ts";
-import { isNextProbable } from "../src/query.ts";
+import { isNextProbable, probableOf } from "../src/query.ts";
 import type { ProbableGame, ProbableSide, StartersPageData } from "../src/pages.ts";
+import type { TeamNextGame } from "../src/team-page.ts";
 import { colorOf } from "@bb-app/domain";
 import { context, pastSeasonContext, r } from "./fixtures.ts";
 
@@ -31,6 +32,20 @@ function side(over: Partial<ProbableSide> = {}): ProbableSide {
         line: { pa: 3, ab: 3, h: 3, double: 0, triple: 0, hr: 0, bb: 0, ibb: 0, hbp: 0, sf: 0, sh: 0, so: 0, roe: 0 },
         avg: r(1, 3),
         rbi: 1,
+      },
+      /**
+       * ⚠**打席 ≠ 打数인 행이 없으면 분모 시험이 공회전한다.**
+       * 위 두 행은 사사구가 0이라 打席과 打数가 같아서, 분모를 `line.pa`로 잘못 써도 값이 같다.
+       * 이 행은 배포물에서 실제로 났던 모양 그대로다 — `万波 9打席 2安打 .250`(= 2/8).
+       * 화면의 두 수(9·2)를 나누면 .222 이므로 **표시된 값과 안 맞는다**.
+       */
+      {
+        opponentId: "71575134",
+        opponentName: "坂本",
+        opponentTeam: "g",
+        line: { pa: 9, ab: 8, h: 2, double: 0, triple: 0, hr: 1, bb: 1, ibb: 0, hbp: 0, sf: 0, sh: 0, so: 0, roe: 0 },
+        avg: r(0.25, 8),
+        rbi: 2,
       },
     ],
     /**
@@ -114,6 +129,37 @@ test("투수 성적의 분모는 이닝이다 — 아웃 카운트를 그대로 
 test("상대 타자 표는 상대 팀 이름을 머리에 쓴다", () => {
   const out = renderStartersPage(data(), context());
   assert.match(out, /<th class="l">巨人の打者<\/th>/);
+});
+
+/**
+ * ⚠**打率의 분모는 打数다 — 이 표에만 그것이 없었다**(2026-08-19 감사 P1 · 배포물 실측).
+ *
+ * `dist/starters.html` 에서 문자열 「打数」가 **0회**였고, 화면은 `万波 9打席 2安打 .250`
+ * 처럼 **틀린 분모를 인접시켜** 놓고 있었다(9와 2를 나누면 .222). `郡司 8打席 3安打 .429`
+ * 도 같다. 「분모 없음」보다 나쁜 상태다 — 읽는 사람이 옆의 두 수로 검산하면 어긋난다.
+ *
+ * 저장소의 규칙은 이미 서 있었다:
+ *  · `assets.ts` — 「打率의 분모는 打数지 試合이 아니다 — 「인접」으로 지켜지지 않으므로 값에 붙인다」
+ *  · `player-page.ts` — 「比率の横の母数（打席数・打数）は設定で消せません」
+ * 다른 화면(順位表 · 구단 · 선수)은 전부 지키고 있었다. **어긋난 것은 이 표 하나였다.**
+ */
+test("⚠상대 타자 표의 打率에 분모(打数)가 붙는다 — 옆의 打席·安打를 나눈 값이 아니다", () => {
+  const out = renderStartersPage(data(), context());
+  const dens = [...out.matchAll(/<span class="den">(\d+)打数<\/span>/g)].map((m) => m[1]);
+  // 今季 3행(打数 6 · 3 · 8) + 通算 1행(打数 22). ⚠**未発表 쪽은 표 자체를 안 그린다**
+  assert.deepEqual(
+    dens,
+    ["6", "3", "8", "22"],
+    "打率 옆의 분모가 打数가 아니다 — 개수·순서·값 중 하나가 어긋났다",
+  );
+  // ⚠**값과 분모가 한 덩어리인지까지 본다.** 떨어져 있으면 어느 값의 분모인지 알 수 없다
+  assert.ok(out.includes('.250<span class="den">8打数</span>'), "9打席 2安打의 행이 .250 / 8打数로 안 나온다");
+  /**
+   * ⚠**打席을 打数라고 부르지 않았는지 못 박는다.** `line.pa` 를 분모로 쓰면 값은 그대로인데
+   * 분모만 9·24 가 되어, **틀린 분모를 더 그럴듯하게** 보여 주는 상태가 된다.
+   */
+  assert.ok(!dens.includes("9"), "打席(9)을 打数라고 불렀다");
+  assert.ok(!dens.includes("24"), "打席(24)을 打数라고 불렀다");
 });
 
 /**
@@ -319,4 +365,53 @@ test("⚠끝난 날을 「次の予告先発」이라고 부르지 않는다", (
  */
 test("⚠최신 경기일이 없으면(개막 전) 예고는 그대로 「다음」이다", () => {
   assert.equal(isNextProbable("2026-03-27", null), true, "개막 전날의 예고를 감췄다");
+});
+
+// ── 구단 페이지의 「予告先発」 고르기 ──────────────────────────────────────
+//
+// ⚠**이 함수가 조용히 늘 `null` 을 내면 12구단 페이지가 영원히 「発表待ち」다.**
+// 화면상 정상으로 보이는 침묵 실패라 눈으로는 못 잡는다(M7).
+// ⚠**실데이터로는 오늘 확인할 수 없다** — 2026-08-19 실측으로 DB 의 예고일은
+// `2026-08-16` 하나뿐이고 그 날은 이미 치러졌다(다음 경기는 8/19). 그래서 여기서 잰다.
+
+function next(over: Partial<TeamNextGame> = {}): TeamNextGame {
+  return { date: "2026-08-16", opponentCode: "g", opponentName: "巨人", home: true, venue: null, startTime: null, ...over };
+}
+
+test("⚠다음 경기와 같은 날의 예고만 붙인다 — 다른 날 것을 「次の」라고 부르지 않는다", () => {
+  const d = data();
+  assert.notEqual(probableOf(d, "d", next()), null, "같은 날인데 못 찾았다 — 이 시험이 공회전한다");
+  assert.equal(probableOf(d, "d", next({ date: "2026-08-19" })), null, "다른 날의 예고를 붙였다");
+});
+
+test("⚠상대 팀까지 맞춘다 — 같은 날 다른 경기를 집으면 남의 선발이 실린다", () => {
+  assert.equal(
+    probableOf(data(), "d", next({ opponentCode: "t" })),
+    null,
+    "상대가 다른 경기의 예고를 붙였다",
+  );
+});
+
+/** 어느 쪽이 `sides[0]` 인지는 정해져 있지 않다 — 「내 것」이 언제나 `mine` 이어야 한다 */
+test("⚠sides 의 순서가 뒤집혀도 「내 선발」이 mine 이다", () => {
+  const forward = probableOf(data(), "d", next());
+  assert.deepEqual(forward, { mine: "柳", theirs: null });
+
+  const flipped = data({ games: [game({ sides: [pending(), side()] })] });
+  assert.deepEqual(
+    probableOf(flipped, "d", next()),
+    { mine: "柳", theirs: null },
+    "sides 순서에 따라 내 선발과 상대 선발이 바뀌었다",
+  );
+  assert.deepEqual(
+    probableOf(flipped, "g", next({ opponentCode: "d", opponentName: "中日" })),
+    { mine: null, theirs: "柳" },
+    "상대 쪽에서 봤을 때가 뒤집히지 않았다",
+  );
+});
+
+/** 그 팀의 경기가 아예 없으면 `null`(= 発表待ち)이다. 「投手なし」가 아니다(M11) */
+test("⚠그 팀의 예고가 없으면 null 이다 — 0 이나 빈 이름으로 메우지 않는다", () => {
+  assert.equal(probableOf(data(), "t", next({ opponentCode: "s" })), null);
+  assert.equal(probableOf(data({ gameDate: null, games: [] }), "d", next()), null);
 });

@@ -1619,6 +1619,129 @@ test("⚠등번호는 완전일치다 — 부분일치면 「1」이 100번대�
   assert.deepEqual(names(await search(doc, "pickPitcher", "18")), ["山本"]);
 });
 
+// ─── 검색이 자르는 것을 말하는가 ────────────────────────────────────────
+
+/**
+ * ⚠**20건에서 조용히 잘리고 있었다**(2026-08-19 감사 P1 · HTTP 서빙 실측).
+ *
+ * 색인 698명에서 「田」 **81건 중 20** · 「中」 **86건 중 20** · 「山」 **48건 중 20** 이
+ * 표시됐고, 「N건 중 20건」도 「더 보기」도 없었다. 「佐」는 11건이라 전부 나왔다 —
+ * 즉 **잘린 화면과 안 잘린 화면이 똑같이 생겼다.** 21번째 선수는 「이 사이트에 없는 사람」이 된다.
+ * §0-1(3클릭 이내 도달)의 **주 경로가 침묵으로 실패**하는 것이고,
+ * 이 프로젝트가 순위표에는 「이 지표로 기록이 있는 선수 256人」까지 적으면서
+ * **가장 많이 쓰는 조작에만** 그 규율이 없었다(작업규칙 7).
+ */
+const MANY_INDEX = Array.from({ length: 25 }, (_, i) => ({
+  i: `t${i}`,
+  n: `田${i}`,
+  t: "チーム",
+}));
+
+/** 헤더 검색(`#q` → `#qhits`)의 뼈대. 목록 id 가 「Hits」가 아니라 `qhits` 다 */
+function buildHeaderSearch(): ReturnType<typeof makeDocument> {
+  const doc = makeDocument("");
+  const box = make("div", { class: "qbox" });
+  box.appendChild(make("input", { id: "q", type: "search", role: "combobox", "aria-expanded": "false" }));
+  box.appendChild(make("ul", { class: "qhits", id: "qhits", role: "listbox" }));
+  doc.body.appendChild(box);
+  return doc;
+}
+
+async function searchIn(
+  doc: ReturnType<typeof makeDocument>,
+  inputId: string,
+  listId: string,
+  term: string,
+): Promise<El[]> {
+  const input = doc.getElementById(inputId)!;
+  input.fire("focus");
+  input.value = term;
+  input.fire("input");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  return doc.querySelectorAll(`#${listId} li`);
+}
+
+/** 결과 항목만. 꼬리의 안내줄은 결과가 아니다 */
+function picks(items: El[]): El[] {
+  return items.filter((li) => li.className !== "more");
+}
+
+test("⚠검색이 20건에서 자른 것을 말한다 — 잠자코 자르면 21번째 선수가 「없는 사람」이 된다", async () => {
+  // ⚠**대상 질의가 실제로 20건을 넘는지 먼저 단언한다.** 안 넘으면 이 시험은 조용히 통과한다
+  assert.ok(
+    MANY_INDEX.filter((p) => p.n.includes("田")).length > 20,
+    "20건을 넘는 질의가 없다 — 이 시험이 공회전한다",
+  );
+  const doc = buildHeaderSearch();
+  run(doc, { index: MANY_INDEX });
+  const items = await searchIn(doc, "q", "qhits", "田");
+
+  assert.equal(picks(items).length, 20, "그리는 인원이 20명이 아니다");
+  const tail = items.at(-1)!;
+  assert.equal(tail.getAttribute("class"), "more", "목록 끝에 안내줄이 없다");
+  assert.match(tail.textContent, /25人中20人を表示/, "「몇 명 중 몇 명」을 말하지 않는다");
+  // ⚠**자르기 전 수여야 한다.** 자른 뒤에 세면 「20人中20人」이 되어 아무 말도 안 한 것과 같다
+  assert.ok(!tail.textContent.includes("20人中"), "자른 뒤의 수를 총건수라고 말했다");
+});
+
+/**
+ * ⚠**보내는 곳이 실제로 그 질의를 받는지 확인하고 링크를 만들었다.**
+ * `players.html` 은 서버가 전 선수를 그려 두고 클라이언트가 좁히기만 얹는 화면이라,
+ * `?q=` 를 읽어 좁힌 상태로 열 수 있다. 받지 못하는 곳이었다면 문구만 냈어야 한다.
+ */
+test("⚠꼬리는 選手一覧으로 그 질의를 달고 간다 — 다시 치게 하면 안내가 빈말이 된다", async () => {
+  const doc = buildHeaderSearch();
+  run(doc, { index: MANY_INDEX });
+  const tail = (await searchIn(doc, "q", "qhits", "田")).at(-1)!;
+  const a = tail.querySelector("a");
+  assert.notEqual(a, null, "갈 곳이 없다");
+  assert.equal(a!.getAttribute("href"), `players.html?q=${encodeURIComponent("田")}`);
+  /**
+   * ⚠**이 줄은 실기가 잡은 결함이다**(2026-08-19 Playwright). 처음 만들 때 안내줄에
+   * `role="option" aria-disabled="true"` 를 붙였는데, 그러면 그 안의 링크가
+   * **「disabled」로 판정돼 눌리지 않는다** — 「여기로 가라」고 써 놓고 「못 쓴다」고 말하는 꼴이다.
+   * 읽기로는 안 잡혔고 브라우저가 잡았다.
+   */
+  assert.equal(tail.getAttribute("aria-disabled"), null, "갈 수 있는 줄을 「쓸 수 없다」고 표시했다");
+});
+
+test("⚠20건 이하면 안내줄을 만들지 않는다 — 안 자른 것을 잘랐다고 하면 그것도 거짓말이다", async () => {
+  const doc = buildHeaderSearch();
+  run(doc, { index: MANY_INDEX });
+  // 「田1」은 田1·田10〜田19 = 11건. 20 이하다
+  const items = await searchIn(doc, "q", "qhits", "田1");
+  assert.equal(picks(items).length, 11, "표본이 11건이 아니다 — 이 시험이 재는 것이 바뀌었다");
+  assert.equal(items.length, 11, "자르지 않았는데 안내줄이 붙었다");
+});
+
+/**
+ * ⚠**「対戦を選ぶ」의 검색창은 고르는 중이다.** 여기서 선수 일람으로 보내면 반대쪽 선택이
+ * 날아간다 — 안내는 하되 페이지를 떠나는 링크는 만들지 않는다.
+ */
+test("⚠고르는 중인 검색창은 안내만 하고 화면을 떠나지 않는다", async () => {
+  const doc = buildPicker();
+  run(doc, { index: MANY_INDEX });
+  const items = await searchIn(doc, "pickPitcher", "pickPitcherHits", "田");
+  const tail = items.at(-1)!;
+  assert.match(tail.textContent, /25人中20人を表示/, "고르는 화면에서는 총건수를 안 말한다");
+  assert.equal(tail.querySelector("a"), null, "고르는 중인데 화면을 떠나는 링크를 놓았다");
+});
+
+/**
+ * ⚠**화살표 이동이 안내줄에 멈추지 않는다.** 멈추면 Enter 로 아무 데도 못 가는 상태가 되고,
+ * 마지막 선수 다음에 「고를 수 없는 것」이 하나 낀 것처럼 보인다.
+ */
+test("⚠안내줄은 골라지지 않는다 — 화살표가 스무 번째에서 멈춘다", async () => {
+  const doc = buildHeaderSearch();
+  const { location } = run(doc, { index: MANY_INDEX });
+  const input = doc.getElementById("q")!;
+  await searchIn(doc, "q", "qhits", "田");
+  for (let n = 0; n < 25; n += 1) input.fire("keydown", { key: "ArrowDown" });
+  input.fire("keydown", { key: "Enter" });
+  // 20번째(= 田19)에서 멈춘다. 안내줄이 골라졌다면 여기서 아무 데도 안 가거나 딴 곳으로 간다
+  assert.equal(location.href, "players/t19.html", "화살표 끝이 스무 번째 선수가 아니다");
+});
+
 test("⚠등번호가 없는 선수에게 자리를 만들지 않는다 — 「―」로 채우면 198줄이 같은 기호가 된다", async () => {
   const doc = buildPicker();
   run(doc, { index: KANA_INDEX });
@@ -1698,6 +1821,49 @@ test("⚠첫 화면의 좁히기도 읽는 법·등번호로 찾는다 — 검�
   filter.value = "佐";
   filter.fire("input");
   assert.deepEqual(rosterNames(doc), ["佐藤"]);
+});
+
+/**
+ * ⚠**헤더 검색의 「선수一覧ですべて見る」가 닿는 곳이 여기다.**
+ * 그 링크는 `?q=` 를 달고 오는데 이 화면이 안 읽으면, 안내를 따라온 사람은
+ * **698명 목록 앞에서 처음부터 다시** 쳐야 한다 — 안내가 빈말이 된다.
+ * ⚠**서버는 이 값을 모른다.** 목록은 전원이 그려져 있고 좁히기만 얹으므로,
+ * 스크립트가 없으면 전 선수 목록이 그대로 나온다(§0-1) — 그래서 문구도 「すべて見る」다.
+ */
+test("⚠?q= 로 들어오면 그 말로 좁힌 상태에서 열린다", () => {
+  const doc = buildKanaRoster();
+  run(doc, { location: { search: `?q=${encodeURIComponent("やまもと")}`, href: "" } });
+  assert.deepEqual(rosterNames(doc), ["山本"], "?q= 를 안 읽었다");
+  assert.equal(doc.getElementById("rosterFilter")!.value, "やまもと", "검색창이 무엇으로 좁혔는지 안 말한다");
+  assert.equal(doc.getElementById("rosterCount")!.textContent, "1人", "몇 명이 남았는지 안 고쳤다");
+});
+
+test("⚠?q= 가 아닌 것으로는 좁히지 않는다 — 첫 방문이 빈 화면이 되면 안 된다", () => {
+  const doc = buildKanaRoster();
+  run(doc);
+  assert.equal(rosterNames(doc).length, 3, "질의어가 없는데 좁혔다");
+  assert.equal(doc.getElementById("rosterFilter")!.value, "");
+
+  /**
+   * ⚠**다른 화면이 쓰는 파라미터로 좁히면 안 된다.** `?vs=` 는 선수 페이지에서 **상대 투수를
+   * ID 로 못 박는 값**이라(M10), 그것으로 이름 좁히기를 걸면 선수 일람이 통째로 0건이 된다.
+   */
+  const other = buildKanaRoster();
+  run(other, { location: { search: `?vs=${encodeURIComponent("山本")}`, href: "" } });
+  assert.equal(rosterNames(other).length, 3, "?q= 가 아닌 값으로 좁혔다");
+  assert.equal(other.getElementById("rosterFilter")!.value, "");
+});
+
+/**
+ * ⚠**`decodeURIComponent` 는 깨진 % 열에서 던진다.** 여기서 던지면 그 뒤의 초기화가
+ * 통째로 죽어 화면 전체가 조용히 고장난다 — 주소창 한 글자로 일어날 수 있는 일이다.
+ */
+test("⚠깨진 ?q= 로도 화면이 죽지 않는다", () => {
+  const doc = buildKanaRoster();
+  run(doc, { location: { search: "?q=%E5%B1%B1%", href: "" } });
+  // 못 푸는 값은 원문 그대로 쓴다. 결과가 0건이어도 **화면은 살아 있다**
+  assert.equal(doc.getElementById("rosterFilter")!.value, "%E5%B1%B1%");
+  assert.equal(doc.getElementById("rosterCount")!.textContent, "0人");
 });
 
 /**
@@ -1952,4 +2118,378 @@ test("⚠넘치지 않으면 아무것도 붙이지 않는다", () => {
   doc.body.appendChild(fits);
   run(doc);
   assert.equal(fits.getAttribute("tabindex"), null, "넘치지도 않는데 탭 정지가 붙었다");
+});
+
+// ─── 최애 구단 ──────────────────────────────────────────────────────────
+/**
+ * ⚠**최애는 하나다.** 「내비의 가장 첫 자리」가 하나이기 때문이다.
+ * 선수 즐겨찾기(`state.favs`)는 다른 개념이라 건드리지 않는다.
+ *
+ * ⚠**서버는 어느 화면에서나 「球団」을 그린다**(§0-1). 스크립트가 하는 일은
+ * 라벨과 링크를 바꾸는 것뿐이고, JS 가 없으면 구단 목록으로 간다 — 길이 끊기지 않는다.
+ */
+function favTeamButton(): El {
+  return make("button", {
+    "data-favteam": "t",
+    "data-favname": "阪神",
+    /**
+     * ⚠**경로를 클라이언트가 짓지 않는다**(M1). `teamPath()` 가 「한 곳에서만 만든다 —
+     * 갈리면 어딘가는 404다」로 선언된 함수인데 클라이언트는 그 밖에 있다.
+     * → **서버가 만든 값**을 버튼이 실어 온다(`teams-page.test.ts` 가 그 일치를 잰다).
+     */
+    "data-favpath": "teams/t.html",
+    "aria-pressed": "false",
+  });
+}
+
+/**
+ * 내비 한 줄. `aria-current` 는 서버가 「이 문서」에만 적는다.
+ *
+ * ⚠**서버가 그리는 그대로 짓는다** — 라벨 `球団` 과 `teams.html` 링크가 여기 있어야 한다.
+ * 클라이언트는 해제할 때 **서버가 그린 것을 되돌릴 뿐** 라벨을 스스로 짓지 않기 때문이다
+ * (경로는 M1 이 `teamPath()` 로 못 박았고 라벨은 i18n 대상이다 · §7).
+ * ⚠**이 픽스처가 실물과 어긋나면 시험은 실물을 재지 않는다.** 실물 쪽은
+ * `layout.test.ts` 의 「내비 첫 항목이 球団이고 구단 목록으로 간다」가 따로 못 박는다.
+ *
+ * ⚠**표식의 「값」은 이 화면이 어느 구단의 상세인가다**(2026-08-19 검토 ④). 구단 상세도 구단 목록도
+ * 서버가 같은 링크를 그리는데, 최애를 걸면 그 링크가 **최애 구단의 페이지**로 바뀐다 —
+ * 「이 링크가 지금 문서인가」를 이 값 없이는 판정할 수 없다. 구단 상세가 아니면 빈 문자열이다.
+ */
+function navTeamLink(doc: ReturnType<typeof makeDocument>, current: string | null, team = ""): El {
+  const nav = make("nav", { class: "tnav" });
+  const attrs: Record<string, string> = { href: "../teams.html", "data-navteam": team };
+  if (current !== null) attrs["aria-current"] = current;
+  const a = make("a", attrs);
+  a.textContent = "球団";
+  nav.appendChild(a);
+  doc.body.appendChild(nav);
+  return a;
+}
+
+/** 구단 목록 화면의 최소 모양 — 내비 + 최애 버튼 */
+function withNavAndFav(current: string | null = "page"): ReturnType<typeof makeDocument> {
+  const doc = buildPage();
+  navTeamLink(doc, current);
+  doc.body.appendChild(favTeamButton());
+  return doc;
+}
+
+/**
+ * 구단 목록 **밖의** 화면 — 내비는 있고 최애 버튼은 없다.
+ *
+ * ⚠**이쪽이 거의 전부다.** 분모를 정확히 쓴다(작업규칙 7 · 2026-08-19 검토 ⑤에서 정정 —
+ * 예전 주석은 「dist 15,443장 중 … 나머지 15,434장」이었는데 **15,443 은 assets/json 을 포함한
+ * 전 파일 수**라 화면 수가 아니었다). 실측(9시즌 빌드 직후):
+ * ```
+ * dist 총 파일   15,443   (HTML 15,340 + assets/json 103)
+ * 내비 보유      15,340   (전 HTML)
+ * 최애 버튼 보유      9   (시즌당 1장 = 구단 목록)
+ * → 버튼 없는 화면 15,331장
+ * ```
+ * 클라이언트가 구단 이름·경로를 **버튼에서만** 읽으면 그 15,331장에서 조용히 열화한다.
+ */
+function withNavOnly(): ReturnType<typeof makeDocument> {
+  const doc = buildPage();
+  navTeamLink(doc, null);
+  return doc;
+}
+
+test("⚠최애를 지정하면 내비 첫 항목이 그 구단이 된다", () => {
+  const doc = withNavAndFav();
+  run(doc, { storage: makeStorage() });
+  doc.querySelectorAll("[data-favteam]")[0]!.fire("click");
+  const a = doc.querySelectorAll("[data-navteam]")[0]!;
+  assert.match(a.getAttribute("href") ?? "", /teams\/t\.html$/);
+  assert.equal(a.textContent, "阪神");
+  assert.equal(doc.querySelectorAll("[data-favteam]")[0]!.getAttribute("aria-pressed"), "true");
+});
+
+test("⚠다시 누르면 해제되고 내비가 球団으로 돌아온다", () => {
+  const doc = withNavAndFav();
+  run(doc, { storage: makeStorage() });
+  const btn = doc.querySelectorAll("[data-favteam]")[0]!;
+  btn.fire("click");
+  btn.fire("click");
+  const a = doc.querySelectorAll("[data-navteam]")[0]!;
+  assert.match(a.getAttribute("href") ?? "", /teams\.html$/);
+  assert.equal(a.textContent, "球団");
+  assert.equal(btn.getAttribute("aria-pressed"), "false");
+});
+
+test("최애는 이 브라우저에 남는다 — 다시 열어도 살아 있다", () => {
+  const storage = makeStorage();
+  const first = withNavAndFav();
+  run(first, { storage });
+  first.querySelectorAll("[data-favteam]")[0]!.fire("click");
+  const second = withNavAndFav();
+  run(second, { storage });
+  assert.match(second.querySelectorAll("[data-navteam]")[0]!.getAttribute("href") ?? "", /teams\/t\.html$/);
+  assert.equal(second.querySelectorAll("[data-favteam]")[0]!.getAttribute("aria-pressed"), "true");
+});
+
+/**
+ * ⚠**여기가 이 기능의 진짜 시험이다.**
+ *
+ * 최애 버튼은 **구단 목록 화면에만** 있는데 내비는 **전 페이지**에 있다.
+ * 이름을 버튼에서만 읽으면 다른 화면에서는 읽을 것이 없어 코드 대문자(「T」)로 떨어지고,
+ * 경로도 만들 수 없다. **화면은 멀쩡히 그려지므로 눈으로는 안 잡힌다.**
+ * → 지정할 때 이름과 경로를 함께 남긴다.
+ */
+test("⚠구단 목록 밖의 화면에서도 이름이 나온다 — 「T」로 떨어지지 않는다", () => {
+  const storage = makeStorage();
+  const list = withNavAndFav();
+  run(list, { storage });
+  list.querySelectorAll("[data-favteam]")[0]!.fire("click");
+
+  const other = withNavOnly();
+  run(other, { storage });
+  const a = other.querySelectorAll("[data-navteam]")[0]!;
+  assert.equal(a.textContent, "阪神", "최애 버튼이 없는 화면에서 내비 라벨이 코드로 떨어졌다");
+  assert.match(a.getAttribute("href") ?? "", /teams\/t\.html$/);
+});
+
+/**
+ * ⚠**「이 문서」라고 말하면 거짓말이 된다.**
+ *
+ * 구단 목록 화면에서 서버는 이 링크에 `aria-current="page"` 를 적는다 — 링크가 이 문서를
+ * 가리키기 때문이다. 최애가 걸리면 링크는 **구단 페이지**로 가므로 그 말이 틀린다.
+ * 같은 구획 안이라는 뜻의 `true` 로 낮춘다(구단 상세 화면이 이미 쓰는 값이다).
+ */
+test("⚠최애가 걸리면 내비는 「이 문서」가 아니다 — aria-current 를 낮춘다", () => {
+  const doc = withNavAndFav("page");
+  run(doc, { storage: makeStorage() });
+  const a = doc.querySelectorAll("[data-navteam]")[0]!;
+  assert.equal(a.getAttribute("aria-current"), "page", "서버가 적은 값이 지정 전에 이미 바뀌었다");
+  const btn = doc.querySelectorAll("[data-favteam]")[0]!;
+  btn.fire("click");
+  assert.equal(a.getAttribute("aria-current"), "true");
+  btn.fire("click");
+  assert.equal(a.getAttribute("aria-current"), "page", "해제했는데 서버가 적은 값으로 안 돌아왔다");
+});
+
+/**
+ * ⚠**최애는 하나다** — 「내비의 첫 자리」가 하나이기 때문이다.
+ * 다른 구단을 누르면 **갈아타는** 것이지 늘어나는 것이 아니다(선수 즐겨찾기와 갈리는 지점).
+ * 실제 화면에는 버튼이 12개 있는데 앞의 시험들은 하나짜리 픽스처라 이 규칙을 못 잰다.
+ */
+test("⚠다른 구단을 누르면 갈아탄다 — 최애가 둘이 되지 않는다", () => {
+  const doc = buildPage();
+  navTeamLink(doc, null);
+  doc.body.appendChild(favTeamButton());
+  doc.body.appendChild(
+    make("button", {
+      "data-favteam": "g",
+      "data-favname": "巨人",
+      "data-favpath": "teams/g.html",
+      "aria-pressed": "false",
+    }),
+  );
+  run(doc, { storage: makeStorage() });
+  const [tigers, giants] = doc.querySelectorAll("[data-favteam]");
+  tigers!.fire("click");
+  giants!.fire("click");
+  assert.equal(giants!.getAttribute("aria-pressed"), "true");
+  assert.equal(tigers!.getAttribute("aria-pressed"), "false", "최애가 둘이 됐다");
+  const a = doc.querySelectorAll("[data-navteam]")[0]!;
+  assert.equal(a.textContent, "巨人");
+  assert.match(a.getAttribute("href") ?? "", /teams\/g\.html$/);
+});
+
+/**
+ * ⚠**저장값은 서버 데이터의 사본이다.**
+ *
+ * 약칭이 바뀌거나 경로 규칙이 바뀌면 사본만 옛 값을 들고 남는데, **그 사본은 이 브라우저에만
+ * 있어 서버가 고칠 방법이 없다.** 경로가 낡으면 404 라도 나지만 **약칭이 낡으면 아무 일도 안 난다** —
+ * 내비가 **틀린 구단 이름을 조용히** 보여준다. 이 저장소가 가장 싫어하는 모양이다.
+ * ⚠**경로 규칙은 바뀔 예정이다** — Pages 파일 상한 때문에 파일 수를 줄이는 안이 대기 중이다
+ * (CLAUDE.md §2-2 「2시즌만 더 넣으면 벽이다」).
+ * → 정본이 눈앞에 있는 화면(구단 목록)에서 사본을 고친다.
+ */
+test("⚠구단 목록에 서면 낡은 사본을 고친다 — 틀린 이름을 조용히 들고 있지 않는다", () => {
+  const storage = makeStorage();
+  storage.setItem(
+    "npb-meikan-layout",
+    JSON.stringify({ favTeam: { code: "t", name: "旧タイガース", path: "old/t.html" } }),
+  );
+  const doc = withNavAndFav(null);
+  run(doc, { storage });
+  const a = doc.querySelectorAll("[data-navteam]")[0]!;
+  assert.equal(a.textContent, "阪神", "눈앞의 정본으로 안 고쳤다");
+  assert.match(a.getAttribute("href") ?? "", /teams\/t\.html$/);
+
+  // ⚠**화면만 고치면 다음 화면에서 다시 낡은 값이 나온다** — 저장까지 갔는지 본다
+  const other = withNavOnly();
+  run(other, { storage });
+  assert.equal(other.querySelectorAll("[data-navteam]")[0]!.textContent, "阪神", "사본이 안 고쳐졌다");
+});
+
+/**
+ * ⚠**위 시험의 짝 — 「모르면 손대지 않는다」쪽이 시험 밖이었다**(2026-08-20 최종 검토 ②).
+ *
+ * `refreshFavTeam` 은 눈앞의 정본으로 낡은 사본을 고치는데, **정본을 못 읽었을 때는 손대지 않는다**
+ * (`if(fresh===null…)return;`). 배포 전 HTML 을 캐시에 들고 있는 브라우저의 버튼에는
+ * `data-favpath` 가 없어 `readFavTeam` 이 `null`(**모른다**)을 내기 때문이다 — 그 `null` 을
+ * 「없다」로 쓰면 이미 지정해 둔 최애가 조용히 지워진다(M11).
+ *
+ * ⚠**그 가지를 1건도 안 재고 있었다.** 실측(2026-08-20 리뷰어): `fresh===null` 일 때
+ * `state.favTeam = null` 로 바꿔도 **806/806 이 그대로 초록**이었다. 아래 클릭 경로 시험
+ * (「경로를 모르는 버튼을 눌러도 …」)은 **저장이 `g` 인데 화면 버튼이 `t`** 라
+ * `if(!b)return` 에서 빠져 이 가지를 한 번도 안 태운다.
+ * → 여기서는 **저장과 버튼의 코드를 `t` 로 맞춰** 가지를 태우고, 그 버튼에서 `data-favpath` 만 뺀다.
+ *
+ * ⚠**낡은 이름이 그대로 남는 것이 정답이다.** 「그 구단이 사라졌다」와 「지금 이 화면에서 못 읽었다」를
+ * 구별할 수 없으므로, 지우면 사용자 설정을 우리 추측으로 날리는 것이 된다.
+ * ⚠**뮤테이션 확인(2026-08-20 실측 · 둘 다 이 한 본만 떨어진다)**:
+ * ⑴ `fresh===null` 일 때 `state.favTeam=null` → `packages/web/test` **807본 중 FAIL 1 · ERROR 0**
+ *    (라벨 단언이 잡는다: `球団` !== `旧タイガース`).
+ * ⑵ 화면은 그대로 두고 **저장만** 지우는 판 → `client.test.ts` 108본 중 FAIL 1 · ERROR 0
+ *    (아래 저장 단언이 잡는다 — 그래서 저장 단언은 라벨 단언의 중복이 아니다).
+ */
+test("⚠경로를 못 읽으면 최애를 손대지 않는다 — 「모른다」로 알던 것을 지우지 않는다(M11)", () => {
+  const storage = makeStorage();
+  storage.setItem(
+    "npb-meikan-layout",
+    JSON.stringify({ favTeam: { code: "t", name: "旧タイガース", path: "old/t.html" } }),
+  );
+  const doc = buildPage();
+  navTeamLink(doc, null);
+  // ⚠**저장과 같은 코드(`t`)의 버튼이다** — 그래야 `refreshFavTeam` 이 `if(!b)return` 에서 안 빠진다.
+  //   그리고 **`data-favpath` 가 없다** — 배포 전 HTML 을 들고 있는 브라우저의 모양 그대로다
+  doc.body.appendChild(make("button", { "data-favteam": "t", "data-favname": "阪神", "aria-pressed": "false" }));
+  run(doc, { storage });
+
+  const a = doc.querySelectorAll("[data-navteam]")[0]!;
+  assert.equal(a.textContent, "旧タイガース", "못 읽은 정본이 알던 이름을 지웠다");
+  assert.match(a.getAttribute("href") ?? "", /old\/t\.html$/, "못 읽은 정본이 알던 링크를 지웠다");
+
+  // ⚠**저장까지 남아 있는지 본다** — 화면만 버텨도 다음 방문에 사라지면 같은 결함이다
+  const saved = JSON.parse(storage.getItem("npb-meikan-layout") ?? "{}") as {
+    favTeam?: { name?: string; path?: string } | null;
+  };
+  assert.equal(saved.favTeam?.name, "旧タイガース", "저장된 최애가 지워졌다");
+  assert.equal(saved.favTeam?.path, "old/t.html", "저장된 경로가 지워졌다");
+});
+
+/**
+ * ⚠**저장이 막힐 수 있다**(프라이빗 모드 등). 기존 `load`/`save`/`toggleFav` 와 같은 규칙 —
+ * 저장은 조용히 실패하되 **이번 방문 동안의 화면은 돈다.**
+ */
+test("저장이 막혀도 최애 지정은 이번 방문 동안 동작한다", () => {
+  const doc = withNavAndFav();
+  run(doc, { storage: makeStorage(true) });
+  doc.querySelectorAll("[data-favteam]")[0]!.fire("click");
+  assert.equal(doc.querySelectorAll("[data-navteam]")[0]!.textContent, "阪神");
+});
+
+/**
+ * ⚠**「모른다」가 「없음」을 뜻하게 두지 않는다**(M11).
+ *
+ * 배포 전 HTML 을 캐시에 들고 있는 브라우저의 버튼에는 `data-favpath` 가 없다 —
+ * `readFavTeam` 은 그때 **`null`(모른다)**을 낸다. 그 `null` 이 그대로 `state.favTeam` 에 들어가면
+ * **「미지정」과 같은 값**이 되어, 이미 지정해 둔 최애가 조용히 지워진다.
+ * 실측(2026-08-19 검토 ②): fav=巨人 상태에서 `data-favpath` 없는 阪神 버튼을 누르면
+ * 라벨이 `巨人 → 球団` 이 되고 저장이 `{"favTeam":null}` 이 됐다.
+ *
+ * ⚠**바로 위 `refreshFavTeam` 은 정반대로 짜여 있었다**(`if(fresh===null…)return;`) —
+ * 같은 상황에 두 경로가 다른 규칙을 쓰고 있었다(M1). 「모르면 손대지 않는다」쪽이 옳다.
+ */
+test("⚠경로를 모르는 버튼을 눌러도 이미 지정된 최애를 지우지 않는다(M11)", () => {
+  const storage = makeStorage();
+  storage.setItem(
+    "npb-meikan-layout",
+    JSON.stringify({ favTeam: { code: "g", name: "巨人", path: "teams/g.html" } }),
+  );
+  const doc = buildPage();
+  navTeamLink(doc, null);
+  // ⚠**`data-favpath` 가 없다** — 배포 전 HTML 을 들고 있는 브라우저의 모양 그대로다
+  doc.body.appendChild(make("button", { "data-favteam": "t", "data-favname": "阪神", "aria-pressed": "false" }));
+  run(doc, { storage });
+
+  const a = doc.querySelectorAll("[data-navteam]")[0]!;
+  assert.equal(a.textContent, "巨人", "누르기 전부터 최애가 안 걸려 있다 — 이 시험은 아무것도 재고 있지 않다");
+  doc.querySelectorAll("[data-favteam]")[0]!.fire("click");
+
+  assert.equal(a.textContent, "巨人", "모른다는 값이 알던 것을 지웠다");
+  assert.match(a.getAttribute("href") ?? "", /teams\/g\.html$/);
+  const saved = JSON.parse(storage.getItem("npb-meikan-layout") ?? "{}") as { favTeam?: { name?: string } | null };
+  assert.equal(saved.favTeam?.name, "巨人", "저장된 최애까지 지워졌다");
+});
+
+/**
+ * ⚠**주석이 코드보다 강하게 말하고 있었다**(2026-08-19 검토 ③).
+ *
+ * `readFavTeam` 위에는 「**경로는 상대경로만 받는다.** 저장값이 상하거나 남이 심어도 이 링크가
+ * 바깥으로 나가지 않는다」고 적혀 있는데, 실제 검사는 `indexOf(":")` 와 `charAt(0)==="/"` 둘뿐이라
+ * **역슬래시와 선행 공백**이 빠져 있었다. 브라우저 URL 파서는 `\` 를 `/` 로 정규화하고 선행 공백을
+ * 버리므로 둘 다 바깥 주소로 읽힌다(실측: BASE 가 빈 문자열인 화면이 dist 에 91장).
+ *
+ * ⚠악용에는 동일 출처 스크립트 실행이 필요해 실질 위험은 낮다 — 고치는 이유는
+ * **주석이 참이 되게 하는 것**이다. 그래서 검사를 화이트리스트로 바꿨다.
+ */
+test("⚠최애 경로는 화이트리스트를 통과한 상대경로만이다 — 주석이 약속한 그대로", () => {
+  // ⚠**먼저 통제군이다.** 이게 없으면 아래 다섯 입력은 「저장을 아예 안 읽는다」로도 전부 통과한다
+  const ok = makeStorage();
+  ok.setItem("npb-meikan-layout", JSON.stringify({ favTeam: { code: "t", name: "阪神", path: "teams/t.html" } }));
+  const good = withNavOnly();
+  run(good, { storage: ok });
+  assert.equal(good.querySelectorAll("[data-navteam]")[0]!.textContent, "阪神", "멀쩡한 경로까지 막혔다");
+
+  const bad = [
+    "\\\\evil.example/x.html", // 역슬래시 둘 — 브라우저가 「//」 로 정규화한다
+    " //evil.example/x.html", // 선행 공백 — 브라우저가 버린다
+    "/evil", // 루트 절대경로(상대경로가 아니다)
+    "/evil.html", // ⚠글자와 확장자만 보면 통과한다 — 선행 「/」 검사가 살아 있어야 막힌다
+    ".html", // ⚠확장자만 남은 값 — 우리가 만드는 경로가 아니다(내비가 404 로 간다)
+  ];
+  for (const path of bad) {
+    const storage = makeStorage();
+    storage.setItem("npb-meikan-layout", JSON.stringify({ favTeam: { code: "t", name: "阪神", path } }));
+    const doc = withNavOnly();
+    run(doc, { storage });
+    const a = doc.querySelectorAll("[data-navteam]")[0]!;
+    assert.equal(a.getAttribute("href"), "../teams.html", `거부해야 할 경로가 링크가 됐다: ${JSON.stringify(path)}`);
+    assert.equal(a.textContent, "球団", `경로는 막았는데 라벨만 바뀌었다: ${JSON.stringify(path)}`);
+  }
+});
+
+/**
+ * ⚠**구단 상세 화면에서 서버는 이 링크에 `aria-current="true"` 를 적는다**(실측 `dist/teams/t.html`).
+ *
+ * 서버가 적은 그 말은 **`teams.html` 로 가는 링크**에 대한 것이다. 최애가 걸리면 링크는
+ * **최애 구단의 페이지**로 바뀌므로 다시 재야 한다:
+ *
+ * ```
+ * 바뀐 목적지가 이 문서다(구단 상세 = 최애)      → page
+ * 이 문서가 구단 목록이다(목록 → 그 안의 한 장)  → true
+ * 그 밖(다른 구단의 상세)                        → 아무 말도 하지 않는다
+ * ```
+ *
+ * 마지막 줄이 2026-08-19 검토 ④가 지적한 자리다. 巨人 페이지에서 라벨이 「阪神」인 링크에
+ * `true` 가 남아 있으면 **현재 항목이 아닌 것을 현재라고 말하는 것**이 된다.
+ */
+function teamDetailWithFav(here: string, favCode: string, favName: string): ReturnType<typeof makeDocument> {
+  const storage = makeStorage();
+  storage.setItem(
+    "npb-meikan-layout",
+    JSON.stringify({ favTeam: { code: favCode, name: favName, path: `teams/${favCode}.html` } }),
+  );
+  const doc = buildPage();
+  // 서버가 구단 상세에 그리는 그대로 — 구획 표시(`true`)와 **이 화면의 구단 코드**
+  navTeamLink(doc, "true", here);
+  run(doc, { storage });
+  return doc;
+}
+
+test("⚠다른 구단의 상세에서는 「지금 여기」라고 말하지 않는다 — 링크가 딴 데를 가리킨다", () => {
+  const doc = teamDetailWithFav("g", "t", "阪神");
+  const a = doc.querySelectorAll("[data-navteam]")[0]!;
+  assert.equal(a.textContent, "阪神", "최애가 안 걸렸다 — 이 시험은 aria-current 를 재고 있지 않다");
+  assert.equal(a.getAttribute("aria-current"), null, "巨人 화면에서 「阪神」 링크를 현재 항목이라고 말한다");
+});
+
+test("⚠최애 구단의 상세에서는 「이 문서」다 — true 로 두면 덜 말하는 것이 된다", () => {
+  const doc = teamDetailWithFav("t", "t", "阪神");
+  const a = doc.querySelectorAll("[data-navteam]")[0]!;
+  assert.equal(a.textContent, "阪神");
+  assert.equal(a.getAttribute("aria-current"), "page");
 });

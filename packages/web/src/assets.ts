@@ -10,6 +10,7 @@
  * 전부 `prefers-reduced-motion`에서 꺼진다.
  */
 import { GLOSSARY } from "./glossary.ts";
+import { emphasisParts } from "./emphasis.ts";
 
 /**
  * 사이트 아이콘 — **우리가 그린 것**이다.
@@ -59,6 +60,15 @@ export const CSS = `
   --bar-w:#062a47; --bar-t:#eceae2; --bar-l:#b8651f;
   --f-body:"Yu Gothic","Hiragino Kaku Gothic ProN","Noto Sans JP","Meiryo",system-ui,sans-serif;
   --f-num:"SFMono-Regular","Consolas","Menlo","Yu Gothic",monospace;
+  /* ⚠**이 값은 .topbar 의 「실제」 높이여야 한다.** .rail·.hjump·.pickbar 의 sticky 오프셋과
+     scroll-padding-top 이 전부 이 하나를 읽는다 — 어긋나면 앵커가 헤더 뒤로 숨는다.
+     ⚠**한때 어긋나 있었다**(2026-08-19 감사 P1 · 2026-08-20 수정). .topbar 가 height 고정인데
+     .tnav{flex-wrap:wrap} 이라 탭 8개가 **481~770px 에서 2행**이 됐고, 바 높이는 안 따라왔다.
+     실측(step 4 · 400~1000px · 151점): **72점에서 탭줄이 바 밖으로** 나갔다 —
+     768px 에서 탭줄이 top:-7.1 ~ bottom:52.1(바는 0~46)이라 첫 행이 화면 위로 잘리고
+     아랫행이 시즌 띠를 배경 없이 덮었다. 손가락(pointer:coarse)에서는 더 넓어 **484~784px · 76점**이었다.
+     → 지금은 **바가 실제로 이 높이가 되도록** 폭 구간마다 값을 바꾼다(아래 반응형 참조).
+     ⚠**값을 바꿀 때는 tools/measure-topbar.ts 로 실측하라.** 눈대중이 이 결함을 못 잡았다. */
   --topbar:46px;
   /* 탭줄 한 줄의 높이. 스크롤 여백 계산이 이 값을 쓰므로 .rail 이 실제로 이 높이여야 한다 */
   --rail:48px;
@@ -99,9 +109,16 @@ a{color:inherit}
 /* ── 전역 헤더 ─────────────────────────────────────────────
    ⚠검색과 이동이 **어느 화면에서나 손에 닿아야 한다.** 최하단에만 두면
    1000행짜리 순위표 아래에 묻힌다. */
+/* ⚠**height 가 아니라 min-height 다.** 고정 높이는 안에 든 것이 넘칠 때 **말없이 넘친다** —
+   그게 2026-08-19 감사가 잡은 결함의 형태였다(탭줄이 바 위아래로 삐져나가 첫 행이 화면 밖으로 잘렸다).
+   min-height 면 최악의 경우 바가 **자란다**. 자라는 것은 눈에 보이고, 넘치는 것은 안 보인다.
+   ⚠**그렇다고 자라도 된다는 뜻은 아니다** — --topbar 를 읽는 곳이 다섯이라 자라면 그쪽이 어긋난다.
+   아래 .tnav{flex-wrap:nowrap} 과 반응형의 --topbar 재정의가 **실제로 자라지 않게** 붙든다. */
 .topbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px;
-  height:var(--topbar);padding:0 12px 0 var(--pad);background:var(--panel);border-bottom:1px solid var(--hair-2)}
-.brand{font-size:13px;font-weight:700;letter-spacing:.14em;text-decoration:none;white-space:nowrap}
+  min-height:var(--topbar);padding:0 12px 0 var(--pad);background:var(--panel);border-bottom:1px solid var(--hair-2)}
+/* ⚠**줄지 않는다.** 기본 flex 항목은 내용보다 작아질 수 있어, 좁은 화면에서 워드마크가
+   제 상자를 넘어 옆 것과 겹친다. 줄어드는 몫은 검색칸(≥681px)과 탭줄(≤680px)이 진다 */
+.brand{flex:0 0 auto;font-size:13px;font-weight:700;letter-spacing:.14em;text-decoration:none;white-space:nowrap}
 .brand b{color:var(--tx-3);font-weight:400;letter-spacing:.04em;font-size:10px;margin-left:5px}
 @media (max-width:560px){.brand b{display:none}}
 .qbox{position:relative;flex:1 1 auto;max-width:340px;min-width:0}
@@ -123,8 +140,38 @@ a{color:inherit}
 /* 성적은 둘째 줄에. **분모까지 붙어 있다**(M2) — 이 줄의 존재 이유가 「이 사람이 맞나」의 판단이다 */
 .qhits .hs{flex-basis:100%;font-size:10.5px;color:var(--tx-2);font-variant-numeric:tabular-nums}
 .qhits .none{padding:7px 11px;font-size:12px;color:var(--tx-3)}
-.tnav{display:flex;gap:2px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
-.tnav a{font-size:12px;padding:5px 9px;text-decoration:none;color:var(--tx-2);white-space:nowrap;
+/* 「몇 명 중 몇 명을 보고 있는가」. ⚠**결과가 아니라 결과에 대한 설명이므로 선을 그어 가른다** —
+   같은 모양으로 두면 21번째 선수처럼 보인다. 눌러서 가는 곳(選手一覧)이 있을 때만 링크가 된다.
+   ⚠「.qhits li a」보다 클래스가 하나 많아 특이도에서 이긴다(0,2,1 대 0,1,2).
+   ⚠**이 파일은 통째로 템플릿 리터럴이다 — 주석에 역따옴표를 쓰면 타입체크가 깨진다**
+   (2026-08-19 이 주석을 쓰다가 실제로 깼다. 코드 인용은 「」로 감싼다) */
+.qhits .more{border-top:1px solid var(--hair);margin-top:4px;padding-top:3px}
+.qhits .more a,.qhits .more span{display:block;padding:6px 11px;font-size:11px;
+  color:var(--tx-2);text-decoration:none}
+.qhits .more a:hover{background:var(--panel-2);color:var(--tx)}
+/* ⚠**탭줄은 접히지 않는다 — 한 줄로 남고 모자라면 옆으로 굴린다.**
+   탭이 8개(球団 試合 一覧 順位 対戦 比較 他大会 記録)라 flex-wrap:wrap 이면 좁은 폭에서 2행이 되는데,
+   바는 --topbar 높이라 **2행이 들어갈 자리가 없다.** 실측 파손 구간 481~770px(손가락 481~784px).
+   ⚠**flex:0 0 auto 가 짝이다**(≥681px). 안 그러면 flex 축소가 검색칸과 탭줄에 **비례 배분**되어
+   자리가 남는데도 탭줄이 먼저 잘린다 — 실측으로 681px 에서 탭줄이 305px 로 줄어 굴림이 생겼다.
+   여기서는 검색칸만 줄고(→최소 107px) 탭 8개는 온전히 남는다.
+   ⚠**≤680px 에서는 뒤집는다** — 검색칸이 제 줄로 내려가므로 탭줄이 줄어드는 쪽이 된다(반응형 참조).
+   ⚠overflow-x 는 「그래도 모자랄 때」의 안전판이다. 한 축이 visible 이 아니면 다른 축도
+   스크롤 컨테이너가 되므로(이 파일이 표에서 이미 데인 성질) overflow-y:hidden 을 명시하고,
+   포커스 링(2px + offset 1px)이 잘리지 않게 위아래 3px 을 비워 둔다.
+   ⚠**여기만 스크롤바를 감춘다 — 바로 아래 .seasons 와 반대다.** .seasons 의 주석은
+   「숨기면 더 있다는 것을 알 방법이 마우스 유저에게 없다」고 적었고 그건 거기서 옳다.
+   여기서 반대로 하는 이유는 하나뿐이다: **이 상자의 높이가 --topbar 라는 계약이기 때문**이다.
+   ⚠**실측이 이걸 잡았다**(2026-08-20). headless 크로뮴은 오버레이 스크롤바라 자리를 안 먹는데,
+   **화면이 붙은 크로뮴(Windows)은 scrollbar-width:thin 이 9px 을 실제로 차지한다** —
+   같은 페이지에서 탭줄 33 → **44px**, 바 88 → **96.6px** 이 됐고 토큰은 88 인 채였다.
+   즉 headless 로만 쟀으면 **고친 줄 알고 같은 결함을 다시 냈다.**
+   ⚠**더 있다는 신호는 잘린 탭 자체가 낸다** — 마지막 탭이 글자 중간에서 끊긴다(실측 420px 에서 「記」).
+   그리고 바로 아래 시즌 띠가 같은 어법으로 스크롤바를 보여 주므로 패턴은 화면에 남아 있다. */
+.tnav{display:flex;gap:2px;margin-left:auto;flex-wrap:nowrap;flex:0 0 auto;justify-content:flex-end;
+  min-width:0;padding:3px 0;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scrollbar-width:none}
+.tnav::-webkit-scrollbar{display:none}
+.tnav a{flex:0 0 auto;font-size:12px;padding:5px 9px;text-decoration:none;color:var(--tx-2);white-space:nowrap;
   transition:color var(--fast) var(--ease),background var(--fast) var(--ease)}
 .tnav a:hover{color:var(--tx);background:var(--panel-2)}
 /* ⚠**「지금 여기」가 어느 화면에서나 같은 방식으로 보여야 한다**(2026-08-17 유저 지적:
@@ -137,7 +184,12 @@ a{color:inherit}
 /* ⚠**홈에서는 표시가 브랜드에 붙는다** — 탭 줄에는 홈 항목이 없기 때문이다.
    여기에 규칙이 없어서 홈만 「아무 데도 안 있는」 것처럼 보였다. 탭과 같은 언어로 표시한다. */
 .brand[aria-current="page"]{box-shadow:inset 0 -2px 0 var(--team,#6b7280)}
-.tbtn{font:inherit;font-size:13px;line-height:1;padding:6px 8px;cursor:pointer;background:transparent;
+/* ⚠**「自動」이 「自/動」으로 접혔다**(2026-08-19 감사 P1). 이 버튼은 flex 항목인데
+   flex 도 white-space 도 없어서, 자리가 모자라면 **글자에서 줄바꿈**을 했다 —
+   실측 43.8×27 → 34.4×**40**. 40px 은 바(44~46px)를 거의 다 먹는다.
+   ⚠글자가 두 자라 「줄이면 되겠지」로 보이지만, 줄어드는 것은 폭이 아니라 **높이**다. */
+.tbtn{flex:0 0 auto;white-space:nowrap;
+  font:inherit;font-size:13px;line-height:1;padding:6px 8px;cursor:pointer;background:transparent;
   color:var(--tx-2);border:1px solid transparent;transition:color var(--fast) var(--ease)}
 .tbtn:hover{color:var(--tx);border-color:var(--hair-2)}
 
@@ -379,6 +431,16 @@ dt{font-size:10.5px;color:var(--tx-2);letter-spacing:.12em;padding:4px 10px 4px 
 dd{margin:0;text-align:right;font-family:var(--f-num);font-variant-numeric:tabular-nums;font-size:14px;
   padding:4px 0;border-bottom:1px solid var(--hair)}
 .den{font-family:var(--f-num);font-size:10px;color:var(--tx-3);margin-left:5px}
+/* ⚠**등급 틴트 위에서 분모가 AA 미달이었다**(2026-08-20 감사 ④ · 다크).
+   픽셀 합성 실측: --g-vgood-bg rgba(95,168,221,.10) over --panel #1c1e23 = rgb(35,44,54) 이고
+   그 위의 --tx-3(#8f8e87 · 10px)가 **4.31:1**, --g-vbad-bg 쪽이 **4.34:1** 이었다(본문 4.5:1 미달).
+   라이트는 통과한다(4.65:1). 실물은 starters.html 의 「125回」·「65.1回」다.
+   ⚠**이 파일은 바로 위에서 「분모에 opacity 를 얹지 않는다」고 적어 두고,
+   등급 배경 틴트로 같은 결과를 만들고 있었다** — 채널만 바뀐 같은 잘못이다.
+   ⚠**틴트를 옅게 하는 쪽이 아니라 글자를 올리는 쪽으로 고친다.** 틴트는 「아주 좋음/나쁨」을
+   나르는 신호이고, 분모는 M2 가 요구하는 정보다 — 지워야 할 것은 어느 쪽도 아니다.
+   --tx-2 는 같은 합성 배경에서 6.3:1 이고, 값(14px --tx)보다 작고 흐리다는 위계는 그대로다. */
+dd.g-veryGood .den,dd.g-veryBad .den{color:var(--tx-2)}
 
 /* 보이지 않는 글자 — 색으로만 전하지 않기 위한 것이다. 지우지 마라 */
 .vh{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
@@ -550,7 +612,16 @@ tr.me:hover td{background:var(--team,#6b7280)}
    **M2가 요구하는 바로 그 정보가 화면에서 가장 안 읽혔다.** 구단 페이지는 표의 86%가 그 색이다.
    토큰 명도를 올리고(색상환은 그대로라 인쇄물의 질감은 남는다), 얇음은 **다른 채널**로 말한다 */
 tr.thin td{color:var(--tx-2)}
-tr.thin td:first-child{box-shadow:inset 2px 0 0 var(--hair-2)}
+/* ⚠**막대가 안 보이는 굵기였다**(2026-08-20 감사 ③). --hair-2 대 --page 가
+   **라이트 1.51:1 · 다크 1.69:1** 로 비텍스트 3:1 에 한참 못 미쳤다 —
+   즉 「薄く表示しています」라는 범례가 자기 화면에 대해 거짓이었다.
+   --tx-3 은 --page 기준 4.9:1 이라 통과한다(막대는 장식이 아니라 표식이다).
+   ⚠**그래도 이 채널만으로는 부족하다** — forced-colors: active 에서 box-shadow 는 none 이 되고
+   color 도 시스템 색으로 강제되어 **두 채널이 함께 죽는다.** 그래서 이름 옆에 글자 표식(.qmk)을 둔다.
+   구단 페이지 타자표에는 ranking.html 의 順位 열 같은 제3의 채널이 없다. */
+tr.thin td:first-child{box-shadow:inset 2px 0 0 var(--tx-3)}
+/* 「薄く」의 글자 표식 — **어떤 색 모드에서도 남는다.** 범례가 같은 글자를 쓴다 */
+.qmk{font-style:normal;font-size:11px;color:var(--tx-2);margin-left:4px}
 /* 구단 색 칩 — **모든 표가 같은 한 벌을 쓴다**(M1의 정신).
    ⚠**셀을 flex 컨테이너로 만들지 않는다.** td{display:flex} 는 그 칸을 테이블 셀 박스에서
    빼내어, **그 열만 아래 경계선이 다른 열과 어긋난다**(2026-08-16 실측: 순위표 球団 열).
@@ -791,15 +862,23 @@ td.bad{color:var(--warn);font-weight:700}
 .hstand tr.lead .hrank{color:var(--tx)}
 .hstand tbody tr:hover td{background:var(--panel)}
 
-/* 그 날의 결과 — 한 줄에 「팀 점수 - 점수 팀」. 표로 만들면 두 줄이 되어 밀도가 떨어진다 */
+/* 그 날의 결과 — 한 줄에 「팀 점수-점수 ＠팀」. 표로 만들면 두 줄이 되어 밀도가 떨어진다.
+   ⚠**간격이 뜻과 반대로 묶여 있었다**(2026-08-20 감사 ②). .hg-t 에 flex:1 1 0 이 붙어
+   양쪽 팀명을 셀 **바깥쪽**으로 밀어붙였기 때문에, 실측(1280px · 텍스트 잉크 기준)으로
+   경기 **내부** 간격이 6~71px(중앙값 32) 인데 경기 **사이**가 **18px** 이었다 —
+   즉 「オリックス」와 다음 경기의 「阪神」이 자기 점수보다 가까웠다.
+   ⚠**칸을 내용에 맞춘다.** auto 3칸 + justify-content:start 면 한 경기가 왼쪽에 뭉치고,
+   남는 폭이 그대로 경기 사이의 간격이 된다. 마지막 칸만 minmax(0,auto) 로 둬서
+   긴 팀명(ソフトバンク)이 셀을 넘겨 가로 스크롤을 만들지 않게 한다.
+   ⚠**괘선은 여전히 칸 전체를 가로지른다** — li 는 여전히 1fr 폭을 갖는 격자 항목이다 */
 .hgames{list-style:none;margin:0;padding:0;display:grid;
-  grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:2px 18px}
-.hgames li{display:flex;align-items:baseline;gap:6px;padding:4px 0;
+  grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:2px 22px}
+.hgames li{display:grid;grid-template-columns:auto auto minmax(0,auto);justify-content:start;
+  align-items:baseline;gap:0 7px;padding:4px 0;
   border-bottom:1px solid var(--hair);font-variant-numeric:tabular-nums}
-.hgames .hg-t{font-size:12px;color:var(--tx-2);flex:1 1 0;min-width:0}
-.hgames li .hg-t:last-child{text-align:right}
-.hgames b{font-size:15px;font-weight:700}
-.hgames s{text-decoration:none;color:var(--tx-3);font-size:11px}
+.hgames .hg-t{font-size:12px;color:var(--tx-2);min-width:0}
+.hgames .hg-s{font-size:15px;font-weight:700;white-space:nowrap}
+.hgames .hg-s s{text-decoration:none;color:var(--tx-3);font-size:11px;font-weight:400;margin:0 1px}
 .more{margin:8px 0 0;font-size:11.5px}
 
 /* ── 일정 캘린더 ────────────────────────────────────────────────
@@ -961,11 +1040,13 @@ a.cg:focus-visible{outline:2px solid var(--tx);outline-offset:1px}
   background:var(--panel-2)}
 @media (pointer:coarse){.hjump a{padding:8px 13px}}
 /* ⚠**좁은 화면에서는 따라 붙지 않는다.**
-   ≤480px 에서 .topbar 는 height:auto 로 접혀 **실제 높이가 --topbar(44px)보다 크다**
-   (검색칸이 flex-basis:100% 라 반드시 2행 이상 · 최소 75.65px). 그런데 .hjump 는
-   top:var(--topbar) 로 붙으므로 **헤더 뒤로 잠긴다** — 누를 곳이 사라진다.
-   ⚠.rail 이 이미 같은 이유로 ≤680px 에서 static 이다. 새로 만든 이 줄만 그 교훈을 안 받았다.
-   ⚠고정을 포기해도 기능은 남는다 — 화면 맨 위의 링크 줄로 동작한다. */
+   ≤680px 에서 .topbar 는 2행으로 접혀 화면의 큰 몫을 이미 먹는다 — 그 아래에 링크 줄까지
+   붙이면 본문이 사라진다. .rail 이 같은 이유로 ≤680px 에서 static 이다.
+   ⚠고정을 포기해도 기능은 남는다 — 화면 맨 위의 링크 줄로 동작한다.
+   ⚠**높이 어긋남은 더 이상 여기서 다루지 않는다**(2026-08-20). 예전에는 「≤480 에서 --topbar 가
+   실제 높이가 아니다」를 이 근처와 아래 두 곳에 나눠 적고 **86px 를 손으로 박았는데**,
+   그 86 조차 실측 113~115px 에 28px 모자랐다. 지금은 --topbar 자체가 폭 구간마다
+   실제 높이로 정의되므로(반응형 §), 이 계산들은 그냥 맞는다. */
 @media (max-width:680px){
   .hjump{position:static}
   /* ⚠**특정성을 한 단계 올린다.** 아래 무조건 규칙과 특정성이 같으면
@@ -975,16 +1056,6 @@ a.cg:focus-visible{outline:2px solid var(--tx);outline-offset:1px}
 }
 /* ⚠**앵커로 뛸 때 sticky 두 겹에 가리지 않게** 여백을 더 준다 */
 html:has(.hjump){scroll-padding-top:calc(var(--topbar) + 52px)}
-/* ⚠**≤480px 에서는 --topbar 가 실제 높이가 아니다**(2026-08-18 감사 P3).
-   .topbar 가 height:auto 로 접혀 **최소 75.65px** 인데(검색칸이 flex-basis:100%)
-   scroll-padding 은 토큰값(46px) 그대로여서, 앵커로 뛰면 구획 머리가 **22~30px 잠겼다.**
-   sticky 는 위에서 껐는데 여백 계산은 안 따라왔다 — 같은 사실을 두 곳에 적은 대가다.
-   ⚠**:root 를 붙여 특정성을 올린다** — 위의 무조건 규칙들과 같으면 소스 순서 싸움이 된다. */
-@media (max-width:480px){
-  html:root{scroll-padding-top:86px}
-  html:root:has(.rail){scroll-padding-top:calc(86px + var(--rail))}
-  html:root:has(.hjump){scroll-padding-top:86px}
-}
 
 /* 先週の顔 — **순위 번호를 크게 쓰지 않는다.** 한 주짜리 순위를 시즌 순위와
    같은 무게로 그리면 그렇게 읽힌다 */
@@ -1125,7 +1196,18 @@ table.iscore .tot{font-weight:700;border-left:1px solid var(--hair-2)}
 /* 주자 다이아몬드 — **우리 데이터로 그린 우리 그림**(로고·사진 금지의 대체물) */
 .dia{display:block;overflow:visible}
 .dia .db{fill:none;stroke:var(--tx-3);stroke-width:1.2}
-.dia .db.on{fill:var(--chip,#6b7280);stroke:var(--chip,#6b7280)}
+/* ⚠**윤곽선까지 구단 색으로 칠하면 「주자 있음」이 「베이스가 없음」으로 보인다**
+   (2026-08-19 감사 P1 · 2026-08-20 수정 · 경기 페이지 7,502장 = 사이트의 49%).
+   빈 베이스는 --tx-3 테두리로 **6.67:1** 이라 확실히 보이는데, 찬 베이스는 면과 선이 같은 색이라
+   대비가 낮은 구단에서 **둘 다 한꺼번에 사라졌다.** WCAG 1.4.11(비텍스트 3:1) 기준으로
+   **12구단 전부가 한쪽 테마에서 미달**이었다(라이트: 阪神 1.61 등 / 다크: オリックス 1.08 등).
+   ⚠**색을 밝게 고르는 것으로는 못 고친다** — 어느 색이든 한쪽 테마에서 무너진다.
+   → **면만 구단 색, 윤곽과 굵기는 중립 고대비.** 색이 안 보여도 「두꺼운 마름모」가 남는다.
+   --tx 는 어느 바탕에서도 실측 라이트 15.85~17.89 · 다크 12.36~14.74 다. 굵기 1.2→2.0 이 형태 채널이고,
+   이 파일이 .hteam i · .cal td.ctoday 에서 이미 쓴 수법이다.
+   ⚠**game-page.ts 의 주석이 「명도 차이로도 읽힌다」고 적어 뒀는데 그건 실측에 반박당했다** —
+   같이 고쳤다. 두 곳에 적은 사실은 두 곳 다 고쳐야 한다. */
+.dia .db.on{fill:var(--chip,#6b7280);stroke:var(--tx);stroke-width:2}
 .dia .do{fill:none;stroke:var(--tx-3);stroke-width:1}
 .dia .do.on{fill:var(--tx-2);stroke:var(--tx-2)}
 @media (max-width:600px){
@@ -1222,6 +1304,12 @@ table.stand .dif i.n{right:50%}
 .gscore{display:flex;flex-direction:column;gap:1px}
 .gside{display:flex;align-items:baseline;gap:8px;padding:3px 0}
 .gside .gt{display:flex;align-items:center;gap:6px;font-size:13.5px;color:var(--tx-2)}
+/* ⚠**어느 쪽이 홈인지가 카드에 없었다**(2026-08-20 감사 ②). 홈 화면의 「＠팀」과 같은 어법이다(M1).
+   ⚠**자리는 두 줄 다 비워 둔다** — 글자를 한쪽에만 붙이면 팀명 시작선이 어긋난다.
+   ⚠생성 콘텐츠는 낭독되지 않을 수 있어 마크업에 .vh 로 「ホーム／ビジター」를 함께 둔다 */
+.gside .gt::before{content:"";flex:none;width:.9em;text-align:center;
+  font-size:10.5px;color:var(--tx-3)}
+.gside.h .gt::before{content:"＠"}
 .gside .gt i{width:9px;height:9px;background:var(--chip,#6b7280);font-style:normal;flex:none}
 /* ⚠이긴 쪽은 **굵기와 크기**로 표시한다. 색만 쓰면 색각 특성에 따라 구별되지 않는다 */
 .gside.w .gt{color:var(--tx);font-weight:700}
@@ -1255,6 +1343,33 @@ table.stand .dif i.n{right:50%}
 /* ── 球団ページ ────────────────────────────────────────────
    ⚠**로고를 쓸 수 없는 자리에서 팀을 구별하는 것은 구단 색과 이름이다**(§6).
    월별 막대는 우리가 계산한 값으로 만든 우리 그림이다. */
+/* 「いまの状況」 — 이 화면에서 가장 먼저 읽히는 줄.
+   ⚠**값이 주역이고 라벨은 그 옆에 붙는다**(§6의 도메인 예외). 다만 분모는 값에서 떼지 않는다(M2).
+   ⚠**칸으로 감싸지 않는다** — 카드 그리드 금지(§6). 가르는 것은 여백과 괘선이다. */
+.tnow{margin:0 0 5px;display:flex;flex-wrap:wrap;align-items:baseline;gap:3px 12px;
+  font-size:12.5px;color:var(--tx-2);font-variant-numeric:tabular-nums}
+.tnow b{font-style:normal;font-weight:600;color:var(--tx)}
+/* 라벨 — 값보다 작게 두되 폭을 맞춰 세 줄이 같은 자리에서 시작하게 한다 */
+.tnow s{text-decoration:none;font-size:10.5px;letter-spacing:.1em;color:var(--tx-3);
+  min-width:5.4em;flex:none}
+.tnow.head{gap:3px 14px;margin-bottom:9px}
+/* ⚠**순위 숫자를 구단 색으로 칠하지 않는다**(2026-08-19 실측). 배경으로 쓸 때는 --team-ink 가
+   짝이 되지만 글자색에는 짝이 없고, **어느 구단 색이든 한쪽 테마에서 무너진다** —
+   阪神 #f2c800 은 라이트 1.61:1, ロッテ #22262b 는 다크 1.10:1 이다.
+   구단 색은 이 화면에 이미 .spine 과 .idline 의 3px 밑줄로 들어와 있다. */
+.tnow.head b{font-size:22px;line-height:1.1;color:var(--tx)}
+/* 우승 경쟁 한 줄.
+   ⚠**글자만으로 말한다.** 「消滅」을 붉게 칠하면 판정의 세기가 색으로 과장되고,
+   색각 특성에 따라 아예 전달되지 않는다(이 화면의 승패 표기와 같은 규칙).
+   ⚠괘선도 구단 색을 쓰지 않는다 — 위와 같은 이유로 ロッテ·オリックス의 다크에서
+   패널 바탕과 1.1:1 이라 **선이 통째로 사라진다.** 가르는 것은 여백과 괘선이다. */
+.tnow.race{margin:11px 0 0;font-size:14px;color:var(--tx);
+  border-left:3px solid var(--hair-2);padding-left:9px}
+/* 이동 버튼 — 이 띠에서 각 상세로 뛴다. 탭이 아니므로 탭처럼 보이지 않게 한다 */
+.tgo{margin:12px 0 0;display:flex;flex-wrap:wrap;gap:6px 8px;font-size:11.5px}
+.tgo a{text-decoration:none;padding:4px 10px;border:1px solid var(--hair-2);color:var(--tx-2);
+  transition:color var(--fast) var(--ease),border-color var(--fast) var(--ease)}
+.tgo a:hover{color:var(--tx);border-color:var(--tx-3)}
 .tmonths{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:10px}
 .tmonth{display:flex;flex-direction:column;gap:3px;min-width:0}
 .tmonth b{font-size:11px;color:var(--tx-2);font-weight:400}
@@ -1272,7 +1387,18 @@ table.stand .dif i.n{right:50%}
 .trecent a{display:flex;align-items:baseline;gap:8px;padding:5px 0;text-decoration:none;
   border-bottom:1px solid var(--hair)}
 .trecent b{font-size:13px;width:1.2em;text-align:center;color:var(--tx-3)}
-.trecent li.w b{color:var(--team,#6b7280)}
+/* ⚠**이겼다는 표식에 구단 색을 쓰지 않는다**(2026-08-19 감사 P1 · 2026-08-20 수정).
+   배경에 쓸 때는 --team-ink 가 짝이 되어 대비가 보장되는데 **글자색에는 짝이 없다.**
+   실측(13px 본문 · 4.5:1 필요 · --page 기준) — **12구단 전부가 한쪽 테마에서 미달**이었다:
+     라이트 미달  阪神 1.61 · ソフトバンク 1.64 · ヤクルト 2.72 · 巨人 2.79
+     다크 미달    オリックス 1.08 · ロッテ 1.10 · 中日 1.35 · 西武 1.46 ·
+                  楽天 1.74 · 日本ハム 2.40 · DeNA 2.54 · 広島 2.83
+   ⚠**결과가 뜻과 반대였다** — 진 경기(--tx-2 · 6.6:1)만 또렷해서 최근 10경기를 훑으면
+   팀이 실제보다 나쁘게 읽혔다. 이긴 경기가 안 보이는 승패 목록은 목록이 아니다.
+   → 이 파일이 이미 세워 둔 「뜻이 있는 자리의 강조색」(--up/--dn)을 쓴다. --up 은 어느 바탕에서도
+   통과한다 — 실측 라이트 4.95(--panel-2)~5.59(--panel) · 다크 5.87~7.00. 구단 색은 이 화면의 다른 자리
+   (월별 막대 .tbar .w · 표제 밑줄)가 이미 배경으로 말하고 있다. */
+.trecent li.w b{color:var(--up);font-weight:700}
 .trecent li.l b{color:var(--tx-2)}
 .trecent span{font-size:11.5px;color:var(--tx-2)}
 .trecent s{text-decoration:none;margin-left:auto;font-size:11.5px}
@@ -1280,6 +1406,65 @@ table.stand .dif i.n{right:50%}
 /* 순위표·일람의 구단명이 링크가 됐다 — 밑줄 대신 색으로만 반응한다(인쇄물의 질감) */
 .stand .tm a,.teamgroup h2 a{text-decoration:none}
 .stand .tm a:hover,.teamgroup h2 a:hover{text-decoration:underline}
+
+/* ── 球団一覧 ──────────────────────────────────────────────
+   ⚠**격자로 만들지 않는다**(§6 「AI틱함」 금지 목록의 「균질한 카드 그리드」).
+   이 화면이 나르는 것은 12개의 동등한 타일이 아니라 **두 리그 × 순위 순서**이고,
+   격자는 그 순서를 지운다. 한 구단 = 한 줄기로 세우고, 가르는 것은 칸이 아니라 괘선과 여백이다
+   (순위표 .hstand · 최근 경기 .trecent 와 같은 어법).
+   ⚠**로고를 쓸 수 없는 자리에서 팀을 구별하는 것은 구단 색과 이름이다**(§6). */
+.tlist{list-style:none;margin:0;padding:0}
+.tcard{display:grid;grid-template-columns:46px 1fr auto;column-gap:12px;align-items:start;
+  padding:10px var(--pad);margin:0 calc(var(--pad) * -1);border-bottom:1px solid var(--hair)}
+.tcard:last-child{border-bottom:0}
+/* ⚠**1위를 색으로 말하지 않는다.** 구단 색을 칠하면 어느 구단이든 한쪽 테마에서 무너진다
+   (구단 페이지가 실측으로 이미 밟은 자리 · 阪神 라이트 1.61:1 · ロッテ 다크 1.10:1).
+   바탕을 한 단 올리는 것은 순위표의 tr.lead 가 이미 쓰는 수법이다 — 같은 어법으로 말한다. */
+.tcard[data-rank="1"]{background:var(--panel-2)}
+/* 순위 — 이 화면에서 가장 먼저 읽히는 값. 왼쪽 끝에 고정 폭으로 세워 세로로 훑을 수 있게 한다 */
+.tcr{grid-column:1;grid-row:1/span 3;margin:0;text-align:right;font-variant-numeric:tabular-nums}
+.tcr b{font-style:normal;font-weight:600;font-size:21px;line-height:1.05;color:var(--tx)}
+.tcr s{text-decoration:none;display:block;font-size:9.5px;color:var(--tx-3);margin-top:1px}
+.tcn{grid-column:2;grid-row:1;margin:0;min-width:0}
+.tcn a{display:inline-flex;align-items:center;gap:7px;text-decoration:none;
+  font-size:14.5px;font-weight:600;color:var(--tx)}
+/* ⚠**색만으로는 안 된다** — 구단 12색 중 다크 바탕에서 3:1 을 못 넘는 것이 7색이다.
+   테두리로 형태를 준다: 색이 안 보여도 사각형은 남는다(.hteam i 와 같은 수법). */
+.tcn a i{width:10px;height:10px;background:var(--chip,#6b7280);flex:none;
+  box-shadow:inset 0 0 0 1px var(--tx-3)}
+.tcn a:hover{text-decoration:underline}
+.tcn a:hover i{outline:1px solid var(--tx-3);outline-offset:1px}
+/* 성적 한 줄 — ⚠**값이 주역이고 라벨은 그 옆에 붙는다**(§6의 도메인 예외).
+   다만 분모는 값에서 떼지 않는다(M2) — .den 이 값 바로 뒤에 붙어 나온다. */
+.tcs{grid-column:2;grid-row:2;margin:3px 0 0;display:flex;flex-wrap:wrap;gap:2px 14px;
+  font-size:12px;color:var(--tx-2);font-variant-numeric:tabular-nums}
+.tcv{display:inline-flex;align-items:baseline;gap:5px;min-width:0}
+.tcv s{text-decoration:none;font-size:9.5px;letter-spacing:.1em;color:var(--tx-3);flex:none}
+.tcv b{font-style:normal;font-weight:600;color:var(--tx)}
+/* ⚠**분모까지 굵어지지 않게 한다.** 분모는 값에 붙어 있어야 하지만(M2) 값과 같은 무게로
+   읽히면 「.562 105試合」이 한 덩어리의 수처럼 보인다 — .den 은 무게를 지정하지 않아
+   .tcv b 의 600 을 그대로 상속한다. 여기서만 되돌린다. */
+.tcv .den{font-weight:400}
+/* 다음 경기 — ⚠**없어도 줄을 지우지 않는다**(M12). 그래서 자리를 늘 차지한다 */
+.tcx{grid-column:2;grid-row:3;margin:3px 0 0;display:flex;align-items:baseline;gap:6px;
+  font-size:11.5px;color:var(--tx-2)}
+.tcx s{text-decoration:none;font-size:9.5px;letter-spacing:.1em;color:var(--tx-3);flex:none}
+.tcx b{font-style:normal;font-weight:400;color:var(--tx-2)}
+.tcf{grid-column:3;grid-row:1/span 3;margin:0;align-self:center}
+/* ⚠**눌린 상태를 색만으로 말하지 않는다** — ★와 굵기가 색 없이도 남는다.
+   구단 색을 쓰지 않는 이유는 위 .tcard[data-rank="1"] 주석과 같다. */
+.favt{font:inherit;font-size:11.5px;line-height:1;padding:6px 10px;cursor:pointer;white-space:nowrap;
+  background:transparent;border:1px solid var(--hair-2);color:var(--tx-3);
+  transition:color var(--fast) var(--ease),border-color var(--fast) var(--ease)}
+.favt:hover{color:var(--tx-2);border-color:var(--tx-3)}
+.favt[aria-pressed="true"]{color:var(--tx);border-color:var(--tx-3);font-weight:700}
+.favt[aria-pressed="true"]::before{content:"★";margin-right:4px}
+/* 좁은 화면에서는 버튼을 아래로 내린다 — 옆에 두면 구단명이 밀려 두 줄이 된다 */
+@media (max-width:560px){
+  .tcard{grid-template-columns:38px 1fr}
+  .tcr b{font-size:18px}
+  .tcf{grid-column:2;grid-row:4;margin-top:7px;align-self:start}
+}
 
 /* 상대전적 — 이긴 비율의 띠. 눈금은 없고 정확한 수는 옆 칸에 있다 */
 table.vs .vsbar{display:inline-block;width:88px;height:6px;background:var(--hair);vertical-align:middle}
@@ -1494,13 +1679,35 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
   .bar{grid-template-columns:76px 1fr 118px;gap:8px}
 }
 @media (max-width:680px){
-  :root{--pad:13px;--topbar:44px}
+  /* ⚠**여기서 헤더가 2행이 된다** — 브랜드·탭줄·테마가 윗줄, 검색칸이 아랫줄.
+     그래서 --topbar 도 **2행의 실제 높이**로 바꾼다. 이 한 줄이 .rail·.hjump·.pickbar·
+     scroll-padding-top·.shell 을 **전부 한꺼번에** 맞춘다 — 예전에는 여기가 44px 인 채
+     scroll-padding-top:86px 를 ≤480 에 따로 박아 뒀고, 그 86 조차 실측 **113~115px** 에
+     28px 모자랐다(2026-08-20 계측).
+     ⚠**실측값이다**(step 4 · 400~680px · 마우스): 내용 높이가 **86.2px**(≤420px · 탭 글자 11px)와
+     **87.7px**(421~680px · 12px) 둘뿐이라, 큰 쪽을 덮는 **88px** 로 잡는다.
+     min-height 라서 작은 쪽도 88px 로 채워진다 — 즉 ≤680px 전 구간에서 바가 정확히 88px 이다.
+     ⚠**작게 잡으면 안 된다**: 86px 로 뒀더니 421~680px 에서 바가 87.7px 로 자라 토큰이 다시 거짓이 됐다. */
+  :root{--pad:13px;--topbar:88px}
+  /* ⚠**검색칸을 아랫줄로 내린다.** 브랜드·탭 8개·테마가 이미 윗줄을 다 쓴다 —
+     한 줄에 넣으면 검색칸이 100px 아래로 찌부러져 무엇을 치는지 안 보인다.
+     ⚠**탭줄은 여기서 줄어드는 쪽이 된다**(기본값 flex:0 0 auto 를 되돌린다). 아랫줄이 없어졌으니
+     모자라면 옆으로 굴린다 — 실측으로 680px 은 8개가 다 보이고, 굴림이 필요한 것은 약 560px 아래다. */
+  .topbar{flex-wrap:wrap;padding:6px 10px 8px;gap:6px}
+  .qbox{order:3;flex-basis:100%;max-width:none}
+  /* ⚠**flex-basis 를 0 으로 만드는 것이 핵심이다**(실측으로 배웠다 · 2026-08-20).
+     줄바꿈은 **줄이기 전의 크기**로 결정된다 — flex:0 1 auto 로 두면 탭줄의 기준 크기가
+     내용 폭(약 330px)이라 400px 화면에서 **탭줄이 제 줄로 밀려나** 헤더가 3행 119.2px 이 됐다.
+     기준을 0 으로 두면 줄바꿈을 유발하지 않고, 윗줄의 남는 폭을 받아 그 안에서 굴린다.
+     ⚠**넘칠 때는 왼쪽 정렬이어야 한다.** justify-content:flex-end 로 넘치면 앞쪽 탭이
+     스크롤로 닿지 않는 자리(시작 방향)로 밀려난다. 그래서 기본을 flex-start 로 두고,
+     아는 브라우저에만 safe flex-end 를 준다 — 모르는 브라우저는 앞 줄에 남아 안전한 쪽으로 떨어진다. */
+  .tnav{flex:1 1 0;margin:0;justify-content:flex-start;justify-content:safe flex-end}
   .shell{grid-template-columns:7px 1fr}
   .spine{padding:0}
   .spine .vt{display:none}
   /* 화면이 좁으면 레일까지 고정하면 본문이 사라진다 — 헤더만 남긴다 */
   .rail{position:static}
-  .qbox{max-width:none}
   .tnav a{padding:5px 7px}
   .idline{gap:11px;padding-top:13px}
   .mark .mk{width:42px;height:42px}
@@ -1512,13 +1719,31 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
   .roster{grid-template-columns:1fr}
   th,td{padding:6px 7px}
 }
+/* ⚠**가장 작은 흔한 폰에서 첫 화면에 수치가 0개였다**(2026-08-20 감사 ⑥).
+   이 제품의 가치 명제가 밀도인데 320×568 에서 그렇다는 것은 명제가 화면에서 무너진 것이다.
+   실측(320×568 · 손가락): 고정 머리가 **topbar 96 + 시즌 띠 37.6 + 상태 띠 52.2 = 185.8px = 화면의 33%**
+   이고, 그 아래에 화면마다 표제(index 91 · 선수 228.6)가 더 얹혀
+   첫 수치가 index 368.9px(65%) · 順位 410.5(72%) · 予告先発 534.3(94%) · 選手 556.3(98%) ·
+   試合 600.6(106% — 접힘선 아래)에 있었다.
+   ⚠**여기서 줄이는 것은 「머리의 군살」뿐이다.** 검색칸을 접거나 시즌 띠를 아래로 옮기는 것은
+   조작 설계를 바꾸는 결정이라 이 라운드에서 하지 않았다 — 남은 거리는 보고서에 수치로 남긴다.
+   ⚠**--topbar 는 건드리지 않는다.** 그 토큰은 다섯 곳이 읽고, 폭 구간마다 실측으로 정해져 있다
+   (topbar-geometry.test.ts). 여기서 바꾸면 그 계약을 다시 재야 한다. */
 @media (max-width:480px){
-  /* 링크가 4개가 되면 한 줄에 브랜드·검색·내비·테마가 다 들어가지 않는다.
-     검색창을 아랫줄로 내린다 — 줄이는 것보다 두 줄이 낫다 */
-  .topbar{height:auto;flex-wrap:wrap;padding:6px 10px 8px;gap:6px}
-  .qbox{order:3;flex-basis:100%;max-width:none}
-  .tnav{margin-left:auto}
+  /* 표제 — 이 화면에서 읽을 것은 이름이지 여백이 아니다 */
+  .idline{padding:9px var(--pad) 8px;gap:9px}
+  .idline .nm{font-size:clamp(19px,5.5vw,26px)}
+  /* 상태 띠는 **줄이되 지우지 않는다** — 여기 뜨는 것은 「수집이 멈췄다」는 경고다(M12) */
+  .state{padding:5px var(--pad);line-height:1.4}
+  /* 시즌 띠 — 9시즌이 늘 넘치므로 칩만 얇게 한다. 스크롤바는 남긴다(더 있다는 유일한 신호다) */
+  .seasons{padding:3px var(--pad)}
+  .seasons a{font-size:11.5px;padding:2px 9px}
+  /* 화면 안 이동 줄 — 칩 높이는 손가락 규칙이 정하므로 상자 여백만 줄인다 */
+  .hjump{padding:5px var(--pad);margin-bottom:8px}
 }
+/* ⚠**≤480 에 있던 헤더 접기를 ≤680 으로 올렸다**(2026-08-20).
+   접는 이유(「한 줄에 브랜드·검색·내비·테마가 다 안 들어간다」)는 480 이 아니라 **680 부터** 참이었다 —
+   481~680 에서는 접지 않은 채 탭줄만 2행이 되어 바 밖으로 샜다. 규칙을 옮겼을 뿐 뜻은 그대로다. */
 @media (max-width:420px){
   .brand{font-size:12px;letter-spacing:.08em}
   .tnav a{font-size:11px;padding:5px 6px}
@@ -1532,6 +1757,17 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
   /* ⚠**접힘 손잡이도 여기 든다.** 글자가 10px이라 손가락으로는 높이 16px 남짓인데,
      이게 목록을 여는 유일한 자리다 — 빠뜨리면 그 화면이 휴대폰에서 안 열린다 */
   .pickfold>summary{padding:6px 0}
+}
+/* ⚠**손가락에서는 헤더가 더 두껍다 — --topbar 도 따라가야 한다.**
+   바로 위 .tnav a{padding:9px 10px} 이 탭 높이를 27.0 → 36.6px 으로 올린다.
+   접힌 헤더(≤680px)에서는 그게 그대로 바 높이가 되므로, 86px 로 두면 바가 **94.6px** 로 자라고
+   --topbar 가 다시 거짓이 된다 — 즉 이 결함의 재발이다.
+   ⚠**폭 조건을 반드시 붙인다.** pointer:coarse 만으로 걸면 터치 노트북의 1200px 화면에서도
+   96px 이 되는데 거기 바는 46px 이다(반대 방향으로 어긋난다).
+   실측(step 4 · 400~680px · 손가락): 내용 높이 **95.0px**(≤420px)와 **95.7px**(421~680px) →
+   큰 쪽을 덮는 96px. ≥684px 은 손가락에서도 42.6px 이라 46px 안에 들어간다(실측 바 46.0). */
+@media (pointer:coarse) and (max-width:680px){
+  :root{--topbar:96px}
 }
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:1ms!important;animation-delay:0ms!important;transition-duration:1ms!important}
@@ -1624,7 +1860,44 @@ const BOOT=(function(){
 const BLOCKS=BOOT.blocks||[];
 /* 용어집. 서버와 같은 정의 한 벌을 쓴다(M1) */
 const GLOSSARY=__GLOSSARY__;
+/* 강조 표기(별표 두 개)를 나누는 규칙. ⚠**서버의 src/emphasis.ts 를 그대로 심은 것**이다(M1) —
+   여기에 두 번째 벌을 적지 마라. 왜 심는가는 embedEmphasis 의 주석에 있다 */
+__EMPHASIS_PARTS__
 const PRESETS=BOOT.presets||{};
+
+/* 최애 구단 경로에 허용하는 글자 — 영숫자와 「-」「_」「/」「.」뿐이다.
+   ⚠**정규식으로 쓰지 않는다.** 이 파일은 통째로 템플릿 리터럴이라 정규식 이스케이프가
+   런타임에 조용히 사라진다 — 글자를 하나씩 본다. */
+const FAV_PATH_CHARS="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_/.";
+/* 저장된 경로가 **이 사이트 안의 상대경로**인가.
+   ⚠**막을 것을 세는 대신 허용할 것만 센다**(2026-08-19 검토 ③). 예전 검사는 「:」와 선행 「/」
+   둘뿐이었는데, 브라우저 URL 파서는 **역슬래시를 「/」로 정규화**하고 **선행 공백을 버린다** —
+   실측으로 역슬래시 두 개로 시작하는 경로와 공백 뒤에 「//」가 오는 경로가 **그대로 href 에
+   들어갔다**(BASE 가 빈 문자열인 화면이 dist 에 91장 있다).
+   ⚠악용에는 동일 출처 스크립트 실행이 필요해 실질 위험은 낮았다 — 고친 이유는
+   **바로 위 주석이 코드보다 강하게 말하고 있었기 때문**이다. */
+function favPathOk(p){
+  /* 선행 「/」는 사이트 루트다 — 우리가 만드는 경로가 아니다(상대경로만 받는다) */
+  if(p.charAt(0)==="/")return false;
+  /* 우리가 만드는 경로는 전부 .html 이다(teamPath) */
+  if(p.length<6||p.slice(-5)!==".html")return false;
+  for(let i=0;i<p.length;i++)if(FAV_PATH_CHARS.indexOf(p.charAt(i))<0)return false;
+  return true;
+}
+/* 저장된 최애 구단 하나를 읽는다.
+   ⚠**셋이 다 있어야 최애다**(M11). 코드·약칭·경로 중 하나라도 없으면 「미지정」으로 본다 —
+   반쪽짜리를 받으면 내비 라벨이 코드(「T」)로 떨어지거나 링크를 아예 만들 수 없다.
+   ⚠**여기서 내는 null 은 「없다」가 아니라 「모른다」다**(M11). 부르는 쪽이 그 둘을 섞으면
+   알던 최애가 조용히 지워진다 — 실제로 그랬다(아래 클릭 처리 참조). */
+function readFavTeam(v){
+  if(!v||typeof v!=="object")return null;
+  const code=typeof v.code==="string"?v.code:"";
+  const name=typeof v.name==="string"?v.name:"";
+  const path=typeof v.path==="string"?v.path:"";
+  if(code===""||name===""||path==="")return null;
+  if(!favPathOk(path))return null;
+  return {code:code,name:name,path:path};
+}
 
 const saved=load()||{};
 const state={
@@ -1646,6 +1919,8 @@ const state={
   picked:(saved.picked&&typeof saved.picked==="object")?saved.picked:{},
   /* 즐겨찾기한 선수 ID. **이 브라우저에만 남는다** — 서버로 가지 않는다 */
   favs:Array.isArray(saved.favs)?saved.favs.filter(x=>typeof x==="string"):[],
+  /* 최애 구단 **하나**. 선수 즐겨찾기(favs)와는 다른 개념이다 — 아래 「최애 구단」 구역 참조 */
+  favTeam:readFavTeam(saved.favTeam),
   grades:saved.grades!==false,
   mark:saved.mark===true,
   theme:saved.theme==="dark"||saved.theme==="light"?saved.theme:"system"
@@ -2005,14 +2280,31 @@ if(tip&&typeof GLOSSARY!=="undefined"){
     if(current)current.setAttribute("aria-expanded","false");
     current=null;tip.hidden=true;
   };
+  /* 설명 한 조각을 넣는다.
+     ⚠**별표 두 개를 굵게 바꾼다** — 서버의 note() 와 **같은 규칙 한 벌**을 쓴다(M1).
+     예전에는 여기가 textContent 뿐이라 별표가 글자 그대로 찍혔다: 용어집 56항목 중 15항목이
+     사용자 가시 문자열에 별표를 갖고, 그중 하나 이상을 내보내는 배포물이 6,333/15,340장(41%)이었다.
+     ⚠**HTML 문자열을 통째로 넣는 API 를 쓰지 않는다**(그 이름을 여기 적지도 않는다 — 시험이 글자로 센다).
+     만드는 태그는 b 하나뿐이고 글자는 전부 textContent 로 들어간다 — 용어집은 우리가 쓴 문장이지만
+     임의 HTML 을 넣는 자리를 만들면 그 자리는 언젠가 쓰인다. */
+  const put=(tag,text)=>{
+    const el=doc.createElement(tag);
+    emphasisParts(text).forEach(p=>{
+      if(p.bold){const b=doc.createElement("b");b.textContent=p.text;el.appendChild(b)}
+      else if(p.text!=="")el.appendChild(doc.createTextNode(p.text));
+    });
+    tip.appendChild(el);
+  };
   const show=(btn)=>{
     const t=GLOSSARY[btn.dataset.term];
     if(!t)return;
     tip.textContent="";
+    /* ⚠**표제는 이름이지 문장이 아니다** — 강조를 풀지 않는다.
+       라벨에 별표가 없다는 것은 glossary.test.ts 가 지킨다 */
     const b=doc.createElement("b");b.textContent=t.label;tip.appendChild(b);
-    const p=doc.createElement("span");p.textContent=t.short;tip.appendChild(p);
-    if(t.how){const s=doc.createElement("s");s.textContent=t.how;tip.appendChild(s)}
-    if(t.caveat){const u=doc.createElement("u");u.textContent=t.caveat;tip.appendChild(u)}
+    put("span",t.short);
+    if(t.how)put("s",t.how);
+    if(t.caveat)put("u",t.caveat);
     tip.hidden=false;
     if(current&&current!==btn)current.setAttribute("aria-expanded","false");
     current=btn;btn.setAttribute("aria-expanded","true");
@@ -2426,12 +2718,20 @@ function fetchIndex(){
   });
 }
 
+/* 드롭다운에 그리는 최대 인원.
+   ⚠**여기서 자른다는 사실을 화면이 말해야 한다**(작업규칙 7 · M2). 잘라 놓고 잠자코 있으면
+   「그 선수는 이 사이트에 없다」로 읽힌다 — 순위표는 「이 지표로 기록이 있는 선수 256人」까지
+   말하는데 **가장 많이 쓰는 조작에만** 그 규율이 없었다(2026-08-19 감사 P1).
+   실측(색인 698명): 「田」 81건 · 「中」 86건 · 「山」 48건이 전부 20건으로 보였다. */
+const SEARCH_LIMIT=20;
+
 /* ── 선수 고르기 ──
    헤더 검색과 「対戦を選ぶ」 화면이 **같은 구현**을 쓴다. 두 벌로 나누면 키보드 조작이
    한쪽에만 붙는 식으로 어긋난다. */
 function attachPicker(input,list,onPick){
   if(!input||!list)return null;
-  let rows=[],active=-1;
+  /* hits = **자르기 전** 일치 수 · asked = 그 수를 낸 질의어(「一覧」으로 넘길 때 쓴다) */
+  let rows=[],active=-1,hits=0,asked="";
   const close=()=>{list.hidden=true;input.setAttribute("aria-expanded","false");active=-1};
   /* @param items 배열이면 결과, **null 이면 아직 읽는 중**이다 */
   const draw=(items,failed)=>{
@@ -2461,6 +2761,37 @@ function attachPicker(input,list,onPick){
       if(onPick)a.addEventListener("click",(e)=>{if(e&&e.preventDefault)e.preventDefault();onPick(p);close()});
       list.appendChild(li);
     });
+    /* ⚠**자른 것을 말한다.** 20건에서 조용히 끊으면 21번째 선수는 「없는 사람」이 된다 —
+       §0-1(3클릭 이내 도달)의 주 경로가 침묵으로 실패하는 것이라 이 화면에서 제일 나쁜 결함이다.
+       ⚠**갈래를 나눈다**: 헤더 검색은 「이동」이라 選手一覧으로 보내도 잃는 것이 없지만,
+       「対戦を選ぶ」·「比較」의 검색창은 **고르는 중**이라 페이지를 떠나면 반대쪽 선택이 날아간다.
+       ⚠**role 을 주지 않는다 — 「該当なし」·「読み込み中…」과 같은 자리다.**
+       처음에 role="option" aria-disabled="true" 로 만들었다가 **실기에서 잡혔다**(Playwright):
+       그 안의 링크가 「disabled」로 판정돼 눌리지 않는 상태가 됐다 —
+       **「여기로 가라」고 써 놓고 「이건 못 쓴다」고 말하는** 자기모순이었다.
+       ⚠**대신 남는 한계를 적어 둔다**: 포커스 모드의 스크린리더는 listbox 안의 롤 없는 항목을
+       읽지 않으므로, 이 줄은 **화면으로만** 전해진다(브라우즈 모드와 Tab 이동에서는 읽힌다).
+       「.none」이 같은 한계를 이미 갖고 있다 — 고칠 때 **둘을 같이** 고쳐야지 여기만 손대면
+       같은 목록 안에서 어떤 줄은 읽히고 어떤 줄은 안 읽히는 상태가 된다.
+       ⚠rows 에는 넣지 않는다 — 화살표 이동이 마지막 선수에서 멈춘다. */
+    if(items&&items.length&&hits>items.length){
+      const li=doc.createElement("li");
+      li.className="more";
+      const text=hits+"人中"+items.length+"人を表示";
+      if(onPick){
+        const s=doc.createElement("span");
+        s.textContent=text+" — 文字を足すとしぼれます";
+        li.appendChild(s);
+      }else{
+        const a=doc.createElement("a");
+        /* ⚠**JS 가 죽어 있어도 참인 문구를 쓴다**(§0-1). 選手一覧은 서버가 전원을 그려 두므로
+           「すべて見る」는 어느 쪽이든 맞다 — 좁혀진 상태로 열리는 것은 JS 가 살아 있을 때의 덤이다 */
+        a.href=BASE+"players.html?q="+encodeURIComponent(asked);
+        a.textContent=text+" — 選手一覧ですべて見る";
+        li.appendChild(a);
+      }
+      list.appendChild(li);
+    }
     list.hidden=false;input.setAttribute("aria-expanded","true");
   };
   const run=()=>{
@@ -2474,8 +2805,11 @@ function attachPicker(input,list,onPick){
       /* ⚠**등번호는 완전일치다.** 부분일치로 두면 「1」이 1·10〜19·100번대를 전부 끌고 와
          이름 검색 결과를 밀어낸다. 「34」로 34번을 찾는 것이 이 기능의 전부다 */
       var q=fold(term);
-      rows=idx.filter(p=>p.n.indexOf(term)>=0||p.t.indexOf(term)>=0
-        ||(p.kf&&p.kf.indexOf(q)>=0)||p.u===term).slice(0,20);
+      var all=idx.filter(p=>p.n.indexOf(term)>=0||p.t.indexOf(term)>=0
+        ||(p.kf&&p.kf.indexOf(q)>=0)||p.u===term);
+      /* ⚠**자르기 전에 센다.** 자른 뒤에 세면 언제나 20이 되어 「81人中」이 「20人中」이 된다 */
+      hits=all.length;asked=term;
+      rows=all.slice(0,SEARCH_LIMIT);
       active=-1;draw(rows,false);
     });
   };
@@ -2930,6 +3264,99 @@ function paintFav(){
 const favBtn=$("#favBtn");
 if(favBtn)favBtn.addEventListener("click",()=>{toggleFav(favBtn.dataset.fav);paintFav()});
 
+/* ── 최애 구단 ──
+   ⚠**위의 선수 즐겨찾기와 다른 개념이다.** 최애는 **하나**뿐이다 — 내비의 첫 자리가
+   하나이기 때문이고, state.favs(선수 여럿)는 여기서 건드리지 않는다.
+   ⚠**서버는 어느 화면에서나 球団 을 그린다**(§0-1). 여기서 하는 일은 라벨과 링크를 바꾸는 것뿐이라
+   JS 가 없어도 구단 목록으로 가는 길이 남는다.
+   ⚠**경로를 손으로 짓지 않는다**(M1). teamPath() 가 「한 곳에서만 만든다 — 갈리면 어딘가는 404다」로
+   선언된 함수인데 번들은 그 밖에 있다 — 그래서 버튼이 data-favpath 로 서버가 만든 값을 실어 오고,
+   우리는 그 앞에 이 화면의 BASE 만 붙인다(서버가 하는 것과 같은 조립이다).
+   ⚠**이름과 경로를 저장에 함께 남긴다.** 버튼은 구단 목록 화면에만 있는데 내비는 **전 페이지**에 있다 —
+   코드만 남기면 다른 화면에서 라벨이 「T」로 떨어지고 링크를 만들 방법이 없다. */
+const navTeamLinks=$$("[data-navteam]");
+/* ⚠**서버가 그린 것을 그대로 되돌린다.** 해제했을 때 쓸 경로·라벨·현재위치를 여기서 다시 짓지 않는다 —
+   경로는 M1 이 한 곳으로 못 박았고 라벨은 i18n 대상이라(§7), 두 벌이 되면 언젠가 갈린다 */
+const navTeamBack=navTeamLinks.map(a=>({href:a.getAttribute("href")||"",text:a.textContent,here:a.getAttribute("aria-current")}));
+function paintFavTeam(){
+  const fav=state.favTeam;
+  /* 빈 문자열은 어느 구단 코드와도 같지 않다 — 미지정이면 12개가 전부 눌리지 않은 상태가 된다 */
+  press("[data-favteam]","favteam",fav===null?"":fav.code);
+  navTeamLinks.forEach((a,i)=>{
+    const back=navTeamBack[i];
+    if(fav===null){
+      a.setAttribute("href",back.href);
+      a.textContent=back.text;
+      if(back.here===null)a.removeAttribute("aria-current");
+      else a.setAttribute("aria-current",back.here);
+      return;
+    }
+    a.setAttribute("href",BASE+fav.path);
+    a.textContent=fav.name;
+    /* ⚠**서버가 적은 aria-current 는 「teams.html 로 가는 링크」에 대한 말이다.**
+       목적지를 우리가 바꿨으니 다시 잰다(2026-08-19 검토 ④ · 처음에는 page 만 다뤄서
+       구단 상세의 true 가 그대로 남아 있었다):
+         ⑴ 바뀐 목적지가 이 문서다(구단 상세 = 최애)      → page
+         ⑵ 이 문서가 구단 목록이다(목록 → 그 안의 한 장)  → true (같은 구획 안이지만 이 문서는 아니다)
+         ⑶ 그 밖(다른 구단의 상세 등)                     → 아무 말도 하지 않는다
+       ⑶ 이 핵심이다 — 巨人 화면에서 라벨이 「阪神」인 링크에 true 가 남으면
+       **현재 항목이 아닌 것을 현재라고 말하는 것**이 된다. ⑵ 를 남기는 근거는 포함관계다:
+       구단 목록은 그 링크가 가리키는 문서를 **담고 있는** 화면이지만, 다른 구단의 상세는
+       그 문서와 아무 관계가 없다.
+       ⚠**어느 구단의 화면인가는 서버만 안다** — data-navteam 의 값이 그것이다(구단 상세만 값을 갖는다). */
+    const mine=a.dataset.navteam||"";
+    if(mine!==""&&mine===fav.code)a.setAttribute("aria-current","page");
+    else if(back.here==="page")a.setAttribute("aria-current","true");
+    else a.removeAttribute("aria-current");
+  });
+}
+/* ⚠**저장값은 서버 데이터의 사본이다** — 그리고 그 사본은 이 브라우저에만 있어 **서버가 못 고친다.**
+   약칭이 바뀌면 내비가 틀린 구단 이름을 조용히 보여주고(404 조차 안 난다), 경로 규칙이 바뀌면
+   내비만 404 로 간다. ⚠**경로 규칙은 바뀔 예정이다**(Pages 파일 상한 · CLAUDE.md §2-2).
+   → 정본이 눈앞에 있는 화면(구단 목록)에 서 있을 때 사본을 고친다. 그 밖의 화면에는 버튼이 없으므로
+   아무 일도 일어나지 않는다.
+   ⚠**코드가 화면에 없으면 손대지 않는다** — 「그 구단이 사라졌다」와 「지금 이 화면에 없다」를
+   구별할 수 없어서다. 지우면 사용자 설정을 우리 추측으로 날리는 것이 된다. */
+function refreshFavTeam(){
+  const fav=state.favTeam;
+  if(fav===null)return;
+  const b=$$("[data-favteam]").filter(x=>x.dataset.favteam===fav.code)[0];
+  if(!b)return;
+  const fresh=readFavTeam({code:b.dataset.favteam,name:b.dataset.favname,path:b.dataset.favpath});
+  if(fresh===null||(fresh.name===fav.name&&fresh.path===fav.path))return;
+  state.favTeam=fresh;
+  try{
+    const cur=load()||{};
+    cur.favTeam=fresh;
+    localStorage.setItem(KEY,JSON.stringify(cur));
+  }catch(e){}
+}
+refreshFavTeam();
+
+$$("[data-favteam]").forEach(b=>b.addEventListener("click",()=>{
+  const on=state.favTeam!==null&&state.favTeam.code===b.dataset.favteam;
+  const next=readFavTeam({code:b.dataset.favteam,name:b.dataset.favname,path:b.dataset.favpath});
+  /* ⚠**「모른다」로 알던 것을 지우지 않는다**(M11 · 2026-08-19 검토 ②).
+     배포 전 HTML 을 캐시에 들고 있는 브라우저의 버튼에는 data-favpath 가 없어 readFavTeam 이
+     null(모른다)을 낸다. 예전에는 그 null 이 그대로 들어가 **「미지정」과 같은 값**이 됐고,
+     실측으로 fav=巨人 인 사람이 그런 버튼을 누르면 라벨이 球団 으로, 저장이 favTeam:null 이 됐다.
+     ⚠**바로 위 refreshFavTeam 은 정반대로 짜여 있었다**(fresh===null 이면 손대지 않는다) —
+     같은 상황에 두 경로가 다른 규칙을 쓰고 있었다(M1). 여기를 refresh 쪽에 맞춘다.
+     ⚠**해제는 막지 않는다** — on 이면 사용자가 지금 걸려 있는 것을 끄겠다는 뜻이라 경로가 필요 없다. */
+  if(!on&&next===null)return;
+  state.favTeam=on?null:next;
+  /* ⚠**state 전체를 쓰지 않는다** — 바로 위 toggleFav 와 같은 이유다.
+     initTabs 가 「지금 화면에 없는 탭 키」를 메모리에서 첫 키로 되돌려 놓은 상태라,
+     여기서 통째로 저장하면 다른 화면의 탭 기본값이 덮어써진다.
+     ⚠**저장이 막혀도**(프라이빗 모드) 이번 방문 동안의 화면은 돌아야 한다 */
+  try{
+    const cur=load()||{};
+    cur.favTeam=state.favTeam;
+    localStorage.setItem(KEY,JSON.stringify(cur));
+  }catch(e){}
+  paintFavTeam();
+}));
+
 /* ── 색인 화면의 이름·구단 좁히기 ──
    목록은 서버가 그렸다. JS는 좁히기만 한다 — 스크립트가 죽어도 전 선수 목록은 남는다. */
 const filter=$("#rosterFilter");
@@ -2972,11 +3399,28 @@ if(filter||chips.length){
     apply();
   });
   if(filter)filter.addEventListener("input",apply);
+
+  /* ?q= 로 들어오면 그 말로 좁힌 상태에서 시작한다.
+     ⚠**헤더 검색이 「81人中20人を表示 — 選手一覧ですべて見る」라고 말한 뒤 보내는 곳이 여기다.**
+     여기서 처음부터 다시 치게 하면 그 안내가 빈말이 된다.
+     ⚠**서버는 이 값을 모른다** — 전 선수 목록은 그대로 그려져 있고 좁히기만 얹는다(§0-1).
+     ⚠**질의어가 없으면 아무것도 하지 않는다.** 여기서 무조건 apply() 를 부르면
+     스크립트가 있을 때만 빈 구단 구획이 사라져, 같은 화면이 JS 유무로 달라진다.
+     ⚠**깨진 % 열이 와도 죽지 않는다** — decodeURIComponent 는 그때 던진다. 원문을 그대로 쓴다. */
+  if(filter){
+    const qm=/[?&]q=([^&#]*)/.exec(LOC.search||"");
+    if(qm){
+      const raw=(qm[1]||"").split("+").join(" ");
+      let q0=raw;
+      try{q0=decodeURIComponent(raw)}catch(e){q0=raw}
+      if(q0.trim()!==""){filter.value=q0;apply()}
+    }
+  }
 }
 
 press(".rail [data-preset]","preset",state.preset);
 press(".rail [data-density]","density",state.density);
-applyTheme();renderBlocks();renderEditor();showTabs();paintFav();revealHash();
+applyTheme();renderBlocks();renderEditor();showTabs();paintFav();paintFavTeam();revealHash();
 })();
 `;
 
@@ -2994,7 +3438,35 @@ function embedGlossary(template: string): string {
   if (json.includes("`")) {
     throw new Error("용어집에 백틱이 있다 — 클라이언트 스크립트가 깨진다");
   }
+  if (!template.includes("__GLOSSARY__")) {
+    throw new Error("__GLOSSARY__ 자리가 없다 — 치환이 조용히 일어나지 않는다");
+  }
   return template.replace("__GLOSSARY__", () => json);
 }
 
-export const CLIENT_JS = embedGlossary(CLIENT_JS_TEMPLATE);
+/**
+ * 강조 규칙(`**…**` → `<b>`)을 클라이언트 스크립트에 심는다.
+ *
+ * ⚠**두 벌로 적지 않기 위해서다**(M1). 서버의 `note()`/`emphasize()` 와 클라이언트의 용어 툴팁이
+ * **같은 함수의 같은 소스**를 쓴다 — 클라이언트는 서버 모듈을 import 할 수 없으므로
+ * 용어집(`__GLOSSARY__`)과 **같은 방식**으로 심는다.
+ * ⚠**두 벌이었을 때 실제로 어긋나 있었다**(2026-08-20 최종 검토 ①): 서버만 규칙을 알았고
+ * 클라이언트는 몰라서 별표가 그대로 찍혔다 — 6,333/15,340장(41%).
+ * ⚠`erasableSyntaxOnly`(tsconfig.base.json) 라서 타입은 공백으로 지워지고 **몸통은 그대로 JS** 다.
+ * 그래도 모양이 바뀌면 조용히 깨지므로 아래에서 시작 글자를 확인한다.
+ */
+function embedEmphasis(template: string): string {
+  const src = emphasisParts.toString();
+  if (src.includes("`")) {
+    throw new Error("강조 규칙 소스에 백틱이 있다 — 클라이언트 스크립트가 깨진다");
+  }
+  if (!src.startsWith("function emphasisParts(")) {
+    throw new Error(`강조 규칙이 함수 선언이 아니다 — 클라이언트에 심을 수 없다: ${src.slice(0, 40)}`);
+  }
+  if (!template.includes("__EMPHASIS_PARTS__")) {
+    throw new Error("__EMPHASIS_PARTS__ 자리가 없다 — 치환이 조용히 일어나지 않는다");
+  }
+  return template.replace("__EMPHASIS_PARTS__", () => src);
+}
+
+export const CLIENT_JS = embedEmphasis(embedGlossary(CLIENT_JS_TEMPLATE));

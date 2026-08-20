@@ -5,10 +5,22 @@
  * **우리 수치를 합산해 「통산」이라고 부르지 않는다.**
  * 시즌 안에서 닫히는 것(시즌 홈런·시즌 도루·연속 경기)만 우리 수치로 낸다.
  *
- * ⚠**マジックナンバーを出さない**(2026-08-17 확정). NPB는 승률(무승부 제외)로 순위를 매기고
- * 잔여 맞대결 일정을 우리는 받지 않는다 — 표준 공식이 그대로 맞지 않아 매체마다 값이 갈린다.
- * **이름이 같은데 값이 다르면 그건 거짓말이 된다.** 대신 **정확히 계산되는 것**만 낸다:
- * 잔여 경기(143 − 소화)와, 전승·전패했을 때의 승률 범위.
+ * ⚠**이 순위표는 マジックナンバー를 싣지 않는다.** 여기서 내는 것은 **정확히 계산되는 것**뿐이다 —
+ * 잔여 경기(규정 경기수 − 소화)와, 전승·전패했을 때의 승률 범위.
+ *
+ * ⚠**「우리는 매직을 내지 않는다」는 낡은 서술이었다**(2026-08-17 확정 → 2026-08-19 정정).
+ * 그때의 근거는 둘이었는데 **하나는 무효가 됐다**:
+ * ⑴ ~~「잔여 맞대결 일정을 우리는 받지 않는다」~~ → **틀렸다.** 예정 일정이 아니라 **규칙**에서 낸다 —
+ *    `deriveSeriesLengths`(aggregate/race.ts)가 대전표에서 규정 대전수를 유도하고,
+ *    「규정 − 이미 치른 수」가 직접대결 잔여다. 실측으로 완결 7시즌 전 쌍이 예외 0건이었다.
+ * ⑵ 「승률 순위 × 승수식 매직이라 매체마다 값이 갈린다」 → **여전히 참이다.**
+ *    그래서 값을 감추는 대신 **화면이 「승수식임」을 말한다**(M3). `0` 은 증명된 우승 확정에만 쓴다.
+ * → **구단 페이지(`team-page.ts` 의 `raceVerdict`)가 판정을 낸다.**
+ *    여기에 **값을** 새로 넣지는 않았다 — 그건 별도의 표시 결정이다.
+ *    ⚠**다만 「出していません」이라고 쓰지도 않는다.** 저장소가 두 곳에서 반대말을 하면 안 된다.
+ *    ⚠**그리고 어디 있는지는 가리킨다**(2026-08-19 검토 m3). 지우기만 했더니 홈에
+ *    매직을 가리키는 줄이 하나도 없어서, 여기서 우승 경쟁을 보던 사람이 「매직은?」이라고
+ *    물으면 답이 없는 화면이 됐다. **포인터 한 줄은 값이 아니다.**
  *
  * ⚠**143은 가정이 아니라 실측이다**(2026-08-17). 2023·2025 두 시즌 모두 12구단 전원이
  * 정확히 143경기를 소화했다. 다만 **`status='played'` 만 세야 한다** — 우천 중지 행이 따로 남고
@@ -219,6 +231,30 @@ export interface HomePageData {
   streaks: HomeStreak[];
   /** 이 시즌에 ポストシーズン 기록이 있는가 */
   hasPostseason: boolean;
+  /**
+   * **이 시즌이 이미 끝났는가**(`query.ts` 의 `seasonIsOver` 와 같은 근거 · M1).
+   *
+   * ⚠**끝난 시즌의 홈에 현재형을 쓰면 거짓말이 된다** — 「続いている記録」는
+   * 2018년 화면에서 「지금 이어지고 있다」로 읽힌다. 구단 페이지(`team-page.ts`)가
+   * `calendar.seasonOver`로 이미 이 판정을 하고 있고, 여기서는 **같은 판정**을
+   * 다른 값으로 받는다(2026-08-20 team-page.ts 수정에서 홈이 안 갈렸다고 신고됨).
+   */
+  seasonOver: boolean;
+}
+
+/**
+ * 「続いている記録」구획 제목 — 시즌이 끝났으면 과거형(M1).
+ *
+ * ⚠**홈·구단 페이지가 같은 함수로 같은 문장을 낸다.** 각자 손으로 적으면
+ * 화면마다 다르게 말하는 균열이 또 난다(팀 페이지만 먼저 과거형으로 고쳐졌던 사고 · 2026-08-20).
+ */
+export function streakSectionTitle(seasonOver: boolean): string {
+  return seasonOver ? "続いていた記録" : "続いている記録";
+}
+
+/** 「記録に近づいている」구획 제목 — 같은 규칙(M1). `streakSectionTitle` 과 짝이다. */
+export function milestoneSectionTitle(seasonOver: boolean): string {
+  return seasonOver ? "記録に近づいていた" : "記録に近づいている";
 }
 
 const pctText = (v: number | null): string => (v === null ? NO_VALUE : avg3(v));
@@ -315,8 +351,8 @@ function jumpNav(d: HomePageData): RawHtml {
   for (const l of d.leagues) items.push({ id: `b-hstand-${l.id}`, label: l.name.replace(/・リーグ$/, "") });
   if (d.week !== null) items.push({ id: "b-hweek", label: "先週の顔" });
   if (d.paces.length > 0) items.push({ id: "b-hpace", label: "ペース" });
-  if (d.milestones.length > 0) items.push({ id: "b-hmile", label: "記録に近づいている" });
-  if (d.streaks.length > 0) items.push({ id: "b-hstreak", label: "続いている記録" });
+  if (d.milestones.length > 0) items.push({ id: "b-hmile", label: milestoneSectionTitle(d.seasonOver) });
+  if (d.streaks.length > 0) items.push({ id: "b-hstreak", label: streakSectionTitle(d.seasonOver) });
   // ⚠**하나뿐이면 그리지 않는다** — 뛸 곳이 하나면 내비가 아니라 장식이다
   if (items.length < 2) return raw("");
   return html`<nav class="hjump" aria-label="このページの中の移動">
@@ -346,14 +382,19 @@ ${jumpNav(d)}
 ${d.latest === null
     ? raw("")
     : html`<section class="block" id="b-hlatest">
-  <h2>${fullDate(d.latest.date)}の結果<span class="qt">${d.latest.games.length}試合</span></h2>
+  <h2>${fullDate(d.latest.date)}の結果<span class="qt">${d.latest.games.length}試合 · ＠がホーム</span></h2>
+  ${/* ⚠**홈·원정이 화면 어디에도 없었다**(2026-08-20 감사 ②). 팀 이름 둘과 점수만 있어서
+       구장 이름으로 추측하는 수밖에 없었다.
+       ⚠**표식은 구단 페이지와 같은 어법을 쓴다**(M1) — 「＠팀」은 그 팀의 본거지에서 했다는 뜻이고,
+       `.trecent` 가 이미 같은 글자를 쓴다. 새 어휘를 만들면 두 화면이 다른 말을 하게 된다.
+       ⚠**한 줄에 세 칸이다.** 예전에는 다섯 요소를 flex 로 늘어놓고 팀명에 flex:1 1 0 을 줘서
+       팀명이 셀 **바깥쪽**으로 밀려 있었다 — 실측 1280px 잉크 기준으로 경기 **내부**가 최대 71px,
+       경기 **사이**가 18px 이라 **간격이 뜻과 반대로 묶였다.** 점수에 이름을 붙인다. */ ""}
   <ul class="hgames">${d.latest.games.map(
       (g) => html`<li>
     <span class="hg-t">${g.away}</span>
-    <b>${g.awayRuns === null ? NO_VALUE : g.awayRuns}</b>
-    <s>-</s>
-    <b>${g.homeRuns === null ? NO_VALUE : g.homeRuns}</b>
-    <span class="hg-t">${g.home}</span>
+    <b class="hg-s">${g.awayRuns === null ? NO_VALUE : g.awayRuns}<s>-</s>${g.homeRuns === null ? NO_VALUE : g.homeRuns}</b>
+    <span class="hg-t">＠${g.home}</span>
   </li>`,
     )}</ul>
   <p class="more"><a href="${dayHref(base, d.latest.date, d.latestDate)}">この日の詳細</a></p>
@@ -369,9 +410,19 @@ ${note(
     `残り試合は ${regularSeasonGames(d.season)}試合 から消化済み（中止を除く）を引いた数です。` +
       "「全勝〜全敗の勝率」は残りを全部勝った場合と全部負けた場合の勝率で、**予想ではなく計算できる範囲**です。" +
       "順位が並んだ球団には「同」を付けています — 当該球団間の対戦成績で決めた上で、それでも並ぶ場合です。" +
-      "引き分けは勝率の分母に入りません（NPBの規定）。" +
-      "マジックナンバーは出していません — NPBは勝率で順位を決め、残りの対戦相手も当サイトは持っていないため、" +
-      "同じ名前で違う数字を出すことになるからです。",
+      // ⚠**「マジックナンバーは出していません」를 지웠다**(2026-08-19). 구단 페이지가 내기 시작했으므로
+      //   그 문장은 **곧 거짓이 된다** — 저장소가 두 곳에서 반대말을 하면 어느 쪽도 믿을 수 없다.
+      //   ⚠홈 순위표에 값을 **새로 넣지는 않았다.** 그건 별도의 표시 결정이다.
+      //   ⚠**대신 어디 있는지는 가리킨다**(2026-08-19 검토 m3). 지우기만 했더니 홈에서
+      //   우승 경쟁을 보던 사람이 「매직은?」이라고 물을 때 **답이 하나도 없는 화면**이 됐다 —
+      //   예전에는 (틀린 답이었지만) 있었다. **값이 아니라 포인터**다.
+      //   ⚠**점등 조건을 문구에 넣는다**(2026-08-19 Minor). 「球団ページに出しています」는
+      //   무조건 있는 것처럼 읽히지만 실측(dist)으로는 **108장 중 매직이 실제로 나오는 것은
+      //   1장뿐**(2026 `h`「優勝マジック 28」) — 완결 시즌 96장은 `優勝が決まりました`/
+      //   `なくなりました` 뿐이다. 조건 없이 「出しています」라고 하면 나머지 107장에서는
+      //   가 보면 없는 포인터가 된다.
+      "マジックナンバーは、点灯していれば**球団ページ**に出します。" +
+        "引き分けは勝率の分母に入りません（NPBの規定）。",
   )}
 
 ${d.week === null
@@ -432,14 +483,17 @@ ${d.paces.length === 0
       "分母はその球団の消化試合数です — 消化が少ない球団の選手ほど換算値は動きやすくなります。" +
       // ⚠**「통산을 다루지 않는다」고 쓰면 안 된다** — 바로 아래 구획이 통산이다.
       //   화면이 자기 자신과 모순됐다(2026-08-17 검토 지적). 이 표가 무엇인지만 말한다
-      "**この表はシーズン記録だけ**です — 通算は下の「記録に近づいている」にあります。",
+      // ⚠**구획 이름을 손으로 적지 마라**(2026-08-20). 아래 구획의 제목은 시즌이 끝나면
+      //   「記録に近づいて**いた**」로 갈리는데 여기만 현재형으로 굳어 있어, 완결 시즌 8장에서
+      //   각주가 존재하지 않는 이름을 가리켰다. **같은 함수를 쓴다**(M1).
+      `**この表はシーズン記録だけ**です — 通算は下の「${milestoneSectionTitle(d.seasonOver)}」にあります。`,
   )}
 </section>`}
 
 ${d.milestones.length === 0
     ? raw("")
     : html`<section class="block" id="b-hmile">
-  <h2>記録に近づいている<span class="qt">通算</span></h2>
+  <h2>${milestoneSectionTitle(d.seasonOver)}<span class="qt">通算</span></h2>
   ${scroller(html`<table>
     <thead><tr>
       <th class="l">選手</th><th class="l">球団</th><th class="l">記録</th>
@@ -474,7 +528,7 @@ ${d.milestones.length === 0
 ${d.streaks.length === 0
     ? raw("")
     : html`<section class="block" id="b-hstreak">
-  <h2>続いている記録</h2>
+  <h2>${streakSectionTitle(d.seasonOver)}</h2>
   ${scroller(html`<table>
     <thead><tr><th class="l">選手</th><th class="l">球団</th><th class="l">記録</th><th>試合</th><th class="l">最後の出場</th></tr></thead>
     <tbody>${d.streaks.map(

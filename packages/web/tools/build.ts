@@ -10,14 +10,16 @@
  * ⚠**시계는 여기서 한 번만 읽는다**(M6). 아래로 내려가는 것은 `YYYY-MM-DD` 문자열이다.
  */
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { brokenLinksIn, linkIndex } from "../src/link-check.ts";
+import { brokenLinksIn, duplicateIds, linkIndex } from "../src/link-check.ts";
 import type { LinkIndex } from "../src/link-check.ts";
 import { dirname, join, resolve } from "node:path";
 import { openDb } from "@bb-app/store";
 import { systemClock, toJstDateString } from "@bb-app/archiver";
 import { buildSite, seasonPaths } from "../src/site.ts";
 import type { BuildResult } from "../src/site.ts";
-import { loadLog, loadSite } from "../src/query.ts";
+// ⚠**연락처 게이트의 판정은 한 벌이다**(M1) — 조건을 여기서 다시 쓰지 않는다
+import { contactGate } from "../src/layout.ts";
+import { buildCareerContext, loadLog, loadSite } from "../src/query.ts";
 
 const [dbArg, outArg, seasonArg, throughArg] = process.argv.slice(2);
 
@@ -46,6 +48,33 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
     try {
       const t0 = process.hrtime.bigint();
       /**
+       * ⚠**시즌을 넘는 계산은 한 번만 한다.**
+       *
+       * 火消し 의 이닝 도중 등판 조회와 등판 시점 RE 행렬은 **보유 첫 시즌부터** 필요하다.
+       * 시즌마다 만들면 **시즌 수의 제곱**으로 늘어난다 — 9시즌 실측(2026-08-20)으로
+       * 조회 누계 26.3초 · RE 90회 14.8초였고, 한 번씩만 만들면 2.5초 · 18회다.
+       * ⚠**`loadSite` 는 이것 없이도 돈다**(스스로 만든다) — 여기서 넘기는 것은 **속도뿐**이고,
+       *   답이 같다는 것을 `relief-seasons.test.ts` 가 실DB로 고정한다.
+       */
+      const held = db.raw
+        .prepare("SELECT MIN(season) AS lo, MAX(season) AS hi FROM game")
+        .get() as { lo: number | null; hi: number | null };
+      const career = buildCareerContext(db, {
+        from: held.lo ?? Math.min(...seasons),
+        to: held.hi ?? Math.max(...seasons),
+        ...(throughArg === undefined ? {} : { through: throughArg }),
+      });
+      /**
+       * ⚠**투수를 모르는 타석은 火消し 를 조용히 줄인다**(M11). 지금 아카이브는 0건이지만,
+       * CLAUDE.md §2-2 가 「소급 시즌은 투수 귀속이 얇을 수 있다」고 적어 뒀다 —
+       * 백필이 그 창을 열면 여기가 먼저 말한다. **배포는 막지 않는다**(값이 없어지는 게 아니라 얇아진다).
+       */
+      if (career.reliefScan.unknownPitcher > 0) {
+        console.warn(
+          `⚠ 투수를 모르는 타석 ${career.reliefScan.unknownPitcher}건 — 火消し 의 교대 판정이 그만큼 성립하지 않는다`,
+        );
+      }
+      /**
        * ⚠**전 시즌을 먼저 읽는다.** 시즌 전환이 「그 시즌에 같은 화면이 있는가」를 물어야 하고,
        * 그건 렌더링 **전에** 알아야 한다 — 없는 곳으로 링크하면 404가 되고 조용하다.
        */
@@ -55,6 +84,7 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
         data: loadSite(db, {
           season: s,
           builtOn,
+          career,
           ...(throughArg === undefined ? {} : { through: throughArg }),
         }),
       }));
@@ -138,11 +168,47 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
         process.exitCode = 1;
       }
 
+      /**
+       * ⚠**우승 판정이 통째로 사라진 채 배포하지 않는다**(2026-08-19 검토 m2).
+       *
+       * 성적(`w/l/t/games`)과 대전표가 어긋나면 `seasonRace` 가 시즌 전체를 `unknown` 으로
+       * 떨어뜨려 **12구단 페이지의 판정이 한꺼번에 없어진다.** 그런데 화면 문구는 정직하고
+       * (「優勝争いはまだ判定できません」) 신호는 `console.warn` 하나뿐이었다 —
+       * CI 가 stderr 를 안 읽으면 아무도 모른다. **M7 의 「실패로」에 반쯤만 닿아 있었다.**
+       *
+       * ⚠**`basis: "unknown"` 전체를 막는 것이 아니다.** 교류전이 안 끝난 4~5월의 `unknown` 은
+       * **정상 상태**다(실측: 2026 타임라인에서 06-01 부터 `confirmed`). 여기서 보는 것은
+       * 「성적과 대전표가 서로 다른 세계의 것이다」뿐이고, 그건 언제나 파이프라인 결함이다.
+       * ⚠**산출물은 남긴다** — `stale`·`emptySeasons` 와 같은 형식이다. 배포만 막는다.
+       */
+      const disagreedSeasons = loaded.filter((l) => l.data.raceDisagreed.length > 0);
+      if (disagreedSeasons.length > 0) {
+        console.error(
+          "⚠ 성적과 대전표가 어긋난다 — 우승 경쟁 판정이 통째로 사라진 채 나갈 뻔했다. 배포하지 않는다",
+        );
+        for (const l of disagreedSeasons) {
+          console.error(`   ${l.season}: ${l.data.raceDisagreed.length}구단 — ${l.data.raceDisagreed.join(" ")}`);
+        }
+        process.exitCode = 1;
+      }
+
       const mb = (bytes / 1024 / 1024).toFixed(1);
       console.log(`생성: ${fileCount}파일 / ${mb}MB / 시즌 ${seasons.join("·")}`);
       console.log(`집계: ${loadMs.toFixed(0)}ms · 최신 경기일 ${result.latestGameDate ?? "없음"} · 생성일 ${builtOn}`);
-      if (site.contact === "") {
-        console.warn("⚠ BB_CONTACT 미설정 — 삭제·정정 요청 창구가 화면에 나오지 않는다(공개 전 필수)");
+      /**
+       * ⚠**연락처가 없으면 화면이 조용하지 않다**(L4 · 2026-08-20).
+       * 꼬리말이 「連絡先が未設定です（公開前に設定してください）」라는 **개발자 지시문**을
+       * 방문자에게 낸다 — 그것도 15,340장 전부에서. 예전에는 `console.warn` 하나뿐이라
+       * 종료 코드가 0이었고, `emptySeasons`·`stale`·`raceDisagreed` 와 **등급이 달랐다**.
+       * ⚠**판정은 `layout.ts` 의 `contactGate` 가 한다** — 여기서 조건을 다시 쓰면 두 벌이 된다.
+       *   로컬을 막지 않는 이유와 `BB_REQUIRE_CONTACT` 를 켜는 자리도 거기에 적혀 있다.
+       */
+      const contact = contactGate(site.contact, process.env["BB_REQUIRE_CONTACT"]);
+      if (contact.fatal) {
+        console.error(contact.message);
+        process.exitCode = 1;
+      } else if (contact.missing) {
+        console.warn(contact.message);
       }
       /**
        * ⚠**깨진 링크로 배포하지 않는다.**
@@ -165,6 +231,33 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
         console.log(
           `링크: ${all.filter((f) => f.path.endsWith(".html")).length}장 검사(앵커 포함) · 깨진 것 없음`,
         );
+      }
+
+      /**
+       * ⚠**중복 id 로 배포하지 않는다.**
+       *
+       * 링크 검사는 「가리키는 곳이 있는가」만 봤고 「그곳이 **하나인가**」는 못 봤다 —
+       * `LinkIndex.ids` 가 `Set` 이었기 때문이다. 그래서 **그물이 있는데 구멍이 있었다**:
+       * 순위표 9장(시즌별 8 + 현행 1)에 중복 id **86종 / 172노드**가 있었는데
+       * 앵커 검사도 ARIA 검사도 전부 통과했다(2026-08-19 감사 실측).
+       * 그동안 `ranking.html#pn-rankmetric-starter-era` 로 들어가면
+       * 브라우저가 먼저 나온 セ 사본을 열어 **パ의 개인 지표에 도달하는 URL 이 없었다.**
+       * ⚠**id 가 겹치면 앵커·ARIA 검사 자체가 무의미해진다** — 그래서 링크 검사보다
+       * 약한 신호가 아니라 **같은 등급의 배포 차단**이다.
+       */
+      const dups = duplicateIds(all);
+      if (dups.length > 0) {
+        const pages = new Set(dups.map((d) => d.path));
+        // ⚠**「종」이 아니다**(2026-08-20 최종 검토 ⑥). `dups` 한 건은 (문서, id) **쌍**이라
+        //   같은 id 가 9장에 있으면 9건이다 — 「9종」으로 읽히면 규모가 9배로 부풀어 보인다.
+        //   id 의 종수는 따로 센다(작업규칙 7 — 분모와 단위를 정확히 쓴다).
+        const kinds = new Set(dups.map((d) => d.id));
+        console.error(
+          `⚠ 같은 문서에 중복된 id ${dups.length}건（${pages.size}장 · id ${kinds.size}종） — 그 자리로 가는 URL 이 다른 곳을 연다. 배포하지 않는다`,
+        );
+        for (const d of dups.slice(0, 20)) console.error(`   ${d.path} → id="${d.id}"`);
+        if (dups.length > 20) console.error(`   … 그 밖에 ${dups.length - 20}건`);
+        process.exitCode = 1;
       }
       if (result.stale) {
         console.error("⚠ 데이터가 낡았다 — 수집이 멈췄는지 확인하라");

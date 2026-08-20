@@ -29,7 +29,9 @@
 import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import { NO_VALUE, avg3, dec2, fullDate, innings } from "./format.ts";
-import { block, denText, follower, note, panel, panelId, rankValue, runCell, scroller, statCount, statRateOuts, statSigned, statText, tabId, tablist, term, widestRunDiff, wlCell } from "./parts.ts";
+import { block, denText, follower, note, panel, panelId, rankValue, runCell, scopedGroup, scroller, statCount, statRateOuts, statSigned, statText, subGroup, tabId, tablist, term, THIN_MARK, thinMark, valueWithDen, widestRunDiff, wlCell } from "./parts.ts";
+import type { TabGroupRef } from "./parts.ts";
+import { denUnit } from "./glossary.ts";
 import { page, pastSeasonOf, ROSTER_PATH } from "./layout.ts";
 import { teamPath } from "./team-page.ts";
 import type { Freshness, SiteMeta } from "./layout.ts";
@@ -121,11 +123,12 @@ const RANKING_PAGE_ROWS = 30;
  * ⚠**지표 탭 그룹을 부문마다 나눈다.** 하나로 묶으면 「打者」에서 고른 `wRC+`가
  * 「先発」로 옮겼을 때 사라져, 아무 표도 안 열린 화면이 된다.
  */
-function categoryPanels(c: RankingCategory, base: string, limit: number, prefix: string): RawHtml {
+function categoryPanels(c: RankingCategory, base: string, limit: number, prefix: TabGroupRef): RawHtml {
   if (c.panels.length === 0) return html`<p class="empty">この部門の順位を計算できていません。</p>`;
   // ⚠페이지마다 접두사를 다르게 준다 — 저장된 탭 상태를 공유하면 5행짜리 일람과
   // 30행짜리 순위표가 서로의 선택을 덮어쓴다
-  const group = `${prefix}-${c.id}`;
+  // ⚠**그룹 이름과 id 이름공간을 함께 늘린다**(`subGroup`) — 한쪽만 늘리면 id 가 다시 겹친다
+  const group = subGroup(prefix, c.id);
   return html`${tablist(
     group,
     c.panels.map((p) => ({ id: p.id, label: p.label })),
@@ -215,7 +218,11 @@ export function renderIndexPage(d: IndexPageData, ctx: RenderContext): string {
 </section>
 
 ${d.teams.map(
-    (t) => html`<section class="teamgroup" style="--chip:${t.color.base};--chip-ink:${t.color.ink}">
+    // ⚠**구단 페이지에서 이 구획으로 바로 오는 앵커**(hi = highlight). id 를 별도로 검사하지 않는다 —
+    // `t.code`는 `TEAMS`(domain/teams.ts)의 닫힌 12개 코드 중 하나이고, 같은 줄의 `teamPath(t.code)`도
+    // 이미 검사 없이 그대로 쓰인다. 게다가 `html` 태그드 템플릿이 값을 자동 이스케이프하므로
+    // 속성 밖으로 빠져나가는 문자도 만들 수 없다(html.ts).
+    (t) => html`<section class="teamgroup" id="hi-${t.code}" style="--chip:${t.color.base};--chip-ink:${t.color.ink}">
   <h2><i></i><a href="${base}${teamPath(t.code)}">${t.name}</a><span class="qt">${t.players.length}人</span></h2>
   <ul class="roster">${t.players.map((p) => {
       const who: MarkPlayer = {
@@ -314,6 +321,33 @@ export interface StandingsSection {
   rows: StandingRow[];
 }
 
+/**
+ * 引き分けの解剖 한 줄.
+ *
+ * ⚠**이 표의 값은 「그 해의 연장 규정」이 데이터에 남긴 자국이다** — 구단의 성질이 아니다.
+ * ⚠**수를 화면에 하드코딩하지 않는다.** 직전 라운드가 리그 실측치를 1,808장에 박았고,
+ *   **DB 에서 다시 세어 대조하는 시험**으로 고쳤다. 여기도 전부 데이터에서 온다.
+ */
+export interface DrawSeasonRow {
+  season: number;
+  /** 보고 있는 시즌인가. 화면이 그 줄을 강조한다 */
+  current: boolean;
+  games: number;
+  draws: number;
+  drawRate: Rate;
+  /** 연장(10회 이상)에 들어간 경기 */
+  extra: number;
+  extraDrawn: number;
+  /** 연장에 들어가 결착이 난 비율. ⚠**연장이 0인 해는 값이 없다**(M11) */
+  extraDecided: Rate;
+  /** 9회 이내에 끝난 무승부. ⚠**연장이 있는 해에 0이 아니면 콜드 게임이다** */
+  regulationDrawn: number;
+  /** 그 해에 실제로 도달한 최대 이닝 */
+  maxInning: number | null;
+  /** 이닝을 모르는 경기. ⚠**9회로 때우지 않는다**(M11) */
+  inningUnknown: number;
+}
+
 export interface RankingPageData {
   season: number;
   asOf: string | null;
@@ -321,7 +355,44 @@ export interface RankingPageData {
   standings: StandingsSection[];
   /** 동률 처리 규칙. ⚠**화면에 적는다**(M3) */
   tieRule: string;
+  /**
+   * 引き分けの解剖. **보유 첫 시즌 ~ 보고 있는 시즌**.
+   * ⚠**미래 시즌을 과거 화면에 싣지 않는다** — 통산 대전과 같은 규약이다.
+   * 비어 있으면 구획을 그리지 않는다.
+   */
+  draws: DrawSeasonRow[];
   leagues: LeagueSection[];
+}
+
+/**
+ * 引き分けの解剖.
+ *
+ * ⚠**なぜここか** — 順位表の`引分`列を見た人が次に持つ疑問がこれだからだ。
+ *   勝率の分母から引き分けを抜くという NPB の規定も、この表の隣にあってはじめて意味を持つ。
+ * ⚠**球団別に出さない。** 引き分けは2球団に同時に付く事象で、それを球団の性質として読ませると
+ *   根拠のない話になる（`draw.ts` の「무엇을 재지 않는가」）。
+ */
+function drawsTable(rows: readonly DrawSeasonRow[]): RawHtml {
+  return scroller(html`<table>
+  <thead><tr>
+    <th class="l">シーズン</th><th>試合</th><th>引き分け</th><th>${term("引分率")}</th>
+    <th>延長</th><th>延長引分</th><th>${term("延長決着率")}</th><th>9回引分</th><th>最長イニング</th>
+  </tr></thead>
+  <tbody>${rows.map(
+    (r) => html`<tr class="${r.current ? "me" : ""}">
+    <td class="l">${r.season}年</td>
+    <td class="b">${r.games}</td>
+    <td>${r.draws}</td>
+    <!-- ⚠**분모를 값에 붙인다**(M2) — 시즌마다 경기 수가 다르다(2020년은 120試合制) -->
+    <td class="wd">${valueWithDen(r.drawRate, denUnit("drawRate"), 3)}</td>
+    <td>${r.extra}</td>
+    <td>${r.extraDrawn}</td>
+    <td class="wd">${valueWithDen(r.extraDecided, denUnit("extraDecided"), 3)}</td>
+    <td>${r.regulationDrawn}</td>
+    <td>${r.maxInning === null ? NO_VALUE : `${r.maxInning}回`}</td>
+  </tr>`,
+  )}</tbody>
+</table>`);
 }
 
 /** 승패무 표기 `25-24-1`. 무승부가 0이어도 자리를 비우지 않는다 — 열이 흔들린다 */
@@ -358,12 +429,17 @@ function standingsTable(s: StandingsSection, base: string): RawHtml {
   return scroller(html`<table class="stand hstand">
     <thead><tr>
       <th>順位</th><th class="l">球団</th><th>試合</th>
-      <th class="l">勝敗分</th><th>勝率</th><th>差</th><th class="l">得失点</th>
+      <!-- ⚠**勝率도 용어집에 있다**(2026-08-20 winPct 등록). 여기만 맨 문자열이면
+           같은 순위표인데 홈 화면(term 을 쓴다)에는 설명이 뜨고 이쪽에는 안 뜬다.
+           ⚠주석 안에 백틱을 쓰지 마라 — 이 자리는 템플릿 리터럴이라 문자열이 그 자리에서 끊긴다 -->
+      <th class="l">勝敗分</th><th>${term("勝率")}</th><th>差</th><th class="l">得失点</th>
       <th>${term("打率")}</th><th>${term("防御率")}</th>
       <th>ホーム</th><th>ビジター</th><th>直近${RECENT_GAMES}</th>
     </tr></thead>
     <tbody>${s.rows.map(
-      (r) => html`<tr style="--chip:${r.color.base}" class="${r.rank === 1 ? "lead" : ""}">
+      // ⚠**구단 페이지에서 이 행으로 바로 오는 앵커**(stand = standings). 위 teamgroup 의 `hi-` 와
+      // 같은 이유로 별도 검사를 두지 않는다 — `r.teamCode` 도 닫힌 12개 구단 코드 중 하나다.
+      (r) => html`<tr id="stand-${r.teamCode}" style="--chip:${r.color.base}" class="${r.rank === 1 ? "lead" : ""}">
         <td class="hrank">${r.rank}${r.tiedRank ? html`<s>同</s>` : null}</td>
         <!-- ⚠**팀명을 누르면 그 팀 화면으로 간다.** 지금까지 목적지가 없어서
              팀을 보려면 이 한 줄과 선수 일람의 한 덩어리를 머리에서 합쳐야 했다 -->
@@ -417,26 +493,61 @@ export function renderRankingPage(d: RankingPageData, ctx: RenderContext): strin
       `交流戦の試合もリーグ順位に含めています。${d.tieRule}` +
       `得点・失点は公表記録、打率と防御率は当サイトの再計算です。`,
   )}
-</section>`;
+</section>
+${d.draws.length === 0
+    ? raw("")
+    : html`<section class="block" id="b-draws">
+  <h2>引き分けの解剖<span class="qt">${d.draws[0]!.season}〜${d.draws[d.draws.length - 1]!.season}年</span></h2>
+  ${drawsTable(d.draws)}
+  ${note(
+      "上の順位表で勝率の分母から抜いている**引き分け**が、どういう試合だったのかを分解しています。" +
+        "**「延長」は10回以降に入った試合**、「9回引分」は9回までで引き分けになった試合です — " +
+        "延長のある年に9回引分があれば、それは雨などのコールドゲームです。" +
+        "⚠**引き分けの多さは球団の性質ではなく、その年の延長規定でほぼ決まります。** " +
+        "当サイトが保有するシーズンでも規定は何度も変わっていて、それがこの表にそのまま残っています。" +
+        "⚠**球団別には出していません** — 引き分けは2球団に同時に付く事象なので、" +
+        "それを球団の強さとして読むと根拠のない話になります。" +
+        "⚠**「引き分けが順位にどれだけ影響したか」も測っていません**（NPBの勝率は引き分けを分母から抜くだけで、" +
+        "当サイトはそれ以上の換算をしません）。" +
+        (d.draws.some((r) => r.inningUnknown > 0)
+          ? `⚠イニングが分からない試合が${d.draws.reduce((a, r) => a + r.inningUnknown, 0)}試合あり、` +
+            "「延長」にも「9回引分」にも数えていません。"
+          : ""),
+    )}
+</section>`}`;
 
-  const personalBody = html`${d.leagues.map((league, li) =>
-    panel(
+  /**
+   * ⚠**부문·지표 탭은 리그마다 한 벌씩 그려진다 — 그룹은 공유, id 는 나눈다.**
+   *
+   * 예전에는 그룹 이름으로 id 까지 지어서 **セ 사본과 パ 사본의 id 가 같았다.**
+   * 실측(2026-08-19 감사): `dist` 15,340장 중 `ranking.html` **9장**(시즌별 8 + 현행 1)에
+   * 중복 id **86종 / 172노드**. `ranking.html#pn-rankmetric-starter-era` 로 들어가면
+   * `getElementById` 가 セ 사본을 반환해 `revealHash()` 가 그쪽 조상만 폈고,
+   * 열린 리그 패널이 **`['central']`** — **パ의 어떤 개인 지표도 URL 로 가리킬 수 없었다.**
+   * 낭독기에는 「パ의 打者 탭이 セ의 패널을 조작한다」고 들렸다(ARIA 참조 20/20이 セ 쪽).
+   *
+   * ⚠**그룹까지 나누면 안 된다** — 「리그를 바꿔도 보고 있던 지표가 남는다」가 사라진다.
+   */
+  const personalBody = html`${d.leagues.map((league, li) => {
+    const catGroup = scopedGroup("rankcat", league.id);
+    const metricGroup = scopedGroup("rankmetric", league.id);
+    return panel(
       "rankleague",
       league.id,
       li === 0,
       html`<section class="block" id="lg-${league.id}">
       <h2>${league.name}<span class="sw">${tablist(
-        "rankcat",
+        catGroup,
         league.categories.map((c) => ({ id: c.id, label: c.label })),
         false,
         `${league.name}の部門`,
       )}</span></h2>
       ${league.categories.map((c, ci) =>
-        panel("rankcat", c.id, ci === 0, categoryPanels(c, base, RANKING_PAGE_ROWS, "rankmetric")),
+        panel(catGroup, c.id, ci === 0, categoryPanels(c, base, RANKING_PAGE_ROWS, metricGroup)),
       )}
     </section>`,
-    ),
-  )}`;
+    );
+  })}`;
 
   // 갈래가 없으면 구분선도 없다 — 앞이 비어 있는 구분선은 그냥 흠집이다
   const leagueRail = hasPersonal
@@ -455,7 +566,7 @@ ${!hasTeam && !hasPersonal
     ? html`<p class="empty">このシーズンの順位はまだ計算できていません。</p>`
     : html`${!split && !hasPersonal
       ? raw("")
-      : html`<nav class="rail" aria-label="順位の表示">
+      : html`<div class="rail">
   ${split
         ? tablist(
           "ranktype",
@@ -466,7 +577,7 @@ ${!hasTeam && !hasPersonal
         )
         : raw("")}
   ${split ? follower("ranktype", "personal", false, leagueRail) : leagueRail}
-</nav>`}
+</div>`}
 
 ${hasTeam ? (split ? panel("ranktype", "team", true, teamBody) : teamBody) : raw("")}
 ${hasPersonal ? (split ? panel("ranktype", "personal", false, personalBody) : personalBody) : raw("")}`}`;
@@ -654,7 +765,7 @@ export function renderStartersPage(d: StartersPageData, ctx: RenderContext): str
                  이 사이트가 직접 만든 지표이고, 방어율·WHIP·FIP 는 어디서나 볼 수 있다. -->
             ${side.summary.srp === null
               ? statText("SRP", NO_VALUE)
-              : statSigned("SRP", side.summary.srp.value, side.summary.srp.denominator, "対戦打者")}
+              : statSigned("SRP", side.summary.srp.value, side.summary.srp.denominator, denUnit("srp"))}
             ${statRateOuts("防御率", side.summary.era, 2)}
             ${statRateOuts("WHIP", side.summary.whip, 2)}
             ${statRateOuts("FIP", side.summary.fip, 2)}
@@ -670,15 +781,29 @@ export function renderStartersPage(d: StartersPageData, ctx: RenderContext): str
    *
    * ⚠**같은 표를 두 번 쓰지 않는다**(M1) — 今季와 通算이 모양이 같으므로 부품 하나로 그린다.
    * 두 벌로 두면 언젠가 한쪽만 고쳐진다.
+   *
+   * ⚠**打率에는 분모(打数)를 붙인다**(M2 · 2026-08-19 감사 P1 · 배포물 실측).
+   * 예전에는 `avg3(m.avg.value)` 만 찍어서 `dist/starters.html` 전체에 「打数」가 **0회**였다.
+   * 그런데 이 표에는 `打席`과 `安打`가 나란히 있어서, 읽는 사람이 그 둘을 나누면 표시값과
+   * 어긋난다 — 실측 `万波 9打席 2安打 .250`(= 2/8) · `郡司 8打席 3安打 .429`(= 3/7).
+   * **「분모 없음」이 아니라 「틀린 분모가 인접」한 상태**라 더 나쁘다.
+   * ⚠**「打数」 열을 더하는 것이 아니라 값에 붙인다** — `assets.ts` 가 順位表에서 같은 판단을
+   * 적어 뒀다(「인접」으로는 지켜지지 않으므로 값에 붙인다). 이 표는 좁은 화면에서 옆으로
+   * 굴러가는 표라 열을 늘리면 打率 자체가 화면 밖으로 밀린다.
+   * (선수 페이지의 対戦成績은 반대로 「打数」 열을 갖는다 — 거기는 정렬·좁히기가 되는 넓은 표라
+   *  열이 하나 더 들어가고, 그래서 `den-units.test.ts` 가 두 갈래를 모두 인정한다.)
+   * ⚠**분모는 `m.avg.denominator`(= `line.ab`)다.** `line.pa` 를 쓰면 값은 그대로인 채
+   * 분모만 틀려서, 지금보다 **더 그럴듯한 거짓말**이 된다(`den-units.test.ts` 가 잡는다).
    */
   const matchupRows = (list: readonly MatchupRow[], side: ProbableSide, opponent: ProbableSide): RawHtml =>
     scroller(html`<table>
     <thead><tr><th class="l">${opponent.shortName}の打者</th><th>打席</th><th>安打</th><th>本塁打</th><th>三振</th><th>打率</th></tr></thead>
     <tbody>${list.map(
       (m) => html`<tr class="${m.line.pa < 10 ? "thin" : ""}">
-        <td class="l"><a href="${base}players/${m.opponentId}.html?vs=${encodeURIComponent(side.playerId ?? "")}#b-matchup">${m.opponentName}</a></td>
+        ${/* ⚠**「薄く」를 글자로도 말한다**(2026-08-20 감사 ③) — 색·그림자는 forced-colors 에서 사라진다 */ ""}
+        <td class="l"><a href="${base}players/${m.opponentId}.html?vs=${encodeURIComponent(side.playerId ?? "")}#b-matchup">${m.opponentName}</a>${thinMark(m.line.pa < 10, "10打席未満")}</td>
         <td>${m.line.pa}</td><td>${m.line.h}</td><td>${m.line.hr}</td><td>${m.line.so}</td>
-        <td>${avg3(m.avg.value)}</td>
+        <td class="wd">${valueWithDen(m.avg, "打数", 3)}</td>
       </tr>`,
     )}</tbody>
   </table>`);
@@ -702,7 +827,7 @@ export function renderStartersPage(d: StartersPageData, ctx: RenderContext): str
     }
     const group = `mu-${side.teamCode}-${opponent.teamCode}`;
     return html`<div class="muwrap">
-      <nav class="muswitch">${tablist(
+      <div class="muswitch">${tablist(
       group,
       [
         { id: "season", label: "今季" },
@@ -711,7 +836,7 @@ export function renderStartersPage(d: StartersPageData, ctx: RenderContext): str
       ],
       false,
       "集計する範囲",
-    )}</nav>
+    )}</div>
       ${panel(group, "season", true, side.opponents.length === 0
       ? html`<p class="empty">今季の対戦はまだありません。</p>`
       : matchupRows(side.opponents, side, opponent))}
@@ -737,7 +862,7 @@ ${d.gameDate === null || d.games.length === 0
     ? html`<section class="block"><p class="empty">${past
       ? "このシーズンの予告先発は記録していません。予告先発の保存を始めたのが今シーズンからです。"
       : "予告先発はまだ発表されていません。発表は前日〜当日です。"}</p></section>`
-    : html`<nav class="cards" role="tablist" data-tabgroup="starters" aria-label="試合">
+    : html`<div class="cards" role="tablist" data-tabgroup="starters" aria-label="試合">
     ${d.games.map(
       /**
        * ⚠**id 와 aria-controls 를 여기서 빠뜨렸었다**(2026-08-18 감사 P2).
@@ -760,7 +885,7 @@ ${d.gameDate === null || d.games.length === 0
       aria-controls="${d.games.map((g) => panelId("starters", gameKey(g))).join(" ")}">
       <span class="ctxt"><b>すべて</b><s>${d.games.length}試合</s></span>
     </button>
-  </nav>
+  </div>
 ${d.games.map((g, i) =>
       panel(
         "starters",
@@ -782,7 +907,7 @@ ${d.games.map((g, i) =>
     "予告先発は試合の前日〜当日に公表される情報です。当サイトは1日1回の取得でこれを反映しており、" +
       "試合中の情報は取得していません。打順は試合前には分からないため、" +
       "「その投手と対戦したことがある相手球団の打者」を打席数の多い順に並べています。" +
-      "10打席未満は薄く表示しています。選手名を押すと、その投手との対戦成績を開いた状態でページが開きます。",
+      `10打席未満は名前に**${THIN_MARK}**を付け、薄く表示しています。選手名を押すと、その投手との対戦成績を開いた状態でページが開きます。`,
   )}
 </section>
 
@@ -1057,12 +1182,12 @@ export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): strin
     <!-- ⚠**이름을 여기 두지 않는다**(2026-08-18 감사 P3). 안쪽 tablist 가 같은 이름을 갖고 있어서
          낭독기가 「日にち ナビゲーション · 日にち タブリスト」처럼 두 번 말했다.
          이름은 **위젯 쪽**에 남긴다 — 조작하는 것이 그쪽이다. -->
-    <nav class="pickday">${tablist(
+    <div class="pickday">${tablist(
       "pickday",
       d.days.map((x) => ({ id: x.date, label: dayLabel(x.date) })),
       true,
       "日にち",
-    )}</nav>
+    )}</div>
     ${d.days.map((day, di) =>
       panel(
         "pickday",
@@ -1073,12 +1198,12 @@ export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): strin
         }${dayStateNote(day)}</p>
     <!-- ⚠**여기에 sticky를 걸지 않는다.** 바로 위의 pickbar가 이미 sticky라
          둘 다 붙으면 같은 자리를 두고 겹친다. 경기 고르기는 한 번 하고 끝나는 조작이다 -->
-    <nav class="pickgames" aria-label="試合">${tablist(
+    <div class="pickgames">${tablist(
           `pickgame-${day.date}`,
           day.games.map((g) => ({ id: g.key, label: `${g.sides[0].shortName} − ${g.sides[1].shortName}` })),
           true,
           "試合",
-        )}</nav>
+        )}</div>
     ${day.games.map((g, i) =>
           panel(
             `pickgame-${day.date}`,

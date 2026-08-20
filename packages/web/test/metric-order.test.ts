@@ -28,6 +28,28 @@ test("세이버가 전통 비율보다 앞이다 — 이 사이트의 입장이�
 test("표본은 비율 뒤, 누적 개수는 그 뒤다", () => {
   assert.ok(metricRank("ops") < metricRank("pa"), "OPS 가 打席 뒤에 있다");
   assert.ok(metricRank("pa") < metricRank("hr"), "打席 가 本塁打 뒤에 있다");
+  // 安打는 개수의 맨 앞이다 — 本塁打·打点보다 앞
+  assert.ok(metricRank("pa") < metricRank("h"), "安打 가 打席 앞에 있다");
+  assert.ok(metricRank("h") < metricRank("hr"), "安打 가 本塁打 뒤에 있다");
+  // 併殺打는 개수다 — 三振 옆
+  assert.ok(metricRank("so") < metricRank("gidp"), "併殺打 가 三振 앞에 있다");
+  assert.ok(metricRank("pa") < metricRank("gidp"), "併殺打 가 표본보다 앞에 있다");
+});
+
+/**
+ * ⚠**勝率은 맨 뒤다.** 승패는 타선과 구원진이 절반을 정한다 — 이 파일이 이미 내린 판단
+ * (「투수 자신을 재는 값이 먼저다」·선발의 첫 지표가 한때 「勝利」였다)과 어긋나지 않게 둔다.
+ * ⚠**「勝利보다 뒤」만 물으면 모자란다** — 등록을 잊어 모르는 키가 되어도 그건 참이 된다
+ * (모르는 키는 맨 뒤로 가므로). **등록돼 있는가**를 함께 묻는다.
+ */
+test("⚠勝率이 투수 목록의 맨 뒤다 — 승수를 앞세우지 않는다는 판단과 같은 방향이다", () => {
+  for (const key of ["srp", "era", "fip", "whip", "so", "w", "l", "sv", "hld", "starts", "qs", "pitches", "balk"]) {
+    assert.ok(metricRank(key) < metricRank("winPct"), `勝率 이 ${key} 앞에 있다`);
+  }
+  assert.ok(
+    metricRank("winPct") < metricRank("등록되지않은지표"),
+    "勝率 이 정본 목록에 없다 — 모르는 키로 맨 뒤에 간 것이라면 순서가 우연이다",
+  );
 });
 
 /**

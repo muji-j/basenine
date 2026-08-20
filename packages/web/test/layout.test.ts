@@ -12,7 +12,8 @@ import {
 } from "../src/layout.ts";
 import { NEUTRAL_COLOR } from "@bb-app/domain";
 import { renderTodayPage } from "../src/today-page.ts";
-import { context } from "./fixtures.ts";
+import { renderPlayerPage } from "../src/player-page.ts";
+import { context, playerPage } from "./fixtures.ts";
 import { html } from "../src/html.ts";
 
 test("신선도는 경기일과 생성일의 간격으로 정해진다", () => {
@@ -131,6 +132,50 @@ const shell = (): string =>
   );
 
 /**
+ * ⚠**주석이 「전부 펼친다」고 적어 놓고 규칙은 탭 패널만 폈다**(2026-08-20 최종 검토 ⑤).
+ *
+ * 선수 페이지는 프리셋 밖의 구획을 `<section class="block" hidden>` 으로 내보내는데,
+ * `[data-panelgroup][hidden]` 은 거기 안 걸린다. 실브라우저(JS 끔)에서
+ * `players/01105138.html` 의 `b-count`·`b-relief` 높이가 **0** 이었고 앵커로 들어가도 0이었다 —
+ * 즉 **닿을 방법이 없는 내용이 페이지에 실려 있었다**(§0-1).
+ * ⚠**기존 구획 6개가 이미 같은 상태였다** — 이번 라운드가 만든 결함이 아니라 이번에 둘을 더 넣었다.
+ *
+ * → **넓히는 쪽을 골랐다.** 길어지는 것이 닿지 못하는 것보다 낫다(같은 파일의 원래 논거).
+ *   인쇄에도 이미 같은 규칙이 있다(`@media print` 의 `.block[hidden]{display:block}`).
+ */
+test("⚠스크립트가 없으면 접힌 구획도 펼친다 — 탭 패널만 펴면 선수 페이지는 여전히 벽이다", () => {
+  const out = shell();
+  const at = out.indexOf("<noscript>");
+  assert.ok(at > 0, "noscript 폴백이 없다");
+  const rule = out.slice(at, out.indexOf("</noscript>", at));
+  assert.match(rule, /\[data-panelgroup\]\[hidden\]\{display:block!important\}/, "탭 패널 규칙이 사라졌다");
+  assert.match(
+    rule,
+    /\.block\[hidden\]\{display:block!important\}/,
+    "선수 페이지의 접힌 구획을 펴는 규칙이 없다 — JS 없이는 그 내용에 닿을 수 없다",
+  );
+});
+
+test("⚠그 규칙에 실제로 대상이 있다 — 선수 페이지가 구획을 hidden 으로 내보낸다", () => {
+  const out = renderPlayerPage(playerPage(), context());
+  const hiddenBlocks = [...out.matchAll(/<section class="block" hidden[^>]*id="b-([\w-]+)"/g)].map((m) => m[1]);
+  /**
+   * ⚠**0이면 통과가 아니라 실패다**(작업규칙 8) — 접힌 구획이 하나도 없으면
+   * 위 시험은 「아무 대상도 없는 규칙」을 지키는 셈이 된다.
+   * 실측(2026-08-20 · 이 타자 픽스처): 구획 10개 중 **6개**가 접혀 나간다
+   * (scorebook · situation · count · streak · matchup · career).
+   * ⚠**하한을 실측값에 딱 맞추지 않는다** — 프리셋 구성이 바뀌면 이 시험이 그것 때문에 떨어진다.
+   *   여기서 지키는 것은 「대상이 있다」이지 「몇 개인가」가 아니다.
+   */
+  assert.ok(
+    hiddenBlocks.length >= 3,
+    `접힌 구획이 ${hiddenBlocks.length}개뿐이다 — 이 규칙이 무엇을 펴는지 모르게 된다`,
+  );
+  // 검토자가 브라우저로 높이 0을 확인한 구획이 실제로 이 목록에 있다(`relief` 는 투수 전용이라 여기 없다)
+  assert.ok(hiddenBlocks.includes("count"), `접힌 구획 목록에 count 가 없다: ${hiddenBlocks.join(", ")}`);
+});
+
+/**
  * ⚠**구단 로고를 쓰지 않는다**(§6). 로고는 상표이고, 「사실은 저작물이 아니다」의 논리가
  * 거기까지 닿지 않는다. 탭 아이콘도 **우리가 그린 것**이어야 한다.
  */
@@ -138,6 +183,34 @@ test("탭 아이콘은 우리가 그린 도형이고 자산으로 나간다", ()
   const out = shell();
   assert.match(out, /<link rel="icon" href="assets\/icon\.svg" type="image\/svg\+xml">/);
   assert.ok(!out.includes("npb.jp/img"), "외부 이미지를 참조했다");
+});
+
+/**
+ * ⚠**JS 가 없어도 구단으로 가는 길이 있어야 한다**(§0-1).
+ *
+ * 최애를 지정하면 클라이언트가 이 항목의 라벨과 링크를 그 구단으로 바꾸지만,
+ * **항목 자체는 서버가 그린다.** 지금까지 구단 페이지는 순위표에서 팀명을 눌러야만 닿았고,
+ * 스크립트가 죽은 브라우저에서는 사실상 닿을 수 없었다.
+ * ⚠**첫 자리여야 한다**(2026-08-18 유저 요청) — 최애 구단이 앉을 자리다.
+ */
+test("⚠내비 첫 항목이 球団이고 구단 목록으로 간다 — 서버가 항상 그린다(§0-1)", () => {
+  const nav = /<nav class="tnav"[\s\S]*?<\/nav>/.exec(shell());
+  assert.notEqual(nav, null, "내비가 없다");
+  const first = /<a\s[^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>/.exec(nav![0]);
+  assert.notEqual(first, null, "내비에 링크가 하나도 없다");
+  assert.equal(first![2], "球団", `첫 항목이 「${first![2]}」다`);
+  assert.match(first![1]!, /(^|\/)teams\.html$/, `첫 항목이 구단 목록으로 가지 않는다: ${first![1]}`);
+});
+
+/**
+ * ⚠**T9 의 클라이언트가 이 표식으로 항목을 찾는다.** 없으면 최애를 지정해도
+ * 내비가 그대로 「球団」인 채 남는다 — 화면은 멀쩡히 그려지므로 눈으로는 안 잡힌다.
+ */
+test("⚠球団 항목에 클라이언트가 잡을 표식이 있다 — T9 이 라벨을 바꾼다", () => {
+  const nav = /<nav class="tnav"[\s\S]*?<\/nav>/.exec(shell())![0];
+  const item = /<a\s[^>]*href="[^"]*teams\.html"[^>]*>/.exec(nav);
+  assert.notEqual(item, null, "내비에 구단 링크가 없다");
+  assert.match(item![0], /\bdata-navteam\b/, `표식이 없다: ${item![0]}`);
 });
 
 test("주소창 색을 라이트·다크 양쪽으로 준다 — 한쪽만 주면 반대 테마에서 어긋난다", () => {

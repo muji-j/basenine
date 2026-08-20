@@ -23,8 +23,9 @@
  */
 import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
-import { NO_VALUE, avg3, dec1, dec2, fullDate, innings, signed1 } from "./format.ts";
+import { NO_VALUE, avg3, dec1, dec2, denominator, fullDate, innings, signed1 } from "./format.ts";
 import { note, panel, tablist } from "./parts.ts";
+import { denUnit } from "./glossary.ts";
 import { page, ROSTER_PATH } from "./layout.ts";
 import type { MatchupGame, RenderContext } from "./pages.ts";
 import { pickTeam } from "./pages.ts";
@@ -108,21 +109,33 @@ function dirOf(metric: string, group: GradeGroup): 1 | -1 | 0 {
   return scale.higherIsBetter ? 1 : -1;
 }
 
-/** 비율 한 줄. `unit`은 분모의 단위 */
+/**
+ * 비율 한 줄.
+ *
+ * ⚠**분모의 단위를 인자로 받지 않는다**(M1 · 2026-08-20). 예전에는 화면이 문자열을 넘겼고,
+ * 그래서 **같은 지표가 선수 페이지와 여기서 다른 단위**로 나갔다 — 배포물 실측으로
+ * BABIP **342명** · SRP **356명**이 어긋나 있었다. 값은 7,664건 전수 일치였으니
+ * **틀린 것은 말뿐**이었고, 그래서 타입도 린트도 못 잡았다.
+ * ⚠BABIP 는 그냥 어긋난 것이 아니라 **거짓**이었다 — `317打数` 라고 썼는데
+ * 그 선수(中野拓夢)의 打数는 **380** 이다(317 = `打数−三振−本塁打+犠飛`).
+ *
+ * ⚠**`asInnings` 플래그도 없앴다.** 「回」의 아웃→이닝 환산은 `format.ts` 의 `denominator()`
+ * 한 곳에 이미 있다 — 같은 규칙을 두 벌 두면 언젠가 한쪽만 고쳐진다.
+ */
 function rateStat(
   key: string,
   label: string,
   r: Rate,
-  unit: string,
   digits: 2 | 3 | 1,
   group: GradeGroup,
-  asInnings = false,
+  /** ⚠**정본이 아직 안 정해진 지표에만** 쓴다(지금은 `pitchesPerOut` 하나). 아래 호출부 참조 */
+  denOverride?: string,
 ): CompareStat {
   return {
     k: key,
     l: label,
     v: r.value === null ? null : digits === 3 ? avg3(r.value) : digits === 2 ? dec2(r.value) : dec1(r.value),
-    d: asInnings ? `${innings(r.denominator)}回` : `${r.denominator}${unit}`,
+    d: denominator(r.denominator, denOverride ?? denUnit(key)),
     g: gradeOf(key, r.value, r.denominator, group),
     dir: dirOf(key, group),
     n: r.value,
@@ -141,13 +154,16 @@ function countStat(key: string, label: string, n: number | null): CompareStat {
   return { k: key, l: label, v: n === null ? null : String(n), d: null, g: null, dir: 0, n, s: 0, min: null };
 }
 
-/** 0이 기준인 값(SRC·SRP). 부호를 붙이고 **등급은 주지 않는다** — 분포 근거가 아직 없다 */
-function signedStat(key: string, label: string, n: number | null, sample: number, unit: string): CompareStat {
+/**
+ * 0이 기준인 값(SRC·SRP). 부호를 붙이고 **등급은 주지 않는다** — 분포 근거가 아직 없다.
+ * ⚠단위는 `rateStat` 과 같은 이유로 인자가 아니다(M1).
+ */
+function signedStat(key: string, label: string, n: number | null, sample: number): CompareStat {
   return {
     k: key,
     l: label,
     v: n === null ? null : signed1(n),
-    d: `${sample}${unit}`,
+    d: denominator(sample, denUnit(key)),
     g: null,
     // ⚠자체 지표라 남의 분포와 견줄 근거가 없다. 그래도 **큰 쪽이 좋다는 것은 정의상 참**이다
     dir: 1,
@@ -194,21 +210,21 @@ export function compareCard(p: PlayerPageData): CompareCard {
     stats.push(
       countStat("games", "試合", b.games),
       countStat("pa", "打席", b.line.pa),
-      rateStat("avg", "打率", b.avg, "打数", 3, group),
-      rateStat("obp", "出塁率", b.obp, "打席", 3, group),
-      rateStat("slg", "長打率", b.slg, "打数", 3, group),
-      rateStat("ops", "OPS", b.ops, "打席", 3, group),
-      rateStat("woba", "wOBA", b.woba, "打席", 3, group),
-      rateStat("wrcPlus", "wRC+", b.wrcPlus, "打席", 1, group),
-      rateStat("iso", "ISO", b.iso, "打数", 3, group),
-      rateStat("babip", "BABIP", b.babip, "打数", 3, group),
-      rateStat("bbRate", "BB%", { value: b.bbRate.value, denominator: b.bbRate.denominator }, "打席", 3, group),
-      rateStat("kRate", "K%", { value: b.kRate.value, denominator: b.kRate.denominator }, "打席", 3, group),
+      rateStat("avg", "打率", b.avg, 3, group),
+      rateStat("obp", "出塁率", b.obp, 3, group),
+      rateStat("slg", "長打率", b.slg, 3, group),
+      rateStat("ops", "OPS", b.ops, 3, group),
+      rateStat("woba", "wOBA", b.woba, 3, group),
+      rateStat("wrcPlus", "wRC+", b.wrcPlus, 1, group),
+      rateStat("iso", "ISO", b.iso, 3, group),
+      rateStat("babip", "BABIP", b.babip, 3, group),
+      rateStat("bbRate", "BB%", { value: b.bbRate.value, denominator: b.bbRate.denominator }, 3, group),
+      rateStat("kRate", "K%", { value: b.kRate.value, denominator: b.kRate.denominator }, 3, group),
       countStat("h", "安打", b.line.h),
       countStat("hr", "本塁打", b.line.hr),
       countStat("rbi", "打点", b.rbi),
       countStat("sb", "盗塁", b.sb),
-      signedStat("src", "SRC", b.src?.src ?? null, b.line.pa, "打席"),
+      signedStat("src", "SRC", b.src?.src ?? null, b.line.pa),
     );
   } else if (p.role === "pitcher" && p.pitching !== null) {
     const q = p.pitching;
@@ -216,20 +232,27 @@ export function compareCard(p: PlayerPageData): CompareCard {
       countStat("games", "登板", q.games),
       countStat("starts", "先発", q.starts),
       { ...countStat("innings", "投球回", q.line.outs), v: innings(q.line.outs) },
-      rateStat("era", "防御率", q.era, "", 2, group, true),
-      rateStat("whip", "WHIP", q.whip, "", 2, group, true),
-      rateStat("fip", "FIP", q.fip, "", 2, group, true),
-      rateStat("k9", "K/9", q.k9, "", 2, group, true),
-      rateStat("bb9", "BB/9", q.bb9, "", 2, group, true),
-      rateStat("hr9", "HR/9", q.hr9, "", 2, group, true),
-      rateStat("pitchesPerOut", "球数/アウト", q.pitchesPerOut, "", 2, group, true),
+      rateStat("era", "防御率", q.era, 2, group),
+      rateStat("whip", "WHIP", q.whip, 2, group),
+      rateStat("fip", "FIP", q.fip, 2, group),
+      rateStat("k9", "K/9", q.k9, 2, group),
+      rateStat("bb9", "BB/9", q.bb9, 2, group),
+      rateStat("hr9", "HR/9", q.hr9, 2, group),
+      /**
+       * ⚠**球数/アウト만 용어집을 거치지 않는다** — 화면마다 단위가 다른데
+       * **둘 다 참**이기 때문이다(선수·比較 `138.1回` · 구단 표 `415アウト` — 같은 수다).
+       * 「사실과 다른 라벨」이 아니라 **어느 쪽을 정본으로 할지의 표시 판단**이라,
+       * 이번 수정(라벨이 사실과 다른 것만 고친다)에서 혼자 정하지 않고 표기를 그대로 뒀다.
+       * 정하면 `glossary.ts` 의 `den` 에 적고 이 인자를 지워라.
+       */
+      rateStat("pitchesPerOut", "球数/アウト", q.pitchesPerOut, 2, group, "回"),
       countStat("w", "勝利", q.decisions.w),
       countStat("l", "敗戦", q.decisions.l),
       countStat("sv", "セーブ", q.decisions.sv),
       countStat("hld", "ホールド", q.decisions.hld),
       countStat("so", "奪三振", q.line.so),
       countStat("pitches", "投球数", q.pitches),
-      signedStat("srp", "SRP", q.srp?.srp ?? null, q.line.bf, "打者"),
+      signedStat("srp", "SRP", q.srp?.srp ?? null, q.line.bf),
     );
   }
 
@@ -419,12 +442,12 @@ export function renderComparePage(d: ComparePageData, ctx: RenderContext): strin
     <!-- ⚠**이름을 여기 두지 않는다**(2026-08-18 감사 P3). 안쪽 tablist 가 같은 이름을 갖고 있어서
          낭독기가 「日にち ナビゲーション · 日にち タブリスト」처럼 두 번 말했다.
          이름은 **위젯 쪽**에 남긴다 — 조작하는 것이 그쪽이다. -->
-    <nav class="pickday">${tablist(
+    <div class="pickday">${tablist(
       "cmpday",
       d.days.map((x) => ({ id: x.date, label: dayLabel(x.date) })),
       true,
       "日にち",
-    )}</nav>
+    )}</div>
     ${d.days.map((day, di) =>
       panel(
         "cmpday",
@@ -434,12 +457,12 @@ export function renderComparePage(d: ComparePageData, ctx: RenderContext): strin
           day.games.length === 0 ? "" : `${fullDate(day.date)}の対戦から選ぶ　`
         }${dayStateNote(day)}<s>押した順に A → B に入ります</s></p>
     <!-- ⚠**탭 그룹 이름을 対戦 화면과 다르게 둔다.** 같은 이름이면 저장된 선택이 두 화면에서 섞인다 -->
-    <nav class="pickgames" aria-label="試合">${tablist(
+    <div class="pickgames">${tablist(
           `cmpgame-${day.date}`,
           day.games.map((g) => ({ id: g.key, label: `${g.sides[0].shortName} − ${g.sides[1].shortName}` })),
           true,
           "試合",
-        )}</nav>
+        )}</div>
     ${day.games.map((g, i) =>
           panel(
             `cmpgame-${day.date}`,

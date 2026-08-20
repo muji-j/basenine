@@ -7,7 +7,8 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { GLOSSARY, glossaryKeys, termKeyForLabel, termOf } from "../src/glossary.ts";
+import { GLOSSARY, denUnit, glossaryKeys, termKeyForLabel, termOf } from "../src/glossary.ts";
+import type { Term } from "../src/glossary.ts";
 import {
   GRADE_LABEL,
   GROUP_BASIS,
@@ -61,6 +62,33 @@ test("등급이 있는 지표는 전부 용어집에도 있다 — 색만 있고
   assert.ok(keys.length > 15, `지표를 못 모았다(${keys.length}개) — SCALES 구조가 바뀌었다`);
   const missing = [...new Set(keys)].filter((k) => termOf(k) === undefined);
   assert.deepEqual(missing, [], `설명 없는 등급 지표: ${missing.join(", ")}`);
+});
+
+/**
+ * ⚠**던지기에 시험이 0본이었다**(2026-08-20 최종 검토 ③).
+ * 던지기를 없애는 뮤테이션이 시험을 **하나도** 떨어뜨리지 못했다. 그때 `tsc` 가 막아 주긴 했는데
+ * **그건 우연히 얻은 그물**이다 — `den: ""` 라고 적으면 타입도 통과하고 던지지도 않아서
+ * 분모 없는 값이 그대로 화면에 나간다(M2).
+ *
+ * ⚠**표를 인자로 받는 이유가 여기 있다.** 실제 용어집에는 빈 `den` 이 없으므로
+ * (그것 자체는 아래 「전부 채워져 있다」가 지킨다) 빈 값을 통과시켜 보려면 대역이 필요하다.
+ */
+test("⚠분모 단위를 모르면 던진다 — 빈 문자열로 흘리면 옆 지표의 단위를 물려받는다(M2)", () => {
+  const t = (den: string): Readonly<Record<string, Term>> => ({
+    x: { label: "x", short: "설명이 충분히 길다", den },
+  });
+  // 있으면 그대로 준다 — 이 줄이 없으면 「늘 던진다」로 고쳐도 아래가 통과한다
+  assert.equal(denUnit("x", t("打数")), "打数");
+  // 키가 없다
+  assert.throws(() => denUnit("존재하지않는지표"), /분모 단위가 정해지지 않은 지표/);
+  assert.throws(() => denUnit("y", t("打数")), /y/);
+  // ⚠**빈 문자열도 던진다** — 타입은 통과시키는 자리다
+  assert.throws(() => denUnit("x", t("")), /분모 단위가 정해지지 않은 지표/);
+});
+
+test("용어집의 `den` 은 비어 있지 않다 — 비어 있으면 값 옆에 단위 없는 숫자가 선다", () => {
+  const empty = glossaryKeys().filter((k) => GLOSSARY[k]!.den === "");
+  assert.deepEqual(empty, [], `den 이 빈 문자열인 용어: ${empty.join(", ")}`);
 });
 
 // ─── 등급 ────────────────────────────────────────────────────────────────

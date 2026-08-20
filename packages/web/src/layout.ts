@@ -146,7 +146,51 @@ export interface SiteMeta {
   contact: string;
 }
 
-/** 전역 헤더에서 지금 어디에 있는지. `aria-current`로 나간다 */
+/** `contactGate` 의 판정. `fatal` 이면 호출자가 종료 코드를 세운다 */
+export interface ContactGate {
+  /** 창구가 비어 화면에 **개발자 지시문**이 나가는 상태인가 */
+  missing: boolean;
+  /** 빌드를 실패로 만들 것인가 */
+  fatal: boolean;
+  /** 로그에 낼 문장. `missing` 이 false 면 빈 문자열 */
+  message: string;
+}
+
+/**
+ * **연락처가 없는 채로 배포되는 것을 막는다**(L4 · 2026-08-20).
+ *
+ * ⚠**빈 값일 때 화면이 조용하지 않다** — 꼬리말이
+ * 「連絡先が未設定です（公開前に設定してください）」라고 **개발자에게 하는 말**을 방문자에게 낸다.
+ * 그 꼬리말은 15,340장 전부에 있으므로, 시크릿이 비는 날 **제품 문면이 통째로 그렇게 나간다.**
+ * 그런데 신호는 `console.warn` 하나뿐이라 종료 코드가 0이었다 — `emptySeasons`·`stale`·
+ * `raceDisagreed` 와 같은 등급이어야 하는데 혼자 경고였다(M7 의 「알아챌 수 있게」에 반만 닿음).
+ *
+ * ⚠**로컬 빌드를 막지 않는다.** 연락처는 시크릿 스토어에만 있어(코드·리포에 두지 않는다 · §6)
+ * 개발자 머신에서는 **항상 비어 있는 것이 정상**이다. 여기서 무조건 세우면 로컬 빌드가
+ * 매번 실패하고, 그러면 **진짜 신호가 소음에 묻힌다**(daily.yml 이 이미 적어 둔 함정).
+ *
+ * ⚠**그래서 「배포하는 쪽만」 켠다** — `BB_REQUIRE_CONTACT=1`.
+ * `BB_REQUIRE_DIST`·`BB_REQUIRE_DB` 와 **같은 형식**이다: 기본은 조용하고, CI 가 켠다.
+ * 켜는 자리는 `.github/workflows/daily.yml` 의 「화면 생성」 단계이고, 그 단계가
+ * `secrets.BB_CONTACT` 를 넘기는 바로 그 자리다 — 시크릿이 사라지면 같은 줄에서 걸린다.
+ *
+ * @param contact `BB_CONTACT` 를 거친 뒤의 값(미설정이면 빈 문자열)
+ * @param requireContact `process.env["BB_REQUIRE_CONTACT"]`
+ */
+export function contactGate(contact: string, requireContact: string | undefined): ContactGate {
+  if (contact !== "") return { missing: false, fatal: false, message: "" };
+  const fatal = requireContact === "1";
+  return {
+    missing: true,
+    fatal,
+    message: fatal
+      ? "⚠ BB_CONTACT 미설정 — 꼬리말에 「連絡先が未設定です（公開前に設定してください）」가 " +
+        "전 화면에 그대로 나간다(L4). BB_REQUIRE_CONTACT=1 이므로 배포하지 않는다"
+      : "⚠ BB_CONTACT 미설정 — 삭제·정정 요청 창구가 화면에 나오지 않는다(공개 전 필수). " +
+        "로컬 빌드라 실패로 만들지 않는다 — CI 는 BB_REQUIRE_CONTACT=1 로 막는다",
+  };
+}
+
 /**
  * 選手一覧의 경로. **한 곳에서만 만든다**(M1) — 갈리면 어딘가는 404다.
  *
@@ -156,6 +200,25 @@ export interface SiteMeta {
  */
 export const ROSTER_PATH = "players.html";
 
+/**
+ * 球団一覧의 경로. **한 곳에서만 만든다**(M1) — 갈리면 어딘가는 404다.
+ *
+ * ⚠**여기 있는 이유는 내비가 이 값을 쓰기 때문이다**(`ROSTER_PATH`와 같은 사정).
+ * 원래는 `teams-page.ts`에 있었는데, 내비가 그쪽을 import 하면 **layout ↔ teams-page 순환**이 된다.
+ * ⚠`site.ts`의 파일 목록과 `seasonPaths`가 **같은 이 값을 봐야 한다.**
+ * 갈리면 시즌 전환이 없는 페이지를 가리키고, 그건 404이며 조용하다.
+ */
+export const TEAMS_PATH = "teams.html";
+
+/**
+ * 전역 헤더에서 지금 어디에 있는지. `aria-current`로 나간다.
+ *
+ * ⚠**내비에 자리가 없는 키를 만들지 마라.** 그 키를 쓴 화면은 헤더에 「지금 여기」가
+ * 하나도 없는 채로 나간다 — `"player"` 가 정확히 그랬고, 그 상태로 dist 6,207장이
+ * 배포돼 있었다(2026-08-19). 선수 페이지는 `選手一覧` 구획(`"index"` + navExact:false)에 속한다.
+ * ⚠**여기서 지운 이유는 컴파일이 막아 주기 때문이다** — 시험보다 이르고 확실하다.
+ * (`"home"` 은 예외다: 탭줄이 아니라 **브랜드 링크**가 그 표시를 받는다.)
+ */
 export type NavKey =
   | "today"
   | "home"
@@ -164,7 +227,6 @@ export type NavKey =
   | "matchup"
   | "compare"
   | "log"
-  | "player"
   | "postseason"
   | "team";
 
@@ -218,6 +280,20 @@ export interface PageOptions {
    * 그런 화면은 `false`로 두고 `aria-current="true"`(구획 안에 있다)만 낸다.
    */
   navExact?: boolean;
+  /**
+   * 이 화면이 **어느 구단의 상세**인가. 구단 상세가 아니면 넘기지 않는다.
+   *
+   * ⚠**클라이언트가 `aria-current` 를 다시 재는 유일한 근거다**(2026-08-19 T9 검토 ④).
+   * 최애를 지정하면 클라이언트가 내비 첫 항목의 목적지를 `teams.html` → `teams/{최애}.html` 로
+   * 바꾼다. 그러면 서버가 적어 둔 말이 그 링크에 대해 더는 참이 아닐 수 있는데,
+   * **「지금 이 화면이 바로 그 구단의 문서인가」는 서버만 안다.**
+   * 이 값이 없으면 巨人 화면에서 「阪神」이라고 적힌 링크가 `aria-current="true"` 를 달고 남는다 —
+   * 현재 항목이 아닌 것을 현재라고 말하는 것이다.
+   * ⚠**전 페이지에 실리는 헤더다** — 그래서 구단 상세가 아니면 `data-navteam` 을 값 없이 둔다.
+   * 실측 분모: 구단 상세는 **108장**(12구단 × 9시즌)이고 나머지 **15,232장**은 값이 없다 —
+   * 거기에 `=""` 를 적으면 3B × 15,232 를 매 배포마다 더 나른다.
+   */
+  navTeam?: string;
   /** 이 시즌에 ポストシーズン 기록이 있는가. 없으면 내비에 항목을 내지 않는다 */
   hasPostseason?: boolean;
   /** 본문. 블록들이 여기 들어간다 */
@@ -238,6 +314,14 @@ export interface PageOptions {
 function topbar(o: PageOptions): RawHtml {
   const here = (key: NavKey): RawHtml =>
     o.nav === key ? raw(o.navExact === false ? ' aria-current="true"' : ' aria-current="page"') : raw("");
+  /**
+   * 구단 항목의 표식. 값은 **이 화면이 어느 구단의 상세인가**이고, 구단 상세가 아니면 값이 없다.
+   *
+   * ⚠**속성을 `raw()` 안에서 문자열로 짓지 않는다**(2026-08-18 감사 P3 · teams-page.ts 가 같은 말을
+   * 적어 뒀다). 그 안의 값은 이스케이프를 거치지 않아 따옴표 하나로 속성이 끊긴다 —
+   * 조각째 `html` 에 넘기면 그 자리가 영구히 이스케이프를 거친다.
+   */
+  const teamMark = o.navTeam === undefined ? raw(" data-navteam") : html` data-navteam="${o.navTeam}"`;
   return html`<header class="topbar">
   <!-- ⚠**브랜드는 홈으로 간다.** 2026-08-17부터 홈은 대시보드이고, 선수 일람은 위 ROSTER_PATH 다 -->
   <a class="brand" href="${o.base}index.html"${here("home")}>${o.site.name}<b>by Lunomel</b></a>
@@ -247,6 +331,15 @@ function topbar(o: PageOptions): RawHtml {
     <ul class="qhits" id="qhits" role="listbox" aria-label="検索結果" hidden></ul>
   </div>
   <nav class="tnav" aria-label="主要ページ">
+    ${/* ⚠**첫 자리다**(2026-08-18 유저 요청). 최애를 지정하면 클라이언트가 라벨과 링크를
+         그 구단으로 바꾼다(data-navteam 이 그 표식이다). **서버는 항상 「球団」을 그린다** —
+         JS 가 없어도 구단으로 가는 길이 있어야 하고(§0-1), 지금까지는 그 길이 아예 없었다
+         (순위표에서 팀명을 눌러야만 닿았다).
+         ⚠**HTML 주석으로 쓰지 않는다.** 이 헤더는 전 페이지에 실린다 — 실측으로 이 주석 하나가
+            424B 이고 15,340장이면 약 6.5MB 를 매 배포마다 나른다. teams-page.ts 가 같은 이유로
+            정한 규칙이 있다: 왜는 소스에 남기고 나가는 것은 마크업만 남긴다.
+         ⚠**아래 세 개는 아직 HTML 주석이다**(합계 733B/장 ≈ 11MB). 같이 옮길지는 별건이다. */ ""}
+    <a href="${o.base}${TEAMS_PATH}"${teamMark}${here("team")}>球団</a>
     <a href="${o.base}today.html"${here("today")}>試合</a>
     <a href="${o.base}${ROSTER_PATH}"${here("index")}>一覧</a>
     <a href="${o.base}ranking.html"${here("ranking")}>順位</a>
@@ -491,8 +584,19 @@ export function page(o: PageOptions): string {
      여는 수단이 사라져 그 내용에 **도달할 방법이 아예 없다.**
      2026-08-16 이중 검토에서 실제로 걸렸다 — 順位를 チーム/個人으로 나눈 순간
      개인 타이틀 전체(2리그 × 3부문 × 8지표)가 JS 없이는 닿을 수 없게 됐다.
-     스크립트가 없으면 **전부 펼친다.** 길어지는 것이 닿지 못하는 것보다 낫다. -->
-<noscript><style>[data-panelgroup][hidden]{display:block!important}</style></noscript>
+     스크립트가 없으면 **전부 펼친다.** 길어지는 것이 닿지 못하는 것보다 낫다.
+
+     ⚠**주석이 「전부」라고 적어 놓고 규칙은 탭 패널만 폈다**(2026-08-20 최종 검토 ⑤).
+     선수 페이지는 프리셋 밖의 구획을 section.block[hidden] 으로 내보내는데
+     그 선택자에 걸리지 않아서, 실브라우저(JS 끔)에서 b-count·b-relief 의 높이가 **0** 이었고
+     "#b-count" 앵커로 들어가도 0이었다 — 기존 구획 6개가 이미 같은 상태였다.
+     ⚠**두 선택자를 한 규칙으로 묶지 않는다** — assets.ts 의 .block[hidden] 이 display:none 이라
+     이기려면 !important 가 필요하고, 규칙을 나눠 두면 어느 쪽이 왜 있는지 읽힌다.
+     ⚠인쇄에도 같은 규칙이 이미 있다(@media print 의 .block[hidden]) — 종이에도 여는 수단이 없다는
+     같은 이유다.
+     ⚠**이 주석에 역따옴표를 쓰지 마라** — 이 파일은 통째로 템플릿 리터럴이라 거기서 끊긴다. -->
+<noscript><style>[data-panelgroup][hidden]{display:block!important}
+.block[hidden]{display:block!important}</style></noscript>
 </head>
 <body style="${style}">
 <a class="skip" href="#main">本文へ</a>

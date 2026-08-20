@@ -69,6 +69,22 @@ async function withSite(fn: (site: ReturnType<typeof loadSite>) => void): Promis
     play(db, "2026-04-02", "l", "m", [{ id: MOVER, pa: 5, h: 1 }, { id: "PL_BAT", pa: 4, h: 2 }], "PL_PIT");
     // 세 리그(阪神 t) — 7월. **가장 최근에 뛴 곳이 여기다**
     play(db, "2026-07-01", "t", "g", [{ id: MOVER, pa: 3, h: 3 }, { id: "CL_BAT", pa: 4, h: 1 }], "MOVER_P");
+    /**
+     * ⚠**阪神에 경기를 더 채운다. MOVER 는 여기 안 나온다** — 이적 선수의 수(13·10·3·3경기)를
+     * 하나도 건드리지 않으면서 **규정타석 기준만 올리기** 위한 것이다.
+     *
+     * 왜 필요한가: 자격 판정 시험 2본(「소속 리그 몫으로 한다」·「팀이 아니라 리그 몫」)은
+     * **세 리그 몫 3타석은 미달이고 합계 13타석은 도달**이어야 뜻이 있다. 즉 기준이
+     * **3 초과 13 이하**여야 한다. 阪神이 1경기뿐이면 기준은 `1 × 3.1 = 3.1 → 3` 이라
+     * 3타석도 도달이 되어 **두 시험이 아무것도 구별하지 못한다.**
+     * ⚠실제로 그렇게 돼 있었다 — 예전 기준은 `切り上げ` 라 `ceil(3.1) = 4` 였고,
+     * 두 시험은 **결함이 만든 +1 에 얹혀서** 초록이었다(2026-08-20 규정타석 P0).
+     * 3경기면 기준이 9(옛 식으로도 10)라 **어느 반올림 규칙에서도 3 < 기준 ≤ 13** 이 되어,
+     * 이 두 시험이 「리그 몫이냐 합계냐」만 재게 된다.
+     * ⚠**경기 수를 줄이지 마라.** 줄이면 시험이 조용히 아무것도 안 재는 상태로 돌아간다.
+     */
+    play(db, "2026-07-02", "t", "g", [{ id: "CL_BAT", pa: 4, h: 1 }], "CL_PIT");
+    play(db, "2026-07-03", "t", "g", [{ id: "CL_BAT", pa: 4, h: 2 }], "CL_PIT");
     fn(loadSite(db, { season: 2026, builtOn: "2026-08-16" }));
   } finally {
     db.close();
@@ -172,6 +188,15 @@ test("리그를 넘지 않은 선수는 아무것도 달라지지 않는다 — 
 test("자격 판정은 소속 리그에서 낸 몫으로 한다 — 합계로 재지 않는다", async () => {
   await withSite((site) => {
     const p = site.players.find((x) => x.playerId === MOVER)!;
+    /**
+     * ⚠**먼저 이 시험이 무언가를 구별할 수 있는 상태인지 확인한다**(작업규칙 8).
+     * 기준이 3 이하이거나 13 초과면 리그 몫(3)과 합계(13)가 **같은 답**을 내어
+     * 아래 단언이 조용히 아무것도 재지 않는다.
+     */
+    assert.ok(
+      p.batting!.needPa > 3 && p.batting!.needPa <= 13,
+      `규정타석이 ${p.batting!.needPa} 라 리그 몫(3)과 합계(13)가 구별되지 않는다 — 이 시험이 공회전한다`,
+    );
     // 세 리그 몫은 3타석. 규정타석(팀 경기수 기준)에 닿지 않는다
     assert.equal(p.batting!.qualified, false, "합계 13타석으로 규정 도달 판정이 났다");
     // 리그를 넘지 않은 선수는 판정이 달라지지 않는다
@@ -424,6 +449,12 @@ test("자격 판정은 팀이 아니라 소속 리그 몫으로 한다", async (
   await withSite((site) => {
     const t = site.teams.find((x) => x.teamCode === "t")!;
     const mover = t.batters.find((b) => b.playerId === MOVER)!;
+    // ⚠구별 가능한 상태인지 먼저 본다 — 선수 페이지 쪽과 같은 이유다
+    const needPa = site.players.find((p) => p.playerId === MOVER)!.batting!.needPa;
+    assert.ok(
+      needPa > 3 && needPa <= 13,
+      `규정타석이 ${needPa} 라 리그 몫(3)과 합계(13)가 구별되지 않는다 — 이 시험이 공회전한다`,
+    );
     // 세 리그 몫은 3타석 — 규정에 못 미친다. 팀 표의 3타석과 우연히 같지만 규칙이 다르다
     assert.equal(mover.qualified, false);
   });

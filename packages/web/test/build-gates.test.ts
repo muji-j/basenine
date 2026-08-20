@@ -1,0 +1,408 @@
+/**
+ * **빌드가 조용히 통과하면 안 되는 자리** — 화면은 정직한데 데이터가 거짓인 두 가지.
+ *
+ * ⚠**M7 의 나머지 절반은 「알아챌 수 있게 하기」다.** 이 리포는 그 절반을 두 번 놓쳤다:
+ * ⑴ `disagreed`(성적과 대전표가 어긋남)가 `console.warn` 하나뿐이라 **12구단의 우승 판정이
+ *    통째로 사라진 채 배포**됐다. 화면 문구는 정직하다(「まだ判定できません」) — 그래서 더 안 보인다.
+ * ⑵ 予告先発이 **낡았을 때와 아직 안 나왔을 때가 화면에서 같은 문장**(「発表待ち」)이다.
+ *    실측(2026-08-19 검토): `dist/starters.html` 대상일 **2026-08-16** · 빌드일 **2026-08-19** ·
+ *    12구단 전부의 다음 경기가 8/19 → **12/12 「発表待ち」**. NPB 予告先発은 전날 발표되므로
+ *    그 예고는 **현실에는 존재했다.** 화면이 말한 이유(「아직 발표 안 됨」)가 사실이 아니었다.
+ *
+ * ⚠**시험이 DB 를 만든다.** 이 두 신호는 실데이터로는 태울 수 없다 —
+ * `probable_pitcher` 는 2026-08-16 하루치(12행)뿐이고, `disagreed` 는 정상 데이터에서 비어 있다
+ * (2026-08-19 실측). 픽스처가 유일한 재현 수단이다.
+ */
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  openDb,
+  upsertBatting,
+  upsertGame,
+  upsertPitching,
+  upsertPlayer,
+  upsertProbablePitcher,
+} from "@bb-app/store";
+import type { Db } from "@bb-app/store";
+import { regularSeasonGames } from "@bb-app/domain";
+import { loadSite } from "../src/query.ts";
+import { contactGate } from "../src/layout.ts";
+
+const NOW = "2026-08-19T00:00:00.000Z";
+/** 빌드 기준일. **주입한다**(M6) — 시험이 시계를 읽으면 날마다 다른 시험이 된다 */
+const BUILT_ON = "2026-08-19";
+
+let seq = 0;
+
+/**
+ * 치러진 경기 한 개.
+ *
+ * ⚠**양 리그에 선수를 남긴다.** 리그 번들이 없으면 `teamPages` 가 그 리그의 팀을 통째로
+ * 건너뛰어서, 「発表待ち」를 세는 자리 자체가 안 돈다.
+ */
+function played(db: Db, date: string, home: string, away: string): void {
+  seq += 1;
+  const gameId = `g${seq}`;
+  upsertGame(db, {
+    gameId, season: 2026, gameDate: date, awayCode: away, homeCode: home, gameNo: 1,
+    status: "played", notPlayedReason: null, competition: "regular",
+    sourceUrl: "https://npb.jp/x", fetchedAt: NOW, awayRuns: 1, homeRuns: 2,
+  });
+  upsertBatting(db, {
+    gameId, playerId: `BAT_${home}`, side: "home", battingOrder: "1", position: "(遊)",
+    pa: 4, ab: 4, h: 1, d2: 0, d3: 0, hr: 0, bb: 0, ibb: 0, hbp: 0,
+    sf: 0, sh: 0, so: 0, roe: 0, runs: 0, rbi: 0, sb: 0,
+  });
+  upsertPitching(db, {
+    gameId, playerId: `PIT_${away}`, side: "away", decision: null,
+    outs: 21, bf: 28, pitches: 90, h: 5, hr: 0, bb: 2, hbp: 0, so: 7, runs: 1, er: 1, wp: 0, balk: 0,
+  });
+}
+
+/** 예정 경기 한 개. `game` 표가 아니라 `upcoming_game` 이다(마이그레이션 015의 이유) */
+function upcoming(db: Db, date: string, home: string, away: string): void {
+  db.raw
+    .prepare(
+      `INSERT INTO upcoming_game (season, game_date, home_code, away_code, seq, venue, start_time, source, fetched_at)
+       VALUES (?, ?, ?, ?, 1, '甲子園', '18:00', 'https://npb.jp/games/', ?)`,
+    )
+    .run(2026, date, home, away, NOW);
+}
+
+/**
+ * @param games 팀당 치를 경기 수. `regularSeasonGames(2026) + 1` 을 주면
+ *   성적이 스스로 어긋나 `disagreed` 가 채워진다(`isRecordSane` 의 상한 검사)
+ */
+async function withSite(
+  o: { games: number; upcomingDate: string | null; probableDate: string | null },
+  fn: (site: ReturnType<typeof loadSite>, warnings: string[]) => void,
+): Promise<void> {
+  const dir = await mkdtemp(join(tmpdir(), "bb-build-gates-"));
+  const db = openDb(join(dir, "t.sqlite"), NOW);
+  const original = console.warn;
+  const warnings: string[] = [];
+  try {
+    // 세 리그(t·g)와 파 리그(l·m) 양쪽에 선수를 남긴다
+    for (const c of ["t", "g", "l", "m"]) {
+      upsertPlayer(db, `BAT_${c}`, `${c}打者`, NOW);
+      upsertPlayer(db, `PIT_${c}`, `${c}投手`, NOW);
+    }
+    for (let i = 0; i < o.games; i += 1) {
+      // 4월 1일부터 하루 한 경기씩. 144경기라도 8월 안에 들어간다
+      const d = new Date(Date.UTC(2026, 3, 1) + i * 86_400_000).toISOString().slice(0, 10);
+      played(db, d, "t", "g");
+      // ⚠**파 리그는 항상 3경기다.** 어긋남을 센트럴에만 만들어야 「어긋난 팀만 잡히는가」를
+      //   잴 수 있고, 144경기를 두 벌 만들지 않아 시험이 10초 이상 빨라진다(실측)
+      if (i < 3) played(db, d, "l", "m");
+    }
+    if (o.upcomingDate !== null) {
+      upcoming(db, o.upcomingDate, "t", "g");
+      upcoming(db, o.upcomingDate, "l", "m");
+    }
+    if (o.probableDate !== null) {
+      for (const [me, you, league] of [["t", "g", "central"], ["g", "t", "central"]] as const) {
+        upsertProbablePitcher(db, {
+          gameDate: o.probableDate, teamCode: me, opponentCode: you, playerId: `PIT_${me}`,
+          sourceName: `${me}投手`, venue: "甲子園", startTime: "18:00", league,
+          sourceUrl: "https://npb.jp/games/", fetchedAt: NOW,
+        });
+      }
+    }
+    console.warn = (...args: unknown[]): void => {
+      warnings.push(args.map((a) => String(a)).join(" "));
+    };
+    const site = loadSite(db, { season: 2026, builtOn: BUILT_ON });
+    console.warn = original;
+    fn(site, warnings);
+  } finally {
+    console.warn = original;
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+// ── m2. 성적과 대전표가 어긋나면 **배포하지 않는다** ───────────────────────────
+
+/**
+ * ⚠**`disagreed` 가 비지 않은 것은 파이프라인 결함이다**(정상 상태가 아니다).
+ * 그때 12구단 페이지의 우승 판정이 통째로 사라지는데 **화면 문구는 정직하다** —
+ * 「優勝争いはまだ判定できません」. 그래서 눈으로는 발견되지 않는다.
+ *
+ * ⚠**`basis: "unknown"` 전체를 막는 것이 아니다.** 교류전이 안 끝난 4~5월에는
+ * 규정 대전수를 유도할 수 없어 `unknown` 이 **정상**이다(실측: 2026 타임라인에서 06-01 부터
+ * `confirmed`). 가르는 것은 `disagreed` 다.
+ */
+test("⚠성적이 스스로 어긋나면 그 사실이 SiteData 까지 나온다 — 빌드가 판단할 수 있게", async () => {
+  const total = regularSeasonGames(2026);
+  await withSite({ games: total + 1, upcomingDate: null, probableDate: null }, (site) => {
+    // ⚠**어긋난 팀만 잡힌다** — 파 리그(3경기)는 멀쩡하다. 「전부 채워진다」면 아무것도 안 재는 것이다
+    assert.deepEqual(
+      [...site.raceDisagreed].sort(),
+      ["g", "t"],
+      `${total + 1}경기(규정 ${total})를 치른 팀이 어긋난 것으로 안 잡혔다`,
+    );
+  });
+});
+
+/** ⚠**반대편도 잰다** — 늘 채워지는 값이면 위 시험은 아무것도 안 재는 것이다 */
+test("⚠정상 데이터에서는 어긋난 구단이 없다", async () => {
+  await withSite({ games: 3, upcomingDate: null, probableDate: null }, (site) => {
+    assert.deepEqual(site.raceDisagreed, [], "정상 픽스처인데 어긋났다고 했다");
+  });
+});
+
+/**
+ * ⚠**빌드를 세우는 것까지가 이 지적의 내용이다**(2026-08-19 검토 m2).
+ * `console.warn` 만으로는 CI 가 stderr 를 읽지 않는 한 아무도 모른다 —
+ * 「M7 의 실패로」에 반쯤만 닿아 있었다.
+ *
+ * ⚠**이 검사는 소스를 글자로 읽는다.** `build.ts` 는 import 만으로 실행되는 스크립트라
+ * 시험에서 그 가지만 태울 수 없고, 종료 코드로 재려 해도 **낡은 데이터·빈 시즌·깨진 링크가
+ * 전부 같은 `1`** 이라 무엇 때문에 1인지 구별되지 않는다(픽스처 DB 는 반드시 낡았다).
+ * 같은 이유로 이 리포에는 이미 글자로 읽는 검사가 있다(`assets-source.test.ts`).
+ */
+test("⚠어긋난 구단이 있으면 빌드가 실패한다 — 경고로 끝내지 않는다", () => {
+  const src = readFileSync(join(import.meta.dirname, "..", "tools", "build.ts"), "utf8");
+  const at = src.indexOf("raceDisagreed");
+  assert.notEqual(at, -1, "빌드가 raceDisagreed 를 아예 안 본다");
+  // 그 가지 안에서 종료 코드를 바꾸는가. `emptySeasons`·`stale` 과 같은 형식이다
+  const region = src.slice(at, at + 800);
+  assert.match(
+    region,
+    /process\.exitCode = 1/,
+    "raceDisagreed 를 보긴 하는데 종료 코드를 안 바꾼다 — 경고만으로는 그대로 배포된다",
+  );
+});
+
+// ── Important. 予告先発이 「아직 안 나왔다」인지 「우리가 안 받았다」인지 ──────────
+
+/**
+ * ⚠**화면 문구는 그대로 둔다**(「発表待ち」). 방문자가 알아야 할 것이 아니라 운영자가 알아야 할 것이다 —
+ * `disagreed` 경고와 **같은 자리·같은 형식**으로 빌드 로그에 낸다.
+ */
+test("⚠予告先発을 하나도 못 받았는데 다음 경기가 있으면 빌드 로그가 말한다", async () => {
+  await withSite(
+    { games: 3, upcomingDate: "2026-08-20", probableDate: null },
+    (site, warnings) => {
+      assert.ok(
+        site.teams.some((t) => t.now.next !== null && t.now.probable === null),
+        "픽스처가 「発表待ち」를 하나도 안 만들었다 — 이 시험이 아무것도 안 재고 있다",
+      );
+      const hit = warnings.filter((w) => w.includes("予告先発"));
+      assert.equal(hit.length, 1, `予告先発 경고가 ${hit.length}건이다:\n${warnings.join("\n")}`);
+      assert.match(hit[0]!, /2026/, "어느 시즌인지 안 말한다");
+    },
+  );
+});
+
+/**
+ * ⚠**「아직 안 나왔다」에 경고를 내면 4~5월의 정상 상태가 매일 울린다.**
+ * NPB 予告先発은 **전날** 발표되므로, 빌드 기준일의 예고를 갖고 있는데
+ * 그 다음 날 경기의 예고가 아직 없는 것은 **정상**이다 — 그때는 화면의 「発表待ち」가 사실이다.
+ */
+test("⚠기준일의 予告先発을 갖고 있으면 다음 날 것이 없어도 경고하지 않는다", async () => {
+  await withSite(
+    { games: 3, upcomingDate: "2026-08-20", probableDate: BUILT_ON },
+    (site, warnings) => {
+      assert.ok(
+        site.teams.some((t) => t.now.next !== null && t.now.probable === null),
+        "픽스처가 「発表待ち」를 안 만들었다 — 경고가 안 난 이유가 화면이 조용해서일 수 있다",
+      );
+      assert.deepEqual(
+        warnings.filter((w) => w.includes("予告先発")),
+        [],
+        "발표 전인 정상 상태에 경고를 냈다",
+      );
+    },
+  );
+});
+
+/**
+ * ⚠**휴식일에는 경고하지 않는다**(2026-08-19 재검토 — Minor ②).
+ *
+ * 옛 조건(「가장 최근 예고일 < 빌드일」)은 경기 없는 날에 주 1회급으로 오탐했다.
+ * DB 실측(2026-07-01~08-19 · 50일): **10일이 경기 없는 날**(월요일 4 · 7/28~30 올스타
+ * 브레이크 3 · 8/17~19 3). 이 픽스처는 그 모양을 그대로 재현한다 — `probableDate`(예고를
+ * 받은 날)는 빌드일보다 **먼저**이고(`starters.gameDate < builtOn`, 옛 조건이면 무조건 발화),
+ * `upcomingDate`(다음 경기)는 빌드일보다 **나중**이다 — 즉 빌드 시점에는 아직 그 경기의
+ * 予告先発이 나올 시점이 아니다(NPB 予告先発은 전날 발표된다). 옛 조건이면 여기서 울렸다.
+ *
+ * ⚠**이 시험이 되돌림(뮤테이션)을 잡는다** — ②를 옛 조건으로 되돌리면 이 시험이 떨어져야 한다.
+ */
+test("⚠휴식일 — 다음 경기가 빌드일보다 나중이면 예고가 낡아도 경고하지 않는다", async () => {
+  await withSite(
+    { games: 3, upcomingDate: "2026-08-20", probableDate: "2026-08-15" },
+    (site, warnings) => {
+      assert.ok(
+        site.teams.some((t) => t.now.next !== null && t.now.probable === null),
+        "픽스처가 「発表待ち」를 안 만들었다 — 경고가 안 난 이유가 화면이 조용해서일 수 있다",
+      );
+      assert.deepEqual(
+        warnings.filter((w) => w.includes("予告先発")),
+        [],
+        "다음 경기가 아직 오지 않았는데(빌드일보다 나중) 예고가 낡았다고 경고했다",
+      );
+    },
+  );
+});
+
+/**
+ * ⚠**끝난 시즌에는 경고하지 않는다.** 9시즌을 한 번에 만드는 빌드에서 소급 시즌 8개가
+ * 매번 울리면 **진짜 신호가 소음에 묻힌다** — 이 리포가 daily.yml 에 이미 적어 둔 함정이다
+ * (「그 예외가 매일 나고 진짜 구조 변경 경보가 소음에 묻힌다」).
+ * 실측(2026-08-19): `probable_pitcher` 는 **2026-08-16 하루치 12행**뿐이라
+ * 2018~2025 는 전부 `gameDate === null` 이다. 다음 경기가 없으면 화면은 「発表待ち」라고
+ * 말하지 않으므로(`—`) 거짓말이 성립하지 않는다.
+ */
+test("⚠다음 경기가 없으면 予告先発을 못 받았어도 경고하지 않는다", async () => {
+  await withSite({ games: 3, upcomingDate: null, probableDate: null }, (site, warnings) => {
+    assert.ok(
+      site.teams.every((t) => t.now.next === null),
+      "픽스처에 예정 경기가 남아 있다 — 이 시험이 다른 것을 재고 있다",
+    );
+    assert.deepEqual(
+      warnings.filter((w) => w.includes("予告先発")),
+      [],
+      "가리킬 경기가 없는데 予告先発이 낡았다고 했다",
+    );
+  });
+});
+
+// ── 중복 id. **그물이 있는데 그 그물에 구멍이 있었다** ─────────────────────────
+
+/**
+ * ⚠**T8 과 같은 모양의 실패다**(「그물이 있는데 그 크기를 아무도 안 쟀다」).
+ *
+ * 링크 검사는 앵커와 ARIA 참조를 전수로 보는데, `LinkIndex.ids` 가 `Set` 이라
+ * **같은 id 가 두 번 있어도 「있다」로만** 보였다 — 검사 통과, 브라우저는 다른 곳.
+ * 실측(2026-08-19 감사): `dist` 15,340장 중 `ranking.html` **9장**에 중복 id
+ * **86종 / 172노드** · `#pn-rankmetric-starter-era` 로 들어갔을 때 열린 리그 패널이
+ * **`['central']`** — パ의 개인 지표에 도달하는 URL 이 존재하지 않았다.
+ *
+ * ⚠**이 검사는 소스를 글자로 읽는다.** 위 `raceDisagreed` 시험과 같은 이유다 —
+ * `build.ts` 는 import 만으로 실행되는 스크립트라 그 가지만 태울 수 없고,
+ * 종료 코드로 재려 해도 낡은 데이터·빈 시즌·깨진 링크가 **전부 같은 `1`** 이라 구별되지 않는다.
+ * 검출 로직 자체는 `link-check.test.ts` 가 값으로 잰다.
+ */
+test("⚠중복 id 가 있으면 빌드가 실패한다 — 앵커 검사가 통과하는 종류의 결함이다", () => {
+  const src = readFileSync(join(import.meta.dirname, "..", "tools", "build.ts"), "utf8");
+  const at = src.indexOf("duplicateIds(all)");
+  assert.notEqual(at, -1, "빌드가 중복 id 를 아예 안 본다");
+  const region = src.slice(at, at + 800);
+  assert.match(
+    region,
+    /process\.exitCode = 1/,
+    "중복 id 를 보긴 하는데 종료 코드를 안 바꾼다 — 경고만으로는 그대로 배포된다",
+  );
+});
+
+/**
+ * ⚠**「N종」의 N 이 종수가 아니었다**(2026-08-20 최종 검토 ⑥).
+ * `duplicateIds()` 한 건은 **(문서, id) 쌍**이라, 한 id 가 9장에 있으면 9건이다 —
+ * 그걸 「9종」이라고 적으면 규모가 9배로 부풀어 읽힌다. 작업규칙 7(분모와 단위를 정확히)의 정신에
+ * 어긋나고, 하필 **배포를 막는 메시지**라 판단 근거가 된다.
+ * ⚠**시험이 소스를 글자로 읽는다** — 위 시험과 같은 이유다(`build.ts` 는 import 만으로 실행된다).
+ */
+test("⚠중복 id 의 수를 「종」이라고 부르지 않는다 — 그 수는 (문서, id) 쌍이다", () => {
+  const src = readFileSync(join(import.meta.dirname, "..", "tools", "build.ts"), "utf8");
+  const at = src.indexOf("duplicateIds(all)");
+  assert.notEqual(at, -1, "빌드가 중복 id 를 아예 안 본다");
+  const region = src.slice(at, at + 1200);
+  assert.doesNotMatch(
+    region,
+    /\$\{dups\.length\}종/,
+    "쌍의 개수를 「종」이라고 부른다 — 한 id 가 9장에 있으면 9종으로 읽힌다",
+  );
+  assert.doesNotMatch(
+    region,
+    /\$\{dups\.length - 20\}종/,
+    "뒷줄에서도 쌍의 개수를 「종」이라고 부른다",
+  );
+  // 종수를 말하려면 **id 를 따로 세야 한다**
+  assert.match(region, /new Set\(dups\.map\(\(d\) => d\.id\)\)/, "id 의 종수를 세는 곳이 없다");
+});
+
+// ── 연락처(L4). **화면이 조용하지 않은데 빌드는 조용했다** ────────────────────
+
+/**
+ * ⚠**빈 연락처는 「표시가 없다」가 아니라 「개발자 지시문이 나간다」다**(2026-08-20 감사 ④).
+ * 꼬리말이 방문자에게 「連絡先が未設定です（公開前に設定してください）」라고 말하고,
+ * 그 꼬리말은 **15,340장 전부**에 있다. L4(삭제·정정 요청 창구)도 그 순간 없는 것이 된다.
+ * 그런데 신호는 `console.warn` 하나뿐이라 **종료 코드가 0**이었다 —
+ * `emptySeasons`·`stale`·`raceDisagreed` 와 같은 등급이어야 하는데 혼자 경고였다.
+ *
+ * ⚠**지금 배포본에는 이 문구가 없다.** CI 가 `secrets.BB_CONTACT` 를 넘기고 있고
+ * 배포 로그에 `BB_CONTACT: ***` 가 찍힌다. 감사가 잰 것은 **시크릿 없는 로컬 빌드**였다.
+ * 막는 것은 「지금 나가는 결함」이 아니라 **시크릿이 비는 날**이다.
+ *
+ * ⚠**로컬을 막으면 안 된다** — 연락처는 시크릿 스토어에만 있으니 개발자 머신에서는
+ * **항상 비어 있는 것이 정상**이고, 매번 실패하면 진짜 신호가 소음에 묻힌다.
+ * 그래서 `BB_REQUIRE_CONTACT=1` 을 **CI 만** 켠다(`BB_REQUIRE_DIST`·`BB_REQUIRE_DB` 와 같은 형식).
+ *
+ * ⚠**여기는 소스를 글자로 읽지 않는다.** 위 두 시험과 달리 판정이 `layout.ts` 의 순수 함수로
+ * 나와 있어 **양방향으로 직접 태울 수 있다**(작업규칙 9).
+ */
+test("⚠연락처가 있으면 아무 소리도 내지 않는다 — 늘 우는 게이트는 게이트가 아니다", () => {
+  for (const require of [undefined, "1"]) {
+    const g = contactGate("hello@example.com", require);
+    assert.deepEqual(
+      g,
+      { missing: false, fatal: false, message: "" },
+      `연락처가 있는데 무언가 말했다(BB_REQUIRE_CONTACT=${String(require)})`,
+    );
+  }
+});
+
+test("⚠연락처가 없고 BB_REQUIRE_CONTACT=1 이면 빌드가 실패한다", () => {
+  const g = contactGate("", "1");
+  assert.equal(g.fatal, true, "CI 조건인데 종료 코드를 안 바꾼다 — 개발자 지시문이 그대로 배포된다");
+  assert.equal(g.missing, true);
+  // 로그가 **무엇이 화면에 나가는지**를 말해야 한다 — 「미설정」만으로는 심각도가 안 보인다
+  assert.match(g.message, /BB_CONTACT/, "무슨 값이 없는지 안 말한다");
+  assert.match(g.message, /連絡先が未設定です/, "화면에 무엇이 나가는지 안 말한다");
+});
+
+test("⚠연락처가 없어도 스위치가 없으면 경고로 끝난다 — 로컬 빌드를 막지 않는다", () => {
+  for (const require of [undefined, "", "0", "true"]) {
+    const g = contactGate("", require);
+    assert.equal(g.missing, true, `연락처가 없는데 없다고 안 한다(BB_REQUIRE_CONTACT=${String(require)})`);
+    assert.equal(g.fatal, false, `로컬 빌드를 세웠다(BB_REQUIRE_CONTACT=${String(require)})`);
+    assert.match(g.message, /BB_REQUIRE_CONTACT/, "CI 에서 어떻게 막는지 안 알려준다");
+  }
+});
+
+/**
+ * ⚠**스위치를 만들고 CI 에서 안 켜면 아무것도 안 고친 것이다.**
+ * 이 리포에는 그 전례가 있다 — `BB_REQUIRE_DIST` 가 없어 시험이 조용히 skip 되고
+ * 종료 코드 0으로 「합격」이 됐다(2026-08-18 감사 P3).
+ */
+test("⚠daily.yml 이 화면 생성 단계에서 BB_REQUIRE_CONTACT 를 켠다", () => {
+  const yml = readFileSync(
+    join(import.meta.dirname, "..", "..", "..", ".github", "workflows", "daily.yml"),
+    "utf8",
+  );
+  const at = yml.indexOf("BB_CONTACT: ${{ secrets.BB_CONTACT }}");
+  assert.notEqual(at, -1, "daily.yml 이 BB_CONTACT 를 아예 안 넘긴다");
+  // ⚠**같은 env 블록 안**이어야 한다. 다른 단계에 켜 두면 빌드가 안 보는 값이 된다
+  assert.match(
+    yml.slice(at, at + 900),
+    /BB_REQUIRE_CONTACT:\s*"?1"?/,
+    "시크릿은 넘기는데 스위치를 안 켰다 — 시크릿이 비는 날 그대로 배포된다",
+  );
+});
+
+/** ⚠**빌드가 그 판정을 실제로 쓰는가.** 순수 함수만 맞고 호출부가 없으면 아무 일도 안 일어난다 */
+test("⚠빌드가 contactGate 의 판정으로 종료 코드를 바꾼다", () => {
+  const src = readFileSync(join(import.meta.dirname, "..", "tools", "build.ts"), "utf8");
+  const at = src.indexOf("contactGate(site.contact");
+  assert.notEqual(at, -1, "빌드가 contactGate 를 안 부른다");
+  assert.match(
+    src.slice(at, at + 400),
+    /process\.exitCode = 1/,
+    "판정만 받고 종료 코드를 안 바꾼다 — 경고만으로는 그대로 배포된다",
+  );
+});

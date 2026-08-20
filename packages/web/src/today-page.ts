@@ -178,9 +178,19 @@ function dayBar(
 </nav>`;
 }
 
-function scoreLine(side: TodaySide, won: boolean, base: string): RawHtml {
-  return html`<div class="gside${won ? " w" : ""}" style="--chip:${side.color.base};--chip-ink:${side.color.ink}">
-  <span class="gt"><i></i>${side.shortName}</span>
+/**
+ * 점수 한 줄.
+ *
+ * ⚠**어느 쪽이 홈인지가 화면 어디에도 없었다**(2026-08-20 감사 ②). 구장 이름으로 추측하는
+ * 수밖에 없었는데, 지방 개최가 있는 이 리그에서 그 추측은 틀린다.
+ * ⚠**표식은 구단 페이지·홈 화면과 같은 어법이다**(M1) — 「＠팀」 = 그 팀의 본거지.
+ * ⚠**글자만으로 자리를 밀지 않는다.** ＠ 를 이름 앞에 그냥 붙이면 두 줄의 팀명 시작선이
+ * 어긋난다 — 자리는 두 줄 다 비워 두고(::before), 글자는 홈에만 넣는다.
+ * ⚠**생성 콘텐츠는 낭독되지 않을 수 있다** — 그래서 보이지 않는 글자를 함께 둔다.
+ */
+function scoreLine(side: TodaySide, won: boolean, home: boolean): RawHtml {
+  return html`<div class="gside${won ? " w" : ""}${home ? " h" : ""}" style="--chip:${side.color.base};--chip-ink:${side.color.ink}">
+  <span class="gt"><i></i>${side.shortName}<span class="vh">（${home ? "ホーム" : "ビジター"}）</span></span>
   <span class="gr">${side.runs === null ? NO_VALUE : side.runs}</span>
 </div>`;
 }
@@ -248,8 +258,8 @@ function gameCard(g: TodayGame, base: string): RawHtml {
     return html`<article class="gcard off">
   <h3 class="gvenue">${g.venue ?? ""}</h3>
   <div class="gscore">
-    <div class="gside" style="--chip:${g.away.color.base}"><span class="gt"><i></i>${g.away.shortName}</span></div>
-    <div class="gside" style="--chip:${g.home.color.base}"><span class="gt"><i></i>${g.home.shortName}</span></div>
+    <div class="gside" style="--chip:${g.away.color.base}"><span class="gt"><i></i>${g.away.shortName}<span class="vh">（ビジター）</span></span></div>
+    <div class="gside h" style="--chip:${g.home.color.base}"><span class="gt"><i></i>${g.home.shortName}<span class="vh">（ホーム）</span></span></div>
   </div>
   <p class="gnone">${g.notPlayedReason ?? "試合なし"}</p>
 </article>`;
@@ -266,8 +276,8 @@ function gameCard(g: TodayGame, base: string): RawHtml {
   return html`<article class="gcard${g.hasPage ? " tapcard" : ""}">
   <h3 class="gvenue">${g.venue ?? ""}${g.winner === null ? html`<span class="gtie">引き分け</span>` : null}</h3>
   <div class="gscore">
-    ${scoreLine(g.away, g.winner === "away", base)}
-    ${scoreLine(g.home, g.winner === "home", base)}
+    ${scoreLine(g.away, g.winner === "away", false)}
+    ${scoreLine(g.home, g.winner === "home", true)}
   </div>
   ${hits === null && errs === null
     ? raw("")

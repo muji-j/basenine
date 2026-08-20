@@ -13,6 +13,12 @@ import { colorOf } from "@bb-app/domain";
 import { context, rankingPanel } from "./fixtures.ts";
 import type { RankingPanel, RankingRow } from "../src/player-page.ts";
 import { rankingRowsFor } from "../src/query.ts";
+/**
+ * ⚠**세 벌째를 만들지 않는다**(2026-08-19 T7 검토 ⓓ). 동률 규칙 문장은 `parts.ts` 에 한 벌 있고
+ * 순위표(`query.ts`)와 구단 목록(`teams-page.ts`)이 그것을 쓴다 —
+ * 픽스처가 자기 사본을 들면 **본문이 바뀌어도 이 시험은 옛 문장을 지킨다.**
+ */
+import { TIE_RULE } from "../src/parts.ts";
 
 function row(over: Partial<StandingRow> = {}): StandingRow {
   return {
@@ -39,10 +45,6 @@ function row(over: Partial<StandingRow> = {}): StandingRow {
   };
 }
 
-const TIE_RULE =
-  "勝率が同じ場合は当該球団間の対戦成績で上位を決めます。それでも並ぶときは同順位として表示します" +
-  "（NPBの規定では次に前年度順位を使いますが、当サイトはそこまでは判定していません）。";
-
 function data(over: Partial<RankingPageData> = {}): RankingPageData {
   return {
     season: 2026,
@@ -58,6 +60,8 @@ function data(over: Partial<RankingPageData> = {}): RankingPageData {
       },
     ],
     tieRule: TIE_RULE,
+    /** ⚠**기본은 비어 있다** — 引き分けの解剖 구획은 그것을 시험하는 곳에서만 켠다 */
+    draws: [],
     leagues: [],
     ...over,
   };
@@ -80,9 +84,22 @@ const split = (): RankingPageData => data({ leagues: [league()] });
  * 「탭줄이 0개」라는 무의미한 통과/실패가 나온다(2026-08-16에 실제로 그랬다).
  */
 function railOf(out: string): string {
-  const at = out.indexOf('class="rail"');
+  const at = out.indexOf('<div class="rail"');
   assert.ok(at > 0, "조작 레일이 없다");
-  return out.slice(at, out.indexOf("</nav>", at));
+  /**
+   * ⚠**닫는 자리를 세어서 자른다.** 예전에는 첫 `</nav>` 로 잘랐는데, 레일이
+   * `<nav>` 를 그만두면서(2026-08-20 감사 ⑤ — 링크 0개인 랜드마크였다)
+   * 그 표식이 사라져 **푸터의 `</nav>` 까지 통째로 들어왔다.**
+   */
+  let depth = 0;
+  for (let i = at; i < out.length; i++) {
+    if (out.startsWith("<div", i) && /[\s>]/.test(out[i + 4] ?? "")) depth++;
+    else if (out.startsWith("</div>", i)) {
+      depth--;
+      if (depth === 0) return out.slice(at, i);
+    }
+  }
+  return assert.fail("레일이 닫히지 않았다");
 }
 
 test("팀 순위가 먼저 열린다 — 「順位」를 누른 사람이 먼저 찾는 것이다", () => {

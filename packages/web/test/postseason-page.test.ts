@@ -274,7 +274,7 @@ test("탭줄이 .rail 안에 있다 — 패딩과 sticky가 거기서 온다", (
   const out = renderPostseasonPage(two(), context());
   assert.match(
     out,
-    /<nav class="rail"[^>]*>\s*<div class="tabs"[^>]*data-tabgroup="post"/,
+    /<div class="rail"[^>]*>\s*<div class="tabs"[^>]*data-tabgroup="post"/,
     "탭줄이 .rail 밖에 있다 — 패딩도 sticky도 안 걸린다",
   );
   // ⚠`.rail` 이 이미 가로 스크롤을 하므로 탭줄까지 켜면 스크롤 상자가 이중이 된다
