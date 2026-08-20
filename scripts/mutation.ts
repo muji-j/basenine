@@ -51,9 +51,19 @@ function run(tests: readonly string[]): { failed: string[]; error: string | null
   }
 }
 
+/**
+ * ⚠**줄바꿈을 대상 파일에 맞춘다.** 이 저장소에는 CRLF 파일과 LF 파일이 섞여 있고
+ * (실측: `draw.ts` 는 CRLF 171줄 · `venues.ts` 는 LF 435줄), 여러 줄짜리 `from` 을
+ * `\n` 으로 적으면 CRLF 파일에서 **아무것도 안 걸린다.**
+ * ⚠**그게 「살아남았다」로 세어지면 이 검사가 통째로 거짓이 된다** — 실제로 한 번 그렇게 나왔다.
+ * 그래서 무효 뮤테이션도 살아남음으로 세고 화면에 따로 적는다.
+ */
+const toEol = (s: string, crlf: boolean): string => (crlf ? s.replace(/\r?\n/g, "\r\n") : s.replace(/\r\n/g, "\n"));
+
 /** @returns 살아남은(=잡히지 않은) 뮤테이션 수. **0이 아니면 그 시험은 그 사고를 못 잡는다** */
 export function runMutations(target: MutationTarget): number {
   const original = readFileSync(target.src, "utf8");
+  const crlf = original.includes("\r\n");
   let survived = 0;
   try {
     const base = run(target.tests);
@@ -69,12 +79,13 @@ export function runMutations(target: MutationTarget): number {
     console.log("");
 
     for (const m of target.mutations) {
-      if (!original.includes(m.from)) {
+      const from = toEol(m.from, crlf);
+      if (!original.includes(from)) {
         console.log(`⚠ ${m.what}\n   → 대상 문자열을 못 찾았다. **뮤테이션이 무효다**(코드가 바뀌었으면 여기를 고쳐라)`);
         survived += 1;
         continue;
       }
-      writeFileSync(target.src, original.replace(m.from, m.to), "utf8");
+      writeFileSync(target.src, original.replace(from, toEol(m.to, crlf)), "utf8");
       const r = run(target.tests);
       if (r.error !== null) {
         // ⚠ERROR 는 「잡았다」가 아니다 — 시험이 아니라 로드가 죽은 것일 수 있다

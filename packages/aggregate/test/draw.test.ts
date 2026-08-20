@@ -11,7 +11,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb, upsertGame, upsertPlayer } from "@bb-app/store";
-import { drawRate, extraDecidedRate, seasonDraws } from "../src/draw.ts";
+import { drawRate, extraDecidedRate, extraRate, seasonDraws } from "../src/draw.ts";
 
 const NOW = "2026-08-20T00:00:00.000Z";
 
@@ -142,6 +142,37 @@ test("⚠타석 로그가 없는 경기는 이닝을 「모름」으로 센다 �
     assert.equal(s.extra, 1, "이닝을 모르는 경기를 연장으로도 9회로도 세지 않는다");
     assert.equal(s.extraDrawn, 0);
     assert.equal(s.regulationDrawn, 0, "이닝을 모르는 무승부를 「9회 무승부」로 셌다");
+
+    /**
+     * ⚠**연장 진입률의 분모에서 이닝 미상을 뺀다**(2026-08-21 수정).
+     * 이닝을 모르는 경기는 **분자에 들어갈 수가 없으므로** 분모에 남기면
+     * 비율이 구조적으로 낮게 나온다 — 여기서는 1.000 이 아니라 **0.500** 이 됐을 것이다.
+     * ⚠**무승부율은 반대다** — 무승부는 득점으로 판정하므로 이닝 미상도 분모에 남는다.
+     */
+    assert.equal(extraRate(s).value, 1, "이닝 미상을 분모에 남겨 연장 진입률이 낮아졌다");
+    assert.equal(extraRate(s).denominator, 1, "분모가 「이닝을 아는 경기」가 아니다(M2)");
+    assert.equal(drawRate(s).value, 0.5, "무승부율의 분모까지 줄이면 안 된다");
+    assert.equal(drawRate(s).denominator, 2);
+  });
+});
+
+test("⚠이닝을 아는 경기가 0이면 연장 진입률은 값이 없다 — .000 이 아니다(M11)", async () => {
+  await withDb((db) => {
+    // 두 경기 다 타석 로그가 없다 = 「연장에 안 갔다」가 아니라 **「모른다」**
+    game(db, { id: "g1", season: 2026, away: 1, home: 1, lastInning: null });
+    game(db, { id: "g2", season: 2026, away: 3, home: 1, lastInning: null });
+    const [s] = seasonDraws(db, "regular", "9999-12-31", 2000, 2100);
+    assert.ok(s !== undefined);
+    assert.equal(s.games, 2);
+    assert.equal(s.inningUnknown, 2);
+    assert.equal(
+      extraRate(s).value,
+      null,
+      "이닝을 하나도 모르는데 「연장 진입 0%」라고 말했다 — 정반대의 거짓말이다",
+    );
+    assert.equal(extraRate(s).denominator, 0, "분모를 버리지 않는다(M2)");
+    // 무승부는 여전히 말할 수 있다 — 득점은 알고 있다
+    assert.equal(drawRate(s).value, 0.5);
   });
 });
 
@@ -161,4 +192,6 @@ test("⚠경기가 0이면 비율을 내지 않는다(M11)", () => {
   };
   assert.equal(drawRate(empty).value, null);
   assert.equal(drawRate(empty).denominator, 0);
+  assert.equal(extraRate(empty).value, null);
+  assert.equal(extraRate(empty).denominator, 0);
 });

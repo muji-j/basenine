@@ -128,14 +128,37 @@ export function seasonDraws(
   }));
 }
 
-/** 무승부율. ⚠**경기가 0이면 값을 내지 않는다**(M11) */
+/**
+ * 무승부율. ⚠**경기가 0이면 값을 내지 않는다**(M11)
+ *
+ * ⚠**여기는 `games` 가 맞다.** 무승부는 득점으로 판정하므로 이닝을 모르는 경기도
+ * 무승부인지 아닌지는 말할 수 있다 — 아래 `extraRate` 와 갈리는 지점이 그것이다.
+ * (득점 자체를 모르는 경기는 분모에 남으면 안 되지만 **실측 0건**이다 —
+ * `status='played'` 인데 득점이 NULL 인 경기는 전 대회에 하나도 없다. 2026-08-21 실측)
+ */
 export function drawRate(l: Pick<SeasonDrawLine, "draws" | "games">): Rate {
   return rate(l.draws, l.games);
 }
 
-/** 연장 진입률 */
-export function extraRate(l: Pick<SeasonDrawLine, "extra" | "games">): Rate {
-  return rate(l.extra, l.games);
+/**
+ * 연장 진입률.
+ *
+ * ⚠**분모에서 `inningUnknown` 을 뺀다.** 이닝을 모르는 경기는 **분자에 들어갈 수가 없으므로**
+ * (`extra` 는 `lastInning > 9` 인 경기만 센다) 분모에 남기면 **비율이 구조적으로 낮게 나온다** —
+ * 「연장에 안 갔다」와 「연장인지 모른다」를 같은 칸에 넣는 것이고 그건 M11 위반이다.
+ * ⚠**분모가 `games` 인 것은 「없다」가 아니라 「모른다」를 0으로 센 것**이라
+ *   `drawRate` 와 달라 보이지만 다른 이유가 아니다 — 위 `drawRate` 주석 참조.
+ *
+ * ⚠**보유 9시즌에서 `inningUnknown` 은 전 대회 0건이다**(2026-08-21 실측).
+ * 그래서 지금은 값이 바뀌지 않는다 — **고친 이유는 값이 아니라 화면에 올리는 날**이다.
+ * 아카이브에 `playbyplay` 가 없는 경기가 하나라도 들어오면 그때부터 조용히 틀린다.
+ *
+ * ⚠**타입이 `inningUnknown` 을 요구한다.** 옛 시그니처(`extra` · `games`)로는 부를 수 없으므로
+ * 부르는 쪽이 「이닝 미상이 몇 건인가」를 **반드시 손에 들고** 와야 한다 —
+ * 규율이 아니라 타입으로 막는다(`Rate` 가 분모를 나르는 것과 같은 이유).
+ */
+export function extraRate(l: Pick<SeasonDrawLine, "extra" | "games" | "inningUnknown">): Rate {
+  return rate(l.extra, l.games - l.inningUnknown);
 }
 
 /**
