@@ -12,7 +12,7 @@ import type { LeagueSection, RankingPageData, StandingRow } from "../src/pages.t
 import { colorOf } from "@bb-app/domain";
 import { context, rankingPanel } from "./fixtures.ts";
 import type { RankingPanel, RankingRow } from "../src/player-page.ts";
-import { rankingRowsFor } from "../src/query.ts";
+import { RANKING_MIN_TOP, RANKING_PAGE_ROWS, minTopFor, rankingRowsFor } from "../src/query.ts";
 import { CLIENT_JS } from "../src/assets.ts";
 /**
  * ⚠**세 벌째를 만들지 않는다**(2026-08-19 T7 검토 ⓓ). 동률 규칙 문장은 `parts.ts` 에 한 벌 있고
@@ -274,12 +274,23 @@ test("팀 순위표가 없으면 그 자리를 통째로 비운다 — 빈 표�
  */
 function panelWithUnqualified(id = "wrcPlus"): RankingPanel {
   const base = rankingPanel();
+  const rows: RankingRow[] = [
+    ...base.rows.map((r, i) => ({ ...r, rank: i + 1, rankAll: i + 2 })),
+    // 규정 미달인데 값은 더 좋다 — 전원 순위에서는 1위
+    {
+      rank: null, rankAll: 1, playerId: "sub", name: "代打",
+      teamCode: "g", value: { value: 999, denominator: 12 }, isMe: false,
+    },
+  ];
   return {
     ...base,
     id,
-    // ⚠**입력이 붙는 패널이라는 것을 서버가 말한다**(`minTopFor` · query.ts). 화면은 이 값으로
-    //   버튼·입력칸을 낼지 정하고, 각주의 「上位N人は必ずこの表にいます」도 이 수를 쓴다
-    minTop: 10,
+    /**
+     * ⚠**서버가 정하는 값을 픽스처가 손으로 적지 않는다**(M1) — `minTopFor` 를 그대로 부른다.
+     * 손으로 적으면 `RANKING_MIN_TOP` 을 올렸을 때 **픽스처만 옛 수를 든 채** 초록이 된다.
+     * 화면은 이 값으로 버튼·입력칸을 낼지 정하고, 각주의 「上位N人は必ずこの表にいます」도 이 수를 쓴다.
+     */
+    minTop: minTopFor(rows, RANKING_PAGE_ROWS),
     /**
      * ⚠**실제 패널의 모양은 「기록이 있는 선수가 실린 행보다 훨씬 많다」이다**
      * (실측: 화면 34.6행 대 기록 보유 수백 명). 픽스처가 그걸 안 닮으면
@@ -287,14 +298,7 @@ function panelWithUnqualified(id = "wrcPlus"): RankingPanel {
      */
     qualifiedCount: 10,
     allCount: 240,
-    rows: [
-      ...base.rows.map((r, i) => ({ ...r, rank: i + 1, rankAll: i + 2 })),
-      // 규정 미달인데 값은 더 좋다 — 전원 순위에서는 1위
-      {
-        rank: null, rankAll: 1, playerId: "sub", name: "代打",
-        teamCode: "g", value: { value: 999, denominator: 12 }, isMe: false,
-      },
-    ],
+    rows,
   };
 }
 
@@ -482,12 +486,40 @@ test("⚠순위를 다시 매기지 않는다는 것을 화면이 말한다 — 
  */
 test("⚠「어느 하한에서도 상위 N은 이 표에 있다」를 화면이 말한다 — 넓혀 놓고 안 말하면 없는 것과 같다", () => {
   const out = withPanel(panelWithUnqualified());
-  assert.match(out, /上位10人は必ずこの表にいます/, "보장하는 수를 화면이 말하지 않는다");
+  // ⚠**수를 손으로 적지 않는다** — 상수를 올렸는데 문구가 그대로면 그게 거짓말이다
+  const want = minTopFor(panelWithUnqualified().rows, RANKING_PAGE_ROWS)!;
+  assert.match(out, new RegExp(`上位${want}人は必ずこの表にいます`), "보장하는 수를 화면이 말하지 않는다");
   // ⚠**남은 한계도 같은 문장이 말한다**(작업규칙 7) — 11위 아래는 이 표의 범위다
   assert.match(out, /それより下の順位は/, "11위 아래에 한계가 남는다는 말이 없다");
   assert.match(out, /記録がある選手 240人のうち/, "분모(기록이 있는 선수 수)를 말하지 않는다");
   // 고장 난 상태를 설명하던 옛 문장이 남아 있으면 두 말이 서로를 부인한다
   assert.ok(!out.includes("絞り込みが効くのは"), "옛 문구가 남아 있다 — 두 문장이 모순된다");
+});
+
+/**
+ * ⚠**보증 수를 문구에 박으면 상수를 올렸을 때 화면만 옛말을 한다.**
+ *
+ * 이 서비스는 「숫자가 곳 내용」이라 문구와 값이 갈리는 것이 곰 침묵 오류다.
+ * 그래서 문구도 고르기도 **`minTopFor` 한 곳에서** 나온다(M1).
+ *
+ * ⚠**약속은 그 표의 크기까지다** — 5행짜리 일람의 하이라이트에서 「상위 10」을 보장하면
+ * 그 표가 10행 넘게 부푼 「하이라이트」라는 이름이 거짓이 된다.
+ */
+test("⚠보증 수는 상수와 그 표의 표시 상한에서 나온다 — 문구에 수를 박지 않는다", () => {
+  const rows = panelWithUnqualified().rows;
+  const wide = minTopFor(rows, RANKING_PAGE_ROWS)!;
+  const small = minTopFor(rows, 5)!;
+  assert.equal(wide, Math.min(RANKING_MIN_TOP, RANKING_PAGE_ROWS), "순위표의 보증 수가 상수를 안 따른다");
+  // ⚠**표보다 큰 약속을 하지 않는다**
+  for (const limit of [1, 3, 5, 12, RANKING_PAGE_ROWS]) {
+    assert.ok(minTopFor(rows, limit)! <= limit, `표시 상한 ${limit} 보다 큰 약속을 한다`);
+  }
+  assert.notEqual(wide, small, "두 상한의 보증이 같다 — 이 시험이 공회전한다");
+  // 그리고 화면은 **그 수를 그대로** 말한다
+  assert.match(withPanel({ ...panelWithUnqualified(), minTop: wide }), new RegExp(`上位${wide}人は必ず`));
+  const smallOut = withPanel({ ...panelWithUnqualified(), minTop: small });
+  assert.match(smallOut, new RegExp(`上位${small}人は必ず`), "작은 표가 자기 상한을 안 말한다");
+  assert.ok(!new RegExp(`上位${wide}人は必ず`).test(smallOut), "작은 표에 큰 약속이 섮였다");
 });
 
 /**

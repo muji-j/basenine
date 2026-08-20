@@ -8,21 +8,23 @@
  *
  * 실측(고치기 전 · 9시즌 18 리그-시즌 · 하한을 실재 분모 전량으로 훑음):
  * 입력이 붙는 **23개 지표가 전부** 걸렸고(414 패널-리그-시즌 중 **144**),
- * 가장 나쁜 자리는 **상위 10 중 4명**이 화면에 없었다(2024 パ 救援 BB/9 · 하한 120아웃).
+ * 가장 나쁜 자리는 **상위 10 중 4명**이 화면에 없었다(2024 パ 救援 BB/9 · 하한 120아웃 ·
+ * 그때의 보증 수 `RANKING_MIN_TOP = 10` 기준).
  * 재현 절차는 `scripts/ranking-cut-measure.ts`.
  *
  * ## 이 시험의 규약
  *
  * ⚠**기대값을 손으로 적지 않는다**(`scripts/test/doc-figures.test.ts` 와 같은 결).
- * 「누가 상위 10인가」를 **DB 에서 다시 세어** 화면이 고른 행과 맞댄다 —
+ * 「누가 상위 N 인가」를 **DB 에서 다시 세어** 화면이 고른 행과 맞댄다 —
  * 손으로 적으면 시험과 화면이 같이 낡고, 그건 검사가 아니라 복사다.
+ * ⚠**N 은 `RANKING_MIN_TOP` 이 정한다** — 이 파일 어디에도 그 수를 손으로 적지 않는다.
  *
  * ⚠**하한을 임의의 격자(30·50·70…)로 훑지 않는다.** 답이 바뀌는 지점은 **패널에 실재하는
  * 분모 값**뿐이므로 그 전부를 훑는다. 격자로 재면 「그 격자에서는 괜찮다」밖에 말할 수 없다 —
  * 실제로 처음 보고된 실측이 `防御率` 한 패널 × 다섯 격자였고, **어느 패널이 걸리는지가 달랐다.**
  *
  * ⚠**개수 지표(홈런·세이브·도루)는 대상이 아니다** — 자격 기준이 없어 입력칸 자체가 안 그려진다
- * (`minTop === null`). 거기도 「상위 10이 빠지는 하한」은 있지만(실측 165건) **아무 조작으로도
+ * (`minTop === null`). 거기도 「상위 N 이 빠지는 하한」은 있지만(실측 165건) **아무 조작으로도
  * 닿을 수 없으므로** 행을 넓혀 봐야 바이트만 는다. 「0건」이 아니라 **「기능이 없다」**이고,
  * 그 구별을 아래 시험이 수로 남긴다(작업규칙 7).
  *
@@ -34,7 +36,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openDb } from "@bb-app/store";
-import { RANKING_PAGE_ROWS, loadSite, rankingRowsFor } from "../src/query.ts";
+import { RANKING_MIN_TOP, RANKING_PAGE_ROWS, loadSite, rankingRowsFor } from "../src/query.ts";
 import type { RankingRow } from "../src/player-page.ts";
 
 const DB = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "data", "bb.sqlite");
@@ -136,10 +138,15 @@ test(
       let skipped = 0;
       let thresholds = 0;
       /**
-       * 규정 30 · 전원 30 을 합쳐도 60 이다. 그 위로 붙는 것이 「어느 하한에서도 상위 N」몫.
-       * 실측(2026-08-20 · 9시즌 · 전 패널): 평균 **34.6행** · **최대 52행**.
+       * **행 수의 예산.**
+       *
+       * ⚠**공식이 아니라 재서 넣은 수다.** 실측(2026-08-20 · 9시즌 전 패널 ·
+       * `RANKING_MIN_TOP = 10`): 평균 **34.6행** · **최대 52행**. 여유를 좀게 잡는 이유는
+       * 느슬한 천장은 아무것도 안 막기 때문이다.
+       * ⚠`RANKING_MIN_TOP` 을 올리면 **여기가 먼저 떨어진다**(실측 k=20 → 최대 60 · k=30 → 72).
+       * 그것은 고장이 아니라 **바이트를 다시 재라는 물음**이다 — 재고 이 수를 같이 고쳐라.
        */
-      const CEILING = RANKING_PAGE_ROWS * 2 + 15;
+      const CEILING = 60;
       const fat: string[] = [];
       let allPanels = 0;
       let allRows = 0;
@@ -176,6 +183,16 @@ test(
                 p.allCount,
                 `${where}: 전량이 안 왔다(${valued} vs ${p.allCount}) — ` +
                   "rankingRows 를 무한으로 줬는데도 잘렸다면 이 시험은 잘린 표를 잘린 표와 맞대는 셈이다",
+              );
+              /**
+               * ⚠**보증 수가 상수를 따라오는가.** 시험이 수를 손으로 들고 있으면
+               * `RANKING_MIN_TOP` 을 올려도 **예전 약속만 검사하고 초록**이 된다.
+               * 아래 훑기는 `p.minTop` 을 그대로 쓰고, 그 수가 정본과 같은지를 여기서 못 박는다.
+               */
+              assert.equal(
+                p.minTop,
+                Math.min(RANKING_MIN_TOP, RANKING_PAGE_ROWS),
+                `${where}: 보증 수가 상수에서 안 나왔다`,
               );
               const shown = new Set(picked.map((r) => r.playerId));
               const got = sweep(where, p.rows, p.minTop, shown);
