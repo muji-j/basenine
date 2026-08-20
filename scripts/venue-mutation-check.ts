@@ -12,20 +12,13 @@
  * ⚠DB 가 필요하다(`BB_REQUIRE_DB=1` 로 돌린다). 없으면 DB 시험이 건너뛰어져
  *   「안 쟀음」이 「0건」으로 읽힌다.
  */
-import { readFileSync, writeFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { runMutations } from "./mutation.ts";
+import type { Mutation } from "./mutation.ts";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const SRC = `${ROOT}packages/domain/src/venues.ts`;
 const TESTS = [`${ROOT}packages/domain/test/venues.test.ts`, `${ROOT}packages/domain/test/venues-db.test.ts`];
-
-interface Mutation {
-  /** 무엇을 틀리게 만드는가 */
-  what: string;
-  from: string;
-  to: string;
-}
 
 /**
  * ⚠**「이 표가 막으려던 사고」를 하나씩 재현한다.** 문법 오류를 넣는 것은 뮤테이션이 아니다 —
@@ -88,69 +81,4 @@ const MUTATIONS: readonly Mutation[] = [
   },
 ];
 
-const original = readFileSync(SRC, "utf8");
-
-/** 시험을 돌린다. **떨어진 시험의 이름**을 돌려준다(FAIL 과 ERROR 를 가른다 — 작업규칙 8) */
-function run(): { failed: string[]; error: string | null } {
-  try {
-    const out = execFileSync(
-      process.execPath,
-      ["--test", "--test-reporter=tap", ...TESTS],
-      { encoding: "utf8", env: { ...process.env, BB_REQUIRE_DB: "1" }, stdio: ["ignore", "pipe", "pipe"] },
-    );
-    return { failed: names(out), error: null };
-  } catch (err) {
-    const e = err as { stdout?: string; stderr?: string; status?: number };
-    const out = `${e.stdout ?? ""}`;
-    const failed = names(out);
-    // ⚠**떨어진 시험이 하나도 없는데 종료 코드가 0이 아니면 그건 ERROR** — 「돌지도 않았다」
-    if (failed.length === 0) return { failed: [], error: (e.stderr || out).slice(0, 400) };
-    return { failed, error: null };
-  }
-}
-
-function names(tap: string): string[] {
-  return [...tap.matchAll(/^not ok \d+ - (.*)$/gm)].map((m) => m[1]!.trim());
-}
-
-let survived = 0;
-try {
-  const base = run();
-  if (base.error !== null) {
-    console.error(`기준선이 ERROR 다 — 뮤테이션을 잴 수 없다:\n${base.error}`);
-    process.exit(1);
-  }
-  if (base.failed.length > 0) {
-    console.error(`기준선이 이미 붉다(${base.failed.length}본): ${base.failed.join(" / ")}`);
-    process.exit(1);
-  }
-  console.log(`기준선: FAIL 0 · ERROR 0`);
-  console.log("");
-
-  for (const m of MUTATIONS) {
-    if (!original.includes(m.from)) {
-      console.log(`⚠ ${m.what}\n   → 대상 문자열을 못 찾았다. **뮤테이션이 무효다**(코드가 바뀌었으면 여기를 고쳐라)`);
-      survived += 1;
-      continue;
-    }
-    writeFileSync(SRC, original.replace(m.from, m.to), "utf8");
-    const r = run();
-    if (r.error !== null) {
-      // ⚠ERROR 는 「잡았다」가 아니다 — 시험이 아니라 로드가 죽은 것일 수 있다. 따로 적는다
-      console.log(`◆ ${m.what}\n   → ERROR(시험이 돌지 않았다): ${r.error.split("\n")[0]}`);
-      continue;
-    }
-    if (r.failed.length === 0) {
-      console.log(`✖ ${m.what}\n   → **살아남았다. 이 시험은 이 사고를 못 잡는다**`);
-      survived += 1;
-      continue;
-    }
-    console.log(`✔ ${m.what}\n   → FAIL ${r.failed.length}본: ${r.failed.join(" / ")}`);
-  }
-} finally {
-  writeFileSync(SRC, original, "utf8");
-}
-
-console.log("");
-console.log(`뮤테이션 ${MUTATIONS.length}건 중 살아남음 **${survived}건**`);
-process.exitCode = survived === 0 ? 0 : 1;
+process.exitCode = runMutations({ src: SRC, tests: TESTS, mutations: MUTATIONS }) === 0 ? 0 : 1;

@@ -29,6 +29,14 @@ export { leagueConstants, sumBatting, sumPitching } from "./league.ts";
 export type { LeagueConstants } from "./league.ts";
 export { fip, wraa, wrcPlus } from "./advanced.ts";
 export {
+  INNINGS_PER_GAME,
+  parkFactor,
+  runsPerGame,
+  runsPerWin,
+  sumRunEnvironments,
+} from "./park.ts";
+export type { ParkFactor, RunEnvironment, RunsPerWin } from "./park.ts";
+export {
   qualifiedBatterPa,
   qualifiedPitcherOuts,
   qualifiedRelieverOuts,
