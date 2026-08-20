@@ -19,11 +19,11 @@ import {
   sumBatting,
   sumPitching,
   whip,
-  woba,
+  wobaWith,
   wraa,
   wrcPlus,
 } from "@bb-app/metrics";
-import type { LeagueConstants, Ranked, Rate } from "@bb-app/metrics";
+import type { LeagueConstants, Ranked, Rate, WobaWeights } from "@bb-app/metrics";
 import type { PitcherRole, SeasonAggregate, SeasonBatting, SeasonPitching } from "./season.ts";
 import { TEAMS } from "@bb-app/domain";
 import type { League } from "@bb-app/domain";
@@ -51,7 +51,17 @@ export interface LeagueBundle {
   teamGamesByCode: ReadonlyMap<string, number>;
 }
 
-export function buildLeagues(agg: SeasonAggregate): LeagueBundle[] {
+export function buildLeagues(
+  agg: SeasonAggregate,
+  /**
+   * 그 리그의 **선형가중치**(득점 단위 · 아웃 원점 이동 후). `deriveRunValues` 가 만든다.
+   *
+   * ⚠**안 주면 폴백 계수로 떨어진다.** 화면 경로(`loadSite`)는 반드시 준다 —
+   * 폴백은 리그·시즌을 모르는 값이라, 조용히 쓰이면 화면이 「우리가 유도한 계수」라고
+   * 말하면서 아닌 값을 보이게 된다. 안 주는 자리는 도구·단위 시험뿐이다.
+   */
+  runValuesOf?: (league: League) => WobaWeights | undefined,
+): LeagueBundle[] {
   const out: LeagueBundle[] = [];
 
   for (const league of ["central", "pacific"] as const) {
@@ -83,6 +93,7 @@ export function buildLeagues(agg: SeasonAggregate): LeagueBundle[] {
         pitching: sumPitching(pitching.map((p) => p.line)),
         // 리그 득점은 타자들의 득점 합계다.
         runs: batting.reduce((n, b) => n + b.runs, 0),
+        runValues: runValuesOf?.(league),
       }),
     });
   }
@@ -121,7 +132,9 @@ export function battingEntryOf(player: SeasonBatting, lc: LeagueConstants): Batt
     obp: onBasePercentage(player.line),
     slg: sluggingPercentage(player.line),
     ops: ops(player.line),
-    woba: woba(player.line),
+    // ⚠**리그·시즌의 계수로 계산한다.** 폴백 계수(`woba(line)`)를 쓰면 화면의 wOBA 와
+    //   같은 화면의 wRAA·wRC+ 가 **다른 계수로 계산된 수**가 되어 서로 어긋난다
+    woba: wobaWith(player.line, lc.wobaWeights),
     wraa: wraa(player.line, lc),
     wrcPlus: wrcPlus(player.line, lc),
   };
@@ -182,6 +195,26 @@ export function blendConstants(
     averageWoba: mean((c) => c.averageWoba),
     cFip: mean((c) => c.cFip),
     runsPerPa: mean((c) => c.runsPerPa),
+    /**
+     * ⚠**계수도 섞는다**(2026-08-20). 계수가 리그·시즌마다 달라졌으므로 안 섞으면
+     * 리그를 넘은 선수의 시즌 합계가 **한쪽 리그의 계수로만** 계산된다.
+     *
+     * ⚠**그 대신 가법성이 정확에서 근사로 내려간다.** 예전 주석이 자랑하던
+     * 「`wRAA(합계, 혼합상수) = wRAA(セ) + wRAA(パ)` 가 **정확히** 성립한다」는
+     * 계수가 양 리그 공통일 때의 이야기다. 계수가 다르면 합계 라인의 wOBA 는
+     * 두 리그 wOBA 의 가중평균이 아니다.
+     * ⚠**대상은 리그를 넘어 이적한 선수뿐**이고 실측 규모는 정의서에 적었다.
+     */
+    wobaWeights: {
+      bb: mean((c) => c.wobaWeights.bb),
+      hbp: mean((c) => c.wobaWeights.hbp),
+      roe: mean((c) => c.wobaWeights.roe),
+      single: mean((c) => c.wobaWeights.single),
+      double: mean((c) => c.wobaWeights.double),
+      triple: mean((c) => c.wobaWeights.triple),
+      hr: mean((c) => c.wobaWeights.hr),
+    },
+    wobaScale: mean((c) => c.wobaScale),
   };
 }
 

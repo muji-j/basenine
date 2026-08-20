@@ -65,7 +65,7 @@ import type {
   ReliefTotals,
   StealBaseRow,
 } from "./player-page.ts";
-import type { BattingLine, LeagueConstants, PitchingLine, Rate } from "@bb-app/metrics";
+import type { BattingLine, LeagueConstants, PitchingLine, Rate, WobaWeights } from "@bb-app/metrics";
 import {
   babip,
   battingAverage,
@@ -102,6 +102,7 @@ import {
   pitchingSplits,
   buildLeagues,
   buildRunExpectancy,
+  deriveRunValues,
   computeSrc,
   computeSrp,
   addSrc,
@@ -4577,7 +4578,42 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     .get(o.season, competition, through) as { games: number; latest: string | null };
 
   const agg = aggregateSeason(db, o.season, competition, through);
-  const bundles = buildLeagues(agg);
+
+  /**
+   * **득점기대치(RE) 행렬을 리그 상수보다 먼저 만든다**(2026-08-20).
+   *
+   * ⚠**순서가 뒤집힌 이유**: wOBA 계수를 이제 **RE 에서 유도**한다. 예전에는 계수가 모듈 상수
+   * 1세트(남의 공개값)라 순서가 상관없었지만, 지금은 **RE 없이는 리그 상수를 만들 수 없다.**
+   * ⚠**같은 `through` 로 만든다** — 어긋나면 계수의 기준일과 화면의 기준일이 갈린다.
+   * ⚠**여기서 만든 행렬을 아래 루프가 다시 쓴다.** 두 번 만들면 시즌을 두 번 훑는 것도,
+   * 값이 갈라지는 것도 일어난다(M1).
+   */
+  const reMade = new Map<League, RunExpectancy>();
+  const runValuesByLeague = new Map<League, WobaWeights>();
+  for (const league of ["central", "pacific"] as const) {
+    const codes = TEAMS.filter((t) => t.league === league).map((t) => t.code);
+    const re = buildRunExpectancy(db, o.season, league, codes, competition, through);
+    // ⚠**행렬은 비어 있어도 넣는다.** 아래 루프가 SRC·SRP·번트에 그대로 쓰고,
+    //   그것들은 「비면 비는」 것이 원래 거동이다 — 여기서 던지면 거동이 바뀐다
+    reMade.set(league, re);
+    /**
+     * ⚠**타석 로그가 없으면 계수를 지어내지 않는다.** 그 리그는 폴백 계수로 떨어지고,
+     * 폴백은 리그·시즌을 모르는 값이라 **출루율 눈금이 밀린다**(중앙 약 1 wRC+).
+     * 조용히 넘기지 않는다 — 박스스코어는 있는데 타석 로그가 통째로 없다는 뜻이고,
+     * 그때는 SRC·SRP·번트·카운트가 **다 같이** 비어 있을 것이다.
+     */
+    if (re.totalPa === 0) {
+      if (agg.battingByLeague.some((b) => b.league === league)) {
+        console.warn(
+          `⚠${o.season} ${league}: 타석 로그가 0건이라 wOBA 계수를 유도하지 못했다 — 폴백 계수를 쓴다`,
+        );
+      }
+      continue;
+    }
+    runValuesByLeague.set(league, deriveRunValues(db, re, codes, competition, through).runValues);
+  }
+
+  const bundles = buildLeagues(agg, (lg) => runValuesByLeague.get(lg));
 
   const profiles = loadProfiles(db);
   const splitsByPlayer = loadSplits(db, o.season, competition, through);
@@ -4727,9 +4763,16 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   for (const bundle of bundles) {
     bundleByLeague.set(bundle.league, bundle);
     const codes = TEAMS.filter((t) => t.league === bundle.league).map((t) => t.code);
-    // ⚠**RE 행렬도 `through`로 거른다.** 안 거르면 「7월 말 기준」 빌드에서
-    // 득점기대치만 8월 데이터로 계산되어 같은 화면의 기준일이 갈린다
-    const re = buildRunExpectancy(db, o.season, bundle.league, codes, competition, through);
+    /**
+     * ⚠**위에서 이미 만들었다.** RE 행렬이 wOBA 계수의 재료가 되면서 리그 상수보다 먼저
+     * 만들어야 했다 — 여기서 다시 만들면 같은 시즌을 두 번 훑고, 두 벌이 갈릴 여지가 생긴다(M1).
+     * ⚠**없으면 던진다.** 번들이 있는데 행렬이 없다는 것은 위 루프와 조건이 어긋났다는 뜻이고,
+     * 조용히 넘기면 그 리그의 SRC·SRP·번트가 통째로 사라진다.
+     */
+    const re = reMade.get(bundle.league);
+    if (re === undefined) {
+      throw new Error(`${o.season} ${bundle.league}: 리그 번들은 있는데 RE 행렬이 없다`);
+    }
     reByLeague.set(bundle.league, re.matrix);
     reFull.set(bundle.league, re);
     // ⚠**리그별로 낸다.** 득점환경이 다르므로 두 리그를 섞은 하나의 번트 가치는 뜻이 흐려진다

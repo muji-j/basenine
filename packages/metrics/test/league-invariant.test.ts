@@ -20,7 +20,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { WOBA_SCALE, leagueConstants, sumBatting, woba } from "../src/index.ts";
+import { leagueConstants, sumBatting, woba, wobaRawWith } from "../src/index.ts";
 import type { BattingLine, PitchingLine } from "../src/index.ts";
 
 function line(over: Partial<BattingLine> = {}): BattingLine {
@@ -50,9 +50,15 @@ function deviationSum(lines: readonly BattingLine[], weight: (l: BattingLine) =>
   });
   let sum = 0;
   for (const l of lines) {
-    const w = woba(l).value;
+    /**
+     * ⚠**상수가 들고 있는 계수·스케일을 쓴다**(2026-08-20). 예전에는 여기서
+     * 모듈 상수 `WOBA_SCALE` 을 직접 읽었는데, 계수가 리그·시즌마다 달라진 지금
+     * 그건 **`wraa()` 가 쓰는 것과 다른 수가 될 수 있는 자리**다 —
+     * 그러면 이 불변식 시험이 구현이 아니라 자기 자신을 검사하게 된다(M1).
+     */
+    const w = wobaRawWith(l, lc.wobaWeights);
     if (w === null) continue;
-    sum += ((w - lc.averageWoba) / WOBA_SCALE) * weight(l);
+    sum += ((w - lc.averageWoba) / lc.wobaScale) * weight(l);
   }
   return sum;
 }

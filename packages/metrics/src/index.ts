@@ -13,7 +13,18 @@ export {
   walkRate,
 } from "./batting.ts";
 export { earnedRunAverage, homeRunsPer9, strikeoutsPer9, walksPer9, whip } from "./pitching.ts";
-export { WOBA_SCALE, WOBA_WEIGHTS, woba, wobaRaw } from "./woba.ts";
+export {
+  WOBA_SCALE,
+  WOBA_WEIGHTS,
+  woba,
+  wobaDenominator,
+  wobaNumerator,
+  wobaRaw,
+  wobaRawWith,
+  wobaWeightsFrom,
+  wobaWith,
+} from "./woba.ts";
+export type { WobaWeights } from "./woba.ts";
 export { leagueConstants, sumBatting, sumPitching } from "./league.ts";
 export type { LeagueConstants } from "./league.ts";
 export { fip, wraa, wrcPlus } from "./advanced.ts";

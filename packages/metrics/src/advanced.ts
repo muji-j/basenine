@@ -1,17 +1,18 @@
 import type { Rate } from "./rate.ts";
 import type { BattingLine, PitchingLine } from "./lines.ts";
 import type { LeagueConstants } from "./league.ts";
-import { WOBA_SCALE, wobaRaw } from "./woba.ts";
+import { wobaRawWith } from "./woba.ts";
 
 /**
- * wRAA = (wOBA − 리그평균wOBA) ÷ wOBAscale × 타석.
+ * wRAA = (wOBA − 리그평균wOBA) ÷ wOBAscale × 타석. 단위는 **평균 대비 득점**.
  *
- * 출처: 1.02 Glossary
- * https://1point02.jp/op/gnav/glossary/gls_explanation.aspx?ecd=204&eid=20041
+ * 계수와 wOBAscale 은 **그 리그·시즌의 것**을 쓴다(`lc`) — 둘은 짝이라
+ * 한쪽만 리그별로 바꾸면 단위가 어긋난다.
+ * 산식과 유도 절차는 `docs/metrics/README.md` §3.1·§3.2.
  */
 export function wraa(line: BattingLine, lc: LeagueConstants): Rate {
-  const w = wobaRaw(line);
-  const value = w === null ? null : ((w - lc.averageWoba) / WOBA_SCALE) * line.pa;
+  const w = wobaRawWith(line, lc.wobaWeights);
+  const value = w === null ? null : ((w - lc.averageWoba) / lc.wobaScale) * line.pa;
   return { value, denominator: line.pa };
 }
 

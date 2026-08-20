@@ -8,11 +8,30 @@ const LINE: BattingLine = {
   bb: 70, ibb: 5, hbp: 10, sf: 20, sh: 0, so: 100, roe: 0,
 };
 
-test("wOBA 계수는 1.02 공개값과 일치한다", () => {
-  assert.deepEqual({ ...WOBA_WEIGHTS }, {
-    bb: 0.692, hbp: 0.73, roe: 0.966, single: 0.865, double: 1.334, triple: 1.725, hr: 2.065,
-  });
-  assert.equal(WOBA_SCALE, 1.24);
+/**
+ * ⚠**이 본의 이름이 예전에는 「wOBA 계수는 1.02 공개값과 일치한다」였다**(2026-08-20 교체).
+ * 지금 이 상수는 **우리가 유도한 폴백**이고, 화면이 쓰는 것은 리그·시즌마다 유도한 쪽이다
+ * (`LeagueConstants.wobaWeights`). 여기서 고정하는 것은 **값 자체가 아니라 성질**이다 —
+ * 값을 그대로 베껴 적으면 다음 백필에서 이 본은 「구현이 무엇이든 통과」하는 복사가 된다
+ * (규정타석 P0 가 그 모양이었다 · `ranking.ts` 표제부).
+ */
+test("⚠폴백 계수는 우리 유도값이고, 사건 사이의 크기 관계가 서 있다", () => {
+  const w = WOBA_WEIGHTS;
+  assert.ok(w.bb < w.hbp, "사구는 볼넷보다 크다");
+  /**
+   * ⚠**실책 출루가 단타보다 크다** — 처음에 「사구와 단타 사이」로 적었다가 실측에 틀렸다.
+   * 우리 로그가 그렇게 말한다: 2025 센트럴에서 실책 출루의 평균 득점가치 **+0.404** ·
+   * 단타 **+0.372**. 실책은 타자를 살리면서 **주자를 단타보다 멀리 보내는 일이 잦다.**
+   * ⚠**추측을 시험에 적지 마라** — 우리는 이 값을 재고 있고, 재는 쪽이 이긴다.
+   */
+  assert.ok(w.hbp < w.roe, "실책 출루는 사구보다 크다");
+  assert.ok(w.single < w.roe && w.roe < w.double, "실책 출루는 단타와 2루타 사이다");
+  assert.ok(w.single < w.double && w.double < w.triple && w.triple < w.hr);
+  // 눈금이 출루율 쪽이라 단타가 0.8~0.95, 홈런이 2 넘는 자리에 있다.
+  // ⚠**범위이지 값이 아니다** — 백필로 조금 움직여도 참이고, 눈금이 깨지면 잡힌다
+  assert.ok(w.single > 0.8 && w.single < 0.95, `단타 ${w.single}`);
+  assert.ok(w.hr > 2 && w.hr < 2.5, `홈런 ${w.hr}`);
+  assert.ok(WOBA_SCALE > 1.1 && WOBA_SCALE < 1.6, `scale ${WOBA_SCALE}`);
 });
 
 test("⚠wOBA는 볼넷에서 고의사구를 뺀다", () => {
