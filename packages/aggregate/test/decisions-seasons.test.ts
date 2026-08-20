@@ -9,6 +9,14 @@
  * ⚠**출처가 다른 두 값을 맞댄다**(M4). 우리 쪽은 **박스스코어의 결정 표기**(`○ ●`)를 센 것이고,
  * `career_pitching` 은 **선수 페이지에서 받아 온 NPB 공표치**다.
  *
+ * ⚠**기준일을 출장량으로 맞춘다**(2026-08-20). 그 전에는 시즌 전량끼리 맞대서
+ * **CI 에서만 22건 / 대조 3,133건**이 어긋났다 — 같은 커밋이 로컬에서는 0건이었다.
+ * 원인은 코드가 아니라 DB 였다: CI 는 08-19 경기까지 수집했는데 공표표는 선수마다
+ * 08-15~08-20 에 걸쳐 받은 것이라 **기준일이 선수마다 달랐다.**
+ * ⚠**어긋난 22건은 실측으로 전부 기준일 차이였다**(진짜 결함 0건) —
+ * 22건 모두 「잘라낸 첫 경기」가 **08-18 또는 08-19**(우리 최신 경기일 = 08-19)였다.
+ * 판정 방식은 `published.ts` 에 한 벌로 있다.
+ *
  * ⚠**DB 가 없으면 건너뛴다**(개발자 머신마다 상태가 다르다). CI 는 `BB_REQUIRE_DB=1` 로 막는다 —
  * 「0건 통과」와 「안 쟀음」을 가른다(작업규칙 7·8).
  *
@@ -20,8 +28,10 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DatabaseSync } from "node:sqlite";
+import { openDb } from "@bb-app/store";
 import { winPct } from "../src/standings.ts";
+import { crossCheck, settledSeasons } from "./published.ts";
+import type { PublishedSample, Sample } from "./published.ts";
 
 const DB = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "data", "bb.sqlite");
 const HAS_DB = existsSync(DB);
@@ -32,12 +42,13 @@ if (process.env["BB_REQUIRE_DB"] === "1" && !HAS_DB) {
 /**
  * 우리 값. **`season.ts` 의 판정과 같은 표기를 본다**(`○` = 승 · `●` = 패).
  * ⚠**포스트시즌을 섞지 않는다**(§2-1) — 선수 페이지의 年度別成績은 정규시즌이다.
+ * ⚠`games` 는 **登板数**다 — 기준일을 맞추는 출장량이면서, 아래 「決着数 ≠ 登板数」 축의 입력이다.
  */
 const OURS = `
 SELECT g.season AS season, p.player_id AS pid,
+       COUNT(DISTINCT p.game_id) AS games,
        SUM(CASE WHEN p.decision = '○' THEN 1 ELSE 0 END) AS w,
-       SUM(CASE WHEN p.decision = '●' THEN 1 ELSE 0 END) AS l,
-       COUNT(*) AS games
+       SUM(CASE WHEN p.decision = '●' THEN 1 ELSE 0 END) AS l
 FROM pitching_line p
 JOIN game g ON g.game_id = p.game_id
 WHERE g.status = 'played' AND g.competition = 'regular'
@@ -46,52 +57,73 @@ GROUP BY g.season, p.player_id
 
 /** ⚠**연도로 묶는다** — 시즌 도중 이적하면 `(선수, 연도, 구단)` 으로 여러 줄이다 */
 const OFFICIAL = `
-SELECT year, player_id AS pid, SUM(w) AS w, SUM(l) AS l
+SELECT year, player_id AS pid, SUM(games) AS games, SUM(w) AS w, SUM(l) AS l,
+       MAX(fetched_at) AS fetched_at
 FROM career_pitching GROUP BY year, player_id
 `;
 
 test("⚠투수의 승·패가 NPB 공표치와 일치한다 — 개인 勝率이 T1 인 근거다", { skip: HAS_DB ? false : "DB 없음" }, () => {
-  const db = new DatabaseSync(DB, { readOnly: true });
+  const db = openDb(DB, "1970-01-01T00:00:00.000Z");
   try {
-    const ours = db.prepare(OURS).all() as unknown as
-      { season: number; pid: string; w: number; l: number; games: number }[];
-    const official = db.prepare(OFFICIAL).all() as unknown as
-      { year: number; pid: string; w: number; l: number }[];
-    const mine = new Map(ours.map((r) => [`${r.season}|${r.pid}`, r]));
+    const ourRows = db.raw.prepare(OURS).all() as unknown as
+      { season: number; pid: string; games: number; w: number; l: number }[];
+    const ours = new Map<string, Sample>(
+      ourRows.map((r) => [
+        `${r.season}|${r.pid}`,
+        { volume: Number(r.games), value: `${Number(r.w)}勝${Number(r.l)}敗` },
+      ]),
+    );
+    const published: PublishedSample[] = (
+      db.raw.prepare(OFFICIAL).all() as unknown as
+        { year: number; pid: string; games: number; w: number; l: number; fetched_at: string | null }[]
+    ).map((r) => ({
+      year: r.year,
+      playerId: r.pid,
+      volume: Number(r.games),
+      value: `${Number(r.w)}勝${Number(r.l)}敗`,
+      // ⚠**「모른다」를 그대로 넘긴다**(M11) — 완결 판정이 그것을 보고 엄격도를 정한다
+      fetchedAt: r.fetched_at,
+    }));
 
-    const problems: string[] = [];
-    const bySeason = new Map<number, number>();
-    let compared = 0;
+    const got = crossCheck(ours, published, settledSeasons(db), "試合");
+
     /**
      * ⚠**「분모 = 등판 수」로 써도 통과하는 상태를 막는다.** 노디시전이 하나도 없으면
      * 決着数와 登板数가 같아져 이 시험이 그 축을 안 재게 된다.
      */
     let differsFromGames = 0;
-
-    for (const r of official) {
-      const got = mine.get(`${r.year}|${r.pid}`);
-      // 우리 아카이브에 그 시즌 기록이 없는 투수(=보유 시즌 밖)는 대조 대상이 아니다
-      if (got === undefined) continue;
-      compared += 1;
-      bySeason.set(r.year, (bySeason.get(r.year) ?? 0) + 1);
-      if (Number(got.w) !== Number(r.w) || Number(got.l) !== Number(r.l)) {
-        problems.push(`${r.year} ${r.pid}: 公表 ${r.w}勝${r.l}敗 · 当サイト ${got.w}勝${got.l}敗`);
-      }
-      if (Number(got.games) !== Number(got.w) + Number(got.l)) differsFromGames += 1;
+    for (const r of ourRows) {
+      if (Number(r.games) !== Number(r.w) + Number(r.l)) differsFromGames += 1;
     }
 
-    // ⚠**공회전 방지**(작업규칙 8). 기준선은 2026-08-20 실측 2,215건이다
-    assert.ok(compared >= 2000, `대조한 선수-시즌이 ${compared}건뿐이다 — 이 시험이 공회전한다`);
-    assert.ok(bySeason.size >= 9, `대조한 시즌이 ${bySeason.size}개뿐이다 — ${[...bySeason.keys()].join(" ")}`);
+    /**
+     * ⚠**공회전 방지**(작업규칙 8). 실측(2026-08-20): CI DB(08-19 수집) **3,043건**
+     * — 기준일이 어긋나 못 잰 90명을 뺀 수다. 로컬 08-16 스냅샷에서는 **2,215건**
+     * (그쪽은 못 잰 것이 0건이었다). **두 DB 를 다 통과해야 하므로 하한은 로컬 쪽에 맞춘다.**
+     * ⚠**이 하한이 「미대조가 폭증했다」의 감시도 겸한다** — 공표표가 통째로 낡으면
+     * `behind` 가 커지면서 `compared` 가 이 선 아래로 떨어진다.
+     */
+    assert.ok(got.compared >= 2000, `대조한 선수-시즌이 ${got.compared}건뿐이다 — 이 시험이 공회전한다`);
+    assert.ok(got.bySeason.size >= 9, `대조한 시즌이 ${got.bySeason.size}개뿐이다 — ${[...got.bySeason.keys()].join(" ")}`);
     assert.ok(
       differsFromGames >= 100,
       `決着数가 登板数와 다른 선수-시즌이 ${differsFromGames}건뿐이다 — 두 수가 같으면 분모 축을 안 재는 것이다`,
     );
 
+    // ⚠**공표가 우리보다 앞선 것 = 우리가 경기를 놓쳤다.** 기준일로 설명되지 않는다
+    assert.deepEqual(got.ahead.slice(0, 10), [], `공표에 있는 등판이 우리에게 없다 ${got.ahead.length}건 — 수집 누락이다`);
+    // ⚠**완결 시즌은 양쪽 다 더 늘 것이 없다** — 그런데 다르면 기준일이 아니라 결함이다
     assert.deepEqual(
-      problems.slice(0, 10),
+      got.behindSettled.slice(0, 10),
       [],
-      `공표치와 어긋난 선수-시즌 ${problems.length}건 / 대조 ${compared}건`,
+      `완결 시즌인데 登板数가 어긋난 선수-시즌 ${got.behindSettled.length}건 — 기준일로 설명되지 않는다`,
+    );
+
+    assert.deepEqual(
+      got.mismatches.slice(0, 10),
+      [],
+      `공표치와 어긋난 선수-시즌 ${got.mismatches.length}건 / 대조 ${got.compared}건` +
+        `（기준일이 달라 못 잰 것 ${got.behind.length}건）`,
     );
   } finally {
     db.close();

@@ -12,6 +12,9 @@ import {
   bestPct,
   buntValues,
   headToHead,
+  // ⚠**각주가 말하는 리그 전체 수치는 여기서 나온다**(2026-08-20). 화면이 수를 문자열로
+  //   들고 있으면 경기가 하나 늘 때마다 사람이 고쳐야 하고, 안 고치면 그대로 거짓이 된다
+  leagueStealTotals,
   pairKey,
   seasonRace,
   STEAL_BASES,
@@ -4512,6 +4515,31 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     const cur = stealByPlayer.get(st.playerId);
     stealByPlayer.set(st.playerId, addSteal(cur, st));
   }
+  /**
+   * **각주가 말하는 리그 전체의 本盗**.
+   *
+   * ⚠**화면이 수를 문자열로 들고 있었다**(2026-08-20). 「9シーズンで成功47・盗塁刺146」이
+   * `player-page.ts` 에 박혀 배포물 **175장**에 복제됐고(실측), **경기가 하나 늘 때마다 사람이 고쳐야**
+   * 했다 — 08-19 경기가 들어오자 곧바로 시험이 붉어졌다. 시즌 중에는 매일 그렇게 된다.
+   * → **DB 에서 읽는다.** 사람이 안 고쳐도 화면이 늘 참이다.
+   *
+   * ⚠**시즌마다 만드는 값이 아니라 「우리가 가진 전 시즌」의 값이다** — 각주의 주장이
+   * 「本盗는 드물다」라서 표본이 클수록 성립한다. 그래서 **시즌으로 자르지 않는다.**
+   * ⚠**대신 그 범위를 화면에 적는다**(M2) — 분모를 말하지 않는 수는 쓰지 않는다.
+   * ⚠**`through` 는 지킨다** — 사이트가 기준일로 자를 때 각주만 앞서가면 안 된다.
+   */
+  const heldForSteal = heldSeasonsOf(db);
+  const leagueSteal = leagueStealTotals(db, competition, through, heldForSteal.from, heldForSteal.to);
+  const leagueHomeSteal =
+    leagueSteal.seasons.length === 0
+      ? null
+      : {
+          from: leagueSteal.seasons[0]!,
+          to: leagueSteal.seasons[leagueSteal.seasons.length - 1]!,
+          sb: leagueSteal.sbByBase.home,
+          cs: leagueSteal.csByBase.home,
+          doubleSteal: leagueSteal.doubleStealByBase.home,
+        };
 
   /**
    * 併殺打. ⚠**선수당 한 벌과 「선수|구단」 두 벌을 같이 만든다** —
@@ -4901,6 +4929,8 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
                 byBase,
                 pickoffByBase,
                 doubleSteal: st?.doubleSteal ?? 0,
+                // ⚠**각주가 쓰는 리그 전체 수치.** 선수마다 같은 값이라 한 번 만든 것을 그대로 가리킨다
+                leagueHome: leagueHomeSteal,
               };
             })(),
             // 併殺打(시즌 합계). ⚠판정 규칙은 `gidpOrUnknown` 한 벌이다(M1) — 근거는 그 함수의 주석에
