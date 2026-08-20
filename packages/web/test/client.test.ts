@@ -1001,8 +1001,11 @@ function buildPicker(): ReturnType<typeof makeDocument> {
     ["Pitcher", "pitcher"],
     ["Batter", "batter"],
   ]) {
-    form.appendChild(make("input", { id: `pick${id}`, type: "search", "aria-expanded": "false" }));
-    form.appendChild(make("ul", { id: `pick${id}Hits`, role: "listbox" }));
+    const qbox = make("div", { class: "qbox" });
+    qbox.appendChild(make("input", { id: `pick${id}`, type: "search" }));
+    qbox.appendChild(make("ul", { id: `pick${id}Hits`, role: "list", "aria-label": "候補" }));
+    qbox.appendChild(make("p", { class: "vh", "data-hitstatus": "", role: "status" }));
+    form.appendChild(qbox);
     form.appendChild(make("b", { id: `pick-${key}-chosen` }));
   }
   const go = make("button", { id: "pickGo", type: "button" });
@@ -1415,8 +1418,11 @@ function buildCompare(): ReturnType<typeof makeDocument> {
   const doc = makeDocument();
   const form = make("section", { class: "block", id: "cmpForm" });
   for (const [id, key] of [["A", "a"], ["B", "b"]] as [string, string][]) {
-    form.appendChild(make("input", { id: `cmp${id}`, type: "search", "aria-expanded": "false" }));
-    form.appendChild(make("ul", { id: `cmp${id}Hits`, role: "listbox" }));
+    const qbox = make("div", { class: "qbox" });
+    qbox.appendChild(make("input", { id: `cmp${id}`, type: "search" }));
+    qbox.appendChild(make("ul", { id: `cmp${id}Hits`, role: "list", "aria-label": "候補" }));
+    qbox.appendChild(make("p", { class: "vh", "data-hitstatus": "", role: "status" }));
+    form.appendChild(qbox);
     form.appendChild(make("b", { id: `cmp-${key}-chosen` }));
   }
   const go = make("button", { id: "cmpGo", type: "button" });
@@ -1637,12 +1643,17 @@ const MANY_INDEX = Array.from({ length: 25 }, (_, i) => ({
   t: "チーム",
 }));
 
-/** 헤더 검색(`#q` → `#qhits`)의 뼈대. 목록 id 가 「Hits」가 아니라 `qhits` 다 */
+/**
+ * 헤더 검색(`#q` → `#qhits`)의 뼈대. 목록 id 가 「Hits」가 아니라 `qhits` 다.
+ * ⚠**listbox / combobox 를 쓰지 않는다**(2026-08-20) — 서버 마크업과 같은 모양이어야 한다.
+ * 그 일치는 `layout.test.ts` 가 실제 렌더 결과에서 따로 잰다.
+ */
 function buildHeaderSearch(): ReturnType<typeof makeDocument> {
   const doc = makeDocument("");
   const box = make("div", { class: "qbox" });
-  box.appendChild(make("input", { id: "q", type: "search", role: "combobox", "aria-expanded": "false" }));
-  box.appendChild(make("ul", { class: "qhits", id: "qhits", role: "listbox" }));
+  box.appendChild(make("input", { id: "q", type: "search" }));
+  box.appendChild(make("ul", { class: "qhits", id: "qhits", role: "list", "aria-label": "検索結果" }));
+  box.appendChild(make("p", { class: "vh", "data-hitstatus": "", role: "status" }));
   doc.body.appendChild(box);
   return doc;
 }
@@ -1740,6 +1751,93 @@ test("⚠안내줄은 골라지지 않는다 — 화살표가 스무 번째에�
   input.fire("keydown", { key: "Enter" });
   // 20번째(= 田19)에서 멈춘다. 안내줄이 골라졌다면 여기서 아무 데도 안 가거나 딴 곳으로 간다
   assert.equal(location.href, "players/t19.html", "화살표 끝이 스무 번째 선수가 아니다");
+});
+
+// ── 롤을 뺀 뒤에도 남아야 하는 것 ─────────────────────────────────────────
+
+/**
+ * ⚠**롤을 빼는 것이지 조작을 빼는 게 아니다**(2026-08-20).
+ * `role="option"`/`aria-selected` 를 지우면 **어디를 고르고 있는지 보여 주던 표시**가
+ * 같이 사라진다 — 화살표는 도는데 화면이 안 움직이면 「키보드가 안 먹는다」가 된다.
+ * ⚠**ARIA 로 되돌리지 않는다.** 그건 방금 뺀 것을 다시 넣는 것이다 — 표시는 우리 클래스로 한다.
+ */
+test("⚠결과 줄에 option 롤도 aria-selected 도 없다 — 그 안의 링크가 「못 쓴다」로 판정된 자리다", async () => {
+  const doc = buildHeaderSearch();
+  run(doc, { index: MANY_INDEX });
+  const items = await searchIn(doc, "q", "qhits", "田");
+  assert.ok(items.length > 1, `줄이 ${items.length}개뿐이다 — 이 시험이 공회전한다`);
+  for (const li of items) {
+    assert.equal(li.getAttribute("role"), null, "결과 줄에 롤이 남아 있다");
+    assert.equal(li.getAttribute("aria-selected"), null, "결과 줄에 aria-selected 가 남아 있다");
+    assert.equal(li.getAttribute("aria-disabled"), null, "링크를 「못 쓴다」고 표시했다");
+  }
+});
+
+test("⚠화살표가 고른 자리는 눈에 보인다 — 표시가 없으면 「키보드가 안 먹는다」가 된다", async () => {
+  const doc = buildHeaderSearch();
+  run(doc, { index: MANY_INDEX });
+  const input = doc.getElementById("q")!;
+  await searchIn(doc, "q", "qhits", "田1");
+  const on = (): number[] =>
+    doc.querySelectorAll("#qhits li").map((li, i) => (li.className.split(/\s+/).includes("on") ? i : -1))
+      .filter((i) => i >= 0);
+  assert.deepEqual(on(), [], "아무것도 안 골랐는데 표시가 있다");
+  input.fire("keydown", { key: "ArrowDown" });
+  assert.deepEqual(on(), [0], "첫 줄이 안 골라진다");
+  input.fire("keydown", { key: "ArrowDown" });
+  assert.deepEqual(on(), [1], "표시가 하나만 움직이지 않는다");
+  input.fire("keydown", { key: "ArrowUp" });
+  assert.deepEqual(on(), [0], "위로 못 올라간다");
+});
+
+test("⚠Esc 로 닫힌다 — 롤을 빼는 것이지 조작을 빼는 게 아니다", async () => {
+  const doc = buildHeaderSearch();
+  run(doc, { index: MANY_INDEX });
+  const input = doc.getElementById("q")!;
+  const list = doc.getElementById("qhits")!;
+  await searchIn(doc, "q", "qhits", "田");
+  assert.equal(list.hidden, false, "목록이 안 열렸다 — 이 시험이 공회전한다");
+  input.fire("keydown", { key: "Escape" });
+  assert.equal(list.hidden, true, "Esc 로 안 닫힌다");
+});
+
+/**
+ * ⚠**combobox 를 그만두면 「열렸다」를 말해 주던 것이 통째로 사라진다.**
+ * 그 자리를 `role="status"` 한 줄이 받는다 — 안 넣으면 낭독기 사용자는 **입력에 아무 반응이 없는**
+ * 화면을 쓰게 된다(§0-1 의 주 경로다).
+ * ⚠**목록 자체를 live 로 만들지 않는다** — 키를 칠 때마다 스무 명을 통째로 읽는다.
+ */
+test("⚠결과 수를 소리로 낸다 — combobox 를 그만둔 자리를 이것이 받는다", async () => {
+  const doc = buildHeaderSearch();
+  run(doc, { index: MANY_INDEX });
+  const status = doc.querySelector("[data-hitstatus]")!;
+  await searchIn(doc, "q", "qhits", "田1");
+  assert.match(status.textContent, /11/, "고른 인원을 말하지 않는다");
+  await searchIn(doc, "q", "qhits", "田");
+  assert.match(status.textContent, /25/, "자르기 전 인원을 말하지 않는다");
+  assert.match(status.textContent, /20/, "그리는 인원을 말하지 않는다");
+  await searchIn(doc, "q", "qhits", "존재하지않음");
+  assert.match(status.textContent, /該当なし/, "0건을 말하지 않는다");
+});
+
+test("⚠읽지 못했을 때도 소리로 낸다 — 「없다」와 「못 읽었다」는 다르다(M12)", async () => {
+  const doc = buildHeaderSearch();
+  run(doc); // 색인을 주지 않는다 = 취득 실패
+  const status = doc.querySelector("[data-hitstatus]")!;
+  await searchIn(doc, "q", "qhits", "田");
+  assert.ok(status.textContent !== "", "실패를 말하지 않는다");
+  assert.ok(!status.textContent.includes("該当なし"), "취득 실패를 「없다」라고 말한다");
+});
+
+test("⚠닫으면 소리도 지운다 — 닫힌 목록의 인원을 낭독기가 계속 들고 있으면 안 된다", async () => {
+  const doc = buildHeaderSearch();
+  run(doc, { index: MANY_INDEX });
+  const input = doc.getElementById("q")!;
+  const status = doc.querySelector("[data-hitstatus]")!;
+  await searchIn(doc, "q", "qhits", "田");
+  assert.ok(status.textContent !== "");
+  input.fire("keydown", { key: "Escape" });
+  assert.equal(status.textContent, "", "닫았는데 결과 수가 남아 있다");
 });
 
 test("⚠등번호가 없는 선수에게 자리를 만들지 않는다 — 「―」로 채우면 198줄이 같은 기호가 된다", async () => {

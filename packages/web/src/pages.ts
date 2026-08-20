@@ -1166,13 +1166,15 @@ export function pickTeam(t: MatchupTeam): RawHtml {
 
 export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): string {
   const { base, root, seasons } = ctx.paths("matchup.html");
+  // ⚠**listbox/combobox 를 쓰지 않는 이유는 `layout.ts` 의 검색 상자에 적혀 있다**(한 벌만 적는다).
+  //   여기·`compare.ts`·`layout.ts` 세 곳이 같은 구조이고, `layout.test.ts` 가 소스 전체를 센다.
   const side = (id: string, label: string, placeholder: string): RawHtml =>
     html`<div class="pickside">
     <label for="pick${id}">${label}</label>
     <div class="qbox">
-      <input id="pick${id}" type="search" autocomplete="off" placeholder="${placeholder}"
-        role="combobox" aria-expanded="false" aria-controls="pick${id}Hits" aria-autocomplete="list">
-      <ul class="qhits" id="pick${id}Hits" role="listbox" aria-label="${label}の候補" hidden></ul>
+      <input id="pick${id}" type="search" autocomplete="off" placeholder="${placeholder}">
+      <ul class="qhits" id="pick${id}Hits" role="list" aria-label="${label}の候補" hidden></ul>
+      <p class="vh" data-hitstatus role="status"></p>
     </div>
   </div>`;
 

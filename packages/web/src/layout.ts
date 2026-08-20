@@ -322,13 +322,29 @@ function topbar(o: PageOptions): RawHtml {
    * 조각째 `html` 에 넘기면 그 자리가 영구히 이스케이프를 거친다.
    */
   const teamMark = o.navTeam === undefined ? raw(" data-navteam") : html` data-navteam="${o.navTeam}"`;
+  /**
+   * ⚠**검색 드롭다운을 `listbox`/`combobox` 라고 부르지 않는다**(2026-08-20 유저 결정).
+   *
+   * 이 목록에는 **결과가 아닌 줄**이 섞인다 — 「該当なし」·「読み込み中…」과 끝의 안내줄이다.
+   * 거기에 `role="option"` 을 붙였다가 **그 안의 링크가 눌리지 않는 것이 실기에서 잡혔고**
+   * (2026-08-19 Playwright), 롤을 빼면 이번에는 포커스 모드의 낭독기가 그 줄을 못 읽었다.
+   * → **listbox 라고 부르는 것 자체를 그만둔다.** 그러면 전부 그냥 링크가 된다.
+   *
+   * ⚠**`role="list"` 는 남긴다** — `.qhits` 가 `list-style:none` 이고 Safari 는 그 스타일이 붙은
+   * `<ul>` 에서 목록 시맨틱을 떼어 간다. 롤이 사라지면 계산된 롤이 generic 이 되어
+   * `aria-label` 이 조용히 안 읽힌다. `list` 는 `listbox` 와 달리 조작을 약속하지 않는다.
+   * ⚠**`role="status"` 한 줄이 필요하다** — combobox 를 그만두면 「목록이 열렸다」를 말해 주던 것이
+   * 통째로 사라진다. **서버가 미리 그려 둔다**: 라이브 영역은 갱신 **전에** DOM 에 있어야 읽힌다.
+   * ⚠**세 곳이 같은 구조다**(여기 · `pages.ts` 의 対戦を選ぶ · `compare.ts`). 한 곳만 고치면
+   * 화면마다 갈리므로 `layout.test.ts` 가 소스 전체에서 그 롤들을 센다.
+   */
   return html`<header class="topbar">
   <!-- ⚠**브랜드는 홈으로 간다.** 2026-08-17부터 홈은 대시보드이고, 선수 일람은 위 ROSTER_PATH 다 -->
   <a class="brand" href="${o.base}index.html"${here("home")}>${o.site.name}<b>by Lunomel</b></a>
   <div class="qbox">
-    <input id="q" type="search" autocomplete="off" placeholder="選手を検索"
-      aria-label="選手を検索" role="combobox" aria-expanded="false" aria-controls="qhits" aria-autocomplete="list">
-    <ul class="qhits" id="qhits" role="listbox" aria-label="検索結果" hidden></ul>
+    <input id="q" type="search" autocomplete="off" placeholder="選手を検索" aria-label="選手を検索">
+    <ul class="qhits" id="qhits" role="list" aria-label="検索結果" hidden></ul>
+    <p class="vh" data-hitstatus role="status"></p>
   </div>
   <nav class="tnav" aria-label="主要ページ">
     ${/* ⚠**첫 자리다**(2026-08-18 유저 요청). 최애를 지정하면 클라이언트가 라벨과 링크를

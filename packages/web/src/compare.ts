@@ -403,13 +403,15 @@ export function renderComparePage(d: ComparePageData, ctx: RenderContext): strin
     const rel = days === 0 ? "本日" : days === 1 ? "明日" : null;
     return rel === null ? fullDate(date) : `${rel}（${fullDate(date)}）`;
   };
+  // ⚠**listbox/combobox 를 쓰지 않는 이유는 `layout.ts` 의 검색 상자에 적혀 있다**(한 벌만 적는다).
+  //   여기·`pages.ts`(対戦を選ぶ)·`layout.ts` 세 곳이 같은 구조이고, `layout.test.ts` 가 소스 전체를 센다.
   const side = (id: string, label: string, placeholder: string): RawHtml =>
     html`<div class="pickside">
     <label for="cmp${id}">${label}</label>
     <div class="qbox">
-      <input id="cmp${id}" type="search" autocomplete="off" placeholder="${placeholder}"
-        role="combobox" aria-expanded="false" aria-controls="cmp${id}Hits" aria-autocomplete="list">
-      <ul class="qhits" id="cmp${id}Hits" role="listbox" aria-label="${label}の候補" hidden></ul>
+      <input id="cmp${id}" type="search" autocomplete="off" placeholder="${placeholder}">
+      <ul class="qhits" id="cmp${id}Hits" role="list" aria-label="${label}の候補" hidden></ul>
+      <p class="vh" data-hitstatus role="status"></p>
     </div>
     <p class="chosen">選択中：<b id="cmp-${id.toLowerCase()}-chosen">未選択</b></p>
   </div>`;

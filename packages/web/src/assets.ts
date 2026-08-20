@@ -130,7 +130,9 @@ a{color:inherit}
   animation:drop var(--fast) var(--ease)}
 .qhits[hidden]{display:none}
 .qhits li a{display:flex;gap:8px;align-items:baseline;padding:6px 11px;text-decoration:none;font-size:13px}
-.qhits li a:hover,.qhits li[aria-selected="true"] a{background:var(--panel-2)}
+/* 화살표가 고른 자리. ⚠**aria-selected 로 표시하지 않는다**(2026-08-20) — 이 목록은 listbox 가
+   아니고, listbox 밖의 aria-selected 는 낭독기에 깨진 구조로 들린다. 표시는 우리 클래스로 한다 */
+.qhits li a:hover,.qhits li.on a{background:var(--panel-2)}
 .qhits li a{flex-wrap:wrap}
 .qhits .ht{margin-left:auto;font-size:10.5px;color:var(--tx-3);white-space:nowrap}
 /* 등번호. **고정폭 자리를 준다** — 한 자리와 세 자리가 섞이면 이름의 시작선이 들쭉날쭉해진다.
@@ -2833,13 +2835,19 @@ const SEARCH_LIMIT=20;
    한쪽에만 붙는 식으로 어긋난다. */
 function attachPicker(input,list,onPick){
   if(!input||!list)return null;
+  /* 결과 수를 **소리로** 내는 자리. 서버가 미리 그려 둔다(라이브 영역은 갱신 전에 DOM 에 있어야 읽힌다).
+     ⚠**목록 자체를 라이브로 만들지 않는다** — 키를 칠 때마다 스무 명을 통째로 읽는다. */
+  const status=list.parentNode?$("[data-hitstatus]",list.parentNode):null;
+  const say=(text)=>{if(status&&status.textContent!==text)status.textContent=text};
   /* hits = **자르기 전** 일치 수 · asked = 그 수를 낸 질의어(「一覧」으로 넘길 때 쓴다) */
   let rows=[],active=-1,hits=0,asked="";
-  const close=()=>{list.hidden=true;input.setAttribute("aria-expanded","false");active=-1};
+  /* ⚠**닫을 때 소리도 지운다** — 닫힌 목록의 인원을 낭독기가 계속 들고 있으면
+     다음에 같은 수가 나왔을 때 아무 말도 안 하게 된다 */
+  const close=()=>{list.hidden=true;say("");active=-1};
   /* @param items 배열이면 결과, **null 이면 아직 읽는 중**이다 */
   const draw=(items,failed)=>{
     list.textContent="";
-    const one=(text)=>{const li=doc.createElement("li");li.className="none";li.textContent=text;list.appendChild(li)};
+    const one=(text)=>{const li=doc.createElement("li");li.className="none";li.textContent=text;list.appendChild(li);say(text)};
     if(failed)one("選手一覧を読み込めませんでした。再読み込みしてください。");
     /* ⚠**「읽는 중」과 「없음」은 다르다**(M12의 4상태). 실패와 0건에는 문구가 있는데
        로딩만 없어서, 느린 회선에서는 목록이 안 뜨는 동안 「검색이 고장났다」로 읽힌다 */
@@ -2847,9 +2855,14 @@ function attachPicker(input,list,onPick){
     else if(!items.length)one("該当なし");
     else (items||[]).forEach((p,i)=>{
       const li=doc.createElement("li");
-      // combobox의 목록 항목은 role=option이어야 aria-selected가 뜻을 갖는다
-      li.setAttribute("role","option");
-      li.setAttribute("aria-selected",String(i===active));
+      /* ⚠**롤도 aria-selected 도 주지 않는다**(2026-08-20). 이 목록은 listbox 가 아니고
+         (섞여 있는 안내줄에 롤을 붙였다가 그 안의 링크가 안 눌렸다 · 아래 꼬리줄 참조),
+         listbox 가 아닌 곳의 option 은 낭독기에 **깨진 구조**로 들린다.
+         ⚠**화살표가 고른 자리는 우리 클래스로 표시한다** — 표시까지 없애면 화면이 안 움직여
+         「키보드가 안 먹는다」가 된다. aria-activedescendant 는 예전에도 없었으므로
+         낭독기가 화살표를 따라오던 적은 애초에 없다(잃는 것이 없다).
+         ⚠이 주석에 역따옴표를 쓰지 마라 — 이 파일은 통째로 템플릿 리터럴이라 거기서 끊긴다 */
+      if(i===active)li.className="on";
       const a=doc.createElement("a");a.href=BASE+"players/"+p.i+".html";
       /* 등번호. ⚠**없으면 자리도 만들지 않는다** — 「―」를 넣으면 은퇴 선수 198명 줄이
          전부 같은 기호로 채워져 시선만 먹는다(M11) */
@@ -2872,15 +2885,18 @@ function attachPicker(input,list,onPick){
        처음에 role="option" aria-disabled="true" 로 만들었다가 **실기에서 잡혔다**(Playwright):
        그 안의 링크가 「disabled」로 판정돼 눌리지 않는 상태가 됐다 —
        **「여기로 가라」고 써 놓고 「이건 못 쓴다」고 말하는** 자기모순이었다.
-       ⚠**대신 남는 한계를 적어 둔다**: 포커스 모드의 스크린리더는 listbox 안의 롤 없는 항목을
-       읽지 않으므로, 이 줄은 **화면으로만** 전해진다(브라우즈 모드와 Tab 이동에서는 읽힌다).
-       「.none」이 같은 한계를 이미 갖고 있다 — 고칠 때 **둘을 같이** 고쳐야지 여기만 손대면
-       같은 목록 안에서 어떤 줄은 읽히고 어떤 줄은 안 읽히는 상태가 된다.
+       ⚠**여기 있던 「남는 한계」는 2026-08-20 에 해소됐다**(그래서 지웠다).
+       그때는 목록이 listbox 였고, 포커스 모드의 낭독기는 listbox 안의 롤 없는 항목을 읽지 않아
+       이 줄이 화면으로만 전해졌다. 지금은 **목록을 listbox 라고 부르지 않으므로**
+       이 줄도 「該当なし」도 그냥 목록 항목이고 전부 읽힌다.
        ⚠rows 에는 넣지 않는다 — 화살표 이동이 마지막 선수에서 멈춘다. */
     if(items&&items.length&&hits>items.length){
       const li=doc.createElement("li");
       li.className="more";
       const text=hits+"人中"+items.length+"人を表示";
+      /* ⚠**소리로도 자른 사실을 말한다** — 화면에만 적으면 낭독기 사용자에게는
+         21번째 선수가 여전히 「없는 사람」이다 */
+      say(text);
       if(onPick){
         const s=doc.createElement("span");
         s.textContent=text+" — 文字を足すとしぼれます";
@@ -2894,8 +2910,8 @@ function attachPicker(input,list,onPick){
         li.appendChild(a);
       }
       list.appendChild(li);
-    }
-    list.hidden=false;input.setAttribute("aria-expanded","true");
+    }else if(items&&items.length)say(items.length+"人");
+    list.hidden=false;
   };
   const run=()=>{
     const term=input.value.trim();
