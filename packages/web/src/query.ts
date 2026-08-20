@@ -265,8 +265,12 @@ const EMPTY_PITCHING: PitchingLine = {
 const SCOREBOOK_LIMIT = 40;
 /** 선수 페이지 안의 순위표에 싣는 상위 인원 */
 const RANKING_ROWS = 10;
-/** 순위표 페이지에 싣는 상위 인원 */
-const RANKING_PAGE_ROWS = 30;
+/**
+ * 순위표 페이지에 싣는 **각 세계의** 상위 인원(규정 상위 N · 전원 상위 N).
+ * ⚠**내보내는 이유는 시험 때문이다** — 「어느 하한에서도 상위 10」을 재려면 시험이
+ * 화면과 **같은 수**로 골라 봐야 한다. 시험이 30을 손으로 적으면 여기를 바꿔도 초록으로 남는다.
+ */
+export const RANKING_PAGE_ROWS = 30;
 /** 収集ログ에 싣는 경기일 수. 한 달이면 구멍이 보인다 */
 const COVERAGE_DAYS = 30;
 /** 収集ログ에 싣는 실행 기록 수 */
@@ -826,7 +830,7 @@ function pitcherRankings(
 export function panelsForPlayer(
   // ⚠**총수 두 개는 여기서 만든다.** 부르는 쪽(MetricRanking)은 그 값을 갖고 있지 않고,
   // 선수 페이지의 순위 블록에는 「規定到達のみ」 전환이 없어서 화면에도 안 쓰인다
-  rankings: readonly Omit<RankingPanel, "qualifiedCount" | "allCount">[],
+  rankings: readonly Omit<RankingPanel, "qualifiedCount" | "allCount" | "minTop">[],
   playerId: string,
   limit = RANKING_ROWS,
 ): RankingPanel[] {
@@ -846,13 +850,22 @@ export function panelsForPlayer(
       rows: top,
       qualifiedCount: m.rows.filter((r) => r.rank !== null).length,
       allCount: m.rows.filter((r) => r.rankAll !== null).length,
+      /**
+       * ⚠**선수 페이지의 순위 블록에는 「規定到達のみ」 전환도 최소 표본 입력도 없다.**
+       * 그래서 **약속 자체가 없다** — null 이다(M11: 「0명 보장」이 아니라 「그런 기능이 없다」).
+       * ⚠여기에 수를 넣으면 **지키지 못할 약속**이 된다: 이 블록은 상위 10 + 본인만 싣고
+       * `rankingRowsFor` 를 거치지 않는다. 언젠가 이 블록에 입력을 붙인다면 **그때 같이 고쳐라.**
+       */
+      minTop: null,
       qualifier: m.qualifier,
     };
   });
 }
 
 /**
- * 화면에 실을 행을 고른다 — **두 세계에서 각각 상위 N을 뽑아 합친다.**
+ * 화면에 실을 행을 고른다 — **세 벌의 합집합**이다.
+ * ⑴ 규정 도달자 상위 N · ⑵ 전원 상위 N · ⑶ **어느 하한에서도 상위 10 에 들 수 있는 행**(`everTop`).
+ * ⑶ 은 최소 표본 입력이 붙는 패널에만 붙는다.
  *
  * ⚠**자르기 전에 골라야 한다.** 처음에는 `rows.slice(0, limit)` 로 **먼저 자른 뒤**
  * 그 안에서 「전원 상위 N」을 뽑았다. 그러면 전원 순위 1~10위가 애초에 잘려 나가서,
@@ -870,13 +883,96 @@ export function rankingRowsFor(rows: readonly RankingRow[], limit: number): Rank
   // 값이 하나도 없는 지표는 예전대로 앞에서부터 자른다 — 「없음」 행이라도 보여야 한다(M11)
   if (withValue.length === 0) return rows.slice(0, limit);
 
-  const head = rows.filter((r) => r.rank !== null).slice(0, limit);
-  const seen = new Set(head.map((r) => r.playerId));
-  const byAll = [...withValue]
-    .sort((a, b) => (a.rankAll ?? 0) - (b.rankAll ?? 0))
-    .slice(0, limit)
-    .filter((r) => !seen.has(r.playerId));
-  return [...head, ...byAll].sort((a, b) => (a.rankAll ?? 0) - (b.rankAll ?? 0));
+  /**
+   * ⚠**들어온 순서에 기대지 않는다.** 예전에는 `m.rows` 가 규정 순위순으로 정렬돼 있다는
+   * 사실에 기대 그냥 앞에서 잘랐다. 그러면 **같은 입력을 다시 넣으면 답이 달라질 수 있고**
+   * (계측·시험이 정확히 그렇게 부른다), 그건 「고르는 규칙」이 함수 밖에 반쯤 있는 것이다.
+   */
+  const head = rows
+    .filter((r) => r.rank !== null)
+    .sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0))
+    .slice(0, limit);
+  const picked = new Map(head.map((r) => [r.playerId, r]));
+  const byAll = [...withValue].sort((a, b) => (a.rankAll ?? 0) - (b.rankAll ?? 0)).slice(0, limit);
+  for (const r of byAll) if (!picked.has(r.playerId)) picked.set(r.playerId, r);
+  /**
+   * ⚠**여기가 「최소 표본」을 실제로 성립시키는 자리다**(2026-08-20).
+   * 위 두 벌만으로는 이런 선수가 **두 화면 어디에도 없다**: 규정에 못 미쳐 규정 상위 N 밖이고,
+   * 표본이 작은 선수들에게 밀려 전원 상위 N 에도 못 든다. 하한은 **실린 행 안에서만** 거르므로
+   * 그 선수는 하한을 아무리 올려도 안 나온다 — **하한 기능이 노리던 바로 그 선수다.**
+   * 실측(2026-08-20 · 9시즌 18 리그-시즌 · 하한을 실재 분모 전량으로 훑음):
+   * 입력이 붙는 23개 지표가 **전부** 걸렸고, 최대 **상위 10 중 6명**이 화면에 없었다.
+   */
+  const k = minTopFor(rows, limit);
+  if (k !== null) {
+    for (const r of everTop(withValue, k)) {
+      if (!picked.has(r.playerId)) picked.set(r.playerId, r);
+    }
+  }
+  return [...picked.values()].sort((a, b) => (a.rankAll ?? 0) - (b.rankAll ?? 0));
+}
+
+/**
+ * **어느 최소 표본을 넣어도 상위 몇 명까지는 표 안에 있는가.** 입력칸이 안 붙는 패널이면 null.
+ *
+ * ⚠**정본은 여기다**(M1). 화면은 `RankingPanel.minTop` 를 그대로 읽는다 —
+ * 예전에는 렌더러가 **고른 뒤의 행**으로 「입력칸을 붙일까」를 다시 판정했고,
+ * 그러면 「고르기가 무엇을 남겼는가」에 따라 조작이 붙었다 안 붙었다 할 수 있었다.
+ * ⚠**개수 지표(홈런·세이브·도루…)에는 자격 기준이 없어 null 이다.** 그 패널에는
+ * 입력칸 자체가 안 그려지므로 **행을 넓혀도 아무 조작으로 닿을 수 없다** — 그래서 안 넓힌다.
+ * ⚠**표보다 큰 약속을 하지 않는다** — 5행짜리 일람의 하이라이트에서 「상위 10」을 보장하면
+ * 그 표가 10행 넘게 부푼다. 약속은 **그 표의 크기까지**다.
+ */
+export function minTopFor(rows: readonly RankingRow[], limit: number): number | null {
+  if (!rows.some((r) => r.rank === null && r.rankAll !== null)) return null;
+  return Math.min(RANKING_MIN_TOP, limit);
+}
+
+/**
+ * **어느 최소 표본을 넣어도 상위 몇 명까지 보장하는가**(순위표 페이지 기준).
+ *
+ * ⚠**표가 30행짜리라고 30으로 올리지 마라** — 행 수가 그만큼 늘고, 이 페이지는 이미
+ * 시즌당 약 1MB 다. 10 인 이유는 「누가 위인가」가 이 화면의 질문이기 때문이다.
+ */
+export const RANKING_MIN_TOP = 10;
+
+/**
+ * **어느 하한에서도 상위 k 에 들 수 있는 행 전부** — 그 이상도 이하도 아니다.
+ *
+ * 행 r 이 어떤 하한에서 상위 k 에 들려면 **가장 너그러운 하한(T = r 자신의 분모)** 에서
+ * 들어야 한다. T 를 더 내리면 경쟁자만 늘고, 더 올리면 r 자신이 빠지기 때문이다.
+ * 그 하한에서 r 보다 앞서는 것은 **「분모가 r 이상이면서 전원 순위가 더 좋은」 행**뿐이므로,
+ * → **그런 행이 k 개 미만인 행 전부**가 답이고, k 개 이상인 행은 **어느 하한에서도 못 든다.**
+ *
+ * ⚠**새 순위를 만드는 것이 아니다**(M1/M3). 쓰는 것은 행이 이미 들고 있는 두 값
+ * (전원 순위 · 분모)뿐이고, 정렬도 동률 규칙도 서버가 매긴 그대로다. **싣는 행만 넓힌다.**
+ *
+ * 분모 큰 쪽부터 훑으면서 「지금까지 본 전원 순위 중 가장 좋은 k 개」만 들고 다닌다 —
+ * 그 k 번째가 나보다 좋으면 나를 밀어낸 것이 이미 k 개라는 뜻이다. O(n·k).
+ * ⚠**같은 분모끼리도 서로를 밀어낸다**(조건이 「분모 ≥」이므로). 그래서 분모가 같으면
+ * 전원 순위가 좋은 쪽을 먼저 놓아, 그 행이 뒤 행의 계산에 이미 들어가 있게 한다.
+ */
+function everTop(rows: readonly RankingRow[], k: number): RankingRow[] {
+  const byDen = rows
+    .filter((r) => r.rankAll !== null)
+    .sort((a, b) => b.value.denominator - a.value.denominator || (a.rankAll ?? 0) - (b.rankAll ?? 0));
+  const out: RankingRow[] = [];
+  /** 지금까지 본 행의 전원 순위 중 **가장 좋은 k 개**. 오름차순 */
+  const best: number[] = [];
+  for (const r of byDen) {
+    const mine = r.rankAll ?? 0;
+    // ⚠**같은 순위는 밀어내지 못한다**(동률은 같은 하한에서 함께 산다) — 그래서 `>=` 다
+    if (best.length < k || best[k - 1]! >= mine) out.push(r);
+    let p = best.length;
+    best.push(mine);
+    while (p > 0 && best[p - 1]! > mine) {
+      best[p] = best[p - 1]!;
+      p -= 1;
+    }
+    best[p] = mine;
+    if (best.length > k) best.length = k;
+  }
+  return out;
 }
 
 function panelsForPage(rankings: readonly MetricRanking[], limit: number): RankingPanel[] {
@@ -891,6 +987,7 @@ function panelsForPage(rankings: readonly MetricRanking[], limit: number): Ranki
     // ⚠**자르기 전 수를 센다** — 「該当 N人」이 자른 뒤의 수면 그것도 거짓말이다
     qualifiedCount: m.rows.filter((r) => r.rank !== null).length,
     allCount: m.rows.filter((r) => r.rankAll !== null).length,
+    minTop: minTopFor(m.rows, limit),
     qualifier: m.qualifier,
   }));
 }
@@ -3980,6 +4077,16 @@ export interface LoadOptions {
    * 시즌을 넘는 계산을 미리 만들어 둔 것. ⚠**없어도 된다** — 그때는 여기서 만든다(느릴 뿐 답은 같다).
    */
   career?: CareerContext;
+  /**
+   * 순위표 패널에 싣는 행 수의 상한.
+   *
+   * ⚠**화면은 이 값을 주지 않는다** — 기본값(`RANKING_PAGE_ROWS`)이 정본이다.
+   * 이 구멍은 **계측·시험이 「고르기 전 전량」을 받기 위한 것**이고, 그러라고 있다:
+   * 「어느 최소 표본에서도 상위 10이 화면에 있는가」는 **고른 뒤의 표만 봐서는 답할 수 없다**
+   * — 없는 선수가 왜 없는지 표 안에는 안 적혀 있기 때문이다.
+   * `Number.POSITIVE_INFINITY` 를 주면 값이 있는 행이 전부 온다.
+   */
+  rankingRows?: number;
 }
 
 export interface SiteData {
@@ -5151,7 +5258,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   const sections: LeagueSection[] = bundles.map((bundle) => ({
     id: bundle.league,
     name: LEAGUE_NAME[bundle.league],
-    categories: categoriesOf(rankingsByLeague.get(bundle.league)!, RANKING_PAGE_ROWS),
+    categories: categoriesOf(rankingsByLeague.get(bundle.league)!, o.rankingRows ?? RANKING_PAGE_ROWS),
   }));
 
   // 일람의 하이라이트는 **부문마다 대표 지표 몇 개씩**만 낸다.

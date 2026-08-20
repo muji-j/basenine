@@ -183,6 +183,12 @@ export function rankingPanel(over: Partial<RankingPanel> = {}): RankingPanel {
     qualifier: "規定打席 332 に達した選手だけに順位がつきます。",
     qualifiedCount: 10,
     allCount: 10,
+    /**
+     * ⚠**기본 픽스처는 자격 미달 행이 하나도 없다**(전원 `rank` 가 있다) —
+     * 그러면 최소 표본 입력이 안 붙는 패널이고, 그때 값은 **null 이지 0 이 아니다**(M11).
+     * 입력이 붙는 패널을 재려면 `over` 로 덮어써라(`standings-page.test.ts` 가 그렇게 한다).
+     */
+    minTop: null,
     rows: Array.from({ length: 10 }, (_, i) => ({
       rank: i + 1,
       rankAll: i + 1,

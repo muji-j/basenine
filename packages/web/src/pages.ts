@@ -114,16 +114,13 @@ export interface IndexPageData {
   highlights: LeagueSection[];
 }
 
-/** 순위표 페이지에 싣는 상위 인원 */
-const RANKING_PAGE_ROWS = 30;
-
 /**
  * 한 부문의 지표 탭줄과 표들.
  *
  * ⚠**지표 탭 그룹을 부문마다 나눈다.** 하나로 묶으면 「打者」에서 고른 `wRC+`가
  * 「先発」로 옮겼을 때 사라져, 아무 표도 안 열린 화면이 된다.
  */
-function categoryPanels(c: RankingCategory, base: string, limit: number, prefix: TabGroupRef): RawHtml {
+function categoryPanels(c: RankingCategory, base: string, prefix: TabGroupRef): RawHtml {
   if (c.panels.length === 0) return html`<p class="empty">この部門の順位を計算できていません。</p>`;
   // ⚠페이지마다 접두사를 다르게 준다 — 저장된 탭 상태를 공유하면 5행짜리 일람과
   // 30행짜리 순위표가 서로의 선택을 덮어쓴다
@@ -134,20 +131,30 @@ function categoryPanels(c: RankingCategory, base: string, limit: number, prefix:
     c.panels.map((p) => ({ id: p.id, label: p.label })),
     true,
   )}
-  ${c.panels.map((p, pi) => panel(group, p.id, pi === 0, panelTable(p, base, limit)))}`;
+  ${c.panels.map((p, pi) => panel(group, p.id, pi === 0, panelTable(p, base)))}`;
 }
 
-function panelTable(p: RankingPanel, base: string, limit: number): RawHtml {
+function panelTable(p: RankingPanel, base: string): RawHtml {
   const rows = p.rows;
   if (rows.length === 0) return html`<p class="empty">順位を計算できていません。</p>`;
   const qualifiedCount = p.qualifiedCount;
-  const truncated = qualifiedCount > limit;
   /**
-   * 자격 기준이 실제로 누군가를 자르고 있는가.
+   * **「規定到達のみ」에서 실제로 보이는 행 수.**
+   *
+   * ⚠**`limit` 로 갈음하지 마라**(2026-08-20). 최소 표본이 걸리는 패널에는
+   * 「어느 하한에서도 상위 N」을 위해 규정 상위 `limit` 밖의 **자격자**가 들어오는 일이 있다
+   * (실측: 9시즌 756 패널-리그-시즌 중 **8건**). 그때 「上位30人のみ表示」는 거짓이 된다.
+   */
+  const shownQualified = rows.filter((r) => r.rank !== null).length;
+  const truncated = qualifiedCount > shownQualified;
+  /**
+   * 자격 기준이 실제로 누군가를 자르고 있는가 — **서버가 이미 판정해서 보낸다**(M1).
    * ⚠**개수 지표(홈런·탈삼진)에는 자격 기준이 없다** — 거기에 전환 버튼을 두면
    * 눌러도 아무것도 사라지지 않아 「고장난 버튼」이 된다.
+   * ⚠**여기서 다시 세지 않는 이유**: 고른 뒤의 행으로 판정하면 「고르기가 무엇을 남겼는가」에
+   * 따라 조작이 붙었다 안 붙었다 한다. 판정의 정본은 `minTopFor`(query.ts) 한 곳이다.
    */
-  const hasQualifier = p.rows.some((r) => r.rank === null && r.rankAll !== null);
+  const hasQualifier = p.minTop !== null;
   /**
    * 「全員」에서 쓰는 **최소 표본**의 단위.
    *
@@ -180,7 +187,7 @@ function panelTable(p: RankingPanel, base: string, limit: number): RawHtml {
       html`<label class="rankmin" hidden>最少${minUnit}<input type="text" inputmode="numeric"
       autocomplete="off" size="5" value="0" data-rankmin="${p.id}"${raw(p.denAsInnings ? " data-rankouts" : "")}></label>`
     }
-    <span class="count"><span data-rankcount="${p.id}">${Math.min(qualifiedCount, limit)}人</span> / 全${rows.length}人</span>
+    <span class="count"><span data-rankcount="${p.id}">${shownQualified}人</span> / 全${rows.length}人</span>
   </div>
   <p class="empty" data-rankbad="${p.id}" hidden role="status">${badHint}</p>`
     : null}
@@ -219,25 +226,34 @@ function panelTable(p: RankingPanel, base: string, limit: number): RawHtml {
   }
   ${note(
     // ⚠**자른 것을 말한다.** 상위 N만 보여주면서 「전부」처럼 보이면 그것도 거짓말이다
-    truncated ? `${p.qualifier} 上位${limit}人のみ表示（該当 ${qualifiedCount}人）。` : p.qualifier,
+    // ⚠**「上位N人」이라고 안 쓴다** — 최소 표본이 걸리는 패널에는 규정 상위 N 밖의 자격자가
+    //   섞이는 일이 있어(위 `shownQualified`) 그때 「上位」가 참이 아니게 된다
+    truncated ? `${p.qualifier} 該当 ${qualifiedCount}人のうち ${shownQualified}人を表示。` : p.qualifier,
   )}
-  ${hasQualifier
-    ? note(
-      "「規定到達のみ」を外すと、規定に届いていない選手も同じ指標で並べた順位で表示します — " +
-        "母数の小さい選手が上位に来ます。母数は右端の列にあります。" +
-        // ⚠**「全員」도 잘려 있다.** 안 적으면 「전원이 나온다」로 읽힌다(작업규칙 7).
-        //    를 계산해 놓고 화면에서 한 번도 쓰지 않던 자리다(2026-08-17 2차 검토)
-        (p.allCount > limit ? `全員でも上位${limit}人までです（この指標で記録がある選手 ${p.allCount}人）。` : "") +
-        // ⚠**번호가 띄엄띄엄해지는 이유를 화면이 말한다.** 거르기만 하고 다시 매기지 않는 것은
-        //   동률 규칙을 두 벌로 만들지 않기 위해서인데(M1·M3), 그 사정을 안 적으면
-        //   「順位が飛んでいる = 고장」으로 읽힌다.
-        `「全員」の間は**最少${minUnit}**を指定できます（0なら絞りません）。` +
-        "⚠**順位はリーグ全体のもので、絞り込んでも振り直しません** — 番号が飛び飛びになるのはそのためです。" +
-        // ⚠**좁히기가 닿는 범위도 말한다**(작업규칙 7). 이 표는 이미 상위 N만 들고 있어서,
-        //   「최소 300타석인 선수 전원」이 아니라 **이 표 안에서** 그 조건에 맞는 사람만 남는다.
-        `絞り込みが効くのは、この表に載っている${rows.length}人の中だけです。`,
-    )
-    : null}`;
+  ${
+    // ⚠**행이 늘면 이 문장도 같이 바뀌어야 한다**(2026-08-20). 예전에는 여기가
+    //   「絞り込みが効くのは、この表に載っているN人の中だけです」 하나였는데,
+    //   그건 **하한을 올려도 답이 안 나오는 상태**를 그대로 설명한 문장이었다.
+    //   지금은 「어느 하한에서도 상위 minTop 은 반드시 있다」가 참이므로 **그것을 말한다** —
+    //   한계가 남은 자리(minTop 아래)도 같은 문장이 계속 말한다.
+    hasQualifier
+      ? note(
+        "「規定到達のみ」を外すと、規定に届いていない選手も同じ指標で並べた順位で表示します — " +
+          "母数の小さい選手が上位に来ます。母数は右端の列にあります。" +
+          // ⚠**번호가 띄엄띄엄해지는 이유를 화면이 말한다.** 거르기만 하고 다시 매기지 않는 것은
+          //   동률 규칙을 두 벌로 만들지 않기 위해서인데(M1·M3), 그 사정을 안 적으면
+          //   「順位が飛んでいる = 고장」으로 읽힌다.
+          `「全員」の間は**最少${minUnit}**を指定できます（0なら絞りません）。` +
+          "⚠**順位はリーグ全体のもので、絞り込んでも振り直しません** — 番号が飛び飛びになるのはそのためです。" +
+          // ⚠**한계가 사라진 패널에 「일부만 걸러집니다」를 남기지 않는다** — 그게 거짓말이다.
+          //   기록이 있는 선수를 전부 싣고 있으면 좁히기에 사각지대가 없다
+          (rows.length >= p.allCount
+            ? `この指標で記録がある選手 ${p.allCount}人は、全員この表に載っています。`
+            : `どの最少${minUnit}を指定しても**上位${p.minTop}人は必ずこの表にいます**。` +
+              `それより下の順位は、この表に載っている${rows.length}人（記録がある選手 ${p.allCount}人のうち）の範囲です。`),
+      )
+      : null
+  }`;
 }
 
 export function renderIndexPage(d: IndexPageData, ctx: RenderContext): string {
@@ -316,7 +332,7 @@ ${d.highlights.map((s) =>
         s.categories.map((c) => ({ id: c.id, label: c.label })),
       ),
       body: html`${s.categories.map((c, ci) =>
-        panel(`hicat-${s.id}`, c.id, ci === 0, categoryPanels(c, base, 5, `himetric-${s.id}`)),
+        panel(`hicat-${s.id}`, c.id, ci === 0, categoryPanels(c, base, `himetric-${s.id}`)),
       )}
       <!-- ⚠**개인 순위는 순위표의 「個人」 갈래 안에 있다.** 그냥 ranking.html 로 보내면
            지난번에 팀 순위를 보고 있던 사람은 개인 순위가 어디 갔는지 알 수 없다 -->
@@ -595,7 +611,7 @@ ${d.draws.length === 0
         `${league.name}の部門`,
       )}</span></h2>
       ${league.categories.map((c, ci) =>
-        panel(catGroup, c.id, ci === 0, categoryPanels(c, base, RANKING_PAGE_ROWS, metricGroup)),
+        panel(catGroup, c.id, ci === 0, categoryPanels(c, base, metricGroup)),
       )}
     </section>`,
     );
