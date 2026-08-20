@@ -584,8 +584,19 @@ export function page(o: PageOptions): string {
      여는 수단이 사라져 그 내용에 **도달할 방법이 아예 없다.**
      2026-08-16 이중 검토에서 실제로 걸렸다 — 順位를 チーム/個人으로 나눈 순간
      개인 타이틀 전체(2리그 × 3부문 × 8지표)가 JS 없이는 닿을 수 없게 됐다.
-     스크립트가 없으면 **전부 펼친다.** 길어지는 것이 닿지 못하는 것보다 낫다. -->
-<noscript><style>[data-panelgroup][hidden]{display:block!important}</style></noscript>
+     스크립트가 없으면 **전부 펼친다.** 길어지는 것이 닿지 못하는 것보다 낫다.
+
+     ⚠**주석이 「전부」라고 적어 놓고 규칙은 탭 패널만 폈다**(2026-08-20 최종 검토 ⑤).
+     선수 페이지는 프리셋 밖의 구획을 section.block[hidden] 으로 내보내는데
+     그 선택자에 걸리지 않아서, 실브라우저(JS 끔)에서 b-count·b-relief 의 높이가 **0** 이었고
+     "#b-count" 앵커로 들어가도 0이었다 — 기존 구획 6개가 이미 같은 상태였다.
+     ⚠**두 선택자를 한 규칙으로 묶지 않는다** — assets.ts 의 .block[hidden] 이 display:none 이라
+     이기려면 !important 가 필요하고, 규칙을 나눠 두면 어느 쪽이 왜 있는지 읽힌다.
+     ⚠인쇄에도 같은 규칙이 이미 있다(@media print 의 .block[hidden]) — 종이에도 여는 수단이 없다는
+     같은 이유다.
+     ⚠**이 주석에 역따옴표를 쓰지 마라** — 이 파일은 통째로 템플릿 리터럴이라 거기서 끊긴다. -->
+<noscript><style>[data-panelgroup][hidden]{display:block!important}
+.block[hidden]{display:block!important}</style></noscript>
 </head>
 <body style="${style}">
 <a class="skip" href="#main">本文へ</a>

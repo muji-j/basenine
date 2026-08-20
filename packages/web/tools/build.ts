@@ -248,11 +248,15 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
       const dups = duplicateIds(all);
       if (dups.length > 0) {
         const pages = new Set(dups.map((d) => d.path));
+        // ⚠**「종」이 아니다**(2026-08-20 최종 검토 ⑥). `dups` 한 건은 (문서, id) **쌍**이라
+        //   같은 id 가 9장에 있으면 9건이다 — 「9종」으로 읽히면 규모가 9배로 부풀어 보인다.
+        //   id 의 종수는 따로 센다(작업규칙 7 — 분모와 단위를 정확히 쓴다).
+        const kinds = new Set(dups.map((d) => d.id));
         console.error(
-          `⚠ 같은 문서에 중복된 id ${dups.length}종 / ${pages.size}장 — 그 자리로 가는 URL 이 다른 곳을 연다. 배포하지 않는다`,
+          `⚠ 같은 문서에 중복된 id ${dups.length}건（${pages.size}장 · id ${kinds.size}종） — 그 자리로 가는 URL 이 다른 곳을 연다. 배포하지 않는다`,
         );
         for (const d of dups.slice(0, 20)) console.error(`   ${d.path} → id="${d.id}"`);
-        if (dups.length > 20) console.error(`   … 그 밖에 ${dups.length - 20}종`);
+        if (dups.length > 20) console.error(`   … 그 밖에 ${dups.length - 20}건`);
         process.exitCode = 1;
       }
       if (result.stale) {

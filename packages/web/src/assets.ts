@@ -10,6 +10,7 @@
  * 전부 `prefers-reduced-motion`에서 꺼진다.
  */
 import { GLOSSARY } from "./glossary.ts";
+import { emphasisParts } from "./emphasis.ts";
 
 /**
  * 사이트 아이콘 — **우리가 그린 것**이다.
@@ -1859,6 +1860,9 @@ const BOOT=(function(){
 const BLOCKS=BOOT.blocks||[];
 /* 용어집. 서버와 같은 정의 한 벌을 쓴다(M1) */
 const GLOSSARY=__GLOSSARY__;
+/* 강조 표기(별표 두 개)를 나누는 규칙. ⚠**서버의 src/emphasis.ts 를 그대로 심은 것**이다(M1) —
+   여기에 두 번째 벌을 적지 마라. 왜 심는가는 embedEmphasis 의 주석에 있다 */
+__EMPHASIS_PARTS__
 const PRESETS=BOOT.presets||{};
 
 /* 최애 구단 경로에 허용하는 글자 — 영숫자와 「-」「_」「/」「.」뿐이다.
@@ -2276,14 +2280,31 @@ if(tip&&typeof GLOSSARY!=="undefined"){
     if(current)current.setAttribute("aria-expanded","false");
     current=null;tip.hidden=true;
   };
+  /* 설명 한 조각을 넣는다.
+     ⚠**별표 두 개를 굵게 바꾼다** — 서버의 note() 와 **같은 규칙 한 벌**을 쓴다(M1).
+     예전에는 여기가 textContent 뿐이라 별표가 글자 그대로 찍혔다: 용어집 56항목 중 15항목이
+     사용자 가시 문자열에 별표를 갖고, 그중 하나 이상을 내보내는 배포물이 6,333/15,340장(41%)이었다.
+     ⚠**HTML 문자열을 통째로 넣는 API 를 쓰지 않는다**(그 이름을 여기 적지도 않는다 — 시험이 글자로 센다).
+     만드는 태그는 b 하나뿐이고 글자는 전부 textContent 로 들어간다 — 용어집은 우리가 쓴 문장이지만
+     임의 HTML 을 넣는 자리를 만들면 그 자리는 언젠가 쓰인다. */
+  const put=(tag,text)=>{
+    const el=doc.createElement(tag);
+    emphasisParts(text).forEach(p=>{
+      if(p.bold){const b=doc.createElement("b");b.textContent=p.text;el.appendChild(b)}
+      else if(p.text!=="")el.appendChild(doc.createTextNode(p.text));
+    });
+    tip.appendChild(el);
+  };
   const show=(btn)=>{
     const t=GLOSSARY[btn.dataset.term];
     if(!t)return;
     tip.textContent="";
+    /* ⚠**표제는 이름이지 문장이 아니다** — 강조를 풀지 않는다.
+       라벨에 별표가 없다는 것은 glossary.test.ts 가 지킨다 */
     const b=doc.createElement("b");b.textContent=t.label;tip.appendChild(b);
-    const p=doc.createElement("span");p.textContent=t.short;tip.appendChild(p);
-    if(t.how){const s=doc.createElement("s");s.textContent=t.how;tip.appendChild(s)}
-    if(t.caveat){const u=doc.createElement("u");u.textContent=t.caveat;tip.appendChild(u)}
+    put("span",t.short);
+    if(t.how)put("s",t.how);
+    if(t.caveat)put("u",t.caveat);
     tip.hidden=false;
     if(current&&current!==btn)current.setAttribute("aria-expanded","false");
     current=btn;btn.setAttribute("aria-expanded","true");
@@ -3417,7 +3438,35 @@ function embedGlossary(template: string): string {
   if (json.includes("`")) {
     throw new Error("용어집에 백틱이 있다 — 클라이언트 스크립트가 깨진다");
   }
+  if (!template.includes("__GLOSSARY__")) {
+    throw new Error("__GLOSSARY__ 자리가 없다 — 치환이 조용히 일어나지 않는다");
+  }
   return template.replace("__GLOSSARY__", () => json);
 }
 
-export const CLIENT_JS = embedGlossary(CLIENT_JS_TEMPLATE);
+/**
+ * 강조 규칙(`**…**` → `<b>`)을 클라이언트 스크립트에 심는다.
+ *
+ * ⚠**두 벌로 적지 않기 위해서다**(M1). 서버의 `note()`/`emphasize()` 와 클라이언트의 용어 툴팁이
+ * **같은 함수의 같은 소스**를 쓴다 — 클라이언트는 서버 모듈을 import 할 수 없으므로
+ * 용어집(`__GLOSSARY__`)과 **같은 방식**으로 심는다.
+ * ⚠**두 벌이었을 때 실제로 어긋나 있었다**(2026-08-20 최종 검토 ①): 서버만 규칙을 알았고
+ * 클라이언트는 몰라서 별표가 그대로 찍혔다 — 6,333/15,340장(41%).
+ * ⚠`erasableSyntaxOnly`(tsconfig.base.json) 라서 타입은 공백으로 지워지고 **몸통은 그대로 JS** 다.
+ * 그래도 모양이 바뀌면 조용히 깨지므로 아래에서 시작 글자를 확인한다.
+ */
+function embedEmphasis(template: string): string {
+  const src = emphasisParts.toString();
+  if (src.includes("`")) {
+    throw new Error("강조 규칙 소스에 백틱이 있다 — 클라이언트 스크립트가 깨진다");
+  }
+  if (!src.startsWith("function emphasisParts(")) {
+    throw new Error(`강조 규칙이 함수 선언이 아니다 — 클라이언트에 심을 수 없다: ${src.slice(0, 40)}`);
+  }
+  if (!template.includes("__EMPHASIS_PARTS__")) {
+    throw new Error("__EMPHASIS_PARTS__ 자리가 없다 — 치환이 조용히 일어나지 않는다");
+  }
+  return template.replace("__EMPHASIS_PARTS__", () => src);
+}
+
+export const CLIENT_JS = embedEmphasis(embedGlossary(CLIENT_JS_TEMPLATE));

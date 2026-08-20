@@ -300,6 +300,32 @@ test("⚠중복 id 가 있으면 빌드가 실패한다 — 앵커 검사가 통
   );
 });
 
+/**
+ * ⚠**「N종」의 N 이 종수가 아니었다**(2026-08-20 최종 검토 ⑥).
+ * `duplicateIds()` 한 건은 **(문서, id) 쌍**이라, 한 id 가 9장에 있으면 9건이다 —
+ * 그걸 「9종」이라고 적으면 규모가 9배로 부풀어 읽힌다. 작업규칙 7(분모와 단위를 정확히)의 정신에
+ * 어긋나고, 하필 **배포를 막는 메시지**라 판단 근거가 된다.
+ * ⚠**시험이 소스를 글자로 읽는다** — 위 시험과 같은 이유다(`build.ts` 는 import 만으로 실행된다).
+ */
+test("⚠중복 id 의 수를 「종」이라고 부르지 않는다 — 그 수는 (문서, id) 쌍이다", () => {
+  const src = readFileSync(join(import.meta.dirname, "..", "tools", "build.ts"), "utf8");
+  const at = src.indexOf("duplicateIds(all)");
+  assert.notEqual(at, -1, "빌드가 중복 id 를 아예 안 본다");
+  const region = src.slice(at, at + 1200);
+  assert.doesNotMatch(
+    region,
+    /\$\{dups\.length\}종/,
+    "쌍의 개수를 「종」이라고 부른다 — 한 id 가 9장에 있으면 9종으로 읽힌다",
+  );
+  assert.doesNotMatch(
+    region,
+    /\$\{dups\.length - 20\}종/,
+    "뒷줄에서도 쌍의 개수를 「종」이라고 부른다",
+  );
+  // 종수를 말하려면 **id 를 따로 세야 한다**
+  assert.match(region, /new Set\(dups\.map\(\(d\) => d\.id\)\)/, "id 의 종수를 세는 곳이 없다");
+});
+
 // ── 연락처(L4). **화면이 조용하지 않은데 빌드는 조용했다** ────────────────────
 
 /**

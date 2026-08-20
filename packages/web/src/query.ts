@@ -57,6 +57,7 @@ import type {
   CareerRow,
   CountBlockData,
   CountSplitRow,
+  CountUnreadable,
   ReliefBlockData,
   ReliefTotals,
   StealBaseRow,
@@ -3488,9 +3489,9 @@ function teamPages(
             sb: r.sb,
             // ⚠**키가 「선수|구단」이다** — 선수 ID 하나로 찾으면 이적 선수의 시즌 합계가 실린다
             //   (바로 아래 SRC 가 같은 함정을 밟았던 자리다).
-            // ⚠**0打席이면 0이고, 打席가 있는데 행이 없을 때만 `null`(모름)이다**(M11) —
-            //   선수 페이지와 같은 규칙이다. 자세한 근거는 그쪽 주석에 있다
-            gidp: gidpByTeam.get(`${r.playerId}|${code}`) ?? (r.line.pa === 0 ? 0 : null),
+            // ⚠**선수 페이지와 같은 판정 함수를 쓴다**(M1) — 두 화면이 같은 선수에게
+            //   한쪽은 `0`, 한쪽은 `—` 를 내면 그 자체가 결함이다
+            gidp: gidpOrUnknown(gidpByTeam.get(`${r.playerId}|${code}`), r.line.pa),
             avg: e.avg,
             obp: e.obp,
             slg: e.slg,
@@ -4317,14 +4318,49 @@ function summaryOf(
 }
 
 /**
+ * 併殺打의 **「0 인가 모름인가」**.
+ *
+ * ⚠**두 화면이 같은 판정을 써야 한다**(M1). 선수 페이지(시즌 합계)와 구단 표(그 구단 몫)가
+ * 같은 식을 **각자 인라인으로** 적고 있었다 — 한쪽만 고치면 같은 선수에게 한 화면은 `0`,
+ * 다른 화면은 `—` 가 나간다.
+ *
+ * ⚠**「0打席이라 정의상 0」과 「세지 못했다」를 가른다**(M11 · 2026-08-20 이중 검토 지적).
+ * 처음에는 행이 없으면 무조건 `null` 이었는데, 실측으로 **`pa_event` 에 행이 없는 타자는
+ * 9시즌 전 시즌에서 예외 없이 `打席 0` 이었다**(1,257명 중 打席>0 인 사람 **0명**).
+ * 즉 그 `null` 은 결측이 아니라 **알 수 있는 0** 이었고, 같은 블록이 그 선수에게
+ * `打席 0`·`安打 0`·`本塁打 0` 은 숫자로 내면서 併殺打만 `—` 를 내고 있었다
+ * (선수 페이지 3,998장 중 **535장**).
+ * ⚠**M11 은 「모르면 —」이 아니라 「0과 결측을 구별하라」다.** 알 수 있는 0을 결측으로
+ * 강등하면, 진짜 결측(타석 로그 파싱 실패)이 났을 때 **같은 화면이라 구별할 수 없다.**
+ * → 打席가 0이면 **0**, 打席가 있는데 행이 없으면 그때가 진짜 `null` 이다.
+ *
+ * ⚠**이 규칙을 지키는 시험이 0본이었다**(2026-08-20 최종 검토 ②). `?? null` 로 되돌리는
+ * 뮤테이션이 `packages/web/test` **920본을 전부 통과**했고, 그러면 그 535장이 다시 `—` 가 된다.
+ * 지금은 `gidp-by-team.test.ts` 가 두 방향을 실DB 로 고정한다.
+ *
+ * @param counted `pa_event` 에서 실제로 센 수. **행이 없으면 `undefined`**(0 이 아니다)
+ * @param pa 같은 범위의 打席 수
+ */
+export function gidpOrUnknown(counted: number | undefined, pa: number): number | null {
+  if (counted !== undefined) return counted;
+  return pa === 0 ? 0 : null;
+}
+
+/**
  * カウント별 블록 데이터.
  *
  * ⚠**비율 산식을 여기서 쓰지 않는다**(M1) — `@bb-app/aggregate` 의 함수가 낸 `Rate` 를 옮겨 담는다.
  * ⚠**타석 로그가 없으면 `null`** — 「0」이 아니라 「그릴 근거가 없다」다(M11·M12).
- *   격리분만 있고 읽은 타석이 0인 경우도 마찬가지다(비율의 분모가 0이라 전부 「—」가 된다).
+ * ⚠**격리분만 있고 읽은 타석이 0인 경우는 `null` 이 아니다**(M7 · 2026-08-20 최종 검토 ④).
+ *   예전에는 같은 `null` 이라 화면이 「打席の記録がありません。」이라고 적었는데,
+ *   그때 그 문장은 **거짓**이고(타석은 있다) 격리한 수가 화면에 아예 안 나갔다 —
+ *   **파서가 조용히 0을 흘리는 것과 구별할 수 없는 모양**이다.
+ * ⚠**내보내는 이유는 시험 때문이다.** 이 상태는 오늘 실데이터에 0건이라 `loadSite` 를 통해서는
+ *   재현할 수 없다 — 규칙을 값으로 재려면 함수를 직접 불러야 한다(작업규칙 9).
  */
-function countBlockOf(c: CountLine | undefined): CountBlockData | null {
-  if (c === undefined || c.pa === 0) return null;
+export function countBlockOf(c: CountLine | undefined): CountBlockData | CountUnreadable | null {
+  if (c === undefined) return null;
+  if (c.pa === 0) return c.quarantined > 0 ? { quarantinedOnly: c.quarantined } : null;
   const row = (label: string, line: BattingLine): CountSplitRow => ({
     label,
     line,
@@ -4867,20 +4903,8 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
                 doubleSteal: st?.doubleSteal ?? 0,
               };
             })(),
-            /**
-             * 併殺打.
-             *
-             * ⚠**「0打席이라 정의상 0」과 「세지 못했다」를 가른다**(M11 · 2026-08-20 이중 검토 지적).
-             * 처음에는 행이 없으면 무조건 `null` 이었는데, 실측으로 **`pa_event` 에 행이 없는 타자는
-             * 9시즌 전 시즌에서 예외 없이 `打席 0` 이었다**(1,257명 중 打席>0 인 사람 **0명**).
-             * 즉 그 `null` 은 결측이 아니라 **알 수 있는 0** 이었고, 같은 블록이 그 선수에게
-             * `打席 0`·`安打 0`·`本塁打 0` 은 숫자로 내면서 併殺打만 `—` 를 내고 있었다
-             * (선수 페이지 3,998장 중 **535장**).
-             * ⚠**M11 은 「모르면 —」이 아니라 「0과 결측을 구별하라」다.** 알 수 있는 0을 결측으로
-             * 강등하면, 진짜 결측(타석 로그 파싱 실패)이 났을 때 **같은 화면이라 구별할 수 없다.**
-             * → 打席가 0이면 **0**, 打席가 있는데 행이 없으면 그때가 진짜 `null` 이다.
-             */
-            gidp: gidpByPlayer.get(playerId) ?? (bat.player.line.pa === 0 ? 0 : null),
+            // 併殺打(시즌 합계). ⚠판정 규칙은 `gidpOrUnknown` 한 벌이다(M1) — 근거는 그 함수의 주석에
+            gidp: gidpOrUnknown(gidpByPlayer.get(playerId), bat.player.line.pa),
             line: bat.player.line,
             avg: bat.avg,
             obp: bat.obp,

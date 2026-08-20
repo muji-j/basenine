@@ -17,6 +17,7 @@ import {
   buttonGroup,
   columns,
   denText,
+  emphasize,
   gradeLegend,
   note,
   panel,
@@ -269,6 +270,22 @@ export interface CountBlockData {
   fullCount: Rate;
   threeBall: Rate;
   rows: CountSplitRow[];
+}
+
+/**
+ * カウント별 블록에 그릴 것이 없는데 **그 이유가 「기록이 없다」가 아닐 때**.
+ *
+ * ⚠**타석은 있는데 볼카운트를 하나도 못 읽은 상태다**(M7 · 2026-08-20 최종 검토 ④).
+ * 예전에는 이것이 `null` 과 같은 길로 흘러 화면이 「打席の記録がありません。」이라고 적었다 —
+ * **그 문장은 그때 거짓이고, 격리한 수가 화면에 아예 나가지 않았다.**
+ * ⚠**오늘은 일어나지 않는다**(실측 2026-08-20: `ball_count` NULL **0건** · 정의역 밖 **1건**,
+ * 그 1건은 `2018/players/81785137.html` 에서 「カウント不明 1」로 제대로 뜬다).
+ * 그런데 마이그레이션 008 이 NULL 을 허용해 뒀고 CLAUDE.md 가 소급 시즌의 품질 저하를 경고한다 —
+ * **파서가 조용히 0을 흘리는 바로 그 모양**이라 상태를 미리 갈라 둔다.
+ */
+export interface CountUnreadable {
+  /** 볼카운트를 못 읽어 격리한 타석. ⚠**1 이상이다**(0이면 이 상태가 아니다) */
+  quarantinedOnly: number;
 }
 
 /** 火消し의 한 벌. 통산과 시즌이 같은 모양을 쓴다 */
@@ -567,8 +584,9 @@ export interface PlayerPageData {
   /**
    * カウント別成績. 타석 로그가 하나도 없으면 null(M12 — 화면이 「모름」을 낸다).
    * ⚠**타자·투수 양쪽에 있다** — 같은 타석 로그를 반대편에서 읽은 값이다.
+   * ⚠**「없음」과 「못 읽음」은 다른 상태다**(M7·M12) — `CountUnreadable` 을 보라.
    */
-  count: CountBlockData | null;
+  count: CountBlockData | CountUnreadable | null;
   /**
    * 火消し. **투수만.** 이닝 도중 등판이 한 번도 없으면 null.
    * ⚠**null 은 「0회」가 아니라 「이 블록을 그릴 근거가 없다」**로 쓴다(M11) —
@@ -772,9 +790,12 @@ function markPanel(who: MarkPlayer, axes: readonly ProfileAxis[], sampleText: st
       return html`<div class="mkread" data-axisread="${i}" ${raw(i === 0 ? "" : "hidden")}>
         <b>${a.label}</b>
         <em>${a.text}<span class="den">${a.sample}</span></em>
-        <p>${t === undefined ? "" : t.short}</p>
+        <!-- ⚠**용어집 문장은 어디서 그리든 같은 강조 규칙을 탄다**(M1 · 2026-08-20 최종 검토 ①).
+             여기만 순수 텍스트로 두면 short/how 에 별표를 쓴 날 그 별표가 글자로 찍힌다 —
+             툴팁이 정확히 그 모양으로 6,333/15,340장에서 깨져 있었다 -->
+        <p>${t === undefined ? "" : emphasize(t.short)}</p>
         ${a.note === "" ? null : html`<p class="mr-note">${a.note}</p>`}
-        ${t?.how === undefined ? null : html`<p class="mr-how">${t.how}</p>`}
+        ${t?.how === undefined ? null : html`<p class="mr-how">${emphasize(t.how)}</p>`}
       </div>`;
     })}
     <p class="note">形は${sampleText}ぶんの成績です。<b>外側ほど良い</b>ように描いています。
@@ -1908,9 +1929,22 @@ function renderBlock(id: BlockId, d: PlayerPageData, base: string): RawHtml {
     case "timesthrough":
       return timesThroughBlock(d.timesThrough);
     case "count":
-      if (d.count !== null) return countBlock(d.count, d.role);
       // ⚠**「0」이 아니라 「기록이 없다」다**(M11·M12) — 이 선수의 타석 로그가 없다는 뜻이다
-      return block({ id: "count", title: "カウント別", body: html`<p class="empty">打席の記録がありません。</p>` });
+      if (d.count === null) {
+        return block({ id: "count", title: "カウント別", body: html`<p class="empty">打席の記録がありません。</p>` });
+      }
+      // ⚠**「기록이 없다」와 「하나도 못 읽었다」를 가른다**(M7·M12). 앞의 문장을 뒤의 상태에 쓰면
+      //   화면이 거짓말을 하고(타석은 있다), 격리한 수가 어디에도 안 나가 조용한 실패가 된다
+      if ("quarantinedOnly" in d.count) {
+        return block({
+          id: "count",
+          title: "カウント別",
+          qualifier: `${d.count.quarantinedOnly}打席を隔離`,
+          body: html`<p class="empty">打席はありますが、ボールカウントを1件も読み取れませんでした（${d.count.quarantinedOnly}打席）。
+            数値を出す根拠がないので、この欄は空にしています。</p>`,
+        });
+      }
+      return countBlock(d.count, d.role);
     case "relief":
       if (d.relief !== null) return reliefBlock(d.relief);
       return block({

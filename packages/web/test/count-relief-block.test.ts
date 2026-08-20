@@ -11,8 +11,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { renderPlayerPage } from "../src/player-page.ts";
+import { countBlockOf } from "../src/query.ts";
 import { termOf } from "../src/glossary.ts";
-import { context, pitcherMark, pitchingBlock, playerPage, reliefBlock, r } from "./fixtures.ts";
+import { BATTING_LINE, context, pitcherMark, pitchingBlock, playerPage, reliefBlock, r } from "./fixtures.ts";
+import type { CountLine } from "@bb-app/aggregate";
 
 /** 그 블록의 구획만 잘라낸다 — 다른 블록의 글자가 섞이면 시험이 헐거워진다 */
 function blockOf(html: string, id: string): string {
@@ -104,6 +106,55 @@ test("타석 로그가 없으면 「0」이 아니라 「기록이 없다」를 
   const b = blockOf(renderPlayerPage(playerPage({ count: null }), context()), "count");
   assert.match(b, /打席の記録がありません/);
   assert.ok(!b.includes("<dd"), "값이 없는데 값 자리를 그렸다");
+});
+
+/**
+ * ⚠**「기록이 없다」와 「하나도 못 읽었다」는 다른 사실이다**(M7 · 2026-08-20 최종 검토 ④).
+ * 예전에는 `pa === 0` 이면 이유를 묻지 않고 `null` 이라 화면이 「打席の記録がありません。」이라고
+ * 적었는데, 타석은 있는데 볼카운트를 하나도 못 읽은 경우 **그 문장은 거짓**이고
+ * 격리한 수가 화면에 아예 안 나갔다 — **파서가 조용히 0을 흘리는 것과 구별되지 않는 모양**이다.
+ *
+ * ⚠**오늘은 안 일어난다**(실측 2026-08-20: `ball_count` NULL 0건 · 정의역 밖 1건).
+ * 그런데 마이그레이션 008 이 NULL 을 허용해 뒀고 소급 시즌의 품질 저하가 예고되어 있다 —
+ * 그래서 **실데이터로는 재현할 수 없고**, 규칙을 값으로 재려면 함수를 직접 부른다(작업규칙 9).
+ */
+function countLine(over: Partial<CountLine> = {}): CountLine {
+  const zero = { ...BATTING_LINE, pa: 0, ab: 0, h: 0, double: 0, triple: 0, hr: 0,
+    bb: 0, ibb: 0, hbp: 0, sf: 0, sh: 0, so: 0, roe: 0 };
+  return {
+    playerId: "1", displayName: "テスト", teamCode: "t",
+    pa: 0, quarantined: 0, twoStrike: 0, threeBall: 0, fullCount: 0, firstPitch: 0,
+    twoStrikeLine: zero, beforeTwoStrikeLine: zero,
+    ...over,
+  };
+}
+
+test("⚠읽은 타석이 0인데 격리가 있으면 「기록이 없다」가 아니다 — 판정(M7)", () => {
+  // 아무것도 없다 = 기록이 없다
+  assert.equal(countBlockOf(undefined), null);
+  assert.equal(countBlockOf(countLine()), null, "격리도 타석도 0인데 상태를 만들었다");
+  // 타석은 있는데 하나도 못 읽었다 = **다른 상태**
+  assert.deepEqual(countBlockOf(countLine({ quarantined: 3 })), { quarantinedOnly: 3 });
+  // 하나라도 읽었으면 평소의 블록이다(격리는 그 안에서 따로 말한다)
+  const some = countBlockOf(countLine({ pa: 5, quarantined: 3 }));
+  assert.ok(some !== null && !("quarantinedOnly" in some), "읽은 타석이 있는데 「못 읽음」이 됐다");
+  assert.equal(some.quarantined, 3);
+});
+
+test("⚠전부 격리된 화면은 그 사실과 수를 말한다 — 「打席の記録がありません」은 그때 거짓이다", () => {
+  const b = blockOf(renderPlayerPage(playerPage({ count: { quarantinedOnly: 7 } }), context()), "count");
+  assert.ok(
+    !b.includes("打席の記録がありません"),
+    "타석은 있는데 「기록이 없다」고 적었다 — 화면이 거짓말을 한다",
+  );
+  assert.match(b, /読み取れませんでした/, "못 읽었다는 사실이 화면에 없다");
+  assert.match(b, /7打席/, "격리한 수가 화면에 안 나간다 — 조용한 실패다(M11)");
+});
+
+test("타석 로그가 아예 없을 때는 여전히 「기록이 없다」다 — 두 상태를 뒤집지 않는다", () => {
+  const b = blockOf(renderPlayerPage(playerPage({ count: null }), context()), "count");
+  assert.match(b, /打席の記録がありません/);
+  assert.ok(!b.includes("読み取れませんでした"), "기록이 없는데 「못 읽었다」고 적었다");
 });
 
 // ── ② 火消し ──────────────────────────────────────────────────────────

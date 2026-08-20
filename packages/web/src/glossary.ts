@@ -500,14 +500,23 @@ export function termOf(key: string): Term | undefined {
  * 분모는 **값의 의미 자체**라(M2), 빈 문자열로 흘리면 「.341 317」 같은 무의미한 글자가 나가거나
  * 더 나쁘게는 옆 지표의 단위를 물려받는다. 새 비율을 만들면 용어집에 `den` 을 적어라.
  *
+ * ⚠**빈 문자열도 던진다**(2026-08-20 최종 검토 ③). 그 전까지는 `undefined` 만 걸렀는데,
+ * `den: ""` 라고 적으면 **타입도 통과하고 던지지도 않아** 분모 없는 값이 그대로 나갔다 —
+ * 즉 이 함수의 그물은 「빠뜨렸을 때」만 있었고 「비워 뒀을 때」는 없었다.
+ * ⚠**던지기 자체에 시험이 0본이었다**(같은 검토). 던지기를 없애는 뮤테이션이 아무것도 떨어뜨리지
+ * 못했고, `tsc` 가 막아 주던 것은 **우연히 얻은 그물**이었다(빈 문자열은 타입도 통과한다).
+ *
  * ⚠**여기 없는 비율이 정확히 하나 있다 — `pitchesPerOut`**(2026-08-20 실측 · 배포물의 비율 20종 중).
  * 화면이 둘로 갈려 있는데(선수·比較는 `138.1回`, 구단 표는 `415アウト`) **둘 다 참인 같은 수**라
  * 어느 쪽이 정본인지는 표시 판단이고, 이번 수정(라벨이 **사실과 다른** 것만 고친다)의 범위 밖이다.
  * 정하면 여기에 `den` 을 적고 `compare.ts`·`team-page.ts` 의 그 두 자리에서 인자를 지워라.
+ *
+ * @param key 지표 키
+ * @param table 용어집. **시험에서만 바꾼다** — 빈 `den` 을 실제로 통과시켜 보려면 대역이 필요하다
  */
-export function denUnit(key: string): string {
-  const den = GLOSSARY[key]?.den;
-  if (den === undefined) {
+export function denUnit(key: string, table: Readonly<Record<string, Term>> = GLOSSARY): string {
+  const den = table[key]?.den;
+  if (den === undefined || den === "") {
     throw new Error(`분모 단위가 정해지지 않은 지표: ${key} — glossary.ts 의 den 에 적어라(M2)`);
   }
   return den;

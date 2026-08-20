@@ -6,6 +6,7 @@
  */
 import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
+import { emphasisParts } from "./emphasis.ts";
 import type { Rate } from "@bb-app/metrics";
 import { NO_VALUE, avg3, dec1, dec2, denominator, innings, int, signed1 } from "./format.ts";
 import { termKeyForLabel } from "./glossary.ts";
@@ -311,20 +312,26 @@ export const TIE_RULE =
   "（NPBの規定では次に前年度順位を使いますが、当サイトはそこまでは判定していません）。";
 
 /**
+ * 별표 두 개로 감싼 곳을 굵게. **감싸는 태그는 부르는 쪽이 정한다.**
+ *
+ * ⚠**직접 HTML을 만들지 않는다.** 조각을 나눈 뒤 각 조각을 `html`에 넘기므로 이스케이프는 그대로 산다 —
+ * 선수명·구단명이 이 문구에 섞여 들어와도 태그가 되지 않는다. 나올 수 있는 태그는 `<b>` 하나뿐이다.
+ * ⚠**나누는 규칙은 `emphasis.ts` 한 벌**이다(M1) — 클라이언트의 용어 툴팁이 같은 함수를 쓴다.
+ */
+export function emphasize(text: string): RawHtml {
+  return html`${emphasisParts(text).map((p) => (p.bold ? html`<b>${p.text}</b>` : p.text))}`;
+}
+
+/**
  * 설명 한 줄.
  *
  * ⚠**별표 두 개로 감싼 곳을 굵게 만든다.** 이 프로젝트의 문구는 어디서나 그 표기로 강조를 쓰는데,
  * 여기만 순수 텍스트라 **별표가 그대로 화면에 찍히고 있었다** — 실측 1,537장(2026-08-16).
- * ⚠**직접 HTML을 만들지 않는다.** 조각을 나눈 뒤 각 조각을 `html`에 넘기므로 이스케이프는 그대로 산다 —
- * 선수명·구단명이 이 문구에 섞여 들어와도 태그가 되지 않는다.
- * ⚠**짝이 맞지 않으면 아무것도 하지 않는다.** 별표가 홀수 개면 어디까지가 강조인지 알 수 없고,
- * 그때 억지로 자르면 엉뚱한 곳이 굵어진다.
+ * ⚠**그 규칙을 클라이언트가 몰랐다**(2026-08-20 최종 검토 ①) — 용어 툴팁이 `textContent` 로
+ * 넣어 별표가 **6,333 / 15,340장(41%)**에 그대로 찍혔다. 지금은 둘 다 `emphasis.ts` 를 쓴다.
  */
 export function note(text: string): RawHtml {
-  const parts = text.split("**");
-  // 조각이 짝수 개 = 별표가 홀수 개 = 짝이 안 맞는다
-  if (parts.length % 2 === 0) return html`<p class="note">${text}</p>`;
-  return html`<p class="note">${parts.map((s, i) => (i % 2 === 1 ? html`<b>${s}</b>` : s))}</p>`;
+  return html`<p class="note">${emphasize(text)}</p>`;
 }
 
 /** 「薄く」 행에 붙는 글자 표식. **범례와 같은 글자를 쓴다** */
