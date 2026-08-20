@@ -178,6 +178,52 @@ test("⚠어긋난 구단이 있으면 빌드가 실패한다 — 경고로 끝�
   );
 });
 
+// ── wOBA 계수 유도. **세어 놓고 아무도 안 읽던 자리** ──────────────────────────
+
+/**
+ * ⚠**이 픽스처에는 타석 로그(`pa_event`)가 없다** — 박스스코어만 있다.
+ * 그건 **폴백 계수로 떨어지는 조건 그 자체**라, 여기서 그 상태를 값으로 잡을 수 있다.
+ *
+ * ⚠**폴백은 화면에 한 글자도 안 드러난다.** 값이 사라지는 게 아니라 **눈금이 밀리고**
+ * (자격자 중앙 약 1 wRC+), 그러는 동안 용어집은
+ * 「係数は当サイトがリーグ・シーズンごとに算出」이라고 쓴다 — **화면이 거짓말을 한다.**
+ * 예전 신호는 `console.warn` 하나뿐이라 종료 코드가 0이었다(2026-08-21 검토 P2-③).
+ */
+test("⚠타석 로그가 없으면 폴백으로 떨어진 사실이 SiteData 까지 나온다", async () => {
+  await withSite({ games: 3, upcomingDate: null, probableDate: null }, (site) => {
+    assert.deepEqual(
+      [...site.wobaDerivation].sort((a, b) => a.league.localeCompare(b.league)),
+      [
+        { league: "central", fellBack: true, skipped: 0, unrecognized: 0 },
+        { league: "pacific", fellBack: true, skipped: 0, unrecognized: 0 },
+      ],
+      "타석 로그가 0건인데 폴백으로 떨어졌다고 말하지 않는다",
+    );
+  });
+});
+
+/**
+ * ⚠**빌드를 세우는 것까지가 이 지적의 내용이다**(P2-②·③).
+ * `deriveRunValues` 는 `skipped`(M11)·`unrecognized`(M7)를 세는데
+ * **유일한 프로덕션 소비자가 `.runValues` 만 꺼내 나머지를 그 줄에서 버리고 있었다.**
+ * ⚠소스를 글자로 읽는 이유는 위 `raceDisagreed` 시험과 같다.
+ */
+test("⚠wOBA 계수 유도가 온전하지 않으면 빌드가 실패한다 — 경고로 끝내지 않는다", () => {
+  const src = readFileSync(join(import.meta.dirname, "..", "tools", "build.ts"), "utf8");
+  const at = src.indexOf("wobaDerivation");
+  assert.notEqual(at, -1, "빌드가 wobaDerivation 을 아예 안 본다");
+  const region = src.slice(at, at + 1200);
+  // 셋을 **전부** 본다 — 하나만 보면 나머지 둘이 다시 조용해진다
+  for (const key of ["fellBack", "skipped", "unrecognized"]) {
+    assert.match(region, new RegExp(key), `빌드가 ${key} 를 안 본다`);
+  }
+  assert.match(
+    region,
+    /process\.exitCode = 1/,
+    "wobaDerivation 을 보긴 하는데 종료 코드를 안 바꾼다 — 경고만으로는 그대로 배포된다",
+  );
+});
+
 // ── Important. 予告先発이 「아직 안 나왔다」인지 「우리가 안 받았다」인지 ──────────
 
 /**

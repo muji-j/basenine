@@ -47,13 +47,21 @@ if (process.env["BB_REQUIRE_DB"] === "1" && !HAS_DB) {
 const FULL = process.env["BB_FULL_SCAN"] === "1";
 const BUILT_ON = "2026-08-20";
 
-/** 어느 시즌을 볼 것인가 — **DB 에 물어본다.** 목록을 손으로 적으면 백필할 때 낡는다 */
+/**
+ * 어느 시즌을 볼 것인가 — **DB 에 물어본다.** 목록을 손으로 적으면 백필할 때 낡는다.
+ *
+ * ⚠**`HAVING n > 100` 이었다**(2026-08-21 검토 P2-③). 그러면 **리그 총 100경기 미만인 시즌이
+ * 통째로 검사 밖**이었다 — 그건 개막 후 2~3주이고, **하필 폴백이 가장 나기 쉬운 때**다
+ * (박스는 들어왔는데 타석 로그 적재가 아직 안 붙은 상태). 그물이 가장 필요한 구간에 그물이 없었다.
+ * ⚠**지금 DB 에서는 이 완화가 아무것도 바꾸지 않는다**(2018~2026 전부 600경기 이상 · 실측).
+ * 바뀌는 것은 **다음 개막 직후**다.
+ */
 function seasonsToScan(db: ReturnType<typeof openDb>): number[] {
   const rows = db.raw
     .prepare(
       `SELECT season AS s, COUNT(*) AS n FROM game
         WHERE competition = 'regular' AND status = 'played'
-        GROUP BY season HAVING n > 100 ORDER BY season DESC`,
+        GROUP BY season HAVING n > 0 ORDER BY season DESC`,
     )
     .all() as { s: number }[];
   const all = rows.map((r) => r.s);
@@ -73,6 +81,21 @@ test(
       for (const season of seasons) {
         const site = loadSite(db, { season, builtOn: BUILT_ON });
         const agg = aggregateSeason(db, season);
+
+        /**
+         * ⚠**「0건」과 「안 쟀음」을 구별한다**(작업규칙 7 · 2026-08-21 검토 P2-②).
+         * `deriveRunValues` 가 세는 `skipped`·`unrecognized` 는 예전에 화면 경로에서
+         * **그 줄에서 버려졌다.** 지금은 `SiteData` 까지 나오고 빌드가 그것으로 배포를 막는다 —
+         * **여기서 실데이터로 「0 인 것이 정상」을 못 박는다.**
+         */
+        assert.deepEqual(
+          [...site.wobaDerivation].sort((a, b) => a.league.localeCompare(b.league)),
+          [
+            { league: "central", fellBack: false, skipped: 0, unrecognized: 0 },
+            { league: "pacific", fellBack: false, skipped: 0, unrecognized: 0 },
+          ],
+          `${season}: wOBA 계수 유도가 온전하지 않다 — 폴백으로 떨어졌거나 미계산·미상 타석이 있다`,
+        );
 
         for (const league of ["central", "pacific"] as const) {
           const codes = TEAMS.filter((t) => t.league === league).map((t) => t.code);

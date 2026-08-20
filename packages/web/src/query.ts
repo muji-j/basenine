@@ -4160,9 +4160,47 @@ export interface SiteData {
    * 06-01 부터 `confirmed`). 둘을 가르는 것이 이 배열이다 — `race.ts` 의 조합표를 보라.
    */
   raceDisagreed: readonly string[];
+  /**
+   * **wOBA 계수를 리그마다 제대로 유도했는가.** ⚠셋 다 「0/false 인 것이 정상」이다.
+   *
+   * ⚠**비정상이면 배포하지 않는다**(`tools/build.ts` · `raceDisagreed` 와 같은 등급).
+   * 세 가지가 **전부 화면에 안 드러나는 종류**라 여기로 들고 나오는 것 말고는 알 길이 없다:
+   * 폴백은 값만 조금 밀리고, `skipped`·`unrecognized` 는 아예 아무 데도 안 나온다.
+   *
+   * ⚠**리그가 안 실려 있으면 「그 리그에 타자가 없다」는 뜻**이다 — 그때는 화면에
+   * 그 리그의 wOBA 자체가 없으므로 판정할 것이 없다.
+   */
+  wobaDerivation: readonly WobaDerivationStatus[];
   /** 경기 페이지. **빌드 대상 시즌만** — 2025년은 아카이브에 있지만 화면은 아직 한 시즌이다 */
   games: GamePageData[];
   search: SearchEntry[];
+}
+
+/**
+ * 리그 하나의 wOBA 계수 유도 상태. **전부 「0/false 가 정상」이다.**
+ *
+ * ⚠**「0건」과 「안 쟀음」을 구별한다**(작업규칙 7). 이 줄이 있다는 것 자체가 「쟀다」이고,
+ * 리그가 아예 안 실려 있으면 그 리그에는 잴 타자가 없었다는 뜻이다.
+ */
+export interface WobaDerivationStatus {
+  league: League;
+  /**
+   * **폴백 계수로 떨어졌는가.** 박스스코어는 있는데 타석 로그가 통째로 없을 때 그렇게 된다.
+   * ⚠그때 화면의 용어집이 「係数は当サイトがリーグ・シーズンごとに算出」이라고 **거짓말을 한다** —
+   * 값이 사라지는 게 아니라 **눈금이 밀린다**(실측 자격자 중앙 약 1 wRC+).
+   */
+  fellBack: boolean;
+  /**
+   * 득점가치를 계산하지 못해 유도에서 빠진 타석 수(M11). **0 이 정상이다.**
+   * ⚠0 이 아니면 **하프이닝 중간의 타석이 걸러졌다**는 뜻이고, 그때는 값이 빠지는 게 아니라
+   * **남은 값이 틀린다**(`afterStateOf` 주석 참조) — 분모로도 결측 카운터로도 안 드러난다.
+   */
+  skipped: number;
+  /**
+   * 우리가 모르는 결과 문자열의 수(M7). **0 이 정상이다.**
+   * ⚠0 이 아니면 파서의 어휘가 DB 보다 낡았다는 뜻이다.
+   */
+  unrecognized: number;
 }
 
 /**
@@ -4590,6 +4628,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
    */
   const reMade = new Map<League, RunExpectancy>();
   const runValuesByLeague = new Map<League, WobaWeights>();
+  const wobaDerivation: WobaDerivationStatus[] = [];
   for (const league of ["central", "pacific"] as const) {
     const codes = TEAMS.filter((t) => t.league === league).map((t) => t.code);
     const re = buildRunExpectancy(db, o.season, league, codes, competition, through);
@@ -4601,16 +4640,31 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
      * 폴백은 리그·시즌을 모르는 값이라 **출루율 눈금이 밀린다**(중앙 약 1 wRC+).
      * 조용히 넘기지 않는다 — 박스스코어는 있는데 타석 로그가 통째로 없다는 뜻이고,
      * 그때는 SRC·SRP·번트·카운트가 **다 같이** 비어 있을 것이다.
+     *
+     * ⚠**타자가 한 명도 없는 리그는 폴백이 아니다** — `buildLeagues` 가 그 리그를 통째로
+     * 건너뛰므로 화면에 나가는 wOBA 자체가 없다. 「없는 것」과 「틀린 자로 잰 것」은 다르다.
      */
     if (re.totalPa === 0) {
       if (agg.battingByLeague.some((b) => b.league === league)) {
-        console.warn(
-          `⚠${o.season} ${league}: 타석 로그가 0건이라 wOBA 계수를 유도하지 못했다 — 폴백 계수를 쓴다`,
-        );
+        wobaDerivation.push({ league, fellBack: true, skipped: 0, unrecognized: 0 });
       }
       continue;
     }
-    runValuesByLeague.set(league, deriveRunValues(db, re, codes, competition, through).runValues);
+    /**
+     * ⚠**세어 둔 것을 버리지 않는다**(2026-08-21 최종 검토 P2-②).
+     * `deriveRunValues` 는 `skipped`(값을 계산 못 한 타석 · M11)와
+     * `unrecognized`(모르는 결과 문자열 · M7)를 세는데, 예전에는 이 줄이 `.runValues` 만
+     * 꺼내서 **유일한 프로덕션 소비자가 그 둘을 그 자리에서 버렸다.**
+     * 세는 코드가 있는데 아무도 안 읽으면 그건 감시 장치가 아니다.
+     */
+    const derived = deriveRunValues(db, re, codes, competition, through);
+    runValuesByLeague.set(league, derived.runValues);
+    wobaDerivation.push({
+      league,
+      fellBack: false,
+      skipped: derived.skipped,
+      unrecognized: derived.unrecognized,
+    });
   }
 
   const bundles = buildLeagues(agg, (lg) => runValuesByLeague.get(lg));
@@ -5534,6 +5588,8 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     // ⚠**순위표와 구단 페이지를 잇기만 한다**(M1) — 여기서 다시 조회하면 두 화면이 갈린다
     teamsPage: teamsPage(o.season, meta.latest, standings, teamData.pages),
     raceDisagreed: teamData.disagreed,
+    // ⚠**위 루프가 잰 것을 그대로 들고 나간다** — 여기서 다시 판정하지 않는다(M1)
+    wobaDerivation,
     games: [...gameList, ...postGameList],
   };
 }

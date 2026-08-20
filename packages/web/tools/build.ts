@@ -192,6 +192,40 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
         process.exitCode = 1;
       }
 
+      /**
+       * ⚠**wOBA 계수를 제대로 유도하지 못한 채 배포하지 않는다**(2026-08-21 최종 검토 P2-②·③).
+       *
+       * 셋 다 **화면에 한 글자도 안 드러난다**:
+       * ⑴ `fellBack` — 폴백 계수로 떨어져도 값만 조금 밀린다(자격자 중앙 약 1 wRC+).
+       *    그런데 용어집은 「係数は当サイトがリーグ・シーズンごとに算出」이라고 쓴다 — **화면이 거짓말을 한다.**
+       * ⑵ `skipped` — 하프이닝 중간의 타석이 걸러졌다는 뜻이고, 그때는 값이 빠지는 게 아니라
+       *    **남은 값이 틀린다.** 분모로도 결측 카운터로도 안 드러난다.
+       * ⑶ `unrecognized` — 파서 어휘가 DB 보다 낡았다(M7).
+       *
+       * ⚠**예전에는 ⑴ 이 `console.warn` 하나였고 ⑵⑶ 은 아무도 안 읽었다.** 그래서 종료 코드가
+       * 0이었고 `emptySeasons`·`stale`·`raceDisagreed` 와 **등급이 달랐다** — 연락처 게이트와 같은 모양이다.
+       * ⚠**판정 조건의 정본은 `query.ts` 다**(M1). 여기서 조건을 다시 쓰지 않고 그 결과만 읽는다.
+       * ⚠**실측(2026-08-21): 18/18 리그-시즌에서 셋 다 0이다.** 「0건」과 「안 쟀음」은 다르다 —
+       *    이 게이트가 있어야 「0건」이 계속 참인지 매 배포마다 확인된다.
+       */
+      const wobaBad = loaded.flatMap((l) =>
+        l.data.wobaDerivation
+          .filter((w) => w.fellBack || w.skipped > 0 || w.unrecognized > 0)
+          .map((w) => ({ season: l.season, ...w })),
+      );
+      if (wobaBad.length > 0) {
+        console.error(
+          `⚠ wOBA 계수 유도가 온전하지 않다 — ${wobaBad.length}개 리그-시즌. 배포하지 않는다`,
+        );
+        for (const w of wobaBad) {
+          const why = w.fellBack
+            ? "타석 로그가 0건이라 폴백 계수로 떨어졌다（화면은 「当サイトが算出」이라고 말한다）"
+            : `미계산 타석 ${w.skipped}건 · 모르는 결과 문자열 ${w.unrecognized}건`;
+          console.error(`   ${w.season} ${w.league}: ${why}`);
+        }
+        process.exitCode = 1;
+      }
+
       const mb = (bytes / 1024 / 1024).toFixed(1);
       console.log(`생성: ${fileCount}파일 / ${mb}MB / 시즌 ${seasons.join("·")}`);
       console.log(`집계: ${loadMs.toFixed(0)}ms · 최신 경기일 ${result.latestGameDate ?? "없음"} · 생성일 ${builtOn}`);
