@@ -254,3 +254,84 @@ test("⚠다른 대회를 섞지 않는다 — 올스타 타석이 정규시즌 
     assert.equal(after.samples.hr, before.samples.hr);
   });
 });
+
+// ─── 「숨기지 않는다」의 두 카운터 ──────────────────────────────────────────
+
+/**
+ * ⚠**세는 코드가 있는데 아무도 안 읽으면 감시 장치가 아니다**(2026-08-21 최종 검토 P2-②).
+ * 화면 경로가 `.runValues` 만 꺼내면서 이 둘을 그 줄에서 버리고 있었다. 지금은
+ * `SiteData.wobaDerivation` 으로 나오고 빌드가 그것으로 배포를 막는다.
+ *
+ * ⚠**그런데 실데이터에서는 둘 다 늘 0이라, 값이 진짜인지 실데이터로는 증명할 수 없다.**
+ * 「0건」과 「안 쟀음」을 가르는 것이 이 시험이다 — **0이 아닌 상태를 일부러 만들어** 센다.
+ */
+test("⚠하프이닝 중간의 타석이 빠지면 skipped 로 센다 — 그때 값이 빠지는 게 아니라 남은 값이 틀린다", async () => {
+  await withDb((db) => {
+    // 계수 7종의 표본을 채운다(없으면 유도 자체가 던진다)
+    const cases: { outcome: Outcome; runs: number }[] = [
+      { outcome: "homerun", runs: 1 }, { outcome: "triple", runs: 0 },
+      { outcome: "double", runs: 0 }, { outcome: "single", runs: 0 },
+      { outcome: "walk", runs: 0 }, { outcome: "hitByPitch", runs: 0 },
+      { outcome: "reachedOnError", runs: 0 }, { outcome: "strikeout", runs: 0 },
+      { outcome: "fieldedOut", runs: 0 },
+    ];
+    cases.forEach((c, i) => {
+      const id = `s${i}`;
+      seedGame(db, id);
+      replacePaEvents(db, id, [ev({ gameId: id, seq: 1, outcome: c.outcome, runsScored: c.runs })]);
+    });
+
+    const re = buildRunExpectancy(db, 2026, "central", CODES);
+    const clean = deriveRunValues(db, re, CODES);
+    assert.equal(clean.skipped, 0, "구멍이 없는데 skipped 가 0이 아니다 — 이 시험이 다른 것을 잰다");
+
+    /**
+     * **같은 하프이닝 안에 seq 구멍을 만든다**(1 · 2 · 4).
+     * seq 2 의 「다음 행」이 seq 4 가 되므로 **두 타석분의 변화를 한 타석에 실을 뻔한 자리**이고,
+     * `afterStateOf` 가 그것을 `null` 로 돌려 계산을 거부한다 — 그 수가 `skipped` 다.
+     */
+    seedGame(db, "gap");
+    replacePaEvents(db, "gap", [1, 2, 4].map((seq) => ev({ gameId: "gap", seq, outcome: "fieldedOut" })));
+
+    const holed = deriveRunValues(db, re, CODES);
+    assert.equal(holed.skipped, 1, "하프이닝 중간이 빠졌는데 세지 않았다");
+    assert.equal(holed.unrecognized, 0, "모르는 결과 문자열이 없는데 셌다");
+    // ⚠**빠진 타석은 유도에도 안 들어간다** — 세 개 중 둘만 쓴다
+    assert.equal(holed.usedPa, clean.usedPa + 2, "쓴 타석 수가 안 맞는다");
+  });
+});
+
+/**
+ * ⚠**모르는 결과 문자열을 「아웃」으로 흘리지 않는다**(M7·M11).
+ * 파서 어휘가 DB 보다 낡으면 그 타석들이 조용히 원점 쪽으로 떨어져 **계수 전체가 밀린다.**
+ * ⚠**타입을 우회해 넣는다** — 정상 경로로는 만들 수 없는 상태이고, 그래서 시험이 필요하다.
+ */
+test("⚠모르는 결과 문자열은 unrecognized 로 센다 — 원점 쪽으로 흘리지 않는다", async () => {
+  await withDb((db) => {
+    const cases: { outcome: Outcome; runs: number }[] = [
+      { outcome: "homerun", runs: 1 }, { outcome: "triple", runs: 0 },
+      { outcome: "double", runs: 0 }, { outcome: "single", runs: 0 },
+      { outcome: "walk", runs: 0 }, { outcome: "hitByPitch", runs: 0 },
+      { outcome: "reachedOnError", runs: 0 }, { outcome: "strikeout", runs: 0 },
+      { outcome: "fieldedOut", runs: 0 },
+    ];
+    cases.forEach((c, i) => {
+      const id = `u${i}`;
+      seedGame(db, id);
+      replacePaEvents(db, id, [ev({ gameId: id, seq: 1, outcome: c.outcome, runsScored: c.runs })]);
+    });
+    seedGame(db, "odd");
+    replacePaEvents(db, "odd", [ev({ gameId: "odd", seq: 1, outcome: "fieldedOut" })]);
+
+    const re = buildRunExpectancy(db, 2026, "central", CODES);
+    const before = deriveRunValues(db, re, CODES);
+    assert.equal(before.unrecognized, 0, "정상 픽스처인데 모르는 문자열이 있다");
+
+    // 파서가 모르는 어휘가 DB 에 들어온 상태를 만든다
+    db.raw.prepare("UPDATE pa_event SET outcome = ? WHERE game_id = 'odd'").run("フォースアウト裏");
+    const after = deriveRunValues(db, re, CODES);
+    assert.equal(after.unrecognized, 1, "모르는 결과 문자열을 세지 않았다");
+    // ⚠**원점에 안 들어갔는가** — 들어갔으면 표본이 그대로 남는다
+    assert.equal(after.originSamples, before.originSamples - 1, "모르는 문자열이 원점 쪽으로 흘렀다");
+  });
+});
