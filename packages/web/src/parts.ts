@@ -327,6 +327,24 @@ export function note(text: string): RawHtml {
   return html`<p class="note">${parts.map((s, i) => (i % 2 === 1 ? html`<b>${s}</b>` : s))}</p>`;
 }
 
+/** 「薄く」 행에 붙는 글자 표식. **범례와 같은 글자를 쓴다** */
+export const THIN_MARK = "†";
+
+/**
+ * 규정 미달·표본 부족 행의 **글자 표식**.
+ *
+ * ⚠**색과 그림자로만 말하면 사라진다**(2026-08-20 감사 ③). `tr.thin` 은 두 채널을 갖고 있었는데
+ * 실측으로 둘 다 죽었다: 왼쪽 2px 막대(`box-shadow`)는 `--hair-2` 대 `--page` 가
+ * **라이트 1.51:1 · 다크 1.69:1**(비텍스트 3:1 미달)이고, `forced-colors: active` 에서는
+ * `box-shadow` 가 `none` 으로, `color` 가 시스템 색으로 강제되어 **두 채널이 함께 소멸**했다.
+ * 화면은 그 상태로 「薄く表示しています」라고 적고 있었다 — 즉 **범례가 자기 페이지에 대해 거짓**이었다.
+ * ⚠**글자는 어떤 모드에서도 남는다.** 그래서 표식은 색이 아니라 문자다.
+ * ⚠**보이지 않는 글자를 함께 둔다** — 낭독기에는 「†」가 「단검」이나 침묵으로 나온다.
+ */
+export function thinMark(thin: boolean, why: string): RawHtml {
+  return thin ? html`<i class="qmk">${THIN_MARK}<span class="vh">（${why}）</span></i>` : raw("");
+}
+
 /**
  * 탭 그룹 — **함께 움직이는 단위**와 **id 이름공간**을 나눠 든다.
  *
@@ -388,6 +406,14 @@ export function subGroup(g: TabGroupRef, suffix: string): TabGroup {
  * @param label ⚠**한 줄에 탭줄이 둘 이상이면 반드시 다르게 준다.** 같은 이름의 탭줄이
  *   나란히 있으면 스크린리더에서 어느 쪽인지 구별할 방법이 사라진다
  * @param seg 세그먼티드 표시 — 「둘 중 하나」인 상위 전환에만. 형태로 배타성을 말한다
+ *
+ * ⚠**이 상자를 `<nav>` 로 감싸지 마라**(2026-08-20 감사 ⑤). `<nav>` 는 랜드마크라
+ * 낭독기의 이동 메뉴에 오르는데, 여기 든 것은 전부 `<button>` 이고 `<a>` 는 0개다.
+ * 실측(수정 전 `dist` 15,340장): **링크 0개인 `<nav>` 가 6,395개**, 그중 `starters.html`
+ * 한 장에 이름조차 없는 것이 **8개**였고 `matchup.html`·`compare.html` 은
+ * **같은 이름 「試合」의 nav 두 개**를 갖고 있었다.
+ * ⚠**ARIA 를 덧붙여 고치는 문제가 아니다** — 시맨틱을 되돌린다. 바깥은 `<div>` 로 두고
+ * **이름은 이 탭줄이 갖는다**(조작하는 것이 이쪽이다).
  */
 export function tablist(
   group: TabGroupRef,

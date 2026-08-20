@@ -442,12 +442,12 @@ export function renderComparePage(d: ComparePageData, ctx: RenderContext): strin
     <!-- ⚠**이름을 여기 두지 않는다**(2026-08-18 감사 P3). 안쪽 tablist 가 같은 이름을 갖고 있어서
          낭독기가 「日にち ナビゲーション · 日にち タブリスト」처럼 두 번 말했다.
          이름은 **위젯 쪽**에 남긴다 — 조작하는 것이 그쪽이다. -->
-    <nav class="pickday">${tablist(
+    <div class="pickday">${tablist(
       "cmpday",
       d.days.map((x) => ({ id: x.date, label: dayLabel(x.date) })),
       true,
       "日にち",
-    )}</nav>
+    )}</div>
     ${d.days.map((day, di) =>
       panel(
         "cmpday",
@@ -457,12 +457,12 @@ export function renderComparePage(d: ComparePageData, ctx: RenderContext): strin
           day.games.length === 0 ? "" : `${fullDate(day.date)}の対戦から選ぶ　`
         }${dayStateNote(day)}<s>押した順に A → B に入ります</s></p>
     <!-- ⚠**탭 그룹 이름을 対戦 화면과 다르게 둔다.** 같은 이름이면 저장된 선택이 두 화면에서 섞인다 -->
-    <nav class="pickgames" aria-label="試合">${tablist(
+    <div class="pickgames">${tablist(
           `cmpgame-${day.date}`,
           day.games.map((g) => ({ id: g.key, label: `${g.sides[0].shortName} − ${g.sides[1].shortName}` })),
           true,
           "試合",
-        )}</nav>
+        )}</div>
     ${day.games.map((g, i) =>
           panel(
             `cmpgame-${day.date}`,

@@ -202,8 +202,23 @@ test("연승·연패가 글자로 나온다", () => {
 test("⚠득점을 못 읽은 경기는 0이 아니라 「없음」으로 나온다(M11)", () => {
   const out = renderHomePage(data(), context());
   const g = out.slice(out.indexOf("巨人"), out.indexOf("巨人") + 220);
-  assert.ok(!/<b>0<\/b>/.test(g), "못 읽은 득점을 0으로 그렸다");
-  assert.match(g, /<b>—<\/b>/, "「없음」 표시가 없다");
+  assert.ok(!/<b class="hg-s">[^<]*0/.test(g), "못 읽은 득점을 0으로 그렸다");
+  assert.match(g, /<b class="hg-s">—<s>-<\/s>—<\/b>/, "「없음」 표시가 없다");
+});
+
+/**
+ * ⚠**홈·원정이 화면 어디에도 없었다**(2026-08-20 감사 ②) — 팀 이름 둘과 점수만 있어서
+ * 구장 이름으로 추측하는 수밖에 없었고, 지방 개최가 있는 이 리그에서 그 추측은 틀린다.
+ * ⚠**표식은 구단 페이지(`.trecent`)와 같은 글자여야 한다**(M1) — 「＠팀」 = 그 팀의 본거지.
+ */
+test("⚠直近の結果가 어느 쪽이 홈인지 말한다 — 구단 페이지와 같은 글자로", () => {
+  const out = renderHomePage(data(), context());
+  const li = /<li>[^]*?<\/li>/.exec(out.slice(out.indexOf('class="hgames"')))?.[0] ?? "";
+  assert.ok(li.length > 0, "直近の結果 목록이 없다");
+  assert.match(li, /<span class="hg-t">阪神<\/span>/, "원정 팀에 표식이 붙었다");
+  assert.match(li, /<span class="hg-t">＠広島<\/span>/, "홈 팀 표식이 없다");
+  // ⚠**표식의 뜻을 화면이 말한다** — 「＠」만 있고 설명이 없으면 새 어휘가 된다
+  assert.match(out, /＠がホーム/);
 });
 
 /**

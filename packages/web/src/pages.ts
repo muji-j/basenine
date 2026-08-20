@@ -29,7 +29,7 @@
 import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import { NO_VALUE, avg3, dec2, fullDate, innings } from "./format.ts";
-import { block, denText, follower, note, panel, panelId, rankValue, runCell, scopedGroup, scroller, statCount, statRateOuts, statSigned, statText, subGroup, tabId, tablist, term, valueWithDen, widestRunDiff, wlCell } from "./parts.ts";
+import { block, denText, follower, note, panel, panelId, rankValue, runCell, scopedGroup, scroller, statCount, statRateOuts, statSigned, statText, subGroup, tabId, tablist, term, THIN_MARK, thinMark, valueWithDen, widestRunDiff, wlCell } from "./parts.ts";
 import type { TabGroupRef } from "./parts.ts";
 import { denUnit } from "./glossary.ts";
 import { page, pastSeasonOf, ROSTER_PATH } from "./layout.ts";
@@ -566,7 +566,7 @@ ${!hasTeam && !hasPersonal
     ? html`<p class="empty">このシーズンの順位はまだ計算できていません。</p>`
     : html`${!split && !hasPersonal
       ? raw("")
-      : html`<nav class="rail" aria-label="順位の表示">
+      : html`<div class="rail">
   ${split
         ? tablist(
           "ranktype",
@@ -577,7 +577,7 @@ ${!hasTeam && !hasPersonal
         )
         : raw("")}
   ${split ? follower("ranktype", "personal", false, leagueRail) : leagueRail}
-</nav>`}
+</div>`}
 
 ${hasTeam ? (split ? panel("ranktype", "team", true, teamBody) : teamBody) : raw("")}
 ${hasPersonal ? (split ? panel("ranktype", "personal", false, personalBody) : personalBody) : raw("")}`}`;
@@ -800,7 +800,8 @@ export function renderStartersPage(d: StartersPageData, ctx: RenderContext): str
     <thead><tr><th class="l">${opponent.shortName}の打者</th><th>打席</th><th>安打</th><th>本塁打</th><th>三振</th><th>打率</th></tr></thead>
     <tbody>${list.map(
       (m) => html`<tr class="${m.line.pa < 10 ? "thin" : ""}">
-        <td class="l"><a href="${base}players/${m.opponentId}.html?vs=${encodeURIComponent(side.playerId ?? "")}#b-matchup">${m.opponentName}</a></td>
+        ${/* ⚠**「薄く」를 글자로도 말한다**(2026-08-20 감사 ③) — 색·그림자는 forced-colors 에서 사라진다 */ ""}
+        <td class="l"><a href="${base}players/${m.opponentId}.html?vs=${encodeURIComponent(side.playerId ?? "")}#b-matchup">${m.opponentName}</a>${thinMark(m.line.pa < 10, "10打席未満")}</td>
         <td>${m.line.pa}</td><td>${m.line.h}</td><td>${m.line.hr}</td><td>${m.line.so}</td>
         <td class="wd">${valueWithDen(m.avg, "打数", 3)}</td>
       </tr>`,
@@ -826,7 +827,7 @@ export function renderStartersPage(d: StartersPageData, ctx: RenderContext): str
     }
     const group = `mu-${side.teamCode}-${opponent.teamCode}`;
     return html`<div class="muwrap">
-      <nav class="muswitch">${tablist(
+      <div class="muswitch">${tablist(
       group,
       [
         { id: "season", label: "今季" },
@@ -835,7 +836,7 @@ export function renderStartersPage(d: StartersPageData, ctx: RenderContext): str
       ],
       false,
       "集計する範囲",
-    )}</nav>
+    )}</div>
       ${panel(group, "season", true, side.opponents.length === 0
       ? html`<p class="empty">今季の対戦はまだありません。</p>`
       : matchupRows(side.opponents, side, opponent))}
@@ -861,7 +862,7 @@ ${d.gameDate === null || d.games.length === 0
     ? html`<section class="block"><p class="empty">${past
       ? "このシーズンの予告先発は記録していません。予告先発の保存を始めたのが今シーズンからです。"
       : "予告先発はまだ発表されていません。発表は前日〜当日です。"}</p></section>`
-    : html`<nav class="cards" role="tablist" data-tabgroup="starters" aria-label="試合">
+    : html`<div class="cards" role="tablist" data-tabgroup="starters" aria-label="試合">
     ${d.games.map(
       /**
        * ⚠**id 와 aria-controls 를 여기서 빠뜨렸었다**(2026-08-18 감사 P2).
@@ -884,7 +885,7 @@ ${d.gameDate === null || d.games.length === 0
       aria-controls="${d.games.map((g) => panelId("starters", gameKey(g))).join(" ")}">
       <span class="ctxt"><b>すべて</b><s>${d.games.length}試合</s></span>
     </button>
-  </nav>
+  </div>
 ${d.games.map((g, i) =>
       panel(
         "starters",
@@ -906,7 +907,7 @@ ${d.games.map((g, i) =>
     "予告先発は試合の前日〜当日に公表される情報です。当サイトは1日1回の取得でこれを反映しており、" +
       "試合中の情報は取得していません。打順は試合前には分からないため、" +
       "「その投手と対戦したことがある相手球団の打者」を打席数の多い順に並べています。" +
-      "10打席未満は薄く表示しています。選手名を押すと、その投手との対戦成績を開いた状態でページが開きます。",
+      `10打席未満は名前に**${THIN_MARK}**を付け、薄く表示しています。選手名を押すと、その投手との対戦成績を開いた状態でページが開きます。`,
   )}
 </section>
 
@@ -1181,12 +1182,12 @@ export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): strin
     <!-- ⚠**이름을 여기 두지 않는다**(2026-08-18 감사 P3). 안쪽 tablist 가 같은 이름을 갖고 있어서
          낭독기가 「日にち ナビゲーション · 日にち タブリスト」처럼 두 번 말했다.
          이름은 **위젯 쪽**에 남긴다 — 조작하는 것이 그쪽이다. -->
-    <nav class="pickday">${tablist(
+    <div class="pickday">${tablist(
       "pickday",
       d.days.map((x) => ({ id: x.date, label: dayLabel(x.date) })),
       true,
       "日にち",
-    )}</nav>
+    )}</div>
     ${d.days.map((day, di) =>
       panel(
         "pickday",
@@ -1197,12 +1198,12 @@ export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): strin
         }${dayStateNote(day)}</p>
     <!-- ⚠**여기에 sticky를 걸지 않는다.** 바로 위의 pickbar가 이미 sticky라
          둘 다 붙으면 같은 자리를 두고 겹친다. 경기 고르기는 한 번 하고 끝나는 조작이다 -->
-    <nav class="pickgames" aria-label="試合">${tablist(
+    <div class="pickgames">${tablist(
           `pickgame-${day.date}`,
           day.games.map((g) => ({ id: g.key, label: `${g.sides[0].shortName} − ${g.sides[1].shortName}` })),
           true,
           "試合",
-        )}</nav>
+        )}</div>
     ${day.games.map((g, i) =>
           panel(
             `pickgame-${day.date}`,

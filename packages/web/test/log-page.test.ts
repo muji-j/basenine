@@ -12,7 +12,7 @@ import type { CoverageDay, LogPageData, RunRecord } from "../src/log-page.ts";
 import { context } from "./fixtures.ts";
 
 function day(over: Partial<CoverageDay> & { date: string }): CoverageDay {
-  return { scheduled: 6, played: 6, notPlayed: 0, withPa: 6, ...over };
+  return { scheduled: 6, played: 6, notPlayed: 0, withPa: 6, upcoming: 0, ...over };
 }
 
 function run(over: Partial<RunRecord> = {}): RunRecord {
@@ -61,6 +61,38 @@ test("⚠「試合なし」와「取り込めていない」를 다른 말로 �
   // 휴장일에는 경고 표시가 붙지 않는다 — 붙이면 경고가 소음이 된다
   const holiday = /2026年8月10日[\s\S]{0,200}?<\/tr>/.exec(out)?.[0] ?? "";
   assert.ok(!holiday.includes('class="l bad"'), "휴장일이 결함으로 칠해졌다");
+});
+
+test("⚠日程にはあるのに結果が入っていない日を「試合なし」と同じ顔にしない — 감사 ①", () => {
+  // context() 의 생성일은 2026-08-15 다
+  const out = renderLogPage(
+    data({
+      coverage: [
+        // 생성일 당일 — 아직 치르지 않았다. **경고가 아니다**
+        day({ date: "2026-08-15", scheduled: 0, played: 0, withPa: 0, upcoming: 6 }),
+        // 어제 — 일정에는 있는데 결과가 없다. **이것이 조용한 실패다**
+        day({ date: "2026-08-14", scheduled: 0, played: 0, withPa: 0, upcoming: 6 }),
+        // 휴장 — 일정에도 없다
+        day({ date: "2026-08-13", scheduled: 0, played: 0, withPa: 0, upcoming: 0 }),
+      ],
+    }),
+    context(),
+  );
+  // ⚠「[^]」로 쓴다 — 템플릿 리터럴 안에서는 역슬래시 이스케이프가 먼저 먹혀 [\s\S] 가 [sS] 가 된다
+  // ⚠**표의 칸에서 찾는다** — 구획 제목의 「2026年8月15日までの3日」이 먼저 걸린다
+  const rowOf = (d: string): string =>
+    new RegExp(`<td class="l">${d}</td>[^]{0,300}?</tr>`).exec(out)?.[0] ?? "";
+  const missing = rowOf("2026年8月14日");
+  assert.ok(missing.includes('class="l bad"'), "결과가 안 들어온 날이 경고로 안 보인다");
+  assert.match(missing, /未取得（予定6試合の結果が入っていません）/);
+
+  const today = rowOf("2026年8月15日");
+  assert.ok(!today.includes('class="l bad"'), "생성일 당일을 결함으로 칠했다");
+  assert.match(today, /6試合予定（結果はこれから）/);
+
+  const off = rowOf("2026年8月13日");
+  assert.ok(!off.includes('class="l bad"'), "휴장일이 결함으로 칠해졌다");
+  assert.match(off, /試合なし/);
 });
 
 test("실행 기록이 없는 것과 0건인 것을 구별해 말한다(M12)", () => {

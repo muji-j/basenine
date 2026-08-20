@@ -345,6 +345,27 @@ test("⚠옅게 그리는 근거와 「規定到達のみ」의 근거가 같다
   }
 });
 
+/**
+ * ⚠**「薄く」의 두 채널이 forced-colors 에서 함께 죽는다**(2026-08-20 감사 ③).
+ * 왼쪽 2px 막대는 `box-shadow` 라 `none` 이 되고, 글자색도 시스템 색으로 강제된다 —
+ * 그런데 이 표에는 `ranking.html` 의 順位 열 같은 제3의 채널이 없다.
+ * **글자 표식은 어떤 색 모드에서도 남는다.**
+ */
+test("⚠규정 미달 행이 글자 표식을 갖는다 — 색과 그림자는 forced-colors 에서 사라진다", () => {
+  const out = renderTeamPage(data(), context());
+  const thinRow = /<tr class="thin"[^]*?<\/tr>/.exec(out)?.[0] ?? "";
+  assert.ok(thinRow.length > 0, "규정 미달 행이 없다");
+  assert.match(thinRow, /class="qmk">†/, "글자 표식이 없다");
+  // ⚠**색으로만 전하지 않는다** — 낭독기에는 글자로 말한다
+  assert.match(thinRow, /規定未到達/);
+  // 규정에 닿은 행에는 붙지 않는다 — 붙으면 표식이 정보가 아니게 된다
+  const okRow = /<tr class=""[^]*?<\/tr>/.exec(out)?.[0] ?? "";
+  assert.ok(okRow.length > 0, "규정 도달 행이 없다");
+  assert.ok(!okRow.includes('class="qmk"'), "규정 도달 행에도 표식이 붙었다");
+  // 범례가 같은 글자를 쓴다 — 다르면 표에서 본 것을 설명에서 못 찾는다
+  assert.match(out, /名前に<b>†<\/b>を付け/);
+});
+
 test("월별 승패에 분모(경기 수)가 함께 나온다 — 「4월 14승」만으로는 몇 경기 중인지 모른다", () => {
   const out = renderTeamPage(data(), context());
   assert.match(out, /14-9-1<em>24試合<\/em>/);

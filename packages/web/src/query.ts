@@ -4046,7 +4046,23 @@ export interface SiteData {
  * ⚠**「치러졌는데 타석 로그가 없는 날」이 이 표의 존재 이유다.** 경기 수만 세면
  * 로그가 통째로 빠진 날을 정상으로 본다 — 그러면 스플릿과 SRC가 조용히 얇아진다.
  */
-function loadCoverage(db: Db, season: number, competition: string, limit: number): CoverageDay[] {
+/**
+ * 취득이 멈춘 뒤에도 표가 며칠까지 행을 만드는가.
+ *
+ * ⚠**무한히 늘리지 않는다.** 시즌이 끝난 뒤에 사이트를 만들면 `builtOn` 과 마지막 경기일이
+ * 몇 달 벌어져 「試合なし」만 수백 줄이 된다. 14일로 자르는 근거: 1일 1회 수집에서
+ * NPB 정규시즌의 정상 공백 중 가장 긴 것이 올스타 브레이크(약 4일)이고,
+ * 2주가 비었다면 그건 이 표가 아니라 **실행 기록 표**가 말해야 하는 종류의 사고다.
+ */
+const COVERAGE_EXTEND_DAYS = 14;
+
+function loadCoverage(
+  db: Db,
+  season: number,
+  competition: string,
+  limit: number,
+  builtOn: string,
+): CoverageDay[] {
   const rows = db.raw
     .prepare(
       `SELECT g.game_date AS date,
@@ -4062,9 +4078,34 @@ function loadCoverage(db: Db, season: number, competition: string, limit: number
        ORDER BY g.game_date DESC
        LIMIT ?`,
     )
-    .all(season, competition, limit) as unknown as CoverageDay[];
+    .all(season, competition, limit) as unknown as Omit<CoverageDay, "upcoming">[];
 
   if (rows.length === 0) return [];
+
+  /**
+   * **일정표에는 있는데 결과가 안 들어온 경기.** 이것이 「試合なし」와 「未取得」을 가른다.
+   *
+   * ⚠**이미 적재된 경기를 두 번 세지 않는다.** `upcoming_game` 은 월간 일정 페이지에서
+   * 매번 다시 만드는 파생 표라 보통은 적재와 동시에 빠지지만, 일정 페이지 스냅숏이
+   * 결과보다 오래됐으면 같은 경기가 양쪽에 남는다 — 그러면 「予定 7 · 実施 6」처럼
+   * **없는 경기를 하나 지어낸다.** 카드(날짜·홈·원정)로 맞춰 빼고 센다.
+   * ⚠`upcoming_game` 에는 대회 구분이 없다 — 월간 일정 페이지가 정규시즌 표이기 때문이다.
+   */
+  const upcomingRows = db.raw
+    .prepare(
+      `SELECT u.game_date AS date, COUNT(*) AS n
+       FROM upcoming_game u
+       WHERE u.season = ?
+         AND NOT EXISTS (
+           SELECT 1 FROM game g
+           WHERE g.season = u.season AND g.competition = ?
+             AND g.game_date = u.game_date
+             AND g.home_code = u.home_code AND g.away_code = u.away_code
+         )
+       GROUP BY u.game_date`,
+    )
+    .all(season, competition) as unknown as { date: string; n: number }[];
+  const upcomingBy = new Map(upcomingRows.map((r) => [r.date, r.n]));
 
   /**
    * ⚠**행이 없는 날짜를 표에서 지우면 구멍이 안 보인다.**
@@ -4073,14 +4114,25 @@ function loadCoverage(db: Db, season: number, competition: string, limit: number
    * 애초에 만들지 않는다. 그러면 8/11 다음이 8/9로 이어져 **8/10이 조용히 사라진다** —
    * 월요일 휴장인지 수집 누락인지 화면이 답하지 못하게 된다.
    * 달력의 모든 날을 채워 넣고, 일정이 0건이면 0건이라고 말한다.
+   *
+   * ⚠**시작점은 마지막 경기일이 아니라 생성일이다**(2026-08-20 감사 ①).
+   * 마지막 경기일에서 시작하면 **취득이 멈춘 뒤의 날은 행이 아예 안 생긴다** —
+   * 실측으로 최신 행 8/16 · 생성일 8/20 이라 8/17~8/19 가 표에서 사라져 있었다.
+   * ⚠**`builtOn` 은 주입된 값이다**(M6). 여기서 시계를 읽지 마라.
    */
   const newest = rows[0]!.date;
   const oldest = rows[rows.length - 1]!.date;
+  const newestT = Date.parse(`${newest}T00:00:00Z`);
+  const endT = Math.min(
+    Math.max(newestT, Date.parse(`${builtOn}T00:00:00Z`)),
+    newestT + COVERAGE_EXTEND_DAYS * 86_400_000,
+  );
   const byDate = new Map(rows.map((r) => [r.date, r]));
   const out: CoverageDay[] = [];
-  for (let t = Date.parse(`${newest}T00:00:00Z`); t >= Date.parse(`${oldest}T00:00:00Z`); t -= 86_400_000) {
+  for (let t = endT; t >= Date.parse(`${oldest}T00:00:00Z`); t -= 86_400_000) {
     const date = new Date(t).toISOString().slice(0, 10);
-    out.push(byDate.get(date) ?? { date, scheduled: 0, played: 0, notPlayed: 0, withPa: 0 });
+    const day = byDate.get(date) ?? { date, scheduled: 0, played: 0, notPlayed: 0, withPa: 0 };
+    out.push({ ...day, upcoming: upcomingBy.get(date) ?? 0 });
   }
   return out;
 }
@@ -4170,7 +4222,7 @@ export function loadLog(db: Db, o: LoadOptions & LogOptions): LogPageData {
 
   return {
     season: o.season,
-    coverage: loadCoverage(db, o.season, competition, COVERAGE_DAYS),
+    coverage: loadCoverage(db, o.season, competition, COVERAGE_DAYS, o.builtOn),
     quarantine,
     runs: o.runLogPath === undefined ? [] : readRunLog(o.runLogPath, RUN_LOG_ROWS),
     archive,

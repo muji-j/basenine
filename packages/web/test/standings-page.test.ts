@@ -84,9 +84,22 @@ const split = (): RankingPageData => data({ leagues: [league()] });
  * 「탭줄이 0개」라는 무의미한 통과/실패가 나온다(2026-08-16에 실제로 그랬다).
  */
 function railOf(out: string): string {
-  const at = out.indexOf('class="rail"');
+  const at = out.indexOf('<div class="rail"');
   assert.ok(at > 0, "조작 레일이 없다");
-  return out.slice(at, out.indexOf("</nav>", at));
+  /**
+   * ⚠**닫는 자리를 세어서 자른다.** 예전에는 첫 `</nav>` 로 잘랐는데, 레일이
+   * `<nav>` 를 그만두면서(2026-08-20 감사 ⑤ — 링크 0개인 랜드마크였다)
+   * 그 표식이 사라져 **푸터의 `</nav>` 까지 통째로 들어왔다.**
+   */
+  let depth = 0;
+  for (let i = at; i < out.length; i++) {
+    if (out.startsWith("<div", i) && /[\s>]/.test(out[i + 4] ?? "")) depth++;
+    else if (out.startsWith("</div>", i)) {
+      depth--;
+      if (depth === 0) return out.slice(at, i);
+    }
+  }
+  return assert.fail("레일이 닫히지 않았다");
 }
 
 test("팀 순위가 먼저 열린다 — 「順位」를 누른 사람이 먼저 찾는 것이다", () => {

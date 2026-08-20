@@ -15,7 +15,7 @@ import { byMetricOrder } from "./metric-order.ts";
 import { denUnit } from "./glossary.ts";
 import type { RawHtml } from "./html.ts";
 import { NO_VALUE, avg3, fullDate, innings, int } from "./format.ts";
-import { block, buttonGroup, columns, note, panel, scroller, tablist, term, valueWithDen } from "./parts.ts";
+import { block, buttonGroup, columns, note, panel, scroller, tablist, term, THIN_MARK, thinMark, valueWithDen } from "./parts.ts";
 import { sortAttr, stableTable } from "./table.ts";
 import type { SortColumn } from "./table.ts";
 import { page, ROSTER_PATH, TEAMS_PATH } from "./layout.ts";
@@ -346,8 +346,12 @@ function batterTable(rows: TeamBatter[], base: string, saber: boolean, qualifier
    * 화면마다 순서가 달라서 같은 지표를 매번 다른 자리에서 찾아야 했다.
    * ⚠**첫 열(選手)은 지표가 아니라 이름표다** — 정렬에서 빼고 늘 맨 앞에 둔다.
    */
+  /**
+   * ⚠**「薄く」를 글자로도 말한다**(2026-08-20 감사 ③). 색과 그림자는 forced-colors 에서
+   * 함께 사라지는데, 이 표에는 `ranking.html` 의 順位 열 같은 제3의 채널이 없다.
+   */
   const name = (r: TeamBatter): RawHtml =>
-    html`<td class="l"><a href="${base}players/${r.playerId}.html">${r.name}</a></td>`;
+    html`<td class="l"><a href="${base}players/${r.playerId}.html">${r.name}</a>${thinMark(!r.qualified, "規定未到達")}</td>`;
 
   const cols: Cell<TeamBatter>[] = orderCols(
     saber
@@ -414,7 +418,7 @@ function batterTable(rows: TeamBatter[], base: string, saber: boolean, qualifier
 function pitcherTable(rows: TeamPitcher[], base: string, saber: boolean, qualifier: string): RawHtml {
   if (rows.length === 0) return html`<p class="empty">投手の記録がありません。</p>`;
   const name = (r: TeamPitcher): RawHtml =>
-    html`<td class="l"><a href="${base}players/${r.playerId}.html">${r.name}</a></td>`;
+    html`<td class="l"><a href="${base}players/${r.playerId}.html">${r.name}</a>${thinMark(!r.qualified, "規定未到達")}</td>`;
 
   /**
    * ⚠**자릿수도 순위 화면과 맞춘다.** 여기만 1자리로 냈더니 같은 SRP 가
@@ -831,7 +835,7 @@ ${milestoneBlock(d.milestones, d.calendar.seasonOver)}
      고장으로 읽힌다. 그래서 対戦은 비면 「対戦成績がありません」이라고 **말한다**(M12).
      탭 안에 든 구획(月別·直近)은 예전처럼 자리를 비우는 쪽이 맞다 — 옆에 チーム成績이
      남아 있어 화면이 통째로 비지 않기 때문이다. -->
-<nav class="rail" aria-label="表示の切り替え">${tablist(
+<div class="rail">${tablist(
     TEAM_TABS,
     [
       { id: "sum", label: "成績" },
@@ -842,7 +846,7 @@ ${milestoneBlock(d.milestones, d.calendar.seasonOver)}
     ],
     true,
     "球団ページの表示",
-  )}</nav>
+  )}</div>
 
 ${panel(TEAM_TABS, "sum", true, html`<section class="block" id="b-teamsum">
   <h2>チーム成績<span class="qt">${d.games}試合</span></h2>
@@ -912,7 +916,7 @@ ${panel(TEAM_TABS, "bat", false, html`<section class="block" id="b-teambat">
     // 다르게 말하게 된다 — 숫자가 아니라 **무엇을 세었는지**를 적어서 맞춘다
     "この球団で出場した記録です — シーズン途中に移籍した選手も、この球団での分だけ含みます。" +
       "見出しを押すと並べ替わります（もう一度押すと逆順）。" +
-      `${d.batQualifier}に届いていない選手は薄く表示しています — 値は小さな標本のものです。`,
+      `${d.batQualifier}に届いていない選手は名前に**${THIN_MARK}**を付け、薄く表示しています — 値は小さな標本のものです。`,
   )}
 </section>`)}
 
@@ -928,7 +932,7 @@ ${panel(TEAM_TABS, "pit", false, html`<section class="block" id="b-teampit">
   ${note(
     "この球団で登板した記録です — シーズン途中に移籍した投手も、この球団での分だけ含みます。" +
       "見出しを押すと並べ替わります（もう一度押すと逆順）。" +
-      `${d.pitQualifier}。届いていない投手は薄く表示しています。`,
+      `${d.pitQualifier}。届いていない投手は名前に**${THIN_MARK}**を付け、薄く表示しています。`,
   )}
 </section>`)}
 

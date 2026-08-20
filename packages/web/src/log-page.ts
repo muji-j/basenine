@@ -30,6 +30,15 @@ export interface CoverageDay {
   notPlayed: number;
   /** 타석 로그가 들어온 경기 수. **치러졌는데 로그가 없으면 그것이 결함이다** */
   withPa: number;
+  /**
+   * **일정표에는 있는데 결과가 아직 안 들어온 경기 수**(`upcoming_game`).
+   *
+   * ⚠**이 칸이 「試合なし」와 「未取得」을 가른다.** 월요일 휴장은 일정표에도 없어 0 이고,
+   * 결과를 못 받은 날은 일정표에 그대로 남아 0 이 아니다 — 그 차이가 이 표의 존재 이유다.
+   * ⚠**0 과 결측을 섞지 않는다**(M11): 일정표를 아예 안 받은 날도 0 이 되므로,
+   * 「0 이면 휴장」이 아니라 「0 이면 일정표가 그 날을 말하지 않는다」가 정확한 뜻이다.
+   */
+  upcoming: number;
 }
 
 /** 배치 1회의 기록. `scripts/freshness.ts --json`이 남긴다 */
@@ -97,22 +106,40 @@ function jstStamp(iso: string): string {
  * ⚠**「일정 0건」과 「취득 실패」를 같은 칸에 그리지 않는다.** 월요일은 원래 경기가 없고,
  * 그날을 빨갛게 칠하면 경고가 소음이 된다. 반대로 **치러졌는데 타석 로그가 없는 날**은
  * 진짜 결함이므로 눈에 띄어야 한다.
+ *
+ * ⚠**「행이 안 생기는 날」이 가장 위험했다**(2026-08-20 감사 ①). 표가 적재된 경기에서만
+ * 행을 만들었기 때문에, **일정조차 못 받은 날은 표에서 통째로 사라졌다** —
+ * 실측으로 최신 행이 8/16 인데 같은 페이지가 생성일을 8/20 이라고 적고 있었다(8/17·18·19 가 없었다).
+ * 조용한 실패를 사람이 눈으로 찾으라고 만든 화면이 **바로 그 조용한 실패를 못 보여줬다.**
+ * → 지금은 `builtOn` 부터 달력일로 역산해 행을 만들고, 결과가 안 들어온 날을 `.bad` 로 말한다.
+ * ⚠**`builtOn` 은 주입된 값이다**(M6) — 여기서 `new Date()` 를 부르지 마라.
  */
-function coverageTable(days: readonly CoverageDay[]): RawHtml {
+function coverageTable(days: readonly CoverageDay[], builtOn: string): RawHtml {
   if (days.length === 0) return html`<p class="empty">まだ試合が入っていません。</p>`;
   return html`${scroller(html`<table>
     <thead><tr><th class="l">試合日</th><th>予定</th><th>実施</th><th>中止</th><th>打席ログ</th><th class="l">状態</th></tr></thead>
     <tbody>${days.map((d) => {
       const missing = d.played - d.withPa;
+      /**
+       * ⚠**생성일 당일만 「これから」다.** 그 앞날은 1일 1회 수집이 이미 지나간 날이므로
+       * 결과가 없으면 그것은 예정이 아니라 **결함**이다. 반대로 당일을 빨갛게 칠하면
+       * 매일 아침 정상인 화면이 경고를 띄운다 — 그러면 아무도 이 표를 안 본다.
+       */
       const state =
         d.scheduled === 0
-          ? { cls: "", text: "試合なし" }
+          ? d.upcoming === 0
+            ? { cls: "", text: "試合なし" }
+            : d.date === builtOn
+              ? { cls: "", text: `${d.upcoming}試合予定（結果はこれから）` }
+              : { cls: "bad", text: `未取得（予定${d.upcoming}試合の結果が入っていません）` }
           : missing > 0
             ? { cls: "bad", text: `打席ログ${missing}試合ぶん未取得` }
-            : { cls: "ok", text: "取得済み" };
+            : d.upcoming > 0 && d.date !== builtOn
+              ? { cls: "bad", text: `${d.upcoming}試合ぶん未取得` }
+              : { cls: "ok", text: "取得済み" };
       return html`<tr>
         <td class="l">${fullDate(d.date)}</td>
-        <td>${d.scheduled}</td>
+        <td>${d.scheduled + d.upcoming}</td>
         <td>${d.played}</td>
         <td>${d.notPlayed === 0 ? "—" : d.notPlayed}</td>
         <td>${d.withPa}</td>
@@ -122,7 +149,9 @@ function coverageTable(days: readonly CoverageDay[]): RawHtml {
   </table>`)}
   ${note(
     "「中止」は雨天などで試合そのものが行われなかった日です。記録がないのではなく、記録すべき試合がありません。" +
-      "⚠「試合なし」と「取り込めていない」は別ものです — 前者は日程どおり、後者は不具合です。",
+      "⚠「試合なし」と「取り込めていない」は別ものです — 前者は日程どおり、後者は不具合です。" +
+      "この表は生成日から日付をさかのぼって並べるので、**取り込みが止まった日にも行ができます**。" +
+      "「未取得」は月間日程にはあるのに結果が入っていない日で、「試合なし」は日程にもない日です。",
   )}`;
 }
 
@@ -228,9 +257,11 @@ export function renderLogPage(d: LogPageData, ctx: RenderContext): string {
 
 ${block({
     id: "coverage",
+    // ⚠**세는 단위를 말한다**(작업규칙 7). 이 표의 행은 「경기가 있던 날」이 아니라
+    // **생성일까지의 달력일**이다 — 그렇지 않으면 빠진 날이 표에서 사라진다
     title: "試合日ごとの取り込み",
-    qualifier: `直近${d.coverage.length}日`,
-    body: coverageTable(d.coverage),
+    qualifier: `${fullDate(ctx.freshness.builtOn)}までの${d.coverage.length}日`,
+    body: coverageTable(d.coverage, ctx.freshness.builtOn),
   })}
 
 ${block({

@@ -785,7 +785,7 @@ function markPanel(who: MarkPlayer, axes: readonly ProfileAxis[], sampleText: st
 
 function rail(d: PlayerPageData): RawHtml {
   const presets = presetsFor(d.role);
-  return html`<nav class="rail" aria-label="表示の切り替え">
+  return html`<div class="rail" role="group" aria-label="表示の切り替え">
   <span class="lbl">構成</span>
   ${presets.map(
     (p) => html`<button class="tab" type="button" data-preset="${p.id}" aria-pressed="${p.id === "standard" ? "true" : "false"}">${p.name}</button>`,
@@ -795,7 +795,7 @@ function rail(d: PlayerPageData): RawHtml {
   <span class="lbl">密度</span>
   <button class="tab" type="button" data-density="normal" aria-pressed="true">標準</button>
   <button class="tab" type="button" data-density="compact" aria-pressed="false">高密度</button>
-</nav>
+</div>
 ${gradeLegend(
     d.role === "pitcher" ? (d.pitching?.role ?? "starter") : "batter",
   )}`;

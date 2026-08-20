@@ -430,6 +430,16 @@ dt{font-size:10.5px;color:var(--tx-2);letter-spacing:.12em;padding:4px 10px 4px 
 dd{margin:0;text-align:right;font-family:var(--f-num);font-variant-numeric:tabular-nums;font-size:14px;
   padding:4px 0;border-bottom:1px solid var(--hair)}
 .den{font-family:var(--f-num);font-size:10px;color:var(--tx-3);margin-left:5px}
+/* ⚠**등급 틴트 위에서 분모가 AA 미달이었다**(2026-08-20 감사 ④ · 다크).
+   픽셀 합성 실측: --g-vgood-bg rgba(95,168,221,.10) over --panel #1c1e23 = rgb(35,44,54) 이고
+   그 위의 --tx-3(#8f8e87 · 10px)가 **4.31:1**, --g-vbad-bg 쪽이 **4.34:1** 이었다(본문 4.5:1 미달).
+   라이트는 통과한다(4.65:1). 실물은 starters.html 의 「125回」·「65.1回」다.
+   ⚠**이 파일은 바로 위에서 「분모에 opacity 를 얹지 않는다」고 적어 두고,
+   등급 배경 틴트로 같은 결과를 만들고 있었다** — 채널만 바뀐 같은 잘못이다.
+   ⚠**틴트를 옅게 하는 쪽이 아니라 글자를 올리는 쪽으로 고친다.** 틴트는 「아주 좋음/나쁨」을
+   나르는 신호이고, 분모는 M2 가 요구하는 정보다 — 지워야 할 것은 어느 쪽도 아니다.
+   --tx-2 는 같은 합성 배경에서 6.3:1 이고, 값(14px --tx)보다 작고 흐리다는 위계는 그대로다. */
+dd.g-veryGood .den,dd.g-veryBad .den{color:var(--tx-2)}
 
 /* 보이지 않는 글자 — 색으로만 전하지 않기 위한 것이다. 지우지 마라 */
 .vh{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
@@ -601,7 +611,16 @@ tr.me:hover td{background:var(--team,#6b7280)}
    **M2가 요구하는 바로 그 정보가 화면에서 가장 안 읽혔다.** 구단 페이지는 표의 86%가 그 색이다.
    토큰 명도를 올리고(색상환은 그대로라 인쇄물의 질감은 남는다), 얇음은 **다른 채널**로 말한다 */
 tr.thin td{color:var(--tx-2)}
-tr.thin td:first-child{box-shadow:inset 2px 0 0 var(--hair-2)}
+/* ⚠**막대가 안 보이는 굵기였다**(2026-08-20 감사 ③). --hair-2 대 --page 가
+   **라이트 1.51:1 · 다크 1.69:1** 로 비텍스트 3:1 에 한참 못 미쳤다 —
+   즉 「薄く表示しています」라는 범례가 자기 화면에 대해 거짓이었다.
+   --tx-3 은 --page 기준 4.9:1 이라 통과한다(막대는 장식이 아니라 표식이다).
+   ⚠**그래도 이 채널만으로는 부족하다** — forced-colors: active 에서 box-shadow 는 none 이 되고
+   color 도 시스템 색으로 강제되어 **두 채널이 함께 죽는다.** 그래서 이름 옆에 글자 표식(.qmk)을 둔다.
+   구단 페이지 타자표에는 ranking.html 의 順位 열 같은 제3의 채널이 없다. */
+tr.thin td:first-child{box-shadow:inset 2px 0 0 var(--tx-3)}
+/* 「薄く」의 글자 표식 — **어떤 색 모드에서도 남는다.** 범례가 같은 글자를 쓴다 */
+.qmk{font-style:normal;font-size:11px;color:var(--tx-2);margin-left:4px}
 /* 구단 색 칩 — **모든 표가 같은 한 벌을 쓴다**(M1의 정신).
    ⚠**셀을 flex 컨테이너로 만들지 않는다.** td{display:flex} 는 그 칸을 테이블 셀 박스에서
    빼내어, **그 열만 아래 경계선이 다른 열과 어긋난다**(2026-08-16 실측: 순위표 球団 열).
@@ -842,15 +861,23 @@ td.bad{color:var(--warn);font-weight:700}
 .hstand tr.lead .hrank{color:var(--tx)}
 .hstand tbody tr:hover td{background:var(--panel)}
 
-/* 그 날의 결과 — 한 줄에 「팀 점수 - 점수 팀」. 표로 만들면 두 줄이 되어 밀도가 떨어진다 */
+/* 그 날의 결과 — 한 줄에 「팀 점수-점수 ＠팀」. 표로 만들면 두 줄이 되어 밀도가 떨어진다.
+   ⚠**간격이 뜻과 반대로 묶여 있었다**(2026-08-20 감사 ②). .hg-t 에 flex:1 1 0 이 붙어
+   양쪽 팀명을 셀 **바깥쪽**으로 밀어붙였기 때문에, 실측(1280px · 텍스트 잉크 기준)으로
+   경기 **내부** 간격이 6~71px(중앙값 32) 인데 경기 **사이**가 **18px** 이었다 —
+   즉 「オリックス」와 다음 경기의 「阪神」이 자기 점수보다 가까웠다.
+   ⚠**칸을 내용에 맞춘다.** auto 3칸 + justify-content:start 면 한 경기가 왼쪽에 뭉치고,
+   남는 폭이 그대로 경기 사이의 간격이 된다. 마지막 칸만 minmax(0,auto) 로 둬서
+   긴 팀명(ソフトバンク)이 셀을 넘겨 가로 스크롤을 만들지 않게 한다.
+   ⚠**괘선은 여전히 칸 전체를 가로지른다** — li 는 여전히 1fr 폭을 갖는 격자 항목이다 */
 .hgames{list-style:none;margin:0;padding:0;display:grid;
-  grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:2px 18px}
-.hgames li{display:flex;align-items:baseline;gap:6px;padding:4px 0;
+  grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:2px 22px}
+.hgames li{display:grid;grid-template-columns:auto auto minmax(0,auto);justify-content:start;
+  align-items:baseline;gap:0 7px;padding:4px 0;
   border-bottom:1px solid var(--hair);font-variant-numeric:tabular-nums}
-.hgames .hg-t{font-size:12px;color:var(--tx-2);flex:1 1 0;min-width:0}
-.hgames li .hg-t:last-child{text-align:right}
-.hgames b{font-size:15px;font-weight:700}
-.hgames s{text-decoration:none;color:var(--tx-3);font-size:11px}
+.hgames .hg-t{font-size:12px;color:var(--tx-2);min-width:0}
+.hgames .hg-s{font-size:15px;font-weight:700;white-space:nowrap}
+.hgames .hg-s s{text-decoration:none;color:var(--tx-3);font-size:11px;font-weight:400;margin:0 1px}
 .more{margin:8px 0 0;font-size:11.5px}
 
 /* ── 일정 캘린더 ────────────────────────────────────────────────
@@ -1276,6 +1303,12 @@ table.stand .dif i.n{right:50%}
 .gscore{display:flex;flex-direction:column;gap:1px}
 .gside{display:flex;align-items:baseline;gap:8px;padding:3px 0}
 .gside .gt{display:flex;align-items:center;gap:6px;font-size:13.5px;color:var(--tx-2)}
+/* ⚠**어느 쪽이 홈인지가 카드에 없었다**(2026-08-20 감사 ②). 홈 화면의 「＠팀」과 같은 어법이다(M1).
+   ⚠**자리는 두 줄 다 비워 둔다** — 글자를 한쪽에만 붙이면 팀명 시작선이 어긋난다.
+   ⚠생성 콘텐츠는 낭독되지 않을 수 있어 마크업에 .vh 로 「ホーム／ビジター」를 함께 둔다 */
+.gside .gt::before{content:"";flex:none;width:.9em;text-align:center;
+  font-size:10.5px;color:var(--tx-3)}
+.gside.h .gt::before{content:"＠"}
 .gside .gt i{width:9px;height:9px;background:var(--chip,#6b7280);font-style:normal;flex:none}
 /* ⚠이긴 쪽은 **굵기와 크기**로 표시한다. 색만 쓰면 색각 특성에 따라 구별되지 않는다 */
 .gside.w .gt{color:var(--tx);font-weight:700}
@@ -1684,6 +1717,28 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
   .bar em{text-align:left}
   .roster{grid-template-columns:1fr}
   th,td{padding:6px 7px}
+}
+/* ⚠**가장 작은 흔한 폰에서 첫 화면에 수치가 0개였다**(2026-08-20 감사 ⑥).
+   이 제품의 가치 명제가 밀도인데 320×568 에서 그렇다는 것은 명제가 화면에서 무너진 것이다.
+   실측(320×568 · 손가락): 고정 머리가 **topbar 96 + 시즌 띠 37.6 + 상태 띠 52.2 = 185.8px = 화면의 33%**
+   이고, 그 아래에 화면마다 표제(index 91 · 선수 228.6)가 더 얹혀
+   첫 수치가 index 368.9px(65%) · 順位 410.5(72%) · 予告先発 534.3(94%) · 選手 556.3(98%) ·
+   試合 600.6(106% — 접힘선 아래)에 있었다.
+   ⚠**여기서 줄이는 것은 「머리의 군살」뿐이다.** 검색칸을 접거나 시즌 띠를 아래로 옮기는 것은
+   조작 설계를 바꾸는 결정이라 이 라운드에서 하지 않았다 — 남은 거리는 보고서에 수치로 남긴다.
+   ⚠**--topbar 는 건드리지 않는다.** 그 토큰은 다섯 곳이 읽고, 폭 구간마다 실측으로 정해져 있다
+   (topbar-geometry.test.ts). 여기서 바꾸면 그 계약을 다시 재야 한다. */
+@media (max-width:480px){
+  /* 표제 — 이 화면에서 읽을 것은 이름이지 여백이 아니다 */
+  .idline{padding:9px var(--pad) 8px;gap:9px}
+  .idline .nm{font-size:clamp(19px,5.5vw,26px)}
+  /* 상태 띠는 **줄이되 지우지 않는다** — 여기 뜨는 것은 「수집이 멈췄다」는 경고다(M12) */
+  .state{padding:5px var(--pad);line-height:1.4}
+  /* 시즌 띠 — 9시즌이 늘 넘치므로 칩만 얇게 한다. 스크롤바는 남긴다(더 있다는 유일한 신호다) */
+  .seasons{padding:3px var(--pad)}
+  .seasons a{font-size:11.5px;padding:2px 9px}
+  /* 화면 안 이동 줄 — 칩 높이는 손가락 규칙이 정하므로 상자 여백만 줄인다 */
+  .hjump{padding:5px var(--pad);margin-bottom:8px}
 }
 /* ⚠**≤480 에 있던 헤더 접기를 ≤680 으로 올렸다**(2026-08-20).
    접는 이유(「한 줄에 브랜드·검색·내비·테마가 다 안 들어간다」)는 480 이 아니라 **680 부터** 참이었다 —

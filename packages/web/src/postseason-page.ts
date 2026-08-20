@@ -267,9 +267,9 @@ ${many
      * 이 화면을 탭으로 나눈 이유를 반만 이루게 된다.
      * ⚠`scroll` 은 끄고 `.rail` 의 가로 스크롤에 맡긴다 — 둘 다 켜면 스크롤 상자가 이중이 된다.
      */
-    ? html`<nav class="rail" aria-label="大会の表示">
+    ? html`<div class="rail">
   ${tablist(TAB_GROUP, d.competitions.map((c) => ({ id: c.id, label: c.name })), false, "大会の切り替え")}
-</nav>`
+</div>`
     : raw("")}
 
 ${d.competitions.length === 0

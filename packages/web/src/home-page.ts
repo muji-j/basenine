@@ -382,14 +382,19 @@ ${jumpNav(d)}
 ${d.latest === null
     ? raw("")
     : html`<section class="block" id="b-hlatest">
-  <h2>${fullDate(d.latest.date)}の結果<span class="qt">${d.latest.games.length}試合</span></h2>
+  <h2>${fullDate(d.latest.date)}の結果<span class="qt">${d.latest.games.length}試合 · ＠がホーム</span></h2>
+  ${/* ⚠**홈·원정이 화면 어디에도 없었다**(2026-08-20 감사 ②). 팀 이름 둘과 점수만 있어서
+       구장 이름으로 추측하는 수밖에 없었다.
+       ⚠**표식은 구단 페이지와 같은 어법을 쓴다**(M1) — 「＠팀」은 그 팀의 본거지에서 했다는 뜻이고,
+       `.trecent` 가 이미 같은 글자를 쓴다. 새 어휘를 만들면 두 화면이 다른 말을 하게 된다.
+       ⚠**한 줄에 세 칸이다.** 예전에는 다섯 요소를 flex 로 늘어놓고 팀명에 flex:1 1 0 을 줘서
+       팀명이 셀 **바깥쪽**으로 밀려 있었다 — 실측 1280px 잉크 기준으로 경기 **내부**가 최대 71px,
+       경기 **사이**가 18px 이라 **간격이 뜻과 반대로 묶였다.** 점수에 이름을 붙인다. */ ""}
   <ul class="hgames">${d.latest.games.map(
       (g) => html`<li>
     <span class="hg-t">${g.away}</span>
-    <b>${g.awayRuns === null ? NO_VALUE : g.awayRuns}</b>
-    <s>-</s>
-    <b>${g.homeRuns === null ? NO_VALUE : g.homeRuns}</b>
-    <span class="hg-t">${g.home}</span>
+    <b class="hg-s">${g.awayRuns === null ? NO_VALUE : g.awayRuns}<s>-</s>${g.homeRuns === null ? NO_VALUE : g.homeRuns}</b>
+    <span class="hg-t">＠${g.home}</span>
   </li>`,
     )}</ul>
   <p class="more"><a href="${dayHref(base, d.latest.date, d.latestDate)}">この日の詳細</a></p>
