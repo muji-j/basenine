@@ -1353,7 +1353,19 @@ table.stand .dif i.n{right:50%}
    화면은 그 사실에 맞춰 만든다 — 없는 칸을 흉내 내지 않는다. */
 .gcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(258px,1fr));gap:12px}
 .gcard{border:1px solid var(--hair-2);padding:11px 12px 10px;min-width:0}
-.gcard.off{opacity:.62}
+/* ⚠**opacity 로 「열리지 않았다」를 말하지 않는다** — .daystep.off 가
+   같은 이유로 이미 고쳐진 자리다(아래). **이것이 그 청소에서 살아남은 마지막 한 건**이었다.
+   실측(2026-08-21 다방면 감사 · 독립 구현 2벌로 재계산): opacity:.62 를 얹으면
+   카드 안 글자가 **바탕을 어느 쪽으로 잡아도 12/12 FAIL** 이다 —
+   .gvenue 2.42–2.88 · .gt 2.74–3.54 · .gnone 2.42–2.88 (기준 4.5).
+   글자 크기가 10.5/11.5/13.5px · weight 400 이라 **대문자 예외도 없다.**
+   opacity 를 벗기면 4.91–7.23 로 전부 통과한다 — 원인은 토큰이 아니라 **그 한 줄**이었다.
+   ⚠**중지 경기에는 승자가 없어 .gside.w 가 0개**다 — 「이긴 팀은 굵어서 통과」가 아니라
+   **카드 안 모든 글자**가 미달이었다. 실측 범위: **208/15,340장 · 284카드**.
+   ⚠**「中止」는 오히려 올린다** — 흐린 카드만이 가진 정보가 「어느 경기인가」·「왜 안 했는가」다. */
+.gcard.off{border-style:dashed}
+.gcard.off .gvenue,.gcard.off .gt,.gcard.off .gr{color:var(--tx-2)}
+.gcard.off .gnone{color:var(--tx);font-weight:600}
 .gvenue{margin:0 0 8px;font-size:10.5px;letter-spacing:.12em;color:var(--tx-3);font-weight:400;
   display:flex;align-items:baseline;gap:7px}
 .gtie{margin-left:auto;color:var(--tx-2);letter-spacing:.04em}
@@ -1382,7 +1394,14 @@ table.stand .dif i.n{right:50%}
 .gstars{list-style:none;margin:9px 0 0;padding:8px 0 0;border-top:1px solid var(--hair);
   display:flex;flex-direction:column;gap:4px}
 .gstars li{display:flex;align-items:baseline;gap:6px;font-size:12px;min-width:0}
-.gstars li i{width:3px;align-self:stretch;background:var(--chip,#6b7280);font-style:normal;flex:none}
+/* ⚠**유일한 구단 표시가 폭 3px 색 막대였다**(2026-08-21 감사 확정 P1).
+   구단색과 --panel 의 대비가 **다크 8/12 · 라이트 4/12** 구단에서 3:1 미달이라
+   그 막대가 그냥 사라졌다(배포물 1,431장 · 21,812행).
+   ⚠**같은 파일이 두 곳에서 이미 쓰던 방식**이다 — 색이 아니라 **윤곽**이 보이게 한다.
+   ⚠윤곽을 둘러도 **색각 특성에서 두 구단색이 가까운 쪽(감사 실측 883/21,812 행)은 안 풀린다** —
+   그건 마크업 쪽의 낭독용 구단명이 받는다. */
+.gstars li i{width:3px;align-self:stretch;background:var(--chip,#6b7280);font-style:normal;flex:none;
+  box-shadow:inset 0 0 0 1px var(--tx-2);position:relative}
 .gstars a{text-decoration:none;font-weight:700;white-space:nowrap}
 .gstars a:hover{text-decoration:underline}
 .gsl{color:var(--tx-2);font-variant-numeric:tabular-nums;font-size:11.5px}

@@ -307,12 +307,26 @@ const SPLIT_AXES: readonly { id: SplitAxisId; dimension: SplitDimension; label: 
  */
 export const VENUE_MIN_PA = 10;
 
+/**
+ * ⚠**「走者あり」라고 적어 있었다. 그게 아니었다**(2026-08-21 다방면 감사 확정 P1).
+ *
+ * 이 축의 세 칸은 **서로 배타적인 분할**이다(`splits.ts` 의 CASE):
+ *   `empty` = 주자 없음 · `scoring` = 2루 또는 3루 · `onBase` = **그 밖 = 1루만**.
+ * 그런데 세 번째를 「走者あり」라고 부르면 **부분집합이 전체보다 큰 분모**를 갖게 된다 —
+ * 한 화면에 「走者あり 86打席」과 「得点圏 86打席」이 나란히 서고, 리그 전체로도
+ * 得点圏(143,327) > 「走者あり」(102,437) 로 **뒤집힌다.**
+ * 실측: 배포물 중 得点圏 > 「走者あり」 인 페이지 **4,152장** · 이 축을 그리는 페이지 5,668장.
+ *
+ * ⚠**값도 분모도 맞았다** — 틀린 것은 **이름**뿐이라 타입도 린트도 M2 도 못 잡았다.
+ * ⚠**정답 이름을 이 저장소가 이미 가지고 있었다** — `game-page.ts` 의 `BASE_LABEL` 이
+ * `bases === "1"` 을 「一塁」로 부른다. 한 제품 안에 같은 데이터의 두 이름이 있었다(M1).
+ */
 const SPLIT_KEY_LABEL: Readonly<Record<string, string>> = {
   left: "対左投手",
   right: "対右投手",
   both: "対両投手",
   empty: "走者なし",
-  onBase: "走者あり",
+  onBase: "一塁のみ",
   scoring: "得点圏",
   home: "本拠地",
   away: "ビジター",
@@ -329,7 +343,8 @@ const PITCHER_SPLIT_KEY_LABEL: Readonly<Record<string, string>> = {
   right: "対右打者",
   both: "対両打者",
   empty: "走者なし",
-  onBase: "走者あり",
+  // ⚠위와 **같은 이유**로 「走者あり」가 아니다. 두 표를 같이 고친다(갈라지면 화면마다 다른 말을 한다)
+  onBase: "一塁のみ",
   scoring: "得点圏",
   home: "本拠地",
   away: "ビジター",
@@ -341,7 +356,7 @@ function monthLabel(key: string): string {
   return m === null ? key : `${Number(m[1])}月`;
 }
 
-function splitLabel(axis: SplitAxisId, key: string, allowed: boolean): string {
+export function splitLabel(axis: SplitAxisId, key: string, allowed: boolean): string {
   if (axis === "month") return monthLabel(key);
   // 구장명은 이미 사람이 읽는 이름이다(파서가 다듬었다) — 표를 다시 만들지 않는다
   if (axis === "venue") return key;

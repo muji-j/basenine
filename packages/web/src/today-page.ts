@@ -290,7 +290,10 @@ function gameCard(g: TodayGame, base: string): RawHtml {
     ? raw("")
     : html`<ul class="gstars">${g.stars.map(
         (s) => html`<li style="--chip:${g.away.teamCode === s.teamCode ? g.away.color.base : g.home.color.base}">
-      <i></i><a href="${base}players/${s.playerId}.html">${who(s.name, s.teamCode, ambiguous)}</a>
+      <!-- ⚠**막대가 유일한 구단 표시였다**(2026-08-21 감사 P1) — 낭독 화면엔 아무것도 안 들렸다.
+           색 밖의 채널을 하나 더 둔다. 보이는 글자로 두면 이 조밀한 줄이 길어지므로,
+           보이는 쪽은 CSS 윤곽(assets.ts .gstars li i)이 맡고 여기는 낭독을 맡는다. -->
+      <i><span class="vh">${shortNameOf(s.teamCode)}</span></i><a href="${base}players/${s.playerId}.html">${who(s.name, s.teamCode, ambiguous)}</a>
       <span class="gsl">${starText(s)}</span>
       ${s.decision === null ? null : html`<em class="gsd">${DECISION_LABEL[s.decision] ?? s.decision}</em>`}
     </li>`,

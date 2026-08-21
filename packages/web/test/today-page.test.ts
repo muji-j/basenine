@@ -12,6 +12,7 @@ import { ambiguousNames, renderTodayPage } from "../src/today-page.ts";
 import type { TodayGame, TodayPageData, TodayStar } from "../src/today-page.ts";
 import { colorOf } from "@bb-app/domain";
 import { context } from "./fixtures.ts";
+import { CSS } from "../src/assets.ts";
 
 function side(teamCode: string, shortName: string, runs: number | null, hits: number | null, errors: number | null) {
   return { teamCode, shortName, name: `${shortName}チーム`, color: colorOf(teamCode), runs, hits, errors };
@@ -369,4 +370,36 @@ test("경기가 없던 날의 카드에서도 구단명이 링크다 — 상세 
   );
   assert.match(out, /<a href="[^"]*teams\/m\.html">ロッテ<\/a>/, "중지 경기 카드의 원정 구단명이 링크가 아니다");
   assert.match(out, /<a href="[^"]*teams\/l\.html">西武<\/a>/, "중지 경기 카드의 홈 구단명이 링크가 아니다");
+});
+
+/**
+ * ⚠**殊勲선수 행의 소속이 「폭 3px 구단색 막대」 하나로만 표시도다**(2026-08-21 감사 확정 P1).
+ * 그 막대의 `<i></i>` 는 배포물 **21,812/21,812 행**이 내용·aria-label·title 이 전무해서,
+ * 낭독 화면에는 소속이 **아예 안 전달된다**(勝/敗/S/H 배지 4,475행을 인정해도 17,307행).
+ * 동시에 막대 색과 패널의 대비가 3:1 미달이라(다크 8/12 · 라이트 4/12 구단) **보이지도 않는다.**
+ *
+ * ⚠**둘은 다른 결함이다** — 색을 고쳐도 낭독은 그대로고, 낭독을 고쳐도 저시력은 그대로다.
+ * 그래서 둘 다 건드린다.
+ */
+test("⚠殊勲선수 행의 소속이 색 밖의 채널로도 전달된다", () => {
+  const out = renderTodayPage(data(), context());
+  const li = /<li style="--chip:[^"]*">([\s\S]*?)<\/li>/.exec(out);
+  assert.notEqual(li, null, "殊勲선수 행이 아예 안 그려졌다 — 이 시험이 공회전한다");
+  assert.ok(
+    !/<i><\/i>/.test(li![1]!),
+    "구단 막대가 빈 <i></i> 다 — 낭독 화면에 소속이 전혀지지 않는다",
+  );
+  // 그 선수의 소속은 서부(l) 다 — 상대 구단(ロッテ) 이 아니어야 한다
+  assert.match(li![1]!, /西武/, "막대가 어느 구단인지 말하지 않는다");
+});
+
+test("⚠구단색 막대가 배경과 같은 색일 때도 보인다 — 윤곽을 둔다", () => {
+  // 이 시험은 CSS 쪽을 본다. 구단 색은 12개라 색만으로는 어느 테마에서든 미달이 나온다.
+  const rule = /\.gstars li i\{([^}]*)\}/.exec(CSS);
+  assert.notEqual(rule, null, ".gstars li i 규칙이 사라졌다 — 이 시험이 공회전한다");
+  assert.match(
+    rule![1]!,
+    /box-shadow:\s*inset 0 0 0 1px var\(--tx-2\)/,
+    "구단색 막대에 윤곽이 없다 — 같은 파일이 다른 두 곳에서는 쓰는 방식이다",
+  );
 });
