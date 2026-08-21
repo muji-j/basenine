@@ -21,6 +21,7 @@ import { renderTeamPage, teamPath } from "./team-page.ts";
 import { renderTeamsPage } from "./teams-page.ts";
 import { gameSlug, renderGamePage } from "./game-page.ts";
 import { renderLogPage } from "./log-page.ts";
+import { GLOSSARY_PATH, renderGlossaryPage } from "./glossary-page.ts";
 import type { LogPageData } from "./log-page.ts";
 import { ROSTER_PATH, TEAMS_PATH, freshness, isStale, pathsFor } from "./layout.ts";
 import type { RenderContext, SeasonPlan, SiteMeta } from "./layout.ts";
@@ -173,6 +174,13 @@ export function buildSite(
           { path: "assets/site.js", content: CLIENT_JS },
           { path: "assets/icon.svg", content: ICON_SVG },
           { path: "_headers", content: HEADERS },
+          /**
+           * ⚠**용어집은 시즌마다 만들지 않는다.** 용어는 시즌에 매이지 않고,
+           * 시즌마다 만들면 같은 글이 9번 올라가며 한쪽만 갱신되는 날 **시즌에 따라 설명이 달라진다.**
+           * `log.html` 이 같은 이유로 루트 전용이고, 링크는 `root` 로 간다(layout.ts 푸터).
+           * ⚠Pages 파일 수는 **+1장**이다 — 시즌마다 만들었으면 +9장이었다.
+           */
+          { path: GLOSSARY_PATH, content: renderGlossaryPage(ctx) },
         ]
       : []),
     { path: at("today.html"), content: renderTodayPage(data.today, ctx) },

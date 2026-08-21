@@ -719,6 +719,19 @@ th[aria-sort="descending"] .sortable i::before{content:"↓"}
 @media (pointer:coarse){.mfind select,.mfind input{padding:8px}}
 
 .note{font-size:11px;color:var(--tx-3);margin:9px 0 0;max-width:64ch}
+/* 用語集 — 지표 설명 한 장.
+   ⚠**카드 그리드로 만들지 않는다**(§6 「AI 틱함」 금지 목록). 이건 읽는 글이지 훑는 목록이라
+   한 줄씩 쌓고 왼쪽에 가는 선으로 단을 만든다 — 목차를 따로 두지 않고도 경계가 보인다.
+   ⚠**글 폭을 제한한다** — caveat 가 4문장짜리도 있어서 넓은 화면에서 한 줄이 너무 길어진다. */
+.glist{display:flex;flex-direction:column;gap:14px;margin-top:4px}
+.gl{padding-left:11px;border-left:2px solid var(--hair-2);max-width:72ch;scroll-margin-top:64px}
+.gl:target{border-left-color:var(--tx)}
+.gln{margin:0;font-size:14px;letter-spacing:.02em}
+.gls{margin:3px 0 0;font-size:12.5px;color:var(--tx-2)}
+.glh{margin:5px 0 0;font-size:11.5px;color:var(--tx-2);font-variant-numeric:tabular-nums}
+.glh b{font-weight:700;margin-right:6px;letter-spacing:.06em;font-size:10.5px;color:var(--tx-3)}
+.glh s{text-decoration:none;margin-left:8px;color:var(--tx-3);font-size:10.5px}
+.glc{margin:5px 0 0;font-size:11.5px;color:var(--tx-2);padding-left:7px;box-shadow:inset 2px 0 0 var(--warn)}
 .empty{font-size:12px;color:var(--tx-3);padding:6px 0}
 
 /* ── 予告先発 ────────────────────────────────────────────── */

@@ -454,8 +454,10 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
   }
 
   // 타석 이벤트: playbyplay의 문맥에 박스의 **검증된** 결과를 붙인다.
+  // ⚠**아래 주자 사건 적재가 `aligned.seqOf` 를 쓴다** — 그래서 밖으로 끌어냈다.
+  let aligned: ReturnType<typeof alignPaEvents> | undefined;
   if (pbpEvents !== null) {
-    const aligned = alignPaEvents(meta.gameId, box, pbpEvents, runsForCompleted);
+    aligned = alignPaEvents(meta.gameId, box, pbpEvents, runsForCompleted);
     budget.paEvents += replacePaEvents(db, meta.gameId, aligned.events);
     quarantine.push(...aligned.quarantine, ...runsQuarantine);
   }
@@ -472,10 +474,32 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
    * `pa_event` 는 원래부터 이 보호가 있었다 — 두 표의 취급이 갈려 있던 것이 결함이다.
    */
   if (pbpEvents !== null) {
+    /**
+     * ⚠**`afterSeq` 를 그대로 저장하면 다른 계열의 번호가 들어간다**(2026-08-21 실측).
+     *
+     * 파서는 자기 번호 체계로 「직전 타석」을 가리키는데, `alignPaEvents` 가
+     * **미완결 타석(`（途中交代）`)과 격리된 타자**를 버리면서 `seq` 를 1..N 으로 다시 매긴다.
+     * 그래서 둘이 서로 밀렸고, 그 어긋남이 **wSB 를 막는 선행 결함**이었다.
+     * 전수 검증: 어긋난 164경기 · 215사건 **전부** 이것으로 설명되고 미설명 0.
+     *
+     * ⚠**버려진 타석을 가리키면 그 앞의 마지막 남은 타석으로 보낸다.**
+     * 「직전 타석」이라는 뜻을 지키는 것이지 임의로 고르는 것이 아니다.
+     * ⚠**앞에 남은 타석이 하나도 없으면 0** — 「1번 타석 앞」과 같은 뜻이고 스키마가 그걸 구별한다.
+     */
+    const remap = (afterSeq: number): number => {
+      if (afterSeq <= 0) return 0;
+      const map = aligned?.seqOf;
+      if (map === undefined) return afterSeq;
+      for (let k = afterSeq; k > 0; k -= 1) {
+        const at = map.get(k);
+        if (at !== undefined) return at;
+      }
+      return 0;
+    };
     budget.runnerEvents += replaceRunnerEvents(
       db,
       meta.gameId,
-      pbpRunners.map((r, i) => ({ ...r, gameId: meta.gameId, seq: i + 1 })),
+      pbpRunners.map((r, i) => ({ ...r, gameId: meta.gameId, seq: i + 1, afterSeq: remap(r.afterSeq) })),
     );
   }
 

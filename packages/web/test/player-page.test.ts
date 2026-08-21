@@ -1364,3 +1364,21 @@ test("⚠투구회 표기는 NPB 어법을 따른다 — 소수 첫자리는 0·
   const q = /class="qual"[^>]*>([^<]*)</.exec(out)?.[1] ?? out;
   assert.ok(!/[0-9]\.[3-9]回/.test(q), `자격 문구에 NPB 에 없는 이닝 표기가 있다: ${q}`);
 });
+
+/**
+ * ⚠**오프시즌에 선수 페이지가 끝난 시즌을 현재형으로 말했다**(handover #56).
+ *
+ * `seasonSurelyOver` 는 근거가 `season < heldTo` 하나였다. 그러면 **최신 시즌이 끝나고
+ * 다음 시즌 첫 경기가 들어오기 전(11월~이듭해 3월)**에는 `false` 가 되고,
+ * 그 창에서 최종전에 나온 선수의 기록이 계속 「今」이 된다(그 함수의 주석이 **135장**으로 실측).
+ * 그 주석이 적어 둔 처방이 **「query.ts 의 seasonIsOver 가 PlayerPageData 까지 와야 한다」**였고,
+ * 지금 그렇게 배선됐다.
+ */
+test("⚠끝난 시즌은 현재형으로 말하지 않는다 — 다음 시즌 경기가 아직 없어도", () => {
+  // ⚠픽스처 기본값은 **최신 경기일에 나온 선수**라 「今」이 붙는다 — 그게 이 시험의 대조군이다
+  const running = renderPlayerPage(playerPage(), context());
+  assert.match(running, /続いている/, "진행 중인데 현재형이 아니다 — 이 시험이 공회전한다");
+
+  const over = renderPlayerPage(playerPage({ seasonOver: true }), context());
+  assert.ok(!over.includes("続いている"), "끝난 시즌을 「続いている」이라고 말했다");
+});

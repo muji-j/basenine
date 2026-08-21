@@ -3240,10 +3240,45 @@ function careerOf(
  * ⚠**오프시즌의 현재 시즌은 「끝났다」로 잡히지 않는다** — 그때는 「다음 시즌 일정을 아직 안 받았다」가
  *   사실이므로 그 문구가 맞다.
  */
-function seasonIsOver(db: Db, season: number): boolean {
-  return ((db.raw
+export function seasonIsOver(db: Db, season: number): boolean {
+  const later = ((db.raw
     .prepare("SELECT COUNT(*) AS n FROM game WHERE season > ?")
     .get(season)) as unknown as { n: number }).n > 0;
+  if (later) return true;
+  return japanSeriesDecided(db, season);
+}
+
+/**
+ * **그 시즌의 일본시리즈가 결착났는가** — 오프시즌을 메우는 둘째 근거.
+ *
+ * 일본시리즈는 NPB 시즌의 **마지막 행사**다. 한 팀이 4승에 닿으면 시리즈가 끝나고
+ * 그것으로 시즌도 끝난다 — **정의상 참**이고 날짜를 읽지 않는다(M6).
+ *
+ * ⚠**「4경기」가 아니라 「4승」이다.** 일본시리즈에는 무승부가 있다 —
+ * 2018년은 **6경기에 4승 1패 1무**였다(실측). 경기 수로 세면 그 해가 틀린다.
+ * ⚠**득점을 못 읽은 경기는 승패를 모른다**(M11) — NULL 은 세지 않는다.
+ * ⚠**클라이맥스 시리즈는 근거가 아니다** — 그 뒤에 일본시리즈가 남아 있다.
+ *
+ * 실측(2026-08-21 · 보유 완결 8시즌): **8/8 전부** 한 팀이 정확히 4승에 도달한다.
+ * ⚠**그래도 `false` 는 여전히 「모른다」다**(M11) — 일본시리즈를 아직 안 받았을 수 있다.
+ */
+function japanSeriesDecided(db: Db, season: number): boolean {
+  const rows = db.raw
+    .prepare(
+      `SELECT away_code AS away, home_code AS home, away_runs AS ar, home_runs AS hr
+       FROM game
+       WHERE season = ? AND competition = 'nipponSeries' AND status = 'played'
+         AND away_runs IS NOT NULL AND home_runs IS NOT NULL`,
+    )
+    .all(season) as unknown as { away: string; home: string; ar: number; hr: number }[];
+  const wins = new Map<string, number>();
+  for (const r of rows) {
+    if (r.ar === r.hr) continue; // 무승부는 승이 아니다
+    const w = r.ar > r.hr ? r.away : r.home;
+    wins.set(w, (wins.get(w) ?? 0) + 1);
+  }
+  for (const n of wins.values()) if (n >= 4) return true;
+  return false;
 }
 
 function calendarOf(
@@ -5396,6 +5431,10 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
 
     players.push({
       playerId,
+      // ⚠**이 시즌이 끝났는가 — `seasonIsOver` 한 벌에서 온다**(M1).
+      //   예전에는 선수 페이지만 `season < heldTo` 로 자체 판정했고,
+      //   그건 **오프시즌에 구멍이 있었다**(실측 135장).
+      seasonOver: seasonIsOver(db, o.season),
       name: base.displayName,
       // 명부와 검색이 같은 문자열을 쓴다(M1)
       summary: summaryOf(role, battingData ?? undefined, pitchingData ?? undefined),

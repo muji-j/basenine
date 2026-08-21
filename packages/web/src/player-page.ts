@@ -541,6 +541,13 @@ export interface PlayerPageData {
   playerId: string;
   name: string;
   season: number;
+  /**
+   * **이 시즌이 끝났는가** — 판정은 `query.ts` 의 `seasonIsOver` 한 벌이다(M1).
+   *
+   * ⚠**`true` 는 증명이고 `false` 는 「모른다」다**(M11). 이 페이지는 이 값을
+   * **「今」을 막는 쪽으로만** 쓴다 — 끝난 시즌에 현재형으로 말하지 않기 위해서다.
+   */
+  seasonOver: boolean;
   teamCode: string;
   teamName: string;
   league: League;
@@ -2110,7 +2117,11 @@ export function renderPlayerPage(d: PlayerPageData, ctx: RenderContext): string 
    * ⚠**연속기록의 「今」이 이것에 걸린다.** 근거는 `freshness` 하나이고 페이지 데이터가 아니다 —
    * `heldTo` 는 `SELECT MAX(season) FROM game`(query.ts `heldSeasonsOf`)이라 **시즌을 안 가린다.**
    */
-  const seasonPast = seasonSurelyOver(d.season, ctx.freshness.heldTo);
+  // ⚠**두 근거를 같이 쓴다.** `seasonSurelyOver` 는 「더 새 시즌이 있다」이고,
+  //   `d.seasonOver` 는 거기에 **일본시리즈 결착**까지 더한 것이다(query.ts `seasonIsOver`).
+  //   둘 다 `true` 만 증명이고 `false` 는 「모른다」라, **OR 가 안전한 방향**이다.
+  //   ⚠앞의 것을 지우지 않는다 — `freshness.heldTo` 는 이 페이지가 보는 유일한 「사이트 전체」 신호다.
+  const seasonPast = d.seasonOver || seasonSurelyOver(d.season, ctx.freshness.heldTo);
 
   const body = html`${idLine(d, base)}
 ${rail(d)}

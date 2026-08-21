@@ -207,6 +207,8 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
   return {
     playerId: "41045153",
     name: "佐藤",
+    // ⚠기본값은 **진행 중**이다 — 기존 시험은 현재형 문구를 기대한다
+    seasonOver: false,
     summary: "打率 .317（382打数）",
     bunts: [{ bases: "1", outs: 0, n: 895, before: 0.716, delta: -0.121 }],
     timesThrough: [
