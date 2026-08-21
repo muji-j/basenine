@@ -1,5 +1,18 @@
 # 증분 C — 지표 엔진 구현 계획
 
+> ⚠**2026-08-20 정정 — 이 계획서의 wOBA 계수 부분은 더 이상 우리가 하는 일이 아니다.**
+>
+> **1.02 산식 의존을 끊기로 정했다**(`docs/metrics/README.md` §6-C · 사용자 결정).
+> 지금은 계수와 wOBAscale 을 **우리 RE 행렬에서 리그×시즌마다 유도**한다
+> (`scripts/woba-weights-derive.ts` · `packages/aggregate/src/woba-weights.ts`).
+> **선형가중치는 원래 RE 에서 나오고 우리는 RE 를 이미 만들고 있었다** — 베낄 이유가 애초에 없었다.
+>
+> ⚠**계획서는 「그때의 기록」이라 본문을 고치지 않는다. 표시만 붙인다**(#54 사용자 결정).
+> 본문에서 낡은 자리는 **네 곳**이다: 「계수는 시즌마다 다르다(1.02도 그렇게 명시)」 주석 ·
+> **「wOBA 계수는 1.02 공개값과 일치한다」시험**(⚠이 시험은 지금 존재하지 않는다) ·
+> 계수 상수의 출처 주석 · wOBAscale 의 출처 주석.
+> ⚠**여기 적힌 고정 계수를 새 코드에 옮기지 마라** — 리그·시즌마다 다르므로 박는 순간 다른 시즌에서 거짓이 된다.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 야구 지표를 계산하는 순수 함수 패키지 `packages/metrics`를 만든다. I/O 의존 0, 스택 비의존.
