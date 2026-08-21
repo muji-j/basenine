@@ -2374,13 +2374,19 @@ function nextMilestone(label: string, count: number): { next: number; toNext: nu
  * ⚠**분모는 그 팀의 소화 경기**다. 선수 출장 수로 나누면 결장이 많은 선수의 환산이 폭주한다
  *   (10경기 5홈런 → 71본). 팀 경기로 나누면 「팀이 143경기 할 때 이 선수가 몇 개」가 된다.
  */
-function paceOf(count: number, teamGames: number, season: number): number {
+export function paceOf(count: number, teamGames: number, season: number): number {
   if (teamGames <= 0) return 0;
   /**
    * ⚠**시즌마다 기준이 다르다**(2026-08-18). 2020년은 120경기였다 —
    * 143으로 환산하면 그 시즌 화면이 **존재하지 않는 기준**으로 말하게 된다.
+   *
+   * ⚠**곱셈을 먼저 한다**(2026-08-21 반증 라운드). 예전에는 `(count / teamGames) * games` 였는데,
+   * 나눠서 생긴 이진수 오차가 다시 곱해지면서 **완결 시즌에서 환산이 현재치보다 1 작았다** —
+   * `(47 / 143) * 143 = 46.99999999999999` → 46. 배포물 108행 중 **5행**이 「現在 47 … 換算 46」이었다.
+   * ⚠**11·13 의 배수 전반**이 걸리고 **2020(120경기)도 같은 결함**이다 — 143 만의 문제가 아니다.
+   * 정수끼리 곱한 뒤 나누면 `teamGames === games` 일 때 **정확히 count** 가 된다.
    */
-  return Math.floor((count / teamGames) * regularSeasonGames(season));
+  return Math.floor((count * regularSeasonGames(season)) / teamGames);
 }
 
 /**

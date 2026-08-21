@@ -140,6 +140,22 @@ function gameFromPath(file: string): {
 const db = openDb(dbPath, nowIso);
 const budget = emptyBudget();
 const seenPlayers = new Set<string>();
+/**
+ * **그 시즌의 표시명** — `player_id|season` → 가장 나중 경기의 표기.
+ *
+ * ⚠**경기마다 UPSERT 하지 않는다.** 그랬더니 쓰기가 **276,817행 늘어**
+ * D1 하루 한도(100,000) 대비 보고가 무의미해졌다(실측 — 선수 276,817행).
+ * 막상 서로 다른 값은 **6,207개뿐**이다 — 메모리에 모아 **끝에 한 번만** 쓴다.
+ * ⚠**상한에 걸려 도중에 멈춰도 문제가 없다** — 이 표는 `as_of` 비교로 갱신되므로
+ * 다음 실행이 나머지를 채우면 같은 결과가 된다(M5).
+ */
+const seasonNames = new Map<string, { season: number; name: string; date: string; source: string }>();
+function noteSeasonName(playerId: string, season: number, name: string, date: string, source: string): void {
+  const key = `${playerId}|${season}`;
+  const prev = seasonNames.get(key);
+  // ⚠**늦은 경기가 이긴다** — 호출 순서가 아니라 경기일로 가른다(저장층과 같은 규칙)
+  if (prev === undefined || date >= prev.date) seasonNames.set(key, { season, name, date, source });
+}
 let played = 0;
 let notPlayed = 0;
 /** 아직 끝나지 않은 경기. **실패가 아니다**(M11) — 다음 실행이 받는다 */
@@ -435,8 +451,8 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
         seenPlayers.add(derived.row.playerId);
         budget.players += upsertPlayer(db, derived.row.playerId, b.name, nowIso);
       }
-      // ⚠**여기는 `seenPlayers` 밖이다** — 시즌마다·경기마다 봐야 한다(아래 주석 참조)
-      budget.players += upsertPlayerSeasonName(db, derived.row.playerId, meta.season, b.name, meta.gameDate, sourceUrl);
+      // ⚠**여기는 `seenPlayers` 밖이다** — 시즌마다·경기마다 봐야 한다. 쓰기는 끝에 모아서 한 번
+      noteSeasonName(derived.row.playerId, meta.season, b.name, meta.gameDate, sourceUrl);
       budget.batting += upsertBatting(db, derived.row);
       quarantine.push(...derived.quarantine);
     }
@@ -452,7 +468,7 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
         seenPlayers.add(row.playerId);
         budget.players += upsertPlayer(db, row.playerId, p.name, nowIso);
       }
-      budget.players += upsertPlayerSeasonName(db, row.playerId, meta.season, p.name, meta.gameDate, sourceUrl);
+      noteSeasonName(row.playerId, meta.season, p.name, meta.gameDate, sourceUrl);
       budget.pitching += upsertPitching(db, row);
     }
   }
@@ -590,6 +606,21 @@ if (rosterLatest.size > 0) {
         num.run(r.uniformNumber, playerId);
         filledNumber += (db.raw.prepare("SELECT changes() AS n").get() as { n: number }).n;
       }
+    }
+  });
+}
+
+/**
+ * **시즌별 표시명을 한 번에 쓴다.**
+ *
+ * ⚠**한 트랜잭션으로 묶는다** — 6,207행을 개별 커밋하면 디스크 동기화가 그만큼 일어난다.
+ * ⚠**`--skip-events` 여도 쓴다** — 이름은 박스에서 오고 박스는 그 플래그와 무관하다.
+ */
+if (seasonNames.size > 0) {
+  db.transaction(() => {
+    for (const [key, v] of seasonNames) {
+      const playerId = key.slice(0, key.lastIndexOf("|"));
+      budget.players += upsertPlayerSeasonName(db, playerId, v.season, v.name, v.date, v.source);
     }
   });
 }

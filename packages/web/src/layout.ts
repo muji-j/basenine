@@ -49,6 +49,20 @@ export interface Freshness {
    */
   heldFrom: number;
   heldTo: number;
+  /**
+   * **이 시즌이 끝났는가.** 판정은 `query.ts` 의 `seasonIsOver` 한 벌이다(M1).
+   *
+   * ⚠**신선도 판정이 이걸 몰라서 오프시즌에 매일 거짓말을 했다**(2026-08-21 반증 라운드 P1).
+   * 그전까지 근거는 `pastSeasonOf(seasons)` 하나였는데, 그건 **「그리는 시즌 번호가
+   * 최신이 아닌가」라는 순수 구조 판정**이라, 최신 시즌이 끝나고 다음 시즌 첫 경기가
+   * 들어오기 전(11월~3월)에는 `false` 다. 그 창에서 화면은 수집이 멀지 않았는데도
+   * 「取得に失敗している可能性があります」를 매일 냈다.
+   *
+   * ⚠**여기 둔 이유**: 화면은 전부 `ctx.freshness` 를 그대로 넘기므로,
+   * 이 한 필드가 **호출부 15곳을 안 건드리고** 전 화면에 닿는다.
+   * ⚠**`true` 는 증명이고 `false` 는 「모른다」다**(M11) — 경고를 **끄는 쪽으로만** 쓴다.
+   */
+  seasonOver: boolean;
   /** 경기일과 생성일의 간격(일). null이면 경기가 하나도 없다 */
   lagDays: number | null;
   /**
@@ -84,6 +98,11 @@ export function freshness(
    * 대신 **0이 아니라 「모른다」로 읽히는 값**을 쓴다(M11). 화면은 0이면 범위를 말하지 않는다.
    */
   held: { from: number; to: number } = { from: 0, to: 0 },
+  /**
+   * 이 시즌이 끝났는가. ⚠**기본값이 `false` 인 것이 안전 방향**이다 —
+   * 모르면 경고하는 쪽으로 남는다(M11).
+   */
+  seasonOver = false,
 ): Freshness {
   return {
     latestGameDate,
@@ -92,6 +111,7 @@ export function freshness(
     regularGameDate,
     heldFrom: held.from,
     heldTo: held.to,
+    seasonOver,
   };
 }
 
@@ -115,7 +135,10 @@ export function heldRange(f: Freshness): string {
  *   실측(2026-08-16): 2025년 화면 2,307장 전부가 「315일 전」이라는 빨간 띠를 달고 있었다.
  */
 export function freshnessBar(f: Freshness, pastSeason = false): RawHtml {
-  if (pastSeason) {
+  // ⚠**두 근거를 합친다.** `pastSeason` 은 「시즌 번호가 최신이 아니다」이고
+  // `f.seasonOver` 는 「그 시즌이 실제로 끝났다」이다 — 둘 다 `true` 만 증명이라
+  // **OR 가 안전한 방향**이다. 오프시즌의 현행 시즌은 뒤쪽만 참이다.
+  if (pastSeason || f.seasonOver) {
     return f.latestGameDate === null
       ? html`<div class="state fresh">このシーズンの試合はありません</div>`
       : html`<div class="state fresh">終了したシーズンです — 最後の試合は ${fullDate(f.latestGameDate)}</div>`;

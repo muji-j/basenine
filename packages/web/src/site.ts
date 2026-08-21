@@ -147,7 +147,17 @@ export function buildSite(
 ): BuildResult {
   // ⚠**신선도는 대회를 가리지 않는다.** 정규시즌만 보면 포스트시즌 기간에
   // 사이트 전체가 「취득 실패」라고 거짓말하고, 빌드가 매일 실패로 끝난다
-  const f = freshness(data.latestAnyGameDate ?? data.asOf, builtOn, data.asOf, data.heldSeasons);
+  // ⚠**마지막 인자가 오프시즌 오진을 막는다**(2026-08-21 반증 라운드 P1).
+  //   그전까지 신선도 판정은 「시즌 번호가 최신인가」만 봐서, 최신 시즌이 끝난 뒤
+  //   다음 시즌 첫 경기까지의 창(11월~3월)에 「取得に失敗している可能性」을 매일 냈다.
+  // ⚠**판정은 `seasonIsOver` 한 벌에서 온다**(M1) — 여기서 다시 계산하지 않는다.
+  const f = freshness(
+    data.latestAnyGameDate ?? data.asOf,
+    builtOn,
+    data.asOf,
+    data.heldSeasons,
+    data.home.seasonOver,
+  );
   const me = plans.find((p) => p.season === data.season);
   const prefix = me?.prefix ?? "";
   const ctx: RenderContext = {
