@@ -21,6 +21,7 @@ import { renderTeamPage, teamPath } from "./team-page.ts";
 import { renderTeamsPage } from "./teams-page.ts";
 import { gameSlug, renderGamePage } from "./game-page.ts";
 import { renderLogPage } from "./log-page.ts";
+import { GLOSSARY_PATH, renderGlossaryPage } from "./glossary-page.ts";
 import type { LogPageData } from "./log-page.ts";
 import { ROSTER_PATH, TEAMS_PATH, freshness, isStale, pathsFor } from "./layout.ts";
 import type { RenderContext, SeasonPlan, SiteMeta } from "./layout.ts";
@@ -146,7 +147,17 @@ export function buildSite(
 ): BuildResult {
   // ⚠**신선도는 대회를 가리지 않는다.** 정규시즌만 보면 포스트시즌 기간에
   // 사이트 전체가 「취득 실패」라고 거짓말하고, 빌드가 매일 실패로 끝난다
-  const f = freshness(data.latestAnyGameDate ?? data.asOf, builtOn, data.asOf, data.heldSeasons);
+  // ⚠**마지막 인자가 오프시즌 오진을 막는다**(2026-08-21 반증 라운드 P1).
+  //   그전까지 신선도 판정은 「시즌 번호가 최신인가」만 봐서, 최신 시즌이 끝난 뒤
+  //   다음 시즌 첫 경기까지의 창(11월~3월)에 「取得に失敗している可能性」을 매일 냈다.
+  // ⚠**판정은 `seasonIsOver` 한 벌에서 온다**(M1) — 여기서 다시 계산하지 않는다.
+  const f = freshness(
+    data.latestAnyGameDate ?? data.asOf,
+    builtOn,
+    data.asOf,
+    data.heldSeasons,
+    data.home.seasonOver,
+  );
   const me = plans.find((p) => p.season === data.season);
   const prefix = me?.prefix ?? "";
   const ctx: RenderContext = {
@@ -173,6 +184,13 @@ export function buildSite(
           { path: "assets/site.js", content: CLIENT_JS },
           { path: "assets/icon.svg", content: ICON_SVG },
           { path: "_headers", content: HEADERS },
+          /**
+           * ⚠**용어집은 시즌마다 만들지 않는다.** 용어는 시즌에 매이지 않고,
+           * 시즌마다 만들면 같은 글이 9번 올라가며 한쪽만 갱신되는 날 **시즌에 따라 설명이 달라진다.**
+           * `log.html` 이 같은 이유로 루트 전용이고, 링크는 `root` 로 간다(layout.ts 푸터).
+           * ⚠Pages 파일 수는 **+1장**이다 — 시즌마다 만들었으면 +9장이었다.
+           */
+          { path: GLOSSARY_PATH, content: renderGlossaryPage(ctx) },
         ]
       : []),
     { path: at("today.html"), content: renderTodayPage(data.today, ctx) },

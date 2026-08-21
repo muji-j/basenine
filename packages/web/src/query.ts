@@ -307,12 +307,26 @@ const SPLIT_AXES: readonly { id: SplitAxisId; dimension: SplitDimension; label: 
  */
 export const VENUE_MIN_PA = 10;
 
+/**
+ * ⚠**「走者あり」라고 적어 있었다. 그게 아니었다**(2026-08-21 다방면 감사 확정 P1).
+ *
+ * 이 축의 세 칸은 **서로 배타적인 분할**이다(`splits.ts` 의 CASE):
+ *   `empty` = 주자 없음 · `scoring` = 2루 또는 3루 · `onBase` = **그 밖 = 1루만**.
+ * 그런데 세 번째를 「走者あり」라고 부르면 **부분집합이 전체보다 큰 분모**를 갖게 된다 —
+ * 한 화면에 「走者あり 86打席」과 「得点圏 86打席」이 나란히 서고, 리그 전체로도
+ * 得点圏(143,327) > 「走者あり」(102,437) 로 **뒤집힌다.**
+ * 실측: 배포물 중 得点圏 > 「走者あり」 인 페이지 **4,152장** · 이 축을 그리는 페이지 5,668장.
+ *
+ * ⚠**값도 분모도 맞았다** — 틀린 것은 **이름**뿐이라 타입도 린트도 M2 도 못 잡았다.
+ * ⚠**정답 이름을 이 저장소가 이미 가지고 있었다** — `game-page.ts` 의 `BASE_LABEL` 이
+ * `bases === "1"` 을 「一塁」로 부른다. 한 제품 안에 같은 데이터의 두 이름이 있었다(M1).
+ */
 const SPLIT_KEY_LABEL: Readonly<Record<string, string>> = {
   left: "対左投手",
   right: "対右投手",
   both: "対両投手",
   empty: "走者なし",
-  onBase: "走者あり",
+  onBase: "一塁のみ",
   scoring: "得点圏",
   home: "本拠地",
   away: "ビジター",
@@ -329,7 +343,8 @@ const PITCHER_SPLIT_KEY_LABEL: Readonly<Record<string, string>> = {
   right: "対右打者",
   both: "対両打者",
   empty: "走者なし",
-  onBase: "走者あり",
+  // ⚠위와 **같은 이유**로 「走者あり」가 아니다. 두 표를 같이 고친다(갈라지면 화면마다 다른 말을 한다)
+  onBase: "一塁のみ",
   scoring: "得点圏",
   home: "本拠地",
   away: "ビジター",
@@ -341,7 +356,7 @@ function monthLabel(key: string): string {
   return m === null ? key : `${Number(m[1])}月`;
 }
 
-function splitLabel(axis: SplitAxisId, key: string, allowed: boolean): string {
+export function splitLabel(axis: SplitAxisId, key: string, allowed: boolean): string {
   if (axis === "month") return monthLabel(key);
   // 구장명은 이미 사람이 읽는 이름이다(파서가 다듬었다) — 표를 다시 만들지 않는다
   if (axis === "venue") return key;
@@ -519,10 +534,18 @@ function batterQualifier(bundle: LeagueBundle): string {
  * ⚠**선발은 NPB 공식 기준, 구원은 우리 기준**이다. 같은 문장으로 쓰면
  * 자체 기준이 공식 기준으로 읽힌다 — 그건 출처를 속이는 것과 같다(§0-10 출처 추적성).
  */
+/**
+ * ⚠**아웃→이닝 변환을 여기서 다시 쓰지 마라**(M1 · 2026-08-21 다방면 감사 확정).
+ * 예전에는 `Math.round((outs / 3) * 10) / 10` 이 여기와 아래 두 곳에 따로 적혀 있었고,
+ * 그 식은 **NPB 에 존재하지 않는 표기**를 만들었다 — 143아웃은 47.2回 인데 `47.7回` 가 나왔다.
+ * 이닝의 소수 첫자리는 **0·1·2 뿐**이고(1/3·2/3 이닝), 우리 파서는 `inningsToOuts("6.3")` 을
+ * **null 로 거부**한다 — 즐 우리 자신이 못 읽는 문자열을 화면에 내고 있었다.
+ * 실측: 배포물 문장 **8,481/9,381(90.4%)** · **1,167/15,340장**.
+ * ⚠값(순위)은 아웃 카운트로 계산돼 안 틀렸다 — **화면만 틀린 말을 했다**(가장 나쁜 모양).
+ */
 function pitcherQualifier(bundle: LeagueBundle, role: PitcherRole): string {
   const { min, max } = neededOutsRange(bundle, role);
-  const one = (outs: number): number => Math.round((outs / 3) * 10) / 10;
-  const need = min === max ? `${one(min)}回` : `${one(min)}〜${one(max)}回`;
+  const need = min === max ? `${innings(min)}回` : `${innings(min)}〜${innings(max)}回`;
   if (role === "starter") {
     return `規定投球回 ${need}（所属球団の試合数 × 1回・NPB公式）に達した先発投手だけに順位がつきます。球団ごとに消化試合数が違うため基準も異なります。同率は同じ順位で、次の順位を飛ばします。`;
   }
@@ -548,8 +571,10 @@ function batterQualifierShort(bundle: LeagueBundle, teamCode: string): string {
  * ⚠**구원 기준은 NPB의 것이 아니다.** 같은 문장으로 쓰면 자체 기준이 공식으로 읽힌다.
  */
 function pitcherQualifierShort(bundle: LeagueBundle, teamCode: string): string {
-  const st = Math.round((neededOuts(bundle, teamCode, "starter") / 3) * 10) / 10;
-  const rl = Math.round((neededOuts(bundle, teamCode, "reliever") / 3) * 10) / 10;
+  // ⚠**위와 같은 이유로 `innings()` 를 쓴다**(M1). 예전에 여기 두 줄이
+  // 바로 위 주석이 금지하는 「값을 여기서 다시 계산하기」를 그대로 하고 있었다.
+  const st = innings(neededOuts(bundle, teamCode, "starter"));
+  const rl = innings(neededOuts(bundle, teamCode, "reliever"));
   return `先発は規定投球回 ${st}回（この球団の試合数 × 1回・NPB公式）、救援はその3分の1 ${rl}回（当サイトの基準でNPBのものではありません）`;
 }
 
@@ -2060,8 +2085,8 @@ function postseasonPage(db: Db, o: LoadOptions): PostseasonPageData {
       series: g.series,
       stage: stageOf(g),
       gameNo: g.gameNo,
-      away: { shortName: squadName(g.awayCode), color: squadColor(g.awayCode), runs: g.awayRuns },
-      home: { shortName: squadName(g.homeCode), color: squadColor(g.homeCode), runs: g.homeRuns },
+      away: { teamCode: g.awayCode, shortName: squadName(g.awayCode), color: squadColor(g.awayCode), runs: g.awayRuns },
+      home: { teamCode: g.homeCode, shortName: squadName(g.homeCode), color: squadColor(g.homeCode), runs: g.homeRuns },
       // ⚠**무승부와 「득점을 못 읽음」은 다르다**(M11). 접으면 결측이 무승부로 보인다
       winner:
         g.awayRuns === null || g.homeRuns === null
@@ -2349,13 +2374,19 @@ function nextMilestone(label: string, count: number): { next: number; toNext: nu
  * ⚠**분모는 그 팀의 소화 경기**다. 선수 출장 수로 나누면 결장이 많은 선수의 환산이 폭주한다
  *   (10경기 5홈런 → 71본). 팀 경기로 나누면 「팀이 143경기 할 때 이 선수가 몇 개」가 된다.
  */
-function paceOf(count: number, teamGames: number, season: number): number {
+export function paceOf(count: number, teamGames: number, season: number): number {
   if (teamGames <= 0) return 0;
   /**
    * ⚠**시즌마다 기준이 다르다**(2026-08-18). 2020년은 120경기였다 —
    * 143으로 환산하면 그 시즌 화면이 **존재하지 않는 기준**으로 말하게 된다.
+   *
+   * ⚠**곱셈을 먼저 한다**(2026-08-21 반증 라운드). 예전에는 `(count / teamGames) * games` 였는데,
+   * 나눠서 생긴 이진수 오차가 다시 곱해지면서 **완결 시즌에서 환산이 현재치보다 1 작았다** —
+   * `(47 / 143) * 143 = 46.99999999999999` → 46. 배포물 108행 중 **5행**이 「現在 47 … 換算 46」이었다.
+   * ⚠**11·13 의 배수 전반**이 걸리고 **2020(120경기)도 같은 결함**이다 — 143 만의 문제가 아니다.
+   * 정수끼리 곱한 뒤 나누면 `teamGames === games` 일 때 **정확히 count** 가 된다.
    */
-  return Math.floor((count / teamGames) * regularSeasonGames(season));
+  return Math.floor((count * regularSeasonGames(season)) / teamGames);
 }
 
 /**
@@ -3215,10 +3246,45 @@ function careerOf(
  * ⚠**오프시즌의 현재 시즌은 「끝났다」로 잡히지 않는다** — 그때는 「다음 시즌 일정을 아직 안 받았다」가
  *   사실이므로 그 문구가 맞다.
  */
-function seasonIsOver(db: Db, season: number): boolean {
-  return ((db.raw
+export function seasonIsOver(db: Db, season: number): boolean {
+  const later = ((db.raw
     .prepare("SELECT COUNT(*) AS n FROM game WHERE season > ?")
     .get(season)) as unknown as { n: number }).n > 0;
+  if (later) return true;
+  return japanSeriesDecided(db, season);
+}
+
+/**
+ * **그 시즌의 일본시리즈가 결착났는가** — 오프시즌을 메우는 둘째 근거.
+ *
+ * 일본시리즈는 NPB 시즌의 **마지막 행사**다. 한 팀이 4승에 닿으면 시리즈가 끝나고
+ * 그것으로 시즌도 끝난다 — **정의상 참**이고 날짜를 읽지 않는다(M6).
+ *
+ * ⚠**「4경기」가 아니라 「4승」이다.** 일본시리즈에는 무승부가 있다 —
+ * 2018년은 **6경기에 4승 1패 1무**였다(실측). 경기 수로 세면 그 해가 틀린다.
+ * ⚠**득점을 못 읽은 경기는 승패를 모른다**(M11) — NULL 은 세지 않는다.
+ * ⚠**클라이맥스 시리즈는 근거가 아니다** — 그 뒤에 일본시리즈가 남아 있다.
+ *
+ * 실측(2026-08-21 · 보유 완결 8시즌): **8/8 전부** 한 팀이 정확히 4승에 도달한다.
+ * ⚠**그래도 `false` 는 여전히 「모른다」다**(M11) — 일본시리즈를 아직 안 받았을 수 있다.
+ */
+function japanSeriesDecided(db: Db, season: number): boolean {
+  const rows = db.raw
+    .prepare(
+      `SELECT away_code AS away, home_code AS home, away_runs AS ar, home_runs AS hr
+       FROM game
+       WHERE season = ? AND competition = 'nipponSeries' AND status = 'played'
+         AND away_runs IS NOT NULL AND home_runs IS NOT NULL`,
+    )
+    .all(season) as unknown as { away: string; home: string; ar: number; hr: number }[];
+  const wins = new Map<string, number>();
+  for (const r of rows) {
+    if (r.ar === r.hr) continue; // 무승부는 승이 아니다
+    const w = r.ar > r.hr ? r.away : r.home;
+    wins.set(w, (wins.get(w) ?? 0) + 1);
+  }
+  for (const n of wins.values()) if (n >= 4) return true;
+  return false;
 }
 
 function calendarOf(
@@ -5371,6 +5437,10 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
 
     players.push({
       playerId,
+      // ⚠**이 시즌이 끝났는가 — `seasonIsOver` 한 벌에서 온다**(M1).
+      //   예전에는 선수 페이지만 `season < heldTo` 로 자체 판정했고,
+      //   그건 **오프시즌에 구멍이 있었다**(실측 135장).
+      seasonOver: seasonIsOver(db, o.season),
       name: base.displayName,
       // 명부와 검색이 같은 문자열을 쓴다(M1)
       summary: summaryOf(role, battingData ?? undefined, pitchingData ?? undefined),

@@ -225,3 +225,70 @@ test("⚠포스트시즌을 섞지 않는다 — CS의 안타가 정규시즌 �
     assert.equal(s.hitting.current, 0, "CS의 안타가 연속 기록을 이었다");
   });
 });
+
+/**
+ * ⚠**공인야구규칙 9.23(b)** — 「사사구·희생번트·타격방해·주자방해**만**으로
+ * 끝난 경기는 연속안타 기록을 끊지 않는다」. 그 경기는 「없던 것」으로 친다.
+ * ⚠**犠飛(희생플라이)는 예외가 아니다** — 규칙이 「중단된다」고 명시한다. 그래서 `sf=0` 을 같이 건다.
+ *
+ * 실측(2026-08-21 다방면 감사 확정): 규칙 대상 경기 **3,554건**(9시즌 정규) ·
+ * best 어긋남 **90/4,179 선수-시즌** · 최악 −6. 실례: 辰己 2026 이 **9** 경기로
+ * 나오지만 규칙대로면 **12**경기다.
+ * ⚠**오차가 항상 짧은 쪽 한 방향**이라 그럴듯한 작은 수만 남는다 — 침묵한 오류다.
+ *
+ * ⚠예전 `seed()` 는 (pa,ab) 를 (0,0) 아니면 (4,4) 로만 만들어서
+ * **이 경우를 구조적으로 표현할 수 없었다** — 그래서 시험 12본이 전부 초록이었다.
+ */
+function seedRows(db: Db, rows: readonly Partial<BattingRow>[]): void {
+  rows.forEach((r, i) => {
+    const gameId = `r${i}`;
+    upsertGame(db, {
+      gameId, season: 2026, gameDate: `2026-05-${String(i + 1).padStart(2, "0")}`,
+      awayCode: "t", homeCode: "g", gameNo: 1,
+      status: "played", notPlayedReason: null, competition: "regular",
+      sourceUrl: "https://npb.jp/x", fetchedAt: NOW,
+    });
+    upsertBatting(db, bat({ gameId, ...r }));
+  });
+}
+
+test("⚠사사구만으로 끝난 경기는 연속안타를 끊지 않는다 — 공인야구규칙 9.23(b)", async () => {
+  await withDb((db) => {
+    // 안타 · [4타석 전부 볼넷] · 안타 → 연속 2경기로 이어져야 한다
+    seedRows(db, [
+      { pa: 4, ab: 4, h: 1 },
+      { pa: 4, ab: 0, h: 0, bb: 4 },
+      { pa: 4, ab: 4, h: 2 },
+    ]);
+    const s = battingStreaks(db, 2026).get("B1")!;
+    assert.equal(s.hitting.best, 2, "사사구뿐이던 경기가 연속안타를 끊었다(9.23(b) 위반)");
+    assert.equal(s.hitting.current, 2, "마지막까지 이어졌는데 끊긴 것으로 쌀다");
+    // ⚠**분모에서는 빼지 않는다** — 그 경기에 출장한 것은 사실이다
+    assert.equal(s.games, 3, "출장 경기 수에서까지 지웠다");
+  });
+});
+
+test("⚠犠飛만 있던 경기는 그대로 끊는다 — 규칙이 「중단된다」고 명시한다", async () => {
+  await withDb((db) => {
+    // 안타 · [희생플라이 1 · 볼넷 1] · 안타
+    seedRows(db, [
+      { pa: 4, ab: 4, h: 1 },
+      { pa: 2, ab: 0, h: 0, sf: 1, bb: 1 },
+      { pa: 4, ab: 4, h: 2 },
+    ]);
+    const s = battingStreaks(db, 2026).get("B1")!;
+    assert.equal(s.hitting.best, 1, "犠飛 가 있는 경기를 「없던 것」으로 쳋다 — 규칙과 다르다");
+  });
+});
+
+test("⚠連続無安打(hitless) 에는 이 예외를 적용하지 않는다 — 반대로 길어지면 거짓이 된다", async () => {
+  await withDb((db) => {
+    seedRows(db, [
+      { pa: 4, ab: 4, h: 0 },
+      { pa: 4, ab: 0, h: 0, bb: 4 },
+      { pa: 4, ab: 4, h: 0 },
+    ]);
+    const s = battingStreaks(db, 2026).get("B1")!;
+    assert.equal(s.hitless.best, 3, "無安打 연속은 출장한 경기를 그대로 센다");
+  });
+});

@@ -40,7 +40,7 @@ import { isEmptyProfile, markFigure, markLetter, markProfile } from "./marks.ts"
 import type { MarkPlayer, ProfileAxis } from "./marks.ts";
 import { denUnit, termOf } from "./glossary.ts";
 import { page, ROSTER_PATH } from "./layout.ts";
-import { teamPath } from "./team-page.ts";
+import { teamLink, teamPath } from "./team-page.ts";
 import { postseasonBrief } from "./postseason-page.ts";
 import type { PostseasonBrief } from "./postseason-page.ts";
 import type { Freshness, SiteMeta } from "./layout.ts";
@@ -541,6 +541,13 @@ export interface PlayerPageData {
   playerId: string;
   name: string;
   season: number;
+  /**
+   * **이 시즌이 끝났는가** — 판정은 `query.ts` 의 `seasonIsOver` 한 벌이다(M1).
+   *
+   * ⚠**`true` 는 증명이고 `false` 는 「모른다」다**(M11). 이 페이지는 이 값을
+   * **「今」을 막는 쪽으로만** 쓴다 — 끝난 시즌에 현재형으로 말하지 않기 위해서다.
+   */
+  seasonOver: boolean;
   teamCode: string;
   teamName: string;
   league: League;
@@ -730,7 +737,7 @@ function sparkline(points: readonly SparkPoint[], label: string): RawHtml {
 </div>`;
 }
 
-function idLine(d: PlayerPageData): RawHtml {
+function idLine(d: PlayerPageData, base: string): RawHtml {
   const who: MarkPlayer = {
     playerId: d.playerId,
     name: d.name,
@@ -749,8 +756,9 @@ function idLine(d: PlayerPageData): RawHtml {
     : html`<button class="mark markbtn" type="button" id="markBtn"
         aria-expanded="false" aria-controls="markPanel">${svg}<span class="mkcap">くわしく</span></button>`;
 
+  // ⚠**구단명만 링크로 떼 낸다.** 나머지는 지금까지처럼 「 · 」로 이은 글자다 —
+  // 배번·포지션·투타는 갈 곳이 없고, 없는 사람에게는 항목째 빠진다(M11).
   const bio = [
-    d.teamName,
     // ⚠**등번호는 팀명 옆이다.** 야구에서 「구단 + 배번」이 한 덩어리로 읽히고,
     // 없는 사람에게는 이 항목이 아예 빠진다(M11) — 「―」를 넣으면 은퇴가 결손처럼 보인다
     d.uniformNumber === null ? null : `背番号 ${d.uniformNumber}`,
@@ -771,7 +779,7 @@ function idLine(d: PlayerPageData): RawHtml {
       눌러도 아무 일이 없는 버튼을 두는 것보다 없는 편이 정직하다 -->
       <button class="favbtn" type="button" id="favBtn" data-fav="${d.playerId}"
         aria-pressed="false" aria-label="お気に入りに入れる" hidden>★</button></h1>
-    <span class="sub">${bio.join(" · ")}</span>
+    <span class="sub">${teamLink(base, d.teamCode, d.teamName)}${bio.length === 0 ? null : raw(" · ")}${bio.join(" · ")}</span>
     <span class="asof">${d.season}年${d.asOf === null ? "" : ` · ${gameDate(d.asOf)}まで`}</span>
     ${d.stints.length < 2
       ? null
@@ -1055,8 +1063,10 @@ export const ROLE_LABEL: Readonly<Record<"starter" | "reliever", string>> = {
  * ⚠자체 기준을 공식 기준과 같은 얼굴로 내보내면 「NPB가 그렇게 정했다」는 오해가 생긴다.
  */
 function pitcherQualifierText(p: PitchingBlockData): string {
-  const have = Math.floor(p.line.outs / 3);
-  const need = Math.floor(p.needOuts / 3);
+  // ⚠**잘라 쓰면 두 수가 같아져 「35回 / 35回 … 未満」가 된다**(감사 실측 12건).
+  // 이닝 표기는 `innings()` 한 벌이 정본이다(M1) — 위 `query.ts` 의 같은 주석 참조.
+  const have = innings(p.line.outs);
+  const need = innings(p.needOuts);
   const basis =
     p.role === "starter"
       ? "規定投球回（NPB公式）"
@@ -2107,9 +2117,13 @@ export function renderPlayerPage(d: PlayerPageData, ctx: RenderContext): string 
    * ⚠**연속기록의 「今」이 이것에 걸린다.** 근거는 `freshness` 하나이고 페이지 데이터가 아니다 —
    * `heldTo` 는 `SELECT MAX(season) FROM game`(query.ts `heldSeasonsOf`)이라 **시즌을 안 가린다.**
    */
-  const seasonPast = seasonSurelyOver(d.season, ctx.freshness.heldTo);
+  // ⚠**두 근거를 같이 쓴다.** `seasonSurelyOver` 는 「더 새 시즌이 있다」이고,
+  //   `d.seasonOver` 는 거기에 **일본시리즈 결착**까지 더한 것이다(query.ts `seasonIsOver`).
+  //   둘 다 `true` 만 증명이고 `false` 는 「모른다」라, **OR 가 안전한 방향**이다.
+  //   ⚠앞의 것을 지우지 않는다 — `freshness.heldTo` 는 이 페이지가 보는 유일한 「사이트 전체」 신호다.
+  const seasonPast = d.seasonOver || seasonSurelyOver(d.season, ctx.freshness.heldTo);
 
-  const body = html`${idLine(d)}
+  const body = html`${idLine(d, base)}
 ${rail(d)}
 ${editor()}
 ${catalog.map((meta) => {

@@ -23,6 +23,8 @@ import type { RawHtml } from "./html.ts";
 import { NO_VALUE, fullDate, signed1 } from "./format.ts";
 import { note, scroller, term } from "./parts.ts";
 import { page, ROSTER_PATH } from "./layout.ts";
+// ⚠**구단 페이지가 없는 코드(올스타 cl/pl)에는 링크를 만들지 않는다** — teamLink 가 그 판정을 쥔다(M1)
+import { teamLink } from "./team-page.ts";
 import type { RenderContext } from "./pages.ts";
 import { NEUTRAL_COLOR } from "@bb-app/domain";
 import type { TeamColor } from "@bb-app/domain";
@@ -167,7 +169,7 @@ export function inningLabel(inning: number, half: "top" | "bottom"): string {
  * ⚠**`0`과 `x`를 구별한다**(M11). `x`는 「공격이 없었다」이지 「0점」이 아니다.
  * ⚠**득점이 난 칸을 강조한다.** 이 표에서 눈이 찾는 것은 숫자가 아니라 **어디서 점수가 났는가**다.
  */
-function inningTable(d: GamePageData): RawHtml {
+function inningTable(d: GamePageData, base: string): RawHtml {
   const innings = [...new Set(d.innings.map((i) => i.inning))].sort((a, b) => a - b);
   const cell = (inning: number, half: "top" | "bottom"): RawHtml => {
     const h = d.innings.find((x) => x.inning === inning && x.half === half);
@@ -178,7 +180,7 @@ function inningTable(d: GamePageData): RawHtml {
     return html`<td class="${h.runs > 0 ? "sc" : ""}">${h.runs}</td>`;
   };
   const row = (side: GameSide, half: "top" | "bottom"): RawHtml => html`<tr style="--chip:${side.color.base}">
-    <th class="l tm" scope="row"><i></i>${side.shortName}</th>
+    <th class="l tm" scope="row"><i></i>${teamLink(base, side.teamCode, side.shortName)}</th>
     ${innings.map((i) => cell(i, half))}
     <td class="tot">${side.runs}</td>
     <td>${side.hits ?? NO_VALUE}</td>
@@ -199,7 +201,9 @@ function playRow(p: GamePlayView, d: GamePageData, base: string, widest: number)
   <span class="pwho">${p.batter === null
     ? html`<b>${NO_VALUE}</b>`
     : html`<a href="${base}players/${p.batter.playerId}.html">${p.batter.name}</a>`}
-    ${p.pitcher === null ? null : html`<s>対 ${p.pitcher.name}</s>`}</span>
+    ${p.pitcher === null
+      ? null
+      : html`<s>対 <a href="${base}players/${p.pitcher.playerId}.html">${p.pitcher.name}</a></s>`}</span>
   <span class="pres">${p.rawBox ?? NO_VALUE}${p.runsScored > 0
     ? html`<em class="${p.rbi === 0 ? "norbi" : ""}">${p.runsScored}点${p.rbi === 0 ? html`<s>打点なし</s>` : null}</em>`
     : null}</span>
@@ -218,7 +222,7 @@ export function renderGamePage(d: GamePageData, ctx: RenderContext): string {
 
   const scoreSide = (side: GameSide, won: boolean): RawHtml => html`<div class="gbside${won ? " w" : ""}"
   style="--chip:${side.color.base};--chip-ink:${side.color.ink}">
-  <span class="gbt"><i></i>${side.name}</span>
+  <span class="gbt"><i></i>${teamLink(base, side.teamCode, side.name)}</span>
   <span class="gbr">${side.runs}</span>
 </div>`;
 
@@ -249,7 +253,7 @@ export function renderGamePage(d: GamePageData, ctx: RenderContext): string {
     : html`<p class="cmpwarn" role="status">この試合のイニング別得点は、当サイトの打席ログから組み直した数字と
       公表されている合計が一致していません。下の表は参考値として扱ってください。</p>`}
 
-  ${inningTable(d)}
+  ${inningTable(d, base)}
   ${note(
     // ⚠**어디서 온 숫자인지 말한다**(M4·L2). 원본 표를 옮긴 것이 아니라 우리가 조립한 것이다
     // ⚠**「원본을 옮긴 것이 아니다」라고 쓰지 않는다.** 이닝별 득점은 계산 구조상

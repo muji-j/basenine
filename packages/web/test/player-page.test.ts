@@ -1130,7 +1130,12 @@ test("⚠드래프트가 표제 줄에 나오고, 없으면 항목째 빠진다"
   const withD = renderPlayerPage(playerPage(), context());
   assert.match(withD, /2016年ドラフト1位/, "드래프트가 표제에 안 나온다");
   // 맨 뒤다 — 체격 뒤에 온다
-  const sub = /<span class="sub">([^<]*)<\/span>/.exec(withD)?.[1] ?? "";
+  // ⚠**이 추출이 `[^<]*` 였다** — 구단명을 링크로 바꾸자 첫 `<` 에서 끊겨
+  // 빈 문자열을 재고도 「둘 다 -1 이라 순서가 맞다」로 통과할 뻔했다.
+  // 재는 것은 **항목의 순서**이지 마크업 모양이 아니므로, 안의 태그를 지우고 글자만 본다.
+  const subHtml = /<span class="sub">([\s\S]*?)<\/span>/.exec(withD)?.[1] ?? "";
+  const sub = subHtml.replace(/<[^>]*>/g, "");
+  assert.ok(sub.includes("ドラフト") && sub.includes("cm"), "표제 줄에서 둘 중 하나가 사라졌다");
   assert.ok(sub.indexOf("ドラフト") > sub.indexOf("cm"), "드래프트가 체격보다 앞에 왔다");
 
   const noD = renderPlayerPage(playerPage({ draft: null }), context());
@@ -1308,4 +1313,72 @@ test("⚠리그 本盗 성공이 0이면 「成功0のうち0はダブルスチ�
     !out.includes("ダブルスチールの一部でした"),
     "「成功例がありません」 뒤에 「成功0のうち0はダブルスチール…」을 그대로 붙였다",
   );
+});
+
+/**
+ * ⚠**선수 페이지의 소속 구단명이 링크가 아니었다**(2026-08-21 배포물 전수 실측).
+ * 페이지 맨 아래 `nav.find` 에는 구단 링크가 있었지만(장당 1개), 사람이 먼저 보는
+ * 표제 줄의 구단명은 생텍스트였다 — 6,207장 전부.
+ * ⚠구단명 **뒤의 구분자**까지 링크에 들어가면 난독이 「한신 가운데점」으로 끝난다.
+ */
+test("⚠선수 페이지 표제 줄의 구단명이 그 구단 페이지로 간다", () => {
+  const out = renderPlayerPage(playerPage(), context());
+  assert.match(
+    out,
+    /<span class="sub"><a href="[^"]*teams\/t\.html">阪神タイガース<\/a> · /,
+    "표제 줄의 구단명이 링크가 아니거나 구분자까지 링크에 들어갔다",
+  );
+  // 나머지 항목은 지금긌대로 글자다 — 갈 곳이 없는 것을 링크로 만들지 않는다
+  assert.ok(!/<a[^>]*>背番号/.test(out), "배번까지 링크가 됐다");
+});
+
+/**
+ * ⚠**NPB 에 없는 이닝 표기가 화면에 나가고 있었다**(2026-08-21 다방면 감사 확정).
+ * 이닝의 소수 첫자리는 **0·1·2 뿐**이다(1/3 · 2/3 이닝). 그런데
+ * `Math.floor(outs/3)` 로 잘라 만든 「到達치 / 기준치」가 **둘 다 정수로 띄어**
+ * 도달했는데도 「35回 / 35回 … 未満」가 되는 자리가 있었다
+ * (감사 실측: 9시즌 구원 1,919 선수-시즌 중 **12건** · 2026 에 2건).
+ * ⚠**변환을 여기서 다시 쓰지 않는다**(M1) — `innings()` 가 정본이다.
+ */
+test("⚠투구회 표기는 NPB 어법을 따른다 — 소수 첫자리는 0·1·2 뿐이다", () => {
+  // 106 아웃 = 35.1回 · 107 아웃 = 35.2回. 잘라 쓰면 둘 다 「35回」가 된다.
+  const out = renderPlayerPage(
+    playerPage({
+      role: "pitcher",
+      position: "投手",
+      batting: null,
+      pitching: pitchingBlock({
+        role: "reliever",
+        starts: 0,
+        needOuts: 106,
+        qualified: false,
+        // 104 아웃 = 34.2回. 기준 106 아웃(35.1回) 에 미달이다 —
+        // 잘라 쓰면 「34回 / 35回」가 되어 **두 수 다 거짓**이 된다.
+        line: { outs: 104, bf: 140, h: 30, hr: 3, bb: 9, ibb: 0, hbp: 1, so: 38, er: 11, r: 12 },
+      }),
+    }),
+    context(),
+  );
+  assert.match(out, /35\.1回/, "기준치 106아웃이 35.1回 로 나오지 않는다");
+  // 이 화면의 자격 문구 안에 불가능한 소수가 없어야 한다
+  const q = /class="qual"[^>]*>([^<]*)</.exec(out)?.[1] ?? out;
+  assert.ok(!/[0-9]\.[3-9]回/.test(q), `자격 문구에 NPB 에 없는 이닝 표기가 있다: ${q}`);
+});
+
+/**
+ * ⚠**오프시즌에 선수 페이지가 끝난 시즌을 현재형으로 말했다**(handover #56).
+ *
+ * `seasonSurelyOver` 는 근거가 `season < heldTo` 하나였다. 그러면 **최신 시즌이 끝나고
+ * 다음 시즌 첫 경기가 들어오기 전(11월~이듭해 3월)**에는 `false` 가 되고,
+ * 그 창에서 최종전에 나온 선수의 기록이 계속 「今」이 된다(그 함수의 주석이 **135장**으로 실측).
+ * 그 주석이 적어 둔 처방이 **「query.ts 의 seasonIsOver 가 PlayerPageData 까지 와야 한다」**였고,
+ * 지금 그렇게 배선됐다.
+ */
+test("⚠끝난 시즌은 현재형으로 말하지 않는다 — 다음 시즌 경기가 아직 없어도", () => {
+  // ⚠픽스처 기본값은 **최신 경기일에 나온 선수**라 「今」이 붙는다 — 그게 이 시험의 대조군이다
+  const running = renderPlayerPage(playerPage(), context());
+  assert.match(running, /続いている/, "진행 중인데 현재형이 아니다 — 이 시험이 공회전한다");
+
+  const over = renderPlayerPage(playerPage({ seasonOver: true }), context());
+  assert.ok(!over.includes("続いている"), "끝난 시즌을 「続いている」이라고 말했다");
 });

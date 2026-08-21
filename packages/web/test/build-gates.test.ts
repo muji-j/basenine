@@ -698,3 +698,36 @@ test("⚠빌드가 contactGate 의 판정으로 종료 코드를 바꾼다", () 
     "판정만 받고 종료 코드를 안 바꾼다 — 경고만으로는 그대로 배포된다",
   );
 });
+
+/**
+ * ⚠**S1(지인한정)의 인가 경계가 Cloudflare 대시보드 설정에만 있었다**(2026-08-21 감사 확정 P1).
+ * 추적 파일 전수 grep 에서 인가 관련 히트가 **2건 · 둘 다 주석**이었고 게이트는 0건.
+ * 그 사이 이 워크플로는 하루 3회 **새 배포 별칭**을 만들고 있었다.
+ * ⚠**이 고장은 2026-08-15 에 실제로 한 번 났다**(deploy.md) — prod 302 · 별칭 200.
+ *
+ * ⚠**안전장치를 사람이 기억해서 붙이면 빠뜨려도 아무도 모른다** — 그래서 여기서 고정한다.
+ * 단계가 **배포보다 앞**에 있어야 한다 — 뒤에 두면 이미 올라간 뒤에 울게 된다.
+ */
+test("⚠daily.yml 이 배포 앞에서 Access 담장을 확인한다", () => {
+  const yml = readFileSync(
+    join(import.meta.dirname, "..", "..", "..", ".github", "workflows", "daily.yml"),
+    "utf8",
+  );
+  const gateAt = yml.indexOf("- name: S1 확인");
+  const deployAt = yml.indexOf("- name: 배포");
+  assert.notEqual(gateAt, -1, "S1 확인 단계가 없다 — 인가 경계를 확인하는 것이 리포에 아무것도 없다");
+  assert.notEqual(deployAt, -1, "배포 단계를 못 찾았다 — 이 시험이 공회전한다");
+  assert.ok(gateAt < deployAt, "S1 확인이 배포보다 뒤에 있다 — 올린 뒤에 울면 늦다");
+
+  const block = yml.slice(gateAt, deployAt);
+  // ⚠**상태 코드와 AUD 둘 다 본다.** 한 쪽만 보면 다른 앱으로 바뀜어도 통과한다
+  assert.match(block, /EXPECT_AUD:/, "기대하는 AUD 가 없다 — 「302 면 된다」는 다른 앱으로 바뀜어도 통과한다");
+  assert.match(block, /kid=\$\{EXPECT_AUD\}/, "AUD 를 실제로 대조하지 않는다");
+  // ⚠**아직 배포되지 않은 별칭**을 본다 — 오늘 만들 별칭이 그것이다
+  assert.match(block, /urandom/, "무작위 별칭을 안 본다 — 오늘 만들 호스트가 담장 밖인지 모른 채 올린다");
+  // ⚠**페이지 문구로 판정하지 않는다** — 감사가 준 문자열은 실제와 달랐다
+  assert.ok(
+    !/Log in to bb-app/.test(block),
+    "Cloudflare 의 페이지 문구로 판정한다 — 그 문구는 실측과 달랐고 언제든 바뀐다",
+  );
+});

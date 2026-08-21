@@ -41,6 +41,17 @@ export interface PaEventRow {
 export interface AlignResult {
   events: PaEventRow[];
   quarantine: QuarantineRow[];
+  /**
+   * **파서의 타석 번호 → 적재된 번호.**
+   *
+   * ⚠**버린 타석은 여기 없다**(미완결 · 격리된 타자). 그게 이 지도의 존재 이유다 —
+   * 버린 것을 알고 있는 곳은 여기뿐이고, 그걸 안 넘기면 호출자가 다시 계산할 수가 없다.
+   *
+   * ⚠**이게 없어서 wSB 가 막혔다**(2026-08-21 실측). `runner_event.after_seq` 는
+   * 파서 번호로 저장되는데 `pa_event.seq` 는 여기서 다시 매겨져, 둘이 **다른 계열**이 됐다.
+   * 어긋난 주자 사건 **164경기 · 215건 전부**가 이것으로 설명된다(미설명 0).
+   */
+  seqOf: ReadonlyMap<number, number>;
 }
 
 /**
@@ -54,7 +65,7 @@ export function alignPaEvents(
   runsForCompleted: readonly number[] = [],
 ): AlignResult {
   const quarantine: QuarantineRow[] = [];
-  if (box.status !== "played") return { events: [], quarantine };
+  if (box.status !== "played") return { events: [], quarantine, seqOf: new Map() };
 
   // 박스: 타자별 결과 목록(시간순)
   const boxByBatter = new Map<string, { raw: string; outcome: string; rbi: number }[]>();
@@ -118,6 +129,8 @@ export function alignPaEvents(
   // 타자별 소비 위치를 들고 시간순으로 훑는다.
   const cursor = new Map<string, number>();
   const rows: PaEventRow[] = [];
+  // ⚠**버린 타석을 기억해 둔다** — 주자 사건을 이어 붙이려면 이 대응이 필요하다
+  const seqOf = new Map<number, number>();
   let seq = 0;
   for (const [completedIndex, e] of completed.entries()) {
     if (!usable.has(e.batterId)) continue;
@@ -125,6 +138,7 @@ export function alignPaEvents(
     cursor.set(e.batterId, i + 1);
     const fromBox = boxByBatter.get(e.batterId)![i]!;
     seq += 1;
+    seqOf.set(e.seq, seq);
     rows.push({
       gameId,
       seq,
@@ -145,5 +159,5 @@ export function alignPaEvents(
     });
   }
 
-  return { events: rows, quarantine };
+  return { events: rows, quarantine, seqOf };
 }

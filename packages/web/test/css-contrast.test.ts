@@ -282,3 +282,67 @@ test("⚠글자색과 opacity 를 같은 규칙에 함께 쓰지 않는다", () 
   }
   assert.deepEqual(bad, [], `글자색에 opacity 를 얹었다 — 대비가 계산과 달라진다: ${bad.join(" / ")}`);
 });
+
+/**
+ * ⚠**위 시험은 공회전하고 있었다**(2026-08-21 다방면 감사 확정).
+ *
+ * 그 시험은 **한 규칙 안에** color 와 opacity 가 같이 있을 때만 잡는다.
+ * 그런데 실제 결함은 **부모에 opacity, 자식에 color** 모양으로 왔다 —
+ * `.gcard.off{opacity:.62}` 에는 color 가 없고, 글자를 가진 `.gvenue`·`.gt`·`.gnone` 은
+ * `.gcard` 를 이름으로 안 적는다. 그래서 시험은 **오늘 잡을 수 있는 규칙이 0건인 채로 초록**이었다.
+ *
+ * DOM 이 없으면 「누가 누구의 자식인가」를 정적으로 알 수 없다.
+ * 그래서 **잡는 방법을 바꾸는 대신 「정당화을 강제」한다**:
+ * 1 미만의 opacity 를 쓰는 규칙은 **전부 아래 목록에 있어야 하고**, 목록은 그 이유를 적는다.
+ * 새 규칙을 넣으면 이 시험이 먼저 울고, 그때 **「이 서브트리에 글자가 있는가」를 손으로 재게** 된다.
+ *
+ * ⚠**이 목록은 「안전하다」가 아니라 「재 보고 넣었다」는 뜻이다.**
+ * 글자를 가진 셋은 실측했다(라이트/다크 모두 기준 4.5 통과):
+ *   `#tip s`(.72) 9.23 / 6.48 · `.chip.fav s`(.8) 9.55 / 9.14 · `.pk[data-slot]::after`(.85) 11.35 / 10.14
+ */
+const OPACITY_ALLOWED: readonly { sel: string; why: string }[] = [
+  { sel: ".mv:disabled", why: "무효 컨트롤 — WCAG 1.4.3 이 명시적으로 면제한다" },
+  { sel: ".go:disabled", why: "같은 이유" },
+  { sel: ".go:hover:not(:disabled)", why: "hover 상태의 일시 연출 · .85 로 기준 아래로 내려가지 않는다" },
+  { sel: "#tip s", why: "글자이지만 실측 9.23/6.48 · 기준 4.5 통과" },
+  { sel: ".chip.fav s", why: "글자이지만 실측 9.55/9.14 통과" },
+  { sel: ".pk[data-slot]::after", why: "생성 글자 · 실측 11.35/10.14 통과" },
+  { sel: ".legend .bar", why: "범례 견본 — 도형이고 글자가 없다(등급 표시를 끕을 때의 연출)" },
+  { sel: ".sortable i", why: "정렬 표시 도형 · 글자 없음. ⚠도형 대비는 별건으로 미검증" },
+  { sel: ".hstand .rdbar::before", why: "기준선 막대 · 글자 없음" },
+  { sel: ".pswing i", why: "막대 · 글자 없음" },
+  { sel: "table.stand .dif i", why: "방향 도형 · 글자 없음" },
+  { sel: ".cardlink:active::after", why: "누름 덤개 · .06 · 글자 없음" },
+];
+
+test("⚠opacity 를 새로 얹으면 여기서 먼저 운다 — 「그 서브트리에 글자가 있는가」를 손으로 재게 한다", () => {
+  const found: string[] = [];
+  for (const m of CSS.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (!/(^|;)\s*opacity:\s*0?\.\d/.test(m[2] ?? "")) continue;
+    // 선택자 앞에 붙은 주석을 떼고, 마지막 선택자만 본다(쉼표로 묶인 경우)
+    const sel = (m[1] ?? "").replace(/\/\*[\s\S]*?\*\//g, "").trim().replace(/\s+/g, " ");
+    found.push(sel);
+  }
+  // ⚠**공회전 방지** — 규칙이 통째로 사라지면 이 시험은 아무것도 재지 않는다
+  assert.ok(found.length >= 10, `opacity 규칙이 ${found.length}건뿐이다 — 이 시험이 공회전한다`);
+
+  const allow = OPACITY_ALLOWED.map((x) => x.sel);
+  const unknown = found.filter((sel) => !allow.some((a) => sel.endsWith(a) || sel === a));
+  assert.deepEqual(
+    unknown,
+    [],
+    `opacity 를 쓰는 새 규칙이 있다. **그 서브트리에 글자가 있는지 재고** OPACITY_ALLOWED 에 이유와 함께 넣어라: ${unknown.join(" / ")}`,
+  );
+});
+
+/**
+ * ⚠**중지 경기 카드가 다시 opacity 로 돌아가지 않게 못 박는다.**
+ * `.gcard.off{opacity:.62}` 는 배포물 **208장 · 284카드**에서 글자 12/12 를 AA 미달로 만들었다.
+ * 그 카드가 혼자 가진 정보는 **어느 경기인가**(구장명 + 양 팀명)라 더 중요하다.
+ */
+test("⚠중지 경기 카드는 opacity 로 흐리지 않는다 — 형태로 말한다", () => {
+  const rule = /\.gcard\.off\{([^}]*)\}/.exec(CSS);
+  assert.notEqual(rule, null, ".gcard.off 규칙이 사라졌다 — 이 시험이 공회전한다");
+  assert.ok(!/opacity/.test(rule![1]!), `.gcard.off 에 opacity 가 돌아왔다: ${rule![1]}`);
+  assert.match(rule![1]!, /border-style:\s*dashed/, "「열리지 않았다」를 말하는 형태가 없다");
+});

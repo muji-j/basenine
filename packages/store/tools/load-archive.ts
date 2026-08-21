@@ -35,6 +35,7 @@ import {
   upsertGame,
   upsertPitching,
   upsertPlayer,
+  upsertPlayerSeasonName,
 } from "../src/load.ts";
 
 const { values, positionals } = parseArgs({
@@ -139,6 +140,22 @@ function gameFromPath(file: string): {
 const db = openDb(dbPath, nowIso);
 const budget = emptyBudget();
 const seenPlayers = new Set<string>();
+/**
+ * **그 시즌의 표시명** — `player_id|season` → 가장 나중 경기의 표기.
+ *
+ * ⚠**경기마다 UPSERT 하지 않는다.** 그랬더니 쓰기가 **276,817행 늘어**
+ * D1 하루 한도(100,000) 대비 보고가 무의미해졌다(실측 — 선수 276,817행).
+ * 막상 서로 다른 값은 **6,207개뿐**이다 — 메모리에 모아 **끝에 한 번만** 쓴다.
+ * ⚠**상한에 걸려 도중에 멈춰도 문제가 없다** — 이 표는 `as_of` 비교로 갱신되므로
+ * 다음 실행이 나머지를 채우면 같은 결과가 된다(M5).
+ */
+const seasonNames = new Map<string, { season: number; name: string; date: string; source: string }>();
+function noteSeasonName(playerId: string, season: number, name: string, date: string, source: string): void {
+  const key = `${playerId}|${season}`;
+  const prev = seasonNames.get(key);
+  // ⚠**늦은 경기가 이긴다** — 호출 순서가 아니라 경기일로 가른다(저장층과 같은 규칙)
+  if (prev === undefined || date >= prev.date) seasonNames.set(key, { season, name, date, source });
+}
 let played = 0;
 let notPlayed = 0;
 /** 아직 끝나지 않은 경기. **실패가 아니다**(M11) — 다음 실행이 받는다 */
@@ -434,6 +451,8 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
         seenPlayers.add(derived.row.playerId);
         budget.players += upsertPlayer(db, derived.row.playerId, b.name, nowIso);
       }
+      // ⚠**여기는 `seenPlayers` 밖이다** — 시즌마다·경기마다 봐야 한다. 쓰기는 끝에 모아서 한 번
+      noteSeasonName(derived.row.playerId, meta.season, b.name, meta.gameDate, sourceUrl);
       budget.batting += upsertBatting(db, derived.row);
       quarantine.push(...derived.quarantine);
     }
@@ -449,13 +468,16 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
         seenPlayers.add(row.playerId);
         budget.players += upsertPlayer(db, row.playerId, p.name, nowIso);
       }
+      noteSeasonName(row.playerId, meta.season, p.name, meta.gameDate, sourceUrl);
       budget.pitching += upsertPitching(db, row);
     }
   }
 
   // 타석 이벤트: playbyplay의 문맥에 박스의 **검증된** 결과를 붙인다.
+  // ⚠**아래 주자 사건 적재가 `aligned.seqOf` 를 쓴다** — 그래서 밖으로 끌어냈다.
+  let aligned: ReturnType<typeof alignPaEvents> | undefined;
   if (pbpEvents !== null) {
-    const aligned = alignPaEvents(meta.gameId, box, pbpEvents, runsForCompleted);
+    aligned = alignPaEvents(meta.gameId, box, pbpEvents, runsForCompleted);
     budget.paEvents += replacePaEvents(db, meta.gameId, aligned.events);
     quarantine.push(...aligned.quarantine, ...runsQuarantine);
   }
@@ -472,10 +494,32 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
    * `pa_event` 는 원래부터 이 보호가 있었다 — 두 표의 취급이 갈려 있던 것이 결함이다.
    */
   if (pbpEvents !== null) {
+    /**
+     * ⚠**`afterSeq` 를 그대로 저장하면 다른 계열의 번호가 들어간다**(2026-08-21 실측).
+     *
+     * 파서는 자기 번호 체계로 「직전 타석」을 가리키는데, `alignPaEvents` 가
+     * **미완결 타석(`（途中交代）`)과 격리된 타자**를 버리면서 `seq` 를 1..N 으로 다시 매긴다.
+     * 그래서 둘이 서로 밀렸고, 그 어긋남이 **wSB 를 막는 선행 결함**이었다.
+     * 전수 검증: 어긋난 164경기 · 215사건 **전부** 이것으로 설명되고 미설명 0.
+     *
+     * ⚠**버려진 타석을 가리키면 그 앞의 마지막 남은 타석으로 보낸다.**
+     * 「직전 타석」이라는 뜻을 지키는 것이지 임의로 고르는 것이 아니다.
+     * ⚠**앞에 남은 타석이 하나도 없으면 0** — 「1번 타석 앞」과 같은 뜻이고 스키마가 그걸 구별한다.
+     */
+    const remap = (afterSeq: number): number => {
+      if (afterSeq <= 0) return 0;
+      const map = aligned?.seqOf;
+      if (map === undefined) return afterSeq;
+      for (let k = afterSeq; k > 0; k -= 1) {
+        const at = map.get(k);
+        if (at !== undefined) return at;
+      }
+      return 0;
+    };
     budget.runnerEvents += replaceRunnerEvents(
       db,
       meta.gameId,
-      pbpRunners.map((r, i) => ({ ...r, gameId: meta.gameId, seq: i + 1 })),
+      pbpRunners.map((r, i) => ({ ...r, gameId: meta.gameId, seq: i + 1, afterSeq: remap(r.afterSeq) })),
     );
   }
 
@@ -562,6 +606,21 @@ if (rosterLatest.size > 0) {
         num.run(r.uniformNumber, playerId);
         filledNumber += (db.raw.prepare("SELECT changes() AS n").get() as { n: number }).n;
       }
+    }
+  });
+}
+
+/**
+ * **시즌별 표시명을 한 번에 쓴다.**
+ *
+ * ⚠**한 트랜잭션으로 묶는다** — 6,207행을 개별 커밋하면 디스크 동기화가 그만큼 일어난다.
+ * ⚠**`--skip-events` 여도 쓴다** — 이름은 박스에서 오고 박스는 그 플래그와 무관하다.
+ */
+if (seasonNames.size > 0) {
+  db.transaction(() => {
+    for (const [key, v] of seasonNames) {
+      const playerId = key.slice(0, key.lastIndexOf("|"));
+      budget.players += upsertPlayerSeasonName(db, playerId, v.season, v.name, v.date, v.source);
     }
   });
 }

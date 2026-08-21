@@ -300,7 +300,14 @@ jobs:
           # ⚠**GitHub 이 503 을 돌려주면 그날 배포가 통째로 날아간다**(2026-08-17 실측).
           #   그날 밤에만 API 503 을 세 번 봤고, 그중 한 번이 **정확히 이 줄**에서 크론을 죽였다
           #   (run 32052853059 · 「보관소에 올림」 실패 → 화면 생성·시험·배포가 전부 skip).
-          #   업로드는 **멱등**이다(`--clobber`) — 다시 올려도 같은 결과다. 그러니 다시 시도한다.
+          # ⚠**「업로드는 멱등이다」는 거짓이었다**(2026-08-21 반증 라운드 확정 P1).
+          #   `gh release upload --help` 원문: 「`--clobber` 사용 시 기존 자산을 **삭제한 뒤** 업로드하며,
+          #   **업로드가 실패하면 원본 자산이 소실된다**」.
+          #   즉 이 루프는 **하루 한 번 소급 불가 자산을 스스로 지우는 창**을 열고,
+          #   재시도는 **이미 지워진 뒤**에 도는 것이다. 재시도 자체는 여전히 옷다(그게 유일한 복구 수단이다).
+          # ⚠**아직 세대 보관으로 바꾸지 않았다** — 복원 경로(「아카이브·DB 복원」)까지 같이 바뀜야 하고
+          #   이 파이프라인은 `gh` 인증 없이 끝까지 시험할 수 없다. **모르는 채 손대면 더 나쁘다.**
+          #   명세는 `docs/audits/2026-08-21-p2-refutation.md` §3 [4] 에 있다.
           # ⚠`set -e` 아래에서 `A || B` 로 쓰지 않는다 — 어느 실패가 스텝을 죽이는지 셸 규칙에
           #   맡기게 된다. 성공 여부를 변수로 들고 **마지막 줄에서 한 번만** 판정한다
           #   (아래 「기록 갱신과 커밋」의 푸시 재시도와 같은 모양).
@@ -313,6 +320,24 @@ jobs:
             sleep "${i}0"
           done
           [ "$uploaded" = 1 ]
+
+          # ⚠**올렸다고 올라간 것은 아니다.** 지금까지는 바이트 수를 **기록만 하고
+          #   한 번도 대조하지 않았다** — 잘려 올라간 아카이브는 **다음 날 복원해야 알게 된다.**
+          #   여기서 바로 묻는다. ⚠**실패를 삼키지 않는다**(`|| true` 금지).
+          for a in $assets; do
+            want=$(wc -c < "$a")
+            name=$(basename "$a")
+            got=$(gh release view "$DATA_TAG" --json assets                     --jq ".assets[] | select(.name==\"$name\") | .size")
+            if [ -z "$got" ]; then
+              echo "::error::보관소에 $name 이 없다 — 업로드가 성공했다고 보고했는데 자산이 없다"
+              exit 1
+            fi
+            if [ "$got" != "$want" ]; then
+              echo "::error::$name 의 크기가 다르다 — 올린 $want B, 보관소 $got B. 잘려 올라갔다"
+              exit 1
+            fi
+            echo "보관소 확인: $name $got B"
+          done
 
       - name: 기록 갱신과 커밋
         # ⚠이 커밋이 리포 활동을 갱신해 60일 자동 비활성화를 막는다. 자기 문제를 자기가 푼다.
@@ -421,6 +446,77 @@ jobs:
           BB_REQUIRE_DB: "1"
           BB_FULL_SCAN: "1"
         run: npm test
+
+      - name: S1 확인 — 배포 앞에서 Access 담장이 살아 있는지 본다
+        # ⚠**S1(지인한정)의 인가 경계가 Cloudflare 대시보드 설정에만 있고,
+        #   그것이 유지되는지 확인하는 코드·시험·게이트가 리포에 0건이었다**(2026-08-21 다방면 감사 확정 P1).
+        #   그 사이 이 워크플로는 하루 3회 **새 배포 별칭**을 만든다.
+        # ⚠**이 고장은 2026-08-15 에 실제로 한 번 났다**(docs/operations/deploy.md) —
+        #   prod 는 302 인데 별칭은 200 으로 내용이 그대로 나왔다. **경고가 없고 상태 코드로도 안 드러났다.**
+        #   설정 플립은 자기치유되지 않는다.
+        #
+        # ⚠**시크릿을 쓰지 않는다.** Access 는 **무자격 요청에도** 앱의 AUD 를 리다이렉트 URL 로 돌려주므로
+        #   토큰 없이 「담장이 서 있는가」를 물을 수 있다(2026-08-21 실측).
+        # ⚠**페이지 문구로 판정하지 마라** — 감사 보고가 인용한 문자열은 실제와 달랐다
+        #   (실제 제목은 「Sign in ・ Cloudflare Access」). 문구는 Cloudflare 가 언제든 바꾼다.
+        #   **상태 코드와 AUD** 두 가지만 본다.
+        # ⚠**아직 배포되지 않은 별칭도 담장 뒤여야 한다** — 와일드카드 앱이 미래 호스트까지 덮는지가
+        #   이 게이트의 핵심이다. 오늘 만들 별칭은 아직 존재하지 않기 때문이다.
+        # ⚠**흔들리는 네트워크를 하드 게이트로 두지 않는다**(L6 게이트가 배운 것) — 세 번 물어 본다.
+        #   단 **「모른다」를 「괜찮다」로 읽지는 않는다.**
+        if: success()
+        env:
+          # ⚠**이 값은 비밀이 아니다** — 무자격 요청의 리다이렉트 URL 에 그대로 실려 나온다.
+          #   앱을 다시 만들면 바뀌므로, 바뀌면 여기서 울고 사람이 확인한 뒤 갱신한다.
+          EXPECT_AUD: "3a221a604b448a571f306d79c26fc98b76df8d4947ce8abd94242eefd40a1048"
+          PAGES_HOST: "bb-app-7mk.pages.dev"
+        run: |
+          set -euo pipefail
+          probe() {
+            curl -s -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 20 "https://$1/"
+          }
+          # ① prod — 302 이고 우리 앱의 AUD 여야 한다
+          out=""
+          for i in 1 2 3; do
+            if out=$(probe "$PAGES_HOST"); then break; fi
+            echo "prod 확인 ${i}회 실패 — 15초 뒤 재시도"; sleep 15; out=""
+          done
+          if [ -z "$out" ]; then
+            echo "::error::Access 담장을 확인하지 못했다(응답 없음). 확인할 수 없으므로 배포하지 않는다."
+            exit 1
+          fi
+          code=${out%% *}; redir=${out#* }
+          echo "prod: ${code} → ${redir%%\&*}"
+          if [ "$code" != "302" ]; then
+            echo "::error::S1 위반 — prod 가 로그인으로 보내지 않는다(HTTP ${code}). Cloudflare Access 정책을 확인하라."
+            exit 1
+          fi
+          case "$redir" in
+            *"kid=${EXPECT_AUD}"*) ;;
+            *)
+              echo "::error::S1 확인 실패 — 리다이렉트의 AUD 가 우리가 아는 앱이 아니다."
+              echo "앱을 다시 만들었다면 EXPECT_AUD 를 갱신하라. 그 전까지는 배포하지 않는다."
+              exit 1;;
+          esac
+          # ② 아직 배포된 적 없는 별칭 — 와일드카드가 미래 호스트까지 덮는가
+          rand=$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' 
+')
+          out2=""
+          for i in 1 2 3; do
+            if out2=$(probe "${rand}.${PAGES_HOST}"); then break; fi
+            echo "별칭 확인 ${i}회 실패 — 15초 뒤 재시도"; sleep 15; out2=""
+          done
+          if [ -z "$out2" ]; then
+            echo "::error::별칭 담장을 확인하지 못했다(응답 없음). 배포하지 않는다."
+            exit 1
+          fi
+          code2=${out2%% *}
+          echo "미배포 별칭 ${rand}: ${code2}"
+          if [ "$code2" != "302" ]; then
+            echo "::error::S1 위반 — 배포된 적 없는 별칭이 담장 밖이다(HTTP ${code2})."
+            echo "오늘 만들 별칭도 같은 상태가 된다. 와일드카드 Access 애플리케이션을 확인하라."
+            exit 1
+          fi
 
       - name: 배포
         # ⚠**`success()`가 핵심이다.** 신선도가 낡으면 앞의 생성 단계가 종료 코드 1을 낸다.

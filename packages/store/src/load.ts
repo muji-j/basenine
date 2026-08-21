@@ -81,6 +81,43 @@ export function upsertPlayer(db: Db, playerId: string, displayName: string, nowI
 }
 
 /**
+ * **그 시즌의 표시명**을 남긴다.
+ *
+ * ⚠**`player.display_name` 과 뜻이 다르다.** 저쪽은 시즌을 가리지 않는 자리(검색 색인·통산표)가
+ * 쓰는 한 개짜리 이름이고, 이쪽은 **그 시즌 화면이 쓰는 이름**이다.
+ * NPB 박스 표기는 「신·구 등록명」이 아니라 **그 시점의 로스터 식별 표기**라,
+ * 어느 한 시점으로 통일하면 반드시 다른 시즌이 틀린다 —
+ * 감사 실측: 최초로 고정하면 620쌍 중 298 틀리고 **최종으로 고정하면 327 틀린다.**
+ *
+ * ⚠**적재 순서에 의존하지 않는다**(M5). 같은 시즌 안에서 표기가 흔들리면
+ * **가장 나중 경기의 표기**를 그 시즌의 이름으로 삼고, 그 판정을 `as_of`(경기일) 비교로 한다 —
+ * `--from` 으로 중간부터 다시 돌려도, 두 번 돌려도 결과가 같다.
+ *
+ * @param gameDate 그 이름을 쓴 **경기의 경기일**. ⚠적재 시각이 아니다
+ */
+export function upsertPlayerSeasonName(
+  db: Db,
+  playerId: string,
+  season: number,
+  displayName: string,
+  gameDate: string,
+  source: string,
+): number {
+  db.raw
+    .prepare(
+      `INSERT INTO player_season_name (player_id, season, display_name, as_of, source)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(player_id, season) DO UPDATE SET
+         display_name = excluded.display_name,
+         as_of        = excluded.as_of,
+         source       = excluded.source
+       WHERE excluded.as_of >= player_season_name.as_of`,
+    )
+    .run(playerId, season, displayName, gameDate, source);
+  return 1;
+}
+
+/**
  * 선수 행이 없으면 만든다. **있으면 표기를 건드리지 않는다.**
  *
  * ⚠`upsertPlayer`를 쓰면 안 된다 — 予告先発 페이지의 표기는 `柳　裕也`이고 박스스코어는 `柳`다.

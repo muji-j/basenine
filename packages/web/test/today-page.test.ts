@@ -12,6 +12,7 @@ import { ambiguousNames, renderTodayPage } from "../src/today-page.ts";
 import type { TodayGame, TodayPageData, TodayStar } from "../src/today-page.ts";
 import { colorOf } from "@bb-app/domain";
 import { context } from "./fixtures.ts";
+import { CSS } from "../src/assets.ts";
 
 function side(teamCode: string, shortName: string, runs: number | null, hits: number | null, errors: number | null) {
   return { teamCode, shortName, name: `${shortName}チーム`, color: colorOf(teamCode), runs, hits, errors };
@@ -344,4 +345,61 @@ test("예고선발이 있으면 카드를 내고 문구가 바뀐다", () => {
   assert.match(out, /id="b-probable"/);
   assert.match(out, /対戦する打者の成績まで見る/, "예고가 있는데 빈 상태 문구가 나왔다");
   assert.ok(!out.includes("まだ発表されていません"), "예고가 있는데 「발표 전」이라고 했다");
+});
+
+/**
+ * ⚠**경기 카드의 구단명이 링크가 아니었다**(2026-08-21 배포물 전수 실측 · 사용자 결정으로 붙인다).
+ * 실측: `days/*` **1,432장에 15,270곳** · `today.html` 32곳 · `postseason.html` 1,936곳.
+ *
+ * ⚠**카드 전체가 이미 경기 상세로 가는 링크다**(`.cardlink` 스트레치). 그 안에 링크를 하나 더 두는 것은
+ * 우연이 아니라 이미 대비돼 있다 — `assets.ts` 의 `.tapcard a:not(.cardlink){position:relative;z-index:1}`
+ * 이 겹쳐 놓인 링크를 스트레치 위로 올린다. 그 규칙이 없으면 이 링크는 눌리지 않는다.
+ */
+test("⚠경기 카드의 구단명이 그 구단 페이지로 간다 — 카드 전체 링크에 먹히지 않는다", () => {
+  const out = renderTodayPage(data(), context());
+  assert.match(out, /<a href="[^"]*teams\/m\.html">ロッテ<\/a>/, "원정 구단명이 링크가 아니다");
+  assert.match(out, /<a href="[^"]*teams\/l\.html">西武<\/a>/, "홈 구단명이 링크가 아니다");
+  // 홈/원정 표시는 링크 안에 남는다 — 자리를 옮기면 낭독 순서가 바뀐다
+  assert.match(out, /西武<\/a><span class="vh">（ホーム）<\/span>/, "홈 표시가 구단명에서 떨어졌다");
+});
+
+test("경기가 없던 날의 카드에서도 구단명이 링크다 — 상세 페이지 유무와 별개다", () => {
+  const out = renderTodayPage(
+    data({ games: [game({ status: "notPlayed", notPlayedReason: "雨天中止", hasPage: false })] }),
+    context(),
+  );
+  assert.match(out, /<a href="[^"]*teams\/m\.html">ロッテ<\/a>/, "중지 경기 카드의 원정 구단명이 링크가 아니다");
+  assert.match(out, /<a href="[^"]*teams\/l\.html">西武<\/a>/, "중지 경기 카드의 홈 구단명이 링크가 아니다");
+});
+
+/**
+ * ⚠**殊勲선수 행의 소속이 「폭 3px 구단색 막대」 하나로만 표시도다**(2026-08-21 감사 확정 P1).
+ * 그 막대의 `<i></i>` 는 배포물 **21,812/21,812 행**이 내용·aria-label·title 이 전무해서,
+ * 낭독 화면에는 소속이 **아예 안 전달된다**(勝/敗/S/H 배지 4,475행을 인정해도 17,307행).
+ * 동시에 막대 색과 패널의 대비가 3:1 미달이라(다크 8/12 · 라이트 4/12 구단) **보이지도 않는다.**
+ *
+ * ⚠**둘은 다른 결함이다** — 색을 고쳐도 낭독은 그대로고, 낭독을 고쳐도 저시력은 그대로다.
+ * 그래서 둘 다 건드린다.
+ */
+test("⚠殊勲선수 행의 소속이 색 밖의 채널로도 전달된다", () => {
+  const out = renderTodayPage(data(), context());
+  const li = /<li style="--chip:[^"]*">([\s\S]*?)<\/li>/.exec(out);
+  assert.notEqual(li, null, "殊勲선수 행이 아예 안 그려졌다 — 이 시험이 공회전한다");
+  assert.ok(
+    !/<i><\/i>/.test(li![1]!),
+    "구단 막대가 빈 <i></i> 다 — 낭독 화면에 소속이 전혀지지 않는다",
+  );
+  // 그 선수의 소속은 서부(l) 다 — 상대 구단(ロッテ) 이 아니어야 한다
+  assert.match(li![1]!, /西武/, "막대가 어느 구단인지 말하지 않는다");
+});
+
+test("⚠구단색 막대가 배경과 같은 색일 때도 보인다 — 윤곽을 둔다", () => {
+  // 이 시험은 CSS 쪽을 본다. 구단 색은 12개라 색만으로는 어느 테마에서든 미달이 나온다.
+  const rule = /\.gstars li i\{([^}]*)\}/.exec(CSS);
+  assert.notEqual(rule, null, ".gstars li i 규칙이 사라졌다 — 이 시험이 공회전한다");
+  assert.match(
+    rule![1]!,
+    /box-shadow:\s*inset 0 0 0 1px var\(--tx-2\)/,
+    "구단색 막대에 윤곽이 없다 — 같은 파일이 다른 두 곳에서는 쓰는 방식이다",
+  );
 });

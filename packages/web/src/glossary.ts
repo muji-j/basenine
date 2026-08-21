@@ -630,3 +630,16 @@ const BY_LABEL: Readonly<Record<string, string>> = Object.fromEntries(
 export function termKeyForLabel(label: string): string | undefined {
   return BY_LABEL[label];
 }
+
+/**
+ * 용어 한 항목의 **앵커 이름**. ⚠**한 곳에서만 만든다**(M1).
+ *
+ * 툴팁(`assets.ts`)과 용어집 페이지(`glossary-page.ts`)가 **같은 문자열**을 써야 한다 —
+ * 갈리면 툴팁의 「くわしく」가 아무 데도 안 가는 링크가 되고, 그건 눌러 보기 전에는 모른다.
+ * ⚠**키를 그대로 쓰지 않는다** — `id` 는 문서에서 유일해야 하는데 `avg`·`ops` 같은 짧은 말은
+ * 다른 목적으로 쓰일 여지가 있다. 접두사를 붙여 이 화면의 것임을 분명히 한다.
+ * ⚠`link-check.ts` 가 앵커까지 검사하므로, 여기가 갈리면 **빌드가 먼저 운다.**
+ */
+export function TERM_ANCHOR(key: string): string {
+  return `t-${key}`;
+}

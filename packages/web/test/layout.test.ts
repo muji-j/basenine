@@ -343,3 +343,31 @@ test("⚠소스 어디에도 listbox·combobox 롤이 남아 있지 않다 — �
   }
   assert.deepEqual(left, [], "listbox/combobox/option 이 아직 남아 있다");
 });
+
+/**
+ * ⚠**오프시즌에 매일 붉은 오진이 뜼다**(2026-08-21 반증 라운드 · P1 승격).
+ *
+ * `freshnessBar` 의 stale 판정이 `pastSeason` 하나로만 갈리는데,
+ * 그 값은 `pastSeasonOf(seasons)` — **「그리는 시즌 번호가 최신이 아닌가」라는 순수 구조 판정**이고
+ * **「이 시즌이 실제로 끝났는가」와는 무관**하다.
+ * 그래서 11월~3월(최신 시즌이 끝나고 다음 시즌 첫 경기가 들어오기 전)에는
+ * **수집이 멀지 않았는데도** 「取得に失敗している可能性があります」라는 붉은 띄가 매일 뜼다.
+ *
+ * ⚠**`season-over.test.ts` 가 같은 구멍을 이미 지목했는데 수정은 본문 문구 쪽만 했다** —
+ * 이 띄는 그때 남았다. 그게 이 시험의 존재 이유다.
+ */
+test("⚠끝난 시즌은 「취득 실패」라고 말하지 않는다 — 다음 시즌 경기가 아직 없어도", () => {
+  // 10월 19일에 끝난 시즌을 11월 20일에 그린다 — 32일 전이라 지금 코드는 stale 로 본다
+  const over = freshness("2026-10-19", "2026-11-20", "2026-10-19", { from: 2018, to: 2026 }, true);
+  const barOver = toString(freshnessBar(over, false));
+  assert.ok(
+    !barOver.includes("取得に失敗している可能性"),
+    `끝난 시즌에 수집 실패 경고를 냈다: ${barOver}`,
+  );
+  assert.ok(!barOver.includes("state stale"), "끝난 시즌에 경고색 띄를 냈다");
+
+  // ⚠**진행 중이면 여전히 경고해야 한다** — 이게 없으면 「늘 조용히」 구현이 통과한다
+  const running = freshness("2026-10-19", "2026-11-20", "2026-10-19", { from: 2018, to: 2026 }, false);
+  const barRunning = toString(freshnessBar(running, false));
+  assert.match(barRunning, /取得に失敗している可能性/, "수집이 멈췄는데 아무 말도 안 했다");
+});

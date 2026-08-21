@@ -22,6 +22,7 @@ import { page, ROSTER_PATH, TEAMS_PATH } from "./layout.ts";
 import type { RenderContext } from "./pages.ts";
 import { dayHref } from "./today-page.ts";
 import type { TeamColor } from "@bb-app/domain";
+import { TEAMS, canonicalTeamCode } from "@bb-app/domain";
 import type { Rate } from "@bb-app/metrics";
 import type { TeamRace } from "@bb-app/aggregate";
 // ⚠**여기서 다시 계산하지 않는다**(M1) — 홈 화면과 같은 한 벌을 팀으로 거른다(query.ts)
@@ -259,6 +260,33 @@ export interface TeamPageData {
 /** 팀 페이지의 파일 경로. **한 곳에서만 만든다**(M1) — 갈리면 어딘가는 404다 */
 export function teamPath(code: string): string {
   return `teams/${code}.html`;
+}
+
+/**
+ * **구단 페이지가 있는 코드인가.**
+ *
+ * ⚠**올스타는 구단이 아니다**(`cl`/`pl` · domain/teams.ts 의 `NON_TEAM_CODES`).
+ * 실측(2026-08-21 · DB 전수): 경기에 나오는 코드는 12구단 + `cl` 16경기 + `pl` 16경기이고,
+ * 시즌별 `teams` 디렉터리에는 **12장씩만** 있다. 즉 올스타 코드로 경로를 지으면 **404 가 된다.**
+ * ⚠이 줄에 `dist/<별표>/teams/` 를 그대로 쓰지 마라 — 블록 주석 안의 `*` + `/` 가 주석을 닫는다(실제로 밟았다).
+ * 지금은 올스타 경기의 페이지 자체가 안 만들어져서 새지 않지만, **그건 우연이지 방어가 아니다.**
+ */
+export function hasTeamPage(code: string): boolean {
+  return TEAMS.some((t) => t.code === canonicalTeamCode(code));
+}
+
+/**
+ * 구단명을 그 구단 페이지로 보낸다.
+ *
+ * ⚠**모르는 코드에서는 링크를 만들지 않고 글자만 낸다.** 던지지 않는 것은
+ * `shortNameOf` 와 같은 이유다 — 표시용 헬퍼가 화면을 통째로 죽이면 안 된다.
+ * ⚠**그러나 「조용히 넘긴 것」이 아니라 「정해서 넘긴 것」이다** — 이 거동은
+ * `team-page.test.ts` 가 고정한다. 시험이 없으면 다음 사람은 이것이 결함인지 결정인지 모른다.
+ */
+export function teamLink(base: string, code: string, label: string): RawHtml {
+  return hasTeamPage(code)
+    ? html`<a href="${base}${teamPath(code)}">${label}</a>`
+    : html`${label}`;
 }
 
 /**
@@ -798,7 +826,7 @@ function nowBlock(d: TeamPageData, base: string): RawHtml {
  * 썼다. 2018 화면이 **「지금 이어지고 있는 기록은 없습니다」**라고 말한 것이다.
  * ⚠**각주는 손대지 않는다** — 「最後の出場日を必ず併記しています」는 시제와 무관하게 참이다.
  */
-function streakBlock(rows: readonly HomeStreak[], seasonOver: boolean): RawHtml {
+function streakBlock(rows: readonly HomeStreak[], seasonOver: boolean, base: string): RawHtml {
   return block({
     id: "tstreak",
     title: streakSectionTitle(seasonOver),
@@ -810,7 +838,7 @@ function streakBlock(rows: readonly HomeStreak[], seasonOver: boolean): RawHtml 
     <thead><tr><th class="l">選手</th><th class="l">記録</th><th>試合</th><th class="l">最後の出場</th></tr></thead>
     <tbody>${rows.map(
         (x) => html`<tr>
-      <td class="l">${x.name}</td>
+      <td class="l"><a href="${base}players/${x.playerId}.html">${x.name}</a></td>
       <td class="l">${x.kind === "hitting" ? "連続安打" : "連続出塁"}</td>
       <td class="b">${x.games}</td>
       <td class="l">${x.lastGameDate === null ? NO_VALUE : fullDate(x.lastGameDate)}</td>
@@ -840,7 +868,7 @@ function streakBlock(rows: readonly HomeStreak[], seasonOver: boolean): RawHtml 
  * 아니라 **「그때 다가서 있었다」**가 맞는 말이다.
  * ⚠**각주는 손대지 않는다** — 「今、選手ページがある選手だけ」는 대상 선정 규칙이라 시제와 무관하다.
  */
-function milestoneBlock(rows: readonly HomeMilestone[], seasonOver: boolean): RawHtml {
+function milestoneBlock(rows: readonly HomeMilestone[], seasonOver: boolean, base: string): RawHtml {
   return block({
     id: "tmile",
     title: milestoneSectionTitle(seasonOver),
@@ -853,7 +881,7 @@ function milestoneBlock(rows: readonly HomeMilestone[], seasonOver: boolean): Ra
     <thead><tr><th class="l">選手</th><th class="l">記録</th><th>通算</th><th class="l">節目まで</th><th>今季</th></tr></thead>
     <tbody>${rows.map(
         (x) => html`<tr>
-      <td class="l">${x.name}</td>
+      <td class="l"><a href="${base}players/${x.playerId}.html">${x.name}</a></td>
       <td class="l">${x.label}</td>
       <td class="b">${x.count}</td>
       <td class="l">${x.next}まであと<b>${x.toNext}</b></td>
@@ -902,8 +930,8 @@ ${nowBlock(d, base)}
      ⚠**0건이어도 지우지 않는다**(M12) — 두 함수가 그 규칙을 지킨다.
      ⚠**seasonOver 를 넘긴다** — 위 요약 띠와 같은 근거를 쓴다(M1). 끝난 시즌에
      「続いている」·「近づいている」이라고 쓰면 2018 화면이 현재형으로 거짓을 말한다. -->
-${streakBlock(d.streaks, d.calendar.seasonOver)}
-${milestoneBlock(d.milestones, d.calendar.seasonOver)}
+${streakBlock(d.streaks, d.calendar.seasonOver, base)}
+${milestoneBlock(d.milestones, d.calendar.seasonOver, base)}
 
 <!-- ⚠**세로로 너무 길었다**(2026-08-17 유저 지적). 6구획이 한 줄로 이어져 있었고
      打者 46행 + 投手 30행이 대부분이었다 — 팀 성적을 보러 온 사람이 선수 76행을 지나야

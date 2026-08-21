@@ -20,6 +20,7 @@ export {
   upsertGame,
   upsertPitching,
   upsertPlayer,
+  upsertPlayerSeasonName,
   upsertProbablePitcher,
 } from "./load.ts";
 export type { GameRow, ProbablePitcherRow, WriteBudget } from "./load.ts";

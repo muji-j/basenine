@@ -115,6 +115,12 @@ test("사이트는 정해진 파일 집합을 만든다", () => {
     // Cloudflare Pages 배포 상한(20,000)을 먹고 있었다
     "compare/4.json",
     "days.html",
+    /**
+     * ⚠**용어집은 루트 한 장이다**(2026-08-21). 시즌마다 만들면 같은 글이 9번 올라가고
+     * 한쪽만 갱신되는 날 **시즌에 따라 설명이 달라진다** — `log.html` 과 같은 이유다.
+     * 그래서 `seasonPaths` 에도 **넣지 않는다** — 시즌 전환이 이 화면을 찾지 않아야 한다.
+     */
+    "glossary.html",
     "index.html",
     "matchup.html",
     // ⚠**루트는 대시보드, 선수 일람은 players.html**(2026-08-17)
@@ -288,9 +294,20 @@ test("만든 화면이 전부 시즌 경로 목록에 있다 — 빠진 만큼�
   });
   const known = seasonPaths(data, false);
   const made = buildSite(data, SITE, "2026-08-15").files.map((f) => f.path);
+  /**
+   * ⚠**사이트에 한 장뿐인 화면은 시즌 경로 목록에 들어가면 안 된다.**
+   * 넣으면 시즌 전환이 `2025/glossary.html` 을 찾고, 그건 **만들지 않으므로 404** 다.
+   * ⚠**이 목록을 「예외」으로 늘리지 마라** — 한 줄 늘릴 때마다
+   * 「그 화면은 시즌이 바뀌어도 같은 내용인가」를 답해야 한다.
+   */
+  const SITE_WIDE = new Set(["glossary.html"]);
   for (const p of made) {
     // 자산·색인은 화면이 아니다 — 시즌 전환의 대상이 아니므로 목록에도 없다
     if (!p.endsWith(".html")) continue;
+    if (SITE_WIDE.has(p)) {
+      assert.ok(!known.has(p), `${p} 는 사이트에 한 장인데 시즌 경로 목록에 들어갔다 — 시즌 전환이 404 로 간다`);
+      continue;
+    }
     assert.ok(known.has(p), `${p} 를 만들었는데 시즌 경로 목록에 없다`);
   }
   assert.ok(known.has("teams/t.html"), "팀 화면이 목록에 없다");

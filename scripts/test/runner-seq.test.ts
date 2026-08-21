@@ -1,12 +1,20 @@
 /**
- * **wSB 를 막고 있는 선행 결함이 아직 그대로인가** — 실DB로.
+ * **`runner_event.after_seq` 가 같은 이닝·표리의 타석을 가리키는가** — 실DB로.
  *
- * ⚠**이 시험은 「결함이 있다」를 못 박는다.** 이상하게 들리지만 이유가 있다:
- * `docs/metrics/README.md` §6 이 **「wSB 를 안 내는 사유」로 이 수치를 인용**하고 있고,
- * **사유로 쓰는 수는 사유로 쓰는 동안 참이어야 한다.** 누가 `after_seq` 를 고치면
- * 이 시험이 붉어지고, 그때 해야 할 일은 **문서에서 그 사유를 지우고 wSB 를 여는 것**이다.
+ * ⚠**이 시험은 2026-08-21 에 부호가 뒤집혔다.** 예전에는 **「결함이 있다」를 못 박았다** —
+ * `docs/metrics/README.md` §6 이 그 수치를 **「wSB 를 안 내는 사유」**로 인용했고,
+ * 사유로 쓰는 수는 쓰는 동안 참이어야 했기 때문이다. 그 시험이 스스로 적어 둔 지시가
+ * 「누가 고치면 붉어질 테니, 그때 문서에서 사유를 지우고 wSB 를 열어라」였다.
  *
- * ⚠**반대로 수치가 나빠져도 붉어진다** — 파서가 회귀했다는 뜻이다.
+ * **그 결함은 고쳤다.** 원인은 파서가 아니라 **적재**였다 —
+ * `alignPaEvents` 가 미완결 타석(`（途中交代）`)과 격리된 타자를 버리면서 `seq` 를 다시 매기는데,
+ * `after_seq` 는 파서 번호 그대로 저장돼 **두 계열이 서로 밀렸다.**
+ * 전수 검증: 어긋난 164경기 · 215사건 **전부** 그것으로 설명되고 미설명 0이었다.
+ * 지금은 `load-archive.ts` 가 `alignPaEvents` 의 `seqOf` 로 재사상한다.
+ *
+ * ⚠**그래서 이제 「0 이어야 한다」를 박는다. 지우지 않는다** —
+ * 지우면 **다음에 같은 곳이 다시 밀려도 아무도 모른다.**
+ * ⚠**이 시험은 데이터를 잰다** — 코드를 고쳐도 **적재를 다시 돌리기 전까지는** 옛 값이 남는다.
  *
  * ⚠**완결 시즌만 센다**(2018~). 진행 중 시즌을 넣으면 경기가 들어올 때마다 낡고,
  * 시즌 중에는 매일 붉어진다 — `scripts/test/doc-figures.test.ts` 머리말이 적은 그 병이다.
@@ -103,23 +111,19 @@ function measure(): Counts {
   }
 }
 
-test("⚠wSB 를 막는 선행 결함이 아직 그대로다 — 고쳤으면 문서에서 사유를 지워라", { skip: SKIP }, () => {
+test("⚠주자 사건이 같은 이닝·표리의 타석을 가리킨다 — 밀리면 wSB 가 남의 상황으로 계산된다", { skip: SKIP }, () => {
   const c = measure();
+  // ⚠**공회전 방지** — 분모가 사라지면 아래의 0 은 공허하게 참이 된다
+  assert.ok(c.total > 10_000, `완결 시즌 주자 사건이 ${c.total}건뿐이다 — 이 시험이 공회전한다`);
   assert.deepEqual(
-    {
-      total: c.total,
-      noSuchPa: c.noSuchPa,
-      halfMismatch: c.halfMismatch,
-      inningMismatch: c.inningMismatch,
-      broken: c.broken,
-      offByOne: c.offByOne,
-    },
-    // 실측 2026-08-21 · 완결 8시즌(2018~2025)
-    { total: 10_944, noSuchPa: 11, halfMismatch: 209, inningMismatch: 119, broken: 220, offByOne: 191 },
-    `잰 시즌: ${c.seasons.join("·")}\n` +
-      "**고쳤다면 이 시험을 지우고 docs/metrics/README.md §6 의 wSB 항을 지운 뒤 wSB 를 열어라.**\n" +
-      "**나빠졌다면 파서가 회귀한 것이다.**\n" +
-      "⚠백필했거나 시즌이 끝났으면 값이 늘어난 것이 정상이다 — 재고 문서를 같이 고쳐라.",
+    { noSuchPa: c.noSuchPa, halfMismatch: c.halfMismatch, inningMismatch: c.inningMismatch, broken: c.broken },
+    { noSuchPa: 0, halfMismatch: 0, inningMismatch: 0, broken: 0 },
+    `잰 시즌: ${c.seasons.join("·")} · 분모 ${c.total}\n` +
+      "**수정 전은 noSuchPa 11 · halfMismatch 209 · broken 220 이었다**(2026-08-21 실측).\n" +
+      "원인은 적재가 미완결 타석·격리 타자를 버리고 seq 를 다시 매기는데\n" +
+      "after_seq 는 파서 번호 그대로 저장되던 것 — load-archive.ts 가 seqOf 로 재사상한다.\n" +
+      "⚠**붉어졌다면 먼저 재사상을 의심해라.**\n" +
+      "⚠**코드만 고치고 적재를 안 돌렸으면 옛 값이 남아 있다** — load-archive.ts 를 다시 돌려라.",
   );
 });
 
@@ -136,23 +140,25 @@ function wsbSection(src: string): string {
   return src.slice(start, end);
 }
 
-test("⚠문서가 말하는 수와 DB 가 같다 — 사유로 쓰는 수는 참이어야 한다", { skip: SKIP }, () => {
+test("⚠문서가 말하는 수와 DB 가 같다 — 상태를 말하는 수는 참이어야 한다", { skip: SKIP }, () => {
   const c = measure();
   const src = wsbSection(readFileSync(`${ROOT}${DOC}`, "utf8"));
   const group = (n: number): string => n.toLocaleString("en-US");
   const pct = (n: number): string => `${((n / c.total) * 100).toFixed(2)}%`;
+  /**
+   * ⚠**부호가 뒤집힌 뒤의 감시다.** 예전에는 「결함이 이만큼 있다」를 문서와 맞췄고,
+   * 지금은 **「분모는 이만큼이고 어긋남은 이만큼이다」**를 맞춘다 — 둘 다 DB 가 정본이다.
+   * ⚠**분모를 함께 본다.** 어긋남만 보면 백필로 분모가 늘어도 문서가 낡은 채 초록이다.
+   */
   const miss = [
-    { text: group(c.total), what: "완결 시즌 주자 사건" },
-    { text: `**${c.broken}**`, what: "이어 붙일 수 없거나 어긋남" },
-    { text: `**${pct(c.broken)}**`, what: "그 비율" },
-    { text: `**${c.halfMismatch}**`, what: "표리 어긋남" },
-    { text: `${c.inningMismatch} `, what: "이닝까지 어긋남" },
-    { text: `**${c.offByOne}건`, what: "한 칸 밀림" },
+    { text: group(c.total), what: "완결 시즌 주자 사건(분모)" },
+    { text: `**${c.broken}건 · ${pct(c.broken)}.**`, what: "이어 붙일 수 없거나 어긋남" },
   ].filter((r) => !src.includes(r.text));
   assert.deepEqual(
     miss.map((r) => `${r.what} = ${r.text}`),
     [],
-    `${DOC} §6 의 wSB 항이 DB 와 갈렸다 — **DB 가 정본이다**`,
+    `${DOC} §6 의 wSB 항이 DB 와 갈렸다 — **DB 가 정본이다**.\n` +
+      "⚠어긋남이 0 이 아니게 됐다면 문서를 고치기 전에 **적재의 재사상**을 먼저 의심해라.",
   );
 });
 
