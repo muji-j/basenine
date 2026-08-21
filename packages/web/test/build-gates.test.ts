@@ -731,3 +731,52 @@ test("⚠daily.yml 이 배포 앞에서 Access 담장을 확인한다", () => {
     "Cloudflare 의 페이지 문구로 판정한다 — 그 문구는 실측과 달랐고 언제든 바뀐다",
   );
 });
+
+/**
+ * ⚠**워크플로 파일이 깨지면 아무도 안 말해 준다**(2026-08-21 실측).
+ *
+ * `run: |` 블록 안에 **열 0 으로 떨어진 줄**을 하나 넣었더니
+ * 블록 스칼라가 거기서 끝나 YAML 이 통째로 깨졌다
+ * (원인: 셀 명령에 `
+` 을 쓰려다 **실제 개행이 들어갔다**).
+ * 그러면 GitHub 은 **0초짜리 실패 run** 을 내고 끝이다 — 로그도 잡도 없고,
+ * `workflow_dispatch` 도 「트리거가 없다」고 거절된다(파일을 못 읽으니까).
+ * **크론이 그날 통째로 안 돌 수 있는 종류의 사고**다.
+ *
+ * ⚠**YAML 파서를 부르지 않는다** — 이 저장소에 없고, 이 것 하나를 위해
+ * 의존성을 늘리지 않는다(공급망은 감사 축이다). 대신 **그 실패 형태만** 정확히 재다:
+ * `jobs:` 아래는 전부 들여쓰기가 있으므로, 거기서 **열 0 으로 시작하는 줄**은
+ * 무엇인가가 빠져나온 것이다.
+ */
+test("⚠daily.yml 의 jobs 안에 열 0 으로 떨어진 줄이 없다 — 블록 스칼라가 거기서 끝난다", () => {
+  const yml = readFileSync(
+    join(import.meta.dirname, "..", "..", "..", ".github", "workflows", "daily.yml"),
+    "utf8",
+  );
+  const lines = yml.split(String.fromCharCode(10)).map((l) => l.replace(/\r$/, ""));
+  const jobsAt = lines.findIndex((l) => /^jobs:\s*$/.test(l));
+  assert.notEqual(jobsAt, -1, "daily.yml 에 jobs: 가 없다 — 이 시험이 공회전한다");
+  const bad: string[] = [];
+  for (let i = jobsAt + 1; i < lines.length; i += 1) {
+    const l = lines[i]!;
+    if (l === "") continue;
+    if (/^\s/.test(l)) continue;
+    bad.push(`${i + 1}: ${l.slice(0, 60)}`);
+  }
+  assert.deepEqual(
+    bad,
+    [],
+    `jobs: 아래에 열 0 줄이 있다 — YAML 이 거기서 깨진다: ${bad.join(" / ")}`,
+  );
+});
+
+/** ⚠**트리거가 사라지면 크론이 안 도는데 아무도 안 말해 준다.** 둘 다 있어야 한다 */
+test("⚠daily.yml 이 schedule 과 workflow_dispatch 를 둘 다 갖는다", () => {
+  const yml = readFileSync(
+    join(import.meta.dirname, "..", "..", "..", ".github", "workflows", "daily.yml"),
+    "utf8",
+  );
+  const head = yml.slice(0, yml.indexOf("jobs:"));
+  assert.match(head, /^\s*schedule:/m, "크론 트리거가 없다");
+  assert.match(head, /^\s*workflow_dispatch:/m, "손으로 돌릴 수 있는 트리거가 없다");
+});
