@@ -1303,3 +1303,29 @@ test("⚠진행 중인 시즌에서는 연속 기록·기록 근접이 현재형
   assert.ok(!m.includes("近づいていた"), "진행 중인 시즌을 과거형으로 말했다");
   assert.match(m, /この球団に記録に近づいている選手はありません/);
 });
+
+/**
+ * ⚠**같은 두 표를 홈은 링크로, 구단 페이지는 생텍스트로 그리고 있었다**(2026-08-21 배포물 전수 실측).
+ * `home-page.ts` 는 `<a href="…players/{playerId}.html">` 로 내는데
+ * `team-page.ts` 는 `${x.name}` 만 냈다 — **같은 데이터·같은 타입**인데 화면마다 달랐다(M1).
+ * 실측: 구단 페이지 **108/108 장**에 링크 아닌 선수명이 **833곳**.
+ *
+ * ⚠**가리킬 페이지가 있다는 근거는 화면이 스스로 적고 있다** —
+ * 두 표의 각주가 「**今、選手ページがある選手だけ**が対象です」라고 말한다.
+ */
+test("⚠구단 페이지의 연속 기록·기록 근접도 선수 페이지로 간다 — 홈과 같은 표가 화면마다 다르면 안 된다", () => {
+  const out = renderTeamPage(
+    data({ streaks: [streakFixture()], milestones: [milestoneFixture()] }),
+    context(),
+  );
+  assert.match(
+    blockOf(out, "tstreak"),
+    /<a href="[^"]*players\/SK1\.html">続巻タイガー<\/a>/,
+    "연속 기록의 선수명이 링크가 아니다",
+  );
+  assert.match(
+    blockOf(out, "tmile"),
+    /<a href="[^"]*players\/MK1\.html">積み上げタイガー<\/a>/,
+    "기록 근접의 선수명이 링크가 아니다",
+  );
+});

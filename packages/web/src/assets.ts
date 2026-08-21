@@ -1232,6 +1232,11 @@ table.iscore .tot{font-weight:700;border-left:1px solid var(--hair-2)}
 .pwho a{text-decoration:none;font-weight:700;border-bottom:1px solid var(--hair-2)}
 .pwho a:hover{border-bottom-color:var(--tx-3)}
 .pwho s{text-decoration:none;font-size:10.5px;color:var(--tx-3)}
+/* ⚠**상대 투수도 링크지만 타자와 같은 무게로 만들지 않는다.**
+   .pwho a 는 700 인데 그걸 그대로 받으면 둘째 줄이 첫째 줄과 같은 세기로 보여
+   「누가 친 타석인가」라는 이 줄의 정보 위계가 무너진다. 굵기는 본문 그대로 두고
+   **밑줄 한 올만** 남겨 누를 수 있다는 것만 말한다(색은 a{color:inherit} 로 s 를 따른다). */
+.pwho s a{font-weight:inherit;border-bottom-color:var(--hair)}
 .pres{font-size:13px;color:var(--tx-2);min-width:0;display:flex;align-items:baseline;gap:6px}
 .pres em{font-style:normal;font-size:11px;font-weight:700;color:var(--tx);
   border-left:3px solid var(--chip,#6b7280);padding-left:5px;flex:none}

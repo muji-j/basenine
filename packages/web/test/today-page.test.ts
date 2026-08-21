@@ -345,3 +345,28 @@ test("예고선발이 있으면 카드를 내고 문구가 바뀐다", () => {
   assert.match(out, /対戦する打者の成績まで見る/, "예고가 있는데 빈 상태 문구가 나왔다");
   assert.ok(!out.includes("まだ発表されていません"), "예고가 있는데 「발표 전」이라고 했다");
 });
+
+/**
+ * ⚠**경기 카드의 구단명이 링크가 아니었다**(2026-08-21 배포물 전수 실측 · 사용자 결정으로 붙인다).
+ * 실측: `days/*` **1,432장에 15,270곳** · `today.html` 32곳 · `postseason.html` 1,936곳.
+ *
+ * ⚠**카드 전체가 이미 경기 상세로 가는 링크다**(`.cardlink` 스트레치). 그 안에 링크를 하나 더 두는 것은
+ * 우연이 아니라 이미 대비돼 있다 — `assets.ts` 의 `.tapcard a:not(.cardlink){position:relative;z-index:1}`
+ * 이 겹쳐 놓인 링크를 스트레치 위로 올린다. 그 규칙이 없으면 이 링크는 눌리지 않는다.
+ */
+test("⚠경기 카드의 구단명이 그 구단 페이지로 간다 — 카드 전체 링크에 먹히지 않는다", () => {
+  const out = renderTodayPage(data(), context());
+  assert.match(out, /<a href="[^"]*teams\/m\.html">ロッテ<\/a>/, "원정 구단명이 링크가 아니다");
+  assert.match(out, /<a href="[^"]*teams\/l\.html">西武<\/a>/, "홈 구단명이 링크가 아니다");
+  // 홈/원정 표시는 링크 안에 남는다 — 자리를 옮기면 낭독 순서가 바뀐다
+  assert.match(out, /西武<\/a><span class="vh">（ホーム）<\/span>/, "홈 표시가 구단명에서 떨어졌다");
+});
+
+test("경기가 없던 날의 카드에서도 구단명이 링크다 — 상세 페이지 유무와 별개다", () => {
+  const out = renderTodayPage(
+    data({ games: [game({ status: "notPlayed", notPlayedReason: "雨天中止", hasPage: false })] }),
+    context(),
+  );
+  assert.match(out, /<a href="[^"]*teams\/m\.html">ロッテ<\/a>/, "중지 경기 카드의 원정 구단명이 링크가 아니다");
+  assert.match(out, /<a href="[^"]*teams\/l\.html">西武<\/a>/, "중지 경기 카드의 홈 구단명이 링크가 아니다");
+});

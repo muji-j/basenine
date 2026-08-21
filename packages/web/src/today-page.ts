@@ -17,6 +17,9 @@ import { page, pastSeasonOf, ROSTER_PATH } from "./layout.ts";
 import type { RenderContext } from "./pages.ts";
 import { NEUTRAL_COLOR, shortNameOf } from "@bb-app/domain";
 import { gameSlug } from "./game-page.ts";
+// ⚠`team-page.ts` 도 여기서 `dayHref` 를 가져간다(순환). 둘 다 **함수 선언**이라 호이스팅되고,
+// `home-page.ts` ↔ `team-page.ts` 가 이미 같은 모양으로 돌고 있다 — 새로 만드는 형태가 아니다.
+import { teamLink } from "./team-page.ts";
 import type { TeamColor } from "@bb-app/domain";
 import type { Rate } from "@bb-app/metrics";
 
@@ -188,9 +191,9 @@ function dayBar(
  * 어긋난다 — 자리는 두 줄 다 비워 두고(::before), 글자는 홈에만 넣는다.
  * ⚠**생성 콘텐츠는 낭독되지 않을 수 있다** — 그래서 보이지 않는 글자를 함께 둔다.
  */
-function scoreLine(side: TodaySide, won: boolean, home: boolean): RawHtml {
+function scoreLine(side: TodaySide, won: boolean, home: boolean, base: string): RawHtml {
   return html`<div class="gside${won ? " w" : ""}${home ? " h" : ""}" style="--chip:${side.color.base};--chip-ink:${side.color.ink}">
-  <span class="gt"><i></i>${side.shortName}<span class="vh">（${home ? "ホーム" : "ビジター"}）</span></span>
+  <span class="gt"><i></i>${teamLink(base, side.teamCode, side.shortName)}<span class="vh">（${home ? "ホーム" : "ビジター"}）</span></span>
   <span class="gr">${side.runs === null ? NO_VALUE : side.runs}</span>
 </div>`;
 }
@@ -258,8 +261,8 @@ function gameCard(g: TodayGame, base: string): RawHtml {
     return html`<article class="gcard off">
   <h3 class="gvenue">${g.venue ?? ""}</h3>
   <div class="gscore">
-    <div class="gside" style="--chip:${g.away.color.base}"><span class="gt"><i></i>${g.away.shortName}<span class="vh">（ビジター）</span></span></div>
-    <div class="gside h" style="--chip:${g.home.color.base}"><span class="gt"><i></i>${g.home.shortName}<span class="vh">（ホーム）</span></span></div>
+    <div class="gside" style="--chip:${g.away.color.base}"><span class="gt"><i></i>${teamLink(base, g.away.teamCode, g.away.shortName)}<span class="vh">（ビジター）</span></span></div>
+    <div class="gside h" style="--chip:${g.home.color.base}"><span class="gt"><i></i>${teamLink(base, g.home.teamCode, g.home.shortName)}<span class="vh">（ホーム）</span></span></div>
   </div>
   <p class="gnone">${g.notPlayedReason ?? "試合なし"}</p>
 </article>`;
@@ -276,8 +279,8 @@ function gameCard(g: TodayGame, base: string): RawHtml {
   return html`<article class="gcard${g.hasPage ? " tapcard" : ""}">
   <h3 class="gvenue">${g.venue ?? ""}${g.winner === null ? html`<span class="gtie">引き分け</span>` : null}</h3>
   <div class="gscore">
-    ${scoreLine(g.away, g.winner === "away", false)}
-    ${scoreLine(g.home, g.winner === "home", true)}
+    ${scoreLine(g.away, g.winner === "away", false, base)}
+    ${scoreLine(g.home, g.winner === "home", true, base)}
   </div>
   ${hits === null && errs === null
     ? raw("")

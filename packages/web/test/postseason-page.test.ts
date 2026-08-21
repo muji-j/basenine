@@ -27,8 +27,8 @@ function cs(over: Partial<PostCompetition> = {}): PostCompetition {
         gameNo: 1,
         series: "CS ファイナルステージ",
         stage: "セ・リーグ CS ファイナルステージ",
-        away: { shortName: "DeNA", color: colorOf("db"), runs: 2 },
-        home: { shortName: "阪神", color: colorOf("t"), runs: 5 },
+        away: { teamCode: "db", shortName: "DeNA", color: colorOf("db"), runs: 2 },
+        home: { teamCode: "t", shortName: "阪神", color: colorOf("t"), runs: 5 },
         winner: "home",
       },
     ],
@@ -136,8 +136,8 @@ test("올스타는 포스트시즌이 아니라고 말하고, 선수표가 없�
           games: [
             {
               gameId: "x", rawGameId: "x", hasPage: false, date: "2025-07-23", venue: "京セラD大阪", gameNo: 1, series: null, stage: null,
-              away: { shortName: "セ・リーグ", color: colorOf("t"), runs: 1 },
-              home: { shortName: "パ・リーグ", color: colorOf("h"), runs: 5 },
+              away: { teamCode: "cl", shortName: "セ・リーグ", color: colorOf("t"), runs: 1 },
+              home: { teamCode: "pl", shortName: "パ・リーグ", color: colorOf("h"), runs: 5 },
               winner: "home",
             },
           ],
@@ -340,4 +340,46 @@ test("대회 앵커가 그 대회 패널 안에 있다 — 깊은 링크가 탭�
   assert.notEqual(at, -1, "가운데 패널을 못 찾았다");
   assert.notEqual(end, -1, "뒤에 패널이 없다 — 상한이 안 걸려 이 시험이 공회전한다");
   assert.ok(out.slice(at, end).includes(`id="pc-nipponSeries"`), "앵커가 패널 밖에 있다");
+});
+
+/**
+ * ⚠**포스트시즌 화면에도 구단 링크가 한 개도 없었다**(2026-08-21 배포물 전수: 9장 · 구단명 1,936곳 · 링크 0).
+ * ⚠**그런데 이 화면은 올스타도 그린다**(`セ・リーグ`/`パ・リーグ` · 코드 `cl`/`pl`).
+ * 그 둘은 구단이 아니라 **구단 페이지가 없다** — 링크를 만들면 404다.
+ * 이 한 장에 「붙여야 할 곳」과 「붙이면 안 되는 곳」이 둘 다 있다.
+ */
+test("⚠포스트시즌 카드의 구단명은 링크고, 올스타는 링크가 아니다", () => {
+  // ⚠**둘을 한 페이지에 같이 넣는다.** 처음엔 CS 만 든 `data()` 로 재고
+  // 「올스타 링크가 없다」고 단언했는데, 그 페이지엔 올스타 경기 자체가 없어서
+  // **가드를 지워도 초록이었다**(뉖테이션 검사에서 잡혔다).
+  const out = renderPostseasonPage(
+    data({
+      competitions: [
+        ...data().competitions,
+        {
+          id: "allStar",
+          name: "オールスターゲーム",
+          detail: "⚠**これはポストシーズンではありません**",
+          games: [
+            {
+              gameId: "as1", rawGameId: "as1", hasPage: false, date: "2025-07-23",
+              venue: "京セラD大阪", gameNo: 1, series: null, stage: null,
+              away: { teamCode: "cl", shortName: "セ・リーグ", color: colorOf("t"), runs: 1 },
+              home: { teamCode: "pl", shortName: "パ・リーグ", color: colorOf("h"), runs: 5 },
+              winner: "home",
+            },
+          ],
+          batters: [],
+          pitchers: [],
+        },
+      ],
+    }),
+    context(),
+  );
+  assert.match(out, /<a href="[^"]*teams\/db\.html">DeNA<\/a>/, "CS 카드의 구단명이 링크가 아니다");
+  assert.match(out, /<a href="[^"]*teams\/t\.html">阪神<\/a>/, "CS 카드의 구단명이 링크가 아니다");
+  // 올스타 경기가 **그 페이지에 실제로 있다**는 것부터 확인한다 — 없으면 아래 두 줄은 공허하게 참이다
+  assert.match(out, /セ・リーグ/, "올스타 경기가 페이지에 없다 — 이 시험은 아무것도 재지 못한다");
+  assert.ok(!/teams\/cl\.html/.test(out), "올스타 코드로 구단 페이지 링크를 만들었다");
+  assert.ok(!/teams\/pl\.html/.test(out), "올스타 코드로 구단 페이지 링크를 만들었다");
 });

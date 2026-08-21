@@ -40,7 +40,7 @@ import { isEmptyProfile, markFigure, markLetter, markProfile } from "./marks.ts"
 import type { MarkPlayer, ProfileAxis } from "./marks.ts";
 import { denUnit, termOf } from "./glossary.ts";
 import { page, ROSTER_PATH } from "./layout.ts";
-import { teamPath } from "./team-page.ts";
+import { teamLink, teamPath } from "./team-page.ts";
 import { postseasonBrief } from "./postseason-page.ts";
 import type { PostseasonBrief } from "./postseason-page.ts";
 import type { Freshness, SiteMeta } from "./layout.ts";
@@ -730,7 +730,7 @@ function sparkline(points: readonly SparkPoint[], label: string): RawHtml {
 </div>`;
 }
 
-function idLine(d: PlayerPageData): RawHtml {
+function idLine(d: PlayerPageData, base: string): RawHtml {
   const who: MarkPlayer = {
     playerId: d.playerId,
     name: d.name,
@@ -749,8 +749,9 @@ function idLine(d: PlayerPageData): RawHtml {
     : html`<button class="mark markbtn" type="button" id="markBtn"
         aria-expanded="false" aria-controls="markPanel">${svg}<span class="mkcap">くわしく</span></button>`;
 
+  // ⚠**구단명만 링크로 떼 낸다.** 나머지는 지금까지처럼 「 · 」로 이은 글자다 —
+  // 배번·포지션·투타는 갈 곳이 없고, 없는 사람에게는 항목째 빠진다(M11).
   const bio = [
-    d.teamName,
     // ⚠**등번호는 팀명 옆이다.** 야구에서 「구단 + 배번」이 한 덩어리로 읽히고,
     // 없는 사람에게는 이 항목이 아예 빠진다(M11) — 「―」를 넣으면 은퇴가 결손처럼 보인다
     d.uniformNumber === null ? null : `背番号 ${d.uniformNumber}`,
@@ -771,7 +772,7 @@ function idLine(d: PlayerPageData): RawHtml {
       눌러도 아무 일이 없는 버튼을 두는 것보다 없는 편이 정직하다 -->
       <button class="favbtn" type="button" id="favBtn" data-fav="${d.playerId}"
         aria-pressed="false" aria-label="お気に入りに入れる" hidden>★</button></h1>
-    <span class="sub">${bio.join(" · ")}</span>
+    <span class="sub">${teamLink(base, d.teamCode, d.teamName)}${bio.length === 0 ? null : raw(" · ")}${bio.join(" · ")}</span>
     <span class="asof">${d.season}年${d.asOf === null ? "" : ` · ${gameDate(d.asOf)}まで`}</span>
     ${d.stints.length < 2
       ? null
@@ -2109,7 +2110,7 @@ export function renderPlayerPage(d: PlayerPageData, ctx: RenderContext): string 
    */
   const seasonPast = seasonSurelyOver(d.season, ctx.freshness.heldTo);
 
-  const body = html`${idLine(d)}
+  const body = html`${idLine(d, base)}
 ${rail(d)}
 ${editor()}
 ${catalog.map((meta) => {

@@ -2060,8 +2060,8 @@ function postseasonPage(db: Db, o: LoadOptions): PostseasonPageData {
       series: g.series,
       stage: stageOf(g),
       gameNo: g.gameNo,
-      away: { shortName: squadName(g.awayCode), color: squadColor(g.awayCode), runs: g.awayRuns },
-      home: { shortName: squadName(g.homeCode), color: squadColor(g.homeCode), runs: g.homeRuns },
+      away: { teamCode: g.awayCode, shortName: squadName(g.awayCode), color: squadColor(g.awayCode), runs: g.awayRuns },
+      home: { teamCode: g.homeCode, shortName: squadName(g.homeCode), color: squadColor(g.homeCode), runs: g.homeRuns },
       // ⚠**무승부와 「득점을 못 읽음」은 다르다**(M11). 접으면 결측이 무승부로 보인다
       winner:
         g.awayRuns === null || g.homeRuns === null

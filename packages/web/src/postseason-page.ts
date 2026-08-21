@@ -20,6 +20,7 @@ import type { RawHtml } from "./html.ts";
 import { fullDate, innings } from "./format.ts";
 import { note, panel, scroller, tablist, term, valueWithDen } from "./parts.ts";
 import { page, ROSTER_PATH } from "./layout.ts";
+import { teamLink } from "./team-page.ts";
 import type { RenderContext } from "./pages.ts";
 import { NEUTRAL_COLOR } from "@bb-app/domain";
 import type { TeamColor } from "@bb-app/domain";
@@ -53,8 +54,10 @@ export interface PostGame {
   hasPage: boolean;
   date: string;
   venue: string | null;
-  away: { shortName: string; color: TeamColor; runs: number | null };
-  home: { shortName: string; color: TeamColor; runs: number | null };
+  // ⚠**코드를 함께 둔다** — 이 화면은 올스타(`cl`/`pl`)도 그린다. 그 둘은 구단이 아니라
+  // 구단 페이지가 **없다** — `teamLink` 가 그 판정을 쥐고, 코드가 없으면 판정 자체를 못 한다.
+  away: { teamCode: string; shortName: string; color: TeamColor; runs: number | null };
+  home: { teamCode: string; shortName: string; color: TeamColor; runs: number | null };
   /**
    * 이긴 쪽.
    * ⚠**「무승부」와 「득점을 못 읽음」을 같은 값으로 접지 않는다**(M11).
@@ -173,9 +176,9 @@ function stageGroups(games: readonly PostGame[]): [string, PostGame[]][] {
   return m.size <= 1 ? [["", games.slice()]] : [...m];
 }
 
-function score(side: PostGame["away"], won: boolean): RawHtml {
+function score(side: PostGame["away"], won: boolean, base: string): RawHtml {
   return html`<div class="gside${won ? " w" : ""}" style="--chip:${side.color.base};--chip-ink:${side.color.ink}">
-  <span class="gt"><i></i>${side.shortName}</span>
+  <span class="gt"><i></i>${teamLink(base, side.teamCode, side.shortName)}</span>
   <span class="gr">${side.runs === null ? "—" : side.runs}</span>
 </div>`;
 }
@@ -183,8 +186,8 @@ function score(side: PostGame["away"], won: boolean): RawHtml {
 function gameCard(g: PostGame, base: string): RawHtml {
   const body = html`<h3 class="gvenue">第${g.gameNo}戦<span class="gtie">${fullDate(g.date)}</span></h3>
   <div class="gscore">
-    ${score(g.away, g.winner === "away")}
-    ${score(g.home, g.winner === "home")}
+    ${score(g.away, g.winner === "away", base)}
+    ${score(g.home, g.winner === "home", base)}
   </div>
   <p class="gnone">${g.venue ?? ""}${g.winner === "tie" ? "　引き分け" : ""}</p>`;
   // ⚠상세 페이지가 없으면 카드를 누를 수 있게 만들지 않는다 — 눌러도 안 가는 카드는 결함이다

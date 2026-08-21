@@ -1130,7 +1130,12 @@ test("⚠드래프트가 표제 줄에 나오고, 없으면 항목째 빠진다"
   const withD = renderPlayerPage(playerPage(), context());
   assert.match(withD, /2016年ドラフト1位/, "드래프트가 표제에 안 나온다");
   // 맨 뒤다 — 체격 뒤에 온다
-  const sub = /<span class="sub">([^<]*)<\/span>/.exec(withD)?.[1] ?? "";
+  // ⚠**이 추출이 `[^<]*` 였다** — 구단명을 링크로 바꾸자 첫 `<` 에서 끊겨
+  // 빈 문자열을 재고도 「둘 다 -1 이라 순서가 맞다」로 통과할 뻔했다.
+  // 재는 것은 **항목의 순서**이지 마크업 모양이 아니므로, 안의 태그를 지우고 글자만 본다.
+  const subHtml = /<span class="sub">([\s\S]*?)<\/span>/.exec(withD)?.[1] ?? "";
+  const sub = subHtml.replace(/<[^>]*>/g, "");
+  assert.ok(sub.includes("ドラフト") && sub.includes("cm"), "표제 줄에서 둘 중 하나가 사라졌다");
   assert.ok(sub.indexOf("ドラフト") > sub.indexOf("cm"), "드래프트가 체격보다 앞에 왔다");
 
   const noD = renderPlayerPage(playerPage({ draft: null }), context());
@@ -1308,4 +1313,21 @@ test("⚠리그 本盗 성공이 0이면 「成功0のうち0はダブルスチ�
     !out.includes("ダブルスチールの一部でした"),
     "「成功例がありません」 뒤에 「成功0のうち0はダブルスチール…」을 그대로 붙였다",
   );
+});
+
+/**
+ * ⚠**선수 페이지의 소속 구단명이 링크가 아니었다**(2026-08-21 배포물 전수 실측).
+ * 페이지 맨 아래 `nav.find` 에는 구단 링크가 있었지만(장당 1개), 사람이 먼저 보는
+ * 표제 줄의 구단명은 생텍스트였다 — 6,207장 전부.
+ * ⚠구단명 **뒤의 구분자**까지 링크에 들어가면 난독이 「한신 가운데점」으로 끝난다.
+ */
+test("⚠선수 페이지 표제 줄의 구단명이 그 구단 페이지로 간다", () => {
+  const out = renderPlayerPage(playerPage(), context());
+  assert.match(
+    out,
+    /<span class="sub"><a href="[^"]*teams\/t\.html">阪神タイガース<\/a> · /,
+    "표제 줄의 구단명이 링크가 아니거나 구분자까지 링크에 들어갔다",
+  );
+  // 나머지 항목은 지금긌대로 글자다 — 갈 곳이 없는 것을 링크로 만들지 않는다
+  assert.ok(!/<a[^>]*>背番号/.test(out), "배번까지 링크가 됐다");
 });
