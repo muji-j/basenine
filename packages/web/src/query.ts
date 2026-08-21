@@ -519,10 +519,18 @@ function batterQualifier(bundle: LeagueBundle): string {
  * ⚠**선발은 NPB 공식 기준, 구원은 우리 기준**이다. 같은 문장으로 쓰면
  * 자체 기준이 공식 기준으로 읽힌다 — 그건 출처를 속이는 것과 같다(§0-10 출처 추적성).
  */
+/**
+ * ⚠**아웃→이닝 변환을 여기서 다시 쓰지 마라**(M1 · 2026-08-21 다방면 감사 확정).
+ * 예전에는 `Math.round((outs / 3) * 10) / 10` 이 여기와 아래 두 곳에 따로 적혀 있었고,
+ * 그 식은 **NPB 에 존재하지 않는 표기**를 만들었다 — 143아웃은 47.2回 인데 `47.7回` 가 나왔다.
+ * 이닝의 소수 첫자리는 **0·1·2 뿐**이고(1/3·2/3 이닝), 우리 파서는 `inningsToOuts("6.3")` 을
+ * **null 로 거부**한다 — 즐 우리 자신이 못 읽는 문자열을 화면에 내고 있었다.
+ * 실측: 배포물 문장 **8,481/9,381(90.4%)** · **1,167/15,340장**.
+ * ⚠값(순위)은 아웃 카운트로 계산돼 안 틀렸다 — **화면만 틀린 말을 했다**(가장 나쁜 모양).
+ */
 function pitcherQualifier(bundle: LeagueBundle, role: PitcherRole): string {
   const { min, max } = neededOutsRange(bundle, role);
-  const one = (outs: number): number => Math.round((outs / 3) * 10) / 10;
-  const need = min === max ? `${one(min)}回` : `${one(min)}〜${one(max)}回`;
+  const need = min === max ? `${innings(min)}回` : `${innings(min)}〜${innings(max)}回`;
   if (role === "starter") {
     return `規定投球回 ${need}（所属球団の試合数 × 1回・NPB公式）に達した先発投手だけに順位がつきます。球団ごとに消化試合数が違うため基準も異なります。同率は同じ順位で、次の順位を飛ばします。`;
   }
@@ -548,8 +556,10 @@ function batterQualifierShort(bundle: LeagueBundle, teamCode: string): string {
  * ⚠**구원 기준은 NPB의 것이 아니다.** 같은 문장으로 쓰면 자체 기준이 공식으로 읽힌다.
  */
 function pitcherQualifierShort(bundle: LeagueBundle, teamCode: string): string {
-  const st = Math.round((neededOuts(bundle, teamCode, "starter") / 3) * 10) / 10;
-  const rl = Math.round((neededOuts(bundle, teamCode, "reliever") / 3) * 10) / 10;
+  // ⚠**위와 같은 이유로 `innings()` 를 쓴다**(M1). 예전에 여기 두 줄이
+  // 바로 위 주석이 금지하는 「값을 여기서 다시 계산하기」를 그대로 하고 있었다.
+  const st = innings(neededOuts(bundle, teamCode, "starter"));
+  const rl = innings(neededOuts(bundle, teamCode, "reliever"));
   return `先発は規定投球回 ${st}回（この球団の試合数 × 1回・NPB公式）、救援はその3分の1 ${rl}回（当サイトの基準でNPBのものではありません）`;
 }
 

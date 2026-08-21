@@ -97,7 +97,11 @@ SELECT b.player_id AS playerId,
        g.game_date AS date,
        SUM(b.h) AS hits,
        SUM(b.h + b.bb + b.hbp) AS onBase,
-       SUM(b.pa) AS pa
+       SUM(b.pa) AS pa,
+       -- ⚠**공인야구규칙 9.23(b)를 판정하려면 타수와 희생플라이가 필요하다.**
+       -- 타석은 있는데 타수도 犠飛 도 0 이면 「사사구·희생번트·방해로만 끝난 경기」다.
+       SUM(b.ab) AS ab,
+       SUM(b.sf) AS sf
 FROM batting_line b
 JOIN game g ON g.game_id = b.game_id
 WHERE g.season = ? AND g.status = 'played' AND g.competition = ?
@@ -106,6 +110,22 @@ GROUP BY b.player_id, b.game_id
 HAVING SUM(b.pa) > 0
 ORDER BY b.player_id, g.game_date, g.game_no
 `;
+
+/**
+ * **이 경기는 연속 기록을 끊는가 — 공인야구규칙 9.23(b).**
+ *
+ * 규칙: 「타자가 그 경기에서 **사사구·희생번트·타격방해·주자방해로만** 끝냈다면
+ * 그 경기는 연속안타 기록을 끊지 않는다」 — 「없던 것」으로 친다.
+ *
+ * ⚠**`sf`(犠飛)를 반드시 본다.** 규칙은 희생플라이가 있으면 **중단된다**고 명시한다.
+ * ⚠**`ab=0` 만 보면 틀린다** — 희생번트·희생플라이는 둘 다 타수에 안 들어가기 때문이다.
+ * ⚠**타격방해는 우리 스키마에 열이 없다.** 그러나 실측상 항등식
+ * `pa = ab + bb + hbp + sh + sf` 가 **211,844/211,862 행**에서 성립하고, 깨진 18행이
+ * 전부 타격방해다 — 그만큼 그것도 `ab=0` 으로 떨어진다(2026-08-21 실측).
+ */
+function skipsForStreak(g: { pa: number; ab: number; sf: number; hits: number }): boolean {
+  return g.pa > 0 && g.ab === 0 && g.sf === 0 && g.hits === 0;
+}
 
 export function battingStreaks(
   db: Db,
@@ -120,22 +140,28 @@ export function battingStreaks(
     hits: number;
     onBase: number;
     pa: number;
+    ab: number;
+    sf: number;
   }[];
 
   // ⚠한 칸이 한 **경기**다. 더블헤더면 같은 날짜가 두 칸 들어온다
-  const byPlayer = new Map<string, { date: string; hits: number; onBase: number }[]>();
+  const byPlayer = new Map<string, { date: string; hits: number; onBase: number; skip: boolean }[]>();
   for (const r of rows) {
+    const g = { date: r.date, hits: r.hits, onBase: r.onBase, skip: skipsForStreak(r) };
     const list = byPlayer.get(r.playerId);
-    if (list === undefined) byPlayer.set(r.playerId, [{ date: r.date, hits: r.hits, onBase: r.onBase }]);
-    else list.push({ date: r.date, hits: r.hits, onBase: r.onBase });
+    if (list === undefined) byPlayer.set(r.playerId, [g]);
+    else list.push(g);
   }
 
   const out = new Map<string, PlayerStreaks>();
   for (const [playerId, games] of byPlayer) {
     out.set(playerId, {
       playerId,
-      hitting: streakOf(games.map((d) => ({ date: d.date, hit: d.hits > 0 }))),
-      onBase: streakOf(games.map((d) => ({ date: d.date, hit: d.onBase > 0 }))),
+      // ⚠**기록을 끊지 않는 경기는 뺀다** — 「무안타」로 넣는 것과 다르다(9.23(b)).
+      hitting: streakOf(games.filter((d) => !d.skip).map((d) => ({ date: d.date, hit: d.hits > 0 }))),
+      onBase: streakOf(games.filter((d) => !d.skip).map((d) => ({ date: d.date, hit: d.onBase > 0 }))),
+      // ⚠**連続無安打에는 적용하지 않는다.** 예외는 「기록을 지켜 주는」 규칙이라
+      //   반대 부호의 기록에 갖다 붙이면 무안타 행진이 이유 없이 **길어진다.**
       hitless: streakOf(games.map((d) => ({ date: d.date, hit: d.hits === 0 }))),
       games: games.length,
       lastGameDate: games.at(-1)?.date ?? null,

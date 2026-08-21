@@ -1056,8 +1056,10 @@ export const ROLE_LABEL: Readonly<Record<"starter" | "reliever", string>> = {
  * ⚠자체 기준을 공식 기준과 같은 얼굴로 내보내면 「NPB가 그렇게 정했다」는 오해가 생긴다.
  */
 function pitcherQualifierText(p: PitchingBlockData): string {
-  const have = Math.floor(p.line.outs / 3);
-  const need = Math.floor(p.needOuts / 3);
+  // ⚠**잘라 쓰면 두 수가 같아져 「35回 / 35回 … 未満」가 된다**(감사 실측 12건).
+  // 이닝 표기는 `innings()` 한 벌이 정본이다(M1) — 위 `query.ts` 의 같은 주석 참조.
+  const have = innings(p.line.outs);
+  const need = innings(p.needOuts);
   const basis =
     p.role === "starter"
       ? "規定投球回（NPB公式）"
