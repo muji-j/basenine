@@ -422,6 +422,77 @@ jobs:
           BB_FULL_SCAN: "1"
         run: npm test
 
+      - name: S1 확인 — 배포 앞에서 Access 담장이 살아 있는지 본다
+        # ⚠**S1(지인한정)의 인가 경계가 Cloudflare 대시보드 설정에만 있고,
+        #   그것이 유지되는지 확인하는 코드·시험·게이트가 리포에 0건이었다**(2026-08-21 다방면 감사 확정 P1).
+        #   그 사이 이 워크플로는 하루 3회 **새 배포 별칭**을 만든다.
+        # ⚠**이 고장은 2026-08-15 에 실제로 한 번 났다**(docs/operations/deploy.md) —
+        #   prod 는 302 인데 별칭은 200 으로 내용이 그대로 나왔다. **경고가 없고 상태 코드로도 안 드러났다.**
+        #   설정 플립은 자기치유되지 않는다.
+        #
+        # ⚠**시크릿을 쓰지 않는다.** Access 는 **무자격 요청에도** 앱의 AUD 를 리다이렉트 URL 로 돌려주므로
+        #   토큰 없이 「담장이 서 있는가」를 물을 수 있다(2026-08-21 실측).
+        # ⚠**페이지 문구로 판정하지 마라** — 감사 보고가 인용한 문자열은 실제와 달랐다
+        #   (실제 제목은 「Sign in ・ Cloudflare Access」). 문구는 Cloudflare 가 언제든 바꾼다.
+        #   **상태 코드와 AUD** 두 가지만 본다.
+        # ⚠**아직 배포되지 않은 별칭도 담장 뒤여야 한다** — 와일드카드 앱이 미래 호스트까지 덮는지가
+        #   이 게이트의 핵심이다. 오늘 만들 별칭은 아직 존재하지 않기 때문이다.
+        # ⚠**흔들리는 네트워크를 하드 게이트로 두지 않는다**(L6 게이트가 배운 것) — 세 번 물어 본다.
+        #   단 **「모른다」를 「괜찮다」로 읽지는 않는다.**
+        if: success()
+        env:
+          # ⚠**이 값은 비밀이 아니다** — 무자격 요청의 리다이렉트 URL 에 그대로 실려 나온다.
+          #   앱을 다시 만들면 바뀌므로, 바뀌면 여기서 울고 사람이 확인한 뒤 갱신한다.
+          EXPECT_AUD: "3a221a604b448a571f306d79c26fc98b76df8d4947ce8abd94242eefd40a1048"
+          PAGES_HOST: "bb-app-7mk.pages.dev"
+        run: |
+          set -euo pipefail
+          probe() {
+            curl -s -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 20 "https://$1/"
+          }
+          # ① prod — 302 이고 우리 앱의 AUD 여야 한다
+          out=""
+          for i in 1 2 3; do
+            if out=$(probe "$PAGES_HOST"); then break; fi
+            echo "prod 확인 ${i}회 실패 — 15초 뒤 재시도"; sleep 15; out=""
+          done
+          if [ -z "$out" ]; then
+            echo "::error::Access 담장을 확인하지 못했다(응답 없음). 확인할 수 없으므로 배포하지 않는다."
+            exit 1
+          fi
+          code=${out%% *}; redir=${out#* }
+          echo "prod: ${code} → ${redir%%\&*}"
+          if [ "$code" != "302" ]; then
+            echo "::error::S1 위반 — prod 가 로그인으로 보내지 않는다(HTTP ${code}). Cloudflare Access 정책을 확인하라."
+            exit 1
+          fi
+          case "$redir" in
+            *"kid=${EXPECT_AUD}"*) ;;
+            *)
+              echo "::error::S1 확인 실패 — 리다이렉트의 AUD 가 우리가 아는 앱이 아니다."
+              echo "앱을 다시 만들었다면 EXPECT_AUD 를 갱신하라. 그 전까지는 배포하지 않는다."
+              exit 1;;
+          esac
+          # ② 아직 배포된 적 없는 별칭 — 와일드카드가 미래 호스트까지 덮는가
+          rand=$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' 
+')
+          out2=""
+          for i in 1 2 3; do
+            if out2=$(probe "${rand}.${PAGES_HOST}"); then break; fi
+            echo "별칭 확인 ${i}회 실패 — 15초 뒤 재시도"; sleep 15; out2=""
+          done
+          if [ -z "$out2" ]; then
+            echo "::error::별칭 담장을 확인하지 못했다(응답 없음). 배포하지 않는다."
+            exit 1
+          fi
+          code2=${out2%% *}
+          echo "미배포 별칭 ${rand}: ${code2}"
+          if [ "$code2" != "302" ]; then
+            echo "::error::S1 위반 — 배포된 적 없는 별칭이 담장 밖이다(HTTP ${code2})."
+            echo "오늘 만들 별칭도 같은 상태가 된다. 와일드카드 Access 애플리케이션을 확인하라."
+            exit 1
+          fi
+
       - name: 배포
         # ⚠**`success()`가 핵심이다.** 신선도가 낡으면 앞의 생성 단계가 종료 코드 1을 낸다.
         # 그때도 배포하면 **낡은 화면이 조용히 올라간다** — 실패는 실패로 끝낸다.
