@@ -499,8 +499,7 @@ jobs:
               exit 1;;
           esac
           # ② 아직 배포된 적 없는 별칭 — 와일드카드가 미래 호스트까지 덮는가
-          rand=$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' 
-')
+          rand=$(head -c 4 /dev/urandom | od -An -tx1 | tr -dc '0-9a-f')
           out2=""
           for i in 1 2 3; do
             if out2=$(probe "${rand}.${PAGES_HOST}"); then break; fi
