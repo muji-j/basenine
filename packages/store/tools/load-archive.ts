@@ -35,6 +35,7 @@ import {
   upsertGame,
   upsertPitching,
   upsertPlayer,
+  upsertPlayerSeasonName,
 } from "../src/load.ts";
 
 const { values, positionals } = parseArgs({
@@ -434,6 +435,8 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
         seenPlayers.add(derived.row.playerId);
         budget.players += upsertPlayer(db, derived.row.playerId, b.name, nowIso);
       }
+      // ⚠**여기는 `seenPlayers` 밖이다** — 시즌마다·경기마다 봐야 한다(아래 주석 참조)
+      budget.players += upsertPlayerSeasonName(db, derived.row.playerId, meta.season, b.name, meta.gameDate, sourceUrl);
       budget.batting += upsertBatting(db, derived.row);
       quarantine.push(...derived.quarantine);
     }
@@ -449,6 +452,7 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
         seenPlayers.add(row.playerId);
         budget.players += upsertPlayer(db, row.playerId, p.name, nowIso);
       }
+      budget.players += upsertPlayerSeasonName(db, row.playerId, meta.season, p.name, meta.gameDate, sourceUrl);
       budget.pitching += upsertPitching(db, row);
     }
   }
