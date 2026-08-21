@@ -38,6 +38,7 @@
  *   playbyplay 문자열을 해석해 지표를 만들지 않는다는 것이 002 마이그레이션의 판단이다(M1).
  */
 import type { Db } from "@bb-app/store";
+import { seasonNameExpr, seasonNameJoin } from "./season-name.ts";
 
 export interface GidpLine {
   playerId: string;
@@ -61,12 +62,13 @@ export interface GidpLine {
  */
 const SQL = `
 SELECT e.batter_id AS playerId,
-       p.display_name AS displayName,
+       ${seasonNameExpr("p")} AS displayName,
        CASE e.half WHEN 'top' THEN g.away_code ELSE g.home_code END AS teamCode,
        SUM(CASE WHEN e.outcome = 'groundedIntoDoublePlay' OR e.raw_box LIKE '%併失%' THEN 1 ELSE 0 END) AS gidp
 FROM pa_event e
 JOIN game g ON g.game_id = e.game_id
 JOIN player p ON p.player_id = e.batter_id
+${seasonNameJoin("e.batter_id", "g.season")}
 WHERE g.season = ? AND g.status = 'played' AND g.competition = ? AND g.game_date <= ?
   AND e.status = 'final'
 GROUP BY e.batter_id, teamCode

@@ -46,6 +46,7 @@
  * 화면 문구에서 독창인 척하지 않는다.
  */
 import type { Db } from "@bb-app/store";
+import { seasonNameExpr, seasonNameJoin } from "./season-name.ts";
 import { foldOutcomes } from "@bb-app/store";
 import type { BattingLine, Rate } from "@bb-app/metrics";
 import { rate } from "@bb-app/metrics";
@@ -134,13 +135,14 @@ function sqlFor(forPitcher: boolean): string {
   /** ⚠**`WHERE` 안에 있다** — 이 조건이 `GROUP BY` 뒤로 새는 것이 위에 적은 결함이었다 */
   const notNull = forPitcher ? "  AND e.pitcher_id IS NOT NULL\n" : "";
   return `
-SELECT ${idCol} AS playerId, p.display_name AS displayName,
+SELECT ${idCol} AS playerId, ${seasonNameExpr("p")} AS displayName,
        ${team} AS teamCode,
        e.ball_count AS ballCount, e.outcome AS outcome,
        COUNT(*) AS n, SUM(e.rbi) AS rbi
 FROM pa_event e
 JOIN game g ON g.game_id = e.game_id
 JOIN player p ON p.player_id = ${idCol}
+${seasonNameJoin(idCol, "g.season")}
 WHERE g.season = ? AND g.status = 'played' AND g.competition = ? AND g.game_date <= ?
   AND e.status = 'final'
 ${notNull}GROUP BY ${idCol}, teamCode, e.ball_count, e.outcome

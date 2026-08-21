@@ -72,7 +72,16 @@ for (const g of games) {
   }
 }
 
-/** 그 시즌에서 **가장 많이 쓰인 표기**를 그 시즌의 이름으로 본다 */
+/**
+ * 그 시즌에서 **가장 많이 쓰인 표기**를 그 시즌의 이름으로 본다.
+ *
+ * ⚠**이 정의는 「정답」이 아니라 「측정 기준」이다.** 배선 뒤에도 **10/6,207(0.16%)** 이 남는데
+ * 실측 결과 **10건 전부 「시즌 도중에 표기가 바뀐 경우」**다 — 동명이인이 들어와 이름을 늘리는 일이 잦다
+ * (`松田×85 → 松田宣×73` · `DJ.ジョンソン×28 → ジョンソン×16` 등, 2026-08-21 `BB_DRIFT_DETAIL=1` 실측).
+ * 저장층은 **그 시즌 마지막 경기의 표기**를 고르고 여기서는 **최빈값**을 고른다.
+ * ⚠**어느 쪽이 옳은지 정해지지 않았다.** 10건 중 하나(`23125136` 2026)는 **28 대 28 동률**이라
+ * 최빈값 자체가 문자열 순서로 갈린다 — **이 수를 0 으로 만들려고 쫓지 마라.**
+ */
 function canonical(names: Map<string, number>): string {
   return [...names.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0]![0];
 }
@@ -105,6 +114,8 @@ let wrongFirst = 0;
 let wrongSeasonTable = 0;
 let missingSeasonRow = 0;
 const drifted: string[] = [];
+/** ⚠**남는 어긋남의 정체를 추정하지 않기 위해** 실물을 낸다 — `BB_DRIFT_DETAIL=1` */
+const detail: string[] = [];
 
 for (const [id, bySeason] of seen) {
   const seasons = [...bySeason.entries()].sort((a, b) => a[0] - b[0]);
@@ -120,7 +131,7 @@ for (const [id, bySeason] of seen) {
     if (hasSeasonTable) {
       const got = seasonName.get(`${id} ${s}`);
       if (got === undefined) missingSeasonRow += 1;
-      else if (got !== name) wrongSeasonTable += 1;
+      else if (got !== name) { wrongSeasonTable += 1; detail.push(`${id} ${s} 표=${got} 최빈=${name} 내역=${[...bySeason.get(s)!.entries()].sort((a, b) => b[1] - a[1]).map(([n2, c]) => `${n2}×${c}`).join(" ")}`); }
     }
   }
 }
@@ -131,13 +142,13 @@ console.log(`박스 파싱 ${parsed} / 실시 경기 ${games.length} · 아카�
 console.log(`선수 ${seen.size} · (선수 × 시즌) 쌍 ${pairs} · 이름이 흔들린 선수 ${drifted.length}`);
 console.log("");
 console.log("정본 = 「그 시즌의 박스가 쓴 이름」. 아래는 그것과 다른 쌍의 수다.");
-console.log(`  지금 화면(player.display_name) : ${wrongNow} (${pct(wrongNow)})`);
+console.log(`  고정 이름(player.display_name): ${wrongNow} (${pct(wrongNow)})`);
 console.log(`  「최종 이름으로 통일」이면      : ${wrongLatest} (${pct(wrongLatest)})`);
 console.log(`  「최초 이름으로 통일」이면      : ${wrongFirst} (${pct(wrongFirst)})`);
 if (hasSeasonTable) {
-  console.log(`  player_season_name             : ${wrongSeasonTable} (${pct(wrongSeasonTable)}) · 행 없음 ${missingSeasonRow}`);
+  console.log(`  지금 화면(시즌 스코프)          : ${wrongSeasonTable} (${pct(wrongSeasonTable)}) · 행 없음 ${missingSeasonRow}`);
   console.log("");
-  console.log("⚠**시즌 스코프 배선이 끝나면 위 줄이 0 이어야 한다.** 행 없음도 0 이어야 한다.");
+  console.log("⚠**「지금 화면」 줄이 이 표의 결론이다** — 배선(2026-08-21)이 그 줄을 쓴다. 「행 없음」이 0 이 아니면 적재가 안 돌았다는 뜻이다.");
 } else {
   console.log("");
   console.log("⚠`player_season_name` 표가 없다 — 마이그레이션 018 이 적용되지 않았다.");
@@ -146,3 +157,9 @@ console.log("");
 console.log("⚠**「최종 통일」이 「최초 통일」보다 큰 것이 이 표의 요점이다** — 어느 한 시점으로 통일하면");
 console.log("  반드시 다른 시즌이 틀리고, 최신 쪽이 더 많이 틀린다. 옳은 것은 시즌 스코프뿐이다.");
 db.close();
+
+if (process.env.BB_DRIFT_DETAIL === "1" && detail.length > 0) {
+  console.log("");
+  console.log(`=== 어긋난 쌍 ${detail.length}건 (표=저장층이 고른 이름 · 최빈=그 시즌 최빈 표기) ===`);
+  for (const d of detail) console.log(`  ${d}`);
+}

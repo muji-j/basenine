@@ -12,6 +12,7 @@
  * - 방향은 **「타구가 떨어진 지점」이 아니라 「처리한 야수 기준」**이다. 시프트와 호수비가 섞인다.
  */
 import { isInfield, readPbp, sideOf, unknownTokens } from "@bb-app/parser";
+import { seasonNameExpr, seasonNameJoin } from "./season-name.ts";
 import type { Db } from "@bb-app/store";
 import { isOutcome } from "@bb-app/parser";
 import type { Outcome } from "@bb-app/parser";
@@ -37,20 +38,29 @@ export interface BattedBall {
 }
 
 const SQL = `
-SELECT e.batter_id AS playerId, p.display_name AS displayName,
+SELECT e.batter_id AS playerId, ${seasonNameExpr("p")} AS displayName,
        CASE e.half WHEN 'top' THEN g.away_code ELSE g.home_code END AS teamCode,
        e.raw_pbp AS raw, e.outcome AS outcome
 FROM pa_event e
 JOIN game g ON g.game_id = e.game_id
 JOIN player p ON p.player_id = e.batter_id
+${seasonNameJoin("e.batter_id", "g.season")}
 WHERE g.season = ? AND g.status = 'played' AND g.competition = ? AND g.game_date <= ?
   AND e.status = 'final'
 `;
 
-/** 투수 쪽은 같은 로그를 투수 기준으로 센다 */
+/**
+ * 투수 쪽은 같은 로그를 투수 기준으로 센다.
+ *
+ * ⚠**치환을 빼먹으면 조용히 틀린 이름이 나간다.** 시즌명 조인을 `batter_id` 로 둔 채 두면
+ * 투수 행에 그 타석 **타자의 이름**이 실리고, 값이 존재하므로 `COALESCE` 가 그걸 고른다 —
+ * 빈 칸이 아니라 **다른 사람 이름**이라 화면만 보고는 모른다(2026-08-21 배선 중 실측).
+ * 그래서 문자열을 손으로 적지 않고 **헬퍼가 만든 것을 그대로 치환**한다 — 헬퍼가 바뀌어도 안 깨진다.
+ */
 const SQL_PITCHER = SQL
   .replace("e.batter_id AS playerId", "e.pitcher_id AS playerId")
   .replace("JOIN player p ON p.player_id = e.batter_id", "JOIN player p ON p.player_id = e.pitcher_id")
+  .replace(seasonNameJoin("e.batter_id", "g.season"), seasonNameJoin("e.pitcher_id", "g.season"))
   .replace("CASE e.half WHEN 'top' THEN g.away_code ELSE g.home_code END",
     "CASE e.half WHEN 'top' THEN g.home_code ELSE g.away_code END")
   + " AND e.pitcher_id IS NOT NULL";
