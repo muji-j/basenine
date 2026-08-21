@@ -42,6 +42,7 @@
  * ⚠**RE 행렬은 리그·시즌마다 다르다.** 센트럴 타자의 SRC를 퍼시픽 RE로 계산하지 마라.
  */
 import type { Db } from "@bb-app/store";
+import { seasonNameExpr, seasonNameJoin } from "./season-name.ts";
 import type { RunExpectancy } from "./run-expectancy.ts";
 import { afterStateOf, paValue, stateKey } from "./run-expectancy.ts";
 
@@ -72,11 +73,12 @@ export interface SrcEntry {
 const SQL = `
 SELECT e.game_id AS gameId, e.inning AS inning, e.half AS half, e.seq AS seq,
        e.bases AS bases, e.outs_before AS outs, e.runs_scored AS runs,
-       e.batter_id AS batterId, b.display_name AS batterName,
+       e.batter_id AS batterId, ${seasonNameExpr("b", "psnb")} AS batterName,
        (CASE e.half WHEN 'top' THEN g.away_code ELSE g.home_code END) AS teamCode
 FROM pa_event e
 JOIN game g ON g.game_id = e.game_id
 JOIN player b ON b.player_id = e.batter_id
+${seasonNameJoin("e.batter_id", "g.season", "psnb")}
 WHERE g.season = ? AND g.status = 'played' AND g.competition = ?
   AND g.game_date <= ? AND g.game_date >= ?
   AND e.status = 'final'
@@ -244,11 +246,12 @@ export interface SrpEntry {
 const SRP_SQL = `
 SELECT e.game_id AS gameId, e.inning AS inning, e.half AS half, e.seq AS seq,
        e.bases AS bases, e.outs_before AS outs, e.runs_scored AS runs,
-       e.pitcher_id AS pitcherId, p.display_name AS pitcherName,
+       e.pitcher_id AS pitcherId, ${seasonNameExpr("p", "psnp")} AS pitcherName,
        (CASE e.half WHEN 'top' THEN g.home_code ELSE g.away_code END) AS teamCode
 FROM pa_event e
 JOIN game g ON g.game_id = e.game_id
 JOIN player p ON p.player_id = e.pitcher_id
+${seasonNameJoin("e.pitcher_id", "g.season", "psnp")}
 WHERE g.season = ? AND g.status = 'played' AND g.competition = ?
   AND g.game_date <= ? AND g.game_date >= ?
   AND e.status = 'final' AND e.pitcher_id IS NOT NULL

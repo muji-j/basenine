@@ -26,6 +26,11 @@ import {
   //   `勝 ÷ (勝 + 敗)` 를 여기서 다시 쓰면 무승부·노디시전 처리가 언젠가 갈린다
   winPct,
   worstPct,
+  // ⚠**시즌별 표시명의 SQL 조각은 한 벌이다**(M1) — 여기서 손으로 적으면 언젠가 갈린다
+  careerNameJoin,
+  careerNames,
+  seasonNameExpr,
+  seasonNameJoin,
 } from "@bb-app/aggregate";
 // ⚠**통산 합계·시즌 수는 파서 쪽 한 벌을 쓴다**(M1) — 여기에 다시 쓰면 시험이 붙은 쪽이 죽는다
 import { careerTotal, seasonsPlayed } from "@bb-app/parser";
@@ -2613,31 +2618,40 @@ function milestonesOf(
    */
   const rows = db.raw
     .prepare(
-      `SELECT c.player_id AS playerId, p.display_name AS name,
+      /**
+       * ⚠**이름은 그 페이지의 시즌 것을 쓴다**(2026-08-21). 통산은 여러 해를 더한 수지만,
+       * 이 표는 **한 시즌 화면**에 실린다 — 같은 화면의 순위표와 다른 이름을 쓰면
+       * 「다른 사람」으로 읽힌다(M1).
+       * ⚠**물음표가 다섯 개다** — SQL 에 나타나는 순서대로 바인드된다:
+       *   SELECT 의 셋 → **LEFT JOIN 의 하나** → WHERE 의 하나.
+       */
+      `SELECT c.player_id AS playerId, ${seasonNameExpr("p")} AS name,
               SUM(c.h) AS h, SUM(c.hr) AS hr, SUM(c.sb) AS sb,
               SUM(CASE WHEN c.year = ? THEN c.h ELSE 0 END) AS yh,
               SUM(CASE WHEN c.year = ? THEN c.hr ELSE 0 END) AS yhr,
               SUM(CASE WHEN c.year = ? THEN c.sb ELSE 0 END) AS ysb
          FROM career_batting c JOIN player p ON p.player_id = c.player_id
+         ${careerNameJoin("c.player_id", "?")}
         WHERE c.year <= ?
         GROUP BY c.player_id`,
     )
-    .all(season, season, season, season) as unknown as {
+    .all(season, season, season, season, season) as unknown as {
       playerId: string; name: string; h: number; hr: number; sb: number;
       yh: number; yhr: number; ysb: number;
     }[];
   const prows = db.raw
     .prepare(
-      `SELECT c.player_id AS playerId, p.display_name AS name,
+      `SELECT c.player_id AS playerId, ${seasonNameExpr("p")} AS name,
               SUM(c.w) AS w, SUM(c.so) AS so, SUM(c.sv) AS sv,
               SUM(CASE WHEN c.year = ? THEN c.w ELSE 0 END) AS yw,
               SUM(CASE WHEN c.year = ? THEN c.so ELSE 0 END) AS yso,
               SUM(CASE WHEN c.year = ? THEN c.sv ELSE 0 END) AS ysv
          FROM career_pitching c JOIN player p ON p.player_id = c.player_id
+         ${careerNameJoin("c.player_id", "?")}
         WHERE c.year <= ?
         GROUP BY c.player_id`,
     )
-    .all(season, season, season, season) as unknown as {
+    .all(season, season, season, season, season) as unknown as {
       playerId: string; name: string; w: number; so: number; sv: number;
       yw: number; yso: number; ysv: number;
     }[];
@@ -5083,7 +5097,11 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   }));
 
   const reliefCareer = new Map<string, ReliefLine>();
-  for (const l of foldRelief(reliefScan.entries, reForEntry)) reliefCareer.set(l.pitcherId, l);
+  // ⚠**이름은 「보고 있는 시즌까지의 최신 등록명」이다** — 공유 스캔은 여러 시즌에 재사용되므로
+  //   조회 시점에 박을 수 없다(`careerNames` 주석). `careerNameJoin` 을 쓰는 통산 대전과 같은 규칙
+  for (const l of foldRelief(reliefScan.entries, reForEntry, careerNames(db, o.season))) {
+    reliefCareer.set(l.pitcherId, l);
+  }
   // ⚠**시즌 몫은 같은 목록을 걸러 만든다** — 다시 조회하면 두 수가 갈릴 수 있다(M1)
   const reliefSeason = new Map<string, ReliefLine>();
   for (const l of foldRelief(reliefScan.entries.filter((e) => e.season === o.season), reForEntry)) {

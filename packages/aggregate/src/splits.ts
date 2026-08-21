@@ -9,6 +9,7 @@
  * 스플릿이 조용히 틀린다 — 제외하고 몇 명인지 보고한다.
  */
 import type { Db } from "@bb-app/store";
+import { careerNameJoin, seasonNameExpr, seasonNameJoin } from "./season-name.ts";
 import { foldOutcomes } from "@bb-app/store";
 import type { BattingLine } from "@bb-app/metrics";
 
@@ -62,7 +63,7 @@ const KEY_EXPR: Readonly<Record<SplitDimension, string>> = {
 
 const SQL = (dimension: SplitDimension): string => `
 SELECT e.batter_id AS playerId,
-       b.display_name AS displayName,
+       ${seasonNameExpr("b")} AS displayName,
        ${KEY_EXPR[dimension]} AS splitKey,
        e.outcome AS outcome,
        COUNT(*) AS n,
@@ -70,6 +71,7 @@ SELECT e.batter_id AS playerId,
 FROM pa_event e
 JOIN game g ON g.game_id = e.game_id
 JOIN player b ON b.player_id = e.batter_id
+${seasonNameJoin("e.batter_id", "g.season")}
 LEFT JOIN player pit ON pit.player_id = e.pitcher_id
 LEFT JOIN batting_line bl ON bl.game_id = e.game_id AND bl.player_id = e.batter_id
 WHERE g.season = ? AND g.status = 'played' AND g.competition = ?
@@ -170,7 +172,7 @@ const PITCHER_KEY_EXPR: Readonly<Record<SplitDimension, string>> = {
 
 const PITCHER_SQL = (dimension: SplitDimension): string => `
 SELECT e.pitcher_id AS playerId,
-       pit.display_name AS displayName,
+       ${seasonNameExpr("pit")} AS displayName,
        ${PITCHER_KEY_EXPR[dimension]} AS splitKey,
        e.outcome AS outcome,
        COUNT(*) AS n,
@@ -178,6 +180,7 @@ SELECT e.pitcher_id AS playerId,
 FROM pa_event e
 JOIN game g ON g.game_id = e.game_id
 JOIN player pit ON pit.player_id = e.pitcher_id
+${seasonNameJoin("e.pitcher_id", "g.season")}
 LEFT JOIN player bat ON bat.player_id = e.batter_id
 LEFT JOIN batting_line bl ON bl.game_id = e.game_id AND bl.player_id = e.batter_id
 WHERE g.season = ? AND g.status = 'played' AND g.competition = ?
@@ -239,18 +242,21 @@ export function matchups(
 ): Matchup[] {
   const rows = db.raw
     .prepare(`
-      SELECT e.pitcher_id AS pitcherId, pp.display_name AS pitcherName,
-             e.batter_id AS batterId, pb.display_name AS batterName,
+      SELECT e.pitcher_id AS pitcherId, ${seasonNameExpr("pp", "psnp")} AS pitcherName,
+             e.batter_id AS batterId, ${seasonNameExpr("pb", "psnb")} AS batterName,
              e.outcome AS outcome, COUNT(*) AS n, SUM(e.rbi) AS rbi
       FROM pa_event e
       JOIN game g ON g.game_id = e.game_id
       JOIN player pp ON pp.player_id = e.pitcher_id
       JOIN player pb ON pb.player_id = e.batter_id
+      ${careerNameJoin("e.batter_id", "?", "psnb")}
+      ${careerNameJoin("e.pitcher_id", "?", "psnp")}
       WHERE g.season BETWEEN ? AND ? AND g.status = 'played' AND g.competition = ?
         AND g.game_date <= ? AND e.status = 'final' AND e.pitcher_id IS NOT NULL
       GROUP BY e.pitcher_id, e.batter_id, e.outcome
     `)
-    .all(fromSeason, season, competition, through) as {
+    // ⚠**물음표 순서**: 조인 2개의 `?` 가 `WHERE` 의 `?` 보다 앞에 온다. 숫자를 세지 말고 SQL 순서를 보고 적어라
+    .all(season, season, fromSeason, season, competition, through) as {
     pitcherId: string;
     pitcherName: string;
     batterId: string;

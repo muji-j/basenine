@@ -43,6 +43,7 @@
  * ⚠**무료 NPB 소스 검색 0건.** NPB 공식은 홀드·세이브만 낸다.
  */
 import type { Db } from "@bb-app/store";
+import { seasonNameExpr, seasonNameJoin } from "./season-name.ts";
 import type { Rate } from "@bb-app/metrics";
 import { rate } from "@bb-app/metrics";
 import type { RunExpectancy } from "./run-expectancy.ts";
@@ -117,11 +118,12 @@ WITH ev AS (
     AND e.status = 'final'
   WINDOW w AS (ORDER BY e.game_id, e.seq)
 )
-SELECT ev.pitcherId AS pitcherId, p.display_name AS displayName,
+SELECT ev.pitcherId AS pitcherId, ${seasonNameExpr("p")} AS displayName,
        ev.teamCode AS teamCode, ev.offenseCode AS offenseCode, ev.season AS season,
        ev.bases AS bases, ev.outs AS outs, ev.restRuns AS restRuns
 FROM ev
 JOIN player p ON p.player_id = ev.pitcherId
+${seasonNameJoin("ev.pitcherId", "ev.season")}
 WHERE ev.prevGameId = ev.gameId AND ev.prevInning = ev.inning AND ev.prevHalf = ev.half
   AND ev.prevPitcherId IS NOT NULL AND ev.pitcherId IS NOT NULL
   AND ev.prevPitcherId <> ev.pitcherId
@@ -194,11 +196,26 @@ export interface ReliefLine {
  * @param reOf 그 등판에 맞는 RE 행렬. ⚠**여기서 만들지 않는다**(M1) —
  *   행렬은 `buildRunExpectancy` 한 벌이고, 어느 리그인지는 부르는 쪽이 안다.
  */
+/**
+ * 등판을 투수별로 접는다.
+ *
+ * ⚠**이름은 「범위 안에서 가장 나중 시즌」의 것을 쓴다** — `careerNameJoin` 과 같은 규칙이다.
+ * 여러 시즌을 접는 표에서 먼저 만난 것을 두면 **가장 오래된 등록명**이 이기고,
+ * 그러면 같은 페이지의 시즌 표와 이름이 갈린다(M1).
+ */
 export function foldRelief(
   entries: readonly ReliefEntry[],
   reOf: (e: ReliefEntry) => RunExpectancy | undefined,
+  /**
+   * 통산 표에 쓸 이름 사전(`careerNames`). ⚠**주면 이것이 이긴다.**
+   * 안 주면 **엔트리 중 가장 나중 시즌**의 표기를 쓴다 - 그건 「등판이 있던 마지막 시즌」이라
+   * 「뛴 마지막 시즌」과 어긋날 수 있다(실측 4명). 시즌 표는 안 줘도 된다(그 시즌 것뿐이므로).
+   */
+  nameOf?: ReadonlyMap<string, string>,
 ): ReliefLine[] {
   const out = new Map<string, ReliefLine>();
+  /** 이름을 고른 시즌. `careerNameJoin` 과 같은 규칙 — **범위 안에서 가장 나중** */
+  const nameSeason = new Map<string, number>();
   for (const e of entries) {
     let l = out.get(e.pitcherId);
     if (l === undefined) {
@@ -207,6 +224,14 @@ export function foldRelief(
         midInning: 0, inherited: 0, inheritedRunners: 0, enteringRe: 0, reMissing: 0, doused: 0,
       };
       out.set(e.pitcherId, l);
+      nameSeason.set(e.pitcherId, e.season);
+      const better = nameOf?.get(e.pitcherId);
+      if (better !== undefined) l.displayName = better;
+    } else if (nameOf === undefined && e.season > (nameSeason.get(e.pitcherId) ?? -1)) {
+      // ⚠**먼저 온 것을 그냥 두면 「가장 오래된 이름」이 이긴다** — 이 표는 여러 시즌을
+      //   접으므로, 안 고르면 통산 火消し 표만 옛 등록명으로 남는다(2026-08-21 배선 중 실측)
+      l.displayName = e.displayName;
+      nameSeason.set(e.pitcherId, e.season);
     }
     l.midInning += 1;
     // ⚠**주자 없는 등판은 火消し의 분모가 아니다.** 넣으면 전원의 성공률이 부풀어 오른다

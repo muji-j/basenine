@@ -11,6 +11,7 @@
  *   · 2026 정규시즌 합계: 도루 611 = 공표 611 · 도루자 254 = 공표 `盗塁刺` 254
  */
 import type { Db } from "@bb-app/store";
+import { seasonNameExpr, seasonNameJoin } from "./season-name.ts";
 
 /**
  * 루. ⚠**뜻이 사건 종류마다 다르다**(마이그레이션 010 주석):
@@ -86,12 +87,13 @@ export interface StealLine {
  * ⚠**주자의 소속은 공격 측이다** — 표(top)면 원정, 리(bottom)면 홈.
  */
 const SQL = `
-SELECT r.runner_id AS playerId, p.display_name AS displayName,
+SELECT r.runner_id AS playerId, ${seasonNameExpr("p")} AS displayName,
        CASE r.half WHEN 'top' THEN g.away_code ELSE g.home_code END AS teamCode,
        r.kind AS kind, r.base AS base, r.double_steal AS doubleSteal
 FROM runner_event r
 JOIN game g ON g.game_id = r.game_id
 JOIN player p ON p.player_id = r.runner_id
+${seasonNameJoin("r.runner_id", "g.season")}
 WHERE g.season = ? AND g.status = 'played' AND g.competition = ? AND g.game_date <= ?
 `;
 

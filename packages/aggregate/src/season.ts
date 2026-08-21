@@ -23,6 +23,7 @@
  */
 
 import type { Db } from "@bb-app/store";
+import { seasonNameExpr, seasonNameJoin } from "./season-name.ts";
 import type { BattingLine, PitchingLine } from "@bb-app/metrics";
 import { leagueOf } from "@bb-app/domain";
 import type { League } from "@bb-app/domain";
@@ -174,7 +175,7 @@ const TEAM_EXPR = `CASE b.side WHEN 'away' THEN g.away_code ELSE g.home_code END
 
 const BATTING_SQL = `
 SELECT b.player_id AS playerId,
-       p.display_name AS displayName,
+       ${seasonNameExpr("p")} AS displayName,
        ${TEAM_EXPR} AS teamCode,
        COUNT(*) AS games,
        MAX(g.game_date) AS lastDate,
@@ -186,6 +187,7 @@ SELECT b.player_id AS playerId,
 FROM batting_line b
 JOIN game g ON g.game_id = b.game_id
 JOIN player p ON p.player_id = b.player_id
+${seasonNameJoin("b.player_id", "g.season")}
 WHERE g.season = ? AND g.status = 'played' AND g.competition = ? AND g.game_date <= ? AND g.game_date >= ?
 GROUP BY b.player_id, teamCode
 `;
@@ -258,7 +260,7 @@ function partial(sum: unknown, count: unknown, total: unknown): number | null {
 const PITCHING_SQL = `
 WITH ${STARTER_CTE}
 SELECT t.player_id AS playerId,
-       p.display_name AS displayName,
+       ${seasonNameExpr("p")} AS displayName,
        CASE t.side WHEN 'away' THEN g.away_code ELSE g.home_code END AS teamCode,
        COUNT(*) AS games,
        MAX(g.game_date) AS lastDate,
@@ -296,6 +298,7 @@ SELECT t.player_id AS playerId,
 FROM pitching_line t
 JOIN game g ON g.game_id = t.game_id
 JOIN player p ON p.player_id = t.player_id
+${seasonNameJoin("t.player_id", "g.season")}
 LEFT JOIN starter s ON s.game_id = t.game_id AND s.pitcher_id = t.player_id
 LEFT JOIN solo so2 ON so2.game_id = t.game_id AND so2.side = t.side
 WHERE g.season = ? AND g.status = 'played' AND g.competition = ? AND g.game_date <= ? AND g.game_date >= ?
