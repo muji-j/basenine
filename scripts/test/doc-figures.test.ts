@@ -34,10 +34,12 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { openDb } from "@bb-app/store";
 import { regularSeasonGames } from "@bb-app/domain";
+import { GAME_PAGES } from "@bb-app/archiver";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const DB = `${ROOT}data/bb.sqlite`;
@@ -384,6 +386,123 @@ test("⚠走塁 대조가 실제로 무언가를 세고 있다 — 분모", { sk
   assert.ok(f.games > 5_000, `대조 경기가 ${f.games}뿐이다 — 완결 시즌 판정이 망가졌다`);
   assert.ok(f.withSteal > 3_000, `도루가 있던 경기가 ${f.withSteal}뿐이다 — 주자 행이 안 들어왔을 수 있다`);
   assert.ok(f.gap > 0, "정규와 전 대회의 도루가 같다 — 대회 구분이 안 들어갔을 수 있다");
+});
+
+/**
+ * **백필 예산** — CLAUDE.md §2-2 의 「몇 요청 · 몇 MiB」.
+ *
+ * ⚠**옛 값 「16,389요청 · 149MB」는 실제의 약 절반이었다**(2026-08-21 감사 [46]).
+ * 원인이 분명하다: `GAME_PAGES` 에 `roster.html` 을 더해 **경기당 3→4장**이 됐는데
+ * **같은 문단의 아랫줄만 고치고 이 줄을 안 고쳤다.** 그래서 한 문단 안에서
+ * 「9시즌 16,389」와 「2024 한 시즌 3,636」(= 909경기 × 4)이 **서로 모순**이었다.
+ *
+ * ⚠**기대값을 손으로 적지 않는다** — `DB 경기 수 × GAME_PAGES.length` 로 만든다.
+ * 손으로 적으면 **문서와 시험이 같이 낡는다**(그게 옛 값이 죽은 방식이다).
+ * ⚠**완결 시즌만 요구한다** — 진행 중 시즌을 넣으면 경기가 들어올 때마다 이 줄이 낡는다.
+ */
+test("⚠백필 예산이 DB × GAME_PAGES 와 같다 — 완결 시즌만 센다", { skip: HAS_DB ? false : "DB 없음" }, () => {
+  const db = openDb(DB, "2026-08-24T00:00:00.000Z");
+  let games = 0;
+  let only: ReadonlySet<number>;
+  try {
+    only = completedSeasons(db);
+    games = (db.raw
+      .prepare(`SELECT COUNT(*) AS n FROM game WHERE season IN (${[...only].join(",")})`)
+      .get() as unknown as { n: number }).n;
+  } finally {
+    db.close();
+  }
+  assert.ok(only.size >= 8, `완결 시즌이 ${only.size}개뿐이다 — 이 시험이 공회전한다`);
+  assert.ok(games > 5_000, `경기가 ${games}건뿐이다`);
+  const src = read(DOCS.claude);
+  const want = [
+    { text: `완결 ${only.size}시즌 ${group(games)}경기 × ${GAME_PAGES.length}장 = ${group(games * GAME_PAGES.length)}요청`,
+      what: "완결 시즌의 요청 수" },
+  ];
+  const miss = want.filter((w) => !src.includes(w.text)).map((w) => `${w.what} = 「${w.text}」 가 없다`);
+  assert.deepEqual(
+    miss,
+    [],
+    "백필 예산이 DB 와 갈렸다. **DB 가 정본이다.**\n" +
+      "⚠**「4장」을 문장에 박아 둔 이유를 지우지 마라** — 그것이 옛 값이 죽은 원인이다.",
+  );
+});
+
+/** ⚠**죽은 수가 돌아오는 것을 막는다** — 그 둘은 분모가 틀렸던 값이다 */
+test("⚠절반짜리 예산(16,389 · 149MB)이 문서에 살아 돌아오지 않는다", () => {
+  const src = read(DOCS.claude);
+  for (const dead of ["16,389", "149MB"]) {
+    const at = src.indexOf(dead);
+    if (at === -1) continue;
+    // 취소선(~~…~~) 안에 남긴 기록은 허용한다 — 「왜 죽었는가」가 그것이다
+    const line = src.slice(src.lastIndexOf("\n", at) + 1, src.indexOf("\n", at));
+    assert.ok(line.includes("~~"), `죽은 값 ${dead} 이 취소선 밖에 살아 있다: ${line.trim()}`);
+  }
+});
+
+/**
+ * **배포물 파일 수** — Pages 상한(배포당 20,000개)까지 얼마나 남았는가.
+ *
+ * ⚠**`deploy.md` 가 5시즌 시절 값(8,611 / 43%)을 그대로 들고 있었다**(2026-08-21 감사 [42]).
+ * 실제는 15,500 / 77.5% 였다 — **같은 사실에 세 값**이 돌아다녔고 방어 시험이 0건이었다.
+ * 상한을 재는 칸이 절반짜리 값을 말하면 **여유가 없는 날을 못 알아챈다.**
+ *
+ * ## ⚠정확히 일치시키지 않는다 — 이 수는 매일 는다
+ *
+ * 경기가 들어오면 페이지가 늘어난다. 정확 일치를 요구하면 **매일 붉어지고**, 매일 붉은 시험은
+ * 아무도 안 읽는다(`archive-guard` 의 바이트 임계와 같은 판단).
+ * → **허용 오차 3%**. 옛 값(8,611)은 실제의 **55.6%** 라 이 안에 절대 안 들어온다.
+ */
+const DIST_TOLERANCE = 0.03;
+
+test("⚠문서의 배포물 파일 수가 dist 와 크게 어긋나지 않는다", () => {
+  const dist = `${ROOT}dist`;
+  if (!existsSync(dist)) {
+    if (process.env["BB_REQUIRE_DIST"] === "1") throw new Error(`BB_REQUIRE_DIST=1 인데 ${dist} 가 없다`);
+    return;
+  }
+  const countFiles = (d: string): number => {
+    let n = 0;
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      n += e.isDirectory() ? countFiles(join(d, e.name)) : 1;
+    }
+    return n;
+  };
+  const actual = countFiles(dist);
+  assert.ok(actual > 5_000, `dist 가 ${actual}파일뿐이다 — 빌드가 끝나지 않았을 수 있다`);
+
+  /** ⚠**같은 사실을 말하는 두 문서** — 한쪽만 고치면 여기서 떨어진다(M1) */
+  const where = [DOCS.claude, "docs/operations/deploy.md"] as const;
+  const bad: string[] = [];
+  for (const rel of where) {
+    const src = read(rel);
+    /**
+     * ⚠**취소선 구간을 먼저 지운다** — 「왜 죽었는가」의 기록은 살려 두되 **검사 대상에서 뺀다.**
+     *
+     * ⚠**처음에는 「그 숫자가 취소선으로 어디엔가 있으면 면제」로 짰고 그게 틀렸다**(2026-08-24).
+     * 숫자 단위로 면제하면, 한 번 취소선에 적힌 수는 **살아 있는 자리에 다시 나타나도 통과**한다 —
+     * 뮤테이션(옛 값 8,611 을 되살리기)이 **안 잡혀서** 알았다. 위치로 판단해야 한다.
+     * ⚠**한 줄 안에서만 짝을 맞춘다** — 여러 줄을 걸치면 짝 없는 물결표 하나가 뒤를 통째로 삼킨다.
+     */
+    const live0 = src.replace(/~~[^~\n]*~~/g, "");
+    const nums = [...live0.matchAll(/\*\*([0-9][0-9,]{3,})파일/g)].map((m) => Number(m[1]!.replace(/,/g, "")));
+    if (nums.length === 0) {
+      bad.push(`${rel}: 「…파일」 을 한 군데도 안 적었다(취소선 밖에)`);
+      continue;
+    }
+    for (const n of nums) {
+      const off = Math.abs(n - actual) / actual;
+      if (off > DIST_TOLERANCE) {
+        bad.push(`${rel}: ${n.toLocaleString("en-US")}파일 은 실측 ${actual.toLocaleString("en-US")} 과 ${(off * 100).toFixed(1)}% 어긋난다`);
+      }
+    }
+  }
+  assert.deepEqual(
+    bad,
+    [],
+    `문서의 배포물 파일 수가 낡았다(실측 ${actual.toLocaleString("en-US")} · 허용 ${DIST_TOLERANCE * 100}%).\n` +
+      "⚠**두 문서가 같은 수를 말해야 한다**(M1) — 한쪽만 고치지 마라.",
+  );
 });
 
 test("⚠결론이 세 문서에서 같다 — 한쪽만 고치고 다른 쪽을 두면 여기서 떨어진다", () => {
