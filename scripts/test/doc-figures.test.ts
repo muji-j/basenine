@@ -630,6 +630,59 @@ test("⚠배포물에 HTML 주석이 없다", () => {
   console.log(`  · html ${pages.length.toLocaleString()}장 / 남은 주석 0개`);
 });
 
+/**
+ * **조사 판정의 유통기한** — 소스 조사가 스스로 「**연 1회 재조사**」를 약속했다.
+ *
+ * ⚠**그 약속이 어디에도 구현돼 있지 않았다**(2026-08-24 · 감사 P3 #60).
+ * `.md` 네 곳에 적혀 있고 `.ts`/`.yml`/`.json` 에는 **0건**이었다 —
+ * **없는 장치를 있다고 적는** 그 모양이고, 이 저장소는 이번 세션에만 **네 번째**다
+ * (M6 린트 · 走塁 규칙 · `source-figures` 스캔 범위 · 이것).
+ *
+ * ## ⚠시계를 안 읽는다 (M6)
+ *
+ * 「1년이 지났는가」는 **지금**을 알아야 하는 질문이다. 그런데 `new Date()` 를 부르면 M6 를 어긴다.
+ * → **`ops/archive-manifest.json` 의 `updatedAt` 을 「지금」으로 쓴다.**
+ * 그건 시계가 아니라 **이 저장소가 마지막으로 일한 시각이 적힌 데이터**다.
+ * ⚠**대가가 있다**: 수집이 멈추면 이 시계도 멈춘다 — **경보가 늦어질 수는 있어도 거짓으로 울지는 않는다.**
+ * 늦게 우는 쪽이 안전한 방향이라 그렇게 골랐다.
+ *
+ * ⚠**만료가 곧 「판정이 틀렸다」는 뜻은 아니다.** 「**다시 확인할 때가 됐다**」는 뜻이다 —
+ * 그 문서 스스로가 「이 판정을 영구화하지 않기 위한 최소 장치」라고 적은 그것이다.
+ */
+const SURVEY = "docs/sources/2026-08-20-blocked-metrics-source-survey.md";
+/** 그 문서가 스스로 약속한 주기 */
+const SURVEY_MAX_DAYS = 365;
+
+test("⚠소스 조사가 약속한 「연 1회 재조사」의 기한이 남아 있다", () => {
+  const src = read(SURVEY);
+  const m = /\|\s*조사일\s*\|\s*(\d{4}-\d{2}-\d{2})\s*\|/.exec(src);
+  assert.ok(m !== null, `${SURVEY} 에서 「조사일」 행을 못 읽었다 — 이 시험이 공회전한다`);
+  const surveyed = Date.parse(`${m![1]!}T00:00:00Z`);
+
+  const manifest = `${ROOT}ops/archive-manifest.json`;
+  if (!existsSync(manifest)) {
+    if (process.env["BB_REQUIRE_DB"] === "1") throw new Error(`BB_REQUIRE_DB=1 인데 ${manifest} 가 없다`);
+    return;
+  }
+  const raw2: unknown = JSON.parse(readFileSync(manifest, "utf8"));
+  const at = (raw2 as { updatedAt?: unknown }).updatedAt;
+  assert.equal(typeof at, "string", "매니페스트에 updatedAt 이 없다 — 「지금」을 못 읽는다");
+  const now = Date.parse(at as string);
+  assert.ok(Number.isFinite(now), `updatedAt 을 못 읽었다: ${String(at)}`);
+
+  const days = Math.floor((now - surveyed) / 86_400_000);
+  assert.ok(days >= 0, `조사일이 미래다(${days}일) — 날짜가 잘못 적혔다`);
+  assert.ok(
+    days <= SURVEY_MAX_DAYS,
+    `소스 조사가 ${days}일 됐다(약속은 ${SURVEY_MAX_DAYS}일).\n` +
+      "⚠**「판정이 틀렸다」가 아니라 「다시 확인할 때가 됐다」는 뜻이다** — 그 문서 스스로가\n" +
+      "「이 판정을 영구화하지 않기 위한 최소 장치」라고 적은 그것이다.\n" +
+      "다시 조사한 뒤 **문서의 「조사일」 행을 갱신하면** 이 시험이 다시 초록이 된다.\n" +
+      `대상: NPB+ 웹·API · BIP 부활 여부 · 구단 Hawk-Eye 확장(${SURVEY} 다음 할 일 7번)`,
+  );
+  console.log(`  · 소스 조사 ${days}일 경과 / 기한 ${SURVEY_MAX_DAYS}일`);
+});
+
 test("⚠결론이 세 문서에서 같다 — 한쪽만 고치고 다른 쪽을 두면 여기서 떨어진다", () => {
   for (const rel of [DOCS.claude, DOCS.metrics]) {
     const src = read(rel);
