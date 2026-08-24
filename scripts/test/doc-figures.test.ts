@@ -584,6 +584,52 @@ test("⚠문서가 근거로 가리키는 경로가 저장소에 추적돼 있�
   );
 });
 
+/**
+ * **배포물에 HTML 주석이 남지 않는다** — 출력 경계(`html.ts` 의 `toString`)가 뗀다.
+ *
+ * ⚠**떼기 전 실측(2026-08-24 · 15,341장 전수): 주석 359,399개 · 114.62 MiB · html 총량의 11.39%.**
+ * gzip 표본 300장에서 **3,449,862 → 2,684,348 B (22.19% 절감)** 이었고,
+ * 실제로 떼고 다시 재니 **예측과 정확히 같았다**. 빌드 산출 용량은 **1,022.4MB → 907.8MB**.
+ * ⚠**Pages 20,000파일 벽에는 효과 0**이다 — 줄어드는 것은 전송량과 용량이지 파일 수가 아니다.
+ *
+ * ⚠**소스의 주석은 그대로 둔다.** 그게 「왜 이렇게 했는가」이고 이 저장소가 가장 아끼는 것이다.
+ * 지우는 자리는 **출력 경계 한 곳**뿐이다(M1).
+ */
+test("⚠배포물에 HTML 주석이 없다", () => {
+  const dist = `${ROOT}dist`;
+  if (!existsSync(dist)) {
+    if (process.env["BB_REQUIRE_DIST"] === "1") throw new Error(`BB_REQUIRE_DIST=1 인데 ${dist} 가 없다`);
+    return;
+  }
+  const pages: string[] = [];
+  const walk = (d: string): void => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p2 = join(d, e.name);
+      if (e.isDirectory()) walk(p2);
+      else if (e.name.endsWith(".html")) pages.push(p2);
+    }
+  };
+  walk(dist);
+  assert.ok(pages.length > 5_000, `html 이 ${pages.length}장뿐이다 — 빌드가 끝나지 않았을 수 있다`);
+
+  let left = 0;
+  const where: string[] = [];
+  for (const f of pages) {
+    const n = (readFileSync(f, "utf8").match(/<!--/g) ?? []).length;
+    if (n > 0) {
+      left += n;
+      if (where.length < 5) where.push(`${f.slice(ROOT.length)}: ${n}개`);
+    }
+  }
+  assert.equal(
+    left,
+    0,
+    `배포물에 주석이 ${left}개 남았다(앞 5장)\n${where.join("\n")}\n` +
+      "⚠**출력 경계가 안 걸린 경로가 있다** — 파일을 직접 쓰는 자리를 찾아라.",
+  );
+  console.log(`  · html ${pages.length.toLocaleString()}장 / 남은 주석 0개`);
+});
+
 test("⚠결론이 세 문서에서 같다 — 한쪽만 고치고 다른 쪽을 두면 여기서 떨어진다", () => {
   for (const rel of [DOCS.claude, DOCS.metrics]) {
     const src = read(rel);
