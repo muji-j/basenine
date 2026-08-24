@@ -56,8 +56,24 @@ export function totalBases(line: BattingLine): number {
  * ⚠이건 **표시용 문자열**이다. 계산에는 절대 쓰지 마라 — 계산은 `outs`로 한다.
  * `6.2`를 수로 더하기 시작하면 이닝이 조용히 어긋난다.
  */
-export function inningsPitched(line: PitchingLine): string {
-  const whole = Math.floor(line.outs / 3);
-  const remainder = line.outs % 3;
+/**
+ * 아웃 카운트 → 이닝 표기의 **규칙 한 벌**. `20` → `6.2`
+ *
+ * ⚠**같은 규칙이 여러 벌이었다**(2026-08-24 · 감사 P3 #52). 「정본」이라던 `inningsPitched` 는
+ * **프로덕션 호출 0곳인 죽은 export** 였고, 실제로 쓰이는 것은 `web/src/format.ts` 의 `innings()` 였다.
+ * ⚠**죽은 정본은 「장치가 있다」는 착각만 남긴다** — 그래서 규칙을 여기 하나로 두고
+ * **양쪽이 이것을 부르게** 했다. 이제 「정본」이라는 말이 참이다.
+ *
+ * ⚠**표시용이다. 계산에 쓰지 마라** — `6.2` 를 수로 더하기 시작하면 이닝이 조용히 어긋난다.
+ * ⚠**클라이언트(`assets.ts`)에는 한 벌이 더 있고 그건 어쩔 수 없다** — 브라우저가 서버 모듈을
+ * 못 부른다. 그 자리는 그 사실이 이미 주석에 적혀 있다.
+ */
+export function inningsFromOuts(outs: number): string {
+  const whole = Math.floor(outs / 3);
+  const remainder = outs % 3;
   return remainder === 0 ? String(whole) : `${whole}.${remainder}`;
+}
+
+export function inningsPitched(line: PitchingLine): string {
+  return inningsFromOuts(line.outs);
 }

@@ -1,6 +1,6 @@
 export { rate } from "./rate.ts";
 export type { Rate } from "./rate.ts";
-export { inningsPitched, singles, totalBases } from "./lines.ts";
+export { inningsFromOuts, inningsPitched, singles, totalBases } from "./lines.ts";
 export type { BattingLine, PitchingLine } from "./lines.ts";
 export {
   babip,

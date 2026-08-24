@@ -2955,7 +2955,10 @@ function homePage(
     const pitchers = pick(wkSrp, HOME_WEEK_MIN_BF, (id) => {
       const x = pitLine.get(id);
       if (x === undefined || x.line.outs === 0) return null;
-      const ip = `${Math.floor(x.line.outs / 3)}${x.line.outs % 3 === 0 ? "" : `.${x.line.outs % 3}`}`;
+      // ⚠**`innings()` 를 쓴다**(M1 · 2026-08-24 · 감사 P3 #52). 여기만 인라인으로
+      //   다시 구현돼 있었다 — **이 파일은 `innings` 를 이미 import 하고 있고**,
+      //   바로 위의 두 자리는 「M1 이라 이걸 쓴다」고 적어 둔 상태였다.
+      const ip = innings(x.line.outs);
       return `${ip}回 ${x.line.so}奪三振 自責${x.line.er}`;
     });
 
