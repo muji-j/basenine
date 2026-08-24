@@ -167,7 +167,15 @@ async function main(): Promise<number> {
   const app = list.body.result.find((a) => a.aud === APP_AUD);
   if (app === undefined) {
     console.error(`어긋났다 — AUD ${APP_AUD.slice(0, 12)}… 인 앱이 없다.`);
+    // ⚠**무엇을 찾았는지 말한다.** 「없다」만 적으면 다음 사람이 처음부터 다시 재야 한다 —
+    //   AUD 도 도메인도 비밀이 아니다(무자격 요청의 리다이렉트에 그대로 실려 나온다)
+    console.error(`계정에서 읽은 Access 앱 ${list.body.result.length}개:`);
+    for (const a of list.body.result) {
+      const doms = (a as unknown as { domain?: string }).domain ?? "(도메인 없음)";
+      console.error(`  · ${a.name} · aud=${(a.aud ?? "").slice(0, 16)}… · ${doms} · 세션 ${a.session_duration ?? "(없음)"}`);
+    }
     console.error("앱을 다시 만들었다면 APP_AUD 와 daily.yml 의 EXPECT_AUD 를 **같이** 고쳐라.");
+    console.error("⚠목록이 0개면 토큰이 **다른 계정**을 보고 있거나 Zero Trust 범위가 좁은 것이다.");
     return 1;
   }
 
