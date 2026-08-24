@@ -22,7 +22,13 @@ test("이름과 팀이 제목·배면·본문에 들어간다", () => {
   const out = renderPlayerPage(playerPage(), context());
   assert.match(out, /<title>佐藤 — 阪神タイガース 2026年<\/title>/);
   assert.match(out, /class="vt">阪神タイガース　佐藤</);
-  assert.match(out, /class="nm">佐藤</);
+  /**
+   * ⚠**`佐藤<` 로 재고 있었고, 그 `<` 는 바로 뒤 HTML 주석의 여는 괄호였다**(2026-08-24).
+   * 출력 경계에서 주석을 떼자 이 시험이 붉어져서 알았다 — **이름 뒤에 태그가 온다**를
+   * 재는 줄이 아니라 **주석이 거기 있다**를 재는 줄이었다. 렌더 결과는 안 바뀌었다
+   * (주석 뒤에 이미 공백이 있어서 `佐藤` 과 버튼 사이 간격은 전과 같다).
+   */
+  assert.match(out, /<h1 class="nm">\s*佐藤/);
 });
 
 /**
