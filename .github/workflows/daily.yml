@@ -517,6 +517,42 @@ jobs:
             exit 1
           fi
 
+      - name: Access 설정 확인 — 세션 길이와 로그인 수단이 되돌아갔는지 본다
+        # 담장이 **서 있는가**는 위에서 봤다. 여기서 보는 것은 담장의 **설정**이다.
+        # ⚠세션이 24시간이면 지인이 매일 이메일 코드를 받는다(2026-08-24 사용자 지적).
+        #   그건 담장의 문제가 아니라 **쓸 수 있는가**의 문제이고, 지금까지 아무도 안 봤다.
+        #
+        # ⚠**「어긋났다」와 「못 쟀다」를 가른다**(작업규칙 7).
+        #   Pages 배포용 토큰에는 Zero Trust 권한이 없을 수 있다 — 그때는 **경고**로 남기고 배포는 계속한다.
+        #   여기서 배포를 세우면 **읽기 권한 하나 때문에 매일 화면이 안 올라간다.**
+        # ⚠**그렇다고 「통과」로 적지도 않는다** — 로그에 「검사가 돌지 않았다」라고 쓴다.
+        #   이 저장소는 「없는 장치를 있다고 적는」 상태를 이미 두 번 겪었다(M6 린트 · 走塁 각주).
+        # ⚠**토큰에 권한을 붙였다면** 리포 변수 `ACCESS_GATE_STRICT` 를 `1` 로 두어라 —
+        #   그때부터 「못 쟀다」도 실패가 된다. 안 그러면 이 게이트는 조용히 아무것도 안 하게 된다.
+        if: success()
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STRICT: ${{ vars.ACCESS_GATE_STRICT }}
+        run: |
+          set +e
+          node scripts/access-config.ts
+          rc=$?
+          set -e
+          case "$rc" in
+            0) echo "Access 설정이 목표와 같다" ;;
+            1) echo "::error::Access 설정이 목표와 다르다 — 위 목록을 보고 고쳐라."
+               echo "고치는 법: node scripts/access-config.ts --apply (Zero Trust 편집 권한이 있는 토큰으로)"
+               exit 1 ;;
+            2) if [ "${STRICT}" = "1" ]; then
+                 echo "::error::Access 설정을 **못 쟀다**(ACCESS_GATE_STRICT=1). 토큰 권한을 확인하라."
+                 exit 1
+               fi
+               echo "::warning::Access 설정을 **못 쟀다** — 통과가 아니라 검사가 돌지 않은 것이다."
+               echo "토큰에 Zero Trust 권한을 붙인 뒤 리포 변수 ACCESS_GATE_STRICT=1 로 두어라." ;;
+            *) echo "::error::access-config.ts 가 모르는 코드 ${rc} 를 냈다"; exit 1 ;;
+          esac
+
       - name: 배포
         # ⚠**`success()`가 핵심이다.** 신선도가 낡으면 앞의 생성 단계가 종료 코드 1을 낸다.
         # 그때도 배포하면 **낡은 화면이 조용히 올라간다** — 실패는 실패로 끝낸다.

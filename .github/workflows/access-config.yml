@@ -1,0 +1,61 @@
+# Access 앱 설정을 확인하거나 적용한다.
+#
+# ⚠**손으로만 돈다**(`workflow_dispatch`). 매일 도는 확인은 `daily.yml` 의 게이트가 한다 —
+#   여기는 **바꾸는 쪽**이라 자동으로 돌리지 않는다.
+# ⚠**시크릿을 사람에게 넘기지 않으려고 있다.** 대시보드 대신 여기서 돌리면
+#   `CLOUDFLARE_API_TOKEN` 이 리포 밖으로 안 나간다.
+# ⚠**토큰에 Zero Trust: Read/Edit 권한이 필요하다.** Pages 배포용 토큰에는 없다 —
+#   없으면 종료 코드 2(**못 쟀다**)로 끝나고, 그건 「통과」가 아니다.
+name: access-config
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "true 면 실제로 바꾼다. 기본은 확인만"
+        type: boolean
+        default: false
+
+# ⚠**읽기만 준다.** 이 워크플로는 리포를 안 건드린다
+permissions:
+  contents: read
+
+concurrency:
+  group: access-config
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+
+      - name: Access 설정 확인·적용
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          APPLY: ${{ inputs.apply }}
+        run: |
+          set +e
+          if [ "${APPLY}" = "true" ]; then
+            node scripts/access-config.ts --apply
+          else
+            node scripts/access-config.ts
+          fi
+          rc=$?
+          set -e
+          case "$rc" in
+            0) echo "::notice::목표와 같다" ;;
+            1) echo "::error::어긋났다 — 위 목록을 보라. 바꾸려면 apply 를 켜고 다시 돌려라"; exit 1 ;;
+            2) echo "::error::**못 쟀다** — 토큰에 Zero Trust: Read/Edit 권한이 없거나 API 에 못 닿았다."
+               echo "이건 「통과」가 아니라 **검사가 돌지 않은 것**이다."
+               echo "Cloudflare 대시보드 → My Profile → API Tokens 에서 권한을 넓히거나, 새 토큰을 만들어"
+               echo "리포 시크릿 CLOUDFLARE_API_TOKEN 을 갱신하라."
+               exit 1 ;;
+            *) echo "::error::access-config.ts 가 모르는 코드 ${rc} 를 냈다"; exit 1 ;;
+          esac
