@@ -32,6 +32,10 @@
  * | `1` | **어긋났다** — 설정이 목표와 다르다 |
  * | `2` | **못 쟀다** — 토큰에 Zero Trust 권한이 없거나 API 에 닿지 못했다 |
  *
+ * ⚠**「앱 0개」도 `2` 다**(2026-08-24 실측). Cloudflare 는 범위 밖 자원에 403 이 아니라
+ * **`success` + 빈 배열**로 답한다. 그걸 `1`(어긋났다)로 두면 **배포가 매일 깨진다** —
+ * 읽기 권한 하나 때문에 화면이 안 올라간다. **「없다」와 「못 봤다」는 다르다.**
+ *
  * ⚠**`2` 를 `0` 으로 취급하지 마라.** 「검사가 통과했다」가 아니라 **「검사가 돌지 않았다」**다.
  */
 
@@ -115,6 +119,22 @@ export function unmeasured(status: number): boolean {
   return status === 401 || status === 403 || status >= 500;
 }
 
+/**
+ * 읽어 온 앱 목록으로 **무엇을 말할 수 있는가**를 정한다. ⚠**순수 함수라 네트워크 없이 시험한다.**
+ *
+ * | 결과 | 언제 | 왜 |
+ * |---|---|---|
+ * | `unmeasured` | 목록이 **비었다** | ⚠**「없어졌다」가 아니다.** S1 게이트가 매일 그 앱을 확인하고 있으므로 앱은 존재한다. Cloudflare 는 범위 밖 자원에 403 이 아니라 **success + 빈 배열**로 답한다(2026-08-24 실측) |
+ * | `missing` | 목록은 있는데 **그 AUD 가 없다** | 앱을 다시 만들었거나 AUD 를 한쪽만 고쳤다 |
+ * | `found` | 찾았다 | — |
+ *
+ * ⚠**`unmeasured` 를 `missing` 으로 두면 배포가 매일 깨진다** — 읽기 권한 하나 때문에 화면이 안 올라간다.
+ */
+export function verdictFor(apps: readonly AccessApp[], aud: string): "unmeasured" | "missing" | "found" {
+  if (apps.length === 0) return "unmeasured";
+  return apps.some((a) => a.aud === aud) ? "found" : "missing";
+}
+
 interface ApiResult<T> {
   success: boolean;
   result: T;
@@ -164,8 +184,22 @@ async function main(): Promise<number> {
     return 2;
   }
 
+  // ⚠**빈 목록은 「없어졌다」가 아니라 「못 봤다」다**(2026-08-24 실측).
+  //   S1 게이트가 매일 그 앱의 리다이렉트를 확인하고 있으므로 **앱은 분명히 존재한다.**
+  //   그런데 이 토큰으로 부르면 Cloudflare 가 403 이 아니라 **success + 빈 배열**을 준다 —
+  //   범위 밖 자원을 「없는 것」처럼 답하는 것이다.
+  // ⚠**이걸 「어긋났다」로 두면 배포가 매일 깨진다.** 읽기 권한 하나 때문에 화면이 안 올라간다.
+  const verdict = verdictFor(list.body.result, APP_AUD);
+  if (verdict === "unmeasured") {
+    console.error("못 쟀다 — Access 앱을 0개 읽었다.");
+    console.error("⚠**「앱이 없어졌다」가 아니다** — S1 게이트가 매일 그 앱을 확인하고 있다.");
+    console.error("토큰이 Zero Trust 를 못 보거나 CLOUDFLARE_ACCOUNT_ID 가 다른 계정이다.");
+    console.error("⚠Cloudflare 는 범위 밖 자원에 403 이 아니라 **빈 목록**으로 답한다(실측).");
+    return 2;
+  }
+
   const app = list.body.result.find((a) => a.aud === APP_AUD);
-  if (app === undefined) {
+  if (verdict === "missing" || app === undefined) {
     console.error(`어긋났다 — AUD ${APP_AUD.slice(0, 12)}… 인 앱이 없다.`);
     // ⚠**무엇을 찾았는지 말한다.** 「없다」만 적으면 다음 사람이 처음부터 다시 재야 한다 —
     //   AUD 도 도메인도 비밀이 아니다(무자격 요청의 리다이렉트에 그대로 실려 나온다)

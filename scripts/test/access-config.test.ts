@@ -16,7 +16,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { APP_AUD, TARGET, diff, unmeasured } from "../access-config.ts";
+import { APP_AUD, TARGET, diff, unmeasured, verdictFor } from "../access-config.ts";
 import type { AccessApp } from "../access-config.ts";
 
 const OK: AccessApp = {
@@ -105,4 +105,25 @@ test("⚠AUD 가 daily.yml 과 같다 — 한쪽만 고치면 게이트가 딴 �
   const m = /EXPECT_AUD:\s*"([0-9a-f]{64})"/.exec(yml);
   assert.ok(m !== null, "daily.yml 에서 EXPECT_AUD 를 못 읽었다 — 이 시험이 공회전한다");
   assert.equal(m![1], APP_AUD, "AUD 가 갈렸다 — 둘을 같이 고쳐라");
+});
+
+/**
+ * ⚠**이 셋이 이 게이트에서 가장 위험한 갈림길이다**(2026-08-24 실측으로 드러났다).
+ *
+ * 첫 실행에서 Cloudflare 가 **`success` + 빈 배열**을 돌려줬다 — 토큰이 Zero Trust 를 못 보는데
+ * 403 이 아니라 「없다」처럼 답한 것이다. 그걸 「어긋났다」로 두면 **배포가 매일 깨진다**
+ * (읽기 권한 하나 때문에 화면이 안 올라간다).
+ *
+ * ⚠**앱이 없어진 게 아니라는 근거가 있다** — S1 게이트가 매일 그 앱의 리다이렉트를 확인한다.
+ */
+test("⚠앱 목록이 비면 「못 쟀다」다 — 「없어졌다」가 아니다", () => {
+  assert.equal(verdictFor([], APP_AUD), "unmeasured");
+});
+
+test("⚠목록은 있는데 그 AUD 가 없으면 「어긋났다」다", () => {
+  assert.equal(verdictFor([{ ...OK, aud: "다른앱" }], APP_AUD), "missing");
+});
+
+test("찾으면 found 다", () => {
+  assert.equal(verdictFor([{ ...OK, aud: "다른앱" }, OK], APP_AUD), "found");
 });
