@@ -8,7 +8,7 @@
  */
 import { readdir, readFile } from "node:fs/promises";
 import { gunzipSync } from "node:zlib";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import {
   parseBoxScore,
@@ -23,6 +23,7 @@ import { canonicalTeamCode, competitionFromLabel, competitionOf } from "@bb-app/
 import { openDb } from "../src/db.ts";
 import { alignPaEvents } from "../src/align.ts";
 import { deriveRuns } from "../src/runs.ts";
+import { fetchedAtOf } from "../src/meta.ts";
 import { deriveBatting, derivePitching } from "../src/derive.ts";
 import type { QuarantineRow } from "../src/derive.ts";
 import {
@@ -242,6 +243,38 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
     continue;
   }
 
+  /**
+   * **언제 받았는가**(M4). ⚠**적재 시각이 아니다.**
+   *
+   * 여기는 `nowIso` 를 넣고 있었다 — 적재는 매일 돌고 아카이브 **전체**를 다시 훑으므로
+   * 8월 15일에 받은 페이지가 **매일 「오늘 받은 것」**이 됐다. 실측으로 **7,805/7,805 전건**이
+   * 그 상태였다(2026-08-21 감사 [1]). 그러면 「이 수치는 언제 것인가」에 답할 수 없다.
+   *
+   * ⚠**014·017 이 통산 기록과 予告先発 에 한 것을 경기에는 안 했다** — 같은 병, 같은 처방이다.
+   * ⚠**못 읽으면 「오늘」로 메우지 않는다**(M11). `game.fetched_at` 은 `NOT NULL` 이라
+   *   적을 정직한 값이 없다 — 그래서 **그 경기를 건너뛰고 실패로 센다**(M7 「빈 값이 아니라 실패로」).
+   *   실측(2026-08-24): 사이드카 **7,805/7,805** 가 읽힌다. **지금은 0건이 걸린다.**
+   *   ⚠**걸리면 아카이버가 고장난 것**이다 — 조용히 넘기면 그걸 영영 모른다.
+   */
+  /**
+   * ⚠**여기는 `upsertProbablePitcher` 처럼 「더 새 판만 이긴다」로 하지 않는다** — 결정과 이유를 적는다.
+   *
+   * 予告先発 은 **한 경기일이 여러 파일에 걸려**(페이지가 하루 중에 다음날치로 넘어간다)
+   * 같은 행에 서로 다른 취득 시각이 들어와 순서가 값을 갈랐다. 그래서 거기는 방어가 필요했다.
+   * 경기는 **`game_id` 하나에 `box.html.gz` 하나**라 사이드카 시각도 하나뿐이다 —
+   * 몇 번을 다시 적재해도 같은 값이 들어온다(M5). **막을 경합이 없다.**
+   * ⚠**옛 아카이브로 되돌아가는 경우**는 `archive-guard` 가 앞에서 막는다(줄어들면 멈춘다).
+   */
+  const boxFetchedAt = fetchedAtOf(join(dirname(file), "box.meta.json"));
+  if (boxFetchedAt === null) {
+    failed += 1;
+    console.error(
+      `취득 시각을 못 읽었다 ${meta.gameId} — ${join(dirname(file), "box.meta.json")}. ` +
+        "적재 시각으로 메우지 않는다(M11). 사이드카를 확인하라.",
+    );
+    continue;
+  }
+
   const sourceUrl = `https://npb.jp/scores/${meta.season}/${meta.gameId.split("/")[1]}/${meta.gameId.split("/")[2]}/box.html`;
 
   /**
@@ -298,7 +331,7 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
         competition,
         series,
         sourceUrl,
-        fetchedAt: nowIso,
+        fetchedAt: boxFetchedAt,
         // ⚠중지 경기에 결과는 없다. **0-0이 아니라 「없음」**이다(M11)
         venue,
       });
@@ -429,7 +462,7 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
     competition,
     series,
     sourceUrl,
-    fetchedAt: nowIso,
+    fetchedAt: boxFetchedAt,
     ...result,
     venue,
   });
