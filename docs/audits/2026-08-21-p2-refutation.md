@@ -59,12 +59,35 @@
 - **검증**: DB↔사이드카 1:1 대조에서 `mismatch===0 && sidecarMissing===0`(현재 7805/0). 보조로 시즌별 distinct 날짜 ≥6 — ⚠**distinct만으로 합격 처리 금지**(필요조건일 뿐).
 - ⚠정정: 없음.
 - **P1 아닌 근거**: `game.fetched_at`을 읽는 코드가 리포 `.ts` 전수에서 **0곳**(fetched_at SELECT 4곳은 전부 다른 표). 화면에 실릴 경로가 없다 — 추적성 필드의 침묵 오염.
+- ⚠**고쳤다(2026-08-24)**. 독립 재측정으로 위 두 사실을 확인했다: 사이드카 **7,805/7,805 읽힘** ·
+  `game.fetched_at` 소비자 **0곳**.
+  - **고른 길: 세어서 건너뛰기**(감사가 제시한 두 길 중 하나). ⚠**nullable 마이그레이션을 안 골랐다** —
+    `game` 은 FK 가 **4개**(batting_line·pitching_line·pa_event·runner_event) 들어오는 중앙 표라
+    재구축 위험이 `probable_pitcher`(참조 0개)와 다르고, **읽는 곳이 0곳이라 그 위험을 살 이득이 없다.**
+    못 읽으면 그 경기를 **건너뛰고 `failed` 로 센다**(기존 패턴 · `failed>0` 이면 종료 코드 1).
+    ⚠**지금 걸리는 것은 0건**이다.
+  - **`ON CONFLICT` 는 무조건 덮어쓰기로 뒀고 이유를 주석에 적었다**: 予告先発 은 **한 날짜가 여러 파일**에
+    걸려 순서가 값을 갈랐지만, 경기는 **`game_id` 하나에 box 하나**라 사이드카 시각도 하나뿐이다 —
+    **막을 경합이 없다.** 옛 아카이브 회귀는 `archive-guard` 가 앞에서 막는다.
+  - **검증**: ⚠**감사가 경고한 지름길(distinct 만 보기)을 본체로 쓰지 않았다.**
+    `packages/store/test/game-fetched-at.test.ts` 가 **DB↔사이드카 1:1 대조**를 하고,
+    distinct·최빈값 쏠림·「경기일보다 앞서지 않는다」는 **보조**로 둔다.
+    ⚠**뮤테이션을 합성으로 만들지 않았다** — 3일치만 재적재한 **실제 중간 상태**에서
+    두 보조 단언이 붉었다(서로 다른 값 **19/7,805 = 0.2%** · 한 값에 **99.8%**).
 
 #### **[2] 투수 7열이 `?? 0`으로 조용히 0 저장** — `derive.ts:204~210`
 - **근거**: `h/hr/bb/hbp/so/runs/er`가 전부 `row.X ?? 0`. 공급원 `num()`은 빈 칸·`-`·비유한수에 null을 준다. 같은 표의 타격은 `requireNum()`으로 **던지고**, 같은 함수의 `outs`는 **격리로 뺀다** — 비대칭 실재. 방어 0: `sweep-archive.ts`·`crosscheck.ts` 둘 다 **CI에도 npm scripts에도 0줄**, `store.test.ts` 24/24 pass 중 투수 null을 재는 건 outs 전용 1본.
 - **지금 틀린 값은 0건**: 아카이브 전량 7,805장 파싱 오류 0 · 투수 행 63,315건 × 7열 = **443,205칸 중 null 0건** · DB 교차대조(원정 투수진 SUM(runs) vs `home_runs` 등) **0/7,518경기 어긋남**. → 잠재 결함.
 - **수정**: `outs` 가드와 **같은 모양**으로 derive 단계에서 막고, 격리 `kind`에 **어느 열인지 detail 기록**. `QuarantineRow.kind` 확장 시 `log-page.ts`도 같이(derive.ts:59-62가 요구하는 절차). `sweep-archive.ts`의 被安打 대조를 CI에 배선.
 - **검증**: `node --test packages/store/test/store.test.ts`(수정 전 붉음 확인) / `pitching_line` 63,315행 유지 + quarantine 종류별 카운트 / `grep -n "sweep-archive" .github/workflows/daily.yml package.json` / `grep -n "unreadableColumn" log-page.ts derive.ts`.
+- ⚠**고쳤다(2026-08-24)**. `outs` 가드와 **같은 모양**으로 derive 단계에서 막는다 —
+  일곱 중 하나라도 못 읽으면 **그 등판을 적재하지 않고** `unreadablePitchingStat` 로 격리하며,
+  `detail` 에 **어느 열인지** 적는다(`投手成績を読めなかった: 피안타・자책`).
+  ⚠**화면은 격리 종류를 하드코딩하지 않는다**(실측) — `log-page.ts` 가 DB 의 `kind` 를 그대로 그리므로
+  새 종류가 자동으로 뜬다. derive.ts:59-62 가 요구한 절차는 **확인으로 충족**됐다.
+  ⚠**남은 것**: `sweep-archive.ts` 의 被安打 대조를 CI 에 배선하는 것은 **안 했다**.
+  - **검증**: 시험 **9본 추가**(7열 각각 + 복수 열 + 기존) · `store.test.ts` **32/32** ·
+    **뮤테이션 확인**(가드를 약화하니 2본 붉음). ⚠**지금 걸리는 것은 0건**이라 값은 안 바뀐다.
 - ⚠**정정**: outs 처리는 「175~193」이 아니라 **179~194**. 보탤 실측 — `derive.ts:211`이 wp/balk에 대해 적은 「이 둘은 '없음'이 실재한다」가 **보유 데이터에 근거가 없다**(63,315행 중 `wp is null` 0건 · `balk is null` 0건). 비대칭이 측정이 아니라 믿음 위에 서 있다. ⚠단 방향은 **7필드를 null 보존 쪽으로**이지 wp/balk를 `?? 0`으로 바꾸라는 게 아니다.
 
 #### **[5] `clock.ts:4`의 「유일한 곳」 단언이 거짓 + 강제한다던 린트가 없다**

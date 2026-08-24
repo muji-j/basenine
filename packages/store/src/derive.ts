@@ -81,7 +81,17 @@ export interface QuarantineRow {
      */
     | "unreadRunner"
     /** 투구회를 읽지 못했다. **0으로 때우면 그 등판이 사라진 채 방어율만 부풀어 오른다** */
-    | "unreadableInnings";
+    | "unreadableInnings"
+    /**
+     * 투수 기록 7열(피안타·피홈런·사구·사구체·탈삼진·실점·자책) 중 하나를 읽지 못했다.
+     *
+     * ⚠**여기는 `?? 0` 이었다**(2026-08-21 감사 [2] · 2026-08-24 수정).
+     * 「모른다」와 「0」은 다르다(M11) — 피안타를 못 읽었는데 0 을 넣으면
+     * **그 투수가 무피안타로 던진 것**이 되고, 아무도 그것을 의심하지 않는다.
+     * ⚠**`unreadableInnings` 와 같은 이유, 같은 처방**이다. 그쪽만 하고 이쪽을 안 했다.
+     * ⚠**지금 걸리는 것은 0건**이다(감사 실측) — 이건 **잠재 결함**을 막는 장치다.
+     */
+    | "unreadablePitchingStat";
   gameId: string;
   playerId: string | null;
   raw: string;
@@ -193,6 +203,48 @@ export function derivePitching(
     };
   }
 
+  /**
+   * ⚠**「모른다」를 0 으로 바꾸지 않는다**(M11 · 감사 [2] · 2026-08-24).
+   *
+   * 이 일곱은 `?? 0` 이었다. 파서가 하나라도 못 읽으면 **그 투수가 「무피안타·무실점」으로
+   * 기록되고**, 화면은 그것을 정상값으로 그린다 — 조용히 틀린 숫자의 교과서적인 모양이다.
+   * ⚠**위 `unreadableInnings` 가 이미 같은 판단을 했다.** 그쪽만 하고 이쪽을 안 했을 뿐이다.
+   * ⚠**지금 걸리는 것은 0건**이다 — 잠재 결함을 막는 장치이지 지금 값을 바꾸는 수정이 아니다.
+   */
+  const { hits, homeRuns, walks, hitByPitch, strikeouts, runs: rns, earnedRuns } = row;
+  // ⚠**한 줄로 묶어 검사한다** — 이래야 타입이 좁혀진다. 모아 세는 방식으로 쓰면
+  //   TS 가 아래에서 여전히 `number | null` 로 본다(실제로 그렇게 썼다가 4곳이 났다)
+  if (
+    hits === null || hits === undefined || homeRuns === null || homeRuns === undefined ||
+    walks === null || walks === undefined || hitByPitch === null || hitByPitch === undefined ||
+    strikeouts === null || strikeouts === undefined || rns === null || rns === undefined ||
+    earnedRuns === null || earnedRuns === undefined
+  ) {
+    /**
+     * ⚠**화면에 그대로 나가는 문자열이라 열 이름도 일본어다**(§7 · `log-page.ts` 가 `detail` 을 그린다).
+     * 바로 위 `unreadableInnings` 의 detail 과 같은 어법이다 — 한 화면에 두 언어가 섞이면 안 된다.
+     */
+    const missing = (
+      [
+        ["被安打", hits], ["被本塁打", homeRuns], ["与四球", walks], ["与死球", hitByPitch],
+        ["奪三振", strikeouts], ["失点", rns], ["自責点", earnedRuns],
+      ] as const
+    ).filter(([, v]) => v === null || v === undefined).map(([k]) => k);
+    // ⚠**이 등판은 적재하지 않는다** — `unreadableInnings` 와 같다
+    return {
+      row: null,
+      quarantine: [
+        {
+          kind: "unreadablePitchingStat",
+          gameId,
+          playerId: row.playerId,
+          raw: row.name,
+          detail: `投手成績を読めなかった: ${missing.join("・")}`,
+        },
+      ],
+    };
+  }
+
   const out: PitchingRow = {
     gameId,
     playerId: row.playerId,
@@ -201,13 +253,13 @@ export function derivePitching(
     outs: row.outs,
     bf: row.battersFaced,
     pitches: row.pitches,
-    h: row.hits ?? 0,
-    hr: row.homeRuns ?? 0,
-    bb: row.walks ?? 0,
-    hbp: row.hitByPitch ?? 0,
-    so: row.strikeouts ?? 0,
-    runs: row.runs ?? 0,
-    er: row.earnedRuns ?? 0,
+    h: hits,
+    hr: homeRuns,
+    bb: walks,
+    hbp: hitByPitch,
+    so: strikeouts,
+    runs: rns,
+    er: earnedRuns,
     // ⚠여기서는 `?? 0`을 쓰지 않는다. 다른 필드와 달리 이 둘은 「없음」이 실재한다
     wp: row.wildPitches,
     balk: row.balks,

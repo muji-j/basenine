@@ -213,6 +213,37 @@ test("⚠투구회를 못 읽으면 0으로 넣지 않고 격리한다(M7·M11)"
   assert.equal(d.quarantine[0]!.playerId, PITCHER.playerId);
 });
 
+/**
+ * ⚠**투수 기록 7열은 `?? 0` 이었다**(2026-08-21 감사 [2] · 2026-08-24 수정).
+ *
+ * 「모른다」와 「0」은 다르다(M11). 피안타를 못 읽었는데 0 을 넣으면
+ * **그 투수가 무피안타로 던진 것**이 되고, 값이 그럴듯해서 **아무도 의심하지 않는다** —
+ * 바로 위 `unreadableInnings` 가 이미 겪은 그 사고와 같은 모양이다(篠木 4.57 → 5.37).
+ * ⚠**지금 걸리는 것은 0건**이다. 이건 **잠재 결함**을 막는 장치다.
+ */
+for (const [field, label] of [
+  ["hits", "被安打"], ["homeRuns", "被本塁打"], ["walks", "与四球"], ["hitByPitch", "与死球"],
+  ["strikeouts", "奪三振"], ["runs", "失点"], ["earnedRuns", "自責点"],
+] as const) {
+  test(`⚠투수 ${label}(${field})를 못 읽으면 0으로 넣지 않고 격리한다(M11)`, () => {
+    const d = derivePitching("g", "away", { ...PITCHER, [field]: null });
+    assert.ok(d);
+    assert.equal(d.row, null, `${label} 을 못 읽었는데 등판을 적재했다 — 0 이 들어갔다`);
+    assert.equal(d.quarantine.length, 1);
+    assert.equal(d.quarantine[0]!.kind, "unreadablePitchingStat");
+    assert.match(d.quarantine[0]!.detail ?? "", new RegExp(label), "무엇을 못 읽었는지 안 말한다");
+  });
+}
+
+/** ⚠**여러 개를 못 읽으면 전부 말한다** — 하나만 말하면 고치고 또 걸린다 */
+test("⚠못 읽은 열을 전부 말한다", () => {
+  const d = derivePitching("g", "away", { ...PITCHER, hits: null, earnedRuns: null });
+  assert.ok(d);
+  assert.equal(d.row, null);
+  assert.match(d.quarantine[0]!.detail ?? "", /被安打/);
+  assert.match(d.quarantine[0]!.detail ?? "", /自責点/);
+});
+
 // ---- 적재 ---------------------------------------------------------------
 
 test("⚠M5 멱등: 같은 경기를 두 번 적재해도 행이 늘지 않는다", async () => {
