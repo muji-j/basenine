@@ -244,6 +244,57 @@ for (const scope of ["light", "dark"] as const) {
  * 얹는 자리는 **원리적으로 못 본다.** 실제로 비교 화면의 겹친 紋이 그랬다(2026-08-21 감사 P2).
  * 아래 시험이 그 구멍을 따로 막는다.
  */
+/**
+ * **배경색 하나로 말하는 자리** — 2026-08-22 감사 #18·#21 이 잡은 둘.
+ *
+ * ⚠**둘 다 「색이 틀렸다」가 아니라 「색밖에 없다」였다.**
+ * · `.qhits li.on a`(검색 드롭다운에서 화살표가 고른 자리) — panel 대 panel-2 가
+ *   라이트 **1.129** · 다크 **1.100**. 3:1 의 절반도 안 되고, **hover 와 똑같이 생겼다.**
+ * · `.tbar i`(월별 勝-敗 막대) — 구단 색 대 바탕이 **합집합 12/12 미달**,
+ *   敗 막대(--hair-2)는 **전 구단·양 테마 미달**(라이트 1.580 · 다크 1.557).
+ *
+ * ⚠**막대 쪽은 WCAG 미달이 아니다** — 勝은 늘 위·敗는 늘 아래이고 옆의 `s` 가
+ * 「○勝○敗○分 · ○試合」을 분모까지 적는다. 그래서 이건 **가독성**이지 적합성이 아니다.
+ * 그래도 안 보이는 그림은 그림이 아니라 얼룩이라 고쳤다.
+ *
+ * 여기서 재는 것은 **테두리가 있는가**와 **그 색이 어느 테마에서든 3:1 을 넘는가** 둘이다.
+ * ⚠`box-shadow` 라서 위의 `TEAM_MARKS` 하네스(color/stroke 전용)가 못 본다 — 그래서 따로 있다.
+ */
+const EDGE_MARKS: readonly { sel: string; bg: string; what: string }[] = [
+  { sel: ".qhits li.on a", bg: "panel-2", what: "화살표가 고른 자리의 표식" },
+  { sel: ".tbar i", bg: "panel", what: "월별 승패 막대의 테두리" },
+];
+
+for (const scope of ["light", "dark"] as const) {
+  for (const mark of EDGE_MARKS) {
+    test(`⚠${scope}: ${mark.sel} 는 배경색 하나로 말하지 않는다 — ${mark.what}`, () => {
+      const css = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
+      const rule = new RegExp(
+        `(?:^|[\\n}])\\s*${mark.sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\{([^{}]*)\\}`,
+      ).exec(css);
+      assert.ok(rule !== null, `${mark.sel} 규칙이 CSS 에 없다 — 이 시험이 공회전한다`);
+      const decl = /(?:^|;)\s*box-shadow:\s*([^;]+)/.exec(rule![1]!);
+      assert.ok(
+        decl !== null,
+        `${mark.sel} 에 box-shadow 가 없다 — 배경색 하나로 돌아갔다.\n` +
+          "⚠**border 로 바꾸지 마라** — 높이가 늘어 막대가 값을 거짓말하고 목록이 흔들린다",
+      );
+      const v = /var\(\s*--([a-z0-9-]+)/.exec(decl![1]!);
+      assert.ok(v !== null, `${mark.sel} 의 box-shadow 색이 토큰이 아니다: ${decl![1]!}`);
+      const t = tokens(scope);
+      const ink = t.get(v![1]!);
+      const bg = t.get(mark.bg);
+      assert.ok(ink !== undefined, `--${v![1]!} 을 못 읽었다`);
+      assert.ok(bg !== undefined, `--${mark.bg} 을 못 읽었다`);
+      const cr = contrast(ink!, bg!);
+      assert.ok(
+        cr >= 3,
+        `${mark.sel} 의 테두리가 --${mark.bg} 위에서 ${cr.toFixed(3)}:1 이다 — 비텍스트 3:1 미달`,
+      );
+    });
+  }
+}
+
 test("⚠구단 색을 선 색(stroke)으로 쓰는 자리가 늘지 않는다", () => {
   const css = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
   const found: string[] = [];
