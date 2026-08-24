@@ -24,7 +24,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openDb } from "@bb-app/store";
 import { seasonDraws } from "@bb-app/aggregate";
@@ -32,6 +32,8 @@ import { GLOSSARY } from "../src/glossary.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC_DIR = join(HERE, "..", "src");
+/** ⚠**화면 문구는 `tools/` 에도 있다** — 실측으로 거기 박힌 수가 안 걸리고 있었다 */
+const TOOLS_DIR = join(HERE, "..", "tools");
 const DB = join(HERE, "..", "..", "..", "data", "bb.sqlite");
 const HAS_DB = existsSync(DB);
 if (process.env["BB_REQUIRE_DB"] === "1" && !HAS_DB) {
@@ -197,13 +199,29 @@ interface Hit { file: string; rule: string; match: string; line: number; at: num
  */
 const SKIP = new Set(["assets.ts"]);
 
+/**
+ * 검사할 `.ts` 를 모은다. ⚠**재귀다**(2026-08-24 · 감사 P3 #58).
+ *
+ * ⚠**전에는 `packages/web/src` 한 겹만 읽었다** — `tools/` 와 다른 패키지가 통째로 검사 밖이었고,
+ * 실제로 `web/tools/marks.ts` 의 화면 문구에 박힌 수가 **안 걸리고 있었다.**
+ * **자기 주장만큼 안 덮는 가드**는 「장치가 있다」는 착각만 남긴다.
+ */
+function tsFilesUnder(dir: string, out: { path: string; label: string }[] = [], base = dir): { path: string; label: string }[] {
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, e.name);
+    if (e.isDirectory()) tsFilesUnder(p, out, base);
+    else if (e.name.endsWith(".ts")) out.push({ path: p, label: p.slice(base.length + 1).split(sep).join("/") });
+  }
+  return out;
+}
+
 function scan(): Hit[] {
   const hits: Hit[] = [];
-  const files = readdirSync(SRC_DIR).filter((f) => f.endsWith(".ts")).sort();
+  const files = [...tsFilesUnder(SRC_DIR), ...tsFilesUnder(TOOLS_DIR)].sort((x, y) => (x.label < y.label ? -1 : 1));
   assert.ok(files.length > 20, `소스가 ${files.length}개뿐이다 — 이 시험이 공회전한다`);
-  for (const file of files) {
+  for (const { path: full, label: file } of files) {
     if (SKIP.has(file)) continue;
-    const src = readFileSync(join(SRC_DIR, file), "utf8");
+    const src = readFileSync(full, "utf8");
     for (const lit of stringLiterals(src)) {
       if (!isProse(lit.text)) continue;
       /**
