@@ -279,6 +279,113 @@ test("⚠Positional 사유의 수치가 DB 와 같다 — 완결 시즌만 센�
  * 위 시험들은 각 문서가 DB 와 맞는지만 본다 — 한 문서에서 수치를 **통째로 지우면** 통과해 버린다.
  * 그래서 **세 문서가 전부 그 수를 들고 있는가**를 따로 못 박는다.
  */
+/**
+ * **走塁 대조 수치** — CLAUDE.md §2-2 와 `steal.ts` 머리말이 같은 말을 해야 한다(M1).
+ *
+ * ⚠**이 시험이 없어서 그 두 곳이 조용히 낡았다**(감사 #3·#6 · 2026-08-22 반증).
+ * 원문은 「2,395경기(2024〜2026) · 2026 도루 611 · 도루자 254」였는데 **진행 중 시즌**을 인용해서
+ * 경기가 들어올 때마다 낡았고, 감사 시점에 이미 **2,401 · 618 · 255** 였다.
+ * xFIP·Positional 은 이미 완결 시즌으로 고정돼 있었는데 **走塁만 빠져 있었다** —
+ * ⚠**같은 파일의 머리말이 「走塁 각주에 이미 적용한 규칙」이라고 적고 있었고 그게 사실이 아니었다.**
+ *
+ * ⚠**기대값을 손으로 적지 않는다.** DB 에서 세어 만든 문자열이 **문서 안에 있는가**를 본다.
+ * ⚠**분모를 둘로 낸다** — 도루 0인 경기는 `0 = 0` 으로 자동 일치하므로,
+ * 전체 경기 수만 적으면 「전수 어긋남 0」이 실제보다 강해 보인다.
+ */
+interface StealFigures {
+  seasons: number[];
+  games: number;
+  withSteal: number;
+  mismatch: number;
+  /** 마지막 완결 시즌 */
+  last: number;
+  regular: number;
+  caught: number;
+  allComp: number;
+  gap: number;
+}
+
+function stealFigures(): StealFigures {
+  const db = openDb(DB, "2026-08-22T00:00:00.000Z");
+  try {
+    const only = [...completedSeasons(db)].sort((a, b) => a - b);
+    assert.ok(only.length >= 8, `완결 시즌이 ${only.length}개뿐이다 — 이 시험이 공회전한다`);
+    const list = only.join(",");
+    const rows = db.raw
+      .prepare(
+        `SELECT (SELECT COUNT(*) FROM runner_event r WHERE r.game_id = g.game_id AND r.kind = 'steal') AS derived,
+                (SELECT COALESCE(SUM(b.sb), 0) FROM batting_line b WHERE b.game_id = g.game_id) AS box
+           FROM game g WHERE g.season IN (${list}) AND g.status = 'played'`,
+      )
+      .all() as unknown as { derived: number; box: number }[];
+    let withSteal = 0;
+    let mismatch = 0;
+    for (const r of rows) {
+      if (r.box > 0 || r.derived > 0) withSteal += 1;
+      if (r.derived !== r.box) mismatch += 1;
+    }
+    const last = only.at(-1)!;
+    const n = (sql: string): number =>
+      (db.raw.prepare(sql).get(last) as unknown as { n: number }).n;
+    const regular = n(
+      "SELECT COUNT(*) AS n FROM runner_event r JOIN game g ON g.game_id = r.game_id" +
+        " WHERE g.season = ? AND g.competition = 'regular' AND r.kind = 'steal'",
+    );
+    const caught = n(
+      "SELECT COUNT(*) AS n FROM runner_event r JOIN game g ON g.game_id = r.game_id" +
+        " WHERE g.season = ? AND g.competition = 'regular' AND r.kind = 'caughtStealing'",
+    );
+    const allComp = n(
+      "SELECT COUNT(*) AS n FROM runner_event r JOIN game g ON g.game_id = r.game_id" +
+        " WHERE g.season = ? AND r.kind = 'steal'",
+    );
+    return {
+      seasons: only, games: rows.length, withSteal, mismatch,
+      last, regular, caught, allComp, gap: allComp - regular,
+    };
+  } finally {
+    db.close();
+  }
+}
+
+/** ⚠**두 곳이 같은 말을 해야 한다** — 한쪽만 고치면 여기서 떨어진다(M1) */
+const STEAL_DOCS = ["CLAUDE.md", "packages/aggregate/src/steal.ts"] as const;
+
+test("⚠走塁 대조 수치가 DB 와 같다 — 완결 시즌만 센다", { skip: HAS_DB ? false : "DB 없음" }, () => {
+  const f = stealFigures();
+  const want: { text: string; what: string }[] = [
+    { text: `완결 ${f.seasons.length}시즌 ${group(f.games)}경기`, what: "대조한 경기 수" },
+    { text: `도루가 있던 ${group(f.withSteal)}경기`, what: "⚠실질 분모(0=0 자동 일치를 뺀 것)" },
+    { text: `어긋남 ${f.mismatch}건`, what: "파생 도루 대 박스 盗塁 의 불일치" },
+    { text: `${f.last} 정규시즌 도루 ${group(f.regular)} · 도루자 ${group(f.caught)}`, what: "마지막 완결 시즌 합계" },
+    { text: `${group(f.allComp)} 이 되어 ${f.gap} 어긋난다`, what: "대회를 섞었을 때의 차이" },
+  ];
+  const miss: string[] = [];
+  for (const rel of STEAL_DOCS) {
+    const src = read(rel);
+    for (const w of want) if (!src.includes(w.text)) miss.push(`${rel}: ${w.what} = 「${w.text}」 가 없다`);
+  }
+  assert.deepEqual(
+    miss,
+    [],
+    `走塁 수치가 DB 와 갈렸다(잰 시즌: ${f.seasons.join("·")}). **DB 가 정본이다.**\n` +
+      "⚠**진행 중 시즌을 인용해서 떨어진 것이라면 그건 문서의 결함이다** — 완결 시즌으로 다시 적어라.\n" +
+      "⚠두 곳이 같은 말을 해야 한다(M1): CLAUDE.md §2-2 · packages/aggregate/src/steal.ts 머리말",
+  );
+});
+
+/**
+ * ⚠**「어긋남 0건」이 「아무것도 안 쟀다」로 통과하지 못하게 한다.**
+ * 주자 행이 통째로 비면 파생도 0, 박스 합도… 아니, 박스는 0이 아니다 —
+ * 그래서 그 경우 이 시험이 아니라 위 시험이 운다. 여기서는 **분모 자체**를 지킨다.
+ */
+test("⚠走塁 대조가 실제로 무언가를 세고 있다 — 분모", { skip: HAS_DB ? false : "DB 없음" }, () => {
+  const f = stealFigures();
+  assert.ok(f.games > 5_000, `대조 경기가 ${f.games}뿐이다 — 완결 시즌 판정이 망가졌다`);
+  assert.ok(f.withSteal > 3_000, `도루가 있던 경기가 ${f.withSteal}뿐이다 — 주자 행이 안 들어왔을 수 있다`);
+  assert.ok(f.gap > 0, "정규와 전 대회의 도루가 같다 — 대회 구분이 안 들어갔을 수 있다");
+});
+
 test("⚠결론이 세 문서에서 같다 — 한쪽만 고치고 다른 쪽을 두면 여기서 떨어진다", () => {
   for (const rel of [DOCS.claude, DOCS.metrics]) {
     const src = read(rel);

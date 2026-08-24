@@ -202,6 +202,16 @@ export function upsertProbablePitcher(db: Db, r: ProbablePitcherRow): number {
   return 1;
 }
 
+/**
+ * 경기 한 행을 넣는다. **멱등**이며(M5) 내용이 달라졌을 때만 `revision` 이 오른다(M4).
+ *
+ * ⚠**`season` · `game_date` · `game_no` 는 일부러 갱신하지 않는다.**
+ * `game_id` 가 `season/MMDD/{home}-{away}-{no}` 라 **키가 그 셋을 결정**한다 —
+ * 실측(7,805경기 전수, 2026-08-22)에서 어긋난 행이 **0건**이고, 셋이 바뀌면
+ * `game_id` 도 바뀌어 **갱신이 아니라 새 행**이 된다.
+ * ⚠**팀 코드는 다르다** — 별칭 정규화 때문에 **148/7,805 가 슬러그와 갈린다.** 그래서 갱신한다.
+ * 근거와 회귀는 `packages/store/test/game-upsert.test.ts`.
+ */
 export function upsertGame(db: Db, g: GameRow): number {
   db.raw
     .prepare(
@@ -210,6 +220,13 @@ export function upsertGame(db: Db, g: GameRow): number {
                          away_runs, home_runs, away_hits, home_hits, away_errors, home_errors, venue)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(game_id) DO UPDATE SET
+         -- ⚠**팀 코드는 갱신한다.** game_id 는 **슬러그 원문 그대로**인데
+         -- 팀 코드는 TEAM_CODE_ALIASES 로 **적재 시점에 정규화**한다 —
+         -- 실측 **148/7,805행(1.9%)이 슬러그와 다르다**(2018 오릭스 bs→b).
+         -- 별칭 표는 코드고 **이미 한 번 바뀌었다** — 안 갱신하면 그걸 고쳐도
+         -- **기존 행은 영영 옛 코드를 유지**한다(감사 #3 · 2026-08-22 반증)
+         away_code = excluded.away_code,
+         home_code = excluded.home_code,
          status = excluded.status,
          not_played_reason = excluded.not_played_reason,
          competition = excluded.competition,
@@ -242,6 +259,9 @@ export function upsertGame(db: Db, g: GameRow): number {
              -- ⚠구분이 바뀌는 것도 정정이다. 정규시즌이던 경기가 CS로 바뀌면
              -- 그 선수의 시즌 성적이 통째로 달라진다
              OR game.competition IS NOT excluded.competition
+             -- 팀 코드 정정도 정정이다 — 그 구단의 성적이 통째로 옴겨간다
+             OR game.away_code IS NOT excluded.away_code
+             OR game.home_code IS NOT excluded.home_code
            THEN game.revision + 1 ELSE game.revision END`,
     )
     .run(

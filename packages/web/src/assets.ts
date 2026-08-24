@@ -132,7 +132,14 @@ a{color:inherit}
 .qhits li a{display:flex;gap:8px;align-items:baseline;padding:6px 11px;text-decoration:none;font-size:13px}
 /* 화살표가 고른 자리. ⚠**aria-selected 로 표시하지 않는다**(2026-08-20) — 이 목록은 listbox 가
    아니고, listbox 밖의 aria-selected 는 낭독기에 깨진 구조로 들린다. 표시는 우리 클래스로 한다 */
-.qhits li a:hover,.qhits li.on a{background:var(--panel-2)}
+.qhits li a:hover{background:var(--panel-2)}
+/* 화살표가 고른 자리. ⚠**배경색 하나로 말하지 않는다**(2026-08-22 감사 #18).
+   panel 대 panel-2 의 대비는 라이트 1.129 · 다크 1.100 으로 **비텍스트 3:1 의 절반도 안 된다** —
+   실측이다. 게다가 hover 와 똑같이 생겨서 「지금 어디에 있는가」가 두 뜻이 된다.
+   → **왼쪽 규칙선을 더한다.** tx-3 대 panel-2 는 라이트 4.541 · 다크 4.611 이다.
+   ⚠**border 가 아니라 inset box-shadow 다** — border 면 3px 만큼 글자가 밀려
+   화살표를 누를 때마다 목록이 흔들린다 */
+.qhits li.on a{background:var(--panel-2);box-shadow:inset 3px 0 0 var(--tx-3)}
 .qhits li a{flex-wrap:wrap}
 .qhits .ht{margin-left:auto;font-size:10.5px;color:var(--tx-3);white-space:nowrap}
 /* 등번호. **고정폭 자리를 준다** — 한 자리와 세 자리가 섞이면 이름의 시작선이 들쭉날쭉해진다.
@@ -1464,9 +1471,19 @@ table.stand .dif i.n{right:50%}
 .tmonth s{text-decoration:none;font-size:10.5px;color:var(--tx-3);
   font-variant-numeric:tabular-nums;display:flex;align-items:baseline;gap:5px}
 .tmonth em{font-style:normal;font-size:9.5px}
-/* 이긴 만큼과 진 만큼을 위아래로 — 색만으로 말하지 않게 수를 옆에 둔다 */
+/* 이긴 만큼과 진 만큼을 위아래로 — 색만으로 말하지 않게 수를 옆에 둔다.
+   ⚠**뜻을 나르는 것은 색이 아니라 위치와 옆의 수다** — 勝은 늘 위, 敗는 늘 아래이고
+   바로 옆 s 가 「○勝○敗○分 · ○試合」을 분모까지 적는다(M2). 막대는 **거드는 그림**이다.
+   ⚠**그래도 안 보이면 그림이 아니라 얼룩이다**(2026-08-22 감사 #21 · 실측 12구단):
+     막대 대 바탕 3:1 미달 — 라이트 **4/12** · 다크 **8/12** · **합집합 12/12**
+       (阪神 라이트 1.61 · ソフトバンク 1.64 · オリックス 다크 1.08 · ロッテ 1.10 …)
+     敗 막대(--hair-2)는 **전 구단·양 테마에서 미달** — 라이트 **1.580** · 다크 **1.557**
+   → **두 막대에 같은 1px 테두리를 준다.** tx-3 은 라이트 5.125 · 다크 5.072 로 어느 바탕에서도 선다.
+   ⚠**box-shadow 다. border 가 아니다** — border 면 높이가 2px 늘어 막대가 값을 거짓말한다.
+   ⚠**敗를 더 진하게 만들지 않는다.** 같은 화면의 .trecent 가 바로 그 실수를 이미 겪었다 —
+   진 쪽만 또렷해서 팀이 실제보다 나쁘게 읽혔다. 여기서 고치는 것은 **보이는가**이지 **누가 눈에 띄는가**가 아니다 */
 .tbar{display:flex;flex-direction:column;gap:1px;height:26px;justify-content:flex-end}
-.tbar i{display:block;font-style:normal}
+.tbar i{display:block;font-style:normal;box-shadow:inset 0 0 0 1px var(--tx-3)}
 .tbar .w{height:calc(var(--w) * 0.24px);background:var(--team,#6b7280)}
 .tbar .l{height:calc(var(--l) * 0.24px);background:var(--hair-2)}
 /* 최근 경기 — 결과를 글자로 낸다. 색만 쓰면 색각 특성에 따라 구별되지 않는다 */
@@ -1484,8 +1501,12 @@ table.stand .dif i.n{right:50%}
    ⚠**결과가 뜻과 반대였다** — 진 경기(--tx-2 · 6.6:1)만 또렷해서 최근 10경기를 훑으면
    팀이 실제보다 나쁘게 읽혔다. 이긴 경기가 안 보이는 승패 목록은 목록이 아니다.
    → 이 파일이 이미 세워 둔 「뜻이 있는 자리의 강조색」(--up/--dn)을 쓴다. --up 은 어느 바탕에서도
-   통과한다 — 실측 라이트 4.95(--panel-2)~5.59(--panel) · 다크 5.87~7.00. 구단 색은 이 화면의 다른 자리
-   (월별 막대 .tbar .w · 표제 밑줄)가 이미 배경으로 말하고 있다. */
+   통과한다 — 실측 라이트 4.95(--panel-2)~5.59(--panel) · 다크 5.87~7.00.
+   ⚠**「구단 색은 월별 막대가 이미 배경으로 말하고 있다」고 적혀 있었고 그건 거짓이었다**
+   (2026-08-22 감사 #21 · 실측): 그 막대도 **합집합 12/12 가 3:1 미달**이다
+   (오릭스 다크 1.08 · 롯데 1.10 — 이 문단이 위에 적어 둔 바로 그 수다).
+   막대 쪽은 1px 테두리로 따로 고쳤다(.tbar). **여기서 --up 을 쓰는 이유는 그대로 유효하다** —
+   근거가 하나 무너졌을 뿐 결론은 안 바뀐다. */
 .trecent li.w b{color:var(--up);font-weight:700}
 .trecent li.l b{color:var(--tx-2)}
 .trecent span{font-size:11.5px;color:var(--tx-2)}
@@ -3113,6 +3134,12 @@ function attachPicker(input,list,onPick){
       if(e.preventDefault)e.preventDefault();
       active=e.key==="ArrowDown"?Math.min(active+1,rows.length-1):Math.max(active-1,0);
       draw(rows,false);
+      /* ⚠**고른 것을 소리로도 말한다**(2026-08-22 감사 #18). 여기까지는 화살표를 눌러도
+         낭독기에 아무 말도 안 갔다 — 화면만 움직이면 눈으로 보는 사람에게만 검색이 있는 것이다.
+         ⚠**몇 번째인지 함께 말한다** — 이름만 읽으면 목록의 어디쯤인지 알 수 없다.
+         draw 가 방금 인원수를 예약했지만 say 가 마지막 것만 남기므로 겹치지 않는다 */
+      const sel=rows[active];
+      if(sel)say((active+1)+"人目 "+sel.n+" "+sel.t);
     }else if(e.key==="Enter"&&active>=0){
       if(e.preventDefault)e.preventDefault();
       if(onPick)onPick(rows[active]);else go(BASE+"players/"+rows[active].i+".html");
