@@ -13,7 +13,22 @@ import type { BlobMeta, Sink } from "./sink.ts";
 import { sha256 } from "./sink.ts";
 import type { PageOutcome, PageResult } from "./archive.ts";
 
+/**
+ * 저장 키. ⚠**선수 ID 는 외부에서 온 문자열이고 여기서 경로가 된다.**
+ *
+ * `../` 가 섞이면 **아카이브 루트 밖에 쓴다.** 조용히 정규화하지 않고 **던진다** —
+ * 정규화하면 「무엇을 받았는지」가 사라지고, 그건 아카이브에서 가장 나쁜 종류의 손실이다.
+ *
+ * ⚠**같은 값에 대해 `web/src/site.ts` 는 이미 같은 검사를 하고 있었다** — 여기만 없었다
+ * (2026-08-24 · 감사 P3 #14). **같은 부류가 한쪽만 지켜지는 비대칭**이라 고쳤다.
+ * ⚠**지금 틀린 값은 0건이다**(실측: 선수 1,640명 전원이 안전한 형태) — 이건 **잠재 결함**을 막는 장치다.
+ */
+const SAFE_ID = /^[A-Za-z0-9_-]+$/;
+
 export function playerKey(playerId: string): string {
+  if (!SAFE_ID.test(playerId)) {
+    throw new Error(`선수 ID가 경로로 쓸 수 없는 형태다: ${JSON.stringify(playerId)}`);
+  }
   return `npb/players/${playerId}`;
 }
 

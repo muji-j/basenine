@@ -9,6 +9,7 @@
  * 비율을 렌더링하는 쪽은 반드시 표본 수를 함께 받는다.
  */
 import type { Rate } from "@bb-app/metrics";
+import { inningsFromOuts } from "@bb-app/metrics";
 
 /** 값이 없음. **0과 구별한다**(M11). */
 export const NO_VALUE = "—";
@@ -66,12 +67,15 @@ export function int(value: number | null): string {
   return value === null || !Number.isFinite(value) ? NO_VALUE : String(Math.round(value));
 }
 
-/** 아웃 카운트 → 이닝 표기. `20` → `6.2` */
+/**
+ * 아웃 카운트 → 이닝 표기. `20` → `6.2`
+ *
+ * ⚠**규칙은 `@bb-app/metrics` 한 벌이다**(M1 · 2026-08-24 · 감사 P3 #52).
+ * 여기서 하는 일은 **「모른다」를 화면 표기로 바꾸는 것**뿐이다 — 그건 표시 계층의 몫이다.
+ */
 export function innings(outs: number | null): string {
   if (outs === null || !Number.isFinite(outs)) return NO_VALUE;
-  const whole = Math.floor(outs / 3);
-  const rest = outs % 3;
-  return rest === 0 ? String(whole) : `${whole}.${rest}`;
+  return inningsFromOuts(outs);
 }
 
 /** 분모 표기. `442打席` */

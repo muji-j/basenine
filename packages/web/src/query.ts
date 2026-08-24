@@ -73,6 +73,10 @@ import type {
   StealBaseRow,
 } from "./player-page.ts";
 import type { BattingLine, LeagueConstants, PitchingLine, Rate, WobaWeights } from "@bb-app/metrics";
+// ⚠**이 파일 안에 같은 이름의 지역 함수 `rate()` 가 있다** — 둘은 서로 다른 것이다.
+//   지역 쪽은 「순위표 한 줄」을 만들고, 이쪽은 **분모/분모 한 쌍**을 만든다(분모 0 → null).
+//   이름을 같게 두면 그늘이 지고 **어느 쪽을 불렀는지가 순서에 달린다** — 별칭을 붙인다.
+import { rate as ratio } from "@bb-app/metrics";
 import {
   babip,
   battingAverage,
@@ -790,10 +794,15 @@ function pitcherRankings(
     rate("bb9", "BB/9", (e) => walksPer9(e.player.line)),
     count("so", "奪三振", (e) => e.player.line.so),
     // ⚠球数/アウト는 **낮을수록 좋다.** 다른 투수 개수 지표와 성격이 다르다
+    // ⚠**여기만 `rate()` 를 안 거치고 직접 나눴다**(2026-08-24 · 감사 P3 #29).
+    //   `outs === 0` 이면 `pitches / 0 = Infinity` 다 — 실측 `pitching_line` **63,315행 중 773행**이
+    //   `outs=0 & pitches>0` 이라 **실재하는 입력**이다. 같은 계산의 다른 두 자리(3,735 · 5,381)는
+    //   각각 가드를 갖고 있었다 — **같은 식이 세 벌인데 하나만 안전했다**(M1).
+    //   `rate()` 가 분모 0 을 `null` 로 만든다 — 「모른다」와 「무한대」를 구별한다(M11).
     rate("pitchesPerOut", "球数/アウト", (e) =>
       e.player.pitches === null
         ? { value: null, denominator: e.player.line.outs }
-        : { value: e.player.pitches / e.player.line.outs, denominator: e.player.line.outs },
+        : ratio(e.player.pitches, e.player.line.outs),
     ),
     count("pitches", "投球数", (e) => e.player.pitches ?? 0),
     inningsRanking(),
@@ -2946,7 +2955,10 @@ function homePage(
     const pitchers = pick(wkSrp, HOME_WEEK_MIN_BF, (id) => {
       const x = pitLine.get(id);
       if (x === undefined || x.line.outs === 0) return null;
-      const ip = `${Math.floor(x.line.outs / 3)}${x.line.outs % 3 === 0 ? "" : `.${x.line.outs % 3}`}`;
+      // ⚠**`innings()` 를 쓴다**(M1 · 2026-08-24 · 감사 P3 #52). 여기만 인라인으로
+      //   다시 구현돼 있었다 — **이 파일은 `innings` 를 이미 import 하고 있고**,
+      //   바로 위의 두 자리는 「M1 이라 이걸 쓴다」고 적어 둔 상태였다.
+      const ip = innings(x.line.outs);
       return `${ip}回 ${x.line.so}奪三振 自責${x.line.er}`;
     });
 
