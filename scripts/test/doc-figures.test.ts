@@ -35,6 +35,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { openDb } from "@bb-app/store";
@@ -502,6 +503,84 @@ test("⚠문서의 배포물 파일 수가 dist 와 크게 어긋나지 않는�
     [],
     `문서의 배포물 파일 수가 낡았다(실측 ${actual.toLocaleString("en-US")} · 허용 ${DIST_TOLERANCE * 100}%).\n` +
       "⚠**두 문서가 같은 수를 말해야 한다**(M1) — 한쪽만 고치지 마라.",
+  );
+});
+
+/**
+ * **적재가 여는 파일** — CLAUDE.md §2-2-1 의 「경기마다 4장을 받는데 적재가 여는 것은 …」.
+ *
+ * ⚠**「`box` 와 `playbyplay` 둘뿐」이라고 적혀 있었고 거짓이었다**(2026-08-21 감사 [43]).
+ * **바로 위 표가 지적한 결함을 고친 커밋(`6f6e525` · roster 추가)이 이 줄을 낡게 만들었고,
+ * 그 줄을 안 고쳤다** — **고침이 문서를 낡게 하는** 모양이다.
+ *
+ * ⚠**소스를 정본으로 둔다.** 문서에 적힌 목록이 아니라 `load-archive.ts` 가 실제로 여는 것을 센다 —
+ * 손으로 적으면 다음 `roster` 가 추가될 때 **또 같은 일이 난다.**
+ * ⚠**월간 일정(`schedule_MM.html.gz`)은 뺀다** — 구장 조회표용이고 경기별 4장 밖이라 층이 다르다.
+ */
+test("⚠문서가 말하는 「적재가 여는 파일」이 소스와 같다", () => {
+  const src = readFileSync(`${ROOT}packages/store/tools/load-archive.ts`, "utf8");
+  const opened = new Set(
+    [...src.matchAll(/"([a-z]+)\.html\.gz"/g)].map((m) => m[1]!),
+  );
+  // 경기별 페이지만 본다 — 일정은 층이 다르다
+  opened.delete("schedule");
+  assert.ok(opened.size >= 2, `여는 파일을 ${opened.size}개밖에 못 찾았다 — 이 시험이 공회전한다`);
+
+  const doc = read(DOCS.claude);
+  const line = doc.split("\n").find((l) => l.includes("적재가 여는 것은"));
+  assert.ok(line !== undefined, "CLAUDE.md 에서 「적재가 여는 것은 …」 줄을 못 찾았다");
+  const missing = [...opened].filter((f) => !line!.includes(f));
+  assert.deepEqual(
+    missing,
+    [],
+    `적재는 여는데 문서가 안 적은 파일: ${missing.join(", ")}\n` +
+      `소스가 여는 것: ${[...opened].sort().join(", ")}\n` +
+      `문서: ${line}\n` +
+      "⚠**소스가 정본이다.** 새 페이지를 열게 됐으면 이 줄도 같이 고쳐라.",
+  );
+});
+
+/**
+ * **문서가 근거로 가리키는 파일이 저장소에 실제로 있는가.**
+ *
+ * ⚠**소스 서베이가 「외부 요청 0회로 대부분이 재현된다」고 적었는데 거짓이었다**(감사 [49]).
+ * `docs/sources/samples/` 가 `.gitignore` 로 무추적이라 **클론한 사람에게는 0파일**이다 —
+ * 그 문장을 믿은 다음 조사자는 **약 70요청을 L1 준수로 다시 쏘거나** 인용을 재대조하지 못한다.
+ * ⚠**결정(.gitignore)이 문서보다 71분 먼저 났는데 문서가 안 따라갔다.**
+ *
+ * ## 이 시험이 재는 것
+ *
+ * 문서 본문이 백틱으로 가리키는 **저장소 상대경로**를 뽑아, **추적 중이 아니면 잡는다.**
+ * ⚠**「파일이 있는가」가 아니라 「추적 중인가」다** — 내 머신에 있는 것과 클론에 있는 것은 다르다.
+ * 그게 이 결함의 정확한 모양이었다.
+ * ⚠**취소선 안과 「로컬 전용」이라고 스스로 밝힌 줄은 봐준다** — 그건 이미 정직한 서술이다.
+ */
+test("⚠문서가 근거로 가리키는 경로가 저장소에 추적돼 있다", () => {
+  const tracked = new Set(
+    execFileSync("git", ["ls-files"], { cwd: ROOT, encoding: "utf8", maxBuffer: 1 << 26 })
+      .split("\n")
+      .filter(Boolean)
+      .map((f) => f.replace(/\\/g, "/")),
+  );
+  assert.ok(tracked.size > 100, `git ls-files 가 ${tracked.size}건뿐이다 — 이 시험이 공회전한다`);
+
+  const bad: string[] = [];
+  for (const rel of [DOCS.metrics, DOCS.recheck, "docs/sources/2026-08-20-blocked-metrics-source-survey.md"]) {
+    for (const line of read(rel).split("\n")) {
+      // 스스로 「로컬 전용 / 저장소에 없다」라고 밝힌 줄과 취소선은 봐준다
+      if (line.includes("로컬 전용") || line.includes("저장소에 없다") || line.includes("~~")) continue;
+      for (const m of line.matchAll(/`(docs\/[A-Za-z0-9_.\/-]+\.[a-z]{2,4})`/g)) {
+        const path = m[1]!;
+        if (path.endsWith("/")) continue;
+        if (!tracked.has(path)) bad.push(`${rel}: \`${path}\` 를 근거로 가리키는데 **추적되지 않는다**`);
+      }
+    }
+  }
+  assert.deepEqual(
+    [...new Set(bad)],
+    [],
+    "문서가 **클론에 없는 파일**을 근거로 가리킨다.\n" +
+      "⚠**「내 머신에 있다」와 「저장소에 있다」는 다르다** — 그 줄에 **로컬 전용임을 명시**하거나 파일을 추적하라.",
   );
 });
 
