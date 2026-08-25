@@ -402,6 +402,102 @@ test("⚠중지 경기 카드는 opacity 로 흐리지 않는다 — 형태로 �
 });
 
 /**
+ * **紋(레이더 도형)의 눈금선은 왜 흐려도 되는가** — 그 전제를 여기 못 박는다.
+ *
+ * 실측(2026-08-25 · 감사 P3 #30 · 배경은 `--panel`):
+ * `.mf-grid`(`--hair-2`) **1.580 / 1.557** · `.mf-spoke`(`--hair`) **1.336 / 1.212** —
+ * 비텍스트 기준 3:1 에 한참 못 미친다. **그래도 고치지 않는다.**
+ *
+ * 전제는 **「눈금선은 정보를 나르지 않는다」**이다. 나르는 것은 셋이고 전부 `--tx-2` 다:
+ * 도형 윤곽(`.mf-shape`) · 꼭짓점(`.mf-dot`) · 축 이름(`.mf-lab`) — 실측 **6.613 / 6.668**.
+ * 눈금선을 진하게 하면 **읽어야 할 것이 배경 격자에 묻힌다** — 고치는 것이 나쁜 쪽이다.
+ *
+ * ⚠**이 전제가 깨지는 두 가지**를 아래 시험이 지킨다:
+ *   ⑴ 나르는 셋 중 하나라도 약한 토큰으로 내려가면 — 그때는 눈금선 논거가 사라진다
+ *   ⑵ **배경이 `--panel` 이 아니게 되면** — 위의 수 전부가 다른 값이 된다
+ *
+ * ⚠**⑵ 는 내가 실제로 틀렸던 자리다**(2026-08-25). 처음에 `--page` 위에서 재서
+ * 1.514/1.688 이 나왔고 감사 수치와 안 맞았다 — **배경을 잘못 잡으면 대비는 그냥 다른 수다.**
+ */
+/** ⚠주석 안의 예시가 규칙으로 잡히면 이 시험이 헛돈다 */
+const CSS_NC = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
+/** 비텍스트(도형·표시) 기준 */
+const UI_NEED_MF = 3;
+
+/**
+ * ⚠**`--panel` 이 바탕이라는 것은 위 `TEAM_MARKS` 주석이 이미 적고 있다**(실측 2026-08-20 ·
+ * `getComputedStyle`). 여기서는 그것을 **시험으로 바꾼다** — 적어 둔 전제와 실제 CSS 는 따로 논다.
+ */
+test("⚠紋의 배경은 --panel 이다 — 이 파일의 대비 계산 전부가 여기에 얹혀 있다", () => {
+  const rule = /\.markpanel\{([^}]*)\}/.exec(CSS_NC);
+  assert.notEqual(rule, null, ".markpanel 규칙이 사라졌다 — 이 시험이 공회전한다");
+  assert.match(
+    rule![1]!,
+    /background:\s*var\(--panel\)/,
+    "紋의 배경이 --panel 이 아니게 됐다 — 눈금선·윤곽 대비를 **전부 다시 재라**",
+  );
+});
+
+/**
+ * ⚠**축 이름(`.mf-lab`)은 아무도 안 재고 있었다.** `TEAM_MARKS` 는 `.mf-shape`·`.mf-dot` 의
+ * `stroke` 만 본다. 그런데 눈금선을 흐리게 두는 근거는 **「읽을 것이 따로 또렷하다」**이고,
+ * 축 이름은 그 「읽을 것」의 하나다.
+ */
+for (const scope of ["light", "dark"] as const) {
+  test(`⚠${scope}: 紋의 축 이름이 3:1 을 넘는다 — 눈금선을 흐리게 두는 근거의 일부다`, () => {
+    const t = tokens(scope);
+    const panel = t.get("panel");
+    const rule = /\.mf-lab\{([^}]*)\}/.exec(CSS_NC);
+    assert.notEqual(rule, null, ".mf-lab 규칙이 사라졌다 — 이 시험이 공회전한다");
+    const m = /(?:^|;)\s*fill:\s*var\(--([a-z0-9-]+)\)/.exec(rule![1]!);
+    assert.notEqual(m, null, `.mf-lab 이 토큰 색을 안 쓴다: ${rule![1]}`);
+    const c = t.get(m![1]!);
+    assert.ok(c !== undefined && panel !== undefined, "토큰을 못 읽었다 — 이 시험이 공회전한다");
+    const r = contrast(c!, panel!);
+    assert.ok(r >= UI_NEED_MF, `.mf-lab --${m![1]!} ${c} 위 --panel ${panel} = ${r.toFixed(3)}:1`);
+    console.log(`  · ${scope} 축 이름 ${r.toFixed(3)}:1`);
+  });
+}
+
+/**
+ * **눈금선은 흐리다. 그건 결함이 아니라 선택이고, 그 선택을 여기 적는다.**
+ *
+ * 실측(2026-08-25 · 감사 P3 #30 · 바탕 `--panel`):
+ * `.mf-grid`(`--hair-2`) **1.580 / 1.557** · `.mf-spoke`(`--hair`) **1.336 / 1.212**.
+ * 비텍스트 3:1 에 한참 못 미친다. **고치지 않는다** — 눈금선을 진하게 하면
+ * **읽어야 할 것(도형·꼭짓점·축 이름)이 배경 격자에 묻힌다.**
+ *
+ * ⚠**감사는 이 값을 「전제가 바뀌었다」로 기록했다** — 예전에는 도형이 구단 색이라
+ * 눈금선과 세기가 비슷했고, 지금은 도형이 `--tx-2`(6.613/6.668)라 **위계가 생겼다.**
+ * 그래서 같은 수가 이제 다른 뜻이다.
+ *
+ * ⚠**이 시험은 값을 못 박는 것이 아니라 「눈금선이 정보 운반자가 되지 않았는가」를 지킨다.**
+ * 눈금선에 색·굵기를 얹어 무언가를 말하기 시작하면 여기서 먼저 운다.
+ */
+test("⚠紋의 눈금선은 정보를 나르지 않는다 — 흐린 채로 두는 근거다", () => {
+  for (const [sel, token] of [[".mf-grid", "hair-2"], [".mf-spoke", "hair"]] as const) {
+    const rule = new RegExp(`\\${sel}\\{([^}]*)\\}`).exec(CSS_NC);
+    assert.notEqual(rule, null, `${sel} 규칙이 사라졌다 — 이 시험이 공회전한다`);
+    assert.match(
+      rule![1]!,
+      new RegExp(`stroke:\\s*var\\(--${token}\\)`),
+      `${sel} 의 색이 --${token} 이 아니게 됐다 — 눈금선이 무언가를 말하기 시작했다면\n` +
+        "  ⚠**그 순간 3:1 이 필요해진다.** 감사 #30 의 전제(「눈금선은 정보를 안 나른다」)를 다시 판단하라.",
+    );
+    // ⚠**상태 클래스가 붙으면 그건 「말하기 시작한 것」이다**(`.mf-ax.on .mf-spoke` 는 별개 — forced-colors.test.ts 가 다룬다)
+    assert.ok(
+      !/stroke-dasharray|marker|font/.test(rule![1]!),
+      `${sel} 이 눈금선 이상의 일을 한다: ${rule![1]}`,
+    );
+  }
+  const t = tokens("light");
+  console.log(
+    `  · 눈금선 --hair-2 ${contrast(t.get("hair-2")!, t.get("panel")!).toFixed(3)}` +
+      ` · --hair ${contrast(t.get("hair")!, t.get("panel")!).toFixed(3)} (라이트 · 3:1 미만이지만 선택이다)`,
+  );
+});
+
+/**
  * **정렬 표시가 보이는가.**
  *
  * ⚠**안 보였다**(2026-08-25 · 감사 P3 #31). `.sortable i{opacity:.3}` 이 `--tx-2` 를 흐려
