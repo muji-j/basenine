@@ -682,10 +682,19 @@ th:has(.sortable){padding:0}
   transition:color var(--fast) var(--ease)}
 th.l .sortable{justify-content:flex-start}
 .sortable:hover{color:var(--tx)}
-.sortable i{font-style:normal;width:7px;opacity:.3}
+/* ⚠**opacity 로 흐리지 않는다**(2026-08-25 · 감사 P3 #31).
+   ~~opacity:.3~~ 이었고, --tx-2 위에 얹으면 실효 대비가 **라이트 1.554 · 다크 1.765** 였다 —
+   UI 표시에 필요한 **3:1** 의 절반이다. ↕ 는 「이 열은 정렬할 수 있다」를 말하는 **유일한 신호**라
+   안 보이면 그 기능이 없는 것과 같다.
+   ⚠**색을 낮춰서 위계를 지킨다** — 지우면 정렬 안 된 표시가 정렬된 것과 같은 세기가 된다.
+   실측: --tx-3 **4.910 / 5.499**(통과) 대 정렬됨 --tx **17.139 / 14.736**. 위계는 그대로다.
+   ⚠**opacity 는 계산을 거짓으로 만든다** — 그래서 목록(css-contrast.test.ts 의 OPACITY_ALLOWED)이
+   이 선택자를 「도형 대비는 별건으로 미검증」이라 적어 두고 있었다. 그 미검증이 이것이었다. */
+.sortable i{font-style:normal;width:7px;color:var(--tx-3)}
+.sortable:hover i{color:var(--tx)}
 .sortable i::before{content:"↕"}
 th[aria-sort="ascending"] .sortable,th[aria-sort="descending"] .sortable{color:var(--tx);font-weight:700}
-th[aria-sort="ascending"] .sortable i,th[aria-sort="descending"] .sortable i{opacity:1}
+th[aria-sort="ascending"] .sortable i,th[aria-sort="descending"] .sortable i{color:inherit}
 th[aria-sort="ascending"] .sortable i::before{content:"↑"}
 th[aria-sort="descending"] .sortable i::before{content:"↓"}
 @media (pointer:coarse){.sortable{padding:9px 8px}}
@@ -1890,6 +1899,45 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
 }
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:1ms!important;animation-delay:0ms!important;transition-duration:1ms!important}
+}
+/* **강제 색 모드**(Windows 고대비 등). ⚠**대응 규칙이 0개였다**(2026-08-25 · 감사 P3 #34).
+
+   그 모드에서 OS 가 갈아치우는 것: color · background-color · border-color · outline-color.
+   ⚠**box-shadow 는 아예 none 이 된다.** 살아남는 것: font-weight · content ·
+   border-style · stroke-width · 크기 · 위치. **시스템 색 키워드는 갈아치우지 않는다** —
+   그래서 대응은 「색을 지정하지 않는 것」이 아니라 **시스템 색으로 다시 말하는 것**이다.
+
+   ⚠**상태 규칙 대부분은 이미 살아남는다**(실측 · 상태 묶음 47개). 그건 우연이 아니라
+   이 저장소가 「색 하나로 말하지 않는다」를 여러 번 고쳐 왔기 때문이다 —
+   tr.me 는 font-weight, aria-sort 는 content 로 화살표, tr.thin 은 .qmk 글자 표식,
+   .gcard.off 는 border-style:dashed, .dia 는 fill:none(색이 아니라 강제 대상이 아니다)과
+   stroke-width, .pk 는 font-weight, .state 는 문장 자체가 다르다.
+
+   ⚠**두 곳이 남았고 둘 다 「지금 어디를 고르고 있는가」다.**
+   ⑴ .qhits li.on a — 검색 목록에서 화살표가 고른 자리. background + box-shadow 뿐이라
+      **강제 색 모드에서 통째로 사라지고 hover 와도 구별이 안 된다.**
+      ⚠**그 box-shadow 는 「배경색 하나로 말하지 않으려고」 더한 것이었다**(2026-08-22 감사 #18) —
+      대비를 고치려고 고른 채널이 하필 이 모드에서 죽는 채널이었다.
+   ⑵ .card[aria-selected] — 고른 카드. color·border-color·background 뿐이고
+      바탕 .card 도 같은 굵기 테두리라 **골랐는지 아닌지가 같은 모양이 된다.**
+
+   ⚠**브라우저로는 확인하지 못했다.** 실제 렌더는 Windows 고대비를 켜야 보이고,
+   그건 CI 에 없다(topbar-geometry.test.ts 가 같은 이유로 「구조를 잰다」고 적은 그 자리다).
+   여기서 지키는 것은 **「죽는 채널만으로 말하는 상태를 남기지 않는다」**는 구조이고,
+   시험이 그것을 붙든다. */
+@media (forced-colors:active){
+  /* 고른 자리는 시스템 강조색으로 다시 말한다 — 이 키워드는 갈아치우지 않는다 */
+  .qhits li.on a{background:Highlight;color:HighlightText}
+  /* 카드는 안쪽 글자들이 각자 색을 가지므로 배경 대신 **윤곽**으로 말한다 */
+  .card[aria-selected="true"]{outline:2px solid Highlight;outline-offset:-3px}
+  /* 지금 페이지 표시가 box-shadow 밑줄 하나였다 — 글자 밑줄로 바꿔 남긴다 */
+  .brand[aria-current="page"]{text-decoration:underline;text-underline-offset:3px}
+  /* 「이 구획 안에 있다」(page 가 아니라 true). page 는 font-weight 로 살아남지만
+     이쪽은 색과 box-shadow 뿐이었다 — **점선 밑줄로 세기를 낮춰** 둘을 갈라 둔다 */
+  .tnav a[aria-current="true"]{text-decoration:underline dotted;text-underline-offset:3px}
+  /* 즐겨찾기는 눌려도 글자가 ★ 그대로다 — 색이 죽으면 눌렀는지가 안 보인다.
+     ⚠낭독기는 aria-pressed 로 알지만, **고대비를 쓰는 눈 뜬 사용자**가 못 본다 */
+  .favbtn[aria-pressed="true"]{outline:2px solid Highlight;outline-offset:1px}
 }
 @media print{
   /* 조작에 쓰는 것은 종이에서 아무 일도 하지 않는다 */
