@@ -56,10 +56,12 @@ export const ALL_STATES: readonly StateKey[] = (() => {
  * 2025 센트럴 `123|0` 은 **+0.0257** 이다.
  * ⚠**감사가 적은 것은 그 「오름」 쪽 하나뿐이라 방향이 반대로 읽힌다**(감사 P3 #7).
  *
- * ⚠**기본은 `include` — 지금까지의 값과 같다.** 바꾸면 wOBA 계수·wRC+·SRC·RE24·WPA 가 전부 움직인다.
- * 그건 **표시할 수를 고르는 일**이라 사용자가 정한다(작업규칙 3).
- * 이 스위치는 우선 **그 판단이 화면을 얼마나 움직이는지 재기 위한 것**이다 —
- * `roe: "weighted" | "zero"`(woba-weights.ts)와 같은 모양이고 같은 이유다.
+ * ⚠**기본은 `exclude` 다**(사용자 결정 2026-08-25). 잘린 값과 골라 담긴 값을 섞지 않는다.
+ * 바꾸기 전(`include`)과의 차이는 실측했다 — 완결 8시즌 · 16 리그-시즌 · 자격 타자 **418명**:
+ * `|Δ wOBA|` 중앙 **0.0001** 최대 **0.0014** · `|Δ wRC+|` 중앙 **0.11** 최대 **0.69** ·
+ * **1위가 바뀐 리그-시즌 0/16**. (비교: 1.02 의존을 끊었을 때는 중앙 **1.01** 최대 **10.00**)
+ * ⚠**`include` 로 되돌리는 스위치는 남긴다** — `roe: "weighted" | "zero"` 와 같은 모양이고,
+ * 「그 판단이 화면을 얼마나 움직이는지」를 **의견이 아니라 수로** 다시 답할 수 있어야 한다.
  *
  * ⚠**RE 행렬과 계수 유도는 반드시 같은 값을 써야 한다.** 한쪽만 제외하면
  * 잘린 타석이 잘리지 않은 행렬로 평가되어 계수가 조용히 어긋난다.
@@ -175,8 +177,8 @@ export function buildRunExpectancy(
    * 득점기대치만 8월 데이터로 계산되어, 같은 화면 안에서 기준일이 갈린다.
    */
   through = "9999-12-31",
-  /** ⚠**계수 유도(`deriveRunValues`)에 같은 값을 넘겨라.** 갈리면 계수가 조용히 어긋난다 */
-  walkoff: WalkoffMode = "include",
+  /** ⚠**계수 유도(`deriveRunValues`)는 이 값을 행렬에서 읽는다** — 인자로 따로 넘기지 않는다 */
+  walkoff: WalkoffMode = "exclude",
 ): RunExpectancy {
   const all = withLeagueTeams(db, teamCodes, () =>
     db.raw.prepare(SQL).all(season, competition, through),

@@ -15,7 +15,7 @@
  * **1위가 바뀐 리그-시즌 0/16**.
  * ⚠비교: 1.02 의존을 끊었을 때는 `|Δ wRC+|` 중앙 **1.01** 최대 **10.00** 이었다(CLAUDE.md §2-2).
  *
- * ⚠**기본은 `include` — 지금까지의 값과 같다.** 무엇을 표시할지는 사용자가 정한다(작업규칙 3).
+ * ⚠**기본은 `exclude` 다**(사용자 결정 2026-08-25). 되돌리는 스위치는 남긴다.
  * 여기서 지키는 것은 **「그 선택이 코드에 이름을 갖고, 두 경로가 갈리지 않는다」**이다.
  */
 import { test } from "node:test";
@@ -110,18 +110,32 @@ test("경기마다 따로 판정한다", () => {
   assert.deepEqual([...walkoffHalves(rows)], ["g1|9|bottom"]);
 });
 
-test("기본은 include — 지금까지의 값과 같고, 섞인 개수는 그래도 센다", async () => {
+test("⚠기본은 exclude 다 — 바꾸면 화면의 전 타격 지표가 같이 움직인다", async () => {
   await withDb((db) => {
     seedGame(db, "g1", 3, 2);
     replacePaEvents(db, "g1", [
-      ev({ gameId: "g1", seq: 1, inning: 1, half: "top", outsBefore: 0, bases: "", runsScored: 0 }),
+      ev({ gameId: "g1", seq: 1, inning: 1, half: "top", outsBefore: 0, bases: "123", runsScored: 2 }),
       ev({ gameId: "g1", seq: 2, inning: 9, half: "bottom", outsBefore: 0, bases: "123", runsScored: 1 }),
     ]);
     const re = buildRunExpectancy(db, 2026, "central", ["g", "t"]);
-    assert.equal(re.walkoff, "include", "기본값이 바뀌었다 — 화면의 전 타격 지표가 같이 움직인다");
-    // ⚠**포함일 때도 센다** — 몇 개가 섞였는지 모르면 판단할 수 없다(작업규칙 7)
+    assert.equal(re.walkoff, "exclude", "기본값이 바뀌었다 — wOBA 계수·wRC+·SRC·RE24·WPA 가 전부 움직인다");
+    // ⚠**제외해도 몇 개를 뺐는지 말한다**(작업규칙 7)
     assert.equal(re.walkoffHalves, 1);
-    assert.equal(re.matrix.get(stateKey("123", 0)), 1, "끝내기 타석이 그대로 들어가 있다");
+    assert.equal(re.matrix.get(stateKey("123", 0)), 2, "잘린 쪽이 빠지고 초 공격만 남아야 한다");
+  });
+});
+
+/** ⚠**되돌리는 스위치는 남긴다** — 「화면이 얼마나 움직이는지」를 수로 다시 답할 수 있어야 한다 */
+test("include 로 부르면 끝내기 타석이 그대로 들어간다", async () => {
+  await withDb((db) => {
+    seedGame(db, "g1", 3, 2);
+    replacePaEvents(db, "g1", [
+      ev({ gameId: "g1", seq: 1, inning: 1, half: "top", outsBefore: 0, bases: "123", runsScored: 2 }),
+      ev({ gameId: "g1", seq: 2, inning: 9, half: "bottom", outsBefore: 0, bases: "123", runsScored: 1 }),
+    ]);
+    const re = buildRunExpectancy(db, 2026, "central", ["g", "t"], "regular", "9999-12-31", "include");
+    assert.equal(re.walkoff, "include");
+    assert.equal(re.matrix.get(stateKey("123", 0)), 1.5, "두 타석의 평균이어야 한다");
   });
 });
 
