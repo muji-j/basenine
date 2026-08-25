@@ -87,10 +87,42 @@ export class MonthlyScheduleCache {
         byteLength: res.body.byteLength,
         revision: (prev?.revision ?? 0) + 1,
       });
+    } else {
+      // ⚠**월간 일정도 「봤다」를 남긴다** — 이 페이지가 이 저장소에서 가장 자주 받는 것이다
+      await markSeen(deps.sink, deps.clock, key, prev);
     }
 
     return discoverGames(new TextDecoder("utf-8").decode(res.body), url);
   }
+}
+
+/**
+ * **「받았는데 안 바뀌었다」도 「봤다」로 남긴다.**
+ *
+ * ⚠**안 남기면 `fetchedAt` 이 「마지막으로 바뀐 시각」에 멈춘다.** 그러면 두 가지가 동시에 망가진다:
+ *   · 화면이 「N時点に取得」이라고 **실제보다 낡은 날짜**를 말한다
+ *   · 재취득 선정이 「아직 안 받았다」로 오판해 **같은 페이지를 매일 다시 친다**(L1)
+ * ⚠**본문은 다시 쓰지 않고 `revision` 도 안 올린다** — 바뀐 게 없기 때문이다(M5).
+ *
+ * ⚠**이 규칙이 두 곳에 따로 있었다**(2026-08-25 · 감사 P3 #10).
+ * `players.ts` 는 2026-08-17 에 이것을 얻었는데 **경기·일정 페이지는 못 받았다** —
+ * `archiveUrl` 이 스스로 「멱등·revision 규칙을 여기 한 벌만 둔다(M5)」고 적어 두고 있으면서
+ * 그 절반이 다른 파일에 있었다. **이제 진짜로 한 벌이다**(M1).
+ *
+ * ⚠**조건부 요청(L7)으로는 못 고친다.** 실측(2026-08-25 · 사이드카 32,398개 중 3,000 표본):
+ * `etag` **0건** · `lastModified` **0건** — **상류가 검증자를 하나도 안 준다.**
+ * 그래서 `304` 경로는 영영 안 타고, 「매번 200 + sha 비교」는 우리 결함이 아니라 **상류의 성질**이다.
+ * **다시 조사하지 마라 — 고칠 수 있는 것은 「봤다」를 남기는 것뿐이다.**
+ */
+export async function markSeen(
+  sink: Sink,
+  clock: Clock,
+  key: string,
+  prev: BlobMeta | null,
+): Promise<void> {
+  // ⚠**전에 본 적이 없으면 남길 것이 없다** — 빈 메타를 지어내지 않는다(M11)
+  if (prev === null) return;
+  await sink.writeMeta(key, { ...prev, checkedAt: clock.now().toISOString() });
 }
 
 /** 하위 페이지 1장을 보존한다. */
@@ -108,6 +140,7 @@ export async function archiveUrl(key: string, url: string, deps: ArchiveDeps): P
     const res = await deps.fetcher.get(url, prev ?? undefined);
 
     if (res.status === 304) {
+      await markSeen(deps.sink, deps.clock, key, prev);
       return { key, url, outcome: "unchanged", status: 304, error: null };
     }
     if (res.status === 404 || res.status === 410) {
@@ -120,7 +153,9 @@ export async function archiveUrl(key: string, url: string, deps: ArchiveDeps): P
 
     const digest = sha256(res.body);
     if (prev && prev.sha256 === digest) {
-      // 서버가 조건부 요청을 지원하지 않아 200을 줬지만 내용은 같다 → 쓰지 않는다(멱등).
+      // 서버가 조건부 요청을 지원하지 않아 200을 줬지만 내용은 같다 → 본문은 안 쓴다(멱등).
+      // ⚠**그래도 「봤다」는 남긴다** — 안 남기면 취득일이 실제보다 낡게 나가고 재취득이 오판한다
+      await markSeen(deps.sink, deps.clock, key, prev);
       return { key, url, outcome: "unchanged", status: res.status, error: null };
     }
 

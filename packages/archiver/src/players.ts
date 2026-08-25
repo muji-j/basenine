@@ -11,6 +11,7 @@ import type { Clock } from "./clock.ts";
 import type { PoliteFetcher } from "./fetcher.ts";
 import type { BlobMeta, Sink } from "./sink.ts";
 import { sha256 } from "./sink.ts";
+import { markSeen } from "./archive.ts";
 import type { PageOutcome, PageResult } from "./archive.ts";
 
 /**
@@ -60,9 +61,9 @@ export async function archivePlayer(playerId: string, deps: ArchivePlayersDeps):
      * ⚠본문은 다시 쓰지 않는다 — 바뀐 게 없으므로 `revision` 도 올리지 않는다(M5).
      */
     const seen = async (status: number): Promise<PageResult> => {
-      if (prev !== null) {
-        await deps.sink.writeMeta(key, { ...prev, checkedAt: deps.clock.now().toISOString() });
-      }
+      // ⚠**규칙은 archive.ts 에 한 벌뿐이다**(M1 · 2026-08-25 · 감사 P3 #10).
+      //   예전에는 이 자리에 같은 코드가 따로 있었고, 그래서 **경기·일정 페이지는 이 규칙을 못 받았다.**
+      await markSeen(deps.sink, deps.clock, key, prev);
       return { key, url, outcome: "unchanged", status, error: null };
     };
 

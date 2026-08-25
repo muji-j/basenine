@@ -142,7 +142,15 @@ jobs:
               echo "정시 슬롯(또는 수동) — 그대로 돈다"
               echo "run=true" >> "$GITHUB_OUTPUT"; exit 0 ;;
           esac
-          prev=$(gh api "repos/$REPO/actions/workflows/daily.yml/runs?status=completed&per_page=1" --jq '.workflow_runs[0].conclusion // "unknown"' 2>/dev/null || echo "unknown")
+          # ⚠**정시 실행만 본다**(2026-08-25 · 감사 P3 #11). 필터가 없어서 **수동 실행과
+          #   옛 push 실행까지** 「직전 완료 실행」으로 집혔다 — 그 둘은 이 판정과 아무 상관이 없다.
+          #   ⚠**위험한 방향은 「건너뜀」이다**: 정시가 실패했는데 그 뒤 수동 실행이 성공하면
+          #   재시도가 「직전이 성공」으로 읽고 거른다. 予告先発은 **거르면 영영 못 받는다.**
+          #   실측(2026-08-25 · 완료 실행 100건): 정시 실행 44건 중 **필터를 넣으면 답이 달라지는 것 4건**,
+          #   그중 **3건이 그 위험한 방향**이었다. ⚠**그 4건이 재시도 슬롯이었는지는 미확정**이다 —
+          #   `gh` 가 실행별 크론을 안 알려준다. **노출 측정이지 실해 증명이 아니다.**
+          #   ⚠수동 실행은 위 `case` 의 `*)` 로 빠지므로 여기까지 오지 않는다.
+          prev=$(gh api "repos/$REPO/actions/workflows/daily.yml/runs?status=completed&per_page=1&event=schedule&branch=${GITHUB_REF_NAME}" --jq '.workflow_runs[0].conclusion // "unknown"' 2>/dev/null || echo "unknown")
           echo "재시도 슬롯 — 직전 완료 실행의 결론: $prev"
           if [ "$prev" = "success" ]; then
             echo "직전이 성공했다. 이번 재시도는 건너뛴다"
