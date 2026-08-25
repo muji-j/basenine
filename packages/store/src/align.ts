@@ -61,11 +61,31 @@ export function alignPaEvents(
   gameId: string,
   box: BoxScore,
   events: readonly PlayEvent[],
-  /** `deriveRuns`가 낸 값. `events`(미완 포함) 중 **성립한 타석만** 순서대로 대응한다 */
-  runsForCompleted: readonly number[] = [],
+  /**
+   * `deriveRuns` 가 낸 값. `events`(미완 포함) 중 **성립한 타석만** 순서대로 대응한다.
+   *
+   * ⚠**「안 줬다」와 「줬는데 비었다」는 다르다**(2026-08-24 · 감사 P3 #8).
+   * · `undefined` — **득점을 안 본다**(시험처럼 짝짓기만 확인하는 호출)
+   * · `[]` — **유도가 실패했다.** 그 경기의 타석 로그를 만들지 않는다
+   */
+  runsForCompleted?: readonly number[],
 ): AlignResult {
   const quarantine: QuarantineRow[] = [];
   if (box.status !== "played") return { events: [], quarantine, seqOf: new Map() };
+
+  /**
+   * ⚠**득점이 안 왔으면 타석 로그를 만들지 않는다**(2026-08-24 · 감사 P3 #8).
+   *
+   * 아래에서 `runsForCompleted[i] ?? 0` 을 쓴다. 목록이 통째로 비어 있으면 그 `?? 0` 이
+   * **그 경기 전 타석을 무득점으로 만든다** — 그리고 화면은 그것을 정상값으로 그린다.
+   * ⚠**0 은 「모른다」가 아니다**(M11). 부르는 쪽이 순서를 지키게 해 놨지만,
+   * **순서에만 기대면 다음 사람이 또 뒤집는다** — 그래서 여기서도 막는다.
+   * ⚠**성립 타석이 0개인 경기(전부 미완)는 원래 빈 목록이 맞다** — 그 경우는 아래에서
+   * 아무것도 안 만들므로 여기 걸리지 않는다.
+   */
+  if (runsForCompleted !== undefined && runsForCompleted.length === 0 && events.some((e) => e.completed)) {
+    return { events: [], quarantine, seqOf: new Map() };
+  }
 
   // 박스: 타자별 결과 목록(시간순)
   const boxByBatter = new Map<string, { raw: string; outcome: string; rbi: number }[]>();
@@ -155,7 +175,7 @@ export function alignPaEvents(
       ballCount: e.count === undefined || e.count === "" ? null : e.count,
       // v1은 확정 데이터만 다룬다. 라이브는 v2에서 'live'로 들어온다(M9).
       status: "final",
-      runsScored: runsForCompleted[completedIndex] ?? 0,
+      runsScored: runsForCompleted?.[completedIndex] ?? 0,
     });
   }
 

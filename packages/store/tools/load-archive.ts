@@ -396,13 +396,26 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
       const pbpHtml = gunzipSync(await readFile(pbpFile)).toString("utf8");
       const pbp = parsePlayByPlay(pbpHtml);
       if (pbp.status === "played") {
-        pbpEvents = pbp.events;
-        pbpRunners = pbp.runners;
-        pbpUnreadRunners = pbp.unreadRunners;
-        // 타석별 득점을 유도하고 라인스코어로 검증한다.
+        /**
+         * ⚠**득점 유도가 먼저다 — 순서가 곧 결함이었다**(2026-08-24 · 감사 P3 #8).
+         *
+         * 전에는 `pbpEvents` 를 여기 **앞에서** 세웠다. 그러면 아래 `parseLineScore`/`deriveRuns` 가
+         * 던졌을 때 `pbpEvents` 는 이미 non-null 이고 `runsForCompleted` 는 `[]` 인 채로
+         * 정렬에 넘어가, `align.ts` 의 `runsForCompleted[i] ?? 0` 이
+         * **그 경기 전 타석의 득점을 0 으로 만든다.**
+         *
+         * ⚠**0 은 「모른다」가 아니다**(M11). 그 경기는 화면에서 **무득점 경기**가 되고,
+         * 박스 합계와 어긋난 채 조용히 남는다.
+         * ⚠**대신 그 경기의 타석 로그를 통째로 안 넣는다** — 틀린 값보다 없는 값이 낫고,
+         * `failed` 가 올라 **종료 코드 1** 이므로 사람이 본다(M7 「빈 값이 아니라 실패로」).
+         * ⚠**지금 걸리는 것은 0건**이다(실측: 타석이 있는 7,518경기 전수에서 「파생 0 · 박스 >0」 **0건**).
+         */
         const derived = deriveRuns(meta.gameId, pbp.events.filter((e) => e.completed), parseLineScore(pbpHtml));
         runsForCompleted = derived.runsPerEvent;
         runsQuarantine.push(...derived.quarantine);
+        pbpEvents = pbp.events;
+        pbpRunners = pbp.runners;
+        pbpUnreadRunners = pbp.unreadRunners;
       }
     } catch (err) {
       failed += 1;
