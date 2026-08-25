@@ -4495,7 +4495,20 @@ export function readRunLog(path: string, limit: number): RunRecord[] {
     if (line.trim() === "") continue;
     try {
       const r = JSON.parse(line) as RunRecord;
-      if (typeof r.ranAt === "string" && typeof r.games === "number") out.push(r);
+      if (typeof r.ranAt !== "string" || typeof r.games !== "number") continue;
+      /**
+       * ⚠**`staleReasons` 는 옛 줄에 없다**(2026-08-25 이전). 없으면 그대로 `undefined` 로 두어야
+       * 화면이 「내역 기록 없음」이라고 말할 수 있다 — `[]` 로 채우면 **「울린 감시가 없다」는
+       * 없는 사실을 단언**하게 된다(M11).
+       * ⚠모양이 다른 값이 오면 **`undefined` 로 되돌린다**. 화면에 그대로 흘리면
+       * 문자열이 아닌 것이 라벨 자리에 들어간다.
+       */
+      const reasons: unknown = r.staleReasons;
+      if (reasons !== undefined
+        && !(Array.isArray(reasons) && reasons.every((x) => typeof x === "string"))) {
+        delete (r as { staleReasons?: unknown }).staleReasons;
+      }
+      out.push(r);
     } catch {
       // 깨진 줄. 기록 자체가 없는 것과 다르므로 버리기만 한다
     }

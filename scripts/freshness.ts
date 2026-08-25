@@ -44,10 +44,26 @@ console.log(
     `선수 ${counts.players} (투타 미상 ${counts.noHand}) · 격리 ${counts.quarantine}`,
 );
 
-let stale = false;
+/**
+ * **어느 감시가 울렸는가.**
+ *
+ * ⚠**예전에는 불리언 하나였고, 그래서 화면이 「古い」라고만 말했다**(2026-08-25 · 감사 P3 #53).
+ * 이 감시는 축이 **다섯**인데(경기 없음 · 경기 지연 · 통산 지연 · 予告先発 뒤처짐 ·
+ * 予告先発 정지) 결과를 한 글자로 뭉개면, 읽는 사람은 표에서 바로 옆 「最新試合日」이
+ * 1일 전인 것을 보고 **판정이 고장난 줄로 읽는다.**
+ *
+ * ⚠**그게 실제로 났던 오진이다**(2026-08-17). 낡은 것은 경기가 아니라 **통산**이었는데
+ * 그때 원인을 「NPB 가 늦다」로 남 탓하고 엉뚱한 처방까지 얹었다.
+ * **어느 축인지 말하지 않는 경보는 그 사고를 다시 만든다.**
+ *
+ * ⚠**키는 기계가 읽는다.** 화면 문구는 `log-page.ts` 가 붙이므로 여기 문구를 바꿔도
+ * 화면은 안 따라온다 — **키를 늘리면 그쪽 표도 같이 늘려야 하고, 시험이 그걸 지킨다.**
+ */
+const staleReasons: string[] = [];
+
 if (latest.d === null) {
   console.error("⚠경기 데이터가 하나도 없다");
-  stale = true;
+  staleReasons.push("no-games");
 } else {
   const ageDays = Math.floor(
     (Date.parse(`${todayJst}T00:00:00Z`) - Date.parse(`${latest.d}T00:00:00Z`)) / 86_400_000,
@@ -58,7 +74,7 @@ if (latest.d === null) {
       `⚠**데이터가 낡았다** — 최신 경기일이 ${ageDays}일 전이다(허용 ${staleDays}일).\n` +
         `   수집이 조용히 멈췄을 수 있다. 이 서비스가 죽는 가장 흔한 방식이다.`,
     );
-    stale = true;
+    staleReasons.push("game-lag");
   }
 }
 
@@ -145,11 +161,11 @@ if (career.players === 0) {
    * ⚠**경기 데이터보다 넉넉하다.** 선수 페이지는 하루 상한(기본 400명)으로 나눠 받으므로
    * 전원이 같은 날일 수 없고, 긴 중단 뒤에는 따라잡는 데 며칠 걸린다(980명이면 3일).
    * 그래도 **가장 오래된 것**이 이보다 밀리면 재취득이 멈춘 것이다.
-   */
-  /**
-   * ⚠**경기 데이터보다 조금 넉넉하다.** 하루 상한(기본 400명)으로 나눠 받으므로
-   * 밀린 몫이 하루이틀 남을 수 있다. 그래도 그 이상 밀리면 재취득이 멈춘 것이다.
    * ⚠**임계를 크게 잡지 않는다** — 이번 사고가 「열흘 내내 아무도 몰랐다」였다.
+   *
+   * ⚠**같은 내용의 주석이 두 벌 겹쳐 있었다**(2026-08-25 정리). 한쪽은 「980명이면 3일」,
+   * 다른 쪽은 「하루이틀」이라 **수가 서로 달랐다** — 붙어 있는 두 설명이 다른 수를 적으면
+   * 어느 쪽이 근거인지 알 수 없다. 실제 근거는 앞의 것(상한 400명 ÷ 인원)이다.
    */
   const careerStaleDays = staleDays + 2;
   if (careerAge > careerStaleDays) {
@@ -158,7 +174,7 @@ if (career.players === 0) {
         `(허용 ${careerStaleDays}일). 선수 페이지 재취득이 멈췄을 수 있다.\n` +
         `   확인: node packages/store/tools/emit-stale-player-ids.ts ${dbPath} --limit 400`,
     );
-    stale = true;
+    staleReasons.push("career-lag");
   }
   if (career.unknown > 0) {
     console.error(
@@ -259,7 +275,7 @@ if (starters.latest === null) {
       `⚠**予告先発이 뒤처졌다** — 다음 경기일이 ${nextGameDay}인데 예고는 ${starters.latest}까지다.\n` +
         `   이 자료는 **거르면 영영 못 받는다**(페이지가 하루치만 보여준다).`,
     );
-    stale = true;
+    staleReasons.push("starters-behind");
   }
   /**
    * **일정에 기대지 않는 검사**: 마지막으로 받은 시각이 며칠 전인가.
@@ -277,7 +293,7 @@ if (starters.latest === null) {
       `⚠**予告先発 수집이 멈췄다** — 마지막 취득이 ${startersAge ?? "알 수 없는 시점"}일 전이다(허용 ${staleDays}일).\n` +
         `   페이지가 하루치만 보여주므로 **거른 날은 영영 못 받는다.**`,
     );
-    stale = true;
+    staleReasons.push("starters-lag");
   }
 }
 
@@ -301,6 +317,13 @@ if (counts.quarantine > 0) {
  * ⚠**경기가 0건인 날과 크론이 안 돈 날은 DB만 봐서는 구별되지 않는다.**
  * 이 기록이 그 둘을 가르는 유일한 근거다.
  */
+/**
+ * ⚠**유도값이다. 따로 세우지 마라.** 예전에는 `stale` 이 원본이고 다섯 곳이 각자 `true` 를 넣었는데,
+ * 그러면 「울렸다」와 「왜 울렸다」가 **따로 관리되어 언젠가 어긋난다**.
+ * 지금은 이유가 원본이고 이 값이 그 길이에서 나온다 — 어긋날 자리가 없다.
+ */
+const stale = staleReasons.length > 0;
+
 const jsonAt = process.argv.indexOf("--json");
 if (jsonAt >= 0) {
   const path = process.argv[jsonAt + 1];
@@ -331,6 +354,9 @@ if (jsonAt >= 0) {
       startersNamed: starters.named,
       nextGameDay,
       stale,
+      // ⚠**어느 축이 울렸는가.** `[]` 는 「울린 감시가 없다」이고, **이 칸이 아예 없는 줄**은
+      //   「이유를 안 남기던 시절(2026-08-25 이전)」이다 — 화면이 그 둘을 구별해 말한다(M11)
+      staleReasons,
     };
     appendFileSync(path, `${JSON.stringify(record)}\n`, "utf8");
   }
