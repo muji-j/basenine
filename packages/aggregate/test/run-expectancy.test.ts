@@ -125,6 +125,8 @@ const RE = {
   ]),
   samples: new Map<string, number>(),
   observedStates: 3,
+  walkoff: "include" as const,
+  walkoffHalves: 0,
   totalPa: 0,
 };
 

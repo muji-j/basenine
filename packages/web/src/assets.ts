@@ -663,7 +663,18 @@ tr.thin td{color:var(--tx-2)}
 tr.thin td:first-child{box-shadow:inset 2px 0 0 var(--tx-3)}
 /* 「薄く」의 글자 표식 — **어떤 색 모드에서도 남는다.** 범례가 같은 글자를 쓴다 */
 .qmk{font-style:normal;font-size:11px;color:var(--tx-2);margin-left:4px}
-/* 구단 색 칩 — **모든 표가 같은 한 벌을 쓴다**(M1의 정신).
+/* 구단 색 칩 — ~~**모든 표가 같은 한 벌을 쓴다**(M1의 정신)~~ **거짓이었다**(2026-08-25 · 감사 P3 #33).
+   실측: 구단 색 스와치 규칙이 **9벌**이고 **크기 5종**(8·9·10·11·12px) · **링 4 · 없음 5**다
+   (그 밖에 3px 막대 .gstars li i 하나와 4px 띠 둘이 더 있지만 스와치가 아니다).
+   여기 적힌 「한 벌」은 아래 .tm i 하나를 가리키고, 그건 **네 화면이 공유한다**는 뜻이다 —
+   ⚠**바로 다음 문장이 그 좁은 뜻을 이미 적고 있는데 첫 줄이 전칭으로 부풀어 있었다.**
+
+   ⚠**그래도 링을 전부에 붙이지 않는다.** 링은 대비 보증인데, 실측으로
+   **칩이 홀로 서는 자리가 0건**이다(dist 9,081장 · 칩 자리 **49,067개** · 뒤에 아무것도 없는 것 0).
+   전부 바로 뒤에 구단 이름 글자가 온다 — 즉 칩은 **정보를 나르지 않는 장식**이다.
+   ⚠**예외가 하나 있었고 이미 고쳐져 있다**: .gstars li i 는 막대가 유일한 구단 표시였고
+   (2026-08-21 감사 P1) 그래서 링과 낭독용 이름을 함께 갖는다. **링은 「홀로 설 때」 붙는다.**
+   → 남은 것은 **미관 불일치**이지 접근성 결함이 아니다. 통일은 값이 아니라 손질이다.
    ⚠**셀을 flex 컨테이너로 만들지 않는다.** td{display:flex} 는 그 칸을 테이블 셀 박스에서
    빼내어, **그 열만 아래 경계선이 다른 열과 어긋난다**(2026-08-16 실측: 순위표 球団 열).
    ⚠전에는 이 규칙이 .stand·.iscore 안에만 있어서 **ポストシーズン 표의 칩은
@@ -1742,8 +1753,14 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
 .find input{font:inherit;font-size:15px;padding:8px 10px;width:100%;max-width:420px;background:var(--panel);
   color:var(--tx);border:1px solid var(--hair-2)}
 .chips{display:flex;gap:5px;flex-wrap:wrap;margin-top:11px}
+/* ⚠**~~transition:all~~ 이었다**(2026-08-25 · 감사 P3 #36). 둘이 나빴다:
+   ⑴ **지금 바꾸는 것 넷 중 font-weight 까지 애니메이트했다** — 눌림에서 글자 굵기가
+      보간되면 그 칩의 폭이 프레임마다 달라지고, 칩줄 전체가 흔들린다(리플로).
+   ⑵ **앞으로 더할 속성까지 조용히 따라간다** — padding 하나만 얹어도 그날부터 애니메이트된다.
+   → **바꾸는 것을 이름으로 적는다.** font-weight 는 일부러 뺐다(즉시 바뀌는 편이 낫다). */
 .chip{font:inherit;font-size:11.5px;padding:4px 9px;cursor:pointer;background:transparent;color:var(--tx-2);
-  border:1px solid var(--hair-2);white-space:nowrap;transition:all var(--fast) var(--ease)}
+  border:1px solid var(--hair-2);white-space:nowrap;
+  transition:color var(--fast) var(--ease),border-color var(--fast) var(--ease),background var(--fast) var(--ease)}
 .chip:hover{color:var(--tx);border-color:var(--tx-3)}
 .chip[aria-pressed="true"]{background:var(--chip,#6b7280);color:var(--chip-ink,#fff);border-color:var(--chip,#6b7280);font-weight:700}
 .count{font-size:11px;color:var(--tx-3);margin-top:10px}
@@ -1764,6 +1781,12 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
 .teamgroup{content-visibility:auto;contain-intrinsic-size:auto 900px}
 .roster{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:0 16px}
 .roster li[hidden]{display:none}
+/* ⚠**이 저장소에서 유일하게 레이아웃 속성을 애니메이트하는 자리다**(2026-08-25 · 감사 P3 #37 ·
+   실측: 전환 규칙 31개 중 레이아웃 속성은 이것 하나).
+   ⚠**transform:translateX 로 바꾸지 않는다** — 그러면 아래 경계선까지 같이 밀려
+   줄 밑줄의 왼쪽이 4px 비고, 명부처럼 줄이 이어지는 화면에서 그게 눈에 띈다.
+   padding-left 는 경계선을 제자리에 두고 내용만 민다 — **모양이 맞는 쪽이 이것**이다.
+   비용은 그 한 줄의 레이아웃이고, 그 대가를 알고 고른다. */
 .roster a{display:flex;gap:8px;align-items:baseline;padding:5px 0;text-decoration:none;border-bottom:1px solid var(--hair);
   transition:padding-left var(--fast) var(--ease)}
 /* ⚠**명부의 성적 줄.** 규칙이 없으면 body 기본 16px·--tx 로 그려져 **선수 이름(13px)보다

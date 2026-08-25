@@ -39,7 +39,7 @@ import type { Db } from "@bb-app/store";
 import { isOutcome } from "@bb-app/parser";
 import type { Outcome } from "@bb-app/parser";
 import type { WobaWeights } from "@bb-app/metrics";
-import { afterStateOf, paValue, withLeagueTeams } from "./run-expectancy.ts";
+import { afterStateOf, dropWalkoffHalves, paValue, withLeagueTeams } from "./run-expectancy.ts";
 import type { RunExpectancy } from "./run-expectancy.ts";
 
 /** wOBA 계수가 붙는 사건. `WobaWeights` 의 키와 같아야 한다 */
@@ -146,7 +146,8 @@ export interface DerivedRunValues {
 
 const SQL = `
 SELECT e.game_id AS gameId, e.inning AS inning, e.half AS half, e.seq AS seq,
-       e.bases AS bases, e.outs_before AS outs, e.runs_scored AS runs, e.outcome AS outcome
+       e.bases AS bases, e.outs_before AS outs, e.runs_scored AS runs, e.outcome AS outcome,
+       g.home_runs AS homeRuns, g.away_runs AS awayRuns
 FROM pa_event e
 JOIN game g ON g.game_id = e.game_id
 JOIN player b ON b.player_id = e.batter_id
@@ -184,12 +185,19 @@ export function deriveRunValues(
    */
   roe: "weighted" | "zero" = "weighted",
 ): DerivedRunValues {
-  const rows = withLeagueTeams(db, teamCodes, () =>
+  const all = withLeagueTeams(db, teamCodes, () =>
     db.raw.prepare(SQL).all(re.season, competition, through),
   ) as unknown as {
     gameId: string; inning: number; half: string; seq: number;
     bases: string; outs: number; runs: number; outcome: string;
+    homeRuns: number | null; awayRuns: number | null;
   }[];
+  /**
+   * ⚠**끝내기 처리는 넘겨받은 행렬을 따른다 — 인자로 받지 않는다.**
+   * 인자로 두면 「행렬은 제외했는데 계수는 포함」이 만들어지고, 그러면 **잘린 타석이
+   * 잘리지 않은 행렬로 평가되어** 계수가 조용히 어긋난다. 갈릴 자리를 아예 없앤다(M1).
+   */
+  const rows = re.walkoff === "exclude" ? dropWalkoffHalves(all) : all;
 
   const sum = new Map<string, number>();
   const n = new Map<string, number>();
