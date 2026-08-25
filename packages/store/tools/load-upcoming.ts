@@ -53,6 +53,39 @@ const ins = db.raw.prepare(
    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 );
 
+/**
+ * **이미 적재된 경기.** `일정표는 「치러졌다」는데 우리에게 행이 없는` 경기를 세기 위한 것이다.
+ *
+ * ⚠**그 상태가 실재한다**(2026-08-25 · 감사 P3 #12). 아래 `if (g.played) continue` 는
+ * **우리가 그 경기를 가졌는지 안 본다.** 경기가 시작되면 일정표에 점수 링크가 붙어
+ * 이 표에서 빠지는데, 박스가 「試合終了」를 말하기 전이면 `load-archive` 가
+ * 그 경기를 **저장하지 않는다**(M9). 그 사이 경기는 **`game` 에도 `upcoming_game` 에도 없다.**
+ * 그러면 그 날 화면에서 경기가 통째로 사라지고, **「未取得」 표시조차 안 뜬다** —
+ * 조용한 실패를 잡으라고 만든 표가 바로 그 조용한 실패를 못 보여주는 모양이다.
+ *
+ * ⚠**지속 상태로는 0건이다**(실측 2026-08-25 · 2026·2025·2024 의 `played` 행 **2,484건 전수**).
+ * 경기가 끝나면 다음 실행이 `game` 행을 만들어 **창이 스스로 닫히기 때문**이다.
+ * 그래서 **지나간 뒤에는 못 잰다** — 여기서 그때그때 세는 것이 유일한 방법이다.
+ *
+ * ⚠**여기서는 세기만 한다. 고치지 않는다.**
+ * 이 행을 그냥 남기면 today 화면이 **진행 중인 경기를 「予定 18:00」이라고** 말하게 된다 —
+ * 사라지는 대신 **다른 거짓말**을 하는 것이라 그게 더 낫다고 단정할 수 없다.
+ * 제대로 가르려면 `upcoming_game` 에 「일정표는 치러졌다고 한다」는 칸이 필요하고,
+ * 그건 스키마 변경이라 **사용자가 고를 일**이다(작업규칙 3).
+ * ⚠`load-archive` 가 이 스크립트보다 **먼저** 돈다(`scripts/update.ts`) — 그래서 이 대조가 성립한다.
+ */
+const loaded = new Map<string, number>();
+for (
+  const r of db.raw.prepare(
+    "SELECT game_date d, home_code h, away_code a, COUNT(*) n FROM game WHERE season = ? GROUP BY 1,2,3",
+  ).all(season) as unknown as { d: string; h: string; a: string; n: number }[]
+) {
+  loaded.set(`${r.d}|${r.h}|${r.a}`, r.n);
+}
+/** 같은 카드가 하루에 둘일 수 있다(더블헤더) — 몇 번째인지 세어 가며 맞춘다 */
+const playedSeen = new Map<string, number>();
+const orphans: string[] = [];
+
 let months = 0, kept = 0, playedRows = 0, nonTeam = 0, unreadable = 0;
 /**
  * ⚠**아무 행도 나오지 않은 달.** 여기가 M7 의 급소다.
@@ -87,7 +120,14 @@ db.transaction(() => {
     unreadable += r.unreadableRows;
     if (r.games.length + r.nonTeamRows + r.unreadableRows === 0) emptyMonths.push(f);
     for (const g of r.games) {
-      if (g.played) { playedRows += 1; continue; }
+      if (g.played) {
+        playedRows += 1;
+        const card = `${g.date}|${g.homeCode}|${g.awayCode}`;
+        const nth = (playedSeen.get(card) ?? 0) + 1;
+        playedSeen.set(card, nth);
+        if ((loaded.get(card) ?? 0) < nth) orphans.push(card);
+        continue;
+      }
       const key = `${g.date}|${g.homeCode}|${g.awayCode}`;
       const seq = seqOf.get(key) ?? 0;
       seqOf.set(key, seq + 1);
@@ -117,6 +157,21 @@ console.log(
 );
 if (unreadable > 0) {
   console.error(`⚠못 읽은 행이 ${unreadable}건 있다 — 일정 표의 표기가 바뀌었을 수 있다(M7)`);
+}
+/**
+ * ⚠**「0건」과 「안 쟀음」을 구별해 쓴다**(작업규칙 7) — 그래서 0 이어도 말한다.
+ * ⚠**실패로 만들지 않는다.** 경기 중에 수집하면 정상적으로 잠깐 생기는 상태이고,
+ * 다음 실행이 닫는다. 여기서 종료 코드를 세우면 **정상인 날 배포가 멈춘다.**
+ */
+if (orphans.length === 0) {
+  console.log("  · 일정표는 치러졌다는데 우리에게 없는 경기 0건");
+} else {
+  console.error(
+    `⚠**일정표는 치러졌다는데 우리에게 없는 경기 ${orphans.length}건** — 이 경기들은\n` +
+      `   \`game\` 에도 \`upcoming_game\` 에도 없어 **화면에서 통째로 사라지고 「未取得」도 안 뜬다**(감사 P3 #12).\n` +
+      `   경기 중에 수집하면 정상적으로 생기고 다음 실행이 닫는다 — **닫히지 않으면 그때가 결함이다.**\n` +
+      `   ${orphans.slice(0, 8).join(" · ")}${orphans.length > 8 ? ` … 외 ${orphans.length - 8}건` : ""}`,
+  );
 }
 
 /**
