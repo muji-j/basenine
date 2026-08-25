@@ -1753,8 +1753,14 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
 .find input{font:inherit;font-size:15px;padding:8px 10px;width:100%;max-width:420px;background:var(--panel);
   color:var(--tx);border:1px solid var(--hair-2)}
 .chips{display:flex;gap:5px;flex-wrap:wrap;margin-top:11px}
+/* ⚠**~~transition:all~~ 이었다**(2026-08-25 · 감사 P3 #36). 둘이 나빴다:
+   ⑴ **지금 바꾸는 것 넷 중 font-weight 까지 애니메이트했다** — 눌림에서 글자 굵기가
+      보간되면 그 칩의 폭이 프레임마다 달라지고, 칩줄 전체가 흔들린다(리플로).
+   ⑵ **앞으로 더할 속성까지 조용히 따라간다** — padding 하나만 얹어도 그날부터 애니메이트된다.
+   → **바꾸는 것을 이름으로 적는다.** font-weight 는 일부러 뺐다(즉시 바뀌는 편이 낫다). */
 .chip{font:inherit;font-size:11.5px;padding:4px 9px;cursor:pointer;background:transparent;color:var(--tx-2);
-  border:1px solid var(--hair-2);white-space:nowrap;transition:all var(--fast) var(--ease)}
+  border:1px solid var(--hair-2);white-space:nowrap;
+  transition:color var(--fast) var(--ease),border-color var(--fast) var(--ease),background var(--fast) var(--ease)}
 .chip:hover{color:var(--tx);border-color:var(--tx-3)}
 .chip[aria-pressed="true"]{background:var(--chip,#6b7280);color:var(--chip-ink,#fff);border-color:var(--chip,#6b7280);font-weight:700}
 .count{font-size:11px;color:var(--tx-3);margin-top:10px}
@@ -1775,6 +1781,12 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
 .teamgroup{content-visibility:auto;contain-intrinsic-size:auto 900px}
 .roster{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:0 16px}
 .roster li[hidden]{display:none}
+/* ⚠**이 저장소에서 유일하게 레이아웃 속성을 애니메이트하는 자리다**(2026-08-25 · 감사 P3 #37 ·
+   실측: 전환 규칙 31개 중 레이아웃 속성은 이것 하나).
+   ⚠**transform:translateX 로 바꾸지 않는다** — 그러면 아래 경계선까지 같이 밀려
+   줄 밑줄의 왼쪽이 4px 비고, 명부처럼 줄이 이어지는 화면에서 그게 눈에 띈다.
+   padding-left 는 경계선을 제자리에 두고 내용만 민다 — **모양이 맞는 쪽이 이것**이다.
+   비용은 그 한 줄의 레이아웃이고, 그 대가를 알고 고른다. */
 .roster a{display:flex;gap:8px;align-items:baseline;padding:5px 0;text-decoration:none;border-bottom:1px solid var(--hair);
   transition:padding-left var(--fast) var(--ease)}
 /* ⚠**명부의 성적 줄.** 규칙이 없으면 body 기본 16px·--tx 로 그려져 **선수 이름(13px)보다
