@@ -86,10 +86,14 @@ on:
     - cron: "0 16 * * *"
   workflow_dispatch:
 
+# ⚠**기본은 읽기다. 쓰기는 그것을 쓰는 잡에만 준다**(2026-08-25 · 감사 P3 #15).
+#   예전에는 여기가 `contents: write` 하나였고, 그러면 **체크아웃조차 안 하는 `decide` 까지**
+#   저장소 쓰기 토큰을 들고 돌았다. 위 「왜 액션을 커밋 SHA 로 고정하는가」가 걱정하는 그 토큰이다 —
+#   범위를 좁히는 것이 그 걱정을 실제로 줄이는 유일한 방법이다.
+# ⚠**잡 수준 `permissions:` 는 합치는 게 아니라 통째로 갈아치운다.**
+#   그래서 잡마다 **필요한 것을 전부** 다시 적어야 한다. 빠뜨리면 `none` 이 된다.
 permissions:
-  contents: write
-  # 재시도 판정이 직전 실행의 결론을 읽는다. **읽기만** 한다
-  actions: read
+  contents: read
 
 concurrency:
   # ⚠중복 기동을 막는다. 수집기는 멱등이지만 동시 실행은 D1 쓰기 예산을 두 배로 태우고,
@@ -114,6 +118,10 @@ jobs:
   # ─────────────────────────────────────────────────────────────────
   decide:
     runs-on: ubuntu-latest
+    # ⚠**이 잡은 읽기만 한다** — 직전 실행의 결론을 볼 뿐이고 체크아웃도 하지 않는다.
+    #   `contents` 를 안 적었으므로 `none` 이다. 그게 맞다.
+    permissions:
+      actions: read
     timeout-minutes: 5
     outputs:
       run: ${{ steps.check.outputs.run }}
@@ -148,6 +156,10 @@ jobs:
     needs: decide
     if: needs.decide.outputs.run == 'true'
     runs-on: ubuntu-latest
+    # ⚠**쓰기가 필요한 것은 이 잡뿐이다** — `ops/` 로그 커밋과 릴리스 자산(`gh release upload`)
+    #   둘 다 `contents: write` 다. `actions` 는 여기서 안 쓴다(그 API 는 `decide` 에만 있다).
+    permissions:
+      contents: write
     timeout-minutes: 45
     steps:
       # ⚠**`persist-credentials: false` 를 넣지 않았다 — 미수정으로 남긴다**(2026-08-18 감사 P3).
