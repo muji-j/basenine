@@ -74,7 +74,7 @@ function fakeRe(): RunExpectancy {
   matrix.set(stateKey("1", 1), 0.55);
   matrix.set(stateKey("12", 1), 0.95);
   matrix.set(stateKey("123", 2), 0.8);
-  return { season: 2026, league: "central", matrix, samples: new Map(), observedStates: matrix.size, totalPa: 0 };
+  return { season: 2026, league: "central", matrix, samples: new Map(), observedStates: matrix.size, totalPa: 0, walkoff: "include" as const, walkoffHalves: 0 };
 }
 
 // ── 등판 추출 ─────────────────────────────────────────────────────────

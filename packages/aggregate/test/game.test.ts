@@ -82,7 +82,7 @@ function fakeRe(): RunExpectancy {
       matrix.set(stateKey(bases, outs), bases.length * 0.4 + (2 - outs) * 0.3);
     }
   }
-  return { season: 2026, league: "central", matrix, samples: new Map(), observedStates: matrix.size, totalPa: 0 };
+  return { season: 2026, league: "central", matrix, samples: new Map(), observedStates: matrix.size, totalPa: 0, walkoff: "include" as const, walkoffHalves: 0 };
 }
 
 const RE = new Map<string, RunExpectancy>([["central", fakeRe()]]);

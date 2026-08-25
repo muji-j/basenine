@@ -51,6 +51,8 @@ const FIXED_RE: RunExpectancy = {
   ]),
   samples: new Map(),
   observedStates: 4,
+  walkoff: "include" as const,
+  walkoffHalves: 0,
   totalPa: 0,
 };
 

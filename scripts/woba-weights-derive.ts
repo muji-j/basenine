@@ -67,6 +67,14 @@ const { positionals, values } = parseArgs({
      * ⚠**「roe 를 어떻게 다룰지」를 의견이 아니라 수로 답하기 위한 스위치다.**
      */
     "drop-roe": { type: "boolean", default: false },
+    /**
+     * 끝내기(경기를 끝낸 말 공격) 하프이닝을 빼고 유도한다.
+     * ⚠**`--drop-roe` 와 같은 목적의 스위치다** — 「끝내기를 어떻게 다룰지」를
+     * 의견이 아니라 **수로** 답하기 위한 것이고, 화면 경로는 기본값(포함)을 쓴다.
+     * ⚠**행렬과 계수 유도에 함께 적용된다**(`deriveRunValues` 가 행렬의 값을 따른다) —
+     * 한쪽만 빼면 잘린 타석이 잘리지 않은 행렬로 평가되어 계수가 조용히 어긋난다.
+     */
+    "drop-walkoff": { type: "boolean", default: false },
     json: { type: "string" },
     season: { type: "string" },
   },
@@ -153,8 +161,16 @@ for (const season of seasons) {
   const derivedByLeague = new Map<League, ReturnType<typeof deriveRunValues>>();
   for (const league of LEAGUES) {
     const codes = codesOf(league);
-    const re = buildRunExpectancy(db, season, league, codes, "regular");
+    const re = buildRunExpectancy(
+      db, season, league, codes, "regular", "9999-12-31",
+      values["drop-walkoff"] ? "exclude" : "include",
+    );
     if (re.totalPa === 0) continue;
+    // ⚠**포함일 때도 몇 개가 섞였는지 말한다**(작업규칙 7) — 모르면 판단할 수 없다
+    console.log(
+      `  ${season} ${league}: 끝내기 하프이닝 ${re.walkoffHalves}개 · ` +
+        (re.walkoff === "exclude" ? "**제외하고** 유도" : "포함해서 유도(기본)"),
+    );
     // ⚠**시계를 쓰지 않는다**(M6) — `performance.now()` 는 벽시계가 아니라 단조 카운터라
     //   날짜 판정에 못 쓰이고, 그래서 M6 가 막으려는 사고(자정 경계)를 만들지 않는다
     const t0 = performance.now();

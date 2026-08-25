@@ -22,6 +22,13 @@ export interface RunExpectancy {
   /** 관측된 상태 수. 24 미만이면 표본이 부족한 상태가 있다는 뜻이다 */
   observedStates: number;
   totalPa: number;
+  /** 끝내기 하프이닝을 어떻게 다뤘는가. **행렬의 뜻이 이 값에 달려 있다** */
+  walkoff: WalkoffMode;
+  /**
+   * 끝내기로 판정된 하프이닝 수.
+   * ⚠**`include` 일 때도 센다** — 「몇 개가 섞여 있는가」를 모르면 판단할 수 없다(작업규칙 7).
+   */
+  walkoffHalves: number;
 }
 
 export function stateKey(bases: string, outs: number): StateKey {
@@ -36,9 +43,92 @@ export const ALL_STATES: readonly StateKey[] = (() => {
   return out;
 })();
 
+/**
+ * **끝내기 하프이닝을 셀 것인가.**
+ *
+ * ⚠**끝내기는 규칙으로 끝난다** — 3아웃까지 가지 않는다. 그래서 그 하프이닝의 「남은 득점」은
+ * **잘린 값**이고, 정상 이닝과 같이 세면 행렬이 치우친다. 그런데 치우침의 방향이 **하나가 아니다**:
+ *   · **선택 효과(대부분)** — 끝내기 이닝은 「홈이 득점한 이닝」만 골라 담는다 → RE 를 **올린다**
+ *   · **절단 효과(만루 계열)** — 이길 점수가 나는 순간 멈춘다 → RE 를 **내린다**
+ *
+ * 실측(2026-08-25 · 완결 8시즌 × 2리그 · 끝내기 **834개**):
+ * 제외하면 상태-리그-시즌 **384개 중 내림 287 · 오름 70**. 최대 변화는 **2024 퍼시픽 `123|0` +0.0687**,
+ * 2025 센트럴 `123|0` 은 **+0.0257** 이다.
+ * ⚠**감사가 적은 것은 그 「오름」 쪽 하나뿐이라 방향이 반대로 읽힌다**(감사 P3 #7).
+ *
+ * ⚠**기본은 `include` — 지금까지의 값과 같다.** 바꾸면 wOBA 계수·wRC+·SRC·RE24·WPA 가 전부 움직인다.
+ * 그건 **표시할 수를 고르는 일**이라 사용자가 정한다(작업규칙 3).
+ * 이 스위치는 우선 **그 판단이 화면을 얼마나 움직이는지 재기 위한 것**이다 —
+ * `roe: "weighted" | "zero"`(woba-weights.ts)와 같은 모양이고 같은 이유다.
+ *
+ * ⚠**RE 행렬과 계수 유도는 반드시 같은 값을 써야 한다.** 한쪽만 제외하면
+ * 잘린 타석이 잘리지 않은 행렬로 평가되어 계수가 조용히 어긋난다.
+ */
+export type WalkoffMode = "include" | "exclude";
+
+/** 하프이닝 하나를 가리키는 키 */
+export function halfKey(r: { gameId: string; inning: number; half: string }): string {
+  return `${r.gameId}|${r.inning}|${r.half}`;
+}
+
+/** 끝내기 판정에 필요한 최소 필드. **두 곳이 같은 판정을 쓰게 하려고 여기 둔다**(M1) */
+export interface HalfInningRow {
+  gameId: string;
+  inning: number;
+  half: string;
+  seq: number;
+  homeRuns: number | null;
+  awayRuns: number | null;
+}
+
+/**
+ * **끝내기로 잘린 하프이닝**의 키 집합.
+ *
+ * 판정: 그 경기의 **마지막 하프이닝** · `half === "bottom"` · **홈 승리**.
+ * ⚠**무승부는 끝내기가 아니다** — 동점으로 끝난 말 공격은 3아웃까지 갔다.
+ * ⚠**득점을 모르면(NULL) 끝내기로 치지 않는다**(M11) — 「모른다」를 「그렇다」로 바꾸지 않는다.
+ * ⚠**행은 `game_id, seq` 순으로 들어와야 한다** — 마지막 하프이닝을 seq 로 판정한다.
+ */
+export function walkoffHalves(rows: readonly HalfInningRow[]): ReadonlySet<string> {
+  const lastSeq = new Map<string, number>();
+  for (const r of rows) {
+    const prev = lastSeq.get(r.gameId);
+    if (prev === undefined || r.seq > prev) lastSeq.set(r.gameId, r.seq);
+  }
+  const out = new Set<string>();
+  let i = 0;
+  while (i < rows.length) {
+    let j = i;
+    const head = rows[i]!;
+    while (
+      j < rows.length && rows[j]!.gameId === head.gameId
+      && rows[j]!.inning === head.inning && rows[j]!.half === head.half
+    ) j += 1;
+    if (
+      head.half === "bottom" && rows[j - 1]!.seq === lastSeq.get(head.gameId)
+      && head.homeRuns !== null && head.awayRuns !== null && head.homeRuns > head.awayRuns
+    ) out.add(halfKey(head));
+    i = j;
+  }
+  return out;
+}
+
+/**
+ * 끝내기 하프이닝의 행을 걷어 낸다.
+ *
+ * ⚠**루프 앞에서 걸러야 한다.** 끝내기는 언제나 그 경기의 **마지막** 하프이닝이므로
+ * 걸러도 남는 것은 「그 경기의 앞부분」이고, 바로 앞 타석의 「다음 행」은 **다음 경기의 첫 행**이 된다 —
+ * `afterStateOf` 가 `gameId` 가 다르면 `zero`(이닝 끝)로 판정하므로 그대로 맞다.
+ */
+export function dropWalkoffHalves<T extends HalfInningRow>(rows: readonly T[]): T[] {
+  const skip = walkoffHalves(rows);
+  return rows.filter((r) => !skip.has(halfKey(r)));
+}
+
 const SQL = `
 SELECT e.game_id AS gameId, e.inning AS inning, e.half AS half, e.seq AS seq,
-       e.bases AS bases, e.outs_before AS outs, e.runs_scored AS runs
+       e.bases AS bases, e.outs_before AS outs, e.runs_scored AS runs,
+       g.home_runs AS homeRuns, g.away_runs AS awayRuns
 FROM pa_event e
 JOIN game g ON g.game_id = e.game_id
 JOIN player b ON b.player_id = e.batter_id
@@ -85,8 +175,10 @@ export function buildRunExpectancy(
    * 득점기대치만 8월 데이터로 계산되어, 같은 화면 안에서 기준일이 갈린다.
    */
   through = "9999-12-31",
+  /** ⚠**계수 유도(`deriveRunValues`)에 같은 값을 넘겨라.** 갈리면 계수가 조용히 어긋난다 */
+  walkoff: WalkoffMode = "include",
 ): RunExpectancy {
-  const rows = withLeagueTeams(db, teamCodes, () =>
+  const all = withLeagueTeams(db, teamCodes, () =>
     db.raw.prepare(SQL).all(season, competition, through),
   ) as {
     gameId: string;
@@ -96,7 +188,12 @@ export function buildRunExpectancy(
     bases: string;
     outs: number;
     runs: number;
+    homeRuns: number | null;
+    awayRuns: number | null;
   }[];
+  // ⚠**`include` 일 때도 센다** — 몇 개가 섞여 있는지 모르면 판단할 수 없다(작업규칙 7)
+  const walkoffKeys = walkoffHalves(all);
+  const rows = walkoff === "exclude" ? all.filter((r) => !walkoffKeys.has(halfKey(r))) : all;
 
   const sum = new Map<StateKey, number>();
   const n = new Map<StateKey, number>();
@@ -136,6 +233,8 @@ export function buildRunExpectancy(
     samples: n,
     observedStates: n.size,
     totalPa: rows.length,
+    walkoff,
+    walkoffHalves: walkoffKeys.size,
   };
 }
 
