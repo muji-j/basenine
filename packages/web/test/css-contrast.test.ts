@@ -359,7 +359,10 @@ const OPACITY_ALLOWED: readonly { sel: string; why: string }[] = [
   { sel: ".chip.fav s", why: "글자이지만 실측 9.55/9.14 통과" },
   { sel: ".pk[data-slot]::after", why: "생성 글자 · 실측 11.35/10.14 통과" },
   { sel: ".legend .bar", why: "범례 견본 — 도형이고 글자가 없다(등급 표시를 끕을 때의 연출)" },
-  { sel: ".sortable i", why: "정렬 표시 도형 · 글자 없음. ⚠도형 대비는 별건으로 미검증" },
+  // ⚠`.sortable i` 는 **빠졌다**(2026-08-25 · 감사 P3 #31). 여기 적혀 있던
+  //   「⚠도형 대비는 별건으로 미검증」이 바로 그 결함이었다 — 재 보니 **1.554/1.765** 로
+  //   UI 표시 기준 3:1 의 절반이었다. opacity 를 `color:var(--tx-3)`(4.910/5.499)로 바꿨다.
+  //   ⚠**「미검증」이라 적어 두는 것으로는 아무도 안 잰다.** 목록에 남기려면 수를 적어라.
   { sel: ".hstand .rdbar::before", why: "기준선 막대 · 글자 없음" },
   { sel: ".pswing i", why: "막대 · 글자 없음" },
   { sel: "table.stand .dif i", why: "방향 도형 · 글자 없음" },
@@ -397,3 +400,50 @@ test("⚠중지 경기 카드는 opacity 로 흐리지 않는다 — 형태로 �
   assert.ok(!/opacity/.test(rule![1]!), `.gcard.off 에 opacity 가 돌아왔다: ${rule![1]}`);
   assert.match(rule![1]!, /border-style:\s*dashed/, "「열리지 않았다」를 말하는 형태가 없다");
 });
+
+/**
+ * **정렬 표시가 보이는가.**
+ *
+ * ⚠**안 보였다**(2026-08-25 · 감사 P3 #31). `.sortable i{opacity:.3}` 이 `--tx-2` 를 흐려
+ * 실효 대비가 **라이트 1.554 · 다크 1.765** 였다 — UI 표시에 필요한 **3:1** 의 절반이다.
+ * 그 표시는 「이 열은 정렬할 수 있다」를 말하는 **유일한 신호**라, 안 보이면 그 기능이 없는 것과 같다.
+ *
+ * ⚠**기존 시험 둘 다 못 잡았다.** 대비 시험은 규칙 안에 color 가 있어야 재는데
+ * 그 규칙에는 없었고(부모에서 상속), opacity 시험은 그 선택자를
+ * **「도형이라 글자 없음 · 도형 대비는 별건으로 미검증」**으로 면제하고 있었다.
+ * **그 「미검증」이 결함 그 자체였다** — 목록에 적어 두는 것만으로는 아무도 안 잰다.
+ *
+ * ⚠**위계는 지킨다**: 정렬 안 됨 --tx-3(4.910/5.499) 대 정렬됨 --tx(17.139/14.736).
+ */
+const UI_NEED = 3;
+
+test("⚠정렬 표시는 opacity 로 흐리지 않는다 — 계산을 거짓으로 만든다", () => {
+  const rule = /\.sortable i\{([^}]*)\}/.exec(CSS);
+  assert.notEqual(rule, null, ".sortable i 규칙이 사라졌다 — 이 시험이 공회전한다");
+  assert.ok(
+    !/opacity/.test(rule![1]!),
+    `.sortable i 에 opacity 가 돌아왔다: ${rule![1]} — 대비를 색으로 말해라`,
+  );
+});
+
+for (const scope of ["light", "dark"] as const) {
+  test(`⚠${scope}: 정렬 표시가 UI 기준 ${UI_NEED}:1 을 넘는다`, () => {
+    const rule = /\.sortable i\{([^}]*)\}/.exec(CSS);
+    assert.notEqual(rule, null, ".sortable i 규칙이 사라졌다 — 이 시험이 공회전한다");
+    const m = /(?:^|;)\s*color:\s*var\(--([a-z0-9-]+)\)/.exec(rule![1]!);
+    assert.notEqual(m, null, `.sortable i 가 토큰 색을 안 쓴다: ${rule![1]}`);
+    const t = tokens(scope);
+    const fg = t.get(m![1]!);
+    const page = t.get("page");
+    assert.ok(fg !== undefined && page !== undefined, "토큰을 못 읽었다 — 이 시험이 공회전한다");
+    const r = contrast(fg!, page!);
+    assert.ok(
+      r >= UI_NEED,
+      `정렬 표시 --${m![1]!} ${fg} 위 --page ${page} = ${r.toFixed(3)}:1 (${UI_NEED} 필요)`,
+    );
+    // ⚠**위계가 남아 있는가** — 그냥 지우면 정렬 안 된 표시가 정렬된 것과 같은 세기가 된다
+    const sorted = contrast(t.get("tx")!, page!);
+    assert.ok(sorted > r * 2, `정렬된 표시(${sorted.toFixed(2)})와 안 된 표시(${r.toFixed(2)})가 안 갈린다`);
+    console.log(`  · ${scope} 정렬표시 ${r.toFixed(3)}:1 / 정렬됨 ${sorted.toFixed(3)}:1`);
+  });
+}

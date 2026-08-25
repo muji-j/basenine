@@ -52,6 +52,41 @@ export interface RunRecord {
   noHand: number;
   quarantine: number;
   stale: boolean;
+  /**
+   * **어느 감시가 울렸는가.** 키는 `scripts/freshness.ts` 가 정한다.
+   *
+   * ⚠**`undefined` 와 `[]` 는 다르다**(M11). `[]` 는 「울린 감시가 없다」이고,
+   * `undefined` 는 **「이유를 안 남기던 시절의 줄」**(2026-08-25 이전)이다.
+   * 옛 줄을 「이유 없음」으로 그리면 화면이 **없는 사실을 단언**하게 된다.
+   */
+  staleReasons?: readonly string[];
+}
+
+/**
+ * 감시 키 → 화면 문구.
+ *
+ * ⚠**「古い」한 글자로 뭉개던 것을 여기서 푼다**(2026-08-25 · 감사 P3 #53).
+ * 이 감시는 축이 다섯인데 결과가 한 글자면, 읽는 사람은 바로 옆 「最新試合日」이
+ * 1일 전인 것을 보고 **판정이 고장난 줄로 읽는다** — 2026-08-17 에 실제로 났던 오진이다
+ * (낡은 것은 경기가 아니라 통산이었는데 「NPB 가 늦다」로 남 탓했다).
+ *
+ * ⚠**모르는 키를 삼키지 않는다**(M7). 표에 없는 키가 오면 키를 그대로 보여준다 —
+ * 조용히 빠지면 「울렸는데 이유가 안 보이는」 화면이 되고, 그게 이 결함의 원래 모양이다.
+ */
+const STALE_REASON_LABEL: Readonly<Record<string, string>> = {
+  "no-games": "試合データなし",
+  "game-lag": "試合が古い",
+  "career-lag": "通算が古い",
+  "starters-behind": "予告先発が遅れ",
+  "starters-lag": "予告先発が停止",
+};
+
+/** 판정 칸의 문구. ⚠**어느 축인지 반드시 말한다** */
+export function staleVerdict(r: Pick<RunRecord, "stale" | "staleReasons">): string {
+  if (!r.stale) return "正常";
+  if (r.staleReasons === undefined) return "古い（内訳の記録なし）";
+  if (r.staleReasons.length === 0) return "古い（内訳なし）";
+  return r.staleReasons.map((k) => STALE_REASON_LABEL[k] ?? k).join("・");
 }
 
 /**
@@ -174,14 +209,17 @@ function runTable(runs: readonly RunRecord[]): RawHtml {
         <td>${r.pa.toLocaleString()}</td>
         <td>${r.players}</td>
         <td class="${r.quarantine > 0 ? "bad" : ""}">${r.quarantine}</td>
-        <td class="l ${r.stale ? "bad" : "ok"}">${r.stale ? "古い" : "正常"}</td>
+        <td class="l ${r.stale ? "bad" : "ok"}">${staleVerdict(r)}</td>
       </tr>`,
     )}</tbody>
   </table>`)}
   ${note(
     "⚠この記録がないと「試合が0件だった日」と「収集そのものが動かなかった日」を区別できません。" +
       "動いたことだけを残す成功ログでは、静かに止まった収集を見つけられないためです。" +
-      "「隔離」は規則の外にあった記録で、捨てずに取っておいて人が判断するものです。",
+      "「隔離」は規則の外にあった記録で、捨てずに取っておいて人が判断するものです。" +
+      "「判定」は5つの監視（試合データなし・試合が古い・通算が古い・予告先発が遅れ・予告先発が停止）" +
+      "のうち鳴った軸をそのまま並べます——古いのが試合とはかぎらないためです。" +
+      "試合の許容日数は各ページ上部の帯より1日短くしてあります（収集の停止を帯より先に知らせるため）。",
   )}`;
 }
 

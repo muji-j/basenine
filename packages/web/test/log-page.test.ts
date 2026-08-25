@@ -120,6 +120,23 @@ test("낡은 실행은 그 사실이 보인다", () => {
   assert.match(out, /class="l bad">古い/);
 });
 
+/**
+ * ⚠**위 시험만으로는 부족했다**(2026-08-25 · 감사 P3 #53).
+ * 새 문구가 「古い（内訳の記録なし）」로 시작하므로 위 정규식은 **고치기 전과 후 양쪽에서 통과**한다 —
+ * 판별력이 없는 시험이다. 실제로 지켜야 할 것은 **어느 축이 낡았는지 화면이 말하는가**이고,
+ * 그건 이유가 붙은 줄로만 잴 수 있다.
+ * ⚠2026-08-17 에 낡은 것은 경기가 아니라 **통산**이었는데 「古い」한 글자뿐이라
+ * 「NPB 가 늦다」로 오진했다 — 이 시험이 그 오진을 막는 자리다.
+ */
+test("⚠어느 축이 낡았는지 화면이 말한다 — 「古い」 한 글자로 뭉개지 않는다", () => {
+  const out = renderLogPage(
+    data({ runs: [run({ stale: true, staleReasons: ["career-lag"] })] }),
+    context(),
+  );
+  assert.match(out, /class="l bad">通算が古い/);
+  assert.ok(!/class="l bad">古い</.test(out), "축을 말하지 않고 「古い」로만 냈다");
+});
+
 test("격리가 있으면 눈에 띈다 — 버그가 아니라 판단 요청이다", () => {
   const out = renderLogPage(data({ runs: [run({ quarantine: 3 })] }), context());
   assert.match(out, /class="bad">3</);
