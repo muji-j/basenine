@@ -233,18 +233,45 @@ jobs:
           set -euo pipefail
           mkdir -p data
           if gh release view "$DATA_TAG" >/dev/null 2>&1; then
-            # ⚠실패를 삼키지 않는다. 릴리스가 있는데 못 받았다면 그것은 사고다
-            gh release download "$DATA_TAG" --dir /tmp/store --clobber
-            tar -xf /tmp/store/archive.tar -C data
+            # ⚠**필요한 것만 받는다**(2026-08-26). 예전에는 `gh release download` 를 인자 없이 불러
+            #   **자산을 전부** 받았다 — 세대 보관을 넣는 순간 그건 **매일 세대 전부(329MiB × N)를
+            #   내려받는다**는 뜻이 된다. `--pattern` 은 여러 번 줄 수 있다(실측 확인).
+            # ⚠**세대 이름은 `store-` 다.** `archive-*` 를 쓰면 아래 「덧붙임 자산」 전개가
+            #   세대를 백필로 오인해 **전부 풀어 버린다** — 접두사를 나눈 이유가 그것이다.
+            newest=$(gh release view "$DATA_TAG" --json assets \
+              --jq '[.assets[].name | select(startswith("store-"))] | sort | last // ""')
+            if [ -n "$newest" ]; then
+              echo "보관소 세대: $newest"
+              gh release download "$DATA_TAG" --dir /tmp/store --clobber \
+                --pattern "$newest" --pattern 'archive-*.tar' --pattern 'bb.sqlite.gz'
+              tar -xf "/tmp/store/$newest" -C data
+            else
+              # ⚠**세대가 아직 없는 첫 실행**(세대 보관 도입 직후). 옛 이름으로 떨어진다.
+              #   ⚠`archive.tar` 는 이 전환 뒤로 **갱신되지 않는다** — 마지막으로 알려진 좋은 사본으로
+              #   남겨 두고, 세대가 쌓인 뒤 사람이 지운다.
+              echo "세대가 없다 — 옛 이름(archive.tar)으로 복원한다"
+              gh release download "$DATA_TAG" --dir /tmp/store --clobber \
+                --pattern 'archive.tar' --pattern 'archive-*.tar' --pattern 'bb.sqlite.gz'
+              tar -xf /tmp/store/archive.tar -C data
+            fi
             # ⚠**덧붙이는 자산도 푼다**(`archive-2021.tar` 같은 것).
             #   소급 시즌은 **로컬에서 백필한 뒤 따로 올린다** — 본 자산(183MB)을 내려받아
             #   합쳐서 다시 올리는 것보다 안전하고 훨씬 싸다. 겹쳐 풀어도 같은 파일이라 문제없다.
             #   ⚠**다음 실행이 알아서 하나로 만든다** — 「보관소에 올림」이 data/archive 를 통째로
             #   다시 tar 하므로, 한 번 돌고 나면 이 자산은 본 자산 안에 들어간다(그때 지워도 된다).
+            # ⚠**무엇을 폈는지 적어 둔다**(2026-08-26). 주석은 「한 번 돌고 나면 본 자산 안에 들어가니
+            #   그때 지워도 된다」고 오래 적고 있었는데 **지우는 것이 없었다** —
+            #   실측: `archive-2018.tar`(37.6MiB)·`archive-2019.tar`(36.6MiB)가 2026-08-18 이후
+            #   **매일 함께 내려받히고 있었다**(+74MiB/일). 둘 다 본 아카이브에 이미 들어 있다
+            #   (로컬 실측: `data/archive/npb/scores/2018` 7,480장 · `2019` 7,208장).
+            # ⚠**이번 실행에서 실제로 편 것만** 적는다 — 도중에 누가 새 백필을 올렸을 때
+            #   그것까지 지우면 **소급 불가 자산을 잃는다.**
+            : > /tmp/absorbed.txt
             for extra in /tmp/store/archive-*.tar; do
               [ -e "$extra" ] || continue
               echo "덧붙임 자산 전개: $(basename "$extra")"
               tar -xf "$extra" -C data
+              basename "$extra" >> /tmp/absorbed.txt
             done
             # ⚠**DB 가 없어도 계속 간다**(2026-08-18 감사 P3). DB 는 아카이브에서 **다시 만들 수 있는**
             #   파생물이지만, 아카이브는 소급 불가 자산이다 — 둘을 같은 무게로 다루면 안 된다.
@@ -295,7 +322,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tar -cf /tmp/archive.tar -C data archive
+          # ⚠**세대 이름은 날짜다**(2026-08-26). `store-YYYYMMDD.tar`.
+          #   ⚠**`archive-` 접두사를 쓰지 않는다** — 복원의 「덧붙임 자산」 전개가 `archive-*.tar` 를
+          #   백필로 보고 전부 풀기 때문이다. 접두사를 나눈 이유가 그것이다.
+          # ⚠**시각을 넣지 않는다.** 이 워크플로는 **하루 3회** 도는데, 실행마다 세대를 만들면
+          #   하루에 329MiB × 3 이 쌓인다. 오늘 것은 **덮어쓰고**(아래) 어제 이전은 안 건드린다.
+          GEN="store-$(date -u +%Y%m%d).tar"
+          tar -cf "/tmp/$GEN" -C data archive
 
           # ⚠**반쯤 쓰인 DB 를 보관소에 올리지 않는다**(2026-08-18 감사 P2).
           #   이 스텝은 always() 라 **적재가 죽어도 돈다**(아카이브는 소급 불가라 그게 옳다).
@@ -309,10 +342,10 @@ jobs:
           #   DB 는 **아카이브에서 언제든 다시 만들 수 있는 파생물**이라 의심스러우면 안 올린다.
           if node scripts/db-check.ts data/bb.sqlite; then
             gzip -c data/bb.sqlite > /tmp/bb.sqlite.gz
-            assets="/tmp/archive.tar /tmp/bb.sqlite.gz"
+            assets="/tmp/$GEN /tmp/bb.sqlite.gz"
           else
             echo "::warning::DB 를 올리지 않는다. 아카이브만 올린다 — 다음 실행이 아카이브에서 다시 만든다"
-            assets="/tmp/archive.tar"
+            assets="/tmp/$GEN"
           fi
 
           gh release view "$DATA_TAG" >/dev/null 2>&1 || \
@@ -328,16 +361,19 @@ jobs:
           #   **업로드가 실패하면 원본 자산이 소실된다**」.
           #   즉 이 루프는 **하루 한 번 소급 불가 자산을 스스로 지우는 창**을 열고,
           #   재시도는 **이미 지워진 뒤**에 도는 것이다. 재시도 자체는 여전히 옷다(그게 유일한 복구 수단이다).
-          # ⚠**아직 세대 보관으로 바꾸지 않았다** — 복원 경로(「아카이브·DB 복원」)까지 같이 바뀌어야 하고
-          #   이 파이프라인은 `gh` 인증 없이 끝까지 시험할 수 없다. **모르는 채 손대면 더 나쁘다.**
-          #   명세는 `docs/audits/2026-08-21-p2-refutation.md` §3 [4] 에 있다.
-          # ⚠**그 명세의 ① 에 함정이 하나 있다**(2026-08-24 발견). 제안된 세대 이름
-          #   `archive-$(date -u +%Y%m%d).tar` 은 **이미 다른 뜻으로 쓰이는 이름**이다 —
-          #   복원 스텝이 `archive-*.tar` 를 「덧붙임 자산」(소급 시즌 백필)으로 보고 **전부 전개**한다.
-          #   게다가 `gh release download` 는 **자산을 전부** 받으므로, 그대로 하면
-          #   **매일 세대 전부(267MiB × N)를 내려받게 된다.**
-          #   → 세대는 **다른 접두사**를 쓰고(예: `store-YYYYMMDD.tar`) 복원은 `--pattern` 으로
-          #   필요한 것만 받아야 한다. **그 재설계 없이 ① 만 하면 더 나빠진다.**
+          # ⚠**세대 보관으로 바꿨다**(2026-08-26 · 감사 [4]-①). 위 인용이 말하는 「스스로 지우는 창」은
+          #   이제 **오늘 세대에만** 열린다 — `store-YYYYMMDD.tar` 는 날마다 이름이 다르므로
+          #   **어제 이전 세대는 덮어쓰기 경로에 아예 없다.** 오늘 것을 잃어도 어제 것이 온전하고,
+          #   오늘 받은 페이지는 다음 실행이 다시 받는다(며칠 단위 롤오프는 없다).
+          # ⚠**접두사를 `store-` 로 나눈 이유**: 감사 명세의 `archive-YYYYMMDD.tar` 은
+          #   **이미 다른 뜻으로 쓰이는 이름**이라(복원이 `archive-*.tar` 를 백필 덧붙임으로 보고 전개한다)
+          #   그대로 했으면 **세대를 매일 전부 풀고 전부 내려받았을** 것이다.
+          # ⚠**실측으로 확인한 기계 넷**(2026-08-26 · 임시 릴리스에서 실행):
+          #   ⑴ `--pattern` 은 여러 번 줄 수 있고 지정한 것만 받는다(옛 세대는 안 받는다)
+          #   ⑵ `gh release delete-asset` 로 가지치기가 된다
+          #   ⑶ **같은 이름 재업로드는 `--clobber` 없이 종료 1** — 그래서 오늘 것은 덮어쓴다
+          #      (이 워크플로는 하루 3회 돈다. 시각을 이름에 넣으면 하루 329MiB × 3 이 쌓인다)
+          #   ⑷ 세대는 이름 정렬로 최신을 고를 수 있다(`sort | last`)
           # ⚠`set -e` 아래에서 `A || B` 로 쓰지 않는다 — 어느 실패가 스텝을 죽이는지 셸 규칙에
           #   맡기게 된다. 성공 여부를 변수로 들고 **마지막 줄에서 한 번만** 판정한다
           #   (아래 「기록 갱신과 커밋」의 푸시 재시도와 같은 모양).
@@ -368,6 +404,41 @@ jobs:
             fi
             echo "보관소 확인: $name $got B"
           done
+
+          # ⚠**여기부터는 「올라간 것이 온전하다」가 확인된 뒤다.** 순서가 요점이다 —
+          #   확인 전에 지우면 **믿을 수 있는 사본이 없는 순간**이 생긴다.
+
+          # ⚠**흡수된 백필 덧붙임을 지운다.** 복원 주석이 「한 번 돌고 나면 본 자산 안에 들어가니
+          #   그때 지워도 된다」고 오래 적고 있었는데 **지우는 것이 없었다** —
+          #   `archive-2018.tar`·`archive-2019.tar`(합 74MiB)가 2026-08-18 이후 매일 함께 내려받혔다.
+          # ⚠**이번 실행에서 실제로 편 것만** 지운다(/tmp/absorbed.txt). 도중에 올라온 새 백필까지
+          #   지우면 **소급 불가 자산을 잃는다.** 방금 올린 세대가 그 내용을 담고 있다는 것도
+          #   위 크기 확인으로 이미 물어봤다.
+          if [ -s /tmp/absorbed.txt ]; then
+            while IFS= read -r a; do
+              [ -n "$a" ] || continue
+              echo "흡수된 덧붙임 삭제: $a"
+              gh release delete-asset "$DATA_TAG" "$a" --yes
+            done < /tmp/absorbed.txt
+          fi
+
+          # ⚠**세대 가지치기.** 오래된 것부터 지우고 **최신 KEEP 개**를 남긴다.
+          #   하나가 329MiB 라 KEEP 을 키우면 그만큼 보관소가 커진다.
+          #   ⚠**KEEP=1 로 두지 마라** — 그러면 오늘 것뿐이고, 그건 세대 보관이 아니다.
+          KEEP=3
+          gens=$(gh release view "$DATA_TAG" --json assets \
+            --jq '[.assets[].name | select(startswith("store-"))] | sort | .[]')
+          # ⚠**`grep -c || true` 로 세지 않는다** — `set -o pipefail` 아래에서 「0건」과 「실패」가
+          #   같은 종료 코드가 되고, 그걸 `|| true` 로 덮으면 **어느 쪽인지 알 수 없다.**
+          if [ -z "$gens" ]; then n=0; else n=$(printf '%s\n' "$gens" | wc -l); fi
+          if [ "$n" -gt "$KEEP" ]; then
+            printf '%s\n' "$gens" | head -n "$((n - KEEP))" | while IFS= read -r old; do
+              [ -n "$old" ] || continue
+              echo "옛 세대 삭제: $old (보관 $KEEP)"
+              gh release delete-asset "$DATA_TAG" "$old" --yes
+            done
+          fi
+          echo "세대 $n개 · 보관 $KEEP개"
 
       - name: 기록 갱신과 커밋
         # ⚠이 커밋이 리포 활동을 갱신해 60일 자동 비활성화를 막는다. 자기 문제를 자기가 푼다.
