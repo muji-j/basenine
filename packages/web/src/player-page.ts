@@ -10,6 +10,7 @@ import type { BattingLine, PitchingLine, Rate } from "@bb-app/metrics";
 import { TEAMS, shortNameOf } from "@bb-app/domain";
 import type { League, TeamColor } from "@bb-app/domain";
 import { blocksFor, presetsFor } from "./blocks.ts";
+import { gamePath } from "./game-page.ts";
 import type { BlockId } from "./blocks.ts";
 import {
   bars,
@@ -1469,7 +1470,7 @@ function scorebookBlock(rows: readonly ScorebookRow[], total: number, base: stri
               <!-- ⚠**타석에서 그 경기로 갈 수 있어야 한다.** 「이 안타가 어떤 경기였나」는
                    이 표를 보는 사람이 가장 자주 하는 질문인데, 지금까지는 날짜만 있고
                    경기 페이지로 가는 길이 없어서 試合 화면에서 날짜를 다시 찾아야 했다 -->
-              <td class="l"><a href="${base}games/${r.gameSlug}.html">${gameDate(r.date)}</a></td>
+              <td class="l"><a href="${base}${gamePath(r.gameSlug)}">${gameDate(r.date)}</a></td>
               <td class="l">${r.opponent}</td>
               <td>${r.inning}${r.half === "top" ? "表" : "裏"}</td>
               <td class="l">${BASE_LABEL[r.bases] ?? r.bases} ${r.outs}死</td>

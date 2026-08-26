@@ -21,6 +21,7 @@ import { fullDate, innings } from "./format.ts";
 import { note, panel, scroller, tablist, term, valueWithDen } from "./parts.ts";
 import { page, ROSTER_PATH } from "./layout.ts";
 import { teamLink } from "./team-page.ts";
+import { gamePath } from "./game-page.ts";
 import type { RenderContext } from "./pages.ts";
 import { NEUTRAL_COLOR } from "@bb-app/domain";
 import type { TeamColor } from "@bb-app/domain";
@@ -193,7 +194,7 @@ function gameCard(g: PostGame, base: string): RawHtml {
   // ⚠상세 페이지가 없으면 카드를 누를 수 있게 만들지 않는다 — 눌러도 안 가는 카드는 결함이다
   return g.hasPage
     ? html`<article class="gcard tapcard">${body}
-  <p class="gmore"><a class="cardlink" href="${base}games/${g.gameId}.html">この試合の詳細<span
+  <p class="gmore"><a class="cardlink" href="${base}${gamePath(g.gameId)}">この試合の詳細<span
     class="vh">（第${g.gameNo}戦 ${g.away.shortName} 対 ${g.home.shortName}）</span></a></p>
 </article>`
     : html`<article class="gcard">${body}</article>`;

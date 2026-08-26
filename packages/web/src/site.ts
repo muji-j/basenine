@@ -19,7 +19,7 @@ import { renderDayIndexPage, renderDayPage, renderTodayPage } from "./today-page
 import { renderPostseasonPage } from "./postseason-page.ts";
 import { renderTeamPage, teamPath } from "./team-page.ts";
 import { renderTeamsPage } from "./teams-page.ts";
-import { gameSlug, renderGamePage } from "./game-page.ts";
+import { gamePath, gameSlug, renderGamePage } from "./game-page.ts";
 import { renderLogPage } from "./log-page.ts";
 import { GLOSSARY_PATH, renderGlossaryPage } from "./glossary-page.ts";
 import type { LogPageData } from "./log-page.ts";
@@ -129,7 +129,7 @@ export function seasonPaths(data: SiteData, hasLog: boolean): Set<string> {
     if (d.gameDate !== null) out.add(`starters/${d.gameDate}.html`);
   }
   for (const p of data.players) out.add(`players/${p.playerId}.html`);
-  for (const g of data.games) out.add(`games/${gameSlug(g.gameId)}.html`);
+  for (const g of data.games) out.add(gamePath(g.gameId));
   return out;
 }
 
@@ -285,7 +285,10 @@ export function buildSite(
     if (!/^[A-Za-z0-9_-]+$/.test(slug)) {
       throw new Error(`경기 ID가 경로로 쓸 수 없는 형태다: ${JSON.stringify(g.gameId)}`);
     }
-    files.push({ path: at(`games/${slug}.html`), content: renderGamePage(g, ctx) });
+    // ⚠**파일을 쓰는 쪽도 같은 한 벌을 쓴다**(2026-08-26). `gameSlug` 의 주석이
+    //   「링크를 만드는 쪽과 파일을 쓰는 쪽이 따로 계산하면 어긋난다」고 경고하는데
+    //   **경로 단계에서는 정확히 그 상태였다.**
+    files.push({ path: at(gamePath(g.gameId)), content: renderGamePage(g, ctx) });
   }
 
   return {

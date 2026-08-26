@@ -16,7 +16,7 @@ import { note } from "./parts.ts";
 import { page, pastSeasonOf, ROSTER_PATH } from "./layout.ts";
 import type { RenderContext } from "./pages.ts";
 import { NEUTRAL_COLOR, shortNameOf } from "@bb-app/domain";
-import { gameSlug } from "./game-page.ts";
+import { gamePath, gameSlug } from "./game-page.ts";
 // ⚠`team-page.ts` 도 여기서 `dayHref` 를 가져간다(순환). 둘 다 **함수 선언**이라 호이스팅되고,
 // `home-page.ts` ↔ `team-page.ts` 가 이미 같은 모양으로 돌고 있다 — 새로 만드는 형태가 아니다.
 import { teamLink } from "./team-page.ts";
@@ -299,7 +299,7 @@ function gameCard(g: TodayGame, base: string): RawHtml {
     </li>`,
       )}</ul>`}
   ${g.hasPage
-    ? html`<p class="gmore"><a class="cardlink" href="${base}games/${gameSlug(g.gameId)}.html">この試合の詳細<span
+    ? html`<p class="gmore"><a class="cardlink" href="${base}${gamePath(g.gameId)}">この試合の詳細<span
       class="vh">（${g.away.shortName} 対 ${g.home.shortName}）</span></a></p>`
     : raw("")}
 </article>`;

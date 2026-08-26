@@ -9,6 +9,7 @@
  * (§6 · 이 리포가 여러 곳에서 세워 둔 규칙).
  */
 import { html, raw } from "./html.ts";
+import { gamePath } from "./game-page.ts";
 import type { RawHtml } from "./html.ts";
 import type { TeamColor } from "@bb-app/domain";
 
@@ -126,7 +127,7 @@ function cell(g: CalendarGame, base: string): RawHtml {
   const cls = g.upcoming ? "cg cgup" : `cg cg${g.result ?? ""}`;
   return g.slug === null
     ? html`<span class="${cls}">${body}</span>`
-    : html`<a class="${cls}" href="${base}games/${g.slug}.html">${body}</a>`;
+    : html`<a class="${cls}" href="${base}${gamePath(g.slug)}">${body}</a>`;
 }
 
 /**

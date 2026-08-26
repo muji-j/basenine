@@ -94,6 +94,22 @@ export function gameSlug(gameId: string): string {
   return gameId.replace(/\//g, "-");
 }
 
+/**
+ * 경기 ID → **링크 경로**(`base` 뒤에 붙인다).
+ *
+ * ⚠**바로 위 주석이 「규칙을 한 곳에만 둔다」고 적는데, 경로는 다섯 곳이 각자 조립하고 있었다**
+ * (2026-08-26). 슬러그는 한 벌이었지만 **그 한 단계 위가 다섯 벌**이었다 —
+ * 같은 병이 한 층 위에서 반복된 모양이고, 어긋났을 때 생기는 것도 같다: **조용한 404**.
+ *
+ * ⚠**이 한 벌이 다음 변경의 손잡이다.** 경기 페이지를 날짜 페이지로 옮길 때
+ * (Pages 파일 상한 · 경기 7,502장 = 배포물의 48.6%) 고칠 곳이 **여기 하나**가 된다.
+ *
+ * ⚠**이미 슬러그가 된 값을 넣어도 안전하다** — 슬러그에는 `/` 가 없으므로 두 번 걸어도 같다.
+ */
+export function gamePath(gameId: string): string {
+  return `games/${gameSlug(gameId)}.html`;
+}
+
 /** 주자 상황의 일본어 표기. **화면과 스크린리더가 같은 말을 쓴다** */
 export const BASE_LABEL: Readonly<Record<string, string>> = {
   "": "走者なし",
@@ -216,7 +232,7 @@ function playRow(p: GamePlayView, d: GamePageData, base: string, widest: number)
 }
 
 export function renderGamePage(d: GamePageData, ctx: RenderContext): string {
-  const { base, root, seasons } = ctx.paths(`games/${gameSlug(d.gameId)}.html`);
+  const { base, root, seasons } = ctx.paths(gamePath(d.gameId));
   const winner = d.away.runs === d.home.runs ? null : d.away.runs > d.home.runs ? "away" : "home";
   const widest = Math.max(0.5, ...d.keyPlays.map((p) => Math.abs(p.swing ?? 0)));
 
