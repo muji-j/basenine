@@ -10,8 +10,21 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { baseLabel, basesMark, gameSlug, renderGamePage, situationLabel } from "../src/game-page.ts";
+import { baseLabel, basesMark, gameSlug, renderGameDayPage, situationLabel } from "../src/game-page.ts";
 import type { GamePageData, GamePlayView, GameSide } from "../src/game-page.ts";
+import type { RenderContext } from "../src/layout.ts";
+
+/**
+ * 경기 하나짜리 하루 페이지.
+ *
+ * ⚠**경기 하나에 파일 하나였던 것을 경기일 하나에 파일 하나로 바꿨다**(2026-08-26 · 감사 P3 #41).
+ * 이 파일이 재는 것은 **경기 한 판의 화면**이고 그건 그대로 성립한다 —
+ * 하루에 경기가 하나면 그 하루 페이지가 곧 그 경기다.
+ * ⚠**여러 경기가 한 장에 들어가는 쪽**은 `game-day-page.test.ts` 가 따로 잰다.
+ */
+function renderGamePage(d: GamePageData, ctx: RenderContext): string {
+  return renderGameDayPage(d.gameDate, [d], ctx);
+}
 import { colorOf } from "@bb-app/domain";
 import { toString } from "../src/html.ts";
 import { context } from "./fixtures.ts";

@@ -94,6 +94,38 @@ export function gameSlug(gameId: string): string {
   return gameId.replace(/\//g, "-");
 }
 
+/** 경기일 하나의 상세 페이지 경로 */
+export function gameDayPath(date: string): string {
+  return `games/${date}.html`;
+}
+
+/** 한 경기의 앵커 id. **파일 안의 이름도 한 벌에서 나온다** */
+export function gameAnchor(gameId: string): string {
+  return `g-${gameSlug(gameId)}`;
+}
+
+/**
+ * 경기 → **링크 경로**(`base` 뒤에 붙인다).
+ *
+ * ⚠**경기 하나에 파일 하나였던 것을 경기일 하나에 파일 하나로 바꿨다**(2026-08-26 · 감사 P3 #41).
+ * Cloudflare Pages 의 배포당 파일 상한(20,000)에 여유가 **2.61시즌**밖에 없었고,
+ * 경기 페이지가 배포물의 **48.6%(7,502장)** 였다. 지금은 **1,531장**이 된다.
+ * 설계와 기각한 안은 `docs/superpowers/specs/2026-08-26-game-pages-by-date-design.md`.
+ *
+ * ⚠**날짜를 슬러그에서 유도하지 않는다.** 한때 그렇게 만들었다가 되돌렸다 —
+ * 유도는 ⑴ **npb.jp 의 ID 형식이 영원하다고 가정**하고, ⑵ 형식이 다르면 **그리는 중에 던져서**
+ * 그 화면이 통째로 안 나온다. `gameDate` 는 실재하는 필드다.
+ *
+ * ⚠**그래서 「링크와 파일이 갈릴 수 있다」가 남는다.** 그것을 막는 것은 **링크 검사**다 —
+ * 빌드가 만들어진 파일에 대해 **앵커까지 포함해** 전 링크를 확인하고, 어긋나면 멈춘다.
+ * 날짜를 잘못 넘기면 죽은 링크가 되고 **빌드가 거기서 선다.**
+ *
+ * ⚠**이미 슬러그가 된 값을 넣어도 안전하다** — 슬러그에는 `/` 가 없으므로 두 번 걸어도 같다.
+ */
+export function gamePath(gameDate: string, gameId: string): string {
+  return `${gameDayPath(gameDate)}#${gameAnchor(gameId)}`;
+}
+
 /** 주자 상황의 일본어 표기. **화면과 스크린리더가 같은 말을 쓴다** */
 export const BASE_LABEL: Readonly<Record<string, string>> = {
   "": "走者なし",
@@ -215,8 +247,17 @@ function playRow(p: GamePlayView, d: GamePageData, base: string, widest: number)
 </li>`;
 }
 
-export function renderGamePage(d: GamePageData, ctx: RenderContext): string {
-  const { base, root, seasons } = ctx.paths(`games/${gameSlug(d.gameId)}.html`);
+/**
+ * **경기 한 판의 본문.** 한 문서에 여럿이 들어간다(경기일 하나에 파일 하나 · 감사 P3 #41).
+ *
+ * ⚠**`h1` 이 아니라 `h2` 로 시작한다** — 문서의 `h1` 은 그 날짜이고, 경기는 그 아래다.
+ * ⚠**구획 id 를 경기마다 다르게 준다.** 예전에는 `b-score`·`b-key`·`b-scoring` 고정이었는데,
+ * 한 문서에 경기가 여섯이면 **같은 id 가 여섯 번** 나온다. 참조하는 곳은 0건이었지만
+ * 중복 id 는 그 자체로 깨진 문서다.
+ * ⚠**원본 링크(L3)는 경기마다 남긴다** — 가리키는 대상이 경기별로 다르다.
+ */
+export function gameSection(d: GamePageData, base: string): RawHtml {
+  const anchor = gameAnchor(d.gameId);
   const winner = d.away.runs === d.home.runs ? null : d.away.runs > d.home.runs ? "away" : "home";
   const widest = Math.max(0.5, ...d.keyPlays.map((p) => Math.abs(p.swing ?? 0)));
 
@@ -231,14 +272,15 @@ export function renderGamePage(d: GamePageData, ctx: RenderContext): string {
       ? raw("")
       : html`<span class="gd"><b>${label}</b><a href="${base}players/${p.playerId}.html">${p.name}</a></span>`;
 
-  const body = html`<header class="idline">
+  return html`<article class="gamedetail" id="${anchor}">
+<header class="idline">
   <div class="idtext">
-    <h1 class="nm">${fullDate(d.gameDate)}</h1>
+    <h2 class="nm">${d.away.shortName} ${d.away.runs}-${d.home.runs} ${d.home.shortName}</h2>
     <span class="sub">${d.venue ?? ""}${d.series === null ? "" : ` · ${d.series}`}</span>
   </div>
 </header>
 
-<section class="block" id="b-score">
+<section class="block" id="${anchor}-score">
   <div class="gbig">
     ${scoreSide(d.away, winner === "away")}
     ${scoreSide(d.home, winner === "home")}
@@ -268,7 +310,7 @@ export function renderGamePage(d: GamePageData, ctx: RenderContext): string {
 
 ${d.keyPlays.length === 0
     ? raw("")
-    : html`<section class="block" id="b-key">
+    : html`<section class="block" id="${anchor}-key">
   <h2>試合を動かした打席<span class="qt">上位${d.keyPlayLimit}打席</span></h2>
   <ul class="plays">${d.keyPlays.map((p) => playRow(p, d, base, widest))}</ul>
   ${note(
@@ -284,13 +326,45 @@ ${d.keyPlays.length === 0
 
 ${d.scoringPlays.length === 0
     ? html`<section class="block"><h2>得点した場面</h2><p class="empty">この試合に得点はありませんでした。</p></section>`
-    : html`<section class="block" id="b-scoring">
+    : html`<section class="block" id="${anchor}-scoring">
   <h2>得点した場面<span class="qt">${d.scoringPlays.length}回</span></h2>
   <ul class="plays">${d.scoringPlays.map((p) => playRow(p, d, base, widest))}</ul>
 </section>`}
 
+<p class="note"><a href="${d.sourceUrl}" rel="noreferrer noopener">この試合の記録を NPB 公式サイトで見る</a></p>
+</article>`;
+}
+
+/**
+ * **경기일 하나의 상세 페이지.** 그 날 경기가 전부 이 한 장에 들어간다.
+ *
+ * ⚠**경기 하나에 파일 하나였다**(2026-08-26 · 감사 P3 #41). Cloudflare Pages 의 배포당
+ * 파일 상한(20,000)에 여유가 **2.61시즌**밖에 없었고 경기 페이지가 배포물의 **48.6%(7,502장)** 였다.
+ * 묶으면 **1,531장**이 되고 여유가 **약 6.0시즌**이 된다.
+ * ⚠**담는 내용은 늘지 않는다 — 묶는 단위만 바뀐다**(L2 경계 그대로).
+ *
+ * ⚠**「記録について」 각주는 한 장에 한 번**만 낸다. 경기마다 내면 같은 문장이 여섯 번 나오고,
+ * 그건 읽는 사람에게도 배포물 크기에도 손해다. **원본 링크는 경기마다** 남는다(L3).
+ * ⚠**색은 중립이다** — 한 장에 경기가 여럿이라 승자 구단색을 하나 고를 수 없다.
+ */
+export function renderGameDayPage(
+  date: string,
+  games: readonly GamePageData[],
+  ctx: RenderContext,
+): string {
+  const { base, root, seasons } = ctx.paths(gameDayPath(date));
+
+  const body = html`<header class="idline">
+  <div class="idtext">
+    <h1 class="nm">${fullDate(date)}の試合詳細</h1>
+    <span class="sub">${games.length}試合</span>
+  </div>
+</header>
+
+${games.map((g) => gameSection(g, base))}
+
 <section class="block">
-  <h2>この試合の記録について</h2>
+  <h2>この記録について</h2>
   ${note(
     "当サイトは試合の全経過を転載していません。得点の場面と、得点期待値を大きく動かした打席だけを選んで載せています。" +
       "打席の表記（右越本④ など）は記録の標準的な書き方です。" +
@@ -298,7 +372,6 @@ ${d.scoringPlays.length === 0
       "⚠「打点なし」と付いた得点は、その打席の結果で入った点ではありません — " +
       "打席の間の走塁や失策で入った点で、記録上その打席の欄に置かれます。",
   )}
-  <p class="note"><a href="${d.sourceUrl}" rel="noreferrer noopener">この試合の記録を NPB 公式サイトで見る</a></p>
 </section>
 
 <nav class="find" aria-label="ほかのページ">
@@ -306,11 +379,11 @@ ${d.scoringPlays.length === 0
 </nav>`;
 
   return page({
-    title: `${d.away.shortName} ${d.away.runs}-${d.home.runs} ${d.home.shortName} — ${fullDate(d.gameDate)}`,
+    title: `${fullDate(date)}の試合詳細`,
     base,
     root,
     seasons,
-    color: (winner === "home" ? d.home : d.away).color,
+    color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
     hasPostseason: ctx.hasPostseason,
