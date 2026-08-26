@@ -44,7 +44,15 @@ async function withDb(fn: (db: ReturnType<typeof openDb>) => void): Promise<void
   }
 }
 
-/** 한 경기 + 그 경기의 타석들. 홈팀이 공격하는 하프(bottom)만 쓴다 */
+/**
+ * 한 경기 + 그 경기의 타석들. 홈팀이 공격하는 하프(bottom)만 쓴다.
+ *
+ * ⚠**이 픽스처는 「1회 말」 하나뿐이고 홈이 이긴다** — 그래서 RE 행렬의 기본값(`exclude`)에서는
+ * **끝내기로 판정돼 통째로 빠진다**(2026-08-25 · `walkoffHalves`). 규칙이 맞고 픽스처가 그 모양이다.
+ * → 아래 번트 시험들은 RE 를 만들 때 **`"include"` 를 명시**한다. 여기서 재는 것은
+ * **번트 커널**이지 끝내기 처리가 아니고, 끝내기 쪽은 `walkoff.test.ts` 가 따로 지킨다.
+ * ⚠**픽스처의 승패를 뒤집어 피하지 마라** — 같은 헬퍼를 쓰는 상대전적 시험이 그 값을 본다.
+ */
 function game(
   db: ReturnType<typeof openDb>,
   id: string,
@@ -133,7 +141,7 @@ test("⚠번트는 그 리그의 것만 센다 — 필터가 없으면 표본이
     game(db, "pl1", PL[1], PL[0], RE_OK);
 
     for (const [lg, codes] of [["central", CL], ["pacific", PL]] as const) {
-      const re = buildRunExpectancy(db, 2026, lg, [...codes], "regular", "9999-12-31");
+      const re = buildRunExpectancy(db, 2026, lg, [...codes], "regular", "9999-12-31", "include");
       const out = buntValues(db, 2026, "regular", "9999-12-31", re, [...codes]);
       const total = out.reduce((a, b) => a + b.n, 0);
       assert.equal(total, 1, `${lg} 버킷이 다른 리그의 번트까지 셌다(${total}건)`);
@@ -144,7 +152,7 @@ test("⚠번트는 그 리그의 것만 센다 — 필터가 없으면 표본이
 test("번트의 득점기대값 변화는 다음 타석 상태에서 나온다 — SRC와 같은 커널", async () => {
   await withDb((db) => {
     game(db, "cl1", CL[1], CL[0], RE_OK);
-    const re = buildRunExpectancy(db, 2026, "central", [...CL], "regular", "9999-12-31");
+    const re = buildRunExpectancy(db, 2026, "central", [...CL], "regular", "9999-12-31", "include");
     const out = buntValues(db, 2026, "regular", "9999-12-31", re, [...CL]);
     assert.equal(out.length, 1);
     const b = out[0]!;
@@ -168,7 +176,7 @@ test("⚠하프이닝 경계를 넘어 다음 행을 이후 상태로 쓰지 않
     // 2회 말의 마지막 타석이 번트다. 그 다음 행은 **3회 말 선두**(주자 없음·무사)라
     // 경계를 무시하면 「주자 없음 무사」의 큰 기대값을 이후로 삼아 Δ가 크게 플러스가 된다
     twoHalves(db, "cl1", CL[1], CL[0]);
-    const re = buildRunExpectancy(db, 2026, "central", [...CL], "regular", "9999-12-31");
+    const re = buildRunExpectancy(db, 2026, "central", [...CL], "regular", "9999-12-31", "include");
     const out = buntValues(db, 2026, "regular", "9999-12-31", re, [...CL]);
     assert.equal(out.length, 1, "번트를 못 찾았다 — 이 시험이 공회전한다");
     // ⚠**정확한 기대식으로 못 박는다.** 「음수인가」로만 보면 경계를 넘어 다른 상태를 써도
