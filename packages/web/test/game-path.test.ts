@@ -22,19 +22,35 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { gamePath, gameSlug } from "../src/game-page.ts";
+import { gameAnchor, gameDayPath, gamePath, gameSlug } from "../src/game-page.ts";
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 
-test("경로는 슬러그 위에 얹힌다", () => {
-  assert.equal(gamePath("2026/0814/s-db-17"), "games/2026-0814-s-db-17.html");
+test("경로는 날짜 파일 + 경기 앵커다", () => {
+  assert.equal(
+    gamePath("2026-08-14", "2026/0814/s-db-17"),
+    "games/2026-08-14.html#g-2026-0814-s-db-17",
+  );
   assert.equal(gameSlug("2026/0814/s-db-17"), "2026-0814-s-db-17");
+  assert.equal(gameDayPath("2026-08-14"), "games/2026-08-14.html");
+  assert.equal(gameAnchor("2026/0814/s-db-17"), "g-2026-0814-s-db-17");
 });
 
 /** ⚠**이미 슬러그가 된 값을 넣어도 같다** — 호출부가 둘을 섞어 넘긴다 */
 test("⚠슬러그를 두 번 걸어도 같은 값이다 — 호출부가 둘을 섞어 넘긴다", () => {
-  const once = gamePath("2026/0814/s-db-17");
-  assert.equal(gamePath(gameSlug("2026/0814/s-db-17")), once);
+  const once = gamePath("2026-08-14", "2026/0814/s-db-17");
+  assert.equal(gamePath("2026-08-14", gameSlug("2026/0814/s-db-17")), once);
+});
+
+/**
+ * ⚠**날짜를 슬러그에서 유도하지 않는다.** 한때 그렇게 만들었다가 되돌렸다 —
+ * 유도는 npb.jp 의 ID 형식이 영원하다고 가정하고, 형식이 다르면 **그리는 중에 던져서**
+ * 그 화면이 통째로 안 나온다. 실제로 그 판을 만들자 **픽스처의 `gameId: "g1"` 에서
+ * 오늘·날짜 화면의 시험 32본이 한꺼번에 무너졌다** — 진짜 데이터가 아니라 형식 가정이 깨진 것이다.
+ * ⚠**그래서 형식을 안 보는 것이 요점이다.** 날짜가 어떤 모양이든 경로가 나온다.
+ */
+test("⚠경기 ID 의 형식을 가정하지 않는다", () => {
+  assert.equal(gamePath("2026-08-14", "g1"), "games/2026-08-14.html#g-g1");
 });
 
 /**

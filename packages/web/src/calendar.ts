@@ -127,7 +127,7 @@ function cell(g: CalendarGame, base: string): RawHtml {
   const cls = g.upcoming ? "cg cgup" : `cg cg${g.result ?? ""}`;
   return g.slug === null
     ? html`<span class="${cls}">${body}</span>`
-    : html`<a class="${cls}" href="${base}${gamePath(g.slug)}">${body}</a>`;
+    : html`<a class="${cls}" href="${base}${gamePath(g.date, g.slug)}">${body}</a>`;
 }
 
 /**

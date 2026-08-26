@@ -256,7 +256,14 @@ function starText(s: TodayStar): string {
 
 const DECISION_LABEL: Readonly<Record<string, string>> = { "○": "勝", "●": "敗", S: "S", H: "H" };
 
-function gameCard(g: TodayGame, base: string): RawHtml {
+/**
+ * ⚠**날짜는 인자로 받는다** — `TodayGame` 에는 날짜가 없고, 이 카드는 today 화면과
+ * 날짜 화면이 함께 쓴다. 경기 상세는 **경기일 하나에 파일 하나**라 링크에 날짜가 필요하다.
+ *
+ * ⚠**날짜를 모르면 링크를 만들지 않는다.** 빈 문자열로 때우면 `games/.html` 이라는
+ * 없는 곳을 가리킨다 — 이 파일이 `hasPage` 에서 이미 쓰는 규칙과 같다(M12).
+ */
+function gameCard(g: TodayGame, base: string, date: string | null): RawHtml {
   if (g.status !== "played") {
     return html`<article class="gcard off">
   <h3 class="gvenue">${g.venue ?? ""}</h3>
@@ -298,8 +305,8 @@ function gameCard(g: TodayGame, base: string): RawHtml {
       ${s.decision === null ? null : html`<em class="gsd">${DECISION_LABEL[s.decision] ?? s.decision}</em>`}
     </li>`,
       )}</ul>`}
-  ${g.hasPage
-    ? html`<p class="gmore"><a class="cardlink" href="${base}${gamePath(g.gameId)}">この試合の詳細<span
+  ${g.hasPage && date !== null
+    ? html`<p class="gmore"><a class="cardlink" href="${base}${gamePath(date, g.gameId)}">この試合の詳細<span
       class="vh">（${g.away.shortName} 対 ${g.home.shortName}）</span></a></p>`
     : raw("")}
 </article>`;
@@ -368,7 +375,7 @@ ${dayBar(base, { prev: d.prev, next: null, latestDate: d.gameDate, dayCount: d.d
     ? html`<p class="empty">${d.gameDate === null
       ? "このシーズンの試合はまだ取り込んでいません。"
       : "この日の試合はまだ取り込んでいません。"}</p>`
-    : html`<div class="gcards">${d.games.map((g) => gameCard(g, base))}</div>`}
+    : html`<div class="gcards">${d.games.map((g) => gameCard(g, base, d.gameDate))}</div>`}
   ${note(
     // ⚠**기준을 화면에 적는다.** 「왜 이 선수가 없지?」에 답할 수 없으면 목록이 아니라 인상이다
     `各試合の下に出るのは「${d.starRule}」に当てはまった記録です。多いときは1試合${d.starLimit}人までにしています。` +
@@ -427,7 +434,7 @@ ${dayBar(base, d)}
   <h2>${fullDate(d.date)}の結果</h2>
   ${d.games.length === 0
     ? html`<p class="empty">この日の試合は取り込んでいません。</p>`
-    : html`<div class="gcards">${d.games.map((g) => gameCard(g, base))}</div>`}
+    : html`<div class="gcards">${d.games.map((g) => gameCard(g, base, d.date))}</div>`}
   ${note(
     `各試合の下に出るのは「${d.starRule}」に当てはまった記録です。多いときは1試合${d.starLimit}人までにしています。` +
       "得点・安打・失策はその試合の公表記録、投手成績は当サイトの再計算です。",

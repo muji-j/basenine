@@ -19,7 +19,8 @@ import { renderDayIndexPage, renderDayPage, renderTodayPage } from "./today-page
 import { renderPostseasonPage } from "./postseason-page.ts";
 import { renderTeamPage, teamPath } from "./team-page.ts";
 import { renderTeamsPage } from "./teams-page.ts";
-import { gamePath, gameSlug, renderGamePage } from "./game-page.ts";
+import { gameDayPath, gameSlug, renderGameDayPage } from "./game-page.ts";
+import type { GamePageData } from "./game-page.ts";
 import { renderLogPage } from "./log-page.ts";
 import { GLOSSARY_PATH, renderGlossaryPage } from "./glossary-page.ts";
 import type { LogPageData } from "./log-page.ts";
@@ -129,7 +130,8 @@ export function seasonPaths(data: SiteData, hasLog: boolean): Set<string> {
     if (d.gameDate !== null) out.add(`starters/${d.gameDate}.html`);
   }
   for (const p of data.players) out.add(`players/${p.playerId}.html`);
-  for (const g of data.games) out.add(gamePath(g.gameId));
+  // ⚠**앵커는 경로가 아니다** — 시즌 경로 목록에는 파일 경로만 넣는다
+  for (const g of data.games) out.add(gameDayPath(g.gameDate));
   return out;
 }
 
@@ -274,21 +276,34 @@ export function buildSite(
   }
 
   /**
-   * 경기 페이지.
+   * 경기 상세 — **경기일 하나에 파일 하나**(2026-08-26 · 감사 P3 #41).
    *
    * ⚠**경기 ID가 파일 경로가 된다.** `2026/0814/s-db-17` 형태이므로 `/`를 그대로 두면
    * 디렉터리가 세 겹 파이는데, 그건 상대 경로 계산을 어렵게 만들 뿐이다 — 평평하게 편다.
    * 그리고 **외부에서 온 문자열이므로 형태를 검사한다**(선수 ID와 같은 이유).
+   *
+   * ⚠**날짜는 `g.gameDate` 다** — 파일도 링크도 같은 필드를 본다.
+   *   한때 슬러그에서 유도했다가 되돌렸다: 유도는 npb.jp 의 ID 형식이 영원하다고 가정하고,
+   *   형식이 다르면 **그리는 중에 던져** 그 화면이 통째로 안 나온다.
+   * ⚠**그래도 갈릴 수 있다** — 링크 쪽이 다른 날짜를 넘기면 그렇다.
+   *   막는 것은 **링크 검사**다(빌드가 앵커까지 포함해 전 링크를 확인하고 어긋나면 멈춘다).
    */
+  const byDay = new Map<string, GamePageData[]>();
   for (const g of data.games) {
     const slug = gameSlug(g.gameId);
     if (!/^[A-Za-z0-9_-]+$/.test(slug)) {
       throw new Error(`경기 ID가 경로로 쓸 수 없는 형태다: ${JSON.stringify(g.gameId)}`);
     }
-    // ⚠**파일을 쓰는 쪽도 같은 한 벌을 쓴다**(2026-08-26). `gameSlug` 의 주석이
-    //   「링크를 만드는 쪽과 파일을 쓰는 쪽이 따로 계산하면 어긋난다」고 경고하는데
-    //   **경로 단계에서는 정확히 그 상태였다.**
-    files.push({ path: at(gamePath(g.gameId)), content: renderGamePage(g, ctx) });
+    const day = g.gameDate;
+    const bucket = byDay.get(day);
+    if (bucket === undefined) byDay.set(day, [g]);
+    else bucket.push(g);
+  }
+  for (const [day, games] of byDay) {
+    files.push({
+      path: at(gameDayPath(safeSegment(day, "경기일"))),
+      content: renderGameDayPage(day, games, ctx),
+    });
   }
 
   return {

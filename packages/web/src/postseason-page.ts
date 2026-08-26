@@ -194,7 +194,7 @@ function gameCard(g: PostGame, base: string): RawHtml {
   // ⚠상세 페이지가 없으면 카드를 누를 수 있게 만들지 않는다 — 눌러도 안 가는 카드는 결함이다
   return g.hasPage
     ? html`<article class="gcard tapcard">${body}
-  <p class="gmore"><a class="cardlink" href="${base}${gamePath(g.gameId)}">この試合の詳細<span
+  <p class="gmore"><a class="cardlink" href="${base}${gamePath(g.date, g.gameId)}">この試合の詳細<span
     class="vh">（第${g.gameNo}戦 ${g.away.shortName} 対 ${g.home.shortName}）</span></a></p>
 </article>`
     : html`<article class="gcard">${body}</article>`;
