@@ -371,6 +371,9 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
           ops: r(0.58, 230),
         },
       ],
+      // ⚠**기본 픽스처는 통산 없음**이다 — 탭이 없는 쪽이 기존 시험이 보던 모양이고,
+      //   통산이 붙은 모양은 `count-career.test.ts` 가 따로 만든다
+      career: null,
     },
     // 기본 픽스처는 타자다 — 火消し는 투수만 (`pitcherPage()` 가 채운다)
     relief: null,

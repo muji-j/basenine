@@ -66,6 +66,7 @@ import type {
   CareerData,
   CareerRow,
   CountBlockData,
+  CountScope,
   CountSplitRow,
   CountUnreadable,
   ReliefBlockData,
@@ -4795,7 +4796,16 @@ export function gidpOrUnknown(counted: number | undefined, pa: number): number |
  * ⚠**내보내는 이유는 시험 때문이다.** 이 상태는 오늘 실데이터에 0건이라 `loadSite` 를 통해서는
  *   재현할 수 없다 — 규칙을 값으로 재려면 함수를 직접 불러야 한다(작업규칙 9).
  */
-export function countBlockOf(c: CountLine | undefined): CountBlockData | CountUnreadable | null {
+export function countBlockOf(
+  c: CountLine | undefined,
+  /**
+   * 통산분(보유 첫 시즌 ~ 보고 있는 시즌)과 그 범위. 없으면 탭을 만들지 않는다.
+   *
+   * ⚠**`span.from === span.to` 면 통산이 시즌과 같다** — 그때도 탭을 만들지 않는다.
+   * 「今季」와 「通算」이 같은 표를 두 번 보여주는 것은 정보가 아니라 잡음이다.
+   */
+  career?: { line: CountLine | undefined; span: { from: number; to: number } },
+): CountBlockData | CountUnreadable | null {
   if (c === undefined) return null;
   if (c.pa === 0) return c.quarantined > 0 ? { quarantinedOnly: c.quarantined } : null;
   const row = (label: string, line: BattingLine): CountSplitRow => ({
@@ -4804,17 +4814,25 @@ export function countBlockOf(c: CountLine | undefined): CountBlockData | CountUn
     avg: battingAverage(line),
     ops: ops(line),
   });
-  return {
-    pa: c.pa,
-    quarantined: c.quarantined,
-    twoStrike: twoStrikeRate(c),
-    firstPitch: firstPitchRate(c),
-    fullCount: fullCountRate(c),
-    threeBall: threeBallRate(c),
+  const scopeOf = (x: CountLine): CountScope => ({
+    pa: x.pa,
+    quarantined: x.quarantined,
+    twoStrike: twoStrikeRate(x),
+    firstPitch: firstPitchRate(x),
+    fullCount: fullCountRate(x),
+    threeBall: threeBallRate(x),
     rows: [
-      row("2ストライク前", c.beforeTwoStrikeLine),
-      row("2ストライク後", c.twoStrikeLine),
+      row("2ストライク前", x.beforeTwoStrikeLine),
+      row("2ストライク後", x.twoStrikeLine),
     ],
+  });
+  const careerLine = career?.line;
+  return {
+    ...scopeOf(c),
+    career:
+      career === undefined || careerLine === undefined || career.span.from >= career.span.to
+        ? null
+        : { ...scopeOf(careerLine), span: career.span },
   };
 }
 
@@ -5056,6 +5074,25 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   const countByPitcher = new Map<string, CountLine>();
   for (const c of countLines(db, o.season, competition, through, true)) {
     countByPitcher.set(c.playerId, addCount(countByPitcher.get(c.playerId), c));
+  }
+  /**
+   * **통산분**(보유 첫 시즌 ~ 보고 있는 시즌).
+   *
+   * ⚠**표본이 이유다.** 실측(2025 · 규정타석급 40명 · 칸 480): 그 시즌만이면
+   * **가장 작은 칸의 중앙 6타석 · 33.8%가 30타석 미만**이고, 통산이면 **중앙 23 · 14.0%** 다.
+   * ⚠**볼카운트는 9시즌 전 시즌 100% 보유**라 통산이 결측을 섞지 않는다(482,563/482,563).
+   *
+   * ⚠**보유가 한 시즌뿐이면 헛수고가 아니라 잡음이다** — `countBlockOf` 가 그때 탭을 안 만든다.
+   */
+  const countCareerByBatter = new Map<string, CountLine>();
+  const countCareerByPitcher = new Map<string, CountLine>();
+  if (heldFrom < o.season) {
+    for (const c of countLines(db, o.season, competition, through, false, heldFrom)) {
+      countCareerByBatter.set(c.playerId, addCount(countCareerByBatter.get(c.playerId), c));
+    }
+    for (const c of countLines(db, o.season, competition, through, true, heldFrom)) {
+      countCareerByPitcher.set(c.playerId, addCount(countCareerByPitcher.get(c.playerId), c));
+    }
   }
 
   const bbPitcher = new Map<string, BattedBallData>();
@@ -5620,7 +5657,13 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
        * カウント別. ⚠**투수 페이지는 투수 쪽 집계를 본다** — 투수도 타석에 서지만
        * 이 블록의 주역은 「이 사람이 던진 타석」이다.
        */
-      count: countBlockOf(role === "pitcher" ? countByPitcher.get(playerId) : countByBatter.get(playerId)),
+      count: countBlockOf(
+        role === "pitcher" ? countByPitcher.get(playerId) : countByBatter.get(playerId),
+        {
+          line: role === "pitcher" ? countCareerByPitcher.get(playerId) : countCareerByBatter.get(playerId),
+          span: { from: heldFrom, to: o.season },
+        },
+      ),
       /** 火消し. ⚠**투수 페이지에만** — 타자에게는 뜻이 없다(`blocks.ts` 가 그것을 강제한다) */
       relief:
         role === "pitcher"

@@ -269,7 +269,8 @@ export interface CountSplitRow {
  * ⚠**投球単位のデータではない.** 파울·헛스윙·투구 수는 여전히 모른다 —
  * 화면이 그 경계를 말한다(`countBlock` 의 각주).
  */
-export interface CountBlockData {
+/** カウント別의 한 범위분. ⚠**시즌과 통산이 같은 모양을 쓴다** — 두 벌로 적으면 어긋난다(M1) */
+export interface CountScope {
   /** 읽을 수 있었던 타석. ⚠**이 블록 전 비율의 분모다**(M2) */
   pa: number;
   /**
@@ -282,6 +283,21 @@ export interface CountBlockData {
   fullCount: Rate;
   threeBall: Rate;
   rows: CountSplitRow[];
+}
+
+export interface CountBlockData extends CountScope {
+  /**
+   * 통산분. 보유가 한 시즌뿐이거나 통산이 시즌과 같으면 `null` — 그때 탭을 만들지 않는다.
+   *
+   * ⚠**왜 이 축에만 통산을 두는가**: 표본이 그렇다. 실측(2025 · 규정타석급 40명 · 칸 480)
+   * 그 시즌만이면 **가장 작은 칸의 중앙 6타석 · 33.8%가 30타석 미만**이고,
+   * 통산이면 **중앙 23타석 · 14.0%** 다. 볼카운트는 **9시즌 전 시즌 100% 보유**라
+   * 통산이 결측을 섞지 않는다(482,563/482,563 실측).
+   *
+   * ⚠**「通算」이라는 말만으로는 거짓이다** — `span` 이 있어야 화면이 범위를 말한다
+   * (`火消し`·스플릿 통산 축과 같은 규칙).
+   */
+  career: (CountScope & { span: { from: number; to: number } }) | null;
 }
 
 /**
@@ -1890,6 +1906,17 @@ function rankingBlock(panels: readonly RankingPanel[], base: string): RawHtml {
 function countBlock(c: CountBlockData, role: "batter" | "pitcher"): RawHtml {
   const forPitcher = role === "pitcher";
   /**
+   * ⚠**통산이 있으면 탭으로 낸다.** 축을 늘리는 것이 아니라 **같은 표를 두 범위로** 보는 것이라
+   * 스플릿처럼 축 목록에 섞지 않는다 — 섞으면 「무엇을 나누는 축인가」가 흐려진다.
+   */
+  const scopes: { id: string; label: string; scope: CountScope; span: { from: number; to: number } | null }[] =
+    c.career === null
+      ? [{ id: "season", label: "今季", scope: c, span: null }]
+      : [
+          { id: "season", label: "今季", scope: c, span: null },
+          { id: "career", label: "通算", scope: c.career, span: c.career.span },
+        ];
+  /**
    * ⚠**투수 화면에 타자 이름을 쓰지 않는다.** 「打率 .358」이 투수 페이지에 있으면
    * 그건 이 투수가 친 것으로 읽힌다 — 용어집이 `avg`/`allowedAvg` 를 나눠 둔 이유와 같다.
    */
@@ -1897,60 +1924,74 @@ function countBlock(c: CountBlockData, role: "batter" | "pitcher"): RawHtml {
   const opsKey = forPitcher ? "allowedOps" : "ops";
   const hitLabel = forPitcher ? "被安打" : "安打";
   const soLabel = forPitcher ? "奪三振" : "三振";
-  const rows = c.rows.filter((r) => r.line.pa > 0);
-  const table = rows.length === 0
-    ? raw("")
-    : scroller(html`<table>
-    <thead><tr>
-      <th class="l">カウント</th><th>${term("打席")}</th><th>${term("打数")}</th>
-      <th>${hitLabel}</th><th>${soLabel}</th>
-      <th>${term(termOf(avgKey)!.label)}</th><th>${term(termOf(opsKey)!.label)}</th>
-    </tr></thead>
-    <tbody>${rows.map(
-      (r) => html`<tr>
-      <td class="l">${r.label}</td>
-      <td class="b">${r.line.pa}</td>
-      <td>${r.line.ab}</td>
-      <td>${r.line.h}</td>
-      <td>${r.line.so}</td>
-      <!-- ⚠**분모를 값에 붙인다**(M2). 옆의 打数 열과 같은 수이지만, 값만 떼어
-           다른 화면에 실릴 때 분모가 따라가야 한다 -->
-      <td class="wd">${valueWithDen(r.avg, denUnit(avgKey), 3)}</td>
-      <td class="wd">${valueWithDen(r.ops, denUnit(opsKey), 3)}</td>
-    </tr>`,
-    )}</tbody>
-  </table>`);
+  const bodyOf = (s: CountScope, span: { from: number; to: number } | null): RawHtml => {
+    const rows = s.rows.filter((r) => r.line.pa > 0);
+    const table = rows.length === 0
+      ? raw("")
+      : scroller(html`<table>
+      <thead><tr>
+        <th class="l">カウント</th><th>${term("打席")}</th><th>${term("打数")}</th>
+        <th>${hitLabel}</th><th>${soLabel}</th>
+        <th>${term(termOf(avgKey)!.label)}</th><th>${term(termOf(opsKey)!.label)}</th>
+      </tr></thead>
+      <tbody>${rows.map(
+        (r) => html`<tr>
+        <td class="l">${r.label}</td>
+        <td class="b">${r.line.pa}</td>
+        <td>${r.line.ab}</td>
+        <td>${r.line.h}</td>
+        <td>${r.line.so}</td>
+        <!-- ⚠**분모를 값에 붙인다**(M2). 옆의 打数 열과 같은 수이지만, 값만 떼어
+             다른 화면에 실릴 때 분모가 따라가야 한다 -->
+        <td class="wd">${valueWithDen(r.avg, denUnit(avgKey), 3)}</td>
+        <td class="wd">${valueWithDen(r.ops, denUnit(opsKey), 3)}</td>
+      </tr>`,
+      )}</tbody>
+    </table>`);
 
-  return block({
-    id: "count",
-    title: "カウント別",
-    qualifier: `${c.pa}打席`,
-    body: html`${columns(
-      html`${statRate(forPitcher ? "追い込み率" : "追い込まれ率", c.twoStrike, denUnit(forPitcher ? "twoStrikeGained" : "twoStrikeAgainst"), 3)}
-        ${statRate("初球決着率", c.firstPitch, denUnit("firstPitchDecided"), 3)}`,
-      html`${statRate("フルカウント率", c.fullCount, denUnit("fullCountReached"), 3)}
-        ${statRate("3ボール率", c.threeBall, denUnit("threeBallReached"), 3)}`,
+    return html`${columns(
+      html`${statRate(forPitcher ? "追い込み率" : "追い込まれ率", s.twoStrike, denUnit(forPitcher ? "twoStrikeGained" : "twoStrikeAgainst"), 3)}
+        ${statRate("初球決着率", s.firstPitch, denUnit("firstPitchDecided"), 3)}`,
+      html`${statRate("フルカウント率", s.fullCount, denUnit("fullCountReached"), 3)}
+        ${statRate("3ボール率", s.threeBall, denUnit("threeBallReached"), 3)}`,
       /**
        * ⚠**격리한 타석이 있으면 그 수를 낸다**(M11). 없으면 줄 자체를 만들지 않는다 —
        * 늘 `0` 이 서 있으면 아무도 안 읽고, 어느 날 1이 되어도 눈에 안 띈다.
        */
-      c.quarantined === 0
+      s.quarantined === 0
         ? raw("")
-        : html`${statCount("カウント不明", c.quarantined)}`,
+        : html`${statCount("カウント不明", s.quarantined)}`,
     )}
     ${table}
     ${note(
-      "⚠**投球単位のデータではありません。** 分かるのは「打席の最後の1球を投げたときのカウント」だけで、" +
+      // ⚠**「通算」とだけ書くと嘘になる** — 当サイトが持っている範囲の通算だからだ(火消しと同じ規則)
+      (span === null
+        ? ""
+        : `この区分は当サイトが保有する**${span.from}〜${span.to}年**を合算しています`
+          + `（NPBが公表する通算とは範囲が違います）。`) +
+        "⚠**投球単位のデータではありません。** 分かるのは「打席の最後の1球を投げたときのカウント」だけで、" +
         "ファウル・空振り・初球ストライク率・投げさせた球数は数えられません" +
         "（公表されている記録に1球ごとの情報がないためです）。" +
         "⚠ボールもストライクも打席の中で減らないので、終了時のカウントで**到達**は正確に言えます — " +
         "2ストライクで終わった打席は必ず途中で追い込まれています。" +
         "⚠**初球決着率から申告敬遠は除いています**（記録上は 0-0 ですが1球も投げていません）。" +
-        (c.quarantined === 0
+        (s.quarantined === 0
           ? ""
-          : `⚠カウントを読めなかった打席が${c.quarantined}件あり、上の母数から外しています。`) +
+          : `⚠カウントを読めなかった打席が${s.quarantined}件あり、上の母数から外しています。`) +
         "⚠この指標自体は当サイト独自のものではありません — 材料が手元にあったので出しています。",
-    )}`,
+    )}`;
+  };
+
+  if (scopes.length === 1) {
+    return block({ id: "count", title: "カウント別", qualifier: `${c.pa}打席`, body: bodyOf(c, null) });
+  }
+  return block({
+    id: "count",
+    title: "カウント別",
+    // ⚠**머리의 분모는 처음 보이는 탭의 것**이다 — 탭을 바꾸면 각 패널이 자기 분모를 낸다
+    qualifier: `${c.pa}打席`,
+    controls: tablist("count", scopes.map((s) => ({ id: s.id, label: s.label })), false, "範囲の切り替え", true),
+    body: html`${scopes.map((s, i) => panel("count", s.id, i === 0, bodyOf(s.scope, s.span)))}`,
   });
 }
 
