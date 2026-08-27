@@ -198,7 +198,10 @@ let stoppedAt: string | null = null;
  * ⚠**가장 최근 경기의 값을 쓴다.** 표기가 갈린 선수가 2명 있었고(스위치 전향 등),
  * 최근 값이 선수 페이지와 일치했다.
  */
-const rosterLatest = new Map<string, { date: string; throws: string; bats: string; uniformNumber: string | null }>();
+const rosterLatest = new Map<
+  string,
+  { date: string; throws: string; bats: string; uniformNumber: string | null; position: string }
+>();
 let rosterFiles = 0;
 let rosterFailed = 0;
 
@@ -437,6 +440,7 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
         if (prev === undefined || prev.date <= meta.gameDate) {
           rosterLatest.set(e.playerId, {
             date: meta.gameDate, throws: e.throws, bats: e.bats, uniformNumber: e.uniformNumber,
+            position: e.position,
           });
         }
       }
@@ -632,6 +636,18 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
  */
 let filledHand = 0;
 let filledNumber = 0;
+/**
+ * ⚠**포지션도 같은 규칙으로 채운다**(2026-08-27). 투타를 메울 때 이 칸을 같이 안 메웠고,
+ * 그 결과가 화면에서 이렇게 나왔다: 선수 페이지의 역할 판정이
+ * `position === "投手"` 를 먼저 보므로, **미상이면 투수가 타자로 판정**된다.
+ * 실측(보유 9시즌): 투타 양쪽 기록을 가진 2,374 선수-시즌 중 **917 이 `position` 미상**이고
+ * 그만큼 **투수 스플릿이 화면에서 통째로 사라진다**(상대한 타자 합 163,631 · 한 명 최대 847).
+ * 소급 시즌일수록 심하다 — 2018년 191명 · 2026년 0명.
+ *
+ * ⚠**「투타는 메웠으니 됐다」가 이 결함을 오래 숨겼다** — 같은 페이지에 답이 있었는데
+ * 그때 필요했던 칸만 읽었다(§2-2-1 「받고 있는데 안 읽던 것」의 재발).
+ */
+let filledPosition = 0;
 if (rosterLatest.size > 0) {
   const throwsFill = db.raw.prepare(
     "UPDATE player SET throws = ? WHERE player_id = ? AND throws IS NULL",
@@ -641,6 +657,9 @@ if (rosterLatest.size > 0) {
   );
   const num = db.raw.prepare(
     "UPDATE player SET uniform_number = ? WHERE player_id = ? AND uniform_number IS NULL",
+  );
+  const pos = db.raw.prepare(
+    "UPDATE player SET position = ? WHERE player_id = ? AND position IS NULL",
   );
   db.transaction(() => {
     for (const [playerId, r] of rosterLatest) {
@@ -652,6 +671,8 @@ if (rosterLatest.size > 0) {
         num.run(r.uniformNumber, playerId);
         filledNumber += (db.raw.prepare("SELECT changes() AS n").get() as { n: number }).n;
       }
+      pos.run(r.position, playerId);
+      filledPosition += (db.raw.prepare("SELECT changes() AS n").get() as { n: number }).n;
     }
   });
 }
@@ -683,7 +704,7 @@ console.log(
 // ⚠**분모를 같이 낸다.** 「보충 122명」만 내면 그것이 전부인지 일부인지 모른다
 console.log(
   `명단 ${rosterFiles}장(실패 ${rosterFailed}) · 선수 ${rosterLatest.size}명 · ` +
-    `투타 보충 ${filledHand}명 · 배번 보충 ${filledNumber}명`,
+    `투타 보충 ${filledHand}명 · 배번 보충 ${filledNumber}명 · 포지션 보충 ${filledPosition}명`,
 );
 if (lineScoreFailed > 0) {
   // ⚠**「성립」 안에 숨어 있던 부분 실패를 드러낸다.** 이 경기들은 득점이 없어

@@ -1215,6 +1215,46 @@ function loadStatePa(
 }
 
 /**
+ * **이 선수 페이지를 어느 쪽으로 그릴 것인가.**
+ *
+ * ⚠**이 판정 하나가 스플릿·상대전적·성적의 문·카운트별을 전부 가른다.** 틀리면 화면이
+ * **반대편을 그리고**, 투수의 경우 자기 타석이 0이라 스플릿이 통째로 사라진다.
+ *
+ * ## 왜 세 갈래인가 — 하나씩 다른 이유로 필요하다
+ *
+ * ⑴ **`position === "投手"`** — 가장 강한 근거이고 대부분이 여기서 갈린다.
+ * ⑵ **타격 기록이 아예 없고 투구 기록이 있다** — 퍼시픽 투수는 자기 타석이 없다.
+ * ⑶ **상대한 타자가 자기 타석보다 많다** — ⑴이 없거나 **낡았을** 때의 마지막 말.
+ *
+ * ⚠**⑶이 왜 필요한가 · 실측 두 벌**(2026-08-27):
+ * - `position` 은 **선수 페이지에서만** 오는데 그 페이지는 **현재 등록 선수만** 받는다.
+ *   소급 시즌에는 없는 선수가 대거 들어온다 — **917 선수-시즌**이 그 상태였고
+ *   사라진 투구가 **상대한 타자 합 163,631 · 한 명 최대 847**이었다.
+ *   지금은 명단(`roster.html`)이 그 칸을 메우지만, **메우기 전에도 옳게 그려져야 한다.**
+ * - `position` 은 **현재**를 말하므로 **전향**을 못 따라간다. 포지션을 다 메운 뒤에도
+ *   남는 것이 **4건이고 전부 한 사람**이다(西純 · 2021~2024 · 상대 타자 336/323/34/28).
+ *
+ * ⚠**야수 등판을 투수로 만들지 않는다.** 실측 5건(北村 6대132 · オスナ 2대226 ·
+ * 増田大 3대50 · 柴田 1대14)은 전부 자기 타석이 훨씬 많아 ⑶에 안 걸린다.
+ *
+ * ⚠**`null` 과 `0` 을 구별한다**(M11). `null` 은 **그 쪽 기록이 아예 없다**는 뜻이고,
+ * `0` 은 **기록은 있는데 값이 0**이라는 뜻이다 — ⑵가 그 둘을 갈라 본다.
+ */
+export function roleOf(o: {
+  /** 선수 페이지의 「ポジション」. 없으면 `null` */
+  position: string | null;
+  /** 그 시즌 자기 타석. **타격 기록 자체가 없으면 `null`** */
+  batterPa: number | null;
+  /** 그 시즌 상대한 타자. **투구 기록 자체가 없으면 `null`** */
+  pitcherBf: number | null;
+}): "batter" | "pitcher" {
+  if (o.position === "投手") return "pitcher";
+  if (o.pitcherBf === null) return "batter";
+  if (o.batterPa === null) return "pitcher";
+  return o.pitcherBf > o.batterPa ? "pitcher" : "batter";
+}
+
+/**
  * 얇은 구장을 한 줄로 접는다.
  *
  * ⚠**버리지 않고 합친다.** 합계가 맞아야 「그 선수의 전 타석이 어딘가에 있다」고 말할 수 있다.
@@ -5329,8 +5369,11 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     const profile = profiles.get(playerId);
     const team = teamOf(base.teamCode);
 
-    const role: "batter" | "pitcher" =
-      profile?.position === "投手" || (bat === undefined && pit !== undefined) ? "pitcher" : "batter";
+    const role = roleOf({
+      position: profile?.position ?? null,
+      batterPa: bat === undefined ? null : bat.player.line.pa,
+      pitcherBf: pit === undefined ? null : pit.player.line.bf,
+    });
 
     const battingData: BattingBlockData | null =
       bat === undefined
