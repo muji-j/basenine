@@ -20,7 +20,12 @@ export type SplitDimension =
   | "baseState"
   | "month"
   | "battingOrder"
-  | "venue";
+  | "venue"
+  /**
+   * **상대 구단.** ⚠**타자와 투수에서 뜻이 반대다** — 타자에게는 수비하는 쪽,
+   * 투수에게는 치는 쪽이다. 두 식을 각각 적어 둔다(KEY_EXPR / PITCHER_KEY_EXPR).
+   */
+  | "opponentTeam";
 
 export interface SplitLine {
   /** 축 안의 구분값. `left`/`right` · `home`/`away` · `empty`/`onBase`/`scoring` · `2026-04` */
@@ -59,6 +64,9 @@ const KEY_EXPR: Readonly<Record<SplitDimension, string>> = {
   // ⚠구장명은 **파서가 이미 다듬은 값**이다(전각 패딩 제거). 여기서 다시 다듬지 않는다 —
   // 두 곳에서 다듬으면 규칙이 어긋나 같은 구장이 두 줄로 갈라진다
   venue: `g.venue`,
+  // ⚠**상대 = 수비하는 쪽.** 표(top)에서 치는 것이 원정이므로 그때 상대는 홈이다.
+  //   같은 파일의 homeAway 식과 **반대로 읽히기 쉬우니** 나란히 두고 비교하라
+  opponentTeam: `CASE e.half WHEN 'top' THEN g.home_code ELSE g.away_code END`,
 };
 
 const SQL = (dimension: SplitDimension): string => `
@@ -74,7 +82,7 @@ JOIN player b ON b.player_id = e.batter_id
 ${seasonNameJoin("e.batter_id", "g.season")}
 LEFT JOIN player pit ON pit.player_id = e.pitcher_id
 LEFT JOIN batting_line bl ON bl.game_id = e.game_id AND bl.player_id = e.batter_id
-WHERE g.season = ? AND g.status = 'played' AND g.competition = ?
+WHERE g.season BETWEEN ? AND ? AND g.status = 'played' AND g.competition = ?
   AND g.game_date <= ? AND e.status = 'final'
 GROUP BY e.batter_id, splitKey, e.outcome
 `;
@@ -91,9 +99,17 @@ export function battingSplits(
   season: number,
   competition = "regular",
   through = "9999-12-31",
+  /**
+   * **어느 시즌부터 셀 것인가.** 기본은 `season` 자체 — 즉 그 시즌만.
+   *
+   * ⚠**통산은 「보고 있는 시즌까지」다** — `matchups` 와 같은 규칙이다(M1).
+   * 2022년 화면에서 2026년 성적을 더하면 그 화면이 **미래를 말하게 된다**.
+   * ⚠**대회는 그대로 분리한다**(§2-1) — 통산이라고 CS·일본시리즈를 섞지 않는다.
+   */
+  fromSeason = season,
 ): PlayerSplits[] {
   return foldSplitRows(
-    db.raw.prepare(SQL(dimension)).all(season, competition, through) as unknown as SplitQueryRow[],
+    db.raw.prepare(SQL(dimension)).all(fromSeason, season, competition, through) as unknown as SplitQueryRow[],
   );
 }
 
@@ -168,6 +184,9 @@ const PITCHER_KEY_EXPR: Readonly<Record<SplitDimension, string>> = {
   // ⚠투수 쪽의 「타순」은 **상대 타자가 몇 번이었는가**다. 자기 타순이 아니다
   battingOrder: `bl.batting_order`,
   venue: `g.venue`,
+  // ⚠**상대 = 치는 쪽.** 투수는 수비 쪽이므로 표(top)에서는 홈 투수이고 상대는 원정이다 —
+  //   **타자 쪽 식과 좌우가 뒤집힌다.** 한쪽만 보고 베끼면 조용히 반대 팀이 나온다
+  opponentTeam: `CASE e.half WHEN 'top' THEN g.away_code ELSE g.home_code END`,
 };
 
 const PITCHER_SQL = (dimension: SplitDimension): string => `
@@ -183,7 +202,7 @@ JOIN player pit ON pit.player_id = e.pitcher_id
 ${seasonNameJoin("e.pitcher_id", "g.season")}
 LEFT JOIN player bat ON bat.player_id = e.batter_id
 LEFT JOIN batting_line bl ON bl.game_id = e.game_id AND bl.player_id = e.batter_id
-WHERE g.season = ? AND g.status = 'played' AND g.competition = ?
+WHERE g.season BETWEEN ? AND ? AND g.status = 'played' AND g.competition = ?
   AND g.game_date <= ? AND e.status = 'final' AND e.pitcher_id IS NOT NULL
 GROUP BY e.pitcher_id, splitKey, e.outcome
 `;
@@ -203,9 +222,17 @@ export function pitchingSplits(
   season: number,
   competition = "regular",
   through = "9999-12-31",
+  /**
+   * **어느 시즌부터 셀 것인가.** 기본은 `season` 자체 — 즉 그 시즌만.
+   *
+   * ⚠**통산은 「보고 있는 시즌까지」다** — `matchups` 와 같은 규칙이다(M1).
+   * 2022년 화면에서 2026년 성적을 더하면 그 화면이 **미래를 말하게 된다**.
+   * ⚠**대회는 그대로 분리한다**(§2-1) — 통산이라고 CS·일본시리즈를 섞지 않는다.
+   */
+  fromSeason = season,
 ): PlayerSplits[] {
   return foldSplitRows(
-    db.raw.prepare(PITCHER_SQL(dimension)).all(season, competition, through) as unknown as SplitQueryRow[],
+    db.raw.prepare(PITCHER_SQL(dimension)).all(fromSeason, season, competition, through) as unknown as SplitQueryRow[],
   );
 }
 

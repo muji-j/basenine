@@ -283,6 +283,8 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
         ],
         unclassified: 12,
         thinBelow: 30,
+        // ⚠한 시즌만인 축이라 범위를 붙이지 않는다(통산 축이면 화면이 「2018〜2026年」이라고 말한다)
+        span: null,
       },
     ],
     scorebook: [
@@ -320,6 +322,9 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
       },
     ],
     matchupTotal: 2,
+    // ⚠**기본 픽스처는 통산 대전 없음**이다 — 탭이 없는 쪽이 기존 시험이 보던 DOM 이고,
+    //   통산이 붙은 모양은 `matchup-career.test.ts` 가 따로 만든다
+    matchupsCareer: null,
     ranking: [rankingPanel()],
     mark: {
       axes: battingProfile({
@@ -369,6 +374,9 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
           ops: r(0.58, 230),
         },
       ],
+      // ⚠**기본 픽스처는 통산 없음**이다 — 탭이 없는 쪽이 기존 시험이 보던 모양이고,
+      //   통산이 붙은 모양은 `count-career.test.ts` 가 따로 만든다
+      career: null,
     },
     // 기본 픽스처는 타자다 — 火消し는 투수만 (`pitcherPage()` 가 채운다)
     relief: null,

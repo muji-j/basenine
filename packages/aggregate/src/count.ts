@@ -143,7 +143,7 @@ FROM pa_event e
 JOIN game g ON g.game_id = e.game_id
 JOIN player p ON p.player_id = ${idCol}
 ${seasonNameJoin(idCol, "g.season")}
-WHERE g.season = ? AND g.status = 'played' AND g.competition = ? AND g.game_date <= ?
+WHERE g.season BETWEEN ? AND ? AND g.status = 'played' AND g.competition = ? AND g.game_date <= ?
   AND e.status = 'final'
 ${notNull}GROUP BY ${idCol}, teamCode, e.ball_count, e.outcome
 `;
@@ -179,12 +179,21 @@ interface Accum {
 }
 
 /**
- * 한 시즌의 선수별 カウント別成績.
+ * 선수별 カウント別成績.
  *
  * @param forPitcher 투수 기준으로 셀 것인가
+ * @param fromSeason 어느 시즌부터 셀 것인가. 기본은 `season`(= 그 시즌만).
+ *   ⚠**끝은 언제나 `season` 이다** — 과거 시즌 화면이 미래를 말하지 않게 한다
+ *   (`matchups`·`battingSplits` 와 같은 규약 · M1).
  *
  * ⚠**0인 선수도 행이 나온다** — 「0」과 「기록 없음」은 다르다(M11).
  *   행이 아예 없다는 것은 그 선수의 타석 로그가 없다는 뜻이고, 화면은 그때 「모름」을 낸다.
+ *
+ * ## 왜 통산을 셀 수 있게 두는가 — 표본이 그렇다
+ *
+ * 실측(2025 · 규정타석급 타자 40명 · 칸 480): 그 시즌만이면 **가장 작은 칸의 중앙이 6타석**이고
+ * **33.8%가 30타석 미만**이다. 통산(보유 9시즌)이면 **중앙 23타석 · 14.0%** 로 내려간다.
+ * ⚠**볼카운트는 9시즌 전 시즌 100% 보유**다(**결측 0건** · 보유 전 시즌·전 대회) — 통산이 결측을 섞지 않는다.
  */
 export function countLines(
   db: Db,
@@ -192,10 +201,11 @@ export function countLines(
   competition: string,
   through: string,
   forPitcher = false,
+  fromSeason = season,
 ): CountLine[] {
   const rows = db.raw
     .prepare(forPitcher ? SQL_PITCHER : SQL)
-    .all(season, competition, through) as unknown as QueryRow[];
+    .all(fromSeason, season, competition, through) as unknown as QueryRow[];
 
   const out = new Map<string, Accum>();
   for (const r of rows) {

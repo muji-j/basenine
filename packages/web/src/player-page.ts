@@ -269,7 +269,8 @@ export interface CountSplitRow {
  * ⚠**投球単位のデータではない.** 파울·헛스윙·투구 수는 여전히 모른다 —
  * 화면이 그 경계를 말한다(`countBlock` 의 각주).
  */
-export interface CountBlockData {
+/** カウント別의 한 범위분. ⚠**시즌과 통산이 같은 모양을 쓴다** — 두 벌로 적으면 어긋난다(M1) */
+export interface CountScope {
   /** 읽을 수 있었던 타석. ⚠**이 블록 전 비율의 분모다**(M2) */
   pa: number;
   /**
@@ -282,6 +283,21 @@ export interface CountBlockData {
   fullCount: Rate;
   threeBall: Rate;
   rows: CountSplitRow[];
+}
+
+export interface CountBlockData extends CountScope {
+  /**
+   * 통산분. 보유가 한 시즌뿐이거나 통산이 시즌과 같으면 `null` — 그때 탭을 만들지 않는다.
+   *
+   * ⚠**왜 이 축에만 통산을 두는가**: 표본이 그렇다. 실측(2025 · 규정타석급 40명 · 칸 480)
+   * 그 시즌만이면 **가장 작은 칸의 중앙 6타석 · 33.8%가 30타석 미만**이고,
+   * 통산이면 **중앙 23타석 · 14.0%** 다. 볼카운트는 **9시즌 전 시즌 100% 보유**라
+   * 통산이 결측을 섞지 않는다(**결측 0건** · 보유 전 시즌·전 대회 실측).
+   *
+   * ⚠**「通算」이라는 말만으로는 거짓이다** — `span` 이 있어야 화면이 범위를 말한다
+   * (`火消し`·스플릿 통산 축과 같은 규칙).
+   */
+  career: (CountScope & { span: { from: number; to: number } }) | null;
 }
 
 /**
@@ -333,7 +349,15 @@ export interface ReliefBlockData {
   minForRate: number;
 }
 
-export type SplitAxisId = "hand" | "base" | "homeAway" | "month" | "order" | "venue";
+export type SplitAxisId =
+  | "hand" | "base" | "homeAway" | "month" | "order" | "venue"
+  /**
+   * **상대 구단별.** ⚠**두 벌인 이유는 범위다** — `opponent` 는 그 시즌, `opponentCareer` 는
+   * 보유 첫 시즌부터 **보고 있는 시즌까지**의 통산이다(`matchups` 와 같은 규칙).
+   * ⚠**한 시즌 교류전은 최대 17타석**이라(2025 실측) 그 범위만으로는 비율이 성립하지 않는다.
+   * 통산이면 같은 리그 중앙 30 · 교류전 중앙 9 로 올라온다.
+   */
+  | "opponent" | "opponentCareer";
 
 export interface SplitRow {
   /** 원본 구분값(`2026-04` 등). **정렬은 라벨이 아니라 이걸로 한다** — 「10月」은 「4月」보다 앞에 온다 */
@@ -360,6 +384,14 @@ export interface SplitAxisData {
   unclassified: number;
   /** 이 축에서 「얇다」고 볼 타석 수 */
   thinBelow: number;
+  /**
+   * 이 축이 **여러 시즌을 합쳐 세는** 경우 그 범위. 한 시즌만이면 `null`.
+   *
+   * ⚠**「통산」이라는 말만으로는 거짓이다** — 우리 통산은 **보유 범위 안**의 통산이고
+   * NPB 가 공표하는 통산(선수의 실제 전 경력)과 다르다. `火消し` 가 이미 같은 규칙을 쓴다
+   * (`ReliefBlockData.from`/`to` · 「화면이 2018〜2026 이라고 말한다」) — **여기서도 화면이 말한다.**
+   */
+  span: { from: number; to: number } | null;
 }
 
 export interface ScorebookRow {
@@ -400,6 +432,15 @@ export interface MatchupRow {
   line: BattingLine;
   avg: Rate;
   rbi: number;
+  /**
+   * **그 시즌 화면에 이 선수의 페이지가 없다.** 통산 대전에만 생긴다 — 은퇴하거나
+   * 그해 1군 기록이 없는 상대다.
+   *
+   * ⚠**링크를 걸면 404 다.** 실측(2026 화면 · 통산 2018~2026):
+   * 통산 대전에 나오는데 그 시즌 페이지가 없는 **투수 523명 · 타자 651명**.
+   * ⚠**행을 지우지 않는다** — 그 대전은 실제로 있었다. **이름만 링크가 아니게 둔다.**
+   */
+  noPage?: true;
 }
 
 export interface RankingRow {
@@ -600,6 +641,33 @@ export interface PlayerPageData {
   matchups: MatchupRow[];
   /** 대전한 투수(또는 타자)의 총 수. `matchups`가 잘렸는지 말하기 위한 값 */
   matchupTotal: number;
+  /**
+   * 통산 대전(보유 첫 시즌 ~ 보고 있는 시즌)과 그 범위. 보유가 한 시즌뿐이면 `null`.
+   *
+   * ## ⚠왜 이 축은 붙이고 球場別은 안 붙였는가 — **지표를 두 번 골랐다**
+   *
+   * 처음에 다른 축과 같은 잣대(**얇은 칸의 비율**)로 재고 「통산이 못 고친다」고 판정했다:
+   * 화면 임계(10타석) 미만이 **今季 91.6% → 通算 82.0%** 이고 **대전 타석 중앙값은 3으로 그대로**다.
+   * 상대 투수가 매년 바뀌어, 깊어지는 만큼 얕은 새 쌍이 늘기 때문이다.
+   *
+   * ⚠**그 지표가 질문에 답하지 않았다.** 이 표는 **분모를 달고 얇은 행을 그대로 싣는** 표라
+   * 「얇은 행의 비율」은 애초에 결함이 아니다. 물어야 할 것은
+   * **「시즌 화면에 원리적으로 존재할 수 없는 행이 생기는가」**였다. 실측(2025 · 규정타석급 40명):
+   *
+   * | 30타석 이상인 대전 | 今季 | 通算 |
+   * |---|---|---|
+   * | 행 수 | **0** | **382** |
+   * | 타자당 중앙 | 0 | **7** |
+   * | 한 행도 없는 타자 | **40/40** | 11/40 |
+   * | 한 쌍 최대 타석 | **27** | **105** |
+   *
+   * **今季는 한 쌍 최대가 27타석이라 30을 넘는 행이 하나도 없다.** 통산에서만 존재한다.
+   *
+   * ⚠**바이트 걱정은 압축 전 수였다.** 통산은 행이 **4.66배**(23,117 → 107,665)이지만,
+   * 가장 큰 선수 페이지 실측이 **178.7 KB → gzip 22.0 KB(8.1배)** 다 — 반복이 많은 표라
+   * 전송량은 **+30 KB 남짓**이다. Pages 상한은 **파일 수**이고 이 변경은 파일을 안 늘린다.
+   */
+  matchupsCareer: { rows: MatchupRow[]; span: { from: number; to: number } } | null;
   ranking: RankingPanel[];
   /** 표제의 식별 마크 */
   mark: MarkData;
@@ -1436,6 +1504,12 @@ function splitsBlock(axes: readonly SplitAxisData[]): RawHtml {
           ? `棒は被OPS（短いほど良い）。数字は 被打率 / 被出塁率 / 被長打率 と対戦打席数です。`
           : `棒はOPS。数字は 打率 / 出塁率 / 長打率 と打席数です。`) +
           `${a.thinBelow}打席未満は棒を薄くしています — 値は小さな標本のもので、順位ではありません。` +
+          // ⚠**「通算」とだけ書くと嘘になる** — 当サイトが持っている範囲の通算だからだ。
+          //   火消しブロックと同じ規則で**画面が範囲を言う**（M1: 規則は一本）。
+          (a.span === null
+            ? ""
+            : ` この区分は当サイトが保有する**${a.span.from}〜${a.span.to}年**を合算しています`
+              + `（NPBが公表する通算とは範囲が違います）。`) +
           // ⚠**접은 사실을 말한다.** 지방 개최는 한 선수에게 3~4타석뿐이라 접지 않으면
           // 표의 절반이 1타석짜리 줄이 된다. 다만 **버린 것이 아니라 합친 것**이므로 그렇게 적는다
           (a.id === "venue"
@@ -1672,23 +1746,33 @@ const MATCHUP_MIN_PA = [1, 3, 5, 10, 20];
  * 대신 **지금 무엇으로 정렬돼 있고 몇 타석 이상만 보고 있는지**를 상태 줄에 항상 낸다.
  * ⚠`THIN_MATCHUP_PA` 미만은 여전히 색을 낮춘다. 값은 지우지 않는다.
  */
-function matchupBlock(rows: readonly MatchupRow[], total: number, opponent: string): RawHtml {
-  if (rows.length === 0) {
-    return block({ id: "matchup", title: "対戦成績", body: html`<p class="empty">対戦記録がありません。</p>` });
-  }
-
-  const controls = buttonGroup(
-    "matchupMin",
-    MATCHUP_MIN_PA.map((n) => ({ id: String(n), label: n === 1 ? "すべて" : `${n}打席以上` })),
-    "最少打席でしぼる",
-  );
-
+/**
+ * 대전 표 한 벌.
+ *
+ * ⚠**`id` 마다 DOM 이 통째로 갈린다**(`<id>Filter`·`<id>Table`·`<id>Count`…).
+ * 그래서 두 범위를 한 화면에 둘 때 **id·선택 상자·버튼줄 그룹을 전부 따로** 준다 —
+ * 하나라도 겹치면 한쪽의 좁히기가 다른 쪽을 조용히 움직인다.
+ *
+ * ⚠**시즌 쪽 id 는 `matchup` 그대로 둔다.** 그 이름으로 붙은 시험이 이미 있고
+ * (`matchupTable`·`matchupFilter`·`matchupCount`…), 바꾸면 그 회귀 감시자가 사라진다.
+ */
+function matchupTable(o: {
+  rows: readonly MatchupRow[];
+  total: number;
+  opponent: string;
+  id: string;
+  selectId: string;
+  minGroup: string;
+  /** 여러 시즌을 합친 표면 그 범위. ⚠**「通算」이라는 말만으로는 거짓이다** */
+  span: { from: number; to: number } | null;
+}): RawHtml {
+  const { rows, total, opponent } = o;
   // 구단 선택지는 **실제로 대전한 구단만** 낸다 — 없는 구단을 고르게 하면 0건 화면이 된다
   const counts = new Map<string, number>();
   for (const r of rows) counts.set(r.opponentTeam, (counts.get(r.opponentTeam) ?? 0) + 1);
 
-  const body = stableTable({
-    id: "matchup",
+  return stableTable({
+    id: o.id,
     columns: MATCHUP_COLUMNS.map((c) => ({
       key: c.key,
       label: c.label,
@@ -1701,7 +1785,7 @@ function matchupBlock(rows: readonly MatchupRow[], total: number, opponent: stri
     findLabel: `${opponent}名でしぼる`,
     findPlaceholder: "例：山本",
     select: {
-      id: "matchupTeam",
+      id: o.selectId,
       field: "teamcode",
       label: "球団",
       options: [
@@ -1713,7 +1797,7 @@ function matchupBlock(rows: readonly MatchupRow[], total: number, opponent: stri
       ],
     },
     thin: { field: "pa", min: THIN_MATCHUP_PA, unit: "打席" },
-    minGroup: "matchupMin",
+    minGroup: o.minGroup,
     minField: "pa",
     total,
     unit: "件",
@@ -1735,21 +1819,85 @@ function matchupBlock(rows: readonly MatchupRow[], total: number, opponent: stri
         // ⚠**주석은 `${…}` 안에 둔다** — 밖에 두면 한 줄 늘어난 만큼 산출물의 공백이 바뀐다.
         r.avg.value === null ? raw("") : html`data-avg="${r.avg.value.toFixed(4)}"`
       }>
-      <td class="l"><a href="${r.opponentId}.html">${r.opponentName}</a></td>
-      <td class="l">${shortNameOf(r.opponentTeam)}</td>
+      ${/* ⚠**페이지가 없는 상대는 링크를 걸지 않는다** — 걸면 404 다(통산에만 생긴다).
+             행은 지우지 않는다: 그 대전은 실제로 있었다. */ ""}
+      <td class="l">${r.noPage === true ? html`${r.opponentName}` : html`<a href="${r.opponentId}.html">${r.opponentName}</a>`}</td>
+      <td class="l">${r.opponentTeam === "" ? NO_VALUE : shortNameOf(r.opponentTeam)}</td>
       <td>${r.line.pa}</td><td>${r.line.ab}</td><td>${r.line.h}</td><td>${r.line.hr}</td>
       <td>${r.line.bb}</td><td>${r.line.so}</td><td>${r.rbi}</td>
       <td>${avg3(r.avg.value)}</td>
     </tr>`,
     )}`,
     note: note(
-      `見出しを押すと並べ替わります（もう一度押すと逆順）。${THIN_MATCHUP_PA}打席未満は薄く表示しています — ` +
+      // ⚠**「通算」とだけ書くと嘘になる** — 当サイトが保有する範囲の通算だからだ(火消しと同じ規則)
+      (o.span === null
+        ? ""
+        : `この表は当サイトが保有する**${o.span.from}〜${o.span.to}年**を合算しています`
+          + `（NPBが公表する通算とは範囲が違います）。`) +
+        `見出しを押すと並べ替わります（もう一度押すと逆順）。${THIN_MATCHUP_PA}打席未満は薄く表示しています — ` +
         `対戦成績は大半が一桁打席で、率で並べると少ない打席が先頭に来ます。` +
         `並び順と絞り込みは上の行に出ています。${opponent}名を押すとその選手のページに移ります。`,
     ),
   });
+}
 
-  return block({ id: "matchup", title: "対戦成績", controls, body });
+/** 최소 타석 버튼줄. ⚠**범위마다 자기 그룹을 갖는다** — 공유하면 한쪽이 다른 쪽을 움직인다 */
+function matchupMinControls(group: string): RawHtml {
+  return buttonGroup(
+    group,
+    MATCHUP_MIN_PA.map((n) => ({ id: String(n), label: n === 1 ? "すべて" : `${n}打席以上` })),
+    "最少打席でしぼる",
+  );
+}
+
+function matchupBlock(
+  rows: readonly MatchupRow[],
+  total: number,
+  opponent: string,
+  career: { rows: MatchupRow[]; span: { from: number; to: number } } | null,
+): RawHtml {
+  if (rows.length === 0) {
+    return block({ id: "matchup", title: "対戦成績", body: html`<p class="empty">対戦記録がありません。</p>` });
+  }
+
+  const seasonTable = matchupTable({
+    rows, total, opponent,
+    id: "matchup", selectId: "matchupTeam", minGroup: "matchupMin", span: null,
+  });
+
+  /**
+   * ⚠**통산이 없거나 시즌과 같으면 탭을 만들지 않는다** — 같은 표를 두 번 보여주는 것은
+   * 정보가 아니라 잡음이다. 그때의 DOM 은 **이 변경 전과 한 글자도 다르지 않아야** 한다.
+   */
+  if (career === null || career.rows.length === 0) {
+    return block({
+      id: "matchup",
+      title: "対戦成績",
+      controls: matchupMinControls("matchupMin"),
+      body: seasonTable,
+    });
+  }
+
+  const careerTable = matchupTable({
+    rows: career.rows, total: career.rows.length, opponent,
+    id: "matchupCareer", selectId: "matchupCareerTeam", minGroup: "matchupCareerMin", span: career.span,
+  });
+
+  return block({
+    id: "matchup",
+    title: "対戦成績",
+    controls: tablist(
+      "matchupScope",
+      [{ id: "season", label: "今季" }, { id: "career", label: "通算" }],
+      false,
+      "範囲の切り替え",
+      true,
+    ),
+    // ⚠**버튼줄이 패널 안으로 들어간다.** 머리에 하나만 두면 두 표가 그것을 나눠 쓰게 되고,
+    //   그러면 「今季에서 10타석 이상」을 고른 상태가 通算 탭에도 걸린다 — 임계의 뜻이 범위마다 다르다.
+    body: html`${panel("matchupScope", "season", true, html`${matchupMinControls("matchupMin")}${seasonTable}`)}
+${panel("matchupScope", "career", false, html`${matchupMinControls("matchupCareerMin")}${careerTable}`)}`,
+  });
 }
 
 /**
@@ -1868,6 +2016,17 @@ function rankingBlock(panels: readonly RankingPanel[], base: string): RawHtml {
 function countBlock(c: CountBlockData, role: "batter" | "pitcher"): RawHtml {
   const forPitcher = role === "pitcher";
   /**
+   * ⚠**통산이 있으면 탭으로 낸다.** 축을 늘리는 것이 아니라 **같은 표를 두 범위로** 보는 것이라
+   * 스플릿처럼 축 목록에 섞지 않는다 — 섞으면 「무엇을 나누는 축인가」가 흐려진다.
+   */
+  const scopes: { id: string; label: string; scope: CountScope; span: { from: number; to: number } | null }[] =
+    c.career === null
+      ? [{ id: "season", label: "今季", scope: c, span: null }]
+      : [
+          { id: "season", label: "今季", scope: c, span: null },
+          { id: "career", label: "通算", scope: c.career, span: c.career.span },
+        ];
+  /**
    * ⚠**투수 화면에 타자 이름을 쓰지 않는다.** 「打率 .358」이 투수 페이지에 있으면
    * 그건 이 투수가 친 것으로 읽힌다 — 용어집이 `avg`/`allowedAvg` 를 나눠 둔 이유와 같다.
    */
@@ -1875,60 +2034,78 @@ function countBlock(c: CountBlockData, role: "batter" | "pitcher"): RawHtml {
   const opsKey = forPitcher ? "allowedOps" : "ops";
   const hitLabel = forPitcher ? "被安打" : "安打";
   const soLabel = forPitcher ? "奪三振" : "三振";
-  const rows = c.rows.filter((r) => r.line.pa > 0);
-  const table = rows.length === 0
-    ? raw("")
-    : scroller(html`<table>
-    <thead><tr>
-      <th class="l">カウント</th><th>${term("打席")}</th><th>${term("打数")}</th>
-      <th>${hitLabel}</th><th>${soLabel}</th>
-      <th>${term(termOf(avgKey)!.label)}</th><th>${term(termOf(opsKey)!.label)}</th>
-    </tr></thead>
-    <tbody>${rows.map(
-      (r) => html`<tr>
-      <td class="l">${r.label}</td>
-      <td class="b">${r.line.pa}</td>
-      <td>${r.line.ab}</td>
-      <td>${r.line.h}</td>
-      <td>${r.line.so}</td>
-      <!-- ⚠**분모를 값에 붙인다**(M2). 옆의 打数 열과 같은 수이지만, 값만 떼어
-           다른 화면에 실릴 때 분모가 따라가야 한다 -->
-      <td class="wd">${valueWithDen(r.avg, denUnit(avgKey), 3)}</td>
-      <td class="wd">${valueWithDen(r.ops, denUnit(opsKey), 3)}</td>
-    </tr>`,
-    )}</tbody>
-  </table>`);
+  const bodyOf = (s: CountScope, span: { from: number; to: number } | null): RawHtml => {
+    const rows = s.rows.filter((r) => r.line.pa > 0);
+    const table = rows.length === 0
+      ? raw("")
+      : scroller(html`<table>
+      <thead><tr>
+        <th class="l">カウント</th><th>${term("打席")}</th><th>${term("打数")}</th>
+        <th>${hitLabel}</th><th>${soLabel}</th>
+        <th>${term(termOf(avgKey)!.label)}</th><th>${term(termOf(opsKey)!.label)}</th>
+      </tr></thead>
+      <tbody>${rows.map(
+        (r) => html`<tr>
+        <td class="l">${r.label}</td>
+        <td class="b">${r.line.pa}</td>
+        <td>${r.line.ab}</td>
+        <td>${r.line.h}</td>
+        <td>${r.line.so}</td>
+        <!-- ⚠**분모를 값에 붙인다**(M2). 옆의 打数 열과 같은 수이지만, 값만 떼어
+             다른 화면에 실릴 때 분모가 따라가야 한다 -->
+        <td class="wd">${valueWithDen(r.avg, denUnit(avgKey), 3)}</td>
+        <td class="wd">${valueWithDen(r.ops, denUnit(opsKey), 3)}</td>
+      </tr>`,
+      )}</tbody>
+    </table>`);
 
-  return block({
-    id: "count",
-    title: "カウント別",
-    qualifier: `${c.pa}打席`,
-    body: html`${columns(
-      html`${statRate(forPitcher ? "追い込み率" : "追い込まれ率", c.twoStrike, denUnit(forPitcher ? "twoStrikeGained" : "twoStrikeAgainst"), 3)}
-        ${statRate("初球決着率", c.firstPitch, denUnit("firstPitchDecided"), 3)}`,
-      html`${statRate("フルカウント率", c.fullCount, denUnit("fullCountReached"), 3)}
-        ${statRate("3ボール率", c.threeBall, denUnit("threeBallReached"), 3)}`,
+    return html`${columns(
+      html`${statRate(forPitcher ? "追い込み率" : "追い込まれ率", s.twoStrike, denUnit(forPitcher ? "twoStrikeGained" : "twoStrikeAgainst"), 3)}
+        ${statRate("初球決着率", s.firstPitch, denUnit("firstPitchDecided"), 3)}`,
+      html`${statRate("フルカウント率", s.fullCount, denUnit("fullCountReached"), 3)}
+        ${statRate("3ボール率", s.threeBall, denUnit("threeBallReached"), 3)}`,
       /**
        * ⚠**격리한 타석이 있으면 그 수를 낸다**(M11). 없으면 줄 자체를 만들지 않는다 —
        * 늘 `0` 이 서 있으면 아무도 안 읽고, 어느 날 1이 되어도 눈에 안 띈다.
        */
-      c.quarantined === 0
+      s.quarantined === 0
         ? raw("")
-        : html`${statCount("カウント不明", c.quarantined)}`,
+        : html`${statCount("カウント不明", s.quarantined)}`,
     )}
     ${table}
     ${note(
-      "⚠**投球単位のデータではありません。** 分かるのは「打席の最後の1球を投げたときのカウント」だけで、" +
+      // ⚠**「通算」とだけ書くと嘘になる** — 当サイトが持っている範囲の通算だからだ(火消しと同じ規則)
+      (span === null
+        ? ""
+        : `この区分は当サイトが保有する**${span.from}〜${span.to}年**を合算しています`
+          + `（NPBが公表する通算とは範囲が違います）。`) +
+        "⚠**投球単位のデータではありません。** 分かるのは「打席の最後の1球を投げたときのカウント」だけで、" +
         "ファウル・空振り・初球ストライク率・投げさせた球数は数えられません" +
         "（公表されている記録に1球ごとの情報がないためです）。" +
         "⚠ボールもストライクも打席の中で減らないので、終了時のカウントで**到達**は正確に言えます — " +
         "2ストライクで終わった打席は必ず途中で追い込まれています。" +
         "⚠**初球決着率から申告敬遠は除いています**（記録上は 0-0 ですが1球も投げていません）。" +
-        (c.quarantined === 0
+        (s.quarantined === 0
           ? ""
-          : `⚠カウントを読めなかった打席が${c.quarantined}件あり、上の母数から外しています。`) +
+          : `⚠カウントを読めなかった打席が${s.quarantined}件あり、上の母数から外しています。`) +
         "⚠この指標自体は当サイト独自のものではありません — 材料が手元にあったので出しています。",
-    )}`,
+    )}`;
+  };
+
+  if (scopes.length === 1) {
+    return block({ id: "count", title: "カウント別", qualifier: `${c.pa}打席`, body: bodyOf(c, null) });
+  }
+  /**
+   * ⚠**탭이 있으면 머리에 분모를 안 적는다.**
+   * 머리는 하나인데 패널은 둘이라, 「今季 141打席」을 적어 두면 通算 탭(580打席)으로 바꿔도
+   * **머리가 안 따라가서 화면이 두 개의 분모를 동시에 주장**한다 — M2 가 막으려던 바로 그 상태다.
+   * 분모는 각 패널이 값 옆에서 말한다.
+   */
+  return block({
+    id: "count",
+    title: "カウント別",
+    controls: tablist("count", scopes.map((s) => ({ id: s.id, label: s.label })), false, "範囲の切り替え", true),
+    body: html`${scopes.map((s, i) => panel("count", s.id, i === 0, bodyOf(s.scope, s.span)))}`,
   });
 }
 
@@ -2069,7 +2246,12 @@ function renderBlock(id: BlockId, d: PlayerPageData, base: string, seasonPast: b
         body: html`<p class="empty">イニング途中からの登板がありません（先発だけ、または回のはじめからの登板だけです）。</p>`,
       });
     case "matchup":
-      return matchupBlock(d.matchups, d.matchupTotal, d.role === "pitcher" ? "打者" : "投手");
+      return matchupBlock(
+        d.matchups,
+        d.matchupTotal,
+        d.role === "pitcher" ? "打者" : "投手",
+        d.matchupsCareer,
+      );
     case "career":
       return careerBlock(d.career);
     case "ranking":
