@@ -322,6 +322,9 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
       },
     ],
     matchupTotal: 2,
+    // ⚠**기본 픽스처는 통산 대전 없음**이다 — 탭이 없는 쪽이 기존 시험이 보던 DOM 이고,
+    //   통산이 붙은 모양은 `matchup-career.test.ts` 가 따로 만든다
+    matchupsCareer: null,
     ranking: [rankingPanel()],
     mark: {
       axes: battingProfile({

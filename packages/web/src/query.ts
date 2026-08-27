@@ -5380,6 +5380,64 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
 
   const ids = new Set<string>([...battingByPlayer.keys(), ...pitchingByPlayer.keys()]);
 
+  /**
+   * **통산 대전 상대의 소속 — 마지막으로 뛴 시즌 기준.**
+   *
+   * ⚠**`teamOfPlayer` 는 그 시즌 소속만 담는다.** 통산에는 은퇴·이탈한 상대가 섞이므로
+   * 그대로 쓰면 구단 칸이 **빈 채로 나가고**(「어느 팀인가」에 답할 수 없다 · M11)
+   * 구단 선택 상자에서도 빠진다. 실측(2026 화면): 그런 상대가 **투수 523명 · 타자 651명**.
+   *
+   * ⚠**`careerMatchups` 자체는 건드리지 않는다.** 선발예고 화면이 **빈 구단으로 은퇴 선수를
+   * 거르는 데 의존**한다(`loadMatchups` 머리주석) — 공유 객체를 메우면 그쪽이 조용히 깨진다.
+   * 그래서 **선수 페이지 경로에서만** 새 행으로 갈아 끼운다.
+   */
+  const careerTeamOf = new Map<string, string>();
+  {
+    /**
+     * ⚠**`batting_line`·`pitching_line` 에 팀 컬럼은 없다.** 있는 것은 `side`(home/away)이고
+     * 팀은 **경기에서 유도한다** — 처음에 `team_code` 를 그대로 읽었다가 빌드가 죽었다.
+     *
+     * ⚠**마지막 한 행을 결정적으로 고른다**(시즌 → 경기일 내림차순). 시즌 중 이적하면
+     * 같은 시즌에 두 팀이 있으므로 `MAX(season)` 만으로는 어느 쪽이 나올지 정해지지 않는다.
+     */
+    const rows = db.raw
+      .prepare(
+        `SELECT id, team FROM (
+           SELECT player_id AS id, team, ROW_NUMBER() OVER (
+             PARTITION BY player_id ORDER BY season DESC, game_date DESC
+           ) AS rn FROM (
+             SELECT bl.player_id, g.season, g.game_date,
+                    CASE bl.side WHEN 'home' THEN g.home_code ELSE g.away_code END AS team
+             FROM batting_line bl JOIN game g ON g.game_id = bl.game_id
+             WHERE g.season BETWEEN ? AND ? AND g.status = 'played'
+             UNION ALL
+             SELECT pl.player_id, g.season, g.game_date,
+                    CASE pl.side WHEN 'home' THEN g.home_code ELSE g.away_code END
+             FROM pitching_line pl JOIN game g ON g.game_id = pl.game_id
+             WHERE g.season BETWEEN ? AND ? AND g.status = 'played'
+           )
+         ) WHERE rn = 1`,
+      )
+      .all(heldFrom, o.season, heldFrom, o.season) as unknown as { id: string; team: string }[];
+    // ⚠**여기서 다시 정규화하지 않는다** — 팀 코드는 **적재 시점에** 정규화된다
+    //   (`TEAM_CODE_ALIASES` · 2018 오릭스 `bs`). 두 곳에서 하면 규칙이 갈린다(M1).
+    for (const r of rows) careerTeamOf.set(r.id, r.team);
+  }
+
+  /**
+   * 통산 대전 행을 선수 페이지용으로 손본다.
+   *
+   * ⚠**행을 지우지 않는다**(`loadMatchups` 의 「자르지 않는다」와 같은 규칙) —
+   * 그 대전은 실제로 있었다. 바꾸는 것은 **구단 칸**과 **링크를 걸지 말지**뿐이다.
+   */
+  const careerRowsFor = (rows: readonly MatchupRow[]): MatchupRow[] =>
+    rows.map((r) => {
+      const hasPage = ids.has(r.opponentId);
+      const team = r.opponentTeam === "" ? (careerTeamOf.get(r.opponentId) ?? "") : r.opponentTeam;
+      if (hasPage && team === r.opponentTeam) return r;
+      return hasPage ? { ...r, opponentTeam: team } : { ...r, opponentTeam: team, noPage: true as const };
+    });
+
   for (const playerId of ids) {
     const bat = battingByPlayer.get(playerId);
     const pit = pitchingByPlayer.get(playerId);
@@ -5570,6 +5628,23 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       role === "pitcher"
         ? (matchupsByPlayer.byPitcher.get(playerId) ?? [])
         : (matchupsByPlayer.byBatter.get(playerId) ?? []);
+    /**
+     * 통산 대전. ⚠**여기서 새로 계산하지 않는다** — `careerMatchups` 가 이미 있고
+     * 선발예고 화면이 그것을 쓴다(M1: 같은 것을 두 번 세면 어느 날 갈린다).
+     *
+     * ⚠**보유가 한 시즌뿐이면 붙이지 않는다** — 같은 표를 두 번 보여주는 것은 잡음이다.
+     */
+    const opponentsCareer =
+      heldFrom >= o.season
+        ? null
+        : {
+            rows: careerRowsFor(
+              role === "pitcher"
+                ? (careerMatchups.byPitcher.get(playerId) ?? [])
+                : (careerMatchups.byBatter.get(playerId) ?? []),
+            ),
+            span: { from: heldFrom, to: o.season },
+          };
 
     // 식별 마크(B안 成績の紋) — 축이 타자·투수로 다르다.
     // ⚠**투수 축은 네 개가 「낮을수록 좋다」라 뒤집혀 있다**(marks.ts). 같은 화면에 나란히
@@ -5644,6 +5719,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       situation,
       matchups: opponents,
       matchupTotal: opponents.length,
+      matchupsCareer: opponentsCareer,
       ranking: panelsForPlayer(
         role === "pitcher"
           ? (pit?.player.role === "reliever" ? rankings.reliever : rankings.starter)
