@@ -14,11 +14,12 @@ import { parseBoxScore } from "../src/box.ts";
 import { countsAsAtBat, countsAsHit } from "../src/tokens.ts";
 import type { BatterRow } from "../src/box.ts";
 
-const root = process.argv[2];
-if (!root) {
+const rootArg = process.argv[2];
+if (rootArg === undefined) {
   console.error("usage: node tools/sweep-archive.ts <archive-root>");
   process.exit(2);
 }
+const root = rootArg;
 
 async function* walk(dir: string): AsyncGenerator<string> {
   for (const e of await readdir(dir, { withFileTypes: true })) {
@@ -30,7 +31,50 @@ async function* walk(dir: string): AsyncGenerator<string> {
 
 const unknownTokens = new Map<string, number>();
 const outcomeCounts = new Map<string, number>();
-const mismatches: string[] = [];
+/**
+ * **출처 자신이 어긋난 행** — 우리 파서의 결함이 아니다.
+ *
+ * ⚠**개수 임계가 아니라 이름을 적는다.** 「1건까지 허용」으로 두면 **다른 행이 어긋나도**
+ * 개수가 같아서 통과한다 — 그건 검사가 아니라 눈감기다.
+ *
+ * ⚠**적어도 되는 것은 「출처의 열과 출처의 셀이 서로 다르다」를 확인한 것뿐**이다.
+ * 우리 도출이 틀렸을 가능성이 남아 있으면 여기 넣지 마라 — 그때는 파서를 고쳐야 한다.
+ */
+interface Mismatch {
+  field: "打数" | "安打" | "打点";
+  /** 아카이브 루트 기준 경로. ⚠**구분자를 `/` 로 맞춘다** — 윈도우와 CI 가 다르다 */
+  file: string;
+  side: string;
+  name: string;
+  expected: number;
+  derived: number;
+  cells: string;
+}
+
+const KNOWN: readonly { field: string; file: string; side: string; name: string; why: string }[] = [
+  {
+    field: "打点",
+    file: "npb/scores/2024/0508/e-b-08/box.html.gz",
+    side: "home",
+    name: "石原",
+    why:
+      "⚠**출처 자신의 열과 셀이 어긋난다**(2026-08-26 실측). 박스의 打点 열은 **1** 인데 "
+      + "그 선수의 타석 셀 넷(右前安·三振·三振·左飛)에 **타점 표식이 하나도 없다** — "
+      + "打数 4 와 셀 4개는 맞으므로 행이 잘린 것도 아니다. "
+      + "어느 쪽이 옳은지는 아카이브만으로 판정할 수 없다. **우리 도출은 셀을 정직하게 읽은 값이다.**",
+  },
+];
+
+const mismatches: Mismatch[] = [];
+
+/** 목록과 대조할 때 쓰는 열쇠 */
+function keyOf(m: { field: string; file: string; side: string; name: string }): string {
+  return `${m.field}|${m.file}|${m.side}|${m.name}`;
+}
+
+function describe(m: Mismatch): string {
+  return `${m.field}  기대 ${m.expected} 도출 ${m.derived}  ${m.file} ${m.side} ${m.name}  ${m.cells}`;
+}
 let games = 0;
 let batters = 0;
 let parseErrors = 0;
@@ -60,10 +104,20 @@ function checkBatter(file: string, side: string, b: BatterRow): void {
     rbi += pa.rbi;
   }
   const cells = b.plateAppearances.map((p) => `${p.raw}[${p.outcome}]`).join(" ");
-  const where = `${file} ${side} ${b.name}  ${cells}`;
-  if (ab !== b.ab) mismatches.push(`打数  기대 ${b.ab} 도출 ${ab}  ${where}`);
-  if (hits !== b.hits) mismatches.push(`安打  기대 ${b.hits} 도출 ${hits}  ${where}`);
-  if (rbi !== b.rbi) mismatches.push(`打点  기대 ${b.rbi} 도출 ${rbi}  ${where}`);
+  /**
+   * ⚠**구분자만 맞춘다.** 호출부가 이미 루트를 떼고 넘긴다(`short`) — 여기서 또 자르면 앞이 더 사라진다.
+   * ⚠**실제로 그랬다**(2026-08-26): `file.slice(root.length)` 로 썼다가
+   * `npb/scores/2024/…` 가 `024/0508/…` 이 됐고, 그 값이 목록과 안 맞아
+   * **「알려진 불일치가 더는 나지 않는다」는 거짓 경보**가 났다.
+   * ⚠윈도우는 `\`, CI(리눅스)는 `/` 라 **구분자는 반드시 맞춰야** 목록이 양쪽에서 같게 걸린다.
+   */
+  const rel = file.replace(/\\/g, "/");
+  const add = (field: Mismatch["field"], expected: number, derived: number): void => {
+    mismatches.push({ field, file: rel, side, name: b.name, expected, derived, cells });
+  };
+  if (ab !== b.ab) add("打数", b.ab, ab);
+  if (hits !== b.hits) add("安打", b.hits, hits);
+  if (rbi !== b.rbi) add("打点", b.rbi, rbi);
 }
 
 for await (const file of walk(root)) {
@@ -131,13 +185,47 @@ for (const [t, n] of [...unknownTokens].sort((a, b) => b[1] - a[1])) {
   console.log(`${String(n).padStart(6)}  ${t}`);
 }
 
-console.log(`\n=== npb.jp 합계와의 불일치 — 타격 (${mismatches.length}건 / 타자 ${batters}행) ===`);
-for (const m of mismatches.slice(0, 20)) console.log(`  ${m}`);
-if (mismatches.length > 20) console.log(`  ... 외 ${mismatches.length - 20}건`);
+/**
+ * ⚠**알려진 것과 새 것을 갈라 센다.** 뭉뚱그리면 「1건이던 것이 여전히 1건」인지
+ * 「다른 1건으로 바뀐」 것인지 알 수 없다 — 그 둘은 전혀 다른 사건이다.
+ */
+const known = new Set(KNOWN.map(keyOf));
+const seen = new Set(mismatches.map(keyOf));
+const fresh = mismatches.filter((m) => !known.has(keyOf(m)));
+/** ⚠**사유만 남고 대상이 없으면 낡은 주장이다** — 고쳐졌으면 목록에서 빼라 */
+const stale = KNOWN.filter((k) => !seen.has(keyOf(k)));
+
+console.log(
+  `\n=== npb.jp 합계와의 불일치 — 타격 (${mismatches.length}건 / 타자 ${batters}행` +
+    ` · 그중 알려진 출처 불일치 ${mismatches.length - fresh.length}건) ===`,
+);
+for (const m of fresh.slice(0, 20)) console.log(`  ${describe(m)}`);
+if (fresh.length > 20) console.log(`  ... 외 ${fresh.length - 20}건`);
+for (const k of KNOWN) {
+  if (seen.has(keyOf(k))) console.log(`  (알려진) ${k.field} ${k.file} ${k.side} ${k.name}`);
+}
+for (const k of stale) {
+  console.error(
+    `⚠알려진 불일치가 더는 나지 않는다: ${k.field} ${k.file} ${k.side} ${k.name}\n` +
+      "  고쳐졌거나 그 경기가 아카이브에서 빠졌다 — **KNOWN 에서 빼라.** 사유만 남으면 낡은 주장이다.",
+  );
+}
 
 console.log(`\n=== 투수 컬럼 교차 대조 (${pitcherMismatches.length}건 / ${pitcherChecked}팀) ===`);
 for (const m of pitcherMismatches.slice(0, 20)) console.log(`  ${m}`);
 if (pitcherMismatches.length > 20) console.log(`  ... 외 ${pitcherMismatches.length - 20}건`);
 
+/**
+ * ⚠**알려진 출처 불일치는 실패로 만들지 않는다** — 매일 붉은 검사는 아무도 안 본다.
+ * 대신 **새 불일치는 무조건 실패**다: 그때는 우리 파서가 틀렸을 수 있고,
+ * 그 판정을 자동으로 할 방법이 없다. **모르면 멈추는 쪽이 맞다**(M7).
+ * ⚠**사유만 남고 대상이 없어도 실패**한다 — 낡은 면제는 다음 사람을 속인다.
+ */
 process.exitCode =
-  parseErrors > 0 || unknownTokens.size > 0 || mismatches.length > 0 || pitcherMismatches.length > 0 ? 1 : 0;
+  parseErrors > 0
+  || unknownTokens.size > 0
+  || fresh.length > 0
+  || stale.length > 0
+  || pitcherMismatches.length > 0
+    ? 1
+    : 0;
