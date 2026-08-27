@@ -283,6 +283,8 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
         ],
         unclassified: 12,
         thinBelow: 30,
+        // ⚠한 시즌만인 축이라 범위를 붙이지 않는다(통산 축이면 화면이 「2018〜2026年」이라고 말한다)
+        span: null,
       },
     ],
     scorebook: [

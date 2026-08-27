@@ -1279,6 +1279,9 @@ function loadSplits(
         rows: axis.id === "venue" ? foldThinVenues(rows) : rows,
         unclassified: p.unclassified,
         thinBelow: axis.thin ?? THIN_SPLIT_PA,
+        // ⚠**한 시즌만인 축에는 범위를 붙이지 않는다** — 「2025〜2025年」은 정보가 아니라 소음이다.
+        //   ⚠`from === season` 이면 통산 축이어도 실제로 한 시즌이므로 여기서 같이 걸러진다.
+        span: from === season ? null : { from, to: season },
       };
       const list = out.get(p.playerId);
       if (list === undefined) out.set(p.playerId, [entry]);
