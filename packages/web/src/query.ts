@@ -295,7 +295,25 @@ const LEAGUE_NAME: Readonly<Record<League, string>> = {
   pacific: "パシフィック・リーグ",
 };
 
-const SPLIT_AXES: readonly { id: SplitAxisId; dimension: SplitDimension; label: string }[] = [
+/**
+ * 그 시즌 범위의 상대 구단별에서 「얇다」고 볼 타석 수.
+ *
+ * ⚠**다른 축의 30 을 그대로 쓰면 안 된다.** 실측(2025): 선수-상대 조합 3,831개의
+ * 타석이 **중앙 11 · 1사분위 4 · 3사분위 26** 이고, 30 이상은 **23.4%** 뿐이다.
+ * ⚠**교류전은 그 시즌 최대가 17타석**이라 30 으로 두면 **한 칸도 비율을 못 낸다.**
+ * 10 은 구장별(`VENUE_MIN_PA`)과 같은 값이고, 같은 이유(한 시즌 안의 작은 표본)에서 나왔다.
+ */
+export const OPPONENT_THIN_SEASON = 10;
+
+const SPLIT_AXES: readonly {
+  id: SplitAxisId;
+  dimension: SplitDimension;
+  label: string;
+  /** 보유 첫 시즌부터 **보고 있는 시즌까지** 합칠 것인가 */
+  career?: true;
+  /** 이 축에서 「얇다」고 볼 타석 수. 없으면 THIN_SPLIT_PA */
+  thin?: number;
+}[] = [
   { id: "hand", dimension: "opponentHand", label: "対左右" },
   { id: "base", dimension: "baseState", label: "走者状況" },
   { id: "homeAway", dimension: "homeAway", label: "本拠地" },
@@ -303,7 +321,21 @@ const SPLIT_AXES: readonly { id: SplitAxisId; dimension: SplitDimension; label: 
   // ⚠투수 쪽의 뜻이 다르다 — 자기 타순이 아니라 **상대 타자가 몇 번이었는가**다
   { id: "order", dimension: "battingOrder", label: "打順" },
   { id: "venue", dimension: "venue", label: "球場別" },
+  /**
+   * **상대 구단별.** ⚠**두 축인 이유는 범위다** — 축이 이미 탭이므로
+   * 「今季」와 「通算」을 **두 축으로 두면 새 UI 없이** 구분해서 볼 수 있다.
+   *
+   * ⚠**얇음 임계를 축마다 다르게 준다.** 실측(2025 · 선수-상대 3,831조합):
+   * 그 시즌은 타석 **중앙 11 · 1사분위 4** 이고 **교류전은 최대 17** 이다 —
+   * 다른 축과 같은 30 을 쓰면 **거의 모든 칸이 얇음**이 된다.
+   * 통산(9시즌)이면 같은 리그 **중앙 30** · 교류전 **중앙 9** 로 올라온다.
+   * ⚠**접지 않는다** — 구장과 달리 **어느 구단인가가 질문 자체**라
+   * 「その他の球団」으로 합치면 답을 지운다.
+   */
+  { id: "opponent", dimension: "opponentTeam", label: "対戦球団別（今季）", thin: OPPONENT_THIN_SEASON },
+  { id: "opponentCareer", dimension: "opponentTeam", label: "対戦球団別（通算）", career: true, thin: THIN_SPLIT_PA },
 ];
+
 
 /**
  * 구장별 스플릿에서 **한 줄로 남길 최소 타석 수**.
@@ -371,6 +403,9 @@ export function splitLabel(axis: SplitAxisId, key: string, allowed: boolean): st
   if (axis === "venue") return key;
   // 타순은 그대로 수다 — 「3」을 「3番」으로 읽히게만 한다
   if (axis === "order") return `${key}番`;
+  // ⚠**구단 코드를 그대로 내지 않는다** — `db`·`bs` 는 사람이 읽는 이름이 아니다.
+  //   이름은 `shortNameOf` 한 벌에서 온다(M1) — 여기서 표를 다시 만들지 않는다
+  if (axis === "opponent" || axis === "opponentCareer") return shortNameOf(key);
   const table = allowed ? PITCHER_SPLIT_KEY_LABEL : SPLIT_KEY_LABEL;
   return table[key] ?? key;
 }
@@ -1215,12 +1250,18 @@ function loadSplits(
   competition: string,
   through: string,
   allowed = false,
+  /**
+   * 통산 축이 **어느 시즌부터** 셀 것인가. 기본은 `season`(= 통산 축도 그 시즌만).
+   * ⚠**끝은 언제나 `season` 이다** — 과거 시즌 화면이 미래를 말하지 않게 한다(`matchups` 와 같은 규칙).
+   */
+  heldFrom = season,
 ): Map<string, SplitAxisData[]> {
   const out = new Map<string, SplitAxisData[]>();
   const query = allowed ? pitchingSplits : battingSplits;
 
   for (const axis of SPLIT_AXES) {
-    for (const p of query(db, axis.dimension, season, competition, through)) {
+    const from = axis.career === true ? heldFrom : season;
+    for (const p of query(db, axis.dimension, season, competition, through, from)) {
       const rows: SplitRow[] = p.splits.map((s) => ({
         key: s.key,
         label: splitLabel(axis.id, s.key, allowed),
@@ -1234,9 +1275,10 @@ function loadSplits(
         id: axis.id,
         label: axis.label,
         allowed,
+        // ⚠**구장만 접는다.** 상대 구단은 「어느 구단인가」가 질문 자체라 접으면 답이 사라진다
         rows: axis.id === "venue" ? foldThinVenues(rows) : rows,
         unclassified: p.unclassified,
-        thinBelow: THIN_SPLIT_PA,
+        thinBelow: axis.thin ?? THIN_SPLIT_PA,
       };
       const list = out.get(p.playerId);
       if (list === undefined) out.set(p.playerId, [entry]);
@@ -4860,9 +4902,14 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   const bundles = buildLeagues(agg, (lg) => runValuesByLeague.get(lg));
 
   const profiles = loadProfiles(db);
-  const splitsByPlayer = loadSplits(db, o.season, competition, through);
+  /**
+   * ⚠**통산 축의 시작 시즌.** `careerMatchups` 와 **같은 값**을 쓴다(M1) —
+   * 두 블록이 다른 범위를 「통산」이라고 부르면 화면 안에서 말이 갈린다.
+   */
+  const heldFrom = heldSeasonsOf(db).from || o.season;
+  const splitsByPlayer = loadSplits(db, o.season, competition, through, false, heldFrom);
   // 투수 스플릿은 축 식이 다르다(좌우가 상대 타자, 홈/원정이 반대). 같은 함수로 만든다
-  const pitcherSplitsByPlayer = loadSplits(db, o.season, competition, through, true);
+  const pitcherSplitsByPlayer = loadSplits(db, o.season, competition, through, true, heldFrom);
   const scorebookByPlayer = loadScorebook(db, o.season, competition, through);
   const statePaByPlayer = loadStatePa(db, o.season, competition, through);
   const monthlyEra = loadMonthlyEra(db, o.season, competition, through);
@@ -5068,7 +5115,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
    * ⚠**한 시즌 표본으로는 순위가 성립하지 않는다**(M3 · 실측 1인당 4.17회) —
    * 시즌 쪽은 **개수만** 낸다.
    */
-  const heldFrom = heldSeasonsOf(db).from || o.season;
+  // ⚠**위에서 이미 잡았다** — 같은 식을 두 번 두면 한쪽만 고쳐지는 날이 온다(M1)
   /**
    * ⚠**미리 만들어 둔 것이 있으면 시즌으로 걸러 쓴다.** 조회는 시즌 범위로 자르나
    * 전 범위를 뽑아 거르나 **같은 답이다** — 하프이닝 안의 인접만 보고, 경기는 시즌을 넘지 않는다.

@@ -333,7 +333,15 @@ export interface ReliefBlockData {
   minForRate: number;
 }
 
-export type SplitAxisId = "hand" | "base" | "homeAway" | "month" | "order" | "venue";
+export type SplitAxisId =
+  | "hand" | "base" | "homeAway" | "month" | "order" | "venue"
+  /**
+   * **상대 구단별.** ⚠**두 벌인 이유는 범위다** — `opponent` 는 그 시즌, `opponentCareer` 는
+   * 보유 첫 시즌부터 **보고 있는 시즌까지**의 통산이다(`matchups` 와 같은 규칙).
+   * ⚠**한 시즌 교류전은 최대 17타석**이라(2025 실측) 그 범위만으로는 비율이 성립하지 않는다.
+   * 통산이면 같은 리그 중앙 30 · 교류전 중앙 9 로 올라온다.
+   */
+  | "opponent" | "opponentCareer";
 
 export interface SplitRow {
   /** 원본 구분값(`2026-04` 등). **정렬은 라벨이 아니라 이걸로 한다** — 「10月」은 「4月」보다 앞에 온다 */
