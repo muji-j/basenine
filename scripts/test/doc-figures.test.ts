@@ -34,7 +34,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
@@ -504,6 +504,70 @@ test("⚠문서의 배포물 파일 수가 dist 와 크게 어긋나지 않는�
     `문서의 배포물 파일 수가 낡았다(실측 ${actual.toLocaleString("en-US")} · 허용 ${DIST_TOLERANCE * 100}%).\n` +
       "⚠**두 문서가 같은 수를 말해야 한다**(M1) — 한쪽만 고치지 마라.",
   );
+});
+
+/**
+ * **배포물의 바이트도 같이 잰다.**
+ *
+ * ⚠**파일 수만 재고 있었고, 그 사이 바이트가 55% 벌어졌다**(2026-08-27).
+ * 통산 대전 표를 선수 페이지에 얹자 **878.8MB → 1,354.0MB** 가 됐는데
+ * 파일 수는 **9,473 → 9,473 으로 그대로**라 위 시험이 초록이었다.
+ * 그리고 문서는 「`doc-figures.test.ts` 가 `dist/` 와 대조한다」고 적어 두고 있었다 —
+ * 읽는 사람은 **두 수 다 지켜진다고 믿는다.** 「없는 장치를 있다고 적는다」의 전형이다.
+ *
+ * ⚠**허용 오차를 파일 수보다 넓게 잡는다(10%)**. 바이트는 경기가 들어올 때마다 늘고
+ * 시즌 진행 중에는 매일 움직인다 — 3% 로 조이면 **헛되이 붉어지고, 그러면 곧 무시된다.**
+ * 55% 같은 어긋남을 잡는 것이 목적이지 소수점을 맞추는 것이 아니다.
+ */
+const DIST_MB_TOLERANCE = 0.10;
+
+test("⚠문서의 배포물 크기(MB)가 dist 와 크게 어긋나지 않는다", () => {
+  const dist = `${ROOT}dist`;
+  if (!existsSync(dist)) {
+    if (process.env["BB_REQUIRE_DIST"] === "1") throw new Error(`BB_REQUIRE_DIST=1 인데 ${dist} 가 없다`);
+    return;
+  }
+  const bytes = (d: string): number => {
+    let n = 0;
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      n += e.isDirectory() ? bytes(join(d, e.name)) : statSync(join(d, e.name)).size;
+    }
+    return n;
+  };
+  const actualMb = bytes(dist) / 1_048_576;
+  assert.ok(actualMb > 100, `dist 가 ${actualMb.toFixed(1)}MB 뿐이다 — 빌드가 끝나지 않았을 수 있다`);
+
+  const bad: string[] = [];
+  for (const rel of [DOCS.claude, "docs/operations/deploy.md"] as const) {
+    // ⚠취소선 구간은 「왜 죽었는가」의 기록이므로 검사에서 뺀다(위 시험과 같은 규칙)
+    const live = read(rel).replace(/~~[^~\n]*~~/g, "");
+    /**
+     * ⚠**「…MB」 를 아무거나 집으면 안 된다 — 첫 판이 그랬다**(2026-08-27).
+     * 두 문서에는 **다른 양**의 MB 가 여럿 있다(아카이브 크기 · 샤드 크기 · 선수 페이지 소계).
+     * 그것들까지 배포물 크기로 재면 **영원히 붉은 시험**이 되고, 붉은 시험은 곧 무시된다.
+     * → **「N파일 / N MB」 쌍**만 집는다. 그 형태로 적힌 것이 배포물 크기다.
+     */
+    const nums = [...live.matchAll(/([0-9][0-9,]{3,})파일\s*\/\s*([0-9][0-9,]*\.?[0-9]*)MB/g)].map((m) =>
+      Number(m[2]!.replace(/,/g, "")),
+    );
+    if (nums.length === 0) {
+      bad.push(`${rel}: 「…파일 / …MB」 쌍을 한 군데도 안 적었다(취소선 밖에)`);
+      continue;
+    }
+    for (const n of nums) {
+      const off = Math.abs(n - actualMb) / actualMb;
+      if (off > DIST_MB_TOLERANCE) {
+        bad.push(`${rel}: ${n}MB 는 실측 ${actualMb.toFixed(1)}MB 와 ${(off * 100).toFixed(1)}% 어긋난다`);
+      }
+    }
+  }
+  assert.deepEqual(
+    bad,
+    [],
+    `문서의 배포물 크기가 낡았다(실측 ${actualMb.toFixed(1)}MB · 허용 ${DIST_MB_TOLERANCE * 100}%).\n`
+      + "⚠**두 문서가 같은 수를 말해야 한다**(M1) — 한쪽만 고치지 마라.",
+  );
+  console.log(`  · 배포물 ${actualMb.toFixed(1)}MB`);
 });
 
 /**
