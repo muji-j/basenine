@@ -80,6 +80,29 @@ test("⚠통산 패널이 보유 범위를 말한다", () => {
 });
 
 /**
+ * ⚠**머리는 하나인데 패널은 둘이다.** 머리에 「今季 400打席」을 적어 두면
+ * 通算 탭(3200打席)으로 바꿔도 **머리가 안 따라가서 화면이 두 분모를 동시에 주장**한다 —
+ * M2 가 막으려던 바로 그 상태다. 그래서 탭이 있으면 머리에서 분모를 뺀다.
+ *
+ * ⚠**탭이 없을 때는 그대로 둔다** — 그때는 머리와 몸이 같은 범위라 어긋날 자리가 없고,
+ * 머리의 분모는 「이 블록 전체가 무엇 위에 서 있는가」를 한눈에 준다.
+ */
+test("⚠탭이 있으면 머리에 분모를 안 적는다 — 머리가 탭을 따라가지 않는다", () => {
+  const two = countBlockOf(SEASON, { line: CAREER, span: { from: 2018, to: 2026 } });
+  const head = /<h2>カウント別([\s\S]*?)<\/h2>/.exec(
+    blockOf(renderPlayerPage(playerPage({ count: two }), context()), "count"),
+  );
+  assert.notEqual(head, null, "머리를 못 찾았다 — 이 시험이 공회전한다");
+  assert.ok(!/qt"/.test(head![1]!), `탭이 있는데 머리에 분모가 남아 있다: ${head![1]}`);
+
+  const one = countBlockOf(SEASON);
+  const head1 = /<h2>カウント別([\s\S]*?)<\/h2>/.exec(
+    blockOf(renderPlayerPage(playerPage({ count: one }), context()), "count"),
+  );
+  assert.match(head1![1]!, /400打席/, "탭이 없을 때는 머리의 분모를 유지해야 한다");
+});
+
+/**
  * ⚠**보유가 한 시즌뿐이면 탭을 만들지 않는다.**
  * 같은 표를 「今季」와 「通算」으로 두 번 보여주는 것은 정보가 아니라 잡음이다.
  */

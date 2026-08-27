@@ -1985,11 +1985,15 @@ function countBlock(c: CountBlockData, role: "batter" | "pitcher"): RawHtml {
   if (scopes.length === 1) {
     return block({ id: "count", title: "カウント別", qualifier: `${c.pa}打席`, body: bodyOf(c, null) });
   }
+  /**
+   * ⚠**탭이 있으면 머리에 분모를 안 적는다.**
+   * 머리는 하나인데 패널은 둘이라, 「今季 141打席」을 적어 두면 通算 탭(580打席)으로 바꿔도
+   * **머리가 안 따라가서 화면이 두 개의 분모를 동시에 주장**한다 — M2 가 막으려던 바로 그 상태다.
+   * 분모는 각 패널이 값 옆에서 말한다.
+   */
   return block({
     id: "count",
     title: "カウント別",
-    // ⚠**머리의 분모는 처음 보이는 탭의 것**이다 — 탭을 바꾸면 각 패널이 자기 분모를 낸다
-    qualifier: `${c.pa}打席`,
     controls: tablist("count", scopes.map((s) => ({ id: s.id, label: s.label })), false, "範囲の切り替え", true),
     body: html`${scopes.map((s, i) => panel("count", s.id, i === 0, bodyOf(s.scope, s.span)))}`,
   });
