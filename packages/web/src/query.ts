@@ -66,6 +66,7 @@ import type {
   CareerData,
   CareerRow,
   CountBlockData,
+  CountScope,
   CountSplitRow,
   CountUnreadable,
   ReliefBlockData,
@@ -295,7 +296,25 @@ const LEAGUE_NAME: Readonly<Record<League, string>> = {
   pacific: "パシフィック・リーグ",
 };
 
-const SPLIT_AXES: readonly { id: SplitAxisId; dimension: SplitDimension; label: string }[] = [
+/**
+ * 그 시즌 범위의 상대 구단별에서 「얇다」고 볼 타석 수.
+ *
+ * ⚠**다른 축의 30 을 그대로 쓰면 안 된다.** 실측(2025): 선수-상대 조합 3,831개의
+ * 타석이 **중앙 11 · 1사분위 4 · 3사분위 26** 이고, 30 이상은 **23.4%** 뿐이다.
+ * ⚠**교류전은 그 시즌 최대가 17타석**이라 30 으로 두면 **한 칸도 비율을 못 낸다.**
+ * 10 은 구장별(`VENUE_MIN_PA`)과 같은 값이고, 같은 이유(한 시즌 안의 작은 표본)에서 나왔다.
+ */
+export const OPPONENT_THIN_SEASON = 10;
+
+const SPLIT_AXES: readonly {
+  id: SplitAxisId;
+  dimension: SplitDimension;
+  label: string;
+  /** 보유 첫 시즌부터 **보고 있는 시즌까지** 합칠 것인가 */
+  career?: true;
+  /** 이 축에서 「얇다」고 볼 타석 수. 없으면 THIN_SPLIT_PA */
+  thin?: number;
+}[] = [
   { id: "hand", dimension: "opponentHand", label: "対左右" },
   { id: "base", dimension: "baseState", label: "走者状況" },
   { id: "homeAway", dimension: "homeAway", label: "本拠地" },
@@ -303,7 +322,21 @@ const SPLIT_AXES: readonly { id: SplitAxisId; dimension: SplitDimension; label: 
   // ⚠투수 쪽의 뜻이 다르다 — 자기 타순이 아니라 **상대 타자가 몇 번이었는가**다
   { id: "order", dimension: "battingOrder", label: "打順" },
   { id: "venue", dimension: "venue", label: "球場別" },
+  /**
+   * **상대 구단별.** ⚠**두 축인 이유는 범위다** — 축이 이미 탭이므로
+   * 「今季」와 「通算」을 **두 축으로 두면 새 UI 없이** 구분해서 볼 수 있다.
+   *
+   * ⚠**얇음 임계를 축마다 다르게 준다.** 실측(2025 · 선수-상대 3,831조합):
+   * 그 시즌은 타석 **중앙 11 · 1사분위 4** 이고 **교류전은 최대 17** 이다 —
+   * 다른 축과 같은 30 을 쓰면 **거의 모든 칸이 얇음**이 된다.
+   * 통산(9시즌)이면 같은 리그 **중앙 30** · 교류전 **중앙 9** 로 올라온다.
+   * ⚠**접지 않는다** — 구장과 달리 **어느 구단인가가 질문 자체**라
+   * 「その他の球団」으로 합치면 답을 지운다.
+   */
+  { id: "opponent", dimension: "opponentTeam", label: "対戦球団別（今季）", thin: OPPONENT_THIN_SEASON },
+  { id: "opponentCareer", dimension: "opponentTeam", label: "対戦球団別（通算）", career: true, thin: THIN_SPLIT_PA },
 ];
+
 
 /**
  * 구장별 스플릿에서 **한 줄로 남길 최소 타석 수**.
@@ -371,6 +404,9 @@ export function splitLabel(axis: SplitAxisId, key: string, allowed: boolean): st
   if (axis === "venue") return key;
   // 타순은 그대로 수다 — 「3」을 「3番」으로 읽히게만 한다
   if (axis === "order") return `${key}番`;
+  // ⚠**구단 코드를 그대로 내지 않는다** — `db`·`bs` 는 사람이 읽는 이름이 아니다.
+  //   이름은 `shortNameOf` 한 벌에서 온다(M1) — 여기서 표를 다시 만들지 않는다
+  if (axis === "opponent" || axis === "opponentCareer") return shortNameOf(key);
   const table = allowed ? PITCHER_SPLIT_KEY_LABEL : SPLIT_KEY_LABEL;
   return table[key] ?? key;
 }
@@ -1180,6 +1216,46 @@ function loadStatePa(
 }
 
 /**
+ * **이 선수 페이지를 어느 쪽으로 그릴 것인가.**
+ *
+ * ⚠**이 판정 하나가 스플릿·상대전적·성적의 문·카운트별을 전부 가른다.** 틀리면 화면이
+ * **반대편을 그리고**, 투수의 경우 자기 타석이 0이라 스플릿이 통째로 사라진다.
+ *
+ * ## 왜 세 갈래인가 — 하나씩 다른 이유로 필요하다
+ *
+ * ⑴ **`position === "投手"`** — 가장 강한 근거이고 대부분이 여기서 갈린다.
+ * ⑵ **타격 기록이 아예 없고 투구 기록이 있다** — 퍼시픽 투수는 자기 타석이 없다.
+ * ⑶ **상대한 타자가 자기 타석보다 많다** — ⑴이 없거나 **낡았을** 때의 마지막 말.
+ *
+ * ⚠**⑶이 왜 필요한가 · 실측 두 벌**(2026-08-27):
+ * - `position` 은 **선수 페이지에서만** 오는데 그 페이지는 **현재 등록 선수만** 받는다.
+ *   소급 시즌에는 없는 선수가 대거 들어온다 — **917 선수-시즌**이 그 상태였고
+ *   사라진 투구가 **상대한 타자 합 163,631 · 한 명 최대 847**이었다.
+ *   지금은 명단(`roster.html`)이 그 칸을 메우지만, **메우기 전에도 옳게 그려져야 한다.**
+ * - `position` 은 **현재**를 말하므로 **전향**을 못 따라간다. 포지션을 다 메운 뒤에도
+ *   남는 것이 **4건이고 전부 한 사람**이다(西純 · 2021~2024 · 상대 타자 336/323/34/28).
+ *
+ * ⚠**야수 등판을 투수로 만들지 않는다.** 실측 5건(北村 6대132 · オスナ 2대226 ·
+ * 増田大 3대50 · 柴田 1대14)은 전부 자기 타석이 훨씬 많아 ⑶에 안 걸린다.
+ *
+ * ⚠**`null` 과 `0` 을 구별한다**(M11). `null` 은 **그 쪽 기록이 아예 없다**는 뜻이고,
+ * `0` 은 **기록은 있는데 값이 0**이라는 뜻이다 — ⑵가 그 둘을 갈라 본다.
+ */
+export function roleOf(o: {
+  /** 선수 페이지의 「ポジション」. 없으면 `null` */
+  position: string | null;
+  /** 그 시즌 자기 타석. **타격 기록 자체가 없으면 `null`** */
+  batterPa: number | null;
+  /** 그 시즌 상대한 타자. **투구 기록 자체가 없으면 `null`** */
+  pitcherBf: number | null;
+}): "batter" | "pitcher" {
+  if (o.position === "投手") return "pitcher";
+  if (o.pitcherBf === null) return "batter";
+  if (o.batterPa === null) return "pitcher";
+  return o.pitcherBf > o.batterPa ? "pitcher" : "batter";
+}
+
+/**
  * 얇은 구장을 한 줄로 접는다.
  *
  * ⚠**버리지 않고 합친다.** 합계가 맞아야 「그 선수의 전 타석이 어딘가에 있다」고 말할 수 있다.
@@ -1215,12 +1291,18 @@ function loadSplits(
   competition: string,
   through: string,
   allowed = false,
+  /**
+   * 통산 축이 **어느 시즌부터** 셀 것인가. 기본은 `season`(= 통산 축도 그 시즌만).
+   * ⚠**끝은 언제나 `season` 이다** — 과거 시즌 화면이 미래를 말하지 않게 한다(`matchups` 와 같은 규칙).
+   */
+  heldFrom = season,
 ): Map<string, SplitAxisData[]> {
   const out = new Map<string, SplitAxisData[]>();
   const query = allowed ? pitchingSplits : battingSplits;
 
   for (const axis of SPLIT_AXES) {
-    for (const p of query(db, axis.dimension, season, competition, through)) {
+    const from = axis.career === true ? heldFrom : season;
+    for (const p of query(db, axis.dimension, season, competition, through, from)) {
       const rows: SplitRow[] = p.splits.map((s) => ({
         key: s.key,
         label: splitLabel(axis.id, s.key, allowed),
@@ -1234,9 +1316,13 @@ function loadSplits(
         id: axis.id,
         label: axis.label,
         allowed,
+        // ⚠**구장만 접는다.** 상대 구단은 「어느 구단인가」가 질문 자체라 접으면 답이 사라진다
         rows: axis.id === "venue" ? foldThinVenues(rows) : rows,
         unclassified: p.unclassified,
-        thinBelow: THIN_SPLIT_PA,
+        thinBelow: axis.thin ?? THIN_SPLIT_PA,
+        // ⚠**한 시즌만인 축에는 범위를 붙이지 않는다** — 「2025〜2025年」은 정보가 아니라 소음이다.
+        //   ⚠`from === season` 이면 통산 축이어도 실제로 한 시즌이므로 여기서 같이 걸러진다.
+        span: from === season ? null : { from, to: season },
       };
       const list = out.get(p.playerId);
       if (list === undefined) out.set(p.playerId, [entry]);
@@ -4710,7 +4796,16 @@ export function gidpOrUnknown(counted: number | undefined, pa: number): number |
  * ⚠**내보내는 이유는 시험 때문이다.** 이 상태는 오늘 실데이터에 0건이라 `loadSite` 를 통해서는
  *   재현할 수 없다 — 규칙을 값으로 재려면 함수를 직접 불러야 한다(작업규칙 9).
  */
-export function countBlockOf(c: CountLine | undefined): CountBlockData | CountUnreadable | null {
+export function countBlockOf(
+  c: CountLine | undefined,
+  /**
+   * 통산분(보유 첫 시즌 ~ 보고 있는 시즌)과 그 범위. 없으면 탭을 만들지 않는다.
+   *
+   * ⚠**`span.from === span.to` 면 통산이 시즌과 같다** — 그때도 탭을 만들지 않는다.
+   * 「今季」와 「通算」이 같은 표를 두 번 보여주는 것은 정보가 아니라 잡음이다.
+   */
+  career?: { line: CountLine | undefined; span: { from: number; to: number } },
+): CountBlockData | CountUnreadable | null {
   if (c === undefined) return null;
   if (c.pa === 0) return c.quarantined > 0 ? { quarantinedOnly: c.quarantined } : null;
   const row = (label: string, line: BattingLine): CountSplitRow => ({
@@ -4719,17 +4814,25 @@ export function countBlockOf(c: CountLine | undefined): CountBlockData | CountUn
     avg: battingAverage(line),
     ops: ops(line),
   });
-  return {
-    pa: c.pa,
-    quarantined: c.quarantined,
-    twoStrike: twoStrikeRate(c),
-    firstPitch: firstPitchRate(c),
-    fullCount: fullCountRate(c),
-    threeBall: threeBallRate(c),
+  const scopeOf = (x: CountLine): CountScope => ({
+    pa: x.pa,
+    quarantined: x.quarantined,
+    twoStrike: twoStrikeRate(x),
+    firstPitch: firstPitchRate(x),
+    fullCount: fullCountRate(x),
+    threeBall: threeBallRate(x),
     rows: [
-      row("2ストライク前", c.beforeTwoStrikeLine),
-      row("2ストライク後", c.twoStrikeLine),
+      row("2ストライク前", x.beforeTwoStrikeLine),
+      row("2ストライク後", x.twoStrikeLine),
     ],
+  });
+  const careerLine = career?.line;
+  return {
+    ...scopeOf(c),
+    career:
+      career === undefined || careerLine === undefined || career.span.from >= career.span.to
+        ? null
+        : { ...scopeOf(careerLine), span: career.span },
   };
 }
 
@@ -4860,9 +4963,14 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   const bundles = buildLeagues(agg, (lg) => runValuesByLeague.get(lg));
 
   const profiles = loadProfiles(db);
-  const splitsByPlayer = loadSplits(db, o.season, competition, through);
+  /**
+   * ⚠**통산 축의 시작 시즌.** `careerMatchups` 와 **같은 값**을 쓴다(M1) —
+   * 두 블록이 다른 범위를 「통산」이라고 부르면 화면 안에서 말이 갈린다.
+   */
+  const heldFrom = heldSeasonsOf(db).from || o.season;
+  const splitsByPlayer = loadSplits(db, o.season, competition, through, false, heldFrom);
   // 투수 스플릿은 축 식이 다르다(좌우가 상대 타자, 홈/원정이 반대). 같은 함수로 만든다
-  const pitcherSplitsByPlayer = loadSplits(db, o.season, competition, through, true);
+  const pitcherSplitsByPlayer = loadSplits(db, o.season, competition, through, true, heldFrom);
   const scorebookByPlayer = loadScorebook(db, o.season, competition, through);
   const statePaByPlayer = loadStatePa(db, o.season, competition, through);
   const monthlyEra = loadMonthlyEra(db, o.season, competition, through);
@@ -4967,6 +5075,25 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   for (const c of countLines(db, o.season, competition, through, true)) {
     countByPitcher.set(c.playerId, addCount(countByPitcher.get(c.playerId), c));
   }
+  /**
+   * **통산분**(보유 첫 시즌 ~ 보고 있는 시즌).
+   *
+   * ⚠**표본이 이유다.** 실측(2025 · 규정타석급 40명 · 칸 480): 그 시즌만이면
+   * **가장 작은 칸의 중앙 6타석 · 33.8%가 30타석 미만**이고, 통산이면 **중앙 23 · 14.0%** 다.
+   * ⚠**볼카운트는 9시즌 전 시즌 100% 보유**라 통산이 결측을 섞지 않는다(**결측 0건**).
+   *
+   * ⚠**보유가 한 시즌뿐이면 헛수고가 아니라 잡음이다** — `countBlockOf` 가 그때 탭을 안 만든다.
+   */
+  const countCareerByBatter = new Map<string, CountLine>();
+  const countCareerByPitcher = new Map<string, CountLine>();
+  if (heldFrom < o.season) {
+    for (const c of countLines(db, o.season, competition, through, false, heldFrom)) {
+      countCareerByBatter.set(c.playerId, addCount(countCareerByBatter.get(c.playerId), c));
+    }
+    for (const c of countLines(db, o.season, competition, through, true, heldFrom)) {
+      countCareerByPitcher.set(c.playerId, addCount(countCareerByPitcher.get(c.playerId), c));
+    }
+  }
 
   const bbPitcher = new Map<string, BattedBallData>();
   for (const b of battedBalls(db, o.season, competition, through, true)) {
@@ -5068,7 +5195,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
    * ⚠**한 시즌 표본으로는 순위가 성립하지 않는다**(M3 · 실측 1인당 4.17회) —
    * 시즌 쪽은 **개수만** 낸다.
    */
-  const heldFrom = heldSeasonsOf(db).from || o.season;
+  // ⚠**위에서 이미 잡았다** — 같은 식을 두 번 두면 한쪽만 고쳐지는 날이 온다(M1)
   /**
    * ⚠**미리 만들어 둔 것이 있으면 시즌으로 걸러 쓴다.** 조회는 시즌 범위로 자르나
    * 전 범위를 뽑아 거르나 **같은 답이다** — 하프이닝 안의 인접만 보고, 경기는 시즌을 넘지 않는다.
@@ -5279,8 +5406,11 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     const profile = profiles.get(playerId);
     const team = teamOf(base.teamCode);
 
-    const role: "batter" | "pitcher" =
-      profile?.position === "投手" || (bat === undefined && pit !== undefined) ? "pitcher" : "batter";
+    const role = roleOf({
+      position: profile?.position ?? null,
+      batterPa: bat === undefined ? null : bat.player.line.pa,
+      pitcherBf: pit === undefined ? null : pit.player.line.bf,
+    });
 
     const battingData: BattingBlockData | null =
       bat === undefined
@@ -5527,7 +5657,13 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
        * カウント別. ⚠**투수 페이지는 투수 쪽 집계를 본다** — 투수도 타석에 서지만
        * 이 블록의 주역은 「이 사람이 던진 타석」이다.
        */
-      count: countBlockOf(role === "pitcher" ? countByPitcher.get(playerId) : countByBatter.get(playerId)),
+      count: countBlockOf(
+        role === "pitcher" ? countByPitcher.get(playerId) : countByBatter.get(playerId),
+        {
+          line: role === "pitcher" ? countCareerByPitcher.get(playerId) : countCareerByBatter.get(playerId),
+          span: { from: heldFrom, to: o.season },
+        },
+      ),
       /** 火消し. ⚠**투수 페이지에만** — 타자에게는 뜻이 없다(`blocks.ts` 가 그것을 강제한다) */
       relief:
         role === "pitcher"

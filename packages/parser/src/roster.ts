@@ -2,7 +2,11 @@
  * 경기별 ベンチ入り選手 명단(`roster.html`) 파서.
  *
  * ⚠**이 페이지는 처음부터 받고 있었는데 한 번도 읽지 않았다**(2026-08-17 확인).
- * 경기마다 1장씩, 아카이브에 3,126장이 쌓여 있고 그 안에 **선수 52명의 배번과 투타**가 있다.
+ * 경기마다 1장씩 쌓이고, 그 안에 **배번·투타·포지션 구획**이 있다.
+ * ⚠**~~3,126장에 52명~~ 은 낡았다**(2026-08-27 정정). 지금은 **7,805장**이고
+ * 그중 **행이 있는 것이 7,533장**, 인원은 **43~64명**(최빈 52 · 5,238장)이다 —
+ * 「52명」은 최빈값이지 상수가 아니었다. **나머지 272장은 행도 머리도 0개**라 실패로 센다.
+ * ⚠**이 수는 매일 는다**(경기가 들어오면 명단도 는다) — 날짜와 함께 읽어라.
  *
  * ## 왜 필요한가 — 선수 페이지로는 닿지 않는 선수가 있다
  *
@@ -23,6 +27,12 @@
  */
 import type { Hand } from "./player.ts";
 
+/**
+ * 명단의 포지션 구획. ⚠**선수 페이지의 「ポジション」과 어휘가 같다**(실측: DB 값이
+ * 投手 420 · 内野手 177 · 外野手 136 · 捕手 78 로 이 넷뿐) — 그래서 같은 칸에 채울 수 있다.
+ */
+export type RosterPosition = "投手" | "捕手" | "内野手" | "外野手";
+
 export interface RosterEntry {
   /** NPB 공식 선수 ID. **이것이 조인 키다**(M10) */
   playerId: string;
@@ -34,6 +44,12 @@ export interface RosterEntry {
   uniformNumber: string | null;
   throws: Hand;
   bats: Hand;
+  /**
+   * 그 경기에서 어느 구획에 있었는가.
+   * ⚠**배번과 같은 성질이다** — 「현재 포지션」이 아니라 **그 경기 시점**이고,
+   * 전향(투수→야수)이 실재하므로 **선수 페이지 값을 덮어쓰면 안 된다.**
+   */
+  position: RosterPosition;
 }
 
 export class RosterParseError extends Error {
@@ -57,14 +73,64 @@ const ROW =
   /<td[^>]*>\s*(\d*)\s*<\/td>\s*<td[^>]*>\s*<a href="\/bis\/players\/(\d+)\.html"[^>]*>([^<]*)<\/a>\s*<\/td>\s*<td[^>]*>\s*([^<]*?)\s*<\/td>/g;
 
 /**
+ * 포지션 구획의 머리 행. `<tr><th colspan="3">投手</th></tr>`
+ *
+ * ⚠**선수 행과 같은 순서로 훑어야 한다** — 구획은 위치로만 정해진다.
+ * 그래서 아래에서 **머리와 행을 한 정규식으로 번갈아 잡는다.** 따로 훑어 인덱스로
+ * 맞추려 하면 마크업이 조금만 바뀌어도 **한 칸씩 밀린 포지션**이 조용히 들어간다.
+ */
+const GROUP = /<th[^>]*colspan="3"[^>]*>\s*([^<]*?)\s*<\/th>/g;
+
+const POSITIONS: Readonly<Record<string, RosterPosition>> = {
+  投手: "投手",
+  捕手: "捕手",
+  内野手: "内野手",
+  外野手: "外野手",
+};
+
+/**
  * 명단을 읽는다.
  *
  * @throws {RosterParseError} 한 행도 못 찾았을 때. ⚠**빈 배열로 넘기지 마라** —
  *   마크업이 바뀌면 「그날은 벤치가 비어 있었다」가 되고, 투타 보충이 조용히 멈춘다.
- *   실측 3,126장 전부에서 52명 안팎이 잡힌다.
+ *   실측(2026-08-27 · 7,805장): 행이 있는 7,533장에서 43~64명이 잡히고, 272장은 0명이라 여기서 걸린다.
  */
 export function parseGameRoster(html: string): RosterEntry[] {
   const out: RosterEntry[] = [];
+
+  /**
+   * 머리 행의 **문서 위치**를 먼저 모아 둔다. 선수 행을 훑으면서
+   * 「그 행보다 앞에 있는 마지막 머리」를 그 행의 구획으로 삼는다.
+   *
+   * ⚠**모르는 머리를 조용히 넘기지 않는다**(M7). 넘기면 그 구획 선수들이
+   * **바로 위 구획의 포지션**을 받아 조용히 틀린 값이 들어간다 — 빈 값보다 나쁘다.
+   */
+  const groups: { at: number; position: RosterPosition }[] = [];
+  for (const g of html.matchAll(GROUP)) {
+    const label = g[1]!;
+    const position = POSITIONS[label];
+    if (position === undefined) {
+      throw new RosterParseError("명단의 포지션 구획을 해석하지 못했다", `value=${JSON.stringify(label)}`);
+    }
+    groups.push({ at: g.index, position });
+  }
+
+  const positionAt = (at: number): RosterPosition => {
+    let found: RosterPosition | undefined;
+    for (const g of groups) {
+      if (g.at > at) break;
+      found = g.position;
+    }
+    /**
+     * ⚠**구획 밖의 선수 행은 실패로 만든다.** 마크업이 바뀌어 머리를 못 찾으면
+     * 여기서 전부 걸린다 — 「포지션 없음」으로 흘리면 보충이 조용히 멈춘다.
+     */
+    if (found === undefined) {
+      throw new RosterParseError("포지션 구획 앞에 있는 선수 행을 만났다", `offset=${at}`);
+    }
+    return found;
+  };
+
   for (const m of html.matchAll(ROW)) {
     const [, no, playerId, name, hand] = m;
     const t = /^([右左両])投([右左両])打$/.exec(hand!.replace(/\s/g, ""));
@@ -82,6 +148,7 @@ export function parseGameRoster(html: string): RosterEntry[] {
       uniformNumber: no === "" ? null : no!,
       throws: HAND[t[1]!]!,
       bats: HAND[t[2]!]!,
+      position: positionAt(m.index),
     });
   }
   if (out.length === 0) {
