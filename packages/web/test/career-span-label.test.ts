@@ -40,11 +40,11 @@ const ROWS: SplitAxisData["rows"] = [
 
 const SEASON_AXIS: SplitAxisData = {
   id: "opponent", label: "対戦球団別（今季）", allowed: false, rows: ROWS, unclassified: 0,
-  thinBelow: 10, span: null,
+  thinBelow: 10, span: null, pitching: null,
 };
 const CAREER_AXIS: SplitAxisData = {
   id: "opponentCareer", label: "対戦球団別（通算）", allowed: false, rows: ROWS, unclassified: 0,
-  thinBelow: 30, span: { from: 2018, to: 2026 },
+  thinBelow: 30, span: { from: 2018, to: 2026 }, pitching: null,
 };
 
 /** ⚠**보유 범위를 화면이 말한다** — 「통산」이라는 말만으로는 어느 범위인지 알 수 없다 */

@@ -285,6 +285,8 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
         thinBelow: 30,
         // ⚠한 시즌만인 축이라 범위를 붙이지 않는다(통산 축이면 화면이 「2018〜2026年」이라고 말한다)
         span: null,
+        // ⚠**타석 단위 축이라 투구 라인을 낼 수 없다** — `null` 은 「0」이 아니라 「못 낸다」다
+        pitching: null,
       },
     ],
     scorebook: [

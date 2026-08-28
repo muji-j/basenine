@@ -36,7 +36,7 @@ import {
 } from "./parts.ts";
 import { stableTable } from "./table.ts";
 import type { BarRow, RankDigits } from "./parts.ts";
-import { NO_VALUE, avg3, gameDate, innings, throwsBats } from "./format.ts";
+import { NO_VALUE, avg3, dec2, gameDate, innings, throwsBats } from "./format.ts";
 import { isEmptyProfile, markFigure, markLetter, markProfile } from "./marks.ts";
 import type { MarkPlayer, ProfileAxis } from "./marks.ts";
 import { denUnit, termOf } from "./glossary.ts";
@@ -392,6 +392,28 @@ export interface SplitAxisData {
    * (`ReliefBlockData.from`/`to` · 「화면이 2018〜2026 이라고 말한다」) — **여기서도 화면이 말한다.**
    */
   span: { from: number; to: number } | null;
+  /**
+   * **투수의 진짜 투구 성적**(등판·이닝·방어율·WHIP). **낼 수 있는 축에만** 붙는다.
+   *
+   * ⚠**축이 「경기 단위」일 때만 있다.** 자책점과 이닝은 **등판 전체에 붙은 수**라
+   * 구단별·홈원정·구장별·월별처럼 **한 등판이 통째로 한 칸에 들어가는** 축에서만 합칠 수 있다.
+   * 대좌우·주자상황·타순은 **한 등판이 여러 칸으로 갈리고**, 그때 이닝을 나누면 **지어낸 수**가 된다.
+   *
+   * ⚠**`null` 은 「0」이 아니라 「이 축에서는 낼 수 없다」**다(M11) — 화면이 그 사실을 말한다.
+   * ⚠**키는 `SplitRow.key` 와 같아야 한다** — 다르면 조용히 짝이 안 맞아 빈 칸이 된다.
+   */
+  pitching: Map<string, PitchingSplitCell> | null;
+}
+
+/** 한 칸의 투구 성적. ⚠**이닝이 0 인 등판도 있다**(아웃 없이 강판) — 0 으로 감추지 않는다 */
+export interface PitchingSplitCell {
+  games: number;
+  outs: number;
+  er: number;
+  h: number;
+  hr: number;
+  bb: number;
+  so: number;
 }
 
 export interface ScorebookRow {
@@ -1481,7 +1503,56 @@ function streakBlock(s: StreakBlockData, season: number, asOf: string | null, se
  * ⚠**`scroller` 로 가둔다** — 모바일(390px)에서 **페이지가 옆으로 밀리면 안 된다**.
  * 표는 자기 상자 안에서 스크롤한다(저장소가 곳곳에서 쓰는 방식).
  */
+/**
+ * **투수의 진짜 투구 성적을 낼 수 있는 축**의 표.
+ *
+ * ⚠**막대가 방어율이다 — 짧을수록 좋다.** 타자 축의 OPS 와 방향이 반대이므로
+ * 각주가 그것을 말한다(`被OPS` 와 같은 규칙).
+ * ⚠**이닝이 0 인 칸은 방어율이 정의되지 않는다** — `0.00` 이 아니라 「—」다(M2·M11).
+ *   npb.jp 도 그런 등판을 `----` 로 적는다(`crosscheck-classify.ts` 가 그 표기를 안다).
+ */
+function pitchingSplitTable(a: SplitAxisData, cells: Map<string, PitchingSplitCell>): RawHtml {
+  const eraOf = (c: PitchingSplitCell): number | null => (c.outs === 0 ? null : (c.er * 27) / c.outs);
+  const whipOf = (c: PitchingSplitCell): number | null =>
+    c.outs === 0 ? null : ((c.h + c.bb) * 3) / c.outs;
+  const worst = Math.max(0.01, ...a.rows.map((r) => eraOf(cells.get(r.key) ?? EMPTY_CELL) ?? 0));
+  return scroller(html`<table class="spl">
+  <thead><tr>
+    <th class="l">${a.label.replace(/（[^）]*）/, "")}</th>
+    <th class="l">${term("防御率")}</th>
+    <th>登板</th>
+    <th>${term("投球回")}</th>
+    <th>${term("防御率")}</th>
+    <th>${term("WHIP")}</th>
+    <th>被安打</th><th>被本塁打</th><th>与四球</th><th>奪三振</th>
+  </tr></thead>
+  <tbody>${a.rows.map((r) => {
+    const c = cells.get(r.key);
+    if (c === undefined) return raw("");
+    const era = eraOf(c);
+    const whip = whipOf(c);
+    // ⚠**얇음의 잣대가 다르다** — 타석이 아니라 **이닝**이다. 3이닝 미만은 흐린다
+    const thin = c.outs < 9;
+    return html`<tr class="${thin ? "thin" : ""}">
+      <td class="l">${r.label}</td>
+      <td class="l"><div class="track"><i style="width:${Math.round(
+        Math.max(0, Math.min(1, (era ?? 0) / worst)) * 100,
+      )}%${thin ? ";opacity:.35" : ""}"></i></div></td>
+      <td class="b">${c.games}</td>
+      <td>${innings(c.outs)}</td>
+      <td class="b">${era === null ? NO_VALUE : dec2(era)}</td>
+      <td>${whip === null ? NO_VALUE : dec2(whip)}</td>
+      <td>${c.h}</td><td>${c.hr}</td><td>${c.bb}</td><td>${c.so}</td>
+    </tr>`;
+  })}</tbody>
+</table>`);
+}
+
+const EMPTY_CELL: PitchingSplitCell = { games: 0, outs: 0, er: 0, h: 0, hr: 0, bb: 0, so: 0 };
+
 function splitTable(a: SplitAxisData, max: number, allowed: boolean): RawHtml {
+  // ⚠**투구 라인이 있으면 그쪽이 맞다** — 「타자 수치를 뒤집은 것」이 아니라 진짜 투수 지표다
+  if (a.pitching !== null) return pitchingSplitTable(a, a.pitching);
   const head = allowed
     ? ["被安打", "被本塁打", "与四球", "奪三振"]
     : ["安打", "二塁打", "本塁打", "打点", "四球", "三振"];
@@ -1546,10 +1617,19 @@ function splitsBlock(axes: readonly SplitAxisData[]): RawHtml {
       ai === 0,
       html`${a.rows.length === 0 ? html`<p class="empty">この区分の打席がありません。</p>` : splitTable(a, max, allowed)}
       ${note(
-        (allowed
-          ? `棒は被OPS（**短いほど良い**）。安打・本塁打・四球・三振は**投手が許した数**です。`
-          : `棒はOPS。`) +
-          `${a.thinBelow}${allowed ? "対戦打席" : "打席"}未満は薄く表示しています — ` +
+        (a.pitching !== null
+          ? // ⚠**이 축의 막대는 방어율이다** — 「被OPS」라고 적으면 화면이 거짓말을 한다.
+            //   임계도 타석이 아니라 **이닝**이다(3이닝 미만).
+            `棒は防御率（**短いほど良い**）。この区分は**登板がまるごと1つの枠に入る**ので、`
+            + `投球回と自責点をそのまま合計できます — **本物の防御率**です。`
+            + `3回未満は薄く表示しています。`
+          : allowed
+            ? `棒は被OPS（**短いほど良い**）。安打・本塁打・四球・三振は**投手が許した数**です。`
+              + `${a.thinBelow}対戦打席未満は薄く表示しています。`
+              // ⚠**왜 여기엔 방어율이 없는가**를 화면이 말한다 — 없는 것을 그냥 비우면 결함으로 읽힌다
+              + `⚠この区分に**防御率はありません** — 投球回と自責点は**登板全体につく数**で、`
+              + `1度の登板がこの区分の複数の枠にまたがるため、枠ごとに割り振ることができません。`
+            : `棒はOPS。${a.thinBelow}打席未満は薄く表示しています。`) +
           `値は小さな標本のもので、順位ではありません。` +
           // ⚠**「通算」とだけ書くと嘘になる** — 当サイトが持っている範囲の通算だからだ。
           //   火消しブロックと同じ規則で**画面が範囲を言う**（M1: 規則は一本）。

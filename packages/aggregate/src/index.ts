@@ -35,8 +35,16 @@ export { careerNameJoin, careerNames, seasonNameExpr, seasonNameJoin } from "./s
 export type { DerivedRunValues, WobaEvent } from "./woba-weights.ts";
 export { addSrc, addSrp, computeSrc, computeSrp, missingStates, srcPer600Of, srpPer9Of } from "./situational.ts";
 export type { SrcEntry, SrcTotals, SrpEntry, SrpTotals } from "./situational.ts";
-export { battingSplits, matchups, pitchingSplits } from "./splits.ts";
-export type { Matchup, PlayerSplits, SplitDimension, SplitLine } from "./splits.ts";
+export { battingSplits, matchups, pitchingGameSplits, pitchingSplits } from "./splits.ts";
+export type {
+  GameLevelDimension,
+  Matchup,
+  PitchingSplitLine,
+  PlayerPitchingSplits,
+  PlayerSplits,
+  SplitDimension,
+  SplitLine,
+} from "./splits.ts";
 export {
   STAR_ER,
   STAR_HITS,
