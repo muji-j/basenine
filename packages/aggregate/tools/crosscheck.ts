@@ -29,6 +29,8 @@ import {
 } from "@bb-app/metrics";
 import type { BattingLine, PitchingLine } from "@bb-app/metrics";
 // ⚠**판정 규칙은 여기 두지 않는다**(M1) — 시험이 직접 부를 수 있어야 한다
+// ⚠**화면이 쓰는 그 이름을 쓴다**(M1) — 기본명은 「지금」의 이름이라 시즌마다 갈린다
+import { seasonNameExpr, seasonNameJoin } from "../src/season-name.ts";
 import { classifyDiff } from "../src/crosscheck-classify.ts";
 import type { CrosscheckDiff as Diff } from "../src/crosscheck-classify.ts";
 // ⚠**화면과 같은 반올림을 쓴다.** 두 벌이면 대조가 거짓 경보를 낸다
@@ -127,7 +129,7 @@ function cmp(team: string, kind: Diff["kind"], name: string, field: string, ours
 
 // ── 타격 ────────────────────────────────────────────────────────────────
 const BAT_SQL = `
-SELECT p.display_name AS name,
+SELECT ${seasonNameExpr("p")} AS name,
        COUNT(DISTINCT b.game_id) AS games,
        SUM(b.pa) AS pa, SUM(b.ab) AS ab, SUM(b.runs) AS runs, SUM(b.h) AS h,
        SUM(b.d2) AS d2, SUM(b.d3) AS d3, SUM(b.hr) AS hr, SUM(b.rbi) AS rbi,
@@ -136,6 +138,7 @@ SELECT p.display_name AS name,
 FROM batting_line b
 JOIN game g ON g.game_id = b.game_id
 JOIN player p ON p.player_id = b.player_id
+${seasonNameJoin("b.player_id", "g.season")}
 WHERE g.season = ? AND g.status = 'played' AND g.competition = ?
   AND g.game_date <= ?
   AND ((b.side = 'away' AND g.away_code = ?) OR (b.side = 'home' AND g.home_code = ?))
@@ -143,7 +146,7 @@ GROUP BY b.player_id
 `;
 
 const PIT_SQL = `
-SELECT p.display_name AS name,
+SELECT ${seasonNameExpr("p")} AS name,
        COUNT(DISTINCT pl.game_id) AS games,
        -- ⚠SUM(x = 'y')는 x가 전부 NULL이면 **NULL을 돌려준다**(0이 아니라).
        -- 결정 표기가 한 번도 없는 투수 79명이 그래서 「불일치」로 잡혔다 — 대조 도구의 버그였다
@@ -157,6 +160,7 @@ SELECT p.display_name AS name,
 FROM pitching_line pl
 JOIN game g ON g.game_id = pl.game_id
 JOIN player p ON p.player_id = pl.player_id
+${seasonNameJoin("pl.player_id", "g.season")}
 WHERE g.season = ? AND g.status = 'played' AND g.competition = ?
   AND g.game_date <= ?
   AND ((pl.side = 'away' AND g.away_code = ?) OR (pl.side = 'home' AND g.home_code = ?))
