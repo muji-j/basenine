@@ -1466,6 +1466,61 @@ function streakBlock(s: StreakBlockData, season: number, asOf: string | null, se
   });
 }
 
+/**
+ * 스플릿 한 축의 표.
+ *
+ * ⚠**막대를 버리지 않았다** — 「対左 대 対右」를 **한눈에** 보는 것이 이 블록의 존재 이유다.
+ * 표만 두면 두 칸을 눈이 아니라 머리로 비교하게 된다. 그래서 **막대를 한 열로 남긴다.**
+ *
+ * ⚠**세부 수치는 원래 데이터에 있었다.** `SplitRow.line` 은 `BattingLine` 전체(안타·2루타·
+ * **홈런**·사사구·삼진)인데 **화면이 세 비율만 그리고 있었다** — 새 집계 없이 그리기만 하면 된다.
+ *
+ * ⚠**투수 화면은 뜻이 반대다**(`splits.ts` 머리주석) — `h` 는 피안타, `hr` 는 피홈런이다.
+ * 열 이름을 「被~」로 바꾸지 않으면 **투수가 친 것으로 읽힌다.**
+ *
+ * ⚠**`scroller` 로 가둔다** — 모바일(390px)에서 **페이지가 옆으로 밀리면 안 된다**.
+ * 표는 자기 상자 안에서 스크롤한다(저장소가 곳곳에서 쓰는 방식).
+ */
+function splitTable(a: SplitAxisData, max: number, allowed: boolean): RawHtml {
+  const head = allowed
+    ? ["被安打", "被本塁打", "与四球", "奪三振"]
+    : ["安打", "二塁打", "本塁打", "打点", "四球", "三振"];
+  const paLabel = allowed ? "対戦打席" : "打席";
+  return scroller(html`<table class="spl">
+  <thead><tr>
+    <th class="l">${a.label.replace(/（[^）]*）/, "")}</th>
+    <th class="l">${allowed ? "被OPS" : "OPS"}</th>
+    <th>${paLabel}</th>
+    ${/* ⚠**`term()` 은 키가 아니라 라벨을 받는다** — 키를 주면 그 글자가 화면에 그대로 찍힌다
+           (첫 판에 `allowedAvg` 가 열 이름으로 나갔다). 용어집에 없는 라벨이면 그냥 글자가 된다. */ ""}
+    <th>${term(allowed ? "被打率" : "打率")}</th>
+    <th>${term(allowed ? "被出塁率" : "出塁率")}</th>
+    <th>${term(allowed ? "被長打率" : "長打率")}</th>
+    ${head.map((h) => html`<th>${h}</th>`)}
+  </tr></thead>
+  <tbody>${a.rows.map((r) => {
+    const thin = r.line.pa < a.thinBelow;
+    return html`<tr class="${thin ? "thin" : ""}">
+      <td class="l">${r.label}</td>
+      ${/* ⚠**투수는 막대가 짧을수록 좋다.** 뒤집지 않는다 — 뒤집으면 같은 길이가
+             타자 화면에서는 좋고 투수 화면에서는 나쁜 것이 되어 눈이 배운 규칙이 무너진다.
+             대신 「棒が短いほど良い」라고 각주가 말한다. */ ""}
+      <td class="l"><div class="track"><i style="width:${Math.round(
+        Math.max(0, Math.min(1, (r.ops.value ?? 0) / max)) * 100,
+      )}%${thin ? ";opacity:.35" : ""}"></i></div></td>
+      <td class="b">${r.line.pa}</td>
+      <td>${avg3(r.avg.value)}</td>
+      <td>${avg3(r.obp.value)}</td>
+      <td>${avg3(r.slg.value)}</td>
+      ${allowed
+        ? html`<td>${r.line.h}</td><td>${r.line.hr}</td><td>${r.line.bb}</td><td>${r.line.so}</td>`
+        : html`<td>${r.line.h}</td><td>${r.line.double}</td><td>${r.line.hr}</td>
+          <td>${r.rbi}</td><td>${r.line.bb}</td><td>${r.line.so}</td>`}
+    </tr>`;
+  })}</tbody>
+</table>`);
+}
+
 function splitsBlock(axes: readonly SplitAxisData[]): RawHtml {
   if (axes.length === 0) {
     return block({
@@ -1485,25 +1540,17 @@ function splitsBlock(axes: readonly SplitAxisData[]): RawHtml {
 
   const panels = axes.map((a, ai) => {
     const max = Math.max(0.001, ...a.rows.map((r) => r.ops.value ?? 0));
-    const rows: BarRow[] = a.rows.map((r) => ({
-      label: r.label,
-      // ⚠**투수는 막대가 짧을수록 좋다.** 그래서 뒤집지 않는다 — 뒤집으면 같은 길이가
-      // 타자 화면에서는 좋고 투수 화면에서는 나쁜 것이 되어 눈이 배운 규칙이 무너진다.
-      // 대신 「棒が短いほど良い」라고 화면이 말한다.
-      fill: (r.ops.value ?? 0) / max,
-      thin: r.line.pa < a.thinBelow,
-      text: html`${avg3(r.avg.value)} / ${avg3(r.obp.value)} / ${avg3(r.slg.value)}<span class="den">${r.line.pa}打席</span>`,
-    }));
     return panel(
       "splits",
       a.id,
       ai === 0,
-      html`${a.rows.length === 0 ? html`<p class="empty">この区分の打席がありません。</p>` : bars(rows)}
+      html`${a.rows.length === 0 ? html`<p class="empty">この区分の打席がありません。</p>` : splitTable(a, max, allowed)}
       ${note(
         (allowed
-          ? `棒は被OPS（短いほど良い）。数字は 被打率 / 被出塁率 / 被長打率 と対戦打席数です。`
-          : `棒はOPS。数字は 打率 / 出塁率 / 長打率 と打席数です。`) +
-          `${a.thinBelow}打席未満は棒を薄くしています — 値は小さな標本のもので、順位ではありません。` +
+          ? `棒は被OPS（**短いほど良い**）。安打・本塁打・四球・三振は**投手が許した数**です。`
+          : `棒はOPS。`) +
+          `${a.thinBelow}${allowed ? "対戦打席" : "打席"}未満は薄く表示しています — ` +
+          `値は小さな標本のもので、順位ではありません。` +
           // ⚠**「通算」とだけ書くと嘘になる** — 当サイトが持っている範囲の通算だからだ。
           //   火消しブロックと同じ規則で**画面が範囲を言う**（M1: 規則は一本）。
           (a.span === null
