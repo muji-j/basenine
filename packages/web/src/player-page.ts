@@ -1519,10 +1519,11 @@ function pitchingSplitTable(a: SplitAxisData, cells: Map<string, PitchingSplitCe
   return scroller(html`<table class="spl">
   <thead><tr>
     <th class="l">${a.label.replace(/（[^）]*）/, "")}</th>
+    ${/* ⚠**막대 열에 값도 넣는다** — 막대만 두면 그 열에 수가 없어 분모를 붙일 자리가 없다(M2).
+           그래서 방어율은 **이 열 하나**로 하고 아래에 따로 두지 않는다(같은 수를 두 번 내지 않는다). */ ""}
     <th class="l">${term("防御率")}</th>
     <th>登板</th>
     <th>${term("投球回")}</th>
-    <th>${term("防御率")}</th>
     <th>${term("WHIP")}</th>
     <th>被安打</th><th>被本塁打</th><th>与四球</th><th>奪三振</th>
   </tr></thead>
@@ -1537,11 +1538,12 @@ function pitchingSplitTable(a: SplitAxisData, cells: Map<string, PitchingSplitCe
       <td class="l">${r.label}</td>
       <td class="l"><div class="track"><i style="width:${Math.round(
         Math.max(0, Math.min(1, (era ?? 0) / worst)) * 100,
-      )}%${thin ? ";opacity:.35" : ""}"></i></div></td>
+      )}%${thin ? ";opacity:.35" : ""}"></i></div>
+        ${/* ⚠**분모는 이닝이다**(자책점 × 9 ÷ 投球回) — 등판 수가 아니다 */ ""}
+        <span class="wd">${valueWithDen({ value: era, denominator: c.outs / 3 }, denUnit("era"), 2)}</span></td>
       <td class="b">${c.games}</td>
       <td>${innings(c.outs)}</td>
-      <td class="b">${era === null ? NO_VALUE : dec2(era)}</td>
-      <td>${whip === null ? NO_VALUE : dec2(whip)}</td>
+      <td class="wd">${valueWithDen({ value: whip, denominator: c.outs / 3 }, denUnit("whip"), 2)}</td>
       <td>${c.h}</td><td>${c.hr}</td><td>${c.bb}</td><td>${c.so}</td>
     </tr>`;
   })}</tbody>
@@ -1562,6 +1564,7 @@ function splitTable(a: SplitAxisData, max: number, allowed: boolean): RawHtml {
     <th class="l">${a.label.replace(/（[^）]*）/, "")}</th>
     <th class="l">${allowed ? "被OPS" : "OPS"}</th>
     <th>${paLabel}</th>
+    <th>${term("打数")}</th>
     ${/* ⚠**`term()` 은 키가 아니라 라벨을 받는다** — 키를 주면 그 글자가 화면에 그대로 찍힌다
            (첫 판에 `allowedAvg` 가 열 이름으로 나갔다). 용어집에 없는 라벨이면 그냥 글자가 된다. */ ""}
     <th>${term(allowed ? "被打率" : "打率")}</th>
