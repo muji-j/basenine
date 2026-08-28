@@ -272,8 +272,19 @@ test("⚠투수 스플릿은 「被成績」이라고 이름을 바꾼다 — �
   );
   const section = /<section class="block"[^>]*id="b-splits">[\s\S]*?<\/section>/.exec(out)?.[0] ?? "";
   assert.match(section, /スプリット（被成績）/);
-  assert.match(section, /棒は被OPS（短いほど良い）/);
-  assert.match(section, /被打率 \/ 被出塁率 \/ 被長打率/);
+  /**
+   * ⚠**규칙을 재고 겉모양은 덜 잰다**(2026-08-28). 강조(`**…**`)가 `<b>` 로 렌더되므로
+   * 문장을 통째로 고정하면 **뜻이 그대로인데도 붉어진다**. 지켜야 할 것은 두 가지다 —
+   * ⑴ 막대가 **被OPS** 이고 ⑵ **짧을수록 좋다**고 화면이 말하는 것.
+   */
+  assert.match(section, /棒は被OPS/);
+  assert.match(section, /短いほど良い/);
+  // ⚠**투수 열은 「被~」여야 한다** — 안 그러면 이 투수가 친 것으로 읽힌다
+  for (const col of ["被打率", "被出塁率", "被長打率", "被安打", "被本塁打"]) {
+    assert.ok(section.includes(col), `투수 스플릿에 ${col} 열이 없다`);
+  }
+  // ⚠**타자 쪽 이름이 새어 들어오면 안 된다**
+  assert.ok(!/<th>打点<\/th>/.test(section), "투수 스플릿에 타자 열(打点)이 들어갔다");
   assert.match(section, /対右打者/);
   assert.ok(!section.includes("対右投手"), "투수 페이지에 「対右投手」가 남았다");
 });

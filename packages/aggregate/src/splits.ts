@@ -11,7 +11,7 @@
 import type { Db } from "@bb-app/store";
 import { careerNameJoin, seasonNameExpr, seasonNameJoin } from "./season-name.ts";
 import { foldOutcomes } from "@bb-app/store";
-import type { BattingLine } from "@bb-app/metrics";
+import type { BattingLine, PitchingLine } from "@bb-app/metrics";
 
 /** 나눌 축. */
 export type SplitDimension =
@@ -318,4 +318,119 @@ export function matchups(
     out.push({ ...meta, line, rbi });
   }
   return out;
+}
+
+/**
+ * **경기 단위 축의 투구 라인** — 투수에게 투수다운 지표를 주려고 따로 둔다.
+ *
+ * ## ⚠왜 타석 로그로는 안 되는가
+ *
+ * `pa_event` 에는 **자책점이 없다**(컬럼 실측: `runs_scored` 는 있어도 `er` 이 없다).
+ * 자책점은 **공식 기록자의 판정**(에러가 없었다면 들어오지 않았을 점을 뺀다)이라
+ * 타석 결과에서 **유도할 수 없다.** 이닝도 마찬가지로 등판 전체에 붙은 수다.
+ *
+ * ⚠**그래서 이 함수는 축이 「경기 단위」일 때만 쓸 수 있다.**
+ * 구단별·홈원정·구장별·월별은 **한 등판이 통째로 한 칸에 들어가므로** 그대로 합치면 된다.
+ * 대좌우·주자상황·타순은 **한 등판이 여러 칸으로 갈리고**, 그때 이닝·자책점을 칸에 나누면
+ * 그건 **우리가 지어낸 수**다. 그런 축에는 이 함수를 쓰지 마라.
+ *
+ * 실측(2025): 선수-상대 조합 **2,181** 중 이닝이 0 이 아닌 칸 **2,172(99.6%)**.
+ */
+export type GameLevelDimension = "opponentTeam" | "homeAway" | "venue" | "month";
+
+/** 그 축 한 칸의 투구 성적. ⚠**`PitchingLine` 그대로**다 — 지표 산식이 그것을 받는다(M1) */
+export interface PitchingSplitLine {
+  key: string;
+  /** 등판 수. ⚠**이닝이 0 인 등판도 있다**(아웃을 못 잡고 강판) — 0 으로 감추지 않는다 */
+  games: number;
+  line: PitchingLine;
+}
+
+export interface PlayerPitchingSplits {
+  playerId: string;
+  displayName: string;
+  splits: PitchingSplitLine[];
+}
+
+/**
+ * ⚠**타자 쪽 식과 좌우가 뒤집힌다** — 투수에게 상대는 **치는 쪽**이다.
+ * 여기서는 `pa_event.half` 가 아니라 **`pitching_line.side`** 로 판정한다(경기 단위이므로).
+ */
+const GAME_KEY_EXPR: Readonly<Record<GameLevelDimension, string>> = {
+  opponentTeam: `CASE pl.side WHEN 'home' THEN g.away_code ELSE g.home_code END`,
+  homeAway: `pl.side`,
+  venue: `g.venue`,
+  month: `substr(g.game_date, 1, 7)`,
+};
+
+export function pitchingGameSplits(
+  db: Db,
+  dimension: GameLevelDimension,
+  season: number,
+  competition = "regular",
+  through = "9999-12-31",
+  /** ⚠**통산의 끝은 언제나 「보고 있는 시즌」**이다(`matchups`·`battingSplits` 와 같은 규약 · M1) */
+  fromSeason = season,
+): PlayerPitchingSplits[] {
+  const rows = db.raw
+    .prepare(`
+SELECT pl.player_id AS playerId,
+       ${seasonNameExpr("p")} AS displayName,
+       ${GAME_KEY_EXPR[dimension]} AS splitKey,
+       COUNT(*) AS games,
+       SUM(pl.outs) AS outs, SUM(pl.bf) AS bf, SUM(pl.h) AS h, SUM(pl.hr) AS hr,
+       SUM(pl.bb) AS bb, SUM(pl.hbp) AS hbp, SUM(pl.so) AS so,
+       SUM(pl.runs) AS runs, SUM(pl.er) AS er
+FROM pitching_line pl
+JOIN game g ON g.game_id = pl.game_id
+JOIN player p ON p.player_id = pl.player_id
+${seasonNameJoin("pl.player_id", "g.season")}
+WHERE g.season BETWEEN ? AND ? AND g.status = 'played' AND g.competition = ?
+  AND g.game_date <= ?
+GROUP BY pl.player_id, splitKey
+`)
+    .all(fromSeason, season, competition, through) as unknown as {
+      playerId: string;
+      displayName: string;
+      splitKey: string | null;
+      games: number;
+      outs: number;
+      bf: number;
+      h: number;
+      hr: number;
+      bb: number;
+      hbp: number;
+      so: number;
+      runs: number;
+      er: number;
+    }[];
+
+  const acc = new Map<string, PlayerPitchingSplits>();
+  for (const r of rows) {
+    // ⚠**키가 없는 칸은 건너뛴다**(구장 미상 등) — 0 으로 메우지 않는다(M11)
+    if (r.splitKey === null) continue;
+    let cur = acc.get(r.playerId);
+    if (cur === undefined) {
+      cur = { playerId: r.playerId, displayName: r.displayName, splits: [] };
+      acc.set(r.playerId, cur);
+    }
+    cur.splits.push({
+      key: r.splitKey,
+      games: r.games,
+      line: {
+        outs: r.outs,
+        bf: r.bf,
+        h: r.h,
+        hr: r.hr,
+        bb: r.bb,
+        // ⚠**고의사구는 경기 표에 없다** — 0 으로 두되 화면이 그 칸을 쓰지 않는다
+        ibb: 0,
+        hbp: r.hbp,
+        so: r.so,
+        er: r.er,
+        r: r.runs,
+      },
+    });
+  }
+  return [...acc.values()];
 }

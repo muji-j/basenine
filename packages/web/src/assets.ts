@@ -724,6 +724,18 @@ th[aria-sort="descending"] .sortable i::before{content:"↓"}
 .bars{display:flex;flex-direction:column;gap:6px;max-width:480px}
 .bar{display:grid;grid-template-columns:84px 1fr 132px;gap:10px;align-items:center}
 .bar span{font-size:11.5px;color:var(--tx-2)}
+/* 스플릿 표의 막대 열. ⚠**막대를 표 안에 남긴 이유**: 「対左 대 対右」를 한눈에 보는 것이
+   이 블록의 존재 이유다. 표만 두면 두 칸을 눈이 아니라 머리로 비교하게 된다.
+   ⚠**폭을 여기서 준다** — track 은 원래 bar 그리드의 남은 칸에 기대고 있었고,
+   표 안에서는 그 부모가 없어 **폭 0 이 된다.**
+   ⚠**이 파일 안에서 백틱을 쓰지 마라** — 파일 전체가 하나의 템플릿 리터럴이라
+   백틱 하나가 문자열을 끊는다(template-literals.test.ts 가 지킨다). */
+.spl td .track{width:72px;min-width:72px}
+.spl th:nth-child(2),.spl td:nth-child(2){padding-left:0}
+/* ⚠얇은 표본은 **지우지 않고 흐린다** — 값은 보이되 시각적 무게를 뺀다(M2 의 화면 쪽).
+   ⚠**.55 로 뒀다가 css-contrast 시험이 잡았다** — 라이트에서 합성 대비 **4.00 으로 기준 4.5 미달**이었다
+   (다크는 5.02 로 통과라 한쪽만 보면 못 잡는다). .65 로 올려 **라이트 5.56 · 다크 6.45**. */
+.spl tr.thin td{opacity:.65}
 .track{height:13px;background:var(--hair)}
 .track i{display:block;height:100%;background:var(--team,#6b7280);transform-origin:left center;
   animation:grow 420ms var(--ease) both}

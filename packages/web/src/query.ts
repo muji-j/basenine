@@ -111,6 +111,7 @@ import {
   blendConstants,
   battingSplits,
   battingStreaks,
+  pitchingGameSplits,
   pitchingSplits,
   buildLeagues,
   buildRunExpectancy,
@@ -166,6 +167,7 @@ import type {
   PitchingEntry,
   RunExpectancy,
   SeasonAggregate,
+  GameLevelDimension,
   SplitDimension,
   SrcEntry,
   SrcTotals,
@@ -193,6 +195,7 @@ import type {
   ScorebookRow,
   SituationCell,
   SparkPoint,
+  PitchingSplitCell,
   SplitAxisData,
   SplitAxisId,
   SplitRow,
@@ -336,6 +339,22 @@ const SPLIT_AXES: readonly {
   { id: "opponent", dimension: "opponentTeam", label: "対戦球団別（今季）", thin: OPPONENT_THIN_SEASON },
   { id: "opponentCareer", dimension: "opponentTeam", label: "対戦球団別（通算）", career: true, thin: THIN_SPLIT_PA },
 ];
+
+/**
+ * **어느 축이 「경기 단위」인가** — 그 축에만 진짜 투구 성적(이닝·자책점)을 붙일 수 있다.
+ *
+ * ⚠**명시적으로 적는다.** 이름으로 추론하면 새 축이 조용히 잘못 붙는다 —
+ * 그때 나오는 것은 「없는 값」이 아니라 **그럴듯한 거짓 이닝**이다.
+ * ⚠**여기 없는 축**(대좌우·주자상황·타순)은 **한 등판이 여러 칸으로 갈린다** —
+ * 등판 전체에 붙은 이닝·자책점을 그 칸들에 나눌 방법이 없다.
+ */
+export const GAME_LEVEL_OF: Readonly<Partial<Record<SplitAxisId, GameLevelDimension>>> = {
+  homeAway: "homeAway",
+  month: "month",
+  venue: "venue",
+  opponent: "opponentTeam",
+  opponentCareer: "opponentTeam",
+};
 
 
 /**
@@ -1300,6 +1319,34 @@ function loadSplits(
   const out = new Map<string, SplitAxisData[]>();
   const query = allowed ? pitchingSplits : battingSplits;
 
+  /**
+   * **투수의 진짜 투구 성적**(등판·이닝·방어율·WHIP)을 축별로 미리 모은다.
+   *
+   * ⚠**경기 단위 축에만 있다.** 자책점·이닝은 **등판 전체에 붙은 수**라
+   * 한 등판이 통째로 한 칸에 들어가는 축에서만 합칠 수 있다 —
+   * 대좌우·주자상황·타순은 한 등판이 여러 칸으로 갈리고, 나누면 **지어낸 수**가 된다.
+   * ⚠**타자 화면에는 만들지 않는다** — 부르는 값이 그대로 낭비다.
+   */
+  const gameLevel = new Map<string, Map<string, Map<string, PitchingSplitCell>>>();
+  if (allowed) {
+    for (const axis of SPLIT_AXES) {
+      const dim = GAME_LEVEL_OF[axis.id];
+      if (dim === undefined) continue;
+      const from = axis.career === true ? heldFrom : season;
+      const byPlayer = new Map<string, Map<string, PitchingSplitCell>>();
+      for (const p of pitchingGameSplits(db, dim, season, competition, through, from)) {
+        byPlayer.set(
+          p.playerId,
+          new Map(p.splits.map((s) => [s.key, {
+            games: s.games, outs: s.line.outs, er: s.line.er,
+            h: s.line.h, hr: s.line.hr, bb: s.line.bb, so: s.line.so,
+          }])),
+        );
+      }
+      gameLevel.set(axis.id, byPlayer);
+    }
+  }
+
   for (const axis of SPLIT_AXES) {
     const from = axis.career === true ? heldFrom : season;
     for (const p of query(db, axis.dimension, season, competition, through, from)) {
@@ -1323,6 +1370,8 @@ function loadSplits(
         // ⚠**한 시즌만인 축에는 범위를 붙이지 않는다** — 「2025〜2025年」은 정보가 아니라 소음이다.
         //   ⚠`from === season` 이면 통산 축이어도 실제로 한 시즌이므로 여기서 같이 걸러진다.
         span: from === season ? null : { from, to: season },
+        // ⚠**경기 단위 축에만 붙는다** — `null` 은 「0」이 아니라 「낼 수 없다」다(M11)
+        pitching: gameLevel.get(axis.id)?.get(p.playerId) ?? null,
       };
       const list = out.get(p.playerId);
       if (list === undefined) out.set(p.playerId, [entry]);
