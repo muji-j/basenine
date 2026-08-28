@@ -28,6 +28,9 @@ import {
   sluggingPercentage,
 } from "@bb-app/metrics";
 import type { BattingLine, PitchingLine } from "@bb-app/metrics";
+// ⚠**판정 규칙은 여기 두지 않는다**(M1) — 시험이 직접 부를 수 있어야 한다
+import { classifyDiff } from "../src/crosscheck-classify.ts";
+import type { CrosscheckDiff as Diff } from "../src/crosscheck-classify.ts";
 // ⚠**화면과 같은 반올림을 쓴다.** 두 벌이면 대조가 거짓 경보를 낸다
 import { avg3 as webAvg3, dec2 as webDec2 } from "../../web/src/format.ts";
 
@@ -97,14 +100,6 @@ function dec2(v: number | null): string {
   return v === null || !Number.isFinite(v) ? "-" : webDec2(v).replace("—", "-");
 }
 
-interface Diff {
-  team: string;
-  kind: "batting" | "pitching";
-  name: string;
-  field: string;
-  ours: string;
-  published: string;
-}
 
 const diffs: Diff[] = [];
 const unmatchedOurs: string[] = [];
@@ -289,20 +284,6 @@ db.close();
  * ⚠**여기에 넣는 것은 「우리가 왜 다르게 하는지 말할 수 있는 것」뿐이다.**
  * 설명 못 하는 차이를 여기 넣으면 그 순간 이 도구가 눈을 감는다.
  */
-function classify(d: Diff): string | null {
-  // ⚠**0타수에 「.000」이라고 쓰지 않는 것은 우리 선택이고 우리 쪽이 맞다**(M11·M2).
-  // 「0안타를 쳤다」와 「타석에 서지 않았다」는 다르다
-  if (d.ours === "-" && (d.published === ".000" || d.published === "0.00")) {
-    return "0타수·0이닝에 우리는 「—」, 공표는 .000 — 우리 쪽이 M11에 맞다";
-  }
-  // ⚠공표 타격표의 「試合」은 **出場試合**(타석이 없어도 센다)이고,
-  // 우리는 **타격 기록이 있는 경기**를 센다. 투수에게서 크게 갈린다.
-  // 우리 화면은 투수의 「試合」을 투구 기록에서 내므로 표시에는 영향이 없다
-  if (d.kind === "batting" && d.field === "試合") {
-    return "공표는 出場試合, 우리는 打撃記録のある試合 — 투수 화면에는 쓰지 않는 값";
-  }
-  return null;
-}
 
 console.log(`\n=== 외부 대조 ${season}년 (${values.competition}) ===`);
 // ⚠**가정을 적는다.** 기준일이 안 맞으면 그날 뛴 선수가 전부 불일치로 잡히고,
@@ -313,7 +294,7 @@ console.log(`대조한 선수 ${comparedPlayers}명 · 항목 ${comparedFields}�
 const known = new Map<string, Diff[]>();
 const real: Diff[] = [];
 for (const d of diffs) {
-  const why = classify(d);
+  const why = classifyDiff(d);
   if (why === null) real.push(d);
   else known.set(why, [...(known.get(why) ?? []), d]);
 }
