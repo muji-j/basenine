@@ -70,6 +70,9 @@ const ALLOWED: ReadonlyMap<string, number> = new Map([
   ["packages/web/tools/marks.ts", 1],
   ["scripts/freshness.ts", 2],
   ["scripts/update.ts", 1],
+  // ⚠**배포가 며칠 전 것인지 재려면 「지금」이 필요하다.** 판정 자체(`verdictFor`)는 `nowIso` 를
+  // 인자로 받는 순수 함수이고, 시계는 **진입점 한 곳에서만** 읽는다
+  ["scripts/verify-deploy.ts", 1],
   // 경과 시간 측정(성능). ⚠**날짜가 아니라 duration 이라 자정 경계와 무관하다**
   ["packages/web/test/client.test.ts", 2],
 ]);

@@ -375,3 +375,37 @@ test("⚠_headers 가 CSP 를 unsafe-inline 없이 닫는다 — 내용까지 �
     assert.ok((csp ?? "").includes(must), `CSP 에 ${must} 가 없다`);
   }
 });
+
+/**
+ * ⚠**낡은 사본이 전달되던 사고의 시험**(2026-08-30).
+ *
+ * 사용자가 「最新の試合 2026年8月18日 まで反映」을 보는 동안 배포된 화면은 **8월 29일**이었다.
+ * DB·빌드·배포가 전부 정상이었고(각각 실측), 서비스워커도 없었다 — 남은 것은 HTTP 캐시뿐인데
+ * **`_headers` 에 `Cache-Control` 이 한 줄도 없었다.** 재사용 기간을 플랫폼 기본값에 맡긴 것이
+ * 결함이다. 하루 3번 다시 만드는 사이트가 그 결정을 위임하면 안 된다.
+ *
+ * ⚠**「있다」로 끝내지 않고 「무엇인가」까지 본다** — `max-age` 가 0 이 아니면 그만큼 낡은 화면이
+ * 나가고, 그게 정확히 이 사고다. 그래서 **값을 못 박는다.**
+ * ⚠**`no-store` 를 요구하지 않는다** — 그러면 304 도 못 쓰고 매번 전부 받는다(L7 과 반대 방향).
+ */
+test("⚠_headers 가 캐시를 우리가 정한다 — 재사용 전에 반드시 물어보게 한다", () => {
+  const f = buildSite(siteData(), SITE, "2026-08-15").files.find((x) => x.path === "_headers");
+  const lines = (f?.content ?? "").split("\n").filter((l) => l !== "");
+  const cc = lines.find((l) => l.includes("Cache-Control"));
+  assert.notEqual(cc, undefined, "Cache-Control 이 없다 — 재사용 기간을 플랫폼 기본값에 맡기고 있다");
+  const value = (cc ?? "").split(": ")[1] ?? "";
+  const maxAge = /max-age=(\d+)/.exec(value)?.[1];
+  assert.equal(maxAge, "0", `max-age 가 0 이 아니다(${value}) — 그만큼 낡은 화면이 나간다`);
+  assert.ok(value.includes("must-revalidate"), `must-revalidate 가 없다: ${value}`);
+  assert.ok(!value.includes("no-store"), `no-store 는 304 를 못 쓰게 한다: ${value}`);
+  /**
+   * ⚠**자산에 따로 긴 수명을 주지 않았는지 본다.** `assets/site.css`·`site.js` 는
+   * **파일명에 내용 해시가 없어서** 길게 캐시하면 고쳐도 영영 안 닿는다.
+   * 해시를 붙이는 날 이 시험을 같이 고쳐라 — 그때는 `immutable` 이 옳다.
+   */
+  assert.equal(
+    lines.filter((l) => !l.startsWith(" ")).join(","),
+    "/*",
+    "경로 규칙이 /* 하나가 아니다 — 자산에 다른 수명을 줬다면 해시가 붙어 있는지 먼저 확인하라",
+  );
+});

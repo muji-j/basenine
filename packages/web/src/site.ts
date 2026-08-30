@@ -47,10 +47,31 @@ import { renderHomePage } from "./home-page.ts";
  *
  * ⚠**빌드가 이 파일을 검사하지 않는다** — Pages 가 배포 시에 읽는 파일이라 링크 검사에 안 걸리고,
  * 문법이 틀리면 **조용히 무시된다.** 바꾼 뒤에는 배포된 응답 헤더를 실제로 확인하라.
+ *
+ * ⚠**`Cache-Control` 이 한 줄도 없었다**(2026-08-30). 사용자가 「最新の試合 2026年8月18日 まで反映」을
+ * 보고 있는데 그날 배포된 화면은 **8월 29일**이었다. 조사 결과 어긋난 곳이 하나도 없었다 —
+ * DB 는 경기 7,580·데이터 나이 1일이었고(구멍도 없다: 7,574→7,580), 빌드도 `최신 경기일 2026-08-29`로
+ * 나갔고(그날 두 실행이 3,134+1 파일을 올렸다), 서비스워커·PWA 는 **0건**, 호스트도 하나다.
+ * 그리고 **사용자가 본 8/18·8/27 은 둘 다 실재했던 빌드**다(수집 로그 실측 3회·8회).
+ * → **산출물은 멀쩡했고 낡은 사본이 전달되고 있었다.**
+ *
+ * ⚠**띠가 초록이었다는 것이 결정적이었다.** `isStale` 는 `lagDays > 3` 에서 켜지므로
+ * 「更新が止まっています」가 아니라 「まで反映」이었다는 것은 **그 화면이 만들어질 당시엔 신선했다**는 뜻이다.
+ * 렌더 버그였다면 초록일 수 없다.
+ *
+ * ⚠**진짜 결함은 「우리가 고르지 않은 것」이다.** 재사용 기간을 플랫폼 기본값에 맡겼고,
+ * 그 기본값이 무엇인지 **아무도 재 본 적이 없다.** 하루 3번 다시 만드는 사이트,
+ * 그것도 **신선도가 곧 상품인 사이트**가 그 결정을 위임하면 안 된다.
+ *
+ * ⚠**`no-store` 가 아니라 `max-age=0, must-revalidate` 다** — 사본은 두되 **쓰기 전에 물어보게** 한다.
+ * ETag 가 붙으므로 안 바뀐 화면은 304 로 끝나 전송량이 늘지 않는다(L7 과 같은 방향이다).
+ * ⚠**자산에 긴 수명을 주지 마라** — `assets/site.css`·`site.js` 는 **파일명에 내용 해시가 없다.**
+ * 길게 캐시하면 CSS 를 고쳐도 영영 안 닿는다. 해시를 붙이기 전까지 규칙은 `/*` 한 벌이다.
  */
 const HEADERS = [
   "/*",
   "  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'",
+  "  Cache-Control: public, max-age=0, must-revalidate",
   "  X-Content-Type-Options: nosniff",
   "  Referrer-Policy: strict-origin-when-cross-origin",
   "  Cross-Origin-Opener-Policy: same-origin",
