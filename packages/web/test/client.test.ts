@@ -183,7 +183,8 @@ interface RunOptions {
   /** `players.json`의 내용. 주지 않으면 취득 실패로 다룬다 */
   index?: { i: string; n: string; t: string; s?: string }[];
   /** `location` 대역. `?vs=` 처리와 `#앵커` 처리를 보려면 필요하다 */
-  location?: { search: string; href: string; hash?: string };
+  /** ⚠`hostname`·`pathname` 은 **동결 스냅샷 경고**가 본다(2026-08-30 사고) */
+  location?: { search: string; href: string; hash?: string; hostname?: string; pathname?: string };
   /**
    * URL 조각 → 응답 본문. `compare/p.json` 처럼 **부분 일치**로 고른다.
    * ⚠**요청 URL을 보는 스텁이 필요했다** — 예전 스텁은 URL을 무시하고 `index` 를 돌려줬다.
@@ -2941,4 +2942,56 @@ test("⚠못 읽은 입력을 사본 쪽 조작이 되돌려 놓으면 오류 �
     "값은 정상으로 돌아갔는데 칸이 여전히 오류라고 말한다",
   );
   assert.equal(bads[0]!.hidden, true, "값은 정상으로 돌아갔는데 경고문이 남아 있다");
+});
+
+/**
+ * **동결 스냅샷 주소 경고**(2026-08-30 사고).
+ *
+ * ⚠**사용자가 실제로 여기 걸렸다.** Cloudflare Pages 는 배포마다 불변 주소를 주는데
+ * (`<hex8>.<project>.pages.dev`), 그것을 즐겨찾기에 넣으면 **영원히 그 날짜가 보인다.**
+ * ⚠**고장으로 안 읽힌다** — 그 사본은 만들어질 당시엔 신선했으므로 띠가 **초록**이고
+ * 「まで反映」이라고 말한다. **사람이 눈으로 구별할 방법이 없다.**
+ * ⚠**서버가 못 잡는다** — 같은 파일이 두 주소로 나가므로 보는 쪽에서만 알 수 있다.
+ */
+function snapshotBar(hostname: string, pathname = "/players/1.html"): El | undefined {
+  const doc = buildPage();
+  run(doc, { location: { search: "", href: "", hostname, pathname } });
+  return doc.querySelectorAll(".state.stale").find((el) => /スナップショット/.test(el.textContent));
+}
+
+test("⚠배포 해시 주소로 보고 있으면 화면이 그렇게 말한다 — 초록 띠로는 구별이 안 된다", () => {
+  const bar = snapshotBar("b49f9aa2.bb-app-7mk.pages.dev");
+  assert.notEqual(bar, undefined, "동결 사본인데 아무 말도 안 한다");
+  const link = bar!.querySelectorAll("a")[0];
+  assert.notEqual(link, undefined, "최신으로 가는 길을 안 준다 — 경고만 하면 사용자가 할 일이 없다");
+  assert.equal(
+    link!.getAttribute("href"),
+    "https://bb-app-7mk.pages.dev/players/1.html",
+    "정본 주소를 잘못 만들었다 — 첫 라벨만 떼야 한다",
+  );
+});
+
+test("⚠정본 주소에서는 아무 말도 안 한다 — 매일 뜨는 경고는 소음이 된다", () => {
+  assert.equal(snapshotBar("bb-app-7mk.pages.dev"), undefined, "정본인데 경고가 뜬다");
+});
+
+/**
+ * ⚠**hex8 이 아닌 것을 스냅샷으로 읽지 않는다.** 브랜치 별칭(`main.<project>.pages.dev`)과
+ * 앞으로 붙을 커스텀 도메인은 **정본**이다. 여기서 잘못 물면 정상 화면에 매일 붉은 띠가 뜬다.
+ */
+test("⚠브랜치 별칭·커스텀 도메인은 스냅샷이 아니다", () => {
+  assert.equal(snapshotBar("main.bb-app-7mk.pages.dev"), undefined, "브랜치 별칭에 경고가 뜬다");
+  assert.equal(snapshotBar("basenine.example.com"), undefined, "커스텀 도메인에 경고가 뜬다");
+  // ⚠**여덟 글자여야 한다** — 일곱이나 아홉은 Cloudflare 가 주는 모양이 아니다
+  assert.equal(snapshotBar("b49f9aa.bb-app-7mk.pages.dev"), undefined, "7글자를 스냅샷으로 읽었다");
+});
+
+test("⚠주소를 모르면 아무 말도 안 한다 — 모르는 것으로 경고하지 않는다(M11)", () => {
+  const doc = buildPage();
+  run(doc, { location: { search: "", href: "" } });
+  assert.equal(
+    doc.querySelectorAll(".state.stale").find((el) => /スナップショット/.test(el.textContent)),
+    undefined,
+    "hostname 을 모르는데 경고했다",
+  );
 });

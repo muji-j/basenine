@@ -3823,9 +3823,43 @@ if(filter||chips.length){
   }
 }
 
+/* ── 이 페이지가 「과거 배포의 동결 사본」인가 ──
+   ⚠**2026-08-30 에 사용자가 여기 걸렸다.** Cloudflare Pages 는 배포마다 **불변 주소**를 준다
+   (hex8 여덟 글자 + 프로젝트 + pages.dev). 그것을 즐겨찾기에 넣으면
+   **캐시를 지우든 헤더를 고치든 영원히 그 날짜가 보인다.**
+   ⚠**고장으로도 안 읽힌다** — 그 사본은 만들어질 당시엔 신선했으므로 띠가 **초록**이고
+   「まで反映」이라고 말한다. 사람이 눈으로 구별할 방법이 없다.
+   ⚠**우리가 만든 함정이다** — 배포 로그가 찍는 그 주소를 보고서에 그대로 옮겨 적어 왔다.
+   ⚠**서버는 이것을 못 잡는다.** 같은 파일이 두 주소로 나가므로 **보는 쪽에서만** 알 수 있다.
+   ⚠**정본 주소를 코드에 박지 않는다** — 첫 라벨만 떼면 그것이 정본이다. 박으면 프로젝트명이
+   바뀌는 날 조용히 틀린 곳으로 보낸다. */
+const isSnapshotHost=(h)=>/^[0-9a-f]{8}\./.test(h||"")&&/\.pages\.dev$/.test(h||"");
+function warnSnapshotHost(){
+  const h=LOC.hostname||"";
+  if(!isSnapshotHost(h))return;
+  const bar=doc.createElement("div");
+  /* ⚠**기존 「낡음」 띠와 같은 옷을 입힌다** — 새 CSS 를 만들면 대비 검사 밖에 놓인다 */
+  bar.setAttribute("class","state stale");
+  bar.setAttribute("role","status");
+  const b=doc.createElement("b");
+  b.textContent="このページは過去の配信スナップショットです";
+  bar.appendChild(b);
+  const s=doc.createElement("span");
+  s.textContent=" — 内容は更新されません。";
+  bar.appendChild(s);
+  const a=doc.createElement("a");
+  a.setAttribute("href","https://"+h.split(".").slice(1).join(".")+(LOC.pathname||"/"));
+  a.textContent="最新のページへ";
+  bar.appendChild(a);
+  const body=doc.body;
+  if(!body)return;
+  const first=body.children&&body.children[0];
+  if(first)body.insertBefore(bar,first);else body.appendChild(bar);
+}
+
 press(".rail [data-preset]","preset",state.preset);
 press(".rail [data-density]","density",state.density);
-applyTheme();renderBlocks();renderEditor();showTabs();paintFav();paintFavTeam();revealHash();
+applyTheme();renderBlocks();renderEditor();showTabs();paintFav();paintFavTeam();revealHash();warnSnapshotHost();
 })();
 `;
 
