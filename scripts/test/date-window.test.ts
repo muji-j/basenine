@@ -9,7 +9,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { JST_TODAY_FROM_HOUR, jstDate, jstHour, targetDates } from "../date-window.ts";
+import { JST_TODAY_FROM_HOUR, MAX_CATCHUP_DAYS, jstDate, jstHour, targetDates } from "../date-window.ts";
 
 /** UTC 문자열로 시각을 만든다. **JST 를 직접 못 만드는 것이 이 시험의 요점**이다 */
 const at = (utc: string): Date => new Date(utc);
@@ -80,4 +80,81 @@ test("⚠자정을 넘긴 직후에도 「어제」가 하루만 밀린다", () 
   assert.deepEqual(targetDates(justBefore), ["2026-08-17", "2026-08-18"]);
   // 자정을 넘기면 「오늘」이 19일이 되고, 22시 전이므로 어제(18일)만 받는다
   assert.deepEqual(targetDates(justAfter), ["2026-08-18"]);
+});
+
+/**
+ * ## ⚠따라잡기 — 「이틀 이상 멈추면 가운데 날이 영구히 빈다」 (2026-08-31)
+ *
+ * 창이 **딱 하루**였다. 실행이 하루 걸러지면 그날 경기는 다음 실행의 창 **밖**으로 밀려나
+ * **영영 안 들어온다.** 2026-08-31 에 실제로 그 상황이 왔다 — GitHub Actions 무료 분이
+ * 소진돼 스케줄이 통째로 멈췄다.
+ * ⚠**그날 NPB 가 쉬는 날이라 손해가 0이었을 뿐이고, 설계가 막은 게 아니다.**
+ *
+ * ⚠**아래 두 본이 이 변경의 값을 지킨다**: 정상·휴식일에는 **요청이 1건도 안 늘어야** 한다.
+ * 늘면 L1(1req/2~5초)에서 그만큼 느려지고, **따라잡기가 평상시의 비용이 되면 안 된다.**
+ */
+test("⚠정상일 때는 예전과 글자까지 같다 — 따라잡기가 평상시 요청을 늘리지 않는다", () => {
+  for (const utc of ["2026-08-18T22:00:00Z", "2026-08-18T05:00:00Z", "2026-08-18T14:30:00Z"]) {
+    const plain = targetDates(at(utc));
+    const withSince = targetDates(at(utc), { collectedThrough: jstDate(at(utc), -1) });
+    assert.deepEqual(withSince, plain, `${utc}: 어제까지 받아 뒀는데 창이 넓어졌다`);
+  }
+});
+
+test("⚠휴식일 뒤에도 안 는다 — 그저께까지 받았으면 빠진 날은 어제 하나다", () => {
+  // 14:00 JST · 어제 = 08-17(월·경기 없음) · 마지막 경기일 = 08-16(일)
+  assert.deepEqual(
+    targetDates(at("2026-08-18T05:00:00Z"), { collectedThrough: "2026-08-16" }),
+    ["2026-08-17"],
+    "휴식일 뒤에 일요일까지 다시 받으려 했다",
+  );
+});
+
+test("⚠이틀 이상 비면 그 사이를 메운다 — 이게 없으면 가운데 날이 영구히 빈다", () => {
+  assert.deepEqual(
+    targetDates(at("2026-08-18T05:00:00Z"), { collectedThrough: "2026-08-14" }),
+    ["2026-08-15", "2026-08-16", "2026-08-17"],
+    "빠진 날을 안 메웠다",
+  );
+});
+
+test("⚠밤 실행에서도 오래된 것부터이고 오늘이 마지막이다", () => {
+  assert.deepEqual(
+    targetDates(at("2026-08-18T14:30:00Z"), { collectedThrough: "2026-08-15" }),
+    ["2026-08-16", "2026-08-17", "2026-08-18"],
+    "순서가 어긋났거나 오늘이 빠졌다",
+  );
+});
+
+/**
+ * ⚠**상한이 없으면 비시즌에 매일 헛돈다.** 10월에 시즌이 끝나면 마지막 경기일이 멈추므로
+ * 다음 개막까지 **수백 일**을 훑게 된다. 그건 따라잡기가 아니라 **백필**이고,
+ * 백필은 사람이 `--date` 로 하는 일이다.
+ * ⚠**침묵하는 쪽으로 넘어가지 않는다** — `scripts/freshness.ts` 가 2일에 이미 빨개진다.
+ */
+test("⚠상한을 넘으면 따라잡지 않는다 — 비시즌에 매일 수백 일을 훑지 않는다", () => {
+  assert.deepEqual(
+    targetDates(at("2026-08-18T05:00:00Z"), { collectedThrough: "2026-07-01" }),
+    ["2026-08-17"],
+    "상한을 넘겼는데도 따라잡으려 했다",
+  );
+  // 경계 — 상한 이내의 가장 먼 날은 메우고, 하루만 더 멀면 안 메운다
+  assert.equal(
+    targetDates(at("2026-08-18T05:00:00Z"), { collectedThrough: "2026-08-10" }).length,
+    MAX_CATCHUP_DAYS,
+    `상한(${MAX_CATCHUP_DAYS}일) 이내인데 다 안 메웠다`,
+  );
+  assert.deepEqual(
+    targetDates(at("2026-08-18T05:00:00Z"), { collectedThrough: "2026-08-09" }),
+    ["2026-08-17"],
+    "상한을 하루 넘겼는데 메웠다",
+  );
+});
+
+test("⚠날짜를 명시하면 따라잡기가 끼어들지 않는다 — 소급 수집의 어법을 바꾸지 않는다", () => {
+  assert.deepEqual(
+    targetDates(at("2026-08-18T05:00:00Z"), { date: "2026-08-01", collectedThrough: "2026-07-20" }),
+    ["2026-08-01"],
+    "명시한 날짜 하나만이어야 한다",
+  );
 });

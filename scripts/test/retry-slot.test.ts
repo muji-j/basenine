@@ -24,7 +24,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -86,4 +86,80 @@ test("⚠직전 실행을 물을 때 정시 실행과 이 브랜치로 거른다
   assert.match(q, /(^|&)branch=/, "branch 필터가 없다 — 다른 브랜치의 실행이 판정에 섞인다");
   assert.match(q, /(^|&)status=completed(&|$)/, "status=completed 가 빠졌다 — 진행 중 실행을 본다");
   assert.match(q, /(^|&)per_page=1(&|$)/, "per_page=1 이 빠졌다");
+});
+
+/**
+ * ## ⚠깊은 실행(전 시즌 스캔) 배선 (2026-08-31)
+ *
+ * `BB_FULL_SCAN` 한 값이 **페이지 표본**과 **시즌 범위** 두 가지를 겸하고 있었고,
+ * 켠 근거로 적힌 것은 페이지 쪽뿐인데 **비용은 시즌 쪽에서 났다**
+ * (CI 실측 295.7초 = 시험 490초의 60% · run 33379836307).
+ * 갈라서 시즌 쪽을 **하루 한 번**으로 돌렸다.
+ *
+ * ⚠**여기가 조용히 깨지는 자리다.** 크론 글자에 오타가 나면 `deep=1` 이 **영영 안 뜨고**,
+ * 그래도 시험은 전부 초록이다 — 얕게 도는 것은 실패가 아니기 때문이다.
+ * **덜 재는 쪽으로 조용히 넘어가는** 그 모양을 여기서 못 박는다.
+ */
+
+/** `decide` 에서 `deep=1` 을 켜는 크론 글자들 */
+function deepCrons(): string[] {
+  return [...yml.matchAll(/^\s*"([^"]+)"\)\s*deep=1\s*;;/gm)].map((m) => m[1]!);
+}
+
+test("⚠깊은 실행 슬롯이 정확히 하나이고, 그 글자가 정시 크론에 실재한다", () => {
+  const deep = deepCrons();
+  assert.equal(deep.length, 1, `deep=1 슬롯이 ${deep.length}개다 — 하나여야 한다: ${deep.join(" · ")}`);
+  const { regular, retry } = crons();
+  assert.ok(
+    regular.includes(deep[0]!),
+    `깊은 실행 슬롯 "${deep[0]}" 이 정시 크론에 없다 — 오타면 전 시즌 스캔이 영영 안 돈다.\n` +
+      `  정시 크론: ${regular.join(" · ")}`,
+  );
+  assert.ok(
+    !retry.includes(deep[0]!),
+    `깊은 실행 슬롯 "${deep[0]}" 이 재시도 크론이다 — 재시도는 실패한 날에만 돌므로 거의 안 돈다`,
+  );
+  console.log(`  · 깊은 실행 슬롯 "${deep[0]}"`);
+});
+
+/**
+ * ⚠**`case` 는 `exit 0` 으로 빠져나간다.** `deep` 을 그 뒤에 내면 **정시 슬롯에서 값이 비어 나가고**,
+ * 빈 문자열은 얕은 쪽이라 **전 시즌 스캔이 한 번도 안 돈다.** 순서가 곧 값이다.
+ */
+test("⚠deep 을 재시도 판정보다 먼저 낸다 — 뒤에 두면 정시 슬롯에서 비어 나간다", () => {
+  const emit = yml.indexOf('echo "deep=${deep}"');
+  assert.notEqual(emit, -1, "deep 을 GITHUB_OUTPUT 에 내는 줄을 못 찾았다 — 이 시험이 공회전한다");
+  const retryCase = yml.indexOf('case "${SCHEDULE:-}" in');
+  assert.notEqual(retryCase, -1, "재시도 case 를 못 찾았다 — 이 시험이 공회전한다");
+  assert.ok(emit < retryCase, "deep 출력이 재시도 case 보다 뒤에 있다 — 정시 슬롯에서 비어 나간다");
+});
+
+test("⚠시험 단계가 BB_ALL_SEASONS 를 decide 의 deep 에 잇는다", () => {
+  const heads = [...yml.matchAll(/^ +- name: 시험$/gm)];
+  assert.equal(heads.length, 1, `「시험」 단계가 ${heads.length}개다 — 어느 것을 재는지 모른다`);
+  const at = heads[0]!.index;
+  const next = yml.indexOf("- name: ", at + 10);
+  const step = yml.slice(at, next < 0 ? yml.length : next);
+  assert.match(
+    step,
+    /^ +BB_ALL_SEASONS: \$\{\{ needs\.decide\.outputs\.deep \}\}$/m,
+    "「시험」 단계가 BB_ALL_SEASONS 를 decide 의 deep 에 잇지 않는다 — 전 시즌 스캔이 안 돈다",
+  );
+  assert.match(yml, /^ +deep: \$\{\{ steps\.check\.outputs\.deep \}\}$/m, "decide 가 deep 을 outputs 에 안 낸다");
+});
+
+/**
+ * ⚠**이 값을 읽는 시험이 실재하는가.** 배선만 맞고 읽는 쪽이 없으면 아무것도 안 바뀐다 —
+ * 「없는 장치를 있다고 적는」 그 모양이고 이 저장소가 여러 번 앓았다.
+ */
+test("⚠BB_ALL_SEASONS 를 실제로 읽는 시험이 있다", () => {
+  const roots = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "packages", "web", "test");
+  const readers = readdirSync(roots)
+    .filter((f) => f.endsWith(".test.ts"))
+    .filter((f) => readFileSync(join(roots, f), "utf8").includes('process.env["BB_ALL_SEASONS"]'));
+  assert.ok(
+    readers.length >= 2,
+    `BB_ALL_SEASONS 를 읽는 시험이 ${readers.length}개뿐이다 — 배선만 있고 읽는 쪽이 없다`,
+  );
+  console.log(`  · 읽는 시험 ${readers.length}본: ${readers.join(" · ")}`);
 });

@@ -36,15 +36,68 @@ export function jstHour(now: Date): number {
 }
 
 /**
+ * **따라잡기의 상한(일).**
+ *
+ * ⚠**이 값이 있는 이유는 「없으면 비시즌에 매일 헛돈다」다.** 10월에 시즌이 끝나면
+ * 「마지막으로 받은 경기일」이 그대로 멈추므로, 상한이 없으면 **다음 개막까지 매일
+ * 수백 일을 훑는다.** 그건 따라잡기가 아니라 백필이고, 백필은 사람이 `--date` 로 돌리는 일이다.
+ * ⚠**그래서 상한을 넘으면 따라잡지 않는다** — `scripts/freshness.ts` 가 2일에 이미 빨개지므로
+ * **모르고 지나가지 않는다.** 침묵하는 쪽으로 넘어가지 않는 것이 핵심이다.
+ */
+export const MAX_CATCHUP_DAYS = 7;
+
+/** `YYYY-MM-DD` 하루 뒤. ⚠**시계를 안 읽는다**(M6) — 주어진 글자를 해석할 뿐이다 */
+function nextDay(d: string): string {
+  return new Date(new Date(`${d}T00:00:00Z`).getTime() + 86_400_000).toISOString().slice(0, 10);
+}
+
+/** 두 `YYYY-MM-DD` 사이의 일수. ⚠시계를 안 읽는다(M6) */
+function daysBetween(from: string, to: string): number {
+  return Math.round(
+    (new Date(`${to}T00:00:00Z`).getTime() - new Date(`${from}T00:00:00Z`).getTime()) / 86_400_000,
+  );
+}
+
+/**
  * 받을 경기일 목록. **오래된 것부터.**
  *
  * ⚠**어제는 언제나 받는다.** 연장·서스펜디드·늦게 끝난 경기가 있으면 밤 실행이
  * `inProgress` 로 건너뛰므로, 다음 실행이 그것을 메워야 한다 — **거르면 영영 안 들어온다.**
  * ⚠**요청이 두 배가 되지 않는다**(L7) — 어제 것은 이미 받아 둔 것이라 조건부 요청으로 304 다.
  * ⚠**명시한 날짜가 있으면 그 하루만**이다. 소급 수집·재수집의 어법을 바꾸지 않는다.
+ *
+ * ## ⚠따라잡기 — 「이틀 이상 멈추면 가운데 날이 영구히 빈다」 (2026-08-31)
+ *
+ * 창이 **딱 하루**였다. 그래서 실행이 하루 걸러지면 그날 경기는 **다음 실행의 창 밖으로
+ * 밀려나고 영영 안 들어온다.** 그날 실제로 그 상황이 왔다 — GitHub Actions 무료 분이
+ * 소진돼 스케줄이 통째로 멈췄다. **그날 NPB 가 쉬는 날이라 손해가 0이었을 뿐이고,
+ * 그건 설계가 막은 게 아니다.**
+ *
+ * ⚠**정상일 때 요청이 1건도 안 는다.** `collectedThrough` 가 어제(또는 그저께)면
+ * 결과는 예전과 **글자까지 같다** — 늘어나는 것은 **실제로 빈 날이 있을 때뿐**이다.
+ * ⚠**월요일(NPB 휴식일) 뒤에도 안 는다**: 일요일까지 받았고 어제가 월요일이면
+ * 빠진 날은 `[월]` 하나이고 그건 예전의 `[어제]` 와 같다.
+ * ⚠**상한을 넘으면 따라잡지 않는다**(위 `MAX_CATCHUP_DAYS`) — 비시즌에 매일 헛돌지 않기 위해서다.
+ *
+ * @param opts.collectedThrough 이미 받아 둔 **마지막 경기일**(`YYYY-MM-DD`).
+ *   보통 DB 의 `MAX(game_date) WHERE status='played'` 다. 모르면 넘기지 않는다 —
+ *   ⚠**모르는 것을 「오늘」로 메우지 마라**(M11): 그러면 빈 날이 있어도 안 메운다.
  */
-export function targetDates(now: Date, opts: { date?: string; forceToday?: boolean } = {}): string[] {
+export function targetDates(
+  now: Date,
+  opts: { date?: string; forceToday?: boolean; collectedThrough?: string } = {},
+): string[] {
   if (opts.date !== undefined) return [opts.date];
   const includeToday = opts.forceToday === true || jstHour(now) >= JST_TODAY_FROM_HOUR;
-  return includeToday ? [jstDate(now, -1), jstDate(now, 0)] : [jstDate(now, -1)];
+  const yesterday = jstDate(now, -1);
+
+  const past: string[] = [];
+  const since = opts.collectedThrough;
+  // ⚠**`gap >= 2` 일 때만 넓힌다.** 0·1 은 정상이고, 상한 초과는 백필이라 사람의 일이다
+  if (since !== undefined && daysBetween(since, yesterday) >= 2 && daysBetween(since, yesterday) <= MAX_CATCHUP_DAYS) {
+    for (let d = nextDay(since); d < yesterday; d = nextDay(d)) past.push(d);
+  }
+
+  const days = [...past, yesterday];
+  return includeToday ? [...days, jstDate(now, 0)] : days;
 }
