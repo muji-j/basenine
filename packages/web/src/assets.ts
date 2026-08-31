@@ -1888,6 +1888,10 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
    크고 진해진다** — 실측 1,397칸. 검색 드롭다운의 .qhits .hs 는 그쪽 전용이라 여기 안 걸린다 */
 .roster .hs{flex:0 0 auto;margin-left:8px;font-size:10.5px;color:var(--tx-3);
   font-variant-numeric:tabular-nums;white-space:nowrap}
+/* ⚠**여기서 칸 폭을 다시 정하지 마라**(2026-08-31). 위에서 232px 로 넓힌 것이 모바일을
+   1열로 만든 줄 알고 여기에 160px 을 넣었는데, **아무 일도 안 하는 죽은 규칙이었다** —
+   아래 max-width:680px 블록의 .roster{grid-template-columns:1fr} 이 **더 뒤에 있어 이긴다.**
+   ⚠**즉 모바일 명부는 처음부터 1열이고, 그건 의도된 결정이다**(680px 블록). */
 @media (max-width:520px){.roster .hs{display:none}}
 .roster a:hover{padding-left:4px}
 /* ⚠**이름이 성적에 밀려 한 글자 폭까지 찌그러졌다**(2026-08-31 · 사용자 지적).

@@ -117,6 +117,17 @@ test("⚠명부의 이름이 먼저 자리를 갖고, 모자라면 말줄임으�
   assert.match(hn, /text-overflow:ellipsis/, `모자랄 때 잘린 채로 넘친다: ${hn}`);
   const min = /\.roster\{[^}]*minmax\((\d+)px/.exec(RULES)?.[1];
   assert.ok(Number(min) >= 210, `명부 칸이 ${min}px 로 좁다 — 이름 몫이 남지 않는다`);
+  /**
+   * ⚠**좁은 화면은 이 값과 무관하다.** 232px 이 모바일을 1열로 만든 줄 알고
+   * 520px 블록에 160px 을 넣었다가 **죽은 규칙임을 확인하고 지웠다** —
+   * 뒤의 `@media (max-width:680px)` 가 `.roster{grid-template-columns:1fr}` 로 이긴다.
+   * **모바일 명부가 1열인 것은 원래 결정이고 내 변경과 무관하다.**
+   */
+  assert.match(
+    RULES,
+    /@media \(max-width:680px\)\{[\s\S]*?\.roster\{grid-template-columns:1fr\}/,
+    "모바일 1열 규칙이 사라졌다 — 명부 칸 폭을 바꿀 때 이것부터 확인하라",
+  );
 });
 
 /**
