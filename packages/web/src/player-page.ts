@@ -1578,14 +1578,33 @@ function splitTable(a: SplitAxisData, max: number, allowed: boolean): RawHtml {
       <td class="l">${r.label}</td>
       ${/* ⚠**투수는 막대가 짧을수록 좋다.** 뒤집지 않는다 — 뒤집으면 같은 길이가
              타자 화면에서는 좋고 투수 화면에서는 나쁜 것이 되어 눈이 배운 규칙이 무너진다.
-             대신 「棒が短いほど良い」라고 각주가 말한다. */ ""}
-      <td class="l"><div class="track"><i style="width:${Math.round(
+             대신 「棒が短いほど良い」라고 각주가 말한다.
+             ⚠**막대만 있고 수가 없었다**(2026-08-31). 열 이름이 「OPS」인데 그 칸에 수가 없으면
+             읽는 사람은 OPS 를 **끝내 알 수 없고**, 분모를 붙일 자리도 없다(M2).
+             → **막대와 값을 같은 칸에** 둔다. */ ""}
+      ${/* ⚠**`td` 를 flex 로 만들지 않는다** — 셀이 테이블 박스에서 빠져나와 아래 경계선이
+             다른 칸과 다른 자리에 그려진다(`css-tables.test.ts` 가 막는 그 결함).
+             막대와 값은 **안쪽 래퍼**로 묶는다. */ ""}
+      <td class="l"><div class="tv"><div class="track"><i style="width:${Math.round(
         Math.max(0, Math.min(1, (r.ops.value ?? 0) / max)) * 100,
-      )}%${thin ? ";opacity:.35" : ""}"></i></div></td>
+      )}%${thin ? ";opacity:.35" : ""}"></i></div><span class="wd">${valueWithDen(
+        r.ops,
+        denUnit(allowed ? "allowedOps" : "ops"),
+        3,
+      )}</span></div></td>
       <td class="b">${r.line.pa}</td>
-      <td>${avg3(r.avg.value)}</td>
-      <td>${avg3(r.obp.value)}</td>
-      <td>${avg3(r.slg.value)}</td>
+      ${/* ⚠**머리에만 있고 본문에 없던 칸**(2026-08-31 · 사용자 보고).
+             이 한 칸이 빠져서 그 뒤 열이 **전부 왼쪽으로 밀렸고**, 화면은 `打数` 칸에 타율을,
+             `長打率` 칸에 안타 수를 실은 채로 나갔다. **값은 전부 맞는 값이었다** —
+             틀린 것은 어느 칸에 있는가뿐이라 아무 검사도 안 울렸다.
+             ⚠**게다가 이 어긋남이 분모 가드를 껐다**(den-units 는 칸 수가 안 맞는 행을 버린다).
+             지금은 `table-columns.test.ts` 가 이 부류를 통째로 막는다. */ ""}
+      <td class="b">${r.line.ab}</td>
+      ${/* ⚠**분모를 값에 붙인다**(M2). 打率는 打数 · 出塁率는 出塁機会 · 長打率는 打数 —
+             **서로 달라서 옆의 打数 열 하나로 대신 말할 수 없다.** */ ""}
+      <td class="wd">${valueWithDen(r.avg, denUnit(allowed ? "allowedAvg" : "avg"), 3)}</td>
+      <td class="wd">${valueWithDen(r.obp, denUnit(allowed ? "allowedObp" : "obp"), 3)}</td>
+      <td class="wd">${valueWithDen(r.slg, denUnit(allowed ? "allowedSlg" : "slg"), 3)}</td>
       ${allowed
         ? html`<td>${r.line.h}</td><td>${r.line.hr}</td><td>${r.line.bb}</td><td>${r.line.so}</td>`
         : html`<td>${r.line.h}</td><td>${r.line.double}</td><td>${r.line.hr}</td>

@@ -14,18 +14,27 @@ import { foldOutcomes } from "@bb-app/store";
 import type { BattingLine, PitchingLine } from "@bb-app/metrics";
 
 /** 나눌 축. */
-export type SplitDimension =
-  | "opponentHand"
-  | "homeAway"
-  | "baseState"
-  | "month"
-  | "battingOrder"
-  | "venue"
-  /**
-   * **상대 구단.** ⚠**타자와 투수에서 뜻이 반대다** — 타자에게는 수비하는 쪽,
-   * 투수에게는 치는 쪽이다. 두 식을 각각 적어 둔다(KEY_EXPR / PITCHER_KEY_EXPR).
-   */
-  | "opponentTeam";
+/**
+ * 나눌 수 있는 축의 **정본 목록**.
+ *
+ * ⚠**타입이 아니라 값으로 둔다**(2026-08-31). 시험이 「전 축에 대해」를 돌려면 목록이 필요한데,
+ * 타입만 있으면 시험이 **자기 목록을 손으로 다시 적게 된다** — 그러면 축을 늘려도
+ * 그 축은 검사에서 조용히 빠진다. 여기 하나를 보고 타입도 시험도 같이 따라온다(M1).
+ *
+ * ⚠**상대 구단은 타자와 투수에서 뜻이 반대다** — 타자에게는 수비하는 쪽,
+ * 투수에게는 치는 쪽이다. 두 식을 각각 적어 둔다(KEY_EXPR / PITCHER_KEY_EXPR).
+ */
+export const SPLIT_DIMENSIONS = [
+  "opponentHand",
+  "homeAway",
+  "baseState",
+  "month",
+  "battingOrder",
+  "venue",
+  "opponentTeam",
+] as const;
+
+export type SplitDimension = (typeof SPLIT_DIMENSIONS)[number];
 
 export interface SplitLine {
   /** 축 안의 구분값. `left`/`right` · `home`/`away` · `empty`/`onBase`/`scoring` · `2026-04` */
