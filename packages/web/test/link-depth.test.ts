@@ -18,43 +18,43 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { clickDepth, tooDeepPlayerPages } from "../src/link-check.ts";
-import type { LinkIndex } from "../src/link-check.ts";
+import { clickDepthLazy, tooDeepIn } from "../src/link-check.ts";
 
 const DIST = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "dist");
 
 /**
- * ⚠**`linkIndex()` 를 쓰지 않고 여기서 `refs` 만 뽑는다** — 그 함수는 파일 내용을 받는데,
- * 배포물 9,370장의 본문을 한 번에 들면 힙이 위험하다(빌드가 이미 그 이유로 색인만 남긴다).
+ * ⚠**경로만 모은다. 링크는 안 들고 있는다**(2026-08-31 · CI 에서 **OOM 으로 죽었다**).
+ * 배포물 9,370장의 링크 참조는 **2,651,860개 · 문자 5,330만자**다 —
+ * 문자열로 들고 있으면 수백 MB 이고, CI 의 기본 힙에서 `JavaScript heap out of memory` 가 난다.
+ * ⚠**이 저장소가 이미 적어 둔 함정을 다시 밟았다** — 빌드도 같은 이유로
+ * 「본문을 버리고 색인만 남기게」 고쳐진 이력이 있다.
  */
-function indexDist(dir = DIST, base = ""): LinkIndex[] {
-  const out: LinkIndex[] = [];
+function listPages(dir = DIST, base = ""): string[] {
+  const out: string[] = [];
   for (const e of readdirSync(dir, { withFileTypes: true })) {
     const rel = base === "" ? e.name : `${base}/${e.name}`;
-    if (e.isDirectory()) {
-      out.push(...indexDist(join(dir, e.name), rel));
-      continue;
-    }
-    if (!e.name.endsWith(".html")) continue;
-    const html = readFileSync(join(dir, e.name), "utf8");
-    const refs = [...html.matchAll(/\s(?:href|src)="([^"]*)"/g)].map((m) => m[1] ?? "");
-    out.push({ path: rel, ids: new Set(), dupIds: [], refs, aria: [] });
+    if (e.isDirectory()) out.push(...listPages(join(dir, e.name), rel));
+    else if (e.name.endsWith(".html")) out.push(rel);
   }
   return out;
 }
 
-const files = existsSync(DIST) ? indexDist() : [];
+const paths = existsSync(DIST) ? listPages() : [];
+const pageSet = new Set(paths);
 /**
- * ⚠**한 번만 계산한다.** 시험마다 다시 걸으면 9,370장을 세 번 훑어 **175초**가 걸린다
- * (실측 · 전체 스위트가 290초인데 그 절반이 여기 얹힌다).
- * 그래서 결과를 나눠 쓴다 — **재는 값은 같고 시간만 1/3 이 된다.**
+ * ⚠**필요한 화면만 그때 읽고 버린다.** BFS 는 화면마다 최대 한 번만 읽으므로
+ * 읽는 횟수는 전부 들고 있을 때와 같고, **보존량만 O(참조) → O(화면)** 이 된다.
  */
-const depth = files.length === 0 ? new Map<string, number>() : clickDepth(files);
-const deepPlayers = files.length === 0 ? [] : tooDeepPlayerPages(files, 3, depth);
+const refsOf = (p: string): string[] =>
+  [...readFileSync(join(DIST, p), "utf8").matchAll(/\s(?:href|src)="([^"]*)"/g)].map((m) => m[1] ?? "");
 
-test("⚠홈에서 모든 선수 페이지까지 3클릭 이내다 (§0-1)", { skip: files.length === 0 ? "dist 없음" : false }, () => {
+/** ⚠**한 번만 걷는다** — 시험마다 다시 걸으면 9,370장을 세 번 훑는다 */
+const depth = paths.length === 0 ? new Map<string, number>() : clickDepthLazy(pageSet, refsOf);
+const deepPlayers = tooDeepIn(paths, depth);
+
+test("⚠홈에서 모든 선수 페이지까지 3클릭 이내다 (§0-1)", { skip: paths.length === 0 ? "dist 없음" : false }, () => {
   const deep = deepPlayers;
-  const players = files.filter((f) => /(^|\/)players\/[^/]+\.html$/.test(f.path)).length;
+  const players = paths.filter((p) => /(^|\/)players\/[^/]+\.html$/.test(p)).length;
   // ⚠**공회전 방지** — 선수 페이지를 못 찾으면 이 시험은 언제나 초록이다
   assert.ok(players > 500, `선수 페이지를 ${players}장밖에 못 찾았다 — 이 시험이 공회전한다`);
   assert.deepEqual(
@@ -69,11 +69,11 @@ test("⚠홈에서 모든 선수 페이지까지 3클릭 이내다 (§0-1)", { s
  * 어떤 화면도 안 가리키는 페이지는 **깨진 링크가 0개인 채로 존재만 한다.**
  */
 test("⚠홈에서 못 닿는 화면이 없다 — 아무도 안 가리키는 페이지는 없는 것과 같다", {
-  skip: files.length === 0 ? "dist 없음" : false,
+  skip: paths.length === 0 ? "dist 없음" : false,
 }, () => {
 
-  const orphan = files.filter((f) => !depth.has(f.path)).map((f) => f.path);
-  assert.ok(files.length > 1000, `화면을 ${files.length}장밖에 못 찾았다 — 이 시험이 공회전한다`);
+  const orphan = paths.filter((p) => !depth.has(p));
+  assert.ok(paths.length > 1000, `화면을 ${paths.length}장밖에 못 찾았다 — 이 시험이 공회전한다`);
   assert.deepEqual(orphan.slice(0, 10), [], `홈에서 못 닿는 화면 ${orphan.length}장`);
 });
 
@@ -82,12 +82,12 @@ test("⚠홈에서 못 닿는 화면이 없다 — 아무도 안 가리키는 �
  * 그 사실을 수치로 남겨야 다음 사람이 「한 단계 더 넣어도 되겠지」를 안 한다.
  */
 test("현행 시즌 선수는 2클릭 이내다 — 과거 시즌만 3클릭을 쓴다", {
-  skip: files.length === 0 ? "dist 없음" : false,
+  skip: paths.length === 0 ? "dist 없음" : false,
 }, () => {
 
-  const worst = files
-    .filter((f) => /^players\/[^/]+\.html$/.test(f.path))
-    .map((f) => depth.get(f.path) ?? 99);
+  const worst = paths
+    .filter((p) => /^players\/[^/]+\.html$/.test(p))
+    .map((p) => depth.get(p) ?? 99);
   assert.ok(worst.length > 300, `현행 시즌 선수를 ${worst.length}장밖에 못 찾았다`);
   assert.ok(Math.max(...worst) <= 2, `현행 시즌 선수가 ${Math.max(...worst)}클릭이다 — 과거 시즌의 여유가 사라진다`);
 });

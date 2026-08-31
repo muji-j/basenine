@@ -277,28 +277,47 @@ export function brokenLinksIn(files: readonly LinkIndex[]): BrokenLink[] {
  * @returns 경로 → 홈에서의 클릭 수. 안 나오는 경로는 **도달 불가**다.
  */
 export function clickDepth(files: readonly LinkIndex[], start = "index.html"): Map<string, number> {
-  const have = new Set(files.map((f) => f.path));
   const byPath = new Map(files.map((f) => [f.path, f]));
+  return clickDepthLazy(new Set(byPath.keys()), (p) => byPath.get(p)?.refs ?? [], start);
+}
+
+/**
+ * 같은 판정이지만 **링크를 그때그때 받아 온다.**
+ *
+ * ⚠**전 배포물의 링크를 한꺼번에 들면 죽는다**(2026-08-31 CI 실측 · `JavaScript heap out of memory`).
+ * 9,370장에 링크 참조가 **2,651,860개 · 문자 5,330만자**다 — 문자열로 들고 있으면 수백 MB다.
+ * ⚠**이 저장소가 이미 적어 둔 함정을 다시 밟았다**: 빌드도 같은 이유로
+ * 「본문을 버리고 색인만 남기게」 고쳐진 이력이 있다(build.ts 의 `all: LinkIndex[]` 주석).
+ *
+ * → 단계마다 **그 층의 화면만** 읽고 버린다. 보존량이 **O(참조)에서 O(화면)**이 된다
+ * (방문 표시 9,370개뿐). 읽는 횟수는 그대로다 — 화면마다 최대 한 번.
+ *
+ * ⚠**빌드는 `clickDepth` 를 그대로 쓴다** — 거기서는 색인을 이미 손에 들고 있어서
+ * 다시 읽을 이유가 없다. **판정 본체는 여기 하나다**(M1).
+ */
+export function clickDepthLazy(
+  pages: ReadonlySet<string>,
+  refsOf: (path: string) => Iterable<string>,
+  start = "index.html",
+): Map<string, number> {
   const depth = new Map<string, number>();
-  if (!have.has(start)) return depth;
+  if (!pages.has(start)) return depth;
   depth.set(start, 0);
   let frontier = [start];
   while (frontier.length > 0) {
     const next: string[] = [];
     for (const p of frontier) {
       const d = depth.get(p) ?? 0;
-      const f = byPath.get(p);
-      if (f === undefined) continue;
       const slash = p.lastIndexOf("/");
       const dir = slash === -1 ? "" : p.slice(0, slash);
-      for (const href of f.refs) {
+      for (const href of refsOf(p)) {
         if (isExternal(href)) continue;
         const clean = href.split("#")[0]?.split("?")[0] ?? "";
         // ⚠같은 화면 안의 앵커는 이동이 아니다
         if (clean === "") continue;
         let to = resolvePath(dir, clean);
         if (to.endsWith("/")) to += "index.html";
-        if (!to.endsWith(".html") || !have.has(to) || depth.has(to)) continue;
+        if (!to.endsWith(".html") || !pages.has(to) || depth.has(to)) continue;
         depth.set(to, d + 1);
         next.push(to);
       }
@@ -324,13 +343,28 @@ export function tooDeepPlayerPages(
    */
   precomputed?: ReadonlyMap<string, number>,
 ): { path: string; clicks: number | null }[] {
-  const depth = precomputed ?? clickDepth(files);
+  return tooDeepIn(
+    files.map((f) => f.path),
+    precomputed ?? clickDepth(files),
+    limit,
+  );
+}
+
+/**
+ * 경로 목록과 깊이만으로 판정한다. ⚠**색인을 안 들고도 쓸 수 있게** 갈라 뒀다 —
+ * 배포물 전체를 훑는 쪽은 링크를 들고 있을 수 없다(`clickDepthLazy` 주석).
+ */
+export function tooDeepIn(
+  paths: readonly string[],
+  depth: ReadonlyMap<string, number>,
+  limit = 3,
+): { path: string; clicks: number | null }[] {
   const out: { path: string; clicks: number | null }[] = [];
-  for (const f of files) {
-    if (!/(^|\/)players\/[^/]+\.html$/.test(f.path)) continue;
-    const d = depth.get(f.path);
-    if (d === undefined) out.push({ path: f.path, clicks: null });
-    else if (d > limit) out.push({ path: f.path, clicks: d });
+  for (const path of paths) {
+    if (!/(^|\/)players\/[^/]+\.html$/.test(path)) continue;
+    const d = depth.get(path);
+    if (d === undefined) out.push({ path, clicks: null });
+    else if (d > limit) out.push({ path, clicks: d });
   }
   return out;
 }
