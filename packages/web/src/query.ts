@@ -286,7 +286,13 @@ const RANKING_ROWS = 10;
  * ⚠**내보내는 이유는 시험 때문이다** — 「어느 하한에서도 상위 N」을 재려면 시험이
  * 화면과 **같은 수**로 골라 봐야 한다. 시험이 30을 손으로 적으면 여기를 바꿔도 초록으로 남는다.
  */
-export const RANKING_PAGE_ROWS = 30;
+/**
+ * ⚠**30 이었다 → 50**(2026-08-31 · 사용자 결정). 「全員」에서 순위가 뛰어 보인 것이
+ * 계기였고, 그때 **어디까지 연속으로 보장할지**를 정했다.
+ * ⚠**대가는 이 화면의 무게다** — 87개 표가 각각 20행씩 늘어난다(실측 2,854행 → 약 4,600행).
+ * 그 무게를 줄이는 이야기는 **별개로 남아 있다**(사용자가 실기 체감 뒤 판단하기로 했다).
+ */
+export const RANKING_PAGE_ROWS = 50;
 /** 収集ログ에 싣는 경기일 수. 한 달이면 구멍이 보인다 */
 const COVERAGE_DAYS = 30;
 /** 収集ログ에 싣는 실행 기록 수 */
@@ -927,7 +933,7 @@ function pitcherRankings(
 export function panelsForPlayer(
   // ⚠**총수 두 개는 여기서 만든다.** 부르는 쪽(MetricRanking)은 그 값을 갖고 있지 않고,
   // 선수 페이지의 순위 블록에는 「規定到達のみ」 전환이 없어서 화면에도 안 쓰인다
-  rankings: readonly Omit<RankingPanel, "qualifiedCount" | "allCount" | "minTop">[],
+  rankings: readonly Omit<RankingPanel, "qualifiedCount" | "allCount" | "minTop" | "topAllCut" | "rest">[],
   playerId: string,
   limit = RANKING_ROWS,
 ): RankingPanel[] {
@@ -954,6 +960,13 @@ export function panelsForPlayer(
        * `rankingRowsFor` 를 거치지 않는다. 언젠가 이 블록에 입력을 붙인다면 **그때 같이 고쳐라.**
        */
       minTop: null,
+      /**
+       * ⚠**여기에도 「全員」 전환이 없다** — 상위 10 + 본인만 싣는 블록이라
+       * 「어디까지 연속인가」라는 질문 자체가 성립하지 않는다(M11).
+       */
+      topAllCut: null,
+      /** ⚠**여기엔 「全員」 전환이 없다** — 펼칠 것이 없다 */
+      rest: [],
       qualifier: m.qualifier,
     };
   });
@@ -1020,6 +1033,23 @@ export function rankingRowsFor(rows: readonly RankingRow[], limit: number): Rank
  * ⚠**표보다 큰 약속을 하지 않는다** — 5행짜리 일람의 하이라이트에서 그보다 큰 수를 보장하면
  * 그 표가 10행 넘게 부푼다. 약속은 **그 표의 크기까지**다.
  */
+/**
+ * **「全員」 기본 화면이 어디까지 이어지는가** — 전원 순위 상위 `limit` 명째의 순위값.
+ *
+ * ⚠**`limit` 을 그대로 쓰면 안 된다.** 동률은 다음 순위를 건너뛰므로(M3 · 화면이 그렇게 공시한다)
+ * 50명째의 전원 순위가 50 보다 클 수 있다. **「몇 명까지」가 아니라 「어느 순위까지」**를 보내야
+ * 화면이 연속인지 판정할 수 있다.
+ * ⚠**정본은 여기다**(M1) — 렌더러도 클라이언트도 다시 세지 않는다.
+ */
+export function topAllCutFor(rows: readonly RankingRow[], limit: number): number | null {
+  const ranks = rows
+    .map((r) => r.rankAll)
+    .filter((x): x is number => x !== null)
+    .sort((a, b) => a - b);
+  if (ranks.length === 0) return null;
+  return ranks[Math.min(limit, ranks.length) - 1] ?? null;
+}
+
 export function minTopFor(rows: readonly RankingRow[], limit: number): number | null {
   if (!rows.some((r) => r.rank === null && r.rankAll !== null)) return null;
   return Math.min(RANKING_MIN_TOP, limit);
@@ -1086,7 +1116,21 @@ function everTop(rows: readonly RankingRow[], k: number): RankingRow[] {
 }
 
 function panelsForPage(rankings: readonly MetricRanking[], limit: number): RankingPanel[] {
-  return rankings.map((m) => ({
+  return rankings.map((m) => {
+    const cut = topAllCutFor(m.rows, limit);
+    /**
+     * ⚠**경계보다 아래를 전부 담는다** — 「もっと見る」가 **연속**이어야 하기 때문이다.
+     * 표에 실린 행 중에도 경계 아래가 있지만(합집합으로 들어온 규정 도달자),
+     * 그것만으로는 **61 · 66 · 110 · 184 · 222** 처럼 다시 뛴다(실측으로 확인했다).
+     * ⚠**중복은 클라이언트가 푼다** — 펼칠 때 표 안의 그 행들을 숨기고 이쪽을 그린다.
+     */
+    const rest =
+      cut === null
+        ? []
+        : m.rows
+            .filter((r) => r.rankAll !== null && r.rankAll > cut)
+            .sort((a, b) => (a.rankAll ?? 0) - (b.rankAll ?? 0));
+    return {
     id: m.id,
     label: m.label,
     digits: m.digits,
@@ -1098,8 +1142,11 @@ function panelsForPage(rankings: readonly MetricRanking[], limit: number): Ranki
     qualifiedCount: m.rows.filter((r) => r.rank !== null).length,
     allCount: m.rows.filter((r) => r.rankAll !== null).length,
     minTop: minTopFor(m.rows, limit),
+    topAllCut: cut,
+    rest,
     qualifier: m.qualifier,
-  }));
+    };
+  });
 }
 
 function ranksFor(rankings: readonly MetricRanking[], playerId: string): Ranks {

@@ -189,6 +189,9 @@ export function rankingPanel(over: Partial<RankingPanel> = {}): RankingPanel {
      * 입력이 붙는 패널을 재려면 `over` 로 덮어써라(`standings-page.test.ts` 가 그렇게 한다).
      */
     minTop: null,
+    /** ⚠**선수 페이지 블록에는 「全員」 전환이 없다** — 「어디까지 연속인가」가 성립하지 않는다 */
+    topAllCut: null,
+    rest: [],
     rows: Array.from({ length: 10 }, (_, i) => ({
       rank: i + 1,
       rankAll: i + 1,

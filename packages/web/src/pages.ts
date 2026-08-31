@@ -69,6 +69,60 @@ export interface LeagueSection {
   categories: RankingCategory[];
 }
 
+/**
+ * 「もっと見る」가 받아 갈 **경계 아래 순위** — 리그·부문마다 한 파일.
+ *
+ * ⚠**표에 안 그린다.** 리그당 수백 행이라 HTML 로 넣으면 이 화면이 몇 배가 된다.
+ * 기본 화면은 상위 50위(연속)까지이고, 그 아래는 **누를 때** 받는다.
+ *
+ * ⚠**서식을 서버가 만들어 보낸다**(`v`·`d` 는 이미 다듬은 글자다). 클라이언트가 다시
+ * 포맷하면 **같은 규칙이 두 벌**이 되고(M1), 자릿수·이닝 표기가 어느 날 갈린다.
+ * ⚠**클라이언트는 `textContent` 로만 넣는다** — 이름은 외부에서 온 글자다(§2-5 · XSS).
+ *
+ * ⚠**한 파일에 그 부문의 패널을 다 담는다.** 지표마다 파일을 두면 배포 파일 수가
+ * 87 × 9시즌 늘어나는데, Pages 는 **배포당 20,000개** 상한이 있다(지금 9,473).
+ * 한 번 받으면 그 탭의 다른 지표도 공짜다.
+ */
+export interface RankRestRow {
+  /** 전원 순위 */
+  r: number;
+  playerId: string;
+  name: string;
+  /** 구단 코드(대문자) */
+  t: string;
+  /** 이미 다듬은 값 */
+  v: string;
+  /** 이미 다듬은 분모 */
+  d: string;
+  /** 분모의 **원시 수** — 최소 표본으로 거를 때 쓴다(표의 `data-den` 과 같은 값) */
+  den: number;
+  /** 규정 도달자인가 — 그 모드로 되돌아갈 때 필요하다 */
+  q: boolean;
+}
+
+export function rankingRestJson(cat: RankingCategory): string {
+  const out: Record<string, RankRestRow[]> = {};
+  for (const p of cat.panels) {
+    if (p.rest.length === 0) continue;
+    out[p.id] = p.rest.map((r) => ({
+      r: r.rankAll ?? 0,
+      playerId: r.playerId,
+      name: r.name,
+      t: r.teamCode.toUpperCase(),
+      v: rankValue(r.value.value, p.digits, p.valueAsInnings === true).toString(),
+      d: denText(r.value.denominator, p.unit, p.denAsInnings).toString(),
+      den: r.value.denominator,
+      q: r.rank !== null,
+    }));
+  }
+  return JSON.stringify(out);
+}
+
+/** 그 화면이 내보낼 「もっと見る」 파일들. ⚠**경로 규칙은 여기 한 벌이다**(M1) */
+export function rankRestPath(leagueId: string, categoryId: string): string {
+  return `rank/${leagueId}-${categoryId}.json`;
+}
+
 export interface RosterEntry {
   playerId: string;
   name: string;
@@ -120,7 +174,16 @@ export interface IndexPageData {
  * ⚠**지표 탭 그룹을 부문마다 나눈다.** 하나로 묶으면 「打者」에서 고른 `wRC+`가
  * 「先発」로 옮겼을 때 사라져, 아무 표도 안 열린 화면이 된다.
  */
-function categoryPanels(c: RankingCategory, base: string, prefix: TabGroupRef): RawHtml {
+function categoryPanels(
+  c: RankingCategory,
+  base: string,
+  prefix: TabGroupRef,
+  /**
+   * 「もっと見る」가 받아 갈 파일의 주소. ⚠**없으면 버튼도 없다** —
+   * 일람의 하이라이트(5행짜리)에는 그런 약속이 없다.
+   */
+  restUrl?: string,
+): RawHtml {
   if (c.panels.length === 0) return html`<p class="empty">この部門の順位を計算できていません。</p>`;
   // ⚠페이지마다 접두사를 다르게 준다 — 저장된 탭 상태를 공유하면 5행짜리 일람과
   // 30행짜리 순위표가 서로의 선택을 덮어쓴다
@@ -131,10 +194,10 @@ function categoryPanels(c: RankingCategory, base: string, prefix: TabGroupRef): 
     c.panels.map((p) => ({ id: p.id, label: p.label })),
     true,
   )}
-  ${c.panels.map((p, pi) => panel(group, p.id, pi === 0, panelTable(p, base)))}`;
+  ${c.panels.map((p, pi) => panel(group, p.id, pi === 0, panelTable(p, base, restUrl)))}`;
 }
 
-function panelTable(p: RankingPanel, base: string): RawHtml {
+function panelTable(p: RankingPanel, base: string, restUrl?: string): RawHtml {
   const rows = p.rows;
   if (rows.length === 0) return html`<p class="empty">順位を計算できていません。</p>`;
   const qualifiedCount = p.qualifiedCount;
@@ -202,7 +265,17 @@ function panelTable(p: RankingPanel, base: string): RawHtml {
       //   (홈런·탈삼진)에까지 실으면 안 쓰는 바이트를 전 페이지가 나른다.
       // ⚠**여기 담기는 것은 원시 분모다** — 아웃 카운트인 패널은 아웃 그대로이고,
       //   이닝 표기(`138.1`)로의 환산은 클라이언트가 입력 쪽에서 한다.
+      // ⚠**「全員」 기본 화면은 연속이어야 한다**(2026-08-31 · 사용자 지적).
+      //   rows 는 세 벌의 합집합이라 규정 도달자인데 전원 순위가 한참 아래인 행이 섞인다 —
+      //   그대로 그리면 **31 → 36 → 152 → 181 → 244** 로 뛴다.
+      //   그런 행은 data-beyond 로 표시해 두고, 「全員」에서는 **펼쳐야** 나온다.
+      // ⚠**규정 모드에서는 그대로 보인다** — 거기서는 규정 순위로 연속이다.
+      // ⚠**경계는 서버가 정한다**(topAllCut) — 동률이 순위를 건너뛰므로 50 이하로는 못 가른다.
       (r) => html`<tr class="${r.isMe ? "me" : ""}" data-qualified="${r.rank === null ? "0" : "1"}"${
+        p.topAllCut !== null && r.rankAll !== null && r.rankAll > p.topAllCut
+          ? html` data-beyond="1"`
+          : raw("")
+      }${
         hasQualifier ? html` data-den="${r.value.denominator}"` : raw("")
       }
         ${raw(r.rank === null ? "hidden" : "")}>
@@ -224,6 +297,16 @@ function panelTable(p: RankingPanel, base: string): RawHtml {
       ? html`<p class="empty" data-rankempty="${p.id}" hidden role="status">指定した最少${minUnit}を満たす選手は、この表にはいません。</p>`
       : null
   }
+  ${/* ⚠**펼치기는 「全員」의 연속을 지키기 위한 것이다**(2026-08-31).
+         기본 화면은 전원 순위가 이어지는 데까지만 그리고, 그 아래(규정 도달자인데
+         전원 순위가 한참 아래인 선수)는 여기서 펼친다.
+         ⚠**서버는 언제나 그린다** — 숨길지는 클라이언트가 정한다(숨긴 행이 없으면 버튼도 없다).
+         ⚠**스크립트가 없으면 안 보인다**(hidden) — 그때 화면은 **연속인 상위만** 보이고,
+         그건 지금까지와 다르지 않다(§0-1: 더해지는 기능이고 없다고 잃는 것이 없다). */ ""}
+  ${restUrl === undefined || p.rest.length === 0
+    ? raw("")
+    : html`<p class="more"><button type="button" class="go alt" data-rankmore="${p.id}"
+    data-rankrest="${restUrl}" aria-expanded="false" hidden>順位をもっと見る</button></p>`}
   ${note(
     // ⚠**자른 것을 말한다.** 상위 N만 보여주면서 「전부」처럼 보이면 그것도 거짓말이다
     // ⚠**「上位N人」이라고 안 쓴다** — 최소 표본이 걸리는 패널에는 규정 상위 N 밖의 자격자가
@@ -611,7 +694,7 @@ ${d.draws.length === 0
         `${league.name}の部門`,
       )}</span></h2>
       ${league.categories.map((c, ci) =>
-        panel(catGroup, c.id, ci === 0, categoryPanels(c, base, metricGroup)),
+        panel(catGroup, c.id, ci === 0, categoryPanels(c, base, metricGroup, `${base}${rankRestPath(league.id, c.id)}`)),
       )}
     </section>`,
     );

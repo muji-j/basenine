@@ -3083,8 +3083,12 @@ $$("[data-rankonly]").forEach(btn=>{
   const badEl=$('[data-rankbad="'+id+'"]',panel);
   const emptyEl=$('[data-rankempty="'+id+'"]',panel);
   const asOuts=minBox&&minBox.hasAttribute?minBox.hasAttribute("data-rankouts"):false;
+  const moreBtn=$('[data-rankmore="'+id+'"]',panel);
   /* 못 읽은 입력. ⚠**저장하지 않는다** — 다음 방문에 되살릴 값이 아니다 */
   let bad=false;
+  /* ⚠**펼침은 저장하지 않는다.** 다음 방문에 되살릴 상태가 아니고, 되살리면
+     **처음 화면이 무거워진다** — 이 표는 이미 무게가 문제인 화면이다 */
+  let expanded=false;
 
   /* @param typing 지금 이 칸에 치고 있는 중인가. 그러면 **입력값을 덮어쓰지 않는다** */
   const apply=(typing)=>{
@@ -3099,7 +3103,17 @@ $$("[data-rankonly]").forEach(btn=>{
          「300타석 이상」에 넣을 근거가 없다. 하한이 0이면 아무도 안 뺀다 */
       const den=tr.dataset.den;
       const wide=min===0||(den!==undefined&&Number(den)>=min);
-      tr.hidden=(!all&&!q)||!wide;
+      /* ⚠**「全員」의 기본 화면은 연속이어야 한다**(2026-08-31 · 사용자 지적).
+         행 집합이 **세 벌의 합집합**이라, 규정 도달자인데 전원 순위가 한참 아래인 행이 섞인다 —
+         그대로 두면 순위가 **31 → 36 → 152 → 181 → 244** 로 뛴다.
+         서버가 data-beyond 로 표시해 둔 그런 행은 **펼쳐야** 나온다.
+         ⚠**규정 모드에서는 숨기지 않는다** — 거기서는 규정 순위로 연속이고, 그 선수들이 본체다. */
+      const beyond=tr.dataset.beyond==="1";
+      /* ⚠**펼쳐도 이 행은 안 보인다.** 펼침은 파일에서 받은 **연속** 행이 대신 그린다 —
+         같은 선수를 두 번 그리지 않으려면 여기서 계속 숨겨야 한다.
+         ⚠**규정 모드에서는 보인다** — 거기서는 이 행들이 본체다. */
+      const past=all&&beyond;
+      tr.hidden=(!all&&!q)||!wide||past;
       if(!tr.hidden)n++;
       /* 순위 칸을 바꿔 넣는다 — 두 값이 다 실려 있으므로 고르기만 한다 */
       const a=$("[data-rankq]",tr),b=$("[data-ranka]",tr);
@@ -3122,6 +3136,15 @@ $$("[data-rankonly]").forEach(btn=>{
     /* ⚠**0건을 빈 표로 두지 않는다**(M12). 못 읽은 입력일 때는 **거르지 않았으므로**
        이 말을 하지 않는다 — 그때 할 말은 badEl 이 한다 */
     if(emptyEl)emptyEl.hidden=!(all&&!bad&&n===0);
+    /* ⚠**펼치기는 「全員」에서만 뜻이 있다** — 규정 모드에는 숨긴 행이 없다.
+       ⚠**숨긴 행이 실제로 있을 때만 낸다** — 눌러도 아무 일도 안 일어나는 버튼은 고장으로 읽힌다 */
+    /* ⚠**서버가 「받을 것이 있다」고 할 때만 그린다** — 버튼 자체가 그때만 나온다.
+       ⚠**「全員」에서만 뜻이 있다** — 규정 모드는 이미 연속이다. */
+    if(moreBtn&&!restLoading){
+      moreBtn.hidden=!all;
+      moreBtn.setAttribute("aria-expanded",String(expanded));
+      moreBtn.textContent=expanded?"上位だけ表示":"順位をもっと見る";
+    }
   };
   const views=(rankViews[id]=rankViews[id]||[]);
   views.push(apply);
@@ -3129,11 +3152,73 @@ $$("[data-rankonly]").forEach(btn=>{
   const refresh=(from)=>views.forEach(f=>f(f===from));
 
   btn.addEventListener("click",()=>{
+    /* ⚠**모드를 바꾸면 펼침을 되돌린다** — 규정 모드에는 숨긴 행이 없으므로
+       그 상태를 들고 돌아오면 「눌러 놓은 적 없는 버튼이 눌려 있는」 화면이 된다 */
+    expanded=false;
     state.rankAll[id]=state.rankAll[id]!==true;save(state);refresh(null);
+  });
+  /* ⚠**이 사본만 펼친다.** 같은 지표가 여러 벌 그려지지만(리그·역할), 펼침은
+     「지금 보고 있는 표를 더 본다」는 뜻이라 다른 사본까지 무겁게 만들 이유가 없다 —
+     저장하는 상태(모드·하한)와 성질이 다르다 */
+  /* ⚠**펼치면 「연속」이어야 한다**(2026-08-31 · 사용자 요구 「누락 순위 없게」).
+     표 안에도 경계 아래 행이 몇 개 있지만(합집합으로 들어온 규정 도달자) 그것만 보이면
+     **61 · 66 · 110 · 184 · 222** 처럼 다시 뛴다 — 실측으로 확인했다.
+     그래서 **경계 아래 전부**를 파일에서 받아 그리고, 표 안의 그 성긴 행들은 숨긴다.
+     ⚠**textContent 로만 넣는다** — 이름은 외부에서 온 글자다.
+     ⚠**서식은 서버가 만든 것을 그대로 쓴다**(v·d) — 여기서 다시 포맷하면 규칙이 두 벌이 된다. */
+  let restRows=null,restLoading=false;
+  const tbody=$("tbody",panel);
+  const drawRest=()=>{
+    if(!tbody)return;
+    $$("tr[data-restrow]",tbody).forEach(tr=>{tr.remove()});
+    if(!expanded||restRows===null)return;
+    const saved=state.rankMin[id];
+    const min=typeof saved==="number"&&saved>0?saved:0;
+    const frag=doc.createDocumentFragment();
+    restRows.forEach(r=>{
+      if(min>0&&!(Number(r.den)>=min))return;
+      const tr=doc.createElement("tr");
+      tr.setAttribute("data-restrow","1");
+      const cells=[String(r.r),r.name,r.t,r.v,r.d];
+      cells.forEach((text,i)=>{
+        const td=doc.createElement("td");
+        if(i===1||i===2)td.className="l";
+        if(i===1){
+          const a=doc.createElement("a");
+          a.setAttribute("href",BASE+"players/"+r.playerId+".html");
+          a.textContent=text;
+          td.appendChild(a);
+        }else td.textContent=text;
+        tr.appendChild(td);
+      });
+      frag.appendChild(tr);
+    });
+    tbody.appendChild(frag);
+  };
+  if(moreBtn)moreBtn.addEventListener("click",()=>{
+    expanded=!expanded;
+    if(expanded&&restRows===null&&!restLoading){
+      restLoading=true;
+      const url=moreBtn.dataset.rankrest;
+      moreBtn.textContent="読み込み中…";
+      fetch(url).then(r=>r.json()).then(j=>{
+        restRows=j[id]||[];
+        restLoading=false;drawRest();apply(false);
+      }).catch(()=>{
+        /* ⚠**못 받았으면 그렇게 말한다** — 조용히 닫으면 「눌러도 아무 일이 없다」가 된다 */
+        restLoading=false;expanded=false;
+        moreBtn.textContent="読み込めませんでした";
+      });
+      return;
+    }
+    drawRest();apply(false);
   });
   if(minBox)minBox.addEventListener("input",()=>{
     const got=rankMinRead(minBox.value,asOuts);
     bad=!got.ok;
+    /* ⚠**펼친 행도 같은 하한을 받아야 한다** — 표의 행만 걸러지면
+       「300타석 이상」인데 그 아래 선수가 펼친 자리에 남는다 */
+    if(got.ok)setTimeout(drawRest,0);
     /* 못 읽은 값이면 **직전에 먹던 하한을 그대로 둔다.** 0으로 되돌리면 표가 갑자기 넓어져
        「값이 먹었다」로 보인다 — 그것이 침묵 오류의 모양이다 */
     if(got.ok){state.rankMin[id]=got.value;save(state)}
