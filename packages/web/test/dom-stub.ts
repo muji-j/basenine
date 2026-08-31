@@ -157,10 +157,32 @@ export class El {
 
 
   appendChild(c: El): El {
+    /**
+     * ⚠**조각은 자기 자식을 넘기고 사라진다** — 진짜 DOM 이 그렇게 한다.
+     * 그대로 넣으면 `tbody` 아래에 `#FRAGMENT` 한 개가 붙고, `querySelectorAll("tr")` 이
+     * **그 안의 행을 못 찾는다** — 시험이 「행이 안 붙었다」고 말하는데 실은 붙어 있는 상태다.
+     */
+    if (c.tagName === "#FRAGMENT") {
+      for (const child of [...c.children]) this.appendChild(child);
+      c.children.length = 0;
+      return c;
+    }
     c.detach();
     c.parentNode = this;
     this.children.push(c);
     return c;
+  }
+
+  /**
+   * 자기 자신을 부모에서 뗀다.
+   *
+   * ⚠**없어서 「もっと見る」로 붙인 행을 지우는 경로가 죽었다**(2026-08-31).
+   * ⚠**대역의 구멍이 결함과 같은 얼굴을 한다** — 이번에도 시험은 「행이 안 붙었다」로만 말했고,
+   * 진짜 원인(`createDocumentFragment`·`remove` 가 없다)은 스택을 봐야 나왔다.
+   * **대역에 없는 API 를 쓸 때는 여기부터 확인하라.**
+   */
+  remove(): void {
+    this.detach();
   }
 
   insertBefore(c: El, ref: El): El {
@@ -261,6 +283,16 @@ export interface StubDocument {
   createElementNS(ns: string, tag: string): El;
   /** 글자 노드. 용어집에 없는 라벨이 이 경로로 그려진다 */
   createTextNode(text: string): El;
+  /**
+   * 여러 행을 한 번에 붙일 때 쓰는 조각.
+   *
+   * ⚠**없어서 순위표의 「もっと見る」 경로가 통째로 죽었다**(2026-08-31).
+   * 대역에 없는 API 를 쓰면 시험은 「행이 안 붙었다」로만 말하고 **왜인지는 안 말한다** —
+   * 진짜 결함과 대역의 구멍이 같은 얼굴이 된다.
+   * ⚠**진짜 조각은 아니다** — 붙이면 자기 자식을 옮기는 것이 아니라 그대로 들어간다.
+   * 재는 것이 「몇 행이 붙었나」이므로 그걸로 충분하고, 아니게 되면 여기를 고쳐라.
+   */
+  createDocumentFragment(): El;
   getElementById(id: string): El | null;
   querySelector(sel: string): El | null;
   querySelectorAll(sel: string): El[];
@@ -286,6 +318,7 @@ export function makeDocument(base = ""): StubDocument {
       t.textContent = text;
       return t;
     },
+    createDocumentFragment: () => new El("#fragment"),
     getElementById: (id) => root.descendants().find((el) => el.id === id) ?? null,
     querySelector: (sel) => root.querySelector(sel),
     querySelectorAll: (sel) => root.querySelectorAll(sel),

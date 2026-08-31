@@ -2649,7 +2649,11 @@ test("⚠최애 구단의 상세에서는 「이 문서」다 — true 로 두�
 function rankingPanelDom(
   id: string,
   dens: readonly (number | null)[],
-  opts: { outs?: true } = {},
+  /**
+   * `more` 를 주면 「順位をもっと見る」 버튼을 단다.
+   * ⚠**서버는 받을 것이 있을 때만 그린다** — 그래서 픽스처도 선택으로 둔다.
+   */
+  opts: { outs?: true; more?: true } = {},
 ): { doc: ReturnType<typeof makeDocument>; rows: El[] } {
   const doc = makeDocument("");
   const panel = make("div", { "data-panelgroup": "rankmetric", "data-panelkey": id });
@@ -2692,6 +2696,12 @@ function rankingPanelDom(
   const empty = make("p", { class: "empty", "data-rankempty": id });
   empty.hidden = true;
   panel.appendChild(empty);
+
+  if (opts.more === true) {
+    const more = make("button", { "data-rankmore": id, "data-rankrest": "rank/x.json", "aria-expanded": "false" });
+    more.hidden = true;
+    panel.appendChild(more);
+  }
 
   doc.body.appendChild(panel);
   return { doc, rows };
@@ -2969,6 +2979,47 @@ test("⚠배포 해시 주소로 보고 있으면 화면이 그렇게 말한다 
     "https://bb-app-7mk.pages.dev/players/1.html",
     "정본 주소를 잘못 만들었다 — 첫 라벨만 떼야 한다",
   );
+});
+
+/**
+ * ⚠**사용자가 밟은 순서 그대로다**(2026-08-31 보고):
+ * 「規定到達のみ」를 풀고 → **펼치고** → 다시 「規定到達のみ」를 누르면,
+ * **펼쳐 붙인 미달자 행이 순위를 단 채 아래에 남아 있었다.**
+ *
+ * ⚠**접었다가 누르면 정상이었다** — 그래서 「전환이 안 된다」가 아니라
+ * **「전환이 붙인 행을 안 지운다」**가 결함이었다. 순서를 밟아야만 보이는 종류다.
+ *
+ * 원인: 전환은 `apply()` 만 부르는데 붙인 행을 지우는 것은 `drawRest()` 라 아무도 안 불렀다.
+ * → **`apply()` 가 끝에서 항상 다시 그린다** — 모드 전환·하한 변경·펼치기가 한 경로로 모인다.
+ */
+test("⚠펼친 뒤 「規定到達のみ」로 돌아가면 붙인 행이 남지 않는다", async () => {
+  const { doc, rows } = rankingPanelDom("avg", [400, 300, 200, 90, 50, 10], { more: true });
+  const rest = [
+    { r: 51, playerId: "x1", name: "미달1", t: "T", v: ".200", d: "20打席", den: 20, q: false },
+    { r: 52, playerId: "x2", name: "미달2", t: "G", v: ".190", d: "15打席", den: 15, q: false },
+  ];
+  const requested: string[] = [];
+  run(doc, { routes: { "rank/x.json": { avg: rest } }, requested });
+
+  const { btn } = rankParts(doc, "avg");
+  const more = doc.querySelector('[data-rankmore="avg"]')!;
+
+  btn.fire("click"); // 「全員」으로
+  assert.equal(more.hidden, false, "「全員」인데 펼치기 버튼이 안 보인다");
+  more.fire("click"); // 펼친다
+  await new Promise((r) => setTimeout(r, 20));
+  assert.ok(requested.some((u) => u.includes("rank/x.json")), `파일을 안 받았다: ${requested.join(",")}`);
+  const added = doc.querySelectorAll("[data-restrow]");
+  assert.ok(added.length > 0, "펼쳤는데 행이 안 붙었다 — 이 시험이 공회전한다");
+
+  btn.fire("click"); // 다시 「規定到達のみ」
+  assert.deepEqual(
+    doc.querySelectorAll("[data-restrow]").map((el) => el.textContent),
+    [],
+    "규정 모드로 돌아왔는데 펼친 행이 남아 있다",
+  );
+  // ⚠**규정 도달자만 보인다** — 남은 것이 없다는 것과 별개로 확인한다
+  assert.equal(shown(rows), 3, "규정 도달자 3명만 보여야 한다");
 });
 
 test("⚠정본 주소에서는 아무 말도 안 한다 — 매일 뜨는 경고는 소음이 된다", () => {
