@@ -3090,6 +3090,45 @@ $$("[data-rankonly]").forEach(btn=>{
      **처음 화면이 무거워진다** — 이 표는 이미 무게가 문제인 화면이다 */
   let expanded=false;
 
+  /* ⚠**펼치면 「연속」이어야 한다**(2026-08-31 · 사용자 요구 「누락 순위 없게」).
+     표 안에도 경계 아래 행이 몇 개 있지만(합집합으로 들어온 규정 도달자) 그것만 보이면
+     **61 · 66 · 110 · 184 · 222** 처럼 다시 뛴다 — 실측으로 확인했다.
+     그래서 **경계 아래 전부**를 파일에서 받아 그리고, 표 안의 그 성긴 행들은 숨긴다.
+     ⚠**textContent 로만 넣는다** — 이름은 외부에서 온 글자다.
+     ⚠**서식은 서버가 만든 것을 그대로 쓴다**(v·d) — 여기서 다시 포맷하면 규칙이 두 벌이 된다.
+     ⚠**apply() 보다 먼저 선언한다** — apply() 가 이것을 부르기 때문이다(그 안의 주석 참조). */
+  let restRows=null,restLoading=false;
+  const tbody=$("tbody",panel);
+  const drawRest=()=>{
+    if(!tbody)return;
+    $$("tr[data-restrow]",tbody).forEach(tr=>{tr.remove()});
+    /* ⚠**「全員」이 아니면 하나도 안 그린다** — 규정 모드에 미달자가 남아 있던 것이
+       사용자가 본 결함이다. 여기 조건이 그 판정의 전부다 */
+    if(!expanded||restRows===null||state.rankAll[id]!==true)return;
+    const saved=state.rankMin[id];
+    const min=typeof saved==="number"&&saved>0?saved:0;
+    const frag=doc.createDocumentFragment();
+    restRows.forEach(r=>{
+      if(min>0&&!(Number(r.den)>=min))return;
+      const tr=doc.createElement("tr");
+      tr.setAttribute("data-restrow","1");
+      const cells=[String(r.r),r.name,r.t,r.v,r.d];
+      cells.forEach((text,i)=>{
+        const td=doc.createElement("td");
+        if(i===1||i===2)td.className="l";
+        if(i===1){
+          const a=doc.createElement("a");
+          a.setAttribute("href",BASE+"players/"+r.playerId+".html");
+          a.textContent=text;
+          td.appendChild(a);
+        }else td.textContent=text;
+        tr.appendChild(td);
+      });
+      frag.appendChild(tr);
+    });
+    tbody.appendChild(frag);
+  };
+
   /* @param typing 지금 이 칸에 치고 있는 중인가. 그러면 **입력값을 덮어쓰지 않는다** */
   const apply=(typing)=>{
     const all=state.rankAll[id]===true;
@@ -3145,6 +3184,13 @@ $$("[data-rankonly]").forEach(btn=>{
       moreBtn.setAttribute("aria-expanded",String(expanded));
       moreBtn.textContent=expanded?"上位だけ表示":"順位をもっと見る";
     }
+    /* ⚠**펼쳐 붙인 행도 여기서 같이 그린다**(2026-08-31 · 사용자 보고).
+       그전에는 「規定到達のみ」 전환이 apply() 만 부르고 붙인 행은 아무도 안 지웠다 —
+       그래서 **규정 모드인데 미달자가 순위를 단 채 아래에 남아 있었다.**
+       ⚠**같은 지표의 다른 사본에서 눌러도 지워져야 한다** — 전환은 refresh() 로 전 사본의
+       apply() 를 부르므로, 여기 두면 사본마다 자기 것을 지운다.
+       → **모드 전환·하한 변경·펼치기가 전부 이 한 경로로 모인다.** */
+    drawRest();
   };
   const views=(rankViews[id]=rankViews[id]||[]);
   views.push(apply);
@@ -3160,41 +3206,6 @@ $$("[data-rankonly]").forEach(btn=>{
   /* ⚠**이 사본만 펼친다.** 같은 지표가 여러 벌 그려지지만(리그·역할), 펼침은
      「지금 보고 있는 표를 더 본다」는 뜻이라 다른 사본까지 무겁게 만들 이유가 없다 —
      저장하는 상태(모드·하한)와 성질이 다르다 */
-  /* ⚠**펼치면 「연속」이어야 한다**(2026-08-31 · 사용자 요구 「누락 순위 없게」).
-     표 안에도 경계 아래 행이 몇 개 있지만(합집합으로 들어온 규정 도달자) 그것만 보이면
-     **61 · 66 · 110 · 184 · 222** 처럼 다시 뛴다 — 실측으로 확인했다.
-     그래서 **경계 아래 전부**를 파일에서 받아 그리고, 표 안의 그 성긴 행들은 숨긴다.
-     ⚠**textContent 로만 넣는다** — 이름은 외부에서 온 글자다.
-     ⚠**서식은 서버가 만든 것을 그대로 쓴다**(v·d) — 여기서 다시 포맷하면 규칙이 두 벌이 된다. */
-  let restRows=null,restLoading=false;
-  const tbody=$("tbody",panel);
-  const drawRest=()=>{
-    if(!tbody)return;
-    $$("tr[data-restrow]",tbody).forEach(tr=>{tr.remove()});
-    if(!expanded||restRows===null)return;
-    const saved=state.rankMin[id];
-    const min=typeof saved==="number"&&saved>0?saved:0;
-    const frag=doc.createDocumentFragment();
-    restRows.forEach(r=>{
-      if(min>0&&!(Number(r.den)>=min))return;
-      const tr=doc.createElement("tr");
-      tr.setAttribute("data-restrow","1");
-      const cells=[String(r.r),r.name,r.t,r.v,r.d];
-      cells.forEach((text,i)=>{
-        const td=doc.createElement("td");
-        if(i===1||i===2)td.className="l";
-        if(i===1){
-          const a=doc.createElement("a");
-          a.setAttribute("href",BASE+"players/"+r.playerId+".html");
-          a.textContent=text;
-          td.appendChild(a);
-        }else td.textContent=text;
-        tr.appendChild(td);
-      });
-      frag.appendChild(tr);
-    });
-    tbody.appendChild(frag);
-  };
   if(moreBtn)moreBtn.addEventListener("click",()=>{
     expanded=!expanded;
     if(expanded&&restRows===null&&!restLoading){
@@ -3203,7 +3214,7 @@ $$("[data-rankonly]").forEach(btn=>{
       moreBtn.textContent="読み込み中…";
       fetch(url).then(r=>r.json()).then(j=>{
         restRows=j[id]||[];
-        restLoading=false;drawRest();apply(false);
+        restLoading=false;apply(false);
       }).catch(()=>{
         /* ⚠**못 받았으면 그렇게 말한다** — 조용히 닫으면 「눌러도 아무 일이 없다」가 된다 */
         restLoading=false;expanded=false;
@@ -3211,14 +3222,14 @@ $$("[data-rankonly]").forEach(btn=>{
       });
       return;
     }
-    drawRest();apply(false);
+    apply(false);
   });
   if(minBox)minBox.addEventListener("input",()=>{
     const got=rankMinRead(minBox.value,asOuts);
     bad=!got.ok;
-    /* ⚠**펼친 행도 같은 하한을 받아야 한다** — 표의 행만 걸러지면
-       「300타석 이상」인데 그 아래 선수가 펼친 자리에 남는다 */
-    if(got.ok)setTimeout(drawRest,0);
+    /* ⚠**펼친 행도 같은 하한을 받는다** — 표의 행만 걸러지면 「300타석 이상」인데
+       그 아래 선수가 펼친 자리에 남는다. apply() 가 끝에서 다시 그리므로 여기서는 안 부른다
+       (예전에는 setTimeout 으로 따로 불렀다 — 경로가 둘이면 하나만 고쳐지는 날이 온다). */
     /* 못 읽은 값이면 **직전에 먹던 하한을 그대로 둔다.** 0으로 되돌리면 표가 갑자기 넓어져
        「값이 먹었다」로 보인다 — 그것이 침묵 오류의 모양이다 */
     if(got.ok){state.rankMin[id]=got.value;save(state)}
