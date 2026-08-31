@@ -43,8 +43,15 @@ const HAS_DB = existsSync(DB);
 if (process.env["BB_REQUIRE_DB"] === "1" && !HAS_DB) {
   throw new Error(`BB_REQUIRE_DB=1 인데 ${DB} 가 없다`);
 }
-/** ⚠**기본은 한 시즌, CI 는 전 시즌** — `ranking-min-sample.test.ts` 와 같은 형식 */
-const FULL = process.env["BB_FULL_SCAN"] === "1";
+/**
+ * ⚠**기본은 한 시즌, 깊은 실행은 전 시즌** — `ranking-min-sample.test.ts` 와 같은 형식.
+ *
+ * ⚠**이름이 `BB_FULL_SCAN` 이 아니다**(2026-08-31). 그 값은 **페이지 표본**과 **시즌 범위**라는
+ * 서로 다른 두 가지를 겸하고 있었고, **켠 근거로 적힌 것은 페이지 쪽뿐**이었다.
+ * 비용은 시즌 쪽에서 났다 — CI 실측(run 33379836307)으로 **이 본 하나가 150.7초**이고
+ * `ranking-min-sample` 과 합쳐 **시험 490초의 60%** 다. 사유 전문은 그 파일에 있다.
+ */
+const FULL = process.env["BB_ALL_SEASONS"] === "1";
 const BUILT_ON = "2026-08-20";
 
 /**

@@ -18,6 +18,8 @@
  */
 import { parseArgs } from "node:util";
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { JST_TODAY_FROM_HOUR, targetDates } from "./date-window.ts";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -105,9 +107,41 @@ if (!contact) {
  * 여기 두면 이 파일이 import 하는 순간 수집을 시작해서 시험할 수가 없다 —
  * 실제로 그래서 이 판단이 한 번도 검증된 적이 없었다(2026-08-18).
  */
+/**
+ * 이미 받아 둔 **마지막 경기일** — 따라잡기의 기준점.
+ *
+ * ⚠**모르면 넘기지 않는다**(M11). DB 가 아직 없거나(첫 실행) 읽지 못하면 `undefined` 이고,
+ * 그러면 창은 예전과 같은 `[어제]` 다. **모르는 것을 「어제」로 메우면 빈 날이 있어도 안 메운다.**
+ * ⚠**읽기 실패를 삼키지 않되 멈추지도 않는다** — 수집 자체는 DB 없이도 성립하고(아카이브가 먼저다),
+ * 여기서 죽으면 **DB 가 깨진 날 수집까지 같이 멈춘다.** 그건 되돌릴 수 없는 쪽이다.
+ */
+function collectedThrough(): string | undefined {
+  const path = join(ROOT, values.db);
+  if (!existsSync(path)) {
+    console.log(`  · ${values.db} 가 아직 없다 — 따라잡기 없이 어제만 받는다`);
+    return undefined;
+  }
+  try {
+    const db = new DatabaseSync(path, { readOnly: true });
+    try {
+      const row = db.prepare("SELECT MAX(game_date) AS d FROM game WHERE status = 'played'").get() as
+        | { d: string | null }
+        | undefined;
+      return row?.d ?? undefined;
+    } finally {
+      db.close();
+    }
+  } catch (e) {
+    console.error(`  ⚠마지막 경기일을 못 읽었다(${String(e)}) — 따라잡기 없이 어제만 받는다`);
+    return undefined;
+  }
+}
+
+const since = values.date === undefined ? collectedThrough() : undefined;
 const dates = targetDates(new Date(), {
   ...(values.date === undefined ? {} : { date: values.date }),
   ...(values.today === true ? { forceToday: true } : {}),
+  ...(since === undefined ? {} : { collectedThrough: since }),
 });
 console.log(
   `대상 경기일 ${dates.join(" · ")}` +
@@ -117,6 +151,9 @@ console.log(
         ? " (어제와 오늘 JST · 끝나지 않은 경기는 저장하지 않는다)"
         : ` (어제 JST · 오늘 것은 ${JST_TODAY_FROM_HOUR}시 이후 실행에서 받는다)`),
 );
+// ⚠**기준점을 말한다.** 창이 조용히 넓어지면 「왜 오늘 요청이 많지」에 아무도 답할 수 없다.
+//   위 「대상 경기일」 줄과 나란히 읽으면 넓어졌는지가 그 자리에서 보인다.
+if (since !== undefined) console.log(`  · 마지막으로 받아 둔 경기일 ${since}`);
 
 function run(label: string, args: string[]): number {
   console.log(`\n── ${label} ──`);
