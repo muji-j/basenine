@@ -202,7 +202,7 @@ function gameCard(g: PostGame, base: string): RawHtml {
 
 function batterTable(rows: PostBatter[], base: string): RawHtml {
   if (rows.length === 0) return html`<p class="empty">打者の記録がありません。</p>`;
-  return scroller(html`<table>
+  return scroller(html`<table aria-label="ポストシーズンの打者成績">
     <thead><tr>
       <th class="l">選手</th><th class="l">球団</th><th>試合</th><th>${term("打席")}</th>
       <th>打数</th><th>安打</th><th>本塁打</th><th>打点</th><th>四球</th><th>三振</th><th>${term("打率")}</th>
@@ -221,7 +221,7 @@ function batterTable(rows: PostBatter[], base: string): RawHtml {
 
 function pitcherTable(rows: PostPitcher[], base: string): RawHtml {
   if (rows.length === 0) return html`<p class="empty">投手の記録がありません。</p>`;
-  return scroller(html`<table>
+  return scroller(html`<table aria-label="ポストシーズンの投手成績">
     <thead><tr>
       <th class="l">選手</th><th class="l">球団</th><th>登板</th><th>投球回</th>
       <th>勝</th><th>敗</th><th>S</th><th>被安打</th><th>被本塁打</th><th>与四球</th><th>奪三振</th>

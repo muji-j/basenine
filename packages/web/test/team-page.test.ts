@@ -525,7 +525,13 @@ test("⚠チーム成績은 뜻이 같은 것끼리 단으로 묶는다 — 규�
  */
 test("⚠모든 표에서 머리 수와 칸 수가 같다 — 어긋나면 머리가 거짓말을 한다", () => {
   const out = renderTeamPage(data(), context());
-  const tables = [...out.matchAll(/<table id="([^"]+)">([\s\S]*?)<\/table>/g)];
+  /**
+   * ⚠**`">"` 로 닫아 놓았더니 속성이 하나 늘자 **표를 0개로 셌다**(2026-08-31).
+   * 표에 `aria-label` 을 붙이는 순간 이 정규식이 **아무것도 안 맞았고**, 공회전 방지 단언이
+   * 그것을 잡아 줬다 — **없었으면 「전부 통과」로 보였을 것이다.**
+   * ⚠**속성 순서와 개수를 가정하지 마라.**
+   */
+  const tables = [...out.matchAll(/<table id="([^"]+)"[^>]*>([\s\S]*?)<\/table>/g)];
   assert.ok(tables.length >= 4, `표가 ${tables.length}개뿐이다 — 이 시험이 아무것도 안 재고 있다`);
   for (const t of tables) {
     const id = t[1] ?? "";
@@ -667,7 +673,8 @@ function marked(): TeamPageData {
 
 test("⚠머리 i번째 아래에 그 지표의 값이 있다 — 개수만 세면 라벨이 거짓말을 한다", () => {
   const out = renderTeamPage(marked(), context());
-  const tables = [...out.matchAll(/<table id="(team[^"]*)">([\s\S]*?)<\/table>/g)];
+  // ⚠**속성 순서와 개수를 가정하지 마라**(위 주석) — `aria-label` 이 붙자 0개가 됐다
+  const tables = [...out.matchAll(/<table id="(team[^"]*)"[^>]*>([\s\S]*?)<\/table>/g)];
   const seen = new Set(tables.map((t) => t[1] ?? ""));
   for (const want of ["teambatTable", "teambatsaberTable", "teampitTable", "teampitsaberTable"]) {
     assert.ok(seen.has(want), `${want} 를 못 찾았다 — 이 시험이 아무것도 안 재고 있다`);
@@ -717,7 +724,8 @@ const EXPECTED_COLS: Readonly<Record<string, readonly string[]>> = {
 
 test("⚠구단 표의 열 집합이 그대로다 — 열이 통째로 사라져도 위 시험은 안 떨어진다", () => {
   const out = renderTeamPage(marked(), context());
-  const tables = [...out.matchAll(/<table id="(team[^"]*)">([\s\S]*?)<\/table>/g)];
+  // ⚠**속성 순서와 개수를 가정하지 마라**(위 주석) — `aria-label` 이 붙자 0개가 됐다
+  const tables = [...out.matchAll(/<table id="(team[^"]*)"[^>]*>([\s\S]*?)<\/table>/g)];
   const got: Record<string, string[]> = {};
   for (const t of tables) {
     const id = t[1] ?? "";

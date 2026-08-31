@@ -191,7 +191,7 @@ function panelTable(p: RankingPanel, base: string): RawHtml {
   </div>
   <p class="empty" data-rankbad="${p.id}" hidden role="status">${badHint}</p>`
     : null}
-  ${scroller(html`<table>
+  ${scroller(html`<table aria-label="${p.label}のリーグ順位">
     <thead><tr><th>順位</th><th class="l">選手</th><th class="l">球団</th><th>${term(p.label)}</th><th>${term("母数")}</th></tr></thead>
     <tbody>${rows.map(
       // ⚠**기본은 「규정 도달자만」이므로 미달 행은 처음부터 숨어 있다.**
@@ -441,7 +441,7 @@ export interface RankingPageData {
  *   根拠のない話になる（`draw.ts` の「무엇을 재지 않는가」）。
  */
 function drawsTable(rows: readonly DrawSeasonRow[]): RawHtml {
-  return scroller(html`<table>
+  return scroller(html`<table aria-label="シーズンごとの引き分け">
   <thead><tr>
     <th class="l">シーズン</th><th>試合</th><th>引き分け</th><th>${term("引分率")}</th>
     <th>延長</th><th>延長引分</th><th>${term("延長決着率")}</th><th>9回引分</th><th>最長イニング</th>
@@ -494,7 +494,7 @@ function standingsTable(s: StandingsSection, base: string): RawHtml {
    * 같은 사실을 홈은 한 칸, 여기는 세 칸으로 말하고 있었고 그 차이에 뜻이 없었다.
    * 잃은 정보는 없다: 승·패·분은 칸 안에 그대로 있고, 得/失 도 分母와 함께 그대로 있다.
    */
-  return scroller(html`<table class="stand hstand">
+  return scroller(html`<table class="stand hstand" aria-label="順位表">
     <thead><tr>
       <th>順位</th><th class="l">球団</th><th>試合</th>
       <!-- ⚠**勝率도 용어집에 있다**(2026-08-20 winPct 등록). 여기만 맨 문자열이면
@@ -864,7 +864,7 @@ export function renderStartersPage(d: StartersPageData, ctx: RenderContext): str
    * 분모만 틀려서, 지금보다 **더 그럴듯한 거짓말**이 된다(`den-units.test.ts` 가 잡는다).
    */
   const matchupRows = (list: readonly MatchupRow[], side: ProbableSide, opponent: ProbableSide): RawHtml =>
-    scroller(html`<table>
+    scroller(html`<table aria-label="${opponent.shortName}の打者一覧">
     <thead><tr><th class="l">${opponent.shortName}の打者</th><th>打席</th><th>安打</th><th>本塁打</th><th>三振</th><th>打率</th></tr></thead>
     <tbody>${list.map(
       (m) => html`<tr class="${m.line.pa < 10 ? "thin" : ""}">

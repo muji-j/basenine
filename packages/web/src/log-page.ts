@@ -151,7 +151,7 @@ function jstStamp(iso: string): string {
  */
 function coverageTable(days: readonly CoverageDay[], builtOn: string): RawHtml {
   if (days.length === 0) return html`<p class="empty">まだ試合が入っていません。</p>`;
-  return html`${scroller(html`<table>
+  return html`${scroller(html`<table aria-label="試合日ごとの取得状況">
     <thead><tr><th class="l">試合日</th><th>予定</th><th>実施</th><th>中止</th><th>打席ログ</th><th class="l">状態</th></tr></thead>
     <tbody>${days.map((d) => {
       const missing = d.played - d.withPa;
@@ -199,7 +199,7 @@ function runTable(runs: readonly RunRecord[]): RawHtml {
   if (runs.length === 0) {
     return html`<p class="empty">実行の記録がまだありません。次回の自動収集から記録されます。</p>`;
   }
-  return html`${scroller(html`<table>
+  return html`${scroller(html`<table aria-label="収集バッチの実行記録">
     <thead><tr><th class="l">実行（JST）</th><th class="l">最新試合日</th><th>試合</th><th>打席</th><th>選手</th><th>隔離</th><th class="l">判定</th></tr></thead>
     <tbody>${runs.map(
       (r) => html`<tr>
@@ -234,7 +234,7 @@ function quarantineTable(kinds: readonly QuarantineKind[]): RawHtml {
   if (kinds.length === 0) {
     return html`<p class="empty">規則の外にあった記録は<b>0件</b>です。取り込みが規則どおりに進んでいます。</p>`;
   }
-  return html`${scroller(html`<table>
+  return html`${scroller(html`<table aria-label="隔離された記録の種類">
     <thead><tr><th class="l">種類</th><th>件数</th><th class="l">原文の例</th></tr></thead>
     <tbody>${kinds.map(
       (k) => html`<tr>

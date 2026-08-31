@@ -307,7 +307,7 @@ function streakText(n: number): string {
 function standingsTable(l: HomeLeague, base: string): RawHtml {
   /** 득실차 띠의 자 — **그 리그 안에서** 가장 큰 폭에 맞춘다 */
   const maxAbs = widestRunDiff(l.rows.filter((x) => x.runGames > 0));
-  return scroller(html`<table class="hstand">
+  return scroller(html`<table class="hstand" aria-label="順位表">
   <thead><tr>
     <th>順位</th>
     <th class="l">球団</th>
@@ -458,7 +458,8 @@ ${d.paces.length === 0
     ? raw("")
     : html`<section class="block" id="b-hpace">
   <h2>今シーズンのペース<span class="qt">${regularSeasonGames(d.season)}試合換算</span></h2>
-  ${scroller(html`<table>
+  ${/* ⚠**첫 판에 엉뚱한 이름을 붙였다** — 여기는 「ペース」 구획이지 「記録に近づいている」가 아니다 */ ""}
+  ${scroller(html`<table aria-label="今シーズンのペース">
     <thead><tr>
       <th class="l">選手</th><th class="l">球団</th><th class="l">項目</th>
       <th>現在</th><th>${regularSeasonGames(d.season)}試合換算</th><th class="l">次の節目</th>
@@ -494,7 +495,7 @@ ${d.milestones.length === 0
     ? raw("")
     : html`<section class="block" id="b-hmile">
   <h2>${milestoneSectionTitle(d.seasonOver)}<span class="qt">通算</span></h2>
-  ${scroller(html`<table>
+  ${scroller(html`<table aria-label="先週の顔">
     <thead><tr>
       <th class="l">選手</th><th class="l">球団</th><th class="l">記録</th>
       <th>通算</th><th class="l">節目まで</th><th>今季</th>
@@ -529,7 +530,10 @@ ${d.streaks.length === 0
     ? raw("")
     : html`<section class="block" id="b-hstreak">
   <h2>${streakSectionTitle(d.seasonOver)}</h2>
-  ${scroller(html`<table>
+  ${/* ⚠**시제를 손으로 적지 마라**(M1) — 끝난 시즌에는 제목이 과거형이 되고,
+         이름만 현재형으로 남으면 **낭독 경로가 화면과 다른 말을 한다.**
+         실제로 첫 판에서 그렇게 적었다가 시험이 잡았다. */ ""}
+  ${scroller(html`<table aria-label="${streakSectionTitle(d.seasonOver)}">
     <thead><tr><th class="l">選手</th><th class="l">球団</th><th class="l">記録</th><th>試合</th><th class="l">最後の出場</th></tr></thead>
     <tbody>${d.streaks.map(
       (x) => html`<tr>
