@@ -9,7 +9,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
-import { parseLineScore, parsePlayByPlay } from "@bb-app/parser";
+import { parseBoxScore, parseLineScore, parsePlayByPlay } from "@bb-app/parser";
 import { deriveRuns } from "../src/runs.ts";
 
 const root = process.argv[2];
@@ -30,6 +30,8 @@ let games = 0;
 let halves = 0;
 let totalRuns = 0;
 let errors = 0;
+/** ⚠**中止 는 결함이 아니라 정상이다** — 그래서 따로 센다(「0건」과 「안 쟀음」을 구별한다) */
+let notPlayed = 0;
 let scoreboardTotal = 0;
 const mismatches: string[] = [];
 const gameTotalMismatch: string[] = [];
@@ -43,6 +45,31 @@ for await (const file of walk(root)) {
     if (pbp.status !== "played") continue;
     ls = parseLineScore(html);
   } catch (err) {
+    /**
+     * ⚠**中止 를 결함으로 세지 마라**(2026-08-31). 경기가 없었으면 `playbyplay` 도 없고,
+     * npb.jp 는 그 주소에 **200 으로 관계없는 페이지**(톱 화면)를 준다 —
+     * 파서는 「타석을 하나도 못 찾았다」로 정직하게 던지는데, 그건 **결함이 아니다.**
+     *
+     * ⚠**이것이 이 도구가 잠자던 이유다.** 실측(9시즌 아카이브): 정상인 데이터에
+     * **ERROR 를 51번** 외쳤다. 그대로 CI 에 걸면 영영 붉고, 붉은 검사는 곧 무시된다.
+     *
+     * ⚠**같은 폴더의 `box` 로 판정한다** — 경기가 없었다는 사실은 거기에 정확히 적혀 있다
+     * (실측: 中止 경기의 box 는 `notPlayed` 로 파싱된다). **정규식으로 「中止」를 찾지 않는다** —
+     * 판정은 파서 한 벌이다(M1).
+     * ⚠**「모르는 것」은 여전히 결함으로 남긴다** — box 도 못 읽으면 그건 진짜 이상이다.
+     */
+    let cancelled = false;
+    try {
+      const boxPath = file.replace(/playbyplay\.html\.gz$/, "box.html.gz");
+      const box = parseBoxScore(gunzipSync(await readFile(boxPath)).toString("utf8"));
+      cancelled = box.status === "notPlayed";
+    } catch {
+      cancelled = false;
+    }
+    if (cancelled) {
+      notPlayed += 1;
+      continue;
+    }
     errors += 1;
     console.error(`ERROR ${file} — ${err instanceof Error ? err.message : String(err)}`);
     continue;
@@ -65,7 +92,7 @@ for await (const file of walk(root)) {
 }
 
 console.log(
-  `경기 ${games}건 · 하프이닝 ${halves}개 · 오류 ${errors}건\n` +
+  `경기 ${games}건 · 하프이닝 ${halves}개 · 中止 ${notPlayed}건(정상) · 오류 ${errors}건\n` +
     `유도 총 득점 ${totalRuns} · 라인스코어 총점 ${scoreboardTotal}`,
 );
 console.log(`\n=== 경기 총점 불일치 (${gameTotalMismatch.length}건 / ${games}경기) ===`);

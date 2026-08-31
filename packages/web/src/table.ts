@@ -60,6 +60,14 @@ export interface StableSelect {
 export interface StableOptions {
   /** 정렬 상태의 저장 키. **화면마다 다르게 준다** — 같으면 서로의 선택을 덮는다 */
   id: string;
+  /**
+   * 표의 **이름**(`aria-label`). ⚠**필수다** — 이름 없는 표는 낭독기에서 그냥 「표」다.
+   *
+   * ⚠**실측(2026-08-31): 배포물의 표 327개 중 295개에 이름이 없었다.**
+   * 순위표 한 장에만 87개가 있어서, 표 단위로 이동하면 **「표」만 87번 들린다.**
+   * ⚠**화면에는 안 보인다.** 그래도 제품 언어이므로 일본어로 짓는다(§7).
+   */
+  label: string;
   columns: readonly SortColumn[];
   /** `<tr>` 들. 만드는 쪽이 `data-*` 를 붙인다 */
   rows: RawHtml;
@@ -168,7 +176,7 @@ export function stableTable(o: StableOptions): RawHtml {
     o.minGroup === undefined ? raw("") : html` data-mingroup="${o.minGroup}" data-minfield="${o.minField ?? ""}"`
   } data-unit="${o.unit}">
 ${controls}
-${scroller(html`<table id="${domId(o.id, "Table")}">
+${scroller(html`<table id="${domId(o.id, "Table")}" aria-label="${o.label}">
   <thead><tr>${head}</tr></thead>
   <tbody>${o.rows}</tbody>
 </table>`)}

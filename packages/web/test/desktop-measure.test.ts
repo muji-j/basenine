@@ -29,10 +29,21 @@ test("⚠본문에 최대 폭이 있다 — 없으면 모바일 레이아웃이 
   assert.match(main, /max-width:\s*var\(--measure\)/, `.main 에 최대 폭이 없다: ${main}`);
 });
 
-test("⚠--measure 가 가장 넓은 표를 담는다 — 실측 14열", () => {
-  const v = /--measure:\s*(\d+)px/.exec(RULES)?.[1];
-  assert.notEqual(v, undefined, "--measure 토큰이 없다");
-  const px = Number(v);
+test("⚠--measure 가 가장 넓은 표를 담고, 넓은 화면에서는 자란다", () => {
+  const expr = /--measure:\s*([^;]+);/.exec(RULES)?.[1]?.trim();
+  assert.notEqual(expr, undefined, "--measure 토큰이 없다");
+  /**
+   * ⚠**고정값이면 27인치에서 화면을 안 쓴다**(사용자 체감 · 2026-08-31).
+   * 노트북에서 좁아지지 않게 **바닥**을 두고, 표가 흩어지지 않게 **상한**을 둔다.
+   */
+  assert.match(expr!, /vw/, `--measure 가 화면 폭을 안 본다: ${expr} — 27인치에서 여백만 늘어난다`);
+  assert.match(expr!, /^min\(/, `상한이 없다: ${expr} — 남는 폭이 숫자 열 사이로 흩어진다`);
+  assert.match(expr!, /max\(/, `바닥이 없다: ${expr} — 좁은 노트북에서 본문이 줄어든다`);
+  const nums = [...expr!.matchAll(/(\d+)px/g)].map((m) => Number(m[1]));
+  assert.equal(nums.length, 2, `px 값이 ${nums.length}개다 — 상한과 바닥 둘이어야 한다: ${expr}`);
+  const [cap, floor] = [Math.max(...nums), Math.min(...nums)];
+  assert.ok(cap <= 1600, `상한 ${cap}px 이 넓다 — 남는 폭이 다시 흩어진다`);
+  const px = floor;
   /**
    * ⚠**아래를 근거로 고른 값이다**(2026-08-31 · dist 표 423개 실측):
    * 가장 넓은 표 **14열** · 셀은 nowrap 에 좌우 8px 여백.

@@ -377,6 +377,21 @@ test("⚠_headers 가 CSP 를 unsafe-inline 없이 닫는다 — 내용까지 �
 });
 
 /**
+ * ⚠**도구는 있는데 안 도는 병**을 막는다 — 이 저장소가 이미 두 번 겪었다.
+ * `stripBlockComments` 가 있어도 **내보낼 때 안 쓰면 이득이 0** 이다.
+ * 안전성 자체는 `ship.test.ts` 가 따로 본다(규칙 보존·문법·이득).
+ */
+test("⚠배포되는 자산에 주석이 없다 — 소스에는 그대로 두고 내보낼 때만 뗀다", () => {
+  const files = buildSite(siteData(), SITE, "2026-08-15").files;
+  for (const path of ["assets/site.css", "assets/site.js"]) {
+    const f = files.find((x) => x.path === path);
+    assert.notEqual(f, undefined, `${path} 가 없다`);
+    assert.ok((f?.content.length ?? 0) > 1000, `${path} 가 비었다 — 이 시험이 공회전한다`);
+    assert.ok(!(f?.content ?? "").includes("/*"), `${path} 에 주석이 남아 있다 — 내보내기에서 안 뗐다`);
+  }
+});
+
+/**
  * ⚠**낡은 사본이 전달되던 사고의 시험**(2026-08-30).
  *
  * 사용자가 「最新の試合 2026年8月18日 まで反映」을 보는 동안 배포된 화면은 **8월 29일**이었다.

@@ -421,6 +421,7 @@ function batterTable(rows: TeamBatter[], base: string, saber: boolean, qualifier
 
   return stableTable({
     id: saber ? "teambatsaber" : "teambat",
+    label: saber ? "チーム打者のセイバーメトリクス" : "チーム打者成績",
     columns: cols,
     sortKey: "pa",
     findLabel: "名前でしぼる",
@@ -491,6 +492,7 @@ function pitcherTable(rows: TeamPitcher[], base: string, saber: boolean, qualifi
 
   return stableTable({
     id: saber ? "teampitsaber" : "teampit",
+    label: saber ? "チーム投手のセイバーメトリクス" : "チーム投手成績",
     columns: cols,
     sortKey: "outs",
     findLabel: "名前でしぼる",
@@ -834,7 +836,7 @@ function streakBlock(rows: readonly HomeStreak[], seasonOver: boolean, base: str
       ? seasonOver
         ? html`<p class="empty">この球団に、シーズン終了時点で続いていた記録はありません。</p>`
         : html`<p class="empty">この球団の続いている記録はありません。</p>`
-      : html`${scroller(html`<table>
+      : html`${scroller(html`<table aria-label="${streakSectionTitle(seasonOver)}">
     <thead><tr><th class="l">選手</th><th class="l">記録</th><th>試合</th><th class="l">最後の出場</th></tr></thead>
     <tbody>${rows.map(
         (x) => html`<tr>
@@ -877,7 +879,7 @@ function milestoneBlock(rows: readonly HomeMilestone[], seasonOver: boolean, bas
       ? seasonOver
         ? html`<p class="empty">この球団に、シーズン終了時点で記録に近づいていた選手はありません。</p>`
         : html`<p class="empty">この球団に記録に近づいている選手はありません。</p>`
-      : html`${scroller(html`<table>
+      : html`${scroller(html`<table aria-label="${milestoneSectionTitle(seasonOver)}">
     <thead><tr><th class="l">選手</th><th class="l">記録</th><th>通算</th><th class="l">節目まで</th><th>今季</th></tr></thead>
     <tbody>${rows.map(
         (x) => html`<tr>
@@ -1054,7 +1056,7 @@ ${panel(TEAM_TABS, "vs", false, d.vs.length === 0
 </section>`
     : html`<section class="block" id="b-vs">
   <h2>対戦成績<span class="qt">レギュラーシーズン</span></h2>
-  <div class="scroller"><table class="vs">
+  <div class="scroller"><table class="vs" aria-label="相手球団別の対戦成績">
     <thead><tr><th class="l">相手</th><th>勝</th><th>敗</th><th>分</th><th>試合</th><th class="l">勝敗</th></tr></thead>
     <tbody>${d.vs.map((v) => {
       const n = v.w + v.l + v.t;

@@ -996,7 +996,7 @@ function stealDetail(s: NonNullable<BattingBlockData["steal"]>): RawHtml {
   if (s.byBase.length === 0 && s.pickoffByBase.length === 0) return raw("");
   const stolen = s.byBase.length === 0
     ? raw("")
-    : html`${scroller(html`<table>
+    : html`${scroller(html`<table aria-label="狙った塁ごとの盗塁成績">
       <thead><tr>
         <th class="l">狙った塁</th><th>企図</th><th>盗塁</th><th>${term("盗塁刺")}</th><th>${term("盗塁成功率")}</th>
       </tr></thead>
@@ -1014,7 +1014,7 @@ function stealDetail(s: NonNullable<BattingBlockData["steal"]>): RawHtml {
     </table>`)}`;
   const pickoffs = s.pickoffByBase.length === 0
     ? raw("")
-    : html`${scroller(html`<table>
+    : html`${scroller(html`<table aria-label="いた塁ごとの牽制死">
       <thead><tr><th class="l">いた塁</th><th>${term("牽制死")}</th></tr></thead>
       <tbody>${s.pickoffByBase.map(
         (r) => html`<tr><td class="l">${r.label}</td><td class="b">${r.n}</td></tr>`,
@@ -1516,7 +1516,7 @@ function pitchingSplitTable(a: SplitAxisData, cells: Map<string, PitchingSplitCe
   const whipOf = (c: PitchingSplitCell): number | null =>
     c.outs === 0 ? null : ((c.h + c.bb) * 3) / c.outs;
   const worst = Math.max(0.01, ...a.rows.map((r) => eraOf(cells.get(r.key) ?? EMPTY_CELL) ?? 0));
-  return scroller(html`<table class="spl">
+  return scroller(html`<table class="spl" aria-label="${a.label}のスプリット">
   <thead><tr>
     <th class="l">${a.label.replace(/（[^）]*）/, "")}</th>
     ${/* ⚠**막대 열에 값도 넣는다** — 막대만 두면 그 열에 수가 없어 분모를 붙일 자리가 없다(M2).
@@ -1559,7 +1559,7 @@ function splitTable(a: SplitAxisData, max: number, allowed: boolean): RawHtml {
     ? ["被安打", "被本塁打", "与四球", "奪三振"]
     : ["安打", "二塁打", "本塁打", "打点", "四球", "三振"];
   const paLabel = allowed ? "対戦打席" : "打席";
-  return scroller(html`<table class="spl">
+  return scroller(html`<table class="spl" aria-label="${a.label}のスプリット">
   <thead><tr>
     <th class="l">${a.label.replace(/（[^）]*）/, "")}</th>
     <th class="l">${allowed ? "被OPS" : "OPS"}</th>
@@ -1683,7 +1683,7 @@ function scorebookBlock(rows: readonly ScorebookRow[], total: number, base: stri
   const body =
     rows.length === 0
       ? html`<p class="empty">打席記録がありません。</p>`
-      : html`${scroller(html`<table>
+      : html`${scroller(html`<table aria-label="火消しの登板一覧">
           <thead><tr>
             <th class="l">試合日</th><th class="l">相手</th><th>回</th><th class="l">状況</th>
             <th class="l">結果</th><th>打点</th>
@@ -1731,7 +1731,7 @@ const MIN_BUNT = 30;
 function buntBlock(rows: readonly BuntCell[], leagueName: string): RawHtml {
   const shown = rows.filter((r) => r.n >= MIN_BUNT);
   if (shown.length === 0) return raw("");
-  return html`${scroller(html`<table>
+  return html`${scroller(html`<table aria-label="状況ごとの犠打">
     <thead><tr>
       <th class="l">状況</th><th>犠打</th><th>直前の期待値</th><th>期待値の変化</th>
     </tr></thead>
@@ -1790,7 +1790,7 @@ function timesThroughBlock(rows: readonly TimesThroughRow[]): RawHtml {
   return block({
     id: "timesthrough",
     title: "打順一巡",
-    body: html`${scroller(html`<table>
+    body: html`${scroller(html`<table aria-label="打順の巡ごとの成績">
     <thead><tr>
       <th class="l">巡</th><th>打席</th><th>${term("打率")}</th><th>本塁打</th><th>四球</th><th>三振</th>
     </tr></thead>
@@ -1922,6 +1922,8 @@ function matchupTable(o: {
 
   return stableTable({
     id: o.id,
+    // ⚠**「対戦成績」만으로는 두 표를 구별 못 한다** — 같은 화면에 今季와 通算이 나란히 있다
+    label: `${opponent}別の対戦成績`,
     columns: MATCHUP_COLUMNS.map((c) => ({
       key: c.key,
       label: c.label,
@@ -2078,7 +2080,7 @@ function careerBlock(c: CareerData | null): RawHtml {
       ? raw("")
       : html`<h3 class="cyr">${label}<span class="qt">${seasons}シーズン</span></h3>
       ${total === null ? null : html`<p class="ctot"><b>通算</b>${total}</p>`}
-      ${scroller(html`<table>
+      ${scroller(html`<table aria-label="年度別成績">
         <thead><tr><th>年度</th><th class="l">球団</th><th>試合</th><th>${unit}</th><th class="l">成績</th></tr></thead>
         <tbody>${rows.map(
           // ⚠**줄마다 출처를 말한다**(M4). 지난 시즌까지는 NPB 공표치이고 올해는 우리 집계다 —
@@ -2129,7 +2131,7 @@ function rankingBlock(panels: readonly RankingPanel[], base: string): RawHtml {
       "pranking",
       p.id,
       pi === 0,
-      html`${scroller(html`<table>
+      html`${scroller(html`<table aria-label="${p.label}のリーグ順位">
         <thead><tr><th>順位</th><th class="l">選手</th><th class="l">球団</th><th>${term(p.label)}</th><th>${term("母数")}</th></tr></thead>
         <tbody>${p.rows.map(
           (r) => html`<tr class="${r.isMe ? "me" : ""}">
@@ -2187,7 +2189,7 @@ function countBlock(c: CountBlockData, role: "batter" | "pitcher"): RawHtml {
     const rows = s.rows.filter((r) => r.line.pa > 0);
     const table = rows.length === 0
       ? raw("")
-      : scroller(html`<table>
+      : scroller(html`<table aria-label="カウント別成績">
       <thead><tr>
         <th class="l">カウント</th><th>${term("打席")}</th><th>${term("打数")}</th>
         <th>${hitLabel}</th><th>${soLabel}</th>

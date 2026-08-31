@@ -21,6 +21,7 @@ import { html, raw } from "../src/html.ts";
 function sample(): string {
   return stableTable({
     id: "demo",
+    label: "見本の表",
     columns: [
       { key: "name", label: "選手", left: true, text: true },
       { key: "pa", label: "打席" },

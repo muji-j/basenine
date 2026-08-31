@@ -219,7 +219,7 @@ function inningTable(d: GamePageData, base: string): RawHtml {
     <td>${side.errors ?? NO_VALUE}</td>
   </tr>`;
 
-  return scroller(html`<table class="iscore">
+  return scroller(html`<table class="iscore" aria-label="イニングスコア">
     <thead><tr><th class="l">球団</th>${innings.map((i) => html`<th>${i}</th>`)}<th class="tot">計</th><th>H</th><th>E</th></tr></thead>
     <tbody>${row(d.away, "top")}${row(d.home, "bottom")}</tbody>
   </table>`);
