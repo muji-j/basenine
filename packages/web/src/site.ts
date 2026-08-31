@@ -8,6 +8,8 @@ import { CLIENT_JS, CSS, ICON_SVG } from "./assets.ts";
 import {
   renderIndexPage,
   renderMatchupPage,
+  rankRestPath,
+  rankingRestJson,
   renderRankingPage,
   renderStartersPage,
   searchIndexJson,
@@ -301,6 +303,21 @@ export function buildSite(
   // ⚠**빈 시즌이면 샤드도 0개다** — 「파일은 있는데 안이 비었다」를 만들지 않는다(M11)
   for (const [shard, cards] of compareShards) {
     files.push({ path: at(`compare/${shard}.json`), content: compareShardJson(cards) });
+  }
+
+  /**
+   * 「もっと見る」가 받아 갈 순위 — **리그·부문마다 한 파일**.
+   *
+   * ⚠**표에 안 그린다**(pages.ts 의 `RankRestRow` 주석). 기본 화면은 상위 50위까지
+   * **연속**으로 그리고, 그 아래는 누를 때 받는다 — 이 화면은 이미 무게가 문제다.
+   * ⚠**빈 것은 안 내보낸다**(M11) — 「파일은 있는데 안이 비었다」를 만들지 않는다.
+   */
+  for (const league of data.ranking.leagues) {
+    for (const cat of league.categories) {
+      const json = rankingRestJson(cat);
+      if (json === "{}") continue;
+      files.push({ path: at(rankRestPath(league.id, cat.id)), content: json });
+    }
   }
 
   /**
