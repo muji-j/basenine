@@ -259,3 +259,78 @@ export function brokenLinksIn(files: readonly LinkIndex[]): BrokenLink[] {
   }
   return out;
 }
+
+/**
+ * **홈에서 몇 번 눌러야 닿는가.**
+ *
+ * ⚠**CLAUDE.md §0-1 의 판정 기준인데 한 번도 안 쟀다**(2026-08-31 에 처음 쟀다):
+ * 「첫 방문 → 원하는 선수 성적까지 **3클릭 이내**」.
+ * 규약에 적혀 있고 제품의 가치 명제인데 **아무 장치도 그것을 보고 있지 않았다** —
+ * 화면을 늘리거나 내비를 줄이면 **조용히 4클릭이 될 수 있고, 아무도 모른다.**
+ *
+ * ⚠**링크만 센다.** 검색칸은 타이핑이라 클릭이 아니고, **JS 가 꺼져도 닿아야 한다**(§0-1).
+ * ⚠**앵커는 이동으로 세지 않는다** — 같은 화면 안이라 「도달」이 아니다.
+ *
+ * 첫 실측(2026-08-31 · 9시즌 dist): 전체 **9,370장 미도달 0** ·
+ * 선수 페이지 **6,207장 전부 3클릭 이내**(현행 1~2 · 과거 시즌 2~3).
+ *
+ * @returns 경로 → 홈에서의 클릭 수. 안 나오는 경로는 **도달 불가**다.
+ */
+export function clickDepth(files: readonly LinkIndex[], start = "index.html"): Map<string, number> {
+  const have = new Set(files.map((f) => f.path));
+  const byPath = new Map(files.map((f) => [f.path, f]));
+  const depth = new Map<string, number>();
+  if (!have.has(start)) return depth;
+  depth.set(start, 0);
+  let frontier = [start];
+  while (frontier.length > 0) {
+    const next: string[] = [];
+    for (const p of frontier) {
+      const d = depth.get(p) ?? 0;
+      const f = byPath.get(p);
+      if (f === undefined) continue;
+      const slash = p.lastIndexOf("/");
+      const dir = slash === -1 ? "" : p.slice(0, slash);
+      for (const href of f.refs) {
+        if (isExternal(href)) continue;
+        const clean = href.split("#")[0]?.split("?")[0] ?? "";
+        // ⚠같은 화면 안의 앵커는 이동이 아니다
+        if (clean === "") continue;
+        let to = resolvePath(dir, clean);
+        if (to.endsWith("/")) to += "index.html";
+        if (!to.endsWith(".html") || !have.has(to) || depth.has(to)) continue;
+        depth.set(to, d + 1);
+        next.push(to);
+      }
+    }
+    frontier = next;
+  }
+  return depth;
+}
+
+/**
+ * 3클릭을 넘거나 아예 못 닿는 **선수 페이지**. ⚠**비어 있어야 한다**(§0-1).
+ *
+ * ⚠**선수 페이지만 본다** — 규약이 말하는 것이 「선수 성적까지」이기 때문이다.
+ * 과거 시즌은 `2025/players/…` 처럼 시즌 접두사가 붙으므로 그것도 센다
+ * (시즌 전환이 한 번 더 들어 **3클릭이 상한선에 딱 걸린다** — 그래서 더 봐야 한다).
+ */
+export function tooDeepPlayerPages(
+  files: readonly LinkIndex[],
+  limit = 3,
+  /**
+   * 이미 걸어 둔 결과. ⚠**9,370장을 두 번 걷지 않기 위해서다** —
+   * 안 넘기면 여기서 다시 걷는다(호출부가 하나뿐일 때는 그게 편하다).
+   */
+  precomputed?: ReadonlyMap<string, number>,
+): { path: string; clicks: number | null }[] {
+  const depth = precomputed ?? clickDepth(files);
+  const out: { path: string; clicks: number | null }[] = [];
+  for (const f of files) {
+    if (!/(^|\/)players\/[^/]+\.html$/.test(f.path)) continue;
+    const d = depth.get(f.path);
+    if (d === undefined) out.push({ path: f.path, clicks: null });
+    else if (d > limit) out.push({ path: f.path, clicks: d });
+  }
+  return out;
+}

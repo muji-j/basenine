@@ -10,7 +10,7 @@
  * ⚠**시계는 여기서 한 번만 읽는다**(M6). 아래로 내려가는 것은 `YYYY-MM-DD` 문자열이다.
  */
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { brokenLinksIn, duplicateIds, linkIndex } from "../src/link-check.ts";
+import { brokenLinksIn, duplicateIds, linkIndex, tooDeepPlayerPages } from "../src/link-check.ts";
 import type { LinkIndex } from "../src/link-check.ts";
 import { dirname, join, resolve } from "node:path";
 import { openDb } from "@bb-app/store";
@@ -308,6 +308,23 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
       } else {
         console.log(
           `링크: ${all.filter((f) => f.path.endsWith(".html")).length}장 검사(앵커 포함) · 깨진 것 없음`,
+        );
+      }
+
+      /**
+       * ⚠**「3클릭 이내」는 규약인데 아무도 안 보고 있었다**(CLAUDE.md §0-1 · 2026-08-31).
+       * 화면을 늘리거나 내비를 줄이면 **조용히 4클릭이 되고 아무도 모른다** —
+       * 깨진 링크와 달리 **아무것도 실패하지 않기 때문**이다.
+       * ⚠**링크 그래프를 여기서 다시 만들지 않는다** — 바로 위 검사가 쓴 색인을 그대로 쓴다.
+       * ⚠**배포를 막지 않고 경고로 둔다**: 판정이 「도달 가능성」이라 새 화면을 만드는 도중에
+       * 잠시 깊어질 수 있고, 그때 배포가 멈추면 이 검사가 곧 지워진다.
+       * 대신 **시험이 0건을 못 박는다**(`link-depth.test.ts`).
+       */
+      const deep = tooDeepPlayerPages(all);
+      if (deep.length > 0) {
+        console.warn(
+          `⚠ 선수 페이지 ${deep.length}장이 홈에서 3클릭을 넘는다(§0-1) — ` +
+            deep.slice(0, 5).map((d) => `${d.path}=${d.clicks ?? "도달 불가"}`).join(" · "),
         );
       }
 

@@ -28,6 +28,7 @@ import { ROSTER_PATH, TEAMS_PATH, freshness, isStale, pathsFor } from "./layout.
 import type { RenderContext, SeasonPlan, SiteMeta } from "./layout.ts";
 import type { SiteData } from "./query.ts";
 import { renderHomePage } from "./home-page.ts";
+import { stripBlockComments } from "./ship.ts";
 
 /**
  * Cloudflare Pages 의 응답 헤더(`_headers`).
@@ -203,8 +204,14 @@ export function buildSite(
      */
     ...(prefix === ""
       ? [
-          { path: "assets/site.css", content: CSS },
-          { path: "assets/site.js", content: CLIENT_JS },
+          /**
+           * ⚠**내보낼 때만 주석을 뗀다**(`ship.ts` · 2026-08-31).
+           * 소스에는 그대로 둔다 — 그 주석이 이 저장소의 기억이다.
+           * 실측: 압축 후 CSS **−74.1%** · JS **−49.4%**, 첫 방문당 **약 52KB**.
+           * ⚠**`CSS`·`CLIENT_JS` 수출은 그대로다** — 시험들이 소스를 보므로 여기서만 뗀다.
+           */
+          { path: "assets/site.css", content: stripBlockComments(CSS) },
+          { path: "assets/site.js", content: stripBlockComments(CLIENT_JS) },
           { path: "assets/icon.svg", content: ICON_SVG },
           { path: "_headers", content: HEADERS },
           /**
