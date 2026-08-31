@@ -192,6 +192,12 @@ interface Table {
   rows: string[][];
 }
 
+/**
+ * ⚠**버려진 행이 여기 쌓인다.** 비어 있지 않으면 이 시험은 **자기가 못 본 표가 있다**는 뜻이다 —
+ * 「통과했다」가 「검사했다」가 아니게 되는 자리이므로 **경고가 아니라 실패**로 만든다.
+ */
+const misaligned: string[] = [];
+
 function tablesOf(page: string, html: string): Table[] {
   const out: Table[] = [];
   for (const t of html.match(/<table\b[^>]*>[\s\S]*?<\/table>/g) ?? []) {
@@ -207,7 +213,26 @@ function tablesOf(page: string, html: string): Table[] {
     for (const r of body?.[1]?.match(/<tr\b[^>]*>[\s\S]*?<\/tr>/g) ?? []) {
       const cells = r.match(/<t[dh]\b[^>]*>[\s\S]*?<\/t[dh]>/g) ?? [];
       // 칸 수가 안 맞는 행(colspan · 소계)은 열을 짚을 수 없으므로 세지 않는다
-      if (cells.length === heads.length) rows.push(cells);
+      if (cells.length === heads.length) {
+        rows.push(cells);
+        continue;
+      }
+      if (cells.length === 0) continue;
+      /**
+       * ⚠**이 버리기가 조용해서 M2 가드가 눈을 감았다**(2026-08-31).
+       * スプリット 표의 머리에 `打数` 를 더하고 본문 칸을 안 더하자 **모든 행**이 안 맞게 되어
+       * **표 전체가 통째로 건너뛰어졌고**, 그 표의 비율 4종은 분모 없이 배포됐다.
+       * 총량 문턱(`checked >= 40`)은 **표 하나가 사라지는 것**을 잡지 못한다.
+       * ⚠**`colspan` 을 더해서 다시 센다** — 소계 행처럼 **제대로 걸친** 행은 정당하므로 버리고,
+       * **걸치지도 못한 행**만 결함으로 올린다. 실측(2026-08-31 · dist 표 377개):
+       * 정당한 colspan 행 **0** · 어긋난 행 **0**.
+       * ⚠**이 부류의 정본 검사는 `table-columns.test.ts` 다** — 여기서는 「이 시험이 눈을 감았다」만 막는다.
+       */
+      const span = cells.reduce(
+        (n, c) => n + Number(/\bcolspan\s*=\s*"?(\d+)"?/i.exec(c)?.[1] ?? 1),
+        0,
+      );
+      if (span !== heads.length) misaligned.push(`${page}: 머리 ${heads.length}칸 / 행 ${span}칸`);
     }
     out.push({ page, heads, rows });
   }
@@ -271,6 +296,17 @@ test("⚠비율 옆의 분모가 그 지표의 정의 분모다 — 화면마다
   assert.ok(byNeighbor >= 1, `인접 열이 분모인 경우를 ${byNeighbor}개 봤다 — 그 갈래가 사라졌다`);
   // 지표 종류가 줄면 표본이 한쪽으로 쏠린 것이다
   assert.ok(seen.size >= 5, `본 비율 지표가 ${seen.size}종뿐이다 — ${[...seen.keys()].join("·")}`);
+
+  /**
+   * ⚠**이 시험이 못 본 표가 있으면 먼저 그것부터 말한다.** 아래 `problems` 가 비어 있어도
+   * 그건 「어긋난 것이 없다」가 아니라 **「본 것 중에 없다」**일 뿐이다.
+   */
+  assert.deepEqual(
+    misaligned,
+    [],
+    `머리와 칸 수가 어긋난 행이 있어 그 표를 통째로 못 봤다 — 분모 검사가 눈을 감은 상태다\n` +
+      `${misaligned.slice(0, 5).join("\n")}\n(정본 검사: packages/web/test/table-columns.test.ts)`,
+  );
 
   assert.deepEqual(problems, [], `분모가 어긋난 비율 ${problems.length}건 / 검사한 비율 열 ${checked}개`);
 });

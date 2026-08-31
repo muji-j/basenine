@@ -75,6 +75,34 @@ export const CSS = `
   --ease:cubic-bezier(.2,.6,.2,1);
   --fast:120ms; --mid:200ms;
   --pad:20px;
+  /* 본문의 **최대 폭**.
+
+     ⚠**이 값이 없었다**(2026-08-31 · 사용자 지적 「PC버전이 지저분함」).
+     미디어 쿼리가 **전부 max-width(모바일 축소용)뿐이라 데스크톱 처리가 0건**이었고,
+     .main 에 상한이 없어서 **모바일 레이아웃이 1920px 까지 그대로 늘어났다.**
+     표는 width:100% 이므로 남는 폭이 **전부 숫자 사이 틈으로 흩어진다** —
+     한 행을 눈으로 따라가는 거리가 길어지는 것이 「지저분함」의 정체다.
+     ⚠**각주만 max-width:520px 이었다** — 표는 1900px, 설명문은 520px 이라 폭이 서로 어긋났다.
+
+     ⚠**값의 근거는 실측이다**(2026-08-31 · dist 표 423개): 가장 넓은 표가 **14열**이고
+     분포는 5열 152 · 7열 88 · 13열 69 · 14열 2다. 셀은 nowrap 에 좌우 8px 여백이라
+     14열이 대략 1,100px 안에 들어간다 — **1180px 면 가장 넓은 표도 가로 스크롤 없이
+     들어가고, 그보다 넓어지지도 않는다.**
+     ⚠**이 상한 하나가 격자 전부를 같이 고친다** — auto-fit 격자들이 1900px 에서 10~12열로
+     흩어지던 것이 4~7열이 된다.
+     ⚠**가운데 정렬하지 않는다** — 왼쪽에 구단색 기둥(.spine)이 서 있어서,
+     본문만 가운데로 보내면 기둥이 홀로 떨어져 남는다. */
+  --measure:1180px;
+  /* 넓은 화면에서 **양쪽에 남는 여백**. 기둥(44px) + 본문(--measure) 을 뺀 나머지의 절반이다.
+
+     ⚠**처음엔 왼쪽 정렬로 뒀고, 브라우저로 보니 틀렸다**(2026-08-31 · 1920px 실측 스크린샷).
+     「왼쪽에 구단색 기둥이 있으니 왼쪽 정렬이 어울린다」고 판단했는데, 실제 화면에서는
+     **오른쪽 약 700px 가 통째로 빈 채로 남아** 고장처럼 보였다.
+     → 여백을 **반으로 갈라 양쪽에** 둔다. 기둥은 본문에 붙은 채로 같이 움직인다.
+     ⚠**본문만 가운데로 보내면 안 된다** — 그러면 기둥이 화면 왼쪽 끝에 홀로 남는다.
+     그래서 .shell(기둥+본문) 에 건다.
+     ⚠**max(0px, …) 로 바닥을 둔다** — 좁은 화면에서 음수가 되면 안 된다. */
+  --gut:max(0px,calc((100% - 44px - var(--measure)) / 2));
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -98,7 +126,19 @@ export const CSS = `
 }
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
-body{margin:0;background:var(--page);color:var(--tx);font-family:var(--f-body);line-height:1.55;font-feature-settings:"palt" 1;overflow-wrap:anywhere}
+/* ⚠**anywhere 였다 → break-word 로 바꿨다**(2026-08-31).
+   차이는 「어디서 끊는가」가 아니라 **「최소 폭을 얼마로 보는가」**다:
+     · anywhere   … 단어를 쪼개 만든 끊을 자리를 **min-content 계산에도 반영**한다
+     · break-word … 넘칠 때만 쪼개고 **최소 폭은 단어 폭을 지킨다**
+   그래서 **라틴 문자·긴 영숫자**가 든 칸이 한 글자 폭까지 찌그러지는 것을 막는다.
+
+   ⚠⚠**이것이 「ウィットリー가 세로로 쪼개진」 결함의 수정이라고 쓰지 마라 — 처음에 그렇게 적었고 틀렸다.**
+   **일본어는 원래 글자 사이에서 줄이 바뀐다**(writing system 의 기본 줄바꿈 기회이지
+   overflow-wrap 이 만든 것이 아니다). 그래서 가나·한자 줄의 min-content 는
+   **어느 값에서도 한 글자**다 — 이 줄을 바꿔도 그 결함은 그대로였다.
+   **그 결함의 실제 수정은 .roster .hn 의 nowrap + 말줄임과 칸 폭이다**(아래).
+   ⚠**넘침 방지는 그대로다** — 긴 URL·연속 영숫자는 여전히 끊어서 가로 스크롤을 안 만든다. */
+body{margin:0;background:var(--page);color:var(--tx);font-family:var(--f-body);line-height:1.55;font-feature-settings:"palt" 1;overflow-wrap:break-word}
 a{color:inherit}
 :focus-visible{outline:2px solid var(--tx);outline-offset:1px}
 
@@ -114,8 +154,16 @@ a{color:inherit}
    min-height 면 최악의 경우 바가 **자란다**. 자라는 것은 눈에 보이고, 넘치는 것은 안 보인다.
    ⚠**그렇다고 자라도 된다는 뜻은 아니다** — --topbar 를 읽는 곳이 다섯이라 자라면 그쪽이 어긋난다.
    아래 .tnav{flex-wrap:nowrap} 과 반응형의 --topbar 재정의가 **실제로 자라지 않게** 붙든다. */
+/* ⚠**띠는 창 끝까지, 내용은 본문 끝까지**(2026-08-31).
+   .topbar 와 .seasons 는 .shell 의 **형제**라 폭 상한이 안 걸린다. 본문만 1180px 로 묶으면
+   1920px 화면에서 **오른쪽 내비가 본문 끝에서 약 700px 떨어져 뜬다** — 머리와 몸이 따로 논다.
+   ⚠**띠 자체를 자르지 않는다** — 배경과 밑줄이 창 중간에서 끊기면 고장으로 보인다.
+   → **오른쪽 여백을 키워** 내용만 본문 오른쪽 끝(기둥 44px + --measure)에 맞춘다.
+   ⚠**max() 로 바닥을 둔다** — 좁은 화면에서 음수가 되면 안 되고, 기존 12px 여백이 그 바닥이다.
+   ⚠**box-sizing:border-box 가 전역이라** 이 계산이 그대로 성립한다. */
 .topbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px;
-  min-height:var(--topbar);padding:0 12px 0 var(--pad);background:var(--panel);border-bottom:1px solid var(--hair-2)}
+  min-height:var(--topbar);padding:0 12px 0 var(--pad);background:var(--panel);border-bottom:1px solid var(--hair-2);
+  padding-left:calc(var(--gut) + var(--pad));padding-right:calc(var(--gut) + 12px)}
 /* ⚠**줄지 않는다.** 기본 flex 항목은 내용보다 작아질 수 있어, 좁은 화면에서 워드마크가
    제 상자를 넘어 옆 것과 겹친다. 줄어드는 몫은 검색칸(≥681px)과 탭줄(≤680px)이 진다 */
 .brand{flex:0 0 auto;font-size:13px;font-weight:700;letter-spacing:.14em;text-decoration:none;white-space:nowrap}
@@ -202,10 +250,15 @@ a{color:inherit}
   color:var(--tx-2);border:1px solid transparent;transition:color var(--fast) var(--ease)}
 .tbtn:hover{color:var(--tx);border-color:var(--hair-2)}
 
-.shell{display:grid;grid-template-columns:44px 1fr;min-height:calc(100vh - var(--topbar))}
+/* ⚠**기둥과 본문을 함께 가운데로**(--gut 주석 참조). 본문만 옮기면 기둥이 홀로 남는다 */
+.shell{display:grid;grid-template-columns:44px 1fr;min-height:calc(100vh - var(--topbar));
+  padding-inline:var(--gut)}
 .spine{background:var(--team,#6b7280);display:flex;flex-direction:column;align-items:center;padding:16px 0;gap:18px}
 .spine .vt{writing-mode:vertical-rl;font-size:12.5px;letter-spacing:.32em;font-weight:700;color:var(--team-ink,#fff)}
-.main{min-width:0;padding:0 0 64px}
+/* ⚠**상한이 없어서 모바일 레이아웃이 1920px 까지 늘어났다**(--measure 주석 참조).
+   ⚠**.main 통째로 건다** — 상태 띠·표제 줄·블록이 **같은 폭에서 끝나야** 오른쪽 모서리가
+   한 줄로 선다. 안쪽 요소마다 따로 걸면 그 선이 요소마다 어긋난다. */
+.main{min-width:0;padding:0 0 64px;max-width:var(--measure)}
 
 /* 상태 띠 — 4상태(M12) 중 「수집실패·낡음」을 여기서 말한다 */
 .state{padding:7px var(--pad);font-size:12px;border-bottom:1px solid var(--hair)}
@@ -730,7 +783,24 @@ th[aria-sort="descending"] .sortable i::before{content:"↓"}
    표 안에서는 그 부모가 없어 **폭 0 이 된다.**
    ⚠**이 파일 안에서 백틱을 쓰지 마라** — 파일 전체가 하나의 템플릿 리터럴이라
    백틱 하나가 문자열을 끊는다(template-literals.test.ts 가 지킨다). */
-.spl td .track{width:72px;min-width:72px}
+/* ⚠**남는 폭을 어디로 보낼 것인가**(2026-08-31 · 브라우저로 보고 두 번 고쳤다).
+   표가 width:100% 라 여유는 반드시 어딘가로 간다. 그냥 두면 **숫자 열 사이 틈으로 흩어져**
+   한 행을 눈으로 따라가는 거리가 길어진다 — 그게 「PC 가 지저분하다」의 정체였다.
+
+   ⚠**첫 판에는 막대에 몰아줬고, 실제로 그려 보니 틀렸다**(1920px 스크린샷).
+   막대가 표의 절반을 먹었는데 **.557 과 .521 의 길이 차이는 눈에 안 보였다** —
+   자리는 가장 많이 쓰면서 정보는 거의 안 더한다.
+   → **막대는 읽을 수 있을 만큼만**(고정 폭) 두고, 여유는 **맨 왼쪽 구분 이름**이 먹는다.
+   왼쪽 끝의 여백은 눈이 지나가는 자리라 **거리를 늘리지 않는다.** */
+.spl{width:auto}
+/* 막대와 값을 한 줄에. ⚠**flex 는 셀(td)이 아니라 이 래퍼에 건다** — 셀을 flex 로 만들면
+   그 칸이 테이블 박스에서 빠져나와 아래 경계선이 다른 칸과 어긋난다(css-tables 가 막는 결함) */
+.spl td .tv{display:flex;align-items:center;gap:8px}
+/* ⚠**막대는 읽을 만큼만.** 늘려도 정보가 안 늘고 자리만 먹는다(위 주석 · 실측으로 확인했다).
+   좁은 화면에서는 줄어들되 실오라기가 되지 않게 바닥을 둔다. */
+.spl td .tv .track{flex:0 1 140px;min-width:72px}
+/* ⚠값은 줄어들지 않는다 — 막대가 먼저 줄어야 수가 읽힌다 */
+.spl td .tv .wd{flex:0 0 auto;text-align:right}
 .spl th:nth-child(2),.spl td:nth-child(2){padding-left:0}
 /* ⚠얇은 표본은 **지우지 않고 흐린다** — 값은 보이되 시각적 무게를 뺀다(M2 의 화면 쪽).
    ⚠**.55 로 뒀다가 css-contrast 시험이 잡았다** — 라이트에서 합성 대비 **4.00 으로 기준 4.5 미달**이었다
@@ -962,7 +1032,12 @@ td.bad{color:var(--warn);font-weight:700}
 .hgames li{display:grid;grid-template-columns:auto auto minmax(0,auto);justify-content:start;
   align-items:baseline;gap:0 7px;padding:4px 0;
   border-bottom:1px solid var(--hair);font-variant-numeric:tabular-nums}
-.hgames .hg-t{font-size:12px;color:var(--tx-2);min-width:0}
+/* ⚠**찌그러짐이 아니라 말줄임으로 끝낸다**(2026-08-31 · 명부에서 겪은 것과 같은 병).
+   이 줄의 점수(.hg-s)는 nowrap 이라 안 줄고, 마지막 칸이 minmax(0,auto) 라 **팀명만 줄어든다.**
+   일본어는 글자 사이가 기본 줄바꿈 자리라 그대로 두면 「ソ/フ/ト/バ/ン/ク」가 된다.
+   ⚠**가로 스크롤을 안 만든다는 원래 의도는 그대로다** — 줄어드는 것은 여전히 이 칸이고,
+   줄어든 뒤의 **모양만** 바뀐다. */
+.hgames .hg-t{font-size:12px;color:var(--tx-2);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hgames .hg-s{font-size:15px;font-weight:700;white-space:nowrap}
 .hgames .hg-s s{text-decoration:none;color:var(--tx-3);font-size:11px;font-weight:400;margin:0 1px}
 .more{margin:8px 0 0;font-size:11.5px}
@@ -1363,7 +1438,11 @@ table.stand .dif i.n{right:50%}
    스냅이 끝나면 연도 하나가 **정확히 라벨이 있는 자리**에 와서 멈춘다 — 겹치는 것이 당연하다.
    ⚠**scroll-padding-left 로 스냅 기준선을 라벨 오른쪽으로 민다.**
    라벨 폭(약 50px)+여백보다 넉넉하게 잡는다 — 모자라면 다시 겹친다. */
+/* ⚠**.topbar 와 같은 이유로 오른쪽을 맞춘다**(그쪽 주석 참조) — 이 띠도 .shell 밖이다.
+   ⚠**가로 스크롤이 있는 띠다**(시즌이 늘면 넘친다). 여유 폭이 커지면 스크롤이 덜 필요해질 뿐,
+   넘칠 때의 거동은 그대로다. */
 .seasons{display:flex;align-items:center;gap:4px;padding:5px var(--pad);
+  padding-left:calc(var(--gut) + var(--pad));padding-right:calc(var(--gut) + var(--pad));
   border-bottom:1px solid var(--hair);background:var(--panel-2);
   flex-wrap:nowrap;overflow-x:auto;overscroll-behavior-x:contain;
   scrollbar-width:thin;scroll-snap-type:x proximity;
@@ -1791,7 +1870,11 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
    전부 900px 추정에서 시작한다. 스크롤 복원이 어긋나는지는 **실기 확인 전에는 모른다**(미검증).
    ⚠검색·구단 좁히기는 그대로 동작한다 — 이것은 렌더 생략이지 display:none 이 아니다. */
 .teamgroup{content-visibility:auto;contain-intrinsic-size:auto 900px}
-.roster{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:0 16px}
+/* ⚠**168px 이었다**(2026-08-31). 그 안에 아이콘 18 + 성적 약 95 + 포지션 12 + 틈 24 가 들어가
+   **이름 몫이 20px 도 안 남았다** — 그래서 「ウィットリー」가 ウ/ィ/ッ/ト/リ/ー 로 세로로 쪼개졌다.
+   ⚠**값의 근거**: 이름은 카나 6글자가 흔하고 13px 이면 약 78px 이다.
+   18+8+78+8+12+8+95 = **227px** — 여유를 두어 232px 로 잡는다. */
+.roster{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:0 16px}
 .roster li[hidden]{display:none}
 /* ⚠**이 저장소에서 유일하게 레이아웃 속성을 애니메이트하는 자리다**(2026-08-25 · 감사 P3 #37 ·
    실측: 전환 규칙 31개 중 레이아웃 속성은 이것 하나).
@@ -1807,8 +1890,15 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
   font-variant-numeric:tabular-nums;white-space:nowrap}
 @media (max-width:520px){.roster .hs{display:none}}
 .roster a:hover{padding-left:4px}
-.roster .hn{font-size:13px}
-.roster .hp{margin-left:auto;font-size:10px;color:var(--tx-3)}
+/* ⚠**이름이 성적에 밀려 한 글자 폭까지 찌그러졌다**(2026-08-31 · 사용자 지적).
+   성적(.hs)은 flex:0 0 auto 라 **안 양보하는데** 이름에는 아무 제약이 없었고,
+   **일본어는 글자 사이가 기본 줄바꿈 자리**라 세로로 쪼개졌다.
+   → ⑴ nowrap 으로 **쪼개기 자체를 금지**하고 ⑵ 모자라면 말줄임으로 끝내고
+     ⑶ 칸을 넓혀(위) 말줄임이 거의 안 일어나게 한다.
+   ⚠**min-width:0 이 있어야 말줄임이 듣는다** — flex 항목의 기본 최소 폭은 내용 폭이라
+   그것 없이는 overflow 가 아예 안 일어난다. */
+.roster .hn{font-size:13px;flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.roster .hp{flex:0 0 auto;font-size:10px;color:var(--tx-3)}
 /* 즐겨찾기 표식 — 순서를 바꾸지 않고 **표시만** 얹는다.
    순서를 바꾸면 「내 선수가 어디 갔지」가 되고, 명감의 배열이 무너진다 */
 .roster li[data-favon="true"] .hn::before{content:"★";color:var(--team,#6b7280);margin-right:4px;font-size:10px}
