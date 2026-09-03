@@ -559,7 +559,7 @@ S3 수익화 검토      ⚠영리목적이 붙는 순간 3층 판단요소가 �
 3. **질문은 AskUserQuestion 선택지 형식**(추천안 먼저·「(추천)」 표기). 자유서술 질문 지양. 진행보고·결과전달은 텍스트.
 4. **표시 언어는 한국어**로 통일(내부 작업 언어는 자유). ※ 제품 UI 언어는 별개 — §7.
 5. **최종 검토는 항상 sonnet + opus 이중 검토** — 1차 `review-specialist`(기본 sonnet high) + 2차 동일 에이전트를 `model:"opus"` 오버라이드로. **모델 다양성이 핵심**(도구 비교에서 발견의 93.4%가 정확히 한 도구에서만 검출됐다).
-6. **설치 스킬 능동 활용** — `frontend-design`·`dataviz`·`auditing-multi-dimensionally`·`superpowers` 계열. 남용 금지.
+6. **설치 스킬 능동 활용** — `frontend-design`·`dataviz`·`shiro-core:auditing-multi-dimensionally`·`superpowers` 계열. 남용 금지.
 7. **분모를 항상 표기** — 「대부분」·「전부 통과」 금지. 「23본 중 23본」. **「0건」과 「안 쟀음」을 구별해 쓴다.**
 8. **FAIL(떨어짐)과 ERROR(돌지도 않음)를 분리해서 센다** — 구 프로젝트에서 E2E 5본이 전부 실행 불가인 채 「0건=합격」으로 오독된 전례.
 9. **새 테스트는 「고치기 전 코드에서 실패하는가」를 확인**한 뒤 채택한다(뮤테이션 검사).
@@ -611,7 +611,12 @@ S3 수익화 검토      ⚠영리목적이 붙는 순간 3층 판단요소가 �
 플러그인은 **유저 레벨**(`~/.claude/settings.json`)에서 전역 활성:
 `superpowers` · `understand-anything` · `example-skills` · `document-skills` · `jp-power` · `frontend-design`
 프로젝트 `.claude/settings.json`은 마켓플레이스 등록만 담당(PPS_NEW_PORTAL과 동일 구성).
-프로젝트 로컬 스킬: `.claude/skills/auditing-multi-dimensionally` (PPS_NEW_PORTAL에서 승계).
+감사 스킬은 공통 플러그인이 제공한다 — `shiro-core:auditing-multi-dimensionally`.
+이 프로젝트의 감사 차원(D8 도메인)과 측정 대상은 `.claude/audit/` 오버레이에 둔다.
+⚠아직 오버레이가 없다. 첫 감사 전에 `shiro-core:project-bootstrap` 으로 생성해야 한다 —
+오버레이 없이 돌리면 스킬이 감사를 거부한다(재지 않고 0건 보고를 막기 위해).
+구 로컬 사본은 제거했다: 다른 프로젝트 전용 내용이었고 측정 도구 3개가 이 저장소에서
+첫 줄부터 실행 불가였는데도 「이 도구로 재라」고 지시하고 있었다.
 
 ---
 
