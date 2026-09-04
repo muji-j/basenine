@@ -643,12 +643,24 @@ test("⚠실물 404 본문은 `no-draft-marker` 로 관측된다 — 같은 0건
   assert.equal(err.observed, "no-draft-marker");
 });
 
-test("⚠`開催要項` 을 표지로 쓰지 마라 — 2001·2006 톱에 그 말이 없다", () => {
-  // ⚠⚠**이 시험이 막는 것은 「그럴듯한 대안」이다.** 2026 톱에 `開催要項` 이 있어서
-  // 그것을 「개최 전 표지」로 삼고 싶어지는데, **실측하면 13장 중 4장에만 있다** —
-  // 2001·2006 연도 톱에는 **없고 그 두 해는 슬러그가 12개씩 정상**이다.
-  // 그걸 표지로 쓰면 **2001 년의 마크업 붕괴가 「아직 안 열렸다」로 읽힌다** — 방향이 정반대다.
-  // 표지는 `page_draft`(실물 드래프트 페이지 12장 중 12장 · 404 본문에는 없음)다.
+test("⚠`開催要項` 을 표지로 쓰지 마라 — 끝난 시즌에도 남는 템플릿 잔존물이다", () => {
+  // ⚠⚠**이 시험이 막는 것은 「그럴듯한 대안」이다.** 2026(개최 전) 톱에 `開催要項` 이 있어서
+  // 「개최 전 표지」로 삼고 싶어진다. **아래 두 묶음이 그게 왜 안 되는지를 못으로 박는다.**
+  // ⚠**사유가 한 번 뒤집혔다**(2026-09-05 재검수): ~~「그걸 쓰면 2001 붕괴가 「아직」으로
+  // 읽힌다」~~ 는 **방향이 반대**였다(2001 은 그 말이 없어서 오히려 엄격한 갈래로 간다).
+  // **진짜 사유는 「개최 여부와 아무 상관이 없다」**이고, 그건 아래처럼 실물로 셀 수 있다.
+
+  // ⑴ 끝난 시즌에도 **남는다** — 그러니 「아직」의 표지가 아니다.
+  for (const year of ["draft-2013-index", "draft-2024-index"]) {
+    assert.ok(fixture(year).includes("開催要項"), `${year}: 끝난 시즌인데 開催要項 이 남아 있다`);
+    assert.equal(parseDraftTeamSlugs(fixture(year)).length, 12, `${year}: 그해 드래프트는 실제로 열렸다`);
+  }
+  // ⑵ 열린 시즌인데 **없기도 하다** — 그러니 「열렸다」의 표지도 아니다.
+  assert.ok(!fixture("draft-2001-index").includes("開催要項"));
+  assert.equal(parseDraftTeamSlugs(fixture("draft-2001-index")).length, 12);
+
+  // → 표지가 답할 질문은 「드래프트 섹션의 페이지인가」이고 `page_draft` 가 그것이다.
+  //   `page_draft` 가 있고 팀 링크가 0건이면 **`開催要項` 이 없어도** `no-team-links` 다.
   const html = `<body class="page_draft" id="ctop"><p>ニュース</p></body>`;
   const err = caught(() => parseDraftTeamSlugs(html));
   assert.ok(err instanceof DraftIndexError);
