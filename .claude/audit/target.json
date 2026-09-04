@@ -1,0 +1,98 @@
+{
+  "$schema": "../../../../_common/shiro-core/skills/auditing-multi-dimensionally/target.schema.json",
+  "version": 1,
+  "project": "bb-app (NPB 정보 서비스 · BaseNine)",
+  "root": {
+    "envVar": "SHIRO_AUDIT_ROOT",
+    "relative": "../.."
+  },
+  "unitLabel": "화면",
+  "units": [
+    "index",
+    "today",
+    "ranking",
+    "players",
+    "teams",
+    "starters",
+    "matchup",
+    "compare",
+    "days",
+    "postseason",
+    "glossary",
+    "log",
+    "players/01005157"
+  ],
+  "render": {
+    "mode": "dev-server",
+    "urlTemplate": "http://127.0.0.1:4173/{unit}.html",
+    "regenerateHint": "npm run build:web  →  npm run preview   (⚠file:// 로 열지 마라: 선수 색인을 fetch 로 받는데 브라우저가 막아 검색이 죽은 화면을 재게 된다 — scripts/preview.ts 머리말)",
+    "waitMs": 2600,
+    "settleMs": 700,
+    "themes": ["light", "dark"],
+    "themeAttribute": "data-theme",
+    "viewport": { "width": 1440, "height": 1000 },
+    "deviceScaleFactor": 1
+  },
+  "tourKeys": [],
+  "rpcShims": [],
+  "uiShims": [],
+  "overlays": [],
+  "selectors": {
+    "nav": [".tnav a", ".seasons a", ".tbtn"],
+    "navDeny": [],
+    "stateMarks": [".on"],
+    "dataColor": [],
+    "floating": []
+  },
+  "danger": {
+    "lang": "ja",
+    "words": [
+      "削除",
+      "全置換",
+      "破棄",
+      "リセット",
+      "クリア",
+      "送信",
+      "保存",
+      "実行",
+      "取込",
+      "アップロード",
+      "複製",
+      "生成",
+      "再構築",
+      "変更",
+      "登録"
+    ],
+    "denySelectors": []
+  },
+  "excluded": {
+    "globs": [
+      "dist/**",
+      "build/**",
+      "data/**",
+      "node_modules/**",
+      "docs/mockups/**",
+      ".tmp-*/**"
+    ],
+    "notApplicable": [
+      "CVSS 점수 산정 — Cloudflare Access 뒤의 허용목록 전용이라 AV/PR/UI 가 상수다(§2-5 S1)",
+      "CrUX 필드 데이터 — 공개 URL 이 없다(Access 게이트). 얻을 방법 자체가 없다",
+      "자체 구현 인증·세션·JWT·TLS 항목 — 자체 구현이 0건이고 전부 Cloudflare Access 가 처리한다",
+      "메모리 안전 CWE — TypeScript/Node 스택이라 해당 없음"
+    ],
+    "untouchableColors": [],
+    "note": "생성물(dist·build)과 원시 아카이브(data)는 감사 대상이 아니다. ⚠SBOM·의존성 스캐너와 CSP 헤더는 **적용 불가가 아니다** — package-lock.json 과 _headers 가 실재하므로 검사 대상이다."
+  },
+  "ledger": {
+    "paths": [
+      "docs/audits/**",
+      "docs/handover/**",
+      "docs/decisions/**",
+      "_NEXT_SESSION.md"
+    ],
+    "memory": false
+  },
+  "limits": {
+    "maxNavPerUnit": 12
+  }
+}
