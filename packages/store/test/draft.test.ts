@@ -176,12 +176,51 @@ test("⚠1순위 지명이 사라지면 그 구단의 옛 입찰 행도 사라�
 
 test("⚠다른 구단을 지우지 않는다 — 구단 단위로 다시 넣어도 된다(M5)", async () => {
   await withDb((db) => {
-    loadDraft(db, { season: 2019, picks: [pick("g", "shihaika", 1, "堀田 賢慎")], bids: [], ...META });
+    // ⚠삭제 범위가 **구단 단위**라, 다른 구단의 **어느 구획도** 건드리면 안 된다.
+    loadDraft(db, {
+      season: 2019,
+      picks: [pick("g", "shihaika", 1, "堀田 賢慎"), pick("g", "ikusei", 1, "平間 隼人")],
+      bids: [],
+      ...META,
+    });
     loadDraft(db, { season: 2019, picks: [pick("c", "shihaika", 1, "森下 暢仁")], bids: [], ...META });
-    const teams = db.raw
-      .prepare("SELECT team FROM draft_pick WHERE season = 2019 ORDER BY team")
-      .all() as unknown as Array<{ team: string }>;
-    assert.deepEqual(teams.map((t) => t.team), ["c", "g"], "구단 2곳 중 2곳이 남는다");
+    const rows = db.raw
+      .prepare("SELECT team, kind FROM draft_pick WHERE season = 2019 ORDER BY team, kind")
+      .all() as unknown as Array<{ team: string; kind: string }>;
+    assert.deepEqual(
+      rows.map((r) => `${r.team}/${r.kind}`),
+      ["c/shihaika", "g/ikusei", "g/shihaika"],
+      "요미우리 2구획 + 히로시마 1구획 = 3행이 그대로 남는다",
+    );
+    assert.equal(bidsOf(db, 2019).length, 2, "입찰도 두 구단 것이 다 남는다");
+  });
+});
+
+test("⚠kind 가 바뀌는 정정에서 옛 지명이 고아로 남지 않는다(M5)", async () => {
+  await withDb((db) => {
+    // ⚠**이 브랜치에서 실제로 일어난 이력이다**(019 주석): 초판 파서가 `自由獲得選手` 를
+    //   `shihaika` 로 접었고 나중에 별도 kind 로 갈랐다. 그 정정을 재적재로 반영하면
+    //   **같은 선수가 두 구획에 동시에 지명된 것처럼** 보인다.
+    loadDraft(db, { season: 2001, picks: [pick("f", "shihaika", 1, "江尻 慎太郎")], bids: [], ...META });
+    loadDraft(db, { season: 2001, picks: [pick("f", "jiyuu_kakutoku", null, "江尻 慎太郎")], bids: [], ...META });
+    const rows = db.raw
+      .prepare("SELECT kind, round_no, name_display FROM draft_pick WHERE season = 2001 AND team = 'f'")
+      .all() as unknown as Array<{ kind: string; round_no: number; name_display: string }>;
+    assert.equal(rows.length, 1, "옛 구획의 행이 남으면 같은 선수가 두 번 지명된 것이 된다");
+    assert.equal(rows[0]?.kind, "jiyuu_kakutoku");
+  });
+});
+
+test("⚠kind 가 바뀌는 정정에서 옛 입찰도 고아로 남지 않는다(M5)", async () => {
+  await withDb((db) => {
+    // 2005~2007 은 本ドラフト가 高校生 / 大学生・社会人 으로 갈라져 있었다 —
+    // 구획 판정이 정정되면 **유도한 단독지명 행도 구획을 옮긴다.**
+    loadDraft(db, { season: 2006, picks: [pick("g", "koukousei", 1, "坂本 勇人")], bids: [], ...META });
+    assert.equal(bidsOf(db, 2006)[0]?.kind, "koukousei", "먼저 高校生 쪽에 단독지명 행이 생긴다");
+    loadDraft(db, { season: 2006, picks: [pick("g", "daigaku_shakaijin", 1, "坂本 勇人")], bids: [], ...META });
+    const rows = bidsOf(db, 2006);
+    assert.equal(rows.length, 1, "옛 구획의 입찰 행이 남으면 안 된다");
+    assert.equal(rows[0]?.kind, "daigaku_shakaijin");
   });
 });
 

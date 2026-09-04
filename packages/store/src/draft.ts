@@ -84,14 +84,12 @@ const LOTTERY_KINDS: ReadonlySet<DraftKind> = new Set<DraftKind>([
  */
 const SEP = "\u0000";
 
-/** 「어느 구획의 어느 구단인가」. */
+/**
+ * 「어느 구획의 어느 구단인가」. ⚠**메모리 안에서 묶을 때만 쓴다** —
+ * DB 를 지우는 범위는 이것이 **아니라 구단**이다(`loadDraft` 주석).
+ */
 function sectionKey(kind: DraftKind, team: string): string {
   return `${kind}${SEP}${team}`;
-}
-
-interface Section {
-  readonly kind: DraftKind;
-  readonly team: string;
 }
 
 /** 회차가 정해진 지명 한 건. */
@@ -334,24 +332,42 @@ function deriveSoleNominations(
   return out;
 }
 
-/** 구획·구단 단위로 지우고 다시 넣기 위한 대상 목록. */
-function sectionsOf(items: ReadonlyArray<{ kind: DraftKind; team: string }>): Section[] {
-  const map = new Map<string, Section>();
-  for (const it of items) map.set(sectionKey(it.kind, it.team), { kind: it.kind, team: it.team });
-  return [...map.values()];
+/** 지우고 다시 넣을 대상 구단. ⚠**구획이 아니라 구단이다** — `loadDraft` 주석의 근거를 봐라. */
+function teamsOf(items: ReadonlyArray<{ team: string }>): string[] {
+  return [...new Set(items.map((it) => it.team))];
 }
 
 /**
  * 한 시즌(또는 한 구단)의 드래프트를 넣는다.
  *
- * ⚠**멱등하다**(M5). 「덮어쓰기」가 아니라 **구획·구단 단위로 지우고 다시 넣는다** — 그래야
+ * ⚠⚠**입력 단위 계약: 한 호출은 「한 구단의 전부」를 담아야 한다.**
+ * 구단 여럿을 한 번에 넣는 것은 괜찮다. **한 구단을 여러 번에 나눠 넣으면 안 된다** —
+ * 아래 삭제가 구단 단위라 **먼저 넣은 구획을 뒤 호출이 지운다.**
+ * 이 계약은 소스의 생김새와 일치한다(실측 · 픽스처 4장): `draftlist_{team}.html` 한 장이
+ * **한 구단**을 내고(4장 중 4장) 그 한 장이 **그 구단의 모든 구획**을 담는다
+ * (4장 중 4장이 2종 이상 · 2006 요미우리는 **4종**). 파서에 구획 단위 입구가 아예 없다.
+ *
+ * ⚠**멱등하다**(M5). 「덮어쓰기」가 아니라 **구단 단위로 지우고 다시 넣는다** — 그래야
  * **정정으로 줄어든 판**도 반영된다. `ON CONFLICT DO UPDATE` 만 쓰면 사라진 지명이 그대로 남고,
  * 행 수만 세는 검사는 **초록인 채로** 지나간다.
- * ⚠**지우는 범위가 「시즌 전체」가 아니라 「구획·구단」인 것이 요점이다** — 호출자가 구단 한 곳씩
- * 넣어도(페이지가 구단별이다) 다른 구단을 날리지 않는다.
  *
- * ⚠**부분 실패는 없다.** 전부 한 트랜잭션이라 도중에 던지면 **아무것도 남지 않는다** —
- * 반쯤 적재된 시즌이 「원래 그렇다」로 읽히는 것이 이 도메인에서 가장 비싼 실패다.
+ * ⚠⚠**삭제 범위가 「구획·구단」이 아니라 「구단」인 것이 요점이다.** 처음엔 구획·구단으로 잡았는데
+ * **그러면 이번 입력에 없는 구획은 손도 안 댄다** — `kind` 가 바뀌는 정정에서 **옛 구획의 행이
+ * 영구 고아로 남고, 화면에는 같은 선수가 두 구획에 동시에 지명된 것처럼 보인다.**
+ * ⚠**가상 시나리오가 아니라 이 브랜치의 이력이다**: 019 주석이 적듯 초판 파서는
+ * `自由獲得選手`·`希望入団枠獲得選手` 를 `shihaika` 로 접었고 나중에 별도 구획으로 갈랐다.
+ * ⚠**뮤테이션으로는 안 잡히는 종류다 — 「코드에 있는 조건」이 아니라 「없는 조건」이었다.**
+ * 지금은 시험 2본(지명·입찰)이 각각 고정한다.
+ *
+ * ⚠**입력에 없는 구단은 건드리지 않는다** — 그 구단은 이번에 안 온 것이지 사라진 것이 아니다.
+ *
+ * ⚠**`draft_event` 는 지우지 않고 upsert 한다.** 그 표의 키는 `(season, kind)` 라 구단이 없어서
+ * 구단 단위 호출로는 「이 구획이 시즌에서 사라졌는가」를 알 수 없다. **어느 지명도 가리키지 않는
+ * 구획 행이 남을 수 있고, 그건 알면서 남긴 것이다**(출처만 든 빈 행이라 값을 왜곡하지 않는다).
+ *
+ * ⚠**부분 실패는 없다.** 판정은 트랜잭션 **밖**에서 끝내고(걸리면 SQL 을 안 만진다) 쓰기는
+ * 한 트랜잭션이라 도중에 던지면 **아무것도 남지 않는다** — 반쯤 적재된 시즌이 「원래 그렇다」로
+ * 읽히는 것이 이 도메인에서 가장 비싼 실패다.
  */
 export function loadDraft(db: Db, input: DraftLoadInput): DraftLoadResult {
   const { season, source, fetchedAt, revision } = input;
@@ -362,17 +378,9 @@ export function loadDraft(db: Db, input: DraftLoadInput): DraftLoadResult {
   const soles = deriveSoleNominations(numbered, resolved);
   const allBids = [...resolved, ...soles];
 
-  const pickSections = sectionsOf(numbered.map((p) => ({ kind: p.row.kind, team: p.row.team })));
-  // ⚠**지울 범위를 「이번에 넣을 행」으로 잡으면 좁다.** 새 판에서 그 구단의 1巡目 지명이
-  //   사라지면 유도할 단독지명도 없어져 `allBids` 에서 빠지는데, **옛 입찰 행은 그대로 남는다** —
-  //   없어진 지명을 가리키는 행이 조용히 살아 있게 된다. 그래서 **추첨이 있는 구획의 구단은
-  //   이번에 행이 나오지 않아도 지운다.**
-  const bidSections = sectionsOf([
-    ...allBids,
-    ...numbered
-      .filter((p) => LOTTERY_KINDS.has(p.row.kind))
-      .map((p) => ({ kind: p.row.kind, team: p.row.team })),
-  ]);
+  // ⚠**구단 단위다**(위 주석). `allBids` 를 합치는 것은 형식뿐이다 — 입찰이 있는 구단은
+  //   반드시 1巡目 지명이 있어서(`firstRoundPick` 이 없으면 던진다) 이미 `numbered` 에 있다.
+  const teams = teamsOf([...numbered.map((p) => p.row), ...allBids]);
   const kinds = new Set(numbered.map((p) => p.row.kind));
 
   db.transaction(() => {
@@ -384,8 +392,8 @@ export function loadDraft(db: Db, input: DraftLoadInput): DraftLoadResult {
     );
     for (const kind of kinds) ev.run(season, kind, source, fetchedAt, revision);
 
-    const delPick = db.raw.prepare("DELETE FROM draft_pick WHERE season = ? AND kind = ? AND team = ?");
-    for (const s of pickSections) delPick.run(season, s.kind, s.team);
+    const delPick = db.raw.prepare("DELETE FROM draft_pick WHERE season = ? AND team = ?");
+    for (const team of teams) delPick.run(season, team);
 
     const insPick = db.raw.prepare(
       `INSERT INTO draft_pick
@@ -410,8 +418,8 @@ export function loadDraft(db: Db, input: DraftLoadInput): DraftLoadResult {
       );
     }
 
-    const delBid = db.raw.prepare("DELETE FROM draft_bid WHERE season = ? AND kind = ? AND team = ?");
-    for (const s of bidSections) delBid.run(season, s.kind, s.team);
+    const delBid = db.raw.prepare("DELETE FROM draft_bid WHERE season = ? AND team = ?");
+    for (const team of teams) delBid.run(season, team);
 
     const insBid = db.raw.prepare(
       `INSERT INTO draft_bid
