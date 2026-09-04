@@ -28,11 +28,23 @@
 --      `name_display` 를 PK 에 더하면 이름이 정정된 뒤 재수집할 때 기존 행을 갱신하지 않고
 --      새 행을 추가해 한 팀·한 라운드에 선수가 둘 남는다 — `018-player-season-name.sql` 이
 --      다루는 것과 같은 모양의 사고다.
+--
+-- ⚠**`kind` 가 6종이다**(2026-09-05 · 파서 검수에서 나온 결정. 위와 같은 절차로
+-- 4표 0행을 확인하고 되돌린 뒤 다시 적용했다). 초판은 4종이었고 파서가
+-- `自由獲得選手`(2001)·`希望入団枠獲得選手`(2006)를 `shihaika` 로 접었다.
+-- **접으면 「1巡目 지명」과 「희망입단枠 지명」이 DB 에서 같은 것이 된다** — 둘 다
+-- `round_no` 가 없는 제도라 적재가 순번을 매기는 순간 구별할 근거가 사라진다.
+-- `kind` 는 이미 「어느 구획/회의인가」를 뜻하므로(`koukousei`·`daigaku_shakaijin` 이 그렇다)
+-- 새 칼럼이 아니라 **이 축을 늘렸다.**
+-- ⚠**`draft_bid`·`draft_note` 에도 같은 6종을 넣었다** — 그 둘에서 새 값이 실제로 쓰일
+-- 일은 없어 보이지만(自由獲得·希望入団枠 에는 추첨이 없다), **어휘를 표마다 다르게 두면
+-- 어느 표의 `kind` 인지에 따라 뜻이 갈린다.** 어휘는 한 벌이다(M1).
 
 CREATE TABLE draft_event (
   season       INTEGER NOT NULL,
   -- shihaika(支配下) | ikusei(育成) | koukousei(高校生) | daigaku_shakaijin(大学生・社会人)
-  kind         TEXT    NOT NULL CHECK (kind IN ('shihaika', 'ikusei', 'koukousei', 'daigaku_shakaijin')),
+  -- | jiyuu_kakutoku(自由獲得選手 · 회차 없음) | kibou_nyudanwaku(希望入団枠獲得選手 · 회차 없음)
+  kind         TEXT    NOT NULL CHECK (kind IN ('shihaika', 'ikusei', 'koukousei', 'daigaku_shakaijin', 'jiyuu_kakutoku', 'kibou_nyudanwaku')),
   held_on      TEXT,               -- YYYY-MM-DD · 모르면 NULL(M11)
   source       TEXT    NOT NULL,
   fetched_at   TEXT    NOT NULL,
@@ -43,7 +55,7 @@ CREATE TABLE draft_event (
 
 CREATE TABLE draft_pick (
   season         INTEGER NOT NULL,
-  kind           TEXT    NOT NULL CHECK (kind IN ('shihaika', 'ikusei', 'koukousei', 'daigaku_shakaijin')),
+  kind           TEXT    NOT NULL CHECK (kind IN ('shihaika', 'ikusei', 'koukousei', 'daigaku_shakaijin', 'jiyuu_kakutoku', 'kibou_nyudanwaku')),
   team           TEXT    NOT NULL,
   round_no       INTEGER NOT NULL,
   pick_seq       INTEGER,          -- 전체 지명 순번. 모르면 NULL
@@ -63,7 +75,7 @@ CREATE TABLE draft_pick (
 
 CREATE TABLE draft_bid (
   season         INTEGER NOT NULL,
-  kind           TEXT    NOT NULL CHECK (kind IN ('shihaika', 'ikusei', 'koukousei', 'daigaku_shakaijin')),
+  kind           TEXT    NOT NULL CHECK (kind IN ('shihaika', 'ikusei', 'koukousei', 'daigaku_shakaijin', 'jiyuu_kakutoku', 'kibou_nyudanwaku')),
   round_no       INTEGER NOT NULL, -- 1巡目 몇 회차인가(1·2·3·4)
   team           TEXT    NOT NULL,
   group_key      TEXT,             -- 같은 회차·같은 경합 대상. 단독지명이면 NULL
@@ -93,7 +105,7 @@ CREATE TABLE draft_bid (
 -- 가능성이 높다.
 CREATE TABLE draft_note (
   season       INTEGER NOT NULL,
-  kind         TEXT    NOT NULL CHECK (kind IN ('shihaika', 'ikusei', 'koukousei', 'daigaku_shakaijin')),
+  kind         TEXT    NOT NULL CHECK (kind IN ('shihaika', 'ikusei', 'koukousei', 'daigaku_shakaijin', 'jiyuu_kakutoku', 'kibou_nyudanwaku')),
   team         TEXT    NOT NULL,
   name_display TEXT    NOT NULL,
   note_kind    TEXT    NOT NULL

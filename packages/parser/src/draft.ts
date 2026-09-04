@@ -14,6 +14,14 @@
  * ⚠**「회차가 없으니 건너뛴다」는 더 나쁘다** — 2001 江尻慎太郎 · 2006 金刃憲人 같은
  * **실재하는 지명이 아무 소리 없이 사라진다.**
  *
+ * ⚠**그 둘은 `kind` 도 다르다**(2026-09-05 결정 · 초판은 `shihaika` 로 접었다).
+ * `自由獲得選手`·`希望入団枠獲得選手` 는 **섹션 머리가 다른 별도 구획**이고 회차라는 개념이
+ * 없는 별개 제도다. `shihaika` 로 접으면 적재가 순번을 매기는 순간 **「1巡目 지명」과
+ * 「희망입단枠 지명」이 같은 것이 된다.** `kind` 는 이미 「어느 구획/회의인가」를 뜻하므로
+ * (`koukousei`·`daigaku_shakaijin` 이 그렇다) 새 칼럼이 아니라 **이 축을 늘린다.**
+ * ⚠**그래도 `roundNo` 는 `null` 그대로다** — 파서는 소스가 말하는 것만 말한다.
+ * 저장 키(순번)는 적재가 만든다. 파서가 `1` 을 지어내면 **소스에 있던 값과 구별할 수 없다.**
+ *
  * ⚠**`（選択権なし）`·`（選択権利なし）` 는 선수가 아니다**(한 글자 다르다 · 2006 vs 2001).
  * 그대로 넣으면 그 이름의 선수가 생긴다(M11).
  * ⚠**판정은 반드시 NFKC 를 건 뒤의 형태로 한다** — NFKC 가 전각 괄호 `（）` 를 반각 `()` 로
@@ -32,7 +40,32 @@ export class DraftParseError extends Error {
   }
 }
 
-export type DraftKind = "shihaika" | "ikusei" | "koukousei" | "daigaku_shakaijin";
+/**
+ * 어느 구획(회의)의 지명인가.
+ *
+ * ⚠**`jiyuu_kakutoku`·`kibou_nyudanwaku` 는 「회차가 없는 제도」다** — 머리말 참조.
+ * 이 둘을 `shihaika` 로 접으면 DB 에서 「1巡目」과 구별할 수 없게 된다.
+ */
+export type DraftKind =
+  | "shihaika"
+  | "ikusei"
+  | "koukousei"
+  | "daigaku_shakaijin"
+  | "jiyuu_kakutoku"
+  | "kibou_nyudanwaku";
+
+/**
+ * 포지션 어휘. ⚠**`roster.ts` 의 `RosterPosition` 과 같은 4종이다** — 다르면 조인이 조용히 빈다.
+ * (실측: 픽스처 4장 40행 전건이 이 넷 안이고 밖은 0건.)
+ */
+export type DraftPosition = "投手" | "捕手" | "内野手" | "外野手";
+
+const POSITIONS: Readonly<Record<string, DraftPosition>> = {
+  投手: "投手",
+  捕手: "捕手",
+  内野手: "内野手",
+  外野手: "外野手",
+};
 
 export interface DraftPickRow {
   team: string;
@@ -54,22 +87,44 @@ export interface DraftPickRow {
    * 소유한다(M1). 여기서 따로 정규화하면 이름 규칙이 두 벌이 된다.
    */
   nameDisplay: string;
-  /** `投手`·`捕手`·`内野手`·`外野手`. ⚠2006 은 `投　手` 라 **공백을 지워야** 2019 와 같아진다. */
-  position: string | null;
+  /**
+   * `投手`·`捕手`·`内野手`·`外野手`. ⚠2006 은 `投　手` 라 **공백을 지워야** 2019 와 같아진다.
+   *
+   * ⚠**어휘 밖이면 던진다**(M7 · `roster.ts` 와 같은 패턴). 초판은 이 칸만 검증 없이
+   * 그대로 담았는데, 그러면 열이 밀렸을 때 **나이나 소속이 포지션으로 조용히 들어간다** —
+   * 이 파일 머리말이 막겠다고 선언한 바로 그 사고다.
+   *
+   * ⚠**빈 칸은 던지지 않고 `null` 이다**(M11 · 「원래 없음」). 근거 둘:
+   * ⑴ **열이 밀려서 비는 일은 없다** — 왼쪽으로 밀리면 이름이, 오른쪽으로 밀리면 소속이
+   *    들어오지 빈 칸이 되지 않는다. 즉 빈 칸은 밀림의 증상이 아니다.
+   * ⑵ **소스에 실재하는 모양이다** — `（選択権なし）` 행의 포지션이 `&nbsp;` 다(2006 3행 ·
+   *    2001 2행). 그 행들은 이름 쪽에서 이미 걸러지므로 여기까지 오지 않는다.
+   * 실측(픽스처 4장): 지명 행 **40건 중 빈 포지션 0건 · 어휘 밖 0건**.
+   */
+  position: DraftPosition | null;
   fromOrg: string | null;
 }
 
 /**
- * 섹션 머리 → 구획.
- * ⚠**순서가 의미를 갖는다.** `育成` 를 먼저 본다 — 「`育成選手選択会議` 가 아래쪽 支配下
- * 패턴 `選択選手` 에 걸리지 않는다」는 **글자를 세어야만** 확인되는 성질이라,
- * 그것에 기대는 순서는 다음 사람이 못 지킨다. 구별되는 낱말을 먼저 둔다.
+ * 섹션 머리 → 구획. 실측한 머리 **7종**(픽스처 4장 전수): `新人選手選択会議` ·
+ * `育成選手選択会議` · `希望入団枠獲得選手` · `大学生・社会人ほか選択会議` ·
+ * `高校生選択会議` · `自由獲得選手` · `選択選手`.
+ *
+ * ⚠**순서에 정확성이 걸려 있지는 않다**(2026-09-05 정정 · 검수 지적). 초판 주석은
+ * 「`育成` 를 먼저 봐야 한다」고 읽히게 썼는데, **실측하면 어느 순서든 충돌이 없다** —
+ * `育成選手選択会議` 는 `選択選手` 를 부분문자열로 갖지 않는다(`選手選択` 은 갖지만 순서가 다르다).
+ * 순서를 이렇게 둔 이유는 **읽는 사람이 글자를 세지 않아도 되게** 하려는 것이고,
+ * 그건 정확성이 아니라 가독성의 이유다. **근거를 실제보다 강하게 적지 않는다.**
+ * ⚠**시험이 고정하는 것은 「머리 7종이 각각 어느 kind 가 되는가」**이지 「순서를 바꿔도
+ * 같다」가 아니다. 패턴을 더할 때는 **기존 7종에 걸리지 않는지 직접 확인해라.**
  */
 const SECTION: ReadonlyArray<readonly [RegExp, DraftKind]> = [
   [/育成/, "ikusei"],
   [/高校生/, "koukousei"],
   [/大学生|社会人/, "daigaku_shakaijin"],
-  [/新人選手選択会議|選択選手|自由獲得選手|希望入団枠獲得選手/, "shihaika"],
+  [/自由獲得選手/, "jiyuu_kakutoku"],
+  [/希望入団枠獲得選手/, "kibou_nyudanwaku"],
+  [/新人選手選択会議|選択選手/, "shihaika"],
 ];
 
 /** ⚠NFKC 를 건 뒤의 형태로 검사한다 — 전각 괄호는 그 시점에 반각이 되어 있다. */
@@ -118,7 +173,7 @@ function roundOf(label: string, where: string): number | null {
  * @returns 지명 행. ⚠**빈 배열은 「전 회차를 건너뛴 구단」일 때만 나온다** —
  *   표를 못 읽은 경우는 던진다.
  * @throws {DraftParseError} 섹션이 없을 때 · 칸 수가 4도 5도 아닐 때 ·
- *   회차 라벨이나 연령 칸이 어휘 밖일 때 · 이름 칸이 비었을 때.
+ *   회차 라벨이나 연령 칸이 어휘 밖일 때 · **포지션이 어휘 밖일 때** · 이름 칸이 비었을 때.
  *   ⚠**삼키지 마라** — 열이 한 칸 밀리면 나이가 포지션으로 들어가고, 그 화면은 그럴듯하다.
  */
 export function parseDraftPicks(html: string, team: string): DraftPickRow[] {
@@ -196,14 +251,26 @@ export function parseDraftPicks(html: string, team: string): DraftPickRow[] {
         const positionRaw = (hasAge ? cells[3]?.text : cells[2]?.text) ?? "";
         const fromOrgRaw = (hasAge ? cells[4]?.text : cells[3]?.text) ?? "";
 
+        // ⚠`投　手` → `投手`. 전각 공백을 남기면 2019 의 `投手` 와 **다른 값**이 된다.
+        const positionKey = compact(positionRaw);
+        // ⚠**어휘 밖을 그대로 담지 않는다**(M7 · `roster.ts:POSITIONS` 와 같은 패턴).
+        // 담으면 열이 밀렸을 때 나이·소속이 포지션이 되고 **그 화면은 그럴듯하다.**
+        // 빈 칸만은 `null`(원래 없음)이다 — 사유는 `DraftPickRow.position` 주석.
+        const position = positionKey === "" ? null : POSITIONS[positionKey];
+        if (position === undefined) {
+          throw new DraftParseError(
+            "포지션이 어휘(投手·捕手·内野手·外野手) 밖이다 — 모르는 값을 그대로 담지 않는다(M7)",
+            `${where} / ${JSON.stringify(positionRaw)} / ${shown}`,
+          );
+        }
+
         rows.push({
           team,
           kind,
           roundNo: roundOf(cells[0]?.text ?? "", where),
           waiverDir: null,
           nameDisplay: nameRaw,
-          // ⚠`投　手` → `投手`. 전각 공백을 남기면 2019 의 `投手` 와 **다른 값**이 된다.
-          position: positionRaw === "" ? null : compact(positionRaw),
+          position,
           // ⚠`ＪＲ東日本` → `JR東日本`. 2019 는 이미 반각이라 NFKC 가 연대를 맞춘다.
           fromOrg: fromOrgRaw === "" ? null : fromOrgRaw.normalize("NFKC"),
         });

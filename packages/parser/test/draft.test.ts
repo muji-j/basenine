@@ -1,12 +1,17 @@
 /**
  * 드래프트 지명 명단 파서 시험.
  *
- * ⚠**이 파서가 조용히 틀리는 방식이 셋이고, 셋 다 화면에서 그럴듯해 보인다.**
+ * ⚠**이 파서가 조용히 틀리는 방식이 넷이고, 넷 다 화면에서 그럴듯해 보인다.**
  *   ⑴ `（選択権なし）` 를 선수로 넣는다 → **「選択権なし」라는 선수가 생긴다**(M11).
  *   ⑵ 5칸 배치(2006)를 4칸으로 읽는다 → **나이 `（22）` 가 포지션 칸에, 포지션이 소속 칸에** 들어간다.
  *   ⑶ 회차 없는 지명(`自由獲得選手`·`希望入団枠獲得選手`)을 건너뛴다 →
  *      **江尻慎太郎·金刃憲人 이 아무 소리 없이 사라진다.**
- * 아래 시험은 셋을 각각 못으로 박는다. ⚠**기대를 낮춰서 통과시키지 마라** — 코드가 실물을 따라간다.
+ *   ⑷ 포지션을 **검증 없이 그대로 담는다**(2026-09-05 검수 지적) → 어휘 밖 값이 DB 로 흘러가고,
+ *      열이 밀렸을 때 **소속이 포지션이 된 화면**을 아무도 결함으로 못 읽는다.
+ * 아래 시험은 넷을 각각 못으로 박는다. ⚠**기대를 낮춰서 통과시키지 마라** — 코드가 실물을 따라간다.
+ *
+ * ⚠**`kind` 는 6종이다**(2026-09-05): `自由獲得選手`·`希望入団枠獲得選手` 를 `shihaika` 로
+ * 접으면 **DB 에서 「1巡目 지명」과 구별할 수 없다.** 아래 두 시험이 그것을 고정한다.
  *
  * 분모(픽스처에서 직접 센 값 · 소스는 `packages/parser/test/fixtures/`):
  *   2019-g  표 행 8 = 지명 8 (`選択権` 0건)
@@ -49,7 +54,9 @@ test("⚠育成 을 支配下 와 구별한다 — 6 + 2 = 8", () => {
   assert.equal(rows.filter((r) => r.kind === "shihaika").length, 6);
   assert.equal(rows.filter((r) => r.kind === "ikusei").length, 2);
   for (const r of rows) {
-    assert.ok(["shihaika", "ikusei", "koukousei", "daigaku_shakaijin"].includes(r.kind));
+    assert.ok(
+      ["shihaika", "ikusei", "koukousei", "daigaku_shakaijin", "jiyuu_kakutoku", "kibou_nyudanwaku"].includes(r.kind),
+    );
   }
 
   // 같은 해 다른 구단도 같은 모양이어야 한다(6 + 3 = 9).
@@ -57,6 +64,40 @@ test("⚠育成 을 支配下 와 구별한다 — 6 + 2 = 8", () => {
   assert.equal(c.length, 9);
   assert.equal(c.filter((r) => r.kind === "shihaika").length, 6);
   assert.equal(c.filter((r) => r.kind === "ikusei").length, 3);
+});
+
+test("⚠회차 없는 제도는 kind 도 다르다 — shihaika 로 접으면 「1巡目」과 구별할 수 없다", () => {
+  // 2006 `希望入団枠獲得選手` — 이 페이지의 shihaika 는 0건이어야 한다.
+  const g2006 = parseDraftPicks(fixture("draft-2006-list-g"), "g");
+  assert.equal(g2006.filter((r) => r.kind === "kibou_nyudanwaku").length, 1);
+  assert.equal(g2006.filter((r) => r.kind === "shihaika").length, 0, "접으면 1巡目 지명과 같은 것이 된다");
+
+  // 2001 은 `自由獲得選手` 와 `選択選手` 가 **한 페이지에 둘 다** 있다 — 접으면 7건이 한 덩어리다.
+  const f2001 = parseDraftPicks(fixture("draft-2001-list-f"), "f");
+  assert.equal(f2001.filter((r) => r.kind === "jiyuu_kakutoku").length, 1);
+  assert.equal(f2001.filter((r) => r.kind === "shihaika").length, 6);
+
+  // ⚠**회차는 여전히 null 이다** — kind 를 갈랐다고 파서가 순번을 지어내지 않는다.
+  assert.equal(f2001.find((r) => r.kind === "jiyuu_kakutoku")?.roundNo, null);
+  assert.equal(g2006.find((r) => r.kind === "kibou_nyudanwaku")?.roundNo, null);
+});
+
+test("⚠섹션 머리 7종의 매핑을 고정한다 — 새 패턴이 기존 머리를 가로채면 여기서 걸린다", () => {
+  const row = "<table><tr><th>1位</th><td>山田 太郎</td><td>投手</td><td>某高</td></tr></table>";
+  const cases: ReadonlyArray<readonly [string, string]> = [
+    ["新人選手選択会議", "shihaika"],
+    ["選択選手", "shihaika"],
+    ["育成選手選択会議", "ikusei"],
+    ["高校生選択会議", "koukousei"],
+    ["大学生・社会人ほか選択会議", "daigaku_shakaijin"],
+    ["自由獲得選手", "jiyuu_kakutoku"],
+    ["希望入団枠獲得選手", "kibou_nyudanwaku"],
+  ];
+  for (const [heading, kind] of cases) {
+    const rows = parseDraftPicks(`<h4>${heading}</h4>${row}`, "g");
+    assert.equal(rows.length, 1, `${heading} 에서 행이 사라졌다`);
+    assert.equal(rows[0]?.kind, kind, `${heading} 의 구획이 틀렸다`);
+  }
 });
 
 test("⚠구형 마크업(2006)도 읽는다 — 전각 숫자·5칸·전각 공백 · 16건 중 16건", () => {
@@ -73,7 +114,9 @@ test("⚠구형 마크업(2006)도 읽는다 — 전각 숫자·5칸·전각 공
   // 2006 은 한 페이지에 세 구획이 있다.
   assert.equal(rows.filter((r) => r.kind === "koukousei").length, 3);
   assert.equal(rows.filter((r) => r.kind === "ikusei").length, 7);
-  assert.equal(rows.filter((r) => r.kind === "shihaika").length, 1);
+  // ⚠**`希望入団枠獲得選手` 는 `shihaika` 가 아니다** — 접으면 「1巡目」과 구별할 수 없다.
+  assert.equal(rows.filter((r) => r.kind === "kibou_nyudanwaku").length, 1);
+  assert.equal(3 + 7 + 5 + 1, rows.length, "16 = 高校生 3 + 育成 7 + 大学生社会人 5 + 希望入団枠 1");
 });
 
 test("⚠5칸 배치에서 나이가 포지션 칸으로 밀리지 않는다(2006)", () => {
@@ -100,7 +143,7 @@ test("⚠회차 없는 지명(自由獲得·希望入団枠)을 버리지 않는
   const kanetsuna = g2006.find((r) => r.nameDisplay === "金刃 憲人");
   assert.ok(kanetsuna, "希望入団枠 지명이 통째로 사라졌다");
   assert.equal(kanetsuna.roundNo, null, "회차는 「원래 없음」이라 null 이다 — 0 으로 메우지 마라");
-  assert.equal(kanetsuna.kind, "shihaika");
+  assert.equal(kanetsuna.kind, "kibou_nyudanwaku");
   assert.equal(kanetsuna.position, "投手");
   assert.equal(kanetsuna.fromOrg, "立命館大");
 
@@ -109,6 +152,7 @@ test("⚠회차 없는 지명(自由獲得·希望入団枠)을 버리지 않는
   const ejiri = f2001.find((r) => r.nameDisplay === "江尻 慎太郎");
   assert.ok(ejiri, "自由獲得 지명이 통째로 사라졌다");
   assert.equal(ejiri.roundNo, null);
+  assert.equal(ejiri.kind, "jiyuu_kakutoku");
   assert.equal(ejiri.position, "投手");
   assert.equal(ejiri.fromOrg, "早稲田大");
 
@@ -222,6 +266,41 @@ test("⚠5칸 행의 3번째가 연령이 아니면 던진다(M7)", () => {
       ),
     DraftParseError,
   );
+});
+
+test("⚠포지션이 어휘 밖이면 던진다(M7) — 초판은 이 칸만 검증 없이 그대로 담았다", () => {
+  // 검수자가 재현한 그대로. ⚠**이 줄이 없으면 「謎ポジション」이 그대로 DB 에 들어간다.**
+  assert.throws(
+    () =>
+      parseDraftPicks(
+        "<h4>新人選手選択会議</h4><table><tr><th>1位</th><td>山田 太郎</td><td>謎ポジション</td><td>某高</td></tr></table>",
+        "g",
+      ),
+    DraftParseError,
+  );
+  // 열이 오른쪽으로 밀리면 소속이 포지션 칸에 온다 — 그 화면은 그럴듯해서 눈으로는 못 잡는다.
+  assert.throws(
+    () =>
+      parseDraftPicks(
+        "<h4>新人選手選択会議</h4><table><tr><th>1位</th><td>山田 太郎</td><td>某高</td><td>投手</td></tr></table>",
+        "g",
+      ),
+    DraftParseError,
+  );
+  // ⚠**가드가 넓어서도 안 된다** — 4종은 전부 통과해야 한다(전각 공백 변종 포함).
+  for (const p of ["投手", "捕手", "内野手", "外野手", "投　手"]) {
+    const rows = parseDraftPicks(
+      `<h4>新人選手選択会議</h4><table><tr><th>1位</th><td>山田 太郎</td><td>${p}</td><td>某高</td></tr></table>`,
+      "g",
+    );
+    assert.equal(rows[0]?.position, p.replace(/\s/g, ""), `${p} 가 막혔다`);
+  }
+  // 빈 칸만은 「원래 없음」이라 null 이다 — 열이 밀려서 비는 일은 없다(M11).
+  const blank = parseDraftPicks(
+    "<h4>新人選手選択会議</h4><table><tr><th>1位</th><td>山田 太郎</td><td>&nbsp;</td><td>某高</td></tr></table>",
+    "g",
+  );
+  assert.equal(blank[0]?.position, null);
 });
 
 test("⚠모르는 섹션 머리는 무시하지 않고 던진다(M7)", () => {
