@@ -29,7 +29,13 @@ import { DraftParseError, parseDraftPicks } from "../src/draft.ts";
 const fixture = (name: string): string =>
   gunzipSync(readFileSync(fileURLToPath(new URL(`fixtures/${name}.html.gz`, import.meta.url)))).toString("utf8");
 
-/** ⚠명단 어휘는 `roster.ts` 의 `RosterPosition` 과 같아야 한다 — 다르면 조인이 조용히 빈다. */
+/**
+ * 기대 어휘 4종. 소스(`positions.ts`)와 같아야 한다 — 다르면 조인이 조용히 빈다.
+ *
+ * ⚠**여기는 일부러 손으로 적는다. `POSITIONS` 를 import 해서 「한 벌로」 만들지 마라** —
+ * 그러면 어휘가 어떻게 바뀌든 시험이 따라가서 **무엇과도 어긋날 수 없는 검사**가 된다.
+ * 제품 코드의 중복은 결함이지만, **시험이 정답을 독립적으로 갖는 것은 그 시험의 존재 이유다.**
+ */
 const POSITIONS = new Set(["投手", "捕手", "内野手", "外野手"]);
 
 test("현행 마크업(2019)에서 지명 명단을 읽는다 — 8건 중 8건", () => {

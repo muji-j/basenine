@@ -30,6 +30,12 @@
  * ⚠**파싱 실패는 빈 값이 아니라 예외다**(M7). 칸이 한 칸 밀리면 「나이」가 포지션 칸에
  * 들어가는데, 그 화면은 그럴듯해서 눈으로는 못 잡는다.
  */
+// ⚠어휘는 `positions.ts` 한 벌이다(M1). 초판은 여기에 **같은 4종을 다시 선언**했는데,
+// 값이 문자 단위로 같아서 시험도 타입체크도 아무 말을 하지 않았다 — 한쪽만 고쳐지는 날
+// 조용히 갈리는 모양이다. **정규화(`compact`)는 이 파일이 계속 갖는다**: 2006 의 `投　手` 는
+// 이 소스만의 문제이고, 명단 파서는 정규화하지 않는 것이 맞다.
+import { POSITIONS } from "./positions.ts";
+import type { Position } from "./positions.ts";
 
 export class DraftParseError extends Error {
   readonly detail: string;
@@ -54,19 +60,6 @@ export type DraftKind =
   | "jiyuu_kakutoku"
   | "kibou_nyudanwaku";
 
-/**
- * 포지션 어휘. ⚠**`roster.ts` 의 `RosterPosition` 과 같은 4종이다** — 다르면 조인이 조용히 빈다.
- * (실측: 픽스처 4장 40행 전건이 이 넷 안이고 밖은 0건.)
- */
-export type DraftPosition = "投手" | "捕手" | "内野手" | "外野手";
-
-const POSITIONS: Readonly<Record<string, DraftPosition>> = {
-  投手: "投手",
-  捕手: "捕手",
-  内野手: "内野手",
-  外野手: "外野手",
-};
-
 export interface DraftPickRow {
   team: string;
   kind: DraftKind;
@@ -90,9 +83,9 @@ export interface DraftPickRow {
   /**
    * `投手`·`捕手`·`内野手`·`外野手`. ⚠2006 은 `投　手` 라 **공백을 지워야** 2019 와 같아진다.
    *
-   * ⚠**어휘 밖이면 던진다**(M7 · `roster.ts` 와 같은 패턴). 초판은 이 칸만 검증 없이
-   * 그대로 담았는데, 그러면 열이 밀렸을 때 **나이나 소속이 포지션으로 조용히 들어간다** —
-   * 이 파일 머리말이 막겠다고 선언한 바로 그 사고다.
+   * ⚠**어휘 밖이면 던진다**(M7 · 명단 파서와 **같은 어휘표**를 쓴다 · `positions.ts`).
+   * 초판은 이 칸만 검증 없이 그대로 담았는데, 그러면 열이 밀렸을 때
+   * **나이나 소속이 포지션으로 조용히 들어간다** — 이 파일 머리말이 막겠다고 선언한 바로 그 사고다.
    *
    * ⚠**빈 칸은 던지지 않고 `null` 이다**(M11 · 「원래 없음」). 근거 둘:
    * ⑴ **열이 밀려서 비는 일은 없다** — 왼쪽으로 밀리면 이름이, 오른쪽으로 밀리면 소속이
@@ -101,7 +94,7 @@ export interface DraftPickRow {
    *    2001 2행). 그 행들은 이름 쪽에서 이미 걸러지므로 여기까지 오지 않는다.
    * 실측(픽스처 4장): 지명 행 **40건 중 빈 포지션 0건 · 어휘 밖 0건**.
    */
-  position: DraftPosition | null;
+  position: Position | null;
   fromOrg: string | null;
 }
 
@@ -253,7 +246,7 @@ export function parseDraftPicks(html: string, team: string): DraftPickRow[] {
 
         // ⚠`投　手` → `投手`. 전각 공백을 남기면 2019 의 `投手` 와 **다른 값**이 된다.
         const positionKey = compact(positionRaw);
-        // ⚠**어휘 밖을 그대로 담지 않는다**(M7 · `roster.ts:POSITIONS` 와 같은 패턴).
+        // ⚠**어휘 밖을 그대로 담지 않는다**(M7 · `positions.ts:POSITIONS` — 명단 파서와 **같은 표**).
         // 담으면 열이 밀렸을 때 나이·소속이 포지션이 되고 **그 화면은 그럴듯하다.**
         // 빈 칸만은 `null`(원래 없음)이다 — 사유는 `DraftPickRow.position` 주석.
         const position = positionKey === "" ? null : POSITIONS[positionKey];
