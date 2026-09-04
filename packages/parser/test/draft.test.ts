@@ -1,0 +1,250 @@
+/**
+ * 드래프트 지명 명단 파서 시험.
+ *
+ * ⚠**이 파서가 조용히 틀리는 방식이 셋이고, 셋 다 화면에서 그럴듯해 보인다.**
+ *   ⑴ `（選択権なし）` 를 선수로 넣는다 → **「選択権なし」라는 선수가 생긴다**(M11).
+ *   ⑵ 5칸 배치(2006)를 4칸으로 읽는다 → **나이 `（22）` 가 포지션 칸에, 포지션이 소속 칸에** 들어간다.
+ *   ⑶ 회차 없는 지명(`自由獲得選手`·`希望入団枠獲得選手`)을 건너뛴다 →
+ *      **江尻慎太郎·金刃憲人 이 아무 소리 없이 사라진다.**
+ * 아래 시험은 셋을 각각 못으로 박는다. ⚠**기대를 낮춰서 통과시키지 마라** — 코드가 실물을 따라간다.
+ *
+ * 분모(픽스처에서 직접 센 값 · 소스는 `packages/parser/test/fixtures/`):
+ *   2019-g  표 행 8 = 지명 8 (`選択権` 0건)
+ *   2019-c  표 행 9 = 지명 9 (`選択権` 0건)
+ *   2006-g  표 행 19 = 지명 16 + `選択権なし` 3
+ *   2001-f  표 행 9 = 지명 7 + `選択権利なし` 2
+ */
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { gunzipSync } from "node:zlib";
+import { fileURLToPath } from "node:url";
+import { DraftParseError, parseDraftPicks } from "../src/draft.ts";
+
+const fixture = (name: string): string =>
+  gunzipSync(readFileSync(fileURLToPath(new URL(`fixtures/${name}.html.gz`, import.meta.url)))).toString("utf8");
+
+/** ⚠명단 어휘는 `roster.ts` 의 `RosterPosition` 과 같아야 한다 — 다르면 조인이 조용히 빈다. */
+const POSITIONS = new Set(["投手", "捕手", "内野手", "外野手"]);
+
+test("현행 마크업(2019)에서 지명 명단을 읽는다 — 8건 중 8건", () => {
+  const rows = parseDraftPicks(fixture("draft-2019-list-g"), "g");
+  assert.equal(rows.length, 8, "빈 배열이거나 수가 다르면 파서가 조용히 실패한 것이다");
+
+  const first = rows.find((r) => r.kind === "shihaika" && r.roundNo === 1);
+  assert.ok(first, "1순위 지명이 있어야 한다");
+  assert.deepEqual(first, {
+    team: "g",
+    kind: "shihaika",
+    roundNo: 1,
+    waiverDir: null,
+    nameDisplay: "堀田 賢慎",
+    position: "投手",
+    fromOrg: "青森山田高",
+  });
+});
+
+test("⚠育成 을 支配下 와 구별한다 — 6 + 2 = 8", () => {
+  const rows = parseDraftPicks(fixture("draft-2019-list-g"), "g");
+  assert.equal(rows.filter((r) => r.kind === "shihaika").length, 6);
+  assert.equal(rows.filter((r) => r.kind === "ikusei").length, 2);
+  for (const r of rows) {
+    assert.ok(["shihaika", "ikusei", "koukousei", "daigaku_shakaijin"].includes(r.kind));
+  }
+
+  // 같은 해 다른 구단도 같은 모양이어야 한다(6 + 3 = 9).
+  const c = parseDraftPicks(fixture("draft-2019-list-c"), "c");
+  assert.equal(c.length, 9);
+  assert.equal(c.filter((r) => r.kind === "shihaika").length, 6);
+  assert.equal(c.filter((r) => r.kind === "ikusei").length, 3);
+});
+
+test("⚠구형 마크업(2006)도 읽는다 — 전각 숫자·5칸·전각 공백 · 16건 중 16건", () => {
+  const rows = parseDraftPicks(fixture("draft-2006-list-g"), "g");
+  assert.equal(rows.length, 16, "구형에서 수가 다르면 연대 차이를 못 넘은 것이다");
+
+  // 전각 `１巡目` 이 정수로 정규화됐는가.
+  for (const r of rows) {
+    assert.ok(r.roundNo === null || (Number.isInteger(r.roundNo) && r.roundNo >= 1), `이상한 회차: ${r.roundNo}`);
+  }
+  const daigaku = rows.filter((r) => r.kind === "daigaku_shakaijin").map((r) => r.roundNo);
+  assert.deepEqual(daigaku, [3, 4, 5, 6, 7], "전각 １~７巡目 이 정수가 돼야 한다(1·2는 選択権なし)");
+
+  // 2006 은 한 페이지에 세 구획이 있다.
+  assert.equal(rows.filter((r) => r.kind === "koukousei").length, 3);
+  assert.equal(rows.filter((r) => r.kind === "ikusei").length, 7);
+  assert.equal(rows.filter((r) => r.kind === "shihaika").length, 1);
+});
+
+test("⚠5칸 배치에서 나이가 포지션 칸으로 밀리지 않는다(2006)", () => {
+  const rows = parseDraftPicks(fixture("draft-2006-list-g"), "g");
+
+  // 坂本勇人 — 高校生 1巡目. 나이 `（17）` 이 끼어 있는 행이다.
+  const sakamoto = rows.find((r) => r.nameDisplay === "坂本 勇人");
+  assert.ok(sakamoto, "坂本 勇人 이 있어야 한다");
+  assert.equal(sakamoto.kind, "koukousei");
+  assert.equal(sakamoto.roundNo, 1);
+  assert.equal(sakamoto.position, "内野手", "나이가 들어왔다면 「(17)」 이 됐을 자리다");
+  assert.equal(sakamoto.fromOrg, "光星学院高", "포지션이 밀려 들어왔다면 「内野手」 가 됐을 자리다");
+
+  // 어느 행에도 나이가 새지 않았는가(전건).
+  for (const r of rows) {
+    assert.ok(!/^\(\d+\)$/.test(r.position ?? ""), `포지션 칸에 나이가 들어왔다: ${r.nameDisplay}`);
+    assert.ok(POSITIONS.has(r.position ?? ""), `모르는 포지션: ${JSON.stringify(r.position)} (${r.nameDisplay})`);
+  }
+});
+
+test("⚠회차 없는 지명(自由獲得·希望入団枠)을 버리지 않는다 — null 이지 0 이 아니다(M11)", () => {
+  // 2006 希望入団枠獲得選手 — `<th>&nbsp;</th>` 라 회차가 없다.
+  const g2006 = parseDraftPicks(fixture("draft-2006-list-g"), "g");
+  const kanetsuna = g2006.find((r) => r.nameDisplay === "金刃 憲人");
+  assert.ok(kanetsuna, "希望入団枠 지명이 통째로 사라졌다");
+  assert.equal(kanetsuna.roundNo, null, "회차는 「원래 없음」이라 null 이다 — 0 으로 메우지 마라");
+  assert.equal(kanetsuna.kind, "shihaika");
+  assert.equal(kanetsuna.position, "投手");
+  assert.equal(kanetsuna.fromOrg, "立命館大");
+
+  // 2001 自由獲得選手 — 같은 모양이다.
+  const f2001 = parseDraftPicks(fixture("draft-2001-list-f"), "f");
+  const ejiri = f2001.find((r) => r.nameDisplay === "江尻 慎太郎");
+  assert.ok(ejiri, "自由獲得 지명이 통째로 사라졌다");
+  assert.equal(ejiri.roundNo, null);
+  assert.equal(ejiri.position, "投手");
+  assert.equal(ejiri.fromOrg, "早稲田大");
+
+  // ⚠0 을 센티넬로 쓰지 않았는가(전건).
+  for (const r of [...g2006, ...f2001]) assert.notEqual(r.roundNo, 0, "0 은 회차가 아니다");
+});
+
+test("⚠최구형(2001)의 「選択権利なし」를 선수로 만들지 않는다 — 9행 중 7건만 지명", () => {
+  const rows = parseDraftPicks(fixture("draft-2001-list-f"), "f");
+  assert.equal(rows.length, 7, "표 행 9 − 選択権利なし 2 = 7");
+  for (const r of rows) {
+    assert.ok(!r.nameDisplay.includes("選択権"), `「${r.nameDisplay}」는 선수가 아니다`);
+  }
+  assert.deepEqual(
+    rows.filter((r) => r.roundNo !== null).map((r) => r.roundNo),
+    [2, 4, 5, 6, 7, 8],
+    "건너뛴 1·3巡目 이 빠지고 나머지가 남아야 한다",
+  );
+});
+
+test("⚠`（選択権なし）`(2006) 도 같이 걸린다 — 한 글자 다르다", () => {
+  const rows = parseDraftPicks(fixture("draft-2006-list-g"), "g");
+  for (const r of rows) {
+    assert.ok(!r.nameDisplay.includes("選択権"), `「${r.nameDisplay}」는 선수가 아니다`);
+  }
+});
+
+test("⚠아는 두 표기만 걸러서는 부족하다 — 모르는 변종은 선수로 만들지 말고 던진다(M7)", () => {
+  // `（選択権無し）` — 한 글자(なし→無し)만 다른 가상의 변종. 걸러지지도 않고
+  // 선수가 되지도 않아야 한다. ⚠**이 줄이 없으면 「選択権無し」라는 선수가 생긴다.**
+  assert.throws(
+    () =>
+      parseDraftPicks(
+        "<h4>新人選手選択会議</h4><table><tr><th>1位</th><td>（選択権無し）</td><td>&nbsp;</td><td></td></tr></table>",
+        "g",
+      ),
+    DraftParseError,
+  );
+  // 괄호로 묶인 칸은 어떤 어휘든 이름이 아니다.
+  assert.throws(
+    () =>
+      parseDraftPicks(
+        "<h4>新人選手選択会議</h4><table><tr><th>1位</th><td>（該当者なし）</td><td>&nbsp;</td><td></td></tr></table>",
+        "g",
+      ),
+    DraftParseError,
+  );
+});
+
+test("⚠HTML 엔티티가 값으로 새지 않는다 — 4장 전부", () => {
+  const all = [
+    ...parseDraftPicks(fixture("draft-2019-list-g"), "g"),
+    ...parseDraftPicks(fixture("draft-2019-list-c"), "c"),
+    ...parseDraftPicks(fixture("draft-2006-list-g"), "g"),
+    ...parseDraftPicks(fixture("draft-2001-list-f"), "f"),
+  ];
+  assert.equal(all.length, 8 + 9 + 16 + 7);
+  for (const r of all) {
+    for (const [k, v] of Object.entries(r)) {
+      if (typeof v !== "string") continue;
+      assert.ok(!/&(nbsp|amp|lt|gt|quot);/.test(v), `${k} 에 엔티티가 남았다: ${JSON.stringify(v)}`);
+    }
+    // 빈 문자열을 null 대신 쓰지 않는다(M11).
+    assert.notEqual(r.position, "", "빈 문자열이 아니라 null 이어야 한다");
+    assert.notEqual(r.fromOrg, "", "빈 문자열이 아니라 null 이어야 한다");
+    assert.notEqual(r.nameDisplay, "", "이름이 비면 안 된다");
+  }
+});
+
+test("⚠포지션·소속의 전각/반각이 연대를 넘어 같아진다", () => {
+  const g2006 = parseDraftPicks(fixture("draft-2006-list-g"), "g");
+  const g2019 = parseDraftPicks(fixture("draft-2019-list-g"), "g");
+
+  // 2006 은 `投　手`(전각 공백), 2019 는 `投手`. 같은 값이 돼야 한다.
+  assert.ok(g2006.some((r) => r.position === "投手"));
+  assert.ok(g2019.some((r) => r.position === "投手"));
+  for (const r of [...g2006, ...g2019]) {
+    assert.ok(POSITIONS.has(r.position ?? ""), `모르는 포지션: ${JSON.stringify(r.position)}`);
+  }
+
+  // 2006 은 `ＮＴＴ東日本`(전각), 2019 는 `JR東日本`(반각). NFKC 가 자리를 맞춘다.
+  assert.ok(g2006.some((r) => r.fromOrg === "NTT東日本"), "ＮＴＴ 가 반각이 돼야 한다");
+  assert.ok(g2006.some((r) => r.fromOrg === "JR東日本"), "ＪＲ 가 반각이 돼야 한다");
+  assert.ok(g2019.some((r) => r.fromOrg === "JR東日本"));
+});
+
+test("⚠구조가 바뀌면 빈 배열이 아니라 던진다(M7) — 섹션이 없다", () => {
+  assert.throws(() => parseDraftPicks("<html><body><p>표가 없다</p></body></html>", "g"), DraftParseError);
+});
+
+test("⚠섹션은 있는데 행이 없어도 던진다(M7)", () => {
+  assert.throws(
+    () => parseDraftPicks("<h4>新人選手選択会議</h4><div>표가 통째로 사라졌다</div>", "g"),
+    DraftParseError,
+  );
+});
+
+test("⚠칸 수가 4도 5도 아니면 던진다(M7) — 열이 밀린 채 흘리지 않는다", () => {
+  assert.throws(
+    () => parseDraftPicks("<h4>新人選手選択会議</h4><table><tr><th>1位</th><td>山田 太郎</td></tr></table>", "g"),
+    DraftParseError,
+  );
+});
+
+test("⚠5칸 행의 3번째가 연령이 아니면 던진다(M7)", () => {
+  assert.throws(
+    () =>
+      parseDraftPicks(
+        "<h4>高校生選択会議</h4><table><tr><th>1位</th><td>山田 太郎</td><td>投手</td><td>内野手</td><td>某高</td></tr></table>",
+        "g",
+      ),
+    DraftParseError,
+  );
+});
+
+test("⚠모르는 섹션 머리는 무시하지 않고 던진다(M7)", () => {
+  assert.throws(
+    () => parseDraftPicks("<h4>新種目選択会議</h4><table><tr><th>1位</th><td>山田</td><td>投手</td><td>某高</td></tr></table>", "g"),
+    DraftParseError,
+  );
+});
+
+test("⚠모르는 회차 라벨은 던진다(M7)", () => {
+  assert.throws(
+    () =>
+      parseDraftPicks(
+        "<h4>新人選手選択会議</h4><table><tr><th>第一位</th><td>山田 太郎</td><td>投手</td><td>某高</td></tr></table>",
+        "g",
+      ),
+    DraftParseError,
+  );
+});
+
+test("team 은 페이지가 아니라 호출자가 준다", () => {
+  const rows = parseDraftPicks(fixture("draft-2019-list-g"), "g");
+  assert.ok(rows.every((r) => r.team === "g"));
+  const same = parseDraftPicks(fixture("draft-2019-list-g"), "yg");
+  assert.ok(same.every((r) => r.team === "yg"));
+});
