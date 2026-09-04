@@ -51,6 +51,11 @@ Expected: PASS (현재 상태). 이 시험은 **빈 DB에 마이그레이션만 
 
 Create `packages/store/migrations/019-draft.sql`:
 
+⚠**이 블록은 검수 지적 5건 반영 후로 갱신했다**(2026-09-05). 최초 구현이 아래 그대로 옮겨
+`STRICT`·`CHECK`·FK·PK 결함을 그대로 물려받았다 — 이 블록 자체가 브리프였다는 뜻이고,
+**다음에 이 계획을 참고하는 사람이 낡은 SQL을 다시 베끼지 않도록** 여기도 고친다.
+실제 사유는 `packages/store/migrations/019-draft.sql` 파일 머리말에 전부 적혀 있다(요약만 아래에).
+
 ```sql
 -- 019 드래프트 회의 — 지명·1순위 입찰·사후 사실
 --
@@ -67,65 +72,81 @@ Create `packages/store/migrations/019-draft.sql`:
 -- ⚠**`won` 이 3값이다**: 1=당첨 · 0=낙첨 · NULL=단독지명.
 -- **단독지명은 어느 소스도 적지 않는다** — 경합 그룹의 여집합으로 유도한다.
 -- 셋을 같은 값으로 쓰면 「경합에서 이겼다」와 「아무도 안 겹쳤다」가 섞인다(M11).
+--
+-- ⚠**4표 전부 `STRICT`** — 이 저장소 관용(018·010 참조).
+-- ⚠**`kind`·`won`·`origin`·`waiver_dir`·`note_kind` 에 `CHECK`** — 003·010 관용.
+-- ⚠**`player_id` 는 `REFERENCES player (player_id)`** — 이 저장소의 nullable player_id 전부가 이 패턴.
 
 CREATE TABLE draft_event (
   season       INTEGER NOT NULL,
-  kind         TEXT    NOT NULL,   -- shihaika | ikusei | koukousei | daigaku_shakaijin
+  -- shihaika(支配下) | ikusei(育成) | koukousei(高校生) | daigaku_shakaijin(大学生・社会人)
+  kind         TEXT    NOT NULL CHECK (kind IN ('shihaika', 'ikusei', 'koukousei', 'daigaku_shakaijin')),
   held_on      TEXT,               -- YYYY-MM-DD · 모르면 NULL(M11)
   source       TEXT    NOT NULL,
   fetched_at   TEXT    NOT NULL,
   revision     TEXT    NOT NULL,   -- 본문 해시
   license      TEXT,               -- wikipedia 유래일 때 CC BY-SA 4.0
   PRIMARY KEY (season, kind)
-);
+) STRICT;
 
+-- ⚠`name_display` 를 PK 에서 뺐다 — 2순위 이후 웨이버는 팀당 라운드당 1명이 자연 키다
+-- (season, kind, team, round_no). PK 에 이름을 넣으면 정정 재수집 때 기존 행을 갱신하지 않고
+-- 새 행이 추가돼 한 팀·한 라운드에 선수가 둘 남는다(`018-player-season-name.sql`과 같은 모양의 사고).
 CREATE TABLE draft_pick (
   season         INTEGER NOT NULL,
-  kind           TEXT    NOT NULL,
+  kind           TEXT    NOT NULL CHECK (kind IN ('shihaika', 'ikusei', 'koukousei', 'daigaku_shakaijin')),
   team           TEXT    NOT NULL,
   round_no       INTEGER NOT NULL,
   pick_seq       INTEGER,          -- 전체 지명 순번. 모르면 NULL
-  waiver_dir     TEXT,             -- '→' | '←' | NULL(1순위)
+  waiver_dir     TEXT    CHECK (waiver_dir IS NULL OR waiver_dir IN ('→', '←')),  -- NULL(1순위)
   name_display   TEXT    NOT NULL,
   name_canonical TEXT,
   position       TEXT,
   from_org       TEXT,
-  origin         TEXT    NOT NULL, -- 'npb' | 'wikipedia'
-  player_id      TEXT,
+  origin         TEXT    NOT NULL CHECK (origin IN ('npb', 'wikipedia')),
+  player_id      TEXT    REFERENCES player (player_id),
   source         TEXT    NOT NULL,
   fetched_at     TEXT    NOT NULL,
   revision       TEXT    NOT NULL,
-  PRIMARY KEY (season, kind, team, round_no, name_display)
-);
+  PRIMARY KEY (season, kind, team, round_no)
+) STRICT;
 
 CREATE TABLE draft_bid (
   season         INTEGER NOT NULL,
-  kind           TEXT    NOT NULL,
+  kind           TEXT    NOT NULL CHECK (kind IN ('shihaika', 'ikusei', 'koukousei', 'daigaku_shakaijin')),
   round_no       INTEGER NOT NULL, -- 1巡目 몇 회차인가(1·2·3·4)
   team           TEXT    NOT NULL,
   group_key      TEXT,             -- 같은 회차·같은 경합 대상. 단독지명이면 NULL
-  won            INTEGER,          -- 1 | 0 | NULL(단독지명)
+  won            INTEGER CHECK (won IS NULL OR won IN (0, 1)),  -- 1 | 0 | NULL(단독지명) ⚠가장 중요한 CHECK — 주석만으로는 won=2 를 못 막았다
   name_display   TEXT    NOT NULL,
   name_canonical TEXT,
-  origin         TEXT    NOT NULL,
-  player_id      TEXT,
+  origin         TEXT    NOT NULL CHECK (origin IN ('npb', 'wikipedia')),
+  player_id      TEXT    REFERENCES player (player_id),
   source         TEXT    NOT NULL,
   fetched_at     TEXT    NOT NULL,
   revision       TEXT    NOT NULL,
   PRIMARY KEY (season, kind, round_no, team)
-);
+) STRICT;
 
+-- ⚠**`team`·`name_display` 를 `NOT NULL` 로 바꿨다**(구현 시점 판단). 원안은 둘 다 nullable 이었는데
+-- SQLite 는 `NULL ≠ NULL` 이라 nullable 컬럼을 PK/UNIQUE 에 넣어도 유일성이 안 걸린다 —
+-- 재수집(교섭권 정정이 이 표의 존재 이유다)이 조용히 중복 행을 쌓는다. 세 선택지
+-- (NOT NULL / UNIQUE+COALESCE / 대리 키) 중 **NOT NULL** 을 골랐다: note_kind 4종 전부가
+-- 「특정 구단의 특정 지명」에 대한 사후 사실이고(2005 교섭권 정정·2025 입단거부 실측 사례가
+-- 전부 팀·선수를 둘 다 갖는다), 팀·선수 없는 주석은 조사 소스 어디에도 없다.
 CREATE TABLE draft_note (
   season       INTEGER NOT NULL,
-  kind         TEXT    NOT NULL,
-  team         TEXT,
-  name_display TEXT,
-  note_kind    TEXT    NOT NULL,   -- kousyouken_teisei | nyudan_kyohi | shimei_hakudatsu | fugoui
+  kind         TEXT    NOT NULL CHECK (kind IN ('shihaika', 'ikusei', 'koukousei', 'daigaku_shakaijin')),
+  team         TEXT    NOT NULL,
+  name_display TEXT    NOT NULL,
+  note_kind    TEXT    NOT NULL
+    CHECK (note_kind IN ('kousyouken_teisei', 'nyudan_kyohi', 'shimei_hakudatsu', 'fugoui')),
   detail       TEXT    NOT NULL,
   source       TEXT    NOT NULL,
   fetched_at   TEXT    NOT NULL,
-  revision     TEXT    NOT NULL
-);
+  revision     TEXT    NOT NULL,
+  PRIMARY KEY (season, kind, team, name_display, note_kind)
+) STRICT;
 
 CREATE INDEX draft_pick_season ON draft_pick (season, kind, round_no);
 CREATE INDEX draft_bid_group   ON draft_bid (season, kind, round_no, group_key);
