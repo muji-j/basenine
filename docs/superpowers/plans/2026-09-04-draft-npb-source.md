@@ -688,9 +688,9 @@ test("지명과 입찰이 들어간다", async () => {
     ],
     ...META,
   });
-  const picks = db.prepare("SELECT * FROM draft_pick WHERE season = 2019").all();
+  const picks = db.raw.prepare("SELECT * FROM draft_pick WHERE season = 2019").all();
   assert.equal(picks.length, 1);
-  const bids = db.prepare("SELECT * FROM draft_bid WHERE season = 2019 ORDER BY round_no").all();
+  const bids = db.raw.prepare("SELECT * FROM draft_bid WHERE season = 2019 ORDER BY round_no").all();
   assert.equal(bids.length, 2);
   assert.equal(bids[0].won, 0, "낙첨은 0 이다");
 });
@@ -705,7 +705,7 @@ test("⚠멱등하다 — 두 번 넣어도 한 번과 같다(M5)", async () => 
   };
   loadDraft(db, input);
   loadDraft(db, input);
-  const n = db.prepare("SELECT COUNT(*) AS n FROM draft_pick").get() as { n: number };
+  const n = db.raw.prepare("SELECT COUNT(*) AS n FROM draft_pick").get() as { n: number };
   assert.equal(n.n, 1, "두 번 넣어도 1행이다");
 });
 
@@ -717,7 +717,7 @@ test("⚠단독지명은 won 이 NULL 이다 — 낙첨(0)과 구별한다(M11)"
     bids: [],   // ⚠경합 주석이 없다 = 단독지명
     ...META,
   });
-  const row = db.prepare("SELECT won FROM draft_bid WHERE season = 2019 AND team = 'c'").get() as { won: number | null } | undefined;
+  const row = db.raw.prepare("SELECT won FROM draft_bid WHERE season = 2019 AND team = 'c'").get() as { won: number | null } | undefined;
   assert.ok(row, "단독지명도 draft_bid 에 행이 있어야 한다 — 그래야 1순위가 전부 한 표에 모인다");
   assert.equal(row.won, null, "⚠0 이 아니라 NULL 이다");
 });
@@ -758,7 +758,7 @@ export function loadDraft(db: Db, input: DraftLoadInput): void {
 
   db.transaction(() => {
     const kinds = new Set(picks.map((p) => p.kind));
-    const ev = db.prepare(
+    const ev = db.raw.prepare(
       `INSERT INTO draft_event (season, kind, held_on, source, fetched_at, revision)
        VALUES (?, ?, NULL, ?, ?, ?)
        ON CONFLICT(season, kind) DO UPDATE SET source = excluded.source,
@@ -766,7 +766,7 @@ export function loadDraft(db: Db, input: DraftLoadInput): void {
     );
     for (const kind of kinds) ev.run(season, kind, source, fetchedAt, revision);
 
-    const insPick = db.prepare(
+    const insPick = db.raw.prepare(
       `INSERT INTO draft_pick
          (season, kind, team, round_no, pick_seq, waiver_dir, name_display, name_canonical,
           position, from_org, origin, player_id, source, fetched_at, revision)
@@ -782,7 +782,7 @@ export function loadDraft(db: Db, input: DraftLoadInput): void {
 
     // 경합이 적힌 구단
     const contested = new Set(bids.map((b) => b.team));
-    const insBid = db.prepare(
+    const insBid = db.raw.prepare(
       `INSERT INTO draft_bid
          (season, kind, round_no, team, group_key, won, name_display, name_canonical,
           origin, player_id, source, fetched_at, revision)
@@ -878,7 +878,7 @@ test("INV-4: 구획×구단마다 확정된 1순위 지명이 정확히 1건", a
     bids: [{ team: "g", roundNo: 1, rivals: ["東京ヤクルト"], nameDisplay: "奥川恭伸", won: false }],
     source: "t", fetchedAt: "t", revision: "t",
   });
-  const rows = db.prepare(
+  const rows = db.raw.prepare(
     `SELECT team, COUNT(*) AS n FROM draft_pick
       WHERE season = 2019 AND kind = 'shihaika' AND round_no = 1 GROUP BY team`,
   ).all() as Array<{ team: string; n: number }>;
@@ -895,7 +895,7 @@ test("INV-5: 같은 (season, kind, round_no, team) 에 입찰이 두 번 들어�
   };
   loadDraft(db, input);
   loadDraft(db, input);
-  const n = db.prepare("SELECT COUNT(*) AS n FROM draft_bid").get() as { n: number };
+  const n = db.raw.prepare("SELECT COUNT(*) AS n FROM draft_bid").get() as { n: number };
   assert.equal(n.n, 1);
 });
 ```
