@@ -100,6 +100,12 @@ const PROVENANCE: Readonly<Record<string, Provenance>> = {
       "매 실행이 **시즌 단위로 지우고 다시 넣는다**(`load-upcoming.ts`) — 판이 쌓이지 않는다. "
       + "⚠예정은 원래 바뀌는 것이고(M9의 정신) 바뀐 이력을 우리가 주장하지 않는다.",
   },
+  // 019 드래프트 — 경기와 달리 부모(game_id)가 없다. npb.jp 가 ETag·Last-Modified 를
+  // 주지 않으므로 revision 은 본문 해시이고, 네 표 모두 자기 컬럼으로 M4 를 답한다.
+  draft_event: { where: "source", when: "fetched_at", revision: "revision" },
+  draft_pick: { where: "source", when: "fetched_at", revision: "revision" },
+  draft_bid: { where: "source", when: "fetched_at", revision: "revision" },
+  draft_note: { where: "source", when: "fetched_at", revision: "revision" },
 };
 
 async function schema(): Promise<Map<string, string[]>> {
