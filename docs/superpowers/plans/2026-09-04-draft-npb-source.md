@@ -792,7 +792,8 @@ export function loadDraft(db: Db, input: DraftLoadInput): void {
          (season, kind, team, round_no, pick_seq, waiver_dir, name_display, name_canonical,
           position, from_org, origin, player_id, source, fetched_at, revision)
        VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, ?, ?, 'npb', NULL, ?, ?, ?)
-       ON CONFLICT(season, kind, team, round_no, name_display) DO UPDATE SET
+       ON CONFLICT(season, kind, team, round_no) DO UPDATE SET
+         name_display = excluded.name_display,
          position = excluded.position, from_org = excluded.from_org,
          fetched_at = excluded.fetched_at, revision = excluded.revision`,
     );
