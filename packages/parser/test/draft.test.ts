@@ -26,6 +26,7 @@ import { gunzipSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
 import {
   DraftParseError,
+  DraftIndexError,
   parseDraftBids,
   parseDraftPicks,
   parseDraftTeamSlugs,
@@ -584,12 +585,14 @@ test("⚠세 연도의 슬러그 집합이 서로 다르다 — 그래서 하드
   for (const s of [y2001, y2013, y2024]) assert.equal(s.length, 12);
 });
 
-test("⚠실물 2026 연도 톱(개최 전)은 슬러그가 0건이라 던진다", () => {
-  // ⚠**이건 「구조가 바뀌었다」가 아니라 「아직 안 열렸다」다**(M11 · 원래 없음).
-  // 실측(2026-09-04 표본): 그 페이지에는 `開催要項` 과 `ニュース` 뿐이고
-  // `draftlist_*` 는 **개최 당일에 생긴다**(조사 문서 §7).
-  // ⚠**그래도 던진다** — 파서는 둘을 구별할 수 없고, 빈 배열로 흘리면
-  // **마크업이 진짜로 바뀐 날에도 똑같이 조용하다.** 「아직인가」는 호출자가 판정한다.
+test("⚠실물 2026 연도 톱은 슬러그가 0건이라 던진다", () => {
+  // ⚠**우리가 바깥에서 아는 것**: 이 표본은 2026-09-04 취득이고 그해 드래프트는 10월이라
+  // 아직 안 열렸다 — `draftlist_*` 는 **개최 당일에 생긴다**(조사 문서 §7).
+  // ⚠**그건 파서가 아는 것이 아니다.** 그걸 알려면 오늘이 며칠인지 읽어야 하고(M6),
+  // 파서는 시계를 안 읽는다. 파서가 하는 일은 둘이다: **빈 배열로 흘리지 않는 것**
+  // (흘리면 진짜 붕괴도 똑같이 조용하다)과 **무엇을 봤는지 남기는 것**(`observed`).
+  // ⚠~~「파서는 둘을 구별할 수 없다」~~ 고 적혀 있었는데 **이제 거짓이다** — 판정은 안 하지만
+  // **관측은 가른다**(바로 아래 세 본). 판정에 필요한 「그 연도가 과거인가」만 호출자 몫이다.
   assert.throws(() => parseDraftTeamSlugs(fixture("draft-2026-index")), DraftParseError);
 });
 
@@ -598,4 +601,56 @@ test("⚠슬러그가 어휘 밖 형태면 던진다(M7 그물) — 한 구단�
   // (그리고 개수 12 를 박으면 위 2026 케이스와 합성 시험이 죽는다).
   const html = `<a href="draftlist_g.html">読売</a><a href="draftlist_B.html">オリックス</a>`;
   assert.throws(() => parseDraftTeamSlugs(html), DraftParseError);
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 슬러그 0건의 **두 갈래** — ⚠호출자가 한국어 메시지를 문자열 매칭하지 않아도 되게.
+ *
+ * ⚠**파서는 「아직 안 열렸다」를 알 수 없다.** 그걸 알려면 **오늘이 며칠인지**를 읽어야 하는데
+ * 파서는 시계를 안 읽는다(M6). 그러니 노출하는 것은 **판정이 아니라 관측**이다 —
+ * 「그 해가 아직인가 / 마크업이 무너졌나」는 **그 연도가 과거인지 아는 호출자**만 정할 수 있다.
+ * ⚠과거 연도에서 `no-team-links` 가 나오면 그건 개최 전이 아니라 **붕괴**다.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * 던진 예외를 **받아서 돌려준다.**
+ * ⚠**`assert.throws` 는 예외를 돌려주지 않는다**(반환이 `void` 다). 초판에서 그 반환을
+ * 캐스트해 `.observed` 를 읽었고, 세 본이 전부 `Cannot read properties of undefined` 로
+ * 죽었다 — **읽어서가 아니라 돌려서 잡혔다.**
+ */
+function caught(fn: () => unknown): unknown {
+  try {
+    fn();
+  } catch (e) {
+    return e;
+  }
+  assert.fail("던질 줄 알았는데 안 던졌다");
+}
+
+test("⚠2026 실물(구단 링크 0건)은 `no-team-links` 로 관측된다", () => {
+  const err = caught(() => parseDraftTeamSlugs(fixture("draft-2026-index")));
+  assert.ok(err instanceof DraftIndexError);
+  assert.equal(err.observed, "no-team-links");
+  // ⚠**기존 호출자를 깨지 않는다** — 하위 클래스라 `DraftParseError` 로도 잡힌다.
+  assert.ok(err instanceof DraftParseError);
+});
+
+test("⚠실물 404 본문은 `no-draft-marker` 로 관측된다 — 같은 0건이지만 뜻이 다르다", () => {
+  // ⚠**수집기가 실제로 받는 모양이다**: 2013 에 `draftlist_b.html` 을 치면 이게 온다
+  // (nginx 404 · 162바이트). 2026 톱과 **똑같이 슬러그 0건**인데 원인이 정반대다.
+  const err = caught(() => parseDraftTeamSlugs(fixture("draft-2013-list-b-404")));
+  assert.ok(err instanceof DraftIndexError);
+  assert.equal(err.observed, "no-draft-marker");
+});
+
+test("⚠`開催要項` 을 표지로 쓰지 마라 — 2001·2006 톱에 그 말이 없다", () => {
+  // ⚠⚠**이 시험이 막는 것은 「그럴듯한 대안」이다.** 2026 톱에 `開催要項` 이 있어서
+  // 그것을 「개최 전 표지」로 삼고 싶어지는데, **실측하면 13장 중 4장에만 있다** —
+  // 2001·2006 연도 톱에는 **없고 그 두 해는 슬러그가 12개씩 정상**이다.
+  // 그걸 표지로 쓰면 **2001 년의 마크업 붕괴가 「아직 안 열렸다」로 읽힌다** — 방향이 정반대다.
+  // 표지는 `page_draft`(실물 드래프트 페이지 12장 중 12장 · 404 본문에는 없음)다.
+  const html = `<body class="page_draft" id="ctop"><p>ニュース</p></body>`;
+  const err = caught(() => parseDraftTeamSlugs(html));
+  assert.ok(err instanceof DraftIndexError);
+  assert.equal(err.observed, "no-team-links", "開催要項 이 없어도 드래프트 페이지다");
 });
