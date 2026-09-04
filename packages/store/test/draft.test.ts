@@ -225,6 +225,38 @@ test("⚠1순위 지명이 사라지면 그 구단의 옛 입찰 행도 사라�
   });
 });
 
+/**
+ * ⚠**지명이 0건인 판도 반영돼야 한다** — 그래서 지울 구단을 행에서 유도하지 않고 입력에서 받는다.
+ * `parseDraftPicks` 는 「전 회차를 건너뛴 구단」에 대해 **빈 배열을 내는 것이 정상**이다
+ * (그 파서의 `@returns`). 유도했다면 지울 대상을 몰라 **옛 행이 조용히 남는다.**
+ * ⚠**이건 [I3] 을 고치다 딸려 온 것이지 검토가 지적한 항목이 아니다** — 그래도 여기 못 박는다.
+ */
+test("⚠지명이 0건인 판을 넣으면 그 구단의 옛 행이 사라진다(M5)", async () => {
+  await withDb((db) => {
+    loadDraft(db, {
+      season: 2001,
+      team: "f",
+      picks: [pick("f", "shihaika", 1, "江尻 慎太郎")],
+      bids: [],
+      ...META,
+    });
+    loadDraft(db, { season: 2001, team: "c", picks: [pick("c", "shihaika", 1, "가상")], bids: [], ...META });
+    assert.equal(
+      (db.raw.prepare("SELECT COUNT(*) AS n FROM draft_pick").get() as unknown as { n: number }).n,
+      2,
+      "먼저 두 구단이 들어간다",
+    );
+
+    // 정정으로 그 구단이 전 회차를 건너뛴 것이 됐다.
+    loadDraft(db, { season: 2001, team: "f", picks: [], bids: [], ...META });
+    const rows = db.raw
+      .prepare("SELECT team FROM draft_pick WHERE season = 2001 ORDER BY team")
+      .all() as unknown as Array<{ team: string }>;
+    assert.deepEqual(rows.map((r) => r.team), ["c"], "⚠f 의 옛 행이 남으면 안 되고, c 는 건드리면 안 된다");
+    assert.equal(bidsOf(db, 2001).length, 1, "f 의 유도된 단독지명 행도 같이 사라진다");
+  });
+});
+
 test("⚠다른 구단을 지우지 않는다 — 구단 단위로 다시 넣어도 된다(M5)", async () => {
   await withDb((db) => {
     // ⚠삭제 범위가 **구단 단위**라, 다른 구단의 **어느 구획도** 건드리면 안 된다.
