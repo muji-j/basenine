@@ -8,7 +8,7 @@ description: |
   assistant: sabermetrics-analyst로 리그 상수·파크팩터를 포함한 산식을 확정하겠습니다.</example>
   <example>user: 규정타석 미달 선수를 순위에 어떻게 표시할까
   assistant: sabermetrics-analyst로 자격 기준과 표시 규칙을 정의합니다.</example>
-tools: Read, Grep, Glob, Bash, WebFetch, WebSearch
+tools: Read, Grep, Glob, Bash, WebFetch, WebSearch, Write
 model: opus
 effort: max
 ---
@@ -64,6 +64,7 @@ effort: max
 - 같은 지표에 복수 정의가 있으면 **전부 나열하고 어느 것을 채택하는지와 이유**를 쓴다.
 - 계산에 필요한데 소스에 없는 입력이 있으면 **즉시 `data-source-scout`로 넘길 항목**으로 표시하라.
 - 산출물은 `docs/metrics/` 에 남긴다. 구현자(M1: 계산식 단일 패키지)가 이것만 보고 쓸 수 있어야 한다.
+  ⚠**`Write` 는 그 경로에만 쓴다** — 코드도 남의 문서도 고치지 마라(경계는 `CLAUDE.md` §4 · **도구가 막아 주지 않는다**).
 
 ## 하지 말 것
 - 코드를 수정하지 마라.

@@ -8,7 +8,7 @@ description: |
   assistant: data-source-scout로 취득 경로·약관·갱신주기를 전수 조사하겠습니다.</example>
   <example>user: 라이브 스코어가 몇 초 지연되는지 알아야 해
   assistant: data-source-scout로 소스별 지연을 실측 조사합니다.</example>
-tools: Read, Grep, Glob, Bash, WebFetch, WebSearch
+tools: Read, Grep, Glob, Bash, WebFetch, WebSearch, Write
 model: opus
 effort: max
 ---
@@ -50,7 +50,7 @@ effort: max
   ⚠**「샘플을 `docs/sources/samples/` 에 저장해 재요청을 없앤다」고 믿지 마라** — 그 디렉터리는 `.gitignore` 로 **무추적**이라 그 말은 **이 기계에서만** 참이다. 다음 조사자는 클론에서 **0파일**을 보고 같은 요청을 L1 속도로 다시 쏜다. **다음 사람에게 실제로 전달되는 것은 `docs/sources/*.md` 에 적은 URL·기준일·인용문뿐이다** — 사본은 로컬 보조로만 둔다.
 - 소스 간 **같은 지표의 값이 다른 경우**를 적극적으로 찾아라. 있으면 그 자체가 설계 입력(어느 쪽을 정본으로?)이다.
 - 자동 취득이 **불가능**하다는 결론도 1급 산출물이다 — 「왜 불가능한가」와 「수동이면 얼마나 드는가」를 함께 써라.
-- 산출물은 `docs/sources/` 에 남긴다.
+- 산출물은 `docs/sources/` 에 남긴다. ⚠**`Write` 는 그 경로에만 쓴다** — 코드도 남의 문서도 고치지 마라(경계는 `CLAUDE.md` §4 · **도구가 막아 주지 않는다**).
 
 ## 하지 말 것
 - 코드를 수정하지 마라.

@@ -8,7 +8,7 @@ description: |
   assistant: planning-architect로 유료·무료 2트랙 ADR을 작성하겠습니다.</example>
   <example>user: 라이브 기능을 어느 단계에 넣을지 계획 잡아줘
   assistant: planning-architect로 단계 분해와 의존관계를 정리합니다.</example>
-tools: Read, Grep, Glob, Bash, WebFetch, WebSearch
+tools: Read, Grep, Glob, Bash, WebFetch, WebSearch, Write
 model: opus
 effort: max
 ---
@@ -39,7 +39,7 @@ C안 · 비교표        성능 · 월비용 · 운용부하 · 확장한계 · 
 - 기존 형제 프로젝트의 선례를 먼저 읽어라 — `../PPS_NEW_PORTAL/docs/decisions/` · `../x-scraper/docs/superpowers/specs/`(**읽기 전용** — 루트 §10). 같은 실수를 두 번 하지 않기 위한 자산이다.
 - 계획은 **단계마다 「무엇으로 완료를 판정하는가」**를 쓴다. 판정 기준 없는 단계는 끝나지 않는다.
 - 의존관계를 명시하라 — 특히 **`data-source-scout`의 결론에 의존하는 항목**은 그 사실을 적어라. 소스가 없으면 그 기능은 존재할 수 없다.
-- 산출물은 **`docs/decisions/YYYY-MM-DD-<주제>.md`**.
+- 산출물은 **`docs/decisions/YYYY-MM-DD-<주제>.md`**. ⚠**`Write` 는 그 경로에만 쓴다** — 코드도 남의 문서도 고치지 마라(경계는 `CLAUDE.md` §4 · **도구가 막아 주지 않는다**).
   ⚠**`ADR-XXX-*.md` 로 쓰지 마라** — 그 이름 규칙을 따르는 파일이 전 이력에 **0건**이고, 실재 3건이 **전부** 날짜 접두사다. ⚠**`ADR-001` 자체가 쓰인 적이 없다** — 스택은 그것 없이 정해져 이미 돌고 있다(`CLAUDE.md` §1).
 
 ## 하지 말 것
