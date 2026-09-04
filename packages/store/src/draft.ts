@@ -18,6 +18,10 @@
  * 「`round_no` 가 없는 제도라 **적재가 순번을 매기는 순간 구별할 근거가 사라진다**」.
  * 파서가 `roundNo: null` 을 내는 것이 옳다(M11 · 「원래 없음」). **파서가 0 이나 1 을 채우면
  * 소스에 있던 값과 우리가 매긴 값을 영영 구별할 수 없다.**
+ * ⚠⚠**그 계약이 `ikusei` 에서 한 번 깨져 있었다**(2026-09-05 · [I4]). 회차 검사가
+ * 「추첨이 있는 구획」(`LOTTERY_KINDS`)으로 물어서, **추첨은 없지만 회차는 있는** `ikusei` 가
+ * 그물을 지나 **적재가 1·2 를 지어냈다.** 지금은 `ROUND_NUMBERED_KINDS` 로 묻는다 —
+ * **두 상수를 하나로 합치지 마라. 축이 다르다.**
  *
  * ⚠**`draft_bid.round_no` 를 지명 회차로 읽지 마라.** 경합은 1巡目에서만 일어나므로
  * (2순위 이후는 웨이버라 추첨이 없다) **어느 추첨에서 이겼든 그 구단이 얻은 것은 1巡目 지명**이다.
@@ -27,7 +31,7 @@
  * ⚠**`origin` 은 `'npb'` 고정이다.** wikipedia 를 넣게 되면 **두 번째 적재기를 만들지 말고**
  * `origin`·`license` 를 입력으로 올려라(M1).
  */
-import { normalizePlayerName } from "@bb-app/parser";
+import { DRAFT_KINDS, normalizePlayerName } from "@bb-app/parser";
 import type { DraftBidRow, DraftKind, DraftPickRow } from "@bb-app/parser";
 import type { Db } from "./db.ts";
 
@@ -40,13 +44,59 @@ export class DraftLoadError extends Error {
   }
 }
 
-export interface DraftLoadInput {
-  season: number;
-  picks: DraftPickRow[];
-  bids: DraftBidRow[];
+/**
+ * 「어느 페이지에서 · 언제 · 몇 번째 판」 한 벌(M4).
+ *
+ * ⚠**입도(무엇 한 개를 가리키는가)는 이 타입이 말하지 않는다** — 쓰는 자리가 말한다.
+ * `DraftLoadInput` 이 이것을 **두 개** 갖는 이유가 그것이다.
+ */
+export interface DraftProvenance {
+  /** 그 행이 실린 페이지의 URL */
   source: string;
   fetchedAt: string;
+  /** ⚠**본문 해시다.** npb.jp 는 `ETag`·`Last-Modified` 를 주지 않는다(019 주석) */
   revision: string;
+}
+
+/**
+ * ⚠⚠**출처가 두 벌인 것이 이 타입의 요점이다**(2026-09-05 최종 검토 [I3]).
+ *
+ * 초판은 출처 3종을 **한 벌만** 받아서 세 표에 다 썼다. 그런데 **표 두 개의 입도가 다르다**:
+ * `draft_pick`·`draft_bid` 는 **구단 페이지**의 행이고, `draft_event` 는 **시즌·구획**의 행이다.
+ * 한 벌로 쓰면 `draft_event` 의 출처가 **마지막에 적재된 구단 페이지**로 덮여서,
+ * 「2019 支配下 회의는 어느 판인가?」의 답이 **12구단 중 11구단에 대해 틀리게** 된다.
+ * ⚠**그리고 `provenance.test.ts` 는 컬럼 존재만 보므로 영원히 초록이다** — 즉
+ * **M4 를 답하는 척**만 하고 있었다.
+ *
+ * ⚠**「시즌 URL 을 넘기면 되지 않나」는 반증됐다** — 그러면 이번엔 `draft_pick.source` 가
+ * 지명이 실린 페이지를 안 가리킨다. **어느 쪽 하나를 고르면 반드시 한쪽이 거짓이다.**
+ * 그래서 고르지 않고 **나눈다.**
+ */
+export interface DraftLoadInput {
+  season: number;
+  /**
+   * 이 호출이 담는 **구단 하나**.
+   *
+   * ⚠**행에서 유도하지 않고 받는다.** 유도하면 두 가지를 못 한다:
+   * ⑴ **지명이 0건인 판을 반영할 수 없다** — 「전 회차를 건너뛴 구단」은 `parseDraftPicks` 가
+   *    빈 배열을 내는 정상 경우인데(그 파서의 `@returns`), 유도하면 지울 대상을 모른다.
+   *    그러면 옛 행이 **조용히 남는다.**
+   * ⑵ **한 호출에 구단이 섞여도 모른다** — 아래 `page` 가 페이지 하나의 출처이므로
+   *    구단이 둘 이상 섞이면 그 순간 **출처가 거짓**이 된다.
+   */
+  team: string;
+  picks: DraftPickRow[];
+  bids: DraftBidRow[];
+  /** 구단 페이지(`draftlist_{team}.html`) — **지명·입찰 행**의 출처 */
+  page: DraftProvenance;
+  /**
+   * 연도 톱(`/draft/{YYYY}/`) — **회의 행(`draft_event`)**의 출처.
+   *
+   * ⚠**이 페이지는 파이프라인이 이미 받는다** — 구단 슬러그를 발견하는 곳이
+   * 바로 여기다(`parseDraftTeamSlugs`). 즉 새로 요청을 늘리지 않는다(M8).
+   * ⚠**`held_on`(개최일)도 언젠가 여기서 온다** — 그래서 이 페이지가 그 행의 출처인 것이 맞다.
+   */
+  event: DraftProvenance;
 }
 
 export interface DraftLoadResult {
@@ -82,6 +132,29 @@ export const LOTTERY_KINDS: ReadonlySet<DraftKind> = new Set<DraftKind>([
 ]);
 
 /**
+ * **회차를 소스가 반드시 적는 구획.** 회차가 없는 제도(`jiyuu_kakutoku`·`kibou_nyudanwaku`)의 여집합이다.
+ *
+ * ⚠⚠**`LOTTERY_KINDS` 와 다른 축이다. 하나로 쓰면 `ikusei` 에서 정확히 갈린다**
+ * (2026-09-05 최종 검토 [I4] · 실측). 초판은 회차 검사에도 `LOTTERY_KINDS` 를 썼는데,
+ * **`ikusei` 는 추첨은 없지만 회차는 있다.** 그래서 회차가 빈 育成 입력이 게이트를 그냥 지나
+ * **적재가 1·2 를 지어냈다**:
+ * ```
+ * g/ikusei roundNo=1,2 (소스)  → round_no 1,2
+ * c/ikusei roundNo=null,null   → round_no 1,2   ← 적재가 만든 값. 예외 0건
+ * DB: [c/1 빈칸A][c/2 빈칸B][g/1 정상A][g/2 정상B]  ← 구별 불가
+ * ```
+ * ⚠**그 순간 이 파일 머리말의 표가 거짓이 된다** — 「그 순번이 회차인지 순번인지는
+ * `kind` 만이 안다」인데, `ikusei` 에서는 `kind` 를 봐도 모르게 된다.
+ *
+ * ⚠**여집합으로 정의한 것이 요점이다.** 목록을 손으로 적으면 7번째 구획이 생긴 날
+ * 조용히 빠지고, 그 구획의 회차 없는 입력이 **번호를 지어내는 쪽**으로 흐른다.
+ * 여집합이면 새 구획의 기본값이 **「회차가 있어야 한다」= 시끄러운 쪽**이다(M7).
+ */
+export const ROUND_NUMBERED_KINDS: ReadonlySet<DraftKind> = new Set<DraftKind>(
+  DRAFT_KINDS.filter((k) => k !== "jiyuu_kakutoku" && k !== "kibou_nyudanwaku"),
+);
+
+/**
  * 키 안에서 칸을 가르는 문자. ⚠**팀 코드·`kind` 에 절대 안 나오는 것**이어야 한다 —
  * 구분자가 값 안에 나올 수 있으면 서로 다른 두 쌍이 같은 키가 된다.
  */
@@ -112,8 +185,10 @@ interface NumberedPick {
  *
  * @throws {DraftLoadError} 한 구획 안에 회차 있는 지명과 없는 지명이 섞였을 때 —
  *   그대로 매기면 **우리가 만든 `1` 이 소스의 `1` 과 같은 칼럼에서 부딪쳐** 진짜 1巡目을 덮어쓴다.
- * @throws {DraftLoadError} 추첨이 있는 구획의 회차가 비었을 때 — 순번을 매기면
- *   **일어난 적 없는 1巡目이 생기고**, 그 위에 단독지명까지 유도된다.
+ * @throws {DraftLoadError} **회차가 있는 구획**(`ROUND_NUMBERED_KINDS`)의 회차가 비었을 때.
+ *   ⚠**「추첨이 있는 구획」이 아니다** — 갈라야 하는 이유는 그 상수 주석에 있다([I4]).
+ *   추첨 구획이면 **일어난 적 없는 1巡目이 생기고** 그 위에 단독지명까지 유도되며,
+ *   `ikusei` 면 **소스의 회차와 우리가 매긴 순번을 영영 구별할 수 없게** 된다.
  */
 function numberRounds(season: number, picks: readonly DraftPickRow[]): NumberedPick[] {
   const sections = new Map<string, number[]>();
@@ -144,10 +219,13 @@ function numberRounds(season: number, picks: readonly DraftPickRow[]): NumberedP
       continue;
     }
 
-    if (LOTTERY_KINDS.has(head.kind)) {
+    // ⚠**「추첨이 있는가」가 아니라 「회차가 있는가」로 묻는다**([I4]).
+    //   `ikusei` 는 추첨이 없지만 회차는 있어서, 추첨으로 물으면 **적재가 번호를 지어낸다.**
+    if (ROUND_NUMBERED_KINDS.has(head.kind)) {
       throw new DraftLoadError(
-        "추첨이 있는 구획인데 회차가 비어 있다 — 순번을 매기면 없던 1巡目이 생긴다(M7)",
-        `season=${season} kind=${head.kind} team=${head.team} 건수=${rows.length}`,
+        "회차가 있는 구획인데 회차가 비어 있다 — 순번을 매기면 소스의 회차와 구별할 수 없게 된다(M7)",
+        `season=${season} kind=${head.kind} team=${head.team} 건수=${rows.length}`
+          + `${LOTTERY_KINDS.has(head.kind) ? " · 추첨 구획이라 없던 1巡目까지 생긴다" : ""}`,
       );
     }
 
@@ -233,6 +311,33 @@ interface ResolvedBid {
   readonly won: 0 | 1 | null;
   readonly nameDisplay: string;
   readonly nameCanonical: string;
+  /**
+   * 주석이 **선언한** 경합 상대(표기 그대로). ⚠**유도한 단독지명은 `null`** 이다 —
+   * 주석 자체가 없으므로 「0개」가 아니라 **「원래 없음」**이다(M11).
+   */
+  readonly rivals: readonly string[] | null;
+}
+
+/**
+ * 주석이 말한 상대 구단 목록을 **그대로** 받되, 모양은 검사한다(M7).
+ *
+ * ⚠**타입이 `string[]` 이라고 안심하지 마라 — 이 값은 HTML 에서 온다.** `wonToInt` 가
+ * 같은 이유로 존재한다. 파서가 오늘 이런 모양을 내지 않아도, 여기서 조용히 통과시키면
+ * **경합 규모가 틀린 채로 DB 에 들어가고 아래 불변식이 그것을 「그룹이 갈렸다」로 오진한다.**
+ */
+function checkRivals(bid: DraftBidRow, season: number): readonly string[] {
+  const { rivals } = bid;
+  const bad =
+    !Array.isArray(rivals)
+    || rivals.length === 0
+    || rivals.some((r) => typeof r !== "string" || r.trim() === "");
+  if (bad) {
+    throw new DraftLoadError(
+      "경합 상대 목록이 모양을 벗어났다 — 경합 규모를 모르는 채로 담지 않는다(M7)",
+      `season=${season} team=${bid.team} round=${bid.roundNo} rivals=${JSON.stringify(rivals as unknown)}`,
+    );
+  }
+  return rivals;
 }
 
 /**
@@ -273,6 +378,10 @@ function resolveBids(
       won: wonToInt(b.won, season, b.team, b.roundNo),
       nameDisplay,
       nameCanonical,
+      // ⚠**주석이 선언한 경합 규모의 유일한 증거다.** 이걸 안 담으면 DB 는
+      //   「몇 구단이 겹쳤어야 하는가」를 영영 모르고, 주석 하나가 조용히 안 읽힌 날
+      //   그 구단의 1巡目이 **단독지명으로 둔갑해도 아무 게이트가 안 뜬다**([I1]).
+      rivals: checkRivals(b, season),
     } satisfies ResolvedBid;
   });
 
@@ -330,25 +439,40 @@ function deriveSoleNominations(
       won: null,
       nameDisplay: p.row.nameDisplay,
       nameCanonical: normalizePlayerName(p.row.nameDisplay),
+      // ⚠**`[]` 가 아니라 `null` 이다**(M11). 「상대가 0명이라고 주석이 말했다」가 아니라
+      //   **「주석 자체가 없다」**이고, 019 의 CHECK 가 그 둘을 갈라 준다.
+      rivals: null,
     });
   }
   return out;
 }
 
-/** 지우고 다시 넣을 대상 구단. ⚠**구획이 아니라 구단이다** — `loadDraft` 주석의 근거를 봐라. */
-function teamsOf(items: ReadonlyArray<{ team: string }>): string[] {
-  return [...new Set(items.map((it) => it.team))];
+/**
+ * 이 호출에 실제로 실려 온 구단 — **입력이 선언한 구단과 같아야 한다.**
+ *
+ * ⚠**「같은지 묻는 것」이 이 함수의 전부다.** 초판은 행에서 구단을 **유도**했는데,
+ * 그러면 ⑴ 지명이 0건인 판에서 **지울 대상을 모르고** ⑵ 구단이 섞여 들어와도 **모른다**
+ * (그 순간 `page` 출처가 거짓이 된다 · [I3]).
+ */
+function foreignTeams(input: DraftLoadInput): string[] {
+  const rows: ReadonlyArray<{ team: string }> = [...input.picks, ...input.bids];
+  return [...new Set(rows.map((r) => r.team))].filter((t) => t !== input.team).sort();
 }
 
 /**
- * 한 시즌(또는 한 구단)의 드래프트를 넣는다.
+ * **한 구단**의 드래프트를 넣는다.
  *
- * ⚠⚠**입력 단위 계약: 한 호출은 「한 구단의 전부」를 담아야 한다.**
- * 구단 여럿을 한 번에 넣는 것은 괜찮다. **한 구단을 여러 번에 나눠 넣으면 안 된다** —
- * 아래 삭제가 구단 단위라 **먼저 넣은 구획을 뒤 호출이 지운다.**
+ * ⚠⚠**입력 단위 계약: 한 호출 = 한 구단 = 한 페이지.**
  * 이 계약은 소스의 생김새와 일치한다(실측 · 픽스처 4장): `draftlist_{team}.html` 한 장이
  * **한 구단**을 내고(4장 중 4장) 그 한 장이 **그 구단의 모든 구획**을 담는다
  * (4장 중 4장이 2종 이상 · 2006 요미우리는 **4종**). 파서에 구획 단위 입구가 아예 없다.
+ * ⚠**한 구단을 여러 번에 나눠 넣으면 안 된다** — 아래 삭제가 구단 단위라
+ * **먼저 넣은 구획을 뒤 호출이 지운다.**
+ *
+ * ⚠**~~구단 여럿을 한 번에 넣는 것은 괜찮다~~ 였고, 그것을 좁혔다**(2026-09-05 · [I3] 처리 중).
+ * 좁힌 이유는 취향이 아니라 **출처의 입도**다: `page` 는 **페이지 하나**의 출처인데
+ * 구단이 둘 섞이면 그 순간 최소 한 구단의 `draft_pick.source` 가 **자기가 실리지 않은 페이지**를
+ * 가리킨다 — `draft_event` 에서 고친 것과 **똑같은 거짓말**이 한 층 아래에서 반복된다.
  *
  * ⚠**멱등하다**(M5). 「덮어쓰기」가 아니라 **구단 단위로 지우고 다시 넣는다** — 그래야
  * **정정으로 줄어든 판**도 반영된다. `ON CONFLICT DO UPDATE` 만 쓰면 사라진 지명이 그대로 남고,
@@ -375,23 +499,32 @@ function teamsOf(items: ReadonlyArray<{ team: string }>): string[] {
  * ⚠**`draft_event` 는 지우지 않고 upsert 한다.** 그 표의 키는 `(season, kind)` 라 구단이 없어서
  * 구단 단위 호출로는 「이 구획이 시즌에서 사라졌는가」를 알 수 없다. **어느 지명도 가리키지 않는
  * 구획 행이 남을 수 있고, 그건 알면서 남긴 것이다**(출처만 든 빈 행이라 값을 왜곡하지 않는다).
+ * ⚠**그 행이 받는 출처는 `input.event`(연도 톱)다** — 구단 페이지가 아니다([I3]).
+ * 그래서 12구단을 순서대로 넣어도 **그 행의 출처가 매번 같은 값으로 덮인다**(= 멱등이고 참이다).
  *
  * ⚠**부분 실패는 없다.** 판정은 트랜잭션 **밖**에서 끝내고(걸리면 SQL 을 안 만진다) 쓰기는
  * 한 트랜잭션이라 도중에 던지면 **아무것도 남지 않는다** — 반쯤 적재된 시즌이 「원래 그렇다」로
  * 읽히는 것이 이 도메인에서 가장 비싼 실패다.
+ *
+ * @throws {DraftLoadError} 입력에 **선언한 구단이 아닌 행**이 섞여 있을 때.
  */
 export function loadDraft(db: Db, input: DraftLoadInput): DraftLoadResult {
-  const { season, source, fetchedAt, revision } = input;
+  const { season, team, page, event } = input;
 
   // ⚠SQL 을 만지기 전에 전부 판정한다 — 던질 것은 트랜잭션 밖에서 던지는 편이 읽기 쉽다.
+  const foreign = foreignTeams(input);
+  if (foreign.length > 0) {
+    throw new DraftLoadError(
+      "한 호출에 선언한 구단이 아닌 행이 섞였다 — 페이지 하나의 출처를 남의 행에 붙이지 않는다(M4·M7)",
+      `season=${season} team=${team} 섞인 구단=${JSON.stringify(foreign)}`,
+    );
+  }
+
   const numbered = numberRounds(season, input.picks);
   const resolved = resolveBids(season, input.bids, numbered);
   const soles = deriveSoleNominations(numbered, resolved);
   const allBids = [...resolved, ...soles];
 
-  // ⚠**구단 단위다**(위 주석). `allBids` 를 합치는 것은 형식뿐이다 — 입찰이 있는 구단은
-  //   반드시 1巡目 지명이 있어서(`firstRoundPick` 이 없으면 던진다) 이미 `numbered` 에 있다.
-  const teams = teamsOf([...numbered.map((p) => p.row), ...allBids]);
   const kinds = new Set(numbered.map((p) => p.row.kind));
 
   db.transaction(() => {
@@ -401,10 +534,14 @@ export function loadDraft(db: Db, input: DraftLoadInput): DraftLoadResult {
        ON CONFLICT(season, kind) DO UPDATE SET
          source = excluded.source, fetched_at = excluded.fetched_at, revision = excluded.revision`,
     );
-    for (const kind of kinds) ev.run(season, kind, source, fetchedAt, revision);
+    // ⚠**시즌 단위 출처를 쓴다.** 구단 페이지(`page`)를 여기 쓰면 12구단 중 11구단분이
+    //   마지막에 적재된 한 장으로 덮여 **「이 회의는 어느 판인가」의 답이 틀린다**([I3]).
+    for (const kind of kinds) ev.run(season, kind, event.source, event.fetchedAt, event.revision);
 
+    // ⚠**지명이 0건이어도 지운다.** 그래서 지울 구단을 행에서 유도하지 않고 입력에서 받는다 —
+    //   「전 회차를 건너뛴 구단」으로 정정된 판이 오면 옛 행이 **조용히 남는 것**이 결함이다.
     const delPick = db.raw.prepare("DELETE FROM draft_pick WHERE season = ? AND team = ?");
-    for (const team of teams) delPick.run(season, team);
+    delPick.run(season, team);
 
     const insPick = db.raw.prepare(
       `INSERT INTO draft_pick
@@ -423,20 +560,20 @@ export function loadDraft(db: Db, input: DraftLoadInput): DraftLoadResult {
         normalizePlayerName(p.row.nameDisplay),
         p.row.position,
         p.row.fromOrg,
-        source,
-        fetchedAt,
-        revision,
+        page.source,
+        page.fetchedAt,
+        page.revision,
       );
     }
 
     const delBid = db.raw.prepare("DELETE FROM draft_bid WHERE season = ? AND team = ?");
-    for (const team of teams) delBid.run(season, team);
+    delBid.run(season, team);
 
     const insBid = db.raw.prepare(
       `INSERT INTO draft_bid
          (season, kind, round_no, team, group_key, won, name_display, name_canonical,
-          origin, player_id, source, fetched_at, revision)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'npb', NULL, ?, ?, ?)`,
+          rivals, origin, player_id, source, fetched_at, revision)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'npb', NULL, ?, ?, ?)`,
     );
     for (const b of allBids) {
       insBid.run(
@@ -448,9 +585,11 @@ export function loadDraft(db: Db, input: DraftLoadInput): DraftLoadResult {
         b.won,
         b.nameDisplay,
         b.nameCanonical,
-        source,
-        fetchedAt,
-        revision,
+        // ⚠**JSON 배열 또는 `NULL`.** `NULL` 은 「주석이 없다」이지 「상대가 0명」이 아니다(M11).
+        b.rivals === null ? null : JSON.stringify(b.rivals),
+        page.source,
+        page.fetchedAt,
+        page.revision,
       );
     }
   });

@@ -1,6 +1,6 @@
 /**
  * 드래프트 불변식 — 규칙 문서(`docs/sources/2026-09-04-draft-wikipedia-markup-rules.md` §5)의
- * **INV-4·INV-5**, 그리고 npb 단독 파이프라인에서만 생기는 **INV-N1·INV-N2**.
+ * **INV-4·INV-5**, 그리고 npb 단독 파이프라인에서만 생기는 **INV-N1·INV-N2·INV-N3**.
  *
  * ⚠**이 시험이 이 기능의 안전망이다.** 파싱이 조용히 틀리면 화면은 그럴듯하고
  * 합계도 맞아서 **눈으로는 못 잡는다.**
@@ -37,11 +37,18 @@ import { normalizePlayerName } from "@bb-app/parser";
 import type { Db } from "@bb-app/store";
 import { LOTTERY_KINDS, loadDraft, openDb } from "@bb-app/store";
 
-const META = {
+/** ⚠**출처는 두 벌이다** — 구단 페이지와 연도 톱은 입도가 다르다([I3] · `store/src/draft.ts`). */
+const PAGE = {
+  source: "https://npb.jp/draft/2019/draftlist_x.html",
+  fetchedAt: "2026-09-05T01:00:00Z",
+  revision: "sha256:page",
+};
+const EVENT = {
   source: "https://npb.jp/draft/2019/",
   fetchedAt: "2026-09-05T00:00:00Z",
-  revision: "sha256:test",
+  revision: "sha256:event",
 };
+const META = { page: PAGE, event: EVENT };
 
 async function withDb(fn: (db: Db) => void | Promise<void>): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), "bb-draft-inv-"));
@@ -239,7 +246,7 @@ function snapshot(db: Db): string[] {
   const bids = db.raw
     .prepare(
       `SELECT season, kind, round_no, team, group_key, won, name_display, name_canonical,
-              origin, player_id, source, fetched_at, revision
+              rivals, origin, player_id, source, fetched_at, revision
          FROM draft_bid ORDER BY season, kind, round_no, team`,
     )
     .all() as unknown as Array<Record<string, unknown>>;
@@ -355,12 +362,99 @@ function invN2OneKindPerPlayer(db: Db): CheckResult {
   };
 }
 
+/**
+ * **INV-N3** — 주석이 **선언한 경합 규모**와 **실제 그룹 멤버 수**가 맞는다.
+ *
+ * ⚠⚠**이것이 「단독지명이라는 거짓 사실」을 잡는 유일한 검사다**(2026-09-05 최종 검토 [I1]).
+ * 단독지명은 **여집합으로 유도**하므로, 경합 주석 하나가 조용히 안 읽히면 그 구단의 1巡目이
+ * 「아무도 안 겹쳤다」로 둔갑한다. 그때 **다른 넷은 전부 초록**이다:
+ *   · INV-4  — 그 구단은 획득 행을 정확히 1건 갖는다(단독으로 유도됐으니까)
+ *   · INV-4′ — 입찰이 가리키는 1巡目 지명은 실재한다
+ *   · INV-5  — 중복이 없다
+ *   · INV-N1 — 남은 그룹에도 이긴 구단이 정확히 1개 있다
+ * **모순이 드러나는 자리는 「몇 구단이 겹쳤어야 하는가」 하나뿐이고**, 그 답은
+ * 주석이 스스로 적어 둔 상대 목록(`draft_bid.rivals`)에 있다.
+ *
+ * 두 가지를 본다:
+ * ⑴ **선언한 규모 ≠ 실제 멤버 수** — 한 구단의 주석이 통째로 안 읽힌 모양.
+ * ⑵ **멤버끼리 선언이 어긋난다** — 어느 한 장의 주석만 어휘가 바뀌어 상대가 덜 읽힌 모양.
+ *
+ * ⚠**`rivals` 가 `NULL` 인 행은 「안 쟀다」이지 위반이 아니다**(M11). 유도한 단독지명은
+ * 애초에 `group_key` 가 없어 여기 안 들어오고, 언젠가 상대 이름을 안 적는 소스가 오면
+ * 그 행은 **분모 밖**으로 빠진다. **0건을 실패로 만들지 않는다** — 경합이 정말 0건인
+ * 구단(단독지명만 한 구단)이 실재하기 때문이다.
+ *
+ * ⚠**이름까지는 대조하지 않는다.** 주석의 구단 표기(`東京ヤクルト`)는 `TEAMS` 와도
+ * `SHORT_NAME` 과도 다른 **세 번째 어휘**라, 대조하려면 매핑표를 새로 만들어야 하고
+ * 그건 M1 위반이다(파서 `DraftBidRow.rivals` 주석). **규모만으로도 [I1] 은 잡힌다.**
+ */
+function invN3DeclaredGroupSize(db: Db): CheckResult {
+  const rows = db.raw
+    .prepare(
+      `SELECT season, group_key, team, kind, won, rivals
+         FROM draft_bid
+        WHERE group_key IS NOT NULL
+        ORDER BY season, group_key, team`,
+    )
+    .all() as unknown as Array<{
+    season: number;
+    group_key: string;
+    team: string;
+    kind: string;
+    won: number | null;
+    rivals: string | null;
+  }>;
+
+  const groups = new Map<string, typeof rows>();
+  for (const r of rows) {
+    const key = `${r.season} ${r.group_key}`;
+    const bucket = groups.get(key);
+    if (bucket === undefined) groups.set(key, [r]);
+    else bucket.push(r);
+  }
+
+  const violations: string[] = [];
+  let checked = 0;
+  for (const members of groups.values()) {
+    const head = members[0]!;
+    // 「그 구단 + 그 구단이 적은 상대들」이 곧 선언된 규모다.
+    const declared = members
+      .filter((m) => m.rivals !== null)
+      .map((m) => ({ team: m.team, size: (JSON.parse(m.rivals as string) as string[]).length + 1 }));
+    if (declared.length === 0) continue; // ⚠**「안 쟀다」이지 위반이 아니다**(M11)
+    checked += 1;
+
+    const sizes = [...new Set(declared.map((d) => d.size))];
+    const at =
+      `${head.season} group_key=${head.group_key} (멤버 ${members.length}개 · `
+      + `${members.map((m) => `${m.team}${m.won === 1 ? "○" : ""}`).join(",")})`;
+    const said = declared.map((d) => `${d.team}=${d.size}`).join(" ");
+    if (sizes.length > 1) {
+      violations.push(`${at}: 멤버끼리 선언한 규모가 어긋난다 — ${said}`);
+      continue;
+    }
+    if (sizes[0] !== members.length) {
+      violations.push(
+        `${at}: 선언한 규모 ${sizes[0]}구단인데 실제 멤버는 ${members.length}개다 — ${said}`,
+      );
+    }
+  }
+
+  return {
+    name: "INV-N3 (선언한 경합 규모 = 실제 그룹 멤버 수)",
+    unit: "상대를 선언한 행이 있는 경합 그룹",
+    checked,
+    violations,
+  };
+}
+
 const ALL_CHECKS = [
   inv4Acquisitions,
   inv4BidsPointAtPick,
   inv5NoDuplicateBids,
   invN1GroupsHaveWinner,
   invN2OneKindPerPlayer,
+  invN3DeclaredGroupSize,
 ] as const;
 
 // =========================================================================
@@ -378,22 +472,35 @@ const ALL_CHECKS = [
  * 여기에 필요한 것은 「실제 2019 이 이랬다」가 아니라 **「한 시즌이 다 들어온 모양」**이다.
  *
  * ```
- * 1회  奥川 恭伸  ヤクルト 획득 / 読売·阪神·西武 낙첨
+ * 1회  奥川 恭伸  ヤクルト 획득 / 読売·阪神 낙첨
  * 2회  宮川 哲    西武 획득 / 読売 낙첨
  * 3회  堀田 賢慎  読売 단독(주석에 한 줄도 없다 — 여집합으로 유도한다)
  *      西 純矢    阪神 단독(2회)
  *      森下 暢仁  広島 단독(1회 · 경합 주석 0건)
  * ```
+ *
+ * ⚠⚠**세이부의 1회차 입찰을 뺐다**(2026-09-05 · INV-N3 을 넣으면서 드러났다).
+ * 옛 판은 `bid("l", 1, ["東京ヤクルト"], "奥川恭伸", false)` 를 갖고 있었는데
+ * **그건 실측과 어긋나는 구성이었다**: 요미우리 주석은 실물이고 거기에 적힌 상대가
+ * `東京ヤクルト、阪神` **둘뿐**이라 **세이부는 그 경합에 있을 수 없다.** 그런데도 넣어 놔서
+ * 그 그룹은 「선언된 규모 3(·2) 대 실제 멤버 4」라는 **내부 모순**을 갖고 있었고,
+ * INV-N1 은 그것을 못 본다(이긴 구단이 정확히 1개이므로).
+ * ⚠**세이부가 1회차에 무엇을 잃었는지는 이 픽스처에 없다**(실제로는 佐々木朗希 · ロッテ 획득).
+ * 이 파일에 필요한 것은 「실제 2019 이 이랬다」가 아니라 **「한 시즌이 다 들어온 모양」**이다.
+ * ⚠**그래서 아래 분모 셋이 줄었다**: 입찰 9→8 · 스냅샷 17→16 · (시즌,구단,이름) 12→11.
+ * **줄어든 것을 「시험이 약해졌다」로 읽지 마라 — 없던 행 하나가 사라진 것이다.**
  */
 function loadSeason2019(db: Db): void {
   loadDraft(db, {
     season: 2019,
+    team: "s",
     picks: [pick("s", "shihaika", 1, "奥川 恭伸"), pick("s", "shihaika", 2, "吉田 大喜")],
     bids: [bid("s", 1, ["読売", "阪神"], null, true)],
     ...META,
   });
   loadDraft(db, {
     season: 2019,
+    team: "g",
     picks: [
       pick("g", "shihaika", 1, "堀田 賢慎"),
       pick("g", "shihaika", 2, "太田 龍"),
@@ -404,17 +511,19 @@ function loadSeason2019(db: Db): void {
   });
   loadDraft(db, {
     season: 2019,
+    team: "t",
     picks: [pick("t", "shihaika", 1, "西 純矢")],
     bids: [bid("t", 1, ["東京ヤクルト", "読売"], "奥川恭伸", false)],
     ...META,
   });
   loadDraft(db, {
     season: 2019,
+    team: "l",
     picks: [pick("l", "shihaika", 1, "宮川 哲")],
-    bids: [bid("l", 1, ["東京ヤクルト"], "奥川恭伸", false), bid("l", 2, ["読売"], null, true)],
+    bids: [bid("l", 2, ["読売"], null, true)],
     ...META,
   });
-  loadDraft(db, { season: 2019, picks: [pick("c", "shihaika", 1, "森下 暢仁")], bids: [], ...META });
+  loadDraft(db, { season: 2019, team: "c", picks: [pick("c", "shihaika", 1, "森下 暢仁")], bids: [], ...META });
 }
 
 /**
@@ -430,7 +539,7 @@ function rawPick(db: Db, season: number, kind: DraftKind, team: string, roundNo:
           position, from_org, origin, player_id, source, fetched_at, revision)
        VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, NULL, NULL, 'npb', NULL, ?, ?, ?)`,
     )
-    .run(season, kind, team, roundNo, name, normalizePlayerName(name), META.source, META.fetchedAt, META.revision);
+    .run(season, kind, team, roundNo, name, normalizePlayerName(name), PAGE.source, PAGE.fetchedAt, PAGE.revision);
 }
 
 function rawBid(
@@ -449,14 +558,14 @@ function rawBid(
           origin, player_id, source, fetched_at, revision)
        VALUES (?, ?, ?, ?, NULL, ?, ?, ?, 'npb', NULL, ?, ?, ?)`,
     )
-    .run(season, kind, roundNo, team, won, name, normalizePlayerName(name), META.source, META.fetchedAt, META.revision);
+    .run(season, kind, roundNo, team, won, name, normalizePlayerName(name), PAGE.source, PAGE.fetchedAt, PAGE.revision);
 }
 
 // =========================================================================
 // ⚠먼저: 검사기 자체가 「아무것도 안 재는」 상태를 스스로 실패로 만드는가
 // =========================================================================
 
-test("⚠빈 DB 에서는 5종 전부 검사 대상 0건이고, 그것 자체가 실패다", async () => {
+test("⚠빈 DB 에서는 6종 전부 검사 대상 0건이고, 그것 자체가 실패다", async () => {
   await withDb((db) => {
     for (const check of ALL_CHECKS) {
       const r = check(db);
@@ -470,7 +579,7 @@ test("⚠빈 DB 에서는 5종 전부 검사 대상 0건이고, 그것 자체가
         `${r.name}: 분모 0 인데 통과했다 — 이 검사는 아무것도 안 지킨다`,
       );
     }
-    assert.equal(ALL_CHECKS.length, 5, "검사기 5종 중 5종을 이 시험이 돈다");
+    assert.equal(ALL_CHECKS.length, 6, "검사기 6종 중 6종을 이 시험이 돈다");
   });
 });
 
@@ -487,9 +596,10 @@ test("2019 한 시즌을 다 넣으면 불변식 5종이 전부 성립한다", a
     //   이 수가 줄면 시험이 약해진 것이고, 그때 이 줄이 붉어져야 한다.
     assert.equal(inv4Acquisitions(db).checked, 5, "추첨 구획의 1巡目 슬롯 5건(s·g·t·l·c)");
     assert.equal(inv4BidsPointAtPick(db).checked, 5, "입찰이 있는 (구획, 구단) 5건");
-    assert.equal(inv5NoDuplicateBids(db).checked, 9, "입찰 9건 — 낙첨 4 · 당첨 2 · 유도한 단독 3");
+    assert.equal(inv5NoDuplicateBids(db).checked, 8, "입찰 8건 — 낙첨 3 · 당첨 2 · 유도한 단독 3");
     assert.equal(invN1GroupsHaveWinner(db).checked, 2, "경합 그룹 2건(1:奥川恭伸 · 2:宮川哲)");
-    assert.equal(invN2OneKindPerPlayer(db).checked, 12, "(시즌, 구단, 이름) 12건");
+    assert.equal(invN2OneKindPerPlayer(db).checked, 11, "(시즌, 구단, 이름) 11건");
+    assert.equal(invN3DeclaredGroupSize(db).checked, 2, "상대를 선언한 경합 그룹 2건");
   });
 });
 
@@ -570,13 +680,13 @@ test("⚠INV-5: 전 구단을 다시 넣어도 두 표의 전 행이 같다(M5) 
   await withDb((db) => {
     loadSeason2019(db);
     const before = snapshot(db);
-    assert.equal(before.length, 17, "지명 8행 + 입찰 9행 = 17행을 비교한다");
+    assert.equal(before.length, 16, "지명 8행 + 입찰 8행 = 16행을 비교한다");
 
     loadSeason2019(db);
     const after = snapshot(db);
     assert.deepEqual(after, before, `재적재로 행이 바뀌었다 — ${before.length}행 중 비교`);
     assertClean(inv5NoDuplicateBids(db));
-    assert.equal(inv5NoDuplicateBids(db).checked, 9, "재적재해도 입찰은 9건 그대로다");
+    assert.equal(inv5NoDuplicateBids(db).checked, 8, "재적재해도 입찰은 8건 그대로다");
 
     // ⚠**비교기가 아무것도 안 보는 것은 아닌가.** 한 칸만 흔들어 실제로 갈리는지 본다 —
     //   이 세 줄이 없으면 위 `deepEqual` 은 「언제나 같다」로도 통과할 수 있다.
@@ -602,12 +712,14 @@ test("INV-N1: 표기가 같으면 한 그룹이고 이긴 구단이 있다 — �
   await withDb((db) => {
     loadDraft(db, {
       season: 2019,
+      team: "e",
       picks: [pick("e", "shihaika", 1, NAME_STANDARD)],
       bids: [bid("e", 1, ["読売"], null, true)],
       ...META,
     });
     loadDraft(db, {
       season: 2019,
+      team: "g",
       picks: [pick("g", "shihaika", 1, "가상 낙첨선수")],
       bids: [bid("g", 1, ["東北楽天"], NAME_STANDARD, false)],
       ...META,
@@ -626,12 +738,14 @@ test("⚠INV-N1: 이체자로 경합 그룹이 갈리면 이긴 구단 없는 �
     // 떨어진 구단의 이름은 **주석**에서 온다. 두 자리의 표기가 갈리면 그룹이 쪼개진다.
     loadDraft(db, {
       season: 2019,
+      team: "e",
       picks: [pick("e", "shihaika", 1, NAME_VARIANT)],
       bids: [bid("e", 1, ["読売"], null, true)],
       ...META,
     });
     loadDraft(db, {
       season: 2019,
+      team: "g",
       picks: [pick("g", "shihaika", 1, "가상 낙첨선수")],
       bids: [bid("g", 1, ["東北楽天"], NAME_STANDARD, false)],
       ...META,
@@ -650,13 +764,127 @@ test("⚠INV-N1: 이체자로 경합 그룹이 갈리면 이긴 구단 없는 �
 });
 
 // =========================================================================
+// INV-N3 — 「단독지명」이라는 거짓 사실
+//
+// ⚠**이 절이 최종 검토 [I1] 의 end-to-end 재현이다.** 경합 주석 하나가 조용히 안 읽히면
+// 그 구단의 1巡目이 「아무도 안 겹쳤다」로 둔갑하는데, **다른 다섯은 전부 초록이다.**
+// =========================================================================
+
+/**
+ * ⚠⚠**검토자가 재현한 그대로.** 2019 阪神 페이지의 경합 주석이 어휘 변화로 0건이 되면
+ * (예: `と重複`→`と競合`) 적재는 `西 純矢` 를 **단독지명**으로 유도한다:
+ * ```
+ * t | round_no=1 | group_key=NULL | won=NULL | 西 純矢   ← 「아무도 안 겹친 1巡目」 = 거짓
+ * ```
+ * ⚠**파서 쪽 그물은 이제 그 입력을 던진다**(`parser/src/draft.ts` 의 두 층). 여기서 재는 것은
+ * **그 그물을 빠져나간 날 DB 가 스스로 모순을 드러내는가**다 — 층이 다르고, 둘 다 필요하다.
+ */
+function loadSeason2019MissingTigersBid(db: Db): void {
+  loadDraft(db, {
+    season: 2019,
+    team: "s",
+    picks: [pick("s", "shihaika", 1, "奥川 恭伸"), pick("s", "shihaika", 2, "吉田 大喜")],
+    bids: [bid("s", 1, ["読売", "阪神"], null, true)],
+    ...META,
+  });
+  loadDraft(db, {
+    season: 2019,
+    team: "g",
+    picks: [pick("g", "shihaika", 1, "堀田 賢慎"), pick("g", "shihaika", 2, "太田 龍")],
+    bids: [bid("g", 1, ["東京ヤクルト", "阪神"], "奥川恭伸", false), bid("g", 2, ["埼玉西武"], "宮川哲", false)],
+    ...META,
+  });
+  // ⚠**여기가 결함이다** — 주석이 실재하는데 파서가 0건을 냈다. `bids: []` 가 그 상태다.
+  loadDraft(db, { season: 2019, team: "t", picks: [pick("t", "shihaika", 1, "西 純矢")], bids: [], ...META });
+  loadDraft(db, {
+    season: 2019,
+    team: "l",
+    picks: [pick("l", "shihaika", 1, "宮川 哲")],
+    bids: [bid("l", 2, ["読売"], null, true)],
+    ...META,
+  });
+  loadDraft(db, { season: 2019, team: "c", picks: [pick("c", "shihaika", 1, "森下 暢仁")], bids: [], ...META });
+}
+
+test("⚠INV-N3: 주석 하나가 조용히 안 읽히면 「단독지명」이라는 거짓 사실이 생긴다([I1])", async () => {
+  await withDb((db) => {
+    loadSeason2019MissingTigersBid(db);
+
+    // ⚠**거짓 사실이 실제로 만들어졌는지 먼저 본다** — 검사기가 무엇을 잡는지 말하려면
+    //   잡을 것이 실재해야 한다.
+    const nishi = db.raw
+      .prepare("SELECT round_no, group_key, won FROM draft_bid WHERE season = 2019 AND team = 't'")
+      .get() as unknown as { round_no: number; group_key: string | null; won: number | null };
+    assert.deepEqual(
+      { ...nishi },
+      { round_no: 1, group_key: null, won: null },
+      "⚠西 純矢 가 「아무도 안 겹친 1巡目」이 됐다 — 이것이 [I1] 이 만든 거짓 사실이다",
+    );
+
+    // ⚠⚠**다섯은 전부 초록이다.** 그래서 여섯 번째가 필요했다.
+    for (const check of [
+      inv4Acquisitions,
+      inv4BidsPointAtPick,
+      inv5NoDuplicateBids,
+      invN1GroupsHaveWinner,
+      invN2OneKindPerPlayer,
+    ]) {
+      assertClean(check(db));
+    }
+
+    const r = invN3DeclaredGroupSize(db);
+    assert.equal(r.checked, 2, "상대를 선언한 그룹 2건은 그대로 잰다");
+    assert.equal(r.violations.length, 1, `위반 1건: ${r.violations.join(" / ")}`);
+    assert.match(r.violations[0] ?? "", /1:奥川恭伸/);
+    assert.match(r.violations[0] ?? "", /선언한 규모 3구단인데 실제 멤버는 2개다/);
+    assert.throws(() => assertClean(r), /INV-N3/);
+  });
+});
+
+test("⚠INV-N3: 한 장의 주석만 상대를 덜 읽어도 붉어진다 — 멤버끼리 선언이 어긋난다", async () => {
+  await withDb((db) => {
+    loadSeason2019(db);
+    // 阪神 주석에서 상대 하나(`読売`)만 안 읽힌 모양. 그룹 멤버 수는 그대로 3이다.
+    db.raw
+      .prepare("UPDATE draft_bid SET rivals = ? WHERE season = 2019 AND team = 't' AND round_no = 1")
+      .run(JSON.stringify(["東京ヤクルト"]));
+
+    const r = invN3DeclaredGroupSize(db);
+    assert.equal(r.violations.length, 1, `위반 1건: ${r.violations.join(" / ")}`);
+    assert.match(r.violations[0] ?? "", /멤버끼리 선언한 규모가 어긋난다/);
+    assert.match(r.violations[0] ?? "", /t=2/);
+    // ⚠**나머지 다섯은 여기서도 초록이다** — 멤버 수가 안 변했기 때문이다.
+    for (const check of [inv4Acquisitions, invN1GroupsHaveWinner]) assertClean(check(db));
+  });
+});
+
+test("⚠INV-N3: 상대를 안 적는 행은 위반이 아니라 분모 밖이다 — 「0건」과 「안 쟀음」은 다르다(M11)", async () => {
+  await withDb((db) => {
+    loadSeason2019(db);
+    assert.equal(invN3DeclaredGroupSize(db).checked, 2, "먼저 2건을 잰다");
+
+    // 언젠가 상대 이름을 안 적는 소스(wikipedia 그리드 등)가 오면 이 모양이 된다.
+    db.raw.prepare("UPDATE draft_bid SET rivals = NULL WHERE season = 2019 AND group_key = '2:宮川哲'").run();
+    const r = invN3DeclaredGroupSize(db);
+    assert.equal(r.checked, 1, "⚠분모가 줄어야 한다 — 「위반 0건」으로 세면 안 쟀다는 사실이 사라진다");
+    assert.deepEqual(r.violations, [], "안 적은 것은 위반이 아니다");
+
+    // ⚠**전부 NULL 이면 분모가 0 이고, 그건 통과가 아니라 실패다.**
+    db.raw.prepare("UPDATE draft_bid SET rivals = NULL").run();
+    const none = invN3DeclaredGroupSize(db);
+    assert.equal(none.checked, 0);
+    assert.throws(() => assertClean(none), /검사 대상이 0건이다/);
+  });
+});
+
+// =========================================================================
 // INV-N2 — kind 가 바뀌는 정정에서 옛 행이 고아로 남는 것
 // =========================================================================
 
 test("⚠INV-N2: 옛 구획의 지명이 고아로 남으면 붉어진다 — 같은 선수가 두 구획에 지명된 것이 된다", async () => {
   await withDb((db) => {
     // 2001 江尻 慎太郎 — 초판 파서가 `自由獲得選手` 를 `shihaika` 로 접었고 나중에 갈랐다.
-    loadDraft(db, { season: 2001, picks: [pick("f", "jiyuu_kakutoku", null, "江尻 慎太郎")], bids: [], ...META });
+    loadDraft(db, { season: 2001, team: "f", picks: [pick("f", "jiyuu_kakutoku", null, "江尻 慎太郎")], bids: [], ...META });
     assertClean(invN2OneKindPerPlayer(db));
 
     // ⚠**`loadDraft` 는 이 상태를 만들지 않는다** — Task 6 이 삭제 범위를 구단 단위로 바꿔
@@ -676,7 +904,7 @@ test("⚠INV-N2: 옛 구획의 입찰이 고아로 남아도 붉어진다 — �
   await withDb((db) => {
     // 2006 은 本ドラフト가 高校生 / 大学生・社会人 으로 갈라져 있었다. 구획 판정이 정정되면
     // **유도한 단독지명 행도 구획을 옮긴다** — 옛 행이 남으면 두 구획에서 얻은 것이 된다.
-    loadDraft(db, { season: 2006, picks: [pick("g", "daigaku_shakaijin", 1, "上野 貴久")], bids: [], ...META });
+    loadDraft(db, { season: 2006, team: "g", picks: [pick("g", "daigaku_shakaijin", 1, "上野 貴久")], bids: [], ...META });
     assertClean(invN2OneKindPerPlayer(db));
 
     rawBid(db, 2006, "koukousei", "g", 1, "上野 貴久", null);
@@ -699,6 +927,7 @@ test("INV-N2: 한 구단이 한 시즌에 여러 구획을 가져도 위반이 �
     // 이 불변식은 침묵해야 한다 — 여기서 붉어지면 정상 데이터를 막는 검사다.
     loadDraft(db, {
       season: 2006,
+      team: "g",
       picks: [
         pick("g", "kibou_nyudanwaku", null, "金刃 憲人"),
         pick("g", "daigaku_shakaijin", 3, "上野 貴久"),
@@ -712,14 +941,29 @@ test("INV-N2: 한 구단이 한 시즌에 여러 구획을 가져도 위반이 �
     //   **시즌이 덜 들어온 것**이다(이 파일 머리말의 전제). 중일이 堂上直倫 을 얻었다.
     loadDraft(db, {
       season: 2006,
+      team: "d",
       picks: [pick("d", "koukousei", 1, "堂上 直倫")],
       bids: [bid("d", 1, ["読売", "阪神"], null, true)],
       ...META,
     });
+    // ⚠⚠**한신도 넣어야 한다 — INV-N3 을 넣고서야 드러났다**(2026-09-05).
+    //   2006 요미우리 주석은 **실물**이고(`堂上直倫内野手で阪神、中日と重複`) 거기 적힌 상대가
+    //   **둘**이라 그 경합은 **3구단**이다. 요미우리·중일만 넣은 옛 판은 「선언 3 대 멤버 2」라는
+    //   **내부 모순**을 갖고 있었는데, INV-N1·INV-4 는 그것을 못 본다(이긴 구단이 정확히 1개다).
+    //   ⚠**「덜 들어온 시즌」과 「틀린 파싱」은 이 검사에서 같은 모양이다** — 그래서 이 파일의
+    //   전제(「시즌을 다 넣은 뒤에 돌린다」)가 INV-N3 에서는 **선택이 아니라 필수**다.
+    loadDraft(db, {
+      season: 2006,
+      team: "t",
+      picks: [pick("t", "koukousei", 1, "野原 将志")],
+      bids: [bid("t", 1, ["読売", "中日"], "堂上直倫", false)],
+      ...META,
+    });
 
     const r = invN2OneKindPerPlayer(db);
-    assert.equal(r.checked, 6, "선수 6명 — 요미우리 5명(지명 4 + 낙첨 대상) + 중일 1명");
+    assert.equal(r.checked, 8, "선수 8명 — 요미우리 5(지명 4 + 낙첨 대상) + 중일 1 + 한신 2");
     assertClean(r);
     for (const check of ALL_CHECKS) assertClean(check(db));
+    assert.equal(invN3DeclaredGroupSize(db).checked, 1, "경합 그룹 1건(1:堂上直倫 · 3구단)");
   });
 });

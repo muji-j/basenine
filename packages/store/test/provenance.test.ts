@@ -102,6 +102,15 @@ const PROVENANCE: Readonly<Record<string, Provenance>> = {
   },
   // 019 드래프트 — 경기와 달리 부모(game_id)가 없다. npb.jp 가 ETag·Last-Modified 를
   // 주지 않으므로 revision 은 본문 해시이고, 네 표 모두 자기 컬럼으로 M4 를 답한다.
+  //
+  // ⚠⚠**컬럼이 같아도 「무엇의 출처인가」가 표마다 다르다**(2026-09-05 최종 검토 [I3]).
+  //   `draft_event` 는 **시즌 단위**(연도 톱 `/draft/{YYYY}/`)이고,
+  //   `draft_pick`·`draft_bid` 는 **구단 단위**(`draftlist_{team}.html`)다.
+  //   초판은 적재가 셋에 **같은 한 벌**을 넣어서 `draft_event` 의 출처가
+  //   **마지막에 적재된 구단 페이지**로 덮였다 — 12구단 중 11구단에 대해 거짓이었다.
+  // ⚠**이 시험은 그것을 못 본다. 컬럼 존재만 보기 때문이다** — 그래서 값을 재는 자리가
+  //   `store/test/draft.test.ts` 에 따로 있다(「draft_event 의 출처가 … 덮이지 않는다」).
+  //   **여기가 초록인 것을 「M4 를 지켰다」로 읽지 마라.**
   draft_event: { where: "source", when: "fetched_at", revision: "revision" },
   draft_pick: { where: "source", when: "fetched_at", revision: "revision" },
   draft_bid: { where: "source", when: "fetched_at", revision: "revision" },
