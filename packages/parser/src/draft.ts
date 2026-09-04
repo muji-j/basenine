@@ -141,6 +141,16 @@ function compact(s: string): string {
   return s.normalize("NFKC").replace(/\s/g, "");
 }
 
+/**
+ * 푸터 위까지로 자른다. **두 파서가 같은 경계를 쓴다**(M1) — 마지막 섹션의 본문이
+ * 문서 끝까지 뻗으므로, 언젠가 푸터에 표나 `※` 가 생기면 그것이 지명·경합으로 섞여 든다.
+ * (실측: 지금 푸터에 `<table>` 도 `※` 도 0건이다 — 그래서 지금 막아 두는 편이 싸다.)
+ */
+function beforeFooter(html: string): string {
+  const footer = html.indexOf("<footer");
+  return footer === -1 ? html : html.slice(0, footer);
+}
+
 function kindOf(heading: string, where: string): DraftKind {
   for (const [re, kind] of SECTION) if (re.test(heading)) return kind;
   throw new DraftParseError(
@@ -170,11 +180,8 @@ function roundOf(label: string, where: string): number | null {
  *   ⚠**삼키지 마라** — 열이 한 칸 밀리면 나이가 포지션으로 들어가고, 그 화면은 그럴듯하다.
  */
 export function parseDraftPicks(html: string, team: string): DraftPickRow[] {
-  // ⚠푸터 아래는 보지 않는다. 마지막 섹션의 본문이 `(?=<h4|$)` 로 **문서 끝까지** 뻗으므로,
-  // 언젠가 푸터에 표가 생기면 그 행이 마지막 구획의 지명으로 섞여 들어온다.
-  // (실측: 지금은 푸터에 `<table>` 이 0개다 — 그래서 지금 고쳐 두는 편이 싸다.)
-  const footer = html.indexOf("<footer");
-  const scope = footer === -1 ? html : html.slice(0, footer);
+  // ⚠푸터 아래는 보지 않는다 — 사유는 `beforeFooter` 주석.
+  const scope = beforeFooter(html);
 
   const sections = [...scope.matchAll(/<h4[^>]*>([\s\S]*?)<\/h4>([\s\S]*?)(?=<h4|$)/g)];
   if (sections.length === 0) {
@@ -279,5 +286,170 @@ export function parseDraftPicks(html: string, team: string): DraftPickRow[] {
       `team=${team} / 섹션 ${sections.length}개`,
     );
   }
+  return rows;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 경합(추첨) 주석 — 표 아래 `※` 한 줄짜리 산문.
+ *
+ * 「제비뽑기에서 누가 걸렸고 다음 1지망을 누구로 바꿨는지」가 **전부 여기서 나온다.**
+ * 표는 **결과만** 싣는다 — 누구를 노렸다가 놓쳤는지는 이 문장에만 있다.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** 경합 1건 = 「1순위 N회차에 누구를 놓고 누구와 붙어서 이겼나/졌나」. */
+export interface DraftBidRow {
+  team: string;
+  /** 1순위 입찰 회차. ⚠**여기는 `null` 이 없다** — 경합은 1순위에서만 일어난다. */
+  roundNo: number;
+  /**
+   * 경합 상대 구단의 **표기 그대로**(`東京ヤクルト`·`横浜DeNA`…).
+   * ⚠**코드 변환은 적재(store)의 일이다** — 파서가 약칭을 손대면 최장일치 규칙이 두 벌이 되고,
+   * `横浜DeNA` 를 `横浜` 로 먼저 먹는 사고가 **두 곳에서** 날 수 있게 된다.
+   */
+  rivals: string[];
+  /**
+   * 노렸던 선수. ⚠**당첨이면 `null` 이다 — 결측이 아니라 「소스가 안 쓴다」**(M11).
+   * 당첨 주석은 이름을 생략하고, **그 팀 표의 그 회차 값이 곧 그 선수**다.
+   * ⚠**파서가 그것을 지어내지 않는다** — 표와 잇는 것은 적재의 일이고, 여기서 채우면
+   * 「소스에 적혀 있던 이름」과 「우리가 추론한 이름」을 **구별할 수 없게 된다.**
+   *
+   * ⚠**NFKC 를 걸지 않는다** — `DraftPickRow.nameDisplay` 와 **같은 규칙**이다(M1).
+   * 한쪽만 정규화하면 이름 규칙이 두 벌이 되고, 두 표를 나란히 놓은 사람만 그 차이를 본다.
+   */
+  nameDisplay: string | null;
+  /** `確定`(교섭권 획득) = true · `外れる`(낙첨) = false. */
+  won: boolean;
+}
+
+/**
+ * 주석의 경계. ⚠**`※` 로 자르는 것만으로는 부족하다** — 마지막 주석의 덩어리가
+ * **페이지 끝까지** 뻗어서, 뒤쪽 산문에 `抽選で` 가 있으면 아래 M7 그물이 헛불을 낸다.
+ * 그래서 각 덩어리를 **자기 블록 안**으로 가둔다. `<a>`·`<span>` 같은 인라인 태그는
+ * 경계가 아니다(그건 `decode` 가 지운다) — 언젠가 이름에 링크가 붙어도 잘리지 않는다.
+ */
+const BLOCK_TAG =
+  /<\s*\/?\s*(?:br|p|div|td|th|tr|li|ul|ol|dl|dt|dd|table|tbody|thead|h[1-6]|section|article|footer|body|html)\b/i;
+
+/** 포지션 어휘는 `positions.ts` 한 벌이다(M1). 길이 내림차순 — 접두 충돌을 구조적으로 막는다. */
+const POSITION_ALT = Object.keys(POSITIONS)
+  .sort((a, b) => b.length - a.length)
+  .join("|");
+
+/**
+ * 경합 주석 문법(규칙 문서 §2 · 실측 40건 전건이 이 하나로 파싱됐다):
+ * ```
+ * ※{1巡目|1位}[（第N回）]： [{선수명}{投手|内野手|外野手|捕手}で]{구단}[、{구단}…]と重複、抽選で{外れる|確定}
+ * ```
+ *
+ * ⚠⚠**브리프의 정규식을 그대로 쓰지 않았다. 실물 3건 중 0건이 통과했기 때문이다.**
+ * 브리프는 `NFKC 를 먼저 걸고` `^(?:1巡目|1位)(?:（第(\d+)回）)?[：:]` 로 매치했는데,
+ * **NFKC 가 전각 괄호 `（）` 를 반각 `()` 로 바꾼다.** 그래서
+ *   - 2019(`※1巡目（第1回）：`) → NFKC 후 `1巡目(第1回):` 이라 `（第…回）` 가 안 맞고,
+ *     그다음 `[：:]` 가 `(` 를 만나 **전체가 실패**한다 → 그 해 경합이 **0건**이 된다.
+ *   - 2006(`※１巡目：`) → NFKC 를 안 걸면 `1巡目` 이 **전각 `１`** 을 못 맞춘다.
+ * **즉 NFKC 를 걸어도 안 걸어도 안 되는, 두 폭이 섞인 정규식이었다.**
+ * ⚠**Task 3 의 `（選択権なし）` 사고와 같은 종류다** — 「NFKC 뒤의 형태로 검사한다」를
+ * 한쪽에만 적용했다.
+ *
+ * → **폭 관용(width-tolerant)으로 쓰고 원문에 그대로 건다.** NFKC 를 통째로 걸지 않는 이유는
+ * 그래야 `nameDisplay` 가 **원문 그대로**가 되어 `DraftPickRow.nameDisplay` 와 규칙이 같아지기
+ * 때문이다(M1). 폭 차이는 **구조 토큰 넷**(선두 숫자·괄호·회차 숫자·콜론)에만 있고,
+ * 그 넷을 문자 클래스로 열어 두는 것이 「이름 규칙을 두 벌로 만드는 것」보다 싸다.
+ * ⚠**그래도 못 맞추는 변종이 오면 아래 M7 그물이 던진다** — 조용히 0건이 되지 않는다.
+ */
+const BID_RE = new RegExp(
+  "^[1１](?:巡目|位)" + // ⚠1순위만이다. 2순위 이후는 웨이버라 추첨이 없다
+    "(?:[（(]第([0-9０-９]+)回[）)])?" + // 그 구단 주석이 2건 이상일 때만 붙는다(§2)
+    "\\s*[：:]\\s*" +
+    `(?:(.+?)(?:${POSITION_ALT})で)?` + // ⚠낙첨일 때만 있다 — 당첨은 이름을 생략한다
+    "(.+?)と重複[、，,]\\s*抽選で(外れる|確定)",
+);
+
+/**
+ * ⚠**M7 그물.** 「경합 주석처럼 보이는데 문법에 안 맞는 것」을 실패로 만든다.
+ *
+ * 이 파서가 조용히 틀리는 방식은 명단 파서와 **모양이 다르다** — 명단은 열이 밀려서
+ * 「그럴듯한 오답」이 나오지만, 여기는 **매치가 안 되면 그냥 0건**이고
+ * **0건은 단독지명 구단의 정답이기도 하다.** 즉 실패와 정답이 같은 모양이라
+ * 그물이 없으면 **어휘가 바뀐 해의 경합이 통째로 사라져도 아무도 못 읽는다.**
+ *
+ * ⚠**`AND` 가 아니라 `OR` 인 것이 요점이다.** `と重複` 과 `抽選で` 를 둘 다 요구하면
+ * **한쪽 낱말만 바뀐 날**(`重複`→`競合`) 그물을 그냥 빠져나간다. 헛불(무관한 주석에
+ * `抽選` 이 들어 있는 경우)은 **시끄럽고 고칠 수 있지만**, 놓친 경합은 조용하고 영구적이다.
+ */
+const LOOKS_LIKE_BID = /と重複|抽選で/;
+
+/**
+ * 한 구단의 경합(추첨) 주석을 읽는다.
+ *
+ * @param html `draftlist_{team}.html` 전문
+ * @param team 구단 코드(URL 슬러그). ⚠페이지가 아니라 **호출자가 아는 사실**이다
+ * @returns 문서 순서대로. ⚠**빈 배열은 정상이다** — 단독지명 구단에는 주석이 없다
+ *   (실측: 2019 広島 · 2001 니혼햄이 각각 0건). **실패가 아니다.**
+ * @throws {DraftParseError} 경합 주석처럼 보이는데 문법에 안 맞을 때 ·
+ *   `（第N回）` 가 문서 순서와 어긋날 때 · 상대 구단 칸이 빌 때.
+ */
+export function parseDraftBids(html: string, team: string): DraftBidRow[] {
+  // ⚠`<p>` 단위가 아니라 `※` 로 자른다 — `<br>` 없이 두 주석이 붙어 있는 해가 있다(2007 西武).
+  // `<p>` 로 자르면 뒤엣것이 **통째로 사라진다.**
+  const chunks = beforeFooter(html).split("※").slice(1);
+
+  const rows: DraftBidRow[] = [];
+  let seq = 0;
+
+  for (const chunk of chunks) {
+    const cut = chunk.search(BLOCK_TAG);
+    const text = decode(cut === -1 ? chunk : chunk.slice(0, cut));
+    const m = BID_RE.exec(text);
+
+    if (!m) {
+      // 드래프트와 무관한 `※` 주석은 그냥 건너뛴다 — 그건 예외가 아니다.
+      if (LOOKS_LIKE_BID.test(text)) {
+        throw new DraftParseError(
+          "경합 주석처럼 보이는데 문법에 맞지 않는다 — 조용히 0건으로 흘리지 않는다(M7)",
+          `team=${team} / ${JSON.stringify(text)}`,
+        );
+      }
+      continue;
+    }
+
+    seq += 1;
+    const [, roundRaw, nameRaw, rivalsRaw, outcome] = m;
+
+    // ⚠`（第N回）` 가 없으면 **주석 순서가 회차**다(규칙 문서 §2 — 2건 이상일 때만 붙는다).
+    let roundNo = seq;
+    if (roundRaw !== undefined) {
+      roundNo = Number(roundRaw.normalize("NFKC")); // ⚠전각 숫자가 섞인다(2006·2007)
+      // ⚠둘이 어긋나면 둘 중 하나가 틀린 것이고, **어느 쪽인지 파서가 고를 수 없다.**
+      // 말없이 한쪽을 고르면 회차가 조용히 밀린 채 상대전적까지 흘러간다.
+      if (roundNo !== seq) {
+        throw new DraftParseError(
+          `（第${roundNo}回）가 문서 순서(${seq}번째 주석)와 어긋난다 — 어느 쪽이 맞는지 파서가 정하지 않는다(M7)`,
+          `team=${team} / ${JSON.stringify(text)}`,
+        );
+      }
+    }
+
+    // ⚠표기 그대로 담는다. 구단 코드로 바꾸는 것은 적재의 일이다(`DraftBidRow.rivals`).
+    // ⚠`length === 0` 은 검사하지 않는다 — `split` 은 빈 배열을 낸 적이 없고
+    // `rivalsRaw` 는 `(.+?)` 라 비어 있을 수 없다. **닿지 않는 가지는 검사가 아니라 소음이다.**
+    const rivals = (rivalsRaw ?? "").split(/[、，,]/).map((s) => s.trim());
+    if (rivals.some((s) => s === "")) {
+      throw new DraftParseError(
+        "경합 상대 칸이 비었다 — 빈 값으로 흘리지 않는다(M7)",
+        `team=${team} / ${JSON.stringify(rivalsRaw)}`,
+      );
+    }
+
+    rows.push({
+      team,
+      roundNo,
+      rivals,
+      // ⚠당첨이면 소스가 이름을 안 쓴다. `null` 이고, 표와 잇는 것은 적재의 일이다(M11).
+      nameDisplay: nameRaw ?? null,
+      won: outcome === "確定",
+    });
+  }
+
   return rows;
 }

@@ -24,7 +24,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
-import { DraftParseError, parseDraftPicks } from "../src/draft.ts";
+import { DraftParseError, parseDraftBids, parseDraftPicks } from "../src/draft.ts";
 
 const fixture = (name: string): string =>
   gunzipSync(readFileSync(fileURLToPath(new URL(`fixtures/${name}.html.gz`, import.meta.url)))).toString("utf8");
@@ -332,4 +332,149 @@ test("team 은 페이지가 아니라 호출자가 준다", () => {
   assert.ok(rows.every((r) => r.team === "g"));
   const same = parseDraftPicks(fixture("draft-2019-list-g"), "yg");
   assert.ok(same.every((r) => r.team === "yg"));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 경합 주석(`parseDraftBids`)
+//
+// ⚠**이 파서가 조용히 틀리는 방식은 명단 파서와 다르다.** 명단은 「열이 밀린다」였지만
+// 여기는 **「매치가 안 돼서 아무것도 안 나온다」**다 — 빈 배열이 정답인 경우(단독지명)가
+// 실재하므로 **0건이 결함으로 안 읽힌다.** 그래서 시험이 **실물 문자열의 전 필드**를
+// 못으로 박는다. 분모는 픽스처에서 직접 센 값이다(`grep -o "※[^<]*"`):
+//   2019-g  ※ 2건 — `※1巡目（第1回）` · `※1巡目（第2回）`  (반각 숫자 · 회차 명시)
+//   2019-c  ※ 0건 — 단독지명 구단
+//   2006-g  ※ 1건 — `※１巡目`                              (**전각 숫자** · 회차 없음)
+//   2001-f  ※ 0건
+//
+// ⚠**브리프의 정규식은 이 셋 중 어느 것도 못 읽었다** — 사유는 `draft.ts` 의 `BID_RE`
+// 주석에 적어 뒀다. **기대를 낮춰서 통과시키지 마라.**
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("경합 주석에서 상대 구단·당락·회차를 읽는다(2019 巨人 · 실물 2건)", () => {
+  const bids = parseDraftBids(fixture("draft-2019-list-g"), "g");
+  assert.equal(bids.length, 2, "2019 요미우리는 주석이 2건이다(실측)");
+
+  // ※1巡目（第1回）： 奥川恭伸投手で東京ヤクルト、阪神と重複、抽選で外れる
+  assert.deepEqual(bids[0], {
+    team: "g",
+    roundNo: 1,
+    rivals: ["東京ヤクルト", "阪神"],
+    nameDisplay: "奥川恭伸",
+    won: false,
+  });
+  // ※1巡目（第2回）： 宮川哲投手で埼玉西武と重複、抽選で外れる
+  assert.deepEqual(bids[1], {
+    team: "g",
+    roundNo: 2,
+    rivals: ["埼玉西武"],
+    nameDisplay: "宮川哲",
+    won: false,
+  });
+});
+
+test("⚠경합이 없는 구단은 빈 배열이다 — 그건 실패가 아니다", () => {
+  assert.deepEqual(parseDraftBids(fixture("draft-2019-list-c"), "c"), [], "단독지명 구단에는 주석이 없다");
+  assert.deepEqual(parseDraftBids(fixture("draft-2001-list-f"), "f"), [], "2001 니혼햄도 ※ 가 0건이다");
+});
+
+test("⚠전각 숫자(`※１巡目`)를 읽고, `（第N回）` 가 없으면 주석 순서가 회차다(2006 巨人 · 실물)", () => {
+  // ※１巡目： 堂上直倫内野手で阪神、中日と重複、抽選で外れる
+  // ⚠**브리프 정규식이 여기서 죽는다** — `1巡目` 을 반각으로만 썼다.
+  const bids = parseDraftBids(fixture("draft-2006-list-g"), "g");
+  assert.equal(bids.length, 1);
+  assert.deepEqual(bids[0], {
+    team: "g",
+    roundNo: 1,
+    rivals: ["阪神", "中日"],
+    nameDisplay: "堂上直倫",
+    won: false,
+  });
+});
+
+test("⚠당첨 주석은 선수명을 생략한다 — null 이지 빈 문자열이 아니다(M11)", () => {
+  // 규칙 문서 §2: 당첨(`確定`)이면 그 팀 표의 그 회차 값이 곧 그 선수라 이름을 안 쓴다.
+  const bids = parseDraftBids("<p>※1巡目： 阪神と重複、抽選で確定</p>", "g");
+  assert.equal(bids.length, 1);
+  assert.equal(bids[0]?.won, true);
+  assert.equal(bids[0]?.nameDisplay, null, "당첨이면 이름이 없다 — 표에서 가져와야 한다(적재의 일)");
+  assert.deepEqual(bids[0]?.rivals, ["阪神"]);
+});
+
+test("⚠`<br>` 없이 붙은 두 주석을 `※` 로 자른다(2007 西武 모양)", () => {
+  // `<p>` 단위로 자르면 둘이 한 덩어리가 되어 **뒤엣것이 통째로 사라진다.**
+  const html =
+    "<p>※1巡目（第1回）： 甲野一投手で阪神と重複、抽選で外れる※1巡目（第2回）： 阪神と重複、抽選で確定</p>";
+  const bids = parseDraftBids(html, "l");
+  assert.equal(bids.length, 2, "붙어 있어도 2건이다");
+  assert.equal(bids[0]?.nameDisplay, "甲野一");
+  assert.equal(bids[0]?.won, false);
+  assert.equal(bids[1]?.roundNo, 2);
+  assert.equal(bids[1]?.won, true);
+  assert.equal(bids[1]?.nameDisplay, null);
+});
+
+test("⚠`1位` 라벨도 같은 문법이다", () => {
+  const bids = parseDraftBids("<p>※1位： 中日と重複、抽選で確定</p>", "g");
+  assert.deepEqual(bids, [{ team: "g", roundNo: 1, rivals: ["中日"], nameDisplay: null, won: true }]);
+});
+
+test("⚠구단 표기는 자르지 않고 그대로 담는다 — `横浜DeNA` 를 `横浜` 로 먹으면 다른 팀이 된다", () => {
+  // 코드 변환은 적재(store)의 일이다. 파서가 약칭을 손대면 **최장일치 규칙이 두 벌**이 된다.
+  const bids = parseDraftBids("<p>※1巡目： 乙川二投手で横浜DeNA、北海道日本ハムと重複、抽選で外れる</p>", "g");
+  assert.deepEqual(bids[0]?.rivals, ["横浜DeNA", "北海道日本ハム"]);
+});
+
+test("⚠nameDisplay 에 NFKC 를 걸지 않는다 — 명단 파서와 **같은 규칙**이다(M1)", () => {
+  // `parseDraftPicks.nameDisplay` 가 원문 그대로인 것과 짝을 맞춘다. 한쪽만 정규화하면
+  // **이름 규칙이 두 벌**이 되고, 두 표를 나란히 놓은 사람만 그 차이를 본다.
+  const bids = parseDraftBids("<p>※1巡目： ｴﾄﾞﾎﾟﾛ ｹｲﾝ外野手で阪神と重複、抽選で外れる</p>", "g");
+  assert.equal(bids[0]?.nameDisplay, "ｴﾄﾞﾎﾟﾛ ｹｲﾝ", "반각 가나가 NFKC 로 접히면 안 된다");
+});
+
+test("⚠드래프트와 무관한 `※` 는 건너뛴다 — 그건 예외가 아니다", () => {
+  const html = "<p>※入団交渉は後日行う</p><p>※1巡目： 阪神と重複、抽選で確定</p>";
+  const bids = parseDraftBids(html, "g");
+  assert.equal(bids.length, 1, "무관한 주석은 세지 않는다");
+  assert.equal(bids[0]?.roundNo, 1, "⚠건너뛴 주석이 회차 순번을 밀지 않는다");
+});
+
+test("⚠경합 주석처럼 보이는데 문법이 다르면 던진다(M7) — 조용히 건너뛰지 않는다", () => {
+  // 어휘가 한쪽만 바뀐 날(`重複`→`競合`) 그냥 넘기면 **그 해 경합이 통째로 0건**이 되고,
+  // 0건은 단독지명과 구별되지 않아 **아무도 결함으로 못 읽는다.**
+  assert.throws(
+    () => parseDraftBids("<p>※1巡目： 甲野一投手で阪神と競合、抽選で外れる</p>", "g"),
+    DraftParseError,
+  );
+  assert.throws(() => parseDraftBids("<p>※1巡目： 阪神と重複、抽選で保留</p>", "g"), DraftParseError);
+});
+
+test("⚠`（第N回）` 가 문서 순서와 어긋나면 던진다(M7)", () => {
+  assert.throws(
+    () =>
+      parseDraftBids(
+        "<p>※1巡目（第2回）： 甲野一投手で阪神と重複、抽選で外れる<br>※1巡目（第1回）： 阪神と重複、抽選で確定</p>",
+        "g",
+      ),
+    DraftParseError,
+  );
+});
+
+test("⚠무관한 주석 **뒤에 이어지는 산문**이 M7 그물을 헛불게 하지 않는다", () => {
+  // ⚠**뮤테이션이 잡아낸 구멍이다**(블록 경계를 없애도 시험이 전부 초록이었다).
+  // 마지막 `※` 덩어리는 페이지 끝까지 뻗으므로, 뒤쪽 산문에 `抽選で` 가 있으면
+  // 경계 없이는 **무관한 주석이 「문법 위반」으로 던져진다.** 각 주석은 자기 블록 안이다.
+  const html = "<p>※注意事項</p><div>入団交渉は抽選で決まった順に行う</div>";
+  assert.deepEqual(parseDraftBids(html, "g"), [], "던지지 않고 0건이다");
+});
+
+test("⚠상대 구단 칸이 비면 던진다(M7) — 빈 문자열을 구단으로 만들지 않는다", () => {
+  // ⚠**이것도 뮤테이션이 잡아낸 구멍이다** — 검사를 지워도 시험이 전부 초록이었다.
+  assert.throws(() => parseDraftBids("<p>※1巡目： 阪神、と重複、抽選で確定</p>", "g"), DraftParseError);
+});
+
+test("⚠푸터 아래의 `※` 는 보지 않는다 — 명단 파서와 같은 경계다", () => {
+  const html = "<p>※1巡目： 阪神と重複、抽選で確定</p><footer><p>※1巡目： 中日と重複、抽選で外れる</p></footer>";
+  const bids = parseDraftBids(html, "g");
+  assert.equal(bids.length, 1);
+  assert.deepEqual(bids[0]?.rivals, ["阪神"]);
 });
