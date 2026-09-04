@@ -32,6 +32,7 @@ export type { Career, CareerBattingSeason, CareerPitchingSeason } from "./career
 export { parseUpcoming } from "./upcoming.ts";
 export type { UpcomingGame, UpcomingResult } from "./upcoming.ts";
 export {
+  DRAFT_KINDS,
   DraftIndexError,
   DraftParseError,
   parseDraftBids,

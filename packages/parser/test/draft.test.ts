@@ -357,6 +357,31 @@ test("⚠포지션이 어휘 밖이면 던진다(M7) — 초판은 이 칸만 �
   assert.equal(blank[0]?.position, null);
 });
 
+/**
+ * ⚠**어휘 검사가 어휘 검사가 아니었다**(2026-09-05 최종 검토 [m1] · 실측).
+ * `POSITIONS[k] === undefined` 로 거르는데 그 표가 평범한 객체 리터럴이면
+ * `Object.prototype` 의 이름들이 **값을 갖고 돌아온다** — `constructor`·`toString` 은
+ * 게이트를 통과했고 **`__proto__` 는 `{}` 를 포지션으로 만들었다.**
+ * ⚠**실제 위험은 ≈0 이다** — npb.jp 의 포지션 칸에 ASCII 식별자가 나올 일이 없다.
+ * 못으로 박는 이유는 위험이 아니라 **문서와 코드가 어긋나 있었다는 것**이다:
+ * `positions.ts` 가 「모르는 값은 `undefined` 가 된다」고 선언하고 있었고 그게 거짓이었다.
+ * ⚠**어휘는 `roster.ts` 와 한 벌이다**(M1) — 짝이 되는 시험이 `roster.test.ts` 에 있다.
+ * **한쪽에만 가드를 넣어 고치지 마라.**
+ */
+test("⚠프로토타입 이름도 어휘 밖이다 — `__proto__` 가 포지션이 되지 않는다(M7)", () => {
+  for (const name of ["constructor", "__proto__", "toString", "valueOf", "hasOwnProperty"]) {
+    assert.throws(
+      () =>
+        parseDraftPicks(
+          `<h4>新人選手選択会議</h4><table><tr><th>1位</th><td>山田 太郎</td><td>${name}</td><td>某高</td></tr></table>`,
+          "g",
+        ),
+      DraftParseError,
+      `${name} 이 어휘를 통과했다 — 어휘표에 프로토타입이 남아 있다`,
+    );
+  }
+});
+
 test("⚠모르는 섹션 머리는 무시하지 않고 던진다(M7)", () => {
   assert.throws(
     () => parseDraftPicks("<h4>新種目選択会議</h4><table><tr><th>1位</th><td>山田</td><td>投手</td><td>某高</td></tr></table>", "g"),
@@ -494,6 +519,93 @@ test("⚠경합 주석처럼 보이는데 문법이 다르면 던진다(M7) — 
     DraftParseError,
   );
   assert.throws(() => parseDraftBids("<p>※1巡目： 阪神と重複、抽選で保留</p>", "g"), DraftParseError);
+});
+
+/**
+ * ⚠⚠**그물이 토크나이저 **하류**에 있으면 토크나이저가 바뀐 날 그물 자체가 안 뜬다.**
+ * (2026-09-05 최종 검토 [I1] · **검토자가 구성한 5변종을 그대로 옮겼다**.)
+ *
+ * 옛 그물은 `※` 로 자른 **덩어리에만** 걸렸다. 실측(고치기 전):
+ * ```
+ * 현행(정답)                                        -> 1건
+ * 「…3球団が競合し、抽選の結果、交渉権を得られず」  -> 0건  조용히
+ * 「…と競合、抽選の結果外れる」                     -> 0건  조용히
+ * ※ 를 * 로                                        -> 0건  조용히
+ * ※ 를 &#8251; 로                                   -> 0건  조용히
+ * ```
+ * ⚠**그 0건이 적재까지 가면 「단독지명」이라는 거짓 사실이 된다** — 겹친 구단의 주석이
+ * 사라지면 그 구단의 1巡目이 `won = NULL`(아무도 안 겹쳤다)로 유도되고,
+ * **불변식 5종도 백필 게이트도 그것을 못 잡는다**(검토자 end-to-end 재현).
+ *
+ * ⚠**5변종은 검토자가 구성한 것이지 실물이 아니다.** 저장소에서 셀 수 있는 실물 경합 주석은
+ * **3건뿐**이다(2019-g 2건 · 2006-g 1건). 못으로 박는 것은 「이 5개가 온다」가 아니라
+ * **「그물이 토크나이저 위에 있다」**는 구조다.
+ */
+test("⚠어휘가 바뀐 경합 주석을 던진다 — 그물이 `※` 자르기 **위**에 있다(M7)", () => {
+  for (const text of [
+    "※1巡目： 奥川恭伸投手で東京ヤクルト、阪神、読売の3球団が競合し、抽選の結果、交渉権を得られず",
+    "※1巡目： 奥川恭伸投手で東京ヤクルトと競合、抽選の結果外れる",
+  ]) {
+    assert.throws(() => parseDraftBids(`<p>${text}</p>`, "g"), DraftParseError, text);
+  }
+});
+
+/**
+ * ⚠**층 ⑵(덩어리 그물)만이 잡는 모양.** 문서 그물은 **「겹침 + 추첨」의 AND** 라
+ * 헛불을 안 내는 대신 **한쪽 낱말만 남은 주석**을 못 본다. 그건 `※` 안에 있으므로
+ * prior 가 높고, 거기서는 **OR** 로 잡는 것이 맞다.
+ * ⚠**두 층 중 어느 쪽을 지워도 이 파일이 붉어지게** 하려고 이 본을 따로 둔다 —
+ * 한 층이 다른 층을 가리면 나머지 한 층은 **지워져도 아무도 모른다.**
+ */
+test("⚠`※` 안에서는 낱말 하나만 남아도 던진다 — 문서 그물(AND)은 이걸 못 본다", () => {
+  assert.throws(
+    () => parseDraftBids("<p>※1巡目： 甲野一投手で阪神と重複、交渉権を得られず</p>", "g"),
+    DraftParseError,
+    "`抽選` 이 빠진 변종",
+  );
+  assert.throws(
+    () => parseDraftBids("<p>※1巡目： 甲野一投手で阪神にくじ引きで敗れる</p>", "g"),
+    DraftParseError,
+    "`重複`·`競合` 이 빠진 변종",
+  );
+});
+
+test("⚠`※` 자체가 바뀌어도 던진다 — 덩어리가 0개면 옛 그물은 아예 안 떴다(M7)", () => {
+  const body = "1巡目： 奥川恭伸投手で東京ヤクルト、阪神と重複、抽選で外れる";
+  // ⚠`&#8251;` 는 `※` 의 수치 참조다. `decode` 가 그것을 풀지 않으므로 **덩어리가 0개**가 된다.
+  for (const marker of ["*", "&#8251;", "&#x203B;", "＊", "■"]) {
+    assert.throws(
+      () => parseDraftBids(`<p>${marker}${body}</p>`, "g"),
+      DraftParseError,
+      `${marker} 로 바뀌었을 때 조용히 0건이 됐다`,
+    );
+  }
+});
+
+test("⚠문서 그물이 헛불지 않는다 — 실물 픽스처 10장 중 10장", () => {
+  // ⚠**헛불 위험이 가설이 아니라 실측이다**: 2006 구단 페이지의 사이드메뉴에
+  //   `入札抽選参加、希望入団枠使用等の公示` 라는 링크가 있어 `抽選` 이 **본문 밖에 1건** 있다.
+  //   그래서 문서 그물은 낱말 하나가 아니라 **「겹침 + 추첨」의 모양**을 본다.
+  const counts: Record<string, number> = {};
+  for (const name of [
+    "draft-2019-list-g", "draft-2019-list-c", "draft-2006-list-g", "draft-2001-list-f",
+    "draft-2001-index", "draft-2013-index", "draft-2024-index", "draft-2026-index",
+    "draft-backnumber", "draft-2013-list-b-404",
+  ]) {
+    counts[name] = parseDraftBids(fixture(name), "g").length;
+  }
+  assert.deepEqual(counts, {
+    "draft-2019-list-g": 2,
+    "draft-2019-list-c": 0,
+    "draft-2006-list-g": 1,
+    "draft-2001-list-f": 0,
+    "draft-2001-index": 0,
+    "draft-2013-index": 0,
+    "draft-2024-index": 0,
+    "draft-2026-index": 0,
+    "draft-backnumber": 0,
+    "draft-2013-list-b-404": 0,
+  });
 });
 
 test("⚠`（第N回）` 가 문서 순서와 어긋나면 던진다(M7)", () => {

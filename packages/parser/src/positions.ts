@@ -49,10 +49,23 @@ export type Position = "投手" | "捕手" | "内野手" | "外野手";
  * ⚠**키가 `string` 인 것이 요점이다.** `Record<Position, Position>` 으로 좁히면
  * 「어휘 밖인가」를 물을 수 없게 되고 — 물을 수 없으면 검증 자체가 사라진다.
  * 이 표의 존재 이유는 매핑이 아니라 **판정**이다.
+ *
+ * ⚠⚠**프로토타입이 없다(`Object.create(null)`). 그게 이 표가 판정할 수 있는 이유다.**
+ * 평범한 객체 리터럴이었을 때 위 문장(「모르는 값은 `undefined`」)이 **거짓이었다**
+ * (2026-09-05 실측 · 최종 검토 [m1]): `constructor`·`toString` 은 `Object.prototype` 에서
+ * 값이 나와 `undefined` 검사를 통과했고, **`__proto__` 는 `{}` 를 포지션으로 만들었다.**
+ * 즉 두 파서(`roster.ts`·`draft.ts`)의 M7 게이트가 그 세 낱말에만 열려 있었다.
+ * ⚠**실제 위험은 ≈0 이었다** — npb.jp 의 포지션 칸에 ASCII 식별자가 나올 일이 없다.
+ * 그래도 닫은 이유 둘: ⑴ 루트 `CLAUDE.md` §5 가 `__proto__` 오염 차단을 명시한다 ·
+ * ⑵ **주석이 거짓인 채로 남는 것 자체가 결함이다**(다음 사람이 그 문장을 믿는다).
+ * ⚠**두 파서가 이 한 벌을 공유하므로 여기서 닫으면 두 곳이 같이 닫힌다**(M1) —
+ * 어느 한쪽에 `Object.hasOwn` 가드를 따로 넣지 마라. 그 순간 규칙이 두 벌이 된다.
  */
-export const POSITIONS: Readonly<Record<string, Position>> = {
-  投手: "投手",
-  捕手: "捕手",
-  内野手: "内野手",
-  外野手: "外野手",
-};
+export const POSITIONS: Readonly<Record<string, Position>> = Object.freeze(
+  Object.assign(Object.create(null) as Record<string, Position>, {
+    投手: "投手",
+    捕手: "捕手",
+    内野手: "内野手",
+    外野手: "外野手",
+  } as const),
+);

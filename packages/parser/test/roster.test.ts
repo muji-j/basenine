@@ -113,6 +113,25 @@ test("⚠모르는 포지션 구획이 오면 멈춘다 — 위 구획의 값을
   );
 });
 
+/**
+ * ⚠**어휘표에 프로토타입이 있으면 이 게이트가 세 낱말에 열려 있다**(2026-09-05 최종 검토 [m1]).
+ * `POSITIONS[label] === undefined` 로 거르는데, 평범한 객체 리터럴이면
+ * `constructor`·`toString` 은 `Object.prototype` 에서 **값이 나오고**
+ * **`__proto__` 는 `{}` 를 포지션으로 만든다.**
+ * ⚠**실제 위험은 ≈0 이다**(구획 머리에 ASCII 식별자가 나올 일이 없다) — 못으로 박는 것은
+ * 「닫혔다」가 아니라 **`positions.ts` 한 벌을 고치면 두 파서가 같이 닫힌다」**는 사실이다(M1).
+ * 드래프트 파서 쪽의 짝은 `draft.test.ts` 에 있다.
+ */
+test("⚠어휘표의 프로토타입 이름도 어휘 밖이다 — `__proto__` 가 포지션이 되지 않는다", () => {
+  for (const name of ["constructor", "__proto__", "toString", "valueOf", "hasOwnProperty"]) {
+    assert.throws(
+      () => parseGameRoster(ROSTER.replace("内野手", name)),
+      /포지션 구획을 해석하지 못했다/,
+      `${name} 이 어휘를 통과했다`,
+    );
+  }
+});
+
 /** ⚠구획 밖의 선수 행을 포지션 없이 흘리지 않는다 — 마크업이 바뀌면 여기서 걸린다 */
 test("⚠구획 앞에 선수 행이 있으면 멈춘다", () => {
   const noHead = ROSTER.replace(/<tr><th colspan="3">[^<]*<\/th><\/tr>\n?/g, "");
