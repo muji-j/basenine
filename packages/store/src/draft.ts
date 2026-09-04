@@ -71,8 +71,11 @@ export interface DraftLoadResult {
  *    「아무도 안 겹쳤다」고 주장**하게 되고, 시즌마다 24행의 비사건이 쌓인다.
  * ⑶ 남는 셋이 곧 「本ドラフト」 구획이다. 2005~2007 은 그게 `koukousei`·`daigaku_shakaijin` 으로
  *    갈라져 있었고 **둘 다 추첨이 있었다**(2006 요미우리 堂上直倫 경합이 高校生 쪽이다 · 픽스처 실측).
+ *
+ * ⚠**내보내는 이유**: 불변식 시험(`scripts/test/draft-invariants.test.ts`)의 **분모가 이 목록이다**.
+ * 시험이 따로 적으면 어휘가 두 벌이 되고, 여기를 고친 날 시험은 **옛 목록으로 조용히 계속 초록**이 된다(M1).
  */
-const LOTTERY_KINDS: ReadonlySet<DraftKind> = new Set<DraftKind>([
+export const LOTTERY_KINDS: ReadonlySet<DraftKind> = new Set<DraftKind>([
   "shihaika",
   "koukousei",
   "daigaku_shakaijin",

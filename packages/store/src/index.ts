@@ -1,6 +1,6 @@
 export { listMigrations, openDb } from "./db.ts";
 export type { Db } from "./db.ts";
-export { DraftLoadError, loadDraft } from "./draft.ts";
+export { DraftLoadError, LOTTERY_KINDS, loadDraft } from "./draft.ts";
 export type { DraftLoadInput, DraftLoadResult } from "./draft.ts";
 export { deriveBatting, derivePitching } from "./derive.ts";
 export type { BattingRow, DeriveResult, PitchingRow, QuarantineRow } from "./derive.ts";
