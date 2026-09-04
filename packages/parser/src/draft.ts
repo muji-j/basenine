@@ -189,13 +189,17 @@ export function parseDraftPicks(html: string, team: string): DraftPickRow[] {
   }
 
   const rows: DraftPickRow[] = [];
-  let dataRows = 0;
+  let recognized = 0;
 
   for (const [, headingRaw, sectionBody] of sections) {
     const heading = decode(headingRaw ?? "");
     if (heading === "") continue;
     const where = `${team} / ${heading}`;
     const kind = kindOf(heading, where);
+    recognized += 1;
+
+    // ⚠**섹션마다 센다. 페이지 전체로 세면 안 된다.** 사유는 아래 던지는 자리 참조.
+    let dataRows = 0;
 
     for (const table of (sectionBody ?? "").matchAll(/<table[^>]*>([\s\S]*?)<\/table>/g)) {
       for (const tr of (table[1] ?? "").matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)) {
@@ -276,14 +280,35 @@ export function parseDraftPicks(html: string, team: string): DraftPickRow[] {
         });
       }
     }
+
+    // ⚠⚠**섹션마다 던진다. 페이지 전체로 세면 조용한 소실이 된다.**
+    // 전역 카운터였을 때는 **한 섹션만 구조가 깨져 0행이 되어도 다른 섹션이 정상이면
+    // 예외가 안 났고**, 그 섹션이 통째로 빠진 배열이 «정상»으로 반환됐다.
+    // ⚠**그 배열을 적재가 받으면 실데이터가 지워진다** — 적재는 구단 단위로 지우고 다시 넣으므로
+    // (`store/src/draft.ts`) 빠진 구획의 행이 **에러 없이 사라진다.** M7 이 막는 것은
+    // 「조용한 오답」인데 여기서는 **「조용한 소실」**이었다.
+    //
+    // ⚠**세는 것은 「읽어 낸 지명 행」이지 「출력한 행」이 아니다.** 둘을 헷갈리면 오탐이 난다 —
+    // `（選択権なし）` 는 **읽히지만 선수가 아니라서** 출력되지 않는다(실측: 픽스처 4장에서 **5건**).
+    // 「전 회차를 건너뛴 섹션」은 0건이 정답이고, 여기서 던지면 안 된다(M11).
+    //
+    // ⚠**오탐 위험을 안다.** 「구획 머리는 있는데 지명 행이 0인」 섹션이 정상으로 실재하면
+    // 그 구단 페이지가 통째로 실패한다. 실측(픽스처 4장 · 인식된 섹션 **10개 중 0건**)이지만
+    // **「10개 중 0건」이지 「그런 경우는 없다」가 아니다** — 12구단 × 22시즌은 안 쟀다.
+    // 그래도 던지는 쪽을 골랐다: **헛불은 시끄럽고 고칠 수 있지만, 지워진 행은 조용하고 영구적이다.**
+    if (dataRows === 0) {
+      throw new DraftParseError(
+        "이 섹션에서 지명 행을 한 건도 못 읽었다 — 섹션이 통째로 빠진 배열을 정상으로 내보내지 않는다(M7)",
+        `${where} / kind=${kind}`,
+      );
+    }
   }
 
-  // ⚠**「지명이 0건」과 「표를 못 읽었다」는 다르다**(M11). 전 회차를 건너뛴 구단은
-  // 실제로 0건이라 빈 배열이 정답이고, 표 자체를 못 읽은 것은 실패다.
-  if (dataRows === 0) {
+  // ⚠머리가 전부 빈 `<h4>` 뿐이면 위 루프가 한 번도 안 돈다 — 그때도 빈 배열로 흘리지 않는다.
+  if (recognized === 0) {
     throw new DraftParseError(
-      "표에서 지명 행을 한 건도 못 읽었다 — 빈 배열로 흘리지 않는다(M7)",
-      `team=${team} / 섹션 ${sections.length}개`,
+      "인식된 섹션이 하나도 없다 — 빈 배열로 흘리지 않는다(M7)",
+      `team=${team} / <h4> ${sections.length}개`,
     );
   }
   return rows;
