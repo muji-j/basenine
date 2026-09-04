@@ -46,7 +46,10 @@
 ```
 draft_event      한 해 × 구획
   season INTEGER, kind TEXT, held_on TEXT NULL
-    kind ∈ {shihaika, ikusei, koukousei, daigaku_shakaijin}
+    kind ∈ {shihaika, ikusei, koukousei, daigaku_shakaijin, jiyuu_kakutoku, kibou_nyudanwaku}
+    ⚠**6종이다**(2026-09-05 정정 · 원안은 4종이었다). `自由獲得選手`(2001)·`希望入団枠獲得選手`(2006)는
+      **회차가 없는 별도 제도**라 `shihaika` 로 접으면 「1巡目 지명」과 구별할 수 없다 —
+      적재가 순번을 매기는 순간 둘이 같아진다. 구현 중 실측으로 드러났다.
     ⚠2005~2007 은 分離ドラフト라 한 해에 구획이 3~4개다
   source TEXT, fetched_at TEXT, revision TEXT, license TEXT NULL
     ⚠M4: 자체 컬럼이다. 경기와 달리 **부모를 타고 답할 상대가 없다**
