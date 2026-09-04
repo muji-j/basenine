@@ -31,5 +31,11 @@ export { CareerParseError, careerTotal, parseCareer, seasonsPlayed } from "./car
 export type { Career, CareerBattingSeason, CareerPitchingSeason } from "./career.ts";
 export { parseUpcoming } from "./upcoming.ts";
 export type { UpcomingGame, UpcomingResult } from "./upcoming.ts";
-export { DraftParseError, parseDraftBids, parseDraftPicks } from "./draft.ts";
+export {
+  DraftParseError,
+  parseDraftBids,
+  parseDraftPicks,
+  parseDraftTeamSlugs,
+  parseDraftYears,
+} from "./draft.ts";
 export type { DraftBidRow, DraftKind, DraftPickRow } from "./draft.ts";

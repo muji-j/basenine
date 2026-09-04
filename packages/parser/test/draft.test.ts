@@ -24,7 +24,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
-import { DraftParseError, parseDraftBids, parseDraftPicks } from "../src/draft.ts";
+import {
+  DraftParseError,
+  parseDraftBids,
+  parseDraftPicks,
+  parseDraftTeamSlugs,
+  parseDraftYears,
+} from "../src/draft.ts";
 
 const fixture = (name: string): string =>
   gunzipSync(readFileSync(fileURLToPath(new URL(`fixtures/${name}.html.gz`, import.meta.url)))).toString("utf8");
@@ -477,4 +483,119 @@ test("⚠푸터 아래의 `※` 는 보지 않는다 — 명단 파서와 같은
   const bids = parseDraftBids(html, "g");
   assert.equal(bids.length, 1);
   assert.deepEqual(bids[0]?.rivals, ["阪神"]);
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 연도 색인(`backnumber.html`)과 구단 슬러그 발견.
+ *
+ * ⚠**이 두 함수는 「수집 진입점」이다** — 여기가 조용히 적게 내면 그만큼의 연도·구단이
+ * **아예 수집되지 않고**, 화면에서는 「원래 그 해는 그렇다」로 읽힌다. CLAUDE.md §2 의
+ * 2018 오릭스 사고(`bs` 를 `b` 로 알고 적재해 148경기가 실패)와 **같은 자리**다.
+ *
+ * ⚠**아래 시험의 절반은 실물 픽스처다.** 이 저장소는 「합성 픽스처로는 검증되지 않는다」를
+ * 실제 사고로 기록해 뒀다(2016 박스 · fixtures/README.md). 합성만으로 얻은 초록은 근거가 아니다.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+test("연도 색인에서 연도를 뽑는다", () => {
+  const html = `<a href="./2025/">2025年</a><a href="./2024/">2024年</a><a href="./2001/">2001年</a>`;
+  assert.deepEqual(parseDraftYears(html), [2001, 2024, 2025], "오름차순 · 중복 없음");
+});
+
+test("⚠실물 `backnumber.html` 에서 26개 연도를 빠짐없이 뽑는다", () => {
+  // ⚠⚠**브리프의 정규식은 이 실물에서 0건이었다.** 실제 마크업은 `href="./2001/"` 가
+  // 아니라 **`href="/draft/2001/"`** 다. 그대로 갔으면 진입점이 **첫 실행에서 던지고
+  // 드래프트 수집이 통째로 안 돌았다.** Task 4 의 「실물 3건 중 0건 통과」와 같은 종류다.
+  const years = parseDraftYears(fixture("draft-backnumber"));
+  assert.equal(years.length, 26, "조사 문서의 실측(2001~2026 · 26건)과 같다");
+  assert.equal(years[0], 2001);
+  assert.equal(years.at(-1), 2026);
+  // ⚠**결번 0** — 26개가 연속인가. 하나가 빠져도 그 해가 통째로 사라진다.
+  assert.deepEqual(
+    years,
+    Array.from({ length: 26 }, (_, i) => 2001 + i),
+    "2001..2026 연속 · 결번 0",
+  );
+});
+
+test("⚠경기 결과 링크(`/scores/2026/0904/`)를 연도로 읽지 않는다", () => {
+  // ⚠**실물 `backnumber.html` 에 이 모양이 실재한다**(그날 경기 5건). 느슨한 정규식이면
+  // `0904` 가 **904년**이 되어 색인에 섞인다 — 904 는 그럴듯하지 않아 눈에 띄지만,
+  // `2026` 쪽은 **진짜 연도와 구별되지 않는다.**
+  const html = `<a href="/draft/2001/">2001年</a><a href="/scores/2026/0904/b-m-21/">試合</a>`;
+  assert.deepEqual(parseDraftYears(html), [2001], "드래프트 연도만 — 904 도 2026 도 아니다");
+});
+
+test("⚠연도 링크를 한 건도 못 찾으면 던진다(M7)", () => {
+  assert.throws(() => parseDraftYears("<html><body>お知らせ</body></html>"), DraftParseError);
+});
+
+test("⚠새 형태의 `/draft/YYYY/` 링크를 조용히 흘리지 않는다(M7 그물)", () => {
+  // ⚠**이 파서가 조용히 틀리는 방식은 「전부 실패」가 아니라 「최신 연도만 놓침」이다.**
+  // 색인이 최신 연도만 다른 형태로 걸면 나머지는 그대로 나오므로 **아무도 결함으로
+  // 못 읽는다** — 그런데 놓친 그 한 개가 **올해**다.
+  const html = `<a href="/draft/2026/">2026年</a><a href="/draft/2027/index.html">2027年</a>`;
+  assert.throws(() => parseDraftYears(html), DraftParseError);
+});
+
+test("⚠구단 슬러그를 하드코딩하지 않고 페이지에서 발견한다", () => {
+  const html = `<a href="draftlist_g.html">読売</a><a href="draftlist_bs.html">オリックス</a>`;
+  assert.deepEqual(parseDraftTeamSlugs(html), ["bs", "g"], "정렬 · 2013 오릭스는 bs 다");
+});
+
+test("⚠슬러그를 한 건도 못 찾으면 던진다", () => {
+  assert.throws(() => parseDraftTeamSlugs("<html></html>"), DraftParseError);
+});
+
+test("⚠실물 2013 연도 톱: 오릭스가 `bs` 이고 `b` 는 없다", () => {
+  // ⚠**하드코딩했으면 여기서 죽는다.** 실측으로 `draftlist_b.html` 은 2013 에서
+  // **nginx 404** 를 낸다(표본 `draft-2013-list-b-HTTP404.html`). 그 404 를 파서에 넣으면
+  // 던지긴 하지만, **애초에 `bs` 를 시도하지 않으므로** 2013 오릭스 지명이 통째로 비고
+  // 화면은 「그 해는 원래 그렇다」로 읽힌다.
+  const slugs = parseDraftTeamSlugs(fixture("draft-2013-index"));
+  assert.equal(slugs.length, 12);
+  assert.ok(slugs.includes("bs"), "2013 오릭스 = bs");
+  assert.ok(!slugs.includes("b"), "2013 에 b 는 없다 — 실측 404");
+});
+
+test("⚠실물 2024 연도 톱: 같은 구단이 `b` 다 — 슬러그는 연도의 함수다", () => {
+  const slugs = parseDraftTeamSlugs(fixture("draft-2024-index"));
+  assert.equal(slugs.length, 12);
+  assert.ok(slugs.includes("b"), "2024 오릭스 = b");
+  assert.ok(!slugs.includes("bs"), "2024 에 bs 는 없다");
+});
+
+test("⚠실물 2001 연도 톱: 지금 없는 구단이 나온다(近鉄 `bu` · ブルーウェーブ `bw`)", () => {
+  // ⚠**현행 12구단 코드를 상수로 박으면 이 해는 2구단이 조용히 빈다.**
+  // 2004 시즌 뒤 近鉄 와 オリックス 가 합병했으므로 `bu`·`bw` 는 어느 현행 표에도 없다.
+  const slugs = parseDraftTeamSlugs(fixture("draft-2001-index"));
+  assert.equal(slugs.length, 12);
+  for (const gone of ["bu", "bw", "yb"]) {
+    assert.ok(slugs.includes(gone), `2001 에 ${gone} 가 있다`);
+  }
+});
+
+test("⚠세 연도의 슬러그 집합이 서로 다르다 — 그래서 하드코딩이 원리적으로 불가능하다", () => {
+  const y2001 = parseDraftTeamSlugs(fixture("draft-2001-index"));
+  const y2013 = parseDraftTeamSlugs(fixture("draft-2013-index"));
+  const y2024 = parseDraftTeamSlugs(fixture("draft-2024-index"));
+  assert.notDeepEqual(y2001, y2013);
+  assert.notDeepEqual(y2013, y2024);
+  // 셋 다 12구단이지만 **구성이 다르다** — 개수만 세는 검사는 이것을 못 잡는다.
+  for (const s of [y2001, y2013, y2024]) assert.equal(s.length, 12);
+});
+
+test("⚠실물 2026 연도 톱(개최 전)은 슬러그가 0건이라 던진다", () => {
+  // ⚠**이건 「구조가 바뀌었다」가 아니라 「아직 안 열렸다」다**(M11 · 원래 없음).
+  // 실측(2026-09-04 표본): 그 페이지에는 `開催要項` 과 `ニュース` 뿐이고
+  // `draftlist_*` 는 **개최 당일에 생긴다**(조사 문서 §7).
+  // ⚠**그래도 던진다** — 파서는 둘을 구별할 수 없고, 빈 배열로 흘리면
+  // **마크업이 진짜로 바뀐 날에도 똑같이 조용하다.** 「아직인가」는 호출자가 판정한다.
+  assert.throws(() => parseDraftTeamSlugs(fixture("draft-2026-index")), DraftParseError);
+});
+
+test("⚠슬러그가 어휘 밖 형태면 던진다(M7 그물) — 한 구단이 조용히 빠지지 않게", () => {
+  // ⚠**놓친 한 구단은 조용하고 영구적이다.** 11개가 정상으로 나오므로 개수를 세도 안 잡힌다
+  // (그리고 개수 12 를 박으면 위 2026 케이스와 합성 시험이 죽는다).
+  const html = `<a href="draftlist_g.html">読売</a><a href="draftlist_B.html">オリックス</a>`;
+  assert.throws(() => parseDraftTeamSlugs(html), DraftParseError);
 });
