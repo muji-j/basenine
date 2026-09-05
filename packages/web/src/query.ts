@@ -6241,6 +6241,10 @@ interface DraftPickSql {
   from_org: string | null;
   origin: string;
   player_id: string | null;
+  /** ⚠**지명이 실린 구단 페이지**다 — 연도 톱(`draft_event.source`)과 다른 판이다([I-1]) */
+  source: string;
+  fetched_at: string;
+  revision: string;
 }
 
 interface DraftBidSql {
@@ -6254,6 +6258,9 @@ interface DraftBidSql {
   rivals: string | null;
   origin: string;
   player_id: string | null;
+  source: string;
+  fetched_at: string;
+  revision: string;
 }
 
 interface DraftNoteSql {
@@ -6381,7 +6388,7 @@ export function loadDraftPage(db: Db, o: LoadOptions): DraftPageData {
   const picks = db.raw
     .prepare(
       `SELECT kind, team, round_no, pick_seq, waiver_dir, name_display, name_canonical,
-              position, from_org, origin, player_id
+              position, from_org, origin, player_id, source, fetched_at, revision
          FROM draft_pick WHERE season = ? ORDER BY kind, round_no`,
     )
     .all(season) as unknown as DraftPickSql[];
@@ -6389,7 +6396,7 @@ export function loadDraftPage(db: Db, o: LoadOptions): DraftPageData {
   const bids = db.raw
     .prepare(
       `SELECT kind, round_no, team, group_key, won, name_display, name_canonical,
-              rivals, origin, player_id
+              rivals, origin, player_id, source, fetched_at, revision
          FROM draft_bid WHERE season = ? ORDER BY kind, round_no, rowid`,
     )
     .all(season) as unknown as DraftBidSql[];
@@ -6539,9 +6546,27 @@ export function loadDraftPage(db: Db, o: LoadOptions): DraftPageData {
 
       /**
        * ⚠**입찰 0행의 뜻이 시즌마다 다르다.**
-       * - 지명은 들어왔는데 입찰만 0 → **NPB 가 표시를 껐다**(2023·2024·2025 실측).
-       *   경합은 실제로 있었다 — 2023 야쿠르트 페이지엔 그 문장이 HTML 주석 안에 남아 있다.
+       * - 지명은 들어왔는데 입찰만 0 → **우리가 가진 판에 추첨 결과가 없다.**
        * - 지명까지 0 → 그건 **우리 수집이 깨진 것**이다(M7 · 조용히 넘기지 않는다).
+       *
+       * ⚠⚠**원인을 단정하지 않는다**(2026-09-06 최종 검토 [I-2]). 초판은
+       * ~~「NPBのページが載せていません（競合そのものは実際にありました）」~~ 라고 썼는데
+       * **두 군데가 근거 없는 단정**이었다:
+       *
+       * ⑴ **「경합이 실제로 있었다」의 근거는 2023 야쿠르트 HTML 주석 1건뿐이다.**
+       *    「주석이 없다」는 「경합이 있었다」의 증거가 아니므로 **2024·2025 에는 미검증 단정**이다.
+       * ⑵ **원인이 우리일 수 있다.** `draftlist_*` 는 **개최 당일 생긴다**(소스 조사 §7).
+       *    개최일 저녁에 받으면 **명단은 있고 주석은 아직 없는** 상태가 아카이브에 고정되고,
+       *    수집이 **연 1회 수동**이라 그 화면이 **1년간** 남는다. 그때 NPB 는 나중에 공표했고
+       *    잘못은 우리 쪽인데 화면은 NPB 를 가리킨다.
+       *    ⚠**적재 로그가 그때 운영자를 안심시킨다** — 「경합 없는 소스 N시즌 … 정상이다」.
+       *
+       * ⚠**이 판정은 적재층 `decideBids` 의 결론을 「재유도」한 것이고, 신호가 더 약하다.**
+       * 적재는 시즌 전체를 보고 「소스가 경합을 쓰는가」를 정하는데(`bids: null`)
+       * **그 판정이 DB 에 안 남는다**(짐 A14 · **미결**). 여기는 `picks>0 && bids===0` 만 본다.
+       * ⚠**진짜 해법은 그 판정을 남기는 것**이고, 그건 스키마를 만지므로 이 태스크 밖이다 —
+       * **결정이 나기 전에 조회층이 스키마를 앞질러 정하지 않는다.** 그때까지는
+       * **구별할 수 없다고 화면이 말한다.**
        */
       const state: DataState =
         kindBids.length > 0
@@ -6549,7 +6574,9 @@ export function loadDraftPage(db: Db, o: LoadOptions): DraftPageData {
           : kindPicks.length > 0
             ? {
                 kind: "unpublished",
-                detail: `NPBのページが${season}年の抽選結果を載せていません（競合そのものは実際にありました）`,
+                detail:
+                  `${season}年の抽選の結果は、当サイトが取得したNPBのページにありません。` +
+                  `もともと書かれていないのか、開催直後に取得して書かれる前だったのかは区別できません。`,
               }
             : {
                 kind: "failed",
@@ -6563,13 +6590,72 @@ export function loadDraftPage(db: Db, o: LoadOptions): DraftPageData {
       };
     }
 
+    /**
+     * **수치가 실린 페이지들**(M4 · [I-1]).
+     *
+     * ⚠**`draft_event` 에서 만들지 않는다** — 그건 연도 톱이고 **수치가 거기서 오지 않는다.**
+     * 묶는 키는 **(URL, 판)**이다: 같은 URL 인데 판이 다르면 **정말 다른 사실**이라 합치면 안 되고
+     * (그게 정정이다), 같은 판이면 한 줄이다.
+     * ⚠**`teams` 를 세는 것은 「페이지 하나 = 구단 하나」를 가정하지 않기 위해서다** —
+     *   wikipedia 처럼 한 장이 전 구단을 싣는 소스가 붙어도 그대로 참이 된다.
+     */
+    const sources: DraftSectionSource[] = [];
+    {
+      const byPage = new Map<
+        string,
+        { url: string; fetchedAt: string; revision: string; origin: DraftOrigin; teams: Map<string, DraftTeam>; rows: number }
+      >();
+      const add = (r: { source: string; fetched_at: string; revision: string; origin: string; team: string }): void => {
+        const key = `${r.source}\u0000${r.revision}`;
+        const hit = byPage.get(key);
+        const t = team(r.team);
+        if (hit === undefined) {
+          byPage.set(key, {
+            url: r.source,
+            fetchedAt: r.fetched_at,
+            revision: r.revision,
+            origin: draftOriginOf(r.origin),
+            teams: new Map([[t.code, t]]),
+            rows: 1,
+          });
+          return;
+        }
+        hit.teams.set(t.code, t);
+        hit.rows += 1;
+      };
+      for (const p of kindPicks) add(p);
+      for (const b of kindBids) add(b);
+      for (const v of byPage.values()) {
+        sources.push({
+          url: v.url,
+          fetchedAt: v.fetchedAt,
+          revision: v.revision,
+          origin: v.origin,
+          teams: [...v.teams.values()].sort((a, b) => draftTeamOrder(a.code) - draftTeamOrder(b.code)),
+          rows: v.rows,
+        });
+      }
+      /**
+       * ⚠**구단 순서(`TEAMS`)로 낸다** — URL 로 늘어놓으면 `draftlist_b` 부터라
+       * **화면이 오릭스·広島·中日·DeNA… 순**이 되어 이 사이트의 다른 표와 다른 차례가 된다.
+       * ⚠**구단이 여럿인 판**(wikipedia 처럼 한 장이 전 구단을 싣는 경우)은 **가장 앞선 구단**으로 잡는다.
+       */
+      const order = (x: DraftSectionSource): number =>
+        x.teams.length === 0 ? TEAMS.length : Math.min(...x.teams.map((t) => draftTeamOrder(t.code)));
+      sources.sort(
+        (a, b) => order(a) - order(b) || a.url.localeCompare(b.url) || a.revision.localeCompare(b.revision),
+      );
+    }
+
     return {
       kind,
       label: DRAFT_KIND_LABEL[kind],
       bids: bidBlock,
       rounds,
       pickCount: kindPicks.length,
-      source:
+      sources,
+      // ⚠**가리키기용이다**(L3). 화면의 「版」은 위 `sources` 에서 나온다
+      event:
         ev === undefined
           ? null
           : {

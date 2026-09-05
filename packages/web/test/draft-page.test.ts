@@ -21,6 +21,7 @@ import type {
   DraftPick,
   DraftRound,
   DraftSection,
+  DraftSectionSource,
   DraftTeam,
 } from "../src/draft-page.ts";
 import { context } from "./fixtures.ts";
@@ -99,6 +100,21 @@ function round(roundNo: number, picks: DraftPick[], numbered = true): DraftRound
   return { roundNo, numbered, picks };
 }
 
+/**
+ * **수치가 실린 페이지 하나.** ⚠구단 페이지이고 **판이 구단마다 다르다** —
+ * 실측: `draft_pick` 은 **252 URL · 252 revision**, `draft_event` 는 **21 · 21**.
+ */
+function srcOf(code: string, short: string | null, revision: string, rows = 1): DraftSectionSource {
+  return {
+    url: `https://npb.jp/draft/2024/draftlist_${code}.html`,
+    fetchedAt: "2026-09-05T04:16:49.435Z",
+    revision,
+    origin: "npb",
+    teams: [tm(code, short)],
+    rows,
+  };
+}
+
 function section(over: Partial<DraftSection> = {}): DraftSection {
   return {
     kind: "shihaika",
@@ -106,7 +122,13 @@ function section(over: Partial<DraftSection> = {}): DraftSection {
     bids: bids(),
     rounds: [round(1, [pick("e", "楽天", "宗山塁"), pick("h", "ソフトバンク", "佐々木 麟太郎")])],
     pickCount: 2,
-    source: {
+    /**
+     * ⚠**수치가 실린 페이지는 구단마다 다르다**(실물: `draftlist_{team}.html` · 2019 支配下 은 **12장**).
+     * 초판 픽스처는 여기에 **연도 톱 한 장**을 넣고 있었고, 그래서 화면이 「版」을 하나만 찍는 것을
+     * 시험이 **정상으로 고정**하고 있었다([I-1]).
+     */
+    sources: [srcOf("g", "巨人", "9f2a1c4d5e6b7a8c"), srcOf("t", "阪神", "aa11bb22cc33dd44")],
+    event: {
       url: "https://npb.jp/draft/2024/",
       /**
        * ⚠**실물과 같은 모양이어야 한다** — 실제 `fetched_at` 은 날짜가 아니라 **UTC 타임스탬프**다.
@@ -114,7 +136,7 @@ function section(over: Partial<DraftSection> = {}): DraftSection {
        * **밀리초까지 붙은 원문**이 나갔다(2026-09-05 실물 확인).
        */
       fetchedAt: "2026-09-05T04:16:49.435Z",
-      revision: "9f2a1c4d5e6b7a8c",
+      revision: "ffffffffffffffff",
       license: null,
       heldOn: null,
     },
@@ -233,14 +255,23 @@ test("⚠공백만 다른 표기를 두 번 적지 않는다 — 그건 정보�
 
 /* ---- 빈 상태 6종을 뭉뚱그리지 않는다 --------------------------------------- */
 
-test("⚠2023 은 「公表されていません」이다 — 「データがありません」가 아니다", () => {
+/**
+ * ⚠**접두사를 「公表されていません」에서 「出典に載っていません」으로 좁혔다**(2026-09-06 [I-2]).
+ * 앞의 것은 **출처에 대한 단정**이라 나중에 공표되면 그날 거짓이 되고, 원인이 **우리 쪽**
+ * (스냅샷을 출처가 쓰기 전에 떴다)일 때도 남을 가리킨다.
+ * ⚠**시험의 목적은 그대로다** — 「データがありません」로 뭉뚱그리지 않는 것.
+ */
+test("⚠2023 은 「出典に載っていません」이다 — 「データがありません」가 아니다", () => {
   const html = render(
     data({
       season: 2023,
       sections: [
         section({
           bids: {
-            state: { kind: "unpublished", detail: "npb.jp が2023年から抽選結果を載せていません" },
+            state: {
+              kind: "unpublished",
+              detail: "もともと書かれていないのか、開催直後に取得したのかは区別できません",
+            },
             rounds: [],
             counts: { bids: 0, groups: 0, solo: 0 },
           },
@@ -248,7 +279,9 @@ test("⚠2023 은 「公表されていません」이다 — 「データがあ
       ],
     }),
   );
-  assert.match(html, /公表されていません/);
+  assert.match(html, /出典に載っていません/);
+  // ⚠**NPB 탓으로 단정하지 않는다** — 원인이 우리일 수 있다
+  assert.doesNotMatch(html, /公表されていません/);
   assert.doesNotMatch(html, /データがありません/);
   assert.doesNotMatch(html, /記録がありません/);
 });
@@ -467,13 +500,7 @@ test("⚠취득일을 JST 로 말한다 — UTC 날짜를 그대로 쓰지 않�
       sections: [
         section({
           // UTC 2026-09-05 22:00 = JST 2026-09-06 07:00
-          source: {
-            url: "https://npb.jp/draft/2024/",
-            fetchedAt: "2026-09-05T22:00:00.000Z",
-            revision: "9f2a1c4d5e6b7a8c",
-            license: null,
-            heldOn: null,
-          },
+          sources: [{ ...srcOf("g", "巨人", "9f2a1c4d5e6b7a8c"), fetchedAt: "2026-09-05T22:00:00.000Z" }],
         }),
       ],
     }),
@@ -483,25 +510,46 @@ test("⚠취득일을 JST 로 말한다 — UTC 날짜를 그대로 쓰지 않�
 });
 
 test("같은 페이지에서 온 구획을 두 줄로 적지 않는다 — 판이 같으면 한 줄이다(M4)", () => {
-  const src = {
-    url: "https://npb.jp/draft/2024/",
-    fetchedAt: "2026-09-05T04:16:49.435Z",
-    revision: "9f2a1c4d5e6b7a8c",
-    license: null,
-    heldOn: null,
-  };
+  // ⚠**실측이 그렇다**: 한 구단 페이지가 支配下 와 育成 을 함께 싣고 **판도 같다**(2019 12구단 전수)
+  const src = srcOf("g", "巨人", "9f2a1c4d5e6b7a8c");
   const html = render(
     data({
-      sections: [section({ source: src }), section({ kind: "ikusei", label: "育成", bids: null, source: src })],
+      sections: [
+        section({ sources: [src] }),
+        section({ kind: "ikusei", label: "育成", bids: null, sources: [src] }),
+      ],
     }),
   );
   // ⚠**URL 문자열로 세지 마라** — 한 줄에 `href` 와 링크 글자로 **두 번** 나온다(처음에 그렇게 세서 틀렸다)
   assert.equal(
-    html.split('href="https://npb.jp/draft/2024/"').length - 1,
+    html.split('href="https://npb.jp/draft/2024/draftlist_g.html"').length - 1,
     1,
     "같은 페이지가 출처 목록에 두 번 나온다",
   );
   assert.match(html, /支配下 · 育成/, "어느 구획이 그 페이지에서 왔는지 사라졌다");
+});
+
+/**
+ * ⚠⚠**화면의 「版」이 거짓이었다**(2026-09-06 최종 검토 [I-1]).
+ *
+ * 초판은 **연도 톱 한 장의 판**을 찍었는데 **수치는 구단 페이지에서 온다.**
+ * 실측: `draft_pick` **252 URL · 252 revision** 대 `draft_event` **21 · 21**.
+ * 한 구단 명단이 정정되면 **그 구단의 판만** 바뀌므로, 연도 톱의 판을 찍는 화면은
+ * **어제와 같은 「版」을 보여 준다** — 사용자의 「어제 본 이름과 다른데?」에
+ * 「같은 판이다」라고 답하는 모양이고, **M4 가 존재하는 이유를 정확히 뒤집는다.**
+ */
+test("⚠⚠「版」은 수치가 실린 페이지마다 나온다 — 연도 톱의 판을 찍지 않는다(M4)", () => {
+  const html = render();
+  // 구단마다 한 줄씩, 자기 판으로
+  assert.match(html, /9f2a1c4d/u);
+  assert.match(html, /aa11bb22/u);
+  // ⚠**연도 톱의 판은 「版」으로 나오면 안 된다** — 그건 수치를 싣지 않은 페이지다
+  assert.doesNotMatch(html, /版 ffffffff/u);
+  // 그래도 **가리키기용 링크는 남는다**(L3)
+  assert.match(html, /href="https:\/\/npb\.jp\/draft\/2024\/"/u);
+  // 어느 구단의 명단인지 사람이 URL 을 해독하지 않아도 되게
+  assert.match(html, /巨人/u);
+  assert.match(html, /阪神/u);
 });
 
 test("wikipedia 가 섞이면 CC BY-SA 를 표기한다(L3)", () => {

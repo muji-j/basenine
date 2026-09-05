@@ -220,11 +220,47 @@ export interface DraftRound {
   picks: readonly DraftPick[];
 }
 
-/** 그 구획을 실은 페이지(M4 · L3). */
+/**
+ * **수치가 실린 페이지 하나**(M4 · L3).
+ *
+ * ⚠⚠**「그 구획을 실은 페이지」가 아니다 — 그렇게 적었다가 「版」이 거짓이 됐다**
+ * (2026-09-06 최종 검토 [I-1]). 초판은 이 값을 **`draft_event`(연도 톱 `/draft/{YYYY}/`)**
+ * 에서만 만들었는데 **수치는 구단 페이지에서 온다.**
+ * 실측: `draft_pick` **252 URL · 252 revision** 대 `draft_event` **21 · 21**.
+ * 2019 支配下 만 해도 **12 페이지 · 12 판**을 화면이 **1 판**이라고 말했다.
+ *
+ * ⚠**그래서 무엇이 깨지는가**: npb 가 한 구단 명단의 표기를 정정하면 **그 구단의 판만** 바뀌고
+ * 연도 톱은 그대로다 → 화면의 「版」이 어제와 같다 → 사용자의 **「어제 본 이름과 다른데?」**에
+ * 화면이 **「같은 판이다」**라고 답한다. **버그와 정정을 가르라는 M4 의 목적이 뒤집힌다.**
+ *
+ * ⚠**한 층 아래에서 이미 고친 실수다**(`store/src/draft.ts` `[I3]` — 출처를 `page`/`event`
+ * 두 벌로 나눈 그 작업). **같은 거짓말이 화면 층에서 다시 났다. 세 번째를 만들지 마라.**
+ */
 export interface DraftSectionSource {
   url: string;
   fetchedAt: string;
   /** ⚠**본문 해시다** — npb.jp 는 `ETag`·`Last-Modified` 를 주지 않는다 */
+  revision: string;
+  origin: DraftOrigin;
+  /**
+   * 그 페이지에서 온 행의 구단.
+   * ⚠**npb 는 페이지 하나가 구단 하나**라 보통 1개다. wikipedia 처럼 한 장이 전 구단을 싣는
+   * 소스가 붙으면 여러 개가 된다 — **그때 「1구단」을 가정한 코드가 조용히 틀리지 않도록 배열이다.**
+   */
+  teams: readonly DraftTeam[];
+  /** 그 판이 실은 행 수(지명 + 입찰). ⚠**분모다**(M2) */
+  rows: number;
+}
+
+/**
+ * 그 구획의 **회의 페이지**(연도 톱).
+ *
+ * ⚠**수치가 여기서 오지 않았다.** 이것은 **가리키기용**이고(L3 — 원본을 대체하지 않고 가리킨다)
+ * 라이선스가 붙는 자리다. ⚠**여기 `revision` 을 화면의 「版」으로 쓰지 마라** — 위 주석의 그 사고다.
+ */
+export interface DraftEventRef {
+  url: string;
+  fetchedAt: string;
   revision: string;
   /** wikipedia 유래면 `CC BY-SA 4.0`. ⚠npb 유래면 `null`(실측 47/47 전건 NULL) */
   license: string | null;
@@ -246,7 +282,13 @@ export interface DraftSection {
   rounds: readonly DraftRound[];
   /** 이 구획의 지명 총수. ⚠**분모다**(M2) */
   pickCount: number;
-  source: DraftSectionSource | null;
+  /**
+   * 이 구획의 **수치가 실린 페이지들**. ⚠**구단마다 판이 다르다** — 하나로 접으면 M4 가 거짓이 된다.
+   * ⚠**행이 0건이면 빈 배열이다** — 회의 페이지를 대신 세우지 않는다.
+   */
+  sources: readonly DraftSectionSource[];
+  /** 회의 페이지. ⚠**「版」의 근거가 아니다** — 가리키기용(L3) */
+  event: DraftEventRef | null;
 }
 
 /** 사후 사실 한 건(교섭권 정정 · 입단 거부 …). */
@@ -582,40 +624,70 @@ function heldRange(seasons: readonly number[]): string {
 }
 
 /**
+ * 그 판을 실은 구단. ⚠**「어느 구단의 명단인가」가 이 줄에서 가장 먼저 읽혀야 한다** —
+ * URL 만 12줄 늘어놓으면 사람이 `draftlist_g` 를 눈으로 해독하게 된다.
+ * ⚠**모르는 구단 코드면 코드를 그대로 낸다**(M7) — 「YB」 같은 것을 지어내지 않는 것과 같은 규칙이다.
+ */
+function sourceTeams(src: DraftSectionSource): string {
+  if (src.teams.length === 0) return "";
+  if (src.teams.length === 1) return `${src.teams[0]!.shortName ?? src.teams[0]!.code} — `;
+  return `${src.teams.length}球団 — `;
+}
+
+/**
  * 출처(L3).
  *
  * ⚠**전 화면에 출처 명기 + 원본 링크**가 이 프로젝트의 법적 안전장치다 —
  * 원본을 대체하는 게 아니라 **가리킨다**(§2-5 3층 회피).
  * ⚠**「몇 번째 판」까지 낸다**(M4) — 어제 본 숫자와 다를 때 버그와 정정을 가르는 근거가 그것이다.
+ *
+ * ⚠⚠**그 「版」이 거짓이었다**(2026-09-06 최종 검토 [I-1]). 초판은 **연도 톱 한 장의 판**을
+ * 찍었는데 **수치는 구단 페이지 12장에서 온다.** 한 구단 명단이 정정돼도 연도 톱은 안 바뀌므로
+ * **화면의 「版」이 어제와 같았다** — 사용자의 「어제 본 이름과 다른데?」에 화면이
+ * 「같은 판이다」라고 답하는 모양이고, 그건 M4 가 존재하는 이유를 정확히 뒤집는다.
  */
 function sourceBlock(d: DraftPageData): RawHtml {
   /**
-   * ⚠**같은 페이지를 두 번 적지 않는다.** 실측(2019): 支配下 와 育成 의 출처가 **같은 URL·같은 판**이라
-   * 그대로 늘어놓으면 같은 줄이 두 번 나온다. **구획 이름을 모아** 한 줄로 낸다.
-   * ⚠**판이 다르면 합치지 않는다** — 그때는 정말 다른 사실이다(M4).
+   * ⚠**같은 페이지를 두 번 적지 않는다.** 실측(2019): 한 구단 페이지가 **支配下 와 育成 을 함께**
+   * 싣고 판도 같다(12구단 전수에서 `urls=1 · revs=1`). 그대로 늘어놓으면 같은 줄이 두 번 나온다.
+   * **구획 이름을 모아** 한 줄로 낸다.
+   * ⚠**판이 다르면 합치지 않는다** — 그때는 정말 다른 사실이다(M4). 그래서 키에 판이 들어간다.
+   * ⚠**라이선스는 키에서 뺐다** — 그건 회의 페이지(`event`)의 성질이고 이 줄의 성질이 아니다.
    */
   const byPage = new Map<string, { src: DraftSectionSource; labels: string[] }>();
   for (const s of d.sections) {
-    if (s.source === null) continue;
-    const key = `${s.source.url} ${s.source.revision} ${s.source.license ?? ""}`;
-    const hit = byPage.get(key);
-    if (hit === undefined) byPage.set(key, { src: s.source, labels: [s.label] });
-    else hit.labels.push(s.label);
+    for (const src of s.sources) {
+      const key = `${src.url}\u0000${src.revision}`;
+      const hit = byPage.get(key);
+      if (hit === undefined) byPage.set(key, { src, labels: [s.label] });
+      else if (!hit.labels.includes(s.label)) hit.labels.push(s.label);
+    }
   }
   const rows = [...byPage.values()];
+  /**
+   * **회의 페이지**(연도 톱). ⚠**여기엔 「版」을 붙이지 않는다** —
+   * **수치가 여기서 오지 않으므로 그 판은 화면의 수를 보증하지 않는다.**
+   * 붙이면 위의 판들과 나란히 서서 **어느 것이 이 수의 판인지** 다시 알 수 없게 된다.
+   */
+  const events = new Map<string, DraftEventRef>();
+  for (const s of d.sections) if (s.event !== null) events.set(s.event.url, s.event);
+  const license = [...events.values()].find((e) => e.license !== null)?.license ?? null;
   return html`<section class="block" id="b-draft-src">
   <h2>出典<span class="qt">この画面の数字がどこから来たか</span></h2>
   ${rows.length === 0
     ? html`<p class="empty">この画面に出典の記録がありません。</p>`
     : html`<ul class="dsrc">${rows.map(
         ({ src, labels }) => html`<li>
-    <b>${labels.join(" · ")}</b>
+    <b>${sourceTeams(src)}${labels.join(" · ")}</b>
     <a href="${src.url}" rel="noreferrer">${src.url}</a>
-    <s>取得 ${fetchedOn(src.fetchedAt)} · 版 ${src.revision.slice(0, 8)}${
-          src.license === null ? null : html` · ${src.license}`
-        }</s>
+    <s>取得 ${fetchedOn(src.fetchedAt)} · 版 ${src.revision.slice(0, 8)} · ${src.rows}件</s>
   </li>`,
       )}</ul>`}
+  ${events.size === 0
+    ? null
+    : html`<p class="dsrcy">この年の一覧: ${[...events.values()].map(
+        (e) => html`<a href="${e.url}" rel="noreferrer">${e.url}</a> `,
+      )}${license === null ? null : html`· ${license}`}</p>`}
   ${d.origins.includes("wikipedia")
     ? note(
         "この画面には **wikipedia 由来**の行が混ざっています。その部分は **CC BY-SA 4.0** です — " +

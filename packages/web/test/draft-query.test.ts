@@ -59,13 +59,23 @@ async function withDb(fn: (db: Db) => void): Promise<void> {
 
 /* ---- 데이터 빌더 + 덮어쓰기 (`packages/web/test/` 관용) -------------------- */
 
-function event(db: Db, o: { season: number; kind: string; license?: string | null }): void {
+function event(
+  db: Db,
+  o: { season: number; kind: string; license?: string | null; source?: string; revision?: string },
+): void {
   db.raw
     .prepare(
       `INSERT INTO draft_event (season, kind, held_on, source, fetched_at, revision, license)
        VALUES (?, ?, NULL, ?, ?, ?, ?)`,
     )
-    .run(o.season, o.kind, PROV.source, PROV.fetchedAt, PROV.revision, o.license ?? null);
+    .run(
+      o.season,
+      o.kind,
+      o.source ?? PROV.source,
+      PROV.fetchedAt,
+      o.revision ?? PROV.revision,
+      o.license ?? null,
+    );
 }
 
 interface PickOver {
@@ -77,6 +87,14 @@ interface PickOver {
   position?: string | null;
   fromOrg?: string | null;
   playerId?: string | null;
+  /**
+   * ⚠**지명이 실린 페이지**(`draftlist_{team}.html`).
+   * 연도 톱(`draft_event.source`)과 **다른 페이지이고 다른 판**이다 —
+   * 실측: `draft_pick` 은 **252 URL · 252 revision** 이고 `draft_event` 는 **21 · 21** 이다.
+   */
+  source?: string;
+  revision?: string;
+  fetchedAt?: string;
 }
 
 function pick(db: Db, o: PickOver = {}): void {
@@ -97,9 +115,9 @@ function pick(db: Db, o: PickOver = {}): void {
       o.position ?? "投手",
       o.fromOrg ?? "架空高",
       o.playerId ?? null,
-      PROV.source,
-      PROV.fetchedAt,
-      PROV.revision,
+      o.source ?? PROV.source,
+      o.fetchedAt ?? PROV.fetchedAt,
+      o.revision ?? PROV.revision,
     );
 }
 
@@ -113,6 +131,9 @@ interface BidOver {
   nameDisplay?: string;
   rivals?: string | null;
   playerId?: string | null;
+  source?: string;
+  revision?: string;
+  fetchedAt?: string;
 }
 
 function bid(db: Db, o: BidOver = {}): void {
@@ -135,9 +156,9 @@ function bid(db: Db, o: BidOver = {}): void {
       (o.nameDisplay ?? "佐々木 朗希").replace(/\s+/gu, ""),
       groupKey === null ? null : (o.rivals ?? null),
       o.playerId ?? null,
-      PROV.source,
-      PROV.fetchedAt,
-      PROV.revision,
+      o.source ?? PROV.source,
+      o.fetchedAt ?? PROV.fetchedAt,
+      o.revision ?? PROV.revision,
     );
 }
 
@@ -467,8 +488,10 @@ test("⚠`draft_event` 가 없어도 지명이 있으면 그 시즌은 존재한
     assert.equal(data.sections.length, 1, "지명이 있으면 구획이 선다");
     assert.equal(data.sections[0]!.pickCount, 1);
     assert.equal(data.sections[0]!.rounds[0]!.picks[0]!.name.display, "孤児 指名");
-    // ⚠출처를 못 대는 것은 숨기지 않는다(M4)
-    assert.equal(data.sections[0]!.source, null);
+    // ⚠**회의 페이지는 못 대도 수치의 출처는 댄다**(M4) — 지명 행이 자기 페이지를 들고 있다
+    assert.equal(data.sections[0]!.event, null);
+    assert.equal(data.sections[0]!.sources.length, 1);
+    assert.equal(data.sections[0]!.sources[0]!.rows, 1);
     // ⑵ 시즌 목록도 같은 규칙이어야 한다 — 안 그러면 그 해 페이지가 안 만들어진다
     assert.deepEqual(data.heldSeasons, [2020, 2025]);
   });
@@ -624,4 +647,140 @@ test("⚠`draft_note` 미수집 플래그가 실제 파서와 맞는다 — 안 
     hasNoteParser,
     "파서의 유무와 플래그가 어긋났다 — 화면이 「아직 수집하지 않는다」를 거짓으로 말하게 된다",
   );
+});
+
+/**
+ * ⚠⚠**「版」에 거짓으로 답하고 있었다**(2026-09-06 최종 검토 [I-1]).
+ *
+ * `DraftSection.source` 를 **`draft_event`(연도 톱 `/draft/{YYYY}/`)에서만** 만들었는데
+ * **수치는 구단 페이지에서 온다.** 실측: `draft_pick` 은 **252 URL · 252 revision** 이고
+ * `draft_event` 는 **21 · 21** 이다. 2019 支配下 만 해도 **12 페이지 · 12 판**을
+ * 화면이 **1 판(`55c2df29`)**이라고 말했다.
+ *
+ * ⚠**실패 시나리오**: npb 가 한 구단 명단의 표기를 정정한다 → 그 구단의 `draft_pick.revision`
+ * 만 바뀐다 → **연도 톱은 그대로** → 화면의 「版」이 어제와 같다. 사용자가 「어제 본 이름과
+ * 다른데?」라고 물으면 화면이 **「같은 판이다」**라고 답한다 — **M4 의 목적 그 자체가 뒤집힌다.**
+ *
+ * ⚠**한 층 아래에서 이미 고친 실수다**(`store/src/draft.ts` 의 `[I3]` — 출처를 `page`/`event`
+ * 두 벌로 나눈 그 작업). **같은 거짓말이 화면 층에서 다시 났다.**
+ */
+test("⚠⚠「版」은 수치가 실린 페이지의 것이다 — 연도 톱의 판을 말하지 않는다(M4)", async () => {
+  await withDb((db) => {
+    event(db, {
+      season: 2019,
+      kind: "shihaika",
+      source: "https://draft.npb.jp/draft/2019/",
+      revision: "EVENT_REVISION",
+    });
+    // 구단마다 다른 페이지 · 다른 판 — 실물이 그렇다
+    pick(db, {
+      season: 2019,
+      team: "g",
+      roundNo: 1,
+      nameDisplay: "巨人 の 1位",
+      source: "https://draft.npb.jp/draft/2019/draftlist_g.html",
+      revision: "REV_G",
+      fetchedAt: "2026-09-05T04:16:41.480Z",
+    });
+    pick(db, {
+      season: 2019,
+      team: "t",
+      roundNo: 1,
+      nameDisplay: "阪神 の 1位",
+      source: "https://draft.npb.jp/draft/2019/draftlist_t.html",
+      revision: "REV_T",
+      fetchedAt: "2026-09-05T04:16:45.000Z",
+    });
+    // 같은 구단 페이지가 입찰도 싣는다(실측: 판이 같다)
+    bid(db, {
+      season: 2019,
+      team: "g",
+      roundNo: 1,
+      groupKey: null,
+      won: null,
+      nameDisplay: "巨人 の 1位",
+      source: "https://draft.npb.jp/draft/2019/draftlist_g.html",
+      revision: "REV_G",
+    });
+
+    const s = loadDraftPage(db, { season: 2019, builtOn: BUILT_ON }).sections[0]!;
+
+    const byUrl = new Map(s.sources.map((x) => [x.url, x]));
+    assert.deepEqual(
+      [...byUrl.keys()].sort(),
+      [
+        "https://draft.npb.jp/draft/2019/draftlist_g.html",
+        "https://draft.npb.jp/draft/2019/draftlist_t.html",
+      ],
+    );
+    const g = byUrl.get("https://draft.npb.jp/draft/2019/draftlist_g.html")!;
+    const t = byUrl.get("https://draft.npb.jp/draft/2019/draftlist_t.html")!;
+    assert.equal(g.revision, "REV_G");
+    assert.equal(t.revision, "REV_T");
+    // ⚠**연도 톱의 판이 수치의 판인 척하면 안 된다**
+    assert.equal(
+      s.sources.some((x) => x.revision === "EVENT_REVISION"),
+      false,
+      "연도 톱의 판이 수치의 출처로 섞였다",
+    );
+
+    // 분모(M2) — 그 판이 몇 개의 수를 실었는가. 巨人 페이지는 지명 1 + 입찰 1
+    assert.equal(g.rows, 2);
+    assert.equal(t.rows, 1);
+    assert.deepEqual(
+      t.teams.map((x) => x.code),
+      ["t"],
+    );
+    assert.equal(g.fetchedAt, "2026-09-05T04:16:41.480Z");
+
+    // 회의 페이지는 **가리키기용으로만** 남는다 — 수치의 출처가 아니다
+    assert.equal(s.event?.url, "https://draft.npb.jp/draft/2019/");
+    assert.equal(s.event?.revision, "EVENT_REVISION");
+  });
+});
+
+test("⚠수치가 없는 구획은 출처도 없다 — 회의 페이지를 수치의 출처로 대신 세우지 않는다", async () => {
+  await withDb((db) => {
+    event(db, { season: 2019, kind: "shihaika", revision: "EVENT_REVISION" });
+    // 지명·입찰이 0행인 구획(수집이 깨진 모양)
+    const s = loadDraftPage(db, { season: 2019, builtOn: BUILT_ON }).sections[0]!;
+    assert.deepEqual(s.sources, []);
+    assert.equal(s.event?.revision, "EVENT_REVISION");
+  });
+});
+
+/**
+ * ⚠⚠**저장되지 않은 판정을 화면이 재유도하고 근거 없는 단정을 붙였다**(2026-09-06 최종 검토 [I-2]).
+ *
+ * 적재층은 「소스가 경합을 쓰는가」를 시즌 전체를 보고 판정하는데(`decideBids` → `bids: null`)
+ * **그 판정이 DB 에 안 남는다**(짐 A14 · 미결). 화면은 더 약한 신호(`picks>0 && bids===0`)로
+ * 그 결론을 재유도하고 거기에 **「競合そのものは実際にありました」**를 덧붙였다.
+ *
+ * ⚠**근거가 2023 야쿠르트 HTML 주석 1건뿐이다** — 「주석이 없다」는 「경합이 있었다」의 증거가
+ * 아니므로 **2024·2025 화면에서 그 문장은 미검증 단정**이다.
+ * ⚠**게다가 원인이 우리일 수 있다**: `draftlist_*` 는 **개최 당일 생긴다.** 개최일 저녁에 받으면
+ * **명단은 있고 주석은 아직 없는** 상태가 아카이브에 고정되고, 수집이 **연 1회 수동**이라
+ * 그 화면이 **1년간** 남는다. 그때 NPB 는 나중에 공표했고 잘못은 우리 쪽이다.
+ */
+test("⚠⚠경합 0행에 「경합이 실제로 있었다」고 단정하지 않는다 — 구별할 수 없다고 말한다", async () => {
+  await withDb((db) => {
+    event(db, { season: 2024, kind: "shihaika" });
+    pick(db, { season: 2024, team: "g", roundNo: 1 });
+
+    const bids = loadDraftPage(db, { season: 2024, builtOn: BUILT_ON }).sections[0]!.bids!;
+    assert.equal(bids.state.kind, "unpublished", "우리 수집 실패가 아니라는 축은 그대로다");
+    const detail = bids.state.kind === "unpublished" ? bids.state.detail : "";
+    // ⚠우리가 아는 것은 2023 뿐이다 — 2024·2025 에 이 문장을 붙일 근거가 없다
+    assert.doesNotMatch(detail, /実際にありました/u, "미검증 단정이 남아 있다");
+    // ⚠원인을 NPB 에 돌리지 않는다 — 우리가 일찍 받은 것일 수도 있다
+    assert.match(detail, /区別できません/u, "구별할 수 없다는 것을 말해야 한다");
+  });
+});
+
+test("⚠새 상태의 접두사도 단정하지 않는다 — 「公表されていません」은 뒤집힐 수 있다", () => {
+  const html = toString(stateNote({ kind: "unpublished", detail: "区別できません" }));
+  // 「NPB 가 공표하지 않았다」는 **나중에 공표되면 거짓이 된다**. 우리가 말할 수 있는 것은
+  // 「우리가 가진 판에 없다」까지다
+  assert.doesNotMatch(html, /公表されていません/u);
+  assert.match(html, /出典に載っていません/u);
 });

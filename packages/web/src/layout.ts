@@ -18,15 +18,18 @@ import { fullDate } from "./format.ts";
  *
  * | 새 상태 | 무엇이 참인가 | `empty` 로 접으면 |
  * |---|---|---|
- * | `unpublished` | **출처가 그 값을 공표하지 않는다.** 사실은 실재했다 | 「그 해엔 그런 일이 없었다」로 읽힌다 |
+ * | `unpublished` | **우리가 가진 판에 그 값이 없다.** 수집 실패는 아니다 | 「그 해엔 그런 일이 없었다」로 읽힌다 |
  * | `uncollected` | **출처에는 있는데 우리가 아직 안 받았다** | **미수집을 0 으로 메우는 쪽**이다(M11) |
  *
- * ⚠**둘을 하나로 합치지 마라 — 고칠 수 있는 사람이 다르다.** `unpublished` 는 우리가
- * 아무리 해도 안 열리고(출처가 표시를 껐다), `uncollected` 는 **우리 몫의 남은 일**이다.
+ * ⚠**둘을 하나로 합치지 마라 — 고칠 수 있는 사람이 다르다.** `unpublished` 는 **그 판을 다시
+ * 받아도 안 나오고**, `uncollected` 는 **우리 몫의 남은 일**이다.
  * 화면에 같은 문장이 나가면 「언젠가 채워지겠지」와 「영영 안 채워진다」가 구별되지 않는다.
  *
- * ⚠**실측 사례**(드래프트): 2023~2025 의 추첨 결과는 npb.jp 가 **표시를 껐다**
- * (2023 야쿠르트 페이지엔 그 문장이 HTML 주석 안에 남아 있다) → `unpublished`.
+ * ⚠⚠**`unpublished` 의 뜻을 좁혔다**(2026-09-06 최종 검토 [I-2]). 처음에는
+ * ~~「출처가 공표하지 않는다 · 사실은 실재했다」~~ 였는데 **둘 다 우리가 아는 것보다 강했다:**
+ * ⑴ 「사실은 실재했다」의 근거는 **2023 야쿠르트 HTML 주석 1건**뿐이라 다른 해로 일반화되지 않고,
+ * ⑵ **원인이 우리일 수 있다** — 스냅샷을 출처가 쓰기 전에 뜨면 같은 모양이 된다.
+ * → **이 상태가 말하는 것은 「우리가 가진 판에 없다」뿐**이고, 왜인지는 `detail` 이 말한다.
  * 후일담(입단 거부·교섭권 정정)은 소스에 있는데 **파서가 없다** → `uncollected`.
  */
 export type DataState =
@@ -62,8 +65,14 @@ export function stateNote(state: DataState): RawHtml {
       return html`<p class="empty" data-state="failed" role="status">取得できていません — ${state.detail}</p>`;
     case "offseason":
       return html`<p class="empty" data-state="offseason">シーズン外 — ${state.detail}</p>`;
+    /**
+     * ⚠**「公表されていません」라고 쓰지 않는다**(2026-09-06 최종 검토 [I-2]).
+     * 그건 **출처에 대한 단정**이라 나중에 공표되면 그날 거짓이 되고, 원인이 **우리 쪽**
+     * (스냅샷을 출처가 쓰기 전에 떴다)일 때도 남을 가리킨다.
+     * 우리가 말할 수 있는 것은 **「우리가 가진 판에 없다」**까지다 — 왜인지는 `detail` 이 말한다.
+     */
     case "unpublished":
-      return html`<p class="empty" data-state="unpublished">公表されていません — ${state.detail}</p>`;
+      return html`<p class="empty" data-state="unpublished">出典に載っていません — ${state.detail}</p>`;
     case "uncollected":
       return html`<p class="empty" data-state="uncollected">まだ収集していません — ${state.detail}</p>`;
   }
