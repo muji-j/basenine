@@ -131,8 +131,39 @@ const SECTION: ReadonlyArray<readonly [RegExp, DraftKind]> = [
   [/新人選手選択会議|選択選手/, "shihaika"],
 ];
 
-/** ⚠NFKC 를 건 뒤의 형태로 검사한다 — 전각 괄호는 그 시점에 반각이 되어 있다. */
-const NOT_A_PLAYER = /^\(?選択権利?なし\)?$/;
+/**
+ * **선수가 아닌 이름 칸.** ⚠NFKC 를 건 뒤의 형태로 검사한다 — 전각 괄호는 그 시점에 반각이 되어 있다.
+ *
+ * 실측(아카이브 2005~2026 전수 · 4·5칸 행의 이름 칸 **2,327개**):
+ * `(選択権なし)` **91** · `(辞退)` **2** · 그 밖의 괄호 표기 **0**.
+ * (`(選択権利なし)` 는 2001 의 표기라 이 범위 밖이지만, 두 글자만 다른 변종이라 어휘에 남긴다.)
+ *
+ * ⚠**`辞退` 는 `選択権なし` 와 뜻이 다르다** — 전자는 「권리가 있었는데 스스로 안 썼다」,
+ * 후자는 「그 회차에 권리가 없었다」다(2007 세이부의 高校生 1巡目·3巡目 두 건).
+ * ⚠**그 차이를 우리는 지금 어디에도 안 남긴다** — `draft_pick.name_display` 가 `NOT NULL` 이라
+ * 행을 만들 수 없고, `draft_note` 는 선수 이름을 요구한다. **둘 다 「지명이 아니다」로만 접힌다.**
+ * 그래도 회차는 안 밀린다(아래 시험이 高校生 4·5·6·7 을 못으로 박는다).
+ */
+const NOT_A_PLAYER = /^\(?(?:選択権利?なし|辞退)\)?$/;
+
+/**
+ * 이름 칸 끝의 **각주 표시**(`片山　博視 ※`). 이름의 일부가 아니라 표 아래 주석을 가리키는 부호다.
+ *
+ * ⚠**M10 이 걸린 자리다.** 남겨 두면 표의 `片山 博視 ※` 와 경합 주석의 `片山博視` 가
+ * **다른 사람**이 되어 경합 그룹이 둘로 갈린다(정규화는 공백만 흡수한다).
+ * ⚠**추론이 아니라 실측이다**(2005 를 실제로 두 번 적재해 비교):
+ * ```
+ * 떼면    "1:片山博視"  wins=1 members=2      ← 広島(낙첨) + 楽天(당첨)이 한 그룹
+ * 안 떼면 "1:片山博視"  wins=0 members=1      ← 이긴 구단이 없는 그룹이 생긴다
+ *         "1:片山博視※" wins=1 members=1
+ * ```
+ * **아래 `※` 가드가 그것을 적재 전에 시끄럽게 만든다** — 가드까지 없애야 위 모양이 나온다.
+ * 실측: 아카이브 전수 이름 칸 2,327개 중 **2건**(2005 楽天 片山博視 · 2010 横浜 鶴岡賢二郎) ·
+ * 둘 다 **꼬리**에 붙고 둘 다 같은 페이지에 `※「…」の漢字は…` 설명 주석이 있다.
+ * ⚠**꼬리만 지운다.** 가운데에 남은 `※` 는 모르는 모양이므로 **던진다** — 이름이 아닌 것을
+ * 이름으로 만들지 않는다(M7).
+ */
+const NAME_FOOTNOTE_TAIL = /\s*※\s*$/;
 
 /** 연령 칸(`（22）` → `(22)`). 5칸 배치를 **구조로** 확인하는 데 쓴다. */
 const AGE = /^\(\d+\)$/;
@@ -236,6 +267,33 @@ function visibleScope(html: string, where: string): string {
   return beforeFooter(stripComments(html, where));
 }
 
+/**
+ * 문서를 **구획으로 자른 조각**. 첫 조각은 `<h4>` 이전(머리 없음)이고 나머지는 각 `<h4>` 의 본문이다.
+ *
+ * ⚠**`parseDraftPicks` 의 `matchAll` 과 달리 머리 앞을 버리지 않는다.** 지명 표는 반드시
+ * 구획 안에 있지만, 주석은 「그렇다」를 **실측으로만** 말할 수 있다(아카이브 전수 220/220이
+ * 구획 안). 버리면 그 0건이 1건이 되는 날 **조용히** 사라진다.
+ * ⚠**그래도 그것만으로 안전하지 않다** — 조각 밖(예: `<h4>` 태그 안)에 주석이 생기면
+ * 여기서는 안 보이는데, 그건 **문서 층 그물**(`shapesInDocument`)이 잡는다.
+ */
+interface DocSegment {
+  /** 그 구획의 머리. ⚠`null` 은 「`<h4>` 이전」이라는 **위치**이지 「모른다」가 아니다. */
+  readonly heading: string | null;
+  readonly body: string;
+}
+
+function docSegments(scope: string): DocSegment[] {
+  const marks = [...scope.matchAll(/<h4[^>]*>([\s\S]*?)<\/h4>/g)];
+  const out: DocSegment[] = [{ heading: null, body: scope.slice(0, marks[0]?.index ?? scope.length) }];
+  marks.forEach((m, i) => {
+    out.push({
+      heading: decode(m[1] ?? ""),
+      body: scope.slice(m.index + m[0].length, marks[i + 1]?.index ?? scope.length),
+    });
+  });
+  return out;
+}
+
 function kindOf(heading: string, where: string): DraftKind {
   for (const [re, kind] of SECTION) if (re.test(heading)) return kind;
   throw new DraftParseError(
@@ -320,11 +378,19 @@ export function parseDraftPicks(html: string, team: string): DraftPickRow[] {
           }
         }
 
-        const nameRaw = cells[1]?.text ?? "";
+        // ⚠**각주 표시를 이름에서 뗀다** — 사유는 `NAME_FOOTNOTE_TAIL` 주석(M10).
+        const nameRaw = (cells[1]?.text ?? "").replace(NAME_FOOTNOTE_TAIL, "");
         const nameKey = compact(nameRaw);
-        if (NOT_A_PLAYER.test(nameKey)) continue; // ⚠선수가 아니라 「건너뛴 회차」다
+        if (NOT_A_PLAYER.test(nameKey)) continue; // ⚠선수가 아니라 「지명이 아닌 칸」이다
         if (nameRaw === "") {
           throw new DraftParseError("이름 칸이 비었다 — 빈 값으로 흘리지 않는다(M7)", `${where} / ${shown}`);
+        }
+        // ⚠꼬리를 뗐는데도 남았다면 **모르는 모양**이다. 이름에 `※` 가 들어가는 일은 없다.
+        if (nameRaw.includes("※")) {
+          throw new DraftParseError(
+            "이름 칸에 각주 표시가 꼬리 밖에 있다 — 모르는 모양을 이름으로 만들지 않는다(M7·M10)",
+            `${where} / ${JSON.stringify(cells[1]?.text ?? "")}`,
+          );
         }
         // ⚠**아는 두 표기만 걸러서는 부족하다.** `（選択権無し）` 처럼 한 글자만 달라진 변종이
         // 나오면 위 필터를 빠져나가 **그 이름의 선수가 조용히 생긴다** — 이 파서가 틀리는
@@ -409,7 +475,30 @@ export function parseDraftPicks(html: string, team: string): DraftPickRow[] {
 /** 경합 1건 = 「1순위 N회차에 누구를 놓고 누구와 붙어서 이겼나/졌나」. */
 export interface DraftBidRow {
   team: string;
-  /** 1순위 입찰 회차. ⚠**여기는 `null` 이 없다** — 경합은 1순위에서만 일어난다. */
+  /**
+   * 이 주석이 들어 있던 **구획**. ⚠**추측이 아니라 소스의 구조다** — 주석이 앉아 있는 `<h4>` 다.
+   *
+   * ⚠⚠**이게 없으면 2005~2007 을 적재할 수 없다.** 그 세 해는 本ドラフト가 `koukousei` 와
+   * `daigaku_shakaijin` 으로 갈려 있어서 **한 구단 페이지에 1巡目 입찰이 두 벌** 있다
+   * (실측: 구단-시즌 **13건** — 2007 이 12구단 중 **11구단** · 2005·2006 은 楽天 각 1건.
+   * ⚠**2007 세이부만 빠지는 것은 高校生 1巡目을 辞退해 지명 행 자체가 없기 때문**이다).
+   * 적재는 「그 구단의 1巡目 지명」으로 당첨자 이름을 찾는데,
+   * 후보가 둘이면 **어느 구획의 경합인지 정할 근거가 없어 던진다**(`store/src/draft.ts`).
+   * `draft_bid` 의 PK 도 `(season, kind, round_no, team)` 이라 **`kind` 가 그 둘을 가른다.**
+   *
+   * ⚠**`null` 은 「모른다」가 아니라 「이 주석이 어느 `<h4>` 안에도 없다」**는 관측이다(M11).
+   * 실물에서는 **220건 중 0건**이고, 합성 문자열(`<h4>` 없는 조각)에서만 나온다.
+   * ⚠**파서가 대신 골라 주지 않는다** — 고르면 「소스가 말한 구획」과 「우리가 추측한 구획」을
+   * 구별할 수 없게 된다. 그 판단은 지명 표를 함께 보는 적재의 일이다.
+   */
+  kind: DraftKind | null;
+  /**
+   * 1순위 입찰 회차. ⚠**여기는 `null` 이 없다** — 경합은 1순위에서만 일어난다.
+   *
+   * ⚠**`（第N回）` 가 없으면 「그 구획 안에서 몇 번째 주석인가」**다. **페이지 안이 아니다** —
+   * 실측(아카이브 전수 · `（第N回）` 가 붙은 **118건**): 구획 안 순서와 **118/118** 일치,
+   * 페이지 순서와는 **110/118**(어긋난 8건은 전부 2007 의 `高校生選択会議`).
+   */
   roundNo: number;
   /**
    * 경합 상대 구단의 **표기 그대로**(`東京ヤクルト`·`横浜DeNA`…). 적어도 1건이다.
@@ -469,6 +558,46 @@ const POSITION_ALT = Object.keys(POSITIONS)
   .sort((a, b) => b.length - a.length)
   .join("|");
 
+/* ── 경합 주석의 어휘 — ⚠**「받는 것」과 「알아보는 것」을 나눈다** ────────────────
+ *
+ * ⚠⚠**둘이 같은 집합이면 그물은 어휘 변화에 영원히 안 뜬다.** 문법이 받는 낱말을 넓힐수록
+ * 「문법에 안 맞는데 경합처럼 보이는 것」이 줄어들기 때문이다. 그래서 규칙을 이렇게 둔다:
+ *   · **받는다(`*_ACCEPTED`)** = **실물에서 셌다.**
+ *   · **알아본다(그물)** = 받는 것 + **그럴듯하지만 아직 못 본 것.**
+ * 즉 **받는 어휘는 언제나 그물 어휘의 진부분집합**이고, 못 본 낱말이 오면 통과가 아니라 **예외**다.
+ *
+ * 실측(아카이브 2005~2026 전수 · `※` 덩어리 **224건** 중 경합 주석 **220건**):
+ * ```
+ * 겹침   重複 217 · 競合 3(2005 뿐)            그 밖 0
+ * 추첨   抽選 220                              그 밖 0
+ * 결과   外れる 145 · 確定 74 · 獲得 1(2006 中日 뿐)
+ * ```
+ * ⚠**「이름있음 145 = 外れる 145」가 220/220 으로 성립한다** — 규칙 문서 §2 의
+ * 「낙첨이면 선수명을 쓰고 당첨이면 생략한다」가 `獲得` 에서도 그대로였다.
+ * **그게 `獲得` 을 「당첨」으로 읽는 근거이고, 낱말 뜻이 아니다.**
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/** 문법이 **받는** 겹침 낱말. 실측한 것만. */
+const CLASH_ACCEPTED = ["重複", "競合"] as const;
+/** 그물만 아는 겹침 낱말 — **실측 0건**이라 받지는 않는다(오면 던진다). */
+const CLASH_UNSEEN = ["競願"] as const;
+
+/** 당첨(교섭권 획득)을 뜻하는 결과 낱말. ⚠`獲得` 은 2006 中日 **한 건**이다. */
+const OUTCOME_WON = ["確定", "獲得"] as const;
+/** 낙첨을 뜻하는 결과 낱말. */
+const OUTCOME_LOST = ["外れる"] as const;
+
+/**
+ * ⚠⚠**당락을 「어느 그룹이 매치됐는가」로 정한다 — 낱말을 다시 비교하지 않는다.**
+ *
+ * `won: outcome === "確定"` 처럼 **낱말 하나와 비교**하면 어휘를 넓힌 날
+ * `獲得` 이 **조용히 낙첨**이 된다(`wonToInt` 가 경고하는 그 접힘이다). 사전 조회로 바꿔도
+ * 「정규식에는 있는데 표에는 없는 낱말」이라는 **닿지 않는 가지**가 남는다.
+ * → 두 집합이 **각자 캡처 그룹**을 만들면 그 둘이 원리적으로 어긋날 수 없다.
+ * 어느 집합에도 없는 낱말은 **애초에 매치되지 않고**, 그러면 M7 그물이 던진다.
+ */
+const OUTCOME_ALT = `(${OUTCOME_WON.join("|")})|(${OUTCOME_LOST.join("|")})`;
+
 /**
  * 경합 주석 문법(규칙 문서 §2 · 실측 40건 전건이 이 하나로 파싱됐다):
  * ```
@@ -493,10 +622,15 @@ const POSITION_ALT = Object.keys(POSITIONS)
  */
 const BID_RE = new RegExp(
   "^[1１](?:巡目|位)" + // ⚠1순위만이다. 2순위 이후는 웨이버라 추첨이 없다
-    "(?:[（(]第([0-9０-９]+)回[）)])?" + // 그 구단 주석이 2건 이상일 때만 붙는다(§2)
+    "(?:[（(]第([0-9０-９]+)回[）)])?" + // ⚠그 **구획**의 주석이 2건 이상일 때만 붙는다(아래)
     "\\s*[：:]\\s*" +
     `(?:(.+?)(?:${POSITION_ALT})で)?` + // ⚠낙첨일 때만 있다 — 당첨은 이름을 생략한다
-    "(.+?)と重複[、，,]\\s*抽選で(外れる|確定)",
+    `(.+?)と(?:${CLASH_ACCEPTED.join("|")})[、，,]\\s*抽選で(?:${OUTCOME_ALT})$`,
+  //                                                                        ↑ ⚠**끝을 고정한다**
+  // ⚠**넓히면 무언가는 통과한다 — 그 대가를 여기서 막는다.** `獲得` 을 받는 순간
+  // `抽選で獲得できず`(= 낙첨)가 **`won=true`** 로 읽힐 수 있고, 그 화면은 그럴듯하다.
+  // 끝 고정의 근거는 실측이다: **220건 전건이 결과 낱말에서 끝난다**(뒤에 아무것도 없다).
+  // ⚠**꼬리가 붙는 날은 던진다** — 조용히 반대 뜻으로 읽는 것보다 낫다.
 );
 
 /* ── M7 그물이 **두 층**인 이유 ─────────────────────────────────────────────
@@ -522,9 +656,12 @@ const BID_RE = new RegExp(
  * 층을 나눈 값은 **토크나이저가 바뀌어도 하나는 남는다**는 것이지 어휘의 완전성이 아니다.
  * ────────────────────────────────────────────────────────────────────────── */
 
-/** 「겹쳤다」쪽 낱말. ⚠**실물은 `重複` 뿐이다**(픽스처 3건) — 나머지는 대비다. */
-const CLASH = "重複|競合|競願";
-/** 「추첨했다」쪽 낱말. */
+/**
+ * 「겹쳤다」쪽 낱말 — **그물의 어휘**(받는 어휘보다 넓다 · 위 `CLASH_ACCEPTED` 주석).
+ * ⚠**~~실물은 `重複` 뿐이다~~ 는 픽스처 3건만 본 말이었다** — 아카이브 전수로는 `競合` 이 **3건** 있다(2005).
+ */
+const CLASH = [...CLASH_ACCEPTED, ...CLASH_UNSEEN].join("|");
+/** 「추첨했다」쪽 낱말. ⚠실물은 `抽選` **220/220** 이고 나머지 셋은 대비다. */
 const LOT = "抽選|抽せん|くじ|籤";
 
 /**
@@ -534,7 +671,7 @@ const LOT = "抽選|抽せん|くじ|籤";
  * 2006 구단 페이지의 사이드메뉴에 `入札抽選参加、希望入団枠使用等の公示` 가 있어서
  * **본문 밖에 `抽選` 이 1건** 존재한다(실측). 그 링크에는 `重複`·`競合` 이 붙지 않는다.
  * ⚠**양방향으로 본다** — 「…と競合、抽選の結果」와 「抽選の結果、…と競合」이 둘 다 있을 수 있다.
- * 실측: 커밋된 드래프트 픽스처 **10장 중 10장**에서 이 모양의 헛불이 0건이다.
+ * 실측: 커밋된 드래프트 픽스처 **14장 중 14장**에서 이 모양의 헛불이 0건이다.
  */
 const BID_SHAPE = new RegExp(`(?:${CLASH})[\\s\\S]{0,30}?(?:${LOT})|(?:${LOT})[\\s\\S]{0,30}?(?:${CLASH})`, "g");
 
@@ -567,70 +704,114 @@ export function parseDraftBids(html: string, team: string): DraftBidRow[] {
   //   이 수는 그대로 나오므로, 아래 루프가 그만큼을 못 읽으면 **끝에서 던진다.**
   const shapesInDocument = [...decode(scope).matchAll(BID_SHAPE)];
 
-  // ⚠`<p>` 단위가 아니라 `※` 로 자른다 — `<br>` 없이 두 주석이 붙어 있는 해가 있다(2007 西武).
-  // `<p>` 로 자르면 뒤엣것이 **통째로 사라진다.**
-  const chunks = scope.split("※").slice(1);
-
+  /**
+   * ⚠⚠**회차 순번은 「페이지 안」이 아니라 「구획 안」이다**(2026-09-05 · 아카이브 전수 실측).
+   *
+   * 2005~2007 은 本ドラフト가 `高校生選択会議` 와 `大学生・社会人ほか選択会議` 로 갈려 있어
+   * **한 페이지에 1巡目 입찰이 두 벌** 있다. 옛 판은 페이지 하나에 카운터 하나였고, 그래서
+   * 2007 中日·ソフトバンク·阪神·横浜에서 **`（第1回）` 가 「2번째 주석」과 만나 던졌다.**
+   * ```
+   * （第N回） 가 붙은 주석 118건
+   *   구획 안 순서와 일치  118 / 118   ← 이쪽이 소스의 규칙이다
+   *   페이지 순서와 일치   110 / 118   ← 어긋난 8건은 전부 2007 高校生選択会議
+   * ```
+   * ⚠**「어느 쪽이 맞나」를 실측으로 정했다** — 어휘를 넓혀서는 절대 안 고쳐지는 종류다.
+   * ⚠**곁다리 실측 하나 더**: 「그 구획의 주석이 2건 이상일 때만 `（第N回）` 가 붙는다」가
+   * 양방향으로 **반례 0건**이다(구획 158개 · 1건인데 붙은 것 0 · 2건 이상인데 없는 것 0).
+   * **그래서 이 카운터를 「구획마다 1부터」로 두는 것이 소스와 같은 말이 된다.**
+   */
   const rows: DraftBidRow[] = [];
-  let seq = 0;
   /** 읽어 낸 주석이 설명하는 모양의 수. ⚠**행 수가 아니다** — 한 덩어리가 둘을 담을 수 있다. */
   let shapesRead = 0;
+  let chunkCount = 0;
 
-  for (const chunk of chunks) {
-    const cut = chunk.search(BLOCK_TAG);
-    const text = decode(cut === -1 ? chunk : chunk.slice(0, cut));
-    const m = BID_RE.exec(text);
+  for (const segment of docSegments(scope)) {
+    // ⚠`<p>` 단위가 아니라 `※` 로 자른다 — `<br>` 없이 두 주석이 붙어 있을 수 있다.
+    //   `<p>` 로 자르면 뒤엣것이 **통째로 사라진다.**
+    const chunks = segment.body.split("※").slice(1);
+    chunkCount += chunks.length;
 
-    if (!m) {
-      // 드래프트와 무관한 `※` 주석은 그냥 건너뛴다 — 그건 예외가 아니다.
-      if (LOOKS_LIKE_BID.test(text)) {
+    let seq = 0;
+    /**
+     * ⚠**머리를 늦게 읽는다** — 그 구획에서 주석을 **실제로 하나 읽었을 때만** `kindOf` 를 부른다.
+     *
+     * ⚠**먼저 부르면 연도 톱이 통째로 던진다**: 실측(커밋된 픽스처)으로 `draft-2013-index` 에
+     * `開催要項`·`概要`·`ニュース`, `draft-2024-index`·`draft-2026-index` 에도 같은 계열의
+     * `<h4>` 가 있고 **전부 `SECTION` 어휘 밖**이다. 그 페이지들은 경합이 원래 0건이라
+     * **어휘 밖인 것이 정상**이다. (⚠404 본문에는 `<h4>` 가 **0개**다 — 그쪽은 이 사정과 무관하다.)
+     * ⚠**그래도 어휘 밖 머리 아래에 주석이 있으면 던진다** — 새 회의 종류의 경합을
+     * 아무 구획에나 붙이지 않는다(M7).
+     */
+    let kind: DraftKind | null | undefined;
+
+    for (const chunk of chunks) {
+      const cut = chunk.search(BLOCK_TAG);
+      const text = decode(cut === -1 ? chunk : chunk.slice(0, cut));
+      const m = BID_RE.exec(text);
+
+      if (!m) {
+        // 드래프트와 무관한 `※` 주석은 그냥 건너뛴다 — 그건 예외가 아니다.
+        if (LOOKS_LIKE_BID.test(text)) {
+          throw new DraftParseError(
+            "경합 주석처럼 보이는데 문법에 맞지 않는다 — 조용히 0건으로 흘리지 않는다(M7)",
+            `team=${team} / ${JSON.stringify(text)}`,
+          );
+        }
+        continue;
+      }
+      // ⚠**읽은 덩어리 안의 모양은 전부 「설명됐다」로 센다.** `m[0]` 만 세면 문법에 맞게 읽은
+      //   주석 뒤에 붙은 부연(`（再抽選）` 등)이 문서 층에서 미아가 되어 헛불을 낸다.
+      shapesRead += [...text.matchAll(BID_SHAPE)].length;
+
+      if (kind === undefined) {
+        // ⚠머리가 없거나(=`<h4>` 이전) 비어 있으면 `null` — 「모른다」가 아니라 「구획 밖이다」(M11).
+        //   ⚠**모르는 머리는 던진다** — 새 회의 종류의 경합을 아무 구획에나 붙이지 않는다.
+        kind = segment.heading === null || segment.heading === ""
+          ? null
+          : kindOf(segment.heading, `${team} / ${segment.heading}`);
+      }
+
+      seq += 1;
+      // ⚠**당락은 `wonRaw` 가 「있는가」로 정해진다** — 낱말 비교가 아니다(위 `OUTCOME_ALT`).
+      const [, roundRaw, nameRaw, rivalsRaw, wonRaw] = m;
+
+      // ⚠`（第N回）` 가 없으면 **그 구획 안의 주석 순서가 회차**다(위 실측).
+      let roundNo = seq;
+      if (roundRaw !== undefined) {
+        roundNo = Number(roundRaw.normalize("NFKC")); // ⚠전각 숫자가 섞인다(2006·2007)
+        // ⚠둘이 어긋나면 둘 중 하나가 틀린 것이고, **어느 쪽인지 파서가 고를 수 없다.**
+        // 말없이 한쪽을 고르면 회차가 조용히 밀린 채 상대전적까지 흘러간다.
+        if (roundNo !== seq) {
+          throw new DraftParseError(
+            `（第${roundNo}回）가 구획 안 순서(${seq}번째 주석)와 어긋난다 — 어느 쪽이 맞는지 파서가 정하지 않는다(M7)`,
+            `team=${team} / 구획=${segment.heading ?? "(<h4> 이전)"} / ${JSON.stringify(text)}`,
+          );
+        }
+      }
+
+      // ⚠표기 그대로 담는다. 구단 코드로 바꾸는 것은 적재의 일이다(`DraftBidRow.rivals`).
+      // ⚠`length === 0` 은 검사하지 않는다 — `split` 은 빈 배열을 낸 적이 없고
+      // `rivalsRaw` 는 `(.+?)` 라 비어 있을 수 없다. **닿지 않는 가지는 검사가 아니라 소음이다.**
+      const rivals = (rivalsRaw ?? "").split(/[、，,]/).map((s) => s.trim());
+      if (rivals.some((s) => s === "")) {
         throw new DraftParseError(
-          "경합 주석처럼 보이는데 문법에 맞지 않는다 — 조용히 0건으로 흘리지 않는다(M7)",
-          `team=${team} / ${JSON.stringify(text)}`,
+          "경합 상대 칸이 비었다 — 빈 값으로 흘리지 않는다(M7)",
+          `team=${team} / ${JSON.stringify(rivalsRaw)}`,
         );
       }
-      continue;
+
+      rows.push({
+        team,
+        kind,
+        roundNo,
+        rivals,
+        // ⚠당첨이면 소스가 이름을 안 쓴다. `null` 이고, 표와 잇는 것은 적재의 일이다(M11).
+        nameDisplay: nameRaw ?? null,
+        // ⚠**`=== "確定"` 로 접지 마라** — `獲得` 이 조용히 낙첨이 된다.
+        //   당첨 그룹이 매치됐으면 당첨이고, 어느 집합에도 없는 낱말은 여기 못 온다.
+        won: wonRaw !== undefined,
+      });
     }
-    // ⚠**읽은 덩어리 안의 모양은 전부 「설명됐다」로 센다.** `m[0]` 만 세면 문법에 맞게 읽은
-    //   주석 뒤에 붙은 부연(`（再抽選）` 등)이 문서 층에서 미아가 되어 헛불을 낸다.
-    shapesRead += [...text.matchAll(BID_SHAPE)].length;
-
-    seq += 1;
-    const [, roundRaw, nameRaw, rivalsRaw, outcome] = m;
-
-    // ⚠`（第N回）` 가 없으면 **주석 순서가 회차**다(규칙 문서 §2 — 2건 이상일 때만 붙는다).
-    let roundNo = seq;
-    if (roundRaw !== undefined) {
-      roundNo = Number(roundRaw.normalize("NFKC")); // ⚠전각 숫자가 섞인다(2006·2007)
-      // ⚠둘이 어긋나면 둘 중 하나가 틀린 것이고, **어느 쪽인지 파서가 고를 수 없다.**
-      // 말없이 한쪽을 고르면 회차가 조용히 밀린 채 상대전적까지 흘러간다.
-      if (roundNo !== seq) {
-        throw new DraftParseError(
-          `（第${roundNo}回）가 문서 순서(${seq}번째 주석)와 어긋난다 — 어느 쪽이 맞는지 파서가 정하지 않는다(M7)`,
-          `team=${team} / ${JSON.stringify(text)}`,
-        );
-      }
-    }
-
-    // ⚠표기 그대로 담는다. 구단 코드로 바꾸는 것은 적재의 일이다(`DraftBidRow.rivals`).
-    // ⚠`length === 0` 은 검사하지 않는다 — `split` 은 빈 배열을 낸 적이 없고
-    // `rivalsRaw` 는 `(.+?)` 라 비어 있을 수 없다. **닿지 않는 가지는 검사가 아니라 소음이다.**
-    const rivals = (rivalsRaw ?? "").split(/[、，,]/).map((s) => s.trim());
-    if (rivals.some((s) => s === "")) {
-      throw new DraftParseError(
-        "경합 상대 칸이 비었다 — 빈 값으로 흘리지 않는다(M7)",
-        `team=${team} / ${JSON.stringify(rivalsRaw)}`,
-      );
-    }
-
-    rows.push({
-      team,
-      roundNo,
-      rivals,
-      // ⚠당첨이면 소스가 이름을 안 쓴다. `null` 이고, 표와 잇는 것은 적재의 일이다(M11).
-      nameDisplay: nameRaw ?? null,
-      won: outcome === "確定",
-    });
   }
 
   // ⚠⚠**여기가 [I1] 이 요구한 자리다 — 그물이 토크나이저 **위**에 있다.**
@@ -638,11 +819,13 @@ export function parseDraftBids(html: string, team: string): DraftBidRow[] {
   //   「경합 0건」으로 내보냈다. 0건은 단독지명 구단의 정답이기도 해서 아무도 못 읽는다.
   //   ⚠**「몇 건을 못 읽었나」가 아니라 「무엇을 못 읽었나」를 낸다** — 개수만 적으면
   //   다음 사람이 다시 문서를 열어야 하고, 그 사이에 소스가 또 바뀐다.
+  //   ⚠**구획으로 나눠 읽게 된 뒤로 이 층이 하나를 더 지킨다**: 주석이 어느 `<h4>` 본문에도
+  //   안 들어 있으면(예: 머리 태그 안) 위 루프가 못 보는데, **문서 층은 그것을 세므로 던진다.**
   if (shapesInDocument.length !== shapesRead) {
     throw new DraftParseError(
       "경합의 모양이 문서에 있는데 주석에서 읽어 내지 못했다 — 토크나이저나 어휘가 바뀌었다(M7)",
       `team=${team} / 문서 ${shapesInDocument.length}건 · 읽음 ${shapesRead}건 · `
-        + `주석 덩어리 ${chunks.length}개 / ${JSON.stringify(shapesInDocument.map((s) => s[0]))}`,
+        + `주석 덩어리 ${chunkCount}개 / ${JSON.stringify(shapesInDocument.map((s) => s[0]))}`,
     );
   }
 

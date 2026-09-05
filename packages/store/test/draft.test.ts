@@ -49,8 +49,24 @@ function pick(team: string, kind: DraftKind, roundNo: number | null, nameDisplay
   return { team, kind, roundNo, waiverDir: null, nameDisplay, position: null, fromOrg: null };
 }
 
+/**
+ * ⚠**`kind` 를 `null` 로 낸다** — 「소스가 이 주석을 어느 `<h4>` 안에도 안 넣었다」이고,
+ * 그때만 적재가 **지명 표에서 구획을 유도**한다. 구획을 실은 입력은 아래 `bidIn` 이 만든다.
+ */
 function bid(team: string, roundNo: number, rivals: string[], nameDisplay: string | null, won: boolean): DraftBidRow {
-  return { team, roundNo, rivals, nameDisplay, won };
+  return { team, kind: null, roundNo, rivals, nameDisplay, won };
+}
+
+/** 구획을 **소스가 말한** 입찰. 2005~2007 처럼 한 페이지에 1巡目이 두 벌인 해가 이 모양이다. */
+function bidIn(
+  team: string,
+  kind: DraftKind,
+  roundNo: number,
+  rivals: string[],
+  nameDisplay: string | null,
+  won: boolean,
+): DraftBidRow {
+  return { team, kind, roundNo, rivals, nameDisplay, won };
 }
 
 interface BidRow {
@@ -846,6 +862,37 @@ test("⚠1순위 지명이 둘 이상의 구획에 있으면 던진다 — 어�
         }),
       /구획/,
       "말없이 한쪽을 고르면 경합이 조용히 다른 드래프트에 붙는다",
+    );
+  });
+});
+
+test("⚠주석이 구획을 말하면 유도하지 않는다 — 2005~2007 은 1巡目이 두 벌이라 유도가 불가능하다", async () => {
+  // ⚠**바로 위 시험이 던지는 그 입력**에 `kind` 만 붙였다. 유도가 못 하는 일을 소스가 말해 준다.
+  //   실물에서 이 모양이 **구단-시즌 13건**이다(2007 이 12구단 중 11구단 · 2005·2006 은 楽天 각 1건).
+  await withDb((db) => {
+    loadDraft(db, {
+      season: 2007,
+      team: "d",
+      picks: [pick("d", "koukousei", 1, "赤坂 和幸"), pick("d", "daigaku_shakaijin", 1, "山内 壮馬")],
+      bids: [
+        bidIn("d", "daigaku_shakaijin", 1, ["西武", "広島東洋"], "長谷部康平", false),
+        bidIn("d", "koukousei", 1, ["東京ヤクルト"], "佐藤由規", false),
+        bidIn("d", "koukousei", 2, ["福岡ソフトバンク"], "岩嵜翔", false),
+      ],
+      ...META,
+    });
+    assert.deepEqual(
+      bidsOf(db, 2007).map((r) => [r.kind, r.round_no, r.name_display, r.won]),
+      [
+        // 大学生: 낙첨 1건 → 다음 회차(2)에서 단독으로 얻은 것이 유도된다
+        ["daigaku_shakaijin", 1, "長谷部康平", 0],
+        ["daigaku_shakaijin", 2, "山内 壮馬", null],
+        // 高校生: 낙첨 2건 → 3회차 단독
+        ["koukousei", 1, "佐藤由規", 0],
+        ["koukousei", 2, "岩嵜翔", 0],
+        ["koukousei", 3, "赤坂 和幸", null],
+      ],
+      "⚠구획이 다르면 같은 회차가 두 번 나온다 — PK 가 (season, kind, round_no, team) 이라 안 부딪친다",
     );
   });
 });

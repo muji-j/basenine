@@ -133,8 +133,10 @@ function pick(team: string, kind: DraftKind, roundNo: number | null, nameDisplay
   return { team, kind, roundNo, waiverDir: null, nameDisplay, position: null, fromOrg: null };
 }
 
+/** ⚠**`kind` 를 `null` 로 낸다** — 「소스가 이 주석을 어느 `<h4>` 안에도 안 넣었다」이고,
+ *  그때만 적재가 지명 표에서 구획을 유도한다(`store/src/draft.ts` `firstRoundPick`). */
 function bid(team: string, roundNo: number, rivals: string[], nameDisplay: string | null, won: boolean): DraftBidRow {
-  return { team, roundNo, rivals, nameDisplay, won };
+  return { team, kind: null, roundNo, rivals, nameDisplay, won };
 }
 
 const PROV = { source: "https://draft.npb.jp/draft/2019/", fetchedAt: "2026-09-05T00:00:00.000Z", revision: "h" };

@@ -291,15 +291,33 @@ function numberRounds(season: number, picks: readonly DraftPickRow[]): NumberedP
  * `daigaku_shakaijin` 으로 갈라져 있었다 — 2006 요미우리는 `shihaika` 지명이 **0건**이고
  * 堂上直倫 경합은 **高校生 1巡目**이다(픽스처 실측).
  *
+ * ⚠⚠**~~「그때 주석 어느 쪽이 어느 구획인지는 파서가 지금 말해 주지 않는다」~~ 는 낡았다**
+ * (2026-09-05). 파서가 **주석이 앉아 있던 `<h4>`** 를 `DraftBidRow.kind` 로 싣는다.
+ * 그래서 이 함수는 **유도하기 전에 소스에게 먼저 묻는다.**
+ *   · `kind` 가 있다 → **그 구획 안에서만** 찾는다. 후보가 하나뿐이라 유도가 필요 없다.
+ *   · `kind` 가 `null` → 옛 경로. 「그 구단의 1巡目이 하나뿐이면 그것」이고, 둘이면 던진다.
+ * ⚠**`null` 은 실물에서 0건이다**(아카이브 전수 220/220 이 구획 안). 남겨 둔 이유는
+ * 「소스가 구획 밖에 주석을 두는 날」에 **조용한 오답 대신 예외**를 내기 위해서다.
+ * ⚠**유도를 먼저 시도하고 실패하면 `kind` 를 보는 순서로 짜지 마라** — 그러면 소스가 말한
+ * 구획과 우리가 고른 구획이 **다를 때 아무 소리도 안 난다.** 말해 준 쪽이 언제나 이긴다.
+ *
  * @throws {DraftLoadError} 후보가 0개이거나 2개 이상일 때. ⚠**말없이 한쪽을 고르면 경합이
  *   조용히 다른 드래프트에 붙는다.** 2005~2007 에 希望入団枠 을 안 쓴 구단은 두 구획 모두
- *   1巡目을 가질 수 있고, 그때 주석 어느 쪽이 어느 구획인지는 **파서가 지금 말해 주지 않는다**
- *   (`※` 만으로 잘라 섹션 정보를 잃는다). **그 해가 들어오면 이 예외가 먼저 터진다 —
- *   그게 조용히 틀린 값보다 낫다.**
+ *   1巡目을 가질 수 있다(실측: 구단-시즌 **13건** — 2007 이 12구단 중 **11구단**(세이부는
+ *   高校生 1巡目을 辞退해 지명 행이 없다) · 2005·2006 은 楽天 각 1건).
  */
-function firstRoundPick(season: number, team: string, numbered: readonly NumberedPick[]): NumberedPick {
+function firstRoundPick(
+  season: number,
+  team: string,
+  numbered: readonly NumberedPick[],
+  kind: DraftKind | null,
+): NumberedPick {
   const found = numbered.filter(
-    (p) => p.row.team === team && p.roundNo === 1 && LOTTERY_KINDS.has(p.row.kind),
+    (p) =>
+      p.row.team === team
+      && p.roundNo === 1
+      && LOTTERY_KINDS.has(p.row.kind)
+      && (kind === null || p.row.kind === kind),
   );
   const kinds = new Set(found.map((p) => p.row.kind));
   const only = found[0];
@@ -309,7 +327,8 @@ function firstRoundPick(season: number, team: string, numbered: readonly Numbere
     kinds.size === 0
       ? "1순위 경합 주석이 있는데 추첨이 있는 구획의 1巡目 지명이 없다 — 어느 구획의 경합인지 정할 근거가 없다(M7)"
       : "이 구단의 1巡目 지명이 둘 이상의 구획에 있다 — 어느 구획의 경합인지 적재가 정하지 않는다(M7)",
-    `season=${season} team=${team} 후보구획=${kinds.size === 0 ? "없음" : [...kinds].join(",")}`,
+    `season=${season} team=${team} 주석구획=${kind ?? "(없음)"}`
+      + ` 후보구획=${kinds.size === 0 ? "없음" : [...kinds].join(",")}`,
   );
 }
 
@@ -394,7 +413,8 @@ function resolveBids(
   numbered: readonly NumberedPick[],
 ): ResolvedBid[] {
   const out = bids.map((b) => {
-    const first = firstRoundPick(season, b.team, numbered);
+    // ⚠**소스가 구획을 말했으면 그것으로 좁힌다** — 유도는 그때만 한다(위 함수 주석).
+    const first = firstRoundPick(season, b.team, numbered, b.kind);
     // ⚠당첨 주석은 이름을 생략한다 — 결측이 아니라 「소스가 안 쓴다」(M11).
     //   그 자리를 채우는 것은 **입찰 회차의 지명이 아니라 1巡目 지명**이다(위 함수 주석).
     const nameDisplay = b.nameDisplay ?? first.row.nameDisplay;
