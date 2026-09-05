@@ -416,7 +416,7 @@ function invN3DeclaredGroupSize(db: Db): CheckResult {
 
   const groups = new Map<string, typeof rows>();
   for (const r of rows) {
-    const key = `${r.season} ${r.group_key}`;
+    const key = `${r.season}\u0000${r.group_key}`;
     const bucket = groups.get(key);
     if (bucket === undefined) groups.set(key, [r]);
     else bucket.push(r);
