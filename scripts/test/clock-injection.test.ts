@@ -67,6 +67,9 @@ const ALLOWED: ReadonlyMap<string, number> = new Map([
   ["packages/store/tools/load-players.ts", 1],
   ["packages/store/tools/load-starters.ts", 1],
   ["packages/store/tools/load-upcoming.ts", 1],
+  // ⚠**리허설 DB 는 여기 안 센다** — `openDb(":memory:")` 에 넘기는 값은 버려지는 표에만 들어가
+  //   아무도 안 읽으므로 상수(`REHEARSAL_NOW`)를 쓴다. 진짜 시계는 CLI 진입점 한 곳뿐이다
+  ["packages/store/tools/load-draft-archive.ts", 1],
   ["packages/web/tools/marks.ts", 1],
   ["scripts/freshness.ts", 2],
   ["scripts/update.ts", 1],
