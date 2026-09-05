@@ -6,7 +6,7 @@
  */
 import { parseArgs } from "node:util";
 import { systemClock, toJstDateString } from "./clock.ts";
-import { PoliteFetcher, buildUserAgent } from "./fetcher.ts";
+import { L1_MIN_DELAY_MS, PoliteFetcher, buildUserAgent, parseDelayMs } from "./fetcher.ts";
 import { LocalSink } from "./sink.ts";
 import { archiveStarters } from "./starters.ts";
 
@@ -26,6 +26,17 @@ if (!contact) {
   process.exit(2);
 }
 
+// ⚠**`Number(values.delay)` 를 직접 넘기지 마라** — `NaN` 은 nullish 가 아니라서
+//   `minDelayMs ?? 3000` 을 통과하고 **간격이 조용히 0이 된다**(L1 · `fetcher.ts` 참조).
+const delayMs = parseDelayMs(values.delay);
+if (delayMs === null) {
+  console.error(`--delay 는 0 이상의 수(ms)여야 한다: ${values.delay}`);
+  process.exit(2);
+}
+if (delayMs < L1_MIN_DELAY_MS) {
+  console.error(`⚠--delay ${delayMs}ms 는 L1 하한(${L1_MIN_DELAY_MS}ms) 아래다 — 실사이트에 쓰지 마라`);
+}
+
 const clock = systemClock;
 // ⚠시계는 한 번만 읽는다(M6)
 const jstDate = values.date ?? toJstDateString(clock.now());
@@ -33,7 +44,7 @@ const jstDate = values.date ?? toJstDateString(clock.now());
 const result = await archiveStarters(jstDate, {
   fetcher: new PoliteFetcher({
     userAgent: buildUserAgent(contact),
-    minDelayMs: Number(values.delay),
+    minDelayMs: delayMs,
     clock,
   }),
   sink: new LocalSink(values.out),

@@ -15,7 +15,7 @@
  *   node packages/archiver/src/cli-stats.ts --season 2026 --contact you@example.com
  */
 import { parseArgs } from "node:util";
-import { PoliteFetcher, buildUserAgent } from "./fetcher.ts";
+import { L1_MIN_DELAY_MS, PoliteFetcher, buildUserAgent, parseDelayMs } from "./fetcher.ts";
 import { LocalSink } from "./sink.ts";
 import { systemClock } from "./clock.ts";
 import { archiveUrl, summarize } from "./archive.ts";
@@ -71,10 +71,21 @@ if (list.length === 0) {
   process.exit(2);
 }
 
+// ⚠**`Number(values.delay)` 를 직접 넘기지 마라** — `NaN` 은 nullish 가 아니라서
+//   `minDelayMs ?? 3000` 을 통과하고 **간격이 조용히 0이 된다**(L1 · `fetcher.ts` 참조).
+const delayMs = parseDelayMs(values.delay);
+if (delayMs === null) {
+  console.error(`--delay 는 0 이상의 수(ms)여야 한다: ${values.delay}`);
+  process.exit(2);
+}
+if (delayMs < L1_MIN_DELAY_MS) {
+  console.error(`⚠--delay ${delayMs}ms 는 L1 하한(${L1_MIN_DELAY_MS}ms) 아래다 — 실사이트에 쓰지 마라`);
+}
+
 const deps = {
   fetcher: new PoliteFetcher({
     userAgent: buildUserAgent(contact),
-    minDelayMs: Number(values.delay),
+    minDelayMs: delayMs,
     clock: systemClock,
   }),
   sink: new LocalSink(values.out),
@@ -82,7 +93,7 @@ const deps = {
 };
 
 console.error(
-  `공표 성적표 ${list.length}장 · 저장 ${values.out} · 간격 ${values.delay}ms · UA ${buildUserAgent(contact)}`,
+  `공표 성적표 ${list.length}장 · 저장 ${values.out} · 간격 ${delayMs}ms · UA ${buildUserAgent(contact)}`,
 );
 
 const results: PageResult[] = [];

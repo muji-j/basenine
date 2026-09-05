@@ -44,6 +44,37 @@ export interface ConditionalHeaders {
 
 const RETRYABLE = new Set([408, 425, 429, 500, 502, 503, 504]);
 
+/**
+ * L1 의 하한 — 「1req / 2~5초」의 아래쪽.
+ *
+ * ⚠**이걸로 막지는 않는다**(픽스처 시험이 `0` 을 쓴다). 진입점이 **경고**하는 데 쓴다 —
+ * 막으면 시험이 못 돌고, 안 알리면 실사이트에 0.5초로 나간다.
+ */
+export const L1_MIN_DELAY_MS = 2000;
+
+/**
+ * 유효한 요청 간격인가. ⚠**생성자와 진입점이 같은 술어를 쓴다**(M1) —
+ * 두 벌로 두면 한쪽만 고쳐진 채로 남고, 그 한쪽이 실제로 나가는 요청을 정한다.
+ */
+function isValidDelayMs(ms: number): boolean {
+  return Number.isFinite(ms) && ms >= 0;
+}
+
+/**
+ * 진입점의 `--delay` 문자열을 간격으로. **못 읽으면 `null`.**
+ *
+ * ⚠**`Number()` 를 그대로 쓰지 마라** — `Number("abc")` 는 `NaN` 인데 **`NaN` 은 nullish 가
+ * 아니라서** `minDelayMs ?? 3000` 을 통과하고, `elapsed < NaN` 이 항상 false 라 **간격이
+ * 0이 된다.** 던지지도 로그를 남기지도 않는다(실측: 연속 3요청에 sleep 0회).
+ * ⚠**「안 줬다」와 「못 읽었다」를 여기서 구별하지 않는다** — 둘 다 `null` 이고,
+ * 기본값을 고르는 것은 진입점의 일이다(`parseArgs` 의 `default`).
+ */
+export function parseDelayMs(raw: string | undefined): number | null {
+  if (raw === undefined) return null;
+  const ms = Number(raw);
+  return isValidDelayMs(ms) ? ms : null;
+}
+
 export class PoliteFetcher {
   private readonly userAgent: string;
   private readonly minDelayMs: number;
@@ -57,7 +88,17 @@ export class PoliteFetcher {
 
   constructor(opts: PoliteFetcherOptions) {
     this.userAgent = opts.userAgent;
-    this.minDelayMs = opts.minDelayMs ?? 3000;
+    const minDelayMs = opts.minDelayMs ?? 3000;
+    // ⚠**여기가 예의의 유일한 관문이다**(L1). `new PoliteFetcher` 는 이 저장소에 5곳이고
+    //   `scripts/update.ts` 가 자기 `--delay` 를 그중 넷에 그대로 넘긴다 — 호출자마다
+    //   검사를 두면 **반드시 하나를 빠뜨리고**, 빠뜨린 그 하나가 간격 없이 나간다.
+    //   ⚠**`buildUserAgent` 이 빈 연락처를 거부하는 것과 같은 자리다**(아래).
+    if (!isValidDelayMs(minDelayMs)) {
+      throw new RangeError(
+        `요청 간격(minDelayMs)은 0 이상의 유한한 수여야 한다 — 조용히 0초가 되는 것을 막는다 (CLAUDE.md L1): ${minDelayMs}`,
+      );
+    }
+    this.minDelayMs = minDelayMs;
     this.maxRetries = opts.maxRetries ?? 3;
     this.clock = opts.clock;
     this.fetchImpl = opts.fetchImpl ?? (globalThis.fetch as unknown as FetchImpl);

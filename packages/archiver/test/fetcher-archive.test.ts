@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { PoliteFetcher, buildUserAgent } from "../src/fetcher.ts";
+import { L1_MIN_DELAY_MS, PoliteFetcher, buildUserAgent, parseDelayMs } from "../src/fetcher.ts";
 import type { FetchImpl } from "../src/fetcher.ts";
 import { MemorySink } from "../src/sink.ts";
 import { MonthlyScheduleCache, archiveDate, archiveDates, archivePage, isDayError, summarize } from "../src/archive.ts";
@@ -53,6 +53,39 @@ test("UA에 연락처가 없으면 만들어지지 않는다 (L1)", () => {
   assert.throws(() => buildUserAgent(""), /연락처/);
   assert.throws(() => buildUserAgent("   "), /연락처/);
   assert.match(buildUserAgent("me@example.com"), /me@example\.com/);
+});
+
+/**
+ * ⚠**간격이 수가 아니면 예의가 조용히 사라진다**(2026-09-05 · L1).
+ *
+ * `Number("abc")` 는 `NaN` 이고 **`NaN` 은 nullish 가 아니라서** `opts.minDelayMs ?? 3000` 을
+ * 그대로 통과했다. 그러면 `elapsed < NaN` 이 **항상 false** 라 `waitForSlot` 이 한 번도 안
+ * 기다린다 — **실측: 연속 3요청에 sleep 0회.** 오타 하나로 L1 위반이고 **로그에 아무것도 안 남는다.**
+ *
+ * ⚠**막는 자리를 생성자로 골랐다.** 이 저장소의 `new PoliteFetcher` 는 **5곳**이고
+ * (`cli.ts`·`cli-stats.ts`·`cli-starters.ts`·`cli-players.ts`·`cli-draft.ts`),
+ * 그중 넷이 `Number(values.delay)` 를 검사 없이 넘기고 있었다. 게다가 `scripts/update.ts` 가
+ * 자기 `--delay` 를 **그 넷에 그대로 전달**한다 — 호출자마다 검사를 두면 **반드시 하나를 빠뜨린다.**
+ * **`buildUserAgent` 이 빈 연락처를 거부하는 것과 같은 자리다**(같은 파일 · 같은 이유).
+ */
+test("⚠L1: 간격이 수가 아니면 생성자가 거부한다 — 조용히 0초가 되지 않는다", () => {
+  const base = { userAgent: "ua", clock: { now: () => new Date(0) } };
+  assert.throws(() => new PoliteFetcher({ ...base, minDelayMs: Number("abc") }), /간격/);
+  assert.throws(() => new PoliteFetcher({ ...base, minDelayMs: Number.POSITIVE_INFINITY }), /간격/);
+  assert.throws(() => new PoliteFetcher({ ...base, minDelayMs: -1 }), /간격/);
+  // ⚠**막지 않는 것**: 안 주면 기본 3초 · 명시한 0 은 픽스처 시험이 쓴다(의도된 값이다)
+  assert.doesNotThrow(() => new PoliteFetcher(base));
+  assert.doesNotThrow(() => new PoliteFetcher({ ...base, minDelayMs: 0 }));
+});
+
+test("⚠`--delay` 파싱은 한 벌이다 — 넷이 같은 술어를 쓴다(M1)", () => {
+  assert.equal(parseDelayMs("3000"), 3000);
+  assert.equal(parseDelayMs("0"), 0);
+  assert.equal(parseDelayMs("abc"), null, "⚠이게 통과하면 간격이 0이 된다");
+  assert.equal(parseDelayMs("-1"), null);
+  assert.equal(parseDelayMs("Infinity"), null);
+  assert.equal(parseDelayMs(undefined), null, "⚠「안 줬다」를 0 으로 메우지 않는다(M11)");
+  assert.equal(L1_MIN_DELAY_MS, 2000, "1req/2~5초의 하한");
 });
 
 test("첫 요청에는 조건부 헤더가 붙지 않는다", async () => {

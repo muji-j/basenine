@@ -9,7 +9,7 @@
 import { parseArgs } from "node:util";
 import { readFile } from "node:fs/promises";
 import { systemClock } from "./clock.ts";
-import { PoliteFetcher, buildUserAgent } from "./fetcher.ts";
+import { L1_MIN_DELAY_MS, PoliteFetcher, buildUserAgent, parseDelayMs } from "./fetcher.ts";
 import { LocalSink } from "./sink.ts";
 import { archivePlayers } from "./players.ts";
 import { summarize } from "./archive.ts";
@@ -40,16 +40,28 @@ const ids = (await readFile(values.ids, "utf8"))
   .map((l) => l.trim())
   .filter((l) => l !== "" && !l.startsWith("#"));
 
+// ⚠**`Number(values.delay)` 를 직접 넘기지 마라** — `NaN` 은 nullish 가 아니라서
+//   `minDelayMs ?? 3000` 을 통과하고 **간격이 조용히 0이 된다**(L1 · `fetcher.ts` 참조).
+//   ⚠여기는 900명을 도는 자리라 간격이 사라지면 피해가 가장 크다.
+const delayMs = parseDelayMs(values.delay);
+if (delayMs === null) {
+  console.error(`--delay 는 0 이상의 수(ms)여야 한다: ${values.delay}`);
+  process.exit(2);
+}
+if (delayMs < L1_MIN_DELAY_MS) {
+  console.error(`⚠--delay ${delayMs}ms 는 L1 하한(${L1_MIN_DELAY_MS}ms) 아래다 — 실사이트에 쓰지 마라`);
+}
+
 const clock = systemClock;
 const fetcher = new PoliteFetcher({
   userAgent: buildUserAgent(contact),
-  minDelayMs: Number(values.delay),
+  minDelayMs: delayMs,
   clock,
 });
 const sink = new LocalSink(values.out);
 
 console.error(
-  `선수 ${ids.length}명 · 저장 위치 ${values.out} · 간격 ${values.delay}ms · ` +
+  `선수 ${ids.length}명 · 저장 위치 ${values.out} · 간격 ${delayMs}ms · ` +
     `${values.refresh ? "전량 재취득" : "기존은 건너뜀"}`,
 );
 
