@@ -82,7 +82,9 @@ test("⚠archiveUrl: 내용이 같으면 본문은 안 쓰고 「봤다」만 �
       userAgent: "test",
       clock: { now: () => new Date(now) },
       fetchImpl: server("same"),
-      minDelayMs: 0,
+      // ⚠**~~`minDelayMs: 0`~~ 을 지웠다**(2026-09-05). L1 하한이 생겨 만들 수 없는 값이 됐고,
+      //   **이 시험은 애초에 그 값을 안 본다** — 아래 `sleep` 이 즉시 반환하는 목이라
+      //   `999999` 로 바꿔도 4본이 그대로 통과한다(실측). 기본값 3000 을 쓴다.
       sleep: async () => {},
     }),
     sink,

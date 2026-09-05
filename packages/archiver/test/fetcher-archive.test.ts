@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { PoliteFetcher, buildUserAgent } from "../src/fetcher.ts";
+import { L1_MIN_DELAY_MS, PoliteFetcher, buildUserAgent, parseDelayMs } from "../src/fetcher.ts";
 import type { FetchImpl } from "../src/fetcher.ts";
 import { MemorySink } from "../src/sink.ts";
 import { MonthlyScheduleCache, archiveDate, archiveDates, archivePage, isDayError, summarize } from "../src/archive.ts";
@@ -52,7 +52,100 @@ const REF = { season: 2026, date: "2026-08-14", slug: "s-db-17", path: "/scores/
 test("UA에 연락처가 없으면 만들어지지 않는다 (L1)", () => {
   assert.throws(() => buildUserAgent(""), /연락처/);
   assert.throws(() => buildUserAgent("   "), /연락처/);
-  assert.match(buildUserAgent("me@example.com"), /me@example\.com/);
+  assert.match(buildUserAgent("bb-app@lunomel.jp"), /bb-app@lunomel\.jp/);
+});
+
+/**
+ * ⚠**닿지 않는 연락처는 빈 연락처와 같다**(L1 · 2026-09-06).
+ *
+ * L1 이 연락처를 요구하는 이유는 **「상대가 문제를 알릴 방법」**이다. `example.com` 은
+ * RFC 2606 이 **영구 예약**한 도메인이라 메일이 어디에도 닿지 않는다 — **빈 문자열과
+ * 실질이 같은데 옛 검사는 통과시켰다.**
+ *
+ * ⚠**이건 실제 사고의 나머지 절반이다.** 2026-09-05 의 L1 위반은 **간격(0.583초)**과
+ * **연락처(`me@example.com`)** 두 겹이었는데 간격만 막혀 있었다.
+ * ⚠**그리고 이 검사가 그때 있었으면 사고가 아예 안 났다** — 진입점은
+ * `buildUserAgent(contact)` 를 **fetcher 를 만들기 전에** 부르므로(`cli-draft.ts`),
+ * 여기서 던졌으면 **222요청이 0요청이었다.** 간격 하한과 **독립적인 두 번째 걸쇠**다.
+ */
+test("⚠L1: 닿지 않는 예약 도메인은 연락처가 아니다", () => {
+  for (const bad of [
+    "me@example.com",
+    "you@example.org",
+    "a@example.net",
+    "a@foo.example",
+    "a@foo.test",
+    "a@foo.invalid",
+    "a@localhost",
+    "a@foo.localhost",
+    // ⚠**URL 연락처도 같은 구멍이다** — 초판은 이메일만 보고 이 셋을 통과시켰다(실측).
+    "https://example.com/issues",
+    "https://example.com/",
+    "http://localhost:8080/x",
+  ]) {
+    assert.throws(() => buildUserAgent(bad), /닿지 않/, `${bad} 를 통과시켰다`);
+  }
+  // ⚠**막지 않는 것**: 이름에 example 이 들어갈 뿐인 실도메인은 예약이 아니다
+  assert.doesNotThrow(() => buildUserAgent("me@example-team.jp"));
+  assert.doesNotThrow(() => buildUserAgent("me@myexample.com"));
+  assert.doesNotThrow(() => buildUserAgent("https://github.com/muji-j/bb-app/issues"));
+});
+
+/**
+ * ⚠**간격이 수가 아니면 예의가 조용히 사라진다**(2026-09-05 · L1).
+ *
+ * `Number("abc")` 는 `NaN` 이고 **`NaN` 은 nullish 가 아니라서** `opts.minDelayMs ?? 3000` 을
+ * 그대로 통과했다. 그러면 `elapsed < NaN` 이 **항상 false** 라 `waitForSlot` 이 한 번도 안
+ * 기다린다 — **실측: 연속 3요청에 sleep 0회.** 오타 하나로 L1 위반이고 **로그에 아무것도 안 남는다.**
+ *
+ * ⚠**막는 자리를 생성자로 골랐다.** 이 저장소의 `new PoliteFetcher` 는 **5곳**이고
+ * (`cli.ts`·`cli-stats.ts`·`cli-starters.ts`·`cli-players.ts`·`cli-draft.ts`),
+ * 그중 넷이 `Number(values.delay)` 를 검사 없이 넘기고 있었다. 게다가 `scripts/update.ts` 가
+ * 자기 `--delay` 를 **그 넷에 그대로 전달**한다 — 호출자마다 검사를 두면 **반드시 하나를 빠뜨린다.**
+ * **`buildUserAgent` 이 빈 연락처를 거부하는 것과 같은 자리다**(같은 파일 · 같은 이유).
+ */
+test("⚠L1: 간격이 수가 아니면 생성자가 거부한다 — 조용히 0초가 되지 않는다", () => {
+  const base = { userAgent: "ua", clock: { now: () => new Date(0) } };
+  assert.throws(() => new PoliteFetcher({ ...base, minDelayMs: Number("abc") }), /간격/);
+  assert.throws(() => new PoliteFetcher({ ...base, minDelayMs: Number.POSITIVE_INFINITY }), /간격/);
+  assert.throws(() => new PoliteFetcher({ ...base, minDelayMs: -1 }), /간격/);
+  assert.doesNotThrow(() => new PoliteFetcher(base), "안 주면 기본 3초");
+});
+
+/**
+ * ⚠**「유효하지만 위험한」 값도 거부한다** — `NaN` 만 막는 것으로는 부족했다.
+ *
+ * `500` 은 수이고 음수도 아니라 옛 검사를 통과했고, 진입점은 **경고 한 줄만 찍고 계속 갔다.**
+ * 그건 이번 수정이 막으려던 것과 **결이 다를 뿐 정도만 다른 같은 범주의 구멍**이다.
+ *
+ * ⚠**시험용 예외를 두지 않았다.** 「`fetchImpl` 을 주입했으면 봐 준다」가 후보였는데,
+ * 그러면 **예의의 보장이 「전송 수단을 갈아 끼웠는가」에 딸려 간다** — 제품 코드가 계측이나
+ * 프록시 목적으로 `fetchImpl` 을 감싸는 순간 하한이 조용히 사라진다. 그건 방금 고친 결함의
+ * 잠복형이다. ⚠**실측으로 예외가 필요 없다는 것이 확인됐다**: 실제로 요청을 보내는 시험
+ * **13곳 전부가 `fetchImpl` 과 `sleep` 을 함께 주입**하고, 시험을 빠르게 만드는 것은
+ * **`sleep` 목이지 작은 `minDelayMs` 가 아니다**(`mark-seen` 의 `minDelayMs: 0` 을
+ * `999999` 로 바꿔도 4본이 그대로 통과한다 — 실측).
+ * → **예외 없는 한 줄 규칙**이고 우회할 것이 없다. `PoliteFetcher` 가 무례하게 설정될 수
+ * 있으면 이름이 거짓이다.
+ */
+test("⚠L1: 하한 아래 간격은 유효한 수라도 거부한다", () => {
+  const base = { userAgent: "ua", clock: { now: () => new Date(0) } };
+  assert.throws(() => new PoliteFetcher({ ...base, minDelayMs: 0 }), /간격/);
+  assert.throws(() => new PoliteFetcher({ ...base, minDelayMs: 500 }), /간격/);
+  assert.throws(() => new PoliteFetcher({ ...base, minDelayMs: L1_MIN_DELAY_MS - 1 }), /간격/);
+  assert.doesNotThrow(() => new PoliteFetcher({ ...base, minDelayMs: L1_MIN_DELAY_MS }), "경계는 통과한다");
+});
+
+test("⚠`--delay` 파싱은 한 벌이다 — 다섯이 같은 술어를 쓴다(M1)", () => {
+  assert.equal(parseDelayMs("3000"), 3000);
+  assert.equal(parseDelayMs("2000"), 2000, "경계는 통과한다");
+  assert.equal(parseDelayMs("500"), null, "⚠이게 통과하면 경고만 찍고 실사이트를 친다");
+  assert.equal(parseDelayMs("0"), null);
+  assert.equal(parseDelayMs("abc"), null, "⚠이게 통과하면 간격이 0이 된다");
+  assert.equal(parseDelayMs("-1"), null);
+  assert.equal(parseDelayMs("Infinity"), null);
+  assert.equal(parseDelayMs(undefined), null, "⚠「안 줬다」를 0 으로 메우지 않는다(M11)");
+  assert.equal(L1_MIN_DELAY_MS, 2000, "1req/2~5초의 하한");
 });
 
 test("첫 요청에는 조건부 헤더가 붙지 않는다", async () => {
@@ -140,7 +233,9 @@ test("503은 지수 백오프로 재시도한 뒤 예외를 던진다", async ()
   const r = recorder(() => response(503));
   const f = new PoliteFetcher({
     userAgent: "ua",
-    minDelayMs: 1000,
+    // ⚠**~~1000~~ 이었다** — L1 하한(2000)이 생기면서 만들 수 없는 값이 됐다.
+    //   `sleep` 이 목이라 **벽시계는 그대로 0초**이고, 재는 것(지수적으로 는다)도 그대로다.
+    minDelayMs: 2000,
     maxRetries: 2,
     clock: h.clock,
     fetchImpl: r.impl,
@@ -149,7 +244,7 @@ test("503은 지수 백오프로 재시도한 뒤 예외를 던진다", async ()
 
   await assert.rejects(() => f.get("https://npb.jp/a"), /취득 실패/);
   assert.equal(r.calls.length, 3, "최초 1회 + 재시도 2회");
-  assert.deepEqual(h.sleeps.slice(0, 3), [1000, 2000, 4000], "백오프가 지수적으로 늘어야 한다");
+  assert.deepEqual(h.sleeps.slice(0, 3), [2000, 4000, 8000], "백오프가 지수적으로 늘어야 한다");
 });
 
 test("동시에 불러도 직렬화된다 — 동시 1커넥션 (L1)", async () => {

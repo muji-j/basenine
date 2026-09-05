@@ -9,7 +9,7 @@
  */
 import { parseArgs } from "node:util";
 import { systemClock, toJstDateString } from "./clock.ts";
-import { PoliteFetcher, buildUserAgent } from "./fetcher.ts";
+import { L1_MIN_DELAY_MS, PoliteFetcher, buildUserAgent, parseDelayMs } from "./fetcher.ts";
 import { LocalSink } from "./sink.ts";
 import { MonthlyScheduleCache, archiveDates, isDayError, summarize } from "./archive.ts";
 import type { PageResult } from "./archive.ts";
@@ -29,9 +29,18 @@ const { values } = parseArgs({
 const contact = values.contact ?? process.env["BB_ARCHIVER_CONTACT"] ?? "";
 if (!contact) {
   console.error(
-    "연락처가 필요하다. --contact you@example.com 또는 BB_ARCHIVER_CONTACT 환경변수를 설정하라.\n" +
+    "연락처가 필요하다. --contact <닿는-연락처> 또는 BB_ARCHIVER_CONTACT 환경변수를 설정하라.\n" +
       "이유: 연락처 없는 UA로 긁으면 상대가 문제를 알릴 방법이 차단밖에 없다 (CLAUDE.md L1).",
   );
+  process.exit(2);
+}
+
+// ⚠**`Number(values.delay)` 를 직접 넘기지 마라** — `NaN` 은 nullish 가 아니라서
+//   `minDelayMs ?? 3000` 을 통과하고 **간격이 조용히 0이 된다**(L1 · `fetcher.ts` 참조).
+//   ⚠여기는 경기 페이지를 날짜 수 × 4장 도는 자리다.
+const delayMs = parseDelayMs(values.delay);
+if (delayMs === null) {
+  console.error(`--delay 는 ${L1_MIN_DELAY_MS}ms 이상이어야 한다 (L1: 1req/2~5초): ${values.delay}`);
   process.exit(2);
 }
 
@@ -40,12 +49,12 @@ const dates = resolveDates();
 
 const fetcher = new PoliteFetcher({
   userAgent: buildUserAgent(contact),
-  minDelayMs: Number(values.delay),
+  minDelayMs: delayMs,
   clock,
 });
 const sink = new LocalSink(values.out);
 
-console.error(`대상 ${dates.length}일 · 저장 위치 ${values.out} · 요청 간격 ${values.delay}ms`);
+console.error(`대상 ${dates.length}일 · 저장 위치 ${values.out} · 요청 간격 ${delayMs}ms`);
 
 const all: PageResult[] = [];
 let daysFailed = 0;

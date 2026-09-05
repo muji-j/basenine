@@ -10,26 +10,71 @@ import type { TeamColor } from "@bb-app/domain";
 import { fullDate } from "./format.ts";
 
 /**
- * 화면의 4상태(M12).
+ * 화면의 빈 상태(M12).
  * ⚠**「데이터 없음」과 「수집 실패」를 같은 화면으로 만들지 마라.** 그 자체가 결함이다.
+ *
+ * ⚠⚠**넷이 아니라 여섯이다**(2026-09-05 · 드래프트 화면에서 늘었다). **넷으로는 말할 수 없는
+ * 사실이 둘 있었고, 둘 다 `empty` 로 접으면 거짓이 된다:**
+ *
+ * | 새 상태 | 무엇이 참인가 | `empty` 로 접으면 |
+ * |---|---|---|
+ * | `unpublished` | **우리가 가진 판에 그 값이 없다.** 수집 실패는 아니다 | 「그 해엔 그런 일이 없었다」로 읽힌다 |
+ * | `uncollected` | **출처에는 있는데 우리가 아직 안 받았다** | **미수집을 0 으로 메우는 쪽**이다(M11) |
+ *
+ * ⚠**둘을 하나로 합치지 마라 — 고칠 수 있는 사람이 다르다.** `unpublished` 는 **그 판을 다시
+ * 받아도 안 나오고**, `uncollected` 는 **우리 몫의 남은 일**이다.
+ * 화면에 같은 문장이 나가면 「언젠가 채워지겠지」와 「영영 안 채워진다」가 구별되지 않는다.
+ *
+ * ⚠⚠**`unpublished` 의 뜻을 좁혔다**(2026-09-06 최종 검토 [I-2]). 처음에는
+ * ~~「출처가 공표하지 않는다 · 사실은 실재했다」~~ 였는데 **둘 다 우리가 아는 것보다 강했다:**
+ * ⑴ 「사실은 실재했다」의 근거는 **2023 야쿠르트 HTML 주석 1건**뿐이라 다른 해로 일반화되지 않고,
+ * ⑵ **원인이 우리일 수 있다** — 스냅샷을 출처가 쓰기 전에 뜨면 같은 모양이 된다.
+ * → **이 상태가 말하는 것은 「우리가 가진 판에 없다」뿐**이고, 왜인지는 `detail` 이 말한다.
+ * 후일담(입단 거부·교섭권 정정)은 소스에 있는데 **파서가 없다** → `uncollected`.
  */
 export type DataState =
   | { kind: "ok" }
   | { kind: "empty"; detail: string }
   | { kind: "failed"; detail: string }
-  | { kind: "offseason"; detail: string };
+  | { kind: "offseason"; detail: string }
+  /** ⚠**출처가 공표하지 않는다.** 우리가 못 얻은 게 아니다 — 탓을 우리에게 돌리지 마라 */
+  | { kind: "unpublished"; detail: string }
+  /** ⚠**우리가 아직 수집하지 않는다.** 출처에는 있다 — 「없었다」로 그리면 거짓이다 */
+  | { kind: "uncollected"; detail: string };
 
-/** 정적 생성이므로 「로딩」은 페이지 단위로는 존재하지 않는다 — 클라이언트가 가져오는 검색 색인에만 있다. */
+/**
+ * 정적 생성이므로 「로딩」은 페이지 단위로는 존재하지 않는다 — 클라이언트가 가져오는 검색 색인에만 있다.
+ *
+ * ⚠**`data-state` 가 장식이 아니다**(2026-09-05 감사 P1). 그전까지 여섯 갈래가 **전부
+ * `<p class="empty">`** 로 나갔고 `.empty` 는 12px·`--tx-3`·테두리 0·바탕 0 이라,
+ * **화면에서 다른 것은 문장 첫 낱말뿐이었다** — 타입으로 여섯을 가르고 화면에서 하나로 되돌린 셈이다.
+ * 같은 사고가 이 저장소에 두 번 기록돼 있다(`.pmiss` 2026-08-18 · `td.ok`/`td.bad` 같은 날).
+ * ⚠**색으로 가르지 않는다** — 「없음」은 고장이 아니다. 형태(들여쓰기·왼쪽 선·바탕)로 가르고
+ * `failed` 에만 `--warn` 을 준다. 판별은 `assets.ts` 의 `.empty[data-state]` 가 한다.
+ * ⚠**클래스를 바꾸지 않고 속성을 더한 이유**: `<p class="empty">` 는 이 저장소에서
+ * 「행이 0건이다」를 손으로 적는 자리에도 쓰인다(예 「この回の競合はありません。」).
+ * 그건 **빈 자리가 아니라 답**이라 같은 모양이면 안 된다 — 속성이 붙은 것만 갈린다.
+ */
 export function stateNote(state: DataState): RawHtml {
   switch (state.kind) {
     case "ok":
       return raw("");
     case "empty":
-      return html`<p class="empty">${state.detail}</p>`;
+      return html`<p class="empty" data-state="empty">${state.detail}</p>`;
     case "failed":
-      return html`<p class="empty" role="status">取得できていません — ${state.detail}</p>`;
+      return html`<p class="empty" data-state="failed" role="status">取得できていません — ${state.detail}</p>`;
     case "offseason":
-      return html`<p class="empty">シーズン外 — ${state.detail}</p>`;
+      return html`<p class="empty" data-state="offseason">シーズン外 — ${state.detail}</p>`;
+    /**
+     * ⚠**「公表されていません」라고 쓰지 않는다**(2026-09-06 최종 검토 [I-2]).
+     * 그건 **출처에 대한 단정**이라 나중에 공표되면 그날 거짓이 되고, 원인이 **우리 쪽**
+     * (스냅샷을 출처가 쓰기 전에 떴다)일 때도 남을 가리킨다.
+     * 우리가 말할 수 있는 것은 **「우리가 가진 판에 없다」**까지다 — 왜인지는 `detail` 이 말한다.
+     */
+    case "unpublished":
+      return html`<p class="empty" data-state="unpublished">出典に載っていません — ${state.detail}</p>`;
+    case "uncollected":
+      return html`<p class="empty" data-state="uncollected">まだ収集していません — ${state.detail}</p>`;
   }
 }
 
@@ -234,6 +279,19 @@ export const ROSTER_PATH = "players.html";
 export const TEAMS_PATH = "teams.html";
 
 /**
+ * ドラフト会議의 경로. **한 곳에서만 만든다**(M1) — 갈리면 어딘가는 404다.
+ *
+ * ⚠**`TEAMS_PATH` 와 정확히 같은 사정으로 여기 있다**(2026-09-05). 정의는 원래
+ * `draft-page.ts` 에 있었는데, 내비가 그쪽을 import 하면 **layout ↔ draft-page 순환**이 된다.
+ * `draft-page.ts` 는 이 값을 여기서 받아 다시 내보낸다 — 부르는 쪽의 import 경로는 그대로다.
+ *
+ * ⚠**`root` 가 아니라 `base` 로 붙인다.** 用語·記録 은 사이트에 한 장이지만
+ * 드래프트는 **시즌마다 한 장**이다. `root` 로 두면 2019 화면의 항목이 2026 드래프트를 열고,
+ * 그건 404가 아니라 **틀린 해를 조용히 보여주는** 쪽이라 더 나쁘다.
+ */
+export const DRAFT_PATH = "draft.html";
+
+/**
  * 전역 헤더에서 지금 어디에 있는지. `aria-current`로 나간다.
  *
  * ⚠**내비에 자리가 없는 키를 만들지 마라.** 그 키를 쓴 화면은 헤더에 「지금 여기」가
@@ -264,6 +322,12 @@ export type NavKey =
   | "log"
   | "glossary"
   | "postseason"
+  /**
+   * ⚠**내비에 항목이 없어도 키는 있어야 한다.** 없으면 드래프트 화면이 다른 항목의 키를 빌려
+   * 그 링크에 `aria-current="page"` 를 달게 되고, 그건 **다른 문서를 「지금 여기」라고 말하는 것**이다.
+   * ⚠**항목 자체를 내비에 넣는 것은 이 화면의 배선(`site.ts`) 몫이다** — 여기는 이름만 연다.
+   */
+  | "draft"
   | "team";
 
 /**
@@ -402,9 +466,28 @@ function topbar(o: PageOptions): RawHtml {
     <!-- ⚠**이름을 「PS」로 두지 않는다.** 올스타뿐인 시즌도 여기로 오므로
          포스트시즌이라고 부르면 틀린다. 「레귤러 시즌 밖의 경기」가 이 항목이 담는 것이다 -->
     ${o.hasPostseason ? html`<a href="${o.base}postseason.html"${here("postseason")}>他大会</a>` : raw("")}
+    ${/* ⚠**조건을 붙이지 않는다**(2026-09-05 · Task 3). 드래프트가 없는 해(2026 · 개최 전)에도
+         화면은 만들고, 그 화면이 「まだ開催されていません」이라고 말한다.
+         항목을 조건부로 두면 **시즌에 따라 탭 줄기가 달라지는데**, 지금 그것이 허용된 항목은
+         `他大会` 하나뿐이다(`topbar-consistency.test.ts`). 게다가 조건과 페이지 생성이 갈리는 날
+         **그 시즌에서만 404** 가 된다 — 전 페이지에 실리는 항목이라 한 시즌이 통째로 그렇게 된다.
+         ⚠**`root` 가 아니라 `base` 다** — 用語·記録 과 달리 **시즌마다 한 장**이기 때문이다.
+            `root` 로 두면 2019 화면의 이 항목이 2026 드래프트를 열고, 그건 404 가 아니라
+            **틀린 해를 조용히 보여주는** 쪽이라 더 나쁘다(`DRAFT_PATH` 주석). */ ""}
+    <a href="${o.base}${DRAFT_PATH}"${here("draft")}>ドラフト</a>
     <!-- ⚠수집 로그는 시즌별이 아니라 사이트 전체다(「언제 어디서 데이터가 들어왔나」).
          과거 시즌에는 만들지 않으므로 링크는 root로 현재 시즌의 것을 가리킨다.
-         base로 두면 2025 화면 2,307장이 전부 404가 된다(2026-08-16 실측 1,585종). -->
+         base로 두면 그 시즌 화면이 전부 404가 된다.
+
+         ⚠**여기에 실측 수를 적지 않는다**(2026-09-05). 한때 「2025 화면 N장 · N종」이라고
+         박혀 있었는데 그 수는 ⑴ 시즌이 늘면 자라고 ⑵ 경기 페이지를 날짜별로 묶으면서
+         **이미 절반 아래로 떨어져 거짓이 되어 있었다**(그 실측은 묶기 열흘 전 것이다).
+         남길 사실은 「그 시즌 화면이 전부」이고, 그건 안 자란다.
+
+         ⚠**그 수가 여태 안 걸린 것은 우연이다.** source-figures 는 조각에
+         가나나 한자가 있을 때만 보는데(isProse), 이 조각은 한글과 ASCII 뿐이라 통과했다.
+         바로 위 「ドラフト」가 같은 조각에 들어오면서 비로소 보였다 —
+         **수가 그날 틀린 게 아니라 그날 보인 것이다. 이 자리는 이제 검사 대상이다.** -->
     <a href="${o.root}glossary.html"${here("glossary")}>用語</a>
     <a href="${o.root}log.html"${here("log")}>記録</a>
   </nav>

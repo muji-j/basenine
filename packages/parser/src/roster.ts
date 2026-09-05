@@ -26,12 +26,10 @@
  * 그러니 **페이지 값을 명단으로 덮어쓰면 안 된다** — 없을 때 채우는 데만 쓴다.
  */
 import type { Hand } from "./player.ts";
-
-/**
- * 명단의 포지션 구획. ⚠**선수 페이지의 「ポジション」과 어휘가 같다**(실측: DB 값이
- * 投手 420 · 内野手 177 · 外野手 136 · 捕手 78 로 이 넷뿐) — 그래서 같은 칸에 채울 수 있다.
- */
-export type RosterPosition = "投手" | "捕手" | "内野手" | "外野手";
+// ⚠어휘는 `positions.ts` 한 벌이다(M1) — 드래프트 명단이 같은 4종을 쓴다.
+// **정규화는 가져오지 않는다**: 여기는 구획 머리를 그대로 쓰고 드래프트는 NFKC 를 건다.
+import { POSITIONS } from "./positions.ts";
+import type { Position } from "./positions.ts";
 
 export interface RosterEntry {
   /** NPB 공식 선수 ID. **이것이 조인 키다**(M10) */
@@ -48,8 +46,11 @@ export interface RosterEntry {
    * 그 경기에서 어느 구획에 있었는가.
    * ⚠**배번과 같은 성질이다** — 「현재 포지션」이 아니라 **그 경기 시점**이고,
    * 전향(투수→야수)이 실재하므로 **선수 페이지 값을 덮어쓰면 안 된다.**
+   *
+   * ⚠**선수 페이지의 「ポジション」과 어휘가 같다**(실측: DB 값이
+   * 投手 420 · 内野手 177 · 外野手 136 · 捕手 78 로 이 넷뿐) — 그래서 같은 칸에 채울 수 있다.
    */
-  position: RosterPosition;
+  position: Position;
 }
 
 export class RosterParseError extends Error {
@@ -81,13 +82,6 @@ const ROW =
  */
 const GROUP = /<th[^>]*colspan="3"[^>]*>\s*([^<]*?)\s*<\/th>/g;
 
-const POSITIONS: Readonly<Record<string, RosterPosition>> = {
-  投手: "投手",
-  捕手: "捕手",
-  内野手: "内野手",
-  外野手: "外野手",
-};
-
 /**
  * 명단을 읽는다.
  *
@@ -105,7 +99,7 @@ export function parseGameRoster(html: string): RosterEntry[] {
    * ⚠**모르는 머리를 조용히 넘기지 않는다**(M7). 넘기면 그 구획 선수들이
    * **바로 위 구획의 포지션**을 받아 조용히 틀린 값이 들어간다 — 빈 값보다 나쁘다.
    */
-  const groups: { at: number; position: RosterPosition }[] = [];
+  const groups: { at: number; position: Position }[] = [];
   for (const g of html.matchAll(GROUP)) {
     const label = g[1]!;
     const position = POSITIONS[label];
@@ -115,8 +109,8 @@ export function parseGameRoster(html: string): RosterEntry[] {
     groups.push({ at: g.index, position });
   }
 
-  const positionAt = (at: number): RosterPosition => {
-    let found: RosterPosition | undefined;
+  const positionAt = (at: number): Position => {
+    let found: Position | undefined;
     for (const g of groups) {
       if (g.at > at) break;
       found = g.position;

@@ -1166,8 +1166,16 @@ test("⚠드래프트가 표제 줄에 나오고, 없으면 항목째 빠진다"
   assert.ok(sub.indexOf("ドラフト") > sub.indexOf("cm"), "드래프트가 체격보다 앞에 왔다");
 
   const noD = renderPlayerPage(playerPage({ draft: null }), context());
-  assert.doesNotMatch(noD, /ドラフト/, "드래프트가 없는데 항목이 그려졌다");
-  assert.match(noD, /背番号/, "드래프트가 없다고 다른 항목까지 사라졌다");
+  /**
+   * ⚠**문서 전체에서 「ドラフト」를 찾으면 안 된다**(2026-09-05 · Task 3).
+   * 예전에는 `assert.doesNotMatch(noD, /ドラフト/)` 였는데, **내비에 ドラフト 항목이 생기면서**
+   * 전 화면에 그 글자가 실리게 됐다 — 그러면 이 시험은 **자기가 재려던 것과 무관하게** 붉어진다.
+   * ⚠**재는 것은 「표제 줄에 항목이 있는가」**이므로 위 갈래와 같은 자리를 본다.
+   */
+  const noSub = (/<span class="sub">([\s\S]*?)<\/span>/.exec(noD)?.[1] ?? "").replace(/<[^>]*>/g, "");
+  assert.ok(noSub.length > 0, "표제 줄을 못 찾았다 — 이 시험이 공회전한다");
+  assert.doesNotMatch(noSub, /ドラフト/, "드래프트가 없는데 항목이 그려졌다");
+  assert.match(noSub, /背番号/, "드래프트가 없다고 다른 항목까지 사라졌다");
 });
 
 

@@ -18,6 +18,29 @@ export { archivePlayer, archivePlayers, playerKey, playerUrl } from "./players.t
 export type { ArchivePlayersDeps } from "./players.ts";
 export { STARTERS_URL, archiveStarters, startersKey } from "./starters.ts";
 export type { ArchiveStartersDeps } from "./starters.ts";
+/**
+ * ⚠**키 규칙을 Task 2 가 베끼지 말고 여기서 가져가게 한다**(M1) —
+ * `npb/draft/{year}/index` · `npb/draft/{year}/{slug}` 를 두 벌로 두면 한쪽만 고쳐진다.
+ */
+export {
+  BACKNUMBER_KEY,
+  BACKNUMBER_URL,
+  DraftCollectError,
+  collectDraft,
+  countSkips,
+  draftTargets,
+  teamPageKey,
+  teamPageUrl,
+  yearIndexKey,
+  yearIndexUrl,
+} from "./draft.ts";
+export type {
+  DraftCollectOptions,
+  DraftCollectResult,
+  DraftTarget,
+  DraftYearSkip,
+  DraftYearSkipped,
+} from "./draft.ts";
 export {
   MonthlyScheduleCache,
   archiveDate,

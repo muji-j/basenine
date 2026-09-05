@@ -2,11 +2,11 @@
 /**
  * 予告先発 아카이버 CLI. **하루 1요청.**
  *
- *   node packages/archiver/src/cli-starters.ts --contact you@example.com
+ *   node packages/archiver/src/cli-starters.ts --contact <닿는-연락처>
  */
 import { parseArgs } from "node:util";
 import { systemClock, toJstDateString } from "./clock.ts";
-import { PoliteFetcher, buildUserAgent } from "./fetcher.ts";
+import { L1_MIN_DELAY_MS, PoliteFetcher, buildUserAgent, parseDelayMs } from "./fetcher.ts";
 import { LocalSink } from "./sink.ts";
 import { archiveStarters } from "./starters.ts";
 
@@ -22,7 +22,15 @@ const { values } = parseArgs({
 
 const contact = values.contact ?? process.env["BB_ARCHIVER_CONTACT"] ?? "";
 if (!contact) {
-  console.error("연락처가 필요하다. --contact you@example.com 또는 BB_ARCHIVER_CONTACT (CLAUDE.md L1)");
+  console.error("연락처가 필요하다. --contact <닿는-연락처> 또는 BB_ARCHIVER_CONTACT (CLAUDE.md L1)");
+  process.exit(2);
+}
+
+// ⚠**`Number(values.delay)` 를 직접 넘기지 마라** — `NaN` 은 nullish 가 아니라서
+//   `minDelayMs ?? 3000` 을 통과하고 **간격이 조용히 0이 된다**(L1 · `fetcher.ts` 참조).
+const delayMs = parseDelayMs(values.delay);
+if (delayMs === null) {
+  console.error(`--delay 는 ${L1_MIN_DELAY_MS}ms 이상이어야 한다 (L1: 1req/2~5초): ${values.delay}`);
   process.exit(2);
 }
 
@@ -33,7 +41,7 @@ const jstDate = values.date ?? toJstDateString(clock.now());
 const result = await archiveStarters(jstDate, {
   fetcher: new PoliteFetcher({
     userAgent: buildUserAgent(contact),
-    minDelayMs: Number(values.delay),
+    minDelayMs: delayMs,
     clock,
   }),
   sink: new LocalSink(values.out),

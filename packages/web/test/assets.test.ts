@@ -400,3 +400,70 @@ test("⚠until-found 지원을 기능으로 판정한다 — UA 문자열로 가
   assert.match(CLIENT_JS, /onbeforematch" in /, "기능 판정이 없다");
   assert.ok(!/navigator\.userAgent/.test(CLIENT_JS), "UA 문자열로 갈랐다");
 });
+
+/* ── 접힘 손잡이(単独指名) — 2026-09-05 감사 P1 ────────────────────────────── */
+
+/**
+ * ⚠**손잡이가 손잡이로 안 보였다.** 세 가지가 겹쳤고 **셋이 다 CSS 에서 판정된다.**
+ * 셋 다 「규칙은 있는데 아무 일도 안 하는」 모양이라 눈으로도 시험으로도 안 잡혔다 —
+ * 하나만 되돌아가도 나머지 둘이 다시 감춘다.
+ */
+const NO_COMMENT = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
+const px = (s: string, prop: string): number => Number(new RegExp(`${prop}:([\\d.]+)px`).exec(s)?.[1] ?? NaN);
+
+test("⚠접힘 손잡이가 회차 머리보다 작다 — 크면 문서 위계가 시각적으로 뒤집힌다", () => {
+  const sum = /\.dsolo>summary\{([^}]*)\}/.exec(NO_COMMENT)?.[1] ?? "";
+  assert.notEqual(sum, "", ".dsolo>summary 규칙이 없다 — body 기본 16px 를 그대로 받는다");
+  const drh = /\.drh\{([^}]*)\}/.exec(NO_COMMENT)?.[1] ?? "";
+  const h2 = /\.block>h2\{([^}]*)\}/.exec(NO_COMMENT)?.[1] ?? "";
+  const s = px(sum, "font-size");
+  assert.ok(!Number.isNaN(s), "손잡이에 명시적 크기가 없다");
+  assert.ok(s < px(drh, "font-size"), `손잡이(${s}px)가 회차 머리(${px(drh, "font-size")}px) 이상이다`);
+  assert.ok(s < px(h2, "font-size"), `손잡이(${s}px)가 구획 제목(${px(h2, "font-size")}px) 이상이다`);
+});
+
+test("⚠hover 가 바꿀 것이 있다 — 시작색이 --tx 면 그 규칙은 죽은 규칙이다", () => {
+  // 실측(2026-09-05): 드래프트 화면만 hover 전후가 같았고, 対戦 화면은 summary 에 .picklab 이
+  // 붙어 --tx-3 에서 시작하므로 살아 있었다. **한쪽에서 도는 것을 「있으니 된다」로 읽지 마라.**
+  const sum = /\.dsolo>summary\{([^}]*)\}/.exec(NO_COMMENT)?.[1] ?? "";
+  const hover = /\.pickfold>summary:hover\{([^}]*)\}/.exec(NO_COMMENT)?.[1] ?? "";
+  assert.match(hover, /color:var\(--tx\)/, "hover 규칙이 없어졌다");
+  assert.match(sum, /color:var\(--tx-2\)/, "손잡이가 이미 --tx 라 hover 가 아무것도 안 바꾼다");
+});
+
+test("⚠마커가 라벨 옆에 있다 — margin-left:auto 면 상자 오른쪽 끝으로 날아간다", () => {
+  // 실측(고치기 전) 라벨 끝 ~ 마커: 1440px 에서 884px · 1024:684 · 768:436 · 390:101
+  const after = /\.dsolo>summary::after\{([^}]*)\}/.exec(NO_COMMENT)?.[1] ?? "";
+  assert.notEqual(after, "", "이 화면 몫의 마커 규칙이 없다 — .pickfold 의 margin-left:auto 가 그대로 산다");
+  assert.match(after, /margin-left:0/, "마커가 아직 오른쪽 끝으로 밀린다");
+  // 접힘 표시는 details 의 관용대로 라벨 앞에 둔다
+  assert.match(after, /order:-1/);
+  // 회전은 한 벌 그대로여야 한다 — 자리를 옮기면서 펼침 표시를 잃으면 더 나쁘다
+  assert.match(NO_COMMENT, /\.pickfold\[open\]>summary::after\{[^}]*rotate\(90deg\)/);
+});
+
+/**
+ * ⚠**「지금 여기」 표시가 화면 밖에 있으면 아무 일도 안 한다**(감사 P2).
+ * 탭이 10개가 되면서 390px 에서 현재 탭이 상자 밖([80,330] 대 [343,391])이었다.
+ */
+test("⚠현재 탭을 상자 안으로 들여놓는다 — 세로 위치는 건드리지 않는다", () => {
+  assert.match(CLIENT_JS, /function showCurrentTab\(\)/, "현재 탭을 들여놓는 코드가 없다");
+  const at = CLIENT_JS.indexOf("function showCurrentTab()");
+  const body = CLIENT_JS.slice(at, CLIENT_JS.indexOf("\n}", at));
+  assert.match(body, /scrollLeft/, "상자를 굴리지 않는다");
+  assert.ok(!body.includes("scrollIntoView"), "scrollIntoView 는 조상까지 굴려 세로 위치를 건드린다");
+  assert.match(body, /scrollWidth<=[^;]*clientWidth/, "안 넘치는데도 굴린다");
+  assert.match(CLIENT_JS, /\n {2}showCurrentTab\(\);/, "부르는 곳이 없다");
+});
+
+/**
+ * ⚠**표가 자기 이름을 갖고 있으면 그것을 쓴다**(감사 P2). 첫 th 만 보면 스크롤 영역의 이름이
+ * **열 이름**이 되어, 같은 모양의 표가 둘 있는 화면에서 둘 다 「球団（横スクロール）」가 됐다.
+ */
+test("⚠가로 스크롤 영역의 이름이 표 이름에서 온다 — 열 이름은 이름이 아니다", () => {
+  assert.match(CLIENT_JS, /querySelector\("table\[aria-label\]"\)/, "표의 이름을 안 본다");
+  const at = CLIENT_JS.indexOf('querySelector("table[aria-label]")');
+  const body = CLIENT_JS.slice(at, at + 320);
+  assert.match(body, /caption,th/, "이름 없는 표를 위한 대비가 사라졌다");
+  assert.match(body, /横スクロール/);
+});

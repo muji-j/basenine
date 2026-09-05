@@ -2,8 +2,8 @@
 /**
  * 일일 갱신 — 수집부터 적재까지 한 번에.
  *
- *   node scripts/update.ts --contact you@example.com
- *   node scripts/update.ts --contact you@example.com --date 2026-08-16
+ *   node scripts/update.ts --contact <닿는-연락처>
+ *   node scripts/update.ts --contact <닿는-연락처> --date 2026-08-16
  *
  * 하는 일:
  *   1. 그날 경기 페이지를 아카이브 (없으면 조용히 0건)
@@ -71,7 +71,7 @@ const { values } = parseArgs({
 
 const contact = values.contact ?? process.env["BB_ARCHIVER_CONTACT"] ?? "";
 if (!contact) {
-  console.error("연락처가 필요하다. --contact you@example.com 또는 BB_ARCHIVER_CONTACT (CLAUDE.md L1)");
+  console.error("연락처가 필요하다. --contact <닿는-연락처> 또는 BB_ARCHIVER_CONTACT (CLAUDE.md L1)");
   process.exit(2);
 }
 

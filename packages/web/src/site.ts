@@ -26,7 +26,8 @@ import type { GamePageData } from "./game-page.ts";
 import { renderLogPage } from "./log-page.ts";
 import { GLOSSARY_PATH, renderGlossaryPage } from "./glossary-page.ts";
 import type { LogPageData } from "./log-page.ts";
-import { ROSTER_PATH, TEAMS_PATH, freshness, isStale, pathsFor } from "./layout.ts";
+import { renderDraftPage } from "./draft-page.ts";
+import { DRAFT_PATH, ROSTER_PATH, TEAMS_PATH, freshness, isStale, pathsFor } from "./layout.ts";
 import type { RenderContext, SeasonPlan, SiteMeta } from "./layout.ts";
 import type { SiteData } from "./query.ts";
 import { renderHomePage } from "./home-page.ts";
@@ -144,6 +145,16 @@ export function seasonPaths(data: SiteData, hasLog: boolean): Set<string> {
      * 여기에 빠뜨리면 시즌 전환이 이 화면을 「그 시즌에는 없다」고 보고 선수 일람으로 튀긴다.
      */
     TEAMS_PATH,
+    /**
+     * ドラフト会議.
+     *
+     * ⚠**조건을 붙이지 않는다**(2026-09-05 · Task 3). `postseason.html` 은 바로 아래에서
+     * 「기록이 있는 시즌에만」인데 이것은 반대다 — **내비 항목이 전 시즌 무조건**이라
+     * (`layout.ts` 의 `DRAFT_PATH` 항목) 여기서 빼면 그 시즌의 **모든 화면**에서 그 링크가 404다.
+     * ⚠**드래프트가 없는 해에도 화면은 만든다**(2026 · 개최 전). 빈 화면이 아니라
+     * 「まだ開催されていません」이라고 말하는 화면이다(M12 · `draft-page.ts`).
+     */
+    DRAFT_PATH,
   ]);
   if (hasLog) out.add("log.html");
   // ⚠**기록이 있는 시즌에만 넣는다.** 없는 화면을 시즌 전환이 가리키면 404가 된다
@@ -244,6 +255,14 @@ export function buildSite(
      * 화면이 「아직 순위를 못 매겼다」고 말하고(M12), 시즌 전환의 목적지가 끊기지 않는다.
      */
     { path: at(TEAMS_PATH), content: renderTeamsPage(data.teamsPage, ctx) },
+    /**
+     * ドラフト会議. ⚠**시즌마다 한 장이고, 드래프트가 없는 해에도 만든다.**
+     *
+     * ⚠**보유 범위와 사이트 시즌 범위가 다르다**(DB 2005~2025 · 사이트 2018~2026).
+     * 그래서 이 화면의 「収録」 문구가 말하는 연도와 시즌 전환 띠가 말하는 연도가 다르다 —
+     * **문구 쪽을 링크로 만들지 않는 것**이 그 차이를 다루는 방법이다(`draft-page.ts` 의 각주).
+     */
+    { path: at(DRAFT_PATH), content: renderDraftPage(data.draft, ctx) },
     { path: at("starters.html"), content: renderStartersPage(data.starters, ctx) },
     /**
      * 날짜별 予告先発.

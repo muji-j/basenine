@@ -8,13 +8,13 @@ npb.jp의 경기 페이지를 **파싱하지 않고 원시 HTML 그대로** 보�
 
 ```bash
 # 오늘(JST) 경기
-node packages/archiver/src/cli.ts --contact you@example.com
+node packages/archiver/src/cli.ts --contact <닿는-연락처>
 
 # 특정 경기일
-node packages/archiver/src/cli.ts --date 2026-08-14 --contact you@example.com
+node packages/archiver/src/cli.ts --date 2026-08-14 --contact <닿는-연락처>
 
 # 기간 백필
-node packages/archiver/src/cli.ts --from 2026-04-01 --to 2026-08-14 --contact you@example.com
+node packages/archiver/src/cli.ts --from 2026-04-01 --to 2026-08-14 --contact <닿는-연락처>
 ```
 
 연락처는 **필수**다(`--contact` 또는 `BB_ARCHIVER_CONTACT`). 연락처 없는 UA로 긁으면 상대가 문제를 알릴 방법이 차단밖에 없다(CLAUDE.md L1).

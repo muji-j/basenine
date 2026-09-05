@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { toString } from "../src/html.ts";
 import {
+  DRAFT_PATH,
   STALE_AFTER_DAYS,
   freshness,
   freshnessBar,
@@ -11,10 +12,11 @@ import {
   safeScript,
   stateNote,
 } from "../src/layout.ts";
+import { CSS } from "../src/assets.ts";
 import { NEUTRAL_COLOR } from "@bb-app/domain";
 import { renderTodayPage } from "../src/today-page.ts";
 import { renderPlayerPage } from "../src/player-page.ts";
-import { context, playerPage } from "./fixtures.ts";
+import { context, pastSeasonContext, playerPage } from "./fixtures.ts";
 import { html } from "../src/html.ts";
 
 test("신선도는 경기일과 생성일의 간격으로 정해진다", () => {
@@ -48,6 +50,46 @@ test("4상태는 서로 다른 문구가 된다(M12)", () => {
   assert.notEqual(failed, off);
   assert.match(failed, /取得できていません/);
   assert.match(off, /シーズン外/);
+});
+
+/**
+ * ⚠**바로 위 시험은 문구만 봤고, 그동안 여섯이 화면에서 한 갈래였다**(2026-09-05 감사 P1).
+ * `stateNote` 가 전부 `<p class="empty">` 로 냈고 `.empty` 는 테두리 0·바탕 0 이라
+ * **다른 것이 문장 첫 낱말뿐**이었다 — 「4상태를 각각 디자인하라」(M12)를 문구로만 만족시킨 것이다.
+ * ⚠**이 저장소가 같은 사고를 세 번 냈다**: `.pmiss`(2026-08-18) · `td.ok`/`td.bad`(같은 날) ·
+ * 여기. 셋 다 **표식은 붙었는데 규칙이 없었다** — 그래서 표식과 규칙을 **함께** 잰다.
+ */
+test("⚠상태가 CSS 에서도 갈린다 — 표식만 붙고 규칙이 0건이면 안 갈린 것이다(M12)", () => {
+  const kinds = ["empty", "failed", "offseason", "unpublished", "uncollected"] as const;
+  const marks = kinds.map((kind) => /data-state="([a-z]+)"/.exec(toString(stateNote({ kind, detail: "x" })))?.[1]);
+  assert.deepEqual(marks, [...kinds], "상태가 화면에서 자기 이름을 안 말한다 — CSS 가 가를 근거가 없다");
+
+  // ⚠주석 안의 글자를 규칙으로 세지 않는다 — 이 스타일시트는 주석이 많다
+  const rules = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
+  const base = /\.empty\[data-state\]\{([^}]*)\}/.exec(rules)?.[1] ?? "";
+  assert.notEqual(base, "", ".empty[data-state] 규칙이 없다 — 표식이 아무 일도 안 한다");
+  assert.match(base, /background:var\(--panel-2\)/);
+  assert.match(base, /border-left:3px/);
+  // ⚠**판정선은 .dnolot 이다**(감사) — 그보다 약하면 「가장 안 중요한 사실이 가장 진한」 상태로 돌아간다
+  const nolot = /\.dnolot\{([^}]*)\}/.exec(rules)?.[1] ?? "";
+  assert.doesNotMatch(nolot, /background:/, ".dnolot 이 바탕을 얻었다 — 무게가 다시 뒤집힌다");
+  // 「우리 몫의 남은 일」과 「영영 안 열린다」를 형태로 가른다(DataState 주석이 요구하는 구별)
+  assert.match(rules, /\[data-state="uncollected"\][^{]*\{[^}]*dashed/);
+  assert.match(rules, /\[data-state="offseason"\][^{]*\{[^}]*dashed/);
+  // 고장만 색을 쓴다 — 「없음」은 고장이 아니다
+  assert.match(rules, /\.empty\[data-state="failed"\]\{[^}]*var\(--warn\)/);
+  assert.doesNotMatch(base, /--warn/, "「없음」에까지 경고색을 칠했다");
+});
+
+/**
+ * ⚠**손으로 적은 `<p class="empty">` 까지 물들이면 안 된다.** 「この回の競合はありません。」은
+ * **빈 자리가 아니라 답**이라 상태 표시와 같은 모양이면 그 구별이 사라진다.
+ */
+test("⚠표식 없는 .empty 는 그대로다 — 「행이 0건이다」와 「받지 못했다」는 다른 사실이다", () => {
+  const rules = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
+  const plain = /(^|\})\s*\.empty\{([^}]*)\}/.exec(rules)?.[2] ?? "";
+  assert.notEqual(plain, "", ".empty 규칙을 못 찾았다 — 이 시험이 공회전한다");
+  assert.doesNotMatch(plain, /background|border-left/, ".empty 자체가 상태 표시가 됐다");
 });
 
 test("safeScript는 문서를 끊는 문자를 죽인다", () => {
@@ -212,6 +254,37 @@ test("⚠球団 항목에 클라이언트가 잡을 표식이 있다 — T9 이 
   const item = /<a\s[^>]*href="[^"]*teams\.html"[^>]*>/.exec(nav);
   assert.notEqual(item, null, "내비에 구단 링크가 없다");
   assert.match(item![0], /\bdata-navteam\b/, `표식이 없다: ${item![0]}`);
+});
+
+/**
+ * ⚠**ドラフト는 시즌마다 있는 화면이라 `root` 가 아니라 `base` 로 간다**(2026-09-05 · Task 3).
+ *
+ * 用語·記録 은 사이트에 한 장이라 `root` 로 가지만, 드래프트는 시즌마다 한 장이다.
+ * `root` 로 두면 과거 시즌 화면이 전부 **현재 시즌의 드래프트**를 가리키고,
+ * 그건 404가 아니라 **틀린 해를 조용히 보여주는** 쪽이라 더 나쁘다.
+ * ⚠**깊은 화면에서 상대 경로가 맞는지까지 본다** — 선수 페이지는 `../` 가 붙어야 한다.
+ */
+test("⚠내비의 ドラフト가 그 시즌의 화면으로 간다 — root 로 두면 과거 시즌이 딴 해를 본다", () => {
+  const top = /<nav class="tnav"[\s\S]*?<\/nav>/.exec(shell())![0];
+  const item = /<a\s[^>]*href="([^"]*draft\.html)"[^>]*>([^<]+)<\/a>/.exec(top);
+  assert.notEqual(item, null, "내비에 드래프트 항목이 없다");
+  assert.equal(item![1], "draft.html", `최상위에서 경로가 어긋난다: ${item![1]}`);
+
+  /**
+   * ⚠**과거 시즌 화면이라야 `base` 와 `root` 가 갈린다.** 현재 시즌에서는 둘이 같은 값이라
+   * `root` 로 바꿔도 아무것도 안 깨진다 — **그 문맥으로만 재면 이 시험은 공회전한다.**
+   * 2025 의 `players/x.html` 은 `base="../"` · `root="../../"` 다.
+   */
+  const past = /<nav class="tnav"[\s\S]*?<\/nav>/.exec(
+    renderPlayerPage(playerPage(), pastSeasonContext([DRAFT_PATH])),
+  )![0];
+  const pastItem = /<a\s[^>]*href="([^"]*draft\.html)"[^>]*>/.exec(past);
+  assert.notEqual(pastItem, null, "과거 시즌 선수 페이지 내비에 드래프트 항목이 없다");
+  assert.equal(
+    pastItem![1],
+    "../draft.html",
+    `과거 시즌에서 경로가 어긋난다(root 로 두면 딴 해를 연다): ${pastItem![1]}`,
+  );
 });
 
 test("주소창 색을 라이트·다크 양쪽으로 준다 — 한쪽만 주면 반대 테마에서 어긋난다", () => {

@@ -90,6 +90,22 @@ function siteData(over: Partial<SiteData> = {}): SiteData {
       { league: "pacific", fellBack: false, skipped: 0, unrecognized: 0 },
     ],
     games: [],
+    /**
+     * ⚠**기본 픽스처가 「드래프트가 없는 해」다** — 2026 이 실제로 그렇다(개최 전).
+     * 그 해에도 화면을 만드는 것이 이 배선의 판단이므로, **기본값이 그 경우여야**
+     * 「데이터가 있을 때만 만든다」로 되돌리는 변경이 여기서 먼저 붉어진다.
+     */
+    draft: {
+      season: 2026,
+      heldSeasons: [2024, 2025],
+      state: { kind: "offseason", detail: "2026年のドラフト会議はまだ開催されていません（例年10月）" },
+      sections: [],
+      notes: { state: { kind: "uncollected", detail: "入団拒否・交渉権訂正はまだ取り込んでいません" }, rows: [] },
+      origins: [],
+      links: { linked: 0, total: 0 },
+      unknownTeamCodes: [],
+      defects: { groupsWithoutWinner: [], groupsWithManyWinners: [] },
+    },
     ...over,
   };
 }
@@ -116,6 +132,12 @@ test("사이트는 정해진 파일 집합을 만든다", () => {
     "compare/4.json",
     "days.html",
     /**
+     * ⚠**드래프트가 없는 해에도 만든다**(2026-09-05 · Task 3 판단). 이 픽스처의 2026 이
+     * 바로 그 해다 — `sections` 가 비어 있는데도 파일이 나온다.
+     * **안 만들면 내비의 「ドラフト」가 그 시즌에서만 404** 이고, 시즌 전환도 選手一覧으로 튕긴다.
+     */
+    "draft.html",
+    /**
      * ⚠**용어집은 루트 한 장이다**(2026-08-21). 시즌마다 만들면 같은 글이 9번 올라가고
      * 한쪽만 갱신되는 날 **시즌에 따라 설명이 달라진다** — `log.html` 과 같은 이유다.
      * 그래서 `seasonPaths` 에도 **넣지 않는다** — 시즌 전환이 이 화면을 찾지 않아야 한다.
@@ -138,6 +160,41 @@ test("사이트는 정해진 파일 집합을 만든다", () => {
   ]);
   assert.equal(out.playerCount, 1);
   assert.equal(out.stale, false);
+});
+
+/**
+ * **ドラフト会議 배선**(2026-09-05 · Task 3).
+ *
+ * ⚠**드래프트의 보유 범위와 사이트의 시즌 범위가 다르다.** DB 는 2005~2025 21시즌이고
+ * 사이트가 굽는 것은 2018~2026 9시즌이다. 그래서 이 화면에는 **두 개의 「없음」**이 있다:
+ * ⑴ 사이트가 안 굽는 해(2005~2017) — 페이지 자체가 없다.
+ * ⑵ 사이트는 굽는데 드래프트가 없는 해(2026 · 개최 전) — **여기서도 페이지를 만든다.**
+ *
+ * ⚠**⑵ 에서 페이지를 안 만들면 두 가지가 동시에 깨진다**: 내비의 「ドラフト」가
+ * 그 시즌에서만 404가 되고(전 페이지에 실리는 항목이다), 시즌 전환이 選手一覧으로 튕긴다.
+ */
+test("⚠드래프트가 없는 해에도 화면을 만든다 — 내비 항목이 그 시즌에서만 404가 되지 않게", () => {
+  const data = siteData();
+  assert.equal(data.draft.sections.length, 0, "픽스처가 「드래프트 없는 해」가 아니다 — 이 시험이 공회전한다");
+  const out = buildSite(data, SITE, "2026-08-15");
+  const page = out.files.find((f) => f.path === "draft.html");
+  assert.notEqual(page, undefined, "드래프트가 없는 해에 화면을 안 만들었다");
+  // ⚠**「빈 화면」이 아니라 「왜 없는지 말하는 화면」이어야 한다**(M12)
+  assert.match(page!.content, /まだ開催されていません/, "왜 비었는지를 말하지 않는다");
+  assert.ok(seasonPaths(data, false).has("draft.html"), "시즌 전환이 이 화면을 찾지 못한다");
+});
+
+/**
+ * ⚠**3클릭 규약은 내비가 지킨다**(§0-1). 홈에서 한 번에 닿아야 과거 시즌이
+ * 「홈 → ドラフト → 시즌 전환」 2클릭으로 끝난다 — 선수 페이지가 3클릭으로
+ * 상한에 딱 걸려 있으므로 여유를 여기서 쓰면 안 된다.
+ */
+test("⚠홈에서 드래프트로 1클릭이다 — 내비에 항목이 있다(§0-1)", () => {
+  const out = buildSite(siteData(), SITE, "2026-08-15");
+  const home = out.files.find((f) => f.path === "index.html")!;
+  const nav = /<nav class="tnav"[\s\S]*?<\/nav>/.exec(home.content);
+  assert.notEqual(nav, null, "홈에 내비가 없다");
+  assert.match(nav![0], /href="draft\.html"/, "내비에서 드래프트로 가는 길이 없다");
 });
 
 test("경기가 없으면 낡음으로 보고한다 — 호출자가 종료 코드를 바꾼다", () => {

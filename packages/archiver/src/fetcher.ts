@@ -44,6 +44,53 @@ export interface ConditionalHeaders {
 
 const RETRYABLE = new Set([408, 425, 429, 500, 502, 503, 504]);
 
+/**
+ * L1 의 하한 — 「1req / 2~5초」의 아래쪽. **이 아래로는 만들 수 없다.**
+ *
+ * ⚠**초판은 이것을 「경고에만 쓴다」고 적었고 그 근거가 틀렸다**(2026-09-05 정정).
+ * 근거는 「픽스처 시험이 `minDelayMs: 0` 을 쓴다」였는데, **실측하니 그 시험은 값이 몇이든
+ * 결과가 같다** — `sleep` 을 즉시 반환하는 목으로 주입하기 때문이다(`mark-seen.test.ts` 의
+ * `0` 을 `999999` 로 바꿔도 4본이 그대로 통과한다). **시험을 빠르게 만드는 것은 `sleep` 목이지
+ * 작은 `minDelayMs` 가 아니었다.** 실제로 요청을 보내는 시험 13곳이 **전부** `fetchImpl` 과
+ * `sleep` 을 함께 주입한다 — **예외를 둘 이유가 애초에 없었다.**
+ */
+export const L1_MIN_DELAY_MS = 2000;
+
+/**
+ * 유효한 요청 간격인가. ⚠**생성자와 진입점이 같은 술어를 쓴다**(M1) —
+ * 두 벌로 두면 한쪽만 고쳐진 채로 남고, 그 한쪽이 실제로 나가는 요청을 정한다.
+ *
+ * ⚠**`NaN` 만 막는 것으로는 부족했다.** `500` 은 수이고 음수도 아니라 통과했고, 진입점은
+ * **경고 한 줄만 찍고 그대로 실사이트를 쳤다.** 오타로 인한 조용한 위반과 **결이 다를 뿐
+ * 정도만 다른 같은 범주의 구멍**이다.
+ * ⚠**이걸 「실측」으로 배웠다**: 이 하한을 넣기 전에 `--delay 500` 을 스폰하는 시험을 쓰자
+ * **222페이지를 0.583초 간격으로 실제로 받아 버렸다**(우리 사이드카의 `fetchedAt` 실측).
+ *
+ * ⚠**「시험이면 봐 준다」를 만들지 않았다.** `fetchImpl` 주입 여부로 가르는 안이 있었는데,
+ * 그러면 **예의의 보장이 「전송 수단을 갈아 끼웠는가」에 딸려 간다** — 제품 코드가 계측이나
+ * 프록시로 `fetchImpl` 을 감싸는 순간 하한이 조용히 사라진다. **방금 고친 결함의 잠복형이다.**
+ * → **예외 없는 한 줄 규칙**이고 우회할 것이 없다.
+ * ⚠**`PoliteFetcher` 가 무례하게 설정될 수 있으면 이름이 거짓이다.**
+ */
+function isValidDelayMs(ms: number): boolean {
+  return Number.isFinite(ms) && ms >= L1_MIN_DELAY_MS;
+}
+
+/**
+ * 진입점의 `--delay` 문자열을 간격으로. **못 읽으면 `null`.**
+ *
+ * ⚠**`Number()` 를 그대로 쓰지 마라** — `Number("abc")` 는 `NaN` 인데 **`NaN` 은 nullish 가
+ * 아니라서** `minDelayMs ?? 3000` 을 통과하고, `elapsed < NaN` 이 항상 false 라 **간격이
+ * 0이 된다.** 던지지도 로그를 남기지도 않는다(실측: 연속 3요청에 sleep 0회).
+ * ⚠**「안 줬다」와 「못 읽었다」를 여기서 구별하지 않는다** — 둘 다 `null` 이고,
+ * 기본값을 고르는 것은 진입점의 일이다(`parseArgs` 의 `default`).
+ */
+export function parseDelayMs(raw: string | undefined): number | null {
+  if (raw === undefined) return null;
+  const ms = Number(raw);
+  return isValidDelayMs(ms) ? ms : null;
+}
+
 export class PoliteFetcher {
   private readonly userAgent: string;
   private readonly minDelayMs: number;
@@ -57,7 +104,17 @@ export class PoliteFetcher {
 
   constructor(opts: PoliteFetcherOptions) {
     this.userAgent = opts.userAgent;
-    this.minDelayMs = opts.minDelayMs ?? 3000;
+    const minDelayMs = opts.minDelayMs ?? 3000;
+    // ⚠**여기가 예의의 유일한 관문이다**(L1). `new PoliteFetcher` 는 이 저장소에 5곳이고
+    //   `scripts/update.ts` 가 자기 `--delay` 를 그중 넷에 그대로 넘긴다 — 호출자마다
+    //   검사를 두면 **반드시 하나를 빠뜨리고**, 빠뜨린 그 하나가 간격 없이 나간다.
+    //   ⚠**`buildUserAgent` 이 빈 연락처를 거부하는 것과 같은 자리다**(아래).
+    if (!isValidDelayMs(minDelayMs)) {
+      throw new RangeError(
+        `요청 간격(minDelayMs)은 ${L1_MIN_DELAY_MS}ms 이상의 유한한 수여야 한다 (CLAUDE.md L1: 1req/2~5초): ${minDelayMs}`,
+      );
+    }
+    this.minDelayMs = minDelayMs;
     this.maxRetries = opts.maxRetries ?? 3;
     this.clock = opts.clock;
     this.fetchImpl = opts.fetchImpl ?? (globalThis.fetch as unknown as FetchImpl);
@@ -133,10 +190,68 @@ export class PoliteFetcher {
 }
 
 /**
+ * **닿지 않는 도메인** — RFC 2606(예약 TLD·2단계) · RFC 6761(특수 용도).
+ *
+ * ⚠**여기 있는 것은 「가짜처럼 보이는 것」이 아니라 「표준이 영구히 예약해서 아무에게도
+ * 닿지 않는 것」이다.** 그래서 `myexample.com` 이나 `example-team.jp` 같은 실도메인은
+ * 걸리지 않는다 — 부분 문자열이 아니라 **도메인 경계로** 맞춘다.
+ */
+const UNREACHABLE_DOMAINS = [
+  "example.com",
+  "example.org",
+  "example.net",
+  "example",
+  "test",
+  "invalid",
+  "localhost",
+] as const;
+
+/**
+ * 연락처에서 **호스트**를 꺼낸다. 꺼낼 수 없으면 빈 문자열.
+ *
+ * 두 모양을 받는다: URL(`https://호스트/…`)과 메일주소(`이름@호스트`).
+ * ⚠**꺼내지 못하면 판정하지 않는다**(빈 문자열 → 통과). 모양을 모르는 연락처를 거부하면
+ * **CI 시크릿(`BB_ARCHIVER_CONTACT`)의 모양을 우리가 못 보는 채로 매일 배치를 깨뜨린다** —
+ * 여기서 막으려는 것은 「모양이 낯선 것」이 아니라 **「닿지 않는 것이 확실한 것」**이다(M11).
+ */
+function contactHost(contact: string): string {
+  const url = /^https?:\/\/([^/?#\s]+)/i.exec(contact);
+  if (url) return (url[1] ?? "").toLowerCase().replace(/^.*@/, "").replace(/:\d+$/, "");
+  const at = contact.lastIndexOf("@");
+  if (at === -1) return "";
+  return contact
+    .slice(at + 1)
+    .toLowerCase()
+    .replace(/[>)\]\s.]+$/, "");
+}
+
+/**
  * 연락처를 포함한 UA를 만든다.
+ *
  * ⚠연락처 없는 UA로 긁지 마라 — 상대가 문제를 알릴 방법이 없으면 차단이 유일한 수단이 된다.
+ *
+ * ⚠**닿지 않는 연락처는 빈 연락처와 같다**(2026-09-06 추가). L1 이 연락처를 요구하는 이유는
+ * 문자열을 채우는 것이 아니라 **「상대가 문제를 알릴 방법」**이고, `example.com` 은 RFC 2606 이
+ * **영구 예약**해서 어디에도 닿지 않는다. **빈 문자열과 실질이 같은데 옛 검사는 통과시켰다.**
+ *
+ * ⚠**이건 2026-09-05 L1 사고의 나머지 절반이다.** 그 사고는 **간격(0.583초)**과
+ * **연락처(`me@example.com`)** 두 겹이었는데 **간격만 막혀 있었다.**
+ * ⚠**이 검사가 그때 있었으면 사고가 아예 안 났다** — 진입점은 이 함수를 **fetcher 를 만들기
+ * 전에** 부르므로, 여기서 던졌으면 **222요청이 0요청이었다.** 간격 하한(`isValidDelayMs`)과
+ * **독립적인 두 번째 걸쇠**이고, 둘 중 하나만 있어도 그날의 요청은 안 나갔다.
  */
 export function buildUserAgent(contact: string): string {
-  if (!contact.trim()) throw new Error("연락처 없는 User-Agent는 허용하지 않는다 (CLAUDE.md L1)");
-  return `bb-app-archiver/0.1 (personal, non-commercial; ${contact})`;
+  const trimmed = contact.trim();
+  if (!trimmed) throw new Error("연락처 없는 User-Agent는 허용하지 않는다 (CLAUDE.md L1)");
+
+  // ⚠**호스트를 꺼내서 도메인 경계로 맞춘다.** 부분 문자열로 보면 `myexample.com` 같은
+  //   **실도메인을 오탐**하고, 문자열 끝만 보면 **URL 연락처를 놓친다**
+  //   (`https://example.com/issues` — 초판이 실제로 통과시켰다).
+  const host = contactHost(trimmed);
+  if (host !== "" && UNREACHABLE_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`))) {
+    throw new Error(
+      `닿지 않는 연락처는 연락처가 아니다 — 예약 도메인(RFC 2606/6761)이다 (CLAUDE.md L1): ${trimmed}`,
+    );
+  }
+  return `bb-app-archiver/0.1 (personal, non-commercial; ${trimmed})`;
 }
