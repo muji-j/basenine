@@ -4482,6 +4482,18 @@ export interface SiteData {
   heldSeasons: { from: number; to: number };
   /** ポストシーズン. ⚠**정규시즌 집계와 섞지 않는다**(§2-1) */
   postseason: PostseasonPageData;
+  /**
+   * ドラフト会議. **시즌마다 한 장이고, 드래프트가 없는 해에도 있다.**
+   *
+   * ⚠**`postseason` 처럼 「기록이 있을 때만」으로 두지 마라**(2026-09-05 · Task 3).
+   * 포스트시즌은 내비 항목까지 조건부라 없는 시즌에는 링크 자체가 안 나가지만,
+   * 드래프트 항목은 **전 시즌 무조건**이다 — 여기가 비었다고 페이지를 안 만들면
+   * **그 시즌에서만 404** 가 되고, 그건 한 시즌의 모든 화면에서 그렇다.
+   * ⚠**보유 범위가 사이트 시즌 범위와 다르다**: DB 는 2005~2025(21시즌)인데
+   * 사이트는 2018~2026(9시즌)을 굽는다. 그래서 이 값의 `heldSeasons` 는
+   * **화면이 보여 줄 수 있는 목록이 아니라 우리가 가진 목록**이다 — 링크로 만들지 마라.
+   */
+  draft: DraftPageData;
   /** 球団ページ. 순위표에서 팀명을 누르면 여기로 온다 */
   teams: TeamPageData[];
   /**
@@ -6129,6 +6141,13 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     days: dayPages(db, o, days, latestDay, nameOf, gamePageIds),
     dayIndex: { season: o.season, latestDate: latestDay, days: [...days] },
     postseason: postseasonData,
+    /**
+     * ⚠**드래프트가 없는 시즌에도 부른다** — 그때 `state` 가 **왜 없는지**를 말한다(M12).
+     * 조회는 시즌당 작은 표 셋(`draft_event`·`draft_pick`·`draft_bid` · 합 2,655행)이라
+     * 9시즌을 다 돌아도 무시할 수 있고, **선수 연결이 0건이라 800,000행 스캔은 아예 안 돈다**
+     * (`draftLinkSeasons` 가 재료 0건이면 조회 자체를 건너뛴다).
+     */
+    draft: loadDraftPage(db, o),
     teams: teamData.pages,
     // ⚠**순위표와 구단 페이지를 잇기만 한다**(M1) — 여기서 다시 조회하면 두 화면이 갈린다
     teamsPage: teamsPage(o.season, meta.latest, standings, teamData.pages),

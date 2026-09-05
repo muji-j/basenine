@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { toString } from "../src/html.ts";
 import {
+  DRAFT_PATH,
   STALE_AFTER_DAYS,
   freshness,
   freshnessBar,
@@ -14,7 +15,7 @@ import {
 import { NEUTRAL_COLOR } from "@bb-app/domain";
 import { renderTodayPage } from "../src/today-page.ts";
 import { renderPlayerPage } from "../src/player-page.ts";
-import { context, playerPage } from "./fixtures.ts";
+import { context, pastSeasonContext, playerPage } from "./fixtures.ts";
 import { html } from "../src/html.ts";
 
 test("신선도는 경기일과 생성일의 간격으로 정해진다", () => {
@@ -212,6 +213,37 @@ test("⚠球団 항목에 클라이언트가 잡을 표식이 있다 — T9 이 
   const item = /<a\s[^>]*href="[^"]*teams\.html"[^>]*>/.exec(nav);
   assert.notEqual(item, null, "내비에 구단 링크가 없다");
   assert.match(item![0], /\bdata-navteam\b/, `표식이 없다: ${item![0]}`);
+});
+
+/**
+ * ⚠**ドラフト는 시즌마다 있는 화면이라 `root` 가 아니라 `base` 로 간다**(2026-09-05 · Task 3).
+ *
+ * 用語·記録 은 사이트에 한 장이라 `root` 로 가지만, 드래프트는 시즌마다 한 장이다.
+ * `root` 로 두면 과거 시즌 화면이 전부 **현재 시즌의 드래프트**를 가리키고,
+ * 그건 404가 아니라 **틀린 해를 조용히 보여주는** 쪽이라 더 나쁘다.
+ * ⚠**깊은 화면에서 상대 경로가 맞는지까지 본다** — 선수 페이지는 `../` 가 붙어야 한다.
+ */
+test("⚠내비의 ドラフト가 그 시즌의 화면으로 간다 — root 로 두면 과거 시즌이 딴 해를 본다", () => {
+  const top = /<nav class="tnav"[\s\S]*?<\/nav>/.exec(shell())![0];
+  const item = /<a\s[^>]*href="([^"]*draft\.html)"[^>]*>([^<]+)<\/a>/.exec(top);
+  assert.notEqual(item, null, "내비에 드래프트 항목이 없다");
+  assert.equal(item![1], "draft.html", `최상위에서 경로가 어긋난다: ${item![1]}`);
+
+  /**
+   * ⚠**과거 시즌 화면이라야 `base` 와 `root` 가 갈린다.** 현재 시즌에서는 둘이 같은 값이라
+   * `root` 로 바꿔도 아무것도 안 깨진다 — **그 문맥으로만 재면 이 시험은 공회전한다.**
+   * 2025 의 `players/x.html` 은 `base="../"` · `root="../../"` 다.
+   */
+  const past = /<nav class="tnav"[\s\S]*?<\/nav>/.exec(
+    renderPlayerPage(playerPage(), pastSeasonContext([DRAFT_PATH])),
+  )![0];
+  const pastItem = /<a\s[^>]*href="([^"]*draft\.html)"[^>]*>/.exec(past);
+  assert.notEqual(pastItem, null, "과거 시즌 선수 페이지 내비에 드래프트 항목이 없다");
+  assert.equal(
+    pastItem![1],
+    "../draft.html",
+    `과거 시즌에서 경로가 어긋난다(root 로 두면 딴 해를 연다): ${pastItem![1]}`,
+  );
 });
 
 test("주소창 색을 라이트·다크 양쪽으로 준다 — 한쪽만 주면 반대 테마에서 어긋난다", () => {

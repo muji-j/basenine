@@ -10,7 +10,8 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { renderDraftPage } from "../src/draft-page.ts";
+import { DRAFT_PATH, renderDraftPage } from "../src/draft-page.ts";
+import { pathsFor } from "../src/layout.ts";
 import type {
   DraftBidBlock,
   DraftBidEntry,
@@ -438,6 +439,41 @@ test("보유 시즌을 데이터에서 말한다 — 화면이 목록을 박지 
   const html = render(data({ heldSeasons: [2025, 2024, 2023] }));
   assert.match(html, /2023/);
   assert.match(html, /2025/);
+});
+
+/**
+ * ⚠**「収録」과 「見られる」가 다른 수다**(2026-09-05 · Task 3 판단).
+ *
+ * DB 는 2005~2025 21년분을 갖고 있는데 사이트가 굽는 것은 2018~2026 이다.
+ * 「21年分を収録」만 적으면 **볼 수 없는 해를 보여 줄 것처럼** 말하게 된다 —
+ * 이 저장소가 「通算」에서 이미 겪은 모양이고, 그때의 답은 **화면이 자기 범위를 말하는 것**이었다.
+ * ⚠**그 연도들을 링크로 만들지 않는 것이 이 문장의 짝이다** — 그 해에는 페이지가 아예 없다.
+ */
+test("⚠가진 연도와 볼 수 있는 연도를 구별해 말한다 — 없는 해로 안내하지 않는다", () => {
+  // 사이트는 2024·2023 두 시즌만 굽는데 보유는 2022 까지다 — 2022 는 화면이 없다
+  const ctx = context({
+    paths: pathsFor(
+      [
+        { season: 2024, prefix: "", paths: new Set([DRAFT_PATH]) },
+        { season: 2023, prefix: "2023/", paths: new Set([DRAFT_PATH]) },
+      ],
+      2024,
+    ),
+  });
+  const html = renderDraftPage(data({ season: 2024, heldSeasons: [2022, 2023, 2024] }), ctx);
+  assert.match(html, /2022/, "보유 연도를 말하지 않는다");
+  assert.match(html, /この画面で見られるのは/, "볼 수 있는 범위를 말하지 않는다");
+  assert.match(html, /残り 1年分/, "못 보는 연도의 수(분모)를 말하지 않는다");
+});
+
+/**
+ * ⚠**시즌 띠가 없는 문맥에서 「見られるのは 0年分」이라고 쓰면 거짓이다.**
+ * 시즌이 하나뿐이면 띠 자체를 안 그리므로(`layout.ts`) 이 계산의 재료가 없다 —
+ * 그때는 **아무 말도 더하지 않는 것**이 맞다.
+ */
+test("⚠시즌이 하나뿐이면 「볼 수 있는 범위」를 말하지 않는다 — 잴 재료가 없다", () => {
+  const html = render();
+  assert.doesNotMatch(html, /この画面で見られる/, "재료가 없는데 범위를 단정했다");
 });
 
 /* ---- 위생 ----------------------------------------------------------------- */

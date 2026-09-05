@@ -30,7 +30,7 @@
 import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import { NO_VALUE, fullDate } from "./format.ts";
-import { page, stateNote } from "./layout.ts";
+import { DRAFT_PATH, page, stateNote } from "./layout.ts";
 import type { DataState, RenderContext } from "./layout.ts";
 import { note } from "./parts.ts";
 // ⚠**JST 변환은 한 벌이다**(M1 · §2-1) — 화면이 +9시간을 자기 손으로 적지 않는다
@@ -319,8 +319,13 @@ export interface DraftPageData {
 
 /**
  * 이 화면의 경로. ⚠**한 곳에서만 짓는다**(M1) — 사이트 배선(`site.ts`)과 링크 검사가 같은 값을 써야 한다.
+ *
+ * ⚠**정의는 `layout.ts` 로 옮겼다**(2026-09-05 · Task 3). 내비가 이 값을 쓰는데,
+ * 내비가 여기를 import 하면 **layout ↔ draft-page 순환**이 된다 —
+ * `TEAMS_PATH` 가 `teams-page.ts` 에서 옮겨 간 것과 정확히 같은 사정이다.
+ * **부르는 쪽의 import 경로는 그대로다** — 여기서 다시 내보낸다.
  */
-export const DRAFT_PATH = "draft.html";
+export { DRAFT_PATH };
 
 /**
  * 1巡目 **안에서 몇 번째 추첨인가**의 표기.
@@ -605,13 +610,44 @@ function sourceBlock(d: DraftPageData): RawHtml {
 }
 
 /**
+ * **보유 연도 각주** — 두 자리(빈 해의 안내 · この画面が言えないこと)가 같은 문장을 쓴다.
+ *
+ * ⚠**한 벌로 둔다**(M1). 예전에는 두 곳에 같은 문장이 **글자 그대로 복사**돼 있었고,
+ * 그 상태로 한쪽만 고치면 **같은 화면 안에서 서로 다른 말**을 하게 된다.
+ *
+ * ⚠**「収録」과 「見られる」는 다른 수다**(2026-09-05 · Task 3). DB 는 2005~2025 를 갖고 있지만
+ * 사이트가 굽는 것은 2018~2026 이라, **가진 21년분 중 화면이 있는 것은 8년분**이다.
+ * 「21年分を収録」만 적으면 **볼 수 없는 해를 보여 줄 것처럼** 말하게 된다 —
+ * 이 저장소가 「通算」에서 이미 겪은 모양이다(CLAUDE.md §2-2: 화면이 「2018〜2026年」이라고 말한다).
+ * ⚠**그렇다고 그 연도들을 링크로 만들지 마라** — 그 해에는 페이지가 아예 없다.
+ *   시즌 전환은 **띠가 이미 하고 있고**, 여기서 또 하면 같은 조작이 두 벌이 된다.
+ *
+ * @param shownHeld 보유 연도 중 **이 사이트에 화면이 있는** 것. 시즌이 하나뿐이면 빈 배열이다
+ */
+function heldNote(d: DraftPageData, shownHeld: readonly number[]): RawHtml {
+  const base =
+    `当サイトが持っているドラフトは **${heldRange(d.heldSeasons)}** です。` +
+    "ここに無い年は「開催されなかった」のではなく、**当サイトがまだ取り込んでいない**という意味です。";
+  /**
+   * ⚠**차이가 없으면 아무 말도 더하지 않는다.** 시즌 띠가 없는 문맥(시즌이 하나뿐일 때)에서는
+   * `shownHeld` 가 비고, 그때 「見られるのは 0年分」이라고 쓰면 **참이 아닌 말**이 된다.
+   */
+  const hidden = d.heldSeasons.length - shownHeld.length;
+  if (shownHeld.length === 0 || hidden <= 0) return note(base);
+  return note(
+    `${base}そのうち**この画面で見られるのは ${heldRange(shownHeld)}** で、` +
+      `残り ${hidden}年分は**データはありますが、まだ画面がありません**。`,
+  );
+}
+
+/**
  * **この画面が言えないこと。**
  *
  * ⚠**한계를 각주로 흘리지 않고 자기 자리를 준다.** 이 화면에는 「소스에 없는 것」이
  * 세 갈래로 있고(지명 순서 · 선수 링크 · 우리 어휘에 없는 구단), 셋 다
  * **조용히 빼면 「그런 것은 원래 없다」로 읽힌다.**
  */
-function limitsBlock(d: DraftPageData): RawHtml {
+function limitsBlock(d: DraftPageData, shownHeld: readonly number[]): RawHtml {
   return html`<section class="block" id="b-draft-limits">
   <h2>この画面が言えないこと<span class="qt">出典にない情報</span></h2>
   ${note(
@@ -631,10 +667,7 @@ function limitsBlock(d: DraftPageData): RawHtml {
           `（${d.unknownTeamCodes.join("・")}）。当時の球団名がわからないので**コードのまま**出しています — ` +
           "今の球団名に置き換えると、その年の画面が**もっともらしい嘘**をつきます。",
       )}
-  ${note(
-    `当サイトが持っているドラフトは **${heldRange(d.heldSeasons)}** です。` +
-      "ここに無い年は「開催されなかった」のではなく、**当サイトがまだ取り込んでいない**という意味です。",
-  )}
+  ${heldNote(d, shownHeld)}
 </section>`;
 }
 
@@ -682,6 +715,18 @@ function notesBlock(d: DraftPageData): RawHtml {
 export function renderDraftPage(d: DraftPageData, ctx: RenderContext): string {
   const { base, root, seasons } = ctx.paths(DRAFT_PATH);
 
+  /**
+   * **보유 연도 중 이 사이트에 화면이 있는 것.**
+   *
+   * ⚠**시즌 띠에서 그대로 읽는다 — 새 데이터를 만들지 않는다**(2026-09-05 · Task 3).
+   * `fallback` 이 `false` 라는 것은 **그 시즌에 이 경로가 실제로 있다**는 뜻이고
+   * (`pathsFor` 가 `p.paths.has(selfPath)` 로 정한다), 그게 정확히 우리가 물어야 할 것이다.
+   * 사이트 시즌 목록을 여기로 따로 나르면 **두 벌이 되고 어느 날 갈린다**(M1).
+   * ⚠**시즌이 하나뿐인 문맥에서는 빈 배열이다** — 띠 자체가 안 그려지는 상황이라 그게 맞다.
+   */
+  const shown = new Set(seasons.filter((s) => !s.fallback).map((s) => s.season));
+  const shownHeld = d.heldSeasons.filter((s) => shown.has(s));
+
   const head = html`<header class="idline">
   <div class="idtext">
     <h1 class="nm">${d.season}年 ドラフト会議</h1>
@@ -707,10 +752,7 @@ ${d.state.kind === "ok" ? null : stateNote(d.state)}`;
 
 <section class="block" id="b-draft-limits">
   <h2>この画面について<span class="qt">この年は、まだ出せるものがありません</span></h2>
-  ${note(
-          `当サイトが持っているドラフトは **${heldRange(d.heldSeasons)}** です。` +
-            "ここに無い年は「開催されなかった」のではなく、**当サイトがまだ取り込んでいない**という意味です。",
-        )}
+  ${heldNote(d, shownHeld)}
 </section>`
       : html`${head}
 ${defectBlock(d)}
@@ -718,7 +760,7 @@ ${d.sections.map(sectionBlock)}
 
 ${notesBlock(d)}
 
-${limitsBlock(d)}
+${limitsBlock(d, shownHeld)}
 ${sourceBlock(d)}`;
 
   return page({
