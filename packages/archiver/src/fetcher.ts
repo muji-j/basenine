@@ -45,19 +45,35 @@ export interface ConditionalHeaders {
 const RETRYABLE = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 /**
- * L1 의 하한 — 「1req / 2~5초」의 아래쪽.
+ * L1 의 하한 — 「1req / 2~5초」의 아래쪽. **이 아래로는 만들 수 없다.**
  *
- * ⚠**이걸로 막지는 않는다**(픽스처 시험이 `0` 을 쓴다). 진입점이 **경고**하는 데 쓴다 —
- * 막으면 시험이 못 돌고, 안 알리면 실사이트에 0.5초로 나간다.
+ * ⚠**초판은 이것을 「경고에만 쓴다」고 적었고 그 근거가 틀렸다**(2026-09-05 정정).
+ * 근거는 「픽스처 시험이 `minDelayMs: 0` 을 쓴다」였는데, **실측하니 그 시험은 값이 몇이든
+ * 결과가 같다** — `sleep` 을 즉시 반환하는 목으로 주입하기 때문이다(`mark-seen.test.ts` 의
+ * `0` 을 `999999` 로 바꿔도 4본이 그대로 통과한다). **시험을 빠르게 만드는 것은 `sleep` 목이지
+ * 작은 `minDelayMs` 가 아니었다.** 실제로 요청을 보내는 시험 13곳이 **전부** `fetchImpl` 과
+ * `sleep` 을 함께 주입한다 — **예외를 둘 이유가 애초에 없었다.**
  */
 export const L1_MIN_DELAY_MS = 2000;
 
 /**
  * 유효한 요청 간격인가. ⚠**생성자와 진입점이 같은 술어를 쓴다**(M1) —
  * 두 벌로 두면 한쪽만 고쳐진 채로 남고, 그 한쪽이 실제로 나가는 요청을 정한다.
+ *
+ * ⚠**`NaN` 만 막는 것으로는 부족했다.** `500` 은 수이고 음수도 아니라 통과했고, 진입점은
+ * **경고 한 줄만 찍고 그대로 실사이트를 쳤다.** 오타로 인한 조용한 위반과 **결이 다를 뿐
+ * 정도만 다른 같은 범주의 구멍**이다.
+ * ⚠**이걸 「실측」으로 배웠다**: 이 하한을 넣기 전에 `--delay 500` 을 스폰하는 시험을 쓰자
+ * **222페이지를 0.583초 간격으로 실제로 받아 버렸다**(우리 사이드카의 `fetchedAt` 실측).
+ *
+ * ⚠**「시험이면 봐 준다」를 만들지 않았다.** `fetchImpl` 주입 여부로 가르는 안이 있었는데,
+ * 그러면 **예의의 보장이 「전송 수단을 갈아 끼웠는가」에 딸려 간다** — 제품 코드가 계측이나
+ * 프록시로 `fetchImpl` 을 감싸는 순간 하한이 조용히 사라진다. **방금 고친 결함의 잠복형이다.**
+ * → **예외 없는 한 줄 규칙**이고 우회할 것이 없다.
+ * ⚠**`PoliteFetcher` 가 무례하게 설정될 수 있으면 이름이 거짓이다.**
  */
 function isValidDelayMs(ms: number): boolean {
-  return Number.isFinite(ms) && ms >= 0;
+  return Number.isFinite(ms) && ms >= L1_MIN_DELAY_MS;
 }
 
 /**
@@ -95,7 +111,7 @@ export class PoliteFetcher {
     //   ⚠**`buildUserAgent` 이 빈 연락처를 거부하는 것과 같은 자리다**(아래).
     if (!isValidDelayMs(minDelayMs)) {
       throw new RangeError(
-        `요청 간격(minDelayMs)은 0 이상의 유한한 수여야 한다 — 조용히 0초가 되는 것을 막는다 (CLAUDE.md L1): ${minDelayMs}`,
+        `요청 간격(minDelayMs)은 ${L1_MIN_DELAY_MS}ms 이상의 유한한 수여야 한다 (CLAUDE.md L1: 1req/2~5초): ${minDelayMs}`,
       );
     }
     this.minDelayMs = minDelayMs;

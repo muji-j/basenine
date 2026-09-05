@@ -30,11 +30,8 @@ if (!contact) {
 //   `minDelayMs ?? 3000` 을 통과하고 **간격이 조용히 0이 된다**(L1 · `fetcher.ts` 참조).
 const delayMs = parseDelayMs(values.delay);
 if (delayMs === null) {
-  console.error(`--delay 는 0 이상의 수(ms)여야 한다: ${values.delay}`);
+  console.error(`--delay 는 ${L1_MIN_DELAY_MS}ms 이상이어야 한다 (L1: 1req/2~5초): ${values.delay}`);
   process.exit(2);
-}
-if (delayMs < L1_MIN_DELAY_MS) {
-  console.error(`⚠--delay ${delayMs}ms 는 L1 하한(${L1_MIN_DELAY_MS}ms) 아래다 — 실사이트에 쓰지 마라`);
 }
 
 const clock = systemClock;

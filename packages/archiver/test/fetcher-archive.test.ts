@@ -73,14 +73,38 @@ test("⚠L1: 간격이 수가 아니면 생성자가 거부한다 — 조용히 
   assert.throws(() => new PoliteFetcher({ ...base, minDelayMs: Number("abc") }), /간격/);
   assert.throws(() => new PoliteFetcher({ ...base, minDelayMs: Number.POSITIVE_INFINITY }), /간격/);
   assert.throws(() => new PoliteFetcher({ ...base, minDelayMs: -1 }), /간격/);
-  // ⚠**막지 않는 것**: 안 주면 기본 3초 · 명시한 0 은 픽스처 시험이 쓴다(의도된 값이다)
-  assert.doesNotThrow(() => new PoliteFetcher(base));
-  assert.doesNotThrow(() => new PoliteFetcher({ ...base, minDelayMs: 0 }));
+  assert.doesNotThrow(() => new PoliteFetcher(base), "안 주면 기본 3초");
 });
 
-test("⚠`--delay` 파싱은 한 벌이다 — 넷이 같은 술어를 쓴다(M1)", () => {
+/**
+ * ⚠**「유효하지만 위험한」 값도 거부한다** — `NaN` 만 막는 것으로는 부족했다.
+ *
+ * `500` 은 수이고 음수도 아니라 옛 검사를 통과했고, 진입점은 **경고 한 줄만 찍고 계속 갔다.**
+ * 그건 이번 수정이 막으려던 것과 **결이 다를 뿐 정도만 다른 같은 범주의 구멍**이다.
+ *
+ * ⚠**시험용 예외를 두지 않았다.** 「`fetchImpl` 을 주입했으면 봐 준다」가 후보였는데,
+ * 그러면 **예의의 보장이 「전송 수단을 갈아 끼웠는가」에 딸려 간다** — 제품 코드가 계측이나
+ * 프록시 목적으로 `fetchImpl` 을 감싸는 순간 하한이 조용히 사라진다. 그건 방금 고친 결함의
+ * 잠복형이다. ⚠**실측으로 예외가 필요 없다는 것이 확인됐다**: 실제로 요청을 보내는 시험
+ * **13곳 전부가 `fetchImpl` 과 `sleep` 을 함께 주입**하고, 시험을 빠르게 만드는 것은
+ * **`sleep` 목이지 작은 `minDelayMs` 가 아니다**(`mark-seen` 의 `minDelayMs: 0` 을
+ * `999999` 로 바꿔도 4본이 그대로 통과한다 — 실측).
+ * → **예외 없는 한 줄 규칙**이고 우회할 것이 없다. `PoliteFetcher` 가 무례하게 설정될 수
+ * 있으면 이름이 거짓이다.
+ */
+test("⚠L1: 하한 아래 간격은 유효한 수라도 거부한다", () => {
+  const base = { userAgent: "ua", clock: { now: () => new Date(0) } };
+  assert.throws(() => new PoliteFetcher({ ...base, minDelayMs: 0 }), /간격/);
+  assert.throws(() => new PoliteFetcher({ ...base, minDelayMs: 500 }), /간격/);
+  assert.throws(() => new PoliteFetcher({ ...base, minDelayMs: L1_MIN_DELAY_MS - 1 }), /간격/);
+  assert.doesNotThrow(() => new PoliteFetcher({ ...base, minDelayMs: L1_MIN_DELAY_MS }), "경계는 통과한다");
+});
+
+test("⚠`--delay` 파싱은 한 벌이다 — 다섯이 같은 술어를 쓴다(M1)", () => {
   assert.equal(parseDelayMs("3000"), 3000);
-  assert.equal(parseDelayMs("0"), 0);
+  assert.equal(parseDelayMs("2000"), 2000, "경계는 통과한다");
+  assert.equal(parseDelayMs("500"), null, "⚠이게 통과하면 경고만 찍고 실사이트를 친다");
+  assert.equal(parseDelayMs("0"), null);
   assert.equal(parseDelayMs("abc"), null, "⚠이게 통과하면 간격이 0이 된다");
   assert.equal(parseDelayMs("-1"), null);
   assert.equal(parseDelayMs("Infinity"), null);
@@ -173,7 +197,9 @@ test("503은 지수 백오프로 재시도한 뒤 예외를 던진다", async ()
   const r = recorder(() => response(503));
   const f = new PoliteFetcher({
     userAgent: "ua",
-    minDelayMs: 1000,
+    // ⚠**~~1000~~ 이었다** — L1 하한(2000)이 생기면서 만들 수 없는 값이 됐다.
+    //   `sleep` 이 목이라 **벽시계는 그대로 0초**이고, 재는 것(지수적으로 는다)도 그대로다.
+    minDelayMs: 2000,
     maxRetries: 2,
     clock: h.clock,
     fetchImpl: r.impl,
@@ -182,7 +208,7 @@ test("503은 지수 백오프로 재시도한 뒤 예외를 던진다", async ()
 
   await assert.rejects(() => f.get("https://npb.jp/a"), /취득 실패/);
   assert.equal(r.calls.length, 3, "최초 1회 + 재시도 2회");
-  assert.deepEqual(h.sleeps.slice(0, 3), [1000, 2000, 4000], "백오프가 지수적으로 늘어야 한다");
+  assert.deepEqual(h.sleeps.slice(0, 3), [2000, 4000, 8000], "백오프가 지수적으로 늘어야 한다");
 });
 
 test("동시에 불러도 직렬화된다 — 동시 1커넥션 (L1)", async () => {

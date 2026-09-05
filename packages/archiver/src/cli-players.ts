@@ -45,11 +45,8 @@ const ids = (await readFile(values.ids, "utf8"))
 //   ⚠여기는 900명을 도는 자리라 간격이 사라지면 피해가 가장 크다.
 const delayMs = parseDelayMs(values.delay);
 if (delayMs === null) {
-  console.error(`--delay 는 0 이상의 수(ms)여야 한다: ${values.delay}`);
+  console.error(`--delay 는 ${L1_MIN_DELAY_MS}ms 이상이어야 한다 (L1: 1req/2~5초): ${values.delay}`);
   process.exit(2);
-}
-if (delayMs < L1_MIN_DELAY_MS) {
-  console.error(`⚠--delay ${delayMs}ms 는 L1 하한(${L1_MIN_DELAY_MS}ms) 아래다 — 실사이트에 쓰지 마라`);
 }
 
 const clock = systemClock;

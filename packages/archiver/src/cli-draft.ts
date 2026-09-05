@@ -85,14 +85,13 @@ if (!contact) {
 }
 
 // ⚠**검사는 `fetcher.ts` 한 벌이다**(M1). 생성자도 같은 술어로 막으므로 여기를 지워도
-//   조용히 0초가 되지는 않는다 — 여기 있는 이유는 **스택트레이스 대신 쓸 만한 메시지**다.
+//   하한 아래로 나가지는 않는다 — 여기 있는 이유는 **스택트레이스 대신 쓸 만한 메시지**다.
+// ⚠**경고가 아니라 거부다.** 「경고만 찍고 계속」은 `--delay 500` 을 그대로 통과시켰고,
+//   그 상태에서 시험 한 본이 **222페이지를 0.583초 간격으로 실제로 받아 버렸다**(실측).
 const delayMs = parseDelayMs(values.delay);
 if (delayMs === null) {
-  console.error(`--delay 는 0 이상의 수(ms)여야 한다: ${values.delay}\n${USAGE}`);
+  console.error(`--delay 는 ${L1_MIN_DELAY_MS}ms 이상이어야 한다 (L1: 1req/2~5초): ${values.delay}\n${USAGE}`);
   process.exit(2);
-}
-if (delayMs < L1_MIN_DELAY_MS) {
-  console.error(`⚠--delay ${delayMs}ms 는 L1 하한(${L1_MIN_DELAY_MS}ms · 1req/2~5초) 아래다 — 실사이트에 쓰지 마라`);
 }
 
 const clock = systemClock;
