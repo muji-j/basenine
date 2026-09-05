@@ -1939,6 +1939,73 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
 /* 큰 紋을 한 번 그린다. 둘레는 pathLength 로 100에 고정돼 있다 */
 @keyframes draw{from{stroke-dasharray:0 100}to{stroke-dasharray:100 0}}
 
+/* ── ドラフト会議 ──
+   ⚠**원본의 격자를 재현하지 않는다**(L2). wikipedia 는 행=회차 × 열=12구단으로 짜는데
+   그건 편집물의 구성이고, 옮기면 §2-5 2층에 닿는다. 우리 단위는 **경합 그룹**이다.
+   ⚠**모서리와 그림자를 새로 만들지 않는다** — 이 화면도 사이트와 같이 각지고, 층이 없으므로
+   깊이도 없다. 구분은 **선과 여백**이 한다.
+   ⚠**当選/落選을 색만으로 말하지 않는다** — 글자가 정보이고, 테두리와 굵기는 거들 뿐이다.
+   ⚠**칩은 홈·순위표와 같은 .hteam 한 벌**이고(M1) 표 안에서는 .tm 이다 — 새 스와치를 만들지 않는다. */
+.drnds{display:flex;flex-direction:column}
+.drnd+.drnd{margin-top:16px;padding-top:15px;border-top:1px solid var(--hair)}
+.drh{margin:0 0 9px;font-size:13px;font-weight:700;letter-spacing:.1em;
+  display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.drh .qt,.dgn .qt,.dsolo>summary .qt,.drgh .qt{letter-spacing:0;font-weight:400;
+  color:var(--tx-3);font-size:10.5px}
+/* 경합 하나가 한 덩어리다 — **왼쪽 선이 그 경계**(용어집 .gl 과 같은 어법) */
+.dgrps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:12px}
+.dgrp{padding-left:11px;box-shadow:inset 2px 0 0 var(--hair-2)}
+/* ⚠**주역은 선수 이름이다** — 이 제품은 이름과 수가 곧 내용이라 라벨을 값보다 키우지 않는다.
+   대신 **분모(N球団競合)를 값에 붙여** 둔다(M2 · 루트 §7의 도메인 예외). */
+.dgn{margin:0 0 4px;display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
+.dgn b{font-size:16px;font-weight:700;letter-spacing:.04em}
+.dbids{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:3px 15px}
+.dbid{display:inline-flex;align-items:baseline;gap:6px;font-size:12.5px}
+/* ⚠**라벨 줄이 단어 안에서 끊겼다**(390px 실측 2026-09-05) — .picklab 은 줄바꿈을 안 한다.
+   남의 화면이 쓰는 규칙을 건드리지 않고 **이 화면 몫만** 접는다. */
+.picklab.dlab{flex-wrap:wrap;gap:3px 8px}
+/* 회차들과 그 각주 사이 — 각주는 **마지막 회차가 아니라 블록 전체**에 붙는 말이다 */
+.drnds+.note{margin-top:15px}
+.dres{font-size:10.5px;letter-spacing:.12em;font-weight:700;padding:1px 5px;flex:none}
+.dbid.won{font-weight:700}
+.dbid.won .dres{color:var(--tx);box-shadow:inset 0 0 0 1px var(--tx-2)}
+.dbid.lost .dres{color:var(--tx-3);font-weight:400;padding-left:0;padding-right:0}
+.dbid.lost .hteam{color:var(--tx-2)}
+.dbid.none .dres{color:var(--warn);box-shadow:inset 0 0 0 1px var(--warn)}
+.dwarn{font-size:11px;color:var(--warn)}
+/* 구단마다 표기가 달랐을 때만 나온다 — **접지 않고 함께** 낸다 */
+.dalt{font-style:normal;font-size:10.5px;color:var(--tx-3)}
+/* 단독지명은 **접어 둔다** — 펼쳐 두면 경합의 서사가 그 목록에 묻힌다 */
+.dsolo{margin-top:11px}
+.dsolos{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:3px 16px;font-size:12.5px}
+.dsolos li{display:inline-flex;align-items:baseline;gap:6px}
+.dsolos b{font-weight:400}
+/* 「제도상 추첨이 없다」 — 빈 상태(.empty)와 **다른 사실**이라 다른 모양으로 말한다 */
+.dnolot{margin:0 0 13px;font-size:12px;color:var(--tx-2);padding-left:9px;
+  box-shadow:inset 2px 0 0 var(--hair-2)}
+/* 지명의 전 기록 — 회차가 **행 묶음의 머리**다(열이 12개인 격자가 아니다) */
+.dpick{margin-top:4px}
+.dpick .drgh th{background:var(--panel-2);color:var(--tx);font-size:10.5px;letter-spacing:.12em;
+  font-weight:700;padding-top:9px;border-bottom:1px solid var(--hair-2)}
+/* 회차 묶음 사이에 숨 쉴 자리 — **첫 묶음은 붙이고 다음부터** 띄운다 */
+.dpick .drg+.drg .drgh th{padding-top:17px}
+.dpick .dnm{font-size:13px}
+.dpick .dorg{color:var(--tx-2)}
+/* 우리 어휘에 없는 구단 코드 — **모른다는 것이 보이게** 한다(지금 이름으로 접지 않는다) */
+.dunk{text-decoration:none;border-bottom:1px dotted var(--tx-3);font-family:var(--f-num);
+  font-size:11.5px;cursor:help}
+/* 출처(L3) · 불변식 위반 · 후일담 */
+.dsrc{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px;font-size:12px}
+.dsrc li{display:flex;flex-wrap:wrap;align-items:baseline;gap:3px 10px}
+.dsrc b{font-size:10px;letter-spacing:.14em;color:var(--tx-2);font-weight:600}
+.dsrc a{word-break:break-all}
+.dsrc s{text-decoration:none;font-family:var(--f-num);font-size:10.5px;color:var(--tx-3)}
+.ddef{list-style:none;margin:9px 0 0;padding:0;display:flex;flex-direction:column;gap:4px;font-size:12px}
+.ddef b{font-size:9.5px;letter-spacing:.14em;color:var(--warn);margin-right:8px}
+.dnotes{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;font-size:12.5px}
+.dnotes li{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px}
+.dnotes s{text-decoration:none;color:var(--tx-2);font-size:11.5px}
+
 /* ── 반응형 ──────────────────────────────────────────────── */
 @media (max-width:900px){
   :root{--pad:16px}

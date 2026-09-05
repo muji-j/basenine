@@ -40,6 +40,25 @@ import {
 // ⚠**드래프트 구획 어휘(`DRAFT_KINDS`)도 파서가 정본이다** — 여기에 6종을 다시 적지 않는다(M1)
 import { DRAFT_KINDS, careerTotal, seasonsPlayed } from "@bb-app/parser";
 import type { DraftKind } from "@bb-app/parser";
+// ⚠**화면 데이터의 정본은 렌더러 모듈이다** — 다른 `*PageData` 10곳과 같은 자리다.
+//   `import type` 이라 **런타임 의존이 생기지 않는다**(순환도 없다).
+import type {
+  DraftBidBlock,
+  DraftBidEntry,
+  DraftBidGroup,
+  DraftBidRound,
+  DraftDefects,
+  DraftName,
+  DraftNote,
+  DraftNotesBlock,
+  DraftOrigin,
+  DraftPageData,
+  DraftPick,
+  DraftRound,
+  DraftSection,
+  DraftSectionSource,
+  DraftTeam,
+} from "./draft-page.ts";
 import type {
   CountLine,
   HeadToHead,
@@ -6181,277 +6200,6 @@ export const DRAFT_KIND_ORDER: readonly DraftKind[] = [
  * `draft-query.test.ts` 가 파서 소스와 이 값을 대조해 어긋나면 붉어진다 — **손으로만 고치지 마라.**
  */
 export const DRAFT_NOTES_COLLECTED = false;
-
-/** 그 행이 어느 소스에서 왔는가. ⚠**행마다 남긴다** — 2023 이후는 대조 상대가 없다 */
-export type DraftOrigin = "npb" | "wikipedia";
-
-/**
- * 지명·입찰에 붙는 구단.
- *
- * ⚠**코드가 연도의 함수다.** 같은 구단이 해마다 다른 슬러그로 나온다 —
- * 실측: `bs`(オリックス 2005~2018 · 지명 116) · `b`(2019~ · 80) ·
- * `yb`(横浜 2005~2011 · 53) · `db`(2012~ · 120).
- */
-export interface DraftTeam {
-  /** 소스 슬러그 그대로. ⚠**정규화하지 않는다** — 그 해에 실제로 쓰인 값이다 */
-  code: string;
-  /**
-   * 짧은 표기. ⚠**모르는 코드면 `null` 이다**(M11 · M7).
-   *
-   * ⚠**`shortNameOf` 를 그냥 부르면 안 된다** — 그 함수는 모르는 코드에서 던지지 않고
-   * `code.toUpperCase()` 로 **조용히 떨어진다.** 그러면 화면에 **「YB」라는 정체불명의 구단**이
-   * 태연히 나가고, 아무 시험도 그걸 결함으로 읽지 못한다.
-   * ⚠**`yb` 를 `db` 로 접지도 않는다** — 2005년의 그 구단은 **DeNA 가 아니었다.**
-   *   접는 순간 화면이 시대착오적인 거짓말을 하고, 그건 「YB」보다 **더 그럴듯해서 더 나쁘다.**
-   *   제대로 고치려면 **「그 시즌에 존재한 구단」 이력 마스터**가 필요하고, 그건 이 태스크 밖이다
-   *   (설계 §0 이 2004 이전을 자른 이유와 같은 문제가 범위 안에서 다시 나온 것이다).
-   */
-  shortName: string | null;
-}
-
-/**
- * 화면에 나오는 이름 하나.
- *
- * ⚠**링크가 없어도 이름은 남는다.** 드래프트에서 이 규칙이 특히 무겁다 —
- * 지명된 선수의 상당수가 우리 `player` 표에 **영영 없다**(입단 거부 · 은퇴 · 1군 미등록).
- * **행을 지우지 마라. 그 지명은 실제로 있었다.**
- */
-export interface DraftName {
-  /** 소스 표기 그대로. ⚠**항상 있다** */
-  display: string;
-  /** 동일성 판정용 정규화형. ⚠**화면에 내지 마라** — 실측 2,234건 중 2,230건이 `display` 와 다르다 */
-  canonical: string | null;
-  /**
-   * 우리 선수 페이지로 이을 수 있으면 그 좌표. **없으면 `null` 이고 이름만 남는다.**
-   *
-   * ⚠**지금은 전건 `null` 이다** — 적재가 `player_id` 를 넣지 않는다(M10 · `store/src/draft.ts`
-   * 머리말: 「이름 문자열로 선수를 잇지 않는다. 연결 자체는 별도 태스크다」).
-   * 실측: `draft_pick` **2,234/2,234** · `draft_bid` **374/374** 전건 NULL.
-   * ⚠**그러니 여기서 이름으로 잇지 마라** — 그 금지가 M10 이고, 동명이인·개명·표기 요동이 그 이유다.
-   * ⚠**`season` 은 「그 선수 페이지가 실재하는 시즌」**이다. 드래프트 연도가 아니다 —
-   *   지명된 해에는 아직 1군 기록이 없으므로 그 해 페이지는 대개 존재하지 않는다.
-   */
-  link: { playerId: string; season: number } | null;
-}
-
-/** 1순위 입찰 한 건 — 한 구단이 적어 낸 이름. */
-export interface DraftBidEntry {
-  team: DraftTeam;
-  /**
-   * 그 구단이 적어 낸 이름.
-   * ⚠**같은 그룹 안에서도 표기가 다를 수 있다** — 실측 2019: 당첨 행 `佐々木 朗希` ·
-   * 낙첨 행 `佐々木朗希`(공백 없음). **표기를 하나로 접지 마라. 소스가 그렇게 적었다.**
-   */
-  name: DraftName;
-  /**
-   * 소스가 **선언한** 경합 상대(원문 표기 그대로).
-   * ⚠**`null` 은 「원래 없음」이다**(M11) — 단독지명 행에는 주석 자체가 없고, 그룹에 속하는데도
-   * 상대 문장이 없는 소스가 있을 수 있다. **`[]`(상대 0명)와 다른 값이다.**
-   * ⚠**구단 코드로 바꾸지 않는다** — `西武`↔`埼玉西武` 처럼 표기가 연대의 함수라 매핑표가
-   * 한 벌로 안 선다(020 마이그레이션 주석).
-   */
-  rivals: readonly string[] | null;
-  /**
-   * `1` 당첨 · `0` 낙첨 · **`null` 단독지명**.
-   * ⚠**셋을 두 값으로 접지 마라**(M11) — 「경합에서 이겼다」와 「아무도 안 겹쳤다」는 다른 사실이다.
-   * ⚠**행 자체가 이 값을 들고 다녀야 한다.** 그래야 `losers` 에 섞인 결함 행(당첨이 둘인 그룹)이
-   *   화면에서 **틀린 이름표를 달고도 조용하지는 않다.**
-   */
-  won: 1 | 0 | null;
-  origin: DraftOrigin;
-}
-
-/**
- * 경합 그룹 하나 — **당첨 1 + 낙첨 N** 이 정상이다.
- */
-export interface DraftBidGroup {
-  /** 소스 유래 키(`1:佐々木朗希`). ⚠**표시용이 아니다** */
-  groupKey: string;
-  /** 겨룬 선수. ⚠구단마다 표기가 달랐다면 **당첨 구단의 표기**를 쓴다 */
-  name: DraftName;
-  /**
-   * 교섭권을 얻은 구단.
-   * ⚠**`null` 이면 그것은 결함이다**(INV-N1). **화면에서 조용히 건너뛰지 마라** —
-   * 그룹을 지우면 「그 경합은 없었다」가 되고, 우리는 그게 참인지 알 방법이 없다.
-   * 같은 사실이 `DraftPageData.defects` 에도 남는다.
-   */
-  winner: DraftBidEntry | null;
-  /**
-   * **당첨으로 고른 한 행을 뺀 나머지 전부.** 소스 순서.
-   *
-   * ⚠**「낙첨 행만」이 아니다 — 일부러 그렇게 했다.** 「`won !== 1` 인 행」으로 정의하면
-   * 당첨이 둘인 결함 그룹에서 **둘째 당첨 행이 화면에서 조용히 사라진다.**
-   * 여기 정의라면 `winner` + `losers` 가 **언제나 그룹의 전부**이고
-   * (`teams === (winner ? 1 : 0) + losers.length` 가 항상 성립),
-   * 섞여 들어온 행은 자기 `won === 1` 로 스스로를 밝힌다.
-   * ⚠**그런 그룹은 `DraftPageData.defects.groupsWithManyWinners` 에도 남는다** — 실측 0건이다.
-   */
-  losers: readonly DraftBidEntry[];
-  /**
-   * **이 그룹에 든 구단 수**(= `winner` 있으면 1 + `losers.length`).
-   * ⚠**분모다**(M2). 화면이 「5球団競合」을 스스로 세면 언젠가 다른 수를 센다.
-   */
-  teams: number;
-}
-
-/** 1순위 입찰의 한 회차 — 1回 · 外れ1位 · 外れ外れ1位 …. */
-export interface DraftBidRound {
-  /**
-   * ⚠**지명 회차가 아니라 「1巡目 안에서 몇 번째 추첨인가」다**(`store/src/draft.ts` 머리말 표).
-   * 어느 추첨에서 이겼든 그 구단이 얻은 것은 **1巡目 지명**이다.
-   */
-  roundNo: number;
-  groups: readonly DraftBidGroup[];
-  /**
-   * 그 회차의 **단독지명**(경합 그룹의 여집합 · `won IS NULL`).
-   * ⚠**낙첨(`won = 0`)과 다른 사실이다**(M11) — 「경합에서 졌다」와 「아무도 안 겹쳤다」.
-   * ⚠**회차마다 나온다** — 실측 2019 는 1·2·3회차 전부에 단독지명이 있다.
-   */
-  solo: readonly DraftBidEntry[];
-}
-
-/**
- * 1순위 입찰 블록.
- *
- * ⚠**「입찰이 0행」이 두 가지 다른 사실이다.** 그래서 `state` 가 붙는다 — `counts` 만 보면
- * 2023(=NPB 가 표시를 껐다)과 진짜 수집 실패가 같은 화면이 된다.
- */
-export interface DraftBidBlock {
-  state: DataState;
-  rounds: readonly DraftBidRound[];
-  /**
-   * 분모 한 벌(M2). `bids` 는 입찰 **행** 수, `groups` 는 경합 그룹 수, `solo` 는 단독지명 수.
-   * ⚠**`bids = groups 안의 구단 수 + solo` 여야 한다** — 어긋나면 어딘가를 흘린 것이다.
-   */
-  counts: { bids: number; groups: number; solo: number };
-}
-
-/** 확정된 지명 한 건. */
-export interface DraftPick {
-  team: DraftTeam;
-  name: DraftName;
-  /** `投手`·`捕手`·`内野手`·`外野手`. ⚠소스가 안 적으면 `null`(M11) */
-  position: string | null;
-  /** 출신(학교·팀). ⚠소스가 안 적으면 `null` */
-  fromOrg: string | null;
-  /**
-   * 웨이버 방향.
-   * ⚠**지금은 전건 `null` 이다** — npb.jp 명단 페이지가 이것을 **적지 않는다**(실측 2,234/2,234).
-   * **「1순위라서 없다」가 아니라 「이 소스가 말하지 않아서 없다」**다(M11).
-   */
-  waiverDir: "→" | "←" | null;
-  /** 전체 지명 순번. ⚠**지금은 전건 `null`**(실측 2,234/2,234) */
-  pickSeq: number | null;
-  origin: DraftOrigin;
-}
-
-/** 지명 한 회차. */
-export interface DraftRound {
-  roundNo: number;
-  /**
-   * **이 수가 소스의 회차인가.**
-   * ⚠`false` 면 **적재가 매긴 순번**이다(`jiyuu_kakutoku`·`kibou_nyudanwaku` — 회차라는 개념이
-   * 없는 제도). 화면이 그것을 「N巡目」이라고 쓰면 **거짓**이다.
-   */
-  numbered: boolean;
-  /** ⚠구단 순서는 `TEAMS` 순이다. **웨이버 순서가 아니다** — 그건 이 소스에 없다 */
-  picks: readonly DraftPick[];
-}
-
-/** 그 구획을 실은 페이지(M4 · L3). */
-export interface DraftSectionSource {
-  url: string;
-  fetchedAt: string;
-  /** ⚠**본문 해시다** — npb.jp 는 `ETag`·`Last-Modified` 를 주지 않는다 */
-  revision: string;
-  /** wikipedia 유래면 `CC BY-SA 4.0`. ⚠npb 유래면 `null`(실측 47/47 전건 NULL) */
-  license: string | null;
-  /** 개최일. ⚠**실측 47/47 전건 NULL** — 소스가 이 페이지에 안 적는다(M11) */
-  heldOn: string | null;
-}
-
-/** 구획(회의) 하나. 2005~2007 은 한 해에 3~4개, 2008~ 은 2개다. */
-export interface DraftSection {
-  kind: DraftKind;
-  /** 화면 표기. ⚠표는 `DRAFT_KIND_LABEL` 한 벌이다(M1) */
-  label: string;
-  /**
-   * 1순위 입찰.
-   * ⚠**`null` 은 「데이터 없음」이 아니라 「제도상 추첨이 없는 구획」이다**(育成·自由獲得·希望入団枠).
-   * `unpublished` 로 그리면 **없는 잘못을 NPB 에 씌우는** 거짓말이 된다.
-   */
-  bids: DraftBidBlock | null;
-  rounds: readonly DraftRound[];
-  /** 이 구획의 지명 총수. ⚠**분모다**(M2) */
-  pickCount: number;
-  source: DraftSectionSource | null;
-}
-
-/** 사후 사실 한 건(교섭권 정정 · 입단 거부 …). */
-export interface DraftNote {
-  kind: DraftKind;
-  team: DraftTeam;
-  name: DraftName;
-  /**
-   * `kousyouken_teisei` | `nyudan_kyohi` | `shimei_hakudatsu` | `fugoui`.
-   * ⚠**표기표를 여기서 만들지 않았다** — 실측 **0행**이라 어떤 문장이 실제로 오는지 모르고,
-   * 안 본 것을 위해 어휘를 지어 두면 파서가 생긴 날 **두 벌이 된다**(M1).
-   */
-  noteKind: string;
-  detail: string;
-}
-
-/**
- * 후일담 블록.
- * ⚠**0행과 미수집을 구별한다**(M11) — 지금은 언제나 후자다(`DRAFT_NOTES_COLLECTED`).
- */
-export interface DraftNotesBlock {
-  state: DataState;
-  rows: readonly DraftNote[];
-}
-
-/**
- * **비어 있는 것이 정상이다.** 비어 있지 않으면 그 사실이 화면까지 가야 한다.
- *
- * ⚠**조용히 건너뛰는 것이 최악이다.** 당첨 없는 그룹을 화면에서 빼면 「그 경합은 없었다」가
- * 되고, 그건 **값도 합계도 그럴듯해서 눈으로는 못 잡는다.**
- */
-export interface DraftDefects {
-  /** 당첨이 0건인 경합 그룹의 키(INV-N1). 실측 **75그룹 중 0건** */
-  groupsWithoutWinner: readonly string[];
-  /** 당첨이 2건 이상인 경합 그룹의 키. 같은 불변식의 반대쪽 */
-  groupsWithManyWinners: readonly string[];
-}
-
-/** 시즌 하나의 드래프트 화면 데이터. */
-export interface DraftPageData {
-  season: number;
-  /**
-   * 우리가 **실제로 가진** 드래프트 시즌. 화면의 시즌 전환이 여기서 나온다.
-   * ⚠**화면이 목록을 박으면 소급할 때마다 사람이 고쳐야 하고, 그래서 안 고쳐진다**
-   * (선수 페이지 1,864장이 「2025年から」라는 거짓말을 싣고 있던 사고와 같은 모양).
-   */
-  heldSeasons: readonly number[];
-  /** 이 시즌 자체의 상태. ⚠`sections` 가 비면 **왜 비었는지**를 이 값이 말한다 */
-  state: DataState;
-  sections: readonly DraftSection[];
-  notes: DraftNotesBlock;
-  /** 이 화면에 섞인 출처. ⚠wikipedia 가 섞이면 **CC BY-SA 표기가 필요하다**(L3) */
-  origins: readonly DraftOrigin[];
-  /**
-   * 선수 페이지로 이어진 이름의 수 / **이름이 있는 행의 수**.
-   * ⚠**「0건」과 「안 쟀음」을 구별하려고 분모를 함께 낸다** — 지금은 `linked` 가 언제나 0 이고
-   * 그 이유는 `DraftName.link` 주석에 있다. 연결 태스크가 붙는 순간 이 수가 움직인다.
-   */
-  links: { linked: number; total: number };
-  /**
-   * 우리 구단 어휘에 없는 코드.
-   * ⚠**결함이 아니라 「우리 어휘가 아직 그 시대를 모른다」다** — 실측으로 `yb`(横浜 2005~2011)
-   * 하나이고, 접을 상대(`db`)는 **다른 이름의 구단**이라 접으면 거짓이 된다(`DraftTeam.shortName`).
-   */
-  unknownTeamCodes: readonly string[];
-  defects: DraftDefects;
-}
 
 interface DraftEventSql {
   kind: string;
