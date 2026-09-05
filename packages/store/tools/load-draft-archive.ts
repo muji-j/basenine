@@ -428,6 +428,124 @@ export async function loadDraftSeason(
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// 검사 시점 — 「지금 걸어도 되는가」
+// ──────────────────────────────────────────────────────────────────────────
+
+/**
+ * 불변식 여섯의 이름. ⚠**정본은 `scripts/test/draft-invariants.test.ts` 의 `name:` 필드**이고
+ * 여기 있는 것은 **그것을 가리키는 라벨**이다 — 사람이 이 줄을 보고 그 파일을 grep 한다.
+ * ⚠**그래서 갈리면 안 된다.** 두 목록이 어긋나면 시험이 붉어진다
+ * (`load-draft-archive.test.ts` 의 「찍는 이름이 실재해야 한다」 · M1).
+ * ⚠**`INV-4b` 가 아니라 `INV-4′` 다** — 계획서 코드 블록이 `INV-4b` 로 적었는데
+ * **저장소 어디에도 그 이름은 없다.** 검사기가 스스로 붙인 이름이 `INV-4′` 이고,
+ * 런북을 읽은 사람이 실제로 찾을 수 있는 것은 그쪽이다.
+ */
+const ALL_INVARIANTS = ["INV-4", "INV-4′", "INV-5", "INV-N1", "INV-N2", "INV-N3"] as const;
+
+/**
+ * `draft_bid` 가 0행이어도 **분모가 서는** 유일한 불변식.
+ * 그것만 분모를 `draft_pick ∪ draft_bid` 에서 얻는다 — 지명은 어느 시즌에나 있다.
+ */
+const INV_WITHOUT_BIDS = ["INV-N2"] as const;
+
+/**
+ * 시즌이 다 들어왔다고 볼 최소 구단 수.
+ *
+ * ⚠**`TEAMS.length`(domain)를 쓰지 않는다.** 그건 **현재** 12구단의 명단이라
+ * 언젠가 확장구단이 붙으면 **과거 시즌 전부가 조용히 「검사 대상 아님」으로 떨어진다** —
+ * 안전망이 소리 없이 꺼지는 쪽으로 틀린다. 여기는 **하한**이고 비교가 `<` 라,
+ * 13구단 시즌이 와도 여섯을 그대로 건다(안전한 쪽으로 틀린다).
+ */
+const SEASON_COMPLETE_TEAMS = 12;
+
+/**
+ * 그 시즌에 **실제로 걸 수 있는** 불변식 목록.
+ *
+ * ⚠**A6** — 12구단이 다 들어오기 전에는 아무것도 안 건다. 중간 상태에서 INV-N1 이
+ * 붉은 것은 결함이 아니라 **시즌이 덜 들어온 것**이고(이긴 구단이 아직 안 왔을 뿐이다),
+ * 헛불이 일상이 되면 **진짜 위반도 안 읽힌다.**
+ *
+ * ⚠**A14** — `sourceWritesBids` 가 참이 아닌 시즌(실측 2023~2025)은 `draft_bid` 가
+ * **0행**이라 여섯 중 다섯이 **구조적으로 붉다**:
+ *   `INV-4`                      분모는 `draft_pick` 에서 와 슬롯이 살아 있는데
+ *                                획득이 영원히 0 → **만족 불가**
+ *   `INV-4′`·`INV-5`·`INV-N1`·`INV-N3`  분모를 `draft_bid` 에서 얻어 **0**
+ *                                → `assertClean` 이 그 자체를 실패시킨다
+ * **남는 것은 `INV-N2` 하나뿐**이다.
+ *
+ * ⚠**그 붉음을 결함으로 읽지 마라.** `INV-4` 의 메시지는 「확정된 획득이 0건이다」인데
+ * 그 시즌의 실제 뜻은 **「이 시즌 소스가 경합을 안 쓴다」**다(B2). 「데이터 없음」이 아니다.
+ *
+ * ⚠**`sourceWritesBids === null`(판정 안 함)도 제한 쪽으로 떨어뜨린다.** 모르면
+ * 안전한 쪽이다 — 여섯을 켰다가 헛불을 내는 것보다 하나만 켜는 편이 싸다(M11).
+ */
+export function checkableInvariants(r: SeasonLoadReport): string[] {
+  if (!r.loaded || r.teams < SEASON_COMPLETE_TEAMS) return [];
+  if (r.sourceWritesBids !== true) return [...INV_WITHOUT_BIDS];
+  return [...ALL_INVARIANTS];
+}
+
+export interface SeasonsSummary {
+  /** 이번에 **돌린** 시즌 수. 분모다 */
+  readonly targets: number;
+  readonly loaded: number;
+  /** ⚠**결함이 아니다**(M11) — 안 받았을 뿐이라 종료코드를 안 올린다 */
+  readonly absent: number;
+  readonly provenance: number;
+  readonly parse: number;
+  readonly load: number;
+  /** ⚠**「돌지도 않음」이라 FAIL 과 따로 센다** */
+  readonly error: number;
+  /** 적재됐지만 **소스가 경합을 안 쓰는** 시즌 수(B2). ⚠건너뛴 시즌은 안 센다 — 「안 쟀음」이다 */
+  readonly noBidsSource: number;
+  /**
+   * **일부만** 걸 수 있는 적재 시즌(실측 2023~2025). ⚠사람이 21줄을 훑지 않아도 되게 담는다.
+   *
+   * ⚠**「여섯보다 적다」로 세지 마라** — 그러면 구단이 덜 들어와 **하나도 못 거는** 시즌이
+   * 같은 칸에 들어가 요약이 「INV-N2 는 걸 수 있다」고 **거짓말을 한다.** 그쪽은 `incomplete` 다.
+   */
+  readonly limited: readonly number[];
+  /**
+   * 적재는 됐는데 **구단이 덜 들어와 아무것도 못 거는** 시즌.
+   *
+   * ⚠**이것은 정상이 아니다** — 아카이브가 불완전하다는 뜻이고, 화면에는
+   * 「그 해는 원래 이렇다」로 보인다(2018 오릭스 `bs` 사고와 같은 모양).
+   * ⚠종료코드는 안 올린다(건너뛴 게 아니라 들어오긴 했다) — **대신 눈에 띄게 찍는다.**
+   */
+  readonly incomplete: readonly number[];
+  readonly exitCode: 0 | 1;
+}
+
+/**
+ * 시즌 보고서를 한 줄로 접는다.
+ *
+ * ⚠**`main` 이 이것을 쓴다 — 세는 규칙은 한 벌이다**(M1). 표시용으로 따로 세면
+ * 종료코드와 화면이 갈리는 날이 온다.
+ * ⚠**`absent` 는 종료코드를 안 올린다.** 2026 은 개최 전이라 구단 페이지가 0장인 것이
+ * **정답**이고, 그걸로 배치를 붉히면 매년 드래프트 전까지 빨간 배치를 보게 된다.
+ */
+export function summarizeSeasons(reports: readonly SeasonLoadReport[]): SeasonsSummary {
+  const by = (k: SeasonSkipKind): number => reports.filter((r) => r.skipped?.kind === k).length;
+  const bad = by("provenance") + by("parse") + by("load") + by("error");
+  /** ⚠**걸 수 있는 개수로 세 갈래를 가른다** — 「여섯보다 적다」 하나로 묶으면 거짓이 된다 */
+  const loadedWith = (want: (n: number) => boolean): number[] =>
+    reports.filter((r) => r.loaded && want(checkableInvariants(r).length)).map((r) => r.season);
+  return {
+    targets: reports.length,
+    loaded: reports.filter((r) => r.loaded).length,
+    absent: by("absent"),
+    provenance: by("provenance"),
+    parse: by("parse"),
+    load: by("load"),
+    error: by("error"),
+    noBidsSource: reports.filter((r) => r.loaded && r.sourceWritesBids === false).length,
+    limited: loadedWith((n) => n > 0 && n < ALL_INVARIANTS.length),
+    incomplete: loadedWith((n) => n === 0),
+    exitCode: bad > 0 ? 1 : 0,
+  };
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // CLI
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -492,10 +610,18 @@ async function main(): Promise<void> {
       const r = await loadDraftSeason(db, season, { archiveRoot });
       reports.push(r);
       if (r.loaded) {
+        /**
+         * ⚠**무엇을 걸 수 있는지 찍는다**(A6·A14). 실 DB 불변식 검사 도구가 **아직 없어서**
+         * **사람이 이 줄을 보고 판단한다** — 「전부 걸 수 있다」고 침묵하지 않는다.
+         * ⚠제한된 시즌은 **이름을 그대로** 적는다. 「일부만」이라고 쓰면 어느 것인지 알 수 없다.
+         */
+        const inv = checkableInvariants(r);
+        const invNote = inv.length === ALL_INVARIANTS.length ? `${inv.length}종 전부` : inv.join(",") || "없음";
         console.log(
           `${season}: 구단 ${r.teams} · 구획 ${r.events} · 지명 ${r.picks} · 입찰 ${r.bids}`
             + ` · 단독지명 ${r.soleNominations ?? "유도안함"}`
-            + ` · 경합표기 ${r.sourceWritesBids === true ? "있음" : "없음"}`,
+            + ` · 경합표기 ${r.sourceWritesBids === true ? "있음" : "없음"}`
+            + ` · 검사가능 ${invNote}`,
         );
       } else {
         console.log(`${season}: 건너뜀 [${r.skipped?.kind}] ${r.skipped?.reason}`);
@@ -506,20 +632,43 @@ async function main(): Promise<void> {
   }
 
   // ⚠**분모를 적는다.** 「몇 시즌 중 몇 시즌」이 없으면 「0건」과 「안 쟀음」을 구별할 수 없다.
-  const by = (k: SeasonSkipKind): number => reports.filter((r) => r.skipped?.kind === k).length;
-  const loaded = reports.filter((r) => r.loaded).length;
+  // ⚠**세는 규칙은 `summarizeSeasons` 한 벌이다**(M1) — 화면과 종료코드가 갈릴 자리를 없앤다.
+  const s = summarizeSeasons(reports);
   console.log(
-    `\n대상 ${targets.length}시즌 / 아카이브 ${all.length}시즌 — 적재 ${loaded} ·`
-      + ` 미수집 ${by("absent")} · 출처없음 ${by("provenance")} · 파싱실패 ${by("parse")} ·`
-      + ` 적재규칙 ${by("load")} · ERROR ${by("error")}`,
+    `\n대상 ${s.targets}시즌 / 아카이브 ${all.length}시즌 — 적재 ${s.loaded} ·`
+      + ` 미수집 ${s.absent} · 출처없음 ${s.provenance} · 파싱실패 ${s.parse} ·`
+      + ` 적재규칙 ${s.load} · ERROR ${s.error}`,
   );
-  if (by("load") > 0) {
+  // ⚠**「무엇을 검사할 수 있는가」를 합계로도 적는다** — 21줄을 훑게 하지 않는다.
+  // ⚠**적재가 0시즌이면 안 찍는다** — 「0시즌은 6종 전부」는 잰 것처럼 보이는 빈 문장이다(M11).
+  if (s.loaded > 0) {
+    const full = s.loaded - s.limited.length - s.incomplete.length;
+    console.log(
+      `검사: 적재 ${s.loaded}시즌 중 ${full}시즌은 ${ALL_INVARIANTS.length}종 전부 ·`
+        + ` ${s.limited.length}시즌은 ${INV_WITHOUT_BIDS.join(",")} 만`
+        + (s.limited.length > 0 ? `(${s.limited.join(",")})` : ""),
+    );
+  }
+  if (s.incomplete.length > 0) {
+    // ⚠**정상이 아니다.** 구단이 덜 들어온 시즌은 화면에서 「그 해는 원래 이렇다」로 읽힌다.
+    console.log(
+      `⚠구단이 덜 들어온 시즌 ${s.incomplete.length}개(${s.incomplete.join(",")})`
+        + " — 불변식을 하나도 걸 수 없다. 아카이브가 불완전하니 그 해를 다시 받아라",
+    );
+  }
+  if (s.noBidsSource > 0) {
+    // ⚠**B2 — 「데이터 없음」이 아니다.** 경합은 실제로 있었고 소스가 그걸 안 적는 것뿐이다.
+    console.log(
+      `⚠경합 없는 소스 ${s.noBidsSource}시즌 — 그 시즌 draft_bid 가 0행인 것이 **정상**이다`
+        + "(「데이터 없음」이 아니라 「소스가 안 쓴다」)",
+    );
+  }
+  if (s.load > 0) {
     // ⚠**A7 — 재시도로 안 풀린다**(입력이 같으면 같은 예외). 다시 돌리라고 안내하지 않는다.
     console.log("⚠[load] 는 재시도로 풀리지 않는다 — 입력이 규칙에 안 맞는 것이라 사람이 봐야 한다");
   }
   // ⚠**`absent` 는 결함이 아니다**(M11) — 그것만으로는 종료코드를 올리지 않는다.
-  const bad = by("provenance") + by("parse") + by("load") + by("error");
-  process.exitCode = bad > 0 ? 1 : 0;
+  process.exitCode = s.exitCode;
 }
 
 const entry = process.argv[1];

@@ -27,10 +27,13 @@ import type { DraftBidRow, DraftKind, DraftPickRow } from "@bb-app/parser";
 import { openDb, type Db } from "../src/db.ts";
 import { DraftLoadError } from "../src/draft.ts";
 import {
+  checkableInvariants,
   decideBids,
   loadDraftSeason,
   loadSeasonPages,
   seasonsInArchive,
+  summarizeSeasons,
+  type SeasonLoadReport,
   type TeamPage,
   type TeamPageWithMeta,
 } from "../tools/load-draft-archive.ts";
@@ -127,6 +130,26 @@ function rows(db: Db, table: string): Record<string, unknown>[] {
 
 function count(db: Db, table: string): number {
   return (db.raw.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+}
+
+/**
+ * 보고서 한 장. ⚠**`as never` 로 뚫지 않는다** — 브리프 초판이 그렇게 썼는데,
+ * 그러면 `skipped` 가 `string` 에서 `{kind, reason}` 으로 바뀐 것을 **시험이 못 잡는다.**
+ * 기본값은 「적재된 평범한 시즌」이고 필요한 칸만 덮어쓴다.
+ */
+function report(over: Partial<SeasonLoadReport> = {}): SeasonLoadReport {
+  return {
+    season: 2019,
+    loaded: true,
+    teams: 12,
+    events: 2,
+    picks: 107,
+    bids: 21,
+    soleNominations: 7,
+    skipped: null,
+    sourceWritesBids: true,
+    ...over,
+  };
 }
 
 function pick(team: string, kind: DraftKind, roundNo: number | null, nameDisplay: string): DraftPickRow {
@@ -438,4 +461,122 @@ test("⚠사이드카에 본문 해시가 없으면 「몇 번째 판」을 말�
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+// ── 검사 시점 ──────────────────────────────────────────────────────────────
+/**
+ * ⚠**여기서 재는 것은 「불변식이 성립하는가」가 아니라 「지금 걸어도 되는가」다.**
+ * 불변식 자체는 `scripts/test/draft-invariants.test.ts` 가 잰다.
+ */
+
+test("⚠불변식은 시즌이 다 들어온 뒤에만 건다(A6) — 중간 상태의 붉음은 결함이 아니다", () => {
+  assert.deepEqual(checkableInvariants(report({ teams: 12, sourceWritesBids: true })), [
+    "INV-4",
+    "INV-4′",
+    "INV-5",
+    "INV-N1",
+    "INV-N2",
+    "INV-N3",
+  ]);
+  assert.deepEqual(
+    checkableInvariants(report({ teams: 7 })),
+    [],
+    "⚠아직 덜 들어왔다 — 걸면 헛불이고, 헛불이 일상이 되면 진짜 위반도 안 읽힌다",
+  );
+  assert.deepEqual(
+    checkableInvariants(report({ loaded: false, teams: 0, sourceWritesBids: null })),
+    [],
+    "안 들어온 시즌은 검사 대상이 아니다",
+  );
+});
+
+test("⚠경합을 안 쓰는 시즌은 INV-N2 만 걸 수 있다(A14) — 나머지 다섯은 구조적으로 붉다", () => {
+  // 2023~2025 는 `bids: null` 이라 그 시즌 `draft_bid` 가 **0행**이다.
+  //   INV-4       분모를 draft_pick 에서 얻어 슬롯은 살아 있는데 획득이 영원히 0 → **만족 불가**
+  //   INV-4′·5·N1·N3  분모를 draft_bid 에서 얻어 **0** → `assertClean` 이 실패시킨다
+  //   INV-N2      분모가 draft_pick ∪ draft_bid 라 지명만으로도 선다 → **이것만 남는다**
+  assert.deepEqual(checkableInvariants(report({ sourceWritesBids: false })), ["INV-N2"]);
+  assert.deepEqual(
+    checkableInvariants(report({ sourceWritesBids: null })),
+    ["INV-N2"],
+    "⚠판정을 못 한 시즌도 안전한 쪽으로 — 나머지 다섯을 켜면 헛불이다",
+  );
+});
+
+test("⚠찍는 이름이 실재해야 한다(M1) — 불변식 이름은 draft-invariants.test.ts 가 소유한다", async () => {
+  const src = await readFile(
+    fileURLToPath(new URL("../../../scripts/test/draft-invariants.test.ts", import.meta.url)),
+    "utf8",
+  );
+  // 검사기가 스스로 붙이는 이름(`name: "INV-… (설명)"`)에서 ID 만 뽑는다.
+  const owned = [...src.matchAll(/name: "(INV-[^\s"]+)/g)].map((m) => m[1]).sort();
+  assert.equal(owned.length, 6, "⚠검사기가 6종이 아니다 — 늘거나 줄었으면 아래 목록도 같이 고쳐라");
+  assert.deepEqual(
+    [...checkableInvariants(report())].sort(),
+    owned,
+    "⚠CLI 가 찍는 이름과 검사기의 이름이 갈렸다 — 런북을 읽은 사람이 grep 해도 안 나온다",
+  );
+});
+
+// ── 시즌 요약 ──────────────────────────────────────────────────────────────
+
+test("⚠absent 는 종료코드를 올리지 않는다(M11) — 「안 받았다」는 FAIL 도 ERROR 도 아니다", () => {
+  const s = summarizeSeasons([
+    report({ season: 2025, sourceWritesBids: false }),
+    report({
+      season: 2026,
+      loaded: false,
+      teams: 0,
+      sourceWritesBids: null,
+      skipped: { kind: "absent", reason: "구단 페이지가 0장" },
+    }),
+  ]);
+  assert.equal(s.loaded, 1);
+  assert.equal(s.absent, 1);
+  assert.equal(s.exitCode, 0, "⚠개최 전 시즌이 있다고 배치를 붉히지 않는다");
+});
+
+test("⚠FAIL 과 ERROR 를 갈래별로 센다 — 「일부 실패」로 뭉치지 않는다", () => {
+  const s = summarizeSeasons([
+    report({ season: 2005, loaded: false, skipped: { kind: "load", reason: "1巡目이 두 구획에" } }),
+    report({ season: 2006, loaded: false, skipped: { kind: "parse", reason: "구조가 바뀌었다" } }),
+    report({ season: 2007, loaded: false, skipped: { kind: "provenance", reason: "사이드카가 없다" } }),
+    report({ season: 2008, loaded: false, skipped: { kind: "error", reason: "TypeError: x" } }),
+    report({ season: 2009, loaded: false, skipped: { kind: "absent", reason: "안 받았다" } }),
+  ]);
+  assert.deepEqual(
+    { load: s.load, parse: s.parse, provenance: s.provenance, error: s.error, absent: s.absent },
+    { load: 1, parse: 1, provenance: 1, error: 1, absent: 1 },
+  );
+  assert.equal(s.loaded, 0);
+  assert.equal(s.exitCode, 1);
+});
+
+test("⚠경합을 안 쓰는 시즌을 따로 센다(B2) — 화면이 「데이터 없음」으로 그리면 거짓이다", () => {
+  const s = summarizeSeasons([
+    report({ season: 2022, sourceWritesBids: true }),
+    report({ season: 2023, sourceWritesBids: false }),
+    report({ season: 2024, sourceWritesBids: false }),
+    report({ season: 2026, loaded: false, sourceWritesBids: null, skipped: { kind: "absent", reason: "x" } }),
+  ]);
+  assert.equal(s.noBidsSource, 2, "⚠적재된 시즌만 센다 — 건너뛴 시즌은 「안 쟀음」이지 「안 쓴다」가 아니다");
+  assert.deepEqual(
+    s.limited,
+    [2023, 2024],
+    "⚠제한된 시즌은 이름으로 남는다 — 「일부만」이라고 쓰면 어느 것인지 알 수 없다",
+  );
+  assert.equal(s.exitCode, 0);
+});
+
+test("⚠구단이 덜 들어온 시즌을 「INV-N2 는 걸 수 있다」로 세지 마라 — 하나도 못 건다", () => {
+  // ⚠적재는 됐는데 구단이 7장뿐인 시즌. `checkableInvariants` 는 []를 주는데,
+  //   「여섯보다 적다」로만 세면 **제한 시즌과 한 칸에 들어가** 요약이 거짓말을 한다.
+  const s = summarizeSeasons([
+    report({ season: 2019, teams: 12, sourceWritesBids: true }),
+    report({ season: 2020, teams: 7, sourceWritesBids: true }),
+    report({ season: 2023, teams: 12, sourceWritesBids: false }),
+  ]);
+  assert.deepEqual(s.limited, [2023], "⚠INV-N2 를 걸 수 있는 시즌만 여기 온다");
+  assert.deepEqual(s.incomplete, [2020], "⚠아카이브가 덜 들어온 시즌은 따로 세운다");
+  assert.equal(s.loaded, 3);
 });
