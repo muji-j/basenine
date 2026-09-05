@@ -6580,10 +6580,28 @@ function draftRivals(raw: string | null): readonly string[] | null {
 export function loadDraftPage(db: Db, o: LoadOptions): DraftPageData {
   const season = o.season;
 
+  /**
+   * ⚠**세 표의 합집합이다 — `kinds` 와 같은 규칙이어야 한다**(2026-09-05 검수 [Important 2]).
+   *
+   * `draft_event` 단독으로 뽑고 있었는데, 같은 함수의 `kinds` 는 event ∪ pick ∪ bid 였다.
+   * **한 함수 안에서 「그 시즌이 있는가」와 「그 구획이 있는가」가 다른 규칙을 쓰면**,
+   * 이벤트 행만 빠진 시즌이 **화면에는 지명이 다 나오는데 시즌 전환 목록에는 없는** 상태가 된다.
+   * Task 2·3 이 이 목록을 **페이지 생성 대상**으로 쓰면 그 해가 통째로 안 만들어진다 —
+   * 2018 오릭스 `bs` 148경기가 사라졌던 것과 같은 모양이다(CLAUDE.md §2-2).
+   *
+   * ⚠**지금 그 상태가 안 생기는 것은 적재기가 event upsert 와 pick/bid 교체를 한 트랜잭션에
+   * 묶기 때문이지 이 함수가 보장하는 것이 아니다.** 남의 원자성에 기대지 않는다 —
+   * 계획된 wikipedia 적재기가 같은 계약을 지킬지는 아무도 확인하지 않았다.
+   */
   const heldSeasons = (
-    db.raw.prepare("SELECT DISTINCT season FROM draft_event ORDER BY season").all() as unknown as {
-      season: number;
-    }[]
+    db.raw
+      .prepare(
+        `SELECT season FROM draft_event
+         UNION SELECT season FROM draft_pick
+         UNION SELECT season FROM draft_bid
+         ORDER BY season`,
+      )
+      .all() as unknown as { season: number }[]
   ).map((r) => r.season);
 
   const events = db.raw
@@ -6806,19 +6824,47 @@ export function loadDraftPage(db: Db, o: LoadOptions): DraftPageData {
   }));
 
   /**
-   * ⚠**이 시즌이 왜 비었는지를 말한다.** 「데이터가ありません」한 줄로 접으면
+   * ⚠**이 시즌이 왜 비었는지를 말한다.** 「データがありません」한 줄로 접으면
    * 「아직 안 열렸다」와 「우리가 안 받았다」가 같은 화면이 된다.
-   * ⚠**「개최 전」은 「보유 최신 시즌보다 뒤」에서 유도한 것이지 날짜를 본 것이 아니다** —
-   *   `held_on` 이 전건 NULL 이라 볼 날짜가 없다. **개최 뒤 수집 전까지는 이 문장이 앞선다.**
-   *   드래프트 수집은 손으로 돌리므로(런북 §1) 그 창이 며칠 될 수 있다.
+   *
+   * ⚠⚠**「개최 전」은 「보유 최신 시즌보다 뒤」에서 유도하면 안 된다**(2026-09-05 검수 [Important 1]).
+   * 초판이 그렇게 했고 **거짓 사실 진술이 나왔다**: 마지막 수집이 2023 인 채로 2026 에 빌드하면
+   * **이미 끝난 2024·2025 드래프트를 「まだ開催されていません」이라고 단정**했다.
+   * ⚠**초판 주석의 「며칠」은 과소평가였다** — 드래프트 수집은 **연 1회 수동 실행**이고
+   * 자동화도 리마인더도 없어서(`docs/operations/draft-backfill.md`) 위험 창의 **상한이 없다.**
+   * 한 사이클만 놓치면 그 시즌은 영영 「아직 열리지 않았습니다」로 남는다.
+   * ⚠**이 화면이 막으려던 「틀린 값을 조용히 보여준다」가 시즌 단위에서 재발한 것이다**(CLAUDE.md §6).
+   *
+   * → **달력으로 단정할 수 있을 때만 단정한다**(주입된 `builtOn` · M6):
+   * ```
+   * season > builtOn 의 해                     아직 오지 않은 시즌   → 확실히 개최 전
+   * season = builtOn 의 해 · builtOn 이 10월 전  개최월 전            → 확실히 개최 전
+   * 그 밖(지난 시즌 · 개최월이 지난 당해)                             → 「우리가 안 받았다」만 말한다
+   * ```
+   * ⚠**셋째 갈래에서 「개최됐다」고도 말하지 않는다** — 우리가 아는 것은 우리 DB 에 없다는 것뿐이다.
    */
   const latestHeld = heldSeasons.at(-1);
+  /**
+   * ⚠**시계를 읽지 않는다**(M6) — 주입된 `builtOn`(`YYYY-MM-DD` JST)을 자른다.
+   * `toDayNumber` 와 같은 방식이고 `Date` 를 안 쓰므로 타임존이 끼어들 자리가 없다.
+   * ⚠**형식이 깨지면 `NaN` 이 되고 두 비교가 모두 `false` 가 되어 아래 「모른다」 갈래로 떨어진다** —
+   *   즉 망가지는 방향이 **단정하지 않는 쪽**이다. 그건 의도한 것이고, 반대로 기울면 안 된다.
+   */
+  const builtOnYear = Number(o.builtOn.slice(0, 4));
+  const builtOnMonth = Number(o.builtOn.slice(5, 7));
+  /**
+   * ⚠**개최월을 「확실히 그 전」의 경계로만 쓴다** — 「그 뒤면 열렸다」로는 쓰지 않는다.
+   * 근거는 저장소 안에 있다(설계 §8 · 소스 조사 §7 이 **2026-10-22** 를 든다 · 런북 「例年10月」).
+   * ⚠**우리 데이터가 개최일을 말해 주지는 않는다** — `held_on` 이 47/47 전건 NULL 이다.
+   * ⚠**옛 分離ドラフト의 高校生 회의는 9월에도 열렸다** — 그래서 이 경계는 「지났으니 열렸다」
+   *   쪽으로는 절대 못 쓴다. 한 방향으로만 쓰는 것이 이 상수가 안전한 유일한 방법이다.
+   */
+  const DRAFT_MONTH = 10;
+  const notYetHeld = season > builtOnYear || (season === builtOnYear && builtOnMonth < DRAFT_MONTH);
   const state: DataState =
     sections.length > 0
       ? { kind: "ok" }
-      : // ⚠**한 해도 없는 DB 를 「아직 개최 전」이라고 하면 안 된다** — 그건 우리가 아무것도
-        //   안 받았다는 뜻이지 그 해에 드래프트가 없었다는 뜻이 아니다(자기 검토에서 잡았다)
-        latestHeld !== undefined && season > latestHeld
+      : notYetHeld
         ? {
             kind: "offseason",
             detail: `${season}年のドラフト会議はまだ開催されていません（例年10月）`,
@@ -6826,9 +6872,14 @@ export function loadDraftPage(db: Db, o: LoadOptions): DraftPageData {
         : {
             kind: "uncollected",
             detail:
+              // ⚠**한 해도 없는 DB 를 「아직 개최 전」이라고 하면 안 된다** — 그건 우리가 아무것도
+              //   안 받았다는 뜻이지 그 해에 드래프트가 없었다는 뜻이 아니다
               latestHeld === undefined
                 ? "ドラフトの記録をまだ一件も収集していません"
-                : `${season}年のドラフトはまだ収集していません（収集済みは${heldSeasons[0]!}〜${latestHeld}年）`,
+                : season === builtOnYear
+                  ? // ⚠**당해 시즌이고 개최월이 지났다 — 어느 쪽인지 우리는 모른다.** 단정하지 않는다
+                    `${season}年のドラフトの記録がありません。開催前かもしれませんし、開催済みで取り込みが済んでいないだけかもしれません（収集済みは${heldSeasons[0]!}〜${latestHeld}年）`
+                  : `${season}年のドラフトはまだ収集していません（収集済みは${heldSeasons[0]!}〜${latestHeld}年）`,
           };
 
   return {
