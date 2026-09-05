@@ -6,6 +6,10 @@
  * 만든 값을 옮겨 담기만 한다. 여기에 산식이 생기는 순간 값이 두 벌이 된다.
  */
 import type { Db } from "@bb-app/store";
+// ⚠**「추첨이 있는 구획인가」·「회차가 있는 구획인가」의 정본은 적재 쪽 한 벌이다**(M1).
+//   여기서 목록을 다시 적으면 구획이 하나 늘어난 날 화면만 옛 목록으로 조용히 돈다.
+import { LOTTERY_KINDS, ROUND_NUMBERED_KINDS } from "@bb-app/store";
+import type { DataState } from "./layout.ts";
 import {
   attempts,
   battedBalls,
@@ -33,7 +37,9 @@ import {
   seasonNameJoin,
 } from "@bb-app/aggregate";
 // ⚠**통산 합계·시즌 수는 파서 쪽 한 벌을 쓴다**(M1) — 여기에 다시 쓰면 시험이 붙은 쪽이 죽는다
-import { careerTotal, seasonsPlayed } from "@bb-app/parser";
+// ⚠**드래프트 구획 어휘(`DRAFT_KINDS`)도 파서가 정본이다** — 여기에 6종을 다시 적지 않는다(M1)
+import { DRAFT_KINDS, careerTotal, seasonsPlayed } from "@bb-app/parser";
+import type { DraftKind } from "@bb-app/parser";
 import type {
   CountLine,
   HeadToHead,
@@ -176,7 +182,16 @@ import type {
 } from "@bb-app/aggregate";
 import { regularSeasonUpcoming } from "./calendar.ts";
 import type { CalendarData, CalendarGame, CalendarMonth } from "./calendar.ts";
-import { NEUTRAL_COLOR, NON_TEAM_CODES, TEAMS, colorOf, leagueOf, shortNameOf, teamOf } from "@bb-app/domain";
+import {
+  NEUTRAL_COLOR,
+  NON_TEAM_CODES,
+  TEAMS,
+  canonicalTeamCode,
+  colorOf,
+  leagueOf,
+  shortNameOf,
+  teamOf,
+} from "@bb-app/domain";
 import type { Competition, League, TeamColor } from "@bb-app/domain";
 import { countsAsHit } from "@bb-app/parser";
 import type { Outcome } from "@bb-app/parser";
@@ -6112,5 +6127,736 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     // ⚠**위 루프가 잰 것을 그대로 들고 나간다** — 여기서 다시 판정하지 않는다(M1)
     wobaDerivation,
     games: [...gameList, ...postGameList],
+  };
+}
+
+/* ---- 드래프트 회의 ------------------------------------------------------- */
+
+/**
+ * 구획(회의)의 **화면 표기**. ⚠**어휘 자체는 `DRAFT_KINDS`(파서)가 정본이고 여기는 표기뿐이다**(M1).
+ *
+ * ⚠**`Record<DraftKind, …>` 로 적는 것이 요점이다** — 구획이 7종이 되는 날 **여기가 타입 오류로
+ * 먼저 죽는다.** 목록을 손으로 늘어놓으면 새 구획이 조용히 빠지고, 그 구획은 화면에서
+ * **키 문자열 그대로**(`kibou_nyudanwaku`) 나가거나 아예 사라진다.
+ *
+ * ⚠**실측(2026-09-05 · 2005~2025 21시즌)**: 실제로 쓰이는 것은 5종이다 —
+ * `shihaika` 1,349 · `ikusei` 626 · `daigaku_shakaijin` 130 · `koukousei` 110 ·
+ * `kibou_nyudanwaku` 19. **`jiyuu_kakutoku` 는 0건**이고 그건 결함이 아니라
+ * **그 제도가 2001~2004(수집 범위 밖)에만 있었기 때문**이다.
+ */
+export const DRAFT_KIND_LABEL: Readonly<Record<DraftKind, string>> = {
+  shihaika: "支配下",
+  ikusei: "育成",
+  koukousei: "高校生",
+  daigaku_shakaijin: "大学生・社会人",
+  jiyuu_kakutoku: "自由獲得選手",
+  kibou_nyudanwaku: "希望入団枠",
+};
+
+/**
+ * 구획을 화면에 놓는 **순서**.
+ *
+ * ⚠**개최 순서라고 주장하지 않는다** — 우리는 그것을 모른다. `draft_event.held_on` 이
+ * **47/47 전건 NULL** 이다(실측 2026-09-05). 2005~2007 分離ドラフト의 실제 일정은
+ * 우리 데이터 밖에 있으므로, 이 배열은 **읽기 좋은 배치**일 뿐이다.
+ * ⚠**育成을 끝에 둔다** — 支配下 서사를 먼저 읽고 나서 보는 것이 설계 §5 의 ③이다.
+ */
+export const DRAFT_KIND_ORDER: readonly DraftKind[] = [
+  "koukousei",
+  "daigaku_shakaijin",
+  "kibou_nyudanwaku",
+  "jiyuu_kakutoku",
+  "shihaika",
+  "ikusei",
+];
+
+/**
+ * **후일담(입단 거부·교섭권 정정)을 우리가 수집하고 있는가.**
+ *
+ * ⚠**`draft_note` 가 0행인 것을 「그런 일이 없었다」로 읽으면 거짓이다** — 2005 교섭권 정정
+ * (辻内崇伸 · 陽仲壽)도 2025 입단 거부(佐々木麟太郎 · 石川ケニー)도 **실재한다.**
+ * 0행인 이유는 **파서가 없어서**이고, 그건 DB 가 말할 수 없는 사실이라 여기 상수로 둔다(M11).
+ *
+ * ⚠**이 줄이 낡으면 화면이 영영 「아직 수집하지 않는다」라고 거짓말한다.**
+ * `draft-query.test.ts` 가 파서 소스와 이 값을 대조해 어긋나면 붉어진다 — **손으로만 고치지 마라.**
+ */
+export const DRAFT_NOTES_COLLECTED = false;
+
+/** 그 행이 어느 소스에서 왔는가. ⚠**행마다 남긴다** — 2023 이후는 대조 상대가 없다 */
+export type DraftOrigin = "npb" | "wikipedia";
+
+/**
+ * 지명·입찰에 붙는 구단.
+ *
+ * ⚠**코드가 연도의 함수다.** 같은 구단이 해마다 다른 슬러그로 나온다 —
+ * 실측: `bs`(オリックス 2005~2018 · 지명 116) · `b`(2019~ · 80) ·
+ * `yb`(横浜 2005~2011 · 53) · `db`(2012~ · 120).
+ */
+export interface DraftTeam {
+  /** 소스 슬러그 그대로. ⚠**정규화하지 않는다** — 그 해에 실제로 쓰인 값이다 */
+  code: string;
+  /**
+   * 짧은 표기. ⚠**모르는 코드면 `null` 이다**(M11 · M7).
+   *
+   * ⚠**`shortNameOf` 를 그냥 부르면 안 된다** — 그 함수는 모르는 코드에서 던지지 않고
+   * `code.toUpperCase()` 로 **조용히 떨어진다.** 그러면 화면에 **「YB」라는 정체불명의 구단**이
+   * 태연히 나가고, 아무 시험도 그걸 결함으로 읽지 못한다.
+   * ⚠**`yb` 를 `db` 로 접지도 않는다** — 2005년의 그 구단은 **DeNA 가 아니었다.**
+   *   접는 순간 화면이 시대착오적인 거짓말을 하고, 그건 「YB」보다 **더 그럴듯해서 더 나쁘다.**
+   *   제대로 고치려면 **「그 시즌에 존재한 구단」 이력 마스터**가 필요하고, 그건 이 태스크 밖이다
+   *   (설계 §0 이 2004 이전을 자른 이유와 같은 문제가 범위 안에서 다시 나온 것이다).
+   */
+  shortName: string | null;
+}
+
+/**
+ * 화면에 나오는 이름 하나.
+ *
+ * ⚠**링크가 없어도 이름은 남는다.** 드래프트에서 이 규칙이 특히 무겁다 —
+ * 지명된 선수의 상당수가 우리 `player` 표에 **영영 없다**(입단 거부 · 은퇴 · 1군 미등록).
+ * **행을 지우지 마라. 그 지명은 실제로 있었다.**
+ */
+export interface DraftName {
+  /** 소스 표기 그대로. ⚠**항상 있다** */
+  display: string;
+  /** 동일성 판정용 정규화형. ⚠**화면에 내지 마라** — 실측 2,234건 중 2,230건이 `display` 와 다르다 */
+  canonical: string | null;
+  /**
+   * 우리 선수 페이지로 이을 수 있으면 그 좌표. **없으면 `null` 이고 이름만 남는다.**
+   *
+   * ⚠**지금은 전건 `null` 이다** — 적재가 `player_id` 를 넣지 않는다(M10 · `store/src/draft.ts`
+   * 머리말: 「이름 문자열로 선수를 잇지 않는다. 연결 자체는 별도 태스크다」).
+   * 실측: `draft_pick` **2,234/2,234** · `draft_bid` **374/374** 전건 NULL.
+   * ⚠**그러니 여기서 이름으로 잇지 마라** — 그 금지가 M10 이고, 동명이인·개명·표기 요동이 그 이유다.
+   * ⚠**`season` 은 「그 선수 페이지가 실재하는 시즌」**이다. 드래프트 연도가 아니다 —
+   *   지명된 해에는 아직 1군 기록이 없으므로 그 해 페이지는 대개 존재하지 않는다.
+   */
+  link: { playerId: string; season: number } | null;
+}
+
+/** 1순위 입찰 한 건 — 한 구단이 적어 낸 이름. */
+export interface DraftBidEntry {
+  team: DraftTeam;
+  /**
+   * 그 구단이 적어 낸 이름.
+   * ⚠**같은 그룹 안에서도 표기가 다를 수 있다** — 실측 2019: 당첨 행 `佐々木 朗希` ·
+   * 낙첨 행 `佐々木朗希`(공백 없음). **표기를 하나로 접지 마라. 소스가 그렇게 적었다.**
+   */
+  name: DraftName;
+  /**
+   * 소스가 **선언한** 경합 상대(원문 표기 그대로).
+   * ⚠**`null` 은 「원래 없음」이다**(M11) — 단독지명 행에는 주석 자체가 없고, 그룹에 속하는데도
+   * 상대 문장이 없는 소스가 있을 수 있다. **`[]`(상대 0명)와 다른 값이다.**
+   * ⚠**구단 코드로 바꾸지 않는다** — `西武`↔`埼玉西武` 처럼 표기가 연대의 함수라 매핑표가
+   * 한 벌로 안 선다(020 마이그레이션 주석).
+   */
+  rivals: readonly string[] | null;
+  /**
+   * `1` 당첨 · `0` 낙첨 · **`null` 단독지명**.
+   * ⚠**셋을 두 값으로 접지 마라**(M11) — 「경합에서 이겼다」와 「아무도 안 겹쳤다」는 다른 사실이다.
+   * ⚠**행 자체가 이 값을 들고 다녀야 한다.** 그래야 `losers` 에 섞인 결함 행(당첨이 둘인 그룹)이
+   *   화면에서 **틀린 이름표를 달고도 조용하지는 않다.**
+   */
+  won: 1 | 0 | null;
+  origin: DraftOrigin;
+}
+
+/**
+ * 경합 그룹 하나 — **당첨 1 + 낙첨 N** 이 정상이다.
+ */
+export interface DraftBidGroup {
+  /** 소스 유래 키(`1:佐々木朗希`). ⚠**표시용이 아니다** */
+  groupKey: string;
+  /** 겨룬 선수. ⚠구단마다 표기가 달랐다면 **당첨 구단의 표기**를 쓴다 */
+  name: DraftName;
+  /**
+   * 교섭권을 얻은 구단.
+   * ⚠**`null` 이면 그것은 결함이다**(INV-N1). **화면에서 조용히 건너뛰지 마라** —
+   * 그룹을 지우면 「그 경합은 없었다」가 되고, 우리는 그게 참인지 알 방법이 없다.
+   * 같은 사실이 `DraftPageData.defects` 에도 남는다.
+   */
+  winner: DraftBidEntry | null;
+  /**
+   * **당첨으로 고른 한 행을 뺀 나머지 전부.** 소스 순서.
+   *
+   * ⚠**「낙첨 행만」이 아니다 — 일부러 그렇게 했다.** 「`won !== 1` 인 행」으로 정의하면
+   * 당첨이 둘인 결함 그룹에서 **둘째 당첨 행이 화면에서 조용히 사라진다.**
+   * 여기 정의라면 `winner` + `losers` 가 **언제나 그룹의 전부**이고
+   * (`teams === (winner ? 1 : 0) + losers.length` 가 항상 성립),
+   * 섞여 들어온 행은 자기 `won === 1` 로 스스로를 밝힌다.
+   * ⚠**그런 그룹은 `DraftPageData.defects.groupsWithManyWinners` 에도 남는다** — 실측 0건이다.
+   */
+  losers: readonly DraftBidEntry[];
+  /**
+   * **이 그룹에 든 구단 수**(= `winner` 있으면 1 + `losers.length`).
+   * ⚠**분모다**(M2). 화면이 「5球団競合」을 스스로 세면 언젠가 다른 수를 센다.
+   */
+  teams: number;
+}
+
+/** 1순위 입찰의 한 회차 — 1回 · 外れ1位 · 外れ外れ1位 …. */
+export interface DraftBidRound {
+  /**
+   * ⚠**지명 회차가 아니라 「1巡目 안에서 몇 번째 추첨인가」다**(`store/src/draft.ts` 머리말 표).
+   * 어느 추첨에서 이겼든 그 구단이 얻은 것은 **1巡目 지명**이다.
+   */
+  roundNo: number;
+  groups: readonly DraftBidGroup[];
+  /**
+   * 그 회차의 **단독지명**(경합 그룹의 여집합 · `won IS NULL`).
+   * ⚠**낙첨(`won = 0`)과 다른 사실이다**(M11) — 「경합에서 졌다」와 「아무도 안 겹쳤다」.
+   * ⚠**회차마다 나온다** — 실측 2019 는 1·2·3회차 전부에 단독지명이 있다.
+   */
+  solo: readonly DraftBidEntry[];
+}
+
+/**
+ * 1순위 입찰 블록.
+ *
+ * ⚠**「입찰이 0행」이 두 가지 다른 사실이다.** 그래서 `state` 가 붙는다 — `counts` 만 보면
+ * 2023(=NPB 가 표시를 껐다)과 진짜 수집 실패가 같은 화면이 된다.
+ */
+export interface DraftBidBlock {
+  state: DataState;
+  rounds: readonly DraftBidRound[];
+  /**
+   * 분모 한 벌(M2). `bids` 는 입찰 **행** 수, `groups` 는 경합 그룹 수, `solo` 는 단독지명 수.
+   * ⚠**`bids = groups 안의 구단 수 + solo` 여야 한다** — 어긋나면 어딘가를 흘린 것이다.
+   */
+  counts: { bids: number; groups: number; solo: number };
+}
+
+/** 확정된 지명 한 건. */
+export interface DraftPick {
+  team: DraftTeam;
+  name: DraftName;
+  /** `投手`·`捕手`·`内野手`·`外野手`. ⚠소스가 안 적으면 `null`(M11) */
+  position: string | null;
+  /** 출신(학교·팀). ⚠소스가 안 적으면 `null` */
+  fromOrg: string | null;
+  /**
+   * 웨이버 방향.
+   * ⚠**지금은 전건 `null` 이다** — npb.jp 명단 페이지가 이것을 **적지 않는다**(실측 2,234/2,234).
+   * **「1순위라서 없다」가 아니라 「이 소스가 말하지 않아서 없다」**다(M11).
+   */
+  waiverDir: "→" | "←" | null;
+  /** 전체 지명 순번. ⚠**지금은 전건 `null`**(실측 2,234/2,234) */
+  pickSeq: number | null;
+  origin: DraftOrigin;
+}
+
+/** 지명 한 회차. */
+export interface DraftRound {
+  roundNo: number;
+  /**
+   * **이 수가 소스의 회차인가.**
+   * ⚠`false` 면 **적재가 매긴 순번**이다(`jiyuu_kakutoku`·`kibou_nyudanwaku` — 회차라는 개념이
+   * 없는 제도). 화면이 그것을 「N巡目」이라고 쓰면 **거짓**이다.
+   */
+  numbered: boolean;
+  /** ⚠구단 순서는 `TEAMS` 순이다. **웨이버 순서가 아니다** — 그건 이 소스에 없다 */
+  picks: readonly DraftPick[];
+}
+
+/** 그 구획을 실은 페이지(M4 · L3). */
+export interface DraftSectionSource {
+  url: string;
+  fetchedAt: string;
+  /** ⚠**본문 해시다** — npb.jp 는 `ETag`·`Last-Modified` 를 주지 않는다 */
+  revision: string;
+  /** wikipedia 유래면 `CC BY-SA 4.0`. ⚠npb 유래면 `null`(실측 47/47 전건 NULL) */
+  license: string | null;
+  /** 개최일. ⚠**실측 47/47 전건 NULL** — 소스가 이 페이지에 안 적는다(M11) */
+  heldOn: string | null;
+}
+
+/** 구획(회의) 하나. 2005~2007 은 한 해에 3~4개, 2008~ 은 2개다. */
+export interface DraftSection {
+  kind: DraftKind;
+  /** 화면 표기. ⚠표는 `DRAFT_KIND_LABEL` 한 벌이다(M1) */
+  label: string;
+  /**
+   * 1순위 입찰.
+   * ⚠**`null` 은 「데이터 없음」이 아니라 「제도상 추첨이 없는 구획」이다**(育成·自由獲得·希望入団枠).
+   * `unpublished` 로 그리면 **없는 잘못을 NPB 에 씌우는** 거짓말이 된다.
+   */
+  bids: DraftBidBlock | null;
+  rounds: readonly DraftRound[];
+  /** 이 구획의 지명 총수. ⚠**분모다**(M2) */
+  pickCount: number;
+  source: DraftSectionSource | null;
+}
+
+/** 사후 사실 한 건(교섭권 정정 · 입단 거부 …). */
+export interface DraftNote {
+  kind: DraftKind;
+  team: DraftTeam;
+  name: DraftName;
+  /**
+   * `kousyouken_teisei` | `nyudan_kyohi` | `shimei_hakudatsu` | `fugoui`.
+   * ⚠**표기표를 여기서 만들지 않았다** — 실측 **0행**이라 어떤 문장이 실제로 오는지 모르고,
+   * 안 본 것을 위해 어휘를 지어 두면 파서가 생긴 날 **두 벌이 된다**(M1).
+   */
+  noteKind: string;
+  detail: string;
+}
+
+/**
+ * 후일담 블록.
+ * ⚠**0행과 미수집을 구별한다**(M11) — 지금은 언제나 후자다(`DRAFT_NOTES_COLLECTED`).
+ */
+export interface DraftNotesBlock {
+  state: DataState;
+  rows: readonly DraftNote[];
+}
+
+/**
+ * **비어 있는 것이 정상이다.** 비어 있지 않으면 그 사실이 화면까지 가야 한다.
+ *
+ * ⚠**조용히 건너뛰는 것이 최악이다.** 당첨 없는 그룹을 화면에서 빼면 「그 경합은 없었다」가
+ * 되고, 그건 **값도 합계도 그럴듯해서 눈으로는 못 잡는다.**
+ */
+export interface DraftDefects {
+  /** 당첨이 0건인 경합 그룹의 키(INV-N1). 실측 **75그룹 중 0건** */
+  groupsWithoutWinner: readonly string[];
+  /** 당첨이 2건 이상인 경합 그룹의 키. 같은 불변식의 반대쪽 */
+  groupsWithManyWinners: readonly string[];
+}
+
+/** 시즌 하나의 드래프트 화면 데이터. */
+export interface DraftPageData {
+  season: number;
+  /**
+   * 우리가 **실제로 가진** 드래프트 시즌. 화면의 시즌 전환이 여기서 나온다.
+   * ⚠**화면이 목록을 박으면 소급할 때마다 사람이 고쳐야 하고, 그래서 안 고쳐진다**
+   * (선수 페이지 1,864장이 「2025年から」라는 거짓말을 싣고 있던 사고와 같은 모양).
+   */
+  heldSeasons: readonly number[];
+  /** 이 시즌 자체의 상태. ⚠`sections` 가 비면 **왜 비었는지**를 이 값이 말한다 */
+  state: DataState;
+  sections: readonly DraftSection[];
+  notes: DraftNotesBlock;
+  /** 이 화면에 섞인 출처. ⚠wikipedia 가 섞이면 **CC BY-SA 표기가 필요하다**(L3) */
+  origins: readonly DraftOrigin[];
+  /**
+   * 선수 페이지로 이어진 이름의 수 / **이름이 있는 행의 수**.
+   * ⚠**「0건」과 「안 쟀음」을 구별하려고 분모를 함께 낸다** — 지금은 `linked` 가 언제나 0 이고
+   * 그 이유는 `DraftName.link` 주석에 있다. 연결 태스크가 붙는 순간 이 수가 움직인다.
+   */
+  links: { linked: number; total: number };
+  /**
+   * 우리 구단 어휘에 없는 코드.
+   * ⚠**결함이 아니라 「우리 어휘가 아직 그 시대를 모른다」다** — 실측으로 `yb`(横浜 2005~2011)
+   * 하나이고, 접을 상대(`db`)는 **다른 이름의 구단**이라 접으면 거짓이 된다(`DraftTeam.shortName`).
+   */
+  unknownTeamCodes: readonly string[];
+  defects: DraftDefects;
+}
+
+interface DraftEventSql {
+  kind: string;
+  held_on: string | null;
+  source: string;
+  fetched_at: string;
+  revision: string;
+  license: string | null;
+}
+
+interface DraftPickSql {
+  kind: string;
+  team: string;
+  round_no: number;
+  pick_seq: number | null;
+  waiver_dir: string | null;
+  name_display: string;
+  name_canonical: string | null;
+  position: string | null;
+  from_org: string | null;
+  origin: string;
+  player_id: string | null;
+}
+
+interface DraftBidSql {
+  kind: string;
+  round_no: number;
+  team: string;
+  group_key: string | null;
+  won: number | null;
+  name_display: string;
+  name_canonical: string | null;
+  rivals: string | null;
+  origin: string;
+  player_id: string | null;
+}
+
+interface DraftNoteSql {
+  kind: string;
+  team: string;
+  name_display: string;
+  note_kind: string;
+  detail: string;
+}
+
+const DRAFT_KIND_SET: ReadonlySet<string> = new Set<string>(DRAFT_KINDS);
+
+/**
+ * ⚠**모르는 값을 조용히 넘기지 않는다**(M7). DB 의 `CHECK` 가 이미 막고 있지만, 그 제약이
+ * 느슨해지거나 새 구획이 생긴 날 **화면이 키 문자열을 그대로 뱉거나 그 구획을 통째로 잃는다.**
+ */
+function draftKindOf(raw: string): DraftKind {
+  if (!DRAFT_KIND_SET.has(raw)) {
+    throw new RangeError(`모르는 드래프트 구획: ${raw}. DRAFT_KINDS 와 표기표를 갱신하라`);
+  }
+  return raw as DraftKind;
+}
+
+/** ⚠`origin` 도 같다 — 어느 소스에서 왔는지 모르는 행을 화면에 싣지 않는다(L3) */
+function draftOriginOf(raw: string): DraftOrigin {
+  if (raw !== "npb" && raw !== "wikipedia") {
+    throw new RangeError(`모르는 드래프트 출처: ${raw}`);
+  }
+  return raw;
+}
+
+const DRAFT_TEAM_ORDER = new Map(TEAMS.map((t, i) => [t.code, i] as const));
+
+function draftTeam(code: string): DraftTeam {
+  const known = DRAFT_TEAM_ORDER.has(canonicalTeamCode(code));
+  return { code, shortName: known ? shortNameOf(code) : null };
+}
+
+/** ⚠모르는 코드는 **끝으로 몰되 사라지지 않는다** — 순서가 없다고 행을 빼면 안 된다 */
+function draftTeamOrder(code: string): number {
+  return DRAFT_TEAM_ORDER.get(canonicalTeamCode(code)) ?? TEAMS.length;
+}
+
+/**
+ * 선수 페이지가 **실재하는** 시즌. 없으면 지도에 안 담긴다.
+ *
+ * ⚠**「`player` 에 있다」와 「페이지가 있다」는 다르다.** 선수 페이지는 그 시즌에 기록이 있는
+ * 선수에게만 생기므로, 등록만 되고 1군 기록이 없으면 페이지가 없다 — 그때 링크를 걸면 **404** 다.
+ * ⚠**재료가 0건이면 조회 자체를 하지 않는다** — 800,000행 스캔을 「아무것도 안 나올 것」에 쓰지 않는다.
+ */
+function draftLinkSeasons(db: Db, ids: readonly string[]): Map<string, number> {
+  const out = new Map<string, number>();
+  if (ids.length === 0) return out;
+  const holes = ids.map(() => "?").join(",");
+  const rows = db.raw
+    .prepare(
+      `SELECT id, MAX(season) AS season FROM (
+         SELECT bl.player_id AS id, g.season AS season
+           FROM batting_line bl JOIN game g ON g.game_id = bl.game_id
+          WHERE g.status = 'played' AND bl.player_id IN (${holes})
+         UNION ALL
+         SELECT pl.player_id AS id, g.season AS season
+           FROM pitching_line pl JOIN game g ON g.game_id = pl.game_id
+          WHERE g.status = 'played' AND pl.player_id IN (${holes})
+       ) GROUP BY id`,
+    )
+    .all(...ids, ...ids) as unknown as { id: string; season: number }[];
+  for (const r of rows) out.set(r.id, r.season);
+  return out;
+}
+
+/**
+ * ⚠**JSON 이 배열이 아니면 던진다**(M7). 020 의 `CHECK` 는 `json_valid` 까지만 보므로
+ * `"3"` 이나 `{}` 도 통과하는데, 그대로 흘리면 화면이 **글자 하나씩 상대 구단으로** 그린다.
+ */
+function draftRivals(raw: string | null): readonly string[] | null {
+  if (raw === null) return null;
+  const parsed: unknown = JSON.parse(raw);
+  if (!Array.isArray(parsed) || parsed.some((x) => typeof x !== "string")) {
+    throw new RangeError(`경합 상대가 문자열 배열이 아니다: ${raw}`);
+  }
+  return parsed as string[];
+}
+
+/**
+ * 시즌 하나의 드래프트 화면 데이터.
+ *
+ * ⚠**「행이 0건」을 한 문장으로 그리지 마라**(M12). 이 함수가 존재하는 이유의 절반이 그것이고,
+ * 나머지 절반은 **당첨 없는 경합 그룹을 조용히 지우지 않는 것**이다.
+ */
+export function loadDraftPage(db: Db, o: LoadOptions): DraftPageData {
+  const season = o.season;
+
+  const heldSeasons = (
+    db.raw.prepare("SELECT DISTINCT season FROM draft_event ORDER BY season").all() as unknown as {
+      season: number;
+    }[]
+  ).map((r) => r.season);
+
+  const events = db.raw
+    .prepare(
+      `SELECT kind, held_on, source, fetched_at, revision, license
+         FROM draft_event WHERE season = ?`,
+    )
+    .all(season) as unknown as DraftEventSql[];
+
+  const picks = db.raw
+    .prepare(
+      `SELECT kind, team, round_no, pick_seq, waiver_dir, name_display, name_canonical,
+              position, from_org, origin, player_id
+         FROM draft_pick WHERE season = ? ORDER BY kind, round_no`,
+    )
+    .all(season) as unknown as DraftPickSql[];
+
+  const bids = db.raw
+    .prepare(
+      `SELECT kind, round_no, team, group_key, won, name_display, name_canonical,
+              rivals, origin, player_id
+         FROM draft_bid WHERE season = ? ORDER BY kind, round_no, rowid`,
+    )
+    .all(season) as unknown as DraftBidSql[];
+
+  const noteRows = db.raw
+    .prepare(
+      `SELECT kind, team, name_display, note_kind, detail
+         FROM draft_note WHERE season = ? ORDER BY kind, team, name_display`,
+    )
+    .all(season) as unknown as DraftNoteSql[];
+
+  const ids = new Set<string>();
+  for (const p of picks) if (p.player_id !== null) ids.add(p.player_id);
+  for (const b of bids) if (b.player_id !== null) ids.add(b.player_id);
+  const linkSeasons = draftLinkSeasons(db, [...ids]);
+
+  let linked = 0;
+  let total = 0;
+  const name = (display: string, canonical: string | null, playerId: string | null): DraftName => {
+    total += 1;
+    const pageSeason = playerId === null ? undefined : linkSeasons.get(playerId);
+    if (playerId !== null && pageSeason !== undefined) {
+      linked += 1;
+      return { display, canonical, link: { playerId, season: pageSeason } };
+    }
+    // ⚠**행을 지우지 않는다** — 링크만 빠지고 이름은 남는다
+    return { display, canonical, link: null };
+  };
+
+  const unknownTeams = new Set<string>();
+  const team = (code: string): DraftTeam => {
+    const t = draftTeam(code);
+    if (t.shortName === null) unknownTeams.add(code);
+    return t;
+  };
+
+  const origins = new Set<DraftOrigin>();
+  const groupsWithoutWinner: string[] = [];
+  const groupsWithManyWinners: string[] = [];
+
+  const bidEntry = (r: DraftBidSql): DraftBidEntry => {
+    const origin = draftOriginOf(r.origin);
+    origins.add(origin);
+    if (r.won !== null && r.won !== 0 && r.won !== 1) {
+      throw new RangeError(`모르는 추첨 결과: ${String(r.won)}`);
+    }
+    return {
+      team: team(r.team),
+      name: name(r.name_display, r.name_canonical, r.player_id),
+      rivals: draftRivals(r.rivals),
+      won: r.won,
+      origin,
+    };
+  };
+
+  /**
+   * ⚠**구획 목록을 `draft_event` 에서만 뽑지 않는다.** 이벤트 행이 어떤 이유로 빠지면
+   * 그 구획의 지명이 **통째로 화면에서 사라지고**, 그 화면은 「그 해는 원래 이렇다」로 읽힌다
+   * (2018 오릭스 `bs` 사고와 같은 모양 · CLAUDE.md §2-2). **셋의 합집합**으로 뽑는다.
+   */
+  const kinds = [
+    ...new Set([
+      ...events.map((e) => draftKindOf(e.kind)),
+      ...picks.map((p) => draftKindOf(p.kind)),
+      ...bids.map((b) => draftKindOf(b.kind)),
+    ]),
+  ].sort((a, b) => DRAFT_KIND_ORDER.indexOf(a) - DRAFT_KIND_ORDER.indexOf(b));
+
+  const sections: DraftSection[] = kinds.map((kind) => {
+    const ev = events.find((e) => e.kind === kind);
+    const kindPicks = picks.filter((p) => p.kind === kind);
+    const kindBids = bids.filter((b) => b.kind === kind);
+
+    // ---- 지명(회차별) ----
+    const numbered = ROUND_NUMBERED_KINDS.has(kind);
+    const roundNos = [...new Set(kindPicks.map((p) => p.round_no))].sort((a, b) => a - b);
+    const rounds: DraftRound[] = roundNos.map((roundNo) => ({
+      roundNo,
+      numbered,
+      picks: kindPicks
+        .filter((p) => p.round_no === roundNo)
+        .sort((a, b) => draftTeamOrder(a.team) - draftTeamOrder(b.team) || a.team.localeCompare(b.team))
+        .map((p): DraftPick => {
+          const origin = draftOriginOf(p.origin);
+          origins.add(origin);
+          const dir = p.waiver_dir;
+          if (dir !== null && dir !== "→" && dir !== "←") {
+            throw new RangeError(`모르는 웨이버 방향: ${dir}`);
+          }
+          return {
+            team: team(p.team),
+            name: name(p.name_display, p.name_canonical, p.player_id),
+            position: p.position,
+            fromOrg: p.from_org,
+            waiverDir: dir,
+            pickSeq: p.pick_seq,
+            origin,
+          };
+        }),
+    }));
+
+    // ---- 1순위 입찰 ----
+    let bidBlock: DraftBidBlock | null = null;
+    if (LOTTERY_KINDS.has(kind)) {
+      const bidRoundNos = [...new Set(kindBids.map((b) => b.round_no))].sort((a, b) => a - b);
+      let groupCount = 0;
+      let soloCount = 0;
+      const bidRounds: DraftBidRound[] = bidRoundNos.map((roundNo) => {
+        const inRound = kindBids.filter((b) => b.round_no === roundNo);
+        const byGroup = new Map<string, DraftBidSql[]>();
+        const solo: DraftBidEntry[] = [];
+        for (const r of inRound) {
+          if (r.group_key === null) {
+            solo.push(bidEntry(r));
+            continue;
+          }
+          const bucket = byGroup.get(r.group_key);
+          if (bucket === undefined) byGroup.set(r.group_key, [r]);
+          else bucket.push(r);
+        }
+        soloCount += solo.length;
+        groupCount += byGroup.size;
+        const groups: DraftBidGroup[] = [...byGroup].map(([groupKey, rows]) => {
+          // ⚠**행을 먼저 전부 만든다.** 「당첨」과 「낙첨」으로 두 번 거르면 당첨이 둘인 그룹에서
+          //   둘째 행이 어느 쪽에도 안 들어가 **조용히 사라진다**(자기 검토에서 실제로 그랬다)
+          const entries = rows.map((r) => bidEntry(r));
+          const winnerIndex = entries.findIndex((e) => e.won === 1);
+          const winnerCount = entries.filter((e) => e.won === 1).length;
+          // ⚠**둘 다 조용히 넘기지 않는다** — 그룹은 그대로 그리고, 사실은 `defects` 에 남긴다
+          if (winnerCount === 0) groupsWithoutWinner.push(groupKey);
+          if (winnerCount > 1) groupsWithManyWinners.push(groupKey);
+          const winner = winnerIndex === -1 ? null : entries[winnerIndex]!;
+          const losers = entries.filter((_, i) => i !== winnerIndex);
+          return {
+            groupKey,
+            // ⚠**당첨 구단의 표기를 그룹 이름으로 쓴다** — 같은 그룹 안에서 표기가 갈린다
+            //   (실측 2019: 당첨 `佐々木 朗希` · 낙첨 `佐々木朗希`).
+            //   당첨이 없으면(=결함) 남은 첫 행의 표기를 쓰되 **행을 지우지는 않는다**
+            name: (winner ?? entries[0]!).name,
+            winner,
+            losers,
+            teams: entries.length,
+          };
+        });
+        return { roundNo, groups, solo };
+      });
+
+      /**
+       * ⚠**입찰 0행의 뜻이 시즌마다 다르다.**
+       * - 지명은 들어왔는데 입찰만 0 → **NPB 가 표시를 껐다**(2023·2024·2025 실측).
+       *   경합은 실제로 있었다 — 2023 야쿠르트 페이지엔 그 문장이 HTML 주석 안에 남아 있다.
+       * - 지명까지 0 → 그건 **우리 수집이 깨진 것**이다(M7 · 조용히 넘기지 않는다).
+       */
+      const state: DataState =
+        kindBids.length > 0
+          ? { kind: "ok" }
+          : kindPicks.length > 0
+            ? {
+                kind: "unpublished",
+                detail: `NPBのページが${season}年の抽選結果を載せていません（競合そのものは実際にありました）`,
+              }
+            : {
+                kind: "failed",
+                detail: `${season}年の${DRAFT_KIND_LABEL[kind]}は指名も抽選も取り込めていません`,
+              };
+
+      bidBlock = {
+        state,
+        rounds: bidRounds,
+        counts: { bids: kindBids.length, groups: groupCount, solo: soloCount },
+      };
+    }
+
+    return {
+      kind,
+      label: DRAFT_KIND_LABEL[kind],
+      bids: bidBlock,
+      rounds,
+      pickCount: kindPicks.length,
+      source:
+        ev === undefined
+          ? null
+          : {
+              url: ev.source,
+              fetchedAt: ev.fetched_at,
+              revision: ev.revision,
+              license: ev.license,
+              heldOn: ev.held_on,
+            },
+    };
+  });
+
+  const notes: DraftNote[] = noteRows.map((r) => ({
+    kind: draftKindOf(r.kind),
+    team: team(r.team),
+    name: name(r.name_display, null, null),
+    noteKind: r.note_kind,
+    detail: r.detail,
+  }));
+
+  /**
+   * ⚠**이 시즌이 왜 비었는지를 말한다.** 「데이터가ありません」한 줄로 접으면
+   * 「아직 안 열렸다」와 「우리가 안 받았다」가 같은 화면이 된다.
+   * ⚠**「개최 전」은 「보유 최신 시즌보다 뒤」에서 유도한 것이지 날짜를 본 것이 아니다** —
+   *   `held_on` 이 전건 NULL 이라 볼 날짜가 없다. **개최 뒤 수집 전까지는 이 문장이 앞선다.**
+   *   드래프트 수집은 손으로 돌리므로(런북 §1) 그 창이 며칠 될 수 있다.
+   */
+  const latestHeld = heldSeasons.at(-1);
+  const state: DataState =
+    sections.length > 0
+      ? { kind: "ok" }
+      : // ⚠**한 해도 없는 DB 를 「아직 개최 전」이라고 하면 안 된다** — 그건 우리가 아무것도
+        //   안 받았다는 뜻이지 그 해에 드래프트가 없었다는 뜻이 아니다(자기 검토에서 잡았다)
+        latestHeld !== undefined && season > latestHeld
+        ? {
+            kind: "offseason",
+            detail: `${season}年のドラフト会議はまだ開催されていません（例年10月）`,
+          }
+        : {
+            kind: "uncollected",
+            detail:
+              latestHeld === undefined
+                ? "ドラフトの記録をまだ一件も収集していません"
+                : `${season}年のドラフトはまだ収集していません（収集済みは${heldSeasons[0]!}〜${latestHeld}年）`,
+          };
+
+  return {
+    season,
+    heldSeasons,
+    state,
+    sections,
+    notes: {
+      /**
+       * ⚠**0행을 「なかった」로 그리지 마라**(M11). 파서가 없어서 0행이고, 그 사실은
+       * DB 가 말할 수 없다 — `DRAFT_NOTES_COLLECTED` 가 말한다.
+       * ⚠**플래그보다 행이 먼저다** — 행이 있는데 「아직 수집하지 않는다」라고 하면
+       *   화면이 자기가 그리고 있는 것을 부정한다(자기 검토에서 잡았다).
+       */
+      state:
+        notes.length > 0
+          ? { kind: "ok" }
+          : DRAFT_NOTES_COLLECTED
+            ? { kind: "empty", detail: `${season}年に交渉権の訂正・入団拒否はありませんでした` }
+            : {
+                kind: "uncollected",
+                detail: "入団拒否や交渉権の訂正などの後日談は、まだ収集していません",
+              },
+      rows: notes,
+    },
+    origins: [...origins].sort(),
+    links: { linked, total },
+    unknownTeamCodes: [...unknownTeams].sort(),
+    defects: { groupsWithoutWinner, groupsWithManyWinners },
   };
 }

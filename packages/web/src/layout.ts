@@ -10,14 +10,34 @@ import type { TeamColor } from "@bb-app/domain";
 import { fullDate } from "./format.ts";
 
 /**
- * 화면의 4상태(M12).
+ * 화면의 빈 상태(M12).
  * ⚠**「데이터 없음」과 「수집 실패」를 같은 화면으로 만들지 마라.** 그 자체가 결함이다.
+ *
+ * ⚠⚠**넷이 아니라 여섯이다**(2026-09-05 · 드래프트 화면에서 늘었다). **넷으로는 말할 수 없는
+ * 사실이 둘 있었고, 둘 다 `empty` 로 접으면 거짓이 된다:**
+ *
+ * | 새 상태 | 무엇이 참인가 | `empty` 로 접으면 |
+ * |---|---|---|
+ * | `unpublished` | **출처가 그 값을 공표하지 않는다.** 사실은 실재했다 | 「그 해엔 그런 일이 없었다」로 읽힌다 |
+ * | `uncollected` | **출처에는 있는데 우리가 아직 안 받았다** | **미수집을 0 으로 메우는 쪽**이다(M11) |
+ *
+ * ⚠**둘을 하나로 합치지 마라 — 고칠 수 있는 사람이 다르다.** `unpublished` 는 우리가
+ * 아무리 해도 안 열리고(출처가 표시를 껐다), `uncollected` 는 **우리 몫의 남은 일**이다.
+ * 화면에 같은 문장이 나가면 「언젠가 채워지겠지」와 「영영 안 채워진다」가 구별되지 않는다.
+ *
+ * ⚠**실측 사례**(드래프트): 2023~2025 의 추첨 결과는 npb.jp 가 **표시를 껐다**
+ * (2023 야쿠르트 페이지엔 그 문장이 HTML 주석 안에 남아 있다) → `unpublished`.
+ * 후일담(입단 거부·교섭권 정정)은 소스에 있는데 **파서가 없다** → `uncollected`.
  */
 export type DataState =
   | { kind: "ok" }
   | { kind: "empty"; detail: string }
   | { kind: "failed"; detail: string }
-  | { kind: "offseason"; detail: string };
+  | { kind: "offseason"; detail: string }
+  /** ⚠**출처가 공표하지 않는다.** 우리가 못 얻은 게 아니다 — 탓을 우리에게 돌리지 마라 */
+  | { kind: "unpublished"; detail: string }
+  /** ⚠**우리가 아직 수집하지 않는다.** 출처에는 있다 — 「없었다」로 그리면 거짓이다 */
+  | { kind: "uncollected"; detail: string };
 
 /** 정적 생성이므로 「로딩」은 페이지 단위로는 존재하지 않는다 — 클라이언트가 가져오는 검색 색인에만 있다. */
 export function stateNote(state: DataState): RawHtml {
@@ -30,6 +50,10 @@ export function stateNote(state: DataState): RawHtml {
       return html`<p class="empty" role="status">取得できていません — ${state.detail}</p>`;
     case "offseason":
       return html`<p class="empty">シーズン外 — ${state.detail}</p>`;
+    case "unpublished":
+      return html`<p class="empty">公表されていません — ${state.detail}</p>`;
+    case "uncollected":
+      return html`<p class="empty">まだ収集していません — ${state.detail}</p>`;
   }
 }
 
