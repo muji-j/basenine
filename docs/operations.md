@@ -3,7 +3,7 @@
 ## 매일 하는 일
 
 ```bash
-node scripts/update.ts --contact you@example.com
+node scripts/update.ts --contact <닿는-연락처>
 ```
 
 1. **어제** 경기 페이지 아카이브

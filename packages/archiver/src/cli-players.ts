@@ -2,7 +2,7 @@
 /**
  * 선수 페이지 아카이버 CLI.
  *
- *   node packages/archiver/src/cli-players.ts --ids data/player-ids.txt --contact you@example.com
+ *   node packages/archiver/src/cli-players.ts --ids data/player-ids.txt --contact <닿는-연락처>
  *
  * ID 목록은 한 줄에 하나. `#`로 시작하는 줄과 빈 줄은 무시한다.
  */
@@ -27,7 +27,7 @@ const { values } = parseArgs({
 
 const contact = values.contact ?? process.env["BB_ARCHIVER_CONTACT"] ?? "";
 if (!contact) {
-  console.error("연락처가 필요하다. --contact you@example.com 또는 BB_ARCHIVER_CONTACT (CLAUDE.md L1)");
+  console.error("연락처가 필요하다. --contact <닿는-연락처> 또는 BB_ARCHIVER_CONTACT (CLAUDE.md L1)");
   process.exit(2);
 }
 if (!values.ids) {

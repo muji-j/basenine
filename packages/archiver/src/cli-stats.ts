@@ -12,7 +12,7 @@
  * 여기서 `fetch`를 직접 부르거나 revision 규칙을 새로 쓰지 않는다.
  *
  * 사용:
- *   node packages/archiver/src/cli-stats.ts --season 2026 --contact you@example.com
+ *   node packages/archiver/src/cli-stats.ts --season 2026 --contact <닿는-연락처>
  */
 import { parseArgs } from "node:util";
 import { L1_MIN_DELAY_MS, PoliteFetcher, buildUserAgent, parseDelayMs } from "./fetcher.ts";
@@ -39,7 +39,7 @@ if (!Number.isInteger(season)) {
 
 const contact = values.contact ?? process.env["BB_ARCHIVER_CONTACT"] ?? "";
 if (!contact) {
-  console.error("연락처가 필요하다. --contact you@example.com 또는 BB_ARCHIVER_CONTACT (CLAUDE.md L1)");
+  console.error("연락처가 필요하다. --contact <닿는-연락처> 또는 BB_ARCHIVER_CONTACT (CLAUDE.md L1)");
   process.exit(2);
 }
 

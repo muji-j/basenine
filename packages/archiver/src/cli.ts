@@ -29,7 +29,7 @@ const { values } = parseArgs({
 const contact = values.contact ?? process.env["BB_ARCHIVER_CONTACT"] ?? "";
 if (!contact) {
   console.error(
-    "연락처가 필요하다. --contact you@example.com 또는 BB_ARCHIVER_CONTACT 환경변수를 설정하라.\n" +
+    "연락처가 필요하다. --contact <닿는-연락처> 또는 BB_ARCHIVER_CONTACT 환경변수를 설정하라.\n" +
       "이유: 연락처 없는 UA로 긁으면 상대가 문제를 알릴 방법이 차단밖에 없다 (CLAUDE.md L1).",
   );
   process.exit(2);

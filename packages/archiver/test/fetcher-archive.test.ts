@@ -52,7 +52,43 @@ const REF = { season: 2026, date: "2026-08-14", slug: "s-db-17", path: "/scores/
 test("UA에 연락처가 없으면 만들어지지 않는다 (L1)", () => {
   assert.throws(() => buildUserAgent(""), /연락처/);
   assert.throws(() => buildUserAgent("   "), /연락처/);
-  assert.match(buildUserAgent("me@example.com"), /me@example\.com/);
+  assert.match(buildUserAgent("bb-app@lunomel.jp"), /bb-app@lunomel\.jp/);
+});
+
+/**
+ * ⚠**닿지 않는 연락처는 빈 연락처와 같다**(L1 · 2026-09-06).
+ *
+ * L1 이 연락처를 요구하는 이유는 **「상대가 문제를 알릴 방법」**이다. `example.com` 은
+ * RFC 2606 이 **영구 예약**한 도메인이라 메일이 어디에도 닿지 않는다 — **빈 문자열과
+ * 실질이 같은데 옛 검사는 통과시켰다.**
+ *
+ * ⚠**이건 실제 사고의 나머지 절반이다.** 2026-09-05 의 L1 위반은 **간격(0.583초)**과
+ * **연락처(`me@example.com`)** 두 겹이었는데 간격만 막혀 있었다.
+ * ⚠**그리고 이 검사가 그때 있었으면 사고가 아예 안 났다** — 진입점은
+ * `buildUserAgent(contact)` 를 **fetcher 를 만들기 전에** 부르므로(`cli-draft.ts`),
+ * 여기서 던졌으면 **222요청이 0요청이었다.** 간격 하한과 **독립적인 두 번째 걸쇠**다.
+ */
+test("⚠L1: 닿지 않는 예약 도메인은 연락처가 아니다", () => {
+  for (const bad of [
+    "me@example.com",
+    "you@example.org",
+    "a@example.net",
+    "a@foo.example",
+    "a@foo.test",
+    "a@foo.invalid",
+    "a@localhost",
+    "a@foo.localhost",
+    // ⚠**URL 연락처도 같은 구멍이다** — 초판은 이메일만 보고 이 셋을 통과시켰다(실측).
+    "https://example.com/issues",
+    "https://example.com/",
+    "http://localhost:8080/x",
+  ]) {
+    assert.throws(() => buildUserAgent(bad), /닿지 않/, `${bad} 를 통과시켰다`);
+  }
+  // ⚠**막지 않는 것**: 이름에 example 이 들어갈 뿐인 실도메인은 예약이 아니다
+  assert.doesNotThrow(() => buildUserAgent("me@example-team.jp"));
+  assert.doesNotThrow(() => buildUserAgent("me@myexample.com"));
+  assert.doesNotThrow(() => buildUserAgent("https://github.com/muji-j/bb-app/issues"));
 });
 
 /**

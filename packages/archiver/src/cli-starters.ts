@@ -2,7 +2,7 @@
 /**
  * 予告先発 아카이버 CLI. **하루 1요청.**
  *
- *   node packages/archiver/src/cli-starters.ts --contact you@example.com
+ *   node packages/archiver/src/cli-starters.ts --contact <닿는-연락처>
  */
 import { parseArgs } from "node:util";
 import { systemClock, toJstDateString } from "./clock.ts";
@@ -22,7 +22,7 @@ const { values } = parseArgs({
 
 const contact = values.contact ?? process.env["BB_ARCHIVER_CONTACT"] ?? "";
 if (!contact) {
-  console.error("연락처가 필요하다. --contact you@example.com 또는 BB_ARCHIVER_CONTACT (CLAUDE.md L1)");
+  console.error("연락처가 필요하다. --contact <닿는-연락처> 또는 BB_ARCHIVER_CONTACT (CLAUDE.md L1)");
   process.exit(2);
 }
 

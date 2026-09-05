@@ -190,10 +190,68 @@ export class PoliteFetcher {
 }
 
 /**
+ * **닿지 않는 도메인** — RFC 2606(예약 TLD·2단계) · RFC 6761(특수 용도).
+ *
+ * ⚠**여기 있는 것은 「가짜처럼 보이는 것」이 아니라 「표준이 영구히 예약해서 아무에게도
+ * 닿지 않는 것」이다.** 그래서 `myexample.com` 이나 `example-team.jp` 같은 실도메인은
+ * 걸리지 않는다 — 부분 문자열이 아니라 **도메인 경계로** 맞춘다.
+ */
+const UNREACHABLE_DOMAINS = [
+  "example.com",
+  "example.org",
+  "example.net",
+  "example",
+  "test",
+  "invalid",
+  "localhost",
+] as const;
+
+/**
+ * 연락처에서 **호스트**를 꺼낸다. 꺼낼 수 없으면 빈 문자열.
+ *
+ * 두 모양을 받는다: URL(`https://호스트/…`)과 메일주소(`이름@호스트`).
+ * ⚠**꺼내지 못하면 판정하지 않는다**(빈 문자열 → 통과). 모양을 모르는 연락처를 거부하면
+ * **CI 시크릿(`BB_ARCHIVER_CONTACT`)의 모양을 우리가 못 보는 채로 매일 배치를 깨뜨린다** —
+ * 여기서 막으려는 것은 「모양이 낯선 것」이 아니라 **「닿지 않는 것이 확실한 것」**이다(M11).
+ */
+function contactHost(contact: string): string {
+  const url = /^https?:\/\/([^/?#\s]+)/i.exec(contact);
+  if (url) return (url[1] ?? "").toLowerCase().replace(/^.*@/, "").replace(/:\d+$/, "");
+  const at = contact.lastIndexOf("@");
+  if (at === -1) return "";
+  return contact
+    .slice(at + 1)
+    .toLowerCase()
+    .replace(/[>)\]\s.]+$/, "");
+}
+
+/**
  * 연락처를 포함한 UA를 만든다.
+ *
  * ⚠연락처 없는 UA로 긁지 마라 — 상대가 문제를 알릴 방법이 없으면 차단이 유일한 수단이 된다.
+ *
+ * ⚠**닿지 않는 연락처는 빈 연락처와 같다**(2026-09-06 추가). L1 이 연락처를 요구하는 이유는
+ * 문자열을 채우는 것이 아니라 **「상대가 문제를 알릴 방법」**이고, `example.com` 은 RFC 2606 이
+ * **영구 예약**해서 어디에도 닿지 않는다. **빈 문자열과 실질이 같은데 옛 검사는 통과시켰다.**
+ *
+ * ⚠**이건 2026-09-05 L1 사고의 나머지 절반이다.** 그 사고는 **간격(0.583초)**과
+ * **연락처(`me@example.com`)** 두 겹이었는데 **간격만 막혀 있었다.**
+ * ⚠**이 검사가 그때 있었으면 사고가 아예 안 났다** — 진입점은 이 함수를 **fetcher 를 만들기
+ * 전에** 부르므로, 여기서 던졌으면 **222요청이 0요청이었다.** 간격 하한(`isValidDelayMs`)과
+ * **독립적인 두 번째 걸쇠**이고, 둘 중 하나만 있어도 그날의 요청은 안 나갔다.
  */
 export function buildUserAgent(contact: string): string {
-  if (!contact.trim()) throw new Error("연락처 없는 User-Agent는 허용하지 않는다 (CLAUDE.md L1)");
-  return `bb-app-archiver/0.1 (personal, non-commercial; ${contact})`;
+  const trimmed = contact.trim();
+  if (!trimmed) throw new Error("연락처 없는 User-Agent는 허용하지 않는다 (CLAUDE.md L1)");
+
+  // ⚠**호스트를 꺼내서 도메인 경계로 맞춘다.** 부분 문자열로 보면 `myexample.com` 같은
+  //   **실도메인을 오탐**하고, 문자열 끝만 보면 **URL 연락처를 놓친다**
+  //   (`https://example.com/issues` — 초판이 실제로 통과시켰다).
+  const host = contactHost(trimmed);
+  if (host !== "" && UNREACHABLE_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`))) {
+    throw new Error(
+      `닿지 않는 연락처는 연락처가 아니다 — 예약 도메인(RFC 2606/6761)이다 (CLAUDE.md L1): ${trimmed}`,
+    );
+  }
+  return `bb-app-archiver/0.1 (personal, non-commercial; ${trimmed})`;
 }

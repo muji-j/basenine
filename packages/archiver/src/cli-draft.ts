@@ -13,8 +13,8 @@
  * `cli-players.ts`↔`players.ts` · `cli-starters.ts`↔`starters.ts` 와 같은 배치다.
  *
  * 사용:
- *   node packages/archiver/src/cli-draft.ts --from 2005 --contact you@example.com
- *   node packages/archiver/src/cli-draft.ts --only 2025 --contact you@example.com
+ *   node packages/archiver/src/cli-draft.ts --from 2005 --contact <닿는-연락처>
+ *   node packages/archiver/src/cli-draft.ts --only 2025 --contact <닿는-연락처>
  */
 import { parseArgs } from "node:util";
 import { L1_MIN_DELAY_MS, PoliteFetcher, buildUserAgent, parseDelayMs } from "./fetcher.ts";
@@ -80,7 +80,7 @@ if (only !== undefined && (only < from || only > to)) {
 
 const contact = values.contact ?? process.env["BB_ARCHIVER_CONTACT"] ?? "";
 if (!contact) {
-  console.error("연락처가 필요하다. --contact you@example.com 또는 BB_ARCHIVER_CONTACT (CLAUDE.md L1)");
+  console.error("연락처가 필요하다. --contact <닿는-연락처> 또는 BB_ARCHIVER_CONTACT (CLAUDE.md L1)");
   process.exit(2);
 }
 
