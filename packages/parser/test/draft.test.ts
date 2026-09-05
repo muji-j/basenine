@@ -587,11 +587,7 @@ test("⚠문서 그물이 헛불지 않는다 — 실물 픽스처 10장 중 10�
   //   `入札抽選参加、希望入団枠使用等の公示` 라는 링크가 있어 `抽選` 이 **본문 밖에 1건** 있다.
   //   그래서 문서 그물은 낱말 하나가 아니라 **「겹침 + 추첨」의 모양**을 본다.
   const counts: Record<string, number> = {};
-  for (const name of [
-    "draft-2019-list-g", "draft-2019-list-c", "draft-2006-list-g", "draft-2001-list-f",
-    "draft-2001-index", "draft-2013-index", "draft-2024-index", "draft-2026-index",
-    "draft-backnumber", "draft-2013-list-b-404",
-  ]) {
+  for (const name of DRAFT_FIXTURES) {
     counts[name] = parseDraftBids(fixture(name), "g").length;
   }
   assert.deepEqual(counts, {
@@ -644,10 +640,51 @@ test("⚠상대 구단 칸이 비면 던진다(M7) — 빈 문자열을 구단�
  * 그 붉음이 **우연히 남은 주석 한 줄에 의존**한다. npb 가 그 줄을 지우면 조용해진다.
  * **loudness 가 설계가 아니라 사고였다.**
  *
- * ⚠실측(커밋된 드래프트 픽스처 10장): 푸터 위에 **주석이 11개씩 있고**(404 본문 1장만 0개)
- * 전부 짝이 맞으며, 지우면 `<table>`·`<h4>`·슬러그·연도가 **하나도 안 바뀐다.**
- * 즉 지우는 것은 오늘 아무것도 잃지 않고, 잃을 뻔한 것만 막는다.
+ * ⚠실측(커밋된 드래프트 픽스처 **10장** · 2026-09-05 [F5] 에서 다시 셌다): **전문에**
+ * `<!-- 108 / --> 108` 로 짝이 전부 맞는다(**파일당 12개 × 9장** · 404 본문 1장만 0개).
+ * ⚠**「푸터 위 11개」로 적었던 것은 이 경계가 세는 수가 아니다** — 주석 제거는 **푸터 컷보다
+ * 먼저 전문에** 걸리고, 파일당 1개가 푸터 아래에 있다.
+ * 그리고 전문에서 지워도 `<table>`·`<h4>`·`draftlist_`·`/draft/YYYY`·`page_draft`·`※`
+ * **여섯 지표가 10장 중 10장에서 하나도 안 바뀐다** — 오늘 아무것도 잃지 않고,
+ * 잃을 뻔한 것만 막는다.
  * ──────────────────────────────────────────────────────────────────────────── */
+
+/** 커밋된 드래프트 픽스처 **전량**. ⚠**두 곳이 각자 목록을 적으면 한쪽만 늘어난다**(M1). */
+const DRAFT_FIXTURES = [
+  "draft-2019-list-g", "draft-2019-list-c", "draft-2006-list-g", "draft-2001-list-f",
+  "draft-2001-index", "draft-2013-index", "draft-2024-index", "draft-2026-index",
+  "draft-backnumber", "draft-2013-list-b-404",
+] as const;
+
+/**
+ * ⚠**주석 분모를 시험이 다시 센다 — 손으로 고치지 마라.**
+ *
+ * [F5] 는 **「무엇을 센 수인가」가 코드와 문서에서 갈린** 결함이었다: 산문이 「푸터 위 11개」라고
+ * 적었는데 `stripComments` 는 **푸터 컷보다 먼저 전문에** 걸리므로 실제로 다루는 것은 **12개**다.
+ * ⚠**산문은 낡지만 이 본은 낡지 않는다** — 픽스처를 갱신하면 **그날 바로** 붉어진다.
+ * (이 저장소의 `scripts/test/doc-figures.test.ts` 가 같은 일을 DB 로 한다.)
+ */
+test("⚠주석 분모: 픽스처 전문에 108/108 · 파일당 12개(404 본문만 0개)", () => {
+  let opens = 0;
+  let closes = 0;
+  const per: Record<string, number> = {};
+  for (const name of DRAFT_FIXTURES) {
+    const html = fixture(name);
+    const o = (html.match(/<!--/g) ?? []).length;
+    const c = (html.match(/-->/g) ?? []).length;
+    assert.equal(o, c, `${name}: 짝이 안 맞는다 — 그러면 파서가 던진다`);
+    opens += o;
+    closes += c;
+    per[name] = o;
+  }
+  assert.equal(DRAFT_FIXTURES.length, 10, "픽스처 10장을 센다");
+  assert.deepEqual([opens, closes], [108, 108], "전문 합계");
+  assert.deepEqual(
+    Object.entries(per).filter(([, n]) => n !== 12).map(([k, n]) => `${k}=${n}`),
+    ["draft-2013-list-b-404=0"],
+    "⚠12개가 아닌 것은 404 본문 한 장뿐이다",
+  );
+});
 
 /** 규칙 문서 §1 이 인용한 실물 잔해. */
 const COMMENTED_BID =
@@ -711,7 +748,7 @@ test("⚠수집 진입점은 푸터 아래도 본다 — 지명·경합과 경�
 });
 
 test("⚠닫히지 않은 주석은 던진다(N2·M7) — 브라우저는 그 뒤를 통째로 숨긴다", () => {
-  // 실측: 픽스처 10장 전부 `<!--` 와 `-->` 가 짝이 맞는다(각 11개 · 404 본문만 0개).
+  // 실측: 픽스처 10장 전문에서 `<!--` 와 `-->` 가 짝이 맞는다(**파일당 12개** · 404 본문만 0개 · 합 108/108).
   // 짝이 안 맞는 날 「그 뒤를 계속 읽는」 쪽을 고르면 **숨겨진 것을 사실로 읽는다.**
   const html = "<h4>新人選手選択会議</h4><table><tr><th>1位</th><td>甲野 一</td><td>投手</td><td>某高</td></tr></table><!-- 닫히지 않았다";
   assert.throws(() => parseDraftPicks(html, "g"), DraftParseError);
