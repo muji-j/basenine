@@ -632,6 +632,92 @@ test("⚠상대 구단 칸이 비면 던진다(M7) — 빈 문자열을 구단�
   assert.throws(() => parseDraftBids("<p>※1巡目： 阪神、と重複、抽選で確定</p>", "g"), DraftParseError);
 });
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * HTML 주석 — ⚠**보이지 않는 것을 읽지 않는다**(2026-09-05 최종 재검토 [N2]).
+ *
+ * `decode` 의 `/<[^>]+>/g` 가 `<!-- <p>` 를 **태그로 먹고 본문을 남긴다.** 그래서
+ * 브라우저가 안 보여 주는 것을 파서가 사실로 읽었다.
+ * ⚠**실물이다**: 2023 야쿠르트 페이지에 주석 처리된 경합 문장이 남아 있고
+ * (`docs/sources/2026-09-04-draft-wikipedia-markup-rules.md` §1 이 인용한다),
+ * **2023 12구단 중 렌더링된 주석은 0건**이다.
+ * ⚠⚠**방향이 [N1] 과 반대라 더 나쁘다** — 이 잔해 덕분에 2023 이 불변식에서 붉어지는데,
+ * 그 붉음이 **우연히 남은 주석 한 줄에 의존**한다. npb 가 그 줄을 지우면 조용해진다.
+ * **loudness 가 설계가 아니라 사고였다.**
+ *
+ * ⚠실측(커밋된 드래프트 픽스처 10장): 푸터 위에 **주석이 11개씩 있고**(404 본문 1장만 0개)
+ * 전부 짝이 맞으며, 지우면 `<table>`·`<h4>`·슬러그·연도가 **하나도 안 바뀐다.**
+ * 즉 지우는 것은 오늘 아무것도 잃지 않고, 잃을 뻔한 것만 막는다.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** 규칙 문서 §1 이 인용한 실물 잔해. */
+const COMMENTED_BID =
+  '<p id="comment"></p>\n'
+  + "<!-- <p>※1巡目： 武内夏暉投手で埼玉西武、福岡ソフトバンクと重複、抽選で外れる<br></p> -->";
+
+test("⚠주석 안의 경합 문장을 읽지 않는다 — 2023 야쿠르트 실물 잔해(N2)", () => {
+  assert.deepEqual(
+    parseDraftBids(COMMENTED_BID, "s"),
+    [],
+    "⚠보이지 않는 문장을 사실로 읽으면 그 해가 「경합이 있었다」가 된다",
+  );
+});
+
+test("⚠주석 밖에 같은 문장이 있으면 읽는다 — 가드가 넓어지면 안 된다", () => {
+  const shown = COMMENTED_BID.replace("<!-- ", "").replace(" -->", "");
+  const bids = parseDraftBids(shown, "s");
+  assert.equal(bids.length, 1, "주석을 벗기면 읽혀야 한다");
+  assert.deepEqual(bids[0]?.rivals, ["埼玉西武", "福岡ソフトバンク"]);
+});
+
+test("⚠주석 안의 지명 표를 읽지 않는다(N2) — 같은 구멍이 명단 쪽에도 있었다", () => {
+  const html =
+    "<h4>新人選手選択会議</h4><table><tr><th>1位</th><td>甲野 一</td><td>投手</td><td>某高</td></tr></table>"
+    + "<!--<h4>育成選手選択会議</h4><table><tr><th>1位</th><td>없는 선수</td><td>捕手</td><td>某高</td></tr></table>-->";
+  const rows = parseDraftPicks(html, "g");
+  assert.equal(rows.length, 1, "주석 안의 지명이 섞이면 안 된다");
+  assert.equal(rows[0]?.nameDisplay, "甲野 一");
+});
+
+test("⚠주석 안의 슬러그·연도를 줍지 않는다(N2) — 수집 진입점도 같은 경계다", () => {
+  assert.deepEqual(
+    parseDraftTeamSlugs('<body class="page_draft"><a href="draftlist_g.html">G</a><!--<a href="draftlist_zz.html">Z</a>--></body>'),
+    ["g"],
+    "⚠주석 안의 슬러그를 주우면 있지도 않은 페이지를 받으러 간다(M8)",
+  );
+  assert.deepEqual(
+    parseDraftYears('<a href="/draft/2019/">2019</a><!--<a href="/draft/2027/">2027</a>-->'),
+    [2019],
+  );
+});
+
+/**
+ * ⚠**두 경계의 근거가 다르다** — 주석 제거는 네 파서 전부, **푸터 컷은 지명·경합만**이다.
+ * 진입점까지 자르면 **푸터에 있는 연도·슬러그를 조용히 잃는다.**
+ * ⚠**내가 실제로 그렇게 만들 뻔했다**(자기 수정 재독에서 잡음) — 경계 하나를 재사용하면서
+ * 근거를 함께 옮기지 않았다. 실측으로는 픽스처 10장 전부 푸터 아래가 비어 있어
+ * **시험이 없었으면 아무도 몰랐다.**
+ */
+test("⚠수집 진입점은 푸터 아래도 본다 — 지명·경합과 경계가 다르다", () => {
+  assert.deepEqual(
+    parseDraftTeamSlugs('<body class="page_draft"><a href="draftlist_g.html">G</a><footer><a href="draftlist_c.html">C</a></footer></body>'),
+    ["c", "g"],
+    "⚠푸터의 슬러그를 버리면 그 구단이 아예 수집되지 않는다",
+  );
+  assert.deepEqual(
+    parseDraftYears('<a href="/draft/2019/">2019</a><footer><a href="/draft/2026/">2026</a></footer>'),
+    [2019, 2026],
+    "⚠놓친 그 하나가 올해일 수 있다(그 함수의 M7 그물이 지키는 것)",
+  );
+});
+
+test("⚠닫히지 않은 주석은 던진다(N2·M7) — 브라우저는 그 뒤를 통째로 숨긴다", () => {
+  // 실측: 픽스처 10장 전부 `<!--` 와 `-->` 가 짝이 맞는다(각 11개 · 404 본문만 0개).
+  // 짝이 안 맞는 날 「그 뒤를 계속 읽는」 쪽을 고르면 **숨겨진 것을 사실로 읽는다.**
+  const html = "<h4>新人選手選択会議</h4><table><tr><th>1位</th><td>甲野 一</td><td>投手</td><td>某高</td></tr></table><!-- 닫히지 않았다";
+  assert.throws(() => parseDraftPicks(html, "g"), DraftParseError);
+  assert.throws(() => parseDraftBids(html, "g"), DraftParseError);
+});
+
 test("⚠푸터 아래의 `※` 는 보지 않는다 — 명단 파서와 같은 경계다", () => {
   const html = "<p>※1巡目： 阪神と重複、抽選で確定</p><footer><p>※1巡目： 中日と重複、抽選で外れる</p></footer>";
   const bids = parseDraftBids(html, "g");

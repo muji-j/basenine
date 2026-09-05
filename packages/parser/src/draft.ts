@@ -153,13 +153,63 @@ function compact(s: string): string {
 }
 
 /**
- * 푸터 위까지로 자른다. **두 파서가 같은 경계를 쓴다**(M1) — 마지막 섹션의 본문이
+ * ⚠⚠**보이지 않는 것을 읽지 않는다**(2026-09-05 최종 재검토 [N2]).
+ *
+ * `decode` 의 `/<[^>]+>/g` 는 `<!-- <p>` 를 **태그 하나로 먹고 본문을 남긴다.** 그래서
+ * 브라우저가 감춘 문장이 **사실로** 읽혔다. ⚠**가정이 아니라 실물이다**: 2023 야쿠르트
+ * 페이지에 주석 처리된 경합 문장이 남아 있고(규칙 문서 §1 이 인용한다) **2023 12구단 중
+ * 렌더링된 주석은 0건**이다. 그 한 줄 덕분에 2023 이 불변식에서 붉어지고 있었는데,
+ * **그 붉음은 설계가 아니라 사고**였다 — npb 가 그 줄을 지우면 조용해진다.
+ *
+ * ⚠**주석을 먼저 지우고 그다음에 푸터를 자른다.** 순서를 뒤집으면 주석 안의 `<footer` 가
+ * 문서를 일찍 자른다. 주석은 구조가 아니므로 먼저 없애는 것이 브라우저와 같은 순서다.
+ *
+ * ⚠**짝이 안 맞으면 던진다**(M7). 브라우저는 닫히지 않은 `<!--` 뒤를 **통째로 숨기므로**,
+ * 계속 읽는 쪽을 고르면 **숨겨진 것을 사실로 읽는다.** 실측(커밋된 드래프트 픽스처 10장):
+ * 푸터 위 주석이 **11개씩 · 짝 전부 일치**(404 본문 1장만 0개)이고, 지워도
+ * `<table>`·`<h4>`·슬러그·연도가 **하나도 안 바뀐다** — 오늘 잃는 것이 없다.
+ *
+ * ⚠**네 진입점이 전부 이 경계를 쓴다**(M1). 지명·경합만 막으면 **연도 톱의 주석 처리된
+ * `draftlist_` 링크**를 슬러그로 주워 있지도 않은 페이지를 받으러 간다(M8).
+ */
+function stripComments(html: string, where: string): string {
+  const out = html.replace(/<!--[\s\S]*?-->/g, "");
+  if (out.includes("<!--")) {
+    throw new DraftParseError(
+      "닫히지 않은 HTML 주석이 있다 — 브라우저가 숨기는 것을 사실로 읽지 않는다(M7)",
+      `${where} / ${JSON.stringify(out.slice(out.indexOf("<!--"), out.indexOf("<!--") + 80))}`,
+    );
+  }
+  return out;
+}
+
+/**
+ * 푸터 위까지로 자른다. **네 파서가 같은 경계를 쓴다**(M1) — 마지막 섹션의 본문이
  * 문서 끝까지 뻗으므로, 언젠가 푸터에 표나 `※` 가 생기면 그것이 지명·경합으로 섞여 든다.
  * (실측: 지금 푸터에 `<table>` 도 `※` 도 0건이다 — 그래서 지금 막아 두는 편이 싸다.)
  */
 function beforeFooter(html: string): string {
   const footer = html.indexOf("<footer");
   return footer === -1 ? html : html.slice(0, footer);
+}
+
+/**
+ * 「사람에게 보이는 **본문**」 = 주석 제거 + 푸터 컷. **지명·경합 파서 전용**이다.
+ *
+ * ⚠⚠**수집 진입점(연도·슬러그)에는 이것을 쓰지 마라 — `stripComments` 만 써라.**
+ * 두 경계의 근거가 다르다:
+ *   · **주석 제거**는 네 파서 전부에 해당한다 — 보이지 않는 것을 읽지 않는다([N2]).
+ *   · **푸터 컷**은 「마지막 섹션의 본문이 문서 끝까지 뻗는다」는 **지명·경합만의 사정**이다.
+ *     진입점은 `href` 를 콕 집어 찾으므로 그 사정이 없고, 자르면 **푸터에 있는 연도·슬러그를
+ *     조용히 잃는다.** 그 두 함수의 머리말이 경고하는 「여기가 적게 내면 그만큼 아예
+ *     수집되지 않는다」가 정확히 그 손해다.
+ * ⚠**실측(커밋된 드래프트 픽스처 10장): 푸터 아래에 `draftlist_`·`/draft/YYYY`·연도 href 가
+ * 전부 0건**이라 오늘은 어느 쪽이든 결과가 같다. **다른 것은 「그렇지 않은 날 무엇을 잃는가」다.**
+ * ⚠**나는 처음에 네 곳 전부에 이것을 썼다**(2026-09-05 자기 수정 재독에서 잡음) —
+ * 근거 없는 축소를 재사용으로 끌고 들어온 모양이다.
+ */
+function visibleScope(html: string, where: string): string {
+  return beforeFooter(stripComments(html, where));
 }
 
 function kindOf(heading: string, where: string): DraftKind {
@@ -192,7 +242,7 @@ function roundOf(label: string, where: string): number | null {
  */
 export function parseDraftPicks(html: string, team: string): DraftPickRow[] {
   // ⚠푸터 아래는 보지 않는다 — 사유는 `beforeFooter` 주석.
-  const scope = beforeFooter(html);
+  const scope = visibleScope(html, `team=${team}`);
 
   const sections = [...scope.matchAll(/<h4[^>]*>([\s\S]*?)<\/h4>([\s\S]*?)(?=<h4|$)/g)];
   if (sections.length === 0) {
@@ -349,12 +399,22 @@ export interface DraftBidRow {
    * 지금은 적재가 **표기 그대로 `draft_bid.rivals` 에 담는다**(JSON 배열).
    *
    * ⚠**그래도 구단 코드로는 안 바꾼다. 「아직 안 했다」가 아니라 「안 하기로 했다」**이다:
-   * 이 표기는 `TEAMS`(`東京ヤクルトスワローズ`)와도 `SHORT_NAME`(`ヤクルト`)과도 **다른 세 번째 어휘**라
-   * 새 매핑표가 필요한데, 그건 **이름 규칙을 한 벌 더 만드는 것**이라 M1 위반이다.
-   * 게다가 2001~2007 에는 `近鉄`·`ブルーウェーブ`·`ダイエー` 처럼 **현행 12구단 표에 없는 구단**이
-   * 나오므로, 지금 코드로 바꾸면 그 해의 경합이 **던지거나 조용히 사라진다.**
+   * ⑴ 이 표기는 `TEAMS`(`東京ヤクルトスワローズ`)와도 `SHORT_NAME`(`ヤクルト`)과도
+   *    **다른 세 번째 어휘**라 새 매핑표가 필요한데, 그건 **이름 규칙을 한 벌 더 만드는 것**이라
+   *    M1 위반이다.
+   * ⑵ **같은 구단의 표기가 연대에 따라 바뀐다** — `西武`↔`埼玉西武` · `横浜`↔`横浜DeNA`.
+   *    뒤엣것은 이 파일이 이미 최장일치 사고로 경고하는 그 쌍이다. 즉 매핑표는 한 벌이 아니라
+   *    **연도의 함수**여야 하고, 그건 슬러그가 연도의 함수인 것과 같은 모양이다
+   *    (`parseDraftTeamSlugs` 주석의 2018 오릭스 `bs` 사고).
    * → **원문을 그대로 보존한다.** 코드가 필요해지는 날의 선행 조건은
-   *   「그 시즌에 존재한 구단」 이력 마스터이고, 그건 소급 범위 결정과 같은 축이다.
+   *   「그 시즌에 그 표기가 어느 구단이었나」 이력 마스터다.
+   *
+   * ⚠**틀렸던 사유를 남긴다**(2026-09-05 최종 재검토에서 뒤집힘). 처음에 ⑵ 자리에
+   * ~~「2001~2007 에 `近鉄`·`ブルーウェーブ` 같은 현행 표에 없는 구단이 나온다」~~ 고 적었는데,
+   * **그 구단들은 전부 2004 시즌까지**이고(2005 에 楽天 창단·オリックス 통합·ソフトバンク 개칭)
+   * **선언된 수집 범위는 2005~2026** 이라 **범위 밖**이다. 결론은 그대로지만 근거가 헛것이었다.
+   * ⚠**결론이 맞았다고 사유를 안 고치면 다음 사람이 그 사유를 근거로 다른 결정을 내린다**
+   * (`CLAUDE.md` §2-2 의 WAR·xFIP 가 그 자리다).
    */
   rivals: string[];
   /**
@@ -477,7 +537,7 @@ const LOOKS_LIKE_BID = new RegExp(`${CLASH}|${LOT}`);
  *   **경합의 모양이 문서에 있는데 어느 주석에서도 읽히지 않았을 때**(토크나이저가 바뀐 날).
  */
 export function parseDraftBids(html: string, team: string): DraftBidRow[] {
-  const scope = beforeFooter(html);
+  const scope = visibleScope(html, `team=${team}`);
 
   // ⚠**토크나이저를 타지 않는 층**(위 「M7 그물이 두 층인 이유」). `※` 가 무엇으로 바뀌든
   //   이 수는 그대로 나오므로, 아래 루프가 그만큼을 못 읽으면 **끝에서 던진다.**
@@ -674,8 +734,11 @@ const DRAFT_YEAR_REF = /\/draft\/(\d{4})/g;
  *   **`/draft/YYYY` 를 가리키는데 연도로 안 잡힌 참조가 있을 때**(아래).
  */
 export function parseDraftYears(html: string): number[] {
+  // ⚠**주석 안의 연도를 줄지 않는다**([N2]) — 준비 중인 해를 주워 오면
+  //   **열리지도 않은 드래프트를 받으러 간다**(M8). 네 진입점이 같은 경계를 쓴다(M1).
+  const scope = stripComments(html, `backnumber ${html.length}자`);
   const years = new Set<number>();
-  for (const m of html.matchAll(YEAR_HREF)) years.add(Number(m[1]));
+  for (const m of scope.matchAll(YEAR_HREF)) years.add(Number(m[1]));
 
   // ⚠**이 파서가 조용히 틀리는 방식은 「전부 실패」가 아니라 「최신 연도만 놓침」이다.**
   // 색인이 최신 한 해만 `/draft/2027/index.html` 같은 다른 형태로 걸면 나머지 26개는
@@ -683,7 +746,7 @@ export function parseDraftYears(html: string): number[] {
   // 올해가 곧 새로 열린 드래프트다. 전부 실패는 시끄럽지만 이건 조용하다.
   // ⚠**이미 잡은 연도를 다시 가리키는 참조는 헛불이 아니다**(`/draft/2026/schedule.html`
   // 같은 편의 링크가 언제든 생길 수 있다) — **못 잡은 연도**만 센다.
-  const missed = [...html.matchAll(DRAFT_YEAR_REF)]
+  const missed = [...scope.matchAll(DRAFT_YEAR_REF)]
     .map((m) => Number(m[1]))
     .filter((y) => !years.has(y));
   if (missed.length > 0) {
@@ -760,8 +823,10 @@ const SLUG_HREF = /href="[^"]*draftlist_([^"]*)"/g;
  *   **과거 연도에서 그게 나오면 붕괴다.** 삼키지 말고 연도별 상태로 남겨라.
  */
 export function parseDraftTeamSlugs(html: string): string[] {
+  // ⚠**주석 안의 `draftlist_` 링크를 줄지 않는다**([N2]).
+  const scope = stripComments(html, `연도 톱 ${html.length}자`);
   const slugs = new Set<string>();
-  for (const m of html.matchAll(TEAM_SLUG)) slugs.add(m[1] as string);
+  for (const m of scope.matchAll(TEAM_SLUG)) slugs.add(m[1] as string);
 
   // ⚠**놓친 한 구단은 조용하고 영구적이다.** 슬러그 어휘가 한 구단만 바뀌면(`draftlist_B.html`)
   // 나머지 11개가 정상으로 나오므로 **개수를 세도 안 잡힌다.**
@@ -772,7 +837,7 @@ export function parseDraftTeamSlugs(html: string): string[] {
   // 「실재하는 빈 꼬리」가 같은 값이 되어 구별이 사라진다.
   // ⚠**여기서만 빈 문자열이 정상 입력이다**(`href="…draftlist_"`): 아래 어휘 검사가
   // 그걸 걸러 던지는 것이 맞고, 그래서 이 자리에 빈 값 가드를 따로 두지 않는다.
-  const odd = [...html.matchAll(SLUG_HREF)]
+  const odd = [...scope.matchAll(SLUG_HREF)]
     .map((m) => m[1] as string)
     .filter((tail) => !/^[a-z]+\.html$/.test(tail));
   if (odd.length > 0) {
@@ -786,7 +851,7 @@ export function parseDraftTeamSlugs(html: string): string[] {
     // ⚠**같은 「0건」인데 뜻이 정반대인 둘을 갈라서 준다.** 호출자가 메시지 문자열을
     // 매칭하지 않아도 되게 `observed` 를 붙인다. ⚠**여기서 판정하지 않는다** —
     // 「아직 안 열렸다」인지 「무너졌다」인지는 **그 연도가 과거인지 아는 쪽**만 안다.
-    const observed: DraftIndexObservation = html.includes(DRAFT_PAGE_MARKER)
+    const observed: DraftIndexObservation = scope.includes(DRAFT_PAGE_MARKER)
       ? "no-team-links"
       : "no-draft-marker";
     throw new DraftIndexError(
