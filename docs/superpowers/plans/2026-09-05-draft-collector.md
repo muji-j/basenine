@@ -10,6 +10,21 @@
 
 ---
 
+## ⚠이 계획도 실행 이력이 되고 있다 — 초판이 틀린 곳
+
+| 무엇 | 초판 | 실제(정본) |
+|---|---|---|
+| **호스트** | `https://npb.jp/draft/…` | ⚠**`https://draft.npb.jp/draft/…`** — 초판대로면 **302 → 301 두 번 리다이렉트**라 **1장마다 3요청**이 되고(287장 → **861요청**), 조사 문서 §9-A 가 「**리다이렉트 홉은 간격 밖이다**」라고 적으므로 **L1 의 예의가 2/3 사라진다.** 가운데 홉은 **평문 `http`** 라 식별 UA 가 그대로 나간다. ⚠**픽스처의 `og:url` 이 `npb.jp` 라 속기 쉽다 — 그건 페이지가 스스로 쓴 문자열이지 서버가 어디서 답하는지가 아니다** |
+| 본문 디코드 | `gunzipSync(body).toString("utf8")` | ⚠**두 겹으로 틀렸다.** `readBody` 가 **이미 gunzip 해서** 주므로 재-gunzip 은 `incorrect header check`. 고쳐도 `Uint8Array#toString("utf8")` 은 **`Buffer` 가 아니라 인자를 무시**하고 `"60,104,116,…"` 를 낸다 — ⚠**던지지 않아서 파서가 오진하고 드래프트가 조용히 0건이 된다**(크래시보다 나쁘다). `archive.ts` 와 같은 `TextDecoder` 를 쓴다 |
+| 파일 배치 | `cli-draft.ts` 한 장 | **`draft.ts`(발견·취득) + `cli-draft.ts`(진입점)** — 진입점에 top-level `parseArgs` 가 있으면 시험이 import 하는 순간 죽는다. 이 패키지의 **지배적 관용**이다(`players.ts`↔`cli-players.ts`). ⚠**`draftTargets` 는 `draft.ts` 에 있다** |
+| Task 1 시험 2본째 | `[2001,2005,2026,2027].filter(...)` | ⚠**우리 코드를 하나도 안 지난다 — `cli-draft.ts` 가 비어 있어도 통과한다.** 「아무것도 안 재는 시험」이었고 13본으로 갈았다 |
+
+**정본은 코드다.** 아래 코드는 「무엇을 하려 했는가」로 읽어라.
+
+⚠**호스트는 위 표에 따라 이미 본문에서 고쳤다**(11곳). Task 2·3 의 `DraftProvenance.source` 도 그 값이다.
+
+---
+
 ## Global Constraints
 
 이 계획의 **모든 태스크**가 아래를 만족해야 한다. 출처는 `CLAUDE.md` 와 `docs/superpowers/plans/2026-09-04-draft-npb-source.md` 의 짐 목록이다.
@@ -84,9 +99,9 @@
 
 | 무엇 | 키 | URL |
 |---|---|---|
-| 연도 색인 | `npb/draft/backnumber` | `https://npb.jp/draft/backnumber.html` |
-| 연도 톱 | `npb/draft/{year}/index` | `https://npb.jp/draft/{year}/` |
-| 구단 페이지 | `npb/draft/{year}/{slug}` | `https://npb.jp/draft/{year}/draftlist_{slug}.html` |
+| 연도 색인 | `npb/draft/backnumber` | `https://draft.npb.jp/draft/backnumber.html` |
+| 연도 톱 | `npb/draft/{year}/index` | `https://draft.npb.jp/draft/{year}/` |
+| 구단 페이지 | `npb/draft/{year}/{slug}` | `https://draft.npb.jp/draft/{year}/draftlist_{slug}.html` |
 
 - [ ] **Step 1: 실패하는 시험을 쓴다**
 
@@ -114,7 +129,7 @@ test("⚠연도 톱과 구단 페이지가 2단계로 발견된다 — 슬러그
     ["npb/draft/2013/bs", "npb/draft/2013/g"],
     "⚠2013 오릭스는 bs 다 — b 로 박으면 그 구단이 통째로 빈다",
   );
-  assert.equal(targets[0]!.url, "https://npb.jp/draft/2013/draftlist_bs.html");
+  assert.equal(targets[0]!.url, "https://draft.npb.jp/draft/2013/draftlist_bs.html");
   // indexHtml·yearHtml2013 은 이 시험에서 직접 안 쓴다 — 발견은 파서가 하고
   // 여기서는 「발견 결과 → 대상 목록」 변환만 잰다(경계를 좁게 유지)
   void indexHtml;
@@ -164,13 +179,13 @@ const KEY_ROOT = "npb/draft";
 
 /** 연도 색인 — 이 한 장이 어느 해가 있는지 말한다 */
 export const BACKNUMBER_KEY = `${KEY_ROOT}/backnumber`;
-export const BACKNUMBER_URL = "https://npb.jp/draft/backnumber.html";
+export const BACKNUMBER_URL = "https://draft.npb.jp/draft/backnumber.html";
 
 export function yearIndexKey(year: number): string {
   return `${KEY_ROOT}/${year}/index`;
 }
 export function yearIndexUrl(year: number): string {
-  return `https://npb.jp/draft/${year}/`;
+  return `https://draft.npb.jp/draft/${year}/`;
 }
 
 export interface DraftTarget {
@@ -194,7 +209,7 @@ export function draftTargets(input: {
     for (const slug of [...slugs].sort()) {
       out.push({
         key: `${KEY_ROOT}/${year}/${slug}`,
-        url: `https://npb.jp/draft/${year}/draftlist_${slug}.html`,
+        url: `https://draft.npb.jp/draft/${year}/draftlist_${slug}.html`,
       });
     }
   }
@@ -361,7 +376,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { decideBids, type TeamPage } from "../tools/load-draft-archive.ts";
 
-const PROV = { source: "https://npb.jp/draft/2023/", fetchedAt: "2026-09-05T00:00:00.000Z", revision: "h" };
+const PROV = { source: "https://draft.npb.jp/draft/2023/", fetchedAt: "2026-09-05T00:00:00.000Z", revision: "h" };
 
 test("⚠시즌 전 구단에 경합이 0건이면 bids 는 null 이다 — 「소스가 안 쓴다」(A2)", () => {
   const pages: TeamPage[] = [
@@ -536,7 +551,7 @@ export async function loadDraftSeason(
 
   const decision = decideBids(pages);
   const event: DraftProvenance = {
-    source: `https://npb.jp/draft/${season}/`,
+    source: `https://draft.npb.jp/draft/${season}/`,
     fetchedAt: opts.fetchedAt,
     revision: `season-${season}`,
   };
@@ -545,7 +560,7 @@ export async function loadDraftSeason(
   let bids = 0;
   for (const p of pages) {
     const page: DraftProvenance = {
-      source: `https://npb.jp/draft/${season}/draftlist_${p.team}.html`,
+      source: `https://draft.npb.jp/draft/${season}/draftlist_${p.team}.html`,
       fetchedAt: opts.fetchedAt,
       revision: `${season}-${p.team}`,
     };
@@ -607,7 +622,7 @@ async function readTeamPages(archiveRoot: string, season: number): Promise<TeamP
 
 ```typescript
     const page: DraftProvenance = {
-      source: `https://npb.jp/draft/${season}/draftlist_${p.team}.html`,
+      source: `https://draft.npb.jp/draft/${season}/draftlist_${p.team}.html`,
       fetchedAt: p.fetchedAt,
       revision: p.revision,
     };
