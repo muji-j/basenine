@@ -262,6 +262,56 @@ test("⚠L1: 전 요청이 주입된 fetch 를 지나고 간격을 지킨다 —
   assert.deepEqual(h.sleeps, new Array(13).fill(3000), "첫 요청 뒤 매번 3초를 기다린다(1req/3초 · 동시 1커넥션)");
 });
 
+/**
+ * ⚠**옛 사본으로 진행한 것을 조용히 두지 마라.**
+ *
+ * 취득이 실패해도 아카이브에 이전 성공분이 있으면 그것으로 발견을 계속한다(L7 캐시 우선).
+ * 실패 자체는 `pages` 에 남아 종료코드가 되지만, **그것만으로는 부족하다**: 로그에는
+ * 「실패 1」만 찍히고 뒤따르는 구단 페이지들은 `stored`/`unchanged` 로 **정상처럼 보인다.**
+ * 그 구단 목록이 **낡은(=구단이 빠져 있을 수 있는) 슬러그 집합**에서 나왔다는 신호가 없으면
+ * **어느 해가 그렇게 받아졌는지 사후에 알 수 없다.**
+ */
+test("⚠연도 톱이 실패해 옛 사본으로 진행하면 그 해를 표시한다", async () => {
+  const h = harness();
+  const { deps, sink } = depsFor(h, realRoute);
+  await collectDraft({ from: 2013, to: 2013 }, deps); // 1회차: 사본을 만든다
+  assert.ok(await sink.readBody("npb/draft/2013/index"));
+
+  // 2회차: 연도 톱만 죽는다. 색인과 구단 페이지는 정상.
+  const h2 = harness();
+  const r2 = recorder((url) => (url === yearIndexUrl(2013) ? response(503) : realRoute(url)));
+  const deps2 = {
+    fetcher: new PoliteFetcher({ userAgent: "ua", clock: h2.clock, fetchImpl: r2.impl, sleep: h2.sleep.bind(h2) }),
+    sink, // ⚠**같은 sink** — 1회차의 사본이 남아 있다
+    clock: h2.clock,
+  };
+
+  const r = await collectDraft({ from: 2013, to: 2013 }, deps2);
+  assert.deepEqual([...r.stale.years], [2013], "⚠낡은 슬러그로 받은 해가 결과에 남아야 한다");
+  assert.equal(r.stale.index, false, "색인은 멀쩡했다 — 뭉뚱그리지 않는다");
+  assert.equal(r.pages.filter((p) => p.outcome === "failed").length, 1, "실패는 그대로 남는다");
+  assert.equal(r.slugsByYear.get(2013)?.length, 12, "옛 사본으로 발견은 계속된다(L7)");
+  assert.equal(r.skipped.length, 0, "건너뛴 게 아니다 — 옛 사본으로 진행한 것이다");
+});
+
+test("⚠색인이 옛 사본이면 연도 목록 전체가 낡았다 — 연도별 표시와 층이 다르다", async () => {
+  const h = harness();
+  const { deps, sink } = depsFor(h, realRoute);
+  await collectDraft({ from: 2013, to: 2013 }, deps);
+
+  const h2 = harness();
+  const r2 = recorder((url) => (url === BACKNUMBER_URL ? response(503) : realRoute(url)));
+  const deps2 = {
+    fetcher: new PoliteFetcher({ userAgent: "ua", clock: h2.clock, fetchImpl: r2.impl, sleep: h2.sleep.bind(h2) }),
+    sink,
+    clock: h2.clock,
+  };
+
+  const r = await collectDraft({ from: 2013, to: 2013 }, deps2);
+  assert.equal(r.stale.index, true, "⚠어느 해가 있는지 자체가 낡은 목록에서 나왔다");
+  assert.deepEqual([...r.stale.years], [], "연도 톱은 멀쩡했다");
+});
+
 test("⚠색인 자체도 아카이브에 남는다 — 이 연도 목록이 어디서 나왔는가(M4)", async () => {
   const h = harness();
   const { deps, sink } = depsFor(h, realRoute);

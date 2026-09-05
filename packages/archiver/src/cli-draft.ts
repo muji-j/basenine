@@ -17,7 +17,7 @@
  *   node packages/archiver/src/cli-draft.ts --only 2025 --contact you@example.com
  */
 import { parseArgs } from "node:util";
-import { PoliteFetcher, buildUserAgent } from "./fetcher.ts";
+import { L1_MIN_DELAY_MS, PoliteFetcher, buildUserAgent, parseDelayMs } from "./fetcher.ts";
 import { LocalSink } from "./sink.ts";
 import { systemClock } from "./clock.ts";
 import { summarize } from "./archive.ts";
@@ -84,20 +84,13 @@ if (!contact) {
   process.exit(2);
 }
 
-/**
- * ⚠**`--delay` 를 검사하지 않으면 예의가 조용히 사라진다.**
- *
- * `Number("abc")` 는 `NaN` 이고 **`NaN` 은 nullish 가 아니라서** `PoliteFetcher` 의
- * `opts.minDelayMs ?? 3000` 을 그대로 통과한다. 그러면 `elapsed < NaN` 이 **항상 false** 라
- * **간격이 0이 된다**(실측) — 오타 하나로 L1 위반이고, 로그에는 아무것도 안 남는다.
- */
-const delayMs = intOrNull(values.delay);
-if (delayMs === null || delayMs < 0) {
-  console.error(`--delay 는 0 이상의 정수(ms)여야 한다: ${values.delay}\n${USAGE}`);
+// ⚠**검사는 `fetcher.ts` 한 벌이다**(M1). 생성자도 같은 술어로 막으므로 여기를 지워도
+//   조용히 0초가 되지는 않는다 — 여기 있는 이유는 **스택트레이스 대신 쓸 만한 메시지**다.
+const delayMs = parseDelayMs(values.delay);
+if (delayMs === null) {
+  console.error(`--delay 는 0 이상의 수(ms)여야 한다: ${values.delay}\n${USAGE}`);
   process.exit(2);
 }
-/** L1 의 하한. ⚠**막지는 않는다**(픽스처 스모크가 있다) — 대신 **조용히 넘어가지 않는다** */
-const L1_MIN_DELAY_MS = 2000;
 if (delayMs < L1_MIN_DELAY_MS) {
   console.error(`⚠--delay ${delayMs}ms 는 L1 하한(${L1_MIN_DELAY_MS}ms · 1req/2~5초) 아래다 — 실사이트에 쓰지 마라`);
 }
@@ -125,6 +118,23 @@ console.error(
     ` — 슬러그를 얻은 해 ${result.slugsByYear.size}개 / 건너뛴 해 ${skips.total}개`,
 );
 console.error(`합계: ${s.total}장 (신규 ${s.stored} / 변경없음 ${s.unchanged} / 부재 ${s.absent} / 실패 ${s.failed})`);
+
+/**
+ * ⚠**옛 사본으로 진행한 것을 반드시 말한다.**
+ *
+ * 취득이 실패해도 아카이브에 이전 성공분이 있으면 발견을 계속한다(L7). 그 자체는 맞지만,
+ * **이 줄이 없으면** 로그에 「실패 1」만 찍히고 뒤따르는 구단 페이지는 `stored` 로
+ * **정상처럼 보인다** — 그 목록이 낡은 슬러그에서 나왔다는 것을 **사후에 알 수 없다.**
+ */
+if (result.stale.index) {
+  console.error(`⚠연도 목록이 옛 사본이다 — 색인 취득이 실패했다. 새로 열린 해가 빠져 있을 수 있다`);
+}
+if (result.stale.years.length > 0) {
+  console.error(
+    `⚠옛 사본의 슬러그로 받은 해 ${result.stale.years.length}개: ${result.stale.years.join(" ")}` +
+      ` — 그해 구단이 늘었으면 그 구단이 통째로 빠진다. 다시 돌려라`,
+  );
+}
 
 if (skips.total > 0) {
   console.error(

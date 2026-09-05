@@ -117,6 +117,20 @@ export interface DraftCollectResult {
   readonly slugsByYear: ReadonlyMap<number, readonly string[]>;
   /** 슬러그를 못 얻은 해. ⚠**버리지 않고 관측을 그대로 남긴다**(A1) */
   readonly skipped: readonly DraftYearSkipped[];
+  /**
+   * ⚠**옛 사본으로 진행한 것** — 취득은 실패했는데 아카이브에 이전 성공분이 있었다(L7).
+   *
+   * ⚠**실패가 `pages` 에 남는 것만으로는 부족하다.** 로그에는 「실패 1」만 찍히고 뒤따르는
+   * 구단 페이지는 `stored`/`unchanged` 로 **정상처럼 보인다** — 그 구단 목록이 **낡은 슬러그
+   * 집합**에서 나왔다는 신호가 없으면 **어느 해가 그렇게 받아졌는지 사후에 알 수 없다.**
+   * ⚠**「빠뜨렸다」가 아니라 「덜 받았을 수 있다」**이다: 그해 구단이 늘었으면 그 구단이 통째로 빈다.
+   */
+  readonly stale: {
+    /** 연도 색인이 옛 사본이다 → **어느 해가 있는지 자체가 낡았다** */
+    readonly index: boolean;
+    /** 이 해의 슬러그가 옛 사본에서 나왔다 → **구단이 빠져 있을 수 있다** */
+    readonly years: readonly number[];
+  };
   /** 받은 페이지 **전건**. 분모이자 `summarize` 의 입력이다 */
   readonly pages: readonly PageResult[];
 }
@@ -211,6 +225,11 @@ export async function collectDraft(
     );
   }
 
+  // ⚠**받기는 실패했는데 옛 사본이 있다** — 그걸로 진행하되(L7) **낡았다고 표시한다.**
+  //   표시하지 않으면 뒤따르는 전부가 정상처럼 보인다.
+  const staleIndex = index.result.outcome === "failed";
+  const staleYears: number[] = [];
+
   // ⚠**`parseDraftYears` 가 던지면 그대로 올린다**(M7) — 빈 배열로 흘리면 그 해부터
   //   영영 안 들어오고, 로그에는 「0건 성공」만 남는다.
   const yearsListed = parseDraftYears(index.html);
@@ -234,6 +253,8 @@ export async function collectDraft(
       skipped.push({ year, skip: skipFromResult(top.result) });
       continue;
     }
+    // ⚠**옛 사본으로 발견을 계속한다**(L7) — 다만 이 해는 낡은 슬러그 집합에서 나왔다.
+    if (top.result.outcome === "failed") staleYears.push(year);
 
     try {
       slugsByYear.set(year, parseDraftTeamSlugs(top.html));
@@ -257,7 +278,14 @@ export async function collectDraft(
     record(await archiveUrl(t.key, t.url, deps));
   }
 
-  return { yearsListed, yearsAttempted, slugsByYear, skipped, pages };
+  return {
+    yearsListed,
+    yearsAttempted,
+    slugsByYear,
+    skipped,
+    stale: { index: staleIndex, years: staleYears },
+    pages,
+  };
 }
 
 /**
