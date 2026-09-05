@@ -854,6 +854,24 @@ th[aria-sort="descending"] .sortable i::before{content:"↓"}
 .glh s{text-decoration:none;margin-left:8px;color:var(--tx-3);font-size:10.5px}
 .glc{margin:5px 0 0;font-size:11.5px;color:var(--tx-2);padding-left:7px;box-shadow:inset 2px 0 0 var(--warn)}
 .empty{font-size:12px;color:var(--tx-3);padding:6px 0}
+/* ── M12 의 여섯 갈래는 **형태**로 갈린다 ──────────────────────
+   ⚠**타입에서 여섯으로 쪼갠 것이 화면에서 한 갈래로 되돌아가 있었다**(2026-09-05 감사 P1).
+   stateNote() 가 여섯을 전부 .empty 로 냈고, 다른 것은 **문장 첫 낱말뿐**이었다.
+   ⚠**그래서 무게가 정확히 뒤집혀 있었다** — 이 화면에서 형태를 가진 것은 「제도상 추첨이 없다」
+   (.dnolot) 하나뿐이라, **가장 안 중요한 사실이 가장 진했다.**
+   ⚠**빨강으로 칠하지 않는다** — 「없음」은 고장이 아니다. 위 .pmiss 가 2026-08-18 에
+   같은 결론에 이미 이르렀고, **여기서는 그 어휘를 그대로 쓴다**(새 색·새 그림자 0).
+   ⚠**갈라야 할 것은 「누가 고칠 수 있는가」다**(layout.ts 의 DataState 주석):
+     실선 = 여기는 안 열린다(출처가 껐다 · 정말로 0건이었다)
+     점선 = 채워질 자리다(우리 몫의 남은 일 · 시간이 채운다)
+   두 상태를 한 문장으로 합치지 말라고 적어 둔 그 구별을 **화면에서도 지킨다.**
+   ⚠**판정선은 .dnolot 이다** — 그보다 약하면 이 수정은 아무것도 안 고친 것이다.
+   여기는 3px 실선 + --panel-2 바탕 + --tx-2 로 그보다 진하다(2px inset · 바탕 없음). */
+.empty[data-state]{color:var(--tx-2);padding:5px 0 5px 9px;background:var(--panel-2);
+  border-left:3px solid var(--hair-2)}
+.empty[data-state="uncollected"],.empty[data-state="offseason"]{border-left-style:dashed}
+/* 이것만 우리 쪽 사고다 — 색을 쓰는 자리가 여기 하나뿐인 이유다(글자도 이미 다르다) */
+.empty[data-state="failed"]{border-left-style:solid;border-left-color:var(--warn)}
 
 /* ── 予告先発 ────────────────────────────────────────────── */
 /* 대전 카드 버튼 — **경기 수만큼 만들어지고, 폭에 맞춰 열이 접힌다** */
@@ -1946,7 +1964,13 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
    ⚠**원본의 격자를 재현하지 않는다**(L2). wikipedia 는 행=회차 × 열=12구단으로 짜는데
    그건 편집물의 구성이고, 옮기면 §2-5 2층에 닿는다. 우리 단위는 **경합 그룹**이다.
    ⚠**모서리와 그림자를 새로 만들지 않는다** — 이 화면도 사이트와 같이 각지고, 층이 없으므로
-   깊이도 없다. 구분은 **선과 여백**이 한다.
+   깊이도 없다.
+   ⚠**「구분은 선과 여백이 한다」고 적혀 있었는데 선은 그 일을 못 한다**(2026-09-05 감사 P3 정정).
+   --hair-2 대 바탕이 **라이트 1.58:1 · 다크 1.34:1** 이라 비텍스트 3:1 에 한참 못 미친다 —
+   눈에 보이는 날도 있고 안 보이는 날도 있는 선이다. 실제로 구분을 지고 있는 것은
+   **글자 자체**다: 경합 그룹은 16px 굵은 선수명과 12px 간격이, 회차는 13px 굵은 머리가
+   **중복으로** 말한다. 선은 그 위에 얹힌 거들기이지 근거가 아니다.
+   ⚠**그러니 선만 남기고 글자 위계를 지우지 마라** — 그날 이 화면의 구분이 통째로 사라진다.
    ⚠**当選/落選을 색만으로 말하지 않는다** — 글자가 정보이고, 테두리와 굵기는 거들 뿐이다.
    ⚠**칩은 홈·순위표와 같은 .hteam 한 벌**이고(M1) 표 안에서는 .tm 이다 — 새 스와치를 만들지 않는다. */
 .drnds{display:flex;flex-direction:column}
@@ -1980,6 +2004,31 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
 .dalt{font-style:normal;font-size:10.5px;color:var(--tx-3)}
 /* 단독지명은 **접어 둔다** — 펼쳐 두면 경합의 서사가 그 목록에 묻힌다 */
 .dsolo{margin-top:11px}
+/* ⚠**손잡이가 손잡이로 안 보였다**(2026-09-05 감사 P1). 셋이 겹쳤고 **셋을 다 고쳐야 한다** —
+   하나만 고치면 나머지 둘이 그대로 「여기 접힌 것이 있다」를 감춘다:
+     ⑴ font-size 선언이 없어 body 기본 **16px** 를 받았다. 회차 머리 .drh(13px)·구획 제목
+        .block>h2(12.5px)보다 커서 **문서 위계가 시각적으로 뒤집혀 있었다.**
+     ⑵ 마커가 .pickfold>summary::after{margin-left:auto} 로 상자 오른쪽 끝에 붙어
+        라벨과 **1440px 에서 884px**(1024:684 · 768:436 · 390:101) 떨어졌다 — 그 거리면
+        같은 줄의 것으로 안 읽힌다.
+     ⑶ .pickfold>summary:hover{color:var(--tx)} 가 **이미 --tx 인 글자를 --tx 로** 바꿔
+        아무것도 안 변했다. 対戦 화면에서만 살아 있었던 것은 거기 summary 에 .picklab 이
+        붙어 --tx-3 에서 시작하기 때문이다 — **같은 규칙이 한쪽에서만 도는 것을
+        「있으니 된다」로 읽지 마라.**
+   ⚠**대가는 2019 서사의 결말이었다** — 巨人이 奥川·宮川 을 놓치고 外れ外れ1位에서 뽑은
+   堀田賢慎이 이 안에만 있어서, 그 회차가 「この回の競合はありません。」만 남아
+   **「3회차엔 아무 일도 없었다」로 읽혔다.**
+   ⚠**마커를 라벨 앞으로 옮긴다**(order:-1). details 의 관용이 그 자리이고, 「접혀 있다」를
+   이름보다 먼저 읽게 한다. **글리프와 회전은 한 벌 그대로**라 어휘가 갈리는 것이 아니라 자리만 다르다.
+   ⚠**対戦 화면은 안 옮겼다. 「거기는 괜찮아서」가 아니다** — 실측하니 거기도 1200px 에서
+   마커가 라벨에서 **약 480px** 떨어져 있다(summary 548px · margin-left:auto). 즉 같은 모양이
+   그 화면에도 있다. 안 옮긴 이유는 하나다: **그 화면은 이번 감사 대상이 아니었고**,
+   거기 두 접힘(投手/打者)은 마커가 오른쪽에서 세로 열을 이루는 배치라 **다르게 판단될 수 있다.**
+   감사받지 않은 화면을 구현자 판단으로 바꾸지 않는다(감사↔구현 분리) — **다음 감사에 올린다.**
+   ⚠**새 색·새 토큰을 만들지 않았다** — --tx-2 는 이 파일이 이미 12px 본문에 쓰는 값이다
+   (라이트 6.61:1 · 다크 6.67:1 · .dnolot 과 같다). */
+.dsolo>summary{font-size:12px;color:var(--tx-2)}
+.dsolo>summary::after{order:-1;margin-left:0}
 .dsolos{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:3px 16px;font-size:12.5px}
 .dsolos li{display:inline-flex;align-items:baseline;gap:6px}
 .dsolos b{font-weight:400}
@@ -2028,7 +2077,14 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
   /* ⚠**검색칸을 아랫줄로 내린다.** 브랜드·탭 8개·테마가 이미 윗줄을 다 쓴다 —
      한 줄에 넣으면 검색칸이 100px 아래로 찌부러져 무엇을 치는지 안 보인다.
      ⚠**탭줄은 여기서 줄어드는 쪽이 된다**(기본값 flex:0 0 auto 를 되돌린다). 아랫줄이 없어졌으니
-     모자라면 옆으로 굴린다 — 실측으로 680px 은 8개가 다 보이고, 굴림이 필요한 것은 약 560px 아래다. */
+     모자라면 옆으로 굴린다.
+     ⚠**여기에 탭 개수와 임계 폭을 적지 않는다**(2026-09-05 정정). 「680px 은 8개가 다 보이고
+     굴림이 필요한 것은 약 560px 아래」라고 박혀 있었는데, **탭이 10개가 되면서 그날 거짓이 됐다** —
+     항목이 하나 늘 때마다 다시 거짓이 되는 수다(같은 자리에서 layout.ts 가 이미 한 번 겪었다).
+     남길 사실은 **「모자라면 굴린다」**이고 그건 안 자란다.
+     ⚠**굴리는 상자에는 첫 위치가 있다** — 왼쪽 끝이라 뒤쪽 항목에 서 있으면 현재 탭이
+     화면 밖에서 시작한다. 그것은 CSS 로 못 고치므로 **스크립트가 상자 안으로 들여놓는다**
+     (showCurrentTab). 스크립트가 죽으면 손으로 굴리는 상자로 남는다. */
   .topbar{flex-wrap:wrap;padding:6px 10px 8px;gap:6px}
   .qbox{order:3;flex-basis:100%;max-width:none}
   /* ⚠**flex-basis 를 0 으로 만드는 것이 핵심이다**(실측으로 배웠다 · 2026-08-20).
@@ -2575,8 +2631,14 @@ function renderBlocks(){
             el.setAttribute("tabindex","0");
             el.setAttribute("role","region");
             if(!el.hasAttribute("aria-label")){
+              /* ⚠**표가 자기 이름을 갖고 있으면 그것을 쓴다**(2026-09-05 감사 P2).
+                 첫 th 만 보면 이름이 **열 이름**이 되어, 같은 모양의 표가 둘 있는 화면에서
+                 둘 다 「球団（横スクロール）」가 됐다 — 실측 2건. 우리 표는 거의 전부
+                 aria-label 을 갖고 있고 그 이름은 이미 유일하다. th 는 **없을 때의 대비**로 남긴다. */
+              const tbl=el.querySelector("table[aria-label]");
               const cap=el.querySelector("caption,th");
-              el.setAttribute("aria-label",(cap&&cap.textContent?cap.textContent.trim():"表")+"（横スクロール）");
+              const nm=tbl?tbl.getAttribute("aria-label"):(cap&&cap.textContent?cap.textContent.trim():"表");
+              el.setAttribute("aria-label",(nm||"表")+"（横スクロール）");
             }
           }
         }else if(el.getAttribute("role")==="region"&&el.getAttribute("tabindex")==="0"){
@@ -3952,6 +4014,33 @@ const navTeamLinks=$$("[data-navteam]");
 /* ⚠**서버가 그린 것을 그대로 되돌린다.** 해제했을 때 쓸 경로·라벨·현재위치를 여기서 다시 짓지 않는다 —
    경로는 M1 이 한 곳으로 못 박았고 라벨은 i18n 대상이라(§7), 두 벌이 되면 언젠가 갈린다 */
 const navTeamBack=navTeamLinks.map(a=>({href:a.getAttribute("href")||"",text:a.textContent,here:a.getAttribute("aria-current")}));
+/* ⚠**「지금 여기」 표시가 화면 밖에 있으면 아무 일도 안 한다**(2026-09-05 감사 P2).
+   탭줄은 좁으면 옆으로 굴리는 상자인데 **첫 위치가 언제나 왼쪽 끝**이라, 뒤쪽 항목에 있는
+   화면에서는 현재 탭이 상자 밖에서 시작한다 — 실측(390px)으로 상자가 [80,330] 인데
+   ドラフト 가 [343,391] 이라 **한 글자도 안 보였다.** 뒤에 있는 항목일수록 이 화면이
+   「내가 어디 있는지」를 못 말한다.
+   ⚠**scrollIntoView 를 쓰지 않는다** — 조상까지 굴려 **세로 위치를 건드린다**(이 상자는
+   sticky 헤더 안에 있다). 상자의 scrollLeft 만 직접 옮긴다.
+   ⚠**부드럽게 굴리지 않는다** — 첫 그림에서 움직이는 것은 모션이 아니라 결함으로 보이고,
+   그러면 prefers-reduced-motion 을 여기서 또 물어야 한다. 즉시 옮기면 그 질문이 없다.
+   ⚠**기하를 모르는 환경에서는 아무것도 하지 않는다**(시험 스텁) — 없는 정보로 판정하지 않는다.
+   ⚠**JS 가 없어도 길은 남는다**(§0-1): 상자는 손으로 굴릴 수 있고, 잘린 탭 자체가 더 있다는 신호다. */
+function showCurrentTab(){
+  const nav=$(".tnav");
+  if(!nav||typeof nav.getBoundingClientRect!=="function")return;
+  if(typeof nav.scrollWidth!=="number"||typeof nav.clientWidth!=="number")return;
+  if(nav.scrollWidth<=nav.clientWidth+1)return;
+  const cur=$("[aria-current]",nav);
+  if(!cur||typeof cur.getBoundingClientRect!=="function")return;
+  const n=nav.getBoundingClientRect(),c=cur.getBoundingClientRect();
+  /* 오른쪽이 넘치면 그만큼만 민다 — 항목을 상자 가운데로 끌어오지 않는다(앞의 탭이 사라진다) */
+  if(c.right>n.right)nav.scrollLeft+=c.right-n.right;
+  else if(c.left<n.left)nav.scrollLeft-=n.left-c.left;
+}
+if(typeof addEventListener==="function"){
+  let tabT=0;
+  addEventListener("resize",()=>{clearTimeout(tabT);tabT=setTimeout(showCurrentTab,150)},{passive:true});
+}
 function paintFavTeam(){
   const fav=state.favTeam;
   /* 빈 문자열은 어느 구단 코드와도 같지 않다 — 미지정이면 12개가 전부 눌리지 않은 상태가 된다 */
@@ -3983,6 +4072,9 @@ function paintFavTeam(){
     else if(back.here==="page")a.setAttribute("aria-current","true");
     else a.removeAttribute("aria-current");
   });
+  /* ⚠**여기서 부른다** — 최애를 바꾸면 첫 탭의 라벨이 「球団」에서 구단 약칭으로 바뀌어
+     **탭줄의 폭도 「지금 여기」의 위치도 함께 바뀐다.** 초기 1회도 이 함수가 겸한다. */
+  showCurrentTab();
 }
 /* ⚠**저장값은 서버 데이터의 사본이다** — 그리고 그 사본은 이 브라우저에만 있어 **서버가 못 고친다.**
    약칭이 바뀌면 내비가 틀린 구단 이름을 조용히 보여주고(404 조차 안 난다), 경로 규칙이 바뀌면

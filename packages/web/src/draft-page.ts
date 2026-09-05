@@ -484,11 +484,19 @@ function roundLabel(r: DraftRound): { label: string; extra: string | null } {
  * **그 해의 1位指名 12건이 화면 어디에도 남지 않는다.**
  *
  * ⚠**구단 순서는 `TEAMS` 순이다 — 웨이버 순이 아니다.** 그 사실을 표 머리 옆에 적는다.
+ *
+ * ⚠**이름을 구획마다 유일하게 만든다**(2026-09-05 감사 P2). 한 화면에 支配下·育成 두 표가
+ * 서고 둘 다 `aria-label="指名の全記録"` 이었다 — 실측으로 같은 이름이 **2건**이다.
+ * 표 목록에서 둘을 고를 수 없으니 이름이 이름 노릇을 못 한다.
+ * ⚠**ARIA 를 더하는 게 아니라 이미 쓰는 이름을 유일하게 만드는 것이다** — 속성이 늘지 않는다.
+ * ⚠**보이는 글자를 이름 안에 남긴다**(WCAG 2.5.3): 화면의 「指名の全記録」이 그대로 들어간다.
+ *
+ * @param sectionLabel 이 표가 속한 구획 이름(支配下·育成 …)
  */
-function pickTable(rounds: readonly DraftRound[]): RawHtml {
+function pickTable(rounds: readonly DraftRound[], sectionLabel: string): RawHtml {
   return html`<p class="picklab dlab">指名の全記録<s>球団の並びは当サイトの球団順です — 指名順ではありません</s></p>
 <div class="scroller">
-  <table class="dpick" aria-label="指名の全記録">
+  <table class="dpick" aria-label="${sectionLabel}の指名の全記録">
     <thead><tr><th class="l">球団</th><th class="l">選手</th><th class="l">守備</th><th class="l">出身</th></tr></thead>
     ${rounds.map((r) => {
       const { label, extra } = roundLabel(r);
@@ -526,7 +534,7 @@ function sectionBlock(s: DraftSection): RawHtml {
 ${bidBlock(s.bids)}`}
   ${s.rounds.length === 0
     ? html`<p class="empty">この区分の指名は記録が0件です。</p>`
-    : pickTable(s.rounds)}
+    : pickTable(s.rounds, s.label)}
 </section>`;
 }
 
@@ -555,14 +563,22 @@ function fetchedOn(at: string): string {
  * (선수 페이지 1,864장이 「2025年から」라는 거짓말을 싣고 있던 사고와 같은 모양).
  * ⚠**연속이 아니면 연속인 척하지 않는다** — 그때는 있는 해를 그대로 늘어놓는다.
  */
-function heldRange(seasons: readonly number[]): string {
+function heldSpan(seasons: readonly number[]): string {
   if (seasons.length === 0) return "0年分";
   const sorted = [...seasons].sort((a, b) => a - b);
   const from = sorted[0]!;
   const to = sorted[sorted.length - 1]!;
-  return to - from + 1 === sorted.length
-    ? `${from}〜${to}年（${sorted.length}年分）`
-    : `${sorted.join("・")}年（${sorted.length}年分）`;
+  return to - from + 1 === sorted.length ? `${from}〜${to}年` : `${sorted.join("・")}年`;
+}
+
+/**
+ * 위에 **분모(N年分)**를 붙인 형태.
+ *
+ * ⚠**`heldSpan` 에서 파생시킨다**(M1). 머리줄은 짧아야 해서 분모 없이 쓰고 각주는 분모까지 쓰는데,
+ * 두 벌로 적으면 「연속이 아니면 연속인 척하지 않는다」는 규칙이 **한쪽에서만** 지켜지는 날이 온다.
+ */
+function heldRange(seasons: readonly number[]): string {
+  return seasons.length === 0 ? "0年分" : `${heldSpan(seasons)}（${seasons.length}年分）`;
 }
 
 /**
@@ -696,19 +712,27 @@ function defectBlock(d: DraftPageData): RawHtml {
  * 후일담(④).
  *
  * ⚠**「0행」과 「미수집」을 가른다**(M11) — 지금은 언제나 후자이고, 그 문장은 `stateNote` 가 낸다.
+ *
+ * ⚠**한 가지 사실을 세 번 말하고 있었다**(2026-09-05 감사 P2). `stateNote` 의 접두사와
+ * `detail` 이 한 줄 안에서 겹쳤고, 그 아래 각주가 **세 번째로** 같은 말을 했다 —
+ * 9장 중 8장 전건에서 블록 높이 **184px** · 본문 **134자**에 정보량은 1비트였다.
+ * → 겹치는 말은 `detail` 에서 걷어냈고(`query.ts`), **행이 없을 때는 한 줄로 끝낸다.**
+ * ⚠**2026 화면에서 「없는 것에 대한 각주를 넉 장 쌓지 않는다」고 판단한 그 논리를 여기에도 쓴다.**
+ *
+ * ⚠**행이 있을 때도 그 각주를 되돌리지 마라 — 그때는 거짓이 된다.** 각주는
+ * 「まだ取り込んでいません」이라고 적는데, 행이 있다는 것은 취급을 시작했다는 뜻이다.
+ * 예전에는 **행이 있든 없든 무조건** 그렸으므로 `DRAFT_NOTES_COLLECTED` 가 켜지는 날
+ * 화면이 **자기가 그리고 있는 목록을 부정**했을 것이다.
  */
 function notesBlock(d: DraftPageData): RawHtml {
+  const hasRows = d.notes.state.kind === "ok" && d.notes.rows.length > 0;
   return html`<section class="block" id="b-draft-notes">
   <h2>その後<span class="qt">入団拒否 · 交渉権の訂正</span></h2>
-  ${d.notes.state.kind === "ok" && d.notes.rows.length > 0
+  ${hasRows
     ? html`<ul class="dnotes">${d.notes.rows.map(
         (n) => html`<li>${teamChip(n.team)}<b>${n.name.display}</b><s>${n.detail}</s></li>`,
       )}</ul>`
     : stateNote(d.notes.state)}
-  ${note(
-    "ドラフトの後に起きたこと（入団拒否・交渉権の訂正）は**出典には載っています**が、" +
-      "当サイトはまだ取り込んでいません — **「そういう事は無かった」という意味ではありません**。",
-  )}
 </section>`;
 }
 
@@ -731,7 +755,16 @@ export function renderDraftPage(d: DraftPageData, ctx: RenderContext): string {
   <div class="idtext">
     <h1 class="nm">${d.season}年 ドラフト会議</h1>
     <span class="sub">誰が競合し、誰がくじを引いたか</span>
-    <span class="asof">${heldRange(d.heldSeasons)}を収録</span>
+    ${/* ⚠**머리줄이 「収録」만 말하면 볼 수 없는 해를 보여 줄 것처럼 말한다**(2026-09-05 감사 P2).
+         `heldNote()` 는 이미 그 구별을 하고 있었는데 **그 정정이 화면에서 5,418px 아래**에 있었다 —
+         머리에서 한 약속을 화면 끝에서 물리는 모양이라, 그 사이를 안 읽은 사람에게는 안 물린 것이다.
+         → **같은 어휘를 머리에도 쓴다.** 분모(N年分)는 각주 쪽에만 두고 여기는 범위만 말한다.
+         ⚠**두 함수가 아니라 한 벌에서 뽑는다**(M1 · `heldSpan`). */ ""}
+    <span class="asof">${
+      shownHeld.length > 0 && shownHeld.length < d.heldSeasons.length
+        ? `${heldSpan(shownHeld)}を表示（収録は${heldSpan(d.heldSeasons)}）`
+        : `${heldRange(d.heldSeasons)}を収録`
+    }</span>
   </div>
 </header>
 

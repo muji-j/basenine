@@ -39,21 +39,33 @@ export type DataState =
   /** ⚠**우리가 아직 수집하지 않는다.** 출처에는 있다 — 「없었다」로 그리면 거짓이다 */
   | { kind: "uncollected"; detail: string };
 
-/** 정적 생성이므로 「로딩」은 페이지 단위로는 존재하지 않는다 — 클라이언트가 가져오는 검색 색인에만 있다. */
+/**
+ * 정적 생성이므로 「로딩」은 페이지 단위로는 존재하지 않는다 — 클라이언트가 가져오는 검색 색인에만 있다.
+ *
+ * ⚠**`data-state` 가 장식이 아니다**(2026-09-05 감사 P1). 그전까지 여섯 갈래가 **전부
+ * `<p class="empty">`** 로 나갔고 `.empty` 는 12px·`--tx-3`·테두리 0·바탕 0 이라,
+ * **화면에서 다른 것은 문장 첫 낱말뿐이었다** — 타입으로 여섯을 가르고 화면에서 하나로 되돌린 셈이다.
+ * 같은 사고가 이 저장소에 두 번 기록돼 있다(`.pmiss` 2026-08-18 · `td.ok`/`td.bad` 같은 날).
+ * ⚠**색으로 가르지 않는다** — 「없음」은 고장이 아니다. 형태(들여쓰기·왼쪽 선·바탕)로 가르고
+ * `failed` 에만 `--warn` 을 준다. 판별은 `assets.ts` 의 `.empty[data-state]` 가 한다.
+ * ⚠**클래스를 바꾸지 않고 속성을 더한 이유**: `<p class="empty">` 는 이 저장소에서
+ * 「행이 0건이다」를 손으로 적는 자리에도 쓰인다(예 「この回の競合はありません。」).
+ * 그건 **빈 자리가 아니라 답**이라 같은 모양이면 안 된다 — 속성이 붙은 것만 갈린다.
+ */
 export function stateNote(state: DataState): RawHtml {
   switch (state.kind) {
     case "ok":
       return raw("");
     case "empty":
-      return html`<p class="empty">${state.detail}</p>`;
+      return html`<p class="empty" data-state="empty">${state.detail}</p>`;
     case "failed":
-      return html`<p class="empty" role="status">取得できていません — ${state.detail}</p>`;
+      return html`<p class="empty" data-state="failed" role="status">取得できていません — ${state.detail}</p>`;
     case "offseason":
-      return html`<p class="empty">シーズン外 — ${state.detail}</p>`;
+      return html`<p class="empty" data-state="offseason">シーズン外 — ${state.detail}</p>`;
     case "unpublished":
-      return html`<p class="empty">公表されていません — ${state.detail}</p>`;
+      return html`<p class="empty" data-state="unpublished">公表されていません — ${state.detail}</p>`;
     case "uncollected":
-      return html`<p class="empty">まだ収集していません — ${state.detail}</p>`;
+      return html`<p class="empty" data-state="uncollected">まだ収集していません — ${state.detail}</p>`;
   }
 }
 

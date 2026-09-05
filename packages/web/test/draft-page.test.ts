@@ -275,6 +275,100 @@ test("후일담은 「まだ収集していません」이다 — 「그런 일�
   assert.match(html, /まだ収集していません/);
 });
 
+/**
+ * ⚠**한 가지 사실을 세 번 말하고 있었다**(2026-09-05 감사 P2).
+ * `stateNote` 의 접두사와 `detail` 이 한 줄 안에서 겹치고, 그 아래 각주가 세 번째로
+ * 같은 말을 했다 — 실측 블록 높이 **184px** · 본문 **134자**에 정보량은 1비트였다.
+ */
+test("⚠その後가 같은 말을 두 번 하지 않는다 — 접두사가 이미 「まだ収集していません」이다", () => {
+  const html = render();
+  const block = /<section[^>]*id="b-draft-notes"[\s\S]*?<\/section>/.exec(html);
+  assert.notEqual(block, null, "その後 구획이 없다");
+  assert.equal(
+    block![0].split("まだ収集していません").length - 1,
+    1,
+    "같은 문장이 블록 안에서 두 번 이상 나온다",
+  );
+  assert.doesNotMatch(block![0], /class="note"/, "행이 0건인데 각주까지 쌓았다");
+});
+
+/**
+ * ⚠**행이 있는데 「아직 취급하지 않는다」고 적으면 화면이 자기가 그리는 목록을 부정한다.**
+ * 예전에는 그 각주를 **행이 있든 없든 무조건** 그렸다 — `DRAFT_NOTES_COLLECTED` 가 켜지는 날
+ * 조용히 거짓이 될 자리였다.
+ */
+test("⚠후일담 행이 있으면 「まだ取り込んでいません」이라고 말하지 않는다", () => {
+  const html = render(
+    data({
+      notes: {
+        state: { kind: "ok" },
+        rows: [
+          {
+            kind: "shihaika",
+            team: tm("g", "巨人"),
+            name: nm("元木大介"),
+            noteKind: "nyudan_kyohi",
+            detail: "入団拒否",
+          },
+        ],
+      },
+    }),
+  );
+  const block = /<section[^>]*id="b-draft-notes"[\s\S]*?<\/section>/.exec(html)![0];
+  assert.match(block, /元木大介/);
+  assert.doesNotMatch(block, /取り込んでいません/, "행을 그려 놓고 아직 안 받았다고 말한다");
+  assert.doesNotMatch(block, /まだ収集していません/);
+});
+
+/**
+ * ⚠**한 화면에 같은 이름의 표가 둘이었다**(2026-09-05 감사 P2 · 실측 `2 aria-label="指名の全記録"`).
+ * 표 목록에서 둘을 고를 수 없으니 이름이 이름 노릇을 못 한다.
+ * ⚠**ARIA 를 더하는 게 아니라 이미 쓰는 이름을 유일하게 만드는 것이다** — 속성 수는 그대로다.
+ */
+test("⚠구획마다 표 이름이 유일하다 — 같은 이름이 둘이면 이름이 아니다", () => {
+  const html = render(
+    data({
+      sections: [
+        section({ kind: "shihaika", label: "支配下" }),
+        section({ kind: "ikusei", label: "育成", bids: null }),
+      ],
+    }),
+  );
+  const names = [...html.matchAll(/aria-label="([^"]*指名の全記録[^"]*)"/g)].map((m) => m[1]!);
+  assert.equal(names.length, 2, `표가 2개가 아니다: ${names.length}개`);
+  assert.equal(new Set(names).size, names.length, `이름이 겹친다: ${names.join(" / ")}`);
+  // ⚠보이는 글자가 이름 안에 남아 있어야 한다(WCAG 2.5.3 label-in-name)
+  for (const n of names) assert.match(n, /指名の全記録$/);
+});
+
+/**
+ * ⚠**머리에서 한 약속을 화면 끝에서 물리고 있었다**(2026-09-05 감사 P2).
+ * 「21年分を収録」과 그 정정(`heldNote`)이 **5,418px** 떨어져 있어서, 그 사이를 안 읽은
+ * 사람에게는 안 물린 것과 같았다. → 같은 어휘를 머리에도 쓴다.
+ */
+test("⚠머리줄이 「볼 수 있는 범위」부터 말한다 — 収録만 적으면 없는 해를 안내한다", () => {
+  const ctx = context({
+    paths: pathsFor(
+      [
+        { season: 2024, prefix: "", paths: new Set([DRAFT_PATH]) },
+        { season: 2023, prefix: "2023/", paths: new Set([DRAFT_PATH]) },
+      ],
+      2024,
+    ),
+  });
+  const html = renderDraftPage(data({ season: 2024, heldSeasons: [2022, 2023, 2024] }), ctx);
+  const asof = /<span class="asof">([^<]*)<\/span>/.exec(html)?.[1] ?? "";
+  assert.match(asof, /2023〜2024年を表示/, `머리줄이 볼 수 있는 범위를 안 말한다: ${asof}`);
+  assert.match(asof, /収録は2022〜2024年/, `머리줄이 보유 범위를 안 말한다: ${asof}`);
+});
+
+test("차이가 없으면 머리줄이 「収録」만 말한다 — 없는 구별을 만들지 않는다", () => {
+  // 시즌 띠가 없는 문맥(시즌 하나)에서는 잴 재료가 없다 — 그때는 아무 말도 더하지 않는다
+  const asof = /<span class="asof">([^<]*)<\/span>/.exec(render())?.[1] ?? "";
+  assert.match(asof, /を収録$/, `쓸 수 없는 구별을 적었다: ${asof}`);
+  assert.doesNotMatch(asof, /を表示/);
+});
+
 /* ---- 소스의 한계를 화면이 말한다 ------------------------------------------- */
 
 test("⚠웨이버 방향을 그리지 않는다 — 데이터가 전건 NULL 이고, 화면이 그 한계를 말한다", () => {

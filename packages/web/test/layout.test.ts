@@ -12,6 +12,7 @@ import {
   safeScript,
   stateNote,
 } from "../src/layout.ts";
+import { CSS } from "../src/assets.ts";
 import { NEUTRAL_COLOR } from "@bb-app/domain";
 import { renderTodayPage } from "../src/today-page.ts";
 import { renderPlayerPage } from "../src/player-page.ts";
@@ -49,6 +50,46 @@ test("4상태는 서로 다른 문구가 된다(M12)", () => {
   assert.notEqual(failed, off);
   assert.match(failed, /取得できていません/);
   assert.match(off, /シーズン外/);
+});
+
+/**
+ * ⚠**바로 위 시험은 문구만 봤고, 그동안 여섯이 화면에서 한 갈래였다**(2026-09-05 감사 P1).
+ * `stateNote` 가 전부 `<p class="empty">` 로 냈고 `.empty` 는 테두리 0·바탕 0 이라
+ * **다른 것이 문장 첫 낱말뿐**이었다 — 「4상태를 각각 디자인하라」(M12)를 문구로만 만족시킨 것이다.
+ * ⚠**이 저장소가 같은 사고를 세 번 냈다**: `.pmiss`(2026-08-18) · `td.ok`/`td.bad`(같은 날) ·
+ * 여기. 셋 다 **표식은 붙었는데 규칙이 없었다** — 그래서 표식과 규칙을 **함께** 잰다.
+ */
+test("⚠상태가 CSS 에서도 갈린다 — 표식만 붙고 규칙이 0건이면 안 갈린 것이다(M12)", () => {
+  const kinds = ["empty", "failed", "offseason", "unpublished", "uncollected"] as const;
+  const marks = kinds.map((kind) => /data-state="([a-z]+)"/.exec(toString(stateNote({ kind, detail: "x" })))?.[1]);
+  assert.deepEqual(marks, [...kinds], "상태가 화면에서 자기 이름을 안 말한다 — CSS 가 가를 근거가 없다");
+
+  // ⚠주석 안의 글자를 규칙으로 세지 않는다 — 이 스타일시트는 주석이 많다
+  const rules = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
+  const base = /\.empty\[data-state\]\{([^}]*)\}/.exec(rules)?.[1] ?? "";
+  assert.notEqual(base, "", ".empty[data-state] 규칙이 없다 — 표식이 아무 일도 안 한다");
+  assert.match(base, /background:var\(--panel-2\)/);
+  assert.match(base, /border-left:3px/);
+  // ⚠**판정선은 .dnolot 이다**(감사) — 그보다 약하면 「가장 안 중요한 사실이 가장 진한」 상태로 돌아간다
+  const nolot = /\.dnolot\{([^}]*)\}/.exec(rules)?.[1] ?? "";
+  assert.doesNotMatch(nolot, /background:/, ".dnolot 이 바탕을 얻었다 — 무게가 다시 뒤집힌다");
+  // 「우리 몫의 남은 일」과 「영영 안 열린다」를 형태로 가른다(DataState 주석이 요구하는 구별)
+  assert.match(rules, /\[data-state="uncollected"\][^{]*\{[^}]*dashed/);
+  assert.match(rules, /\[data-state="offseason"\][^{]*\{[^}]*dashed/);
+  // 고장만 색을 쓴다 — 「없음」은 고장이 아니다
+  assert.match(rules, /\.empty\[data-state="failed"\]\{[^}]*var\(--warn\)/);
+  assert.doesNotMatch(base, /--warn/, "「없음」에까지 경고색을 칠했다");
+});
+
+/**
+ * ⚠**손으로 적은 `<p class="empty">` 까지 물들이면 안 된다.** 「この回の競合はありません。」은
+ * **빈 자리가 아니라 답**이라 상태 표시와 같은 모양이면 그 구별이 사라진다.
+ */
+test("⚠표식 없는 .empty 는 그대로다 — 「행이 0건이다」와 「받지 못했다」는 다른 사실이다", () => {
+  const rules = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
+  const plain = /(^|\})\s*\.empty\{([^}]*)\}/.exec(rules)?.[2] ?? "";
+  assert.notEqual(plain, "", ".empty 규칙을 못 찾았다 — 이 시험이 공회전한다");
+  assert.doesNotMatch(plain, /background|border-left/, ".empty 자체가 상태 표시가 됐다");
 });
 
 test("safeScript는 문서를 끊는 문자를 죽인다", () => {

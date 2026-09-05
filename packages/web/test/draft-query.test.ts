@@ -324,6 +324,16 @@ test("⚠`draft_note` 0행은 「없었다」가 아니라 「아직 수집하�
     assert.deepEqual(data.notes.rows, []);
     assert.notEqual(data.notes.state.kind, "empty", "0 과 미수집을 섞지 마라");
     assert.equal(data.notes.state.kind, "uncollected");
+    /**
+     * ⚠**`detail` 이 접두사를 되풀이하면 화면이 한 줄 안에서 같은 말을 두 번 한다**
+     * (2026-09-05 감사 P2). `stateNote` 가 「まだ収集していません — 」을 앞에 붙이므로
+     * 여기서 또 「まだ収集していません」이라고 쓰면 그대로 겹친다 — 실제로 그랬다.
+     * ⚠**항목 이름도 다시 부르지 않는다** — h2 옆이 이미 「入団拒否 · 交渉権の訂正」이다.
+     */
+    const detail = "detail" in data.notes.state ? data.notes.state.detail : "";
+    assert.doesNotMatch(detail, /まだ収集していません/, "접두사와 같은 말을 detail 이 또 한다");
+    assert.doesNotMatch(detail, /入団拒否|交渉権/, "h2 가 이미 부른 이름을 detail 이 또 부른다");
+    assert.match(detail, /そういう事は無かった/, "「없었다는 뜻이 아니다」가 사라졌다(M11)");
   });
 });
 
