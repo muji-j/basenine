@@ -86,7 +86,26 @@ export interface DraftLoadInput {
    */
   team: string;
   picks: DraftPickRow[];
-  bids: DraftBidRow[];
+  /**
+   * 이 구단 페이지에서 읽어 낸 경합 주석.
+   *
+   * ⚠⚠**`null` 과 `[]` 는 다른 사실이다**(M11 · 2026-09-05 최종 재검토 [N1]):
+   *   · **`[]`** = 「소스가 경합을 말하고, **이 구단은 아무와도 안 겹쳤다**」 — 2019 히로시마.
+   *     → 그 구단의 1巡目을 **단독지명으로 유도한다.**
+   *   · **`null`** = 「**이 시즌 소스는 경합을 아예 안 쓴다**」 — 2023~2026 의 npb.jp.
+   *     → **아무것도 유도하지 않는다.** 모르는 것을 「単独指名」으로 메우지 않는다.
+   *
+   * ⚠**둘을 한 값으로 쓰면 네 시즌 전체가 거짓으로 적재된다.** 실측(조사 문서 §1):
+   * **2023 12구단 전수 · 렌더링된 주석 0/12** · 2024·2025 도 0. 초판은 `[]` 하나로 둘을
+   * 표현해서 2023 `武内 夏暉`(**실제로는 3구단 추첨의 당첨자**)가 単独指名이 됐다.
+   * ⚠**그리고 그 거짓은 어느 게이트에도 안 걸린다** — 문서층 그물은 `0 == 0` 으로 통과하고,
+   * 덩어리층은 안 돌고, INV-N3 는 **분모 0 이라 「위반 0건」**을 낸다.
+   *
+   * ⚠**파서는 이것을 못 정한다** — 2019 히로시마도 `※` 0건이라 **한 장만 봐서는 같은 모양**이다.
+   * 「이 시즌 소스가 경합을 말하는가」는 **시즌 전체를 봐야** 갈리므로 **수집기가 정한다.**
+   * ⚠**그래서 기본값이 없다.** 기본값을 주면 수집기가 안 정해도 조용히 통과한다.
+   */
+  bids: DraftBidRow[] | null;
   /** 구단 페이지(`draftlist_{team}.html`) — **지명·입찰 행**의 출처 */
   page: DraftProvenance;
   /**
@@ -106,9 +125,19 @@ export interface DraftLoadResult {
   /**
    * 그중 **여집합으로 유도한** 단독지명 행. ⚠**소스가 적어서가 아니라 우리가 유도한 수다** —
    * 로그에 적을 때 「0건」과 「안 유도했음」을 구별할 수 있게 따로 센다.
+   *
+   * ⚠**`null` 이 「안 유도했다」다**(`bids === null` · [N1]). 초판은 이 주석이
+   * 「둘을 구별한다」고 선언해 놓고 **타입이 `number` 라 구별할 수 없었다** — 즉 주석이 거짓이었다.
    */
-  readonly soleNominations: number;
+  readonly soleNominations: number | null;
 }
+
+/**
+ * 이 적재기가 쓰는 출처 이름. ⚠**INSERT 와 DELETE 가 같은 값을 봐야 한다** —
+ * 한쪽만 고치면 **남의 출처 행을 지우거나(N1-b) 자기 행을 못 지운다.**
+ * ⚠`origin` 을 입력으로 올리게 되면(파일 머리말) **이 상수가 아니라 그 입력을 양쪽에 넘겨라.**
+ */
+const ORIGIN = "npb";
 
 /**
  * 추첨(경합)이 성립하는 구획.
@@ -455,7 +484,7 @@ function deriveSoleNominations(
  * (그 순간 `page` 출처가 거짓이 된다 · [I3]).
  */
 function foreignTeams(input: DraftLoadInput): string[] {
-  const rows: ReadonlyArray<{ team: string }> = [...input.picks, ...input.bids];
+  const rows: ReadonlyArray<{ team: string }> = [...input.picks, ...(input.bids ?? [])];
   return [...new Set(rows.map((r) => r.team))].filter((t) => t !== input.team).sort();
 }
 
@@ -521,9 +550,12 @@ export function loadDraft(db: Db, input: DraftLoadInput): DraftLoadResult {
   }
 
   const numbered = numberRounds(season, input.picks);
-  const resolved = resolveBids(season, input.bids, numbered);
-  const soles = deriveSoleNominations(numbered, resolved);
-  const allBids = [...resolved, ...soles];
+  const resolved = resolveBids(season, input.bids ?? [], numbered);
+  // ⚠⚠**「소스가 경합을 안 쓴다」면 유도하지 않는다**([N1] · M11). 이 한 줄이 없으면
+  //   2023~2026 네 시즌 전체가 「単独指名」이라는 거짓으로 적재되고,
+  //   **문서층 그물도 덩어리층 그물도 INV-N3 도 그것을 못 잡는다**(입력 JSDoc 참조).
+  const soles = input.bids === null ? null : deriveSoleNominations(numbered, resolved);
+  const allBids = [...resolved, ...(soles ?? [])];
 
   const kinds = new Set(numbered.map((p) => p.row.kind));
 
@@ -540,14 +572,18 @@ export function loadDraft(db: Db, input: DraftLoadInput): DraftLoadResult {
 
     // ⚠**지명이 0건이어도 지운다.** 그래서 지울 구단을 행에서 유도하지 않고 입력에서 받는다 —
     //   「전 회차를 건너뛴 구단」으로 정정된 판이 오면 옛 행이 **조용히 남는 것**이 결함이다.
-    const delPick = db.raw.prepare("DELETE FROM draft_pick WHERE season = ? AND team = ?");
-    delPick.run(season, team);
+    // ⚠**`origin` 을 가린다**([N1-b]). 안 가리면 계획된 wikipedia 적재(2023+ 경합)를
+    //   npb 적재가 지우고 그 자리에 유도한 単独指名 을 넣는다. `origin` 은 019 부터 있었고
+    //   삭제만 그것을 안 봐다. ⚠PK 에는 `origin` 이 없으므로 두 출처가 **같은 키**를 쓰면
+    //   이제 **PK 충돌로 던진다** — 조용한 삭제보다 시끄러운 실패를 골랐다.
+    const delPick = db.raw.prepare("DELETE FROM draft_pick WHERE season = ? AND team = ? AND origin = ?");
+    delPick.run(season, team, ORIGIN);
 
     const insPick = db.raw.prepare(
       `INSERT INTO draft_pick
          (season, kind, team, round_no, pick_seq, waiver_dir, name_display, name_canonical,
           position, from_org, origin, player_id, source, fetched_at, revision)
-       VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 'npb', NULL, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
     );
     for (const p of numbered) {
       insPick.run(
@@ -560,20 +596,21 @@ export function loadDraft(db: Db, input: DraftLoadInput): DraftLoadResult {
         normalizePlayerName(p.row.nameDisplay),
         p.row.position,
         p.row.fromOrg,
+        ORIGIN,
         page.source,
         page.fetchedAt,
         page.revision,
       );
     }
 
-    const delBid = db.raw.prepare("DELETE FROM draft_bid WHERE season = ? AND team = ?");
-    delBid.run(season, team);
+    const delBid = db.raw.prepare("DELETE FROM draft_bid WHERE season = ? AND team = ? AND origin = ?");
+    delBid.run(season, team, ORIGIN);
 
     const insBid = db.raw.prepare(
       `INSERT INTO draft_bid
          (season, kind, round_no, team, group_key, won, name_display, name_canonical,
           rivals, origin, player_id, source, fetched_at, revision)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'npb', NULL, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
     );
     for (const b of allBids) {
       insBid.run(
@@ -587,6 +624,7 @@ export function loadDraft(db: Db, input: DraftLoadInput): DraftLoadResult {
         b.nameCanonical,
         // ⚠**JSON 배열 또는 `NULL`.** `NULL` 은 「주석이 없다」이지 「상대가 0명」이 아니다(M11).
         b.rivals === null ? null : JSON.stringify(b.rivals),
+        ORIGIN,
         page.source,
         page.fetchedAt,
         page.revision,
@@ -598,6 +636,6 @@ export function loadDraft(db: Db, input: DraftLoadInput): DraftLoadResult {
     events: kinds.size,
     picks: numbered.length,
     bids: allBids.length,
-    soleNominations: soles.length,
+    soleNominations: soles === null ? null : soles.length,
   };
 }
