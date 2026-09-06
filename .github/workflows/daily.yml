@@ -753,6 +753,32 @@ jobs:
         # 여기 적으면 **그 시즌이 빈 화면으로 생성된다**(2024·2023은 2026-08-17에 올렸다).
         run: node --max-old-space-size=6144 packages/web/tools/build.ts data/bb.sqlite dist 2026,2025,2024,2023,2022,2021,2020,2019,2018
 
+      - name: npb 픽스처 복원 — ⚠공개 저장소에 원본 페이지를 두지 않기 위해서다
+        env:
+          GH_TOKEN: ${{ secrets.BB_DATA_TOKEN }}
+        # ⚠**왜 저장소에 없는가**(2026-09-06 · 공개 감사 F1). `packages/parser/test/fixtures/` 의
+        #   npb.jp 픽스처 **20장**은 **페이지 전문**이고, 그중 19장이 자기 바이트 안에
+        #   「二次利用および無断転載を固く禁じます」와 `<meta name="copyright" …NPB…>` 를 담고 있다.
+        #   저장소를 공개하면 **그 문장을 담은 채 복제**되는 상태가 된다(§2-5 4층 · L6).
+        #   ⚠`.gitignore` 가 `docs/sources/samples/` 를 막는 사유(「페이지 사본을 저장소에 쌓는 것은
+        #   반대 방향이다」)가 여기에도 그대로 적용되는데 **이쪽만 예외로 남아 있었다.**
+        # ⚠**ja.wikipedia 픽스처 11장은 저장소에 남는다** — CC BY-SA 4.0 이 재배포를 허락하고
+        #   canonical URL·라이선스 링크가 **파일 안에** 있어 귀속이 파일과 함께 간다. 층이 다르다.
+        # ⚠**잘라서 넣는 것으로 대신하지 않는다** — 픽스처 README 가 그 이유를 적는다:
+        #   발췌로 줄이면 `S1`·`S2` 가 **아무것도 안 막고 「조용히 다른 표를 읽는」 쪽으로 통과**한다.
+        # ⚠**없으면 시험을 건너뛰지 않는다** — 없는 채로 초록이 되면 그게 가장 나쁘다.
+        run: |
+          set -euo pipefail
+          gh release download "$DATA_TAG" --repo "$DATA_REPO" --dir /tmp/fx --clobber \
+            --pattern 'npb-fixtures.tar'
+          tar -xf /tmp/fx/npb-fixtures.tar -C packages/parser/test/fixtures
+          n=$(find packages/parser/test/fixtures -name '*.html.gz' -not -name 'wiki-*' | wc -l)
+          echo "npb 픽스처 ${n}장 복원"
+          if [ "$n" -lt 20 ]; then
+            echo "::error::npb 픽스처가 ${n}장이다(20장이어야 한다). 시험이 조용히 초록이 되면 안 된다"
+            exit 1
+          fi
+
       - name: 시험
         # ⚠**CI 가 `npm test` 를 한 번도 돌리지 않고 있었다**(2026-08-18 감사 P3).
         #   화면 대조 시험(`topbar-consistency`)은 `dist` 를 읽으므로 **생성 뒤**에 와야 한다.
