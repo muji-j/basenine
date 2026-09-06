@@ -1506,8 +1506,13 @@ table.stand .dif i.n{right:50%}
   border:1px solid transparent;transition:color var(--fast) var(--ease)}
 .seasons a:hover{color:var(--tx);border-color:var(--hair-2)}
 .seasons a[aria-current="page"]{color:var(--tx);font-weight:700;border-color:var(--tx-3);background:var(--panel)}
-/* 같은 화면이 그 시즌에 없어 다른 곳으로 보낼 때. **숨기지 않고 표시한다** */
-.seasons a i{font-style:normal;font-size:9px;color:var(--tx-3);margin-left:3px}
+/* 같은 화면이 그 시즌에 없어 다른 곳으로 보낼 때. **숨기지 않고 표시한다**
+   ⚠**탭줄과 브랜드도 같은 표식을 쓴다**(M1). 드래프트만 굽는 시즌(2005~2017)에서는
+   그 시즌에 없는 화면의 탭이 **가장 최신 시즌으로** 간다 — 조용히 해가 바뀌면
+   사용자는 그것을 모른다. 표식은 i 요소 하나이고 뜻은 세 자리에서 같다.
+   ⚠**색만으로 말하지 않는다**(§7) — 글자(→)가 그 일을 하고 색은 뒤로 물릴 뿐이다.
+   ⚠**이 주석에 역따옴표를 쓰지 마라** — 이 파일은 통째로 템플릿 리터럴이라 거기서 끊긴다. */
+.seasons a i,.tnav a i,.brand i{font-style:normal;font-size:9px;color:var(--tx-3);margin-left:3px}
 
 /* ── 試合（直近の結果） ──────────────────────────────────────
    ⚠**원본 표(이닝별 스코어보드)를 재현하지 않는다**(L2). 우리가 가진 것은 R·H·E뿐이고,

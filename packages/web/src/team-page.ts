@@ -906,7 +906,7 @@ function milestoneBlock(rows: readonly HomeMilestone[], seasonOver: boolean, bas
 
 export function renderTeamPage(d: TeamPageData, ctx: RenderContext): string {
   // ⚠시즌을 바꿀 때 選手一覧이 아니라 **그 시즌의 같은 팀**으로 간다 — 팀은 시즌을 넘어 존재한다
-  const { base, root, seasons } = ctx.paths(teamPath(d.teamCode), {
+  const { base, root, seasons, navTo } = ctx.paths(teamPath(d.teamCode), {
     path: ROSTER_PATH,
     label: "選手一覧",
   });
@@ -1083,6 +1083,7 @@ ${panel(TEAM_TABS, "vs", false, d.vs.length === 0
     base,
     root,
     seasons,
+    navTo,
     color: d.color,
     spine: d.name,
     freshness: ctx.freshness,

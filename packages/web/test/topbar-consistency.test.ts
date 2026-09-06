@@ -102,11 +102,35 @@ function headOf(file: string): string {
   return (/<header class="topbar"[\s\S]*?<\/header>/.exec(text) ?? [""])[0];
 }
 
-/** 그 화면의 탭 목록(순서 포함) */
+/**
+ * 그 화면의 탭 목록(순서 포함).
+ *
+ * ⚠**안쪽 태그를 벗겨서 「보이는 글자」만 남긴다**(2026-09-07). 예전 정규식은
+ * `>([^<]*)</a>` 라서 **속에 요소가 하나라도 있으면 그 탭을 통째로 못 봤다** —
+ * 드래프트만 굽는 시즌의 탭에 대체 표식(`<i>→</i>`)이 붙자 6개가 목록에서 사라졌고,
+ * 아래 「탭 줄기가 같다」가 **라벨은 똑같은데** 빨개졌다.
+ * ⚠**이 시험이 재는 것은 라벨이지 마크업이 아니다** — 표식 자체는
+ * `draft-only-season.test.ts` 가 따로 못 박는다. 여기서 느슨해진 것은 없다.
+ */
 function tabsOf(head: string): string[] {
   const nav = /<nav class="tnav"[^>]*>([\s\S]*?)<\/nav>/.exec(head);
   if (nav === null) return [];
-  return [...nav[1]!.matchAll(/<a\s[^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>/g)].map((m) => m[2]!.trim());
+  return [...nav[1]!.matchAll(/<a\s[^>]*href="[^"]*"[^>]*>([\s\S]*?)<\/a>/g)].map((m) => label(m[1]!));
+}
+
+/**
+ * 앵커 안에서 **라벨만** 남긴다 — `aria-hidden` 장식은 통째로 버린다.
+ *
+ * ⚠**장식은 라벨이 아니다.** 다른 시즌으로 보내는 탭에는 표식(`→`)이 붙는데,
+ * 그건 낭독기가 안 읽는 조각이고 **시즌마다 붙고 안 붙는다.** 그것까지 라벨로 세면
+ * 「시즌이 달라도 탭 줄기는 같다」가 **라벨은 똑같은데** 빨개진다.
+ * ⚠**표식이 있는지는 여기서 안 잰다** — `draft-only-season.test.ts` 가 못 박는다.
+ */
+function label(inner: string): string {
+  return inner
+    .replace(/<([a-z]+)\s[^>]*aria-hidden="true"[^>]*>[\s\S]*?<\/\1>/g, "")
+    .replace(/<[^>]*>/g, "")
+    .trim();
 }
 
 /**

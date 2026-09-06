@@ -377,6 +377,15 @@ export interface PageOptions {
    * 둘을 하나로 합치면 과거 시즌에서 CSS가 조용히 404가 된다.
    */
   root: string;
+  /**
+   * 상단 내비의 목적지 계산기. **`ctx.paths(...)` 가 준다 — 손으로 만들지 마라.**
+   *
+   * ⚠**선택 인자로 두지 않는다.** 빠뜨리면 그 화면에서만 내비가 자기 시즌을 가리키게 되고,
+   * 그 시즌이 일부 화면만 굽는 시즌이면 **그 화면에서만 404** 가 난다 —
+   * `hasPostseason` 이 선택값이던 시절에 홈만 탭 하나가 사라졌던 것과 같은 모양이다.
+   * 필수로 두면 컴파일이 멈춘다.
+   */
+  navTo: NavTo;
   /** 시즌 전환. 시즌이 하나뿐이면 빈 배열 — 그때는 띠를 그리지 않는다 */
   seasons: readonly SeasonLink[];
   color: TeamColor;
@@ -451,6 +460,31 @@ function topbar(o: PageOptions): RawHtml {
    */
   const teamMark = o.navTeam === undefined ? raw(" data-navteam") : html` data-navteam="${o.navTeam}"`;
   /**
+   * **다른 시즌으로 보낸다는 사실을 화면에 남긴다.**
+   *
+   * ⚠**시즌 띠와 같은 어휘를 쓴다**(M1 · `seasonBar`): 보이는 `→` 와, 어디로 가는지 말하는
+   * `aria-label`. 어느 한쪽만 두면 한쪽 사용자에게만 조용해진다.
+   * ⚠**보이는 글자가 이름 안에 있어야 한다**(WCAG 2.5.3 label-in-name) — 그래서 라벨이
+   * `${label}（…）` 로 시작한다. 음성으로 「球団」이라고 말해도 이 링크가 눌린다.
+   * ⚠**`toSeason` 이 `null` 이면 아무것도 더하지 않는다.** 전 화면(수천 장)에 실리는 헤더라
+   * 한 바이트가 늘면 그날 배포가 통째로 새 파일이 된다(`footStamp` 주석의 그 사고).
+   */
+  const away = (t: NavTarget, label: string): RawHtml =>
+    t.toSeason === null
+      ? raw("")
+      : html` aria-label="${`${label}（この年にはありません。${t.toSeason}年へ移動します）`}"`;
+  const awayMark = (t: NavTarget): RawHtml | null =>
+    t.toSeason === null ? null : html`<i aria-hidden="true">→</i>`;
+  /**
+   * 내비 한 칸. ⚠**`o.base` 를 직접 쓰지 않는다** — 그 시즌에 그 화면이 없으면 404다.
+   * @param extra `href` **바로 뒤**에 오는 속성(구단 칸의 `data-navteam`). 순서를 바꾸지 마라
+   */
+  const navA = (path: string, key: NavKey, label: string, extra: RawHtml = raw("")): RawHtml => {
+    const t = o.navTo(path);
+    return html`<a href="${t.href}"${extra}${here(key)}${away(t, label)}>${label}${awayMark(t)}</a>`;
+  };
+  const brand = o.navTo("index.html");
+  /**
    * ⚠**검색 드롭다운을 `listbox`/`combobox` 라고 부르지 않는다**(2026-08-20 유저 결정).
    *
    * 이 목록에는 **결과가 아닌 줄**이 섞인다 — 「該当なし」·「読み込み中…」과 끝의 안내줄이다.
@@ -468,7 +502,7 @@ function topbar(o: PageOptions): RawHtml {
    */
   return html`<header class="topbar">
   <!-- ⚠**브랜드는 홈으로 간다.** 2026-08-17부터 홈은 대시보드이고, 선수 일람은 위 ROSTER_PATH 다 -->
-  <a class="brand" href="${o.base}index.html"${here("home")}>${o.site.name}<b>by Lunomel</b></a>
+  <a class="brand" href="${brand.href}"${here("home")}${away(brand, `${o.site.name} by Lunomel`)}>${o.site.name}<b>by Lunomel</b>${awayMark(brand)}</a>
   <div class="qbox">
     <input id="q" type="search" autocomplete="off" placeholder="選手を検索" aria-label="選手を検索">
     <ul class="qhits" id="qhits" role="list" aria-label="検索結果" hidden></ul>
@@ -483,17 +517,17 @@ function topbar(o: PageOptions): RawHtml {
             424B 이고 15,340장이면 약 6.5MB 를 매 배포마다 나른다. teams-page.ts 가 같은 이유로
             정한 규칙이 있다: 왜는 소스에 남기고 나가는 것은 마크업만 남긴다.
          ⚠**아래 세 개는 아직 HTML 주석이다**(합계 733B/장 ≈ 11MB). 같이 옮길지는 별건이다. */ ""}
-    <a href="${o.base}${TEAMS_PATH}"${teamMark}${here("team")}>球団</a>
-    <a href="${o.base}today.html"${here("today")}>試合</a>
-    <a href="${o.base}${ROSTER_PATH}"${here("index")}>一覧</a>
-    <a href="${o.base}ranking.html"${here("ranking")}>順位</a>
-    <a href="${o.base}matchup.html"${here("matchup")}>対戦</a>
-    <a href="${o.base}compare.html"${here("compare")}>比較</a>
+    ${navA(TEAMS_PATH, "team", "球団", teamMark)}
+    ${navA("today.html", "today", "試合")}
+    ${navA(ROSTER_PATH, "index", "一覧")}
+    ${navA("ranking.html", "ranking", "順位")}
+    ${navA("matchup.html", "matchup", "対戦")}
+    ${navA("compare.html", "compare", "比較")}
     <!-- ⚠**기록이 있는 시즌에만 낸다.** 2026년은 아직 포스트시즌이 없다 —
          눌러도 빈 화면이 나오는 항목은 고장으로 읽힌다 -->
     <!-- ⚠**이름을 「PS」로 두지 않는다.** 올스타뿐인 시즌도 여기로 오므로
          포스트시즌이라고 부르면 틀린다. 「레귤러 시즌 밖의 경기」가 이 항목이 담는 것이다 -->
-    ${o.hasPostseason ? html`<a href="${o.base}postseason.html"${here("postseason")}>他大会</a>` : raw("")}
+    ${o.hasPostseason ? navA("postseason.html", "postseason", "他大会") : raw("")}
     ${/* ⚠**조건을 붙이지 않는다**(2026-09-05 · Task 3). 드래프트가 없는 해(2026 · 개최 전)에도
          화면은 만들고, 그 화면이 「まだ開催されていません」이라고 말한다.
          항목을 조건부로 두면 **시즌에 따라 탭 줄기가 달라지는데**, 지금 그것이 허용된 항목은
@@ -502,7 +536,7 @@ function topbar(o: PageOptions): RawHtml {
          ⚠**`root` 가 아니라 `base` 다** — 用語·記録 과 달리 **시즌마다 한 장**이기 때문이다.
             `root` 로 두면 2019 화면의 이 항목이 2026 드래프트를 열고, 그건 404 가 아니라
             **틀린 해를 조용히 보여주는** 쪽이라 더 나쁘다(`DRAFT_PATH` 주석). */ ""}
-    <a href="${o.base}${DRAFT_PATH}"${here("draft")}>ドラフト</a>
+    ${navA(DRAFT_PATH, "draft", "ドラフト")}
     <!-- ⚠수집 로그는 시즌별이 아니라 사이트 전체다(「언제 어디서 데이터가 들어왔나」).
          과거 시즌에는 만들지 않으므로 링크는 root로 현재 시즌의 것을 가리킨다.
          base로 두면 그 시즌 화면이 전부 404가 된다.
@@ -628,10 +662,38 @@ export interface Fallback {
 
 const DEFAULT_FALLBACK: Fallback = { path: ROSTER_PATH, label: "選手一覧" };
 
+/**
+ * **상단 내비 한 칸의 목적지.**
+ *
+ * ⚠**시즌 띠와 같은 문제를 푼다.** 띠는 「그 시즌에 이 화면이 있는가」를 이미 묻는데,
+ * 내비는 그것을 **한 번도 묻지 않고** `${base}teams.html` 처럼 자기 시즌 폴더만 가리켰다.
+ * 그래서 **일부 화면만 굽는 시즌**(드래프트만 있는 2005~2017)에서는 그 링크가 전부 404다.
+ */
+export interface NavTarget {
+  /** 이 화면에서 목적지 폴더까지의 상대 기준. `href` 는 언제나 `base + path` 다 */
+  base: string;
+  href: string;
+  /**
+   * **다른 시즌으로 보낼 때 그 시즌.** 자기 시즌에 그 화면이 있으면 `null`.
+   * ⚠**`null` 이 아니면 화면이 그 사실을 말해야 한다** — 조용히 해를 바꾸면
+   * 사용자는 시즌이 바뀐 것을 모른다. 시즌 띠가 `→` 와 `aria-label` 로 하는 그 일이고,
+   * **같은 어휘를 쓴다**(M1).
+   */
+  toSeason: number | null;
+}
+
+/** 경로 → 목적지. ⚠**모르면 자기 시즌을 가리킨다**(`pathsFor` 의 갈래 ④) */
+export type NavTo = (path: string) => NavTarget;
+
 export interface PagePaths {
   base: string;
   root: string;
   seasons: SeasonLink[];
+  /**
+   * 상단 내비의 목적지 계산기.
+   * ⚠**`base` 를 손으로 붙이지 마라** — 그것이 이 저장소에서 404 를 만든 방식이다.
+   */
+  navTo: NavTo;
 }
 
 /** 한 시즌의 배치 */
@@ -660,25 +722,72 @@ export function pathsFor(
     const depth = selfPath.split("/").length - 1;
     const base = "../".repeat(depth);
     const root = "../".repeat(depth + prefixDepth);
+    /**
+     * **상단 내비의 목적지.** 네 갈래이고, **넷째가 이 함수의 안전 방향**이다.
+     *
+     * ```
+     * ① 배치를 모른다(plans 가 비었다)   → 자기 시즌            (지금까지의 동작)
+     * ② 자기 시즌에 그 화면이 있다        → 자기 시즌            (지금까지의 동작)
+     * ③ 다른 시즌에 있다                 → 그중 가장 최신 시즌   ← 새로 생긴 갈래
+     * ④ 아는 시즌 어디에도 없다           → 자기 시즌            (아래)
+     * ```
+     *
+     * ⚠**④ 에서 항목을 지우지 않는다.** 「어느 시즌에도 없다」와 **「우리가 아는 곳이 없다」**는
+     * 다른 말이고, 여기서 아는 것은 후자뿐이다 — `Freshness.seasonOver` 가 같은 이유로
+     * 「`true` 는 증명이고 `false` 는 모른다」고 적혀 있다(M11). 지우는 쪽으로 기울면
+     * **배치를 안 적은 문맥에서 헤더가 통째로 사라지고, 그건 아무 검사도 안 떨어뜨린다.**
+     * 자기 시즌을 가리키면 반대로 **없는 곳을 가리킨 순간 링크 검사가 빌드를 세운다**(`build.ts`) —
+     * 조용한 결함을 시끄러운 결함으로 바꾸는 쪽이 안전 방향이다.
+     * ⚠**실제로 ④ 가 도는 곳은 시험 문맥뿐이다** — 사이트 시즌은 내비의 전 경로를 굽는다
+     * (`seasonPaths`). 그래서 이 갈래는 **지금까지의 출력을 한 바이트도 안 바꾼다.**
+     *
+     * ⚠**「가장 최신」을 `plans` 의 순서로 읽지 않는다.** 그 순서는 `build.ts` 가 받은 인자 순서일
+     * 뿐이라, 언젠가 오름차순으로 넘기는 날 **가장 오래된 시즌으로 보내게 된다.** 연도를 비교한다.
+     */
+    const navTo: NavTo = (path: string): NavTarget => {
+      const here: NavTarget = { base, href: `${base}${path}`, toSeason: null };
+      if (me === undefined || me.paths.has(path)) return here;
+      let alt: SeasonPlan | null = null;
+      for (const p of plans) {
+        if (p.season !== current && p.paths.has(path) && (alt === null || p.season > alt.season)) alt = p;
+      }
+      if (alt === null) return here;
+      const at = `${root}${alt.prefix}`;
+      return { base: at, href: `${at}${path}`, toSeason: alt.season };
+    };
     return {
       base,
       root,
-      seasons: plans.map((p) => {
+      navTo,
+      seasons: plans.flatMap((p): SeasonLink[] => {
         if (p.season === current) {
-          return {
+          return [{
             season: p.season, href: `${base}${selfPath}`, current: true,
             fallback: false, fallbackTo: fallback.label,
-          };
+          }];
         }
         // ⚠**없는 화면으로 링크하지 않는다.** 2026에만 있는 선수의 2025 페이지는 없다
         const has = p.paths.has(selfPath);
-        return {
+        /**
+         * ⚠**대체할 곳조차 없으면 그 칸을 안 낸다**(2026-09-07).
+         *
+         * 지금까지 대체 목적지(`選手一覧`·`日付一覧`)는 **모든 시즌에 반드시 있다**는 전제 위에
+         * 서 있었고, 사이트 시즌만 있는 동안은 참이었다. **일부 화면만 굽는 시즌**
+         * (드래프트만 있는 2005~2017)이 생기면서 그 전제가 깨진다 —
+         * 그대로 두면 순위표의 시즌 띠가 `2010/players.html` 을 가리키고, 그건 404다.
+         * ⚠**빈 화면으로 보내느니 칸을 안 내는 쪽**이다(`hasPostseason` 과 같은 판단).
+         *   고를 수 없는 해를 띠에 세워 두면 그 자체가 고장으로 읽힌다.
+         * ⚠**사이트 시즌은 이 갈래에 걸리지 않는다** — `seasonPaths` 가 두 대체 목적지를
+         *   전 시즌에 넣는다. 그래서 이 줄은 기존 화면의 띠를 한 칸도 바꾸지 않는다.
+         */
+        if (!has && !p.paths.has(fallback.path)) return [];
+        return [{
           season: p.season,
           href: `${root}${p.prefix}${has ? selfPath : fallback.path}`,
           current: false,
           fallback: !has,
           fallbackTo: fallback.label,
-        };
+        }];
       }),
     };
   };
@@ -739,8 +848,22 @@ export function page(o: PageOptions): string {
       ? raw("")
       : html`<script type="application/json" id="bb-boot">${raw(safeScript(o.bootstrapJs))}</script>`;
 
+  /**
+   * **클라이언트가 시즌 자산을 찾는 기준**(`assets.ts` 의 `BASE`).
+   *
+   * ⚠**「이 문서의 폴더」가 아니라 「선수 자산이 있는 시즌 폴더」다.** 번들이 이 값으로 만드는 것은
+   * 전부 시즌 자산이다 — `players.json` · `players/*.html` · `players.html` · `compare/*.json` ·
+   * 최애 구단의 `teams/*.html`. **일부 화면만 굽는 시즌**(드래프트만 있는 2005~2017)에는
+   * 그 자산이 하나도 없으므로, 자기 폴더를 적으면 **검색 색인이 404 로 떨어져 검색창이
+   * 죽은 채로 서 있게 된다.** 에러가 아니라 침묵이라 아무도 결함으로 못 읽는다.
+   * ⚠**`ROSTER_PATH` 를 대리로 묻는다** — 위 자산들은 선수 일람과 **같은 시즌에 함께** 구워진다
+   * (`site.ts` 의 `buildSite`). 자산 하나하나를 `paths` 에 등록하면 그 목록이 두 벌이 된다.
+   * ⚠**보통 화면에서는 `o.base` 와 같은 값이다** — 그래서 이 줄은 기존 출력을 바꾸지 않는다.
+   */
+  const assetBase = o.navTo(ROSTER_PATH).base;
+
   const doc = html`<!doctype html>
-<html lang="ja" data-base="${o.base}">
+<html lang="ja" data-base="${assetBase}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">

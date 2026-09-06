@@ -13,9 +13,24 @@ import { freshness } from "../src/layout.ts";
 import { renderTodayPage } from "../src/today-page.ts";
 import { context, seasonContext } from "./fixtures.ts";
 
+/**
+ * ⚠**대체 목적지(`players.html`)를 두 시즌 다 갖는다**(2026-09-07).
+ * 예전 픽스처에는 그것이 없었는데, 아래 시험은 「선수 일람으로 보낸다」를 단언하고 있었다 —
+ * **없는 곳으로 보내는 것을 옳다고 못 박고 있었던 셈**이다. 실제 시즌은 언제나 이 화면을 굽는다
+ * (`site.ts` 의 `seasonPaths`). 없는 시즌을 시험하는 것은 아래 `DRAFT_ONLY_PLANS` 다.
+ */
 const PLANS = [
-  { season: 2026, prefix: "", paths: new Set(["index.html", "ranking.html", "players/A.html"]) },
-  { season: 2025, prefix: "2025/", paths: new Set(["index.html", "ranking.html", "players/B.html"]) },
+  { season: 2026, prefix: "", paths: new Set(["index.html", "players.html", "ranking.html", "players/A.html"]) },
+  { season: 2025, prefix: "2025/", paths: new Set(["index.html", "players.html", "ranking.html", "players/B.html"]) },
+];
+
+/**
+ * **드래프트만 굽는 시즌이 섞인 배치**(2026-09-07 · 보유 21시즌을 고를 수 있게).
+ * 2010 에는 `draft.html` 하나뿐이다 — 대체 목적지(`players.html`)조차 없다.
+ */
+const DRAFT_ONLY_PLANS = [
+  ...PLANS.map((p) => ({ ...p, paths: new Set([...p.paths, "draft.html"]) })),
+  { season: 2010, prefix: "2010/", paths: new Set(["draft.html"]) },
 ];
 
 test("현재 시즌은 사이트 루트에 놓인다 — 기존 URL이 그대로 산다", () => {
@@ -106,4 +121,59 @@ test("⚠지난 시즌에는 「終了したシーズン」이라고 쓴다 — 
 test("지난 시즌에 경기가 없으면 그렇게 말한다", () => {
   const out = toString(freshnessBar(freshness(null, "2026-08-16"), true));
   assert.match(out, /このシーズンの試合はありません/);
+});
+
+/* ── 일부 화면만 굽는 시즌 ─────────────────────────────────────
+   ⚠**드래프트만 있는 시즌**(2005~2017)이 생기면서 지금까지 참이던 전제 하나가 깨졌다:
+   「대체 목적지(選手一覧)는 어느 시즌에나 있다」. 아래가 그 새 규칙을 못 박는다. */
+
+test("⚠그 화면도 대체 목적지도 없는 시즌은 띠에 안 낸다 — 고를 수 없는 해를 세워 두지 않는다", () => {
+  const s = pathsFor(DRAFT_ONLY_PLANS, 2026)("ranking.html").seasons;
+  assert.deepEqual(
+    s.map((x) => x.season),
+    [2026, 2025],
+    "2010 에는 順位도 選手一覧도 없다 — 그리로 보내면 404다",
+  );
+});
+
+test("⚠같은 화면이 있으면 그 시즌을 낸다 — ドラフト 는 2010 에도 있다", () => {
+  const s = pathsFor(DRAFT_ONLY_PLANS, 2026)("draft.html").seasons;
+  assert.deepEqual(s.map((x) => x.season), [2026, 2025, 2010]);
+  const old = s.find((x) => x.season === 2010)!;
+  assert.equal(old.href, "2010/draft.html");
+  assert.equal(old.fallback, false, "실제로 있는 화면을 「대체」라고 말하면 안 된다");
+});
+
+/**
+ * **상단 내비의 대체**(`navTo`).
+ *
+ * ⚠**여기가 없으면 드래프트만 있는 시즌의 탭이 전부 404 다.** 탭은 지금까지
+ * 자기 시즌 폴더만 가리켰고, 그 시즌에 그 화면이 있는지 **한 번도 묻지 않았다.**
+ */
+test("⚠내비는 그 시즌에 없는 화면을 「그 화면이 있는 가장 최신 시즌」으로 보낸다", () => {
+  const navTo = pathsFor(DRAFT_ONLY_PLANS, 2010)("draft.html").navTo;
+  const ranking = navTo("ranking.html");
+  assert.equal(ranking.href, "../ranking.html", "2010 에 順位는 없다 — 2026 으로 보내야 한다");
+  assert.equal(ranking.toSeason, 2026, "어느 해로 보내는지 화면이 말할 수 있어야 한다");
+  assert.equal(ranking.base, "../", "클라이언트가 쓰는 기준도 그 시즌이다");
+
+  const draft = navTo("draft.html");
+  assert.equal(draft.href, "draft.html", "있는 화면을 다른 시즌으로 보내면 안 된다");
+  assert.equal(draft.toSeason, null);
+});
+
+test("⚠「가장 최신」을 배열 순서가 아니라 연도로 고른다 — 오름차순으로 넘겨도 같아야 한다", () => {
+  const ascending = [...DRAFT_ONLY_PLANS].sort((a, b) => a.season - b.season);
+  assert.equal(pathsFor(ascending, 2010)("draft.html").navTo("ranking.html").toSeason, 2026);
+});
+
+test("⚠아는 시즌 어디에도 없으면 자기 시즌을 가리킨다 — 항목을 지우지 않는다", () => {
+  // ⚠**「어느 시즌에도 없다」가 아니라 「우리가 아는 곳이 없다」다**(M11).
+  //   지우는 쪽으로 기울면 배치를 안 적은 문맥에서 헤더가 통째로 사라지고 아무 검사도 안 떨어진다.
+  //   자기 시즌을 가리키면 없는 곳을 가리킨 순간 **링크 검사가 빌드를 세운다.**
+  const t = pathsFor(DRAFT_ONLY_PLANS, 2026)("draft.html").navTo("nowhere.html");
+  assert.equal(t.href, "nowhere.html");
+  assert.equal(t.toSeason, null);
+  // 배치를 아예 모르는 문맥(시즌 하나)에서도 같다
+  assert.equal(pathsFor([], 2026)("draft.html").navTo("ranking.html").href, "ranking.html");
 });

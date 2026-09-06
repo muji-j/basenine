@@ -15,11 +15,11 @@ import type { LinkIndex } from "../src/link-check.ts";
 import { dirname, join, resolve } from "node:path";
 import { openDb } from "@bb-app/store";
 import { systemClock, toJstDateString } from "@bb-app/archiver";
-import { buildSite, seasonPaths } from "../src/site.ts";
+import { DRAFT_SEASON_PATHS, buildDraftSeason, buildSite, seasonPaths } from "../src/site.ts";
 import type { BuildResult } from "../src/site.ts";
 // ⚠**연락처 게이트의 판정은 한 벌이다**(M1) — 조건을 여기서 다시 쓰지 않는다
 import { contactGate } from "../src/layout.ts";
-import { buildCareerContext, loadLog, loadSite } from "../src/query.ts";
+import { buildCareerContext, draftHeldSeasons, loadDraftPage, loadLog, loadSite } from "../src/query.ts";
 
 const [dbArg, outArg, seasonArg, throughArg] = process.argv.slice(2);
 
@@ -118,11 +118,30 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
         ...(throughArg === undefined ? {} : { through: throughArg }),
       });
 
-      const plans = loaded.map((l) => ({
-        season: l.season,
-        prefix: l.prefix,
-        paths: seasonPaths(l.data, l.season === season),
-      }));
+      /**
+       * **드래프트만 있는 시즌**(2026-09-07).
+       *
+       * ⚠**데이터는 이미 있고 화면만 없었다.** DB 가 가진 드래프트는 2005~2025 인데
+       * 사이트가 굽는 시즌은 2018~2026 이라, **13년분이 「데이터는 있는데 화면이 없다」**였다.
+       * 화면 스스로 그렇게 적고 있었다(「2018〜2025年を表示（収録は2005〜2025年）」).
+       * ⚠**시즌을 통째로 늘리지 않는다** — 경기 데이터가 없어 선수·구단·순위가 전부
+       * 빈 화면으로 생긴다. 경기를 소급 수집하려면 약 34시간의 외부 요청이 든다(CLAUDE.md §2-2).
+       * ⚠**외부 요청 0** — `loadDraftPage` 는 DB 만 읽는다.
+       * ⚠**내림차순으로 붙인다** — 시즌 띠가 `plans` 의 순서 그대로 그려지므로,
+       *   현재 시즌(첫 칸)이 바뀌면 `pastSeasonOf` 판정까지 흔들린다.
+       */
+      const draftOnly = draftHeldSeasons(db)
+        .filter((s) => !seasons.includes(s))
+        .sort((a, b) => b - a);
+
+      const plans = [
+        ...loaded.map((l) => ({
+          season: l.season,
+          prefix: l.prefix,
+          paths: seasonPaths(l.data, l.season === season),
+        })),
+        ...draftOnly.map((s) => ({ season: s, prefix: `${s}/`, paths: DRAFT_SEASON_PATHS })),
+      ];
 
       rmSync(outDir, { recursive: true, force: true });
       let bytes = 0;
@@ -149,6 +168,33 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
         console.log(
           `  ${l.season}年${l.prefix === "" ? "(現行)" : ` → /${l.prefix}`} : ${r.files.length}파일 · 선수 ${r.playerCount}명 · 최신 ${r.latestGameDate ?? "없음"}`,
         );
+      }
+      /**
+       * ⚠**여기서 만드는 것은 드래프트 한 장뿐이다.** 다른 화면을 만들면
+       * 경기가 없는 시즌에 **빈 화면**이 생기고, 그건 「그 해는 원래 그렇다」로 읽힌다.
+       * ⚠**상단 내비는 이 시즌에 없는 화면을 가장 최신 시즌으로 보낸다**(`pathsFor` 의 `navTo`).
+       *   그 대체를 화면이 `→` 와 `aria-label` 로 말한다 — 조용히 해가 바뀌면 안 된다.
+       */
+      const heldGames = { from: held.lo ?? 0, to: held.hi ?? 0 };
+      for (const s of draftOnly) {
+        const files = buildDraftSeason(
+          loadDraftPage(db, { season: s, builtOn, ...(throughArg === undefined ? {} : { through: throughArg }) }),
+          site,
+          builtOn,
+          heldGames,
+          plans,
+        );
+        for (const f of files) {
+          const path = join(outDir, f.path);
+          mkdirSync(dirname(path), { recursive: true });
+          writeFileSync(path, f.content, "utf8");
+          bytes += Buffer.byteLength(f.content, "utf8");
+          fileCount += 1;
+          all.push(linkIndex(f));
+        }
+      }
+      if (draftOnly.length > 0) {
+        console.log(`  ドラフトのみ ${draftOnly.length}시즌(${draftOnly.at(-1)}〜${draftOnly[0]}) : ${draftOnly.length}파일`);
       }
       const result = current!;
 
