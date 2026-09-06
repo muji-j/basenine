@@ -21,6 +21,7 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  loadDraft,
   openDb,
   upsertBatting,
   upsertGame,
@@ -430,6 +431,76 @@ test("⚠끝난 시즌의 판정 부재가 종료 코드를 바꾼다 — 경고
   // 판정식이 **양쪽을 다 본다** — 하나만 보면 4~5월을 막거나 판정이 선 시즌을 막는다
   assert.match(g.head, /seasonOver/, "빌드가 시즌 종료 여부를 안 본다");
   assert.match(g.head, /basis/, "빌드가 판정 근거를 안 본다");
+  assert.match(
+    g.block,
+    /process\.exitCode = 1/,
+    "보긴 하는데 종료 코드를 안 바꾼다 — 경고만으로는 그대로 배포된다",
+  );
+});
+
+// ── 드래프트만 굽는 시즌. **「데이터가 있는데 안 적었다」** ─────────────────────
+
+/**
+ * 그 시즌에 드래프트 행 하나를 남긴다 — **경기 데이터와는 독립이다**(그게 이 게이트의 전제).
+ * ⚠**`bids: null`** — 「이 시즌 소스는 경합을 아예 안 쓴다」이고, `[]`(=안 겹쳤다)와 다른 사실이다(M11).
+ */
+function draftOf(db: Db, season: number, team: string): void {
+  const at = { source: `https://npb.jp/draft/${season}/`, fetchedAt: NOW, revision: "sha256:x" };
+  loadDraft(db, {
+    season,
+    team,
+    picks: [{ team, kind: "shihaika", roundNo: 1, waiverDir: null, nameDisplay: "山田 太郎", position: null, fromOrg: null }],
+    bids: null,
+    page: { ...at, source: `https://npb.jp/draft/${season}/draftlist_${team}.html` },
+    event: at,
+  });
+}
+
+/**
+ * ⚠⚠**분류에 「경기가 있는가」를 묻는 자리가 없었다**(2026-09-07 이중 검토 P3).
+ *
+ * `draftOnly` 는 **「빌드 인자 목록에 없는 드래프트 시즌」**을 전부 드래프트 전용으로 본다.
+ * 2017 을 백필해 놓고 `package.json` 의 시즌 목록 갱신을 잊으면 그 시즌이 **조용히 한 장으로만
+ * 구워지고** 선수·경기·순위가 통째로 사라진 채 **「그 해는 원래 드래프트만 있는 해」로 읽힌다.**
+ * ⚠**빈 화면조차 안 남는다** — `emptySeasons` 는 **목록에 적힌** 시즌만 보므로 이 갈래에 닿지 않고,
+ * 링크 검사도 통과한다(없는 화면은 링크도 없다). M7 의 「조용한 0」보다 더 안 보이는 모양이다.
+ *
+ * **한 번의 실행으로 양쪽을 다 잰다**:
+ * ```
+ * 2025  드래프트 있음 · 경기 있음 · 목록 밖  → **여기만 막는다**
+ * 2010  드래프트 있음 · 경기 없음 · 목록 밖  → 막지 않는다(이 기능의 정상 사용)
+ * ```
+ */
+test("⚠경기가 있는 시즌을 드래프트 한 장으로 굽지 않는다 — 목록에서 빠진 것을 조용히 지우지 않는다", async () => {
+  await withBuild(
+    "2026",
+    (db) => {
+      roster(db);
+      played(db, "2026-04-01", "t", "g", 2026);
+      played(db, "2025-04-01", "t", "g", 2025);
+      draftOf(db, 2025, "t");
+      draftOf(db, 2010, "t");
+    },
+    (r) => {
+      // ⚠**게이트까지 갔는가부터 확인한다** — 도중에 죽으면 아래 「안 났다」가 공허해진다
+      assert.match(r.stdout, /생성: \d+파일/, `빌드가 게이트까지 가지도 못했다:\n${r.stderr}`);
+      assert.match(
+        r.stderr,
+        /경기가 있는 시즌을 ドラフト 한 장으로만 구웠다: 2025 —/,
+        `경기가 있는 시즌이 한 장으로 구워지는데 아무 말도 안 했다:\n${r.stderr}`,
+      );
+      assert.doesNotMatch(r.stderr, /구웠다:[^\n]*2010/, "경기가 없는 시즌까지 막았다 — 이 기능이 죽는다");
+      assert.equal(r.status, 1, "배포를 세우지 않았다");
+    },
+  );
+});
+
+/**
+ * ⚠**「막는가」는 위에서 쟀다. 여기서는 「그 줄이 종료 코드를 세우는가」를 잰다** —
+ * 자식 프로세스의 종료 코드는 이 픽스처에서 세 게이트가 함께 세우므로 귀속이 안 된다.
+ */
+test("⚠그 시즌이 빠진 것이 종료 코드를 바꾼다 — 경고로 끝내지 않는다", () => {
+  const g = gate(buildSrc(), "droppedSeasons");
   assert.match(
     g.block,
     /process\.exitCode = 1/,

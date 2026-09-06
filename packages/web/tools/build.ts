@@ -19,7 +19,14 @@ import { DRAFT_SEASON_PATHS, buildDraftSeason, buildSite, seasonPaths } from "..
 import type { BuildResult } from "../src/site.ts";
 // ⚠**연락처 게이트의 판정은 한 벌이다**(M1) — 조건을 여기서 다시 쓰지 않는다
 import { contactGate } from "../src/layout.ts";
-import { buildCareerContext, draftHeldSeasons, loadDraftPage, loadLog, loadSite } from "../src/query.ts";
+import {
+  buildCareerContext,
+  draftHeldSeasons,
+  gameHeldSeasons,
+  loadDraftPage,
+  loadLog,
+  loadSite,
+} from "../src/query.ts";
 
 const [dbArg, outArg, seasonArg, throughArg] = process.argv.slice(2);
 
@@ -197,6 +204,30 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
         console.log(`  ドラフトのみ ${draftOnly.length}시즌(${draftOnly.at(-1)}〜${draftOnly[0]}) : ${draftOnly.length}파일`);
       }
       const result = current!;
+
+      /**
+       * ⚠**경기가 있는 시즌을 드래프트 한 장으로 굽지 않는다**(2026-09-07 이중 검토 P3).
+       *
+       * `draftOnly` 는 **「빌드 인자 목록에 없는 드래프트 시즌」**을 전부 드래프트 전용으로 본다.
+       * 그 분류에는 **경기가 있는지 묻는 자리가 없다** — 2017 을 백필해 놓고 `package.json` 의
+       * 시즌 목록 갱신을 잊으면 그 시즌이 **조용히 한 장으로만 구워지고** 선수·경기·순위가
+       * 통째로 사라진 채 **「그 해는 원래 드래프트만 있는 해」로 읽힌다.**
+       * ⚠**빈 화면조차 안 남는다** — 바로 아래 `emptySeasons` 는 **목록에 적힌** 시즌만 보므로
+       *   이 갈래에는 닿지 않는다. 링크 검사도 통과한다(없는 화면은 링크도 없다).
+       *   M7 이 경계하는 「조용한 0」보다 더 안 보이는 모양이다.
+       * ⚠**바로 아래 게이트와 방향이 반대인 짝이다**: 저쪽은 「적었는데 데이터가 없다」,
+       *   이쪽은 **「데이터가 있는데 안 적었다」**다. 둘 다 사람의 선언과 데이터가 어긋난 사고다.
+       * ⚠**산출물은 남긴다** — 다른 게이트와 같은 형식이다. 배포만 막는다.
+       */
+      const gameSeasons = new Set(gameHeldSeasons(db));
+      const droppedSeasons = draftOnly.filter((s) => gameSeasons.has(s));
+      if (droppedSeasons.length > 0) {
+        console.error(
+          `⚠ 경기가 있는 시즌을 ドラフト 한 장으로만 구웠다: ${droppedSeasons.join("·")} — ` +
+            `시즌 목록(${seasons.join(",")})에 넣어라. **선수·경기·순위가 통째로 사라진다**. 배포하지 않는다`,
+        );
+        process.exitCode = 1;
+      }
 
       /**
        * ⚠**목록에 적었는데 데이터가 없는 시즌을 조용히 배포하지 않는다.**
