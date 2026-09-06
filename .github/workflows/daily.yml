@@ -957,15 +957,35 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: node scripts/verify-deploy.ts
 
-      - name: 산출물 보관
-        # ⚠**성공한 날에는 올리지 않는다**(2026-08-18 감사 P2). 성공하면 같은 것이 Pages 에 올라가
-        #   **볼 수 있는 곳이 이미 있다** — 아티팩트는 그때 아무도 안 본다.
-        #   그런데 dist 는 **522MB · 8,611파일**이고 7일 보관이라 매일 그만큼을 태우고 있었다.
-        #   원래 의도(「무엇이 만들어졌는데 안 올라갔는가」)는 **실패한 날에만** 필요하다.
-        # ⚠`failure()` 만으로는 부족하다 — 취소된 실행도 남긴다. 그래서 `|| cancelled()` 다.
+      - name: 산출물 목록 만들기 — ⚠사이트 자체를 올리지 않는다
+        # ⚠⚠**예전에는 `dist` 를 통째로 올렸다**(2026-09-06 공개 감사에서 잡힘).
+        #   그건 **Cloudflare Access 담장 뒤에 있어야 할 사이트 전체**다 —
+        #   실측 **1.5 GB · 9,536파일**이고, 과거 아티팩트 **28건 · 최대 187MB** 가 실제로 만들어졌다.
+        #   저장소가 공개되면 **아티팩트는 누구나 받는다** → S1(「재배포 형태를 취하지 않는다」)이 뚫린다.
+        #   ⚠**최근 100실행 중 22건이 실패**라 「가끔」이 아니라 **5회 중 1회** 발화한다.
+        # ⚠**목적은 유지한다.** 원래 의도는 「무엇이 만들어졌는데 안 올라갔는가」이고,
+        #   그건 **경로와 크기**로 답할 수 있다. 내용은 필요 없었다.
+        # ⚠**성공한 날에는 안 만든다** — 성공하면 같은 것이 Pages 에 있고 아무도 안 본다.
+        if: ${{ failure() || cancelled() }}
+        run: |
+          set -uo pipefail
+          if [ ! -d dist ]; then
+            echo "dist 가 없다 — 화면 생성 전에 죽었다" > /tmp/dist-manifest.txt
+          else
+            {
+              echo "# 파일 수: $(find dist -type f | wc -l)"
+              echo "# 합계 바이트: $(du -sb dist | cut -f1)"
+              echo "# 경로<TAB>바이트"
+              find dist -type f -printf '%p\t%s\n' | sort
+            } > /tmp/dist-manifest.txt
+          fi
+          wc -l < /tmp/dist-manifest.txt
+
+      - name: 산출물 목록 보관
+        # ⚠올리는 것은 **목록뿐**이다. 사이트 내용은 안 올린다.
         if: ${{ failure() || cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: site
-          path: dist
+          name: dist-manifest
+          path: /tmp/dist-manifest.txt
           retention-days: 3
