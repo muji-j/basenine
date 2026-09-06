@@ -161,6 +161,49 @@ function data(over: Partial<DraftPageData> = {}): DraftPageData {
 
 const render = (d: DraftPageData = data()): string => renderDraftPage(d, context());
 
+/**
+ * **2023~2025 의 실제 모양** — 지명은 npb 이고 **1位指名 입찰만 wikipedia** 다([C-2]).
+ *
+ * ⚠**행마다 `origin` 을 바꾼다** — 화면은 「이 자리의 값이 어디서 왔나」를 그 행에서 읽는다.
+ * 페이지 전체의 `origins` 만 바꾸면 **「어딘가에 섞여 있다」**밖에 못 말한다.
+ */
+function wikiSeason(): DraftPageData {
+  const w = (e: DraftBidEntry): DraftBidEntry => ({ ...e, origin: "wikipedia" });
+  const b = bids();
+  const wikiBids: DraftBidBlock = {
+    ...b,
+    rounds: b.rounds.map((r) => ({
+      ...r,
+      groups: r.groups.map((g) => ({
+        ...g,
+        winner: g.winner === null ? null : w(g.winner),
+        losers: g.losers.map(w),
+      })),
+      solo: r.solo.map(w),
+    })),
+  };
+  return data({
+    origins: ["npb", "wikipedia"],
+    sections: [
+      section({
+        bids: wikiBids,
+        /** ⚠**한 장이 전 구단을 싣는다** — npb 는 페이지 하나가 구단 하나다(`teams` 가 그 차이다) */
+        sources: [
+          srcOf("g", "巨人", "9f2a1c4d5e6b7a8c"),
+          {
+            url: "https://ja.wikipedia.org/wiki/2024年度新人選手選択会議_(日本プロ野球)",
+            fetchedAt: "2026-09-06T04:31:47.587Z",
+            revision: "4f7a3993",
+            origin: "wikipedia",
+            teams: [tm("e", "楽天"), tm("l", "西武")],
+            rows: 8,
+          },
+        ],
+      }),
+    ],
+  });
+}
+
 /* ---- ① 1순위 입찰 --------------------------------------------------------- */
 
 test("경합 그룹이 「当選 / 落選」과 분모(N球団競合)로 렌더된다", () => {
@@ -555,9 +598,44 @@ test("⚠⚠「版」은 수치가 실린 페이지마다 나온다 — 연도 �
   assert.match(html, /阪神/u);
 });
 
-test("wikipedia 가 섞이면 CC BY-SA 를 표기한다(L3)", () => {
-  const html = render(data({ origins: ["npb", "wikipedia"] }));
-  assert.match(html, /CC BY-SA/);
+/**
+ * ⚠⚠**[C-2] 이 본은 위약이었다**(2026-09-06 최종 검토에서 잡힘).
+ *
+ * 옛 본은 `assert.match(html, /CC BY-SA/)` 하나였는데 그건 **문서 전체 grep** 이라
+ * 고지가 **`hidden` 인 탭 안에** 있어도 통과한다. 실제로 그랬다 — 2023 화면의 첫 화면에 보이는
+ * 것은 **위키 유래 경합**인데 `ja.wikipedia` 도 `CC BY-SA 4.0` 도 「この画面について」를
+ * 눌러야만 나왔고, ⚠**그때 보이는 전역 푸터는 「出典：日本野球機構（NPB）公式サイト」라고 단정**했다.
+ *
+ * → **패널 경계를 갈라서 잰다**(같은 파일의 「미공표 설명은 절대 탭 뒤로 숨지 않는다」와 같은 방식).
+ */
+test("⚠[C-2] 위키 유래 입찰이 보이는 자리에서 출처와 라이선스가 보인다 — 탭 뒤가 아니다(L3)", () => {
+  const html = render(wikiSeason());
+  const { body, after } = mainSpan(html);
+
+  // ⑴ 고지가 **입찰 블록 안**에 있다 — 그 데이터가 실제로 있는 곳이다
+  const bids = sectionOf(html, "b-draft-bids");
+  assert.match(bids, /ja\.wikipedia/u, "위키 유래 입찰 옆에 출처 이름이 없다");
+  assert.match(bids, /CC BY-SA 4\.0/u, "위키 유래 입찰 옆에 라이선스가 없다");
+  assert.match(bids, /href="https:\/\/ja\.wikipedia\.org\/wiki\//u, "기사 링크가 없다 — 원본을 가리켜야 한다(L3)");
+
+  // ⑵ **탭 상자 안이 아니다** — 안에 들어가면 안 눌러 본 사람에게는 없는 것과 같다
+  assert.ok(!body.includes('id="b-draft-bids"'), "고지가 든 블록이 탭 상자 안으로 들어갔다");
+  assert.doesNotMatch(bids, /\bhidden\b/u, "보이는 자리에 뒀다면서 그 블록에 hidden 이 붙었다");
+
+  // ⑶ **전역 푸터가 npb 만 주장하지 않는다** — 그 문장이 이 화면에서는 거짓이었다
+  assert.match(after, /出典：日本野球機構/u, "이 시험이 공회전한다 — 푸터를 못 찾았다");
+  assert.match(after, /ja\.wikipedia/u, "⚠푸터가 이 화면의 출처를 npb 하나라고 단정한다");
+  assert.match(after, /CC BY-SA 4\.0/u, "푸터가 재배포 조건을 말하지 않는다");
+});
+
+test("⚠[C-2] npb 뿐인 시즌에는 CC BY-SA 가 한 글자도 안 나온다 — 없는 조건을 주장하지 않는다", () => {
+  const html = render();
+  assert.doesNotMatch(html, /CC BY-SA/u, "npb 전용 화면에 위키 라이선스가 나왔다");
+  assert.doesNotMatch(html, /ja\.wikipedia/u, "npb 전용 화면에 위키 이름이 나왔다");
+  // ⚠**푸터가 그대로여야 한다** — 이 줄은 전 화면(수천 장)에 실리므로 한 바이트가 늘면
+  //   그날 배포가 통째로 새 파일이 된다(`layout.ts` 의 `footStamp` 주석과 같은 사고).
+  const { after } = mainSpan(html);
+  assert.match(after, /npb\.jp<\/a>。\s*本ページの数値は/u, "안 섞인 화면의 푸터에 글자가 늘었다");
 });
 
 /**
@@ -662,6 +740,24 @@ function panelOf(html: string, key: string): string {
   const m = new RegExp(`<div[^>]*data-panelkey="${key}"[^>]*>`).exec(html);
   assert.notEqual(m, null, `패널 ${key} 가 없다 — 이 시험이 공회전한다`);
   return sliceDiv(html, m!.index, m![0].length);
+}
+
+/**
+ * `<section … id="…">` 하나를 깊이를 세어 자른다.
+ * ⚠**입찰 블록은 회차마다 `<section>` 을 품는다** — 첫 `</section>` 에서 끊으면 시험이 공회전한다.
+ */
+function sectionOf(html: string, id: string): string {
+  const m = new RegExp(`<section[^>]*id="${id}"[^>]*>`).exec(html);
+  assert.notEqual(m, null, `${id} 섹션이 없다 — 이 시험이 공회전한다`);
+  let i = m!.index + m![0].length;
+  let depth = 1;
+  while (depth > 0) {
+    const n = /<section\b|<\/section>/.exec(html.slice(i));
+    if (n === null) break;
+    i += n.index + n[0].length;
+    depth += n[0] === "</section>" ? -1 : 1;
+  }
+  return html.slice(m!.index, i);
 }
 
 /** `<div …>` 하나를 깊이를 세어 자른다. @returns 여는 태그부터 짝이 맞는 닫는 태그까지 */

@@ -349,6 +349,20 @@ export interface SeasonLink {
   fallbackTo: string;
 }
 
+/**
+ * 푸터가 **함께 이름을 대야 하는** 출처 하나.
+ *
+ * ⚠**라이선스가 붙는 소스가 있다**(ja.wikipedia = CC BY-SA 4.0). 라이선스를 안 적으면
+ * **재배포 조건을 모르는 채로 퍼진다** — 그건 L3 가 막으려는 것 자체다.
+ */
+export interface ExtraSource {
+  /** 사람이 읽는 이름(`ja.wikipedia`). ⚠**URL 을 이름 대신 쓰지 마라** */
+  name: string;
+  url: string;
+  /** `CC BY-SA 4.0` 같은 것. ⚠없으면 `null`(M11 — 「모른다」가 아니라 「붙지 않는다」) */
+  license: string | null;
+}
+
 export interface PageOptions {
   title: string;
   /**
@@ -396,6 +410,20 @@ export interface PageOptions {
   navTeam?: string;
   /** 이 시즌에 ポストシーズン 기록이 있는가. 없으면 내비에 항목을 내지 않는다 */
   hasPostseason?: boolean;
+  /**
+   * **npb.jp 말고 이 화면이 실제로 쓴 출처**(L3).
+   *
+   * ⚠⚠**푸터가 사실이 아닌 출처를 주장하고 있었다**(2026-09-06 최종 검토 [C-2]).
+   * 이 줄은 모든 화면에서 「出典：日本野球機構（NPB）公式サイト」라고 **단정**하는데,
+   * ドラフト 2023~2025 화면의 1位指名 경합은 **ja.wikipedia 에서 온다.** 즉 그 화면에서
+   * 이 문장은 **지키기는커녕 틀린 출처를 주장**했다.
+   * ⚠**대부분의 화면은 이 값을 넘기지 않는다** — 안 넘겼거나 **빈 배열이면 출력이 그대로**다.
+   *   전 화면(수천 장)에 실리는 줄이라 **한 바이트가 늘면 그날 배포가 통째로 새 파일**이 된다
+   *   (`footStamp` 주석의 그 사고와 같은 모양). 시험이 그것을 고정한다.
+   * ⚠**여기에 「이 화면의 상세 출처」를 다 싣지 마라** — 그건 화면 안의 出典 블록이 한다.
+   *   여기 드는 것은 **「누구의 것이 섞여 있는가」와 그 라이선스**뿐이다.
+   */
+  extraSources?: readonly ExtraSource[];
   /** 본문. 블록들이 여기 들어간다 */
   body: RawHtml;
   /**
@@ -527,6 +555,24 @@ function footStamp(o: PageOptions): string {
   if (!isPastSeason(o)) return `${fullDate(o.freshness.builtOn)} 生成`;
   const asOf = o.freshness.regularGameDate ?? o.freshness.latestGameDate;
   return asOf === null ? "終了したシーズン" : `${fullDate(asOf)}までのデータ`;
+}
+
+/**
+ * 푸터의 **출처 한 줄에 이름을 더한다**([C-2] · L3).
+ *
+ * ⚠⚠**안 넘기면 아무것도 안 낸다 — 그것이 이 함수의 계약이다.** 이 푸터는 전 화면(수천 장)에
+ * 실리므로, 넘기지 않은 화면의 바이트가 하나라도 바뀌면 그날 배포가 통째로 새 파일이 된다
+ * (바로 위 `footStamp` 가 정확히 그 사고로 생겼다).
+ * ⚠**라이선스를 빼지 마라** — 재배포 조건을 모르는 채로 퍼지는 것이 L3 가 막으려는 것이다.
+ * ⚠**중복은 접는다** — 두 소스가 같은 라이선스면 괄호 안에 한 번만 적는다.
+ */
+function extraSourceLine(sources: readonly ExtraSource[] | undefined): RawHtml | null {
+  if (sources === undefined || sources.length === 0) return null;
+  const licenses = [...new Set(sources.map((s) => s.license).filter((l): l is string => l !== null))];
+  return html` この画面には ${sources.map(
+    (s, i) =>
+      html`${i === 0 ? null : "・"}<a href="${s.url}" rel="noreferrer noopener">${s.name}</a>`,
+  )} 由来の行も含まれます${licenses.length === 0 ? null : `（${licenses.join("・")}）`}。`;
 }
 
 function isPastSeason(o: PageOptions): boolean {
@@ -744,7 +790,7 @@ ${seasonBar(o)}
     ${freshnessBar(o.freshness, isPastSeason(o))}
     ${o.body}
     <footer class="foot">
-      出典：日本野球機構（NPB）公式サイト <a href="https://npb.jp/" rel="noreferrer noopener">npb.jp</a>。
+      出典：日本野球機構（NPB）公式サイト <a href="https://npb.jp/" rel="noreferrer noopener">npb.jp</a>。${extraSourceLine(o.extraSources)}
       本ページの数値は公表記録をもとに<b>当サイトが独自に再計算</b>したものです。原本の表を再現するものではありません。<br>
       選手の写真・球団ロゴは<b>使用していません</b>（記録は事実ですが、写真とロゴは別の権利です）。<br>
       掲載内容の削除・訂正のご依頼は ${o.site.contact === "" ? html`<b>連絡先が未設定です（公開前に設定してください）</b>` : o.site.contact} まで。<br>

@@ -126,6 +126,50 @@ test("모든 화면에 출처와 원본 링크가 있다(L3)", () => {
   assert.match(out, /独自に再計算/);
 });
 
+/**
+ * ⚠⚠**푸터가 「出典：日本野球機構（NPB）公式サイト」라고 단정하는데, 그것이 거짓인 화면이 있다**
+ * (2026-09-06 최종 검토 [C-2]). ドラフト 2023~2025 의 1位指名 경합은 **ja.wikipedia** 에서 온다.
+ * → 그런 화면은 `extraSources` 로 **이름과 라이선스를 함께** 댄다.
+ *
+ * ⚠**안 넘긴 화면의 바이트는 그대로여야 한다.** 이 줄은 전 화면(수천 장)에 실리므로
+ * 한 글자가 늘면 **그날 배포가 통째로 새 파일**이 된다 — `footStamp` 가 정확히 그 사고로 생겼다.
+ */
+test("⚠[C-2] 다른 출처가 섞인 화면만 푸터가 그것을 말한다 — 안 넘기면 한 글자도 안 는다", () => {
+  const plain = render("a@example.invalid");
+  assert.doesNotMatch(plain, /この画面には/u, "안 넘긴 화면의 푸터에 글자가 늘었다");
+
+  const mixed = page({
+    title: "테스트",
+    base: "",
+    root: "",
+    seasons: [],
+    color: NEUTRAL_COLOR,
+    freshness: freshness("2026-08-14", "2026-08-15"),
+    site: { name: "bb-app", contact: "a@example.invalid" },
+    nav: "index",
+    body: html`<p>본문</p>`,
+    extraSources: [{ name: "ja.wikipedia", url: "https://ja.wikipedia.org/wiki/x", license: "CC BY-SA 4.0" }],
+  });
+  assert.match(mixed, /出典：日本野球機構/u, "원래 출처를 지우면 안 된다 — 더하는 것이다");
+  assert.match(mixed, /<a href="https:\/\/ja\.wikipedia\.org\/wiki\/x"[^>]*>ja\.wikipedia<\/a>/u);
+  assert.match(mixed, /CC BY-SA 4\.0/u, "⚠재배포 조건을 안 적으면 모르는 채로 퍼진다");
+
+  // ⚠**빈 배열은 「안 넘긴 것」과 같아야 한다** — 「0건」을 문장으로 만들지 않는다
+  const empty = page({
+    title: "테스트",
+    base: "",
+    root: "",
+    seasons: [],
+    color: NEUTRAL_COLOR,
+    freshness: freshness("2026-08-14", "2026-08-15"),
+    site: { name: "bb-app", contact: "a@example.invalid" },
+    nav: "index",
+    body: html`<p>본문</p>`,
+    extraSources: [],
+  });
+  assert.equal(empty, plain, "빈 배열이 출력을 바꿨다 — 전 화면의 바이트가 움직인다");
+});
+
 test("연락처가 없으면 화면이 그 사실을 말한다(L4) — 가짜 주소를 만들지 않는다", () => {
   assert.match(render(""), /連絡先が未設定/);
   assert.ok(!render("a@example.invalid").includes("連絡先が未設定"));

@@ -32,7 +32,7 @@ import type { RawHtml } from "./html.ts";
 import { NO_VALUE, fullDate } from "./format.ts";
 import { DRAFT_PATH, page, stateNote } from "./layout.ts";
 import type { DataState, RenderContext } from "./layout.ts";
-import { note, panel, tablist } from "./parts.ts";
+import { emphasize, note, panel, tablist } from "./parts.ts";
 // ⚠**JST 변환은 한 벌이다**(M1 · §2-1) — 화면이 +9시간을 자기 손으로 적지 않는다
 import { toJstDateString } from "@bb-app/archiver";
 import { NEUTRAL_COLOR, colorOf } from "@bb-app/domain";
@@ -574,12 +574,81 @@ function pickTable(rounds: readonly DraftRound[], sectionLabel: string): RawHtml
 const PICK_TABS = "draft-view";
 
 /**
+ * wikipedia 유래 행에 붙는 것들. ⚠**화면 문구는 이 파일이 소유한다**
+ * (`store/src/draft-wiki.ts` 의 `DRAFT_WIKI_LICENSE` 주석이 그렇게 정한다) —
+ * 저쪽은 **DB·사이드카에 넣는 값**이고 이쪽은 **사람에게 보이는 글자**라 층이 다르다.
+ * ⚠**같은 글자를 세 곳에 손으로 적지 마라**(M1) — 지금 쓰는 곳이 셋이다:
+ * 보이는 고지(`wikiNotice`) · 「この画面について」의 出典 · 전역 푸터(`extraSources`).
+ */
+const WIKI_NAME = "ja.wikipedia";
+const WIKI_LICENSE = "CC BY-SA 4.0";
+/** ⚠**기사 URL 이 없을 때만 쓰는 대체 링크**다 — 기사 주소는 `sources` 가 말한다 */
+const WIKI_HOME = "https://ja.wikipedia.org/";
+
+/**
+ * 이 화면에서 **wikipedia 가 실린 페이지 주소**. ⚠**우리가 지어내지 않는다** —
+ * `query.ts` 가 지명·입찰 행의 `source` 에서 만든 것을 그대로 쓴다(M4).
+ */
+function wikiUrlsOf(sections: readonly DraftSection[]): string[] {
+  return [
+    ...new Set(sections.flatMap((s) => s.sources.filter((x) => x.origin === "wikipedia").map((x) => x.url))),
+  ];
+}
+
+/**
+ * 이 구획의 **입찰 행이 실제로 어느 출처에서 왔는가.**
+ *
+ * ⚠⚠**화면 전체의 `origins` 로 대신하지 마라**([C-2]). 그건 「이 화면 어딘가에 섞여 있다」이고,
+ * 여기서 물어야 하는 것은 **「지금 이 자리에 보이는 값이 어디서 왔는가」**다. 둘을 같은 값으로 쓰면
+ * 지명은 npb·입찰은 wikipedia 인 2023~2025 에서 **어느 쪽에 고지를 붙일지 정할 수 없다.**
+ * ⚠**결함 그룹(당첨 없음·당첨 둘)의 행도 센다** — `losers` 는 「당첨을 뺀 전부」라 새는 행이 없다.
+ */
+function bidOrigins(b: DraftBidBlock): Set<DraftOrigin> {
+  const out = new Set<DraftOrigin>();
+  for (const r of b.rounds) {
+    for (const g of r.groups) {
+      if (g.winner !== null) out.add(g.winner.origin);
+      for (const e of g.losers) out.add(e.origin);
+    }
+    for (const e of r.solo) out.add(e.origin);
+  }
+  return out;
+}
+
+/**
+ * **wikipedia 유래 고지 — 그 데이터가 보이는 자리에 둔다**([C-2] · L3 · 2026-09-06 최종 검토).
+ *
+ * ⚠⚠**초판은 이 고지를 `hidden` 인 「この画面について」 탭 안에만 뒀다.** 그러면 2023 화면의
+ * **첫 화면에 보이는 것이 위키 유래 경합인데**, `ja.wikipedia` 도 `CC BY-SA 4.0` 도
+ * **탭을 눌러야만** 나온다. ⚠**그리고 그때 보이는 전역 푸터는 「出典：日本野球機構（NPB）公式サイト」라고
+ * 단정한다** — 지키기는커녕 **사실이 아닌 출처를 주장**하고 있었다.
+ * ⚠**「전역 푸터가 L3 를 지킨다」가 탭에 넣은 근거였는데, 위키 유래 행에 대해서는 그 전제가 거짓이다.**
+ *
+ * ⚠**링크는 그 구획의 wikipedia 출처에서 온다** — 그것이 `sources` 에 실제로 실린 URL 이고
+ * (`query.ts` 가 입찰 행에서 만든다), 우리가 지어낸 주소가 아니다.
+ * ⚠**출처가 안 붙어 있으면 링크 없이 고지만 낸다**(M11) — 「모르니까 조용히 넘긴다」가 최악이다.
+ */
+function wikiNotice(sections: readonly DraftSection[]): RawHtml | null {
+  const fromWiki = sections.filter((s) => s.bids !== null && bidOrigins(s.bids).has("wikipedia"));
+  if (fromWiki.length === 0) return null;
+  const urls = wikiUrlsOf(fromWiki);
+  return html`<p class="note">${emphasize(
+    `この区分の入札は **${WIKI_NAME}** から取り込んだものです — `
+      + "NPB公式サイトは2023年から抽選結果を載せていません。"
+      + `その部分は **${WIKI_LICENSE}** で、再配布するときは同じ条件が付きます。`,
+  )}${urls.length === 0
+    ? null
+    : html` ${urls.map((u) => html`<a href="${u}" rel="noreferrer">${u}</a> `)}`}</p>`;
+}
+
+/**
  * **입찰(추첨)은 탭에 넣지 않는다** — 이 화면의 목적이 그것이기 때문이다
  * (머리줄이 「誰が競合し、誰がくじを引いたか」라고 말한다 · 사용자 결정 2026-09-06).
  *
  * ⚠**2023~2025 에서 특히 중요하다.** 그 시즌들은 여기 들어가는 것이 「公表されていません」
  * 한 줄인데, 그걸 탭 뒤에 숨기면 **안 눌러 본 사람에게는 「경합이 없었다」로 읽힌다.**
  * 없는 것을 설명하는 문장은 **숨기면 안 된다.**
+ * ⚠**같은 이유로 wikipedia 고지도 여기 있다**([C-2] · `wikiNotice`) — 그 데이터가 이 블록에 있다.
  *
  * ⚠**추첨이 없는 구획(育成 등)은 여기 오지 않는다** — `bids === null` 은
  * 「데이터가 없다」가 아니라 **「제도상 추첨이 없다」**라서, 그 설명은 그 구획의 패널에 있어야 한다.
@@ -597,6 +666,7 @@ function bidsBlock(sections: readonly DraftSection[]): RawHtml | null {
       : html`<p class="picklab dlab">${s.label}</p>
 ${bidBlock(s.bids)}`,
   )}
+  ${wikiNotice(sections)}
 </section>`;
 }
 
@@ -769,10 +839,12 @@ function sourceBlock(d: DraftPageData): RawHtml {
     : html`<p class="dsrcy">この年の一覧: ${[...events.values()].map(
         (e) => html`<a href="${e.url}" rel="noreferrer">${e.url}</a> `,
       )}${license === null ? null : html`· ${license}`}</p>`}
+  ${/* ⚠**이 탭은 「상세」다 — 여기만 있으면 안 된다**([C-2]). 보이는 자리(`wikiNotice`)와
+       전역 푸터(`extraSources`)가 같은 사실을 각자의 층에서 말한다. **셋을 하나로 줄이지 마라.** */ ""}
   ${d.origins.includes("wikipedia")
     ? note(
-        "この画面には **wikipedia 由来**の行が混ざっています。その部分は **CC BY-SA 4.0** です — " +
-          "再配布するときは同じ条件が付きます。",
+        `この画面には **${WIKI_NAME} 由来**の行が混ざっています。その部分は **${WIKI_LICENSE}** です — `
+          + "再配布するときは同じ条件が付きます。",
       )
     : null}
 </section>`;
@@ -957,5 +1029,15 @@ ${pickTabs(d, shownHeld)}`;
     hasPostseason: ctx.hasPostseason,
     nav: "draft",
     body,
+    /**
+     * ⚠**푸터가 「出典：日本野球機構（NPB）公式サイト」라고 단정하는데, 이 화면에서는 그것이
+     * 참이 아닐 수 있다**([C-2]). 섞였으면 **푸터에서도 이름을 댄다** — 화면 안 고지
+     * (`wikiNotice`)와 층이 다르다: 저쪽은 「이 자리의 값이 어디서 왔나」, 이쪽은
+     * 「이 문서가 누구의 것을 담고 있나」다. ⚠**둘 중 하나만으로는 안 된다.**
+     * ⚠**섞이지 않은 화면에는 안 넘긴다** — 넘기지 않으면 푸터 바이트가 그대로다(`layout.ts`).
+     */
+    extraSources: d.origins.includes("wikipedia")
+      ? [{ name: WIKI_NAME, url: wikiUrlsOf(d.sections)[0] ?? WIKI_HOME, license: WIKI_LICENSE }]
+      : [],
   });
 }
