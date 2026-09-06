@@ -4025,17 +4025,30 @@ const navTeamBack=navTeamLinks.map(a=>({href:a.getAttribute("href")||"",text:a.t
    그러면 prefers-reduced-motion 을 여기서 또 물어야 한다. 즉시 옮기면 그 질문이 없다.
    ⚠**기하를 모르는 환경에서는 아무것도 하지 않는다**(시험 스텁) — 없는 정보로 판정하지 않는다.
    ⚠**JS 가 없어도 길은 남는다**(§0-1): 상자는 손으로 굴릴 수 있고, 잘린 탭 자체가 더 있다는 신호다. */
-function showCurrentTab(){
-  const nav=$(".tnav");
+function revealInStrip(nav,cur){
   if(!nav||typeof nav.getBoundingClientRect!=="function")return;
   if(typeof nav.scrollWidth!=="number"||typeof nav.clientWidth!=="number")return;
   if(nav.scrollWidth<=nav.clientWidth+1)return;
-  const cur=$("[aria-current]",nav);
   if(!cur||typeof cur.getBoundingClientRect!=="function")return;
   const n=nav.getBoundingClientRect(),c=cur.getBoundingClientRect();
   /* 오른쪽이 넘치면 그만큼만 민다 — 항목을 상자 가운데로 끌어오지 않는다(앞의 탭이 사라진다) */
   if(c.right>n.right)nav.scrollLeft+=c.right-n.right;
   else if(c.left<n.left)nav.scrollLeft-=n.left-c.left;
+}
+/* ⚠**같은 처치가 필요한 상자가 셋이다**(2026-09-07 유저 지적으로 넓혔다).
+   처음에는 .tnav 에만 걸었는데, **시즌 띠(.seasons)가 같은 모양으로 잘리고 있었다** —
+   실측: 2018년 화면에서 현재 연도가 **9개 중 9번째**(맨 오른쪽)이고 상자는 왼쪽 끝에서 시작한다.
+   ⚠**시즌 띠는 탭이 아니라 링크다** — 누르면 **페이지가 바뀌고** 새 페이지의 스크롤은
+   당연히 0에서 시작한다. 그래서 「누르면 스크롤이 처음으로 돌아간다」로 보인다.
+   **JS 탭 전환의 문제가 아니었다.**
+   ⚠**탭줄(.tabs.scroll)도 같다** — 선택은 localStorage 에서 되살아나는데 상자는 0에서 시작하므로,
+   뒤쪽 탭을 고른 채 다시 오면 **그 탭이 안 보인다.**
+   ⚠**서버가 그린 것을 기준으로 삼는다** — 탭줄은 aria-selected="true", 링크 띠는 aria-current. */
+function showCurrentTab(){
+  revealInStrip($(".tnav"),$("[aria-current]",$(".tnav")));
+  const band=$(".seasons");
+  if(band)revealInStrip(band,$("[aria-current]",band));
+  $$(".tabs.scroll").forEach(t=>revealInStrip(t,$('[aria-selected="true"]',t)));
 }
 if(typeof addEventListener==="function"){
   let tabT=0;
