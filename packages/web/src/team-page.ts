@@ -606,7 +606,7 @@ function raceVerdict(r: TeamRace): string {
   //   `selfPossible === true` 를 전제로 하기 때문이다 — 프로브 재현: `c1 80-63-0 g=143 .559`
   //   (rem 0 · self false)가 이 줄을 탔는데 같은 리그 `c2 79-61-0 g=140 .564`가 이미 위에 있었다.
   if (r.remaining === 0 && r.selfPossible) {
-    // ⚠**「リーグに」를 넣는다**(2026-08-19 재검토 — 22d2470 이 놓친 것을 1차 검토도 놓쳤다).
+    // ⚠**「リーグに」를 넣는다**(2026-08-19 재검토 — fe04202 이 놓친 것을 1차 검토도 놓쳤다).
     //   `race.ts` 의 비교는 **리그 내부에서만** 이뤄진다(`leagueOf(other) !== leagueOf(me)` 는 스킵).
     //   리그 한정이 없으면 문장이 「球団」을 전 리그로 읽어 실측으로 거짓이 된다:
     //   2022 `dist/teams/b.html`(오릭스 `.539`, 이 문장을 냄) ↔ 같은 저장소 `dist/2022/index.html`

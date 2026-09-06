@@ -248,7 +248,7 @@ function quarantineTable(kinds: readonly QuarantineKind[]): RawHtml {
   </table>`)}
   ${/* ⚠**강조는 별표 두 개다**(emphasis.ts 가 그 규칙의 정본 · M1). note() 는 문자열을
         이스케이프하므로 여기에 <b> 를 적으면 **화면에 태그가 글자로 찍힌다** —
-        player-page.ts 가 정확히 같은 실수로 6,207장 중 3,459장에 그 글자를 내보냈다(3b39400).
+        player-page.ts 가 정확히 같은 실수로 6,207장 중 3,459장에 그 글자를 내보냈다(ecde7d9).
         지금 이 분기는 격리 0건이라 안 그려지지만(배포물 0/15,340장) 그려지는 날 같은 결함이다.
         parts.test.ts 의 「note() 에 생 태그를 넣지 않는다」가 이 부류를 전 파일에서 막는다. */
   note(
