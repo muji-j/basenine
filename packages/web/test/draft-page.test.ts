@@ -295,14 +295,15 @@ test("⚠`bids === null` 은 「제도상 추첨이 없다」이지 미공표가
     }),
   );
   // ⚠**구획 안만 본다** — 후일담 블록은 별개의 사실(`uncollected`)이라 같은 화면에 함께 산다
-  // ⚠**자리가 바뀌었다**(2026-09-06 탭 도입): 구획별 블록이 없어지고 표가 탭 패널로 들어갔다.
-  //   `b-draft-picks` 안에는 중첩된 `<section>` 이 없으므로 첫 닫는 태그가 이 블록의 것이다.
-  const block = /<section[^>]*id="b-draft-picks"[\s\S]*?<\/section>/.exec(html);
-  assert.notEqual(block, null, "指名の全記録 블록이 없다");
-  assert.match(block![0], /育成/);
-  assert.match(block![0], /抽選/);
-  assert.doesNotMatch(block![0], /公表されていません/);
-  assert.doesNotMatch(block![0], /まだ収集していません/);
+  // ⚠**자리가 두 번 바뀌었다**(2026-09-06): 구획별 블록 → 탭 패널 → 「この画面について」까지 든 탭.
+  //   패널 경계는 `data-panelkey` 로 가른다(`</section>` 세기는 중첩 때문에 못 쓴다).
+  // ⚠`panelOf` 는 **문자열**을 낸다 — 예전 `exec()` 의 `block![0]` 을 그대로 두면
+  //   첫 글자 `"<"` 를 검사하게 되고, 그건 무엇과도 안 맞아 **엉뚱한 이유로 붉어진다**(실제로 그랬다).
+  const block = panelOf(html, "ikusei");
+  assert.match(block, /育成/);
+  assert.match(block, /抽選/);
+  assert.doesNotMatch(block, /公表されていません/);
+  assert.doesNotMatch(block, /まだ収集していません/);
 });
 
 test("후일담은 「まだ収集していません」이다 — 「그런 일이 없었다」가 아니다", () => {
@@ -639,25 +640,49 @@ test("문서가 한 장으로 닫힌다 — 셸·꼬리말이 붙는다", () => 
   assert.match(html, /<\/html>/);
 });
 
-/* ---- ⑥ 탭 — 무엇을 접고, 무엇은 접지 않는가 (2026-09-06) ------------------ */
+/* ---- ⑥ 탭 — 탭이 페이지를 끝낸다 (2026-09-06 · 2차) ---------------------- */
 
 /**
- * ⚠**이 묶음이 지키는 것은 「탭이 있다」가 아니라 「무엇을 숨기지 않는가」다.**
+ * ⚠**이 묶음이 지키는 것은 「탭이 있다」가 아니라 「탭 아래에 아무것도 안 남는다」다.**
  *
- * 접은 이유는 세로 길이였다 — 실측(2026-09-05 배포물 `dist/2019/draft.html`):
- * 支配下 **60.8%**(396줄) · 育成 **24.8%**(157줄) · 정직성 블록 셋은 합쳐 **5.1%**.
- * **긴 것은 표 둘뿐**이므로 거기만 접는다.
+ * 1차에서는 긴 표 둘만 접고 注記·言えないこと·出典 을 **그 아래**에 두었다.
+ * 실측: 처음 보이는 줄이 **2019 −18% · 2018 −15%** 밖에 안 줄었고 그 아래에 셋이 그대로 깔렸다.
+ * 사용자 판단(2026-09-06): **「제일 피하고 싶은 건 세로로 긴 항목 하단부에 추가 정보가 있는 것」** ·
+ * **「한 항목이 길어도 그 탭으로 완결되면 필요한 사람만 내려가면 되니 문제없다」**.
+ * ⚠**400줄짜리 표 밑에 두는 것은 접어 두는 것과 다르지 않다.**
  *
- * ⚠**접으면 안 되는 것은 「없는 것을 설명하는 문장」이다.** 2023~2025 는 1위 입찰이
- * 「公表されていません」 한 줄인데, 그것을 탭 뒤에 두면 **안 눌러 본 사람에게는
- * 「경합이 없었다」로 읽힌다.** 그건 거짓이다 — 경합은 실제로 있었고 NPB 가 안 쓸 뿐이다.
+ * ⚠**단 두 가지는 여전히 접지 않는다:**
+ * ⑴ **1位指名の入札** — 머리줄이 약속한 것이고, 2023~2025 는 거기 드는 것이
+ *    「출처에 없다」 한 줄이라 숨기면 **「경합이 없었다」로 읽힌다.**
+ * ⑵ **전역 푸터의 출처** — L3 는 그쪽이 지킨다. 탭에 든 `出典` 은 **상세**(구단별 URL·版·취득일)다.
  */
 
-/** `<section class="block" id="…">` 하나를 잘라 낸다. ⚠이 블록들에는 중첩 `<section>` 이 없다 */
-function blockOf(html: string, id: string): string {
-  const m = new RegExp(`<section[^>]*id="${id}"[\\s\\S]*?<\\/section>`).exec(html);
-  assert.notEqual(m, null, `${id} 블록이 없다 — 이 시험이 공회전한다`);
-  return m![0];
+/** `data-panelkey="…"` 패널 하나. ⚠패널은 중첩 `<div>`·`<section>` 을 담으므로 깊이를 센다 */
+function panelOf(html: string, key: string): string {
+  const m = new RegExp(`<div[^>]*data-panelkey="${key}"[^>]*>`).exec(html);
+  assert.notEqual(m, null, `패널 ${key} 가 없다 — 이 시험이 공회전한다`);
+  return sliceDiv(html, m!.index, m![0].length);
+}
+
+/** `<div …>` 하나를 깊이를 세어 자른다. @returns 여는 태그부터 짝이 맞는 닫는 태그까지 */
+function sliceDiv(html: string, at: number, openLen: number): string {
+  let i = at + openLen;
+  let depth = 1;
+  while (depth > 0) {
+    const n = /<div\b|<\/div>/.exec(html.slice(i));
+    if (n === null) break;
+    i += n.index + n[0].length;
+    depth += n[0] === "</div>" ? -1 : 1;
+  }
+  return html.slice(at, i);
+}
+
+/** 탭 상자 전체와, **그 뒤에 남은 것**. */
+function mainSpan(html: string): { body: string; after: string } {
+  const m = /<div[^>]*id="b-draft-main"[^>]*>/.exec(html);
+  assert.notEqual(m, null, "b-draft-main 이 없다 — 이 시험이 공회전한다");
+  const body = sliceDiv(html, m!.index, m![0].length);
+  return { body, after: html.slice(m!.index + body.length) };
 }
 
 const twoSections = (over: Partial<DraftSection> = {}): DraftPageData =>
@@ -674,32 +699,47 @@ const twoSections = (over: Partial<DraftSection> = {}): DraftPageData =>
     ],
   });
 
-test("긴 표 둘이 탭으로 접힌다 — 구획마다 탭 하나, 열려 있는 것은 첫 패널뿐", () => {
-  const html = render(twoSections());
-  const picks = blockOf(html, "b-draft-picks");
-  assert.match(picks, /role="tablist"/, "탭줄이 없다");
-  assert.equal((picks.match(/role="tab"/g) ?? []).length, 2, "탭이 구획 수(2)만큼이 아니다");
+test("탭이 구획 수 + 「この画面について」 만큼이고, 열려 있는 것은 첫 패널뿐", () => {
+  const { body } = mainSpan(render(twoSections()));
+  assert.equal((body.match(/role="tab"/g) ?? []).length, 3, "탭이 구획 2 + 안내 1 이 아니다");
   assert.equal(
-    (picks.match(/aria-selected="true"/g) ?? []).length,
+    (body.match(/aria-selected="true"/g) ?? []).length,
     1,
-    "열린 탭이 하나가 아니다 — 둘이 열려 있으면 어느 것이 보이는지 화면과 낭독기가 갈린다",
+    "열린 탭이 하나가 아니다 — 둘이 열려 있으면 화면과 낭독기가 갈린다",
   );
-  assert.match(picks, /data-panelkey="shihaika"[^>]*>/, "支配下 패널이 없다");
-  assert.match(picks, /data-panelkey="ikusei"[^>]*hidden/, "育成 패널이 닫혀 있지 않다");
-  assert.match(picks, /支配下 2件/, "탭 라벨에 건수가 없다 — 접은 표의 크기를 눌러 보기 전에 알 수 없다");
+  assert.match(body, /data-panelkey="ikusei"[^>]*hidden/, "育成 패널이 닫혀 있지 않다");
+  assert.match(body, /data-panelkey="about"[^>]*hidden/, "안내 패널이 닫혀 있지 않다");
+  assert.match(body, /支配下 2件/, "탭 라벨에 건수가 없다 — 접은 표의 크기를 눌러 보기 전에 알 수 없다");
+});
+
+test("⚠⚠탭 아래에 아무것도 남지 않는다 — 긴 표 밑에 둔 것은 접어 둔 것과 같다", () => {
+  const { after } = mainSpan(render(twoSections()));
+  assert.doesNotMatch(
+    after,
+    /class="block"/,
+    "탭 상자 뒤에 블록이 남아 있다 — 사용자가 가장 피하고 싶다고 한 모양이다",
+  );
+});
+
+test("注記·言えないこと·出典은 「この画面について」 탭 안에서 완결된다", () => {
+  const about = panelOf(render(twoSections()), "about");
+  for (const id of ["b-draft-notes", "b-draft-limits", "b-draft-src"]) {
+    assert.ok(about.includes(`id="${id}"`), `${id} 가 안내 탭에 없다`);
+  }
 });
 
 test("⚠1位指名の入札은 탭 밖에 있다 — 이 화면의 목적이 그것이다", () => {
   const html = render(twoSections());
-  const bidsBlk = blockOf(html, "b-draft-bids");
-  assert.doesNotMatch(bidsBlk, /role="tabpanel"/, "입찰이 탭 패널 안에 들어갔다");
+  const { body } = mainSpan(html);
+  assert.ok(html.includes('id="b-draft-bids"'), "입찰 블록이 없다");
+  assert.ok(!body.includes('id="b-draft-bids"'), "입찰이 탭 상자 안으로 들어갔다");
   assert.ok(
-    html.indexOf('id="b-draft-bids"') < html.indexOf('id="b-draft-picks"'),
-    "입찰이 표보다 아래에 있다 — 머리줄이 약속한 것을 스크롤 뒤에 두면 안 된다",
+    html.indexOf('id="b-draft-bids"') < html.indexOf('id="b-draft-main"'),
+    "입찰이 탭보다 아래에 있다 — 머리줄이 약속한 것을 스크롤 뒤에 두면 안 된다",
   );
 });
 
-test("⚠⚠「公表されていません」은 절대 탭 뒤로 숨지 않는다 — 숨기면 「경합이 없었다」로 읽힌다", () => {
+test("⚠⚠미공표 설명은 절대 탭 뒤로 숨지 않는다 — 숨기면 「경합이 없었다」로 읽힌다", () => {
   const html = render(
     twoSections({
       bids: bids({
@@ -707,32 +747,23 @@ test("⚠⚠「公表されていません」은 절대 탭 뒤로 숨지 않는
       }),
     }),
   );
-  const bidsBlk = blockOf(html, "b-draft-bids");
-  assert.match(bidsBlk, /載せていません/, "미공표 설명이 입찰 블록에 없다");
-  assert.doesNotMatch(bidsBlk, /role="tabpanel"/, "미공표 설명이 탭 패널 안에 들어갔다");
-  const picks = blockOf(html, "b-draft-picks");
-  assert.doesNotMatch(picks, /載せていません/, "미공표 설명이 표 블록에도 있다 — 한 사실을 두 곳에서 말한다");
+  const { body } = mainSpan(html);
+  assert.match(html, /載せていません/, "미공표 설명이 화면에 없다");
+  assert.ok(!body.includes("載せていません"), "미공표 설명이 탭 안으로 들어갔다");
 });
 
-test("⚠출처와 「言えないこと」는 접지 않는다 — 정직성 블록은 합쳐 5%라 접을 이유가 없다", () => {
-  const html = render(twoSections());
-  const picks = blockOf(html, "b-draft-picks");
-  for (const id of ["b-draft-limits", "b-draft-src"]) {
-    assert.ok(html.includes(`id="${id}"`), `${id} 가 화면에서 사라졌다`);
-    assert.ok(!picks.includes(`id="${id}"`), `${id} 가 탭 안으로 들어갔다`);
-  }
-});
-
-test("⚠구획이 하나면 탭줄을 그리지 않는다 — 그래도 구획 이름은 보인다", () => {
-  const html = render(
-    data({
-      sections: [
-        section({ kind: "ikusei", label: "育成", bids: null, pickCount: 1,
-          rounds: [round(1, [pick("t", "阪神", "石黒佑弥")])] }),
-      ],
-    }),
+test("⚠구획이 하나여도 탭줄이 선다 — 「この画面について」가 항상 있기 때문이다", () => {
+  const { body } = mainSpan(
+    render(
+      data({
+        sections: [
+          section({ kind: "ikusei", label: "育成", bids: null, pickCount: 1,
+            rounds: [round(1, [pick("t", "阪神", "石黒佑弥")])] }),
+        ],
+      }),
+    ),
   );
-  const picks = blockOf(html, "b-draft-picks");
-  assert.doesNotMatch(picks, /role="tablist"/, "선택지가 하나인 탭줄을 그렸다 — 누를 것이 없는데 누를 수 있어 보인다");
-  assert.match(picks, /育成/, "탭줄이 없어지면서 구획 이름까지 사라졌다");
+  assert.match(body, /role="tablist"/, "탭줄이 없다");
+  assert.equal((body.match(/role="tab"/g) ?? []).length, 2, "탭이 구획 1 + 안내 1 이 아니다");
+  assert.match(body, /育成/, "구획 이름이 화면에서 사라졌다");
 });

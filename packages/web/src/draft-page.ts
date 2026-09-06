@@ -566,8 +566,12 @@ function pickTable(rounds: readonly DraftRound[], sectionLabel: string): RawHtml
  * **「제도상 추첨이 없는 구획」**이다(育成·自由獲得·希望入団枠) — `unpublished` 로 그리면
  * **없는 잘못을 NPB 에 씌우는** 거짓말이 된다.
  */
-/** 탭 그룹 이름. ⚠**한 문서에 한 번만 그린다** — 사본이 없으므로 `scopedGroup` 이 필요없다 */
-const PICK_TABS = "draft-kind";
+/**
+ * 탭 그룹 이름. ⚠**한 문서에 한 번만 그린다** — 사본이 없으므로 `scopedGroup` 이 필요없다.
+ * ⚠**`draft-kind` 가 아니다** — 구획(支配下·育成) 말고 「この画面について」도 담으므로
+ * 이름이 「구획」이라고 말하면 거짓이 된다.
+ */
+const PICK_TABS = "draft-view";
 
 /**
  * **입찰(추첨)은 탭에 넣지 않는다** — 이 화면의 목적이 그것이기 때문이다
@@ -599,14 +603,11 @@ ${bidBlock(s.bids)}`,
 /**
  * 한 구획의 패널 알맹이 — 표, 그리고 그 구획에만 해당하는 설명.
  *
- * ⚠**탭줄이 없을 때는 구획 이름을 여기서 낸다.** 탭이 있으면 이름은 탭이 갖지만,
- * 구획이 하나라 탭줄을 안 그리는 경우에는 **이름을 낼 자리가 사라진다** —
- * 실제로 그렇게 만들었다가 `育成` 이 화면에서 표의 `aria-label` 에만 남았다.
+ * ⚠**제목을 패널이 갖는다.** 탭줄에는 「この画面について」도 들어가므로 바깥 블록에
+ * `指名の全記録` 이라는 제목을 달면 그 탭에서 거짓이 된다.
  */
-function pickPanel(s: DraftSection, withLabel: boolean): RawHtml {
-  return html`${
-    withLabel ? html`<p class="picklab dlab">${s.label}<s>指名 ${s.pickCount}件</s></p>` : null
-  }
+function pickPanel(s: DraftSection): RawHtml {
+  return html`<h2>指名の全記録<span class="qt">${s.label} — 球団の並びは当サイトの球団順です · 指名順ではありません</span></h2>
   ${
     s.bids === null
       ? html`<p class="dnolot">この区分に抽選はありません — 制度上、1位指名の入札が行われない区分です。</p>`
@@ -618,34 +619,47 @@ function pickPanel(s: DraftSection, withLabel: boolean): RawHtml {
 }
 
 /**
- * **긴 표 둘을 탭으로 접는다**(사용자 요청 2026-09-06).
+ * **탭 아래에 아무것도 남기지 않는다**(사용자 결정 2026-09-06 · 2차).
  *
- * 실측(2026-09-05 배포물): 支配下 가 페이지의 **60.8%**(396줄) · 育成 이 **24.8%**(157줄)이고
- * 정직성 블록(注記·言えないこと·出典)은 합쳐 **5.1%** 였다. **긴 것은 표 둘뿐**이라 거기만 접는다.
+ * 1차에서는 긴 표 둘만 접고 注記·言えないこと·出典 을 그 아래에 두었다. 사용자 판단:
+ * **「제일 피하고 싶은 건 세로로 긴 항목 하단부에 추가 정보가 있는 것」**이고,
+ * **「한 항목이 길어도 그 탭으로 완결되면 필요한 사람만 내려가면 되니 문제없다」**.
+ * ⚠**그 지적이 맞다** — 400줄짜리 표 밑에 둔 것은 접어 둔 것과 다르지 않다.
+ * 실측(1차 결과): 처음 보이는 줄이 2019 −18% · 2018 −15% 밖에 안 줄었고,
+ * 그 아래에 정직성 블록 셋이 그대로 깔려 있었다.
  *
- * ⚠**구획이 하나면 탭줄을 그리지 않는다.** 선택지가 하나인 탭은 조작할 것이 없는데
- * 조작할 수 있는 것처럼 보인다. 패널은 그대로 두어 **레이아웃이 갈라지지 않게** 한다.
+ * → **탭이 페이지를 끝낸다.** 아래에 오는 블록이 없다.
+ *
+ * ⚠**`出典` 을 탭에 넣어도 L3 를 안 깬다** — 전역 푸터가 모든 화면에
+ * 「出典：日本野球機構（NPB）公式サイト」와 재계산·사진/로고·삭제요청 안내를 싣는다(`layout.ts`).
+ * 여기 든 것은 **구단별 URL·版·취득일**이라 **상세**다. ⚠**그 푸터를 지우면 이 판단이 무너진다.**
+ *
+ * ⚠**「この画面について」 탭은 항상 있다.** 그래서 탭줄도 항상 있고, 구획이 하나뿐인 해에도
+ * 선택지가 둘이라 「누를 것이 없는 탭줄」이 되지 않는다.
  * ⚠**탭 부품을 새로 만들지 않는다**(M1) — `parts.ts` 의 `tablist`/`panel` 이
  * 화살표 키·로빙 tabindex·`aria-*`·해시 딥링크를 이미 갖고 있다.
  */
-function pickTabs(sections: readonly DraftSection[]): RawHtml {
-  const single = sections.length < 2;
-  return html`<section class="block" id="b-draft-picks">
-  <h2>指名の全記録<span class="qt">球団の並びは当サイトの球団順です — 指名順ではありません</span></h2>
-  ${
-    single
-      ? null
-      : tablist(
-          PICK_TABS,
-          sections.map((s) => ({ id: s.kind, label: `${s.label} ${s.pickCount}件` })),
-          false,
-          "指名区分の切り替え",
-          true,
-        )
-  }
-  ${sections.map((s, i) => panel(PICK_TABS, s.kind, i === 0, pickPanel(s, single)))}
-</section>`;
+function pickTabs(d: DraftPageData, shownHeld: readonly number[]): RawHtml {
+  const items = [
+    ...d.sections.map((s) => ({ id: s.kind, label: `${s.label} ${s.pickCount}件` })),
+    { id: ABOUT_TAB, label: "この画面について" },
+  ];
+  return html`<div class="block" id="b-draft-main">
+  ${tablist(PICK_TABS, items, false, "表示の切り替え", true)}
+  ${d.sections.map((s, i) => panel(PICK_TABS, s.kind, i === 0, pickPanel(s)))}
+  ${panel(
+    PICK_TABS,
+    ABOUT_TAB,
+    false,
+    html`${notesBlock(d)}
+${limitsBlock(d, shownHeld)}
+${sourceBlock(d)}`,
+  )}
+</div>`;
 }
+
+/** ⚠구획 코드와 겹치면 안 된다 — `DraftKind` 에 없는 이름이어야 한다 */
+const ABOUT_TAB = "about";
 
 /**
  * 취득 시각 → **JST 날짜**.
@@ -929,12 +943,7 @@ ${d.state.kind === "ok" ? null : stateNote(d.state)}`;
       : html`${head}
 ${defectBlock(d)}
 ${bidsBlock(d.sections)}
-${pickTabs(d.sections)}
-
-${notesBlock(d)}
-
-${limitsBlock(d, shownHeld)}
-${sourceBlock(d)}`;
+${pickTabs(d, shownHeld)}`;
 
   return page({
     title: `ドラフト会議 — ${d.season}年`,
