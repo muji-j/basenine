@@ -1,0 +1,91 @@
+/**
+ * **추적되는 소스·문서에 날문자 NUL 이 들어가지 않았는가.**
+ *
+ * ⚠**이 시험이 있는 이유는 문서로는 안 막혔기 때문이다.** 이 저장소에서 같은 결함이
+ * **다섯 번** 났다(2026-09-05 ~ 09-06):
+ *
+ * | 어디 | 무엇이었나 |
+ * |---|---|
+ * | `scripts/test/draft-invariants.test.ts` | 맵 키 구분자 `` `${season}<NUL>${key}` `` |
+ * | `packages/web/src/query.ts`(당시) | 같은 모양 |
+ * | `scripts/archive-guard.ts` | `.pop() ?? "<NUL>"` — `""` 를 쓸 자리 |
+ * | `docs/superpowers/plans/2026-09-05-draft-screen.md` | **「날문자를 쓰지 마라」고 적는 편집이 넣었다** |
+ * | `packages/{parser,store}/src/draft-wiki.ts` | `const SEP = "<NUL>"` — **계획서에 그 함정을 적어 둔 뒤에도 났다** |
+ *
+ * ## 왜 위험한가 — 값이 아니라 **읽을 수 없게 되는 것**이 문제다
+ *
+ * `grep` 은 NUL 이 든 파일을 **「Binary file … matches」로 지나가고 내용을 한 줄도 안 보여 준다.**
+ * git 도 텍스트 diff 를 포기한다(실측: `archive-guard.ts` 가 `Bin 8085 -> 8084 bytes` 로 나왔다).
+ * 즉 **그 파일은 검색·리뷰·diff 에서 사실상 사라진다.** 값은 멀쩡한데 **아무도 못 읽는다.**
+ *
+ * ## 고치는 법은 하나다
+ *
+ * `"\u0000"` **이스케이프로 쓴다.** ⚠**이 줄에 날문자를 넣지 마라 — 실제로 그렇게 했다**
+ * (2026-09-06 · 이 파일이 여섯 번째였다). 그때 단독 실행은 **초록이었다**:
+ * `git ls-files` 는 **추적된 파일만** 보므로 **미추적인 새 파일은 자기 자신을 못 본다.**
+ * ⚠**커밋한 뒤에 한 번 더 돌려라.** 런타임 값이 **완전히 같고** 소스는 텍스트로 남는다.
+ * ⚠**날문자를 넣지 말라는 것이지 NUL 을 쓰지 말라는 게 아니다** — 맵 키 구분자로 NUL 은 좋은 선택이다.
+ *
+ * ⚠**gzip 픽스처(`.html.gz`)는 원래 바이너리다** — 그건 세지 않는다.
+ */
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+/**
+ * 원래 바이너리인 것 — 여기 있으면 세지 않는다.
+ * ⚠**늘리기 전에 생각하라.** 이 목록이 길어지면 이 시험은 아무것도 안 막는다.
+ */
+const BINARY_EXT = [".gz", ".png", ".jpg", ".jpeg", ".webp", ".ico", ".woff", ".woff2", ".pdf"];
+
+/** git 이 추적하는 파일 전부. ⚠**작업트리를 훑지 않는다** — `node_modules`·`dist` 를 빨아들인다 */
+function trackedFiles(): string[] {
+  const out = execFileSync("git", ["-C", ROOT, "ls-files", "-z"], { encoding: "buffer" });
+  return out
+    .toString("utf8")
+    .split("\0")
+    .filter((p) => p !== "");
+}
+
+test("⚠추적되는 소스·문서에 날문자 NUL 이 없다 — 있으면 grep 이 그 파일을 통째로 안 보여 준다", () => {
+  const files = trackedFiles();
+  assert.ok(files.length > 100, `추적 파일이 ${files.length}개다 — git 이 안 돌았다(이 시험이 공회전한다)`);
+
+  const skipped: string[] = [];
+  const offenders: string[] = [];
+  let scanned = 0;
+
+  for (const rel of files) {
+    if (BINARY_EXT.some((e) => rel.endsWith(e))) {
+      skipped.push(rel);
+      continue;
+    }
+    let buf: Buffer;
+    try {
+      buf = readFileSync(join(ROOT, rel));
+    } catch {
+      // 심볼릭 링크·권한 등. ⚠**「없다」로 세지 않는다**(M11) — 못 읽은 것은 못 읽은 것이다
+      skipped.push(rel);
+      continue;
+    }
+    scanned += 1;
+    const n = buf.filter((b) => b === 0).length;
+    if (n > 0) offenders.push(`${rel} (NUL ${n}개)`);
+  }
+
+  // ⚠**분모를 남긴다.** 「0건」과 「안 쟀음」을 구별할 수 있어야 한다(작업규칙 7)
+  assert.ok(scanned > 100, `읽은 파일이 ${scanned}개다 — 분모가 너무 작다`);
+
+  assert.deepEqual(
+    offenders,
+    [],
+    `날문자 NUL 이 든 소스가 있다(읽은 것 ${scanned} / 건너뛴 것 ${skipped.length}):\n  ` +
+      offenders.join("\n  ") +
+      '\n→ `"\\u0000"` 이스케이프로 바꿔라. 런타임 값은 같고 소스는 텍스트로 남는다.',
+  );
+});

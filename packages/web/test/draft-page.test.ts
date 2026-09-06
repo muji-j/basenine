@@ -161,6 +161,49 @@ function data(over: Partial<DraftPageData> = {}): DraftPageData {
 
 const render = (d: DraftPageData = data()): string => renderDraftPage(d, context());
 
+/**
+ * **2023~2025 의 실제 모양** — 지명은 npb 이고 **1位指名 입찰만 wikipedia** 다([C-2]).
+ *
+ * ⚠**행마다 `origin` 을 바꾼다** — 화면은 「이 자리의 값이 어디서 왔나」를 그 행에서 읽는다.
+ * 페이지 전체의 `origins` 만 바꾸면 **「어딘가에 섞여 있다」**밖에 못 말한다.
+ */
+function wikiSeason(): DraftPageData {
+  const w = (e: DraftBidEntry): DraftBidEntry => ({ ...e, origin: "wikipedia" });
+  const b = bids();
+  const wikiBids: DraftBidBlock = {
+    ...b,
+    rounds: b.rounds.map((r) => ({
+      ...r,
+      groups: r.groups.map((g) => ({
+        ...g,
+        winner: g.winner === null ? null : w(g.winner),
+        losers: g.losers.map(w),
+      })),
+      solo: r.solo.map(w),
+    })),
+  };
+  return data({
+    origins: ["npb", "wikipedia"],
+    sections: [
+      section({
+        bids: wikiBids,
+        /** ⚠**한 장이 전 구단을 싣는다** — npb 는 페이지 하나가 구단 하나다(`teams` 가 그 차이다) */
+        sources: [
+          srcOf("g", "巨人", "9f2a1c4d5e6b7a8c"),
+          {
+            url: "https://ja.wikipedia.org/wiki/2024年度新人選手選択会議_(日本プロ野球)",
+            fetchedAt: "2026-09-06T04:31:47.587Z",
+            revision: "4f7a3993",
+            origin: "wikipedia",
+            teams: [tm("e", "楽天"), tm("l", "西武")],
+            rows: 8,
+          },
+        ],
+      }),
+    ],
+  });
+}
+
 /* ---- ① 1순위 입찰 --------------------------------------------------------- */
 
 test("경합 그룹이 「当選 / 落選」과 분모(N球団競合)로 렌더된다", () => {
@@ -295,12 +338,15 @@ test("⚠`bids === null` 은 「제도상 추첨이 없다」이지 미공표가
     }),
   );
   // ⚠**구획 안만 본다** — 후일담 블록은 별개의 사실(`uncollected`)이라 같은 화면에 함께 산다
-  const block = /<section[^>]*id="b-draft-ikusei"[\s\S]*?<\/section>/.exec(html);
-  assert.notEqual(block, null, "育成 구획이 없다");
-  assert.match(block![0], /育成/);
-  assert.match(block![0], /抽選/);
-  assert.doesNotMatch(block![0], /公表されていません/);
-  assert.doesNotMatch(block![0], /まだ収集していません/);
+  // ⚠**자리가 두 번 바뀌었다**(2026-09-06): 구획별 블록 → 탭 패널 → 「この画面について」까지 든 탭.
+  //   패널 경계는 `data-panelkey` 로 가른다(`</section>` 세기는 중첩 때문에 못 쓴다).
+  // ⚠`panelOf` 는 **문자열**을 낸다 — 예전 `exec()` 의 `block![0]` 을 그대로 두면
+  //   첫 글자 `"<"` 를 검사하게 되고, 그건 무엇과도 안 맞아 **엉뚱한 이유로 붉어진다**(실제로 그랬다).
+  const block = panelOf(html, "ikusei");
+  assert.match(block, /育成/);
+  assert.match(block, /抽選/);
+  assert.doesNotMatch(block, /公表されていません/);
+  assert.doesNotMatch(block, /まだ収集していません/);
 });
 
 test("후일담은 「まだ収集していません」이다 — 「그런 일이 없었다」가 아니다", () => {
@@ -552,9 +598,44 @@ test("⚠⚠「版」은 수치가 실린 페이지마다 나온다 — 연도 �
   assert.match(html, /阪神/u);
 });
 
-test("wikipedia 가 섞이면 CC BY-SA 를 표기한다(L3)", () => {
-  const html = render(data({ origins: ["npb", "wikipedia"] }));
-  assert.match(html, /CC BY-SA/);
+/**
+ * ⚠⚠**[C-2] 이 본은 위약이었다**(2026-09-06 최종 검토에서 잡힘).
+ *
+ * 옛 본은 `assert.match(html, /CC BY-SA/)` 하나였는데 그건 **문서 전체 grep** 이라
+ * 고지가 **`hidden` 인 탭 안에** 있어도 통과한다. 실제로 그랬다 — 2023 화면의 첫 화면에 보이는
+ * 것은 **위키 유래 경합**인데 `ja.wikipedia` 도 `CC BY-SA 4.0` 도 「この画面について」를
+ * 눌러야만 나왔고, ⚠**그때 보이는 전역 푸터는 「出典：日本野球機構（NPB）公式サイト」라고 단정**했다.
+ *
+ * → **패널 경계를 갈라서 잰다**(같은 파일의 「미공표 설명은 절대 탭 뒤로 숨지 않는다」와 같은 방식).
+ */
+test("⚠[C-2] 위키 유래 입찰이 보이는 자리에서 출처와 라이선스가 보인다 — 탭 뒤가 아니다(L3)", () => {
+  const html = render(wikiSeason());
+  const { body, after } = mainSpan(html);
+
+  // ⑴ 고지가 **입찰 블록 안**에 있다 — 그 데이터가 실제로 있는 곳이다
+  const bids = sectionOf(html, "b-draft-bids");
+  assert.match(bids, /ja\.wikipedia/u, "위키 유래 입찰 옆에 출처 이름이 없다");
+  assert.match(bids, /CC BY-SA 4\.0/u, "위키 유래 입찰 옆에 라이선스가 없다");
+  assert.match(bids, /href="https:\/\/ja\.wikipedia\.org\/wiki\//u, "기사 링크가 없다 — 원본을 가리켜야 한다(L3)");
+
+  // ⑵ **탭 상자 안이 아니다** — 안에 들어가면 안 눌러 본 사람에게는 없는 것과 같다
+  assert.ok(!body.includes('id="b-draft-bids"'), "고지가 든 블록이 탭 상자 안으로 들어갔다");
+  assert.doesNotMatch(bids, /\bhidden\b/u, "보이는 자리에 뒀다면서 그 블록에 hidden 이 붙었다");
+
+  // ⑶ **전역 푸터가 npb 만 주장하지 않는다** — 그 문장이 이 화면에서는 거짓이었다
+  assert.match(after, /出典：日本野球機構/u, "이 시험이 공회전한다 — 푸터를 못 찾았다");
+  assert.match(after, /ja\.wikipedia/u, "⚠푸터가 이 화면의 출처를 npb 하나라고 단정한다");
+  assert.match(after, /CC BY-SA 4\.0/u, "푸터가 재배포 조건을 말하지 않는다");
+});
+
+test("⚠[C-2] npb 뿐인 시즌에는 CC BY-SA 가 한 글자도 안 나온다 — 없는 조건을 주장하지 않는다", () => {
+  const html = render();
+  assert.doesNotMatch(html, /CC BY-SA/u, "npb 전용 화면에 위키 라이선스가 나왔다");
+  assert.doesNotMatch(html, /ja\.wikipedia/u, "npb 전용 화면에 위키 이름이 나왔다");
+  // ⚠**푸터가 그대로여야 한다** — 이 줄은 전 화면(수천 장)에 실리므로 한 바이트가 늘면
+  //   그날 배포가 통째로 새 파일이 된다(`layout.ts` 의 `footStamp` 주석과 같은 사고).
+  const { after } = mainSpan(html);
+  assert.match(after, /npb\.jp<\/a>。\s*本ページの数値は/u, "안 섞인 화면의 푸터에 글자가 늘었다");
 });
 
 /**
@@ -635,4 +716,150 @@ test("문서가 한 장으로 닫힌다 — 셸·꼬리말이 붙는다", () => 
   assert.match(html, /^<!doctype html>/);
   assert.match(html, /2024年/);
   assert.match(html, /<\/html>/);
+});
+
+/* ---- ⑥ 탭 — 탭이 페이지를 끝낸다 (2026-09-06 · 2차) ---------------------- */
+
+/**
+ * ⚠**이 묶음이 지키는 것은 「탭이 있다」가 아니라 「탭 아래에 아무것도 안 남는다」다.**
+ *
+ * 1차에서는 긴 표 둘만 접고 注記·言えないこと·出典 을 **그 아래**에 두었다.
+ * 실측: 처음 보이는 줄이 **2019 −18% · 2018 −15%** 밖에 안 줄었고 그 아래에 셋이 그대로 깔렸다.
+ * 사용자 판단(2026-09-06): **「제일 피하고 싶은 건 세로로 긴 항목 하단부에 추가 정보가 있는 것」** ·
+ * **「한 항목이 길어도 그 탭으로 완결되면 필요한 사람만 내려가면 되니 문제없다」**.
+ * ⚠**400줄짜리 표 밑에 두는 것은 접어 두는 것과 다르지 않다.**
+ *
+ * ⚠**단 두 가지는 여전히 접지 않는다:**
+ * ⑴ **1位指名の入札** — 머리줄이 약속한 것이고, 2023~2025 는 거기 드는 것이
+ *    「출처에 없다」 한 줄이라 숨기면 **「경합이 없었다」로 읽힌다.**
+ * ⑵ **전역 푸터의 출처** — L3 는 그쪽이 지킨다. 탭에 든 `出典` 은 **상세**(구단별 URL·版·취득일)다.
+ */
+
+/** `data-panelkey="…"` 패널 하나. ⚠패널은 중첩 `<div>`·`<section>` 을 담으므로 깊이를 센다 */
+function panelOf(html: string, key: string): string {
+  const m = new RegExp(`<div[^>]*data-panelkey="${key}"[^>]*>`).exec(html);
+  assert.notEqual(m, null, `패널 ${key} 가 없다 — 이 시험이 공회전한다`);
+  return sliceDiv(html, m!.index, m![0].length);
+}
+
+/**
+ * `<section … id="…">` 하나를 깊이를 세어 자른다.
+ * ⚠**입찰 블록은 회차마다 `<section>` 을 품는다** — 첫 `</section>` 에서 끊으면 시험이 공회전한다.
+ */
+function sectionOf(html: string, id: string): string {
+  const m = new RegExp(`<section[^>]*id="${id}"[^>]*>`).exec(html);
+  assert.notEqual(m, null, `${id} 섹션이 없다 — 이 시험이 공회전한다`);
+  let i = m!.index + m![0].length;
+  let depth = 1;
+  while (depth > 0) {
+    const n = /<section\b|<\/section>/.exec(html.slice(i));
+    if (n === null) break;
+    i += n.index + n[0].length;
+    depth += n[0] === "</section>" ? -1 : 1;
+  }
+  return html.slice(m!.index, i);
+}
+
+/** `<div …>` 하나를 깊이를 세어 자른다. @returns 여는 태그부터 짝이 맞는 닫는 태그까지 */
+function sliceDiv(html: string, at: number, openLen: number): string {
+  let i = at + openLen;
+  let depth = 1;
+  while (depth > 0) {
+    const n = /<div\b|<\/div>/.exec(html.slice(i));
+    if (n === null) break;
+    i += n.index + n[0].length;
+    depth += n[0] === "</div>" ? -1 : 1;
+  }
+  return html.slice(at, i);
+}
+
+/** 탭 상자 전체와, **그 뒤에 남은 것**. */
+function mainSpan(html: string): { body: string; after: string } {
+  const m = /<div[^>]*id="b-draft-main"[^>]*>/.exec(html);
+  assert.notEqual(m, null, "b-draft-main 이 없다 — 이 시험이 공회전한다");
+  const body = sliceDiv(html, m!.index, m![0].length);
+  return { body, after: html.slice(m!.index + body.length) };
+}
+
+const twoSections = (over: Partial<DraftSection> = {}): DraftPageData =>
+  data({
+    sections: [
+      section(over),
+      section({
+        kind: "ikusei",
+        label: "育成",
+        bids: null,
+        pickCount: 3,
+        rounds: [round(1, [pick("t", "阪神", "石黒佑弥")])],
+      }),
+    ],
+  });
+
+test("탭이 구획 수 + 「この画面について」 만큼이고, 열려 있는 것은 첫 패널뿐", () => {
+  const { body } = mainSpan(render(twoSections()));
+  assert.equal((body.match(/role="tab"/g) ?? []).length, 3, "탭이 구획 2 + 안내 1 이 아니다");
+  assert.equal(
+    (body.match(/aria-selected="true"/g) ?? []).length,
+    1,
+    "열린 탭이 하나가 아니다 — 둘이 열려 있으면 화면과 낭독기가 갈린다",
+  );
+  assert.match(body, /data-panelkey="ikusei"[^>]*hidden/, "育成 패널이 닫혀 있지 않다");
+  assert.match(body, /data-panelkey="about"[^>]*hidden/, "안내 패널이 닫혀 있지 않다");
+  assert.match(body, /支配下 2件/, "탭 라벨에 건수가 없다 — 접은 표의 크기를 눌러 보기 전에 알 수 없다");
+});
+
+test("⚠⚠탭 아래에 아무것도 남지 않는다 — 긴 표 밑에 둔 것은 접어 둔 것과 같다", () => {
+  const { after } = mainSpan(render(twoSections()));
+  assert.doesNotMatch(
+    after,
+    /class="block"/,
+    "탭 상자 뒤에 블록이 남아 있다 — 사용자가 가장 피하고 싶다고 한 모양이다",
+  );
+});
+
+test("注記·言えないこと·出典은 「この画面について」 탭 안에서 완결된다", () => {
+  const about = panelOf(render(twoSections()), "about");
+  for (const id of ["b-draft-notes", "b-draft-limits", "b-draft-src"]) {
+    assert.ok(about.includes(`id="${id}"`), `${id} 가 안내 탭에 없다`);
+  }
+});
+
+test("⚠1位指名の入札은 탭 밖에 있다 — 이 화면의 목적이 그것이다", () => {
+  const html = render(twoSections());
+  const { body } = mainSpan(html);
+  assert.ok(html.includes('id="b-draft-bids"'), "입찰 블록이 없다");
+  assert.ok(!body.includes('id="b-draft-bids"'), "입찰이 탭 상자 안으로 들어갔다");
+  assert.ok(
+    html.indexOf('id="b-draft-bids"') < html.indexOf('id="b-draft-main"'),
+    "입찰이 탭보다 아래에 있다 — 머리줄이 약속한 것을 스크롤 뒤에 두면 안 된다",
+  );
+});
+
+test("⚠⚠미공표 설명은 절대 탭 뒤로 숨지 않는다 — 숨기면 「경합이 없었다」로 읽힌다", () => {
+  const html = render(
+    twoSections({
+      bids: bids({
+        state: { kind: "unpublished", detail: "NPBのページが2023年の抽選結果を載せていません" },
+      }),
+    }),
+  );
+  const { body } = mainSpan(html);
+  assert.match(html, /載せていません/, "미공표 설명이 화면에 없다");
+  assert.ok(!body.includes("載せていません"), "미공표 설명이 탭 안으로 들어갔다");
+});
+
+test("⚠구획이 하나여도 탭줄이 선다 — 「この画面について」가 항상 있기 때문이다", () => {
+  const { body } = mainSpan(
+    render(
+      data({
+        sections: [
+          section({ kind: "ikusei", label: "育成", bids: null, pickCount: 1,
+            rounds: [round(1, [pick("t", "阪神", "石黒佑弥")])] }),
+        ],
+      }),
+    ),
+  );
+  assert.match(body, /role="tablist"/, "탭줄이 없다");
+  assert.equal((body.match(/role="tab"/g) ?? []).length, 2, "탭이 구획 1 + 안내 1 이 아니다");
+  assert.match(body, /育成/, "구획 이름이 화면에서 사라졌다");
 });

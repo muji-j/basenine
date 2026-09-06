@@ -21,7 +21,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync, gzipSync } from "node:zlib";
-import { teamPageKey, yearIndexKey } from "@bb-app/archiver";
+import { draftWikiKey, teamPageKey, yearIndexKey } from "@bb-app/archiver";
 import type { BlobMeta } from "@bb-app/archiver";
 import type { DraftBidRow, DraftKind, DraftPickRow } from "@bb-app/parser";
 import { openDb, type Db } from "../src/db.ts";
@@ -29,13 +29,18 @@ import { DraftLoadError } from "../src/draft.ts";
 import {
   checkableInvariants,
   decideBids,
+  invariantNote,
   loadDraftSeason,
+  loadDraftWikiSeason,
   loadSeasonPages,
   seasonsInArchive,
   summarizeSeasons,
+  summarizeWiki,
+  wikiLine,
   type SeasonLoadReport,
   type TeamPage,
   type TeamPageWithMeta,
+  type WikiSeasonReport,
 } from "../tools/load-draft-archive.ts";
 
 // ── 픽스처 ────────────────────────────────────────────────────────────────
@@ -146,6 +151,8 @@ function report(over: Partial<SeasonLoadReport> = {}): SeasonLoadReport {
     picks: 107,
     bids: 21,
     soleNominations: 7,
+    // ⚠**`{0,0}` 이 「재 봤더니 0」이다** — 건너뛴 시즌만 `null`(「안 쟀음」 · M11 · [C1])
+    yielded: { picks: 0, bids: 0 },
     skipped: null,
     sourceWritesBids: true,
     ...over,
@@ -579,4 +586,176 @@ test("⚠구단이 덜 들어온 시즌을 「INV-N2 는 걸 수 있다」로 �
   assert.deepEqual(s.limited, [2023], "⚠INV-N2 를 걸 수 있는 시즌만 여기 온다");
   assert.deepEqual(s.incomplete, [2020], "⚠아카이브가 덜 들어온 시즌은 따로 세운다");
   assert.equal(s.loaded, 3);
+});
+
+// ── [C1] 두 출처가 같은 슬롯을 다툴 때 ──────────────────────────────────────
+
+/**
+ * ⚠⚠**리허설이 원리적으로 못 잡던 자리다**(2026-09-06 · [C1]).
+ *
+ * 옛 구조는 **빈 in-memory DB** 에 시즌을 먼저 적재해 보고 나서 진짜 DB 에 넣었다.
+ * 그 리허설은 **이미 들어 있는 다른 `origin` 의 행을 볼 수 없다** — 그래서
+ * 「위키가 채운 자리에 npb 가 들어온다」는 **진짜 DB 에서만 터졌고**, 그때는
+ * `loadDraft` 가 구단마다 커밋하던 터라 **앞 구단이 남았다.**
+ *
+ * ⚠**지금은 리허설이 없다.** `loadSeasonPages` 가 시즌을 한 트랜잭션으로 묶고,
+ * `loadDraft` 는 `SAVEPOINT` 라 그 안에 중첩된다. **한 번만 적재하고, 실패하면 통째로 되돌린다.**
+ *
+ * ⚠**이 시험은 고치기 전 코드에서 떨어진다**(뮤테이션 확인): 비켜세우기를 빼면
+ * `UNIQUE constraint failed: draft_bid…` 로 던진다.
+ */
+test("⚠[C1] 위키가 채운 시즌에 npb 가 들어와도 교착하지 않는다 — 시즌이 통째로 들어간다", async () => {
+  await withDb((db) => {
+    // 위키가 먼저 2019 의 1回 추첨을 채웠다(개최일 저녁 = npb 페이지에 아직 주석이 없던 상태)
+    for (const team of ["c", "g"]) {
+      db.raw
+        .prepare(
+          `INSERT INTO draft_bid
+             (season, kind, round_no, team, group_key, won, name_display, name_canonical,
+              rivals, origin, player_id, source, fetched_at, revision)
+           VALUES (2019, 'shihaika', 1, ?, '1:誰か', 0, '誰か', '誰か',
+                   NULL, 'wikipedia', NULL, 'https://ja.wikipedia.org/x', '2026-09-06T00:00:00Z', 'w')`,
+        )
+        .run(team);
+    }
+
+    // 며칠 뒤 npb 재수집 — 이번엔 경합 주석이 실렸다
+    const pages: TeamPageWithMeta[] = [
+      page("c", [pick("c", "shihaika", 1, "森下 暢仁")], []),
+      page("g", [pick("g", "shihaika", 1, "堀田 賢慎")], [bid("g", 1, ["東京ヤクルト"], "奥川恭伸", false)]),
+    ];
+    const n = loadSeasonPages(db, 2019, { pages, event: PROV });
+
+    assert.equal(n.teams, 2, "⚠한 구단이라도 빠지면 부분 적재다");
+    assert.equal(n.yielded.bids, 2, "비켜세운 위키 입찰을 세지 않으면 로그가 이 사건을 못 적는다");
+    assert.equal(n.yielded.picks, 0, "위키 지명은 없었다 — 「0건」이지 「안 쟀음」이 아니다");
+    const origins = db.raw
+      .prepare("SELECT origin, COUNT(*) AS n FROM draft_bid WHERE season = 2019 GROUP BY origin")
+      .all() as unknown as Array<{ origin: string; n: number }>;
+    // npb 입찰 3행 = g 낙첨(1回) + g 단독(2回 · 유도) + c 단독(1回 · 유도)
+    assert.deepEqual(
+      origins.map((r) => ({ ...r })),
+      [{ origin: "npb", n: 3 }],
+      "⚠같은 슬롯에 두 출처가 남으면 한 표에 두 판이 섞인다",
+    );
+    assert.equal(count(db, "draft_pick"), 2, "두 구단의 지명이 다 들어가야 한다");
+  });
+});
+
+/**
+ * ⚠**시즌 단위 원자성이 「위키가 이미 있는 DB」에서도 성립한다**(A7 의 짝).
+ * 앞 구단이 남으면 화면은 「그 해는 원래 이렇다」로 읽힌다.
+ */
+test("⚠[C1] 위키가 있는 DB 에서도 한 구단이 던지면 앞 구단이 안 남는다(행 0)", async () => {
+  await withDb((db) => {
+    db.raw
+      .prepare(
+        `INSERT INTO draft_bid
+           (season, kind, round_no, team, group_key, won, name_display, name_canonical,
+            rivals, origin, player_id, source, fetched_at, revision)
+         VALUES (2006, 'shihaika', 1, 'a', '1:誰か', 0, '誰か', '誰か',
+                 NULL, 'wikipedia', NULL, 'https://ja.wikipedia.org/x', '2026-09-06T00:00:00Z', 'w')`,
+      )
+      .run();
+    const good = page("a", [pick("a", "shihaika", 1, "정상")], [bid("a", 1, ["阪神"], "누군가", false)]);
+    const bad = page(
+      "b",
+      [pick("b", "koukousei", 1, "고교"), pick("b", "daigaku_shakaijin", 1, "대학")],
+      [bid("b", 1, ["阪神"], "누군가", false)],
+    );
+    assert.throws(() => loadSeasonPages(db, 2006, { pages: [good, bad], event: PROV }), DraftLoadError);
+    assert.equal(count(db, "draft_pick"), 0, "⚠앞 구단(a)이 남으면 부분 적재다");
+    assert.equal(count(db, "draft_event"), 0);
+    // ⚠**되돌렸으니 위키 행도 돌아와야 한다** — 비켜세우기까지 같이 되돌리지 않으면
+    //   실패한 적재가 **남의 행만 지우고 끝난다.**
+    const rows = db.raw
+      .prepare("SELECT origin FROM draft_bid WHERE season = 2006")
+      .all() as unknown as Array<{ origin: string }>;
+    assert.deepEqual(rows.map((r) => r.origin), ["wikipedia"], "⚠비켜세우기가 되돌려지지 않았다");
+  });
+});
+
+// ── [I-5] 「npb 가 아직 안 들어왔다」는 실패가 아니다 ────────────────────────
+
+/** wikipedia 기사 한 장만 든 아카이브. ⚠npb 쪽은 **일부러 안 만든다** */
+async function archiveWikiOnly(season: number): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "bb-wiki-arc-"));
+  await writeBlob(
+    root,
+    draftWikiKey(season),
+    fixture(`wiki-draft-${season}`),
+    meta(`https://ja.wikipedia.org/wiki/${season}年度新人選手選択会議_(日本プロ野球)`, {
+      sha256: "wiki".padEnd(64, "0"),
+    }),
+  );
+  return root;
+}
+
+/**
+ * ⚠⚠**수집이 두 명령이라 순서가 갈릴 수 있다**(런북 §1 · §8-2). 위키 자산만 먼저 넓혀졌거나
+ * npb 아카이브가 그 해만 아직 없으면, 열↔구단 맞추기는 「맞출 근거가 없다」로 **정당하게 던진다.**
+ * 그것을 `failed` 로 세면 **exit 1 이 되어 배치가 매일 붉어지고**, 헛불이 일상이 되면
+ * **진짜 위반도 안 읽힌다**(A6·A14 와 같은 판단).
+ */
+test("⚠[I-5] 위키는 있는데 npb 지명이 없는 시즌은 실패가 아니다 — 종료코드를 안 올린다", async () => {
+  const root = await archiveWikiOnly(2024);
+  try {
+    await withDb(async (db) => {
+      const w = await loadDraftWikiSeason(db, 2024, { archiveRoot: root });
+      assert.equal(w.state, "no-npb", `실패로 셌다: [${w.state}] ${w.reason ?? ""}`);
+      assert.match(w.reason ?? "", /npb/u, "왜 건너뛰었는지를 사람이 읽을 수 있어야 한다");
+      const s = summarizeWiki([w]);
+      assert.equal(s.failed, 0, "⚠`failed` 로 세면 배치가 매일 붉어진다");
+      assert.equal(s.noNpb, 1, "⚠따로 세지 않으면 「안 쟀음」이 「0건」과 같은 칸에 든다");
+      assert.equal(s.done, 0);
+      // ⚠**그래도 조용하지 않다** — 한 줄이 상태와 사유를 그대로 낸다
+      assert.match(wikiLine(w), /\[no-npb\]/u);
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * ⚠**분모가 0 인 검사는 「통과」가 아니라 「안 쟀음」이다**(Minor-1 · 작업규칙 7).
+ * 초판은 `invariantChecked` 를 계산해 놓고 **버렸고**, 로그에는 「INV 위반 0」만 남았다.
+ */
+test("⚠[Minor-1] INV 는 분모와 함께 찍는다 — 「0건」과 「안 쟀음」을 가른다", () => {
+  const base: WikiSeasonReport = {
+    season: 2024,
+    state: "done",
+    reason: null,
+    columns: 12,
+    minOverlap: 7,
+    invariantChecked: { "INV-1": 4, "INV-2": 2, "INV-3": 1, "INV-4": 12, "INV-5": 20, "INV-6": 8 },
+    invariantViolations: [],
+    pickChecked: 124,
+    pickFact: 0,
+    pickSpelling: 2,
+    pickDiffs: [],
+    bidChecked: 0,
+    bidFact: 0,
+    bidSpelling: 0,
+    bidDiffs: [],
+    wrote: { picks: 0, bids: 22, events: 0 },
+    deferred: { picks: 123, bids: 0 },
+  };
+  assert.equal(invariantNote(base), "INV 위반 0 / 6종 분모 47");
+  assert.match(wikiLine(base), /INV 위반 0 \/ 6종 분모 47/u, "시즌 줄이 분모를 안 싣는다");
+
+  // ⚠**분모가 내려앉은 검사는 이름으로 드러난다** — 위반 0 과 같은 칸에 세면 안 된다
+  const blind: WikiSeasonReport = {
+    ...base,
+    invariantChecked: { ...base.invariantChecked!, "INV-3": 0, "INV-6": 0 },
+  };
+  assert.match(invariantNote(blind), /⚠분모0: INV-3,INV-6/u);
+  const s = summarizeWiki([base, blind]);
+  assert.equal(s.invariantChecked, 47 + 38, "합계 분모가 없으면 「위반 0」이 무엇의 0 인지 모른다");
+  assert.deepEqual(s.invariantBlind, [2024], "분모가 0 인 시즌을 따로 세지 않으면 초록으로 보인다");
+
+  // ⚠**건너뛴 시즌은 「위반 0」이 아니라 「안 쟀음」이다**
+  const skipped: WikiSeasonReport = { ...base, state: "no-npb", invariantChecked: null };
+  assert.match(invariantNote(skipped), /안쟀음/u);
+  assert.equal(summarizeWiki([skipped]).invariantChecked, 0);
+  assert.deepEqual(summarizeWiki([skipped]).invariantBlind, [], "⚠안 잰 시즌을 「분모 0」으로 세면 안 된다");
 });

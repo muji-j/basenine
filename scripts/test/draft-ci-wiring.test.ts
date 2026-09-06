@@ -147,6 +147,75 @@ test("⚠적재에 `--to` 를 주지 않는다 — 상한을 박으면 새 해�
   );
 });
 
+test("⚠복원이 **두 출처를 따로 센다** — 하나로 접으면 「위키가 없다」가 「좀 적다」로 보인다", () => {
+  const s = stepStartingWith(RESTORE);
+  assert.match(
+    s.body,
+    /data\/archive\/wikipedia\/draft/,
+    "복원 스텝이 `data/archive/wikipedia/draft` 를 세지 않는다. " +
+      "그러면 위키 원본이 자산에서 빠진 날 **2023~2025 의 1位指名 경합만 조용히 사라진다** — " +
+      "에러가 아니라 빈 화면이라 아무도 결함으로 못 읽는다",
+  );
+  assert.match(
+    s.body,
+    /data\/archive\/npb\/draft/,
+    "복원 스텝이 npb 쪽을 세지 않는다 — 이 시험이 공회전한다",
+  );
+});
+
+/**
+ * ⚠⚠**「센다」와 「보인다」는 다른 일이다**(2026-09-06 · [I-3]).
+ *
+ * 바로 위 시험은 복원이 **두 뿌리를 따로 센다**까지만 고정했다. 그런데 위키가 0장일 때
+ * 하던 것은 **평범한 `echo`** 였고, 이 스텝은 `continue-on-error` 라 **초록으로 끝난다** —
+ * 즉 「세는 것」은 했는데 **아무도 안 읽는 곳에** 적고 있었다.
+ * 결과는 **2023~2025 세 시즌의 1位指名 경합이 조용히 사라지는 것**이고,
+ * ⚠**에러가 아니라 빈 화면이라 아무도 결함으로 못 읽는다** — 이 저장소가 가장 싫어하는 모양이다.
+ *
+ * ⚠**`::error::` 가 아니라 `::warning::` 인 것이 판단이다.** 자산을 아직 안 넓힌 것은
+ * **결함이 아니라 순서**이고(런북 §8-3), 그걸로 붉히면 **헛불이 일상이 되어 진짜 실패도 안 읽힌다.**
+ */
+test("⚠위키가 0장이면 워크플로 주석으로 올린다 — 평범한 echo 는 초록에 묻힌다", () => {
+  const s = stepStartingWith(RESTORE);
+  const guard = /if \[ "\$wiki" -eq 0 \]; then\s*\n([^\n]*)\n/.exec(s.body);
+  assert.notEqual(guard, null, "위키 0장 가드를 못 찾았다 — 이 시험이 공회전한다");
+  assert.match(
+    guard![1]!,
+    /echo "::warning::/,
+    "위키가 0장일 때 `::warning::` 을 안 낸다. 이 스텝은 continue-on-error 라 초록으로 끝나고, "
+      + "평범한 echo 는 로그 한 줄로 묻힌다 — 그때 사라지는 것은 2023~ 의 1位指名 경합 전부다: "
+      + guard![1]!.trim(),
+  );
+});
+
+test("⚠파일을 세는 줄이 `set -e` 로 스텝을 죽이지 않는다 — 뿌리가 없는 날이 반드시 온다", () => {
+  /**
+   * ⚠**실측이다**: `set -euo pipefail` 아래에서 `n=$(find 없는경로 2>/dev/null | wc -l)` 는
+   * **`echo` 까지 못 간다.** `find` 가 exit 1 이고 `pipefail` 이 그걸 파이프 밖으로 내보내며
+   * `set -e` 가 대입문에서 죽는다. ⚠**그 「없는 날」이 바로 자산을 아직 안 넓힌 첫날**이고,
+   * 그때 죽으면 로그가 **복원 결과를 한 줄도 안 남긴다.**
+   */
+  const s = stepStartingWith(RESTORE);
+  const counts = s.body.split(/\r?\n/u).filter((l) => /=\$\(.*find .*wc -l/u.test(l));
+  assert.ok(counts.length >= 2, `파일을 세는 줄을 ${counts.length}개 찾았다 — 2개 이상이어야 한다(이 시험이 공회전한다)`);
+  for (const line of counts) {
+    assert.match(
+      line,
+      /\|\| true/u,
+      "`|| true` 가 없다 — 뿌리가 없으면 이 줄에서 스텝이 죽는다(실측): " + line.trim(),
+    );
+  }
+});
+
+test("⚠적재 가드가 두 뿌리를 다 본다 — npb 만 보면 위키만 있는 날 조용히 건너뛴다", () => {
+  const s = stepStartingWith(LOAD);
+  const guard = /if \[ ! -d ([^\]]+)\] && \[ ! -d ([^\]]+)\]; then/.exec(s.body);
+  assert.notEqual(guard, null, "적재 스텝의 아카이브 가드를 못 찾았다 — 이 시험이 공회전한다");
+  const both = `${guard![1]} ${guard![2]}`;
+  assert.match(both, /npb\/draft/, "가드에 npb 뿌리가 없다");
+  assert.match(both, /wikipedia\/draft/, "가드에 wikipedia 뿌리가 없다");
+});
+
 test("⚠적재는 외부 요청을 내지 않는다 — CI 가 npb.jp 를 다시 치면 L7 위반이다", () => {
   const s = stepStartingWith(LOAD);
   assert.doesNotMatch(

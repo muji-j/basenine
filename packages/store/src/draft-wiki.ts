@@ -1,0 +1,540 @@
+/**
+ * 드래프트 적재 — **wikipedia 경로**(2023~ 의 1순위 경합).
+ *
+ * ⚠⚠**M1 — 같은 (시즌·구획·구단)에 두 출처가 겹치면 npb 가 이긴다**(§2-4 신뢰 등급: 공식 > 커뮤니티).
+ * wikipedia 는 **npb 가 말하지 않는 자리만** 채운다. 그 판정은 표마다 따로 한다 —
+ * 2023~2025 는 `draft_pick` 은 npb 가 다 채웠고 `draft_bid` 는 **0행**이라, 실제로 채워지는 것은
+ * 입찰뿐이다. ⚠**그 「0건 채움」이 조용하지 않게** 적재 보고가 두 수를 따로 낸다.
+ *
+ * ⚠⚠**`draft.ts` 는 「두 번째 적재기를 만들지 말고 `origin` 을 입력으로 올려라」고 적어 뒀다.
+ * 그렇게 하지 않은 이유를 여기 남긴다** — 편의가 아니라 구조가 다르다:
+ *   ⑴ `loadDraft` 는 **받은 지명을 전부 넣는다.** wikipedia 는 npb 가 이미 가진 지명을 같이 들고 오므로
+ *      그대로 넣으면 `draft_pick` 의 PK(`season,kind,team,round_no` · **origin 없음**)에서 부딪친다.
+ *      「넣을 것」과 「입찰을 풀기 위한 문맥」을 가를 자리가 그 함수에 없다.
+ *   ⑵ npb 의 단독지명은 **여집합으로 유도한 것**이고 wikipedia 의 단독지명은 **소스가 칠하지 않은 칸**,
+ *      즉 **말해 준 것**이다. 유도기를 다시 돌리면 소스가 말한 사실을 우리 추론으로 덮는다.
+ * ⚠**대신 「규칙」은 가져다 쓴다**(M1): 회차 순번(`numberRounds`) · 추첨 구획(`LOTTERY_KINDS`) ·
+ * 이름 정규화(`normalizePlayerName`). **베끼지 않는다.**
+ *
+ * ⚠**`draft_event` 는 건드리지 않는다 — 행이 아예 없을 때만 만든다.** 그 표의 키는 `(season, kind)` 라
+ * **`origin` 이 없고**, 덮으면 「이 회의는 어느 판인가」의 답이 npb 에서 wikipedia 로 바뀐다.
+ * ⚠**`license` 를 npb 행에 얹지 마라** — 그 행의 `url` 은 npb.jp 연도 톱이고 **그 페이지는 CC BY-SA 가 아니다.**
+ * 화면의 CC BY-SA 고지는 `draft_pick`/`draft_bid` 의 `origin` 에서 나온다(`draft-page.ts`).
+ */
+import { normalizePlayerName } from "@bb-app/parser";
+import type { DraftKind, DraftPickRow, DraftWikiBid, DraftWikiPick } from "@bb-app/parser";
+import type { Db } from "./db.ts";
+import { LOTTERY_KINDS, numberRounds } from "./draft.ts";
+import type { DraftProvenance } from "./draft.ts";
+
+export class DraftWikiLoadError extends Error {
+  readonly detail: string;
+  constructor(message: string, detail: string) {
+    super(`${message} — ${detail}`);
+    this.name = "DraftWikiLoadError";
+    this.detail = detail;
+  }
+}
+
+/** 이 적재기가 쓰는 출처 이름. ⚠**INSERT 와 DELETE 가 같은 값을 봐야 한다**(`draft.ts` 와 같은 규칙) */
+const ORIGIN = "wikipedia";
+
+/**
+ * 키 안에서 칸을 가르는 문자. ⚠**구단 코드·`kind`·이름에 절대 안 나오는 것**이어야 한다 —
+ * 구분자가 값 안에 나올 수 있으면 서로 다른 두 쌍이 같은 키가 된다(`draft.ts` 의 `SEP` 과 같은 이유).
+ */
+const SEP = "\u0000";
+
+/** ⚠**사이드카에도 같은 문자열이 있다**(`archiver/src/draft-wiki.ts`) — 화면 문구는 `draft-page.ts` 소유다 */
+export const DRAFT_WIKI_LICENSE = "CC BY-SA 4.0";
+
+// ──────────────────────────────────────────────────────────────────────────
+// 열 ↔ 구단 — ⚠**하드코딩한 이름표를 쓰지 않는다**
+// ──────────────────────────────────────────────────────────────────────────
+
+/**
+ * wikipedia 의 열 머리(`ヤクルト`·`横浜`·`DeNA`)를 **그 시즌의 npb 슬러그**에 맞춘다.
+ *
+ * ⚠⚠**이름표를 만들지 않는 것이 요점이다.** 두 어휘가 **둘 다 연도의 함수**라서 표를 만들면
+ * 반드시 이력이 필요해진다:
+ *   · npb 슬러그  `bs`→`b`(오릭스) · `yb`→`db`(요코하마) — 실측
+ *   · wiki 약칭   `横浜`→`DeNA`(2012~) — 실측
+ * 그리고 **열 머리에 링크가 있는 해가 2005·2018~2025 뿐**이라(실측 21년 중 9년) 기사 표제로
+ * 맞추는 길도 막혀 있다.
+ *
+ * → **그 해의 지명 명단으로 맞춘다.** 한 열의 선수 이름 집합과 한 슬러그의 선수 이름 집합이
+ *   가장 많이 겹치면 그 둘이 같은 구단이다. ⚠**이건 우회가 아니라 `X-3` 그 자체다** —
+ *   맞출 수 있다는 것이 곧 두 소스의 명단이 같다는 것이고, 못 맞추면 **시끄럽게 실패한다**(M7).
+ *
+ * ⚠**전단사(bijection)를 요구한다.** 한 슬러그에 두 열이 붙거나 남는 슬러그가 있으면 던진다 —
+ *   「가장 그럴듯한 짝」으로 넘어가면 **한 구단의 경합이 통째로 남의 것이 된다.**
+ *
+ * ⚠**이 함수는 npb 명단이 있어야 돈다.** 없으면 던진다 —
+ *   「모르면 안 넘긴다」(M11)이고, 조용히 12열을 순서대로 붙이는 것이 최악이다.
+ */
+export interface DraftWikiColumnMatch {
+  readonly columnIndex: number;
+  readonly column: string;
+  readonly team: string;
+  /** 겹친 이름 수. ⚠**분모와 함께 읽어라** */
+  readonly overlap: number;
+  /** 그 열의 wikipedia 이름 수 */
+  readonly wikiNames: number;
+  /** 그 슬러그의 npb 이름 수 */
+  readonly npbNames: number;
+  /** 2위와의 차. ⚠**1 이상이어야 한다** — 동점이면 짝을 정할 근거가 없다 */
+  readonly margin: number;
+}
+
+export function resolveDraftWikiColumns(
+  season: number,
+  columns: readonly string[],
+  wikiNamesByColumn: readonly ReadonlySet<string>[],
+  npbNamesByTeam: ReadonlyMap<string, ReadonlySet<string>>,
+): DraftWikiColumnMatch[] {
+  const teams = [...npbNamesByTeam.keys()].sort();
+  if (teams.length === 0) {
+    throw new DraftWikiLoadError(
+      "이 시즌의 npb 지명 명단이 0건이다 — wikipedia 열을 구단에 맞출 근거가 없다(M11)",
+      `season=${season}`,
+    );
+  }
+  if (teams.length !== columns.length) {
+    throw new DraftWikiLoadError(
+      "wikipedia 열 수와 npb 구단 수가 다르다 — 어느 쪽이 빠졌는지 사람이 봐야 한다(M7)",
+      `season=${season} 열=${columns.length} 구단=${teams.length}(${teams.join(",")})`,
+    );
+  }
+
+  const out: DraftWikiColumnMatch[] = [];
+  for (let c = 0; c < columns.length; c += 1) {
+    const mine = wikiNamesByColumn[c] ?? new Set<string>();
+    const scored = teams
+      .map((team) => {
+        let n = 0;
+        for (const name of mine) if (npbNamesByTeam.get(team)!.has(name)) n += 1;
+        return { team, n };
+      })
+      .sort((a, b) => b.n - a.n || a.team.localeCompare(b.team));
+    const best = scored[0]!;
+    const second = scored[1]?.n ?? -1;
+    if (best.n === 0 || best.n - second < 1) {
+      throw new DraftWikiLoadError(
+        "wikipedia 열을 구단에 맞출 수 없다 — 이름이 겹치지 않거나 동점이다(M7)",
+        `season=${season} col=${c}(${columns[c]}) 최고=${best.team}:${best.n} 차점=${second}`,
+      );
+    }
+    out.push({
+      columnIndex: c,
+      column: columns[c]!,
+      team: best.team,
+      overlap: best.n,
+      wikiNames: mine.size,
+      npbNames: npbNamesByTeam.get(best.team)!.size,
+      margin: best.n - second,
+    });
+  }
+
+  const used = new Set(out.map((m) => m.team));
+  if (used.size !== out.length) {
+    const dup = out
+      .filter((m, i) => out.findIndex((x) => x.team === m.team) !== i)
+      .map((m) => `${m.column}→${m.team}`);
+    throw new DraftWikiLoadError(
+      "두 열이 같은 구단에 붙었다 — 전단사가 아니면 한 구단의 경합이 남의 것이 된다(M7)",
+      `season=${season} 겹침=${JSON.stringify(dup)}`,
+    );
+  }
+  return out;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// 대조 — `X-3`(지명 명단) · `X-1`(경합)
+// ──────────────────────────────────────────────────────────────────────────
+
+/**
+ * ⚠⚠**두 갈래를 뭉치면 이 대조가 죽는다.**
+ *
+ * 실측(2026-09-06 · 2005~2025 전수)에서 두 소스가 갈리는 곳은 **거의 전부 표기**다 —
+ * `髙/高` · `﨑/崎` · `會/会` · `攝/摂` · `靍/鶴` 같은 이체자와, 등록명이 긴 선수의 **표시 축약**
+ * (`エドポロケイン` ↔ `エドポロ クリストファ ケイン セカンド`). ⚠**정규화로는 못 붙인다**:
+ * `NFC`·`NFD`·`NFKC`·`NFKD` **넷 다** 위 네 쌍을 같은 값으로 만들지 않는다(실측).
+ *
+ * 그것을 `fact` 와 같은 칸에 세면 **대조가 매일 붉어지고, 헛불이 일상이 되면 진짜 위반도 안 읽힌다.**
+ * 반대로 뭉개서 통과시키면 **누가 뽑혔는지가 갈린 날에도 조용하다.**
+ * → **갈래를 나누고, 종료코드는 `fact` 에만 반응한다. 둘 다 분모와 함께 찍는다.**
+ */
+export type DraftWikiDiffSeverity =
+  /** 「누가 뽑혔나 · 누가 겹쳤나 · 누가 이겼나 · 몇 회차인가」가 다르다. **파서가 잘못 읽은 것일 수 있다** */
+  | "fact"
+  /** 같은 자리인데 **글자가 다르다**. 두 소스가 다르게 쓴 것이고 우리가 고를 일이 아니다(M10) */
+  | "spelling";
+
+export interface DraftWikiDiff {
+  readonly id: "X-1" | "X-3";
+  readonly severity: DraftWikiDiffSeverity;
+  readonly detail: string;
+}
+
+export interface DraftWikiCompare {
+  /** 분모. ⚠「불일치 0건」과 「안 쟀음」을 구별하기 위한 것이다 */
+  readonly checked: number;
+  readonly diffs: readonly DraftWikiDiff[];
+}
+
+/** ⚠**세는 규칙은 한 벌이다**(M1) — 보고와 종료코드가 갈릴 자리를 없앤다 */
+export function countBySeverity(diffs: readonly DraftWikiDiff[]): { fact: number; spelling: number } {
+  return {
+    fact: diffs.filter((d) => d.severity === "fact").length,
+    spelling: diffs.filter((d) => d.severity === "spelling").length,
+  };
+}
+
+export interface NpbPickKey {
+  readonly team: string;
+  readonly kind: string;
+  readonly roundNo: number;
+  readonly nameDisplay: string;
+}
+
+/**
+ * `X-3` — **구단별 지명 명단이 같은가.**
+ *
+ * ⚠**비교는 정규화한 이름으로 한다**(공백만 흡수 · `normalizePlayerName`). 그것이 못 붙이는 것이
+ * **이체자**다 — `山﨑`(U+FA11)↔`山崎`(U+5D0E) 는 NFC·NFKC·NFD 어느 것으로도 안 붙는다(실측).
+ * **그건 결함이 아니라 두 소스가 다르게 쓴 것**이고, 그래서 여기서 **숨기지 않고 센다**.
+ *
+ * ⚠**회차까지 본다.** 이름만 맞추면 「같은 사람을 다른 회차에 적었다」가 통과한다.
+ */
+export function compareDraftWikiPicks(
+  season: number,
+  npb: readonly NpbPickKey[],
+  wiki: readonly { team: string; kind: DraftKind; roundNo: number | null; nameDisplay: string }[],
+): DraftWikiCompare {
+  /**
+   * ⚠**자리(슬롯)로 먼저 맞춘 뒤 이름을 본다.** 이름까지 넣어 키를 만들면 **표기가 다른 한 건이
+   * 「한쪽에만 있는 지명」 두 건**으로 보이고, 「명단이 어긋났다」와 「글자가 다르다」가 같은 칸에 든다.
+   */
+  const slot = (t: string, k: string, r: number | null): string => `${t}${SEP}${k}${SEP}${r ?? "-"}`;
+  const group = (rows: readonly { team: string; kind: string; roundNo: number | null; nameDisplay: string }[]): Map<string, string[]> => {
+    const m = new Map<string, string[]>();
+    for (const r of rows) {
+      const key = slot(r.team, r.kind, r.roundNo);
+      const bucket = m.get(key);
+      if (bucket === undefined) m.set(key, [normalizePlayerName(r.nameDisplay)]);
+      else bucket.push(normalizePlayerName(r.nameDisplay));
+    }
+    for (const v of m.values()) v.sort();
+    return m;
+  };
+  const a = group(npb);
+  const w = group(wiki);
+  const diffs: DraftWikiDiff[] = [];
+  const keys = new Set([...a.keys(), ...w.keys()]);
+  // ⚠**키를 그대로 찍지 마라** — 구분자가 `\u0000` 이라 로그가 **바이너리로 보인다**(`grep` 이 침묵한다).
+  const show = (k: string): string => k.split(SEP).join("/");
+  for (const k of keys) {
+    const mine = w.get(k);
+    const theirs = a.get(k);
+    if (mine === undefined) {
+      diffs.push({ id: "X-3", severity: "fact", detail: `${season} npb 에만 있는 자리: ${show(k)} ${theirs!.join(",")}` });
+      continue;
+    }
+    if (theirs === undefined) {
+      diffs.push({ id: "X-3", severity: "fact", detail: `${season} wikipedia 에만 있는 자리: ${show(k)} ${mine.join(",")}` });
+      continue;
+    }
+    if (mine.length !== theirs.length) {
+      diffs.push({ id: "X-3", severity: "fact", detail: `${season} 인원이 다르다: ${show(k)} npb=${theirs.length} wiki=${mine.length}` });
+      continue;
+    }
+    if (mine.join("\u0001") !== theirs.join("\u0001")) {
+      diffs.push({ id: "X-3", severity: "spelling", detail: `${season} ${show(k)} npb=${theirs.join(",")} wiki=${mine.join(",")}` });
+    }
+  }
+  // ⚠**분모는 「비교한 자리의 수」**다. 합집합이라 한쪽에만 있는 것도 분모에 든다.
+  return { checked: keys.size, diffs };
+}
+
+export interface BidFact {
+  readonly kind: string;
+  readonly roundNo: number;
+  readonly team: string;
+  readonly groupKey: string | null;
+  /** `1` 당첨 · `0` 낙첨 · `null` 단독지명 */
+  readonly won: 0 | 1 | null;
+  readonly nameDisplay: string;
+}
+
+/**
+ * `X-1` — **npb 경합 문장과 wikipedia 그리드가 같은가.**
+ *
+ * ⚠⚠**이것이 이 소스를 채용할 수 있는 유일한 근거다**(규칙표 §5). `INV-1~6` 은 **내부 정합성**이라
+ * **색을 통째로 잘못 읽어도 같이 통과한다** — 「색 = 경합, 굵음 = 당첨」이라는 **뜻**을 지탱하는 것은
+ * 이 대조 하나뿐이다.
+ *
+ * ⚠**단독지명도 함께 본다** — 그쪽은 npb 에서 **유도한 값**이고 wikipedia 에서는 **칠하지 않은 칸**,
+ * 즉 소스가 말한 것이다. 성질이 달라서 **`detail` 에 그렇게 적는다.**
+ */
+export function compareDraftWikiBids(
+  season: number,
+  npb: readonly BidFact[],
+  wiki: readonly BidFact[],
+): DraftWikiCompare {
+  const key = (b: BidFact): string => `${b.kind}${SEP}${b.roundNo}${SEP}${b.team}`;
+  const show = (b: BidFact): string =>
+    `${b.kind}/${b.roundNo}/${b.team} ${b.won === null ? "単独" : b.won === 1 ? "当選" : "外れ"} ${b.nameDisplay}`;
+  const a = new Map(npb.map((b) => [key(b), b]));
+  const w = new Map(wiki.map((b) => [key(b), b]));
+  const diffs: DraftWikiDiff[] = [];
+  for (const [k, v] of a) {
+    const other = w.get(k);
+    if (other === undefined) {
+      diffs.push({ id: "X-1", severity: "fact", detail: `${season} npb 에만: ${show(v)}` });
+      continue;
+    }
+    if (v.won !== other.won) {
+      diffs.push({ id: "X-1", severity: "fact", detail: `${season} 승패가 다르다: npb=${show(v)} / wiki=${show(other)}` });
+    }
+    if (normalizePlayerName(v.nameDisplay) !== normalizePlayerName(other.nameDisplay)) {
+      // ⚠**이름만 다른 것은 `spelling` 이다** — 위 `DraftWikiDiffSeverity` 주석의 그 이유다.
+      diffs.push({ id: "X-1", severity: "spelling", detail: `${season} 이름이 다르다: npb=${show(v)} / wiki=${show(other)}` });
+    }
+    // ⚠**그룹의 「모양」까지 본다** — 같은 회차·같은 구단인데 **묶인 상대가 다르면** 색을 잘못 읽은 것이다.
+    const mates = (src: readonly BidFact[], b: BidFact): string =>
+      b.groupKey === null
+        ? "(단독)"
+        : src
+            .filter((x) => x.kind === b.kind && x.groupKey === b.groupKey)
+            .map((x) => x.team)
+            .sort()
+            .join(",");
+    if (mates(npb, v) !== mates(wiki, other)) {
+      diffs.push({
+        id: "X-1",
+        severity: "fact",
+        detail: `${season} 경합 구단 집합이 다르다: ${v.kind}/${v.roundNo}/${v.team} npb=[${mates(npb, v)}] wiki=[${mates(wiki, other)}]`,
+      });
+    }
+  }
+  for (const [k, v] of w) {
+    if (!a.has(k)) diffs.push({ id: "X-1", severity: "fact", detail: `${season} wikipedia 에만: ${show(v)}` });
+  }
+  return { checked: new Set([...a.keys(), ...w.keys()]).size, diffs };
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// 적재
+// ──────────────────────────────────────────────────────────────────────────
+
+export interface DraftWikiLoadInput {
+  readonly season: number;
+  /** 열 → 구단 슬러그. `resolveDraftWikiColumns` 가 만든다 */
+  readonly teamOfColumn: readonly string[];
+  readonly picks: readonly DraftWikiPick[];
+  readonly bids: readonly DraftWikiBid[];
+  /** 기사 페이지 — **지명·입찰 행의 출처**(M4) */
+  readonly page: DraftProvenance;
+}
+
+export interface DraftWikiLoadResult {
+  /** 실제로 넣은 지명. ⚠**0 이 정상이다** — npb 가 2005~2025 를 다 갖고 있다 */
+  readonly picks: number;
+  readonly bids: number;
+  /** npb 가 이미 말해서 **안 넣은** 자리. ⚠**분모다** — 「0건 넣었다」와 「넣을 것이 없었다」를 가른다 */
+  readonly picksDeferred: number;
+  readonly bidsDeferred: number;
+  /** 없어서 새로 만든 `draft_event` 행. ⚠**있는 행은 덮지 않는다** */
+  readonly events: number;
+}
+
+/** `(kind, team)` 키. ⚠팀 코드·`kind` 에 안 나오는 문자로 가른다 */
+function slot(kind: string, team: string): string {
+  return `${kind}${SEP}${team}`;
+}
+
+function occupiedByNpb(db: Db, table: "draft_pick" | "draft_bid", season: number): Set<string> {
+  const rows = db.raw
+    .prepare(`SELECT DISTINCT kind, team FROM ${table} WHERE season = ? AND origin = 'npb'`)
+    .all(season) as unknown as { kind: string; team: string }[];
+  return new Set(rows.map((r) => slot(r.kind, r.team)));
+}
+
+/**
+ * 한 시즌의 wikipedia 그리드를 넣는다 — **한 호출 = 한 기사 = 한 시즌.**
+ *
+ * ⚠**멱등하다**(M5). 「덮어쓰기」가 아니라 **시즌 단위로 지우고 다시 넣는다** — 그래야 정정으로
+ * **줄어든 판**도 반영된다. ⚠**삭제 범위가 구단이 아니라 시즌인 것은 소스의 모양 때문이다**:
+ * 기사 한 장이 12구단을 한꺼번에 싣는다(npb 는 한 장이 한 구단이라 그쪽이 구단 단위인 것이다).
+ *
+ * ⚠**부분 실패가 없다** — 판정은 트랜잭션 밖에서 끝내고 쓰기는 한 트랜잭션이다.
+ *
+ * @throws {DraftWikiLoadError} 열 매핑 길이가 안 맞을 때 · 회차가 빈 지명이 회차 있는 구획에 섞였을 때
+ */
+export function loadDraftWiki(db: Db, input: DraftWikiLoadInput): DraftWikiLoadResult {
+  const { season, teamOfColumn, page } = input;
+
+  const teamOf = (columnIndex: number): string => {
+    const t = teamOfColumn[columnIndex];
+    if (t === undefined) {
+      throw new DraftWikiLoadError("열 번호에 붙은 구단이 없다 — 열 매핑이 짧다(M7)", `season=${season} col=${columnIndex}`);
+    }
+    return t;
+  };
+
+  // ── 지명: `numberRounds` 가 회차 없는 제도(希望入団枠)에 순번을 매긴다(M1 · `draft.ts` 한 벌) ──
+  // ⚠**`nameCanonical` 을 이름으로 되찾지 마라**(M10). 같은 시즌·같은 구단에 동명이인이 있으면
+  //   조용히 남의 표제를 붙인다 — 그래서 **행 객체 자체**를 열쇠로 들고 다닌다.
+  const canonicalOf = new Map<DraftPickRow, string | null>();
+  const pickRows: DraftPickRow[] = input.picks.map((p) => {
+    const row: DraftPickRow = {
+      team: teamOf(p.columnIndex),
+      kind: p.kind,
+      roundNo: p.roundNo,
+      waiverDir: p.waiverDir,
+      nameDisplay: p.nameDisplay,
+      // ⚠**wikipedia 는 포지션·소속을 그리드에 안 적는다**(M11 — 「원래 없음」). 지어내지 않는다.
+      position: null,
+      fromOrg: null,
+    };
+    canonicalOf.set(row, p.nameCanonical);
+    return row;
+  });
+  const numbered = numberRounds(season, pickRows);
+
+  const bidRows = input.bids.map((b) => ({
+    team: teamOf(b.columnIndex),
+    kind: b.kind,
+    roundNo: b.bidRound,
+    groupKey: b.groupKey,
+    won: b.won === null ? null : b.won ? 1 : 0,
+    nameDisplay: b.nameDisplay,
+    nameCanonical: b.nameCanonical,
+  }));
+
+  // ⚠**npb 가 말한 자리는 건너뛴다**(M1). 표마다 따로 묻는다 — 2023~2025 는 지명은 npb 가 갖고
+  //   입찰은 0행이라, 같은 시즌에서 한쪽만 채워진다.
+  const pickTaken = occupiedByNpb(db, "draft_pick", season);
+  const bidTaken = occupiedByNpb(db, "draft_bid", season);
+  const picksToWrite = numbered.filter((p) => !pickTaken.has(slot(p.row.kind, p.row.team)));
+  const bidsToWrite = bidRows.filter((b) => !bidTaken.has(slot(b.kind, b.team)));
+
+  const kinds = new Set(picksToWrite.map((p) => p.row.kind).concat(bidsToWrite.map((b) => b.kind)));
+  let events = 0;
+
+  db.transaction(() => {
+    // ⚠**있는 `draft_event` 는 덮지 않는다** — 그 표에는 `origin` 이 없어서, 덮으면
+    //   「이 회의는 어느 판인가」의 답이 조용히 wikipedia 로 바뀐다.
+    const has = db.raw.prepare("SELECT 1 FROM draft_event WHERE season = ? AND kind = ?");
+    const insEvent = db.raw.prepare(
+      `INSERT INTO draft_event (season, kind, held_on, source, fetched_at, revision, license)
+       VALUES (?, ?, NULL, ?, ?, ?, ?)`,
+    );
+    for (const kind of kinds) {
+      if (has.get(season, kind) !== undefined) continue;
+      insEvent.run(season, kind, page.source, page.fetchedAt, page.revision, DRAFT_WIKI_LICENSE);
+      events += 1;
+    }
+
+    db.raw.prepare("DELETE FROM draft_pick WHERE season = ? AND origin = ?").run(season, ORIGIN);
+    db.raw.prepare("DELETE FROM draft_bid WHERE season = ? AND origin = ?").run(season, ORIGIN);
+
+    const insPick = db.raw.prepare(
+      `INSERT INTO draft_pick
+         (season, kind, team, round_no, pick_seq, waiver_dir, name_display, name_canonical,
+          position, from_org, origin, player_id, source, fetched_at, revision)
+       VALUES (?, ?, ?, ?, NULL, ?, ?, ?, NULL, NULL, ?, NULL, ?, ?, ?)`,
+    );
+    for (const p of picksToWrite) {
+      insPick.run(
+        season,
+        p.row.kind,
+        p.row.team,
+        p.roundNo,
+        p.row.waiverDir,
+        p.row.nameDisplay,
+        // ⚠**`name_canonical` 의 뜻이 origin 마다 다르다.** npb 는 표기를 정규화한 것이고
+        //   wikipedia 는 **기사 표제**다 — 링크가 없으면 `null`(M11 · 「소스가 안 말한다」).
+        //   ⚠**둘 중 어느 쪽도 항상 옳지 않다**(규칙표 §6-7 · 8건이 서로 다르다). 그래서 두 벌을 다 남긴다.
+        canonicalOf.get(p.row) ?? null,
+        ORIGIN,
+        page.source,
+        page.fetchedAt,
+        page.revision,
+      );
+    }
+
+    const insBid = db.raw.prepare(
+      `INSERT INTO draft_bid
+         (season, kind, round_no, team, group_key, won, name_display, name_canonical,
+          rivals, origin, player_id, source, fetched_at, revision)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?)`,
+    );
+    for (const b of bidsToWrite) {
+      insBid.run(
+        season,
+        b.kind,
+        b.roundNo,
+        b.team,
+        b.groupKey,
+        b.won,
+        b.nameDisplay,
+        b.nameCanonical,
+        // ⚠**`rivals` 는 `NULL` 이다 — 「상대가 0명」이 아니라 「이 소스는 따로 말하지 않는다」**(M11).
+        //   ⚠**색에서 뽑아 담지 마라.** 020 이 그 칸에 기대한 것은 **그룹과 독립된 증거**인데,
+        //   위키의 상대 목록은 그룹 그 자체라 담으면 **언제나 통과하는 가짜 대조**가 된다.
+        ORIGIN,
+        page.source,
+        page.fetchedAt,
+        page.revision,
+      );
+    }
+  });
+
+  return {
+    picks: picksToWrite.length,
+    bids: bidsToWrite.length,
+    picksDeferred: numbered.length - picksToWrite.length,
+    bidsDeferred: bidRows.length - bidsToWrite.length,
+    events,
+  };
+}
+
+/** 이 시즌 npb 지명의 **구단별 정규화 이름 집합**. 열 매칭의 재료다 */
+export function npbNamesBySeason(db: Db, season: number): Map<string, Set<string>> {
+  const rows = db.raw
+    .prepare("SELECT team, name_display FROM draft_pick WHERE season = ? AND origin = 'npb'")
+    .all(season) as unknown as { team: string; name_display: string }[];
+  const out = new Map<string, Set<string>>();
+  for (const r of rows) {
+    const set = out.get(r.team) ?? new Set<string>();
+    set.add(normalizePlayerName(r.name_display));
+    out.set(r.team, set);
+  }
+  return out;
+}
+
+/** 이 시즌 npb 지명 전건(`X-3` 의 한쪽) */
+export function npbPicksBySeason(db: Db, season: number): NpbPickKey[] {
+  return db.raw
+    .prepare("SELECT team, kind, round_no AS roundNo, name_display AS nameDisplay FROM draft_pick WHERE season = ? AND origin = 'npb'")
+    .all(season) as unknown as NpbPickKey[];
+}
+
+/** 이 시즌 npb 입찰 전건(`X-1` 의 한쪽) */
+export function npbBidsBySeason(db: Db, season: number): BidFact[] {
+  return db.raw
+    .prepare(
+      `SELECT kind, round_no AS roundNo, team, group_key AS groupKey, won, name_display AS nameDisplay
+       FROM draft_bid WHERE season = ? AND origin = 'npb'`,
+    )
+    .all(season) as unknown as BidFact[];
+}
+
+/**
+ * 추첨이 성립하는 구획만 남긴다. ⚠**`LOTTERY_KINDS` 는 `draft.ts` 한 벌이다**(M1) —
+ * 여기서 목록을 다시 적으면 그쪽을 고친 날 이 대조만 옛 목록으로 조용히 통과한다.
+ */
+export function isLotteryKind(kind: string): boolean {
+  return LOTTERY_KINDS.has(kind as DraftKind);
+}
