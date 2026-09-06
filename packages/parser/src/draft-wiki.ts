@@ -842,13 +842,19 @@ function derive(
   const picks: DraftWikiPick[] = [];
   const bids: DraftWikiBid[] = [];
   const markers: DraftWikiMarkerCell[] = [];
-  /** ⚠**같은 원본 칸이 rowspan 으로 여러 행에 나온다**(2007) — 표식을 5번 세지 않는다 */
+  /**
+   * ⚠**같은 원본 칸이 rowspan 으로 여러 행에 나온다**(2007) — 표식을 5번 세지 않는다.
+   * ⚠**키에 `kind` 를 넣는다**(2026-09-06 자기 재독에서 고침). 안 넣으면 같은 구단이 **두 구획에서**
+   * 같은 표식을 받은 해에 **한 건으로 접히고**, 그러면 아래 `INV-4` 가 **분모에서 한 슬롯을 더 뺀다** —
+   * 「지명권이 없었다」가 없던 구획으로 번진다. **지금 실물은 표식이 2건뿐이라 안 갈리지만**
+   * (2006 `不合意` · 2007 `指名権剥奪`) 그건 「오늘 0건」이지 「일어날 수 없다」가 아니다.
+   */
   const seenMarker = new Set<string>();
 
   for (const row of grid.rows) {
     for (const cell of row.cells) {
       if (cell.cellKind === "marker") {
-        const key = `${cell.columnIndex}${SEP}${cell.marker}`;
+        const key = `${row.kind}${SEP}${cell.columnIndex}${SEP}${cell.marker}`;
         if (!seenMarker.has(key)) {
           seenMarker.add(key);
           markers.push({ columnIndex: cell.columnIndex, kind: row.kind, labelRaw: row.labelRaw, marker: cell.marker! });
