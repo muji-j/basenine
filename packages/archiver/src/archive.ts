@@ -119,10 +119,22 @@ export async function markSeen(
   clock: Clock,
   key: string,
   prev: BlobMeta | null,
+  extra?: BlobExtra,
 ): Promise<void> {
   // ⚠**전에 본 적이 없으면 남길 것이 없다** — 빈 메타를 지어내지 않는다(M11)
   if (prev === null) return;
-  await sink.writeMeta(key, { ...prev, checkedAt: clock.now().toISOString() });
+  await sink.writeMeta(key, { ...prev, ...(extra ?? {}), checkedAt: clock.now().toISOString() });
+}
+
+/**
+ * 소스에 대해 **수집기가 아는 사실**. 응답에서 나오지 않고 우리가 아는 것이라 따로 받는다.
+ *
+ * ⚠**`stored` 경로에만 붙이면 안 된다.** 조건부 요청이 통하는 소스(ja.wikipedia 는 `Last-Modified`
+ * 를 준다 · **우리 사이드카 22/22** · `ETag` 는 0/22)에서는 **두 번째 실행부터 계속 `unchanged`** 라, 그쪽에 안 붙이면
+ * **처음 한 번 빠뜨린 라이선스가 영영 안 들어간다.**
+ */
+export interface BlobExtra {
+  readonly license?: string;
 }
 
 /** 하위 페이지 1장을 보존한다. */
@@ -133,14 +145,19 @@ export async function markSeen(
  * 구별과 revision 증가 조건은 미묘해서, 두 벌로 만들면 한쪽만 고쳐진 채로 남는다.
  * 경기 페이지도 공표 성적표도 이 함수를 지난다.
  */
-export async function archiveUrl(key: string, url: string, deps: ArchiveDeps): Promise<PageResult> {
+export async function archiveUrl(
+  key: string,
+  url: string,
+  deps: ArchiveDeps,
+  extra?: BlobExtra,
+): Promise<PageResult> {
   const prev = await deps.sink.readMeta(key);
 
   try {
     const res = await deps.fetcher.get(url, prev ?? undefined);
 
     if (res.status === 304) {
-      await markSeen(deps.sink, deps.clock, key, prev);
+      await markSeen(deps.sink, deps.clock, key, prev, extra);
       return { key, url, outcome: "unchanged", status: 304, error: null };
     }
     if (res.status === 404 || res.status === 410) {
@@ -155,7 +172,7 @@ export async function archiveUrl(key: string, url: string, deps: ArchiveDeps): P
     if (prev && prev.sha256 === digest) {
       // 서버가 조건부 요청을 지원하지 않아 200을 줬지만 내용은 같다 → 본문은 안 쓴다(멱등).
       // ⚠**그래도 「봤다」는 남긴다** — 안 남기면 취득일이 실제보다 낡게 나가고 재취득이 오판한다
-      await markSeen(deps.sink, deps.clock, key, prev);
+      await markSeen(deps.sink, deps.clock, key, prev, extra);
       return { key, url, outcome: "unchanged", status: res.status, error: null };
     }
 
@@ -168,6 +185,7 @@ export async function archiveUrl(key: string, url: string, deps: ArchiveDeps): P
       sha256: digest,
       byteLength: res.body.byteLength,
       revision: (prev?.revision ?? 0) + 1,
+      ...(extra ?? {}),
     };
     await deps.sink.write(key, res.body, meta);
     return { key, url, outcome: "stored", status: res.status, error: null };

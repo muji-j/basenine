@@ -41,6 +41,12 @@ export type {
   DraftYearSkip,
   DraftYearSkipped,
 } from "./draft.ts";
+/**
+ * ⚠**키 규칙을 적재가 베끼지 말고 여기서 가져가게 한다**(M1) — `wikipedia/draft/{year}`.
+ * ⚠**`npb/draft/…` 와 나란히 두지 마라**: 출처도 라이선스도 배포 tar 도 다르다(L3·L6).
+ */
+export { DRAFT_WIKI_LICENSE, collectDraftWiki, draftWikiKey, draftWikiUrl } from "./draft-wiki.ts";
+export type { DraftWikiCollectOptions, DraftWikiCollectResult } from "./draft-wiki.ts";
 export {
   MonthlyScheduleCache,
   archiveDate,
@@ -50,4 +56,4 @@ export {
   isDayError,
   summarize,
 } from "./archive.ts";
-export type { ArchiveDeps, DayError, DayResult, PageOutcome, PageResult } from "./archive.ts";
+export type { ArchiveDeps, BlobExtra, DayError, DayResult, PageOutcome, PageResult } from "./archive.ts";
