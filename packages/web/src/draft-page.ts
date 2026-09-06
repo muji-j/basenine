@@ -32,7 +32,7 @@ import type { RawHtml } from "./html.ts";
 import { NO_VALUE, fullDate } from "./format.ts";
 import { DRAFT_PATH, page, stateNote } from "./layout.ts";
 import type { DataState, RenderContext } from "./layout.ts";
-import { note } from "./parts.ts";
+import { note, panel, tablist } from "./parts.ts";
 // ⚠**JST 변환은 한 벌이다**(M1 · §2-1) — 화면이 +9시간을 자기 손으로 적지 않는다
 import { toJstDateString } from "@bb-app/archiver";
 import { NEUTRAL_COLOR, colorOf } from "@bb-app/domain";
@@ -536,8 +536,7 @@ function roundLabel(r: DraftRound): { label: string; extra: string | null } {
  * @param sectionLabel 이 표가 속한 구획 이름(支配下·育成 …)
  */
 function pickTable(rounds: readonly DraftRound[], sectionLabel: string): RawHtml {
-  return html`<p class="picklab dlab">指名の全記録<s>球団の並びは当サイトの球団順です — 指名順ではありません</s></p>
-<div class="scroller">
+  return html`<div class="scroller">
   <table class="dpick" aria-label="${sectionLabel}の指名の全記録">
     <thead><tr><th class="l">球団</th><th class="l">選手</th><th class="l">守備</th><th class="l">出身</th></tr></thead>
     ${rounds.map((r) => {
@@ -567,16 +566,84 @@ function pickTable(rounds: readonly DraftRound[], sectionLabel: string): RawHtml
  * **「제도상 추첨이 없는 구획」**이다(育成·自由獲得·希望入団枠) — `unpublished` 로 그리면
  * **없는 잘못을 NPB 에 씌우는** 거짓말이 된다.
  */
-function sectionBlock(s: DraftSection): RawHtml {
-  return html`<section class="block" id="b-draft-${s.kind}">
-  <h2>${s.label}<span class="qt">指名 ${s.pickCount}件</span></h2>
-  ${s.bids === null
-    ? html`<p class="dnolot">この区分に抽選はありません — 制度上、1位指名の入札が行われない区分です。</p>`
-    : html`<p class="picklab dlab">1位指名の入札<s>くじを引いた回ごとに並べています</s></p>
-${bidBlock(s.bids)}`}
+/** 탭 그룹 이름. ⚠**한 문서에 한 번만 그린다** — 사본이 없으므로 `scopedGroup` 이 필요없다 */
+const PICK_TABS = "draft-kind";
+
+/**
+ * **입찰(추첨)은 탭에 넣지 않는다** — 이 화면의 목적이 그것이기 때문이다
+ * (머리줄이 「誰が競合し、誰がくじを引いたか」라고 말한다 · 사용자 결정 2026-09-06).
+ *
+ * ⚠**2023~2025 에서 특히 중요하다.** 그 시즌들은 여기 들어가는 것이 「公表されていません」
+ * 한 줄인데, 그걸 탭 뒤에 숨기면 **안 눌러 본 사람에게는 「경합이 없었다」로 읽힌다.**
+ * 없는 것을 설명하는 문장은 **숨기면 안 된다.**
+ *
+ * ⚠**추첨이 없는 구획(育成 등)은 여기 오지 않는다** — `bids === null` 은
+ * 「데이터가 없다」가 아니라 **「제도상 추첨이 없다」**라서, 그 설명은 그 구획의 패널에 있어야 한다.
+ */
+function bidsBlock(sections: readonly DraftSection[]): RawHtml | null {
+  const withBids = sections.filter(
+    (s): s is DraftSection & { bids: DraftBidBlock } => s.bids !== null,
+  );
+  if (withBids.length === 0) return null;
+  return html`<section class="block" id="b-draft-bids">
+  <h2>1位指名の入札<span class="qt">くじを引いた回ごとに並べています</span></h2>
+  ${withBids.map((s) =>
+    withBids.length === 1
+      ? bidBlock(s.bids)
+      : html`<p class="picklab dlab">${s.label}</p>
+${bidBlock(s.bids)}`,
+  )}
+</section>`;
+}
+
+/**
+ * 한 구획의 패널 알맹이 — 표, 그리고 그 구획에만 해당하는 설명.
+ *
+ * ⚠**탭줄이 없을 때는 구획 이름을 여기서 낸다.** 탭이 있으면 이름은 탭이 갖지만,
+ * 구획이 하나라 탭줄을 안 그리는 경우에는 **이름을 낼 자리가 사라진다** —
+ * 실제로 그렇게 만들었다가 `育成` 이 화면에서 표의 `aria-label` 에만 남았다.
+ */
+function pickPanel(s: DraftSection, withLabel: boolean): RawHtml {
+  return html`${
+    withLabel ? html`<p class="picklab dlab">${s.label}<s>指名 ${s.pickCount}件</s></p>` : null
+  }
+  ${
+    s.bids === null
+      ? html`<p class="dnolot">この区分に抽選はありません — 制度上、1位指名の入札が行われない区分です。</p>`
+      : null
+  }
   ${s.rounds.length === 0
     ? html`<p class="empty">この区分の指名は記録が0件です。</p>`
-    : pickTable(s.rounds, s.label)}
+    : pickTable(s.rounds, s.label)}`;
+}
+
+/**
+ * **긴 표 둘을 탭으로 접는다**(사용자 요청 2026-09-06).
+ *
+ * 실측(2026-09-05 배포물): 支配下 가 페이지의 **60.8%**(396줄) · 育成 이 **24.8%**(157줄)이고
+ * 정직성 블록(注記·言えないこと·出典)은 합쳐 **5.1%** 였다. **긴 것은 표 둘뿐**이라 거기만 접는다.
+ *
+ * ⚠**구획이 하나면 탭줄을 그리지 않는다.** 선택지가 하나인 탭은 조작할 것이 없는데
+ * 조작할 수 있는 것처럼 보인다. 패널은 그대로 두어 **레이아웃이 갈라지지 않게** 한다.
+ * ⚠**탭 부품을 새로 만들지 않는다**(M1) — `parts.ts` 의 `tablist`/`panel` 이
+ * 화살표 키·로빙 tabindex·`aria-*`·해시 딥링크를 이미 갖고 있다.
+ */
+function pickTabs(sections: readonly DraftSection[]): RawHtml {
+  const single = sections.length < 2;
+  return html`<section class="block" id="b-draft-picks">
+  <h2>指名の全記録<span class="qt">球団の並びは当サイトの球団順です — 指名順ではありません</span></h2>
+  ${
+    single
+      ? null
+      : tablist(
+          PICK_TABS,
+          sections.map((s) => ({ id: s.kind, label: `${s.label} ${s.pickCount}件` })),
+          false,
+          "指名区分の切り替え",
+          true,
+        )
+  }
+  ${sections.map((s, i) => panel(PICK_TABS, s.kind, i === 0, pickPanel(s, single)))}
 </section>`;
 }
 
@@ -861,7 +928,8 @@ ${d.state.kind === "ok" ? null : stateNote(d.state)}`;
 </section>`
       : html`${head}
 ${defectBlock(d)}
-${d.sections.map(sectionBlock)}
+${bidsBlock(d.sections)}
+${pickTabs(d.sections)}
 
 ${notesBlock(d)}
 

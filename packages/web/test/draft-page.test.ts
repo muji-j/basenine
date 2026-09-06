@@ -295,8 +295,10 @@ test("⚠`bids === null` 은 「제도상 추첨이 없다」이지 미공표가
     }),
   );
   // ⚠**구획 안만 본다** — 후일담 블록은 별개의 사실(`uncollected`)이라 같은 화면에 함께 산다
-  const block = /<section[^>]*id="b-draft-ikusei"[\s\S]*?<\/section>/.exec(html);
-  assert.notEqual(block, null, "育成 구획이 없다");
+  // ⚠**자리가 바뀌었다**(2026-09-06 탭 도입): 구획별 블록이 없어지고 표가 탭 패널로 들어갔다.
+  //   `b-draft-picks` 안에는 중첩된 `<section>` 이 없으므로 첫 닫는 태그가 이 블록의 것이다.
+  const block = /<section[^>]*id="b-draft-picks"[\s\S]*?<\/section>/.exec(html);
+  assert.notEqual(block, null, "指名の全記録 블록이 없다");
   assert.match(block![0], /育成/);
   assert.match(block![0], /抽選/);
   assert.doesNotMatch(block![0], /公表されていません/);
@@ -635,4 +637,102 @@ test("문서가 한 장으로 닫힌다 — 셸·꼬리말이 붙는다", () => 
   assert.match(html, /^<!doctype html>/);
   assert.match(html, /2024年/);
   assert.match(html, /<\/html>/);
+});
+
+/* ---- ⑥ 탭 — 무엇을 접고, 무엇은 접지 않는가 (2026-09-06) ------------------ */
+
+/**
+ * ⚠**이 묶음이 지키는 것은 「탭이 있다」가 아니라 「무엇을 숨기지 않는가」다.**
+ *
+ * 접은 이유는 세로 길이였다 — 실측(2026-09-05 배포물 `dist/2019/draft.html`):
+ * 支配下 **60.8%**(396줄) · 育成 **24.8%**(157줄) · 정직성 블록 셋은 합쳐 **5.1%**.
+ * **긴 것은 표 둘뿐**이므로 거기만 접는다.
+ *
+ * ⚠**접으면 안 되는 것은 「없는 것을 설명하는 문장」이다.** 2023~2025 는 1위 입찰이
+ * 「公表されていません」 한 줄인데, 그것을 탭 뒤에 두면 **안 눌러 본 사람에게는
+ * 「경합이 없었다」로 읽힌다.** 그건 거짓이다 — 경합은 실제로 있었고 NPB 가 안 쓸 뿐이다.
+ */
+
+/** `<section class="block" id="…">` 하나를 잘라 낸다. ⚠이 블록들에는 중첩 `<section>` 이 없다 */
+function blockOf(html: string, id: string): string {
+  const m = new RegExp(`<section[^>]*id="${id}"[\\s\\S]*?<\\/section>`).exec(html);
+  assert.notEqual(m, null, `${id} 블록이 없다 — 이 시험이 공회전한다`);
+  return m![0];
+}
+
+const twoSections = (over: Partial<DraftSection> = {}): DraftPageData =>
+  data({
+    sections: [
+      section(over),
+      section({
+        kind: "ikusei",
+        label: "育成",
+        bids: null,
+        pickCount: 3,
+        rounds: [round(1, [pick("t", "阪神", "石黒佑弥")])],
+      }),
+    ],
+  });
+
+test("긴 표 둘이 탭으로 접힌다 — 구획마다 탭 하나, 열려 있는 것은 첫 패널뿐", () => {
+  const html = render(twoSections());
+  const picks = blockOf(html, "b-draft-picks");
+  assert.match(picks, /role="tablist"/, "탭줄이 없다");
+  assert.equal((picks.match(/role="tab"/g) ?? []).length, 2, "탭이 구획 수(2)만큼이 아니다");
+  assert.equal(
+    (picks.match(/aria-selected="true"/g) ?? []).length,
+    1,
+    "열린 탭이 하나가 아니다 — 둘이 열려 있으면 어느 것이 보이는지 화면과 낭독기가 갈린다",
+  );
+  assert.match(picks, /data-panelkey="shihaika"[^>]*>/, "支配下 패널이 없다");
+  assert.match(picks, /data-panelkey="ikusei"[^>]*hidden/, "育成 패널이 닫혀 있지 않다");
+  assert.match(picks, /支配下 2件/, "탭 라벨에 건수가 없다 — 접은 표의 크기를 눌러 보기 전에 알 수 없다");
+});
+
+test("⚠1位指名の入札은 탭 밖에 있다 — 이 화면의 목적이 그것이다", () => {
+  const html = render(twoSections());
+  const bidsBlk = blockOf(html, "b-draft-bids");
+  assert.doesNotMatch(bidsBlk, /role="tabpanel"/, "입찰이 탭 패널 안에 들어갔다");
+  assert.ok(
+    html.indexOf('id="b-draft-bids"') < html.indexOf('id="b-draft-picks"'),
+    "입찰이 표보다 아래에 있다 — 머리줄이 약속한 것을 스크롤 뒤에 두면 안 된다",
+  );
+});
+
+test("⚠⚠「公表されていません」은 절대 탭 뒤로 숨지 않는다 — 숨기면 「경합이 없었다」로 읽힌다", () => {
+  const html = render(
+    twoSections({
+      bids: bids({
+        state: { kind: "unpublished", detail: "NPBのページが2023年の抽選結果を載せていません" },
+      }),
+    }),
+  );
+  const bidsBlk = blockOf(html, "b-draft-bids");
+  assert.match(bidsBlk, /載せていません/, "미공표 설명이 입찰 블록에 없다");
+  assert.doesNotMatch(bidsBlk, /role="tabpanel"/, "미공표 설명이 탭 패널 안에 들어갔다");
+  const picks = blockOf(html, "b-draft-picks");
+  assert.doesNotMatch(picks, /載せていません/, "미공표 설명이 표 블록에도 있다 — 한 사실을 두 곳에서 말한다");
+});
+
+test("⚠출처와 「言えないこと」는 접지 않는다 — 정직성 블록은 합쳐 5%라 접을 이유가 없다", () => {
+  const html = render(twoSections());
+  const picks = blockOf(html, "b-draft-picks");
+  for (const id of ["b-draft-limits", "b-draft-src"]) {
+    assert.ok(html.includes(`id="${id}"`), `${id} 가 화면에서 사라졌다`);
+    assert.ok(!picks.includes(`id="${id}"`), `${id} 가 탭 안으로 들어갔다`);
+  }
+});
+
+test("⚠구획이 하나면 탭줄을 그리지 않는다 — 그래도 구획 이름은 보인다", () => {
+  const html = render(
+    data({
+      sections: [
+        section({ kind: "ikusei", label: "育成", bids: null, pickCount: 1,
+          rounds: [round(1, [pick("t", "阪神", "石黒佑弥")])] }),
+      ],
+    }),
+  );
+  const picks = blockOf(html, "b-draft-picks");
+  assert.doesNotMatch(picks, /role="tablist"/, "선택지가 하나인 탭줄을 그렸다 — 누를 것이 없는데 누를 수 있어 보인다");
+  assert.match(picks, /育成/, "탭줄이 없어지면서 구획 이름까지 사라졌다");
 });
