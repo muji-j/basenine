@@ -352,7 +352,19 @@ jobs:
             exit 1
           fi
           tar -xf /tmp/draft/draft-archive.tar -C data
-          echo "드래프트 원본 복원: $(find data/archive/npb/draft -type f | wc -l) 파일"
+          # ⚠**두 출처를 따로 센다**(M11·L3). 하나로 접으면 「위키를 못 받았다」가
+          #   「드래프트가 좀 적게 들어왔다」로 보이고, **2023~2025 의 1위 경합만 조용히 사라진다.**
+          #   ⚠**위키가 0이어도 멈추지 않는다** — 자산이 아직 안 넓혀졌을 수 있고, 그때 화면은
+          #   경합만 빈 채로 나가는 것이 참이다.
+          # ⚠⚠**`|| true` 가 없으면 이 스텝이 죽는다.** 뿌리가 없을 때 `find` 는 **exit 1** 이고,
+          #   `set -o pipefail` 이 그것을 파이프 밖으로 내보내며, `set -e` 가 대입문에서 그대로 죽는다
+          #   (**실측**: 없는 경로로 돌리면 `echo` 까지 못 간다). **자산을 아직 안 넓힌 첫날이 정확히 그 상태다.**
+          npb=$( { find data/archive/npb/draft -type f 2>/dev/null || true; } | wc -l )
+          wiki=$( { find data/archive/wikipedia/draft -type f 2>/dev/null || true; } | wc -l )
+          echo "드래프트 원본 복원: npb $npb 파일 · wikipedia $wiki 파일"
+          if [ "$wiki" -eq 0 ]; then
+            echo "⚠자산에 wikipedia 원본이 없다 — 2023~ 의 1位指名 경합은 이번 실행에서 비어 나간다(런북 §8-3)"
+          fi
 
       - name: 수집·적재
         env:
@@ -378,7 +390,9 @@ jobs:
         #   종료코드를 올리지 않는다. 그걸로 붉히면 매년 드래프트 날까지 빨간 배치를 보게 되고,
         #   그러면 아무도 안 본다. 붉어지는 것은 `parse`·`load`·`error` 뿐이다(런북 §2).
         run: |
-          if [ ! -d data/archive/npb/draft ]; then
+          # ⚠**두 뿌리 중 하나라도 있으면 돈다.** `npb/` 만 보면 위키만 복원된 상태에서
+          #   **조용히 건너뛰고**, 로그에는 「아카이브가 없다」라는 거짓이 남는다.
+          if [ ! -d data/archive/npb/draft ] && [ ! -d data/archive/wikipedia/draft ]; then
             echo "드래프트 아카이브가 없다 — 적재를 건너뛴다"
             exit 0
           fi

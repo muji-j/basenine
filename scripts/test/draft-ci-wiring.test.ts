@@ -147,6 +147,50 @@ test("⚠적재에 `--to` 를 주지 않는다 — 상한을 박으면 새 해�
   );
 });
 
+test("⚠복원이 **두 출처를 따로 센다** — 하나로 접으면 「위키가 없다」가 「좀 적다」로 보인다", () => {
+  const s = stepStartingWith(RESTORE);
+  assert.match(
+    s.body,
+    /data\/archive\/wikipedia\/draft/,
+    "복원 스텝이 `data/archive/wikipedia/draft` 를 세지 않는다. " +
+      "그러면 위키 원본이 자산에서 빠진 날 **2023~2025 의 1位指名 경합만 조용히 사라진다** — " +
+      "에러가 아니라 빈 화면이라 아무도 결함으로 못 읽는다",
+  );
+  assert.match(
+    s.body,
+    /data\/archive\/npb\/draft/,
+    "복원 스텝이 npb 쪽을 세지 않는다 — 이 시험이 공회전한다",
+  );
+});
+
+test("⚠파일을 세는 줄이 `set -e` 로 스텝을 죽이지 않는다 — 뿌리가 없는 날이 반드시 온다", () => {
+  /**
+   * ⚠**실측이다**: `set -euo pipefail` 아래에서 `n=$(find 없는경로 2>/dev/null | wc -l)` 는
+   * **`echo` 까지 못 간다.** `find` 가 exit 1 이고 `pipefail` 이 그걸 파이프 밖으로 내보내며
+   * `set -e` 가 대입문에서 죽는다. ⚠**그 「없는 날」이 바로 자산을 아직 안 넓힌 첫날**이고,
+   * 그때 죽으면 로그가 **복원 결과를 한 줄도 안 남긴다.**
+   */
+  const s = stepStartingWith(RESTORE);
+  const counts = s.body.split(/\r?\n/u).filter((l) => /=\$\(.*find .*wc -l/u.test(l));
+  assert.ok(counts.length >= 2, `파일을 세는 줄을 ${counts.length}개 찾았다 — 2개 이상이어야 한다(이 시험이 공회전한다)`);
+  for (const line of counts) {
+    assert.match(
+      line,
+      /\|\| true/u,
+      "`|| true` 가 없다 — 뿌리가 없으면 이 줄에서 스텝이 죽는다(실측): " + line.trim(),
+    );
+  }
+});
+
+test("⚠적재 가드가 두 뿌리를 다 본다 — npb 만 보면 위키만 있는 날 조용히 건너뛴다", () => {
+  const s = stepStartingWith(LOAD);
+  const guard = /if \[ ! -d ([^\]]+)\] && \[ ! -d ([^\]]+)\]; then/.exec(s.body);
+  assert.notEqual(guard, null, "적재 스텝의 아카이브 가드를 못 찾았다 — 이 시험이 공회전한다");
+  const both = `${guard![1]} ${guard![2]}`;
+  assert.match(both, /npb\/draft/, "가드에 npb 뿌리가 없다");
+  assert.match(both, /wikipedia\/draft/, "가드에 wikipedia 뿌리가 없다");
+});
+
 test("⚠적재는 외부 요청을 내지 않는다 — CI 가 npb.jp 를 다시 치면 L7 위반이다", () => {
   const s = stepStartingWith(LOAD);
   assert.doesNotMatch(
