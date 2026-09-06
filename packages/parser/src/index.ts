@@ -41,3 +41,27 @@ export {
   parseDraftYears,
 } from "./draft.ts";
 export type { DraftBidRow, DraftIndexObservation, DraftKind, DraftPickRow } from "./draft.ts";
+/**
+ * ⚠**wikipedia 는 npb 와 다른 소스다** — 파서도 다르고 산출 타입도 다르다.
+ * 섞어 쓰면 「어느 소스가 말한 것인가」가 타입에서 사라진다(M1·M4).
+ */
+export {
+  DRAFT_WIKI_SECTION_IDS,
+  DraftWikiParseError,
+  checkDraftWikiInvariants,
+  draftWikiUrl,
+  parseDraftWiki,
+} from "./draft-wiki.ts";
+export type {
+  DraftWikiBid,
+  DraftWikiCell,
+  DraftWikiGrid,
+  DraftWikiInvariantReport,
+  DraftWikiMarker,
+  DraftWikiMarkerCell,
+  DraftWikiParse,
+  DraftWikiPick,
+  DraftWikiRow,
+  DraftWikiRowLabel,
+  WaiverDir,
+} from "./draft-wiki.ts";
