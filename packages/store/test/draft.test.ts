@@ -281,9 +281,14 @@ test("⚠지명이 0건인 판을 넣으면 그 구단의 옛 행이 사라진�
  * **출처를 안 가린다** — npb 적재가 wikipedia 입찰을 지우고 그 자리에 유도한 単独指名을 넣는다.
  * ⚠**`origin` 컬럼은 019 부터 있었다. 삭제가 그것을 안 봤을 뿐이다.**
  *
- * ⚠**부수 효과를 정직하게 적는다**: PK 에 `origin` 이 없으므로 두 출처가 **같은 키**를 쓰면
- * 이제 **PK 충돌로 던진다**(옛 판은 조용히 덮어썼다). **시끄러운 실패를 골랐다** —
- * 조용한 삭제보다 낫다. 그 자리가 실제로 오면 그때 `origin` 을 PK 에 넣을지 정한다.
+ * ⚠⚠**~~「같은 키를 쓰면 던진다. 시끄러운 실패를 골랐다」~~ 는 2026-09-06 에 뒤집혔다**([C1]).
+ * 「그 자리가 실제로 오면 그때 정한다」고 적어 뒀는데 **그 자리가 왔다** — `draftlist_*` 는
+ * 개최 당일 생기고 경합 주석은 며칠 뒤에 붙으므로, **개최일 저녁 수집 → 위키가 채움 →
+ * 며칠 뒤 재수집**이 정확히 그 경로다(2026 이 그 모양이다).
+ * ⚠**던지는 것이 「시끄러운 실패」가 아니었다**: 예외가 `loadDraft` 안에서 나오므로
+ * **그 시즌이 반쯤 적재된 채 교착**됐고, 재시도해도 같은 자리에서 같은 예외였다.
+ * → 지금은 **npb 가 자기가 채우는 (구획·구단) 슬롯에서만 남을 비켜세운다**(§2-4 공식 > 커뮤니티).
+ * **이 시험의 아래쪽 절반이 그것을 고정한다.**
  */
 test("⚠[N1-b] npb 적재가 wikipedia 행을 지우지 않는다 — 삭제가 origin 을 본다", async () => {
   const insWiki = (db: ReturnType<typeof openDb>, roundNo: number): void => {
@@ -299,47 +304,138 @@ test("⚠[N1-b] npb 적재가 wikipedia 행을 지우지 않는다 — 삭제가
   };
 
   await withDb((db) => {
-    insWiki(db, 2); // ⚠npb 가 쓸 자리(1회차)와 겹치지 않는 키
-    loadDraft(db, { season: 2023, team: "l", picks: [pick("l", "shihaika", 1, "武内 夏暉")], bids: [], ...META });
+    // ⚠**npb 가 이 구획에 입찰을 한 행도 안 쓰는 경우**(`bids: null` = 2023~2025 의 실제 모양).
+    //   그때는 슬롯을 채우지 않으므로 위키 행에 손대면 안 된다.
+    insWiki(db, 2);
+    const r = loadDraft(db, {
+      season: 2023,
+      team: "l",
+      picks: [pick("l", "shihaika", 1, "武内 夏暉")],
+      bids: null,
+      ...META,
+    });
+    assert.deepEqual({ ...r.yielded }, { picks: 0, bids: 0 }, "안 채우는 자리에서 남을 비켜세웠다");
     const rows = db.raw
       .prepare("SELECT origin, round_no FROM draft_bid WHERE season = 2023 ORDER BY origin")
       .all() as unknown as Array<{ origin: string; round_no: number }>;
     assert.deepEqual(
       rows.map((r) => `${r.origin}/${r.round_no}`),
-      ["npb/1", "wikipedia/2"],
-      "⚠wikipedia 행이 사라지면 계획된 2023+ 경합이 통째로 날아간다",
+      ["wikipedia/2"],
+      "⚠wikipedia 행이 사라지면 2023~2025 의 1位指名 경합이 화면에서 통째로 날아간다",
+    );
+  });
+});
+
+/**
+ * ⚠⚠**[C1] 두 출처가 같은 슬롯을 다투면 npb 가 이긴다 — 던지지 않는다.**
+ *
+ * ⚠**이 시험은 고치기 전 코드에서 떨어진다**(뮤테이션 확인 2026-09-06):
+ * `DELETE … origin <> 'npb'` 를 빼면 `UNIQUE constraint failed: draft_bid.season, kind, round_no, team`
+ * 로 던진다. 그 예외는 **시즌을 반쯤 적재한 채** 남기고 재시도해도 안 풀린다.
+ */
+test("⚠[C1] 위키가 채운 자리에 npb 가 들어오면 npb 가 이긴다 — 교착하지 않는다", async () => {
+  const insWikiBid = (db: ReturnType<typeof openDb>, roundNo: number, team = "l"): void => {
+    db.raw
+      .prepare(
+        `INSERT INTO draft_bid
+           (season, kind, round_no, team, group_key, won, name_display, name_canonical,
+            rivals, origin, player_id, source, fetched_at, revision)
+         VALUES (2023, 'shihaika', ?, ?, '1:武内夏暉', 1, '武内 夏暉', '武内夏暉',
+                 NULL, 'wikipedia', NULL, ?, ?, ?)`,
+      )
+      .run(roundNo, team, "https://ja.wikipedia.org/wiki/2023年ドラフト会議", PAGE.fetchedAt, "sha256:wiki");
+  };
+
+  await withDb((db) => {
+    // 위키가 1·2회차를 채운 뒤, npb 가 1회차 경합 주석을 뒤늦게 실었다
+    insWikiBid(db, 1);
+    insWikiBid(db, 2);
+    const r = loadDraft(db, {
+      season: 2023,
+      team: "l",
+      picks: [pick("l", "shihaika", 1, "武内 夏暉")],
+      bids: [bid("l", 1, ["福岡ソフトバンク"], null, true)],
+      ...META,
+    });
+    assert.equal(r.yielded.bids, 2, "비켜세운 행 수를 세지 않으면 로그가 이 사건을 못 적는다");
+    const rows = db.raw
+      .prepare("SELECT origin, round_no FROM draft_bid WHERE season = 2023 ORDER BY round_no")
+      .all() as unknown as Array<{ origin: string; round_no: number }>;
+    assert.deepEqual(
+      rows.map((x) => `${x.origin}/${x.round_no}`),
+      ["npb/1"],
+      "⚠같은 (구획·구단) 슬롯의 위키 행은 전부 비켜서야 한다 — 하나라도 남으면 한 표에 두 판이 섞인다",
     );
   });
 
   await withDb((db) => {
-    // 같은 키를 두 출처가 쓰면 **조용히 덮이지 않고 던진다.** 그리고 되돌려진다.
-    insWiki(db, 1);
-    assert.throws(() =>
-      loadDraft(db, { season: 2023, team: "l", picks: [pick("l", "shihaika", 1, "武内 夏暉")], bids: [], ...META }),
-    );
+    // ⚠**남의 구단은 건드리지 않는다** — npb 가 채우는 것은 자기 구단 슬롯뿐이다
+    insWikiBid(db, 1, "h");
+    const r = loadDraft(db, {
+      season: 2023,
+      team: "l",
+      picks: [pick("l", "shihaika", 1, "武内 夏暉")],
+      bids: [bid("l", 1, ["福岡ソフトバンク"], null, true)],
+      ...META,
+    });
+    assert.equal(r.yielded.bids, 0);
     const rows = db.raw
-      .prepare("SELECT origin FROM draft_bid WHERE season = 2023")
-      .all() as unknown as Array<{ origin: string }>;
-    assert.deepEqual(rows.map((r) => r.origin), ["wikipedia"], "던진 뒤 wikipedia 행이 그대로 남는다");
+      .prepare("SELECT origin, team FROM draft_bid WHERE season = 2023 ORDER BY team")
+      .all() as unknown as Array<{ origin: string; team: string }>;
+    assert.deepEqual(rows.map((x) => `${x.origin}/${x.team}`), ["wikipedia/h", "npb/l"]);
   });
 });
 
-test("⚠[N1-b] 지명 쪽도 같은 모양이다 — npb 적재가 wikipedia 지명을 지우지 않는다", async () => {
+/**
+ * ⚠⚠**이 본이 옛 `[N1-b] 지명 쪽도 같은 모양이다` 를 대신한다**(2026-09-06 · [C1]).
+ *
+ * 옛 본은 「위키가 `shihaika/l` **5순위**를 갖고, npb 가 1순위를 넣어도 5순위는 남는다」를 고정했다.
+ * **지금은 그것이 참이 아니고, 참이면 안 된다** — 비켜세우는 입도가 **PK 가 아니라 (구획·구단) 슬롯**이다.
+ * 그 입도는 취향이 아니라 `draft-wiki.ts` 의 `occupiedByNpb` 와 **같은 값이어야 한다**:
+ * 그쪽은 「npb 가 이 (구획·구단)을 말했으면 나는 통째로 미룬다」로 판정하므로, 이쪽만 PK 단위로
+ * 비켜세우면 **위키가 다시는 안 쓸 행이 표에 남아 한 구단의 지명 명단이 두 출처로 섞인다.**
+ *
+ * ⚠**`[N1-b]` 가 지키려던 것은 그대로 지켜진다** — 「삭제가 `origin` 을 본다」는
+ * **npb 가 손대지 않은 자리**에서 재야 하고, 아래 `育成` 절반이 정확히 그것이다.
+ */
+test("⚠[C1] 지명 쪽도 같다 — npb 가 그 구획을 채우면 위키 지명이 비켜선다", async () => {
   await withDb((db) => {
     db.raw
       .prepare(
         `INSERT INTO draft_pick
            (season, kind, team, round_no, pick_seq, waiver_dir, name_display, name_canonical,
             position, from_org, origin, player_id, source, fetched_at, revision)
-         VALUES (2023, 'shihaika', 'l', 5, NULL, NULL, '가상 5순위', '가상5순위',
+         VALUES (2023, 'shihaika', 'l', 1, NULL, NULL, '武内 夏暉', '武内夏暉',
                  NULL, NULL, 'wikipedia', NULL, ?, ?, ?)`,
       )
       .run("https://ja.wikipedia.org/wiki/2023年ドラフト会議", PAGE.fetchedAt, "sha256:wiki");
-    loadDraft(db, { season: 2023, team: "l", picks: [pick("l", "shihaika", 1, "武内 夏暉")], bids: null, ...META });
+    // ⚠**育成 은 npb 가 안 채운다** — 그 구획의 위키 행은 남아야 한다
+    db.raw
+      .prepare(
+        `INSERT INTO draft_pick
+           (season, kind, team, round_no, pick_seq, waiver_dir, name_display, name_canonical,
+            position, from_org, origin, player_id, source, fetched_at, revision)
+         VALUES (2023, 'ikusei', 'l', 1, NULL, NULL, '育成の誰か', NULL,
+                 NULL, NULL, 'wikipedia', NULL, ?, ?, ?)`,
+      )
+      .run("https://ja.wikipedia.org/wiki/2023年ドラフト会議", PAGE.fetchedAt, "sha256:wiki");
+
+    const r = loadDraft(db, {
+      season: 2023,
+      team: "l",
+      picks: [pick("l", "shihaika", 1, "武内 夏暉")],
+      bids: null,
+      ...META,
+    });
+    assert.equal(r.yielded.picks, 1);
     const rows = db.raw
-      .prepare("SELECT origin, round_no FROM draft_pick WHERE season = 2023 ORDER BY round_no")
-      .all() as unknown as Array<{ origin: string; round_no: number }>;
-    assert.deepEqual(rows.map((r) => `${r.origin}/${r.round_no}`), ["npb/1", "wikipedia/5"]);
+      .prepare("SELECT origin, kind FROM draft_pick WHERE season = 2023 ORDER BY kind")
+      .all() as unknown as Array<{ origin: string; kind: string }>;
+    assert.deepEqual(
+      rows.map((x) => `${x.origin}/${x.kind}`),
+      ["wikipedia/ikusei", "npb/shihaika"],
+      "⚠npb 가 손대지 않은 구획(育成)의 위키 행까지 지우면 「채운다」와 「없다」를 안 가른 것이다",
+    );
   });
 });
 

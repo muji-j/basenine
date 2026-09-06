@@ -73,12 +73,6 @@ const META_EXT = ".meta.json";
 const bodyPath = (root: string, key: string): string => join(root, `${key}${BODY_EXT}`);
 const metaPath = (root: string, key: string): string => join(root, `${key}${META_EXT}`);
 
-/**
- * 리허설 DB 의 마이그레이션 시각. ⚠**버려지는 DB 라 아무도 안 읽는다** —
- * 그래서 여기서 시계를 읽지 않는다(M6). 진짜 시계는 아래 CLI 진입점에서 한 번만 읽는다.
- */
-const REHEARSAL_NOW = "1970-01-01T00:00:00.000Z";
-
 // ──────────────────────────────────────────────────────────────────────────
 // 경합 판정 — 시즌 단위
 // ──────────────────────────────────────────────────────────────────────────
@@ -281,12 +275,20 @@ export interface SeasonLoadCounts {
   /** ⚠**`null` 은 「안 유도했다」**이지 「0건」이 아니다(M11) */
   readonly soleNominations: number | null;
   readonly sourceWritesBids: boolean;
+  /**
+   * npb 가 그 자리를 실제로 채워서 **비켜세운** 다른 출처(wikipedia)의 행 수([C1]).
+   * ⚠**0 이 정상이다.** 0 이 아니면 **어제까지 CC BY-SA 로 나가던 행이 오늘 npb 것이 됐다**는
+   * 뜻이라 사람이 알아야 한다 — CLI 가 그 시즌 이름을 따로 찍는다.
+   */
+  readonly yielded: { readonly picks: number; readonly bids: number };
 }
 
 function applyPages(db: Db, season: number, sp: SeasonPages, decision: BidsDecision): SeasonLoadCounts {
   let picks = 0;
   let bids = 0;
   let soles = 0;
+  let yieldedPicks = 0;
+  let yieldedBids = 0;
   for (const p of sp.pages) {
     // ⚠**A16 — 한 키에는 출처가 하나다.** `loadDraft` 가 `origin='npb'` 만 지운다.
     // ⚠**`page` 는 그 구단 페이지, `event` 는 연도 톱**이다 — 입도가 다르므로 값도 달라야 한다([I3]).
@@ -301,6 +303,8 @@ function applyPages(db: Db, season: number, sp: SeasonPages, decision: BidsDecis
     picks += r.picks;
     bids += r.bids;
     soles += r.soleNominations ?? 0;
+    yieldedPicks += r.yielded.picks;
+    yieldedBids += r.yielded.bids;
   }
   return {
     teams: sp.pages.length,
@@ -309,45 +313,39 @@ function applyPages(db: Db, season: number, sp: SeasonPages, decision: BidsDecis
     bids,
     soleNominations: decision.sourceWritesBids ? soles : null,
     sourceWritesBids: decision.sourceWritesBids,
+    yielded: { picks: yieldedPicks, bids: yieldedBids },
   };
 }
 
 /**
  * 시즌 전체를 넣는다 — **전부 아니면 아무것도 아니다**(G3).
  *
- * ⚠⚠**먼저 버릴 DB 에 리허설한다.** 이유는 취향이 아니라 **막다른 골목**이다:
- * `loadDraft` 가 스스로 `db.transaction`(`BEGIN`/`COMMIT`)을 열기 때문에 **바깥에서 한 번 더
- * 묶을 수 없다** — 실측하면 `transaction` 안에서도 `savepoint` 안에서도
- * `cannot start a transaction within a transaction` 으로 죽는다(2026-09-05).
- * 즉 구단마다 커밋이 떨어지고, **k번째 구단에서 던지면 앞의 k−1 구단이 남는다.**
+ * ⚠⚠**한 트랜잭션이다. 그게 전부이고, 그렇게 되기까지가 이 함수의 이력이다.**
  *
  * ⚠**그것이 정확히 A7 이 밟는 자리다.** 2005~2007 分離ドラフト에서 `firstRoundPick` 이 던지는
- * `DraftLoadError` 는 **파싱이 다 끝난 뒤 `loadDraft` 안에서** 나온다 — 브리프 초판의 구조는
- * 그 예외를 `readTeamPages` 의 `try` 밖에서 맞아 **시즌을 반쯤 적재한 채 죽는다.**
- * 부분 적재는 화면에서 「그 해는 원래 그렇다」로 읽힌다(2018 오릭스 `bs` 사고와 같은 모양).
+ * `DraftLoadError` 는 **파싱이 다 끝난 뒤 `loadDraft` 안에서** 나온다 — 구단마다 커밋이 떨어지면
+ * **k번째에서 던졌을 때 앞의 k−1 구단이 남고**, 부분 적재는 화면에서 「그 해는 원래 그렇다」로
+ * 읽힌다(2018 오릭스 `bs` 사고와 같은 모양).
  *
- * ⚠**리허설은 같은 `loadDraft` 를 쓴다**(M1). 판정 규칙을 여기서 베껴 쓰면 두 벌이 되고,
- * 한쪽만 고쳐진 날 리허설이 **통과시키는 쪽**으로 틀린다.
- * ⚠**비용은 쟀다**: `openDb(":memory:")` = 마이그레이션 20본에 **약 61ms**(10회 611.5ms 실측).
- * 시즌당 한 번이므로 26시즌이면 약 1.6초다.
+ * ⚠⚠**~~「버릴 DB 에 먼저 리허설한다」~~ 였고, 2026-09-06 에 버렸다**([C1]).
+ * 그 구조는 「`loadDraft` 가 `BEGIN` 을 열어서 바깥에서 못 묶는다」는 **막다른 골목** 위에 서 있었는데,
+ * 골목의 출구는 `BEGIN` 이 아니라 **`SAVEPOINT`** 였다(실측: 밖에 트랜잭션이 없으면
+ * `BEGIN DEFERRED` 와 같게 동작하고, 있으면 중첩된다). `loadDraft` 를 그렇게 바꾸자
+ * 시즌을 통째로 묶을 수 있게 됐다.
+ * ⚠**리허설이 원리적으로 못 잡던 것이 있었다**: 리허설 DB 는 **비어 있어서**, 이미 들어 있는
+ * **다른 `origin`** 의 행과 PK 가 부딪히는 경우를 **보지 못했다.** 그건 가정이 아니라
+ * **2023~2026 이 실제로 밟는 경로**였다(`store/src/draft.ts` 머리말 [C1]).
+ * → **한계를 우회한 것이 아니라 없앴다.** 지금 되돌아가는 것은 그 눈먼 자리를 되살리는 것이다.
+ * ⚠**덤으로 시즌당 약 61ms(마이그레이션 20본 · 10회 611.5ms 실측)와 두 번 적재하던 비용이 사라졌다** —
+ * 그건 이유가 아니라 결과다.
  *
- * ⚠**리허설이 못 잡는 것 하나**: 리허설 DB 는 **비어 있으므로**, 이미 들어 있는
- * **다른 `origin`** 의 행과 PK 가 부딪히는 경우는 진짜 DB 에서만 터진다.
- * 지금 `origin` 은 `'npb'` 고정이라 그 경로가 없지만, **wikipedia 적재를 붙이는 날 이 문단을 다시 읽어라.**
+ * ⚠**`decideBids` 는 트랜잭션 밖에서 부른다** — 판정에서 던지면 **SQL 을 한 줄도 안 만진다.**
  *
- * @throws {DraftLoadError} 입력이 적재 규칙에 안 맞을 때. ⚠**진짜 DB 는 안 건드린 상태다**
+ * @throws {DraftLoadError} 입력이 적재 규칙에 안 맞을 때. ⚠**되돌려져서 아무것도 안 남는다**
  */
 export function loadSeasonPages(db: Db, season: number, sp: SeasonPages): SeasonLoadCounts {
   const decision = decideBids(sp.pages);
-
-  const rehearsal = openDb(":memory:", REHEARSAL_NOW);
-  try {
-    applyPages(rehearsal, season, sp, decision);
-  } finally {
-    rehearsal.close();
-  }
-
-  return applyPages(db, season, sp, decision);
+  return db.transaction(() => applyPages(db, season, sp, decision));
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -380,6 +378,11 @@ export interface SeasonLoadReport {
   readonly picks: number;
   readonly bids: number;
   readonly soleNominations: number | null;
+  /**
+   * npb 가 그 자리를 채워 **비켜세운** 다른 출처의 행 수([C1]).
+   * ⚠**`null` 은 「안 쟀음」**(건너뛴 시즌)이고 `{picks:0,bids:0}` 은 「재 봤더니 0」이다(M11).
+   */
+  readonly yielded: { readonly picks: number; readonly bids: number } | null;
   readonly skipped: SeasonSkip | null;
   /**
    * ⚠**소스가 경합을 쓰는 시즌인가.** 화면이 「데이터 없음」으로 그리면 거짓이다(B2).
@@ -406,8 +409,9 @@ function skipped(season: number, skip: SeasonSkip): SeasonLoadReport {
     events: 0,
     picks: 0,
     bids: 0,
-    // ⚠**둘 다 `null` 이다** — 0 이라고 쓰면 「재 봤더니 0」이 된다(M11)
+    // ⚠**전부 `null` 이다** — 0 이라고 쓰면 「재 봤더니 0」이 된다(M11)
     soleNominations: null,
+    yielded: null,
     skipped: skip,
     sourceWritesBids: null,
   };
@@ -440,6 +444,7 @@ export async function loadDraftSeason(
       picks: n.picks,
       bids: n.bids,
       soleNominations: n.soleNominations,
+      yielded: n.yielded,
       skipped: null,
       sourceWritesBids: n.sourceWritesBids,
     };
@@ -463,8 +468,17 @@ export async function loadDraftSeason(
  */
 export interface WikiSeasonReport {
   readonly season: number;
-  /** ⚠**`absent` 는 「아카이브에 그 해가 없다」**이지 결함이 아니다(M11) */
-  readonly state: "absent" | "no-grid" | "done" | "failed";
+  /**
+   * ⚠**셋은 결함이 아니다**(M11) — `absent`(아카이브에 그 해가 없다) · `no-grid`(개최 전·미기재) ·
+   * `no-npb`(npb 지명이 아직 안 들어왔다). **`failed` 만 종료코드를 올린다.**
+   *
+   * ⚠⚠**`no-npb` 를 `failed` 로 세면 헛불이 일상이 된다**(2026-09-06 · [I-5]).
+   * 수집이 **두 명령**이라(런북 §1 · §8-2) **위키만 먼저 들어온 상태가 정상적인 중간 상태**다.
+   * 그때 열↔구단 맞추기는 「npb 명단이 0건이라 맞출 근거가 없다」로 **정당하게 던지는데**,
+   * 그 예외를 `failed` 로 세면 **자산을 아직 안 넓힌 날 배치가 매일 붉어진다.**
+   * ⚠**헛불이 일상이 되면 진짜 위반도 안 읽힌다** — 이 저장소가 A6·A14 에서 이미 판단한 그것이다.
+   */
+  readonly state: "absent" | "no-grid" | "no-npb" | "done" | "failed";
   readonly reason: string | null;
   /** 열↔구단이 붙은 수. **12여야 한다** */
   readonly columns: number;
@@ -548,6 +562,21 @@ export async function loadDraftWikiSeason(
     return wikiSkip(season, "no-grid", `절 ${parsed.sectionId} 에 wikitable 이 없다`);
   }
 
+  /**
+   * ⚠⚠**[I-5] npb 지명이 아직 없는 것은 결함이 아니라 정상적인 중간 상태다.**
+   *
+   * 수집이 두 명령이라(런북 §1 · §8-2) **순서가 갈릴 수 있다** — 위키 자산만 먼저 넓혀졌거나,
+   * npb 아카이브가 그 해만 아직 없는 상태. 그때 `resolveDraftWikiColumns` 는 「맞출 근거가 없다」로
+   * **정당하게 던지지만**, 그 예외를 `failed` 로 세면 **exit 1 이 되어 배치가 매일 붉어진다.**
+   * ⚠**여기서 미리 묻는 이유**: 예외 메시지로 갈래를 되찾으면 문구가 바뀐 날 조용히 `failed` 로
+   * 돌아간다. **묻는 것과 던지는 것을 같은 문자열에 의존시키지 않는다**(M1).
+   * ⚠**그 아래 갈래(열 수가 다르다 · 겹침이 0 · 동점)는 그대로 `failed` 다** — 그건 진짜 붕괴다.
+   */
+  const npbNames = npbNamesBySeason(db, season);
+  if (npbNames.size === 0) {
+    return wikiSkip(season, "no-npb", `${season}: npb 지명이 0건이라 열↔구단을 맞출 수 없다 — 먼저 npb 를 넣어라`);
+  }
+
   try {
     const inv = checkDraftWikiInvariants(parsed);
 
@@ -555,7 +584,7 @@ export async function loadDraftWikiSeason(
     const namesByColumn = parsed.grid.columns.map(
       (_, c) => new Set(parsed.picks.filter((p) => p.columnIndex === c).map((p) => normalizePlayerName(p.nameDisplay))),
     );
-    const matches = resolveDraftWikiColumns(season, parsed.grid.columns, namesByColumn, npbNamesBySeason(db, season));
+    const matches = resolveDraftWikiColumns(season, parsed.grid.columns, namesByColumn, npbNames);
     const teamOfColumn = matches.map((m) => m.team);
 
     // ── X-3: 지명 명단 ──
@@ -728,6 +757,15 @@ export interface SeasonsSummary {
    * ⚠종료코드는 안 올린다(건너뛴 게 아니라 들어오긴 했다) — **대신 눈에 띄게 찍는다.**
    */
   readonly incomplete: readonly number[];
+  /**
+   * npb 가 **다른 출처의 행을 비켜세운** 시즌([C1]).
+   *
+   * ⚠**결함이 아니다 — 규칙대로 동작한 것이다**(공식 > 커뮤니티). 그래도 **조용하면 안 된다**:
+   * 그 시즌은 어제까지 화면에 **CC BY-SA 고지와 함께** 나가던 행이 오늘 npb 것으로 바뀌었고,
+   * `X-1` 대조도 「안 쟀음」에서 「쟀음」으로 넘어간다(런북 §8-5).
+   * ⚠**종료코드는 안 올린다** — 정상 동작이다.
+   */
+  readonly yielded: readonly number[];
   readonly exitCode: 0 | 1;
 }
 
@@ -756,6 +794,7 @@ export function summarizeSeasons(reports: readonly SeasonLoadReport[]): SeasonsS
     noBidsSource: reports.filter((r) => r.loaded && r.sourceWritesBids === false).length,
     limited: loadedWith((n) => n > 0 && n < ALL_INVARIANTS.length),
     incomplete: loadedWith((n) => n === 0),
+    yielded: reports.filter((r) => (r.yielded?.picks ?? 0) + (r.yielded?.bids ?? 0) > 0).map((r) => r.season),
     exitCode: bad > 0 ? 1 : 0,
   };
 }
@@ -763,6 +802,27 @@ export function summarizeSeasons(reports: readonly SeasonLoadReport[]): SeasonsS
 // ──────────────────────────────────────────────────────────────────────────
 // CLI
 // ──────────────────────────────────────────────────────────────────────────
+
+/**
+ * 불변식 여섯의 **분모**를 한 칸에 적는다(Minor-1 · 2026-09-06).
+ *
+ * ⚠⚠**초판은 `invariantChecked` 를 계산해 놓고 버렸다** — 로그에는 「INV 위반 0」만 남았고,
+ * 그건 **「0건」과 「안 쟀음」을 구별하지 못하는 문장**이다(작업규칙 7). 파서가 어느 구획의 색을
+ * 통째로 못 읽으면 그 검사의 분모가 **0 으로 조용히 내려앉는데**, 위반도 0 이라 로그가 초록으로 보인다.
+ * ⚠**그래서 분모 0 인 검사의 이름을 따로 찍는다** — `assertClean` 이 시험 하네스에서 하는 일과
+ * 같은 판단이고(런북 §7), 실 DB 검사 도구가 없는 지금 **사람이 이 줄을 보고 판단한다.**
+ */
+export function invariantNote(w: WikiSeasonReport): string {
+  const n = w.invariantViolations.length;
+  if (w.invariantChecked === null) return `INV 안쟀음(위반 ${n})`;
+  const entries = Object.entries(w.invariantChecked);
+  const total = entries.reduce((a, [, v]) => a + v, 0);
+  const zero = entries.filter(([, v]) => v === 0).map(([id]) => id);
+  return (
+    `INV 위반 ${n} / ${entries.length}종 분모 ${total}`
+    + (zero.length > 0 ? ` ⚠분모0: ${zero.join(",")}` : "")
+  );
+}
 
 /** 한 시즌 wikipedia 결과 한 줄. ⚠**「안 쟀음」을 「0건」으로 적지 않는다**(M11) */
 export function wikiLine(w: WikiSeasonReport): string {
@@ -772,7 +832,7 @@ export function wikiLine(w: WikiSeasonReport): string {
   // ⚠**「사실」과 「표기」를 한 수로 접지 않는다** — 접으면 매일 붉고, 붉으면 아무도 안 읽는다
   const x3 = `X-3 사실 ${w.pickFact} · 표기 ${w.pickSpelling} / ${w.pickChecked}`;
   const x1 = w.bidChecked === 0 ? "X-1 안쟀음" : `X-1 사실 ${w.bidFact} · 표기 ${w.bidSpelling} / ${w.bidChecked}`;
-  return `열 ${w.columns}/12 (겹침 최소 ${w.minOverlap}) · ${wrote}${held} · ${x3} · ${x1} · INV 위반 ${w.invariantViolations.length}`;
+  return `열 ${w.columns}/12 (겹침 최소 ${w.minOverlap}) · ${wrote}${held} · ${x3} · ${x1} · ${invariantNote(w)}`;
 }
 
 export interface WikiSummary {
@@ -780,6 +840,8 @@ export interface WikiSummary {
   readonly done: number;
   readonly absent: number;
   readonly noGrid: number;
+  /** ⚠**결함이 아니다**(M11 · [I-5]) — npb 를 아직 안 넣었을 뿐이라 종료코드를 안 올린다 */
+  readonly noNpb: number;
   readonly failed: number;
   readonly picks: number;
   readonly bids: number;
@@ -787,6 +849,13 @@ export interface WikiSummary {
   readonly picksDeferred: number;
   readonly bidsDeferred: number;
   readonly invariantViolations: number;
+  /**
+   * 불변식 여섯의 **분모 합**(Minor-1). ⚠**「위반 0」이 「안 쟀음」인지 가르는 유일한 수다.**
+   * ⚠**여섯을 더한 수라 그 자체는 뜻이 없다** — 0 인가 아닌가만 읽어라. 갈래별 분모는 시즌 줄에 있다.
+   */
+  readonly invariantChecked: number;
+  /** 분모가 **0 으로 내려앉은** 검사가 있던 시즌. ⚠**위반 0 과 같은 칸에 세면 안 된다** */
+  readonly invariantBlind: readonly number[];
   readonly pickChecked: number;
   readonly pickFact: number;
   readonly pickSpelling: number;
@@ -804,6 +873,7 @@ export function summarizeWiki(reports: readonly WikiSeasonReport[]): WikiSummary
     done: by("done"),
     absent: by("absent"),
     noGrid: by("no-grid"),
+    noNpb: by("no-npb"),
     failed: by("failed"),
     picks: sum((r) => r.wrote?.picks ?? 0),
     bids: sum((r) => r.wrote?.bids ?? 0),
@@ -811,6 +881,12 @@ export function summarizeWiki(reports: readonly WikiSeasonReport[]): WikiSummary
     picksDeferred: sum((r) => r.deferred?.picks ?? 0),
     bidsDeferred: sum((r) => r.deferred?.bids ?? 0),
     invariantViolations: sum((r) => r.invariantViolations.length),
+    invariantChecked: sum((r) =>
+      r.invariantChecked === null ? 0 : Object.values(r.invariantChecked).reduce((a, v) => a + v, 0),
+    ),
+    invariantBlind: reports
+      .filter((r) => r.invariantChecked !== null && Object.values(r.invariantChecked).some((v) => v === 0))
+      .map((r) => r.season),
     pickChecked: sum((r) => r.pickChecked),
     pickFact: sum((r) => r.pickFact),
     pickSpelling: sum((r) => r.pickSpelling),
@@ -950,12 +1026,33 @@ async function main(): Promise<void> {
     // ⚠**A7 — 재시도로 안 풀린다**(입력이 같으면 같은 예외). 다시 돌리라고 안내하지 않는다.
     console.log("⚠[load] 는 재시도로 풀리지 않는다 — 입력이 규칙에 안 맞는 것이라 사람이 봐야 한다");
   }
+  if (s.yielded.length > 0) {
+    /**
+     * ⚠**[C1] — 정상 동작이지만 조용하면 안 된다.** npb 가 그 자리를 실제로 채웠으므로
+     * 다른 출처(wikipedia)의 행이 비켜섰다. **그 시즌 화면의 CC BY-SA 고지가 사라진다**는 뜻이고,
+     * 아래 wikipedia 줄의 「npb 우선」 수도 그만큼 움직인다.
+     */
+    const rows = reports
+      .filter((r) => (r.yielded?.picks ?? 0) + (r.yielded?.bids ?? 0) > 0)
+      .map((r) => `${r.season}(지명 ${r.yielded!.picks}·입찰 ${r.yielded!.bids})`);
+    console.log(
+      `⚠npb 가 자리를 채워 다른 출처를 비켜세운 시즌 ${s.yielded.length}개: ${rows.join(" · ")}`
+        + " — 규칙대로지만(공식 > 커뮤니티) 그 시즌의 CC BY-SA 행이 npb 것으로 바뀌었다(런북 §8-1)",
+    );
+  }
   const w = summarizeWiki(wiki);
   // ⚠**wikipedia 줄을 npb 줄과 섞지 않는다** — 같은 표에 들어가지만 **다른 소스이고 다른 규칙**이다.
   console.log(
     `\nwikipedia: 대상 ${w.targets}시즌 — 읽음 ${w.done} · 미수집 ${w.absent} ·`
-      + ` 미개최 ${w.noGrid} · 실패 ${w.failed}`,
+      + ` 미개최 ${w.noGrid} · npb대기 ${w.noNpb} · 실패 ${w.failed}`,
   );
+  if (w.noNpb > 0) {
+    // ⚠**[I-5] 결함이 아니다.** 수집이 두 명령이라 순서가 갈릴 수 있고, 그때는 npb 를 넣으면 풀린다.
+    console.log(
+      `⚠npb 지명이 아직 없는 시즌 ${w.noNpb}개 — wikipedia 열을 구단에 맞출 근거가 없어 건너뛴다.`
+        + " **실패가 아니라 순서다**(런북 §8-4: npb 를 먼저 넣는다)",
+    );
+  }
   if (w.done > 0) {
     console.log(
       `  적재: 지명 ${w.picks} · 입찰 ${w.bids} · 회의 ${w.events}`
@@ -963,12 +1060,23 @@ async function main(): Promise<void> {
     );
     // ⚠**분모 없이 「불일치 0」이라고 쓰지 않는다.** 「0건」과 「안 쟀음」은 다른 말이다.
     // ⚠**「사실」과 「표기」를 따로 센다** — 종료코드가 반응하는 것은 앞쪽뿐이다.
+    // ⚠**INV 도 분모와 함께 적는다**(Minor-1) — 「위반 0」만으로는 「안 쟀음」과 구별되지 않는다.
     console.log(
-      `  대조: INV 위반 ${w.invariantViolations}`
+      `  대조: INV 위반 ${w.invariantViolations} / 분모 ${w.invariantChecked}`
         + ` · X-3 사실 ${w.pickFact} · 표기 ${w.pickSpelling} / ${w.pickChecked}`
         + ` · X-1 사실 ${w.bidFact} · 표기 ${w.bidSpelling} / ${w.bidChecked}`
         + (w.bidChecked === 0 ? " ⚠X-1 은 **안 쟀다**(이 범위에 npb 경합 문장이 없다)" : ""),
     );
+    if (w.invariantBlind.length > 0) {
+      /**
+       * ⚠**분모가 0 인 검사는 「통과」가 아니라 「안 쟀음」이다**(M11 · 런북 §7 의 `assertClean`).
+       * 파서가 어느 구획의 색을 통째로 못 읽으면 정확히 이 모양이 되고, **위반도 0 이라 초록으로 보인다.**
+       */
+      console.log(
+        `⚠분모가 0 인 불변식이 있는 시즌 ${w.invariantBlind.length}개(${w.invariantBlind.join(",")})`
+          + " — 그 검사는 **통과한 것이 아니라 안 쟀다**. 시즌 줄의 `⚠분모0:` 이 어느 것인지 말한다",
+      );
+    }
     if (w.pickSpelling > 0 || w.bidSpelling > 0) {
       /**
        * ⚠**표기 차는 결함이 아니지만 「없는 것」도 아니다**(M10). 이체자(`髙/高`·`﨑/崎`)와
@@ -1001,7 +1109,9 @@ async function main(): Promise<void> {
   /**
    * ⚠**대조 불일치와 불변식 위반이 종료코드를 올린다.** 그것이 채택 게이트(`G-A`·`G-B`·`G-C`)이고,
    * 조용해지면 **색을 잘못 읽어도 아무도 모른 채** 화면에 나간다.
-   * ⚠**`absent`·`no-grid` 는 올리지 않는다**(M11) — 자산이 아직 없는 것과 개최 전은 결함이 아니다.
+   * ⚠**`absent`·`no-grid`·`no-npb` 는 올리지 않는다**(M11) — 자산이 아직 없는 것 · 개최 전 ·
+   * **npb 가 아직 안 들어온 것**은 결함이 아니다([I-5]). 셋 다 「다음 실행에서 저절로 풀리는」 모양이고,
+   * 그걸로 붉히면 **헛불이 일상이 되어 진짜 위반도 안 읽힌다.**
    */
   // ⚠**`spelling` 은 종료코드를 안 올린다** — 위 주석의 그 이유다. 올리는 것은 `fact` 뿐이다.
   const wikiBad = w.failed > 0 || w.invariantViolations > 0 || w.pickFact > 0 || w.bidFact > 0;

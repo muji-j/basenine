@@ -130,6 +130,15 @@ export interface DraftLoadResult {
    * 「둘을 구별한다」고 선언해 놓고 **타입이 `number` 라 구별할 수 없었다** — 즉 주석이 거짓이었다.
    */
   readonly soleNominations: number | null;
+  /**
+   * **npb 가 그 자리를 실제로 채워서 비켜 준** 다른 출처(지금은 wikipedia)의 행 수.
+   *
+   * ⚠**조용하면 안 되는 수다.** 이 수가 0 보다 크다는 것은 **어제까지 화면에 CC BY-SA 로 나가던
+   * 행이 오늘 npb 것으로 바뀌었다**는 뜻이고, 그때 그 시즌의 `X-1` 대조는 **분모가 없던 상태에서
+   * 생긴 상태로** 넘어간다(런북 §8-5). 로그가 그 사실을 적는다.
+   * ⚠**「0건」과 「안 쟀음」을 구별할 수 있다** — 적재가 돌면 언제나 재는 수이므로 `null` 이 없다.
+   */
+  readonly yielded: { readonly picks: number; readonly bids: number };
 }
 
 /**
@@ -188,6 +197,14 @@ export const ROUND_NUMBERED_KINDS: ReadonlySet<DraftKind> = new Set<DraftKind>(
  * 구분자가 값 안에 나올 수 있으면 서로 다른 두 쌍이 같은 키가 된다.
  */
 const SEP = "\u0000";
+
+/**
+ * 지운 행 수. ⚠**`node:sqlite` 의 `changes` 는 `number | bigint` 다** — 좁히는 자리를 한 곳으로 모은다.
+ * 여기 오는 수는 **한 구단·한 구획의 행 수**라 `number` 로 안전하게 들어간다.
+ */
+function changed(r: { changes: number | bigint }): number {
+  return Number(r.changes);
+}
 
 /**
  * 「어느 구획의 어느 구단인가」. ⚠**메모리 안에서 묶을 때만 쓴다** —
@@ -555,9 +572,29 @@ function foreignTeams(input: DraftLoadInput): string[] {
  * ⚠**그 행이 받는 출처는 `input.event`(연도 톱)다** — 구단 페이지가 아니다([I3]).
  * 그래서 12구단을 순서대로 넣어도 **그 행의 출처가 매번 같은 값으로 덮인다**(= 멱등이고 참이다).
  *
- * ⚠**부분 실패는 없다.** 판정은 트랜잭션 **밖**에서 끝내고(걸리면 SQL 을 안 만진다) 쓰기는
- * 한 트랜잭션이라 도중에 던지면 **아무것도 남지 않는다** — 반쯤 적재된 시즌이 「원래 그렇다」로
+ * ⚠**부분 실패는 없다.** 판정은 쓰기 **밖**에서 끝내고(걸리면 SQL 을 안 만진다) 쓰기는
+ * **한 SAVEPOINT** 라 도중에 던지면 **아무것도 남지 않는다** — 반쯤 적재된 시즌이 「원래 그렇다」로
  * 읽히는 것이 이 도메인에서 가장 비싼 실패다.
+ * ⚠⚠**`db.transaction` 이 아니라 `db.savepoint` 인 것이 요점이다**(2026-09-06 · [C1]).
+ * `transaction` 은 `BEGIN` 이라 **바깥에서 한 번 더 묶을 수 없다**(실측: `BEGIN` 도 `SAVEPOINT`
+ * 안에서도 `cannot start a transaction within a transaction`). 그래서 구단마다 커밋이 떨어지고
+ * **k번째 구단에서 던지면 앞의 k−1 구단이 남았다.** `SAVEPOINT` 는 밖에 트랜잭션이 없으면
+ * `BEGIN DEFERRED` 와 같게 동작하고(실측), 있으면 그 안에 얌전히 중첩된다 — 그래서
+ * **시즌 단위 원자성을 부르는 쪽이 만들 수 있다**(`load-draft-archive.ts` 의 `loadSeasonPages`).
+ *
+ * ## ⚠두 출처가 같은 슬롯을 다투면 — **npb 가 이긴다. 단 자기가 채우는 자리에서만.**
+ *
+ * `draft_pick`·`draft_bid` 의 PK 에는 **`origin` 이 없다**(019). 그래서 wikipedia 가 이미 채운
+ * 자리에 npb 가 들어오면 **UNIQUE 로 던졌다** — 그리고 그 예외는 시즌을 **반쯤 적재된 채**로
+ * 남겼다(위 문단). ⚠**실제로 도달하는 경로다**: `draftlist_*` 는 개최 당일 생기고 경합 주석은
+ * 며칠 뒤에 붙으므로, 개최일 저녁 수집 → 위키가 그 자리를 채움 → **며칠 뒤 재수집**이 방아쇠다.
+ *
+ * → **npb 가 쓰는 (구획·구단) 슬롯에서만** 다른 출처를 비켜세운다(§2-4 신뢰 등급: 공식 > 커뮤니티).
+ * ⚠⚠**「이 구단·이 시즌」으로 지우면 안 된다.** 2023~2025 의 npb 는 **입찰을 아예 안 쓴다** —
+ * 그때 위키를 지우면 **화면의 1位指名 경합이 통째로 사라진다.** 「npb 가 그 자리를 실제로 채운다」와
+ * 「npb 페이지에 그 자리가 없다」는 다른 사실이고, **지우는 근거는 언제나 전자**다.
+ * ⚠**슬롯의 입도가 `draft-wiki.ts` 의 `occupiedByNpb` 와 같아야 한다**(둘 다 `(kind, team)`) —
+ * 갈리면 한쪽은 비켜세우고 다른 쪽은 다시 채워 **매 적재마다 행이 흔들린다.**
  *
  * @throws {DraftLoadError} 입력에 **선언한 구단이 아닌 행**이 섞여 있을 때.
  */
@@ -581,9 +618,22 @@ export function loadDraft(db: Db, input: DraftLoadInput): DraftLoadResult {
   const soles = input.bids === null ? null : deriveSoleNominations(numbered, resolved);
   const allBids = [...resolved, ...(soles ?? [])];
 
+  /**
+   * **npb 가 이번에 실제로 지명 행을 넣는 구획.** `draft_event` 를 세우는 목록이자
+   * **비켜세우기의 범위**이기도 하다 — 같은 식을 두 번 적으면 한쪽만 고쳐지는 날이 온다(M1).
+   * ⚠구단은 `team` 하나로 이미 고정돼 있다(`foreignTeams` 가 그것을 지킨다).
+   */
   const kinds = new Set(numbered.map((p) => p.row.kind));
+  /**
+   * 입찰 쪽 슬롯. ⚠⚠**지명과 따로 센다 — 이 한 줄이 2023~2025 를 지킨다.**
+   * 그 시즌 npb 는 지명은 채우고 **입찰은 한 행도 안 채우므로**, 한 벌로 묶으면
+   * **위키가 채운 1位指名 경합을 지우게 된다.**
+   */
+  const bidSlots = new Set(allBids.map((b) => b.kind));
+  let yieldedPicks = 0;
+  let yieldedBids = 0;
 
-  db.transaction(() => {
+  db.savepoint("draft_load", () => {
     const ev = db.raw.prepare(
       `INSERT INTO draft_event (season, kind, held_on, source, fetched_at, revision)
        VALUES (?, ?, NULL, ?, ?, ?)
@@ -596,12 +646,17 @@ export function loadDraft(db: Db, input: DraftLoadInput): DraftLoadResult {
 
     // ⚠**지명이 0건이어도 지운다.** 그래서 지울 구단을 행에서 유도하지 않고 입력에서 받는다 —
     //   「전 회차를 건너뛴 구단」으로 정정된 판이 오면 옛 행이 **조용히 남는 것**이 결함이다.
-    // ⚠**`origin` 을 가린다**([N1-b]). 안 가리면 계획된 wikipedia 적재(2023+ 경합)를
-    //   npb 적재가 지우고 그 자리에 유도한 単独指名 을 넣는다. `origin` 은 019 부터 있었고
-    //   삭제만 그것을 안 봐다. ⚠PK 에는 `origin` 이 없으므로 두 출처가 **같은 키**를 쓰면
-    //   이제 **PK 충돌로 던진다** — 조용한 삭제보다 시끄러운 실패를 골랐다.
+    // ⚠**`origin` 을 가린다**([N1-b]). 안 가리면 wikipedia 적재(2023+ 경합)를
+    //   npb 적재가 통째로 지우고 그 자리에 유도한 単独指名 을 넣는다. `origin` 은 019 부터 있었고
+    //   삭제만 그것을 안 봤다.
     const delPick = db.raw.prepare("DELETE FROM draft_pick WHERE season = ? AND team = ? AND origin = ?");
     delPick.run(season, team, ORIGIN);
+    // ⚠**그다음 「내가 채우는 자리」에서만 남을 비켜세운다**([C1] · 위 머리말).
+    //   PK 에 `origin` 이 없으므로, 이 줄이 없으면 같은 키에서 **UNIQUE 로 던지고 시즌이 반쯤 남는다.**
+    const yieldPick = db.raw.prepare(
+      "DELETE FROM draft_pick WHERE season = ? AND team = ? AND kind = ? AND origin <> ?",
+    );
+    for (const kind of kinds) yieldedPicks += changed(yieldPick.run(season, team, kind, ORIGIN));
 
     const insPick = db.raw.prepare(
       `INSERT INTO draft_pick
@@ -629,6 +684,12 @@ export function loadDraft(db: Db, input: DraftLoadInput): DraftLoadResult {
 
     const delBid = db.raw.prepare("DELETE FROM draft_bid WHERE season = ? AND team = ? AND origin = ?");
     delBid.run(season, team, ORIGIN);
+    // ⚠⚠**`bidSlots` 가 비면 한 행도 안 지운다 — 그것이 2023~2025 를 지키는 전부다.**
+    //   그 시즌 npb 는 입찰을 안 쓰므로 `allBids` 가 빈 배열이고, 위키가 채운 경합이 그대로 남는다.
+    const yieldBid = db.raw.prepare(
+      "DELETE FROM draft_bid WHERE season = ? AND team = ? AND kind = ? AND origin <> ?",
+    );
+    for (const kind of bidSlots) yieldedBids += changed(yieldBid.run(season, team, kind, ORIGIN));
 
     const insBid = db.raw.prepare(
       `INSERT INTO draft_bid
@@ -661,5 +722,6 @@ export function loadDraft(db: Db, input: DraftLoadInput): DraftLoadResult {
     picks: numbered.length,
     bids: allBids.length,
     soleNominations: soles === null ? null : soles.length,
+    yielded: { picks: yieldedPicks, bids: yieldedBids },
   };
 }
