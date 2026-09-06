@@ -2450,6 +2450,14 @@ function showTabs(){
       else b.setAttribute("aria-selected",on);
     });
   });
+  /* ⚠**선택이 바뀌면 그 탭을 상자 안으로 들여놓는다 — 여기 한 곳에서 한다**(M1 · 2026-09-07 P2).
+     처음에는 초기화에서 한 번만 불렀는데, **그 뒤에 선택을 바꾸는 경로가 넷 더 있었다**:
+     깊은 링크(revealHash) · 브라우저 찾기(beforematch) · 클릭 · 화살표 키.
+     앞의 둘은 「패널은 열리는데 그 탭이 상자 밖」이 되어 **유저가 이번에 지적한 바로 그 증상**이
+     경로만 달리해서 그대로 남아 있었다. 부르는 자리를 늘리는 대신 **탭이 바뀌는 곳**에 건다 —
+     그래야 다음에 경로가 하나 더 생겨도 잊을 자리가 없다.
+     ⚠**이미 보이면 아무 일도 안 한다**(revealInStrip 이 넘침을 먼저 본다) — 클릭 경로가 조용한 이유다. */
+  revealSelectedTabs();
   tabHooks.forEach(f=>f());
 }
 (function initTabs(){
@@ -4017,8 +4025,37 @@ if(favBtn)favBtn.addEventListener("click",()=>{toggleFav(favBtn.dataset.fav);pai
    코드만 남기면 다른 화면에서 라벨이 「T」로 떨어지고 링크를 만들 방법이 없다. */
 const navTeamLinks=$$("[data-navteam]");
 /* ⚠**서버가 그린 것을 그대로 되돌린다.** 해제했을 때 쓸 경로·라벨·현재위치를 여기서 다시 짓지 않는다 —
-   경로는 M1 이 한 곳으로 못 박았고 라벨은 i18n 대상이라(§7), 두 벌이 되면 언젠가 갈린다 */
-const navTeamBack=navTeamLinks.map(a=>({href:a.getAttribute("href")||"",text:a.textContent,here:a.getAttribute("aria-current")}));
+   경로는 M1 이 한 곳으로 못 박았고 라벨은 i18n 대상이라(§7), 두 벌이 되면 언젠가 갈린다.
+
+   ⚠⚠**되돌릴 것이 글자만이 아니게 됐다**(2026-09-07 이중 검토 P1 · 검토자 둘이 독립으로 찾았다).
+   드래프트만 굽는 시즌에서는 이 링크가 **다른 해로 간다** — 그래서 서버가 두 가지를 더 그린다:
+   보이는 표식(i 요소의 →)과 어디로 가는지 말하는 aria-label.
+   그런데 여기는 textContent 만 들고 있었다. 결과가 둘:
+     ⑴ **최애 미설정**(기본값 · 대부분의 방문자)에서도 되돌리기가 돌아
+        「球団<i>→</i>」를 평문 "球団→" 로 뭉갠다 → 그 항목만 표식의 스타일이 죽는다.
+     ⑵ **최애 설정**이면 글자는 「阪神」인데 이름은 「球団（…）」로 남는다 →
+        **보이는 글자가 접근성 이름 안에 없다**(WCAG 2.5.3 label-in-name).
+   ⚠**표식은 최애를 걸어도 참이다** — 최애 구단 페이지도 그 해에는 없다(BASE 가 그 해를 가리킨다).
+   ⚠**문장을 여기서 짓지 않는다**(M1). 서버가 「라벨＋괄호」로 지은 이름에서 **라벨만 뗀다** —
+      괄호 안의 말투는 내비·시즌 띠와 한 벌이라 여기 두 번째 벌을 두면 언젠가 갈린다. */
+const navTeamBack=navTeamLinks.map(a=>{
+  /* 표식은 요소다 — 글자로 되돌리면 스타일이 걸리지 않는다(.tnav a i) */
+  const mark=a.querySelector?a.querySelector("i"):null;
+  const whole=a.textContent||"";
+  const mt=mark?(mark.textContent||""):"";
+  const text=mt!==""&&whole.slice(whole.length-mt.length)===mt?whole.slice(0,whole.length-mt.length):whole;
+  const lab=a.getAttribute("aria-label");
+  /* 라벨로 시작하지 않으면 뗄 수 없다 — 그때는 이름을 보이는 글자로만 둔다(거짓말은 안 한다) */
+  const away=lab!==null&&lab.slice(0,text.length)===text?lab.slice(text.length):"";
+  return {href:a.getAttribute("href")||"",text:text,mark:mark,label:lab,away:away,here:a.getAttribute("aria-current")};
+});
+/* 라벨을 갈아 끼우되 **표식은 남긴다.** textContent 를 쓰면 자식이 통째로 날아간다 */
+function setNavLabel(a,text,mark){
+  if(!mark){a.textContent=text;return}
+  a.textContent="";
+  a.appendChild(doc.createTextNode(text));
+  a.appendChild(mark);
+}
 /* ⚠**「지금 여기」 표시가 화면 밖에 있으면 아무 일도 안 한다**(2026-09-05 감사 P2).
    탭줄은 좁으면 옆으로 굴리는 상자인데 **첫 위치가 언제나 왼쪽 끝**이라, 뒤쪽 항목에 있는
    화면에서는 현재 탭이 상자 밖에서 시작한다 — 실측(390px)으로 상자가 [80,330] 인데
@@ -4049,11 +4086,18 @@ function revealInStrip(nav,cur){
    ⚠**탭줄(.tabs.scroll)도 같다** — 선택은 localStorage 에서 되살아나는데 상자는 0에서 시작하므로,
    뒤쪽 탭을 고른 채 다시 오면 **그 탭이 안 보인다.**
    ⚠**서버가 그린 것을 기준으로 삼는다** — 탭줄은 aria-selected="true", 링크 띠는 aria-current. */
+/* ⚠**선택이 바뀌는 상자는 이것뿐이다** — 그래서 showTabs 가 부르는 것도 이것 하나다.
+   ⚠**내비와 시즌 띠를 여기 넣지 마라**: 그 둘의 「지금 여기」는 페이지가 사는 동안 안 바뀐다.
+   탭을 누를 때마다 같이 굴리면 **사용자가 손으로 밀어 둔 내비가 제자리로 튕겨 돌아간다** —
+   자기가 하지 않은 움직임이라 그건 조작이 아니라 결함으로 보인다. */
+function revealSelectedTabs(){
+  $$(".tabs.scroll").forEach(t=>revealInStrip(t,$('[aria-selected="true"]',t)));
+}
 function showCurrentTab(){
   revealInStrip($(".tnav"),$("[aria-current]",$(".tnav")));
   const band=$(".seasons");
   if(band)revealInStrip(band,$("[aria-current]",band));
-  $$(".tabs.scroll").forEach(t=>revealInStrip(t,$('[aria-selected="true"]',t)));
+  revealSelectedTabs();
 }
 if(typeof addEventListener==="function"){
   let tabT=0;
@@ -4067,13 +4111,19 @@ function paintFavTeam(){
     const back=navTeamBack[i];
     if(fav===null){
       a.setAttribute("href",back.href);
-      a.textContent=back.text;
+      setNavLabel(a,back.text,back.mark);
+      if(back.label===null)a.removeAttribute("aria-label");
+      else a.setAttribute("aria-label",back.label);
       if(back.here===null)a.removeAttribute("aria-current");
       else a.setAttribute("aria-current",back.here);
       return;
     }
     a.setAttribute("href",BASE+fav.path);
-    a.textContent=fav.name;
+    setNavLabel(a,fav.name,back.mark);
+    /* ⚠**보이는 글자가 바뀌면 이름도 바뀐다**(WCAG 2.5.3). 서버가 이름을 안 적은 화면
+       — 같은 해 안에서 끝나는 보통 화면 **9,379장 / 9,392장**(2026-09-07 배포물 실측) —
+       에서는 여기서도 안 적는다. 지금까지와 같다 */
+    if(back.label!==null)a.setAttribute("aria-label",fav.name+back.away);
     /* ⚠**서버가 적은 aria-current 는 「teams.html 로 가는 링크」에 대한 말이다.**
        목적지를 우리가 바꿨으니 다시 잰다(2026-08-19 검토 ④ · 처음에는 page 만 다뤄서
        구단 상세의 true 가 그대로 남아 있었다):

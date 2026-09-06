@@ -463,9 +463,11 @@ test("⚠현재 위치를 상자 안으로 들여놓는다 — 세로 위치는 
 });
 
 test("⚠같은 처치가 세 상자에 다 걸린다 — 하나만 걸면 나머지에서 「지금 여기」가 안 보인다", () => {
-  const at = CLIENT_JS.indexOf("function showCurrentTab()");
-  assert.notEqual(at, -1, "showCurrentTab 이 없다 — 이 시험이 공회전한다");
-  const body = CLIENT_JS.slice(at, CLIENT_JS.indexOf("\n}", at));
+  const at = CLIENT_JS.indexOf("function revealSelectedTabs()");
+  assert.notEqual(at, -1, "revealSelectedTabs 가 없다 — 이 시험이 공회전한다");
+  const end = CLIENT_JS.indexOf("\n}", CLIENT_JS.indexOf("function showCurrentTab()"));
+  assert.ok(end > at, "showCurrentTab 이 revealSelectedTabs 뒤에 없다 — 이 시험이 엉뚱한 곳을 잰다");
+  const body = CLIENT_JS.slice(at, end);
   assert.match(body, /\.tnav/u, "상단 내비를 안 본다");
   assert.match(body, /\.seasons/u, "시즌 띠를 안 본다 — 실측으로 현재 연도가 맨 오른쪽인 화면이 있다");
   assert.match(body, /\.tabs\.scroll/u, "가로로 흐르는 탭줄을 안 본다 — 저장된 선택이 화면 밖일 수 있다");
@@ -474,6 +476,22 @@ test("⚠같은 처치가 세 상자에 다 걸린다 — 하나만 걸면 나�
     /aria-selected="true"/u,
     "탭줄에서 선택을 aria-current 로 찾으려 한다 — 탭줄은 aria-selected 를 쓴다(층이 다르다)",
   );
+});
+
+/**
+ * ⚠**갈라 둔 이유가 있다**(2026-09-07 P2). 선택이 바뀌는 상자는 탭줄뿐이라
+ * `showTabs` 는 **탭줄만** 다시 본다. 내비·시즌 띠까지 같이 굴리면 사용자가 손으로 밀어 둔
+ * 내비가 탭을 누를 때마다 제자리로 튕겨 돌아간다 — 자기가 하지 않은 움직임이다.
+ */
+test("⚠탭이 바뀌면 그 탭을 상자 안으로 들여놓는다 — 내비·시즌 띠는 건드리지 않는다", () => {
+  const at = CLIENT_JS.indexOf("function showTabs()");
+  assert.notEqual(at, -1, "showTabs 가 없다 — 이 시험이 공회전한다");
+  const body = CLIENT_JS.slice(at, CLIENT_JS.indexOf("\n}\n", at));
+  assert.match(body, /\n {2}revealSelectedTabs\(\);/, "탭이 바뀌어도 상자를 다시 안 본다");
+  assert.ok(!body.includes("showCurrentTab()"), "탭을 누를 때마다 내비까지 굴린다");
+
+  const seen = CLIENT_JS.indexOf("function revealSelectedTabs()");
+  assert.ok(seen > at, "선언이 showTabs 뒤에 없다 — 이 시험의 전제(호이스팅)가 깨졌다");
 });
 
 /**
