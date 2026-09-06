@@ -36,13 +36,34 @@
 import { readFile, readdir } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { gunzipSync } from "node:zlib";
-import { BACKNUMBER_KEY, teamPageKey, yearIndexKey } from "@bb-app/archiver";
-import { DraftParseError, parseDraftBids, parseDraftPicks } from "@bb-app/parser";
-import type { DraftBidRow, DraftPickRow } from "@bb-app/parser";
+import { BACKNUMBER_KEY, draftWikiKey, teamPageKey, yearIndexKey } from "@bb-app/archiver";
+import {
+  DraftParseError,
+  DraftWikiParseError,
+  checkDraftWikiInvariants,
+  normalizePlayerName,
+  parseDraftBids,
+  parseDraftPicks,
+  parseDraftWiki,
+} from "@bb-app/parser";
+import type { DraftBidRow, DraftPickRow, DraftWikiParse } from "@bb-app/parser";
 import { openDb } from "../src/db.ts";
 import type { Db } from "../src/db.ts";
 import { DraftLoadError, loadDraft } from "../src/draft.ts";
 import type { DraftProvenance } from "../src/draft.ts";
+import {
+  DraftWikiLoadError,
+  compareDraftWikiBids,
+  compareDraftWikiPicks,
+  countBySeverity,
+  isLotteryKind,
+  loadDraftWiki,
+  npbBidsBySeason,
+  npbNamesBySeason,
+  npbPicksBySeason,
+  resolveDraftWikiColumns,
+} from "../src/draft-wiki.ts";
+import type { BidFact, DraftWikiDiff } from "../src/draft-wiki.ts";
 import { fetchedAtOf } from "../src/meta.ts";
 
 /** `LocalSink` 의 배치. **키**는 수집기가 소유하고 이 두 꼬리만 여기서 안다 */
@@ -427,6 +448,200 @@ export async function loadDraftSeason(
   }
 }
 
+
+// ──────────────────────────────────────────────────────────────────────────
+// wikipedia 경로 — ⚠**npb 가 말하지 않는 자리만 채운다**(M1)
+// ──────────────────────────────────────────────────────────────────────────
+
+/**
+ * 한 시즌의 wikipedia 결과.
+ *
+ * ⚠**「적재」와 「대조」가 한 함수에 있는 것이 일부러다.** 2005~2022 는 npb 가 경합을 말하므로
+ * **넣지 않고 대조만** 하고, 2023~ 은 npb 가 말하지 않으므로 **넣는다.** 두 일을 갈라 놓으면
+ * 대조가 「따로 돌리는 것」이 되고, 따로 돌리는 검사는 **안 돌게 된다.**
+ * ⚠**그리고 대조가 이 소스를 채용할 수 있는 유일한 근거다**(규칙표 §5 · `X-1`).
+ */
+export interface WikiSeasonReport {
+  readonly season: number;
+  /** ⚠**`absent` 는 「아카이브에 그 해가 없다」**이지 결함이 아니다(M11) */
+  readonly state: "absent" | "no-grid" | "done" | "failed";
+  readonly reason: string | null;
+  /** 열↔구단이 붙은 수. **12여야 한다** */
+  readonly columns: number;
+  /** 이름 겹침의 **최솟값**. ⚠1이면 아슬아슬하다는 뜻이라 사람이 봐야 한다 */
+  readonly minOverlap: number | null;
+  readonly invariantChecked: Readonly<Record<string, number>> | null;
+  readonly invariantViolations: readonly string[];
+  /**
+   * `X-3` — 지명 명단 대조.
+   * ⚠**두 갈래를 나눠 센다**: `fact` 는 「누가 뽑혔나」가 갈린 것이고 `spelling` 은 **글자만** 다른 것이다.
+   * 뭉치면 대조가 **매일 붉어지고** 헛불이 일상이 된다(`DraftWikiDiffSeverity` 주석).
+   */
+  readonly pickChecked: number;
+  readonly pickFact: number;
+  readonly pickSpelling: number;
+  readonly pickDiffs: readonly string[];
+  /** `X-1` — 경합 대조. ⚠**npb 가 경합을 안 쓰는 시즌은 분모가 0이다**(「안 쟀음」) */
+  readonly bidChecked: number;
+  readonly bidFact: number;
+  readonly bidSpelling: number;
+  readonly bidDiffs: readonly string[];
+  readonly wrote: { readonly picks: number; readonly bids: number; readonly events: number } | null;
+  readonly deferred: { readonly picks: number; readonly bids: number } | null;
+}
+
+function wikiSkip(season: number, state: WikiSeasonReport["state"], reason: string | null): WikiSeasonReport {
+  return {
+    season,
+    state,
+    reason,
+    columns: 0,
+    minOverlap: null,
+    invariantChecked: null,
+    invariantViolations: [],
+    // ⚠**전부 0 이지만 「0건 일치」가 아니라 「안 쟀음」이다.** `state` 가 그것을 말한다(M11).
+    pickChecked: 0,
+    pickFact: 0,
+    pickSpelling: 0,
+    pickDiffs: [],
+    bidChecked: 0,
+    bidFact: 0,
+    bidSpelling: 0,
+    bidDiffs: [],
+    wrote: null,
+    deferred: null,
+  };
+}
+
+/**
+ * 한 시즌의 wikipedia 기사를 읽어 **대조하고, npb 가 말하지 않는 자리에만 넣는다.**
+ *
+ * ⚠**던지지 않는다** — 사유를 보고서에 담는다(npb 쪽 `loadDraftSeason` 과 같은 방침).
+ * ⚠**대조 불일치는 종료코드를 올린다.** 그것이 채택 게이트 `G-B`·`G-C` 이고, 조용해지면
+ * 이 소스를 계속 쓸 근거가 사라진다.
+ */
+export async function loadDraftWikiSeason(
+  db: Db,
+  season: number,
+  opts: { readonly archiveRoot: string },
+): Promise<WikiSeasonReport> {
+  const key = draftWikiKey(season);
+  let html: string;
+  try {
+    html = new TextDecoder("utf-8").decode(gunzipSync(await readFile(bodyPath(opts.archiveRoot, key))));
+  } catch {
+    // ⚠**「안 받았다」는 결함이 아니다**(M11). 자산이 아직 없는 상태에서도 배치는 돌아야 한다.
+    return wikiSkip(season, "absent", `${bodyPath(opts.archiveRoot, key)}`);
+  }
+
+  let prov: DraftProvenance;
+  let parsed: DraftWikiParse;
+  try {
+    // ⚠**출처는 사이드카에서 온다**(M4) — URL 도 시각도 판도. npb 쪽과 같은 한 벌을 쓴다.
+    prov = await provenanceOf(opts.archiveRoot, key, `wikipedia/${season}`);
+    parsed = parseDraftWiki(html, season);
+  } catch (err) {
+    return wikiSkip(season, "failed", err instanceof Error ? `${err.name}: ${err.message}` : String(err));
+  }
+  if (parsed.kind !== "grid") {
+    // ⚠**미개최·미기재다**(2026). 실패가 아니다.
+    return wikiSkip(season, "no-grid", `절 ${parsed.sectionId} 에 wikitable 이 없다`);
+  }
+
+  try {
+    const inv = checkDraftWikiInvariants(parsed);
+
+    // ── 열 ↔ 구단 ──
+    const namesByColumn = parsed.grid.columns.map(
+      (_, c) => new Set(parsed.picks.filter((p) => p.columnIndex === c).map((p) => normalizePlayerName(p.nameDisplay))),
+    );
+    const matches = resolveDraftWikiColumns(season, parsed.grid.columns, namesByColumn, npbNamesBySeason(db, season));
+    const teamOfColumn = matches.map((m) => m.team);
+
+    // ── X-3: 지명 명단 ──
+    // ⚠**회차 없는 제도(希望入団枠·自由獲得)는 순번을 「적재가」 매긴다** — 그 순번은 소스가 말한
+    //   값이 아니므로 **회차로 대조하면 안 된다.** 그래서 양쪽 다 그 구획만 회차를 뺀다.
+    const noRound = (kind: string): boolean => kind === "kibou_nyudanwaku" || kind === "jiyuu_kakutoku";
+    const npbPicks = npbPicksBySeason(db, season).map((p) => ({ ...p, roundNo: noRound(p.kind) ? -1 : p.roundNo }));
+    const x3 = compareDraftWikiPicks(
+      season,
+      npbPicks,
+      parsed.picks.map((p) => ({
+        team: teamOfColumn[p.columnIndex]!,
+        kind: p.kind,
+        roundNo: noRound(p.kind) ? -1 : p.roundNo,
+        nameDisplay: p.nameDisplay,
+      })),
+    );
+
+    // ── X-1: 경합 ──
+    // ⚠**추첨이 성립하는 구획만 본다** — 育成·希望入団枠 에는 추첨이 없어서 비교 대상이 아니다.
+    const wikiBids: BidFact[] = parsed.bids
+      .filter((b) => isLotteryKind(b.kind))
+      .map((b) => ({
+        kind: b.kind,
+        roundNo: b.bidRound,
+        team: teamOfColumn[b.columnIndex]!,
+        groupKey: b.groupKey,
+        won: b.won === null ? null : b.won ? 1 : 0,
+        nameDisplay: b.nameDisplay,
+      }));
+    const npbBids = npbBidsBySeason(db, season);
+    /**
+     * ⚠⚠**추첨이 실제로 열린 구획만 분모에 넣는다** — 둘 중 **한 쪽이라도 경합 그룹을 가진** 구획.
+     *
+     * ⚠**실측으로 나온 자리다**(2005·2006 `daigaku_shakaijin`): 그 두 해의 대학생·사회인 드래프트는
+     * **희망입단枠 + 웨이버**라 추첨이 없었다. 그런데 npb 적재는 그 구획의 1巡目 지명을 보고
+     * **単独指名 을 유도**하고(`deriveSoleNominations`), wikipedia 는 그 행이 **웨이버 행**이라 입찰을 안 낸다.
+     * → **둘 다 틀리지 않았고 모델이 다른 것**이라, 그걸 「불일치」로 세면 **매일 붉어진다.**
+     *
+     * ⚠**그렇다고 구멍이 생기지는 않는다**: 파서가 어느 구획의 색을 통째 못 읽으면
+     * **npb 쪽에 경합 그룹이 남아 있으므로** 그 구획은 분모에 들고, 그때 npb 행 전부가 `fact` 로 드러난다.
+     */
+    const contested = new Set(
+      [...npbBids, ...wikiBids].filter((b) => b.groupKey !== null).map((b) => b.kind),
+    );
+    const npbInScope = npbBids.filter((b) => contested.has(b.kind));
+    const wikiInScope = wikiBids.filter((b) => contested.has(b.kind));
+    // ⚠**npb 가 경합을 안 쓰는 시즌은 대조하지 않는다** — 그때 「전건 불일치」를 내면
+    //   2023~2025 가 매번 붉어지고, 헛불이 일상이 되면 진짜 위반도 안 읽힌다(A6 과 같은 사고).
+    const x1: { checked: number; diffs: readonly DraftWikiDiff[] } =
+      npbBids.length === 0 ? { checked: 0, diffs: [] } : compareDraftWikiBids(season, npbInScope, wikiInScope);
+
+    // ── 적재 ──
+    // ⚠**불변식이 깨졌으면 넣지 않는다.** 「일단 넣고 나중에 고친다」가 이 도메인에서 가장 비싸다.
+    const wrote =
+      inv.violations.length > 0
+        ? null
+        : loadDraftWiki(db, { season, teamOfColumn, picks: parsed.picks, bids: parsed.bids, page: prov });
+
+    return {
+      season,
+      state: "done",
+      reason: null,
+      columns: matches.length,
+      minOverlap: Math.min(...matches.map((m) => m.overlap)),
+      invariantChecked: inv.checked,
+      invariantViolations: inv.violations.map((v) => `${v.id} ${v.detail}`),
+      pickChecked: x3.checked,
+      pickFact: countBySeverity(x3.diffs).fact,
+      pickSpelling: countBySeverity(x3.diffs).spelling,
+      pickDiffs: x3.diffs.map((d) => `[${d.severity}] ${d.detail}`),
+      bidChecked: x1.checked,
+      bidFact: countBySeverity(x1.diffs).fact,
+      bidSpelling: countBySeverity(x1.diffs).spelling,
+      bidDiffs: x1.diffs.map((d) => `[${d.severity}] ${d.detail}`),
+      wrote: wrote === null ? null : { picks: wrote.picks, bids: wrote.bids, events: wrote.events },
+      deferred: wrote === null ? null : { picks: wrote.picksDeferred, bids: wrote.bidsDeferred },
+    };
+  } catch (err) {
+    if (err instanceof DraftWikiLoadError || err instanceof DraftWikiParseError || err instanceof DraftLoadError) {
+      return wikiSkip(season, "failed", `${err.name}: ${err.message}`);
+    }
+    return wikiSkip(season, "failed", err instanceof Error ? `${err.name}: ${err.message}` : String(err));
+  }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // 검사 시점 — 「지금 걸어도 되는가」
 // ──────────────────────────────────────────────────────────────────────────
@@ -549,6 +764,62 @@ export function summarizeSeasons(reports: readonly SeasonLoadReport[]): SeasonsS
 // CLI
 // ──────────────────────────────────────────────────────────────────────────
 
+/** 한 시즌 wikipedia 결과 한 줄. ⚠**「안 쟀음」을 「0건」으로 적지 않는다**(M11) */
+export function wikiLine(w: WikiSeasonReport): string {
+  if (w.state !== "done") return `[${w.state}] ${w.reason ?? ""}`;
+  const wrote = w.wrote === null ? "적재안함(불변식 위반)" : `지명 ${w.wrote.picks} · 입찰 ${w.wrote.bids}`;
+  const held = w.deferred === null ? "" : ` · npb 우선 ${w.deferred.picks}/${w.deferred.bids}`;
+  // ⚠**「사실」과 「표기」를 한 수로 접지 않는다** — 접으면 매일 붉고, 붉으면 아무도 안 읽는다
+  const x3 = `X-3 사실 ${w.pickFact} · 표기 ${w.pickSpelling} / ${w.pickChecked}`;
+  const x1 = w.bidChecked === 0 ? "X-1 안쟀음" : `X-1 사실 ${w.bidFact} · 표기 ${w.bidSpelling} / ${w.bidChecked}`;
+  return `열 ${w.columns}/12 (겹침 최소 ${w.minOverlap}) · ${wrote}${held} · ${x3} · ${x1} · INV 위반 ${w.invariantViolations.length}`;
+}
+
+export interface WikiSummary {
+  readonly targets: number;
+  readonly done: number;
+  readonly absent: number;
+  readonly noGrid: number;
+  readonly failed: number;
+  readonly picks: number;
+  readonly bids: number;
+  readonly events: number;
+  readonly picksDeferred: number;
+  readonly bidsDeferred: number;
+  readonly invariantViolations: number;
+  readonly pickChecked: number;
+  readonly pickFact: number;
+  readonly pickSpelling: number;
+  readonly bidChecked: number;
+  readonly bidFact: number;
+  readonly bidSpelling: number;
+}
+
+/** ⚠**세는 규칙은 한 벌이다**(M1) — 화면과 종료코드가 갈릴 자리를 없앤다 */
+export function summarizeWiki(reports: readonly WikiSeasonReport[]): WikiSummary {
+  const by = (st: WikiSeasonReport["state"]): number => reports.filter((r) => r.state === st).length;
+  const sum = (f: (r: WikiSeasonReport) => number): number => reports.reduce((a, r) => a + f(r), 0);
+  return {
+    targets: reports.length,
+    done: by("done"),
+    absent: by("absent"),
+    noGrid: by("no-grid"),
+    failed: by("failed"),
+    picks: sum((r) => r.wrote?.picks ?? 0),
+    bids: sum((r) => r.wrote?.bids ?? 0),
+    events: sum((r) => r.wrote?.events ?? 0),
+    picksDeferred: sum((r) => r.deferred?.picks ?? 0),
+    bidsDeferred: sum((r) => r.deferred?.bids ?? 0),
+    invariantViolations: sum((r) => r.invariantViolations.length),
+    pickChecked: sum((r) => r.pickChecked),
+    pickFact: sum((r) => r.pickFact),
+    pickSpelling: sum((r) => r.pickSpelling),
+    bidChecked: sum((r) => r.bidChecked),
+    bidFact: sum((r) => r.bidFact),
+    bidSpelling: sum((r) => r.bidSpelling),
+  };
+}
+
 /**
  * ⚠**진입점을 최상위에 두지 않는다.** 시험이 이 파일을 `import` 하는 순간 `parseArgs` 가
  * 돌아 `ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL` 로 죽는다(수집기 쪽에서 실측된 사고).
@@ -605,6 +876,7 @@ async function main(): Promise<void> {
   // 시계는 1회만 읽어 전체 적재에 같은 값을 쓴다(M6).
   const db = openDb(dbPath, new Date().toISOString());
   const reports: SeasonLoadReport[] = [];
+  const wiki: WikiSeasonReport[] = [];
   try {
     for (const season of targets) {
       const r = await loadDraftSeason(db, season, { archiveRoot });
@@ -626,6 +898,17 @@ async function main(): Promise<void> {
       } else {
         console.log(`${season}: 건너뜀 [${r.skipped?.kind}] ${r.skipped?.reason}`);
       }
+
+      /**
+       * ⚠**wikipedia 는 npb **뒤에** 돈다 — 순서가 뜻을 갖는다.**
+       * 「npb 가 말한 자리는 건너뛴다」를 DB 를 읽어 판정하므로, npb 가 먼저 들어와 있어야 한다.
+       * 뒤집으면 **같은 자리를 두 출처가 채우려다 PK 로 부딪치거나**, 더 나쁘게는
+       * npb 적재가 wikipedia 행을 못 보고 지나쳐 **두 판이 한 표에 남는다.**
+       */
+      const w = await loadDraftWikiSeason(db, season, { archiveRoot });
+      wiki.push(w);
+      console.log(`${season}: wiki ${wikiLine(w)}`);
+      for (const d of [...w.invariantViolations, ...w.pickDiffs, ...w.bidDiffs]) console.log(`    !! ${d}`);
     }
   } finally {
     db.close();
@@ -667,8 +950,63 @@ async function main(): Promise<void> {
     // ⚠**A7 — 재시도로 안 풀린다**(입력이 같으면 같은 예외). 다시 돌리라고 안내하지 않는다.
     console.log("⚠[load] 는 재시도로 풀리지 않는다 — 입력이 규칙에 안 맞는 것이라 사람이 봐야 한다");
   }
+  const w = summarizeWiki(wiki);
+  // ⚠**wikipedia 줄을 npb 줄과 섞지 않는다** — 같은 표에 들어가지만 **다른 소스이고 다른 규칙**이다.
+  console.log(
+    `\nwikipedia: 대상 ${w.targets}시즌 — 읽음 ${w.done} · 미수집 ${w.absent} ·`
+      + ` 미개최 ${w.noGrid} · 실패 ${w.failed}`,
+  );
+  if (w.done > 0) {
+    console.log(
+      `  적재: 지명 ${w.picks} · 입찰 ${w.bids} · 회의 ${w.events}`
+        + ` (npb 가 말해서 안 넣은 것: 지명 ${w.picksDeferred} · 입찰 ${w.bidsDeferred})`,
+    );
+    // ⚠**분모 없이 「불일치 0」이라고 쓰지 않는다.** 「0건」과 「안 쟀음」은 다른 말이다.
+    // ⚠**「사실」과 「표기」를 따로 센다** — 종료코드가 반응하는 것은 앞쪽뿐이다.
+    console.log(
+      `  대조: INV 위반 ${w.invariantViolations}`
+        + ` · X-3 사실 ${w.pickFact} · 표기 ${w.pickSpelling} / ${w.pickChecked}`
+        + ` · X-1 사실 ${w.bidFact} · 표기 ${w.bidSpelling} / ${w.bidChecked}`
+        + (w.bidChecked === 0 ? " ⚠X-1 은 **안 쟀다**(이 범위에 npb 경합 문장이 없다)" : ""),
+    );
+    if (w.pickSpelling > 0 || w.bidSpelling > 0) {
+      /**
+       * ⚠**표기 차는 결함이 아니지만 「없는 것」도 아니다**(M10). 이체자(`髙/高`·`﨑/崎`)와
+       * 등록명 축약이고, **정규화 넷 다 못 붙인다**(실측). 우리는 두 소스를 **이름으로 잇지 않으므로**
+       * 값이 틀리지는 않는다 — 그래도 **수가 움직이면 사람이 봐야 한다.**
+       */
+      console.log(
+        `⚠표기 차 ${w.pickSpelling + w.bidSpelling}건 — 이체자·등록명 축약이다(M10).`
+          + " 값에는 영향이 없지만 **수가 바뀌면 무엇이 바뀐 것인지 확인해라**(런북 §8)",
+      );
+    }
+  }
+  if (w.failed > 0) {
+    console.log("⚠wikipedia 실패는 재시도로 안 풀릴 수 있다 — 규칙이 바뀐 것이면 사람이 봐야 한다(M7)");
+  }
+  /**
+   * ⚠⚠**위의 npb 줄이 「검사가능 INV-N2」라고 말한 시즌에 이제 입찰이 있다.**
+   * `checkableInvariants` 는 **npb 적재 보고**만 보므로 그 줄은 여전히 「npb 는 경합을 안 쓴다」를
+   * 말한다 — 그건 참이지만, **DB 의 `draft_bid` 는 더 이상 0행이 아니다.**
+   * 두 문장을 나란히 두지 않으면 다음 사람이 런북 §3 의 A14 를 그대로 믿고
+   * 「이 시즌은 INV-N2 밖에 못 건다」고 읽는다.
+   */
+  const filled = wiki.filter((r) => (r.wrote?.bids ?? 0) > 0).map((r) => r.season);
+  if (filled.length > 0) {
+    console.log(
+      `⚠wikipedia 가 입찰을 채운 시즌 ${filled.length}개(${filled.join(",")}) —`
+        + " 위 npb 줄의 「검사가능」은 **npb 기준**이다. 그 시즌 draft_bid 는 이제 0행이 아니다",
+    );
+  }
+  /**
+   * ⚠**대조 불일치와 불변식 위반이 종료코드를 올린다.** 그것이 채택 게이트(`G-A`·`G-B`·`G-C`)이고,
+   * 조용해지면 **색을 잘못 읽어도 아무도 모른 채** 화면에 나간다.
+   * ⚠**`absent`·`no-grid` 는 올리지 않는다**(M11) — 자산이 아직 없는 것과 개최 전은 결함이 아니다.
+   */
+  // ⚠**`spelling` 은 종료코드를 안 올린다** — 위 주석의 그 이유다. 올리는 것은 `fact` 뿐이다.
+  const wikiBad = w.failed > 0 || w.invariantViolations > 0 || w.pickFact > 0 || w.bidFact > 0;
   // ⚠**`absent` 는 결함이 아니다**(M11) — 그것만으로는 종료코드를 올리지 않는다.
-  process.exitCode = s.exitCode;
+  process.exitCode = s.exitCode === 1 || wikiBad ? 1 : 0;
 }
 
 const entry = process.argv[1];

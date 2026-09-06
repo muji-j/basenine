@@ -198,7 +198,7 @@ function sectionKey(kind: DraftKind, team: string): string {
 }
 
 /** 회차가 정해진 지명 한 건. */
-interface NumberedPick {
+export interface NumberedPick {
   readonly row: DraftPickRow;
   readonly roundNo: number;
 }
@@ -218,8 +218,12 @@ interface NumberedPick {
  *   ⚠**「추첨이 있는 구획」이 아니다** — 갈라야 하는 이유는 그 상수 주석에 있다([I4]).
  *   추첨 구획이면 **일어난 적 없는 1巡目이 생기고** 그 위에 단독지명까지 유도되며,
  *   `ikusei` 면 **소스의 회차와 우리가 매긴 순번을 영영 구별할 수 없게** 된다.
+ *
+ * ⚠**내보내는 이유**(2026-09-06): wikipedia 적재기(`draft-wiki.ts`)가 **같은 규칙**을 써야 한다(M1).
+ * 회차 없는 제도에 1부터 순번을 매기는 것 · 섞이면 던지는 것 · 중복을 던지는 것 —
+ * 그 셋이 두 벌이 되면 **한쪽만 고쳐진 채로** 같은 표에 서로 다른 규칙으로 쓰이게 된다.
  */
-function numberRounds(season: number, picks: readonly DraftPickRow[]): NumberedPick[] {
+export function numberRounds(season: number, picks: readonly DraftPickRow[]): NumberedPick[] {
   const sections = new Map<string, number[]>();
   picks.forEach((p, i) => {
     const key = sectionKey(p.kind, p.team);
