@@ -28,7 +28,7 @@ npb.jp 의 드래프트 페이지를 **연 1회** 받아 아카이브에 넣고,
 
 ### ⚠새 해를 받으면 자산도 같이 올려라 — 안 올리면 화면에 안 나온다
 
-    node packages/archiver/src/cli-draft.ts --contact 307930238+muji-j@users.noreply.github.com --only <새해>
+    node packages/archiver/src/cli-draft.ts --contact "$BB_ARCHIVER_CONTACT" --only <새해>
     node packages/store/tools/load-draft-archive.ts data/archive data/bb.sqlite --only <새해>
     tar -cf /tmp/draft-archive.tar -C data archive/npb/draft
     gh release upload data-store /tmp/draft-archive.tar --clobber
@@ -73,14 +73,14 @@ npb.jp 의 드래프트 페이지를 **연 1회** 받아 아카이브에 넣고,
 
 ## 1. 수집 — 외부 요청이 나간다
 
-    node packages/archiver/src/cli-draft.ts --contact 307930238+muji-j@users.noreply.github.com --only 2026
+    node packages/archiver/src/cli-draft.ts --contact "$BB_ARCHIVER_CONTACT" --only 2026
 
 ⚠**평소에 돌릴 것은 이 형태다.** 새로 열린 해 **하나만** 받는다.
 **완결 시즌은 얼어 있으므로 다시 받는 것은 검사가 아니라 반복이다**(L7: 안 보내는 요청이 가장 안전한 요청).
 
 전 범위를 처음부터 받아야 할 때만:
 
-    node packages/archiver/src/cli-draft.ts --contact 307930238+muji-j@users.noreply.github.com --from 2005
+    node packages/archiver/src/cli-draft.ts --contact "$BB_ARCHIVER_CONTACT" --from 2005
 
 ⚠**`--to` 를 생략하면 상한이 없다**(소스가 나열하는 데까지). 해가 바뀌면 새 해가 저절로 들어오므로
 **연도를 박지 마라.** 반대로 `--only` 는 **범위 밖이면 exit 2** 로 거절한다 — 조용히 0건이 되지 않는다.
@@ -91,12 +91,21 @@ npb.jp 의 드래프트 페이지를 **연 1회** 받아 아카이브에 넣고,
 |---|---|
 | 플래그 | `--contact` (또는 환경변수 `BB_ARCHIVER_CONTACT`) |
 | 없으면 | **`exit 2`** — 요청이 한 건도 안 나간다 |
-| 지금 쓰는 값 | **`307930238+muji-j@users.noreply.github.com`** (사용자 결정 2026-09-05) |
+| 지금 쓰는 값 | ⚠**여기 적지 않는다.** 시크릿 **`BB_ARCHIVER_CONTACT`** 에 있다(사용자 결정 2026-09-05 · 주소 자체는 안 바꾼다 — 아래) |
 | 실제로 나가는 UA | `bb-app-archiver/0.1 (personal, non-commercial; <연락처>)` |
 
 ⚠⚠**이 주소는 남의 서버 액세스 로그에 영구히 남고 되돌릴 수 없다.**
 지우고 싶어도 우리 쪽에 지울 것이 없다. **다른 주소를 쓰기로 정하기 전까지 이 값을 바꾸지 마라** —
 바꾸면 상대 로그에 **두 개의 신원**이 남는다.
+
+⚠⚠**문서에 평문으로 적지 않는다**(2026-09-06 · 공개 감사 지적). 그 값은 워크플로가
+**시크릿으로 넘기고 실행 로그에서 `***` 로 가려진다** — 문서가 평문으로 적으면 **그 가림이 무의미해진다.**
+명령 예시도 `--contact "$BB_ARCHIVER_CONTACT"` 로 쓴다. 로컬에서 돌릴 때는 그 환경변수를 먼저 넣어라.
+
+⚠**주소 자체는 바꾸지 않는다.** 이미 npb.jp·ja.wikipedia 액세스 로그에 남았고 되돌릴 수 없다 —
+바꾸면 **상대 로그에 신원이 둘**이 된다(위 「연락처는 필수다」 참조).
+⚠**GitHub 의 `users.noreply.github.com` 으로 바꾸지도 마라 — 수신함이 없다.**
+L1 이 요구하는 것은 「식별 가능」이 아니라 **「닿는」** 연락처다.
 
 ### ⚠간격은 늘릴 때만 건드린다
 
@@ -428,11 +437,11 @@ wikipedia 는 **npb 가 말하지 않는 자리만** 채운다(§2-4 신뢰 등�
 
 ### 8-2. 수집 — 외부 요청이 나간다 (연 1회)
 
-    node packages/archiver/src/cli-draft-wiki.ts --contact 307930238+muji-j@users.noreply.github.com --only 2026
+    node packages/archiver/src/cli-draft-wiki.ts --contact "$BB_ARCHIVER_CONTACT" --only 2026
 
 전 범위:
 
-    node packages/archiver/src/cli-draft-wiki.ts --contact 307930238+muji-j@users.noreply.github.com --from 2005 --to 2026
+    node packages/archiver/src/cli-draft-wiki.ts --contact "$BB_ARCHIVER_CONTACT" --from 2005 --to 2026
 
 ⚠**npb 쪽과 다른 것 셋. 「같은 코드니까 같겠지」로 넘기면 틀린다.**
 
