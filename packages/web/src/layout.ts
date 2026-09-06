@@ -485,6 +485,27 @@ function topbar(o: PageOptions): RawHtml {
   };
   const brand = o.navTo("index.html");
   /**
+   * **검색이 뒤지는 시즌.**
+   *
+   * ⚠⚠**검색창이 조용히 다른 해를 뒤지고 있었다**(2026-09-07 이중 검토 P0). 이 상자가 쓰는 것은
+   * 전부 시즌 자산이다 — 색인 `players.json` · 결과 링크 `players/*.html` · 「すべて見る」의
+   * `players.html`. **일부 화면만 굽는 시즌**(드래프트만 있는 2005~2017)에는 그게 하나도 없어서
+   * `data-base` 가 이미 **그 자산이 있는 시즌**을 가리키는데(`page()` 의 `assetBase`),
+   * **화면은 그 사실을 한 마디도 안 했다** — 2010년 화면에서 검색하면 2010년에 뛴 선수가 아니라
+   * **2026년 선수가 나온다.** 「틀린 값을 조용히 보여주는」 그 모양이다(CLAUDE.md §6).
+   * ⚠**링크 검사가 못 잡는다** — 그 URL 은 클라이언트가 `fetch` 로 만든다.
+   * ⚠**시즌 해석을 여기서 다시 하지 않는다**(M1) — `assetBase` 와 **같은 물음**을 던진다.
+   *   따로 세면 어느 날 검색은 2026 을 뒤지는데 화면은 2025 라고 말하게 된다.
+   * ⚠**보이는 글자에 해를 적는다.** 내비의 `→` 는 「여기가 아니다」까지만 말하는데,
+   *   검색은 **누르기 전에 결과가 어느 해 것인지** 알아야 고르는 조작이라 한 겹 더 필요하다.
+   *   설명문(괄호 안)은 내비·시즌 띠와 **같은 어휘**를 쓴다(M1) — 새 말투를 하나 더 만들지 않는다.
+   * ⚠**보이는 글자가 이름 안에 있어야 한다**(WCAG 2.5.3) — 그래서 이름이 placeholder 로 시작한다.
+   * ⚠**보통 화면에서는 지금까지와 한 바이트도 다르지 않다**(`toSeason === null`).
+   */
+  const roster = o.navTo(ROSTER_PATH);
+  const qLabel = roster.toSeason === null ? "選手を検索" : `${roster.toSeason}年の選手を検索`;
+  const qName = roster.toSeason === null ? html` aria-label="${qLabel}"` : away(roster, qLabel);
+  /**
    * ⚠**검색 드롭다운을 `listbox`/`combobox` 라고 부르지 않는다**(2026-08-20 유저 결정).
    *
    * 이 목록에는 **결과가 아닌 줄**이 섞인다 — 「該当なし」·「読み込み中…」과 끝의 안내줄이다.
@@ -504,7 +525,7 @@ function topbar(o: PageOptions): RawHtml {
   <!-- ⚠**브랜드는 홈으로 간다.** 2026-08-17부터 홈은 대시보드이고, 선수 일람은 위 ROSTER_PATH 다 -->
   <a class="brand" href="${brand.href}"${here("home")}${away(brand, `${o.site.name} by Lunomel`)}>${o.site.name}<b>by Lunomel</b>${awayMark(brand)}</a>
   <div class="qbox">
-    <input id="q" type="search" autocomplete="off" placeholder="選手を検索" aria-label="選手を検索">
+    <input id="q" type="search" autocomplete="off" placeholder="${qLabel}"${qName}>
     <ul class="qhits" id="qhits" role="list" aria-label="検索結果" hidden></ul>
     <p class="vh" data-hitstatus role="status"></p>
   </div>
