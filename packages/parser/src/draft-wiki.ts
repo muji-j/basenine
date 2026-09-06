@@ -256,7 +256,7 @@ const COMMENT = "#comment";
  * 구분자가 값 안에 나올 수 있으면 서로 다른 두 쌍이 같은 키가 된다.
  * (`store/src/draft.ts` 의 `SEP` 과 같은 이유 · 그쪽과 층이 달라 값만 나란히 둔다.)
  */
-const SEP = " ";
+const SEP = "\u0000";
 
 function scanTags(html: string, where: string, from = 0, to = html.length): Tag[] {
   const out: Tag[] = [];
