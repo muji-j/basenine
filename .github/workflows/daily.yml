@@ -104,6 +104,12 @@ concurrency:
 env:
   # 아카이브·DB를 담아 두는 릴리스. 코드 릴리스가 아니라 **데이터 보관소**다
   DATA_TAG: data-store
+  # ⚠**보관소가 이 저장소에 있지 않다**(2026-09-06). 코드 저장소를 공개하기 위해 갈랐다 —
+  #   릴리스 자산은 공개 저장소에서 **누구나 받아 가고**, 그 안은 npb.jp 원본 그대로다(§2-5 2·3층).
+  #   `docs/decisions/2026-09-06-repo-public-and-data-store.md`
+  # ⚠**여기 있는 `gh release` 는 전부 `--repo "$DATA_REPO"` 를 붙인다.** 안 붙이면
+  #   **조용히 코드 저장소를 보고**, 거기엔 자산이 없으므로 「첫 실행」으로 오인해 전부 다시 만든다.
+  DATA_REPO: muji-j/bb-app-data
 
 jobs:
   # ─────────────────────────────────────────────────────────────────
@@ -216,7 +222,7 @@ jobs:
       - name: 의존성 설치
         run: npm ci --no-audit --no-fund
 
-      - name: L6 확인 — 리포가 공개면 여기서 멈춘다
+      - name: L6 확인 — 원시 아카이브가 공개될 수 있으면 여기서 멈춘다
         # ⚠**L6(원시 아카이브는 내부 보관)의 유일한 근거가 「이 리포가 비공개다」인데,
         #   그것을 확인하는 코드가 한 줄도 없었다**(2026-08-18 감사 P2).
         #   설정을 한 번 뒤집으면 **154MB 의 npb.jp 원본**이 릴리스 자산째로 공개된다 —
@@ -225,6 +231,14 @@ jobs:
         # ⚠**수집하기 전에 본다** — 올린 뒤에 알면 늦다.
         env:
           GH_TOKEN: ${{ github.token }}
+          DATA_TOKEN: ${{ secrets.BB_DATA_TOKEN }}
+        # ⚠**게이트의 뜻이 바뀌었다**(2026-09-06). 예전에는 「**이 저장소**가 공개면 멈춘다」였다.
+        #   이제 코드 저장소는 **공개해도 된다** — 원시 아카이브가 거기 없기 때문이다.
+        #   그래서 묻는 것이 둘로 늘었다:
+        #     ⑴ **데이터 저장소가 비공개인가** — 원본이 실제로 있는 곳이다
+        #     ⑵ **코드 저장소의 보관소 릴리스에 자산이 0건인가** — 옛 자산이 남아 있으면
+        #        공개로 뒤집는 순간 그대로 새 나간다. ⚠**이전이 끝났는지를 매일 다시 묻는 것이다.**
+        # ⚠**⑵ 를 「한 번 지웠으니 됐다」로 빼지 마라** — 사람이 손으로 다시 올릴 수 있다.
         # ⚠**흔들리는 네트워크 호출을 소급 불가 파이프라인 앞의 하드 게이트로 두면 안 된다.**
         #   처음에 `gh repo view --json visibility`(**GraphQL**)를 재시도 없이 썼다가,
         #   GitHub 장애일 때 **503 한 번에 그날 수집이 통째로 막혔다**(run 32055778604 · 21초 만에 실패).
@@ -235,41 +249,66 @@ jobs:
         #   자동으로 통과시키면 이 게이트는 있으나 마나가 된다.
         run: |
           set -euo pipefail
+
+          # ⑴ 데이터 저장소가 비공개인가 — 원본이 실제로 있는 곳이다
           priv=""
           for i in 1 2 3; do
-            if priv=$(gh api repos/${GITHUB_REPOSITORY} --jq .private 2>/dev/null); then break; fi
-            echo "공개 범위 조회 ${i}회 실패 — 20초 뒤 재시도"
+            if priv=$(GH_TOKEN="$DATA_TOKEN" gh api "repos/$DATA_REPO" --jq .private 2>/dev/null); then break; fi
+            echo "데이터 저장소 공개 범위 조회 ${i}회 실패 — 20초 뒤 재시도"
             sleep 20
             priv=""
           done
           if [ -z "$priv" ]; then
-            echo "::error::리포의 공개 범위를 확인하지 못했다(GitHub API 응답 없음). L6 를 확인할 수 없으므로 멈춘다."
+            echo "::error::데이터 저장소($DATA_REPO)의 공개 범위를 확인하지 못했다. L6 를 확인할 수 없으므로 멈춘다."
             exit 1
           fi
-          echo "리포 비공개 여부: ${priv}"
+          echo "데이터 저장소 비공개 여부: ${priv}"
           if [ "$priv" != "true" ]; then
-            echo "::error::L6 위반 — 이 리포가 공개다. 원시 아카이브(npb.jp 원본)가 공개된다."
-            echo "공개로 전환하려면 먼저 릴리스 자산에서 아카이브를 내리고 CLAUDE.md §2-5 를 다시 판정하라."
+            echo "::error::L6 위반 — 데이터 저장소($DATA_REPO)가 공개다. 원시 아카이브(npb.jp 원본)가 공개된다."
+            exit 1
+          fi
+
+          # ⑵ 코드 저장소에 옛 보관소 자산이 남아 있지 않은가
+          #    ⚠릴리스 자체가 없으면 「0건」이다 — 그게 정상이고, 조회 실패와 구별한다.
+          left=""
+          for i in 1 2 3; do
+            if ! gh release view "$DATA_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              left=0; break
+            fi
+            if left=$(gh release view "$DATA_TAG" --repo "$GITHUB_REPOSITORY" \
+                        --json assets --jq '.assets | length' 2>/dev/null); then break; fi
+            echo "코드 저장소 자산 조회 ${i}회 실패 — 20초 뒤 재시도"
+            sleep 20
+            left=""
+          done
+          if [ -z "$left" ]; then
+            echo "::error::코드 저장소의 보관소 자산을 확인하지 못했다. L6 를 확인할 수 없으므로 멈춘다."
+            exit 1
+          fi
+          echo "코드 저장소에 남은 보관소 자산: ${left}건"
+          if [ "$left" != "0" ]; then
+            echo "::error::L6 위반 위험 — 코드 저장소의 '$DATA_TAG' 릴리스에 자산이 ${left}건 남아 있다."
+            echo "이 저장소를 공개하면 그대로 나간다. 데이터 저장소로 옮기고 여기서 지워라."
             exit 1
           fi
 
       - name: 아카이브·DB 복원
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.BB_DATA_TOKEN }}
         run: |
           set -euo pipefail
           mkdir -p data
-          if gh release view "$DATA_TAG" >/dev/null 2>&1; then
+          if gh release view "$DATA_TAG" --repo "$DATA_REPO" >/dev/null 2>&1; then
             # ⚠**필요한 것만 받는다**(2026-08-26). 예전에는 `gh release download` 를 인자 없이 불러
             #   **자산을 전부** 받았다 — 세대 보관을 넣는 순간 그건 **매일 세대 전부(329MiB × N)를
             #   내려받는다**는 뜻이 된다. `--pattern` 은 여러 번 줄 수 있다(실측 확인).
             # ⚠**세대 이름은 `store-` 다.** `archive-*` 를 쓰면 아래 「덧붙임 자산」 전개가
             #   세대를 백필로 오인해 **전부 풀어 버린다** — 접두사를 나눈 이유가 그것이다.
-            newest=$(gh release view "$DATA_TAG" --json assets \
+            newest=$(gh release view "$DATA_TAG" --repo "$DATA_REPO" --json assets \
               --jq '[.assets[].name | select(startswith("store-"))] | sort | last // ""')
             if [ -n "$newest" ]; then
               echo "보관소 세대: $newest"
-              gh release download "$DATA_TAG" --dir /tmp/store --clobber \
+              gh release download "$DATA_TAG" --repo "$DATA_REPO" --dir /tmp/store --clobber \
                 --pattern "$newest" --pattern 'archive-*.tar' --pattern 'bb.sqlite.gz'
               tar -xf "/tmp/store/$newest" -C data
             else
@@ -277,7 +316,7 @@ jobs:
               #   ⚠`archive.tar` 는 이 전환 뒤로 **갱신되지 않는다** — 마지막으로 알려진 좋은 사본으로
               #   남겨 두고, 세대가 쌓인 뒤 사람이 지운다.
               echo "세대가 없다 — 옛 이름(archive.tar)으로 복원한다"
-              gh release download "$DATA_TAG" --dir /tmp/store --clobber \
+              gh release download "$DATA_TAG" --repo "$DATA_REPO" --dir /tmp/store --clobber \
                 --pattern 'archive.tar' --pattern 'archive-*.tar' --pattern 'bb.sqlite.gz'
               tar -xf /tmp/store/archive.tar -C data
             fi
@@ -328,7 +367,7 @@ jobs:
         #     경기 수집은 그날치가 밀린다. **두 손해의 크기가 다르므로 같은 운명에 묶지 않는다.**
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.BB_DATA_TOKEN }}
         # ⚠**외부 요청이 0이다.** npb.jp 는 `ETag` 도 `Last-Modified` 도 안 준다
         #   (사이드카 275장 전수 실측 · `docs/operations/draft-backfill.md` §1). 즉 L7 조건부 요청이
         #   이 소스에서 아무것도 절약하지 못하고, 다시 받는 것은 **275요청을 상대에게 다시 무는 일**이다.
@@ -340,7 +379,7 @@ jobs:
         # ⚠**연 1회 갱신이다.** 새 해를 받은 사람이 이 자산을 다시 올려야 반영된다(런북 §1).
         run: |
           set -euo pipefail
-          if ! gh release download "$DATA_TAG" --dir /tmp/draft --clobber --pattern 'draft-archive.tar'; then
+          if ! gh release download "$DATA_TAG" --repo "$DATA_REPO" --dir /tmp/draft --clobber --pattern 'draft-archive.tar'; then
             echo "⚠보관소에 draft-archive.tar 가 없다 — 이번 실행의 드래프트 화면은 비어 나간다"
             exit 0
           fi
@@ -440,7 +479,7 @@ jobs:
         # ⚠**잡 전체는 여전히 실패로 끝난다** — 배포는 `success()` 라 막히고, 사람이 알아챈다.
         if: always() && steps.guard.outcome == 'success'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.BB_DATA_TOKEN }}
         run: |
           set -euo pipefail
           # ⚠**세대 이름은 날짜다**(2026-08-26). `store-YYYYMMDD.tar`.
@@ -469,8 +508,8 @@ jobs:
             assets="/tmp/$GEN"
           fi
 
-          gh release view "$DATA_TAG" >/dev/null 2>&1 || \
-            gh release create "$DATA_TAG" \
+          gh release view "$DATA_TAG" --repo "$DATA_REPO" >/dev/null 2>&1 || \
+            gh release create "$DATA_TAG" --repo "$DATA_REPO" \
               --title "데이터 보관소" \
               --notes "일일 수집이 덮어쓴다. 코드 릴리스가 아니다." \
               --latest=false
@@ -500,7 +539,7 @@ jobs:
           #   (아래 「기록 갱신과 커밋」의 푸시 재시도와 같은 모양).
           uploaded=0
           for i in 1 2 3 4 5; do
-            if gh release upload "$DATA_TAG" $assets --clobber; then
+            if gh release upload "$DATA_TAG" --repo "$DATA_REPO" $assets --clobber; then
               uploaded=1; break
             fi
             echo "보관소 업로드 ${i}회 실패 — ${i}0초 뒤 재시도"
@@ -514,7 +553,7 @@ jobs:
           for a in $assets; do
             want=$(wc -c < "$a")
             name=$(basename "$a")
-            got=$(gh release view "$DATA_TAG" --json assets                     --jq ".assets[] | select(.name==\"$name\") | .size")
+            got=$(gh release view "$DATA_TAG" --repo "$DATA_REPO" --json assets                     --jq ".assets[] | select(.name==\"$name\") | .size")
             if [ -z "$got" ]; then
               echo "::error::보관소에 $name 이 없다 — 업로드가 성공했다고 보고했는데 자산이 없다"
               exit 1
@@ -539,7 +578,7 @@ jobs:
             while IFS= read -r a; do
               [ -n "$a" ] || continue
               echo "흡수된 덧붙임 삭제: $a"
-              gh release delete-asset "$DATA_TAG" "$a" --yes
+              gh release delete-asset "$DATA_TAG" --repo "$DATA_REPO" "$a" --yes
             done < /tmp/absorbed.txt
           fi
 
@@ -547,7 +586,7 @@ jobs:
           #   하나가 329MiB 라 KEEP 을 키우면 그만큼 보관소가 커진다.
           #   ⚠**KEEP=1 로 두지 마라** — 그러면 오늘 것뿐이고, 그건 세대 보관이 아니다.
           KEEP=3
-          gens=$(gh release view "$DATA_TAG" --json assets \
+          gens=$(gh release view "$DATA_TAG" --repo "$DATA_REPO" --json assets \
             --jq '[.assets[].name | select(startswith("store-"))] | sort | .[]')
           # ⚠**`grep -c || true` 로 세지 않는다** — `set -o pipefail` 아래에서 「0건」과 「실패」가
           #   같은 종료 코드가 되고, 그걸 `|| true` 로 덮으면 **어느 쪽인지 알 수 없다.**
@@ -556,7 +595,7 @@ jobs:
             printf '%s\n' "$gens" | head -n "$((n - KEEP))" | while IFS= read -r old; do
               [ -n "$old" ] || continue
               echo "옛 세대 삭제: $old (보관 $KEEP)"
-              gh release delete-asset "$DATA_TAG" "$old" --yes
+              gh release delete-asset "$DATA_TAG" --repo "$DATA_REPO" "$old" --yes
             done
           fi
           echo "세대 $n개 · 보관 $KEEP개"
