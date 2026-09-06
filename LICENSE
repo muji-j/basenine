@@ -1,0 +1,47 @@
+MIT License
+
+Copyright (c) 2026 muji-j
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+## ⚠ What this license does NOT cover
+
+**This license applies to the source code of this repository only.**
+
+1. **Baseball records and statistics.** The underlying records come from the
+   Nippon Professional Baseball Organization (npb.jp). They are not ours to
+   license. This repository does not contain them — the collected archive and
+   the derived database are kept outside this repository.
+
+2. **`packages/parser/test/fixtures/wiki-*.html.gz`** — these are pages from
+   ja.wikipedia and are licensed under **CC BY-SA 4.0**, not MIT. Each file
+   carries its own canonical URL and license link inside its bytes.
+   https://creativecommons.org/licenses/by-sa/4.0/
+
+3. **Generated pages.** The published site presents values this project
+   recalculated from public records. It does not reproduce the original
+   tables. If you republish those values, cite npb.jp as the source of the
+   records.
+
+⚠ **Running this code makes network requests under your own identity.**
+Set `BB_ARCHIVER_CONTACT` to a contact address that actually receives mail.
+The collector is deliberately slow (1 request per 2–5 seconds, single
+connection). Do not remove that limit.
