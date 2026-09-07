@@ -82,7 +82,15 @@ const NAMED_ENTITIES: Readonly<Record<string, number>> = {
 
 /**
  * ⚠**모르는 이름 엔티티는 풀지 않는다** — 억지로 풀면 없는 글자를 만들어 낸다.
- * 안 풀어도 손해가 없다(그 글자들은 전부 ASCII 라 바닥에 이미 있다).
+ *
+ * ⚠**~~안 풀어도 손해가 없다~~ 는 거짓이었다**(2026-09-08 3차 검토 · P3).
+ * 위 표에 없는 이름(`&copy;` 등)은 **조용히 무시**되므로 **그 형태로만 존재하는 글자가
+ * 요구 목록에서 통째로 빠진다** — 화면에는 나오는데 부분집합에는 없다.
+ * → **여기서는 여전히 안 푼다**(없는 글자를 만들지 않는다) — 대신 **부르는 쪽이 이름을 받아
+ * 빌드를 세운다**(`scanBytes`/`scanChars` 의 반환값 · `collectUsedChars.unknownEntities`).
+ * ⚠**HTML5 이름 개체는 2,231종이라 표로 다 담지 않는다.** 담아야 할 이름이 생기면
+ * **그때 그 이름만** 위 표에 더해라 — 실측(2026-09-08 · dist 전수)으로 `.html`/`.svg` 의
+ * 이름 개체는 `&amp;` **1건이 전부**다.
  */
 export function entityCodePoint(body: string): number | undefined {
   if (body.startsWith("#x") || body.startsWith("#X")) {
@@ -99,6 +107,75 @@ export function entityCodePoint(body: string): number | undefined {
 const ENTITY_RE = /^&(#x[0-9a-fA-F]{1,6}|#\d{1,7}|[a-zA-Z][a-zA-Z0-9]{1,31});/;
 
 /**
+ * `\uXXXX` · `\u{XXXXX}` · `\xXX` 를 읽는다.
+ *
+ * ⚠**이스케이프로만 존재하는 글자를 놓치지 않기 위해서다**(2026-09-08 3차 검토 · P3).
+ * `"髙"` 는 바이트로 보면 ASCII 뿐이라, 안 풀면 **髙 가 요구 목록에서 통째로 빠진다** —
+ * 화면에는 나오는데 부분집합에는 없는, 이 게이트가 막으려는 바로 그 상태다.
+ *
+ * ⚠**서러게이트 쌍을 먼저 본다.** `𠮷` 을 반쪽씩 세면 **어느 서체에도 없는
+ * 외톨이 서러게이트**를 요구하게 되어 빌드가 거짓으로 붉어진다. 짝이 없는 반쪽은 **안 센다**
+ * (「없는 글자를 만들지 않는다」의 같은 원칙).
+ *
+ * ⚠**CSS 고유의 `\4E9C` 꼴(마커 없는 16진)은 풀지 않는다** — 정규식의 `\b`·`\d` 와
+ * 글자 그대로 같은 모양이라 **없는 글자를 만들어 낸다**(`\bd` → U+00BD). 실측(2026-09-08 ·
+ * dist 전수)으로 `.css` 의 역슬래시는 **0개**이고, `.html` 도 **0개**다(전체 1개 · `.js` 의 정규식).
+ * 필요해지면 **확장자를 봐서** 그때 더해라.
+ */
+const ESCAPE_PAIR_RE = /^\\u([dD][89abAB][0-9a-fA-F]{2})\\u([dD][c-fC-F][0-9a-fA-F]{2})/;
+const ESCAPE_RE = /^\\(?:u\{([0-9a-fA-F]{1,6})\}|u([0-9a-fA-F]{4})|x([0-9a-fA-F]{2}))/;
+
+export function escapeCodePoint(text: string): number | undefined {
+  const pair = ESCAPE_PAIR_RE.exec(text);
+  if (pair !== null) {
+    return (Number.parseInt(pair[1]!, 16) - 0xd800) * 0x400 + (Number.parseInt(pair[2]!, 16) - 0xdc00) + 0x10000;
+  }
+  const m = ESCAPE_RE.exec(text);
+  if (m === null) return undefined;
+  const cp = Number.parseInt(m[1] ?? m[2] ?? m[3]!, 16);
+  if (!Number.isFinite(cp) || cp <= 0 || cp > 0x10ffff) return undefined;
+  // ⚠짝을 못 이룬 서러게이트는 글자가 아니다 — 세면 전 서체가 「못 덮는다」로 붉어진다
+  if (cp >= 0xd800 && cp <= 0xdfff) return undefined;
+  return cp;
+}
+
+/** 이스케이프 한 개가 차지할 수 있는 최대 길이(`𠮷` = 12) + 여유 */
+const ESCAPE_WINDOW = 14;
+
+/**
+ * 이 키워드 **뒤**의 `/` 는 나눗셈이 아니라 정규식이다 — `return /x/.test(s)`.
+ * ⚠식별자 뒤는 기본이 나눗셈이므로, 이 목록이 없으면 그 흔한 모양이 위 사고를 낸다.
+ */
+const REGEX_AFTER_KEYWORD: ReadonlySet<string> = new Set([
+  "return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw",
+  "case", "do", "else", "yield", "await",
+]);
+
+/**
+ * 직전 토큰으로 「이 `/` 가 정규식을 여는가」를 가른다(표준 휴리스틱).
+ *
+ * ⚠**남는 애매함 둘을 적어 둔다** — `)` 와 `}` 뒤다. `if(a)/re/.test(b)` 와 블록 `}` 뒤의
+ * 정규식은 **나눗셈으로 읽힌다.** 반대로 고르면 훨씬 흔한 `(a+b)/2 // 주석` 이 깨져
+ * 주석의 한글이 요구 목록에 들어간다(빌드가 거짓으로 붉어진다).
+ * ⚠**실측(2026-09-08 · `dist/assets/site.js`)**: `/` 50개 중 `)` 가 앞선 2개는 둘 다
+ * **정규식을 닫는 슬래시**라 이 판정에 오지 않고, `}` 가 앞선 것은 **0개**다.
+ * 그 두 모양이 번들에 들어오면 여기를 다시 판단하라.
+ *
+ * ⚠**이 함수는 TypeScript 도 읽는다**(`forced-colors.test.ts` 가 `.ts` 소스에 쓴다).
+ * 그래서 **뒤에 붙는 `!`(non-null 단언)와 앞에 붙는 `!`(부정)를 갈라야 한다** —
+ * `sum.get(k)! / count` 와 `!/re/.test(s)` 가 글자로는 같다. **앞 글자로 가른다.**
+ * ⚠**안 가르면 저장소에서 7건이 걸렸다**(2026-09-08 실측 · `run-expectancy.ts` ·
+ * `woba-weights.ts` · `asrc-asrp-measure.ts` ×4 · `woba-weights-derive.ts` — 전부 나눗셈).
+ */
+function regexAllowed(lastSig: string, prevSig: string, lastWord: string): boolean {
+  if (lastSig === "") return true; // 파일의 첫 토큰
+  if (/[A-Za-z0-9_$]/.test(lastSig)) return REGEX_AFTER_KEYWORD.has(lastWord);
+  // ⚠피연산자 뒤의 `!` 는 TS 의 non-null 단언 — 그 뒤의 `/` 는 나눗셈이다
+  if (lastSig === "!") return !/[A-Za-z0-9_$)\]"'`]/.test(prevSig);
+  return !")]}\"'`.".includes(lastSig);
+}
+
+/**
  * ⚠**JS 주석은 안 센다 — 그리지 않기 때문이다.**
  *
  * 실측(2026-09-08 · `dist/assets/site.js`): 이 번들은 **줄 주석 5줄**에 한국어를 담고 있고,
@@ -107,8 +184,28 @@ const ENTITY_RE = /^&(#x[0-9a-fA-F]{1,6}|#\d{1,7}|[a-zA-Z][a-zA-Z0-9]{1,31});/;
  *
  * ⚠**문자열은 절대 지우지 않는다** — 지우면 §5-C 가 막으려는 「덜 센다」가 된다.
  * 그래서 따옴표·역따옴표 상태를 좇는다.
- * ⚠**정규식 리터럴은 안 좇는다.** `/[/*]/` 같은 것이 있으면 어긋나는데, 어긋나면
- * 끝에서 상태가 안 돌아오므로 **던진다**(조용히 삼키지 않는다). 실측으로 이 번들에는 없다.
+ *
+ * ## ⚠정규식 리터럴을 좇는다 — ~~안 좇는다~~ 는 침묵 실패였다 (2026-09-08 3차 검토 · P2)
+ *
+ * 옛 판은 「`/[/*]/` 같은 것이 있으면 어긋나는데, 어긋나면 끝에서 상태가 안 돌아오므로 **던진다**」
+ * 고 적었다. **그 주장이 이 입력에서 성립하지 않는다:**
+ *
+ * ```
+ * const r=/\//;document.body.textContent="髙";
+ * ```
+ *
+ * 이스케이프된 슬래시의 **두 번째 글자**와 **정규식을 닫는 슬래시**가 붙어 `//` 를 만들고,
+ * 옛 판은 그 자리에서 줄 주석으로 들어가 **그 줄의 나머지를 통째로 주석으로 분류**했다 —
+ * **던지지 않고 조용히.** 髙 는 요구 목록에서 사라지고 화면에서는 시스템 폰트로 떨어진다.
+ * **정확히 이 게이트가 막으려던 결함이다.**
+ *
+ * ⚠**어느 쪽으로 틀리는가가 여기서 전부다.**
+ *   · 나눗셈을 정규식으로 잘못 보면 → 그 구간이 전부 `code` 로 간다. **덜 세지 않는다.**
+ *     주석 하나를 코드로 셀 수는 있고 그러면 빌드가 붉어진다 — **시끄럽지만 안전하다.**
+ *   · 정규식을 나눗셈으로 잘못 보면 → 위 사고 그대로. **조용히 글자가 빠진다.**
+ * 그래서 애매하면 **정규식 쪽으로 기울이되**, 흔한 나눗셈(`(a+b)/2 // 주석`)을 깨지 않는
+ * 표준 휴리스틱을 쓴다(`regexAllowed`).
+ *
  * ⚠**떨어져 나간 글자는 부르는 쪽이 받아서 보고한다** — 「조용히 뺐다」가 되지 않게.
  */
 export function stripJsComments(src: string): { code: string; comments: string } {
@@ -116,10 +213,38 @@ export function stripJsComments(src: string): { code: string; comments: string }
   let comments = "";
   let i = 0;
   const n = src.length;
-  let state: "code" | "sq" | "dq" | "tpl" | "line" | "block" = "code";
+  let state: "code" | "sq" | "dq" | "tpl" | "line" | "block" | "re" = "code";
+  /** 정규식의 `[...]` 안에서는 `/` 가 정규식을 닫지 않는다 */
+  let inClass = false;
+  /**
+   * ⚠**보간(`${…}`)을 좇는다 — 안 좇으면 안쪽 템플릿의 여는 역따옴표가 바깥을 닫는다.**
+   *
+   * 이 저장소의 화면 코드는 `html\`…${cond ? html\`…\` : raw("")}…\`` 모양이 흔한데,
+   * 옛 판은 `${}` 를 모르므로 **안쪽 역따옴표를 바깥의 닫는 짝으로 읽고** 거기서부터
+   * 템플릿 내용을 코드로 셌다. 그 상태에서 `</span>` 의 `<` 뒤 `/` 가 나오면
+   * **정규식 판정에 걸린다** — 즉 이 결함은 원래 있었고 옛 판에서는 조용했다.
+   * ⚠**같은 이유로 보간 안의 `//` 주석도 옛 판은 코드로 셌다.** 여기서 함께 낫는다.
+   *
+   * 쌓는 것은 **보간에 들어가기 직전의 중괄호 깊이**다. `}` 를 만났을 때 깊이가 0이고
+   * 이 스택이 비어 있지 않으면 그 `}` 가 보간을 닫는 것이다.
+   */
+  const tplStack: number[] = [];
+  let braceDepth = 0;
+  /** 마지막으로 code 에 넣은 **공백 아닌** 글자 · 그 앞의 것 · 그 자리에서 끝나는 식별자 */
+  let lastSig = "";
+  let prevSig = "";
+  let lastWord = "";
+  const push = (ch: string): void => {
+    code += ch;
+    if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r") return;
+    prevSig = lastSig;
+    lastSig = ch;
+    lastWord = /[A-Za-z0-9_$]/.test(ch) ? lastWord + ch : "";
+  };
   while (i < n) {
     const c = src[i]!;
     if (state === "code") {
+      // ⚠**주석 판정이 먼저다.** 빈 정규식 `//` 도 `/*` 로 시작하는 정규식도 JS 에 없다
       if (c === "/" && src[i + 1] === "/") {
         state = "line";
         i += 2;
@@ -130,17 +255,63 @@ export function stripJsComments(src: string): { code: string; comments: string }
         i += 2;
         continue;
       }
+      if (c === "/" && regexAllowed(lastSig, prevSig, lastWord)) {
+        state = "re";
+        inClass = false;
+        push(c);
+        i += 1;
+        continue;
+      }
       if (c === "'") state = "sq";
       else if (c === '"') state = "dq";
       else if (c === "`") state = "tpl";
-      code += c;
+      else if (c === "{") braceDepth += 1;
+      else if (c === "}") {
+        if (braceDepth === 0 && tplStack.length > 0) {
+          // ⚠이 `}` 는 블록이 아니라 **보간을 닫는다** — 바깥 템플릿으로 돌아간다
+          braceDepth = tplStack.pop()!;
+          state = "tpl";
+        } else if (braceDepth > 0) braceDepth -= 1;
+      }
+      push(c);
+      i += 1;
+      continue;
+    }
+    if (state === "re") {
+      push(c);
+      if (c === "\\") {
+        // ⚠**이스케이프는 통째로 넘긴다** — `/\//` 의 두 번째 글자가 정규식을 닫지 않게
+        if (i + 1 < n) push(src[i + 1]!);
+        i += 2;
+        continue;
+      }
+      if (c === "\n") {
+        // ⚠**정규식 리터럴은 줄을 넘지 못한다.** 여기 왔다는 것은 위 판정이 틀렸다는 뜻이고,
+        //   그대로 두면 다음 줄의 주석을 코드로 세게 된다 — **조용히 넘기지 않는다.**
+        throw new Error(
+          "JS 주석 제거가 어긋났다(정규식 리터럴이 줄을 넘었다) — `/` 를 정규식으로 잘못 읽었다. " +
+            "regexAllowed 의 판정을 다시 보라.",
+        );
+      }
+      if (c === "[") inClass = true;
+      else if (c === "]") inClass = false;
+      else if (c === "/" && !inClass) state = "code";
       i += 1;
       continue;
     }
     if (state === "sq" || state === "dq" || state === "tpl") {
-      code += c;
+      push(c);
       if (c === "\\") {
-        if (i + 1 < n) code += src[i + 1]!;
+        if (i + 1 < n) push(src[i + 1]!);
+        i += 2;
+        continue;
+      }
+      if (state === "tpl" && c === "$" && src[i + 1] === "{") {
+        // ⚠**보간 안은 코드다** — 여기 있는 주석·정규식·중첩 템플릿을 전부 제대로 봐야 한다
+        push("{");
+        tplStack.push(braceDepth);
+        braceDepth = 0;
+        state = "code";
         i += 2;
         continue;
       }
@@ -154,7 +325,7 @@ export function stripJsComments(src: string): { code: string; comments: string }
     if (state === "line") {
       if (c === "\n") {
         state = "code";
-        code += c;
+        push(c);
       } else comments += c;
       i += 1;
       continue;
@@ -168,10 +339,16 @@ export function stripJsComments(src: string): { code: string; comments: string }
     comments += c;
     i += 1;
   }
-  if (state === "sq" || state === "dq" || state === "tpl" || state === "block") {
+  if (state === "sq" || state === "dq" || state === "tpl" || state === "block" || state === "re") {
     throw new Error(
       `JS 주석 제거가 어긋났다(끝에서 상태가 ${state}) — 이 상태로는 문자열을 지웠을 수 있다. ` +
         "정규식 리터럴이나 새 문법을 의심하라.",
+    );
+  }
+  if (tplStack.length > 0) {
+    throw new Error(
+      `JS 주석 제거가 어긋났다(끝에서 안 닫힌 보간 \${…} 이 ${tplStack.length}개) — ` +
+        "템플릿 리터럴을 잘못 읽었다.",
     );
   }
   return { code, comments };
@@ -186,6 +363,11 @@ export interface Charset {
   readonly byExtension: Readonly<Record<string, number>>;
   /** ⚠**주석에만 있어서 뺀 글자.** 「조용히 뺐다」가 안 되게 밖으로 낸다 */
   readonly commentOnly: readonly number[];
+  /**
+   * ⚠**풀지 못한 이름 개체.** 비어 있지 않으면 **그 글자가 요구 목록에서 빠져 있다** —
+   * 「조용히 뺐다」가 안 되게 밖으로 내고, `build-fonts.ts` 가 이걸로 빌드를 세운다.
+   */
+  readonly unknownEntities: readonly { name: string; count: number; where: string }[];
   /** 읽은 바이트(UTF-16 코드유닛 기준이 아니라 파일 크기) */
   readonly bytesRead: number;
 }
@@ -240,9 +422,10 @@ export class CharSink {
  * ⚠**남은 21.3초 중 11.5초는 순수 읽기다**(같은 파일 목록을 두 번 읽어 잰 값 · 129 MiB/s) —
  * **여기서 더 짜낼 것은 별로 없다.**
  */
-export function scanBytes(buf: Buffer, into: CharSink, entities: boolean): void {
+export function scanBytes(buf: Buffer, into: CharSink, entities: boolean): readonly string[] {
   const n = buf.length;
   const bmp = into.bitmap;
+  let unknown: string[] | undefined;
   for (let i = 0; i < n; i += 1) {
     const b = buf[i]!;
     if (b < 0x80) {
@@ -253,14 +436,23 @@ export function scanBytes(buf: Buffer, into: CharSink, entities: boolean): void 
         for (let j = i + 1; j < end; j += 1) {
           const c = buf[j]!;
           if (c === 0x3b /* ; */) {
-            const cp = entityCodePoint(buf.toString("latin1", i + 1, j));
-            if (cp !== undefined) into.add(cp);
+            const body = buf.toString("latin1", i + 1, j);
+            const cp = entityCodePoint(body);
+            // ⚠**못 푼 이름을 조용히 흘리지 않는다** — 그 글자가 요구 목록에서 빠진다
+            if (cp === undefined) (unknown ??= []).push(body);
+            else into.add(cp);
             break;
           }
           const ok =
             (c >= 0x30 && c <= 0x39) || (c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a) || c === 0x23;
           if (!ok) break;
         }
+      } else if (b === 0x5c /* \ */) {
+        // ⚠**이스케이프 본문도 전부 ASCII 다.** 확장자를 안 가리고 늘 본다 —
+        //   과다 계상은 시끄러울 뿐이고, 놓치면 글자가 조용히 빠진다.
+        //   ⚠**건너뛰지 않는다**(`i` 를 안 민다): 이스케이프의 ASCII 는 어차피 바닥에 있다
+        const cp = escapeCodePoint(buf.toString("latin1", i, Math.min(n, i + ESCAPE_WINDOW)));
+        if (cp !== undefined) into.add(cp);
       }
       continue;
     }
@@ -278,10 +470,15 @@ export function scanBytes(buf: Buffer, into: CharSink, entities: boolean): void 
     // ⚠**깨진 바이트는 건너뛴다** — 여기서 던지면 배포물 한 곳의 잡음이 전체를 멈춘다.
     //   손해는 「덜 세는 것」인데, 애초에 UTF-8 이 아닌 바이트는 화면에도 글자로 안 나온다.
   }
+  return unknown ?? EMPTY_NAMES;
 }
 
-export function scanChars(text: string, into: CharSink, entities: boolean): void {
+/** ⚠**빈 배열을 매번 새로 만들지 않는다** — 파일마다 부르는 자리다 */
+const EMPTY_NAMES: readonly string[] = [];
+
+export function scanChars(text: string, into: CharSink, entities: boolean): readonly string[] {
   const n = text.length;
+  let unknown: string[] | undefined;
   for (let i = 0; i < n; i += 1) {
     const c = text.charCodeAt(i);
     if (c >= 0xd800 && c <= 0xdbff && i + 1 < n) {
@@ -297,10 +494,16 @@ export function scanChars(text: string, into: CharSink, entities: boolean): void
       const m = ENTITY_RE.exec(text.slice(i, i + 36));
       if (m !== null) {
         const cp = entityCodePoint(m[1]!);
-        if (cp !== undefined) into.add(cp);
+        if (cp === undefined) (unknown ??= []).push(m[1]!);
+        else into.add(cp);
       }
+    } else if (c === 0x5c /* \ */) {
+      // ⚠바이트 경로와 **같은 규칙**이다(M1) — 한쪽만 풀면 `.js` 와 `.json` 이 갈린다
+      const cp = escapeCodePoint(text.slice(i, i + ESCAPE_WINDOW));
+      if (cp !== undefined) into.add(cp);
     }
   }
+  return unknown ?? EMPTY_NAMES;
 }
 
 /**
@@ -316,8 +519,17 @@ export function collectUsedChars(distDir: string): Charset {
   for (const cp of asciiFloor()) sink.add(cp);
   const commentSink = new CharSink();
   const byExtension: Record<string, number> = {};
+  /** 못 푼 이름 개체 — 이름 → 횟수·처음 본 파일 */
+  const unresolved = new Map<string, { count: number; where: string }>();
   let filesRead = 0;
   let bytesRead = 0;
+  const noteUnknown = (names: readonly string[], rel: string): void => {
+    for (const name of names) {
+      const hit = unresolved.get(name);
+      if (hit === undefined) unresolved.set(name, { count: 1, where: rel });
+      else hit.count += 1;
+    }
+  };
 
   const walk = (dir: string): void => {
     for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
@@ -340,7 +552,7 @@ export function collectUsedChars(distDir: string): Charset {
         scanChars(split.code, sink, false);
         scanChars(split.comments, commentSink, false);
       } else {
-        scanBytes(raw, sink, ext === ".html" || ext === ".svg");
+        noteUnknown(scanBytes(raw, sink, ext === ".html" || ext === ".svg"), rel);
       }
       filesRead += 1;
       bytesRead += raw.length;
@@ -358,7 +570,10 @@ export function collectUsedChars(distDir: string): Charset {
   }
   const chars = sink.toSet();
   const commentOnly = [...commentSink.toSet()].filter((cp) => !chars.has(cp)).sort((a, b) => a - b);
-  return { chars, filesRead, byExtension, commentOnly, bytesRead };
+  const unknownEntities = [...unresolved.entries()]
+    .map(([name, v]) => ({ name, count: v.count, where: v.where }))
+    .sort((a, b) => (a.name < b.name ? -1 : 1));
+  return { chars, filesRead, byExtension, commentOnly, unknownEntities, bytesRead };
 }
 
 // ---------------------------------------------------------------------------
@@ -582,6 +797,32 @@ export const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 /** 저장소 루트 기준 경로를 실제 경로로 */
 export function fromRoot(rel: string): string {
   return join(REPO_ROOT, rel);
+}
+
+/**
+ * **원본을 읽으면서 적어 둔 sha256 과 대조한다**(2026-09-08 3차 검토 · P2 · 공급망).
+ *
+ * ⚠**~~시험이 지킨다~~ 로는 부족했다.** `npm test` 와 `npm run build:fonts` 는 **별개 실행**이라
+ * **시험을 건너뛰고 빌드만 돌리면** 갈린 폰트 바이트가 그대로 부분집합에 들어간다 —
+ * 그러면 글리프가 통째로 달라져도 **아무것도 안 운다.**
+ * **게이트는 바이트를 읽는 그 자리에 있어야 한다.**
+ *
+ * ⚠**여기서 던지는 것이 맞다** — 「나중에 모아서 보고」로 미루면 **이미 갈린 바이트로 구운 뒤**가 된다.
+ * ⚠**`want` 가 `undefined` 인 것은 「안 쟀음」이 아니다** — npm 쪽은 락파일의 `integrity` 가
+ * 같은 일을 한다(`FamilySource.sha256` 주석). 부르는 쪽이 그 수를 분모로 찍는다.
+ */
+export function readVerified(rel: string, want: string | undefined, label: string): Buffer {
+  const buf = readFileSync(fromRoot(rel));
+  if (want === undefined) return buf;
+  const got = createHash("sha256").update(buf).digest("hex");
+  if (got !== want) {
+    throw new Error(
+      `⚠${label} 의 원본이 적어 둔 sha256 과 다르다 — 조용한 교체를 여기서 세운다.\n` +
+        `  파일: ${rel}\n  적어 둔 값: ${want}\n  읽은 값:   ${got}\n` +
+        "  → 일부러 바꿨다면 scripts/fonts.ts 의 sha256 과 vendor/fonts/ibm-plex/README.md 를 같이 고쳐라.",
+    );
+  }
+  return buf;
 }
 
 /**

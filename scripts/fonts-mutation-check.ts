@@ -87,7 +87,7 @@ const MUTATIONS: readonly Mutation[] = [
   {
     what: "⑧ 빈 `dist` 를 통과로 만든다 — 「안 쟀음」이 「깨끗함」이 된다",
     from: `    throw new Error(\`\${distDir} 에서 훑을 파일이 0개다 — 화면을 먼저 구웠는가?\`);`,
-    to: `    return { chars: new Set(), filesRead: 0, byExtension: {}, commentOnly: [], bytesRead: 0 };`,
+    to: `    return { chars: new Set(), filesRead: 0, byExtension: {}, commentOnly: [], unknownEntities: [], bytesRead: 0 };`,
   },
   {
     what: "⑨ 줄바꿈·제로폭도 글리프로 요구한다 — 첫 실행부터 전 서체가 실패해 사람이 검사를 끄게 된다",
@@ -103,6 +103,53 @@ const MUTATIONS: readonly Mutation[] = [
       i += 2;`,
     to: `    } else if (b >= 0xe0 && b <= 0xef && i + 2 < n) {
       i += 2;`,
+  },
+  {
+    what: "⑪ 정규식 리터럴을 안 좇는다 — 고치기 전 그대로. `/\\//` 뒤의 코드가 통째로 주석이 된다",
+    from: `      if (c === "/" && regexAllowed(lastSig, prevSig, lastWord)) {`,
+    to: `      if (false && c === "/" && regexAllowed(lastSig, prevSig, lastWord)) {`,
+  },
+  {
+    what: "⑪′ 정규식 판정을 늘 참으로 — 흔한 나눗셈이 정규식이 되어 그 줄의 주석을 코드로 센다",
+    from: `function regexAllowed(lastSig: string, prevSig: string, lastWord: string): boolean {
+  if (lastSig === "") return true; // 파일의 첫 토큰`,
+    to: `function regexAllowed(lastSig: string, prevSig: string, lastWord: string): boolean {
+  if (lastSig !== "\\u0000") return true; // 파일의 첫 토큰`,
+  },
+  {
+    what: "⑫ 보간(${…})을 안 좇는다 — 안쪽 역따옴표가 바깥을 닫아 그 뒤가 통째로 밀린다",
+    from: `      if (state === "tpl" && c === "$" && src[i + 1] === "{") {`,
+    to: `      if (false && state === "tpl" && c === "$" && src[i + 1] === "{") {`,
+  },
+  {
+    what: "⑬ 바이트 경로가 이스케이프를 안 푼다 — `\\uXXXX` 로만 있는 글자가 조용히 빠진다",
+    from: `        const cp = escapeCodePoint(buf.toString("latin1", i, Math.min(n, i + ESCAPE_WINDOW)));
+        if (cp !== undefined) into.add(cp);`,
+    to: `        escapeCodePoint(buf.toString("latin1", i, Math.min(n, i + ESCAPE_WINDOW)));`,
+  },
+  {
+    what: "⑬′ 문자 경로가 이스케이프를 안 푼다 — `.js` 만 갈린다(M1 이 경계하는 모양)",
+    from: `      const cp = escapeCodePoint(text.slice(i, i + ESCAPE_WINDOW));
+      if (cp !== undefined) into.add(cp);`,
+    to: `      escapeCodePoint(text.slice(i, i + ESCAPE_WINDOW));`,
+  },
+  {
+    what: "⑬″ 서러게이트 쌍을 반쪽씩 센다 — 어느 서체도 못 덮어 빌드가 거짓으로 붉어진다",
+    from: `  const pair = ESCAPE_PAIR_RE.exec(text);
+  if (pair !== null) {`,
+    to: `  const pair = null as RegExpExecArray | null;
+  if (pair !== null) {`,
+  },
+  {
+    what: "⑭ 못 푼 이름 개체를 조용히 흘린다 — 그 글자가 화면에서만 살아남는다",
+    from: `            if (cp === undefined) (unknown ??= []).push(body);
+            else into.add(cp);`,
+    to: `            if (cp !== undefined) into.add(cp);`,
+  },
+  {
+    what: "⑮ 원본 sha256 대조를 늘 통과시킨다 — 조용한 폰트 교체가 빌드로 그대로 들어간다",
+    from: `  if (got !== want) {`,
+    to: `  if (got !== want && want !== want) {`,
   },
 ];
 

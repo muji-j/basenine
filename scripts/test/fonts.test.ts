@@ -37,6 +37,7 @@ import {
   digitAdvances,
   hashedName,
   layoutFeatures,
+  readVerified,
   scanBytes,
   stacks,
   stripJsComments,
@@ -118,6 +119,111 @@ test("⚠주석 제거가 어긋나면 던진다 — 조용히 문자열을 지�
   assert.throws(() => stripJsComments('const s = "안 닫힌 문자열'), /어긋났다/);
   // 정상 입력은 그대로 돈다
   assert.equal(stripJsComments('const s = "//not a comment"; // real\n').code.includes("//not a comment"), true);
+});
+
+/**
+ * ⚠**정규식 리터럴을 줄 주석으로 오인하면 글자가 조용히 빠진다**(2026-09-08 3차 검토 · P2).
+ *
+ * 아래 입력에서 **이스케이프된 슬래시의 두 번째 글자**와 **정규식을 닫는 슬래시**가 붙어 `//` 가 되고,
+ * 고치기 전 코드는 거기서부터 **그 줄의 나머지를 통째로 주석으로 분류**했다 — **던지지 않고.**
+ * 그러면 髙 는 요구 목록에서 사라지고 화면에서는 시스템 폰트로 떨어진다.
+ * ⚠**「지금 번들에 그 패턴이 없다」는 안전의 근거가 아니다** — 다음에 정규식이 하나 들어오면 난다.
+ */
+test("⚠정규식 리터럴을 줄 주석으로 오인하지 않는다 — 오인하면 그 줄의 글자가 조용히 빠진다", () => {
+  const src = 'const r=/\\//;document.body.textContent="髙";\n';
+  const got = stripJsComments(src);
+  assert.ok(got.code.includes("髙"), "정규식 뒤의 코드를 주석으로 분류했다 — 그 글자가 요구 목록에서 빠진다");
+  assert.equal(got.comments, "", `주석이 아닌 것을 주석으로 셌다: ${JSON.stringify(got.comments)}`);
+  // ⚠**진짜 주석은 여전히 주석이다** — 반대 방향으로 무너지지 않았는지 같이 잰다
+  const both = stripJsComments('const r=/[/*]/; // 한국어\nconst t="打";\n');
+  assert.ok(both.code.includes("打"), "문자열의 글자를 지웠다");
+  assert.ok(both.comments.includes("한국어"), "진짜 줄 주석을 코드로 셌다");
+  // ⚠**흔한 나눗셈이 정규식으로 읽히면 그 줄의 주석이 코드가 된다** — 그쪽도 막는다
+  const div = stripJsComments("const half=(a+b)/2; // 반으로 나눈다\nconst u=\"投\";\n");
+  assert.ok(div.comments.includes("반으로"), "나눗셈을 정규식으로 읽어 주석을 코드로 셌다");
+  assert.ok(div.code.includes("投"), "그 다음 줄의 글자를 잃었다");
+  // ⚠**TypeScript 의 non-null 단언도 나눗셈이다** — `!` 를 부정으로 읽으면 저장소에서 7건이 걸렸다
+  const nn = stripJsComments('const avg=sum.get(k)! / n; // 나눈다\nconst v="率";\n');
+  assert.ok(nn.comments.includes("나눈다"), "`x! / y` 를 정규식으로 읽었다");
+  assert.ok(nn.code.includes("率"), "그 다음 줄의 글자를 잃었다");
+});
+
+/**
+ * ⚠**중첩 템플릿 리터럴** — 이 저장소의 화면 코드가 늘 쓰는 모양이다.
+ * 고치기 전 코드는 `${}` 를 몰라서 **안쪽 역따옴표를 바깥의 닫는 짝으로 읽었고**,
+ * 그때부터 템플릿 내용을 코드로 셌다. 그 상태에서 보간 안의 주석이 코드로 들어간다.
+ */
+test("⚠보간(${…}) 안을 코드로 읽는다 — 안쪽 역따옴표가 바깥을 닫으면 안 된다", () => {
+  const src = 'const h=html`<p>${x ? html`<b>打</b>` : raw("")}</p>`; // 한국어 주석\nconst t="者";\n';
+  const got = stripJsComments(src);
+  assert.ok(got.code.includes("打"), "안쪽 템플릿의 글자를 잃었다");
+  assert.ok(got.code.includes("者"), "바깥 템플릿이 안 닫혀 뒤가 통째로 밀렸다");
+  assert.ok(got.comments.includes("한국어"), "줄 주석을 코드로 셌다");
+  // ⚠**보간 안의 주석도 주석이다** — 옛 판은 이것을 코드로 셌다
+  const inner = stripJsComments("const h=t`a${/* 주석 */ 1}b`;\n");
+  assert.ok(inner.comments.includes("주석"), "보간 안의 블록 주석을 코드로 셌다");
+  assert.ok(!inner.code.includes("주석"), "보간 안의 주석을 코드에 남겼다");
+});
+
+/**
+ * ⚠**이스케이프로만 존재하는 글자**(2026-09-08 3차 검토 · P3).
+ * `"\u9AD9"` 는 바이트로 보면 ASCII 뿐이라, 안 풀면 그 글자가 요구 목록에서 통째로 빠진다.
+ */
+test("⚠이스케이프를 푼다 — 안 풀면 그 형태로만 있는 글자가 빠진다", async () => {
+  const dir = await makeDist({
+    "assets/site.js": 'const a="\\u9AD9";const b="\\u{20BB7}";\n',
+    "d.json": '{"n":"\\u5927\\u8c37"}',
+    "assets/site.css": '.x::after{content:"\\u00e9"}',
+  });
+  try {
+    const got = collectUsedChars(dir);
+    assert.ok(got.chars.has(0x9ad9), "JS 의 \\uXXXX 를 안 풀었다(髙)");
+    assert.ok(got.chars.has(0x20bb7), "\\u{…} 를 안 풀었다(𠮷)");
+    assert.ok(got.chars.has(0x5927) && got.chars.has(0x8c37), "JSON 의 \\uXXXX 를 안 풀었다(大谷)");
+    // ⚠**CSS 자신은 U+005C u 0 0 e 9 를 é 로 읽지 않는다** — CSS 의 이스케이프는 마커 없는 16진이다.
+    //   여기서 푸는 것은 **확장자를 안 가리는 과다 계상**이고, 그 방향이 안전한 쪽이다(놓치면 조용히 빠진다).
+    //   ⚠확장자마다 규칙을 갈라 두면 다음 사람이 「.css 만 안 푼다」를 못 읽는다(M1).
+    assert.ok(got.chars.has(0x00e9), ".css 에서도 같은 규칙으로 푼다 — 확장자마다 갈리면 안 된다");
+    // ⚠**외톨이 서러게이트를 요구하면 안 된다** — 어느 서체에도 없어 빌드가 거짓으로 붉어진다
+    for (let cp = 0xd800; cp <= 0xdfff; cp += 0x100) {
+      assert.ok(!got.chars.has(cp), `외톨이 서러게이트 U+${cp.toString(16)} 를 요구하고 있다`);
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("⚠서러게이트 쌍 이스케이프를 한 글자로 센다 — 반쪽씩 세면 전 서체가 못 덮는다", async () => {
+  const dir = await makeDist({ "assets/site.js": 'const s="\\uD842\\uDFB7";\n' });
+  try {
+    const got = collectUsedChars(dir);
+    assert.ok(got.chars.has(0x20bb7), "서러게이트 쌍을 안 합쳤다");
+    assert.ok(!got.chars.has(0xd842) && !got.chars.has(0xdfb7), "반쪽을 글자로 세고 있다");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * ⚠**풀지 못한 이름 개체를 조용히 흘리지 않는다**(M7 · M11).
+ * `&copy;` 는 표에 없으므로 **안 푼다**(없는 글자를 만들지 않는다) — 대신 **이름을 밖으로 낸다.**
+ * `build-fonts.ts` 가 이 목록으로 빌드를 세운다.
+ */
+test("⚠모르는 이름 개체를 목록으로 낸다 — 조용히 빼면 그 글자가 화면에서만 산다", async () => {
+  const dir = await makeDist({ "a.html": "<p>&copy;&amp;&zzz;</p>", "b.json": '{"n":"&copy;"}' });
+  try {
+    const got = collectUsedChars(dir);
+    assert.deepEqual(
+      got.unknownEntities.map((e) => e.name).sort(),
+      ["copy", "zzz"],
+      "못 푼 이름을 안 내거나, JSON 의 것까지 개체로 세고 있다",
+    );
+    assert.equal(got.unknownEntities.find((e) => e.name === "copy")!.count, 1, "센 횟수가 다르다 — .json 은 개체를 안 푼다");
+    assert.ok(!got.chars.has(0x00a9), "모르는 이름을 억지로 풀었다 — 없는 글자를 만들면 안 된다");
+    assert.ok(got.chars.has(0x26), "아는 이름(&amp;)까지 못 풀고 있다");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("⚠엔티티를 푼다 — 안 풀면 화면에 나오는 글자를 안 센다", async () => {
@@ -363,6 +469,45 @@ test("⚠벤더링한 원본이 적어 둔 sha256 과 같다 — 조용한 교�
     }
   }
   assert.equal(checked, 6, `대조한 파일이 ${checked}개다 — 6개여야 한다(이 시험이 공회전한다)`);
+});
+
+/**
+ * ⚠**시험만으로는 안 지켜진다**(2026-09-08 3차 검토 · P2 · 공급망).
+ *
+ * `npm test` 와 `npm run build:fonts` 는 **별개 실행**이다. 위 시험이 아무리 초록이어도
+ * **시험을 건너뛰고 빌드만 돌리면** 갈린 폰트 바이트가 그대로 부분집합에 들어간다 —
+ * 그리고 글리프가 통째로 달라져도 **아무것도 안 운다.**
+ * → 게이트를 **바이트를 읽는 그 자리**로 옮겼다(`readVerified`). 아래 둘을 잰다:
+ *   ⑴ 그 함수가 실제로 던지는가 · ⑵ **빌드가 그 함수를 쓰는가**(안 쓰면 ⑴ 이 공회전한다).
+ */
+test("⚠원본 바이트가 적어 둔 sha256 과 다르면 읽는 자리에서 던진다", () => {
+  // ⚠**진짜로 쓰는 파일로 잰다** — 임시 파일을 만들면 「이 함수가 실제 원본에 걸리는가」를 안 재게 된다
+  const fam = stacks()[0]!.order[0]!;
+  const rel = fam.weights[400]!;
+  const want = fam.sha256![400]!;
+  const bytes = readVerified(rel, want, "probe");
+  assert.ok(bytes.length > 1000, `원본이 ${bytes.length}B 다 — 이 시험이 공회전한다`);
+  assert.equal(createHash("sha256").update(bytes).digest("hex"), want, "돌려준 바이트가 대조한 것과 다르다");
+  // ⚠**한 글자만 갈려도 선다** — 조용한 교체가 이 자리에서 막힌다
+  const wrong = want.slice(0, -1) + (want.endsWith("0") ? "1" : "0");
+  assert.throws(() => readVerified(rel, wrong, "probe"), /sha256/);
+  // ⚠**`undefined` 는 「안 쟀음」이 아니라 「락파일이 지킨다」다** — 던지지 않는다
+  assert.equal(readVerified(rel, undefined, "probe").length, bytes.length);
+});
+
+test("⚠빌드가 원본을 읽을 때 그 게이트를 지난다 — 안 지나면 위 시험이 공회전한다", () => {
+  const src = readFileSync(join(ROOT, "scripts", "build-fonts.ts"), "utf8");
+  // ⚠**주석의 같은 글자로 통과하지 않는다**(판정기는 이 저장소에 한 벌이다 · M1)
+  const { code } = stripJsComments(src);
+  assert.match(
+    code.replace(/\s+/g, " "),
+    /byWeight\.set\(w, readVerified\(path, want, /,
+    "빌드가 원본을 읽는 자리에서 sha256 을 안 본다 — 시험을 건너뛰면 갈린 바이트가 그대로 들어간다",
+  );
+  assert.ok(
+    !/readFileSync\(fromRoot\(path\)\)/.test(code),
+    "대조 없이 원본을 읽는 자리가 남아 있다",
+  );
 });
 
 test("⚠OFL 사본을 실을 자리가 있다 — 부분집합도 배포물이다", () => {

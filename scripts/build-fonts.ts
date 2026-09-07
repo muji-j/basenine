@@ -19,6 +19,12 @@
  * 「Plex 가 못 덮으니 Noto 로」 같은 조용한 대체를 하지 않는다. 못 덮으면 **종료코드 1** 이고
  * **빠진 글자를 전부 찍는다.** 그것이 §5-C 가 요구한 것이다.
  *
+ * ⚠**여기서 세우는 것이 커버리지만이 아니다**(2026-09-08 3차 검토):
+ *   · **벤더링한 원본의 sha256** — 바이트를 읽는 그 자리에서 대조한다(`readVerified`).
+ *     ⚠**시험에만 두면 소용이 없다** — `npm test` 와 이 명령은 별개 실행이라
+ *     **시험을 건너뛰고 빌드만 돌리면** 갈린 바이트가 그대로 배포물에 들어간다.
+ *   · **풀지 못한 이름 개체** — 조용히 무시하면 그 글자가 요구 목록에서 빠진다(M7).
+ *
  * ## ⚠어디서 도는가 — 아직 CI 에서는 안 돈다
  *
  * `npm run build:web` 이 화면을 구운 **뒤에** 이것을 부른다(`&&`).
@@ -47,6 +53,7 @@ import {
   fromRoot,
   hashedName,
   layoutFeatures,
+  readVerified,
   stacks,
   verifyCoverage,
 } from "./fonts.ts";
@@ -60,6 +67,13 @@ const fontverter = require_("fontverter") as {
 
 /** ⚠`palt` 는 화면이 이미 켜고 있다(`font-feature-settings:"palt" 1`) · `tnum` 은 표의 자릿수를 잡는다 */
 const FEATURES_WE_RELY_ON: readonly string[] = ["palt", "tnum"];
+
+/**
+ * ⚠**분모다** — 「0장 대조하고 통과」를 「깨끗함」으로 읽지 않기 위해 찍는다.
+ * 판정 자체는 `scripts/fonts.ts` 의 `readVerified` 한 벌이다(M1).
+ */
+let shaChecked = 0;
+let shaSkipped = 0;
 
 const distArg = process.argv[2] ?? "dist";
 const distDir = resolve(distArg);
@@ -109,13 +123,31 @@ console.log(
 );
 console.log(`· 훑는 데 ${scanMs.toFixed(0)}ms`);
 
+/** ⚠**먼저 다 굽고 나서 지운다** — 도중에 죽으면 옛 파일이라도 남아 있는 편이 낫다 */
+const staged: { name: string; data: Buffer }[] = [];
+const failures: string[] = [];
+
+/**
+ * ⚠**풀지 못한 이름 개체는 실패다**(M7 · 2026-09-08 3차 검토 P3).
+ *
+ * `&copy;` 처럼 표에 없는 이름은 **조용히 무시**되고, 그러면 그 글자가 요구 목록에서 빠져
+ * **화면에서만 시스템 폰트로 떨어진다** — 이 게이트가 막으려는 그 상태다.
+ * ⚠**「빈 값이 아니라 실패」**로 낸다. 실측(2026-09-08 · dist 전수)으로 `.html`/`.svg` 의
+ * 이름 개체는 `&amp;` 1건이 전부라 **오늘 이 줄은 0건**이다.
+ */
+console.log(`· 풀지 못한 이름 개체 ${used.unknownEntities.length}종`);
+if (used.unknownEntities.length > 0) {
+  failures.push(
+    `[이름 개체] 풀지 못한 이름 ${used.unknownEntities.length}종 — 그 글자가 요구 목록에서 빠진다:\n  ` +
+      used.unknownEntities.map((e) => `&${e.name}; ×${e.count} (예: ${e.where})`).join("\n  ") +
+      "\n  → scripts/fonts.ts 의 NAMED_ENTITIES 에 그 이름을 더하거나, 화면에서 글자를 그대로 써라.",
+  );
+}
+
 const charsetSha = createHash("sha256")
   .update([...used.chars].sort((a, b) => a - b).join(","))
   .digest("hex");
 
-/** ⚠**먼저 다 굽고 나서 지운다** — 도중에 죽으면 옛 파일이라도 남아 있는 편이 낫다 */
-const staged: { name: string; data: Buffer }[] = [];
-const failures: string[] = [];
 const stackOut: { key: string; label: string; families: FamilyOut[] }[] = [];
 const licenseFiles = new Map<string, string>();
 const timing: { label: string; ms: number }[] = [];
@@ -133,7 +165,11 @@ for (const stack of stacks() as Stack[]) {
     for (const w of WEIGHTS) {
       const path = fam.weights[w];
       if (path === undefined) throw new Error(`${fam.key} 에 웨이트 ${w} 원본이 없다`);
-      byWeight.set(w, readFileSync(fromRoot(path)));
+      // ⚠**바이트를 읽는 그 자리에서 대조한다** — 시험이 아니라 여기가 게이트다
+      const want = fam.sha256?.[w];
+      if (want === undefined) shaSkipped += 1;
+      else shaChecked += 1;
+      byWeight.set(w, readVerified(path, want, `${fam.key} ${w}`));
     }
     sources.set(fam.key, byWeight);
     // cmap·기능은 **400 원본** 기준으로 본다. 웨이트가 달라도 커버리지는 같아야 하고,
@@ -211,16 +247,24 @@ for (const stack of stacks() as Stack[]) {
 // ⚠**시간과 크기는 실패해도 찍는다** — 실패 때 못 재면 「예산 안에 드는가」를 영영 못 묻는다(§7-5)
 const totalBytes = staged.reduce((n, s) => n + s.data.length, 0);
 const fileCount = staged.length + licenseFiles.size + 1;
-console.log(`\n## 산출${failures.length > 0 ? " (⚠커버리지 실패라 **쓰지 않는다**)" : ""}`);
+console.log(`\n## 산출${failures.length > 0 ? " (⚠게이트 실패라 **쓰지 않는다**)" : ""}`);
 console.log(
   `· 폰트 ${staged.length}장 ${(totalBytes / 1024).toFixed(1)} KiB · 라이선스 ${licenseFiles.size}장 · 매니페스트 1장 = **${fileCount}장**`,
+);
+console.log(
+  `· 원본 sha256 대조 ${shaChecked}장 일치 · 대조 안 함 ${shaSkipped}장` +
+    " (npm 쪽 — 락파일의 integrity 가 같은 일을 한다)",
 );
 console.log(`· 훑기 ${(scanMs / 1000).toFixed(1)}초`);
 for (const t of timing) console.log(`· ${t.label} 굽기 ${(t.ms / 1000).toFixed(1)}초`);
 console.log(`· 합계 ${(ms(t0) / 1000).toFixed(1)}초`);
 
 if (failures.length > 0) {
-  console.error(`\n⚠서체 커버리지 실패 ${failures.length}건 — 배포하면 그 글자만 시스템 폰트로 떨어진다.`);
+  // ⚠**「커버리지 실패」로만 적지 마라** — 이 목록에는 풀지 못한 이름 개체도 들어온다
+  console.error(
+    `\n⚠서체 게이트 실패 ${failures.length}건 — 배포하면 그 글자만 시스템 폰트로 떨어진다.` +
+      "\n  (커버리지인지 이름 개체인지는 아래 각 항목의 머리가 말한다)",
+  );
   for (const f of failures) console.error(`\n${f}`);
   console.error(
     "\n⚠**조용히 다른 서체로 바꾸지 마라**(§7-1 P2). 고르는 길은 둘뿐이다:\n" +
