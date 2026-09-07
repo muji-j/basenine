@@ -74,12 +74,19 @@ const JUSTIFIED: readonly { sel: string; covered?: true; why: string }[] = [
   { sel: ".mf-ax.on .mf-spoke", why: ".mf-ax.on .mf-dot 의 transform 과 .mf-lab 의 font-weight 가 남는다" },
   { sel: ".scroller tr.me td:first-child", why: "tr.me td 의 font-weight:700 이 남는다" },
   { sel: "tr.me:hover td", why: "같은 이유" },
+  // ⚠**이 규칙은 구단 색 면 위의 대비를 위한 것이다**(2026-09-08 · design-auditor P0).
+  //   강제 색 모드에는 **그 면 자체가 없다** — 배경도 글자도 시스템 색으로 갈린다.
+  //   분모는 부모 `tr.me td` 와 **같은 시스템 색**을 받으므로 사라지지 않는다.
+  { sel: "tr.me td .den", why: "부모 tr.me td 와 같은 시스템 색으로 강제된다 · 구단 색 면이 애초에 없다" },
   { sel: "tr.thin td", why: "이름 옆 .qmk 글자 표식이 남는다(그 주석이 이 모드를 사유로 적는다)" },
   { sel: "tr.thin td:first-child", why: "같은 이유" },
   { sel: '.dg .c.thin u', why: "얇음은 힌트다 — 값(.dg .c u)과 분모(.dg .c s)는 색과 무관하게 그대로 보인다" },
   { sel: "td.ok", why: "글자가 「取得済み」라고 적혀 있다 · 색은 강조일 뿐이다" },
   { sel: '.pk[aria-pressed="true"] s', why: "부모 .pk[aria-pressed] 의 font-weight:700 이 남는다" },
   { sel: '.pk[aria-pressed="true"] em', why: "같은 이유" },
+  // ⚠**같은 처방을 .chip.fav 에도 붙였다**(2026-09-08). 눌린 칩은 면이 구단 색이 되므로
+  //   개수(<s>)가 --tx-3 를 들고 들어가면 안 되는데, 강제 색 모드에는 그 면이 아예 없다.
+  { sel: '.chip.fav[aria-pressed="true"] s', why: "부모 .chip[aria-pressed] 의 font-weight:700 이 남는다 · color:inherit 라 부모와 같은 시스템 색이 된다" },
   // ⚠`.dia .db.on` 은 **여기 없다** — `stroke-width` 1.2→2 로 살아남아 이 목록의 대상이 아니다.
   //   한때 적어 뒀다가 「사유만 남고 대상이 없는 항목」 시험이 잡아냈다.
   { sel: ".dia .do.on", why: "fill:none→색 · none 은 색이 아니라 강제 대상이 아니므로 채움 유무가 남는다" },

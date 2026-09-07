@@ -226,10 +226,27 @@ a{color:inherit}
 .brand{flex:0 0 auto;font-size:var(--fs-lead);font-weight:var(--w-bold);letter-spacing:.14em;text-decoration:none;white-space:nowrap}
 .brand b{color:var(--tx-3);font-weight:var(--w-reg);letter-spacing:.04em;font-size:var(--fs-col);margin-left:5px}
 @media (max-width:560px){.brand b{display:none}}
+/* ⚠**::placeholder 규칙이 CSS 전체에 0건이었다**(2026-09-08 · design-auditor P1).
+   UA 기본값 rgb(117,117,117) 이 **두 테마 모두에** 새어 라이트 **4.414** · 다크 **3.924**
+   (본문 기준 4.5 미달)였다. ⚠**더 무거운 것은 토큰 이탈이다** — 이 색만 디자인 시스템 밖에 있어
+   팔레트를 바꿔도 **안 따라온다.**
+   ⚠**전역으로 건다** — 입력칸은 상단바(.qbox input · 채움 --page)와 본문(.find input·
+   .mfind input · 채움 --panel) 양쪽에 있고, --tx-3 는 둘 다에서 통과한다
+   (--page 4.910 / 5.499 · --panel 5.125 / 5.072). */
+::placeholder{color:var(--tx-3);opacity:1}
 .qbox{position:relative;flex:1 1 auto;max-width:340px;min-width:0}
+/* ⚠**검색칸의 경계를 말하는 것이 테두리 하나였다**(2026-09-08 · design-auditor P1 · WCAG 2.2 SC 1.4.11).
+   채움(--page)과 상단바(--panel)의 대비가 **라이트 1.044 · 다크 1.084** 라 면으로는 경계가 안 보이고,
+   그 하나뿐인 테두리가 --hair-2 로 **1.580 / 1.557** 이었다(비텍스트 3:1 필요).
+   ⚠**예외 둘(비활성 · UA 기본)에 해당하지 않는다** — 우리가 그린 활성 입력칸이다.
+   ⚠**「hover 에서 진해지니 괜찮다」는 답이 아니다** — 1.4.11 은 **rest 상태**를 잰다.
+   → 테두리를 --tx-3 로 올린다: **--panel 대비 5.125 / 5.072 · 채움(--page) 대비 4.910 / 5.499** 로
+   감사자의 판정 기준 1(양쪽 3:1)을 두 테마에서 만족한다. hover 는 한 단계 더 진한 --tx-2 로 옮긴다.
+   ⚠**같은 잉크의 다른 자리를 같이 끌고 오지 마라** — .tab·.chip·.mv·.go.alt·.hjump a 는
+   **가시 텍스트 라벨**이 있어 1.4.11 위반으로 단정할 수 없다(감사자 판정). */
 .qbox input{font:inherit;font-size:var(--fs-lead);width:100%;padding:5px 9px;background:var(--page);color:var(--tx);
-  border:var(--rw-row) solid var(--hair-2);transition:border-color var(--t1) var(--e-out)}
-.qbox input:hover{border-color:var(--tx-3)}
+  border:var(--rw-row) solid var(--tx-3);transition:border-color var(--t1) var(--e-out)}
+.qbox input:hover{border-color:var(--tx-2)}
 .qhits{position:absolute;left:0;right:0;top:calc(100% + 3px);z-index:30;margin:0;padding:var(--s1) 0;list-style:none;
   background:var(--panel);border:var(--rw-row) solid var(--hair-2);max-height:min(60vh,380px);overflow:auto;
   animation:drop var(--t1) var(--e-out)}
@@ -598,11 +615,13 @@ dd.g-veryGood .den,dd.g-veryBad .den{color:var(--tx-2)}
 th .term{cursor:help}
 /* ⚠**손가락은 글자보다 크다.** 항목명은 10.5px라 그대로는 누르기 어렵다.
    가짜 요소로 **판정 영역만** 넓힌다 — 여백을 주면 표의 행 높이가 늘어난다.
-   위아래는 5px까지만 — 항목 줄 간격이 25px 남짓이라 더 넓히면 옆 줄의 설명이 뜬다 */
-@media (pointer:coarse){
-  .term{position:relative}
-  .term::after{content:"";position:absolute;left:-7px;right:-7px;top:-5px;bottom:-5px}
-}
+   위아래는 5px까지만 — 항목 줄 간격이 25px 남짓이라 더 넓히면 옆 줄의 설명이 뜬다.
+   ⚠**@media (pointer:coarse) 밖으로 뺐다**(2026-09-08 · design-auditor P2).
+   그 안에 있어서 마우스에서는 판정 영역이 **22 × 17** 이었다 — WCAG 2.2 SC 2.5.8 의 24 × 24 미달이고,
+   그 기준에는 「포인터가 정밀하면 면제」가 없다. 넓힌 뒤 **36 × 27**(가로 +7·+7 · 세로 +5·+5).
+   ⚠**CSS 문자열 검사로는 못 잡는다** — 규칙은 그대로 있고 **어느 미디어 안에 있는가**만 달랐다. */
+.term{position:relative}
+.term::after{content:"";position:absolute;left:-7px;right:-7px;top:-5px;bottom:-5px}
 .term:active{border-bottom-color:var(--tx);border-bottom-style:solid}
 
 /* ⚠**넘치면 잘라서 굴린다.** 예전에는 max-height 도 overflow 도 없었고 자리잡기가 아래를
@@ -760,6 +779,19 @@ tbody tr{transition:background var(--t1) var(--e-out)}
 tbody tr:hover{background:var(--panel-2)}
 tr.me td{background:var(--team,#6b7280);color:var(--team-ink,#fff);font-weight:var(--w-bold)}
 tr.me:hover td{background:var(--team,#6b7280)}
+/* ⚠**강조면 위에서는 면의 잉크에 맞춘다**(2026-09-08 · design-auditor P0).
+   tr.me td 는 배경을 구단 색으로 칠하는데 그 안의 분모(.den)만 --tx-3 를 그대로 들고 있어서
+   **면과 거의 같은 색이 됐다.** 실측(ranking.html · 그 화면의 --team 은 중립색 #6b7280):
+   **라이트 1.060 · 다크 1.470** · 10px. **값은 4.547 로 보이고 분모만 안 보였다.**
+   ⚠**우연이 아니다** — --tx-3 를 12구단 색 위에 얹으면 **라이트 12/12 · 다크 10/12 가 4.5 미달**이다.
+   ⚠**지금은 9장(ranking.html × 9시즌)이지만 tr.me 행은 배포물에 83,808개**다(실측 2026-09-08) —
+   그 행에 비율을 하나 더 넣는 순간 같은 결함이 그 수만큼 생긴다.
+   ⚠**--team-ink 의 여유는 얇다**: 12구단 최저 **5.466**(広島) · **중립색 4.547** 로 기준 4.5 바로 위다.
+   css-contrast.test.ts 가 12구단 + 중립색 × 2테마로 계속 잰다.
+   ⚠**특이도에서 이 규칙을 이기는 .den 색 규칙이 둘 있다**(table.stand td.wd .den ·
+   .hstand td.wd .den · 둘 다 (0,3,2)). **그 두 표에는 tr.me 가 없다**(실측) —
+   생기면 여기가 **조용히 진다.** 시험이 「그 둘뿐인가」를 못 박는다. */
+tr.me td .den{color:var(--team-ink,#fff)}
 /* ⚠**「얇음」을 대비 강등으로 말하지 않는다.**
    --tx-3 이 붙는 것은 분모(.den)·자격 기준과 표본 경고(.note)·규정 미달 행인데,
    실측(2026-08-16) 대비가 라이트 3.20:1 · 다크 4.20:1 이었다 —
@@ -862,10 +894,21 @@ th[aria-sort="descending"] .sortable i::before{content:"↓"}
 /* ⚠값은 줄어들지 않는다 — 막대가 먼저 줄어야 수가 읽힌다 */
 .spl td .tv .wd{flex:0 0 auto;text-align:right}
 .spl th:nth-child(2),.spl td:nth-child(2){padding-left:0}
-/* ⚠얇은 표본은 **지우지 않고 흐린다** — 값은 보이되 시각적 무게를 뺀다(M2 의 화면 쪽).
-   ⚠**.55 로 뒀다가 css-contrast 시험이 잡았다** — 라이트에서 합성 대비 **4.00 으로 기준 4.5 미달**이었다
-   (다크는 5.02 로 통과라 한쪽만 보면 못 잡는다). .65 로 올려 **라이트 5.56 · 다크 6.45**. */
-.spl tr.thin td{opacity:.65}
+/* ⚠**얇은 표본을 흐림으로 말하지 않는다 — opacity 를 뺐다**(2026-09-08 · design-auditor P0).
+   ⚠**여기 적혀 있던 「라이트 5.56 · 다크 6.45」는 틀린 수였다.** 그 수는 --tx 를 --panel 위에
+   .65 로 합성한 값인데, **실제 잉크는 tr.thin td 의 --tx-2 이고 바탕은 --page** 다
+   (.scroller table{background:var(--page)} · 스플릿 표는 .scroller 안에 있다).
+   **두 오차가 같은 방향으로 겹쳐 2.9 를 5.6 으로 보이게 했다.** 다시 잰 값:
+   값(--tx-2) **라이트 2.917 · 다크 3.758** · 분모(.den = --tx-3 · 10px) **2.545 / 3.045**.
+   ⚠**M2 가 요구하는 바로 그 분모가 화면에서 가장 안 읽혔다** — 「표본이 얇으니 값을 믿지 마라」를
+   말하는 행에서 그 경고를 싣는 분모가 가장 안 보였다.
+   → **흐림을 빼고 형태로 말한다.** 이 표에서 얇음을 말하는 채널은 셋이고, 전부 남는다:
+   ⑴ tr.thin td 의 --tx-2(6.336 / 7.229 · 보통 행의 --tx 17.139 / 14.736 과 위계가 남는다) ·
+   ⑵ 첫 칸의 inset 2px 괘선 · ⑶ 막대(.track i)의 인라인 opacity:.35 — **도형이라 글자 기준이 안 걸린다.**
+   ⚠**.qmk 를 여기 세지 마라** — 그 글자 표식은 명단·순위 표의 것이고 **스플릿 표에는 0건**이다
+   (실측: 한 선수 페이지의 spl 표 8개 · thin 행 13개 중 .qmk 보유 0). 뺀 뒤 분모는 **4.910 / 5.499**.
+   ⚠**다시 얹지 마라** — css-contrast.test.ts 의 OPACITY_ALLOWED 는 이제 **문자열이 아니라 계산**이라
+   얹는 순간 그 자리에서 값을 다시 센다. */
 .track{height:13px;background:var(--hair)}
 .track i{display:block;height:100%;background:var(--team,#6b7280);transform-origin:left center;
   animation:grow var(--t3) var(--e-out) both}
@@ -957,11 +1000,18 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
 .chosen b{color:var(--tx);font-weight:var(--w-bold)}
 .go{font:inherit;font-size:var(--fs-lead);padding:9px 18px;cursor:pointer;background:var(--team,#6b7280);
   color:var(--team-ink,#fff);border:var(--rw-row) solid var(--team,#6b7280);font-weight:var(--w-bold);
-  transition:opacity var(--t1) var(--e-out)}
+  transition:border-color var(--t1) var(--e-out)}
 .go:disabled{opacity:.35;cursor:default}
-.go:hover:not(:disabled){opacity:.85}
+/* ⚠**버튼 전체를 흐리면 글자와 면이 함께 흐려진다** — 그러면 대비가 **비율까지 떨어진다**
+   (2026-09-08 · ⑵ 를 계산으로 바꾸면서 드러남). 이 버튼이 실제로 서는 화면(matchup.html·compare.html)은
+   --team 이 **중립색 #6b7280 / #f7f8f9 = 4.547** 이라 여유가 없어서, .85 로 흐리면 **라이트 3.436** 이 된다.
+   ⚠**α 를 올려도 안 된다** — .99 에서도 4.482 로 미달이고 **1.00 에서만 4.547** 이다. 흐림 자체가 답이 아니다.
+   → hover 를 **테두리 색**으로 말한다(.mv·.chip·.pk·.go.alt 가 이미 쓰는 이 집의 방식).
+   --tx-3 는 --page 대비 **4.910 / 5.499** 라 면 색과 무관하게 보인다. */
+.go:hover:not(:disabled){border-color:var(--tx-3)}
 .go.alt{background:transparent;color:var(--tx-2);border-color:var(--hair-2);font-weight:var(--w-reg);margin-left:7px}
-.go.alt:hover:not(:disabled){color:var(--tx);border-color:var(--tx-3);opacity:1}
+/* ⚠opacity:1 을 뺐다 — 그것은 위의 .go:hover 흐림을 **되돌리기 위한 것**이었고, 그 흐림이 사라졌다 */
+.go.alt:hover:not(:disabled){color:var(--tx);border-color:var(--tx-3)}
 
 /* ⚠**고른 것과 실행 버튼은 화면에서 사라지면 안 된다.** 아래의 선수 목록이 길어서
    스크롤하면 「골랐는데 어떻게 보지?」가 된다. 레일과 같은 sticky를 쓴다 */
@@ -1399,7 +1449,12 @@ html:has(.hjump){scroll-padding-top:calc(var(--topbar) + 52px)}
 .pk[aria-pressed="true"] s{color:inherit}
 .pk[aria-pressed="true"] em{background:var(--chip-ink,#fff);color:var(--chip,#6b7280)}
 /* 비교 화면에서는 **어느 자리에 들어갔는지**까지 말한다 — 채울 자리가 둘이다 */
-.pk[data-slot]::after{content:attr(data-slot);font-size:var(--fs-min);margin-left:var(--s1);opacity:.85}
+/* ⚠**「11.35 / 10.14」도 틀린 수였다**(2026-09-08 · 같은 조사). data-slot 은 **눌린 버튼에만** 붙으므로
+   (markCmp 가 aria-pressed 와 함께 세운다) 실제 바탕은 --panel 이 아니라 **--chip(구단 색)** 이고
+   잉크는 **--chip-ink** 다. .85 로 합성하면 **広島 4.246 으로 미달**(12구단 최저).
+   이 글자는 「A / B 어느 자리에 넣었는가」를 말하는 정보라 흐릴 자리가 아니다.
+   → **opacity 를 뺀다.** 12구단 최저 **5.466**. */
+.pk[data-slot]::after{content:attr(data-slot);font-size:var(--fs-min);margin-left:var(--s1)}
 .pickfind{margin:var(--s4) 0 0;border-top:var(--rw-row) solid var(--hair);padding-top:var(--s3)}
 .pickfind .picker{margin-top:var(--s3)}
 
@@ -1990,7 +2045,19 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
    순서를 바꾸면 「내 선수가 어디 갔지」가 되고, 명감의 배열이 무너진다 */
 .roster li[data-favon="true"] .hn::before{content:"★";color:var(--team,#6b7280);margin-right:var(--s1);font-size:var(--fs-col)}
 .chip.fav i{font-style:normal;margin-right:var(--s1)}
-.chip.fav s{text-decoration:none;margin-left:var(--s1);font-size:var(--fs-col);opacity:.8}
+/* ⚠**여기 적혀 있던 「9.55 / 9.14」도 같은 방식으로 틀렸다**(2026-09-08 · ⑵ 를 계산으로 바꾸면서 드러남).
+   그 수는 --tx 를 --panel 위에 .8 로 합성한 값인데, **실제 잉크는 .chip 이 물려주는 --tx-2,
+   바탕은 .find 가 배경을 안 깔아 --page** 다 — 다시 재면 **라이트 3.999(미달) · 다크 5.076**.
+   즐겨찾기 개수는 글자이고 정보다. → .sortable i 와 같은 처방: **opacity 를 색으로 바꾼다**
+   (--tx-3 = --page 대비 **4.910 / 5.499**). 값(--tx-2)보다 옅다는 위계는 그대로다. */
+.chip.fav s{text-decoration:none;margin-left:var(--s1);font-size:var(--fs-col);color:var(--tx-3)}
+/* ⚠⚠**바로 위 수정이 새 결함을 만들 뻔했다**(자기 수정 재확인에서 잡음 · 2026-09-08).
+   이 칩은 눌리면 **면이 구단 색으로 바뀐다**(.chip[aria-pressed="true"] · 여기서는 --chip 이
+   안 깔려 있어 중립색 #6b7280 / #fff 로 떨어진다). 그 위에서 --tx-3 는 **1.060 / 1.470** 이다 —
+   tr.me td .den 과 **똑같은 결함**을 옆자리에 만드는 것이었다.
+   → .pk 가 이미 쓰는 처방을 그대로 쓴다(.pk[aria-pressed="true"] s{color:inherit}).
+   ⚠**옛 상태도 미달이었다**: inherit 를 .8 로 흐렸을 때 **3.760**. 흐림을 빼서 **4.834** 가 된다. */
+.chip.fav[aria-pressed="true"] s{color:inherit}
 .chip.fav[hidden]{display:none}
 .favbtn{font:inherit;font-size:var(--fs-lead);line-height:1;margin-left:var(--s2);padding:2px 6px;cursor:pointer;
   background:transparent;border:var(--rw-row) solid var(--hair-2);color:var(--tx-3);vertical-align:middle;
