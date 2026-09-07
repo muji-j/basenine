@@ -37,10 +37,11 @@
  */
 import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
-import { NO_VALUE, avg3, fullDate } from "./format.ts";
+import { NO_VALUE, avg3, fullDate, gameDate } from "./format.ts";
 import { ROSTER_PATH, page } from "./layout.ts";
 import type { RenderContext } from "./layout.ts";
 import { note, runCell, scroller, term, widestRunDiff, wlCell } from "./parts.ts";
+import { termLabel } from "./glossary.ts";
 import { teamPath } from "./team-page.ts";
 import { dayHref } from "./today-page.ts";
 import { NEUTRAL_COLOR, REGULAR_SEASON_GAMES, regularSeasonGames } from "@bb-app/domain";
@@ -125,8 +126,34 @@ export interface HomeStreak {
   teamCode: string;
   shortName: string;
   color: TeamColor;
-  kind: "hitting" | "onBase";
+  /**
+   * ⚠**投手も入る**(2026-09-07). `scorelessAppearances` は **連続無失点登板**で、
+   * 打者の2種とは**続きやすさが違う** — 表は長さで並べるが、それは「どれがすごいか」の順ではない。
+   * 각주가 그 사실을 말한다.
+   * ⚠**連続無失点イニングは入れない**(정의서 §1-7) — 「N回以上」은 「N回」와 비교가
+   * 성립하지 않아 **순위를 붙일 수 없다.** 이 표는 길이로 줄 세우는 표다.
+   */
+  kind: "hitting" | "onBase" | "scorelessAppearances";
+  /** 記録の長さ。打者は試合、投手は登板（どちらも単位は「試合」だ） */
   games: number;
+  /**
+   * **훑은 사건 수 — M2 의 첫째 분모**(정의서 §1-6 ⑴).
+   * 타자는 **타석이 있던 경기 수**, 투수는 **등판 수**다.
+   * ⚠**`games`(마루의 길이)와 섞지 마라** — 하나는 값이고 하나는 분모다.
+   */
+  scanned: number;
+  /** 훑은 사건의 단위. 화면이 분모에 붙일 말이고, **타자와 투수가 다르다** */
+  scannedUnit: "試合" | "登板";
+  /**
+   * **마루의 시작·끝 경기일 — M2 의 둘째 분모**(정의서 §1-6 ⑵).
+   *
+   * ⚠**`to` 는 `lastGameDate` 와 같은 값이 아니다.** 타자는 9.23(b) 본문으로 건너뛴 경기가
+   * 마지막이면 마루의 끝이 그 앞 경기가 된다 — **다른 사실이라 둘 다 낸다**(M11).
+   * 실측(2026-09-07 · 로컬 DB 9시즌 · 홈 표에 실릴 조건의 타자 행 58건): **어긋남 0건**.
+   * ⚠**「0건」은 「일어나지 않는다」가 아니다** — 구조적으로 일어날 수 있어서 나눠 둔다.
+   */
+  from: string | null;
+  to: string | null;
   /** 마지막 출장일. **「継続中」이라고 쓸 수 있는지 판단하는 근거** */
   lastGameDate: string | null;
 }
@@ -255,6 +282,76 @@ export function streakSectionTitle(seasonOver: boolean): string {
 /** 「記録に近づいている」구획 제목 — 같은 규칙(M1). `streakSectionTitle` 과 짝이다. */
 export function milestoneSectionTitle(seasonOver: boolean): string {
   return seasonOver ? "記録に近づいていた" : "記録に近づいている";
+}
+
+/**
+ * 연속 기록 종류 → **용어집 키**. ⚠**한 곳에서만 만든다**(M1) —
+ * 홈과 구단 페이지가 같은 표를 그리는데, 각자 삼항식으로 적으면 한쪽만 고쳐진다.
+ * 실제로 `連続安打` 가 네 곳에 문자열로 박혀 있었고 그것이 **9.23(a) 의 다른 기록 이름**이었다.
+ */
+export const STREAK_TERM_KEY: Readonly<Record<HomeStreak["kind"], string>> = {
+  hitting: "hitStreak",
+  onBase: "onBaseStreak",
+  scorelessAppearances: "scorelessAppearanceStreak",
+};
+
+/**
+ * 「続いている記録」表の**共通の見出しと行** — ⚠**홈과 구단이 같은 표를 그린다**(M1).
+ *
+ * 지금까지 두 파일이 **같은 `<td>` 를 따로 적고 있었고**, 그래서 라벨이 평문(`termLabel`)인
+ * 결함도 **두 곳에 똑같이** 있었다. 한 벌로 모아 둔다 — 구단 페이지는 `球団` 열만 없다.
+ *
+ * ⚠**라벨은 `term()` 을 통과해야 한다**(루트 §7). 평문으로 그리면 **키보드·터치에서 설명을 열 방법이 없다** —
+ * 선수 페이지는 버튼인데 이 두 표만 아니어서, **같은 화면 안에서 접근성이 갈렸다.**
+ * ⚠**`term()` 은 「라벨 → 키」 역인덱스로 찾는다** — 그래서 `termLabel(키)` 로 라벨을 꺼내
+ * 다시 넣는다. 문자열을 직접 쓰면 용어집을 고친 날 **툴팁만 조용히 사라진다.**
+ */
+export const STREAK_TABLE_HEAD =
+  html`<th class="l">記録</th><th>試合</th><th class="l">期間</th><th class="l">最後の出場</th>`;
+
+/**
+ * 마루의 기간 — **M2 의 둘째 분모**(정의서 §1-6 ⑵).
+ * ⚠**끝은 「마지막 출장」이 아니라 「기록에 센 마지막 경기」다**(`HomeStreak.to` 주석).
+ */
+export function streakSpanText(x: HomeStreak): string {
+  return x.from === null || x.to === null ? NO_VALUE : `${gameDate(x.from)}〜${gameDate(x.to)}`;
+}
+
+/** 위 견출에 맞는 한 행의 칸들(선수·구단 칸을 뺀 나머지). **한 벌만 둔다**(M1) */
+export function streakCells(x: HomeStreak): RawHtml {
+  return html`<td class="l">${term(termLabel(STREAK_TERM_KEY[x.kind]))}</td>
+      ${/* ⚠**값 옆에 분모를 붙인다**(M2 · 정의서 §1-6 ⑴) — 「50登板」이 몇 등판 중의 50인지가
+             없으면 그 수가 무엇인지 말할 수 없다. 타자는 試合, 투수는 登板이다. */ ""}
+      <td class="b">${x.games}<span class="den">${x.scanned}${x.scannedUnit}</span></td>
+      <td class="l">${streakSpanText(x)}</td>
+      <td class="l">${x.lastGameDate === null ? NO_VALUE : fullDate(x.lastGameDate)}</td>`;
+}
+
+/**
+ * 「続いている記録」表の各注 — **홈과 구단이 같은 문장을 쓴다**(M1).
+ *
+ * ⚠**옛 문장은 투수가 들어온 순간 거짓이 됐다**: 「その日より後に試合があれば、記録はもう
+ * 途切れているか、本人が出ていないかのどちらかです」 — 투수는 **등판하지 않으면 안 끊긴다.**
+ * 「출장하지 않았다」와 「기록이 끊겼다」가 타자에서는 배타적이지만 투수에서는 아니다.
+ * ⚠**길이로 줄 세우지만 종류가 다르면 비교가 성립하지 않는다** — 그 사실도 적는다.
+ */
+export function streakTableNote(season: number): string {
+  return (
+    "**最後の出場日を必ず併記しています。** 打者の記録は、その日より後に試合があれば" +
+    "もう途切れているか本人が出ていないかのどちらかです。" +
+    "⚠**投手の連続無失点は、登板しなければ途切れません** — そのぶん日付が古いまま残ることがあります。" +
+    "連続記録は「試合」単位で数えます（NPB・MLBの慣例）。代走だけで出た試合は数えません。" +
+    // ⚠**M2 의 셋째 분모 — 「어느 범위에서 센 수인가」**(정의서 §1-6 ⑶).
+    //   石井大智는 **정규만이면 이어지고 일본시리즈를 넣으면 끊긴다** — 같은 선수·같은 날에 답이 뒤집힌다.
+    //   ⚠**연도를 박지 않는다**(사용자 결정 ⑵) — 보고 있는 시즌에서 유도한다.
+    `この表は**${season}年のレギュラーシーズンのみ**で数えた記録です — ` +
+    "日本シリーズ・クライマックスシリーズ・オープン戦は入れていません。" +
+    // ⚠**분모 셋 중 첫째** — 「몇 경기(登板)를 훑어서 나온 수인가」
+    "「試合」欄の小さい数字は、**この範囲で数えた出場試合（投手は登板）**の数です。" +
+    // ⚠**「期間」의 오른쪽 끝은 마지막 출장이 아니라 記録の最後の試合**이다 — 드물게 갈린다
+    "「期間」は**記録が始まった試合から、記録に数えた最後の試合まで**です。" +
+    "⚠**種類の違う記録を長さで並べています** — 続きやすさが違うので、並び順は「どれがすごいか」の順ではありません。"
+  );
 }
 
 const pctText = (v: number | null): string => (v === null ? NO_VALUE : avg3(v));
@@ -534,21 +631,17 @@ ${d.streaks.length === 0
          이름만 현재형으로 남으면 **낭독 경로가 화면과 다른 말을 한다.**
          실제로 첫 판에서 그렇게 적었다가 시험이 잡았다. */ ""}
   ${scroller(html`<table aria-label="${streakSectionTitle(d.seasonOver)}">
-    <thead><tr><th class="l">選手</th><th class="l">球団</th><th class="l">記録</th><th>試合</th><th class="l">最後の出場</th></tr></thead>
+    <thead><tr><th class="l">選手</th><th class="l">球団</th>${STREAK_TABLE_HEAD}</tr></thead>
     <tbody>${d.streaks.map(
       (x) => html`<tr>
       <td class="l"><a href="${base}players/${x.playerId}.html">${x.name}</a></td>
       <td class="l">${teamChip(x.teamCode, x.shortName, x.color, base)}</td>
-      <td class="l">${x.kind === "hitting" ? "連続安打" : "連続出塁"}</td>
-      <td class="b">${x.games}</td>
-      <td class="l">${x.lastGameDate === null ? NO_VALUE : fullDate(x.lastGameDate)}</td>
+      ${streakCells(x)}
     </tr>`,
     )}</tbody>
   </table>`)}
   ${note(
-    "**最後の出場日を必ず併記しています** — その日より後に試合があれば、記録はもう途切れているか、" +
-      "本人が出ていないかのどちらかです。連続記録は「試合」単位で数えます（NPB・MLBの慣例）。" +
-      "代走だけで出た試合は数えません。",
+    streakTableNote(d.season),
   )}
 </section>`}
 

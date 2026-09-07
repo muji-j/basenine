@@ -7,9 +7,10 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { REGULAR_SEASON_GAMES, renderHomePage } from "../src/home-page.ts";
+import { REGULAR_SEASON_GAMES, STREAK_TERM_KEY, renderHomePage } from "../src/home-page.ts";
 import type { HomePageData } from "../src/home-page.ts";
 import { colorOf } from "@bb-app/domain";
+import { termLabel } from "../src/glossary.ts";
 import { context } from "./fixtures.ts";
 
 function team(code: string, over: Record<string, unknown> = {}) {
@@ -101,6 +102,8 @@ function data(over: Partial<HomePageData> = {}): HomePageData {
       {
         playerId: "B3", name: "森下", teamCode: "t", shortName: "阪神", color: colorOf("t"),
         kind: "hitting", games: 12, lastGameDate: "2026-08-16",
+        // ⚠**분모 3종 중 둘이 행에 있다**(M2 · 정의서 §1-6): 훑은 사건 수 · 마루의 기간
+        scanned: 96, scannedUnit: "試合", from: "2026-07-28", to: "2026-08-16",
       },
     ],
     hasPostseason: false,
@@ -259,7 +262,10 @@ test("⚠페이스에 분모와 「예측이 아니다」가 함께 나온다", 
  */
 test("⚠연속 기록에 마지막 출장일이 반드시 붙는다", () => {
   const out = renderHomePage(data(), context());
-  assert.match(out, /連続安打/);
+  // ⚠**라벨을 여기 적지 않는다**(M1 · 2026-09-07). 예전에는 `/連続安打/` 라고 박혀 있었고,
+  //   그 이름이 **공인야구규칙 9.23(a) 의 다른 기록**이라 `連続試合安打` 로 고칠 때 이 줄이 떨어졌다.
+  //   용어집에서 꺼내면 다음에 또 바뀌어도 시험이 저절로 따라간다.
+  assert.ok(out.includes(termLabel("hitStreak")), "연속 기록의 이름이 용어집과 다르다");
   assert.match(out, /2026年8月16日/, "마지막 출장일이 없다");
   assert.match(out, /最後の出場日を必ず併記/, "왜 날짜를 내는지 말하지 않는다");
 });
@@ -580,4 +586,117 @@ test("⚠진행 중인 시즌의 홈은 「続いている記録」・「記録�
   const nav = /<nav class="hjump"[\s\S]*?<\/nav>/.exec(out)?.[0] ?? "";
   assert.match(nav, /続いている記録/, "내비 라벨이 현재형이 아니다");
   assert.match(nav, /記録に近づいている/, "내비 라벨이 현재형이 아니다");
+});
+
+/**
+ * ⚠**「続いている記録」이 조용히 「打者の記録」을 뜻하고 있었다**(2026-09-07) —
+ * `blocks.ts` 의 「打者のみ」와 같은 모양의 결함이고, 그 상태로는 2025년 NPB 최대의 연속 기록
+ * (石井大智의 50試合連続無失点)이 이 구획에 나올 수 없었다.
+ *
+ * ⚠**배선이 실제로 도는지는 `team-streaks-milestones.test.ts` 가 `loadSite` 로 잰다.**
+ * 여기서 보는 것은 **화면이 그 행을 어떻게 그리는가**다 — 둘을 한 시험에 넣으면 어느 쪽이
+ * 깨졌는지 모른다.
+ */
+test("⚠투수 행의 이름도 용어집에서 나온다 — 화면이 라벨을 직접 적지 않는다", () => {
+  const out = renderHomePage(
+    data({
+      streaks: [
+        {
+          playerId: "P9", name: "石井", teamCode: "t", shortName: "阪神", color: colorOf("t"),
+          // ⚠**최신 경기일이 아니다** — 구원투수는 매일 안 던진다. 그래도 기록은 안 끊겼다
+          kind: "scorelessAppearances", games: 16, lastGameDate: "2026-08-13",
+          scanned: 41, scannedUnit: "登板", from: "2026-05-30", to: "2026-08-13",
+        },
+      ],
+    }),
+    context(),
+  );
+  assert.ok(out.includes(termLabel("scorelessAppearanceStreak")), "투수 기록의 이름이 없다");
+  assert.match(out, /2026年8月13日/, "마지막 등판일이 없다 — 이 표에서 그게 분모다");
+  // ⚠**투수의 분모 단위는 「登板」이다** — 타자와 같은 「試合」로 적으면 다른 것을 센 것처럼 읽힌다
+  assert.match(out, /16<span class="den">41登板<\/span>/, "훑은 등판 수(분모)가 없다");
+  assert.match(out, /5月30日〜8月13日/, "마루의 기간이 없다");
+});
+
+/**
+ * ⚠**분모 3종을 다 내지 않으면 M2 위반이다**(정의서 §1-6): ⑴ 훑은 사건 수 · ⑵ 마루의 기간 ·
+ * ⑶ 집계 범위. 이 표는 **⑴도 ⑵도 ⑶도 없이** 길이와 마지막 출장일만 싣고 있었다
+ * (2026-09-07 검토 ⑶) — 「12試合」이 **몇 경기 중의 12이고 언제부터인지**를 말하지 못했다.
+ *
+ * ⚠**⑶은 각주에 있어도 된다**(표가 좁다) — 다만 **반드시 있어야 한다.** 石井大智는
+ * **정규만이면 이어지고 일본시리즈를 넣으면 끊긴다**(정의서 §1-1) — 같은 선수·같은 날에 답이 뒤집힌다.
+ */
+test("⚠연속 기록 표가 분모 3종을 낸다 — 훑은 사건 수 · 마루의 기간 · 집계 범위", () => {
+  const out = renderHomePage(data(), context());
+  // ⑴ 훑은 사건 수 — **마루의 길이(12)와 다른 수**다
+  assert.match(out, /12<span class="den">96試合<\/span>/, "훑은 경기 수(분모)가 값 옆에 없다");
+  // ⑵ 마루의 기간
+  assert.match(out, /7月28日〜8月16日/, "마루의 기간이 없다");
+  // ⑶ 집계 범위 — **연도를 박지 않고 시즌에서 유도한다**(사용자 결정 ⑵)
+  assert.match(out, /2026年のレギュラーシーズンのみ/, "집계 범위를 말하지 않는다");
+  assert.match(out, /日本シリーズ/, "무엇을 뺐는지 말하지 않는다");
+  const older = renderHomePage(data({ season: 2019 }), context());
+  assert.match(older, /2019年のレギュラーシーズンのみ/, "「2026」이 어딘가에 박혀 있다");
+});
+
+/**
+ * ⚠**같은 화면 안에서 접근성이 갈려 있었다**(2026-09-07 검토 ⑷).
+ * 선수 페이지의 연속기록 라벨은 `term()`(버튼)이라 **키보드·터치로 설명을 열 수 있는데**,
+ * 홈과 구단의 이 표만 평문 `termLabel()` 이었다 — PC 호버로도 안 열린다.
+ * 루트 `CLAUDE.md` §7(키보드 조작 · 포커스 · WCAG AA).
+ *
+ * ⚠**「글자는 나온다」가 통과 근거가 될 수 없다** — 그래서 라벨 문자열이 아니라
+ * **`data-term` 속성**을 본다.
+ */
+test("⚠연속 기록 라벨이 키보드로 열리는 버튼이다 — 평문이면 설명에 닿을 방법이 없다", () => {
+  const out = renderHomePage(data(), context());
+  assert.match(
+    out,
+    new RegExp(`<button class="term" type="button" data-term="hitStreak"[^>]*>${termLabel("hitStreak")}</button>`),
+    "타자 행의 라벨이 버튼이 아니다",
+  );
+  const pit = renderHomePage(
+    data({
+      streaks: [
+        {
+          playerId: "P9", name: "石井", teamCode: "t", shortName: "阪神", color: colorOf("t"),
+          kind: "scorelessAppearances", games: 16, lastGameDate: "2026-08-13",
+          scanned: 41, scannedUnit: "登板", from: "2026-05-30", to: "2026-08-13",
+        },
+      ],
+    }),
+    context(),
+  );
+  assert.match(pit, /data-term="scorelessAppearanceStreak"/, "투수 행의 라벨이 버튼이 아니다");
+});
+
+/**
+ * ⚠**옛 각주는 투수가 들어온 순간 거짓이 됐다.** 「その日より後に試合があれば、記録はもう
+ * 途切れているか、本人が出ていないかのどちらかです」 — **투수는 등판하지 않으면 안 끊긴다.**
+ * 「출장하지 않았다」와 「기록이 끊겼다」가 타자에서는 배타적이지만 투수에서는 아니다.
+ */
+test("⚠각주가 투수와 타자를 구별한다 — 그리고 종류가 다르면 비교가 성립하지 않는다고 말한다", () => {
+  const out = renderHomePage(data(), context());
+  assert.match(out, /投手の連続無失点は、登板しなければ途切れません/);
+  assert.match(out, /種類の違う記録を長さで並べています/);
+  assert.ok(
+    !out.includes("その日より後に試合があれば、記録はもう途切れているか"),
+    "투수에게 거짓인 옛 각주가 남아 있다",
+  );
+});
+
+/**
+ * ⚠**종류 → 용어집 키의 표는 한 벌이다**(M1) — 홈과 구단 페이지가 같은 표를 그리는데
+ * 각자 삼항식으로 적으면 한쪽만 고쳐진다. 실제로 `連続安打` 가 네 곳에 박혀 있었다.
+ */
+test("⚠연속 기록 종류의 라벨 표가 한 벌이고 빠진 종류가 없다", () => {
+  assert.deepEqual(STREAK_TERM_KEY, {
+    hitting: "hitStreak",
+    onBase: "onBaseStreak",
+    scorelessAppearances: "scorelessAppearanceStreak",
+  });
+  for (const key of Object.values(STREAK_TERM_KEY)) {
+    // ⚠`termLabel` 은 모르는 키에 던진다 — 표에 오타가 있으면 여기서 터진다
+    assert.ok(termLabel(key).length > 0);
+  }
 });

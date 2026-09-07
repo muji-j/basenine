@@ -10,6 +10,7 @@ import type { Db } from "@bb-app/store";
 //   여기서 목록을 다시 적으면 구획이 하나 늘어난 날 화면만 옛 목록으로 조용히 돈다.
 import { LOTTERY_KINDS, ROUND_NUMBERED_KINDS } from "@bb-app/store";
 import type { DataState } from "./layout.ts";
+import { daysBetween } from "./layout.ts";
 import {
   attempts,
   battedBalls,
@@ -60,8 +61,12 @@ import type {
   DraftTeam,
 } from "./draft-page.ts";
 import type {
+  CareerBattingStreaks,
+  CareerStreak,
   CountLine,
   HeadToHead,
+  PitchingStreak,
+  PitchingStreaks,
   PlayerStreaks,
   ReliefLine,
   ReliefScan,
@@ -70,6 +75,7 @@ import type {
   SeriesLengths,
   StealBase,
   StealLine,
+  Streak,
   TeamRace,
   TeamRaceInput,
 } from "@bb-app/aggregate";
@@ -94,7 +100,13 @@ import type {
   CountScope,
   CountSplitRow,
   CountUnreadable,
+  CareerStreakScope,
+  CareerStreakView,
+  PitchingStreakBlockData,
+  PitchingStreakScope,
+  PitchingStreakView,
   ReliefBlockData,
+  StreakBlockData,
   ReliefTotals,
   StealBaseRow,
 } from "./player-page.ts";
@@ -136,6 +148,8 @@ import {
   blendConstants,
   battingSplits,
   battingStreaks,
+  careerBattingStreaks,
+  pitchingStreaks,
   pitchingGameSplits,
   pitchingSplits,
   buildLeagues,
@@ -2923,6 +2937,55 @@ function milestonesOf(
 }
 
 
+/** ⚠**`side` 가 답이다** — 홈이면 `home_code`, 원정이면 `away_code`. 더블헤더는 `game_no` 로 뒤쪽을 고른다 */
+const APPEARANCE_TEAM_SQL =
+  `SELECT CASE pl.side WHEN 'home' THEN g.home_code ELSE g.away_code END AS code
+     FROM pitching_line pl JOIN game g ON g.game_id = pl.game_id
+    WHERE pl.player_id = ? AND g.season = ? AND g.competition = ? AND g.status = 'played'
+      AND g.game_date = ?
+    ORDER BY g.game_no DESC LIMIT 1`;
+
+/**
+ * ⚠**`Db` 별로 캐시한다** — 빌드가 여러 DB 를 열 수 있고, 준비된 문장은 그것을 만든 연결에 묶인다
+ * (`CAREER_STMTS` 와 같은 이유·같은 모양). `WeakMap` 이라 DB 가 닫히면 같이 사라진다.
+ */
+const APPEARANCE_TEAM_STMTS = new WeakMap<object, ReturnType<Db["raw"]["prepare"]>>();
+
+/**
+ * **그 등판일에 이 투수가 어느 구단이었는가.**
+ *
+ * ⚠**추측이 아니라 사실이다** — `pitching_line.side` 가 홈·원정을 말하므로 그 경기의
+ * 구단 코드가 그대로 나온다. 정의서 §6-10 이 「그때 소속 구단」을 미해결로 남겼는데
+ * **그 답이 스키마에 이미 있었다.**
+ *
+ * ⚠**한 벌만 둔다**(M1). 선수 페이지는 처음부터 이것을 썼는데, 홈·구단의 「続いている記録」은
+ * `agg.batting` → `agg.pitching` 순으로 찾는 다른 함수를 썼다 — **타격 구단을 무조건 먼저** 보므로
+ * 시즌 도중에 옮긴 투수는 **투구하지 않은 구단의 화면에 실렸다.**
+ * 실측(2026-09-07 · 로컬 DB 9시즌 · 하한 5의 투수 행 272건): **어긋남 1건** —
+ * 2023 `03105136` 이 타격 `d` · 투구 `f` 인데 `d` 로 실렸다(마루는 `f` 에서 만든 것이다).
+ * ⚠**같은 저장소 안에서 두 화면이 다른 답을 내고 있었다.** 그것이 M1 이 막는 바로 그 상태다.
+ *
+ * ⚠**A→B→A 는 여전히 못 잡는다** — 이 함수는 「그 날짜의 구단」만 말한다(계획서 §10-2).
+ *
+ * @returns 그 날짜에 등판 기록이 없으면 `null`. ⚠**모르면 다른 값으로 때우지 않는다**(M11).
+ */
+export function pitchingTeamOn(
+  db: Db,
+  playerId: string,
+  season: number,
+  competition: string,
+  date: string,
+): string | null {
+  const key = db.raw as unknown as object;
+  let stmt = APPEARANCE_TEAM_STMTS.get(key);
+  if (stmt === undefined) {
+    stmt = db.raw.prepare(APPEARANCE_TEAM_SQL);
+    APPEARANCE_TEAM_STMTS.set(key, stmt);
+  }
+  const row = stmt.get(playerId, season, competition, date) as unknown as { code: string } | undefined;
+  return row?.code ?? null;
+}
+
 /**
  * 대시보드 데이터.
  *
@@ -2936,6 +2999,12 @@ function homePage(
   standings: readonly StandingsSection[],
   agg: SeasonAggregate,
   streaksByPlayer: ReadonlyMap<string, PlayerStreaks>,
+  /**
+   * 투수 연속 무실점(**그 시즌 범위**). ⚠**통산 몫을 여기 넣지 않는다** —
+   * 홈은 「続いている記録」이라 **보고 있는 시즌**의 이야기이고, 통산을 섞으면
+   * 같은 표 안에서 두 범위가 겹친다(M2 의 셋째 분모가 행마다 달라진다).
+   */
+  pitchStreakSeason: ReadonlyMap<string, PitchingStreaks>,
   /** 리그별 RE 행렬 — 주간 SRC/SRP 를 **시즌과 같은 커널**로 재기 위해 받는다(M1) */
   reByLeague: ReadonlyMap<string, RunExpectancy>,
   asOf: string | null,
@@ -3084,20 +3153,66 @@ function homePage(
    * 「지금 이어지는 중」으로 8월 화면에 남는다.
    */
   const streaks: HomeStreak[] = [];
+  /**
+   * **투수의 連続無失点登板도 싣는다**(2026-09-07).
+   *
+   * ⚠**「続いている記録」이 조용히 「打者の記録」을 뜻하고 있었다** — `blocks.ts` 의
+   * 「打者のみ」와 같은 결함이고, 2025년 NPB 최대의 연속 기록(石井大智 50試合)이
+   * 이 구획에 나올 수 없었다.
+   *
+   * ⚠**타자의 「최신 경기일에 출장」 조건을 그대로 쓰지 않는다.** 구원투수는 매일 안 던진다 —
+   * 실측(2026 · 로컬 DB 최신 정규 2026-08-16): 진행 중 마루 **5등판 이상 37명 중
+   * 최신 경기일에 등판한 사람은 9명**, **8등판 이상 12명 중 1명**이다. 그 조건을 걸면
+   * **상위 기록이 거의 전부 사라진다**(16등판 1위도 3일 전 등판이라 빠진다).
+   * → **날짜 조건을 안 걸고, 각주가 「투수는 등판하지 않으면 途切れない」고 말한다.**
+   *
+   * ⚠**이닝 쪽은 싣지 않는다**(정의서 §1-7): 「N回以上」과 「N回」는 비교가 성립하지 않아
+   * **순위를 붙일 수 없다.** 이 표는 길이로 줄 세우는 표이므로 **항상 확정인 등판 축**만 쓴다.
+   */
+  for (const [playerId, ps] of pitchStreakSeason) {
+    const cur = ps.current;
+    if (cur === null || cur.appearances < HOME_PITCHING_STREAK_MIN) continue;
+    /**
+     * ⚠**구단은 「등판한 구단」이지 「타석에 선 구단」이 아니다**(M1 · `pitchingTeamOn`).
+     * `teamCodeOf` 는 `agg.batting` 을 무조건 먼저 보므로, 시즌 도중에 옮긴 투수의 마루가
+     * **투구하지 않은 구단의 화면**에 실렸다(실측 2023 `03105136`).
+     * ⚠**선수 페이지가 이미 이 답을 쓰고 있었다** — 두 화면이 갈려 있었던 것이다.
+     * ⚠**못 찾으면 다른 값으로 때우지 않고 뺀다**(M11).
+     */
+    const code = ps.lastGameDate === null
+      ? null
+      : pitchingTeamOn(db, playerId, o.season, competition, ps.lastGameDate);
+    if (code === null || code === "") continue;
+    streaks.push({
+      playerId,
+      name: nameOf(playerId),
+      ...chip(code),
+      kind: "scorelessAppearances",
+      games: cur.appearances,
+      // ⚠**분모 3종**(M2 · 정의서 §1-6): 훑은 등판 수 · 마루의 기간 · 집계 범위(각주가 낸다)
+      scanned: ps.appearances,
+      scannedUnit: "登板",
+      from: cur.from,
+      to: cur.to,
+      lastGameDate: ps.lastGameDate,
+    });
+  }
   for (const [playerId, st] of streaksByPlayer) {
     if (latestDate !== null && st.lastGameDate !== latestDate) continue;
     const code = teamCodeOf(playerId);
     if (code === "") continue;
+    /** ⚠**분모는 「타석이 있던 경기」다**(M2) — 마루의 길이(`current`)와 다른 수다 */
+    const row = (kind: HomeStreak["kind"], m: Streak): HomeStreak => ({
+      playerId, name: nameOf(playerId), ...chip(code),
+      kind, games: m.current,
+      scanned: st.games, scannedUnit: "試合",
+      from: m.currentFrom, to: m.currentTo,
+      lastGameDate: st.lastGameDate,
+    });
     if (st.hitting.current >= HOME_STREAK_MIN) {
-      streaks.push({
-        playerId, name: nameOf(playerId), ...chip(code),
-        kind: "hitting", games: st.hitting.current, lastGameDate: st.lastGameDate,
-      });
+      streaks.push(row("hitting", st.hitting));
     } else if (st.onBase.current >= HOME_STREAK_MIN) {
-      streaks.push({
-        playerId, name: nameOf(playerId), ...chip(code),
-        kind: "onBase", games: st.onBase.current, lastGameDate: st.lastGameDate,
-      });
+      streaks.push(row("onBase", st.onBase));
     }
   }
   streaks.sort((a, b) => b.games - a.games || a.playerId.localeCompare(b.playerId));
@@ -3238,7 +3353,7 @@ function homePage(
       week,
       milestones: milestones.slice(0, HOME_MILESTONE_ROWS),
       paces,
-      streaks: streaks.slice(0, HOME_STREAK_ROWS),
+      streaks: shareStreakRows(streaks, HOME_STREAK_ROWS),
       hasPostseason,
       // ⚠**구단 페이지와 같은 판정을 쓴다**(M1) — `calendarOf` 가 쓰는 것과 같은 함수다.
       // 「続いている記録」가 끝난 시즌에서 현재형으로 거짓말하는 것을 막는다(2026-08-20).
@@ -3291,6 +3406,67 @@ const HOME_WEEK_MIN_PA = 10;
 const HOME_WEEK_MIN_BF = 12;
 const HOME_WEEK_ROWS = 5;
 const HOME_STREAK_MIN = 5;
+/**
+ * 홈·구단의 「続いている記録」에 투수를 싣는 하한 — **連続無失点登板**.
+ *
+ * ⚠**타자의 `HOME_STREAK_MIN` 과 수가 같은 것은 우연이고, 근거가 다르다**(정의서 §1-7:
+ * 「안타와 출루에 같은 값을 쓰지 마라」와 같은 정신). **따로 두어야 한쪽만 고칠 수 있다.**
+ *
+ * 근거(2026-09-07 실측 · 로컬 DB · 2026 시즌 범위 · 진행 중 마루가 있는 투수 133명):
+ * **≥3 62명 · ≥5 37명 · ≥8 12명 · ≥10 7명 · ≥15 2명**. 표는 10행까지이므로
+ * 3이면 목록이 하한 근처의 잡음으로 차고, 8이면 12명 중 상위 10명이라 **거의 거르지 않는다**.
+ * 5는 **37명에서 상위 10명을 고르는** 값이고, 완결 8시즌 전체에서도 마루의 26.0%가 5등판 이상이다
+ * (정의서 §1-7). ⚠**진행 중 마루는 중도에 잘려 있어 짧게 나오므로 낮게 잡는다.**
+ */
+const HOME_PITCHING_STREAK_MIN = 5;
+
+/**
+ * 「続いている記録」의 자리를 **타자 몫과 투수 몫으로 나눈다.**
+ *
+ * ⚠**길이로만 자르면 투수가 표를 차지한다.** 실측(2026-09-07 · 로컬 DB · 하한 5):
+ * 후보 수가 **2026 타자 23 · 투수 37**, **2025 타자 6 · 투수 37**, **2022 타자 4 · 투수 32**,
+ * **2018 타자 7 · 투수 19** 다 — 진행 중 마루가 있는 투수는 늘 수십 명인데, 타자는
+ * 「최신 경기일에 출장」까지 요구하므로 한 자릿수인 시즌이 흔하다.
+ * ⚠**실제로 그렇게 됐다**: 나누기 전 2026 홈 화면은 **10행 중 7행이 투수**였다.
+ * 끝난 시즌이면 거의 전부가 투수가 된다 — 그러면 이 구획이 조용히 **「투수의 기록」**이 되고,
+ * 그건 방금 고친 「조용히 타자만」과 **같은 결함의 반대 방향**이다.
+ *
+ * ⚠**한쪽이 모자라면 다른 쪽이 채운다** — 자리를 비워 두면 정보가 줄기만 한다.
+ * ⚠**정렬은 그대로 길이순이다** — 종류가 다르면 비교가 성립하지 않는다는 것은 **각주가 말한다**
+ * (`streakTableNote`). 여기서 하는 일은 **어느 쪽도 사라지지 않게 하는 것**뿐이다.
+ *
+ * ⚠**export 는 시험을 위해서다**(`isNextProbable`·`foldThinVenues`·`sliceRelief` 와 같은 이유) —
+ * 이 자르기는 **후보가 수십 명일 때만** 드러나는데, 그만큼의 실DB 픽스처를 만드는 것은
+ * 이 규칙 하나를 재자고 치르기엔 비싼 값이다.
+ *
+ * @param rows 길이순으로 이미 정렬된 목록
+ */
+export function shareStreakRows(rows: readonly HomeStreak[], limit: number): HomeStreak[] {
+  const isPitcher = (r: HomeStreak): boolean => r.kind === "scorelessAppearances";
+  const bat = rows.filter((r) => !isPitcher(r));
+  const pit = rows.filter(isPitcher);
+  /**
+   * ⚠**`ceil` 이면 홀수 한도에서 합이 한도를 넘는다** — `limit=5` 면 양쪽에 3씩 주어 **6행**이 나오고,
+   * 아래의 남는 자리 배분은 `spare > 0` 만 보므로 **음수(−1)를 되돌리지 않는다.**
+   * ⚠**지금 호출 상수가 둘 다 짝수(10)라 발현하지 않았다** — 계약이 틀린 것이지 값이 운 좋은 것이다.
+   * → **`floor` 로 반씩 주고**, 남는 한 자리는 아래의 「모자란 쪽을 채운다」가 배분한다.
+   *   짝수 한도에서는 `ceil` 과 같은 값이라 **지금 화면은 한 행도 안 바뀐다.**
+   * ⚠**`Math.max(0, …)` 는 한도가 0 이하일 때 `slice` 가 뒤에서 자르는 것을 막는다.**
+   */
+  const half = Math.max(0, Math.floor(limit / 2));
+  let batN = Math.min(bat.length, half);
+  let pitN = Math.min(pit.length, half);
+  let spare = limit - batN - pitN;
+  if (spare > 0) {
+    const addBat = Math.min(spare, bat.length - batN);
+    batN += addBat;
+    spare -= addBat;
+    pitN += Math.min(spare, pit.length - pitN);
+  }
+  // ⚠**원래 순서를 지킨다** — 입력이 이미 길이순이라 각 몫을 앞에서 잘라 다시 섞으면 된다
+  const picked = new Set([...bat.slice(0, batN), ...pit.slice(0, pitN)]);
+  return rows.filter((r) => picked.has(r));
+}
 const HOME_STREAK_ROWS = 10;
 /** 통산 마디 구획의 행 수 */
 const HOME_MILESTONE_ROWS = 8;
@@ -4073,7 +4249,7 @@ function teamPages(
          * `filter` 는 순서를 보존하므로, 여기서 다시 `sort` 하지 않는다.
          *   다시 정렬하는 순간 두 화면의 「상위」가 다른 뜻이 된다.
          */
-        streaks: allStreaks.filter((s) => s.teamCode === code).slice(0, TEAM_STREAK_ROWS),
+        streaks: shareStreakRows(allStreaks.filter((s) => s.teamCode === code), TEAM_STREAK_ROWS),
         milestones: allMilestones.filter((m) => m.teamCode === code).slice(0, TEAM_MILESTONE_ROWS),
       });
     }
@@ -5118,7 +5294,62 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   const monthlyEra = loadMonthlyEra(db, o.season, competition, through);
   // ⚠연속 기록은 경기 단위다. 타석이 없는 경기(대주자·수비 교대)는 세지 않는다
   const streaksByPlayer = battingStreaks(db, o.season, competition, through);
+  /**
+   * **투수 연속 무실점** — 시즌 몫과 통산 몫.
+   *
+   * ⚠**한 번씩만 부른다.** 선수마다 부르면 **O(n²)** 다(계획서 §7). 실측(2026-09-07 · 로컬 DB):
+   * 통산 2018〜2026 **1회 1,876ms**(882명) · 2026 시즌 **133ms**(358명).
+   * 시즌마다 통산을 부르는 것은 여기서 피할 수 없다 — **통산의 끝은 언제나 보고 있는 시즌**이라
+   * 2022년 화면의 통산은 2018〜2022 이고 2026년 화면의 것과 다른 답이다(CLAUDE.md §2-2).
+   * ⚠**결과를 잘라 쓸 수는 없다**: 2023년에 끊긴 마루는 2022년 시야에서 `open` 이 되고
+   * 경계 등판이 사라져 이닝의 상한이 달라진다 — **자르면 조용히 다른 수가 된다.**
+   * 9시즌 합계 실측 **16.4초**(2018:266ms → 2026:3,904ms · 전체 집계 348.7초의 4.7%).
+   *
+   * ⚠**보유 하한이 곧 이 시즌이면 다시 훑지 않는다** — 같은 범위라 답이 같고 시간만 든다.
+   *   그때는 시즌을 넘는 마루가 **원리적으로 없으므로** 토글도 안 생긴다.
+   */
+  const pitchStreakSeason = pitchingStreaks(db, {
+    fromSeason: o.season,
+    toSeason: o.season,
+    competition,
+    through,
+  });
+  const pitchStreakCareer =
+    heldFrom < o.season
+      ? pitchingStreaks(db, { fromSeason: heldFrom, toSeason: o.season, competition, through })
+      : null;
+  /**
+   * **타자 연속 기록의 통산 몫**. ⚠**`連続試合無安打` 는 여기 없다**(사용자 결정 ⑺ · 정의서 §4-4) —
+   * 계산 계층의 타입에 자리가 없고, 그것이 「우리가 아직 안 정했다」를 정직하게 말한다.
+   */
+  const batStreakCareer =
+    heldFrom < o.season
+      ? careerBattingStreaks(db, { fromSeason: heldFrom, toSeason: o.season, competition, through })
+      : null;
 
+  /**
+   * 구단별 **그 시즌 경기일 목록**(오름차순) — 「마지막 등판 뒤 그 구단이 몇 경기 했는가」의 재료.
+   *
+   * ⚠**이것이 연속 무실점의 두 번째 분모다**(M2 · 정의서 §1-5). 안 내면 島本의 27등판이
+   * 「지금도 무실점 중」으로 읽힌다 — 실제로는 그 사이 시즌 두 개가 통째로 비어 있다.
+   * ⚠**날짜가 아니라 경기를 센다** — 더블헤더가 오면 한 날에 두 경기다(보유 9시즌 실측 0건).
+   */
+  const teamGameDates = new Map<string, string[]>();
+  for (const r of db.raw
+    .prepare(
+      `SELECT away_code AS away, home_code AS home, game_date AS date FROM game
+        WHERE season = ? AND competition = ? AND status = 'played' AND game_date <= ?
+        ORDER BY game_date, game_no`,
+    )
+    .all(o.season, competition, through) as unknown as { away: string; home: string; date: string }[]) {
+    for (const code of [r.away, r.home]) {
+      const list = teamGameDates.get(code);
+      if (list === undefined) teamGameDates.set(code, [r.date]);
+      else list.push(r.date);
+    }
+  }
+  const teamGamesAfter = (code: string, date: string): number =>
+    (teamGameDates.get(code) ?? []).filter((d) => d > date).length;
   // 상대 선수의 소속 구단은 시즌 집계에서 온다 — 이름 문자열로 조인하지 않는다(M10)
   const teamOfPlayer = new Map<string, string>();
   for (const b of agg.batting) teamOfPlayer.set(b.playerId, b.teamCode);
@@ -5580,6 +5811,109 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       return hasPage ? { ...r, opponentTeam: team } : { ...r, opponentTeam: team, noPage: true as const };
     });
 
+  /**
+   * 계산 계층의 마루 → 화면용.
+   * ⚠**세 값을 다 옮긴다**(하한·상한·확정 여부) — 표시가 어느 쪽을 고르든(정의서 §3-3).
+   * ⚠**`atRangeStart` 와 `exact` 를 한 필드로 합치지 않는다** — **「以上」의 사유가 둘**이고
+   *   화면이 다른 말을 해야 한다(정의서 §1-6).
+   */
+  const pitchingViewOf = (m: PitchingStreak | null): PitchingStreakView | null =>
+    m === null
+      ? null
+      : {
+          appearances: m.appearances,
+          lowerOuts: m.innings.lowerOuts,
+          upperOuts: m.innings.upperOuts,
+          exact: m.innings.exact,
+          atRangeStart: m.atRangeStart,
+          from: m.from,
+          to: m.to,
+          seasons: m.seasons,
+        };
+  const pitchingScopeOf = (p: PitchingStreaks): PitchingStreakScope => ({
+    current: pitchingViewOf(p.current),
+    best: pitchingViewOf(p.best),
+    bestInnings: pitchingViewOf(p.bestInnings),
+    appearances: p.appearances,
+    fromSeason: p.fromSeason,
+    toSeason: p.toSeason,
+  });
+  /**
+   * ⚠**토글은 「시즌 넘김 마루가 실재하는 선수」에게만 붙인다**(사용자 결정 ⑶).
+   * 실측(2026-09-07 · 로컬 DB): 그 시즌에 등판한 투수 중 시즌 넘김 마루 보유자는
+   * **2019년 37/357(10.4%) · 2022년 56/352(15.9%) · 2026년 77/358(21.5%)**.
+   * ⚠**`seasons` 는 「사건이 있던 시즌」이라 건너뛴 시즌을 안 담는다** — 그래서 길이 ≥ 2 가
+   *   「시즌을 넘었다」와 같은 뜻이다.
+   */
+  const crossesSeasons = (marus: readonly ({ seasons: readonly number[] } | null)[]): boolean =>
+    marus.some((m) => m !== null && m.seasons.length >= 2);
+
+  const careerViewOf = (m: CareerStreak | null): CareerStreakView | null =>
+    m === null
+      ? null
+      : { length: m.length, from: m.from, to: m.to, seasons: m.seasons, atRangeStart: m.atRangeStart };
+  const careerScopeOf = (c: CareerBattingStreaks): CareerStreakScope => ({
+    hitting: { current: careerViewOf(c.hitting.current), best: careerViewOf(c.hitting.best) },
+    onBase: { current: careerViewOf(c.onBase.current), best: careerViewOf(c.onBase.best) },
+    games: c.games,
+    fromSeason: c.fromSeason,
+    toSeason: c.toSeason,
+  });
+
+  const batterStreakBlockOf = (playerId: string): StreakBlockData | null => {
+    const s = streaksByPlayer.get(playerId);
+    if (s === undefined) return null;
+    const c = batStreakCareer?.get(playerId);
+    const cross =
+      c !== undefined && crossesSeasons([c.hitting.current, c.hitting.best, c.onBase.current, c.onBase.best]);
+    return {
+      hitting: s.hitting,
+      onBase: s.onBase,
+      hitless: s.hitless,
+      games: s.games,
+      lastGameDate: s.lastGameDate,
+      career: cross && c !== undefined ? careerScopeOf(c) : null,
+      // ⚠**「2017」을 박지 않는다**(사용자 결정 ⑵) — 화면이 이 값에서 문구를 유도한다
+      careerFrom: heldFrom,
+    };
+  };
+
+  /**
+   * 투수 연속 무실점 한 벌.
+   *
+   * ⚠**「그때 소속 구단」을 추측하지 않는다**(정의서 §6-10). 마지막 등판의 `side` 가 사실을 말한다.
+   * ⚠**그 뒤에 소속이 바뀌었으면 그 구단의 경기 수를 쓰지 않는다**(M11) — 「그가 던질 수 있었던
+   *   경기 수」를 뜻하지 않게 되기 때문이다. 그때는 **경과 일수**를 낸다.
+   * ⚠**이동을 「페이지의 소속과 다른가」로 판정한다** — A→B→A 처럼 되돌아온 경우는 못 잡는다.
+   *   **그건 알고 남긴 한계다**(그 경우 경기 수가 과다해진다).
+   */
+  const pitcherStreakBlockOf = (playerId: string, pageTeam: string): PitchingStreakBlockData | null => {
+    const s = pitchStreakSeason.get(playerId);
+    if (s === undefined) return null;
+    const c = pitchStreakCareer?.get(playerId);
+    const cross = c !== undefined && crossesSeasons([c.current, c.best, c.bestInnings]);
+    const last = s.lastGameDate;
+    let since: { teamName: string; games: number } | null = null;
+    let sinceDays: number | null = null;
+    if (last !== null) {
+      // ⚠**홈·구단의 「続いている記録」과 같은 함수다**(M1) — 두 화면이 다른 답을 내면 안 된다
+      const code = pitchingTeamOn(db, playerId, o.season, competition, last);
+      if (code !== null && code === pageTeam) {
+        since = { teamName: teamOf(code).name, games: teamGamesAfter(code, last) };
+      } else if (meta.latest !== null) {
+        sinceDays = daysBetween(last, meta.latest);
+      }
+    }
+    return {
+      season: pitchingScopeOf(s),
+      career: cross && c !== undefined ? pitchingScopeOf(c) : null,
+      lastGameDate: last,
+      since,
+      sinceDays,
+      careerFrom: heldFrom,
+    };
+  };
+
   for (const playerId of ids) {
     const bat = battingByPlayer.get(playerId);
     const pit = pitchingByPlayer.get(playerId);
@@ -5870,7 +6204,12 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       ),
       mark,
       spark,
-      streaks: streaksByPlayer.get(playerId) ?? null,
+      streaks: batterStreakBlockOf(playerId),
+      /**
+       * ⚠**투수 페이지에만 만든다** — 타자에게 「連続無失点登板」은 뜻이 없다.
+       * ⚠**`null` 은 「등판이 0」이지 「기록이 0」이 아니다**(M11) — 화면이 그 둘을 다르게 그린다.
+       */
+      pitchingStreaks: role === "pitcher" ? pitcherStreakBlockOf(playerId, base.teamCode) : null,
       /**
        * カウント別. ⚠**투수 페이지는 투수 쪽 집계를 본다** — 투수도 타석에 서지만
        * 이 블록의 주역은 「이 사람이 던진 타석」이다.
@@ -6051,6 +6390,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     standings,
     agg,
     streaksByPlayer,
+    pitchStreakSeason,
     reFull,
     meta.latest,
     latestDay,

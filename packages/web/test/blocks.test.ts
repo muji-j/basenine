@@ -34,9 +34,33 @@ test("⚠득점기대치는 투수에게 주지 않는다 — 빈 화면보다 �
   assert.ok(ids.includes("standard"));
 });
 
-test("⚠연속 기록은 투수에게 주지 않는다 — 타석이 주역인 기록이다", () => {
-  assert.ok(!blocksFor("pitcher").map((b) => b.id).includes("streak"));
+/**
+ * ⚠**2026-09-07 에 뒤집혔다.** 예전 시험은 「연속 기록은 투수에게 주지 않는다 — 타석이 주역인
+ * 기록이다」였는데, 투수에게도 주역인 연속 기록이 있다: **連続無失点登板 · 連続無失点イニング**.
+ * ⚠**같은 블록 id 를 쓴다** — 사용자에게는 둘 다 「連続記録」이고, 한 페이지가 둘 다 그리지 않는다
+ * (`renderBlock` 이 `role` 로 가른다). 블록을 둘로 쪼개면 조립 UI 에 **자기 역할에 없는 이름**이
+ * 하나 더 뜬다.
+ */
+test("⚠연속 기록은 양쪽에 있다 — 투수 쪽은 連続無失点이고 타자 쪽과 세는 것이 다르다", () => {
+  assert.ok(blocksFor("pitcher").map((b) => b.id).includes("streak"));
   assert.ok(blocksFor("batter").map((b) => b.id).includes("streak"));
+});
+
+/**
+ * ⚠**설명문이 목록보다 늦게 낡는다.** `PITCHER_BLOCKS` 에 `streak` 를 넣은 순간
+ * 「打者のみ」가 거짓이 됐는데 **타입도 시험도 그것을 몰랐다**(설명문은 자유 문자열이다).
+ * → **역할별 목록과 설명문이 어긋나지 않는지 여기서 센다.**
+ */
+test("⚠양쪽에 나오는 블록의 설명문이 「〜のみ」라고 말하지 않는다", () => {
+  const bat = new Set(blocksFor("batter").map((b) => b.id));
+  const pit = new Set(blocksFor("pitcher").map((b) => b.id));
+  for (const b of BLOCKS) {
+    if (!bat.has(b.id) || !pit.has(b.id)) continue;
+    assert.ok(
+      !b.desc.includes("打者のみ") && !b.desc.includes("投手のみ"),
+      `${b.id} は両方に出るのに説明文が「〜のみ」と言っている: ${b.desc}`,
+    );
+  }
 });
 
 test("⚠선발·구원별은 타자에게 주지 않는다 — 반대 방향의 같은 오류다", () => {

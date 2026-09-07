@@ -61,8 +61,23 @@ export { RECENT_GAMES, bestPct, gamesBehind, pctKey, teamStandings, winPct, wors
 export type { TeamRecord } from "./standings.ts";
 export { KEY_PLAY_LIMIT, gameDetails } from "./game.ts";
 export type { GameDetail, GamePlay, HalfInning } from "./game.ts";
-export { battingStreaks, emptyStreaks } from "./streaks.ts";
-export type { PlayerStreaks, Streak } from "./streaks.ts";
+export { battingStreaks, careerBattingStreaks, emptyStreaks } from "./streaks.ts";
+export type {
+  BattingStreakScope,
+  CareerBattingStreaks,
+  CareerStreak,
+  CareerStreakPair,
+  PlayerStreaks,
+  Streak,
+} from "./streaks.ts";
+export { emptyPitchingStreaks, pitchingStreaks, rankStreaks } from "./pitching-streaks.ts";
+export type {
+  PitchingStreak,
+  PitchingStreaks,
+  ScorelessInnings,
+  StreakRankEntry,
+  StreakScope,
+} from "./pitching-streaks.ts";
 export { battedBalls } from "./batted-ball.ts";
 export type { BattedBall } from "./batted-ball.ts";
 export { games, headToHead } from "./head-to-head.ts";

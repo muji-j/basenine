@@ -11,6 +11,9 @@ import type { ProfileAxis } from "../src/marks.ts";
 import type {
   BattingBlockData,
   PitchingBlockData,
+  PitchingStreakBlockData,
+  PitchingStreakScope,
+  PitchingStreakView,
   PlayerPageData,
   RankingPanel,
   ReliefBlockData,
@@ -166,6 +169,56 @@ export function reliefBlock(over: Partial<ReliefBlockData> = {}): ReliefBlockDat
     enteringRe: r(0.94, 44),
     reMissing: 0,
     minForRate: 10,
+    ...over,
+  };
+}
+
+/**
+ * 투수 연속 무실점 마루 하나.
+ * ⚠**기본은 「확정 · 범위 시작 아님」**이다 — 「以上」이 붙는 쪽은 시험이 명시적으로 켠다.
+ *   기본을 부등호 쪽으로 두면 **부등호가 안 붙는 경우를 아무도 안 보게 된다.**
+ */
+export function pitchingMaru(over: Partial<PitchingStreakView> = {}): PitchingStreakView {
+  return {
+    appearances: 12,
+    lowerOuts: 35,
+    upperOuts: 35,
+    exact: true,
+    atRangeStart: false,
+    from: "2026-06-01",
+    to: "2026-07-20",
+    seasons: [2026],
+    ...over,
+  };
+}
+
+export function pitchingScope(over: Partial<PitchingStreakScope> = {}): PitchingStreakScope {
+  return {
+    current: pitchingMaru({ appearances: 6, lowerOuts: 17, upperOuts: 17, from: "2026-07-28", to: "2026-08-14" }),
+    best: pitchingMaru(),
+    bestInnings: pitchingMaru(),
+    appearances: 48,
+    fromSeason: 2026,
+    toSeason: 2026,
+    ...over,
+  };
+}
+
+/**
+ * 투수 연속 무실점 한 벌.
+ *
+ * ⚠**기본은 「시즌 안에서 완결 · 이어지는 중 · 팀의 최신 경기에 등판」**이다.
+ * 세 상태·두 「以上」·토글은 전부 화면 분기라 **시험이 각각 자기 픽스처로 켠다** —
+ * 기본 하나로 다 덮으려 하면 나머지 분기가 영영 안 그려진다(`reliefBlock` 과 같은 규칙).
+ */
+export function pitchingStreakData(over: Partial<PitchingStreakBlockData> = {}): PitchingStreakBlockData {
+  return {
+    season: pitchingScope(),
+    career: null,
+    lastGameDate: "2026-08-14",
+    since: { teamName: "阪神タイガース", games: 0 },
+    sinceDays: null,
+    careerFrom: 2018,
     ...over,
   };
 }
@@ -352,7 +405,18 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
       games: 104,
       // 픽스처는 **최신 경기일에 나온 선수**다 — `asOf`와 같으므로 「今」이 붙는다
       lastGameDate: "2026-08-14",
+      /**
+       * ⚠**기본 픽스처는 시즌 넘김 기록이 없는 선수다**(사용자 결정 ⑶ — 토글은 그 기록이
+       * 있는 선수에게만). 통산 축을 보는 시험은 자기 픽스처에서 `career` 를 덮어쓴다.
+       */
+      career: null,
+      careerFrom: 2018,
     },
+    /**
+     * ⚠**타자 픽스처라 `null` 이다** — 투수 픽스처는 자기 자리에서 덮어쓴다.
+     * `null` 은 「등판이 없다」이지 「기록이 0」이 아니다(M11).
+     */
+    pitchingStreaks: null,
     sparkLabel: "月別OPS",
     /**
      * カウント別. ⚠**격리분이 0이 아닌 픽스처**를 기본으로 둔다 —

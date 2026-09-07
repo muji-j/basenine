@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb, upsertBatting, upsertGame, upsertPlayer } from "@bb-app/store";
 import type { BattingRow, Db } from "@bb-app/store";
-import { battingStreaks } from "../src/streaks.ts";
+import { battingStreaks, careerBattingStreaks } from "../src/streaks.ts";
 
 const NOW = "2026-08-16T00:00:00.000Z";
 
@@ -117,6 +117,26 @@ test("최장 구간의 시작·끝 날짜를 낸다 — 언제였는지 말할 �
   });
 });
 
+/**
+ * ⚠**「지금」의 양 끝은 「최장」의 양 끝이 아니다** — 다른 구간이다.
+ * 화면은 이 값으로 **M2 의 둘째 분모(마루의 기간)**를 낸다(정의서 §1-6 ⑵).
+ * 둘을 같은 값으로 두면 「지금 5경기」 옆에 **최장 구간의 날짜**가 붙어, 독자는 지금의 기록이
+ * 그때 시작했다고 읽는다 — 이 파일 위쪽의 「같은 길이면 나중 구간」과 같은 종류의 사고다.
+ */
+test("⚠「지금」의 시작·끝은 최장 구간의 것과 다르다", async () => {
+  await withDb((db) => {
+    // 안타 4경기 → 무안타 → 안타 2경기. **최장은 앞쪽(4)**, **지금은 뒤쪽(2)**이다
+    seed(db, [1, 1, 1, 1, 0, 1, 1]);
+    const s = battingStreaks(db, 2026).get("B1")!;
+    assert.equal(s.hitting.best, 4);
+    assert.equal(s.hitting.bestFrom, "2026-04-01");
+    assert.equal(s.hitting.bestTo, "2026-04-04");
+    assert.equal(s.hitting.current, 2);
+    assert.equal(s.hitting.currentFrom, "2026-04-06");
+    assert.equal(s.hitting.currentTo, "2026-04-07");
+  });
+});
+
 test("기록이 0이면 날짜도 null이다 — 없는 구간에 날짜를 붙이지 않는다(M11)", async () => {
   await withDb((db) => {
     seed(db, [0, 0, 0]);
@@ -124,6 +144,10 @@ test("기록이 0이면 날짜도 null이다 — 없는 구간에 날짜를 붙�
     assert.equal(s.hitting.best, 0);
     assert.equal(s.hitting.bestFrom, null);
     assert.equal(s.hitting.bestTo, null);
+    // ⚠**끊긴 기록의 날짜도 null 이다** — 0에 날짜를 붙이면 「그때 이어지고 있었다」로 읽힌다
+    assert.equal(s.hitting.current, 0);
+    assert.equal(s.hitting.currentFrom, null);
+    assert.equal(s.hitting.currentTo, null);
   });
 });
 
@@ -290,5 +314,139 @@ test("⚠連続無安打(hitless) 에는 이 예외를 적용하지 않는다 �
     ]);
     const s = battingStreaks(db, 2026).get("B1")!;
     assert.equal(s.hitless.best, 3, "無安打 연속은 출장한 경기를 그대로 센다");
+  });
+});
+
+/**
+ * **시즌을 넘는 연속 기록**(`careerBattingStreaks`).
+ *
+ * ⚠**옛 제약의 근거는 사라졌다** — 「2025년 이전이 없는데 통산이라고 하면 거짓말」이었는데
+ * 지금은 2018~2026 9시즌을 보유한다. 남은 함정은 **범위를 화면이 말하는 것**과
+ * **하한에 닿은 마루가 「以上」이라는 것** 둘이고, 여기서는 그 사실을 내는지 본다.
+ *
+ * ⚠**`連続試合無安打` 는 없다** — 정의서 §4-4 의 권고이고 §6-7 이 사용자 결정 대기로 남겼다.
+ * 그것을 **타입에 자리를 안 두는 것**으로 표현했다(`null` 이면 「기록이 없다」로 읽힌다).
+ */
+
+/** 시즌을 명시해 경기를 만든다 */
+function seedSeason(
+  db: Db,
+  rows: readonly { season: number; date: string; h?: number; bb?: number; pa?: number; ab?: number }[],
+): void {
+  rows.forEach((r, i) => {
+    const gameId = `c${i}`;
+    upsertGame(db, {
+      gameId, season: r.season, gameDate: r.date, awayCode: "t", homeCode: "g", gameNo: 1,
+      status: "played", notPlayedReason: null, competition: "regular",
+      sourceUrl: "https://npb.jp/x", fetchedAt: NOW,
+    });
+    upsertBatting(db, bat({ gameId, pa: r.pa ?? 4, ab: r.ab ?? 4, h: r.h ?? 0, bb: r.bb ?? 0 }));
+  });
+}
+
+test("⚠통산 모드는 시즌 경계를 넘어 잇는다 — 시즌 모드는 안 잇는다", async () => {
+  await withDb((db) => {
+    seedSeason(db, [
+      { season: 2025, date: "2025-09-30", h: 1 },
+      { season: 2026, date: "2026-03-27", h: 1 },
+    ]);
+    const career = careerBattingStreaks(db, { fromSeason: 2018, toSeason: 2026 }).get("B1")!;
+    assert.equal(career.hitting.best!.length, 2, "시즌 경계에서 끊겼다");
+    assert.deepEqual(career.hitting.best!.seasons, [2025, 2026]);
+    assert.equal(battingStreaks(db, 2026).get("B1")!.hitting.best, 1, "시즌 모드가 시즌을 넘겼다");
+  });
+});
+
+test("⚠통산 분모는 전 범위의 「타석이 있던 경기」다 — 시즌 값을 그대로 쓰면 안 된다", async () => {
+  await withDb((db) => {
+    seedSeason(db, [
+      { season: 2025, date: "2025-09-29", h: 1 },
+      { season: 2025, date: "2025-09-30", h: 1 },
+      { season: 2026, date: "2026-03-27", h: 1 },
+    ]);
+    const career = careerBattingStreaks(db, { fromSeason: 2018, toSeason: 2026 }).get("B1")!;
+    assert.equal(career.games, 3, "분모가 전 범위가 아니다");
+    assert.ok(career.games >= career.hitting.best!.length, "분모가 마루보다 작다");
+    assert.equal(career.fromSeason, 2018);
+    assert.equal(career.toSeason, 2026);
+    assert.equal(career.competition, "regular", "훑은 대회를 결과가 말하지 않는다");
+  });
+});
+
+test("⚠보고 있는 시즌에서 자른다 — 2025년 화면이 2026년을 말하지 않는다", async () => {
+  await withDb((db) => {
+    seedSeason(db, [
+      { season: 2025, date: "2025-09-30", h: 1 },
+      { season: 2026, date: "2026-03-27", h: 1 },
+    ]);
+    const career = careerBattingStreaks(db, { fromSeason: 2018, toSeason: 2025 }).get("B1")!;
+    assert.equal(career.hitting.best!.length, 1);
+    assert.equal(career.hitting.best!.to, "2025-09-30", "미래 시즌이 과거 화면에 실렸다");
+    assert.equal(career.lastGameDate, "2025-09-30");
+  });
+});
+
+test("⚠건너뛴 시즌이 seasons 에서 드러난다 — 날짜만으로는 공백이 안 보인다", async () => {
+  await withDb((db) => {
+    seedSeason(db, [
+      { season: 2019, date: "2019-09-13", h: 1 },
+      { season: 2020, date: "2020-07-19", h: 1 },
+      { season: 2022, date: "2022-04-01", h: 1 },
+    ]);
+    const career = careerBattingStreaks(db, { fromSeason: 2018, toSeason: 2026 }).get("B1")!;
+    assert.deepEqual(career.hitting.best!.seasons, [2019, 2020, 2022], "건너뛴 2021이 안 보인다");
+    assert.equal(career.hitting.best!.from, "2019-09-13");
+    assert.equal(career.hitting.best!.to, "2022-04-01");
+  });
+});
+
+test("⚠범위 하한에 닿은 마루는 atRangeStart 다 — 「N試合以上」의 근거", async () => {
+  await withDb((db) => {
+    seedSeason(db, [
+      { season: 2018, date: "2018-03-30", h: 1 },
+      { season: 2018, date: "2018-03-31", h: 1 },
+      { season: 2018, date: "2018-04-01", h: 0 },
+      { season: 2018, date: "2018-04-02", h: 1 },
+      { season: 2018, date: "2018-04-03", h: 1 },
+    ]);
+    const career = careerBattingStreaks(db, { fromSeason: 2018, toSeason: 2026 }).get("B1")!;
+    // 앞뒤 마루가 동률이라 **나중 구간**이 best 로 남는다 — 그쪽은 하한에 안 닿았다
+    assert.equal(career.hitting.best!.atRangeStart, false);
+    assert.equal(career.hitting.best!.open, true, "뒤에 경기가 없는데 끊긴 것으로 했다");
+    assert.equal(career.hitting.current!.from, "2018-04-02");
+  });
+});
+
+test("⚠끊긴 뒤에는 current 가 null 이다 — 0 이 아니다(M11)", async () => {
+  await withDb((db) => {
+    seedSeason(db, [
+      { season: 2025, date: "2025-09-29", h: 1 },
+      { season: 2025, date: "2025-09-30", h: 0 },
+    ]);
+    const career = careerBattingStreaks(db, { fromSeason: 2018, toSeason: 2026 }).get("B1")!;
+    assert.equal(career.hitting.current, null);
+    assert.equal(career.hitting.best!.length, 1);
+  });
+});
+
+test("⚠통산에도 9.23(b) 예외가 걸린다 — 사사구뿐이던 경기는 시즌을 넘어서도 안 끊는다", async () => {
+  await withDb((db) => {
+    seedSeason(db, [
+      { season: 2025, date: "2025-09-30", h: 1 },
+      { season: 2026, date: "2026-03-27", h: 0, ab: 0, bb: 4 },
+      { season: 2026, date: "2026-03-28", h: 1 },
+    ]);
+    const career = careerBattingStreaks(db, { fromSeason: 2018, toSeason: 2026 }).get("B1")!;
+    assert.equal(career.hitting.best!.length, 2, "사사구뿐이던 경기가 통산 마루를 끊었다");
+    assert.equal(career.games, 3, "출장 경기 수에서까지 지웠다");
+  });
+});
+
+test("⚠通算 결과에 hitless 자리가 없다 — 사용자 결정 대기(정의서 §4-4·§6-7)", async () => {
+  await withDb((db) => {
+    seedSeason(db, [{ season: 2025, date: "2025-09-30", h: 0 }]);
+    const career = careerBattingStreaks(db, { fromSeason: 2018, toSeason: 2026 }).get("B1")!;
+    assert.equal("hitless" in career, false, "정하지 않은 것에 값을 냈다");
+    assert.equal("hitting" in career && "onBase" in career, true);
   });
 });

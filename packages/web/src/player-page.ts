@@ -36,10 +36,10 @@ import {
 } from "./parts.ts";
 import { stableTable } from "./table.ts";
 import type { BarRow, RankDigits } from "./parts.ts";
-import { NO_VALUE, avg3, dec2, gameDate, innings, throwsBats } from "./format.ts";
+import { NO_VALUE, avg3, dec2, fullDate, gameDate, innings, throwsBats } from "./format.ts";
 import { isEmptyProfile, markFigure, markLetter, markProfile } from "./marks.ts";
 import type { MarkPlayer, ProfileAxis } from "./marks.ts";
-import { denUnit, termOf } from "./glossary.ts";
+import { denUnit, termLabel, termOf } from "./glossary.ts";
 import { page, ROSTER_PATH } from "./layout.ts";
 import { teamLink, teamPath } from "./team-page.ts";
 import { postseasonBrief } from "./postseason-page.ts";
@@ -248,6 +248,127 @@ export interface StreakBlockData {
    * 지금 이어지는 것처럼 보인다(실측 21명).
    */
   lastGameDate: string | null;
+  /**
+   * **시즌을 넘는 몫**. ⚠**시즌 넘김 마루가 실재하는 타자에게만**(사용자 결정 ⑶) —
+   * 없으면 `null` 이고 그때는 탭을 만들지 않는다.
+   *
+   * ⚠**`連続試合無安打` 가 여기 없는 것은 빠뜨린 게 아니다**(사용자 결정 ⑺ · 정의서 §4-4).
+   * 공표 범주가 없고, 예외 규칙(9.23(b))의 부호가 반대이고, 「토글이 있다 = 시즌 넘김 기록이 있다」는
+   * 신호가 흐려진다. **화면이 그 사실을 말한다** — 안 말하면 「기록이 없다」로 읽힌다.
+   */
+  career: CareerStreakScope | null;
+  /**
+   * 통산 축의 **하한 시즌**(보유 첫 시즌). ⚠**「2017」을 어디에도 박지 않는다**(사용자 결정 ⑵).
+   *
+   * ⚠**토글이 없는 이유가 둘이고 말이 달라야 한다**: 보유 하한 시즌의 화면에서는
+   * 「시즌을 넘는 기록이 없다」가 **우리가 알 수 없는 주장**이다 — 그 앞을 안 봤기 때문이다(M11).
+   */
+  careerFrom: number;
+}
+
+/** 한 마루 — **시즌 넘김 화면이 필요로 하는 사실을 전부 담는다** */
+export interface CareerStreakView {
+  length: number;
+  from: string;
+  to: string;
+  /**
+   * 사건이 있던 시즌(오름차순).
+   * ⚠**건너뛴 시즌은 여기 없다 — 그래서 보인다**(2019 →(2020·2021 없음)→ 2022).
+   */
+  seasons: readonly number[];
+  /** 범위의 첫 사건에서 시작 = **그 앞을 우리가 안 봤다** → 「N試合以上」 */
+  atRangeStart: boolean;
+}
+
+export interface CareerStreakPairView {
+  /** 지금 이어지고 있는 마루. 마지막 경기에서 끊겼으면 `null`(0 아님 · M11) */
+  current: CareerStreakView | null;
+  best: CareerStreakView | null;
+}
+
+export interface CareerStreakScope {
+  hitting: CareerStreakPairView;
+  onBase: CareerStreakPairView;
+  /** 훑은 경기 수(**타석이 있던 경기**). ⚠**전 범위로 다시 센 값이다**(M2) */
+  games: number;
+  /** ⚠**「通算」이라고만 쓰면 거짓이다** — 화면이 이 범위를 말한다 */
+  fromSeason: number;
+  toSeason: number;
+}
+
+/**
+ * 투수 연속 무실점 마루 하나.
+ *
+ * ⚠**「以上」의 사유가 둘이고, 화면이 그것을 구별해야 한다**(정의서 §1-6):
+ * `exact === false` 는 **「그 등판의 실점 시점을 못 짚는다」**이고
+ * `atRangeStart === true` 는 **「그 앞을 우리가 안 봤다」**다. 같은 각주로 묶으면
+ * 다음 사람이 잘못된 것을 고친다.
+ */
+export interface PitchingStreakView {
+  /** 連続無失点登板. 단위 **登板** */
+  appearances: number;
+  /** 連続無失点イニング의 하한(아웃). **반드시 참이다** */
+  lowerOuts: number;
+  /** 그 상한(아웃). `exact` 면 하한과 같다. **이것도 반드시 참이다** */
+  upperOuts: number;
+  /** 양 끝 경계를 다 짚었는가 */
+  exact: boolean;
+  /** 훑은 범위의 첫 등판에서 시작했는가 */
+  atRangeStart: boolean;
+  from: string;
+  to: string;
+  /** 등판이 있던 시즌(오름차순 · 건너뛴 시즌은 없다) */
+  seasons: readonly number[];
+}
+
+/**
+ * 한 범위(시즌 또는 통산)의 투수 연속 무실점.
+ *
+ * ⚠**`current === null` 은 「데이터가 없다」가 아니라 「마지막 등판에서 실점했다」다**(M11·M12).
+ * 정의서 §3 은 連続無失点イニング을 **登板 마루에 붙여** 정의하므로, 마지막 등판에서 실점한 투수의
+ * 「지금」은 **登板도 イニング도 0**이다 — **정의가 그렇다. 결함이 아니다.**
+ * 화면은 그것을 **`0登板` + 「途切れた」**로 그리고, **데이터가 없는 쪽은 블록 자체를 안 그린다.**
+ */
+export interface PitchingStreakScope {
+  current: PitchingStreakView | null;
+  /** 가장 긴 마루 — **등판 기준** */
+  best: PitchingStreakView | null;
+  /** 가장 긴 마루 — **이닝 기준**. ⚠`best` 와 다른 마루일 수 있다 */
+  bestInnings: PitchingStreakView | null;
+  /** 훑은 등판 수. **분모다**(M2) */
+  appearances: number;
+  fromSeason: number;
+  toSeason: number;
+}
+
+export interface PitchingStreakBlockData {
+  season: PitchingStreakScope;
+  /**
+   * 통산 몫. ⚠**시즌 넘김 마루가 실재하는 투수에게만**(사용자 결정 ⑶) — 없으면 `null`.
+   * ⚠**「토글이 없다」가 「기록이 없다」로 읽히면 안 된다**(정의서 §1-6) — 각주가 그 자리를 메운다.
+   */
+  career: PitchingStreakScope | null;
+  /** 마지막 등판일. ⚠**모르면 「今」으로 때우지 않는다**(M11) */
+  lastGameDate: string | null;
+  /**
+   * 마지막 등판 **뒤**에 **그때 소속 구단**이 치른 정규 경기 수 — **이 지표의 두 번째 분모**(M2).
+   *
+   * ⚠**이걸 안 쓰면 島本이 「27등판 무실점 중」으로 읽힌다**(정의서 §1-5) —
+   * 실제로는 2019-08-01 ~ 2022-08-24 이고 2020·2021 시즌을 통째로 건너뛴다.
+   * ⚠**구단 이름을 함께 낸다** — 「N試合」만으로는 무엇의 N인지 모른다.
+   */
+  since: { teamName: string; games: number } | null;
+  /**
+   * ⚠**`since` 를 못 낼 때의 대체**(M11 — 모르는 것을 다른 것으로 때우지 않는다).
+   * 마지막 등판 이후 **경과 일수**. 소속이 바뀐 선수는 「그때 소속 구단의 경기 수」가
+   * 「그가 던질 수 있었던 경기 수」를 뜻하지 않으므로 그 수를 내지 않는다.
+   */
+  sinceDays: number | null;
+  /**
+   * 통산 축의 하한 시즌. ⚠**「2017」을 어디에도 박지 않는다**(사용자 결정 ⑵) —
+   * 문구는 **이 값 − 1** 에서 유도한다.
+   */
+  careerFrom: number;
 }
 
 /**
@@ -722,8 +843,16 @@ export interface PlayerPageData {
   spark: SparkPoint[];
   /** 그 꺾은선이 무엇인지 (`月別OPS` 등) */
   sparkLabel: string;
-  /** 연속 기록. 타자만. 타석이 하나도 없으면 null */
+  /** 연속 기록. **타자 쪽.** 타석이 하나도 없으면 null */
   streaks: StreakBlockData | null;
+  /**
+   * 연속 무실점. **투수 쪽.** 등판이 하나도 없으면 null.
+   *
+   * ⚠**`streaks` 와 같은 블록 id(`streak`)를 쓴다** — 사용자에게는 둘 다 「連続記録」이고,
+   * 한 페이지가 둘 다 그리는 일은 없다(`role` 이 가른다). 블록을 둘로 쪼개면
+   * 조립 UI 에 **자기 역할에 없는 이름**이 하나 더 뜬다.
+   */
+  pitchingStreaks: PitchingStreakBlockData | null;
   /**
    * カウント別成績. 타석 로그가 하나도 없으면 null(M12 — 화면이 「모름」을 낸다).
    * ⚠**타자·투수 양쪽에 있다** — 같은 타석 로그를 반대편에서 읽은 값이다.
@@ -1472,43 +1601,337 @@ function streakBlock(s: StreakBlockData, season: number, asOf: string | null, se
       ? NO_VALUE
       : `${gameDate(s.lastGameDate)}時点`;
 
-  const row = (label: string, v: StreakData, unit = "試合"): RawHtml => {
+  /**
+   * ⚠**라벨이 아니라 용어집 키를 받는다**(2026-09-07). 문자열을 여기 적으면
+   * 용어집의 라벨과 갈릴 수 있고, 갈리는 순간 `term()` 이 키를 못 찾아 **툴팁이 소리 없이 죽는다**
+   * (`termKeyForLabel` 은 모르는 라벨에 `undefined` 를 돌려주고 던지지 않는다).
+   * `termLabel` 은 **모르는 키에 던지므로** 그 실패가 조용할 수 없다.
+   */
+  const row = (key: string, v: StreakData, unit = "試合"): RawHtml => {
     const span =
       v.bestFrom === null || v.bestTo === null
         ? null
         : html`<span class="den">${gameDate(v.bestFrom)}〜${gameDate(v.bestTo)}</span>`;
-    return html`<dt>${term(label)}</dt><dd class="v">${v.current}${unit}<span class="den">${current}</span></dd>
+    return html`<dt>${term(termLabel(key))}</dt><dd class="v">${v.current}${unit}<span class="den">${current}</span></dd>
       <dt class="sub2">今季最長</dt><dd class="v">${v.best}${unit}${span}</dd>`;
   };
-  return block({
-    id: "streak",
-    title: "連続記録",
-    qualifier: `${season}年 · 打席のあった${s.games}試合`,
-    body: html`${columns(
-      row("連続安打", s.hitting),
-      row("連続出塁", s.onBase),
-      row("連続無安打", s.hitless),
-    )}
+
+  /**
+   * ⚠**「今」의 사유 문장은 시즌·통산이 같다** — 판정하는 사실이 같기 때문이다(M1).
+   * 뒤에 붙는 범위 문장만 다르다.
+   */
+  const whenText =
+    stillNow
+      ? "「今」はいま続いている記録、"
+      : s.lastGameDate === null
+        ? "左の数字がいつの時点のものかがわかりません。"
+        : seasonPast
+          ? `この選手の最後の出場は${gameDate(s.lastGameDate)}で、このシーズンはすでに終わっています。左の数字はその時点で続いていた記録です。`
+          : `この選手の最後の出場は${gameDate(s.lastGameDate)}です。左の数字はその時点で続いていた記録で、いまも続いているとは限りません。`;
+
+  const paNote = "⚠打席のなかった試合（代走・守備固めだけ）は数えません — 数えると連続記録が理不尽に途切れます。";
+
+  const seasonBody = html`${columns(
+    row("hitStreak", s.hitting),
+    row("onBaseStreak", s.onBase),
+    row("hitlessStreak", s.hitless),
+  )}
     ${note(
       /**
        * ⚠**네 상태를 각각 다른 말로 낸다**(M12).
        * ⚠**끝난 시즌에 「いまも続いているとは限りません」이라고 쓰지 않는다** — 「그럴지도 모른다」가
        *   아니라 **그 시즌은 이미 끝났다.** 「~とは限りません」은 진행 중 시즌에서만 참인 유보다.
        */
-      (stillNow
-        ? "「今」はいま続いている記録、"
-        : s.lastGameDate === null
-          ? "左の数字がいつの時点のものかがわかりません。"
-          : seasonPast
-            ? `この選手の最後の出場は${gameDate(s.lastGameDate)}で、このシーズンはすでに終わっています。左の数字はその時点で続いていた記録です。`
-            : `この選手の最後の出場は${gameDate(s.lastGameDate)}です。左の数字はその時点で続いていた記録で、いまも続いているとは限りません。`) +
+      whenText +
         "「今季最長」はこの1年でいちばん長かった記録です。" +
-        "⚠打席のなかった試合（代走・守備固めだけ）は数えません — 数えると連続記録が理不尽に途切れます。" +
+        paNote +
         // ⚠**강조는 별표 두 개다**(`emphasis.ts` 가 그 규칙의 정본 · M1). 여기에는 `<b>` 를 직접
         //   적어 뒀는데 `note()` 가 문자열을 이스케이프하므로 **화면에 `<b>` 가 글자로 찍혔다** —
         //   실측(2026-08-21 · `dist` 전수): 연속기록 구획이 있는 **3,459 / 6,207장** 전부가 그 상태였다.
         //   ⚠**소스만 읽어서는 안 보인다** — 문법이 멀쩡하고 문장만 깨진다(실기 확인이 잡았다).
-        `⚠${season}年のなかだけで数えています。「通算」は下の**通算成績**（出典：NPB）にあります。`,
+        `⚠${season}年のなかだけで数えています。「通算」は下の**通算成績**（出典：NPB）にあります。` +
+        // ⚠**탭이 없을 때 그 자리가 무엇을 말하는지 정한다**(정의서 §1-6) —
+        //   「토글이 없다」가 「기록이 없다」로 읽히면 안 된다. **전 화면에서 같은 문장을 쓴다.**
+        (s.career === null ? noCareerToggleNote(season, s.careerFrom) : ""),
+    )}`;
+
+  if (s.career === null) {
+    return block({
+      id: "streak",
+      title: "連続記録",
+      qualifier: `${season}年 · 打席のあった${s.games}試合`,
+      body: seasonBody,
+    });
+  }
+
+  const c = s.career;
+  /**
+   * ⚠**`current === null` 은 `0試合` 이다** — 「기록이 없다」가 아니라 「마지막 경기에서 끊겼다」다.
+   * 시즌 축의 `current: 0` 과 **같은 것을 같게 그린다**(M11).
+   */
+  const lenOf = (m: CareerStreakView | null): string =>
+    m === null ? "0試合" : `${m.length}試合${m.atRangeStart ? "以上" : ""}`;
+  const careerRow = (key: string, p: CareerStreakPairView): RawHtml =>
+    html`<dt>${term(termLabel(key))}</dt><dd class="v">${lenOf(p.current)}<span class="den">${current}</span></dd>
+      <dt class="sub2">最長</dt><dd class="v">${lenOf(p.best)}${maruSpan(p.best, "出場")}</dd>`;
+
+  const careerBody = html`${columns(careerRow("hitStreak", c.hitting), careerRow("onBaseStreak", c.onBase))}
+    ${note(
+      whenText +
+        `「最長」はこの範囲でいちばん長かった記録です。${paNote}` +
+        // ⚠**「通算」이라고만 쓰면 거짓이다** — 우리 통산은 **보유 범위 안**이다(火消し·스플릿과 같은 규칙)
+        `この範囲は当サイトが保有する**${c.fromSeason}〜${c.toSeason}年**の**レギュラーシーズン**で、` +
+        `打席のあった試合は${c.games}試合です（NPBが公表する通算成績とは範囲が違います）。` +
+        `「通算」は下の**通算成績**（出典：NPB）にあります。` +
+        atRangeStartNote([c.hitting.current, c.hitting.best, c.onBase.current, c.onBase.best], c.fromSeason) +
+        // ⚠**「無安打が抜けている」ではなく「出していない」だと言う**(사용자 결정 ⑺ · 정의서 §4-4).
+        //   안 말하면 「기록이 없다」로 읽힌다.
+        `⚠${termLabel("hitlessStreak")}はこの範囲では出していません — 公表されている記録の区分になく、` +
+        "範囲を広げると当サイトが作った記録になってしまうためです。",
+    )}`;
+
+  return block({
+    id: "streak",
+    title: "連続記録",
+    /**
+     * ⚠**탭이 있으면 머리에 분모를 안 적는다**(`countBlock` 과 같은 규칙).
+     * 머리는 하나인데 패널은 둘이라, 「打席のあった130試合」을 적어 두면 通算 탭으로 바꿔도
+     * 머리가 안 따라가 **화면이 두 개의 분모를 동시에 주장**한다 — M2 가 막으려던 그 상태다.
+     */
+    controls: tablist(
+      "streak",
+      [{ id: "season", label: "今季" }, { id: "career", label: "通算" }],
+      false,
+      "範囲の切り替え",
+      true,
+    ),
+    body: html`${panel("streak", "season", true, seasonBody)}${panel("streak", "career", false, careerBody)}`,
+  });
+}
+
+/**
+ * **토글이 없는 이유**를 말하는 문장 — 정의서 §1-6 이 「고르고 전 화면에서 통일하라」고 남긴 자리.
+ *
+ * ⚠**사유가 둘이고 한쪽은 우리가 주장할 수 없는 것이다**(M11). 보유 하한 시즌의 화면에서는
+ * 「시즌을 넘는 기록이 없다」가 **그 앞을 안 봐서** 확인 불가다 — 그때는 그렇게 적는다.
+ * ⚠**「2017」을 박지 않는다**(사용자 결정 ⑵) — 보고 있는 시즌에서 유도한다.
+ */
+function noCareerToggleNote(season: number, careerFrom: number): string {
+  return careerFrom >= season
+    ? `⚠${season}年より前は当サイトが持っていないため、シーズンをまたぐ記録は出していません。`
+    : "シーズンをまたぐ連続記録はないため、範囲の切り替えは出していません。";
+}
+
+/**
+ * 마루의 기간 문구.
+ *
+ * ⚠**시즌을 넘으면 연도를 붙인다.** 荻野의 36경기는 **2019-09-13 ~ 2020-07-19**(10개월 공백)인데
+ * 연도가 없으면 `9月13日〜7月19日` 이 되어 **거꾸로 읽힌다.**
+ * ⚠**건너뛴 시즌을 말한다**(정의서 §1-6) — 島本은 2019 →(2020·2021 등판 없음)→ 2022 다.
+ * 날짜만 보이면 그 3년이 안 보인다.
+ *
+ * @param absent 건너뛴 시즌에 붙일 말. 타자는 `出場`, 투수는 `登板`
+ */
+function maruSpanText(
+  m: { from: string; to: string; seasons: readonly number[] } | null,
+  absent: string,
+): string {
+  if (m === null) return "";
+  const crossesSeasons = m.seasons.length >= 2;
+  const d = crossesSeasons ? fullDate : gameDate;
+  const first = m.seasons[0];
+  const last = m.seasons[m.seasons.length - 1];
+  const gaps =
+    first === undefined || last === undefined
+      ? []
+      : Array.from({ length: last - first + 1 }, (_, i) => first + i).filter((y) => !m.seasons.includes(y));
+  const gapText = gaps.length === 0 ? "" : `（${gaps.join("・")}年は${absent}なし）`;
+  return `${d(m.from)}〜${d(m.to)}${gapText}`;
+}
+
+/** ⚠**분모 조각은 한 칸에 모은다** — `<span class="den">` 이 둘 붙으면 화면에서 두 덩어리로 읽힌다 */
+function den(...parts: string[]): RawHtml {
+  const t = parts.filter((p) => p !== "").join(" · ");
+  return t === "" ? raw("") : html`<span class="den">${t}</span>`;
+}
+
+function maruSpan(m: { from: string; to: string; seasons: readonly number[] } | null, absent: string): RawHtml {
+  return den(maruSpanText(m, absent));
+}
+
+/**
+ * 「以上」의 사유 ① — **그 앞을 우리가 안 봤다**(정의서 §1-4 · §1-6).
+ *
+ * ⚠**사유 ②(경계 등판의 실점 시점을 못 짚는다)와 섞지 마라.** 두 「以上」은 다른 사실이고,
+ * 섞어 쓰면 다음 사람이 잘못된 것을 고친다.
+ * ⚠**「2017」을 박지 않는다**(사용자 결정 ⑵) — `fromSeason − 1` 에서 유도한다.
+ */
+function atRangeStartNote(
+  marus: readonly ({ atRangeStart: boolean } | null)[],
+  fromSeason: number,
+): string {
+  if (!marus.some((m) => m !== null && m.atRangeStart)) return "";
+  return (
+    `⚠「以上」は、その記録が当サイトの保有範囲の最初の試合から始まっているという意味です — ` +
+    `**${fromSeason - 1}年以前は未参照**なので、実際にはもっと長い可能性があります。`
+  );
+}
+
+/**
+ * 투수 연속 무실점 — **連続無失点登板**(登板 단위)와 **連続無失点イニング**(1/3回 단위).
+ *
+ * ## ⚠이 블록이 지켜야 하는 것 넷
+ *
+ * ⑴ **`0登板` 과 「데이터 없음」은 다른 화면이다**(M11·M12). 마지막 등판에서 실점하면
+ *    **정의상** 「지금」이 0이 된다(정의서 §3 이 イニング을 登板 마루에 붙여 정의한다) —
+ *    **결함이 아니다.** 등판 자체가 없는 투수는 이 블록에 오지 않는다(`renderBlock` 이 가른다).
+ * ⑵ **「以上」의 사유가 둘이고 말이 달라야 한다** — `exact=false`(그 등판의 실점 시점을 못 짚는다)와
+ *    `atRangeStart`(그 앞을 안 봤다). 섞으면 다음 사람이 잘못된 것을 고친다.
+ * ⑶ **같은 기록이 시즌 범위와 통산 범위에서 다른 수가 된다.** 山﨑伊織의 2025 개막 마루는
+ *    시즌 범위면 **36.0回(확정)**, 통산 범위면 **36.0回以上(최대 42.1回)** 다 —
+ *    **화면이 어느 범위를 보고 있는지 반드시 말한다.**
+ * ⑷ **상태는 색이 아니라 말이다**(루트 §7) — 継続中 / 途切れていない / 途切れた.
+ *
+ * ⚠**「継続中」의 판정에 임의 상수를 두지 않았다**(사용자 결정 ⑹ · 정의서 §6-10).
+ * 「며칠 이상 공백이면 끝」 같은 값을 고르는 대신, **「그 뒤 팀이 몇 경기를 치렀는가」라는 사실**을
+ * 늘 함께 낸다 — 그게 이 지표의 **두 번째 분모**다(M2). 島本(27등판)은 그래야 읽힌다.
+ */
+function pitchingStreakBlock(
+  s: PitchingStreakBlockData,
+  season: number,
+  seasonPast: boolean,
+): RawHtml {
+  /**
+   * **세 상태**(정의서 §1-5). ⚠**`current === null` 이 「途切れた」다** —
+   * 그 판정은 범위에 안 흔들린다(시즌 범위에서 끊겼으면 통산 범위에서도 끊겼다).
+   */
+  const broken = s.season.current === null;
+  const stateWord = broken ? "途切れた" : seasonPast ? "途切れていない" : "継続中";
+
+  /**
+   * 「그 뒤 팀이 몇 경기」 — **이 지표의 두 번째 분모**(M2 · §1-5).
+   * ⚠**소속이 바뀐 선수에게는 이 수를 안 낸다**(M11) — 「그때 소속 구단의 경기 수」가
+   * 「그가 던질 수 있었던 경기 수」를 뜻하지 않게 되기 때문이다. 그때는 **경과 일수**를 낸다.
+   */
+  const sinceText =
+    s.since !== null
+      ? s.since.games === 0
+        ? "それが、そのチームの最新の試合です。"
+        : `そのあと${s.since.teamName}は**${s.since.games}試合**を戦っていて、その間の登板はありません。`
+      : s.sinceDays === null
+        ? ""
+        : `そのあと**${s.sinceDays}日**が経っています（この間に所属が変わっているため、チームの試合数では数えていません）。`;
+
+  const whenText =
+    s.lastGameDate === null
+      ? "左の数字がいつの時点のものかがわかりません。"
+      : broken
+        ? `${gameDate(s.lastGameDate)}の登板で失点したので、いま続いている記録は**0**です（記録がないという意味ではありません）。`
+        : `記録は途切れていません。最後の登板は${gameDate(s.lastGameDate)}で、${sinceText}`;
+
+  /**
+   * @param careerMode 통산 범위인가. ⚠**`atRangeStart` 의 뜻이 모드마다 다르다** —
+   *   시즌 모드에서는 「시즌 시작」이라 「以上」이 아니다(화면이 이미 「今季」라고 말한다).
+   *   실제로 山﨑 케이스가 그 증거다(시즌 범위면 확정 36.0回).
+   */
+  const scopeBody = (sc: PitchingStreakScope, careerMode: boolean): RawHtml => {
+    const atFloor = (m: PitchingStreakView): boolean => careerMode && m.atRangeStart;
+    const appText = (m: PitchingStreakView | null): string =>
+      m === null ? "0登板" : `${m.appearances}登板${atFloor(m) ? "以上" : ""}`;
+    /**
+     * ⚠**이닝은 아웃에서 만든다**(M1 · `inningsFromOuts`). **소수점 형식을 새로 만들지 않는다** —
+     * 정수 이닝은 `36回` 이고 `36.0回` 가 아니다(npb.jp 박스와 같은 표기).
+     * ⚠**0 도 그 함수를 통과시킨다** — `"0.0回"` 라고 적으면 그 순간 형식이 두 벌이 된다.
+     */
+    const inTextOf = (m: PitchingStreakView | null): string =>
+      m === null ? `${innings(0)}回` : `${innings(m.lowerOuts)}回${!m.exact || atFloor(m) ? "以上" : ""}`;
+    /**
+     * ⚠**상한도 「반드시 참」이다** — 「어차피 비슷하니 점추정」으로 가지 않는다(정의서 §3-3).
+     *
+     * ⚠**단 `atFloor` 면 단정할 수 없다.** 그 마루는 **보유 범위의 첫 등판에서 시작**하므로
+     * 같은 화면의 각주가 「実際にはもっと長い可能性があります」라고 말한다 —
+     * 「最大 8.2回」와 그 문장은 **동시에 참일 수 없다.**
+     * 실측(2026-09-07 · 로컬 DB): `dist/2025/players/91495153.html` 이
+     * **`6.2回以上` + `最大8.2回` + 그 각주**를 같이 싣고 있었다.
+     * → **상한이 「보유 범위 안의 상한」임을 말로 한정한다.** 숨기면 참인 정보를 버리게 된다.
+     */
+    const maxOf = (m: PitchingStreakView | null): string =>
+      m === null || m.exact ? "" : `${atFloor(m) ? "保有範囲内では" : ""}最大${innings(m.upperOuts)}回`;
+    const bestLabel = careerMode ? "最長" : "今季最長";
+
+    const marus = [sc.current, sc.best, sc.bestInnings];
+    const anyInexact = marus.some((m) => m !== null && !m.exact);
+    const anyFloor = marus.some((m) => m !== null && atFloor(m));
+    /**
+     * ⚠**「最大」를 실제로 내는 칸은 이 둘뿐이다** — 각주도 그 둘을 보고 말한다.
+     * 두 사유가 **같은 마루에 겹치면** 각주의 「최대까지의 어딘가에서 반드시 성립한다」가 거짓이 된다.
+     */
+    const maxShown = [sc.current, sc.bestInnings];
+    const anyFloorInexact = maxShown.some((m) => m !== null && atFloor(m) && !m.exact);
+
+    return html`${columns(
+      html`<dt>${term(termLabel("scorelessAppearanceStreak"))}</dt><dd class="v">${appText(sc.current)}${den(stateWord)}</dd>
+        <dt class="sub2">${bestLabel}</dt><dd class="v">${appText(sc.best)}${maruSpan(sc.best, "登板")}</dd>`,
+      html`<dt>${term(termLabel("scorelessInningStreak"))}</dt><dd class="v">${inTextOf(sc.current)}${den(maxOf(sc.current), stateWord)}</dd>
+        <dt class="sub2">${bestLabel}</dt><dd class="v">${inTextOf(sc.bestInnings)}${den(
+          maxOf(sc.bestInnings),
+          maruSpanText(sc.bestInnings, "登板"),
+        )}</dd>`,
+    )}
+    ${note(
+      whenText +
+        // ⚠**분모 3종을 여기서 다 말한다**(M2 · 정의서 §1-6): 훑은 등판 수 · 마루의 기간 · 집계 범위
+        `この範囲は**${
+          sc.fromSeason === sc.toSeason ? `${sc.fromSeason}年` : `${sc.fromSeason}〜${sc.toSeason}年`
+        }のレギュラーシーズンのみ**で、登板は${sc.appearances}試合です。` +
+        // ⚠**포스트시즌을 넣으면 답이 뒤집히는 선수가 실재한다**(石井大智 · 정의서 §1-1)
+        "日本シリーズ・クライマックスシリーズ・オープン戦は入れていません。" +
+        `「${bestLabel}」はこの範囲でいちばん長かった記録です。` +
+        // ⚠**두 지표가 다른 마루일 수 있다** — 안 말하면 「기간이 왜 다르지?」가 된다
+        "⚠登板数でいちばん長い記録と、イニング数でいちばん長い記録は**別の期間になることがあります**。" +
+        // ⚠**이 각주가 없으면 값 자체가 오독된다** — 이 지표는 값이 곧 이닝이다(정의서 §1-2)
+        "⚠**「33.1回」は33と1/3回**という意味です（33.1回ではありません）。" +
+        (anyInexact
+          ? "⚠イニングの「以上」は、**記録の切れ目になった登板のどのイニングで失点したかを特定できない**" +
+            "という意味です。" +
+            // ⚠**두 사유가 겹친 마루가 있으면 「最大までのどこかで必ず成り立つ」는 거짓이다** —
+            //   그 마루는 보유 범위 밖으로 더 이어질 수 있어서 상한을 넘을 수 있다
+            (anyFloorInexact
+              ? "併記した「最大」は**当サイトが持っている範囲のなかでの上限**です — " +
+                "その範囲より前は数えていないので、記録そのものはもっと長い可能性があります。"
+              : "併記した「最大」までのどこかで、どちらの数字も必ず成り立ちます。")
+          : "") +
+        (anyFloor ? atRangeStartNote(marus, sc.fromSeason) : "") +
+        // ⚠**「자책점이 아니라 실점」은 값의 정의다**(사용자 결정 ⑸) — 용어집에도 있지만 화면에도 적는다
+        "⚠**自責点ではなく失点**で数えています。" +
+        (careerMode ? "" : s.career === null ? noCareerToggleNote(season, s.careerFrom) : ""),
+    )}`;
+  };
+
+  const seasonBody = scopeBody(s.season, false);
+  if (s.career === null) {
+    return block({
+      id: "streak",
+      title: "連続記録",
+      qualifier: `${season}年 · 登板した${s.season.appearances}試合`,
+      body: seasonBody,
+    });
+  }
+  return block({
+    id: "streak",
+    title: "連続記録",
+    controls: tablist(
+      "streak",
+      [{ id: "season", label: "今季" }, { id: "career", label: "通算" }],
+      false,
+      "範囲の切り替え",
+      true,
+    ),
+    body: html`${panel("streak", "season", true, seasonBody)}${panel(
+      "streak",
+      "career",
+      false,
+      scopeBody(s.career, true),
     )}`,
   });
 }
@@ -2385,7 +2808,15 @@ function renderBlock(id: BlockId, d: PlayerPageData, base: string, seasonPast: b
     case "rolesplit":
       if (d.pitching !== null) return roleSplitBlock(d.pitching);
       return block({ id: "rolesplit", title: "先発・救援別", body: html`<p class="empty">登板がありません。</p>` });
+    /**
+     * ⚠**빈 상태를 역할별로 다른 말로 낸다**(M12). 투수에게 「打席がありません」은 거짓이고,
+     * 타자에게 「登板がありません」은 뜻이 없다 — **같은 블록이지만 세는 것이 다르다.**
+     */
     case "streak":
+      if (d.role === "pitcher") {
+        if (d.pitchingStreaks !== null) return pitchingStreakBlock(d.pitchingStreaks, d.season, seasonPast);
+        return block({ id: "streak", title: "連続記録", body: html`<p class="empty">レギュラーシーズンの登板がありません。</p>` });
+      }
       if (d.streaks !== null) return streakBlock(d.streaks, d.season, d.asOf, seasonPast);
       return block({ id: "streak", title: "連続記録", body: html`<p class="empty">打席がありません。</p>` });
     case "splits":

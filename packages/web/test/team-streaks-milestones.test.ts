@@ -106,6 +106,34 @@ function playedWide(
 }
 
 /**
+ * 경기 한 개 — **한쪽 투수만 무실점**으로 끝낸다.
+ *
+ * ⚠**`playedBoth` 는 양쪽 투수에게 `runs: 1` 을 준다** — 그러면 連続無失点登板 이 영영 안 생기고,
+ * 「투수가 표에 실리는가」를 재는 시험이 **조용히 공회전한다.** 그래서 따로 만든다.
+ */
+function playedScoreless(db: Db, date: string, home: string, away: string, scoreless: "home" | "away"): void {
+  seq += 1;
+  const gameId = `g${seq}`;
+  upsertGame(db, {
+    gameId, season: 2026, gameDate: date, awayCode: away, homeCode: home, gameNo: 1,
+    status: "played", notPlayedReason: null, competition: "regular",
+    sourceUrl: "https://npb.jp/x", fetchedAt: NOW, awayRuns: 1, homeRuns: 2,
+  });
+  for (const [side, code] of [["home", home], ["away", away]] as const) {
+    upsertBatting(db, {
+      gameId, playerId: `BAT_${code}`, side, battingOrder: "1", position: "(遊)",
+      pa: 4, ab: 4, h: 1, d2: 0, d3: 0, hr: 0, bb: 0, ibb: 0, hbp: 0,
+      sf: 0, sh: 0, so: 0, roe: 0, runs: 0, rbi: 0, sb: 0,
+    });
+    upsertPitching(db, {
+      gameId, playerId: `PIT_${code}`, side, decision: null,
+      outs: 3, bf: 3, pitches: 12, h: 0, hr: 0, bb: 0, hbp: 0, so: 1,
+      runs: side === scoreless ? 0 : 1, er: side === scoreless ? 0 : 1, wp: 0, balk: 0,
+    });
+  }
+}
+
+/**
  * 통산 마디에 다가선 선수 하나 만들기.
  *
  * ⚠**`career_batting`은 store 패키지에 전용 upsert 헬퍼가 없다**(적재 도구가 원문 그대로
@@ -350,5 +378,251 @@ test("정말 후보가 없는 구단은 0건이다 — 그때의 「ありませ
       assert.equal(team.streaks.length, 0, `${team.teamCode}: 후보가 없는데 연속 기록이 나왔다`);
       assert.equal(team.milestones.length, 0, `${team.teamCode}: 후보가 없는데 기록 근접이 나왔다`);
     }
+  });
+});
+
+/**
+ * ⚠**「続いている記録」이 조용히 「打者の記録」을 뜻하고 있었다**(2026-09-07) —
+ * `blocks.ts` 의 「打者のみ」와 같은 모양의 결함이다. 이 시험은 **`loadSite` 를 실제로 돌려**
+ * 투수의 連続無失点登板 이 홈·구단 표에 실리는지를 잰다(렌더러만 재면 배선이 빠져도 초록이다).
+ *
+ * ⚠**타자의 「최신 경기일에 출장」 조건을 그대로 쓰지 않는다.** 구원투수는 매일 안 던진다 —
+ * 실측(2026 · 로컬 DB): 진행 중 마루 5등판 이상 37명 중 **최신 경기일 등판은 9명**뿐이다.
+ * 이 픽스처의 투수도 **마지막 경기일에 안 던진다** — 그래도 실려야 한다.
+ */
+test("⚠투수의 連続無失点登板이 홈·구단 표에 실린다 — 마지막 경기일에 안 던져도 실린다", async () => {
+  await withDb((db) => {
+    for (const c of ["t", "g", "l", "m"]) {
+      upsertPlayer(db, `BAT_${c}`, `${c}球団の続巻`, NOW);
+      upsertPlayer(db, `PIT_${c}`, `${c}球団投手`, NOW);
+    }
+    // t 의 투수는 5경기 연속 무실점, g 의 투수는 매번 1실점
+    const dates = ["2026-08-11", "2026-08-12", "2026-08-13", "2026-08-14", "2026-08-15"];
+    for (const d of dates) playedScoreless(db, d, "t", "g", "home");
+    for (const d of dates.slice(0, 2)) playedBoth(db, d, "l", "m");
+    // ⚠**최신 경기일에는 t 가 안 뛴다** — 그날 등판이 없어도 기록은 안 끊긴다는 것이 요지다.
+    //   `playedBoth` 로 t 를 한 번 더 넣으면 `PIT_t` 에게 1실점이 붙어 마루가 끊긴다
+    playedBoth(db, "2026-08-16", "l", "m");
+
+    const site = loadSite(db, { season: 2026, builtOn: BUILT_ON });
+    const rows = site.home.streaks.filter((s) => s.kind === "scorelessAppearances");
+    assert.equal(rows.length, 1, `투수 행이 1개여야 한다(실제 ${rows.length}) — 픽스처가 공회전하거나 실점 투수가 섞였다`);
+    assert.equal(rows[0]!.playerId, "PIT_t");
+    assert.equal(rows[0]!.games, 5, "連続無失点登板 이 5가 아니다");
+    // ⚠**마지막 등판일이 최신 경기일(8/16)이 아니다** — 그래도 실렸다는 것이 이 시험의 요지다
+    assert.equal(rows[0]!.lastGameDate, "2026-08-15");
+    assert.equal(site.home.latest?.date ?? null, "2026-08-16");
+
+    // 구단 페이지에도 같은 행이 간다 — 다시 계산하지 않는다(M1)
+    const teamT = site.teams.find((x) => x.teamCode === "t")!;
+    const mine = teamT.streaks.filter((s) => s.kind === "scorelessAppearances");
+    assert.deepEqual(mine, rows, "구단 페이지의 투수 행이 홈의 것과 다르다");
+    const teamG = site.teams.find((x) => x.teamCode === "g")!;
+    assert.equal(
+      teamG.streaks.filter((s) => s.kind === "scorelessAppearances").length,
+      0,
+      "실점한 투수가 구단 표에 실렸다",
+    );
+  });
+});
+
+/**
+ * ⚠**하한은 정한 값이고, 정했다는 것을 시험이 고정한다**(M3).
+ * `HOME_PITCHING_STREAK_MIN = 5` — 근거는 `query.ts` 의 그 상수 주석(실측 분포)에 있다.
+ */
+test("⚠하한 미만의 투수는 표에 안 실린다 — 정한 값이 실제로 걸린다", async () => {
+  await withDb((db) => {
+    for (const c of ["t", "g", "l", "m"]) {
+      upsertPlayer(db, `BAT_${c}`, `${c}球団の続巻`, NOW);
+      upsertPlayer(db, `PIT_${c}`, `${c}球団投手`, NOW);
+    }
+    // 4등판뿐 — 하한(5)에 하나 모자란다
+    const dates = ["2026-08-12", "2026-08-13", "2026-08-14", "2026-08-15"];
+    for (const d of dates) playedScoreless(db, d, "t", "g", "home");
+    for (const d of dates.slice(0, 2)) playedBoth(db, d, "l", "m");
+
+    const site = loadSite(db, { season: 2026, builtOn: BUILT_ON });
+    assert.equal(
+      site.home.streaks.filter((s) => s.kind === "scorelessAppearances").length,
+      0,
+      "하한 미만인데 실렸다 — 하한이 실제로 안 걸린다",
+    );
+  });
+});
+
+/**
+ * 시즌 도중 이적 — **투구한 구단과 타석에 선 구단이 다른 투수**를 만든다.
+ *
+ * ⚠**합성이 아니라 실DB 에 실재하는 모양이다**: 2023 `03105136` 은 마지막 타격 구단이 `d` 인데
+ * **5연속 무실점을 만든 투구 구단은 `f`** 다(2026-09-07 실측 · 9시즌 · 하한 5의 투수 행 272건 중 1건).
+ */
+function playedWithTradedPitcher(
+  db: Db,
+  date: string,
+  home: string,
+  away: string,
+  pitcherId: string,
+): void {
+  seq += 1;
+  const gameId = `g${seq}`;
+  upsertGame(db, {
+    gameId, season: 2026, gameDate: date, awayCode: away, homeCode: home, gameNo: 1,
+    status: "played", notPlayedReason: null, competition: "regular",
+    sourceUrl: "https://npb.jp/x", fetchedAt: NOW, awayRuns: 1, homeRuns: 2,
+  });
+  for (const [side, code] of [["home", home], ["away", away]] as const) {
+    upsertBatting(db, {
+      gameId, playerId: `BAT_${code}`, side, battingOrder: "1", position: "(遊)",
+      pa: 4, ab: 4, h: 1, d2: 0, d3: 0, hr: 0, bb: 0, ibb: 0, hbp: 0,
+      sf: 0, sh: 0, so: 0, roe: 0, runs: 0, rbi: 0, sb: 0,
+    });
+    // ⚠**이 경기의 투수는 다른 사람이다** — 같은 이름을 쓰면 이적한 투수의 마루가 하나 늘어난다
+    upsertPitching(db, {
+      gameId, playerId: `PIT2_${code}`, side, decision: null,
+      outs: 21, bf: 28, pitches: 90, h: 5, hr: 0, bb: 2, hbp: 0, so: 7, runs: 1, er: 1, wp: 0, balk: 0,
+    });
+  }
+  // ⚠**이적한 투수는 원정(=away) 쪽 타자로만 들어온다** — 이 경기에서는 던지지 않는다
+  upsertBatting(db, {
+    gameId, playerId: pitcherId, side: "away", battingOrder: "9", position: "(投)",
+    pa: 3, ab: 3, h: 1, d2: 0, d3: 0, hr: 0, bb: 0, ibb: 0, hbp: 0,
+    sf: 0, sh: 0, so: 0, roe: 0, runs: 0, rbi: 0, sb: 0,
+  });
+}
+
+/**
+ * ⚠**투수 행의 구단은 「등판한 구단」이지 「타석에 선 구단」이 아니다**(2026-09-07 검토 ⑴).
+ *
+ * `query.ts` 의 `teamCodeOf` 는 `agg.batting` → `agg.pitching` 순으로 찾는다 —
+ * **타격 구단을 무조건 먼저 본다.** 타자 행에는 그게 맞지만 **투수 행에는 틀리고**,
+ * 시즌 도중에 옮긴 투수의 마루가 **투구하지 않은 구단의 화면**에 실렸다.
+ *
+ * ⚠**같은 저장소에 이미 옳은 답이 있었다** — 선수 페이지는 처음부터 `pitching_line.side` 로
+ * 「그때 소속」을 얻고 있었다. 두 경로가 다른 답을 내던 것이라 **M1 위반**이다.
+ * → 한 벌(`pitchingTeamOn`)로 합쳤고, 이 시험이 **홈·구단 쪽이 그 한 벌을 타는지** 잰다.
+ *
+ * ⚠**렌더러만 재면 못 잡는다** — 배선이 `loadSite` 안에 있다.
+ */
+test("⚠투수 행의 구단은 등판한 구단이다 — 타격 구단을 먼저 보면 다른 팀 화면에 실린다", async () => {
+  await withDb((db) => {
+    for (const c of ["t", "g", "l", "m"]) {
+      upsertPlayer(db, `BAT_${c}`, `${c}球団の続巻`, NOW);
+      upsertPlayer(db, `PIT_${c}`, `${c}球団投手`, NOW);
+      upsertPlayer(db, `PIT2_${c}`, `${c}球団投手2`, NOW);
+    }
+    // `PIT_t` 가 t 에서 5경기 연속 무실점을 만든다
+    const dates = ["2026-08-11", "2026-08-12", "2026-08-13", "2026-08-14", "2026-08-15"];
+    for (const d of dates) playedScoreless(db, d, "t", "g", "home");
+    for (const d of dates.slice(0, 2)) playedBoth(db, d, "l", "m");
+    // 그 뒤 g 로 옮겨 **타석에만** 선다 — 등판은 없다(마루는 t 에서 만든 그대로다)
+    playedWithTradedPitcher(db, "2026-08-16", "t", "g", "PIT_t");
+
+    const site = loadSite(db, { season: 2026, builtOn: BUILT_ON });
+
+    const rows = site.home.streaks.filter((s) => s.kind === "scorelessAppearances");
+    assert.equal(rows.length, 1, `투수 행이 1개여야 한다(실제 ${rows.length}) — 픽스처가 공회전한다`);
+    assert.equal(rows[0]!.playerId, "PIT_t");
+    assert.equal(rows[0]!.games, 5, "마루가 5등판이 아니다 — 이적 경기가 마루에 섞였다");
+    assert.equal(rows[0]!.lastGameDate, "2026-08-15", "마지막 등판일이 이적 경기로 밀렸다");
+    assert.equal(rows[0]!.teamCode, "t", "타격 구단(g)으로 실렸다 — 마루는 t 에서 만든 것이다");
+
+    // 구단 페이지도 같은 답이어야 한다 — 「우리 팀 기록」이 남의 팀 화면에 서면 안 된다
+    const teamT = site.teams.find((x) => x.teamCode === "t")!;
+    const teamG = site.teams.find((x) => x.teamCode === "g")!;
+    assert.equal(
+      teamT.streaks.filter((s) => s.kind === "scorelessAppearances").length,
+      1,
+      "등판한 구단의 페이지에 안 실렸다",
+    );
+    assert.equal(
+      teamG.streaks.filter((s) => s.kind === "scorelessAppearances").length,
+      0,
+      "투구하지 않은 구단의 페이지에 실렸다",
+    );
+  });
+});
+
+/**
+ * 경기 한 개 — **홈 타자의 안타 유무와 홈 투수의 실점 유무를 따로 지정한다.**
+ *
+ * ⚠**`playedScoreless` 로는 「분모 ≠ 값」을 못 만든다** — 매 경기 안타·무실점이라
+ * **훑은 수와 마루의 길이가 같은 수**가 되고, 그러면 분모를 값으로 바꿔 넣는 뮤테이션이
+ * 조용히 통과한다(실측으로 그렇게 됐다 · 2026-09-07).
+ * 원정 쪽은 **늘 무안타·실점**이라 그쪽에서는 마루가 안 생긴다.
+ */
+function playedTuned(
+  db: Db,
+  date: string,
+  home: string,
+  away: string,
+  homeHit: boolean,
+  homeScoreless: boolean,
+): void {
+  seq += 1;
+  const gameId = `g${seq}`;
+  upsertGame(db, {
+    gameId, season: 2026, gameDate: date, awayCode: away, homeCode: home, gameNo: 1,
+    status: "played", notPlayedReason: null, competition: "regular",
+    sourceUrl: "https://npb.jp/x", fetchedAt: NOW, awayRuns: 1, homeRuns: 2,
+  });
+  for (const [side, code, hit, scoreless] of [
+    ["home", home, homeHit, homeScoreless],
+    ["away", away, false, false],
+  ] as const) {
+    upsertBatting(db, {
+      gameId, playerId: `BAT_${code}`, side, battingOrder: "1", position: "(遊)",
+      pa: 4, ab: 4, h: hit ? 1 : 0, d2: 0, d3: 0, hr: 0, bb: 0, ibb: 0, hbp: 0,
+      sf: 0, sh: 0, so: 0, roe: 0, runs: 0, rbi: 0, sb: 0,
+    });
+    upsertPitching(db, {
+      gameId, playerId: `PIT_${code}`, side, decision: null,
+      outs: 3, bf: 3, pitches: 12, h: 0, hr: 0, bb: 0, hbp: 0, so: 1,
+      runs: scoreless ? 0 : 1, er: scoreless ? 0 : 1, wp: 0, balk: 0,
+    });
+  }
+}
+
+/**
+ * ⚠**분모 3종은 계산에서 와야 한다**(M2 · 정의서 §1-6) — 화면에서 만들어 넣으면
+ * 값과 분모가 다른 곳에서 나오게 되고, 그러면 언젠가 갈린다.
+ * 여기서는 **`loadSite` 가 실제로 채우는지**를 잰다(렌더러 시험은 픽스처가 채운 것을 볼 뿐이다).
+ *
+ * ⚠**분모와 값이, 그리고 「지금」과 「최장」이 서로 다른 수가 되게 픽스처를 짰다.**
+ * 같은 수면 `scanned`↔`games` · `currentFrom`↔`bestFrom` 을 바꿔 넣어도 시험이 초록이다.
+ */
+test("⚠연속 기록 행이 분모(훑은 사건 수)와 마루의 기간을 들고 온다", async () => {
+  await withDb((db) => {
+    for (const c of ["t", "g", "l", "m"]) {
+      upsertPlayer(db, `BAT_${c}`, `${c}球団の続巻`, NOW);
+      upsertPlayer(db, `PIT_${c}`, `${c}球団投手`, NOW);
+    }
+    /**
+     * 12경기.
+     * - `BAT_t`: 1~6 안타 · **7 무안타** · 8~12 안타 → 지금 **5**경기 · 최장 **6**경기 · 훑은 **12**경기.
+     * - `PIT_t`: 1~2 실점 · 3~12 무실점 → 지금 **10**등판 · 훑은 **12**등판.
+     */
+    const dates = Array.from({ length: 12 }, (_, i) => `2026-08-${String(i + 4).padStart(2, "0")}`);
+    dates.forEach((d, i) => playedTuned(db, d, "t", "g", i !== 6, i >= 2));
+    for (const d of dates.slice(0, 2)) playedBoth(db, d, "l", "m");
+
+    const site = loadSite(db, { season: 2026, builtOn: BUILT_ON });
+
+    const pit = site.home.streaks.find((s) => s.kind === "scorelessAppearances");
+    assert.notEqual(pit, undefined, "투수 행이 없다 — 시험이 공회전한다");
+    // ⚠**단위가 다르다** — 투수는 登板, 타자는 試合
+    assert.equal(pit!.scannedUnit, "登板");
+    assert.equal(pit!.games, 10, "마루의 길이가 아니다");
+    assert.equal(pit!.scanned, 12, "훑은 등판 수가 아니다 — 마루의 길이를 분모로 썼다");
+    assert.equal(pit!.from, "2026-08-06", "마루의 시작이 아니다");
+    assert.equal(pit!.to, "2026-08-15", "마루의 끝이 아니다");
+
+    const bat = site.home.streaks.find((s) => s.kind === "hitting");
+    assert.notEqual(bat, undefined, "타자 행이 없다 — 시험이 공회전한다");
+    assert.equal(bat!.scannedUnit, "試合");
+    assert.equal(bat!.games, 5, "마루의 길이가 아니다");
+    assert.equal(bat!.scanned, 12, "타석이 있던 경기 수가 아니다 — 마루의 길이를 분모로 썼다");
+    // ⚠**「지금」의 기간이지 「최장」의 기간이 아니다** — 최장은 8/4〜8/9(6경기)다
+    assert.equal(bat!.from, "2026-08-11", "「지금」이 아니라 「최장」의 시작을 냈다");
+    assert.equal(bat!.to, "2026-08-15", "마루의 끝이 아니다");
   });
 });

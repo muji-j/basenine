@@ -128,7 +128,12 @@ export function isStale(f: Freshness): boolean {
   return f.lagDays === null || f.lagDays > STALE_AFTER_DAYS;
 }
 
-function daysBetween(fromIso: string, toIso: string): number {
+/**
+ * 두 경기일 사이의 일수. ⚠**시계를 읽지 않는다**(M6) — 주어진 두 문자열만 본다.
+ * ⚠**export 는 M1 때문이다** — 선수 페이지의 연속 무실점이 「마지막 등판에서 며칠」을 쓰는데,
+ * 같은 계산을 두 벌 두면 어느 날 하루가 어긋난다.
+ */
+export function daysBetween(fromIso: string, toIso: string): number {
   const a = Date.parse(`${fromIso}T00:00:00Z`);
   const b = Date.parse(`${toIso}T00:00:00Z`);
   return Math.round((b - a) / 86_400_000);
