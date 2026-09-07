@@ -3078,8 +3078,19 @@ interface StreakCandidate {
   outs: number;
   /** 상한(이닝 축만 뜻이 있다). 확정이면 `value` 와 같다 */
   upper: number;
+  /**
+   * **그 축이 실제로 걸친 기간**(분모 ⑵).
+   * ⚠**이닝 축은 등판 축과 다른 값이다** — 경계 등판은 등판 축에 안 들어가고 이닝 축에는 들어간다.
+   * 그래서 `bestInnings` 는 `innings.from`/`innings.to` 를 받는다(`ScorelessInnings.from` 주석).
+   */
   from: string;
   to: string;
+  /**
+   * 그 기간이 확정인가. ⚠**이닝 축만 `false` 가 될 수 있다** — 미확정 경계가 있으면
+   * 「최대」쪽 값은 그 등판까지 세므로 **기간이 화면에 보이는 것보다 넓을 수 있다.**
+   * 그 사실을 각주가 말한다(M2 · M11 — 모르는 것을 아는 척하지 않는다).
+   */
+  spanExact: boolean;
   rankable: boolean;
   /** 화면에 낼 값. 이미 다듬은 글자 */
   text: string;
@@ -3134,7 +3145,8 @@ function streakPanelOf(
   scannedUnit: "試合" | "登板",
   isInnings: boolean,
 ): StreakRankPanel {
-  const out = cutStreakRows(rankStreaks(rows), STREAK_RANK_ROWS).map((r): StreakRankRow => ({
+  const cut = cutStreakRows(rankStreaks(rows), STREAK_RANK_ROWS);
+  const out = cut.map((r): StreakRankRow => ({
     playerId: r.playerId,
     name: r.name,
     teamCode: r.teamCode,
@@ -3148,7 +3160,15 @@ function streakPanelOf(
   }));
   // ⚠**`candidates` 와 `rows` 가 같은 모집단에서 나온다** — 후보를 만들 때 이미 이름·구단을
   //   못 찾은 것을 뺐으므로, 각주의 「N人のうち M人」이 두 다른 잣대를 섞지 않는다
-  return { id: termKey, rows: out, candidates: rows.length, scannedUnit, isInnings };
+  return {
+    id: termKey,
+    rows: out,
+    candidates: rows.length,
+    scannedUnit,
+    isInnings,
+    // ⚠**실린 행만 본다** — 잘려 나간 행의 유보를 각주에 적으면 화면에 없는 것을 말하게 된다
+    spanUncertain: cut.some((r) => !r.spanExact),
+  };
 }
 
 /**
@@ -3159,8 +3179,12 @@ function streakPanelOf(
  * ⑵ 홈·구단의 「続いている記録」이 이미 같은 이유로 이 축을 뺐다(`HomeStreak.kind` 3종).
  * ⑶ 이 축의 길이는 **계속 출장했다는 사실과 섞인다.**
  * ⚠**「없다」가 아니라 「안 싣기로 정했다」다** — 선수 페이지에는 그대로 있다.
+ *
+ * ⚠**`export` 는 시험 때문이다**(`cutStreakRows` 와 같은 이유). 「이름·구단을 못 찾으면
+ * **후보에서도** 뺀다」는 M11 경로는 **실데이터에 결측이 0건이라 산출물 대조로 못 잡는다** —
+ * 되돌려도 스위트가 초록이었다(2026-09-07 이중 검토 P2). 그 자리를 시험이 직접 부른다.
  */
-function streakCategoriesByLeague(
+export function streakCategoriesByLeague(
   db: Db,
   season: number,
   competition: string,
@@ -3205,6 +3229,8 @@ function streakCategoriesByLeague(
         upper: best.appearances,
         from: best.from,
         to: best.to,
+        // ⚠**등판 축의 기간은 언제나 확정이다** — 경계 등판은 이 축에 안 들어간다
+        spanExact: true,
         // ⚠**시즌 모드에서 `atRangeStart` 는 「以上」이 아니다**(머리주석) — 항상 확정이다
         rankable: true,
         text: String(best.appearances),
@@ -3219,8 +3245,14 @@ function streakCategoriesByLeague(
         value: bi.innings.lowerOuts,
         outs: bi.innings.lowerOuts,
         upper: bi.innings.upperOuts,
-        from: bi.from,
-        to: bi.to,
+        /**
+         * ⚠**등판 축의 `bi.from`/`bi.to` 가 아니다.** 경계 등판의 아웃이 값에 들어가면
+         * 그 등판일이 **記録に数えた最後の試合**이다 — 각주가 「期間」을 그렇게 약속한다.
+         * 山﨑 2025 의 `36回` 가 그 예다(4/2〜4/30 의 105아웃 + **5/7 의 3아웃**).
+         */
+        from: bi.innings.from,
+        to: bi.innings.to,
+        spanExact: bi.innings.spanExact,
         rankable: bi.innings.exact,
         text: streakInningsText(bi.innings.lowerOuts, bi.innings.exact, false),
         maxText: streakInningsMax(bi.innings.upperOuts, bi.innings.exact, false),
@@ -3247,6 +3279,8 @@ function streakCategoriesByLeague(
         upper: m.best,
         from: m.bestFrom,
         to,
+        // ⚠**타자 축에는 경계라는 것이 없다** — 마루가 경기 단위라 기간이 언제나 확정이다
+        spanExact: true,
         rankable: true,
         text: String(m.best),
         maxText: "",
@@ -6112,6 +6146,8 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
    * ⚠**세 값을 다 옮긴다**(하한·상한·확정 여부) — 표시가 어느 쪽을 고르든(정의서 §3-3).
    * ⚠**`atRangeStart` 와 `exact` 를 한 필드로 합치지 않는다** — **「以上」의 사유가 둘**이고
    *   화면이 다른 말을 해야 한다(정의서 §1-6).
+   * ⚠**기간도 두 벌을 옮긴다** — 등판 축과 이닝 축의 기간은 **다른 값**이다
+   *   (`ScorelessInnings.from` 주석). 한 벌만 옮기면 화면이 「記録に数えた最後の試合」을 거짓으로 말한다.
    */
   const pitchingViewOf = (m: PitchingStreak | null): PitchingStreakView | null =>
     m === null
@@ -6125,6 +6161,10 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
           from: m.from,
           to: m.to,
           seasons: m.seasons,
+          inningsFrom: m.innings.from,
+          inningsTo: m.innings.to,
+          inningsSeasons: m.innings.seasons,
+          inningsSpanExact: m.innings.spanExact,
         };
   const pitchingScopeOf = (p: PitchingStreaks): PitchingStreakScope => ({
     current: pitchingViewOf(p.current),
@@ -6780,6 +6820,13 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     ranking: {
       season: o.season,
       asOf: meta.latest,
+      /**
+       * ⚠**홈이 쓰는 그 값을 그대로 넘긴다**(M1) — 여기서 `seasonIsOver` 를 다시 부르지 않는다.
+       * 順位 화면의 連続記録 각주가 **홈·구단의 구획 이름을 불러 주는데**, 그 이름은 시제로 갈린다.
+       * 두 벌로 두면 어느 날 **각주가 그 시즌 화면에 없는 구획을 가리킨다** — 실제로 그랬다
+       * (`false` 하드코딩 · `RankingPageData.seasonOver` 주석의 실측).
+       */
+      seasonOver: homeData.page.seasonOver,
       standings,
       tieRule: TIE_RULE,
       draws: drawRows,

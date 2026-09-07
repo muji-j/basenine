@@ -52,6 +52,8 @@ function panelOf(over: Partial<StreakRankPanel> = {}): StreakRankPanel {
     candidates: 162,
     scannedUnit: "登板",
     isInnings: false,
+    // ⚠**기본은 확정**이다 — 유보가 붙는 쪽은 시험이 명시적으로 켠다
+    spanUncertain: false,
     ...over,
   };
 }
@@ -69,12 +71,12 @@ function leagueOf(panels: StreakRankPanel[]): LeagueSection {
   };
 }
 
-function pageData(leagues: LeagueSection[]): RankingPageData {
-  return { season: SEASON, asOf: "2025-10-02", standings: [], tieRule: TIE_RULE, draws: [], leagues };
+function pageData(leagues: LeagueSection[], seasonOver = false): RankingPageData {
+  return { season: SEASON, asOf: "2025-10-02", seasonOver, standings: [], tieRule: TIE_RULE, draws: [], leagues };
 }
 
-function render(panels: StreakRankPanel[]): string {
-  return renderRankingPage(pageData([leagueOf(panels)]), context());
+function render(panels: StreakRankPanel[], seasonOver = false): string {
+  return renderRankingPage(pageData([leagueOf(panels)], seasonOver), context());
 }
 
 /** 그 부문 패널만 잘라 본다 — 다른 부문의 글자가 섞이면 판정이 헐거워진다 */
@@ -221,6 +223,33 @@ test("⚠상한을 값 옆에 함께 낸다 — 상한도 「반드시 참」이
   assert.ok(s.includes('<span class="den">最大25.1回 · 47登板</span>'), "상한과 분모가 한 칸에 안 모였다");
 });
 
+/**
+ * ⚠**각주가 「期間」을 「記録に数えた最後の試合まで」라고 약속한다**(2026-09-07 P2).
+ * 경계 등판을 셀지 말지가 안 정해지면 **기간의 끝도 안 정해진다** — 그때 좁은 기간을
+ * 단정해 두고 아무 말도 안 하면 그 약속이 거짓이 된다(M11).
+ */
+test("⚠기간이 확정이 아니면 그 사실을 말한다 — 확정인 표에는 안 말한다", () => {
+  const uncertain = streakSection(
+    render([
+      panelOf({
+        id: "scorelessInningStreak",
+        isInnings: true,
+        spanUncertain: true,
+        rows: [row({ rank: null, value: "23.1回以上", max: "最大25.1回" })],
+      }),
+    ]),
+  );
+  assert.match(uncertain, /この「期間」がさらに広がることがあります/);
+
+  const certain = streakSection(
+    render([panelOf({ id: "scorelessInningStreak", isInnings: true, spanUncertain: false })]),
+  );
+  assert.ok(
+    !/この「期間」がさらに広がることがあります/.test(certain),
+    "확정인 표에 없는 유보를 적었다 — 그것도 거짓이다",
+  );
+});
+
 test("⚠이닝 축에만 「33.1回 は 33と1/3回」를 적는다 — 값이 곧 이닝인 축이다", () => {
   const inn = streakSection(render([panelOf({ id: "scorelessInningStreak", isInnings: true })]));
   assert.match(inn, /33と1\/3回/);
@@ -257,6 +286,31 @@ test("⚠「지금 이어지고 있는 기록」이 아니라고 말한다 — �
   const s = streakSection(render([panelOf()]));
   assert.match(s, /いま続いている記録ではありません/);
   assert.match(s, /続いている記録/);
+});
+
+/**
+ * ⚠**각주가 가리키는 구획이 그 시즌 화면에 실재해야 한다**(2026-09-07 이중 검토 P1 · M1).
+ *
+ * 이 각주는 **다른 화면의 구획 이름**을 부른다. 그 이름은 시즌이 끝났는지로 갈리는데
+ * (`streakSectionTitle`), 여기서 **`false` 를 하드코딩**하고 있었다 — 완결 시즌의 홈·구단은
+ * 「続いて**いた**記録」이므로 **없는 구획을 가리켰다.**
+ * 실측(고치기 전 빌드): `dist/2025/ranking.html` 에 「続いている記録」 **16건** ·
+ * 같은 시즌 `dist/2025/index.html` 에 「続いていた記録」 **3건**. 2018·2020·2024 도 같았다.
+ *
+ * ⚠**이전 시험은 `/続いている記録/` 만 봤고 `seasonOver=true` 픽스처를 한 번도 안 줬다** —
+ * 그래서 초록인 채로 지나갔다. **여기서 두 시제를 다 준다.**
+ */
+test("⚠완결 시즌의 각주는 「続いていた記録」을 가리킨다 — 없는 구획 이름을 부르지 않는다", () => {
+  const over = streakSection(render([panelOf()], true));
+  assert.match(over, /続いていた記録/, "완결 시즌인데 과거형 구획 이름이 없다");
+  assert.ok(
+    !/続いている記録/.test(over),
+    "완결 시즌 화면이 현재형 「続いている記録」을 가리킨다 — 그 시즌의 홈·구단에 그 구획은 없다",
+  );
+
+  const live = streakSection(render([panelOf()], false));
+  assert.match(live, /いま続いている記録ではありません/);
+  assert.ok(!/続いていた記録/.test(live), "진행 중 시즌인데 과거형 구획 이름을 가리킨다");
 });
 
 // ────────────────────────────────────────────────────────────── 안 싣는 축

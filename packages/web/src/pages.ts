@@ -145,6 +145,15 @@ export interface StreakRankPanel {
   scannedUnit: "試合" | "登板";
   /** 값이 이닝인가. 각주의 「33.1回 は 33と1/3回」를 켠다 */
   isInnings: boolean;
+  /**
+   * **실린 행 중에 「期間」이 확정이 아닌 것이 있는가**(이닝 축에서만 `true` 가 될 수 있다).
+   *
+   * ⚠**각주가 「期間」을 「記録に数えた最後の試合まで」라고 약속한다.** 경계 등판의 실점 시점을
+   * 못 짚으면 **그 등판을 셀지 말지가 안 정해지고**, 그러면 기간의 끝(또는 시작)도 안 정해진다.
+   * 그때는 **모른다는 것을 화면이 말해야 한다**(M11) — 조용히 좁은 기간을 단정하면 그것이 거짓이다.
+   * ⚠**`rank === null` 과 같은 값이 아니다** — 경계 등판의 아웃이 0 이면 미확정이어도 기간은 확정이다.
+   */
+  spanUncertain: boolean;
 }
 
 /**
@@ -200,7 +209,16 @@ function streakRankTable(p: StreakRankPanel, base: string): RawHtml {
  * ⚠**각주가 M2 의 셋째 분모를 낸다**(집계 범위) — 표가 좁아 열로 못 넣는다.
  * 홈 표(`streakTableNote`)와 같은 규칙이다.
  */
-function streakPanelBody(p: StreakRankPanel, season: number, base: string): RawHtml {
+function streakPanelBody(
+  p: StreakRankPanel,
+  season: number,
+  /**
+   * ⚠**시즌이 끝났는지를 받아야 한다** — 각주가 **다른 화면의 구획 이름**을 부르는데
+   * 그 이름이 시제로 갈린다(`streakSectionTitle`). 값을 안 받으면 **없는 구획을 가리키게 된다.**
+   */
+  seasonOver: boolean,
+  base: string,
+): RawHtml {
   const label = termLabel(p.id);
   if (p.rows.length === 0) {
     /**
@@ -220,11 +238,25 @@ function streakPanelBody(p: StreakRankPanel, season: number, base: string): RawH
     //   ⚠**연도를 박지 않는다**(사용자 결정 ⑵) — 보고 있는 시즌에서 유도한다.
     `この表は**${season}年のレギュラーシーズンのみ**で数えた、**そのシーズンでいちばん長かった記録**です — ` +
       "日本シリーズ・クライマックスシリーズ・オープン戦は入れていません。" +
-      // ⚠**이 표가 답하는 질문을 말한다** — 「지금 이어지고 있는가」는 다른 화면의 일이다(설계 §6-4)
-      `⚠**いま続いている記録ではありません** — それはトップページと球団ページの「${streakSectionTitle(false)}」にあります。` +
+      // ⚠**이 표가 답하는 질문을 말한다** — 「지금 이어지고 있는가」는 다른 화면의 일이다(설계 §6-4).
+      //   ⚠**시제를 박지 마라** — 끝난 시즌의 그 구획은 「続いて**いた**記録」이고,
+      //   `false` 를 박았더니 **그 시즌 화면에 없는 이름**을 가리켰다(2026-09-07 P1).
+      `⚠**${seasonOver ? "シーズン終了時に続いていた記録ではありません" : "いま続いている記録ではありません"}** — ` +
+      `それはトップページと球団ページの「${streakSectionTitle(seasonOver)}」にあります。` +
       // ⚠**분모 ⑴ 의 단위가 타자와 투수에서 다르다**
       `値の横の小さい数字は、**この範囲で数えた${p.scannedUnit}**の数です。` +
       "「期間」は**記録が始まった試合から、記録に数えた最後の試合まで**です。" +
+      /**
+       * ⚠**그 약속을 지킬 수 없는 행이 있으면 그 사실을 말한다**(M11 · 2026-09-07 P2).
+       * 이닝 축은 **경계 등판의 아웃이 값에 들어가므로** 기간이 그 등판일까지 늘어나는데,
+       * 실점 시점을 못 짚는 경계는 **셀지 말지 자체가 안 정해진다.** 그때 좁은 기간을
+       * 단정하면 각주가 스스로 거짓이 된다.
+       */
+      (p.spanUncertain
+        ? "⚠**「以上」の行では、この「期間」がさらに広がることがあります** — " +
+          "記録の切れ目になった登板を数に入れるかどうかが決まらないためで、" +
+          "併記した「最大」はその登板まで数えた値です。"
+        : "") +
       // ⚠**값 자체가 이닝인 축에만 붙인다** — 이 각주가 없으면 값이 오독된다(정의서 §1-2)
       (p.isInnings ? "⚠**「33.1回」は33と1/3回**という意味です（33.1回ではありません）。" : "") +
       (hasUnranked
@@ -257,6 +289,7 @@ function streakCategoryPanels(
    */
   prefix: TabGroupRef,
   season: number,
+  seasonOver: boolean,
 ): RawHtml {
   if (c.panels.length === 0) return html`<p class="empty">この部門の記録を計算できていません。</p>`;
   return html`${tablist(
@@ -264,7 +297,7 @@ function streakCategoryPanels(
     c.panels.map((p) => ({ id: p.id, label: termLabel(p.id) })),
     true,
   )}
-  ${c.panels.map((p, pi) => panel(prefix, p.id, pi === 0, streakPanelBody(p, season, base)))}`;
+  ${c.panels.map((p, pi) => panel(prefix, p.id, pi === 0, streakPanelBody(p, season, seasonOver, base)))}`;
 }
 
 /**
@@ -701,6 +734,17 @@ export interface DrawSeasonRow {
 export interface RankingPageData {
   season: number;
   asOf: string | null;
+  /**
+   * **이 시즌이 이미 끝났는가.** 판정은 `query.ts` 의 `seasonIsOver` 한 벌이다(M1) —
+   * 홈·구단 페이지가 쓰는 것과 **같은 값**이다.
+   *
+   * ⚠**이 필드가 없어서 각주가 거짓말을 했다**(2026-09-07 이중 검토 P1). 連続記録 의 각주가
+   * 「トップページと球団ページの『続いている記録』」이라고 **`streakSectionTitle(false)` 를 박아서**
+   * 냈는데, 완결 시즌의 그 구획 이름은 **「続いて**いた**記録」**이다 — 실측으로
+   * `dist/2025/ranking.html` 16건 대 `dist/2025/index.html` 3건이 서로 다른 시제였다.
+   * **넘길 방법이 없었던 것이 원인이다. 값이 아니라 배선이 빠져 있었다.**
+   */
+  seasonOver: boolean;
   /** 팀 순위표. **개인 순위보다 먼저 온다** — 「順位」를 누른 사람이 먼저 찾는 것이다 */
   standings: StandingsSection[];
   /** 동률 처리 규칙. ⚠**화면에 적는다**(M3) */
@@ -918,7 +962,7 @@ ${d.draws.length === 0
           // ⚠**첫 패널이 아니다** — 부문이 하나도 없으면 이 줄이 첫 패널이 되어야 하는데,
           //   `categories` 가 빈 리그는 `buildLeagues` 가 통째로 건너뛰므로 그런 리그는 오지 않는다
           league.categories.length === 0,
-          streakCategoryPanels(league.streaks, base, streakGroup, d.season),
+          streakCategoryPanels(league.streaks, base, streakGroup, d.season, d.seasonOver),
         )}
     </section>`,
     );

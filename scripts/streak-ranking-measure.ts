@@ -22,6 +22,9 @@ import { parseArgs } from "node:util";
 import { openDb } from "@bb-app/store";
 import { battingStreaks, pitchingStreaks, rankStreaks } from "@bb-app/aggregate";
 import { TEAMS } from "@bb-app/domain";
+// ⚠**프로덕션이 쓰는 그 함수를 그대로 쓴다**(M1) — 같은 뜻의 SQL 을 여기서 다시 적지 않는다.
+//   `ranking-cut-measure.ts` 가 `query.ts` 를 직접 import 하는 선례를 따른다
+import { battingTeamOn, pitchingTeamOn } from "../packages/web/src/query.ts";
 
 const SEASONS: readonly number[] = [2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026];
 const IN_PROGRESS: ReadonlySet<number> = new Set([2026]);
@@ -42,13 +45,13 @@ const rpad = (s: string, n: number): string => (s.length >= n ? s : " ".repeat(n
 // ⚠**시계를 안 읽는다**(M6) — 마이그레이션 기록용 문자열이라 고정값을 준다(`ranking-cut-measure.ts` 와 같다)
 const db = openDb(dbPath, "1970-01-01T00:00:00.000Z");
 
-/** 그 경기일에 이 투수가 던진 구단 */
-const teamOnStmt = db.raw.prepare(
-  `SELECT CASE pl.side WHEN 'home' THEN g.home_code ELSE g.away_code END AS code
-     FROM pitching_line pl JOIN game g ON g.game_id = pl.game_id
-    WHERE pl.player_id = ? AND g.season = ? AND g.competition = ? AND g.status = 'played'
-      AND g.game_date = ? ORDER BY g.game_no DESC LIMIT 1`,
-);
+// ⚠**배정 구단은 프로덕션 함수를 그대로 쓴다**(M1 · 2026-09-07 이중 검토 P3).
+//   예전에는 이 파일이 **같은 뜻의 SQL 을 자기 손으로 다시 적었고**, 타자 쪽에만
+//   `AND b.pa > 0` 이 붙어 있었다 — `battingTeamOn` 에는 그 조건이 **없다.**
+//   그 상태로 잰 수를 설계서 §7 이 인용했으니, **프로덕션과 다른 쿼리로 얻은 수**였다.
+//   재는 도구가 재는 대상과 어긋나면 그 측정은 아무것도 말하지 않는다.
+//   아래 두 조회는 **「그 기간에 구단이 몇 개였나」 전용**이고 배정에는 안 쓴다.
+
 /** 그 기간에 이 투수가 던진 **구단 전부**(마루가 리그를 넘는지 보기 위해) */
 const teamsInSpanStmt = db.raw.prepare(
   `SELECT DISTINCT CASE pl.side WHEN 'home' THEN g.home_code ELSE g.away_code END AS code
@@ -56,14 +59,17 @@ const teamsInSpanStmt = db.raw.prepare(
     WHERE pl.player_id = ? AND g.season = ? AND g.competition = ? AND g.status = 'played'
       AND g.game_date BETWEEN ? AND ?`,
 );
-/** 타자가 그 기간에 선 구단 전부 — **마지막 것이 배정 구단** */
+/**
+ * 타자가 그 기간에 선 구단 전부 — **리그를 넘었는지**를 보기 위한 것이다.
+ * ⚠**배정 구단은 여기서 안 정한다** — `battingTeamOn` 이 정한다(위).
+ * ⚠**`pa > 0` 을 걸지 않는다** — 프로덕션이 안 걸기 때문이다. 걸면 대수비만 나간 경기가
+ *   여기서만 빠져 「구단이 둘 이상」 판정이 프로덕션보다 느슨해진다.
+ */
 const batTeamsStmt = db.raw.prepare(
-  `SELECT CASE b.side WHEN 'home' THEN g.home_code ELSE g.away_code END AS code,
-          MAX(g.game_date) AS last
+  `SELECT DISTINCT CASE b.side WHEN 'home' THEN g.home_code ELSE g.away_code END AS code
      FROM batting_line b JOIN game g ON g.game_id = b.game_id
     WHERE b.player_id = ? AND g.season = ? AND g.competition = ? AND g.status = 'played'
-      AND g.game_date BETWEEN ? AND ? AND b.pa > 0
-    GROUP BY code ORDER BY last`,
+      AND g.game_date BETWEEN ? AND ?`,
 );
 
 interface Row {
@@ -91,8 +97,8 @@ function rowsFor(season: number): Map<string, Row[]> {
   const psi: Row[] = [];
   for (const [playerId, s] of pitchingStreaks(db, scope)) {
     const add = (arr: Row[], from: string, to: string, value: number, upper: number, outs: number, rankable: boolean): void => {
-      const code = teamOnStmt.get(playerId, season, COMPETITION, to) as { code: string } | undefined;
-      const lg = code === undefined ? undefined : LEAGUE_OF.get(code.code);
+      const code = pitchingTeamOn(db, playerId, season, COMPETITION, to);
+      const lg = code === null ? undefined : LEAGUE_OF.get(code);
       if (lg === undefined) return;
       const codes = teamsInSpanStmt.all(playerId, season, COMPETITION, from, to) as { code: string }[];
       const lgs = new Set(codes.map((c) => LEAGUE_OF.get(c.code)));
@@ -104,7 +110,17 @@ function rowsFor(season: number): Map<string, Row[]> {
     if (bi !== null) {
       // ⚠**시즌 모드에서 `atRangeStart` 는 「以上」이 아니다**(`PitchingStreak.atRangeStart` 주석) —
       //   그건 「시즌 시작」이라는 뜻이고 화면이 이미 「今季」라고 말한다. `exact` 만이 사유다.
-      add(psi, bi.from, bi.to, bi.innings.lowerOuts, bi.innings.upperOuts, bi.innings.lowerOuts, bi.innings.exact);
+      // ⚠**기간은 이닝 축의 것을 쓴다**(M1 · 프로덕션과 같게) — 등판 축의 것을 쓰면
+      //   구단 배정과 「리그를 넘었나」 판정이 화면과 다른 경기를 보게 된다
+      add(
+        psi,
+        bi.innings.from,
+        bi.innings.to,
+        bi.innings.lowerOuts,
+        bi.innings.upperOuts,
+        bi.innings.lowerOuts,
+        bi.innings.exact,
+      );
     }
   }
   out.set("PSA-登板", psa);
@@ -119,7 +135,10 @@ function rowsFor(season: number): Map<string, Row[]> {
       const codes = batTeamsStmt.all(s.playerId, season, COMPETITION, from, to) as { code: string }[];
       if (codes.length === 0) return;
       const lgs = new Set(codes.map((c) => LEAGUE_OF.get(c.code)));
-      const lg = LEAGUE_OF.get(codes[codes.length - 1]!.code);
+      // ⚠**배정은 프로덕션과 같은 함수다**(M1) — 「마루의 마지막 경기의 구단」이지
+      //   「기간 안에서 가장 늦은 경기의 구단」이 아니다
+      const code = battingTeamOn(db, s.playerId, season, COMPETITION, to);
+      const lg = code === null ? undefined : LEAGUE_OF.get(code);
       if (lg === undefined) return;
       arr.push({ playerId: s.playerId, league: lg, value: best, upper: best, outs: 0, to, rankable: true, crossLeague: lgs.size > 1, multiTeam: codes.length > 1 });
     };
