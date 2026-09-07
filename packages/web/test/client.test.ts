@@ -16,7 +16,7 @@ import { BLOCKS, PRESETS, blocksFor, presetsFor } from "../src/blocks.ts";
 const BATTER_PRESETS = presetsFor("batter");
 const BATTER_BLOCKS = blocksFor("batter");
 import { bootstrapFor } from "../src/player-page.ts";
-import { El, make, makeDocument, makeStorage } from "./dom-stub.ts";
+import { El, make, makeDocument, makeStorage, withRect } from "./dom-stub.ts";
 import { compareCard } from "../src/compare.ts";
 import { playerPage } from "./fixtures.ts";
 
@@ -2253,6 +2253,62 @@ test("⚠포커스로 오른쪽 끝까지 밀 수 있으면 탭 정지를 늘리
   assert.equal(reachable.getAttribute("tabindex"), null, "쓸모없는 탭 정지가 늘었다");
 });
 
+/**
+ * **가로로 넘치는 탭줄 + 뒤쪽 탭이 여는 패널.**
+ *
+ * ⚠**기하를 손으로 넣는다** — 스텁에는 레이아웃이 없고, 클라이언트는 기하를 모르면
+ * 아무것도 안 한다(그게 안전 방향이다). `withRect` 로 **이 요소들에만** 넣는다.
+ * 상자는 [0,100] 인데 뒤쪽 탭이 [200,260] 이라 **한 글자도 안 보인다** — 실측(390px)에서
+ * 상자 [80,330] 대 ドラフト [343,391] 이던 그 모양이다.
+ */
+function deepTabStrip(doc: ReturnType<typeof makeDocument>): El {
+  const strip = make("div", { class: "tabs scroll", role: "tablist", "data-tabgroup": "deep" });
+  strip.scrollWidth = 300;
+  strip.clientWidth = 100;
+  withRect(strip, 0, 100);
+  for (const [key, left, right] of [["a", 0, 60], ["b", 200, 260]] as const) {
+    const b = make("button", { class: "tab", role: "tab", "data-tab": key, "aria-selected": "false" });
+    withRect(b, left, right);
+    strip.appendChild(b);
+  }
+  doc.body.appendChild(strip);
+  for (const key of ["a", "b"]) {
+    const p = make("div", { "data-panelgroup": "deep", "data-panelkey": key, role: "tabpanel" });
+    if (key === "b") p.appendChild(make("h4", { id: "deep-target" }));
+    doc.body.appendChild(p);
+  }
+  return strip;
+}
+
+/**
+ * ⚠⚠**초기화에서 한 번만 부르고 있었다**(2026-09-07 이중 검토 P2).
+ *
+ * `showCurrentTab()` 의 호출처가 코드 전체에서 초기화 한 곳뿐이었는데, **그 뒤에 탭 선택을
+ * 바꾸는 경로가 둘 더 있다** — 깊은 링크(`revealHash`)와 브라우저 찾기(`beforematch`).
+ * 그래서 뒤쪽 탭을 가리키는 해시로 들어오면 **패널은 열리는데 그 탭이 상자 밖에 남았다.**
+ * ⚠**유저가 이번에 고쳐 달라고 한 바로 그 증상이고, 경로만 다르다.**
+ */
+test("⚠해시로 뒤쪽 탭을 열면 그 탭도 상자 안으로 들어온다 — 패널만 열고 끝내지 않는다", () => {
+  const doc = buildPage();
+  const strip = deepTabStrip(doc);
+  run(doc, { location: { search: "", href: "", hash: "#deep-target" } });
+  assert.equal(
+    doc.querySelectorAll('[data-panelgroup="deep"][data-panelkey="b"]')[0]!.hidden,
+    false,
+    "패널이 안 열렸다 — 이 시험은 스크롤을 재고 있지 않다",
+  );
+  assert.equal(strip.scrollLeft, 160, "패널은 열렸는데 그 탭이 상자 밖에 남았다");
+});
+
+test("⚠브라우저 찾기가 패널을 펼쳐도 같다 — 탭줄만 옛 자리에 남지 않는다", () => {
+  const doc = buildPage();
+  const strip = deepTabStrip(doc);
+  run(doc, { storage: makeStorage() });
+  assert.equal(strip.scrollLeft, 0, "아직 아무 일도 없어야 한다 — 첫 탭은 상자 안이다");
+  doc.querySelectorAll('[data-panelgroup="deep"][data-panelkey="b"]')[0]!.fire("beforematch");
+  assert.equal(strip.scrollLeft, 160, "찾기로 열린 탭이 상자 밖에 남았다");
+});
+
 test("⚠넘치지 않으면 아무것도 붙이지 않는다", () => {
   const doc = buildPage();
   const fits = scrollerCase(340, 353, 8, 90);
@@ -2305,6 +2361,51 @@ function navTeamLink(doc: ReturnType<typeof makeDocument>, current: string | nul
   nav.appendChild(a);
   doc.body.appendChild(nav);
   return a;
+}
+
+/** 서버가 그 자리에 실제로 쓰는 문장. ⚠**여기서 짓지 않는다** — `layout.ts` 의 `away()` 형식이다 */
+const AWAY_NOTE = "（この年にはありません。2026年へ移動します）";
+
+/**
+ * **다른 시즌으로 보내는** 내비 한 줄 — 드래프트만 굽는 시즌(2005~2017)의 실물이다.
+ *
+ * ⚠⚠**픽스처가 실물과 어긋나면 시험은 실물을 재지 않는다.** 위 `navTeamLink` 는 평문
+ * `球団` 만 만드는데, 그건 **같은 해 안에서 끝나는 화면**의 모양이다. 그 시즌에 없는 화면은
+ * 서버가 두 가지를 더 그린다 — 보이는 표식(`<i aria-hidden>→</i>`)과 어디로 가는지 말하는
+ * `aria-label`. **그 둘을 모델링하지 않아서 P1 이 시험을 그대로 통과했다**(2026-09-07).
+ * 실물: `<a href="../teams.html" data-navteam aria-label="球団（…）">球団<i aria-hidden="true">→</i></a>`
+ * ⚠**글자와 표식이 형제다** — `textContent` 하나로 되돌리면 표식이 평문으로 뭉개진다.
+ */
+function navTeamLinkAway(doc: ReturnType<typeof makeDocument>, team = ""): El {
+  const nav = make("nav", { class: "tnav" });
+  const a = make("a", {
+    href: "../teams.html",
+    "data-navteam": team,
+    "aria-label": `球団${AWAY_NOTE}`,
+  });
+  a.appendChild(doc.createTextNode("球団"));
+  const mark = make("i", { "aria-hidden": "true" });
+  mark.textContent = "→";
+  a.appendChild(mark);
+  nav.appendChild(a);
+  doc.body.appendChild(nav);
+  return a;
+}
+
+/** 최애가 저장된 브라우저. 구단 목록 화면이 아니어도 내비는 그 값을 쓴다 */
+function storedFav(code: string, name: string): Storage {
+  const storage = makeStorage();
+  storage.setItem(
+    "npb-meikan-layout",
+    JSON.stringify({ favTeam: { code, name, path: `teams/${code}.html` } }),
+  );
+  return storage;
+}
+
+/** 표식(`<i>`)이 **요소로** 남아 있는가. 평문 "→" 로 뭉개지면 스타일이 안 걸린다 */
+function markKept(a: El): boolean {
+  const i = a.querySelector("i");
+  return i !== null && i.textContent === "→" && i.getAttribute("aria-hidden") === "true";
 }
 
 /** 구단 목록 화면의 최소 모양 — 내비 + 최애 버튼 */
@@ -2609,11 +2710,7 @@ test("⚠최애 경로는 화이트리스트를 통과한 상대경로만이다 
  * `true` 가 남아 있으면 **현재 항목이 아닌 것을 현재라고 말하는 것**이 된다.
  */
 function teamDetailWithFav(here: string, favCode: string, favName: string): ReturnType<typeof makeDocument> {
-  const storage = makeStorage();
-  storage.setItem(
-    "npb-meikan-layout",
-    JSON.stringify({ favTeam: { code: favCode, name: favName, path: `teams/${favCode}.html` } }),
-  );
+  const storage = storedFav(favCode, favName);
   const doc = buildPage();
   // 서버가 구단 상세에 그리는 그대로 — 구획 표시(`true`)와 **이 화면의 구단 코드**
   navTeamLink(doc, "true", here);
@@ -2633,6 +2730,59 @@ test("⚠최애 구단의 상세에서는 「이 문서」다 — true 로 두�
   const a = doc.querySelectorAll("[data-navteam]")[0]!;
   assert.equal(a.textContent, "阪神");
   assert.equal(a.getAttribute("aria-current"), "page");
+});
+
+// ── 다른 시즌으로 보내는 내비(드래프트만 굽는 2005~2017) ──────────────────
+//
+// ⚠**이 네 본이 재는 것은 「서버가 그린 것을 되돌릴 수 있는가」다.** 클라이언트는 라벨을
+// 스스로 짓지 않는다 — 그런데 서버가 그리는 것이 **글자 하나에서 셋(글자·표식·이름)으로**
+// 늘어난 것을 되돌리기 쪽이 따라가지 않았다(2026-09-07 이중 검토 P1).
+
+test("⚠최애 미설정이어도 「→」 표식을 평문으로 뭉개지 않는다 — 되돌리기가 기본 경로다", () => {
+  const doc = buildPage();
+  const a = navTeamLinkAway(doc);
+  run(doc, { storage: makeStorage() });
+  assert.equal(a.textContent, "球団→", "글자가 사라졌다");
+  assert.ok(markKept(a), "표식이 요소가 아니라 평문이 됐다 — .tnav a i 가 안 걸린다");
+  assert.equal(a.getAttribute("aria-label"), `球団${AWAY_NOTE}`, "어디로 가는지 말하던 것이 사라졌다");
+});
+
+test("⚠최애를 걸어도 다른 해로 간다는 사실이 남는다 — 표식과 이름 둘 다", () => {
+  const doc = buildPage();
+  const a = navTeamLinkAway(doc);
+  run(doc, { storage: storedFav("t", "阪神") });
+  assert.equal(a.getAttribute("href"), "../teams/t.html");
+  assert.ok(markKept(a), "최애를 걸었더니 표식이 사라졌다 — 조용히 해가 바뀐다");
+  // ⚠**보이는 글자가 접근성 이름 안에 있어야 한다**(WCAG 2.5.3 label-in-name)
+  assert.equal(a.getAttribute("aria-label"), `阪神${AWAY_NOTE}`);
+});
+
+test("⚠최애를 해제하면 서버가 그린 그대로 돌아온다 — 이름까지", () => {
+  const doc = buildPage();
+  const a = navTeamLinkAway(doc);
+  doc.body.appendChild(favTeamButton());
+  run(doc, { storage: makeStorage() });
+  const btn = doc.querySelectorAll("[data-favteam]")[0]!;
+  btn.fire("click");
+  assert.equal(a.getAttribute("aria-label"), `阪神${AWAY_NOTE}`, "최애가 안 걸렸다 — 이 시험이 공회전한다");
+  btn.fire("click");
+  assert.equal(a.textContent, "球団→");
+  assert.ok(markKept(a));
+  assert.equal(a.getAttribute("aria-label"), `球団${AWAY_NOTE}`);
+});
+
+/**
+ * ⚠**분모가 여기에 있다** — 표식도 이름도 없는 화면이 배포물의 거의 전부다:
+ * **9,379장 / 9,392장**(2026-09-07 배포물 실측 · 표식이 붙는 것은 드래프트만 굽는 13장뿐).
+ * 그쪽에 이름을 새로 붙이면 **전 페이지가 새 파일**이 되고, 그건 이 저장소가 이미 밟은 함정이다.
+ */
+test("⚠같은 해 안에서 끝나는 화면에는 이름을 붙이지 않는다 — 없던 것을 만들지 않는다", () => {
+  const doc = withNavOnly();
+  const a = doc.querySelectorAll("[data-navteam]")[0]!;
+  run(doc, { storage: storedFav("t", "阪神") });
+  assert.equal(a.textContent, "阪神");
+  assert.equal(a.querySelector("i"), null, "없던 표식이 생겼다");
+  assert.equal(a.getAttribute("aria-label"), null, "없던 이름이 생겼다 — 전 페이지가 새 파일이 된다");
 });
 
 // ── 순위표의 「全員」 + 최소 표본 ──────────────────────────────────────────

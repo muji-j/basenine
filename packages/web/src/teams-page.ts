@@ -152,7 +152,7 @@ function teamRow(c: TeamsCard, base: string): RawHtml {
 }
 
 export function renderTeamsPage(d: TeamsPageData, ctx: RenderContext): string {
-  const { base, root, seasons } = ctx.paths(TEAMS_PATH);
+  const { base, root, seasons, navTo } = ctx.paths(TEAMS_PATH);
   const count = d.leagues.reduce((n, l) => n + l.teams.length, 0);
 
   const body = html`<header class="idline">
@@ -208,6 +208,7 @@ ${note(
     base,
     root,
     seasons,
+    navTo,
     // ⚠**한 구단의 화면이 아니다** — 여기서 어느 구단 색을 쓰면 그 구단을 편든다
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,

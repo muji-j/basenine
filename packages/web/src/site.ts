@@ -27,6 +27,7 @@ import { renderLogPage } from "./log-page.ts";
 import { GLOSSARY_PATH, renderGlossaryPage } from "./glossary-page.ts";
 import type { LogPageData } from "./log-page.ts";
 import { renderDraftPage } from "./draft-page.ts";
+import type { DraftPageData } from "./draft-page.ts";
 import { DRAFT_PATH, ROSTER_PATH, TEAMS_PATH, freshness, isStale, pathsFor } from "./layout.ts";
 import type { RenderContext, SeasonPlan, SiteMeta } from "./layout.ts";
 import type { SiteData } from "./query.ts";
@@ -378,4 +379,53 @@ export function buildSite(
     latestGameDate: data.latestAnyGameDate ?? data.asOf,
     playerCount: data.players.length,
   };
+}
+
+/**
+ * **드래프트만 있는 시즌이 만드는 화면.**
+ *
+ * ⚠**한 장뿐인 것이 이 시즌의 정의다.** 경기 데이터가 없으므로 선수·구단·순위는
+ * **전부 빈 화면**이 된다 — 그건 M12 가 말하는 「데이터 없음」이 아니라 **우리가 만든 빈 화면**이고,
+ * 「그 해는 원래 그렇다」로 읽힌다. **안 만드는 것이 정직하다.**
+ * ⚠**목록을 여기 한 벌로 둔다** — `buildDraftSeason` 이 쓰는 목록과 갈리면
+ * 시즌 띠가 있다고 말하는 화면을 아무도 안 굽게 된다.
+ */
+export const DRAFT_SEASON_PATHS: ReadonlySet<string> = new Set([DRAFT_PATH]);
+
+/**
+ * **드래프트만 있는 시즌**을 굽는다(2026-09-07 · 보유 21시즌 전부를 고를 수 있게).
+ *
+ * ⚠**`buildSite` 를 부르지 않는다.** 그건 선수·경기·집계를 전부 읽고 그 시즌의 전 화면을 만든다.
+ * 여기 필요한 것은 `loadDraftPage` 하나이고, **외부 요청은 0**이다.
+ * ⚠**이 시즌은 「현재 시즌」이 될 수 없다** — 접두사가 항상 `2010/` 이라 자산(CSS·JS·색인)을
+ * 만들지 않는다. 자산은 현재 시즌만 낸다(`buildSite` 의 `prefix === ""`).
+ * ⚠**상단 내비가 자기 시즌을 가리키면 전부 404 다** — 그것을 푸는 것이 `pathsFor` 의 `navTo` 이고,
+ * 여기서는 `plans` 에 이 시즌이 들어 있기만 하면 된다.
+ *
+ * @param plans 전 시즌의 배치. **이 시즌도 포함돼 있어야 한다**(안 그러면 시즌 띠가 자기를 안 낸다)
+ */
+export function buildDraftSeason(
+  draft: DraftPageData,
+  site: SiteMeta,
+  builtOn: string,
+  /** 경기 보유 범위. 꼬리말이 「当サイトが持っている記録」을 말하는 데 쓴다 */
+  heldGameSeasons: { from: number; to: number },
+  plans: readonly SeasonPlan[],
+): SiteFile[] {
+  const me = plans.find((p) => p.season === draft.season);
+  const prefix = me?.prefix ?? `${draft.season}/`;
+  const ctx: RenderContext = {
+    site,
+    /**
+     * ⚠**경기가 없는 것과 수집이 멈춘 것을 같은 문장으로 말하지 않는다**(M12).
+     * 인자가 `null` 이면 띠는 「このシーズンの試合はありません」이라고 말한다 —
+     * `seasonOver: true` 와 「지난 시즌」이 둘 다 참이라 **경고가 아니라 사실**로 나간다.
+     * ⚠**`latestGameDate` 에 아무 날짜나 넣지 마라** — 없는 경기를 있다고 말하게 된다.
+     */
+    freshness: freshness(null, builtOn, null, heldGameSeasons, true),
+    paths: pathsFor(plans, draft.season),
+    // ⚠**이 시즌에는 경기가 없다** — 「他大会」를 낼 근거가 없다(내비에서 그 항목이 빠진다)
+    hasPostseason: false,
+  };
+  return [{ path: `${prefix}${DRAFT_PATH}`, content: renderDraftPage(draft, ctx) }];
 }

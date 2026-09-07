@@ -331,7 +331,7 @@ function probableCard(p: TodayProbable, base: string): RawHtml {
 }
 
 export function renderTodayPage(d: TodayPageData, ctx: RenderContext): string {
-  const { base, root, seasons } = ctx.paths("today.html");
+  const { base, root, seasons, navTo } = ctx.paths("today.html");
   const isToday = d.gameDate !== null && d.gameDate === d.builtOn;
   // ⚠**끝난 시즌에 「発表待ち」라고 쓰지 않는다.** 기다리는 것이 아니라 끝난 것이다
   const past = pastSeasonOf(seasons);
@@ -392,6 +392,7 @@ ${dayBar(base, { prev: d.prev, next: null, latestDate: d.gameDate, dayCount: d.d
     base,
     root,
     seasons,
+    navTo,
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
@@ -411,7 +412,7 @@ ${dayBar(base, { prev: d.prev, next: null, latestDate: d.gameDate, dayCount: d.d
 export function renderDayPage(d: DayPageData, ctx: RenderContext): string {
   // ⚠**시즌을 바꿀 때 選手一覧으로 보내지 않는다.** 2026-08-13은 2025년에 없지만
   // 「그 시즌의 날짜 일람」은 있다 — 가장 가까운 곳으로 보내는 편이 덜 놀랍다
-  const { base, root, seasons } = ctx.paths(`days/${d.date}.html`, {
+  const { base, root, seasons, navTo } = ctx.paths(`days/${d.date}.html`, {
     path: "days.html",
     label: "日付一覧",
   });
@@ -450,6 +451,7 @@ ${dayBar(base, d)}
     base,
     root,
     seasons,
+    navTo,
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
@@ -470,7 +472,7 @@ ${dayBar(base, d)}
  * 날짜 입력칸으로 만들면 스크립트가 막힌 환경에서 날짜를 지정할 길이 사라진다.
  */
 export function renderDayIndexPage(d: DayIndexData, ctx: RenderContext): string {
-  const { base, root, seasons } = ctx.paths("days.html");
+  const { base, root, seasons, navTo } = ctx.paths("days.html");
   // 최근이 위로 온다 — 찾는 날은 대개 최근이다
   const desc = [...d.days].reverse();
   const months = new Map<string, typeof desc>();
@@ -514,6 +516,7 @@ ${d.days.length === 0
     base,
     root,
     seasons,
+    navTo,
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,

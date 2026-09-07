@@ -6351,23 +6351,27 @@ function draftRivals(raw: string | null): readonly string[] | null {
  * ⚠**「행이 0건」을 한 문장으로 그리지 마라**(M12). 이 함수가 존재하는 이유의 절반이 그것이고,
  * 나머지 절반은 **당첨 없는 경합 그룹을 조용히 지우지 않는 것**이다.
  */
-export function loadDraftPage(db: Db, o: LoadOptions): DraftPageData {
-  const season = o.season;
-
-  /**
-   * ⚠**세 표의 합집합이다 — `kinds` 와 같은 규칙이어야 한다**(2026-09-05 검수 [Important 2]).
-   *
-   * `draft_event` 단독으로 뽑고 있었는데, 같은 함수의 `kinds` 는 event ∪ pick ∪ bid 였다.
-   * **한 함수 안에서 「그 시즌이 있는가」와 「그 구획이 있는가」가 다른 규칙을 쓰면**,
-   * 이벤트 행만 빠진 시즌이 **화면에는 지명이 다 나오는데 시즌 전환 목록에는 없는** 상태가 된다.
-   * Task 2·3 이 이 목록을 **페이지 생성 대상**으로 쓰면 그 해가 통째로 안 만들어진다 —
-   * 2018 오릭스 `bs` 148경기가 사라졌던 것과 같은 모양이다(CLAUDE.md §2-2).
-   *
-   * ⚠**지금 그 상태가 안 생기는 것은 적재기가 event upsert 와 pick/bid 교체를 한 트랜잭션에
-   * 묶기 때문이지 이 함수가 보장하는 것이 아니다.** 남의 원자성에 기대지 않는다 —
-   * 계획된 wikipedia 적재기가 같은 계약을 지킬지는 아무도 확인하지 않았다.
-   */
-  const heldSeasons = (
+/**
+ * **드래프트를 가진 시즌**(오름차순).
+ *
+ * ⚠**세 표의 합집합이다 — `loadDraftPage` 의 `kinds` 와 같은 규칙이어야 한다**
+ * (2026-09-05 검수 [Important 2]).
+ *
+ * `draft_event` 단독으로 뽑고 있었는데, 같은 함수의 `kinds` 는 event ∪ pick ∪ bid 였다.
+ * **한 함수 안에서 「그 시즌이 있는가」와 「그 구획이 있는가」가 다른 규칙을 쓰면**,
+ * 이벤트 행만 빠진 시즌이 **화면에는 지명이 다 나오는데 시즌 전환 목록에는 없는** 상태가 된다.
+ *
+ * ⚠**지금 그 상태가 안 생기는 것은 적재기가 event upsert 와 pick/bid 교체를 한 트랜잭션에
+ * 묶기 때문이지 이 함수가 보장하는 것이 아니다.** 남의 원자성에 기대지 않는다 —
+ * 계획된 wikipedia 적재기가 같은 계약을 지킬지는 아무도 확인하지 않았다.
+ *
+ * ⚠**여기가 한 벌인 것이 중요해졌다**(2026-09-07 · M1). 이 목록은 이제 화면의 문장
+ * (「収録は2005〜2025年」)만이 아니라 **페이지 생성 대상**이다(`build.ts`) —
+ * 두 벌이 되면 「화면은 있다고 하는데 그 해가 안 구워진」 상태가 되고,
+ * 그건 2018 오릭스 `bs` 148경기가 사라졌던 것과 같은 모양이다(CLAUDE.md §2-2).
+ */
+export function draftHeldSeasons(db: Db): number[] {
+  return (
     db.raw
       .prepare(
         `SELECT season FROM draft_event
@@ -6377,6 +6381,29 @@ export function loadDraftPage(db: Db, o: LoadOptions): DraftPageData {
       )
       .all() as unknown as { season: number }[]
   ).map((r) => r.season);
+}
+
+/**
+ * **경기가 있는 시즌.**
+ *
+ * ⚠**「드래프트만 있는 시즌」의 반대편이다**(2026-09-07 이중 검토 P3). `build.ts` 는
+ * 「빌드 인자에 없는 드래프트 시즌」을 전부 드래프트 전용으로 분류하는데, 그 분류에는
+ * **경기가 있는지 묻는 자리가 없었다.** 2017 을 백필해 놓고 `package.json` 의 시즌 목록을
+ * 잊으면 그 시즌이 **조용히 한 장으로만 구워지고** 선수·경기·순위가 통째로 사라진 채
+ * 「그 해는 원래 드래프트만 있는 해」로 읽힌다 — **빈 화면조차 안 남아 M7 이 경계하는 것보다
+ * 더 안 보인다.** 그걸 묻는 것이 이 함수다.
+ * ⚠**`MIN/MAX(season)` 로 대신하지 마라** — 구간 안에 구멍이 있으면 그 시즌을 놓친다.
+ */
+export function gameHeldSeasons(db: Db): number[] {
+  return (
+    db.raw.prepare("SELECT DISTINCT season FROM game ORDER BY season").all() as unknown as { season: number }[]
+  ).map((r) => r.season);
+}
+
+export function loadDraftPage(db: Db, o: LoadOptions): DraftPageData {
+  const season = o.season;
+
+  const heldSeasons = draftHeldSeasons(db);
 
   const events = db.raw
     .prepare(

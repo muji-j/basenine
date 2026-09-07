@@ -962,7 +962,7 @@ function notesBlock(d: DraftPageData): RawHtml {
 }
 
 export function renderDraftPage(d: DraftPageData, ctx: RenderContext): string {
-  const { base, root, seasons } = ctx.paths(DRAFT_PATH);
+  const { base, root, seasons, navTo } = ctx.paths(DRAFT_PATH);
 
   /**
    * **보유 연도 중 이 사이트에 화면이 있는 것.**
@@ -1022,6 +1022,7 @@ ${pickTabs(d, shownHeld)}`;
     base,
     root,
     seasons,
+    navTo,
     color: NEUTRAL_COLOR,
     spine: "ドラフト",
     freshness: ctx.freshness,

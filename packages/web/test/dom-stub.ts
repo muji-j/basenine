@@ -64,6 +64,12 @@ export class El {
   clientWidth = 0;
   offsetLeft = 0;
   offsetWidth = 0;
+  /**
+   * 가로로 얼마나 밀려 있는가. ⚠**실제 요소에는 언제나 있고 초기값이 0 이다.**
+   * 없으면 `el.scrollLeft += n` 이 `undefined + n = NaN` 이 되어, 시험이
+   * **「굴리지 않았다」와 「굴렸는데 값이 NaN 이다」를 구별하지 못한다.**
+   */
+  scrollLeft = 0;
   #text = "";
   #value: string | null = null;
 
@@ -123,7 +129,14 @@ export class El {
   get textContent(): string {
     return this.children.length === 0 ? this.#text : this.children.map((c) => c.textContent).join("");
   }
+  /**
+   * ⚠**떼어 낸 자식의 `parentNode` 를 비운다** — 실제 DOM 이 그렇게 한다.
+   * 안 비우면 그 자식을 **다시 붙일 때** `detach()` 가 `indexOf` 로 −1 을 받아
+   * `splice(-1,1)` 로 **엉뚱한 마지막 자식을 지운다.** 실제로 「글자를 갈아 끼우고
+   * 표식을 다시 붙인다」가 스텁에서만 깨졌다(2026-09-07).
+   */
   set textContent(v: string) {
+    for (const c of this.children) c.parentNode = null;
     this.children.length = 0;
     this.#text = v;
   }
@@ -348,6 +361,21 @@ export function makeStorage(broken = false): Storage {
       return map.size;
     },
   } as Storage;
+}
+
+/**
+ * 그 요소에만 기하를 넣는다 — **가로 위치**를 재는 코드용.
+ *
+ * ⚠**클래스에 메서드로 두지 않는다.** 클라이언트는 `typeof el.getBoundingClientRect!=="function"`
+ * 으로 「기하를 모르는 환경」을 가리고, 그 갈래가 **스텁 전체의 기본 상태**다(스텁에는 레이아웃이
+ * 없으므로 그게 맞다). 클래스에 달면 그 안전 갈래가 **전 시험에서 통째로 사라지고**,
+ * 툴팁·앵커 보정처럼 세로 기하를 읽는 코드가 **0 을 진짜 값으로 믿게 된다.**
+ * → **재려는 시험이 재려는 요소에만** 붙인다.
+ */
+export function withRect(el: El, left: number, right: number): El {
+  (el as unknown as { getBoundingClientRect: () => { left: number; right: number } }).getBoundingClientRect =
+    () => ({ left, right });
+  return el;
 }
 
 /** `el.className`으로 만든 요소. 테스트에서 마크업을 조립할 때 쓴다 */

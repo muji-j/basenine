@@ -70,7 +70,7 @@ function entry(key: string, t: Term): RawHtml {
 }
 
 export function renderGlossaryPage(ctx: RenderContext): string {
-  const { base, root, seasons } = ctx.paths(GLOSSARY_PATH);
+  const { base, root, seasons, navTo } = ctx.paths(GLOSSARY_PATH);
   const terms = glossaryOrder();
 
   const body = html`<header class="idline">
@@ -112,6 +112,7 @@ ${block({
     base,
     root,
     seasons,
+    navTo,
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,

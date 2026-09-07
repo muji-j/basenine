@@ -2469,7 +2469,7 @@ export function bootstrapFor(role: "batter" | "pitcher"): string {
 }
 
 export function renderPlayerPage(d: PlayerPageData, ctx: RenderContext): string {
-  const { base, root, seasons } = ctx.paths(`players/${d.playerId}.html`);
+  const { base, root, seasons, navTo } = ctx.paths(`players/${d.playerId}.html`);
   const catalog = blocksFor(d.role);
   const initial = new Set(presetsFor(d.role).find((p) => p.id === "standard")?.blocks ?? []);
   /**
@@ -2504,6 +2504,7 @@ ${postseasonBrief(d.postseason, base)}
     base,
     root,
     seasons,
+    navTo,
     color: d.color,
     spine: `${d.teamName}　${d.name}`,
     freshness: ctx.freshness,

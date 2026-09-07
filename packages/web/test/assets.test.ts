@@ -445,15 +445,53 @@ test("⚠마커가 라벨 옆에 있다 — margin-left:auto 면 상자 오른�
 /**
  * ⚠**「지금 여기」 표시가 화면 밖에 있으면 아무 일도 안 한다**(감사 P2).
  * 탭이 10개가 되면서 390px 에서 현재 탭이 상자 밖([80,330] 대 [343,391])이었다.
+ *
+ * ⚠**2026-09-07 에 넓혔다**(유저 지적). 처음에는 상단 내비 하나에만 걸었는데
+ * **시즌 띠가 같은 모양으로 잘리고 있었다** — 실측: 2018년 화면에서 현재 연도가
+ * **9개 중 9번째**(맨 오른쪽)이고 상자는 왼쪽 끝에서 시작한다.
+ * ⚠**시즌 띠는 탭이 아니라 링크다** — 누르면 페이지가 바뀌고 새 페이지의 스크롤은 0에서 시작한다.
+ * 그래서 유저에게는 「누르면 스크롤이 처음으로 돌아간다」로 보인다. **JS 탭의 문제가 아니었다.**
  */
-test("⚠현재 탭을 상자 안으로 들여놓는다 — 세로 위치는 건드리지 않는다", () => {
-  assert.match(CLIENT_JS, /function showCurrentTab\(\)/, "현재 탭을 들여놓는 코드가 없다");
-  const at = CLIENT_JS.indexOf("function showCurrentTab()");
+test("⚠현재 위치를 상자 안으로 들여놓는다 — 세로 위치는 건드리지 않는다", () => {
+  assert.match(CLIENT_JS, /function revealInStrip\(/, "상자를 굴리는 코드가 없다");
+  const at = CLIENT_JS.indexOf("function revealInStrip(");
   const body = CLIENT_JS.slice(at, CLIENT_JS.indexOf("\n}", at));
   assert.match(body, /scrollLeft/, "상자를 굴리지 않는다");
   assert.ok(!body.includes("scrollIntoView"), "scrollIntoView 는 조상까지 굴려 세로 위치를 건드린다");
   assert.match(body, /scrollWidth<=[^;]*clientWidth/, "안 넘치는데도 굴린다");
   assert.match(CLIENT_JS, /\n {2}showCurrentTab\(\);/, "부르는 곳이 없다");
+});
+
+test("⚠같은 처치가 세 상자에 다 걸린다 — 하나만 걸면 나머지에서 「지금 여기」가 안 보인다", () => {
+  const at = CLIENT_JS.indexOf("function revealSelectedTabs()");
+  assert.notEqual(at, -1, "revealSelectedTabs 가 없다 — 이 시험이 공회전한다");
+  const end = CLIENT_JS.indexOf("\n}", CLIENT_JS.indexOf("function showCurrentTab()"));
+  assert.ok(end > at, "showCurrentTab 이 revealSelectedTabs 뒤에 없다 — 이 시험이 엉뚱한 곳을 잰다");
+  const body = CLIENT_JS.slice(at, end);
+  assert.match(body, /\.tnav/u, "상단 내비를 안 본다");
+  assert.match(body, /\.seasons/u, "시즌 띠를 안 본다 — 실측으로 현재 연도가 맨 오른쪽인 화면이 있다");
+  assert.match(body, /\.tabs\.scroll/u, "가로로 흐르는 탭줄을 안 본다 — 저장된 선택이 화면 밖일 수 있다");
+  assert.match(
+    body,
+    /aria-selected="true"/u,
+    "탭줄에서 선택을 aria-current 로 찾으려 한다 — 탭줄은 aria-selected 를 쓴다(층이 다르다)",
+  );
+});
+
+/**
+ * ⚠**갈라 둔 이유가 있다**(2026-09-07 P2). 선택이 바뀌는 상자는 탭줄뿐이라
+ * `showTabs` 는 **탭줄만** 다시 본다. 내비·시즌 띠까지 같이 굴리면 사용자가 손으로 밀어 둔
+ * 내비가 탭을 누를 때마다 제자리로 튕겨 돌아간다 — 자기가 하지 않은 움직임이다.
+ */
+test("⚠탭이 바뀌면 그 탭을 상자 안으로 들여놓는다 — 내비·시즌 띠는 건드리지 않는다", () => {
+  const at = CLIENT_JS.indexOf("function showTabs()");
+  assert.notEqual(at, -1, "showTabs 가 없다 — 이 시험이 공회전한다");
+  const body = CLIENT_JS.slice(at, CLIENT_JS.indexOf("\n}\n", at));
+  assert.match(body, /\n {2}revealSelectedTabs\(\);/, "탭이 바뀌어도 상자를 다시 안 본다");
+  assert.ok(!body.includes("showCurrentTab()"), "탭을 누를 때마다 내비까지 굴린다");
+
+  const seen = CLIENT_JS.indexOf("function revealSelectedTabs()");
+  assert.ok(seen > at, "선언이 showTabs 뒤에 없다 — 이 시험의 전제(호이스팅)가 깨졌다");
 });
 
 /**

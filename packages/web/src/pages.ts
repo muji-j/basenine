@@ -340,7 +340,7 @@ function panelTable(p: RankingPanel, base: string, restUrl?: string): RawHtml {
 }
 
 export function renderIndexPage(d: IndexPageData, ctx: RenderContext): string {
-  const { base, root, seasons } = ctx.paths(ROSTER_PATH);
+  const { base, root, seasons, navTo } = ctx.paths(ROSTER_PATH);
   const body = html`<header class="idline">
   <div class="idtext">
     <h1 class="nm">選手一覧</h1>
@@ -428,6 +428,7 @@ ${d.highlights.map((s) =>
     base,
     root,
     seasons,
+    navTo,
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
@@ -621,7 +622,7 @@ function standingsTable(s: StandingsSection, base: string): RawHtml {
  * 지표 탭은 **리그별로 그리되 같은 그룹 이름을 쓴다.** 리그를 바꿔도 보고 있던 지표가 유지된다.
  */
 export function renderRankingPage(d: RankingPageData, ctx: RenderContext): string {
-  const { base, root, seasons } = ctx.paths("ranking.html");
+  const { base, root, seasons, navTo } = ctx.paths("ranking.html");
   const leagueTabs = d.leagues.map((l) => ({ id: l.id, label: l.name.replace("・リーグ", "") }));
   const hasTeam = d.standings.length > 0;
   const hasPersonal = d.leagues.length > 0;
@@ -738,6 +739,7 @@ ${hasPersonal ? (split ? panel("ranktype", "personal", false, personalBody) : pe
     base,
     root,
     seasons,
+    navTo,
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
@@ -898,7 +900,7 @@ export function renderStartersPage(d: StartersPageData, ctx: RenderContext): str
    * 빌드의 링크 검사가 **361건**을 잡았다(2026-08-18 실측). 잡아 준 덕에 배포 전에 알았다.
    */
   const self = d.isDayPage && d.gameDate !== null ? `starters/${d.gameDate}.html` : "starters.html";
-  const { base, root, seasons } = ctx.paths(self);
+  const { base, root, seasons, navTo } = ctx.paths(self);
   const isToday = d.gameDate !== null && d.gameDate === d.builtOn;
   // ⚠**끝난 시즌에 「発表待ち」라고 쓰지 않는다.** 기다리는 것이 아니라 끝난 것이다
   const past = pastSeasonOf(seasons);
@@ -1071,6 +1073,7 @@ ${d.games.map((g, i) =>
     base,
     root,
     seasons,
+    navTo,
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
@@ -1264,7 +1267,7 @@ export function pickTeam(t: MatchupTeam): RawHtml {
 }
 
 export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): string {
-  const { base, root, seasons } = ctx.paths("matchup.html");
+  const { base, root, seasons, navTo } = ctx.paths("matchup.html");
   // ⚠**listbox/combobox 를 쓰지 않는 이유는 `layout.ts` 의 검색 상자에 적혀 있다**(한 벌만 적는다).
   //   여기·`compare.ts`·`layout.ts` 세 곳이 같은 구조이고, `layout.test.ts` 가 소스 전체를 센다.
   const side = (id: string, label: string, placeholder: string): RawHtml =>
@@ -1409,6 +1412,7 @@ export function renderMatchupPage(d: MatchupPageData, ctx: RenderContext): strin
     base,
     root,
     seasons,
+    navTo,
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,

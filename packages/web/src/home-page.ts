@@ -361,7 +361,7 @@ function jumpNav(d: HomePageData): RawHtml {
 }
 
 export function renderHomePage(d: HomePageData, ctx: RenderContext): string {
-  const { base, root, seasons } = ctx.paths("index.html");
+  const { base, root, seasons, navTo } = ctx.paths("index.html");
 
   const body = html`<header class="idline">
   <div class="idtext">
@@ -562,6 +562,7 @@ ${d.streaks.length === 0
     base,
     root,
     seasons,
+    navTo,
     // ⚠**홈은 특정 구단의 화면이 아니다.** 구단 색을 쓰면 그 팀 화면처럼 보인다
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,

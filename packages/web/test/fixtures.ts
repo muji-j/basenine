@@ -409,12 +409,34 @@ export function context(over: Partial<RenderContext> = {}): RenderContext {
   };
 }
 
+/**
+ * **온전한 시즌이 굽는 화면**(`site.ts` 의 `seasonPaths` 무조건 목록과 같은 것).
+ *
+ * ⚠**빈 집합을 쓰지 마라**(2026-09-07). 예전 픽스처는 2026 을 `new Set()` 으로 뒀는데,
+ * 그건 **「아무 화면도 없는 시즌」**이라는 뜻이다. `pathsFor` 가 「그 화면도 대체 목적지도
+ * 없는 시즌」을 띠에서 빼게 된 뒤로 그 시즌이 통째로 사라지고, 그러면
+ * `pastSeasonOf`(첫 칸이 현재 시즌인가)가 뒤집혀 **끝난 시즌 화면이 현재형으로 말하게 된다.**
+ * ⚠**실제 시즌은 이 목록을 전부 굽는다** — 픽스처가 실물보다 가난하면 시험이 없는 결함을 만든다.
+ */
+const FULL_SEASON: readonly string[] = [
+  "today.html",
+  "index.html",
+  "players.html",
+  "ranking.html",
+  "starters.html",
+  "matchup.html",
+  "compare.html",
+  "days.html",
+  "teams.html",
+  "draft.html",
+];
+
 /** 시즌이 둘인 문맥. `paths2025`에 없는 경로는 「그 시즌엔 없음」으로 다뤄진다 */
 export function seasonContext(paths2025: readonly string[] = []): RenderContext {
   return context({
     paths: pathsFor(
       [
-        { season: 2026, prefix: "", paths: new Set<string>() },
+        { season: 2026, prefix: "", paths: new Set(FULL_SEASON) },
         { season: 2025, prefix: "2025/", paths: new Set(paths2025) },
       ],
       2026,
@@ -432,7 +454,7 @@ export function pastSeasonContext(paths2025: readonly string[] = []): RenderCont
   return context({
     paths: pathsFor(
       [
-        { season: 2026, prefix: "", paths: new Set<string>() },
+        { season: 2026, prefix: "", paths: new Set(FULL_SEASON) },
         { season: 2025, prefix: "2025/", paths: new Set(paths2025) },
       ],
       2025,

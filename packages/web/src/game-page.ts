@@ -352,7 +352,7 @@ export function renderGameDayPage(
   games: readonly GamePageData[],
   ctx: RenderContext,
 ): string {
-  const { base, root, seasons } = ctx.paths(gameDayPath(date));
+  const { base, root, seasons, navTo } = ctx.paths(gameDayPath(date));
 
   const body = html`<header class="idline">
   <div class="idtext">
@@ -383,6 +383,7 @@ ${games.map((g) => gameSection(g, base))}
     base,
     root,
     seasons,
+    navTo,
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,

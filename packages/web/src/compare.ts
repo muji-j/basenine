@@ -393,7 +393,7 @@ export interface ComparePageData {
  * 스크립트가 죽어도 「고장난 빈 페이지」가 아니라 「고를 것이 있는 페이지」로 보여야 한다(M12).
  */
 export function renderComparePage(d: ComparePageData, ctx: RenderContext): string {
-  const { base, root, seasons } = ctx.paths("compare.html");
+  const { base, root, seasons, navTo } = ctx.paths("compare.html");
   /**
    * 그 날을 사람 말로. ⚠**생성일 기준이다**(M6) — 보는 시각이 아니라 화면을 만든 날이라
    * 상대 표현과 날짜를 **함께** 낸다.
@@ -508,6 +508,7 @@ export function renderComparePage(d: ComparePageData, ctx: RenderContext): strin
     base,
     root,
     seasons,
+    navTo,
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,

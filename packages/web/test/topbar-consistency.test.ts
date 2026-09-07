@@ -102,11 +102,35 @@ function headOf(file: string): string {
   return (/<header class="topbar"[\s\S]*?<\/header>/.exec(text) ?? [""])[0];
 }
 
-/** 그 화면의 탭 목록(순서 포함) */
+/**
+ * 그 화면의 탭 목록(순서 포함).
+ *
+ * ⚠**안쪽 태그를 벗겨서 「보이는 글자」만 남긴다**(2026-09-07). 예전 정규식은
+ * `>([^<]*)</a>` 라서 **속에 요소가 하나라도 있으면 그 탭을 통째로 못 봤다** —
+ * 드래프트만 굽는 시즌의 탭에 대체 표식(`<i>→</i>`)이 붙자 6개가 목록에서 사라졌고,
+ * 아래 「탭 줄기가 같다」가 **라벨은 똑같은데** 빨개졌다.
+ * ⚠**이 시험이 재는 것은 라벨이지 마크업이 아니다** — 표식 자체는
+ * `draft-only-season.test.ts` 가 따로 못 박는다. 여기서 느슨해진 것은 없다.
+ */
 function tabsOf(head: string): string[] {
   const nav = /<nav class="tnav"[^>]*>([\s\S]*?)<\/nav>/.exec(head);
   if (nav === null) return [];
-  return [...nav[1]!.matchAll(/<a\s[^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>/g)].map((m) => m[2]!.trim());
+  return [...nav[1]!.matchAll(/<a\s[^>]*href="[^"]*"[^>]*>([\s\S]*?)<\/a>/g)].map((m) => label(m[1]!));
+}
+
+/**
+ * 앵커 안에서 **라벨만** 남긴다 — `aria-hidden` 장식은 통째로 버린다.
+ *
+ * ⚠**장식은 라벨이 아니다.** 다른 시즌으로 보내는 탭에는 표식(`→`)이 붙는데,
+ * 그건 낭독기가 안 읽는 조각이고 **시즌마다 붙고 안 붙는다.** 그것까지 라벨로 세면
+ * 「시즌이 달라도 탭 줄기는 같다」가 **라벨은 똑같은데** 빨개진다.
+ * ⚠**표식이 있는지는 여기서 안 잰다** — `draft-only-season.test.ts` 가 못 박는다.
+ */
+function label(inner: string): string {
+  return inner
+    .replace(/<([a-z]+)\s[^>]*aria-hidden="true"[^>]*>[\s\S]*?<\/\1>/g, "")
+    .replace(/<[^>]*>/g, "")
+    .trim();
 }
 
 /**
@@ -163,6 +187,24 @@ interface Screen {
   tabs: string[];
   current: string[];
   hasHeader: boolean;
+  /** 헤더 검색창의 **보이는 글자**와 **접근성 이름**. 헤더가 없으면 둘 다 `null` */
+  q: { ph: string; aria: string } | null;
+}
+
+/**
+ * 헤더 검색창을 뜯는다.
+ *
+ * ⚠**이 상자가 쓰는 것은 전부 시즌 자산이다** — 색인 `players.json` · 결과 링크
+ * `players/*.html` · 「すべて見る」의 `players.html`. 그 시즌에 그게 없으면 **다른 시즌의
+ * 것을 뒤진다**(`data-base`). 그 사실을 말하는지 아래 시험이 dist 전체에서 센다.
+ */
+function searchBoxOf(head: string): { ph: string; aria: string } | null {
+  const input = /<input id="q"[^>]*>/.exec(head);
+  if (input === null) return null;
+  return {
+    ph: (/placeholder="([^"]*)"/.exec(input[0]) ?? ["", ""])[1]!,
+    aria: (/aria-label="([^"]*)"/.exec(input[0]) ?? ["", ""])[1]!,
+  };
 }
 
 const dirs = existsSync(DIST) ? byDirectory(DIST) : new Map<string, string[]>();
@@ -177,6 +219,7 @@ const screens: Screen[] = picked.map((f) => {
     tabs: tabsOf(head),
     current: currentValues(head),
     hasHeader: head !== "",
+    q: searchBoxOf(head),
   };
 });
 /** 분모를 말한다(작업규칙 7) — 「전부 통과」가 아니라 「몇 장 중 몇 장」 */
@@ -308,6 +351,42 @@ test("⚠쓰이는 aria-current 값마다 CSS 규칙이 있다 — 보이지 않
   const css = readFileSync(join(DIST, "assets", "site.css"), "utf8");
   const missing = [...used].filter((v) => !css.includes(`[aria-current="${v}"]`));
   assert.deepEqual(missing, [], `CSS 규칙이 없는 값: ${missing.join(", ")}(쓰이는 값: ${[...used].join(", ")})`);
+});
+
+/**
+ * ⚠⚠**검색창이 조용히 다른 해를 뒤지고 있었다**(2026-09-07 이중 검토 P0).
+ *
+ * 드래프트만 굽는 시즌(2005~2017)에는 시즌 자산이 하나도 없어서 `data-base` 가 **다른 시즌**을
+ * 가리킨다 — 그건 색인이 404 로 떨어지지 않게 하려고 일부러 그렇게 한 것이다(2026-09-07).
+ * 그런데 **화면은 그 사실을 한 마디도 안 했다**: 2010년 화면에서 검색하면 2026년 선수가 나온다.
+ * ⚠**링크 검사가 못 잡는다** — 그 URL 은 클라이언트가 `fetch` 로 만든다. **dist 를 직접 세는
+ *   이 그물이 그 자리를 지키는 유일한 장치다.**
+ * ⚠**두 방향 다 잰다**: 다른 해를 뒤지면 **반드시 말하고**, 자기 해를 뒤지면 **말하지 않는다.**
+ *   후자를 안 재면 **9,379장**(2026-09-07 배포물 실측 · 전체 9,392장)에 없던 글자가 붙어도
+ *   아무도 모른다 — 전 페이지가 새 파일이 되어 그날 배포가 통째로 다시 올라간다.
+ */
+test("⚠검색창이 자기가 뒤지는 해를 말한다 — 잠자코 다른 해를 내놓지 않는다", { skip: screens.length === 0 ? "dist 없음" : false }, () => {
+  const withBox = screens.filter((s) => s.q !== null);
+  assert.ok(withBox.length >= 50, `검색창이 있는 화면이 ${withBox.length}장뿐이다(${SCOPE})`);
+  const bad: string[] = [];
+  for (const s of withBox) {
+    const q = s.q!;
+    // ⚠**보이는 글자가 이름 안에 있어야 한다**(WCAG 2.5.3 label-in-name) — 예외 없다
+    if (!q.aria.startsWith(q.ph)) bad.push(`${s.file}: 보이는 글자가 이름 안에 없다 ${q.ph} / ${q.aria}`);
+    /**
+     * **그 화면이 뒤지는 선수 일람이 자기 시즌에 있는가.** 있으면 같은 해, 없으면 다른 해다 —
+     * ⚠**여기서 시즌을 다시 해석하지 않는다**(M1): 파일이 있는지만 본다.
+     */
+    const dir = s.season === "current" ? "" : `${s.season}/`;
+    const own = existsSync(join(DIST, dir, "players.html"));
+    if (own && q.ph !== "選手を検索") bad.push(`${s.file}: 자기 해를 뒤지는데 해를 적었다 — ${q.ph}`);
+    if (own && q.aria !== "選手を検索") bad.push(`${s.file}: 자기 해를 뒤지는데 설명이 붙었다 — ${q.aria}`);
+    if (!own && !/^\d{4}年の/.test(q.ph)) bad.push(`${s.file}: 다른 해를 뒤지는데 해를 안 적었다 — ${q.ph}`);
+    if (!own && !/年へ移動します）$/.test(q.aria)) {
+      bad.push(`${s.file}: 다른 해를 뒤지는데 어디로 가는지 말하지 않는다 — ${q.aria}`);
+    }
+  }
+  assert.deepEqual(bad, [], `검색창이 자기가 뒤지는 해를 말하지 않는다(${SCOPE})\n  ${bad.slice(0, 5).join("\n  ")}`);
 });
 
 /**

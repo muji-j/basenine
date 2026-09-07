@@ -241,7 +241,7 @@ function pitcherTable(rows: PostPitcher[], base: string): RawHtml {
 }
 
 export function renderPostseasonPage(d: PostseasonPageData, ctx: RenderContext): string {
-  const { base, root, seasons } = ctx.paths("postseason.html");
+  const { base, root, seasons, navTo } = ctx.paths("postseason.html");
   /**
    * ⚠**대회가 하나뿐이면 탭을 만들지 않는다.**
    * 2026년 8월은 올스타 2경기뿐이다. 거기에 탭줄을 그리면 「고르라」고 해 놓고 고를 것이 없다 —
@@ -316,6 +316,7 @@ ${d.competitions.length === 0
     base,
     root,
     seasons,
+    navTo,
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,

@@ -259,7 +259,7 @@ function quarantineTable(kinds: readonly QuarantineKind[]): RawHtml {
 }
 
 export function renderLogPage(d: LogPageData, ctx: RenderContext): string {
-  const { base, root, seasons } = ctx.paths("log.html");
+  const { base, root, seasons, navTo } = ctx.paths("log.html");
   const a = d.archive;
 
   const body = html`<header class="idline">
@@ -344,6 +344,7 @@ ${block({
     base,
     root,
     seasons,
+    navTo,
     color: NEUTRAL_COLOR,
     freshness: ctx.freshness,
     site: ctx.site,
