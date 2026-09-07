@@ -326,7 +326,49 @@ function rulesBySelector(): Map<string, string[]> {
 
 const squash = (s: string): string => s.replace(/\s+/g, "");
 
-test("⚠사유가 인용한 CSS 선언이 실재한다 — 인용을 지우면 여기가 붉어져야 한다", () => {
+/** 인용은 언제나 `prop:value` 한 쌍이다 */
+function splitDecl(decl: string): { prop: string; value: string } {
+  const i = decl.indexOf(":");
+  assert.notEqual(i, -1, `인용이 prop:value 모양이 아니다: ${decl}`);
+  return { prop: decl.slice(0, i).trim(), value: decl.slice(i + 1).trim() };
+}
+
+/**
+ * ⚠**이 롱핸드를 되감는 숏핸드** — 뒤에 오면 앞의 롱핸드가 **무효**가 된다.
+ * 인용에 실제로 쓰이는 속성만 적는다. **여기 없는 속성은 숏핸드 검사를 하지 않는다** —
+ * 「안 쟀다」가 아니라 **그 속성에는 되감는 숏핸드가 없다**(content·display·transform·fill).
+ */
+const RESET_BY: Readonly<Record<string, readonly string[]>> = {
+  "font-weight": ["font"],
+  "border-style": ["border"],
+  "border-width": ["border"],
+  "border-color": ["border"],
+  "background-color": ["background"],
+};
+
+/**
+ * 그 선택자의 규칙들에서 `prop` 이 **최종적으로 갖는 값**.
+ *
+ * ⚠**마지막이 이긴다**(2026-09-08 3차 검토 · P2). 옛 판은 규칙 본문에 그 문자열이
+ * **있는지만** 봤다 — 같은 규칙 안에 같은 속성의 후속 선언이 있어 앞의 것이 무효가 돼도
+ * 「인용이 실재한다」로 통과했다. **캐스케이드에서 이기는 것은 마지막 선언이다.**
+ *
+ * @returns `undefined` = 선언이 아예 없다 · `null` = 뒤의 숏핸드가 되감았다 · 그 밖 = 이긴 값
+ */
+function winningValue(bodies: readonly string[], prop: string): string | null | undefined {
+  let out: string | null | undefined;
+  const shorthands = RESET_BY[prop] ?? [];
+  for (const body of bodies) {
+    for (const m of body.matchAll(/(?:^|;)\s*([a-zA-Z-]+)\s*:\s*([^;]*)/g)) {
+      const p = m[1]!.trim();
+      if (p === prop) out = m[2]!.trim();
+      else if (shorthands.includes(p)) out = null;
+    }
+  }
+  return out;
+}
+
+test("⚠사유가 인용한 CSS 선언이 **지금도 이긴다** — 덮어써진 선언을 근거로 인정하지 않는다", () => {
   const rules = rulesBySelector();
   const bad: string[] = [];
   let n = 0;
@@ -338,19 +380,30 @@ test("⚠사유가 인용한 CSS 선언이 실재한다 — 인용을 지우면 
         bad.push(`${j.sel} → 인용한 규칙 ${c.sel} 가 CSS 에 없다`);
         continue;
       }
-      if (!bodies.some((b) => squash(b).includes(squash(c.decl)))) {
-        bad.push(`${j.sel} → ${c.sel} 에 ${c.decl} 이(가) 없다: ${bodies.join(" | ").slice(0, 160)}`);
+      const { prop, value } = splitDecl(c.decl);
+      const won = winningValue(bodies, prop);
+      if (won === undefined) {
+        bad.push(`${j.sel} → ${c.sel} 에 ${prop} 선언이 없다: ${bodies.join(" | ").slice(0, 160)}`);
+      } else if (won === null) {
+        bad.push(
+          `${j.sel} → ${c.sel} 의 ${prop} 를 **뒤에 오는 숏핸드가 되감는다** — 인용이 이미 거짓이다`,
+        );
+      } else if (squash(won) !== squash(value)) {
+        bad.push(
+          `${j.sel} → ${c.sel} 의 ${prop} 는 지금 「${won}」 이다(인용은 「${value}」) —` +
+            " **뒤 선언이 이긴다.** 인용을 고치든 CSS 를 고치든 하나는 해야 한다",
+        );
       }
     }
   }
   assert.deepEqual(
     bad,
     [],
-    "사유가 인용한 선언이 CSS 에 없다 — 그 사유는 이미 거짓이다.\n" +
+    "사유가 인용한 선언이 CSS 에서 이기지 않는다 — 그 사유는 이미 거짓이다.\n" +
       "  ⚠고친 쪽이 맞으면 **사유를 고쳐라.** 인용만 지우고 산문을 남기면 처음 상태로 돌아간다.",
   );
   assert.ok(n >= 12, `CSS 인용이 ${n}건뿐이다 — 자료구조가 비면 이 시험이 공회전한다`);
-  console.log(`  · CSS 인용 ${n}건이 전부 실재한다`);
+  console.log(`  · CSS 인용 ${n}건이 전부 실재하고 전부 캐스케이드에서 이긴다`);
 });
 
 test("⚠인용한 속성이 이 모드에서 실제로 살아남는다 — 죽는 것을 근거로 적지 않는다", () => {

@@ -406,9 +406,58 @@ function alphaOf(sel: string): number {
   return hit[0]!.alpha;
 }
 
+/**
+ * 선택자가 **정확히 일치하는** 규칙 본문들.
+ * ⚠`@media` 안의 같은 선택자도 여기 걸린다 — 그래서 아래 `tokenOf` 가 「몇 곳인가」를 센다.
+ */
+function bodiesOf(sel: string): string[] {
+  const out: string[] = [];
+  for (const m of CSS_NC.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if ((m[1] ?? "").trim().replace(/\s+/g, " ") === sel) out.push(m[2] ?? "");
+  }
+  return out;
+}
+
+/**
+ * 그 규칙에서 `prop` 이 실제로 쓰는 **토큰 이름을 CSS 에서 읽는다.**
+ *
+ * ⚠**이 함수가 이 라운드의 수술 그 자체다.** 옛 목록은 잉크·바탕을 `"page"`·`"tx"` 라고
+ * **글자로 적어 뒀고**, 그래서 `#tip` 의 `color` 를 `var(--tx)` 로 바꿔도(= 실제 대비 1:1)
+ * 시험은 **옛 조합으로 계산해 그대로 통과했다**(2026-09-08 3차 검토가 재현). alpha 는 CSS 에서
+ * 읽으면서 색만 적어 두는 것이 정확히 그 구멍이었다 — **색이 뒤집히는 유일한 자리에 난 구멍**이다.
+ *
+ * ⚠**마지막 선언을 취한다** — 같은 규칙 안에 같은 속성이 두 번 있으면 **뒤가 이긴다**(캐스케이드).
+ */
+function tokenOf(sel: string, prop: "color" | "background"): string {
+  const bodies = bodiesOf(sel);
+  assert.ok(bodies.length > 0, `${sel} 규칙이 CSS 에 없다 — 이 시험이 공회전한다`);
+  const declaring = bodies.filter((b) => new RegExp(`(?:^|;)\\s*${prop}:`).test(b));
+  assert.equal(
+    declaring.length,
+    1,
+    `${sel} 의 ${prop} 선언이 ${declaring.length}곳이다 — 어느 것이 이기는지 이 시험이 못 고른다`,
+  );
+  const all = [...declaring[0]!.matchAll(new RegExp(`(?:^|;)\\s*${prop}:\\s*([^;]+)`, "g"))];
+  assert.ok(all.length > 0, `${sel} 의 ${prop} 에 값이 없다: ${declaring[0]}`);
+  const raw = all[all.length - 1]![1]!.trim();
+  const m = /^var\(\s*--([a-z0-9-]+)\s*[,)]/.exec(raw);
+  assert.notEqual(m, null, `${sel} 의 ${prop} 이 토큰이 아니다: ${raw}`);
+  return m![1]!;
+}
+
 type OpacityEntry =
-  /** 글자가 있다 — `ink` 를 `bg` 위에 CSS 의 alpha 로 합성해 **두 테마에서** 4.5 를 잰다 */
-  | { sel: string; kind: "ink"; ink: string; bg: string; why: string }
+  /**
+   * 글자가 있다 — 잉크를 바탕 위에 CSS 의 alpha 로 합성해 **두 테마에서** 4.5 를 잰다.
+   *
+   * ⚠**토큰 이름을 여기 적지 않는다.** `inkFrom`·`bgFrom` 은 **그 색을 선언하는 규칙의 선택자**이고,
+   * 어느 토큰인지는 시험이 CSS 에서 읽는다(`tokenOf`). 적어 두면 CSS 만 고쳤을 때 옛 조합으로 잰다.
+   * ⚠**둘을 가른 이유**: 「자기 규칙이 글자색을 갖고 바탕만 조상에서 오는」 모양이 흔하다.
+   *   그때 한 필드로는 거짓말을 하게 된다.
+   * ⚠**「어느 규칙에서 상속되는가」는 DOM 포함관계라 CSS 만으로는 못 읽는다** — 그래서 이 둘은
+   *   선언으로 남는다(`FIELD_EDGES` 의 `around` 와 같은 층이다). 대신 아래 시험이
+   *   **자기 규칙이 그 색을 직접 갖지 않는지**를 확인해 그 선언이 낡는 것을 막는다.
+   */
+  | { sel: string; kind: "ink"; inkFrom: string; bgFrom: string; why: string }
   /** 그 서브트리에 글자가 없다(도형·덮개). ⚠「안 쟀다」가 아니라 **「잴 것이 없다」**다 */
   | { sel: string; kind: "shape"; why: string }
   /** 무효 컨트롤 — WCAG 1.4.3 이 명시적으로 면제한다 */
@@ -420,8 +469,9 @@ const OPACITY_ALLOWED: readonly OpacityEntry[] = [
   /**
    * ⚠**툴팁은 색이 뒤집힌다** — `#tip{background:var(--tx);color:var(--page)}` 이라
    * 잉크가 `--page`, 바탕이 `--tx` 다. 옛 목록은 여기서만 우연히 결론이 맞았다(9.23 / 6.48 대 계산값).
+   * ⚠**그리고 그 「우연히 맞음」이 이번 라운드에 구멍으로 드러났다** — `tokenOf` 주석을 봐라.
    */
-  { sel: "#tip s", kind: "ink", ink: "page", bg: "tx", why: "툴팁 안의 부제 — 색이 뒤집힌 면 위의 글자" },
+  { sel: "#tip s", kind: "ink", inkFrom: "#tip", bgFrom: "#tip", why: "툴팁 안의 부제 — 색이 뒤집힌 면 위의 글자" },
   { sel: ".legend .bar", kind: "shape", why: "범례 견본 — 도형이고 글자가 없다(등급 표시를 끌 때의 연출)" },
   { sel: ".hstand .rdbar::before", kind: "shape", why: "기준선 막대 · 글자 없음" },
   { sel: ".pswing i", kind: "shape", why: "막대 · 글자 없음" },
@@ -478,6 +528,36 @@ test("⚠opacity 를 새로 얹으면 여기서 먼저 운다 — 「그 서브�
   );
 });
 
+/**
+ * ⚠**「상속받는다」는 선언이다. 그 선언이 낡지 않게 지킨다.**
+ *
+ * `inkFrom`·`bgFrom` 은 「이 요소의 색은 저 규칙에서 온다」는 주장인데, **자기 규칙이 그 색을
+ * 직접 갖는 순간 그 주장은 거짓이 된다** — 직접 건 색은 상속을 언제나 이기기 때문이다.
+ * (`tr.me td .den` 이 정확히 그 모양으로 났던 결함이다 — 아래 강조행 시험 주석 참조.)
+ * ⚠그래서 **자기 자신을 가리키지 않는 `from`** 에 대해서만 「자기 규칙에 그 속성이 없다」를 잰다.
+ */
+test("⚠상속받는다고 적은 색을 자기 규칙이 직접 갖고 있지 않다", () => {
+  const inks = OPACITY_ALLOWED.filter((e) => e.kind === "ink");
+  assert.ok(inks.length >= 1, "글자를 가진 opacity 항목이 0건이다 — 이 시험이 공회전한다");
+  const bad: string[] = [];
+  let checked = 0;
+  for (const e of inks) {
+    if (e.kind !== "ink") continue;
+    for (const [from, prop] of [
+      [e.inkFrom, "color"],
+      [e.bgFrom, "background"],
+    ] as const) {
+      if (from === e.sel) continue; // 자기 규칙이 갖는다고 적었다 — 상속 주장이 아니다
+      checked += 1;
+      const own = bodiesOf(e.sel).filter((b) => new RegExp(`(?:^|;)\\s*${prop}:`).test(b));
+      if (own.length > 0) bad.push(`${e.sel} 가 ${prop} 를 직접 갖는다(${from} 에서 온다고 적혀 있다)`);
+    }
+  }
+  assert.ok(checked >= 2, `상속 주장이 ${checked}건뿐이다 — 이 시험이 공회전한다`);
+  assert.deepEqual(bad, [], "직접 건 색은 상속을 이긴다 — 목록의 inkFrom/bgFrom 이 이미 거짓이다");
+  console.log(`  · 상속 주장 ${checked}건이 전부 성립한다`);
+});
+
 for (const scope of ["light", "dark"] as const) {
   test(`⚠${scope}: opacity 로 흐린 글자가 AA 를 넘는다 — 「적어 둔 수」가 아니라 **계산**으로 잰다`, () => {
     const t = tokens(scope);
@@ -489,13 +569,16 @@ for (const scope of ["light", "dark"] as const) {
     for (const e of inks) {
       if (e.kind !== "ink") continue;
       const alpha = alphaOf(e.sel);
-      const ink = t.get(e.ink);
-      const bg = t.get(e.bg);
-      assert.ok(ink !== undefined && bg !== undefined, `${e.sel} 의 토큰(--${e.ink} / --${e.bg})을 못 읽었다`);
+      // ⚠**잉크도 바탕도 CSS 에서 읽는다** — 목록에는 「어느 규칙에서 오는가」만 적혀 있다
+      const inkTok = tokenOf(e.inkFrom, "color");
+      const bgTok = tokenOf(e.bgFrom, "background");
+      const ink = t.get(inkTok);
+      const bg = t.get(bgTok);
+      assert.ok(ink !== undefined && bg !== undefined, `${e.sel} 의 토큰(--${inkTok} / --${bgTok})을 못 읽었다`);
       const r = contrast(mix(ink!, bg!, alpha), bg!);
       measured += 1;
-      if (r < NEED) failed.push(`${e.sel} (--${e.ink} @ ${alpha} over --${e.bg}) ${r.toFixed(3)}`);
-      console.log(`  · ${scope} ${e.sel} α=${alpha} --${e.ink} over --${e.bg} = ${r.toFixed(3)}:1`);
+      if (r < NEED) failed.push(`${e.sel} (--${inkTok} @ ${alpha} over --${bgTok}) ${r.toFixed(3)}`);
+      console.log(`  · ${scope} ${e.sel} α=${alpha} --${inkTok} over --${bgTok} = ${r.toFixed(3)}:1`);
     }
     assert.equal(measured, inks.length, `잰 항목이 ${measured}건인데 목록은 ${inks.length}건이다`);
     assert.deepEqual(failed, [], `opacity 로 흐린 글자가 ${NEED}:1 에 미달한다: ${failed.join(" / ")}`);
@@ -733,37 +816,60 @@ for (const scope of ["light", "dark"] as const) {
 }
 
 /**
- * ⚠**`.den` 에 색을 주는 규칙 중 `tr.me td .den` 보다 특이도가 높은 것이 둘 있다.**
+ * ⚠**`.den` 에 색을 주는 규칙 중 `tr.me td .den` 을 이기는 것이 둘 있다.**
  *
- * `table.stand td.wd .den` · `.hstand td.wd .den` 이 (0,3,2)로 (0,2,2)를 이긴다.
+ * `table.stand td.wd .den` · `.hstand td.wd .den` 이 (0,3,2)·(0,3,1)로 (0,2,2)를 이긴다.
  * **그 두 표에는 `tr.me` 가 없다**(2026-09-08 실측 — dist 의 順位表·홈 순위표 전건에서 0건)
  * 그래서 오늘은 문제가 아니다. ⚠**셋째가 생기면 여기가 조용히 진다** — 그때 이 시험이 먼저 운다.
+ *
+ * ## ⚠**「이긴다」가 특이도만이 아니다** (2026-09-08 3차 검토 · P3)
+ *
+ * 처음 판은 **엄격히 더 높은** 특이도만 봤다. 그런데 캐스케이드는 **같은 특이도면 뒤가 이긴다** —
+ * `.foo .den{color:…}`(클래스 2 · 요소 0)이 아니라 예컨대 `tbody tr.x .den` 같은 (0,2,2) 규칙이
+ * `tr.me td .den` **뒤에** 오면 그대로 이기는데 옛 판은 그것을 못 봤다.
+ * → **소스 위치까지 본다.** 「특이도가 더 높다」 **또는** 「같은데 뒤에 있다」가 이기는 조건이다.
+ * ⚠**`!important` 는 여기서 안 본다** — 실측 **5줄**(그중 1줄은 주석)이고 전부 `.den` 과 무관하다
+ *   (`prefers-reduced-motion` 의 모션 못박기 · `.tab`·`.teamgroup`·`.scroller` 의 인쇄/좁은 화면 보정).
+ *   `.den` 색 규칙에 붙는 날이 오면 이 시험을 그때 넓혀라.
  */
-test("⚠강조행의 분모를 특이도로 이기는 .den 규칙이 늘지 않는다 — 늘면 조용히 진다", () => {
+test("⚠강조행의 분모를 이기는 .den 규칙이 늘지 않는다 — 늘면 조용히 진다", () => {
   /** (클래스+속성, 요소) — 우리 CSS 에는 id 선택자가 규칙에 안 쓰이므로 두 자리로 충분하다 */
   const spec = (one: string): [number, number] => [
     (one.match(/\.[a-zA-Z][\w-]*|\[[^\]]+\]/g) ?? []).length,
     (one.match(/(?:^|[\s>+~])[a-zA-Z][\w-]*/g) ?? []).length,
   ];
-  /** `tr.me td .den` = 클래스 2 · 요소 2 */
-  const beats = (one: string): boolean => {
-    const [b, c] = spec(one);
-    return b > 2 || (b === 2 && c > 2);
-  };
-  const stronger: string[] = [];
+  const OURS = "tr.me td .den";
+  /** `.den` 에 **색을 주는** 규칙 전부 — 소스 위치와 함께 */
+  const colored: { sel: string; at: number }[] = [];
   for (const m of CSS_NC.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
     const sel = (m[1] ?? "").trim().replace(/\s+/g, " ");
     if (!/(^|;)\s*color:/.test(m[2] ?? "")) continue;
     // ⚠**마지막 컴파운드가 .den 이어야 한다** — 조상 자리의 .den 은 그 요소의 색이 아니다
     if (!targetsClass(sel, "den")) continue;
-    if (sel.split(",").some((one) => beats(one.trim()))) stronger.push(sel);
+    colored.push({ sel, at: m.index ?? -1 });
   }
+  const ours = colored.filter((r) => r.sel === OURS);
+  // ⚠**공회전 방지** — 우리 규칙이 사라지거나 둘이 되면 아래 비교의 기준이 없다
+  assert.equal(ours.length, 1, `${OURS} 규칙이 ${ours.length}건이다 — 이 시험이 공회전한다`);
+  assert.ok(colored.length >= 4, `.den 색 규칙이 ${colored.length}건뿐이다 — 이 시험이 공회전한다`);
+  const [ob, oc] = spec(OURS); // 클래스 2 · 요소 2
+  /** 특이도가 더 높거나, 같은데 **뒤에** 있으면 이긴다 */
+  const beats = (one: string, at: number): boolean => {
+    const [b, c] = spec(one);
+    if (b !== ob) return b > ob;
+    if (c !== oc) return c > oc;
+    return at > ours[0]!.at;
+  };
+  const stronger = colored
+    .filter((r) => r.sel !== OURS && r.sel.split(",").some((one) => beats(one.trim(), r.at)))
+    .map((r) => r.sel);
   assert.deepEqual(
     stronger.sort(),
     [".hstand td.wd .den", "table.stand td.wd .den"],
-    "특이도로 `tr.me td .den` 을 이기는 .den 색 규칙이 바뀌었다.\n" +
+    "`tr.me td .den` 을 이기는 .den 색 규칙이 바뀌었다(특이도가 높거나, 같은 특이도인데 뒤에 있다).\n" +
       "  ⚠**그 표에 tr.me 가 있는지 실물로 확인해라** — 있으면 강조행의 분모가 조용히 --tx-3 로 돌아간다",
   );
+  console.log(`  · .den 색 규칙 ${colored.length}건 · 이기는 것 ${stronger.length}건(${stronger.join(" / ")})`);
 });
 
 /**
