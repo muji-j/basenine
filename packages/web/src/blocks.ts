@@ -10,6 +10,8 @@
  * ⚠**프리셋이 먼저고 조립은 나중이다.** 설정 화면부터 보여주는 도구는 아무도 안 쓴다.
  */
 
+import { termLabel } from "./glossary.ts";
+
 export type BlockId =
   | "standard"
   | "advanced"
@@ -57,7 +59,16 @@ export const BLOCKS: readonly BlockMeta[] = [
    * ⚠**통산 전용이다** — 한 시즌으로는 1인당 4회 남짓이라 값이 아니라 소음이다(M3).
    */
   { id: "relief", name: "火消し", desc: "投手のみ。走者を背負って登板した場面と、その結果（通算）" },
-  { id: "streak", name: "連続記録", desc: "打者のみ。連続安打・連続出塁" },
+  /**
+   * ⚠**라벨을 여기 적지 않는다**(M1 · 2026-09-07). `連続安打` 가 네 곳에 문자열로 박혀 있었고,
+   * 그것이 **공인야구규칙 9.23(a) 의 다른 기록 이름**이라는 것이 뒤늦게 드러났다.
+   * 용어집에서 꺼내면 다음에 이름이 바뀔 때 여기가 저절로 따라간다.
+   */
+  {
+    id: "streak",
+    name: "連続記録",
+    desc: `打者のみ。${termLabel("hitStreak")}・${termLabel("onBaseStreak")}`,
+  },
   { id: "matchup", name: "対戦成績", desc: "投手別。打席数の多い順" },
   /**
    * ⚠**출처가 다른 유일한 블록이다**(M4). 다른 블록은 우리가 경기에서 쌓은 값이고,

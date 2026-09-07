@@ -634,6 +634,29 @@ test("⚠진행 중인 시즌이라도 최신 경기일에 안 나왔으면 「�
  * 「下の&lt;b&gt;通算成績&lt;/b&gt;（出典：NPB）」라고 쓰고 있었다 —
  * ⚠**소스만 읽어서는 안 보인다**(문법은 멀쩡하다). 실기로 열어야 보인다.
  */
+/**
+ * ⚠**라벨이 용어집에서 나오고 툴팁이 붙는가**(2026-09-07).
+ *
+ * 예전에는 화면이 `row("連続安打", …)` 처럼 **문자열을 직접** 넘겼다. `term()` 은
+ * **라벨 → 키 역인덱스**로 툴팁을 붙이는데 그 역인덱스는 **모르는 라벨에 `undefined` 를
+ * 돌려주고 던지지 않으므로**, 용어집만 고치면 **글자는 나오고 툴팁만 조용히 사라진다.**
+ * ⚠**소스를 읽어서는 안 보인다** — 문법도 멀쩡하고 글자도 맞다.
+ * → 화면이 **키**를 넘기게 바꿨고, 이 시험이 그 배선을 실기로 고정한다.
+ *
+ * ⚠**이름 자체가 맞는가는 `streak-label.test.ts` 가 본다**(`連続安打` 는 9.23(a) 의 다른 기록이다).
+ * 여기서는 **화면과 용어집이 이어져 있는가**만 본다 — 둘을 한 시험에 넣으면 어느 쪽이 깨졌는지 모른다.
+ */
+test("⚠연속기록 라벨은 용어집에서 나오고 툴팁이 붙는다", () => {
+  const blk = streakBlockOf(renderPlayerPage(playerPage({ asOf: "2026-08-14" }), heldContext(2026)));
+  for (const key of ["hitStreak", "onBaseStreak", "hitlessStreak"]) {
+    assert.ok(
+      blk.includes(`data-term="${key}"`),
+      `${key} 의 툴팁이 없다 — 라벨이 용어집과 갈렸다(termKeyForLabel 이 조용히 undefined 를 냈다)`,
+    );
+    assert.ok(blk.includes(termOf(key)!.label), `${key} 의 라벨이 용어집과 다르다`);
+  }
+});
+
 test("⚠연속기록 각주의 강조가 태그가 아니라 굵은 글씨로 나간다", () => {
   const blk = streakBlockOf(renderPlayerPage(playerPage({ asOf: "2026-08-14" }), heldContext(2026)));
   assert.ok(!blk.includes("&lt;b&gt;"), "화면에 <b> 가 글자로 찍힌다");

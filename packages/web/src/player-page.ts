@@ -39,7 +39,7 @@ import type { BarRow, RankDigits } from "./parts.ts";
 import { NO_VALUE, avg3, dec2, gameDate, innings, throwsBats } from "./format.ts";
 import { isEmptyProfile, markFigure, markLetter, markProfile } from "./marks.ts";
 import type { MarkPlayer, ProfileAxis } from "./marks.ts";
-import { denUnit, termOf } from "./glossary.ts";
+import { denUnit, termLabel, termOf } from "./glossary.ts";
 import { page, ROSTER_PATH } from "./layout.ts";
 import { teamLink, teamPath } from "./team-page.ts";
 import { postseasonBrief } from "./postseason-page.ts";
@@ -1472,12 +1472,18 @@ function streakBlock(s: StreakBlockData, season: number, asOf: string | null, se
       ? NO_VALUE
       : `${gameDate(s.lastGameDate)}時点`;
 
-  const row = (label: string, v: StreakData, unit = "試合"): RawHtml => {
+  /**
+   * ⚠**라벨이 아니라 용어집 키를 받는다**(2026-09-07). 문자열을 여기 적으면
+   * 용어집의 라벨과 갈릴 수 있고, 갈리는 순간 `term()` 이 키를 못 찾아 **툴팁이 소리 없이 죽는다**
+   * (`termKeyForLabel` 은 모르는 라벨에 `undefined` 를 돌려주고 던지지 않는다).
+   * `termLabel` 은 **모르는 키에 던지므로** 그 실패가 조용할 수 없다.
+   */
+  const row = (key: string, v: StreakData, unit = "試合"): RawHtml => {
     const span =
       v.bestFrom === null || v.bestTo === null
         ? null
         : html`<span class="den">${gameDate(v.bestFrom)}〜${gameDate(v.bestTo)}</span>`;
-    return html`<dt>${term(label)}</dt><dd class="v">${v.current}${unit}<span class="den">${current}</span></dd>
+    return html`<dt>${term(termLabel(key))}</dt><dd class="v">${v.current}${unit}<span class="den">${current}</span></dd>
       <dt class="sub2">今季最長</dt><dd class="v">${v.best}${unit}${span}</dd>`;
   };
   return block({
@@ -1485,9 +1491,9 @@ function streakBlock(s: StreakBlockData, season: number, asOf: string | null, se
     title: "連続記録",
     qualifier: `${season}年 · 打席のあった${s.games}試合`,
     body: html`${columns(
-      row("連続安打", s.hitting),
-      row("連続出塁", s.onBase),
-      row("連続無安打", s.hitless),
+      row("hitStreak", s.hitting),
+      row("onBaseStreak", s.onBase),
+      row("hitlessStreak", s.hitless),
     )}
     ${note(
       /**

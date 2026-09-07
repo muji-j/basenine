@@ -12,7 +12,7 @@
 import { html, raw } from "./html.ts";
 import { byMetricOrder } from "./metric-order.ts";
 // ⚠**분모 단위의 정본**(M1) — 화면이 문자열을 직접 적지 않는다
-import { denUnit } from "./glossary.ts";
+import { denUnit, termLabel } from "./glossary.ts";
 import type { RawHtml } from "./html.ts";
 import { NO_VALUE, avg3, fullDate, innings, int } from "./format.ts";
 import { block, buttonGroup, columns, note, panel, scroller, tablist, term, THIN_MARK, thinMark, valueWithDen } from "./parts.ts";
@@ -841,7 +841,7 @@ function streakBlock(rows: readonly HomeStreak[], seasonOver: boolean, base: str
     <tbody>${rows.map(
         (x) => html`<tr>
       <td class="l"><a href="${base}players/${x.playerId}.html">${x.name}</a></td>
-      <td class="l">${x.kind === "hitting" ? "連続安打" : "連続出塁"}</td>
+      <td class="l">${termLabel(x.kind === "hitting" ? "hitStreak" : "onBaseStreak")}</td>
       <td class="b">${x.games}</td>
       <td class="l">${x.lastGameDate === null ? NO_VALUE : fullDate(x.lastGameDate)}</td>
     </tr>`,

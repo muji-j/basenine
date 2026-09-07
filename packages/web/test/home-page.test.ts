@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import { REGULAR_SEASON_GAMES, renderHomePage } from "../src/home-page.ts";
 import type { HomePageData } from "../src/home-page.ts";
 import { colorOf } from "@bb-app/domain";
+import { termLabel } from "../src/glossary.ts";
 import { context } from "./fixtures.ts";
 
 function team(code: string, over: Record<string, unknown> = {}) {
@@ -259,7 +260,10 @@ test("⚠페이스에 분모와 「예측이 아니다」가 함께 나온다", 
  */
 test("⚠연속 기록에 마지막 출장일이 반드시 붙는다", () => {
   const out = renderHomePage(data(), context());
-  assert.match(out, /連続安打/);
+  // ⚠**라벨을 여기 적지 않는다**(M1 · 2026-09-07). 예전에는 `/連続安打/` 라고 박혀 있었고,
+  //   그 이름이 **공인야구규칙 9.23(a) 의 다른 기록**이라 `連続試合安打` 로 고칠 때 이 줄이 떨어졌다.
+  //   용어집에서 꺼내면 다음에 또 바뀌어도 시험이 저절로 따라간다.
+  assert.ok(out.includes(termLabel("hitStreak")), "연속 기록의 이름이 용어집과 다르다");
   assert.match(out, /2026年8月16日/, "마지막 출장일이 없다");
   assert.match(out, /最後の出場日を必ず併記/, "왜 날짜를 내는지 말하지 않는다");
 });

@@ -41,6 +41,7 @@ import { NO_VALUE, avg3, fullDate } from "./format.ts";
 import { ROSTER_PATH, page } from "./layout.ts";
 import type { RenderContext } from "./layout.ts";
 import { note, runCell, scroller, term, widestRunDiff, wlCell } from "./parts.ts";
+import { termLabel } from "./glossary.ts";
 import { teamPath } from "./team-page.ts";
 import { dayHref } from "./today-page.ts";
 import { NEUTRAL_COLOR, REGULAR_SEASON_GAMES, regularSeasonGames } from "@bb-app/domain";
@@ -539,7 +540,7 @@ ${d.streaks.length === 0
       (x) => html`<tr>
       <td class="l"><a href="${base}players/${x.playerId}.html">${x.name}</a></td>
       <td class="l">${teamChip(x.teamCode, x.shortName, x.color, base)}</td>
-      <td class="l">${x.kind === "hitting" ? "連続安打" : "連続出塁"}</td>
+      <td class="l">${termLabel(x.kind === "hitting" ? "hitStreak" : "onBaseStreak")}</td>
       <td class="b">${x.games}</td>
       <td class="l">${x.lastGameDate === null ? NO_VALUE : fullDate(x.lastGameDate)}</td>
     </tr>`,
