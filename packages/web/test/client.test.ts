@@ -6,7 +6,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CLIENT_JS } from "../src/assets.ts";
+import { CLIENT_JS, CSS } from "../src/assets.ts";
 import { BLOCKS, PRESETS, blocksFor, presetsFor } from "../src/blocks.ts";
 
 /**
@@ -642,11 +642,27 @@ test("밀도를 바꾸면 블록 여백 토큰이 바뀐다 — 인라인 패딩
   const doc = buildPage();
   run(doc);
   const el = doc.querySelector(".block")!;
-  assert.equal(el.style.getPropertyValue("--block-pad-y"), "22px");
+  const normal = el.style.getPropertyValue("--block-pad-y");
   press(doc, "density", "compact");
-  assert.equal(el.style.getPropertyValue("--block-pad-y"), "11px");
+  const compact = el.style.getPropertyValue("--block-pad-y");
   // ⚠**인라인 패딩이 다시 들어오면 안 된다** — 그게 원래 결함이다
   assert.equal(el.style["paddingTop"] ?? "", "", "인라인 패딩이 되살아났다");
+
+  /**
+   * ⚠**~~"22px"·"11px" 리터럴을 여기서 고정하고 있었다~~**(2026-09-08 · 2a).
+   * 그 두 수는 **간격 척도 밖의 값**이었고, 척도로 접으면서 스크립트도 토큰을 쓰게 됐다.
+   * ⚠**그런데 이름을 고정하는 것만으로는 부족하다** — 2a 가 --sN 의 **번호를 밀었다**
+   * (옛 --s1(4px)이 지금 --s2 다). 이름만 보면 다음 번호 이동 때 **조용히 다른 단**을 가리킨다.
+   * → **이름이 CSS 에 실재하는지 · 값이 어느 쪽이 큰지**까지 여기서 잰다.
+   */
+  const step = (v: string): number => {
+    const name = /^var\((--s\d+)\)$/.exec(v.trim())?.[1];
+    assert.ok(name !== undefined, `여백을 척도 토큰으로 안 넘겼다: ${v}`);
+    const px = new RegExp(`${name}:\\s*(\\d+)px`).exec(CSS)?.[1];
+    assert.ok(px !== undefined, `${name} 이 CSS 에 없다 — 스크립트가 없는 단을 가리킨다`);
+    return Number(px);
+  };
+  assert.ok(step(normal) > step(compact), `밀도를 좁혀도 여백이 안 줄었다: ${normal} → ${compact}`);
 });
 
 test("저장된 설정이 깨져 있어도 기본값으로 돌아간다", () => {
