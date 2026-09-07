@@ -922,15 +922,28 @@ test("⚠눌리면 구단 색 면이 되는 버튼의 자손이 --tx* 를 그대
  *   2 `CR(채움, 바깥면) ≥ 3`
  *   3 테두리를 3:1 이상 잉크의 **밑줄(하단 2px+)** 로 바꾸고 채움 폭 전체를 덮게
  * ⚠**3 은 여기서 못 잰다** — 형태를 바꾸는 안이라 규칙 모양 자체가 달라진다. 그때 이 시험을 고쳐라.
+ *
+ * ## ⚠같은 결함이 네 자리였다 (2026-09-08 · 첫 라운드는 검색칸만 고쳤다)
+ *
+ * `.find input` · `.mfind input` · `.mfind select` 가 같은 모양이었다 —
+ * 채움 `--panel` · 테두리 `--hair-2`.
+ * ⚠**`.mfind` 는 더 나쁘다**: `.block`(`--panel`) 안이라 **채움 대 둘러싼 면이 정확히 1.000** 이다.
+ * ⚠**바탕이 다르니 처방(`--tx-3`)을 그대로 옮기기 전에 다시 쟀다** — 네 자리 모두에서 통과한다:
+ * `--tx-3` 대 `--page` **4.910 / 5.499** · 대 `--panel` **5.125 / 5.072**.
+ * ⚠**hover 도 같이 옮겼다** — `.mfind` 의 hover 가 `--tx-3` 이라 rest 와 **같은 색**이 될 뻔했다.
  */
 const FIELD_EDGES: readonly { sel: string; fill: string; around: string; what: string }[] = [
   { sel: ".qbox input", fill: "page", around: "panel", what: "상단바의 검색칸" },
+  { sel: ".find input", fill: "panel", around: "page", what: "선수 목록의 이름 좁히기" },
+  { sel: ".mfind input", fill: "panel", around: "panel", what: "표 좁히기 칸(.block 안 · 면이 같다)" },
+  { sel: ".mfind select", fill: "panel", around: "panel", what: "표 좁히기 고르개(.block 안 · 면이 같다)" },
 ];
 
 /**
  * ⚠**같은 잉크의 다른 자리는 등급이 다르다. 같이 끌고 오지 마라.**
  * 아래 다섯은 `--hair-2` 테두리를 쓰지만 **가시 텍스트 라벨**이 있고 그 라벨이 6.6 대비라
- * 1.4.11 위반으로 **단정할 수 없다**(감사자 판정 · 2026-09-08). 검색칸만 올리는 것이 정당한 선택이다.
+ * 1.4.11 위반으로 **단정할 수 없다**(감사자 판정 · 2026-09-08).
+ * ⚠**입력칸 넷만 올리는 것이 정당한 선택이다** — 라벨이 없는 것은 그 넷뿐이다.
  * ⚠**여기 적어 둔 것이 낡지 않게** 아래 시험이 「그 선택자가 아직 CSS 에 있는가」를 확인한다.
  */
 const EDGE_EXEMPT: readonly { sel: string; why: string }[] = [
@@ -952,17 +965,39 @@ test("⚠1.4.11 면제로 적어 둔 자리가 아직 실재한다 — 사라진
 for (const scope of ["light", "dark"] as const) {
   for (const f of FIELD_EDGES) {
     test(`⚠${scope}: ${f.sel} 의 경계가 3:1 을 넘는다 — ${f.what}`, () => {
-      const rule = new RegExp(
-        `(?:^|[\\n}])\\s*${f.sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\{([^{}]*)\\}`,
-      ).exec(CSS_NC);
-      assert.notEqual(rule, null, `${f.sel} 규칙이 CSS 에 없다 — 이 시험이 공회전한다`);
+      // ⚠**`exec` 로 첫 규칙만 잡지 않는다** — 같은 선택자가 `@media` 안에 다시 나오고
+      //   (`.mfind input` 은 680px 이하에서 폭만 바꾼다) 그쪽에는 `border` 가 없다.
+      //   **테두리를 선언하는 규칙이 정확히 하나인지**까지 여기서 못 박는다.
+      const all = [
+        ...CSS_NC.matchAll(
+          new RegExp(`(?:^|[\\n}])\\s*${f.sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\{([^{}]*)\\}`, "g"),
+        ),
+      ].map((m) => m[1]!);
+      assert.ok(all.length > 0, `${f.sel} 규칙이 CSS 에 없다 — 이 시험이 공회전한다`);
+      const withBorder = all.filter((body) => /(?:^|;)\s*border:/.test(body));
+      assert.equal(
+        withBorder.length,
+        1,
+        `${f.sel} 의 border 선언이 ${withBorder.length}곳이다 — 어느 것이 rest 상태인지 이 시험이 못 고른다`,
+      );
       // ⚠**border 단축 속성은 var() 를 둘 쓴다**(`var(--rw-row) solid var(--tx-3)`) —
       //   **색은 마지막 것**이다. 첫 것을 잡으면 굵기 토큰(--rw-row: 1px)을 색으로 읽는다.
-      const shorthand = /(?:^|;)\s*border:\s*([^;]+)/.exec(rule![1]!);
+      const shorthand = /(?:^|;)\s*border:\s*([^;]+)/.exec(withBorder[0]!);
       assert.notEqual(shorthand, null, `${f.sel} 에 border 선언이 없다 — 이 시험이 공회전한다`);
       const vars = [...shorthand![1]!.matchAll(/var\(\s*--([a-z0-9-]+)/g)].map((v) => v[1]!);
       assert.ok(vars.length >= 1, `${f.sel} 의 border 가 토큰을 안 쓴다: ${shorthand![1]}`);
       const border = vars[vars.length - 1]!;
+      // ⚠**채움도 CSS 에서 읽는다 — 목록에 적어 둔 것을 믿지 않는다.**
+      //   여기 적힌 `fill` 이 문자열이던 동안, CSS 의 `background` 를 바꿔도 이 시험은 **초록이었다**
+      //   (2026-09-08 뮤테이션 실측). 「적어 둔 주장을 시험이 검산하지 않는」 그 병이다.
+      //   ⚠`around`(둘러싼 면)는 DOM 포함관계라 CSS 만으로는 못 읽는다 — 그쪽은 선언으로 남는다.
+      const bg = /(?:^|;)\s*background:\s*var\(\s*--([a-z0-9-]+)\s*\)/.exec(withBorder[0]!);
+      assert.notEqual(bg, null, `${f.sel} 이 background 를 토큰으로 안 쓴다 — 채움을 확인할 수 없다`);
+      assert.equal(
+        bg![1]!,
+        f.fill,
+        `${f.sel} 의 채움이 --${bg![1]} 인데 목록은 --${f.fill} 이라고 적고 있다 — 목록을 고쳐라`,
+      );
       const t = tokens(scope);
       const ink = t.get(border);
       const fill = t.get(f.fill);
@@ -977,16 +1012,26 @@ for (const scope of ["light", "dark"] as const) {
           ` 채움 대 바깥면 ${contrast(fill!, around!).toFixed(3)} — 셋 다 ${UI_NEED_EDGE} 미만이다.\n` +
           "  ⚠**hover 를 근거로 삼지 마라** — 1.4.11 은 rest 상태를 잰다",
       );
-      // ⚠**공회전 방지** — 옛 값(--hair-2)으로 되돌아가면 반드시 떨어지는지 여기서 확인한다
+      // ⚠**공회전 방지 ⑴** — 옛 값(--hair-2)으로 되돌아가면 반드시 떨어지는지 여기서 확인한다
       const was = t.get("hair-2")!;
       assert.ok(
-        contrast(was, around!) < UI_NEED_EDGE,
-        `--hair-2 가 이제 --${f.around} 위에서 ${contrast(was, around!).toFixed(3)} 이다 —` +
+        contrast(was, around!) < UI_NEED_EDGE && contrast(was, fill!) < UI_NEED_EDGE,
+        `--hair-2 가 이제 --${f.around} 위에서 ${contrast(was, around!).toFixed(3)} ·` +
+          ` --${f.fill} 위에서 ${contrast(was, fill!).toFixed(3)} 이다 —` +
           " 이 시험의 전제(옛 테두리가 미달이었다)가 바뀌었으니 다시 판단하라",
       );
+      // ⚠**공회전 방지 ⑵ — 위의 `c1 || c2` 가 c2 로 조용히 통과하면 테두리를 아무 색이나 써도 초록이다.**
+      //   여기 있는 네 자리는 전부 **면으로는 경계가 없어서** 골라 둔 것이므로, 그 전제를 못 박는다.
+      //   면이 실제로 갈라지게 바뀌었다면 이 시험이 아니라 **목록을 다시 판단해야 한다.**
+      assert.ok(
+        !c2,
+        `${f.sel}: 채움 --${f.fill} 대 바깥면 --${f.around} 가 ${contrast(fill!, around!).toFixed(3)} 이다 —` +
+          " 이제 면만으로 경계가 서므로 이 자리는 목록의 전제(테두리가 유일한 채널)를 벗어났다",
+      );
       console.log(
-        `  · ${scope} ${f.sel} 테두리 --${border}: 바깥면 ${contrast(ink!, around!).toFixed(3)} ·` +
-          ` 채움 ${contrast(ink!, fill!).toFixed(3)} (기준 ${UI_NEED_EDGE} · 판정 ${c1 ? "1" : "2"})`,
+        `  · ${scope} ${f.sel} 테두리 --${border}: 바깥면 --${f.around} ${contrast(ink!, around!).toFixed(3)} ·` +
+          ` 채움 --${f.fill} ${contrast(ink!, fill!).toFixed(3)} ·` +
+          ` 채움 대 바깥면 ${contrast(fill!, around!).toFixed(3)} (기준 ${UI_NEED_EDGE} · 판정 ${c1 ? "1" : "2"})`,
       );
     });
   }

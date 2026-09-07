@@ -804,7 +804,10 @@ tr.thin td{color:var(--tx-2)}
    --tx-3 은 --page 기준 4.9:1 이라 통과한다(막대는 장식이 아니라 표식이다).
    ⚠**그래도 이 채널만으로는 부족하다** — forced-colors: active 에서 box-shadow 는 none 이 되고
    color 도 시스템 색으로 강제되어 **두 채널이 함께 죽는다.** 그래서 이름 옆에 글자 표식(.qmk)을 둔다.
-   구단 페이지 타자표에는 ranking.html 의 順位 열 같은 제3의 채널이 없다. */
+   구단 페이지 타자표에는 ranking.html 의 順位 열 같은 제3의 채널이 없다.
+   ⚠**「그래서 .qmk 를 둔다」를 전칭으로 읽지 마라**(2026-09-08 정정). tr.thin 을 그리는 자리는
+   **6곳이고 그중 3곳**만 그 표식을 붙인다 — 선수 페이지의 세 표는 안 붙인다(둘은 막대 흐림이 대신하고,
+   対戦成績 표는 **아무것도 없다**). 그 셈은 forced-colors.test.ts 가 소스에서 다시 센다. */
 tr.thin td:first-child{box-shadow:inset 2px 0 0 var(--tx-3)}
 /* 「薄く」의 글자 표식 — **어떤 색 모드에서도 남는다.** 범례가 같은 글자를 쓴다 */
 .qmk{font-style:normal;font-size:var(--fs-note);color:var(--tx-2);margin-left:var(--s1)}
@@ -916,12 +919,22 @@ th[aria-sort="descending"] .sortable i::before{content:"↓"}
 /* 상대전적 좁히기 */
 .mfind{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:0 0 9px}
 .mfind label{font-size:var(--fs-label);letter-spacing:.14em;color:var(--tx-3)}
+/* ⚠**검색칸(.qbox input)과 같은 결함이고 여기가 더 나쁘다**(2026-09-08 · design-auditor · WCAG 2.2 SC 1.4.11).
+   이 좁히기 줄은 .block(--panel) 안에 있고 칸의 채움도 --panel 이라 **채움 대 둘러싼 면이 정확히 1.000** —
+   즉 **경계를 말하는 것이 테두리 하나뿐**인데 그게 --hair-2 로 **라이트 1.580 · 다크 1.557** 이었다(3:1 필요).
+   ⚠**예외 둘(비활성 · UA 기본)에 해당하지 않는다** — 우리가 그린 활성 입력칸이다.
+   ⚠**hover 를 근거로 삼지 마라** — 1.4.11 은 rest 상태를 잰다.
+   → **--tx-3**: 테두리 대 채움 = 테두리 대 바깥면 = **5.125 / 5.072**(같은 면이라 한 수다) 로
+   감사자 판정 기준 1(양쪽 3:1)을 두 테마에서 만족한다.
+   ⚠**hover 를 --tx-2 로 옮긴다** — 안 옮기면 rest 와 hover 가 **같은 색**이 되어 되짚을 표시가 사라진다.
+   ⚠**.tab·.chip·.mv·.go.alt·.hjump a 를 같이 끌고 오지 마라** — 가시 텍스트 라벨이 있어 등급이 다르다
+   (css-contrast.test.ts 의 EDGE_EXEMPT 가 사유와 함께 붙든다). */
 .mfind input{font:inherit;font-size:var(--fs-lead);padding:5px 9px;width:170px;background:var(--panel);color:var(--tx);
-  border:var(--rw-row) solid var(--hair-2);transition:border-color var(--t1) var(--e-out)}
-.mfind input:hover{border-color:var(--tx-3)}
+  border:var(--rw-row) solid var(--tx-3);transition:border-color var(--t1) var(--e-out)}
+.mfind input:hover{border-color:var(--tx-2)}
 .mfind select{font:inherit;font-size:var(--fs-lead);padding:5px var(--s2);background:var(--panel);color:var(--tx);
-  border:var(--rw-row) solid var(--hair-2);max-width:180px;transition:border-color var(--t1) var(--e-out)}
-.mfind select:hover{border-color:var(--tx-3)}
+  border:var(--rw-row) solid var(--tx-3);max-width:180px;transition:border-color var(--t1) var(--e-out)}
+.mfind select:hover{border-color:var(--tx-2)}
 .mfind .count{font-family:var(--f-num);font-size:var(--fs-note);color:var(--tx-3)}
 @media (max-width:680px){
   .mfind input{flex:1 1 auto;width:auto;min-width:0}
@@ -1036,7 +1049,25 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
 .pickfold>summary::-webkit-details-marker{display:none}
 /* ⚠**글리프에 빈 대체텍스트를 붙인다.** details/summary 는 접힘·펼침을 이미 네이티브로 알리는데,
    그 위에 생성 콘텐츠를 얹으면 낭독기가 「검은 오른쪽 삼각형」을 덧붙여 읽는다 */
-.pickfold>summary::after{content:"▸" / "";margin-left:auto;font-size:var(--fs-note);color:var(--tx-3);
+/* ⚠**~~"▸"(U+25B8)~~ 였고 그 글자는 네 서체 어디에도 없다**(2026-09-08 · npm run build:fonts 가
+   종료코드 1 로 세웠다 · 결정문 docs/superpowers/specs/2026-09-07-design-direction.md §5-E).
+   → **"▶"(U+25B6)** 로 바꾼다. plex-jp·noto-jp 실측 보유(라틴 두 서체에는 **없다** — 이 표식은 JP 페이스가 맡는다).
+   ⚠**같은 삼각형이 아니다 — 크기를 같이 안 고치면 줄이 커진다.** 실측(400 · 원본 hmtx/glyf):
+   진폭 **1.000em**(全角 · › 0.30em 의 3.3배) · 잉크 **0.746×0.856em**(plex-jp) / **0.814×0.940em**(noto-jp)
+   — **대문자 A(0.70~0.73em)보다 크고** 이미 쓰는 →(0.434/0.466em)의 **약 2배**다.
+   게다가 **베이스라인 아래로 0.047~0.093em 내려간다**(이 줄들은 전부 align-items:baseline 이다).
+   → **font-size 를 --fs-note(11px) → --fs-min(9.5px)** 로 내린다: 잉크 **8.1~8.9px** ·
+   내려가는 양 **0.4~0.9px**(반올림되면 사라지는 크기)로 줄어든다.
+   ⚠**브라우저로는 확인하지 못했다** — 옛 "▸" 는 서체에 없어 **시스템 폰트로 떨어져 있었고**(그래서 게이트가 잡았다)
+   그 크기를 잴 방법이 없다. 남는 위험 둘: ⑴ **그래도 옛 모습보다 크다** — 소삼각형의 잉크를
+   흔한 값(약 0.42em)으로 **가정하면** 11px 에서 4.6px 이었을 테니 **1.8배쯤**인데, ⚠**그 4.6px 은 실측이 아니라 가정이다** ·
+   ⑵ **U+25B6/U+25C0 은 이모지 표현을 가진 글자**라, @font-face 배선 전에는 환경에 따라
+   **색 이모지 폰트로 떨어질 수 있다**(옛 U+25B8 에는 그 성질이 없었다).
+   ⚠**U+FE0E(VS15)로 못 막는다** — 그 글자도 서체에 없어 게이트가 다시 선다(isNonGlyph 에 예외를 더하지 마라).
+   → **더 가볍게 가려면 ›/‹(U+203A/U+2039)** 다. **네 서체 전부**가 갖고(라틴 포함)
+   진폭 0.30em · 잉크 0.41~0.43em · **베이스라인 아래로 안 내려가고** 이모지 표현이 없다 —
+   즉 지금 CSS 가 전제한 그 치수다. 바꿀 때는 여기와 아래 .cmprow 두 줄을 **같이** 고쳐라. */
+.pickfold>summary::after{content:"▶" / "";margin-left:auto;font-size:var(--fs-min);color:var(--tx-3);
   transition:transform var(--t1) var(--e-out)}
 .pickfold[open]>summary::after{transform:rotate(90deg)}
 /* 눌리는 자리임을 손에 알린다 — 라벨만으로는 눌러도 되는지 알 수 없다.
@@ -1954,10 +1985,13 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
 .cmprow .vb{grid-column:3;text-align:left}
 .cmprow .den{display:block;font-size:var(--fs-col);color:var(--tx-3);margin-top:2px;font-variant-numeric:tabular-nums}
 /* ⚠**이긴 쪽에만 표시를 붙인다.** 양쪽에 붙이면 아무 말도 안 한 것과 같다 */
+/* ⚠**~~"◂"/"▸"~~ 는 네 서체 어디에도 없었다** — 사유·실측·대안은 위 .pickfold>summary::after 에 한 벌로 적었다.
+   여기도 같은 처방이다: **"◀"(U+25C0) / "▶"(U+25B6)** + **font-size --fs-data(12px) → --fs-min(9.5px)**.
+   ⚠이 자리는 값이 **17px** 이라 표식이 값보다 커 보이면 안 된다 — 잉크 8.1~8.9px 로 값의 약 절반이다. */
 .cmprow .win{font-weight:var(--w-bold)}
-.cmprow .win::after{content:"◂";margin-left:5px;color:var(--g-vgood);font-size:var(--fs-data)}
+.cmprow .win::after{content:"◀";margin-left:5px;color:var(--g-vgood);font-size:var(--fs-min)}
 .cmprow .vb.win::after{content:none}
-.cmprow .vb.win::before{content:"▸";margin-right:5px;color:var(--g-vgood);font-size:var(--fs-data)}
+.cmprow .vb.win::before{content:"▶";margin-right:5px;color:var(--g-vgood);font-size:var(--fs-min)}
 .cmprow .g{display:inline-block;width:14px;height:3px;vertical-align:2px;margin-left:5px;background:var(--g-avg)}
 .cmprow .g.g-veryGood{background:var(--g-vgood)}
 .cmprow .g.g-good{background:var(--g-good)}
@@ -1979,8 +2013,14 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
 /* ── 색인 ────────────────────────────────────────────────── */
 .find{padding:14px var(--pad);border-bottom:var(--rw-row) solid var(--hair)}
 .find label{display:block;font-size:var(--fs-label);letter-spacing:.16em;color:var(--tx-3);margin-bottom:6px}
+/* ⚠**검색칸(.qbox input)과 같은 결함**(2026-09-08 · design-auditor · WCAG 2.2 SC 1.4.11).
+   .find 는 배경을 안 깔아 바깥면이 --page 이고 칸의 채움은 --panel 이라 **채움 대 바깥면 1.044 / 1.084** —
+   면으로는 경계가 없고, 그 하나뿐인 테두리가 --hair-2 로 **1.580 / 1.557**(채움 기준) ·
+   **1.514 / 1.688**(바깥면 기준) 이었다. 셋 다 3:1 미만이다.
+   → **--tx-3**: 채움 기준 **5.125 / 5.072** · 바깥면 기준 **4.910 / 5.499** 로 판정 기준 1 을 두 테마에서 만족한다.
+   ⚠**hover 를 더하지 않는다** — 이 칸에는 원래 hover 규칙이 없었고, 없는 것이 결함은 아니다. */
 .find input{font:inherit;font-size:15px;padding:var(--s2) 10px;width:100%;max-width:420px;background:var(--panel);
-  color:var(--tx);border:var(--rw-row) solid var(--hair-2)}
+  color:var(--tx);border:var(--rw-row) solid var(--tx-3)}
 .chips{display:flex;gap:5px;flex-wrap:wrap;margin-top:11px}
 /* ⚠**~~transition:all~~ 이었다**(2026-08-25 · 감사 P3 #36). 둘이 나빴다:
    ⑴ **지금 바꾸는 것 넷 중 font-weight 까지 애니메이트했다** — 눌림에서 글자 굵기가
