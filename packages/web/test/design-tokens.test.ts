@@ -54,7 +54,7 @@ function rootTokens(): Map<string, string> {
 const TOK = rootTokens();
 
 const SPACE_PROP =
-  /^(padding|margin|gap|row-gap|column-gap|padding-(top|right|bottom|left)|margin-(top|right|bottom|left)|padding-inline|padding-block|scroll-margin-top|scroll-padding-left)$/;
+  /^(padding|margin|gap|row-gap|column-gap|padding-(top|right|bottom|left)|margin-(top|right|bottom|left)|padding-inline|padding-block|scroll-margin-top|scroll-padding-top|scroll-padding-left)$/;
 const BORDER_PROP = /^border(-(top|right|bottom|left))?(-width)?$/;
 
 /**
@@ -156,12 +156,19 @@ test("⚠모션 시간이 리터럴로 남아 있지 않다 — 시간은 토큰
  */
 const BUDGET = {
   /**
-   * ⚠**남은 1건은 리듬이 아니라 기하다**: `.seasons{scroll-padding-left:84px}` —
-   * sticky 라벨(「シーズン」)의 **폭**에서 나온 수라 간격 계단에 올릴 것이 아니다.
-   * 계단에 억지로 올리면 라벨 밑에 연도가 다시 겹친다(2026-08-18 에 고친 그 결함).
-   * **라벨 폭을 재는 토큰이 생기면 그때 0 이 된다.**
+   * ⚠**둘 다 리듬이 아니라 기하다** — 척도(`--s*`)에 올릴 값이 아니라서 예외로 남긴다.
+   *
+   * 1. `.seasons{scroll-padding-left:84px}` — sticky 라벨(「シーズン」)의 **폭**에서 나온 수.
+   *    계단에 억지로 올리면 라벨 밑에 연도가 다시 겹친다(2026-08-18 에 고친 그 결함).
+   *    **라벨 폭을 재는 토큰이 생기면 그때 0 이 된다.**
+   * 2. `html:has(.hjump){scroll-padding-top:calc(var(--topbar) + 52px)}` —
+   *    **`.hjump` 자신의 실제 높이**(sticky 두 겹째)라서 `+var(--s4)`(형제 규칙 둘의 8px)로
+   *    바꾸면 앵커가 그 막대 뒤로 숨는다. **2026-09-08 검토가 잡은 사각지대**:
+   *    `SPACE_PROP` 이 `scroll-margin-top`·`scroll-padding-left`는 보면서 `scroll-padding-top`
+   *    은 안 봐서 이 줄이 한 번도 안 세어졌다 — 이번에 정규식에 추가해 보이게 했다.
+   *    **`.hjump` 높이를 재는 토큰(`.rail`의 `--rail`과 같은 자리)이 생기면 그때 0 이 된다.**
    */
-  space: 1,
+  space: 2,
   fontSize: 0,
   fontWeight: 0,
   borderWidth: 0,   // ⚠**1단계부터 0 이었다** — border 굵기는 전부 --rw-* 에서 나온다
@@ -203,4 +210,14 @@ test("⚠척도 이탈 예산 — 늘어나지 않는다", () => {
         + `  예: ${[...new Set(off[k])].slice(0, 8).join(" / ")}`,
     );
   }
+  /* ⚠**위 루프는 상한(`<=`)만 본다** — 감지 정규식이 후퇴해 `space`가 실제보다 적게 잡혀도
+     예산 안이면 조용히 통과한다. **그게 정확히 이 파일이 고친 사각지대의 모양이다**
+     (`SPACE_PROP`이 `scroll-padding-top`을 안 보던 것 · 2026-09-08).
+     `space`만은 예외 목록과 실측이 **정확히** 맞아야 그 재발을 잡는다. */
+  assert.equal(
+    count("space"),
+    BUDGET.space,
+    `간격 이탈이 ${count("space")}건인데 예산은 ${BUDGET.space}건이다 — 둘이 정확히 같지 않으면 `
+      + "SPACE_PROP 감지가 예외 목록과 어긋난 것이다(새 값이 생겼거나, 잡던 것을 놓쳤거나).",
+  );
 });
