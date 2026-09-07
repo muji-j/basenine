@@ -70,7 +70,9 @@ test("⚠상태가 CSS 에서도 갈린다 — 표식만 붙고 규칙이 0건�
   const base = /\.empty\[data-state\]\{([^}]*)\}/.exec(rules)?.[1] ?? "";
   assert.notEqual(base, "", ".empty[data-state] 규칙이 없다 — 표식이 아무 일도 안 한다");
   assert.match(base, /background:var\(--panel-2\)/);
-  assert.match(base, /border-left:3px/);
+  // ⚠**굵기가 토큰이 됐다**(2026-09-07 토큰 1단계 · --rw-mast:3px). 여기서 묻는 것은
+  // 「값이 3인가」가 아니라 **「기둥 굵기의 왼쪽 괘가 있는가」**다.
+  assert.match(base, /border-left:(?:3px|var\(--rw-mast\))/);
   // ⚠**판정선은 .dnolot 이다**(감사) — 그보다 약하면 「가장 안 중요한 사실이 가장 진한」 상태로 돌아간다
   const nolot = /\.dnolot\{([^}]*)\}/.exec(rules)?.[1] ?? "";
   assert.doesNotMatch(nolot, /background:/, ".dnolot 이 바탕을 얻었다 — 무게가 다시 뒤집힌다");

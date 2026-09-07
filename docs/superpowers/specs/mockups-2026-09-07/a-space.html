@@ -1,0 +1,926 @@
+<!doctype html>
+<!--
+  ============================================================================
+  A안 — 「余白で組む」 / 선이 아니라 공간으로 나눈다
+  ----------------------------------------------------------------------------
+  한 줄 요약: 테두리를 전부 걷어내고, 묶음은 「톤 한 단계 + 여백의 크기 차이」로만
+  만든다 — 선은 데이터를 나를 때만(승패 막대·득실 막대·팀 색) 살아남는다.
+  ============================================================================
+  불변식 3개 (CSS 에서 검증 가능하게 토큰으로 박아 뒀다)
+    ① 한 묶음 안의 최대 간격(--sp-group 18px) < 묶음 사이 최소 간격(--sp-block 40px)
+    ② 높이(elevation)는 톤으로만 표현한다. stroke 로 표현하지 않는다.
+       s0(지면) < s1(블록) < s2(1위행) < hov(호버)  — 4단 사다리, 양 테마 동일
+    ③ border-radius 는 층을 뜻한다. 0=종이(내용) / 4px=누르는 것 / 9px=떠 있는 것
+  ============================================================================
+-->
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>2025年 BaseNine — A안 余白で組む</title>
+<meta name="color-scheme" content="light dark">
+<style>
+/* ==========================================================================
+   1. TOKENS
+   ========================================================================== */
+:root{
+  /* --- 표면 사다리: 높이는 톤이다. 어느 토큰도 선이 아니다. ------------- */
+  --s0:#f2f0ea;          /* 지면. 페이지 그 자체 */
+  --s1:#fbfaf7;          /* 블록 표면 (한 단 올라옴) */
+  --s2:#fefdfb;          /* 1위 행·스티키 셀 (두 단) */
+  --hov:#ffffff;         /* 호버 (세 단) — 어떤 행에서도 반드시 보인다 */
+  --sunk:#eae7df;        /* 각주·트랙 (한 단 내려감) */
+
+  /* --- 잉크 ------------------------------------------------------------- */
+  --ink:#17171a;         /* 본문·값 */
+  --ink-2:#54544e;       /* 라벨·각주 */
+  --ink-3:#67665f;       /* 분모·단위 */
+
+  /* --- 도메인 색: 감청(勝) · 클레이(敗) · 흙(分) ------------------------ */
+  --navy:#0d3b5c;        /* 勝 막대 */
+  --clay:#b8651f;        /* 敗 막대 */
+  --tie:#8b877d;         /* 分 막대 */
+  --up:#1b6ca8;          /* 득점차 + (텍스트) */
+  --dn:#8f4a12;          /* 득점차 − (텍스트) */
+  --warn:#9d3f2a;        /* 수집실패·주의 */
+  --ok:#37613f;
+
+  /* --- 타입: 한 패밀리, 6단계 ------------------------------------------ */
+  --f:system-ui,-apple-system,"Segoe UI","Hiragino Kaku Gothic ProN","Yu Gothic Medium","Yu Gothic","Noto Sans JP",Meiryo,sans-serif;
+  --t-xs:10.5px;   /* 단위·분모 */
+  --t-sm:12px;     /* 표 머리·보조 */
+  --t-md:13px;     /* 표 본문·목록 */
+  --t-lg:15px;     /* 행 안의 주역 값 */
+  --t-xl:19px;     /* 스코어 */
+  --t-2xl:clamp(23px,4.4vw,29px);
+
+  /* --- 간격: 이름이 역할이다. ①의 불변식을 여기서 보증한다 ------------- */
+  --sp-hair:2px;   /* 숫자 ↔ 그 단위 */
+  --sp-tight:6px;  /* 라벨 ↔ 값 */
+  --sp-item:10px;  /* 행 내부 */
+  --sp-group:18px; /* 블록 안의 부분들 사이 (제목↔표, 표↔각주) */
+  --sp-block:40px; /* 블록 사이  ← 반드시 --sp-group 보다 크다 */
+  --sp-zone:64px;  /* 본문 ↔ 푸터 */
+
+  --pad:clamp(14px,3.6vw,30px);   /* 블록 내부 좌우 */
+  --edge:clamp(10px,2.4vw,26px);  /* 블록 바깥 좌우 — 390 에서도 0 이 아니다 */
+  --measure:min(1180px,100%);
+
+  /* --- 반지름: 층을 뜻한다 --------------------------------------------- */
+  --r-surface:0;   /* 종이 */
+  --r-control:4px; /* 누르는 것 */
+  --r-float:9px;   /* 떠 있는 것 */
+
+  /* --- 모션 ------------------------------------------------------------- */
+  --e:cubic-bezier(.22,.61,.36,1);
+  --t-fast:110ms;  /* 피드백 */
+  --t-mid:200ms;   /* 열림 */
+  --t-data:620ms;  /* 단 하나의 연출 = 순위 막대 */
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --s0:#131418; --s1:#1a1c21; --s2:#21242a; --hov:#282c33; --sunk:#0e0f13;
+    --ink:#eae9e4; --ink-2:#adaca4; --ink-3:#96948c;
+    --navy:#bfe0f7; --clay:#cf7c2e; --tie:#6d727c;
+    --up:#6fb2e4; --dn:#e09a58; --warn:#e79379; --ok:#93c5a0;
+  }
+}
+:root[data-theme="dark"]{
+  --s0:#131418; --s1:#1a1c21; --s2:#21242a; --hov:#282c33; --sunk:#0e0f13;
+  --ink:#eae9e4; --ink-2:#adaca4; --ink-3:#96948c;
+  --navy:#bfe0f7; --clay:#cf7c2e; --tie:#6d727c;
+  --up:#6fb2e4; --dn:#e09a58; --warn:#e79379; --ok:#93c5a0;
+}
+
+/* ==========================================================================
+   2. BASE
+   ========================================================================== */
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;scroll-padding-top:96px}
+body{margin:0;background:var(--s0);color:var(--ink);font-family:var(--f);
+  font-size:var(--t-md);line-height:1.6;font-feature-settings:"palt" 1;
+  overflow-wrap:break-word;-webkit-font-smoothing:antialiased}
+a{color:inherit}
+:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-control)}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.skip{position:absolute;left:-9999px;top:0;z-index:60;background:var(--ink);color:var(--s1);
+  padding:10px 16px;border-radius:var(--r-control)}
+.skip:focus{left:8px;top:8px}
+
+/* ==========================================================================
+   3. TOPBAR — 경계선 대신 「스크롤 엣지」
+   HIG Layout: "Differentiate controls from content. …Instead of a background,
+   use a scroll edge effect to provide a transition between content and the
+   control area." → 문서 맨 위에서는 선이 없고, 내용이 밑으로 지나가기
+   시작할 때만 그림자가 켜진다. 근거가 있는 유일한 그림자다.
+   ========================================================================== */
+.top-sentinel{position:absolute;top:0;height:1px;width:1px}
+.topbar{position:sticky;top:0;z-index:30;background:var(--s1);
+  display:flex;align-items:center;gap:12px;min-height:52px;
+  padding:8px max(var(--edge),calc((100% - var(--measure))/2));}
+.topbar::after{content:"";position:absolute;left:0;right:0;top:100%;height:10px;pointer-events:none;
+  background:linear-gradient(to bottom,rgb(0 0 0 / .10),rgb(0 0 0 / 0));
+  opacity:0;transition:opacity 180ms var(--e)}
+:root[data-scrolled] .topbar::after{opacity:1}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .topbar::after{background:linear-gradient(to bottom,rgb(0 0 0 / .5),rgb(0 0 0 / 0))}}
+:root[data-theme="dark"] .topbar::after{background:linear-gradient(to bottom,rgb(0 0 0 / .5),rgb(0 0 0 / 0))}
+
+.brand{flex:0 0 auto;font-size:14px;font-weight:700;letter-spacing:.1em;text-decoration:none;white-space:nowrap}
+.brand b{display:block;color:var(--ink-3);font-weight:400;letter-spacing:.06em;font-size:var(--t-xs);margin-top:1px}
+.qbox{flex:1 1 190px;min-width:0;max-width:300px}
+.qbox input{font:inherit;font-size:var(--t-md);width:100%;padding:7px 11px;color:var(--ink);
+  background:var(--s0);border:0;border-radius:var(--r-control);
+  transition:background var(--t-fast) var(--e),box-shadow var(--t-fast) var(--e)}
+.qbox input::placeholder{color:var(--ink-3)}
+.qbox input:hover{background:var(--sunk)}
+.qbox input:focus{background:var(--hov);outline:2px solid var(--ink);outline-offset:0}
+
+/* 넓은 폭: 내비는 한 줄. 좁은 폭: 디스클로저 (가로 스크롤 0) */
+.tnav{display:flex;gap:2px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
+.tnav a{font-size:var(--t-sm);padding:6px 9px;text-decoration:none;color:var(--ink-2);white-space:nowrap;
+  border-radius:var(--r-control);
+  transition:color var(--t-fast) var(--e),background var(--t-fast) var(--e)}
+.tnav a:hover{color:var(--ink);background:var(--s0)}
+.tnav a[aria-current="page"]{color:var(--ink);font-weight:700;background:var(--sunk)}
+.menu{display:none;margin-left:auto;position:relative}
+.menu>summary{list-style:none;cursor:pointer;font-size:var(--t-sm);padding:7px 12px;
+  color:var(--ink-2);background:var(--s0);border-radius:var(--r-control);white-space:nowrap;
+  transition:background var(--t-fast) var(--e),color var(--t-fast) var(--e)}
+.menu>summary::-webkit-details-marker{display:none}
+.menu>summary:hover{background:var(--sunk);color:var(--ink)}
+.menu[open]>summary{background:var(--ink);color:var(--s1)}
+.menu-panel{position:absolute;right:0;top:calc(100% + 8px);z-index:40;width:min(280px,86vw);
+  display:grid;grid-template-columns:1fr 1fr;gap:2px;padding:8px;
+  background:var(--hov);border-radius:var(--r-float);
+  box-shadow:0 1px 2px rgb(0 0 0 / .08),0 10px 26px -8px rgb(0 0 0 / .30);
+  animation:pop var(--t-mid) var(--e) both}
+.menu-panel a{padding:9px 10px;font-size:var(--t-md);text-decoration:none;color:var(--ink);
+  border-radius:var(--r-control)}
+.menu-panel a:hover{background:var(--s0)}
+.menu-panel a[aria-current="page"]{background:var(--sunk);font-weight:700}
+.tbtn{flex:0 0 auto;font:inherit;font-size:var(--t-sm);padding:7px 10px;cursor:pointer;
+  color:var(--ink-2);background:transparent;border:0;border-radius:var(--r-control);
+  transition:background var(--t-fast) var(--e),color var(--t-fast) var(--e)}
+.tbtn:hover{background:var(--s0);color:var(--ink)}
+
+/* ==========================================================================
+   4. IDENTITY — 시즌 띠(가로 스크롤 밴드)를 없애고 제목 줄에 접어 넣었다
+   ========================================================================== */
+.wrap{max-width:var(--measure);margin:0 auto;padding:0 var(--edge)}
+.idline{display:flex;align-items:flex-end;gap:var(--sp-group);flex-wrap:wrap;
+  padding:calc(var(--sp-block) - 8px) var(--pad) var(--sp-group)}
+.idtext{min-width:0;flex:1 1 auto}
+.idtext h1{margin:0;font-size:var(--t-2xl);font-weight:700;letter-spacing:.03em;line-height:1.15}
+.idmeta{margin:var(--sp-tight) 0 0;display:flex;align-items:center;gap:var(--sp-item);flex-wrap:wrap;
+  font-size:var(--t-sm);color:var(--ink-2)}
+.idmeta .asof{color:var(--ink-3);font-variant-numeric:tabular-nums}
+
+/* 4상태 — 색이 아니라 「말」로 구분한다(원칙 유지). 톤은 보조. */
+.state{font-size:var(--t-sm);padding:3px 9px;border-radius:var(--r-control);
+  background:var(--sunk);color:var(--ink-2)}
+.state.loading{color:var(--ink-3)}
+.state.empty{color:var(--ink-2)}
+.state.failed{background:var(--warn);color:var(--s1);font-weight:700}
+.state.offseason{color:var(--ink-2)}
+
+.yrs{display:flex;align-items:baseline;gap:var(--sp-hair);flex-wrap:wrap;justify-content:flex-end}
+.yrs .lab{font-size:var(--t-xs);letter-spacing:.14em;color:var(--ink-3);margin-right:var(--sp-tight)}
+.yrs a{font-size:var(--t-sm);padding:4px 8px;text-decoration:none;color:var(--ink-2);
+  border-radius:var(--r-control);font-variant-numeric:tabular-nums;
+  transition:color var(--t-fast) var(--e),background var(--t-fast) var(--e)}
+.yrs a:hover{color:var(--ink);background:var(--s1)}
+.yrs a[aria-current="page"]{color:var(--ink);font-weight:700;background:var(--s1)}
+.yrfold{display:none;position:relative}
+.yrfold>summary{list-style:none;cursor:pointer;font-size:var(--t-sm);padding:6px 10px;
+  background:var(--s1);color:var(--ink);border-radius:var(--r-control);font-weight:700;
+  font-variant-numeric:tabular-nums}
+.yrfold>summary::-webkit-details-marker{display:none}
+.yrfold>summary::after{content:"▾";margin-left:6px;color:var(--ink-3);font-weight:400}
+.yrfold[open]>summary::after{content:"▴"}
+.yrpanel{position:absolute;left:0;top:calc(100% + 6px);z-index:25;
+  display:grid;grid-template-columns:repeat(3,minmax(74px,1fr));gap:2px;padding:8px;
+  background:var(--hov);border-radius:var(--r-float);
+  box-shadow:0 1px 2px rgb(0 0 0 / .08),0 10px 26px -8px rgb(0 0 0 / .30);
+  animation:pop var(--t-mid) var(--e) both}
+.yrpanel a{padding:8px 6px;text-align:center;font-size:var(--t-md);text-decoration:none;
+  color:var(--ink);border-radius:var(--r-control);font-variant-numeric:tabular-nums}
+.yrpanel a:hover{background:var(--s0)}
+.yrpanel a[aria-current="page"]{background:var(--sunk);font-weight:700}
+
+/* ==========================================================================
+   5. 페이지 안 이동 — 「각진 상자들」을 지우고 조용한 글자 줄로
+   ========================================================================== */
+.hjump{position:sticky;top:52px;z-index:20;background:var(--s0);
+  display:flex;flex-wrap:wrap;gap:var(--sp-tight) var(--sp-group);
+  padding:var(--sp-item) var(--pad) calc(var(--sp-item) + 2px)}
+.hjump::after{content:"";position:absolute;left:0;right:0;top:100%;height:8px;pointer-events:none;
+  background:linear-gradient(to bottom,rgb(0 0 0 / .07),rgb(0 0 0 / 0));
+  opacity:0;transition:opacity 180ms var(--e)}
+:root[data-scrolled] .hjump::after{opacity:1}
+.hjump a{font-size:var(--t-md);color:var(--ink-2);text-decoration:none;padding:2px 0;
+  transition:color var(--t-fast) var(--e),box-shadow var(--t-fast) var(--e)}
+.hjump a:hover{color:var(--ink);box-shadow:inset 0 -2px 0 var(--ink-3)}
+.hjump a[aria-current="true"]{color:var(--ink);font-weight:700;box-shadow:inset 0 -2px 0 var(--clay)}
+@media (pointer:coarse){.hjump{gap:var(--sp-item) var(--sp-group)}.hjump a{padding:5px 0}}
+
+/* ==========================================================================
+   6. BLOCK — 테두리 0. 지면(s0) 위에 한 단 올라온 종이(s1).
+      묶음은 「톤 한 단 + 40px 의 지면」이 만든다.
+   ========================================================================== */
+.block{background:var(--s1);padding:26px var(--pad) 28px;margin:0 0 var(--sp-block);
+  border-radius:var(--r-surface)}
+.block>h2{margin:0 0 var(--sp-group);font-size:14px;font-weight:700;letter-spacing:.02em;
+  color:var(--ink);display:flex;align-items:baseline;gap:var(--sp-item);flex-wrap:wrap}
+.block>h2 .qt{font-size:var(--t-sm);font-weight:400;color:var(--ink-3);letter-spacing:0}
+/* 앵커로 뛰어온 블록은 한 단 더 떠올랐다가 가라앉는다 — 「어디에 도착했는지」의 피드백 */
+.block.flash{animation:landed 900ms var(--e) both}
+@keyframes landed{0%{background:var(--hov)}60%{background:var(--hov)}100%{background:var(--s1)}}
+
+/* ==========================================================================
+   7. TABLE — th/td 의 border 를 전부 뺐다.
+      행 구분 = 지면 톤으로 「가라앉는」 짝수 행 + 호버 시 한 단 떠오름.
+      표는 width:auto — 1180px 끝까지 늘어나 눈이 멀리 가던 문제를 없앤다.
+   ========================================================================== */
+.scroller{position:relative;overflow-x:auto;overscroll-behavior-x:contain;
+  -webkit-overflow-scrolling:touch;scrollbar-width:thin}
+.scroller::after{content:"";position:sticky;right:0;top:0;float:right;
+  width:28px;height:1px;pointer-events:none}
+.scroller:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+/* 오른쪽 가장자리 페이드 — 「더 있다」를 말한다. 더 없으면 꺼진다.
+   HIG Layout: "you need to indicate that there are additional items that
+   aren't currently visible … display parts of items to hint that people can
+   reveal additional content by interacting with the view, such as by scrolling." */
+.swrap{position:relative}
+.swrap::after,.swrap::before{content:"";position:absolute;top:0;bottom:0;width:30px;
+  pointer-events:none;opacity:0;transition:opacity 180ms var(--e);z-index:3}
+.swrap::after{right:0;background:linear-gradient(to left,var(--s1),transparent)}
+.swrap::before{left:0;background:linear-gradient(to right,var(--s1),transparent)}
+.swrap[data-more]::after{opacity:1}
+.swrap[data-x]::before{opacity:1}
+.hint{margin:var(--sp-tight) 0 0;font-size:var(--t-xs);color:var(--ink-3);
+  transition:opacity var(--t-fast) var(--e)}
+.swrap[data-x] .hint{opacity:0}
+@media (min-width:761px){.hint{display:none}}
+
+table{border-collapse:separate;border-spacing:0;width:auto;font-size:var(--t-md);
+  font-variant-numeric:tabular-nums}
+th,td{padding:7px 11px;text-align:right;white-space:nowrap;border:0;
+  background:var(--row,var(--s1))}
+th{font-size:var(--t-sm);font-weight:600;color:var(--ink-2);letter-spacing:.04em;
+  padding-bottom:calc(var(--sp-item) + 1px)}   /* 머리↔몸은 선이 아니라 공백이 가른다 */
+td.l,th.l{text-align:left}
+tbody tr{--row:var(--s1);transition:none}
+tbody tr:nth-child(even){--row:var(--s0)}      /* 짝수 행은 지면으로 가라앉는다 */
+tbody tr.lead{--row:var(--s2)}                 /* 1위는 한 단 떠 있다 */
+tbody tr:hover{--row:var(--hov)}
+tbody td{transition:background var(--t-fast) var(--e)}
+td a{color:inherit;text-decoration:none;box-shadow:inset 0 -1px 0 rgb(128 128 128 / .45);
+  transition:box-shadow var(--t-fast) var(--e)}
+td a:hover{box-shadow:inset 0 -1px 0 currentColor}
+.den{font-size:var(--t-xs);color:var(--ink-3);margin-left:var(--sp-hair)}
+.b{font-size:var(--t-lg);font-weight:700}
+
+/* --- 용어 버튼 --- */
+.term{font:inherit;font-size:inherit;color:inherit;background:transparent;border:0;padding:0;
+  cursor:help;box-shadow:inset 0 -1px 0 rgb(128 128 128 / .55);
+  transition:box-shadow var(--t-fast) var(--e)}
+.term:hover{box-shadow:inset 0 -2px 0 var(--clay)}
+th .term{font-weight:600}
+#tip{position:absolute;z-index:50;max-width:min(320px,80vw);padding:11px 13px;
+  background:var(--hov);color:var(--ink);font-size:var(--t-md);line-height:1.65;
+  border-radius:var(--r-float);
+  box-shadow:0 1px 2px rgb(0 0 0 / .10),0 12px 30px -10px rgb(0 0 0 / .35);
+  animation:pop 150ms var(--e) both}
+#tip[hidden]{display:none}
+#tip b{display:block;margin-bottom:4px;letter-spacing:.03em}
+#tip s{display:block;margin-top:5px;text-decoration:none;color:var(--ink-2);font-size:var(--t-sm)}
+
+/* ==========================================================================
+   8. 順位表
+   ========================================================================== */
+.hstand th:nth-child(1),.hstand td:nth-child(1){position:sticky;left:0;z-index:2;
+  width:52px;min-width:52px;padding-left:var(--sp-item);padding-right:var(--sp-tight)}
+.hstand th:nth-child(2),.hstand td:nth-child(2){position:sticky;left:52px;z-index:2;
+  min-width:104px;padding-left:var(--sp-tight)}
+.hstand thead th{z-index:4}
+/* 스티키 열의 그림자도 「내용이 밑으로 지나간다」가 켤 때만 나온다 */
+.swrap[data-x] .hstand th:nth-child(2),.swrap[data-x] .hstand td:nth-child(2){
+  box-shadow:9px 0 9px -9px rgb(0 0 0 / .34)}
+.hstand th:nth-child(2),.hstand td:nth-child(2){transition:box-shadow 180ms var(--e)}
+
+/* 순위 칸이 곧 팀 색이다 — 팀 색 + 그 팀 전용 잉크(12/12 모두 AA 통과, 최저 5.47:1).
+   9px 회색 사각형보다 훨씬 잘 보이고, 「1열이 곧 팀 찾기」가 된다. */
+.hrank i{display:inline-flex;align-items:center;justify-content:center;
+  width:24px;height:24px;font-style:normal;font-weight:700;font-size:var(--t-md);
+  background:var(--chip);color:var(--chip-ink);border-radius:var(--r-surface)}
+tr.lead .hrank i{width:28px;height:28px;font-size:var(--t-lg)}
+.hteam{text-decoration:none;box-shadow:inset 0 -1px 0 rgb(128 128 128 / .45)}
+.hteam:hover{box-shadow:inset 0 -1px 0 currentColor}
+tr.lead .wlnum,tr.lead .b{font-size:var(--t-xl)}
+
+.wl3{min-width:168px}
+.wlnum{font-size:var(--t-lg);font-weight:700}
+.wlnum s{text-decoration:none;font-size:var(--t-xs);font-weight:400;color:var(--ink-3);margin:0 3px 0 1px}
+/* 막대 3구획을 서로 2px 의 「지면」이 가른다 — 선이 아니라 공백이 가른다.
+   그래서 각 구획은 서로가 아니라 배경에 대해서만 3:1 을 만족하면 된다
+   (勝 11.19 / 敗 4.09 / 分 3.43 — 라이트 기준 실측). */
+.wlbar{display:flex;gap:2px;height:6px;margin-top:5px;width:100%;min-width:132px}
+.wlbar i{display:block;height:100%;transform-origin:left center;
+  animation:grow var(--t-data) var(--e) both;animation-delay:calc(var(--r,0) * 45ms)}
+.wlbar .ww{background:var(--navy)}
+.wlbar .wt{background:var(--tie);min-width:2px}
+.wlbar .wl{background:var(--clay)}
+
+.wd{white-space:normal}
+.rdiff{font-size:var(--t-lg);font-weight:700}
+.rdiff.up{color:var(--up)} .rdiff.dn{color:var(--dn)}
+.rdlab{text-decoration:none;font-size:var(--t-xs);letter-spacing:.1em;color:var(--ink-3);margin-left:4px}
+.rdbar{display:block;position:relative;height:6px;margin-top:5px;width:100%;min-width:132px;
+  background:var(--sunk)}
+.rdbar::before{content:"";position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;
+  background:var(--ink-3)}   /* 0점 기준선 — 데이터를 나르는 선이라 살아남는다 */
+.rdbar i{position:absolute;top:0;bottom:0;display:block;
+  animation:grow var(--t-data) var(--e) both;animation-delay:calc(var(--r,0) * 45ms)}
+.rdbar i.up{background:var(--up);transform-origin:left center}
+.rdbar i.dn{background:var(--dn);transform-origin:right center}
+.hstand .den{display:block;margin:3px 0 0}
+.hstand .den s{text-decoration:none;color:var(--ink-3);margin:0 1px 0 0}
+.hstand .den em{font-style:normal;margin-left:6px;color:var(--ink-3)}
+
+/* ==========================================================================
+   9. 直近の結果
+   ========================================================================== */
+.hgames{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:var(--sp-tight) 44px}
+.hgames li{display:flex;align-items:baseline;gap:var(--sp-item);padding:var(--sp-tight) 0}
+.hgames .hg-t{font-size:var(--t-md);color:var(--ink-2)}
+.hgames .hg-s{font-size:var(--t-xl);font-weight:700;font-variant-numeric:tabular-nums}
+.hgames .hg-s s{text-decoration:none;color:var(--ink-3);font-size:var(--t-md);font-weight:400;margin:0 3px}
+.more{margin:var(--sp-group) 0 0;font-size:var(--t-md)}
+.more a{color:var(--ink-2)}
+
+/* ==========================================================================
+   10. 先週の顔 — 선 대신 「정렬」이 목록을 만든다
+   ========================================================================== */
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:var(--sp-group) 48px}
+.wklab{margin:0 0 var(--sp-item);font-size:var(--t-sm);font-weight:700;letter-spacing:.06em;
+  color:var(--ink-2);display:flex;align-items:baseline;gap:var(--sp-tight)}
+.wklab s{text-decoration:none;font-weight:400;letter-spacing:0;color:var(--ink-3);font-size:var(--t-xs)}
+.wklist{list-style:none;margin:0;padding:0;counter-reset:wk}
+.wklist li{display:grid;grid-template-columns:16px minmax(76px,auto) minmax(0,1fr) auto;
+  align-items:baseline;gap:2px var(--sp-item);padding:var(--sp-item) 6px;margin:0 -6px;
+  border-radius:var(--r-surface);transition:background var(--t-fast) var(--e)}
+.wklist li:hover{background:var(--s0)}
+.wklist li::before{counter-increment:wk;content:counter(wk);grid-row:span 2;
+  font-size:var(--t-xs);color:var(--ink-3);font-variant-numeric:tabular-nums;text-align:right}
+.wklist .who{font-size:var(--t-md)}
+.wklist .tm{font-size:var(--t-sm);color:var(--ink-2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wklist .val{font-size:var(--t-lg);font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+.wklist .val s{text-decoration:none;font-size:var(--t-xs);font-weight:400;color:var(--ink-3);
+  letter-spacing:.08em;margin-left:4px}
+.wklist em{grid-column:2 / -1;font-style:normal;font-size:var(--t-sm);color:var(--ink-2);
+  font-variant-numeric:tabular-nums}
+.wkteams{list-style:none;margin:0;padding:0;
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(238px,1fr));gap:0 44px}
+.wkteams li{display:grid;grid-template-columns:minmax(84px,auto) auto minmax(0,1fr);
+  align-items:baseline;gap:var(--sp-item);padding:var(--sp-item) 6px;margin:0 -6px;
+  font-variant-numeric:tabular-nums;transition:background var(--t-fast) var(--e)}
+.wkteams li:hover{background:var(--s0)}
+.wkteams .tm{font-size:var(--t-md)}
+.wkteams b{font-size:var(--t-lg);font-weight:700;white-space:nowrap}
+.wkteams em{font-style:normal;font-size:var(--t-sm);color:var(--ink-3);white-space:nowrap;text-align:right}
+.wkteams em s{text-decoration:none;font-weight:700;font-size:var(--t-md);margin-left:6px}
+.wkteams em s.up{color:var(--up)} .wkteams em s.dn{color:var(--dn)}
+.wkteams em i{font-style:normal;font-size:var(--t-xs);letter-spacing:.1em;margin-left:3px}
+.sub-h{margin:var(--sp-block) 0 var(--sp-item)}
+
+/* 팀 색 점 — 순위표 밖에서는 이름 옆의 작은 표식으로만 쓴다.
+   ⚠정보를 색만으로 나르지 않는다: 팀 이름이 항상 글자로 함께 있다. */
+.dot{display:inline-block;width:8px;height:8px;margin-right:6px;vertical-align:1px;
+  background:var(--chip);border-radius:var(--r-surface)}
+
+/* ==========================================================================
+   11. 각주 — 지우지 않는다. 「읽히게」 만든다.
+       11px/tx-3 → 13px/ink-2, 행간 1.85, 가라앉은 재질(sunk).
+       테두리가 아니라 재질이 「여기는 잔글씨」라고 말한다.
+   ========================================================================== */
+.note{margin:var(--sp-group) 0 0;padding:15px 17px;background:var(--sunk);
+  border-radius:var(--r-surface);
+  font-size:var(--t-md);line-height:1.85;color:var(--ink-2);max-width:66ch}
+.note b{color:var(--ink);font-weight:700}
+.note + .note{margin-top:var(--sp-item)}
+
+/* ==========================================================================
+   12. FIND / FOOT
+   ========================================================================== */
+.find{display:flex;flex-wrap:wrap;gap:var(--sp-tight) var(--sp-group);
+  padding:0 var(--pad) var(--sp-block);font-size:var(--t-md)}
+.find a{color:var(--ink-2);text-decoration:none;box-shadow:inset 0 -1px 0 rgb(128 128 128 / .4);
+  transition:color var(--t-fast) var(--e),box-shadow var(--t-fast) var(--e)}
+.find a:hover{color:var(--ink);box-shadow:inset 0 -1px 0 currentColor}
+.foot{margin-top:var(--sp-zone);padding:0 var(--pad) var(--sp-zone);
+  font-size:var(--t-sm);line-height:1.85;color:var(--ink-2);max-width:74ch}
+.foot a{color:inherit}
+.foot b{color:var(--ink)}
+
+/* ==========================================================================
+   13. NARROW — 가로 스크롤 영역 4개 → 1개
+       내비: 디스클로저 / 시즌 띠: 제목 줄에 접힘 / 앵커 줄: 줄바꿈
+       남는 하나(표)는 「가로로 스크롤할 수 있다」고 말한다.
+   ========================================================================== */
+@media (max-width:760px){
+  .tnav{display:none}
+  .menu{display:block}
+  .yrs{display:none}
+  .yrfold{display:block}
+  .idline{align-items:flex-start;flex-direction:column-reverse;gap:var(--sp-item);
+    padding-top:var(--sp-group)}
+  .hjump{top:52px}
+  :root{--sp-block:26px}      /* ①은 유지: 26 > 18 */
+  .block{padding:20px var(--pad) 22px}
+  .wkteams{gap:0}
+  .cols{gap:var(--sp-group)}
+}
+@media (max-width:420px){
+  .topbar{flex-wrap:wrap;row-gap:8px}
+  .qbox{order:3;flex:1 1 100%;max-width:none}
+  .brand b{display:none}
+}
+
+/* ==========================================================================
+   14. MOTION — 자동 모션은 「순위 막대가 자란다」 하나뿐.
+       나머지는 전부 사람의 동작에 답하는 피드백이다.
+   ========================================================================== */
+@keyframes grow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes pop{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:none}}
+
+/* HIG 접근성: "Replacing transitions in x-, y-, and z-axes with fades to avoid
+   motion" — 전부 1ms 로 죽이지 않는다. 움직임(transform)만 없애고,
+   움직임이 아닌 색·불투명도 피드백은 남긴다. */
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  .wlbar i,.rdbar i{animation:none;transform:none}
+  .menu-panel,.yrpanel,#tip{animation:fadeonly 120ms var(--e) both}
+  .block.flash{animation:landed 500ms linear both}
+  @keyframes fadeonly{from{opacity:0}to{opacity:1}}
+}
+
+/* 강제 색 모드에서도 「묶음」이 남아야 한다 — 톤이 전부 지워지므로 이때만 선을 켠다 */
+@media (forced-colors:active){
+  .block{border:1px solid CanvasText;margin-bottom:20px}
+  th,td{border-bottom:1px solid CanvasText}
+  .note{border:1px solid CanvasText}
+  .hrank i{border:1px solid CanvasText}
+  .hjump a[aria-current="true"]{text-decoration:underline;text-underline-offset:4px}
+}
+</style>
+</head>
+<body>
+<div class="top-sentinel" id="sentinel"></div>
+<a class="skip" href="#main">本文へ</a>
+
+<header class="topbar">
+  <a class="brand" href="#" aria-current="page">BaseNine<b>by Lunomel</b></a>
+  <div class="qbox">
+    <input id="q" type="search" autocomplete="off" placeholder="選手を検索" aria-label="選手を検索">
+  </div>
+  <nav class="tnav" aria-label="主要ページ">
+    <a href="#">球団</a><a href="#">試合</a><a href="#">一覧</a><a href="#">順位</a>
+    <a href="#">対戦</a><a href="#">比較</a><a href="#">他大会</a><a href="#">ドラフト</a>
+    <a href="#">用語</a><a href="#">記録</a>
+  </nav>
+  <details class="menu">
+    <summary aria-label="主要ページのメニュー">メニュー</summary>
+    <nav class="menu-panel" aria-label="主要ページ">
+      <a href="#">球団</a><a href="#">試合</a><a href="#">一覧</a><a href="#">順位</a>
+      <a href="#">対戦</a><a href="#">比較</a><a href="#">他大会</a><a href="#">ドラフト</a>
+      <a href="#">用語</a><a href="#">記録</a>
+    </nav>
+  </details>
+  <button class="tbtn" type="button" id="themeBtn" aria-label="表示テーマ：自動（切り替え）">自動</button>
+</header>
+
+<div class="wrap">
+
+  <header class="idline">
+    <div class="idtext">
+      <h1>2025年 BaseNine</h1>
+      <p class="idmeta">
+        <span>リーグの今を一枚で</span>
+        <span class="asof">2025年10月5日まで</span>
+        <span class="state offseason">終了したシーズンです — 最後の試合は 2025年10月30日</span>
+      </p>
+    </div>
+
+    <nav class="yrs" aria-label="シーズン">
+      <span class="lab">シーズン</span>
+      <a href="#">2026年</a><a href="#" aria-current="page">2025年</a><a href="#">2024年</a><a href="#">2023年</a><a href="#">2022年</a><a href="#">2021年</a><a href="#">2020年</a><a href="#">2019年</a><a href="#">2018年</a>
+    </nav>
+    <details class="yrfold">
+      <summary>シーズン 2025年</summary>
+      <nav class="yrpanel" aria-label="シーズン">
+        <a href="#">2026</a><a href="#" aria-current="page">2025</a><a href="#">2024</a>
+        <a href="#">2023</a><a href="#">2022</a><a href="#">2021</a>
+        <a href="#">2020</a><a href="#">2019</a><a href="#">2018</a>
+      </nav>
+    </details>
+  </header>
+
+  <nav class="hjump" aria-label="このページの中の移動">
+    <a href="#b-hlatest">直近の結果</a><a href="#b-hstand-central">セントラル</a><a href="#b-hstand-pacific">パシフィック</a><a href="#b-hweek">先週の顔</a><a href="#b-hpace">ペース</a><a href="#b-hmile">記録に近づいていた</a><a href="#b-hstreak">続いていた記録</a>
+  </nav>
+
+  <main id="main">
+
+  <!-- ===================== 直近の結果 ===================== -->
+  <section class="block" id="b-hlatest">
+    <h2>2025年10月5日の結果<span class="qt">2試合 · ＠がホーム</span></h2>
+    <ul class="hgames">
+      <li><span class="hg-t">オリックス</span><b class="hg-s">2<s>-</s>1</b><span class="hg-t">＠楽天</span></li>
+      <li><span class="hg-t">ソフトバンク</span><b class="hg-s">5<s>-</s>2</b><span class="hg-t">＠ロッテ</span></li>
+    </ul>
+    <p class="more"><a href="#">この日の詳細</a></p>
+  </section>
+
+  <!-- ===================== セントラル ===================== -->
+  <section class="block" id="b-hstand-central">
+    <h2>セントラル・リーグ</h2>
+    <div class="swrap">
+      <div class="scroller" tabindex="0" role="region" aria-label="セントラル・リーグ順位表（横スクロール）">
+      <table class="hstand">
+        <thead><tr>
+          <th>順位</th><th class="l">球団</th><th class="l">勝敗分</th>
+          <th><button class="term" type="button" data-term="winPct">勝率</button></th>
+          <th>ゲーム差</th><th class="l">得失点</th><th>直近10</th><th>連続</th><th>残り</th><th class="l">全勝〜全敗の勝率</th>
+        </tr></thead>
+        <tbody>
+          <tr class="lead" style="--chip:#f2c800;--chip-ink:#17170f;--r:0">
+            <td class="hrank"><i>1</i></td>
+            <td class="l"><a class="hteam" href="#">阪神</a></td>
+            <td class="l wl3"><span class="wlnum">85<s>勝</s>54<s>敗</s>4<s>分</s></span><span class="wlbar" role="img" aria-label="85勝54敗4分（143試合）"><i class="ww" style="width:59.44%"></i><i class="wt" style="width:2.80%"></i><i class="wl" style="width:37.76%"></i></span></td>
+            <td class="b">.612</td><td>—</td>
+            <td class="l wd"><b class="rdiff up">+144</b><s class="rdlab">点差</s><span class="rdbar" aria-hidden="true"><i class="up" style="left:50%;width:50.00%"></i></span><span class="den">496<s>得</s> 352<s>失</s><em>143試合</em></span></td>
+            <td>4-5-1</td><td>1連勝</td><td>0</td><td class="l">—</td>
+          </tr>
+          <tr style="--chip:#0b5fa5;--chip-ink:#f4f8fb;--r:1">
+            <td class="hrank"><i>2</i></td>
+            <td class="l"><a class="hteam" href="#">DeNA</a></td>
+            <td class="l wl3"><span class="wlnum">71<s>勝</s>66<s>敗</s>6<s>分</s></span><span class="wlbar" role="img" aria-label="71勝66敗6分（143試合）"><i class="ww" style="width:49.65%"></i><i class="wt" style="width:4.20%"></i><i class="wl" style="width:46.15%"></i></span></td>
+            <td class="b">.518</td><td>13</td>
+            <td class="l wd"><b class="rdiff up">+54</b><s class="rdlab">点差</s><span class="rdbar" aria-hidden="true"><i class="up" style="left:50%;width:18.75%"></i></span><span class="den">510<s>得</s> 456<s>失</s><em>143試合</em></span></td>
+            <td>6-3-1</td><td>1連勝</td><td>0</td><td class="l">—</td>
+          </tr>
+          <tr style="--chip:#f4780f;--chip-ink:#1a1005;--r:2">
+            <td class="hrank"><i>3</i></td>
+            <td class="l"><a class="hteam" href="#">巨人</a></td>
+            <td class="l wl3"><span class="wlnum">70<s>勝</s>69<s>敗</s>4<s>分</s></span><span class="wlbar" role="img" aria-label="70勝69敗4分（143試合）"><i class="ww" style="width:48.95%"></i><i class="wt" style="width:2.80%"></i><i class="wl" style="width:48.25%"></i></span></td>
+            <td class="b">.504</td><td>15</td>
+            <td class="l wd"><b class="rdiff up">+2</b><s class="rdlab">点差</s><span class="rdbar" aria-hidden="true"><i class="up" style="left:50%;width:0.69%"></i></span><span class="den">463<s>得</s> 461<s>失</s><em>143試合</em></span></td>
+            <td>5-4-1</td><td>2連勝</td><td>0</td><td class="l">—</td>
+          </tr>
+          <tr style="--chip:#0a2f7a;--chip-ink:#eef3fb;--r:3">
+            <td class="hrank"><i>4</i></td>
+            <td class="l"><a class="hteam" href="#">中日</a></td>
+            <td class="l wl3"><span class="wlnum">63<s>勝</s>78<s>敗</s>2<s>分</s></span><span class="wlbar" role="img" aria-label="63勝78敗2分（143試合）"><i class="ww" style="width:44.06%"></i><i class="wt" style="width:1.40%"></i><i class="wl" style="width:54.55%"></i></span></td>
+            <td class="b">.447</td><td>23</td>
+            <td class="l wd"><b class="rdiff dn">−60</b><s class="rdlab">点差</s><span class="rdbar" aria-hidden="true"><i class="dn" style="right:50%;width:20.83%"></i></span><span class="den">403<s>得</s> 463<s>失</s><em>143試合</em></span></td>
+            <td>5-5-0</td><td>2連敗</td><td>0</td><td class="l">—</td>
+          </tr>
+          <tr style="--chip:#c8102e;--chip-ink:#fff4f5;--r:4">
+            <td class="hrank"><i>5</i></td>
+            <td class="l"><a class="hteam" href="#">広島</a></td>
+            <td class="l wl3"><span class="wlnum">59<s>勝</s>79<s>敗</s>5<s>分</s></span><span class="wlbar" role="img" aria-label="59勝79敗5分（143試合）"><i class="ww" style="width:41.26%"></i><i class="wt" style="width:3.50%"></i><i class="wl" style="width:55.24%"></i></span></td>
+            <td class="b">.428</td><td>25.5</td>
+            <td class="l wd"><b class="rdiff dn">−56</b><s class="rdlab">点差</s><span class="rdbar" aria-hidden="true"><i class="dn" style="right:50%;width:19.44%"></i></span><span class="den">441<s>得</s> 497<s>失</s><em>143試合</em></span></td>
+            <td>1-9-0</td><td>5連敗</td><td>0</td><td class="l">—</td>
+          </tr>
+          <tr style="--chip:#7cab2b;--chip-ink:#12180a;--r:5">
+            <td class="hrank"><i>6</i></td>
+            <td class="l"><a class="hteam" href="#">ヤクルト</a></td>
+            <td class="l wl3"><span class="wlnum">57<s>勝</s>79<s>敗</s>7<s>分</s></span><span class="wlbar" role="img" aria-label="57勝79敗7分（143試合）"><i class="ww" style="width:39.86%"></i><i class="wt" style="width:4.90%"></i><i class="wl" style="width:55.24%"></i></span></td>
+            <td class="b">.419</td><td>26.5</td>
+            <td class="l wd"><b class="rdiff dn">−121</b><s class="rdlab">点差</s><span class="rdbar" aria-hidden="true"><i class="dn" style="right:50%;width:42.01%"></i></span><span class="den">443<s>得</s> 564<s>失</s><em>143試合</em></span></td>
+            <td>6-3-1</td><td>2連勝</td><td>0</td><td class="l">—</td>
+          </tr>
+        </tbody>
+      </table>
+      </div>
+      <p class="hint">← 表は横にスクロールできます →</p>
+    </div>
+  </section>
+
+  <!-- ===================== パシフィック ===================== -->
+  <section class="block" id="b-hstand-pacific">
+    <h2>パシフィック・リーグ</h2>
+    <div class="swrap">
+      <div class="scroller" tabindex="0" role="region" aria-label="パシフィック・リーグ順位表（横スクロール）">
+      <table class="hstand">
+        <thead><tr>
+          <th>順位</th><th class="l">球団</th><th class="l">勝敗分</th>
+          <th><button class="term" type="button" data-term="winPct">勝率</button></th>
+          <th>ゲーム差</th><th class="l">得失点</th><th>直近10</th><th>連続</th><th>残り</th><th class="l">全勝〜全敗の勝率</th>
+        </tr></thead>
+        <tbody>
+          <tr class="lead" style="--chip:#f5c400;--chip-ink:#171509;--r:0">
+            <td class="hrank"><i>1</i></td>
+            <td class="l"><a class="hteam" href="#">ソフトバンク</a></td>
+            <td class="l wl3"><span class="wlnum">87<s>勝</s>52<s>敗</s>4<s>分</s></span><span class="wlbar" role="img" aria-label="87勝52敗4分（143試合）"><i class="ww" style="width:60.84%"></i><i class="wt" style="width:2.80%"></i><i class="wl" style="width:36.36%"></i></span></td>
+            <td class="b">.626</td><td>—</td>
+            <td class="l wd"><b class="rdiff up">+162</b><s class="rdlab">点差</s><span class="rdbar" aria-hidden="true"><i class="up" style="left:50%;width:50.00%"></i></span><span class="den">551<s>得</s> 389<s>失</s><em>143試合</em></span></td>
+            <td>7-3-0</td><td>2連勝</td><td>0</td><td class="l">—</td>
+          </tr>
+          <tr style="--chip:#0b5c9c;--chip-ink:#f2f7fb;--r:1">
+            <td class="hrank"><i>2</i></td>
+            <td class="l"><a class="hteam" href="#">日本ハム</a></td>
+            <td class="l wl3"><span class="wlnum">83<s>勝</s>57<s>敗</s>3<s>分</s></span><span class="wlbar" role="img" aria-label="83勝57敗3分（143試合）"><i class="ww" style="width:58.04%"></i><i class="wt" style="width:2.10%"></i><i class="wl" style="width:39.86%"></i></span></td>
+            <td class="b">.593</td><td>4.5</td>
+            <td class="l wd"><b class="rdiff up">+139</b><s class="rdlab">点差</s><span class="rdbar" aria-hidden="true"><i class="up" style="left:50%;width:42.90%"></i></span><span class="den">548<s>得</s> 409<s>失</s><em>143試合</em></span></td>
+            <td>6-4-0</td><td>1連敗</td><td>0</td><td class="l">—</td>
+          </tr>
+          <tr style="--chip:#1d1f4e;--chip-ink:#eeeff8;--r:2">
+            <td class="hrank"><i>3</i></td>
+            <td class="l"><a class="hteam" href="#">オリックス</a></td>
+            <td class="l wl3"><span class="wlnum">74<s>勝</s>66<s>敗</s>3<s>分</s></span><span class="wlbar" role="img" aria-label="74勝66敗3分（143試合）"><i class="ww" style="width:51.75%"></i><i class="wt" style="width:2.10%"></i><i class="wl" style="width:46.15%"></i></span></td>
+            <td class="b">.529</td><td>13.5</td>
+            <td class="l wd"><b class="rdiff dn">−17</b><s class="rdlab">点差</s><span class="rdbar" aria-hidden="true"><i class="dn" style="right:50%;width:5.25%"></i></span><span class="den">502<s>得</s> 519<s>失</s><em>143試合</em></span></td>
+            <td>7-3-0</td><td>1連勝</td><td>0</td><td class="l">—</td>
+          </tr>
+          <tr style="--chip:#8a1123;--chip-ink:#fdf2f3;--r:3">
+            <td class="hrank"><i>4</i></td>
+            <td class="l"><a class="hteam" href="#">楽天</a></td>
+            <td class="l wl3"><span class="wlnum">67<s>勝</s>74<s>敗</s>2<s>分</s></span><span class="wlbar" role="img" aria-label="67勝74敗2分（143試合）"><i class="ww" style="width:46.85%"></i><i class="wt" style="width:1.40%"></i><i class="wl" style="width:51.75%"></i></span></td>
+            <td class="b">.475</td><td>21</td>
+            <td class="l wd"><b class="rdiff dn">−80</b><s class="rdlab">点差</s><span class="rdbar" aria-hidden="true"><i class="dn" style="right:50%;width:24.69%"></i></span><span class="den">446<s>得</s> 526<s>失</s><em>143試合</em></span></td>
+            <td>3-7-0</td><td>1連敗</td><td>0</td><td class="l">—</td>
+          </tr>
+          <tr style="--chip:#12357f;--chip-ink:#eef2fb;--r:4">
+            <td class="hrank"><i>5</i></td>
+            <td class="l"><a class="hteam" href="#">西武</a></td>
+            <td class="l wl3"><span class="wlnum">63<s>勝</s>77<s>敗</s>3<s>分</s></span><span class="wlbar" role="img" aria-label="63勝77敗3分（143試合）"><i class="ww" style="width:44.06%"></i><i class="wt" style="width:2.10%"></i><i class="wl" style="width:53.85%"></i></span></td>
+            <td class="b">.450</td><td>24.5</td>
+            <td class="l wd"><b class="rdiff dn">−55</b><s class="rdlab">点差</s><span class="rdbar" aria-hidden="true"><i class="dn" style="right:50%;width:16.98%"></i></span><span class="den">410<s>得</s> 465<s>失</s><em>143試合</em></span></td>
+            <td>3-7-0</td><td>2連敗</td><td>0</td><td class="l">—</td>
+          </tr>
+          <tr style="--chip:#22262b;--chip-ink:#f1f2f4;--r:5">
+            <td class="hrank"><i>6</i></td>
+            <td class="l"><a class="hteam" href="#">ロッテ</a></td>
+            <td class="l wl3"><span class="wlnum">56<s>勝</s>84<s>敗</s>3<s>分</s></span><span class="wlbar" role="img" aria-label="56勝84敗3分（143試合）"><i class="ww" style="width:39.16%"></i><i class="wt" style="width:2.10%"></i><i class="wl" style="width:58.74%"></i></span></td>
+            <td class="b">.400</td><td>31.5</td>
+            <td class="l wd"><b class="rdiff dn">−112</b><s class="rdlab">点差</s><span class="rdbar" aria-hidden="true"><i class="dn" style="right:50%;width:34.57%"></i></span><span class="den">441<s>得</s> 553<s>失</s><em>143試合</em></span></td>
+            <td>5-5-0</td><td>1連敗</td><td>0</td><td class="l">—</td>
+          </tr>
+        </tbody>
+      </table>
+      </div>
+      <p class="hint">← 表は横にスクロールできます →</p>
+    </div>
+    <p class="note">残り試合は 143試合 から消化済み（中止を除く）を引いた数です。「全勝〜全敗の勝率」は残りを全部勝った場合と全部負けた場合の勝率で、<b>予想ではなく計算できる範囲</b>です。順位が並んだ球団には「同」を付けています — 当該球団間の対戦成績で決めた上で、それでも並ぶ場合です。マジックナンバーは、点灯していれば<b>球団ページ</b>に出します。引き分けは勝率の分母に入りません（NPBの規定）。</p>
+  </section>
+
+  <!-- ===================== 先週の顔 ===================== -->
+  <section class="block" id="b-hweek">
+    <h2>先週の顔<span class="qt">9/29〜10/5 · 7日</span></h2>
+    <div class="cols">
+      <div>
+        <p class="wklab">打者<s>SRC順</s></p>
+        <ol class="wklist">
+          <li><a class="who" href="#">オスナ</a><span class="tm"><i class="dot" style="--chip:#7cab2b"></i>ヤクルト</span><span class="val">+4.1<s>SRC</s></span><em>17打席 6安打 0本 4打点</em></li>
+          <li><a class="who" href="#">ボイト</a><span class="tm"><i class="dot" style="--chip:#8a1123"></i>楽天</span><span class="val">+4.0<s>SRC</s></span><em>22打席 6安打 0本 3打点</em></li>
+          <li><a class="who" href="#">山川</a><span class="tm"><i class="dot" style="--chip:#f5c400"></i>ソフトバンク</span><span class="val">+3.6<s>SRC</s></span><em>13打席 3安打 2本 6打点</em></li>
+          <li><a class="who" href="#">村上</a><span class="tm"><i class="dot" style="--chip:#7cab2b"></i>ヤクルト</span><span class="val">+3.6<s>SRC</s></span><em>16打席 5安打 2本 4打点</em></li>
+          <li><a class="who" href="#">セデーニョ</a><span class="tm"><i class="dot" style="--chip:#12357f"></i>西武</span><span class="val">+3.6<s>SRC</s></span><em>19打席 7安打 0本 4打点</em></li>
+        </ol>
+      </div>
+      <div>
+        <p class="wklab">投手<s>SRP順</s></p>
+        <ol class="wklist">
+          <li><a class="who" href="#">九里</a><span class="tm"><i class="dot" style="--chip:#1d1f4e"></i>オリックス</span><span class="val">+3.3<s>SRP</s></span><em>9回 5奪三振 自責0</em></li>
+          <li><a class="who" href="#">荘司</a><span class="tm"><i class="dot" style="--chip:#8a1123"></i>楽天</span><span class="val">+2.3<s>SRP</s></span><em>9回 4奪三振 自責1</em></li>
+          <li><a class="who" href="#">與座</a><span class="tm"><i class="dot" style="--chip:#12357f"></i>西武</span><span class="val">+2.2<s>SRP</s></span><em>6回 4奪三振 自責0</em></li>
+          <li><a class="who" href="#">サモンズ</a><span class="tm"><i class="dot" style="--chip:#22262b"></i>ロッテ</span><span class="val">+2.2<s>SRP</s></span><em>6回 4奪三振 自責0</em></li>
+          <li><a class="who" href="#">渡邉</a><span class="tm"><i class="dot" style="--chip:#12357f"></i>西武</span><span class="val">+2.2<s>SRP</s></span><em>6回 0奪三振 自責0</em></li>
+        </ol>
+      </div>
+    </div>
+
+    <p class="wklab sub-h">球団<s>勝-敗-分 · 得点/失点</s></p>
+    <ul class="wkteams">
+      <li><span class="tm"><i class="dot" style="--chip:#1d1f4e"></i>オリックス</span><b>3-2-0</b><em>23<i>得</i> 22<i>失</i><s class="up">+1</s><i>点差</i></em></li>
+      <li><span class="tm"><i class="dot" style="--chip:#7cab2b"></i>ヤクルト</span><b>3-2-0</b><em>22<i>得</i> 21<i>失</i><s class="up">+1</s><i>点差</i></em></li>
+      <li><span class="tm"><i class="dot" style="--chip:#8a1123"></i>楽天</span><b>3-2-0</b><em>13<i>得</i> 15<i>失</i><s class="dn">−2</s><i>点差</i></em></li>
+      <li><span class="tm"><i class="dot" style="--chip:#f4780f"></i>巨人</span><b>2-0-0</b><em>9<i>得</i> 4<i>失</i><s class="up">+5</s><i>点差</i></em></li>
+      <li><span class="tm"><i class="dot" style="--chip:#f5c400"></i>ソフトバンク</span><b>2-1-0</b><em>16<i>得</i> 6<i>失</i><s class="up">+10</s><i>点差</i></em></li>
+      <li><span class="tm"><i class="dot" style="--chip:#12357f"></i>西武</span><b>2-3-0</b><em>21<i>得</i> 25<i>失</i><s class="dn">−4</s><i>点差</i></em></li>
+      <li><span class="tm"><i class="dot" style="--chip:#f2c800"></i>阪神</span><b>1-0-0</b><em>6<i>得</i> 2<i>失</i><s class="up">+4</s><i>点差</i></em></li>
+      <li><span class="tm"><i class="dot" style="--chip:#0b5fa5"></i>DeNA</span><b>1-1-0</b><em>13<i>得</i> 11<i>失</i><s class="up">+2</s><i>点差</i></em></li>
+      <li><span class="tm"><i class="dot" style="--chip:#0b5c9c"></i>日本ハム</span><b>1-1-0</b><em>2<i>得</i> 4<i>失</i><s class="dn">−2</s><i>点差</i></em></li>
+      <li><span class="tm"><i class="dot" style="--chip:#22262b"></i>ロッテ</span><b>1-3-0</b><em>6<i>得</i> 9<i>失</i><s class="dn">−3</s><i>点差</i></em></li>
+      <li><span class="tm"><i class="dot" style="--chip:#0a2f7a"></i>中日</span><b>0-2-0</b><em>4<i>得</i> 9<i>失</i><s class="dn">−5</s><i>点差</i></em></li>
+      <li><span class="tm"><i class="dot" style="--chip:#c8102e"></i>広島</span><b>0-2-0</b><em>2<i>得</i> 9<i>失</i><s class="dn">−7</s><i>点差</i></em></li>
+    </ul>
+    <p class="note"><b>月曜から日曜まで</b>を1週間として、<b>終わった週だけ</b>を出します — 途中の週を出すと、試合数の違う選手が同じ表に並びます。並べ方は当サイトの<b>SRC・SRP</b>（その場面でどれだけ得点を動かしたか。単位は「点」）です。1週間は20〜30打席しかないので、<b>率で並べると「7打数4安打」が1位になります</b> — だから点で並べ、打席数も必ず併記しています。</p>
+  </section>
+
+  <!-- ===================== ペース ===================== -->
+  <section class="block" id="b-hpace">
+    <h2>今シーズンのペース<span class="qt">143試合換算</span></h2>
+    <div class="swrap">
+      <div class="scroller" tabindex="0" role="region" aria-label="今シーズンのペース（横スクロール）">
+      <table>
+        <thead><tr><th class="l">選手</th><th class="l">球団</th><th class="l">項目</th><th>現在</th><th>143試合換算</th><th class="l">次の節目</th></tr></thead>
+        <tbody>
+          <tr><td class="l"><a href="#">佐藤輝</a></td><td class="l"><i class="dot" style="--chip:#f2c800"></i>阪神</td><td class="l">本塁打</td><td class="b">40<span class="den">143試合</span></td><td>40</td><td class="l">50まであと<b>10</b></td></tr>
+          <tr><td class="l"><a href="#">レイエス</a></td><td class="l"><i class="dot" style="--chip:#0b5c9c"></i>日本ハム</td><td class="l">本塁打</td><td class="b">32<span class="den">143試合</span></td><td>32</td><td class="l">40まであと<b>8</b></td></tr>
+          <tr><td class="l"><a href="#">山川</a></td><td class="l"><i class="dot" style="--chip:#f5c400"></i>ソフトバンク</td><td class="l">本塁打</td><td class="b">23<span class="den">143試合</span></td><td>23</td><td class="l">30まであと<b>7</b></td></tr>
+          <tr><td class="l"><a href="#">佐藤輝</a></td><td class="l"><i class="dot" style="--chip:#f2c800"></i>阪神</td><td class="l">打点</td><td class="b">102<span class="den">143試合</span></td><td>102</td><td class="l">120まであと<b>18</b></td></tr>
+          <tr><td class="l"><a href="#">レイエス</a></td><td class="l"><i class="dot" style="--chip:#0b5c9c"></i>日本ハム</td><td class="l">打点</td><td class="b">90<span class="den">143試合</span></td><td>90</td><td class="l">100まであと<b>10</b></td></tr>
+          <tr><td class="l"><a href="#">森下</a></td><td class="l"><i class="dot" style="--chip:#f2c800"></i>阪神</td><td class="l">打点</td><td class="b">89<span class="den">143試合</span></td><td>89</td><td class="l">100まであと<b>11</b></td></tr>
+          <tr><td class="l"><a href="#">周東</a></td><td class="l"><i class="dot" style="--chip:#f5c400"></i>ソフトバンク</td><td class="l">盗塁</td><td class="b">35<span class="den">143試合</span></td><td>35</td><td class="l">40まであと<b>5</b></td></tr>
+          <tr><td class="l"><a href="#">近本</a></td><td class="l"><i class="dot" style="--chip:#f2c800"></i>阪神</td><td class="l">盗塁</td><td class="b">32<span class="den">143試合</span></td><td>32</td><td class="l">40まであと<b>8</b></td></tr>
+          <tr><td class="l"><a href="#">小深田</a></td><td class="l"><i class="dot" style="--chip:#8a1123"></i>楽天</td><td class="l">盗塁</td><td class="b">28<span class="den">143試合</span></td><td>28</td><td class="l">30まであと<b>2</b></td></tr>
+          <tr><td class="l"><a href="#">伊藤</a></td><td class="l"><i class="dot" style="--chip:#0b5c9c"></i>日本ハム</td><td class="l">奪三振</td><td class="b">195<span class="den">143試合</span></td><td>195</td><td class="l">200まであと<b>5</b></td></tr>
+          <tr><td class="l"><a href="#">今井</a></td><td class="l"><i class="dot" style="--chip:#12357f"></i>西武</td><td class="l">奪三振</td><td class="b">178<span class="den">143試合</span></td><td>178</td><td class="l">200まであと<b>22</b></td></tr>
+          <tr><td class="l"><a href="#">モイネロ</a></td><td class="l"><i class="dot" style="--chip:#f5c400"></i>ソフトバンク</td><td class="l">奪三振</td><td class="b">172<span class="den">143試合</span></td><td>172</td><td class="l">200まであと<b>28</b></td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p class="hint">← 表は横にスクロールできます →</p>
+    </div>
+    <p class="note"><b>各部門の上位3人</b>です — 部門ごとに分けて選んでいます。まとめて選ぶと数の大きい部門（打点・奪三振）が全部を占めて、盗塁が消えるからです。換算は「今の割合がシーズン終了まで続いたら」という<b>計算</b>で、予想ではありません。分母はその球団の消化試合数です — 消化が少ない球団の選手ほど換算値は動きやすくなります。<b>この表はシーズン記録だけ</b>です — 通算は下の「記録に近づいていた」にあります。</p>
+  </section>
+
+  <!-- ===================== 記録に近づいていた ===================== -->
+  <section class="block" id="b-hmile">
+    <h2>記録に近づいていた<span class="qt">通算</span></h2>
+    <div class="swrap">
+      <div class="scroller" tabindex="0" role="region" aria-label="記録に近づいていた（横スクロール）">
+      <table>
+        <thead><tr><th class="l">選手</th><th class="l">球団</th><th class="l">記録</th><th>通算</th><th class="l">節目まで</th><th>今季</th></tr></thead>
+        <tbody>
+          <tr><td class="l"><a href="#">平野</a></td><td class="l"><i class="dot" style="--chip:#1d1f4e"></i>オリックス</td><td class="l">通算奪三振</td><td class="b">999</td><td class="l">1000まであと<b>1</b></td><td>1</td></tr>
+          <tr><td class="l"><a href="#">桑原</a></td><td class="l"><i class="dot" style="--chip:#0b5fa5"></i>DeNA</td><td class="l">通算盗塁</td><td class="b">99</td><td class="l">100まであと<b>1</b></td><td>10</td></tr>
+          <tr><td class="l"><a href="#">杉本</a></td><td class="l"><i class="dot" style="--chip:#1d1f4e"></i>オリックス</td><td class="l">通算本塁打</td><td class="b">99</td><td class="l">100まであと<b>1</b></td><td>16</td></tr>
+          <tr><td class="l"><a href="#">田嶋大</a></td><td class="l"><i class="dot" style="--chip:#1d1f4e"></i>オリックス</td><td class="l">通算勝利</td><td class="b">49</td><td class="l">50まであと<b>1</b></td><td>7</td></tr>
+          <tr><td class="l"><a href="#">宮城</a></td><td class="l"><i class="dot" style="--chip:#1d1f4e"></i>オリックス</td><td class="l">通算勝利</td><td class="b">49</td><td class="l">50まであと<b>1</b></td><td>7</td></tr>
+          <tr><td class="l"><a href="#">坂本</a></td><td class="l"><i class="dot" style="--chip:#f4780f"></i>巨人</td><td class="l">通算本塁打</td><td class="b">298</td><td class="l">300まであと<b>2</b></td><td>3</td></tr>
+          <tr><td class="l"><a href="#">益田</a></td><td class="l"><i class="dot" style="--chip:#22262b"></i>ロッテ</td><td class="l">通算セーブ</td><td class="b">248</td><td class="l">250まであと<b>2</b></td><td>5</td></tr>
+          <tr><td class="l"><a href="#">山田</a></td><td class="l"><i class="dot" style="--chip:#7cab2b"></i>ヤクルト</td><td class="l">通算盗塁</td><td class="b">198</td><td class="l">200まであと<b>2</b></td><td>3</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p class="hint">← 表は横にスクロールできます →</p>
+    </div>
+    <p class="note">⚠<b>この表だけ出典が違います</b> — 通算は選手ページの<b>年度別成績（NPBの公表値）</b>を当サイトが足したものです（NPBが載せている合計行と毎回突き合わせています）。ほかの数字は当サイトが試合記録から積み上げた値で、混ぜていません。<b>NPBの記録だけ</b>です — 海外リーグの期間はこの表に入りません。<b>今、選手ページがある選手だけ</b>が対象です（引退した選手は含みません）ので、通算の順位ではありません。<b>節目までの残りが少ない順</b>に8人までです。<b>通算も今季も同じ年度別成績から取っています</b> — 出典が違う数字を並べると、引き算が合わなくなるからです。当サイトが試合から積み上げた数字とは<b>日付の基準が違うことがあります</b>。今季まだ0の項目は出していません。</p>
+  </section>
+
+  <!-- ===================== 続いていた記録 ===================== -->
+  <section class="block" id="b-hstreak">
+    <h2>続いていた記録</h2>
+    <div class="swrap">
+      <div class="scroller" tabindex="0" role="region" aria-label="続いていた記録（横スクロール）">
+      <table>
+        <thead><tr><th class="l">選手</th><th class="l">球団</th><th class="l">記録</th><th>試合</th><th class="l">期間</th><th class="l">最後の出場</th></tr></thead>
+        <tbody>
+          <tr><td class="l"><a href="#">石井</a></td><td class="l"><i class="dot" style="--chip:#f2c800"></i>阪神</td><td class="l"><button class="term" type="button" data-term="scorelessAppearanceStreak">連続無失点登板</button></td><td class="b">50<span class="den">53登板</span></td><td class="l">4月5日〜9月28日</td><td class="l">2025年9月28日</td></tr>
+          <tr><td class="l"><a href="#">藤平</a></td><td class="l"><i class="dot" style="--chip:#8a1123"></i>楽天</td><td class="l"><button class="term" type="button" data-term="scorelessAppearanceStreak">連続無失点登板</button></td><td class="b">29<span class="den">62登板</span></td><td class="l">7月11日〜10月5日</td><td class="l">2025年10月5日</td></tr>
+          <tr><td class="l"><a href="#">荘司</a></td><td class="l"><i class="dot" style="--chip:#7cab2b"></i>ヤクルト</td><td class="l"><button class="term" type="button" data-term="scorelessAppearanceStreak">連続無失点登板</button></td><td class="b">18<span class="den">45登板</span></td><td class="l">8月7日〜10月4日</td><td class="l">2025年10月4日</td></tr>
+          <tr><td class="l"><a href="#">マルティネス</a></td><td class="l"><i class="dot" style="--chip:#f4780f"></i>巨人</td><td class="l"><button class="term" type="button" data-term="scorelessAppearanceStreak">連続無失点登板</button></td><td class="b">17<span class="den">58登板</span></td><td class="l">8月5日〜9月30日</td><td class="l">2025年9月30日</td></tr>
+          <tr><td class="l"><a href="#">田中</a></td><td class="l"><i class="dot" style="--chip:#0b5c9c"></i>日本ハム</td><td class="l"><button class="term" type="button" data-term="scorelessAppearanceStreak">連続無失点登板</button></td><td class="b">17<span class="den">49登板</span></td><td class="l">8月15日〜9月30日</td><td class="l">2025年9月30日</td></tr>
+          <tr><td class="l"><a href="#">ボイト</a></td><td class="l"><i class="dot" style="--chip:#8a1123"></i>楽天</td><td class="l"><button class="term" type="button" data-term="onBaseStreak">連続試合出塁</button></td><td class="b">9<span class="den">67試合</span></td><td class="l">9月25日〜10月5日</td><td class="l">2025年10月5日</td></tr>
+          <tr><td class="l"><a href="#">紅林</a></td><td class="l"><i class="dot" style="--chip:#1d1f4e"></i>オリックス</td><td class="l"><button class="term" type="button" data-term="onBaseStreak">連続試合出塁</button></td><td class="b">9<span class="den">114試合</span></td><td class="l">9月23日〜10月5日</td><td class="l">2025年10月5日</td></tr>
+          <tr><td class="l"><a href="#">髙部</a></td><td class="l"><i class="dot" style="--chip:#22262b"></i>ロッテ</td><td class="l"><button class="term" type="button" data-term="hitStreak">連続試合安打</button></td><td class="b">7<span class="den">102試合</span></td><td class="l">9月25日〜10月5日</td><td class="l">2025年10月5日</td></tr>
+          <tr><td class="l"><a href="#">山川</a></td><td class="l"><i class="dot" style="--chip:#f5c400"></i>ソフトバンク</td><td class="l"><button class="term" type="button" data-term="onBaseStreak">連続試合出塁</button></td><td class="b">7<span class="den">130試合</span></td><td class="l">9月23日〜10月5日</td><td class="l">2025年10月5日</td></tr>
+          <tr><td class="l"><a href="#">頓宮</a></td><td class="l"><i class="dot" style="--chip:#1d1f4e"></i>オリックス</td><td class="l"><button class="term" type="button" data-term="onBaseStreak">連続試合出塁</button></td><td class="b">6<span class="den">129試合</span></td><td class="l">9月25日〜10月5日</td><td class="l">2025年10月5日</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p class="hint">← 表は横にスクロールできます →</p>
+    </div>
+    <p class="note"><b>最後の出場日を必ず併記しています。</b> 打者の記録は、その日より後に試合があればもう途切れているか本人が出ていないかのどちらかです。⚠<b>投手の連続無失点は、登板しなければ途切れません</b> — そのぶん日付が古いまま残ることがあります。連続記録は「試合」単位で数えます（NPB・MLBの慣例）。代走だけで出た試合は数えません。この表は<b>2025年のレギュラーシーズンのみ</b>で数えた記録です — 日本シリーズ・クライマックスシリーズ・オープン戦は入れていません。「試合」欄の小さい数字は、<b>この範囲で数えた出場試合（投手は登板）</b>の数です。「期間」は<b>記録が始まった試合から、記録に数えた最後の試合まで</b>です。⚠<b>種類の違う記録を長さで並べています</b> — 続きやすさが違うので、並び順は「どれがすごいか」の順ではありません。</p>
+  </section>
+  </main>
+
+  <nav class="find" aria-label="ほかのページ">
+    <a href="#">選手一覧</a><a href="#">リーグ順位表</a><a href="#">試合</a><a href="#">選手をくらべる</a>
+  </nav>
+
+  <footer class="foot">
+    出典：日本野球機構（NPB）公式サイト <a href="https://npb.jp/" rel="noreferrer noopener">npb.jp</a>。
+    本ページの数値は公表記録をもとに<b>当サイトが独自に再計算</b>したものです。原本の表を再現するものではありません。<br>
+    選手の写真・球団ロゴは<b>使用していません</b>（記録は事実ですが、写真とロゴは別の権利です）。<br>
+    掲載内容の削除・訂正のご依頼は <b>連絡先が未設定です（公開前に設定してください）</b> まで。<br>
+    BaseNine by Lunomel · 2025年10月5日までのデータ
+  </footer>
+</div>
+
+<div id="tip" role="tooltip" hidden></div>
+
+<script>
+(function () {
+  var root = document.documentElement;
+
+  /* ---- 1. 스크롤 엣지: 문서 맨 위를 벗어났는가 ------------------------ */
+  var sentinel = document.getElementById('sentinel');
+  if ('IntersectionObserver' in window) {
+    new IntersectionObserver(function (es) {
+      if (es[0].isIntersecting) root.removeAttribute('data-scrolled');
+      else root.setAttribute('data-scrolled', '');
+    }).observe(sentinel);
+  }
+
+  /* ---- 2. 가로 스크롤러: 「더 있다 / 지나왔다」를 실제로 말한다 -------- */
+  function syncScroller(sc) {
+    var wrap = sc.parentNode;
+    var max = sc.scrollWidth - sc.clientWidth;
+    if (sc.scrollLeft > 2) wrap.setAttribute('data-x', ''); else wrap.removeAttribute('data-x');
+    if (max - sc.scrollLeft > 2) wrap.setAttribute('data-more', ''); else wrap.removeAttribute('data-more');
+  }
+  var scrollers = [].slice.call(document.querySelectorAll('.scroller'));
+  scrollers.forEach(function (sc) {
+    syncScroller(sc);
+    sc.addEventListener('scroll', function () { syncScroller(sc); }, { passive: true });
+  });
+  addEventListener('resize', function () { scrollers.forEach(syncScroller); }, { passive: true });
+
+  /* ---- 3. 스크롤 스파이 (앵커 줄) ------------------------------------- */
+  var links = [].slice.call(document.querySelectorAll('.hjump a'));
+  var byId = {};
+  links.forEach(function (a) { byId[a.getAttribute('href').slice(1)] = a; });
+  if ('IntersectionObserver' in window) {
+    var seen = {};
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (e) { seen[e.target.id] = e.isIntersecting ? e.intersectionRatio : 0; });
+      var best = null, bestV = 0;
+      Object.keys(seen).forEach(function (id) { if (seen[id] > bestV) { bestV = seen[id]; best = id; } });
+      links.forEach(function (a) { a.removeAttribute('aria-current'); });
+      if (best && byId[best]) byId[best].setAttribute('aria-current', 'true');
+    }, { rootMargin: '-96px 0px -55% 0px', threshold: [0, .05, .3, .7, 1] });
+    [].slice.call(document.querySelectorAll('.block')).forEach(function (b) { io.observe(b); });
+  }
+
+  /* ---- 4. 앵커로 도착한 곳을 잠깐 띄운다 (어디 왔는지의 피드백) ------- */
+  function flash(id) {
+    var t = document.getElementById(id);
+    if (!t) return;
+    t.classList.remove('flash');
+    void t.offsetWidth;
+    t.classList.add('flash');
+  }
+  links.forEach(function (a) {
+    a.addEventListener('click', function () { flash(a.getAttribute('href').slice(1)); });
+  });
+
+  /* ---- 5. 용어 툴팁 (마우스·키보드 양쪽) ------------------------------ */
+  var TERMS = {
+    winPct: ['勝率', '勝った割合。引き分けは数に入れません（NPBの規定）。', '勝 ÷ (勝 + 敗)'],
+    scorelessAppearanceStreak: ['連続無失点登板', '失点せずに終えた登板が何試合続いているか。', '自責点ではなく失点で数えます。'],
+    onBaseStreak: ['連続試合出塁', '安打・四死球のどれかで出塁した試合が何試合続いているか。', '連続試合安打より途切れにくくなります。'],
+    hitStreak: ['連続試合安打', '安打を打った試合が何試合続いているか。', '⚠打席のなかった試合（代走・守備固めだけ）は数えません。']
+  };
+  var tip = document.getElementById('tip'), openBtn = null;
+  function closeTip() { tip.hidden = true; openBtn = null; }
+  function showTip(btn) {
+    var t = TERMS[btn.dataset.term]; if (!t) return;
+    tip.innerHTML = '<b></b><span></span><s></s>';
+    tip.querySelector('b').textContent = t[0];
+    tip.querySelector('span').textContent = t[1];
+    tip.querySelector('s').textContent = t[2];
+    tip.hidden = false;
+    var r = btn.getBoundingClientRect();
+    var top = r.bottom + scrollY + 8;
+    var left = Math.min(r.left + scrollX, scrollX + innerWidth - tip.offsetWidth - 12);
+    tip.style.top = top + 'px'; tip.style.left = Math.max(scrollX + 8, left) + 'px';
+    openBtn = btn;
+  }
+  document.addEventListener('pointerover', function (e) {
+    var b = e.target.closest && e.target.closest('.term'); if (b) showTip(b);
+  });
+  document.addEventListener('pointerout', function (e) {
+    var b = e.target.closest && e.target.closest('.term'); if (b && b === openBtn) closeTip();
+  });
+  document.addEventListener('focusin', function (e) {
+    var b = e.target.closest && e.target.closest('.term');
+    if (b) showTip(b); else if (openBtn) closeTip();
+  });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeTip(); });
+
+  /* ---- 6. 디스클로저는 바깥을 누르면 닫힌다 --------------------------- */
+  document.addEventListener('click', function (e) {
+    [].slice.call(document.querySelectorAll('details[open]')).forEach(function (d) {
+      if (!d.contains(e.target)) d.open = false;
+    });
+  });
+
+  /* ---- 7. 테마 (自動 → ライト → ダーク) ------------------------------- */
+  var modes = [['', '自動'], ['light', 'ライト'], ['dark', 'ダーク']], mi = 0;
+  var btn = document.getElementById('themeBtn');
+  btn.addEventListener('click', function () {
+    mi = (mi + 1) % 3;
+    if (modes[mi][0]) root.setAttribute('data-theme', modes[mi][0]);
+    else root.removeAttribute('data-theme');
+    btn.textContent = modes[mi][1];
+    btn.setAttribute('aria-label', '表示テーマ：' + modes[mi][1] + '（切り替え）');
+  });
+})();
+</script>
+</body>
+</html>

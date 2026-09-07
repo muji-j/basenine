@@ -3,6 +3,41 @@ import assert from "node:assert/strict";
 import { CLIENT_JS, CSS } from "../src/assets.ts";
 import { BLOCKS, PRESETS } from "../src/blocks.ts";
 
+/**
+ * ⚠**토큰이 생긴 뒤로 「리터럴이 있는가」는 헛돈다**(2026-09-07 · 토큰 1단계).
+ * `animation-duration:1ms!important` 를 문자로 찾던 시험이, 같은 뜻인
+ * `animation-duration:var(--t1)!important` + `--t1:1ms` 에서 **떨어졌다.**
+ * → **값을 풀어서** 본다. 그러면 「선언이 틀린 것」까지 같이 잡힌다(리터럴 검사는 못 잡던 것이다).
+ */
+/** 중괄호를 세어 `@media …{ … }` 한 덩어리를 통째로 꺼낸다 — 안에 규칙이 몇 개든 상관없다 */
+export function atRuleBody(css: string, head: string): string {
+  const at = css.indexOf(head);
+  if (at < 0) return "";
+  let depth = 0;
+  for (let i = at + head.length - 1; i < css.length; i++) {
+    if (css[i] === "{") depth++;
+    else if (css[i] === "}" && --depth === 0) return css.slice(at + head.length, i);
+  }
+  return "";
+}
+/** `:root` 선언에서 토큰 값을 읽는다. `scope` 를 주면 그 구간 안의 재정의를 우선한다 */
+export function tokenValue(name: string, scope?: string): string | undefined {
+  const bare = (s: string): string => s.replace(/\/\*[\s\S]*?\*\//g, "");
+  const find = (s: string): string | undefined =>
+    new RegExp(`(?:^|[;{])\\s*${name}\\s*:\\s*([^;}]+)`).exec(bare(s))?.[1]?.trim();
+  return (scope ? find(scope) : undefined) ?? find(CSS.slice(0, CSS.indexOf("@media")));
+}
+/** 값 안의 `var(--x)` 를 선언값으로 편다 */
+export function resolve(value: string, scope?: string): string {
+  let out = value;
+  for (let i = 0; i < 10; i++) {
+    const next = out.replace(/var\((--[a-z0-9-]+)\)/g, (all, n: string) => tokenValue(n, scope) ?? all);
+    if (next === out) return out;
+    out = next;
+  }
+  throw new Error("토큰이 순환한다");
+}
+
 test("클라이언트 스크립트가 문법적으로 유효하다 — 깨진 스크립트는 조용히 아무것도 안 한다", () => {
   // 실행하지 않고 파싱만 한다(document가 없으므로 실행은 불가능하다).
   assert.doesNotThrow(() => new Function(CLIENT_JS));
@@ -217,10 +252,15 @@ test("손가락 조작에서 버튼이 커진다", () => {
 });
 
 test("모션은 감소 설정에서 전부 꺼진다 — 애니메이션을 늘렸으면 이 규칙도 넓어야 한다", () => {
-  const rule = /@media \(prefers-reduced-motion:reduce\)\{([^}]*\}[^}]*)\}/.exec(CSS)?.[1] ?? "";
-  assert.match(rule, /animation-duration:1ms!important/);
-  assert.match(rule, /transition-duration:1ms!important/);
-  assert.match(rule, /\*,\*::before,\*::after/);
+  const block = atRuleBody(CSS, "@media (prefers-reduced-motion:reduce){");
+  assert.notEqual(block, "", "모션 감소 블록이 없다");
+  assert.match(block, /\*,\*::before,\*::after/);
+  // ⚠**값을 풀어서 잰다** — 리터럴을 찾으면 토큰으로 바뀌는 날 헛돈다(위 주석)
+  for (const prop of ["animation-duration", "transition-duration"] as const) {
+    const raw = new RegExp(`${prop}:([^;}]+?)!important`).exec(block)?.[1];
+    assert.ok(raw, `${prop} 를 !important 로 못 박지 않는다`);
+    assert.equal(resolve(raw, block), "1ms", `${prop} 가 감소 설정에서 1ms 로 풀리지 않는다`);
+  }
 });
 
 test("구단 색은 CSS 변수로 받는다 — 색값이 스타일시트에 박혀 있지 않다", () => {
@@ -343,9 +383,16 @@ test("탭 전환에 방향이 있고, 탭줄 자체는 미끄러지지 않는다
 });
 
 test("새로 넣은 모션도 감소 설정에서 꺼진다 — 예외를 만들지 않는다", () => {
-  const rule = /@media \(prefers-reduced-motion:reduce\)\{([^}]*\}[^}]*)\}/.exec(CSS)?.[1] ?? "";
-  assert.match(rule, /\*,\*::before,\*::after/, "전역 가드가 아니면 새 애니메이션이 새어 나간다");
-  assert.match(rule, /animation-duration:1ms!important/);
+  const block = atRuleBody(CSS, "@media (prefers-reduced-motion:reduce){");
+  assert.match(block, /\*,\*::before,\*::after/, "전역 가드가 아니면 새 애니메이션이 새어 나간다");
+  const raw = /animation-duration:([^;}]+?)!important/.exec(block)?.[1];
+  assert.ok(raw, "전역 가드가 애니메이션 길이를 못 박지 않는다");
+  assert.equal(resolve(raw, block), "1ms");
+  // ⚠**시간 토큰도 여기서 같이 내려간다** — 토큰만 쓰는 새 모션은 가드 없이도 따라와야 한다
+  for (const t of ["--t1", "--t2", "--t3"]) {
+    assert.equal(tokenValue(t, block), "1ms", `${t} 가 감소 설정에서 안 내려간다`);
+  }
+  assert.equal(tokenValue("--t-stagger", block), "0ms", "순번 지연이 감소 설정에서 안 사라진다");
 });
 
 test("검색 결과의 성적 줄에 자리가 있다 — 분모까지 들어가므로 한 줄을 통째로 쓴다", () => {
@@ -409,7 +456,11 @@ test("⚠until-found 지원을 기능으로 판정한다 — UA 문자열로 가
  * 하나만 되돌아가도 나머지 둘이 다시 감춘다.
  */
 const NO_COMMENT = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
-const px = (s: string, prop: string): number => Number(new RegExp(`${prop}:([\\d.]+)px`).exec(s)?.[1] ?? NaN);
+/** ⚠**토큰을 풀고 나서 잰다** — `font-size:var(--fs-data)` 를 「크기가 없다」로 읽으면 헛돈다 */
+const px = (s: string, prop: string): number => {
+  const raw = new RegExp(`${prop}:([^;}]+)`).exec(s)?.[1]?.trim();
+  return raw === undefined ? NaN : Number(/^([\d.]+)px$/.exec(resolve(raw))?.[1] ?? NaN);
+};
 
 test("⚠접힘 손잡이가 회차 머리보다 작다 — 크면 문서 위계가 시각적으로 뒤집힌다", () => {
   const sum = /\.dsolo>summary\{([^}]*)\}/.exec(NO_COMMENT)?.[1] ?? "";

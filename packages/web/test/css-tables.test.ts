@@ -394,7 +394,9 @@ test("⚠태그를 올린 곳의 CSS가 따라왔다 — 기본 크기로 튀지
 
   const sub = sel(".rolecol .subhead");
   assert.notEqual(sub, undefined, ".subhead 규칙을 못 찾았다");
-  assert.match(sub!.body, /font-size:\s*\d/, "크기를 태그 기본값에 맡기고 있다");
+  // ⚠**토큰도 명시적 크기다**(2026-09-07 토큰 1단계). 이 시험이 묻는 것은
+  // 「값이 무엇인가」가 아니라 「태그 기본값에 맡겼는가」다.
+  assert.match(sub!.body, /font-size:\s*(?:[\d.]|var\(--fs-)/, "크기를 태그 기본값에 맡기고 있다");
 });
 
 /**
@@ -405,7 +407,7 @@ test("⚠태그를 올린 곳의 CSS가 따라왔다 — 기본 크기로 튀지
 test("⚠명부의 성적 줄에 규칙이 있다 — 없으면 이름보다 커진다", () => {
   const r = rules(CSS).filter((x) => x.sel.split(",").some((one) => /\.roster\s+\.hs$/.test(one.trim())));
   assert.ok(r.length > 0, "명부 성적 줄의 규칙이 없다 — body 기본 16px 로 그려진다");
-  assert.match(r[0]!.body, /font-size:\s*\d/, "크기가 없다");
+  assert.match(r[0]!.body, /font-size:\s*(?:[\d.]|var\(--fs-)/, "크기가 없다");
   assert.match(r[0]!.body, /color:\s*var\(--tx/, "색이 없다");
 });
 
