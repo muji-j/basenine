@@ -150,6 +150,8 @@ import {
   battingStreaks,
   careerBattingStreaks,
   pitchingStreaks,
+  // ⚠**순위·동률·「以上」의 취급은 계산 계층이 소유한다**(M1 · 정의서 §1-7). 화면이 다시 만들지 않는다
+  rankStreaks,
   pitchingGameSplits,
   pitchingSplits,
   buildLeagues,
@@ -264,11 +266,18 @@ import type {
   RosterEntry,
   SearchEntry,
   StartersPageData,
+  StreakCategory,
+  StreakRankPanel,
+  StreakRankRow,
   TeamRoster,
 } from "./pages.ts";
 import type { StandingRow, StandingsSection } from "./pages.ts";
 // 予告先発 화면의 앵커. **試合 카드가 그리로 가므로 키를 두 벌 만들지 않는다**(M1)
 import { batterPick, gameKey, pitcherPick, startersAnchor, unseenPitcherPick } from "./pages.ts";
+// ⚠**연속 기록 순위표의 컷 상한.** 화면 파일이 소유한다 — 각주가 그 수를 그대로 쓴다(M3의 정신)
+import { STREAK_RANK_ROWS } from "./pages.ts";
+// ⚠**「以上」·「最大」의 서식은 한 벌이다**(M1) — 선수 페이지와 이 순위표가 같은 함수를 쓴다
+import { streakInningsMax, streakInningsText } from "./streak-view.ts";
 import type { RankDigits } from "./parts.ts";
 // ⚠**동률 규칙 문장은 구단 목록과 공유한다**(M1) — 두 화면이 같은 사실을 다르게 공시하고 있었다
 import { TIE_RULE } from "./parts.ts";
@@ -2984,6 +2993,327 @@ export function pitchingTeamOn(
   }
   const row = stmt.get(playerId, season, competition, date) as unknown as { code: string } | undefined;
   return row?.code ?? null;
+}
+
+/** ⚠**타자판도 `side` 가 답이다** — `pitching_line` 대신 `batting_line` 을 볼 뿐 모양이 같다 */
+const BATTING_TEAM_SQL =
+  `SELECT CASE b.side WHEN 'home' THEN g.home_code ELSE g.away_code END AS code
+     FROM batting_line b JOIN game g ON g.game_id = b.game_id
+    WHERE b.player_id = ? AND g.season = ? AND g.competition = ? AND g.status = 'played'
+      AND g.game_date = ?
+    ORDER BY g.game_no DESC LIMIT 1`;
+
+const BATTING_TEAM_STMTS = new WeakMap<object, ReturnType<Db["raw"]["prepare"]>>();
+
+/**
+ * **그 경기일에 이 타자가 어느 구단이었는가** — `pitchingTeamOn` 의 타자판.
+ *
+ * ⚠**왜 필요한가**: 연속 기록의 리그 목록은 **今季いちばん長かった** 기록이라 **4월의 마루**가
+ * 실릴 수 있는데, 그 선수가 7월에 옮겼으면 **시즌 집계의 구단은 그 마루의 구단이 아니다.**
+ * 홈의 「続いている記録」은 `lastGameDate === latestDate` 로 걸러서 이 문제를 안 만났다.
+ *
+ * ⚠**`teamCodeOf`(`agg.batting` 을 찾는 함수)를 대신하지 않는다** — 그건 시즌 전체의 소속을
+ * 말하는 값이고, 여기 필요한 것은 **그 날의 사실**이다. 두 값이 다른 것은 결함이 아니라
+ * **서로 다른 물음의 답**이다(`docs/superpowers/plans/2026-09-07-streak-metrics.md` §11-1 이 그은 경계 그대로).
+ *
+ * ⚠**A→B→A 는 못 잡는다** — 「그 날짜의 구단」만 말한다.
+ *
+ * @returns 그 날짜에 출장 기록이 없으면 `null`. ⚠**모르면 다른 값으로 때우지 않는다**(M11).
+ */
+export function battingTeamOn(
+  db: Db,
+  playerId: string,
+  season: number,
+  competition: string,
+  date: string,
+): string | null {
+  const key = db.raw as unknown as object;
+  let stmt = BATTING_TEAM_STMTS.get(key);
+  if (stmt === undefined) {
+    stmt = db.raw.prepare(BATTING_TEAM_SQL);
+    BATTING_TEAM_STMTS.set(key, stmt);
+  }
+  const row = stmt.get(playerId, season, competition, date) as unknown as { code: string } | undefined;
+  return row?.code ?? null;
+}
+
+/**
+ * **연속 기록의 리그 전체 목록** — 순위 화면의 `連続記録` 부문.
+ *
+ * 설계 정본 `docs/superpowers/specs/2026-09-07-streak-ranking-design.md` ·
+ * 지표 정본 `docs/metrics/2026-09-07-streak-metrics.md` §1-6 · §1-7.
+ *
+ * ## ⚠여기서 순위를 새로 만들지 않는다 (M1)
+ *
+ * 정렬·동률·「以上」의 취급은 **`rankStreaks`(`@bb-app/aggregate`)가 소유한다.**
+ * 그 함수는 값→아웃→`to` 늦은 것 먼저→`playerId` 로 정렬하고, 동률에 같은 순위를 주고
+ * 다음 순위를 건너뛰며, `rankable === false` 에 `rank: null` 을 준다.
+ * ⚠**그 순서를 다시 정렬하지 마라** — 정적 생성이라 흔들리면 **매 빌드마다 diff 로 남는다.**
+ *
+ * ## ⚠컷 — 「以上」 행을 하한으로만 자르면 조용히 빠진다
+ *
+ * `23.1回以上（最大25.1回）` 인 행은 **진짜 값이 25.1 일 수 있다.** 10위가 24.0回 면
+ * 그 행은 **상위 10에 들 수도 있다.** 하한으로만 자르면 **들 수도 있는 기록이 사라지고,
+ * 사라졌다는 사실도 안 보인다.** → **상한이 경계에 닿으면 남긴다**(순위는 안 준다).
+ *
+ * ## ⚠시즌 모드에서 `atRangeStart` 는 「以上」이 아니다
+ *
+ * 그건 「시즌 시작」이라는 뜻이고 **화면이 이미 「${season}年」이라고 말한다**
+ * (`PitchingStreak.atRangeStart` 주석). 통산 모드에서만 「(하한−1)年以前は未参照」가 된다.
+ * 여기 붙이면 **시즌 화면에 없어야 할 부등호**가 전 행에 붙는다.
+ */
+interface StreakCandidate {
+  playerId: string;
+  /**
+   * ⚠**이름과 구단을 **후보를 만들 때** 정한다.** 나중에 정하면 못 찾은 행이 표에서만 빠지고
+   * **각주의 분모(`candidates`)에는 남아** 「162人のうち13人」이 조용히 틀린 수가 된다(M2).
+   * 못 찾은 것은 **애초에 후보가 아니다** — 그러면 두 수가 같은 모집단에서 나온다.
+   */
+  name: string;
+  /** ⚠**마루의 마지막 경기의 구단이다** — 시즌 집계의 구단이 아니다(`pitchingTeamOn`/`battingTeamOn`) */
+  teamCode: string;
+  /** 정렬의 주 값. 이닝 축은 **하한 아웃 수** */
+  value: number;
+  /** 2차 정렬용 아웃 수 */
+  outs: number;
+  /** 상한(이닝 축만 뜻이 있다). 확정이면 `value` 와 같다 */
+  upper: number;
+  /**
+   * **그 축이 실제로 걸친 기간**(분모 ⑵).
+   * ⚠**이닝 축은 등판 축과 다른 값이다** — 경계 등판은 등판 축에 안 들어가고 이닝 축에는 들어간다.
+   * 그래서 `bestInnings` 는 `innings.from`/`innings.to` 를 받는다(`ScorelessInnings.from` 주석).
+   */
+  from: string;
+  to: string;
+  /**
+   * 그 기간이 확정인가. ⚠**이닝 축만 `false` 가 될 수 있다** — 미확정 경계가 있으면
+   * 「최대」쪽 값은 그 등판까지 세므로 **기간이 화면에 보이는 것보다 넓을 수 있다.**
+   * 그 사실을 각주가 말한다(M2 · M11 — 모르는 것을 아는 척하지 않는다).
+   */
+  spanExact: boolean;
+  rankable: boolean;
+  /** 화면에 낼 값. 이미 다듬은 글자 */
+  text: string;
+  /** 이닝 축의 상한 표기. 확정이면 빈 문자열 */
+  maxText: string;
+  /** 분모 ⑴ — 훑은 사건 수 */
+  scanned: number;
+}
+
+/**
+ * 컷 — **순위 `limit` 위까지 + 상한이 그 경계에 닿는 「以上」 행**.
+ *
+ * ⚠**확정 행이 하나도 없어도 빈 표를 내지 않는다**(M11). 그때는 경계를 **값 상위 `limit` 번째**로
+ * 잡는다 — 실측(9시즌 · 축×리그 90칸)으로는 안 일어나지만 **0으로 때우지 않는다.**
+ */
+export function cutStreakRows<T extends { rank: number | null; value: number; upper: number }>(
+  ranked: readonly T[],
+  limit: number,
+): T[] {
+  const top = ranked.filter((r) => r.rank !== null && r.rank <= limit);
+  const floor =
+    top.length > 0
+      ? Math.min(...top.map((r) => r.value))
+      : ([...ranked].sort((a, b) => b.value - a.value)[limit - 1]?.value ?? -Infinity);
+  return ranked.filter(
+    (r) => (r.rank !== null && r.rank <= limit) || (r.rank === null && r.upper >= floor),
+  );
+}
+
+/** 한 축의 후보를 리그별로 모은 것 */
+type StreakByLeague = Map<League, StreakCandidate[]>;
+
+function emptyByLeague(leagues: readonly League[]): StreakByLeague {
+  return new Map(leagues.map((lg) => [lg, [] as StreakCandidate[]]));
+}
+
+/**
+ * 후보 → 패널. **`rankStreaks` 가 준 순서를 그대로 쓴다**(M1).
+ *
+ * ⚠**`candidates` 는 자르기 전의 수다** — 화면이 「N人のうち M人」이라고 말할 때의 N 이다
+ * (작업규칙 7: 자른 것을 말한다).
+ *
+ * ⚠**지금의 컷에서는 `candidates > 0` 이면 `rows` 도 반드시 비지 않는다** —
+ * 확정 행이 하나도 없어도 값 상위로 경계를 잡기 때문이다(`cutStreakRows`).
+ * 즉 **빈 패널은 언제나 `candidates === 0`** 이다. 그래도 수를 함께 내는 이유는,
+ * 나중에 **표시 하한을 더하면 그 순간 두 상태가 갈리기** 때문이다(M11) —
+ * 그때 화면 문장을 고칠 필요가 없어야 한다.
+ */
+function streakPanelOf(
+  termKey: string,
+  rows: readonly StreakCandidate[],
+  scannedUnit: "試合" | "登板",
+  isInnings: boolean,
+): StreakRankPanel {
+  const cut = cutStreakRows(rankStreaks(rows), STREAK_RANK_ROWS);
+  const out = cut.map((r): StreakRankRow => ({
+    playerId: r.playerId,
+    name: r.name,
+    teamCode: r.teamCode,
+    rank: r.rank,
+    value: r.text,
+    // ⚠**분모 ⑴ 은 여기서 단위와 붙는다** — 타자는 `試合`, 투수는 `登板`이다(M2)
+    scanned: `${r.scanned}${scannedUnit}`,
+    max: r.maxText,
+    from: r.from,
+    to: r.to,
+  }));
+  // ⚠**`candidates` 와 `rows` 가 같은 모집단에서 나온다** — 후보를 만들 때 이미 이름·구단을
+  //   못 찾은 것을 뺐으므로, 각주의 「N人のうち M人」이 두 다른 잣대를 섞지 않는다
+  return {
+    id: termKey,
+    rows: out,
+    candidates: rows.length,
+    scannedUnit,
+    isInnings,
+    // ⚠**실린 행만 본다** — 잘려 나간 행의 유보를 각주에 적으면 화면에 없는 것을 말하게 된다
+    spanUncertain: cut.some((r) => !r.spanExact),
+  };
+}
+
+/**
+ * 순위 화면의 `連続記録` 부문 — 리그마다 한 벌.
+ *
+ * ⚠**`連続試合無安打` 를 싣지 않는다**(설계 §3-3). 사유 셋: ⑴ 공인야구규칙에도 기록집에도
+ * **범주가 없다**(정의서 §4-4 ⑴) — 리그 전체를 줄 세우면 그 순간 **우리가 만든 「기록」**이 된다.
+ * ⑵ 홈·구단의 「続いている記録」이 이미 같은 이유로 이 축을 뺐다(`HomeStreak.kind` 3종).
+ * ⑶ 이 축의 길이는 **계속 출장했다는 사실과 섞인다.**
+ * ⚠**「없다」가 아니라 「안 싣기로 정했다」다** — 선수 페이지에는 그대로 있다.
+ *
+ * ⚠**`export` 는 시험 때문이다**(`cutStreakRows` 와 같은 이유). 「이름·구단을 못 찾으면
+ * **후보에서도** 뺀다」는 M11 경로는 **실데이터에 결측이 0건이라 산출물 대조로 못 잡는다** —
+ * 되돌려도 스위트가 초록이었다(2026-09-07 이중 검토 P2). 그 자리를 시험이 직접 부른다.
+ */
+export function streakCategoriesByLeague(
+  db: Db,
+  season: number,
+  competition: string,
+  leagues: readonly League[],
+  pitchStreakSeason: ReadonlyMap<string, PitchingStreaks>,
+  streaksByPlayer: ReadonlyMap<string, PlayerStreaks>,
+  nameOf: (id: string) => string | null,
+): Map<League, StreakCategory> {
+  const psa = emptyByLeague(leagues);
+  const psi = emptyByLeague(leagues);
+  const hit = emptyByLeague(leagues);
+  const onBase = emptyByLeague(leagues);
+
+  /** 그 마루의 마지막 경기의 리그. 못 찾으면 `null` — **그 행은 어느 리그에도 안 넣는다**(M11) */
+  const leagueAt = (code: string | null): League | null => {
+    if (code === null || code === "") return null;
+    try {
+      return leagueOf(code);
+    } catch {
+      return null;
+    }
+  };
+
+  for (const [playerId, s] of pitchStreakSeason) {
+    /**
+     * ⚠**「그때 소속」과 이름을 여기서 정한다** — 못 찾으면 **후보에서 뺀다**(M11).
+     * 뒤에서 빼면 각주의 분모만 남아 「162人のうち13人」이 조용히 틀린 수가 된다.
+     */
+    const push = (into: StreakByLeague, c: Omit<StreakCandidate, "name" | "teamCode">): void => {
+      const code = pitchingTeamOn(db, playerId, season, competition, c.to);
+      const lg = leagueAt(code);
+      const name = nameOf(playerId);
+      if (lg === null || code === null || name === null) return;
+      into.get(lg)?.push({ ...c, name, teamCode: code });
+    };
+    const best = s.best;
+    if (best !== null) {
+      push(psa, {
+        playerId,
+        value: best.appearances,
+        outs: best.interiorOuts,
+        upper: best.appearances,
+        from: best.from,
+        to: best.to,
+        // ⚠**등판 축의 기간은 언제나 확정이다** — 경계 등판은 이 축에 안 들어간다
+        spanExact: true,
+        // ⚠**시즌 모드에서 `atRangeStart` 는 「以上」이 아니다**(머리주석) — 항상 확정이다
+        rankable: true,
+        text: String(best.appearances),
+        maxText: "",
+        scanned: s.appearances,
+      });
+    }
+    const bi = s.bestInnings;
+    if (bi !== null) {
+      push(psi, {
+        playerId,
+        value: bi.innings.lowerOuts,
+        outs: bi.innings.lowerOuts,
+        upper: bi.innings.upperOuts,
+        /**
+         * ⚠**등판 축의 `bi.from`/`bi.to` 가 아니다.** 경계 등판의 아웃이 값에 들어가면
+         * 그 등판일이 **記録に数えた最後の試合**이다 — 각주가 「期間」을 그렇게 약속한다.
+         * 山﨑 2025 의 `36回` 가 그 예다(4/2〜4/30 의 105아웃 + **5/7 의 3아웃**).
+         */
+        from: bi.innings.from,
+        to: bi.innings.to,
+        spanExact: bi.innings.spanExact,
+        rankable: bi.innings.exact,
+        text: streakInningsText(bi.innings.lowerOuts, bi.innings.exact, false),
+        maxText: streakInningsMax(bi.innings.upperOuts, bi.innings.exact, false),
+        scanned: s.appearances,
+      });
+    }
+  }
+
+  for (const [playerId, s] of streaksByPlayer) {
+    const push = (into: StreakByLeague, m: Streak): void => {
+      if (m.best <= 0 || m.bestFrom === null || m.bestTo === null) return;
+      const to = m.bestTo;
+      const code = battingTeamOn(db, playerId, season, competition, to);
+      const lg = leagueAt(code);
+      const name = nameOf(playerId);
+      if (lg === null || code === null || name === null) return;
+      into.get(lg)?.push({
+        playerId,
+        name,
+        teamCode: code,
+        value: m.best,
+        // ⚠**타자 축에 아웃 수가 없다** — 2차 정렬은 `to` → `playerId` 로 내려간다(`rankStreaks`)
+        outs: 0,
+        upper: m.best,
+        from: m.bestFrom,
+        to,
+        // ⚠**타자 축에는 경계라는 것이 없다** — 마루가 경기 단위라 기간이 언제나 확정이다
+        spanExact: true,
+        rankable: true,
+        text: String(m.best),
+        maxText: "",
+        scanned: s.games,
+      });
+    };
+    push(hit, s.hitting);
+    push(onBase, s.onBase);
+  }
+
+  const out = new Map<League, StreakCategory>();
+  for (const lg of leagues) {
+    out.set(lg, {
+      id: "streak",
+      /**
+       * ⚠**부문 이름은 용어집에서 안 꺼낸다** — 용어집은 **지표의 이름**을 담고 이건 **구획의 이름**이다.
+       * 옆의 `打者`·`先発`·`救援`(`categoriesOf`)도 같은 이유로 여기 적혀 있다.
+       * ⚠**`blocks.ts` 의 `streak` 블록 이름과 같은 글자지만 같은 것이 아니다** —
+       * 저쪽은 선수 페이지의 블록이고 이쪽은 순위 화면의 부문이다. 한쪽을 바꿔도 다른 쪽이
+       * 따라갈 이유가 없으므로 **묶지 않는다.** 안에 든 **지표 라벨은 용어집에서 나온다**(M1).
+       */
+      label: "連続記録",
+      panels: [
+        // ⚠**항상 확정인 등판 축이 먼저다**(정의서 §1-7: 「순위표의 주 축을 등판으로 두고
+        //   이닝은 옆에 싣는 것이 안전하다」). 첫 패널이 그 화면의 주장이다
+        streakPanelOf("scorelessAppearanceStreak", psa.get(lg) ?? [], "登板", false),
+        streakPanelOf("scorelessInningStreak", psi.get(lg) ?? [], "登板", true),
+        streakPanelOf("hitStreak", hit.get(lg) ?? [], "試合", false),
+        streakPanelOf("onBaseStreak", onBase.get(lg) ?? [], "試合", false),
+      ],
+    });
+  }
+  return out;
 }
 
 /**
@@ -5816,6 +6146,8 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
    * ⚠**세 값을 다 옮긴다**(하한·상한·확정 여부) — 표시가 어느 쪽을 고르든(정의서 §3-3).
    * ⚠**`atRangeStart` 와 `exact` 를 한 필드로 합치지 않는다** — **「以上」의 사유가 둘**이고
    *   화면이 다른 말을 해야 한다(정의서 §1-6).
+   * ⚠**기간도 두 벌을 옮긴다** — 등판 축과 이닝 축의 기간은 **다른 값**이다
+   *   (`ScorelessInnings.from` 주석). 한 벌만 옮기면 화면이 「記録に数えた最後の試合」을 거짓으로 말한다.
    */
   const pitchingViewOf = (m: PitchingStreak | null): PitchingStreakView | null =>
     m === null
@@ -5829,6 +6161,10 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
           from: m.from,
           to: m.to,
           seasons: m.seasons,
+          inningsFrom: m.innings.from,
+          inningsTo: m.innings.to,
+          inningsSeasons: m.innings.seasons,
+          inningsSpanExact: m.innings.spanExact,
         };
   const pitchingScopeOf = (p: PitchingStreaks): PitchingStreakScope => ({
     current: pitchingViewOf(p.current),
@@ -6335,6 +6671,23 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     pitchingByPlayer.get(playerId)?.player.displayName ??
     null;
 
+  /**
+   * **연속 기록의 리그 전체 목록**(설계 `docs/superpowers/specs/2026-09-07-streak-ranking-design.md`).
+   *
+   * ⚠**여기서 만드는 이유는 `nameOf` 다** — 위쪽의 `sections` 자리에서는 아직 없다.
+   * ⚠**시즌 몫만 쓴다**(설계 §5). 통산을 섞으면 **한 화면이 두 범위를 주장**한다 —
+   *   홈이 같은 이유로 통산을 안 섞었다(`homePage` 의 `pitchStreakSeason` 주석).
+   */
+  const streakCats = streakCategoriesByLeague(
+    db,
+    o.season,
+    competition,
+    bundles.map((b) => b.league),
+    pitchStreakSeason,
+    streaksByPlayer,
+    nameOf,
+  );
+
   // ⚠**만들어진 경기 페이지를 먼저 안다.** 試合 화면이 없는 페이지로 링크하면 404가 된다
   const gameList = gamePages(db, o, reFull, nameOf);
   /**
@@ -6467,10 +6820,21 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     ranking: {
       season: o.season,
       asOf: meta.latest,
+      /**
+       * ⚠**홈이 쓰는 그 값을 그대로 넘긴다**(M1) — 여기서 `seasonIsOver` 를 다시 부르지 않는다.
+       * 順位 화면의 連続記録 각주가 **홈·구단의 구획 이름을 불러 주는데**, 그 이름은 시제로 갈린다.
+       * 두 벌로 두면 어느 날 **각주가 그 시즌 화면에 없는 구획을 가리킨다** — 실제로 그랬다
+       * (`false` 하드코딩 · `RankingPageData.seasonOver` 주석의 실측).
+       */
+      seasonOver: homeData.page.seasonOver,
       standings,
       tieRule: TIE_RULE,
       draws: drawRows,
-      leagues: sections,
+      // ⚠**`streaks` 는 순위 화면에만 붙인다** — 일람의 하이라이트(`highlights`)에는 없다
+      leagues: sections.map((sec) => {
+        const cat = streakCats.get(sec.id as League);
+        return cat === undefined ? sec : { ...sec, streaks: cat };
+      }),
     },
     // ⚠**위에서 이미 만들었다** — `teamPages`가 같은 한 벌을 쓰므로 여기서 다시 부르면 두 벌이 된다(M1)
     home: homeData.page,

@@ -350,6 +350,62 @@ test("⚠시즌 넘김 마루는 연도를 붙이고 건너뛴 시즌을 말한�
   assert.match(blk, /2020・2021年は登板なし/, "건너뛴 시즌이 안 보인다");
 });
 
+/**
+ * ⚠**イニング 축의 기간은 登板 축의 기간이 아니다**(2026-09-07 이중 검토 P2 · 정의서 §3-3-B).
+ *
+ * 규칙 R 에서 **경계 등판의 아웃이 값에 들어가는데**, 그 등판은 **登板 마루에는 안 들어간다.**
+ * 그래서 두 축의 기간을 한 필드로 쓰면 **값의 근거가 된 경기가 기간에서 빠진다.**
+ * 실측 사례가 山﨑(2025 · `36回` = 4/2~4/30 의 105아웃 + **5/7 의 3아웃**)이다.
+ */
+test("⚠イニング 최장의 기간은 경계 등판까지 · 登板 최장의 기간은 그대로다", () => {
+  const blk = render(
+    pitchingStreakData({
+      season: pitchingScope({
+        best: pitchingMaru({ appearances: 9, from: "2026-06-01", to: "2026-07-20" }),
+        bestInnings: pitchingMaru({
+          appearances: 5,
+          lowerOuts: 108,
+          upperOuts: 108,
+          from: "2026-04-02",
+          to: "2026-04-30",
+          // 경계 등판(5/7)의 3아웃이 값에 들어갔다
+          inningsTo: "2026-05-07",
+        }),
+      }),
+    }),
+  );
+  assert.match(blk, /4月2日〜5月7日/, "이닝 최장의 기간이 경계 등판을 안 담았다");
+  assert.ok(!blk.includes("4月2日〜4月30日"), "이닝 최장이 등판 축의 기간을 그렸다");
+  assert.match(blk, /6月1日〜7月20日/, "등판 최장의 기간이 흔들렸다");
+});
+
+/**
+ * ⚠**미확정 경계는 기간까지 흔든다**(M11). 좁은 쪽을 단정해 두고 아무 말도 안 하면
+ * 그 기간이 거짓이 된다 — **「以上」의 사유만 말하고 끝내지 않는다.**
+ */
+test("⚠기간이 확정이 아니면 그 사실을 말한다 — 확정이면 안 말한다", () => {
+  const uncertain = render(
+    pitchingStreakData({
+      season: pitchingScope({
+        bestInnings: pitchingMaru({ lowerOuts: 69, upperOuts: 76, exact: false, inningsSpanExact: false }),
+      }),
+    }),
+  );
+  assert.match(uncertain, /イニングの「期間」もそこまで広がることがあります/);
+
+  const certain = render(
+    pitchingStreakData({
+      season: pitchingScope({
+        bestInnings: pitchingMaru({ lowerOuts: 69, upperOuts: 76, exact: false, inningsSpanExact: true }),
+      }),
+    }),
+  );
+  assert.ok(
+    !certain.includes("イニングの「期間」もそこまで広がることがあります"),
+    "기간이 확정인데 유보를 적었다 — 없는 유보도 거짓이다",
+  );
+});
+
 test("시즌 안에서 끝난 마루에는 연도를 안 붙인다 — 같은 해가 두 번 나오면 잡음이다", () => {
   const blk = render(pitchingStreakData());
   assert.match(blk, /6月1日〜7月20日/);

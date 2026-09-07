@@ -198,6 +198,68 @@ test("⚠규칙 R · 끝 경계 — 실점이 붙은 하프이닝은 통째로 0
     assert.equal(s.best!.innings.lowerOuts, 24, "끝 경계의 기여가 3아웃이 아니다(규칙 R)");
     assert.equal(s.best!.innings.upperOuts, 24);
     assert.equal(s.best!.innings.exact, true);
+    /**
+     * ⚠**값의 근거가 된 경기가 기간에 있어야 한다**(2026-09-07 P2 · 정의서 §1-6 ⑵).
+     * 4/8 의 3아웃이 24 아웃에 들어갔는데 기간이 `4/1〜4/1` 이면 **근거가 화면에서 사라진다.**
+     * ⚠**등판 축의 기간은 그대로다** — 4/8 은 실점 등판이라 **등판 축에는 안 들어간다.**
+     */
+    assert.equal(s.best!.innings.to, "2026-04-08", "이닝 축의 기간이 경계 등판을 안 담았다");
+    assert.equal(s.best!.innings.from, "2026-04-01");
+    assert.equal(s.best!.to, "2026-04-01", "등판 축의 기간이 실점 등판까지 늘어났다");
+    assert.equal(s.best!.innings.spanExact, true);
+  });
+});
+
+/**
+ * ⚠**`spanExact` 는 `exact` 의 복사가 아니다.** 미확정 경계라도 **그 등판의 아웃이 0** 이면
+ * 기여는 0 으로 정해지므로 **기간은 흔들리지 않는다.** 한 필드로 합치면 이 경우에
+ * 화면이 없는 유보를 적게 된다.
+ */
+test("⚠아웃 0인 미확정 경계 — exact 는 false 인데 기간은 확정이다", async () => {
+  await withDb((db) => {
+    appearance(db, { gameId: "g1", date: "2026-04-01", boxRuns: 0, boxOuts: 21 });
+    // 아웃 없이 2실점하고 강판. pa_event 합(1실점)이 박스(2실점)와 안 맞아 미확정이다
+    appearance(db, {
+      gameId: "g2",
+      date: "2026-04-08",
+      boxRuns: 2,
+      boxOuts: 0,
+      halves: [
+        { inning: 1, outs: 0, runs: 0 },
+        { inning: 2, outs: 0, runs: 1 },
+      ],
+    });
+    const s = pitchingStreaks(db, scope).get(P)!;
+    assert.equal(s.best!.innings.exact, false, "귀속이 안 맞는데 확정이라고 했다");
+    assert.equal(s.best!.innings.spanExact, true, "아웃이 0인 경계인데 기간이 흔들린다고 했다");
+    assert.equal(s.best!.innings.to, "2026-04-01");
+  });
+});
+
+/**
+ * ⚠**시즌을 넘는 경계**(통산 모드). 이닝 축의 기간이 이웃 시즌으로 넘어가면
+ * `innings.seasons` 도 그것을 말해야 한다 — 화면이 **연도를 붙일지**를 그것으로 정하기 때문이다.
+ * 안 그러면 `9月13日〜7月19日` 이 거꾸로 읽힌다(`maruSpanText` 의 그 함정).
+ */
+test("⚠경계가 이웃 시즌이면 innings.seasons 가 그 시즌을 담는다", async () => {
+  await withDb((db) => {
+    // 2025 마지막 등판: 1회 실점 → 2회 무실점(기여 3아웃)
+    appearance(db, {
+      gameId: "y0",
+      date: "2025-09-30",
+      boxRuns: 1,
+      boxOuts: 6,
+      halves: [
+        { inning: 1, outs: 3, runs: 1 },
+        { inning: 2, outs: 3, runs: 0 },
+      ],
+    });
+    appearance(db, { gameId: "y1", date: "2026-04-01", boxRuns: 0, boxOuts: 3 });
+    const s = pitchingStreaks(db, { fromSeason: 2018, toSeason: 2026 }).get(P)!;
+    assert.equal(s.best!.innings.lowerOuts, 6);
+    assert.equal(s.best!.innings.from, "2025-09-30");
+    assert.deepEqual(s.best!.innings.seasons, [2025, 2026], "이닝 축의 시즌 목록에 경계 시즌이 없다");
+    assert.deepEqual(s.best!.seasons, [2026], "등판 축의 시즌 목록이 경계까지 담았다");
   });
 });
 
@@ -220,6 +282,15 @@ test("⚠규칙 R · 시작 경계 — 마지막 실점 하프이닝 뒤부터 �
     assert.equal(s.best!.innings.lowerOuts, 24, "시작 경계의 기여가 3아웃이 아니다(규칙 R)");
     assert.equal(s.best!.innings.exact, true);
     assert.equal(s.best!.atRangeStart, false);
+    /**
+     * ⚠**시작 경계도 기간을 늘린다** — 그 등판의 2회가 값에 들어갔으므로
+     * 이닝 마루는 **4/1 에 시작한다.** 등판 축의 기간은 4/8 그대로다.
+     * ⚠**끝쪽은 기여가 0 이라 안 늘어난다**(g2 는 하프이닝 1개 · 확정 0) — **한 줄에 두 규칙이 다 있다.**
+     */
+    assert.equal(s.best!.innings.from, "2026-04-01", "시작 경계의 등판일이 기간에 없다");
+    assert.equal(s.best!.from, "2026-04-08", "등판 축의 기간이 실점 등판까지 늘어났다");
+    assert.equal(s.best!.innings.to, "2026-04-08", "기여 0인 끝 경계가 기간에 들어갔다");
+    assert.equal(s.best!.innings.spanExact, true);
   });
 });
 
@@ -290,6 +361,9 @@ test("⚠실점 귀속이 안 맞는 경계는 미확정이다 — lower·upper�
     assert.equal(s.best!.innings.exact, false, "귀속이 안 맞는데 확정이라고 했다");
     assert.equal(s.best!.innings.lowerOuts, 21, "미확정 경계의 기여를 0으로 두지 않았다");
     assert.equal(s.best!.innings.upperOuts, 27, "상한이 그 등판의 전체 아웃을 얹지 않았다");
+    // ⚠**기간도 하한을 따라간다** — 셀지 말지가 안 정해진 등판을 단정해 넣지 않는다(M11)
+    assert.equal(s.best!.innings.to, "2026-04-01", "미확정 경계를 기간에 단정해 넣었다");
+    assert.equal(s.best!.innings.spanExact, false, "모르는 것을 확정이라고 했다");
   });
 });
 

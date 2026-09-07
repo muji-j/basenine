@@ -179,7 +179,7 @@ export function reliefBlock(over: Partial<ReliefBlockData> = {}): ReliefBlockDat
  *   기본을 부등호 쪽으로 두면 **부등호가 안 붙는 경우를 아무도 안 보게 된다.**
  */
 export function pitchingMaru(over: Partial<PitchingStreakView> = {}): PitchingStreakView {
-  return {
+  const m = {
     appearances: 12,
     lowerOuts: 35,
     upperOuts: 35,
@@ -187,8 +187,22 @@ export function pitchingMaru(over: Partial<PitchingStreakView> = {}): PitchingSt
     atRangeStart: false,
     from: "2026-06-01",
     to: "2026-07-20",
-    seasons: [2026],
+    seasons: [2026] as readonly number[],
     ...over,
+  };
+  return {
+    ...m,
+    /**
+     * ⚠**기본은 등판 축과 같은 기간**이다 — 경계 등판이 기여하지 않는 흔한 모양.
+     * 다른 기간이 되는 쪽(**경계 등판이 값에 들어간 마루**)은 시험이 명시적으로 켠다.
+     *
+     * ⚠**`from`/`to`/`seasons` 를 덮으면 여기도 따라온다.** 고정값으로 두면, 기간을 바꿔
+     * 시험하는 자리(시즌 넘김 · 연도 표기)가 **이닝 축에서는 고정값을 보게 되어 조용히 공회전한다.**
+     */
+    inningsFrom: over.inningsFrom ?? m.from,
+    inningsTo: over.inningsTo ?? m.to,
+    inningsSeasons: over.inningsSeasons ?? m.seasons,
+    inningsSpanExact: over.inningsSpanExact ?? true,
   };
 }
 

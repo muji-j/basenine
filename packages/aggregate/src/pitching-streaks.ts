@@ -10,6 +10,10 @@
  * - **PSI** = 실점 없이 던진 **이닝**이 몇 회 연속됐는가. **등판 도중에도 끊긴다.**
  *   `interiorOuts` + **양 끝 경계 등판의 기여**다.
  *
+ * ⚠**그래서 두 지표는 기간도 다르다.** 경계 등판은 PSA 의 마루에 안 들어가고 PSI 의 값에는
+ * 들어가므로, PSI 의 기간은 **그 등판일까지** 걸친다(`ScorelessInnings.from`/`to`).
+ * `PitchingStreak.from`/`to` 를 이닝 축 화면에 그대로 쓰면 **값의 근거가 된 경기가 기간에서 빠진다.**
+ *
  * ## ⚠규칙 R — 이닝 경계의 정의 (정의서 §3-1)
  *
  * > **하프이닝 단위로 센다. 그 투수에게 실점이 붙은 하프이닝은 그가 몇 아웃을 잡았든 통째로 0 으로 친다.**
@@ -56,6 +60,35 @@ export interface ScorelessInnings {
    * 저쪽은 「그 앞을 우리가 안 봤다」다. **각주에서 구별하라**(정의서 §1-6).
    */
   exact: boolean;
+  /**
+   * **이닝 축이 실제로 걸친 기간의 첫 경기일.**
+   *
+   * ⚠**`PitchingStreak.from` 과 다를 수 있다 — 한 필드에 두 뜻을 담지 않는다.**
+   * 경계 등판은 **등판 축에는 안 들어가고 이닝 축에는 들어간다**(규칙 R). 앞 경계가
+   * **확실히** 기여하면(`exact` 이고 기여 아웃 > 0) 이닝 마루는 **그 등판일에 시작한다.**
+   *
+   * ⚠**실제로 화면이 거짓말을 했다**(2026-09-07 이중 검토 P2): 山﨑(`03305153`) 2025 의
+   * `36回` 는 4/2~4/30 의 105아웃 **+ 5/7 등판의 3아웃**인데, 화면 기간이 `4月2日〜4月30日` 라
+   * **값의 근거가 된 5/7 이 빠져 있었다.** 값은 맞는데 근거를 가리키는 기간이 틀렸다.
+   */
+  from: string;
+  /** 같은 규칙의 끝. 뒤 경계가 **확실히** 기여하면 **그 등판일**이다 */
+  to: string;
+  /**
+   * `from`~`to` 안에 **등판이 있던 시즌**(오름차순 · 중복 없음).
+   * ⚠**`PitchingStreak.seasons` 와 다를 수 있다** — 경계 등판이 이웃 시즌일 수 있다(통산 모드).
+   * 화면이 **연도를 붙일지**를 이것으로 정한다(안 그러면 `9月13日〜7月19日` 이 거꾸로 읽힌다).
+   */
+  seasons: readonly number[];
+  /**
+   * **그 기간이 확정인가.**
+   *
+   * ⚠**`exact` 와 같은 값이 아니다.** 경계가 미확정이어도 그 등판의 아웃이 **0** 이면
+   * 기여는 0 으로 정해져 기간이 안 흔들린다. 반대 방향은 성립한다 — `spanExact === false` 면
+   * `exact` 도 반드시 `false` 다(미확정 경계가 있다는 뜻이므로).
+   * ⚠**`false` 일 때 이 기간은 「하한이 센 범위」다** — 상한(`upperOuts`)은 그 밖의 등판까지 센다.
+   */
+  spanExact: boolean;
 }
 
 /** 마루 하나 */
@@ -288,6 +321,15 @@ function makeStreak(
   let lowerOuts = interiorOuts;
   let upperOuts = interiorOuts;
   let exact = true;
+  /**
+   * ⚠**이닝 축의 기간은 등판 축의 기간이 아니다.** 경계 등판은 등판 축에 안 들어가지만
+   * 이닝 축에는 **들어간다** — 기여 아웃이 0 이 아니면 그 등판일이 마루의 끝(또는 시작)이다.
+   * **한 필드에 두 뜻을 담지 않는다**(정의서 §1-6 ⑵ 가 「記録に数えた最後の試合まで」라고 약속한다).
+   */
+  let inningsFrom = seg[0]!.date;
+  let inningsTo = seg.at(-1)!.date;
+  const inningsSeasons = [...seasons];
+  let spanExact = true;
   for (const [app, side] of [
     [before, "before"],
     [after, "after"],
@@ -297,17 +339,38 @@ function makeStreak(
     if (b.exact) {
       lowerOuts += b.outs;
       upperOuts += b.outs;
+      // ⚠**기여가 0 이면 기간을 늘리지 않는다** — 그 등판은 한 아웃도 이 마루에 안 들어갔다
+      if (b.outs > 0) {
+        if (side === "before") {
+          inningsFrom = app.date;
+          if (inningsSeasons[0] !== app.season) inningsSeasons.unshift(app.season);
+        } else {
+          inningsTo = app.date;
+          if (inningsSeasons.at(-1) !== app.season) inningsSeasons.push(app.season);
+        }
+      }
     } else {
       // ⚠**하한은 기여 0 · 상한은 그 등판의 전체 아웃.** 둘 다 「반드시 참」이다
       upperOuts += app.outs;
       exact = false;
+      // ⚠**기간은 하한을 따라간다**(늘리지 않는다). 다만 **늘어날 수도 있다는 사실**을 낸다 —
+      //   아웃이 0 인 경계는 기여가 0 으로 정해지므로 기간이 안 흔들린다(그때는 확정이다)
+      if (app.outs > 0) spanExact = false;
     }
   }
 
   return {
     appearances: seg.length,
     interiorOuts,
-    innings: { lowerOuts, upperOuts, exact },
+    innings: {
+      lowerOuts,
+      upperOuts,
+      exact,
+      from: inningsFrom,
+      to: inningsTo,
+      seasons: inningsSeasons,
+      spanExact,
+    },
     from: seg[0]!.date,
     to: seg.at(-1)!.date,
     seasons,

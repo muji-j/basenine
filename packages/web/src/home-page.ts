@@ -38,6 +38,7 @@
 import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import { NO_VALUE, avg3, fullDate, gameDate } from "./format.ts";
+import { streakSpan } from "./streak-view.ts";
 import { ROSTER_PATH, page } from "./layout.ts";
 import type { RenderContext } from "./layout.ts";
 import { note, runCell, scroller, term, widestRunDiff, wlCell } from "./parts.ts";
@@ -314,7 +315,8 @@ export const STREAK_TABLE_HEAD =
  * ⚠**끝은 「마지막 출장」이 아니라 「기록에 센 마지막 경기」다**(`HomeStreak.to` 주석).
  */
 export function streakSpanText(x: HomeStreak): string {
-  return x.from === null || x.to === null ? NO_VALUE : `${gameDate(x.from)}〜${gameDate(x.to)}`;
+  // ⚠**서식은 `streak-view.ts` 한 벌이다**(M1) — 순위 화면의 연속 기록 표가 같은 기간을 그린다
+  return streakSpan(x.from, x.to);
 }
 
 /** 위 견출에 맞는 한 행의 칸들(선수·구단 칸을 뺀 나머지). **한 벌만 둔다**(M1) */

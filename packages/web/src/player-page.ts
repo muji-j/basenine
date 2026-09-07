@@ -37,6 +37,8 @@ import {
 import { stableTable } from "./table.ts";
 import type { BarRow, RankDigits } from "./parts.ts";
 import { NO_VALUE, avg3, dec2, fullDate, gameDate, innings, throwsBats } from "./format.ts";
+// ⚠**연속 기록의 값 서식은 한 벌이다**(M1) — 순위 화면의 連続記録 표가 같은 함수를 쓴다
+import { streakCountText, streakDen, streakInningsMax, streakInningsText } from "./streak-view.ts";
 import { isEmptyProfile, markFigure, markLetter, markProfile } from "./marks.ts";
 import type { MarkPlayer, ProfileAxis } from "./marks.ts";
 import { denUnit, termLabel, termOf } from "./glossary.ts";
@@ -315,10 +317,25 @@ export interface PitchingStreakView {
   exact: boolean;
   /** 훑은 범위의 첫 등판에서 시작했는가 */
   atRangeStart: boolean;
+  /** **登板 축**의 기간. ⚠**이닝 축은 다른 값이다**(아래) */
   from: string;
   to: string;
   /** 등판이 있던 시즌(오름차순 · 건너뛴 시즌은 없다) */
   seasons: readonly number[];
+  /**
+   * **イニング 축**의 기간 — ⚠**`from`/`to` 와 다를 수 있다.**
+   *
+   * 경계 등판은 **登板 축에는 안 들어가고 イニング 축에는 들어간다**(규칙 R). 그래서
+   * 「イニングでいちばん長い記録」의 기간을 등판 축의 것으로 그리면 **값의 근거가 된 등판이
+   * 기간에서 빠진다**(2026-09-07 P2 · `ScorelessInnings.from` 주석의 山﨑 실측).
+   * ⚠**한 필드에 두 뜻을 담지 않는다** — 두 축은 애초에 다른 마루일 수도 있다.
+   */
+  inningsFrom: string;
+  inningsTo: string;
+  /** 그 기간 안에 등판이 있던 시즌. **연도를 붙일지를 이것으로 정한다** */
+  inningsSeasons: readonly number[];
+  /** 그 기간이 확정인가. ⚠**`exact` 와 같은 값이 아니다**(`ScorelessInnings.spanExact` 주석) */
+  inningsSpanExact: boolean;
 }
 
 /**
@@ -1670,7 +1687,7 @@ function streakBlock(s: StreakBlockData, season: number, asOf: string | null, se
    * 시즌 축의 `current: 0` 과 **같은 것을 같게 그린다**(M11).
    */
   const lenOf = (m: CareerStreakView | null): string =>
-    m === null ? "0試合" : `${m.length}試合${m.atRangeStart ? "以上" : ""}`;
+    m === null ? "0試合" : streakCountText(m.length, "試合", m.atRangeStart);
   const careerRow = (key: string, p: CareerStreakPairView): RawHtml =>
     html`<dt>${term(termLabel(key))}</dt><dd class="v">${lenOf(p.current)}<span class="den">${current}</span></dd>
       <dt class="sub2">最長</dt><dd class="v">${lenOf(p.best)}${maruSpan(p.best, "出場")}</dd>`;
@@ -1749,14 +1766,22 @@ function maruSpanText(
   return `${d(m.from)}〜${d(m.to)}${gapText}`;
 }
 
-/** ⚠**분모 조각은 한 칸에 모은다** — `<span class="den">` 이 둘 붙으면 화면에서 두 덩어리로 읽힌다 */
-function den(...parts: string[]): RawHtml {
-  const t = parts.filter((p) => p !== "").join(" · ");
-  return t === "" ? raw("") : html`<span class="den">${t}</span>`;
+function maruSpan(m: { from: string; to: string; seasons: readonly number[] } | null, absent: string): RawHtml {
+  return streakDen(maruSpanText(m, absent));
 }
 
-function maruSpan(m: { from: string; to: string; seasons: readonly number[] } | null, absent: string): RawHtml {
-  return den(maruSpanText(m, absent));
+/**
+ * **イニング 축의 기간을 꺼낸다** — `maruSpanText` 에 넘길 모양으로.
+ *
+ * ⚠**등판 축의 `from`/`to` 를 그대로 쓰면 안 된다**(2026-09-07 P2). 경계 등판의 아웃이
+ * 값에 들어가면 **그 등판일까지가 이 기록의 기간**인데, 등판 축의 기간에는 그 경기가 없다.
+ * ⚠**`seasons` 도 이닝 축의 것을 쓴다** — 안 그러면 시즌을 넘는 마루에서 **연도가 안 붙어**
+ * `9月13日〜7月19日` 이 거꾸로 읽힌다(`maruSpanText` 주석의 그 함정).
+ */
+function inningsSpanOf(
+  m: PitchingStreakView | null,
+): { from: string; to: string; seasons: readonly number[] } | null {
+  return m === null ? null : { from: m.inningsFrom, to: m.inningsTo, seasons: m.inningsSeasons };
 }
 
 /**
@@ -1836,15 +1861,16 @@ function pitchingStreakBlock(
    */
   const scopeBody = (sc: PitchingStreakScope, careerMode: boolean): RawHtml => {
     const atFloor = (m: PitchingStreakView): boolean => careerMode && m.atRangeStart;
+    // ⚠**서식은 `streak-view.ts` 한 벌이다**(M1) — 순위 화면의 連続記録 표가 같은 규칙으로 그린다
     const appText = (m: PitchingStreakView | null): string =>
-      m === null ? "0登板" : `${m.appearances}登板${atFloor(m) ? "以上" : ""}`;
+      m === null ? "0登板" : streakCountText(m.appearances, "登板", atFloor(m));
     /**
      * ⚠**이닝은 아웃에서 만든다**(M1 · `inningsFromOuts`). **소수점 형식을 새로 만들지 않는다** —
      * 정수 이닝은 `36回` 이고 `36.0回` 가 아니다(npb.jp 박스와 같은 표기).
      * ⚠**0 도 그 함수를 통과시킨다** — `"0.0回"` 라고 적으면 그 순간 형식이 두 벌이 된다.
      */
     const inTextOf = (m: PitchingStreakView | null): string =>
-      m === null ? `${innings(0)}回` : `${innings(m.lowerOuts)}回${!m.exact || atFloor(m) ? "以上" : ""}`;
+      m === null ? `${innings(0)}回` : streakInningsText(m.lowerOuts, m.exact, atFloor(m));
     /**
      * ⚠**상한도 「반드시 참」이다** — 「어차피 비슷하니 점추정」으로 가지 않는다(정의서 §3-3).
      *
@@ -1856,7 +1882,7 @@ function pitchingStreakBlock(
      * → **상한이 「보유 범위 안의 상한」임을 말로 한정한다.** 숨기면 참인 정보를 버리게 된다.
      */
     const maxOf = (m: PitchingStreakView | null): string =>
-      m === null || m.exact ? "" : `${atFloor(m) ? "保有範囲内では" : ""}最大${innings(m.upperOuts)}回`;
+      m === null ? "" : streakInningsMax(m.upperOuts, m.exact, atFloor(m));
     const bestLabel = careerMode ? "最長" : "今季最長";
 
     const marus = [sc.current, sc.best, sc.bestInnings];
@@ -1870,12 +1896,13 @@ function pitchingStreakBlock(
     const anyFloorInexact = maxShown.some((m) => m !== null && atFloor(m) && !m.exact);
 
     return html`${columns(
-      html`<dt>${term(termLabel("scorelessAppearanceStreak"))}</dt><dd class="v">${appText(sc.current)}${den(stateWord)}</dd>
+      html`<dt>${term(termLabel("scorelessAppearanceStreak"))}</dt><dd class="v">${appText(sc.current)}${streakDen(stateWord)}</dd>
         <dt class="sub2">${bestLabel}</dt><dd class="v">${appText(sc.best)}${maruSpan(sc.best, "登板")}</dd>`,
-      html`<dt>${term(termLabel("scorelessInningStreak"))}</dt><dd class="v">${inTextOf(sc.current)}${den(maxOf(sc.current), stateWord)}</dd>
-        <dt class="sub2">${bestLabel}</dt><dd class="v">${inTextOf(sc.bestInnings)}${den(
+      html`<dt>${term(termLabel("scorelessInningStreak"))}</dt><dd class="v">${inTextOf(sc.current)}${streakDen(maxOf(sc.current), stateWord)}</dd>
+        <dt class="sub2">${bestLabel}</dt><dd class="v">${inTextOf(sc.bestInnings)}${streakDen(
           maxOf(sc.bestInnings),
-          maruSpanText(sc.bestInnings, "登板"),
+          // ⚠**이닝 축의 기간이다** — 등판 축의 것을 쓰면 값의 근거가 된 경계 등판이 빠진다
+          maruSpanText(inningsSpanOf(sc.bestInnings), "登板"),
         )}</dd>`,
     )}
     ${note(
@@ -1899,7 +1926,15 @@ function pitchingStreakBlock(
             (anyFloorInexact
               ? "併記した「最大」は**当サイトが持っている範囲のなかでの上限**です — " +
                 "その範囲より前は数えていないので、記録そのものはもっと長い可能性があります。"
-              : "併記した「最大」までのどこかで、どちらの数字も必ず成り立ちます。")
+              : "併記した「最大」までのどこかで、どちらの数字も必ず成り立ちます。") +
+            /**
+             * ⚠**그 미확정이 기간까지 흔든다**(2026-09-07 P2). 「最長」 옆의 기간은
+             * **하한이 센 범위**이고, 그 등판을 셀지 말지가 안 정해지면 **기간도 안 정해진다.**
+             * 좁은 쪽을 단정해 두고 아무 말도 안 하면 그 기간이 거짓이 된다(M11).
+             */
+            (sc.bestInnings !== null && !sc.bestInnings.inningsSpanExact
+              ? "その登板を数に入れるかどうかが決まらないので、**イニングの「期間」もそこまで広がることがあります**。"
+              : "")
           : "") +
         (anyFloor ? atRangeStartNote(marus, sc.fromSeason) : "") +
         // ⚠**「자책점이 아니라 실점」은 값의 정의다**(사용자 결정 ⑸) — 용어집에도 있지만 화면에도 적는다

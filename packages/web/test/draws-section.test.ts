@@ -50,6 +50,7 @@ function data(draws: DrawSeasonRow[]): RankingPageData {
   return {
     season: 2026,
     asOf: "2026-08-14",
+    seasonOver: false,
     standings: [{ id: "central", name: "セントラル・リーグ", rows: [] }],
     tieRule: TIE_RULE,
     draws,

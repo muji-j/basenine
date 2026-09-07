@@ -739,6 +739,66 @@ test("조립 시스템이 없는 화면에서도 탭은 동작한다 — 부문 
 });
 
 /**
+ * **한 그룹이 리그마다 탭줄을 한 벌씩 갖는다 — 로빙 tabindex 는 그 탭줄 안의 규약이다.**
+ *
+ * ⚠**둘을 한 배열로 모아 놓았다**(2026-09-07 이중 검토 P3 · **이 diff 이전부터 있던 결함**).
+ * `initTabs` 가 `[data-tabgroup="G"] [data-tab]` 를 **문서 전체에서** 모으므로:
+ * ⑴ 탭 정지(`tabindex="0"`)가 **그룹 전체에 하나**뿐이라, パ 로 바꾸면 그 탭줄에
+ *    탭 정지가 **0개**가 되어 **키보드로 아예 닿을 수 없다**(WCAG 2.1.1).
+ * ⑵ 끝에서 화살표를 누르면 **숨은 반대 리그의 버튼**으로 넘어가고, 숨은 요소는 초점을
+ *    못 받으므로 **초점이 사라진다.**
+ *
+ * ⚠**「그룹을 리그별로 나눈다」로 고치면 안 된다**(`parts.ts` 의 `TabGroup` 주석) —
+ * 「리그를 바꿔도 보던 지표가 남는다」가 함께 사라진다. **순환과 탭 정지만** 탭줄 안으로 가둔다.
+ */
+test("⚠탭 정지는 탭줄마다 하나씩 — 반대 리그의 탭줄이 키보드에서 사라지면 안 된다", () => {
+  const doc = buildRankingPage();
+  run(doc);
+  const lists = doc.querySelectorAll('[data-tabgroup="rankcat"]');
+  assert.equal(lists.length, 2, "픽스처가 두 리그의 탭줄을 안 만들었다 — 이 시험이 공회전한다");
+  for (const [i, list] of lists.entries()) {
+    const stops = list
+      .querySelectorAll("[data-tab]")
+      .filter((b) => b.getAttribute("tabindex") === "0");
+    assert.equal(stops.length, 1, `${i === 0 ? "セ" : "パ"}의 탭줄에 탭 정지가 ${stops.length}개다`);
+  }
+});
+
+test("⚠화살표는 그 탭줄 안에서만 돈다 — 숨은 반대 리그로 넘어가면 초점이 사라진다", () => {
+  const doc = buildRankingPage();
+  run(doc);
+  const [ce, pa] = doc.querySelectorAll('[data-tabgroup="rankcat"]');
+  const ceBtns = ce!.querySelectorAll("[data-tab]");
+  const paBtns = pa!.querySelectorAll("[data-tab]");
+  // セ의 **마지막** 버튼에서 오른쪽 → 같은 탭줄의 첫 버튼으로 돌아와야 한다
+  ceBtns[ceBtns.length - 1]!.fire("keydown", { key: "ArrowRight" });
+  assert.equal(
+    ceBtns[0]!.getAttribute("tabindex"),
+    "0",
+    "끝에서 오른쪽을 눌렀는데 같은 탭줄의 첫 버튼으로 안 돌아왔다",
+  );
+  assert.equal(
+    paBtns.filter((b) => b.getAttribute("tabindex") === "0").length,
+    1,
+    "반대 리그의 탭줄이 탭 정지를 잃었다",
+  );
+});
+
+test("⚠그래도 리그 간 선택은 함께 움직인다 — 그룹을 나누면 그것이 사라진다", () => {
+  const doc = buildRankingPage();
+  run(doc);
+  const [ce, pa] = doc.querySelectorAll('[data-tabgroup="rankcat"]');
+  ce!.querySelectorAll("[data-tab]").find((b) => b.dataset["tab"] === "starter")!.fire("click");
+  const on = (list: El): string[] =>
+    list
+      .querySelectorAll("[data-tab]")
+      .filter((b) => b.getAttribute("aria-selected") === "true")
+      .map((b) => b.dataset["tab"]!);
+  assert.deepEqual(on(ce!), ["starter"]);
+  assert.deepEqual(on(pa!), ["starter"], "리그를 바꿨을 때 보던 지표가 남지 않는다");
+});
+
+/**
  * 지금 열려 있는 **패널**의 키.
  * ⚠`role="tabpanel"`로 거른다 — 같은 그룹에는 레일 안의 하위 탭줄(`follower`)도 붙어 있어서
  * 거르지 않으면 한 갈래가 두 번 세어진다.
