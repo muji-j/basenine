@@ -86,6 +86,32 @@ test("⚠用語集のラベルを変えたら画面がついてくる — 片方
 test("⚠ブロックの説明文も用語集から出る — 4か所目の直書きだった", () => {
   const streak = BLOCKS.find((b) => b.id === "streak");
   assert.ok(streak !== undefined);
-  assert.equal(streak.desc, `打者のみ。${termLabel("hitStreak")}・${termLabel("onBaseStreak")}`);
+  /**
+   * ⚠**2026-09-07 に投手2種が同じブロックへ入り、「打者のみ」が嘘になった。**
+   * 4種すべてを用語集から出す — どちらかが増えてもここが付いてくる。
+   */
+  assert.equal(
+    streak.desc,
+    `打者は${termLabel("hitStreak")}・${termLabel("onBaseStreak")}、` +
+      `投手は${termLabel("scorelessAppearanceStreak")}・${termLabel("scorelessInningStreak")}`,
+  );
   assert.match(streak.desc, /連続試合安打/);
+  assert.match(streak.desc, /連続無失点登板/);
+  assert.ok(!streak.desc.includes("打者のみ"), "投手にも出るのに「打者のみ」と言っている");
+});
+
+/**
+ * ⚠**投手2種も「名前をそのまま使えるか」の判定を通っている**(정의서 §5) —
+ * ただし**確信度は「慣例」だ**: 公認野球規則 9.23 に投手の連続無失点の条文がない。
+ * その事実を**画面が言う**(caveat)。言わなければ「公式記録」と読まれる。
+ */
+test("⚠投手2種の用語は「公認野球規則にない」ことを画面で言う", () => {
+  for (const key of ["scorelessAppearanceStreak", "scorelessInningStreak"] as const) {
+    assert.equal(termKeyForLabel(termOf(key)!.label), key, `${key} が逆索引で引けない`);
+  }
+  assert.match(termOf("scorelessAppearanceStreak")!.caveat ?? "", /公認野球規則/);
+  // ⚠**自責点ではなく失点**(사용자 결정 ⑸) — 값의 정의라 화면이 말해야 한다
+  assert.match(termOf("scorelessAppearanceStreak")!.caveat ?? "", /自責点ではなく/);
+  // ⚠**「33.1回」は33と1/3回**(정의서 §1-2) — 값 자체가 이닝이라 오독이 곧 오보다
+  assert.match(termOf("scorelessInningStreak")!.caveat ?? "", /33と1\/3回/);
 });

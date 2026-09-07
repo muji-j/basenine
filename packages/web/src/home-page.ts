@@ -126,7 +126,15 @@ export interface HomeStreak {
   teamCode: string;
   shortName: string;
   color: TeamColor;
-  kind: "hitting" | "onBase";
+  /**
+   * ⚠**投手も入る**(2026-09-07). `scorelessAppearances` は **連続無失点登板**で、
+   * 打者の2種とは**続きやすさが違う** — 表は長さで並べるが、それは「どれがすごいか」の順ではない。
+   * 각주가 그 사실을 말한다.
+   * ⚠**連続無失点イニングは入れない**(정의서 §1-7) — 「N回以上」은 「N回」와 비교가
+   * 성립하지 않아 **순위를 붙일 수 없다.** 이 표는 길이로 줄 세우는 표다.
+   */
+  kind: "hitting" | "onBase" | "scorelessAppearances";
+  /** 記録の長さ。打者は試合、投手は登板（どちらも単位は「試合」だ） */
   games: number;
   /** 마지막 출장일. **「継続中」이라고 쓸 수 있는지 판단하는 근거** */
   lastGameDate: string | null;
@@ -257,6 +265,32 @@ export function streakSectionTitle(seasonOver: boolean): string {
 export function milestoneSectionTitle(seasonOver: boolean): string {
   return seasonOver ? "記録に近づいていた" : "記録に近づいている";
 }
+
+/**
+ * 연속 기록 종류 → **용어집 키**. ⚠**한 곳에서만 만든다**(M1) —
+ * 홈과 구단 페이지가 같은 표를 그리는데, 각자 삼항식으로 적으면 한쪽만 고쳐진다.
+ * 실제로 `連続安打` 가 네 곳에 문자열로 박혀 있었고 그것이 **9.23(a) 의 다른 기록 이름**이었다.
+ */
+export const STREAK_TERM_KEY: Readonly<Record<HomeStreak["kind"], string>> = {
+  hitting: "hitStreak",
+  onBase: "onBaseStreak",
+  scorelessAppearances: "scorelessAppearanceStreak",
+};
+
+/**
+ * 「続いている記録」表の各注 — **홈과 구단이 같은 문장을 쓴다**(M1).
+ *
+ * ⚠**옛 문장은 투수가 들어온 순간 거짓이 됐다**: 「その日より後に試合があれば、記録はもう
+ * 途切れているか、本人が出ていないかのどちらかです」 — 투수는 **등판하지 않으면 안 끊긴다.**
+ * 「출장하지 않았다」와 「기록이 끊겼다」가 타자에서는 배타적이지만 투수에서는 아니다.
+ * ⚠**길이로 줄 세우지만 종류가 다르면 비교가 성립하지 않는다** — 그 사실도 적는다.
+ */
+export const STREAK_TABLE_NOTE =
+  "**最後の出場日を必ず併記しています。** 打者の記録は、その日より後に試合があれば" +
+  "もう途切れているか本人が出ていないかのどちらかです。" +
+  "⚠**投手の連続無失点は、登板しなければ途切れません** — そのぶん日付が古いまま残ることがあります。" +
+  "連続記録は「試合」単位で数えます（NPB・MLBの慣例）。代走だけで出た試合は数えません。" +
+  "⚠**種類の違う記録を長さで並べています** — 続きやすさが違うので、並び順は「どれがすごいか」の順ではありません。";
 
 const pctText = (v: number | null): string => (v === null ? NO_VALUE : avg3(v));
 
@@ -540,16 +574,14 @@ ${d.streaks.length === 0
       (x) => html`<tr>
       <td class="l"><a href="${base}players/${x.playerId}.html">${x.name}</a></td>
       <td class="l">${teamChip(x.teamCode, x.shortName, x.color, base)}</td>
-      <td class="l">${termLabel(x.kind === "hitting" ? "hitStreak" : "onBaseStreak")}</td>
+      <td class="l">${termLabel(STREAK_TERM_KEY[x.kind])}</td>
       <td class="b">${x.games}</td>
       <td class="l">${x.lastGameDate === null ? NO_VALUE : fullDate(x.lastGameDate)}</td>
     </tr>`,
     )}</tbody>
   </table>`)}
   ${note(
-    "**最後の出場日を必ず併記しています** — その日より後に試合があれば、記録はもう途切れているか、" +
-      "本人が出ていないかのどちらかです。連続記録は「試合」単位で数えます（NPB・MLBの慣例）。" +
-      "代走だけで出た試合は数えません。",
+    STREAK_TABLE_NOTE,
   )}
 </section>`}
 

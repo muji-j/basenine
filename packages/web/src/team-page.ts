@@ -29,7 +29,7 @@ import type { TeamRace } from "@bb-app/aggregate";
 import type { HomeMilestone, HomeStreak } from "./home-page.ts";
 // ⚠**제목 문자열도 홈 화면과 한 벌을 쓴다**(M1) — 손으로 복사하면 한쪽만 고쳐지는 사고가 난다
 // (2026-08-20에 이 파일만 과거형으로 고쳐지고 홈이 안 갈린 사고가 실제로 났다)
-import { milestoneSectionTitle, streakSectionTitle } from "./home-page.ts";
+import { STREAK_TABLE_NOTE, STREAK_TERM_KEY, milestoneSectionTitle, streakSectionTitle } from "./home-page.ts";
 
 /**
  * 구단 페이지의 「続いている記録」·「記録に近づいている」에 싣는 행 수 — **홈의 한도와 별개다.**
@@ -841,16 +841,14 @@ function streakBlock(rows: readonly HomeStreak[], seasonOver: boolean, base: str
     <tbody>${rows.map(
         (x) => html`<tr>
       <td class="l"><a href="${base}players/${x.playerId}.html">${x.name}</a></td>
-      <td class="l">${termLabel(x.kind === "hitting" ? "hitStreak" : "onBaseStreak")}</td>
+      <td class="l">${termLabel(STREAK_TERM_KEY[x.kind])}</td>
       <td class="b">${x.games}</td>
       <td class="l">${x.lastGameDate === null ? NO_VALUE : fullDate(x.lastGameDate)}</td>
     </tr>`,
       )}</tbody>
   </table>`)}
   ${note(
-        "**最後の出場日を必ず併記しています** — その日より後に試合があれば、記録はもう途切れているか、" +
-          "本人が出ていないかのどちらかです。連続記録は「試合」単位で数えます（NPB・MLBの慣例）。" +
-          "代走だけで出た試合は数えません。" +
+        STREAK_TABLE_NOTE +
           // ⚠**자르는 기준을 화면에 적는다**(M3의 정신) — 「왜 이 선수가 없지?」에 답할 수 있게
           `**この球団の中で試合数が多い順に${TEAM_STREAK_ROWS}人まで**です（リーグ全体の上位ではありません）。`,
       )}`,

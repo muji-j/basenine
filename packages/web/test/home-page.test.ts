@@ -7,7 +7,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { REGULAR_SEASON_GAMES, renderHomePage } from "../src/home-page.ts";
+import { REGULAR_SEASON_GAMES, STREAK_TERM_KEY, renderHomePage } from "../src/home-page.ts";
 import type { HomePageData } from "../src/home-page.ts";
 import { colorOf } from "@bb-app/domain";
 import { termLabel } from "../src/glossary.ts";
@@ -584,4 +584,61 @@ test("⚠진행 중인 시즌의 홈은 「続いている記録」・「記録�
   const nav = /<nav class="hjump"[\s\S]*?<\/nav>/.exec(out)?.[0] ?? "";
   assert.match(nav, /続いている記録/, "내비 라벨이 현재형이 아니다");
   assert.match(nav, /記録に近づいている/, "내비 라벨이 현재형이 아니다");
+});
+
+/**
+ * ⚠**「続いている記録」이 조용히 「打者の記録」을 뜻하고 있었다**(2026-09-07) —
+ * `blocks.ts` 의 「打者のみ」와 같은 모양의 결함이고, 그 상태로는 2025년 NPB 최대의 연속 기록
+ * (石井大智의 50試合連続無失点)이 이 구획에 나올 수 없었다.
+ *
+ * ⚠**배선이 실제로 도는지는 `team-streaks-milestones.test.ts` 가 `loadSite` 로 잰다.**
+ * 여기서 보는 것은 **화면이 그 행을 어떻게 그리는가**다 — 둘을 한 시험에 넣으면 어느 쪽이
+ * 깨졌는지 모른다.
+ */
+test("⚠투수 행의 이름도 용어집에서 나온다 — 화면이 라벨을 직접 적지 않는다", () => {
+  const out = renderHomePage(
+    data({
+      streaks: [
+        {
+          playerId: "P9", name: "石井", teamCode: "t", shortName: "阪神", color: colorOf("t"),
+          // ⚠**최신 경기일이 아니다** — 구원투수는 매일 안 던진다. 그래도 기록은 안 끊겼다
+          kind: "scorelessAppearances", games: 16, lastGameDate: "2026-08-13",
+        },
+      ],
+    }),
+    context(),
+  );
+  assert.ok(out.includes(termLabel("scorelessAppearanceStreak")), "투수 기록의 이름이 없다");
+  assert.match(out, /2026年8月13日/, "마지막 등판일이 없다 — 이 표에서 그게 분모다");
+});
+
+/**
+ * ⚠**옛 각주는 투수가 들어온 순간 거짓이 됐다.** 「その日より後に試合があれば、記録はもう
+ * 途切れているか、本人が出ていないかのどちらかです」 — **투수는 등판하지 않으면 안 끊긴다.**
+ * 「출장하지 않았다」와 「기록이 끊겼다」가 타자에서는 배타적이지만 투수에서는 아니다.
+ */
+test("⚠각주가 투수와 타자를 구별한다 — 그리고 종류가 다르면 비교가 성립하지 않는다고 말한다", () => {
+  const out = renderHomePage(data(), context());
+  assert.match(out, /投手の連続無失点は、登板しなければ途切れません/);
+  assert.match(out, /種類の違う記録を長さで並べています/);
+  assert.ok(
+    !out.includes("その日より後に試合があれば、記録はもう途切れているか"),
+    "투수에게 거짓인 옛 각주가 남아 있다",
+  );
+});
+
+/**
+ * ⚠**종류 → 용어집 키의 표는 한 벌이다**(M1) — 홈과 구단 페이지가 같은 표를 그리는데
+ * 각자 삼항식으로 적으면 한쪽만 고쳐진다. 실제로 `連続安打` 가 네 곳에 박혀 있었다.
+ */
+test("⚠연속 기록 종류의 라벨 표가 한 벌이고 빠진 종류가 없다", () => {
+  assert.deepEqual(STREAK_TERM_KEY, {
+    hitting: "hitStreak",
+    onBase: "onBaseStreak",
+    scorelessAppearances: "scorelessAppearanceStreak",
+  });
+  for (const key of Object.values(STREAK_TERM_KEY)) {
+    // ⚠`termLabel` 은 모르는 키에 던진다 — 표에 오타가 있으면 여기서 터진다
+    assert.ok(termLabel(key).length > 0);
+  }
 });

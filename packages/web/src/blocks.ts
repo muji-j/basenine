@@ -63,11 +63,18 @@ export const BLOCKS: readonly BlockMeta[] = [
    * ⚠**라벨을 여기 적지 않는다**(M1 · 2026-09-07). `連続安打` 가 네 곳에 문자열로 박혀 있었고,
    * 그것이 **공인야구규칙 9.23(a) 의 다른 기록 이름**이라는 것이 뒤늦게 드러났다.
    * 용어집에서 꺼내면 다음에 이름이 바뀔 때 여기가 저절로 따라간다.
+   *
+   * ⚠**「打者のみ」는 2026-09-07 에 거짓이 됐다** — 투수 2종(連続無失点登板 · 連続無失点イニング)이
+   * 같은 블록에 붙었다. **설명문이 목록보다 늦게 낡는다**: `PITCHER_BLOCKS` 에 `streak` 를 넣은
+   * 순간 이 문장이 틀렸는데 **타입도 시험도 그것을 몰랐다**(문장은 자유 문자열이다).
+   * → 양쪽 4종을 **전부 용어집에서 꺼내** 적는다. 어느 쪽이 늘어도 여기가 따라간다.
    */
   {
     id: "streak",
     name: "連続記録",
-    desc: `打者のみ。${termLabel("hitStreak")}・${termLabel("onBaseStreak")}`,
+    desc:
+      `打者は${termLabel("hitStreak")}・${termLabel("onBaseStreak")}、` +
+      `投手は${termLabel("scorelessAppearanceStreak")}・${termLabel("scorelessInningStreak")}`,
   },
   { id: "matchup", name: "対戦成績", desc: "投手別。打席数の多い順" },
   /**
@@ -119,6 +126,14 @@ const PITCHER_BLOCKS = new Set<BlockId>([
   "count",
   /** ⚠**투수 전용이다** — 타자에게는 뜻이 없다. `rolesplit` 과 같은 이유로 양쪽 목록에 명시한다 */
   "relief",
+  /**
+   * ⚠**같은 블록 id 에 서로 다른 두 지표 묶음이 든다**(2026-09-07).
+   * 타자에게는 `連続試合安打`·`連続試合出塁`·`連続試合無安打`, 투수에게는
+   * `連続無失点登板`·`連続無失点イニング` 다 — **역할로 갈리는 유일한 블록**이다.
+   * ⚠**`rolesplit`·`relief` 처럼 한쪽만의 블록으로 나누지 않았다**: 사용자에게는 둘 다
+   * 「連続記録」이고, 블록 두 개로 쪼개면 조립 UI 에 **자기 역할에 없는 이름**이 하나 더 뜬다.
+   */
+  "streak",
   "splits",
   "scorebook",
   "matchup",
