@@ -11,7 +11,7 @@
   "scripts": {
     "test": "node --test \"packages/*/test/*.test.ts\" \"scripts/test/*.test.ts\"",
     "typecheck": "tsc -p tsconfig.json",
-    "build:web": "node --max-old-space-size=6144 packages/web/tools/build.ts data/bb.sqlite dist 2026,2025,2024,2023,2022,2021,2020,2019,2018",
+    "build:web": "node --max-old-space-size=6144 packages/web/tools/build.ts data/bb.sqlite dist 2026,2025,2024,2023,2022,2021,2020,2019,2018 && node scripts/build-fonts.ts dist",
     "preview": "node scripts/preview.ts dist 4173",
     "marks": "node packages/web/tools/marks.ts data/bb.sqlite docs/mockups/2026-08-15-identity-marks.html 2026",
     "archive": "node packages/archiver/src/cli.ts",
@@ -20,10 +20,15 @@
     "leaderboard": "node packages/aggregate/tools/leaderboard.ts data/bb.sqlite 2026",
     "splits": "node packages/aggregate/tools/splits-report.ts data/bb.sqlite 2026",
     "src": "node packages/aggregate/tools/src-report.ts data/bb.sqlite 2026",
-    "run-expectancy": "node packages/aggregate/tools/run-expectancy.ts data/bb.sqlite 2026"
+    "run-expectancy": "node packages/aggregate/tools/run-expectancy.ts data/bb.sqlite 2026",
+    "build:fonts": "node scripts/build-fonts.ts dist"
   },
   "devDependencies": {
+    "@expo-google-fonts/noto-sans": "0.4.2",
+    "@expo-google-fonts/noto-sans-jp": "0.4.3",
     "@types/node": "^24.0.0",
+    "fontverter": "2.0.0",
+    "subset-font": "2.7.0",
     "typescript": "^5.7.0",
     "wrangler": "4.123.0"
   }

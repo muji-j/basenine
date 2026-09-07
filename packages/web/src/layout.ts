@@ -185,13 +185,27 @@ export function heldRange(f: Freshness): string {
  *   실측(2026-08-16): 2025년 화면 2,307장 전부가 「315일 전」이라는 빨간 띠를 달고 있었다.
  */
 export function freshnessBar(f: Freshness, pastSeason = false): RawHtml {
+  /**
+   * ⚠정규시즌이 다른 날에서 멈춰 있으면 **그것도 적는다** — 화면 대부분이 싣는 것은 그쪽이다.
+   *
+   * ⚠**이 한정어가 진행 중 분기에만 걸려 있었다**(2026-09-08 · design-auditor P2).
+   * 완결 시즌 화면은 띠에 「最後の試合は 10月30日」(전 대회)을, 푸터 도장에 「10月5日までのデータ」
+   * (`footStamp` = `regularGameDate ?? latestGameDate`)를 **범위를 말하지 않은 채 나란히** 실었다.
+   * 완결 8시즌 **8/8 이 불일치**하고 차이는 **11~27일**이다 — 사용자는 그것을
+   * 「데이터가 25일 밀렸나?」로 읽는다(§6 의 그 사고와 같은 모양).
+   * ⚠**같은 문제를 인지하고 만든 장치가 한쪽 분기에만 걸려 있었다.** 그래서 위로 끌어올린다.
+   */
+  const regular =
+    f.regularGameDate === null || f.regularGameDate === f.latestGameDate
+      ? raw("")
+      : html`（レギュラーシーズンは ${fullDate(f.regularGameDate)} まで）`;
   // ⚠**두 근거를 합친다.** `pastSeason` 은 「시즌 번호가 최신이 아니다」이고
   // `f.seasonOver` 는 「그 시즌이 실제로 끝났다」이다 — 둘 다 `true` 만 증명이라
   // **OR 가 안전한 방향**이다. 오프시즌의 현행 시즌은 뒤쪽만 참이다.
   if (pastSeason || f.seasonOver) {
     return f.latestGameDate === null
       ? html`<div class="state fresh">このシーズンの試合はありません</div>`
-      : html`<div class="state fresh">終了したシーズンです — 最後の試合は ${fullDate(f.latestGameDate)}</div>`;
+      : html`<div class="state fresh">終了したシーズンです — 最後の試合は ${fullDate(f.latestGameDate)}${regular}</div>`;
   }
   if (f.latestGameDate === null) {
     return html`<div class="state stale" role="status">
@@ -199,11 +213,6 @@ export function freshnessBar(f: Freshness, pastSeason = false): RawHtml {
     </div>`;
   }
   const latest = fullDate(f.latestGameDate);
-  // ⚠정규시즌이 다른 날에서 멈춰 있으면 **그것도 적는다** — 화면 대부분이 싣는 것은 그쪽이다
-  const regular =
-    f.regularGameDate === null || f.regularGameDate === f.latestGameDate
-      ? raw("")
-      : html`（レギュラーシーズンは ${fullDate(f.regularGameDate)} まで）`;
   if (isStale(f)) {
     return html`<div class="state stale" role="status">
       <b>更新が止まっています</b> — 最新の試合は ${latest}（${f.lagDays}日前）。取得に失敗している可能性があります

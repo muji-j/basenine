@@ -20,7 +20,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CLIENT_JS } from "../src/assets.ts";
+import { CLIENT_JS, CSS } from "../src/assets.ts";
 import { glossaryKeys } from "../src/glossary.ts";
 import { El, make, makeDocument, makeStorage } from "./dom-stub.ts";
 
@@ -139,4 +139,61 @@ test("⚠정렬 버튼의 용어는 호버로 열린다 — 손가락에서 그�
   assert.equal(s.open(), true, "정렬 버튼의 용어가 호버로 안 열렸다");
   s.head.fire("mouseleave");
   assert.equal(s.open(), false);
+});
+
+/**
+ * **용어 버튼의 판정 영역** — WCAG 2.2 SC 2.5.8 Target Size (Minimum) 은 **24 × 24 CSS px** 을 요구한다.
+ *
+ * ⚠**넓히는 규칙이 `@media (pointer:coarse)` 안에 있었다**(2026-09-08 · design-auditor P2).
+ * 그래서 마우스에서는 판정 영역이 글자 그대로 **22 × 17** 이었다 — 10.5px 글자 한 덩어리다.
+ * ⚠**2.5.8 에는 「포인터가 정밀하면 면제」가 없다.** 면제는 인라인 텍스트 안의 링크·필수 크기·
+ * 같은 기능이 옆에 또 있는 경우인데, 이 버튼은 **그 용어 설명을 여는 유일한 자리**다.
+ * → 미디어 쿼리 밖으로 뺐다. 좌우 +7 · 상하 +5 이므로 **36 × 27** 이 된다.
+ *
+ * ⚠**CSS 문자열 검사로는 못 잡던 결함이다** — 규칙은 그대로 있었고 **어느 미디어 안에 있는가**만 달랐다.
+ * 그래서 이 시험은 「규칙이 있는가」가 아니라 **「어느 블록 안에 있는가」**를 본다.
+ */
+test("⚠용어 버튼의 판정 영역이 마우스에서도 24×24 를 넘는다 — coarse 안에 가두지 마라", () => {
+  const css = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
+  const rule = /(?:^|[\n}])\s*\.term::after\{([^{}]*)\}/.exec(css);
+  assert.notEqual(rule, null, ".term::after 규칙이 없다 — 이 시험이 공회전한다");
+
+  /** `@media (pointer:coarse)` 블록들의 본문 — 그 안에 있으면 마우스에서는 안 걸린다 */
+  const coarse: string[] = [];
+  for (const at of css.matchAll(/@media \(pointer:coarse\)[^{]*\{/g)) {
+    let depth = 0;
+    const start = at.index! + at[0]!.length;
+    for (let i = start - 1; i < css.length; i += 1) {
+      if (css[i] === "{") depth += 1;
+      else if (css[i] === "}") {
+        depth -= 1;
+        if (depth === 0) { coarse.push(css.slice(start, i)); break; }
+      }
+    }
+  }
+  // ⚠**공회전 방지** — coarse 블록을 하나도 못 찾으면 아래 단언이 언제나 통과한다
+  assert.ok(coarse.length >= 3, `@media (pointer:coarse) 블록을 ${coarse.length}개밖에 못 찾았다`);
+  assert.ok(
+    !coarse.some((b) => /\.term::after\{/.test(b)),
+    "판정 영역을 넓히는 규칙이 다시 @media (pointer:coarse) 안으로 들어갔다 —\n" +
+      "  ⚠마우스에서 22 × 17 로 돌아간다(SC 2.5.8 은 24 × 24 를 요구하고 포인터로 면제하지 않는다)",
+  );
+
+  // 실제 크기를 **계산**한다 — 글자 상자 + 좌우·상하 확장
+  const px = (name: string): number => {
+    const m = new RegExp(`${name}:\\s*(-?\\d+(?:\\.\\d+)?)px`).exec(rule![1]!);
+    assert.notEqual(m, null, `.term::after 에 ${name} 이 없다: ${rule![1]}`);
+    return Number(m![1]);
+  };
+  // 글자 상자: 항목명 10.5px 두 글자(=21px 남짓) · 줄높이 1.55 → 약 22 × 17 로 측정됐다
+  const TEXT_W = 22;
+  const TEXT_H = 17;
+  const w = TEXT_W + -px("left") + -px("right");
+  const h = TEXT_H + -px("top") + -px("bottom");
+  assert.ok(w >= 24, `판정 영역의 가로가 ${w}px 이다 — SC 2.5.8 은 24px 을 요구한다`);
+  assert.ok(h >= 24, `판정 영역의 세로가 ${h}px 이다 — SC 2.5.8 은 24px 을 요구한다`);
+  // ⚠**위아래를 더 넓히지 마라** — 항목 줄 간격이 25px 남짓이라 옆 줄의 설명이 뜬다(그 주석이 근거다)
+  assert.ok(-px("top") <= 5, `위쪽 확장이 ${-px("top")}px 이다 — 5px 을 넘으면 옆 줄과 겹친다`);
+  assert.ok(-px("bottom") <= 5, `아래쪽 확장이 ${-px("bottom")}px 이다 — 5px 을 넘으면 옆 줄과 겹친다`);
+  console.log(`  · .term 판정 영역 ${w} × ${h}px (글자 ${TEXT_W} × ${TEXT_H} + 확장)`);
 });
