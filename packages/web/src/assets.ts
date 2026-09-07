@@ -2481,24 +2481,43 @@ function showTabs(){
        ⚠**새로 만든 날짜 토글(오늘·내일)도 이 위에 얹혀 있다.**
        ⚠tabindex 는 여기서 준다 — JS 가 없으면 화살표도 없으니 그때는 전부 탭으로 닿는 편이 맞다
        (바로 아래 .picklist 가 쓰는 것과 같은 방침). */
-    const isTablist=groups[g].some(l=>l.getAttribute&&l.getAttribute("role")==="tablist");
-    const rove=(el)=>{if(isTablist)buttons.forEach(b=>b.setAttribute("tabindex",b===el?"0":"-1"))};
-    const sel=buttons.filter(b=>b.dataset.tab===state.tabs[g])[0]||buttons[0];
-    if(sel)rove(sel);
-    if(isTablist)buttons.forEach((b,at)=>{
-      b.addEventListener("click",()=>rove(b));
-      b.addEventListener("keydown",(e)=>{
-        const step=e.key==="ArrowRight"||e.key==="ArrowDown"?at+1
-          :e.key==="ArrowLeft"||e.key==="ArrowUp"?at-1
-          :e.key==="Home"?0:e.key==="End"?buttons.length-1:null;
-        if(step===null)return;
-        const to=buttons[(step+buttons.length)%buttons.length];
-        e.preventDefault();
-        /* ⚠**이동하면 그 탭을 연다**(자동 활성화). 이 탭들은 이미 그려진 패널을 여닫을 뿐이라
-           여는 비용이 없고, 수동 활성화(Enter 를 또 눌러야 함)는 여기서 손만 늘린다. */
-        delete transient[g];
-        state.tabs[g]=to.dataset.tab;save(state);showTabs();
-        rove(to);if(to.focus)to.focus();
+    /* ⚠**로빙은 「탭줄 하나」 안의 규약이다 — 그룹 전체의 규약이 아니다**(2026-09-07 P3).
+       한 그룹이 리그마다 탭줄을 한 벌씩 갖는데(순위 화면의 rankcat·rankmetric·rankstreak),
+       버튼을 문서 전체에서 한 배열로 모으면 둘이 난다:
+       ⑴ 탭 정지가 **그룹에 하나**뿐이라 パ 로 바꾸면 그 탭줄에 탭 정지가 **0개**가 되어
+          **Tab 으로 아예 닿을 수 없다**(WCAG 2.1.1).
+       ⑵ 끝에서 화살표를 누르면 **숨은 반대 리그의 버튼**으로 넘어가고, 숨은 요소는 초점을
+          못 받으므로 **초점이 사라진다.**
+       ⚠**그룹을 리그별로 나눠서 고치지 마라**(parts.ts 의 TabGroup 주석) — 그러면
+       「리그를 바꿔도 보던 지표가 남는다」가 함께 사라진다. 위의 클릭 배선은 그룹 전체
+       그대로 두고, **탭 정지와 순환만** 탭줄 안으로 가둔다. */
+    const tablists=groups[g].filter(l=>l.getAttribute&&l.getAttribute("role")==="tablist");
+    const inList=(list)=>$$("[data-tab]",list);
+    /* 지금 고른 키에 맞춰 **탭줄마다 하나씩** 탭 정지를 둔다. 숨은 탭줄에도 둔다 —
+       그 리그로 바꾸는 순간 그 자리가 필요해지고, 그때 다시 계산할 자리가 없다 */
+    const rove=(key)=>tablists.forEach(list=>{
+      const bs=inList(list);
+      const on=bs.filter(b=>b.dataset.tab===key)[0]||bs[0];
+      bs.forEach(b=>b.setAttribute("tabindex",b===on?"0":"-1"));
+    });
+    rove(state.tabs[g]);
+    tablists.forEach(list=>{
+      const bs=inList(list);
+      bs.forEach((b,at)=>{
+        b.addEventListener("click",()=>rove(b.dataset.tab));
+        b.addEventListener("keydown",(e)=>{
+          const step=e.key==="ArrowRight"||e.key==="ArrowDown"?at+1
+            :e.key==="ArrowLeft"||e.key==="ArrowUp"?at-1
+            :e.key==="Home"?0:e.key==="End"?bs.length-1:null;
+          if(step===null)return;
+          const to=bs[(step+bs.length)%bs.length];
+          e.preventDefault();
+          /* ⚠**이동하면 그 탭을 연다**(자동 활성화). 이 탭들은 이미 그려진 패널을 여닫을 뿐이라
+             여는 비용이 없고, 수동 활성화(Enter 를 또 눌러야 함)는 여기서 손만 늘린다. */
+          delete transient[g];
+          state.tabs[g]=to.dataset.tab;save(state);showTabs();
+          rove(to.dataset.tab);if(to.focus)to.focus();
+        });
       });
     });
   });
