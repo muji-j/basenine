@@ -31,7 +31,7 @@ import type { RawHtml } from "./html.ts";
 import { NO_VALUE, avg3, dec2, fullDate, innings } from "./format.ts";
 import { block, denText, follower, note, panel, panelId, rankValue, runCell, scopedGroup, scroller, statCount, statRateOuts, statSigned, statText, subGroup, tabId, tablist, term, THIN_MARK, thinMark, valueWithDen, widestRunDiff, wlCell } from "./parts.ts";
 import type { TabGroupRef } from "./parts.ts";
-import { denUnit } from "./glossary.ts";
+import { denUnit, termLabel } from "./glossary.ts";
 import { page, pastSeasonOf, ROSTER_PATH } from "./layout.ts";
 import { teamPath } from "./team-page.ts";
 import type { Freshness, SiteMeta } from "./layout.ts";
@@ -43,6 +43,10 @@ import type { TeamColor } from "@bb-app/domain";
 import type { Rate } from "@bb-app/metrics";
 import { isEmptyProfile, markLetter, markProfile } from "./marks.ts";
 import type { MarkPlayer, ProfileAxis } from "./marks.ts";
+import { streakDen, streakSpan } from "./streak-view.ts";
+// ⚠**「続いている記録」이라는 이름을 여기서 다시 적지 않는다**(M1) — 이 표의 각주가
+//   「그건 저쪽 화면이다」라고 말할 때 쓰는 그 이름이다. 한쪽만 고쳐지면 안내가 거짓이 된다
+import { streakSectionTitle } from "./home-page.ts";
 
 // ⚠**타입은 `layout.ts` 한 벌만 둔다.** 세 곳에 두면 필드를 늘릴 때마다 세 곳을 고친다
 export type { RenderContext } from "./layout.ts";
@@ -67,6 +71,200 @@ export interface LeagueSection {
   id: string;
   name: string;
   categories: RankingCategory[];
+  /**
+   * **연속 기록 부문**. 순위표 부문(`categories`)과 **나란히 서지만 표가 다르다**(설계 §2).
+   *
+   * ⚠**`categories` 에 못 넣는다** — `RankingPanel` 은 `rank === null` 을 「규정 미달」로 다루고
+   * 기본으로 **숨긴다.** 연속 기록에서 그건 「비교가 성립하지 않는다」이고 **반드시 보여야 한다.**
+   * ⚠**선택 필드다** — 일람의 하이라이트(`IndexPageData.highlights`)에는 이 부문이 없다.
+   */
+  streaks?: StreakCategory;
+}
+
+/**
+ * **연속 기록 순위표에 싣는 확정 순위의 상한.** ⚠**화면에도 적는다**(M3의 정신) —
+ * 기준이 코드에만 있으면 「왜 이 선수가 없지?」에 답할 수 없다.
+ *
+ * ⚠**`RANKING_PAGE_ROWS`(50)를 쓰지 않는다 — 근거가 다르다.**
+ * 저쪽은 「規定到達のみ / 全員」 전환과 「もっと見る」가 붙는 표이고, 이쪽은 **자를수록
+ * 각주가 말해야 할 것이 늘어나는 표**다. 실측(2026-09-07 · `scripts/streak-ranking-measure.ts` ·
+ * 완결 8시즌 · 축×리그 64칸)에서 **10위의 값**은 連続無失点登板 **11~17登板** ·
+ * 連続試合安打 **11~14試合** · 連続試合出塁 **16~26試合** · 連続無失点イニング **45~68아웃**이라,
+ * 정의서 §1-7 이 歴代 목록에 제안한 하한(10등판)보다 **오히려 높다** — **별도 하한이 필요 없다.**
+ * ⚠**하한을 또 두면 화면이 어느 쪽이 잘랐는지 말할 수 없게 된다**(작업규칙 7).
+ */
+export const STREAK_RANK_ROWS = 10;
+
+/**
+ * 연속 기록 순위표의 한 행.
+ *
+ * ⚠**분모를 타입이 강제한다**(M2 · 정의서 §1-6). `scanned`(훑은 사건 수)와 `from`/`to`(마루의 기간)가
+ * **옵셔널이 아니다** — 분모 없는 행을 **만들 수 없다.** 셋째 분모(집계 범위)는 각주가 낸다.
+ *
+ * ⚠**값은 서버가 이미 다듬은 글자다**(`RankRestRow` 와 같은 규약 · M1). 렌더러가 다시 포맷하면
+ * 이닝 표기(`33.1回` = 33과 1/3回)와 「以上」의 규칙이 **두 벌**이 된다.
+ */
+export interface StreakRankRow {
+  playerId: string;
+  name: string;
+  /** 구단 코드. ⚠**마루의 마지막 경기의 구단이다** — 시즌 집계의 구단이 아니다(query.ts) */
+  teamCode: string;
+  /**
+   * 순위. ⚠**`null` 은 「자격 미달」이 아니라 「비교가 성립하지 않는다」**다(정의서 §1-7) —
+   * `23回以上` 과 `23回` 는 비교할 수 없다. **그래서 이 행은 반드시 보인다.**
+   * ⚠**기존 순위표의 `rank === null`(규정 미달 · 기본으로 숨김)과 뜻이 정반대다** —
+   * 그래서 이 표는 `RankingPanel` 을 재사용하지 않는다.
+   */
+  rank: number | null;
+  /** 이미 다듬은 값 — `50` / `23.1回以上` */
+  value: string;
+  /** **분모 ⑴** — 훑은 사건 수. `57登板` / `104試合` */
+  scanned: string;
+  /** 이닝 축의 상한(`最大25.1回`). 확정이면 빈 문자열 */
+  max: string;
+  /** **분모 ⑵** — 마루의 첫·마지막 경기일 */
+  from: string;
+  to: string;
+}
+
+/** 연속 기록 순위표의 한 패널(= 축 하나) */
+export interface StreakRankPanel {
+  /** 탭 키. **용어집 키를 그대로 쓴다** — 두 이름을 두면 어긋난다 */
+  id: string;
+  /** ⚠**라벨을 여기 담지 않는다**(M1) — `termLabel(id)` 가 용어집에서 꺼낸다 */
+  rows: StreakRankRow[];
+  /**
+   * **그 축에 기록이 있는 선수 수 — 자른 것을 말하기 위한 분모**(작업규칙 7).
+   *
+   * ⚠**지금의 컷에서 빈 패널은 언제나 `candidates === 0` 이다**(`streakPanelOf` 주석).
+   * 그래도 빈 화면이 이 수를 함께 내는 이유는, 나중에 **표시 하한을 더하면 그 순간
+   * 「선수가 없다」와 「상위에 못 든다」가 갈리기** 때문이다(M11) — 그때 문장을 안 고쳐도 된다.
+   */
+  candidates: number;
+  /** 분모 ⑴ 의 단위. ⚠**타자와 투수가 다르다** — 같은 말로 적으면 다른 것을 센 것처럼 읽힌다 */
+  scannedUnit: "試合" | "登板";
+  /** 값이 이닝인가. 각주의 「33.1回 は 33と1/3回」를 켠다 */
+  isInnings: boolean;
+}
+
+/**
+ * 연속 기록 부문 — **`RankingCategory` 와 나란히 서지만 표가 다르다**(설계 §2).
+ *
+ * ⚠**`RankingPanel`/`panelTable` 을 재사용하지 않는 이유**: 그 표는 `rank === null` 을
+ * **「규정 미달 → 기본으로 숨김」**으로 다루는데, 연속 기록의 `rank === null` 은
+ * **「비교가 성립하지 않는다 → 반드시 보여야 한다」**로 **정반대**다. 게다가
+ * 「規定到達のみ」·「最少母数」·「もっと見る」는 전부 **비율 지표의 장치**이고,
+ * 연속 기록에는 정의서 §1-7 이 자격 기준을 **적용하지 말라**고 못 박았다.
+ */
+export interface StreakCategory {
+  id: string;
+  label: string;
+  panels: StreakRankPanel[];
+}
+
+/**
+ * 순위 없는 행의 `順位` 칸.
+ *
+ * ⚠**색이나 흐림으로 말하지 않는다**(루트 §7 · `thinMark` 가 같은 이유로 글자를 쓴다).
+ * ⚠**보이지 않는 설명을 함께 둔다** — 낭독기에는 `—` 가 「대시」나 침묵으로 나온다.
+ */
+function streakRankCell(rank: number | null): RawHtml {
+  return rank === null
+    ? html`${NO_VALUE}<span class="vh">順位なし（「以上」の記録のため）</span>`
+    : html`${rank}`;
+}
+
+function streakRankTable(p: StreakRankPanel, base: string): RawHtml {
+  const label = termLabel(p.id);
+  return scroller(html`<table aria-label="${label}のリーグ順位">
+    <thead><tr><th>順位</th><th class="l">選手</th><th class="l">球団</th><th>${term(label)}</th><th class="l">期間</th></tr></thead>
+    <tbody>${p.rows.map(
+      // ⚠**값 옆에 분모를 붙인다**(M2 · 정의서 §1-6 ⑴). 이닝 축은 **상한도 함께** —
+      //   「23.1回以上」만 두면 상한이 참이라는 사실이 화면에서 사라진다(정의서 §3-3).
+      // ⚠**주석을 템플릿 안에 두지 않는다** — `${…}` 안이어도 앞뒤의 줄바꿈과 들여쓰기가
+      //   **행마다** 산출물로 나간다(`parts.ts` 가 707장이 달라졌다고 적어 둔 그 자리와 같은 성질).
+      (r) => html`<tr>
+        <td><b>${streakRankCell(r.rank)}</b></td>
+        <td class="l"><a href="${base}players/${r.playerId}.html">${r.name}</a></td>
+        <td class="l">${r.teamCode.toUpperCase()}</td>
+        <td class="b">${r.value}${streakDen(r.max, r.scanned)}</td>
+        <td class="l">${streakSpan(r.from, r.to)}</td>
+      </tr>`,
+    )}</tbody>
+  </table>`);
+}
+
+/**
+ * 한 축의 표와 각주.
+ *
+ * ⚠**각주가 M2 의 셋째 분모를 낸다**(집계 범위) — 표가 좁아 열로 못 넣는다.
+ * 홈 표(`streakTableNote`)와 같은 규칙이다.
+ */
+function streakPanelBody(p: StreakRankPanel, season: number, base: string): RawHtml {
+  const label = termLabel(p.id);
+  if (p.rows.length === 0) {
+    /**
+     * ⚠**빈 화면에 후보 수를 함께 낸다**(M11·M12). 「선수가 0명」과 「기록이 0건」은 다른 상태이고,
+     * **수 하나가 그것을 가른다** — 문장을 둘로 나누지 않아도 읽는 사람이 구별할 수 있다.
+     *
+     * ⚠**「まだ」를 쓰지 않는다** — 이 화면은 **끝난 시즌에도 그려진다.** 2018년 화면이
+     * 「まだありません」이라고 말하면 거짓이다(`streakSectionTitle` 이 같은 이유로 시제를 가른다).
+     * 여기서는 **시제가 없는 문장**을 써서 시즌 상태를 안 받아도 늘 참이게 한다.
+     */
+    return html`<p class="empty">${season}年のレギュラーシーズンには、この記録がある選手がいません（対象 ${p.candidates}人）。</p>`;
+  }
+  const hasUnranked = p.rows.some((r) => r.rank === null);
+  return html`${streakRankTable(p, base)}
+  ${note(
+    // ⚠**M2 의 셋째 분모** — 石井大智는 정규만이면 이어지고 **일본시리즈를 넣으면 끊긴다**(정의서 §1-1).
+    //   ⚠**연도를 박지 않는다**(사용자 결정 ⑵) — 보고 있는 시즌에서 유도한다.
+    `この表は**${season}年のレギュラーシーズンのみ**で数えた、**そのシーズンでいちばん長かった記録**です — ` +
+      "日本シリーズ・クライマックスシリーズ・オープン戦は入れていません。" +
+      // ⚠**이 표가 답하는 질문을 말한다** — 「지금 이어지고 있는가」는 다른 화면의 일이다(설계 §6-4)
+      `⚠**いま続いている記録ではありません** — それはトップページと球団ページの「${streakSectionTitle(false)}」にあります。` +
+      // ⚠**분모 ⑴ 의 단위가 타자와 투수에서 다르다**
+      `値の横の小さい数字は、**この範囲で数えた${p.scannedUnit}**の数です。` +
+      "「期間」は**記録が始まった試合から、記録に数えた最後の試合まで**です。" +
+      // ⚠**값 자체가 이닝인 축에만 붙인다** — 이 각주가 없으면 값이 오독된다(정의서 §1-2)
+      (p.isInnings ? "⚠**「33.1回」は33と1/3回**という意味です（33.1回ではありません）。" : "") +
+      (hasUnranked
+        ? "⚠**「以上」の記録には順位を付けていません** — 記録の切れ目になった登板の" +
+          "どのイニングで失点したかを特定できないためで、**「23回以上」と「23回」は比べられません**。" +
+          "併記した「最大」までのどこかで、どちらの数字も必ず成り立ちます。" +
+          "上位に入る可能性があるものだけを順位なしで載せているので、**この表は完全な順位表ではありません**。"
+        : "") +
+      // ⚠**자른 것을 말한다**(작업규칙 7)
+      `${label}の記録がある${p.candidates}人のうち、**${p.rows.length}人**を表示しています` +
+      `（**${STREAK_RANK_ROWS}位まで**・同じ順位は全員）。`,
+  )}`;
+}
+
+/**
+ * 부문 하나 — 축마다 탭.
+ *
+ * ⚠**자리를 나누지 않는다.** 홈의 「続いている記録」은 **한 표**에 타자와 투수를 섞으므로
+ * `shareStreakRows` 가 필요했다(2026 홈이 10행 중 7행 투수가 됐던 그 결함). 여기는
+ * **축마다 패널이 따로**라 한쪽이 다른 쪽을 밀어내지 않는다.
+ */
+function streakCategoryPanels(
+  c: StreakCategory,
+  base: string,
+  /**
+   * 축 탭의 그룹. ⚠**`subGroup` 을 한 단계 더 두지 않는다** — 연속 기록 부문은 **하나뿐**이고
+   * 그 아래가 바로 축이다. 한 단계를 더 두면 그룹 이름이 `rankstreak-streak` 가 되어
+   * **이름이 자기를 두 번 말한다.** 지표 탭(`rankmetric`)이 `subGroup` 을 쓰는 것은
+   * 부문이 셋(打者·先発·救援)이라 **부문마다 갈라야 하기 때문**이다.
+   */
+  prefix: TabGroupRef,
+  season: number,
+): RawHtml {
+  if (c.panels.length === 0) return html`<p class="empty">この部門の記録を計算できていません。</p>`;
+  return html`${tablist(
+    prefix,
+    c.panels.map((p) => ({ id: p.id, label: termLabel(p.id) })),
+    true,
+  )}
+  ${c.panels.map((p, pi) => panel(prefix, p.id, pi === 0, streakPanelBody(p, season, base)))}`;
 }
 
 /**
@@ -683,20 +881,45 @@ ${d.draws.length === 0
   const personalBody = html`${d.leagues.map((league, li) => {
     const catGroup = scopedGroup("rankcat", league.id);
     const metricGroup = scopedGroup("rankmetric", league.id);
+    /**
+     * ⚠**연속 기록의 축 탭은 지표 탭과 **다른 그룹**이다.**
+     * 같은 그룹이면 「打者」에서 고른 `wRC+` 가 「連続記録」으로 옮겼을 때 사라져
+     * **아무 표도 안 열린 화면**이 된다 — `categoryPanels` 머리주석의 그 결함이다.
+     * ⚠**id 는 리그마다 갈린다**(`scopedGroup`) — 안 그러면 2026-08-19 P1(중복 id 86종)이 재발한다.
+     */
+    const streakGroup = scopedGroup("rankstreak", league.id);
     return panel(
       "rankleague",
       league.id,
       li === 0,
       html`<section class="block" id="lg-${league.id}">
+      ${/* ⚠**연속 기록 부문은 마지막이다.** 첫 자리는 「이 화면의 주장」이고(순위표의 기본 지표가
+             승수가 아닌 것과 같은 이유), 이 화면의 주장은 여전히 打者·先発·救援 의 시즌 성적이다.
+             ⚠**부문 탭 한 줄에 두 종류가 섞인다** — 앞 셋은 「누구의 순위인가」, 넷째는
+             「어떤 종류의 기록인가」다. 그래도 한 줄에 두는 이유는 이 줄이 **지표 버튼 줄을
+             짧게 유지하는 장치**이기 때문이다(`RankingCategory` 주석) — 연속 기록도 축이 4개다. */ ""}
       <h2>${league.name}<span class="sw">${tablist(
         catGroup,
-        league.categories.map((c) => ({ id: c.id, label: c.label })),
+        [
+          ...league.categories.map((c) => ({ id: c.id, label: c.label })),
+          ...(league.streaks === undefined ? [] : [{ id: league.streaks.id, label: league.streaks.label }]),
+        ],
         false,
         `${league.name}の部門`,
       )}</span></h2>
       ${league.categories.map((c, ci) =>
         panel(catGroup, c.id, ci === 0, categoryPanels(c, base, metricGroup, `${base}${rankRestPath(league.id, c.id)}`)),
       )}
+      ${league.streaks === undefined
+        ? raw("")
+        : panel(
+          catGroup,
+          league.streaks.id,
+          // ⚠**첫 패널이 아니다** — 부문이 하나도 없으면 이 줄이 첫 패널이 되어야 하는데,
+          //   `categories` 가 빈 리그는 `buildLeagues` 가 통째로 건너뛰므로 그런 리그는 오지 않는다
+          league.categories.length === 0,
+          streakCategoryPanels(league.streaks, base, streakGroup, d.season),
+        )}
     </section>`,
     );
   })}`;
