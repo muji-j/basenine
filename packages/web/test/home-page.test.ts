@@ -102,6 +102,8 @@ function data(over: Partial<HomePageData> = {}): HomePageData {
       {
         playerId: "B3", name: "森下", teamCode: "t", shortName: "阪神", color: colorOf("t"),
         kind: "hitting", games: 12, lastGameDate: "2026-08-16",
+        // ⚠**분모 3종 중 둘이 행에 있다**(M2 · 정의서 §1-6): 훑은 사건 수 · 마루의 기간
+        scanned: 96, scannedUnit: "試合", from: "2026-07-28", to: "2026-08-16",
       },
     ],
     hasPostseason: false,
@@ -603,6 +605,7 @@ test("⚠투수 행의 이름도 용어집에서 나온다 — 화면이 라벨�
           playerId: "P9", name: "石井", teamCode: "t", shortName: "阪神", color: colorOf("t"),
           // ⚠**최신 경기일이 아니다** — 구원투수는 매일 안 던진다. 그래도 기록은 안 끊겼다
           kind: "scorelessAppearances", games: 16, lastGameDate: "2026-08-13",
+          scanned: 41, scannedUnit: "登板", from: "2026-05-30", to: "2026-08-13",
         },
       ],
     }),
@@ -610,6 +613,61 @@ test("⚠투수 행의 이름도 용어집에서 나온다 — 화면이 라벨�
   );
   assert.ok(out.includes(termLabel("scorelessAppearanceStreak")), "투수 기록의 이름이 없다");
   assert.match(out, /2026年8月13日/, "마지막 등판일이 없다 — 이 표에서 그게 분모다");
+  // ⚠**투수의 분모 단위는 「登板」이다** — 타자와 같은 「試合」로 적으면 다른 것을 센 것처럼 읽힌다
+  assert.match(out, /16<span class="den">41登板<\/span>/, "훑은 등판 수(분모)가 없다");
+  assert.match(out, /5月30日〜8月13日/, "마루의 기간이 없다");
+});
+
+/**
+ * ⚠**분모 3종을 다 내지 않으면 M2 위반이다**(정의서 §1-6): ⑴ 훑은 사건 수 · ⑵ 마루의 기간 ·
+ * ⑶ 집계 범위. 이 표는 **⑴도 ⑵도 ⑶도 없이** 길이와 마지막 출장일만 싣고 있었다
+ * (2026-09-07 검토 ⑶) — 「12試合」이 **몇 경기 중의 12이고 언제부터인지**를 말하지 못했다.
+ *
+ * ⚠**⑶은 각주에 있어도 된다**(표가 좁다) — 다만 **반드시 있어야 한다.** 石井大智는
+ * **정규만이면 이어지고 일본시리즈를 넣으면 끊긴다**(정의서 §1-1) — 같은 선수·같은 날에 답이 뒤집힌다.
+ */
+test("⚠연속 기록 표가 분모 3종을 낸다 — 훑은 사건 수 · 마루의 기간 · 집계 범위", () => {
+  const out = renderHomePage(data(), context());
+  // ⑴ 훑은 사건 수 — **마루의 길이(12)와 다른 수**다
+  assert.match(out, /12<span class="den">96試合<\/span>/, "훑은 경기 수(분모)가 값 옆에 없다");
+  // ⑵ 마루의 기간
+  assert.match(out, /7月28日〜8月16日/, "마루의 기간이 없다");
+  // ⑶ 집계 범위 — **연도를 박지 않고 시즌에서 유도한다**(사용자 결정 ⑵)
+  assert.match(out, /2026年のレギュラーシーズンのみ/, "집계 범위를 말하지 않는다");
+  assert.match(out, /日本シリーズ/, "무엇을 뺐는지 말하지 않는다");
+  const older = renderHomePage(data({ season: 2019 }), context());
+  assert.match(older, /2019年のレギュラーシーズンのみ/, "「2026」이 어딘가에 박혀 있다");
+});
+
+/**
+ * ⚠**같은 화면 안에서 접근성이 갈려 있었다**(2026-09-07 검토 ⑷).
+ * 선수 페이지의 연속기록 라벨은 `term()`(버튼)이라 **키보드·터치로 설명을 열 수 있는데**,
+ * 홈과 구단의 이 표만 평문 `termLabel()` 이었다 — PC 호버로도 안 열린다.
+ * 루트 `CLAUDE.md` §7(키보드 조작 · 포커스 · WCAG AA).
+ *
+ * ⚠**「글자는 나온다」가 통과 근거가 될 수 없다** — 그래서 라벨 문자열이 아니라
+ * **`data-term` 속성**을 본다.
+ */
+test("⚠연속 기록 라벨이 키보드로 열리는 버튼이다 — 평문이면 설명에 닿을 방법이 없다", () => {
+  const out = renderHomePage(data(), context());
+  assert.match(
+    out,
+    new RegExp(`<button class="term" type="button" data-term="hitStreak"[^>]*>${termLabel("hitStreak")}</button>`),
+    "타자 행의 라벨이 버튼이 아니다",
+  );
+  const pit = renderHomePage(
+    data({
+      streaks: [
+        {
+          playerId: "P9", name: "石井", teamCode: "t", shortName: "阪神", color: colorOf("t"),
+          kind: "scorelessAppearances", games: 16, lastGameDate: "2026-08-13",
+          scanned: 41, scannedUnit: "登板", from: "2026-05-30", to: "2026-08-13",
+        },
+      ],
+    }),
+    context(),
+  );
+  assert.match(pit, /data-term="scorelessAppearanceStreak"/, "투수 행의 라벨이 버튼이 아니다");
 });
 
 /**

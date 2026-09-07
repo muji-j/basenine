@@ -55,6 +55,8 @@ function streakFixture(over: Partial<HomeStreak> = {}): HomeStreak {
   return {
     playerId: "SK1", name: "続巻タイガー", teamCode: "t", shortName: "阪神", color: colorOf("t"),
     kind: "hitting", games: 7, lastGameDate: "2026-08-15",
+    // ⚠**분모를 뺀 행은 만들 수 없다**(M2) — 타입이 그것을 강제한다
+    scanned: 88, scannedUnit: "試合", from: "2026-08-05", to: "2026-08-15",
     ...over,
   };
 }
@@ -1188,6 +1190,30 @@ test("연속 기록 표에 경기 수와 마지막 출장일이 나온다", () =
   const b = blockOf(out, "tstreak");
   assert.match(b, />9</, "연속 경기 수가 안 보인다");
   assert.match(b, /2026年8月15日/, "마지막 출장일이 안 보인다");
+});
+
+/**
+ * ⚠**구단 페이지에도 같은 결함이 있었다**(2026-09-07 검토 ⑶·⑷) — 홈과 이 표는 **같은 표**인데
+ * 각자 `<td>` 를 적고 있었고, 그래서 **분모 3종이 없는 것도 라벨이 평문인 것도 두 곳에 똑같이** 있었다.
+ * → 행과 견출을 `home-page.ts` 한 벌로 모았다(M1). 이 시험은 **구단 쪽도 그 한 벌을 타는지** 본다.
+ */
+test("⚠구단 표도 분모 3종을 내고, 라벨이 키보드로 열리는 버튼이다", () => {
+  const out = renderTeamPage(data({ streaks: [streakFixture()] }), context());
+  const b = blockOf(out, "tstreak");
+  // ⑴ 훑은 사건 수 — **마루의 길이(7)와 다른 수**다
+  assert.match(b, /7<span class="den">88試合<\/span>/, "훑은 경기 수(분모)가 값 옆에 없다");
+  // ⑵ 마루의 기간
+  assert.match(b, /8月5日〜8月15日/, "마루의 기간이 없다");
+  // ⑶ 집계 범위 — 표가 좁으므로 각주가 낸다
+  assert.match(b, /2026年のレギュラーシーズンのみ/, "집계 범위를 말하지 않는다");
+  // ⑷ 접근성 — 평문이면 키보드·터치에서 설명을 열 방법이 없다(루트 §7)
+  assert.match(b, /data-term="hitStreak"/, "라벨이 버튼이 아니다");
+});
+
+/** ⚠**연도를 박지 않는다**(사용자 결정 ⑵) — 보고 있는 시즌에서 유도한다 */
+test("⚠집계 범위의 연도는 보고 있는 시즌에서 나온다", () => {
+  const out = renderTeamPage(data({ season: 2019, streaks: [streakFixture()] }), context());
+  assert.match(blockOf(out, "tstreak"), /2019年のレギュラーシーズンのみ/, "「2026」이 박혀 있다");
 });
 
 /**

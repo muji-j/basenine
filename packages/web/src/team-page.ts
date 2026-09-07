@@ -12,7 +12,7 @@
 import { html, raw } from "./html.ts";
 import { byMetricOrder } from "./metric-order.ts";
 // ⚠**분모 단위의 정본**(M1) — 화면이 문자열을 직접 적지 않는다
-import { denUnit, termLabel } from "./glossary.ts";
+import { denUnit } from "./glossary.ts";
 import type { RawHtml } from "./html.ts";
 import { NO_VALUE, avg3, fullDate, innings, int } from "./format.ts";
 import { block, buttonGroup, columns, note, panel, scroller, tablist, term, THIN_MARK, thinMark, valueWithDen } from "./parts.ts";
@@ -29,7 +29,13 @@ import type { TeamRace } from "@bb-app/aggregate";
 import type { HomeMilestone, HomeStreak } from "./home-page.ts";
 // ⚠**제목 문자열도 홈 화면과 한 벌을 쓴다**(M1) — 손으로 복사하면 한쪽만 고쳐지는 사고가 난다
 // (2026-08-20에 이 파일만 과거형으로 고쳐지고 홈이 안 갈린 사고가 실제로 났다)
-import { STREAK_TABLE_NOTE, STREAK_TERM_KEY, milestoneSectionTitle, streakSectionTitle } from "./home-page.ts";
+import {
+  STREAK_TABLE_HEAD,
+  milestoneSectionTitle,
+  streakCells,
+  streakSectionTitle,
+  streakTableNote,
+} from "./home-page.ts";
 
 /**
  * 구단 페이지의 「続いている記録」·「記録に近づいている」에 싣는 행 수 — **홈의 한도와 별개다.**
@@ -828,7 +834,12 @@ function nowBlock(d: TeamPageData, base: string): RawHtml {
  * 썼다. 2018 화면이 **「지금 이어지고 있는 기록은 없습니다」**라고 말한 것이다.
  * ⚠**각주는 손대지 않는다** — 「最後の出場日を必ず併記しています」는 시제와 무관하게 참이다.
  */
-function streakBlock(rows: readonly HomeStreak[], seasonOver: boolean, base: string): RawHtml {
+function streakBlock(
+  rows: readonly HomeStreak[],
+  seasonOver: boolean,
+  season: number,
+  base: string,
+): RawHtml {
   return block({
     id: "tstreak",
     title: streakSectionTitle(seasonOver),
@@ -837,18 +848,16 @@ function streakBlock(rows: readonly HomeStreak[], seasonOver: boolean, base: str
         ? html`<p class="empty">この球団に、シーズン終了時点で続いていた記録はありません。</p>`
         : html`<p class="empty">この球団の続いている記録はありません。</p>`
       : html`${scroller(html`<table aria-label="${streakSectionTitle(seasonOver)}">
-    <thead><tr><th class="l">選手</th><th class="l">記録</th><th>試合</th><th class="l">最後の出場</th></tr></thead>
+    <thead><tr><th class="l">選手</th>${STREAK_TABLE_HEAD}</tr></thead>
     <tbody>${rows.map(
         (x) => html`<tr>
       <td class="l"><a href="${base}players/${x.playerId}.html">${x.name}</a></td>
-      <td class="l">${termLabel(STREAK_TERM_KEY[x.kind])}</td>
-      <td class="b">${x.games}</td>
-      <td class="l">${x.lastGameDate === null ? NO_VALUE : fullDate(x.lastGameDate)}</td>
+      ${streakCells(x)}
     </tr>`,
       )}</tbody>
   </table>`)}
   ${note(
-        STREAK_TABLE_NOTE +
+        streakTableNote(season) +
           // ⚠**자르는 기준을 화면에 적는다**(M3의 정신) — 「왜 이 선수가 없지?」에 답할 수 있게
           `**この球団の中で試合数が多い順に${TEAM_STREAK_ROWS}人まで**です（リーグ全体の上位ではありません）。`,
       )}`,
@@ -930,7 +939,7 @@ ${nowBlock(d, base)}
      ⚠**0건이어도 지우지 않는다**(M12) — 두 함수가 그 규칙을 지킨다.
      ⚠**seasonOver 를 넘긴다** — 위 요약 띠와 같은 근거를 쓴다(M1). 끝난 시즌에
      「続いている」·「近づいている」이라고 쓰면 2018 화면이 현재형으로 거짓을 말한다. -->
-${streakBlock(d.streaks, d.calendar.seasonOver, base)}
+${streakBlock(d.streaks, d.calendar.seasonOver, d.season, base)}
 ${milestoneBlock(d.milestones, d.calendar.seasonOver, base)}
 
 <!-- ⚠**세로로 너무 길었다**(2026-08-17 유저 지적). 6구획이 한 줄로 이어져 있었고

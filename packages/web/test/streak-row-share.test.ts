@@ -14,7 +14,7 @@
  * 그건 이번에 고친 **「조용히 타자의 기록」과 같은 결함의 반대 방향**이다.
  *
  * ⚠**순서는 안 바꾼다.** 나누는 것은 **자리**이지 순위가 아니다 —
- * 종류가 다르면 길이 비교가 성립하지 않는다는 것은 각주(`STREAK_TABLE_NOTE`)가 말한다.
+ * 종류가 다르면 길이 비교가 성립하지 않는다는 것은 각주(`streakTableNote`)가 말한다.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -30,6 +30,10 @@ const row = (kind: HomeStreak["kind"], games: number, i: number): HomeStreak => 
   color: colorOf("t"),
   kind,
   games,
+  scanned: games + 10,
+  scannedUnit: kind === "scorelessAppearances" ? "登板" : "試合",
+  from: "2026-05-01",
+  to: "2026-08-16",
   lastGameDate: "2026-08-16",
 });
 
@@ -77,6 +81,38 @@ test("타자 쪽 두 종류는 같은 몫을 나눠 쓴다", () => {
   assert.equal(picked.filter((r) => r.kind !== "scorelessAppearances").length, 5);
   // 타자 몫 안에서는 길이가 이긴다 — 出塁 가 더 길므로 5칸을 다 가져간다
   assert.equal(picked.filter((r) => r.kind === "onBase").length, 5);
+});
+
+/**
+ * ⚠**홀수 한도에서 한 행이 더 나왔다** — `ceil(5/2) = 3` 을 **양쪽에** 주면 3+3 = **6행**이고,
+ * 남는 자리를 배분하는 아래 가지는 `spare > 0` 만 보므로 **음수(−1)를 되돌리지 않았다.**
+ *
+ * ⚠**지금 호출 상수가 둘 다 짝수(10)라 화면에서는 안 드러났다** — 발현하지 않는 것과
+ * 계약이 맞는 것은 다르다. 상수를 하나 홀수로 고치는 날 **조용히 한 행이 는다.**
+ *
+ * ⚠**짝수 한도의 거동은 안 바뀐다**(위 시험들이 그것을 고정한다) — `floor` 와 `ceil` 이 같은 값이다.
+ */
+test("⚠홀수 한도에서 한 행을 더 내지 않는다 — ceil 이면 5를 시켰는데 6행이 나온다", () => {
+  const rows = sorted([
+    ...Array.from({ length: 8 }, (_, i) => row("scorelessAppearances", 40 - i, i)),
+    ...Array.from({ length: 8 }, (_, i) => row("hitting", 30 - i, i)),
+  ]);
+  for (const limit of [1, 3, 5, 7, 9]) {
+    const picked = shareStreakRows(rows, limit);
+    assert.equal(picked.length, limit, `한도 ${limit} 인데 ${picked.length}행이 나왔다`);
+  }
+  // ⚠**한 자리만 남을 때 어느 쪽이 가져가는지도 고정한다** — 안 정하면 빌드마다 흔들린다
+  const five = shareStreakRows(rows, 5);
+  assert.equal(five.filter((r) => r.kind === "scorelessAppearances").length, 2);
+  assert.equal(five.filter((r) => r.kind === "hitting").length, 3);
+  // ⚠**정렬은 그대로 길이순이다**
+  assert.deepEqual([...five].sort((a, b) => b.games - a.games), five);
+});
+
+/** ⚠**한도가 0 이하면 빈 목록이다** — `slice` 가 뒤에서 자르는 사고를 막는다 */
+test("한도가 0이면 아무것도 안 낸다", () => {
+  const rows = sorted([row("hitting", 9, 0), row("scorelessAppearances", 8, 1)]);
+  assert.deepEqual(shareStreakRows(rows, 0), []);
 });
 
 test("후보가 한도보다 적으면 전부 낸다 · 빈 목록은 빈 목록이다", () => {
