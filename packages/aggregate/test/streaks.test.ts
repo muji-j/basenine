@@ -117,6 +117,26 @@ test("최장 구간의 시작·끝 날짜를 낸다 — 언제였는지 말할 �
   });
 });
 
+/**
+ * ⚠**「지금」의 양 끝은 「최장」의 양 끝이 아니다** — 다른 구간이다.
+ * 화면은 이 값으로 **M2 의 둘째 분모(마루의 기간)**를 낸다(정의서 §1-6 ⑵).
+ * 둘을 같은 값으로 두면 「지금 5경기」 옆에 **최장 구간의 날짜**가 붙어, 독자는 지금의 기록이
+ * 그때 시작했다고 읽는다 — 이 파일 위쪽의 「같은 길이면 나중 구간」과 같은 종류의 사고다.
+ */
+test("⚠「지금」의 시작·끝은 최장 구간의 것과 다르다", async () => {
+  await withDb((db) => {
+    // 안타 4경기 → 무안타 → 안타 2경기. **최장은 앞쪽(4)**, **지금은 뒤쪽(2)**이다
+    seed(db, [1, 1, 1, 1, 0, 1, 1]);
+    const s = battingStreaks(db, 2026).get("B1")!;
+    assert.equal(s.hitting.best, 4);
+    assert.equal(s.hitting.bestFrom, "2026-04-01");
+    assert.equal(s.hitting.bestTo, "2026-04-04");
+    assert.equal(s.hitting.current, 2);
+    assert.equal(s.hitting.currentFrom, "2026-04-06");
+    assert.equal(s.hitting.currentTo, "2026-04-07");
+  });
+});
+
 test("기록이 0이면 날짜도 null이다 — 없는 구간에 날짜를 붙이지 않는다(M11)", async () => {
   await withDb((db) => {
     seed(db, [0, 0, 0]);
@@ -124,6 +144,10 @@ test("기록이 0이면 날짜도 null이다 — 없는 구간에 날짜를 붙�
     assert.equal(s.hitting.best, 0);
     assert.equal(s.hitting.bestFrom, null);
     assert.equal(s.hitting.bestTo, null);
+    // ⚠**끊긴 기록의 날짜도 null 이다** — 0에 날짜를 붙이면 「그때 이어지고 있었다」로 읽힌다
+    assert.equal(s.hitting.current, 0);
+    assert.equal(s.hitting.currentFrom, null);
+    assert.equal(s.hitting.currentTo, null);
   });
 });
 

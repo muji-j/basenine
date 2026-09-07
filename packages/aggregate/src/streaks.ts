@@ -28,6 +28,22 @@ import type { Db } from "@bb-app/store";
 export interface Streak {
   /** 지금 이어지고 있는 길이. 마지막 경기에서 끊겼으면 0 */
   current: number;
+  /**
+   * **지금 이어지고 있는 마루의 시작 경기일.** 이어지는 마루가 없으면 `null`(0 아님 · M11).
+   *
+   * ⚠**이것이 없으면 화면이 M2 의 둘째 분모(마루의 기간)를 낼 수 없다**(정의서 §1-6).
+   * 끝은 `lastGameDate` 가 아니다 — `skipsForStreak` 로 빠진 경기가 마지막이면 둘이 갈린다.
+   * ⚠**`bestFrom` 과 다른 값이다.** 「지금」과 「최장」은 다른 마루다.
+   */
+  currentFrom: string | null;
+  /**
+   * **지금 이어지고 있는 마루의 마지막 경기일.** 이어지는 마루가 없으면 `null`.
+   *
+   * ⚠**`lastGameDate` 와 같은 값이 아니다.** 9.23(b) 본문으로 **건너뛴 경기**(사사구·희생번트·
+   * 방해로만 끝난 경기)가 마지막이면, 그 경기는 열에서 빠지므로 마루의 끝은 그 앞 경기다.
+   * 「마지막으로 나온 경기」와 「마루의 끝」은 **다른 사실**이라 둘 다 낸다(M11).
+   */
+  currentTo: string | null;
   /** 이 시즌에 가장 길었던 길이 */
   best: number;
   /** 가장 길었던 구간의 시작·끝 경기일. 0이면 null */
@@ -119,7 +135,14 @@ export interface BattingStreakScope {
   toSeason: number;
 }
 
-const EMPTY: Streak = { current: 0, best: 0, bestFrom: null, bestTo: null };
+const EMPTY: Streak = {
+  current: 0,
+  currentFrom: null,
+  currentTo: null,
+  best: 0,
+  bestFrom: null,
+  bestTo: null,
+};
 const DEFAULT_COMPETITION = "regular";
 const DEFAULT_THROUGH = "9999-12-31";
 
@@ -175,8 +198,12 @@ function streakOf(events: readonly Event[]): Streak {
   let best: CareerStreak | null = null;
   for (const m of marus) if (best === null || m.length >= best.length) best = m;
   const last = marus.at(-1);
+  // ⚠**「지금」의 양 끝은 `best` 가 아니라 이 마루에서 나온다** — 둘은 다른 구간이다
+  const open = last !== undefined && last.open ? last : null;
   return {
-    current: last !== undefined && last.open ? last.length : 0,
+    current: open?.length ?? 0,
+    currentFrom: open?.from ?? null,
+    currentTo: open?.to ?? null,
     best: best?.length ?? 0,
     bestFrom: best?.from ?? null,
     bestTo: best?.to ?? null,

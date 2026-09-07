@@ -218,6 +218,9 @@ ORDER BY b.player_id, g.game_date, g.game_no
 
 interface OldStreak {
   current: number;
+  /** ⚠**「지금」의 양 끝** — 화면이 M2 의 둘째 분모(마루의 기간)를 내려면 필요하다(정의서 §1-6 ⑵) */
+  currentFrom: string | null;
+  currentTo: string | null;
   best: number;
   bestFrom: string | null;
   bestTo: string | null;
@@ -227,11 +230,13 @@ function oldStreakOf(days: readonly { date: string; hit: boolean }[]): OldStreak
   let current = 0;
   let best = 0;
   let from: string | null = null;
+  let to: string | null = null;
   let bestFrom: string | null = null;
   let bestTo: string | null = null;
   for (const d of days) {
     if (d.hit) {
       if (current === 0) from = d.date;
+      to = d.date;
       current += 1;
       if (current >= best) {
         best = current;
@@ -241,9 +246,10 @@ function oldStreakOf(days: readonly { date: string; hit: boolean }[]): OldStreak
     } else {
       current = 0;
       from = null;
+      to = null;
     }
   }
-  return { current, best, bestFrom, bestTo };
+  return { current, currentFrom: from, currentTo: to, best, bestFrom, bestTo };
 }
 
 function oldBattingStreaks(db: Db, season: number): Map<string, unknown> {
