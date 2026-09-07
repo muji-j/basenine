@@ -1845,14 +1845,29 @@ function pitchingStreakBlock(
      */
     const inTextOf = (m: PitchingStreakView | null): string =>
       m === null ? `${innings(0)}回` : `${innings(m.lowerOuts)}回${!m.exact || atFloor(m) ? "以上" : ""}`;
-    /** ⚠**상한도 「반드시 참」이다** — 「어차피 비슷하니 점추정」으로 가지 않는다(정의서 §3-3) */
+    /**
+     * ⚠**상한도 「반드시 참」이다** — 「어차피 비슷하니 점추정」으로 가지 않는다(정의서 §3-3).
+     *
+     * ⚠**단 `atFloor` 면 단정할 수 없다.** 그 마루는 **보유 범위의 첫 등판에서 시작**하므로
+     * 같은 화면의 각주가 「実際にはもっと長い可能性があります」라고 말한다 —
+     * 「最大 8.2回」와 그 문장은 **동시에 참일 수 없다.**
+     * 실측(2026-09-07 · 로컬 DB): `dist/2025/players/91495153.html` 이
+     * **`6.2回以上` + `最大8.2回` + 그 각주**를 같이 싣고 있었다.
+     * → **상한이 「보유 범위 안의 상한」임을 말로 한정한다.** 숨기면 참인 정보를 버리게 된다.
+     */
     const maxOf = (m: PitchingStreakView | null): string =>
-      m === null || m.exact ? "" : `最大${innings(m.upperOuts)}回`;
+      m === null || m.exact ? "" : `${atFloor(m) ? "保有範囲内では" : ""}最大${innings(m.upperOuts)}回`;
     const bestLabel = careerMode ? "最長" : "今季最長";
 
     const marus = [sc.current, sc.best, sc.bestInnings];
     const anyInexact = marus.some((m) => m !== null && !m.exact);
     const anyFloor = marus.some((m) => m !== null && atFloor(m));
+    /**
+     * ⚠**「最大」를 실제로 내는 칸은 이 둘뿐이다** — 각주도 그 둘을 보고 말한다.
+     * 두 사유가 **같은 마루에 겹치면** 각주의 「최대까지의 어딘가에서 반드시 성립한다」가 거짓이 된다.
+     */
+    const maxShown = [sc.current, sc.bestInnings];
+    const anyFloorInexact = maxShown.some((m) => m !== null && atFloor(m) && !m.exact);
 
     return html`${columns(
       html`<dt>${term(termLabel("scorelessAppearanceStreak"))}</dt><dd class="v">${appText(sc.current)}${den(stateWord)}</dd>
@@ -1878,7 +1893,13 @@ function pitchingStreakBlock(
         "⚠**「33.1回」は33と1/3回**という意味です（33.1回ではありません）。" +
         (anyInexact
           ? "⚠イニングの「以上」は、**記録の切れ目になった登板のどのイニングで失点したかを特定できない**" +
-            "という意味です。併記した「最大」までのどこかで、どちらの数字も必ず成り立ちます。"
+            "という意味です。" +
+            // ⚠**두 사유가 겹친 마루가 있으면 「最大までのどこかで必ず成り立つ」는 거짓이다** —
+            //   그 마루는 보유 범위 밖으로 더 이어질 수 있어서 상한을 넘을 수 있다
+            (anyFloorInexact
+              ? "併記した「最大」は**当サイトが持っている範囲のなかでの上限**です — " +
+                "その範囲より前は数えていないので、記録そのものはもっと長い可能性があります。"
+              : "併記した「最大」までのどこかで、どちらの数字も必ず成り立ちます。")
           : "") +
         (anyFloor ? atRangeStartNote(marus, sc.fromSeason) : "") +
         // ⚠**「자책점이 아니라 실점」은 값의 정의다**(사용자 결정 ⑸) — 용어집에도 있지만 화면에도 적는다
