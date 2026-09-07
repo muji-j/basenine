@@ -2162,6 +2162,55 @@ test("샤드가 다르면 각각 받고, 같은 샤드는 두 번째부터 안 �
 });
 
 /**
+ * ⚠**「どちらが上か」가 낭독기에 전혀 안 들렸다**(2026-09-08 1차 검토).
+ *
+ * 채널이 **굵기(`.cmprow .win{font-weight}`)와 생성 콘텐츠 삼각형(`::after`/`::before`)** 둘뿐이었고,
+ * **그 자리에** `aria-label` 도 숨김 글자도 **0건**이었다(비교 화면을 그리는 `compare.ts`·`assets.ts` 전수).
+ * ⚠**「이 저장소에 aria-label 이 0건」이 아니다** — 겹친 紋(SVG)과 테마 버튼은 갖고 있다.
+ *   없던 것은 **이긴 쪽을 말하는 채널**이다.
+ * → **두 값은 들리는데 어느 쪽이 위인지가 안 들린다.** 색만으로 상태를 말하는 것과 같은 얼굴이다.
+ *
+ * ⚠**이 시험이 잡는 것과 못 잡는 것.** 잡는 것은 「이긴 칸에 **읽히는 글자**가 있는가」까지다.
+ * 실제 낭독기가 어떻게 읽는지는 **CI 에 낭독기가 없어서 못 잰다** — `forced-colors.test.ts` 가
+ * 같은 이유로 「구조를 잰다」고 적은 그 자리다.
+ */
+test("⚠比較の「どちらが上か」が読み上げにも届く — 太字と三角だけでは聞こえない", async () => {
+  /** 판정 가능한 지표 하나를 **지는 쪽으로** 흔든다. 안 흔들면 두 카드가 같아 승자가 안 나온다 */
+  const weaken = (c: unknown): unknown => {
+    const card = JSON.parse(JSON.stringify(c)) as {
+      stats: { k: string; dir: number; min: number | null; n: number | null; s: number }[];
+    };
+    const hit = card.stats.find((s) => s.dir !== 0 && s.min !== null && s.n !== null && s.s >= s.min);
+    assert.notEqual(hit, undefined, "판정 가능한 지표가 없다 — 이 시험이 공회전한다");
+    hit!.n = hit!.n! - hit!.dir; // dir=1 이면 작게, dir=-1 이면 크게 = 어느 쪽이든 진다
+    return card;
+  };
+  const doc = buildCompare();
+  run(doc, { routes: { "compare/p.json": { p1: card("p1", "山本"), p2: weaken(card("p2", "宮城")) } } });
+  cpk(doc, "p1").fire("click");
+  cpk(doc, "p2").fire("click");
+  doc.getElementById("cmpGo")!.fire("click");
+  await new Promise((r) => setTimeout(r, 0));
+
+  const wins = doc.querySelectorAll(".cmprow .win");
+  // ⚠**공회전 방지** — 승자 표시가 0건이면 이 시험은 아무것도 안 잰다
+  assert.ok(wins.length >= 1, `이긴 쪽 표시가 ${wins.length}건이다 — 이 시험이 공회전한다`);
+  for (const w of wins) {
+    const vh = w.querySelectorAll(".vh");
+    assert.equal(
+      vh.length,
+      1,
+      "이긴 칸에 보이지 않는 글자가 없다 — 굵기와 삼각형은 낭독기에 안 들린다(색만으로 말하는 것과 같다)",
+    );
+    // ⚠**「こちらが上」이 아니라 이름이다** — 선형으로 읽히면 「こちら」가 무엇인지 사라진다
+    assert.match(vh[0]!.textContent, /^(山本|宮城)が上$/, `읽히는 글자가 뜻을 안 나른다: ${vh[0]!.textContent}`);
+  }
+  // ⚠**진 칸에는 붙지 않는다** — 양쪽에 붙이면 아무 말도 안 한 것과 같다
+  const all = doc.querySelectorAll(".cmprow .vh");
+  assert.equal(all.length, wins.length, `이기지 않은 칸에도 붙었다(표시 ${wins.length} · 글자 ${all.length})`);
+});
+
+/**
  * ⚠**샤드는 받았는데 그 선수가 없는 경우를 조용히 넘기지 않는다.**
  * 빈 카드로 그리면 「성적 0」처럼 보인다(M11) — 「없다」와 「못 읽었다」는 다른 상태다(M12).
  *

@@ -1988,10 +1988,25 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
 /* ⚠**~~"◂"/"▸"~~ 는 네 서체 어디에도 없었다** — 사유·실측·대안은 위 .pickfold>summary::after 에 한 벌로 적었다.
    여기도 같은 처방이다: **"◀"(U+25C0) / "▶"(U+25B6)** + **font-size --fs-data(12px) → --fs-min(9.5px)**.
    ⚠이 자리는 값이 **17px** 이라 표식이 값보다 커 보이면 안 된다 — 잉크 8.1~8.9px 로 값의 약 절반이다. */
+/* ⚠**「이긴 쪽」이 낭독기에 전혀 안 들렸다**(2026-09-08 1차 검토).
+   채널이 **굵기 + 생성 콘텐츠 삼각형** 둘뿐이었고 둘 다 낭독기에는 없는 것과 같다 —
+   "aria-label" 도 숨김 글자도 0건이었다. **두 값은 들리는데 어느 쪽이 위인지가 안 들린다.**
+   → 처방 둘을 **함께** 쓴다. 하나만 쓰면 더 나빠진다:
+     ⑴ 뜻은 **보이지 않는 글자**가 나른다(client 의 cell() 이 ".vh" 를 넣는다 — 선수 이름 + 「が上」).
+        ⚠**「こちらが上」로 하지 않는다** — 선형으로 읽히는 흐름에서 「こちら」는 무엇을 가리키는지 없다.
+     ⑵ 그러고 나서 **글리프에 빈 대체텍스트**를 붙여 「검은 왼쪽 삼각형」이 덧붙어 읽히지 않게 한다.
+        ⚠**대체텍스트만 붙이면 유일한 채널이 사라져 더 나빠진다** — ⑴ 없이 이 줄만 넣지 마라.
+   ⚠**선례가 이미 있다**: 달력의 승패 표식(calendar.ts)이 aria-hidden 인 글자 + .vh 로 같은 짝을 쓴다.
+   여기는 표식이 **생성 콘텐츠**라 aria-hidden 을 걸 자리가 없어서 대체텍스트로 같은 일을 한다.
+   ⚠**같은 선언을 두 번 쓰는 것은 실수가 아니다.** content: "x" / "alt" 문법을 모르는 브라우저는
+   **선언 전체를 무효로 버리므로** 표식이 통째로 사라진다 — 이 자리에서는 그게 정보 손실이다.
+   앞줄이 보이는 표식을 보장하고, 뒷줄은 아는 브라우저에서만 덮는다. */
 .cmprow .win{font-weight:var(--w-bold)}
 .cmprow .win::after{content:"◀";margin-left:5px;color:var(--g-vgood);font-size:var(--fs-min)}
+.cmprow .win::after{content:"◀" / ""}
 .cmprow .vb.win::after{content:none}
 .cmprow .vb.win::before{content:"▶";margin-right:5px;color:var(--g-vgood);font-size:var(--fs-min)}
+.cmprow .vb.win::before{content:"▶" / ""}
 .cmprow .g{display:inline-block;width:14px;height:3px;vertical-align:2px;margin-left:5px;background:var(--g-avg)}
 .cmprow .g.g-veryGood{background:var(--g-vgood)}
 .cmprow .g.g-good{background:var(--g-good)}
@@ -3900,12 +3915,21 @@ if(cmpForm){
     setCmp(chosen.a?"b":"a",p);
   }));
 
-  /* 값 하나를 그린다. ⚠등급 막대는 **값 뒤**에 온다 — 분모를 모르고 본 색은 근거가 없다 */
-  const cell=(st,cls,win)=>{
-    const d=el("div",cls+(win?" win":""));
+  /* 값 하나를 그린다. ⚠등급 막대는 **값 뒤**에 온다 — 분모를 모르고 본 색은 근거가 없다.
+     ⚠**세 번째 인자는 「이겼는가」가 아니라 「이긴 사람의 이름」이다**(2026-09-08 1차 검토).
+     굵기와 삼각형은 낭독기에 안 들려서, 두 값은 들리는데 **어느 쪽이 위인지가 안 들렸다** —
+     색만으로 상태를 말하지 않는다는 규칙의 같은 얼굴이다.
+     ⚠**이름을 쓴다.** 「こちらが上」은 선형으로 읽히면 무엇을 가리키는지 사라진다.
+     ⚠**행마다 되풀이되는 것을 감수한다** — 낭독기 사용자는 행 단위로 훑고, 행 하나로 뜻이 서야 한다.
+     ⚠**동명이인이면 이름만으로는 안 갈린다**(M10) — 그건 머리의 두 이름도 마찬가지라 이 자리에서
+     새로 생기는 문제가 아니다. 고칠 자리는 여기가 아니라 **카드의 이름 표기**다.
+     ⚠**보이는 삼각형은 그대로 둔다** — CSS 가 그 글리프에 빈 대체텍스트를 붙인다(그쪽 주석 참조). */
+  const cell=(st,cls,winner)=>{
+    const d=el("div",cls+(winner?" win":""));
     d.appendChild(doc.createTextNode(st&&st.v!==null?st.v:"—"));
     if(st&&st.g){const g=el("i","g g-"+st.g);g.setAttribute("aria-hidden","true");d.appendChild(g)}
     if(st&&st.d)d.appendChild(el("span","den",st.d));
+    if(winner)d.appendChild(el("span","vh",winner+"が上"));
     return d;
   };
 
@@ -4018,7 +4042,7 @@ if(cmpForm){
       const w=better(sa,sb);
       if(w)judged++;
       const row=el("div","cmprow");
-      row.appendChild(cell(sa,"va",w==="a"));
+      row.appendChild(cell(sa,"va",w==="a"?A.name:null));
       const lb=el("span","lb");
       /* 용어집 툴팁을 그대로 태운다 — 설명을 여기서 새로 쓰지 않는다(M1).
          ⚠**진짜 버튼으로 만든다.** 그래야 터치로도 열리고 키보드에도 잡힌다 */
@@ -4028,7 +4052,7 @@ if(cmpForm){
         t.textContent=sa.l;lb.appendChild(t);
       }else lb.appendChild(doc.createTextNode(sa.l));
       row.appendChild(lb);
-      row.appendChild(cell(sb,"vb",w==="b"));
+      row.appendChild(cell(sb,"vb",w==="b"?B.name:null));
       wrap.appendChild(row);
     });
 
