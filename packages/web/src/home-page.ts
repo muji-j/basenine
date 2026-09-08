@@ -406,8 +406,23 @@ function streakText(n: number): string {
 function standingsTable(l: HomeLeague, base: string): RawHtml {
   /** 득실차 띠의 자 — **그 리그 안에서** 가장 큰 폭에 맞춘다 */
   const maxAbs = widestRunDiff(l.rows.filter((x) => x.runGames > 0));
+  // ⚠**열을 세 묶음으로 나눈다**(2026-09-08 · 2d · 목업 C 의 「成績 / 勢い / この先」).
+  //   감사가 짚은 것: 1,180px 폭에 열 열 개가 끝까지 늘어나 **눈이 멀리 이동하고**,
+  //   `全勝〜全敗の勝率` 이 오른쪽 끝에 홀로 서 있다 — 무엇의 일부인지 말해 주는 것이 없었다.
+  //   ⚠**이 표가 C 가 그린 그 표다.** 목업은 홈 화면 한 장이었다.
+  //   ⚠**순위 화면의 12열 표는 이 묶음이 안 맞는다** — 앞을 말하는 열이 없어 `この先` 이 빈다.
+  //     그쪽은 따로 정한다. **같은 이름을 다른 표에 억지로 씌우지 마라.**
+  //   ⚠**묶음을 선으로 가르지 않는다** — 2b 가 「여백이 할 일을 선이 하고 있다」를 고친 참이다.
+  //     묶음의 시작 열에 여백을 주고(assets.ts .hstand 의 nth-child), 머리 줄이 이름을 말한다.
   return scroller(html`<table class="hstand" aria-label="順位表">
-  <thead><tr>
+  <thead>
+  <tr class="grp">
+    <td colspan="2"></td>
+    <th colspan="4" scope="colgroup">成績</th>
+    <th colspan="2" scope="colgroup">勢い</th>
+    <th colspan="2" scope="colgroup">この先</th>
+  </tr>
+  <tr>
     <th>順位</th>
     <th class="l">球団</th>
     <th class="l">勝敗分</th>

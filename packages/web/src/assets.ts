@@ -1321,12 +1321,26 @@ td.bad{color:var(--warn);font-weight:var(--w-bold)}
    ⚠**두 열을 함께 고정한다.** 두 번째 열의 left 는 첫 열의 실제 폭과 같아야 한다 —
    그래서 순위 열에 고정 폭을 준다(어긋나면 겹치거나 틈이 벌어진다). */
 .hstand td.hrank,.hstand th:first-child{width:44px;min-width:44px}
-.hstand th:nth-child(2),.hstand td:nth-child(2){position:sticky;left:44px;z-index:2;
+/* ⚠**묶음 줄(tr.grp)을 반드시 뺀다**(2026-09-08 · 2d). 그 줄의 첫 칸은 colspan=2 라
+   nth-child(2) 가 **팀 열이 아니라 「成績」**이 된다 — 안 빼면 엉뚱한 칸이 고정된다.
+   ⚠**아래 z-index 줄도 같이 고쳐야 한다** — 여기에 :not() 을 더하면 특이도가 올라가서
+   그 줄이 지고, **머리의 고정 열이 본문 밑으로 깔린다.** 둘은 한 벌이다. */
+.hstand tr:not(.grp) th:nth-child(2),.hstand tr:not(.grp) td:nth-child(2){position:sticky;left:44px;z-index:2;
   background:var(--panel)}
-.hstand thead th:nth-child(2){z-index:3}
+.hstand thead tr:not(.grp) th:nth-child(2){z-index:3}
 /* 고정 열의 오른쪽 끝을 표시한다 — 어디까지가 고정인지 모르면 스크롤이 혼란스럽다 */
-.hstand th:nth-child(2)::after,.hstand td:nth-child(2)::after{content:"";position:absolute;
+.hstand tr:not(.grp) th:nth-child(2)::after,.hstand tr:not(.grp) td:nth-child(2)::after{content:"";position:absolute;
   top:0;bottom:0;right:0;width:1px;background:var(--hair-2)}
+/* ── 열 묶음 (2d · 2026-09-08) ─────────────────────────────────
+   ⚠**묶음을 선으로 가르지 않는다.** 2b 가 「여백이 할 일을 선이 하고 있다」를 고친 참이다 —
+   묶음의 **시작 열에 여백**을 주고 머리 줄이 이름을 말한다. 선을 세 개 더 세우면 그 수정을 되돌린다.
+   ⚠**묶음 줄의 첫 칸도 왼쪽에 고정한다** — 안 하면 옆으로 밀 때 「成績」이 순위·구단 위를 지나간다. */
+.hstand tr.grp td:first-child{position:sticky;left:0;z-index:3;background:var(--panel);border-bottom:var(--rw-none)}
+.hstand tr.grp th{font-size:var(--fs-label);letter-spacing:.16em;color:var(--tx-3);
+  font-weight:var(--w-reg);text-align:left;padding:0 var(--s4) var(--s1) var(--s6);
+  border-bottom:var(--rw-none);white-space:nowrap}
+.hstand tr:not(.grp) th:nth-child(3),.hstand tr:not(.grp) th:nth-child(7),.hstand tr:not(.grp) th:nth-child(9),
+.hstand td:nth-child(3),.hstand td:nth-child(7),.hstand td:nth-child(9){padding-left:var(--s6)}
 
 /* ⚠**得失 셀을 두 줄로 접는다.** 한 줄이면 약 158px 로 이 표에서 가장 넓은 칸이 된다 —
    「득실차를 주역으로, 득점·실점을 뒤에」라는 위계도 한 줄에서는 성립하지 않는다.
