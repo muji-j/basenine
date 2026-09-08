@@ -462,9 +462,11 @@ function jumpNav(d: HomePageData): RawHtml {
   //   ⚠**왜 체크박스인지는 layout.ts 의 내비 주석이 갖는다**(요약: JS 는 defer 라 100ms 깜빡이고,
   //   CSS 로 <details> 를 펴는 것은 최신 크롬에서만 된다 — 둘 다 실측).
   //   ⚠**id 가 화면에 하나뿐이어야 한다** — 이 조각은 홈에 한 번만 그려진다(위 items.length 가드).
-  return html`<input class="hjtoggle vh" type="checkbox" id="hjtoggle">
+  // ⚠**aria-controls 만 준다** — 체크박스는 펼침/접힘 의미론을 못 주는데, `aria-expanded` 를 박으면
+  //   스크립트 없이는 갱신이 안 돼 **틀린 값이 고정된다**(layout.ts 의 같은 자리 주석 참조).
+  return html`<input class="hjtoggle vh" type="checkbox" id="hjtoggle" aria-controls="hjumpnav">
 <label class="hjbtn" for="hjtoggle">目次<b class="vh">を開く</b><s>${String(items.length)}</s></label>
-<nav class="hjump" aria-label="このページの中の移動">
+<nav class="hjump" id="hjumpnav" aria-label="このページの中の移動">
   ${items.map((x) => html`<a href="#${x.id}">${x.label}</a>`)}
 </nav>`;
 }

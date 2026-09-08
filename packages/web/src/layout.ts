@@ -583,9 +583,14 @@ function topbar(o: PageOptions): RawHtml {
        숨은 꼬리가 무엇을 하는 버튼인지 말한다.
        ⚠**아이콘에 새 글자를 쓰지 마라** — 서체 부분집합 커버리지 게이트가 없는 글자에서 멈춘다.
        그래서 삼선은 CSS 로 그린다(assets.ts .navbtn::before). */ ""}
-  <input class="navtoggle vh" type="checkbox" id="navtoggle">
+  ${/* ⚠**aria-controls 는 스크립트 없이 줄 수 있는 유일한 보완이다**(2026-09-08 · 검토 P2).
+       체크박스는 낭독기에서 **「체크박스」**로 읽히고 펼침/접힘 의미론을 못 준다.
+       ⚠**aria-expanded 를 박지 마라** — 스크립트 없이는 갱신이 안 되므로 **틀린 값이 고정된다.**
+       없는 것보다 나쁘다. 여는 대상만 가리키고, 상태는 체크 여부가 말한다.
+       ⚠**실제 낭독기로 확인하지 않았다** — 이 환경에서 못 돌린다. 재는 것은 남은 일이다. */ ""}
+  <input class="navtoggle vh" type="checkbox" id="navtoggle" aria-controls="mainnav">
   <label class="navbtn" for="navtoggle">${NAV_LABELS[o.nav]}<b class="vh">ページを切り替える</b></label>
-  <nav class="tnav" aria-label="主要ページ">
+  <nav class="tnav" id="mainnav" aria-label="主要ページ">
     ${/* ⚠**첫 자리다**(2026-08-18 유저 요청). 최애를 지정하면 클라이언트가 라벨과 링크를
          그 구단으로 바꾼다(data-navteam 이 그 표식이다). **서버는 항상 「球団」을 그린다** —
          JS 가 없어도 구단으로 가는 길이 있어야 하고(§0-1), 지금까지는 그 길이 아예 없었다
