@@ -414,7 +414,11 @@ function standingsTable(l: HomeLeague, base: string): RawHtml {
   //     그쪽은 따로 정한다. **같은 이름을 다른 표에 억지로 씌우지 마라.**
   //   ⚠**묶음을 선으로 가르지 않는다** — 2b 가 「여백이 할 일을 선이 하고 있다」를 고친 참이다.
   //     묶음의 시작 열에 여백을 주고(assets.ts .hstand 의 nth-child), 머리 줄이 이름을 말한다.
-  return scroller(html`<table class="hstand" aria-label="順位表">
+  // ⚠**진입 연출을 여기서만 켠다**(2026-09-08 · 2e · 방향서 §7-2 「화면이 명시적으로 켠다」).
+  //   ⚠**순위 화면은 켜지 않는다** — 그 표는 `stand hstand` 라 클래스가 겹치므로 **옵트인으로 가른다.**
+  //   실측 근거: 막대는 **이미 전부 짧은 표(≤20행) 안**에 있고 긴 표의 막대는 **0개**다(화면 7장 전수).
+  //   순위 화면은 긴 표가 84개라 거기에 연출을 걸면 무너지는데, **걸 막대가 애초에 없다.**
+  return scroller(html`<table class="hstand anim" aria-label="順位表">
   <thead>
   <tr class="grp">
     <td colspan="2"></td>

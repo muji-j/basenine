@@ -1484,6 +1484,26 @@ a.cg:focus-visible{outline:2px solid var(--tx);outline-offset:1px}
   background:var(--hair);overflow:hidden}
 /* ⚠**0 이 아니면 보여야 한다.** 무승부 1경기는 폭 0.94% = 약 1px 이라 사실상 사라졌다 —
    「띠의 승 비율과 승률이 다른 이유」를 설명하는 조각이 그 설명을 못 했다(감사 P2). */
+/* ── 진입 연출 (2e · 2026-09-08 · 사용자 결정 「진입 연출까지 · 막대 차오름」) ─────
+   ⚠**화면이 명시적으로 켠다**(.anim). 기본은 꺼짐이고 **순위 화면은 안 켠다**(방향서 §7-2).
+   ⚠**막대 하나하나가 아니라 띠 전체를 키운다** — .wlbar 안의 세 조각(승·무·패)을 따로 키우면
+   각자 제 왼쪽에서 자라 **셋이 따로 노는** 그림이 된다. 띠를 하나로 키우면 12개면 된다(조각은 36개).
+   ⚠**득실차 띠(.rdbar)는 안 켠다** — 가운데에서 좌우로 갈리는 띠라 자라는 방향이 행마다 다르고,
+   방향을 틀리면 **음수가 오른쪽으로 자라는** 거짓 그림이 된다. 켜려면 방향별 origin 을 먼저 재라.
+   ⚠**스크립트가 필요 없다** — @keyframes grow 는 이미 있고(.track i 가 쓴다) both 로 끝 상태를 남긴다.
+   ⚠**뷰포트 진입(IntersectionObserver)으로 안 만들었다.** 그러려면 기본 상태를 scaleX(0) 으로 둬야 하는데,
+   이 사이트는 **인라인 실행 스크립트가 0개**라(§0-1 · 2c 에서 실측) 스크립트가 없으면
+   **막대가 영영 0 인 채로 남는다.** 화면 밖에서 미리 자라는 편이 훨씬 낫다.
+   ⚠**prefers-reduced-motion 은 이미 배선돼 있다** — 그 블록이 --t1~--t3 를 1ms 로 만들어
+   **끝 상태로 즉시** 그린다. 여기서 따로 분기하지 않는다(1단계가 세운 방식). */
+.anim .wlbar{transform-origin:left center;animation:grow var(--t3) var(--e-out) both}
+/* 순번 지연 — ⚠**마크업에 --i 를 심지 않는다.** 전 페이지에 실리는 표라 한 행에 몇 바이트라도
+   붙으면 그날 배포가 통째로 새 파일이 된다. 리그당 6팀이라 여섯 줄이면 끝난다. */
+.anim tbody tr:nth-child(2) .wlbar{animation-delay:calc(1 * var(--t-stagger))}
+.anim tbody tr:nth-child(3) .wlbar{animation-delay:calc(2 * var(--t-stagger))}
+.anim tbody tr:nth-child(4) .wlbar{animation-delay:calc(3 * var(--t-stagger))}
+.anim tbody tr:nth-child(5) .wlbar{animation-delay:calc(4 * var(--t-stagger))}
+.anim tbody tr:nth-child(6) .wlbar{animation-delay:calc(5 * var(--t-stagger))}
 .wlbar i{display:block;height:100%}
 .wlbar i.wt{min-width:2px}
 .wlbar .ww{background:var(--bar-w)}
