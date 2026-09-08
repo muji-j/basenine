@@ -525,6 +525,18 @@ a{color:inherit}
   min-height:var(--rail);
   padding:var(--s4) var(--pad);border-bottom:var(--rw-row) solid var(--hair);background:var(--panel);
   overflow-x:auto;scrollbar-width:thin;-webkit-overflow-scrolling:touch}
+/* ⚠**「더 있다」를 말하게 한다**(2026-09-08 · 2c-3). 이 줄은 옆으로 굴러가는데 스크롤바를
+   감추고(아래 줄) **그늘도 없어서**, 잘린 탭이 있다는 것을 화면이 한 마디도 안 했다.
+   실측: 선수 화면 390px 에서 **79px 넘친다**(내용 462 / 상자 383).
+   ⚠**.tabs.scroll 이 같은 문제를 이미 풀어 뒀다**(M1) — local 과 scroll 두 겹을 겹쳐
+   **끝에 닿으면 사라지는** 그늘을 만든다. 같은 처방을 그대로 쓴다.
+   ⚠**마지막 층이 바탕이다** — 이 줄은 sticky 라 밑을 덮어야 하고, 그늘만 두면 본문이 비친다. */
+.rail{background:
+  linear-gradient(to right,var(--panel) 30%,rgba(0,0,0,0)) left center/22px 100% no-repeat local,
+  linear-gradient(to left,var(--panel) 30%,rgba(0,0,0,0)) right center/22px 100% no-repeat local,
+  linear-gradient(to right,var(--hair-2),rgba(0,0,0,0)) left center/9px 100% no-repeat scroll,
+  linear-gradient(to left,var(--hair-2),rgba(0,0,0,0)) right center/9px 100% no-repeat scroll,
+  linear-gradient(var(--panel),var(--panel))}
 .rail::-webkit-scrollbar{height:0}
 .rail .lbl{font-size:var(--fs-label);letter-spacing:.16em;color:var(--tx-3);white-space:nowrap}
 .rail .grow{flex:1 1 auto;min-width:6px}
@@ -854,8 +866,20 @@ dd.g-veryBad{box-shadow:inset 0 -3px 0 var(--g-vbad);background:var(--g-vbad-bg)
 /* ⚠좁은 화면에서 표를 옆으로 밀면 **누구의 행인지**가 먼저 사라진다.
    첫 열을 고정해서 이름이 남게 한다. 오른쪽 끝의 그늘은 「더 있다」는 신호다. */
 .scroller:focus-visible{outline:2px solid var(--tx);outline-offset:-2px}
+/* ⚠**그늘이 거짓말을 하고 있었다**(2026-09-08 · 2c-3). 오른쪽 그라데이션 한 겹이라
+   **다 밀어서 끝에 닿아도 그대로 남는다** — 「더 있다」고 계속 말하는 표식이다.
+   ⚠**.tabs.scroll 이 같은 문제를 이미 풀어 뒀다**(M1): local 층은 내용과 함께 흐르고
+   scroll 층은 상자에 붙어, 둘을 겹치면 **끝에서 저절로 사라진다.** 같은 처방을 쓴다.
+   ⚠**왼쪽에도 둔다** — 예전 것은 오른쪽만 있어서, 오른쪽 끝까지 민 사용자에게
+   「왼쪽에 돌아갈 것이 있다」를 말하지 않았다.
+   ⚠**바탕은 --page 다**(이 상자 안의 표가 --page 를 깐다 · 아래 줄). 마지막 층이 그것이다. */
 .scroller{overflow-x:auto;-webkit-overflow-scrolling:touch;position:relative;
-  background:linear-gradient(to left,var(--page),rgba(0,0,0,0) 24px) right center / 24px 100% no-repeat}
+  background:
+    linear-gradient(to right,var(--page) 30%,rgba(0,0,0,0)) left center/24px 100% no-repeat local,
+    linear-gradient(to left,var(--page) 30%,rgba(0,0,0,0)) right center/24px 100% no-repeat local,
+    linear-gradient(to right,var(--hair-2),rgba(0,0,0,0)) left center/9px 100% no-repeat scroll,
+    linear-gradient(to left,var(--hair-2),rgba(0,0,0,0)) right center/9px 100% no-repeat scroll,
+    linear-gradient(var(--page),var(--page))}
 .scroller table{background:var(--page)}
 .scroller th:first-child,.scroller td:first-child{position:sticky;left:0;z-index:1;background:var(--page)}
 .scroller tr.me td:first-child{background:var(--team,#6b7280)}
@@ -1518,6 +1542,25 @@ a.cg:focus-visible{outline:2px solid var(--tx);outline-offset:1px}
    실제 높이가 아니다」를 이 근처와 아래 두 곳에 나눠 적고 **86px 를 손으로 박았는데**,
    그 86 조차 실측 113~115px 에 28px 모자랐다. 지금은 --topbar 자체가 폭 구간마다
    실제 높이로 정의되므로(반응형 §), 이 계산들은 그냥 맞는다. */
+/* ── 좁은 화면의 목차 접기 (2c-3 · 2026-09-08) ─────────────────────
+   ⚠**넓은 화면에서는 없는 셈이다** — 버튼은 display:none 이고 체크박스는 .vh 다.
+   ⚠**여기는 내비보다 쉽다**: 아래 블록이 이미 ≤680px 에서 .hjump 를 static 으로 만든다.
+   sticky 가 아니므로 **펼쳐도 흐름 안에서 줄바꿈만 하고**, --topbar 나 52px 보정에 안 닿는다.
+   ⚠**개수를 버튼에 적는다** — 접으면 「뛸 곳이 몇 군데인지」가 사라진다. 숫자가 그것을 말한다. */
+.hjbtn{display:none}
+@media (max-width:680px){
+  .hjbtn{display:inline-flex;align-items:center;gap:var(--s3);margin:var(--s4) var(--pad) 0;
+    padding:var(--s3) var(--s5);font-size:var(--fs-data);color:var(--tx);cursor:pointer;
+    border:var(--rw-row) solid var(--tx-3);background:var(--panel);
+    transition:border-color var(--t1) var(--e-out),background var(--t1) var(--e-out)}
+  .hjbtn s{text-decoration:none;font-size:var(--fs-label);color:var(--tx-3);
+    font-variant-numeric:tabular-nums}
+  .hjbtn:hover{border-color:var(--tx-2);background:var(--panel-2)}
+  .hjtoggle:focus-visible + .hjbtn{outline:2px solid var(--tx);outline-offset:1px}
+  .hjump{display:none}
+  .hjtoggle:checked ~ .hjump{display:flex;flex-wrap:wrap;overflow:visible;
+    scroll-snap-type:none;scroll-padding-left:0}
+}
 @media (max-width:680px){
   .hjump{position:static}
   /* ⚠**특정성을 한 단계 올린다.** 아래 무조건 규칙과 특정성이 같으면
