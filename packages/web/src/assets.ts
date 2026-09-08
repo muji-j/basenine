@@ -73,27 +73,48 @@ export const CSS = `
   /* 탭줄 한 줄의 높이. 스크롤 여백 계산이 이 값을 쓰므로 .rail 이 실제로 이 높이여야 한다 */
   --rail:48px;
   /* ══ 척도 ═══════════════════════════════════════════════════════════════════
-     ⚠**이 블록은 1단계(2026-09-07)에서 세운 배선이고 값은 지금 화면 그대로다.**
      이름과 체계는 채택안 C(docs/superpowers/specs/mockups-2026-09-07/c-modern.html)에서
-     가져왔고 **초기값은 현행에서 유도했다** — 값을 바꾸는 것은 2단계다.
-     ⚠**여기 없는 값이 화면에 아직 많다.** 그건 「덜 한 것」이 아니라
-     **「현행이 척도 위에 서 있지 않다」는 실측**이고, design-tokens.test.ts 가
-     그 수를 세어 **늘지 못하게** 붙든다. */
+     가져왔다. **1단계(2026-09-07)는 배선만 세우고 화면을 안 바꿨고, 2a(2026-09-08)가
+     흩어진 값을 여기로 접었다** — 간격 336건 · 활자 53건 · 웨이트 2건.
+     ⚠**~~여기 없는 값이 화면에 아직 많다~~ 는 이제 거의 거짓이다** — 간격 이탈은
+     339 → **1**(그 하나는 리듬이 아니라 라벨 폭 기하다 · .seasons 참조), 활자·웨이트는 **0** 이다.
+     design-tokens.test.ts 가 그 수를 세어 **늘지 못하게** 붙든다.
+     ⚠**아직 척도 밖인 것 둘**: inset box-shadow 로 그린 괘선과 모서리 반지름 —
+     둘 다 2b 의 몫이다(값이 아니라 **선의 위계**를 정하는 일이라 같이 봐야 한다). */
 
-  /* ── 간격 — 4px 계단(s_n = 4n).
-     ⚠**s6 위를 안 만들었다.** 현행의 큰 간격은 22·44·64px 이라 이 계단에 없다 —
-     C안의 s7(40px)에 해당하는 값이 이 화면에 **없다.** 맞추지 않고 그대로 뒀다(2단계). */
-  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:20px; --s6:24px;
+  /* ── 간격 — **네 단마다 걸음이 두 배**: 2·4·6·8 → 12·16·20·24 → 32·(40·48…).
+     ⚠**~~4px 계단(s_n = 4n)~~ 이 아니다**(2a 에서 바꿨다). 4px 격자는 이 제품의 아래쪽
+     절반에서 너무 거칠다 — 표 셀 여백이 사는 2~8px 구간에서 한 걸음이 50% 다.
+     현행이 실제로 쓰던 값이 1·2·3·5·6·7·9·10·11px 이었고, 그걸 4n 으로만 접으면
+     **여백을 늘리는 쪽**이 되어 밀도가 깎인다. 이 제품에서 그건 개악이다.
+     ⚠**번호가 밀렸다** — 옛 --s1(4px)이 지금 --s2 다. 옛 코드를 그대로 옮기지 마라.
+     ⚠**접는 규칙은 「가장 가까운 단 · 같으면 작은 쪽」**이었다(움직임 최대 2px). */
+  --s1:2px; --s2:4px; --s3:6px; --s4:8px;
+  --s5:12px; --s6:16px; --s7:20px; --s8:24px;
+  --s9:32px;
 
-  /* ── 활자 크기 — 역할 이름.
-     ⚠**현행은 9~16px 사이에 0.5px 단으로 13종이 있다 — 계단이 아니라 연속이다.**
-     여기 올린 7종이 font-size 선언 248개 중 **191개(77%)** 를 덮는다.
-     남은 57개(12.5px 12 · 15px 8 · 9px 7 · 14px 7 · 13.5px 6 · …)는 **맞추지 않고 남겼다.**
-     ⚠**--fs-min 보다 작은 자리가 7곳 있다**(9px) — 그것이 이 척도의 첫 이탈이다. */
+  /* ── 활자 크기 — 역할 이름. **아래 7단 + 위 사다리 6단.**
+     ⚠**아래 7단(9.5~13px)은 2a 에서 안 건드렸다.** 0.5px 단이 촘촘한 것은 맞지만,
+     여기를 접으면 **106개 선언의 글자 크기가 한꺼번에 움직인다** — 그건 서체를 바꾸는
+     3단계와 같이 해야 할 일이다. 대신 **여기로 접을 수 있는 것만 접었다**:
+     9px 7곳 → --fs-min · 12.5px 12곳 → --fs-data · 13.5px 6곳 → --fs-lead.
+     ⚠**위쪽에는 단이 아예 없었다** — 13px 위로 토큰이 **0개**였고 화면에는
+     14·14.5·15·16·17·18·19·20·21·22·26·28·34·36·44px 이 흩어져 있었다.
+     「이탈」이라기보다 **척도의 절반이 없었던 것**이다.
+     → **14 × 1.26ⁿ**(세 단마다 두 배: 14→28 · 18→35 · 22→44) 로 여섯 단을 만들었다.
+     ⚠**16px 과 20px 은 양옆 단과 거리가 같아 자리마다 손으로 골랐다** —
+     달력 날짜(.dayc b)는 이름급, 경합 그룹 머리(.dgn b)와 비교 상대명(.cmpwho .nm)은 제목급. */
   --fs-min:9.5px; --fs-col:10px; --fs-label:10.5px; --fs-note:11px;
   --fs-sub:11.5px; --fs-data:12px; --fs-lead:13px;
+  --fs-name:14px; --fs-title:18px; --fs-num:22px;
+  --fs-score:28px; --fs-score-2:35px; --fs-score-3:44px;
 
-  /* ── 활자 웨이트. ⚠500·800 이 각 1곳 남아 있고 그건 이탈이다(2단계). */
+  /* ── 활자 웨이트. ⚠**500·800 을 2a 에서 접었다**(각 1곳).
+     th 의 500 은 **--w-reg(400)** 로 갔다 — 600 이 아니다. 지금 본문 서체(Yu Gothic·
+     Hiragino·Meiryo)는 **Regular/Bold 두 벌뿐**이라 CSS 500 은 실제로 400 으로 그려지고
+     600 은 700 으로 그려진다. 600 으로 접으면 **모든 표의 열 머리가 갑자기 굵어진다.**
+     ⚠**3단계에서 다중 웨이트 서체를 씌우면 여기가 다시 판단할 자리가 된다.**
+     .hstand tr.lead .hrank 의 800 은 --w-bold(700) — 이건 지금도 700 으로 그려진다. */
   --w-reg:400; --w-semi:600; --w-bold:700;
 
   /* ── 괘선 굵기 — **뜻으로 이름을 준다**(B안 「선을 줄이는 대신 선에 위계를 준다」).
@@ -101,7 +122,9 @@ export const CSS = `
      1px 77 · 0 13 · 2px 12 · 3px 10 이고 **행 구분과 구획 경계가 둘 다 1px** 이다 —
      즉 지금은 --rw-row 하나가 그 둘을 겸한다. **그 둘을 가르는 것이 2단계의 일**이고,
      이름이 먼저 있어야 어디를 가를지 말할 수 있다.
-     ⚠**inset box-shadow 로 그린 괘선은 아직 이 척도 밖이다**(2단계에서 같이 들여야 한다). */
+     ⚠**inset box-shadow 로 그린 괘선은 아직 이 척도 밖이다**(실측 36건) — **2b 의 몫**이다.
+     2a 는 값(간격·활자)만 접었고 **선은 안 건드렸다**: 굵기를 정하는 일은 「몇 px 인가」가 아니라
+     「무엇이 구획이고 무엇이 행인가」라 값만 옮기면 뜻이 안 생긴다. */
   --rw-none:0;      /* 없음 — 정렬만으로 가른다 */
   --rw-row:1px;     /* 행 구분 · 얇은 경계 */
   --rw-sect:2px;    /* 구획 경계 */
@@ -110,7 +133,7 @@ export const CSS = `
   /* ── 모서리.
      ⚠**이 디자인의 border-radius 는 2곳뿐이고 둘 다 스크롤바 손잡이다** — 「카드·둥근 모서리를
      쓰지 않는다」(이 파일 머리말)의 결과다. C안의 4단(pill/panel/field/data)에 대응하는 값이
-     현행에 **없다.** 없는 것을 미리 만들지 않는다 — 2단계에서 처음 값이 생긴다. */
+     현행에 **없다.** 없는 것을 미리 만들지 않는다 — **2b** 에서 처음 값이 생긴다. */
   --r-thumb:3px;
 
   /* ── 모션 — C안의 t1/t2/t3 + e-out 체계. 값은 전부 현행 그대로.
@@ -120,9 +143,9 @@ export const CSS = `
   --t-stagger:26ms;  /* .block 등장의 순번 지연 — --i 를 곱한다 */
   --e-out:cubic-bezier(.2,.6,.2,1);
 
-  /* ⚠**--pad 는 척도 위에 있지만 좁은 폭에서 내려간다**(20 → 16 → 13px).
-     그 마지막 단 13px 은 계단에 없다 — 아래 반응형 참조. */
-  --pad:var(--s5);
+  /* **--pad 는 좁은 폭에서 한 단씩 내려간다**(--s7 20 → --s6 16 → --s5 12px).
+     ⚠**~~마지막 단 13px 은 계단에 없다~~ 는 2a 에서 해소됐다** — 12px(--s5)이 됐다. */
+  --pad:var(--s7);
   /* 본문의 **최대 폭**.
 
      ⚠**이 값이 없었다**(2026-08-31 · 사용자 지적 「PC버전이 지저분함」).
@@ -200,7 +223,7 @@ a{color:inherit}
 :focus-visible{outline:2px solid var(--tx);outline-offset:1px}
 
 /* 본문으로 건너뛰기 — 키보드 사용자가 매번 헤더를 지나지 않게 */
-.skip{position:absolute;left:-9999px;top:0;z-index:50;background:var(--tx);color:var(--page);padding:var(--s2) 14px}
+.skip{position:absolute;left:-9999px;top:0;z-index:50;background:var(--tx);color:var(--page);padding:var(--s4) var(--s5)}
 .skip:focus{left:0}
 
 /* ── 전역 헤더 ─────────────────────────────────────────────
@@ -218,13 +241,13 @@ a{color:inherit}
    → **오른쪽 여백을 키워** 내용만 본문 오른쪽 끝(기둥 44px + --measure)에 맞춘다.
    ⚠**max() 로 바닥을 둔다** — 좁은 화면에서 음수가 되면 안 되고, 기존 12px 여백이 그 바닥이다.
    ⚠**box-sizing:border-box 가 전역이라** 이 계산이 그대로 성립한다. */
-.topbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px;
-  min-height:var(--topbar);padding:0 var(--s3) 0 var(--pad);background:var(--panel);border-bottom:var(--rw-row) solid var(--hair-2);
-  padding-left:calc(var(--gut) + var(--pad));padding-right:calc(var(--gut) + var(--s3))}
+.topbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:var(--s4);
+  min-height:var(--topbar);padding:0 var(--s5) 0 var(--pad);background:var(--panel);border-bottom:var(--rw-row) solid var(--hair-2);
+  padding-left:calc(var(--gut) + var(--pad));padding-right:calc(var(--gut) + var(--s5))}
 /* ⚠**줄지 않는다.** 기본 flex 항목은 내용보다 작아질 수 있어, 좁은 화면에서 워드마크가
    제 상자를 넘어 옆 것과 겹친다. 줄어드는 몫은 검색칸(≥681px)과 탭줄(≤680px)이 진다 */
 .brand{flex:0 0 auto;font-size:var(--fs-lead);font-weight:var(--w-bold);letter-spacing:.14em;text-decoration:none;white-space:nowrap}
-.brand b{color:var(--tx-3);font-weight:var(--w-reg);letter-spacing:.04em;font-size:var(--fs-col);margin-left:5px}
+.brand b{color:var(--tx-3);font-weight:var(--w-reg);letter-spacing:.04em;font-size:var(--fs-col);margin-left:var(--s2)}
 @media (max-width:560px){.brand b{display:none}}
 /* ⚠**::placeholder 규칙이 CSS 전체에 0건이었다**(2026-09-08 · design-auditor P1).
    UA 기본값 rgb(117,117,117) 이 **두 테마 모두에** 새어 라이트 **4.414** · 다크 **3.924**
@@ -244,14 +267,14 @@ a{color:inherit}
    감사자의 판정 기준 1(양쪽 3:1)을 두 테마에서 만족한다. hover 는 한 단계 더 진한 --tx-2 로 옮긴다.
    ⚠**같은 잉크의 다른 자리를 같이 끌고 오지 마라** — .tab·.chip·.mv·.go.alt·.hjump a 는
    **가시 텍스트 라벨**이 있어 1.4.11 위반으로 단정할 수 없다(감사자 판정). */
-.qbox input{font:inherit;font-size:var(--fs-lead);width:100%;padding:5px 9px;background:var(--page);color:var(--tx);
+.qbox input{font:inherit;font-size:var(--fs-lead);width:100%;padding:var(--s2) var(--s4);background:var(--page);color:var(--tx);
   border:var(--rw-row) solid var(--tx-3);transition:border-color var(--t1) var(--e-out)}
 .qbox input:hover{border-color:var(--tx-2)}
-.qhits{position:absolute;left:0;right:0;top:calc(100% + 3px);z-index:30;margin:0;padding:var(--s1) 0;list-style:none;
+.qhits{position:absolute;left:0;right:0;top:calc(100% + 3px);z-index:30;margin:0;padding:var(--s2) 0;list-style:none;
   background:var(--panel);border:var(--rw-row) solid var(--hair-2);max-height:min(60vh,380px);overflow:auto;
   animation:drop var(--t1) var(--e-out)}
 .qhits[hidden]{display:none}
-.qhits li a{display:flex;gap:var(--s2);align-items:baseline;padding:6px 11px;text-decoration:none;font-size:var(--fs-lead)}
+.qhits li a{display:flex;gap:var(--s4);align-items:baseline;padding:var(--s3) var(--s5);text-decoration:none;font-size:var(--fs-lead)}
 /* 화살표가 고른 자리. ⚠**aria-selected 로 표시하지 않는다**(2026-08-20) — 이 목록은 listbox 가
    아니고, listbox 밖의 aria-selected 는 낭독기에 깨진 구조로 들린다. 표시는 우리 클래스로 한다 */
 .qhits li a:hover{background:var(--panel-2)}
@@ -270,14 +293,14 @@ a{color:inherit}
   font-variant-numeric:tabular-nums}
 /* 성적은 둘째 줄에. **분모까지 붙어 있다**(M2) — 이 줄의 존재 이유가 「이 사람이 맞나」의 판단이다 */
 .qhits .hs{flex-basis:100%;font-size:var(--fs-label);color:var(--tx-2);font-variant-numeric:tabular-nums}
-.qhits .none{padding:7px 11px;font-size:var(--fs-data);color:var(--tx-3)}
+.qhits .none{padding:var(--s3) var(--s5);font-size:var(--fs-data);color:var(--tx-3)}
 /* 「몇 명 중 몇 명을 보고 있는가」. ⚠**결과가 아니라 결과에 대한 설명이므로 선을 그어 가른다** —
    같은 모양으로 두면 21번째 선수처럼 보인다. 눌러서 가는 곳(選手一覧)이 있을 때만 링크가 된다.
    ⚠「.qhits li a」보다 클래스가 하나 많아 특이도에서 이긴다(0,2,1 대 0,1,2).
    ⚠**이 파일은 통째로 템플릿 리터럴이다 — 주석에 역따옴표를 쓰면 타입체크가 깨진다**
    (2026-08-19 이 주석을 쓰다가 실제로 깼다. 코드 인용은 「」로 감싼다) */
-.qhits .more{border-top:var(--rw-row) solid var(--hair);margin-top:var(--s1);padding-top:3px}
-.qhits .more a,.qhits .more span{display:block;padding:6px 11px;font-size:var(--fs-note);
+.qhits .more{border-top:var(--rw-row) solid var(--hair);margin-top:var(--s2);padding-top:var(--s1)}
+.qhits .more a,.qhits .more span{display:block;padding:var(--s3) var(--s5);font-size:var(--fs-note);
   color:var(--tx-2);text-decoration:none}
 .qhits .more a:hover{background:var(--panel-2);color:var(--tx)}
 /* ⚠**탭줄은 접히지 않는다 — 한 줄로 남고 모자라면 옆으로 굴린다.**
@@ -302,10 +325,10 @@ a{color:inherit}
    즉 headless 로만 쟀으면 **고친 줄 알고 같은 결함을 다시 냈다.**
    ⚠**더 있다는 신호는 잘린 탭 자체가 낸다** — 마지막 탭이 글자 중간에서 끊긴다(실측 420px 에서 「記」).
    그리고 바로 아래 시즌 띠가 같은 어법으로 스크롤바를 보여 주므로 패턴은 화면에 남아 있다. */
-.tnav{display:flex;gap:2px;margin-left:auto;flex-wrap:nowrap;flex:0 0 auto;justify-content:flex-end;
-  min-width:0;padding:3px 0;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scrollbar-width:none}
+.tnav{display:flex;gap:var(--s1);margin-left:auto;flex-wrap:nowrap;flex:0 0 auto;justify-content:flex-end;
+  min-width:0;padding:var(--s1) 0;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scrollbar-width:none}
 .tnav::-webkit-scrollbar{display:none}
-.tnav a{flex:0 0 auto;font-size:var(--fs-data);padding:5px 9px;text-decoration:none;color:var(--tx-2);white-space:nowrap;
+.tnav a{flex:0 0 auto;font-size:var(--fs-data);padding:var(--s2) var(--s4);text-decoration:none;color:var(--tx-2);white-space:nowrap;
   transition:color var(--t1) var(--e-out),background var(--t1) var(--e-out)}
 .tnav a:hover{color:var(--tx);background:var(--panel-2)}
 /* ⚠**「지금 여기」가 어느 화면에서나 같은 방식으로 보여야 한다**(2026-08-17 유저 지적:
@@ -323,22 +346,22 @@ a{color:inherit}
    실측 43.8×27 → 34.4×**40**. 40px 은 바(44~46px)를 거의 다 먹는다.
    ⚠글자가 두 자라 「줄이면 되겠지」로 보이지만, 줄어드는 것은 폭이 아니라 **높이**다. */
 .tbtn{flex:0 0 auto;white-space:nowrap;
-  font:inherit;font-size:var(--fs-lead);line-height:1;padding:6px var(--s2);cursor:pointer;background:transparent;
+  font:inherit;font-size:var(--fs-lead);line-height:1;padding:var(--s3) var(--s4);cursor:pointer;background:transparent;
   color:var(--tx-2);border:var(--rw-row) solid transparent;transition:color var(--t1) var(--e-out)}
 .tbtn:hover{color:var(--tx);border-color:var(--hair-2)}
 
 /* ⚠**기둥과 본문을 함께 가운데로**(--gut 주석 참조). 본문만 옮기면 기둥이 홀로 남는다 */
 .shell{display:grid;grid-template-columns:44px 1fr;min-height:calc(100vh - var(--topbar));
   padding-inline:var(--gut)}
-.spine{background:var(--team,#6b7280);display:flex;flex-direction:column;align-items:center;padding:var(--s4) 0;gap:18px}
-.spine .vt{writing-mode:vertical-rl;font-size:12.5px;letter-spacing:.32em;font-weight:var(--w-bold);color:var(--team-ink,#fff)}
+.spine{background:var(--team,#6b7280);display:flex;flex-direction:column;align-items:center;padding:var(--s6) 0;gap:var(--s6)}
+.spine .vt{writing-mode:vertical-rl;font-size:var(--fs-data);letter-spacing:.32em;font-weight:var(--w-bold);color:var(--team-ink,#fff)}
 /* ⚠**상한이 없어서 모바일 레이아웃이 1920px 까지 늘어났다**(--measure 주석 참조).
    ⚠**.main 통째로 건다** — 상태 띠·표제 줄·블록이 **같은 폭에서 끝나야** 오른쪽 모서리가
    한 줄로 선다. 안쪽 요소마다 따로 걸면 그 선이 요소마다 어긋난다. */
-.main{min-width:0;padding:0 0 64px;max-width:var(--measure)}
+.main{min-width:0;padding:0 0 var(--s9);max-width:var(--measure)}
 
 /* 상태 띠 — 4상태(M12) 중 「수집실패·낡음」을 여기서 말한다 */
-.state{padding:7px var(--pad);font-size:var(--fs-data);border-bottom:var(--rw-row) solid var(--hair)}
+.state{padding:var(--s3) var(--pad);font-size:var(--fs-data);border-bottom:var(--rw-row) solid var(--hair)}
 /* ⚠**채움 배경에 흰 글자를 하드코딩하지 않는다**(2026-08-18 감사 P2).
    --warn 은 라이트에서 어두운 벽돌색(#a8452f)이지만 **다크에서는 밝은 살구색**(#e08a72)이라,
    흰 글자를 얹으면 대비가 **2.61:1** 로 떨어진다(AA 본문 4.5:1 은커녕 큰 글자 3:1 도 미달).
@@ -350,26 +373,26 @@ a{color:inherit}
 .state b{font-weight:var(--w-bold)}
 
 /* ── 선수 표제 ───────────────────────────────────────────── */
-.idline{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:var(--s4) var(--pad) 11px;
+.idline{display:flex;align-items:center;gap:var(--s5);flex-wrap:wrap;padding:var(--s6) var(--pad) var(--s5);
   border-bottom:var(--rw-mast) solid var(--team,#6b7280)}
 /* 식별 마크(成績の紋). 배경은 SVG가 스스로 칠한다 */
 .mark{flex:0 0 auto;display:flex;line-height:0}
 .mk{display:block}
-.mkline{display:inline-block;vertical-align:-3px;margin-right:6px;line-height:0}
-.idtext{min-width:0;display:flex;flex-direction:column;gap:2px}
+.mkline{display:inline-block;vertical-align:-3px;margin-right:var(--s3);line-height:0}
+.idtext{min-width:0;display:flex;flex-direction:column;gap:var(--s1)}
 /* ⚠**표제는 h1 이다.** 크기는 원래 맞았는데 태그가 span 이라, 스크린리더의 헤딩 목록에
    페이지 제목이 없었다(3,257장 중 h1 0장). 여백은 여기서 지운다 — h1 의 기본 여백이 붙으면
    머리줄이 벌어진다 */
-.idline .nm{margin:0;font-size:clamp(21px,5vw,26px);font-weight:var(--w-bold);letter-spacing:.08em;line-height:1.2}
+.idline .nm{margin:0;font-size:clamp(var(--fs-num),5vw,var(--fs-score));font-weight:var(--w-bold);letter-spacing:.08em;line-height:1.2}
 .idline .sub{font-size:var(--fs-sub);color:var(--tx-2);letter-spacing:.06em}
-.spark{margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:2px}
+.spark{margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:var(--s1)}
 .spark svg{display:block;overflow:visible}
 .spark .sl{font-family:var(--f-num);font-size:var(--fs-min);color:var(--tx-3);letter-spacing:.06em}
 .idline .asof{font-family:var(--f-num);font-size:var(--fs-note);color:var(--tx-3)}
 
 /* 紋을 여는 버튼 — 눌리는 것임을 글자로도 말한다. 도형만 두면 아무도 누르지 않는다 */
-.markbtn{padding:0;border:var(--rw-none);background:transparent;cursor:pointer;flex-direction:column;gap:3px;align-items:center}
-.markbtn .mkcap{font-size:9px;letter-spacing:.12em;color:var(--tx-3);line-height:1;
+.markbtn{padding:0;border:var(--rw-none);background:transparent;cursor:pointer;flex-direction:column;gap:var(--s1);align-items:center}
+.markbtn .mkcap{font-size:var(--fs-min);letter-spacing:.12em;color:var(--tx-3);line-height:1;
   border-bottom:var(--rw-row) dotted var(--hair-2);transition:color var(--t1) var(--e-out)}
 .markbtn:hover .mkcap,.markbtn[aria-expanded="true"] .mkcap{color:var(--tx)}
 .markbtn .mk{transition:box-shadow var(--t1) var(--e-out)}
@@ -377,8 +400,8 @@ a{color:inherit}
 
 /* ── 成績の紋（확대） ───────────────────────────────────────
    ⚠**꼭짓점을 고르는 판이다.** 표제의 52px 마크는 신원 표시라 꼭짓점이 붙어 있어 못 누른다. */
-.markpanel{display:flex;flex-wrap:wrap;gap:18px var(--s6);align-items:flex-start;
-  padding:14px var(--pad) var(--s4);border-bottom:var(--rw-row) solid var(--hair);background:var(--panel);
+.markpanel{display:flex;flex-wrap:wrap;gap:var(--s6) var(--s8);align-items:flex-start;
+  padding:var(--s5) var(--pad) var(--s6);border-bottom:var(--rw-row) solid var(--hair);background:var(--panel);
   animation:rise var(--t2) var(--e-out) both}
 .markpanel[hidden]{display:none}
 .mkfigwrap{flex:0 0 auto;width:min(212px,52vw)}
@@ -431,33 +454,33 @@ a{color:inherit}
 .mf-ax.on .mf-lab{fill:var(--tx);font-weight:var(--w-bold)}
 .mf-ax.on .mf-spoke{stroke:var(--tx-2)}
 
-.mkside{flex:1 1 260px;min-width:0;display:flex;flex-direction:column;gap:9px}
-.mkside [data-markpick]{gap:var(--s1)}
-.mkside [data-markpick] .tab{font-size:var(--fs-sub);padding:3px 9px}
-.mkread{display:grid;grid-template-columns:auto 1fr;gap:2px var(--s3);align-items:baseline}
+.mkside{flex:1 1 260px;min-width:0;display:flex;flex-direction:column;gap:var(--s4)}
+.mkside [data-markpick]{gap:var(--s2)}
+.mkside [data-markpick] .tab{font-size:var(--fs-sub);padding:var(--s1) var(--s4)}
+.mkread{display:grid;grid-template-columns:auto 1fr;gap:var(--s1) var(--s5);align-items:baseline}
 .mkread[hidden]{display:none}
 .mkread b{font-size:var(--fs-data);letter-spacing:.14em;color:var(--tx-2);font-weight:var(--w-semi)}
 .mkread em{font-style:normal;font-family:var(--f-num);font-variant-numeric:tabular-nums;
-  font-size:21px;text-align:right}
-.mkread p{grid-column:1 / -1;margin:var(--s1) 0 0;font-size:var(--fs-data);color:var(--tx-2);line-height:1.6}
+  font-size:var(--fs-num);text-align:right}
+.mkread p{grid-column:1 / -1;margin:var(--s2) 0 0;font-size:var(--fs-data);color:var(--tx-2);line-height:1.6}
 .mkread .mr-how{font-family:var(--f-num);font-size:var(--fs-label);color:var(--tx-3)}
 /* ⚠뒤집힌 축의 한마디는 **눈에 띄어야 한다.** 못 보면 도형을 반대로 읽는다 */
-.mkread .mr-note{padding-left:var(--s2);box-shadow:inset 2px 0 0 var(--warn);color:var(--tx)}
+.mkread .mr-note{padding-left:var(--s4);box-shadow:inset 2px 0 0 var(--warn);color:var(--tx)}
 @media (max-width:520px){
-  .markpanel{gap:var(--s3)}
+  .markpanel{gap:var(--s5)}
   .mkfigwrap{width:min(190px,58vw);margin:0 auto}
-  .mkread em{font-size:19px}
+  .mkread em{font-size:var(--fs-title)}
 }
 
 /* ── 조작 레일 ───────────────────────────────────────────── */
-.rail{position:sticky;top:var(--topbar);z-index:10;display:flex;align-items:center;gap:6px;
+.rail{position:sticky;top:var(--topbar);z-index:10;display:flex;align-items:center;gap:var(--s3);
   min-height:var(--rail);
-  padding:9px var(--pad);border-bottom:var(--rw-row) solid var(--hair);background:var(--panel);
+  padding:var(--s4) var(--pad);border-bottom:var(--rw-row) solid var(--hair);background:var(--panel);
   overflow-x:auto;scrollbar-width:thin;-webkit-overflow-scrolling:touch}
 .rail::-webkit-scrollbar{height:0}
 .rail .lbl{font-size:var(--fs-label);letter-spacing:.16em;color:var(--tx-3);white-space:nowrap}
 .rail .grow{flex:1 1 auto;min-width:6px}
-.tab{font:inherit;font-size:var(--fs-data);padding:var(--s1) 10px;cursor:pointer;background:transparent;color:var(--tx-2);
+.tab{font:inherit;font-size:var(--fs-data);padding:var(--s2) var(--s4);cursor:pointer;background:transparent;color:var(--tx-2);
   border:var(--rw-row) solid var(--hair-2);white-space:nowrap;
   transition:color var(--t1) var(--e-out),background var(--t1) var(--e-out),border-color var(--t1) var(--e-out)}
 .tab:hover{color:var(--tx);border-color:var(--tx-3)}
@@ -465,13 +488,13 @@ a{color:inherit}
   border-color:var(--team,#6b7280);font-weight:var(--w-bold)}
 
 /* 탭 묶음 — 화면을 아래로 늘리는 대신 골라 본다 */
-.tabs{display:flex;gap:5px;flex-wrap:wrap}
+.tabs{display:flex;gap:var(--s2);flex-wrap:wrap}
 /* ⚠**min-width:0 이 이 줄의 핵심이다.** flex 아이템의 min-width 는 기본값이 auto 이고
    그것은 **내용의 최소폭**으로 풀린다. 버튼이 white-space:nowrap 이라 최소폭 = 버튼 폭의 합이 되고,
    그러면 이 줄은 줄어들기를 거부한다 → 부모가 밀리고 **페이지 전체가 옆으로 넓어진다.**
    overflow-x:auto 만 적어두면 아무 일도 일어나지 않는다 — 줄어들 수 있어야 넘칠 수 있다. */
 .tabs.scroll{flex-wrap:nowrap;overflow-x:auto;overscroll-behavior-x:contain;
-  min-width:0;max-width:100%;padding-bottom:2px;scrollbar-width:thin;
+  min-width:0;max-width:100%;padding-bottom:var(--s1);scrollbar-width:thin;
   /* 끝에 닿으면 사라지는 그늘 — 「더 있다」를 말하고, 다 봤으면 말하지 않는다.
      local은 내용과 함께 흐르고 scroll은 상자에 붙는다. 둘을 겹쳐 끝을 감지한다 */
   background:
@@ -492,28 +515,28 @@ a{color:inherit}
 /* 레일 안에서 상위 탭을 따라 열리고 닫히는 자리(하위 탭줄).
    ⚠**[hidden] 규칙을 여기서 다시 쓴다** — 위쪽의 display:none 과 특이도가 같아
    나중에 오는 이 display:flex 가 이기기 때문이다. 안 쓰면 숨겨야 할 탭줄이 계속 보인다 */
-.rail>[data-panelgroup]{display:flex;align-items:center;gap:6px;min-width:0}
+.rail>[data-panelgroup]{display:flex;align-items:center;gap:var(--s3);min-width:0}
 .rail>[data-panelgroup][hidden]{display:none}
-.rail .div{flex:none;align-self:stretch;width:1px;margin:-2px 2px;background:var(--hair-2)}
+.rail .div{flex:none;align-self:stretch;width:1px;margin:calc(-1 * var(--s1)) var(--s1);background:var(--hair-2)}
 
 /* ── 조립 UI ─────────────────────────────────────────────── */
-.editor{padding:14px var(--pad) var(--s4);border-bottom:var(--rw-row) solid var(--hair);background:var(--panel)}
+.editor{padding:var(--s5) var(--pad) var(--s6);border-bottom:var(--rw-row) solid var(--hair);background:var(--panel)}
 .editor[hidden]{display:none}
 /* ⚠**태그를 h2 로 올렸으면 선택자도 따라가야 한다.** 안 그러면 이 제목만
    브라우저 기본 h2(24px + 큰 여백)로 그려진다 — 헤딩 순서를 고치다 만든 결함이다 */
-.editor h2{margin:0 0 3px;font-size:var(--fs-data);letter-spacing:.14em;color:var(--tx-2);font-weight:var(--w-semi)}
-.editor p{margin:0 0 var(--s3);font-size:var(--fs-sub);color:var(--tx-3)}
-.blocks{display:flex;flex-direction:column;gap:var(--s1);max-width:520px}
-.brow{display:grid;grid-template-columns:auto 1fr auto auto;gap:10px;align-items:center;padding:6px var(--s2);
+.editor h2{margin:0 0 var(--s1);font-size:var(--fs-data);letter-spacing:.14em;color:var(--tx-2);font-weight:var(--w-semi)}
+.editor p{margin:0 0 var(--s5);font-size:var(--fs-sub);color:var(--tx-3)}
+.blocks{display:flex;flex-direction:column;gap:var(--s2);max-width:520px}
+.brow{display:grid;grid-template-columns:auto 1fr auto auto;gap:var(--s4);align-items:center;padding:var(--s3) var(--s4);
   border:var(--rw-row) solid var(--hair);background:var(--page)}
 .brow input[type=checkbox]{accent-color:var(--team,#6b7280);width:16px;height:16px}
 .brow .bn{font-size:var(--fs-lead)}
 .brow .bd{font-size:var(--fs-note);color:var(--tx-3)}
-.mv{font:inherit;font-size:var(--fs-note);padding:3px var(--s2);cursor:pointer;background:transparent;color:var(--tx-2);
+.mv{font:inherit;font-size:var(--fs-note);padding:var(--s1) var(--s4);cursor:pointer;background:transparent;color:var(--tx-2);
   border:var(--rw-row) solid var(--hair-2);transition:color var(--t1) var(--e-out)}
 .mv:hover:not(:disabled){color:var(--tx);border-color:var(--tx-3)}
 .mv:disabled{opacity:.3;cursor:default}
-.fixed-note{margin-top:var(--s3);padding:9px 11px;border-left:var(--rw-mast) solid var(--warn);background:var(--page);
+.fixed-note{margin-top:var(--s5);padding:var(--s4) var(--s5);border-left:var(--rw-mast) solid var(--warn);background:var(--page);
   font-size:var(--fs-sub);color:var(--tx-2);max-width:520px}
 .fixed-note b{color:var(--warn)}
 
@@ -545,7 +568,7 @@ a{color:inherit}
    예전에는 + 4px 였는데, 구획의 마지막 요소는 대개 .note(작은 글씨)라
    그 아래 여백이 실제보다 더 넓어 보였다 — 글자가 작을수록 빈 공간이 크게 읽힌다.
    ⚠**전 화면에 걸리는 값이다.** 여기만 고치면 모든 구획의 아래가 같이 정돈된다. */
-.block{padding:var(--block-pad-y, 22px) var(--pad);background:var(--panel);
+.block{padding:var(--block-pad-y, var(--s7)) var(--pad);background:var(--panel);
   /* ⚠**테두리를 이전보다 흐리게 만들면 안 된다.** 바꾸기 전이 2px --hair-2(1.51:1)였는데
      1px --hair(1.28:1)로 오히려 **약해졌다**(감사 P2 실측). 요청은 「더 강하게」였다. */
   /* ⚠**여기에 구단색을 쓰지 않는다**(2026-08-18 감사 P2). 선수·구단 화면에서는 바로 왼쪽에
@@ -554,15 +577,15 @@ a{color:inherit}
      ⚠**구단색은 h2::before 가 계속 나른다** — 그쪽은 var(--pad) 만큼 안쪽이라 기둥과 안 겹친다.
      여기서는 굵기(3px)만 남겨 「구획이 여기서 시작한다」를 말한다. */
   border:var(--rw-row) solid var(--hair-2);border-left:var(--rw-mast) solid var(--hair-2);
-  margin-bottom:var(--s4);
+  margin-bottom:var(--s6);
   animation:rise var(--t2) var(--e-out) both;animation-delay:calc(var(--i,0) * var(--t-stagger))}
 .block[hidden]{display:none}
 /* ⚠**구획 머리를 더 또렷하게**(2026-08-17 유저 요청: 가시성·영역 구분).
    카드·그림자·둥근 모서리는 쓰지 않는다(§6) — 대신 **짧은 색 막대**와 글자 무게로 가른다.
    막대 색은 그 화면의 구단 색(--chip)이고, 없으면 본문 색이라 어디서든 보인다. */
-.block>h2{margin:0 0 14px;font-size:12.5px;letter-spacing:.16em;color:var(--tx);font-weight:var(--w-bold);
-  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
-  padding:0 0 10px 11px;position:relative;
+.block>h2{margin:0 0 var(--s5);font-size:var(--fs-lead);letter-spacing:.16em;color:var(--tx);font-weight:var(--w-bold);
+  display:flex;align-items:center;gap:var(--s4);flex-wrap:wrap;
+  padding:0 0 var(--s4) var(--s5);position:relative;
   /* ⚠**머리 아래에 실선을 둔다** — 제목과 내용의 경계가 없으면 표가 제목에 붙어 읽힌다 */
   border-bottom:var(--rw-row) solid var(--hair)}
 /* ⚠**구단 색이 여기까지 온다.** body 에 --team 이 이미 있고(선수·구단 페이지는 그 팀 색,
@@ -570,7 +593,7 @@ a{color:inherit}
    ⚠**--chip 이 있으면 그쪽이 이긴다** — 구단별 묶음 안에서는 그 구단 색이어야 한다 */
 .block>h2::before{content:"";position:absolute;left:0;top:-.05em;bottom:-.05em;width:4px;
   background:var(--chip,var(--team,var(--tx)))}
-.block>h2 .sw{display:flex;gap:var(--s1);margin-left:auto;flex-wrap:wrap}
+.block>h2 .sw{display:flex;gap:var(--s2);margin-left:auto;flex-wrap:wrap}
 .block>h2 .qt{letter-spacing:0;font-weight:var(--w-reg);color:var(--tx-3)}
 [data-panelgroup]{animation:fade var(--t1) var(--e-out)}
 /* ⚠**until-found 는 display:none 이면 동작하지 않는다.**
@@ -585,12 +608,12 @@ a{color:inherit}
 [data-panelgroup][role="tabpanel"][data-slide="next"]{animation:slideNext var(--t2) var(--e-out)}
 [data-panelgroup][role="tabpanel"][data-slide="prev"]{animation:slidePrev var(--t2) var(--e-out)}
 
-.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:0 var(--s6)}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:0 var(--s8)}
 dl{margin:0;display:grid;grid-template-columns:auto 1fr;align-items:baseline}
-dt{font-size:var(--fs-label);color:var(--tx-2);letter-spacing:.12em;padding:var(--s1) 10px var(--s1) 0;border-bottom:var(--rw-row) solid var(--hair);white-space:nowrap}
-dd{margin:0;text-align:right;font-family:var(--f-num);font-variant-numeric:tabular-nums;font-size:14px;
-  padding:var(--s1) 0;border-bottom:var(--rw-row) solid var(--hair)}
-.den{font-family:var(--f-num);font-size:var(--fs-col);color:var(--tx-3);margin-left:5px}
+dt{font-size:var(--fs-label);color:var(--tx-2);letter-spacing:.12em;padding:var(--s2) var(--s4) var(--s2) 0;border-bottom:var(--rw-row) solid var(--hair);white-space:nowrap}
+dd{margin:0;text-align:right;font-family:var(--f-num);font-variant-numeric:tabular-nums;font-size:var(--fs-name);
+  padding:var(--s2) 0;border-bottom:var(--rw-row) solid var(--hair)}
+.den{font-family:var(--f-num);font-size:var(--fs-col);color:var(--tx-3);margin-left:var(--s2)}
 /* ⚠**등급 틴트 위에서 분모가 AA 미달이었다**(2026-08-20 감사 ④ · 다크).
    픽셀 합성 실측: --g-vgood-bg rgba(95,168,221,.10) over --panel #1c1e23 = rgb(35,44,54) 이고
    그 위의 --tx-3(#8f8e87 · 10px)가 **4.31:1**, --g-vbad-bg 쪽이 **4.34:1** 이었다(본문 4.5:1 미달).
@@ -634,15 +657,15 @@ th .term{cursor:help}
    ⚠**overscroll-behavior 로 안쪽 스크롤을 가둔다** — 안 그러면 설명 끝에서 페이지가 따라 움직인다.
    ⚠**4문장짜리 caveat 는 툴팁이 담을 그릇이 아니다**(2026-08-21 감사 지적). 제대로 된 답은
    용어집 페이지를 따로 두는 것이지만 그건 범위가 다른 별개 결정이다 — 여기서는 읽을 수 있게만 한다. */
-#tip{position:absolute;z-index:40;max-width:min(30ch,86vw);max-height:70vh;padding:9px 11px;
+#tip{position:absolute;z-index:40;max-width:min(30ch,86vw);max-height:70vh;padding:var(--s4) var(--s5);
   overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;
   background:var(--tx);color:var(--page);font-size:var(--fs-data);line-height:1.5;
   box-shadow:0 2px 10px rgba(0,0,0,.22);animation:drop var(--t1) var(--e-out)}
 #tip[hidden]{display:none}
-#tip b{display:block;font-size:12.5px;letter-spacing:.06em;margin-bottom:3px}
-#tip s{display:block;text-decoration:none;font-family:var(--f-num);font-size:var(--fs-label);opacity:.72;margin-top:5px}
-#tip u{display:block;text-decoration:none;font-size:var(--fs-sub);margin-top:5px;
-  padding-left:7px;box-shadow:inset 2px 0 0 var(--warn)}
+#tip b{display:block;font-size:var(--fs-data);letter-spacing:.06em;margin-bottom:var(--s1)}
+#tip s{display:block;text-decoration:none;font-family:var(--f-num);font-size:var(--fs-label);opacity:.72;margin-top:var(--s2)}
+#tip u{display:block;text-decoration:none;font-size:var(--fs-sub);margin-top:var(--s2);
+  padding-left:var(--s3);box-shadow:inset 2px 0 0 var(--warn)}
 
 /* ── 수준 색 ───────────────────────────────────────────────
    ⚠**빨강↔초록을 쓰지 않는다.** 가장 흔한 색각 이상에서 구별되지 않는다.
@@ -672,21 +695,21 @@ dd.g-veryBad{box-shadow:inset 0 -3px 0 var(--g-vbad);background:var(--g-vbad-bg)
 :root[data-grades="off"] dd.v{box-shadow:none;background:transparent}
 
 /* 범례 — 색이 무엇을 뜻하는지 말한다. 말하지 않으면 색은 장식이다 */
-.legend{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
-  padding:6px var(--pad);border-bottom:var(--rw-row) solid var(--hair);background:var(--panel-2);
+.legend{display:flex;align-items:center;gap:var(--s5);flex-wrap:wrap;
+  padding:var(--s3) var(--pad);border-bottom:var(--rw-row) solid var(--hair);background:var(--panel-2);
   font-size:var(--fs-label);color:var(--tx-2)}
 /* ⚠**첫 색 블록이 「水準」의 것처럼 읽혔다**(2026-08-18 유저 지적).
    묶음 안쪽 간격(5px)과 바깥 간격(11px)이 너무 비슷해서, 라벨 다음에 오는
    とても悪い 의 견본이 **라벨에 붙은 블록**으로 보였다.
    → 라벨과 눈금 사이에 **세로선**을 넣어 「여기부터가 눈금」임을 형태로 말한다. */
 .legend .lg{letter-spacing:.16em;color:var(--tx-3);white-space:nowrap}
-.legend .lg:first-child{border-right:var(--rw-row) solid var(--hair-2);padding-right:11px}
+.legend .lg:first-child{border-right:var(--rw-row) solid var(--hair-2);padding-right:var(--s5)}
 .legend .tail{margin-left:auto}
 /* ⚠**눈금은 이어져 있어야 눈금으로 읽힌다**(2026-08-18 유저 지적).
    예전에는 색과 글자가 번갈아 놓여서 ⑴ 첫 색이 「水準」에 붙은 것으로 읽히고
    ⑵ 다섯 칸이 **한 축**이라는 것이 보이지 않았다.
    → 양 끝에만 글자를 두고 가운데 색을 **틈 없이** 붙인다. */
-.legend .scale{display:inline-flex;align-items:center;gap:7px;white-space:nowrap}
+.legend .scale{display:inline-flex;align-items:center;gap:var(--s3);white-space:nowrap}
 .legend .send{font-weight:var(--w-reg);color:var(--tx-2)}
 .legend .bar{display:inline-flex;height:9px;border:var(--rw-row) solid var(--hair-2)}
 /* ⚠**틈을 두지 않는다** — 틈이 있으면 다섯 개의 점이지 하나의 축이 아니다 */
@@ -695,29 +718,29 @@ dd.g-veryBad{box-shadow:inset 0 -3px 0 var(--g-vbad);background:var(--g-vbad-bg)
 .legend .bar i.g-good{background:var(--g-good)}
 .legend .bar i.g-bad{background:var(--g-bad)}
 .legend .bar i.g-veryBad{background:var(--g-vbad)}
-.legend #gradeBtn{font-size:var(--fs-note);padding:2px var(--s2)}
+.legend #gradeBtn{font-size:var(--fs-note);padding:var(--s1) var(--s4)}
 /* 색을 끄면 범례의 견본도 함께 죽는다 — 안 쓰는 안내가 남아 있으면 그것도 거짓말이다 */
 :root[data-grades="off"] .legend .bar{opacity:.3}
 @media (max-width:620px){.legend .tail{display:none}}
 /* 좁은 화면 — 가운데 세 칸의 글자를 접고 견본만 남긴다. 양 끝(とても悪い↔とても良い)이
    남으므로 눈금의 뜻은 그대로 읽힌다. 다섯 줄을 다 늘어놓으면 성적이 화면 밖으로 밀린다 */
 @media (max-width:520px){
-  .legend{gap:7px}
+  .legend{gap:var(--s3)}
   .legend .sw{gap:0}
   .legend .sw.g-bad b,.legend .sw.g-average b,.legend .sw.g-good b{display:none}
-  .legend .sw.g-veryBad i{margin-right:5px}
-  .legend .sw.g-veryGood i{margin-right:5px}
+  .legend .sw.g-veryBad i{margin-right:var(--s2)}
+  .legend .sw.g-veryGood i{margin-right:var(--s2)}
 }
-.rank{background:var(--team,#6b7280);color:var(--team-ink,#fff);font-weight:var(--w-bold);padding:0 5px;font-size:var(--fs-col);
-  margin-left:6px;font-family:var(--f-body)}
+.rank{background:var(--team,#6b7280);color:var(--team-ink,#fff);font-weight:var(--w-bold);padding:0 var(--s2);font-size:var(--fs-col);
+  margin-left:var(--s3);font-family:var(--f-body)}
 
 /* 선발·구원별 — 두 단이 각자의 제목을 갖는다. 제목이 없으면 어느 쪽 숫자인지 알 수 없다 */
 /* 격리 원문 — 코드가 아니라 **원본 그대로의 글자**임을 보이게 한다 */
-.qs{font-family:var(--f-num);font-size:var(--fs-note);background:var(--panel-2);padding:1px 5px;white-space:nowrap}
+.qs{font-family:var(--f-num);font-size:var(--fs-note);background:var(--panel-2);padding:var(--s1) var(--s2);white-space:nowrap}
 .qd{font-size:var(--fs-label);color:var(--tx-3)}
 /* ⚠**크기를 명시한다.** 원래 h5 의 기본값(0.83em)에 기대고 있었는데 h3 로 올리면서
    1.17em 이 되어 41% 커졌다 — 블록 제목(10.5px)보다 커진다. 태그에 기대지 않는다 */
-.rolecol .subhead{margin:0 0 var(--s1);font-size:var(--fs-note);letter-spacing:.1em;color:var(--tx-2);font-weight:var(--w-semi)}
+.rolecol .subhead{margin:0 0 var(--s2);font-size:var(--fs-note);letter-spacing:.1em;color:var(--tx-2);font-weight:var(--w-semi)}
 .rolecol dl{margin:0}
 
 /* ⚠좁은 화면에서 표를 옆으로 밀면 **누구의 행인지**가 먼저 사라진다.
@@ -732,16 +755,16 @@ dd.g-veryBad{box-shadow:inset 0 -3px 0 var(--g-vbad);background:var(--g-vbad-bg)
 /* ⚠**앵커가 고정 머리 아래로 들어가지 않게 한다.** #pc-nipponSeries 처럼 깊은 링크로
    들어오면 브라우저는 대상을 화면 맨 위에 두는데, 그 자리는 topbar 가 덮고 있다 —
    눌러서 왔는데 찾던 것이 안 보인다 */
-html{scroll-padding-top:calc(var(--topbar) + 10px)}
+html{scroll-padding-top:calc(var(--topbar) + var(--s4))}
 /* 탭줄이 있는 화면은 그 높이만큼 더 비운다.
    ⚠**topbar 만 빼면 모자란다** — 順位·타대회는 topbar 아래에 탭줄이 한 겹 더 sticky 로 얹힌다.
    #pc-nipponSeries 로 들어오면 제목과 첫 줄이 그 탭줄 뒤로 가린 채 멈춘다.
    :has() 를 모르는 브라우저는 위의 기본값으로 떨어질 뿐이라 더 나빠지지 않는다 */
-html:has(.rail){scroll-padding-top:calc(var(--topbar) + var(--rail) + 10px)}
+html:has(.rail){scroll-padding-top:calc(var(--topbar) + var(--rail) + var(--s4))}
 
 table{border-collapse:collapse;width:100%;font-size:var(--fs-data)}
-th,td{padding:5px var(--s2);text-align:right;font-variant-numeric:tabular-nums;border-bottom:var(--rw-row) solid var(--hair);white-space:nowrap}
-th{font-size:var(--fs-col);letter-spacing:.1em;color:var(--tx-2);font-weight:500}
+th,td{padding:var(--s2) var(--s4);text-align:right;font-variant-numeric:tabular-nums;border-bottom:var(--rw-row) solid var(--hair);white-space:nowrap}
+th{font-size:var(--fs-col);letter-spacing:.1em;color:var(--tx-2);font-weight:var(--w-reg)}
 /* ⚠**머리 고정은 thead 에만 건다.** th 전체에 걸면 tbody 의 **행 머리**(이닝 스코어의
    구단명 칸)까지 붙어 자기 행을 떠난다 — 표가 고장 난 것으로 보인다.
    실측(2026-08-16): 사이트에서 scope=row 를 쓰는 표는 이닝 스코어 하나뿐이다.
@@ -810,7 +833,7 @@ tr.thin td{color:var(--tx-2)}
    対戦成績 표는 **아무것도 없다**). 그 셈은 forced-colors.test.ts 가 소스에서 다시 센다. */
 tr.thin td:first-child{box-shadow:inset 2px 0 0 var(--tx-3)}
 /* 「薄く」의 글자 표식 — **어떤 색 모드에서도 남는다.** 범례가 같은 글자를 쓴다 */
-.qmk{font-style:normal;font-size:var(--fs-note);color:var(--tx-2);margin-left:var(--s1)}
+.qmk{font-style:normal;font-size:var(--fs-note);color:var(--tx-2);margin-left:var(--s2)}
 /* 구단 색 칩 — ~~**모든 표가 같은 한 벌을 쓴다**(M1의 정신)~~ **거짓이었다**(2026-08-25 · 감사 P3 #33).
    실측: 구단 색 스와치 규칙이 **9벌**이고 **크기 5종**(8·9·10·11·12px) · **링 4 · 없음 5**다
    (그 밖에 3px 막대 .gstars li i 하나와 4px 띠 둘이 더 있지만 스와치가 아니다).
@@ -828,7 +851,7 @@ tr.thin td:first-child{box-shadow:inset 2px 0 0 var(--tx-3)}
    ⚠전에는 이 규칙이 .stand·.iscore 안에만 있어서 **ポストシーズン 표의 칩은
    아예 그려지지 않았다** — <i> 는 인라인이라 width/height 가 먹지 않는다.
    네 화면(順位·イニングスコア·ポストシーズン 타자표·투수표)이 이 한 벌을 쓴다 */
-.tm i{display:inline-block;width:9px;height:9px;margin-right:6px;vertical-align:middle;
+.tm i{display:inline-block;width:9px;height:9px;margin-right:var(--s3);vertical-align:middle;
   background:var(--chip,#6b7280);box-shadow:inset 0 0 0 1px var(--tx-2)}
 td a{text-decoration:none;box-shadow:inset 0 -1px 0 var(--hair-2)}
 td a:hover{box-shadow:inset 0 -1px 0 currentColor}
@@ -836,8 +859,8 @@ td a:hover{box-shadow:inset 0 -1px 0 currentColor}
 /* 정렬 가능한 머리 — **버튼이다.** 클릭만 되고 초점이 안 가는 머리를 만들지 않는다 */
 th:has(.sortable){padding:0}
 .sortable{font:inherit;font-size:var(--fs-col);letter-spacing:.1em;color:var(--tx-2);background:transparent;
-  border:var(--rw-none);cursor:pointer;padding:5px var(--s2);width:100%;text-align:inherit;white-space:nowrap;
-  display:inline-flex;align-items:center;gap:3px;justify-content:flex-end;
+  border:var(--rw-none);cursor:pointer;padding:var(--s2) var(--s4);width:100%;text-align:inherit;white-space:nowrap;
+  display:inline-flex;align-items:center;gap:var(--s1);justify-content:flex-end;
   transition:color var(--t1) var(--e-out)}
 th.l .sortable{justify-content:flex-start}
 .sortable:hover{color:var(--tx)}
@@ -856,21 +879,21 @@ th[aria-sort="ascending"] .sortable,th[aria-sort="descending"] .sortable{color:v
 th[aria-sort="ascending"] .sortable i,th[aria-sort="descending"] .sortable i{color:inherit}
 th[aria-sort="ascending"] .sortable i::before{content:"↑"}
 th[aria-sort="descending"] .sortable i::before{content:"↓"}
-@media (pointer:coarse){.sortable{padding:9px var(--s2)}}
+@media (pointer:coarse){.sortable{padding:var(--s4) var(--s4)}}
 
 .pa{font-size:var(--fs-sub);letter-spacing:.02em}
 .pa.h{color:var(--warn);font-weight:var(--w-bold)}
 
-.dg{display:grid;grid-template-columns:66px repeat(3,minmax(56px,1fr));gap:3px;min-width:300px}
+.dg{display:grid;grid-template-columns:66px repeat(3,minmax(56px,1fr));gap:var(--s1);min-width:300px}
 .dg .h{font-size:var(--fs-col);letter-spacing:.1em;color:var(--tx-3);text-align:center}
 .dg .rl{font-size:var(--fs-note);color:var(--tx-2);display:flex;align-items:center}
-.dg .c{border:var(--rw-row) solid var(--hair);padding:5px 3px;text-align:center;font-family:var(--f-num);font-variant-numeric:tabular-nums}
+.dg .c{border:var(--rw-row) solid var(--hair);padding:var(--s2) var(--s1);text-align:center;font-family:var(--f-num);font-variant-numeric:tabular-nums}
 .dg .c u{display:block;text-decoration:none;font-size:var(--fs-lead)}
-.dg .c s{display:block;text-decoration:none;font-size:9px;color:var(--tx-3)}
+.dg .c s{display:block;text-decoration:none;font-size:var(--fs-min);color:var(--tx-3)}
 .dg .c.thin u{color:var(--tx-2)}
 
-.bars{display:flex;flex-direction:column;gap:6px;max-width:480px}
-.bar{display:grid;grid-template-columns:84px 1fr 132px;gap:10px;align-items:center}
+.bars{display:flex;flex-direction:column;gap:var(--s3);max-width:480px}
+.bar{display:grid;grid-template-columns:84px 1fr 132px;gap:var(--s4);align-items:center}
 .bar span{font-size:var(--fs-sub);color:var(--tx-2)}
 /* 스플릿 표의 막대 열. ⚠**막대를 표 안에 남긴 이유**: 「対左 대 対右」를 한눈에 보는 것이
    이 블록의 존재 이유다. 표만 두면 두 칸을 눈이 아니라 머리로 비교하게 된다.
@@ -890,7 +913,7 @@ th[aria-sort="descending"] .sortable i::before{content:"↓"}
 .spl{width:auto}
 /* 막대와 값을 한 줄에. ⚠**flex 는 셀(td)이 아니라 이 래퍼에 건다** — 셀을 flex 로 만들면
    그 칸이 테이블 박스에서 빠져나와 아래 경계선이 다른 칸과 어긋난다(css-tables 가 막는 결함) */
-.spl td .tv{display:flex;align-items:center;gap:var(--s2)}
+.spl td .tv{display:flex;align-items:center;gap:var(--s4)}
 /* ⚠**막대는 읽을 만큼만.** 늘려도 정보가 안 늘고 자리만 먹는다(위 주석 · 실측으로 확인했다).
    좁은 화면에서는 줄어들되 실오라기가 되지 않게 바닥을 둔다. */
 .spl td .tv .track{flex:0 1 140px;min-width:72px}
@@ -917,7 +940,7 @@ th[aria-sort="descending"] .sortable i::before{content:"↓"}
   animation:grow var(--t3) var(--e-out) both}
 .bar em{font-style:normal;font-family:var(--f-num);font-variant-numeric:tabular-nums;font-size:var(--fs-data);text-align:right}
 /* 상대전적 좁히기 */
-.mfind{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:0 0 9px}
+.mfind{display:flex;align-items:center;gap:var(--s4);flex-wrap:wrap;margin:0 0 var(--s4)}
 .mfind label{font-size:var(--fs-label);letter-spacing:.14em;color:var(--tx-3)}
 /* ⚠**검색칸(.qbox input)과 같은 결함이고 여기가 더 나쁘다**(2026-09-08 · design-auditor · WCAG 2.2 SC 1.4.11).
    이 좁히기 줄은 .block(--panel) 안에 있고 칸의 채움도 --panel 이라 **채움 대 둘러싼 면이 정확히 1.000** —
@@ -929,10 +952,10 @@ th[aria-sort="descending"] .sortable i::before{content:"↓"}
    ⚠**hover 를 --tx-2 로 옮긴다** — 안 옮기면 rest 와 hover 가 **같은 색**이 되어 되짚을 표시가 사라진다.
    ⚠**.tab·.chip·.mv·.go.alt·.hjump a 를 같이 끌고 오지 마라** — 가시 텍스트 라벨이 있어 등급이 다르다
    (css-contrast.test.ts 의 EDGE_EXEMPT 가 사유와 함께 붙든다). */
-.mfind input{font:inherit;font-size:var(--fs-lead);padding:5px 9px;width:170px;background:var(--panel);color:var(--tx);
+.mfind input{font:inherit;font-size:var(--fs-lead);padding:var(--s2) var(--s4);width:170px;background:var(--panel);color:var(--tx);
   border:var(--rw-row) solid var(--tx-3);transition:border-color var(--t1) var(--e-out)}
 .mfind input:hover{border-color:var(--tx-2)}
-.mfind select{font:inherit;font-size:var(--fs-lead);padding:5px var(--s2);background:var(--panel);color:var(--tx);
+.mfind select{font:inherit;font-size:var(--fs-lead);padding:var(--s2) var(--s4);background:var(--panel);color:var(--tx);
   border:var(--rw-row) solid var(--tx-3);max-width:180px;transition:border-color var(--t1) var(--e-out)}
 .mfind select:hover{border-color:var(--tx-2)}
 .mfind .count{font-family:var(--f-num);font-size:var(--fs-note);color:var(--tx-3)}
@@ -941,23 +964,23 @@ th[aria-sort="descending"] .sortable i::before{content:"↓"}
   .mfind select{flex:1 1 auto;max-width:none;min-width:0}
   .mfind .count{flex-basis:100%}
 }
-@media (pointer:coarse){.mfind select,.mfind input{padding:var(--s2)}}
+@media (pointer:coarse){.mfind select,.mfind input{padding:var(--s4)}}
 
-.note{font-size:var(--fs-note);color:var(--tx-3);margin:9px 0 0;max-width:64ch}
+.note{font-size:var(--fs-note);color:var(--tx-3);margin:var(--s4) 0 0;max-width:64ch}
 /* 用語集 — 지표 설명 한 장.
    ⚠**카드 그리드로 만들지 않는다**(§6 「AI 틱함」 금지 목록). 이건 읽는 글이지 훑는 목록이라
    한 줄씩 쌓고 왼쪽에 가는 선으로 단을 만든다 — 목차를 따로 두지 않고도 경계가 보인다.
    ⚠**글 폭을 제한한다** — caveat 가 4문장짜리도 있어서 넓은 화면에서 한 줄이 너무 길어진다. */
-.glist{display:flex;flex-direction:column;gap:14px;margin-top:var(--s1)}
-.gl{padding-left:11px;border-left:var(--rw-sect) solid var(--hair-2);max-width:72ch;scroll-margin-top:64px}
+.glist{display:flex;flex-direction:column;gap:var(--s5);margin-top:var(--s2)}
+.gl{padding-left:var(--s5);border-left:var(--rw-sect) solid var(--hair-2);max-width:72ch;scroll-margin-top:calc(var(--topbar) + var(--s6))}
 .gl:target{border-left-color:var(--tx)}
-.gln{margin:0;font-size:14px;letter-spacing:.02em}
-.gls{margin:3px 0 0;font-size:12.5px;color:var(--tx-2)}
-.glh{margin:5px 0 0;font-size:var(--fs-sub);color:var(--tx-2);font-variant-numeric:tabular-nums}
-.glh b{font-weight:var(--w-bold);margin-right:6px;letter-spacing:.06em;font-size:var(--fs-label);color:var(--tx-3)}
-.glh s{text-decoration:none;margin-left:var(--s2);color:var(--tx-3);font-size:var(--fs-label)}
-.glc{margin:5px 0 0;font-size:var(--fs-sub);color:var(--tx-2);padding-left:7px;box-shadow:inset 2px 0 0 var(--warn)}
-.empty{font-size:var(--fs-data);color:var(--tx-3);padding:6px 0}
+.gln{margin:0;font-size:var(--fs-name);letter-spacing:.02em}
+.gls{margin:var(--s1) 0 0;font-size:var(--fs-data);color:var(--tx-2)}
+.glh{margin:var(--s2) 0 0;font-size:var(--fs-sub);color:var(--tx-2);font-variant-numeric:tabular-nums}
+.glh b{font-weight:var(--w-bold);margin-right:var(--s3);letter-spacing:.06em;font-size:var(--fs-label);color:var(--tx-3)}
+.glh s{text-decoration:none;margin-left:var(--s4);color:var(--tx-3);font-size:var(--fs-label)}
+.glc{margin:var(--s2) 0 0;font-size:var(--fs-sub);color:var(--tx-2);padding-left:var(--s3);box-shadow:inset 2px 0 0 var(--warn)}
+.empty{font-size:var(--fs-data);color:var(--tx-3);padding:var(--s3) 0}
 /* ── M12 의 여섯 갈래는 **형태**로 갈린다 ──────────────────────
    ⚠**타입에서 여섯으로 쪼갠 것이 화면에서 한 갈래로 되돌아가 있었다**(2026-09-05 감사 P1).
    stateNote() 가 여섯을 전부 .empty 로 냈고, 다른 것은 **문장 첫 낱말뿐**이었다.
@@ -971,7 +994,7 @@ th[aria-sort="descending"] .sortable i::before{content:"↓"}
    두 상태를 한 문장으로 합치지 말라고 적어 둔 그 구별을 **화면에서도 지킨다.**
    ⚠**판정선은 .dnolot 이다** — 그보다 약하면 이 수정은 아무것도 안 고친 것이다.
    여기는 3px 실선 + --panel-2 바탕 + --tx-2 로 그보다 진하다(2px inset · 바탕 없음). */
-.empty[data-state]{color:var(--tx-2);padding:5px 0 5px 9px;background:var(--panel-2);
+.empty[data-state]{color:var(--tx-2);padding:var(--s2) 0 var(--s2) var(--s4);background:var(--panel-2);
   border-left:var(--rw-mast) solid var(--hair-2)}
 .empty[data-state="uncollected"],.empty[data-state="offseason"]{border-left-style:dashed}
 /* 이것만 우리 쪽 사고다 — 색을 쓰는 자리가 여기 하나뿐인 이유다(글자도 이미 다르다) */
@@ -979,39 +1002,39 @@ th[aria-sort="descending"] .sortable i::before{content:"↓"}
 
 /* ── 予告先発 ────────────────────────────────────────────── */
 /* 대전 카드 버튼 — **경기 수만큼 만들어지고, 폭에 맞춰 열이 접힌다** */
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:6px;
-  padding:var(--s3) var(--pad);border-bottom:var(--rw-row) solid var(--hair);background:var(--panel)}
-.card{display:flex;align-items:center;gap:9px;font:inherit;text-align:left;cursor:pointer;
-  padding:var(--s2) 10px;background:transparent;color:var(--tx-2);border:var(--rw-row) solid var(--hair-2);
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:var(--s3);
+  padding:var(--s5) var(--pad);border-bottom:var(--rw-row) solid var(--hair);background:var(--panel)}
+.card{display:flex;align-items:center;gap:var(--s4);font:inherit;text-align:left;cursor:pointer;
+  padding:var(--s4) var(--s4);background:transparent;color:var(--tx-2);border:var(--rw-row) solid var(--hair-2);
   transition:color var(--t1) var(--e-out),border-color var(--t1) var(--e-out),background var(--t1) var(--e-out)}
 .card:hover{color:var(--tx);border-color:var(--tx-3)}
 .card[aria-selected="true"]{color:var(--tx);border-color:var(--tx);background:var(--page)}
-.card .cbar{display:flex;flex-direction:column;gap:2px;flex:0 0 auto}
+.card .cbar{display:flex;flex-direction:column;gap:var(--s1);flex:0 0 auto}
 .card .cbar i{display:block;width:5px;height:13px}
-.card .ctxt{min-width:0;display:flex;flex-direction:column;gap:1px}
-.card .ctxt b{font-size:12.5px;font-weight:var(--w-bold);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card .ctxt{min-width:0;display:flex;flex-direction:column;gap:var(--s1)}
+.card .ctxt b{font-size:var(--fs-data);font-weight:var(--w-bold);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .card .ctxt s{text-decoration:none;font-family:var(--f-num);font-size:var(--fs-col);color:var(--tx-3);white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis}
 .card.all .ctxt b{letter-spacing:.1em}
-@media (max-width:420px){.cards{grid-template-columns:1fr 1fr;gap:5px}.card{padding:7px var(--s2)}}
+@media (max-width:420px){.cards{grid-template-columns:1fr 1fr;gap:var(--s2)}.card{padding:var(--s3) var(--s4)}}
 
-.starters{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+.starters{display:grid;grid-template-columns:1fr 1fr;gap:var(--s7)}
 .sside{min-width:0}
-.sname{margin:0 0 6px;font-size:var(--fs-note);letter-spacing:.14em;font-weight:var(--w-bold);display:flex;align-items:center;gap:7px}
+.sname{margin:0 0 var(--s3);font-size:var(--fs-note);letter-spacing:.14em;font-weight:var(--w-bold);display:flex;align-items:center;gap:var(--s3)}
 .sname i{width:10px;height:10px;background:var(--chip,#6b7280);font-style:normal}
-.spitcher{margin:0 0 9px;font-size:19px;font-weight:var(--w-bold);letter-spacing:.06em}
+.spitcher{margin:0 0 var(--s4);font-size:var(--fs-title);font-weight:var(--w-bold);letter-spacing:.06em}
 .spitcher a{text-decoration:none;box-shadow:inset 0 -2px 0 var(--chip,#6b7280)}
-dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
-@media (max-width:680px){.starters{grid-template-columns:1fr;gap:18px}}
+dl.srow{grid-template-columns:auto 1fr;margin-bottom:var(--s5)}
+@media (max-width:680px){.starters{grid-template-columns:1fr;gap:var(--s6)}}
 
 /* ── 対戦を選ぶ ──────────────────────────────────────────── */
-.picker{display:grid;grid-template-columns:repeat(auto-fit,minmax(238px,1fr));gap:18px;max-width:640px}
-.pickside label{display:block;font-size:var(--fs-label);letter-spacing:.16em;color:var(--tx-3);margin-bottom:6px}
+.picker{display:grid;grid-template-columns:repeat(auto-fit,minmax(238px,1fr));gap:var(--s6);max-width:640px}
+.pickside label{display:block;font-size:var(--fs-label);letter-spacing:.16em;color:var(--tx-3);margin-bottom:var(--s3)}
 .pickside .qbox{max-width:none}
-.pickside .qbox input{font-size:15px;padding:var(--s2) 10px}
-.chosen{margin:7px 0 0;font-size:var(--fs-data);color:var(--tx-3)}
+.pickside .qbox input{font-size:var(--fs-name);padding:var(--s4) var(--s4)}
+.chosen{margin:var(--s3) 0 0;font-size:var(--fs-data);color:var(--tx-3)}
 .chosen b{color:var(--tx);font-weight:var(--w-bold)}
-.go{font:inherit;font-size:var(--fs-lead);padding:9px 18px;cursor:pointer;background:var(--team,#6b7280);
+.go{font:inherit;font-size:var(--fs-lead);padding:var(--s4) var(--s6);cursor:pointer;background:var(--team,#6b7280);
   color:var(--team-ink,#fff);border:var(--rw-row) solid var(--team,#6b7280);font-weight:var(--w-bold);
   transition:border-color var(--t1) var(--e-out)}
 .go:disabled{opacity:.35;cursor:default}
@@ -1022,30 +1045,30 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
    → hover 를 **테두리 색**으로 말한다(.mv·.chip·.pk·.go.alt 가 이미 쓰는 이 집의 방식).
    --tx-3 는 --page 대비 **4.910 / 5.499** 라 면 색과 무관하게 보인다. */
 .go:hover:not(:disabled){border-color:var(--tx-3)}
-.go.alt{background:transparent;color:var(--tx-2);border-color:var(--hair-2);font-weight:var(--w-reg);margin-left:7px}
+.go.alt{background:transparent;color:var(--tx-2);border-color:var(--hair-2);font-weight:var(--w-reg);margin-left:var(--s3)}
 /* ⚠opacity:1 을 뺐다 — 그것은 위의 .go:hover 흐림을 **되돌리기 위한 것**이었고, 그 흐림이 사라졌다 */
 .go.alt:hover:not(:disabled){color:var(--tx);border-color:var(--tx-3)}
 
 /* ⚠**고른 것과 실행 버튼은 화면에서 사라지면 안 된다.** 아래의 선수 목록이 길어서
    스크롤하면 「골랐는데 어떻게 보지?」가 된다. 레일과 같은 sticky를 쓴다 */
 .pickbar{position:sticky;top:var(--topbar);z-index:9;display:flex;align-items:center;
-  flex-wrap:wrap;gap:var(--s2) var(--s4);margin:0 0 14px;padding:9px 0;background:var(--panel);
+  flex-wrap:wrap;gap:var(--s4) var(--s6);margin:0 0 var(--s5);padding:var(--s4) 0;background:var(--panel);
   border-bottom:var(--rw-row) solid var(--hair)}
-.pickbar .chosen{margin:0;display:flex;align-items:baseline;gap:7px;min-width:0}
+.pickbar .chosen{margin:0;display:flex;align-items:baseline;gap:var(--s3);min-width:0}
 .pickbar .chosen span{font-size:var(--fs-col);letter-spacing:.16em;color:var(--tx-3);flex:none}
-.pickbar .chosen b{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pickbar .chosen b{font-size:var(--fs-name);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pickbar .go{margin-left:auto;flex:none}
-.picknote{margin:0 0 var(--s2);font-size:var(--fs-sub);color:var(--tx-3)}
-.pickgames{margin:0 0 var(--s3)}
+.picknote{margin:0 0 var(--s4);font-size:var(--fs-sub);color:var(--tx-3)}
+.pickgames{margin:0 0 var(--s5)}
 /* 두 팀을 나란히. 좁으면 위아래로 — 어느 쪽이 어느 팀인지는 색 표식과 이름이 말한다 */
-.pickteams{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:var(--s4)}
+.pickteams{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:var(--s6)}
 .pickteam{min-width:0}
-.picktm{margin:0 0 var(--s2);font-size:var(--fs-lead);display:flex;align-items:center;gap:7px}
+.picktm{margin:0 0 var(--s4);font-size:var(--fs-lead);display:flex;align-items:center;gap:var(--s3)}
 .picktm i{width:10px;height:10px;background:var(--chip,#6b7280);font-style:normal;flex:none}
 /* ⚠**접힌 채로도 무엇이 몇 명인지 보여야 한다.** 요약이 라벨 노릇을 그대로 한다.
    ⚠**기본 화살표를 지우고 우리 표식을 쓴다** — 브라우저마다 모양이 달라 줄이 흔들린다 */
-.pickfold{margin:10px 0 0}
-.pickfold>summary{cursor:pointer;list-style:none;display:flex;align-items:baseline;gap:6px}
+.pickfold{margin:var(--s4) 0 0}
+.pickfold>summary{cursor:pointer;list-style:none;display:flex;align-items:baseline;gap:var(--s3)}
 .pickfold>summary::-webkit-details-marker{display:none}
 /* ⚠**글리프에 빈 대체텍스트를 붙인다.** details/summary 는 접힘·펼침을 이미 네이티브로 알리는데,
    그 위에 생성 콘텐츠를 얹으면 낭독기가 「검은 오른쪽 삼각형」을 덧붙여 읽는다 */
@@ -1083,9 +1106,9 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
    ⚠**둥근 모서리도 뺐다** — 이 스타일시트에 border-radius 는 그 한 줄뿐이었고,
    파일 머리말이 「둥근 모서리를 쓰지 않는다」고 적어 둔 그것이다 */
 .pickfold>summary:focus-visible{outline:2px solid var(--tx);outline-offset:2px}
-.pickfold .picklist{margin-top:5px}
-.picklab{margin:10px 0 5px;font-size:var(--fs-col);letter-spacing:.16em;color:var(--tx-3);
-  display:flex;align-items:baseline;gap:6px}
+.pickfold .picklist{margin-top:var(--s2)}
+.picklab{margin:var(--s4) 0 var(--s2);font-size:var(--fs-col);letter-spacing:.16em;color:var(--tx-3);
+  display:flex;align-items:baseline;gap:var(--s3)}
 .picklab s{text-decoration:none;letter-spacing:0;font-size:var(--fs-label)}
 /* ── 「데이터가 없다」는 평범한 캡션과 달라야 한다 ─────────────────
    ⚠**클래스만 붙고 규칙이 0건이었다**(2026-08-18 감사 P2). M12 의 4상태를 가르려고
@@ -1095,7 +1118,7 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:11px}
    경고가 같은 줄의 힌트(10.5px)보다 **작았다.** 그래서 여기서 자간과 크기를 되돌린다.
    ⚠**빨강으로 칠하지 않는다** — 「없음」은 고장이 아니다. 색이 아니라 **형태**로 가른다. */
 .pmiss{letter-spacing:0;font-size:var(--fs-data);color:var(--tx-2);
-  border-left:var(--rw-mast) solid var(--hair-2);padding:var(--s1) 0 var(--s1) 9px;background:var(--panel-2)}
+  border-left:var(--rw-mast) solid var(--hair-2);padding:var(--s2) 0 var(--s2) var(--s4);background:var(--panel-2)}
 .picklab.pmiss{letter-spacing:0;font-size:var(--fs-data)}
 /* 고를 것이 없으면 「누르는 법」도 필요 없다 */
 .pmiss s{display:none}
@@ -1114,19 +1137,19 @@ td.bad{color:var(--warn);font-weight:var(--w-bold)}
    ⚠**태그 기본값에 기대지 않는다.** h3 는 기본 1.17em 이라 **구획 제목(h2, 11px)보다 커진다** —
    이 저장소가 이미 한 번 밟은 함정이다(위 .standname 주석 참조).
    ⚠**통산 한 줄이 이 블록의 주역**이다. 연도별은 근거이고, 먼저 읽혀야 하는 것은 합계다. */
-.cyr{margin:14px 0 6px;font-size:var(--fs-label);letter-spacing:.16em;color:var(--tx-2);font-weight:var(--w-semi);
-  display:flex;align-items:baseline;gap:var(--s2)}
+.cyr{margin:var(--s5) 0 var(--s3);font-size:var(--fs-label);letter-spacing:.16em;color:var(--tx-2);font-weight:var(--w-semi);
+  display:flex;align-items:baseline;gap:var(--s4)}
 .cyr:first-child{margin-top:0}
 .cyr .qt{letter-spacing:0;font-weight:var(--w-reg);color:var(--tx-3);font-size:var(--fs-label)}
-.ctot{margin:0 0 var(--s2);font-size:13.5px;font-variant-numeric:tabular-nums;
-  padding:7px 0 7px 11px;border-left:var(--rw-mast) solid var(--chip,var(--team,var(--tx)))}
-.ctot b{font-size:var(--fs-col);letter-spacing:.16em;color:var(--tx-3);font-weight:var(--w-semi);margin-right:var(--s2);
+.ctot{margin:0 0 var(--s4);font-size:var(--fs-lead);font-variant-numeric:tabular-nums;
+  padding:var(--s3) 0 var(--s3) var(--s5);border-left:var(--rw-mast) solid var(--chip,var(--team,var(--tx)))}
+.ctot b{font-size:var(--fs-col);letter-spacing:.16em;color:var(--tx-3);font-weight:var(--w-semi);margin-right:var(--s4);
   vertical-align:.08em}
 /* ── ホーム(대시보드) ──
    ⚠**로고를 쓰지 않는다**(§6). 구단을 구별하는 것은 **우리가 고른 색**과 이름이다.
    ⚠**카드 그리드를 만들지 않는다** — 균질한 카드 격자는 「AI틱함」 금지 목록에 있다.
    이 화면은 표와 목록으로 간다: 순위는 표가 가장 빨리 읽히고, 주간은 짧은 순서 목록이다. */
-.hteam{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.hteam{display:inline-flex;align-items:center;gap:var(--s2);white-space:nowrap}
 /* ⚠**색만으로는 안 된다.** 구단 12색 중 다크 바탕에서 3:1 을 못 넘는 것이 7색이다
    (실측 2026-08-17: 가장 낮은 것이 1.17:1). 표를 가로로 밀면 팀명이 화면 밖으로 나가
    **이 칩이 유일한 식별자**가 되는데, 그때 칩이 안 보이면 누구의 줄인지 알 수 없다.
@@ -1166,12 +1189,12 @@ td.bad{color:var(--warn);font-weight:var(--w-bold)}
    비면서 스크롤이 이상하게 보였다. 바로 위 주석이 「두 열을 함께 고정한다」고 적어 둔
    그 약속이 CSS 에서는 지켜지지 않고 있었다(자기 수정이 만든 결함 · CLAUDE.md 작업규칙 10).
    ⚠**sticky 도 「위치가 정해진 요소」다** — ::before 의 기준으로 relative 와 똑같이 동작한다. */
-.hstand tbody td:first-child{position:sticky;left:0;z-index:2;padding-left:var(--s3)}
+.hstand tbody td:first-child{position:sticky;left:0;z-index:2;padding-left:var(--s5)}
 .hstand thead th:first-child{position:sticky;left:0;z-index:3;background:var(--page)}
 .hstand tbody td:first-child::before{content:"";position:absolute;left:0;top:2px;bottom:2px;width:4px;
   background:var(--chip,transparent)}
-.hstand .hrank{font-weight:var(--w-bold);font-size:14px}
-.hstand .hrank s{text-decoration:none;font-size:var(--fs-min);color:var(--tx-3);margin-left:2px}
+.hstand .hrank{font-weight:var(--w-bold);font-size:var(--fs-name)}
+.hstand .hrank s{text-decoration:none;font-size:var(--fs-min);color:var(--tx-3);margin-left:var(--s1)}
 /* 1위 행만 조금 더 무겁게 — 「지금 누가 위인가」가 이 표의 첫 질문이다 */
 .hstand tr.lead td{background:var(--panel)}
 .hstand tr.lead .hrank{color:var(--tx)}
@@ -1187,9 +1210,9 @@ td.bad{color:var(--warn);font-weight:var(--w-bold)}
    긴 팀명(ソフトバンク)이 셀을 넘겨 가로 스크롤을 만들지 않게 한다.
    ⚠**괘선은 여전히 칸 전체를 가로지른다** — li 는 여전히 1fr 폭을 갖는 격자 항목이다 */
 .hgames{list-style:none;margin:0;padding:0;display:grid;
-  grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:2px 22px}
+  grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:var(--s1) var(--s7)}
 .hgames li{display:grid;grid-template-columns:auto auto minmax(0,auto);justify-content:start;
-  align-items:baseline;gap:0 7px;padding:var(--s1) 0;
+  align-items:baseline;gap:0 var(--s3);padding:var(--s2) 0;
   border-bottom:var(--rw-row) solid var(--hair);font-variant-numeric:tabular-nums}
 /* ⚠**찌그러짐이 아니라 말줄임으로 끝낸다**(2026-08-31 · 명부에서 겪은 것과 같은 병).
    이 줄의 점수(.hg-s)는 nowrap 이라 안 줄고, 마지막 칸이 minmax(0,auto) 라 **팀명만 줄어든다.**
@@ -1197,33 +1220,33 @@ td.bad{color:var(--warn);font-weight:var(--w-bold)}
    ⚠**가로 스크롤을 안 만든다는 원래 의도는 그대로다** — 줄어드는 것은 여전히 이 칸이고,
    줄어든 뒤의 **모양만** 바뀐다. */
 .hgames .hg-t{font-size:var(--fs-data);color:var(--tx-2);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.hgames .hg-s{font-size:15px;font-weight:var(--w-bold);white-space:nowrap}
-.hgames .hg-s s{text-decoration:none;color:var(--tx-3);font-size:var(--fs-note);font-weight:var(--w-reg);margin:0 1px}
-.more{margin:var(--s2) 0 0;font-size:var(--fs-sub)}
+.hgames .hg-s{font-size:var(--fs-name);font-weight:var(--w-bold);white-space:nowrap}
+.hgames .hg-s s{text-decoration:none;color:var(--tx-3);font-size:var(--fs-note);font-weight:var(--w-reg);margin:0 var(--s1)}
+.more{margin:var(--s4) 0 0;font-size:var(--fs-sub)}
 
 /* ── 일정 캘린더 ────────────────────────────────────────────────
    ⚠**격자를 카드로 만들지 않는다**(§6). 달력은 이미 격자라, 칸마다 그림자와 둥근 모서리를
    더하면 그 순간 「AI가 만든 대시보드」가 된다. 선과 여백만으로 짓는다.
    ⚠**승패를 색으로만 말하지 않는다** — 글자(○●△中)가 먼저이고 색은 보조다.
    ⚠**날짜를 큼직하게 두지 않는다.** 이 화면에서 읽을 것은 날짜가 아니라 **상대와 결과**다. */
-.calwrap{display:flex;flex-direction:column;gap:22px}
+.calwrap{display:flex;flex-direction:column;gap:var(--s7)}
 .cal{width:100%;border-collapse:collapse;table-layout:fixed}
 /* ⚠**구획 제목(.block>h2 = 12.5px/700)보다 크면 안 된다.** 13px/700 이었다 —
    이 파일이 이미 두 번 적어 둔 함정을 세 번째로 밟았다(2026-08-18 감사 P2).
    달 이름은 구획 안의 **소제목**이지 구획 제목이 아니다. */
 .cal caption{text-align:left;font-size:var(--fs-sub);font-weight:var(--w-bold);letter-spacing:.1em;
-  padding:0 0 var(--s2);color:var(--tx-2)}
+  padding:0 0 var(--s4);color:var(--tx-2)}
 .cal th{font-size:var(--fs-col);font-weight:var(--w-reg);letter-spacing:.1em;color:var(--tx-3);
-  padding:0 0 6px;text-align:center;border:var(--rw-none)}
+  padding:0 0 var(--s3);text-align:center;border:var(--rw-none)}
 .cal th abbr{text-decoration:none;border:var(--rw-none)}
 /* 일요일은 조금 진하게. ⚠빨강을 쓰지 않는다 — 「나쁨」으로 읽힌다 */
 .cal .cw0,.cal .cw6{color:var(--tx-2)}
-.cal td{border:var(--rw-row) solid var(--hair);vertical-align:top;padding:var(--s1);height:62px;
+.cal td{border:var(--rw-row) solid var(--hair);vertical-align:top;padding:var(--s2);height:62px;
   background:var(--panel)}
 /* 그 달에 없는 칸. ⚠**지우지 않고 비운다** — 없애면 요일이 밀린다 */
 .cal td.cpad{background:transparent;border-color:transparent}
 .cday{display:block;font-family:var(--f-num);font-size:var(--fs-col);color:var(--tx-3);
-  line-height:1;margin-bottom:3px}
+  line-height:1;margin-bottom:var(--s1)}
 /* 오늘. ⚠바탕을 칠하지 않고 테두리로 말한다 — 칠하면 「선택됨」으로 읽힌다
    ⚠**구단색만으로는 안 된다**(2026-08-18 감사 P2). 12구단 전부가 라이트·다크 중
    한쪽에서 3:1 을 못 넘고 최악은 **1.08:1** 이다 — 그 팀 페이지에서는 오늘 칸이 그냥 안 보인다.
@@ -1235,15 +1258,15 @@ td.bad{color:var(--warn);font-weight:var(--w-bold)}
 
 /* 한 칸 안의 경기. 지난 경기는 링크, 앞으로의 경기는 그냥 글자 */
 .cg{display:block;text-decoration:none;color:var(--tx);font-size:var(--fs-note);line-height:1.35;
-  padding:3px var(--s1);border-left:var(--rw-sect) solid var(--hair-2);
+  padding:var(--s1) var(--s2);border-left:var(--rw-sect) solid var(--hair-2);
   transition:background var(--t1) var(--e-out),border-color var(--t1) var(--e-out)}
-.cg + .cg{margin-top:3px}
+.cg + .cg{margin-top:var(--s1)}
 a.cg:hover{background:var(--panel-2);border-left-color:var(--team,var(--tx-3))}
 a.cg:focus-visible{outline:2px solid var(--tx);outline-offset:1px}
 .cvs{display:block;font-size:var(--fs-note);color:var(--tx-2);white-space:nowrap;overflow:hidden;
   text-overflow:ellipsis}
 .cscore{display:inline-block;font-family:var(--f-num);font-variant-numeric:tabular-nums;
-  font-size:12.5px;font-weight:var(--w-bold);margin-right:var(--s1)}
+  font-size:var(--fs-data);font-weight:var(--w-bold);margin-right:var(--s2)}
 .cmark{font-size:var(--fs-data);font-weight:var(--w-bold)}
 .cmark.win{color:var(--up)}
 .cmark.loss{color:var(--dn)}
@@ -1255,15 +1278,15 @@ a.cg:focus-visible{outline:2px solid var(--tx);outline-offset:1px}
 @media (max-width:680px){
   /* ⚠좁은 화면에서는 칸이 작아진다 — 그래도 **가로로 밀지 않는다**.
      달력을 옆으로 스크롤하면 「몇째 주인지」를 잃는다 */
-  .cal td{height:auto;min-height:44px;padding:3px}
+  .cal td{height:auto;min-height:44px;padding:var(--s1)}
   /* ⚠**팀명을 자르지 않는다**(2026-08-18 감사 P2). 353px 화면에서 한 칸은 약 44px 이라
      nowrap+말줄임이면 「@ヤ…」처럼 **2글자만 남았다** — 이 화면이 읽으라고 만든
      바로 그 정보다. 줄을 바꾸는 쪽이 낫다: 칸 높이는 늘어나도 뜻은 남는다. */
   .cvs{font-size:var(--fs-col);white-space:normal;overflow:visible;text-overflow:clip;
     overflow-wrap:anywhere;line-height:1.25}
-  .cg{padding:2px 3px}
+  .cg{padding:var(--s1) var(--s1)}
   .cscore{font-size:var(--fs-note)}
-  .calwrap{gap:var(--s4)}
+  .calwrap{gap:var(--s6)}
 }
 
 /* ── 순위표: 승패를 눈으로 비교할 수 있게 ─────────────────────────
@@ -1272,8 +1295,8 @@ a.cg:focus-visible{outline:2px solid var(--tx);outline-offset:1px}
    그 차이를 설명하는 것이 이 띠의 무승부 조각이다. */
 .wl3{white-space:nowrap;min-width:150px}
 .wlnum{font-family:var(--f-num);font-variant-numeric:tabular-nums;font-size:var(--fs-lead);font-weight:var(--w-bold)}
-.wlnum s{text-decoration:none;font-size:var(--fs-min);font-weight:var(--w-reg);color:var(--tx-3);margin:0 2px 0 1px}
-.wlbar{display:flex;height:5px;margin-top:5px;width:100%;min-width:110px;
+.wlnum s{text-decoration:none;font-size:var(--fs-min);font-weight:var(--w-reg);color:var(--tx-3);margin:0 var(--s1) 0 var(--s1)}
+.wlbar{display:flex;height:5px;margin-top:var(--s2);width:100%;min-width:110px;
   background:var(--hair);overflow:hidden}
 /* ⚠**0 이 아니면 보여야 한다.** 무승부 1경기는 폭 0.94% = 약 1px 이라 사실상 사라졌다 —
    「띠의 승 비율과 승률이 다른 이유」를 설명하는 조각이 그 설명을 못 했다(감사 P2). */
@@ -1284,17 +1307,17 @@ a.cg:focus-visible{outline:2px solid var(--tx);outline-offset:1px}
 .wlbar .wt{background:var(--bar-t)}
 
 /* 득실차. ⚠**부호를 문자로 쓴다** — 색만으로 +− 를 구별하면 색각 이상에서 사라진다 */
-.rdiff{font-family:var(--f-num);font-variant-numeric:tabular-nums;font-size:14px;font-weight:var(--w-bold)}
+.rdiff{font-family:var(--f-num);font-variant-numeric:tabular-nums;font-size:var(--fs-name);font-weight:var(--w-bold)}
 .rdiff.up{color:var(--up)}
 .rdiff.dn{color:var(--dn)}
 /* ⚠**주역이 무엇인지 값 옆에서 말한다**(2026-08-18 유저 지적: 「이해가 안 됨」).
    열 이름은 得失点 인데 큰 수는 그 **차이**여서 둘이 어긋나 있었다. */
 .hstand .rdlab{text-decoration:none;font-size:var(--fs-min);letter-spacing:.14em;
-  color:var(--tx-3);margin-left:5px}
+  color:var(--tx-3);margin-left:var(--s2)}
 /* 득실차의 좌우 발산 띠 — 가운데가 0. ⚠**뜻을 나르는 것은 색이 아니라 방향**이다
    (--up 과 --dn 은 명도가 거의 같다 · 실측 1.01:1). 부호가 붙은 수가 바로 위에 있다.
    ⚠트랙 대비는 잰 값이다 — --up/--dn 대 --hair 가 라이트 4.18/4.21 · 다크 5.33/5.23. */
-.hstand .rdbar{display:block;position:relative;height:5px;margin-top:5px;
+.hstand .rdbar{display:block;position:relative;height:5px;margin-top:var(--s2);
   width:100%;min-width:104px;background:var(--hair);overflow:hidden}
 /* 0 자리를 눈에 보이게 — 어디가 기준인지 모르면 방향이 뜻을 못 나른다 */
 .hstand .rdbar::before{content:"";position:absolute;left:50%;top:0;bottom:0;
@@ -1303,14 +1326,14 @@ a.cg:focus-visible{outline:2px solid var(--tx);outline-offset:1px}
 .hstand .rdbar i.up{background:var(--up)}
 .hstand .rdbar i.dn{background:var(--dn)}
 /* 득점·실점 줄. ⚠**단위를 수보다 작게** 두고, 분모(경기 수)는 한 단계 더 뒤로 물린다 */
-.hstand td.wd .den s{text-decoration:none;font-size:9px;color:var(--tx-3);margin:0 1px 0 0}
+.hstand td.wd .den s{text-decoration:none;font-size:var(--fs-min);color:var(--tx-3);margin:0 var(--s1) 0 0}
 /* ⚠**분모에 opacity 를 얹지 않는다**(2026-08-18 감사 P2에서 시험이 잡았다).
    0.8 이면 대비가 라이트 **3.32:1** · 다크 3.97:1 로 AA(4.5:1) 미달이다.
    하필 이 자리가 **분모**다 — 이 서비스가 「분모 없는 비율을 금지한다」고 말해 놓고
    그 분모를 못 읽게 그리면 규칙을 지킨 척만 하는 것이 된다(M2).
    ⚠**뒤로 물리는 것은 크기와 색으로 한다** — 그건 이미 --tx-3 과 9px 이 하고 있다. */
-.hstand td.wd .den em{font-style:normal;color:var(--tx-3);margin-left:6px}
-.hstand td.wd .den em::before{content:"·";margin-right:6px}
+.hstand td.wd .den em{font-style:normal;color:var(--tx-3);margin-left:var(--s3)}
+.hstand td.wd .den em::before{content:"·";margin-right:var(--s3)}
 
 /* 1위 줄.
    ⚠**바탕을 칠하지 않는다** — 표 안에서 한 줄만 바탕이 다르면 「선택됨」으로 읽힌다.
@@ -1318,8 +1341,8 @@ a.cg:focus-visible{outline:2px solid var(--tx);outline-offset:1px}
    바탕(--panel)은 표 바탕과 1.04:1 이라 감지 한계 이하였고,
    좌측 그림자는 이미 있는 ::before(4px, 같은 색) 아래에 완전히 덮였다.
    → **굵기와 크기로만** 말한다. 색이 아니라 형태라 어느 테마·어느 색각에서도 남는다. */
-.hstand tr.lead .wlnum{font-size:15px}
-.hstand tr.lead .hrank{font-weight:800;font-size:15px}
+.hstand tr.lead .wlnum{font-size:var(--fs-name)}
+.hstand tr.lead .hrank{font-weight:var(--w-bold);font-size:var(--fs-name)}
 .hstand tr.lead td{border-top:var(--rw-sect) solid var(--tx-3);border-bottom:var(--rw-sect) solid var(--tx-3)}
 /* ⚠**이 화면 안의 이동**(2026-08-17 유저 지적: 「대쉬보드가 세로로 기니까 해당 부분으로
    바로 점프하는 네비게이션」). 예전에는 다른 화면으로 가는 줄이었는데 **그건 상단 탭에 있다.**
@@ -1341,24 +1364,24 @@ a.cg:focus-visible{outline:2px solid var(--tx);outline-offset:1px}
    ⚠**scroll-padding-left 로 스냅 기준선을 안쪽으로 민다.** 패딩만으로는 안 된다 —
    패딩은 스크롤과 함께 밀려나지만 scroll-padding 은 스크롤포트에 붙어 있다. */
 .hjump{position:sticky;top:var(--topbar);z-index:8;
-  display:flex;flex-wrap:nowrap;gap:6px;margin:0 0 10px;
-  padding:var(--s2) var(--pad);scroll-padding-left:var(--pad);
+  display:flex;flex-wrap:nowrap;gap:var(--s3);margin:0 0 var(--s4);
+  padding:var(--s4) var(--pad);scroll-padding-left:var(--pad);
   background:var(--page);border-bottom:var(--rw-row) solid var(--hair);
   overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin;
   scroll-snap-type:x proximity}
 .hjump::-webkit-scrollbar{height:6px}
 .hjump::-webkit-scrollbar-thumb{background:var(--hair-2);border-radius:var(--r-thumb)}
 .hjump a{flex:0 0 auto;scroll-snap-align:start;
-  display:inline-flex;align-items:center;padding:6px 11px;
+  display:inline-flex;align-items:center;padding:var(--s3) var(--s5);
   border:var(--rw-row) solid var(--hair-2);background:var(--panel);color:var(--tx);
-  font-size:12.5px;text-decoration:none;white-space:nowrap;
+  font-size:var(--fs-data);text-decoration:none;white-space:nowrap;
   transition:border-color var(--t1) var(--e-out),background var(--t1) var(--e-out),color var(--t1) var(--e-out)}
 .hjump a:hover{border-color:var(--team,var(--tx-3));background:var(--panel-2)}
 /* ⚠**지금 보고 있는 구획을 표시한다.** 스크롤 위치를 자바스크립트가 알려 준다 —
    안 켜지면 그냥 링크 줄로 남는다(§0-1: 스크립트 없이도 동작해야 한다) */
 .hjump a[aria-current="true"]{border-color:var(--team,var(--tx));font-weight:var(--w-bold);
   background:var(--panel-2)}
-@media (pointer:coarse){.hjump a{padding:var(--s2) 13px}}
+@media (pointer:coarse){.hjump a{padding:var(--s4) var(--s5)}}
 /* ⚠**좁은 화면에서는 따라 붙지 않는다.**
    ≤680px 에서 .topbar 는 2행으로 접혀 화면의 큰 몫을 이미 먹는다 — 그 아래에 링크 줄까지
    붙이면 본문이 사라진다. .rail 이 같은 이유로 ≤680px 에서 static 이다.
@@ -1372,7 +1395,7 @@ a.cg:focus-visible{outline:2px solid var(--tx);outline-offset:1px}
   /* ⚠**특정성을 한 단계 올린다.** 아래 무조건 규칙과 특정성이 같으면
      **소스 순서가 뒤인 그쪽이 이겨서** 이 보정이 한 번도 적용되지 않는다 —
      실제로 그 상태로 커밋했다(2026-08-17 검토 P2). 미디어쿼리는 특정성을 올려 주지 않는다. */
-  html:root:has(.hjump){scroll-padding-top:calc(var(--topbar) + 10px)}
+  html:root:has(.hjump){scroll-padding-top:calc(var(--topbar) + var(--s4))}
 }
 /* ⚠**앵커로 뛸 때 sticky 두 겹에 가리지 않게** 여백을 더 준다 */
 html:has(.hjump){scroll-padding-top:calc(var(--topbar) + 52px)}
@@ -1381,41 +1404,41 @@ html:has(.hjump){scroll-padding-top:calc(var(--topbar) + 52px)}
    같은 무게로 그리면 그렇게 읽힌다 */
 /* 予告先発 의 상대 타자 표 — 今季 / 범위 전환.
    ⚠**전환 줄을 표에서 떼어 놓는다** — 붙어 있으면 표 머리처럼 읽힌다. */
-.muwrap{margin-top:10px}
-.muswitch{display:flex;margin:0 0 7px}
+.muwrap{margin-top:var(--s4)}
+.muswitch{display:flex;margin:0 0 var(--s3)}
 /* ⚠**묶음 사이가 항목 사이와 비슷하면 어디서 바뀌는지 모른다**(2026-08-18 유저 지적).
    打者 → 投手 로 넘어가는 자리가 사람과 사람 사이와 같은 간격이었다.
    ⚠**아래 패딩을 여기서 또 주지 않는다** — 구획 자체가 이미 아래 여백을 갖는다.
    「묶음 사이를 벌린다」고 넣은 것이 구획 아래에서 이중으로 쌓이고 있었다. */
 .wkcol{min-width:0}
-.cols > .wkcol + .wkcol{margin-top:10px}
+.cols > .wkcol + .wkcol{margin-top:var(--s4)}
 /* ⚠**이 목록에 CSS 가 한 줄도 없었다**(2026-08-18 유저 지적: 「득실점 쪽은 뭘 말하고 싶은지 모르겠음」).
    그래서 득실차를 감싼 <s> 태그가 **브라우저 기본 취소선**으로 그려졌다 —
    25/6+19 의 +19 에 줄이 그어져 「무효」처럼 보였다. 화면이 정반대를 말하고 있었다.
    ⚠**순위표와 같은 어법으로 맞춘다** — 값 옆에 点差 라벨, 부호는 글자, 색은 --up/--dn. */
 .wkteams{list-style:none;margin:0;padding:0;
-  display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:0 18px}
-.wkteams li{display:flex;align-items:baseline;gap:10px;padding:6px 0;
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:0 var(--s6)}
+.wkteams li{display:flex;align-items:baseline;gap:var(--s4);padding:var(--s3) 0;
   border-bottom:var(--rw-row) solid var(--hair);font-variant-numeric:tabular-nums}
 /* 마지막 줄의 밑줄은 지운다 — 구획 테두리와 이중선이 된다 */
 .wkteams li:last-child{border-bottom:var(--rw-none)}
-.wkteams b{font-family:var(--f-num);font-size:13.5px;font-weight:var(--w-bold);white-space:nowrap}
+.wkteams b{font-family:var(--f-num);font-size:var(--fs-lead);font-weight:var(--w-bold);white-space:nowrap}
 /* ⚠**margin-left:auto 로 오른쪽 끝에 붙이지 않는다**(2026-08-18 유저 지적).
    한 줄에 한 팀만 들어가는 폭에서는 팀명과 성적 사이가 화면 폭만큼 벌어져,
    **같은 줄인데 따로 노는** 모양이 된다 — 눈이 두 번 움직여야 한 팀을 읽는다.
    → 붙여 놓고 gap 으로만 띄운다. 숫자 자리는 tabular-nums 가 맞춘다. */
 .wkteams em{font-style:normal;font-size:var(--fs-note);color:var(--tx-3);white-space:nowrap}
-.wkteams em s{text-decoration:none;font-family:var(--f-num);font-weight:var(--w-bold);font-size:var(--fs-data);margin-left:5px}
+.wkteams em s{text-decoration:none;font-family:var(--f-num);font-weight:var(--w-bold);font-size:var(--fs-data);margin-left:var(--s2)}
 .wkteams em s.up{color:var(--up)}
 .wkteams em s.dn{color:var(--dn)}
-.wkteams em i{font-style:normal;font-size:9px;letter-spacing:.14em;color:var(--tx-3);margin-left:3px}
+.wkteams em i{font-style:normal;font-size:var(--fs-min);letter-spacing:.14em;color:var(--tx-3);margin-left:var(--s1)}
 /* ⚠**서브타이틀이 내용보다 작았다**(2026-08-18 유저 지적).
    10px 자간 .16em 회색이라 바로 아래 12~15px 내용에 묻혔고, 그래서
    「어디서 내용이 바뀌는지」가 안 보였다 — 打者 / 投手 / 球団 을 가르는 유일한 표시인데도.
    → **본문보다 크게 하지는 않되**(§6: 숫자가 주역) 무게·색·구분선으로 확실히 가른다. */
-.wklab{margin:0 0 var(--s2);font-size:var(--fs-data);font-weight:var(--w-bold);letter-spacing:.1em;color:var(--tx);
-  display:flex;align-items:baseline;gap:var(--s2);
-  padding:0 0 5px 9px;position:relative;border-bottom:var(--rw-row) solid var(--hair)}
+.wklab{margin:0 0 var(--s4);font-size:var(--fs-data);font-weight:var(--w-bold);letter-spacing:.1em;color:var(--tx);
+  display:flex;align-items:baseline;gap:var(--s4);
+  padding:0 0 var(--s2) var(--s4);position:relative;border-bottom:var(--rw-row) solid var(--hair)}
 /* 구획 제목과 같은 어법의 짧은 색 막대 — 「여기서 새 묶음이 시작한다」 */
 .wklab::before{content:"";position:absolute;left:0;top:1px;bottom:6px;width:3px;
   background:var(--tx-3)}
@@ -1424,12 +1447,12 @@ html:has(.hjump){scroll-padding-top:calc(var(--topbar) + 52px)}
 /* ⚠**패딩을 늘려 항목을 갈랐다**(2026-08-18 유저 지적: 「경계가 약하거나 패딩이 좁거나
    일정하지 않아서 구분이 모호」). 6px 은 한 항목이 세 줄(이름·값·성적)인 목록에서
    **줄 간격과 구별되지 않는다** — 어디까지가 한 사람인지가 안 보였다. */
-.wklist li{display:grid;grid-template-columns:auto auto 1fr;gap:var(--s1) 7px;align-items:baseline;
-  padding:10px 0;border-bottom:var(--rw-row) solid var(--hair-2)}
+.wklist li{display:grid;grid-template-columns:auto auto 1fr;gap:var(--s2) var(--s3);align-items:baseline;
+  padding:var(--s4) 0;border-bottom:var(--rw-row) solid var(--hair-2)}
 .wklist li:last-child{border-bottom:var(--rw-none)}
 .wklist li::before{counter-increment:wk;content:counter(wk);grid-row:span 2;
   font-size:var(--fs-col);color:var(--tx-3);width:11px;font-variant-numeric:tabular-nums}
-.wklist a{font-size:13.5px}
+.wklist a{font-size:var(--fs-lead)}
 /* ⚠**margin-left:auto 가 값을 이름 길이에 따라 움직이게 하고 있었다**(2026-08-18 유저 지적).
    이 격자의 2번째 열은 폭이 auto 라 **그 열에서 가장 넓은 것**(=선수 이름)이 폭을 정한다.
    거기에 값을 오른쪽 정렬로 붙였으니, 이름이 두 글자인 사람과 세 글자인 사람의
@@ -1443,12 +1466,12 @@ html:has(.hjump){scroll-padding-top:calc(var(--topbar) + 52px)}
 
 /* 순위표의 전환 줄. ⚠**「지금 몇 명을 보고 있는가」를 늘 낸다**(M2) —
    전환했는데 인원이 안 보이면 무엇이 늘고 줄었는지 알 수 없다 */
-.rankonly{margin:0 0 var(--s2)}
+.rankonly{margin:0 0 var(--s4)}
 /* 「全員」일 때만 나오는 최소 표본 칸.
    ⚠**display 를 주면 [hidden] 을 다시 적어야 한다** — 안 적으면 브라우저 기본의
    [hidden]{display:none} 을 이겨 버려서 **숨긴 것이 안 숨는다.** 서버는 이 칸을 hidden 으로 내고
    (스크립트가 없으면 못 쓰는 조작이므로) 클라이언트가 「全員」에서만 연다 */
-.rankmin{display:inline-flex;align-items:center;gap:6px}
+.rankmin{display:inline-flex;align-items:center;gap:var(--s3)}
 .rankmin[hidden]{display:none}
 /* ⚠**위의 .mfind input 을 순서가 아니라 특이도로 이긴다** — 저쪽은 width:170px 이고
    680px 이하에서 다시 width:auto 로 바뀐다. 순서에 기대면 규칙 하나가 옮겨진 날 조용히 어긋난다.
@@ -1460,17 +1483,17 @@ html:has(.hjump){scroll-padding-top:calc(var(--topbar) + 52px)}
 /* 못 읽은 값을 알리는 글. ⚠**보통 안내문과 같은 회색으로 두지 않는다** — 「친 값이 안 먹었다」는
    말이라 눈에 걸려야 한다. .empty 의 color 를 특이도로 이긴다(0,2,0 대 0,1,0).
    ⚠--warn 이 --page 위에서 AA 를 넘는 것은 css-contrast.test.ts 가 두 테마 다 잰다 */
-.empty[data-rankbad]{color:var(--warn);padding-left:7px;box-shadow:inset 2px 0 0 var(--warn)}
+.empty[data-rankbad]{color:var(--warn);padding-left:var(--s3);box-shadow:inset 2px 0 0 var(--warn)}
 /* ⚠**자르지 않고 상자 안에서 스크롤한다.** 상위 N만 내면 대타·중간계투가 사라지고,
    찾는 사람이 없는 순간 이 기능은 없는 것과 같아진다 */
-.picklist{display:flex;flex-wrap:wrap;gap:var(--s1);max-height:184px;overflow-y:auto;
-  overscroll-behavior-y:contain;padding:1px}
-.pk{font:inherit;font-size:12.5px;padding:var(--s1) var(--s2);cursor:pointer;background:transparent;
-  color:var(--tx-2);border:var(--rw-row) solid var(--hair-2);display:inline-flex;align-items:baseline;gap:5px;
+.picklist{display:flex;flex-wrap:wrap;gap:var(--s2);max-height:184px;overflow-y:auto;
+  overscroll-behavior-y:contain;padding:var(--s1)}
+.pk{font:inherit;font-size:var(--fs-data);padding:var(--s2) var(--s4);cursor:pointer;background:transparent;
+  color:var(--tx-2);border:var(--rw-row) solid var(--hair-2);display:inline-flex;align-items:baseline;gap:var(--s2);
   transition:color var(--t1) var(--e-out),border-color var(--t1) var(--e-out)}
 .pk s{text-decoration:none;font-size:var(--fs-col);color:var(--tx-3);font-variant-numeric:tabular-nums}
 .pk em{font-style:normal;font-size:var(--fs-min);letter-spacing:.08em;color:var(--chip-ink,#fff);
-  background:var(--chip,#6b7280);padding:0 var(--s1)}
+  background:var(--chip,#6b7280);padding:0 var(--s2)}
 .pk:hover{color:var(--tx);border-color:var(--tx-3)}
 /* 고른 것은 **버튼 자신이** 말한다 — 위의 pickbar만 바뀌면 목록 안에서 무엇을 눌렀는지 잃는다 */
 .pk[aria-pressed="true"]{background:var(--chip,#6b7280);color:var(--chip-ink,#fff);
@@ -1485,27 +1508,27 @@ html:has(.hjump){scroll-padding-top:calc(var(--topbar) + 52px)}
    잉크는 **--chip-ink** 다. .85 로 합성하면 **広島 4.246 으로 미달**(12구단 최저).
    이 글자는 「A / B 어느 자리에 넣었는가」를 말하는 정보라 흐릴 자리가 아니다.
    → **opacity 를 뺀다.** 12구단 최저 **5.466**. */
-.pk[data-slot]::after{content:attr(data-slot);font-size:var(--fs-min);margin-left:var(--s1)}
-.pickfind{margin:var(--s4) 0 0;border-top:var(--rw-row) solid var(--hair);padding-top:var(--s3)}
-.pickfind .picker{margin-top:var(--s3)}
+.pk[data-slot]::after{content:attr(data-slot);font-size:var(--fs-min);margin-left:var(--s2)}
+.pickfind{margin:var(--s6) 0 0;border-top:var(--rw-row) solid var(--hair);padding-top:var(--s5)}
+.pickfind .picker{margin-top:var(--s5)}
 
 /* ── 試合ページ ────────────────────────────────────────────
    ⚠**원본의 이닝별 표를 옮긴 화면이 아니다**(L2). 숫자는 우리가 타석 로그에서 조립했고,
    화면의 주역은 「어디서 점수가 났는가」와 「어느 타석이 경기를 움직였는가」다. */
-.gbig{display:grid;grid-template-columns:1fr;gap:2px;max-width:520px}
-.gbside{display:flex;align-items:center;gap:11px;padding:7px 0;border-bottom:var(--rw-row) solid var(--hair)}
+.gbig{display:grid;grid-template-columns:1fr;gap:var(--s1);max-width:520px}
+.gbside{display:flex;align-items:center;gap:var(--s5);padding:var(--s3) 0;border-bottom:var(--rw-row) solid var(--hair)}
 .gbside:last-child{border-bottom:var(--rw-none)}
-.gbt{display:flex;align-items:center;gap:9px;font-size:15px;color:var(--tx-2);min-width:0}
+.gbt{display:flex;align-items:center;gap:var(--s4);font-size:var(--fs-name);color:var(--tx-2);min-width:0}
 .gbt i{width:12px;height:12px;background:var(--chip,#6b7280);font-style:normal;flex:none}
 /* ⚠이긴 쪽은 **크기와 굵기**로 표시한다. 색만 쓰면 색각 특성에 따라 구별되지 않는다 */
 .gbside.w .gbt{color:var(--tx);font-weight:var(--w-bold)}
-.gbr{margin-left:auto;font-size:34px;line-height:1;font-variant-numeric:tabular-nums;color:var(--tx-3);
+.gbr{margin-left:auto;font-size:var(--fs-score-2);line-height:1;font-variant-numeric:tabular-nums;color:var(--tx-3);
   letter-spacing:-.02em}
-.gbside.w .gbr{font-size:44px;color:var(--tx);font-weight:var(--w-bold)}
-.gtie2{margin:var(--s2) 0 0;font-size:var(--fs-data);color:var(--tx-2)}
+.gbside.w .gbr{font-size:var(--fs-score-3);color:var(--tx);font-weight:var(--w-bold)}
+.gtie2{margin:var(--s4) 0 0;font-size:var(--fs-data);color:var(--tx-2)}
 /* 이닝별 득점 — 득점한 칸이 먼저 보여야 한다 */
-table.iscore{font-variant-numeric:tabular-nums;margin-top:13px}
-table.iscore th,table.iscore td{text-align:center;padding:5px 9px;white-space:nowrap}
+table.iscore{font-variant-numeric:tabular-nums;margin-top:var(--s5)}
+table.iscore th,table.iscore td{text-align:center;padding:var(--s2) var(--s4);white-space:nowrap}
 table.iscore th.l{text-align:left}
 
 table.iscore td.sc{font-weight:var(--w-bold);color:var(--tx);background:var(--panel-2)}
@@ -1515,11 +1538,11 @@ table.iscore .tot{font-weight:var(--w-bold);border-left:var(--rw-row) solid var(
 /* 타석 목록 — 훑어 읽는 자리다. 이닝 · 상황 그림 · 사람 · 결과 · 점수 · 움직임 */
 .plays{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
 .play{display:grid;grid-template-columns:4.6em 34px minmax(0,1fr) minmax(0,1.1fr) 4.2em 5.4em;
-  gap:0 10px;align-items:center;padding:var(--s2) 0;border-bottom:var(--rw-row) solid var(--hair)}
+  gap:0 var(--s4);align-items:center;padding:var(--s4) 0;border-bottom:var(--rw-row) solid var(--hair)}
 .play:last-child{border-bottom:var(--rw-none)}
 .pin{font-size:var(--fs-sub);color:var(--tx-3);letter-spacing:.04em}
 .pdia{display:flex;align-items:center}
-.pwho{min-width:0;font-size:13.5px;display:flex;flex-direction:column;gap:1px}
+.pwho{min-width:0;font-size:var(--fs-lead);display:flex;flex-direction:column;gap:var(--s1)}
 .pwho a{text-decoration:none;font-weight:var(--w-bold);border-bottom:var(--rw-row) solid var(--hair-2)}
 .pwho a:hover{border-bottom-color:var(--tx-3)}
 .pwho s{text-decoration:none;font-size:var(--fs-label);color:var(--tx-3)}
@@ -1528,14 +1551,14 @@ table.iscore .tot{font-weight:var(--w-bold);border-left:var(--rw-row) solid var(
    「누가 친 타석인가」라는 이 줄의 정보 위계가 무너진다. 굵기는 본문 그대로 두고
    **밑줄 한 올만** 남겨 누를 수 있다는 것만 말한다(색은 a{color:inherit} 로 s 를 따른다). */
 .pwho s a{font-weight:inherit;border-bottom-color:var(--hair)}
-.pres{font-size:var(--fs-lead);color:var(--tx-2);min-width:0;display:flex;align-items:baseline;gap:6px}
+.pres{font-size:var(--fs-lead);color:var(--tx-2);min-width:0;display:flex;align-items:baseline;gap:var(--s3)}
 .pres em{font-style:normal;font-size:var(--fs-note);font-weight:var(--w-bold);color:var(--tx);
-  border-left:var(--rw-mast) solid var(--chip,#6b7280);padding-left:5px;flex:none}
+  border-left:var(--rw-mast) solid var(--chip,#6b7280);padding-left:var(--s2);flex:none}
 /* ⚠**타점 없는 득점은 타자가 낸 점이 아니다.** 굵게 두면 그 타석의 성과로 읽힌다 */
 .pres em.norbi{font-weight:var(--w-reg);color:var(--tx-2);border-left-color:var(--hair-2)}
-.pres em.norbi s{text-decoration:none;font-size:var(--fs-min);color:var(--tx-3);margin-left:var(--s1)}
+.pres em.norbi s{text-decoration:none;font-size:var(--fs-min);color:var(--tx-3);margin-left:var(--s2)}
 .psc{font-size:var(--fs-data);color:var(--tx-3);font-variant-numeric:tabular-nums;text-align:right}
-.pswing{position:relative;text-align:right;font-variant-numeric:tabular-nums;font-size:var(--fs-lead);padding-bottom:6px}
+.pswing{position:relative;text-align:right;font-variant-numeric:tabular-nums;font-size:var(--fs-lead);padding-bottom:var(--s3)}
 .pswing.none{color:var(--tx-3)}
 .pswing i{position:absolute;bottom:0;height:3px;width:calc(var(--w) * 1%);font-style:normal;opacity:.8}
 .pswing i.p{right:0;background:var(--g-vgood)}
@@ -1558,30 +1581,30 @@ table.iscore .tot{font-weight:var(--w-bold);border-left:var(--rw-row) solid var(
 .dia .do{fill:none;stroke:var(--tx-3);stroke-width:1}
 .dia .do.on{fill:var(--tx-2);stroke:var(--tx-2)}
 @media (max-width:600px){
-  .play{grid-template-columns:3.9em 30px minmax(0,1fr) 4.6em;gap:2px var(--s2)}
+  .play{grid-template-columns:3.9em 30px minmax(0,1fr) 4.6em;gap:var(--s1) var(--s4)}
   /* 좁은 화면에서는 결과와 움직임을 아랫줄로 내린다 — 가로로 밀지 않는다 */
   .pres{grid-column:3 / span 2;font-size:var(--fs-data)}
   .psc{grid-column:1 / span 2;text-align:left;font-size:var(--fs-note)}
   .pswing{grid-column:4;text-align:right}
-  .gbr{font-size:28px}
-  .gbside.w .gbr{font-size:36px}
+  .gbr{font-size:var(--fs-score)}
+  .gbside.w .gbr{font-size:var(--fs-score-2)}
 }
 
 /* ── チーム順位表 ──────────────────────────────────────────
    ⚠**로고를 쓰지 않는다.** 구단 구별은 색 마크와 짧은 이름으로 한다(CLAUDE.md §6). */
-.standwrap{margin-bottom:var(--s4)}
+.standwrap{margin-bottom:var(--s6)}
 .standwrap:last-of-type{margin-bottom:0}
-.standname{margin:0 0 7px;font-size:var(--fs-note);letter-spacing:.14em;font-weight:var(--w-bold);color:var(--tx-2)}
+.standname{margin:0 0 var(--s3);font-size:var(--fs-note);letter-spacing:.14em;font-weight:var(--w-bold);color:var(--tx-2)}
 table.stand{font-variant-numeric:tabular-nums}
 table.stand td,table.stand th{white-space:nowrap}
 table.stand .rk{font-weight:var(--w-bold)}
-table.stand .rk em{font-style:normal;font-size:9px;color:var(--tx-3);margin-left:2px}
+table.stand .rk em{font-style:normal;font-size:var(--fs-min);color:var(--tx-3);margin-left:var(--s1)}
 
 table.stand td.b{font-weight:var(--w-bold)}
 /* ⚠**타율과 방어율에도 분모를 붙인다**(M2). 勝率의 분모는 옆의 勝·敗 열 자체이지만,
    打率의 분모는 打数지 試合이 아니다 — 「인접」으로 지켜지지 않으므로 값에 붙인다 */
 table.stand td.wd{line-height:1.2}
-table.stand td.wd .den{display:block;font-size:var(--fs-min);color:var(--tx-3);margin-top:1px}
+table.stand td.wd .den{display:block;font-size:var(--fs-min);color:var(--tx-3);margin-top:var(--s1)}
 /* 得失点差 — **우리가 만든 그림**. 눈금은 없고, 정확한 값은 바로 옆 숫자에 있다 */
 table.stand .dif{position:relative;min-width:64px}
 table.stand .dif b{font-weight:var(--w-reg)}
@@ -1605,7 +1628,7 @@ table.stand .dif i.n{right:50%}
 /* ⚠**.topbar 와 같은 이유로 오른쪽을 맞춘다**(그쪽 주석 참조) — 이 띠도 .shell 밖이다.
    ⚠**가로 스크롤이 있는 띠다**(시즌이 늘면 넘친다). 여유 폭이 커지면 스크롤이 덜 필요해질 뿐,
    넘칠 때의 거동은 그대로다. */
-.seasons{display:flex;align-items:center;gap:var(--s1);padding:5px var(--pad);
+.seasons{display:flex;align-items:center;gap:var(--s2);padding:var(--s2) var(--pad);
   padding-left:calc(var(--gut) + var(--pad));padding-right:calc(var(--gut) + var(--pad));
   border-bottom:var(--rw-row) solid var(--hair);background:var(--panel-2);
   flex-wrap:nowrap;overflow-x:auto;overscroll-behavior-x:contain;
@@ -1625,18 +1648,18 @@ table.stand .dif i.n{right:50%}
 .slab{font-size:var(--fs-min);letter-spacing:.16em;color:var(--tx-3);
   position:sticky;left:0;z-index:3;background:var(--panel-2);
   align-self:stretch;display:flex;align-items:center;
-  margin-right:0;padding-right:var(--s3);flex:0 0 auto;
+  margin-right:0;padding-right:var(--s5);flex:0 0 auto;
   border-right:var(--rw-row) solid var(--hair-2);
   box-shadow:4px 0 0 0 var(--panel-2),7px 0 6px -6px rgba(0,0,0,.20)}
 /* 구분선 오른쪽으로 첫 연도가 바로 붙지 않게 한다 */
-.seasons .slab + a{margin-left:6px}
+.seasons .slab + a{margin-left:var(--s3)}
 .seasons a{flex:0 0 auto;scroll-snap-align:start}
 /* 시즌 중 이적 이력. ⚠**합계와 순위가 다른 이유**가 여기 적힌다 */
-.stint{display:block;font-size:var(--fs-label);color:var(--tx-3);margin-top:2px}
+.stint{display:block;font-size:var(--fs-label);color:var(--tx-3);margin-top:var(--s1)}
 /* 「합계와 순위의 수가 왜 다른가」 — 이적 이력 바로 아래에 붙는다 */
 /* ⚠**opacity 를 뺐다**(위 .den em 과 같은 이유 · 2026-08-18). 뒤로 물리는 것은 크기와 색이 한다 */
 .stint em{display:block;font-style:normal;font-size:var(--fs-col);color:var(--tx-3)}
-.seasons a{font-size:var(--fs-data);padding:3px 10px;text-decoration:none;color:var(--tx-2);
+.seasons a{font-size:var(--fs-data);padding:var(--s1) var(--s4);text-decoration:none;color:var(--tx-2);
   border:var(--rw-row) solid transparent;transition:color var(--t1) var(--e-out)}
 .seasons a:hover{color:var(--tx);border-color:var(--hair-2)}
 .seasons a[aria-current="page"]{color:var(--tx);font-weight:var(--w-bold);border-color:var(--tx-3);background:var(--panel)}
@@ -1646,13 +1669,13 @@ table.stand .dif i.n{right:50%}
    사용자는 그것을 모른다. 표식은 i 요소 하나이고 뜻은 세 자리에서 같다.
    ⚠**색만으로 말하지 않는다**(§7) — 글자(→)가 그 일을 하고 색은 뒤로 물릴 뿐이다.
    ⚠**이 주석에 역따옴표를 쓰지 마라** — 이 파일은 통째로 템플릿 리터럴이라 거기서 끊긴다. */
-.seasons a i,.tnav a i,.brand i{font-style:normal;font-size:9px;color:var(--tx-3);margin-left:3px}
+.seasons a i,.tnav a i,.brand i{font-style:normal;font-size:var(--fs-min);color:var(--tx-3);margin-left:var(--s1)}
 
 /* ── 試合（直近の結果） ──────────────────────────────────────
    ⚠**원본 표(이닝별 스코어보드)를 재현하지 않는다**(L2). 우리가 가진 것은 R·H·E뿐이고,
    화면은 그 사실에 맞춰 만든다 — 없는 칸을 흉내 내지 않는다. */
-.gcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(258px,1fr));gap:var(--s3)}
-.gcard{border:var(--rw-row) solid var(--hair-2);padding:11px var(--s3) 10px;min-width:0}
+.gcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(258px,1fr));gap:var(--s5)}
+.gcard{border:var(--rw-row) solid var(--hair-2);padding:var(--s5) var(--s5) var(--s4);min-width:0}
 /* ⚠**opacity 로 「열리지 않았다」를 말하지 않는다** — .daystep.off 가
    같은 이유로 이미 고쳐진 자리다(아래). **이것이 그 청소에서 살아남은 마지막 한 건**이었다.
    실측(2026-08-21 다방면 감사 · 독립 구현 2벌로 재계산): opacity:.62 를 얹으면
@@ -1666,12 +1689,12 @@ table.stand .dif i.n{right:50%}
 .gcard.off{border-style:dashed}
 .gcard.off .gvenue,.gcard.off .gt,.gcard.off .gr{color:var(--tx-2)}
 .gcard.off .gnone{color:var(--tx);font-weight:var(--w-semi)}
-.gvenue{margin:0 0 var(--s2);font-size:var(--fs-label);letter-spacing:.12em;color:var(--tx-3);font-weight:var(--w-reg);
-  display:flex;align-items:baseline;gap:7px}
+.gvenue{margin:0 0 var(--s4);font-size:var(--fs-label);letter-spacing:.12em;color:var(--tx-3);font-weight:var(--w-reg);
+  display:flex;align-items:baseline;gap:var(--s3)}
 .gtie{margin-left:auto;color:var(--tx-2);letter-spacing:.04em}
-.gscore{display:flex;flex-direction:column;gap:1px}
-.gside{display:flex;align-items:baseline;gap:var(--s2);padding:3px 0}
-.gside .gt{display:flex;align-items:center;gap:6px;font-size:13.5px;color:var(--tx-2)}
+.gscore{display:flex;flex-direction:column;gap:var(--s1)}
+.gside{display:flex;align-items:baseline;gap:var(--s4);padding:var(--s1) 0}
+.gside .gt{display:flex;align-items:center;gap:var(--s3);font-size:var(--fs-lead);color:var(--tx-2)}
 /* ⚠**어느 쪽이 홈인지가 카드에 없었다**(2026-08-20 감사 ②). 홈 화면의 「＠팀」과 같은 어법이다(M1).
    ⚠**자리는 두 줄 다 비워 둔다** — 글자를 한쪽에만 붙이면 팀명 시작선이 어긋난다.
    ⚠생성 콘텐츠는 낭독되지 않을 수 있어 마크업에 .vh 로 「ホーム／ビジター」를 함께 둔다 */
@@ -1681,19 +1704,19 @@ table.stand .dif i.n{right:50%}
 .gside .gt i{width:9px;height:9px;background:var(--chip,#6b7280);font-style:normal;flex:none}
 /* ⚠이긴 쪽은 **굵기와 크기**로 표시한다. 색만 쓰면 색각 특성에 따라 구별되지 않는다 */
 .gside.w .gt{color:var(--tx);font-weight:var(--w-bold)}
-.gside .gr{margin-left:auto;font-size:20px;line-height:1;font-variant-numeric:tabular-nums;color:var(--tx-2)}
-.gside.w .gr{font-size:26px;font-weight:var(--w-bold);color:var(--tx)}
-.ghe{margin:var(--s2) 0 0;display:flex;gap:13px;font-size:var(--fs-note);color:var(--tx-3);
-  padding-top:7px;border-top:var(--rw-row) solid var(--hair)}
+.gside .gr{margin-left:auto;font-size:var(--fs-num);line-height:1;font-variant-numeric:tabular-nums;color:var(--tx-2)}
+.gside.w .gr{font-size:var(--fs-score);font-weight:var(--w-bold);color:var(--tx)}
+.ghe{margin:var(--s4) 0 0;display:flex;gap:var(--s5);font-size:var(--fs-note);color:var(--tx-3);
+  padding-top:var(--s3);border-top:var(--rw-row) solid var(--hair)}
 .ghe b{color:var(--tx-2);font-weight:var(--w-reg);font-variant-numeric:tabular-nums}
-.gdec{margin:6px 0 0;display:flex;flex-wrap:wrap;gap:var(--s1) 11px;font-size:var(--fs-sub)}
-.gd b{font-size:var(--fs-min);letter-spacing:.1em;color:var(--tx-3);font-weight:var(--w-reg);margin-right:var(--s1)}
+.gdec{margin:var(--s3) 0 0;display:flex;flex-wrap:wrap;gap:var(--s2) var(--s5);font-size:var(--fs-sub)}
+.gd b{font-size:var(--fs-min);letter-spacing:.1em;color:var(--tx-3);font-weight:var(--w-reg);margin-right:var(--s2)}
 .gd a{text-decoration:none;border-bottom:var(--rw-row) solid var(--hair-2)}
 .gd a:hover{border-bottom-color:var(--tx-3)}
-.gnone{margin:7px 0 0;font-size:var(--fs-sub);color:var(--tx-3)}
-.gstars{list-style:none;margin:9px 0 0;padding:var(--s2) 0 0;border-top:var(--rw-row) solid var(--hair);
-  display:flex;flex-direction:column;gap:var(--s1)}
-.gstars li{display:flex;align-items:baseline;gap:6px;font-size:var(--fs-data);min-width:0}
+.gnone{margin:var(--s3) 0 0;font-size:var(--fs-sub);color:var(--tx-3)}
+.gstars{list-style:none;margin:var(--s4) 0 0;padding:var(--s4) 0 0;border-top:var(--rw-row) solid var(--hair);
+  display:flex;flex-direction:column;gap:var(--s2)}
+.gstars li{display:flex;align-items:baseline;gap:var(--s3);font-size:var(--fs-data);min-width:0}
 /* ⚠**유일한 구단 표시가 폭 3px 색 막대였다**(2026-08-21 감사 확정 P1).
    구단색과 --panel 의 대비가 **다크 8/12 · 라이트 4/12** 구단에서 3:1 미달이라
    그 막대가 그냥 사라졌다(배포물 1,431장 · 21,812행).
@@ -1705,8 +1728,8 @@ table.stand .dif i.n{right:50%}
 .gstars a{text-decoration:none;font-weight:var(--w-bold);white-space:nowrap}
 .gstars a:hover{text-decoration:underline}
 .gsl{color:var(--tx-2);font-variant-numeric:tabular-nums;font-size:var(--fs-sub)}
-.gsd{margin-left:auto;font-style:normal;font-size:var(--fs-col);color:var(--tx-3);border:var(--rw-row) solid var(--hair-2);padding:0 var(--s1);flex:none}
-.gmore{margin:9px 0 0;padding-top:var(--s2);border-top:var(--rw-row) solid var(--hair);font-size:var(--fs-sub)}
+.gsd{margin-left:auto;font-style:normal;font-size:var(--fs-col);color:var(--tx-3);border:var(--rw-row) solid var(--hair-2);padding:0 var(--s2);flex:none}
+.gmore{margin:var(--s4) 0 0;padding-top:var(--s4);border-top:var(--rw-row) solid var(--hair);font-size:var(--fs-sub)}
 .gmore a{text-decoration:none;border-bottom:var(--rw-row) solid var(--hair-2)}
 .gmore a:hover{border-bottom-color:var(--tx-3)}
 
@@ -1721,35 +1744,35 @@ table.stand .dif i.n{right:50%}
 /* 「いまの状況」 — 이 화면에서 가장 먼저 읽히는 줄.
    ⚠**값이 주역이고 라벨은 그 옆에 붙는다**(§6의 도메인 예외). 다만 분모는 값에서 떼지 않는다(M2).
    ⚠**칸으로 감싸지 않는다** — 카드 그리드 금지(§6). 가르는 것은 여백과 괘선이다. */
-.tnow{margin:0 0 5px;display:flex;flex-wrap:wrap;align-items:baseline;gap:3px var(--s3);
-  font-size:12.5px;color:var(--tx-2);font-variant-numeric:tabular-nums}
+.tnow{margin:0 0 var(--s2);display:flex;flex-wrap:wrap;align-items:baseline;gap:var(--s1) var(--s5);
+  font-size:var(--fs-data);color:var(--tx-2);font-variant-numeric:tabular-nums}
 .tnow b{font-style:normal;font-weight:var(--w-semi);color:var(--tx)}
 /* 라벨 — 값보다 작게 두되 폭을 맞춰 세 줄이 같은 자리에서 시작하게 한다 */
 .tnow s{text-decoration:none;font-size:var(--fs-label);letter-spacing:.1em;color:var(--tx-3);
   min-width:5.4em;flex:none}
-.tnow.head{gap:3px 14px;margin-bottom:9px}
+.tnow.head{gap:var(--s1) var(--s5);margin-bottom:var(--s4)}
 /* ⚠**순위 숫자를 구단 색으로 칠하지 않는다**(2026-08-19 실측). 배경으로 쓸 때는 --team-ink 가
    짝이 되지만 글자색에는 짝이 없고, **어느 구단 색이든 한쪽 테마에서 무너진다** —
    阪神 #f2c800 은 라이트 1.61:1, ロッテ #22262b 는 다크 1.10:1 이다.
    구단 색은 이 화면에 이미 .spine 과 .idline 의 3px 밑줄로 들어와 있다. */
-.tnow.head b{font-size:22px;line-height:1.1;color:var(--tx)}
+.tnow.head b{font-size:var(--fs-num);line-height:1.1;color:var(--tx)}
 /* 우승 경쟁 한 줄.
    ⚠**글자만으로 말한다.** 「消滅」을 붉게 칠하면 판정의 세기가 색으로 과장되고,
    색각 특성에 따라 아예 전달되지 않는다(이 화면의 승패 표기와 같은 규칙).
    ⚠괘선도 구단 색을 쓰지 않는다 — 위와 같은 이유로 ロッテ·オリックス의 다크에서
    패널 바탕과 1.1:1 이라 **선이 통째로 사라진다.** 가르는 것은 여백과 괘선이다. */
-.tnow.race{margin:11px 0 0;font-size:14px;color:var(--tx);
-  border-left:var(--rw-mast) solid var(--hair-2);padding-left:9px}
+.tnow.race{margin:var(--s5) 0 0;font-size:var(--fs-name);color:var(--tx);
+  border-left:var(--rw-mast) solid var(--hair-2);padding-left:var(--s4)}
 /* 이동 버튼 — 이 띠에서 각 상세로 뛴다. 탭이 아니므로 탭처럼 보이지 않게 한다 */
-.tgo{margin:var(--s3) 0 0;display:flex;flex-wrap:wrap;gap:6px var(--s2);font-size:var(--fs-sub)}
-.tgo a{text-decoration:none;padding:var(--s1) 10px;border:var(--rw-row) solid var(--hair-2);color:var(--tx-2);
+.tgo{margin:var(--s5) 0 0;display:flex;flex-wrap:wrap;gap:var(--s3) var(--s4);font-size:var(--fs-sub)}
+.tgo a{text-decoration:none;padding:var(--s2) var(--s4);border:var(--rw-row) solid var(--hair-2);color:var(--tx-2);
   transition:color var(--t1) var(--e-out),border-color var(--t1) var(--e-out)}
 .tgo a:hover{color:var(--tx);border-color:var(--tx-3)}
-.tmonths{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:10px}
-.tmonth{display:flex;flex-direction:column;gap:3px;min-width:0}
+.tmonths{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:var(--s4)}
+.tmonth{display:flex;flex-direction:column;gap:var(--s1);min-width:0}
 .tmonth b{font-size:var(--fs-note);color:var(--tx-2);font-weight:var(--w-reg)}
 .tmonth s{text-decoration:none;font-size:var(--fs-label);color:var(--tx-3);
-  font-variant-numeric:tabular-nums;display:flex;align-items:baseline;gap:5px}
+  font-variant-numeric:tabular-nums;display:flex;align-items:baseline;gap:var(--s2)}
 .tmonth em{font-style:normal;font-size:var(--fs-min)}
 /* 이긴 만큼과 진 만큼을 위아래로 — 색만으로 말하지 않게 수를 옆에 둔다.
    ⚠**뜻을 나르는 것은 색이 아니라 위치와 옆의 수다** — 勝은 늘 위, 敗는 늘 아래이고
@@ -1762,14 +1785,14 @@ table.stand .dif i.n{right:50%}
    ⚠**box-shadow 다. border 가 아니다** — border 면 높이가 2px 늘어 막대가 값을 거짓말한다.
    ⚠**敗를 더 진하게 만들지 않는다.** 같은 화면의 .trecent 가 바로 그 실수를 이미 겪었다 —
    진 쪽만 또렷해서 팀이 실제보다 나쁘게 읽혔다. 여기서 고치는 것은 **보이는가**이지 **누가 눈에 띄는가**가 아니다 */
-.tbar{display:flex;flex-direction:column;gap:1px;height:26px;justify-content:flex-end}
+.tbar{display:flex;flex-direction:column;gap:var(--s1);height:26px;justify-content:flex-end}
 .tbar i{display:block;font-style:normal;box-shadow:inset 0 0 0 1px var(--tx-3)}
 .tbar .w{height:calc(var(--w) * 0.24px);background:var(--team,#6b7280)}
 .tbar .l{height:calc(var(--l) * 0.24px);background:var(--hair-2)}
 /* 최근 경기 — 결과를 글자로 낸다. 색만 쓰면 색각 특성에 따라 구별되지 않는다 */
 .trecent{list-style:none;margin:0;padding:0;display:grid;
-  grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:0 var(--s4)}
-.trecent a{display:flex;align-items:baseline;gap:var(--s2);padding:5px 0;text-decoration:none;
+  grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:0 var(--s6)}
+.trecent a{display:flex;align-items:baseline;gap:var(--s4);padding:var(--s2) 0;text-decoration:none;
   border-bottom:var(--rw-row) solid var(--hair)}
 .trecent b{font-size:var(--fs-lead);width:1.2em;text-align:center;color:var(--tx-3)}
 /* ⚠**이겼다는 표식에 구단 색을 쓰지 않는다**(2026-08-19 감사 P1 · 2026-08-20 수정).
@@ -1791,7 +1814,7 @@ table.stand .dif i.n{right:50%}
 .trecent li.l b{color:var(--tx-2)}
 .trecent span{font-size:var(--fs-sub);color:var(--tx-2)}
 .trecent s{text-decoration:none;margin-left:auto;font-size:var(--fs-sub)}
-.trecent a:hover{padding-left:var(--s1)}
+.trecent a:hover{padding-left:var(--s2)}
 /* 순위표·일람의 구단명이 링크가 됐다 — 밑줄 대신 색으로만 반응한다(인쇄물의 질감) */
 .stand .tm a,.teamgroup h2 a{text-decoration:none}
 .stand .tm a:hover,.teamgroup h2 a:hover{text-decoration:underline}
@@ -1803,8 +1826,8 @@ table.stand .dif i.n{right:50%}
    (순위표 .hstand · 최근 경기 .trecent 와 같은 어법).
    ⚠**로고를 쓸 수 없는 자리에서 팀을 구별하는 것은 구단 색과 이름이다**(§6). */
 .tlist{list-style:none;margin:0;padding:0}
-.tcard{display:grid;grid-template-columns:46px 1fr auto;column-gap:var(--s3);align-items:start;
-  padding:10px var(--pad);margin:0 calc(var(--pad) * -1);border-bottom:var(--rw-row) solid var(--hair)}
+.tcard{display:grid;grid-template-columns:46px 1fr auto;column-gap:var(--s5);align-items:start;
+  padding:var(--s4) var(--pad);margin:0 calc(var(--pad) * -1);border-bottom:var(--rw-row) solid var(--hair)}
 .tcard:last-child{border-bottom:var(--rw-none)}
 /* ⚠**1위를 색으로 말하지 않는다.** 구단 색을 칠하면 어느 구단이든 한쪽 테마에서 무너진다
    (구단 페이지가 실측으로 이미 밟은 자리 · 阪神 라이트 1.61:1 · ロッテ 다크 1.10:1).
@@ -1812,11 +1835,11 @@ table.stand .dif i.n{right:50%}
 .tcard[data-rank="1"]{background:var(--panel-2)}
 /* 순위 — 이 화면에서 가장 먼저 읽히는 값. 왼쪽 끝에 고정 폭으로 세워 세로로 훑을 수 있게 한다 */
 .tcr{grid-column:1;grid-row:1/span 3;margin:0;text-align:right;font-variant-numeric:tabular-nums}
-.tcr b{font-style:normal;font-weight:var(--w-semi);font-size:21px;line-height:1.05;color:var(--tx)}
-.tcr s{text-decoration:none;display:block;font-size:var(--fs-min);color:var(--tx-3);margin-top:1px}
+.tcr b{font-style:normal;font-weight:var(--w-semi);font-size:var(--fs-num);line-height:1.05;color:var(--tx)}
+.tcr s{text-decoration:none;display:block;font-size:var(--fs-min);color:var(--tx-3);margin-top:var(--s1)}
 .tcn{grid-column:2;grid-row:1;margin:0;min-width:0}
-.tcn a{display:inline-flex;align-items:center;gap:7px;text-decoration:none;
-  font-size:14.5px;font-weight:var(--w-semi);color:var(--tx)}
+.tcn a{display:inline-flex;align-items:center;gap:var(--s3);text-decoration:none;
+  font-size:var(--fs-name);font-weight:var(--w-semi);color:var(--tx)}
 /* ⚠**색만으로는 안 된다** — 구단 12색 중 다크 바탕에서 3:1 을 못 넘는 것이 7색이다.
    테두리로 형태를 준다: 색이 안 보여도 사각형은 남는다(.hteam i 와 같은 수법). */
 .tcn a i{width:10px;height:10px;background:var(--chip,#6b7280);flex:none;
@@ -1825,9 +1848,9 @@ table.stand .dif i.n{right:50%}
 .tcn a:hover i{outline:1px solid var(--tx-3);outline-offset:1px}
 /* 성적 한 줄 — ⚠**값이 주역이고 라벨은 그 옆에 붙는다**(§6의 도메인 예외).
    다만 분모는 값에서 떼지 않는다(M2) — .den 이 값 바로 뒤에 붙어 나온다. */
-.tcs{grid-column:2;grid-row:2;margin:3px 0 0;display:flex;flex-wrap:wrap;gap:2px 14px;
+.tcs{grid-column:2;grid-row:2;margin:var(--s1) 0 0;display:flex;flex-wrap:wrap;gap:var(--s1) var(--s5);
   font-size:var(--fs-data);color:var(--tx-2);font-variant-numeric:tabular-nums}
-.tcv{display:inline-flex;align-items:baseline;gap:5px;min-width:0}
+.tcv{display:inline-flex;align-items:baseline;gap:var(--s2);min-width:0}
 .tcv s{text-decoration:none;font-size:var(--fs-min);letter-spacing:.1em;color:var(--tx-3);flex:none}
 .tcv b{font-style:normal;font-weight:var(--w-semi);color:var(--tx)}
 /* ⚠**분모까지 굵어지지 않게 한다.** 분모는 값에 붙어 있어야 하지만(M2) 값과 같은 무게로
@@ -1835,24 +1858,24 @@ table.stand .dif i.n{right:50%}
    .tcv b 의 600 을 그대로 상속한다. 여기서만 되돌린다. */
 .tcv .den{font-weight:var(--w-reg)}
 /* 다음 경기 — ⚠**없어도 줄을 지우지 않는다**(M12). 그래서 자리를 늘 차지한다 */
-.tcx{grid-column:2;grid-row:3;margin:3px 0 0;display:flex;align-items:baseline;gap:6px;
+.tcx{grid-column:2;grid-row:3;margin:var(--s1) 0 0;display:flex;align-items:baseline;gap:var(--s3);
   font-size:var(--fs-sub);color:var(--tx-2)}
 .tcx s{text-decoration:none;font-size:var(--fs-min);letter-spacing:.1em;color:var(--tx-3);flex:none}
 .tcx b{font-style:normal;font-weight:var(--w-reg);color:var(--tx-2)}
 .tcf{grid-column:3;grid-row:1/span 3;margin:0;align-self:center}
 /* ⚠**눌린 상태를 색만으로 말하지 않는다** — ★와 굵기가 색 없이도 남는다.
    구단 색을 쓰지 않는 이유는 위 .tcard[data-rank="1"] 주석과 같다. */
-.favt{font:inherit;font-size:var(--fs-sub);line-height:1;padding:6px 10px;cursor:pointer;white-space:nowrap;
+.favt{font:inherit;font-size:var(--fs-sub);line-height:1;padding:var(--s3) var(--s4);cursor:pointer;white-space:nowrap;
   background:transparent;border:var(--rw-row) solid var(--hair-2);color:var(--tx-3);
   transition:color var(--t1) var(--e-out),border-color var(--t1) var(--e-out)}
 .favt:hover{color:var(--tx-2);border-color:var(--tx-3)}
 .favt[aria-pressed="true"]{color:var(--tx);border-color:var(--tx-3);font-weight:var(--w-bold)}
-.favt[aria-pressed="true"]::before{content:"★";margin-right:var(--s1)}
+.favt[aria-pressed="true"]::before{content:"★";margin-right:var(--s2)}
 /* 좁은 화면에서는 버튼을 아래로 내린다 — 옆에 두면 구단명이 밀려 두 줄이 된다 */
 @media (max-width:560px){
   .tcard{grid-template-columns:38px 1fr}
-  .tcr b{font-size:18px}
-  .tcf{grid-column:2;grid-row:4;margin-top:7px;align-self:start}
+  .tcr b{font-size:var(--fs-title)}
+  .tcf{grid-column:2;grid-row:4;margin-top:var(--s3);align-self:start}
 }
 
 /* 상대전적 — 이긴 비율의 띠. 눈금은 없고 정확한 수는 옆 칸에 있다 */
@@ -1861,8 +1884,8 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
 
 /* ── ポストシーズン ────────────────────────────────────────
    ⚠**순위가 아니라 기록이다.** 표본이 13경기·5경기라 순위를 붙이면 거짓말이 된다 */
-.postrow{margin:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
-.postrow>div{display:flex;flex-direction:column;gap:2px}
+.postrow{margin:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:var(--s4)}
+.postrow>div{display:flex;flex-direction:column;gap:var(--s1)}
 .postrow dt{font-size:var(--fs-label);letter-spacing:.12em;color:var(--tx-3)}
 /* ⚠**링크는 링크처럼 보이되 UA 기본 밑줄은 쓰지 않는다** — 이 사이트의 다른 링크와 같은 처리다.
    빠뜨리면 이 한 곳만 파란 밑줄에 hover 무반응이 되어 「여기만 남의 화면」이 된다 */
@@ -1870,7 +1893,7 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
 /* ⚠여기도 var(--tx-1)(미정의)이었다 — 이번 검토에서 같이 드러났다(2026-08-17).
    무효 선언이라 상속으로 메워져 「대충 진해지긴」 했지만 의도한 값이 아니었다 */
 .postrow dt a:hover{border-bottom-color:var(--tx-3);color:var(--tx)}
-.postrow dd{margin:0;font-size:15px;font-variant-numeric:tabular-nums}
+.postrow dd{margin:0;font-size:var(--fs-name);font-variant-numeric:tabular-nums}
 
 /* ── 카드 전체를 누르기 ──────────────────────────────────────
    ⚠**링크를 하나 더 겹치지 않는다.** 이미 있는 「この試合の詳細」의 클릭 영역을
@@ -1895,13 +1918,13 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
 /* ── 날짜 이동 ────────────────────────────────────────────
    ⚠**앞뒤는 달력의 어제·내일이 아니라 「경기가 있었던 날」이다.** 월요일은 대개 경기가 없어서
    달력대로 움직이면 빈 날에 떨어진다. 그래서 날짜를 글자로 함께 낸다 — 어디로 가는지 보인다. */
-.daybar{display:flex;align-items:stretch;gap:var(--s2);margin:0 0 var(--s1);padding:10px var(--pad);
+.daybar{display:flex;align-items:stretch;gap:var(--s4);margin:0 0 var(--s2);padding:var(--s4) var(--pad);
   border-bottom:var(--rw-row) solid var(--hair)}
 /* 화살표는 라벨과 **같은 줄**에 있어야 방향을 말한다 — daystep 이 세로 flex라 묶어야 한다 */
-.dayrow{display:flex;align-items:baseline;gap:5px;white-space:nowrap}
+.dayrow{display:flex;align-items:baseline;gap:var(--s2);white-space:nowrap}
 .daystep i{font-style:normal;color:var(--tx-3)}
-.daystep,.daypick{display:flex;flex-direction:column;gap:2px;text-decoration:none;font-size:var(--fs-data);
-  padding:5px 10px;border:var(--rw-row) solid var(--hair-2);min-width:0;
+.daystep,.daypick{display:flex;flex-direction:column;gap:var(--s1);text-decoration:none;font-size:var(--fs-data);
+  padding:var(--s2) var(--s4);border:var(--rw-row) solid var(--hair-2);min-width:0;
   transition:border-color var(--t1) var(--e-out),color var(--t1) var(--e-out)}
 .daystep s,.daypick s{text-decoration:none;font-size:var(--fs-col);color:var(--tx-3);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -1922,42 +1945,42 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
   .daypick{order:3;width:100%;margin:0}
 }
 /* 날짜 일람 — 달마다 한 덩어리 */
-.daygrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(76px,1fr));gap:5px}
-.dayc{display:flex;flex-direction:column;align-items:center;gap:2px;padding:7px var(--s1);
+.daygrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(76px,1fr));gap:var(--s2)}
+.dayc{display:flex;flex-direction:column;align-items:center;gap:var(--s1);padding:var(--s3) var(--s2);
   text-decoration:none;border:var(--rw-row) solid var(--hair-2);
   transition:border-color var(--t1) var(--e-out),background var(--t1) var(--e-out)}
-.dayc b{font-size:16px;font-variant-numeric:tabular-nums;color:var(--tx)}
-.dayc s{text-decoration:none;font-size:var(--fs-min);color:var(--tx-3);display:flex;gap:var(--s1);align-items:baseline}
-.dayc em{font-style:normal;color:var(--tx-2);border:var(--rw-row) solid var(--hair-2);padding:0 3px}
+.dayc b{font-size:var(--fs-name);font-variant-numeric:tabular-nums;color:var(--tx)}
+.dayc s{text-decoration:none;font-size:var(--fs-min);color:var(--tx-3);display:flex;gap:var(--s2);align-items:baseline}
+.dayc em{font-style:normal;color:var(--tx-2);border:var(--rw-row) solid var(--hair-2);padding:0 var(--s1)}
 .dayc:hover{border-color:var(--tx-3);background:var(--panel-2)}
 /* 지금 보고 있는 최신 경기일 */
 .dayc.now{border-color:var(--tx);background:var(--panel-2)}
 
 /* 予告先発の要約 — 상세는 予告先発 페이지가 낸다 */
-.pbcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
-.pbcard{border:var(--rw-row) solid var(--hair-2);padding:10px 11px}
-.pbside{display:flex;align-items:baseline;gap:7px;padding:3px 0;min-width:0}
-.pbt{display:flex;align-items:center;gap:6px;font-size:var(--fs-sub);color:var(--tx-3);flex:none}
+.pbcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:var(--s4)}
+.pbcard{border:var(--rw-row) solid var(--hair-2);padding:var(--s4) var(--s5)}
+.pbside{display:flex;align-items:baseline;gap:var(--s3);padding:var(--s1) 0;min-width:0}
+.pbt{display:flex;align-items:center;gap:var(--s3);font-size:var(--fs-sub);color:var(--tx-3);flex:none}
 .pbt i{width:8px;height:8px;background:var(--chip,#6b7280);font-style:normal}
-.pbn{font-size:13.5px;text-decoration:none;font-weight:var(--w-bold);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pbn{font-size:var(--fs-lead);text-decoration:none;font-weight:var(--w-bold);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pbn:hover{text-decoration:underline}
 .pbn.empty{font-weight:var(--w-reg);color:var(--tx-3);font-size:var(--fs-sub)}
 .pbe{margin-left:auto;font-size:var(--fs-note);color:var(--tx-2);font-variant-numeric:tabular-nums;white-space:nowrap;flex:none}
-.pbe s{text-decoration:none;color:var(--tx-3);font-size:var(--fs-min);margin-left:var(--s1)}
+.pbe s{text-decoration:none;color:var(--tx-3);font-size:var(--fs-min);margin-left:var(--s2)}
 
 /* ── 選手をくらべる ──────────────────────────────────────────
    ⚠**두 열의 폭을 같게 고정한다.** 이름 길이에 따라 열이 움직이면 값이 세로로 안 맞고,
    그러면 비교라는 이 화면의 유일한 목적이 사라진다. */
-.cmpwrap{padding:var(--s4) var(--pad);border-bottom:var(--rw-row) solid var(--hair)}
-.cmphead{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:var(--s1)}
-.cmpwho{padding:9px 11px;border:var(--rw-row) solid var(--hair-2);border-top:var(--rw-mast) solid var(--who,#6b7280);min-width:0}
-.cmpwho .nm{display:block;font-size:16px;font-weight:var(--w-bold);line-height:1.25}
+.cmpwrap{padding:var(--s6) var(--pad);border-bottom:var(--rw-row) solid var(--hair)}
+.cmphead{display:grid;grid-template-columns:1fr 1fr;gap:var(--s4);margin-bottom:var(--s2)}
+.cmpwho{padding:var(--s4) var(--s5);border:var(--rw-row) solid var(--hair-2);border-top:var(--rw-mast) solid var(--who,#6b7280);min-width:0}
+.cmpwho .nm{display:block;font-size:var(--fs-title);font-weight:var(--w-bold);line-height:1.25}
 .cmpwho .nm a{text-decoration:none}
 .cmpwho .nm a:hover{text-decoration:underline}
-.cmpwho .sub{display:block;font-size:var(--fs-note);color:var(--tx-3);margin-top:3px}
-.cmpwho .smp{display:block;font-size:var(--fs-note);color:var(--tx-2);margin-top:5px;font-variant-numeric:tabular-nums}
+.cmpwho .sub{display:block;font-size:var(--fs-note);color:var(--tx-3);margin-top:var(--s1)}
+.cmpwho .smp{display:block;font-size:var(--fs-note);color:var(--tx-2);margin-top:var(--s2);font-variant-numeric:tabular-nums}
 /* 겹친 紋 — 두 선수를 같은 판에 그린다. 색만으로 구별하지 않고 범례를 붙인다 */
-.cmpfig{max-width:300px;margin:14px auto var(--s1)}
+.cmpfig{max-width:300px;margin:var(--s5) auto var(--s2)}
 .cmpfig svg{display:block;width:100%;height:auto;overflow:visible}
 /* ⚠**여기 선 색은 CSS 가 아니라 클라이언트가 얹고 있었다**(2026-08-21 감사 P2).
    compare 화면은 브라우저가 표를 조립하므로 setAttribute("stroke", 구단색) 으로 칠했고,
@@ -1971,19 +1994,19 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
    결과적으로 구단 색이 안 보이는데, 그건 겹친 도형을 읽히게 하려는 원래 설계다. */
 .cmpfig .cf-a{fill-opacity:.30;stroke:var(--tx);stroke-width:1.8;stroke-linejoin:round}
 .cmpfig .cf-b{fill-opacity:0;stroke:var(--tx-2);stroke-width:1.8;stroke-linejoin:round;stroke-dasharray:4 3}
-.cmpkey{display:flex;gap:14px;justify-content:center;font-size:var(--fs-note);color:var(--tx-2);margin:2px 0 0}
-.cmpkey span{display:inline-flex;align-items:center;gap:5px}
+.cmpkey{display:flex;gap:var(--s5);justify-content:center;font-size:var(--fs-note);color:var(--tx-2);margin:var(--s1) 0 0}
+.cmpkey span{display:inline-flex;align-items:center;gap:var(--s2)}
 .cmpkey i{width:16px;height:0;border-top-width:var(--rw-sect);font-style:normal}
 .cmpkey .ka i{border-top-style:solid;border-top-color:var(--tx)}
 .cmpkey .kb i{border-top-style:dashed;border-top-color:var(--tx-2)}
 /* 값 표 — 라벨을 가운데 두고 값을 양쪽으로 민다. 어느 쪽 열인지 눈이 헤매지 않는다 */
-.cmprow{display:grid;grid-template-columns:1fr 8.5em 1fr;align-items:baseline;gap:0 var(--s2);
-  padding:7px 0;border-bottom:var(--rw-row) solid var(--hair)}
+.cmprow{display:grid;grid-template-columns:1fr 8.5em 1fr;align-items:baseline;gap:0 var(--s4);
+  padding:var(--s3) 0;border-bottom:var(--rw-row) solid var(--hair)}
 .cmprow .lb{grid-column:2;text-align:center;font-size:var(--fs-note);color:var(--tx-3);letter-spacing:.06em}
-.cmprow .va,.cmprow .vb{font-variant-numeric:tabular-nums;font-size:17px;line-height:1.15;min-width:0}
+.cmprow .va,.cmprow .vb{font-variant-numeric:tabular-nums;font-size:var(--fs-title);line-height:1.15;min-width:0}
 .cmprow .va{grid-column:1;text-align:right}
 .cmprow .vb{grid-column:3;text-align:left}
-.cmprow .den{display:block;font-size:var(--fs-col);color:var(--tx-3);margin-top:2px;font-variant-numeric:tabular-nums}
+.cmprow .den{display:block;font-size:var(--fs-col);color:var(--tx-3);margin-top:var(--s1);font-variant-numeric:tabular-nums}
 /* ⚠**이긴 쪽에만 표시를 붙인다.** 양쪽에 붙이면 아무 말도 안 한 것과 같다 */
 /* ⚠**~~"◂"/"▸"~~ 는 네 서체 어디에도 없었다** — 사유·실측·대안은 위 .pickfold>summary::after 에 한 벌로 적었다.
    여기도 같은 처방이다: **"◀"(U+25C0) / "▶"(U+25B6)** + **font-size --fs-data(12px) → --fs-min(9.5px)**.
@@ -2002,56 +2025,56 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
    **선언 전체를 무효로 버리므로** 표식이 통째로 사라진다 — 이 자리에서는 그게 정보 손실이다.
    앞줄이 보이는 표식을 보장하고, 뒷줄은 아는 브라우저에서만 덮는다. */
 .cmprow .win{font-weight:var(--w-bold)}
-.cmprow .win::after{content:"◀";margin-left:5px;color:var(--g-vgood);font-size:var(--fs-min)}
+.cmprow .win::after{content:"◀";margin-left:var(--s2);color:var(--g-vgood);font-size:var(--fs-min)}
 .cmprow .win::after{content:"◀" / ""}
 .cmprow .vb.win::after{content:none}
-.cmprow .vb.win::before{content:"▶";margin-right:5px;color:var(--g-vgood);font-size:var(--fs-min)}
+.cmprow .vb.win::before{content:"▶";margin-right:var(--s2);color:var(--g-vgood);font-size:var(--fs-min)}
 .cmprow .vb.win::before{content:"▶" / ""}
-.cmprow .g{display:inline-block;width:14px;height:3px;vertical-align:2px;margin-left:5px;background:var(--g-avg)}
+.cmprow .g{display:inline-block;width:14px;height:3px;vertical-align:2px;margin-left:var(--s2);background:var(--g-avg)}
 .cmprow .g.g-veryGood{background:var(--g-vgood)}
 .cmprow .g.g-good{background:var(--g-good)}
 .cmprow .g.g-bad{background:var(--g-bad)}
 .cmprow .g.g-veryBad{background:var(--g-vbad)}
-.cmprow .vb .g{margin-left:0;margin-right:5px}
-.cmpwarn{margin:0 0 var(--s3);padding:9px 11px;font-size:var(--fs-data);line-height:1.6;color:var(--tx-2);
+.cmprow .vb .g{margin-left:0;margin-right:var(--s2)}
+.cmpwarn{margin:0 0 var(--s5);padding:var(--s4) var(--s5);font-size:var(--fs-data);line-height:1.6;color:var(--tx-2);
   border-left:var(--rw-mast) solid var(--g-bad);background:var(--panel-2);max-width:64ch}
 /* 「나란히 못 놓는다」로 끝내지 않고 갈 곳을 준다 */
-.cmpgo{display:inline-block;margin-top:10px;font-size:var(--fs-lead);padding:6px var(--s3);
+.cmpgo{display:inline-block;margin-top:var(--s4);font-size:var(--fs-lead);padding:var(--s3) var(--s5);
   border:var(--rw-row) solid var(--hair-2);text-decoration:none}
 .cmpgo:hover{border-color:var(--tx-2);background:var(--panel-2)}
 @media (max-width:560px){
   .cmprow{grid-template-columns:1fr 6.4em 1fr}
-  .cmprow .va,.cmprow .vb{font-size:15px}
-  .cmpwho .nm{font-size:14px}
+  .cmprow .va,.cmprow .vb{font-size:var(--fs-name)}
+  .cmpwho .nm{font-size:var(--fs-name)}
 }
 
 /* ── 색인 ────────────────────────────────────────────────── */
-.find{padding:14px var(--pad);border-bottom:var(--rw-row) solid var(--hair)}
-.find label{display:block;font-size:var(--fs-label);letter-spacing:.16em;color:var(--tx-3);margin-bottom:6px}
+.find{padding:var(--s5) var(--pad);border-bottom:var(--rw-row) solid var(--hair)}
+.find label{display:block;font-size:var(--fs-label);letter-spacing:.16em;color:var(--tx-3);margin-bottom:var(--s3)}
 /* ⚠**검색칸(.qbox input)과 같은 결함**(2026-09-08 · design-auditor · WCAG 2.2 SC 1.4.11).
    .find 는 배경을 안 깔아 바깥면이 --page 이고 칸의 채움은 --panel 이라 **채움 대 바깥면 1.044 / 1.084** —
    면으로는 경계가 없고, 그 하나뿐인 테두리가 --hair-2 로 **1.580 / 1.557**(채움 기준) ·
    **1.514 / 1.688**(바깥면 기준) 이었다. 셋 다 3:1 미만이다.
    → **--tx-3**: 채움 기준 **5.125 / 5.072** · 바깥면 기준 **4.910 / 5.499** 로 판정 기준 1 을 두 테마에서 만족한다.
    ⚠**hover 를 더하지 않는다** — 이 칸에는 원래 hover 규칙이 없었고, 없는 것이 결함은 아니다. */
-.find input{font:inherit;font-size:15px;padding:var(--s2) 10px;width:100%;max-width:420px;background:var(--panel);
+.find input{font:inherit;font-size:var(--fs-name);padding:var(--s4) var(--s4);width:100%;max-width:420px;background:var(--panel);
   color:var(--tx);border:var(--rw-row) solid var(--tx-3)}
-.chips{display:flex;gap:5px;flex-wrap:wrap;margin-top:11px}
+.chips{display:flex;gap:var(--s2);flex-wrap:wrap;margin-top:var(--s5)}
 /* ⚠**~~transition:all~~ 이었다**(2026-08-25 · 감사 P3 #36). 둘이 나빴다:
    ⑴ **지금 바꾸는 것 넷 중 font-weight 까지 애니메이트했다** — 눌림에서 글자 굵기가
       보간되면 그 칩의 폭이 프레임마다 달라지고, 칩줄 전체가 흔들린다(리플로).
    ⑵ **앞으로 더할 속성까지 조용히 따라간다** — padding 하나만 얹어도 그날부터 애니메이트된다.
    → **바꾸는 것을 이름으로 적는다.** font-weight 는 일부러 뺐다(즉시 바뀌는 편이 낫다). */
-.chip{font:inherit;font-size:var(--fs-sub);padding:var(--s1) 9px;cursor:pointer;background:transparent;color:var(--tx-2);
+.chip{font:inherit;font-size:var(--fs-sub);padding:var(--s2) var(--s4);cursor:pointer;background:transparent;color:var(--tx-2);
   border:var(--rw-row) solid var(--hair-2);white-space:nowrap;
   transition:color var(--t1) var(--e-out),border-color var(--t1) var(--e-out),background var(--t1) var(--e-out)}
 .chip:hover{color:var(--tx);border-color:var(--tx-3)}
 .chip[aria-pressed="true"]{background:var(--chip,#6b7280);color:var(--chip-ink,#fff);border-color:var(--chip,#6b7280);font-weight:var(--w-bold)}
-.count{font-size:var(--fs-note);color:var(--tx-3);margin-top:10px}
-.teamgroup{padding:14px var(--pad);border-bottom:var(--rw-row) solid var(--hair)}
+.count{font-size:var(--fs-note);color:var(--tx-3);margin-top:var(--s4)}
+.teamgroup{padding:var(--s5) var(--pad);border-bottom:var(--rw-row) solid var(--hair)}
 .teamgroup[hidden]{display:none}
-.teamgroup h2{margin:0 0 var(--s2);font-size:var(--fs-note);letter-spacing:.14em;font-weight:var(--w-bold);
-  display:flex;align-items:center;gap:var(--s2)}
+.teamgroup h2{margin:0 0 var(--s4);font-size:var(--fs-note);letter-spacing:.14em;font-weight:var(--w-bold);
+  display:flex;align-items:center;gap:var(--s4)}
 .teamgroup h2 i{width:11px;height:11px;background:var(--chip,#6b7280);font-style:normal;box-shadow:inset 0 0 0 1px var(--tx-2)}
 /* ⚠**화면 밖의 구단 묶음은 그리지 않는다.**
    일람은 구단 12묶음에 선수 698명이고, 선수마다 인라인 SVG가 하나씩 붙는다
@@ -2067,7 +2090,7 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
    **이름 몫이 20px 도 안 남았다** — 그래서 「ウィットリー」가 ウ/ィ/ッ/ト/リ/ー 로 세로로 쪼개졌다.
    ⚠**값의 근거**: 이름은 카나 6글자가 흔하고 13px 이면 약 78px 이다.
    18+8+78+8+12+8+95 = **227px** — 여유를 두어 232px 로 잡는다. */
-.roster{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:0 var(--s4)}
+.roster{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:0 var(--s6)}
 .roster li[hidden]{display:none}
 /* ⚠**이 저장소에서 유일하게 레이아웃 속성을 애니메이트하는 자리다**(2026-08-25 · 감사 P3 #37 ·
    실측: 전환 규칙 31개 중 레이아웃 속성은 이것 하나).
@@ -2075,18 +2098,18 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
    줄 밑줄의 왼쪽이 4px 비고, 명부처럼 줄이 이어지는 화면에서 그게 눈에 띈다.
    padding-left 는 경계선을 제자리에 두고 내용만 민다 — **모양이 맞는 쪽이 이것**이다.
    비용은 그 한 줄의 레이아웃이고, 그 대가를 알고 고른다. */
-.roster a{display:flex;gap:var(--s2);align-items:baseline;padding:5px 0;text-decoration:none;border-bottom:var(--rw-row) solid var(--hair);
+.roster a{display:flex;gap:var(--s4);align-items:baseline;padding:var(--s2) 0;text-decoration:none;border-bottom:var(--rw-row) solid var(--hair);
   transition:padding-left var(--t1) var(--e-out)}
 /* ⚠**명부의 성적 줄.** 규칙이 없으면 body 기본 16px·--tx 로 그려져 **선수 이름(13px)보다
    크고 진해진다** — 실측 1,397칸. 검색 드롭다운의 .qhits .hs 는 그쪽 전용이라 여기 안 걸린다 */
-.roster .hs{flex:0 0 auto;margin-left:var(--s2);font-size:var(--fs-label);color:var(--tx-3);
+.roster .hs{flex:0 0 auto;margin-left:var(--s4);font-size:var(--fs-label);color:var(--tx-3);
   font-variant-numeric:tabular-nums;white-space:nowrap}
 /* ⚠**여기서 칸 폭을 다시 정하지 마라**(2026-08-31). 위에서 232px 로 넓힌 것이 모바일을
    1열로 만든 줄 알고 여기에 160px 을 넣었는데, **아무 일도 안 하는 죽은 규칙이었다** —
    아래 max-width:680px 블록의 .roster{grid-template-columns:1fr} 이 **더 뒤에 있어 이긴다.**
    ⚠**즉 모바일 명부는 처음부터 1열이고, 그건 의도된 결정이다**(680px 블록). */
 @media (max-width:520px){.roster .hs{display:none}}
-.roster a:hover{padding-left:var(--s1)}
+.roster a:hover{padding-left:var(--s2)}
 /* ⚠**이름이 성적에 밀려 한 글자 폭까지 찌그러졌다**(2026-08-31 · 사용자 지적).
    성적(.hs)은 flex:0 0 auto 라 **안 양보하는데** 이름에는 아무 제약이 없었고,
    **일본어는 글자 사이가 기본 줄바꿈 자리**라 세로로 쪼개졌다.
@@ -2098,14 +2121,14 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
 .roster .hp{flex:0 0 auto;font-size:var(--fs-col);color:var(--tx-3)}
 /* 즐겨찾기 표식 — 순서를 바꾸지 않고 **표시만** 얹는다.
    순서를 바꾸면 「내 선수가 어디 갔지」가 되고, 명감의 배열이 무너진다 */
-.roster li[data-favon="true"] .hn::before{content:"★";color:var(--team,#6b7280);margin-right:var(--s1);font-size:var(--fs-col)}
-.chip.fav i{font-style:normal;margin-right:var(--s1)}
+.roster li[data-favon="true"] .hn::before{content:"★";color:var(--team,#6b7280);margin-right:var(--s2);font-size:var(--fs-col)}
+.chip.fav i{font-style:normal;margin-right:var(--s2)}
 /* ⚠**여기 적혀 있던 「9.55 / 9.14」도 같은 방식으로 틀렸다**(2026-09-08 · ⑵ 를 계산으로 바꾸면서 드러남).
    그 수는 --tx 를 --panel 위에 .8 로 합성한 값인데, **실제 잉크는 .chip 이 물려주는 --tx-2,
    바탕은 .find 가 배경을 안 깔아 --page** 다 — 다시 재면 **라이트 3.999(미달) · 다크 5.076**.
    즐겨찾기 개수는 글자이고 정보다. → .sortable i 와 같은 처방: **opacity 를 색으로 바꾼다**
    (--tx-3 = --page 대비 **4.910 / 5.499**). 값(--tx-2)보다 옅다는 위계는 그대로다. */
-.chip.fav s{text-decoration:none;margin-left:var(--s1);font-size:var(--fs-col);color:var(--tx-3)}
+.chip.fav s{text-decoration:none;margin-left:var(--s2);font-size:var(--fs-col);color:var(--tx-3)}
 /* ⚠⚠**바로 위 수정이 새 결함을 만들 뻔했다**(자기 수정 재확인에서 잡음 · 2026-09-08).
    이 칩은 눌리면 **면이 구단 색으로 바뀐다**(.chip[aria-pressed="true"] · 여기서는 --chip 이
    안 깔려 있어 중립색 #6b7280 / #fff 로 떨어진다). 그 위에서 --tx-3 는 **1.060 / 1.470** 이다 —
@@ -2114,14 +2137,14 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
    ⚠**옛 상태도 미달이었다**: inherit 를 .8 로 흐렸을 때 **3.760**. 흐림을 빼서 **4.834** 가 된다. */
 .chip.fav[aria-pressed="true"] s{color:inherit}
 .chip.fav[hidden]{display:none}
-.favbtn{font:inherit;font-size:var(--fs-lead);line-height:1;margin-left:var(--s2);padding:2px 6px;cursor:pointer;
+.favbtn{font:inherit;font-size:var(--fs-lead);line-height:1;margin-left:var(--s4);padding:var(--s1) var(--s3);cursor:pointer;
   background:transparent;border:var(--rw-row) solid var(--hair-2);color:var(--tx-3);vertical-align:middle;
   transition:color var(--t1) var(--e-out),border-color var(--t1) var(--e-out)}
 .favbtn:hover{color:var(--tx-2);border-color:var(--tx-3)}
 .favbtn[aria-pressed="true"]{color:var(--team,#6b7280);border-color:var(--team,#6b7280)}
 .favbtn[hidden]{display:none}
 
-.foot{padding:18px var(--pad);color:var(--tx-3);font-size:var(--fs-sub)}
+.foot{padding:var(--s6) var(--pad);color:var(--tx-3);font-size:var(--fs-sub)}
 .foot a{text-decoration:underline}
 
 @keyframes rise{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
@@ -2149,26 +2172,26 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
    ⚠**当選/落選을 색만으로 말하지 않는다** — 글자가 정보이고, 테두리와 굵기는 거들 뿐이다.
    ⚠**칩은 홈·순위표와 같은 .hteam 한 벌**이고(M1) 표 안에서는 .tm 이다 — 새 스와치를 만들지 않는다. */
 .drnds{display:flex;flex-direction:column}
-.drnd+.drnd{margin-top:var(--s4);padding-top:15px;border-top:var(--rw-row) solid var(--hair)}
-.drh{margin:0 0 9px;font-size:var(--fs-lead);font-weight:var(--w-bold);letter-spacing:.1em;
-  display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.drnd+.drnd{margin-top:var(--s6);padding-top:var(--s6);border-top:var(--rw-row) solid var(--hair)}
+.drh{margin:0 0 var(--s4);font-size:var(--fs-lead);font-weight:var(--w-bold);letter-spacing:.1em;
+  display:flex;align-items:baseline;gap:var(--s4);flex-wrap:wrap}
 .drh .qt,.dgn .qt,.dsolo>summary .qt,.drgh .qt{letter-spacing:0;font-weight:var(--w-reg);
   color:var(--tx-3);font-size:var(--fs-label)}
 /* 경합 하나가 한 덩어리다 — **왼쪽 선이 그 경계**(용어집 .gl 과 같은 어법) */
-.dgrps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:var(--s3)}
-.dgrp{padding-left:11px;box-shadow:inset 2px 0 0 var(--hair-2)}
+.dgrps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:var(--s5)}
+.dgrp{padding-left:var(--s5);box-shadow:inset 2px 0 0 var(--hair-2)}
 /* ⚠**주역은 선수 이름이다** — 이 제품은 이름과 수가 곧 내용이라 라벨을 값보다 키우지 않는다.
    대신 **분모(N球団競合)를 값에 붙여** 둔다(M2 · 루트 §7의 도메인 예외). */
-.dgn{margin:0 0 var(--s1);display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
-.dgn b{font-size:16px;font-weight:var(--w-bold);letter-spacing:.04em}
-.dbids{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:3px 15px}
-.dbid{display:inline-flex;align-items:baseline;gap:6px;font-size:12.5px}
+.dgn{margin:0 0 var(--s2);display:flex;align-items:baseline;gap:var(--s4);flex-wrap:wrap}
+.dgn b{font-size:var(--fs-title);font-weight:var(--w-bold);letter-spacing:.04em}
+.dbids{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:var(--s1) var(--s6)}
+.dbid{display:inline-flex;align-items:baseline;gap:var(--s3);font-size:var(--fs-data)}
 /* ⚠**라벨 줄이 단어 안에서 끊겼다**(390px 실측 2026-09-05) — .picklab 은 줄바꿈을 안 한다.
    남의 화면이 쓰는 규칙을 건드리지 않고 **이 화면 몫만** 접는다. */
-.picklab.dlab{flex-wrap:wrap;gap:3px var(--s2)}
+.picklab.dlab{flex-wrap:wrap;gap:var(--s1) var(--s4)}
 /* 회차들과 그 각주 사이 — 각주는 **마지막 회차가 아니라 블록 전체**에 붙는 말이다 */
-.drnds+.note{margin-top:15px}
-.dres{font-size:var(--fs-label);letter-spacing:.12em;font-weight:var(--w-bold);padding:1px 5px;flex:none}
+.drnds+.note{margin-top:var(--s6)}
+.dres{font-size:var(--fs-label);letter-spacing:.12em;font-weight:var(--w-bold);padding:var(--s1) var(--s2);flex:none}
 .dbid.won{font-weight:var(--w-bold)}
 .dbid.won .dres{color:var(--tx);box-shadow:inset 0 0 0 1px var(--tx-2)}
 .dbid.lost .dres{color:var(--tx-3);font-weight:var(--w-reg);padding-left:0;padding-right:0}
@@ -2178,7 +2201,7 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
 /* 구단마다 표기가 달랐을 때만 나온다 — **접지 않고 함께** 낸다 */
 .dalt{font-style:normal;font-size:var(--fs-label);color:var(--tx-3)}
 /* 단독지명은 **접어 둔다** — 펼쳐 두면 경합의 서사가 그 목록에 묻힌다 */
-.dsolo{margin-top:11px}
+.dsolo{margin-top:var(--s5)}
 /* ⚠**손잡이가 손잡이로 안 보였다**(2026-09-05 감사 P1). 셋이 겹쳤고 **셋을 다 고쳐야 한다** —
    하나만 고치면 나머지 둘이 그대로 「여기 접힌 것이 있다」를 감춘다:
      ⑴ font-size 선언이 없어 body 기본 **16px** 를 받았다. 회차 머리 .drh(13px)·구획 제목
@@ -2204,39 +2227,39 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
    (라이트 6.61:1 · 다크 6.67:1 · .dnolot 과 같다). */
 .dsolo>summary{font-size:var(--fs-data);color:var(--tx-2)}
 .dsolo>summary::after{order:-1;margin-left:0}
-.dsolos{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:3px var(--s4);font-size:12.5px}
-.dsolos li{display:inline-flex;align-items:baseline;gap:6px}
+.dsolos{list-style:none;margin:var(--s3) 0 0;padding:0;display:flex;flex-wrap:wrap;gap:var(--s1) var(--s6);font-size:var(--fs-data)}
+.dsolos li{display:inline-flex;align-items:baseline;gap:var(--s3)}
 .dsolos b{font-weight:var(--w-reg)}
 /* 「제도상 추첨이 없다」 — 빈 상태(.empty)와 **다른 사실**이라 다른 모양으로 말한다 */
-.dnolot{margin:0 0 13px;font-size:var(--fs-data);color:var(--tx-2);padding-left:9px;
+.dnolot{margin:0 0 var(--s5);font-size:var(--fs-data);color:var(--tx-2);padding-left:var(--s4);
   box-shadow:inset 2px 0 0 var(--hair-2)}
 /* 지명의 전 기록 — 회차가 **행 묶음의 머리**다(열이 12개인 격자가 아니다) */
-.dpick{margin-top:var(--s1)}
+.dpick{margin-top:var(--s2)}
 .dpick .drgh th{background:var(--panel-2);color:var(--tx);font-size:var(--fs-label);letter-spacing:.12em;
-  font-weight:var(--w-bold);padding-top:9px;border-bottom:var(--rw-row) solid var(--hair-2)}
+  font-weight:var(--w-bold);padding-top:var(--s4);border-bottom:var(--rw-row) solid var(--hair-2)}
 /* 회차 묶음 사이에 숨 쉴 자리 — **첫 묶음은 붙이고 다음부터** 띄운다 */
-.dpick .drg+.drg .drgh th{padding-top:17px}
+.dpick .drg+.drg .drgh th{padding-top:var(--s6)}
 .dpick .dnm{font-size:var(--fs-lead)}
 .dpick .dorg{color:var(--tx-2)}
 /* 우리 어휘에 없는 구단 코드 — **모른다는 것이 보이게** 한다(지금 이름으로 접지 않는다) */
 .dunk{text-decoration:none;border-bottom:var(--rw-row) dotted var(--tx-3);font-family:var(--f-num);
   font-size:var(--fs-sub);cursor:help}
 /* 출처(L3) · 불변식 위반 · 후일담 */
-.dsrc{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px;font-size:var(--fs-data)}
-.dsrc li{display:flex;flex-wrap:wrap;align-items:baseline;gap:3px 10px}
+.dsrc{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:var(--s4);font-size:var(--fs-data)}
+.dsrc li{display:flex;flex-wrap:wrap;align-items:baseline;gap:var(--s1) var(--s4)}
 .dsrc b{font-size:var(--fs-col);letter-spacing:.14em;color:var(--tx-2);font-weight:var(--w-semi)}
 .dsrc a{word-break:break-all}
 .dsrc s{text-decoration:none;font-family:var(--f-num);font-size:var(--fs-label);color:var(--tx-3)}
-.ddef{list-style:none;margin:9px 0 0;padding:0;display:flex;flex-direction:column;gap:var(--s1);font-size:var(--fs-data)}
-.ddef b{font-size:var(--fs-min);letter-spacing:.14em;color:var(--warn);margin-right:var(--s2)}
-.dnotes{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;font-size:12.5px}
-.dnotes li{display:flex;flex-wrap:wrap;align-items:baseline;gap:var(--s2)}
+.ddef{list-style:none;margin:var(--s4) 0 0;padding:0;display:flex;flex-direction:column;gap:var(--s2);font-size:var(--fs-data)}
+.ddef b{font-size:var(--fs-min);letter-spacing:.14em;color:var(--warn);margin-right:var(--s4)}
+.dnotes{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:var(--s3);font-size:var(--fs-data)}
+.dnotes li{display:flex;flex-wrap:wrap;align-items:baseline;gap:var(--s4)}
 .dnotes s{text-decoration:none;color:var(--tx-2);font-size:var(--fs-sub)}
 
 /* ── 반응형 ──────────────────────────────────────────────── */
 @media (max-width:900px){
-  :root{--pad:var(--s4)}
-  .bar{grid-template-columns:76px 1fr 118px;gap:var(--s2)}
+  :root{--pad:var(--s6)}
+  .bar{grid-template-columns:76px 1fr 118px;gap:var(--s4)}
 }
 @media (max-width:680px){
   /* ⚠**여기서 헤더가 2행이 된다** — 브랜드·탭줄·테마가 윗줄, 검색칸이 아랫줄.
@@ -2248,7 +2271,7 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
      **87.7px**(421~680px · 12px) 둘뿐이라, 큰 쪽을 덮는 **88px** 로 잡는다.
      min-height 라서 작은 쪽도 88px 로 채워진다 — 즉 ≤680px 전 구간에서 바가 정확히 88px 이다.
      ⚠**작게 잡으면 안 된다**: 86px 로 뒀더니 421~680px 에서 바가 87.7px 로 자라 토큰이 다시 거짓이 됐다. */
-  :root{--pad:13px;--topbar:88px}
+  :root{--pad:var(--s5);--topbar:88px}
   /* ⚠**검색칸을 아랫줄로 내린다.** 브랜드·탭 8개·테마가 이미 윗줄을 다 쓴다 —
      한 줄에 넣으면 검색칸이 100px 아래로 찌부러져 무엇을 치는지 안 보인다.
      ⚠**탭줄은 여기서 줄어드는 쪽이 된다**(기본값 flex:0 0 auto 를 되돌린다). 아랫줄이 없어졌으니
@@ -2260,7 +2283,7 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
      ⚠**굴리는 상자에는 첫 위치가 있다** — 왼쪽 끝이라 뒤쪽 항목에 서 있으면 현재 탭이
      화면 밖에서 시작한다. 그것은 CSS 로 못 고치므로 **스크립트가 상자 안으로 들여놓는다**
      (showCurrentTab). 스크립트가 죽으면 손으로 굴리는 상자로 남는다. */
-  .topbar{flex-wrap:wrap;padding:6px 10px var(--s2);gap:6px}
+  .topbar{flex-wrap:wrap;padding:var(--s3) var(--s4) var(--s4);gap:var(--s3)}
   .qbox{order:3;flex-basis:100%;max-width:none}
   /* ⚠**flex-basis 를 0 으로 만드는 것이 핵심이다**(실측으로 배웠다 · 2026-08-20).
      줄바꿈은 **줄이기 전의 크기**로 결정된다 — flex:0 1 auto 로 두면 탭줄의 기준 크기가
@@ -2275,16 +2298,16 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
   .spine .vt{display:none}
   /* 화면이 좁으면 레일까지 고정하면 본문이 사라진다 — 헤더만 남긴다 */
   .rail{position:static}
-  .tnav a{padding:5px 7px}
-  .idline{gap:11px;padding-top:13px}
+  .tnav a{padding:var(--s2) var(--s3)}
+  .idline{gap:var(--s5);padding-top:var(--s5)}
   .mark .mk{width:42px;height:42px}
   .spark{width:100%;margin-left:0;align-items:flex-start}
   .cols{grid-template-columns:1fr;gap:0}
   .bars{max-width:none}
-  .bar{grid-template-columns:1fr;gap:2px}
+  .bar{grid-template-columns:1fr;gap:var(--s1)}
   .bar em{text-align:left}
   .roster{grid-template-columns:1fr}
-  th,td{padding:6px 7px}
+  th,td{padding:var(--s3) var(--s3)}
 }
 /* ⚠**가장 작은 흔한 폰에서 첫 화면에 수치가 0개였다**(2026-08-20 감사 ⑥).
    이 제품의 가치 명제가 밀도인데 320×568 에서 그렇다는 것은 명제가 화면에서 무너진 것이다.
@@ -2298,32 +2321,32 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
    (topbar-geometry.test.ts). 여기서 바꾸면 그 계약을 다시 재야 한다. */
 @media (max-width:480px){
   /* 표제 — 이 화면에서 읽을 것은 이름이지 여백이 아니다 */
-  .idline{padding:9px var(--pad) var(--s2);gap:9px}
-  .idline .nm{font-size:clamp(19px,5.5vw,26px)}
+  .idline{padding:var(--s4) var(--pad) var(--s4);gap:var(--s4)}
+  .idline .nm{font-size:clamp(var(--fs-title),5.5vw,var(--fs-score))}
   /* 상태 띠는 **줄이되 지우지 않는다** — 여기 뜨는 것은 「수집이 멈췄다」는 경고다(M12) */
-  .state{padding:5px var(--pad);line-height:1.4}
+  .state{padding:var(--s2) var(--pad);line-height:1.4}
   /* 시즌 띠 — 9시즌이 늘 넘치므로 칩만 얇게 한다. 스크롤바는 남긴다(더 있다는 유일한 신호다) */
-  .seasons{padding:3px var(--pad)}
-  .seasons a{font-size:var(--fs-sub);padding:2px 9px}
+  .seasons{padding:var(--s1) var(--pad)}
+  .seasons a{font-size:var(--fs-sub);padding:var(--s1) var(--s4)}
   /* 화면 안 이동 줄 — 칩 높이는 손가락 규칙이 정하므로 상자 여백만 줄인다 */
-  .hjump{padding:5px var(--pad);margin-bottom:var(--s2)}
+  .hjump{padding:var(--s2) var(--pad);margin-bottom:var(--s4)}
 }
 /* ⚠**≤480 에 있던 헤더 접기를 ≤680 으로 올렸다**(2026-08-20).
    접는 이유(「한 줄에 브랜드·검색·내비·테마가 다 안 들어간다」)는 480 이 아니라 **680 부터** 참이었다 —
    481~680 에서는 접지 않은 채 탭줄만 2행이 되어 바 밖으로 샜다. 규칙을 옮겼을 뿐 뜻은 그대로다. */
 @media (max-width:420px){
   .brand{font-size:var(--fs-data);letter-spacing:.08em}
-  .tnav a{font-size:var(--fs-note);padding:5px 6px}
+  .tnav a{font-size:var(--fs-note);padding:var(--s2) var(--s3)}
 }
 /* 손가락은 마우스보다 크다 */
 @media (pointer:coarse){
-  .tab,.chip{padding:7px var(--s3)}
-  .mv{padding:6px 11px}
-  .tnav a{padding:9px 10px}
-  .roster a,.qhits li a{padding-top:var(--s2);padding-bottom:var(--s2)}
+  .tab,.chip{padding:var(--s3) var(--s5)}
+  .mv{padding:var(--s3) var(--s5)}
+  .tnav a{padding:var(--s4) var(--s4)}
+  .roster a,.qhits li a{padding-top:var(--s4);padding-bottom:var(--s4)}
   /* ⚠**접힘 손잡이도 여기 든다.** 글자가 10px이라 손가락으로는 높이 16px 남짓인데,
      이게 목록을 여는 유일한 자리다 — 빠뜨리면 그 화면이 휴대폰에서 안 열린다 */
-  .pickfold>summary{padding:6px 0}
+  .pickfold>summary{padding:var(--s3) 0}
 }
 /* ⚠**손가락에서는 헤더가 더 두껍다 — --topbar 도 따라가야 한다.**
    바로 위 .tnav a{padding:9px 10px} 이 탭 높이를 27.0 → 36.6px 으로 올린다.
@@ -2396,7 +2419,7 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
      통째로 없어져 있었다. **적어 둔 의도가 실제로는 한 번도 실행되지 않았다.**
      레일을 쓰는 화면은 順位·選手·ポストシーズン·球団 넷이다(실측).
      ⚠고정·괘선·가로 스크롤은 종이에서 뜻이 없으므로 벗긴다 */
-  .rail{position:static;overflow:visible;background:transparent;border:var(--rw-none);padding:var(--s2) 0 0;min-height:0}
+  .rail{position:static;overflow:visible;background:transparent;border:var(--rw-none);padding:var(--s4) 0 0;min-height:0}
   .block[hidden]{display:block}
   /*
      ⚠**닫힌 탭을 펼치지 않는다.** 한때 펼쳤다가 되돌렸다 — 실측으로 순위 화면이
@@ -2406,7 +2429,7 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
   */
   /* ⚠**탭줄은 조작이면서 「고른 것의 이름」이다.** 통째로 숨기면 표에서 이름이 사라진다 —
      고른 것만 글자로 남기고 버튼 모양은 지운다 */
-  .tab{border:var(--rw-none);background:transparent!important;color:inherit!important;padding:0 var(--s2) 0 0;font-weight:var(--w-bold)}
+  .tab{border:var(--rw-none);background:transparent!important;color:inherit!important;padding:0 var(--s4) 0 0;font-weight:var(--w-bold)}
   .tab:not([aria-selected="true"]):not([aria-pressed="true"]){display:none}
   /* ⚠**렌더 생략을 끈다.** content-visibility 는 화면 밖을 그리지 않는데,
      종이에는 「화면 밖」이 없다 — 켜 둔 채 인쇄하면 **빈 페이지가 나온다** */
@@ -2425,7 +2448,7 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
   .scroller th,.scroller td{position:static!important}
   .shell{grid-template-columns:0 1fr}
   /* 링크의 목적지를 남긴다 — 종이에서는 누를 수 없다 */
-  .foot a[href^="http"]::after{content:" (" attr(href) ")";font-size:9px;color:#555}
+  .foot a[href^="http"]::after{content:" (" attr(href) ")";font-size:var(--fs-min);color:#555}
   /* ⚠블록에는 break-inside 를 걸지 않는다 — 한 페이지보다 큰 블록에는 엔진이 지킬 수 없어
      무시하거나 앞에 빈 여백을 남긴다. 행 단위만 지킨다 */
   table{break-inside:auto}
@@ -2752,7 +2775,7 @@ function renderBlocks(){
   }
   /* ⚠**인라인 스타일로 덮지 않는다** — 스타일시트의 설계값이 죽는다(감사 P1).
      토큰만 바꾸고, 실제 값과 아래쪽 여백 계산은 CSS 한 곳에 둔다(M1). */
-  const pad=state.density==="compact"?"11px":"22px";
+  const pad=state.density==="compact"?"var(--s5)":"var(--s7)";
   /* ⚠**지금 보고 있는 구획을 내비가 표시한다.**
      ⚠**스크립트가 없어도 링크는 동작한다**(§0-1) — 여기서 하는 일은 표시뿐이다.
      ⚠IntersectionObserver 가 없으면 조용히 아무 것도 안 한다(옛 브라우저). */
