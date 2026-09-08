@@ -523,10 +523,21 @@ a{color:inherit}
    ⚠**여기서는 이중선이 안 생긴다** — 아래 margin-left:-1px 이 두 테두리를 같은 픽셀에 포갠다
    (실측: seg 줄에서 나온 겹침 무리 0개). 끄는 이유가 애초에 없던 자리다. */
 /* ⚠**고른 것은 빼야 한다 — 안 빼고 썼다가 회귀를 만들었다**(2026-09-08 실측).
-   .tab[aria-selected] 와 특이도가 같아(둘 다 0,2,0) **뒤에 오는 이 줄이 이긴다.**
+   .tabs.seg .tab 는 (0,3,0) 이라 .tab[aria-selected] (0,2,0) 를 **특이도로 이긴다.**
+   ⚠~~특이도가 같아 순서로 이긴다~~ 고 적었는데 **틀린 설명이었다**(검토 P3 · 결과는 옳았다).
    그대로 두면 고른 탭이 채움색 위에 --hair-2 테를 둘러 **채움과 테가 어긋난 고리**가 생긴다
-   (실측: 고른 탭 테두리가 rgb(107,114,128) → rgb(207,206,197) 로 바뀌었다). */
-.tabs.seg .tab:not([aria-selected="true"]):not([aria-pressed="true"]){border-color:var(--hair-2)}
+   (실측: 고른 탭 테두리가 rgb(107,114,128) → rgb(207,206,197) 로 바뀌었다).
+   ⚠**:where() 로 감싸 특이도를 (0,3,0) 에 묶는다.** 안 감싸면 :not() 안의 속성 선택자가
+   각각 (0,1,0) 을 더해 **(0,5,0)** 이 되고, 그러면 .tab:hover (0,2,0) 까지 눌러
+   **세그먼티드에서 호버 강조가 죽는다**(검토 P1 · 변경 전에는 살아 있었으니 회귀였다). */
+.tabs.seg .tab:where(:not([aria-selected="true"]):not([aria-pressed="true"])){border-color:var(--hair-2)}
+/* ⚠**호버를 세그먼티드 안에서 다시 얹는다.** 위 줄이 (0,3,0) 이라 전역 .tab:hover (0,2,0) 로는 못 이긴다.
+   이 줄은 (0,4,0) 이라 이긴다 — 「칠해진 테두리 = 고른 것이거나 손가락이 얹힌 것」이 여기서도 성립한다.
+   ⚠**여기서도 고른 것을 뺀다 — 안 빼고 썼다가 같은 결함을 호버에서 되살렸다**(실측:
+   고른 탭에 손가락을 얹으면 테두리가 채움색 rgb(107,114,128) 에서 rgb(110,110,105) 로 바뀌어
+   **채움 위에 어긋난 고리**가 다시 생겼다). 보통 탭에서는 원래 .tab[aria-selected] 가
+   같은 특이도의 뒤 규칙이라 이기고 있었다 — 그 성질을 세그먼티드에서도 유지한다. */
+.tabs.seg .tab:hover:where(:not([aria-selected="true"]):not([aria-pressed="true"])){border-color:var(--tx-3)}
 /* 테두리를 겹쳐 한 줄로 만든다. 겹치면 고른 쪽 테두리가 덮이므로 위로 올린다 */
 .tabs.seg .tab+.tab{margin-left:-1px}
 .tabs.seg .tab[aria-selected="true"]{position:relative;z-index:1}
@@ -609,19 +620,19 @@ a{color:inherit}
    ⚠**지우는 쪽이 구획이지 조작 줄이 아니다** — .rail 은 sticky 라 스크롤 중에 구획에서
    떨어져 나오고, 그때 자기 밑줄이 없으면 본문이 그 밑으로 그냥 흘러 들어간다. */
 /* ⚠**구획이 래퍼 안에 있는 경우가 있다** — .rail 다음은 .block 이 아니라
-   [data-panelgroup] 이고 구획은 그 안이다(실측). 인접 선택자만으로는 안 닿는다.
-   ⚠**그 래퍼의 구획들은 배타적이지 않다** — 순위 화면에서 둘 다 보이고 y 가 244·1132 다.
-   전부 끄면 **화면 중간 구획의 윗줄이 사라진다.** 그래서 첫 자식만 끈다. */
-/* ⚠**.legend 는 이 규칙으로 못 고친다 — 사슬을 써 봤고 안 맞았다**(2026-09-08 실측).
-   선수 페이지에서 .legend 다음 형제는 .editor 이고 그다음은 #b-scorebook 인데
-   **그 사이 형제들이 [hidden]** 이라, 화면에서 legend 밑에 붙는 것은 훨씬 뒤의 #b-standard 다.
-   **DOM 인접과 화면 인접이 다르고 CSS 는 화면 인접을 말할 수 없다.**
-   → 그래서 구획의 윗변을 굵히지 않았다(위 .block 주석). 남는 것은 1px + 1px 이고 그건 바꾸기 전과 같다.
-   ⚠**여기에 .legend + .editor + .block 을 적지 마라 — 한 번도 안 맞는 죽은 선택자다.** */
-.rail + .block,.legend + .block,.idline + .block,
-.rail + [data-panelgroup] > .block:first-child,
-.legend + [data-panelgroup] > .block:first-child,
-.idline + [data-panelgroup] > .block:first-child{border-top-color:transparent}
+   [data-panelgroup] 이고 구획은 그 안이다(실측).
+   ⚠⚠**인접 결합자(+)를 쓰면 안 된다 — 처음에 그렇게 썼다가 검토가 잡았다**(P1 · 2026-09-08).
+   패널들은 **전부 .rail 의 뒤 형제**이고 한 번에 하나만 보인다. + 는 **첫 패널만** 맞으므로
+   **사용자가 탭을 바꾸는 순간 이중선이 되살아난다.** 실측으로 재현했다:
+   팀 화면 日程·打者·投手·対戦 과 순위 화면 個人 에서 보이는 구획의 윗줄이 칠해져 있었다.
+   ⚠**내 게이트가 첫 로드만 쟀기 때문에 안 보였다** — 상호작용 뒤 상태를 같이 재라.
+   ⚠**:first-child 는 유지한다** — 한 패널에 구획이 여러 개 쌓이는 경우가 있고
+   (순위 화면에서 y 244·1132 로 둘), 전부 끄면 **화면 중간 구획의 윗줄이 사라진다.**
+   ⚠**죽은 선택자를 적지 마라**(검토 P2). 2시즌 전수 빌드에서 0건이던 것들:
+   .rail + .block · .legend + .block · .legend + [data-panelgroup] · .idline + [data-panelgroup].
+   .legend 는 애초에 CSS 로 못 닿는다(사이 형제가 [hidden] 이라 DOM 인접 ≠ 화면 인접). */
+.idline + .block,
+.rail ~ [data-panelgroup] .block:first-child{border-top-color:transparent}
 /* ⚠**구획 머리를 더 또렷하게**(2026-08-17 유저 요청: 가시성·영역 구분).
    카드·그림자·둥근 모서리는 쓰지 않는다(§6) — 대신 **짧은 색 막대**와 글자 무게로 가른다.
    막대 색은 그 화면의 구단 색(--chip)이고, 없으면 본문 색이라 어디서든 보인다. */

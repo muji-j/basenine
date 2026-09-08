@@ -205,9 +205,21 @@ const JUSTIFIED: readonly Justification[] = [
   // ⚠**2b 에서 쉬는 탭의 테두리를 껐고**(인접한 두 상자가 사이에 선을 두 개 세웠다),
   //   세그먼티드 줄에서만 되살렸다 — 거기서는 붙은 상자 모양 자체가 「둘 중 하나」를 말한다.
   //   그 되살리는 규칙이 상태(고르지 않음)를 색으로만 말하므로 강제 색 모드에서 죽는다.
+  // ⚠**:where() 로 감싼 형태다.** 안 감싸면 :not() 안의 속성 선택자가 특이도를 (0,5,0) 으로
+  //   올려 .tab:hover 까지 눌러 **호버 강조가 죽는다**(검토 P1 · 실측으로 재현했다).
   {
-    sel: '.tabs.seg .tab:not([aria-selected="true"]):not([aria-pressed="true"])',
+    sel: '.tabs.seg .tab:where(:not([aria-selected="true"]):not([aria-pressed="true"]))',
     why: "쉬는 세그먼트에 테두리를 돌려주는 규칙이라 강제 색에서 색이 죽는다 — 고른 쪽은 굵기로 산다",
+    cites: [
+      { sel: '.tab[aria-pressed="true"],.tab[aria-selected="true"]', decl: "font-weight:var(--w-bold)" },
+    ],
+  },
+  // ⚠**호버 쪽도 같은 이유로 목록에 든다** — 선택자에 aria-* 가 들어 있어서다(뜻은 「고르지 않은 것」).
+  //   강제 색 모드에서 호버의 테두리 색은 죽지만, **구별해야 할 상태(고름/안 고름)는 굵기가 나른다.**
+  //   호버 자체의 피드백은 그 모드에서 시스템이 맡는 몫이고 우리가 색으로 되살릴 수 없다.
+  {
+    sel: '.tabs.seg .tab:hover:where(:not([aria-selected="true"]):not([aria-pressed="true"]))',
+    why: "같은 이유 — 고름/안 고름은 굵기가 나른다. 호버는 강제 색 모드에서 색으로 말할 수 없다",
     cites: [
       { sel: '.tab[aria-pressed="true"],.tab[aria-selected="true"]', decl: "font-weight:var(--w-bold)" },
     ],
