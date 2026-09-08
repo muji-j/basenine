@@ -716,7 +716,31 @@ export function pastSeasonOf(seasons: readonly SeasonLink[]): boolean {
 
 function seasonBar(o: PageOptions): RawHtml {
   if (o.seasons.length < 2) return raw("");
-  return html`<nav class="seasons" aria-label="シーズン">
+  /**
+   * ⚠**시즌이 많으면 한 줄만 보이고 나머지는 접는다**(2026-09-08 · 사용자 요청).
+   *
+   * 실측(390px · 9시즌): 이 띠는 **두 줄**이 되고 첫 줄에 **라벨 + 5년**이 들어간다.
+   * 320px 에서는 **세 줄**이다. 화면 맨 위에서 그만큼을 늘 먹는 것은 비싸다.
+   *
+   * ⚠**서버가 세어서 정한다 — CSS 는 줄 수를 못 센다.**
+   * 한 줄에 담기는 연도가 5개(390px)라 **7시즌부터** 접을 값이 생긴다.
+   * 그 아래에서는 토글을 아예 안 낸다 — **눌러도 아무 일도 안 나는 손잡이를 두지 않는다.**
+   * ⚠**이 수는 폭에 따라 달라진다**: 680px 에서는 9시즌도 한 줄에 들어가므로 그 폭에서는
+   *   토글이 있어도 접을 것이 없다. **그건 받아들인다** — 반대(좁은 화면에서 못 접는 것)가 더 나쁘다.
+   * ⚠**시즌이 늘면 이 실측을 다시 하라.** 지금 값은 9시즌 기준이다.
+   */
+  const foldSeasons = o.seasons.length >= 7;
+  return html`${foldSeasons
+    ? html`<input class="sntoggle vh" type="checkbox" id="sntoggle" aria-controls="seasonbar">`
+    : raw("")}
+${/* ⚠**띠와 손잡이를 한 상자에 넣는다**(2026-09-08 · 2f · 사용자 지적: 「모든 연도 버튼이 잘 안 어울린다」).
+     그전에는 손잡이가 **띠 밖 · 띠의 밑줄 아래**에 있어서 회색 띠와 다른 바탕 위에 흰 알약이
+     혼자 떠 있었다 — **띠의 일부가 아니라 다음 구획의 첫 요소처럼 읽혔다.**
+     ⚠**그렇다고 띠 「안」(nav 안)으로 넣으면 안 된다** — 아래 주석이 말하듯 접을 때 같이 숨는다.
+     → **형제로 두되 같은 상자에 담는다.** 바탕과 밑줄은 이제 이 상자가 진다.
+     ⚠**넓은 화면에서는 display:contents 라 아무것도 안 바뀐다** — 접기 자체가 ≤680px 전용이다. */ ""}
+<div class="snwrap">
+<nav class="seasons${foldSeasons ? " fold" : ""}" id="seasonbar" aria-label="シーズン">
   <span class="slab">シーズン</span>
   ${o.seasons.map(
     (s) =>
@@ -728,7 +752,15 @@ function seasonBar(o: PageOptions): RawHtml {
         ? html` aria-label="${`${s.season}年（このページの${s.season}年版はありません。${s.fallbackTo}へ移動します）`}"`
         : raw("")}>${s.season}年${s.fallback ? html`<i aria-hidden="true">→</i>` : null}</a>`,
   )}
-</nav>`;
+</nav>
+${/* ⚠**손잡이를 띠 안에 넣지 마라** — 한 줄로 접으면 그 손잡이가 둘째 줄로 밀려 **같이 숨는다.**
+     띠 밖에 두면 접힌 상태에서도 늘 보인다.
+     ⚠**개수를 적는다** — 접으면 「몇 년치가 더 있는지」가 사라진다.
+     ⚠**보이는 글자가 이름 안에 있어야 한다**(WCAG 2.5.3). */ ""}
+${foldSeasons
+  ? html`<label class="snbtn" for="sntoggle"><b>すべての年</b><s>${String(o.seasons.length)}</s></label>`
+  : raw("")}
+</div>`;
 }
 
 

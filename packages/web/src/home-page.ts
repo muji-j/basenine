@@ -483,13 +483,27 @@ function jumpNav(d: HomePageData): RawHtml {
   //   ⚠**왜 체크박스인지는 layout.ts 의 내비 주석이 갖는다**(요약: JS 는 defer 라 100ms 깜빡이고,
   //   CSS 로 <details> 를 펴는 것은 최신 크롬에서만 된다 — 둘 다 실측).
   //   ⚠**id 가 화면에 하나뿐이어야 한다** — 이 조각은 홈에 한 번만 그려진다(위 items.length 가드).
-  // ⚠**aria-controls 만 준다** — 체크박스는 펼침/접힘 의미론을 못 주는데, `aria-expanded` 를 박으면
-  //   스크립트 없이는 갱신이 안 돼 **틀린 값이 고정된다**(layout.ts 의 같은 자리 주석 참조).
-  return html`<input class="hjtoggle vh" type="checkbox" id="hjtoggle" aria-controls="hjumpnav">
-<label class="hjbtn" for="hjtoggle">目次<b class="vh">を開く</b><s>${String(items.length)}</s></label>
-<nav class="hjump" id="hjumpnav" aria-label="このページの中の移動">
-  ${items.map((x) => html`<a href="#${x.id}">${x.label}</a>`)}
-</nav>`;
+  // ⚠**기본은 펼침이고 접을 수 있다**(2026-09-08 · 사용자 요청 · 2c 의 반대다).
+  //   2c 는 좁은 화면에서 **접어 두고** 열게 했는데, 사용자가 **보이는 쪽이 기본**이길 원했다.
+  //   → 서버가 `checked` 로 그린다. 스크립트가 없어도 펼쳐진 채이고, 눌러서 접는다.
+  //
+  // ⚠**라벨은 반드시 <nav> 밖이다** — 안에 넣으면 접었을 때 **같이 숨어 다시 못 편다.**
+  //   (시즌 띠에서도 같은 이유로 밖에 뒀다.)
+  //
+  // ⚠**「目次」를 화면에 보이게 적는다.** 지금까지는 `aria-label` 에만 있어서, 눈으로 보는 사람에게는
+  //   제목과 본문 사이에 **이름 없는 글자 줄**이 떠 있었다 — 사용자가 「영역 구성이 나쁘다」고 한 자리다.
+  //
+  // ⚠**폭으로 가르지 않는다** — 넓은 화면에서 라벨만 두고 체크박스를 끄면 **눌러도 아무 일이 없는
+  //   손잡이**가 된다. 접기는 전 폭에서 똑같이 동작한다.
+  //
+  // ⚠**aria-expanded 는 안 준다** — 스크립트 없이는 갱신이 안 돼 **틀린 값이 고정된다.**
+  return html`<div class="hjbar">
+  <input class="hjtoggle vh" type="checkbox" id="hjtoggle" checked aria-controls="hjumpnav">
+  <label class="hjlab" for="hjtoggle">目次<s>${String(items.length)}</s></label>
+  <nav class="hjump" id="hjumpnav" aria-label="このページの中の移動">
+    ${items.map((x) => html`<a href="#${x.id}">${x.label}</a>`)}
+  </nav>
+</div>`;
 }
 
 export function renderHomePage(d: HomePageData, ctx: RenderContext): string {

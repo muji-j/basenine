@@ -72,8 +72,10 @@ export const CSS = `
   --bar-w:#062a47; --bar-t:#eceae2; --bar-l:#b8651f;
   --f-body:${FONT_FALLBACK};
   --f-num:"SFMono-Regular","Consolas","Menlo","Yu Gothic",monospace;
-  /* ⚠**이 값은 .topbar 의 「실제」 높이여야 한다.** .rail·.hjump·.pickbar 의 sticky 오프셋과
+  /* ⚠**이 값은 .topbar 의 「실제」 높이여야 한다.** .rail·.pickbar 의 sticky 오프셋과
      scroll-padding-top 이 전부 이 하나를 읽는다 — 어긋나면 앵커가 헤더 뒤로 숨는다.
+     ⚠**~~.hjump~~ 는 2f 에서 빠졌다**(2026-09-08 · 2차 검토 F9). 목차가 고정을 버렸다 —
+     이제 --topbar 를 sticky 오프셋으로 읽는 것은 **둘**이고 사다리는 **하나**(.rail)다.
      ⚠**한때 어긋나 있었다**(2026-08-19 감사 P1 · 2026-08-20 수정). .topbar 가 height 고정인데
      .tnav{flex-wrap:wrap} 이라 탭 8개가 **481~770px 에서 2행**이 됐고, 바 높이는 안 따라왔다.
      실측(step 4 · 400~1000px · 151점): **72점에서 탭줄이 바 밖으로** 나갔다 —
@@ -142,10 +144,25 @@ export const CSS = `
   --rw-sect:2px;    /* 구획 경계 */
   --rw-mast:3px;    /* 기둥 — 왼쪽 강조바 · 팀색 밑줄 */
 
-  /* ── 모서리.
-     ⚠**이 디자인의 border-radius 는 2곳뿐이고 둘 다 스크롤바 손잡이다** — 「카드·둥근 모서리를
-     쓰지 않는다」(이 파일 머리말)의 결과다. C안의 4단(pill/panel/field/data)에 대응하는 값이
-     현행에 **없다.** 없는 것을 미리 만들지 않는다 — **2b** 에서 처음 값이 생긴다. */
+  /* ── 모서리 — **C안의 4단.**
+     ⚠**2b 에서 만들었어야 했는데 조용히 빠졌다**(2026-09-08 · 사용자 지적으로 발견).
+     2b 계획서가 「inset box-shadow 괘선 28건**과 모서리 반지름**」을 넘겨받았다고 적어 뒀는데
+     **괘선만 하고 모서리는 안 했고, 안 했다고 말하지도 않았다.**
+     그 결과 목업과 화면의 가장 큰 시각 차이가 그대로 남았다 — 실측: 목업 C 가 **34곳**에서
+     모서리를 쓰는데 화면은 **4곳**(전부 스크롤바 손잡이)뿐이었다.
+
+     ⚠**단계마다 이유가 다르다 — 그게 「모든 요소에 같은 border-radius」 금지(§6)에 대한 답이다.**
+     하나로 통일하면 그게 바로 그 금지가 말하는 「AI틱함」이 된다.
+       · pill  — 가로로 늘어선 텍스트 버튼. HIG Buttons 가 그 배치에 캡슐을 권한다
+       · panel — 내용 덩어리. 둥근 사각형
+       · field — 입력란·시트 안의 항목. **작은 조작자**라 한 단 작다
+       · data  — **표와 막대는 0 이다. 값에 둥근 끝은 없다.**
+     ⚠**data 를 「그냥 0이니까 안 적어도 된다」고 생각하지 마라** — 이름이 있어야
+     다음 사람이 표에 모서리를 주려 할 때 **여기서 막힌다.** */
+  --r-pill:999px;   /* 가로 줄의 텍스트 버튼 */
+  --r-panel:12px;   /* 내용 패널 */
+  --r-field:8px;    /* 입력란·작은 조작자 */
+  --r-data:0;       /* 표·막대 — 값에 둥근 끝은 없다 */
   --r-thumb:3px;
 
   /* ── 모션 — C안의 t1/t2/t3 + e-out 체계. 값은 전부 현행 그대로.
@@ -779,6 +796,38 @@ dd{margin:0;text-align:right;font-family:var(--f-num);font-variant-numeric:tabul
 dd.g-veryGood .den,dd.g-veryBad .den{color:var(--tx-2)}
 
 /* 보이지 않는 글자 — 색으로만 전하지 않기 위한 것이다. 지우지 마라 */
+/* ── 모서리 배치 (2f · 2026-09-08) ─────────────────────────────
+   ⚠**한 블록에 모은다.** 흩어 놓으면 「어디에 어느 단이 붙는가」라는 규칙 자체를 읽을 수 없고,
+   그러면 다음 사람이 아무 데나 둥글게 만든다 — 그게 §6 이 금지한 「모든 요소에 같은 반지름」의 시작이다.
+   ⚠**여기에 없는 것은 각지다. 그것이 기본값이고 의도다.**
+
+   pill — 가로로 늘어선 텍스트 버튼. 손잡이가 글자 폭만큼이라 캡슐이 그 폭을 그대로 말한다 */
+/* ⚠⚠**.tnav a 와 .seasons a 는 여기 안 든다 — 넣었다가 뺐다**(2026-09-08 · 2차 검토 F3).
+   그 둘의 「지금 여기」 표식은 **inset 밑줄**(box-shadow:inset 0 -2px 0)인데,
+   border-radius:999px 는 h<w 인 상자에서 **h/2 로 클램프**되고 inset 밑줄은 반지름에 잘린다 —
+   남는 직선 구간이 **w − h** 다. 실측: .tnav a 가 1280px 마우스에서 40 → **13.4px**,
+   390px 손가락에서는 **약 5px** 다. **표식이 사실상 호(弧)가 된다.**
+   게다가 .brand[aria-current] 는 워드마크라 반지름이 없어 **직선 그대로**여서,
+   2b 가 「셋이 같은 뜻을 같은 형태로 말한다」로 통일한 것이 렌더링에서 갈라졌다.
+   ⚠**그 통일을 지키는 시험은 box-shadow 값만 읽어서 초록이었다**(css-contrast.test.ts).
+   → **표식이 장식보다 무겁다.** 밑줄로 말하는 요소에는 알약을 주지 않는다.
+   ⚠**.hjump a 는 남는다** — 그쪽 표식은 밑줄이 아니라 **테두리 색**이라 반지름과 안 싸운다. */
+.tab,.chip,.mv,.go,.tbtn,.navbtn,.favbtn,
+.hjump a{border-radius:var(--r-pill)}
+/* ⚠**세그먼티드는 붙어 있는 것이 뜻이다** — 낱개를 캡슐로 만들면 그 뜻이 사라진다.
+   바깥 두 모서리만 둥글게 해서 **하나의 손잡이**로 읽히게 한다. */
+.tabs.seg .tab{border-radius:0}
+.tabs.seg .tab:first-child{border-radius:var(--r-pill) 0 0 var(--r-pill)}
+.tabs.seg .tab:last-child{border-radius:0 var(--r-pill) var(--r-pill) 0}
+/* panel — 내용 덩어리. ⚠**구획의 왼쪽 기둥(3px)도 같이 둥글어진다** — 그게 맞다.
+   기둥은 구획의 일부이지 따로 붙인 장식이 아니다. */
+.block,.qhits,#tip{border-radius:var(--r-panel)}
+/* field — 입력란과 작은 조작자. **한 단 작다** — 글자를 담는 상자이지 누르는 손잡이가 아니다 */
+.qbox input,.find input,.mfind input,.mfind select{border-radius:var(--r-field)}
+/* ⚠**data 는 0 이다 — 값에 둥근 끝은 없다.**
+   표·막대에 모서리를 주면 **끝값이 잘려 보인다**(승률 .612 의 막대 끝이 둥글면 그만큼 짧아 보인다).
+   ⚠**이 줄을 지우지 마라** — 지우면 「안 준 것」과 「일부러 0인 것」을 구별할 수 없다. */
+table,.wlbar,.rdbar,.track,.scroller{border-radius:var(--r-data)}
 .vh{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
   clip:rect(0 0 0 0);white-space:nowrap;border:var(--rw-none)}
 
@@ -1601,35 +1650,38 @@ a.cg:focus-visible{outline:2px solid var(--tx);outline-offset:1px}
 /* ⚠**좌우 패딩이 없어 칩이 구단색 기둥에 딱 붙어 있었다**(2026-08-18 감사 P2).
    .block 은 좌우로 var(--pad) 를 두는데 이 줄만 0 이라, 페이지에서 **유일하게 정렬선을 벗어난
    요소**가 됐다. 음수 마진 사고(바로 위 문단) 뒤에 0 으로 되돌리면서 같이 빠졌다. */
-/* ⚠**가로 스크롤 컨테이너의 왼쪽 패딩은 스크롤하면 사라진다**(2026-08-18 유저 지적:
-   「가장 왼쪽의 버튼이 왼쪽 디자인 요소랑 겹쳐져 있다」).
-   .hjump a 에 scroll-snap-align:start 가 있어서, 스냅이 끝나면 칩 하나가
-   **스크롤포트 왼쪽 끝**에 와서 멈춘다 — 그 자리는 바로 옆이 .spine(구단색 기둥)이다.
-   시즌 띠에서 이미 같은 함정을 밟았는데 이 줄만 교훈을 못 받았다.
-   ⚠**scroll-padding-left 로 스냅 기준선을 안쪽으로 민다.** 패딩만으로는 안 된다 —
-   패딩은 스크롤과 함께 밀려나지만 scroll-padding 은 스크롤포트에 붙어 있다. */
-.hjump{position:sticky;top:var(--topbar);z-index:8;
-  display:flex;flex-wrap:nowrap;gap:var(--s3);margin:0 0 var(--s4);
-  padding:var(--s4) var(--pad);scroll-padding-left:var(--pad);
-  background:var(--page);border-bottom:var(--rw-row) solid var(--hair);
-  overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin;
-  scroll-snap-type:x proximity}
-.hjump::-webkit-scrollbar{height:6px}
-.hjump::-webkit-scrollbar-thumb{background:var(--hair-2);border-radius:var(--r-thumb)}
-.hjump a{flex:0 0 auto;scroll-snap-align:start;
+/* ⚠**아래는 2f 이전의 기록이다 — 지금 .hjump 는 굴러가지 않는다.**
+   당시: 「가로 스크롤 컨테이너의 왼쪽 패딩은 스크롤하면 사라진다」(2026-08-18 유저 지적:
+   「가장 왼쪽의 버튼이 왼쪽 디자인 요소랑 겹쳐져 있다」). .hjump a 의 scroll-snap-align:start 로
+   칩 하나가 **스크롤포트 왼쪽 끝** = .spine(구단색 기둥) 옆에 와서 멈췄고,
+   scroll-padding-left 로 스냅 기준선을 안쪽으로 밀어 고쳤다.
+   ⚠**그 처방을 2f 에서 걷어냈다** — 줄바꿈으로 바꾸면서 스크롤포트 자체가 없어졌다.
+   **시즌 띠(.seasons)는 아직 >680px 에서 굴러가므로 그쪽 처방은 살아 있다** — 두 줄을 섞지 마라. */
+/* ⚠**바탕과 테두리는 이제 .hjbar 가 진다** — 라벨과 목록이 한 덩어리로 붙어 있어야
+   접었을 때도 라벨이 남는다. 여기는 목록의 배치만 맡는다.
+   ⚠**굴리지 않고 줄바꿈한다** — 좁은 화면에서 **305px 넘치던** 것이 감사가 짚은 네 스크롤 중 하나였다. */
+.hjump{display:flex;flex-wrap:wrap;gap:var(--s3);flex:1 1 auto;min-width:0}
+/* ⚠**스크롤바 규칙을 지웠다** — 이제 이 줄은 굴러가지 않고 줄바꿈한다(2026-09-08 · 2f).
+   안 지우면 「굴러가는 줄」이라는 거짓 근거가 소스에 남는다. */
+.hjump a{flex:0 0 auto;
   display:inline-flex;align-items:center;padding:var(--s3) var(--s5);
-  /* ⚠**쉬는 칩은 테두리도 면도 칠하지 않는다**(2026-09-08 · 2b · .tab 과 같은 사유).
-     ⚠**배경까지 끄는 이유**: .hjump 의 바탕이 --page 이고 칩이 --panel 이었는데 그 둘의 대비가
-     **라이트 1.044 · 다크 1.084** 라 애초에 안 보이는 면이었다. 안 보이는 면을 남겨 두면
-     「면으로도 구분된다」는 거짓 근거가 남는다. **지금 보고 있는 구획**만 면과 테두리를 갖는다. */
-  border:var(--rw-row) solid transparent;background:transparent;color:var(--tx);
+  /* ⚠⚠**칸을 다시 칠한다 — 2b 에서 껐던 것을 되돌린다**(2026-09-08 · 사용자 지적).
+     2b 는 「쉬는 탭은 테두리를 안 칠한다」를 세웠고, 그건 **같은 묶음에 칠해진 형제가 있다**는
+     전제 위에 선다. **목차에는 그 형제가 대부분 없다** — 지금 보고 있는 구획이 없으면
+     **하나도 안 칠해져 전부 맨 글자가 된다.** 실제로 그렇게 나갔고 사용자가 「가시성이 나쁘다」고 짚었다.
+     ⚠**홀로 선 토글(.mfind .tab)에서 검토가 잡은 것과 같은 결함을 여기에도 만들었다** —
+     **전제가 성립하는지 먼저 보라**는 것이 그 교훈이다.
+     ⚠**면이 아니라 선으로 칠한다** — 바탕(--page)과 --panel 의 대비가 **1.044 / 1.084** 라
+     면은 안 보인다. --tx-3 테두리는 **4.910 / 5.499** 다. */
+  border:var(--rw-row) solid var(--tx-3);background:transparent;color:var(--tx);
   font-size:var(--fs-data);text-decoration:none;white-space:nowrap;
   transition:border-color var(--t1) var(--e-out),background var(--t1) var(--e-out),color var(--t1) var(--e-out)}
-.hjump a:hover{border-color:var(--team,var(--tx-3));background:var(--panel-2)}
+.hjump a:hover{border-color:var(--tx-2);background:var(--panel-2)}
 /* ⚠**지금 보고 있는 구획을 표시한다.** 스크롤 위치를 자바스크립트가 알려 준다 —
-   안 켜지면 그냥 링크 줄로 남는다(§0-1: 스크립트 없이도 동작해야 한다) */
-.hjump a[aria-current="true"]{border-color:var(--team,var(--tx));font-weight:var(--w-bold);
-  background:var(--panel-2)}
+   안 켜지면 그냥 링크 줄로 남는다(§0-1: 스크립트 없이도 동작해야 한다).
+   ⚠**구단색을 쓰지 않는다**(2c 에서 네 번째로 같은 판정을 내린 그것) — 12구단 중 12구단이
+   3:1 미달이라 **테마에 따라 표식이 사라진다.** 굵기와 잉크가 말한다. */
+.hjump a[aria-current="true"]{border-color:var(--tx);font-weight:var(--w-bold);color:var(--tx)}
 @media (pointer:coarse){.hjump a{padding:var(--s4) var(--s5)}}
 /* ⚠**좁은 화면에서는 따라 붙지 않는다.**
    ≤680px 에서 .topbar 는 2행으로 접혀 화면의 큰 몫을 이미 먹는다 — 그 아래에 링크 줄까지
@@ -1639,34 +1691,58 @@ a.cg:focus-visible{outline:2px solid var(--tx);outline-offset:1px}
    실제 높이가 아니다」를 이 근처와 아래 두 곳에 나눠 적고 **86px 를 손으로 박았는데**,
    그 86 조차 실측 113~115px 에 28px 모자랐다. 지금은 --topbar 자체가 폭 구간마다
    실제 높이로 정의되므로(반응형 §), 이 계산들은 그냥 맞는다. */
-/* ── 좁은 화면의 목차 접기 (2c-3 · 2026-09-08) ─────────────────────
-   ⚠**넓은 화면에서는 없는 셈이다** — 버튼은 display:none 이고 체크박스는 .vh 다.
-   ⚠**여기는 내비보다 쉽다**: 아래 블록이 이미 ≤680px 에서 .hjump 를 static 으로 만든다.
-   sticky 가 아니므로 **펼쳐도 흐름 안에서 줄바꿈만 하고**, --topbar 나 52px 보정에 안 닿는다.
-   ⚠**개수를 버튼에 적는다** — 접으면 「뛸 곳이 몇 군데인지」가 사라진다. 숫자가 그것을 말한다. */
-.hjbtn{display:none}
-@media (max-width:680px){
-  .hjbtn{display:inline-flex;align-items:center;gap:var(--s3);margin:var(--s4) var(--pad) 0;
-    padding:var(--s3) var(--s5);font-size:var(--fs-data);color:var(--tx);cursor:pointer;
-    border:var(--rw-row) solid var(--tx-3);background:var(--panel);
-    transition:border-color var(--t1) var(--e-out),background var(--t1) var(--e-out)}
-  .hjbtn s{text-decoration:none;font-size:var(--fs-label);color:var(--tx-3);
-    font-variant-numeric:tabular-nums}
-  .hjbtn:hover{border-color:var(--tx-2);background:var(--panel-2)}
-  .hjtoggle:focus-visible + .hjbtn{outline:2px solid var(--tx);outline-offset:1px}
-  .hjump{display:none}
-  .hjtoggle:checked ~ .hjump{display:flex;flex-wrap:wrap;overflow:visible;
-    scroll-snap-type:none;scroll-padding-left:0}
-}
-@media (max-width:680px){
-  .hjump{position:static}
-  /* ⚠**특정성을 한 단계 올린다.** 아래 무조건 규칙과 특정성이 같으면
-     **소스 순서가 뒤인 그쪽이 이겨서** 이 보정이 한 번도 적용되지 않는다 —
-     실제로 그 상태로 커밋했다(2026-08-17 검토 P2). 미디어쿼리는 특정성을 올려 주지 않는다. */
-  html:root:has(.hjump){scroll-padding-top:calc(var(--topbar) + var(--s4))}
-}
-/* ⚠**앵커로 뛸 때 sticky 두 겹에 가리지 않게** 여백을 더 준다 */
-html:has(.hjump){scroll-padding-top:calc(var(--topbar) + 52px)}
+/* ── 목차 (2f · 2026-09-08 · 사용자 요청으로 전면 개편) ─────────────
+   ⚠**바꾼 것 셋과 사유가 각각 다르다.**
+
+   ⑴ **기본이 펼침이고 접을 수 있다**(2c 의 반대다). 2c 는 좁은 화면에서 접어 두고 열게 했는데,
+      사용자가 **보이는 쪽이 기본**이길 원했다. 서버가 checked 로 그리므로 **스크립트가 없어도 펼쳐져 있다.**
+   ⑵ **「目次」가 화면에 보인다.** 지금까지 그 이름은 aria-label 에만 있었고, 눈으로 보는 사람에게는
+      제목과 본문 사이에 **이름 없는 글자 줄**이 떠 있었다 — 「영역 구성이 나쁘다」의 정체다.
+   ⑶ ⚠**칸이 다시 보인다 — 2b 에서 내가 껐던 것을 되돌린다.**
+      2b 는 「쉬는 탭은 테두리를 안 칠한다」를 세웠고 그건 **같은 묶음에 칠해진 형제가 있다**는 전제 위에 선다.
+      **목차에는 그 형제가 대부분 없다**(지금 보고 있는 구획이 없으면 아무것도 안 칠해진다) —
+      그래서 전부 맨 글자가 됐다. **홀로 선 토글에서 검토가 잡은 것과 같은 결함을 여기에도 만들었다.**
+
+   ⚠**폭으로 가르지 않는다** — 넓은 화면에서 라벨만 두고 체크박스를 끄면
+   **눌러도 아무 일이 없는 손잡이**가 된다. 접기는 전 폭에서 똑같이 동작한다. */
+/* ⚠**고정(sticky)을 걷어냈다**(2026-09-08 · 2f · 실측이 시켰다).
+   2f 전의 .hjump 는 **한 줄을 가로로 굴리는 띄**였고 높이가 52px 로 **고정**이었다 —
+   그래서 scroll-padding-top 사다리에 52 를 박을 수 있었다. 2f 가 **줄바꿈 + 접기**로 바꾸면서
+   그 전제가 사라졌다: 실측 높이가 **43.3 ~ 122.5px** 로 움직인다
+   (684~1456px step 28 · 전 시즌 홈 9장 · 항목은 9장 전부 7개 · 최대는 684px).
+   ⚠**그런 바에는 정직한 상수가 없다** — sticky-anchor.test.ts 머리말이 .pickbar 에 대해
+   적어 둔 그 논거가 그대로 걸린다(「flex-wrap:wrap 이라 높이가 고정이 아니다」).
+   ⚠**폭으로 구간을 나누는 우회도 못 쓴다** — 서체가 3종(Plex·Noto·system)이라
+   줄바꿈 지점이 사용자 선택에 따라 움직인다. 구간을 박는 순간 다른 서체에서 거짓이 된다.
+   ⚠**숨기는 것보다 안 따라붙는 쪽을 고른다.** 목차는 페이지 맨 위에 펼쳐 있고,
+   되살리려면 **한 줄로 고정**해야 하는데 그건 2f 가 없앱 가로 스크롤을 다시 들이는 일이다. */
+.hjbar{margin:0 0 var(--s4);
+  display:flex;align-items:center;gap:var(--s4);flex-wrap:wrap;
+  padding:var(--s3) var(--pad);background:var(--page);
+  border-bottom:var(--rw-row) solid var(--hair)}
+/* ⚠**판정 영역을 --s1 로 두면 높이가 22.3px 이다**(2026-09-08 · 실측).
+   WCAG 2.2 SC 2.5.8 은 **24 × 24 CSS px** 을 요구하고 **포인터로 면제하지 않는다**
+   (term-tip.test.ts 가 같은 근거로 용어 버튼을 붙든다) — 즉 1280px 마우스에서도 미달이었다.
+   ⚠**이것은 목차를 접는 유일한 자리다** — .pickfold>summary 에 적어 둔 그 사유가 여기도 걸린다.
+   --s3 으로 올리면 **30.3px** 이다(내용+테두리 18.3 + 6×2). */
+.hjlab{display:inline-flex;align-items:center;gap:var(--s2);flex:0 0 auto;cursor:pointer;
+  font-size:var(--fs-label);letter-spacing:.16em;color:var(--tx-2);
+  padding:var(--s3) var(--s4);border:var(--rw-row) solid var(--tx-3);
+  border-radius:var(--r-pill);background:var(--panel);
+  transition:color var(--t1) var(--e-out),border-color var(--t1) var(--e-out)}
+.hjlab s{text-decoration:none;color:var(--tx-3);font-variant-numeric:tabular-nums;letter-spacing:0}
+.hjlab:hover{color:var(--tx);border-color:var(--tx-2)}
+.hjtoggle:focus-visible + .hjlab{outline:2px solid var(--tx);outline-offset:1px}
+/* ⚠**접으면 라벨이 그 사실을 말해야 한다** — 같은 글자면 무엇이 일어날지 알 수 없다 */
+.hjtoggle:not(:checked) ~ .hjlab::after{content:"を開く";letter-spacing:0;color:var(--tx-3)}
+/* ⚠**열림 상태도 말해야 대칭이다**(2026-09-08 · 1차 검토 P3).
+   같은 커밋의 시즌 손잡이는 두 상태를 다 바꾸는데 여기만 한쪽이었다 —
+   **같은 라운드에서 만든 두 접기가 다른 규율을 쓰면 다음 사람이 어느 쪽을 따를지 모른다.** */
+.hjtoggle:checked ~ .hjlab::after{content:"を閉じる";letter-spacing:0;color:var(--tx-3)}
+.hjtoggle:not(:checked) ~ .hjump{display:none}
+/* ⚠**사다리에 .hjbar 항목이 없는 것이 맞다** — 이제 고정이 아니므로 앵커를 가리지 않는다.
+   기본 규칙(html{scroll-padding-top:calc(var(--topbar) + var(--s4))})이 그대로 맞는다.
+   ⚠**다시 고정으로 되돌리면 여기에 상수를 박기 전에 위 문단을 읽어라.** */
 
 /* 先週の顔 — **순위 번호를 크게 쓰지 않는다.** 한 주짜리 순위를 시즌 순위와
    같은 무게로 그리면 그렇게 읽힌다 */
@@ -1914,8 +1990,100 @@ table.stand .dif i.n{right:50%}
    scroll-padding-left(84px)도 마찬가지다.
    ⚠**이 띠는 sticky 가 아니다** — 그래서 --topbar 같은 실측 토큰을 건드리지 않는다.
    내비(.tnav)는 sticky 인 .topbar 안이라 **같은 처방을 쓸 수 없다**(그쪽은 접는다 · 별건). */
+/* ⚠**넓은 화면에서는 이 둘이 없어야 한다 — 체크박스까지 꺼야 한다**(2c 에서 배운 것):
+   .vh 는 시각만 숨기고 **초점은 그대로 먹는다.** 순서도 중요하다 — 이 줄이 아래 미디어쿼리보다
+   **먼저** 와야 그쪽이 이긴다. 뒤에 두면 좁은 화면에서도 안 보인다(실제로 그렇게 썼다가 고쳤다). */
+.snbtn,.sntoggle{display:none}
+/* ⚠**띠와 손잡이를 담는 상자다 — 넓은 화면에서는 없는 셈이다.**
+   display:contents 면 자식이 부모의 흐름에 그대로 서므로 **>680px 의 기하가 한 픽셀도 안 바뀐다.**
+   접기는 ≤680px 전용이라, 상자가 일을 하는 것도 거기서뿐이다. */
+.snwrap{display:contents}
 @media (max-width:680px){
-  .seasons{flex-wrap:wrap;overflow-x:visible;scroll-snap-type:none;scroll-padding-left:0}
+  /* ⚠**바탕과 밑줄을 상자로 올린다**(2026-09-08 · 2f · 사용자 지적).
+     그전에는 .seasons 가 밑줄을 그었고 손잡이가 **그 줄 아래**에 있어서,
+     손잡이가 띠에서 잘려 나가 다른 구획처럼 보였다. 이제 둘이 같은 바탕·같은 줄 안에 있다.
+     ⚠**align-items:center 다** — 펼쳐서 띠가 3줄이 되어도 손잡이는 가운데 선다.
+     flex-start 로 두면 3줄 옆에서 위로 붙어 「첫 줄의 부속」처럼 읽힌다. */
+  /* ⚠**세로 패딩이 필요하다**(2026-09-08 · 2차 검토 Minor). 없으면 손가락에서 띠 높이가
+     .snbtn 높이(34.3px)와 같아져 **알약 테두리가 띠의 위아래 경계에 딱 붙는다** —
+     「띠에서 잘려 나가 보인다」를 고치려던 변경이 다른 모양으로 같은 인상을 준다. */
+  .snwrap{display:flex;align-items:center;gap:var(--s3);
+    background:var(--panel-2);border-bottom:var(--rw-row) solid var(--hair);
+    padding:var(--s2) calc(var(--gut) + var(--pad)) var(--s2) 0}
+  .seasons{flex-wrap:wrap;overflow-x:visible;scroll-snap-type:none;scroll-padding-left:0;
+    flex:1 1 auto;min-width:0;background:transparent;padding-right:0;
+    /* ⚠**~~none~~ 이 아니라 var(--rw-none) 이다**(2026-09-08 · 2차 검토 F6).
+       처음에 「0 은 척도 밖 값으로 세니까 none 을 쓴다」고 적었는데 **뒷부분이 거짓이었다** —
+       --rw-none:0 이 정확히 그 자리를 위해 존재하고 이 파일에서 15회 쓰이며 그중 7회가
+       border-bottom 이다. 그쪽도 게이트를 통과한다(정규식이 var( 로 시작하는 값을 안 센다).
+       **회피는 아니었지만 어법 이탈이었고 사유가 틀렸다.** */
+    border-bottom:var(--rw-none)}
+  .sntoggle{display:block}
+  /* ⚠⚠**높이로 자르지 않는다 — 개수로 자른다**(2026-09-08 · 2차 검토 F1·F2).
+     처음에는 max-height:30px;overflow:hidden 으로 한 줄만 남겼는데, **두 가지가 깨졌다**:
+
+     ⑴ **「지금 여기」가 사라진다.** 칩은 최신 내림차순이라 2018년 화면에서 aria-current 는
+        9개 중 **9번째**다 — 첫 줄(2026〜2022)에 없다. 2005 드래프트 화면은 22칩 중
+        **17개가 가려진다**(실측). 이 표식은 이 브랜치가 네 라운드에 걸쳐 지켜 온 그것이다.
+        ⚠**가로 스크롤용 보정(revealInStrip)은 여기서 안 돈다** — 그건 가로 넘침이 있을 때만
+        도는데 줄바꿈 상태에서는 넘침이 0 이다. **그것을 지키는 시험도 가로 축만 봐서 초록이었다.**
+     ⑵ **잘린 링크가 초점을 그대로 먹는다.** overflow:hidden 은 「프로그램으로 스크롤 가능한
+        상자」라, Tab 이 안 보이는 칩에 닿으면 브라우저가 띠를 세로로 굴린다 — 초점이 떠나도
+        scrollTop 은 남아 **「접혔다는데 둘째 줄만 보이는」 상태로 굳고, 손으로는 못 되돌린다**
+        (overflow:hidden 은 휠·터치로 안 굴러간다).
+        ⚠**바로 위 문단이 「.vh 는 시각만 숨기고 초점은 그대로 먹는다」를 적어 뒀는데**,
+        그 규율을 손잡이에는 적용하고 **잘라 낸 링크에는 적용하지 않았다.**
+        같은 커밋의 목차는 display:none 이라 이 문제가 없다 — **한 커밋 안에서 두 접기가 달랐다.**
+
+     → **display:none 으로 개수를 자른다.** 초점도 같이 사라지고(⑵ 해소), 스크롤 상자가
+       아예 안 생기며, **[aria-current] 만 예외로 남겨 표식을 지킨다**(⑴ 해소).
+     ⚠**규칙이 하나다 — 되돌리는 규칙을 안 쓴다.** :not(:checked) 안에 두면 펼쳤을 때
+       규칙 자체가 안 걸리므로 **기본 display 로 정확히 돌아간다.** display 값을 손으로 복원하면
+       그 값이 기본값과 어긋나는 날 조용히 틀어진다.
+     ⚠**nth-of-type 이지 nth-child 가 아니다** — 첫 자식은 라벨(span.slab)이라
+       nth-child 로 세면 연도가 하나씩 밀린다.
+     ⚠**한 줄을 보장하지 못한다**(폭·서체에 따라 1~2줄이다 · 실측 아래).
+       ⚠**남기는 개수는 3 이다**(2026-09-08 · 실측). 그 값에서 **기본 화면(현재 시즌)이
+       390px 에서 정확히 한 줄(27.8px)** 이 된다 — 사용자가 요청한 그 화면이다.
+       두 줄(55.6px)이 되는 경우는 둘뿐이다: ⑴**과거 시즌 화면**(멀리 있는 현재 칩을 예외로
+       끌어와야 해서 한 자리를 더 쓴다) ⑵**320px**. 둘 다 **사라지면 안 되는 정보가 그 줄을 산다.**
+       ⚠**4 로 두면 390px 기본 화면도 두 줄이 된다**(라벨 + 3년이 한 줄의 한계다 · 실측).
+       ⚠**한 줄을 보장하지 못한다. 보장을 포기한 것이 아니라 바꾼 것이다** —
+       「한 줄」보다 **「표식이 보이고 초점이 안 갇힌다」**가 무겁다. */
+  .sntoggle:not(:checked) ~ .snwrap .seasons.fold a:nth-of-type(n+4):not([aria-current="page"]){display:none}
+  /* ⚠**background:var(--panel) 을 걷어냈다** — 띠는 --panel-2 인데 손잡이만 --panel(흰색)이라
+     **회색 띠 위의 흰 얼룩**이었다. 잉크(테두리)로만 말하게 한다.
+     ⚠**테두리는 --tx-3 그대로다** — --hair-2 로 낮추면 조작 가능한 것으로 안 읽힌다
+     WCAG 1.4.11 은 비텍스트에 3:1 을 요구한다.
+     ⚠**바탕은 --page 가 아니라 --panel-2 다**(2026-09-08 · 2차 검토 F5 — **내가 다른 자리의 수를
+     그대로 옮겨 적었다**). .snbtn 은 background:transparent 이고 담는 상자가 .snwrap{--panel-2} 다 —
+     실제 대비는 **4.541(라이트) / 4.611(다크)** 이다. 3:1 은 통과하므로 **결론은 안 바뀌고 근거만 바뀐다.**
+     ⚠**같은 실수를 이 파일이 이미 적어 뒀다**(.seasons 문단의 「바탕의 이름과 숫자가 둘 다 틀렸다」) —
+     **읽고도 되풀이했다.**
+     ⚠**판정 영역은 --s3 을 유지한다**(30.3px · SC 2.5.8) — 연도 칩(23.8px)에 맞추지 마라.
+     맞추면 기준 미달이 하나 더 생길 뿐이다. */
+  .snbtn{display:inline-flex;align-items:center;gap:var(--s3);cursor:pointer;flex:0 0 auto;
+    margin:0;padding:var(--s3) var(--s4);
+    font-size:var(--fs-label);letter-spacing:.14em;color:var(--tx-2);
+    border:var(--rw-row) solid var(--tx-3);border-radius:var(--r-pill);background:transparent;
+    /* ⚠.hjlab 과 같은 역할·같은 hover 변화인데 여기만 전환이 없었다(2차 검토 Minor) */
+    transition:color var(--t1) var(--e-out),border-color var(--t1) var(--e-out)}
+  .snbtn s{text-decoration:none;color:var(--tx-3);font-variant-numeric:tabular-nums}
+  .snbtn:hover{color:var(--tx);border-color:var(--tx-2)}
+  .sntoggle:focus-visible ~ .snwrap .snbtn{outline:2px solid var(--tx);outline-offset:1px}
+  /* ⚠**펼친 뒤에는 「닫기」라고 말해야 한다** — 같은 글자면 무엇이 일어날지 알 수 없다 */
+  /* ⚠⚠**~~font-size:0~~ 으로 숨기면 안 된다**(2026-09-08 · 1차 검토 P2).
+     접근성 이름 계산은 display:none · visibility:hidden · aria-hidden 만 제외하고
+     **font-size:0 은 안 뺀다** — 펼친 상태에서 이름이 「すべての年(+閉じる)」로 남아
+     **패널이 열려 있는데 「여는」 것으로 읽힌다.** 바로 아래 개수(s)는 display:none 을 쓰면서
+     **b 만 다른 기법을 썼다.**
+     → b 를 진짜로 숨기고 글자는 **라벨 자신의 ::after** 로 낸다(생성 콘텐츠는 이름에 들어간다).
+     ⚠**b::after 가 아니라 .snbtn::after 다** — display:none 인 요소의 ::after 는 안 생긴다. */
+  .sntoggle:checked ~ .snwrap .snbtn b{display:none}
+  .sntoggle:checked ~ .snwrap .snbtn::after{content:"閉じる"}
+  /* ⚠**펼친 뒤에는 개수를 숨긴다** — 「閉じる 9」는 9 가 무엇의 수인지 말하지 못한다.
+     접혀 있을 때만 「뛸 곳이 몇 개 더 있는가」를 뜻한다. */
+  .sntoggle:checked ~ .snwrap .snbtn s{display:none}
 }
 /* ⚠**라벨은 굴러 나가지 않는다** — 무엇을 고르는 줄인지가 사라지면 안 된다 */
 /* ⚠**라벨이 덮는 넓이가 자기 글자만큼뿐이었다.** align-items:center 라 높이가 글자 높이였고,
@@ -2562,7 +2730,7 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
 }
 @media (max-width:680px){
   /* ⚠**여기서 헤더가 2행이 된다** — 브랜드·탭줄·테마가 윗줄, 검색칸이 아랫줄.
-     그래서 --topbar 도 **2행의 실제 높이**로 바꾼다. 이 한 줄이 .rail·.hjump·.pickbar·
+     그래서 --topbar 도 **2행의 실제 높이**로 바꾼다. 이 한 줄이 .rail·.pickbar·
      scroll-padding-top·.shell 을 **전부 한꺼번에** 맞춘다 — 예전에는 여기가 44px 인 채
      scroll-padding-top:86px 를 ≤480 에 따로 박아 뒀고, 그 86 조차 실측 **113~115px** 에
      28px 모자랐다(2026-08-20 계측).
@@ -2624,11 +2792,15 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
   .idline .nm{font-size:clamp(var(--fs-title),5.5vw,var(--fs-score))}
   /* 상태 띠는 **줄이되 지우지 않는다** — 여기 뜨는 것은 「수집이 멈췄다」는 경고다(M12) */
   .state{padding:var(--s2) var(--pad);line-height:1.4}
-  /* 시즌 띠 — 9시즌이 늘 넘치므로 칩만 얇게 한다. 스크롤바는 남긴다(더 있다는 유일한 신호다) */
-  .seasons{padding:var(--s1) var(--pad)}
+  /* 시즌 띠 — 칩만 얇게 한다.
+     ⚠**~~9시즌이 늘 넘치므로~~ · ~~스크롤바는 남긴다~~ 는 낡았다**(2026-09-08 · 2차 검토 Minor).
+     2c 부터 ≤680px 에서는 굴리지 않고 줄바꿈하며, 2f 부터는 개수로 접는다 — 스크롤바가 없다.
+     ⚠**단축 속성을 쓰지 마라** — padding 한 줄이 위 ≤680 블록의 padding-right:0 을 **통째로 지운다.**
+     그러면 손잡이가 든 상자(.snwrap)가 이미 오른쪽 안여백을 주는데 띠가 한 번 더 줘서 두 겹이 된다. */
+  .seasons{padding-top:var(--s1);padding-bottom:var(--s1)}
   .seasons a{font-size:var(--fs-sub);padding:var(--s1) var(--s4)}
   /* 화면 안 이동 줄 — 칩 높이는 손가락 규칙이 정하므로 상자 여백만 줄인다 */
-  .hjump{padding:var(--s2) var(--pad);margin-bottom:var(--s4)}
+  .hjbar{padding:var(--s2) var(--pad);margin-bottom:var(--s4)}
 }
 /* ⚠**≤480 에 있던 헤더 접기를 ≤680 으로 올렸다**(2026-08-20).
    접는 이유(「한 줄에 브랜드·검색·내비·테마가 다 안 들어간다」)는 480 이 아니라 **680 부터** 참이었다 —
@@ -2653,9 +2825,16 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
      **그대로 바 높이**가 된다. 내비를 접은 뒤로는 .tnav a 가 아니라 **이 버튼**이 그 자리다.
      (2026-09-08 실측: 이 줄을 넣고도 96.0px 로 토큰과 일치했다 — 바 높이를 정하는 것은
      검색칸 줄이고 버튼은 그 안에 들어간다. 버튼 높이는 28.6 → **32.6px**.)
-     ⚠**.hjbtn 은 여기 안 든다** — 그쪽 기본값이 이미 var(--s3) var(--s5) 라 같은 값을 다시 쓰는
-     **무효 선언**이 된다(실측: 마우스·손가락 둘 다 6px 12px · 32.6px).
-     목차 버튼은 상단바 밖이라 처음부터 넉넉히 줄 수 있었다. */
+     ⚠**~~.hjbtn 은 여기 안 든다~~ 는 낡았다**(2026-09-08 · 2f 에서 그 버튼이 사라졌다).
+     목차는 이제 접기 버튼이 아니라 **늘 보이는 라벨(.hjlab)**이고 목록이 기본으로 펼쳐져 있다.
+     ⚠⚠**~~.hjlab·.snbtn 은 기본값이 이미 손가락에 맞는다~~ 는 거짓이었다** —
+     **재기 전에 쓴 문장이고 틀렸다.** 실측하니 둘 다 **22.3px** 이었고(손가락·마우스 동일 ·
+     390·1280px 네 지점 전부) SC 2.5.8 의 24px 에 미달이었다. 기본값을 --s3 으로 올려 30.3px 으로
+     맞추고(각각의 정의문), 여기서 한 단계 더 준다 — **둘 다 그 목록을 여닫는 유일한 손잡이**라
+     바로 위 .pickfold>summary 에 적은 사유가 그대로 걸린다.
+     ⚠**이 둘은 .topbar 밖이라 --topbar 를 건드리지 않는다**(실측: inTopbar=false ·
+     바 높이는 바꾸기 전후 96/88/46 으로 토큰과 일치). */
+  .hjlab,.snbtn{padding:var(--s4) var(--s5)}
   .navbtn{padding:var(--s3) var(--s5)}
 }
 /* ⚠**손가락에서는 헤더가 더 두껍다 — --topbar 도 따라가야 한다.**
@@ -2741,7 +2920,11 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
 }
 @media print{
   /* 조작에 쓰는 것은 종이에서 아무 일도 하지 않는다 */
-  .topbar,.editor,.skip,.seasons,.daybar,.pickbar,.pickgames{display:none}
+  /* ⚠**새 조작을 이 목록에 넣는 것을 빼먹지 마라**(2026-09-08 · 검토 Minor).
+     .snwrap 은 시즌 띄를 담는 상자라 안 지우면 **바탕과 밑줄만 종이에 남고**,
+     .snbtn · .hjbar 는 종이에서 아무 일도 안 하는 손잡이다. **목록은 이름으로 적는 방식이라
+     새 조작을 만들 때마다 여기를 같이 고쳐야 한다.** */
+  .topbar,.editor,.skip,.seasons,.snwrap,.snbtn,.hjbar,.daybar,.pickbar,.pickgames{display:none}
   /* ⚠**레일은 지우지 않는다 — 지우면 아래 규칙이 닿기도 전에 이름이 사라진다.**
      여기 있던 .rail 의 display:none 이 그 일을 하고 있었다(2026-08-17 이중 검토).
      바로 밑 주석이 「탭줄은 조작이면서 고른 것의 이름이다」라고 적어 두고,

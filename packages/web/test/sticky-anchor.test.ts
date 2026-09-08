@@ -1,7 +1,11 @@
 /**
  * **고정 바가 앵커를 가리지 않는가** — 브라우저 없이.
  *
- * `--topbar` 를 sticky 오프셋으로 읽는 바가 셋이다(`.rail` · `.hjump` · `.pickbar`).
+ * `--topbar` 를 sticky 오프셋으로 읽는 바가 **둘**이다(`.rail` · `.pickbar`).
+ * ⚠**~~셋(`.rail` · `.hjump` · `.pickbar`)~~ 은 낡았다**(2026-09-08 · 2f).
+ *   목차가 줄바꿈 + 접기로 바뀌면서 높이가 **43.3 ~ 122.5px** 로 움직이게 됐고,
+ *   그런 바에는 정직한 상수가 없어 **고정을 걷었다**(assets.ts 의 .hjbar 문단).
+ *   그래서 사다리 규칙도 둘에서 **하나**(`.rail`)로 줄었다.
  * 앵커로 뛰면 그 바 뒤에 대상이 숨으므로 `scroll-padding-top` 사다리가 그만큼을 비워 줘야 한다.
  * ⚠**그 사다리에 `.pickbar` 만 없다**(2026-08-25 · 감사 P3 #32).
  *
@@ -62,8 +66,12 @@ function ladderCovers(): Set<string> {
 test("⚠집합을 뽑는 방식이 헛돌지 않는다 — 아래 두 시험이 전부 여기에 얹혀 있다", () => {
   const bars = stickyAtTopbar();
   const ladder = ladderCovers();
-  assert.ok(bars.size >= 3, `--topbar 에 붙는 고정 바를 ${bars.size}개밖에 못 찾았다 — 정규식이 헛돈다`);
-  assert.ok(ladder.size >= 2, `사다리 규칙을 ${ladder.size}개밖에 못 찾았다 — 정규식이 헛돈다`);
+  // ⚠**분모를 실제 수에 맞춘다**(2026-09-08 · 2f 에서 .hjbar 가 고정을 버렸다).
+  //   예전 문턱(바 3 · 사다리 2)은 .hjump 가 sticky 이던 시절의 수다.
+  //   ⚠문턱을 낮추는 것이 검사를 약하게 만들지 않는다 — 이 시험의 일은
+  //   **정규식이 아무것도 못 잡는 상태**를 잡는 것이고, 새 바가 생기면 아래 시험이 잡는다.
+  assert.ok(bars.size >= 2, `--topbar 에 붙는 고정 바를 ${bars.size}개밖에 못 찾았다 — 정규식이 헛돈다`);
+  assert.ok(ladder.size >= 1, `사다리 규칙을 ${ladder.size}개밖에 못 찾았다 — 정규식이 헛돈다`);
   assert.ok(bars.has(".rail"), `.rail 을 못 찾았다: ${[...bars].join(" ")}`);
   assert.ok(bars.has(".pickbar"), `.pickbar 를 못 찾았다: ${[...bars].join(" ")}`);
   console.log(`  · 고정 바 ${bars.size}개 [${[...bars].sort().join(" ")}] / 사다리 ${ladder.size}개 [${[...ladder].sort().join(" ")}]`);

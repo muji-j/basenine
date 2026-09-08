@@ -447,10 +447,20 @@ test("⚠표 머리에 세로 sticky 오프셋을 주지 않는다 — 주면 �
  * ⚠**위 검사가 성립하는 전제를 함께 고정한다.**
  * 「표가 전부 스크롤 상자 안에 있다」가 깨지면 위 결론(top 이 무해하지 않다)도 달라진다 —
  * 전제가 조용히 바뀌는 것을 막는다. 실측(2026-08-17): 검사한 121개 표가 121/121 `.scroller` 안.
+ *
+ * ⚠**첫 리터럴 일치를 집지 마라**(2026-09-08 · 2f 에서 실제로 붉어졌다).
+ * 예전에는 `/\.scroller\{…\}/` 로 **소스에서 처음 나오는** `.scroller{` 를 읽었는데,
+ * 반지름 척도가 `table,…,.scroller{border-radius:…}` 를 **그 앞에** 만들면서
+ * 스크롤과 아무 상관 없는 규칙을 집었다. 전제는 그대로인데 시험만 거짓이 된 것이다.
+ * → **`.scroller` 를 선택자로 갖는 규칙을 전부 모아** 그중 하나가 말하는지 본다.
  */
 test("표를 감싸는 상자가 여전히 가로 스크롤 컨테이너다 — 위 검사의 전제", () => {
-  const m = /\.scroller\{([^}]*)\}/.exec(CSS);
-  assert.notEqual(m, null, ".scroller 규칙이 없다");
-  assert.match(m![1]!, /overflow-x\s*:\s*auto/, ".scroller 가 더는 가로 스크롤 상자가 아니다");
+  const own = rules(CSS).filter((r) => r.sel.split(",").some((one) => one.trim() === ".scroller"));
+  assert.ok(own.length > 0, ".scroller 규칙이 없다");
+  assert.ok(
+    own.some((r) => /overflow-x\s*:\s*auto/.test(r.body)),
+    `.scroller 가 더는 가로 스크롤 상자가 아니다 — 읽은 규칙 ${own.length}개: ` +
+      own.map((r) => `{ ${r.body.trim()} }`).join(" / "),
+  );
 });
 
