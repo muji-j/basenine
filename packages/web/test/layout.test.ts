@@ -4,6 +4,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { toString } from "../src/html.ts";
 import {
   DRAFT_PATH,
+  NAV_LABELS,
   STALE_AFTER_DAYS,
   freshness,
   freshnessBar,
@@ -528,4 +529,44 @@ test("⚠끝난 시즌은 「취득 실패」라고 말하지 않는다 — 다�
   const running = freshness("2026-10-19", "2026-11-20", "2026-10-19", { from: 2018, to: 2026 }, false);
   const barRunning = toString(freshnessBar(running, false));
   assert.match(barRunning, /取得に失敗している可能性/, "수집이 멈췄는데 아무 말도 안 했다");
+});
+
+/**
+ * ⚠**접힌 내비 버튼의 이름표가 내비와 갈리지 않는다**(2026-09-08 · 2c-2).
+ *
+ * 좁은 화면에서 내비를 접으면 `aria-current="page"` 가 붙은 링크가 **화면에서 사라진다**.
+ * 그래서 버튼이 **현재 화면의 이름을 그대로 입는다**(`NAV_LABELS`). 그 표가 내비의 라벨과
+ * 갈리면 **버튼이 다른 이름을 말하게 되고**, 그건 「지금 어디」를 틀리게 말하는 것이다.
+ *
+ * ⚠**소스에서 대조한다** — 라벨은 `layout.ts` 의 렌더에 흩어져 있고(navA 여덟 · 직접 두 개),
+ * 자료 구조 한 벌로 모으는 리팩터는 **항목마다 href 규칙이 달라**(시즌 상대 · root 고정)
+ * 위험이 이득보다 크다. **모으는 대신 갈라지지 못하게 묶는다.**
+ * ⚠**`home` 만 예외다** — 내비에 항목이 없고 그 자리의 표식은 브랜드가 진다.
+ */
+test("⚠접힌 내비 버튼의 이름표(NAV_LABELS)가 내비의 라벨과 같다", () => {
+  const src = readFileSync(new URL("../src/layout.ts", import.meta.url), "utf8");
+  const found = new Map<string, string>();
+  // navA(<경로>, "<키>", "<라벨>"
+  for (const m of src.matchAll(/navA\([^,]+,\s*"([a-z]+)",\s*"([^"]+)"/g)) {
+    found.set(m[1]!, m[2]!);
+  }
+  // 시즌과 무관한 두 항목은 navA 를 안 쓴다: ...${here("log")}>記録</a>
+  for (const m of src.matchAll(/\$\{here\("([a-z]+)"\)\}>([^<]+)</g)) {
+    found.set(m[1]!, m[2]!);
+  }
+  assert.ok(found.size >= 10, `내비 라벨을 ${found.size}개밖에 못 찾았다 — 추출 방식이 낡았다`);
+
+  const wrong: string[] = [];
+  for (const [key, label] of found) {
+    const want = NAV_LABELS[key as keyof typeof NAV_LABELS];
+    if (want === undefined) wrong.push(`${key} — NAV_LABELS 에 없다(내비에는 「${label}」로 있다)`);
+    else if (want !== label) wrong.push(`${key} — 내비는 「${label}」인데 표는 「${want}」다`);
+  }
+  // 표에만 있고 내비에 없는 것 — home 하나여야 한다
+  for (const k of Object.keys(NAV_LABELS)) {
+    if (!found.has(k) && k !== "home") wrong.push(`${k} — 표에만 있고 내비에는 없다`);
+  }
+
+  assert.deepEqual(wrong, [], "접힌 버튼이 내비와 다른 이름을 말하게 된다");
+  console.log(`  · 내비 라벨 ${found.size}종이 NAV_LABELS 와 일치(home 은 브랜드가 진다)`);
 });

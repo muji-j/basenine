@@ -331,6 +331,39 @@ a{color:inherit}
 .tnav a{flex:0 0 auto;font-size:var(--fs-data);padding:var(--s2) var(--s4);text-decoration:none;color:var(--tx-2);white-space:nowrap;
   transition:color var(--t1) var(--e-out),background var(--t1) var(--e-out)}
 .tnav a:hover{color:var(--tx);background:var(--panel-2)}
+/* ── 좁은 화면의 내비 접기 (2c-2 · 2026-09-08) ─────────────────────
+   ⚠**넓은 화면에서는 이 셋이 전부 없는 셈이다** — 버튼은 display:none 이고 체크박스는 .vh 이며
+   내비는 지금까지대로 그려진다. **좁은 화면 분기 안에서만 뜻이 생긴다.**
+   ⚠**왜 체크박스인지는 layout.ts 의 주석이 갖는다**(요약: JS 로 정하면 defer 라 100ms 깜빡이고,
+   CSS 로 <details> 를 펴는 것은 최신 크롬에서만 된다 — 둘 다 실측).
+   ⚠**삼선 아이콘을 글자로 쓰지 않는다** — 서체 부분집합 커버리지 게이트가 없는 글자에서 멈춘다.
+   그래서 gradient 로 그린다. 배경이라 강제 색 모드에서 사라지지만, **버튼의 글자(현재 화면 이름)가
+   남으므로 눌 곳을 잃지 않는다.** */
+.navbtn{display:none}
+@media (max-width:680px){
+  .navbtn{display:inline-flex;align-items:center;gap:var(--s3);flex:0 0 auto;
+    padding:var(--s2) var(--s4);font-size:var(--fs-data);color:var(--tx);cursor:pointer;
+    border:var(--rw-row) solid var(--tx-3);background:var(--panel);
+    transition:border-color var(--t1) var(--e-out),background var(--t1) var(--e-out)}
+  .navbtn::before{content:"";flex:none;width:14px;height:10px;
+    background:linear-gradient(var(--tx),var(--tx)) 0 0/100% 2px no-repeat,
+      linear-gradient(var(--tx),var(--tx)) 0 4px/100% 2px no-repeat,
+      linear-gradient(var(--tx),var(--tx)) 0 8px/100% 2px no-repeat}
+  .navbtn:hover{border-color:var(--tx-2);background:var(--panel-2)}
+  /* ⚠**초점 링이 체크박스가 아니라 라벨에 서야 한다** — 체크박스는 .vh 라 화면에 없다.
+     이게 없으면 **키보드 사용자가 어디에 있는지 안 보인다.** */
+  .navtoggle:focus-visible + .navbtn{outline:2px solid var(--tx);outline-offset:1px}
+  /* 접힌 상태가 기본이다 — **CSS 가 정하므로 첫 페인트부터 접혀 있다.** */
+  .tnav{display:none}
+  /* ⚠**펼치면 띠 밖으로 겹쳐 내린다.** 안에 넣으면 상단바가 자라고, 그러면 --topbar(실측 토큰)와
+     그것을 쓰는 sticky 오프셋이 전부 거짓이 된다. .topbar 는 sticky 라 이미 위치 기준이다. */
+  .navtoggle:checked ~ .tnav{display:flex;flex-wrap:wrap;overflow:visible;
+    position:absolute;top:100%;left:0;right:0;z-index:30;
+    padding:var(--s3) calc(var(--gut) + var(--pad));gap:var(--s2);
+    background:var(--panel);border-bottom:var(--rw-row) solid var(--hair-2);
+    box-shadow:0 6px 14px rgba(0,0,0,.14)}
+  .navtoggle:checked ~ .tnav a{padding:var(--s3) var(--s4)}
+}
 /* ⚠**「지금 여기」가 어느 화면에서나 같은 방식으로 보여야 한다**(2026-08-17 유저 지적:
    「홈화면에 있을때랑 탭이 활성화 되어 있을때 헤더 디자인이 다르다」).
    ⚠**두 단계가 있다** — page(바로 이 화면) 와 true(이 구획 안이지만 다른 화면).
