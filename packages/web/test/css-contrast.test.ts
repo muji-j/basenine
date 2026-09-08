@@ -1090,6 +1090,47 @@ test("⚠1.4.11 면제로 적어 둔 자리가 아직 실재한다 — 사라진
  * ⚠**이 시험이 없으면 그 자리는 조용히 되돌아간다.** 위 면제 시험은 「선택자가 있는가」만 보므로
  * 테두리를 다시 꺼도 초록이다 — 그게 F4 가 낡은 채로 통과하던 방식이다.
  */
+/**
+ * ⚠**「지금 여기」 표식 셋은 한 언어여야 하고, 그 잉크에 구단색을 쓰지 않는다**(2026-09-08 · 2c).
+ *
+ * 셋(`.tnav a[aria-current="page"]` · `.brand[aria-current="page"]` · `.seasons a[aria-current="page"]`)은
+ * **같은 뜻**(바로 이 화면·이 시즌)을 **같은 형태**(2px inset 밑줄)로 말한다. 잉크가 갈리면
+ * 같은 뜻이 두세 색이 된다.
+ *
+ * ⚠**구단색은 특히 안 된다.** 12구단 전수 실측(`--panel` 대비): **라이트 4/12 · 다크 8/12 ·
+ * 합집합 12/12** 가 비텍스트 3:1 미달이다 — 최악 다크 オリックス 1.079 · 라이트 楽天 1.611.
+ * **테마에 따라 「지금 여기」가 통째로 사라진다.**
+ *
+ * ⚠**이 저장소가 같은 판정을 내린 것이 세 번째다**(`.tbar i` · `.mf-shape`/`.mf-dot` ·
+ * `.seasons a[aria-current]`). 처방도 셋 다 같았다 — **구단색을 선에서 빼고 토큰으로.**
+ * 세 번 같은 결함이 났다는 것은 **사람의 기억으로는 안 막힌다**는 뜻이라 시험으로 못 박는다.
+ */
+test("⚠「지금 여기」 표식 셋이 한 잉크(--tx-3)이고 구단색을 쓰지 않는다", () => {
+  const MARKS = [
+    '.tnav a[aria-current="page"]',
+    '.brand[aria-current="page"]',
+    '.seasons a[aria-current="page"]',
+  ];
+  const bad: string[] = [];
+  for (const sel of MARKS) {
+    const re = new RegExp(
+      `(?:^|[\\n}])\\s*${sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\{([^{}]*)\\}`,
+    );
+    const m = re.exec(CSS_NC);
+    if (!m) {
+      bad.push(`${sel} — 규칙을 못 찾았다(선택자가 바뀌었으면 이 목록도 고쳐라)`);
+      continue;
+    }
+    const body = m[1]!;
+    const shadow = /box-shadow:([^;]*)/.exec(body)?.[1] ?? "";
+    if (!shadow) bad.push(`${sel} — inset 밑줄이 없다`);
+    else if (/var\(--team/.test(shadow)) bad.push(`${sel} — 밑줄에 구단색을 쓴다: ${shadow.trim()}`);
+    else if (!/var\(--tx-3\)/.test(shadow)) bad.push(`${sel} — 밑줄 잉크가 --tx-3 이 아니다: ${shadow.trim()}`);
+  }
+  assert.deepEqual(bad, [], "「지금 여기」 표식의 언어가 갈렸다");
+  console.log(`  · 「지금 여기」 표식 ${MARKS.length}곳 전부 inset 2px --tx-3 (구단색 0곳)`);
+});
+
 test("⚠홀로 서는 토글(.mfind .tab)은 쉬는 동안에도 스스로 테두리를 갖는다", () => {
   const m = /\.mfind\s+\.tab:where\(:not\(\[aria-pressed="true"\]\)\)\s*\{([^{}]*)\}/.exec(CSS_NC);
   assert.ok(

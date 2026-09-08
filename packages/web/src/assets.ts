@@ -336,11 +336,26 @@ a{color:inherit}
    ⚠**두 단계가 있다** — page(바로 이 화면) 와 true(이 구획 안이지만 다른 화면).
    예전에는 page 만 스타일이 있어서 days.html·starters.html 이 **아무것도 선택돼 보이지 않았다**
    (마크업은 맞고 화면만 비어 있었다). */
-.tnav a[aria-current="page"]{color:var(--tx);font-weight:var(--w-bold);box-shadow:inset 0 -2px 0 var(--team,#6b7280)}
+/* ⚠**밑줄에 구단색을 쓰지 않는다**(2026-09-08 · 2c). 12구단 전수 실측(--panel 대비):
+   **라이트 4/12 · 다크 8/12 · 합집합 12/12** 가 비텍스트 3:1 미달이다. 최악은 다크의
+   オリックス **1.079** · 西武 1.096, 라이트의 ソフトバンク **1.643** · 楽天 1.611 —
+   **테마에 따라 「지금 여기」가 통째로 사라진다.**
+   ⚠**이 저장소가 같은 판정을 내린 것이 이번이 세 번째다**: .tbar i(감사 #21) ·
+   .mf-shape/.mf-dot(감사 P1) · .seasons a[aria-current](2b 2차 검토 F2). 처방도 셋 다 같았다 —
+   **구단색을 선에서 빼고 토큰으로 바꾼다.**
+   → --tx-3 (--panel 대비 **5.125 / 5.072**). 굵기(bold)가 「바로 이 화면」을 같이 말한다.
+   ⚠**구단색이 사라지는 게 아니다** — 구단을 말하는 자리는 .block>h2::before 와 .spine 이고
+   그쪽은 면이라 대비 규칙이 다르다. **선에만 안 쓴다.**
+   ⚠**아랫줄(true)은 손대지 않았다** — --hair-2 라 **1.580 / 1.557** 로 역시 3:1 미달이지만
+   이 브랜치가 만든 결함이 아니고, 고치면 page 와 잉크가 같아져 **둘을 가르는 것이 굵기뿐**이 된다.
+   **별도 판단이 필요해 남긴다.** */
+.tnav a[aria-current="page"]{color:var(--tx);font-weight:var(--w-bold);box-shadow:inset 0 -2px 0 var(--tx-3)}
 .tnav a[aria-current="true"]{color:var(--tx);box-shadow:inset 0 -2px 0 var(--hair-2)}
 /* ⚠**홈에서는 표시가 브랜드에 붙는다** — 탭 줄에는 홈 항목이 없기 때문이다.
-   여기에 규칙이 없어서 홈만 「아무 데도 안 있는」 것처럼 보였다. 탭과 같은 언어로 표시한다. */
-.brand[aria-current="page"]{box-shadow:inset 0 -2px 0 var(--team,#6b7280)}
+   여기에 규칙이 없어서 홈만 「아무 데도 안 있는」 것처럼 보였다. 탭과 같은 언어로 표시한다.
+   ⚠**「같은 언어」에는 잉크도 포함된다** — 위 .tnav 를 --tx-3 로 고치면서 여기만 두면
+   **같은 뜻의 표식이 두 색이 된다.** 같은 12/12 대비 결함이기도 하다(위 주석 참조). */
+.brand[aria-current="page"]{box-shadow:inset 0 -2px 0 var(--tx-3)}
 /* ⚠**「自動」이 「自/動」으로 접혔다**(2026-08-19 감사 P1). 이 버튼은 flex 항목인데
    flex 도 white-space 도 없어서, 자리가 모자라면 **글자에서 줄바꿈**을 했다 —
    실측 43.8×27 → 34.4×**40**. 40px 은 바(44~46px)를 거의 다 먹는다.
@@ -1716,6 +1731,19 @@ table.stand .dif i.n{right:50%}
   scroll-padding-left:84px}
 .seasons::-webkit-scrollbar{height:6px}
 .seasons::-webkit-scrollbar-thumb{background:var(--hair-2);border-radius:var(--r-thumb)}
+/* ⚠**좁은 화면에서는 굴리지 않고 접는다**(2026-09-08 · 2c).
+   감사 실측: 390px 첫 화면에 **가로로 미는 것이 넷**(내비 · 이 띠 · 탭줄 · 표)이고
+   **사용자가 어느 것을 밀어야 하는지 알 수 없다.** 그게 「투박하다」의 상당 부분이었다.
+   이 띠는 9시즌에서 **227px 넘친다**(내용 617 / 상자 390).
+   → 줄바꿈하면 넘침이 **0** 이 되고 높이는 29 → **57px**(+28px · 실측).
+   ⚠**스크립트가 필요 없다**(§0-1) — CSS 한 블록이고, 스크립트를 끈 사람도 같은 화면을 본다.
+   ⚠**스냅을 같이 꺼야 한다** — 굴리지 않는 줄에 scroll-snap 이 남으면 뜻이 없고,
+   scroll-padding-left(84px)도 마찬가지다.
+   ⚠**이 띠는 sticky 가 아니다** — 그래서 --topbar 같은 실측 토큰을 건드리지 않는다.
+   내비(.tnav)는 sticky 인 .topbar 안이라 **같은 처방을 쓸 수 없다**(그쪽은 접는다 · 별건). */
+@media (max-width:680px){
+  .seasons{flex-wrap:wrap;overflow-x:visible;scroll-snap-type:none;scroll-padding-left:0}
+}
 /* ⚠**라벨은 굴러 나가지 않는다** — 무엇을 고르는 줄인지가 사라지면 안 된다 */
 /* ⚠**라벨이 덮는 넓이가 자기 글자만큼뿐이었다.** align-items:center 라 높이가 글자 높이였고,
    gap 4px + margin 5px 는 배경이 없다 — 그 틈과 위아래로 **지나가는 연도가 그대로 보였다.**
