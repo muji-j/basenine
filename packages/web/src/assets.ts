@@ -30,6 +30,18 @@ export const ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32
 </svg>
 `;
 
+/**
+ * 웹폰트가 못 오거나 「기본」을 고른 사람이 보는 **대체 글꼴 목록**.
+ *
+ * ⚠**여기가 정본이다**(2026-09-08 · 3단계 검토 P2). 같은 목록이 `scripts/build-fonts.ts` 에도
+ * 하드코딩돼 있었는데, 그쪽이 붙이는 규칙(`html[data-font=...]` · 특이도 0,1,1)이
+ * 아래 `:root`(0,1,0)를 **항상 이긴다** — 즉 이 값은 **렌더에 한 번도 반영되지 않는 죽은 선언**이었다.
+ * 두 곳이 갈리면 「고쳤는데 왜 안 바뀌지」가 된다.
+ * → **build-fonts.ts 가 이 상수를 import 한다.** 목록은 한 벌이다(M1).
+ */
+export const FONT_FALLBACK =
+  '"Yu Gothic","Hiragino Kaku Gothic ProN","Noto Sans JP","Meiryo",system-ui,sans-serif';
+
 export const CSS = `
 :root {
   --page:#fbfaf7; --tx:#17171a; --tx-2:#5d5d59; --tx-3:#6e6e69;
@@ -58,7 +70,7 @@ export const CSS = `
      탐색으로 찾은 값이고 실측 대비는 **승|무 12.19 · 무|패 3.54 · 승|패 3.44** 다.
      ⚠파랑↔주황은 유지한다(색각 안전 · 아래 「수준 색」과 같은 이유). */
   --bar-w:#062a47; --bar-t:#eceae2; --bar-l:#b8651f;
-  --f-body:"Yu Gothic","Hiragino Kaku Gothic ProN","Noto Sans JP","Meiryo",system-ui,sans-serif;
+  --f-body:${FONT_FALLBACK};
   --f-num:"SFMono-Regular","Consolas","Menlo","Yu Gothic",monospace;
   /* ⚠**이 값은 .topbar 의 「실제」 높이여야 한다.** .rail·.hjump·.pickbar 의 sticky 오프셋과
      scroll-padding-top 이 전부 이 하나를 읽는다 — 어긋나면 앵커가 헤더 뒤로 숨는다.
@@ -339,8 +351,15 @@ a{color:inherit}
    ⚠**삼선 아이콘을 글자로 쓰지 않는다** — 서체 부분집합 커버리지 게이트가 없는 글자에서 멈춘다.
    그래서 gradient 로 그린다. 배경이라 강제 색 모드에서 사라지지만, **버튼의 글자(현재 화면 이름)가
    남으므로 눌 곳을 잃지 않는다.** */
-.navbtn{display:none}
+/* ⚠**체크박스도 같이 꺼야 한다 — 안 껐다가 검토에 잡혔다**(P1 · 2026-09-08).
+   .vh 는 **시각적으로만** 숨기는 기법이라(position:absolute + clip) **초점은 그대로 먹는다.**
+   실측(1280px): Tab 네 번째가 **보이지 않는 체크박스**에 멈췄다 —
+   초점 링을 라벨로 옮기는 규칙조차 좁은 화면 블록 안에만 있어서 아무 표시가 없다.
+   ⚠**바로 위 주석이 「넓은 화면에서는 이 셋이 전부 없는 셈이다」라고 적고 있었고 그게 거짓이었다.**
+   ⚠**.vh 는 display 를 안 건드리므로** 여기서 display 로 끄고 좁은 화면에서 되살리면 된다. */
+.navbtn,.navtoggle,.hjtoggle{display:none}
 @media (max-width:680px){
+  .navtoggle,.hjtoggle{display:block}
   .navbtn{display:inline-flex;align-items:center;gap:var(--s3);flex:0 0 auto;
     padding:var(--s2) var(--s4);font-size:var(--fs-data);color:var(--tx);cursor:pointer;
     border:var(--rw-row) solid var(--tx-3);background:var(--panel);
@@ -357,7 +376,12 @@ a{color:inherit}
   .tnav{display:none}
   /* ⚠**펼치면 띠 밖으로 겹쳐 내린다.** 안에 넣으면 상단바가 자라고, 그러면 --topbar(실측 토큰)와
      그것을 쓰는 sticky 오프셋이 전부 거짓이 된다. .topbar 는 sticky 라 이미 위치 기준이다. */
+  /* ⚠**옛 「2행 헤더」 블록의 값을 되돌려야 한다 — 안 되돌렸다가 검토에 잡혔다**(P2 · 2026-09-08).
+     그 블록이 같은 폭 조건에서 .tnav 에 justify-content:safe flex-end 와 flex:1 1 0 을 준다.
+     상단바 안에서 오른쪽으로 굴리려던 값인데, **전폭 드롭다운에서는 줄이 오른쪽으로 몰린다.**
+     실측으로 새는 것을 확인했다(펼친 뒤 justify-content 가 safe flex-end 였다). */
   .navtoggle:checked ~ .tnav{display:flex;flex-wrap:wrap;overflow:visible;
+    justify-content:flex-start;flex:0 0 auto;
     position:absolute;top:100%;left:0;right:0;z-index:30;
     padding:var(--s3) calc(var(--gut) + var(--pad));gap:var(--s2);
     background:var(--panel);border-bottom:var(--rw-row) solid var(--hair-2);
@@ -2870,7 +2894,10 @@ const state={
   favTeam:readFavTeam(saved.favTeam),
   grades:saved.grades!==false,
   mark:saved.mark===true,
-  theme:saved.theme==="dark"||saved.theme==="light"?saved.theme:"system"
+  theme:saved.theme==="dark"||saved.theme==="light"?saved.theme:"system",
+  /* ⚠**모르는 값은 초기값으로 떨어뜨린다** — 저장된 것이 낡거나 손으로 고쳐졌을 수 있다.
+     ⚠**초기값이 plex 다**(사용자 결정 · 3단계). 테마의 "system" 과 다르므로 베끼지 마라. */
+  font:saved.font==="noto"||saved.font==="system"?saved.font:"plex"
 };
 
 function press(sel,attr,val,mark){
@@ -2894,6 +2921,32 @@ if(tb)tb.addEventListener("click",()=>{
   state.theme=state.theme==="system"?"light":state.theme==="light"?"dark":"system";
   save(state);applyTheme();
 });
+
+/* ── 서체 (3단계 · 2026-09-08) ──
+   ⚠**초기값은 plex 다**(사용자 결정). 서버가 그 상태를 그대로 그리므로
+   **JS 가 없으면 초기값이 그대로 맞다** — 테마와 같은 방식이다.
+   ⚠**「기본」은 웹폰트 요청이 0건이어야 한다** — CSS 가 그 자리에 웹폰트 이름을 안 쓴다
+   (build-fonts.ts 가 쓰는 블록). ⚠**단, 저장된 「기본」은 이 스크립트가 돌기 전까지는 못 막는다** —
+   이 사이트는 인라인 실행 스크립트가 0개라 첫 페인트 전에 손댈 수가 없다.
+   그 비용은 「기본」을 고른 사람에게만, 화면마다 한 번 생긴다.
+   ⚠**저장이 안 되는 브라우저에서도 화면은 정상이다** — save 가 try/catch 이고(위 save),
+   읽기가 실패하면 saved 가 빈 객체라 초기값으로 떨어진다. */
+function applyFont(){
+  const el=doc.documentElement;
+  el.setAttribute("data-font",state.font);
+  const b=$("#fontBtn");
+  if(b){
+    const t={plex:"Plex",noto:"Noto",system:"標準"}[state.font];
+    b.textContent=t;
+    b.setAttribute("aria-label","書体："+t+"（切り替え）");
+  }
+}
+const fb=$("#fontBtn");
+if(fb)fb.addEventListener("click",()=>{
+  state.font=state.font==="plex"?"noto":state.font==="noto"?"system":"plex";
+  save(state);applyFont();
+});
+applyFont();
 
 /* ── 탭 묶음 ──
    tablist: [data-tabgroup="G"] 안의 [data-tab="v"]

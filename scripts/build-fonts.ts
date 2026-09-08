@@ -37,7 +37,7 @@
  * 아직 이 파일들을 받는 화면이 없고, CI 무료 분이 스케줄만으로 88% 차 있기 때문이다(CLAUDE.md §6).
  * **CSS 배선이 들어가는 그 변경에서 워크플로에 한 줄을 더해라**(실측 비용은 그 단계의 보고에 있다).
  */
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import { createRequire } from "node:module";
@@ -58,6 +58,8 @@ import {
   verifyCoverage,
 } from "./fonts.ts";
 import type { Stack } from "./fonts.ts";
+// ⚠**대체 글꼴 목록의 정본은 화면 쪽이다**(M1 · 검토 P2). 여기서 다시 적지 않는다.
+import { FONT_FALLBACK } from "../packages/web/src/assets.ts";
 import subsetFont from "subset-font";
 
 const require_ = createRequire(import.meta.url);
@@ -290,5 +292,110 @@ const manifest = {
   licenses: [...licenseFiles.keys()].sort(),
 };
 writeFileSync(join(outDir, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
+
+// ── CSS 배선 (3단계 · 2026-09-08) ────────────────────────────────────────
+/**
+ * ⚠**여기서 CSS 를 쓰는 이유는 하나다: 파일명이 해시라 `assets.ts` 가 미리 못 적는다.**
+ * 그래서 매니페스트를 **방금 만든 이 자리**에서 읽어 `site.css` 뒤에 붙인다.
+ *
+ * ⚠**같은 자리에 두 번 붙지 않는다** — 표식 사이를 통째로 갈아 끼운다(멱등 · M5 의 정신).
+ * ⚠**`--f-body` 는 이미 토큰이다**(1단계가 만들었다) — 그래서 배선이 **그 값 하나만** 바꾼다.
+ *
+ * ## ⚠서체 이름을 원래 이름으로 쓰지 않는 이유 — 둘이고 서로 다르다
+ *
+ * · **IBM Plex** — OFL 의 **예약 서체명이 "Plex"** 이고 §1 이 **글리프 삭제도 개변**으로 본다.
+ *   즉 이 부분집합은 개변판이라 그 이름을 쓰면 안 된다. ⚠**안전한 쪽으로 고른 것이지
+ *   법률 판단이 아니다**(Google Fonts 는 같은 서체의 부분집합을 원래 이름으로 서빙한다).
+ * · **Noto** — 예약명은 "Source" 라 OFL 은 안 걸린다. 그런데 **`--f-body` 의 대체 목록에
+ *   "Noto Sans JP" 가 들어 있다** — 같은 이름으로 선언하면 **사용자 기기에 깔린 그 서체를
+ *   우리 부분집합이 덮어쓴다.** 이름 충돌이라 바꾼다.
+ *
+ * **두 사유가 다르므로 뭉뚱그리지 마라.** 한쪽이 풀려도 다른 쪽은 남는다.
+ */
+/**
+ * ⚠**표식은 ASCII 여야 한다 — 한글로 썼다가 커버리지 게이트에 잡혔다**(2026-09-08).
+ *
+ * 이 표식은 **배포물(site.css)에 그대로 실린다.** 처음에 한국어로 적었더니
+ * 다음 훑기가 그 한글을 「쓰이는 글자」로 세어 **서체가 못 덮는다고 멈췄다**
+ * (다·라·로·마·손·쓴·으·지·치 — 서체에 한글이 없다).
+ * ⚠**두 가지가 동시에 잘못이었다**: ⑴ 내부 주석이 배포물에 샜고 ⑵ 두 번째 실행이 실패했다(멱등 아님).
+ * ⚠**assets.ts 의 한국어 주석은 안 새는데** 그건 stripJsComments 가 걷어내기 때문이다 —
+ * **여기서 붙이는 것은 그 경로를 안 지난다.** 그러니 여기 나가는 글자는 전부 ASCII 로 적어라.
+ * ⚠**게이트가 잡았다는 것이 이 설계의 값이다** — 안 세웠으면 한글이 배포물에 조용히 남았다.
+ */
+const MARK_A = "/* bb-fonts:begin (written by build-fonts.ts) */";
+const MARK_B = "/* bb-fonts:end */";
+/**
+ * 대체 목록 — 웹폰트가 못 오면 여기로 떨어진다.
+ * ⚠**여기 적지 않는다 — 적었다가 검토에 잡혔다**(P2 · 2026-09-08).
+ * 같은 목록이 `assets.ts` 에도 있었는데, **여기서 붙이는 규칙이 그쪽을 항상 이겨서**
+ * 그 값이 **죽은 선언**이 돼 있었다. 정본은 `assets.ts` 의 `FONT_FALLBACK` 하나다(M1).
+ */
+const FALLBACK = FONT_FALLBACK;
+const SYSTEM = FALLBACK;
+
+const cssFamilyOf = (stackKey: string, famKey: string): string =>
+  `BN ${stackKey === "plex" ? "Sans" : "Noto"}${famKey.endsWith("-jp") ? " JP" : ""}`;
+
+const faceRules: string[] = [];
+const stackFamilies = new Map<string, string[]>();
+for (const st of stackOut) {
+  const names: string[] = [];
+  for (const fam of st.families) {
+    const name = cssFamilyOf(st.key, fam.key);
+    if (!names.includes(name)) names.push(name);
+    for (const face of fam.faces) {
+      faceRules.push(
+        `@font-face{font-family:"${name}";font-weight:${face.weight};font-style:normal;` +
+          // ⚠**swap 이 안전한 근거가 있다**(§5-D 실측): 서체가 바뀌어도 **행이 두 줄 되는 곳이 0** 이다.
+          //   optional 은 느린 회선에서 서체를 아예 건너뛰어 「고른 이유」가 사라지므로 안 쓴다.
+          `font-display:swap;src:url("fonts/${face.file}") format("woff2")}`,
+      );
+    }
+  }
+  // ⚠**JP 를 먼저 둔다** — 라틴 부분집합에는 한자가 없어서, 라틴이 앞에 오면 브라우저가
+  //   글자마다 두 번 찾는다. 어차피 unicode-range 를 안 쓰므로 순서가 곧 우선순위다.
+  stackFamilies.set(st.key, names.sort((a, b) => (b.endsWith(" JP") ? 1 : 0) - (a.endsWith(" JP") ? 1 : 0)));
+}
+const quoted = (k: string) => stackFamilies.get(k)!.map((n) => `"${n}"`).join(",");
+const cssBlock = [
+  MARK_A,
+  ...faceRules,
+  // ⚠⚠**CSS 의 기본은 시스템이다 — 초기값이 Plex 인 것과 다른 말이고, 그 차이가 중요하다.**
+  //   처음에는 data-font 가 없을 때도 plex 로 뒀는데, **실측이 그게 나쁘다는 것을 보여줬다**
+  //   (2026-09-08 · 저장된 선택으로 화면을 열었을 때의 woff2 요청 수):
+  //     저장 plex 4개 · 저장 **noto 8개**(Plex 4장을 버리고 Noto 를 또 받는다) ·
+  //     저장 **system 4개**(전부 버려진다 · 계획서의 「0건」 게이트 실패).
+  //   **기본이 아닌 것을 고른 사람이 오히려 손해를 본다.** 원인은 이 사이트에
+  //   **인라인 실행 스크립트가 0개**라 저장된 선택을 첫 페인트 전에 못 심는 것이다.
+  //   → **뒤집는다.** CSS 기본은 시스템이고, 스크립트가 뜨면 초기값(plex)을 켠다.
+  //   ⚠**보이는 순서는 안 바뀐다** — font-display:swap 이라 **어차피 첫 페인트는 대체 글꼴**이다.
+  //     바뀌는 것은 요청이 약 100ms 늦게 나간다는 것뿐이고(defer 실행 시점),
+  //     그 대가로 **고른 대로만 받는다.**
+  //   ⚠**스크립트가 없으면 시스템 글꼴로 남는다** — 화면은 정상이고(§0-1) 웹폰트는 덤이다.
+  `html:not([data-font]),html[data-font="system"]{--f-body:${SYSTEM}}`,
+  `html[data-font="plex"]{--f-body:${quoted("plex")},${FALLBACK}}`,
+  `html[data-font="noto"]{--f-body:${quoted("noto")},${FALLBACK}}`,
+  MARK_B,
+].join("\n");
+
+const siteCssPath = join(outDir, "..", "site.css");
+if (existsSync(siteCssPath)) {
+  const cur = readFileSync(siteCssPath, "utf8");
+  const cut = cur.includes(MARK_A)
+    ? cur.slice(0, cur.indexOf(MARK_A)) + cur.slice(cur.indexOf(MARK_B) + MARK_B.length)
+    : cur;
+  writeFileSync(siteCssPath, cut.trimEnd() + "\n" + cssBlock + "\n");
+  console.log(
+    `· CSS 배선: site.css 에 @font-face ${faceRules.length}개 + 전환 규칙 3개를 붙였다` +
+      ` (${(Buffer.byteLength(cssBlock) / 1024).toFixed(1)} KiB)`,
+  );
+} else {
+  // ⚠**여기서 바로 끝낸다 — 안 끝냈다가 검토에 잡혔다**(P3 · 2026-09-08).
+  //   exitCode 만 세우고 흘려보내면 바로 아래 「썼다」가 그대로 찍혀
+  //   **실패한 실행이 성공처럼 읽힌다.** 종료코드는 맞았지만 로그가 거짓말을 했다.
+  console.error(`⚠ ${siteCssPath} 가 없다 — 화면을 먼저 구워야 한다. **CSS 배선을 못 했다.**`);
+  process.exit(1);
+}
 
 console.log(`· 썼다: ${outDir}`);
