@@ -18,7 +18,7 @@ import { parseArgs } from "node:util";
 import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { openDb } from "@bb-app/store";
-import { parseTeamBatting, parseTeamPitching } from "@bb-app/parser";
+import { parseTeamBatting, parseTeamPitching, publishedAsOf } from "@bb-app/parser";
 import type { PublishedBatting, PublishedPitching } from "@bb-app/parser";
 import { TEAMS } from "@bb-app/domain";
 import {
@@ -45,7 +45,9 @@ const { values, positionals } = parseArgs({
      * ⚠**공표표는 스냅샷이다.** 우리 DB가 그보다 하루라도 앞서면 그날 뛴 선수가 **전부**
      * 불일치로 잡힌다 — 실측(2026-08-17): 기준일을 안 맞추면 「결함 후보 1,253건」이 나온다.
      * 그 상태의 대조 도구는 진짜 결함을 찾는 데 쓸 수 없다. **거짓 경보는 경보를 죽인다.**
-     * 주지 않으면 공표표의 `fetchedAt` 에서 유도하고, **무엇을 가정했는지 화면에 적는다.**
+     * ⚠**~~주지 않으면 `fetchedAt` 에서 유도한다~~ 는 낡았다**(2026-09-09) —
+     * 이제 **공표표가 스스로 적은 기준일**을 읽는다(아래 `publishedThrough`).
+     * 이 옵션은 그 문구가 없거나 못 믿을 때 사람이 덮어쓰는 수단으로만 남는다.
      */
     through: { type: "string" },
     verbose: { type: "boolean", default: false },
@@ -57,24 +59,63 @@ const season = Number(positionals[1] ?? 2026);
 /**
  * 공표표가 어느 날까지를 담고 있는가.
  *
- * ⚠**추측이지 사실이 아니다.** 페이지에 기준일이 적혀 있지 않으므로 취득 시각으로 유도한다 —
- * JST 날짜에서 하루를 뺀다(경기는 오후에 시작하므로 낮에 받은 표는 전날까지를 담는다).
- * 그래서 **화면에 가정을 적고**, 맞지 않으면 `--through` 로 덮어쓸 수 있게 둔다.
+ * ⚠⚠**~~취득 시각에서 유도한다~~ 를 버렸다**(2026-09-09). **공표표가 자기 기준일을 스스로 적는다** —
+ * `2026年9月7日 現在` 가 진행 중 시즌의 모든 표에 있다(std_* · idb1_* · idp1_* · tmb_* 실측 5장).
+ * **받고 있는데 안 읽던 것의 다섯 번째다**(CLAUDE.md §2-2-1).
+ *
+ * ⚠**옛 규칙이 실제로 배포를 막았다.** 「JST 날짜 − 1일」은 「낮에 받는다」를 전제하는데
+ * **자정을 넘겨 받으면 하루를 앞지른다**: 2026-09-08T16:14Z(= JST 09-09 01:14)에 받은 표에서
+ * 09-08 을 유도했지만 npb.jp 는 09-07 까지만 공표하고 있었다 →
+ * **결함 후보 989건**(전부 정확히 한 경기치, 우리가 앞서 있었다) → `if: success()` 인 배포가 통째로 막혔다.
+ * ⚠**크론 지연이 커질수록 이 창에 더 자주 들어간다** — 그래서 규칙을 고치는 쪽이 맞다.
+ *
+ * ⚠**적혀 있지 않으면 「완결 시즌」이다** — 끝난 시즌 표는 스냅숏이 아니라 확정이라
+ * 「◯◯ 現在」라고 적을 것이 없다(2024 표 실측: `現在` 0건). 그때는 **자르지 않는다.**
+ * 그 상태에서 우리 DB 가 앞선다면 그건 가정이 아니라 **진짜 불일치**이므로 잡혀야 한다.
  */
 function publishedThrough(): { date: string; from: string } {
   if (values.through !== undefined) return { date: values.through, from: "--through" };
-  try {
-    const meta = JSON.parse(
-      readFileSync(`${values.archive}/npb/stats/${season}/idb1_c.meta.json`, "utf8"),
-    ) as { fetchedAt?: string };
-    if (typeof meta.fetchedAt === "string") {
-      const jst = new Date(new Date(meta.fetchedAt).getTime() + 9 * 3600 * 1000 - 24 * 3600 * 1000);
-      return { date: jst.toISOString().slice(0, 10), from: `취득 ${meta.fetchedAt} 에서 유도` };
+
+  // ⚠**한 장이 아니라 우리가 읽는 전부에서 읽는다**(2026-09-09 · 2차 검토 F5).
+  //   예전에는 idb1_c 한 장만 봤는데, **어차피 아래에서 24장을 전부 파싱한다** — 이미 손에 든 HTML 이다.
+  //   그 30장을 받는 데 CI 실측 53초가 걸리고(L1 이 2~5초/장을 요구한다),
+  //   npb.jp 가 그 창을 지나며 페이지 단위로 갱신하면 **팀마다 기준일이 갈린다.**
+  //   그러면 그 팀 전원이 불일치로 잡혀 **이 수정이 없애려는 바로 그 모양의 거짓 경보**가 난다.
+  //   ⚠**원자적으로 갱신된다고 가정하지 않는다 — 안 쟀다.** 대신 갈리면 잡는다.
+  const seen = new Map<string, string[]>();
+  let read = 0;
+  for (const t of TEAMS) {
+    for (const kind of ["idb1", "idp1"] as const) {
+      const html = readArchived(`npb/stats/${season}/${kind}_${t.code}`);
+      if (html === null) continue;
+      read += 1;
+      const asOf = publishedAsOf(html);
+      if (asOf === null) continue;
+      seen.set(asOf, [...(seen.get(asOf) ?? []), `${kind}_${t.code}`]);
     }
-  } catch {
-    // 메타가 없으면 아래로
   }
-  return { date: "9999-12-31", from: "⚠유도 실패 — 전 기간으로 비교한다(거짓 경보가 난다)" };
+
+  if (seen.size > 1) {
+    // ⚠**고르지 않는다.** 어느 쪽을 골라도 그 쪽이 아닌 팀 전원이 불일치로 잡힌다
+    const detail = [...seen].map(([d, who]) => `${d}(${String(who.length)}장)`).join(" / ");
+    console.error(`⚠공표표의 기준일이 장마다 다르다 — ${detail}`);
+    console.error("  갱신 중에 받았을 수 있다. 고르면 그쪽이 아닌 팀 전원이 불일치로 잡힌다.");
+    process.exit(1);
+  }
+  if (seen.size === 1) {
+    const [date, who] = [...seen][0]!;
+    return { date, from: `공표표에 적힌 「現在」 · ${String(who.length)}/${String(read)}장 일치` };
+  }
+  if (read > 0) {
+    // ⚠**「완결 시즌」과 「마크업이 바뀌어 못 찾음」을 구별할 수 없다**(2차 검토 F8).
+    //   전자면 자를 것이 없는 게 맞고, 후자면 이 판정이 틀렸다. **로그가 둘 다 말해야 한다.**
+    //   ⚠그래도 방향은 안전하다 — 안 자르면 **가장 엄격한 비교**가 되어 시끄럽게 끝난다.
+    return {
+      date: "9999-12-31",
+      from: `${String(read)}장 어디에도 기준일이 없다 — 완결 시즌이거나 ⚠문구가 바뀐 것이다. 자르지 않는다`,
+    };
+  }
+  return { date: "9999-12-31", from: "⚠공표표를 한 장도 못 읽었다 — 전 기간으로 비교한다" };
 }
 const through = publishedThrough();
 
@@ -313,8 +354,12 @@ if (known.size > 0) {
   for (const [why, list] of known) console.log(`  ${String(list.length).padStart(5)}  ${why}`);
 }
 
-if (real.length === 0) {
+if (real.length === 0 && comparedPlayers > 0) {
   console.log(`\n결함 후보 없음 — 우리가 계산한 값이 공표값과 전부 맞는다`);
+} else if (real.length === 0) {
+  // ⚠**0명을 「전부 맞는다」로 쓰지 않는다**(2026-09-09 · 2차 검토 F1).
+  //   종료코드만 고치고 이 문장을 두면 **로그를 읽는 사람에게는 여전히 거짓말**이다.
+  console.log(`\n⚠비교한 것이 없다 — 「맞았다」가 아니라 「안 쟀다」이다`);
 } else {
   // 어느 항목이 얼마나 어긋나는지부터 — 한 항목이 전부면 원인이 하나다
   const byField = new Map<string, number>();
@@ -335,6 +380,22 @@ if (unmatchedOurs.length > 0) {
 if (unmatchedPub.length > 0) {
   console.log(`\n--- 짝을 못 정한 공표 선수 (${unmatchedPub.length}명) ---`);
   for (const u of unmatchedPub.slice(0, 30)) console.log(`  ${u}`);
+}
+
+// ⚠⚠**아무것도 안 쟀으면 통과가 아니다**(2026-09-09 · 2차 검토 F1).
+//   실측: `--through 2025-10-05`(범위 밖) 과 `--archive /nonexistent` 둘 다
+//   **「대조한 선수 0명 · 결함 후보 0건 · 우리가 계산한 값이 공표값과 전부 맞는다」 · exit 0** 이었다.
+//   공표표 취득 단계가 `continue-on-error: true` 라 실패해도 워크플로가 안 죽고,
+//   대조 단계는 **디렉터리만 있으면** 돌므로 — **게이트가 아무것도 재지 않고 초록**이 된다.
+//   ⚠**이 저장소가 같은 병을 이미 두 번 앓았다**(「통과하는데 안 돌던 검사」).
+//   §1 이 요구하는 것은 정확히 이것이다: **「0건」과 「안 쟀음」을 구별한다.**
+if (comparedPlayers === 0) {
+  console.error(
+    `\n⚠대조한 선수가 0명이다 — 이것은 「전부 맞았다」가 아니라 「안 쟀다」이다.` +
+      `\n  기준일 ${through.date} · 공표쪽 미해결 ${String(unmatchedPub.length)}명` +
+      `\n  공표표를 못 받았거나, 기준일이 우리 데이터 범위 밖이거나, 시즌이 아직 시작 전이다.`,
+  );
+  process.exit(1);
 }
 
 // ⚠**정의 차이로 실패하지 않는다.** 그러면 이 도구가 늘 빨간불이라 아무도 안 보게 되고,
