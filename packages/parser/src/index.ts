@@ -23,7 +23,13 @@ export { StarterParseError, parseAnnouncedStarters } from "./starter.ts";
 export type { AnnouncedStarters, StarterGame, StarterSide } from "./starter.ts";
 export { normalizeVenue, parseScheduleVenues, venuesByGameId } from "./schedule.ts";
 export type { VenueByPath } from "./schedule.ts";
-export { StatsParseError, normalizePlayerName, parseTeamBatting, parseTeamPitching } from "./stats.ts";
+export {
+  StatsParseError,
+  normalizePlayerName,
+  parseTeamBatting,
+  parseTeamPitching,
+  publishedAsOf,
+} from "./stats.ts";
 export type { PublishedBatting, PublishedPitching } from "./stats.ts";
 export { isInfield, readPbp, sideOf, unknownTokens } from "./pbp.ts";
 export type { Field, PbpFacts, StrikeoutKind, Trajectory } from "./pbp.ts";

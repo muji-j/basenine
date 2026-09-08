@@ -22,6 +22,35 @@ export class StatsParseError extends Error {
   }
 }
 
+/**
+ * 공표표가 **스스로 적은 기준일**을 읽는다 — `2026年9月7日 現在`.
+ *
+ * ⚠**이것을 여태 안 읽고 취득 시각에서 유도하고 있었다**(2026-09-09에 고침).
+ * 그 규칙(JST 날짜 − 1일)은 「낮에 받는다」를 전제하는데, **자정을 넘겨 받으면 하루를 앞지른다.**
+ * 실제 사고: 2026-09-08T16:14Z(= JST 09-09 01:14)에 받은 표에서 09-08 을 유도했지만
+ * npb.jp 는 아직 09-07 까지만 공표하고 있었다 → **결함 후보 989건**(전부 정확히 한 경기치) →
+ * `if: success()` 인 배포 단계가 통째로 막혔다.
+ * ⚠**「받고 있는데 안 읽던 것」의 다섯 번째다**(CLAUDE.md §2-2-1) —
+ * 이 문구는 **std_* · idb1_* · idp1_* · tmb_* 전부에 정확히 한 번** 있다(2026 실측 5장).
+ *
+ * ⚠**없으면 null 이다. 여기서 추측하지 않는다** — 무엇을 가정할지는 부르는 쪽이 정하고,
+ * 그 가정을 화면에 적게 한다. 파서가 대신 정하면 그 가정이 어디에도 안 적힌다.
+ * ⚠**둘 이상이면 던진다**(M7). 고르는 순간 추측이 되고, 기준일이 하루만 틀려도
+ * 그날 뛴 선수가 **전부** 불일치로 잡힌다 — 그 거짓 경보가 경보를 죽인다.
+ */
+export function publishedAsOf(html: string): string | null {
+  const hits = [...html.matchAll(/(\d{4})\u5e74\s*(\d{1,2})\u6708\s*(\d{1,2})\u65e5\s*\u73fe\u5728/g)];
+  if (hits.length === 0) return null;
+  if (hits.length > 1) {
+    throw new StatsParseError(
+      "\uacf5\ud45c\ud45c\uc758 \uae30\uc900\uc77c\uc774 \uc5ec\ub7ec \uac1c\ub2e4 \u2014 \uc5b4\ub290 \uac83\uc774 \uae30\uc900\uc77c\uc9c0 \uace0\ub974\uba74 \ucd94\uce21\uc774 \ub41c\ub2e4",
+      hits.map((h) => h[0]).join(" / "),
+    );
+  }
+  const [, y, m, d] = hits[0]!;
+  return `${y!}-${m!.padStart(2, "0")}-${d!.padStart(2, "0")}`;
+}
+
 /** 공표 성적표 한 줄(타격). **컬럼 이름은 원문 그대로 두지 않고 우리 어휘로 옮긴다** */
 export interface PublishedBatting {
   /** 등록명 원문(`*佐藤 輝明`). 마커와 공백을 남긴 채로 든다 — 대조 리포트가 원문을 보여야 한다 */
