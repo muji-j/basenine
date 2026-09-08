@@ -365,6 +365,52 @@ test("⚠대시보드 안의 구획으로 뛰는 내비가 있고, 앵커가 실
 });
 
 /**
+ * ⚠**목차는 기본으로 펼쳐져 있고, 그것을 지키는 시험이 여태 없었다**(2026-09-08 · 2f · 2차 검토 F7).
+ *
+ * **2c 는 정반대였다** — 좁은 화면에서 접어 두고 열게 했다. 2f 가 사용자 요청으로 뒤집었으므로
+ * **되돌아가기 가장 쉬운 결정**이고, 되돌아가도 아무 시험이 안 붉어졌다.
+ *
+ * ⚠**서버가 `checked` 로 그린다는 것이 핵심이다** — 스크립트를 끈 사람도 펼쳐진 화면을 본다(§0-1).
+ * 스크립트로 펼치면 그 사람에게는 접힌 채로 남는다.
+ */
+test("⚠목차는 서버가 펼친 채로 그린다 — 스크립트가 없어도 펼쳐져 있다", () => {
+  const out = renderHomePage(data(), context());
+  const toggle = /<input[^>]*class="hjtoggle[^>]*>/.exec(out)?.[0] ?? "";
+  assert.ok(toggle.length > 0, "목차 토글이 없다");
+  assert.match(toggle, /\schecked(\s|>)/, "토글이 checked 로 안 그려졌다 — 기본이 접힘이 된다");
+  assert.match(toggle, /type="checkbox"/, "체크박스가 아니다");
+});
+
+/**
+ * ⚠**라벨이 `<nav>` 밖에 있어야 한다.** 안에 넣으면 접었을 때 목록과 **같이 숨어**
+ * 다시 펼 수단이 사라진다 — 시즌 띠의 손잡이와 같은 이유이고, 두 곳 다 소스에 경고만 있었다.
+ */
+test("⚠목차 라벨은 nav 밖이다 — 안에 넣으면 접었을 때 같이 숨어 다시 못 편다", () => {
+  const out = renderHomePage(data(), context());
+  const nav = /<nav class="hjump"[\s\S]*?<\/nav>/.exec(out)?.[0] ?? "";
+  assert.ok(nav.length > 0, "목차가 없다");
+  assert.ok(!nav.includes('class="hjlab"'), "라벨이 nav 안으로 들어갔다");
+  assert.ok(out.includes('class="hjlab"'), "라벨 자체가 사라졌다");
+  // 라벨과 목록을 담는 상자에 CSS 가 의존한다
+  assert.ok(out.includes('class="hjbar"'), "상자(.hjbar)가 없다 — CSS 가 그 이름에 의존한다");
+});
+
+/**
+ * ⚠**「目次」가 눈에 보여야 한다.** 2f 이전에는 그 이름이 `aria-label` 에만 있어서,
+ * 눈으로 보는 사람에게는 제목과 본문 사이에 **이름 없는 글자 줄**이 떠 있었다 —
+ * 사용자가 「영역 구성이 나쁘다」로 짚은 것의 정체다.
+ * ⚠**개수도 같이 말한다** — 접으면 「뛸 곳이 몇 군데인지」가 사라진다.
+ */
+test("⚠목차의 이름이 화면에 보인다 — aria-label 에만 있으면 안 된다", () => {
+  const out = renderHomePage(data(), context());
+  const lab = /<label[^>]*class="hjlab"[^>]*>([\s\S]*?)<\/label>/.exec(out)?.[1] ?? "";
+  assert.ok(lab.includes("目次"), "라벨에 보이는 이름이 없다");
+  const nav = /<nav class="hjump"[\s\S]*?<\/nav>/.exec(out)?.[0] ?? "";
+  const items = [...nav.matchAll(/href="#/g)].length;
+  assert.match(lab, new RegExp(`<s>${String(items)}</s>`), `개수 표기가 실제 항목 수(${String(items)})와 다르다`);
+});
+
+/**
  * ⚠**없는 구획으로 뛰게 하지 않는다**(M12). 대시보드는 데이터에 따라 구획이 통째로 빠진다.
  */
 test("⚠데이터가 없는 구획은 내비에도 없다(M12)", () => {

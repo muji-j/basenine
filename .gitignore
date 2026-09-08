@@ -1,6 +1,10 @@
 node_modules/
 data/
 dist/
+# ⚠비교용 빌드 산출물(dist-2c · dist-2f …) — 한 벌이 1.5GB 다.
+#   `dist/` 만 적혀 있어 untracked 로 남았고, `git add -A` 한 번이면 수천 장이 스테이지된다
+#   (2026-09-08 · 검토 지적).
+dist-*/
 build/
 .env
 .env.*
