@@ -56,6 +56,9 @@ function buildPage(): ReturnType<typeof makeDocument> {
 
   const topbar = make("header", { class: "topbar" });
   topbar.appendChild(make("button", { class: "tbtn", id: "themeBtn" }));
+  // ⚠**서체 버튼도 스텁에 있어야 한다** — 없으면 새 로직이 `if(fb)` 가드에 걸려
+  //   **조용히 아무것도 안 하고**, 그 상태로 시험이 초록이 된다(3단계 검토 P1).
+  topbar.appendChild(make("button", { class: "tbtn", id: "fontBtn" }));
   doc.body.appendChild(topbar);
 
   const main = make("div", { class: "main" });
@@ -625,6 +628,47 @@ test("테마는 자동 → 밝게 → 어둡게로 돌고 저장된다", () => {
   const again = buildPage();
   run(again, { storage });
   assert.equal(again.documentElement.getAttribute("data-theme"), "light");
+});
+
+/**
+ * ⚠**서체 전환에 시험이 0건이었다**(2026-09-08 · 3단계 검토 P1).
+ *
+ * 바로 위 테마 시험과 **같은 모양의 로직**(순환 클릭 · save/load · 초기값 폴백)을 추가하면서
+ * 시험을 안 붙였다. 그러면 **깨져도 `npm test` 가 초록으로 남는다.**
+ *
+ * ⚠**테마와 초기값이 다르다**(테마는 `system`, 서체는 **`plex`**) — 베끼지 마라.
+ * 그래서 스크립트가 뜨는 즉시 `data-font="plex"` 가 붙는다(CSS 의 기본은 시스템이고,
+ * **고른 대로만 받게** 하려고 그렇게 뒤집었다 · `build-fonts.ts` 주석).
+ */
+test("서체는 Plex → Noto → 標準 으로 돌고 저장된다 · 모르는 값은 초기값으로 떨어진다", () => {
+  const storage = makeStorage();
+  const doc = buildPage();
+  run(doc, { storage });
+  const btn = doc.getElementById("fontBtn")!;
+  // ⚠**초기값이 곧 첫 상태다** — 테마와 달리 속성이 처음부터 붙는다
+  assert.equal(doc.documentElement.getAttribute("data-font"), "plex");
+  assert.equal(btn.textContent, "Plex");
+  btn.fire("click");
+  assert.equal(doc.documentElement.getAttribute("data-font"), "noto");
+  assert.equal(btn.textContent, "Noto");
+  btn.fire("click");
+  assert.equal(doc.documentElement.getAttribute("data-font"), "system");
+  assert.equal(btn.textContent, "標準");
+  btn.fire("click");
+  assert.equal(doc.documentElement.getAttribute("data-font"), "plex", "한 바퀴 돌면 처음으로 온다");
+
+  // 저장된 선택이 다음 화면에서 되살아난다
+  btn.fire("click");
+  const again = buildPage();
+  run(again, { storage });
+  assert.equal(again.documentElement.getAttribute("data-font"), "noto");
+
+  // ⚠**모르는 값은 초기값으로 떨어진다** — 저장이 낡거나 손으로 고쳐졌을 수 있다
+  const bad = makeStorage();
+  bad.setItem("npb-meikan-layout", JSON.stringify({ font: "comic-sans" }));
+  const third = buildPage();
+  run(third, { storage: bad });
+  assert.equal(third.documentElement.getAttribute("data-font"), "plex");
 });
 
 /**

@@ -58,6 +58,8 @@ import {
   verifyCoverage,
 } from "./fonts.ts";
 import type { Stack } from "./fonts.ts";
+// ⚠**대체 글꼴 목록의 정본은 화면 쪽이다**(M1 · 검토 P2). 여기서 다시 적지 않는다.
+import { FONT_FALLBACK } from "../packages/web/src/assets.ts";
 import subsetFont from "subset-font";
 
 const require_ = createRequire(import.meta.url);
@@ -323,8 +325,13 @@ writeFileSync(join(outDir, "manifest.json"), JSON.stringify(manifest, null, 2) +
  */
 const MARK_A = "/* bb-fonts:begin (written by build-fonts.ts) */";
 const MARK_B = "/* bb-fonts:end */";
-/** 대체 목록 — 웹폰트가 못 오면 여기로 떨어진다. assets.ts 의 --f-body 와 같은 줄이어야 한다 */
-const FALLBACK = '"Yu Gothic","Hiragino Kaku Gothic ProN","Noto Sans JP","Meiryo",system-ui,sans-serif';
+/**
+ * 대체 목록 — 웹폰트가 못 오면 여기로 떨어진다.
+ * ⚠**여기 적지 않는다 — 적었다가 검토에 잡혔다**(P2 · 2026-09-08).
+ * 같은 목록이 `assets.ts` 에도 있었는데, **여기서 붙이는 규칙이 그쪽을 항상 이겨서**
+ * 그 값이 **죽은 선언**이 돼 있었다. 정본은 `assets.ts` 의 `FONT_FALLBACK` 하나다(M1).
+ */
+const FALLBACK = FONT_FALLBACK;
 const SYSTEM = FALLBACK;
 
 const cssFamilyOf = (stackKey: string, famKey: string): string =>
@@ -384,8 +391,11 @@ if (existsSync(siteCssPath)) {
       ` (${(Buffer.byteLength(cssBlock) / 1024).toFixed(1)} KiB)`,
   );
 } else {
-  console.error(`⚠ ${siteCssPath} 가 없다 — 화면을 먼저 구워야 한다. **CSS 배선을 건너뛴다.**`);
-  process.exitCode = 1;
+  // ⚠**여기서 바로 끝낸다 — 안 끝냈다가 검토에 잡혔다**(P3 · 2026-09-08).
+  //   exitCode 만 세우고 흘려보내면 바로 아래 「썼다」가 그대로 찍혀
+  //   **실패한 실행이 성공처럼 읽힌다.** 종료코드는 맞았지만 로그가 거짓말을 했다.
+  console.error(`⚠ ${siteCssPath} 가 없다 — 화면을 먼저 구워야 한다. **CSS 배선을 못 했다.**`);
+  process.exit(1);
 }
 
 console.log(`· 썼다: ${outDir}`);
