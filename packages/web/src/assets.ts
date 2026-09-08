@@ -2638,6 +2638,26 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
   :root{--t1:1ms;--t2:1ms;--t3:1ms;--t-stagger:0ms}
   *,*::before,*::after{animation-duration:var(--t1)!important;animation-delay:var(--t-stagger)!important;transition-duration:var(--t1)!important}
 }
+/* ── 문서 간 전환 (2e · 2026-09-08) ────────────────────────────
+   ⚠**감사의 「페이지 전환 애니메이션은 원리적으로 못 한다」는 낡은 판정이다.**
+   그 문장의 근거는 「서버가 없어 화면 이동이 실제 문서 이동이다」인데,
+   **문서 간 View Transition 은 정확히 그 경우를 위해 만들어졌다.**
+   실측(Chrome 149): CSSViewTransitionRule 파싱 · pageswap/pagereveal 둘 다 있다.
+   ⚠**이 사이트에 특히 잘 맞는다** — CSS **한 줄**이고 **스크립트가 0개**다(이 저장소의 제약과 같다).
+   ⚠**미지원 브라우저는 지금과 똑같이 이동한다** — Firefox·Safari 에서 회귀가 아니라 무변화다.
+   ⚠**모션 감소에서는 끈다** — 위 블록은 지속시간만 줄이는데, 문서 간 전환은 그 방식으로 안 꺼진다.
+   ⚠**같은 출처에서만 발동한다** — 바깥 링크(npb.jp)에는 안 걸린다.
+   ⚠⚠**발동을 증명하지 못했다 — 「된다」고 읽지 마라**(2026-09-08).
+   지원은 확인했다(CSSViewTransitionRule 파싱 · pageswap/pagereveal 존재 · 새 문서에 규칙이 살아 있음).
+   그런데 pagereveal 로 전환 시간을 재려 했더니 **모션 감소에서만 이벤트가 잡히고
+   기본에서는 안 잡혔다** — 전환이 걸릴 때 그 이벤트가 계측기의 리스너보다 먼저 지나가는 것으로
+   보이지만 **그것도 추정이다.**
+   ⚠**그래서 두 가지를 모르는 채로 켠다**: ⑴ 실제로 도는가 ⑵ **순위 화면(42,703노드)에서 얼마나 비싼가.**
+   켜는 근거는 「확인했다」가 아니라 **「틀려도 잃는 것이 없다」**다 —
+   미지원이면 무변화이고, 도는데 비싸면 **그때 이 두 줄만 지우면 원상복구**다.
+   ⚠**사람이 실기에서 한 번 봐야 한다.** 그건 계측기가 아니라 눈이 할 일이다. */
+@view-transition{navigation:auto}
+@media (prefers-reduced-motion:reduce){@view-transition{navigation:none}}
 /* **강제 색 모드**(Windows 고대비 등). ⚠**대응 규칙이 0개였다**(2026-08-25 · 감사 P3 #34).
 
    그 모드에서 OS 가 갈아치우는 것: color · background-color · border-color · outline-color.
