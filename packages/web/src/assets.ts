@@ -480,8 +480,17 @@ a{color:inherit}
 .rail::-webkit-scrollbar{height:0}
 .rail .lbl{font-size:var(--fs-label);letter-spacing:.16em;color:var(--tx-3);white-space:nowrap}
 .rail .grow{flex:1 1 auto;min-width:6px}
+/* ⚠**쉬고 있는 탭은 테두리를 칠하지 않는다**(2026-09-08 · 2b). 자리는 그대로 잡아 두므로
+   레이아웃은 안 움직인다(border-color 만 바꾼다 — width 를 건드리면 줄이 흔들린다).
+   ⚠**왜**: 인접한 두 탭이 각자 상자를 그리면 사이에 **1px 선이 두 개** 서고, 실측에서
+   그 무리가 화면 8장에 **38개**였다(탭 28 · .hjump a 10). 감사가 「가장 낡아 보이는 요소」로
+   짚은 것이 정확히 이 모양이다. 선을 굵게 만드는 대신 **칠해진 테두리에 뜻을 준다 —
+   칠해져 있으면 그것이 지금 고른 것이거나 손가락이 얹힌 것이다.**
+   ⚠**대비 후퇴가 아니다** — 이 무리는 위 .qbox 주석이 적은 그 판정에서 「가시 텍스트 라벨이 있어
+   1.4.11 위반으로 단정할 수 없다」로 분류된 쪽이다. 라벨이 컨트롤을 말하고, 고른 것은
+   **배경 + 굵기**가 말한다(색만으로 말하지 않는다 · §7). */
 .tab{font:inherit;font-size:var(--fs-data);padding:var(--s2) var(--s4);cursor:pointer;background:transparent;color:var(--tx-2);
-  border:var(--rw-row) solid var(--hair-2);white-space:nowrap;
+  border:var(--rw-row) solid transparent;white-space:nowrap;
   transition:color var(--t1) var(--e-out),background var(--t1) var(--e-out),border-color var(--t1) var(--e-out)}
 .tab:hover{color:var(--tx);border-color:var(--tx-3)}
 .tab[aria-pressed="true"],.tab[aria-selected="true"]{background:var(--team,#6b7280);color:var(--team-ink,#fff);
@@ -509,6 +518,15 @@ a{color:inherit}
 /* 세그먼티드 — 「둘 중 하나」인 상위 전환. 붙여 놓으면 배타성이 형태로 보인다.
    ⚠**줄어들지 않게 flex:none.** 이 줄은 화면의 갈래 자체라 스크롤 밖으로 밀리면 안 된다 */
 .tabs.seg{gap:0;flex:none}
+/* ⚠**세그먼티드만 테두리를 되살린다**(2026-09-08 · 2b). 위에서 쉬는 탭의 테두리를 껐는데,
+   이 줄은 **붙어 있는 상자 모양 자체가 「둘 중 하나」를 말하는** 자리라 끄면 뜻이 사라진다.
+   ⚠**여기서는 이중선이 안 생긴다** — 아래 margin-left:-1px 이 두 테두리를 같은 픽셀에 포갠다
+   (실측: seg 줄에서 나온 겹침 무리 0개). 끄는 이유가 애초에 없던 자리다. */
+/* ⚠**고른 것은 빼야 한다 — 안 빼고 썼다가 회귀를 만들었다**(2026-09-08 실측).
+   .tab[aria-selected] 와 특이도가 같아(둘 다 0,2,0) **뒤에 오는 이 줄이 이긴다.**
+   그대로 두면 고른 탭이 채움색 위에 --hair-2 테를 둘러 **채움과 테가 어긋난 고리**가 생긴다
+   (실측: 고른 탭 테두리가 rgb(107,114,128) → rgb(207,206,197) 로 바뀌었다). */
+.tabs.seg .tab:not([aria-selected="true"]):not([aria-pressed="true"]){border-color:var(--hair-2)}
 /* 테두리를 겹쳐 한 줄로 만든다. 겹치면 고른 쪽 테두리가 덮이므로 위로 올린다 */
 .tabs.seg .tab+.tab{margin-left:-1px}
 .tabs.seg .tab[aria-selected="true"]{position:relative;z-index:1}
@@ -576,18 +594,49 @@ a{color:inherit}
      게다가 블록 사이 16px 틈마다 색이 끊겨 기둥에 **톱니 모서리**가 생겼다.
      ⚠**구단색은 h2::before 가 계속 나른다** — 그쪽은 var(--pad) 만큼 안쪽이라 기둥과 안 겹친다.
      여기서는 굵기(3px)만 남겨 「구획이 여기서 시작한다」를 말한다. */
+  /* ⚠**여기에 --rw-sect(2px)를 주지 마라 — 한 번 줬다가 되돌렸다**(2026-09-08 · 2b).
+     구획의 윗변은 **바로 위 요소의 밑줄과 같은 픽셀에 서는 자리**다. 2px 으로 굵히면
+     .legend 처럼 CSS 로 닿을 수 없는 경우에 **1px + 2px = 3px 띠**가 되어 오히려 투박해진다
+     (닿을 수 없는 이유: 사이에 [hidden] 형제가 있어 DOM 인접과 화면 인접이 다르다 · 실측).
+     굵기의 뜻은 **이웃이 없는 자리**에서 준다 — 아래 h2 의 밑줄이 그 자리다. */
   border:var(--rw-row) solid var(--hair-2);border-left:var(--rw-mast) solid var(--hair-2);
   margin-bottom:var(--s6);
   animation:rise var(--t2) var(--e-out) both;animation-delay:calc(var(--i,0) * var(--t-stagger))}
 .block[hidden]{display:none}
+/* ⚠**바로 위에 조작 줄이 붙는 구획은 자기 윗줄을 내려놓는다**(2026-09-08 · 2b).
+   .rail·.legend·.idline 은 각자 border-bottom 을 갖는데 그 아래가 곧바로 구획이라
+   **같은 픽셀에 1px 선이 두 개** 서 있었다(실측 8무리 · 간격 0.0px).
+   ⚠**지우는 쪽이 구획이지 조작 줄이 아니다** — .rail 은 sticky 라 스크롤 중에 구획에서
+   떨어져 나오고, 그때 자기 밑줄이 없으면 본문이 그 밑으로 그냥 흘러 들어간다. */
+/* ⚠**구획이 래퍼 안에 있는 경우가 있다** — .rail 다음은 .block 이 아니라
+   [data-panelgroup] 이고 구획은 그 안이다(실측). 인접 선택자만으로는 안 닿는다.
+   ⚠**그 래퍼의 구획들은 배타적이지 않다** — 순위 화면에서 둘 다 보이고 y 가 244·1132 다.
+   전부 끄면 **화면 중간 구획의 윗줄이 사라진다.** 그래서 첫 자식만 끈다. */
+/* ⚠**.legend 는 이 규칙으로 못 고친다 — 사슬을 써 봤고 안 맞았다**(2026-09-08 실측).
+   선수 페이지에서 .legend 다음 형제는 .editor 이고 그다음은 #b-scorebook 인데
+   **그 사이 형제들이 [hidden]** 이라, 화면에서 legend 밑에 붙는 것은 훨씬 뒤의 #b-standard 다.
+   **DOM 인접과 화면 인접이 다르고 CSS 는 화면 인접을 말할 수 없다.**
+   → 그래서 구획의 윗변을 굵히지 않았다(위 .block 주석). 남는 것은 1px + 1px 이고 그건 바꾸기 전과 같다.
+   ⚠**여기에 .legend + .editor + .block 을 적지 마라 — 한 번도 안 맞는 죽은 선택자다.** */
+.rail + .block,.legend + .block,.idline + .block,
+.rail + [data-panelgroup] > .block:first-child,
+.legend + [data-panelgroup] > .block:first-child,
+.idline + [data-panelgroup] > .block:first-child{border-top-color:transparent}
 /* ⚠**구획 머리를 더 또렷하게**(2026-08-17 유저 요청: 가시성·영역 구분).
    카드·그림자·둥근 모서리는 쓰지 않는다(§6) — 대신 **짧은 색 막대**와 글자 무게로 가른다.
    막대 색은 그 화면의 구단 색(--chip)이고, 없으면 본문 색이라 어디서든 보인다. */
 .block>h2{margin:0 0 var(--s5);font-size:var(--fs-lead);letter-spacing:.16em;color:var(--tx);font-weight:var(--w-bold);
   display:flex;align-items:center;gap:var(--s4);flex-wrap:wrap;
   padding:0 0 var(--s4) var(--s5);position:relative;
-  /* ⚠**머리 아래에 실선을 둔다** — 제목과 내용의 경계가 없으면 표가 제목에 붙어 읽힌다 */
-  border-bottom:var(--rw-row) solid var(--hair)}
+  /* ⚠**머리 아래에 실선을 둔다** — 제목과 내용의 경계가 없으면 표가 제목에 붙어 읽힌다.
+     ⚠**굵기 위계가 여기서 선다**(2026-09-08 · 2b). 여태 구획 경계도 행 구분도 둘 다 1px 이고
+     잉크(--hair / --hair-2)로만 갈렸다 — --rw-sect 는 선언만 있고 어디서도 「구획」을 뜻하지 않았다.
+     이제 셋이 각각 다른 것을 말한다: **왼쪽 3px = 구획의 기둥 · 여기 2px = 머리와 내용의 경계 ·
+     1px = 가장자리와 행.**
+     ⚠**이 자리를 고른 이유는 이웃이 없기 때문이다** — 구획 안쪽이라 다른 요소의 밑줄과
+     같은 픽셀에 설 수 없다. 구획의 윗변에 주면 겹쳐서 띠가 된다(위 .block 주석).
+     ⚠**선을 늘린 것이 아니라 굵힌 것이다** — 같은 커밋에서 겹친 선 47개를 없앴다. */
+  border-bottom:var(--rw-sect) solid var(--hair-2)}
 /* ⚠**구단 색이 여기까지 온다.** body 에 --team 이 이미 있고(선수·구단 페이지는 그 팀 색,
    그 밖은 중립색), 로고를 못 쓰는 자리에서 팀을 말하는 것이 색이다(§6).
    ⚠**--chip 이 있으면 그쪽이 이긴다** — 구단별 묶음 안에서는 그 구단 색이어야 한다 */
@@ -1373,7 +1422,11 @@ a.cg:focus-visible{outline:2px solid var(--tx);outline-offset:1px}
 .hjump::-webkit-scrollbar-thumb{background:var(--hair-2);border-radius:var(--r-thumb)}
 .hjump a{flex:0 0 auto;scroll-snap-align:start;
   display:inline-flex;align-items:center;padding:var(--s3) var(--s5);
-  border:var(--rw-row) solid var(--hair-2);background:var(--panel);color:var(--tx);
+  /* ⚠**쉬는 칩은 테두리도 면도 칠하지 않는다**(2026-09-08 · 2b · .tab 과 같은 사유).
+     ⚠**배경까지 끄는 이유**: .hjump 의 바탕이 --page 이고 칩이 --panel 이었는데 그 둘의 대비가
+     **라이트 1.044 · 다크 1.084** 라 애초에 안 보이는 면이었다. 안 보이는 면을 남겨 두면
+     「면으로도 구분된다」는 거짓 근거가 남는다. **지금 보고 있는 구획**만 면과 테두리를 갖는다. */
+  border:var(--rw-row) solid transparent;background:transparent;color:var(--tx);
   font-size:var(--fs-data);text-decoration:none;white-space:nowrap;
   transition:border-color var(--t1) var(--e-out),background var(--t1) var(--e-out),color var(--t1) var(--e-out)}
 .hjump a:hover{border-color:var(--team,var(--tx-3));background:var(--panel-2)}
@@ -1662,7 +1715,14 @@ table.stand .dif i.n{right:50%}
 .seasons a{font-size:var(--fs-data);padding:var(--s1) var(--s4);text-decoration:none;color:var(--tx-2);
   border:var(--rw-row) solid transparent;transition:color var(--t1) var(--e-out)}
 .seasons a:hover{color:var(--tx);border-color:var(--hair-2)}
-.seasons a[aria-current="page"]{color:var(--tx);font-weight:var(--w-bold);border-color:var(--tx-3);background:var(--panel)}
+/* ⚠**「지금 여기」를 상단 내비와 같은 언어로 말한다**(2026-09-08 · 2b · M1).
+   여태 이 칩만 **상자**로 표시했는데, 그 상자의 위·아래 테두리가 .topbar 의 밑줄과
+   .seasons 의 밑줄 사이에 끼어 **34px 안에 가로선 4개**가 됐다(실측 16무리 · 간격 2~5px).
+   상단 내비는 같은 뜻을 이미 inset 밑줄 2px 으로 말한다 — 표시 언어가 두 벌일 이유가 없다.
+   ⚠**면도 뺐다** — --panel 이 .seasons 바탕(--page)과 **1.044** 라 보이지 않던 면이다.
+   ⚠**색만으로 말하지 않는다**(§7) — 굵기(bold)와 잉크(--tx)가 같이 말한다. */
+.seasons a[aria-current="page"]{color:var(--tx);font-weight:var(--w-bold);
+  box-shadow:inset 0 calc(-1 * var(--rw-sect)) 0 var(--team,var(--tx-3))}
 /* 같은 화면이 그 시즌에 없어 다른 곳으로 보낼 때. **숨기지 않고 표시한다**
    ⚠**탭줄과 브랜드도 같은 표식을 쓴다**(M1). 드래프트만 굽는 시즌(2005~2017)에서는
    그 시즌에 없는 화면의 탭이 **가장 최신 시즌으로** 간다 — 조용히 해가 바뀌면

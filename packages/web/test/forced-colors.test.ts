@@ -202,6 +202,16 @@ const JUSTIFIED: readonly Justification[] = [
     why: "같은 이유",
     cites: [{ sel: '.pk[aria-pressed="true"]', decl: "font-weight:var(--w-bold)" }],
   },
+  // ⚠**2b 에서 쉬는 탭의 테두리를 껐고**(인접한 두 상자가 사이에 선을 두 개 세웠다),
+  //   세그먼티드 줄에서만 되살렸다 — 거기서는 붙은 상자 모양 자체가 「둘 중 하나」를 말한다.
+  //   그 되살리는 규칙이 상태(고르지 않음)를 색으로만 말하므로 강제 색 모드에서 죽는다.
+  {
+    sel: '.tabs.seg .tab:not([aria-selected="true"]):not([aria-pressed="true"])',
+    why: "쉬는 세그먼트에 테두리를 돌려주는 규칙이라 강제 색에서 색이 죽는다 — 고른 쪽은 굵기로 산다",
+    cites: [
+      { sel: '.tab[aria-pressed="true"],.tab[aria-selected="true"]', decl: "font-weight:var(--w-bold)" },
+    ],
+  },
   // ⚠**같은 처방을 .chip.fav 에도 붙였다**(2026-09-08). 눌린 칩은 면이 구단 색이 되므로
   //   개수(<s>)가 --tx-3 를 들고 들어가면 안 되는데, 강제 색 모드에는 그 면이 아예 없다.
   {
