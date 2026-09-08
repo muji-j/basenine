@@ -941,6 +941,19 @@ tbody th{font-size:var(--fs-data);letter-spacing:0;color:var(--tx);font-weight:v
 td.l,th.l{text-align:left}
 tbody tr{transition:background var(--t1) var(--e-out)}
 tbody tr:hover{background:var(--panel-2)}
+/* ⚠**면으로는 호버가 안 보인다 — 실측이다**(2026-09-08 · 2d).
+   감사가 「표에 호버도 줄무늬도 없다」고 적었는데, **규칙은 있고 보이지 않는 것**이었다.
+   칠해진 색을 읽어 대비를 계산한 결과(화면 3종 × 테마 2):
+     홈 순위표 **1.044 / 1.084** · 순위 화면 **1.044 / 1.084** · 선수 화면 **1.081 / 1.192**
+   전부 이 저장소가 스스로 「감지 한계 이하」라고 적어 둔 1.04 대다.
+   ⚠**이 팔레트의 밝은 바탕들은 서로 1.04~1.19 다** — 2b 에서 두 번(패널의 층 · .legend 의 면)
+   확인한 것과 같은 성질이다. **면으로 표식을 만들려는 시도는 이 팔레트에서 계속 실패한다.**
+   → **2b 가 세운 어휘를 그대로 쓴다: 칠해진 테두리 = 지금 고른 것이거나 손가락이 얹힌 것.**
+   위아래 1px 을 --tx-3 로 그어 행을 감싼다(--page 대비 **4.910 / 5.499**).
+   ⚠**면(--panel-2)은 남긴다** — 안 보여도 해롭지 않고, 선과 함께 있으면 거드는 몫은 한다.
+   ⚠**강제 색 모드에서는 이 선이 죽는다** — 그 모드의 호버 표시는 시스템 몫이고,
+   바꾸기 전에도 면이 죽어 같은 상태였다(회귀 아님). */
+tbody tr:hover td,tbody tr:hover th{box-shadow:inset 0 1px 0 var(--tx-3),inset 0 -1px 0 var(--tx-3)}
 tr.me td{background:var(--team,#6b7280);color:var(--team-ink,#fff);font-weight:var(--w-bold)}
 tr.me:hover td{background:var(--team,#6b7280)}
 /* ⚠**강조면 위에서는 면의 잉크에 맞춘다**(2026-09-08 · design-auditor P0).
