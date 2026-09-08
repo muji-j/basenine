@@ -640,6 +640,14 @@ function topbar(o: PageOptions): RawHtml {
        「自動」이라고 말해도 눌리지 않았다. JS 가 뜨면 스스로 고쳤지만 **그 전까지가 틀렸다.**
        서버가 처음부터 JS 와 같은 문장을 쓴다(assets.ts applyTheme 과 같은 형식). -->
   <button class="tbtn" type="button" id="themeBtn" aria-label="表示テーマ：自動（切り替え）">自動</button>
+  ${/* ⚠**서체 전환**(3단계 · 2026-09-08 · 사용자 결정 「3종 · 초기값 IBM Plex」).
+       ⚠**서버가 초기값을 그대로 그린다** — 테마 버튼과 같은 방식이다(그쪽 주석 참조):
+       JS 가 뜨면 저장된 선택으로 고쳐 쓰고, **JS 가 없으면 초기값이 그대로 맞다.**
+       ⚠**보이는 글자가 이름 안에 있어야 한다**(WCAG 2.5.3) — 라벨이 「書体：Plex」로 시작한다.
+       ⚠**「Plex」를 화면에 쓰는 것은 서체 파일 이름이 아니라 고른 것의 이름이다** —
+       부분집합의 CSS 패밀리는 BN Sans 이고(OFL 예약명 회피 · build-fonts.ts), 이 글자는 사람에게
+       「어느 서체를 골랐는지」를 말한다. 둘을 같은 것으로 읽지 마라. */ ""}
+  <button class="tbtn" type="button" id="fontBtn" aria-label="書体：Plex（切り替え）">Plex</button>
 </header>`;
 }
 

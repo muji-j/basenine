@@ -2870,7 +2870,10 @@ const state={
   favTeam:readFavTeam(saved.favTeam),
   grades:saved.grades!==false,
   mark:saved.mark===true,
-  theme:saved.theme==="dark"||saved.theme==="light"?saved.theme:"system"
+  theme:saved.theme==="dark"||saved.theme==="light"?saved.theme:"system",
+  /* ⚠**모르는 값은 초기값으로 떨어뜨린다** — 저장된 것이 낡거나 손으로 고쳐졌을 수 있다.
+     ⚠**초기값이 plex 다**(사용자 결정 · 3단계). 테마의 "system" 과 다르므로 베끼지 마라. */
+  font:saved.font==="noto"||saved.font==="system"?saved.font:"plex"
 };
 
 function press(sel,attr,val,mark){
@@ -2894,6 +2897,32 @@ if(tb)tb.addEventListener("click",()=>{
   state.theme=state.theme==="system"?"light":state.theme==="light"?"dark":"system";
   save(state);applyTheme();
 });
+
+/* ── 서체 (3단계 · 2026-09-08) ──
+   ⚠**초기값은 plex 다**(사용자 결정). 서버가 그 상태를 그대로 그리므로
+   **JS 가 없으면 초기값이 그대로 맞다** — 테마와 같은 방식이다.
+   ⚠**「기본」은 웹폰트 요청이 0건이어야 한다** — CSS 가 그 자리에 웹폰트 이름을 안 쓴다
+   (build-fonts.ts 가 쓰는 블록). ⚠**단, 저장된 「기본」은 이 스크립트가 돌기 전까지는 못 막는다** —
+   이 사이트는 인라인 실행 스크립트가 0개라 첫 페인트 전에 손댈 수가 없다.
+   그 비용은 「기본」을 고른 사람에게만, 화면마다 한 번 생긴다.
+   ⚠**저장이 안 되는 브라우저에서도 화면은 정상이다** — save 가 try/catch 이고(위 save),
+   읽기가 실패하면 saved 가 빈 객체라 초기값으로 떨어진다. */
+function applyFont(){
+  const el=doc.documentElement;
+  el.setAttribute("data-font",state.font);
+  const b=$("#fontBtn");
+  if(b){
+    const t={plex:"Plex",noto:"Noto",system:"標準"}[state.font];
+    b.textContent=t;
+    b.setAttribute("aria-label","書体："+t+"（切り替え）");
+  }
+}
+const fb=$("#fontBtn");
+if(fb)fb.addEventListener("click",()=>{
+  state.font=state.font==="plex"?"noto":state.font==="noto"?"system":"plex";
+  save(state);applyFont();
+});
+applyFont();
 
 /* ── 탭 묶음 ──
    tablist: [data-tabgroup="G"] 안의 [data-tab="v"]
