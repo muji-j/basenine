@@ -418,7 +418,9 @@ function standingsTable(l: HomeLeague, base: string): RawHtml {
   //   ⚠**순위 화면은 켜지 않는다** — 그 표는 `stand hstand` 라 클래스가 겹치므로 **옵트인으로 가른다.**
   //   실측 근거: 막대는 **이미 전부 짧은 표(≤20행) 안**에 있고 긴 표의 막대는 **0개**다(화면 7장 전수).
   //   순위 화면은 긴 표가 84개라 거기에 연출을 걸면 무너지는데, **걸 막대가 애초에 없다.**
-  return scroller(html`<table class="hstand anim" aria-label="順位表">
+  //   ⚠**`colgrp` 는 「이 표는 열을 묶었다」는 표식이다** — 묶음 여백을 `.hstand` 로만 걸었더니
+  //     같은 클래스를 쓰는 **순위 화면의 12열 표로 샜다**(검토 P2 · 그쪽은 묶지 않은 표다).
+  return scroller(html`<table class="hstand anim colgrp" aria-label="順位表">
   <thead>
   <tr class="grp">
     <td colspan="2"></td>

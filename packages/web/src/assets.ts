@@ -954,6 +954,16 @@ tbody tr:hover{background:var(--panel-2)}
    ⚠**강제 색 모드에서는 이 선이 죽는다** — 그 모드의 호버 표시는 시스템 몫이고,
    바꾸기 전에도 면이 죽어 같은 상태였다(회귀 아님). */
 tbody tr:hover td,tbody tr:hover th{box-shadow:inset 0 1px 0 var(--tx-3),inset 0 -1px 0 var(--tx-3)}
+/* ⚠**box-shadow 는 병합이 아니라 대체다 — 이걸 안 쓰면 한 칸만 조용히 진다**(검토 P1 · 2026-09-08).
+   ⚠**이 주석에 역따옴표를 쓰지 마라** — 이 파일은 통째로 템플릿 리터럴이다. 오늘만 세 번 깼다.
+   위 줄은 (0,1,3) 인데 tr.thin td:first-child 의 box-shadow 는 **(0,2,2)** 라
+   **표본 부족 행의 이름 칸에서만** 호버 테두리가 사라지고 왼쪽 2px 표식만 남는다 —
+   같은 행의 둘째 칸부터는 테두리가 뜨므로 **한 행 안에서 어긋난다.**
+   ⚠**이 계열에서 같은 모양의 실수가 여섯 번째다.** box-shadow 를 겹쳐 쓸 때는 **항상**
+   「누가 이기나」가 아니라 **「이긴 쪽이 나머지를 지운다」**를 먼저 생각하라.
+   → 세 그림자를 **한 규칙에 합성**한다. (0,3,2) 라 둘 다 이긴다. */
+tr.thin:hover td:first-child{box-shadow:inset 2px 0 0 var(--tx-3),
+  inset 0 1px 0 var(--tx-3),inset 0 -1px 0 var(--tx-3)}
 tr.me td{background:var(--team,#6b7280);color:var(--team-ink,#fff);font-weight:var(--w-bold)}
 tr.me:hover td{background:var(--team,#6b7280)}
 /* ⚠**강조면 위에서는 면의 잉크에 맞춘다**(2026-09-08 · design-auditor P0).
@@ -1352,8 +1362,15 @@ td.bad{color:var(--warn);font-weight:var(--w-bold)}
 .hstand tr.grp th{font-size:var(--fs-label);letter-spacing:.16em;color:var(--tx-3);
   font-weight:var(--w-reg);text-align:left;padding:0 var(--s4) var(--s1) var(--s6);
   border-bottom:var(--rw-none);white-space:nowrap}
-.hstand tr:not(.grp) th:nth-child(3),.hstand tr:not(.grp) th:nth-child(7),.hstand tr:not(.grp) th:nth-child(9),
-.hstand td:nth-child(3),.hstand td:nth-child(7),.hstand td:nth-child(9){padding-left:var(--s6)}
+/* ⚠**표를 지정해서 건다 — .hstand 만으로는 순위 화면으로 샌다**(검토 P2 · 2026-09-08).
+   ⚠**이 주석에 역따옴표를 쓰지 마라** — 이 파일은 통째로 템플릿 리터럴이다. 오늘만 세 번 깼다.
+   순위 화면의 12열 표가 class="stand hstand" 로 **같은 클래스를 쓴다.** 그 표에는 tr.grp 가
+   없으니 :not(.grp) 는 항상 참이고, 결국 **試合·得失点·防御率 앞에 이유 없는 16px** 이 붙었다 —
+   계획서는 「순위 화면의 12열 표는 아직 안 묶었다」고 적어 두고 **CSS 는 이미 손대고 있었다.**
+   → 묶음을 실제로 그린 표에만 .colgrp 를 붙여 그것으로 건다. */
+.hstand.colgrp tr:not(.grp) th:nth-child(3),.hstand.colgrp tr:not(.grp) th:nth-child(7),
+.hstand.colgrp tr:not(.grp) th:nth-child(9),
+.hstand.colgrp td:nth-child(3),.hstand.colgrp td:nth-child(7),.hstand.colgrp td:nth-child(9){padding-left:var(--s6)}
 
 /* ⚠**得失 셀을 두 줄로 접는다.** 한 줄이면 약 158px 로 이 표에서 가장 넓은 칸이 된다 —
    「득실차를 주역으로, 득점·실점을 뒤에」라는 위계도 한 줄에서는 성립하지 않는다.
@@ -1916,8 +1933,9 @@ table.stand .dif i.n{right:50%}
    ⚠**바꾸기 전이 4.541/4.611(--tx-3)이었으니 내가 표식을 없앤 셈이다.**
    ⚠**이 저장소는 같은 판정을 이미 두 번 내렸다** — .tbar i(감사 #21) · .mf-shape/.mf-dot(감사 P1).
    처방도 두 번 다 같았다: **구단색을 선에서 빼고 토큰으로 바꾼다.**
-   ⚠**.tnav a[aria-current] 는 아직 var(--team) 이다** — 같은 결함이지만 이 브랜치가 만든 것이
-   아니라 손대지 않았다. **다음 조각에서 같이 본다.** */
+   ⚠~~.tnav a[aria-current] 는 아직 var(--team) 이다 — 다음 조각에서 같이 본다~~
+   → **2c 에서 처리했다**(2026-09-08 · 검토 P3 가 이 줄이 낡은 것을 짚었다).
+   .tnav 와 .brand 의 같은 표식도 --tx-3 이 됐고, 셋이 갈라지지 못하게 시험이 묶는다. */
 .seasons a[aria-current="page"]{color:var(--tx);font-weight:var(--w-bold);
   box-shadow:inset 0 calc(-1 * var(--rw-sect)) 0 var(--tx-3)}
 /* 같은 화면이 그 시즌에 없어 다른 곳으로 보낼 때. **숨기지 않고 표시한다**
