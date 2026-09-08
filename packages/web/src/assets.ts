@@ -941,6 +941,29 @@ tbody th{font-size:var(--fs-data);letter-spacing:0;color:var(--tx);font-weight:v
 td.l,th.l{text-align:left}
 tbody tr{transition:background var(--t1) var(--e-out)}
 tbody tr:hover{background:var(--panel-2)}
+/* ⚠**면으로는 호버가 안 보인다 — 실측이다**(2026-09-08 · 2d).
+   감사가 「표에 호버도 줄무늬도 없다」고 적었는데, **규칙은 있고 보이지 않는 것**이었다.
+   칠해진 색을 읽어 대비를 계산한 결과(화면 3종 × 테마 2):
+     홈 순위표 **1.044 / 1.084** · 순위 화면 **1.044 / 1.084** · 선수 화면 **1.081 / 1.192**
+   전부 이 저장소가 스스로 「감지 한계 이하」라고 적어 둔 1.04 대다.
+   ⚠**이 팔레트의 밝은 바탕들은 서로 1.04~1.19 다** — 2b 에서 두 번(패널의 층 · .legend 의 면)
+   확인한 것과 같은 성질이다. **면으로 표식을 만들려는 시도는 이 팔레트에서 계속 실패한다.**
+   → **2b 가 세운 어휘를 그대로 쓴다: 칠해진 테두리 = 지금 고른 것이거나 손가락이 얹힌 것.**
+   위아래 1px 을 --tx-3 로 그어 행을 감싼다(--page 대비 **4.910 / 5.499**).
+   ⚠**면(--panel-2)은 남긴다** — 안 보여도 해롭지 않고, 선과 함께 있으면 거드는 몫은 한다.
+   ⚠**강제 색 모드에서는 이 선이 죽는다** — 그 모드의 호버 표시는 시스템 몫이고,
+   바꾸기 전에도 면이 죽어 같은 상태였다(회귀 아님). */
+tbody tr:hover td,tbody tr:hover th{box-shadow:inset 0 1px 0 var(--tx-3),inset 0 -1px 0 var(--tx-3)}
+/* ⚠**box-shadow 는 병합이 아니라 대체다 — 이걸 안 쓰면 한 칸만 조용히 진다**(검토 P1 · 2026-09-08).
+   ⚠**이 주석에 역따옴표를 쓰지 마라** — 이 파일은 통째로 템플릿 리터럴이다. 오늘만 세 번 깼다.
+   위 줄은 (0,1,3) 인데 tr.thin td:first-child 의 box-shadow 는 **(0,2,2)** 라
+   **표본 부족 행의 이름 칸에서만** 호버 테두리가 사라지고 왼쪽 2px 표식만 남는다 —
+   같은 행의 둘째 칸부터는 테두리가 뜨므로 **한 행 안에서 어긋난다.**
+   ⚠**이 계열에서 같은 모양의 실수가 여섯 번째다.** box-shadow 를 겹쳐 쓸 때는 **항상**
+   「누가 이기나」가 아니라 **「이긴 쪽이 나머지를 지운다」**를 먼저 생각하라.
+   → 세 그림자를 **한 규칙에 합성**한다. (0,3,2) 라 둘 다 이긴다. */
+tr.thin:hover td:first-child{box-shadow:inset 2px 0 0 var(--tx-3),
+  inset 0 1px 0 var(--tx-3),inset 0 -1px 0 var(--tx-3)}
 tr.me td{background:var(--team,#6b7280);color:var(--team-ink,#fff);font-weight:var(--w-bold)}
 tr.me:hover td{background:var(--team,#6b7280)}
 /* ⚠**강조면 위에서는 면의 잉크에 맞춘다**(2026-09-08 · design-auditor P0).
@@ -1321,12 +1344,33 @@ td.bad{color:var(--warn);font-weight:var(--w-bold)}
    ⚠**두 열을 함께 고정한다.** 두 번째 열의 left 는 첫 열의 실제 폭과 같아야 한다 —
    그래서 순위 열에 고정 폭을 준다(어긋나면 겹치거나 틈이 벌어진다). */
 .hstand td.hrank,.hstand th:first-child{width:44px;min-width:44px}
-.hstand th:nth-child(2),.hstand td:nth-child(2){position:sticky;left:44px;z-index:2;
+/* ⚠**묶음 줄(tr.grp)을 반드시 뺀다**(2026-09-08 · 2d). 그 줄의 첫 칸은 colspan=2 라
+   nth-child(2) 가 **팀 열이 아니라 「成績」**이 된다 — 안 빼면 엉뚱한 칸이 고정된다.
+   ⚠**아래 z-index 줄도 같이 고쳐야 한다** — 여기에 :not() 을 더하면 특이도가 올라가서
+   그 줄이 지고, **머리의 고정 열이 본문 밑으로 깔린다.** 둘은 한 벌이다. */
+.hstand tr:not(.grp) th:nth-child(2),.hstand tr:not(.grp) td:nth-child(2){position:sticky;left:44px;z-index:2;
   background:var(--panel)}
-.hstand thead th:nth-child(2){z-index:3}
+.hstand thead tr:not(.grp) th:nth-child(2){z-index:3}
 /* 고정 열의 오른쪽 끝을 표시한다 — 어디까지가 고정인지 모르면 스크롤이 혼란스럽다 */
-.hstand th:nth-child(2)::after,.hstand td:nth-child(2)::after{content:"";position:absolute;
+.hstand tr:not(.grp) th:nth-child(2)::after,.hstand tr:not(.grp) td:nth-child(2)::after{content:"";position:absolute;
   top:0;bottom:0;right:0;width:1px;background:var(--hair-2)}
+/* ── 열 묶음 (2d · 2026-09-08) ─────────────────────────────────
+   ⚠**묶음을 선으로 가르지 않는다.** 2b 가 「여백이 할 일을 선이 하고 있다」를 고친 참이다 —
+   묶음의 **시작 열에 여백**을 주고 머리 줄이 이름을 말한다. 선을 세 개 더 세우면 그 수정을 되돌린다.
+   ⚠**묶음 줄의 첫 칸도 왼쪽에 고정한다** — 안 하면 옆으로 밀 때 「成績」이 순위·구단 위를 지나간다. */
+.hstand tr.grp td:first-child{position:sticky;left:0;z-index:3;background:var(--panel);border-bottom:var(--rw-none)}
+.hstand tr.grp th{font-size:var(--fs-label);letter-spacing:.16em;color:var(--tx-3);
+  font-weight:var(--w-reg);text-align:left;padding:0 var(--s4) var(--s1) var(--s6);
+  border-bottom:var(--rw-none);white-space:nowrap}
+/* ⚠**표를 지정해서 건다 — .hstand 만으로는 순위 화면으로 샌다**(검토 P2 · 2026-09-08).
+   ⚠**이 주석에 역따옴표를 쓰지 마라** — 이 파일은 통째로 템플릿 리터럴이다. 오늘만 세 번 깼다.
+   순위 화면의 12열 표가 class="stand hstand" 로 **같은 클래스를 쓴다.** 그 표에는 tr.grp 가
+   없으니 :not(.grp) 는 항상 참이고, 결국 **試合·得失点·防御率 앞에 이유 없는 16px** 이 붙었다 —
+   계획서는 「순위 화면의 12열 표는 아직 안 묶었다」고 적어 두고 **CSS 는 이미 손대고 있었다.**
+   → 묶음을 실제로 그린 표에만 .colgrp 를 붙여 그것으로 건다. */
+.hstand.colgrp tr:not(.grp) th:nth-child(3),.hstand.colgrp tr:not(.grp) th:nth-child(7),
+.hstand.colgrp tr:not(.grp) th:nth-child(9),
+.hstand.colgrp td:nth-child(3),.hstand.colgrp td:nth-child(7),.hstand.colgrp td:nth-child(9){padding-left:var(--s6)}
 
 /* ⚠**得失 셀을 두 줄로 접는다.** 한 줄이면 약 158px 로 이 표에서 가장 넓은 칸이 된다 —
    「득실차를 주역으로, 득점·실점을 뒤에」라는 위계도 한 줄에서는 성립하지 않는다.
@@ -1457,6 +1501,26 @@ a.cg:focus-visible{outline:2px solid var(--tx);outline-offset:1px}
   background:var(--hair);overflow:hidden}
 /* ⚠**0 이 아니면 보여야 한다.** 무승부 1경기는 폭 0.94% = 약 1px 이라 사실상 사라졌다 —
    「띠의 승 비율과 승률이 다른 이유」를 설명하는 조각이 그 설명을 못 했다(감사 P2). */
+/* ── 진입 연출 (2e · 2026-09-08 · 사용자 결정 「진입 연출까지 · 막대 차오름」) ─────
+   ⚠**화면이 명시적으로 켠다**(.anim). 기본은 꺼짐이고 **순위 화면은 안 켠다**(방향서 §7-2).
+   ⚠**막대 하나하나가 아니라 띠 전체를 키운다** — .wlbar 안의 세 조각(승·무·패)을 따로 키우면
+   각자 제 왼쪽에서 자라 **셋이 따로 노는** 그림이 된다. 띠를 하나로 키우면 12개면 된다(조각은 36개).
+   ⚠**득실차 띠(.rdbar)는 안 켠다** — 가운데에서 좌우로 갈리는 띠라 자라는 방향이 행마다 다르고,
+   방향을 틀리면 **음수가 오른쪽으로 자라는** 거짓 그림이 된다. 켜려면 방향별 origin 을 먼저 재라.
+   ⚠**스크립트가 필요 없다** — @keyframes grow 는 이미 있고(.track i 가 쓴다) both 로 끝 상태를 남긴다.
+   ⚠**뷰포트 진입(IntersectionObserver)으로 안 만들었다.** 그러려면 기본 상태를 scaleX(0) 으로 둬야 하는데,
+   이 사이트는 **인라인 실행 스크립트가 0개**라(§0-1 · 2c 에서 실측) 스크립트가 없으면
+   **막대가 영영 0 인 채로 남는다.** 화면 밖에서 미리 자라는 편이 훨씬 낫다.
+   ⚠**prefers-reduced-motion 은 이미 배선돼 있다** — 그 블록이 --t1~--t3 를 1ms 로 만들어
+   **끝 상태로 즉시** 그린다. 여기서 따로 분기하지 않는다(1단계가 세운 방식). */
+.anim .wlbar{transform-origin:left center;animation:grow var(--t3) var(--e-out) both}
+/* 순번 지연 — ⚠**마크업에 --i 를 심지 않는다.** 전 페이지에 실리는 표라 한 행에 몇 바이트라도
+   붙으면 그날 배포가 통째로 새 파일이 된다. 리그당 6팀이라 여섯 줄이면 끝난다. */
+.anim tbody tr:nth-child(2) .wlbar{animation-delay:calc(1 * var(--t-stagger))}
+.anim tbody tr:nth-child(3) .wlbar{animation-delay:calc(2 * var(--t-stagger))}
+.anim tbody tr:nth-child(4) .wlbar{animation-delay:calc(3 * var(--t-stagger))}
+.anim tbody tr:nth-child(5) .wlbar{animation-delay:calc(4 * var(--t-stagger))}
+.anim tbody tr:nth-child(6) .wlbar{animation-delay:calc(5 * var(--t-stagger))}
 .wlbar i{display:block;height:100%}
 .wlbar i.wt{min-width:2px}
 .wlbar .ww{background:var(--bar-w)}
@@ -1869,8 +1933,9 @@ table.stand .dif i.n{right:50%}
    ⚠**바꾸기 전이 4.541/4.611(--tx-3)이었으니 내가 표식을 없앤 셈이다.**
    ⚠**이 저장소는 같은 판정을 이미 두 번 내렸다** — .tbar i(감사 #21) · .mf-shape/.mf-dot(감사 P1).
    처방도 두 번 다 같았다: **구단색을 선에서 빼고 토큰으로 바꾼다.**
-   ⚠**.tnav a[aria-current] 는 아직 var(--team) 이다** — 같은 결함이지만 이 브랜치가 만든 것이
-   아니라 손대지 않았다. **다음 조각에서 같이 본다.** */
+   ⚠~~.tnav a[aria-current] 는 아직 var(--team) 이다 — 다음 조각에서 같이 본다~~
+   → **2c 에서 처리했다**(2026-09-08 · 검토 P3 가 이 줄이 낡은 것을 짚었다).
+   .tnav 와 .brand 의 같은 표식도 --tx-3 이 됐고, 셋이 갈라지지 못하게 시험이 묶는다. */
 .seasons a[aria-current="page"]{color:var(--tx);font-weight:var(--w-bold);
   box-shadow:inset 0 calc(-1 * var(--rw-sect)) 0 var(--tx-3)}
 /* 같은 화면이 그 시즌에 없어 다른 곳으로 보낼 때. **숨기지 않고 표시한다**
@@ -2591,6 +2656,26 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
   :root{--t1:1ms;--t2:1ms;--t3:1ms;--t-stagger:0ms}
   *,*::before,*::after{animation-duration:var(--t1)!important;animation-delay:var(--t-stagger)!important;transition-duration:var(--t1)!important}
 }
+/* ── 문서 간 전환 (2e · 2026-09-08) ────────────────────────────
+   ⚠**감사의 「페이지 전환 애니메이션은 원리적으로 못 한다」는 낡은 판정이다.**
+   그 문장의 근거는 「서버가 없어 화면 이동이 실제 문서 이동이다」인데,
+   **문서 간 View Transition 은 정확히 그 경우를 위해 만들어졌다.**
+   실측(Chrome 149): CSSViewTransitionRule 파싱 · pageswap/pagereveal 둘 다 있다.
+   ⚠**이 사이트에 특히 잘 맞는다** — CSS **한 줄**이고 **스크립트가 0개**다(이 저장소의 제약과 같다).
+   ⚠**미지원 브라우저는 지금과 똑같이 이동한다** — Firefox·Safari 에서 회귀가 아니라 무변화다.
+   ⚠**모션 감소에서는 끈다** — 위 블록은 지속시간만 줄이는데, 문서 간 전환은 그 방식으로 안 꺼진다.
+   ⚠**같은 출처에서만 발동한다** — 바깥 링크(npb.jp)에는 안 걸린다.
+   ⚠⚠**발동을 증명하지 못했다 — 「된다」고 읽지 마라**(2026-09-08).
+   지원은 확인했다(CSSViewTransitionRule 파싱 · pageswap/pagereveal 존재 · 새 문서에 규칙이 살아 있음).
+   그런데 pagereveal 로 전환 시간을 재려 했더니 **모션 감소에서만 이벤트가 잡히고
+   기본에서는 안 잡혔다** — 전환이 걸릴 때 그 이벤트가 계측기의 리스너보다 먼저 지나가는 것으로
+   보이지만 **그것도 추정이다.**
+   ⚠**그래서 두 가지를 모르는 채로 켠다**: ⑴ 실제로 도는가 ⑵ **순위 화면(42,703노드)에서 얼마나 비싼가.**
+   켜는 근거는 「확인했다」가 아니라 **「틀려도 잃는 것이 없다」**다 —
+   미지원이면 무변화이고, 도는데 비싸면 **그때 이 두 줄만 지우면 원상복구**다.
+   ⚠**사람이 실기에서 한 번 봐야 한다.** 그건 계측기가 아니라 눈이 할 일이다. */
+@view-transition{navigation:auto}
+@media (prefers-reduced-motion:reduce){@view-transition{navigation:none}}
 /* **강제 색 모드**(Windows 고대비 등). ⚠**대응 규칙이 0개였다**(2026-08-25 · 감사 P3 #34).
 
    그 모드에서 OS 가 갈아치우는 것: color · background-color · border-color · outline-color.

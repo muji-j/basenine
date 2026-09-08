@@ -179,6 +179,18 @@ const JUSTIFIED: readonly Justification[] = [
     says: [{ file: "parts.ts", text: 'class="qmk"' }],
     noCite: "⚠위 tr.thin td 와 같다 — box-shadow 는 none 이 되고, 대신 말해 주는 CSS 선언이 없다.",
   },
+  // ⚠**호버 전용으로 하나가 더 생겼다**(2026-09-08 · 2d 검토 P1). 새 행 호버 테두리가
+  //   box-shadow 인데 **box-shadow 는 병합이 아니라 대체**라, 특이도가 높은 위 규칙이
+  //   `.thin` 행의 **첫 칸에서만** 호버 테두리를 지웠다. 세 그림자를 한 규칙에 합성해 고쳤고,
+  //   그 규칙도 같은 이유로 이 모드에서 통째로 죽는다.
+  {
+    sel: "tr.thin:hover td:first-child",
+    why: "같은 이유 — 호버 테두리와 얇음 표식을 한 규칙에 합성한 것이라 이 모드에서 통째로 none 이 된다",
+    says: [{ file: "parts.ts", text: 'class="qmk"' }],
+    noCite:
+      "⚠위 둘과 같다. ⚠**호버 자체가 이 모드에서 색으로 말할 수 없다** — 시스템이 맡는 몫이고," +
+      " 바꾸기 전에도 면(--panel-2)이 죽어 같은 상태였다(회귀 아님).",
+  },
   {
     sel: ".dg .c.thin u",
     why: "얇음은 힌트다 — 값(.dg .c u)과 분모(.dg .c s)는 색과 무관하게 그대로 그려진다",
