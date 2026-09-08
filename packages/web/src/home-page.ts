@@ -454,7 +454,19 @@ function jumpNav(d: HomePageData): RawHtml {
   if (d.streaks.length > 0) items.push({ id: "b-hstreak", label: streakSectionTitle(d.seasonOver) });
   // ⚠**하나뿐이면 그리지 않는다** — 뛸 곳이 하나면 내비가 아니라 장식이다
   if (items.length < 2) return raw("");
-  return html`<nav class="hjump" aria-label="このページの中の移動">
+  // ⚠**좁은 화면에서는 접는다**(2026-09-08 · 2c-3 · 사용자 결정 「접힌 목차」).
+  //   실측: 390px 첫 화면에서 이 줄이 **305px 넘쳤다**(내용 688 / 상자 383) — 감사가 짚은
+  //   「가로로 미는 것이 넷」 중 하나다.
+  //   ⚠**여기는 상단 내비보다 쉽다** — 이 줄은 ≤680px 에서 이미 `position:static` 이라
+  //   sticky 오프셋 토큰(--topbar · 52px 보정)에 안 걸린다. 펼쳐도 흐름 안에서 줄바꿈만 한다.
+  //   ⚠**왜 체크박스인지는 layout.ts 의 내비 주석이 갖는다**(요약: JS 는 defer 라 100ms 깜빡이고,
+  //   CSS 로 <details> 를 펴는 것은 최신 크롬에서만 된다 — 둘 다 실측).
+  //   ⚠**id 가 화면에 하나뿐이어야 한다** — 이 조각은 홈에 한 번만 그려진다(위 items.length 가드).
+  // ⚠**aria-controls 만 준다** — 체크박스는 펼침/접힘 의미론을 못 주는데, `aria-expanded` 를 박으면
+  //   스크립트 없이는 갱신이 안 돼 **틀린 값이 고정된다**(layout.ts 의 같은 자리 주석 참조).
+  return html`<input class="hjtoggle vh" type="checkbox" id="hjtoggle" aria-controls="hjumpnav">
+<label class="hjbtn" for="hjtoggle">目次<b class="vh">を開く</b><s>${String(items.length)}</s></label>
+<nav class="hjump" id="hjumpnav" aria-label="このページの中の移動">
   ${items.map((x) => html`<a href="#${x.id}">${x.label}</a>`)}
 </nav>`;
 }

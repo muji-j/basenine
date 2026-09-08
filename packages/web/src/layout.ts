@@ -345,6 +345,32 @@ export type NavKey =
   | "team";
 
 /**
+ * 내비 항목의 **보이는 이름**.
+ *
+ * ⚠**접힌 버튼이 「지금 어느 화면인지」를 말하려면 이 표가 필요하다**(2026-09-08 · 2c-2).
+ * 좁은 화면에서 내비를 접으면 `aria-current="page"` 가 붙은 링크가 **화면에서 사라진다** —
+ * 목업 C 담당이 「모바일 내비를 접으면 지금 어느 화면인지가 안 보인다」고 짚은 그 구멍이다.
+ * 그래서 버튼이 **현재 화면의 이름을 그대로 입는다.**
+ *
+ * ⚠**이 표가 내비의 라벨과 갈리면 안 된다** — `layout.test.ts` 가 소스에서 대조한다.
+ * 내비 항목을 더하거나 이름을 바꾸면 여기도 같이 고쳐야 시험이 초록이 된다.
+ * ⚠**`home` 만 내비에 항목이 없다** — 그 자리의 표식은 브랜드가 진다(topbar 주석 참조).
+ */
+export const NAV_LABELS: Record<NavKey, string> = {
+  home: "ホーム",
+  team: "球団",
+  today: "試合",
+  index: "一覧",
+  ranking: "順位",
+  matchup: "対戦",
+  compare: "比較",
+  postseason: "他大会",
+  draft: "ドラフト",
+  glossary: "用語",
+  log: "記録",
+};
+
+/**
  * 시즌 전환의 한 칸.
  *
  * ⚠**같은 화면의 다른 시즌으로 보낸다.** 2026 순위표를 보다가 2025를 누르면 2025 순위표여야지
@@ -543,7 +569,28 @@ function topbar(o: PageOptions): RawHtml {
     <ul class="qhits" id="qhits" role="list" aria-label="検索結果" hidden></ul>
     <p class="vh" data-hitstatus role="status"></p>
   </div>
-  <nav class="tnav" aria-label="主要ページ">
+  ${/* ⚠**좁은 화면에서 내비를 접는 스위치**(2026-09-08 · 2c-2 · 사용자 결정 「버튼으로 접는다」).
+       ⚠**왜 체크박스인가 — JS 로는 못 한다.** 이 사이트는 **인라인 실행 스크립트가 0개**이고
+       (CSP 를 unsafe-inline 없이 닫기 위해서다 · 아래 bootstrapJs 주석), site.js 는 defer 라
+       **파싱이 끝난 뒤에 실행된다.** 실측(2026-09-08): 가장 무거운 선수 페이지에서
+       **FCP 504ms · DCL 607ms** 로 스크립트가 첫 페인트보다 **약 100ms 늦다** —
+       JS 가 초기 상태를 정하면 **펼친 내비가 한 번 그려졌다가 접히는 깜빡임**이 난다.
+       ⚠**CSS 로 <details> 를 펼 수도 없다**(실측): 세 방법 중 `::details-content` 하나만 되고
+       그건 최신 크롬 전용이라, Firefox·Safari 에서 **넓은 화면 내비가 접힌 채 갇힌다.**
+       → 체크박스면 **초기 상태를 CSS 가 정한다.** 깜빡임 0 · 스크립트 0 · URL 무변경(§0-1).
+       ⚠**:target 은 쓰지 않는다** — 주소의 해시를 먹어 `#pc-nipponSeries` 같은 앵커와 부딪친다.
+       ⚠**보이는 글자가 이름 안에 있어야 한다**(WCAG 2.5.3) — 보이는 것은 현재 화면 이름이고
+       숨은 꼬리가 무엇을 하는 버튼인지 말한다.
+       ⚠**아이콘에 새 글자를 쓰지 마라** — 서체 부분집합 커버리지 게이트가 없는 글자에서 멈춘다.
+       그래서 삼선은 CSS 로 그린다(assets.ts .navbtn::before). */ ""}
+  ${/* ⚠**aria-controls 는 스크립트 없이 줄 수 있는 유일한 보완이다**(2026-09-08 · 검토 P2).
+       체크박스는 낭독기에서 **「체크박스」**로 읽히고 펼침/접힘 의미론을 못 준다.
+       ⚠**aria-expanded 를 박지 마라** — 스크립트 없이는 갱신이 안 되므로 **틀린 값이 고정된다.**
+       없는 것보다 나쁘다. 여는 대상만 가리키고, 상태는 체크 여부가 말한다.
+       ⚠**실제 낭독기로 확인하지 않았다** — 이 환경에서 못 돌린다. 재는 것은 남은 일이다. */ ""}
+  <input class="navtoggle vh" type="checkbox" id="navtoggle" aria-controls="mainnav">
+  <label class="navbtn" for="navtoggle">${NAV_LABELS[o.nav]}<b class="vh">ページを切り替える</b></label>
+  <nav class="tnav" id="mainnav" aria-label="主要ページ">
     ${/* ⚠**첫 자리다**(2026-08-18 유저 요청). 최애를 지정하면 클라이언트가 라벨과 링크를
          그 구단으로 바꾼다(data-navteam 이 그 표식이다). **서버는 항상 「球団」을 그린다** —
          JS 가 없어도 구단으로 가는 길이 있어야 하고(§0-1), 지금까지는 그 길이 아예 없었다

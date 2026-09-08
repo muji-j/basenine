@@ -331,16 +331,73 @@ a{color:inherit}
 .tnav a{flex:0 0 auto;font-size:var(--fs-data);padding:var(--s2) var(--s4);text-decoration:none;color:var(--tx-2);white-space:nowrap;
   transition:color var(--t1) var(--e-out),background var(--t1) var(--e-out)}
 .tnav a:hover{color:var(--tx);background:var(--panel-2)}
+/* ── 좁은 화면의 내비 접기 (2c-2 · 2026-09-08) ─────────────────────
+   ⚠**넓은 화면에서는 이 셋이 전부 없는 셈이다** — 버튼은 display:none 이고 체크박스는 .vh 이며
+   내비는 지금까지대로 그려진다. **좁은 화면 분기 안에서만 뜻이 생긴다.**
+   ⚠**왜 체크박스인지는 layout.ts 의 주석이 갖는다**(요약: JS 로 정하면 defer 라 100ms 깜빡이고,
+   CSS 로 <details> 를 펴는 것은 최신 크롬에서만 된다 — 둘 다 실측).
+   ⚠**삼선 아이콘을 글자로 쓰지 않는다** — 서체 부분집합 커버리지 게이트가 없는 글자에서 멈춘다.
+   그래서 gradient 로 그린다. 배경이라 강제 색 모드에서 사라지지만, **버튼의 글자(현재 화면 이름)가
+   남으므로 눌 곳을 잃지 않는다.** */
+.navbtn{display:none}
+@media (max-width:680px){
+  .navbtn{display:inline-flex;align-items:center;gap:var(--s3);flex:0 0 auto;
+    padding:var(--s2) var(--s4);font-size:var(--fs-data);color:var(--tx);cursor:pointer;
+    border:var(--rw-row) solid var(--tx-3);background:var(--panel);
+    transition:border-color var(--t1) var(--e-out),background var(--t1) var(--e-out)}
+  .navbtn::before{content:"";flex:none;width:14px;height:10px;
+    background:linear-gradient(var(--tx),var(--tx)) 0 0/100% 2px no-repeat,
+      linear-gradient(var(--tx),var(--tx)) 0 4px/100% 2px no-repeat,
+      linear-gradient(var(--tx),var(--tx)) 0 8px/100% 2px no-repeat}
+  .navbtn:hover{border-color:var(--tx-2);background:var(--panel-2)}
+  /* ⚠**초점 링이 체크박스가 아니라 라벨에 서야 한다** — 체크박스는 .vh 라 화면에 없다.
+     이게 없으면 **키보드 사용자가 어디에 있는지 안 보인다.** */
+  .navtoggle:focus-visible + .navbtn{outline:2px solid var(--tx);outline-offset:1px}
+  /* 접힌 상태가 기본이다 — **CSS 가 정하므로 첫 페인트부터 접혀 있다.** */
+  .tnav{display:none}
+  /* ⚠**펼치면 띠 밖으로 겹쳐 내린다.** 안에 넣으면 상단바가 자라고, 그러면 --topbar(실측 토큰)와
+     그것을 쓰는 sticky 오프셋이 전부 거짓이 된다. .topbar 는 sticky 라 이미 위치 기준이다. */
+  .navtoggle:checked ~ .tnav{display:flex;flex-wrap:wrap;overflow:visible;
+    position:absolute;top:100%;left:0;right:0;z-index:30;
+    padding:var(--s3) calc(var(--gut) + var(--pad));gap:var(--s2);
+    background:var(--panel);border-bottom:var(--rw-row) solid var(--hair-2);
+    box-shadow:0 6px 14px rgba(0,0,0,.14)}
+  /* ⚠**여기에 padding 을 주지 마라 — 줬다가 뺐다**(2026-09-08 · 검토 P2).
+     ⚠**이 주석에 역따옴표를 쓰지 마라** — 이 파일은 통째로 템플릿 리터럴이라 거기서 끊긴다.
+     실제로 이 자리에 쓰고 빌드를 깼다(같은 함정이 이 파일 안 다른 곳에도 적혀 있다).
+     .navtoggle:checked ~ .tnav a 는 **(0,3,1)** 이라
+     @media(pointer:coarse) 의 .tnav a{padding:var(--s4) var(--s4)} **(0,1,1)** 를 **폭·순서와 무관하게 이긴다.**
+     그러면 **실제 휴대폰에서 펼친 내비의 위아래 여백이 8px → 6px 로 조용히 줄어든다** —
+     이 저장소가 「손가락은 마우스보다 크다」는 이유로 일부러 만든 보정을 특이도로 무력화하는 것이다.
+     ⚠**이 계열에서 같은 실수를 다섯 번째로 했다.** 앞의 넷은 2b(셋)와 2c(하나·굽기 전 자수)다.
+     → **아무것도 안 주는 것이 맞다.** 접힌 줄이든 펼친 줄이든 같은 링크이고,
+     손가락 보정은 이미 그 블록이 준다. */
+}
 /* ⚠**「지금 여기」가 어느 화면에서나 같은 방식으로 보여야 한다**(2026-08-17 유저 지적:
    「홈화면에 있을때랑 탭이 활성화 되어 있을때 헤더 디자인이 다르다」).
    ⚠**두 단계가 있다** — page(바로 이 화면) 와 true(이 구획 안이지만 다른 화면).
    예전에는 page 만 스타일이 있어서 days.html·starters.html 이 **아무것도 선택돼 보이지 않았다**
    (마크업은 맞고 화면만 비어 있었다). */
-.tnav a[aria-current="page"]{color:var(--tx);font-weight:var(--w-bold);box-shadow:inset 0 -2px 0 var(--team,#6b7280)}
+/* ⚠**밑줄에 구단색을 쓰지 않는다**(2026-09-08 · 2c). 12구단 전수 실측(--panel 대비):
+   **라이트 4/12 · 다크 8/12 · 합집합 12/12** 가 비텍스트 3:1 미달이다. 최악은 다크의
+   オリックス **1.079** · 西武 1.096, 라이트의 ソフトバンク **1.643** · 楽天 1.611 —
+   **테마에 따라 「지금 여기」가 통째로 사라진다.**
+   ⚠**이 저장소가 같은 판정을 내린 것이 이번이 세 번째다**: .tbar i(감사 #21) ·
+   .mf-shape/.mf-dot(감사 P1) · .seasons a[aria-current](2b 2차 검토 F2). 처방도 셋 다 같았다 —
+   **구단색을 선에서 빼고 토큰으로 바꾼다.**
+   → --tx-3 (--panel 대비 **5.125 / 5.072**). 굵기(bold)가 「바로 이 화면」을 같이 말한다.
+   ⚠**구단색이 사라지는 게 아니다** — 구단을 말하는 자리는 .block>h2::before 와 .spine 이고
+   그쪽은 면이라 대비 규칙이 다르다. **선에만 안 쓴다.**
+   ⚠**아랫줄(true)은 손대지 않았다** — --hair-2 라 **1.580 / 1.557** 로 역시 3:1 미달이지만
+   이 브랜치가 만든 결함이 아니고, 고치면 page 와 잉크가 같아져 **둘을 가르는 것이 굵기뿐**이 된다.
+   **별도 판단이 필요해 남긴다.** */
+.tnav a[aria-current="page"]{color:var(--tx);font-weight:var(--w-bold);box-shadow:inset 0 -2px 0 var(--tx-3)}
 .tnav a[aria-current="true"]{color:var(--tx);box-shadow:inset 0 -2px 0 var(--hair-2)}
 /* ⚠**홈에서는 표시가 브랜드에 붙는다** — 탭 줄에는 홈 항목이 없기 때문이다.
-   여기에 규칙이 없어서 홈만 「아무 데도 안 있는」 것처럼 보였다. 탭과 같은 언어로 표시한다. */
-.brand[aria-current="page"]{box-shadow:inset 0 -2px 0 var(--team,#6b7280)}
+   여기에 규칙이 없어서 홈만 「아무 데도 안 있는」 것처럼 보였다. 탭과 같은 언어로 표시한다.
+   ⚠**「같은 언어」에는 잉크도 포함된다** — 위 .tnav 를 --tx-3 로 고치면서 여기만 두면
+   **같은 뜻의 표식이 두 색이 된다.** 같은 12/12 대비 결함이기도 하다(위 주석 참조). */
+.brand[aria-current="page"]{box-shadow:inset 0 -2px 0 var(--tx-3)}
 /* ⚠**「自動」이 「自/動」으로 접혔다**(2026-08-19 감사 P1). 이 버튼은 flex 항목인데
    flex 도 white-space 도 없어서, 자리가 모자라면 **글자에서 줄바꿈**을 했다 —
    실측 43.8×27 → 34.4×**40**. 40px 은 바(44~46px)를 거의 다 먹는다.
@@ -477,6 +534,18 @@ a{color:inherit}
   min-height:var(--rail);
   padding:var(--s4) var(--pad);border-bottom:var(--rw-row) solid var(--hair);background:var(--panel);
   overflow-x:auto;scrollbar-width:thin;-webkit-overflow-scrolling:touch}
+/* ⚠**「더 있다」를 말하게 한다**(2026-09-08 · 2c-3). 이 줄은 옆으로 굴러가는데 스크롤바를
+   감추고(아래 줄) **그늘도 없어서**, 잘린 탭이 있다는 것을 화면이 한 마디도 안 했다.
+   실측: 선수 화면 390px 에서 **79px 넘친다**(내용 462 / 상자 383).
+   ⚠**.tabs.scroll 이 같은 문제를 이미 풀어 뒀다**(M1) — local 과 scroll 두 겹을 겹쳐
+   **끝에 닿으면 사라지는** 그늘을 만든다. 같은 처방을 그대로 쓴다.
+   ⚠**마지막 층이 바탕이다** — 이 줄은 sticky 라 밑을 덮어야 하고, 그늘만 두면 본문이 비친다. */
+.rail{background:
+  linear-gradient(to right,var(--panel) 30%,rgba(0,0,0,0)) left center/22px 100% no-repeat local,
+  linear-gradient(to left,var(--panel) 30%,rgba(0,0,0,0)) right center/22px 100% no-repeat local,
+  linear-gradient(to right,var(--hair-2),rgba(0,0,0,0)) left center/9px 100% no-repeat scroll,
+  linear-gradient(to left,var(--hair-2),rgba(0,0,0,0)) right center/9px 100% no-repeat scroll,
+  linear-gradient(var(--panel),var(--panel))}
 .rail::-webkit-scrollbar{height:0}
 .rail .lbl{font-size:var(--fs-label);letter-spacing:.16em;color:var(--tx-3);white-space:nowrap}
 .rail .grow{flex:1 1 auto;min-width:6px}
@@ -806,8 +875,20 @@ dd.g-veryBad{box-shadow:inset 0 -3px 0 var(--g-vbad);background:var(--g-vbad-bg)
 /* ⚠좁은 화면에서 표를 옆으로 밀면 **누구의 행인지**가 먼저 사라진다.
    첫 열을 고정해서 이름이 남게 한다. 오른쪽 끝의 그늘은 「더 있다」는 신호다. */
 .scroller:focus-visible{outline:2px solid var(--tx);outline-offset:-2px}
+/* ⚠**그늘이 거짓말을 하고 있었다**(2026-09-08 · 2c-3). 오른쪽 그라데이션 한 겹이라
+   **다 밀어서 끝에 닿아도 그대로 남는다** — 「더 있다」고 계속 말하는 표식이다.
+   ⚠**.tabs.scroll 이 같은 문제를 이미 풀어 뒀다**(M1): local 층은 내용과 함께 흐르고
+   scroll 층은 상자에 붙어, 둘을 겹치면 **끝에서 저절로 사라진다.** 같은 처방을 쓴다.
+   ⚠**왼쪽에도 둔다** — 예전 것은 오른쪽만 있어서, 오른쪽 끝까지 민 사용자에게
+   「왼쪽에 돌아갈 것이 있다」를 말하지 않았다.
+   ⚠**바탕은 --page 다**(이 상자 안의 표가 --page 를 깐다 · 아래 줄). 마지막 층이 그것이다. */
 .scroller{overflow-x:auto;-webkit-overflow-scrolling:touch;position:relative;
-  background:linear-gradient(to left,var(--page),rgba(0,0,0,0) 24px) right center / 24px 100% no-repeat}
+  background:
+    linear-gradient(to right,var(--page) 30%,rgba(0,0,0,0)) left center/24px 100% no-repeat local,
+    linear-gradient(to left,var(--page) 30%,rgba(0,0,0,0)) right center/24px 100% no-repeat local,
+    linear-gradient(to right,var(--hair-2),rgba(0,0,0,0)) left center/9px 100% no-repeat scroll,
+    linear-gradient(to left,var(--hair-2),rgba(0,0,0,0)) right center/9px 100% no-repeat scroll,
+    linear-gradient(var(--page),var(--page))}
 .scroller table{background:var(--page)}
 .scroller th:first-child,.scroller td:first-child{position:sticky;left:0;z-index:1;background:var(--page)}
 .scroller tr.me td:first-child{background:var(--team,#6b7280)}
@@ -1470,6 +1551,25 @@ a.cg:focus-visible{outline:2px solid var(--tx);outline-offset:1px}
    실제 높이가 아니다」를 이 근처와 아래 두 곳에 나눠 적고 **86px 를 손으로 박았는데**,
    그 86 조차 실측 113~115px 에 28px 모자랐다. 지금은 --topbar 자체가 폭 구간마다
    실제 높이로 정의되므로(반응형 §), 이 계산들은 그냥 맞는다. */
+/* ── 좁은 화면의 목차 접기 (2c-3 · 2026-09-08) ─────────────────────
+   ⚠**넓은 화면에서는 없는 셈이다** — 버튼은 display:none 이고 체크박스는 .vh 다.
+   ⚠**여기는 내비보다 쉽다**: 아래 블록이 이미 ≤680px 에서 .hjump 를 static 으로 만든다.
+   sticky 가 아니므로 **펼쳐도 흐름 안에서 줄바꿈만 하고**, --topbar 나 52px 보정에 안 닿는다.
+   ⚠**개수를 버튼에 적는다** — 접으면 「뛸 곳이 몇 군데인지」가 사라진다. 숫자가 그것을 말한다. */
+.hjbtn{display:none}
+@media (max-width:680px){
+  .hjbtn{display:inline-flex;align-items:center;gap:var(--s3);margin:var(--s4) var(--pad) 0;
+    padding:var(--s3) var(--s5);font-size:var(--fs-data);color:var(--tx);cursor:pointer;
+    border:var(--rw-row) solid var(--tx-3);background:var(--panel);
+    transition:border-color var(--t1) var(--e-out),background var(--t1) var(--e-out)}
+  .hjbtn s{text-decoration:none;font-size:var(--fs-label);color:var(--tx-3);
+    font-variant-numeric:tabular-nums}
+  .hjbtn:hover{border-color:var(--tx-2);background:var(--panel-2)}
+  .hjtoggle:focus-visible + .hjbtn{outline:2px solid var(--tx);outline-offset:1px}
+  .hjump{display:none}
+  .hjtoggle:checked ~ .hjump{display:flex;flex-wrap:wrap;overflow:visible;
+    scroll-snap-type:none;scroll-padding-left:0}
+}
 @media (max-width:680px){
   .hjump{position:static}
   /* ⚠**특정성을 한 단계 올린다.** 아래 무조건 규칙과 특정성이 같으면
@@ -1716,6 +1816,19 @@ table.stand .dif i.n{right:50%}
   scroll-padding-left:84px}
 .seasons::-webkit-scrollbar{height:6px}
 .seasons::-webkit-scrollbar-thumb{background:var(--hair-2);border-radius:var(--r-thumb)}
+/* ⚠**좁은 화면에서는 굴리지 않고 접는다**(2026-09-08 · 2c).
+   감사 실측: 390px 첫 화면에 **가로로 미는 것이 넷**(내비 · 이 띠 · 탭줄 · 표)이고
+   **사용자가 어느 것을 밀어야 하는지 알 수 없다.** 그게 「투박하다」의 상당 부분이었다.
+   이 띠는 9시즌에서 **227px 넘친다**(내용 617 / 상자 390).
+   → 줄바꿈하면 넘침이 **0** 이 되고 높이는 29 → **57px**(+28px · 실측).
+   ⚠**스크립트가 필요 없다**(§0-1) — CSS 한 블록이고, 스크립트를 끈 사람도 같은 화면을 본다.
+   ⚠**스냅을 같이 꺼야 한다** — 굴리지 않는 줄에 scroll-snap 이 남으면 뜻이 없고,
+   scroll-padding-left(84px)도 마찬가지다.
+   ⚠**이 띠는 sticky 가 아니다** — 그래서 --topbar 같은 실측 토큰을 건드리지 않는다.
+   내비(.tnav)는 sticky 인 .topbar 안이라 **같은 처방을 쓸 수 없다**(그쪽은 접는다 · 별건). */
+@media (max-width:680px){
+  .seasons{flex-wrap:wrap;overflow-x:visible;scroll-snap-type:none;scroll-padding-left:0}
+}
 /* ⚠**라벨은 굴러 나가지 않는다** — 무엇을 고르는 줄인지가 사라지면 안 된다 */
 /* ⚠**라벨이 덮는 넓이가 자기 글자만큼뿐이었다.** align-items:center 라 높이가 글자 높이였고,
    gap 4px + margin 5px 는 배경이 없다 — 그 틈과 위아래로 **지나가는 연도가 그대로 보였다.**
@@ -2444,6 +2557,17 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
   /* ⚠**접힘 손잡이도 여기 든다.** 글자가 10px이라 손가락으로는 높이 16px 남짓인데,
      이게 목록을 여는 유일한 자리다 — 빠뜨리면 그 화면이 휴대폰에서 안 열린다 */
   .pickfold>summary{padding:var(--s3) 0}
+  /* ⚠**접기 버튼 둘도 같은 부류다**(2026-09-08 · 검토 P2). 바로 위 .pickfold>summary 가
+     「이게 목록을 여는 유일한 자리다 — 빠뜨리면 그 화면이 휴대폰에서 안 열린다」고 적어 둔 그 이유가
+     여기에도 그대로 걸린다: **내비와 목차를 여는 유일한 손잡이**다.
+     ⚠**--topbar 를 반드시 다시 재라** — 아래 주석이 말하듯 접힌 헤더에서는 이 줄의 높이가
+     **그대로 바 높이**가 된다. 내비를 접은 뒤로는 .tnav a 가 아니라 **이 버튼**이 그 자리다.
+     (2026-09-08 실측: 이 줄을 넣고도 96.0px 로 토큰과 일치했다 — 바 높이를 정하는 것은
+     검색칸 줄이고 버튼은 그 안에 들어간다. 버튼 높이는 28.6 → **32.6px**.)
+     ⚠**.hjbtn 은 여기 안 든다** — 그쪽 기본값이 이미 var(--s3) var(--s5) 라 같은 값을 다시 쓰는
+     **무효 선언**이 된다(실측: 마우스·손가락 둘 다 6px 12px · 32.6px).
+     목차 버튼은 상단바 밖이라 처음부터 넉넉히 줄 수 있었다. */
+  .navbtn{padding:var(--s3) var(--s5)}
 }
 /* ⚠**손가락에서는 헤더가 더 두껍다 — --topbar 도 따라가야 한다.**
    바로 위 .tnav a{padding:9px 10px} 이 탭 높이를 27.0 → 36.6px 으로 올린다.
