@@ -24,7 +24,13 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { LOOKBACK_HOURS, type CollectJob, heartbeatVerdict } from "../heartbeat.ts";
+import {
+  type ApiJob,
+  type CollectJob,
+  LOOKBACK_HOURS,
+  heartbeatVerdict,
+  toCollectJob,
+} from "../heartbeat.ts";
 
 const NOW = "2026-09-09T12:00:00.000Z";
 
@@ -62,12 +68,55 @@ test("24시간보다 오래된 성공뿐이면 알린다", () => {
 });
 
 /**
- * ⚠**`created_at` 으로 재면 이 경우를 놓친다**(콜드 리뷰 P2-4).
- * 23시간 50분 전에 **끝난** 성공인데, 45분짜리 잡이라 **생성은 24시간 35분 전**이다.
+ * ⚠**이 시험의 단언 메시지가 거짓말이었다**(2026-09-09 · 이중 검토 F4).
+ * 「created_at 으로 재고 있다」고 잡는다고 적어 뒀지만, **어느 필드를 읽는지는
+ * `toCollectJob` 이 정하고 그건 이 시험이 안 부른다** — 검토자가 `started_at` 으로 바꿔 돌렸을 때
+ * **9본이 전부 통과했다.** 여기서 재는 것은 **창 경계(23.83 ≤ 24)** 뿐이다.
+ * **필드 선택은 아래 `toCollectJob` 시험이 잰다.**
  */
-test("⚠끝난 시각으로 잰다 — 생성이 24시간 밖이어도 완료가 안이면 조용하다", () => {
+test("창 경계 — 23.83시간 전 성공은 창(24시간) 안이다", () => {
   const v = heartbeatVerdict(NOW, [job({ completedAt: ago(23.83) })]);
-  assert.equal(v.kind, "ok", "완료 시각이 창 안인데 알렸다 — created_at 으로 재고 있다");
+  assert.equal(v.kind, "ok", "23.83 <= 24 인데 알렸다 — 창 비교가 틀렸다");
+});
+
+/**
+ * ⚠**여기가 F4 가 뚫은 자리다.** 설계서가 「`completed_at` 을 `created_at` 으로 바꾸면 붉어져야
+ * 한다」고 적어 뒀는데 **그 선택이 시험 밖에 있었다.** 떼어내서 직접 잰다.
+ *
+ * ⚠**왜 `completed_at` 인가**: 묻는 것은 「끝까지 돌았는가」이고 `collect` 는 `timeout-minutes: 45` 다.
+ * 시작·생성 시각으로 재면 **23시간 50분 전에 끝난 성공**을 24시간 밖으로 밀어내 거짓 경보가 난다.
+ */
+test("⚠끝난 시각(completed_at)을 읽는다 — started_at·created_at 으로 바꾸면 붉어진다", () => {
+  const api: ApiJob = {
+    name: "collect",
+    conclusion: "success",
+    completed_at: "2026-09-09T09:00:00Z",
+    started_at: "2026-09-09T08:15:00Z",
+    created_at: "2026-09-09T08:10:00Z",
+  };
+  const j = toCollectJob(7, api);
+  assert.equal(j.completedAt, "2026-09-09T09:00:00Z", "completed_at 이 아닌 다른 필드를 읽고 있다");
+  assert.equal(j.runId, 7);
+  assert.equal(j.conclusion, "success");
+});
+
+/** 없는 필드는 `null` 이 되어야 한다 — `undefined` 가 새면 판정에서 조용히 빠진다 */
+test("⚠없는 필드는 null 이다 — undefined 가 새면 판정에서 조용히 빠진다", () => {
+  const j = toCollectJob(1, { name: "collect" });
+  assert.equal(j.conclusion, null);
+  assert.equal(j.completedAt, null);
+});
+
+/**
+ * ⚠**파싱 못 한 시각이 최솟값 자리를 먹으면 멀쩡한 날에 경보가 난다**(이중 검토 Minor).
+ * `NaN` 은 어떤 비교에도 false 라 그 뒤 유효한 성공이 와도 갱신되지 않는다.
+ */
+test("⚠읽을 수 없는 시각이 섞여도 유효한 성공을 가린다면 안 된다", () => {
+  const v = heartbeatVerdict(NOW, [
+    job({ runId: 2, completedAt: "그런 날짜 없음" }),
+    job({ runId: 1, completedAt: ago(2) }),
+  ]);
+  assert.equal(v.kind, "ok", "읽을 수 없는 시각이 유효한 최근 성공을 가렸다");
 });
 
 test("⚠실행이 하나도 없으면 알린다 — 「0건」은 「정상」이 아니다", () => {

@@ -71,6 +71,10 @@ export function heartbeatVerdict(nowIso: string, jobs: readonly CollectJob[] | n
     // ⚠**성공한 것만 센다.** skipped·failure·cancelled 는 「수집됐다」가 아니다
     if (j.conclusion !== "success" || j.completedAt === null) continue;
     const hoursAgo = (now - Date.parse(j.completedAt)) / 3600_000;
+    // ⚠**파싱 못 한 시각을 최솟값 자리에 넣지 마라**(이중 검토 Minor).
+    //   `NaN` 이 들어가면 그 뒤 유효한 최근 성공이 와도 `NaN < NaN` 이 false 라 갱신되지 않아
+    //   **멀쩡한 날에 경보가 난다.** 안전한 방향이긴 하지만 거짓 경보는 경보를 죽인다.
+    if (!Number.isFinite(hoursAgo)) continue;
     if (bestHoursAgo === null || hoursAgo < bestHoursAgo) bestHoursAgo = hoursAgo;
   }
 
@@ -108,8 +112,34 @@ const PER_PAGE = 20;
 interface RunsResponse {
   workflow_runs?: { id?: number }[];
 }
+/** ⚠**`completed_at` 이다.** `created_at`·`started_at` 이 아니다 — 아래 `toCollectJob` 주석 참조 */
+export interface ApiJob {
+  name?: string;
+  conclusion?: string | null;
+  completed_at?: string | null;
+  /** ⚠**읽지 않는다.** 여기 적어 두는 것은 「실수로 이걸 쓰지 마라」를 보이게 하기 위해서다 */
+  started_at?: string | null;
+  created_at?: string | null;
+}
 interface JobsResponse {
-  jobs?: { name?: string; conclusion?: string | null; completed_at?: string | null }[];
+  jobs?: ApiJob[];
+}
+
+/**
+ * API 의 잡 하나를 우리 판정 입력으로 옮긴다.
+ *
+ * ⚠**이 한 줄이 시험 밖에 있었다**(2026-09-09 · 이중 검토 F4). 설계서가 「`completed_at` 을
+ * `created_at` 으로 바꾸면 붉어져야 한다」고 적어 뒀는데, 그 선택이 **시험에서 부르지 않는 함수 안**에
+ * 있어서 검토자가 `started_at` 으로 바꿔 돌렸을 때 **9본이 전부 통과했다.**
+ * 게다가 그 자리를 지킨다고 이름 붙인 시험의 단언 메시지가 **「created_at 으로 재고 있다」**고
+ * 잡는다고 적고 있었다 — **메시지가 거짓말이었다.**
+ * → **떼어내서 직접 잰다.**
+ *
+ * ⚠**왜 `completed_at` 인가**: 묻는 것은 「끝까지 돌았는가」이고 `collect` 는 `timeout-minutes: 45` 다.
+ * 시작·생성 시각으로 재면 **23시간 50분 전에 끝난 성공**을 놓쳐 거짓 경보가 난다.
+ */
+export function toCollectJob(runId: number, job: ApiJob): CollectJob {
+  return { runId, conclusion: job.conclusion ?? null, completedAt: job.completed_at ?? null };
 }
 
 async function gh<T>(path: string, token: string): Promise<T | null> {
@@ -120,7 +150,9 @@ async function gh<T>(path: string, token: string): Promise<T | null> {
         Accept: "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
       },
-      signal: AbortSignal.timeout(20_000),
+      // ⚠**요청 수 × 이 값이 잡 타임아웃을 넘으면 판정 대신 오경보가 난다**(이중 검토 Minor).
+      //   최악 21요청 × 10초 = 210초 · 잡은 10분이다.
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) return null;
     return (await res.json()) as T;
@@ -135,10 +167,16 @@ async function gh<T>(path: string, token: string): Promise<T | null> {
  * ⚠**한 건이라도 못 읽으면 `null` 을 준다** — 「일부만 봤다」를 「전부 봤다」로 쓰면
  * 조용한 실패가 된다(작업규칙 7: 「0건」과 「안 쟀음」을 구별한다).
  */
-async function fetchCollectJobs(repo: string, token: string): Promise<CollectJob[] | null> {
+async function fetchCollectJobs(
+  repo: string,
+  token: string,
+  branch: string,
+): Promise<CollectJob[] | null> {
+  // ⚠**브랜치를 박지 않는다**(이중 검토 Minor) — `daily.yml` 의 같은 질의는
+  //   `${GITHUB_REF_NAME}` 을 쓴다. **기준이 두 벌이면 어느 날 갈린다.**
   const runs = await gh<RunsResponse>(
     `/repos/${repo}/actions/workflows/daily.yml/runs`
-      + `?branch=main&status=completed&per_page=${String(PER_PAGE)}`,
+      + `?branch=${encodeURIComponent(branch)}&status=completed&per_page=${String(PER_PAGE)}`,
     token,
   );
   if (runs?.workflow_runs === undefined) return null;
@@ -150,7 +188,7 @@ async function fetchCollectJobs(repo: string, token: string): Promise<CollectJob
     if (jobs?.jobs === undefined) return null;
     for (const j of jobs.jobs) {
       if (j.name !== "collect") continue;
-      out.push({ runId: r.id, conclusion: j.conclusion ?? null, completedAt: j.completed_at ?? null });
+      out.push(toCollectJob(r.id, j));
     }
   }
   return out;
@@ -164,7 +202,8 @@ async function main(): Promise<number> {
     return 1;
   }
 
-  const jobs = await fetchCollectJobs(repo, token);
+  const branch = process.env["BRANCH"];
+  const jobs = await fetchCollectJobs(repo, token, branch === undefined || branch === "" ? "main" : branch);
   // ⚠**진입점에서만 시계를 읽는다**(M6 · scripts/ 는 목록에 적힌 만큼 예외다)
   const v = heartbeatVerdict(new Date().toISOString(), jobs);
   const text = describe(v);
