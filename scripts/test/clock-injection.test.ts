@@ -76,6 +76,10 @@ const ALLOWED: ReadonlyMap<string, number> = new Map([
   // ⚠**배포가 며칠 전 것인지 재려면 「지금」이 필요하다.** 판정 자체(`verdictFor`)는 `nowIso` 를
   // 인자로 받는 순수 함수이고, 시계는 **진입점 한 곳에서만** 읽는다
   ["scripts/verify-deploy.ts", 1],
+  // ⚠**「마지막 수집이 몇 시간 전인가」를 재려면 「지금」이 필요하다.**
+  //   판정 자체(`heartbeatVerdict`)는 `nowIso` 를 인자로 받는 순수 함수이고
+  //   시계는 **진입점 한 곳에서만** 읽는다 — 위 verify-deploy 와 같은 모양이다.
+  ["scripts/heartbeat.ts", 1],
   // 경과 시간 측정(성능). ⚠**날짜가 아니라 duration 이라 자정 경계와 무관하다**
   ["packages/web/test/client.test.ts", 2],
 ]);
