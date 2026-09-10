@@ -218,5 +218,10 @@ async function main(): Promise<number> {
 }
 
 if (process.argv[1]?.endsWith("heartbeat.ts") === true) {
-  process.exit(await main());
+  // ⚠**`process.exit()` 을 부르지 않는다**(2026-09-10 · 직접 돌려 발견).
+  //   대기 중인 핸들(실패한 fetch 의 `AbortSignal.timeout` 타이머)가 남은 채 끊으면
+  //   Windows 에서 **libuv 단언이 터져 exit 127** 이 된다 — 종료 코드가 뜻을 잃는다.
+  //   ⚠**「리눅스 러너면 괜찮겠지」로 넣어두지 마라** — 감시기의 종료 코드가 곳 알림이다.
+  //   `exitCode` 를 세우면 Node 가 핸들을 정리하고 스스로 끝난다.
+  process.exitCode = await main();
 }

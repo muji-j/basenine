@@ -149,3 +149,19 @@ test("판정이 마지막 성공까지의 시간을 말한다 — 없으면 로�
   assert.equal(v.kind, "ok");
   if (v.kind === "ok") assert.equal(Math.round(v.lastSuccessHoursAgo), 5);
 });
+
+/**
+ * ⚠**진입점에서 `process.exit()` 을 부르지 않는다**(2026-09-10 · 머지 뒤 직접 돌려 발견).
+ * 대기 중인 핸들(실패한 fetch 의 `AbortSignal.timeout` 타이머)이 남은 채 끊으면
+ * Windows 에서 **libuv 단언이 터져 exit 127** 이 된다 — **종료 코드가 뜻을 잃는다.**
+ * 감시기에서는 종료 코드가 곧 알림이라 그 자리를 지켜야 한다.
+ * ⚠**「리눅스 러너면 괜찮겠지」로 두지 마라** — 실측: 정상 0 · 못 쟀을 때 **127 → 1**.
+ */
+test("⚠진입점이 process.exit 을 안 쓴다 — 대기 핸들이 남으면 종료 코드가 뜻을 잃는다", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { fileURLToPath } = await import("node:url");
+  const src = readFileSync(fileURLToPath(new URL("../heartbeat.ts", import.meta.url)), "utf8");
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  assert.ok(!/process\.exit\s*\(/.test(code), "process.exit() 로 되돌아갔다 — exitCode 를 세워라");
+  assert.match(code, /process\.exitCode\s*=/, "종료 코드를 세우지 않는다");
+});
