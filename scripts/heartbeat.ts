@@ -218,5 +218,14 @@ async function main(): Promise<number> {
 }
 
 if (process.argv[1]?.endsWith("heartbeat.ts") === true) {
-  process.exit(await main());
+  // ⚠**`fetch` 를 쓴 뒤 `process.exit()` 을 부르지 않는다**(2026-09-10 · 직접 돌려 발견).
+  //   Windows 에서 **libuv 단언이 터져 exit 127** 이 된다 — 종료 코드가 뜻을 잃는다.
+  //   ⚠**~~실패한 fetch 의 `AbortSignal.timeout` 타이머 때문~~ 은 실측보다 좁았다**(검수 P3):
+  //   **`AbortSignal` 없이도, 성공한 fetch 만으로도 재현된다**(검토자 실측 3/3).
+  //   원인은 그 타이머가 아니라 **연결·소켓 핸들이 정리되기 전에 강제 종료**하는 것이다.
+  //   ⚠**「타임아웃만 안 쓰면 안전하다」로 읽지 마라** — 그 오독이 좁은 서술이 만드는 것이다.
+  //   ⚠**「리눅스 러너면 괜찮겠지」로 넣어두지 마라** — 감시기의 종료 코드가 곧 알림이다.
+  //   `exitCode` 를 세우면 Node 가 핸들을 정리하고 스스로 끝난다
+  //   (`AbortSignal.timeout` 의 타이머는 unref 라 매달리지 않는다 · 실측).
+  process.exitCode = await main();
 }

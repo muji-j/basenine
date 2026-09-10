@@ -149,3 +149,9 @@ test("판정이 마지막 성공까지의 시간을 말한다 — 없으면 로�
   assert.equal(v.kind, "ok");
   if (v.kind === "ok") assert.equal(Math.round(v.lastSuccessHoursAgo), 5);
 });
+
+/**
+ * ⚠**종료 코드 가드는 여기 안 둔다** — `scripts/test/exit-code.test.ts` 로 옮겼다(2026-09-10 · 검수 P2).
+ * 하트비트에만 붙여 두었더니 **`verify-deploy.ts` 에 같은 결함이 그대로 남아 기준이 두 벌**이 됐다.
+ * **한 파일에 붙인 검사는 그것을 못 본다.**
+ */

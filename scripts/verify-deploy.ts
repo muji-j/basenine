@@ -200,6 +200,11 @@ async function main(): Promise<number> {
 }
 
 // ⚠**진입점에서만 시계를 읽는다**(M6 · scripts/ 는 목록에 적힌 만큼 예외다)
+// ⚠**`fetch` 를 쓴 뒤 `process.exit()` 을 부르지 않는다**(2026-09-10 · 검수 P2).
+//   Windows 에서 **libuv 단언이 터져 exit 127** 이 된다 — 종료 코드가 뜻을 잃는다.
+//   ⚠**CI 는 ubuntu 라 프로덕션은 안전했지만**, 로컬에서 배포를 확인하는 사람에게는 그대로 깨진다.
+//   ⚠**기준이 두 벌이었다** — `access-config.ts` 는 처음부터 `exitCode` 를 쓰고 있었다.
+//   `scripts/test/exit-code.test.ts` 가 이제 셋을 같은 기준으로 묶는다.
 if (process.argv[1]?.endsWith("verify-deploy.ts") === true) {
-  process.exit(await main());
+  process.exitCode = await main();
 }
