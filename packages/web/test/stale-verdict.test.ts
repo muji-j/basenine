@@ -23,6 +23,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { STALE_REASON_KEYS } from "@bb-app/domain";
 import { staleVerdict } from "../src/log-page.ts";
 import { STALE_AFTER_DAYS } from "../src/layout.ts";
 
@@ -56,12 +57,14 @@ test("⚠라벨이 없는 키는 키 자체를 보여준다 — 조용히 빼지
 
 /**
  * ⚠**감시와 화면이 갈라지는 것을 막는다**(M1 의 정신).
- * 키는 `scripts/freshness.ts` 가 정하고 문구는 `log-page.ts` 가 붙인다 —
+ * 키는 **`@bb-app/domain` 의 `STALE_REASON_KEYS`** 가 정하고 문구는 `log-page.ts` 가 붙인다 —
  * 한쪽만 늘리면 화면에 **날 키가 그대로** 나간다.
+ * ⚠**2026-09-11 에 키의 출처가 바뀌었다** — 예전에는 `scripts/freshness.ts` 소스에서 `staleReasons.push("…")` 를 긁었는데,
+ * 판정이 도메인 함수(`collectionVerdict`)로 옮겨 가면서 그 문자열이 사라졌다. 그대로 뒀으면 「키를 0개 찾았다」로 떨어졌다.
  */
 test("⚠감시가 미는 키 전부에 화면 문구가 있다", () => {
-  const keys = [...MONITOR.matchAll(/staleReasons\.push\("([^"]+)"\)/g)].map((m) => m[1]!);
-  assert.ok(keys.length >= 5, `감시에서 키를 ${keys.length}개밖에 못 찾았다 — 이 시험이 공회전한다`);
+  const keys = [...STALE_REASON_KEYS];
+  assert.ok(keys.length >= 6, `감시 키가 ${keys.length}개뿐이다 — 이 시험이 공회전한다`);
   const naked = keys.filter((k) => staleVerdict({ stale: true, staleReasons: [k] }) === k);
   assert.deepEqual(
     naked,
@@ -69,6 +72,16 @@ test("⚠감시가 미는 키 전부에 화면 문구가 있다", () => {
     "이 키들이 화면 문구 없이 날것으로 나간다 — `STALE_REASON_LABEL` 에 일본어 문구를 더해라",
   );
   console.log(`  · 감시 키 ${keys.length}개 [${keys.join(" ")}] 전부 문구 있음`);
+});
+
+/**
+ * ⚠**판정은 한 벌이다**(M1 · 설계 D10). 감시 스크립트가 도메인 판정을 쓰고 **스스로 사유를 만들지 않는다** —
+ * 누가 판정을 스크립트에 다시 복사하면 화면 띠·빌드 게이트와 감시가 언젠가 다른 말을 한다.
+ */
+test("⚠감시 스크립트는 판정을 도메인 한 벌에서 받는다 — 스스로 사유를 만들지 않는다", () => {
+  assert.match(MONITOR, /collectionVerdict\(/, "감시가 도메인 판정을 쓰지 않는다");
+  assert.match(MONITOR, /collectionEvidence\(/, "감시가 저장소 증거 SQL 을 쓰지 않는다");
+  assert.doesNotMatch(MONITOR, /staleReasons\.push\(/, "감시가 사유를 스스로 만든다 — 판정이 두 벌이 됐다");
 });
 
 /**
