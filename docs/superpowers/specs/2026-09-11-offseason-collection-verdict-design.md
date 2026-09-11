@@ -1,6 +1,6 @@
 # 휴식기·오프시즌의 수집 판정 — 「며칠 지났나」가 아니라 「치러진 경기를 못 받았나」로
 
-> **상태**: 설계 **3판**(콜드 리뷰 2회 반영 · 2026-09-11) · 반영 내역은 부록 A·B
+> **상태**: 설계 **4판**(콜드 리뷰 3회 반영 · 2026-09-11) · 반영 내역은 부록 A·B·C
 > **결정**: 사용자가 네 선택지 중 **「일정과 대조해 판정」**을 골랐다(2026-09-11). 기각한 셋은 §9.
 > **마감**: 첫 휴식 구간은 **2026 정규시즌 종료 → 클라이맥스 시리즈(CS) 사이, 10월 초**다(§1-1).
 > 문서에 적혀 있던 「11월 초 전에 정한다」(`docs/operations.md`)는 **틀렸다.**
@@ -150,7 +150,7 @@ B(2차) = { 예고 (D, T) | 받았다(구단) 가 아니다
                         ∧ game 에 날짜 D 의 행이 하나도 없다(상태 무관)
                         ∧ 그 예고보다 늦게 받은 D 의 휴식 공표가 없다 }
 missed = A ∪ B      missed ≠ ∅ → staleReasons 에 "game-missed"
-missedGames = |A| + |B|   (A 는 경기 단위, B 는 구단 단위 — 출력은 A·B 를 나눠 적는다)
+missedPlayed = |A|  (경기 단위)      missedAnnounced = |B|  (구단 단위) — 단위가 달라 더해서 한 수로 말하지 않는다
 ```
 
 - **「그 예고보다 늦게 받은 휴식 공표」**: `starters_fetch` 에 `game_date = D ∧ no_games = 1` 이고
@@ -181,8 +181,14 @@ missedGames = |A| + |B|   (A 는 경기 단위, B 는 구단 단위 — 출력�
 - **휴식 공표 조건은 보조 장치다.** 予告先発 아카이브는 **날짜마다 그날 마지막 취득이 파일을 덮으므로**
   (13시 뒤 다음 날 내용이 앞 내용을 지운다) 「그 날짜의 마지막 공표」가 남는다는 보장이 없다. 막으면 좋고 못 막아도
   위 셋으로 설명된다.
-- **사람이 끄는 법**: `node packages/archiver/src/cli.ts --date <D>` 로 그 달 사본을 새로 받으면 「사본이 새롭다」가 참이
-  되어 B 에서 빠진다(요청 1건). 절차를 `docs/operations.md` 에 적는다.
+- **B 를 없애는 길은 원인을 고치는 것뿐이다**(경보를 끄는 스위치를 두지 않는다):
+  ⑴ 일정 요청 실패 → 원인을 고치면 **다음 정기 실행이** 그 달을 받는다(따라잡기 7일 안) ·
+  ⑵ 사이드카 결손 → 사이드카를 되살린다 ·
+  ⑶ 7일 넘는 정지 → **소급 절차**로 그 날짜들을 다시 수집한다(`scripts/update.ts --date <D>` — 경기 페이지 경기당 4장 ·
+  그 달과 다음 달 일정 · 予告先発 1장 · 낡은 선수 프로필 상한 400명까지 받는다 · 워크플로 수동 실행에는 날짜 입력이 없다).
+  ⚠**`packages/archiver/src/cli.ts --date` 만 돌리면 풀리지 않는다** — 그 도구는 **다음 달 일정도 받고**(`cli.ts:106-114`)
+  **DB 에 적재하지 않으므로** `schedule_month.fetched_at` 이 그대로다(적재는 `load-upcoming.ts` · `update.ts:260`).
+  절차는 `docs/operations.md` 에 원인별로 적는다.
 - **옛 규칙과 같은 엄격함(연속 경기 기간)**: 옛 규칙 `today − L > 2`. `D = L + 1` 을 못 받았다면
   `today − D ≥ 2` 에서 울린다 — 새 규칙의 `D ≤ today − 2` 와 같다.
 - **옛 규칙보다 강한 점**: A 는 **경기 단위**다. 6경기 중 1경기, 더블헤더 두 경기 중 1경기만 빠져도 잡는다.
@@ -249,7 +255,11 @@ CREATE TABLE starters_fetch (
 기존 조건(`nextGameDay ≤ today ∧ starters.latest < nextGameDay`)에 **둘 중 하나라도 참이면 울리지 않는다**를 더한다:
 
 - `starters_fetch` 에 `game_date = nextGameDay ∧ no_games = 1` 인 행이 있다 — **예비 경기 날의 1차 근거.**
-- 최신 시즌이 `seasonOver` 다 — 1차 근거가 없을 때(§6 P4)의 **2차 가드.**
+- **`nextGameDay` 가 속한 시즌**이 `seasonIsOver` 다 — 1차 근거가 없을 때(§6 P4)의 **2차 가드.**
+  시즌은 `nextGameDay` 를 낸 행(`upcoming_game.season` 또는 `game.season`)에서 읽는다.
+  ⚠**「최신 시즌」으로 두면 안 된다**(콜드 리뷰 3회 지적) — 최신 시즌은 `MAX(season) of played games` 라 **새 시즌 첫 경기를
+  받기 전에는 전년도**이고, 전년도 일본시리즈 결착이 계속 참이므로 **개막일 예고 누락까지 꺼진다.**
+  `nextGameDay` 의 시즌으로 두면 개막일(2027)은 `seasonIsOver(2027)` = 거짓이라 울리고, 일본시리즈 예비일(2025)은 참이라 쉰다.
 
 ### D5. 「치러짐 표시」를 적재한다 — 새 표 둘
 
@@ -275,10 +285,19 @@ CREATE TABLE schedule_month (
 );
 ```
 
-- `load-upcoming.ts` 가 `upcoming_game` 과 **같은 트랜잭션·같은 파싱 결과**로 시즌 단위 `DELETE` 후 다시 넣는다(M5).
+- `load-upcoming.ts` 가 세 표(`upcoming_game` · `schedule_played` · `schedule_month`)를 **한 트랜잭션 · 같은 파싱 결과**로 갱신한다(M5).
   `ScheduleShapeError` 면 셋 다 되돌린다.
-- ⚠**읽을 일정 파일이 0개면 `DELETE` 하지 않는다**(콜드 리뷰 지적 · `load-upcoming.ts:101,110-144` 확인). 지금은 폴더만 있고
-  `schedule_NN.html.gz` 가 0개면 반복문이 0회라 가드가 하나도 안 돌고 **`DELETE` 만 커밋된다.** 파일 0개는 D7 의 결정표로 보낸다.
+- ⚠**교체 단위는 시즌이 아니라 「읽은 달」이다**(콜드 리뷰 3회 지적 · 지금은 `DELETE … WHERE season = ?` 한 번).
+  시즌 단위로 지우면 **파일이 빠진 달의 기존 증거까지 지워져** A 가 조용히 풀린다(복원 누락 · 경로 오류).
+
+| 그 달의 `schedule_NN.html.gz` | `schedule_month` 에 그 달 기존 행 | 처리 |
+|---|---|---|
+| 있고 파싱 성공 | 무관 | 그 달의 세 표 행만 `DELETE` 후 다시 넣는다(달 판별: `schedule_month.month` · 나머지 두 표는 `game_date` 의 월) |
+| 없음 | 있음 | **행 보존** · 「사본이 사라진 달 MM」 보고 · **종료 코드 1**(아카이브가 줄었다 = 비정상) |
+| 없음 | 없음 | 아무것도 안 한다(그 달은 원래 안 받았다) |
+
+- ⚠**읽을 일정 파일이 시즌에 0개면 어떤 행도 지우지 않고** D7 의 결정표로 보낸다(`load-upcoming.ts:101,110-144` — 지금은 반복문이
+  0회라 가드가 안 돌고 `DELETE` 만 커밋된다).
 - 지금 로그로만 세는 `orphans`(56~84행)는 **이 표를 쓰는 판정으로 옮긴다** — 적재기는 세기만 하고 기록은 표가 한다.
 - `revision` 면제 사유: `upcoming_game` 과 같다(시즌 단위로 지우고 다시 넣는다).
 
@@ -316,13 +335,23 @@ CREATE TABLE schedule_month (
   `npb/games/YYYY/schedule_MM.meta.json` 에 **관측 사이드카** `{ url, status: 404, checkedAt }` 를 쓴다
   (본문이 이미 있으면 **아무것도 안 쓴다** — 옛 사본과 그 취득 시각을 지킨다). 나중에 200 이 오면 보통처럼 본문과 사이드카를 쓴다.
   `BlobMeta` 에 본문 없는 관측 모양이 없으면 더한다.
-- **적재기** `load-upcoming.ts` — **시즌 폴더가 없거나, 있어도 `schedule_NN.html.gz` 가 0개일 때**(D5):
+- **적재기** `load-upcoming.ts` — **시즌 폴더가 없거나, 있어도 `schedule_NN.html.gz` 가 0개일 때**(D5).
+  ⚠**404 관측은 「이번 실행이 겨냥한 달」의 「이번 실행 무렵」 것만 인정한다**(콜드 리뷰 3회 지적). 다른 달의 오래된 404 한 장이
+  시즌 전체를 「미공표」로 만들면 **요청 누락·달 선택 오류**를 가린다.
+  → `update.ts` 가 **가장 늦은 대상 날짜의 달**을 `--expect-month YYYY-MM` 으로 넘긴다(시즌 인자와 같은 계산에서 나온다).
+  「유효한 관측」 = 그 달 키의 관측 사이드카가 있고 `status = 404` 이고 `url` 이 `monthlyScheduleUrl(YYYY, MM)` 과 같고
+  `checkedAt`(`fetchedAtOf` 규칙으로 유효)이 **적재기 실행 시각보다 36시간 이내**다.
+  정상 경로에서는 **같은 `update.ts` 실행의 아카이버가 몇 분 전에 쓴 것**이라 몇 분 차이다. 36시간은 수집만 따로 돌리고 적재를
+  이튿날 돌리는 수동 절차와 시계 오차를 받는 여유이고, **이틀 전 관측은 받지 않는다.**
+  적재기의 실행 시각은 **이미 읽고 있는 `nowIso`**(`load-upcoming.ts:47`)를 쓴다(새 시계 호출 없음).
 
-| 그 시즌 404 관측 사이드카 | DB 에 그 시즌 `game` 행 | 판정 | 처리 · 종료 코드 |
+| `--expect-month` 의 유효한 404 관측 | DB 에 그 시즌 `game` 행 | 판정 | 처리 · 종료 코드 |
 |---|---|---|---|
-| 1장 이상 | 0 | **새 시즌 일정 미공표**(NPB 404 를 봤다) | 표 **불변** · **0** · 「YYYY 시즌 일정 미공표 — NPB 404 확인 MM월 · 시각」 |
-| 0장 | 0 | **확인 불가**(요청 안 함 · 경로 오류 · 복원 누락) | 표 **불변** · **1** · 「일정 아카이브도 404 관측도 없다」 |
+| 있음 | 0 | **새 시즌 일정 미공표**(NPB 404 를 방금 봤다) | 표 **불변** · **0** · 「YYYY 시즌 일정 미공표 — NPB 404 확인 MM월 · 시각」 |
+| 없음(인자 없음 · 다른 달 · 오래됨 · URL 불일치 · 시각 무효 포함) | 0 | **확인 불가**(요청 안 함 · 경로 오류 · 복원 누락) | 표 **불변** · **1** · 무엇이 없었는지 적는다 |
 | 무관 | 1 이상 | 경기는 있는데 일정 사본이 없다 = 모순 | 표 **불변** · **1** |
+
+- ⚠**P2(12~2월이 404 인가)는 여전히 미측정이다** — 이 결정표는 **404 라면** 어떻게 할지이고, 날짜 행만 있는 페이지라면 D6 이 받는다.
 
 - ⚠**시즌 중 URL 이 바뀌어 404 가 이어지면**: 새 사본이 안 생겨 **「사본이 새롭다」가 거짓**이 되므로
   **D1 의 B(예고)가 `grace` 일 안에 잡는다.** 이 안전이 D1-B 에 기대고 있다는 것을 코드 주석에 적는다.
@@ -347,15 +376,32 @@ CREATE TABLE schedule_month (
 
 ### D9. 화면 띠는 같은 판정을 쓴다
 
-- `Freshness` 에 `missedGames: number` 와 `latestSeasonOver: boolean` 을 더한다 — 빌드 시점(`builtOn`)에
-  **D1·D2 와 같은 증거·판정 함수**를 `grace = STALE_AFTER_DAYS` 로 부른 결과다.
-- `isStale(f)` = `latestGameDate === null` ∨ `missedGames > 0` ∨ `lagDays > backstop(latestSeasonOver) + 1`.
-- ⚠**`BuildResult.stale` 도 이 값이다**(`site.ts:376`) → **빌드 게이트(#7)가 같은 판정을 쓴다.** 빌드 종료 코드의 규칙
-  (`stale` 이면 exit 1 · `build.ts:434`)은 그대로 둔다 — 바뀌는 것은 `stale` 의 뜻이다.
-- ⚠**`latestSeasonOver` 는 DB 의 최신 시즌 기준이고, 화면이 그리는 시즌의 `seasonOver` 와 다르다.** 빌드는 시즌마다
-  `freshness()` 를 만들지만(`site.ts:192` · `data.home.seasonOver` 는 **그 시즌** 것) 신선도 증거는 사이트 전체의 것이다 —
-  2022 시즌 화면을 그린다고 백스톱이 200일이 되면 안 된다. 띠의 「終了したシーズンです」 갈래는 **그 시즌**의 `seasonOver` 를
-  그대로 쓴다(표시 문제이지 신선도 판정이 아니다).
+- ⚠**두 범위를 필드로 가른다**(콜드 리뷰 3회 지적). 지금 `Freshness.latestGameDate`·`lagDays` 는 **그 시즌으로 한정된 값**이다 —
+  `latestAnyDate` 는 이름과 달리 `WHERE season = ?`(`query.ts:6719-6724`)이고 「Any」는 「대회 무관」이다.
+
+| 필드 | 범위 | 누가 쓰나 |
+|---|---|---|
+| `latestGameDate` · `regularGameDate` · `lagDays` · `seasonOver`(기존) | **그리는 시즌** | 띠의 **문구**(「最後の試合は …」) |
+| **`collection`**(새) = `{ stale, missedPlayed, missedAnnounced, siteLatestGameDate, siteLagDays, latestSeasonOver }` | **사이트 전체**(DB 한 벌) | `isStale` · 띠의 **상태** · `BuildResult.stale` |
+
+- `collection` 은 **빌드마다 한 번** 계산한다(시즌마다 다시 계산하지 않는다) — D1·D2 와 같은 증거·판정 함수를
+  `today = builtOn` · `grace = STALE_AFTER_DAYS` · 백스톱 `+1` 로 부른다. 모든 시즌의 `Freshness` 가 **같은 `collection`** 을 받는다.
+- `isStale(f)` = `f.collection.stale` = `siteLatestGameDate === null` ∨ `missedPlayed + missedAnnounced > 0` ∨ `siteLagDays > backstop(latestSeasonOver) + 1`.
+- `BuildResult.stale` = `isStale(f)`(`site.ts:376`) → **빌드 게이트(#7)가 같은 판정을 쓴다.** 게이트는 지금처럼 **현행 시즌의 결과**만 본다
+  (`build.ts:206` `const result = current!` · 434행). `collection` 이 시즌 무관이므로 어느 시즌 결과를 봐도 같다.
+- **띠의 결정표**(`freshnessBar(f, pastSeason)` · 위에서부터 처음 참인 줄):
+
+| 순서 | 조건 | 띠 |
+|---|---|---|
+| 1 | `pastSeason`(현행이 아닌 시즌 화면) | 「終了したシーズンです — 最後の試合は {그 시즌 latestGameDate}」 — **수집 상태를 말하지 않는다**(그 시즌 자료는 확정이고 게이트는 따로 있다 · 지금과 같음) |
+| 2 | `latestGameDate === null` | 「データがありません」(지금과 같음) |
+| 3 | `isStale(f)` ∧ `missedPlayed + missedAnnounced > 0` | **「取得できていない試合があります — {n}試合（{가장 이른 날짜}〜）」** |
+| 4 | `isStale(f)`(백스톱) | 「更新が止まっています — 最新の試合は {latestGameDate}（{lagDays}日前）。取得に失敗している可能性があります」(지금 문구) |
+| 5 | `seasonOver`(그 시즌 = 현행 시즌이 끝났다) | 「終了したシーズンです — …」 |
+| 6 | 그 밖 | 「最新の試合 … まで反映」 |
+
+- ⚠**3·4 가 5 보다 앞이다** — 지금 `layout.ts:205` 는 `seasonOver` 면 **`isStale` 을 보기 전에** 초록을 돌려준다. 그대로 두면
+  오프시즌에 누락이 있어도 띠는 초록인데 빌드는 실패한다(콜드 리뷰 3회 지적). 1 이 앞인 것은 **과거 시즌 화면**이라서다.
 - 「경보 임계(2) < 띠 임계(3)」 시험을 **백스톱까지 넓힌다**(감시 `backstop` < 화면 `backstop + 1`).
 - 「終了したシーズンです」 갈래(`pastSeason ∨ seasonOver`)는 그대로다.
 
@@ -394,7 +440,7 @@ CREATE TABLE schedule_month (
 시즌 중 월요일(어제 경기 있음) → 2 · 시즌 중 화요일 아침(어제 휴일 · 오늘 예고 있음) → 2 ·
 CS→일본시리즈 사이 3일째 → 4(`rest`) · DB 가 빔 → 1.
 
-- `freshness.ts` 가 콘솔 한 줄과 JSONL 필드 `period` · `missedGames` 로 남긴다.
+- `freshness.ts` 가 콘솔 한 줄과 JSONL 필드 `period` · `missedPlayed` · `missedAnnounced` 로 남긴다.
 - ⚠**종료 코드에 쓰지 않는다** — 「휴식이라 통과했다」와 「경기를 받아서 통과했다」를 **나중에 구별하려고** 남긴다.
   수집 로그 화면은 이번에 안 바꾼다.
 
@@ -441,14 +487,14 @@ CS→일본시리즈 사이 3일째 → 4(`rest`) · DB 가 빔 → 1.
 
 | # | 무엇 | 어디 | 반드시 들어갈 경우와 기대값 |
 |---|---|---|---|
-| T1 | 순수 판정 | `packages/domain/test/collection-verdict.test.ts` | A 있음 `D=today−2` → `game-missed` · `D=today−1` → 없음 · `D=today−30` → 있음 · `D=today−31` → 없음 · B 는 사본이 새로우면 무시 · 백스톱 44·45·46 / 199·200·201 · 화면은 +1 · `starters-behind` 가 휴식 공표·`seasonOver` 에서 쉼 · §4 D11 결정표의 사례 6개 각각 **정확히 한 값** |
+| T1 | 순수 판정 | `packages/domain/test/collection-verdict.test.ts` | A 있음 `D=today−2` → `game-missed` · `D=today−1` → 없음 · `D=today−30` → 있음 · `D=today−31` → 없음 · B 는 사본이 새로우면 무시 · 백스톱 44·45·46 / 199·200·201 · 화면은 +1 · `starters-behind` 가 휴식 공표에서 쉼 · **`nextGameDay` 시즌이 끝났으면 쉼 / 전년도는 끝났지만 `nextGameDay` 가 새 시즌 개막일이면 운다** · §4 D11 결정표의 사례 6개 각각 **정확히 한 값** |
 | T2 | 증거 SQL | `packages/store/test/collection-evidence.test.ts`(마이그레이션 적용한 임시 DB) | 치러짐 표시 있고 `game` 없음 → A · 중지(`notPlayed`) 행 → 받음 · **같은 카드 두 경기 표시에 `game` 0·1·2행 → A 가 2·1·0건** · 사본이 `D` 당일 취득 → B 적용 · 사본 `fetched_at` NULL → B 적용 · **B: 그날 다른 구단 경기 행이 하나라도 있으면 제외** · **B: 예고보다 늦은 휴식 공표 → 제외 · 이른 휴식 공표 → 남음 · 어느 쪽이든 `fetched_at` NULL → 남음** · `LOOKBACK` 경계 · 휴식 공표만 있는 날에도 맥박 전진 · `fetched_at` NULL 행은 맥박에서 빠짐 · **같은 아카이브로 두 번 적재해도 증거가 같다**(M5) |
 | T3 | 일정표 분류 | `packages/parser/test/schedule-rows.test.ts` | 공백 행 · 경기(치러짐/앞으로) · 구단 아님 · **칸에 글자 있는데 `team1` 클래스 없음 → `unreadable`** · **숫자 있고 링크 없음 → `unreadable`** · 같은 id 반복 행 · 홑따옴표 id · **같은 HTML 에 `season` 2025·2026 을 주면 날짜 연도만 다르다** |
-| T4 | 달 적재 | `packages/store/test/` (`load-upcoming` 을 임시 아카이브로) | 공백 달 → exit 0 · **클래스 변경 달 → exit 1 이고 기존 `upcoming_game`·`schedule_played`·`schedule_month` 행이 그대로** · D7 결정표 세 줄 × (폴더 없음 / 폴더 있고 파일 0개) = **6경우** 각각 종료 코드와 **세 표 불변** |
+| T4 | 달 적재 | `packages/store/test/upcoming-load.test.ts`(기존 `withLoad` 를 넓힌다) | 공백 달 → exit 0 · **클래스 변경 달 → exit 1 이고 기존 `upcoming_game`·`schedule_played`·`schedule_month` 행이 그대로** · **9·10월 증거가 있는 DB 에 10월 파일만 → 9월 행 보존 · exit 1 · 「사본이 사라진 달 09」** · **10월만 다시 적재하면 10월 행만 바뀐다** · D7 결정표 세 줄 × (폴더 없음 / 폴더 있고 파일 0개) = 6경우 각각 종료 코드와 **세 표 불변** · 유효한 관측의 반례 다섯(`--expect-month` 없음 · 다른 달 · 37시간 전 · URL 불일치 · `checkedAt` 무효) → 전부 「확인 불가」 exit 1 |
 | T5 | 일정 404 | `packages/archiver/test/` | 404 → 경기 0 · `ERROR` 아님 · `scheduleUnpublished` 참 · **본문 없는 키에 관측 사이드카(`status: 404`)가 생김** · **본문 있는 키는 사이드카가 안 바뀜** · 500 → `ERROR` · 이미 있는 사본은 남음 |
 | T6 | 대조 0명 | `packages/aggregate/test/` | 24장 · 양쪽 0 → 0 · 23장 · 양쪽 0 → 1 · 24장 · 공표 0 · 우리 1 → 1 · 0장 → 1 |
 | T7 | 예고 맥박 · 취득 시각 | `packages/store/test/` (`load-starters` 를 임시 아카이브로) · `meta.ts` 단위 | 휴식 공표 파일 → `starters_fetch` 행(`no_games=1`) · 사이드카 없음 → 행 있음 · `fetched_at` NULL · 파서 실패 파일 → 행 없음 · `failed` 1 · 다른 파일 행은 남음 · **`fetchedAtOf`: 파일 없음 / 깨진 JSON / JSON `null` / 배열 / `checkedAt` 숫자 / `checkedAt` 무효 날짜 + `fetchedAt` 유효 → `fetchedAt` / 둘 다 무효 → NULL · 어느 경우도 예외 없음** · 로컬 실물 아카이브의 사이드카 전수에서 무효 값 개수를 세어 PR 에 적는다 |
-| T8 | 화면 띠 · 빌드 게이트 | `packages/web/test/` | 휴식(증거 없음 · `lagDays` 6) → 초록 · A 1건 → 경고 · **시즌 중 `lagDays` 45·46 → 초록 · 47 → 경고** · **오프시즌 200·201 → 초록 · 202 → 경고** · 시즌 종료 갈래 불변 · **`BuildResult.stale` 이 `isStale` 과 같다** · **과거 시즌(2022) 화면을 그려도 백스톱은 최신 시즌 기준** · 오프시즌 `lagDays` 60 → 띠 「終了したシーズンです」 이고 `stale` 거짓 |
+| T8 | 화면 띠 · 빌드 게이트 | `packages/web/test/layout.test.ts` · `site.test.ts` | 휴식(증거 없음 · `siteLagDays` 6) → 초록 · **시즌 중 `siteLagDays` 45·46 → 초록 · 47 → 경고** · **오프시즌 200·201 → 초록 · 202 → 경고** · **D9 띠 결정표 여섯 줄 각각**(특히 현행 시즌 `seasonOver` ∧ A 1건 → 3번 「取得できていない試合」 · 현행 시즌 `seasonOver` ∧ `siteLagDays` 202 → 4번 · 과거 시즌 화면 ∧ `collection.stale` → 1번 「終了」) · **`BuildResult.stale` 이 `collection.stale` 과 같다** · **같은 DB 로 현행·2022 시즌을 구우면 `collection` 은 같고 띠의 「最後の試合」 날짜는 각자 시즌 것** · 오프시즌 `siteLagDays` 60 → 5번 「終了」 · `stale` 거짓 |
 | T9 | 키·출처 | `stale-verdict.test.ts` · `provenance.test.ts` | `STALE_REASON_KEYS` 전부에 문구(새 키 포함) · 새 표 3개가 출처 검사를 통과(면제 사유 포함) |
 | T10 | **재생** | 일회성 · 결과를 PR 에 적는다 | CI 최신 DB+아카이브로 **2026-08-18~09-11 매일** 판정 → 경보 **0/N일** · 한 날 한 경기의 `game` 행을 지운 사본 → **그 날 +2일에 A 1건** · 2025 CS→일본시리즈 휴식 창을 흉내 낸 사본 → 경보 0 · 2025 일본시리즈 예비일(11/1) → 경보 0 |
 
@@ -522,3 +568,16 @@ CS→일본시리즈 사이 3일째 → 4(`rest`) · DB 가 빔 → 1.
 | 7 | P2 D+1 사본이면 D 결과가 다 있다는 숨은 전제(미검증) | 타당 — **실측으로 확인** | §6 P9 — CI DB 130/130 · 한계(`fetched_at` 은 마지막 확인 시각) |
 | 8 | P2 오프시즌 임계 인자가 감시에만 있고 빌드에 안 간다 | 타당 | D2 — 인자를 없애고 상수 한 곳 · 바꿀 땐 커밋 |
 | 9 | P2 §1-3 이 틀렸다 — 빌드가 `stale` 로 exit 1 한다 | **타당 · 더 무거웠다** | §1-2 에 **#7 빌드 게이트** 추가(`build.ts:434` · `isStale` 이 `seasonOver` 를 안 봄) · §1-3 재작성 · D9 에 `BuildResult.stale`·`latestSeasonOver` · T8 |
+
+## 부록 C. 콜드 리뷰 3회 반영 (2026-09-11 · `gpt-6-astra` · xhigh · 지적 6건 · P1 3 · P2 3)
+
+⚠**P1 셋이 같은 모양이었다 — 새 판정은 맞는데 기존 코드의 조기 반환·정의·순회 범위 위에 얹으면 조용히 무력화된다.**
+
+| # | 지적 | 판정 | 반영 |
+|---|---|---|---|
+| 1 | P1 종료 시즌 띠가 `isStale` 보다 먼저 초록을 돌려준다 | 타당(`layout.ts:205` · 216 확인) | D9 — 띠 결정표 여섯 줄 · 현행 시즌은 낡음이 종료보다 앞 · 과거 시즌은 지금처럼 「終了」 · T8 |
+| 2 | P1 전년도 종료가 새 시즌 개막일 예고 누락 경보까지 끈다 | 타당(`query.ts:3997-4002` 확인) | D4 — 가드를 `nextGameDay` 가 속한 시즌으로 · T1 |
+| 3 | P1 일정 파일이 일부만 남으면 시즌 단위 교체가 기존 증거를 지운다 | 타당(`load-upcoming.ts:101,110-144` 확인) | D5 — 교체 단위를 「읽은 달」로 · 사라진 달은 보존하고 exit 1 · T4 |
+| 4 | P2 다른 달의 오래된 404 가 시즌 전체를 「미공표」로 만든다 | 타당(리뷰어 `unverified` 표시 — NPB 공표 관행은 외부 사실) | D7 — `--expect-month` 의 36시간 이내 관측만 인정 · 반례 다섯을 T4 에 |
+| 5 | P2 사이트 전체 판정과 시즌별 표시 날짜를 가를 필드가 없다 | 타당(`query.ts:6719-6724` 가 시즌 한정임을 확인 · 게이트는 현행 시즌 결과만 봄 `build.ts:206`) | D9 — `Freshness.collection` 분리 · 빌드마다 한 번 계산 |
+| 6 | P2 수동 해소 명령이 요청 1건도 아니고 DB 도 안 바꾼다 | 타당(`cli.ts:106-114` · `update.ts:260` 확인) | D1 — 원인별 해소로 다시 씀 · `cli.ts --date` 만으로는 안 풀린다고 명시 |
