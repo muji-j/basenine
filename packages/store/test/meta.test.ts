@@ -93,3 +93,51 @@ test("⚠읽지 못하면 null 이다 — 오늘로 떨어뜨리지 않는다", 
     assert.equal(fetchedAtOf(empty), null, "빈 문자열을 취득 시각이라고 했다");
   });
 });
+
+/**
+ * ⚠**문법은 맞는데 객체가 아닌 JSON 에서 예외가 났다**(2026-09-11 · 콜드 리뷰 지적).
+ *
+ * `JSON.parse("null")` 은 성공하고 `null` 을 돌려주므로 `m.checkedAt` 에서 **TypeError** 로 멈췄다 —
+ * 사이드카 한 장 때문에 **적재기 전체**가 뒤 파일까지 못 읽는다. 「모른다」는 null 이지 예외가 아니다.
+ * ⚠실물 아카이브에서는 0장이다(로컬 사이드카 **32,695장 전수** · 객체 아님 0) — 그래도 막는다.
+ */
+test("⚠객체가 아닌 사이드카는 null 이다 — 예외로 적재를 멈추지 않는다", async () => {
+  await withDir(async (dir) => {
+    for (const [name, body] of [
+      ["null", "null"],
+      ["array", "[]"],
+      ["string", JSON.stringify("2026-08-15T03:51:56.478Z")],
+      ["number", "42"],
+    ] as const) {
+      const p = join(dir, `${name}.meta.json`);
+      await writeFile(p, body);
+      let got: string | null | undefined;
+      assert.doesNotThrow(() => { got = fetchedAtOf(p); }, `JSON ${name} 에서 예외가 났다`);
+      assert.equal(got, null, `JSON ${name} 에 값을 줬다`);
+    }
+  });
+});
+
+/**
+ * ⚠**날짜로 읽을 수 없는 문자열을 취득 시각이라고 돌려줬다**(2026-09-11 · 콜드 리뷰 지적).
+ *
+ * 그 값이 신선도 맥박(`MAX(fetched_at)`)에 섞이면 문자열 비교로 **아무 날보다 늦은 날**이 될 수도 있다.
+ * → **`YYYY-MM-DDTHH:MM` 으로 시작하고 `Date.parse` 가 유한할 때만** 인정한다.
+ * ⚠`checkedAt` 이 무효면 `fetchedAt` 으로 떨어진다 — 옛 사이드카를 다루는 규칙(`checkedAt` 없음)과 같은 방향이다.
+ */
+test("⚠날짜가 아닌 값은 버린다 — checkedAt 이 무효면 fetchedAt, 둘 다 무효면 null", async () => {
+  await withDir(async (dir) => {
+    const fallback = join(dir, "fallback.meta.json");
+    await writeFile(fallback, JSON.stringify({ checkedAt: "not-a-date", fetchedAt: "2026-08-15T03:51:56.478Z" }));
+    assert.equal(fetchedAtOf(fallback), "2026-08-15T03:51:56.478Z", "무효한 checkedAt 을 믿었다");
+
+    const both = join(dir, "both.meta.json");
+    await writeFile(both, JSON.stringify({ checkedAt: "not-a-date", fetchedAt: "2026-13-99T00:00:00Z" }));
+    assert.equal(fetchedAtOf(both), null, "둘 다 무효인데 값을 줬다");
+
+    // 날짜만 있고 시각이 없다 — 아카이버가 쓰는 모양(`toISOString`)이 아니다
+    const dateOnly = join(dir, "date-only.meta.json");
+    await writeFile(dateOnly, JSON.stringify({ fetchedAt: "2026-08-15" }));
+    assert.equal(fetchedAtOf(dateOnly), null, "시각 없는 날짜를 취득 시각이라고 했다");
+  });
+});
