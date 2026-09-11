@@ -42,6 +42,22 @@ try {
 
 const db = openDb(dbPath, nowIso);
 
+/**
+ * **받은 날마다 맥박 한 행**(`starters_fetch` · 설계 D3).
+ *
+ * ⚠**옛 맥박은 경기가 없으면 멈췄다.** 신선도의 「予告先発 수집이 멈췄다」가 `probable_pitcher` 의 `MAX(fetched_at)` 을 봤는데,
+ * 휴식 공표 페이지는 아래에서 `continue` 로 행을 안 남기므로 **3일 넘는 휴식과 오프시즌 내내 「멈췄다」**가 됐다.
+ * ⚠**파서가 성공한 파일만** 남긴다 — 「받았다」와 「읽었다」를 섞지 않는다. 파일마다 그 날의 마지막 취득이 덮으므로 upsert 다.
+ * ⚠`fetched_at` 이 NULL 이면 「취득 시각을 모른다」다 — 적재 시각으로 메우지 않는다(017 선례 · M11).
+ */
+const upsertFetch = db.raw.prepare(
+  `INSERT INTO starters_fetch (fetched_date, game_date, no_games, source_url, fetched_at)
+   VALUES (?, ?, ?, ?, ?)
+   ON CONFLICT (fetched_date) DO UPDATE SET
+     game_date = excluded.game_date, no_games = excluded.no_games,
+     source_url = excluded.source_url, fetched_at = excluded.fetched_at`,
+);
+
 let games = 0;
 let announced = 0;
 let pending = 0;
@@ -97,6 +113,11 @@ for (const file of files) {
    */
   if (parsed.noGamesScheduled) {
     restDays += 1;
+    // ⚠**휴식 공표도 맥박이다** — NPB 가 날짜를 붙여 「그날은 경기가 없다」고 적은 것이다(예비 경기 날의 근거 · 설계 D4)
+    const restDate = resolveGameDate(fetchedDate, parsed.monthDay);
+    if (values.season === undefined || restDate === null || restDate.startsWith(`${values.season}-`)) {
+      upsertFetch.run(fetchedDate, restDate, 1, STARTERS_URL, fetchedAt);
+    }
     continue;
   }
 
@@ -109,6 +130,7 @@ for (const file of files) {
   if (values.season !== undefined && !gameDate.startsWith(`${values.season}-`)) continue;
 
   db.transaction(() => {
+    upsertFetch.run(fetchedDate, gameDate, 0, STARTERS_URL, fetchedAt);
     for (const game of parsed.games) {
       const teams = game.sides.map((s) => {
         const team = teamByName(s.teamName);
