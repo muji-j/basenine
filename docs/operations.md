@@ -138,19 +138,33 @@ node scripts/freshness.ts data/bb.sqlite 2
      1. 다음 정기 실행이 다시 받아 풀리는지 본다(잘린 응답은 대개 한 번이다).
      2. 안 풀리면 **npb.jp 의 그 달 페이지를 사람이 연다.** 그 날짜가 **페이지에 있으면** 사본이 잘린 것이다 — 소급 절차로 다시 받는다.
      3. 페이지에 **정말로 없으면** NPB 가 **온 날을 일정에서 지운 것**이다(설계서 §6 P11 · 실측 표본 없음 · 밤 슬롯은 평소 자정 뒤에 돌므로
-        전날 밤 공표된 연기도 여기에 걸릴 수 있다). 그 달 **기준선만 비운다** — ⚠**실행과 실행 사이에** 한다(도는 실행은 시작에서 받은 DB 를
-        끝에서 `--clobber` 로 다시 올려 **이 수정을 덮는다** · 4라운드 재검토 2차 F3):
+        전날 밤 공표된 연기도 여기에 걸릴 수 있다). 그 달 **기준선만 비운다.**
+        ⚠⚠**먼저 새 실행 유입을 멈춘다** — 도는 실행은 시작에서 받은 DB 를 끝에서 `--clobber` 로 다시 올려 **이 수정을 덮고**, 반대 순서면
+        사람이 올린 낡은 DB 가 그 사이 배치 갱신분을 되돌린다(4라운드 2차 F3 · 5라운드 1·2·3차). 「지금 도는 게 없는가」를 **한 번 확인하는 것은
+        잠금이 아니다** — 확인 직후 새 실행이 시작할 수 있다(`concurrency` 는 워크플로 실행끼리만 줄 세우고 사람의 `gh` 명령과는 무관하다).
+        **저장소 루트의 Git Bash 에서** 한다(PowerShell 5.1 의 `>` 는 이진 파일을 깨뜨린다 · ④ 가 저장소의 스크립트를 부른다):
         ```sh
-        gh auth switch --user muji-j                     # ⚠계정이 되돌아가 있을 수 있다
-        gh run list --repo muji-j/basenine --workflow daily.yml --status in_progress   # 비어 있어야 한다
-        gh release download data-store --repo muji-j/bb-app-data --pattern bb.sqlite.gz --dir <작업 폴더>
-        gunzip -c <작업 폴더>/bb.sqlite.gz > <작업 폴더>/bb.sqlite
-        node -e "const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[1]);console.log(d.prepare('UPDATE schedule_month SET first_content = NULL WHERE season = ? AND month = ?').run(Number(process.argv[2]), Number(process.argv[3])).changes);d.close()" <작업 폴더>/bb.sqlite <시즌> <월>   # 1 이 찍혀야 한다
-        gzip -c <작업 폴더>/bb.sqlite > <작업 폴더>/bb.sqlite.gz
-        gh release upload data-store --repo muji-j/bb-app-data <작업 폴더>/bb.sqlite.gz --clobber
+        gh auth switch --user muji-j        # ⚠반드시 이 계정 — 스케줄 워크플로를 껐다 켜면 실패 알림이 「다시 켠 사용자」에게 간다(GitHub 문서 원문 · 2026-09-11 확인)
+        gh workflow disable daily.yml --repo muji-j/basenine                                   # ① 새 실행 유입을 멈춘다
+        gh run list --repo muji-j/basenine --workflow daily.yml --limit 10 --json status,databaseId \
+          --jq '.[] | select(.status != "completed")'                                          # ② 아무것도 안 나올 때까지 기다린다(대기·진행 모두)
+        W=$(mktemp -d)                                                                         # ③ 매번 새 폴더 — 전 시도의 파일을 올리지 않게
+        gh release download data-store --repo muji-j/bb-app-data --pattern bb.sqlite.gz --dir "$W"
+        gunzip -c "$W/bb.sqlite.gz" > "$W/bb.sqlite"
+        node -e "const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[1]);console.log(d.prepare('UPDATE schedule_month SET first_content = NULL WHERE season = ? AND month = ?').run(Number(process.argv[2]), Number(process.argv[3])).changes);d.close()" "$W/bb.sqlite" <시즌> <월>   # 1 이 찍혀야 한다
+        node scripts/db-check.ts "$W/bb.sqlite"                                                # ④ 워크플로가 올리기 전에 하는 검사와 같다
+        gzip -c "$W/bb.sqlite" > "$W/bb.sqlite.gz"
+        gh release upload data-store --repo muji-j/bb-app-data "$W/bb.sqlite.gz" --clobber
+        wc -c < "$W/bb.sqlite.gz"
+        gh release view data-store --repo muji-j/bb-app-data --json assets \
+          --jq '.assets[] | select(.name=="bb.sqlite.gz") | .size'                             # ⑤ 위 수와 같아야 한다(워크플로의 올린 뒤 대조와 같다)
+        gh auth status                                                                         # ⚠⑥ 직전에 다시 본다 — 세션 도중 계정이 되돌아간 적이 있다
+        gh workflow enable daily.yml --repo muji-j/basenine                                    # ⑥ 재개 — ⚠알림이 이 명령을 친 계정으로 옮겨 간다
         ```
-        다음 실행 로그에서 그 달이 받아졌는지(`날짜가 빠진 달` 이 없는지) 본다. ⚠`--clobber` 는 **지운 뒤 올린다** — 업로드가 실패하면 자산이 사라지고
-        다음 실행이 DB 를 아카이브에서 다시 만든다(모든 기준선이 NULL → 사실 근거만 남는 기간 · 설계서 §5). 실패하면 바로 다시 올린다.
+        재개 뒤 **다음 정기 실행**의 로그에서 그 달이 받아졌는지(`날짜가 빠진 달` 이 없는지) 본다 — ⚠수동 실행으로 당기지 마라(매 실행이 npb.jp 를 친다 · L1).
+        ⚠마지막으로 끝까지 돈 수집에서 24시간이 지나면 하트비트가 다음 검사(6시간 주기 · 최악 30시간)에서 운다 — 멈춘 사실을 알고 있으면 무시해도 되지만 **길게 끌지 마라.**
+        ⚠`--clobber` 는 **지운 뒤 올린다** — 업로드가 실패하면 자산이 사라지고 다음 실행이 DB 를 아카이브에서 다시 만든다
+        (모든 기준선이 NULL → 사실 근거만 남는 기간 · 설계서 §5). ⑤ 가 다르거나 비면 **재개하기 전에** 다시 올린다.
         ⚠**이 칸은 적재기만 쓴다** — 다른 적재기가 되살리지 않는다. ⚠기준선이 NULL 인 동안 그 달은 사실 근거로만 막으므로, **페이지를 확인하기 전에 비우지 마라.**
         ⚠~~그 날짜의 `upcoming_game` · `probable_pitcher` 행을 지운다~~ 는 **안 된다** — 예고 행은 같은 실행의 `load-starters` 가 아카이브에서
         되살려 **다음 날 다시 멈췄다**(3라운드 재검토 2·3차 · 실행 재현). ⚠**아카이브(예고 원본)를 지우지 마라** — 소급 불가 자산이다.
