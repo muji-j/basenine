@@ -27,3 +27,20 @@ export {
   venueOf,
 } from "./venues.ts";
 export type { HomeVenueKind, Venue, VenueHome, VenueName } from "./venues.ts";
+export {
+  BACKSTOP_IN_SEASON_DAYS,
+  BACKSTOP_OFFSEASON_DAYS,
+  LOOKBACK_DAYS,
+  STALE_REASON_KEYS,
+  backstopDays,
+  collectionVerdict,
+} from "./collection-verdict.ts";
+export type {
+  CollectionEvidence,
+  CollectionPeriod,
+  CollectionVerdict,
+  MissedAnnounced,
+  MissedPlayed,
+  StaleReason,
+  VerdictOptions,
+} from "./collection-verdict.ts";
