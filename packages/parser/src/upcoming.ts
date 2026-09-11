@@ -45,6 +45,8 @@ export interface UpcomingResult {
   blankRows: number;
   /** 대진이 안 정해진 행사 자리(`セ・CSファーストS` · `(予備日)` …) 행 수 */
   placeholderRows: number;
+  /** 날짜 행의 `MMDD` — 중복 없이 나온 순서대로. 적재기의 날짜 완결성 판정 재료 */
+  dateKeys: string[];
 }
 
 /**
@@ -71,6 +73,12 @@ export interface UpcomingResult {
 export interface ScheduleRows {
   /** `<tr id="dateMMDD">` 행 수 */
   dateRows: number;
+  /**
+   * 날짜 행의 `MMDD` — **중복 없이 나온 순서대로**.
+   * ⚠적재기가 **날짜 완결성**(그 달 날짜가 말일까지 이어지는가)을 판정하는 재료다 — 일부 날짜만 담긴 응답을
+   * 「파싱이 됐다」로 받으면 달 교체가 사라진 날의 치러짐 표시를 지운다(설계 D5 · 콜드 리뷰 지적).
+   */
+  dateKeys: string[];
   blank: number;
   placeholder: number;
   games: UpcomingGame[];
@@ -102,11 +110,16 @@ const NON_TEAM_LABELS: ReadonlySet<string> = new Set(["セ・リーグ", "パ・
  * @param season 연도. **페이지에 없다** — 표는 `8/18（火）` 라고만 쓴다. 호출자가 안다. 파서는 시계를 읽지 않는다(M6).
  */
 export function classifyScheduleRows(html: string, season: number): ScheduleRows {
-  const out: ScheduleRows = { dateRows: 0, blank: 0, placeholder: 0, games: [], nonTeam: 0, unreadable: 0 };
+  const out: ScheduleRows = { dateRows: 0, dateKeys: [], blank: 0, placeholder: 0, games: [], nonTeam: 0, unreadable: 0 };
+  const seenKeys = new Set<string>();
 
   for (const m of html.matchAll(ROW)) {
     out.dateRows += 1;
     const mmdd = m[2]!;
+    if (!seenKeys.has(mmdd)) {
+      seenKeys.add(mmdd);
+      out.dateKeys.push(mmdd);
+    }
     const row = m[0];
     const home = /<div class="team1">([^<]*)<\/div>/.exec(row)?.[1]?.trim() ?? "";
     const away = /<div class="team2">([^<]*)<\/div>/.exec(row)?.[1]?.trim() ?? "";
@@ -164,5 +177,6 @@ export function parseUpcoming(html: string, season: number): UpcomingResult {
     dateRows: r.dateRows,
     blankRows: r.blank,
     placeholderRows: r.placeholder,
+    dateKeys: r.dateKeys,
   };
 }

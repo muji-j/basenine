@@ -197,6 +197,22 @@ test("parseUpcoming 은 같은 분류 위에 선다 — 기존 필드 호환 · 
   assert.equal(u.placeholderRows, 1);
 });
 
+/**
+ * 적재기가 **날짜 완결성**을 판정하는 재료다(설계 D5) — 일부 날짜만 담긴 응답이면 달 교체가 증거를 지운다.
+ * ⚠같은 날짜가 여러 행(경기 여럿)이어도 한 번만 · 페이지에 나온 순서대로.
+ */
+test("날짜 행의 날짜를 중복 없이 나온 순서대로 준다", () => {
+  const r = classifyScheduleRows(page(
+    gameRow("0902", "巨人", "DeNA"),
+    gameRow("0902", "ヤクルト", "阪神"),
+    blankRow("0901"),
+    placeholderRow("0903", "(予備日)"),
+    gameRow("0904", "阪神", "ソフトバンク", { teamClass: "club" }),
+  ), 2026);
+  assert.deepEqual(r.dateKeys, ["0902", "0901", "0903", "0904"]);
+  assert.deepEqual(parseUpcoming(page(blankRow("1001"), blankRow("1002")), 2026).dateKeys, ["1001", "1002"]);
+});
+
 test("다섯 분류가 날짜 행 수를 빠짐없이 나눈다", () => {
   const c = classifyScheduleRows(page(
     gameRow("1030", "阪神", "ソフトバンク", { score: [2, 3], link: "/scores/2025/1030/t-h-05/" }),
