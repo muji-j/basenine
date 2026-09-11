@@ -29,7 +29,7 @@ import type { LogPageData } from "./log-page.ts";
 import { renderDraftPage } from "./draft-page.ts";
 import type { DraftPageData } from "./draft-page.ts";
 import { DRAFT_PATH, ROSTER_PATH, TEAMS_PATH, freshness, isStale, pathsFor } from "./layout.ts";
-import type { RenderContext, SeasonPlan, SiteMeta } from "./layout.ts";
+import type { CollectionStatus, RenderContext, SeasonPlan, SiteMeta } from "./layout.ts";
 import type { SiteData } from "./query.ts";
 import { renderHomePage } from "./home-page.ts";
 import { stripBlockComments } from "./ship.ts";
@@ -182,6 +182,12 @@ export function buildSite(
    * ⚠**비우면 시즌이 하나뿐인 것으로 다룬다** — 전환 띠가 안 나온다.
    */
   plans: readonly SeasonPlan[] = [],
+  /**
+   * **사이트 전체 수집 판정** — 빌드마다 한 번 DB 증거로 만든다(`tools/build.ts` · 설계 D9).
+   * ⚠**모든 시즌에 같은 값**을 넘긴다 — 그리는 시즌의 날짜로 따로 판정하면 과거 시즌 빌드가 다른 말을 한다.
+   * ⚠비우면 그리는 시즌 날짜만으로 같은 판정(백스톱만)을 한다 — 시험용이다.
+   */
+  collection?: CollectionStatus,
 ): BuildResult {
   // ⚠**신선도는 대회를 가리지 않는다.** 정규시즌만 보면 포스트시즌 기간에
   // 사이트 전체가 「취득 실패」라고 거짓말하고, 빌드가 매일 실패로 끝난다
@@ -195,6 +201,7 @@ export function buildSite(
     data.asOf,
     data.heldSeasons,
     data.home.seasonOver,
+    ...(collection === undefined ? [] : [collection] as const),
   );
   const me = plans.find((p) => p.season === data.season);
   const prefix = me?.prefix ?? "";

@@ -197,6 +197,20 @@ test("⚠홈에서 드래프트로 1클릭이다 — 내비에 항목이 있다(
   assert.match(nav![0], /href="draft\.html"/, "내비에서 드래프트로 가는 길이 없다");
 });
 
+/**
+ * ⚠**빌드 게이트가 띠와 같은 판정을 쓴다**(설계 D9). `BuildResult.stale` 은 넘겨받은 **사이트 전체** 판정(`collection`)이고,
+ * 옛 규칙(최신 경기가 3일보다 오래됐다)으로 따로 계산하지 않는다 — 그러면 **휴식마다 빌드가 실패해 배포가 막혔다**(해마다 10월 · 오프시즌 내내).
+ */
+test("⚠빌드 게이트는 사이트 전체 판정을 따른다 — 휴식(증거 없음)이면 낡지 않다 · 누락이 있으면 낡다", () => {
+  const rest = buildSite(siteData({ latestAnyGameDate: "2026-08-09" }), SITE, "2026-08-15");
+  assert.equal(rest.stale, false, "6일 휴식에 빌드를 실패시켰다 — 옛 규칙이다");
+  const missed = buildSite(siteData({ latestAnyGameDate: "2026-08-14" }), SITE, "2026-08-15", undefined, [], {
+    stale: true, missedPlayed: 1, missedAnnounced: 0, missedEarliest: "2026-08-12",
+    siteLatestGameDate: "2026-08-14", siteLagDays: 1, latestSeasonOver: false,
+  });
+  assert.equal(missed.stale, true, "넘겨받은 판정을 무시했다");
+});
+
 test("경기가 없으면 낡음으로 보고한다 — 호출자가 종료 코드를 바꾼다", () => {
   const out = buildSite(siteData({ asOf: null, latestAnyGameDate: null }), SITE, "2026-08-15");
   assert.equal(out.stale, true);

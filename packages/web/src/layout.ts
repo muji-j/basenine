@@ -6,7 +6,8 @@
  */
 import { html, raw, toString } from "./html.ts";
 import type { RawHtml } from "./html.ts";
-import type { TeamColor } from "@bb-app/domain";
+import type { CollectionEvidence, TeamColor } from "@bb-app/domain";
+import { collectionVerdict } from "@bb-app/domain";
 import { fullDate } from "./format.ts";
 
 /**
@@ -119,13 +120,73 @@ export interface Freshness {
    * 다르면 **둘 다 적는다** — 어느 쪽도 숨기지 않는 것이 답이다.
    */
   regularGameDate: string | null;
+  /**
+   * **사이트 전체의 수집 판정** — 띠의 **상태**와 빌드 게이트(`BuildResult.stale`)가 이것을 쓴다.
+   *
+   * ⚠**위의 날짜들(`latestGameDate`·`lagDays`·`seasonOver`)은 「그리는 시즌」의 것**이고 띠의 **문구**만 쓴다.
+   * `latestAnyDate` 는 이름과 달리 `WHERE season = ?` 다(「Any」는 「대회 무관」) — 2022 시즌 화면을 그린다고
+   * 수집 판정이 2022 기준이 되면 안 된다(콜드 리뷰 3회 지적). 그래서 **빌드마다 한 번** 계산해 모든 시즌에 같은 값을 넘긴다.
+   */
+  collection: CollectionStatus;
 }
 
-/** 며칠까지를 「최신」으로 볼 것인가. 하루 1회 배치라 전날 경기까지가 정상이다. */
+/**
+ * **누락 유예(일)** — 받았어야 할 경기를 못 받은 날에서 며칠 지나면 띠가 경고하는가.
+ * ⚠**감시(`scripts/freshness.ts` · 워크플로 인자 2)보다 하루 크다** — 경보가 띠보다 먼저 울려야 한다(`stale-verdict.test.ts`).
+ * ⚠**2026-09-11 에 뜻이 바뀌었다** — 「최신 경기가 며칠 전인가」의 임계였는데, 그 규칙은 4일 넘는 휴식마다 전 화면을 경고로 만들었다.
+ */
 export const STALE_AFTER_DAYS = 3;
 
+/** 띠의 판정 옵션 — 유예 3 · 백스톱 +1(감시와 빌드가 다른 시각에 날짜를 읽어 자정을 넘기는 한 번을 흡수한다) */
+export const BANNER_VERDICT = { grace: STALE_AFTER_DAYS, backstopMargin: 1 } as const;
+
+/**
+ * 띠와 빌드 게이트가 쓰는 사이트 전체 판정. 설계 `docs/superpowers/specs/2026-09-11-offseason-collection-verdict-design.md` D9.
+ * ⚠**판정은 `@bb-app/domain` 의 `collectionVerdict` 한 벌이다**(M1) — 감시와 같은 함수를 유예만 달리해서 부른다.
+ */
+export interface CollectionStatus {
+  /** 경기가 없음 ∨ 받았어야 할 경기를 못 받음 ∨ 백스톱 초과. ⚠통산·予告先発 축은 띠가 말하지 않는다(감시가 말한다) */
+  stale: boolean;
+  /** A — 치러짐 표시인데 못 받은 **경기** 수 */
+  missedPlayed: number;
+  /** B — 예고됐는데 못 받은 **구단** 수(단위가 달라 더하지 않는다) */
+  missedAnnounced: number;
+  /** A·B 중 가장 이른 누락일 */
+  missedEarliest: string | null;
+  siteLatestGameDate: string | null;
+  siteLagDays: number | null;
+  latestSeasonOver: boolean;
+}
+
+export function collectionStatus(e: CollectionEvidence): CollectionStatus {
+  const v = collectionVerdict(e, BANNER_VERDICT);
+  return {
+    stale: v.reasons.includes("no-games") || v.reasons.includes("game-missed") || v.reasons.includes("game-lag"),
+    missedPlayed: v.missedPlayed.length,
+    missedAnnounced: v.missedAnnounced.length,
+    missedEarliest: v.missedEarliest,
+    siteLatestGameDate: e.latestPlayed,
+    siteLagDays: v.ageDays,
+    latestSeasonOver: e.latestSeasonOver,
+  };
+}
+
+/**
+ * **증거 없이 날짜만 있을 때** — 같은 판정에 빈 증거를 넣는다(시험 · DB 없이 그리는 화면).
+ * ⚠누락 증거가 없으므로 **백스톱만** 판정한다. 빌드는 DB 증거로 만든 `collectionStatus` 를 넘긴다(`tools/build.ts`).
+ */
+export function collectionStatusFromDates(latestGameDate: string | null, builtOn: string, seasonOver: boolean): CollectionStatus {
+  return collectionStatus({
+    today: builtOn, latestPlayed: latestGameDate, latestSeasonOver: seasonOver,
+    playedWithoutGame: [], announcedWithoutGame: [],
+    startersLatest: null, startersPulseDate: null, nextGameDay: null, nextGameRestDeclared: false, nextGameSeasonOver: false,
+    careerPlayers: 0, careerStalestPlayed: null,
+    latestGameRowDate: latestGameDate, latestPlayedMarkDate: null, nextAnnouncementDate: null,
+  });
+}
+
 export function isStale(f: Freshness): boolean {
-  return f.lagDays === null || f.lagDays > STALE_AFTER_DAYS;
+  return f.collection.stale;
 }
 
 /**
@@ -153,6 +214,11 @@ export function freshness(
    * 모르면 경고하는 쪽으로 남는다(M11).
    */
   seasonOver = false,
+  /**
+   * 사이트 전체 수집 판정. ⚠**빌드는 반드시 DB 증거로 만든 값을 넘긴다**(`tools/build.ts`) —
+   * 비우면 **그리는 시즌의 날짜만으로** 같은 판정(백스톱만)을 한다. 시험·DB 없는 화면용이다.
+   */
+  collection: CollectionStatus = collectionStatusFromDates(latestGameDate, builtOn, seasonOver),
 ): Freshness {
   return {
     latestGameDate,
@@ -162,6 +228,7 @@ export function freshness(
     heldFrom: held.from,
     heldTo: held.to,
     seasonOver,
+    collection,
   };
 }
 
@@ -199,24 +266,50 @@ export function freshnessBar(f: Freshness, pastSeason = false): RawHtml {
     f.regularGameDate === null || f.regularGameDate === f.latestGameDate
       ? raw("")
       : html`（レギュラーシーズンは ${fullDate(f.regularGameDate)} まで）`;
-  // ⚠**두 근거를 합친다.** `pastSeason` 은 「시즌 번호가 최신이 아니다」이고
-  // `f.seasonOver` 는 「그 시즌이 실제로 끝났다」이다 — 둘 다 `true` 만 증명이라
-  // **OR 가 안전한 방향**이다. 오프시즌의 현행 시즌은 뒤쪽만 참이다.
-  if (pastSeason || f.seasonOver) {
+  /**
+   * ⚠**결정표 — 위에서부터 처음 참인 줄**(설계 D9).
+   * | 1 | 과거 시즌 화면 | 「終了」 — 수집 상태를 말하지 않는다(그 시즌 자료는 확정이고 게이트는 따로 있다) |
+   * | 2 | 경기 없음 | 끝난 시즌이면 「このシーズンの試合はありません」, 아니면 「データがありません」 |
+   * | 3 | 낡음 ∧ 누락 있음 | 「取得できていない試合があります — N試合・M球団分（가장 이른 날 〜）」 |
+   * | 4 | 낡음(백스톱) | 「更新が止まっています …」 |
+   * | 5 | 그 시즌이 끝났다 | 「終了」 |
+   * | 6 | 그 밖 | 「最新の試合 … まで反映」 |
+   * ⚠**3·4 가 5 보다 앞이다** — 예전에는 `pastSeason || seasonOver` 를 맨 앞에서 초록으로 돌려줘서, **오프시즌에 누락이 있어도
+   *   띠는 초록인데 빌드는 실패**했다(콜드 리뷰 3회 지적). 1 이 앞인 것은 과거 시즌 화면이라서다.
+   * ⚠**3·4 번 띠는 운영 사이트에 나가지 않는다** — 같은 판정으로 감시가 먼저 `collect` 를 실패시켜 배포가 안 돈다.
+   *   이 표는 로컬·수동 빌드의 산출물과 빌드 게이트가 서로 다른 말을 하지 않게 하는 것이다(운영자 경보는 하트비트).
+   */
+  if (pastSeason) {
     return f.latestGameDate === null
       ? html`<div class="state fresh">このシーズンの試合はありません</div>`
       : html`<div class="state fresh">終了したシーズンです — 最後の試合は ${fullDate(f.latestGameDate)}${regular}</div>`;
   }
   if (f.latestGameDate === null) {
-    return html`<div class="state stale" role="status">
+    return f.seasonOver
+      ? html`<div class="state fresh">このシーズンの試合はありません</div>`
+      : html`<div class="state stale" role="status">
       <b>データがありません</b> — まだ試合を取り込んでいません
     </div>`;
   }
   const latest = fullDate(f.latestGameDate);
-  if (isStale(f)) {
+  const c = f.collection;
+  if (c.stale && c.missedPlayed + c.missedAnnounced > 0) {
+    // ⚠**단위가 달라 더하지 않는다** — A 는 경기 · B 는 구단(예고 한 장에 두 구단)
+    const units = [
+      ...(c.missedPlayed > 0 ? [`${c.missedPlayed}試合`] : []),
+      ...(c.missedAnnounced > 0 ? [`${c.missedAnnounced}球団分`] : []),
+    ].join("・");
+    return html`<div class="state stale" role="status">
+      <b>取得できていない試合があります</b> — ${units}（${c.missedEarliest === null ? "" : fullDate(c.missedEarliest)} 〜）
+    </div>`;
+  }
+  if (c.stale) {
     return html`<div class="state stale" role="status">
       <b>更新が止まっています</b> — 最新の試合は ${latest}（${f.lagDays}日前）。取得に失敗している可能性があります
     </div>`;
+  }
+  if (f.seasonOver) {
+    return html`<div class="state fresh">終了したシーズンです — 最後の試合は ${latest}${regular}</div>`;
   }
   return html`<div class="state fresh">最新の試合 ${latest} まで反映${regular}</div>`;
 }
