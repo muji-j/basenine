@@ -37,45 +37,132 @@ export interface UpcomingResult {
   games: UpcomingGame[];
   /** 구단이 아닌 행(올스타 등). **버린 수를 센다** */
   nonTeamRows: number;
-  /** 팀 이름을 못 읽은 행. 0이 아니면 표기가 바뀐 것이다(M7) */
+  /** 못 읽은 행. 0이 아니면 표기가 바뀐 것이다(M7) — 분류 규칙은 `classifyScheduleRows` */
   unreadableRows: number;
+  /** `<tr id="dateMMDD">` 행 수. ⚠**날짜 수가 아니다** — 한 날짜에 경기가 여럿이면 행이 반복된다 */
+  dateRows: number;
+  /** 경기가 없는 날의 공백 행 수 */
+  blankRows: number;
+  /** 대진이 안 정해진 행사 자리(`セ・CSファーストS` · `(予備日)` …) 행 수 */
+  placeholderRows: number;
 }
 
-/** `<tr id="dateMMDD">` 로 행을 가른다. ⚠날짜는 첫 경기에만 붙는 `<th>` 가 아니라 이 id 에서 온다 */
-const ROW = /<tr[^>]*id="date(\d{4})"[\s\S]*?(?=<tr[^>]*id="date|<\/table>)/g;
+/**
+ * 월간 일정 표를 **행 단위로 다섯 중 하나로** 가른 결과.
+ *
+ * | 분류 | 조건 |
+ * |---|---|
+ * | 공백 | 날짜 머리칸(`<th>`)을 뺀 나머지가 태그·공백·`&nbsp;` 뿐 — 그 날 경기가 없다 |
+ * | 예정 표기 | 팀 칸이 없고, `div.commentLong` 에 글자가 있고, 그것을 빼면 나머지가 공백뿐 — 대진 미정 행사 자리 |
+ * | 경기 | `div.team1`·`div.team2` 가 둘 다 비지 않았고 둘 다 NPB 구단 약칭 |
+ * | 구단 아님 | 두 칸이 `セ・リーグ`·`パ・リーグ` 의 조합(올스타 · 허용 목록 `NON_TEAM_LABELS`) |
+ * | 못 읽음 | 그 밖 — **칸에 글자가 있는데 경기로 못 읽었다**, **팀 칸이 비었다**, **점수 숫자가 있는데 점수 링크가 없다**, **허용 목록 밖 구단 표기** |
+ *
+ * ⚠**「예정 표기」는 실물에서 찾았다**(2026-09-11). 설계 초안에는 넷뿐이었는데, 실물 월간 일정 75장 전수에
+ * 돌리자 **2026년 10월 페이지 1장에서 30행**이 「못 읽음」으로 떨어졌다 — `セ・CSファーストS` · `パ・CSファイナルS` ·
+ * `(予備日)` · `日本シリーズ セ本拠地球場` 이다. 그대로 뒀으면 **10월 일정을 받는 날부터 적재기가 구조 변경으로 멈췄다.**
+ * 나머지 74장은 옛 파서와 경기 목록이 **전부 같다**.
+ *
+ * ⚠**「날짜 행만 있으면 경기가 없는 달」로 받던 것이 구조 변경을 가렸다**(2026-09-11 · 콜드 리뷰 지적) —
+ * 경기 칸의 클래스만 바뀐 페이지도 날짜 행은 그대로라 「경기 0 · 못 읽음 0」이 됐다.
+ * ⚠**「숫자 ⇒ 링크」는 실측이다** — 로컬 아카이브 월간 일정 75장 · 경기 칸 8,027개에서 **숫자가 있는데 링크가 없는 칸 0개**
+ * (링크만 있고 숫자가 없는 287칸은 중지 등이다). 링크 모양이 바뀌면 치러진 경기가 조용히 「앞으로의 경기」가 되므로 막는다.
+ */
+export interface ScheduleRows {
+  /** `<tr id="dateMMDD">` 행 수 */
+  dateRows: number;
+  blank: number;
+  placeholder: number;
+  games: UpcomingGame[];
+  nonTeam: number;
+  unreadable: number;
+}
 
 /**
- * @param season 연도. **페이지에 없다** — 표는 `8/18（火）` 라고만 쓴다. 호출자가 안다.
+ * 날짜 행의 앵커. ⚠**홑·곁따옴표를 다 받는다** — 한쪽만 받으면 따옴표만 바뀐 멀쩡한 페이지가
+ * 「날짜 행 0」이 되어 구조 변경으로 멈춘다. `\s` 로 `data-id="date…"` 같은 다른 속성을 걸러낸다.
+ * ⚠**수집기(`archiver/src/discover.ts`)도 이 함수를 쓴다**(M1) — 앵커를 두 벌 두면 두 가드의 전제가 갈린다.
  */
-export function parseUpcoming(html: string, season: number): UpcomingResult {
-  const games: UpcomingGame[] = [];
-  let nonTeamRows = 0;
-  let unreadableRows = 0;
+const ROW = /<tr[^>]*\sid=(["'])date(\d{4})\1[\s\S]*?(?=<tr[^>]*\sid=["']date\d{4}["']|<\/table>)/g;
+
+/** 점수 링크 — 이것이 있으면 NPB 가 「치렀다」고 표시한 경기다 */
+const SCORE_LINK = /\/scores\/\d{4}\/\d{4}\/[^/"']+\//;
+
+/**
+ * **「구단 아님」으로 인정하는 표기** — 올스타뿐이다.
+ * ⚠**모르는 약칭을 전부 여기로 빼면 구단 약칭이 바뀌는 날 그 구단 경기가 조용히 치러짐 표시에서 빠진다**(2026-09-11 · 콜드 리뷰 지적).
+ * 실측: 월간 일정 75장에서 「구단 아님」은 **16행 · 두 표기**(`セ・リーグ - パ・リーグ` 9 · `パ・リーグ - セ・リーグ` 7)뿐이다.
+ * 새 표기가 실물에 나타나면 「못 읽음」으로 멈추고, 사람이 여기에 더한다.
+ */
+const NON_TEAM_LABELS: ReadonlySet<string> = new Set(["セ・リーグ", "パ・リーグ"]);
+
+/**
+ * 월간 일정 표를 행 단위로 분류한다.
+ *
+ * @param season 연도. **페이지에 없다** — 표는 `8/18（火）` 라고만 쓴다. 호출자가 안다. 파서는 시계를 읽지 않는다(M6).
+ */
+export function classifyScheduleRows(html: string, season: number): ScheduleRows {
+  const out: ScheduleRows = { dateRows: 0, blank: 0, placeholder: 0, games: [], nonTeam: 0, unreadable: 0 };
 
   for (const m of html.matchAll(ROW)) {
-    const mmdd = m[1]!;
+    out.dateRows += 1;
+    const mmdd = m[2]!;
     const row = m[0];
     const home = /<div class="team1">([^<]*)<\/div>/.exec(row)?.[1]?.trim() ?? "";
     const away = /<div class="team2">([^<]*)<\/div>/.exec(row)?.[1]?.trim() ?? "";
     if (home === "" || away === "") {
-      // ⚠**경기가 없는 날**(월요일 등)은 팀 칸 자체가 없다. 그건 결손이 아니라 정상이다
-      if (/<div class="team1">/.test(row)) unreadableRows += 1;
+      // ⚠**경기가 없는 날은 팀 칸 자체가 없고 칸이 `&nbsp;` 뿐이다**(실측). 그것만 공백이다.
+      //   **대진 미정 행사 자리는 팀 칸 없이 `commentLong` 에만 글자가 있다**(실측) — 예정 표기다.
+      //   팀 칸이 있는데 비었거나, 팀 칸이 없는데 **그 밖의 글자가 남아 있으면** 못 읽은 것이다.
+      const body = row.replace(/<th[\s\S]*?<\/th>/g, "");
+      const text = (s: string): string => s.replace(/<[^>]*>/g, "").replace(/&nbsp;/g, "").trim();
+      const label = [...body.matchAll(/<div class="commentLong">([^<]*)<\/div>/g)].map((x) => text(x[1]!)).join("");
+      // ⚠**일본시리즈 자리는 장소 칸에도 임시 표기가 있다**(`セ本拠地球場` · 2026-10-24 실측) —
+      //   그래서 예정 표기는 「알려진 칸 밖에 글자가 없다」로 본다. 공백은 「머리칸 밖에 글자가 전혀 없다」로 더 엄격하다.
+      const outsideKnown = text(body.replace(/<div class="(?:commentLong|place|time|weather|comment)">[^<]*<\/div>/g, ""));
+      if (/<div class="team1">/.test(row)) out.unreadable += 1;
+      else if (text(body) === "") out.blank += 1;
+      else if (label !== "" && outsideKnown === "") out.placeholder += 1;
+      else out.unreadable += 1;
       continue;
     }
     if (!isTeamShortName(home) || !isTeamShortName(away)) {
-      nonTeamRows += 1;
+      if (NON_TEAM_LABELS.has(home) && NON_TEAM_LABELS.has(away)) out.nonTeam += 1;
+      else out.unreadable += 1;
+      continue;
+    }
+    const played = SCORE_LINK.test(row);
+    const scored = /<div class="score[12]">\s*\d+\s*<\/div>/.test(row);
+    if (scored && !played) {
+      out.unreadable += 1;
       continue;
     }
     const venue = normalizeVenue(/<div class="place">([^<]*)<\/div>/.exec(row)?.[1] ?? "");
     const t = /<div class="time">\s*(\d{1,2}:\d{2})\s*<\/div>/.exec(row)?.[1] ?? null;
-    games.push({
+    out.games.push({
       date: `${season}-${mmdd.slice(0, 2)}-${mmdd.slice(2)}`,
       homeCode: teamCodeByShortName(home),
       awayCode: teamCodeByShortName(away),
       venue,
       startTime: t,
-      played: /\/scores\/\d{4}\/\d{4}\/[^/]+\//.test(row),
+      played,
     });
   }
-  return { games, nonTeamRows, unreadableRows };
+  return out;
+}
+
+/**
+ * @param season 연도. **페이지에 없다** — 표는 `8/18（火）` 라고만 쓴다. 호출자가 안다.
+ * ⚠**분류는 `classifyScheduleRows` 한 벌이다**(M1) — 여기서 다시 판정하지 않는다.
+ */
+export function parseUpcoming(html: string, season: number): UpcomingResult {
+  const r = classifyScheduleRows(html, season);
+  return {
+    games: r.games,
+    nonTeamRows: r.nonTeam,
+    unreadableRows: r.unreadable,
+    dateRows: r.dateRows,
+    blankRows: r.blank,
+    placeholderRows: r.placeholder,
+  };
 }

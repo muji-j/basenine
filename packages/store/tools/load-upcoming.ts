@@ -86,18 +86,25 @@ for (
 const playedSeen = new Map<string, number>();
 const orphans: string[] = [];
 
-let months = 0, kept = 0, playedRows = 0, nonTeam = 0, unreadable = 0;
+let months = 0, kept = 0, playedRows = 0, nonTeam = 0;
 /**
- * ⚠**아무 행도 나오지 않은 달.** 여기가 M7 의 급소다.
+ * ⚠**달 판정 — 여기가 M7 의 급소다.** 분류는 파서의 `classifyScheduleRows` 한 벌이다(수집기 `discover.ts` 와 같다 · M1).
  *
- * 일정 표의 마크업이 바뀌면 `team1` 칸 자체가 사라지므로 **「못 읽은 행」으로도 안 잡힌다** —
- * 파서는 0건을 돌려주고, 적재는 DELETE 만 하고 **종료 코드 0으로 끝난다.**
- * 그러면 화면이 「앞으로의 경기가 없습니다」라고 말한다. 조용한 0 그 자체다.
- * 반증자가 실제로 재현했다: 마크업을 바꾸자 `upcoming_game` 이 **8행 → 0행**(2026-08-18 감사 P1).
- * ⚠**월간 일정 페이지에는 반드시 경기 행이 있다**(치러진 것이든 앞으로의 것이든) —
- * 아카이브에 있는 달이 0행이면 그건 「경기가 없다」가 아니라 **「못 읽었다」**다.
+ * | 조건 | 판정 |
+ * |---|---|
+ * | 날짜 행 0 | 구조 변경 — 되돌린다 |
+ * | 못 읽은 행 1 이상 | 구조 변경 — **되돌린다** |
+ * | 날짜 행은 있고 경기·구단 아님·예정 표기·못 읽음이 전부 0 | **경기가 없는 달** — 정상 |
+ *
+ * ⚠**옛 가드는 「경기 행 0」을 전부 구조 변경으로 봤다.** 그 근거(「월간 일정 페이지에는 반드시 경기 행이 있다」)가
+ * 경기가 없는 달(12~2월)에는 거짓이고, **수집기는 같은 모양을 정상으로 받는데 적재기만 반대 전제**였다(2026-09-11).
+ * ⚠**「못 읽음」을 커밋 뒤 exit 1 로 두던 것도 바꿨다** — 그러면 DELETE 가 이미 커밋돼 기존 일정이 사라진다.
+ * 반증자가 실제로 재현했던 모양(마크업을 바꾸자 `upcoming_game` 8행 → 0행 · 2026-08-18 감사 P1)은
+ * 이제 파서가 「못 읽음」으로 세고 여기서 되돌린다.
  */
-const emptyMonths: string[] = [];
+const noDateRowMonths: string[] = [];
+const unreadableMonths: string[] = [];
+const noGameMonths: string[] = [];
 const files = readdirSync(dir).filter((f) => /^schedule_\d{2}\.html\.gz$/.test(f)).sort();
 
 /**
@@ -117,8 +124,9 @@ db.transaction(() => {
     const fetchedAt = fetchedAtOf(join(dir, f.replace(/\.html\.gz$/, ".meta.json")));
     const r = parseUpcoming(html, season);
     nonTeam += r.nonTeamRows;
-    unreadable += r.unreadableRows;
-    if (r.games.length + r.nonTeamRows + r.unreadableRows === 0) emptyMonths.push(f);
+    if (r.dateRows === 0) noDateRowMonths.push(f);
+    else if (r.unreadableRows > 0) unreadableMonths.push(`${f}(${r.unreadableRows}행)`);
+    else if (r.games.length + r.nonTeamRows + r.placeholderRows === 0) noGameMonths.push(f);
     for (const g of r.games) {
       if (g.played) {
         playedRows += 1;
@@ -135,10 +143,17 @@ db.transaction(() => {
       kept += 1;
     }
   }
-  if (emptyMonths.length > 0) {
+  if (noDateRowMonths.length > 0) {
     throw new ScheduleShapeError(
-      `일정 표에서 경기 행을 하나도 못 읽은 달이 있다: ${emptyMonths.join("·")}\n` +
+      `일정 표에서 날짜 행을 하나도 못 찾은 달이 있다: ${noDateRowMonths.join("·")}\n` +
         `  마크업이 바뀌었을 가능성이 높다. **기존 일정을 지우지 않고 멈춘다**(M7).`,
+    );
+  }
+  if (unreadableMonths.length > 0) {
+    throw new ScheduleShapeError(
+      `일정 표에 못 읽은 행이 있는 달이 있다: ${unreadableMonths.join("·")}\n` +
+        `  칸에 글자가 있는데 경기로 못 읽었거나, 점수 숫자가 있는데 점수 링크가 없다 — 표기가 바뀌었을 수 있다.\n` +
+        `  **기존 일정을 지우지 않고 멈춘다**(M7).`,
     );
   }
 });
@@ -153,11 +168,9 @@ db.transaction(() => {
 
 console.log(
   `일정 ${months}개월분 · 앞으로의 경기 ${kept}건 적재 · 치러진 행 ${playedRows}건 제외` +
-    ` · 구단 아닌 행 ${nonTeam}건 · 못 읽은 행 ${unreadable}건`,
+    ` · 구단 아닌 행 ${nonTeam}건 · 경기가 없는 달 ${noGameMonths.length}개` +
+    (noGameMonths.length === 0 ? "" : `(${noGameMonths.join("·")})`),
 );
-if (unreadable > 0) {
-  console.error(`⚠못 읽은 행이 ${unreadable}건 있다 — 일정 표의 표기가 바뀌었을 수 있다(M7)`);
-}
 /**
  * ⚠**「0건」과 「안 쟀음」을 구별해 쓴다**(작업규칙 7) — 그래서 0 이어도 말한다.
  * ⚠**실패로 만들지 않는다.** 경기 중에 수집하면 정상적으로 잠깐 생기는 상태이고,
@@ -185,4 +198,5 @@ if (missing.length > 0) {
 }
 
 db.close();
-process.exitCode = unreadable > 0 ? 1 : 0;
+// ⚠못 읽은 행은 위에서 되돌리고 exit 1 로 끝났다 — 여기까지 왔으면 읽은 달은 전부 판정이 섰다
+process.exitCode = 0;

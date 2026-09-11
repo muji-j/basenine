@@ -35,8 +35,8 @@ export { isInfield, readPbp, sideOf, unknownTokens } from "./pbp.ts";
 export type { Field, PbpFacts, StrikeoutKind, Trajectory } from "./pbp.ts";
 export { CareerParseError, careerTotal, parseCareer, seasonsPlayed } from "./career.ts";
 export type { Career, CareerBattingSeason, CareerPitchingSeason } from "./career.ts";
-export { parseUpcoming } from "./upcoming.ts";
-export type { UpcomingGame, UpcomingResult } from "./upcoming.ts";
+export { classifyScheduleRows, parseUpcoming } from "./upcoming.ts";
+export type { ScheduleRows, UpcomingGame, UpcomingResult } from "./upcoming.ts";
 export {
   DRAFT_KINDS,
   DraftIndexError,
