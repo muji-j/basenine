@@ -115,6 +115,33 @@ const PROVENANCE: Readonly<Record<string, Provenance>> = {
   draft_pick: { where: "source", when: "fetched_at", revision: "revision" },
   draft_bid: { where: "source", when: "fetched_at", revision: "revision" },
   draft_note: { where: "source", when: "fetched_at", revision: "revision" },
+  // 021 수집 판정 증거 — 오프시즌·휴식기 설계(`docs/superpowers/specs/2026-09-11-offseason-collection-verdict-design.md` D3·D5).
+  // ⚠**세 표 모두 판(版)이 성립하지 않는다** — 각자 사유가 다르므로 따로 적는다.
+  starters_fetch: {
+    where: "source_url",
+    when: "fetched_at",
+    revision: null,
+    why:
+      "予告先発 페이지를 **받은 날마다 한 행**이고 그 날의 **마지막 취득이 덮는다**(아카이브 파일도 날짜마다 하나다). "
+      + "정정의 이력이 아니라 「언제 마지막으로 봤는가」라는 맥박이라 판이 뜻이 없다. "
+      + "⚠`fetched_at` 이 NULL 이면 「취득 시각을 모른다」다(M11 · 017 선례) — 적재 시각으로 메우지 않는다.",
+  },
+  schedule_played: {
+    where: "source",
+    when: "fetched_at",
+    revision: null,
+    why:
+      "월간 일정 페이지가 「치렀다」고 표시한 경기의 **목록**이고, 적재가 **읽은 달 단위로 지우고 다시 넣는다** "
+      + "(`load-upcoming.ts` · `upcoming_game` 과 같은 트랜잭션) — 판이 쌓이지 않는다.",
+  },
+  schedule_month: {
+    where: "source",
+    when: "fetched_at",
+    revision: null,
+    why:
+      "월간 일정 사본을 **언제 받았는가**(「사본이 새롭다」의 근거)를 달마다 한 행으로 든다. "
+      + "읽은 달 단위로 덮으며 이력을 주장하지 않는다.",
+  },
 };
 
 async function schema(): Promise<Map<string, string[]>> {

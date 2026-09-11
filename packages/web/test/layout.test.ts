@@ -6,6 +6,7 @@ import {
   DRAFT_PATH,
   NAV_LABELS,
   STALE_AFTER_DAYS,
+  collectionStatus,
   freshness,
   freshnessBar,
   isStale,
@@ -14,6 +15,7 @@ import {
   safeScript,
   stateNote,
 } from "../src/layout.ts";
+import type { CollectionStatus } from "../src/layout.ts";
 import { CSS } from "../src/assets.ts";
 import { NEUTRAL_COLOR } from "@bb-app/domain";
 import { renderTodayPage } from "../src/today-page.ts";
@@ -27,10 +29,33 @@ test("신선도는 경기일과 생성일의 간격으로 정해진다", () => {
   assert.equal(freshness(null, "2026-08-15").lagDays, null);
 });
 
-test("경계에서 낡음 판정이 뒤집힌다 — 임계값을 테스트가 고정한다", () => {
+/** `date` 에서 n 일 전 */
+const minus = (date: string, n: number): string => new Date(Date.parse(`${date}T00:00:00Z`) - n * 86_400_000).toISOString().slice(0, 10);
+
+/**
+ * ⚠**2026-09-11 에 규칙이 바뀌었다** — 「최신 경기가 3일보다 오래됐다」가 아니라 **「NPB 가 치렀다고 표시한 경기를 못 받았다」**다
+ * (설계 `docs/superpowers/specs/2026-09-11-offseason-collection-verdict-design.md` D9). 옛 규칙은 **4일 넘는 휴식마다** 전 화면을
+ * 「取得に失敗している可能性」으로 만들고 빌드를 실패시켰다(해마다 10월 CS 전후 두 번 · 오프시즌 내내).
+ * 증거가 없으면(휴식) 나이는 **백스톱**으로만 본다 — 띠는 감시(45 · 200)보다 **하루 늦게**(46 · 201) 운다.
+ */
+test("⚠경계 — 띠의 유예는 3일 · 증거가 없으면 백스톱(시즌 중 46 · 오프시즌 201)을 넘어야 낡음", () => {
   assert.equal(STALE_AFTER_DAYS, 3);
-  assert.equal(isStale(freshness("2026-08-12", "2026-08-15")), false);
-  assert.equal(isStale(freshness("2026-08-11", "2026-08-15")), true);
+  const at = (age: number, over = false) => isStale(freshness(minus("2026-08-15", age), "2026-08-15", undefined, undefined, over));
+  assert.deepEqual([at(4), at(45), at(46), at(47)], [false, false, false, true], "시즌 중 경계가 틀렸다");
+  assert.deepEqual([at(200, true), at(201, true), at(202, true)], [false, false, true], "오프시즌 경계가 틀렸다");
+});
+
+test("⚠띠의 유예 3일 — 누락 증거가 D−3 이면 낡음 · D−2 면 아직(감시가 먼저 운다)", () => {
+  const withMissed = (age: number) => collectionStatus({
+    today: "2026-08-15", latestPlayed: "2026-08-14", latestSeasonOver: false,
+    playedWithoutGame: [{ date: minus("2026-08-15", age), homeCode: "g", awayCode: "t", seq: 0 }], announcedWithoutGame: [],
+    startersLatest: null, startersPulseDate: null, nextGameDay: null, nextGameRestDeclared: false, nextGameSeasonOver: false,
+    careerPlayers: 0, careerStalestPlayed: null, latestGameRowDate: "2026-08-14", latestPlayedMarkDate: "2026-08-14", nextAnnouncementDate: null,
+  });
+  assert.equal(withMissed(2).stale, false);
+  assert.equal(withMissed(3).stale, true);
+  assert.equal(withMissed(3).missedPlayed, 1);
+  assert.equal(withMissed(3).missedEarliest, "2026-08-12");
 });
 
 test("경기가 하나도 없으면 낡음이다 — 「데이터 없음」을 정상으로 보이게 하지 않는다", () => {
@@ -38,9 +63,10 @@ test("경기가 하나도 없으면 낡음이다 — 「데이터 없음」을 �
   assert.match(toString(freshnessBar(freshness(null, "2026-08-15"))), /データがありません/);
 });
 
-test("낡았을 때만 경고 띠가 된다", () => {
+test("낡았을 때만 경고 띠가 된다 — ⚠6일 휴식은 낡음이 아니다", () => {
   assert.match(toString(freshnessBar(freshness("2026-08-14", "2026-08-15"))), /class="state fresh"/);
-  assert.match(toString(freshnessBar(freshness("2026-07-01", "2026-08-15"))), /class="state stale"/);
+  assert.match(toString(freshnessBar(freshness("2026-08-09", "2026-08-15"))), /class="state fresh"/, "6일 휴식에 경고를 냈다 — 옛 규칙이다");
+  assert.match(toString(freshnessBar(freshness(minus("2026-08-15", 47), "2026-08-15"))), /class="state stale"/);
 });
 
 test("4상태는 서로 다른 문구가 된다(M12)", () => {
@@ -525,10 +551,47 @@ test("⚠끝난 시즌은 「취득 실패」라고 말하지 않는다 — 다�
   );
   assert.ok(!barOver.includes("state stale"), "끝난 시즌에 경고색 띄를 냈다");
 
-  // ⚠**진행 중이면 여전히 경고해야 한다** — 이게 없으면 「늘 조용히」 구현이 통과한다
-  const running = freshness("2026-10-19", "2026-11-20", "2026-10-19", { from: 2018, to: 2026 }, false);
+  // ⚠**진행 중이면서 받았어야 할 경기를 못 받았으면 여전히 경고해야 한다** — 이게 없으면 「늘 조용히」 구현이 통과한다.
+  // ⚠2026-09-11 부터 **나이(32일)만으로는 경고하지 않는다** — 시즌 중 휴식(CS→일본시리즈 5~8일 · 2021 올림픽 27일)이 실재한다.
+  const quiet = freshness("2026-10-19", "2026-11-20", "2026-10-19", { from: 2018, to: 2026 }, false);
+  assert.ok(!toString(freshnessBar(quiet, false)).includes("state stale"), "증거 없는 32일 휴식에 경고를 냈다");
+  const missed: CollectionStatus = {
+    stale: true, missedPlayed: 2, missedAnnounced: 0, missedEarliest: "2026-11-15",
+    siteLatestGameDate: "2026-10-19", siteLagDays: 32, latestSeasonOver: false,
+  };
+  const running = freshness("2026-10-19", "2026-11-20", "2026-10-19", { from: 2018, to: 2026 }, false, missed);
   const barRunning = toString(freshnessBar(running, false));
-  assert.match(barRunning, /取得に失敗している可能性/, "수집이 멈췄는데 아무 말도 안 했다");
+  assert.match(barRunning, /取得できていない試合があります/, "받았어야 할 경기를 못 받았는데 아무 말도 안 했다");
+});
+
+/**
+ * ⚠**띠의 결정표**(설계 D9) — 위에서부터 처음 참인 줄. ⚠**현행 시즌에서는 낡음이 「終了」보다 앞이다** —
+ * 옛 코드는 시즌이 끝났으면 낡음을 보기 전에 초록을 돌려줘서, **오프시즌에 누락이 있어도 띠는 초록인데 빌드는 실패**했다(콜드 리뷰 3회 지적).
+ * ⚠과거 시즌 화면은 수집 상태를 말하지 않는다 — 그 시즌 자료는 확정이다.
+ */
+test("⚠띠 결정표 — 현행 시즌은 낡음이 종료보다 앞 · 단위를 섞지 않는다 · 과거 시즌은 종료", () => {
+  const col = (o: Partial<CollectionStatus>): CollectionStatus => ({
+    stale: false, missedPlayed: 0, missedAnnounced: 0, missedEarliest: null,
+    siteLatestGameDate: "2026-10-30", siteLagDays: 3, latestSeasonOver: true, ...o,
+  });
+  const bar = (c: CollectionStatus, past = false, over = true, latest = "2026-10-30") =>
+    toString(freshnessBar(freshness(latest, "2026-11-02", latest, { from: 2018, to: 2026 }, over, c), past));
+  // 3 — 현행 · 끝난 시즌 · 누락 있음 → 경고(종료가 아니라)
+  const a = bar(col({ stale: true, missedPlayed: 2, missedEarliest: "2026-10-29" }));
+  assert.match(a, /state stale/);
+  assert.match(a, /取得できていない試合があります<\/b> — 2試合（2026年10月29日 〜）/);
+  assert.ok(!a.includes("終了したシーズン"), "누락이 있는데 종료로 덮었다");
+  assert.match(bar(col({ stale: true, missedAnnounced: 2, missedEarliest: "2026-10-29" })), /2球団分（2026年10月29日 〜）/);
+  assert.match(bar(col({ stale: true, missedPlayed: 1, missedAnnounced: 2, missedEarliest: "2026-10-28" })), /1試合・2球団分（2026年10月28日 〜）/);
+  // 4 — 현행 · 백스톱
+  const b = bar(col({ stale: true, siteLagDays: 202 }), false, true, "2026-04-14");
+  assert.match(b, /更新が止まっています/);
+  // 5 — 현행 · 끝난 시즌 · 낡지 않음
+  assert.match(bar(col({})), /終了したシーズンです/);
+  // 1 — 과거 시즌은 수집 상태를 말하지 않는다
+  const past = bar(col({ stale: true, missedPlayed: 2, missedEarliest: "2026-10-29" }), true);
+  assert.match(past, /終了したシーズンです/);
+  assert.ok(!past.includes("state stale"), "과거 시즌 화면에 수집 경고를 냈다");
 });
 
 /**

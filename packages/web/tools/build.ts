@@ -13,12 +13,12 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { brokenLinksIn, duplicateIds, linkIndex, tooDeepPlayerPages } from "../src/link-check.ts";
 import type { LinkIndex } from "../src/link-check.ts";
 import { dirname, join, resolve } from "node:path";
-import { openDb } from "@bb-app/store";
+import { collectionEvidence, openDb } from "@bb-app/store";
 import { systemClock, toJstDateString } from "@bb-app/archiver";
 import { DRAFT_SEASON_PATHS, buildDraftSeason, buildSite, seasonPaths } from "../src/site.ts";
 import type { BuildResult } from "../src/site.ts";
 // ⚠**연락처 게이트의 판정은 한 벌이다**(M1) — 조건을 여기서 다시 쓰지 않는다
-import { contactGate } from "../src/layout.ts";
+import { collectionStatus, contactGate } from "../src/layout.ts";
 import {
   buildCareerContext,
   draftHeldSeasons,
@@ -161,8 +161,14 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
        * 검사가 실제로 보는 것은 `id` 집합과 링크·ARIA 참조뿐이라, **쓰자마자 색인만 남기고 버린다.**
        */
       const all: LinkIndex[] = [];
+      /**
+       * ⚠**수집 판정은 빌드마다 한 번 · 사이트 전체 · DB 증거로**(설계 D9). 감시(`scripts/freshness.ts`)와 **같은 증거·판정 함수**를
+       * 유예 3 · 백스톱 +1 로 부른다 — 옛 규칙(최신 경기가 3일보다 오래됐다)은 **4일 넘는 휴식마다 빌드를 실패시켰다.**
+       * ⚠모든 시즌에 **같은 값**을 넘긴다 — 그리는 시즌의 날짜로 따로 판정하면 과거 시즌 빌드가 다른 말을 한다.
+       */
+      const collection = collectionStatus(collectionEvidence(db, builtOn));
       for (const l of loaded) {
-        const r = buildSite(l.data, site, builtOn, l.season === season ? log : undefined, plans);
+        const r = buildSite(l.data, site, builtOn, l.season === season ? log : undefined, plans, collection);
         if (l.season === season) current = r;
         for (const f of r.files) {
           const path = join(outDir, f.path);

@@ -851,3 +851,22 @@ test("⚠daily.yml 이 schedule 과 workflow_dispatch 를 둘 다 갖는다", ()
   assert.match(head, /^\s*schedule:/m, "크론 트리거가 없다");
   assert.match(head, /^\s*workflow_dispatch:/m, "손으로 돌릴 수 있는 트리거가 없다");
 });
+
+/**
+ * ⚠**빌드 게이트(stale)는 DB 증거로 만든 사이트 전체 판정을 쓴다**(2026-09-11 · 설계 D9).
+ *
+ * 옛 게이트는 `isStale` = 「그리는 시즌의 최신 경기가 3일보다 오래됐다」였고 `seasonOver` 를 안 봤다 —
+ * **4일 넘는 휴식과 오프시즌 내내 빌드를 실패시켜 배포를 막는** 모양이었다. 수집이 먼저 실패해서 가려져 있었을 뿐이다.
+ * ⚠`stale` 은 `systemClock` 을 읽는 `builtOn` 과 비교하므로 **실행 시험으로는 주입점이 없다**(위 머리말) — 그래서 배선을 소스로 붙든다.
+ * 판정 자체는 `layout.test.ts`·`site.test.ts`·도메인·저장소 시험이 잰다.
+ */
+test("⚠빌드 게이트는 DB 증거로 한 번 만든 수집 판정을 모든 시즌에 넘긴다", () => {
+  const src = buildSrc();
+  assert.match(src, /const collection = collectionStatus\(collectionEvidence\(db, builtOn\)\);/,
+    "빌드가 DB 증거로 수집 판정을 만들지 않는다 — 그리는 시즌 날짜로 따로 판정하게 된다");
+  assert.match(src, /buildSite\(l\.data, site, builtOn, [^;]*, plans, collection\)/,
+    "빌드가 수집 판정을 시즌 화면에 넘기지 않는다");
+  // ⚠`gate()` 는 표지 **뒤에서** `if (` 를 찾는다 — 표지가 조건 안에 있으면 못 찾으므로 `if` 부터 준다
+  const g = gate(src, "if (result.stale)");
+  assert.match(g.block, /process\.exitCode = 1/, "낡았는데 종료 코드를 안 세운다");
+});

@@ -6,7 +6,7 @@
  * 조용한 0건은 「그날 경기가 없었다」로 오독되어 영구히 빈 아카이브를 남긴다.
  */
 
-import { parseScheduleVenues } from "@bb-app/parser";
+import { classifyScheduleRows, parseScheduleVenues } from "@bb-app/parser";
 
 /** 발견된 경기 1건. */
 export interface GameRef {
@@ -46,26 +46,24 @@ export class NoGamesFoundError extends Error {
 const GAME_HREF = /\/scores\/(\d{4})\/(\d{2})(\d{2})\/([a-z0-9]+(?:-[a-z0-9]+)+)\//g;
 
 /**
- * **그 달의 날짜 행**. 「경기가 0건」과 「페이지가 바뀌었다」를 가르는 근거다.
- *
- * ⚠**이 둘을 못 가르면 오프시즌에 파이프라인이 통째로 멈춘다**(2026-08-18 감사 P2).
- * NPB 는 12~2월에도 월간 일정 페이지를 내놓는데 **경기 링크가 0건**이다. 그때
- * `NoGamesFoundError` 를 던지면 그 달의 배치가 통째로 실패하고, 배포도 기록 커밋도
- * 같이 멈춘다 — 넉 달 동안 매일.
- * ⚠**그렇다고 0건을 그냥 넘기면 M7 이 죽는다.** 그래서 **구조가 살아 있는지**를 따로 본다:
- * 날짜 행이 있으면 페이지는 읽힌 것이고 0건은 사실이다. 날짜 행조차 없으면 구조가 바뀐 것이다.
- */
-const DATE_ROW = /<tr[^>]*\sid=["']date\d{4}["']/g;
-
-
-
-/**
  * 월간 일정 HTML에서 경기 참조를 추출한다.
  *
- * @throws {NoGamesFoundError} 링크가 0건이고 **날짜 행조차 없을 때**. 호출자가 삼키지 마라.
- *   ⚠날짜 행이 있는데 경기가 0건이면 **오프시즌이므로 빈 배열을 돌려준다**(위 `DATE_ROW` 참조).
+ * ⚠**「경기가 0건」과 「페이지가 바뀌었다」를 못 가르면 오프시즌에 파이프라인이 통째로 멈춘다**(2026-08-18 감사 P2).
+ * NPB 는 경기가 없는 달에도 월간 일정 페이지를 내놓는데 **경기 링크가 0건**이다. 그때
+ * `NoGamesFoundError` 를 던지면 그 달의 배치가 통째로 실패하고, 배포도 기록 커밋도 같이 멈춘다.
+ * ⚠**그렇다고 0건을 그냥 넘기면 M7 이 죽는다.** 그래서 **구조가 살아 있는지**를 따로 본다.
+ *
+ * ⚠**「날짜 행이 있으면 살아 있다」로는 부족했다**(2026-09-11 · 콜드 리뷰 지적). 경기 칸의 클래스만 바뀌거나
+ * **점수 링크 모양만 바뀐** 페이지도 날짜 행은 그대로라 빈 배열로 통과했다 — 치러진 경기가 조용히 0건이 된다.
+ * → 판정을 **파서의 행 분류 한 벌**(`classifyScheduleRows`)로 옮겼다. 적재기(`load-upcoming.ts`)도 같은 분류를 쓴다(M1).
+ *   날짜 행이 있고 **못 읽은 행이 0** 이면(공백 · 대진 미정 예정 표기 · 앞으로의 경기뿐) 0건은 사실이다.
+ *   ⚠10·11월의 링크·숫자 없는 팀 칸 행에 모르는 표기가 있어도 예정 표기다(파서 `PENDING_MATCHUP_MONTHS` · 2026-09-11) —
+ *   링크가 없는 행이라 수집할 경기가 애초에 없다. 링크가 붙은 행은 여전히 링크로 찾는다.
+ *
+ * @param season 그 페이지의 시즌. **페이지에 연도가 없다** — 요청한 쪽이 안다(`MonthlyScheduleCache`).
+ * @throws {NoGamesFoundError} 링크가 0건이고 **날짜 행이 없거나 못 읽은 행이 있을 때**. 호출자가 삼키지 마라.
  */
-export function discoverGames(html: string, sourceUrl: string): GameRef[] {
+export function discoverGames(html: string, sourceUrl: string, season: number): GameRef[] {
   // ⚠구장 추출은 parser 한 벌만 쓴다(M1) — 수집기와 적재기가 다른 값을 내면 안 된다
   const venues = parseScheduleVenues(html);
   const seen = new Set<string>();
@@ -87,12 +85,8 @@ export function discoverGames(html: string, sourceUrl: string): GameRef[] {
   }
 
   if (out.length === 0) {
-    /**
-     * ⚠**날짜 행이 살아 있으면 「경기가 없는 달」이다** — 12~2월이 실제로 그렇다.
-     * 던지면 오프시즌 내내 배치가 죽는다(§0-3 의 자동 최신화가 통째로 멈춘다).
-     */
-    const rows = html.match(DATE_ROW)?.length ?? 0;
-    if (rows === 0) throw new NoGamesFoundError(sourceUrl, html.length);
+    const rows = classifyScheduleRows(html, season);
+    if (rows.dateRows === 0 || rows.unreadable > 0) throw new NoGamesFoundError(sourceUrl, html.length);
   }
   return out;
 }

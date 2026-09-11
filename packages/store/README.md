@@ -1,9 +1,12 @@
 # @bb-app/store
 
-스키마·적재·조회. **Cloudflare D1(SQLite) 호환 SQL만** 쓴다.
+스키마·적재·조회. 로컬 개발도 CI 도 Node 24 내장 `node:sqlite` 다(SQLite 1파일 · 배포는 정적 사이트).
+SQL 은 **SQLite 한 벌**이다(`datetime()` · `STRICT` · `ON CONFLICT` 같은 SQLite 기능은 쓴다 · 5라운드 재검토 2차 Minor).
 
-로컬 개발은 Node 24 내장 `node:sqlite`로 한다. 둘 다 SQLite이므로 **SQL은 한 벌이면 되고**,
-그 전제를 지키기 위해 방언을 쓰지 않는다. 덕분에 Cloudflare 계정 없이 전부 만들고 검증할 수 있다.
+⚠~~Cloudflare D1(SQLite) 호환 SQL만 쓴다~~ 는 스택이 정적 생성으로 확정되기 전의 서술이다(2026-09-11 정정 · `src/db.ts` 머리말).
+⚠**예외 하나 — 마이그레이션 022 는 `openDb` 가 등록하는 JS 함수 `bb_fetched_at` 을 부른다.** D1 처럼 사용자 정의 함수를 못 쓰는 런타임으로
+옮기면 022 를 JS 데이터 마이그레이션으로 옮겨야 한다. 아래 쓰기 예산(`--max-writes` · `D1_DAILY_WRITE_LIMIT`)은 **옮길 때를 대비한
+장치로 코드에 남아 있다** — 제약 자체는 지금 운영에 없다.
 
 ## 사용법
 
@@ -81,6 +84,7 @@ node packages/store/tools/load-archive.ts data/archive data/bb.sqlite --from 202
 ## 아직 안 한 것
 
 - **집계·조회 쿼리** — 순위·스플릿(증분 E)
-- **D1 배포** — wrangler 설정과 원격 마이그레이션. 스키마는 그대로 쓸 수 있다
+- ~~**D1 배포** — wrangler 설정과 원격 마이그레이션. 스키마는 그대로 쓸 수 있다~~ — **계획에 없다**(배포는 정적 사이트 · CLAUDE.md §1 · 2026-09-11).
+  옮기게 되면 마이그레이션 022 가 JS 함수에 기대므로 그것부터 옮겨야 한다(위 머리말). ⚠이 절의 다른 줄도 오래됐다 — 이번 작업 범위 밖이라 두었다
 - **타석 단위 로그** — `playbyplay.html` 파서가 선행(증분 F)
 - **경기구분 판정** — 지금은 전부 `regular`로 넣는다. CS·일본시리즈 구간은 별도 판정이 필요하다

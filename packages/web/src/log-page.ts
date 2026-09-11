@@ -75,6 +75,8 @@ export interface RunRecord {
  */
 const STALE_REASON_LABEL: Readonly<Record<string, string>> = {
   "no-games": "試合データなし",
+  // ⚠**2026-09-11 부터 1차 축이다** — NPB 가 치렀다고 표시했는데 받지 못한 경기(설계 D1). 「試合が古い」는 이제 백스톱이다
+  "game-missed": "未取得の試合",
   "game-lag": "試合が古い",
   "career-lag": "通算が古い",
   "starters-behind": "予告先発が遅れ",

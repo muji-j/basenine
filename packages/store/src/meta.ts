@@ -7,10 +7,41 @@
  * 그것을 **「NPB 가 늦다」고 오진**해 엉뚱한 처방(두 출처 이어 붙이기)까지 얹었다(2026-08-17).
  *
  * ⚠**읽지 못하면 `null` 이다** — 「모른다」를 「오늘」로 바꾸지 않는다(M11).
- * 파일이 없는 것, JSON 이 깨진 것, `fetchedAt` 이 문자열이 아닌 것을 전부 같게 다룬다:
+ * 파일이 없는 것, JSON 이 깨진 것, **JSON 이 객체가 아닌 것**, 값이 **날짜로 읽히지 않는 것**을 전부 같게 다룬다:
  * 어느 쪽이든 **우리는 취득 시각을 모른다.**
+ *
+ * ⚠**「객체가 아니다」와 「날짜가 아니다」는 2026-09-11 에 더했다**(콜드 리뷰 지적).
+ * 그전에는 JSON `null` 이 `m.checkedAt` 에서 **예외**를 내 적재기 전체를 멈췄고,
+ * `"not-a-date"` 는 **그대로** 취득 시각이 돼 신선도 맥박(`MAX(fetched_at)`)에 섞일 수 있었다.
+ * 실물 아카이브에서는 둘 다 **0장**이었다(로컬 사이드카 32,695장 전수) — 규칙을 조여도 바뀌는 값이 없다.
  */
 import { readFileSync } from "node:fs";
+
+/**
+ * 취득 시각으로 인정하는 모양. 아카이버는 `Date#toISOString()` 을 쓴다(`YYYY-MM-DDTHH:MM:SS.sssZ`).
+ * ⚠**앞모양만으로는 부족하다** — `2026-13-99T00:00` 도 모양은 맞는다. `Date.parse` 가 유한해야 한다.
+ * ⚠**시간대 표기(`Z` · `±HH:MM`)로 끝나야 한다**(2026-09-11 · 3중 검토 2차 N3 · 실측). 없으면 `Date.parse` 가
+ *   **실행 기계의 현지 시간**으로 읽어 이 기계(JST)와 CI(UTC)에서 9시간이 갈리고, SQLite `datetime()`(UTC 로 읽는다)과도 갈린다.
+ * ⚠⚠**정리 마이그레이션 `022-invalid-fetched-at.sql` 은 조건을 따로 적지 않고 이 함수를 부른다**(`db.ts` 가 `bb_fetched_at` 으로 등록).
+ *   조건을 SQL 로 흉내 냈을 때 SQLite `datetime()` 과 경계값에서 갈렸다(`24:01` · `+15:00` · 수정분 재검토 2·3차) — **여기가 유일한 정의다.**
+ */
+const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+/**
+ * 인정한 값은 **UTC `toISOString` 한 모양으로** 돌려준다.
+ * ⚠**신선도 판정이 취득 시각을 문자열로 비교한다**(`MAX(fetched_at)` · 「예고보다 늦은 휴식 공표」) —
+ * `09:00+09:00` 과 `00:00Z` 는 같은 시각인데 문자열로는 다르고, 앞의 것이 `01:00Z` 보다 크다고 나온다(2026-09-11 · 콜드 리뷰 지적).
+ * 실물 사이드카는 전부 이미 이 모양이라(CI DB 5개 표에서 `Z` 로 안 끝나는 값 0) **정규화로 바뀌는 값이 없다.**
+ * ⚠`new Date(ms)` 는 주어진 값을 해석할 뿐 시계를 읽지 않는다(M6).
+ */
+export function normalizeFetchedAt(v: unknown): string | null {
+  if (typeof v !== "string" || !TIMESTAMP.test(v)) return null;
+  const ms = Date.parse(v);
+  if (!Number.isFinite(ms)) return null;
+  const iso = new Date(ms).toISOString();
+  // ⚠출력도 자기 모양이어야 한다 — `0000-01-01T00:00+00:01` 은 UTC 로 `-000001-…` 이 되어 다시 넣으면 NULL 이 된다(022 멱등성 · 3라운드 재검토 2차)
+  return TIMESTAMP.test(iso) ? iso : null;
+}
 
 export function fetchedAtOf(metaPath: string): string | null {
   let raw: string;
@@ -19,13 +50,14 @@ export function fetchedAtOf(metaPath: string): string | null {
   } catch {
     return null;
   }
-  let m: { fetchedAt?: unknown; checkedAt?: unknown };
+  let parsed: unknown;
   try {
-    m = JSON.parse(raw) as { fetchedAt?: unknown; checkedAt?: unknown };
+    parsed = JSON.parse(raw);
   } catch {
     return null;
   }
-  const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const m = parsed as { fetchedAt?: unknown; checkedAt?: unknown };
   /**
    * ⚠**`checkedAt`(마지막으로 본 시각)이 먼저다.**
    * `fetchedAt` 은 「내용이 마지막으로 **바뀐**」 시각이라, 안 바뀐 페이지에서는 영영 안 움직인다.
@@ -33,6 +65,8 @@ export function fetchedAtOf(metaPath: string): string | null {
    * **같은 페이지를 매일 다시 친다**(L1). 우리가 답해야 하는 질문은 「이 값이 언제 것인가」이고,
    * 그 답은 **마지막으로 확인한 시각**이다.
    * ⚠옛 사이드카에는 `checkedAt` 이 없다 — 그때는 `fetchedAt` 이 곧 확인 시각이었으므로 그대로 떨어뜨린다.
+   * ⚠`checkedAt` 이 **있지만 무효**여도 같은 방향으로 떨어진다 — 「마지막으로 본 시각」을 모르면
+   *   「마지막으로 바뀐 시각」이 그다음으로 정직한 답이다.
    */
-  return str(m.checkedAt) ?? str(m.fetchedAt);
+  return normalizeFetchedAt(m.checkedAt) ?? normalizeFetchedAt(m.fetchedAt);
 }

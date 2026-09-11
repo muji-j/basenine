@@ -92,7 +92,7 @@ export class MonthlyScheduleCache {
       await markSeen(deps.sink, deps.clock, key, prev);
     }
 
-    return discoverGames(new TextDecoder("utf-8").decode(res.body), url);
+    return discoverGames(new TextDecoder("utf-8").decode(res.body), url, season);
   }
 }
 

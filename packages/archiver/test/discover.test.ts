@@ -27,7 +27,7 @@ const MONTHLY_HTML = `
 </table>`;
 
 test("월간 일정에서 경기 링크를 추출한다", () => {
-  const games = discoverGames(MONTHLY_HTML, "https://npb.jp/games/2026/schedule_08_detail.html");
+  const games = discoverGames(MONTHLY_HTML, "https://npb.jp/games/2026/schedule_08_detail.html", 2026);
   assert.equal(games.length, 6, "중복 1건을 제외한 6건이어야 한다");
 
   const first = games[0];
@@ -43,7 +43,7 @@ test("월간 일정에서 경기 링크를 추출한다", () => {
 });
 
 test("같은 경기 링크가 여러 번 나와도 1건으로 센다", () => {
-  const games = discoverGames(MONTHLY_HTML, "u");
+  const games = discoverGames(MONTHLY_HTML, "u", 2026);
   const paths = games.map((g) => g.path);
   assert.equal(new Set(paths).size, paths.length, "중복이 남아 있으면 같은 페이지를 두 번 받는다");
 });
@@ -51,7 +51,7 @@ test("같은 경기 링크가 여러 번 나와도 1건으로 센다", () => {
 test("⚠M7: 링크가 0건이면 빈 배열이 아니라 예외를 던진다", () => {
   // 페이지 구조가 바뀐 상황을 모사한다. 조용한 0건은 「그날 경기가 없었다」로 오독된다.
   const changed = `<div class="new-layout"><span data-game="2026-08-14">試合</span></div>`;
-  assert.throws(() => discoverGames(changed, "https://npb.jp/x"), NoGamesFoundError);
+  assert.throws(() => discoverGames(changed, "https://npb.jp/x", 2026), NoGamesFoundError);
 });
 
 /**
@@ -62,13 +62,42 @@ test("⚠오프시즌: 날짜 행은 있는데 경기가 0건이면 던지지 �
   const offseason =
     `<table><tr id="date1201"><th>12/1（火）</th><td>&nbsp;</td></tr>` +
     `<tr id="date1202"><th>12/2（水）</th><td>&nbsp;</td></tr></table>`;
-  const games = discoverGames(offseason, "https://npb.jp/games/2026/schedule_12_detail.html");
+  const games = discoverGames(offseason, "https://npb.jp/games/2026/schedule_12_detail.html", 2026);
   assert.deepEqual(games, [], "경기가 없는 달은 빈 배열이다 — 예외가 아니다");
+});
+
+/**
+ * ⚠**날짜 행만 보고 「경기가 없는 달」로 받으면 링크 모양 변경이 가려진다**(2026-09-11 · 콜드 리뷰 지적).
+ * 링크를 하나도 못 찾았어도 **점수 숫자가 있는 칸**이 있으면 경기는 치러졌고 링크를 못 읽은 것이다.
+ * 판정은 파서의 `classifyScheduleRows` 한 벌이다(M1) — 적재기(`load-upcoming.ts`)와 같은 규칙.
+ */
+test("⚠링크가 0건인데 점수 숫자가 있는 칸이 있으면 던진다 — 링크 모양이 바뀐 것이다", () => {
+  const linkChanged =
+    `<table><tr id="date0910"><th>9/10（木）</th><td>` +
+    `<div class="team1">巨人</div><a href="/games/2026/0910/g-db/"><div class="score1">3</div>` +
+    `<div class="state">-</div><div class="score2">2</div></a><div class="team2">DeNA</div></td></tr></table>`;
+  assert.throws(() => discoverGames(linkChanged, "https://npb.jp/games/2026/schedule_09_detail.html", 2026), NoGamesFoundError);
+});
+
+test("⚠링크가 0건이고 경기 칸 클래스가 바뀐 행이 있으면 던진다", () => {
+  const classChanged =
+    `<table><tr id="date0910"><th>9/10（木）</th><td>` +
+    `<div class="club1">巨人</div><div class="club2">DeNA</div></td></tr></table>`;
+  assert.throws(() => discoverGames(classChanged, "https://npb.jp/games/2026/schedule_09_detail.html", 2026), NoGamesFoundError);
+});
+
+test("링크가 0건이어도 대진 미정 예정 표기(CS·일본시리즈 자리)만 있는 달은 던지지 않는다", () => {
+  const placeholders =
+    `<table><tr id="date1010"><th>10/10（土）</th><td><div class="commentLong">セ・CSファーストS</div></td>` +
+    `<td><div class="place"></div><div class="time"></div></td></tr>` +
+    `<tr id="date1024"><th>10/24（土）</th><td><div class="commentLong">日本シリーズ</div></td>` +
+    `<td><div class="place">セ本拠地球場</div><div class="time"></div></td></tr></table>`;
+  assert.deepEqual(discoverGames(placeholders, "https://npb.jp/games/2026/schedule_10_detail.html", 2026), []);
 });
 
 test("⚠M7: 예외에 진단 정보가 담긴다", () => {
   try {
-    discoverGames("<html></html>", "https://npb.jp/x");
+    discoverGames("<html></html>", "https://npb.jp/x", 2026);
     assert.fail("던져야 한다");
   } catch (err) {
     assert.ok(err instanceof NoGamesFoundError);
@@ -78,19 +107,19 @@ test("⚠M7: 예외에 진단 정보가 담긴다", () => {
 });
 
 test("경기일로 거른다", () => {
-  const games = discoverGames(MONTHLY_HTML, "u");
+  const games = discoverGames(MONTHLY_HTML, "u", 2026);
   assert.equal(gamesOn(games, "2026-08-14").length, 3);
   assert.equal(gamesOn(games, "2026-08-13").length, 1);
 });
 
 test("경기가 없는 날은 0건이며 이것은 정상이다", () => {
   // 「구조가 깨져서 0건」(예외)과 「그날 경기가 없어서 0건」(정상)은 다르다.
-  const games = discoverGames(MONTHLY_HTML, "u");
+  const games = discoverGames(MONTHLY_HTML, "u", 2026);
   assert.equal(gamesOn(games, "2026-08-12").length, 0);
 });
 
 test("더블헤더처럼 같은 날 복수 경기가 남는다", () => {
-  const games = discoverGames(MONTHLY_HTML, "u");
+  const games = discoverGames(MONTHLY_HTML, "u", 2026);
   const slugs = gamesOn(games, "2026-08-14").map((g) => g.slug);
   assert.deepEqual(slugs, ["s-db-17", "d-g-18", "c-t-16"]);
 });

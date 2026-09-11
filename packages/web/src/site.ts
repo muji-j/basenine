@@ -29,7 +29,7 @@ import type { LogPageData } from "./log-page.ts";
 import { renderDraftPage } from "./draft-page.ts";
 import type { DraftPageData } from "./draft-page.ts";
 import { DRAFT_PATH, ROSTER_PATH, TEAMS_PATH, freshness, isStale, pathsFor } from "./layout.ts";
-import type { RenderContext, SeasonPlan, SiteMeta } from "./layout.ts";
+import type { CollectionStatus, RenderContext, SeasonPlan, SiteMeta } from "./layout.ts";
 import type { SiteData } from "./query.ts";
 import { renderHomePage } from "./home-page.ts";
 import { stripBlockComments } from "./ship.ts";
@@ -60,7 +60,8 @@ import { stripBlockComments } from "./ship.ts";
  * 그리고 **사용자가 본 8/18·8/27 은 둘 다 실재했던 빌드**다(수집 로그 실측 3회·8회).
  * → **산출물은 멀쩡했고 낡은 사본이 전달되고 있었다.**
  *
- * ⚠**띠가 초록이었다는 것이 결정적이었다.** `isStale` 는 `lagDays > 3` 에서 켜지므로
+ * ⚠**띠가 초록이었다는 것이 결정적이었다.** 당시 `isStale` 는 `lagDays > 3` 에서 켜졌으므로
+ * (⚠**그 규칙은 2026-09-11 에 수집 판정으로 바뀌었다** — 설계 D9 · 휴식마다 빌드를 실패시켰다)
  * 「更新が止まっています」가 아니라 「まで反映」이었다는 것은 **그 화면이 만들어질 당시엔 신선했다**는 뜻이다.
  * 렌더 버그였다면 초록일 수 없다.
  *
@@ -182,6 +183,12 @@ export function buildSite(
    * ⚠**비우면 시즌이 하나뿐인 것으로 다룬다** — 전환 띠가 안 나온다.
    */
   plans: readonly SeasonPlan[] = [],
+  /**
+   * **사이트 전체 수집 판정** — 빌드마다 한 번 DB 증거로 만든다(`tools/build.ts` · 설계 D9).
+   * ⚠**모든 시즌에 같은 값**을 넘긴다 — 그리는 시즌의 날짜로 따로 판정하면 과거 시즌 빌드가 다른 말을 한다.
+   * ⚠비우면 그리는 시즌 날짜만으로 같은 판정(백스톱만)을 한다 — 시험용이다.
+   */
+  collection?: CollectionStatus,
 ): BuildResult {
   // ⚠**신선도는 대회를 가리지 않는다.** 정규시즌만 보면 포스트시즌 기간에
   // 사이트 전체가 「취득 실패」라고 거짓말하고, 빌드가 매일 실패로 끝난다
@@ -195,6 +202,7 @@ export function buildSite(
     data.asOf,
     data.heldSeasons,
     data.home.seasonOver,
+    ...(collection === undefined ? [] : [collection] as const),
   );
   const me = plans.find((p) => p.season === data.season);
   const prefix = me?.prefix ?? "";

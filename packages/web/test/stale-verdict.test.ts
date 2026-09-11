@@ -23,8 +23,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { STALE_REASON_KEYS } from "@bb-app/domain";
 import { staleVerdict } from "../src/log-page.ts";
-import { STALE_AFTER_DAYS } from "../src/layout.ts";
+import { BANNER_VERDICT, STALE_AFTER_DAYS } from "../src/layout.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const MONITOR = readFileSync(join(ROOT, "scripts", "freshness.ts"), "utf8");
@@ -56,12 +57,14 @@ test("⚠라벨이 없는 키는 키 자체를 보여준다 — 조용히 빼지
 
 /**
  * ⚠**감시와 화면이 갈라지는 것을 막는다**(M1 의 정신).
- * 키는 `scripts/freshness.ts` 가 정하고 문구는 `log-page.ts` 가 붙인다 —
+ * 키는 **`@bb-app/domain` 의 `STALE_REASON_KEYS`** 가 정하고 문구는 `log-page.ts` 가 붙인다 —
  * 한쪽만 늘리면 화면에 **날 키가 그대로** 나간다.
+ * ⚠**2026-09-11 에 키의 출처가 바뀌었다** — 예전에는 `scripts/freshness.ts` 소스에서 `staleReasons.push("…")` 를 긁었는데,
+ * 판정이 도메인 함수(`collectionVerdict`)로 옮겨 가면서 그 문자열이 사라졌다. 그대로 뒀으면 「키를 0개 찾았다」로 떨어졌다.
  */
 test("⚠감시가 미는 키 전부에 화면 문구가 있다", () => {
-  const keys = [...MONITOR.matchAll(/staleReasons\.push\("([^"]+)"\)/g)].map((m) => m[1]!);
-  assert.ok(keys.length >= 5, `감시에서 키를 ${keys.length}개밖에 못 찾았다 — 이 시험이 공회전한다`);
+  const keys = [...STALE_REASON_KEYS];
+  assert.ok(keys.length >= 6, `감시 키가 ${keys.length}개뿐이다 — 이 시험이 공회전한다`);
   const naked = keys.filter((k) => staleVerdict({ stale: true, staleReasons: [k] }) === k);
   assert.deepEqual(
     naked,
@@ -69,6 +72,16 @@ test("⚠감시가 미는 키 전부에 화면 문구가 있다", () => {
     "이 키들이 화면 문구 없이 날것으로 나간다 — `STALE_REASON_LABEL` 에 일본어 문구를 더해라",
   );
   console.log(`  · 감시 키 ${keys.length}개 [${keys.join(" ")}] 전부 문구 있음`);
+});
+
+/**
+ * ⚠**판정은 한 벌이다**(M1 · 설계 D10). 감시 스크립트가 도메인 판정을 쓰고 **스스로 사유를 만들지 않는다** —
+ * 누가 판정을 스크립트에 다시 복사하면 화면 띠·빌드 게이트와 감시가 언젠가 다른 말을 한다.
+ */
+test("⚠감시 스크립트는 판정을 도메인 한 벌에서 받는다 — 스스로 사유를 만들지 않는다", () => {
+  assert.match(MONITOR, /collectionVerdict\(/, "감시가 도메인 판정을 쓰지 않는다");
+  assert.match(MONITOR, /collectionEvidence\(/, "감시가 저장소 증거 SQL 을 쓰지 않는다");
+  assert.doesNotMatch(MONITOR, /staleReasons\.push\(/, "감시가 사유를 스스로 만든다 — 판정이 두 벌이 됐다");
 });
 
 /**
@@ -88,4 +101,21 @@ test("⚠경보 임계가 띠 임계보다 엄격하다", () => {
       "  수집 로그는 「正常」인 날이 생긴다.",
   );
   console.log(`  · 감시 ${monitorDays}일 < 띠 ${STALE_AFTER_DAYS}일`);
+});
+
+/**
+ * ⚠⚠**백스톱에서도 감시가 먼저 운다**(설계 D9 「백스톱까지 넓힌다」 · 2026-09-11 · 3중 검토 2차 N4).
+ * 위 시험은 유예만 묶었다 — 감시의 `backstopMargin` 을 1 로 바꿔도 전 시험이 초록이었고, 그러면 46~47일째에
+ * **띠는 경고 · 감시는 正常** 인 날이 생긴다. 감시 스크립트가 **실제로 넘기는 값**을 읽어 띠와 비교한다.
+ * ⚠유예도 스크립트가 **인자를 그대로 넘기는지** 본다 — 인자를 읽고 딴 값을 넘기면 위 시험이 헛돈다.
+ */
+test("⚠⚠감시의 백스톱 여유가 띠보다 작다 — 감시가 실제로 넘기는 값을 읽는다", () => {
+  const m = /collectionVerdict\(evidence, \{ grace: (\w+), backstopMargin: (\d+) \}\)/.exec(MONITOR);
+  assert.ok(m !== null, "freshness.ts 에서 감시 판정 옵션을 못 읽었다 — 이 시험이 공회전한다");
+  assert.equal(m![1], "staleDays", "감시가 유예 인자(staleDays)가 아닌 값을 판정에 넘긴다 — 위 임계 시험이 헛돈다");
+  const monitorMargin = Number(m![2]!);
+  assert.ok(
+    monitorMargin < BANNER_VERDICT.backstopMargin,
+    `감시 백스톱 여유 ${monitorMargin}일이 띠 여유 ${BANNER_VERDICT.backstopMargin}일보다 작지 않다 — 백스톱 경계에서 띠가 먼저 운다`,
+  );
 });

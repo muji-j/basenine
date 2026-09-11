@@ -2,7 +2,7 @@
   "name": "@bb-app/store",
   "private": true,
   "type": "module",
-  "description": "스키마·적재·조회. D1(SQLite) 호환 SQL만 쓴다.",
+  "description": "스키마·적재·조회. node:sqlite 의 SQLite 방언 없는 SQL — 단 마이그레이션 022 는 openDb 가 등록한 JS 함수 bb_fetched_at 을 부른다(src/db.ts 머리말).",
   "exports": {
     ".": "./src/index.ts"
   },
