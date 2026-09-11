@@ -211,6 +211,39 @@ test("⚠빌드 게이트는 사이트 전체 판정을 따른다 — 휴식(증
   assert.equal(missed.stale, true, "넘겨받은 판정을 무시했다");
 });
 
+/**
+ * ⚠**T8 — 같은 DB 로 현행·과거 시즌을 구우면 수집 판정은 같고, 띠의 날짜는 각자 시즌 것이다**(설계 D9 · 2026-09-11 · 3중 검토 2차 N4).
+ * 시즌마다 **그리는 시즌의 날짜로** 따로 판정하면 과거 시즌 빌드가 백스톱으로 실패한다 — 4년 전 마지막 경기일은 200일을 넘는다.
+ * 반대로 판정을 넘기면서 **날짜까지 사이트 전체 것**을 쓰면 2022 화면이 「最後の試合は 8月14日」이라고 거짓말한다.
+ */
+test("⚠T8 — 현행·과거 시즌이 같은 수집 판정을 받고, 띠의 날짜는 각자 시즌 것이다", () => {
+  const plans = [
+    { season: 2026, prefix: "", paths: new Set(["index.html"]) },
+    { season: 2022, prefix: "2022/", paths: new Set(["index.html"]) },
+  ];
+  const collection = {
+    stale: false, missedPlayed: 0, missedAnnounced: 0, missedEarliest: null,
+    siteLatestGameDate: "2026-08-14", siteLagDays: 1, latestSeasonOver: false,
+  };
+  const cur = buildSite(siteData({ latestAnyGameDate: "2026-08-14" }), SITE, "2026-08-15", undefined, plans, collection);
+  const d22 = siteData({ season: 2022, asOf: "2022-10-02", latestAnyGameDate: "2022-10-30" });
+  const past = buildSite({ ...d22, home: { ...d22.home, season: 2022, seasonOver: true } }, SITE, "2026-08-15", undefined, plans, collection);
+  assert.equal(cur.stale, false);
+  assert.equal(past.stale, cur.stale, "과거 시즌 빌드가 사이트 전체 판정과 다른 게이트 값을 냈다 — 시즌마다 따로 판정했다");
+  const bar = (out: ReturnType<typeof buildSite>, path: string): string => {
+    const page = out.files.find((f) => f.path === path);
+    assert.ok(page !== undefined, `${path} 를 안 만들었다`);
+    const m = /<div class="state[^"]*"[^>]*>([\s\S]*?)<\/div>/.exec(String(page.content));
+    assert.ok(m !== null, `${path} 에 신선도 띠가 없다`);
+    return m[1]!;
+  };
+  const curBar = bar(cur, "index.html");
+  const pastBar = bar(past, "2022/index.html");
+  assert.match(curBar, /8月14日/, `현행 시즌 띠가 자기 날짜를 안 말한다: ${curBar}`);
+  assert.match(pastBar, /終了したシーズンです — 最後の試合は[\s\S]*10月30日/, `과거 시즌 띠가 자기 날짜를 안 말한다: ${pastBar}`);
+  assert.doesNotMatch(pastBar, /8月14日/, "과거 시즌 띠가 사이트 전체의 날짜를 말한다");
+});
+
 test("경기가 없으면 낡음으로 보고한다 — 호출자가 종료 코드를 바꾼다", () => {
   const out = buildSite(siteData({ asOf: null, latestAnyGameDate: null }), SITE, "2026-08-15");
   assert.equal(out.stale, true);

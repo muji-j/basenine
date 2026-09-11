@@ -17,7 +17,21 @@ function rawOf(src: Db | DatabaseSync): DatabaseSync {
   return "raw" in src ? src.raw : src;
 }
 
-export function collectionEvidence(src: Db | DatabaseSync, today: string, lookbackDays: number = LOOKBACK_DAYS): CollectionEvidence {
+/**
+ * 판정에 쓰는 증거 + **보고에만 쓰는** 통산 취득일 요약.
+ * ⚠**요약도 판정과 같은 「최근 출장자」 범위다**(2026-09-11 · 3중 검토 1차 F4 · 2차 N2). 재배선하면서 요약만 범위 없는 별도 쿼리로
+ * 떼어 냈더니 콘솔은 「최근 출장자」라고 적는데 JSONL 은 전원을 셌다 — 같은 SQL 한 벌에서 함께 나오게 되돌렸다(옛 감시와 같다).
+ * ⚠도메인 판정 타입(`CollectionEvidence`)에 넣지 않는다 — 판정이 안 쓰는 값이다.
+ */
+export interface CollectionEvidenceReport extends CollectionEvidence {
+  /** 최근 출장자 중 통산 취득 시각을 모르는 선수 */
+  careerUnknown: number;
+  /** 최근 출장자의 통산 취득일(JST) 중 가장 오래된 날 */
+  careerOldest: string | null;
+  careerNewest: string | null;
+}
+
+export function collectionEvidence(src: Db | DatabaseSync, today: string, lookbackDays: number = LOOKBACK_DAYS): CollectionEvidenceReport {
   const db = rawOf(src);
   const one = <T>(sql: string, ...params: (string | number)[]): T => db.prepare(sql).get(...params) as unknown as T;
   const from = one<{ d: string }>("SELECT DATE(?, ?) AS d", today, `-${lookbackDays} days`).d;
@@ -91,7 +105,7 @@ export function collectionEvidence(src: Db | DatabaseSync, today: string, lookba
    * **통산** — ⚠**기존 감시(`scripts/freshness.ts`)의 SQL 을 그대로 옮겼다**(설계 D10 · 규칙을 바꾸지 않는다).
    * 「아직 못 받은 선수 중 가장 오래전에 뛴 사람의 그 경기일」 — 재취득이 멈추면 하루씩 뒤로 밀린다.
    */
-  const career = one<{ players: number; stalestPlayed: string | null }>(`
+  const career = one<{ players: number; unknown: number | null; oldest: string | null; newest: string | null; stalestPlayed: string | null }>(`
     WITH appearance AS (
       SELECT b.player_id AS id, MAX(g.game_date) AS last
         FROM batting_line b JOIN game g ON g.game_id = b.game_id
@@ -111,6 +125,9 @@ export function collectionEvidence(src: Db | DatabaseSync, today: string, lookba
        GROUP BY player_id
     )
     SELECT COUNT(*) AS players,
+           SUM(f.day IS NULL) AS unknown,
+           MIN(f.day) AS oldest,
+           MAX(f.day) AS newest,
            (SELECT MIN(l2.last) FROM last_seen l2
               LEFT JOIN fetched f2 ON f2.id = l2.id
              WHERE (f2.day IS NULL OR f2.day <= l2.last)
@@ -134,6 +151,9 @@ export function collectionEvidence(src: Db | DatabaseSync, today: string, lookba
     nextGameSeasonOver,
     careerPlayers: career.players,
     careerStalestPlayed: career.stalestPlayed,
+    careerUnknown: career.unknown ?? 0,
+    careerOldest: career.oldest,
+    careerNewest: career.newest,
     latestGameRowDate: one<{ d: string | null }>("SELECT MAX(game_date) AS d FROM game WHERE game_date <= ?", today).d,
     latestPlayedMarkDate: one<{ d: string | null }>("SELECT MAX(game_date) AS d FROM schedule_played WHERE game_date <= ?", today).d,
     nextAnnouncementDate: one<{ d: string | null }>("SELECT MIN(game_date) AS d FROM probable_pitcher WHERE game_date >= ?", today).d,

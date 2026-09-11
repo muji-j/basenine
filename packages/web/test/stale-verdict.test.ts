@@ -25,7 +25,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { STALE_REASON_KEYS } from "@bb-app/domain";
 import { staleVerdict } from "../src/log-page.ts";
-import { STALE_AFTER_DAYS } from "../src/layout.ts";
+import { BANNER_VERDICT, STALE_AFTER_DAYS } from "../src/layout.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const MONITOR = readFileSync(join(ROOT, "scripts", "freshness.ts"), "utf8");
@@ -101,4 +101,21 @@ test("⚠경보 임계가 띠 임계보다 엄격하다", () => {
       "  수집 로그는 「正常」인 날이 생긴다.",
   );
   console.log(`  · 감시 ${monitorDays}일 < 띠 ${STALE_AFTER_DAYS}일`);
+});
+
+/**
+ * ⚠⚠**백스톱에서도 감시가 먼저 운다**(설계 D9 「백스톱까지 넓힌다」 · 2026-09-11 · 3중 검토 2차 N4).
+ * 위 시험은 유예만 묶었다 — 감시의 `backstopMargin` 을 1 로 바꿔도 전 시험이 초록이었고, 그러면 46~47일째에
+ * **띠는 경고 · 감시는 正常** 인 날이 생긴다. 감시 스크립트가 **실제로 넘기는 값**을 읽어 띠와 비교한다.
+ * ⚠유예도 스크립트가 **인자를 그대로 넘기는지** 본다 — 인자를 읽고 딴 값을 넘기면 위 시험이 헛돈다.
+ */
+test("⚠⚠감시의 백스톱 여유가 띠보다 작다 — 감시가 실제로 넘기는 값을 읽는다", () => {
+  const m = /collectionVerdict\(evidence, \{ grace: (\w+), backstopMargin: (\d+) \}\)/.exec(MONITOR);
+  assert.ok(m !== null, "freshness.ts 에서 감시 판정 옵션을 못 읽었다 — 이 시험이 공회전한다");
+  assert.equal(m![1], "staleDays", "감시가 유예 인자(staleDays)가 아닌 값을 판정에 넘긴다 — 위 임계 시험이 헛돈다");
+  const monitorMargin = Number(m![2]!);
+  assert.ok(
+    monitorMargin < BANNER_VERDICT.backstopMargin,
+    `감시 백스톱 여유 ${monitorMargin}일이 띠 여유 ${BANNER_VERDICT.backstopMargin}일보다 작지 않다 — 백스톱 경계에서 띠가 먼저 운다`,
+  );
 });

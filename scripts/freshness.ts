@@ -95,11 +95,23 @@ if (verdict.ageDays !== null) {
 if (staleReasons.includes("game-missed")) {
   const a = verdict.missedPlayed.map((m) => `${m.date} ${m.awayCode}@${m.homeCode}${m.seq > 0 ? `#${m.seq + 1}` : ""}`);
   const b = verdict.missedAnnounced.map((m) => `${m.date} ${m.teamCode}`);
+  /**
+   * ⚠**B 는 「발견 경로 고장」과 「사이드카 결손」이 같은 모양으로 운다**(설계 D1 ⑵⑷ · 3중 검토 2차 N2) —
+   * 그 달 사본의 마지막 취득 시각을 적어야 사람이 원인을 가른다. **판정이 아니라 보고다**(판정은 증거 SQL 한 벌).
+   */
+  const monthCopy = db.prepare("SELECT fetched_at AS f FROM schedule_month WHERE season = ? AND month = ?");
+  const copies = [...new Set(verdict.missedAnnounced.map((m) => m.date.slice(0, 7)))].sort().map((ym) => {
+    const row = monthCopy.get(Number(ym.slice(0, 4)), Number(ym.slice(5, 7))) as { f: string | null } | undefined;
+    if (row === undefined) return `${ym} 사본 기록 없음`;
+    if (row.f === null) return `${ym} 사본 취득 시각 모름(사이드카 결손 · M4)`;
+    return `${ym} 사본 마지막 취득 ${row.f}`;
+  });
   console.error(
     `⚠**받았어야 할 경기를 못 받았다** — 가장 이른 날 ${verdict.missedEarliest}(유예 ${staleDays}일).\n` +
       (a.length > 0 ? `   일정표가 치렀다고 표시했는데 경기 행이 없다: ${a.length}경기 — ${a.slice(0, 8).join(" · ")}${a.length > 8 ? " …" : ""}\n` : "") +
       (b.length > 0
-        ? `   예고됐는데 받지 못했다(그 달 일정 사본이 그 날 뒤에 안 받아졌다 — 발견 경로 고장 의심): ${b.length}구단분 — ${b.slice(0, 8).join(" · ")}${b.length > 8 ? " …" : ""}\n`
+        ? `   예고됐는데 받지 못했다(그 달 일정 사본이 그 날 뒤에 안 받아졌다 — 발견 경로 고장 의심): ${b.length}구단분 — ${b.slice(0, 8).join(" · ")}${b.length > 8 ? " …" : ""}\n` +
+          `   그 달 일정 사본: ${copies.join(" · ")}\n`
         : "") +
       `   수집이 조용히 멈췄을 수 있다. 이 서비스가 죽는 가장 흔한 방식이다.`,
   );
@@ -113,17 +125,13 @@ if (staleReasons.includes("game-lag")) {
 }
 
 // ── 통산 — 기존 규칙 그대로(설계 D10) ────────────────────────────────────
-const careerInfo = db.prepare(`
-  SELECT MIN(day) AS oldest, MAX(day) AS newest, SUM(day IS NULL) AS unknown FROM (
-    SELECT player_id, MAX(SUBSTR(datetime(fetched_at, '+9 hours'), 1, 10)) AS day
-      FROM (SELECT player_id, fetched_at FROM career_batting UNION ALL SELECT player_id, fetched_at FROM career_pitching)
-     GROUP BY player_id)
-`).get() as { oldest: string | null; newest: string | null; unknown: number | null };
+// ⚠요약(취득일 범위 · 모름)도 **증거 SQL 한 벌**에서 온다 — 판정과 같은 「최근 출장자」 범위다(3중 검토 1차 F4 · 2차 N2).
 if (evidence.careerPlayers === 0) {
   console.log("통산 기록 없음 — 아직 선수 페이지를 적재하지 않았다");
 } else {
   console.log(
-    `통산 기록(최근 출장자) ${evidence.careerPlayers}명 · 취득일 ${careerInfo.oldest ?? "?"}〜${careerInfo.newest ?? "?"} · ` +
+    `통산 기록(최근 출장자) ${evidence.careerPlayers}명 · 취득일 ${evidence.careerOldest ?? "?"}〜${evidence.careerNewest ?? "?"}` +
+      ` · 취득일 모름 ${evidence.careerUnknown}명 · ` +
       (evidence.careerStalestPlayed === null
         ? "**아직 못 받은 선수 없음**"
         : `아직 못 받은 선수의 마지막 출장 ${evidence.careerStalestPlayed}(${verdict.careerAge}일 전)`),
@@ -135,9 +143,23 @@ if (evidence.careerPlayers === 0) {
         `   확인: node packages/store/tools/emit-stale-player-ids.ts ${dbPath} --limit 400`,
     );
   }
+  if (evidence.careerUnknown > 0) {
+    console.error(
+      `⚠취득일을 모르는 선수 ${evidence.careerUnknown}명 — 아카이브 사이드카(*.meta.json)가 없거나 깨졌다.\n` +
+        `   화면이 그 선수의 통산에 「取得日は記録がありません」이라고 적는다.`,
+    );
+  }
 }
 
 // ── 予告先発 — 맥박(D3)과 뒤처짐(D4) ───────────────────────────────────
+/**
+ * ⚠**취득 시각을 모르는 予告先発 행은 맥박에서 빠진다**(설계 D3) — 그래서 따로 센다. 안 세면 사이드카 결손이
+ * 「予告先発 수집이 멈췄다」로만 보인다(3중 검토 2차 N2).
+ */
+const startersUnknown = (db.prepare("SELECT COUNT(*) AS n FROM starters_fetch WHERE fetched_at IS NULL").get() as { n: number }).n;
+if (startersUnknown > 0) {
+  console.error(`⚠予告先発 취득 시각 모름 ${startersUnknown}장 — 사이드카(*.meta.json)가 없거나 깨졌다. 이 행들은 맥박에서 빠진다`);
+}
 const upcoming = db.prepare(
   `SELECT COUNT(*) AS n, MAX(game_date) AS last,
           MAX(SUBSTR(datetime(fetched_at, '+9 hours'), 1, 10)) AS fetched
@@ -222,9 +244,9 @@ if (jsonAt >= 0) {
       quarantine: counts.quarantine,
       // ⚠**통산 신선도도 남긴다** — 이 값이 없어서 「열흘 내내 초록」이었던 것을 나중에 증명할 수 없었다
       careerPlayers: evidence.careerPlayers,
-      careerOldest: careerInfo.oldest,
-      careerNewest: careerInfo.newest,
-      careerUnknown: careerInfo.unknown ?? 0,
+      careerOldest: evidence.careerOldest,
+      careerNewest: evidence.careerNewest,
+      careerUnknown: evidence.careerUnknown,
       careerStalestPlayed: evidence.careerStalestPlayed,
       startersLatest: evidence.startersLatest,
       // ⚠**2026-09-11 부터 `starters_fetch` 맥박**(휴식 공표 페이지 포함)이다 — 그전 줄은 `probable_pitcher` 의 취득일이었다
