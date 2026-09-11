@@ -584,8 +584,8 @@ test("⚠⚠개막이 같은 달 안에서 늦춰진 사본은 받는다 — 아
 /**
  * ⚠⚠**기준선은 「내용이 있는 첫 날짜 행」이다 — 빈 행은 세지 않는다**(2026-09-11 · 4라운드 재검토 2차 F2).
  * 개막 전에 받은 3월 페이지가 3/1 부터 빈 행을 싣고(⚠실물 표본 없음) 뒤 페이지가 개막일부터 싣는다면, 빈 행까지 센 기준선(03-01)은
- * 「이미 온 날이 빠졌다」로 **3월부터 적재기를 멈춘다.** ⚠대가: 전 사본에서 비어 있던 날이 빠진 것은 받아들인다 — 그 사이 경기가 생겼거나
- * 잘림이 첫 내용일을 넘어 이어지면 못 잡는다(5라운드 재검토 2차 D1 · 설계 §5).
+ * 「이미 온 날이 빠졌다」로 **3월부터 적재기를 멈춘다.** ⚠대가: 전 사본에서 비어 있던 날이 빠진 것은 받아들인다 — 그 사이 그 빈 날에 경기가 생겼거나
+ * **첫 내용일이 오기 전**에 받은 사본이 첫 내용일을 넘어 잘려 있으면 못 잡는다(5라운드 재검토 2차 D1 · 설계 §5). 첫 내용일이 온 뒤의 잘림은 멈춘다(6라운드 3차).
  */
 test("⚠⚠빈 행으로 시작하던 개막 달 사본 뒤에 개막일부터 싣는 사본은 받는다 — 빈 행은 기준선이 아니다", async () => {
   await withArchive(async ({ games, run, db }) => {
@@ -611,27 +611,49 @@ test("⚠⚠빈 행으로 시작하던 개막 달 사본 뒤에 개막일부터 
 /**
  * ⚠**기준선은 문서 순서가 아니라 날짜 순서의 첫 내용 행이다**(5라운드 재검토 1차 V1 · 2차 확정 · 실행 재현).
  * 파서의 내용 키는 페이지에 **나온 순서**라, 날짜가 뒤바뀐 페이지(실물 75장에는 0장)에서 첫 원소를 쓰면 너무 늦은 날이 기준선이 되고
- * 그 뒤의 잘림이 조용히 통과한다. 옆의 `first`(첫 날짜 행)는 이미 정렬해서 구했다 — 같은 방어를 쓴다.
+ * 그 뒤의 잘림이 조용히 통과한다.
+ * ⚠**날짜를 한 자리 · 두 자리에 걸쳐 둔다**(6라운드 재검토 2차 F2) — 3/2 · 3/5 로 두었더니 비교 함수를 뺀 `.sort()`(사전식)가 같은 순서를 내
+ *   뮤턴트가 살아남았다. 사전식이면 `12` 가 `5` 보다 앞선다(실물 75개월 중 9개월의 기준선이 늦어진다 · 2차 계산).
  */
 test("⚠날짜 순서가 뒤바뀐 페이지에서도 기준선은 가장 이른 내용 행이다 — 그 뒤 잘림을 놓치지 않는다", async () => {
   await withArchive(async ({ games, run, db }) => {
     const blank = (d: number): string => `<tr id="date03${String(d).padStart(2, "0")}" class=""><th>3/${d}</th><td>&nbsp;</td><td>&nbsp;</td></tr>`;
-    // 3/1 공백 · 3/5 경기(문서상 먼저) · 3/2 경기(문서상 나중) · 나머지 공백
-    let body = blank(1) + row("0305", "巨人", "阪神", "東京ドーム", "18:00") + row("0302", "阪神", "巨人", "甲子園", "18:00");
-    for (let d = 3; d <= 31; d++) if (d !== 5) body += blank(d);
+    // 3/1 공백 · 3/12 경기(문서상 먼저) · 3/5 경기(문서상 나중) · 나머지 공백
+    let body = blank(1) + row("0312", "巨人", "阪神", "東京ドーム", "18:00") + row("0305", "阪神", "巨人", "甲子園", "18:00");
+    for (let d = 2; d <= 31; d++) if (d !== 5 && d !== 12) body += blank(d);
     await writeMonth(games, "03", body, "2026-02-20T00:44:00.000Z");
     assert.equal(run().code, 0);
     const d1 = db();
     try {
       const m = d1.raw.prepare("SELECT first_content c FROM schedule_month WHERE month = 3").get() as unknown as { c: string };
-      assert.equal(m.c, "2026-03-02", "문서 순서의 첫 내용 행을 기준선으로 썼다 — 날짜 순서의 첫 내용 행이어야 한다");
+      assert.equal(m.c, "2026-03-05", "날짜 순서(숫자)의 첫 내용 행이 아니다 — 문서 순서나 사전식 순서로 골랐다");
     } finally {
       d1.close();
     }
-    let truncated = row("0305", "巨人", "阪神", "東京ドーム", "18:00");
-    for (let d = 6; d <= 31; d++) truncated += blank(d);
+    let truncated = row("0312", "巨人", "阪神", "東京ドーム", "18:00");
+    for (let d = 13; d <= 31; d++) truncated += blank(d);
     await writeMonth(games, "03", truncated, "2026-03-06T00:44:00.000Z");
-    assert.equal(run().code, 1, "3/2 경기까지 잘린 사본을 받았다 — 기준선이 너무 늦었다");
+    assert.equal(run().code, 1, "3/5 경기까지 잘린 사본을 받았다 — 기준선이 너무 늦었다");
+  });
+});
+
+/**
+ * ⚠**첫 날짜 행도 날짜 순서(숫자)로 고른다**(6라운드 재검토 2차 m3 — 사전식 정렬 뮤턴트가 살아남았다).
+ * 뒤섞인 페이지에서 첫 날짜 행을 늦게 잡으면 앞부분 공백이 부풀어, 기준선(3/8)보다 이른 날부터 싣는 정당한 사본을 「이미 온 날이 빠졌다」로 멈춘다.
+ * 문서 순서로 3/20 을 먼저 두고(정렬 없음 → 20) 3/6~3/31 을 싣는다(사전식 → 10 · 숫자 → 6).
+ */
+test("⚠첫 날짜 행도 날짜 순서로 고른다 — 뒤섞인 페이지의 앞부분 공백을 부풀려 정당한 사본을 멈추지 않는다", async () => {
+  await withArchive(async ({ games, run }) => {
+    const blank = (d: number): string => `<tr id="date03${String(d).padStart(2, "0")}" class=""><th>3/${d}</th><td>&nbsp;</td><td>&nbsp;</td></tr>`;
+    let full = "";
+    for (let d = 1; d <= 31; d++) full += d === 8 ? row("0308", "巨人", "阪神", "東京ドーム", "18:00") : blank(d);
+    await writeMonth(games, "03", full, "2026-03-01T00:44:00.000Z");
+    assert.equal(run().code, 0);
+    let shuffled = blank(20);
+    for (let d = 6; d <= 31; d++) if (d !== 20) shuffled += d === 8 ? row("0308", "巨人", "阪神", "東京ドーム", "18:00") : blank(d);
+    await writeMonth(games, "03", shuffled, "2026-03-09T00:44:00.000Z");
+    const r = run();
+    assert.equal(r.code, 0, `3/6 부터 싣는 사본을 늦은 첫 날짜 행으로 재어 멈췄다: ${r.err}`);
   });
 });
 
@@ -653,6 +675,55 @@ test("⚠기준선은 그 달의 내용 행만 본다 — 파일에 섞인 다�
       assert.equal(m.c, "2026-10-05", "다른 달 날짜 행의 「일」을 그 달 기준선으로 썼다");
     } finally {
       d.close();
+    }
+  });
+});
+
+/**
+ * ⚠⚠**그 달 파일은 그 달 행만 쓴다**(6라운드 재검토 2차 F3 · 실행 재현).
+ * 교체가 **달 단위**라 다른 달 날짜 행을 넣으면 그 행을 지울 파일이 없다 — ⑴ 제 달 파일과 카드 번호가 겹쳐 헛 치러짐 표시가 남고(A 헛경보 ·
+ * 섞인 행이 뒤 달 파일에 있든 앞 달 파일에 있든) ⑵ 제 달 파일이 없으면 **같은 입력의 두 번째 실행이 UNIQUE 충돌로 멈춘다**(M5 · 배포가 매일 막힌다).
+ * ⚠시즌 단위로 지우던 옛 적재기에는 없던 문제다 — 달 단위 교체(설계 D5)가 만들었다. 실물 75장에는 섞인 행이 0행이다.
+ */
+test("⚠⚠한 달 파일에 섞인 다른 달 날짜 행은 적재하지 않는다 — 헛 치러짐 표시도 재실행 충돌도 없다(M5)", async () => {
+  await withArchive(async ({ games, run, db }) => {
+    // 9월 파일: 제 달 9/30 치러짐 + 섞인 10/1 치러짐 · 10월 파일: 제 달 10/1 치러짐 + 섞인 9/30 치러짐 — 두 방향
+    await writeMonth(games, "09", padMonth("09", row("0930", "巨人", "阪神", "東京ドーム", "18:00", "/scores/2026/0930/t-g-24/")
+      + row("1001", "DeNA", "巨人", "横　浜", "18:00", "/scores/2026/1001/g-db-25/")));
+    await writeMonth(games, "10", padMonth("10", row("1001", "DeNA", "巨人", "横　浜", "18:00", "/scores/2026/1001/g-db-25/")
+      + row("0930", "巨人", "阪神", "東京ドーム", "18:00", "/scores/2026/0930/t-g-24/")));
+    for (const nth of [1, 2]) {
+      const r = run();
+      assert.equal(r.code, 0, `${nth}번째 실행이 실패했다: ${r.err}`);
+      assert.match(r.out, /다른 달 날짜 행 2건 제외/, "섞인 행을 조용히 버렸다 — 요약에 세어 찍어야 한다");
+    }
+    const d1 = db();
+    try {
+      const played = d1.raw.prepare("SELECT game_date d, seq, source FROM schedule_played ORDER BY game_date, seq").all() as unknown as { d: string; seq: number; source: string }[];
+      assert.deepEqual(
+        played.map((p) => [p.d, p.seq, p.source]),
+        [["2026-09-30", 0, "npb.jp/games/2026/schedule_09_detail"], ["2026-10-01", 0, "npb.jp/games/2026/schedule_10_detail"]],
+        "섞인 행이 치러짐 표시로 들어갔다 — 짝지을 경기 행이 없는 두 번째 번호가 A 헛경보를 낸다",
+      );
+    } finally {
+      d1.close();
+    }
+  });
+  await withArchive(async ({ games, run, db }) => {
+    // 제 달(9월) 파일이 없다 — 10월 파일에만 9/29(링크 없음) · 9/30(치러짐)이 섞였다
+    await writeMonth(games, "10", padMonth("10", row("1005", "阪神", "巨人", "甲子園", "18:00")
+      + row("0929", "巨人", "阪神", "東京ドーム", "18:00") + row("0930", "巨人", "阪神", "東京ドーム", "18:00", "/scores/2026/0930/t-g-24/")));
+    for (const nth of [1, 2]) {
+      const r = run();
+      assert.equal(r.code, 0, `${nth}번째 실행이 멈췄다 — 지울 파일이 없는 다른 달 행이 다시 들어가 충돌했다: ${r.err}`);
+    }
+    const d2 = db();
+    try {
+      assert.equal(count(d2, "SELECT COUNT(*) n FROM upcoming_game WHERE substr(game_date, 6, 2) <> '10'"), 0, "다른 달 앞으로의 경기가 들어갔다");
+      assert.equal(count(d2, "SELECT COUNT(*) n FROM schedule_played WHERE substr(game_date, 6, 2) <> '10'"), 0, "다른 달 치러짐 표시가 들어갔다");
+      assert.equal(count(d2, "SELECT COUNT(*) n FROM upcoming_game"), 1, "제 달 경기까지 빠졌다");
+    } finally {
+      d2.close();
     }
   });
 });
