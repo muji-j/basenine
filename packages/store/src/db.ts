@@ -48,17 +48,12 @@ export function listMigrations(): string[] {
  */
 export function openDb(path: string, nowIso: string): Db {
   const raw = new DatabaseSync(path);
-  raw.exec("PRAGMA foreign_keys = ON");
-  raw.exec(BOOTSTRAP);
-
-  const applied = new Set(
-    (raw.prepare("SELECT name FROM schema_migration").all() as { name: string }[]).map((r) => r.name),
-  );
-
-  for (const name of listMigrations()) {
-    if (applied.has(name)) continue;
-    raw.exec(readFileSync(join(MIGRATIONS_DIR, name), "utf8"));
-    raw.prepare("INSERT INTO schema_migration (name, applied_at) VALUES (?, ?)").run(name, nowIso);
+  try {
+    migrate(raw, nowIso);
+  } catch (err) {
+    // ⚠열린 채 던지면 파일 핸들이 남는다 — Windows 에서는 그 파일을 지우지도 못한다(시험 정리가 EBUSY 로 실측 · 2026-09-11)
+    raw.close();
+    throw err;
   }
 
   return {
@@ -99,4 +94,49 @@ export function openDb(path: string, nowIso: string): Db {
     },
     close: () => raw.close(),
   };
+}
+
+function migrate(raw: DatabaseSync, nowIso: string): void {
+  /**
+   * ⚠**여러 프로세스가 같은 파일을 동시에 연다** — `node --test` 가 시험 파일을 병렬 프로세스로 돌린다.
+   * 잠금을 곧바로 실패로 받지 않고 기다린다(아래 마이그레이션 잠금과 짝이다).
+   */
+  raw.exec("PRAGMA busy_timeout = 15000");
+  raw.exec("PRAGMA foreign_keys = ON");
+  raw.exec(BOOTSTRAP);
+
+  const applied = new Set(
+    (raw.prepare("SELECT name FROM schema_migration").all() as { name: string }[]).map((r) => r.name),
+  );
+
+  /**
+   * ⚠**마이그레이션 하나 = 쓰기 잠금 트랜잭션 하나 · 잠근 뒤에 「이미 적용됐나」를 다시 본다**(M5 · 2026-09-11).
+   * 예전에는 위에서 한 번 읽은 목록만 믿고 적용했다 — 새 마이그레이션(021)을 받은 로컬 DB 에서 `npm test` 를 돌리자
+   * 병렬 프로세스들이 **같은 마이그레이션을 동시에 적용하려다** 실DB 시험 **47개**가 `table starters_fetch already exists` ·
+   * `database is locked` 로 떨어졌다. CI 는 「수집·적재」가 「시험」보다 먼저 돌아 안 걸렸을 뿐이다.
+   * ⚠`BEGIN IMMEDIATE` 는 쓰기 잠금을 **먼저** 잡는다 — 그냥 `BEGIN` 이면 두 프로세스가 둘 다 읽고 나서 쓰기에서 부딪친다.
+   * ⚠마이그레이션 파일에 자체 `BEGIN`·`COMMIT`·`PRAGMA` 가 없어야 한다(2026-09-11 전수 확인 0건) — 있으면 여기와 겹친다.
+   * ⚠**실패하면 되돌리고 던진다 — 경합보다 이쪽이 무겁다.** 옛 코드는 트랜잭션이 없어 도중에 죽으면 **앞의 표만 남았다**:
+   * 위 47개 실패 뒤 로컬 DB 에 021 의 표 둘만 있고 기록은 없었고, `CREATE TABLE` 이라 **다음 실행마다 같은 오류로 죽었다.**
+   * SQLite 의 DDL 은 트랜잭션 안에서 되돌려진다 — 그래서 반쯤 적용된 상태가 남지 않는다.
+   */
+  for (const name of listMigrations()) {
+    if (applied.has(name)) continue;
+    raw.exec("BEGIN IMMEDIATE");
+    try {
+      const done = raw.prepare("SELECT 1 AS x FROM schema_migration WHERE name = ?").get(name) !== undefined;
+      if (!done) {
+        raw.exec(readFileSync(join(MIGRATIONS_DIR, name), "utf8"));
+        raw.prepare("INSERT INTO schema_migration (name, applied_at) VALUES (?, ?)").run(name, nowIso);
+      }
+      raw.exec("COMMIT");
+    } catch (err) {
+      try {
+        raw.exec("ROLLBACK");
+      } catch {
+        // 트랜잭션이 이미 끝났다 — 원래 오류가 중요하다
+      }
+      throw err;
+    }
+  }
 }
