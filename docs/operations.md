@@ -125,24 +125,41 @@ node scripts/freshness.ts data/bb.sqlite 2
      ⚠`packages/archiver/src/cli.ts --date` **만** 돌리면 **풀리지 않는다** — DB 의 사본 기록(`schedule_month`)은 적재기가 쓴다.
 
    **적재기가 `날짜가 빠진 달 MM(없는 날 … · 근거: …)` 으로 멈췄을 때**(설계서 D5) — 적재기는 되돌렸고 기존 증거는 그대로다.
-   **메시지의 근거부터 읽는다** — 셋 중 하나다:
+   **메시지의 근거부터 읽는다** — 넷 중 하나다:
+   - **`날짜 행 없음`** → 그 파일에 그 달의 날짜 행이 하나도 없다(예: `schedule_10` 에 9월 날짜만 있다). **다른 달 페이지가 왔거나 형식이 바뀐 것**이다 —
+     npb.jp 페이지를 확인하고 사본 재취득 또는 **파서·적재기 수정**으로 올린다(4라운드 재검토 2차 F4).
    - **`중간·끝 날짜가 빠짐`** → 페이지 중간이나 끝이 없다. 잘린 응답이거나 **페이지 형식이 바뀐 것**이다.
      다음 정기 실행이 풀지 않으면 npb.jp 의 그 달 페이지를 사람이 연다(요청 1회 · L1). 페이지는 온전한데 사본만 잘렸으면 소급 절차로 다시 받고,
      페이지 형식 자체가 바뀌었으면 **파서·적재기 수정**으로 올린다(데이터를 고치지 않는다).
    - **`경기 행·치러짐 표시가 YYYY-MM-DD 에 있다`** → 그 날 치러진 사실이 있는데 사본이 그 날보다 늦게 시작한다 — **사본이 잘렸다**(치러진 날은 페이지에서 안 사라진다).
      npb.jp 페이지로 확인하고 소급 절차(`node scripts/update.ts --date <그 달 안의 오늘 이전 날>`)로 사본을 다시 받는다.
      ⚠**`game` · `schedule_played` 행을 지우지 마라** — 그게 치러진 사실이고, 지우면 누락 판정이 조용히 풀린다.
-   - **`전 사본이 YYYY-MM-DD 부터 실었고 그 날이 이미 왔다`** → 받아들였던 사본이 그 날부터 실었는데 새 사본에는 그 날이 없다.
+   - **`전 사본이 YYYY-MM-DD 부터 내용을 실었고 그 날이 이미 왔다`** → 받아들였던 사본이 그 날부터 경기·예정 표기를 실었는데 새 사본에는 그 날이 없다.
      1. 다음 정기 실행이 다시 받아 풀리는지 본다(잘린 응답은 대개 한 번이다).
      2. 안 풀리면 **npb.jp 의 그 달 페이지를 사람이 연다.** 그 날짜가 **페이지에 있으면** 사본이 잘린 것이다 — 소급 절차로 다시 받는다.
-     3. 페이지에 **정말로 없으면** NPB 가 **온 날을 일정에서 지운 것**이다(설계서 §6 P11 · 실측 표본 없음 · 전날 밤 공표된 연기가 자정 뒤에 받아진 경우도 여기다).
-        그 달 **기준선만 비운다**: 보관소 DB 에서 `UPDATE schedule_month SET first_listed = NULL WHERE season = <시즌> AND month = <월>` —
-        다음 실행이 그 사본을 새 기준선으로 받아들인다. ⚠**이 칸은 적재기만 쓴다** — 다른 적재기가 되살리지 않는다.
+     3. 페이지에 **정말로 없으면** NPB 가 **온 날을 일정에서 지운 것**이다(설계서 §6 P11 · 실측 표본 없음 · 밤 슬롯은 평소 자정 뒤에 돌므로
+        전날 밤 공표된 연기도 여기에 걸릴 수 있다). 그 달 **기준선만 비운다** — ⚠**실행과 실행 사이에** 한다(도는 실행은 시작에서 받은 DB 를
+        끝에서 `--clobber` 로 다시 올려 **이 수정을 덮는다** · 4라운드 재검토 2차 F3):
+        ```sh
+        gh auth switch --user muji-j                     # ⚠계정이 되돌아가 있을 수 있다
+        gh run list --repo muji-j/basenine --workflow daily.yml --status in_progress   # 비어 있어야 한다
+        gh release download data-store --repo muji-j/bb-app-data --pattern bb.sqlite.gz --dir <작업 폴더>
+        gunzip -c <작업 폴더>/bb.sqlite.gz > <작업 폴더>/bb.sqlite
+        node -e "const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[1]);console.log(d.prepare('UPDATE schedule_month SET first_content = NULL WHERE season = ? AND month = ?').run(Number(process.argv[2]), Number(process.argv[3])).changes);d.close()" <작업 폴더>/bb.sqlite <시즌> <월>   # 1 이 찍혀야 한다
+        gzip -c <작업 폴더>/bb.sqlite > <작업 폴더>/bb.sqlite.gz
+        gh release upload data-store --repo muji-j/bb-app-data <작업 폴더>/bb.sqlite.gz --clobber
+        ```
+        다음 실행 로그에서 그 달이 받아졌는지(`날짜가 빠진 달` 이 없는지) 본다. ⚠`--clobber` 는 **지운 뒤 올린다** — 업로드가 실패하면 자산이 사라지고
+        다음 실행이 DB 를 아카이브에서 다시 만든다(모든 기준선이 NULL → 사실 근거만 남는 기간 · 설계서 §5). 실패하면 바로 다시 올린다.
+        ⚠**이 칸은 적재기만 쓴다** — 다른 적재기가 되살리지 않는다. ⚠기준선이 NULL 인 동안 그 달은 사실 근거로만 막으므로, **페이지를 확인하기 전에 비우지 마라.**
         ⚠~~그 날짜의 `upcoming_game` · `probable_pitcher` 행을 지운다~~ 는 **안 된다** — 예고 행은 같은 실행의 `load-starters` 가 아카이브에서
         되살려 **다음 날 다시 멈췄다**(3라운드 재검토 2·3차 · 실행 재현). ⚠**아카이브(예고 원본)를 지우지 마라** — 소급 불가 자산이다.
    - 사이드카가 깨져 **사본 시각을 모르면** 「이미 왔다」고 보고 멈춘다 — 사이드카(`schedule_MM.meta.json`)부터 복구한다.
 
 ## 쓰기 예산
+
+⚠**지금 운영은 D1 이 아니다**(SQLite 1파일 · 정적 사이트 — CLAUDE.md §1 · 2026-09-11 정정 · 4라운드 재검토 1차 Q1). 아래는 **D1 로 옮길 때를 대비해
+코드에 남은 장치**(`load-archive.ts` 의 `D1_DAILY_WRITE_LIMIT` 기본 100,000 · 일일 배치의 `scripts/update.ts --max-writes` 기본 5,000,000)의 근거다.
 
 D1 무료는 **하루 10만 행**에서 **차단**된다(과금이 아니다).
 

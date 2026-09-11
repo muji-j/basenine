@@ -1,9 +1,12 @@
 # @bb-app/store
 
-스키마·적재·조회. **Cloudflare D1(SQLite) 호환 SQL만** 쓴다.
+스키마·적재·조회. 로컬 개발도 CI 도 Node 24 내장 `node:sqlite` 다(SQLite 1파일 · 배포는 정적 사이트).
+SQL 은 SQLite 방언을 쓰지 않는 한 벌로 둔다.
 
-로컬 개발은 Node 24 내장 `node:sqlite`로 한다. 둘 다 SQLite이므로 **SQL은 한 벌이면 되고**,
-그 전제를 지키기 위해 방언을 쓰지 않는다. 덕분에 Cloudflare 계정 없이 전부 만들고 검증할 수 있다.
+⚠~~Cloudflare D1(SQLite) 호환 SQL만 쓴다~~ 는 스택이 정적 생성으로 확정되기 전의 서술이다(2026-09-11 정정 · `src/db.ts` 머리말).
+⚠**예외 하나 — 마이그레이션 022 는 `openDb` 가 등록하는 JS 함수 `bb_fetched_at` 을 부른다.** D1 처럼 사용자 정의 함수를 못 쓰는 런타임으로
+옮기면 022 를 JS 데이터 마이그레이션으로 옮겨야 한다. 아래 쓰기 예산(`--max-writes` · `D1_DAILY_WRITE_LIMIT`)은 **옮길 때를 대비한
+장치로 코드에 남아 있다** — 제약 자체는 지금 운영에 없다.
 
 ## 사용법
 
