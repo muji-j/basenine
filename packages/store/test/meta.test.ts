@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fetchedAtOf } from "../src/meta.ts";
+import { fetchedAtOf, normalizeFetchedAt } from "../src/meta.ts";
 
 async function withDir(fn: (dir: string) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), "bb-meta-"));
@@ -188,4 +188,17 @@ test("⚠시간대 표기가 없는 시각은 버린다 — 기계마다 다른 
     await writeFile(tail, JSON.stringify({ fetchedAt: "2026-09-10T05:00:00.000Zjunk" }));
     assert.equal(fetchedAtOf(tail), null, "끝에 딴 글자가 붙은 값을 취득 시각이라고 했다");
   });
+});
+
+/**
+ * ⚠**정규화한 값은 다시 정규화해도 같아야 한다**(3라운드 재검토 2차 Minor · 실행 재현).
+ * `0000-01-01T00:00:00.000+00:01` 은 모양이 맞고 해석도 되지만 UTC 로 옮기면 `-000001-12-31T23:59:00.000Z` 가 되어
+ * **자기 모양을 통과하지 못한다** — 022 를 두 번 돌리면 두 번째에 NULL 이 되어 「여러 번 돌려도 같다(M5)」가 거짓이 된다.
+ */
+test("⚠정규화 결과가 자기 모양을 통과하지 못하면 모른다(null)로 둔다 — 두 번 정규화해도 같다", () => {
+  for (const v of ["0000-01-01T00:00:00.000+00:01", "9999-12-31T23:59:00.000-00:01", "2026-09-10T14:00:00+09:00", "2026-09-10T05:00:00.000Z"]) {
+    const once = normalizeFetchedAt(v);
+    assert.equal(normalizeFetchedAt(once), once, `${v} → ${String(once)} 를 다시 정규화하자 달라졌다`);
+  }
+  assert.equal(normalizeFetchedAt("0000-01-01T00:00:00.000+00:01"), null, "UTC 로 옮기면 모양이 깨지는 값을 받았다");
 });

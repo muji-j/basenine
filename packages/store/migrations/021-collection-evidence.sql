@@ -45,5 +45,10 @@ CREATE TABLE schedule_month (
   fetched_at TEXT,
   date_rows  INTEGER NOT NULL,
   games      INTEGER NOT NULL,
+  -- ⚠받아들인 사본이 실은 **첫 날짜**(`YYYY-MM-DD`) — 잘림의 기준선이다. 새 사본이 이보다 늦게 시작하는데 이 날이 이미 왔으면
+  --   잘린 것이다(설계 D5 · 2026-09-11 3라운드 재검토). 다른 표의 관측(앞으로의 경기 · 予告先発)으로 추측하면
+  --   予告先発이 안 지워져 개막 연기 뒤 적재기가 시즌 내내 멈췄다. NULL = 기준선 없음(첫 사본 · 사람이 초기화함)
+  -- ⚠이 칸은 머지 전에 더했다 — 운영 DB 에 021 이 적용된 적이 없다
+  first_listed TEXT,
   PRIMARY KEY (season, month)
 ) STRICT;

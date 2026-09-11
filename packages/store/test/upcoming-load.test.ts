@@ -417,6 +417,7 @@ test("개막 달의 앞부분 공백은 정상이다 — DB 에 더 이른 그 �
     const r = run();
     assert.equal(r.code, 1, "그 달에 더 이른 경기가 DB 에 있는데 앞부분이 잘린 사본을 받았다");
     assert.match(r.err, /날짜가 빠진 달 03/);
+    assert.match(r.err, /근거: 경기 행·치러짐 표시가 2026-03-20/, "멈춘 근거(사실)를 말하지 않는다");
   });
 });
 
@@ -424,7 +425,8 @@ test("개막 달의 앞부분 공백은 정상이다 — DB 에 더 이른 그 �
  * ⚠⚠**앞부분 공백을 허용할지 `game` 만 보고 정하면 바로 그 누락이 근거에서 빠진다**(2026-09-11 · 3중 검토 3차 P1 · 실행 재현).
  * 10/1 경기를 못 받아 `game` 에 10/3 만 있을 때, 10/1 행이 잘린 사본(10/2~31)이 오면 「그 달에 첫 날짜 행보다 이른 경기가 없다」가
  * 참이 되어 **개막 달로 받아들이고** — 10/1 의 치러짐 표시를 지우고 사본 시각을 새로 써서 A·B 가 **함께 풀린다.**
- * → 전에 **관측한 날**(치러짐 표시 · 앞으로의 경기)도 근거로 본다. 관측한 날이 첫 날짜 행보다 이르면 잘린 것이다.
+ * → 근거는 둘이다(설계 D5): ⑴ 치러진 사실(경기 행 · 치러짐 표시) ⑵ **받아들인 전 사본의 첫 날짜**(`schedule_month.first_listed`)가
+ *   이미 왔는데 새 사본에 없다. 아래 두 경우는 전 사본이 10/1 부터 실었으므로 ⑵ 가 잡는다(첫 경우는 ⑴ 도).
  */
 test("⚠⚠전에 관측한 날이 빠진 사본은 개막 달이 아니다 — 누락 증거를 지우지 않고 멈춘다", async () => {
   const oct = (withFirst: boolean, first: string): string => {
@@ -469,11 +471,16 @@ test("⚠⚠전에 관측한 날이 빠진 사본은 개막 달이 아니다 —
 });
 
 /**
- * ⚠⚠**予告先発에만 남은 날도 관측한 날이다**(2026-09-11 · 수정분 재검토 3차 P1 · 실행 재현).
- * 10/1 이 사본에서 예정 표기(대진 미정)였고 우리에게 경기 행이 없으면 「아는 날」은 **예고뿐**이다. 그 날을 자른 사본이
- * 개막 달로 통과하면 사본 시각이 새로워져 **B(예고됐는데 못 받음)가 조용히 꺼진다.**
+ * ⚠⚠**잘림의 증거는 「받아들인 전 사본이 실었던 첫 날」이다**(2026-09-11 · 3라운드 재검토 2·3차 · 실행 재현).
+ *
+ * 1회: `game` 만 봤다 → 누락된 바로 그 경기가 근거에서 빠졌다(3중 검토 3차 P1).
+ * 2회: 앞으로의 경기 · 予告先発을 「관측한 날」로 더했다 → 予告先発은 **어디서도 안 지워지고 `load-starters` 가 아카이브에서 되살려**,
+ *   개막이 미뤄진 옛 날짜가 **지나는 순간** 적재기를 시즌 내내 멈췄고 런북 복구도 같은 실행에서 되돌려졌다(재검토 2·3차).
+ * → 다른 표의 관측으로 추측하지 않고 **그 달 페이지 자신의 이력**을 본다: 받아들인 사본의 첫 날짜를 `schedule_month.first_listed` 에 두고,
+ *   새 사본이 그보다 늦게 시작하는데 **그 날이 이미 왔으면**(사본을 받은 JST 날짜 ≥ 그 날) 잘린 것이다.
+ *   ⚠예정 표기(대진 미정)만 있던 날도 날짜 행이라 첫 날짜가 된다 — 予告先発에 기대지 않고 B 의 근거를 지킨다.
  */
-test("⚠⚠予告先発에만 남은 지난 날이 빠진 사본도 멈춘다 — B 의 근거를 지우지 않는다", async () => {
+test("⚠⚠전 사본이 실었던 첫 날이 이미 왔는데 빠진 사본은 멈춘다 — 예정 표기만 있던 날도 · 予告先発 없이", async () => {
   const ph = (mmdd: string): string =>
     `<tr id="date${mmdd}" class=""><th>${Number(mmdd.slice(0, 2))}/${Number(mmdd.slice(2))}</th><td><div class="commentLong">セ・CSファーストS</div></td><td><div class="place"></div></td></tr>`;
   const oct = (withFirst: boolean): string => {
@@ -482,24 +489,18 @@ test("⚠⚠予告先発에만 남은 지난 날이 빠진 사본도 멈춘다 �
     return s;
   };
   await withArchive(async ({ games, run, db }) => {
-    const pre = db();
-    for (const [team, opp] of [["g", "t"], ["t", "g"]] as const) {
-      pre.raw.prepare(
-        `INSERT INTO probable_pitcher (game_date, team_code, opponent_code, player_id, source_name, venue, start_time, league, source_url, fetched_at)
-         VALUES ('2026-10-01', ?, ?, NULL, NULL, NULL, '18:00', 'cl', 'https://npb.jp/announcement/starter/', '2026-09-30T04:00:00.000Z')`,
-      ).run(team, opp);
-    }
-    pre.close();
     await writeMonth(games, "10", oct(true), "2026-09-30T00:44:00.000Z");
     assert.equal(run().code, 0, "완결된 사본의 첫 적재가 실패했다");
     await writeMonth(games, "10", oct(false), "2026-10-04T00:44:00.000Z");
     const r = run();
-    assert.equal(r.code, 1, "予告先発에만 남은 10/1 이 빠진 사본을 개막 달로 받았다 — B 가 꺼진다");
+    assert.equal(r.code, 1, "전 사본이 10/1 부터 실었는데 10/1 이 빠진 사본을 개막 달로 받았다 — B 가 꺼진다");
     assert.match(r.err, /날짜가 빠진 달 10/);
+    assert.match(r.err, /전 사본이 2026-10-01 부터 실었/, "멈춘 근거(전 사본의 첫 날)를 말하지 않는다 — 운영자가 엉뚱한 행을 지운다");
     const d = db();
     try {
-      const m = d.raw.prepare("SELECT fetched_at f FROM schedule_month WHERE month = 10").get() as unknown as { f: string };
+      const m = d.raw.prepare("SELECT fetched_at f, first_listed l FROM schedule_month WHERE month = 10").get() as unknown as { f: string; l: string };
       assert.equal(m.f, "2026-09-30T00:44:00.000Z", "되돌리지 않고 사본 시각을 새로 썼다 — B 가 꺼진다");
+      assert.equal(m.l, "2026-10-01", "되돌리지 않고 기준선을 옮겼다");
     } finally {
       d.close();
     }
@@ -507,10 +508,32 @@ test("⚠⚠予告先発에만 남은 지난 날이 빠진 사본도 멈춘다 �
 });
 
 /**
- * ⚠⚠**아직 오지 않은 날의 관측은 정당하게 사라질 수 있다 — 개막이 같은 달 안에서 늦춰지면**(2026-09-11 · 수정분 재검토 2차 D1 · 실행 재현).
- * 관측한 날을 근거로 삼자 3/26 개막(앞으로의 경기)을 본 뒤 3/30 으로 늦춘 사본이 「잘린 사본」으로 멈췄고, 멈추면 되돌리므로
- * **3/26 관측이 영원히 남아 스스로 못 풀렸다.** 잘림의 증거는 **사본을 받은 날에 이미 지난 날**뿐이다 — 지난 날은 치렀든 중지됐든
- * 페이지에 남는다. 아직 안 온 날이 빠진 것은 일정 변경이다.
+ * ⚠**「이미 왔다」의 경계는 JST 자정이다**(3라운드 재검토 2차 R3-3). 그날 받은 사본은 그날을 싣는다 — 경기가 중지돼도 날짜 행은 링크를 단 채 남는다
+ * (실물 중지 287행). 날짜를 지우는 일정 변경은 **미리** 공표된다. ⚠2차는 「그날 22:00」을 제안했지만 그러면 그날 낮의 잘린 사본 한 장이
+ * 기준선을 넘겨 이후 잘림이 안 보인다.
+ */
+test("⚠「이미 왔다」는 JST 날짜로 가른다 — 9/30 23:59 JST 에 받은 사본은 10/1 을 몰라도 되고 10/1 00:00 JST 사본은 실어야 한다", async () => {
+  const oct = (from: number): string => {
+    let s = "";
+    for (let d = from; d <= 31; d++) s += `<tr id="date10${String(d).padStart(2, "0")}" class=""><th>10/${d}</th><td>&nbsp;</td><td>&nbsp;</td></tr>`;
+    return s;
+  };
+  for (const [checkedAt, want] of [["2026-09-30T14:59:00.000Z", 0], ["2026-09-30T15:00:00.000Z", 1]] as const) {
+    await withArchive(async ({ games, run }) => {
+      await writeMonth(games, "10", oct(1), "2026-09-29T00:44:00.000Z");
+      assert.equal(run().code, 0);
+      await writeMonth(games, "10", oct(2), checkedAt);
+      const r = run();
+      assert.equal(r.code, want, `${checkedAt}(JST ${want === 0 ? "9/30 23:59" : "10/1 00:00"}) 사본의 판정이 틀렸다: ${r.err}`);
+    });
+  }
+});
+
+/**
+ * ⚠⚠**아직 오지 않은 날은 정당하게 사라질 수 있다 — 개막이 같은 달 안에서 늦춰지면**(2026-09-11 · 수정분 재검토 2차 D1 · 3라운드 2·3차 R3-1 · 실행 재현).
+ * 다른 표의 관측을 근거로 삼자 3/26 개막을 본 뒤 3/30 으로 늦춘 사본이 멈췄고(멈추면 되돌리므로 영원히), 날짜를 가려도 **予告先発은 안 지워져**
+ * 옛 개막일이 **지나는 순간** 다시 멈췄다. 이제 근거는 **받아들인 사본의 첫 날짜**라 3/11 사본을 받는 순간 기준선이 3/30 으로 옮겨 가고,
+ * 옛 날짜가 지나도 예고 행이 남아도 멈추지 않는다.
  */
 test("⚠⚠개막이 같은 달 안에서 늦춰진 사본은 받는다 — 아직 오지 않은 날의 관측으로 멈추지 않는다", async () => {
   await withArchive(async ({ games, run, db }) => {
@@ -532,6 +555,10 @@ test("⚠⚠개막이 같은 달 안에서 늦춰진 사본은 받는다 — 아
     const r = run();
     assert.equal(r.code, 0, `개막 연기(아직 오지 않은 3/26 이 사라짐)를 잘린 사본으로 봤다: ${r.err}`);
     assert.equal(run().code, 0, "다음 실행에서도 풀리지 않았다");
+    // ⚠⚠옛 개막일(3/26)이 **지난 뒤**에 받은 사본도 받는다 — 예고 행이 남아 있어도(3라운드 재검토 2·3차 R3-1 · 실행 재현)
+    await writeMonth(games, "03", late, "2026-03-27T00:44:00.000Z");
+    const after = run();
+    assert.equal(after.code, 0, `옛 개막일이 지나자 받아들였던 연기 사본을 다시 거부했다 — 시즌 내내 멈춘다: ${after.err}`);
     const d = db();
     try {
       const dates = (d.raw.prepare("SELECT game_date g FROM upcoming_game WHERE game_date LIKE '2026-03-%' ORDER BY 1").all() as unknown as { g: string }[]).map((x) => x.g);

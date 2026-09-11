@@ -64,35 +64,37 @@ const insPlayed = db.raw.prepare(
 );
 /** 사본을 언제 받았는가 — 「사본이 새롭다」의 근거(설계 D1-B) */
 const upsertMonth = db.raw.prepare(
-  `INSERT INTO schedule_month (season, month, source, fetched_at, date_rows, games)
-   VALUES (?, ?, ?, ?, ?, ?)
+  `INSERT INTO schedule_month (season, month, source, fetched_at, date_rows, games, first_listed)
+   VALUES (?, ?, ?, ?, ?, ?, ?)
    ON CONFLICT (season, month) DO UPDATE SET
      source = excluded.source, fetched_at = excluded.fetched_at,
-     date_rows = excluded.date_rows, games = excluded.games`,
+     date_rows = excluded.date_rows, games = excluded.games, first_listed = excluded.first_listed`,
 );
 /**
- * 그 시즌 그 달에서 **우리가 아는 가장 이른 날** — 개막 달의 앞부분 공백을 가르는 근거.
+ * **잘림의 근거 둘** — 개막 달의 앞부분 공백을 가른다. 두 조회 모두 그 달을 지우기 **전에** 돈다.
  *
- * ⚠⚠**`game` 만 보면 바로 그 누락이 근거에서 빠진다**(2026-09-11 · 3중 검토 3차 P1 · 실행 재현). 10/1 경기를 못 받았으면
- * `game` 의 가장 이른 날은 10/3 이라, 10/1 행이 잘린 사본이 「개막 달」로 통과해 **10/1 의 치러짐 표시를 지운다.**
- * → **전에 받은 사본이 관측한 날**(치러짐 표시 · 앞으로의 경기)도 본다. 이 조회는 그 달을 지우기 **전에** 돈다.
- * ⚠⚠**予告先発도 관측이다**(2026-09-11 · 수정분 재검토 3차 P1 · 실행 재현). 10/1 이 사본에서 예정 표기였고 경기 행이 없으면
- *   아는 것은 예고뿐이라, 그것을 안 보면 10/1 을 자른 사본이 통과해 **B 가 꺼진다.**
- * ⚠⚠**「앞으로의 경기」·予告先発은 새 사본을 받은 날(JST)에 이미 지난 날만 센다**(수정분 재검토 2차 D1 · 실행 재현).
- *   아직 안 온 날은 **정당하게 사라질 수 있다** — 개막이 같은 달 안에서 늦춰지면 3/26 관측이 남아 멈추고, 멈추면 되돌리므로
- *   **영원히 못 풀렸다.** 지난 날은 치렀든 중지됐든 페이지에 남으므로 그것만이 잘림의 증거다.
- *   경기 행 · 치러짐 표시는 그 자체로 지난 사실이라 날짜를 안 가린다. ⚠사본 시각을 모르면 **전부 센다**(안전한 쪽 · M11).
+ * ⑴ **사실**: 그 달의 경기 행 · 치러짐 표시 중 가장 이른 날. 첫 날짜 행보다 이르면 잘린 것이다 — 치러진 날은 페이지에서 안 사라진다.
+ * ⑵ **그 달 페이지 자신의 이력**: 받아들인 전 사본의 첫 날짜(`schedule_month.first_listed`). 새 사본이 그보다 늦게 시작하는데
+ *    **그 날이 이미 왔으면**(새 사본을 받은 JST 날짜 ≥ 그 날) 잘린 것이다. 그날 받은 페이지는 그날을 싣는다 — 경기가 중지돼도 날짜 행은
+ *    링크를 단 채 남는다(실물 중지 287행). 날짜를 지우는 일정 변경은 **미리** 공표되므로 아직 오지 않은 날이 빠진 것은 받는다(개막 연기).
+ *    ⚠사본 시각을 모르면 이미 왔다고 본다(안전한 쪽 · M11).
+ *
+ * ⚠⚠**세 번 틀렸다**(2026-09-11): ① `game` 만 봤다 → 누락된 바로 그 경기가 근거에서 빠졌다(3중 검토 3차 P1)
+ *   ② 앞으로의 경기 · 予告先発을 「관측한 날」로 더했다 → 予告先発은 **어디서도 안 지워지고** `load-starters` 가 아카이브에서 매번 되살려,
+ *   개막이 미뤄진 옛 날짜가 **지나는 순간** 시즌 내내 멈췄고 런북 복구(행 삭제)도 같은 실행에서 되돌려졌다(3라운드 재검토 2·3차 · 실행 재현)
+ *   ③ 그래서 다른 표의 관측으로 추측하지 않고 **페이지 자신의 이력**을 본다 — 기준선은 받아들일 때마다 새로워져 스스로 풀린다.
+ *   ⚠2차는 경계를 「그날 22:00」으로 제안했지만 그러면 그날 낮의 잘린 사본 한 장이 기준선을 넘겨 이후 잘림이 안 보인다.
  */
-const firstKnownOfMonth = db.raw.prepare(
-  `WITH c(cut) AS (SELECT COALESCE(substr(datetime(?3, '+9 hours'), 1, 10), '9999-12-31'))
-   SELECT MIN(d) AS d FROM (
+const firstFactOfMonth = db.raw.prepare(
+  `SELECT MIN(d) AS d FROM (
      SELECT MIN(game_date) AS d FROM game WHERE season = ?1 AND substr(game_date, 6, 2) = ?2
      UNION ALL SELECT MIN(game_date) FROM schedule_played WHERE season = ?1 AND substr(game_date, 6, 2) = ?2
-     UNION ALL SELECT MIN(game_date) FROM upcoming_game
-                WHERE season = ?1 AND substr(game_date, 6, 2) = ?2 AND game_date < (SELECT cut FROM c)
-     UNION ALL SELECT MIN(game_date) FROM probable_pitcher
-                WHERE substr(game_date, 1, 4) = ?4 AND substr(game_date, 6, 2) = ?2 AND game_date < (SELECT cut FROM c)
    )`,
+);
+const prevBaseline = db.raw.prepare(
+  `SELECT first_listed AS d,
+          first_listed <= COALESCE(substr(datetime(?3, '+9 hours'), 1, 10), '9999-12-31') AS reached
+     FROM schedule_month WHERE season = ?1 AND month = ?2`,
 );
 
 /**
@@ -101,25 +103,36 @@ const firstKnownOfMonth = db.raw.prepare(
  * ⚠**「파싱이 됐다」가 「그 달 전부를 담았다」는 아니다**(설계 D5 · 콜드 리뷰 지적). 일부 날짜만 담긴 응답으로 달을 교체하면
  * 사라진 날의 치러짐 표시를 지우고 사본은 새로워져 누락 판정이 함께 풀린다.
  * ⚠**앞부분이 비어도 되는 것은 개막 달뿐이다** — 실측: 월간 일정 75장 중 66장이 모든 날을 싣고, 나머지 9장은 전부 개막 달
- * (8시즌의 3월 · 2020년 6월)이며 **빠진 것이 앞부분뿐**이다. 그래서 「그 달에 첫 날짜 행보다 이른 날을 우리가 모를 때」만 허용한다
- * (경기 행 · 전에 받은 사본의 치러짐 표시 · 앞으로의 경기 — `firstKnownOfMonth`).
- * ⚠개막이 미뤄져 개막 달의 첫 날짜가 **뒤로** 밀리면 전에 관측한 날이 앞서므로 멈춘다 — 조용히 받는 것보다 안전한 쪽이다.
- * @returns 빠진 날(`[]` 이면 완결)
+ * (8시즌의 3월 · 2020년 6월)이며 **빠진 것이 앞부분뿐**이다. 그래서 앞부분 공백은 **잘림의 근거 둘**(`firstFactOfMonth` · `prevBaseline`)이
+ * 없을 때만 허용한다.
+ * @returns 빠진 날(`[]` 이면 완결)과 **멈춘 근거** — ⚠근거를 말하지 않으면 운영자가 엉뚱한 행을 지운다(3라운드 재검토 2차 R3-5)
  */
-function missingDays(mm: string, dateKeys: readonly string[], fetchedAt: string | null): number[] {
+function missingDays(mm: string, dateKeys: readonly string[], fetchedAt: string | null): { days: number[]; why: string | null; firstListed: string | null } {
   const last = new Date(Date.UTC(season, Number(mm), 0)).getUTCDate();
   const days = new Set(dateKeys.filter((k) => k.slice(0, 2) === mm).map((k) => Number(k.slice(2))));
   const present = [...days].sort((a, b) => a - b);
   const all = Array.from({ length: last }, (_, i) => i + 1);
-  if (present.length === 0) return all;
+  if (present.length === 0) return { days: all, why: "날짜 행 없음", firstListed: null };
   const first = present[0]!;
-  const gaps = all.filter((d) => d >= first && !days.has(d));
-  if (first === 1) return gaps;
-  // 앞부분이 빈다 — 개막 달인가
   const firstListed = `${season}-${mm}-${String(first).padStart(2, "0")}`;
-  const earliest = (firstKnownOfMonth.get(season, mm, fetchedAt, String(season)) as { d: string | null } | undefined)?.d ?? null;
-  const prefix = earliest !== null && earliest < firstListed ? all.filter((d) => d < first) : [];
-  return [...prefix, ...gaps];
+  const gaps = all.filter((d) => d >= first && !days.has(d));
+  const middle = gaps.length > 0 ? "중간·끝 날짜가 빠짐" : null;
+  if (first === 1) return { days: gaps, why: middle, firstListed };
+  // 앞부분이 빈다 — 개막 달인가, 잘렸나
+  const prefix = all.filter((d) => d < first);
+  const fact = (firstFactOfMonth.get(season, mm) as { d: string | null } | undefined)?.d ?? null;
+  if (fact !== null && fact < firstListed) {
+    return { days: [...prefix, ...gaps], why: `경기 행·치러짐 표시가 ${fact} 에 있다(치러진 날은 페이지에서 안 사라진다)`, firstListed };
+  }
+  const prev = prevBaseline.get(season, Number(mm), fetchedAt) as { d: string | null; reached: number | null } | undefined;
+  if (prev?.d != null && prev.d < firstListed && prev.reached === 1) {
+    return {
+      days: [...prefix, ...gaps],
+      why: `전 사본이 ${prev.d} 부터 실었고 그 날이 이미 왔다${fetchedAt === null ? "(사본 시각 모름 — 왔다고 본다)" : ""}`,
+      firstListed,
+    };
+  }
+  return { days: gaps, why: middle, firstListed };
 }
 
 /**
@@ -212,12 +225,19 @@ db.transaction(() => {
     const r = parseUpcoming(html, season);
     nonTeam += r.nonTeamRows;
     pendingLabels.push(...r.pendingMatchupLabels);
+    /** 받아들이면 새 기준선이 된다 — 문제가 있는 달은 아래에서 던져 되돌리므로 그 값은 남지 않는다 */
+    let firstListed: string | null = null;
     if (r.dateRows === 0) noDateRowMonths.push(f);
     else if (r.unreadableRows > 0) unreadableMonths.push(`${f}(${r.unreadableRows}행)`);
     else {
+      // ⚠기준선 조회는 아래 upsert 보다 **먼저** 돈다 — 같은 실행에서 덮어쓴 값을 읽지 않는다
       const missing = missingDays(mm, r.dateKeys, fetchedAt);
-      if (missing.length > 0) {
-        incompleteMonths.push(`날짜가 빠진 달 ${mm}(없는 날 ${missing.slice(0, 6).join(",")}${missing.length > 6 ? `… 외 ${missing.length - 6}` : ""})`);
+      firstListed = missing.firstListed;
+      if (missing.days.length > 0) {
+        incompleteMonths.push(
+          `날짜가 빠진 달 ${mm}(없는 날 ${missing.days.slice(0, 6).join(",")}${missing.days.length > 6 ? `… 외 ${missing.days.length - 6}` : ""}` +
+            `${missing.why === null ? "" : ` · 근거: ${missing.why}`})`,
+        );
       } else if (r.games.length + r.nonTeamRows + r.placeholderRows === 0) {
         noGameMonths.push(f);
       }
@@ -225,7 +245,7 @@ db.transaction(() => {
     // ⚠**그 달만** 지우고 다시 넣는다 — 문제가 있는 달이 하나라도 있으면 아래에서 던져 **전부 되돌린다**
     delUpcomingMonth.run(season, mm);
     delPlayedMonth.run(season, mm);
-    upsertMonth.run(season, Number(mm), sourceOf(f), fetchedAt, r.dateRows, r.games.length);
+    upsertMonth.run(season, Number(mm), sourceOf(f), fetchedAt, r.dateRows, r.games.length, firstListed);
     for (const g of r.games) {
       if (g.played) {
         playedRows += 1;

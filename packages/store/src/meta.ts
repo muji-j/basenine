@@ -37,7 +37,10 @@ const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\
 export function normalizeFetchedAt(v: unknown): string | null {
   if (typeof v !== "string" || !TIMESTAMP.test(v)) return null;
   const ms = Date.parse(v);
-  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+  if (!Number.isFinite(ms)) return null;
+  const iso = new Date(ms).toISOString();
+  // ⚠출력도 자기 모양이어야 한다 — `0000-01-01T00:00+00:01` 은 UTC 로 `-000001-…` 이 되어 다시 넣으면 NULL 이 된다(022 멱등성 · 3라운드 재검토 2차)
+  return TIMESTAMP.test(iso) ? iso : null;
 }
 
 export function fetchedAtOf(metaPath: string): string | null {
