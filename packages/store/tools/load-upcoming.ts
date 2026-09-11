@@ -76,7 +76,9 @@ const upsertMonth = db.raw.prepare(
  *
  * ⑴ **사실**: 그 달의 경기 행 · 치러짐 표시 중 가장 이른 날. 첫 날짜 행보다 이르면 잘린 것이다 — 치러진 날은 페이지에서 안 사라진다.
  * ⑵ **그 달 페이지 자신의 이력**: 받아들인 전 사본의 **내용이 있는 첫 날짜 행**(`schedule_month.first_content` · 경기 · 예정 표기 · 구단 아님).
- *    ⚠빈 행은 세지 않는다 — 개막 전 페이지가 3/1 부터 빈 행을 싣는다면 개막일부터 싣는 뒤 페이지를 멈추고, 빈 행이 빠져도 잃는 증거가 없다(4라운드 F2).
+ *    ⚠빈 행은 세지 않는다 — 개막 전 페이지가 3/1 부터 빈 행을 싣는다면 개막일부터 싣는 뒤 페이지를 멈춘다(4라운드 F2).
+ *    ⚠**맞교환이다**(5라운드 2차 D1 · 실행 재현): 전 사본에서 비어 있던 앞쪽 날이 빠진 사본은 받아들이므로, 그 사이 그 날 경기가 새로 생겼거나
+ *    (적재기가 멈춘 기간의 振替) 잘림이 첫 내용일을 넘어 이어지면 **조용하다** — 앞쪽 휴식이 긴 달일수록 창이 넓다(실물 11개월 · 2021-08 은 12일 · 설계 §5).
  *    ⚠기준선이 NULL 이면(첫 사본 · 내용 없는 달 · 사람이 초기화 · DB 재구축) **사실로만** 막는다(4라운드 2·3차 · 설계 §5).
  *    새 사본이 그보다 늦게 시작하는데
  *    **그 날이 이미 왔으면**(새 사본을 받은 JST 날짜 ≥ 그 날) 잘린 것이다. 그날 받은 페이지는 그날을 싣는다 — 경기가 중지돼도 날짜 행은
@@ -121,9 +123,13 @@ function missingDays(
   const days = new Set(dateKeys.filter((k) => k.slice(0, 2) === mm).map((k) => Number(k.slice(2))));
   const present = [...days].sort((a, b) => a - b);
   const all = Array.from({ length: last }, (_, i) => i + 1);
-  /** 받아들이면 새 기준선 — 내용이 있는 첫 날짜 행(없으면 NULL) */
-  const firstContentKey = contentKeys.find((k) => k.slice(0, 2) === mm);
-  const baseline = firstContentKey === undefined ? null : `${season}-${mm}-${firstContentKey.slice(2)}`;
+  /**
+   * 받아들이면 새 기준선 — 그 달의 **날짜 순서로** 가장 이른 내용 행(없으면 NULL).
+   * ⚠문서 순서의 첫 원소를 쓰면 날짜가 뒤바뀐 페이지에서 너무 늦은 날이 기준선이 된다(5라운드 재검토 1차 V1 · 실행 재현) — 정렬한다.
+   * ⚠그 달 키만 본다 — 파일에 섞인 다른 달 행의 「일」이 기준선이 되지 않게(2차 M18).
+   */
+  const contentDays = [...new Set(contentKeys.filter((k) => k.slice(0, 2) === mm).map((k) => Number(k.slice(2))))].sort((a, b) => a - b);
+  const baseline = contentDays.length === 0 ? null : `${season}-${mm}-${String(contentDays[0]).padStart(2, "0")}`;
   if (present.length === 0) return { days: all, why: "날짜 행 없음", baseline };
   const first = present[0]!;
   const firstListed = `${season}-${mm}-${String(first).padStart(2, "0")}`;

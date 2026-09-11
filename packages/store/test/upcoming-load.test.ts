@@ -584,7 +584,8 @@ test("⚠⚠개막이 같은 달 안에서 늦춰진 사본은 받는다 — 아
 /**
  * ⚠⚠**기준선은 「내용이 있는 첫 날짜 행」이다 — 빈 행은 세지 않는다**(2026-09-11 · 4라운드 재검토 2차 F2).
  * 개막 전에 받은 3월 페이지가 3/1 부터 빈 행을 싣고(⚠실물 표본 없음) 뒤 페이지가 개막일부터 싣는다면, 빈 행까지 센 기준선(03-01)은
- * 「이미 온 날이 빠졌다」로 **3월부터 적재기를 멈춘다.** 빈 날짜 행이 빠져도 잃는 증거는 없다(그 날 경기가 없다).
+ * 「이미 온 날이 빠졌다」로 **3월부터 적재기를 멈춘다.** ⚠대가: 전 사본에서 비어 있던 날이 빠진 것은 받아들인다 — 그 사이 경기가 생겼거나
+ * 잘림이 첫 내용일을 넘어 이어지면 못 잡는다(5라운드 재검토 2차 D1 · 설계 §5).
  */
 test("⚠⚠빈 행으로 시작하던 개막 달 사본 뒤에 개막일부터 싣는 사본은 받는다 — 빈 행은 기준선이 아니다", async () => {
   await withArchive(async ({ games, run, db }) => {
@@ -601,6 +602,55 @@ test("⚠⚠빈 행으로 시작하던 개막 달 사본 뒤에 개막일부터 
     try {
       const m = d.raw.prepare("SELECT first_content c FROM schedule_month WHERE month = 3").get() as unknown as { c: string };
       assert.equal(m.c, "2026-03-27");
+    } finally {
+      d.close();
+    }
+  });
+});
+
+/**
+ * ⚠**기준선은 문서 순서가 아니라 날짜 순서의 첫 내용 행이다**(5라운드 재검토 1차 V1 · 2차 확정 · 실행 재현).
+ * 파서의 내용 키는 페이지에 **나온 순서**라, 날짜가 뒤바뀐 페이지(실물 75장에는 0장)에서 첫 원소를 쓰면 너무 늦은 날이 기준선이 되고
+ * 그 뒤의 잘림이 조용히 통과한다. 옆의 `first`(첫 날짜 행)는 이미 정렬해서 구했다 — 같은 방어를 쓴다.
+ */
+test("⚠날짜 순서가 뒤바뀐 페이지에서도 기준선은 가장 이른 내용 행이다 — 그 뒤 잘림을 놓치지 않는다", async () => {
+  await withArchive(async ({ games, run, db }) => {
+    const blank = (d: number): string => `<tr id="date03${String(d).padStart(2, "0")}" class=""><th>3/${d}</th><td>&nbsp;</td><td>&nbsp;</td></tr>`;
+    // 3/1 공백 · 3/5 경기(문서상 먼저) · 3/2 경기(문서상 나중) · 나머지 공백
+    let body = blank(1) + row("0305", "巨人", "阪神", "東京ドーム", "18:00") + row("0302", "阪神", "巨人", "甲子園", "18:00");
+    for (let d = 3; d <= 31; d++) if (d !== 5) body += blank(d);
+    await writeMonth(games, "03", body, "2026-02-20T00:44:00.000Z");
+    assert.equal(run().code, 0);
+    const d1 = db();
+    try {
+      const m = d1.raw.prepare("SELECT first_content c FROM schedule_month WHERE month = 3").get() as unknown as { c: string };
+      assert.equal(m.c, "2026-03-02", "문서 순서의 첫 내용 행을 기준선으로 썼다 — 날짜 순서의 첫 내용 행이어야 한다");
+    } finally {
+      d1.close();
+    }
+    let truncated = row("0305", "巨人", "阪神", "東京ドーム", "18:00");
+    for (let d = 6; d <= 31; d++) truncated += blank(d);
+    await writeMonth(games, "03", truncated, "2026-03-06T00:44:00.000Z");
+    assert.equal(run().code, 1, "3/2 경기까지 잘린 사본을 받았다 — 기준선이 너무 늦었다");
+  });
+});
+
+/**
+ * ⚠**기준선은 그 달의 내용 행만 본다**(5라운드 재검토 2차 M18 — 월 필터를 지워도 통과하던 생존 뮤턴트).
+ * 한 달 파일에 다른 달 날짜 행이 섞이면 그 날의 「일」이 그 달 기준선이 될 수 있다(`0901` → `2026-10-01`).
+ */
+test("⚠기준선은 그 달의 내용 행만 본다 — 파일에 섞인 다른 달 날짜 행은 기준선이 아니다", async () => {
+  await withArchive(async ({ games, run, db }) => {
+    let body = row("0901", "巨人", "阪神", "東京ドーム", "18:00"); // 10월 파일에 섞인 9/1(링크 없음)
+    for (let d = 1; d <= 4; d++) body += `<tr id="date10${String(d).padStart(2, "0")}" class=""><th>10/${d}</th><td>&nbsp;</td><td>&nbsp;</td></tr>`;
+    body += row("1005", "阪神", "巨人", "甲子園", "18:00");
+    for (let d = 6; d <= 31; d++) body += `<tr id="date10${String(d).padStart(2, "0")}" class=""><th>10/${d}</th><td>&nbsp;</td><td>&nbsp;</td></tr>`;
+    await writeMonth(games, "10", body, "2026-09-20T00:44:00.000Z");
+    assert.equal(run().code, 0);
+    const d = db();
+    try {
+      const m = d.raw.prepare("SELECT first_content c FROM schedule_month WHERE month = 10").get() as unknown as { c: string };
+      assert.equal(m.c, "2026-10-05", "다른 달 날짜 행의 「일」을 그 달 기준선으로 썼다");
     } finally {
       d.close();
     }
