@@ -49,3 +49,5 @@ export {
 } from "./load.ts";
 export type { GameRow, ProbablePitcherRow, WriteBudget } from "./load.ts";
 export { fetchedAtOf } from "./meta.ts";
+export { japanSeriesDecided, seasonIsOver } from "./season-over.ts";
+export { collectionEvidence } from "./collection-evidence.ts";
