@@ -70,9 +70,19 @@ const upsertMonth = db.raw.prepare(
      source = excluded.source, fetched_at = excluded.fetched_at,
      date_rows = excluded.date_rows, games = excluded.games`,
 );
-/** 그 시즌 그 달의 가장 이른 경기일 — 개막 달의 앞부분 공백을 가르는 근거 */
-const firstGameOfMonth = db.raw.prepare(
-  "SELECT MIN(game_date) AS d FROM game WHERE season = ? AND substr(game_date, 6, 2) = ?",
+/**
+ * 그 시즌 그 달에서 **우리가 아는 가장 이른 날** — 개막 달의 앞부분 공백을 가르는 근거.
+ *
+ * ⚠⚠**`game` 만 보면 바로 그 누락이 근거에서 빠진다**(2026-09-11 · 3중 검토 3차 P1 · 실행 재현). 10/1 경기를 못 받았으면
+ * `game` 의 가장 이른 날은 10/3 이라, 10/1 행이 잘린 사본이 「개막 달」로 통과해 **10/1 의 치러짐 표시를 지운다.**
+ * → **전에 받은 사본이 관측한 날**(치러짐 표시 · 앞으로의 경기)도 본다. 이 조회는 그 달을 지우기 **전에** 돈다.
+ */
+const firstKnownOfMonth = db.raw.prepare(
+  `SELECT MIN(d) AS d FROM (
+     SELECT MIN(game_date) AS d FROM game WHERE season = ?1 AND substr(game_date, 6, 2) = ?2
+     UNION ALL SELECT MIN(game_date) FROM schedule_played WHERE season = ?1 AND substr(game_date, 6, 2) = ?2
+     UNION ALL SELECT MIN(game_date) FROM upcoming_game WHERE season = ?1 AND substr(game_date, 6, 2) = ?2
+   )`,
 );
 
 /**
@@ -81,7 +91,9 @@ const firstGameOfMonth = db.raw.prepare(
  * ⚠**「파싱이 됐다」가 「그 달 전부를 담았다」는 아니다**(설계 D5 · 콜드 리뷰 지적). 일부 날짜만 담긴 응답으로 달을 교체하면
  * 사라진 날의 치러짐 표시를 지우고 사본은 새로워져 누락 판정이 함께 풀린다.
  * ⚠**앞부분이 비어도 되는 것은 개막 달뿐이다** — 실측: 월간 일정 75장 중 66장이 모든 날을 싣고, 나머지 9장은 전부 개막 달
- * (8시즌의 3월 · 2020년 6월)이며 **빠진 것이 앞부분뿐**이다. 그래서 「그 달에 첫 날짜 행보다 이른 경기가 DB 에 없을 때」만 허용한다.
+ * (8시즌의 3월 · 2020년 6월)이며 **빠진 것이 앞부분뿐**이다. 그래서 「그 달에 첫 날짜 행보다 이른 날을 우리가 모를 때」만 허용한다
+ * (경기 행 · 전에 받은 사본의 치러짐 표시 · 앞으로의 경기 — `firstKnownOfMonth`).
+ * ⚠개막이 미뤄져 개막 달의 첫 날짜가 **뒤로** 밀리면 전에 관측한 날이 앞서므로 멈춘다 — 조용히 받는 것보다 안전한 쪽이다.
  * @returns 빠진 날(`[]` 이면 완결)
  */
 function missingDays(mm: string, dateKeys: readonly string[]): number[] {
@@ -95,7 +107,7 @@ function missingDays(mm: string, dateKeys: readonly string[]): number[] {
   if (first === 1) return gaps;
   // 앞부분이 빈다 — 개막 달인가
   const firstListed = `${season}-${mm}-${String(first).padStart(2, "0")}`;
-  const earliest = (firstGameOfMonth.get(season, mm) as { d: string | null } | undefined)?.d ?? null;
+  const earliest = (firstKnownOfMonth.get(season, mm) as { d: string | null } | undefined)?.d ?? null;
   const prefix = earliest !== null && earliest < firstListed ? all.filter((d) => d < first) : [];
   return [...prefix, ...gaps];
 }

@@ -165,3 +165,27 @@ test("⚠취득 시각은 UTC 한 모양으로 돌려준다 — 표기가 달라
     assert.equal(fetchedAtOf(canonical), "2026-08-17T02:00:00.123Z");
   });
 });
+
+/**
+ * ⚠**시간대 표기가 없는 시각은 기계마다 다른 시각이 된다**(2026-09-11 · 3중 검토 2차 N3 · 실측).
+ *
+ * `Date.parse("2026-09-10T05:00")` 은 **실행 기계의 현지 시간**으로 읽는다 — 이 기계(JST)에서 `2026-09-09T20:00Z`,
+ * UTC 인 CI 에서 `05:00Z` 로 **9시간이 갈린다.** 같은 문자열을 SQLite `datetime()` 은 UTC 로 읽어 **SQL 과 JS 도 갈린다.**
+ * → 시간대 표기(`Z` · `±HH:MM`)가 없으면 **모른다(null)** 로 둔다. 실물 사이드카는 전부 `Z` 모양이라 바뀌는 값이 없다.
+ */
+test("⚠시간대 표기가 없는 시각은 버린다 — 기계마다 다른 시각이 된다", async () => {
+  await withDir(async (dir) => {
+    const naive = join(dir, "naive.meta.json");
+    await writeFile(naive, JSON.stringify({ checkedAt: "2026-09-10T05:00:00", fetchedAt: "2026-09-10T05:00" }));
+    assert.equal(fetchedAtOf(naive), null, "시간대 없는 시각을 실행 기계의 현지 시간으로 읽었다");
+
+    const fallback = join(dir, "naive-fallback.meta.json");
+    await writeFile(fallback, JSON.stringify({ checkedAt: "2026-09-10T05:00:00.000", fetchedAt: "2026-09-09T05:00:00.000Z" }));
+    assert.equal(fetchedAtOf(fallback), "2026-09-09T05:00:00.000Z", "시간대 없는 checkedAt 을 믿었다");
+
+    // 끝에 딴 글자가 붙은 값도 모양이 아니다
+    const tail = join(dir, "tail.meta.json");
+    await writeFile(tail, JSON.stringify({ fetchedAt: "2026-09-10T05:00:00.000Zjunk" }));
+    assert.equal(fetchedAtOf(tail), null, "끝에 딴 글자가 붙은 값을 취득 시각이라고 했다");
+  });
+});

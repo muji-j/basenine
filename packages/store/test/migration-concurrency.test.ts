@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
-import { listMigrations, openDb } from "../src/db.ts";
+import { applyPendingMigrations, listMigrations, openDb } from "../src/db.ts";
 
 const DB_TS = fileURLToPath(new URL("../src/db.ts", import.meta.url));
 const NOW = "2026-09-11T00:00:00.000Z";
@@ -77,6 +77,41 @@ test("⚠마이그레이션이 도중에 실패하면 앞서 만든 표까지 �
   }
 });
 
+/**
+ * ⚠⚠**경합을 결정적으로 만든다**(2026-09-11 · 3중 검토 3차 P2).
+ * 아래 「프로세스 8개」 시험은 **프로세스가 뜨는 시차에 기댄다** — 첫 프로세스가 먼저 끝나면 나머지는 이미 적용된 DB 를 열어
+ * 고치기 전 코드로도 통과할 수 있다. 실제로 갈렸다: 이 기계에서는 고치기 전 코드로 **3/3 실패**, 3차 검토의 사본에서는 **1/1 통과**.
+ * → 경합의 핵심인 「**낡은 적용 목록을 쥔 연결**」을 한 프로세스 안에서 그대로 만든다:
+ *   ⑴ 연결 A 가 적용 목록을 읽는다(021·022 없음) ⑵ 다른 연결이 그 사이 021·022 를 적용한다 ⑶ A 가 낡은 목록으로 적용을 시도한다.
+ *   잠근 뒤 다시 보지 않으면 ⑶ 이 `table starters_fetch already exists` 로 죽는다.
+ */
+test("⚠⚠낡은 적용 목록을 쥔 연결도 이미 적용된 마이그레이션을 다시 적용하지 않는다 — 잠근 뒤 다시 본다", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "bb-migrate-stale-"));
+  const path = join(dir, "t.sqlite");
+  let a: DatabaseSync | undefined;
+  try {
+    openDb(path, NOW).close();
+    const rewound = rewindLastTwo(path);
+    const conn = new DatabaseSync(path);
+    a = conn;
+    const stale = new Set((conn.prepare("SELECT name FROM schema_migration").all() as { name: string }[]).map((r) => r.name));
+    assert.ok(rewound.every((name) => !stale.has(name)), "전제가 틀렸다 — 낡은 목록에 되돌린 마이그레이션이 있다");
+    openDb(path, NOW).close(); // 다른 연결이 그 사이 적용한다
+    assert.doesNotThrow(() => applyPendingMigrations(conn, NOW, stale), "낡은 목록으로 같은 마이그레이션을 다시 적용하려 했다");
+    for (const name of rewound) {
+      const row = conn.prepare("SELECT COUNT(*) AS cnt FROM schema_migration WHERE name = ?").get(name) as { cnt: number };
+      assert.equal(row.cnt, 1, `${name} 이 ${row.cnt}번 기록됐다`);
+    }
+  } finally {
+    a?.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * **통합 연기 시험** — 실제 프로세스 동시 개설에서 `busy_timeout` 과 잠금이 함께 돈다.
+ * ⚠**이 시험만으로는 경합을 보장하지 못한다**(위 결정적 시험이 본체다).
+ */
 test("⚠프로세스 8개가 동시에 열어도 전부 성공하고 마이그레이션은 한 번씩만 기록된다", async () => {
   const dir = await mkdtemp(join(tmpdir(), "bb-migrate-race-"));
   const path = join(dir, "t.sqlite");

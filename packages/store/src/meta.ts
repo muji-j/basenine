@@ -20,8 +20,11 @@ import { readFileSync } from "node:fs";
 /**
  * 취득 시각으로 인정하는 모양. 아카이버는 `Date#toISOString()` 을 쓴다(`YYYY-MM-DDTHH:MM:SS.sssZ`).
  * ⚠**앞모양만으로는 부족하다** — `2026-13-99T00:00` 도 모양은 맞는다. `Date.parse` 가 유한해야 한다.
+ * ⚠**시간대 표기(`Z` · `±HH:MM`)로 끝나야 한다**(2026-09-11 · 3중 검토 2차 N3 · 실측). 없으면 `Date.parse` 가
+ *   **실행 기계의 현지 시간**으로 읽어 이 기계(JST)와 CI(UTC)에서 9시간이 갈리고, SQLite `datetime()`(UTC 로 읽는다)과도 갈린다.
+ * ⚠**정리 마이그레이션 `022-invalid-fetched-at.sql` 이 같은 세 조건을 SQL 로 건다** — 한쪽만 고치면 정의가 두 벌이 된다.
  */
-const TIMESTAMP_HEAD = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/;
 
 /**
  * 인정한 값은 **UTC `toISOString` 한 모양으로** 돌려준다.
@@ -31,7 +34,7 @@ const TIMESTAMP_HEAD = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
  * ⚠`new Date(ms)` 는 주어진 값을 해석할 뿐 시계를 읽지 않는다(M6).
  */
 function timestamp(v: unknown): string | null {
-  if (typeof v !== "string" || !TIMESTAMP_HEAD.test(v)) return null;
+  if (typeof v !== "string" || !TIMESTAMP.test(v)) return null;
   const ms = Date.parse(v);
   return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
 }

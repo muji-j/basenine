@@ -108,7 +108,17 @@ function migrate(raw: DatabaseSync, nowIso: string): void {
   const applied = new Set(
     (raw.prepare("SELECT name FROM schema_migration").all() as { name: string }[]).map((r) => r.name),
   );
+  applyPendingMigrations(raw, nowIso, applied);
+}
 
+/**
+ * `applied`(**미리 읽어 둔** 적용 목록)에 없는 마이그레이션을 차례로 적용한다.
+ *
+ * ⚠**목록을 인자로 받는 것은 시험 이음새다**(2026-09-11 · 3중 검토 3차 P2) — 「낡은 목록을 쥔 연결」을 프로세스 시차 없이
+ * **결정적으로** 재현하려고 뗐다(`migration-concurrency.test.ts`). 운영 경로는 `openDb` 가 방금 읽은 목록을 넘긴다.
+ * ⚠**목록이 낡았어도 안전해야 한다** — 그래서 아래에서 잠근 뒤 다시 본다.
+ */
+export function applyPendingMigrations(raw: DatabaseSync, nowIso: string, applied: ReadonlySet<string>): void {
   /**
    * ⚠**마이그레이션 하나 = 쓰기 잠금 트랜잭션 하나 · 잠근 뒤에 「이미 적용됐나」를 다시 본다**(M5 · 2026-09-11).
    * 예전에는 위에서 한 번 읽은 목록만 믿고 적용했다 — 새 마이그레이션(021)을 받은 로컬 DB 에서 `npm test` 를 돌리자
@@ -119,6 +129,8 @@ function migrate(raw: DatabaseSync, nowIso: string): void {
    * ⚠**실패하면 되돌리고 던진다 — 경합보다 이쪽이 무겁다.** 옛 코드는 트랜잭션이 없어 도중에 죽으면 **앞의 표만 남았다**:
    * 위 47개 실패 뒤 로컬 DB 에 021 의 표 둘만 있고 기록은 없었고, `CREATE TABLE` 이라 **다음 실행마다 같은 오류로 죽었다.**
    * SQLite 의 DDL 은 트랜잭션 안에서 되돌려진다 — 그래서 반쯤 적용된 상태가 남지 않는다.
+   * ⚠**이미 반쯤 적용된 DB 는 이것으로 안 풀린다**(3중 검토 2차 N7) — 새로 생기는 것만 막는다. 그 DB 는 기록 없이 남은 표가
+   *   **비었는지 확인하고** 지운 뒤 다시 연다(2026-09-11 로컬 DB 에서 021 의 표 둘이 0행임을 확인하고 그렇게 했다).
    */
   for (const name of listMigrations()) {
     if (applied.has(name)) continue;

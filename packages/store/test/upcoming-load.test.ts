@@ -316,6 +316,38 @@ test("⚠사본이 사라진 달의 행은 보존하고 실패로 알린다 — 
 });
 
 /**
+ * ⚠**롤백 반경은 「이번 실행에서 읽은 전체」다**(2026-09-11 · 3중 검토 1차 F1 · 2차가 실험으로 확인).
+ * 교체 **단위**는 달이지만 트랜잭션은 실행 하나다 — 9월이 못 읽힌 날에는 **정상인 8월의 새 치러짐 표시·사본 시각도 함께 되돌린다.**
+ * 의도다: 그날은 이미 exit 1 로 잡이 실패해 배포가 막히고, 달마다 커밋해도 그건 같다. 잃는 것은 실패 기간의 부분 갱신뿐이고
+ * B(사본이 낡으면 예고로 판정)가 하루 전체 누락을 여전히 잡는다. **바꾸려면 이 시험부터 바꿔라** — 조용히 반경이 바뀌지 않게.
+ */
+test("⚠한 실행에서 못 읽은 달이 있으면 같이 읽은 정상 달의 갱신도 되돌린다 — 반경은 실행 전체다", async () => {
+  await withArchive(async ({ games, run, db }) => {
+    await writeMonth(games, "08", padMonth("08", row("0816", "巨人", "阪神", "東京ドーム", "18:00", "/scores/2026/0816/t-g-15/")));
+    await writeMonth(games, "09", padMonth("09", row("0901", "巨人", "阪神", "東京ドーム", "18:00")));
+    assert.equal(run().code, 0);
+    // 8월은 정상으로 새 치러짐 표시가 붙고, 9월은 팀 칸이 비어 못 읽는다
+    await writeMonth(
+      games, "08",
+      padMonth("08", row("0816", "巨人", "阪神", "東京ドーム", "18:00", "/scores/2026/0816/t-g-15/") + row("0820", "阪神", "巨人", "甲子園", "18:00", "/scores/2026/0820/g-t-16/")),
+      "2026-08-21T00:44:00.000Z",
+    );
+    await writeMonth(games, "09", padMonth("09", row("0901", "", "阪神", "東京ドーム", "18:00")), "2026-08-21T00:44:00.000Z");
+    const r = run();
+    assert.equal(r.code, 1, "못 읽은 달이 있는데 성공으로 끝냈다");
+    assert.match(r.err, /못 읽은 행이 있는 달/);
+    const d = db();
+    try {
+      assert.equal(count(d, "SELECT COUNT(*) n FROM schedule_played WHERE game_date = '2026-08-20'"), 0, "같은 실행의 정상 달 갱신을 커밋했다 — 반경이 달로 바뀌었다");
+      const m = d.raw.prepare("SELECT fetched_at f FROM schedule_month WHERE month = 8").get() as unknown as { f: string };
+      assert.equal(m.f, "2026-08-17T00:44:00.000Z", "같은 실행의 정상 달 사본 시각을 새로 썼다");
+    } finally {
+      d.close();
+    }
+  });
+});
+
+/**
  * ⚠**「파싱이 됐다」가 「그 달 전부를 담았다」는 아니다**(설계 D5 · 콜드 리뷰 지적). 중간 날짜가 빠진 응답으로 달을 교체하면
  * 사라진 날의 치러짐 표시를 지우고 사본은 새로워져 누락 판정이 함께 풀린다 — **되돌리고 멈춘다.**
  */
@@ -355,6 +387,10 @@ test("개막 달의 앞부분 공백은 정상이다 — DB 에 더 이른 그 �
     await writeMonth(games, "03", march());
     const r = run();
     assert.equal(r.code, 0, `개막 달의 앞부분 공백을 실패로 봤다: ${r.err}`);
+    // 같은 사본을 다시 받아도 정상이다 — 전에 관측한 가장 이른 날이 첫 날짜 행과 같다
+    await writeMonth(games, "03", march(), "2026-03-29T00:44:00.000Z");
+    const again = run();
+    assert.equal(again.code, 0, `개막 달을 다시 적재하자 실패로 봤다: ${again.err}`);
   });
   await withArchive(async ({ games, run, db }) => {
     const d = db();
@@ -369,6 +405,54 @@ test("개막 달의 앞부분 공백은 정상이다 — DB 에 더 이른 그 �
     assert.equal(r.code, 1, "그 달에 더 이른 경기가 DB 에 있는데 앞부분이 잘린 사본을 받았다");
     assert.match(r.err, /날짜가 빠진 달 03/);
   });
+});
+
+/**
+ * ⚠⚠**앞부분 공백을 허용할지 `game` 만 보고 정하면 바로 그 누락이 근거에서 빠진다**(2026-09-11 · 3중 검토 3차 P1 · 실행 재현).
+ * 10/1 경기를 못 받아 `game` 에 10/3 만 있을 때, 10/1 행이 잘린 사본(10/2~31)이 오면 「그 달에 첫 날짜 행보다 이른 경기가 없다」가
+ * 참이 되어 **개막 달로 받아들이고** — 10/1 의 치러짐 표시를 지우고 사본 시각을 새로 써서 A·B 가 **함께 풀린다.**
+ * → 전에 **관측한 날**(치러짐 표시 · 앞으로의 경기)도 근거로 본다. 관측한 날이 첫 날짜 행보다 이르면 잘린 것이다.
+ */
+test("⚠⚠전에 관측한 날이 빠진 사본은 개막 달이 아니다 — 누락 증거를 지우지 않고 멈춘다", async () => {
+  const oct = (withFirst: boolean, first: string): string => {
+    let s = withFirst ? first : "";
+    s += row("1003", "巨人", "阪神", "東京ドーム", "18:00", "/scores/2026/1003/t-g-03/");
+    for (let d = 2; d <= 31; d++) {
+      if (d === 3) continue;
+      s += `<tr id="date10${String(d).padStart(2, "0")}" class=""><th>10/${d}</th><td>&nbsp;</td><td>&nbsp;</td></tr>`;
+    }
+    return s;
+  };
+  const cases = [
+    { label: "치러짐 표시", first: row("1001", "DeNA", "広島", "横　浜", "18:00", "/scores/2026/1001/c-db-01/"), table: "schedule_played" },
+    { label: "앞으로의 경기", first: row("1001", "DeNA", "広島", "横　浜", "18:00"), table: "upcoming_game" },
+  ];
+  for (const c of cases) {
+    await withArchive(async ({ games, run, db }) => {
+      const pre = db();
+      upsertGame(pre, {
+        gameId: "oct3", season: 2026, gameDate: "2026-10-03", awayCode: "t", homeCode: "g", gameNo: 1,
+        status: "played", notPlayedReason: null, competition: "regular", sourceUrl: "https://npb.jp/x",
+        fetchedAt: NOW, awayRuns: 0, homeRuns: 1,
+      });
+      pre.close();
+      await writeMonth(games, "10", oct(true, c.first));
+      assert.equal(run().code, 0, `${c.label}: 완결된 사본의 첫 적재가 실패했다`);
+      // 10/1 행이 잘린 사본 — 10/2 부터 싣는다
+      await writeMonth(games, "10", oct(false, c.first), "2026-10-04T00:44:00.000Z");
+      const r = run();
+      assert.equal(r.code, 1, `${c.label}: 전에 관측한 10/1 이 빠진 사본을 개막 달로 받았다`);
+      assert.match(r.err, /날짜가 빠진 달 10/);
+      const d = db();
+      try {
+        assert.equal(count(d, `SELECT COUNT(*) n FROM ${c.table} WHERE game_date = '2026-10-01'`), 1, `${c.label}: 10/1 관측을 지웠다`);
+        const m = d.raw.prepare("SELECT fetched_at f FROM schedule_month WHERE month = 10").get() as unknown as { f: string };
+        assert.equal(m.f, "2026-08-17T00:44:00.000Z", `${c.label}: 되돌리지 않고 사본 시각을 새로 썼다`);
+      } finally {
+        d.close();
+      }
+    });
+  }
 });
 
 /**
