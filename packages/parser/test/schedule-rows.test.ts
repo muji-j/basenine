@@ -120,11 +120,14 @@ test("⚠⚠10·11월의 링크·숫자 없는 행만 모르는 표기를 예정
   assert.equal(halfDecided.unreadable, 0, "대진이 반쯤 정해진 포스트시즌 행을 못 읽음으로 봤다 — 10월에 적재기가 멈춘다");
   assert.equal(halfDecided.placeholder, 1);
   assert.equal(halfDecided.games.length, 0, "대진 미정 행을 경기로 넣었다");
+  // ⚠받은 표기를 남긴다 — 진짜 미정 표기인지 약칭이 깨진 것인지는 사람이 로그로 가른다(수정분 재검토 1차 R1 · 2차 권고)
+  assert.deepEqual(halfDecided.pendingMatchups, ["阪神−CS勝者"], "예외로 받은 행의 표기를 안 남겼다 — P10 확인을 로그로 못 한다");
   const undecided = classifyScheduleRows(page(gameRow("1101", "セ優勝", "パ優勝")), 2026);
   assert.equal(undecided.placeholder, 1, "11월 대진 미정 행을 예정 표기로 안 받았다");
 
   const linked = classifyScheduleRows(page(gameRow("1010", "阪神", "CS勝者", { link: "/scores/2026/1010/t-x-01/" })), 2026);
   assert.equal(linked.unreadable, 1, "점수 링크가 있는 행의 모르는 표기를 예정 표기로 받았다 — 치러진 경기가 조용히 빠진다");
+  assert.deepEqual(linked.pendingMatchups, [], "못 읽은 행의 표기를 예외 목록에 넣었다");
   const scored = classifyScheduleRows(page(gameRow("1010", "阪神", "CS勝者", { score: [3, 2] })), 2026);
   assert.equal(scored.unreadable, 1, "점수 숫자가 있는 행의 모르는 표기를 예정 표기로 받았다");
   const regular = classifyScheduleRows(page(gameRow("0930", "阪神", "CS勝者")), 2026);

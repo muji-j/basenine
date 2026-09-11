@@ -205,6 +205,19 @@ test("⚠대진 미정 예정 표기만 있는 달은 정상 종료한다", asyn
   });
 });
 
+/**
+ * ⚠**10·11월 예외로 받은 행은 표기를 로그에 찍는다**(2026-09-11 · 수정분 재검토 1차 R1 · 2차 권고).
+ * 예외는 「진짜 미정 표기(`CS勝者`)」와 「약칭이 깨진 미래 경기」를 못 가른다 — 표본이 없어 패턴으로 좁히면 추측이 틀릴 때
+ * 10월 정지가 되살아난다. 그래서 **좁히지 않고 보이게** 한다. 런북의 확인 날짜(리그 우승 확정 직후)에 사람이 이 줄을 본다.
+ */
+test("⚠10·11월 예외로 받은 대진 미정 행의 표기를 요약에 찍는다", async () => {
+  await withLoad({ "10": row("1010", "阪神", "CS勝者", "甲子園", "18:00") + row("1011", "阪神", "CS勝者", "甲子園", "18:00") }, (_db, out, err, code) => {
+    assert.equal(code, 0, `대진 미정 행이 있는 10월을 실패로 봤다: ${err}`);
+    assert.match(out, /대진 미정 팀 칸 2행/, "예외로 받은 행 수를 안 찍었다");
+    assert.match(out, /阪神−CS勝者/, "예외로 받은 표기를 안 찍었다 — 진짜 미정 표기인지 로그로 못 가른다");
+  });
+});
+
 test("⚠날짜 행이 하나도 없는 달은 구조 변경이다 — 실패로 끝난다", async () => {
   await withLoad({ "08": '<div class="new-layout"><span>8/18 DeNA-巨人</span></div>' }, (_db, _out, err, code) => {
     assert.equal(code, 1, "날짜 행이 없는데 성공으로 끝냈다");
@@ -453,6 +466,92 @@ test("⚠⚠전에 관측한 날이 빠진 사본은 개막 달이 아니다 —
       }
     });
   }
+});
+
+/**
+ * ⚠⚠**予告先発에만 남은 날도 관측한 날이다**(2026-09-11 · 수정분 재검토 3차 P1 · 실행 재현).
+ * 10/1 이 사본에서 예정 표기(대진 미정)였고 우리에게 경기 행이 없으면 「아는 날」은 **예고뿐**이다. 그 날을 자른 사본이
+ * 개막 달로 통과하면 사본 시각이 새로워져 **B(예고됐는데 못 받음)가 조용히 꺼진다.**
+ */
+test("⚠⚠予告先発에만 남은 지난 날이 빠진 사본도 멈춘다 — B 의 근거를 지우지 않는다", async () => {
+  const ph = (mmdd: string): string =>
+    `<tr id="date${mmdd}" class=""><th>${Number(mmdd.slice(0, 2))}/${Number(mmdd.slice(2))}</th><td><div class="commentLong">セ・CSファーストS</div></td><td><div class="place"></div></td></tr>`;
+  const oct = (withFirst: boolean): string => {
+    let s = withFirst ? ph("1001") : "";
+    for (let d = 2; d <= 31; d++) s += `<tr id="date10${String(d).padStart(2, "0")}" class=""><th>10/${d}</th><td>&nbsp;</td><td>&nbsp;</td></tr>`;
+    return s;
+  };
+  await withArchive(async ({ games, run, db }) => {
+    const pre = db();
+    for (const [team, opp] of [["g", "t"], ["t", "g"]] as const) {
+      pre.raw.prepare(
+        `INSERT INTO probable_pitcher (game_date, team_code, opponent_code, player_id, source_name, venue, start_time, league, source_url, fetched_at)
+         VALUES ('2026-10-01', ?, ?, NULL, NULL, NULL, '18:00', 'cl', 'https://npb.jp/announcement/starter/', '2026-09-30T04:00:00.000Z')`,
+      ).run(team, opp);
+    }
+    pre.close();
+    await writeMonth(games, "10", oct(true), "2026-09-30T00:44:00.000Z");
+    assert.equal(run().code, 0, "완결된 사본의 첫 적재가 실패했다");
+    await writeMonth(games, "10", oct(false), "2026-10-04T00:44:00.000Z");
+    const r = run();
+    assert.equal(r.code, 1, "予告先発에만 남은 10/1 이 빠진 사본을 개막 달로 받았다 — B 가 꺼진다");
+    assert.match(r.err, /날짜가 빠진 달 10/);
+    const d = db();
+    try {
+      const m = d.raw.prepare("SELECT fetched_at f FROM schedule_month WHERE month = 10").get() as unknown as { f: string };
+      assert.equal(m.f, "2026-09-30T00:44:00.000Z", "되돌리지 않고 사본 시각을 새로 썼다 — B 가 꺼진다");
+    } finally {
+      d.close();
+    }
+  });
+});
+
+/**
+ * ⚠⚠**아직 오지 않은 날의 관측은 정당하게 사라질 수 있다 — 개막이 같은 달 안에서 늦춰지면**(2026-09-11 · 수정분 재검토 2차 D1 · 실행 재현).
+ * 관측한 날을 근거로 삼자 3/26 개막(앞으로의 경기)을 본 뒤 3/30 으로 늦춘 사본이 「잘린 사본」으로 멈췄고, 멈추면 되돌리므로
+ * **3/26 관측이 영원히 남아 스스로 못 풀렸다.** 잘림의 증거는 **사본을 받은 날에 이미 지난 날**뿐이다 — 지난 날은 치렀든 중지됐든
+ * 페이지에 남는다. 아직 안 온 날이 빠진 것은 일정 변경이다.
+ */
+test("⚠⚠개막이 같은 달 안에서 늦춰진 사본은 받는다 — 아직 오지 않은 날의 관측으로 멈추지 않는다", async () => {
+  await withArchive(async ({ games, run, db }) => {
+    let early = row("0326", "巨人", "阪神", "東京ドーム", "18:00");
+    for (let d = 27; d <= 31; d++) early += `<tr id="date03${d}" class=""><th>3/${d}</th><td>&nbsp;</td><td>&nbsp;</td></tr>`;
+    await writeMonth(games, "03", early, "2026-03-10T00:44:00.000Z");
+    assert.equal(run().code, 0);
+    // 원래 개막일의 예고도 이미 나와 있었다 — 아직 오지 않은 날의 예고도 잘림의 증거가 아니다
+    const pre = db();
+    for (const [team, opp] of [["g", "t"], ["t", "g"]] as const) {
+      pre.raw.prepare(
+        `INSERT INTO probable_pitcher (game_date, team_code, opponent_code, player_id, source_name, venue, start_time, league, source_url, fetched_at)
+         VALUES ('2026-03-26', ?, ?, NULL, NULL, NULL, '18:00', 'cl', 'https://npb.jp/announcement/starter/', '2026-03-10T04:00:00.000Z')`,
+      ).run(team, opp);
+    }
+    pre.close();
+    const late = row("0330", "巨人", "阪神", "東京ドーム", "18:00") + `<tr id="date0331" class=""><th>3/31</th><td>&nbsp;</td><td>&nbsp;</td></tr>`;
+    await writeMonth(games, "03", late, "2026-03-11T00:44:00.000Z");
+    const r = run();
+    assert.equal(r.code, 0, `개막 연기(아직 오지 않은 3/26 이 사라짐)를 잘린 사본으로 봤다: ${r.err}`);
+    assert.equal(run().code, 0, "다음 실행에서도 풀리지 않았다");
+    const d = db();
+    try {
+      const dates = (d.raw.prepare("SELECT game_date g FROM upcoming_game WHERE game_date LIKE '2026-03-%' ORDER BY 1").all() as unknown as { g: string }[]).map((x) => x.g);
+      assert.deepEqual(dates, ["2026-03-30"], "늦춰진 개막으로 앞으로의 경기를 바꾸지 않았다");
+    } finally {
+      d.close();
+    }
+  });
+  // ⚠사본 시각을 모르면 「이미 지난 날」을 가를 수 없다 — 전부 세어 멈춘다(안전한 쪽 · M11)
+  await withArchive(async ({ games, run }) => {
+    let early = row("0326", "巨人", "阪神", "東京ドーム", "18:00");
+    for (let d = 27; d <= 31; d++) early += `<tr id="date03${d}" class=""><th>3/${d}</th><td>&nbsp;</td><td>&nbsp;</td></tr>`;
+    await writeMonth(games, "03", early, "2026-03-10T00:44:00.000Z");
+    assert.equal(run().code, 0);
+    const late = row("0330", "巨人", "阪神", "東京ドーム", "18:00") + `<tr id="date0331" class=""><th>3/31</th><td>&nbsp;</td><td>&nbsp;</td></tr>`;
+    await writeMonth(games, "03", late, "not-a-date");
+    const r = run();
+    assert.equal(r.code, 1, "사본 시각을 모르는데 전에 관측한 날이 빠진 사본을 받았다");
+    assert.match(r.err, /날짜가 빠진 달 03/);
+  });
 });
 
 /**

@@ -76,12 +76,22 @@ const upsertMonth = db.raw.prepare(
  * ⚠⚠**`game` 만 보면 바로 그 누락이 근거에서 빠진다**(2026-09-11 · 3중 검토 3차 P1 · 실행 재현). 10/1 경기를 못 받았으면
  * `game` 의 가장 이른 날은 10/3 이라, 10/1 행이 잘린 사본이 「개막 달」로 통과해 **10/1 의 치러짐 표시를 지운다.**
  * → **전에 받은 사본이 관측한 날**(치러짐 표시 · 앞으로의 경기)도 본다. 이 조회는 그 달을 지우기 **전에** 돈다.
+ * ⚠⚠**予告先発도 관측이다**(2026-09-11 · 수정분 재검토 3차 P1 · 실행 재현). 10/1 이 사본에서 예정 표기였고 경기 행이 없으면
+ *   아는 것은 예고뿐이라, 그것을 안 보면 10/1 을 자른 사본이 통과해 **B 가 꺼진다.**
+ * ⚠⚠**「앞으로의 경기」·予告先発은 새 사본을 받은 날(JST)에 이미 지난 날만 센다**(수정분 재검토 2차 D1 · 실행 재현).
+ *   아직 안 온 날은 **정당하게 사라질 수 있다** — 개막이 같은 달 안에서 늦춰지면 3/26 관측이 남아 멈추고, 멈추면 되돌리므로
+ *   **영원히 못 풀렸다.** 지난 날은 치렀든 중지됐든 페이지에 남으므로 그것만이 잘림의 증거다.
+ *   경기 행 · 치러짐 표시는 그 자체로 지난 사실이라 날짜를 안 가린다. ⚠사본 시각을 모르면 **전부 센다**(안전한 쪽 · M11).
  */
 const firstKnownOfMonth = db.raw.prepare(
-  `SELECT MIN(d) AS d FROM (
+  `WITH c(cut) AS (SELECT COALESCE(substr(datetime(?3, '+9 hours'), 1, 10), '9999-12-31'))
+   SELECT MIN(d) AS d FROM (
      SELECT MIN(game_date) AS d FROM game WHERE season = ?1 AND substr(game_date, 6, 2) = ?2
      UNION ALL SELECT MIN(game_date) FROM schedule_played WHERE season = ?1 AND substr(game_date, 6, 2) = ?2
-     UNION ALL SELECT MIN(game_date) FROM upcoming_game WHERE season = ?1 AND substr(game_date, 6, 2) = ?2
+     UNION ALL SELECT MIN(game_date) FROM upcoming_game
+                WHERE season = ?1 AND substr(game_date, 6, 2) = ?2 AND game_date < (SELECT cut FROM c)
+     UNION ALL SELECT MIN(game_date) FROM probable_pitcher
+                WHERE substr(game_date, 1, 4) = ?4 AND substr(game_date, 6, 2) = ?2 AND game_date < (SELECT cut FROM c)
    )`,
 );
 
@@ -96,7 +106,7 @@ const firstKnownOfMonth = db.raw.prepare(
  * ⚠개막이 미뤄져 개막 달의 첫 날짜가 **뒤로** 밀리면 전에 관측한 날이 앞서므로 멈춘다 — 조용히 받는 것보다 안전한 쪽이다.
  * @returns 빠진 날(`[]` 이면 완결)
  */
-function missingDays(mm: string, dateKeys: readonly string[]): number[] {
+function missingDays(mm: string, dateKeys: readonly string[], fetchedAt: string | null): number[] {
   const last = new Date(Date.UTC(season, Number(mm), 0)).getUTCDate();
   const days = new Set(dateKeys.filter((k) => k.slice(0, 2) === mm).map((k) => Number(k.slice(2))));
   const present = [...days].sort((a, b) => a - b);
@@ -107,7 +117,7 @@ function missingDays(mm: string, dateKeys: readonly string[]): number[] {
   if (first === 1) return gaps;
   // 앞부분이 빈다 — 개막 달인가
   const firstListed = `${season}-${mm}-${String(first).padStart(2, "0")}`;
-  const earliest = (firstKnownOfMonth.get(season, mm) as { d: string | null } | undefined)?.d ?? null;
+  const earliest = (firstKnownOfMonth.get(season, mm, fetchedAt, String(season)) as { d: string | null } | undefined)?.d ?? null;
   const prefix = earliest !== null && earliest < firstListed ? all.filter((d) => d < first) : [];
   return [...prefix, ...gaps];
 }
@@ -146,6 +156,8 @@ const playedSeen = new Map<string, number>();
 const orphans: string[] = [];
 
 let months = 0, kept = 0, playedRows = 0, nonTeam = 0;
+/** 10·11월 예외로 예정 표기에 넣은 팀 칸 행의 표기 — 요약에 찍어 사람이 진짜 미정 표기인지 가른다(수정분 재검토 1차 R1) */
+const pendingLabels: string[] = [];
 /**
  * ⚠**달 판정 — 여기가 M7 의 급소다.** 분류는 파서의 `classifyScheduleRows` 한 벌이다(수집기 `discover.ts` 와 같다 · M1).
  *
@@ -199,10 +211,11 @@ db.transaction(() => {
     const fetchedAt = fetchedAtOf(join(dir, f.replace(/\.html\.gz$/, ".meta.json")));
     const r = parseUpcoming(html, season);
     nonTeam += r.nonTeamRows;
+    pendingLabels.push(...r.pendingMatchupLabels);
     if (r.dateRows === 0) noDateRowMonths.push(f);
     else if (r.unreadableRows > 0) unreadableMonths.push(`${f}(${r.unreadableRows}행)`);
     else {
-      const missing = missingDays(mm, r.dateKeys);
+      const missing = missingDays(mm, r.dateKeys, fetchedAt);
       if (missing.length > 0) {
         incompleteMonths.push(`날짜가 빠진 달 ${mm}(없는 날 ${missing.slice(0, 6).join(",")}${missing.length > 6 ? `… 외 ${missing.length - 6}` : ""})`);
       } else if (r.games.length + r.nonTeamRows + r.placeholderRows === 0) {
@@ -263,7 +276,14 @@ db.transaction(() => {
 console.log(
   `일정 ${months}개월분 · 앞으로의 경기 ${kept}건 적재 · 치러진 행 ${playedRows}건 제외` +
     ` · 구단 아닌 행 ${nonTeam}건 · 경기가 없는 달 ${noGameMonths.length}개` +
-    (noGameMonths.length === 0 ? "" : `(${noGameMonths.join("·")})`),
+    (noGameMonths.length === 0 ? "" : `(${noGameMonths.join("·")})`) +
+    /**
+     * ⚠**10·11월 예외로 받은 행은 표기를 찍는다** — 예외는 진짜 미정 표기(`CS勝者`)와 약칭이 깨진 미래 경기를 못 가른다.
+     * 표본이 없어 패턴으로 좁히지 않았다(추측이 틀리면 10월 정지가 되살아난다). 런북의 확인 날짜에 **사람이 이 줄을 본다.**
+     */
+    (pendingLabels.length === 0
+      ? ""
+      : ` · 대진 미정 팀 칸 ${pendingLabels.length}행(표기: ${[...new Set(pendingLabels)].slice(0, 8).join(" · ")}${new Set(pendingLabels).size > 8 ? " …" : ""})`),
 );
 /**
  * ⚠**「0건」과 「안 쟀음」을 구별해 쓴다**(작업규칙 7) — 그래서 0 이어도 말한다.

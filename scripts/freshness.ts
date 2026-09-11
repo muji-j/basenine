@@ -33,7 +33,7 @@
  */
 import { DatabaseSync } from "node:sqlite";
 import { collectionEvidence } from "@bb-app/store";
-import { backstopDays, collectionVerdict } from "@bb-app/domain";
+import { LOOKBACK_DAYS, backstopDays, collectionVerdict } from "@bb-app/domain";
 
 const [dbPath, staleDaysArg] = process.argv.slice(2);
 if (!dbPath) {
@@ -156,9 +156,12 @@ if (evidence.careerPlayers === 0) {
  * ⚠**취득 시각을 모르는 予告先発 행은 맥박에서 빠진다**(설계 D3) — 그래서 따로 센다. 안 세면 사이드카 결손이
  * 「予告先発 수집이 멈췄다」로만 보인다(3중 검토 2차 N2).
  */
-const startersUnknown = (db.prepare("SELECT COUNT(*) AS n FROM starters_fetch WHERE fetched_at IS NULL").get() as { n: number }).n;
+const startersUnknown = (db.prepare(
+  // ⚠판정 창 안만 센다 — 오래된 「모름」 한 장이 매일 경고를 찍으면 경고가 무시된다(수정분 재검토 2차 Minor)
+  "SELECT COUNT(*) AS n FROM starters_fetch WHERE fetched_at IS NULL AND fetched_date >= DATE(?, ?)",
+).get(todayJst, `-${LOOKBACK_DAYS} days`) as { n: number }).n;
 if (startersUnknown > 0) {
-  console.error(`⚠予告先発 취득 시각 모름 ${startersUnknown}장 — 사이드카(*.meta.json)가 없거나 깨졌다. 이 행들은 맥박에서 빠진다`);
+  console.error(`⚠予告先発 취득 시각 모름 ${startersUnknown}장(최근 ${LOOKBACK_DAYS}일) — 사이드카(*.meta.json)가 없거나 깨졌다. 이 행들은 맥박에서 빠진다`);
 }
 const upcoming = db.prepare(
   `SELECT COUNT(*) AS n, MAX(game_date) AS last,

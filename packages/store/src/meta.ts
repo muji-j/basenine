@@ -22,7 +22,8 @@ import { readFileSync } from "node:fs";
  * ⚠**앞모양만으로는 부족하다** — `2026-13-99T00:00` 도 모양은 맞는다. `Date.parse` 가 유한해야 한다.
  * ⚠**시간대 표기(`Z` · `±HH:MM`)로 끝나야 한다**(2026-09-11 · 3중 검토 2차 N3 · 실측). 없으면 `Date.parse` 가
  *   **실행 기계의 현지 시간**으로 읽어 이 기계(JST)와 CI(UTC)에서 9시간이 갈리고, SQLite `datetime()`(UTC 로 읽는다)과도 갈린다.
- * ⚠**정리 마이그레이션 `022-invalid-fetched-at.sql` 이 같은 세 조건을 SQL 로 건다** — 한쪽만 고치면 정의가 두 벌이 된다.
+ * ⚠⚠**정리 마이그레이션 `022-invalid-fetched-at.sql` 은 조건을 따로 적지 않고 이 함수를 부른다**(`db.ts` 가 `bb_fetched_at` 으로 등록).
+ *   조건을 SQL 로 흉내 냈을 때 SQLite `datetime()` 과 경계값에서 갈렸다(`24:01` · `+15:00` · 수정분 재검토 2·3차) — **여기가 유일한 정의다.**
  */
 const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/;
 
@@ -33,7 +34,7 @@ const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\
  * 실물 사이드카는 전부 이미 이 모양이라(CI DB 5개 표에서 `Z` 로 안 끝나는 값 0) **정규화로 바뀌는 값이 없다.**
  * ⚠`new Date(ms)` 는 주어진 값을 해석할 뿐 시계를 읽지 않는다(M6).
  */
-function timestamp(v: unknown): string | null {
+export function normalizeFetchedAt(v: unknown): string | null {
   if (typeof v !== "string" || !TIMESTAMP.test(v)) return null;
   const ms = Date.parse(v);
   return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
@@ -64,5 +65,5 @@ export function fetchedAtOf(metaPath: string): string | null {
    * ⚠`checkedAt` 이 **있지만 무효**여도 같은 방향으로 떨어진다 — 「마지막으로 본 시각」을 모르면
    *   「마지막으로 바뀐 시각」이 그다음으로 정직한 답이다.
    */
-  return timestamp(m.checkedAt) ?? timestamp(m.fetchedAt);
+  return normalizeFetchedAt(m.checkedAt) ?? normalizeFetchedAt(m.fetchedAt);
 }

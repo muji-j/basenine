@@ -136,9 +136,12 @@ test("⚠B 가 울리면 그 달 사본의 취득 시각을 적는다 — 모르
     db.raw.prepare(
       "INSERT INTO schedule_month (season, month, source, fetched_at, date_rows, games) VALUES (?, ?, 'x', NULL, 30, 90)",
     ).run(Number(d.slice(0, 4)), Number(d.slice(5, 7)));
-    db.raw.prepare(
+    const insFetch = db.raw.prepare(
       "INSERT INTO starters_fetch (fetched_date, game_date, no_games, source_url, fetched_at) VALUES (?, ?, 0, 'x', NULL)",
-    ).run(shift(d, -1), d);
+    );
+    insFetch.run(shift(d, -1), d);
+    // ⚠판정 창(30일) 밖의 오래된 「모름」은 세지 않는다 — 한 장이라도 남으면 매일 경고가 찍혀 무시된다(수정분 재검토 2차 Minor)
+    insFetch.run(shift(today, -60), shift(today, -60));
   } finally {
     db.close();
   }

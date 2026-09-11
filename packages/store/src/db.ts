@@ -8,6 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { normalizeFetchedAt } from "./meta.ts";
 
 const MIGRATIONS_DIR = fileURLToPath(new URL("../migrations/", import.meta.url));
 
@@ -119,6 +120,13 @@ function migrate(raw: DatabaseSync, nowIso: string): void {
  * ⚠**목록이 낡았어도 안전해야 한다** — 그래서 아래에서 잠근 뒤 다시 본다.
  */
 export function applyPendingMigrations(raw: DatabaseSync, nowIso: string, applied: ReadonlySet<string>): void {
+  /**
+   * ⚠⚠**「유효한 취득 시각」의 정의는 JS 한 벌이고, SQL 마이그레이션도 그것을 부른다**(2026-09-11 · 수정분 재검토 3차 P2).
+   * 조건을 SQL 로 흉내 내자 SQLite `datetime()` 과 JS `Date.parse` 가 경계값에서 갈렸다(`24:01` 은 SQL 만 받고 `+15:00` 은 JS 만 받는다) —
+   * 그러면 JS 가 거부한 값을 022 가 남기고, 그 값이 문자열 비교로 정상 시각보다 커 **upsert 가 영영 못 덮는다.**
+   * → `meta.ts` 의 `normalizeFetchedAt` 를 SQL 함수 `bb_fetched_at` 으로 등록한다. 마이그레이션을 적용하는 길은 여기 하나다.
+   */
+  raw.function("bb_fetched_at", { deterministic: true }, (v) => normalizeFetchedAt(v));
   /**
    * ⚠**마이그레이션 하나 = 쓰기 잠금 트랜잭션 하나 · 잠근 뒤에 「이미 적용됐나」를 다시 본다**(M5 · 2026-09-11).
    * 예전에는 위에서 한 번 읽은 목록만 믿고 적용했다 — 새 마이그레이션(021)을 받은 로컬 DB 에서 `npm test` 를 돌리자

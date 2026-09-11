@@ -43,10 +43,15 @@ export interface UpcomingResult {
   dateRows: number;
   /** 경기가 없는 날의 공백 행 수 */
   blankRows: number;
-  /** 대진이 안 정해진 행사 자리(`セ・CSファーストS` · `(予備日)` …) 행 수 */
+  /**
+   * 대진이 안 정해진 행사 자리(`セ・CSファーストS` · `(予備日)` …) 행 수.
+   * ⚠**10·11월의 링크·숫자 없는 팀 칸 행에 모르는 표기가 든 것도 여기 센다**(`PENDING_MATCHUP_MONTHS`) — 그 표기는 `pendingMatchupLabels`
+   */
   placeholderRows: number;
   /** 날짜 행의 `MMDD` — 중복 없이 나온 순서대로. 적재기의 날짜 완결성 판정 재료 */
   dateKeys: string[];
+  /** 10·11월 예외로 예정 표기에 넣은 팀 칸 행의 표기(`home−away`) — 적재기가 요약에 찍는다(수정분 재검토 1차 R1) */
+  pendingMatchupLabels: string[];
 }
 
 /**
@@ -55,10 +60,10 @@ export interface UpcomingResult {
  * | 분류 | 조건 |
  * |---|---|
  * | 공백 | 날짜 머리칸(`<th>`)을 뺀 나머지가 태그·공백·`&nbsp;` 뿐 — 그 날 경기가 없다 |
- * | 예정 표기 | 팀 칸이 없고, `div.commentLong` 에 글자가 있고, 그것을 빼면 나머지가 공백뿐 — 대진 미정 행사 자리 |
+ * | 예정 표기 | 팀 칸이 없고, `div.commentLong` 에 글자가 있고, 그것을 빼면 나머지가 공백뿐 — 대진 미정 행사 자리 · ⚠**또는 10·11월의 점수 링크·숫자 없는 팀 칸 행에 모르는 표기**(`PENDING_MATCHUP_MONTHS` · 표기는 `pendingMatchups`) |
  * | 경기 | `div.team1`·`div.team2` 가 둘 다 비지 않았고 둘 다 NPB 구단 약칭 |
  * | 구단 아님 | 두 칸이 `セ・リーグ`·`パ・リーグ` 의 조합(올스타 · 허용 목록 `NON_TEAM_LABELS`) |
- * | 못 읽음 | 그 밖 — **칸에 글자가 있는데 경기로 못 읽었다**, **팀 칸이 비었다**, **점수 숫자가 있는데 점수 링크가 없다**, **허용 목록 밖 구단 표기** |
+ * | 못 읽음 | 그 밖 — **칸에 글자가 있는데 경기로 못 읽었다**, **팀 칸이 비었다**, **점수 숫자가 있는데 점수 링크가 없다**, **허용 목록 밖 구단 표기**(10·11월의 링크·숫자 없는 행은 예외 — 위) |
  *
  * ⚠**「예정 표기」는 실물에서 찾았다**(2026-09-11). 설계 초안에는 넷뿐이었는데, 실물 월간 일정 75장 전수에
  * 돌리자 **2026년 10월 페이지 1장에서 30행**이 「못 읽음」으로 떨어졌다 — `セ・CSファーストS` · `パ・CSファイナルS` ·
@@ -84,6 +89,11 @@ export interface ScheduleRows {
   games: UpcomingGame[];
   nonTeam: number;
   unreadable: number;
+  /**
+   * **10·11월 예외로 「예정 표기」에 넣은 팀 칸 행의 표기**(`阪神−CS勝者` · 행마다 · 중복 그대로) — `placeholder` 에 이미 세어져 있다.
+   * ⚠예외는 진짜 미정 표기와 **약칭이 깨진 미래 경기**를 못 가른다(수정분 재검토 1차 R1). 좁히지 않고 **보이게** 한다 — 적재기가 찍는다.
+   */
+  pendingMatchups: string[];
 }
 
 /**
@@ -122,7 +132,7 @@ const PENDING_MATCHUP_MONTHS: ReadonlySet<string> = new Set(["10", "11"]);
  * @param season 연도. **페이지에 없다** — 표는 `8/18（火）` 라고만 쓴다. 호출자가 안다. 파서는 시계를 읽지 않는다(M6).
  */
 export function classifyScheduleRows(html: string, season: number): ScheduleRows {
-  const out: ScheduleRows = { dateRows: 0, dateKeys: [], blank: 0, placeholder: 0, games: [], nonTeam: 0, unreadable: 0 };
+  const out: ScheduleRows = { dateRows: 0, dateKeys: [], blank: 0, placeholder: 0, games: [], nonTeam: 0, unreadable: 0, pendingMatchups: [] };
   const seenKeys = new Set<string>();
 
   for (const m of html.matchAll(ROW)) {
@@ -155,7 +165,10 @@ export function classifyScheduleRows(html: string, season: number): ScheduleRows
     const scored = /<div class="score[12]">\s*\d+\s*<\/div>/.test(row);
     if (!isTeamShortName(home) || !isTeamShortName(away)) {
       if (NON_TEAM_LABELS.has(home) && NON_TEAM_LABELS.has(away)) out.nonTeam += 1;
-      else if (!played && !scored && PENDING_MATCHUP_MONTHS.has(mmdd.slice(0, 2))) out.placeholder += 1;
+      else if (!played && !scored && PENDING_MATCHUP_MONTHS.has(mmdd.slice(0, 2))) {
+        out.placeholder += 1;
+        out.pendingMatchups.push(`${home}−${away}`);
+      }
       else out.unreadable += 1;
       continue;
     }
@@ -191,5 +204,6 @@ export function parseUpcoming(html: string, season: number): UpcomingResult {
     blankRows: r.blank,
     placeholderRows: r.placeholder,
     dateKeys: r.dateKeys,
+    pendingMatchupLabels: r.pendingMatchups,
   };
 }
