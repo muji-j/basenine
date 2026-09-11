@@ -105,6 +105,18 @@ const SCORE_LINK = /\/scores\/\d{4}\/\d{4}\/[^/"']+\//;
 const NON_TEAM_LABELS: ReadonlySet<string> = new Set(["セ・リーグ", "パ・リーグ"]);
 
 /**
+ * **대진이 정해지는 도중일 수 있는 달** — 포스트시즌(CS · 일본시리즈)이 치러지는 10·11월(2020 은 11월).
+ *
+ * ⚠⚠**이 달의 점수 링크·숫자 없는 행만** 모르는 구단 표기를 「예정 표기」로 받는다(2026-09-11 · 3중 검토 2차 N1).
+ * 리그 우승이 정해진 뒤 `阪神 − CS勝者` 처럼 한쪽만 구단인 행이 나올 수 있는데 그 모양은 **실물로 안 쟀다** —
+ * 못 읽음으로 두면 이 설계가 겨냥한 10월에 적재기가 멈춘다.
+ * ⚠**링크·숫자가 있으면 못 읽음이다** — 허용 목록의 사유(치러진 경기가 조용히 빠진다)는 거기서 성립한다.
+ * ⚠**3~9월은 풀지 않는다** — 오프시즌에 약칭이 바뀌면 새 시즌 일정이 공표되는 날 정규시즌 달에서 멈춘다.
+ *   미래 행 전부를 풀면 그 구단 경기가 개막까지 몇 달 동안 「예정 표기」로 숨는다(M7).
+ */
+const PENDING_MATCHUP_MONTHS: ReadonlySet<string> = new Set(["10", "11"]);
+
+/**
  * 월간 일정 표를 행 단위로 분류한다.
  *
  * @param season 연도. **페이지에 없다** — 표는 `8/18（火）` 라고만 쓴다. 호출자가 안다. 파서는 시계를 읽지 않는다(M6).
@@ -139,13 +151,14 @@ export function classifyScheduleRows(html: string, season: number): ScheduleRows
       else out.unreadable += 1;
       continue;
     }
+    const played = SCORE_LINK.test(row);
+    const scored = /<div class="score[12]">\s*\d+\s*<\/div>/.test(row);
     if (!isTeamShortName(home) || !isTeamShortName(away)) {
       if (NON_TEAM_LABELS.has(home) && NON_TEAM_LABELS.has(away)) out.nonTeam += 1;
+      else if (!played && !scored && PENDING_MATCHUP_MONTHS.has(mmdd.slice(0, 2))) out.placeholder += 1;
       else out.unreadable += 1;
       continue;
     }
-    const played = SCORE_LINK.test(row);
-    const scored = /<div class="score[12]">\s*\d+\s*<\/div>/.test(row);
     if (scored && !played) {
       out.unreadable += 1;
       continue;

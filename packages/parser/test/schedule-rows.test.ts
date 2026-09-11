@@ -105,6 +105,32 @@ test("⚠「구단 아님」은 올스타 표기만이다 — 모르는 약칭�
   assert.equal(mixed.unreadable, 1, "올스타 표기와 구단이 섞인 행을 구단 아님으로 받았다");
 });
 
+/**
+ * ⚠⚠**대진이 반쯤 정해진 포스트시즌 행**(2026-09-11 · 3중 검토 2차 N1 · ⚠실물 표본 없음).
+ * 리그 우승이 정해진 뒤 NPB 가 `阪神 − CS勝者` 처럼 한쪽만 구단인 행을 낼 수 있다 — 그 모양은 **아무도 안 쟀다**
+ * (가진 10월 페이지는 확정된 과거 페이지이거나 대진이 정해지기 전 페이지뿐이다). 위 규칙대로 「못 읽음」이면
+ * **이 설계가 겨냥한 바로 그 10월에 적재기가 멈춰 배포가 막힌다.**
+ * → **10·11월**의 **점수 링크·점수 숫자가 없는** 행에 한해 모르는 표기를 「예정 표기」로 받는다.
+ * ⚠**링크나 숫자가 있으면 그대로 못 읽음이다** — 허용 목록의 사유(치러진 경기가 조용히 빠진다)가 거기서 성립한다.
+ * ⚠**3~9월은 그대로 엄격하다** — 오프시즌에 약칭이 바뀌면 새 시즌 일정이 공표되는 날 정규시즌 달에서 멈춘다.
+ *   미래 행 전부를 풀면 그 구단 경기가 **개막까지 몇 달 동안** 「예정 표기」로 숨는다(M7).
+ */
+test("⚠⚠10·11월의 링크·숫자 없는 행만 모르는 표기를 예정 표기로 받는다 — 치러진 행과 정규시즌 달은 그대로 엄격하다", () => {
+  const halfDecided = classifyScheduleRows(page(gameRow("1010", "阪神", "CS勝者")), 2026);
+  assert.equal(halfDecided.unreadable, 0, "대진이 반쯤 정해진 포스트시즌 행을 못 읽음으로 봤다 — 10월에 적재기가 멈춘다");
+  assert.equal(halfDecided.placeholder, 1);
+  assert.equal(halfDecided.games.length, 0, "대진 미정 행을 경기로 넣었다");
+  const undecided = classifyScheduleRows(page(gameRow("1101", "セ優勝", "パ優勝")), 2026);
+  assert.equal(undecided.placeholder, 1, "11월 대진 미정 행을 예정 표기로 안 받았다");
+
+  const linked = classifyScheduleRows(page(gameRow("1010", "阪神", "CS勝者", { link: "/scores/2026/1010/t-x-01/" })), 2026);
+  assert.equal(linked.unreadable, 1, "점수 링크가 있는 행의 모르는 표기를 예정 표기로 받았다 — 치러진 경기가 조용히 빠진다");
+  const scored = classifyScheduleRows(page(gameRow("1010", "阪神", "CS勝者", { score: [3, 2] })), 2026);
+  assert.equal(scored.unreadable, 1, "점수 숫자가 있는 행의 모르는 표기를 예정 표기로 받았다");
+  const regular = classifyScheduleRows(page(gameRow("0930", "阪神", "CS勝者")), 2026);
+  assert.equal(regular.unreadable, 1, "정규시즌 달의 모르는 표기를 예정 표기로 받았다 — 약칭 변경이 개막까지 숨는다");
+});
+
 test("⚠경기 칸의 클래스가 바뀌면 못 읽음이다 — 공백으로 받지 않는다", () => {
   const r = classifyScheduleRows(page(gameRow("1030", "阪神", "ソフトバンク", { teamClass: "club" })), 2025);
   assert.equal(r.dateRows, 1);
