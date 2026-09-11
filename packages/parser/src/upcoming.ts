@@ -52,6 +52,8 @@ export interface UpcomingResult {
   dateKeys: string[];
   /** 10·11월 예외로 예정 표기에 넣은 팀 칸 행의 표기(`home−away`) — 적재기가 요약에 찍는다(수정분 재검토 1차 R1) */
   pendingMatchupLabels: string[];
+  /** 내용이 있는(공백이 아닌) 날짜 행의 `MMDD` — 적재기의 잘림 기준선(`classifyScheduleRows` 의 `contentKeys`) */
+  contentDateKeys: string[];
 }
 
 /**
@@ -94,6 +96,12 @@ export interface ScheduleRows {
    * ⚠예외는 진짜 미정 표기와 **약칭이 깨진 미래 경기**를 못 가른다(수정분 재검토 1차 R1). 좁히지 않고 **보이게** 한다 — 적재기가 찍는다.
    */
   pendingMatchups: string[];
+  /**
+   * **내용이 있는 날짜 행**(공백이 아닌 행 — 경기 · 예정 표기 · 구단 아님 · 못 읽음)의 `MMDD` — 중복 없이 나온 순서대로.
+   * ⚠적재기의 잘림 기준선이다(설계 D5). 빈 행까지 세면 개막 전 페이지가 3/1 부터 빈 행을 실을 때 개막일부터 싣는 뒤 페이지를
+   *   「이미 온 날이 빠졌다」로 멈춘다(4라운드 재검토 2차 F2) — 빈 행이 빠져도 잃는 증거는 없다.
+   */
+  contentKeys: string[];
 }
 
 /**
@@ -132,8 +140,15 @@ const PENDING_MATCHUP_MONTHS: ReadonlySet<string> = new Set(["10", "11"]);
  * @param season 연도. **페이지에 없다** — 표는 `8/18（火）` 라고만 쓴다. 호출자가 안다. 파서는 시계를 읽지 않는다(M6).
  */
 export function classifyScheduleRows(html: string, season: number): ScheduleRows {
-  const out: ScheduleRows = { dateRows: 0, dateKeys: [], blank: 0, placeholder: 0, games: [], nonTeam: 0, unreadable: 0, pendingMatchups: [] };
+  const out: ScheduleRows = { dateRows: 0, dateKeys: [], blank: 0, placeholder: 0, games: [], nonTeam: 0, unreadable: 0, pendingMatchups: [], contentKeys: [] };
   const seenKeys = new Set<string>();
+  const seenContent = new Set<string>();
+  const markContent = (mmdd: string): void => {
+    if (!seenContent.has(mmdd)) {
+      seenContent.add(mmdd);
+      out.contentKeys.push(mmdd);
+    }
+  };
 
   for (const m of html.matchAll(ROW)) {
     out.dateRows += 1;
@@ -155,12 +170,17 @@ export function classifyScheduleRows(html: string, season: number): ScheduleRows
       // ⚠**일본시리즈 자리는 장소 칸에도 임시 표기가 있다**(`セ本拠地球場` · 2026-10-24 실측) —
       //   그래서 예정 표기는 「알려진 칸 밖에 글자가 없다」로 본다. 공백은 「머리칸 밖에 글자가 전혀 없다」로 더 엄격하다.
       const outsideKnown = text(body.replace(/<div class="(?:commentLong|place|time|weather|comment)">[^<]*<\/div>/g, ""));
+      if (text(body) === "" && !/<div class="team1">/.test(row)) {
+        out.blank += 1;
+        continue;
+      }
+      markContent(mmdd);
       if (/<div class="team1">/.test(row)) out.unreadable += 1;
-      else if (text(body) === "") out.blank += 1;
       else if (label !== "" && outsideKnown === "") out.placeholder += 1;
       else out.unreadable += 1;
       continue;
     }
+    markContent(mmdd);
     const played = SCORE_LINK.test(row);
     const scored = /<div class="score[12]">\s*\d+\s*<\/div>/.test(row);
     if (!isTeamShortName(home) || !isTeamShortName(away)) {
@@ -205,5 +225,6 @@ export function parseUpcoming(html: string, season: number): UpcomingResult {
     placeholderRows: r.placeholder,
     dateKeys: r.dateKeys,
     pendingMatchupLabels: r.pendingMatchups,
+    contentDateKeys: r.contentKeys,
   };
 }

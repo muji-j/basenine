@@ -6,9 +6,10 @@
  * ⚠**외부 요청 0회.** 이미 받아 둔 일정 페이지를 읽을 뿐이다 —
  * 경기 아카이버가 대상 날짜의 달을 받으면서 **월 단위로 통째** 저장해 두었다(§2-2-1).
  *
- * ⚠**시즌 단위로 지우고 다시 넣는다**(멱등 · M5). 경기가 치러지면 일정 페이지에
- * 점수 링크가 붙고 파서가 `played:true` 로 표시하므로, 다시 넣을 때 **자동으로 빠진다.**
+ * ⚠**읽은 달 단위로 지우고 다시 넣는다**(멱등 · M5 · ~~시즌 단위~~ 는 2026-09-11 에 바뀌었다 — 설계 D5). 경기가 치러지면 일정 페이지에
+ * 점수 링크가 붙고 파서가 `played:true` 로 표시하므로, 다시 넣을 때 **자동으로 빠진다**(치러짐 표시 `schedule_played` 로 옮겨 간다).
  * 손으로 지우는 경로를 만들지 않는다 — 그런 경로는 언젠가 안 돈다.
+ * ⚠**달을 바꾸기 전에 그 사본이 온전한지 본다** — 날짜 완결성 · 잘림의 근거(사실 · 전 사본의 내용 있는 첫 날짜)는 `missingDays`.
  *
  * ⚠**받지 않은 달은 조용히 0건이 아니다.** 몇 달치를 읽었는지 보고한다(§3-7).
  */
@@ -64,17 +65,20 @@ const insPlayed = db.raw.prepare(
 );
 /** 사본을 언제 받았는가 — 「사본이 새롭다」의 근거(설계 D1-B) */
 const upsertMonth = db.raw.prepare(
-  `INSERT INTO schedule_month (season, month, source, fetched_at, date_rows, games, first_listed)
+  `INSERT INTO schedule_month (season, month, source, fetched_at, date_rows, games, first_content)
    VALUES (?, ?, ?, ?, ?, ?, ?)
    ON CONFLICT (season, month) DO UPDATE SET
      source = excluded.source, fetched_at = excluded.fetched_at,
-     date_rows = excluded.date_rows, games = excluded.games, first_listed = excluded.first_listed`,
+     date_rows = excluded.date_rows, games = excluded.games, first_content = excluded.first_content`,
 );
 /**
  * **잘림의 근거 둘** — 개막 달의 앞부분 공백을 가른다. 두 조회 모두 그 달을 지우기 **전에** 돈다.
  *
  * ⑴ **사실**: 그 달의 경기 행 · 치러짐 표시 중 가장 이른 날. 첫 날짜 행보다 이르면 잘린 것이다 — 치러진 날은 페이지에서 안 사라진다.
- * ⑵ **그 달 페이지 자신의 이력**: 받아들인 전 사본의 첫 날짜(`schedule_month.first_listed`). 새 사본이 그보다 늦게 시작하는데
+ * ⑵ **그 달 페이지 자신의 이력**: 받아들인 전 사본의 **내용이 있는 첫 날짜 행**(`schedule_month.first_content` · 경기 · 예정 표기 · 구단 아님).
+ *    ⚠빈 행은 세지 않는다 — 개막 전 페이지가 3/1 부터 빈 행을 싣는다면 개막일부터 싣는 뒤 페이지를 멈추고, 빈 행이 빠져도 잃는 증거가 없다(4라운드 F2).
+ *    ⚠기준선이 NULL 이면(첫 사본 · 내용 없는 달 · 사람이 초기화 · DB 재구축) **사실로만** 막는다(4라운드 2·3차 · 설계 §5).
+ *    새 사본이 그보다 늦게 시작하는데
  *    **그 날이 이미 왔으면**(새 사본을 받은 JST 날짜 ≥ 그 날) 잘린 것이다. 그날 받은 페이지는 그날을 싣는다 — 경기가 중지돼도 날짜 행은
  *    링크를 단 채 남는다(실물 중지 287행). 날짜를 지우는 일정 변경은 **미리** 공표되므로 아직 오지 않은 날이 빠진 것은 받는다(개막 연기).
  *    ⚠사본 시각을 모르면 이미 왔다고 본다(안전한 쪽 · M11).
@@ -92,8 +96,8 @@ const firstFactOfMonth = db.raw.prepare(
    )`,
 );
 const prevBaseline = db.raw.prepare(
-  `SELECT first_listed AS d,
-          first_listed <= COALESCE(substr(datetime(?3, '+9 hours'), 1, 10), '9999-12-31') AS reached
+  `SELECT first_content AS d,
+          first_content <= COALESCE(substr(datetime(?3, '+9 hours'), 1, 10), '9999-12-31') AS reached
      FROM schedule_month WHERE season = ?1 AND month = ?2`,
 );
 
@@ -107,32 +111,40 @@ const prevBaseline = db.raw.prepare(
  * 없을 때만 허용한다.
  * @returns 빠진 날(`[]` 이면 완결)과 **멈춘 근거** — ⚠근거를 말하지 않으면 운영자가 엉뚱한 행을 지운다(3라운드 재검토 2차 R3-5)
  */
-function missingDays(mm: string, dateKeys: readonly string[], fetchedAt: string | null): { days: number[]; why: string | null; firstListed: string | null } {
+function missingDays(
+  mm: string,
+  dateKeys: readonly string[],
+  contentKeys: readonly string[],
+  fetchedAt: string | null,
+): { days: number[]; why: string | null; baseline: string | null } {
   const last = new Date(Date.UTC(season, Number(mm), 0)).getUTCDate();
   const days = new Set(dateKeys.filter((k) => k.slice(0, 2) === mm).map((k) => Number(k.slice(2))));
   const present = [...days].sort((a, b) => a - b);
   const all = Array.from({ length: last }, (_, i) => i + 1);
-  if (present.length === 0) return { days: all, why: "날짜 행 없음", firstListed: null };
+  /** 받아들이면 새 기준선 — 내용이 있는 첫 날짜 행(없으면 NULL) */
+  const firstContentKey = contentKeys.find((k) => k.slice(0, 2) === mm);
+  const baseline = firstContentKey === undefined ? null : `${season}-${mm}-${firstContentKey.slice(2)}`;
+  if (present.length === 0) return { days: all, why: "날짜 행 없음", baseline };
   const first = present[0]!;
   const firstListed = `${season}-${mm}-${String(first).padStart(2, "0")}`;
   const gaps = all.filter((d) => d >= first && !days.has(d));
   const middle = gaps.length > 0 ? "중간·끝 날짜가 빠짐" : null;
-  if (first === 1) return { days: gaps, why: middle, firstListed };
+  if (first === 1) return { days: gaps, why: middle, baseline };
   // 앞부분이 빈다 — 개막 달인가, 잘렸나
   const prefix = all.filter((d) => d < first);
   const fact = (firstFactOfMonth.get(season, mm) as { d: string | null } | undefined)?.d ?? null;
   if (fact !== null && fact < firstListed) {
-    return { days: [...prefix, ...gaps], why: `경기 행·치러짐 표시가 ${fact} 에 있다(치러진 날은 페이지에서 안 사라진다)`, firstListed };
+    return { days: [...prefix, ...gaps], why: `경기 행·치러짐 표시가 ${fact} 에 있다(치러진 날은 페이지에서 안 사라진다)`, baseline };
   }
   const prev = prevBaseline.get(season, Number(mm), fetchedAt) as { d: string | null; reached: number | null } | undefined;
   if (prev?.d != null && prev.d < firstListed && prev.reached === 1) {
     return {
       days: [...prefix, ...gaps],
-      why: `전 사본이 ${prev.d} 부터 실었고 그 날이 이미 왔다${fetchedAt === null ? "(사본 시각 모름 — 왔다고 본다)" : ""}`,
-      firstListed,
+      why: `전 사본이 ${prev.d} 부터 내용을 실었고 그 날이 이미 왔다${fetchedAt === null ? "(사본 시각 모름 — 왔다고 본다)" : ""}`,
+      baseline,
     };
   }
-  return { days: gaps, why: middle, firstListed };
+  return { days: gaps, why: middle, baseline };
 }
 
 /**
@@ -226,13 +238,13 @@ db.transaction(() => {
     nonTeam += r.nonTeamRows;
     pendingLabels.push(...r.pendingMatchupLabels);
     /** 받아들이면 새 기준선이 된다 — 문제가 있는 달은 아래에서 던져 되돌리므로 그 값은 남지 않는다 */
-    let firstListed: string | null = null;
+    let baseline: string | null = null;
     if (r.dateRows === 0) noDateRowMonths.push(f);
     else if (r.unreadableRows > 0) unreadableMonths.push(`${f}(${r.unreadableRows}행)`);
     else {
       // ⚠기준선 조회는 아래 upsert 보다 **먼저** 돈다 — 같은 실행에서 덮어쓴 값을 읽지 않는다
-      const missing = missingDays(mm, r.dateKeys, fetchedAt);
-      firstListed = missing.firstListed;
+      const missing = missingDays(mm, r.dateKeys, r.contentDateKeys, fetchedAt);
+      baseline = missing.baseline;
       if (missing.days.length > 0) {
         incompleteMonths.push(
           `날짜가 빠진 달 ${mm}(없는 날 ${missing.days.slice(0, 6).join(",")}${missing.days.length > 6 ? `… 외 ${missing.days.length - 6}` : ""}` +
@@ -245,7 +257,7 @@ db.transaction(() => {
     // ⚠**그 달만** 지우고 다시 넣는다 — 문제가 있는 달이 하나라도 있으면 아래에서 던져 **전부 되돌린다**
     delUpcomingMonth.run(season, mm);
     delPlayedMonth.run(season, mm);
-    upsertMonth.run(season, Number(mm), sourceOf(f), fetchedAt, r.dateRows, r.games.length, firstListed);
+    upsertMonth.run(season, Number(mm), sourceOf(f), fetchedAt, r.dateRows, r.games.length, baseline);
     for (const g of r.games) {
       if (g.played) {
         playedRows += 1;

@@ -134,6 +134,12 @@ test("⚠⚠10·11월의 링크·숫자 없는 행만 모르는 표기를 예정
   assert.equal(regular.unreadable, 1, "정규시즌 달의 모르는 표기를 예정 표기로 받았다 — 약칭 변경이 개막까지 숨는다");
 });
 
+test("⚠내용이 있는 날짜 행만 contentKeys 에 든다 — 빈 행은 적재기의 잘림 기준선이 아니다(4라운드 재검토 2차 F2)", () => {
+  const r = classifyScheduleRows(page(blankRow("1001"), placeholderRow("1002", "セ・CSファーストS"), gameRow("1003", "阪神", "巨人"), blankRow("1004")), 2026);
+  assert.deepEqual(r.dateKeys, ["1001", "1002", "1003", "1004"]);
+  assert.deepEqual(r.contentKeys, ["1002", "1003"], "빈 행을 내용 있는 행으로 셌다 — 개막 전 페이지가 3월부터 적재기를 멈춘다");
+});
+
 test("⚠경기 칸의 클래스가 바뀌면 못 읽음이다 — 공백으로 받지 않는다", () => {
   const r = classifyScheduleRows(page(gameRow("1030", "阪神", "ソフトバンク", { teamClass: "club" })), 2025);
   assert.equal(r.dateRows, 1);
