@@ -142,33 +142,57 @@ node scripts/freshness.ts data/bb.sqlite 2
         ⚠⚠**먼저 새 실행 유입을 멈춘다** — 도는 실행은 시작에서 받은 DB 를 끝에서 `--clobber` 로 다시 올려 **이 수정을 덮고**, 반대 순서면
         사람이 올린 낡은 DB 가 그 사이 배치 갱신분을 되돌린다(4라운드 2차 F3 · 5라운드 1·2·3차). 「지금 도는 게 없는가」를 **한 번 확인하는 것은
         잠금이 아니다** — 확인 직후 새 실행이 시작할 수 있다(`concurrency` 는 워크플로 실행끼리만 줄 세우고 사람의 `gh` 명령과는 무관하다).
-        **저장소 루트의 Git Bash 에서** 한다(PowerShell 5.1 의 `>` 는 이진 파일을 깨뜨린다 · ④ 가 저장소의 스크립트를 부른다):
+        **저장소 루트의 Git Bash 에서** 한다(PowerShell 5.1 의 `>` 는 이진 파일을 깨뜨린다 · ④ 가 저장소의 스크립트를 부른다).
+        ⚠⚠**`<시즌>` `<월>` 을 채운 뒤 괄호째 한 번에 붙여 넣는다** — 확인을 눈에 맡기면 붙여 넣은 줄이 **확인을 기다리지 않고 끝까지 간다**
+        (대기 중인 실행을 두고 올리거나 · 깨진 DB 를 올리거나 · 크기가 다른데 재개한다 — 6라운드 재검토 2차 F4 · 3차 P2). 괄호 안은 **한 줄이라도 실패하면 거기서 멈추고** 창은 안 닫힌다:
         ```sh
-        gh auth switch --user muji-j        # ⚠반드시 이 계정 — 스케줄 워크플로를 껐다 켜면 실패 알림이 「다시 켠 사용자」에게 간다(GitHub 문서 원문 · 2026-09-11 확인)
-        gh workflow disable daily.yml --repo muji-j/basenine                                   # ① 새 실행 유입을 멈춘다
-        gh run list --repo muji-j/basenine --workflow daily.yml --limit 10 --json status,databaseId \
-          --jq '.[] | select(.status != "completed")'                                          # ② 아무것도 안 나올 때까지 기다린다(대기·진행 모두)
-        W=$(mktemp -d)                                                                         # ③ 매번 새 폴더 — 전 시도의 파일을 올리지 않게
-        gh release download data-store --repo muji-j/bb-app-data --pattern bb.sqlite.gz --dir "$W"
-        gunzip -c "$W/bb.sqlite.gz" > "$W/bb.sqlite"
-        node -e "const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[1]);console.log(d.prepare('UPDATE schedule_month SET first_content = NULL WHERE season = ? AND month = ?').run(Number(process.argv[2]), Number(process.argv[3])).changes);d.close()" "$W/bb.sqlite" <시즌> <월>   # 1 이 찍혀야 한다
-        node scripts/db-check.ts "$W/bb.sqlite"                                                # ④ 워크플로가 올리기 전에 하는 검사와 같다
-        gzip -c "$W/bb.sqlite" > "$W/bb.sqlite.gz"
-        gh release upload data-store --repo muji-j/bb-app-data "$W/bb.sqlite.gz" --clobber
-        wc -c < "$W/bb.sqlite.gz"
-        gh release view data-store --repo muji-j/bb-app-data --json assets \
-          --jq '.assets[] | select(.name=="bb.sqlite.gz") | .size'                             # ⑤ 위 수와 같아야 한다(워크플로의 올린 뒤 대조와 같다)
-        gh auth status                                                                         # ⚠⑥ 직전에 다시 본다 — 세션 도중 계정이 되돌아간 적이 있다
-        gh workflow enable daily.yml --repo muji-j/basenine                                    # ⑥ 재개 — ⚠알림이 이 명령을 친 계정으로 옮겨 간다
+        gh auth switch --user muji-j   # ⚠반드시 이 계정 — 스케줄 워크플로를 껐다 켜면 실패 알림이 「다시 켠 사용자」에게 간다(GitHub 문서 원문 · 2026-09-11 확인)
+        ( set -euo pipefail
+          SEASON=<시즌>; MONTH=<월>; R=muji-j/basenine; D=muji-j/bb-app-data
+          me()   { [ "$(gh api user --jq .login)" = muji-j ] || { echo "⚠계정이 muji-j 가 아니다 — gh auth switch 뒤 처음부터"; return 1; }; }
+          busy() { gh api "repos/$R/actions/workflows/daily.yml/runs?per_page=30" \
+                     --jq "[.workflow_runs[] | select(.status != \"completed\" or .created_at > \"$1\")] | length"; }   # 파일명 조회라 꺼진 워크플로도 된다
+          me
+          T0=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          [ "$(gh api "repos/$R/actions/workflows/daily.yml" --jq .state)" = disabled_manually ] || gh workflow disable daily.yml --repo "$R"   # ① 새 실행 유입을 멈춘다(이미 꺼져 있으면 건너뛴다)
+          while :; do n=$(busy 9999); [ "$n" = 0 ] && break; echo "대기·진행 실행 ${n}개 — 60초 뒤 다시 본다"; sleep 60; done              # ② 끝날 때까지 기다린다
+          W=$(mktemp -d); echo "작업 폴더: $W"                                                    # ③ 매번 새 폴더 — 전 시도의 파일을 올리지 않게
+          gh release download data-store --repo "$D" --pattern bb.sqlite.gz --dir "$W"
+          gunzip -c "$W/bb.sqlite.gz" > "$W/bb.sqlite"
+          node -e "const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[1]);const c=d.prepare('UPDATE schedule_month SET first_content = NULL WHERE season = ? AND month = ?').run(Number(process.argv[2]),Number(process.argv[3])).changes;d.close();console.log('changes='+c);process.exit(c===1?0:1)" "$W/bb.sqlite" "$SEASON" "$MONTH"   # 정확히 1행이 아니면 멈춘다
+          node scripts/db-check.ts "$W/bb.sqlite"                                                 # ④ 워크플로가 올리기 전에 하는 검사와 같다 — 실패하면 멈춘다(보관소는 그대로다)
+          gzip -c "$W/bb.sqlite" > "$W/bb.sqlite.gz"; want=$(wc -c < "$W/bb.sqlite.gz")
+          [ "$(busy "$T0")" = 0 ] || { echo "⚠① 뒤에 생긴 실행이 있다 — 끝난 뒤 괄호를 처음부터"; exit 1; }
+          ok=0
+          for i in 1 2 3; do                                                                     # ⑤ 올리고 크기를 대조한다(워크플로의 올린 뒤 대조와 같다)
+            gh release upload data-store --repo "$D" "$W/bb.sqlite.gz" --clobber || { echo "올림 실패 ${i}회"; sleep 10; continue; }
+            got=$(gh release view data-store --repo "$D" --json assets --jq '.assets[] | select(.name=="bb.sqlite.gz") | .size') || got=""
+            [ "$got" = "$want" ] && { ok=1; break; }
+            echo "크기가 다르다(올린 $want · 보관소 ${got:-없음}) — 다시 올린다"
+          done
+          [ "$ok" = 1 ] || { echo "⚠⚠3회 모두 실패 — **재개하지 마라**(재개하면 다음 실행이 DB 를 아카이브에서 다시 만든다) · 사본: $W/bb.sqlite.gz"; exit 1; }
+          [ "$(busy "$T0")" = 0 ] || { echo "⚠올리는 사이 생긴 실행이 있다 — 그 실행이 끝에서 덮는다 · 끝난 뒤 괄호를 처음부터"; exit 1; }
+          me
+          gh workflow enable daily.yml --repo "$R"                                               # ⑥ 재개 — ⚠알림이 이 명령을 친 계정으로 옮겨 간다
+          echo "끝 — ${SEASON}년 ${MONTH}월 기준선을 비우고 재개했다"
+        )
         ```
+        ⚠**괄호 안에서 멈추면 워크플로가 꺼진 채다** — 찍힌 문장대로 한다. ⑤ 에 닿기 전에 멈췄으면 보관소는 그대로이므로 원인을 고친 뒤 괄호를 처음부터 붙여 넣는다
+        (① 은 이미 꺼져 있어도 된다). 재개만 따로 하려면 같은 계정으로 `gh workflow enable daily.yml --repo muji-j/basenine`.
+        ⚠**「3회 모두 실패」에서는 재개하지 마라** — `--clobber` 는 **지운 뒤 올린다**(업로드가 실패하면 자산이 없거나 잘려 있다). 찍힌 작업 폴더의 사본을
+        `gh release upload … --clobber` 로 다시 올려 크기가 맞은 뒤에 재개한다. 그대로 재개하면 다음 실행이 DB 를 아카이브에서 다시 만든다
+        (모든 기준선이 NULL → 사실 근거만 남는 기간 · 설계서 §5).
         재개 뒤 **다음 정기 실행**의 로그에서 그 달이 받아졌는지(`날짜가 빠진 달` 이 없는지) 본다 — ⚠수동 실행으로 당기지 마라(매 실행이 npb.jp 를 친다 · L1).
-        ⚠마지막으로 끝까지 돈 수집에서 24시간이 지나면 하트비트가 다음 검사(6시간 주기 · 최악 30시간)에서 운다 — 멈춘 사실을 알고 있으면 무시해도 되지만 **길게 끌지 마라.**
-        ⚠`--clobber` 는 **지운 뒤 올린다** — 업로드가 실패하면 자산이 사라지고 다음 실행이 DB 를 아카이브에서 다시 만든다
-        (모든 기준선이 NULL → 사실 근거만 남는 기간 · 설계서 §5). ⑤ 가 다르거나 비면 **재개하기 전에** 다시 올린다.
+        ⚠멈춘 동안 하트비트가 운다 — 마지막으로 끝까지 돈 수집에서 창 24시간 + 주기 6시간이라 **정시면 약 30시간 뒤, 스케줄 지연·탈락이면 더 늦게**
+        (위 「탐지 지연」 · 약 36~42시간). 멈춘 사실을 알고 있으면 무시해도 되지만 **길게 끌지 마라.**
         ⚠**이 칸은 적재기만 쓴다** — 다른 적재기가 되살리지 않는다. ⚠기준선이 NULL 인 동안 그 달은 사실 근거로만 막으므로, **페이지를 확인하기 전에 비우지 마라.**
         ⚠~~그 날짜의 `upcoming_game` · `probable_pitcher` 행을 지운다~~ 는 **안 된다** — 예고 행은 같은 실행의 `load-starters` 가 아카이브에서
         되살려 **다음 날 다시 멈췄다**(3라운드 재검토 2·3차 · 실행 재현). ⚠**아카이브(예고 원본)를 지우지 마라** — 소급 불가 자산이다.
    - 사이드카가 깨져 **사본 시각을 모르면** 「이미 왔다」고 보고 멈춘다 — 사이드카(`schedule_MM.meta.json`)부터 복구한다.
+
+   **적재 요약에 `⚠다른 달 날짜 행 N건 제외(날짜: …)` 가 찍혔을 때** — 멈춘 것이 아니다. 그 달 파일은 그 달 날짜 행만 쓰고, 섞인 행의 날은 **제 달 파일이 싣는다**
+   (섞인 채 넣으면 지울 파일이 없어 헛 치러짐 표시 · 재실행 충돌이 났다 — 6라운드 재검토 2차 F3). ⚠실물 75장에는 없던 모양이라 **페이지 형식이 바뀐 신호**일 수 있다 —
+   npb.jp 의 그 달 페이지를 한 번 열어 보고, 제 달 파일이 아카이브에 있는지(`schedule_MM.html.gz`) 확인한다.
 
 ## 쓰기 예산
 
