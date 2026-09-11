@@ -43,7 +43,10 @@ const { values } = parseArgs({
      */
     "max-writes": { type: "string", default: "5000000" },
     delay: { type: "string", default: "3000" },
-    /** 며칠 이상 낡으면 경고할지 */
+    /**
+     * **누락 유예(일)** — 받았어야 할 경기를 그 날에서 며칠 지나도 못 받으면 경고할지(`scripts/freshness.ts`).
+     * ⚠**2026-09-11 에 뜻이 바뀌었다** — 「최신 경기가 며칠 전인가」의 임계였는데, 그 규칙은 휴식마다 수집 잡을 실패시켰다.
+     */
     "stale-days": { type: "string", default: "2" },
     /**
      * 하루에 다시 받을 선수 페이지 수의 상한.

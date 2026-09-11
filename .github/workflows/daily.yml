@@ -660,6 +660,9 @@ jobs:
             if [ "${{ steps.guard.outcome }}" = "success" ]; then
               node scripts/archive-guard.ts write data/archive ops/archive-manifest.json || return 1
             fi
+            # ⚠`2` 는 **누락 유예(일)** 다(2026-09-11 · 설계 D1) — 「최신 경기가 며칠 전인가」의 임계가 아니다.
+            #   받았어야 할 경기(일정표 점수 링크 · 사본이 낡으면 예고)를 그 날에서 2일 지나도 못 받았으면 운다.
+            #   화면 띠는 3 이다(감시가 먼저 운다 · `packages/web/test/stale-verdict.test.ts` 가 이 줄의 수를 읽는다).
             node scripts/freshness.ts data/bb.sqlite 2 --json ops/collection-log.jsonl \
               >> ops/collection-log.txt 2>&1 || true
             echo "--- $(date -u +%FT%TZ) ---" >> ops/collection-log.txt
