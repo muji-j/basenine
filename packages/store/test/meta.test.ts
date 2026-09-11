@@ -141,3 +141,27 @@ test("⚠날짜가 아닌 값은 버린다 — checkedAt 이 무효면 fetchedAt
     assert.equal(fetchedAtOf(dateOnly), null, "시각 없는 날짜를 취득 시각이라고 했다");
   });
 });
+
+/**
+ * ⚠**같은 시각이 다른 표기로 들어오면 문자열 비교가 틀린다**(2026-09-11 · 콜드 리뷰 지적).
+ *
+ * 신선도 판정은 취득 시각을 **문자열로** 비교한다(`MAX(fetched_at)` · 「예고보다 늦은 휴식 공표」).
+ * `2026-10-30T09:00:00+09:00`(= `00:00Z`)은 `2026-10-30T01:00:00Z` 보다 **한 시간 이른데**, 문자열로는 앞의 것이 크다.
+ * → 돌려줄 때 **UTC `toISOString` 한 모양**으로 맞춘다. 실물은 전부 그 모양이라(CI DB 5개 표 · `Z` 아닌 값 0) 바뀌는 값이 없다.
+ */
+test("⚠취득 시각은 UTC 한 모양으로 돌려준다 — 표기가 달라도 같은 시각은 같은 문자열이다", async () => {
+  await withDir(async (dir) => {
+    const jst = join(dir, "jst.meta.json");
+    await writeFile(jst, JSON.stringify({ checkedAt: "2026-10-30T09:00:00+09:00" }));
+    assert.equal(fetchedAtOf(jst), "2026-10-30T00:00:00.000Z", "시간대 표기를 그대로 돌려줬다");
+
+    const noMs = join(dir, "no-ms.meta.json");
+    await writeFile(noMs, JSON.stringify({ fetchedAt: "2026-08-15T03:51:56Z" }));
+    assert.equal(fetchedAtOf(noMs), "2026-08-15T03:51:56.000Z");
+
+    // 이미 아카이버 모양이면 그대로다 — 실물이 바뀌지 않는다
+    const canonical = join(dir, "canonical.meta.json");
+    await writeFile(canonical, JSON.stringify({ checkedAt: "2026-08-17T02:00:00.123Z" }));
+    assert.equal(fetchedAtOf(canonical), "2026-08-17T02:00:00.123Z");
+  });
+});

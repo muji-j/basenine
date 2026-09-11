@@ -23,8 +23,17 @@ import { readFileSync } from "node:fs";
  */
 const TIMESTAMP_HEAD = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
 
+/**
+ * 인정한 값은 **UTC `toISOString` 한 모양으로** 돌려준다.
+ * ⚠**신선도 판정이 취득 시각을 문자열로 비교한다**(`MAX(fetched_at)` · 「예고보다 늦은 휴식 공표」) —
+ * `09:00+09:00` 과 `00:00Z` 는 같은 시각인데 문자열로는 다르고, 앞의 것이 `01:00Z` 보다 크다고 나온다(2026-09-11 · 콜드 리뷰 지적).
+ * 실물 사이드카는 전부 이미 이 모양이라(CI DB 5개 표에서 `Z` 로 안 끝나는 값 0) **정규화로 바뀌는 값이 없다.**
+ * ⚠`new Date(ms)` 는 주어진 값을 해석할 뿐 시계를 읽지 않는다(M6).
+ */
 function timestamp(v: unknown): string | null {
-  return typeof v === "string" && TIMESTAMP_HEAD.test(v) && Number.isFinite(Date.parse(v)) ? v : null;
+  if (typeof v !== "string" || !TIMESTAMP_HEAD.test(v)) return null;
+  const ms = Date.parse(v);
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
 }
 
 export function fetchedAtOf(metaPath: string): string | null {
