@@ -52,3 +52,5 @@ export { fetchedAtOf } from "./meta.ts";
 export { japanSeriesDecided, seasonIsOver } from "./season-over.ts";
 export { collectionEvidence } from "./collection-evidence.ts";
 export type { CollectionEvidenceReport } from "./collection-evidence.ts";
+export { judgeVersion, writeGameGuarded } from "./version-guard.ts";
+export type { GuardedWrite, VersionJudgement } from "./version-guard.ts";
