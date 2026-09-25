@@ -1,5 +1,8 @@
 /**
- * 적재기의 옛 판 가드 · 세트 · 본문 대조를 **실물 경기**로 잰다(설계 §7 시험 1·2·4·5·5a·6·6a·7·7c).
+ * 적재기의 옛 판 가드 · 세트 · 본문 대조를 **실물 경기**로 잰다(설계 §7 시험 1·2·4·5·5a·6·6a·7·7c ·
+ * 7b 의 적재기판(DB 시각 무효) · 경기 단위 읽기 오류).
+ * ⚠**쓰기 트랜잭션 안의 재판정 경로는 여기서 못 잰다** — 프로세스 하나로는 사전 판정이 옛 판을 전부 먼저 잡는다.
+ *   그 배선은 `load-archive-wiring.test.ts` 가 소스로 고정하고, 함수 자체는 `version-guard.test.ts`(7a·7a′)가 잰다.
  *
  * ⚠**합성 box 를 쓰지 않는다** — 파서가 엄격해서 만든 문자열은 실물과 갈리고, 그러면 「아무것도 안 재는 초록」이 된다
  *   (`packages/parser/test/fixtures/README.md`). 로컬·CI 의 `data/archive` 에서 경기 폴더를 **임시 폴더로 복사**해 쓴다.
@@ -8,7 +11,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cp, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -102,7 +105,10 @@ test("⚠1 DB 가 더 새 판이면 경기 행·자식 행을 건드리지 않�
     assert.equal(r.code, 1, r.out + r.err);
     assert.match(r.out, /옛 판 건너뜀 1건/);
     assert.ok(r.out.includes(gameId(PLAYED)), "경기 ID 를 찍어야 한다");
-    assert.match(r.out, /refetch_dates=2026-08-15/);
+    // 설계 D1-7 — 경기 ID 는 **날짜별로 묶어** 찍는다
+    assert.ok(r.out.includes(`2026-08-15: ${gameId(PLAYED)}`), "경기 ID 를 날짜 아래 묶어 찍어야 한다");
+    assert.match(r.out, /복구: 수동 실행 입력 refetch_dates=2026-08-15\n/);
+    assert.match(r.out, /docs\/operations\/deploy\.md §7-E/);
     assert.equal(q<{ h: number }>(env, "SELECT home_runs AS h FROM game WHERE game_id = ?", gameId(PLAYED)).h, 99);
     assert.equal(q<{ r: number }>(env, "SELECT revision AS r FROM game WHERE game_id = ?", gameId(PLAYED)).r, 1);
     assert.equal(q<{ n: number }>(env, "SELECT COUNT(*) AS n FROM batting_line WHERE game_id = ? AND h = 777", gameId(PLAYED)).n, 1, "자식 행도 그대로여야 한다");
@@ -143,7 +149,9 @@ test("5 옛 미성립 box 가 실시 기록을 지우지 않는다", { skip }, a
     }
     exec(env, "INSERT INTO batting_line (game_id, player_id, side, batting_order, position, pa, ab, h, d2, d3, hr, bb, ibb, hbp, sf, sh, so, roe, runs, rbi, sb) VALUES (?, 'P1', 'home', 1, '中', 4, 4, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)", gameId(NOT_PLAYED));
     const r = load(env);
-    assert.equal(r.code, 1);
+    assert.equal(r.code, 1, r.out + r.err);
+    // ⚠종료 1 은 다른 실패로도 난다 — **옛 판 경로를 탔는지**를 따로 본다(안 보면 무관한 실패로 초록이 된다)
+    assert.match(r.out, /옛 판 건너뜀 1건/);
     assert.equal(q<{ s: string }>(env, "SELECT status AS s FROM game WHERE game_id = ?", gameId(NOT_PLAYED)).s, "played");
     assert.equal(q<{ n: number }>(env, "SELECT COUNT(*) AS n FROM batting_line WHERE game_id = ?", gameId(NOT_PLAYED)).n, 1);
   } finally {
@@ -177,8 +185,11 @@ test("5a 옛 판 경기의 명단은 선수 표를 채우지 않는다", { skip 
     const p = q<{ id: string }>(env, "SELECT player_id AS id FROM batting_line WHERE game_id = ? LIMIT 1", gameId(PLAYED)).id;
     exec(env, "UPDATE player SET throws = NULL, bats = NULL, uniform_number = NULL, position = NULL WHERE player_id = ?", p);
     exec(env, "UPDATE game SET fetched_at = ? WHERE game_id = ?", LATER, gameId(PLAYED));
-    assert.equal(load(env).code, 1);
-    const row = q<{ t: string | null; pos: string | null }>(env, "SELECT throws AS t, position AS pos FROM player WHERE player_id = ?", p);
+    const r = load(env);
+    assert.equal(r.code, 1, r.out + r.err);
+    // ⚠종료 1 만으로는 옛 판 경로를 탔는지 모른다 — 다른 실패로 명단 합치기 전에 빠져도 초록이 된다
+    assert.match(r.out, /옛 판 건너뜀 1건/);
+    const row =q<{ t: string | null; pos: string | null }>(env, "SELECT throws AS t, position AS pos FROM player WHERE player_id = ?", p);
     assert.equal(row.t, null, "옛 판의 명단이 투타를 채우면 안 된다");
     assert.equal(row.pos, null);
   } finally {
@@ -226,6 +237,45 @@ test("6a playbyplay 가 둘 다 없으면 지금 동작 그대로 — PBP 실패
     assert.match(r.out, /본문 불일치 0건/);
     assert.equal(q<{ n: number }>(env, "SELECT COUNT(*) AS n FROM game").n, 1);
     assert.equal(q<{ n: number }>(env, "SELECT COUNT(*) AS n FROM pa_event").n, 0);
+  } finally {
+    await rm(env.dir, { recursive: true, force: true });
+  }
+});
+
+test("7b DB 의 취득 시각이 무효면 판을 비교하지 않고 건너뛴다(fail-closed) · 종료 1 · 경기 행 불변", { skip }, async () => {
+  const env = await setup([PLAYED]);
+  try {
+    assert.equal(load(env).code, 0);
+    exec(env, "UPDATE game SET fetched_at = 'not-a-date', home_runs = 99 WHERE game_id = ?", gameId(PLAYED));
+    const r = load(env);
+    assert.equal(r.code, 1, r.out + r.err);
+    assert.match(r.err, /DB 의 취득 시각이 무효다 2026\/0815\/b-f-20/);
+    // ⚠무효는 옛 판이 아니라 **실패**로 센다 — 복구 목록(재수집)으로 보내지 않는다
+    assert.match(r.out, /성립 0건 · 미성립 0건 · 실패 1건/);
+    assert.match(r.out, /옛 판 건너뜀 0건/);
+    const row = q<{ h: number; r: number; f: string }>(
+      env, "SELECT home_runs AS h, revision AS r, fetched_at AS f FROM game WHERE game_id = ?", gameId(PLAYED),
+    );
+    assert.deepEqual({ ...row }, { h: 99, r: 1, f: "not-a-date" }, "경기 행을 건드리지 않아야 한다");
+  } finally {
+    await rm(env.dir, { recursive: true, force: true });
+  }
+});
+
+test("3′ 한 경기의 읽기 오류는 그 경기의 실패다 — 적재 전체를 멈추지 않고 뒤 경기를 적재한다", { skip }, async () => {
+  // 순회는 날짜순이다 — 앞(0813)을 깨뜨려 뒤(0815)가 적재되는지 본다
+  const env = await setup([NOT_PLAYED, PLAYED]);
+  try {
+    // 「없음」은 오류가 아니므로 **디렉터리**로 바꿔 읽기 자체를 실패시킨다(EISDIR)
+    const idx = pagePath(env, NOT_PLAYED, "index", "html.gz");
+    await unlink(idx);
+    await mkdir(idx);
+    const r = load(env);
+    assert.equal(r.code, 1, r.out + r.err);
+    assert.match(r.err, /READ ERROR 2026\/0813\/s-c-19/);
+    assert.match(r.out, /성립 1건 · 미성립 0건 · 실패 1건/);
+    assert.equal(q<{ n: number }>(env, "SELECT COUNT(*) AS n FROM game WHERE game_id = ?", gameId(PLAYED)).n, 1);
+    assert.equal(q<{ n: number }>(env, "SELECT COUNT(*) AS n FROM game WHERE game_id = ?", gameId(NOT_PLAYED)).n, 0);
   } finally {
     await rm(env.dir, { recursive: true, force: true });
   }
