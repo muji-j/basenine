@@ -122,9 +122,10 @@ export function targetDates(
  * `BB_REFETCH_DATES`(수동 실행 입력 `refetch_dates`)를 검증한다(설계 D4).
  * ⚠**틀리면 아무것도 받지 않는다** — 반쯤 맞는 입력을 고쳐 읽지 않는다.
  * ⚠셸로 넘어온 값이라 형식을 **정규식으로 먼저** 막는다(`;`·공백 명령 등).
- * ⚠**날짜는 오름차순으로 정렬해 돌려준다**(M2) — `update.ts` 가 `dates[dates.length - 1]`
- * 를 「가장 늦은 대상일」로 써서 予告先発 조회 시즌을 정한다. 입력 순서를 그대로 돌려주면
- * 사람이 날짜를 거꾸로 적었을 때 조용히 틀린 시즌을 조회하게 된다.
+ * ⚠**날짜는 오름차순으로 정렬해 돌려준다** — 받는 순서와 로그가 날짜순이 되고, 「마지막 날짜 = 가장 늦은 대상일」이 늘 참이다.
+ *   ⚠~~予告先発 조회 시즌을 정한다~~ 는 **틀린 서술이었다**(2026-09-26 · 3중 검토 1차 P3 · 2차 F4).
+ *   `update.ts` 가 마지막 날짜로 정하는 것은 **앞으로의 일정**(`load-upcoming.ts`)의 시즌이고, 予告先発(`cli-starters.ts`)은 날짜를 받지 않는다.
+ *   그리고 **재수집 실행에서는 그 시즌을 JST 의 올해로 정한다**(재수집 날짜는 작년일 수 있다) — 여기 정렬이 시즌을 정하지 않는다.
  */
 export function parseRefetchDates(raw: string | undefined): { ok: true; dates: string[] | null } | { ok: false; error: string } {
   if (raw === undefined || raw.trim() === "") return { ok: true, dates: null };

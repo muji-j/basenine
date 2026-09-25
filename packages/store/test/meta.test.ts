@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fetchedAtOf, normalizeFetchedAt } from "../src/meta.ts";
+import { fetchedAtOf, normalizeFetchedAt, seenAtOf } from "../src/meta.ts";
 
 async function withDir(fn: (dir: string) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), "bb-meta-"));
@@ -201,4 +201,31 @@ test("⚠정규화 결과가 자기 모양을 통과하지 못하면 모른다(n
     assert.equal(normalizeFetchedAt(once), once, `${v} → ${String(once)} 를 다시 정규화하자 달라졌다`);
   }
   assert.equal(normalizeFetchedAt("0000-01-01T00:00:00.000+00:01"), null, "UTC 로 옮기면 모양이 깨지는 값을 받았다");
+});
+
+/**
+ * ⚠**`seenAtOf`(이미 읽은 값)와 `fetchedAtOf`(파일)는 같은 규칙 한 벌이다**(M1 · 2026-09-26 3중 검토 3차 P2).
+ * 경기 적재기는 스냅샷(`readGamePages`)의 사이드카 값으로 본 시각을 내는데, 그 규칙이 파일 쪽과 갈리면
+ * 같은 사이드카가 두 경로에서 다른 판이 된다 — 옛 판 가드가 조용히 어긋난다.
+ */
+test("⚠seenAtOf 는 같은 사이드카에서 fetchedAtOf 와 언제나 같은 값을 낸다", async () => {
+  await withDir(async (dir) => {
+    const cases: [string, unknown][] = [
+      ["checkedAt 우선", { fetchedAt: "2026-08-15T03:51:56.478Z", checkedAt: "2026-08-17T02:00:00.000Z" }],
+      ["checkedAt 없음", { fetchedAt: "2026-08-15T03:51:56.478Z" }],
+      ["checkedAt 무효", { fetchedAt: "2026-08-15T03:51:56.478Z", checkedAt: "not-a-date" }],
+      ["둘 다 무효", { fetchedAt: "2026-08-15", checkedAt: 42 }],
+      ["시간대 정규화", { fetchedAt: "2026-10-30T09:00:00+09:00" }],
+      ["null", null],
+      ["배열", []],
+      ["문자열", "2026-08-15T03:51:56.478Z"],
+    ];
+    for (const [name, value] of cases) {
+      const p = join(dir, `${cases.findIndex((c) => c[0] === name)}.meta.json`);
+      await writeFile(p, JSON.stringify(value));
+      assert.equal(seenAtOf(value), fetchedAtOf(p), `${name}: 두 경로가 갈렸다`);
+    }
+    assert.equal(seenAtOf({ fetchedAt: "2026-08-15T03:51:56.478Z", checkedAt: "2026-08-17T02:00:00.000Z" }), "2026-08-17T02:00:00.000Z");
+    assert.equal(seenAtOf(undefined), null, "값이 없으면 모른다(null)");
+  });
 });

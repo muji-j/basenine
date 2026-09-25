@@ -52,3 +52,61 @@ test("⚠I1 date-window.ts 는 store 배럴을 가져오지 않는다 — 잎 �
 test("⚠I1 refetch-limit.ts 는 import 가 0개인 잎 파일이다", () => {
   assert.equal(/^\s*import\b/m.test(REFETCH_LIMIT), false, "refetch-limit.ts 에 import 문이 있으면 안 된다 — 그 자체가 배럴을 끌어올 수 있다");
 });
+
+/**
+ * ⚠**`update.ts` 의 재수집 배선을 소스로 고정한다**(2026-09-26 · 3중 검토 2차 F3).
+ * `update.ts` 는 import 하는 순간 수집을 시작하므로 실행 시험을 할 수 없다(`date-window.ts` 머리말) — 검증 함수
+ * (`parseRefetchDates`)는 시험이 있지만 **그것을 부르고 결과대로 멈추는 배선**은 아무도 안 쟀다. 한 줄만 빠져도
+ * 틀린 입력으로 수집이 돌거나(종료 2 없음) 재수집 날짜가 무시되고 평소 창을 받는다(`refetch.dates ??` 없음) — 둘 다 초록인 채로.
+ * ⚠주석은 걷어내고 본다(주석 속 낱말이 판정을 흐리지 않게).
+ */
+const UPDATE = readFileSync(fileURLToPath(new URL("../update.ts", import.meta.url)), "utf8")
+  .replace(/\r\n/g, "\n")
+  .replace(/\/\*[\s\S]*?\*\//g, "")
+  .replace(/(?<!:)\/\/[^\n]*/g, "");
+
+/** `head` 로 시작하는 최상위 블록(`head` … 줄머리의 `}`). 정확히 한 곳이어야 한다 */
+function topBlock(head: string): string {
+  const at = UPDATE.indexOf(head);
+  assert.notEqual(at, -1, `update.ts 에 ${head} 가 없다 — 배선이 빠졌거나 모양이 바뀌었다`);
+  assert.equal(UPDATE.indexOf(head, at + 1), -1, `${head} 가 두 곳 이상이다`);
+  const end = UPDATE.indexOf("\n}", at);
+  assert.notEqual(end, -1, `${head} 블록이 닫히지 않는다`);
+  return UPDATE.slice(at, end + 2);
+}
+
+test("⚠14b update.ts 는 BB_REFETCH_DATES 를 검증 함수로 읽고 · 틀리면 아무것도 받기 전에 종료 2 로 멈춘다", () => {
+  const calls = UPDATE.match(/parseRefetchDates\(process\.env\["BB_REFETCH_DATES"\]\)/g) ?? [];
+  assert.equal(calls.length, 1, `parseRefetchDates(process.env["BB_REFETCH_DATES"]) 호출이 ${calls.length}곳이다(1곳이어야 한다)`);
+  const invalid = topBlock("if (!refetch.ok) {");
+  assert.match(invalid, /process\.exit\(2\)/, "틀린 BB_REFETCH_DATES 에서 종료 2 로 멈추지 않는다 — 틀린 입력으로 수집이 돈다");
+  const firstRun = UPDATE.indexOf("run(`");
+  assert.notEqual(firstRun, -1, "수집 단계(run)를 못 찾았다 — 이 순서 검사가 공회전한다");
+  assert.ok(firstRun > UPDATE.indexOf("if (!refetch.ok) {"), "검증이 첫 수집(run) 뒤에 있다 — 틀린 입력으로 일부를 받은 뒤에 멈춘다");
+});
+
+test("⚠14c 재수집 날짜가 수집 창을 대신한다(`refetch.dates ??`) · --date · --today 와 같이 주면 각각 종료 2", () => {
+  assert.match(UPDATE, /const dates = refetch\.dates \?\? targetDates\(/, "재수집 날짜가 수집 창을 대신하지 않는다 — 평소 창을 받는다");
+  assert.match(topBlock("if (refetch.dates !== null && values.date !== undefined) {"), /process\.exit\(2\)/, "--date 와 같이 줘도 멈추지 않는다");
+  assert.match(topBlock("if (refetch.dates !== null && values.today === true) {"), /process\.exit\(2\)/, "--today 와 같이 줘도 멈추지 않는다");
+});
+
+/**
+ * ⚠**재수집 실행의 「앞으로의 일정」 시즌은 JST 의 올해다**(2026-09-26 · 3중 검토 1차 P3 · 2차 F4).
+ * 재수집 날짜는 지난 날짜이고 작년일 수 있다 — 마지막 날짜의 해를 쓰면 그 실행은 올해 일정을 건너뛴다.
+ * 시계는 진입점에서 **한 번** 읽은 `now` 를 수집 창과 같이 쓴다(M6 · `clock-injection.test.ts` 가 개수를 센다).
+ */
+test("⚠14d 재수집이면 앞으로의 일정 시즌은 jstDate(now) 의 해 · 평소는 마지막 대상일의 해 · load-upcoming 에 그 값이 간다", () => {
+  assert.match(UPDATE, /const now = new Date\(\);/, "진입점 시계 `now` 가 없다");
+  assert.match(UPDATE, /targetDates\(now,/, "수집 창이 같은 `now` 를 쓰지 않는다");
+  assert.match(
+    UPDATE,
+    /const upcomingSeason = refetch\.dates !== null \? jstDate\(now\)\.slice\(0, 4\) :\s*dates\[dates\.length - 1\]!\.slice\(0, 4\);/,
+    "재수집 갈래가 JST 올해를 쓰지 않는다 — 작년 날짜를 재수집하면 올해 일정을 건너뛴다",
+  );
+  const at = UPDATE.indexOf('run("앞으로의 일정 적재", [');
+  assert.notEqual(at, -1, "앞으로의 일정 적재 단계를 못 찾았다");
+  const args = UPDATE.slice(at, UPDATE.indexOf("])", at));
+  assert.match(args, /\bupcomingSeason\b/, "load-upcoming 에 upcomingSeason 이 안 간다");
+  assert.ok(!args.includes("dates[dates.length - 1]"), "load-upcoming 인자가 여전히 마지막 대상일을 직접 쓴다");
+});

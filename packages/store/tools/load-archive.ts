@@ -23,7 +23,7 @@ import { canonicalTeamCode, competitionFromLabel, competitionOf } from "@bb-app/
 import { openDb } from "../src/db.ts";
 import { alignPaEvents } from "../src/align.ts";
 import { deriveRuns } from "../src/runs.ts";
-import { fetchedAtOf } from "../src/meta.ts";
+import { seenAtOf } from "../src/meta.ts";
 import { deriveBatting, derivePitching } from "../src/derive.ts";
 import type { QuarantineRow } from "../src/derive.ts";
 import {
@@ -313,13 +313,18 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
    *   적을 정직한 값이 없다 — 그래서 **그 경기를 건너뛰고 실패로 센다**(M7 「빈 값이 아니라 실패로」).
    *   실측(2026-08-24): 사이드카 **7,805/7,805** 가 읽힌다. **지금은 0건이 걸린다.**
    *   ⚠**걸리면 아카이버가 고장난 것**이다 — 조용히 넘기면 그걸 영영 모른다.
+   * ⚠**파일을 다시 읽지 않는다 — 위에서 읽은 스냅샷(`pages.box.meta`)에서 낸다**(2026-09-26 · 3중 검토 3차 P2).
+   *   예전에는 `fetchedAtOf(box.meta.json)` 로 **한 번 더** 읽었다. 그 사이에 아카이버가 사이드카를 바꾸면
+   *   무결성·세트 대조는 옛 스냅샷으로, 판 가드는 새 사이드카의 시각으로 해서 **대조한 판과 다른 판의 시각**이 들어갔다.
+   *   규칙은 `fetchedAtOf` 와 한 벌이다(`seenAtOf` · M1). `load-archive-wiring.test.ts` 가 이 모양을 지킨다.
    */
-  const boxFetchedAt = fetchedAtOf(join(dirname(file), "box.meta.json"));
+  const boxFetchedAt = seenAtOf(pages.box.meta);
   if (boxFetchedAt === null) {
     failed += 1;
     console.error(
-      `취득 시각을 못 읽었다 ${meta.gameId} — ${join(dirname(file), "box.meta.json")}. ` +
-        "적재 시각으로 메우지 않는다(M11). 사이드카를 확인하라.",
+      `취득 시각을 못 읽었다 ${meta.gameId} — ${join(dirname(file), "box.meta.json")}` +
+        (pages.box.metaError === null ? "" : ` (${pages.box.metaError})`) +
+        ". 적재 시각으로 메우지 않는다(M11). 사이드카를 확인하라.",
     );
     continue;
   }

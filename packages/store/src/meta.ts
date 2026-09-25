@@ -56,8 +56,18 @@ export function fetchedAtOf(metaPath: string): string | null {
   } catch {
     return null;
   }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-  const m = parsed as { fetchedAt?: unknown; checkedAt?: unknown };
+  return seenAtOf(parsed);
+}
+
+/**
+ * **이미 읽어 둔** 사이드카 값에서 본 시각을 낸다 — `fetchedAtOf` 와 **같은 규칙 한 벌**(M1).
+ * ⚠경기 적재기는 네 장을 한 번 읽은 스냅샷(`readGamePages`)으로 무결성·세트를 대조한다. 본 시각만 파일을 **다시** 읽으면
+ *   그 사이에 아카이버가 사이드카를 바꿨을 때 **대조한 판과 다른 판의 시각**이 판 가드에 들어간다(TOCTOU ·
+ *   2026-09-26 3중 검토 3차 P2 · 설계 부록 D). 그래서 적재기는 스냅샷의 값을 이 함수에 넘긴다.
+ */
+export function seenAtOf(meta: unknown): string | null {
+  if (meta === null || typeof meta !== "object" || Array.isArray(meta)) return null;
+  const m = meta as { fetchedAt?: unknown; checkedAt?: unknown };
   /**
    * ⚠**`checkedAt`(마지막으로 본 시각)이 먼저다.**
    * `fetchedAt` 은 「내용이 마지막으로 **바뀐**」 시각이라, 안 바뀐 페이지에서는 영영 안 움직인다.

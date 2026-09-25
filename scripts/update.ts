@@ -20,7 +20,7 @@ import { parseArgs } from "node:util";
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { JST_TODAY_FROM_HOUR, parseRefetchDates, targetDates } from "./date-window.ts";
+import { JST_TODAY_FROM_HOUR, jstDate, parseRefetchDates, targetDates } from "./date-window.ts";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -159,7 +159,9 @@ if (refetch.dates !== null && values.today === true) {
 }
 
 const since = values.date === undefined && refetch.dates === null ? collectedThrough() : undefined;
-const dates = refetch.dates ?? targetDates(new Date(), {
+// ⚠**시계는 여기서 한 번 읽는다**(M6 · 진입점) — 수집 창과 「앞으로의 일정」 시즌(4단계)이 같은 「지금」을 본다
+const now = new Date();
+const dates = refetch.dates ?? targetDates(now, {
   ...(values.date === undefined ? {} : { date: values.date }),
   ...(values.today === true ? { forceToday: true } : {}),
   ...(since === undefined ? {} : { collectedThrough: since }),
@@ -278,14 +280,20 @@ if (emit.status === 0 && emit.stdout) {
  * ⚠**외부 요청 0회다** — 경기 아카이버가 대상 날짜의 달을 받으면서 **월 단위로 통째** 저장해
  * 두었고, 이 단계는 그걸 읽기만 한다(§2-2-1 「받고 있는데 안 읽던 것」).
  * ⚠**경기 적재 뒤에 둔다** — 치러진 경기가 먼저 들어와야 일정에서 빠질 것이 정해진다.
- * ⚠**시즌은 대상 날짜에서 낸다.** 벽시계를 읽지 않는다(M6).
+ * ⚠**시즌은 대상 날짜에서 낸다** — 위에서 한 번 읽은 `now` 말고 시계를 다시 읽지 않는다(M6).
+ * ⚠**재수집(`BB_REFETCH_DATES`)일 때는 JST 의 올해다**(2026-09-26 · 3중 검토 1차 P3 · 2차 F4).
+ *   재수집 날짜는 **지난** 날짜이고 작년일 수도 있다 — 그 해를 쓰면 이번 실행은 **올해의 앞으로의 일정**을 건너뛴다.
+ *   (재수집 실행은 올해 달의 일정 페이지를 새로 받지 않는다 — 앞선 정시 실행이 받아 둔 것을 읽는다.)
+ *   `scripts/test/refetch-wiring.test.ts` 가 이 갈래를 지킨다.
  */
+const upcomingSeason = refetch.dates !== null ? jstDate(now).slice(0, 4) :
+  // ⚠**가장 늦은 대상일의 해**를 쓴다. 연말에 어제와 오늘의 해가 갈릴 수 있다
+  dates[dates.length - 1]!.slice(0, 4);
 failures += run("앞으로의 일정 적재", [
   "packages/store/tools/load-upcoming.ts",
   values.archive,
   values.db,
-  // ⚠**가장 늦은 대상일의 해**를 쓴다. 연말에 어제와 오늘의 해가 갈릴 수 있다
-  dates[dates.length - 1]!.slice(0, 4),
+  upcomingSeason,
 ]) === 0 ? 0 : 1;
 
 // 5. 予告先発 — 하루 1요청. ⚠거르면 그날 예고는 영영 못 받는다(페이지가 하루치만 보여준다)

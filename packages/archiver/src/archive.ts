@@ -10,7 +10,7 @@
 import type { Clock } from "./clock.ts";
 import { GAME_PAGES, discoverGames, gamesOn, monthlyScheduleUrl, pageKey, pageUrl } from "./discover.ts";
 import type { GamePage, GameRef } from "./discover.ts";
-import type { PoliteFetcher } from "./fetcher.ts";
+import type { FetchResponse, PoliteFetcher } from "./fetcher.ts";
 import type { BlobMeta, Sink } from "./sink.ts";
 import { sha256 } from "./sink.ts";
 
@@ -117,6 +117,12 @@ export class MonthlyScheduleCache {
  * `etag` **0건** · `lastModified` **0건** — **상류가 검증자를 하나도 안 준다.**
  * 그래서 `304` 경로는 영영 안 타고, 「매번 200 + sha 비교」는 우리 결함이 아니라 **상류의 성질**이다.
  * **다시 조사하지 마라 — 고칠 수 있는 것은 「봤다」를 남기는 것뿐이다.**
+ *
+ * ⚠**`seenAt` — 「봤다」의 시각은 실제로 받은 시각이다**(2026-09-26 · 3중 검토 3차 P1 · 설계 부록 D).
+ * 받기와 기록이 떨어져 있는 호출자(`commitPrepared`)는 **받은 직후 읽은 시각**을 넘긴다. 기록할 때 시계를 다시 읽으면
+ * 두 아카이버가 같은 폴더에서 겹칠 때 **먼저 옛 내용을 받고 늦게 기록한 쪽**이 가장 새 「봤다」를 찍고,
+ * 적재기의 판 가드(box 의 `checkedAt ?? fetchedAt`)가 그 옛 내용을 새 판으로 믿는다.
+ * 넘기지 않으면 지금 시계다 — 받자마자 기록하는 호출자(`players.ts` · 월간 일정)는 그 둘이 같다.
  */
 export async function markSeen(
   sink: Sink,
@@ -124,10 +130,11 @@ export async function markSeen(
   key: string,
   prev: BlobMeta | null,
   extra?: BlobExtra,
+  seenAt?: string,
 ): Promise<void> {
   // ⚠**전에 본 적이 없으면 남길 것이 없다** — 빈 메타를 지어내지 않는다(M11)
   if (prev === null) return;
-  await sink.writeMeta(key, { ...prev, ...(extra ?? {}), checkedAt: clock.now().toISOString() });
+  await sink.writeMeta(key, { ...prev, ...(extra ?? {}), checkedAt: seenAt ?? clock.now().toISOString() });
 }
 
 /**
@@ -143,7 +150,12 @@ export interface BlobExtra {
   readonly set?: string;
 }
 
-export type Prepared = { key: string; url: string; prev: BlobMeta | null } & (
+/**
+ * ⚠`observedAt` — **받기가 끝난 직후** 읽은 시각(UTC `toISOString`). 기록 단계는 이 값을 쓰고 시계를 다시 읽지 않는다
+ *   (`changed` 의 `meta.fetchedAt` 과 같은 값 · `unchanged` 의 `checkedAt` 이 된다 · 2026-09-26 3중 검토 3차 P1).
+ *   `failed` 에서는 판정이 끝난 시각일 뿐 어디에도 기록되지 않는다.
+ */
+export type Prepared = { key: string; url: string; prev: BlobMeta | null; observedAt: string } & (
   | { kind: "changed"; status: number; body: Uint8Array; meta: BlobMeta }
   | { kind: "unchanged"; status: number }
   | { kind: "absent"; status: number }
@@ -156,26 +168,35 @@ const errorText = (err: unknown): string => (err instanceof Error ? err.message 
  * URL 하나를 **받고 판정까지만** 한다. **기록하지 않는다 · 던지지 않는다.**
  * ⚠`readMeta` 예외도 `failed` 로 흡수한다(2026-09-25 · 설계 D2). 예전에는 `try` 밖이라 깨진 사이드카 하나가
  *   `archiveGame` → `archiveDate` 를 거쳐 **그날 전체를 날짜 단위 오류**로 만들었다. 단독 호출자에게도 같은 변화다(의도).
+ * ⚠**본 시각은 여기서 한 번 읽는다**(받은 직후 · M6) — 기록이 늦어져도 「언제 본 내용인가」가 바뀌지 않게.
  */
 export async function prepareUrl(key: string, url: string, deps: ArchiveDeps): Promise<Prepared> {
   let prev: BlobMeta | null;
   try {
     prev = await deps.sink.readMeta(key);
   } catch (err) {
-    return { key, url, prev: null, kind: "failed", status: null, error: `사이드카를 못 읽었다: ${errorText(err)}` };
+    const observedAt = deps.clock.now().toISOString();
+    return { key, url, prev: null, observedAt, kind: "failed", status: null, error: `사이드카를 못 읽었다: ${errorText(err)}` };
   }
+  let res: FetchResponse;
   try {
-    const res = await deps.fetcher.get(url, prev ?? undefined);
-    if (res.status === 304) return { key, url, prev, kind: "unchanged", status: 304 };
+    res = await deps.fetcher.get(url, prev ?? undefined);
+  } catch (err) {
+    const observedAt = deps.clock.now().toISOString();
+    return { key, url, prev, observedAt, kind: "failed", status: null, error: errorText(err) };
+  }
+  const observedAt = deps.clock.now().toISOString();
+  try {
+    if (res.status === 304) return { key, url, prev, observedAt, kind: "unchanged", status: 304 };
     // 사실이다 — 이 경기에 이 페이지는 존재하지 않는다. 실패가 아니다.
-    if (res.status === 404 || res.status === 410) return { key, url, prev, kind: "absent", status: res.status };
-    if (res.body === null) return { key, url, prev, kind: "failed", status: res.status, error: `본문 없는 ${res.status} 응답` };
+    if (res.status === 404 || res.status === 410) return { key, url, prev, observedAt, kind: "absent", status: res.status };
+    if (res.body === null) return { key, url, prev, observedAt, kind: "failed", status: res.status, error: `본문 없는 ${res.status} 응답` };
     const digest = sha256(res.body);
     // 서버가 조건부 요청을 지원하지 않아 200을 줬지만 내용은 같다 → 본문은 안 쓴다(멱등)
-    if (prev && prev.sha256 === digest) return { key, url, prev, kind: "unchanged", status: res.status };
+    if (prev && prev.sha256 === digest) return { key, url, prev, observedAt, kind: "unchanged", status: res.status };
     const meta: BlobMeta = {
       url,
-      fetchedAt: deps.clock.now().toISOString(),
+      fetchedAt: observedAt,
       lastModified: res.lastModified,
       etag: res.etag,
       status: res.status,
@@ -183,15 +204,17 @@ export async function prepareUrl(key: string, url: string, deps: ArchiveDeps): P
       byteLength: res.body.byteLength,
       revision: (prev?.revision ?? 0) + 1,
     };
-    return { key, url, prev, kind: "changed", status: res.status, body: res.body, meta };
+    return { key, url, prev, observedAt, kind: "changed", status: res.status, body: res.body, meta };
   } catch (err) {
-    return { key, url, prev, kind: "failed", status: null, error: errorText(err) };
+    return { key, url, prev, observedAt, kind: "failed", status: null, error: errorText(err) };
   }
 }
 
 /**
  * 판정 결과를 기록한다. ⚠**던지지 않는다** — `sink` 가 던지면 `failed` 로 돌려준다(예전 `archiveUrl` 과 같은 결과).
  * ⚠「받았는데 안 바뀌었다」도 「봤다」로 남긴다(`markSeen`) — 안 남기면 취득일이 실제보다 낡게 나가고 재취득이 오판한다.
+ * ⚠**시계를 읽지 않는다** — 「봤다」는 `p.observedAt`(받은 시각)이다. 기록 시각을 찍으면 겹친 아카이버가
+ *   옛 내용에 새 시각을 붙인다(설계 부록 D · 3중 검토 3차 P1).
  */
 export async function commitPrepared(p: Prepared, deps: ArchiveDeps, extra?: BlobExtra): Promise<PageResult> {
   const base = { key: p.key, url: p.url };
@@ -201,7 +224,7 @@ export async function commitPrepared(p: Prepared, deps: ArchiveDeps, extra?: Blo
         await deps.sink.write(p.key, p.body, { ...p.meta, ...(extra ?? {}) });
         return { ...base, outcome: "stored", status: p.status, error: null };
       case "unchanged":
-        await markSeen(deps.sink, deps.clock, p.key, p.prev, extra);
+        await markSeen(deps.sink, deps.clock, p.key, p.prev, extra, p.observedAt);
         return { ...base, outcome: "unchanged", status: p.status, error: null };
       case "absent":
         return { ...base, outcome: "absent", status: p.status, error: null };
@@ -259,7 +282,7 @@ export async function archiveGame(ref: GameRef, deps: ArchiveDeps): Promise<Page
     const p = await prepareUrl(pageKey(ref, page), pageUrl(ref, page), deps);
     prepared.push(
       p.kind === "absent" && p.prev !== null
-        ? { key: p.key, url: p.url, prev: p.prev, kind: "failed", status: p.status, error: "있던 페이지가 사라졌다" }
+        ? { key: p.key, url: p.url, prev: p.prev, observedAt: p.observedAt, kind: "failed", status: p.status, error: "있던 페이지가 사라졌다" }
         : p,
     );
   }

@@ -162,3 +162,61 @@ test("미성립 쓰기도 같은 모양이다 — `notPlayed += 1` 은 `written`
   assert.equal(inc.length, 1, `notPlayed += 1 이 ${inc.length}곳이다(1곳이어야 한다)`);
   assert.ok(inc[0]! > start && inc[0]! < end, "notPlayed += 1 이 written 갈래 밖이다 — 쓰지 않은 경기를 미성립으로 센다");
 });
+
+/** 경기 순회(`for await (const file of walk(archiveRoot, "box.html.gz"))`)의 본문 [시작, 끝] — 정확히 한 곳이어야 한다 */
+function gameLoop(): [number, number] {
+  const at = codeIndicesOf('for await (const file of walk(archiveRoot, "box.html.gz"))');
+  assert.equal(at.length, 1, `경기 순회가 ${at.length}곳이다(1곳이어야 한다) — 소스 모양이 바뀌었다`);
+  return [at[0]!, closingBrace(at[0]!)];
+}
+
+/** `writeGameGuarded(` 호출 전부의 [여는 위치, 닫는 괄호] */
+function guardedRanges(): [number, number][] {
+  return codeIndicesOf(GUARDED).map((i) => [i, closingParen(i)]);
+}
+
+/**
+ * ⚠**자식 행 쓰기도 판정 안이어야 한다**(2026-09-26 · 3중 검토 2차 · 설계 D1 끝).
+ * 위 시험은 `upsertGame(` 만 본다 — 그런데 설계가 `upsertGame` 의 `WHERE` 만으로는 안 된다고 한 이유가 바로 **자식 행**이다
+ * (경기 행만 지키면 자식만 옛 판인 새 혼합이 생긴다). 자식 행 쓰기 하나가 콜백 밖으로 나가면 옛 판 경기의 타석·주자·격리가
+ * 판정 없이 갈아 끼워진다. 경기 순회 안의 쓰기를 **전부** 본다.
+ * ⚠`upsertPlayer(` 도 넣는다 — 선수 표도 옛 판 경기에서 흘러가면 안 되는 쓰기다(명단과 같은 이유 · D1-6).
+ */
+test("경기 순회 안의 자식 행 쓰기(타격·투수·타석·주자·격리·삭제·선수)는 전부 `writeGameGuarded(` 콜백 안이다", () => {
+  const [loopStart, loopEnd] = gameLoop();
+  const ranges = guardedRanges();
+  assert.ok(ranges.length >= 2, `${GUARDED} 호출이 ${ranges.length}곳뿐이다 — 미성립·실시 두 경로여야 한다`);
+  const line = (i: number): number => RAW.slice(0, i).split("\n").length;
+  const needles = ["replacePaEvents(", "replaceRunnerEvents(", "upsertBatting(", "upsertPitching(", "replaceQuarantine(", "DELETE FROM", "upsertPlayer("];
+  const counts: string[] = [];
+  for (const needle of needles) {
+    const inLoop = codeIndicesOf(needle).filter((i) => i > loopStart && i < loopEnd);
+    // ⚠분모 — 0 이면 이 시험은 그 쓰기를 아무것도 안 잰 것이다(이름이 바뀌었거나 가림이 코드를 먹었다)
+    assert.ok(inLoop.length >= 1, `경기 순회 안에 ${needle} 가 없다 — 소스 모양이 바뀌었다`);
+    counts.push(`${needle}${inLoop.length}`);
+    for (const i of inLoop) {
+      assert.ok(
+        ranges.some(([s, e]) => i > s && i < e),
+        `${line(i)}행의 ${needle} 가 ${GUARDED} 콜백 밖이다 — 판정 없이 자식 행을 쓴다(설계 D1 · 옛 판이 자식만 덮는다)`,
+      );
+    }
+  }
+  // ⚠삭제는 미성립 4 · 실시 2 다 — 하나라도 빠지면(가림 오류 포함) 분모가 달라진다
+  assert.equal(codeIndicesOf("DELETE FROM").filter((i) => i > loopStart && i < loopEnd).length, 6, `DELETE FROM 개수가 다르다: ${counts.join(" · ")}`);
+});
+
+/**
+ * ⚠**box 의 본 시각은 스냅샷에서 낸다 — 파일을 다시 읽지 않는다**(2026-09-26 · 3중 검토 3차 P2).
+ * 예전에는 `readGamePages` 로 네 장을 읽은 **뒤** `fetchedAtOf(box.meta.json)` 로 사이드카를 한 번 더 읽었다(TOCTOU) —
+ * 그 사이 아카이버가 사이드카를 바꾸면 무결성·세트는 옛 스냅샷으로, 판 가드는 새 시각으로 판정한다.
+ */
+test("box 의 본 시각(`boxFetchedAt`)은 `readGamePages` 스냅샷의 `pages.box.meta` 에서 낸다 — `fetchedAtOf(` 로 다시 읽지 않는다", () => {
+  assert.equal(codeIndicesOf("fetchedAtOf(").length, 0, "적재기가 사이드카 파일을 다시 읽는다(fetchedAtOf) — 스냅샷과 다른 판의 시각이 들어간다");
+  const derive = codeIndicesOf("const boxFetchedAt = seenAtOf(pages.box.meta);");
+  assert.equal(derive.length, 1, `boxFetchedAt 을 스냅샷에서 내는 줄이 ${derive.length}곳이다(1곳이어야 한다)`);
+  const read = codeIndicesOf("readGamePages(");
+  const judge = codeIndicesOf("judgeVersion(");
+  assert.equal(read.length, 1, `readGamePages( 가 ${read.length}곳이다`);
+  assert.equal(judge.length, 1, `judgeVersion( 가 ${judge.length}곳이다`);
+  assert.ok(read[0]! < derive[0]! && derive[0]! < judge[0]!, "순서가 다르다 — 스냅샷을 읽고 → 본 시각을 내고 → 사전 판정한다");
+});

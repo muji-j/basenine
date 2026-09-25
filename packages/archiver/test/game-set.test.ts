@@ -1,6 +1,7 @@
 /**
  * 경기 페이지 세트 기록(설계 D2 · 시험 8 · 8a · 9 · 9a · 10 · 11a · 12a · 12b · 12c).
  * ⚠8a 는 설계 부록 C 의 I1(2026-09-26 최종 가지 검토)이다 — 받기 단계 실패 때 box 의 본 시각이 오르면 옛 판 가드가 풀린다.
+ * ⚠15·15a 는 설계 부록 D 의 A1(2026-09-26 3중 검토 3차 P1)이다 — 「봤다」는 **받은 시각**이지 기록 시각이 아니다.
  * ⚠가짜 fetcher 는 `get` 만 가진 객체다 — 재시도·지연 없이 호출 순서를 그대로 기록한다.
  */
 import { test } from "node:test";
@@ -8,7 +9,7 @@ import assert from "node:assert/strict";
 import { MemorySink, sha256 } from "../src/sink.ts";
 import type { BlobMeta } from "../src/sink.ts";
 import type { FetchResponse, PoliteFetcher } from "../src/fetcher.ts";
-import { archiveDate, archiveGame, archivePage } from "../src/archive.ts";
+import { archiveDate, archiveGame, archivePage, commitPrepared, prepareUrl } from "../src/archive.ts";
 
 const REF = { season: 2026, date: "2026-08-14", slug: "s-db-17", path: "/scores/2026/0814/s-db-17/", venue: null };
 const KEY = (leaf: string) => `npb/scores/2026/0814/s-db-17/${leaf}`;
@@ -207,4 +208,74 @@ test("12c 처음부터 없던 roster 의 404 는 absent 이고 세트가 기록�
   assert.deepEqual(outcomes(rs), ["unchanged", "unchanged", "stored", "absent"]);
   assert.equal(await sink.readMeta(KEY("roster")), null);
   assert.ok((await sink.readMeta(KEY("box")))?.set);
+});
+
+/**
+ * ⚠**15 「봤다」는 받은 시각이다 — 기록 시각이 아니다**(설계 부록 D · 3중 검토 3차 P1).
+ * 두 아카이버가 같은 폴더에서 겹치면 **먼저 옛 내용을 받고 늦게 기록한 쪽**이 있다. 기록할 때 시계를 다시 읽으면
+ * 그 옛 내용에 가장 새 `checkedAt` 이 붙고, 적재기의 판 가드(box 의 `checkedAt ?? fetchedAt`)가 그것을 새 판으로 믿는다.
+ * → 받기와 기록 사이에 시계가 흐르게 하고, 기록된 시각이 **받은 시각**인지 본다.
+ */
+test("15 prepare 와 commit 사이에 시계가 흘러도 안 바뀐 페이지의 checkedAt · 바뀐 페이지의 fetchedAt 은 받은 시각이다", async () => {
+  const OBSERVED = "2026-09-25T00:00:00.000Z";
+  const COMMITTED = "2026-09-25T00:05:00.000Z";
+  let now = OBSERVED;
+  const movingClock = { now: () => new Date(now) };
+  const sink = new MemorySink();
+  await seedAll(sink);
+  const { fetcher } = stubFetcher((leaf) => (leaf === "box" ? ok("box1") : ok(`${leaf}0`)));
+  const deps = { fetcher, sink, clock: movingClock };
+
+  const same = await prepareUrl(KEY("index"), URL_OF.index, deps);
+  const changed = await prepareUrl(KEY("box"), URL_OF.box, deps);
+  assert.equal(same.kind, "unchanged");
+  assert.equal(changed.kind, "changed");
+  now = COMMITTED; // 받은 뒤 한참 지나 기록한다
+  assert.equal((await commitPrepared(same, deps)).outcome, "unchanged");
+  assert.equal((await commitPrepared(changed, deps)).outcome, "stored");
+
+  const index = await sink.readMeta(KEY("index"));
+  assert.equal(index?.checkedAt, OBSERVED, "안 바뀐 페이지의 「봤다」에 기록 시각이 찍혔다 — 겹친 아카이버가 옛 내용을 새 판으로 만든다");
+  assert.equal(index?.fetchedAt, "2026-08-15T00:00:00.000Z", "안 바뀐 페이지의 fetchedAt 은 움직이지 않는다");
+  const box = await sink.readMeta(KEY("box"));
+  assert.equal(box?.fetchedAt, OBSERVED, "바뀐 페이지의 fetchedAt 에 기록 시각이 찍혔다");
+  assert.equal(box?.checkedAt, undefined, "새로 쓴 사이드카는 fetchedAt 이 곧 본 시각이다");
+});
+
+test("15a archiveGame: 네 장 각각의 본 시각은 **그 페이지를 받은 직후**의 시각이다 — 세트를 기록할 때의 시각이 아니다", async () => {
+  const OBS: Record<string, string> = {
+    index: "2026-09-25T00:00:01.000Z",
+    playbyplay: "2026-09-25T00:00:04.000Z",
+    box: "2026-09-25T00:00:07.000Z",
+    roster: "2026-09-25T00:00:10.000Z",
+  };
+  const COMMITTED = "2026-09-25T00:09:00.000Z";
+  let now = "2026-09-25T00:00:00.000Z";
+  const movingClock = { now: () => new Date(now) };
+  const { fetcher } = stubFetcher((leaf) => {
+    now = OBS[leaf]!; // 이 페이지의 응답이 도착한 시각
+    return leaf === "box" ? ok("box1") : ok(`${leaf}0`);
+  });
+  // 기록 단계의 첫 쓰기에서 시계를 크게 밀어 「기록은 받기보다 늦다」를 만든다
+  class LateSink extends MemorySink {
+    override async write(key: string, body: Uint8Array, meta: BlobMeta): Promise<void> {
+      now = COMMITTED;
+      return super.write(key, body, meta);
+    }
+    override async writeMeta(key: string, meta: BlobMeta): Promise<void> {
+      now = COMMITTED;
+      return super.writeMeta(key, meta);
+    }
+  }
+  const late = new LateSink();
+  await seedAll(late, { set: "S0" }); // 심는 쓰기도 시계를 밀지만 곧바로 받기가 다시 정한다
+
+  const rs = await archiveGame(REF, { fetcher, sink: late, clock: movingClock });
+  assert.deepEqual(outcomes(rs), ["unchanged", "unchanged", "stored", "unchanged"]);
+  for (const leaf of ["index", "playbyplay", "roster"]) {
+    assert.equal((await late.readMeta(KEY(leaf)))?.checkedAt, OBS[leaf], `${leaf} 의 checkedAt 이 받은 시각이 아니다`);
+  }
+  assert.equal((await late.readMeta(KEY("box")))?.fetchedAt, OBS["box"], "box 의 fetchedAt 이 받은 시각이 아니다");
+  const sets = await Promise.all(["index", "playbyplay", "box", "roster"].map(async (l) => (await late.readMeta(KEY(l)))?.set));
+  assert.equal(new Set(sets).size, 1, "세트 표식은 여전히 한 값이다");
 });
