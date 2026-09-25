@@ -73,3 +73,121 @@ for (const bad of ["index", "playbyplay", "roster"]) {
     assert.ok(day.pages.some((p) => p.outcome === "failed" && /사이드카를 못 읽었다/.test(p.error ?? "")));
   });
 }
+
+const outcomes = (rs: { outcome: string }[]) => rs.map((r) => r.outcome);
+
+test("8 받기 단계에서 playbyplay 가 실패하면 바뀐 box 는 held · 아무 본문도 안 쓰고 set 도 안 바뀐다", async () => {
+  const sink = new MemorySink();
+  await seedAll(sink);
+  const writes = sink.writeCount;
+  const { fetcher } = stubFetcher((leaf) => (leaf === "playbyplay" ? new Error("ECONNRESET") : leaf === "box" ? ok("box1") : ok(`${leaf}0`)));
+  const rs = await archiveGame(REF, { fetcher, sink, clock });
+  assert.deepEqual(outcomes(rs), ["unchanged", "failed", "held", "unchanged"]);
+  assert.equal(sink.writeCount, writes, "새 본문 쓰기 0회");
+  assert.equal(new TextDecoder().decode(sink.bodies.get(KEY("box"))), "box0");
+  assert.equal((await sink.readMeta(KEY("box")))?.revision, 1);
+  for (const leaf of ["index", "roster"]) {
+    const m = await sink.readMeta(KEY(leaf));
+    assert.equal(m?.checkedAt, "2026-09-25T00:00:00.000Z", `${leaf} 는 봤다고 남긴다`);
+    assert.equal(m?.set, undefined, `${leaf} 의 set 은 바뀌지 않는다`);
+  }
+});
+
+test("9 전부 성공이면 네 사이드카의 set 이 모두 같다 · 바뀐 페이지만 revision 이 오른다", async () => {
+  const sink = new MemorySink();
+  await seedAll(sink);
+  const { fetcher } = stubFetcher((leaf) => (leaf === "box" ? ok("box1") : ok(`${leaf}0`)));
+  const rs = await archiveGame(REF, { fetcher, sink, clock });
+  assert.deepEqual(outcomes(rs), ["unchanged", "unchanged", "stored", "unchanged"]);
+  const sets = await Promise.all(["index", "playbyplay", "box", "roster"].map(async (l) => (await sink.readMeta(KEY(l)))?.set));
+  assert.ok(typeof sets[0] === "string" && sets[0].startsWith("2026-09-25T00:00:00.000Z-"));
+  assert.equal(new Set(sets).size, 1);
+  assert.equal((await sink.readMeta(KEY("box")))?.revision, 2);
+  assert.equal((await sink.readMeta(KEY("index")))?.revision, 1);
+});
+
+test("9a 세트 id: 같은 시각이라도 내용이 다르면 다르고 · 같으면 같다", async () => {
+  const run = async (box: string) => {
+    const sink = new MemorySink();
+    await seedAll(sink);
+    await archiveGame(REF, { fetcher: stubFetcher((leaf) => (leaf === "box" ? ok(box) : ok(`${leaf}0`))).fetcher, sink, clock });
+    return (await sink.readMeta(KEY("box")))?.set;
+  };
+  const a = await run("boxA");
+  const b = await run("boxB");
+  const a2 = await run("boxA");
+  assert.notEqual(a, b);
+  assert.equal(a, a2);
+});
+
+test("10 요청 수·순서는 지금과 같다 — index · playbyplay · box · roster 한 번씩", async () => {
+  const sink = new MemorySink();
+  const { fetcher, calls } = stubFetcher((leaf) => ok(`${leaf}0`));
+  await archiveGame(REF, { fetcher, sink, clock });
+  assert.deepEqual(calls, [URL_OF.index, URL_OF.playbyplay, URL_OF.box, URL_OF.roster]);
+});
+
+class FailingWriteSink extends MemorySink {
+  /** ⚠사전 적재(`seedAll`)가 끝난 뒤에 켠다 — 안 그러면 준비 단계에서 먼저 죽는다 */
+  armed = false;
+  private readonly badLeaf: string;
+  private readonly halfWrite: boolean;
+  constructor(badLeaf: string, halfWrite: boolean) {
+    super();
+    this.badLeaf = badLeaf;
+    this.halfWrite = halfWrite;
+  }
+  override async write(key: string, body: Uint8Array, meta: BlobMeta): Promise<void> {
+    if (this.armed && key === KEY(this.badLeaf)) {
+      // halfWrite: 본문 rename 은 됐고 사이드카 rename 에서 죽은 모양(12b)
+      if (this.halfWrite) this.bodies.set(key, body);
+      throw new Error("디스크 오류");
+    }
+    return super.write(key, body, meta);
+  }
+}
+
+test("12a 기록 단계에서 playbyplay 쓰기가 실패하면 거기서 멈춘다 · 앞 index 만 새 set · 뒤는 held/무기록", async () => {
+  const sink = new FailingWriteSink("playbyplay", false);
+  await seedAll(sink);
+  sink.armed = true;
+  const { fetcher } = stubFetcher((leaf) => (leaf === "playbyplay" ? ok("playbyplay1") : leaf === "box" ? ok("box1") : ok(`${leaf}0`)));
+  const rs = await archiveGame(REF, { fetcher, sink, clock });
+  assert.deepEqual(outcomes(rs), ["unchanged", "failed", "held", "unchanged"]);
+  assert.ok((await sink.readMeta(KEY("index")))?.set, "index 는 새 set 을 받았다");
+  const roster = await sink.readMeta(KEY("roster"));
+  assert.equal(roster?.checkedAt, undefined, "멈춘 뒤의 roster 는 markSeen 도 안 한다");
+  assert.equal(roster?.set, undefined);
+  assert.equal(new TextDecoder().decode(sink.bodies.get(KEY("box"))), "box0");
+});
+
+test("12b 본문만 바뀌고 사이드카에서 죽으면 failed · 본문과 사이드카 sha 가 어긋난 채 남는다(적재기가 본문 불일치로 잡는다)", async () => {
+  const sink = new FailingWriteSink("playbyplay", true);
+  await seedAll(sink);
+  sink.armed = true;
+  const { fetcher } = stubFetcher((leaf) => (leaf === "playbyplay" ? ok("playbyplay1") : ok(`${leaf}0`)));
+  const rs = await archiveGame(REF, { fetcher, sink, clock });
+  assert.equal(rs[1]!.outcome, "failed");
+  const body = sink.bodies.get(KEY("playbyplay"))!;
+  assert.notEqual(sha256(body), (await sink.readMeta(KEY("playbyplay")))?.sha256);
+});
+
+test("12c 있던 playbyplay 가 404 면 실패 · 본문·사이드카 보존 · 바뀐 box 는 held", async () => {
+  const sink = new MemorySink();
+  await seedAll(sink);
+  const { fetcher } = stubFetcher((leaf) => (leaf === "playbyplay" ? notFound : leaf === "box" ? ok("box1") : ok(`${leaf}0`)));
+  const rs = await archiveGame(REF, { fetcher, sink, clock });
+  assert.deepEqual(outcomes(rs), ["unchanged", "failed", "held", "unchanged"]);
+  assert.match(rs[1]!.error ?? "", /있던 페이지가 사라졌다/);
+  assert.equal(new TextDecoder().decode(sink.bodies.get(KEY("playbyplay"))), "playbyplay0");
+});
+
+test("12c 처음부터 없던 roster 의 404 는 absent 이고 세트가 기록된다", async () => {
+  const sink = new MemorySink();
+  for (const leaf of ["index", "playbyplay", "box"]) await seed(sink, leaf, `${leaf}0`);
+  const { fetcher } = stubFetcher((leaf) => (leaf === "roster" ? notFound : leaf === "box" ? ok("box1") : ok(`${leaf}0`)));
+  const rs = await archiveGame(REF, { fetcher, sink, clock });
+  assert.deepEqual(outcomes(rs), ["unchanged", "unchanged", "stored", "absent"]);
+  assert.equal(await sink.readMeta(KEY("roster")), null);
+  assert.ok((await sink.readMeta(KEY("box")))?.set);
+});

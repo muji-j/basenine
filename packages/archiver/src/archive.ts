@@ -231,11 +231,59 @@ export async function archivePage(ref: GameRef, page: GamePage, deps: ArchiveDep
   return archiveUrl(pageKey(ref, page), pageUrl(ref, page), deps);
 }
 
-/** 경기 1건의 전 하위 페이지를 보존한다. */
+/**
+ * 세트 id — `<기록 시각>-<페이지 키와 새 sha 의 digest 앞 16자>`(설계 D2-4).
+ * ⚠**내용이 다르면 같은 밀리초라도 다르다** — 수동 백필과 CI 가 같은 경기를 겹쳐 받는 경우(`sink.ts` 임시 파일 주석이 그 겹침을 인정한다).
+ * ⚠무작위를 쓰지 않는다 — 시각·난수는 주입해 결정론화한다(루트 §6).
+ */
+export function gameSetId(prepared: readonly Prepared[], clock: Clock): string {
+  const lines = prepared.map((p) => {
+    const sha = p.kind === "changed" ? p.meta.sha256 : p.kind === "unchanged" ? (p.prev?.sha256 ?? "-") : "-";
+    return `${p.key}\t${sha}`;
+  });
+  return `${clock.now().toISOString()}-${sha256(new TextEncoder().encode(lines.join("\n"))).slice(0, 16)}`;
+}
+
+/**
+ * 경기 1건의 전 하위 페이지를 **한 세트로** 보존한다(M5 · 2026-09-25 감사 C6 · 설계 D2).
+ *
+ * ⚠예전에는 페이지마다 받자마자 기록했다 — `playbyplay` 만 실패하고 `box` 가 바뀌면 **box 새 판 · 타석 로그 옛 판**이 섞였다.
+ * → ① 4장을 **모두** 받는다(요청 수·순서는 그대로 · L1) ② 하나라도 실패하면 바뀐 페이지는 `held`(기록 안 함)
+ *   ③ 실패가 없으면 같은 `set` 을 적으며 기록한다 ④ 기록 도중 실패하면 **거기서 멈춘다** — 앞 페이지는 되돌리지 않고
+ *   적재기가 세트 불일치로 잡는다(`packages/store/src/page-integrity.ts`).
+ * ⚠**있던 페이지의 404 는 실패다** — 옛 사이드카가 옛 `set` 을 든 채 남으면 세트가 영원히 어긋난다. 본문은 지우지 않는다.
+ */
 export async function archiveGame(ref: GameRef, deps: ArchiveDeps): Promise<PageResult[]> {
-  const out: PageResult[] = [];
+  const prepared: Prepared[] = [];
   for (const page of GAME_PAGES) {
-    out.push(await archivePage(ref, page, deps));
+    const p = await prepareUrl(pageKey(ref, page), pageUrl(ref, page), deps);
+    prepared.push(
+      p.kind === "absent" && p.prev !== null
+        ? { key: p.key, url: p.url, prev: p.prev, kind: "failed", status: p.status, error: "있던 페이지가 사라졌다" }
+        : p,
+    );
+  }
+
+  if (prepared.some((p) => p.kind === "failed")) {
+    const out: PageResult[] = [];
+    for (const p of prepared) {
+      // ⚠`set` 을 넘기지 않는다 — 안 바뀐 페이지의 「봤다」만 남기고 기존 `set` 은 그대로 둔다
+      out.push(p.kind === "changed" ? heldResult(p) : await commitPrepared(p, deps));
+    }
+    return out;
+  }
+
+  const set = gameSetId(prepared, deps.clock);
+  const out: PageResult[] = [];
+  let stopped = false;
+  for (const p of prepared) {
+    if (stopped) {
+      out.push(p.kind === "changed" ? heldResult(p) : { key: p.key, url: p.url, outcome: p.kind === "absent" ? "absent" : "unchanged", status: p.status, error: null });
+      continue;
+    }
+    const r = await commitPrepared(p, deps, { set });
+    out.push(r);
+    if (r.outcome === "failed") stopped = true;
   }
   return out;
 }
