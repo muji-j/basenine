@@ -9,7 +9,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { JST_TODAY_FROM_HOUR, MAX_CATCHUP_DAYS, jstDate, jstHour, targetDates } from "../date-window.ts";
+import { JST_TODAY_FROM_HOUR, MAX_CATCHUP_DAYS, jstDate, jstHour, parseRefetchDates, targetDates } from "../date-window.ts";
 
 /** UTC 문자열로 시각을 만든다. **JST 를 직접 못 만드는 것이 이 시험의 요점**이다 */
 const at = (utc: string): Date => new Date(utc);
@@ -157,4 +157,18 @@ test("⚠날짜를 명시하면 따라잡기가 끼어들지 않는다 — 소�
     ["2026-08-01"],
     "명시한 날짜 하나만이어야 한다",
   );
+});
+
+test("13 재수집 날짜: 비면 평소 창 · 정상 3일은 그 3일", () => {
+  assert.deepEqual(parseRefetchDates(undefined), { ok: true, dates: null });
+  assert.deepEqual(parseRefetchDates("  "), { ok: true, dates: null });
+  assert.deepEqual(parseRefetchDates("2026-08-01, 2026-08-02,2026-08-03"), { ok: true, dates: ["2026-08-01", "2026-08-02", "2026-08-03"] });
+});
+
+test("13 재수집 날짜: 8개 · 없는 날짜 · 셸 문자 · 중복 · 자릿수 틀림은 거부", () => {
+  const eight = Array.from({ length: 8 }, (_, i) => `2026-08-0${i + 1}`).join(",");
+  for (const bad of [eight, "2026-02-30", "2026-08-01;rm -rf /", "2026-08-01,2026-08-01", "2026-8-1", "2026-08-01,"]) {
+    const r = parseRefetchDates(bad);
+    assert.equal(r.ok, false, bad);
+  }
 });

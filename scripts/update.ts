@@ -20,7 +20,7 @@ import { parseArgs } from "node:util";
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { JST_TODAY_FROM_HOUR, targetDates } from "./date-window.ts";
+import { JST_TODAY_FROM_HOUR, parseRefetchDates, targetDates } from "./date-window.ts";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -140,19 +140,35 @@ function collectedThrough(): string | undefined {
   }
 }
 
-const since = values.date === undefined ? collectedThrough() : undefined;
-const dates = targetDates(new Date(), {
+/**
+ * ⚠**재수집 입력**(수동 실행 `refetch_dates` → `BB_REFETCH_DATES` · 설계 D4). 옛 판·세트·본문 불일치로 적재가
+ * 실패했을 때 **그 날짜만** 다시 받는다. 틀리면 아무것도 받지 않고 멈춘다(종료 2).
+ */
+const refetch = parseRefetchDates(process.env["BB_REFETCH_DATES"]);
+if (!refetch.ok) {
+  console.error(`BB_REFETCH_DATES 가 틀렸다 — ${refetch.error}. 아무것도 받지 않는다`);
+  process.exit(2);
+}
+if (refetch.dates !== null && values.date !== undefined) {
+  console.error("--date 와 BB_REFETCH_DATES 를 같이 줄 수 없다 — 하나만 줘라");
+  process.exit(2);
+}
+
+const since = values.date === undefined && refetch.dates === null ? collectedThrough() : undefined;
+const dates = refetch.dates ?? targetDates(new Date(), {
   ...(values.date === undefined ? {} : { date: values.date }),
   ...(values.today === true ? { forceToday: true } : {}),
   ...(since === undefined ? {} : { collectedThrough: since }),
 });
 console.log(
   `대상 경기일 ${dates.join(" · ")}` +
-    (values.date !== undefined
-      ? ""
-      : dates.length > 1
-        ? " (어제와 오늘 JST · 끝나지 않은 경기는 저장하지 않는다)"
-        : ` (어제 JST · 오늘 것은 ${JST_TODAY_FROM_HOUR}시 이후 실행에서 받는다)`),
+    (refetch.dates !== null
+      ? " (재수집 · BB_REFETCH_DATES)"
+      : values.date !== undefined
+        ? ""
+        : dates.length > 1
+          ? " (어제와 오늘 JST · 끝나지 않은 경기는 저장하지 않는다)"
+          : ` (어제 JST · 오늘 것은 ${JST_TODAY_FROM_HOUR}시 이후 실행에서 받는다)`),
 );
 // ⚠**기준점을 말한다.** 창이 조용히 넓어지면 「왜 오늘 요청이 많지」에 아무도 답할 수 없다.
 //   위 「대상 경기일」 줄과 나란히 읽으면 넓어졌는지가 그 자리에서 보인다.

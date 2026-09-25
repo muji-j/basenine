@@ -10,6 +10,13 @@
 import type { Db } from "./db.ts";
 import { normalizeFetchedAt } from "./meta.ts";
 
+/**
+ * 재수집 날짜의 상한. **L1 근거**다 — 하루 최대 6경기 × 4장 × 7일 = 168요청 ≈ 3초 간격 8.4분.
+ * ⚠**여기가 유일한 정본이다**(M1) — `load-archive.ts` 의 복구 힌트 출력과 `scripts/date-window.ts` 의
+ * `parseRefetchDates` 둘 다 이 값을 가져다 쓴다. 두 곳에 따로 적으면 하나만 고쳐졌을 때 어긋난다.
+ */
+export const MAX_REFETCH_DATES = 7;
+
 export type VersionJudgement = "new" | "same-or-newer" | "stale" | "invalid-db";
 
 export type GuardedWrite<T> =

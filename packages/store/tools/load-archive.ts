@@ -38,7 +38,7 @@ import {
   upsertPlayer,
   upsertPlayerSeasonName,
 } from "../src/load.ts";
-import { judgeVersion, writeGameGuarded } from "../src/version-guard.ts";
+import { MAX_REFETCH_DATES, judgeVersion, writeGameGuarded } from "../src/version-guard.ts";
 import { checkIntegrity, checkSet, readGamePages } from "../src/page-integrity.ts";
 import type { GamePages } from "../src/page-integrity.ts";
 
@@ -819,10 +819,13 @@ for (const [label, list] of [["세트 표식이 갈린 경기", setMismatch], ["
   const dates = [...new Set([...staleArchive, ...setMismatch, ...integrityMismatch].map((s) => s.date))].sort();
   if (dates.length > 0) {
     /**
-     * ⚠**한 줄에 7일까지 · 날짜는 전부**(설계 D1-7 · D4). 재수집 입력은 한 번에 1~7일이다(L1 근거 · D4) —
-     * 넘으면 **줄을 나눠** 찍고 한 줄이 수동 실행 한 번이다. 앞 7일만 찍으면 나머지 날짜가 복구 목록에서 사라진다.
+     * ⚠**한 줄에 `MAX_REFETCH_DATES`(7)일까지 · 날짜는 전부**(설계 D1-7 · D4). 재수집 입력은 한 번에
+     * 1~7일이다(L1 근거 · D4) — 넘으면 **줄을 나눠** 찍고 한 줄이 수동 실행 한 번이다.
+     * 앞 7일만 찍으면 나머지 날짜가 복구 목록에서 사라진다.
+     * ⚠**상한은 여기서 정하지 않는다**(M1) — `../src/version-guard.ts` 의 `MAX_REFETCH_DATES` 가 정본이고
+     * `scripts/date-window.ts` 의 `parseRefetchDates` 도 같은 값을 가져다 쓴다.
      */
-    const perRun = 7;
+    const perRun = MAX_REFETCH_DATES;
     for (let i = 0; i < dates.length; i += perRun) {
       console.log(`   복구: 수동 실행 입력 refetch_dates=${dates.slice(i, i + perRun).join(",")}`);
     }

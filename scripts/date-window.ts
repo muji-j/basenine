@@ -8,6 +8,10 @@
  *
  * ⚠**시계는 주입받는다**(M6). 여기서 `Date.now()` 를 부르면 자정 경계를 시험할 수 없다.
  */
+import { MAX_REFETCH_DATES } from "@bb-app/store";
+
+/** 재수집 날짜 상한 — 정본은 `packages/store/src/version-guard.ts`(M1). 이 파일에서 다시 쓴다 */
+export { MAX_REFETCH_DATES };
 
 /**
  * 오늘 것까지 받을 시각인가.
@@ -105,4 +109,29 @@ export function targetDates(
 
   const days = [...past, yesterday];
   return includeToday ? [...days, jstDate(now, 0)] : days;
+}
+
+/**
+ * `BB_REFETCH_DATES`(수동 실행 입력 `refetch_dates`)를 검증한다(설계 D4).
+ * ⚠**틀리면 아무것도 받지 않는다** — 반쯤 맞는 입력을 고쳐 읽지 않는다.
+ * ⚠셸로 넘어온 값이라 형식을 **정규식으로 먼저** 막는다(`;`·공백 명령 등).
+ */
+export function parseRefetchDates(raw: string | undefined): { ok: true; dates: string[] | null } | { ok: false; error: string } {
+  if (raw === undefined || raw.trim() === "") return { ok: true, dates: null };
+  const parts = raw.split(",").map((s) => s.trim());
+  if (parts.length > MAX_REFETCH_DATES) {
+    return { ok: false, error: `재수집 날짜는 ${MAX_REFETCH_DATES}개까지다(${parts.length}개) — L1` };
+  }
+  const seen = new Set<string>();
+  for (const p of parts) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(p)) return { ok: false, error: `YYYY-MM-DD 가 아니다: ${JSON.stringify(p)}` };
+    const [y, m, d] = p.split("-").map(Number) as [number, number, number];
+    const t = new Date(Date.UTC(y, m - 1, d));
+    if (t.getUTCFullYear() !== y || t.getUTCMonth() !== m - 1 || t.getUTCDate() !== d) {
+      return { ok: false, error: `없는 날짜다: ${p}` };
+    }
+    if (seen.has(p)) return { ok: false, error: `같은 날짜가 두 번 있다: ${p}` };
+    seen.add(p);
+  }
+  return { ok: true, dates: parts };
 }
