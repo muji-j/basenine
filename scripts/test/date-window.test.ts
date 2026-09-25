@@ -9,7 +9,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { JST_TODAY_FROM_HOUR, MAX_CATCHUP_DAYS, jstDate, jstHour, parseRefetchDates, targetDates } from "../date-window.ts";
+import { JST_TODAY_FROM_HOUR, MAX_CATCHUP_DAYS, MAX_REFETCH_DATES, jstDate, jstHour, parseRefetchDates, targetDates } from "../date-window.ts";
 
 /** UTC 문자열로 시각을 만든다. **JST 를 직접 못 만드는 것이 이 시험의 요점**이다 */
 const at = (utc: string): Date => new Date(utc);
@@ -171,4 +171,22 @@ test("13 재수집 날짜: 8개 · 없는 날짜 · 셸 문자 · 중복 · 자�
     const r = parseRefetchDates(bad);
     assert.equal(r.ok, false, bad);
   }
+});
+
+/**
+ * ⚠**경계는 정확히 상한(M1 · 감사 반영)**. 적재기의 복구 힌트(`load-archive.ts`)는
+ * 정확히 `MAX_REFETCH_DATES` 개짜리 줄을 찍는다 — 그 줄을 그대로 붙여 넣으면 통과해야 한다.
+ */
+test("13 재수집 날짜: 정확히 상한(7)개 · 전부 다른 날짜는 받는다", () => {
+  const seven = Array.from({ length: MAX_REFETCH_DATES }, (_, i) => `2026-08-0${i + 1}`);
+  assert.deepEqual(parseRefetchDates(seven.join(",")), { ok: true, dates: seven });
+});
+
+/**
+ * ⚠**`update.ts` 는 `dates[dates.length - 1]` 을 「가장 늦은 대상일」로 써서 予告先発 조회
+ * 시즌을 정한다**(M2 · 감사 반영). 입력 순서를 그대로 돌려주면 사람이 날짜를 거꾸로 적었을 때
+ * 조용히 틀린 시즌을 조회한다 — 그래서 오름차순으로 정렬해 돌려준다.
+ */
+test("13 재수집 날짜: 뒤죽박죽 입력도 오름차순으로 정렬해 돌려준다", () => {
+  assert.deepEqual(parseRefetchDates("2026-08-02,2025-09-01"), { ok: true, dates: ["2025-09-01", "2026-08-02"] });
 });

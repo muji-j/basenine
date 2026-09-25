@@ -153,6 +153,10 @@ if (refetch.dates !== null && values.date !== undefined) {
   console.error("--date 와 BB_REFETCH_DATES 를 같이 줄 수 없다 — 하나만 줘라");
   process.exit(2);
 }
+if (refetch.dates !== null && values.today === true) {
+  console.error("--today 와 BB_REFETCH_DATES 를 같이 줄 수 없다 — 하나만 줘라");
+  process.exit(2);
+}
 
 const since = values.date === undefined && refetch.dates === null ? collectedThrough() : undefined;
 const dates = refetch.dates ?? targetDates(new Date(), {

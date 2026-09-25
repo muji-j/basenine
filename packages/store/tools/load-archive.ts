@@ -819,11 +819,12 @@ for (const [label, list] of [["세트 표식이 갈린 경기", setMismatch], ["
   const dates = [...new Set([...staleArchive, ...setMismatch, ...integrityMismatch].map((s) => s.date))].sort();
   if (dates.length > 0) {
     /**
-     * ⚠**한 줄에 `MAX_REFETCH_DATES`(7)일까지 · 날짜는 전부**(설계 D1-7 · D4). 재수집 입력은 한 번에
-     * 1~7일이다(L1 근거 · D4) — 넘으면 **줄을 나눠** 찍고 한 줄이 수동 실행 한 번이다.
-     * 앞 7일만 찍으면 나머지 날짜가 복구 목록에서 사라진다.
-     * ⚠**상한은 여기서 정하지 않는다**(M1) — `../src/version-guard.ts` 의 `MAX_REFETCH_DATES` 가 정본이고
-     * `scripts/date-window.ts` 의 `parseRefetchDates` 도 같은 값을 가져다 쓴다.
+     * ⚠**한 줄에 `MAX_REFETCH_DATES`일까지 · 날짜는 전부**(설계 D1-7 · D4). 재수집 입력은 한 번에
+     * 그 상한만큼이다(L1 근거 · D4) — 넘으면 **줄을 나눠** 찍고 한 줄이 수동 실행 한 번이다.
+     * 앞 한 줄만 찍으면 나머지 날짜가 복구 목록에서 사라진다.
+     * ⚠**상한은 여기서 정하지 않는다**(M1) — `../src/refetch-limit.ts` 의 `MAX_REFETCH_DATES` 가
+     * import 없는 잎 파일의 유일한 정본이고(감사 반영 I1), `scripts/date-window.ts` 의
+     * `parseRefetchDates` 도 같은 값을 가져다 쓴다. 숫자를 여기 다시 적지 마라.
      */
     const perRun = MAX_REFETCH_DATES;
     for (let i = 0; i < dates.length; i += perRun) {

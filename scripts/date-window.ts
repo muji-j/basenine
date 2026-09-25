@@ -8,9 +8,16 @@
  *
  * ⚠**시계는 주입받는다**(M6). 여기서 `Date.now()` 를 부르면 자정 경계를 시험할 수 없다.
  */
-import { MAX_REFETCH_DATES } from "@bb-app/store";
+/**
+ * ⚠**배럴(`@bb-app/store`)이 아니라 잎 서브패스에서 가져온다**(감사 반영 I1).
+ * 이 파일은 `scripts/update.ts`(수집 오케스트레이터)가 import 하고, 그 스크립트는 경기·予告先発
+ * 수집을 각각 자식 프로세스로 격리해 **부분 실패를 전체 실패로 만들지 않는다.** 배럴로 가져오면
+ * parser·domain 까지 통째로 평가돼 그중 어디서든 로드 시점 오류가 나면 수집 시작 전에 죽는다.
+ * `scripts/test/refetch-wiring.test.ts` 가 배럴 import 를 정적으로 금지한다.
+ */
+import { MAX_REFETCH_DATES } from "@bb-app/store/refetch-limit";
 
-/** 재수집 날짜 상한 — 정본은 `packages/store/src/version-guard.ts`(M1). 이 파일에서 다시 쓴다 */
+/** 재수집 날짜 상한 — 정본은 `packages/store/src/refetch-limit.ts`(M1). 이 파일에서 다시 쓴다 */
 export { MAX_REFETCH_DATES };
 
 /**
@@ -115,6 +122,9 @@ export function targetDates(
  * `BB_REFETCH_DATES`(수동 실행 입력 `refetch_dates`)를 검증한다(설계 D4).
  * ⚠**틀리면 아무것도 받지 않는다** — 반쯤 맞는 입력을 고쳐 읽지 않는다.
  * ⚠셸로 넘어온 값이라 형식을 **정규식으로 먼저** 막는다(`;`·공백 명령 등).
+ * ⚠**날짜는 오름차순으로 정렬해 돌려준다**(M2) — `update.ts` 가 `dates[dates.length - 1]`
+ * 를 「가장 늦은 대상일」로 써서 予告先発 조회 시즌을 정한다. 입력 순서를 그대로 돌려주면
+ * 사람이 날짜를 거꾸로 적었을 때 조용히 틀린 시즌을 조회하게 된다.
  */
 export function parseRefetchDates(raw: string | undefined): { ok: true; dates: string[] | null } | { ok: false; error: string } {
   if (raw === undefined || raw.trim() === "") return { ok: true, dates: null };
@@ -133,5 +143,5 @@ export function parseRefetchDates(raw: string | undefined): { ok: true; dates: s
     if (seen.has(p)) return { ok: false, error: `같은 날짜가 두 번 있다: ${p}` };
     seen.add(p);
   }
-  return { ok: true, dates: parts };
+  return { ok: true, dates: [...parts].sort() };
 }
