@@ -4,7 +4,7 @@
 - 출처: 다방면 감사 `docs/audits/2026-09-25-multi-dimensional.md` 의 **C5**(P1)·**C6**(P1) — 둘 다 외부 블라인드 반증을 견뎠다
 - 결정(사용자 · 2026-09-25): 접근 A · 옛 판을 감지하면 **실패로 끝내 배포를 막는다** · 재수집 입력 포함
 - 고위험 영역: 멱등성(M5) · 정정 순서(M4/M9) · 데이터 계약 → 배포 전 `shiro-core:triple-review`(루트 §4)
-- 콜드 리뷰: 2회 반영(부록 A·B) · 최종 가지 검토 반영(부록 C · 2026-09-26 — ⚠G3a 를 고쳤다)
+- 콜드 리뷰: 2회 반영(부록 A·B) · 최종 가지 검토 반영(부록 C · 2026-09-26 — ⚠G3a 를 고쳤다) · 3중 검토 반영(부록 D · 2026-09-26 — ⚠본 시각을 **받은 시각**으로 · 적재기는 스냅샷에서 판을 읽는다)
 
 ## 0. 한 줄 요약
 
@@ -79,7 +79,7 @@
 
 | 말 | 뜻 |
 |---|---|
-| **본 시각**(`seenAt`) | **`fetchedAtOf(사이드카)`** 의 값 — `normalizeFetchedAt(checkedAt) ?? normalizeFetchedAt(fetchedAt)`(`meta.ts`). 「그 내용이 상류와 같다고 마지막으로 확인한 때」 · UTC `toISOString` 모양. **`game.fetched_at` 에 이미 이 값이 들어간다** |
+| **본 시각**(`seenAt`) | **`fetchedAtOf(사이드카)`** 의 값 — `normalizeFetchedAt(checkedAt) ?? normalizeFetchedAt(fetchedAt)`(`meta.ts`). 「그 내용이 상류와 같다고 마지막으로 확인한 때」 · UTC `toISOString` 모양. **`game.fetched_at` 에 이미 이 값이 들어간다**. ⚠규칙은 `seenAtOf`(이미 읽은 값) 한 벌이고 `fetchedAtOf` 는 파일을 읽어 그것을 부른다 — 경기 적재기는 스냅샷 값으로 부른다(부록 D A2). ⚠`checkedAt`·`fetchedAt` 은 아카이버가 **받은 직후** 읽은 시각이다 — 기록 시각이 아니다(부록 D A1) |
 | **옛 판** | 아카이브 box 의 본 시각이 DB `game.fetched_at` 보다 **이른** 경우 |
 | **세트** | 한 경기에서 한 번의 `archiveGame` 이 기록한 페이지들. 사이드카의 `set` 값이 같다 |
 | **보류**(`held`) | 받았고 내용이 바뀌었지만, 같은 경기의 다른 페이지가 실패해서 **기록하지 않은** 페이지 |
@@ -104,6 +104,7 @@ writeGameGuarded(db, gameId, boxSeenAt, write: () => number) → { outcome: "wri
 **적재기의 경기별 순서**(바뀐 부분만):
 1. box 본문을 읽고 파싱한다(지금과 같다).
 2. `boxSeenAt = fetchedAtOf(box.meta.json)` — 지금 271-279행과 같다(`null` 이면 `failed`).
+   ⚠**구현은 파일을 다시 읽지 않고 D3 가 읽은 스냅샷에서 낸다**(`seenAtOf(pages.box.meta)` · 같은 규칙 · 부록 D A2 — 다시 읽으면 대조한 판과 다른 판의 시각이 들어간다).
 3. **사전 판정(읽기 전용)**: `judgeVersion`. `stale` → **아무것도 하지 않고** `staleArchive` 에 넣고 다음 경기로. `invalid-db` → `failed` 로 다음 경기로.
    ⚠**대회 판정·`inProgress`·`notPlayed`·라인스코어·PBP·명단 분기보다 앞**이다 — 옛 `inProgress` box·옛 명단도 여기서 걸린다.
 4. **D3**(본문 무결성 → 세트 대조). 걸리면 아무것도 쓰지 않고 다음 경기로.
@@ -135,8 +136,10 @@ writeGameGuarded(db, gameId, boxSeenAt, write: () => number) → { outcome: "wri
 - `prepareUrl(key, url, deps) → Promise<Prepared>` — `readMeta` · 받기 · 판정까지. **기록하지 않는다. 던지지 않는다.**
   결과: `unchanged`(304 또는 같은 sha · `prev` 를 든다) · `absent`(404/410 · `prev` 를 든다 — `null` 일 수 있다) · `failed`(`error`) · `changed`(새 본문과 새 `BlobMeta`).
   ⚠**`readMeta` 예외도 `failed` 로 흡수한다**(`error: "사이드카를 못 읽었다: …"`). 지금은 `readMeta`(154행)가 `try`(156행) **밖**이라 깨진 사이드카 하나가
-  `archiveGame` → `archiveDate` 를 거쳐 **그날 전체를 날짜 단위 오류**로 만든다. ⚠**이것은 `archiveUrl` 단독 호출자(공표표·선수·予告先発)에게도 동작 변경**이다 —
+  `archiveGame` → `archiveDate` 를 거쳐 **그날 전체를 날짜 단위 오류**로 만든다. ⚠**이것은 `archiveUrl` 단독 호출자(`cli-stats` 공표표 · `draft` · `draft-wiki`)에게도 동작 변경**이다 —
   예외(그날 전체 중단) 대신 그 페이지 `failed` 가 된다. 의도한 변경이고 시험 11a 가 고정한다.
+  ⚠~~단독 호출자(공표표·선수·予告先発)~~ 는 **틀린 목록이었다**(부록 D) — 선수(`players.ts`)·予告先発(`starters.ts`)은 `archiveUrl` 을 안 쓰고 자기 `readMeta` 를 부른다.
+  ⚠**`Prepared` 는 `observedAt`(받은 직후 읽은 시각)을 든다**(부록 D A1) — `changed` 의 `meta.fetchedAt` 이 그 값이고, `commitPrepared` 는 `unchanged` 의 `checkedAt` 에 그 값을 쓴다(시계를 다시 읽지 않는다).
 - `commitPrepared(prepared, deps, extra) → Promise<PageResult>` — `changed` 면 `sink.write`, `unchanged` 면 `markSeen`, 나머지는 아무것도 안 한다.
   ⚠**던지지 않는다.** `sink` 가 던지면 잡아서 `{ outcome: "failed", error }` 를 돌려준다.
 - `archiveUrl` = `prepareUrl` → `commitPrepared`. 위 `readMeta` 한 가지 말고는 **기존 호출자의 동작이 그대로다**(외부 요청 수·순서·결과 값 동일).
@@ -230,7 +233,9 @@ D1 순서의 4단계다(사전 판정 뒤 · 파싱·쓰기 전). ⚠`--skip-eve
 | 기록 도중 `sink` 예외 | 거기서 멈춤 · 뒤는 `held` · 앞은 새 `set` → `setMismatch` → 다음 실행이 풂 |
 | 기록 도중 프로세스 사망(페이지 사이) | 일부 페이지만 새 `set` → `setMismatch` |
 | 기록 도중 프로세스 사망(한 페이지의 본문과 사이드카 사이) | 본문 sha ≠ 사이드카 sha → `integrityMismatch` |
-| 깨진 사이드카(JSON) | 아카이버: 그 페이지 `failed` → 세트 보류(날짜 전체 중단 아님) · 적재기: box 면 `fetchedAtOf` `null` → `failed`, 다른 페이지면 sha 를 못 읽어 `integrityMismatch` |
+| 깨진 사이드카(JSON) | 아카이버: 그 페이지 `failed` → 세트 보류(날짜 전체 중단 아님) · 적재기: box 면 본 시각 `null`(`seenAtOf(pages.box.meta)`) → `failed`, 다른 페이지면 sha 를 못 읽어 `integrityMismatch`. ⚠**재수집으로 안 풀린다** — 받기 단계 실패라 그 경기에 아무것도 기록되지 않는다(G3a). 이전 세대에서 되살린다(런북 §7-E · 부록 D B1) |
+| 잘리거나 깨진 `.gz` · 상류 = 사이드카 sha | 적재기: `본문을 못 풀었다` → `integrityMismatch` · 아카이버: `unchanged`(로컬 본문을 안 연다) → 본문을 영영 다시 안 쓴다. **재수집으로 안 풀린다** → 이전 세대에서 되살린다(부록 D B1) |
+| 두 아카이버가 같은 아카이브 폴더에 겹쳐 기록(로컬 수동 백필끼리 · **지원하지 않는다**) | 본 시각이 **받은 시각**이라(부록 D A1) 옛 내용에 새 시각이 붙지 않는다 → 적재기가 옛 판·세트·본문 불일치로 **시끄럽게** 멈춘다. 늦게 기록한 쪽이 새 내용을 덮는 자산 손실은 막지 못한다 |
 | 있던 페이지가 404(수집 중이든 재수집 중이든) | 그 페이지 `failed`(「있던 페이지가 사라졌다」) · 세트 보류 · 본문·사이드카 보존 · 옛 판이었다면 여전히 옛 판 → 런북의 「사람이 판단」 |
 | 사이드카·DB 의 시각이 무효 | 그 경기 `failed`(fail-closed) |
 | 두 적재기가 같은 DB 에 동시 쓰기 | 판정이 쓰기 트랜잭션 안이라 옛 판이 못 이긴다 · 잠금 경합은 `SQLITE_BUSY` 실패로 보인다(지금과 같다) |
@@ -276,7 +281,7 @@ D1 순서의 4단계다(사전 판정 뒤 · 파싱·쓰기 전). ⚠`--skip-eve
 9. 전부 성공 → 바뀐 페이지는 새 revision, 안 바뀐 페이지는 `checkedAt` 갱신, **네 사이드카의 `set` 이 모두 같다.**
 9a. 세트 id: 같은 `clock` 값 · 다른 내용의 두 실행 → id 가 다르다 · 같은 내용 → 같다.
 10. 요청 수·순서가 지금과 같다 — 가짜 fetcher 의 호출 기록을 기존 순서와 대조.
-11. `archiveUrl` 을 쓰는 기존 호출자 시험(공표표·선수·予告先発)이 **변경 없이** 통과.
+11. `archiveUrl` 을 쓰는 기존 호출자 시험(`cli-stats` 공표표 · `draft` · `draft-wiki` — ⚠~~공표표·선수·予告先発~~ 은 틀린 목록이었다 · 부록 D)이 **변경 없이** 통과.
 11a. 깨진 사이드카: `readMeta` 가 던지는 sink → `prepareUrl` 이 `failed` · `archiveUrl` 도 던지지 않고 `failed` · `archiveGame` 은 그 경기 세트 보류 · `archiveDate` 가 **날짜 오류가 아니라** 페이지 `failed` 를 돌려준다. 첫·중간·마지막 페이지 각각.
 12a. `index` 같음 · `playbyplay` 바뀜 · `box` 바뀜 · `roster` 같음 + `playbyplay` 의 `write` 에서 던지는 sink → 결과 `[unchanged, failed, held, unchanged]` · `index` 사이드카만 새 `set` · `roster` 는 `markSeen` 없음 · `archiveGame` 은 던지지 않음.
 12b. `writeMeta` 에서 던지는 sink(본문은 이미 교체) → 그 페이지 `failed` · 뒤는 `held` · 이 아카이브를 적재기가 `integrityMismatch` 로 건너뛴다.
@@ -373,14 +378,19 @@ D1 순서의 4단계다(사전 판정 뒤 · 파싱·쓰기 전). ⚠`--skip-eve
 | D1 `writeGameGuarded → { outcome: "written", n }` | `{ outcome: "written", value: T }`(`GuardedWrite<T>` · 계획 Task 1 이 정했다) | 콜백이 무엇을 돌려주든 담는다 — 미성립 경로는 `upsertGame` 의 수를 돌려주고 실시 경로의 콜백은 값이 없다 |
 | D4 상한 7 의 자리를 정하지 않음 | `MAX_REFETCH_DATES` 를 **import 0개인 잎** `packages/store/src/refetch-limit.ts` 에 두고 서브패스 `@bb-app/store/refetch-limit` 로 내보낸다 | `scripts/update.ts` 가 `scripts/date-window.ts` 를 거쳐 이 값을 가져오는데, store 배럴을 거치면 parser·domain 까지 평가돼 **무관한 모듈의 로드 오류가 수집을 시작 전에 죽인다.** `scripts/test/refetch-wiring.test.ts` 가 잎임을 강제한다 |
 | D3 ① 「네 본문을 이 단계에서 한 번 읽는다」(읽기 오류는 미정) | `roster`·`index` 의 **ENOENT 아닌 읽기 오류도 경기 전체 실패**(`READ ERROR` · `failed`) | 못 읽은 페이지는 무결성·세트 대조를 할 수 없다. ⚠**예전보다 엄격하다** — 예전엔 roster 읽기 오류는 `ROSTER ERROR` 로 세기만 하고 경기를 적재했고, PBP 읽기 오류는 타석 없이 적재했으며, `index` 는 읽지 않았다(`load-archive.ts` 주석에 적었다) |
-| D4 날짜 목록(순서 미정) | `refetch_dates` 의 날짜를 **오름차순 정렬**해 받는다 | `update.ts` 가 **마지막 날짜**(`dates[dates.length - 1]`)를 予告先発 조회 시즌의 근거로 쓴다 — 입력 순서가 뒤섞이면 엉뚱한 시즌을 본다 |
+| D4 날짜 목록(순서 미정) | `refetch_dates` 의 날짜를 **오름차순 정렬**해 받는다 | 받는 순서와 로그가 날짜순이 되고 「마지막 날짜 = 가장 늦은 대상일」이 늘 참이다. ⚠~~`update.ts` 가 마지막 날짜를 予告先発 조회 시즌의 근거로 쓴다~~ 는 **틀린 서술이었다**(부록 D A3) — 마지막 날짜로 정하던 것은 **앞으로의 일정**(`load-upcoming.ts`)의 시즌이고 予告先発(`cli-starters.ts`)은 날짜를 받지 않는다. 그리고 재수집 실행에서는 그 시즌을 이제 **JST 의 올해**로 정한다(재수집 날짜는 작년일 수 있다) |
 | D4 `--date` 와의 관계만 | **`--today` 와 `BB_REFETCH_DATES` 를 같이 주면 거부**(종료 코드 2 · `--date` 와 같은 규칙) | 둘 다 받을 날짜를 정하는 입력이라 무엇이 이기는지 모호하다 |
 | D1-7 「경기 ID 전부(날짜별로 묶어)와 복구 입력 예」 | 경기 ID 를 **전부 날짜별로** 찍고, 복구 입력을 **`refetch_dates=` 한 줄에 `MAX_REFETCH_DATES`일씩** 나눠 찍는다(한 줄 = 수동 실행 한 번) | 예 한 줄만 찍으면 상한을 넘는 날짜가 복구 목록에서 사라진다 |
 
 ### C-3. 받아들인 맞교환(M3) — `index` 가 계속 실패하면 그 경기의 box·PBP·roster 도 저장되지 않는다
 
 세트는 「전부 아니면 전무」(G3a)라, **우리가 파싱하지도 않는** `index` 가 계속 실패하면(상류가 그 경기의 試合TOP 만 깨뜨리는 등)
-그 경기의 box·playbyplay·roster 갱신이 **계속 보류**된다. 조용히 사라지는 것은 아니다 — 매 실행 수집 실패(`실패 N / 보류 N`)로 보인다.
+그 경기의 box·playbyplay·roster 갱신이 **계속 보류**된다. 조용히 사라지는 것은 아니다 — ~~매 실행 수집 실패(`실패 N / 보류 N`)로 보인다~~
+⚠**그 문장은 수집 창 안에서만 참이다**(부록 D · 3중 검토 2차). 창은 「어제(·오늘) + DB 의 `MAX(game_date) WHERE status='played'` 부터의 따라잡기」라
+**다른 경기가 적재되면 창이 그 날짜를 지나간다** — 그 뒤로는 아카이버가 그 경기를 다시 받지 않아 수집 실패도 안 찍힌다.
+그 뒤를 받치는 것은 신선도 감시(`scripts/freshness.ts`)의 **「NPB 가 치렀다고 표시했는데 경기 행이 없다」**(`game-missed` · 월간 일정 `schedule_played` · 유예 2일 · 최근 `LOOKBACK_DAYS` 30일)다 —
+**처음 받는 경기**(행이 없다)면 30일까지 잡이 실패로 보인다. ⚠**이미 적재된 경기의 정정이 보류된 것**은 행이 있으므로 그 감시도 안 운다 —
+창을 벗어나면 **옛 정정 전 값 그대로 조용하다**(되돌림이 아니라 정정 누락이다).
 예외 목록 없는 한 규칙을 지키는 쪽을 골랐다. **실제로 일어나면 다시 본다**(예: `index` 를 세트에서 빼되 무결성 대조만 하는 안).
 
 ### C-4. 같은 판에 반영한 나머지
@@ -392,3 +402,48 @@ D1 순서의 4단계다(사전 판정 뒤 · 파싱·쓰기 전). ⚠`--skip-eve
 - 런북 `docs/operations/deploy.md` §7-E: 워크플로 이름(`daily collection`) · 저절로 안 풀린다 · 7일 넘는 복구는 며칠에 나눠 ·
   재수집으로 안 풀리는 본문 불일치 2종 · 완료 기준에 수집 합계(실패 0 · 보류 0).
 - `CLAUDE.md` §2-2-1: 「적재가 여는 것」(4장)과 「파싱하는 것」(3장)을 한 문장으로.
+
+## 부록 D. 3중 검토 반영 (2026-09-26 · `fix-archive-load-version-guard` HEAD `6ff58e2` 기준)
+
+배포 전 `shiro-core:triple-review`(1차 · 2차 · 3차 = 다른 벤더)의 발견을 합친 목록과 그 처리다. 한 라운드로 고쳤다.
+
+### D-1. 발견과 처리
+
+| # | 출처 · 심각도 | 무엇 | 처리 |
+|---|---|---|---|
+| **A1** | 3차 · P1 | **「봤다」의 시각이 기록 시각이었다.** `markSeen` 이 `commitPrepared` 때 `clock.now()` 를 찍었다. 두 아카이버가 같은 아카이브 폴더에서 겹치면(CI 는 `concurrency` 로 직렬이지만 로컬 수동 백필끼리는 겹칠 수 있다 · `sink.ts` 임시 파일 주석이 인정한다) **먼저 옛 내용을 받고 늦게 기록한 쪽**이 가장 새 `checkedAt` 을 찍고, 적재기의 판 가드(box 의 `checkedAt ?? fetchedAt`)가 **옛 내용을 새 판으로 믿는다** | `prepareUrl` 이 **받은 직후** 시계를 한 번 읽어 `Prepared.observedAt`(전 종류)에 싣는다 — `changed` 의 `meta.fetchedAt` 이 같은 값이다. `commitPrepared` 는 `unchanged` 에 `markSeen(…, seenAt = p.observedAt)` 로 그 값을 쓰고 **시계를 다시 읽지 않는다.** `markSeen` 의 새 인자 `seenAt` 은 선택이고 기본은 지금 시계라 `players.ts`·월간 일정(`MonthlyScheduleCache`)은 그대로다. `archiveUrl` 단독 호출자는 `checkedAt`/`fetchedAt` 이 받은 시각이 된다(한 프로세스에서는 기록 시각과 밀리초 차). 시험 `game-set.test.ts` 15(prepare → 시계 5분 흐름 → commit) · 15a(`archiveGame` · 페이지마다 다른 도착 시각). 뮤턴트 ① `unchanged` 를 기록 시각으로 되돌림 · ② `changed` 의 `fetchedAt` 을 기록 시각으로 → 둘 다 **15·15a RED**(14본 중 2본) |
+| **A2** | 3차 · P2 | 적재기가 `readGamePages` 스냅샷으로 무결성·세트를 대조한 **뒤** `fetchedAtOf(box.meta.json)` 로 사이드카를 **다시** 읽었다(TOCTOU) — 그 사이 아카이버가 사이드카를 바꾸면 대조한 판과 다른 판의 시각이 판 가드에 들어간다 | 규칙을 `packages/store/src/meta.ts` 의 `seenAtOf(meta: unknown)`(객체 확인 + `normalizeFetchedAt(checkedAt) ?? normalizeFetchedAt(fetchedAt)`)로 뽑고 `fetchedAtOf` 가 그것을 부른다(한 벌 · M1). 적재기는 `seenAtOf(pages.box.meta)` — `null` 이면 예전과 같은 문구로 `failed` 이고 `metaError` 가 있으면 덧붙인다. 시험: `meta.test.ts` 에 두 경로 동치(8 사례) · `load-archive-wiring.test.ts` 에 「`fetchedAtOf(` 0곳 · `seenAtOf(pages.box.meta)` 1곳 · `readGamePages(` → 그것 → `judgeVersion(` 순서」. 뮤턴트(예전 재읽기로 되돌림) → **RED** |
+| **A3** | 1차 · P3 + 2차 · F4 | `update.ts` 가 「앞으로의 일정」(`load-upcoming.ts`) 시즌을 **마지막 대상일의 해**로 넘겼다 — `refetch_dates` 로 작년 날짜를 받으면 그 실행은 **올해 일정을 건너뛴다.** 그리고 여러 곳이 그것을 「予告先発 조회 시즌」이라고 잘못 적었다(予告先発 `cli-starters.ts` 은 날짜를 받지 않는다) · D2 의 「`archiveUrl` 단독 호출자(공표표·선수·予告先発)」도 틀린 목록이었다 | 재수집이면 `jstDate(now)` 의 해, 평소는 그대로. 시계는 진입점에서 **한 번**(`const now = new Date()`)이고 수집 창과 같이 쓴다(`clock-injection.test.ts` 의 `update.ts` 허용 1건 그대로). 서술 정정: `scripts/date-window.ts` · `scripts/test/date-window.test.ts` · C-2 표 · D2 · 시험 11(실제 단독 호출자는 `cli-stats` · `draft` · `draft-wiki` — `players.ts`·`starters.ts` 는 자기 `readMeta`) |
+| **A4** | 2차 · F3 | `update.ts` 의 재수집 **배선**(검증 함수 호출 · 틀리면 종료 2 · 수집 창 대체 · `--date`/`--today` 충돌)에 시험이 없었다 — import 하면 수집을 시작하는 파일이라 실행 시험을 못 한다 | `scripts/test/refetch-wiring.test.ts` 14b·14c·14d(주석을 걷어낸 소스 정적 대조 · 검증이 첫 `run(` 보다 앞인지까지). 뮤턴트 ① `refetch.dates ??` 삭제 → 14c RED ② 틀린 입력의 `process.exit(2)` 삭제 → 14b RED ③ A3 갈래 삭제 → 14d RED |
+| **A5** | 2차 · F5 | 아카이버의 `GAME_PAGES`(`discover.ts`)와 적재기의 `GAME_PAGE_LEAVES`(`page-integrity.ts`)를 묶는 시험이 없었다 — 한쪽에만 페이지를 더하면 세트 밖 페이지가 섞이거나 없는 페이지를 찾는다 | `scripts/test/game-page-leaves.test.ts` — `GAME_PAGES` 를 `pageKey` 자체로 잎 이름에 옮겨 **순서까지** 같은지. 뮤턴트(잎 순서 바꿈) → RED |
+| **A6** | 2차 · 가능성 | 배선 시험이 `upsertGame(` 만 봤다 — **자식 행 쓰기**가 `writeGameGuarded(` 콜백 밖으로 나가도 초록(설계가 `WHERE` 만으로 안 된다고 한 바로 그 이유) | `load-archive-wiring.test.ts`: 경기 순회 안의 `replacePaEvents(` · `replaceRunnerEvents(` · `upsertBatting(` · `upsertPitching(` · `replaceQuarantine(` · `DELETE FROM`(정확히 6) · `upsertPlayer(` 가 전부 콜백 안. 뮤턴트 ① `replaceQuarantine(` 을 콜백 뒤로 ② 미성립 경로의 `DELETE FROM pa_event` 를 콜백 앞으로 → 둘 다 **RED** |
+| **B1** | 2차 · F2 | 런북 §7-E 가 재수집으로 **안 풀리는** 경우 둘을 빠뜨렸다 — ⑴ index·playbyplay·roster(와 box) 사이드카 **JSON 이 깨짐**: 아카이버 `readMeta` 실패 → 받기 단계 실패 → 아무것도 안 씀 → 영영 안 고쳐짐(적재기 사유 「사이드카 JSON 을 못 읽었다」) ⑵ **잘리거나 깨진 `.gz`** 인데 상류 = 사이드카 sha: 아카이버는 `unchanged`(로컬 본문을 안 연다) → 본문을 다시 안 씀(사유 「본문을 못 풀었다」). 그리고 「이전 세대에서 되살린다」의 **구체 절차**가 없었다 | §7-E 에 안 풀리는 다섯 경우 표 · 세대 복원 절차 ①~⑦(`store-*.tar` 에서 그 경기 폴더만 꺼내 `archive-<이름>.tar` 덧붙임으로 올리고 `refetch_dates` 한 번) · ⚠**덧붙임은 파일을 못 지운다** — 「있던 페이지가 사라졌다」는 「원래 없던 페이지」로 못 바꾸고, 그 페이지가 아직 있는(그리고 box 본 시각이 DB 이상인) 세대에서 되살리는 것뿐이다 · 세대는 최신 3개뿐. §5 표에 두 줄을 더했다 |
+| **F1** | 2차 | **탈출구가 없다** — 옛 판·세트·본문 불일치를 사람이 「이번 한 번은 받아들인다」고 넘길 입력이 없어서, 세대 복원으로도 안 풀리면(좋은 판이 세대 3개 밖) 잡이 매일 실패하고 배포가 막힌 채다 | **코드는 바꾸지 않았다** — 사용자가 fail-closed 를 골랐다(§0 결정). 런북의 세대 복원이 유일한 출구다. ⚠「**가드 1회 수용 입력**」(경기 ID 를 지정해 그 경기만 한 번 판 가드를 넘기는 수동 입력)은 **사용자가 정할 열린 결정**으로 남긴다(D-3) |
+| C-3 | 2차 · 가능성 | C-3 의 「매 실행 수집 실패로 보인다」는 **수집 창 안에서만** 참이다 — `collectedThrough = MAX(game_date) WHERE status='played'` 가 다른 경기 적재로 그 날짜를 지나가면 아카이버가 그 경기를 다시 안 받는다 | C-3 문구 정정: 그 뒤는 `freshness.ts` 의 `game-missed`(월간 일정 `schedule_played` · 유예 2일 · 30일)가 받치고, **이미 적재된 경기의 정정 보류**는 그것도 안 운다(정정 누락이지 되돌림이 아니다) |
+| 되돌림 | 병합 목록 | **배포 뒤 이 가지를 되돌리면** 옛 코드가 바뀐 페이지를 `set` 없이 쓰고, 옛 `markSeen` 은 `{ ...prev }` 라 안 바뀐 페이지의 **이전 `set` 을 그대로 둔다** → 되돌린 동안 바뀐 경기는 재배포 때 「일부만 `set`」으로 **세트 불일치** | 기록만 한다(작다). 수집 창 안의 경기는 다음 실행이 네 장을 새 `set` 으로 다시 적어 풀리고, 창 밖은 `refetch_dates` 한 번 |
+
+### D-2. 안 잰 것
+
+- **CI 아카이브의 2026-08-17 이후 상태**(혼합·옛 판·본문 불일치) — 로컬 아카이브는 2026-08-16 까지다(§1-2 · §6 과 같다). 배포 첫 실행에서 새 세 건수가 0 이 아니면 **이미 일어난 일**이고 런북대로 푼다.
+- **수동 재수집 실행의 총 소요 시간 대 `timeout-minutes: 45`**(`daily.yml` 의 `collect` 잡 — 복원부터 배포까지 한 잡이다). 재수집 요청 자체는 7일 상한에서 약 168요청 ≈ 8.4분(D4)이지만,
+  그 실행은 적재 전체 · 선수 프로필 재취득 · 빌드 · 배포까지 같이 돈다 — **합계를 안 쟀다.** 첫 재수집은 날짜를 적게 넣고 실행 시간을 보고 늘린다.
+- A1 의 겹침 시나리오를 **실제 두 프로세스**로 재현하지 않았다 — 시험은 한 프로세스 안에서 받기와 기록 사이에 시계를 흘려 **계약**(기록되는 시각 = 받은 시각)을 고정한다.
+- 런북 복원 절차의 `gh` 단계(①②⑥)는 돌려 보지 않았다 — 워크플로가 쓰는 것과 같은 명령이다. ③⑤의 `tar` 와 ④의 확인 줄은 로컬 아카이브의 경기 폴더 하나로 실행해 확인했다.
+
+### D-3. 열린 결정(사용자)
+
+- **가드 1회 수용 입력** — 세대 복원으로도 못 푸는 경우(좋은 판이 최신 세대 3개 밖 · 상류가 페이지를 지웠고 남은 세대에 새 판이 없음)의 출구. 지금은 없다(fail-closed · F1).
+- 세대 보관 수(`KEEP=3`)를 늘릴지 — 늘리면 복원 가능한 기간이 길어지고 보관소가 커진다(세대 하나 수백 MiB).
+
+### D-4. 이 판에서 고친 설계 본문
+
+§3 본 시각 · D1-2(스냅샷에서) · D2(`observedAt` · 단독 호출자 목록) · §5 표(깨진 사이드카 · 깨진 `.gz` · 겹친 아카이버) · 시험 11 · C-2 표 · C-3.
+
+### D-5. 검증(2026-09-26 · 로컬 · 코드 커밋 `a3fe7cc`)
+
+- 관련 시험 15파일(archiver 4 · store 6 · scripts 5 — 새 파일 `game-page-leaves.test.ts` 포함) **158 중 158 통과** · FAIL 0 · ERROR 0 · skip 0
+  (`load-archive-guard.test.ts` 는 로컬 `data/archive` 가 있어 건너뛰지 않고 돌았다).
+- `npm run typecheck` 종료 0.
+- `npm test` 전체 **2,874 중 통과 2,873** · FAIL 0 · ERROR(cancelled) 0 · skip 1(`石井大智` 공표값 대조 — 데이터 조건부 · 기준선과 같다).
+  기준선(`6ff58e2`) 2,865 에서 +9 = 15·15a · `seenAtOf` 동치 · 배선 2 · 14b·14c·14d · 페이지 목록 1.
+- 뮤턴트: A1 2종 · A2 1종 · A4 3종 · A5 1종 · A6 2종 — **전부 RED** 확인 후 되돌렸다.
