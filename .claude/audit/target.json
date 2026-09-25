@@ -21,7 +21,12 @@
     "glossary",
     "log",
     "draft",
-    "players/01005157"
+    "players/01005157",
+    "teams/g",
+    "games/2026-08-15",
+    "days/2026-08-15",
+    "2025/postseason",
+    "2017/draft"
   ],
   "render": {
     "mode": "dev-server",
@@ -42,8 +47,18 @@
     "nav": [".tnav a", ".seasons a", ".tbtn"],
     "navDeny": [],
     "stateMarks": [".on"],
-    "dataColor": [],
-    "floating": []
+    "dataColor": [
+      ".gside .gt i",
+      ".teamgroup h2 i",
+      ".sname i",
+      ".picktm i",
+      "table.vs .vsbar i",
+      ".gbt i",
+      ".dia .db",
+      ".track i",
+      "i.up, i.dn"
+    ],
+    "floating": [".qhits", "#tip"]
   },
   "danger": {
     "lang": "ja",
