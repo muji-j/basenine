@@ -286,8 +286,12 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
   }
 
   // ⚠네 페이지를 **먼저 한 번** 읽는다 — 무결성 대조와 파싱이 같은 바이트를 본다(설계 D3)
-  // ⚠읽기 오류(권한 · 디렉터리 등 — 「없음」은 오류가 아니다)는 **그 경기의 실패**다. 적재 전체를 멈추지 않는다 —
+  // ⚠읽기 오류(권한 · 디렉터리 등 — 「없음」(ENOENT)은 오류가 아니다)는 **그 경기의 실패**다. 적재 전체를 멈추지 않는다 —
   //   전에도 box·PBP 읽기 오류는 경기마다 잡혀 `failed` 로 셌다. 한 경기의 파일이 나머지 경기를 막으면 안 된다.
+  // ⚠**예전보다 엄격해진 곳이 있다**(의도): 예전에는 PBP 읽기 오류면 타석 없이 경기를 적재했고, roster 읽기 오류는
+  //   `ROSTER ERROR` 로 세기만 하고 경기를 적재했으며(`failed` 아님), index 는 아예 읽지 않았다.
+  //   지금은 **네 장 중 어느 것이든** ENOENT 아닌 읽기 오류면 **경기 전체를 건너뛰고 `failed`** 다 —
+  //   못 읽은 페이지는 무결성·세트 대조(설계 D3)를 할 수 없어서다.
   let pages: GamePages;
   try {
     pages = await readGamePages(dirname(file));
@@ -433,12 +437,13 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
       db.raw.prepare("DELETE FROM quarantine WHERE game_id = ?").run(meta.gameId);
       return n;
     });
-    if (w.outcome === "stale" || w.outcome === "invalid-db") {
+    // ⚠아래 실시 경로와 같은 모양 — 성공 처리는 `written` 갈래 안에만 둔다(빠뜨릴 `continue` 가 없게)
+    if (w.outcome === "written") {
+      notPlayed += 1;
+      budget.games += w.value;
+    } else {
       noteVersionSkip(w.outcome, meta);
-      continue;
     }
-    notPlayed += 1;
-    budget.games += w.value;
     continue;
   }
 
@@ -710,13 +715,17 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
 
   budget.quarantine += replaceQuarantine(db, meta.gameId, quarantine, nowIso);
   });
-  if (written.outcome === "stale" || written.outcome === "invalid-db") {
+  // ⚠성공 처리는 **`written` 갈래 안에만** 둔다(2026-09-26 최종 가지 검토 이월 1). 예전 모양은 `stale`·`invalid-db` 를
+  //   걸러 `continue` 하고 그 **아래**에 성공 처리를 뒀다 — `continue` 한 줄이 빠지면 쓰지 않은 경기가 `played` 로 세어지고
+  //   그 명단이 선수 표로 흘러가는데(설계 D1-6), 위치만 보던 배선 시험은 그 삭제를 못 잡았다. 갈래로 나누면 빠질 줄이 없다.
+  //   `load-archive-wiring.test.ts` 가 이 모양을 지킨다.
+  if (written.outcome === "written") {
+    played += 1;
+    mergeRoster(localRoster);
+    for (const q of quarantine) quarantineKinds.set(q.kind, (quarantineKinds.get(q.kind) ?? 0) + 1);
+  } else {
     noteVersionSkip(written.outcome, meta);
-    continue;
   }
-  played += 1;
-  mergeRoster(localRoster);
-  for (const q of quarantine) quarantineKinds.set(q.kind, (quarantineKinds.get(q.kind) ?? 0) + 1);
 }
 
 /**

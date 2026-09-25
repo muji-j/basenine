@@ -111,17 +111,54 @@ test("`db.transaction(` 콜백 어디에도 `upsertGame(` 이 없다", () => {
   }
 });
 
-test("명단 합치기(`mergeRoster(`)는 실시 쓰기의 판정 결과를 본 **뒤**에만 있다", () => {
-  const staleCheck = codeIndicesOf('written.outcome === "stale"');
-  const invalidCheck = codeIndicesOf('written.outcome === "invalid-db"');
-  assert.equal(staleCheck.length, 1, `written.outcome === "stale" 가 ${staleCheck.length}곳이다(1곳이어야 한다)`);
-  assert.equal(invalidCheck.length, 1, `written.outcome === "invalid-db" 가 ${invalidCheck.length}곳이다(1곳이어야 한다)`);
-  const after = Math.max(staleCheck[0]!, invalidCheck[0]!);
+/** `from` 이후 첫 여는 중괄호의 짝이 되는 닫는 중괄호 위치. 문자열 리터럴 안의 중괄호는 세지 않는다 */
+function closingBrace(from: number): number {
+  let depth = 0;
+  for (let i = SRC.indexOf("{", from); i < SRC.length; i += 1) {
+    const c = SRC[i];
+    if (c === '"' || c === "'" || c === "`") {
+      i = endOfString(SRC, i);
+      continue;
+    }
+    if (c === "{") depth += 1;
+    else if (c === "}") {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  throw new Error(`중괄호 짝을 못 찾았다(위치 ${from})`);
+}
+
+/** `open`(예: `if (x.outcome === "written") {`)이 **정확히 한 곳**이고, 그 블록의 [시작, 끝] */
+function writtenBranch(open: string): [number, number] {
+  const at = codeIndicesOf(open);
+  assert.equal(at.length, 1, `${open} 가 ${at.length}곳이다(1곳이어야 한다) — 성공 처리를 가두는 갈래가 없다`);
+  return [at[0]!, closingBrace(at[0]!)];
+}
+
+/**
+ * ⚠「판정 **뒤**에 있다」로는 부족했다(2026-09-26 최종 가지 검토 이월 1). 예전 모양은 `stale`·`invalid-db` 를 걸러 `continue` 하고
+ *   그 아래에 성공 처리를 뒀는데, 위치만 보는 시험은 **그 `continue` 를 지워도 초록**이었다 — 쓰지 않은 경기의 명단이 선수 표로 흘러간다.
+ *   → 성공 처리가 **`written` 갈래 안**에 있는지를 본다. 갈래 밖으로 옮기거나 옛 「걸러서 continue」 모양으로 돌아가면 붉어진다.
+ */
+test("명단 합치기(`mergeRoster(`)와 성공 집계는 실시 쓰기가 **`written` 인 갈래 안**에만 있다", () => {
+  const [start, end] = writtenBranch('if (written.outcome === "written") {');
+  const line = (i: number): number => RAW.slice(0, i).split("\n").length;
   // 정의(`function mergeRoster(`)는 빼고 호출만 본다
   const calls = codeIndicesOf("mergeRoster(").filter((i) => !SRC.slice(Math.max(0, i - 9), i).endsWith("function "));
   assert.ok(calls.length >= 1, "mergeRoster( 호출이 없다 — 명단 보충이 빠졌다");
   for (const c of calls) {
-    const line = RAW.slice(0, c).split("\n").length;
-    assert.ok(c > after, `${line}행의 mergeRoster( 가 쓰기 판정보다 앞이다 — 건너뛴 경기의 명단이 선수 표로 흘러간다(설계 D1-6)`);
+    assert.ok(c > start && c < end, `${line(c)}행의 mergeRoster( 가 written 갈래 밖이다 — 건너뛴 경기의 명단이 선수 표로 흘러간다(설계 D1-6)`);
   }
+  // `notPlayed += 1` 과 섞이지 않게 앞 글자를 본다
+  const playedInc = [...SRC.matchAll(/(?<![\w$])played \+= 1/g)].map((m) => m.index);
+  assert.equal(playedInc.length, 1, `played += 1 이 ${playedInc.length}곳이다(1곳이어야 한다)`);
+  assert.ok(playedInc[0]! > start && playedInc[0]! < end, `${line(playedInc[0]!)}행의 played += 1 이 written 갈래 밖이다 — 쓰지 않은 경기를 실시로 센다`);
+});
+
+test("미성립 쓰기도 같은 모양이다 — `notPlayed += 1` 은 `written` 인 갈래 안에만 있다", () => {
+  const [start, end] = writtenBranch('if (w.outcome === "written") {');
+  const inc = codeIndicesOf("notPlayed += 1");
+  assert.equal(inc.length, 1, `notPlayed += 1 이 ${inc.length}곳이다(1곳이어야 한다)`);
+  assert.ok(inc[0]! > start && inc[0]! < end, "notPlayed += 1 이 written 갈래 밖이다 — 쓰지 않은 경기를 미성립으로 센다");
 });

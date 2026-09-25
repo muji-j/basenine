@@ -189,7 +189,7 @@ test("5a 옛 판 경기의 명단은 선수 표를 채우지 않는다", { skip 
     assert.equal(r.code, 1, r.out + r.err);
     // ⚠종료 1 만으로는 옛 판 경로를 탔는지 모른다 — 다른 실패로 명단 합치기 전에 빠져도 초록이 된다
     assert.match(r.out, /옛 판 건너뜀 1건/);
-    const row =q<{ t: string | null; pos: string | null }>(env, "SELECT throws AS t, position AS pos FROM player WHERE player_id = ?", p);
+    const row = q<{ t: string | null; pos: string | null }>(env, "SELECT throws AS t, position AS pos FROM player WHERE player_id = ?", p);
     assert.equal(row.t, null, "옛 판의 명단이 투타를 채우면 안 된다");
     assert.equal(row.pos, null);
   } finally {

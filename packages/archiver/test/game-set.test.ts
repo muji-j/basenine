@@ -1,5 +1,6 @@
 /**
- * 경기 페이지 세트 기록(설계 D2 · 시험 8 · 9 · 9a · 10 · 11a · 12a · 12b · 12c).
+ * 경기 페이지 세트 기록(설계 D2 · 시험 8 · 8a · 9 · 9a · 10 · 11a · 12a · 12b · 12c).
+ * ⚠8a 는 설계 부록 C 의 I1(2026-09-26 최종 가지 검토)이다 — 받기 단계 실패 때 box 의 본 시각이 오르면 옛 판 가드가 풀린다.
  * ⚠가짜 fetcher 는 `get` 만 가진 객체다 — 재시도·지연 없이 호출 순서를 그대로 기록한다.
  */
 import { test } from "node:test";
@@ -76,21 +77,37 @@ for (const bad of ["index", "playbyplay", "roster"]) {
 
 const outcomes = (rs: { outcome: string }[]) => rs.map((r) => r.outcome);
 
-test("8 받기 단계에서 playbyplay 가 실패하면 바뀐 box 는 held · 아무 본문도 안 쓰고 set 도 안 바뀐다", async () => {
+test("8 받기 단계에서 playbyplay 가 실패하면 바뀐 box 는 held · 어떤 본문도 사이드카도 안 쓴다(안 바뀐 페이지의 「봤다」도 없다)", async () => {
   const sink = new MemorySink();
-  await seedAll(sink);
+  await seedAll(sink, { set: "S0" });
   const writes = sink.writeCount;
+  const metaWrites = sink.metaWriteCount;
   const { fetcher } = stubFetcher((leaf) => (leaf === "playbyplay" ? new Error("ECONNRESET") : leaf === "box" ? ok("box1") : ok(`${leaf}0`)));
   const rs = await archiveGame(REF, { fetcher, sink, clock });
   assert.deepEqual(outcomes(rs), ["unchanged", "failed", "held", "unchanged"]);
   assert.equal(sink.writeCount, writes, "새 본문 쓰기 0회");
+  assert.equal(sink.metaWriteCount, metaWrites, "사이드카만 고치는 쓰기(markSeen)도 0회 — 설계 G3a(2026-09-26 정정)");
   assert.equal(new TextDecoder().decode(sink.bodies.get(KEY("box"))), "box0");
   assert.equal((await sink.readMeta(KEY("box")))?.revision, 1);
   for (const leaf of ["index", "roster"]) {
     const m = await sink.readMeta(KEY(leaf));
-    assert.equal(m?.checkedAt, "2026-09-25T00:00:00.000Z", `${leaf} 는 봤다고 남긴다`);
-    assert.equal(m?.set, undefined, `${leaf} 의 set 은 바뀌지 않는다`);
+    assert.equal(m?.checkedAt, undefined, `${leaf} 의 checkedAt 은 심은 그대로(없음)다`);
+    assert.equal(m?.set, "S0", `${leaf} 의 set 은 이전 값 그대로다`);
   }
+});
+
+test("8a 받기 단계 실패 때 안 바뀐 box 의 본 시각을 올리지 않는다 — 올리면 적재기가 held 된 옛 playbyplay 를 새 판으로 믿는다(I1)", async () => {
+  const SEEN = "2026-08-15T00:00:00.000Z";
+  const sink = new MemorySink();
+  await seedAll(sink, { set: "S0", checkedAt: SEEN });
+  const { fetcher } = stubFetcher((leaf) => (leaf === "index" ? new Error("ECONNRESET") : leaf === "playbyplay" ? ok("playbyplay1") : ok(`${leaf}0`)));
+  const rs = await archiveGame(REF, { fetcher, sink, clock });
+  assert.deepEqual(outcomes(rs), ["failed", "held", "unchanged", "unchanged"]);
+  const box = await sink.readMeta(KEY("box"));
+  assert.equal(box?.checkedAt, SEEN, "box 의 checkedAt(적재기가 세트의 판으로 쓰는 값)은 심은 그대로다");
+  assert.equal(box?.set, "S0");
+  assert.equal(new TextDecoder().decode(sink.bodies.get(KEY("playbyplay"))), "playbyplay0", "playbyplay 본문은 옛 판 그대로(held)");
+  assert.equal((await sink.readMeta(KEY("playbyplay")))?.revision, 1);
 });
 
 test("9 전부 성공이면 네 사이드카의 set 이 모두 같다 · 바뀐 페이지만 revision 이 오른다", async () => {

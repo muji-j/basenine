@@ -248,8 +248,8 @@ export function gameSetId(prepared: readonly Prepared[], clock: Clock): string {
  * 경기 1건의 전 하위 페이지를 **한 세트로** 보존한다(M5 · 2026-09-25 감사 C6 · 설계 D2).
  *
  * ⚠예전에는 페이지마다 받자마자 기록했다 — `playbyplay` 만 실패하고 `box` 가 바뀌면 **box 새 판 · 타석 로그 옛 판**이 섞였다.
- * → ① 4장을 **모두** 받는다(요청 수·순서는 그대로 · L1) ② 하나라도 실패하면 바뀐 페이지는 `held`(기록 안 함)
- *   ③ 실패가 없으면 같은 `set` 을 적으며 기록한다 ④ 기록 도중 실패하면 **거기서 멈춘다** — 앞 페이지는 되돌리지 않고
+ * → ① 4장을 **모두** 받는다(요청 수·순서는 그대로 · L1) ② 하나라도 실패하면 **아무 페이지도 기록하지 않는다**
+ *   (바뀐 페이지는 `held` · 안 바뀐 페이지도 `markSeen` 안 함 — 아래 갈래의 주석) ③ 실패가 없으면 같은 `set` 을 적으며 기록한다 ④ 기록 도중 실패하면 **거기서 멈춘다** — 앞 페이지는 되돌리지 않고
  *   적재기가 세트 불일치로 잡는다(`packages/store/src/page-integrity.ts`).
  * ⚠**있던 페이지의 404 는 실패다** — 옛 사이드카가 옛 `set` 을 든 채 남으면 세트가 영원히 어긋난다. 본문은 지우지 않는다.
  */
@@ -265,12 +265,27 @@ export async function archiveGame(ref: GameRef, deps: ArchiveDeps): Promise<Page
   }
 
   if (prepared.some((p) => p.kind === "failed")) {
-    const out: PageResult[] = [];
-    for (const p of prepared) {
-      // ⚠`set` 을 넘기지 않는다 — 안 바뀐 페이지의 「봤다」만 남기고 기존 `set` 은 그대로 둔다
-      out.push(p.kind === "changed" ? heldResult(p) : await commitPrepared(p, deps));
-    }
-    return out;
+    /**
+     * ⚠**받기 단계에서 하나라도 실패하면 어떤 페이지도 기록하지 않는다 — 안 바뀐 페이지의 「봤다」(`markSeen`)도 안 남긴다**
+     * (2026-09-26 최종 가지 검토 I1 · 설계 G3a 정정).
+     * 적재기는 **box 사이드카의 본 시각**(`fetchedAtOf` = `checkedAt ?? fetchedAt`)을 **네 장 세트 전체의 판**으로 쓴다.
+     * 예전에는 여기서 안 바뀐 페이지를 `markSeen` 했다 — box 가 안 바뀌고 playbyplay 가 바뀌어 `held` 인 채
+     * 다른 페이지(예: index)가 실패하면 **box 의 `checkedAt` 만 지금으로 올라가**, 적재기의 판 가드가 「같거나 새 판」으로 보고
+     * **옛 playbyplay 를 그대로 적재**했다. `refetch_dates` 복구 중이면 타석·주자·격리가 **요약 0/0/0 인 채 조용히 옛 판으로** 돌아간다.
+     * 경기 페이지는 수집 창(날짜 단위)이 다시 받으므로 여기서 「봤다」를 안 남겨 잃는 것은 없다.
+     */
+    return prepared.map((p): PageResult => {
+      switch (p.kind) {
+        case "changed":
+          return heldResult(p);
+        case "unchanged":
+          return { key: p.key, url: p.url, outcome: "unchanged", status: p.status, error: null };
+        case "absent":
+          return { key: p.key, url: p.url, outcome: "absent", status: p.status, error: null };
+        case "failed":
+          return { key: p.key, url: p.url, outcome: "failed", status: p.status, error: p.error };
+      }
+    });
   }
 
   const set = gameSetId(prepared, deps.clock);
