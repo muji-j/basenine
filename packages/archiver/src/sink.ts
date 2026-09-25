@@ -56,6 +56,11 @@ export interface BlobMeta {
    * 아카이브만 보고도 「이 바이트를 어떤 조건으로 다룰 수 있는가」에 답할 수 있어야 한다(M4).
    */
   license?: string;
+  /**
+   * **세트 표식**(설계 `2026-09-25-archive-load-version-guard-design.md` D2). 경기 페이지 4장을 **한 번에** 기록할 때 같은 값을 적는다.
+   * ⚠없는 사이드카(기능 이전 기록 전부)는 깨진 것이 아니다 — 적재기가 「기존 기록」으로 통과시킨다.
+   */
+  set?: string;
 }
 
 export interface Sink {

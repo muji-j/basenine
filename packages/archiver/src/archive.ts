@@ -14,7 +14,11 @@ import type { PoliteFetcher } from "./fetcher.ts";
 import type { BlobMeta, Sink } from "./sink.ts";
 import { sha256 } from "./sink.ts";
 
-export type PageOutcome = "stored" | "unchanged" | "absent" | "failed";
+/**
+ * ⚠`held`(보류) — 받았고 바뀌었지만 같은 경기의 다른 페이지가 실패해서 **기록하지 않은** 페이지(설계 D2).
+ * 실패가 아니다: 그 경기에 이미 `failed` 가 있으므로 CLI 종료 코드는 그걸로 1 이 된다.
+ */
+export type PageOutcome = "stored" | "unchanged" | "absent" | "failed" | "held";
 
 export interface PageResult {
   key: string;
@@ -135,47 +139,40 @@ export async function markSeen(
  */
 export interface BlobExtra {
   readonly license?: string;
+  /** 경기 페이지 세트 id — `archiveGame` 만 넘긴다(설계 D2) */
+  readonly set?: string;
 }
 
-/** 하위 페이지 1장을 보존한다. */
-/**
- * URL 하나를 예의 있게 받아 보존한다.
- *
- * ⚠**멱등·revision 규칙을 여기 한 벌만 둔다**(M5). 「304」·「내용이 같은 200」·「404」·「실패」의
- * 구별과 revision 증가 조건은 미묘해서, 두 벌로 만들면 한쪽만 고쳐진 채로 남는다.
- * 경기 페이지도 공표 성적표도 이 함수를 지난다.
- */
-export async function archiveUrl(
-  key: string,
-  url: string,
-  deps: ArchiveDeps,
-  extra?: BlobExtra,
-): Promise<PageResult> {
-  const prev = await deps.sink.readMeta(key);
+export type Prepared = { key: string; url: string; prev: BlobMeta | null } & (
+  | { kind: "changed"; status: number; body: Uint8Array; meta: BlobMeta }
+  | { kind: "unchanged"; status: number }
+  | { kind: "absent"; status: number }
+  | { kind: "failed"; status: number | null; error: string }
+);
 
+const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/**
+ * URL 하나를 **받고 판정까지만** 한다. **기록하지 않는다 · 던지지 않는다.**
+ * ⚠`readMeta` 예외도 `failed` 로 흡수한다(2026-09-25 · 설계 D2). 예전에는 `try` 밖이라 깨진 사이드카 하나가
+ *   `archiveGame` → `archiveDate` 를 거쳐 **그날 전체를 날짜 단위 오류**로 만들었다. 단독 호출자에게도 같은 변화다(의도).
+ */
+export async function prepareUrl(key: string, url: string, deps: ArchiveDeps): Promise<Prepared> {
+  let prev: BlobMeta | null;
+  try {
+    prev = await deps.sink.readMeta(key);
+  } catch (err) {
+    return { key, url, prev: null, kind: "failed", status: null, error: `사이드카를 못 읽었다: ${errorText(err)}` };
+  }
   try {
     const res = await deps.fetcher.get(url, prev ?? undefined);
-
-    if (res.status === 304) {
-      await markSeen(deps.sink, deps.clock, key, prev, extra);
-      return { key, url, outcome: "unchanged", status: 304, error: null };
-    }
-    if (res.status === 404 || res.status === 410) {
-      // 사실이다 — 이 경기에 이 페이지는 존재하지 않는다. 실패가 아니다.
-      return { key, url, outcome: "absent", status: res.status, error: null };
-    }
-    if (res.body === null) {
-      return { key, url, outcome: "failed", status: res.status, error: `본문 없는 ${res.status} 응답` };
-    }
-
+    if (res.status === 304) return { key, url, prev, kind: "unchanged", status: 304 };
+    // 사실이다 — 이 경기에 이 페이지는 존재하지 않는다. 실패가 아니다.
+    if (res.status === 404 || res.status === 410) return { key, url, prev, kind: "absent", status: res.status };
+    if (res.body === null) return { key, url, prev, kind: "failed", status: res.status, error: `본문 없는 ${res.status} 응답` };
     const digest = sha256(res.body);
-    if (prev && prev.sha256 === digest) {
-      // 서버가 조건부 요청을 지원하지 않아 200을 줬지만 내용은 같다 → 본문은 안 쓴다(멱등).
-      // ⚠**그래도 「봤다」는 남긴다** — 안 남기면 취득일이 실제보다 낡게 나가고 재취득이 오판한다
-      await markSeen(deps.sink, deps.clock, key, prev, extra);
-      return { key, url, outcome: "unchanged", status: res.status, error: null };
-    }
-
+    // 서버가 조건부 요청을 지원하지 않아 200을 줬지만 내용은 같다 → 본문은 안 쓴다(멱등)
+    if (prev && prev.sha256 === digest) return { key, url, prev, kind: "unchanged", status: res.status };
     const meta: BlobMeta = {
       url,
       fetchedAt: deps.clock.now().toISOString(),
@@ -185,13 +182,48 @@ export async function archiveUrl(
       sha256: digest,
       byteLength: res.body.byteLength,
       revision: (prev?.revision ?? 0) + 1,
-      ...(extra ?? {}),
     };
-    await deps.sink.write(key, res.body, meta);
-    return { key, url, outcome: "stored", status: res.status, error: null };
+    return { key, url, prev, kind: "changed", status: res.status, body: res.body, meta };
   } catch (err) {
-    return { key, url, outcome: "failed", status: null, error: err instanceof Error ? err.message : String(err) };
+    return { key, url, prev, kind: "failed", status: null, error: errorText(err) };
   }
+}
+
+/**
+ * 판정 결과를 기록한다. ⚠**던지지 않는다** — `sink` 가 던지면 `failed` 로 돌려준다(예전 `archiveUrl` 과 같은 결과).
+ * ⚠「받았는데 안 바뀌었다」도 「봤다」로 남긴다(`markSeen`) — 안 남기면 취득일이 실제보다 낡게 나가고 재취득이 오판한다.
+ */
+export async function commitPrepared(p: Prepared, deps: ArchiveDeps, extra?: BlobExtra): Promise<PageResult> {
+  const base = { key: p.key, url: p.url };
+  try {
+    switch (p.kind) {
+      case "changed":
+        await deps.sink.write(p.key, p.body, { ...p.meta, ...(extra ?? {}) });
+        return { ...base, outcome: "stored", status: p.status, error: null };
+      case "unchanged":
+        await markSeen(deps.sink, deps.clock, p.key, p.prev, extra);
+        return { ...base, outcome: "unchanged", status: p.status, error: null };
+      case "absent":
+        return { ...base, outcome: "absent", status: p.status, error: null };
+      case "failed":
+        return { ...base, outcome: "failed", status: p.status, error: p.error };
+    }
+  } catch (err) {
+    return { ...base, outcome: "failed", status: null, error: errorText(err) };
+  }
+}
+
+/** 기록하지 않은 바뀐 페이지(설계 D2) */
+export function heldResult(p: Prepared): PageResult {
+  return { key: p.key, url: p.url, outcome: "held", status: p.status, error: null };
+}
+
+/**
+ * URL 하나를 예의 있게 받아 보존한다.
+ * ⚠**멱등·revision 규칙은 `prepareUrl`·`commitPrepared` 한 벌이다**(M5 · M1). 경기 페이지도 공표 성적표도 이 둘을 지난다.
+ */
+export async function archiveUrl(key: string, url: string, deps: ArchiveDeps, extra?: BlobExtra): Promise<PageResult> {
+  return commitPrepared(await prepareUrl(key, url, deps), deps, extra);
 }
 
 /** 경기의 한 페이지를 보존한다. 경로 규칙만 얹고 나머지는 `archiveUrl`이 한다 */
@@ -277,6 +309,7 @@ export function summarize(pages: readonly PageResult[]): Record<PageOutcome | "t
     unchanged: 0,
     absent: 0,
     failed: 0,
+    held: 0,
     total: pages.length,
   };
   for (const p of pages) acc[p.outcome] += 1;

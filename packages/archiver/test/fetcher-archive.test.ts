@@ -367,7 +367,7 @@ test("경기일의 전 경기 × 4페이지를 보존한다", async () => {
   const day = await archiveDate("2026-08-14", { fetcher, sink, clock: h.clock });
   assert.equal(day.gamesFound, 1, "픽스처에서 8/14 경기는 1건");
   assert.equal(day.pages.length, 4);
-  assert.deepEqual(summarize(day.pages), { stored: 4, unchanged: 0, absent: 0, failed: 0, total: 4 });
+  assert.deepEqual(summarize(day.pages), { stored: 4, unchanged: 0, absent: 0, failed: 0, held: 0, total: 4 });
 });
 
 test("경기가 없는 날은 0건이고 이것은 오류가 아니다", async () => {
@@ -495,5 +495,5 @@ test("summarize는 분모를 함께 낸다 (작업규칙 7)", () => {
     { key: "c", url: "u", outcome: "absent", status: 404, error: null },
     { key: "d", url: "u", outcome: "failed", status: null, error: "boom" },
   ]);
-  assert.deepEqual(s, { stored: 1, unchanged: 1, absent: 1, failed: 1, total: 4 });
+  assert.deepEqual(s, { stored: 1, unchanged: 1, absent: 1, failed: 1, held: 0, total: 4 });
 });
