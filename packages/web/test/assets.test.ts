@@ -414,6 +414,39 @@ test("인쇄는 보고 있는 것을 찍는다 — 닫힌 탭을 펼치지 않�
  * 「이 구단에 3명뿐인가」로 읽는다.
  */
 /**
+ * ⚠**대체 텍스트를 쓴 `content` 는 앞선 폴백 `content` 를 갖는다 — 전수**(2026-09-27 · PR-D 검토 P3).
+ *
+ * `content:"x" / ""` 문법을 모르는 브라우저는 그 선언을 **통째로 버린다** — 폴백이 없으면 표식이 사라진다.
+ * N12 는 자리를 이름으로 적어 재서 `.pickfold>summary::after{content:"▶" / ""}` 를 못 봤다(기본 표식도
+ * `list-style:none` 으로 지워 둬서 그 브라우저에서는 **접힘 손잡이가 표식 없이** 남았다).
+ * → 대체 텍스트를 쓴 선언마다 **같은 규칙의 앞선 선언** 또는 **같은 선택자의 앞선 규칙**에
+ *   같은 글리프의 폴백이 있어야 한다(`.cmprow .win::after` 는 두 규칙으로 쓴 선례다).
+ */
+test("⚠대체 텍스트를 쓴 content 는 모두 앞선 폴백 content 를 갖는다 — 모르는 브라우저에서 표식이 안 사라진다", () => {
+  const seen = new Map<string, Set<string>>();
+  const missing: string[] = [];
+  let alts = 0;
+  for (const r of parseRules(CSS)) {
+    for (const d of r.body.matchAll(/(?:^|;)\s*content\s*:\s*([^;]+)/g)) {
+      const v = d[1]!.trim();
+      const alt = /^("[^"]*")\s*\/\s*"[^"]*"$/.exec(v);
+      for (const part of r.parts) {
+        const key = `${r.media ?? ""}|${part}`;
+        if (alt === null) {
+          (seen.get(key) ?? seen.set(key, new Set()).get(key)!).add(v);
+          continue;
+        }
+        alts += 1;
+        if (!(seen.get(key)?.has(alt[1]!) ?? false)) missing.push(`${part}{content:${v}}`);
+      }
+    }
+  }
+  // ⚠**공회전 방지** — 대체 텍스트를 쓴 자리는 여럿 있다(比較 · 명부 ★ · 경기 카드 ＠ · 접힘 손잡이)
+  assert.ok(alts >= 5, `대체 텍스트를 쓴 content 를 ${alts}곳밖에 못 찾았다 — 이 스캔이 공회전한다`);
+  assert.deepEqual(missing, [], "폴백 없이 대체 텍스트만 쓴 content 가 있다 — 그 문법을 모르는 브라우저에서 표식이 사라진다");
+});
+
+/**
  * ⚠**즐겨찾기 버튼이 종이에 찍혔다**(2026-09-27 · 감사 N10). 인쇄 숨김 목록에 `.favbtn` 이 없었고,
  * 마크업의 `hidden` 은 스크립트가 걷는다(`paintFav` → `b.hidden=false`) — 그래서 `.favbtn[hidden]` 규칙도 안 걸린다.
  * ⚠**문자열이 아니라 캐스케이드로 잰다** — 목록에 이름을 넣어도 더 구체적인 화면 규칙이 `display` 를 주면 진다.

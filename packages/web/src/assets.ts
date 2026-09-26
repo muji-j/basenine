@@ -1382,8 +1382,11 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:var(--s5)}
    ⚠**U+FE0E(VS15)로 못 막는다** — 그 글자도 서체에 없어 게이트가 다시 선다(isNonGlyph 에 예외를 더하지 마라).
    → **더 가볍게 가려면 ›/‹(U+203A/U+2039)** 다. **네 서체 전부**가 갖고(라틴 포함)
    진폭 0.30em · 잉크 0.41~0.43em · **베이스라인 아래로 안 내려가고** 이모지 표현이 없다 —
-   즉 지금 CSS 가 전제한 그 치수다. 바꿀 때는 여기와 아래 .cmprow 두 줄을 **같이** 고쳐라. */
-.pickfold>summary::after{content:"▶" / "";margin-left:auto;font-size:var(--fs-min);color:var(--tx-3);
+   즉 지금 CSS 가 전제한 그 치수다. 바꿀 때는 여기와 아래 .cmprow 두 줄을 **같이** 고쳐라.
+   ⚠**폴백 선언이 빠져 있었다**(2026-09-27 · PR-D 검토 P3). 대체 텍스트 문법을 모르는 브라우저는
+   content:"▶" / "" 를 통째로 버리는데, 기본 표식도 list-style:none 으로 지워 둬서 **손잡이에 표식이 없었다.**
+   → 앞 선언(글리프만)이 보이는 ▶ 를 보장하고 뒤 선언이 아는 브라우저에서 낭독을 비운다(.cmprow 와 같은 두 겹). */
+.pickfold>summary::after{content:"▶";content:"▶" / "";margin-left:auto;font-size:var(--fs-min);color:var(--tx-3);
   transition:transform var(--t1) var(--e-out)}
 .pickfold[open]>summary::after{transform:rotate(90deg)}
 /* 눌리는 자리임을 손에 알린다 — 라벨만으로는 눌러도 되는지 알 수 없다.
