@@ -169,6 +169,14 @@ test("C7 · 사이드카를 못 읽으면 profile_fetched_at 은 NULL 이다 —
     );
     assert.ok(cb.n > 0, "통산 타격 행이 없다 — 이 시험이 비교할 상대가 없다");
     assert.equal(cb.known, 0, "통산 행에는 시각이 들어갔다 — 프로필과 통산이 갈렸다");
+    // ⚠투구 통산도 같다(집중 재검토 P3) — 두 INSERT 가 지금은 같은 변수를 쓰지만, 갈라지면 이 줄이 잡는다
+    const cp = q<{ n: number; known: number }>(
+      env,
+      "SELECT COUNT(*) AS n, COUNT(fetched_at) AS known FROM career_pitching WHERE player_id = ?",
+      PITCHER,
+    );
+    assert.ok(cp.n > 0, "통산 투구 행이 없다 — 투수 픽스처가 아니다");
+    assert.equal(cp.known, 0, "통산 투구 행에는 시각이 들어갔다 — 프로필·타격 통산과 갈렸다");
     // ⚠「모른다」는 조용히 넘기지 않는다 — 요약에 결손 수가 찍혀야 한다
     assert.match(r.err, /취득시각 결손 1명/);
   } finally {
