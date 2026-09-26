@@ -4245,9 +4245,14 @@ function attachPicker(input,list,onPick){
   const sayAtOnce=(text)=>{sayStop();sayApply(text)};
   /* hits = **자르기 전** 일치 수 · asked = 그 수를 낸 질의어(「一覧」으로 넘길 때 쓴다) */
   let rows=[],active=-1,hits=0,asked="";
+  /* ⚠**표시 세대**(2026-09-25 감사 C3). 닫으면 올린다 — 닫기 전에 걸어 둔 색인 대기는 그리지 않는다.
+     닫기(Esc · 바깥 클릭)는 **검색어를 바꾸지 않아서** 아래 run 의 「검색어가 그대로인가」 검사를
+     그대로 통과했고, 늦게 온 색인이 **사용자가 닫은 목록을 다시 열고** 인원수 낭독까지 되살렸다.
+     ⚠검색어 검사를 이것으로 바꾸지 않는다 — 둘은 막는 것이 다르다(새 검색어 / 닫힌 목록). */
+  let gen=0;
   /* ⚠**닫을 때 소리도 지운다** — 닫힌 목록의 인원을 낭독기가 계속 들고 있으면
      다음에 같은 수가 나왔을 때 아무 말도 안 하게 된다 */
-  const close=()=>{list.hidden=true;sayAtOnce("");active=-1};
+  const close=()=>{gen++;list.hidden=true;sayAtOnce("");active=-1};
   /* @param items 배열이면 결과, **null 이면 아직 읽는 중**이다 */
   const draw=(items,failed)=>{
     list.textContent="";
@@ -4322,8 +4327,10 @@ function attachPicker(input,list,onPick){
     if(term===""){close();return}
     /* 인덱스가 아직 안 왔으면 **그렇다고 말하고** 기다린다 — 잠자코 있지 않는다 */
     if(!INDEX&&!indexError)draw(null,false);
+    /* 이 요청을 건 때의 표시 세대. 그사이 닫혔으면 그리지 않는다(위 gen 주석 · C3) */
+    const mine=gen;
     withIndex(idx=>{
-      if(input.value.trim()!==term)return;
+      if(mine!==gen||input.value.trim()!==term)return;
       if(!idx){draw([],true);return}
       /* ⚠**등번호는 완전일치다.** 부분일치로 두면 「1」이 1·10〜19·100번대를 전부 끌고 와
          이름 검색 결과를 밀어낸다. 「34」로 34번을 찾는 것이 이 기능의 전부다 */

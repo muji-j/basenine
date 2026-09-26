@@ -2055,6 +2055,66 @@ test("⚠닫으면 소리도 지운다 — 닫힌 목록의 인원을 낭독기�
   assert.equal(await said(doc), "", "닫은 뒤에 미뤄 둔 인원수가 되살아났다");
 });
 
+/**
+ * ⚠**닫은 목록을 늦게 온 색인 응답이 다시 열지 않는다**(2026-09-25 감사 C3).
+ *
+ * 닫기(Esc · 바깥 클릭)는 **검색어를 바꾸지 않는다.** 그래서 「검색어가 그대로인가」만 보던
+ * 옛 보호(위 「늦게 온 결과가 새 검색어를 덮지 않는다」)를 그대로 통과했고, 색인이 오는 순간
+ * 그리기가 목록을 되살리고 인원수 낭독까지 다시 예약했다 — **사용자가 닫은 것이 저절로 다시 열린다.**
+ * ⚠색인은 `routes` 로 준다 — 스텁의 `hold` 는 `routes` 응답에만 걸린다(`index` 옵션은 즉시 응답한다).
+ */
+async function closeWhileLoading(
+  close: (doc: ReturnType<typeof makeDocument>, input: El) => void,
+): Promise<{ doc: ReturnType<typeof makeDocument>; input: El; list: El }> {
+  const doc = buildHeaderSearch();
+  let release: () => void = () => assert.fail("색인 요청이 안 나갔다 — 이 시험이 공회전한다");
+  run(doc, { routes: { "players.json": MANY_INDEX }, hold: { "players.json": (r) => { release = r; } } });
+  const input = doc.getElementById("q")!;
+  const list = doc.getElementById("qhits")!;
+  input.fire("focus");
+  input.value = "田";
+  input.fire("input");
+  // 전제 — 색인이 아직 안 왔으므로 「읽는 중」으로 열려 있다. 안 열렸으면 닫기를 잴 수 없다
+  assert.equal(list.hidden, false, "읽는 중 상태로 안 열렸다 — 전제가 틀렸다");
+  assert.match(list.textContent, /読み込み中/, "읽는 중 문구가 없다 — 전제가 틀렸다");
+  close(doc, input);
+  assert.equal(list.hidden, true, "닫기가 안 먹었다 — 전제가 틀렸다");
+  release();
+  await new Promise((r) => setTimeout(r, 10));
+  return { doc, input, list };
+}
+
+test("⚠C3 Esc 로 닫은 뒤 늦게 온 색인이 목록을 다시 열지 않는다 — 낭독도 되살아나지 않는다", async () => {
+  const { doc, list } = await closeWhileLoading((_d, input) => input.fire("keydown", { key: "Escape" }));
+  assert.equal(list.hidden, true, "Esc 로 닫았는데 늦게 온 색인이 목록을 다시 열었다");
+  assert.equal(await said(doc), "", "닫힌 목록의 인원수를 뒤늦게 낭독했다");
+});
+
+test("⚠C3 바깥을 눌러 닫은 뒤 늦게 온 색인이 목록을 다시 열지 않는다", async () => {
+  const { doc, list } = await closeWhileLoading((d) => d.fire("click", { target: d.body }));
+  assert.equal(list.hidden, true, "바깥을 눌러 닫았는데 늦게 온 색인이 목록을 다시 열었다");
+  assert.equal(await said(doc), "", "닫힌 목록의 인원수를 뒤늦게 낭독했다");
+});
+
+/**
+ * C3 대조군 — **막은 것은 「닫힌 뒤의 옛 응답」뿐이다.** 다시 치거나 다시 포커스하면 정상적으로 열려야 한다.
+ * 이것이 없으면 「목록을 아예 안 그리게 만든」 수정도 위 두 시험을 통과한다.
+ */
+test("C3 대조군 — 닫은 뒤 다시 치거나 다시 포커스하면 목록이 정상적으로 열린다", async () => {
+  const typed = await closeWhileLoading((_d, input) => input.fire("keydown", { key: "Escape" }));
+  typed.input.value = "田1";
+  typed.input.fire("input");
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(typed.list.hidden, false, "닫은 뒤 새로 쳤는데 목록이 안 열린다");
+  assert.equal(picks(typed.doc.querySelectorAll("#qhits li")).length, 11, "새 검색어의 결과가 아니다");
+
+  const refocused = await closeWhileLoading((d) => d.fire("click", { target: d.body }));
+  refocused.input.fire("focus");
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(refocused.list.hidden, false, "닫은 뒤 다시 포커스했는데 목록이 안 열린다");
+  assert.match(refocused.list.textContent, /25人中20人を表示/, "다시 연 목록이 그 검색어의 결과가 아니다");
+});
+
 test("⚠등번호가 없는 선수에게 자리를 만들지 않는다 — 「―」로 채우면 198줄이 같은 기호가 된다", async () => {
   const doc = buildPicker();
   run(doc, { index: KANA_INDEX });
