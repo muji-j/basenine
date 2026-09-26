@@ -287,7 +287,7 @@ import type { RankDigits } from "./parts.ts";
 import { TIE_RULE } from "./parts.ts";
 import { NO_VALUE, avg3, dec2, denominator, innings } from "./format.ts";
 // ⚠**분모 단위의 정본**(M1) — 화면이 문자열을 직접 적지 않는다
-import { denUnit } from "./glossary.ts";
+import { denUnit, WIN_PCT_AWARD_RULE } from "./glossary.ts";
 import { readFileSync } from "node:fs";
 // ⚠**한도는 화면 파일에 산다** — 각주가 그 수를 그대로 쓰기 때문이다(M3의 정신).
 //   여기 두면 상수와 화면 문장이 조용히 갈린다
@@ -870,11 +870,13 @@ function pitcherRankings(
      * 야구 관례이고, 2자리로 내면 동률이 없는데 있는 것처럼 보인다.
      */
     digits: RankDigits = 2,
+    /** 자격 문구. 기본은 역할의 자격선 문장이고, **그 지표만의 사정**이 있으면 뒤에 덧붙인 것을 넘긴다 */
+    qualifier: string = pq,
   ): MetricRanking =>
     // ⚠**방향을 끝까지 넘긴다.** 「전원 순위」도 같은 방향으로 매겨야 한다 —
     // 안 넘기면 방어율 전원 순위가 **나쁜 순**이 되어 1위가 최악의 투수가 된다
     toMetricRanking(
-      id, label, digits, den.unit, pq,
+      id, label, digits, den.unit, qualifier,
       asRanked(rankPitchersInRole(bundle, pit, role, pick, higherIsBetter)),
       den.asInnings, false, higherIsBetter,
     );
@@ -949,15 +951,22 @@ function pitcherRankings(
       count("starts", "先発", (e) => e.player.starts),
       count("qs", "QS", (e) => e.player.quality.qs),
       /**
-       * **最高勝率** — NPB 공식 타이틀인데 개인 순위가 없었다
+       * **勝率** — NPB 표창(「勝率第一位投手賞」 · 통칭 最高勝率)이 있는 지표인데 개인 순위가 없었다
        * (2026-08-20 실측: `dist/ranking.html` 의 「勝率」 4회는 전부 **팀 순위표의 각주**다).
        *
        * ⚠**분모는 決着数(勝 + 敗)다** — 무승부도 노디시전도 들어가지 않는다(NPB 규칙).
        *   투구회가 아니므로 `asInnings` 를 끈다. 켜 두면 `12決着` 이 `4回` 로 나간다
        *   (SRP 가 정확히 그 함정을 밟아 123행 전부가 어긋나 있었다).
-       * ⚠**선발 목록에만 둔다.** 最高勝率의 자격은 **NPB 규정투구회**인데,
-       *   구원 쪽 목록의 자격선은 그 3분의 1인 **우리 기준**이라 NPB 것이 아니다.
-       *   같은 타이틀 이름에 다른 자격을 붙이면 자체 기준이 공식으로 읽힌다(§0-10).
+       * ⚠**이 순위의 자격은 규정투구회이고, 표창의 자격이 아니다**(2026-09-26 1차 대조).
+       *   ~~最高勝率의 자격은 NPB 규정투구회~~ 라고 적고 있었는데 **틀렸다** — 표창은 **13勝以上**
+       *   (2020 은 10勝以上)이고, 그래서 완결 16 리그-시즌 중 4곳에서 이 순위의 1위와 수상자가 다르다.
+       *   → 자격 문구가 그 사실을 말한다(`WIN_PCT_AWARD_RULE`). 규정투구회는 다른 비율 순위와 같은 기준이고
+       *   NPB 통계표(勝率リーダーズ)도 그 기준으로 보인다(2018パ 9/9 일치 · 1개 리그-시즌이라 要確認).
+       * ⚠**순위를 승수 기준으로 바꾸지 않았다** — 진행 중 시즌에는 누군가 13勝에 닿기 전까지(대개 8월)
+       *   순위가 통째로 비고, 13勝은 시즌 끝의 표창 규정이지 시즌 중 줄 세우기의 규칙이 아니다.
+       *   바꾸는 것은 제품 결정이라 열어 둔다(`docs/sources/2026-09-26-winpct-title-qualification.md`).
+       * ⚠**선발 목록에만 둔다.** 구원 쪽 목록의 자격선은 규정투구회의 3분의 1인 **우리 기준**이라
+       *   NPB 것이 아니다. 같은 순위 이름에 다른 자격을 붙이면 자체 기준이 공식으로 읽힌다(§0-10).
        * ⚠**목록의 맨 뒤다** — 자리는 `metric-order.ts` 가 정한다. 승패는 타선과 구원진이
        *   절반을 정하므로, 그 값들을 자체 산출하는 사이트가 앞세울 값이 아니다.
        */
@@ -971,6 +980,7 @@ function pitcherRankings(
         true,
         { unit: denUnit("winPct"), asInnings: false },
         3,
+        `${pq}${WIN_PCT_AWARD_RULE}そのため、この順位の1位と受賞者が一致しないことがあります。`,
       ),
     ], (x) => x.id);
   }
