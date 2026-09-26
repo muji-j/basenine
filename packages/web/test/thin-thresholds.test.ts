@@ -20,17 +20,20 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { THIN_SPLIT_PA } from "../src/query.ts";
-import { THIN_MATCHUP_PA, THIN_SITUATION_PA } from "../src/player-page.ts";
+import { OPPONENT_THIN_SEASON, THIN_SPLIT_PA } from "../src/query.ts";
+import { THIN_MATCHUP_PA, THIN_SITUATION_PA, THIN_SPLIT_OUTS } from "../src/player-page.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DOC = join(HERE, "..", "..", "..", "docs", "metrics", "README.md");
 const ASSETS = join(HERE, "..", "src", "assets.ts");
 
-/** §5-A 표의 한 줄에서 「**N타석** `상수이름`」을 뽑는다 */
-function documented(md: string, constant: string): number | null {
-  const m = new RegExp(`\\*\\*(\\d+)타석\\*\\* \`${constant}\``).exec(md);
-  return m === null ? null : Number(m[1]);
+/**
+ * §5-A 표의 한 줄에서 「**N타석** `상수이름`」(또는 「**N아웃**」)을 뽑는다.
+ * ⚠**단위도 같이 본다**(2026-09-27 · PR-D 검토) — 투수의 경기 단위 축은 타석이 아니라 **아웃**이 잣대다.
+ */
+function documented(md: string, constant: string): { n: number; unit: string } | null {
+  const m = new RegExp(`\\*\\*(\\d+)(타석|아웃)\\*\\* \`${constant}\``).exec(md);
+  return m === null ? null : { n: Number(m[1]), unit: m[2]! };
 }
 
 test("⚠정의서 §5-A 의 스플릿 임계값이 코드 상수와 같다", () => {
@@ -39,15 +42,22 @@ test("⚠정의서 §5-A 의 스플릿 임계값이 코드 상수와 같다", ()
   // ⚠**공회전 방지**: 표 자체가 사라지거나 형식이 바뀌면 아래 비교가 전부 「없음 vs 없음」이 된다
   assert.match(md, /## 5-A\. 스플릿의 자격 기준/, "§5-A 가 정의서에서 사라졌다 — 이 시험이 잴 것이 없다");
 
-  const pairs: [string, number][] = [
-    ["THIN_SPLIT_PA", THIN_SPLIT_PA],
-    ["THIN_SITUATION_PA", THIN_SITUATION_PA],
-    ["THIN_MATCHUP_PA", THIN_MATCHUP_PA],
+  /**
+   * ⚠**`THIN_SPLIT_OUTS`·`OPPONENT_THIN_SEASON` 이 빠져 있었다**(2026-09-27 · PR-D 검토 P3).
+   * 앞의 것은 투수의 경기 단위 축(月別 등)과 **표제 월별 꺾은선**이 함께 쓰는 수이고, 뒤의 것은
+   * 그 시즌 상대 구단별 축의 수다 — 둘 다 코드에만 있었다(M3 — 자격 기준은 값의 일부다).
+   */
+  const pairs: [string, number, "타석" | "아웃"][] = [
+    ["THIN_SPLIT_PA", THIN_SPLIT_PA, "타석"],
+    ["THIN_SITUATION_PA", THIN_SITUATION_PA, "타석"],
+    ["THIN_MATCHUP_PA", THIN_MATCHUP_PA, "타석"],
+    ["OPPONENT_THIN_SEASON", OPPONENT_THIN_SEASON, "타석"],
+    ["THIN_SPLIT_OUTS", THIN_SPLIT_OUTS, "아웃"],
   ];
-  for (const [name, code] of pairs) {
+  for (const [name, code, unit] of pairs) {
     const doc = documented(md, name);
     assert.notEqual(doc, null, `정의서 §5-A 가 ${name} 을 안 싣는다 — 코드에만 있는 기준은 아무도 검증할 수 없다(M3)`);
-    assert.equal(doc, code, `${name}: 정의서 ${doc}타석 · 코드 ${code}타석 — 둘 중 하나가 거짓말이다`);
+    assert.deepEqual(doc, { n: code, unit }, `${name}: 정의서 ${doc?.n}${doc?.unit} · 코드 ${code}${unit} — 둘 중 하나가 거짓말이다`);
   }
 
   /**
