@@ -1448,3 +1448,28 @@ test("⚠끝난 시즌은 현재형으로 말하지 않는다 — 다음 시즌 
   const over = renderPlayerPage(playerPage({ seasonOver: true }), context());
   assert.ok(!over.includes("続いている"), "끝난 시즌을 「続いている」이라고 말했다");
 });
+
+/**
+ * ⚠**일본어 각주 한가운데에 영어 낱말이 섞여 배포됐다**(2026-09-25 다방면 감사 C14).
+ * 打順一巡 각주가 「3巡目まで投げる投手はその日**good**投球をしている」였다 — 한 낱말이 번역되지 않은 채
+ * 투수 페이지 전부에 나갔다. 값은 틀리지 않았지만 **도메인 경고 문장이 비문**이 되어 경고의 신뢰가 떨어진다.
+ *
+ * ⚠**범위를 이 각주 하나로 좁힌다.** 화면 전체에서 라틴 소문자를 찾으면 클래스명·URL·
+ * 영문 약어가 섞인 용어(`K%` 따위)가 걸려 **오탐으로 죽는 시험**이 된다 — 재는 것은 **이 문장**이다.
+ * ⚠**대문자만인 낱말(`NPB`)은 막지 않는다** — 이 각주가 첫머리에 실제로 쓰는 공식 약칭이다.
+ */
+test("⚠打順一巡 각주에 영어 낱말이 섞이지 않는다 — 「good投球」가 배포됐다(C14)", () => {
+  const out = renderPlayerPage(
+    playerPage({ role: "pitcher", batting: null, pitching: pitchingBlock(), mark: pitcherMark(), streaks: null }),
+    context(),
+  );
+  // ⚠**속성 순서에 기대지 않는다** — 분석 갈래의 블록은 `hidden` 이 `id` 앞에 붙어 나온다(실측)
+  const block = /<section class="block"[^>]*\sid="b-timesthrough"[^>]*>[\s\S]*?<\/section>/.exec(out);
+  assert.ok(block !== null, "打順一巡 블록이 없다 — 이 시험이 공회전한다");
+  const notes = [...block[0].matchAll(/<p class="note">([\s\S]*?)<\/p>/g)].map((m) => m[1]!.replace(/<[^>]*>/g, ""));
+  assert.equal(notes.length, 1, `打順一巡 각주가 ${notes.length}개다 — 이 시험이 무엇을 재는지 다시 봐라`);
+  // ⚠공회전 방지 — 다른 문단을 재고 통과하지 않게, 그 각주가 맞는지 먼저 확인한다
+  assert.match(notes[0]!, /生存者バイアス/, "생존자 편향 각주가 아니다 — 이 시험이 엉뚱한 문장을 잰다");
+  const latin = notes[0]!.match(/[A-Za-z]*[a-z][A-Za-z]*/g) ?? [];
+  assert.deepEqual(latin, [], `일본어 각주에 라틴 소문자 낱말이 섞였다: ${latin.join(" / ")}`);
+});
