@@ -18,12 +18,10 @@
  */
 import { parseArgs } from "node:util";
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
-// ⚠**잎 서브패스로 가져온다**(I1) — store 배럴이면 parser·domain 까지 평가돼 무관한 로드 오류가 수집을 시작 전에 죽인다
-import { gameFromBoxPath } from "@bb-app/store/game-slug";
-import { JST_TODAY_FROM_HOUR, MAX_CATCHUP_DAYS, jstDate, parseRefetchDates, sinceStatus, targetDates } from "./date-window.ts";
-import type { SinceStatus } from "./date-window.ts";
+import { JST_TODAY_FROM_HOUR, jstDate, parseRefetchDates, targetDates } from "./date-window.ts";
+// ⚠**덜 받은 날의 판정 I/O 는 이 모듈 한 벌이다**(C10 · M1) — import 해도 부작용이 없고(시계·출력 없음) 시험이 실제로 돌린다
+import { catchupNotes, readCollectedThrough } from "./collected-through.ts";
+import type { Note } from "./collected-through.ts";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 
@@ -115,103 +113,19 @@ if (!contact) {
  * 실제로 그래서 이 판단이 한 번도 검증된 적이 없었다(2026-08-18).
  */
 /**
- * 이미 받아 둔 **마지막 경기일**(`since`)과 **그날이 덜 받혔는가** — 따라잡기의 기준점.
+ * 이미 받아 둔 **마지막 경기일**(`since`)과 **덜 받은 날** — 따라잡기의 기준점.
  *
- * ⚠**모르면 넘기지 않는다**(M11). DB 가 아직 없거나(첫 실행) 읽지 못하면 `undefined` 이고,
- * 그러면 창은 예전과 같은 `[어제]` 다. **모르는 것을 「어제」로 메우면 빈 날이 있어도 안 메운다.**
- * ⚠**읽기 실패를 삼키지 않되 멈추지도 않는다** — 수집 자체는 DB 없이도 성립하고(아카이브가 먼저다),
- * 여기서 죽으면 **DB 가 깨진 날 수집까지 같이 멈춘다.** 그건 되돌릴 수 없는 쪽이다.
- *
- * ## ⚠덜 받은 마지막 경기일 (2026-09-26 · 감사 C10 · 설계 `docs/superpowers/specs/2026-09-26-catchup-partial-day-design.md`)
- *
- * 적재기는 끝나지 않은 경기(`inProgress`)를 **행 없이** 건너뛴다. 23:30 실행이 D 의 끝난 경기만 저장하고 D+1 의 실행이
- * 전부 실패하면 `since` 가 D 에 머물고 창은 D+1 부터라 **D 의 그 경기는 영영 안 받혔다.** 그래서 `since` 하나만 본다 —
- * 그날 **아카이브에 경기 폴더는 있는데 DB 에 행이 없는** 경기가 있으면 `incomplete` 이고, 부르는 쪽이 `includeSince` 로 D 를 다시 받는다.
- * ⚠**읽는 순서를 고정한다**(D3): ① **DB 먼저** — 읽기 전용 연결 하나에서 `MAX(played)` 와 그날의 경기 id(상태 무관)를
- *   **한 트랜잭션**으로 읽는다. ② **그다음 아카이브.** 그 사이 다른 수집이 폴더를 더하면 「덜 받음」 쪽(더 받는 쪽)으로
- *   틀린다 — 빠뜨리는 쪽이 아니다(같은 아카이브에 수집기 둘은 원래 안 돌린다 · 일일 잡은 `concurrency` 로 직렬).
- * ⚠**경기 폴더 판별은 적재기와 한 벌이다**(D2 · M1) — `box.html.gz` 가 있고 잎 `gameFromBoxPath` 를 통과한 것만 센다.
- * ⚠**못 읽으면 `null`(모름)이지 빈 목록이 아니다**(D1) — 빈 목록으로 두면 그날 경기 **전부**를 「덜 받음」으로 오판한다.
- *   모름이면 넓히지 않고(요청 0 증가 쪽) 무엇을 못 읽었는지 말한다. ⚠**`since` 자체는 지킨다** — 그날 목록만 못 읽었으면
- *   예전 따라잡기(빠진 날 메우기)는 그대로 돈다.
+ * ⚠**판정 I/O 는 `scripts/collected-through.ts` 한 벌이다**(2026-09-27 · C10 3중 검토 2차 F1). 예전에는 여기(`collectedThrough()`)에
+ *   있어서 import 하는 순간 수집이 시작돼 **소스 모양만** 볼 수 있었고, 그래서 사본에 넣은 변이 5개가 전부 초록이었다.
+ *   지금은 그 모듈을 `scripts/test/collected-through.test.ts` 가 임시 SQLite·임시 아카이브로 실제로 돌린다.
+ * ⚠**덜 받은 날은 `since` 하나가 아니다**(3중 검토 3차 P2) — 한 실행 안에서 D 의 재수집은 실패하고 D+1 은 성공하면
+ *   `since` 가 D+1 로 전진한다. 그래서 판정은 `[어제 − 상한, min(since, 어제)]` 의 날마다 한다.
+ * ⚠**모르면 넘기지 않는다**(M11) · **읽기 실패를 삼키지 않되 멈추지도 않는다** — 규칙과 근거는 그 모듈의 머리말.
  */
-function collectedThrough(): { since: string; verdict: SinceStatus } | undefined {
-  // ⚠`resolve` 다 — 자식 프로세스가 `cwd: ROOT` 로 같은 인자를 푸는 것과 같게(절대경로를 줘도 맞다)
-  const path = resolve(ROOT, values.db);
-  if (!existsSync(path)) {
-    console.log(`  · ${values.db} 가 아직 없다 — 따라잡기 없이 어제만 받는다`);
-    return undefined;
-  }
-
-  // ① DB 먼저 — 한 트랜잭션에서 마지막 경기일과 그날의 경기 id(상태 무관 — 미성립도 행이다)
-  let since: string | undefined;
-  let loaded: string[] | null = null;
-  let loadedError = "";
-  try {
-    const db = new DatabaseSync(path, { readOnly: true });
-    try {
-      db.exec("BEGIN");
-      const row = db.prepare("SELECT MAX(game_date) AS d FROM game WHERE status = 'played'").get() as
-        | { d: string | null }
-        | undefined;
-      since = row?.d ?? undefined;
-      if (since !== undefined) {
-        try {
-          const rows = db.prepare("SELECT game_id AS id FROM game WHERE game_date = ?").all(since) as { id: string }[];
-          loaded = rows.map((r) => r.id);
-        } catch (e) {
-          loadedError = String(e);
-        }
-      }
-      db.exec("COMMIT");
-    } finally {
-      db.close();
-    }
-  } catch (e) {
-    console.error(`  ⚠마지막 경기일을 못 읽었다(${String(e)}) — 따라잡기 없이 어제만 받는다`);
-    return undefined;
-  }
-  if (since === undefined) return undefined;
-
-  // ② 그다음 아카이브 — 그날 폴더에서 적재기가 경기로 보는 것만(D2)
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(since);
-  const dayDir = m === null ? null : resolve(ROOT, values.archive, "npb", "scores", m[1]!, `${m[2]}${m[3]}`);
-  let archived: string[] | null = [];
-  let archivedError = "";
-  if (dayDir === null) {
-    // ⚠적재기는 경로에서 `YYYY-MM-DD` 만 만든다 — 아니면 모르는 모양이다(M7 · 빈 목록으로 두지 않는다)
-    archived = null;
-    archivedError = `마지막 경기일이 YYYY-MM-DD 가 아니다: ${JSON.stringify(since)}`;
-  } else {
-    try {
-      for (const e of readdirSync(dayDir, { withFileTypes: true })) {
-        if (!e.isDirectory()) continue;
-        const box = join(dayDir, e.name, "box.html.gz");
-        if (!existsSync(box)) continue;
-        const g = gameFromBoxPath(box);
-        if (g !== null) archived.push(g.gameId);
-      }
-    } catch (e) {
-      // ⚠그날 폴더가 **없으면** 받아 둔 경기가 0 이다(아카이브가 지워진 경우 — 설계 D1 「완결」). 그 밖의 오류는 모름이다
-      if ((e as { code?: unknown }).code !== "ENOENT") {
-        archived = null;
-        archivedError = String(e);
-      }
-    }
-  }
-
-  const verdict = sinceStatus(archived, loaded);
-  if (verdict.status === "unknown") {
-    const unread = [
-      ...(loaded === null ? [`DB 의 그날 경기 목록(${loadedError})`] : []),
-      ...(archived === null ? [`아카이브의 그날 폴더 ${dayDir ?? "(경로 없음)"}(${archivedError})`] : []),
-    ];
-    console.error(
-      `  ⚠마지막 경기일 ${since} 이 덜 받혔는지 모른다 — ${unread.join(" · ")} 를 못 읽었다. ` +
-        "그날을 다시 받지는 않는다(빠진 날 메우기는 그대로)",
-    );
-  }
-  return { since, verdict };
+/** 판정 모듈의 알림 한 줄 — 경고는 표준오류로, 안내는 표준출력으로 */
+function say(n: Note): void {
+  if (n.level === "warn") console.error(`  ${n.text}`);
+  else console.log(`  ${n.text}`);
 }
 
 /**
@@ -232,17 +146,26 @@ if (refetch.dates !== null && values.today === true) {
   process.exit(2);
 }
 
-// ⚠**재수집·`--date` 면 판정하지 않는다**(C10 설계 D6) — 그때 창은 주어진 날짜뿐이라 기준점이 필요 없다
-const collected = values.date === undefined && refetch.dates === null ? collectedThrough() : undefined;
-const since = collected?.since;
-// ⚠**시계는 여기서 한 번 읽는다**(M6 · 진입점) — 수집 창과 「앞으로의 일정」 시즌(4단계)이 같은 「지금」을 본다
+// ⚠**시계는 여기서 한 번 읽는다**(M6 · 진입점) — 덜 받은 날의 판정 · 수집 창 · 「앞으로의 일정」 시즌(4단계)이 같은 「지금」을 본다.
+//   판정보다 **먼저** 읽는다 — 판정 범위(어제 − 상한)와 창이 서로 다른 「어제」를 보면 범위 규칙이 어긋난다
 const now = new Date();
-const dates = refetch.dates ?? targetDates(now, {
+// ⚠**재수집·`--date` 면 판정하지 않는다**(C10 설계 D6) — 그때 창은 주어진 날짜뿐이라 기준점이 필요 없다
+// ⚠경로는 `resolve` 다 — 자식 프로세스가 `cwd: ROOT` 로 같은 인자를 푸는 것과 같게(절대경로를 줘도 맞다)
+const read = values.date === undefined && refetch.dates === null
+  ? readCollectedThrough({ dbPath: resolve(ROOT, values.db), archiveRoot: resolve(ROOT, values.archive), now })
+  : undefined;
+for (const n of read?.notes ?? []) say(n);
+const collected = read?.collected;
+const since = collected?.since;
+const windowOpts = {
   ...(values.date === undefined ? {} : { date: values.date }),
   ...(values.today === true ? { forceToday: true } : {}),
   ...(since === undefined ? {} : { collectedThrough: since }),
-  // ⚠**덜 받았다고 확인됐을 때만**(C10 D4) — 완결·모름이면 안 넘긴다. 안 넘기면 창은 예전과 글자까지 같다(정상·휴식일 요청 0 증가)
-  ...(collected?.verdict.status === "incomplete" ? { includeSince: true } : {}),
+};
+const dates = refetch.dates ?? targetDates(now, {
+  ...windowOpts,
+  // ⚠**덜 받았다고 확인된 날만**(C10 D4) — 판정 범위의 날마다 대조한 결과다. 없거나 빈 배열이면 창은 예전과 글자까지 같다(정상·휴식일 요청 0 증가)
+  ...(collected === undefined ? {} : { include: collected.include }),
 });
 console.log(
   `대상 경기일 ${dates.join(" · ")}` +
@@ -252,7 +175,7 @@ console.log(
         ? ""
         // ⚠**「오늘이 들었는가」로 가른다 — 날짜 수로 가르지 않는다**(2026-09-26 · C10 구현 보고).
         //   `dates.length > 1` 로 가르면 아침의 따라잡기 창(`[D, 어제]`)에도 「어제와 오늘」이라고 말한다 —
-        //   C10 의 includeSince 로 그런 창이 더 자주 생긴다.
+        //   C10 의 덜 받은 날(`include`)로 그런 창이 더 자주 생긴다.
         : dates.at(-1) === jstDate(now)
           ? " (오늘 JST 까지 · 끝나지 않은 경기는 저장하지 않는다)"
           : ` (어제 JST 까지 · 오늘 것은 ${JST_TODAY_FROM_HOUR}시 이후 실행에서 받는다)`),
@@ -260,22 +183,9 @@ console.log(
 // ⚠**기준점을 말한다.** 창이 조용히 넓어지면 「왜 오늘 요청이 많지」에 아무도 답할 수 없다.
 //   위 「대상 경기일」 줄과 나란히 읽으면 넓어졌는지가 그 자리에서 보인다.
 if (since !== undefined) console.log(`  · 마지막으로 받아 둔 경기일 ${since}`);
-// ⚠**덜 받은 날을 말한다**(C10 D5) — 창에 since 가 왜 다시 들어왔는지, 또는 왜 못 들어왔는지
-if (collected?.verdict.status === "incomplete") {
-  const { since: d, verdict } = collected;
-  if (dates.includes(d)) {
-    console.log(`  · 마지막 경기일 ${d} 에 저장 안 된 경기 ${verdict.missing}건 — ${d} 도 다시 받는다`);
-  } else {
-    // ⚠조용히 넘기지 않는다 — 창 밖이면 자동으로는 안 받힌다. 사람이 할 일을 적는다
-    console.error(
-      `  ⚠마지막 경기일 ${d} 에 저장 안 된 경기 ${verdict.missing}건 — 이번 창에 없다(` +
-        (d > jstDate(now, -1)
-          ? `오늘 이후 날짜라 ${JST_TODAY_FROM_HOUR}시 이후 실행이 받는다`
-          : `간격이 따라잡기 상한 ${MAX_CATCHUP_DAYS}일을 넘었다 · 백필은 사람의 일: --date ${d}`) +
-        ")",
-    );
-  }
-}
+// ⚠**덜 받아서 새로 더한 날만 말한다**(C10 D5 · 3중 검토 2차 Minor) — `include` 없이 잡은 창(원래 창)과 맞댄다.
+//   원래 창에 있던 날(간격 0 의 어제 등)까지 「다시 받는다」고 하면 로그로 요청 수를 셀 때 오독한다
+if (collected !== undefined) for (const n of catchupNotes(collected, targetDates(now, windowOpts), dates)) say(n);
 
 function run(label: string, args: string[]): number {
   console.log(`\n── ${label} ──`);

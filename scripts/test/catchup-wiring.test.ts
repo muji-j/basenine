@@ -1,14 +1,15 @@
 /**
- * **덜 받은 마지막 경기일 — `update.ts` 의 배선**(감사 C10 · 설계 `docs/superpowers/specs/2026-09-26-catchup-partial-day-design.md` D3·D5·D6).
+ * **덜 받은 날 — `update.ts` 의 배선**(감사 C10 · 설계 `docs/superpowers/specs/2026-09-26-catchup-partial-day-design.md` · 2026-09-27 3중 검토 반영).
  *
- * 판정(`sinceStatus`)과 창(`targetDates` 의 `includeSince`)은 `date-window.test.ts` 가 실행으로 잰다.
- * 여기는 **그것을 부르는 배선**을 잰다 — `update.ts` 는 import 하는 순간 수집을 시작하므로(외부 요청) 실행 시험을 할 수 없다.
- * 한 줄만 어긋나도 초록인 채로 틀린다:
- *   · 아카이브를 DB 보다 먼저 읽으면, 그 사이 적재가 끝난 경기를 「덜 받음」 쪽이 아니라 **빠뜨리는 쪽**으로 틀릴 수 있다(D3)
- *   · `includeSince` 를 판정과 무관하게 넘기면 **휴식일 다음 날마다** 다 받은 날을 다시 받는다(요청 0 증가 약속 · L1)
- *   · 경기 폴더를 적재기와 다른 규칙으로 세면 매 실행 그 날을 다시 받거나 덜 받은 날을 놓친다(D2 · M1)
- *   · 못 읽음을 빈 목록으로 두면 그날 경기 전부를 「덜 받음」으로 오판한다(D1 · 콜드 리뷰 ①)
- * ⚠주석은 걷어내고 본다(주석 속 낱말이 판정을 흐리지 않게) · 줄끝은 `\n` 으로 맞춘다(Windows 체크아웃은 CRLF).
+ * ⚠**판정 자체는 여기서 재지 않는다.** 판정 I/O 는 `scripts/collected-through.ts` 로 떼어 `collected-through.test.ts` 가
+ *   임시 SQLite·임시 아카이브로 **실제로 돌린다**(3중 검토 2차 F1 — 소스 모양 검사로는 변이 5개가 전부 초록이었다).
+ *   창은 `date-window.test.ts` 가 실행으로 잰다. 여기는 `update.ts`(import 하면 수집이 시작돼 실행할 수 없다)가
+ *   **그것들을 제자리에서 부르는가**만 본다:
+ *   · 판정 I/O 가 `update.ts` 에 두 벌로 남지 않는다(M1) · store 배럴을 안 가져온다(I1)
+ *   · 시계를 한 번 읽고 그 `now` 를 판정과 창에 같이 준다(M6) · 재수집·`--date` 면 판정하지 않는다(D6)
+ *   · 덜 받은 날은 `include` 로만 창에 들어간다(D4) · 알림은 `include` 없는 창과 맞대 **새로 더한 날만** 말한다(D5)
+ *   · 「대상 경기일」 꼬리표는 **오늘이 들었는가**로 가른다(날짜 수로 가르면 아침 따라잡기 창에서 「어제와 오늘」이라고 거짓말한다)
+ * ⚠주석은 걷어내고 본다 · 줄끝은 `\n` 으로 맞춘다(Windows 체크아웃은 CRLF).
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -23,90 +24,59 @@ const UPDATE = readLf("../update.ts")
   .replace(/\/\*[\s\S]*?\*\//g, "")
   .replace(/(?<!:)\/\/[^\n]*/g, "");
 
-/** `head` 로 시작하는 최상위 블록(`head` … 줄머리의 `}`). 정확히 한 곳이어야 한다 */
-function topBlock(head: string): string {
-  const at = UPDATE.indexOf(head);
-  assert.notEqual(at, -1, `update.ts 에 ${head} 가 없다 — 배선이 빠졌거나 모양이 바뀌었다`);
-  assert.equal(UPDATE.indexOf(head, at + 1), -1, `${head} 가 두 곳 이상이다`);
-  const end = UPDATE.indexOf("\n}", at);
-  assert.notEqual(end, -1, `${head} 블록이 닫히지 않는다`);
-  return UPDATE.slice(at, end + 2);
+/** `needle` 이 코드에 정확히 한 번 나오는 위치 */
+function once(needle: string, what: string): number {
+  const at = UPDATE.indexOf(needle);
+  assert.notEqual(at, -1, `update.ts 에 ${what}(${needle})가 없다 — 배선이 빠졌거나 모양이 바뀌었다`);
+  assert.equal(UPDATE.indexOf(needle, at + 1), -1, `update.ts 에 ${what}(${needle})가 두 곳 이상이다`);
+  return at;
 }
 
-/** `block` 안에서 `needle` 의 위치 — 없으면 떨어진다(순서 비교가 -1 로 공회전하지 않게) */
-function posIn(block: string, needle: string, what: string): number {
-  const i = block.indexOf(needle);
-  assert.notEqual(i, -1, `collectedThrough 에 ${what}(${needle})가 없다`);
-  return i;
-}
-
-/**
- * ⚠**따옴표까지 포함한 문자열 리터럴 전체**로 찾는다 — 부분 문자열로 찾으면 `… WHERE game_date = ? AND status = 'played'` 도
- * 통과한다(뮤테이션 실측). 그날 경기 id 는 **상태 무관**이어야 한다: 미성립 경기도 행이 있으므로 played 만 세면 비 온 날마다 「덜 받음」이 된다.
- */
-const MAX_SQL = `"SELECT MAX(game_date) AS d FROM game WHERE status = 'played'"`;
-const IDS_SQL = `"SELECT game_id AS id FROM game WHERE game_date = ?"`;
-
-test("⚠I1 update.ts 는 경기 폴더 판별을 잎 서브패스로 가져온다 — store 배럴을 가져오지 않는다", () => {
-  assert.equal(/from\s+"@bb-app\/store"/.test(UPDATE), false, "@bb-app/store(배럴)를 가져오면 parser·domain 까지 평가돼 수집이 시작 전에 죽을 수 있다");
-  assert.match(UPDATE, /import \{ gameFromBoxPath \} from "@bb-app\/store\/game-slug";/, "gameFromBoxPath 를 잎 서브패스에서 가져오지 않는다");
+test("⚠I1·M1 update.ts 는 판정 모듈을 가져오기만 한다 — 판정 I/O 를 따로 갖지 않고 store 배럴도 안 가져온다", () => {
+  assert.match(UPDATE, /import \{ catchupNotes, readCollectedThrough \} from "\.\/collected-through\.ts";/, "판정 모듈을 가져오지 않는다");
+  assert.equal(/from\s+"@bb-app\/store"|import\s+"@bb-app\/store"/.test(UPDATE), false, "store 배럴을 가져온다");
+  for (const own of ["new DatabaseSync(", "readdirSync(", "gameFromBoxPath", "dayStatus(", "judgeDates("]) {
+    assert.equal(UPDATE.includes(own), false, `update.ts 에 판정 I/O(${own})가 남아 있다 — 두 벌이면 한쪽만 고쳐진다(M1)`);
+  }
 });
 
-test("⚠D3 collectedThrough 는 DB 를 먼저(읽기 전용 · 한 트랜잭션 · 마지막 경기일과 그날 경기 id) 읽고 그다음 아카이브를 읽는다", () => {
-  const fn = topBlock("function collectedThrough(");
-  const open = posIn(fn, "new DatabaseSync(", "DB 열기");
-  assert.match(fn.slice(open, fn.indexOf(")", open) + 1), /readOnly: true/, "DB 를 읽기 전용으로 열지 않는다");
-  const begin = posIn(fn, 'db.exec("BEGIN")', "트랜잭션 시작");
-  const max = posIn(fn, MAX_SQL, "마지막 경기일 조회");
-  const ids = posIn(fn, IDS_SQL, "그날 경기 id 조회(상태 무관)");
-  const commit = posIn(fn, 'db.exec("COMMIT")', "트랜잭션 끝");
-  const archive = posIn(fn, "readdirSync(", "아카이브 그날 폴더 읽기");
-  assert.ok(begin < max && max < ids && ids < commit, "마지막 경기일과 그날 경기 id 가 한 트랜잭션(BEGIN … COMMIT) 안에서 그 순서로 읽히지 않는다");
-  assert.ok(commit < archive, "아카이브를 DB 보다 먼저(또는 트랜잭션 안에서) 읽는다 — 읽는 순서는 DB → 아카이브다(D3)");
-  assert.ok(open < archive, "아카이브를 DB 를 열기 전에 읽는다");
-  const verdict = posIn(fn, "sinceStatus(archived, loaded)", "판정 호출");
-  assert.ok(archive < verdict, "두 목록을 다 읽기 전에 판정한다");
-});
-
-test("⚠D2 아카이브의 경기 폴더는 box.html.gz 가 있고 잎 판정(gameFromBoxPath)을 통과한 것만 센다 — 제 판정을 따로 갖지 않는다", () => {
-  const fn = topBlock("function collectedThrough(");
-  assert.match(fn, /existsSync\(\s*box\s*\)/, "box.html.gz 가 있는지 안 본다");
-  assert.match(fn, /join\([^)]*"box\.html\.gz"\)/, "경기 폴더의 box.html.gz 경로를 만들지 않는다");
-  assert.match(fn, /gameFromBoxPath\(\s*box\s*\)/, "잎 판정(gameFromBoxPath)을 거치지 않는다");
-  assert.equal(/split\("-"\)/.test(UPDATE) || UPDATE.includes("scores[\\\\/]"), false, "update.ts 가 슬러그·경로 판정을 따로 갖는다 — 적재기와 두 벌이 된다");
-});
-
-test("⚠D1 못 읽음은 null(모름)이다 — 빈 목록으로 메우지 않는다", () => {
-  const fn = topBlock("function collectedThrough(");
-  assert.match(fn, /let loaded: string\[\] \| null = null;/, "그날 경기 id 목록이 「못 읽음(null)」에서 시작하지 않는다");
-  assert.match(fn, /archived = null;/, "아카이브를 못 읽었을 때 null 로 두지 않는다");
-  assert.equal(/(loaded|archived)\s*\?\?\s*\[\]|loaded\s*=\s*\[\]/.test(fn), false, "못 읽음을 빈 목록으로 메운다 — 그날 경기 전부를 덜 받음으로 오판한다(콜드 리뷰 ①)");
-  assert.match(fn, /"ENOENT"/, "그날 폴더가 없는 것(받아 둔 경기 0)과 못 읽은 것을 가르지 않는다");
-});
-
-test("⚠D4 includeSince 는 판정이 incomplete 일 때만 넘긴다 — 한 곳 · targetDates(now, …) 안", () => {
-  const n = [...UPDATE.matchAll(/includeSince/g)].length;
-  assert.equal(n, 1, `includeSince 가 ${n}곳이다(1곳이어야 한다) — 판정과 무관하게 넘기는 길이 있으면 휴식일 다음 날마다 다 받은 날을 다시 받는다`);
-  const call = UPDATE.slice(UPDATE.indexOf("targetDates(now, {"), UPDATE.indexOf("});", UPDATE.indexOf("targetDates(now, {")));
-  assert.match(
-    call,
-    /\.\.\.\(collected\?\.verdict\.status === "incomplete" \? \{ includeSince: true \} : \{\}\)/,
-    "targetDates 에 includeSince 를 「incomplete 일 때만」 넘기지 않는다",
-  );
-});
-
-test("⚠D6 재수집(BB_REFETCH_DATES)·--date 가 있으면 판정하지 않는다 — collectedThrough 는 한 곳에서 그 조건으로만 부른다", () => {
-  // ⚠선언(`function collectedThrough():`)은 호출이 아니다 — 빼고 센다
-  const calls = [...UPDATE.matchAll(/(?<!function )collectedThrough\(\)/g)].length;
-  assert.equal(calls, 1, `collectedThrough() 호출이 ${calls}곳이다(1곳이어야 한다)`);
+test("⚠M6·D6 시계를 먼저 한 번 읽고 · 재수집·--date 가 아닐 때만 · 그 now 로 판정한다", () => {
+  // ⚠시계 호출을 **문자열로 적지 않는다** — `clock-injection.test.ts` 가 문자열 속 호출도 센다(괄호를 이스케이프한 정규식으로 찾는다)
+  const clocks = [...UPDATE.matchAll(/const now = new Date\(\);/g)];
+  assert.equal(clocks.length, 1, `진입점 시계가 ${clocks.length}곳이다(1곳이어야 한다)`);
+  const clock = clocks[0]!.index;
+  const call = once("readCollectedThrough(", "판정 호출");
+  assert.ok(clock < call, "판정이 시계보다 먼저다 — 판정과 창이 다른 「지금」을 본다(M6)");
   assert.match(
     UPDATE,
-    /const collected = values\.date === undefined && refetch\.dates === null \? collectedThrough\(\) : undefined;/,
-    "--date·재수집일 때도 판정한다(또는 그 조건이 바뀌었다)",
+    /const read = values\.date === undefined && refetch\.dates === null\s*\?\s*readCollectedThrough\(\{ dbPath: resolve\(ROOT, values\.db\), archiveRoot: resolve\(ROOT, values\.archive\), now \}\)\s*:\s*undefined;/,
+    "재수집·--date 에도 판정하거나 · now·경로를 다르게 넘긴다",
   );
 });
 
-test("D5 판정을 한 줄로 말한다 — 덜 받음이면 몇 건이고 그날도 다시 받는지 · 모름이면 무엇을 못 읽었는지", () => {
-  assert.match(UPDATE, /저장 안 된 경기 \$\{[^}]+\}건 — \$\{[^}]+\} 도 다시 받는다/, "덜 받음 판정을 말하지 않는다");
-  assert.match(UPDATE, /덜 받혔는지 모른다/, "모름 판정을 말하지 않는다");
+test("⚠D4 덜 받은 날은 include 로만 창에 들어간다 — 한 곳 · 옛 includeSince 는 없다", () => {
+  assert.equal(UPDATE.includes("includeSince"), false, "옛 includeSince 가 남아 있다");
+  assert.match(
+    UPDATE,
+    /const dates = refetch\.dates \?\? targetDates\(now, \{\s*\.\.\.windowOpts,\s*\.\.\.\(collected === undefined \? \{\} : \{ include: collected\.include \}\),?\s*\}\);/,
+    "덜 받은 날을 include 로 넘기지 않는다(또는 모양이 바뀌었다)",
+  );
+  assert.equal([...UPDATE.matchAll(/include:/g)].length, 1, "include 를 넘기는 곳이 한 곳이 아니다");
+});
+
+test("⚠D5 판정 모듈의 알림을 찍고 · 창에 새로 더한 날만 말한다(include 없는 창과 맞댄다)", () => {
+  assert.match(UPDATE, /for \(const n of read\?\.notes \?\? \[\]\) say\(n\);/, "판정 모듈의 알림을 찍지 않는다");
+  assert.match(
+    UPDATE,
+    /if \(collected !== undefined\) for \(const n of catchupNotes\(collected, targetDates\(now, windowOpts\), dates\)\) say\(n\);/,
+    "알림이 include 없는 창(원래 창)과 맞대지 않는다 — 원래 창에 있던 날도 「다시 받는다」고 말한다",
+  );
+  const say = UPDATE.slice(once("function say(", "알림 출력"), UPDATE.indexOf("\n}", UPDATE.indexOf("function say(")));
+  assert.match(say, /n\.level === "warn"[\s\S]*console\.error/, "경고를 표준오류로 찍지 않는다");
+});
+
+/** ⚠변이 (e) — 3중 검토 2차 F1: 꼬리표를 옛 판(`dates.length > 1`)으로 되돌려도 배선 시험 7본이 전부 초록이었다 */
+test("⚠「대상 경기일」 꼬리표는 오늘이 들었는가로 가른다 — 날짜 수로 가르지 않는다", () => {
+  assert.match(UPDATE, /: dates\.at\(-1\) === jstDate\(now\)\s*\?\s*" \(오늘 JST 까지/, "꼬리표가 「마지막 날짜가 오늘인가」로 가르지 않는다");
+  assert.equal(/dates\.length > 1/.test(UPDATE), false, "꼬리표를 날짜 수로 가른다 — 아침 따라잡기 창에서 「어제와 오늘」이라고 말한다");
 });

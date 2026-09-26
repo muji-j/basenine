@@ -109,35 +109,28 @@ function daysBetween(from: string, to: string): number {
  * 빠진 날은 `[월]` 하나이고 그건 예전의 `[어제]` 와 같다.
  * ⚠**상한을 넘으면 따라잡지 않는다**(위 `MAX_CATCHUP_DAYS`) — 비시즌에 매일 헛돌지 않기 위해서다.
  *
- * ## ⚠「덜 받은 마지막 경기일」 — `since` 자신도 넣는다 (2026-09-26 · 감사 C10 · 설계 `docs/superpowers/specs/2026-09-26-catchup-partial-day-design.md` D4)
+ * ## ⚠덜 받은 날을 다시 받는다 — 최근 창으로 소급한다 (감사 C10 · 설계 `docs/superpowers/specs/2026-09-26-catchup-partial-day-design.md`)
  *
  * 창이 `since` **다음 날부터**라서, 23:30 실행이 D 의 끝난 경기만 저장하고(진행 중은 `inProgress` 로 건너뜀)
- * D+1 의 실행이 **전부 실패**하면 D 는 영영 창에 안 들었다 — `since` 가 D 에 머물고 다음 성공 실행의 창은 D+1 부터다.
- * → 부르는 쪽이 「`since` 가 덜 받혔다」를 확인했을 때만(`sinceStatus` → `incomplete`) `includeSince` 를 넘기고,
- *   그러면 창 **맨 앞에** `since` 를 더한다.
- * ⚠**간격은 실제 `since` 로 잰다** — `since` 를 하루 앞당겨 넘기는 안은 간격이 정확히 상한일 때 8 이 되어
- *   **따라잡기를 통째로 껐다**(콜드 리뷰 ③ · 재현). 그래서 옵션이 따로 있다.
- * ⚠상한을 넘으면 `since` 도 안 넣는다(백필은 사람의 일) · `since` 가 어제거나 그 뒤면 더하지 않는다(어제는 이미 창에 있다).
- * ⚠**`includeSince` 가 없거나 거짓이면 결과는 예전과 글자까지 같다** — 정상·휴식일의 요청 0 증가가 여기에 걸려 있다.
+ * D+1 의 실행이 **전부 실패**하면 D 는 영영 창에 안 들었다. ⚠~~`since` 하나만 대조해 `includeSince` 로 넣는다~~ 는
+ * **2026-09-27 에 바꿨다**(3중 검토 3차 P2 · 2차 F3) — `update.ts` 는 날짜마다 따로 받고 실패도 따로 세서, 한 실행 안에서
+ * D 의 재수집은 실패하고 D+1 은 성공하면 `since` 가 D+1 로 전진해 **D 를 다시 보지 않았다.**
+ * → 부르는 쪽(`scripts/collected-through.ts`)이 `[어제 − 상한, min(since, 어제)]`(`judgeDates`)의 **날마다** 덜 받았는지 대조하고,
+ *   덜 받은 날 **전부**를 `include` 로 넘긴다. 여기는 그 날들을 **창의 범위 규칙 안에서만** 더한다:
+ * ⚠**간격은 실제 `since` 로 잰다** — `since` 를 앞당겨 넘기는 안은 간격이 정확히 상한일 때 따라잡기를 통째로 껐다(콜드 리뷰 ③ · 재현).
+ * ⚠`since` 를 모르거나 간격이 상한을 넘으면 아무것도 안 더한다(따라잡기와 같은 규칙 · 백필은 사람의 일) ·
+ * ⚠`[어제 − 상한, 어제]` 밖(오늘 이후 포함 — 오늘은 22시 이후 실행의 몫)과 틀린 모양은 버린다 — 버리는 것은 **안 넓히는 쪽**이다 ·
+ * ⚠결과는 **합집합 · 오름차순 · 중복 없음**이다.
+ * ⚠**`include` 가 없거나 빈 배열이면 결과는 예전과 글자까지 같다** — 정상·휴식일의 요청 0 증가가 여기에 걸려 있다.
  *
  * @param opts.collectedThrough 이미 받아 둔 **마지막 경기일**(`YYYY-MM-DD`).
  *   보통 DB 의 `MAX(game_date) WHERE status='played'` 다. 모르면 넘기지 않는다 —
  *   ⚠**모르는 것을 「오늘」로 메우지 마라**(M11): 그러면 빈 날이 있어도 안 메운다.
- * @param opts.includeSince `collectedThrough` 날이 **덜 받혔다고 확인됐을 때만** 참(위 C10). 모르면 넘기지 않는다.
- * @param opts.include **덜 받았다고 확인된 날들**(C10 재설계 · 2026-09-27 · 아래 절). 없거나 빈 배열이면 창은 예전과 글자까지 같다.
- *
- * ## ⚠덜 받은 날은 `since` 하나가 아니다 — 최근 창으로 소급한다 (2026-09-27 · C10 3중 검토 3차 P2 · 2차 F3)
- *
- * `update.ts` 는 날짜마다 따로 받고 실패도 따로 센다. 한 실행 안에서 D 의 재수집은 실패하고 D+1 은 성공하면
- * `since` 가 D+1 로 전진해 **D 를 다시 보지 않았다.** 그래서 부르는 쪽이 `[어제 − 상한, min(since, 어제)]`(`judgeDates`)의
- * 날마다 덜 받았는지 대조하고, 덜 받은 날 **전부**를 `include` 로 넘긴다. 여기는 그 날들을 **창의 범위 규칙 안에서만** 더한다:
- * ⚠`since` 를 모르거나 간격이 상한을 넘으면 아무것도 안 더한다(따라잡기와 같은 규칙 · 백필은 사람의 일) ·
- * ⚠`[어제 − 상한, 어제]` 밖(오늘 이후 포함 — 오늘은 22시 이후 실행의 몫)과 틀린 모양은 버린다 — 버리는 것은 **안 넓히는 쪽**이다 ·
- * ⚠결과는 **합집합 · 오름차순 · 중복 없음**이다.
+ * @param opts.include **덜 받았다고 확인된 날들**(위 C10). 모르면 넘기지 않는다.
  */
 export function targetDates(
   now: Date,
-  opts: { date?: string; forceToday?: boolean; collectedThrough?: string; includeSince?: boolean; include?: readonly string[] } = {},
+  opts: { date?: string; forceToday?: boolean; collectedThrough?: string; include?: readonly string[] } = {},
 ): string[] {
   if (opts.date !== undefined) return [opts.date];
   const includeToday = opts.forceToday === true || jstHour(now) >= JST_TODAY_FROM_HOUR;
@@ -145,11 +138,9 @@ export function targetDates(
 
   const past: string[] = [];
   const since = opts.collectedThrough;
-  // ⚠상한 초과는 백필이라 사람의 일이다 — since 도, 그 사이도, 덜 받은 날도 넣지 않는다
+  // ⚠상한 초과는 백필이라 사람의 일이다 — 그 사이도, 덜 받은 날도 넣지 않는다
   if (since !== undefined && daysBetween(since, yesterday) <= MAX_CATCHUP_DAYS) {
     const gap = daysBetween(since, yesterday);
-    // ⚠**덜 받은 since 자신**(C10) — 어제보다 이를 때만(`gap >= 1`). 어제면 이미 창에 있다
-    if (opts.includeSince === true && gap >= 1) past.push(since);
     // ⚠**`gap >= 2` 일 때만 그 사이를 넓힌다.** 0·1 은 정상이다
     if (gap >= 2) for (let d = nextDay(since); d < yesterday; d = nextDay(d)) past.push(d);
     // ⚠**덜 받았다고 확인된 날**(C10 재설계) — 창의 범위 `[어제 − 상한, 어제]` 안의 것만
@@ -201,28 +192,6 @@ export function dayStatus(archived: readonly string[] | null, loaded: readonly s
   const have = new Set(loaded);
   const missing = [...new Set(archived.filter((id) => !have.has(id)))].sort();
   return missing.length > 0 ? { status: "incomplete", missing } : { status: "complete", missing: [] };
-}
-
-/** `sinceStatus` 의 판정 — `missing` 은 「폴더는 있는데 행이 없는」 경기 수(`incomplete` 에서만 0 보다 크다) */
-export type SinceStatus = { status: "complete" | "incomplete" | "unknown"; missing: number };
-
-/**
- * **마지막 경기일(`since`)이 덜 받혔는가**(감사 C10 · 설계 D1). 순수 함수 — I/O 는 `scripts/update.ts` 의 `collectedThrough()` 가 한다.
- *
- * @param archived `since` 날의 **아카이브** 경기 id 목록(`<시즌>/<MMDD>/<슬러그>` · 판별은 잎 `@bb-app/store/game-slug` 한 벌). 못 읽었으면 `null`.
- * @param loaded `since` 날의 **DB** 경기 id 목록(**상태 무관** — 미성립도 행이다). 못 읽었으면 `null`.
- *
- * - 어느 쪽이든 `null` → `unknown` — **넓히지 않는다**(요청 0 증가 쪽으로 기운다 · 무엇을 못 읽었는지는 부르는 쪽이 말한다).
- *   ⚠**`loaded` 실패를 빈 목록으로 두지 마라** — 그날 경기 **전부**를 「덜 받음」으로 오판해 매 실행 그 날을 다시 받는다(콜드 리뷰 ①).
- * - `archived` 에 `loaded` 에 없는 id 가 있으면 `incomplete`(`missing` = 그 수) — 적재기가 끝나지 않은 경기(`inProgress`)를
- *   **행 없이** 건너뛰므로, 「폴더는 있는데 행이 없다」가 곧 「진행 중에 받았다」의 흔적이다.
- * - 그 밖(`loaded` 에만 있는 id 포함 — 아카이브가 지워진 경우)은 `complete`.
- */
-export function sinceStatus(archived: readonly string[] | null, loaded: readonly string[] | null): SinceStatus {
-  if (archived === null || loaded === null) return { status: "unknown", missing: 0 };
-  const have = new Set(loaded);
-  const missing = new Set(archived.filter((id) => !have.has(id))).size;
-  return missing > 0 ? { status: "incomplete", missing } : { status: "complete", missing: 0 };
 }
 
 /**
