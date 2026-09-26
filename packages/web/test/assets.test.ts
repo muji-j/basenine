@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { CLIENT_JS, CSS } from "../src/assets.ts";
 import { BLOCKS, PRESETS } from "../src/blocks.ts";
 
@@ -638,4 +640,43 @@ test("⚠比較の勝ち表示は「見える形」と「読み上げの意味�
     /if\(winner\)d\.appendChild\(el\("span","vh",winner\+"が上"\)\)/,
     "이긴 칸의 보이지 않는 글자가 사라졌다 — 대체텍스트만 남으면 낭독기에 아무것도 안 들린다",
   );
+});
+
+/**
+ * ⚠**뜻을 따로 낭독 글자로 싣는 장식 글리프는 대체 텍스트를 비운다**(2026-09-27 · 감사 N12).
+ *
+ * 명부의 즐겨찾기 ★(`.hn::before`)는 대체 텍스트 없이 **링크 이름에 들어갔고**, 스크립트가 같은 링크에
+ * 붙이는 `.favtag.vh`(「お気に入り」)와 **두 번** 읽혔다(생성 콘텐츠도 이름 계산에 든다 — AccName).
+ * 같은 모양이 경기 카드의 홈 표식 ＠(`.gside.h .gt::before`) + `.vh`「（ホーム）」에도 있었다 —
+ * 그 자리의 주석은 「생성 콘텐츠는 낭독되지 않을 수 있다」를 전제했는데, 읽히는 브라우저에서는 둘 다 읽힌다.
+ * → 위 「比較の勝ち表示」와 같은 두 겹 처방이다: **폴백 선언(글리프) → 대체 텍스트를 비운 선언**, 그리고
+ *   뜻을 나르는 낭독 글자가 **살아 있는가**까지 본다(그게 없으면 대체 텍스트가 채널을 지우기만 한다).
+ * ⚠**`.favbtn::before` 의 ☆/★ 는 여기 없다** — 버튼 이름은 `aria-label` 이 정해 글리프가 이름에 안 들어가고,
+ *   비워 두면 `aria-label` 이 빠지는 날 **이름 없는 버튼**이 된다(assets.ts 의 그 규칙 주석).
+ */
+test("⚠N12 뜻을 따로 낭독하는 장식 글리프는 대체 텍스트가 비어 있다 — 두 번 읽히지 않는다", () => {
+  const today = readFileSync(join(import.meta.dirname, "..", "src", "today-page.ts"), "utf8");
+  const sites = [
+    {
+      sel: '.roster li[data-favon="true"] .hn::before',
+      glyph: "★",
+      speaks: CLIENT_JS.includes('tag.className="favtag vh";tag.textContent="お気に入り"'),
+    },
+    {
+      sel: ".gside.h .gt::before",
+      glyph: "＠",
+      speaks: today.includes('<span class="vh">（${home ? "ホーム" : "ビジター"}）</span>') && today.includes('<span class="vh">（ホーム）</span>'),
+    },
+  ];
+  const css = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
+  for (const s of sites) {
+    const esc = s.sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const contents = [...css.matchAll(new RegExp(`(?:^|[\\n}])\\s*${esc}\\{([^{}]*)\\}`, "g"))]
+      .flatMap((m) => [...m[1]!.matchAll(/(?:^|;)\s*content\s*:\s*([^;]+)/g)].map((c) => c[1]!.trim()));
+    assert.ok(contents.length > 0, `${s.sel} 의 content 가 없다 — 이 시험이 공회전한다`);
+    assert.equal(contents.at(-1), `"${s.glyph}" / ""`, `${s.sel} 의 글리프가 이름에 들어간다 — 뜻을 싣는 낭독 글자와 두 번 읽힌다`);
+    // ⚠**앞 선언이 보이는 표식을 보장한다** — 대체 텍스트 문법을 모르는 브라우저는 뒤 선언을 통째로 버린다
+    assert.equal(contents[0], `"${s.glyph}"`, `${s.sel} 의 폴백 선언이 없다 — 모르는 브라우저에서 표식이 사라진다`);
+    assert.ok(s.speaks, `${s.sel} 의 뜻을 싣는 낭독 글자가 사라졌다 — 대체 텍스트만 남으면 아무것도 안 들린다`);
+  }
 });

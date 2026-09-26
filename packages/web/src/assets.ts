@@ -2202,10 +2202,13 @@ table.stand .dif i.n{right:50%}
 .gside .gt{display:flex;align-items:center;gap:var(--s3);font-size:var(--fs-lead);color:var(--tx-2)}
 /* ⚠**어느 쪽이 홈인지가 카드에 없었다**(2026-08-20 감사 ②). 홈 화면의 「＠팀」과 같은 어법이다(M1).
    ⚠**자리는 두 줄 다 비워 둔다** — 글자를 한쪽에만 붙이면 팀명 시작선이 어긋난다.
-   ⚠생성 콘텐츠는 낭독되지 않을 수 있어 마크업에 .vh 로 「ホーム／ビジター」를 함께 둔다 */
+   ⚠생성 콘텐츠는 낭독되지 않을 수 있어 마크업에 .vh 로 「ホーム／ビジター」를 함께 둔다
+   ⚠⚠**그 전제의 반대쪽도 참이다 — 읽는 브라우저에서는 둘 다 읽혔다**(2026-09-27 · 감사 N12 과 같은 모양).
+   생성 콘텐츠도 이름·낭독에 들어가서 「＠ 広島 （ホーム）」처럼 뜻이 두 번 나갔다.
+   → 뜻은 .vh 가 한 번만 말하고 ＠ 는 대체 텍스트를 비운다. 앞 선언은 그 문법을 모르는 브라우저용 폴백이다. */
 .gside .gt::before{content:"";flex:none;width:.9em;text-align:center;
   font-size:var(--fs-label);color:var(--tx-3)}
-.gside.h .gt::before{content:"＠"}
+.gside.h .gt::before{content:"＠";content:"＠" / ""}
 .gside .gt i{width:9px;height:9px;background:var(--chip,#6b7280);font-style:normal;flex:none}
 /* ⚠이긴 쪽은 **굵기와 크기**로 표시한다. 색만 쓰면 색각 특성에 따라 구별되지 않는다 */
 .gside.w .gt{color:var(--tx);font-weight:var(--w-bold)}
@@ -2629,8 +2632,12 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
    ⚠**구단 색이 아니라 --tx-2 다**(2026-09-25 감사 W2 · 2026-09-27). 표식이 있다/없다(★ 자체)가
    상태를 말하고 색은 거들 뿐인데, 그 색이 구단 색 변수였다 — ⚠**게다가 이 화면(選手一覧)은
    --team 에 중립색을 싣는다**: 실제로 그려지던 것은 #6b7280 이고 다크 --page 대비 **3.740** 으로
-   10px 글자의 4.5 에 미달이었다. → 필터 칩(.chip.fav)의 ★ 와 같은 잉크(M1 · --page 대비 6.336 / 7.229). */
-.roster li[data-favon="true"] .hn::before{content:"★";color:var(--tx-2);margin-right:var(--s2);font-size:var(--fs-col)}
+   10px 글자의 4.5 에 미달이었다. → 필터 칩(.chip.fav)의 ★ 와 같은 잉크(M1 · --page 대비 6.336 / 7.229).
+   ⚠**★ 는 링크 이름에 넣지 않는다 — 대체 텍스트를 비운다**(2026-09-27 · 감사 N12). 생성 콘텐츠도 이름 계산에
+   들어가서, 스크립트가 같은 링크에 붙이는 .favtag.vh(「お気に入り」)와 **두 번** 읽혔다. 뜻은 그 글자가 한 번만 말한다.
+   ⚠**같은 선언을 두 번 쓰는 것은 실수가 아니다** — 대체 텍스트 문법을 모르는 브라우저는 뒤 선언을 통째로 버리므로
+   앞 선언이 보이는 ★ 를 보장한다(.cmprow .win::after 와 같은 두 겹 처방). */
+.roster li[data-favon="true"] .hn::before{content:"★";content:"★" / "";color:var(--tx-2);margin-right:var(--s2);font-size:var(--fs-col)}
 .chip.fav i{font-style:normal;margin-right:var(--s2)}
 /* ⚠**여기 적혀 있던 「9.55 / 9.14」도 같은 방식으로 틀렸다**(2026-09-08 · ⑵ 를 계산으로 바꾸면서 드러남).
    그 수는 --tx 를 --panel 위에 .8 로 합성한 값인데, **실제 잉크는 .chip 이 물려주는 --tx-2,
@@ -2664,7 +2671,10 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
    (정렬 화살표 th[aria-sort] … ::before 와 같은 방식). 이름은 aria-label 이 말한다.
    ⚠☆·★ 는 두 서체 스택 모두 **일본어 서체(Plex JP · Noto JP)가 3웨이트 전부 갖는다**(원본 cmap 실측 ·
    라틴 서체는 둘 다 없다) — 같은 서체가 둘 다 그리므로 눌러도 글꼴이 안 바뀌고, 진폭도 둘 다 1000/1000(전각)이라
-   **버튼 폭이 안 흔들린다.** ⚠굵기는 더하지 않는다 — 글자가 별 하나라 채널 구실을 못 한다. */
+   **버튼 폭이 안 흔들린다.** ⚠굵기는 더하지 않는다 — 글자가 별 하나라 채널 구실을 못 한다.
+   ⚠**여기는 대체 텍스트를 비우지 않는다**(2026-09-27 · 감사 N12 판단 — 명부의 ★ 와 다르다).
+   버튼 이름은 aria-label 이 정하므로 이 글리프는 **지금도 이름에 안 들어간다**. 비워 두면 오히려
+   aria-label 이 빠지는 날 **이름 없는 버튼**이 된다 — 두면 최소한 글리프가 마지막 이름으로 남는다. */
 .favbtn::before{content:"☆"}
 .favbtn[aria-pressed="true"]{color:var(--tx);border-color:var(--tx-3)}
 .favbtn[aria-pressed="true"]::before{content:"★"}
