@@ -282,6 +282,81 @@ test("타구 성향은 아웃만 분모로 센다 — 안타는 타구 종류를
   });
 });
 
+/**
+ * ⚠**C13 — 「ゴロアウト率」의 분모는 아웃만이다**(2026-09-25 감사 C13 · 2026-09-27 수정).
+ *
+ * 화면은 「ゴロアウト率の分母はアウトだけ」라고 말하는데, 집계는 **「안타가 아니면 아웃」**으로 셌다 —
+ * 그래서 **타자가 산 타구**(실책 출루 · 野選 · 犠飛失策)가 땅볼·공중 아웃에 들어갔다.
+ * 정의서(D8 정본 · `docs/metrics/README.md` §3.1)가 이미 野選 은 「타자가 살아 있다」,
+ * 실책 출루는 「타자가 **아웃이 아니고**」라고 정의한다.
+ * → 결과 분류마다 **들어가는가 / 안 들어가는가**를 표로 못 박는다(타자 쪽 한 줄씩 · 투수 쪽은 합계).
+ * ⚠원문은 보유 로그의 실제 표기다(`（エラー）`·`（フィールダースチョイス）` 가 타구 종류 뒤에 붙는다).
+ */
+test("⚠C13 타구 성향의 아웃 분모는 결과 분류로 가른다 — 타자가 산 타구는 아웃이 아니다", async () => {
+  const CASES: readonly (readonly [outcome: string, raw: string, ground: number, air: number, why: string])[] = [
+    ["fieldedOut", "セカンドゴロ", 1, 0, "범타 — 땅볼 아웃"],
+    ["fieldedOut", "センターフライ", 0, 1, "범타 — 뜬공 아웃"],
+    ["fieldedOut", "ショートライナー", 0, 1, "범타 — 직선타는 공중 아웃"],
+    ["fieldedOut", "キャッチャーファウルフライ", 0, 1, "범타 — 파울플라이는 공중 아웃"],
+    ["groundedIntoDoublePlay", "ショートゴロ併殺打", 1, 0, "併殺打 — 타자 아웃(땅볼)"],
+    ["sacFly", "センター犠牲フライ（打点1）", 0, 1, "犠飛 — 잡혔으니 타자 아웃(타수가 아닐 뿐이다)"],
+    ["reachedOnError", "サードゴロ（エラー）", 0, 0, "실책 출루(땅볼) — 타자가 산다"],
+    ["reachedOnError", "レフトフライ（エラー）", 0, 0, "실책 출루(뜬공) — 타자가 산다"],
+    ["fieldersChoice", "セカンドゴロ（フィールダースチョイス）", 0, 0, "野選 — 타자가 산다"],
+    ["sacFlyError", "ライト犠牲フライ（エラー）（打点1）", 0, 0, "犠飛失策 — 타자가 산다"],
+    ["sacBunt", "ピッチャー犠牲バント", 0, 0, "犠打 — 번트는 땅볼·공중 어느 쪽도 아니다"],
+    ["sacBuntError", "ピッチャー犠牲バント（エラー）", 0, 0, "犠打失策 — 번트 · 타자가 산다"],
+    ["sacBuntFieldersChoice", "ピッチャー犠牲バント（フィールダースチョイス）", 0, 0, "犠打野選 — 번트 · 타자가 산다"],
+    ["single", "ショートゴロ", 0, 0, "내야안타 — 타구 종류가 붙어도 아웃이 아니다"],
+  ];
+  await withDb((db) => {
+    game(
+      db,
+      "cl1",
+      CL[1],
+      CL[0],
+      CASES.map(([outcome, raw], i) => ({ bases: "", outs: i % 3, outcome, raw, batter: `B${i}` })),
+    );
+    const byBatter = new Map(battedBalls(db, 2026, "regular", "9999-12-31").map((b) => [b.playerId, b]));
+    const bad: string[] = [];
+    CASES.forEach(([outcome, raw, ground, air, why], i) => {
+      const b = byBatter.get(`B${i}`);
+      const got = b === undefined ? "행 없음" : `${b.groundOuts}/${b.airOuts}`;
+      if (got !== `${ground}/${air}`) bad.push(`${outcome}「${raw}」 땅볼/공중 = ${got} (기대 ${ground}/${air} — ${why})`);
+    });
+    assert.deepEqual(bad, [], "아웃이 아닌 타구가 아웃 분모에 들어갔거나, 아웃이 빠졌다");
+    // ⚠**투수 쪽은 같은 로그를 다른 SQL 로 센다** — 한쪽만 고치면 투수 페이지에서만 틀린다
+    const p = battedBalls(db, 2026, "regular", "9999-12-31", true);
+    assert.equal(p.length, 1, "투수 행이 하나가 아니다");
+    const want = CASES.reduce((a, c) => ({ g: a.g + c[2], a: a.a + c[3] }), { g: 0, a: 0 });
+    assert.deepEqual(
+      { g: p[0]!.groundOuts, a: p[0]!.airOuts },
+      want,
+      "투수 쪽의 땅볼·공중 아웃이 타자 쪽 합계와 다르다",
+    );
+  });
+});
+
+/**
+ * ⚠**결과 분류를 모르는 타구는 멈춘다**(M7 · C13).
+ * 「안타가 아니면 아웃」이던 시절에는 **모르는 결과가 조용히 아웃**이 됐다. 목록으로 바꾸면 반대로
+ * **조용히 빠진다** — 어느 쪽이든 분모가 소리 없이 틀린다. 그래서 둘 다 아니고 멈춘다.
+ * ⚠`bunt.ts` 의 타순 순회가 이미 같은 자리에서 멈춘다(모르는 결과면 던진다) — 새 실패 모드가 아니다.
+ * 실측: 보유 전 시즌 `pa_event` 의 `unknown` **0건**.
+ */
+test("⚠C13 결과 분류를 모르는 타구는 아웃에 넣지도 빼지도 않고 멈춘다(M7)", async () => {
+  for (const outcome of ["unknown", "mysteryOutcome"]) {
+    await withDb((db) => {
+      game(db, "cl1", CL[1], CL[0], [{ bases: "", outs: 0, outcome, raw: "セカンドゴロ" }]);
+      assert.throws(
+        () => battedBalls(db, 2026, "regular", "9999-12-31"),
+        /결과 분류를 모른다/,
+        `결과 분류 ${outcome} 인 땅볼을 조용히 셌다(또는 조용히 뺐다)`,
+      );
+    });
+  }
+});
+
 /** ⚠**내야안타의 분모는 내야 타구**다. 홈런은 내야안타가 될 수 없다 */
 test("내야안타는 내야 타구를 분모로 하고, 홈런을 세지 않는다", async () => {
   await withDb((db) => {

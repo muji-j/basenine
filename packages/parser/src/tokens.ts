@@ -266,6 +266,62 @@ function assertHandled(outcome: never, where: string): never {
   throw new RangeError(`${where}: 다루지 않은 결과 분류 ${JSON.stringify(outcome)}`);
 }
 
+/**
+ * 이 결과가 **아웃으로 기록되는 타석**인가 — 타자의 기록이 아웃 계열(범타·병살·희생·삼진·방해/반칙 아웃)인가.
+ *
+ * ⚠**「안타가 아니면 아웃」이 아니다**(2026-09-25 감사 C13). 그렇게 세면 **타자가 산 결과**가 아웃에
+ * 들어간다 — 실책 출루(`失`) · 野選 · 犠飛失策 · 犠打失策 · 犠打野選 · 振逃 · 사사구 · 방해 출루.
+ * 정의서가 이미 그렇게 정의한다(`docs/metrics/README.md` §3.1 — 「`野選`·`振逃` 은 타자가 살아 있다」,
+ * 실책 출루는 「타자가 **아웃이 아니고**」).
+ * ⚠**`countsAsAtBat` 과 다른 질문이다.** 犠飛·犠打는 타수가 아니지만 **아웃**이고,
+ *   실책 출루·野選 은 타수이지만 **아웃이 아니다.** 한쪽으로 다른 쪽을 대신하지 마라.
+ * ⚠**그 타석에 난 아웃의 수가 아니다.** 併殺打는 아웃이 둘이고, 실책 출루에도 주자가 죽는 일이 있다
+ *   (`併失` — 併殺崩れの失策). 이 함수는 **타자의 기록이 아웃 계열인가**만 답한다.
+ *
+ * 실측(보유 전 시즌 · 전 대회 · 「그 타석 동안 난 아웃 수」= 같은 반이닝 다음 타석의 `outs_before` − 이 타석의 것):
+ *   아웃 쪽 — fieldedOut 251,263 · groundedIntoDoublePlay 10,048 · sacBunt 9,447 · sacFly 3,259 가 **전건 1 이상**.
+ *   산 쪽 — sacFlyError **7/7** · reachedOnError 4,540/4,694 · fieldersChoice 296/309 가 **0**
+ *   (0 이 아닌 나머지는 併失처럼 주자가 죽은 타석이다).
+ * ⚠**모르는 결과(`unknown`)는 아웃이라고 하지 않는다** — 쓰는 쪽이 멈추거나 격리해야 한다
+ *   (`batted-ball.ts` 는 멈춘다).
+ */
+export function countsAsOut(outcome: Outcome): boolean {
+  switch (outcome) {
+    case "fieldedOut":
+    case "groundedIntoDoublePlay":
+    // ⚠**희생플라이는 아웃이다** — 공이 잡혔다. 희생이라 타수가 아닐 뿐이다
+    case "sacFly":
+    // ⚠**희생번트도 아웃이다** — 타자가 1루에서 죽는다
+    case "sacBunt":
+    case "strikeout":
+    // 수비방해·규칙 위반 아웃 — 타자가 아웃된다(근거는 `countsAsAtBat` 의 같은 줄)
+    case "interferenceOut":
+    case "ruleViolationOut":
+      return true;
+    case "single":
+    case "double":
+    case "triple":
+    case "homerun":
+    case "walk":
+    case "intentionalWalk":
+    case "hitByPitch":
+    // 振逃 — 삼진이지만 타자가 산다(유니온 주석)
+    case "strikeoutReached":
+    case "reachedOnError":
+    case "fieldersChoice":
+    // ⚠**희생 변형 중 실책·野選 은 타자가 산다** — 희생으로 기록될 뿐이다
+    case "sacFlyError":
+    case "sacBuntError":
+    case "sacBuntFieldersChoice":
+    case "interference":
+    case "obstruction":
+    case "unknown":
+      return false;
+    default:
+      return assertHandled(outcome, "countsAsOut");
+  }
+}
+
 /** 이 결과가 안타(安打)인가. */
 export function countsAsHit(outcome: Outcome): boolean {
   return (

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { countsAsAtBat, countsAsHit, parsePaCell } from "../src/tokens.ts";
+import { OUTCOMES, countsAsAtBat, countsAsHit, countsAsOut, parsePaCell } from "../src/tokens.ts";
 import type { Outcome } from "../src/tokens.ts";
 
 /** 실측 어휘에서 뽑은 대표 토큰. 전부 아카이브에 실재하는 문자열이다. */
@@ -106,6 +106,63 @@ test("안타 판정은 4종뿐이다", () => {
   }
   for (const o of ["walk", "reachedOnError", "fieldersChoice", "strikeoutReached"] as const) {
     assert.equal(countsAsHit(o), false, `${o}은 안타가 아니다`);
+  }
+});
+
+/**
+ * ⚠**아웃 판정은 「안타가 아니면」이 아니다 — 결과 분류 전량을 표로 못 박는다**(2026-09-25 감사 C13).
+ * 그 규칙으로 세면 **타자가 산 결과**(실책 출루·野選·희생 변형의 실책/野選·振逃)가 아웃이 된다 —
+ * 「ゴロアウト率」의 분모가 정확히 그렇게 틀렸다. 정본은 정의서 §3.1(野選·振逃 은 「타자가 살아 있다」 ·
+ * 실책 출루는 「타자가 아웃이 아니고」).
+ * ⚠**표가 `OUTCOMES` 전량을 덮는지도 본다** — 분류가 늘면 여기서도 운다(컴파일은 `countsAsOut` 의 switch 가 막는다).
+ */
+const OUT: Readonly<Record<Outcome, boolean>> = {
+  fieldedOut: true,
+  groundedIntoDoublePlay: true,
+  sacFly: true, // 잡혔다 — 타수가 아닐 뿐 아웃이다
+  sacBunt: true, // 1루에서 죽는다
+  strikeout: true,
+  interferenceOut: true,
+  ruleViolationOut: true,
+  single: false,
+  double: false,
+  triple: false,
+  homerun: false,
+  walk: false,
+  intentionalWalk: false,
+  hitByPitch: false,
+  strikeoutReached: false, // 振逃 — 삼진이지만 산다
+  reachedOnError: false,
+  fieldersChoice: false,
+  sacFlyError: false,
+  sacBuntError: false,
+  sacBuntFieldersChoice: false,
+  interference: false,
+  obstruction: false,
+  unknown: false, // 모르면 아웃이라고 하지 않는다 — 쓰는 쪽이 멈춘다
+};
+
+test("⚠C13 아웃 판정은 결과 분류 전량의 명시 목록이다 — 타자가 산 결과는 아웃이 아니다", () => {
+  assert.deepEqual(Object.keys(OUT).sort(), [...OUTCOMES].sort(), "표가 결과 분류 전량을 덮지 않는다");
+  const bad = OUTCOMES.filter((o) => countsAsOut(o) !== OUT[o]).map((o) => `${o}: ${countsAsOut(o)} (표 ${OUT[o]})`);
+  assert.deepEqual(bad, [], "아웃 판정이 표와 다르다");
+  // ⚠**타수와 다른 질문이다** — 한쪽으로 다른 쪽을 대신하면 여기서 갈린다
+  assert.equal(countsAsAtBat("sacFly"), false);
+  assert.equal(countsAsOut("sacFly"), true, "犠飛는 타수가 아니지만 아웃이다");
+  assert.equal(countsAsAtBat("reachedOnError"), true);
+  assert.equal(countsAsOut("reachedOnError"), false, "실책 출루는 타수이지만 아웃이 아니다");
+});
+
+test("⚠C13 박스 원문에서 읽어도 같다 — 三ゴ失·投野選·右犠失은 아웃이 아니고 遊併打·中犠飛는 아웃이다", () => {
+  const want: readonly (readonly [string, boolean])[] = [
+    ["二ゴロ", true], ["中 飛", true], ["遊併打", true], ["中犠飛①", true], ["投犠打", true], ["三 振", true],
+    ["三ゴ失", false], ["遊ゴ失①", false], ["投野選", false], ["右犠失", false], ["投犠失", false], ["投犠野①", false],
+    ["振逃", false], ["中前安", false],
+  ];
+  for (const [cell, out] of want) {
+    const r = parsePaCell(cell);
+    assert.ok(r, cell);
+    assert.equal(countsAsOut(r.outcome), out, `「${cell}」(${r.outcome})`);
   }
 });
 
