@@ -1708,7 +1708,11 @@ function buildCompare(): ReturnType<typeof makeDocument> {
     qbox.appendChild(make("ul", { id: `cmp${id}Hits`, role: "list", "aria-label": "候補" }));
     qbox.appendChild(make("p", { class: "vh", "data-hitstatus": "", role: "status" }));
     form.appendChild(qbox);
-    form.appendChild(make("b", { id: `cmp-${key}-chosen` }));
+    // ⚠**서버(`compare.ts`)는 「未選択」을 미리 그려 둔다** — 스텁도 같게 둔다. 비워 두면
+    //   「아무도 안 되살렸다」와 「되살리다 말았다」를 시험이 구별하지 못한다(감사 W8)
+    const chosen = make("b", { id: `cmp-${key}-chosen` });
+    chosen.textContent = "未選択";
+    form.appendChild(chosen);
   }
   const go = make("button", { id: "cmpGo", type: "button" });
   go.disabled = true;
@@ -1850,6 +1854,131 @@ test("C4 대조군 — 사용자가 아무것도 안 하면 늦게 와도 공유
     ["A", "B"],
     "사용자 조작이 없는데 복원을 건너뛰었다 — 공유 링크가 같은 화면을 안 연다",
   );
+});
+
+// ─── 공유 링크 복원 — 한쪽이 없거나 색인을 못 받을 때 (감사 W8) ────────────
+
+/**
+ * ⚠**한쪽이 색인에 없으면 양쪽을 조용히 버렸다**(2026-09-25 감사 W8).
+ * 옛 복원은 `if(!idx)return` · `if(!pa||!pb)return` 두 줄로 끝나서, 공유받은 사람은
+ * **유효한 쪽까지** 「未選択」인 빈 화면을 봤다 — 링크가 고장났는지, 그 선수가 없는지, 아직 읽는 중인지
+ * 구별할 수 없다. 시즌이 바뀌면 그런 링크가 늘어난다(2025 색인 721명 중 160명이 2026 색인에 없다 · 감사 실측).
+ * ⚠「없다」와 「못 읽었다」는 **다른 문구**다(M12) — 시키는 행동이 다르다(골라 다시 / 통신 확인 후 새로고침).
+ */
+const CMP_INDEX = [
+  { i: "p1", n: "山本", t: "チーム" },
+  { i: "p2", n: "宮城", t: "チーム" },
+  { i: "b1", n: "佐藤", t: "チーム" },
+];
+
+async function landCompare(
+  search: string,
+  opts: { index?: unknown; requested?: string[] } = {},
+): Promise<{ doc: ReturnType<typeof makeDocument>; out: string }> {
+  const doc = buildCompare();
+  const routes: Record<string, unknown> = {
+    "compare/p.json": { p1: card("p1", "山本"), p2: card("p2", "宮城") },
+    "compare/b.json": { b1: card("b1", "佐藤") },
+  };
+  // ⚠색인을 안 주면 요청이 거절된다 = 취득 실패(`run` 의 스텁 fetch)
+  if (opts.index !== undefined) routes["players.json"] = opts.index;
+  run(doc, { routes, location: { search, href: "" }, ...(opts.requested ? { requested: opts.requested } : {}) });
+  await new Promise((r) => setTimeout(r, 10));
+  return { doc, out: doc.getElementById("cmpOut")!.textContent };
+}
+
+const chosenOf = (doc: ReturnType<typeof makeDocument>): [string, string] => [
+  doc.getElementById("cmp-a-chosen")!.textContent,
+  doc.getElementById("cmp-b-chosen")!.textContent,
+];
+
+test("W8 유효한 쌍 — 두 사람을 되살리고 비교를 시작한다 · 없다/못 읽었다 안내는 없다", async () => {
+  const { doc, out } = await landCompare("?a=p1&b=b1", { index: CMP_INDEX });
+  assert.deepEqual(chosenOf(doc), ["山本（チーム）", "佐藤（チーム）"]);
+  assert.match(out, /山本/, "되살렸는데 비교를 시작하지 않았다");
+  // ⚠「いません」만으로 찾지 않는다 — 비교 결과의 「印はついていません」에도 걸린다
+  assert.doesNotMatch(out, /選手一覧にいません|読み込めなかった/, "멀쩡한 링크에 실패 안내를 냈다");
+});
+
+test("⚠W8 A 만 색인에 없다 — B 는 그 자리에 되살리고 A 가 없다고 말한다 · 비교는 시작하지 않는다", async () => {
+  const requested: string[] = [];
+  const { doc, out } = await landCompare("?a=zz99&b=b1", { index: CMP_INDEX, requested });
+  assert.deepEqual(chosenOf(doc), ["未選択", "佐藤（チーム）"], "색인에 있는 B 까지 버렸다");
+  assert.match(out, /選手A（ID zz99）/, "어느 쪽이 없는지 말하지 않는다");
+  assert.match(out, /このシーズンの選手一覧にいません/, "「없다」를 말하지 않는다");
+  assert.doesNotMatch(out, /選手B（ID/, "되살린 B 를 없다고 말했다");
+  assert.doesNotMatch(out, /読み込めなかった/, "「없다」를 「못 읽었다」로 말했다");
+  assert.equal(doc.getElementById("cmpGo")!.disabled, true, "한 사람뿐인데 비교 버튼이 열렸다");
+  assert.deepEqual(requested.filter((u) => u.includes("compare/")), [], "한 사람뿐인데 비교를 시작했다");
+});
+
+test("⚠W8 B 만 색인에 없다 — A 는 그 자리에 되살리고 B 가 없다고 말한다", async () => {
+  const { doc, out } = await landCompare("?a=p1&b=zz99", { index: CMP_INDEX });
+  assert.deepEqual(chosenOf(doc), ["山本（チーム）", "未選択"], "색인에 있는 A 까지 버렸다");
+  assert.match(out, /選手B（ID zz99）/);
+  assert.match(out, /このシーズンの選手一覧にいません/);
+  assert.doesNotMatch(out, /選手A（ID/, "되살린 A 를 없다고 말했다");
+  assert.equal(cpk(doc, "p1").getAttribute("data-slot"), "A", "되살린 A 가 버튼에 안 비쳤다");
+});
+
+test("⚠W8 두 사람 다 색인에 없다 — 둘 다 없다고 말한다", async () => {
+  const { doc, out } = await landCompare("?a=zz98&b=zz99", { index: CMP_INDEX });
+  assert.deepEqual(chosenOf(doc), ["未選択", "未選択"]);
+  assert.match(out, /選手A（ID zz98）/);
+  assert.match(out, /選手B（ID zz99）/);
+  assert.match(out, /このシーズンの選手一覧にいません/);
+});
+
+test("⚠W8 색인을 못 받았다 — 「없다」가 아니라 「못 읽었다」고 말한다(M12)", async () => {
+  const { doc, out } = await landCompare("?a=p1&b=b1"); // 색인 없음 = 취득 실패
+  assert.deepEqual(chosenOf(doc), ["未選択", "未選択"]);
+  assert.match(out, /選手一覧を読み込めなかった/, "취득 실패를 말하지 않는다 — 빈 화면이다");
+  assert.doesNotMatch(out, /選手一覧にいません/, "「못 읽었다」를 「없다」로 말했다 — 시키는 행동이 반대다");
+});
+
+/**
+ * ⚠**C4 는 실패 안내에도 걸린다.** 기다리는 사이 사용자가 골라 비교를 시작했다면,
+ * 늦게 온 「못 읽었다」 안내가 #cmpOut 의 **비교 결과를 덮으면 안 된다** — 복원이 덮어쓰지 않는 것과 같은 이유다.
+ */
+test("⚠W8·C4 사용자가 고른 뒤 늦게 온 색인 실패가 비교 결과를 덮지 않는다", async () => {
+  const doc = buildCompare();
+  let release: () => void = () => assert.fail("색인 요청이 안 나갔다 — 이 시험이 공회전한다");
+  run(doc, {
+    routes: {
+      // ⚠본문이 배열이 아니면 색인 적재가 던져 **취득 실패 경로**로 간다(hold 는 routes 에만 걸린다)
+      "players.json": null,
+      "compare/p.json": { p1: card("p1", "山本"), p2: card("p2", "宮城") },
+      "compare/b.json": { b1: card("b1", "佐藤") },
+    },
+    location: { search: "?a=p1&b=b1", href: "" },
+    hold: { "players.json": (r) => { release = r; } },
+  });
+  cpk(doc, "p2").fire("click");
+  cpk(doc, "b1").fire("click");
+  doc.getElementById("cmpGo")!.fire("click");
+  await new Promise((r) => setTimeout(r, 10));
+  assert.match(doc.getElementById("cmpOut")!.textContent, /宮城/, "비교가 안 그려졌다 — 전제가 틀렸다");
+  release();
+  await new Promise((r) => setTimeout(r, 10));
+  const out = doc.getElementById("cmpOut")!.textContent;
+  assert.match(out, /宮城/, "늦게 온 색인 실패가 사용자가 시작한 비교를 지웠다");
+  assert.doesNotMatch(out, /読み込めなかった/, "사용자가 고른 뒤에 공유 링크의 실패를 말했다");
+});
+
+test("W8 한쪽만 담긴 링크(?a= 만)는 그 자리만 되살리고 아무것도 없다고 말하지 않는다", async () => {
+  const { doc, out } = await landCompare("?a=p1", { index: CMP_INDEX });
+  assert.deepEqual(chosenOf(doc), ["山本（チーム）", "未選択"]);
+  assert.doesNotMatch(out, /選手一覧にいません|読み込めなかった/, "링크에 없던 B 를 없다고 말했다");
+});
+
+/**
+ * ⚠**깨진 % 열에 `decodeURIComponent` 가 던진다.** 여기서 던지면 초기화 전체가 죽어
+ * 탭·검색·비교 버튼이 **전부 조용히** 안 돈다 — 選手一覧의 `?q=` 가 이미 지키는 규칙이다.
+ */
+test("⚠W8 깨진 % 열이 담긴 공유 링크로도 화면이 죽지 않는다 — 읽을 수 있는 쪽은 되살린다", async () => {
+  const { doc, out } = await landCompare("?a=%E5%&b=b1", { index: CMP_INDEX });
+  assert.deepEqual(chosenOf(doc), ["未選択", "佐藤（チーム）"]);
+  assert.match(out, /選手A（ID/, "읽을 수 없는 A 를 말하지 않는다");
 });
 
 /**

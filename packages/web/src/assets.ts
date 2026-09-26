@@ -4847,20 +4847,49 @@ if(cmpForm){
   /* URL로 들어온 두 사람을 되살린다 — 공유한 링크가 같은 화면을 열어야 한다 */
   const qs=(name)=>{
     const m=new RegExp("[?&]"+name+"=([^&]*)").exec(LOC.search||"");
-    return m?decodeURIComponent(m[1]):"";
+    if(!m)return "";
+    /* ⚠**깨진 % 열에서 던진다** — 여기서 던지면 이 뒤의 초기화 전체가 죽는다(選手一覧 ?q= 와 같은 규칙).
+       못 푸는 값은 원문 그대로 쓴다 — 색인에 없으니 아래에서 「없다」고 말하게 된다 */
+    try{return decodeURIComponent(m[1])}catch(e){return m[1]}
   };
+  /* 되살리지 못한 이유를 비교 자리에 말한다. 샤드 실패·카드 없음과 같은 자리·같은 옷이다(M12) */
+  const sayRestore=(text)=>{
+    if(!out)return;
+    out.textContent="";
+    const e=el("section","cmpwrap");
+    e.appendChild(warn(text));
+    out.appendChild(e);
+  };
+  /* URL 에서 온 값이라 길이를 모른다 — 화면을 가로로 밀어내지 않게 줄여서 보인다 */
+  const shortId=(s)=>s.length>16?s.slice(0,16)+"…":s;
   const ia=qs("a"),ib=qs("b");
-  if(ia&&ib){
+  if(ia||ib){
     const asked=userGen;
     withIndex(idx=>{
-      if(!idx)return;
-      /* ⚠기다리는 사이 사용자가 골랐으면 되살리지 않는다(C4 · 위 userGen 주석) */
+      /* ⚠**기다리는 사이 사용자가 골랐으면 되살리지도, 말하지도 않는다**(C4 · 위 userGen 주석).
+         그 사이 비교를 시작했다면 늦게 온 안내가 **그 결과를 덮는다** — 그래서 이 검사가 맨 앞이다 */
       if(userGen!==asked)return;
-      const find=(id)=>idx.filter(p=>p.i===id)[0]||null;
+      /* ⚠**「못 읽었다」와 「없다」를 다른 말로 한다**(M12 · 2026-09-25 감사 W8). 예전에는 둘 다
+         아무 말 없이 돌아가서, 공유받은 사람은 링크가 고장났는지·그 선수가 없는지·읽는 중인지 몰랐다 */
+      if(!idx){
+        sayRestore("選手一覧を読み込めなかったため、共有リンクの選手を復元できませんでした。"+
+          "通信を確認して、ページを再読み込みしてください。");
+        return;
+      }
+      /* ⚠**양쪽을 따로 판정한다**(감사 W8). 예전에는 한쪽이라도 없으면 **색인에 있는 쪽까지** 버렸다 */
+      const find=(id)=>id===""?null:(idx.filter(p=>p.i===id)[0]||null);
       const pa=find(ia),pb=find(ib);
-      if(!pa||!pb)return;
-      setInput("a",pa);show("a",pa);setInput("b",pb);show("b",pb);
-      run();
+      if(pa){setInput("a",pa);show("a",pa)}
+      if(pb){setInput("b",pb);show("b",pb)}
+      /* 비교는 두 사람이 다 있을 때만 시작한다 */
+      if(pa&&pb){run();return}
+      const miss=[];
+      if(ia!==""&&!pa)miss.push("選手A（ID "+shortId(ia)+"）");
+      if(ib!==""&&!pb)miss.push("選手B（ID "+shortId(ib)+"）");
+      if(!miss.length)return;
+      /* 한쪽을 되살렸으면 무엇을 하면 되는지까지 말한다 */
+      const next=(pa&&ib!=="")?"選手Bを選ぶと比較できます。":(pb&&ia!=="")?"選手Aを選ぶと比較できます。":"";
+      sayRestore("共有リンクの"+miss.join("と")+"は、このシーズンの選手一覧にいません。"+next);
     });
     fetchIndex();
   }
