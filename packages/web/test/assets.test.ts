@@ -261,7 +261,11 @@ test("⚠W4 시즌 띠의 스냅 기준선이 띠의 padding-left 를 포함한�
     }
     return d;
   };
-  const bodies = [...flat.matchAll(/(?<=^|[}\s])\.seasons\{([^}]*)\}/g)].filter((m) => depthAt(m.index) === 0).map((m) => m[1]!);
+  // ⚠**선택자 목록 전체를 잡고 콤마로 나눈다**(재검토 P2) — `.x,.seasons{…}` 처럼 **콤마 뒤 공백 없이** 묶인 규칙이
+  //   이 저장소의 주된 쓰는 법인데, `.seasons{` 앞 글자를 보는 정규식은 그것을 놓쳐 초록인 채로 결함이 돌아온다.
+  const bodies = [...flat.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .filter((m) => depthAt(m.index) === 0 && m[1]!.split(",").some((s) => s.trim() === ".seasons"))
+    .map((m) => m[2]!);
   assert.ok(bodies.length > 0, ".seasons 규칙이 없다 — 이 시험이 공회전한다");
   const last = (prop: string): string | undefined => {
     let v: string | undefined;
