@@ -595,21 +595,27 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
   for (const [side, team] of [["away", box.away], ["home", box.home]] as const) {
     for (const b of team.batters) {
       const derived = deriveBatting(meta.gameId, side, b);
+      // ⚠`null` 은 **합계 행뿐**이다(2026-09-26 · 감사 C9). 선수 링크를 못 읽은 행은 `row: null` 과 격리로 온다 —
+      //   예전에는 그 행도 `null` 이라 여기서 **격리 전에** 사라졌다
       if (derived === null) continue;
-      if (derived.row.sb > 0) {
-        boxStealsBy.set(derived.row.playerId, (boxStealsBy.get(derived.row.playerId) ?? 0) + derived.row.sb);
+      quarantine.push(...derived.quarantine);
+      // ⚠**적재할 수 없는 행은 넣지 않는다**(M10 — 이름으로 조인하지 않는다). 격리는 위에서 남겼다
+      if (derived.row === null) continue;
+      const row = derived.row;
+      if (row.sb > 0) {
+        boxStealsBy.set(row.playerId, (boxStealsBy.get(row.playerId) ?? 0) + row.sb);
       }
-      if (!seenPlayers.has(derived.row.playerId)) {
-        seenPlayers.add(derived.row.playerId);
-        budget.players += upsertPlayer(db, derived.row.playerId, b.name, nowIso);
+      if (!seenPlayers.has(row.playerId)) {
+        seenPlayers.add(row.playerId);
+        budget.players += upsertPlayer(db, row.playerId, b.name, nowIso);
       }
       // ⚠**여기는 `seenPlayers` 밖이다** — 시즌마다·경기마다 봐야 한다. 쓰기는 끝에 모아서 한 번
-      noteSeasonName(derived.row.playerId, meta.season, b.name, meta.gameDate, sourceUrl);
-      budget.batting += upsertBatting(db, derived.row);
-      quarantine.push(...derived.quarantine);
+      noteSeasonName(row.playerId, meta.season, b.name, meta.gameDate, sourceUrl);
+      budget.batting += upsertBatting(db, row);
     }
     for (const p of team.pitchers) {
       const derived = derivePitching(meta.gameId, side, p);
+      // `null` 은 합계 행뿐이다 — 링크를 못 읽은 투수 행은 `row: null` 과 격리로 온다(감사 C9)
       if (derived === null) continue;
       quarantine.push(...derived.quarantine);
       // ⚠**읽지 못한 등판은 넣지 않는다.** 0으로 넣으면 그 등판이 사라진 채

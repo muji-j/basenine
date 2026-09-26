@@ -91,7 +91,19 @@ export interface QuarantineRow {
      * ⚠**`unreadableInnings` 와 같은 이유, 같은 처방**이다. 그쪽만 하고 이쪽을 안 했다.
      * ⚠**지금 걸리는 것은 0건**이다(감사 실측) — 이건 **잠재 결함**을 막는 장치다.
      */
-    | "unreadablePitchingStat";
+    | "unreadablePitchingStat"
+    /**
+     * 박스의 선수 행에서 **선수 링크(`/bis/players/{id}.html`)를 못 읽었다**(2026-09-26 · 감사 C9).
+     *
+     * ⚠**이름으로 조인하지 않는다**(M10) — 그래서 그 행은 **적재하지 않고** 원문(이름 · 先攻/後攻 · 경기)을 여기 남긴다.
+     * 예전에는 `null` 을 돌려 적재기가 격리 **전에** `continue` 했다 — 이름은 있는데 행이 통째로 사라지고
+     * 격리도 로그도 종료 코드도 아무 말을 안 했다. ⚠**투수는 교차 확인이 없어서**(타자는 경과와 타석 수를 맞대는
+     * `paMismatch` 가 간접으로 잡는다) 그 줄이 빠지면 팀 투구회·방어율이 **조용히 줄 뿐**이었다.
+     * ⚠**이름까지 빈 행도 여기 온다** — 합계 행(`チーム計`)이 아닌데 링크가 없으면 전부다.
+     * 실측(2026-09-26): 보유 박스 7,805장(성립 7,518) · 비합계 타자 211,862행 · 투수 63,315행에서 **0건**
+     *   (이름 없는 행도 0행) — 지금 값을 바꾸는 수정이 아니라 **잠재 결함**을 막는 장치다.
+     */
+    | "unlinkedPlayer";
   gameId: string;
   playerId: string | null;
   raw: string;
@@ -105,19 +117,45 @@ export interface DeriveResult {
 }
 
 /**
+ * 선수 링크를 못 읽은 행 → 격리 한 줄(감사 C9 · 위 `unlinkedPlayer`).
+ *
+ * ⚠**화면에 그대로 나가는 문자열이라 일본어다**(`log-page.ts` 가 `raw`·`detail` 을 그린다 ·
+ *   아래 `unreadableInnings` 와 같은 어법 — 한 화면에 두 언어가 섞이면 안 된다).
+ * ⚠`raw` 는 **원문 이름 그대로**다 — 비어 있으면 빈 채로 두고 `detail` 이 그 사실을 말한다.
+ */
+function unlinkedPlayer(gameId: string, side: "away" | "home", name: string, what: string): QuarantineRow {
+  return {
+    kind: "unlinkedPlayer",
+    gameId,
+    playerId: null,
+    raw: name,
+    detail: `選手リンクを読めなかった（${side === "away" ? "先攻" : "後攻"}・${what}${name === "" ? "・名前も空" : ""}）`,
+  };
+}
+
+/**
  * 타자 1행을 센다.
  *
  * ⚠**희생번트 계열 3종(犠打·犠野·犠失)은 전부 `sh`로 센다.** 어느 쪽이든 희생타로
  * 기록되어 타수에 들어가지 않는다 — 아카이브 대조로 확정한 사실이다.
  * ⚠**`振逃`(낫아웃 출루)는 삼진으로 센다.** 타자는 살아나가지만 삼진은 삼진이다.
+ *
+ * @returns 합계 행이면 `null`(적재 대상이 아니다). 선수 링크를 못 읽은 행이면 `row: null` 과 격리 한 줄.
  */
 export function deriveBatting(
   gameId: string,
   side: "away" | "home",
   row: BatterRow,
-): { row: BattingRow; quarantine: QuarantineRow[] } | null {
+): { row: BattingRow | null; quarantine: QuarantineRow[] } | null {
   if (row.isTeamTotal) return null;
-  if (row.playerId === null) return null;
+  /**
+   * ⚠**링크를 못 읽은 행은 버리지 않는다 — 적재하지 않고 격리한다**(2026-09-26 · 감사 C9).
+   * 예전에는 여기서 `null` 이었고 적재기는 그것을 합계 행과 똑같이 `continue` 했다 — 격리 전에.
+   */
+  if (row.playerId === null) {
+    const where = `打者・打順${row.order ?? "なし"}・守備${row.position === "" ? "なし" : row.position}`;
+    return { row: null, quarantine: [unlinkedPlayer(gameId, side, row.name, where)] };
+  }
 
   const q: QuarantineRow[] = [];
 
@@ -184,7 +222,8 @@ export function derivePitching(
   row: PitcherRow,
 ): { row: PitchingRow | null; quarantine: QuarantineRow[] } | null {
   if (row.isTeamTotal) return null;
-  if (row.playerId === null) return null;
+  // ⚠**링크를 못 읽은 투수 행도 격리한다**(감사 C9) — 투수는 교차 확인이 없어 빠지면 아무도 모른다
+  if (row.playerId === null) return { row: null, quarantine: [unlinkedPlayer(gameId, side, row.name, "投手")] };
 
   if (row.outs === null) {
     // ⚠**이 등판은 적재하지 않는다.** 0으로 넣으면 시즌 합계가 조용히 틀리고,
