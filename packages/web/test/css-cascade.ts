@@ -27,6 +27,8 @@ export interface El {
   attrs?: Readonly<Record<string, string>>;
   /** `:focus-visible`·`:focus`·`:focus-within` 에 맞는가 */
   focused?: boolean;
+  /** 문서 뿌리(`:root`)인가 — 토큰(사용자 정의 속성)을 풀 때만 쓴다 */
+  root?: boolean;
   /** 조상들. 주면 결합자 앞 조건을 이걸로 맞춘다(순서는 안 본다) */
   ancestors?: readonly Omit<El, "ancestors" | "focused">[];
 }
@@ -224,13 +226,15 @@ function matches(c: Compound, el: Node, subject: boolean): boolean {
       case "focus-within":
         if (!(subject && el.focused === true)) return false;
         break;
-      // 손을 대지 않은 · 체크 안 된 · 켜진 · 문서 뿌리가 아닌 요소로 잰다
+      case "root":
+        if (!(subject && el.root === true)) return false;
+        break;
+      // 손을 대지 않은 · 체크 안 된 · 켜진 요소로 잰다
       case "hover":
       case "active":
       case "checked":
       case "disabled":
       case "target":
-      case "root":
         return false;
       case "not":
         if (listOf(p.arg ?? "").some((x) => matches(x, el, subject))) return false;
@@ -289,13 +293,13 @@ export function computed(rules: readonly Rule[], el: El, prop: string, mediaOk: 
   const short = SHORTHAND_OF[prop];
   for (const r of rules) {
     if (r.media !== null && !mediaOk(r.media)) continue;
-    let spec: Spec | null = null;
-    for (const p of r.parts) {
-      const s = match(p, el);
-      if (s !== null && (spec === null || gt(s, spec))) spec = s;
-    }
-    if (spec === null) continue;
-    for (const d of r.body.matchAll(/(?:^|;)\s*([a-z-]+)\s*:\s*([^;]+)/g)) {
+    /**
+     * ⚠**그 속성을 선언한 규칙만 선택자를 맞춰 본다.** 모르는 의사 클래스(`:has` 등)는
+     * **값에 영향을 줄 수 있는 규칙에서만** 던진다 — 무관한 규칙 때문에 계산 전체가 멈추지 않게.
+     * ⚠**`[\w-]` 다** — 토큰 이름에는 숫자가 들어간다(`--s8` · `--fs-num`). `[a-z-]` 면 토큰을 못 읽는다.
+     */
+    const decls: { imp: boolean; value: string }[] = [];
+    for (const d of r.body.matchAll(/(?:^|;)\s*([\w-]+)\s*:\s*([^;]+)/g)) {
       const name = d[1]!;
       let raw = d[2]!.trim();
       const imp = /!important$/.test(raw);
@@ -303,7 +307,16 @@ export function computed(rules: readonly Rule[], el: El, prop: string, mediaOk: 
       let value: string | undefined;
       if (name === prop) value = raw;
       else if (short !== undefined && name === short) value = fromShorthand(prop, short, raw);
-      if (value === undefined) continue;
+      if (value !== undefined) decls.push({ imp, value });
+    }
+    if (decls.length === 0) continue;
+    let spec: Spec | null = null;
+    for (const p of r.parts) {
+      const s = match(p, el);
+      if (s !== null && (spec === null || gt(s, spec))) spec = s;
+    }
+    if (spec === null) continue;
+    for (const { imp, value } of decls) {
       const cand = { imp, spec, order: r.order, value };
       if (
         best === null ||
@@ -318,12 +331,18 @@ export function computed(rules: readonly Rule[], el: El, prop: string, mediaOk: 
 }
 
 /**
- * 길이 값을 px 로 푼다 — `24px` · `var(--hit)`(기본 `:root` 의 값을 따라간다).
+ * 길이 값을 px 로 푼다 — `24px` · `var(--hit)`(`:root` 의 토큰을 **캐스케이드대로** 따라간다).
+ *
+ * ⚠**켠 미디어 안의 `:root` 재정의도 반영한다**(2026-09-27 · PR-D 검토 P3). 옛 판은 첫 `@media` 앞의
+ *   `:root` 만 읽어서, `@media (pointer:coarse){:root{--hit:20px}}` 를 넣어도 손가락 장면이 24px 로 통과했다.
  * ⚠**모르는 형태는 던진다**(`calc()` · `em` · 토큰 없음) — 못 푼 것을 0 이나 통과로 흘리지 않는다.
+ * ⚠**요소 단위 재정의(`.x{--hit:…}`)는 모른다** — 상속을 따라가야 하는데 이 계산기는 조상 값을 안 들고 다닌다.
+ *   그런 선언이 있으면 **던진다**(`:root` 값을 조용히 내지 않는다).
+ * @param mediaOk 켤 `@media` 조건 — `computed` 에 주는 것과 같은 것을 준다
  */
-export function toPx(source: string, value: string): number {
-  const css = source.replace(/\/\*[\s\S]*?\*\//g, "");
-  const head = css.slice(0, css.indexOf("@media"));
+export function toPx(source: string, value: string, mediaOk: (q: string) => boolean = () => false): number {
+  const rules = parseRules(source);
+  const root: El = { tag: "html", classes: [], root: true };
   const seen = new Set<string>();
   let v = value.trim();
   for (;;) {
@@ -332,11 +351,18 @@ export function toPx(source: string, value: string): number {
     if (v === "0") return 0;
     const ref = /^var\(\s*(--[\w-]+)\s*\)$/.exec(v);
     if (ref === null) throw new Error(`px 로 풀 수 없는 값: ${value}`);
-    if (seen.has(ref[1]!)) throw new Error(`토큰이 돌고 돈다: ${ref[1]}`);
-    seen.add(ref[1]!);
-    const def = new RegExp(`${ref[1]!.replace(/[-]/g, "\\-")}\\s*:\\s*([^;}]+)`).exec(head);
-    if (def === null) throw new Error(`기본 :root 에 없는 토큰: ${ref[1]}`);
-    v = def[1]!.trim();
+    const name = ref[1]!;
+    if (seen.has(name)) throw new Error(`토큰이 돌고 돈다: ${name}`);
+    seen.add(name);
+    const declares = new RegExp(`(?:^|;)\\s*${name}\\s*:`);
+    for (const r of rules) {
+      if (!declares.test(r.body)) continue;
+      const other = r.parts.filter((p) => !/^:root(?:$|[:[])/.test(p));
+      if (other.length > 0) throw new Error(`요소 단위 재정의는 이 계산기가 모른다: ${other.join(", ")}{${name}:…}`);
+    }
+    const won = computed(rules, root, name, mediaOk);
+    if (won === undefined) throw new Error(`:root 에 없는 토큰: ${name}`);
+    v = won.trim();
   }
 }
 

@@ -66,10 +66,19 @@ test("⚠id 선택자는 요소의 id 로 맞추고 특이도에서 클래스를
   assert.deepEqual(elementOf("#favBtn.favbtn", "button"), { tag: "button", classes: ["favbtn"], attrs: {}, id: "favBtn" });
 });
 
-test("길이를 px 로 푼다 — 토큰을 따라가고, 모르는 형태는 던진다", () => {
+/**
+ * ⚠**켜진 미디어 안의 `:root` 재정의도 따라간다**(2026-09-27 · PR-D 검토 P3).
+ * 옛 판은 첫 `@media` 앞의 `:root` 만 읽어서, `@media (pointer:coarse){:root{--hit:20px}}` 를 더해도
+ * 손가락 장면의 N13 시험이 24px 로 통과했다 — **그 시험이 재야 할 바로 그 장면**을 못 봤다.
+ * ⚠이 시험은 예전에 「미디어 안 재정의를 무시한다」를 정답으로 고정하고 있었다(아래 첫 단언만 있었다).
+ */
+test("길이를 px 로 푼다 — 토큰을 따라가고, 켠 미디어의 :root 재정의를 반영하고, 모르는 형태는 던진다", () => {
   const css = `:root{--a:var(--b);--b:24px} @media print{:root{--a:1px}}`;
   assert.equal(toPx(css, "var(--a)"), 24);
+  assert.equal(toPx(css, "var(--a)", (q) => q === "print"), 1, "켠 미디어 안의 :root 재정의를 안 봤다");
   assert.equal(toPx(css, "13px"), 13);
   assert.throws(() => toPx(css, "calc(1px + 2px)"), /풀 수 없는/);
   assert.throws(() => toPx(css, "var(--none)"), /없는 토큰/);
+  // ⚠**요소 단위 재정의는 이 계산기가 모른다** — 조용히 :root 값을 내지 않고 던진다
+  assert.throws(() => toPx(`:root{--a:1px} .x{--a:2px}`, "var(--a)"), /요소 단위/);
 });

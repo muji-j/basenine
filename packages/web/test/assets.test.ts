@@ -460,7 +460,8 @@ test("⚠N13 즐겨찾기 버튼의 최종 최소 폭·높이가 24px 이상이�
       for (const prop of ["min-width", "min-height"]) {
         const v = computed(all, el, prop, mediaOk);
         assert.ok(v !== undefined, `${scene} · 눌림=${pressed}: ${prop} 가 없다 — 표적이 글자 크기에 맡겨져 있다`);
-        assert.ok(toPx(CSS, v) >= 24, `${scene} · 눌림=${pressed}: ${prop} ${v} 가 24px 미만이다`);
+        // ⚠**토큰도 같은 장면의 미디어로 푼다**(PR-D 검토 P3) — 손가락 미디어에서 --hit 를 줄이면 잡혀야 한다
+        assert.ok(toPx(CSS, v, mediaOk) >= 24, `${scene} · 눌림=${pressed}: ${prop} ${v} 가 24px 미만이다`);
       }
     }
   }
