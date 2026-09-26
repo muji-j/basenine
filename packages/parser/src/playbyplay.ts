@@ -165,8 +165,72 @@ function playerIdsIn(html: string): string[] {
   return [...html.matchAll(/\/bis\/players\/(\d+)\.html/g)].map((m) => m[1]!);
 }
 
+/** 교대 표기의 화살표(U+2192). ⚠`&rarr;`·`&#8594;` 같은 엔티티는 풀지 않는다 — 그 모양이 오면 글자 쪽이 0 이라 던진다 */
+const ARROW = "→";
+
+const occurrences = (s: string, needle: string): number => s.split(needle).length - 1;
+
 /**
- * @throws {PlayByPlayParseError} 이닝 헤더나 주자 표기를 해석하지 못했을 때.
+ * 투수 표기 행(`（先発投手） A` · `（投手交代） 旧 → 新`) 한 줄에서 **그 하프의 새 현재 투수**를 낸다.
+ *
+ * ⚠**모양을 검증한다 — 예전에는 「링크가 하나라도 있으면 마지막 링크가 새 투수」였다**(2026-09-27 · 감사 N2 ·
+ * 설계 `docs/superpowers/specs/2026-09-27-profile-version-guard-design.md` §7). 교대 행에서 **새 투수의 링크만** 못 읽으면
+ * `ids = [旧]` 가 되어 **다음 교대까지의 타석이 이전 투수에게 조용히** 붙었다(반증자 실물 변이: 6회초 5타석).
+ * 정렬(`store/src/align.ts`)은 타자별 타석 수만 맞대고 투수 ID 는 옮기기만 해서 그것을 못 잡는다.
+ * ⚠**규칙**(위에서부터):
+ *   · 두 표기가 한 행에 같이 있으면 → 던진다
+ *   · `先発投手`: 글자의 화살표 **0** · 링크 **정확히 1** → 그 ID
+ *   · `投手交代`: 화살표가 **글자와 본문 양쪽에서 정확히 1**(속성 안 화살표·엔티티로 둘이 갈리면 나눌 자리를 모른다) ·
+ *     화살표 **뒤** 링크 정확히 1(새 투수) · 앞 링크 0~1 — 있으면 **그 하프의 현재 투수와 같아야** 한다(빠진 先発 행 ·
+ *     하프 헤더 오판을 같은 행의 정보로 잡는다). ⚠**앞 링크 0 은 살린다** — 옛 투수 링크만 없는 경우도 새 투수는 안다.
+ * ⚠실측(설계 §4-3 · 보유 경과 전수): 로컬 **63,357행 · CI 사본 64,150행에서 위반 0** · 옛 투수 대조 어긋남 0/48,900.
+ *   규칙을 만족하는 행에서는 새 투수 = 예전의 `ids.at(-1)` 이라 **기존 귀속이 한 타석도 안 바뀐다.**
+ * ⚠**던지면 그 경기의 경과 전체가 실패다**(적재기 `PBP ERROR` · `failed` · 종료 1) — 타석·주자 로그는 **건드리지 않는다**
+ *   (주자 행처럼 격리로 흘리지 않는 이유: 투수 귀속이 틀린 채 들어가면 상대전적이 **조용히** 틀린다. 주자 행 하나는 그 행만 잃는다).
+ * @throws {PlayByPlayParseError} 기대한 모양이 아니면
+ */
+function pitcherOfNotation(body: string, half: "top" | "bottom", current: string | null): string {
+  const text = strip(body);
+  const links = playerIdsIn(body);
+  const head = `half=${half} · row=${JSON.stringify(text.slice(0, 80))} · links=${links.length}`;
+  const hasStart = text.includes("先発投手");
+  const hasChange = text.includes("投手交代");
+  if (hasStart && hasChange) {
+    throw new PlayByPlayParseError("先発投手 와 投手交代 가 한 행에 같이 있다", head);
+  }
+  if (hasStart) {
+    const arrows = occurrences(text, ARROW);
+    if (arrows !== 0 || links.length !== 1) {
+      throw new PlayByPlayParseError("先発投手 표기에서 투수 링크를 정확히 하나 읽지 못했다", `${head} · arrows=${arrows}`);
+    }
+    return links[0]!;
+  }
+  const textArrows = occurrences(text, ARROW);
+  const bodyArrows = occurrences(body, ARROW);
+  if (textArrows !== 1 || bodyArrows !== 1) {
+    throw new PlayByPlayParseError(
+      "投手交代 표기의 화살표(→)가 정확히 하나가 아니다",
+      `${head} · arrows=글자 ${textArrows}/본문 ${bodyArrows} · current=${current ?? "-"}`,
+    );
+  }
+  const at = body.indexOf(ARROW);
+  const before = playerIdsIn(body.slice(0, at));
+  const after = playerIdsIn(body.slice(at + ARROW.length));
+  const detail = `${head} · old=${before.join(",") || "-"} · new=${after.join(",") || "-"} · current=${current ?? "-"}`;
+  if (after.length !== 1) {
+    throw new PlayByPlayParseError("投手交代 표기의 화살표 뒤에서 새 투수 링크를 정확히 하나 읽지 못했다", detail);
+  }
+  if (before.length > 1) {
+    throw new PlayByPlayParseError("投手交代 표기의 화살표 앞 링크가 둘 이상이다", detail);
+  }
+  if (before.length === 1 && before[0] !== current) {
+    throw new PlayByPlayParseError("投手交代 의 옛 투수가 그 하프의 현재 투수와 다르다", detail);
+  }
+  return after[0]!;
+}
+
+/**
+ * @throws {PlayByPlayParseError} 이닝 헤더나 주자 표기를 해석하지 못했을 때 · 투수 표기 행이 기대 모양이 아닐 때(`pitcherOfNotation`).
  * ⚠빈 배열로 넘기지 마라 — 그러면 「그 경기엔 타석이 없었다」가 된다.
  */
 export function parsePlayByPlay(html: string): PlayByPlay {
@@ -211,11 +275,8 @@ export function parsePlayByPlay(html: string): PlayByPlay {
     // 투수 표기 행: `（先発投手） A` 또는 `（投手交代） A → B`
     if (cells.length === 1 && /colspan/i.test(cells[0]![1]!)) {
       const body = cells[0]![2]!;
-      if (/先発投手|投手交代/.test(strip(body))) {
-        const ids = playerIdsIn(body);
-        // 교대는 `구 → 신` 이므로 **마지막 링크가 새 투수**다.
-        if (ids.length > 0) currentPitcher[half] = ids.at(-1)!;
-      }
+      // ⚠모양이 기대와 다르면 **이전 투수에게 조용히 붙이지 않고 던진다**(감사 N2 · `pitcherOfNotation`)
+      if (/先発投手|投手交代/.test(strip(body))) currentPitcher[half] = pitcherOfNotation(body, half, currentPitcher[half]);
       continue;
     }
 
