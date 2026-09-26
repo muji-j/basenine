@@ -3760,6 +3760,11 @@ function vsParam(){
 if(!state.sort||typeof state.sort!=="object")state.sort={};
 if(!state.only||typeof state.only!=="object")state.only={};
 
+/* 표마다의 손잡이(data-stable 값 → 상자·행·좁히기 칸·다시 그리기).
+   ⚠**?vs= 착지가 今季·通算 두 표를 함께 다뤄야 해서 남긴다**(아래 landVs · 감사 W7) —
+   예전에는 표 하나의 초기화 안에서 그 표만 보고 끝났다. 키는 서버가 정한 표 이름이라 프로토타입 없는 지도에 둔다. */
+const stables=Object.create(null);
+
 $$("[data-stable]").forEach(box=>{
   const id=box.dataset.stable;
   const table=$("table",box);
@@ -3894,41 +3899,117 @@ $$("[data-stable]").forEach(box=>{
     }
   }
   tabHooks.push(apply);
-
-  /* 대전 표만의 사정: 「対戦を選ぶ」에서 ?vs= 로 넘어온 **선수 ID** 로 그 한 행만 남긴다.
-     ⚠**예전에는 이름을 넘겨 좁히기 칸에 넣었다**(2026-08-18 감사 P2). 그러면 동명이인이
-     함께 걸리고 부분일치까지 걸려, 「이 투수와의 성적」이라며 **남의 기록이 섞인 표**를 보여 준다.
-     ⚠**이름은 화면에 보여 줄 때만 쓴다** — 좁히기 칸에는 그 행의 이름을 넣어 무엇이 걸렸는지 말하되,
-     실제 판정은 ID 로 한다.
-     ⚠**옛 링크(이름)를 버리지 않는다** — ID 로 걸리는 행이 없으면 지금까지대로 이름 좁히기로 흘린다.
-     ⚠**「ID 처럼 생겼는가」로 판정하지 않는다.** 처음에 정규식으로 숫자인지 봤는데
-        (ㄱ) 이 파일은 템플릿 리터럴이라 소스에 쓴 숙자 클래스 이스케이프가
-             클라이언트에서는 글자 d 로 죽어 있었다 — 판정이 조용히 뒤집혀 있었다
-             (이 파일의 역따옴표 함정과 같은 부류다),
-        (ㄴ) ID 의 모양은 우리가 정한 것이 아니라 소스가 정한다.
-        **그냥 찾아보고 없으면 이름으로 다룬다** — 모양을 가정하지 않는 편이 짧고 안전하다. */
-  if(id==="matchup"&&finder){
-    const vs=vsParam();
-    if(vs!==""){
-      const byId=$$("tbody tr",box).filter(tr=>tr.dataset.oppid===vs)[0];
-      if(byId){
-        box.dataset.pinid=vs;
-        finder.value=String(byId.dataset.name||"");
-        /* ⚠**칸을 건드리면 못 박기를 푼다.** 안 그러면 지운 뒤에도 한 행만 남아
-           「대전 기록이 하나뿐인 선수」로 보인다 */
-        /* ⚠**지우고 다시 그린다.** 이미 등록된 input 핸들러가 먼저 돌아
-           못 박기가 살아있는 채로 걸러진다 — 순서에 기대지 않고 여기서 다시 적용한다 */
-        finder.addEventListener("input",()=>{
-          if(box.dataset.pinid!==undefined){delete box.dataset.pinid;apply()}
-        });
-      }else{
-        finder.value=vs;
-      }
-      /* 대전 블록이 꺼져 있으면 이번 방문에만 켠다 — 사용자의 저장된 구성은 건드리지 않는다 */
-      if(state.order.indexOf("matchup")<0)state.order=state.order.concat(["matchup"]);
-    }
-  }
+  stables[id]={box:box,all:all,finder:finder,apply:apply};
 });
+
+/* ── 대전 표의 ?vs= 착지 ──
+   「対戦を選ぶ」·比較 화면·선발예고가 ?vs=<선수 ID> 로 넘긴 **상대 한 사람**으로 대전 표를 좁힌다.
+   ⚠**이름이 아니라 선수 ID 로 못 박는다**(M10 · 2026-08-18 감사 P2). 이름을 넘기면 동명이인(이 저장소에
+     「小島」가 둘)과 부분일치가 함께 걸려, 「이 투수와의 성적」이라며 **남의 기록이 섞인 표**를 보여 준다.
+     좁히기 칸에는 그 행의 **이름**을 넣어 무엇이 걸렸는지 말하되, 실제 판정은 ID 로 한다.
+   ⚠**今季·通算 두 표를 함께 본다**(2026-09-25 감사 W7). 예전에는 今季 표만 보고, 거기 없는 상대면
+     **원시 ID 를 이름 좁히기 칸에 넣어** 「この条件の対戦記録はありません。」만 보였다 — 같은 페이지의
+     通算 표에 그 대전이 있는데도. 선발예고의 링크는 **통산 대전**에서 나오므로 그 경로가 가장 자주 걸렸다.
+       ① 今季에 있다   → 그 한 행. 通算 표도 같은 상대로 좁힌다(탭을 바꿔도 「이 상대와의」 성적이다)
+       ② 通算에만 있다 → 通算 탭을 **이번 방문에만** 연다(transient — 저장하지 않는다 · revealHash 와 같은 규칙)
+                          그리고 **왜 열었는지 말한다** — 말없이 바꾸면 통산 수치를 今季 로 읽는다
+       ③ 어디에도 없다 → ID 를 칸에 넣지 않는다. 0건으로 두고(그 상대와의 대전은 정말로 0이다)
+                          「대전 기록 없음」을 **이름으로** 말한다. 이름은 이 페이지에 없으므로 색인에서 찾고,
+                          못 찾으면(취득 실패 · 그 시즌 색인에 없음) 「この相手」로 말한다
+   ⚠**옛 링크(이름)를 버리지 않는다** — ID 로 걸리는 행이 어디에도 없고 이름으로 걸리는 행이 있으면
+     지금까지대로 이름 좁히기로 흘린다.
+   ⚠**「ID 처럼 생겼는가」로 판정하지 않는다.** 처음에 정규식으로 숫자인지 봤는데
+      (ㄱ) 이 파일은 템플릿 리터럴이라 소스에 쓴 숫자 클래스 이스케이프가
+           클라이언트에서는 글자 d 로 죽어 있었다 — 판정이 조용히 뒤집혀 있었다
+           (이 파일의 역따옴표 함정과 같은 부류다),
+      (ㄴ) ID 의 모양은 우리가 정한 것이 아니라 소스가 정한다.
+   **그냥 찾아보고 없으면 이름으로 다룬다** — 모양을 가정하지 않는 편이 짧고 안전하다.
+   ⚠**부르는 곳은 맨 아래 초기화 줄이다** — 색인(INDEX · withIndex)이 이 아래에서 let 으로 선언되므로
+     여기서 부르면 ③ 이 선언 전 접근(TDZ)으로 스크립트 전체를 죽인다. 그리고 renderBlocks·showTabs 보다 먼저여야
+     대전 블록과 通算 탭이 이번 방문에 열린다. */
+function landVs(){
+  const vs=vsParam();
+  if(vs==="")return;
+  const season=stables.matchup&&stables.matchup.finder?stables.matchup:null;
+  const career=stables.matchupCareer&&stables.matchupCareer.finder?stables.matchupCareer:null;
+  const scopes=[season,career].filter(s=>s!==null);
+  if(!scopes.length)return;
+  /* 대전 블록이 꺼져 있으면 이번 방문에만 켠다 — 사용자의 저장된 구성은 건드리지 않는다 */
+  if(state.order.indexOf("matchup")<0)state.order=state.order.concat(["matchup"]);
+
+  /* 착지가 무엇을 했는지 표 위에서 말한다. **서버가 그린 자리가 아니므로** 여기서 만든다 */
+  const vsNote=(s,text)=>{
+    let n=$("[data-vsnote]",s.box);
+    if(!n){
+      n=doc.createElement("p");
+      n.className="note";
+      n.setAttribute("role","status");
+      n.setAttribute("data-vsnote","");
+      const first=s.box.children&&s.box.children[0];
+      if(first)s.box.insertBefore(n,first);else s.box.appendChild(n);
+    }
+    n.textContent=text;
+    n.hidden=false;
+  };
+  /* ⚠**칸을 건드리면 못 박기를 풀고 착지의 말도 거둔다.** 안 그러면 지운 뒤에도 한 행만 남아
+     「대전 기록이 하나뿐인 선수」로 보인다.
+     ⚠**지우고 다시 그린다.** 이미 등록된 input 핸들러가 먼저 돌아 못 박기가 살아있는 채로 걸러진다 —
+     순서에 기대지 않고 여기서 다시 적용한다 */
+  scopes.forEach(s=>s.finder.addEventListener("input",()=>{
+    const n=$("[data-vsnote]",s.box);
+    if(n)n.hidden=true;
+    if(s.box.dataset.pinid!==undefined){delete s.box.dataset.pinid;s.apply()}
+  }));
+  /* 그 표를 감싼 닫힌 패널을 이번 방문에만 연다 — revealHash 와 같은 규칙(저장하지 않는다) */
+  const openScope=(s)=>{
+    let n=s.box;
+    while(n&&n!==doc.body){
+      const d=n.dataset;
+      if(d&&d.panelgroup&&d.panelkey&&state.tabs[d.panelgroup]!==d.panelkey&&state.tabs[d.panelgroup]!=="all"){
+        transient[d.panelgroup]=d.panelkey;
+      }
+      n=n.parentNode;
+    }
+  };
+
+  const rowsOf=(s,test)=>s===null?[]:s.all.filter(test);
+  let inSeason=rowsOf(season,tr=>tr.dataset.oppid===vs),inCareer=rowsOf(career,tr=>tr.dataset.oppid===vs);
+  const byId=inSeason.length>0||inCareer.length>0;
+  if(!byId){
+    const byName=(tr)=>String(tr.dataset.name||"").indexOf(vs)>=0;
+    inSeason=rowsOf(season,byName);inCareer=rowsOf(career,byName);
+  }
+
+  if(!inSeason.length&&!inCareer.length){
+    /* ③ 어디에도 없다 */
+    const tail=career!==null?"との対戦記録はありません（今季・通算とも）。":"との対戦記録はありません。";
+    scopes.forEach(s=>{s.box.dataset.pinid=vs;vsNote(s,"この相手"+tail)});
+    withIndex(idx=>{
+      const p=idx?idx.filter(x=>x.i===vs)[0]:null;
+      if(!p)return;
+      /* ⚠**그사이 사용자가 칸을 건드렸으면 그 표는 손대지 않는다** — 친 글자를 이름으로 덮지 않는다 */
+      scopes.forEach(s=>{
+        if(s.box.dataset.pinid!==vs)return;
+        vsNote(s,p.n+tail);
+        if(s.finder.value==="")s.finder.value=p.n;
+      });
+    });
+    fetchIndex();
+    return;
+  }
+
+  /* ①② 찾았다. ID 로 찾았으면 ID 로 못 박고 칸에는 이름을, 옛 이름 링크면 지금까지대로 이름으로 좁힌다 */
+  const name=byId?String((inSeason[0]||inCareer[0]).dataset.name||""):vs;
+  scopes.forEach(s=>{
+    if(byId)s.box.dataset.pinid=vs;
+    s.finder.value=name;
+  });
+  if(!inSeason.length&&career!==null){
+    /* ② 通算에만 있다 */
+    openScope(career);
+    vsNote(career,"今季は"+name+"との対戦がありません。通算の対戦成績を表示しています。");
+  }
+}
 
 /* ── 찾기로 펼쳐진 패널의 탭을 맞춘다 ──
 
@@ -5122,7 +5203,8 @@ function warnSnapshotHost(){
 
 press(".rail [data-preset]","preset",state.preset);
 press(".rail [data-density]","density",state.density);
-applyTheme();renderBlocks();renderEditor();showTabs();paintFav();paintFavTeam();revealHash();warnSnapshotHost();
+/* ⚠landVs 는 renderBlocks·showTabs 보다 앞이다 — 대전 블록과 通算 탭을 이번 방문에 연다(위 landVs 주석) */
+applyTheme();landVs();renderBlocks();renderEditor();showTabs();paintFav();paintFavTeam();revealHash();warnSnapshotHost();
 })();
 `;
 
