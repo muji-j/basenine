@@ -12,6 +12,8 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { NEUTRAL_COLOR, TEAMS, colorOf } from "@bb-app/domain";
 // ⚠**강조행을 실제로 그려서 재는 시험이 있다** — 정적 CSS 검사만으로는
 //   「자손이 tr.me 를 이름으로 안 적는다」는 모양을 원리적으로 못 잡는다
@@ -21,6 +23,8 @@ import { renderRankingPage } from "../src/pages.ts";
 import type { DrawSeasonRow } from "../src/pages.ts";
 import { TIE_RULE } from "../src/parts.ts";
 import { context } from "./fixtures.ts";
+// ⚠**주석을 걷어내고 본다** — 판정기는 scripts 에 한 벌 있다(M1 · forced-colors.test.ts 와 같은 것)
+import { stripJsComments } from "../../../scripts/fonts.ts";
 
 /** WCAG 상대 휘도 */
 function luminance(hex: string): number {
@@ -112,43 +116,31 @@ for (const scope of ["light", "dark"] as const) {
  */
 test("⚠구단 색(--team)을 글자색으로 쓰지 않는다 — 어느 테마에서든 한쪽이 무너진다", () => {
   /**
-   * ⚠**알려진 예외 2건 — 둘 다 이 규칙이 생기기 전부터 있던 것이라 기록만 남긴다**(2026-08-19 발견).
-   * 둘 다 「이 구단의 것」이라는 표시를 글자색으로 하고 있고, 그래서 阪神·ソフトバンク의 라이트와
-   * ロッテ·オリックス의 다크에서 대비가 무너진다.
-   * · `.roster li[data-favon="true"] .hn::before` — 즐겨찾기 `★`(10px)
-   * · `.favbtn[aria-pressed="true"]` — 즐겨찾기 버튼의 눌림 상태(테두리도 같이 바뀐다)
-   * ⚠**`.trecent li.w b` 는 2026-08-20 에 여기서 빠졌다** — 예외가 아니라 **고쳤다.**
-   * 直近の試合의 `○` 는 이제 `--up`(라이트 4.95~5.59 · 다크 5.87~7.00)이다.
-   * 아래 「구단 색에 기대지 않는다」 시험이 그 자리를 12구단 × 2테마로 계속 잰다.
-   * ⚠**여기 더 넣지 마라.** 새 자리가 생기면 그건 고칠 것이지 예외로 둘 것이 아니다.
+   * ⚠**예외가 0건이 됐다 — 예외 목록 자체를 걷어냈다**(2026-09-27 · 감사 W2).
+   * 이 규칙보다 먼저 있던 두 자리를 「알려진 예외」로 기록만 해 두었는데(2026-08-19 발견) 둘 다 고쳤다:
+   * · `.roster li[data-favon="true"] .hn::before` — 명부의 즐겨찾기 `★`(10px) → `--tx-2`.
+   *   ⚠**그 화면(選手一覧)은 `--team` 에 중립색을 싣는다** — 실제로 그려지던 것은 구단 색이 아니라
+   *   #6b7280 이었고, 그것도 다크 `--page` 대비 **3.740** 으로 10px 글자의 4.5 에 미달이었다.
+   * · `.favbtn[aria-pressed="true"]` — 즐겨찾기 버튼의 눌림 → 잉크 `--tx` · 테두리 `--tx-3` ·
+   *   글리프 ☆→★(색 말고도 말한다 — `forced-colors.test.ts` 의 W2 시험).
+   * ⚠`.trecent li.w b` 는 2026-08-20 에 먼저 빠졌다(`--up`).
+   * 아래 「구단 색에 기대지 않는다」 시험이 셋 다 12구단 + 중립 × 2테마로 계속 잰다.
+   * ⚠**예외 목록을 되살리지 마라.** 새 자리가 생기면 그건 고칠 것이지 예외로 둘 것이 아니다.
    */
-  const KNOWN = new Set(['.roster li[data-favon="true"] .hn::before', '.favbtn[aria-pressed="true"]']);
-  // ⚠**주석을 먼저 지운다** — 안 지우면 규칙 바로 앞의 주석까지 선택자로 잡혀
-  // 예외 목록이 맞아떨어지지 않는다(첫 판이 그렇게 헛돌았다)
+  // ⚠**주석을 먼저 지운다** — 안 지우면 규칙 바로 앞의 주석까지 선택자로 잡힌다(첫 판이 그렇게 헛돌았다)
   const css = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
   const bad: string[] = [];
+  let pairs = 0;
   for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
     const sel = (m[1] ?? "").trim();
+    // ⚠**공회전 방지** — 짝 글자색(`--team-ink`)을 쓰는 규칙은 실재한다. 그것조차 못 보면 이 스캔이 헛돈다
+    if (/(^|;)\s*color:\s*var\(--team-ink[,)]/.test(m[2] ?? "")) pairs += 1;
     // ⚠`--team-ink` 는 짝이 되는 글자색이므로 걸리면 안 된다 — `--team` 바로 뒤가 `,` 나 `)` 인 것만 본다
     if (!/(^|;)\s*color:\s*var\(--team[,)]/.test(m[2] ?? "")) continue;
-    if (KNOWN.has(sel)) continue;
     bad.push(sel);
   }
+  assert.ok(pairs >= 3, `짝 글자색(--team-ink) 규칙을 ${pairs}개밖에 못 봤다 — 이 스캔이 공회전한다`);
   assert.deepEqual(bad, [], `구단 색을 글자색으로 썼다: ${bad.join(" / ")}`);
-  /**
-   * ⚠**예외 목록이 낡으면 이 시험이 조용히 헐거워진다.**
-   * 예전에는 「선택자가 CSS 에 있는가」만 봤는데, 그러면 **고친 뒤에도 예외가 남는다** —
-   * 실제로 `.trecent li.w b` 가 그럴 뻔했다(선택자는 남고 색만 바뀐다).
-   * → **그 규칙이 지금도 구단 색을 글자색으로 쓰고 있는가**를 본다. 안 쓰면 목록에서 빼라는 뜻이다.
-   */
-  for (const k of KNOWN) {
-    const rule = new RegExp(`${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\{([^{}]*)\\}`).exec(css);
-    assert.ok(rule !== null, `예외로 적어 둔 ${k} 가 CSS 에 없다 — 목록에서 빼라`);
-    assert.ok(
-      /(^|;)\s*color:\s*var\(--team[,)]/.test(rule![1]!),
-      `${k} 는 이제 구단 색을 글자색으로 쓰지 않는다 — 고쳐진 것이니 예외 목록에서 빼라`,
-    );
-  }
 });
 
 /**
@@ -168,7 +160,14 @@ test("⚠구단 색(--team)을 글자색으로 쓰지 않는다 — 어느 테�
  * ⚠**바탕은 `--panel` 이다**(실측 2026-08-20 · 브라우저에서 두 자리 모두 `.block` = `--panel` 위였다).
  * 눈대중이 아니라 `getComputedStyle` 로 확인한 값이다.
  */
-const TEAM_MARKS: readonly { sel: string; prop: "color" | "stroke"; need: number; what: string }[] = [
+const TEAM_MARKS: readonly {
+  sel: string;
+  prop: "color" | "stroke" | "fill" | "border-color";
+  need: number;
+  what: string;
+  /** ⚠그 자리의 **실제 바탕** 토큰. 없으면 `--panel`(위 주석의 실측). 바탕을 잘못 잡으면 대비는 그냥 다른 수다 */
+  bg?: "panel" | "page";
+}[] = [
   { sel: ".trecent li.w b", prop: "color", need: 4.5, what: "直近の試合의 이긴 경기 표식(13px)" },
   { sel: ".dia .db.on", prop: "stroke", need: 3.0, what: "주자 있는 베이스의 윤곽(비텍스트)" },
   /**
@@ -185,6 +184,24 @@ const TEAM_MARKS: readonly { sel: string; prop: "color" | "stroke"; need: number
    */
   { sel: ".mf-shape", prop: "stroke", need: 3.0, what: "成績の紋 도형의 윤곽(비텍스트)" },
   { sel: ".mf-dot", prop: "stroke", need: 3.0, what: "成績の紋 꼭짓점의 링 — 조작 요소의 유일한 어포던스" },
+  /**
+   * ⚠**구단 색을 선·글리프 색으로 쓰던 자리 중 감사 W2 가 짚은 넷**(2026-09-25 감사 W2 · 2026-09-27 수정).
+   *   ⚠~~마지막 자리들~~ 은 거짓이었다(같은 날 디자인 감사) — `.spitcher a` 의 구단 색 밑줄(box-shadow)이
+   *   남아 있고, 이 하네스(color/stroke/fill/border-color)도 box-shadow 시험도 그 자리를 안 본다.
+   *   다음 감사 라운드의 후보로 넘겼다(감사 문서 §10-4).
+   * 감사 실측(바탕 --page · 비텍스트 3:1): 12구단 중 **라이트 4 · 다크 7 · 합집합 11** 이 미달이었다 —
+   * ロッテ 다크 **1.188** · オリックス 다크 1.169 · 阪神 라이트 1.543. 広島만 양 테마 통과(5.637 / 3.073).
+   * ⚠**바탕은 --page 다** — 선수 표제(`.idline`)와 명부(`.teamgroup`)는 배경을 안 깐다(body = --page).
+   *   감사가 잰 다크 바탕 rgb(21,22,26) 이 곧 --page(#15161a) 다.
+   * · 즐겨찾기 ★ 는 **그 버튼의 유일한 시각 내용**이라 색이 죽으면 버튼이 사라졌다 — 글자(4.5)로 잰다.
+   * · 월별 추이 꺾은선·끝점은 **마크업 속성**에 구단 색을 달고 있어 이 하네스가 못 봤다(아래 SVG 시험).
+   *   색을 CSS 로 옮겼고, 이제 여기서 잰다.
+   */
+  { sel: '.favbtn[aria-pressed="true"]', prop: "color", need: 4.5, bg: "page", what: "눌린 즐겨찾기의 ★ — 버튼의 유일한 시각 내용" },
+  { sel: '.favbtn[aria-pressed="true"]', prop: "border-color", need: 3.0, bg: "page", what: "눌린 즐겨찾기의 테두리(비텍스트)" },
+  { sel: '.roster li[data-favon="true"] .hn::before', prop: "color", need: 4.5, bg: "page", what: "명부의 즐겨찾기 ★(10px 글자)" },
+  { sel: ".spark polyline", prop: "stroke", need: 3.0, bg: "page", what: "월별 추이 꺾은선(비텍스트)" },
+  { sel: ".spark circle", prop: "fill", need: 3.0, bg: "page", what: "월별 추이의 끝점(비텍스트)" },
 ];
 
 for (const scope of ["light", "dark"] as const) {
@@ -203,8 +220,9 @@ for (const scope of ["light", "dark"] as const) {
       assert.ok(decl !== null, `${mark.sel} 에 ${mark.prop} 선언이 없다 — 이 시험이 공회전한다`);
       const raw = decl![1]!.trim();
       const t = tokens(scope);
-      const bg = t.get("panel");
-      assert.ok(bg !== undefined, "--panel 을 못 읽었다");
+      const bgName = mark.bg ?? "panel";
+      const bg = t.get(bgName);
+      assert.ok(bg !== undefined, `--${bgName} 을 못 읽었다`);
 
       /**
        * 선언값을 색으로 푼다.
@@ -224,16 +242,23 @@ for (const scope of ["light", "dark"] as const) {
         return tok!;
       };
 
+      /**
+       * ⚠**중립색도 잰다**(2026-09-27 · W2). 목록 화면(選手一覧 등)은 `--team` 에 중립색을 싣는다 —
+       * 명부의 ★ 가 실제로 그 색(#6b7280)으로 그려지고 있었다. 12구단만 재면 그 자리를 못 본다.
+       */
+      const colors: readonly { code: string; hex: string }[] = [
+        ...TEAMS.map((team) => ({ code: team.code, hex: colorOf(team.code).base.toLowerCase() })),
+        { code: "neutral", hex: NEUTRAL_COLOR.base.toLowerCase() },
+      ];
       const failed: string[] = [];
-      for (const team of TEAMS) {
-        const hex = colorOf(team.code).base.toLowerCase();
-        const r = contrast(resolve(hex), bg!);
-        if (r < mark.need) failed.push(`${team.code} ${r.toFixed(2)}`);
+      for (const c of colors) {
+        const r = contrast(resolve(c.hex), bg!);
+        if (r < mark.need) failed.push(`${c.code} ${r.toFixed(2)}`);
       }
       assert.deepEqual(
         failed,
         [],
-        `${mark.sel} 의 ${mark.prop}(${raw})가 ${mark.need}:1 에 미달하는 구단: ${failed.join(" / ")}`,
+        `${mark.sel} 의 ${mark.prop}(${raw})가 --${bgName} 위에서 ${mark.need}:1 에 미달하는 색: ${failed.join(" / ")}`,
       );
     });
   }
@@ -328,6 +353,41 @@ test("⚠클라이언트 스크립트가 폴리곤의 선 색을 얹지 않는�
   assert.deepEqual(bad, [], `선 색을 스크립트가 얹는다(${bad.length}건) — CSS 토큰으로 옮겨라`);
   // ⚠**공회전 방지**: 채움은 실제로 얹고 있다. 이 자리가 통째로 사라지면 위 단언이 무의미해진다.
   assert.ok(/setAttribute\(\s*"fill"/.test(js), 'setAttribute("fill") 이 없다 — 이 시험이 공회전한다');
+});
+
+/**
+ * ⚠**서버가 굽는 SVG 속성도 CSS 검사가 못 본다 — 세 번째 구멍이다**(2026-09-25 감사 W2 · 2026-09-27).
+ *
+ * 위 두 구멍(CSS 규칙은 `color` 만 · 클라이언트의 `setAttribute`)에 이어, 선수 페이지의 월별 추이가
+ * 꺾은선의 선 색과 끝점의 채움을 **마크업의 stroke·fill 속성**에 `var(--team,…)` 으로 달고 있었다.
+ * CSS 만 읽는 대비 검사는 **영원히 초록**이었고, 실제로는 12구단 중 11구단이 어느 한 테마에서
+ * --page 대비 3:1 미달이었다(ロッテ 다크 1.188).
+ * → 색을 CSS 토큰으로 옮겼다(`.spark polyline` · `.spark circle` — 위 `TEAM_MARKS` 가 잰다).
+ * ⚠**구단 바탕 + 그 짝 잉크(marks.ts 의 `p.color.base` · `p.color.ink`)는 여기 안 걸린다** —
+ * 그건 신원 표시이고 짝이 대비를 보장한다. 막는 것은 **바탕 위에 구단 색 변수로 선·점을 긋는 것**이다.
+ * ⚠**모양이 둘 더 있다**(2026-09-27 · 디자인 감사 P3): `style="stroke:var(--team)"` 과
+ * 보간(`stroke="${…}"`)이다. 처음 판은 둘 다 못 봤다. 보간은 **신원 표시의 짝 두 이름만** 허용한다.
+ */
+test("⚠서버가 굽는 SVG 가 구단 색 변수를 선·채움 속성으로 싣지 않는다 — CSS 대비 검사가 못 본다", () => {
+  const dir = join(import.meta.dirname, "..", "src");
+  const files = readdirSync(dir).filter((f) => f.endsWith(".ts"));
+  /** 보간해도 되는 색 — 구단 바탕과 그 짝 잉크(신원 표시 · 짝이 대비를 보장한다) */
+  const IDENTITY = new Set(["p.color.base", "p.color.ink"]);
+  let attrs = 0;
+  const bad: string[] = [];
+  for (const f of files) {
+    // ⚠**주석은 뺀다** — 이 결함의 이력을 적은 주석이 스스로 걸리면 안 된다
+    const code = stripJsComments(readFileSync(join(dir, f), "utf8")).code;
+    attrs += [...code.matchAll(/\b(?:stroke|fill)="/g)].length;
+    for (const m of code.matchAll(/\b(?:stroke|fill)="var\(\s*--(?:team|chip)\b[^"]*"/g)) bad.push(`${f}: ${m[0]}`);
+    for (const m of code.matchAll(/\bstyle="[^"]*\b(?:stroke|fill)\s*:\s*var\(\s*--(?:team|chip)\b[^"]*"/g)) bad.push(`${f}: ${m[0]}`);
+    for (const m of code.matchAll(/\b(?:stroke|fill)="\$\{\s*([^}]*?)\s*\}"/g)) {
+      if (!IDENTITY.has(m[1]!)) bad.push(`${f}: ${m[0]} — 신원 표시의 짝(${[...IDENTITY].join(" · ")}) 밖의 보간`);
+    }
+  }
+  // ⚠**공회전 방지** — marks.ts 가 SVG 채움 속성을 실제로 쓴다. 속성을 하나도 못 보면 이 스캔이 헛돈다
+  assert.ok(files.length >= 10 && attrs >= 5, `훑은 파일 ${files.length}개 · SVG 색 속성 ${attrs}개 — 이 시험이 공회전한다`);
+  assert.deepEqual(bad, [], "구단 색 변수를 SVG 선·채움 속성으로 싣는다 — CSS 대비 검사가 못 본다. CSS 토큰으로 옮겨라");
 });
 
 test("⚠글자색과 opacity 를 같은 규칙에 함께 쓰지 않는다", () => {

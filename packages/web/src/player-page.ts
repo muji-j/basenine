@@ -966,6 +966,10 @@ const RANKING_TOP = 10;
  *
  * ⚠**축을 그리지 않는다.** 눈금 없는 선은 「값」이 아니라 **모양**이고, 정확한 값은
  * 스플릿 블록에 분모와 함께 있다. 여기서 읽히면 안 되는 것을 읽히게 만들지 않는다.
+ *
+ * ⚠**선과 끝점의 색을 여기(속성)서 주지 않는다 — CSS 토큰(`.spark polyline` · `.spark circle`)이 준다**
+ * (2026-09-25 감사 W2 · 2026-09-27). 구단 색 변수를 속성으로 달았더니 12구단 중 11구단이 어느 한 테마에서
+ * 바탕 대비 3:1 미달이었고, **CSS 만 읽는 대비 검사는 그것을 원리적으로 못 봤다**(`css-contrast.test.ts`).
  */
 function sparkline(points: readonly SparkPoint[], label: string): RawHtml {
   const values = points.map((p) => p.value).filter((v): v is number => v !== null);
@@ -991,9 +995,9 @@ function sparkline(points: readonly SparkPoint[], label: string): RawHtml {
   return html`<div class="spark">
   <svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img"
     aria-label="${label}：${points.map((p) => `${p.label} ${p.value === null ? "なし" : p.value.toFixed(3)}`).join("、")}">
-    <polyline points="${line}" fill="none" stroke="var(--team,#6b7280)" stroke-width="1.6"
+    <polyline points="${line}" fill="none" stroke-width="1.6"
       stroke-linejoin="round" stroke-linecap="round"></polyline>
-    ${last === undefined ? null : html`<circle cx="${last.x.toFixed(1)}" cy="${last.y!.toFixed(1)}" r="2.4" fill="var(--team,#6b7280)"></circle>`}
+    ${last === undefined ? null : html`<circle cx="${last.x.toFixed(1)}" cy="${last.y!.toFixed(1)}" r="2.4"></circle>`}
   </svg>
   <span class="sl">${label}　${points[0]?.label ?? ""}→${points.at(-1)?.label ?? ""}</span>
 </div>`;
@@ -1038,9 +1042,11 @@ function idLine(d: PlayerPageData, base: string): RawHtml {
   <div class="idtext">
     <h1 class="nm">${d.name}<!-- ⚠**계정 없이 되는 것만 만든다.** 이 표시는 이 브라우저에만 남고
       서버로 가지 않는다. 스크립트가 없으면 버튼 자체를 띄우지 않는다 —
-      눌러도 아무 일이 없는 버튼을 두는 것보다 없는 편이 정직하다 -->
+      눌러도 아무 일이 없는 버튼을 두는 것보다 없는 편이 정직하다.
+      ⚠**글리프(☆/★)는 마크업에 없다** — CSS 가 aria-pressed 에서 그린다(감사 W2 · 2026-09-27).
+      글자로 두면 눌림과 글리프가 따로 놀 수 있고, 눌림을 색 하나로만 말하게 된다 -->
       <button class="favbtn" type="button" id="favBtn" data-fav="${d.playerId}"
-        aria-pressed="false" aria-label="お気に入りに入れる" hidden>★</button></h1>
+        aria-pressed="false" aria-label="お気に入りに入れる" hidden></button></h1>
     <span class="sub">${teamLink(base, d.teamCode, d.teamName)}${bio.length === 0 ? null : raw(" · ")}${bio.join(" · ")}</span>
     <span class="asof">${d.season}年${d.asOf === null ? "" : ` · ${gameDate(d.asOf)}まで`}</span>
     ${d.stints.length < 2
@@ -2295,7 +2301,7 @@ function timesThroughBlock(rows: readonly TimesThroughRow[]): RawHtml {
   ${note(
     "NPB全体の値です（この選手の記録ではありません）。同じ試合で同じ投手が同じ打者と" +
       "何度目に対戦したかで分けています。" +
-      "⚠**「3巡目は打たれる」と読まないでください。** 3巡目まで投げる投手はその日good投球をしている" +
+      "⚠**「3巡目は打たれる」と読まないでください。** 3巡目まで投げる投手はその日好投している" +
       "投手なので、**実際の不利より成績が良く出ます**（生存者バイアス）。" +
       `⚠個人の順位はつけません — 個人の3巡目は標本が薄すぎます。${MIN_TTO_PA}打席未満の巡は出していません。`,
   )}`,
