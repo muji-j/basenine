@@ -9,7 +9,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { JST_TODAY_FROM_HOUR, MAX_CATCHUP_DAYS, jstDate, jstHour, targetDates } from "../date-window.ts";
+import { JST_TODAY_FROM_HOUR, MAX_CATCHUP_DAYS, MAX_REFETCH_DATES, jstDate, jstHour, parseRefetchDates, targetDates } from "../date-window.ts";
 
 /** UTC 문자열로 시각을 만든다. **JST 를 직접 못 만드는 것이 이 시험의 요점**이다 */
 const at = (utc: string): Date => new Date(utc);
@@ -157,4 +157,37 @@ test("⚠날짜를 명시하면 따라잡기가 끼어들지 않는다 — 소�
     ["2026-08-01"],
     "명시한 날짜 하나만이어야 한다",
   );
+});
+
+test("13 재수집 날짜: 비면 평소 창 · 정상 3일은 그 3일", () => {
+  assert.deepEqual(parseRefetchDates(undefined), { ok: true, dates: null });
+  assert.deepEqual(parseRefetchDates("  "), { ok: true, dates: null });
+  assert.deepEqual(parseRefetchDates("2026-08-01, 2026-08-02,2026-08-03"), { ok: true, dates: ["2026-08-01", "2026-08-02", "2026-08-03"] });
+});
+
+test("13 재수집 날짜: 8개 · 없는 날짜 · 셸 문자 · 중복 · 자릿수 틀림은 거부", () => {
+  const eight = Array.from({ length: 8 }, (_, i) => `2026-08-0${i + 1}`).join(",");
+  for (const bad of [eight, "2026-02-30", "2026-08-01;rm -rf /", "2026-08-01,2026-08-01", "2026-8-1", "2026-08-01,"]) {
+    const r = parseRefetchDates(bad);
+    assert.equal(r.ok, false, bad);
+  }
+});
+
+/**
+ * ⚠**경계는 정확히 상한(M1 · 감사 반영)**. 적재기의 복구 힌트(`load-archive.ts`)는
+ * 정확히 `MAX_REFETCH_DATES` 개짜리 줄을 찍는다 — 그 줄을 그대로 붙여 넣으면 통과해야 한다.
+ */
+test("13 재수집 날짜: 정확히 상한(7)개 · 전부 다른 날짜는 받는다", () => {
+  const seven = Array.from({ length: MAX_REFETCH_DATES }, (_, i) => `2026-08-0${i + 1}`);
+  assert.deepEqual(parseRefetchDates(seven.join(",")), { ok: true, dates: seven });
+});
+
+/**
+ * ⚠**재수집 날짜는 오름차순으로 돌려준다** — 받는 순서와 로그가 날짜순이 되고 「마지막 날짜 = 가장 늦은 대상일」이 늘 참이다.
+ * ⚠~~`update.ts` 가 마지막 날짜로 予告先発 조회 시즌을 정한다~~ 는 **틀린 서술이었다**(2026-09-26 · 3중 검토 1차 P3 · 2차 F4) —
+ *   마지막 날짜로 정하는 것은 **앞으로의 일정**(`load-upcoming.ts`)의 시즌이고 予告先発(`cli-starters.ts`)은 날짜를 받지 않는다.
+ *   재수집 실행에서는 그 시즌을 **JST 의 올해**로 정한다(`scripts/test/refetch-wiring.test.ts` 가 지킨다).
+ */
+test("13 재수집 날짜: 뒤죽박죽 입력도 오름차순으로 정렬해 돌려준다", () => {
+  assert.deepEqual(parseRefetchDates("2026-08-02,2025-09-01"), { ok: true, dates: ["2025-09-01", "2026-08-02"] });
 });

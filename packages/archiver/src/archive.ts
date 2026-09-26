@@ -10,11 +10,15 @@
 import type { Clock } from "./clock.ts";
 import { GAME_PAGES, discoverGames, gamesOn, monthlyScheduleUrl, pageKey, pageUrl } from "./discover.ts";
 import type { GamePage, GameRef } from "./discover.ts";
-import type { PoliteFetcher } from "./fetcher.ts";
+import type { FetchResponse, PoliteFetcher } from "./fetcher.ts";
 import type { BlobMeta, Sink } from "./sink.ts";
 import { sha256 } from "./sink.ts";
 
-export type PageOutcome = "stored" | "unchanged" | "absent" | "failed";
+/**
+ * ⚠`held`(보류) — 받았고 바뀌었지만 같은 경기의 다른 페이지가 실패해서 **기록하지 않은** 페이지(설계 D2).
+ * 실패가 아니다: 그 경기에 이미 `failed` 가 있으므로 CLI 종료 코드는 그걸로 1 이 된다.
+ */
+export type PageOutcome = "stored" | "unchanged" | "absent" | "failed" | "held";
 
 export interface PageResult {
   key: string;
@@ -113,6 +117,12 @@ export class MonthlyScheduleCache {
  * `etag` **0건** · `lastModified` **0건** — **상류가 검증자를 하나도 안 준다.**
  * 그래서 `304` 경로는 영영 안 타고, 「매번 200 + sha 비교」는 우리 결함이 아니라 **상류의 성질**이다.
  * **다시 조사하지 마라 — 고칠 수 있는 것은 「봤다」를 남기는 것뿐이다.**
+ *
+ * ⚠**`seenAt` — 「봤다」의 시각은 실제로 받은 시각이다**(2026-09-26 · 3중 검토 3차 P1 · 설계 부록 D).
+ * 받기와 기록이 떨어져 있는 호출자(`commitPrepared`)는 **받은 직후 읽은 시각**을 넘긴다. 기록할 때 시계를 다시 읽으면
+ * 두 아카이버가 같은 폴더에서 겹칠 때 **먼저 옛 내용을 받고 늦게 기록한 쪽**이 가장 새 「봤다」를 찍고,
+ * 적재기의 판 가드(box 의 `checkedAt ?? fetchedAt`)가 그 옛 내용을 새 판으로 믿는다.
+ * 넘기지 않으면 지금 시계다 — 받자마자 기록하는 호출자(`players.ts` · 월간 일정)는 그 둘이 같다.
  */
 export async function markSeen(
   sink: Sink,
@@ -120,10 +130,11 @@ export async function markSeen(
   key: string,
   prev: BlobMeta | null,
   extra?: BlobExtra,
+  seenAt?: string,
 ): Promise<void> {
   // ⚠**전에 본 적이 없으면 남길 것이 없다** — 빈 메타를 지어내지 않는다(M11)
   if (prev === null) return;
-  await sink.writeMeta(key, { ...prev, ...(extra ?? {}), checkedAt: clock.now().toISOString() });
+  await sink.writeMeta(key, { ...prev, ...(extra ?? {}), checkedAt: seenAt ?? clock.now().toISOString() });
 }
 
 /**
@@ -135,63 +146,107 @@ export async function markSeen(
  */
 export interface BlobExtra {
   readonly license?: string;
+  /** 경기 페이지 세트 id — `archiveGame` 만 넘긴다(설계 D2) */
+  readonly set?: string;
 }
 
-/** 하위 페이지 1장을 보존한다. */
 /**
- * URL 하나를 예의 있게 받아 보존한다.
- *
- * ⚠**멱등·revision 규칙을 여기 한 벌만 둔다**(M5). 「304」·「내용이 같은 200」·「404」·「실패」의
- * 구별과 revision 증가 조건은 미묘해서, 두 벌로 만들면 한쪽만 고쳐진 채로 남는다.
- * 경기 페이지도 공표 성적표도 이 함수를 지난다.
+ * ⚠`observedAt` — **받기가 끝난 직후** 읽은 시각(UTC `toISOString`). 기록 단계는 이 값을 쓰고 시계를 다시 읽지 않는다
+ *   (`changed` 의 `meta.fetchedAt` 과 같은 값 · `unchanged` 의 `checkedAt` 이 된다 · 2026-09-26 3중 검토 3차 P1).
+ *   `failed` 에서는 판정이 끝난 시각일 뿐 어디에도 기록되지 않는다.
  */
-export async function archiveUrl(
-  key: string,
-  url: string,
-  deps: ArchiveDeps,
-  extra?: BlobExtra,
-): Promise<PageResult> {
-  const prev = await deps.sink.readMeta(key);
+export type Prepared = { key: string; url: string; prev: BlobMeta | null; observedAt: string } & (
+  | { kind: "changed"; status: number; body: Uint8Array; meta: BlobMeta }
+  | { kind: "unchanged"; status: number }
+  | { kind: "absent"; status: number }
+  | { kind: "failed"; status: number | null; error: string }
+);
 
+const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/**
+ * URL 하나를 **받고 판정까지만** 한다. **기록하지 않는다 · 던지지 않는다.**
+ * ⚠`readMeta` 예외도 `failed` 로 흡수한다(2026-09-25 · 설계 D2). 예전에는 `try` 밖이라 깨진 사이드카 하나가
+ *   `archiveGame` → `archiveDate` 를 거쳐 **그날 전체를 날짜 단위 오류**로 만들었다. 단독 호출자에게도 같은 변화다(의도).
+ * ⚠**본 시각은 여기서 한 번 읽는다**(받은 직후 · M6) — 기록이 늦어져도 「언제 본 내용인가」가 바뀌지 않게.
+ */
+export async function prepareUrl(key: string, url: string, deps: ArchiveDeps): Promise<Prepared> {
+  let prev: BlobMeta | null;
   try {
-    const res = await deps.fetcher.get(url, prev ?? undefined);
-
-    if (res.status === 304) {
-      await markSeen(deps.sink, deps.clock, key, prev, extra);
-      return { key, url, outcome: "unchanged", status: 304, error: null };
-    }
-    if (res.status === 404 || res.status === 410) {
-      // 사실이다 — 이 경기에 이 페이지는 존재하지 않는다. 실패가 아니다.
-      return { key, url, outcome: "absent", status: res.status, error: null };
-    }
-    if (res.body === null) {
-      return { key, url, outcome: "failed", status: res.status, error: `본문 없는 ${res.status} 응답` };
-    }
-
+    prev = await deps.sink.readMeta(key);
+  } catch (err) {
+    const observedAt = deps.clock.now().toISOString();
+    return { key, url, prev: null, observedAt, kind: "failed", status: null, error: `사이드카를 못 읽었다: ${errorText(err)}` };
+  }
+  let res: FetchResponse;
+  try {
+    res = await deps.fetcher.get(url, prev ?? undefined);
+  } catch (err) {
+    const observedAt = deps.clock.now().toISOString();
+    return { key, url, prev, observedAt, kind: "failed", status: null, error: errorText(err) };
+  }
+  const observedAt = deps.clock.now().toISOString();
+  try {
+    if (res.status === 304) return { key, url, prev, observedAt, kind: "unchanged", status: 304 };
+    // 사실이다 — 이 경기에 이 페이지는 존재하지 않는다. 실패가 아니다.
+    if (res.status === 404 || res.status === 410) return { key, url, prev, observedAt, kind: "absent", status: res.status };
+    if (res.body === null) return { key, url, prev, observedAt, kind: "failed", status: res.status, error: `본문 없는 ${res.status} 응답` };
     const digest = sha256(res.body);
-    if (prev && prev.sha256 === digest) {
-      // 서버가 조건부 요청을 지원하지 않아 200을 줬지만 내용은 같다 → 본문은 안 쓴다(멱등).
-      // ⚠**그래도 「봤다」는 남긴다** — 안 남기면 취득일이 실제보다 낡게 나가고 재취득이 오판한다
-      await markSeen(deps.sink, deps.clock, key, prev, extra);
-      return { key, url, outcome: "unchanged", status: res.status, error: null };
-    }
-
+    // 서버가 조건부 요청을 지원하지 않아 200을 줬지만 내용은 같다 → 본문은 안 쓴다(멱등)
+    if (prev && prev.sha256 === digest) return { key, url, prev, observedAt, kind: "unchanged", status: res.status };
     const meta: BlobMeta = {
       url,
-      fetchedAt: deps.clock.now().toISOString(),
+      fetchedAt: observedAt,
       lastModified: res.lastModified,
       etag: res.etag,
       status: res.status,
       sha256: digest,
       byteLength: res.body.byteLength,
       revision: (prev?.revision ?? 0) + 1,
-      ...(extra ?? {}),
     };
-    await deps.sink.write(key, res.body, meta);
-    return { key, url, outcome: "stored", status: res.status, error: null };
+    return { key, url, prev, observedAt, kind: "changed", status: res.status, body: res.body, meta };
   } catch (err) {
-    return { key, url, outcome: "failed", status: null, error: err instanceof Error ? err.message : String(err) };
+    return { key, url, prev, observedAt, kind: "failed", status: null, error: errorText(err) };
   }
+}
+
+/**
+ * 판정 결과를 기록한다. ⚠**던지지 않는다** — `sink` 가 던지면 `failed` 로 돌려준다(예전 `archiveUrl` 과 같은 결과).
+ * ⚠「받았는데 안 바뀌었다」도 「봤다」로 남긴다(`markSeen`) — 안 남기면 취득일이 실제보다 낡게 나가고 재취득이 오판한다.
+ * ⚠**시계를 읽지 않는다** — 「봤다」는 `p.observedAt`(받은 시각)이다. 기록 시각을 찍으면 겹친 아카이버가
+ *   옛 내용에 새 시각을 붙인다(설계 부록 D · 3중 검토 3차 P1).
+ */
+export async function commitPrepared(p: Prepared, deps: ArchiveDeps, extra?: BlobExtra): Promise<PageResult> {
+  const base = { key: p.key, url: p.url };
+  try {
+    switch (p.kind) {
+      case "changed":
+        await deps.sink.write(p.key, p.body, { ...p.meta, ...(extra ?? {}) });
+        return { ...base, outcome: "stored", status: p.status, error: null };
+      case "unchanged":
+        await markSeen(deps.sink, deps.clock, p.key, p.prev, extra, p.observedAt);
+        return { ...base, outcome: "unchanged", status: p.status, error: null };
+      case "absent":
+        return { ...base, outcome: "absent", status: p.status, error: null };
+      case "failed":
+        return { ...base, outcome: "failed", status: p.status, error: p.error };
+    }
+  } catch (err) {
+    return { ...base, outcome: "failed", status: null, error: errorText(err) };
+  }
+}
+
+/** 기록하지 않은 바뀐 페이지(설계 D2) */
+export function heldResult(p: Prepared): PageResult {
+  return { key: p.key, url: p.url, outcome: "held", status: p.status, error: null };
+}
+
+/**
+ * URL 하나를 예의 있게 받아 보존한다.
+ * ⚠**멱등·revision 규칙은 `prepareUrl`·`commitPrepared` 한 벌이다**(M5 · M1). 경기 페이지도 공표 성적표도 이 둘을 지난다.
+ */
+export async function archiveUrl(key: string, url: string, deps: ArchiveDeps, extra?: BlobExtra): Promise<PageResult> {
+  return commitPrepared(await prepareUrl(key, url, deps), deps, extra);
 }
 
 /** 경기의 한 페이지를 보존한다. 경로 규칙만 얹고 나머지는 `archiveUrl`이 한다 */
@@ -199,11 +254,74 @@ export async function archivePage(ref: GameRef, page: GamePage, deps: ArchiveDep
   return archiveUrl(pageKey(ref, page), pageUrl(ref, page), deps);
 }
 
-/** 경기 1건의 전 하위 페이지를 보존한다. */
+/**
+ * 세트 id — `<기록 시각>-<페이지 키와 새 sha 의 digest 앞 16자>`(설계 D2-4).
+ * ⚠**내용이 다르면 같은 밀리초라도 다르다** — 수동 백필과 CI 가 같은 경기를 겹쳐 받는 경우(`sink.ts` 임시 파일 주석이 그 겹침을 인정한다).
+ * ⚠무작위를 쓰지 않는다 — 시각·난수는 주입해 결정론화한다(루트 §6).
+ */
+export function gameSetId(prepared: readonly Prepared[], clock: Clock): string {
+  const lines = prepared.map((p) => {
+    const sha = p.kind === "changed" ? p.meta.sha256 : p.kind === "unchanged" ? (p.prev?.sha256 ?? "-") : "-";
+    return `${p.key}\t${sha}`;
+  });
+  return `${clock.now().toISOString()}-${sha256(new TextEncoder().encode(lines.join("\n"))).slice(0, 16)}`;
+}
+
+/**
+ * 경기 1건의 전 하위 페이지를 **한 세트로** 보존한다(M5 · 2026-09-25 감사 C6 · 설계 D2).
+ *
+ * ⚠예전에는 페이지마다 받자마자 기록했다 — `playbyplay` 만 실패하고 `box` 가 바뀌면 **box 새 판 · 타석 로그 옛 판**이 섞였다.
+ * → ① 4장을 **모두** 받는다(요청 수·순서는 그대로 · L1) ② 하나라도 실패하면 **아무 페이지도 기록하지 않는다**
+ *   (바뀐 페이지는 `held` · 안 바뀐 페이지도 `markSeen` 안 함 — 아래 갈래의 주석) ③ 실패가 없으면 같은 `set` 을 적으며 기록한다 ④ 기록 도중 실패하면 **거기서 멈춘다** — 앞 페이지는 되돌리지 않고
+ *   적재기가 세트 불일치로 잡는다(`packages/store/src/page-integrity.ts`).
+ * ⚠**있던 페이지의 404 는 실패다** — 옛 사이드카가 옛 `set` 을 든 채 남으면 세트가 영원히 어긋난다. 본문은 지우지 않는다.
+ */
 export async function archiveGame(ref: GameRef, deps: ArchiveDeps): Promise<PageResult[]> {
-  const out: PageResult[] = [];
+  const prepared: Prepared[] = [];
   for (const page of GAME_PAGES) {
-    out.push(await archivePage(ref, page, deps));
+    const p = await prepareUrl(pageKey(ref, page), pageUrl(ref, page), deps);
+    prepared.push(
+      p.kind === "absent" && p.prev !== null
+        ? { key: p.key, url: p.url, prev: p.prev, observedAt: p.observedAt, kind: "failed", status: p.status, error: "있던 페이지가 사라졌다" }
+        : p,
+    );
+  }
+
+  if (prepared.some((p) => p.kind === "failed")) {
+    /**
+     * ⚠**받기 단계에서 하나라도 실패하면 어떤 페이지도 기록하지 않는다 — 안 바뀐 페이지의 「봤다」(`markSeen`)도 안 남긴다**
+     * (2026-09-26 최종 가지 검토 I1 · 설계 G3a 정정).
+     * 적재기는 **box 사이드카의 본 시각**(`fetchedAtOf` = `checkedAt ?? fetchedAt`)을 **네 장 세트 전체의 판**으로 쓴다.
+     * 예전에는 여기서 안 바뀐 페이지를 `markSeen` 했다 — box 가 안 바뀌고 playbyplay 가 바뀌어 `held` 인 채
+     * 다른 페이지(예: index)가 실패하면 **box 의 `checkedAt` 만 지금으로 올라가**, 적재기의 판 가드가 「같거나 새 판」으로 보고
+     * **옛 playbyplay 를 그대로 적재**했다. `refetch_dates` 복구 중이면 타석·주자·격리가 **요약 0/0/0 인 채 조용히 옛 판으로** 돌아간다.
+     * 경기 페이지는 수집 창(날짜 단위)이 다시 받으므로 여기서 「봤다」를 안 남겨 잃는 것은 없다.
+     */
+    return prepared.map((p): PageResult => {
+      switch (p.kind) {
+        case "changed":
+          return heldResult(p);
+        case "unchanged":
+          return { key: p.key, url: p.url, outcome: "unchanged", status: p.status, error: null };
+        case "absent":
+          return { key: p.key, url: p.url, outcome: "absent", status: p.status, error: null };
+        case "failed":
+          return { key: p.key, url: p.url, outcome: "failed", status: p.status, error: p.error };
+      }
+    });
+  }
+
+  const set = gameSetId(prepared, deps.clock);
+  const out: PageResult[] = [];
+  let stopped = false;
+  for (const p of prepared) {
+    if (stopped) {
+      out.push(p.kind === "changed" ? heldResult(p) : { key: p.key, url: p.url, outcome: p.kind === "absent" ? "absent" : "unchanged", status: p.status, error: null });
+      continue;
+    }
+    const r = await commitPrepared(p, deps, { set });
+    out.push(r);
+    if (r.outcome === "failed") stopped = true;
   }
   return out;
 }
@@ -277,6 +395,7 @@ export function summarize(pages: readonly PageResult[]): Record<PageOutcome | "t
     unchanged: 0,
     absent: 0,
     failed: 0,
+    held: 0,
     total: pages.length,
   };
   for (const p of pages) acc[p.outcome] += 1;

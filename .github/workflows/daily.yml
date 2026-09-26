@@ -92,6 +92,16 @@ on:
     - cron: "30 6 * * *"
     - cron: "0 16 * * *"
   workflow_dispatch:
+    inputs:
+      refetch_dates:
+        # ⚠적재가 「옛 판 · 세트 불일치 · 본문 불일치」로 실패했을 때만 쓴다(docs/operations/deploy.md §7-E).
+        #   비워 두면 평소 수집과 같다. 값은 **환경변수로만** 넘긴다 — `run:` 에 직접 쓰면 셸 코드로 끼어든다.
+        # ⚠상한의 정본은 packages/store/src/refetch-limit.ts 의 MAX_REFETCH_DATES — 바꾸면 이 설명도 고친다
+        #   (YAML 은 그 값을 import 할 수 없어 아래 숫자는 손으로 맞춘다).
+        description: "다시 받을 경기일 YYYY-MM-DD (쉼표 구분 · 최대 7개). 평소에는 비워 둔다"
+        required: false
+        default: ""
+        type: string
 
 # ⚠**기본은 읽기다. 쓰기는 그것을 쓰는 잡에만 준다**(2026-08-25 · 감사 P3 #15).
 #   예전에는 여기가 `contents: write` 하나였고, 그러면 **체크아웃조차 안 하는 `decide` 까지**
@@ -420,6 +430,7 @@ jobs:
       - name: 수집·적재
         env:
           BB_ARCHIVER_CONTACT: ${{ secrets.BB_ARCHIVER_CONTACT }}
+          BB_REFETCH_DATES: ${{ inputs.refetch_dates }}
         # ⚠**쓰기 상한을 여기서만 푼다.** 적재는 아카이브 **전체**를 다시 훑으므로
         # (파서 수정이 옛 행에도 반영되게 하려는 의도) **4시즌이면 37만 행**이 나온다.
         # 기본값 10만은 D1 무료 한도라 **코드의 기본값은 그대로 둔다** — 나중에 D1으로

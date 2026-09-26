@@ -8,6 +8,17 @@
  *
  * ⚠**시계는 주입받는다**(M6). 여기서 `Date.now()` 를 부르면 자정 경계를 시험할 수 없다.
  */
+/**
+ * ⚠**배럴(`@bb-app/store`)이 아니라 잎 서브패스에서 가져온다**(감사 반영 I1).
+ * 이 파일은 `scripts/update.ts`(수집 오케스트레이터)가 import 하고, 그 스크립트는 경기·予告先発
+ * 수집을 각각 자식 프로세스로 격리해 **부분 실패를 전체 실패로 만들지 않는다.** 배럴로 가져오면
+ * parser·domain 까지 통째로 평가돼 그중 어디서든 로드 시점 오류가 나면 수집 시작 전에 죽는다.
+ * `scripts/test/refetch-wiring.test.ts` 가 배럴 import 를 정적으로 금지한다.
+ */
+import { MAX_REFETCH_DATES } from "@bb-app/store/refetch-limit";
+
+/** 재수집 날짜 상한 — 정본은 `packages/store/src/refetch-limit.ts`(M1). 이 파일에서 다시 쓴다 */
+export { MAX_REFETCH_DATES };
 
 /**
  * 오늘 것까지 받을 시각인가.
@@ -105,4 +116,33 @@ export function targetDates(
 
   const days = [...past, yesterday];
   return includeToday ? [...days, jstDate(now, 0)] : days;
+}
+
+/**
+ * `BB_REFETCH_DATES`(수동 실행 입력 `refetch_dates`)를 검증한다(설계 D4).
+ * ⚠**틀리면 아무것도 받지 않는다** — 반쯤 맞는 입력을 고쳐 읽지 않는다.
+ * ⚠셸로 넘어온 값이라 형식을 **정규식으로 먼저** 막는다(`;`·공백 명령 등).
+ * ⚠**날짜는 오름차순으로 정렬해 돌려준다** — 받는 순서와 로그가 날짜순이 되고, 「마지막 날짜 = 가장 늦은 대상일」이 늘 참이다.
+ *   ⚠~~予告先発 조회 시즌을 정한다~~ 는 **틀린 서술이었다**(2026-09-26 · 3중 검토 1차 P3 · 2차 F4).
+ *   `update.ts` 가 마지막 날짜로 정하는 것은 **앞으로의 일정**(`load-upcoming.ts`)의 시즌이고, 予告先発(`cli-starters.ts`)은 날짜를 받지 않는다.
+ *   그리고 **재수집 실행에서는 그 시즌을 JST 의 올해로 정한다**(재수집 날짜는 작년일 수 있다) — 여기 정렬이 시즌을 정하지 않는다.
+ */
+export function parseRefetchDates(raw: string | undefined): { ok: true; dates: string[] | null } | { ok: false; error: string } {
+  if (raw === undefined || raw.trim() === "") return { ok: true, dates: null };
+  const parts = raw.split(",").map((s) => s.trim());
+  if (parts.length > MAX_REFETCH_DATES) {
+    return { ok: false, error: `재수집 날짜는 ${MAX_REFETCH_DATES}개까지다(${parts.length}개) — L1` };
+  }
+  const seen = new Set<string>();
+  for (const p of parts) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(p)) return { ok: false, error: `YYYY-MM-DD 가 아니다: ${JSON.stringify(p)}` };
+    const [y, m, d] = p.split("-").map(Number) as [number, number, number];
+    const t = new Date(Date.UTC(y, m - 1, d));
+    if (t.getUTCFullYear() !== y || t.getUTCMonth() !== m - 1 || t.getUTCDate() !== d) {
+      return { ok: false, error: `없는 날짜다: ${p}` };
+    }
+    if (seen.has(p)) return { ok: false, error: `같은 날짜가 두 번 있다: ${p}` };
+    seen.add(p);
+  }
+  return { ok: true, dates: [...parts].sort() };
 }

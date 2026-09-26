@@ -74,7 +74,7 @@ await archiveDates(dates, { fetcher, sink, clock, schedule }, (day) => {
   if (day.gamesFound > 0 || s.failed > 0) {
     console.error(
       `${day.date}  경기 ${day.gamesFound}건 · 페이지 ${s.total}장 ` +
-        `(신규 ${s.stored} / 변경없음 ${s.unchanged} / 부재 ${s.absent} / 실패 ${s.failed})`,
+        `(신규 ${s.stored} / 변경없음 ${s.unchanged} / 부재 ${s.absent} / 실패 ${s.failed} / 보류 ${s.held})`,
     );
   }
   for (const p of day.pages) {
@@ -124,7 +124,7 @@ const total = summarize(all);
 console.error(
   `\n합계: ${dates.length}일 중 ${dates.length - daysFailed}일 처리 (경기 있는 날 ${daysWithGames}일) · ` +
     `월간 일정 취득 ${schedule.fetchCount}회 · ` +
-    `페이지 ${total.total}장 (신규 ${total.stored} / 변경없음 ${total.unchanged} / 부재 ${total.absent} / 실패 ${total.failed})`,
+    `페이지 ${total.total}장 (신규 ${total.stored} / 변경없음 ${total.unchanged} / 부재 ${total.absent} / 실패 ${total.failed} / 보류 ${total.held})`,
 );
 
 // ⚠`process.exit()`를 쓰지 마라. 네트워크 작업 뒤에 부르면 Windows에서 libuv가

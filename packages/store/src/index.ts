@@ -52,3 +52,7 @@ export { fetchedAtOf } from "./meta.ts";
 export { japanSeriesDecided, seasonIsOver } from "./season-over.ts";
 export { collectionEvidence } from "./collection-evidence.ts";
 export type { CollectionEvidenceReport } from "./collection-evidence.ts";
+export { MAX_REFETCH_DATES, judgeVersion, writeGameGuarded } from "./version-guard.ts";
+export type { GuardedWrite, VersionJudgement } from "./version-guard.ts";
+export { GAME_PAGE_LEAVES, checkIntegrity, checkSet, readGamePages } from "./page-integrity.ts";
+export type { GamePageLeaf, GamePages, PageCheck, PageFile } from "./page-integrity.ts";

@@ -23,7 +23,7 @@ import { canonicalTeamCode, competitionFromLabel, competitionOf } from "@bb-app/
 import { openDb } from "../src/db.ts";
 import { alignPaEvents } from "../src/align.ts";
 import { deriveRuns } from "../src/runs.ts";
-import { fetchedAtOf } from "../src/meta.ts";
+import { seenAtOf } from "../src/meta.ts";
 import { deriveBatting, derivePitching } from "../src/derive.ts";
 import type { QuarantineRow } from "../src/derive.ts";
 import {
@@ -38,6 +38,9 @@ import {
   upsertPlayer,
   upsertPlayerSeasonName,
 } from "../src/load.ts";
+import { MAX_REFETCH_DATES, judgeVersion, writeGameGuarded } from "../src/version-guard.ts";
+import { checkIntegrity, checkSet, readGamePages } from "../src/page-integrity.ts";
+import type { GamePages } from "../src/page-integrity.ts";
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -175,8 +178,47 @@ let failed = 0;
 let lineScoreFailed = 0;
 const lineScoreFailedIds: string[] = [];
 const quarantineKinds = new Map<string, number>();
+/**
+ * ⚠**적재하지 않은 경기 셋**(설계 D1·D3 · 2026-09-25). 셋 다 **종료 코드 1** 이다 — 사용자 결정:
+ * 옛 판을 만나면 실패로 끝내 배포를 막는다. 옛 판이 된 원인(보관소 업로드 부분 실패 · 백필 덧붙임)은
+ * **아카이브 자산 손실**이라 사람이 봐야 한다. 처치는 그 날짜 재수집이다(`docs/operations/deploy.md` §7-E).
+ */
+const staleArchive: { gameId: string; date: string }[] = [];
+const setMismatch: { gameId: string; date: string; reason: string }[] = [];
+const integrityMismatch: { gameId: string; date: string; reason: string }[] = [];
+
+/**
+ * 판 판정이 「쓰지 않는다」를 낸 경기의 처리 — **한 벌**이다. 사전 판정 · 미성립 쓰기 · 실시 쓰기 세 곳이 부른다.
+ * ⚠`stale` 은 실패가 아니라 **옛 판 목록**으로 센다(복구 안내가 그 목록에서 나온다) · `invalid-db` 는 판을 비교할 수
+ * 없으므로 **실패**다(fail-closed · 설계 D1 시각 규칙).
+ */
+function noteVersionSkip(outcome: "stale" | "invalid-db", meta: { gameId: string; gameDate: string }): void {
+  if (outcome === "stale") {
+    staleArchive.push({ gameId: meta.gameId, date: meta.gameDate });
+    return;
+  }
+  failed += 1;
+  console.error(`DB 의 취득 시각이 무효다 ${meta.gameId} — 판을 비교할 수 없어 건너뛴다(fail-closed)`);
+}
+
+/**
+ * 날짜별로 묶는다(날짜순 · 같은 날 안은 들어온 순서). 설계 D1-7 「경기 ID **전부**(날짜별로 묶어)」 —
+ * ⚠**자르지 않는다.** 잘린 목록은 복구할 경기를 조용히 빠뜨린다.
+ */
+function byDate<T extends { date: string }>(list: readonly T[]): [string, T[]][] {
+  const groups = new Map<string, T[]>();
+  for (const s of list) {
+    const g = groups.get(s.date);
+    if (g === undefined) groups.set(s.date, [s]);
+    else g.push(s);
+  }
+  return [...groups].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+}
 
 let stoppedAt: string | null = null;
+
+/** 경기 명단 한 줄의 값. 전역 표(`rosterLatest`)와 경기별 지역 목록(`localRoster`)이 같은 모양을 쓴다 */
+type RosterEntry = { date: string; throws: string; bats: string; uniformNumber: string | null; position: string };
 
 /**
  * 구장 조회표. **월간 일정 페이지**에서 만든다.
@@ -198,12 +240,20 @@ let stoppedAt: string | null = null;
  * ⚠**가장 최근 경기의 값을 쓴다.** 표기가 갈린 선수가 2명 있었고(스위치 전향 등),
  * 최근 값이 선수 페이지와 일치했다.
  */
-const rosterLatest = new Map<
-  string,
-  { date: string; throws: string; bats: string; uniformNumber: string | null; position: string }
->();
+const rosterLatest = new Map<string, RosterEntry>();
 let rosterFiles = 0;
 let rosterFailed = 0;
+
+/**
+ * ⚠**경기의 쓰기가 실제로 된 뒤에만 합친다**(설계 D1-6). 전에는 파싱하자마자 전역 표에 넣어서,
+ * 그 경기가 뒤에서 건너뛰어져도 명단은 선수 표(투타·배번·포지션 보충)로 흘러갔다.
+ */
+function mergeRoster(entries: readonly (readonly [string, RosterEntry])[]): void {
+  for (const [playerId, v] of entries) {
+    const prev = rosterLatest.get(playerId);
+    if (prev === undefined || prev.date <= v.date) rosterLatest.set(playerId, v);
+  }
+}
 
 const venueByGameId = new Map<string, string>();
 for await (const f of walkSchedules(archiveRoot)) {
@@ -235,14 +285,19 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
     break;
   }
 
-  let box;
-  let boxHtml: string;
+  // ⚠네 페이지를 **먼저 한 번** 읽는다 — 무결성 대조와 파싱이 같은 바이트를 본다(설계 D3)
+  // ⚠읽기 오류(권한 · 디렉터리 등 — 「없음」(ENOENT)은 오류가 아니다)는 **그 경기의 실패**다. 적재 전체를 멈추지 않는다 —
+  //   전에도 box·PBP 읽기 오류는 경기마다 잡혀 `failed` 로 셌다. 한 경기의 파일이 나머지 경기를 막으면 안 된다.
+  // ⚠**예전보다 엄격해진 곳이 있다**(의도): 예전에는 PBP 읽기 오류면 타석 없이 경기를 적재했고, roster 읽기 오류는
+  //   `ROSTER ERROR` 로 세기만 하고 경기를 적재했으며(`failed` 아님), index 는 아예 읽지 않았다.
+  //   지금은 **네 장 중 어느 것이든** ENOENT 아닌 읽기 오류면 **경기 전체를 건너뛰고 `failed`** 다 —
+  //   못 읽은 페이지는 무결성·세트 대조(설계 D3)를 할 수 없어서다.
+  let pages: GamePages;
   try {
-    boxHtml = gunzipSync(await readFile(file)).toString("utf8");
-    box = parseBoxScore(boxHtml);
+    pages = await readGamePages(dirname(file));
   } catch (err) {
     failed += 1;
-    console.error(`PARSE ERROR ${meta.gameId} — ${err instanceof Error ? err.message : String(err)}`);
+    console.error(`READ ERROR ${meta.gameId} — ${err instanceof Error ? err.message : String(err)}`);
     continue;
   }
 
@@ -258,23 +313,59 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
    *   적을 정직한 값이 없다 — 그래서 **그 경기를 건너뛰고 실패로 센다**(M7 「빈 값이 아니라 실패로」).
    *   실측(2026-08-24): 사이드카 **7,805/7,805** 가 읽힌다. **지금은 0건이 걸린다.**
    *   ⚠**걸리면 아카이버가 고장난 것**이다 — 조용히 넘기면 그걸 영영 모른다.
+   * ⚠**파일을 다시 읽지 않는다 — 위에서 읽은 스냅샷(`pages.box.meta`)에서 낸다**(2026-09-26 · 3중 검토 3차 P2).
+   *   예전에는 `fetchedAtOf(box.meta.json)` 로 **한 번 더** 읽었다. 그 사이에 아카이버가 사이드카를 바꾸면
+   *   무결성·세트 대조는 옛 스냅샷으로, 판 가드는 새 사이드카의 시각으로 해서 **대조한 판과 다른 판의 시각**이 들어갔다.
+   *   규칙은 `fetchedAtOf` 와 한 벌이다(`seenAtOf` · M1). `load-archive-wiring.test.ts` 가 이 모양을 지킨다.
    */
-  /**
-   * ⚠**여기는 `upsertProbablePitcher` 처럼 「더 새 판만 이긴다」로 하지 않는다** — 결정과 이유를 적는다.
-   *
-   * 予告先発 은 **한 경기일이 여러 파일에 걸려**(페이지가 하루 중에 다음날치로 넘어간다)
-   * 같은 행에 서로 다른 취득 시각이 들어와 순서가 값을 갈랐다. 그래서 거기는 방어가 필요했다.
-   * 경기는 **`game_id` 하나에 `box.html.gz` 하나**라 사이드카 시각도 하나뿐이다 —
-   * 몇 번을 다시 적재해도 같은 값이 들어온다(M5). **막을 경합이 없다.**
-   * ⚠**옛 아카이브로 되돌아가는 경우**는 `archive-guard` 가 앞에서 막는다(줄어들면 멈춘다).
-   */
-  const boxFetchedAt = fetchedAtOf(join(dirname(file), "box.meta.json"));
+  const boxFetchedAt = seenAtOf(pages.box.meta);
   if (boxFetchedAt === null) {
     failed += 1;
     console.error(
-      `취득 시각을 못 읽었다 ${meta.gameId} — ${join(dirname(file), "box.meta.json")}. ` +
-        "적재 시각으로 메우지 않는다(M11). 사이드카를 확인하라.",
+      `취득 시각을 못 읽었다 ${meta.gameId} — ${join(dirname(file), "box.meta.json")}` +
+        (pages.box.metaError === null ? "" : ` (${pages.box.metaError})`) +
+        ". 적재 시각으로 메우지 않는다(M11). 사이드카를 확인하라.",
     );
+    continue;
+  }
+
+  /**
+   * ⚠**옛 판이 새 판을 덮지 못하게 한다**(M5 · 2026-09-25 감사 C5 · 설계 D1).
+   *
+   * 예전 결정은 「경기는 `box.html.gz` 가 하나라 경합이 없고, 옛 아카이브 복원은 `archive-guard` 가 막는다」였다.
+   * ⚠**뒤의 전제가 거짓이었다** — `archive-guard` 는 파일 수 감소와 0.5% 넘는 바이트 감소만 본다.
+   * 보관소 업로드가 오늘 세대를 지운 뒤 실패하면 다음 실행이 **어제 세대 + 더 새 DB** 를 복원하고,
+   * 정정만 있던 날은 파일 수가 같아 통과한다. 백필 덧붙임이 옛 페이지를 덮어도 같다.
+   * 그러면 점수·안타가 과거로 돌아가고 `revision` 은 오른다 — 수집 창 밖이면 영영 안 돌아온다.
+   * → **모든 분기(대회·끝나지 않은 경기·미성립·명단)보다 앞에서** 판정하고, 쓰기 트랜잭션 안에서 **한 번 더** 한다.
+   * ⚠`upsertGame` 의 SQL 에 `WHERE` 를 다는 것으로는 안 된다 — 자식 행을 같은 트랜잭션에서 갈아 넣으므로 자식만 옛 판이 된다.
+   */
+  const pre = judgeVersion(db, meta.gameId, boxFetchedAt);
+  if (pre === "stale" || pre === "invalid-db") {
+    noteVersionSkip(pre, meta);
+    continue;
+  }
+
+  // ⚠본문 무결성을 세트보다 **먼저** 본다 — 본문이 사이드카와 안 맞으면 그 사이드카의 `set` 은 믿을 근거가 없다(설계 D3)
+  const integrity = checkIntegrity(pages);
+  if (!integrity.ok) {
+    integrityMismatch.push({ gameId: meta.gameId, date: meta.gameDate, reason: integrity.reason });
+    continue;
+  }
+  const setCheck = checkSet(pages);
+  if (!setCheck.ok) {
+    setMismatch.push({ gameId: meta.gameId, date: meta.gameDate, reason: setCheck.reason });
+    continue;
+  }
+
+  let box;
+  // 무결성을 통과했으므로 box 본문이 있다(순회가 `box.html.gz` 로 찾았고 사이드카와 sha 가 맞았다)
+  const boxHtml = pages.box.body!.toString("utf8");
+  try {
+    box = parseBoxScore(boxHtml);
+  } catch (err) {
+    failed += 1;
+    console.error(`PARSE ERROR ${meta.gameId} — ${err instanceof Error ? err.message : String(err)}`);
     continue;
   }
 
@@ -325,8 +416,7 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
   }
 
   if (box.status === "notPlayed") {
-    notPlayed += 1;
-    budget.games += db.transaction(() => {
+    const w = writeGameGuarded(db, meta.gameId, boxFetchedAt, () => {
       const n = upsertGame(db, {
         ...meta,
         status: "notPlayed",
@@ -352,6 +442,13 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
       db.raw.prepare("DELETE FROM quarantine WHERE game_id = ?").run(meta.gameId);
       return n;
     });
+    // ⚠아래 실시 경로와 같은 모양 — 성공 처리는 `written` 갈래 안에만 둔다(빠뜨릴 `continue` 가 없게)
+    if (w.outcome === "written") {
+      notPlayed += 1;
+      budget.games += w.value;
+    } else {
+      noteVersionSkip(w.outcome, meta);
+    }
     continue;
   }
 
@@ -371,7 +468,7 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
     awayErrors: null, homeErrors: null,
   };
   try {
-    const ls = parseLineScore(gunzipSync(await readFile(file)).toString("utf8"));
+    const ls = parseLineScore(boxHtml);
     result = {
       awayRuns: ls.awayTotal, homeRuns: ls.homeTotal,
       awayHits: ls.awayHits, homeHits: ls.homeHits,
@@ -396,7 +493,10 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
   if (!values["skip-events"]) {
     const pbpFile = file.replace(/box\.html\.gz$/, "playbyplay.html.gz");
     try {
-      const pbpHtml = gunzipSync(await readFile(pbpFile)).toString("utf8");
+      const pbpBody = pages.playbyplay.body;
+      // ⚠없으면 지금처럼 PBP 실패다(아래 catch · failed) — 경기는 타석 없이 적재된다
+      if (pbpBody === null) throw new Error(`playbyplay 가 없다: ${pbpFile}`);
+      const pbpHtml = pbpBody.toString("utf8");
       const pbp = parsePlayByPlay(pbpHtml);
       if (pbp.status === "played") {
         /**
@@ -427,22 +527,24 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
   }
 
   /**
-   * 명단(`roster.html`). ⚠**적재를 멈추지 않는다** — 이건 보충이지 본체가 아니다.
+   * 명단(`roster.html`). ⚠**없거나 파싱에 실패해도 적재를 멈추지 않는다** — 이건 보충이지 본체가 아니다.
    * 실패하면 세어서 마지막에 보고한다(0이 아닌 값이 나오면 마크업이 바뀐 것이다).
+   * ⚠**단 무결성 불일치(본문 sha · 사이드카 짝)는 예외다** — 위 `checkIntegrity` 가 **경기 전체**를 건너뛴다(설계 D3).
+   *   본문과 사이드카가 어긋났다는 것은 그 경기 폴더가 기록 도중 죽었다는 신호라, 명단만 빼고 적재할 근거가 없다.
+   * ⚠**여기서는 모으기만 한다** — 쓰기가 실제로 된 뒤에 `mergeRoster` 로 합친다(설계 D1-6).
    */
+  const localRoster: (readonly [string, RosterEntry])[] = [];
   {
     const rosterFile = file.replace(/box\.html\.gz$/, "roster.html.gz");
     try {
-      const html = gunzipSync(await readFile(rosterFile)).toString("utf8");
+      const body = pages.roster.body;
+      if (body === null) throw new Error(`roster 가 없다: ${rosterFile}`);
+      const html = body.toString("utf8");
       rosterFiles += 1;
       for (const e of parseGameRoster(html)) {
-        const prev = rosterLatest.get(e.playerId);
-        if (prev === undefined || prev.date <= meta.gameDate) {
-          rosterLatest.set(e.playerId, {
-            date: meta.gameDate, throws: e.throws, bats: e.bats, uniformNumber: e.uniformNumber,
-            position: e.position,
-          });
-        }
+        localRoster.push([e.playerId, {
+          date: meta.gameDate, throws: e.throws, bats: e.bats, uniformNumber: e.uniformNumber, position: e.position,
+        }]);
       }
     } catch (err) {
       rosterFailed += 1;
@@ -452,12 +554,12 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
     }
   }
 
-  played += 1;
   const quarantine: QuarantineRow[] = [];
 
   // ⚠경기 1건의 쓰기를 한 트랜잭션으로 묶는다. 개별 커밋은 느릴 뿐 아니라
   // 도중에 죽으면 **절반만 적재된 경기**를 남긴다.
-  db.transaction(() => {
+  // ⚠판정을 그 트랜잭션 **안에서 다시** 한다(`writeGameGuarded` · 설계 D1)
+  const written = writeGameGuarded(db, meta.gameId, boxFetchedAt, () => {
   /**
    * ⚠**재적재가 「줄어드는 방향」으로는 멱등이 아니었다**(M5 · 2026-08-18 감사 P2).
    * `upsertBatting`/`upsertPitching` 은 `(game_id, player_id)` 충돌 시 **갱신**만 한다 —
@@ -618,8 +720,17 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
 
   budget.quarantine += replaceQuarantine(db, meta.gameId, quarantine, nowIso);
   });
-
-  for (const q of quarantine) quarantineKinds.set(q.kind, (quarantineKinds.get(q.kind) ?? 0) + 1);
+  // ⚠성공 처리는 **`written` 갈래 안에만** 둔다(2026-09-26 최종 가지 검토 이월 1). 예전 모양은 `stale`·`invalid-db` 를
+  //   걸러 `continue` 하고 그 **아래**에 성공 처리를 뒀다 — `continue` 한 줄이 빠지면 쓰지 않은 경기가 `played` 로 세어지고
+  //   그 명단이 선수 표로 흘러가는데(설계 D1-6), 위치만 보던 배선 시험은 그 삭제를 못 잡았다. 갈래로 나누면 빠질 줄이 없다.
+  //   `load-archive-wiring.test.ts` 가 이 모양을 지킨다.
+  if (written.outcome === "written") {
+    played += 1;
+    mergeRoster(localRoster);
+    for (const q of quarantine) quarantineKinds.set(q.kind, (quarantineKinds.get(q.kind) ?? 0) + 1);
+  } else {
+    noteVersionSkip(written.outcome, meta);
+  }
 }
 
 /**
@@ -701,6 +812,45 @@ console.log(
     // ⚠**세어서 보여준다.** 안 보이면 「왜 오늘 경기가 없지?」에 답할 수 없다(M11·M12)
     (inProgress > 0 ? ` · 아직 진행 중 ${inProgress}건` : ""),
 );
+// ⚠**0 이어도 찍는다** — 「0건」과 「안 쟀음」을 가른다(설계 D1-8)
+console.log(
+  `옛 판 건너뜀 ${staleArchive.length}건 · 세트 불일치 ${setMismatch.length}건 · 본문 불일치 ${integrityMismatch.length}건`,
+);
+// ⚠**경기 ID 를 전부 · 날짜별로 찍는다**(설계 D1-7). 자르지 않는다 — 잘린 목록은 복구할 경기를 조용히 빠뜨린다
+if (staleArchive.length > 0) {
+  console.log(`⚠아카이브가 DB 보다 옛 판인 경기 ${staleArchive.length}건 — 적재하지 않았다(DB 를 지켰다)`);
+  for (const [date, games] of byDate(staleArchive)) console.log(`   ${date}: ${games.map((s) => s.gameId).join(", ")}`);
+}
+for (const [label, list] of [["세트 표식이 갈린 경기", setMismatch], ["본문이 사이드카와 안 맞는 경기", integrityMismatch]] as const) {
+  if (list.length === 0) continue;
+  console.log(`⚠${label} ${list.length}건 — 적재하지 않았다`);
+  for (const [date, games] of byDate(list)) {
+    console.log(`   ${date}:`);
+    for (const s of games) console.log(`      ${s.gameId} — ${s.reason}`);
+  }
+}
+{
+  const dates = [...new Set([...staleArchive, ...setMismatch, ...integrityMismatch].map((s) => s.date))].sort();
+  if (dates.length > 0) {
+    /**
+     * ⚠**한 줄에 `MAX_REFETCH_DATES`일까지 · 날짜는 전부**(설계 D1-7 · D4). 재수집 입력은 한 번에
+     * 그 상한만큼이다(L1 근거 · D4) — 넘으면 **줄을 나눠** 찍고 한 줄이 수동 실행 한 번이다.
+     * 앞 한 줄만 찍으면 나머지 날짜가 복구 목록에서 사라진다.
+     * ⚠**상한은 여기서 정하지 않는다**(M1) — `../src/refetch-limit.ts` 의 `MAX_REFETCH_DATES` 가
+     * import 없는 잎 파일의 유일한 정본이고(감사 반영 I1), `scripts/date-window.ts` 의
+     * `parseRefetchDates` 도 같은 값을 가져다 쓴다. 숫자를 여기 다시 적지 마라.
+     */
+    const perRun = MAX_REFETCH_DATES;
+    for (let i = 0; i < dates.length; i += perRun) {
+      console.log(`   복구: 수동 실행 입력 refetch_dates=${dates.slice(i, i + perRun).join(",")}`);
+    }
+    const runs = Math.ceil(dates.length / perRun);
+    console.log(
+      `   (${dates.length}일` + (runs > 1 ? ` · 위 ${runs}줄을 한 줄에 한 번씩 수동 실행` : "") +
+        ") 절차: docs/operations/deploy.md §7-E",
+    );
+  }
+}
 // ⚠**분모를 같이 낸다.** 「보충 122명」만 내면 그것이 전부인지 일부인지 모른다
 console.log(
   `명단 ${rosterFiles}장(실패 ${rosterFailed}) · 선수 ${rosterLatest.size}명 · ` +
@@ -744,4 +894,8 @@ db.close();
  * 로그는 아무 말도 하지 않는다. 이 프로젝트가 가장 두려워하는 「조용한 죽음」의 형태다.
  * ⚠**메시지는 이미 찍고 있었다**(재개 지점까지). 종료 코드만 그 사실을 안 말했다.
  */
-process.exitCode = failed > 0 || lineScoreFailed > 0 || stoppedAt !== null ? 1 : 0;
+process.exitCode =
+  failed > 0 || lineScoreFailed > 0 || stoppedAt !== null ||
+  staleArchive.length > 0 || setMismatch.length > 0 || integrityMismatch.length > 0
+    ? 1
+    : 0;
