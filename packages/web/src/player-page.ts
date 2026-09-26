@@ -1030,6 +1030,8 @@ const SPARK_DIGITS: Readonly<Record<SparkData["metric"], 2 | 3>> = { ops: 3, era
  * 속을 비운다(「꽉 찬 도형은 『이만큼이다』라는 단정」). 채움 유무는 **강제 색 모드에서도 남는다**
  * (`fill:none` 은 색이 아니라 강제 대상이 아니다 — forced-colors.test.ts).
  * ⚠**눌러 붙인 얇은 점은 크기를 말하지 않는다** — 방향(다른 달보다 위/아래)만 참이다. 크기는 이름과 표가 말한다.
+ * ⚠**속 빈 점의 뜻은 캡션 끝의 범례가 말한다**(`○＝30打席未満` · 얇은 달이 있을 때만 · PR-D 디자인 감사 P2).
+ *   얇은 점은 값이 극단이라 모서리를 차지하기 쉬워서, 뜻 없이 두면 「이상한 점」으로 읽힌다.
  * ⚠**믿을 수 있는 달이 둘 미만이면 그리지 않는다** — 얇은 점만 있는 그림은 선이 없는 그림이다.
  *
  * ⚠**선과 점의 색은 CSS 토큰(`.spark polyline` · `.spark circle` · `.spark circle.thin`)이 준다**
@@ -1082,7 +1084,13 @@ function sparkline(s: SparkData): RawHtml {
     ${thin.map((c) => html`<circle class="thin" cx="${c.x}" cy="${c.y}" r="2.4" fill="none" stroke="currentColor" stroke-width="1.2"></circle>`)}
     <circle cx="${last.x}" cy="${last.y}" r="2.4" fill="currentColor"></circle>
   </svg>
-  <span class="sl">${label}　${s.points[0]?.label ?? ""}→${s.points.at(-1)?.label ?? ""}</span>
+  <span class="sl">${label}　${s.points[0]?.label ?? ""}→${s.points.at(-1)?.label ?? ""}${
+    // ⚠**속 빈 점의 뜻을 화면이 말한다 — 얇은 달이 있을 때만**(2026-09-27 · PR-D 디자인 감사 P2).
+    //   얇은 달은 값이 극단이라 점이 상자 모서리를 차지하는데(약 73% 가 눈금 밖) 뜻은 이름에만 있었다.
+    //   ⚠**글자는 이름의 얇음 문구(`thinText`)와 한 벌이다**(M1).
+    //   ⚠**낭독에서는 뺀다** — 그림의 부호를 푸는 글자이고, 같은 뜻을 이름이 달마다 이미 말한다
+    thin.length === 0 ? null : html`　<span aria-hidden="true">○＝${thinText}</span>`
+  }</span>
 </div>`;
 }
 

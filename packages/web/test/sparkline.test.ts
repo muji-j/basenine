@@ -241,6 +241,47 @@ test("⚠N14 꺾은선의 선·점이 CSS 없이도 그려진다 — 기본 색 
   }
 });
 
+/** 꺾은선 밑 캡션(`.sl`) — 원문과, 태그를 걷은 글자 */
+function captionOf(box: string): { html: string; text: string } {
+  const at = box.indexOf('<span class="sl">');
+  assert.ok(at !== -1, "캡션(.sl)이 없다 — 이 시험이 잴 것이 없다");
+  const html = box.slice(at + '<span class="sl">'.length, box.lastIndexOf("</span>"));
+  return { html, text: html.replace(/<[^>]+>/g, "") };
+}
+
+/**
+ * ⚠**속 빈 점의 뜻이 화면에 없었다**(2026-09-27 · PR-D 디자인 감사 P2).
+ * 얇은 달은 표본이 작아 값이 극단이라 **점이 상자 모서리를 차지**하는데(얇은 점의 약 73% 가 눈금 밖),
+ * 그 뜻은 접근 가능한 이름에만 있었다. → **얇은 달이 있을 때만** 캡션 끝에 범례를 단다.
+ * ⚠**글자는 이름의 얇음 문구와 한 벌이다**(M1) — 따로 쓰면 문턱을 바꾼 날 둘이 갈린다.
+ */
+test("⚠속 빈 점의 뜻을 캡션이 말한다 — 얇은 달이 있을 때만 「○＝문턱」, 글자는 이름의 얇음 문구와 같다", () => {
+  const bat = sparkBox(render("ops", [
+    { label: "4月", value: 0.7, den: 100 },
+    { label: "5月", value: 0.8, den: 8 },
+    { label: "6月", value: 0.9, den: 100 },
+  ]))!;
+  const phrase = /・([^）]+)）$/.exec(nameOf(bat).months.find((m) => m.startsWith("5月"))!)?.[1];
+  assert.equal(phrase, `${THIN_SPLIT_PA}打席未満`, "이름의 얇음 문구를 못 읽었다 — 이 시험이 잴 것이 없다");
+  const cap = captionOf(bat);
+  assert.ok(cap.text.endsWith(`○＝${phrase}`), `얇은 달이 있는데 캡션에 범례가 없다: ${cap.text}`);
+  // ⚠**범례는 그림의 부호를 푸는 글자라 낭독에서 뺀다** — 같은 뜻을 이름이 달마다 이미 말한다
+  assert.match(cap.html, /<span aria-hidden="true">○＝/, `범례가 낭독에 한 번 더 들어간다: ${cap.html}`);
+
+  const pit = captionOf(sparkBox(render("era", [
+    { label: "4月", value: 3.0, den: 90 },
+    { label: "5月", value: 27 / 8, den: THIN_SPLIT_OUTS - 1 },
+    { label: "6月", value: 2.25, den: 60 },
+  ]))!);
+  assert.ok(pit.text.endsWith(`○＝${innings(THIN_SPLIT_OUTS)}回未満`), `투수 캡션의 범례가 문턱 상수와 다르다: ${pit.text}`);
+
+  const none = captionOf(sparkBox(render("ops", [
+    { label: "4月", value: 0.7, den: 100 },
+    { label: "5月", value: 0.9, den: 100 },
+  ]))!);
+  assert.ok(!none.text.includes("○"), `얇은 달이 없는데 범례가 있다: ${none.text}`);
+});
+
 /** 투수 月別 표의 한 행 — 표는 경기 단위 투구 성적(`pitching`)을 그리고, 이 줄은 키·라벨만 쓴다 */
 function monthRow(key: string, label: string): SplitRow {
   const line = { pa: 40, ab: 36, h: 9, double: 2, triple: 0, hr: 1, bb: 3, ibb: 0, hbp: 1, sf: 0, sh: 0, so: 8, roe: 0 };
