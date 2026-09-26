@@ -1892,6 +1892,35 @@ const chosenOf = (doc: ReturnType<typeof makeDocument>): [string, string] => [
   doc.getElementById("cmp-b-chosen")!.textContent,
 ];
 
+/**
+ * ⚠**기다리는 동안도 말한다**(M12 · 교차 모델 검토 P2). 복원은 색인을 기다리는데, 그 사이 화면이
+ * 서버가 그린 「未選択」·빈 비교 자리 그대로라 **「읽는 중」과 「아무도 안 골랐다」가 같은 화면**이었다 —
+ * 색인 응답이 멈추면 그 상태가 끝없이 간다. ⚠사용자가 고르면 그 안내는 **곧바로 걷힌다**(낡은 문구를 남기지 않는다).
+ */
+test("⚠W8 복원을 기다리는 동안 「読み込んでいます」를 말하고, 사용자가 고르면 걷는다", async () => {
+  const doc = buildCompare();
+  let release: () => void = () => assert.fail("색인 요청이 안 나갔다 — 이 시험이 공회전한다");
+  run(doc, {
+    routes: { "players.json": CMP_INDEX, "compare/p.json": { p1: card("p1", "山本") }, "compare/b.json": { b1: card("b1", "佐藤") } },
+    location: { search: "?a=p1&b=b1", href: "" },
+    hold: { "players.json": (r) => { release = r; } },
+  });
+  const out = doc.getElementById("cmpOut")!;
+  assert.match(out.textContent, /共有リンクの選手を読み込んでいます/, "기다리는 동안 아무 말도 없다 — 「읽는 중」이 「아무도 안 골랐다」와 같은 화면이다");
+  cpk(doc, "p2").fire("click"); // 사용자가 먼저 고른다
+  assert.doesNotMatch(out.textContent, /共有リンクの選手を読み込んでいます/, "사용자가 골랐는데 복원 안내가 남았다");
+  release();
+  await new Promise((r) => setTimeout(r, 10));
+  assert.doesNotMatch(out.textContent, /共有リンクの選手を読み込んでいます/, "응답이 온 뒤에도 안내가 남았다");
+});
+
+test("W8 복원 안내는 응답이 오면 걷힌다 — 비교 결과·없다 안내가 그 자리를 차지한다", async () => {
+  const { out: ok } = await landCompare("?a=p1&b=b1", { index: CMP_INDEX });
+  assert.doesNotMatch(ok, /共有リンクの選手を読み込んでいます/, "비교를 시작했는데 복원 안내가 남았다");
+  const { out: one } = await landCompare("?a=p1", { index: CMP_INDEX });
+  assert.doesNotMatch(one, /共有リンクの選手を読み込んでいます/, "한쪽만 되살리고 끝났는데 복원 안내가 남았다");
+});
+
 test("W8 유효한 쌍 — 두 사람을 되살리고 비교를 시작한다 · 없다/못 읽었다 안내는 없다", async () => {
   const { doc, out } = await landCompare("?a=p1&b=b1", { index: CMP_INDEX });
   assert.deepEqual(chosenOf(doc), ["山本（チーム）", "佐藤（チーム）"]);

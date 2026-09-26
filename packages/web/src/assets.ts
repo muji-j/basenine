@@ -4598,11 +4598,15 @@ if(cmpForm){
      ⚠cmpGen(비교 요청 세대)과 따로 둔다 — 그쪽은 **요청끼리의 순서**를 지키고, 이것은 **누가 골랐는가**를 지킨다.
      복원 자신은 setCmp 를 거치지 않으므로 이 세대를 올리지 않는다. */
   let userGen=0;
-  const setCmp=(side,p)=>{userGen++;setInput(side,p);show(side,p)};
+  /* 공유 링크 복원을 기다리는 동안의 안내(아래 복원 절). ⚠**사용자가 조작하면 곧바로 걷는다** —
+     그 사람의 선택이 화면의 주인이고, 낡은 「읽는 중」을 남기면 무엇을 기다리는지 모르게 된다(M12) */
+  let restoring=null;
+  const touch=()=>{userGen++;if(restoring&&restoring.remove)restoring.remove();restoring=null};
+  const setCmp=(side,p)=>{touch();setInput(side,p);show(side,p)};
   attachPicker($("#cmpA"),$("#cmpAHits"),(p)=>setCmp("a",p));
   attachPicker($("#cmpB"),$("#cmpBHits"),(p)=>setCmp("b",p));
   /* 검색창에 치기 시작한 것도 조작이다 — 복원이 setInput 으로 **친 글자를 지우면** 같은 덮어쓰기다 */
-  ["#cmpA","#cmpB"].forEach(s=>{const i=$(s);if(i)i.addEventListener("input",()=>{userGen++})});
+  ["#cmpA","#cmpB"].forEach(s=>{const i=$(s);if(i)i.addEventListener("input",touch)});
   /* 오늘 대전하는 두 팀에서 바로 고르기. **누른 순서대로 A → B에 들어간다** —
      어느 자리에 넣을지 먼저 묻는 화면으로 만들면 조작이 한 단계 늘어난다 */
   $$("#cmpToday [data-pick]").forEach(b=>b.addEventListener("click",()=>{
@@ -4838,7 +4842,7 @@ if(cmpForm){
   if(goBtn)goBtn.addEventListener("click",run);
   const swap=$("#cmpSwap");
   if(swap)swap.addEventListener("click",()=>{
-    userGen++;
+    touch();
     const t=chosen.a;setInput("a",chosen.b);setInput("b",t);
     const bb=chosen.b;show("a",bb);show("b",t);
     if(out&&out.firstChild)run();
@@ -4865,10 +4869,21 @@ if(cmpForm){
   const ia=qs("a"),ib=qs("b");
   if(ia||ib){
     const asked=userGen;
+    /* ⚠**기다리는 동안도 말한다**(M12 · 2026-09-26 교차 모델 검토). 안 그러면 서버가 그린 「未選択」·빈 비교 자리
+       그대로라 **「읽는 중」과 「아무도 안 골랐다」가 같은 화면**이다 — 색인 응답이 멈추면 그 상태가 끝없이 간다.
+       모양은 비교를 읽는 동안(run)과 같다. 사용자가 조작하면 touch() 가 걷는다 */
+    if(out){
+      out.textContent="";
+      restoring=el("section","cmpwrap");
+      restoring.appendChild(el("p","empty","共有リンクの選手を読み込んでいます…"));
+      out.appendChild(restoring);
+    }
     withIndex(idx=>{
       /* ⚠**기다리는 사이 사용자가 골랐으면 되살리지도, 말하지도 않는다**(C4 · 위 userGen 주석).
          그 사이 비교를 시작했다면 늦게 온 안내가 **그 결과를 덮는다** — 그래서 이 검사가 맨 앞이다 */
       if(userGen!==asked)return;
+      if(restoring&&restoring.remove)restoring.remove();
+      restoring=null;
       /* ⚠**「못 읽었다」와 「없다」를 다른 말로 한다**(M12 · 2026-09-25 감사 W8). 예전에는 둘 다
          아무 말 없이 돌아가서, 공유받은 사람은 링크가 고장났는지·그 선수가 없는지·읽는 중인지 몰랐다 */
       if(!idx){
