@@ -217,13 +217,63 @@ test("C8 · 투수 표 id 가 바뀐 페이지 → 기존 통산 행을 지키�
   }
 });
 
+/** 탭(`nav_p`)·구획(`stats_p`)·표(`tablefix_p`)의 id 를 **한꺼번에** 바꾼다 — 파서의 「탭·구획이 말하는가」 신호를 피해 간다 */
+const renameAllPitching = (h: string): string =>
+  h.replace('id="nav_p"', 'id="nav_x"').replace('id="stats_p"', 'id="stats_x"').replace('<table id="tablefix_p">', '<table id="tablefix_x">');
+
 /**
- * ⚠**파서의 신호를 전부 피해 가는 변이**다 — 탭(`nav_p`)·구획(`stats_p`)·표(`tablefix_p`)의 id 를 한꺼번에 바꾸면
- * 파서는 그 페이지를 「투수 표가 원래 없는 야수 페이지」로 읽는다(그 판단 자체는 옳다 — 신호가 없다).
- * 그래도 **있던 통산 행이 0행이 되는 것**은 원래 없음이 아니다 — 1군 기록은 사라지지 않는다.
+ * ⚠**3중 검토 3차 P2 의 재현 그대로다**(실물 `01005134` · 2026-09-26).
+ * **신규 투수**(있던 통산 행 0)에게 위 변이를 주면, 예전에는 파서가 투수 표를 「원래 없음」으로 읽어 빈 배열을 냈고
+ * 적재기의 「있던 표가 0행이면 실패」도 `had.pitching === 0` 이라 안 걸려 **투구 통산 0행 · 실패 0 · 종료 0** 이었다.
+ * 모든 표가 한꺼번에 바뀌면 기존 선수들에서 시끄럽게 잡히지만, **투수 표만** 바뀌면 그 뒤 신규 투수만 조용히 빈다.
+ * 이제 파서가 통계 구획의 **모르는 표**(`tablefix_x`)로 던진다. 원본으로 되돌려 다시 적재하면 정상으로 돌아온다.
+ */
+test("C8 · 신규 투수의 투수 표 탭·구획·표 id 가 한꺼번에 바뀌면 종료 1 · CAREER ERROR — 원본을 되돌려 재적재하면 종료 0", { skip }, async () => {
+  const env = await setup({ [PITCHER]: { fetchedAt: T_PITCHER } });
+  try {
+    // ⚠**적재 전에** 바꾼다 — 있던 통산 행이 없는 신규 선수의 모양이다
+    await mutatePage(env, PITCHER, renameAllPitching);
+    const r = load(env);
+    assert.equal(r.code, 1, `신규 투수의 투구 통산이 조용히 비었는데 종료 ${r.code} 다\n${r.err}`);
+    assert.match(r.err, new RegExp(`CAREER ERROR ${PITCHER} — .*모르는 표가 있다`));
+    assert.deepEqual(counts(env, PITCHER), { b: 0, p: 0 }, "실패한 선수의 통산이 반쪽만 들어갔다");
+
+    // 원본으로 되돌리면 다음 적재가 정상으로 끝난다 — 막힌 것은 그 페이지뿐이다
+    await copyFile(join(PLAYERS, `${PITCHER}.html.gz`), join(env.archive, "npb", "players", `${PITCHER}.html.gz`));
+    const again = load(env);
+    assert.equal(again.code, 0, again.out + again.err);
+    const c = counts(env, PITCHER);
+    assert.ok(c.b > 0 && c.p > 0, `원본을 재적재했는데 통산이 없다 — ${JSON.stringify(c)}`);
+  } finally {
+    await cleanup(env);
+  }
+});
+
+/** 같은 변이를 **기존 통산이 있는** DB 에 준다 — 기존 행은 그대로 남고 실패로 끝난다(이제 파서가 먼저 잡는다) */
+test("C8 · 기존 통산이 있는 투수의 투수 표 탭·구획·표 id 가 한꺼번에 바뀌어도 기존 행을 지키고 종료 1", { skip }, async () => {
+  const env = await setup({ [PITCHER]: { fetchedAt: T_PITCHER } });
+  try {
+    assert.equal(load(env).code, 0);
+    const before = counts(env, PITCHER);
+    assert.ok(before.p > 0);
+
+    await mutatePage(env, PITCHER, renameAllPitching);
+    const r = load(env);
+    assert.equal(r.code, 1, `있던 투구 행을 잃을 뻔했는데 종료 ${r.code} 다\n${r.err}`);
+    assert.match(r.err, new RegExp(`CAREER ERROR ${PITCHER} — .*모르는 표가 있다`));
+    assert.deepEqual(counts(env, PITCHER), before, "기존 통산 행이 사라졌다");
+  } finally {
+    await cleanup(env);
+  }
+});
+
+/**
+ * ⚠**파서가 원리적으로 못 가르는 변이**다 — 투수 표의 탭·구획·표를 **통째로 지우면** 그 페이지는
+ * 「투수 표가 원래 없는 야수 페이지」와 바이트 모양이 같다(모르는 표도 없다). 파서의 빈 배열은 그 판단으로는 옳다.
+ * 그래도 **있던 통산 행이 0행이 되는 것**은 원래 없음이 아니다 — 1군 기록은 사라지지 않는다. 적재기가 결과 쪽에서 막는다.
  * 실측(선수 페이지 스냅숏 8벌 · 1,644명 · 서로 다른 판 3,291개 사이의 전이 1,647개): 표가 있다가 없어진 전이 **0건**.
  */
-test("C8 · 투수 표의 탭·구획·표 id 가 한꺼번에 바뀌어도 있던 투구 행은 지킨다 — 있던 표가 0행이 되면 실패다", { skip }, async () => {
+test("C8 · 투수 표가 페이지에서 통째로 사라져도(야수 페이지와 같은 모양) 있던 투구 행은 지킨다 — 있던 표가 0행이면 실패", { skip }, async () => {
   const env = await setup({ [PITCHER]: { fetchedAt: T_PITCHER } });
   try {
     assert.equal(load(env).code, 0);
@@ -231,10 +281,11 @@ test("C8 · 투수 표의 탭·구획·표 id 가 한꺼번에 바뀌어도 있�
     assert.ok(before.p > 0);
 
     await mutatePage(env, PITCHER, (h) =>
-      h.replace('id="nav_p"', 'id="nav_x"').replace('id="stats_p"', 'id="stats_x"').replace('<table id="tablefix_p">', '<table id="tablefix_x">'));
+      h.replace(/<li id="nav_p"[^>]*>[^<]*<\/li>/, "")
+        .replace(/<div class="stats_table tab_unit" id="stats_p">[\s\S]*?<\/table>\s*<\/div>/, ""));
     const r = load(env);
     assert.equal(r.code, 1, `있던 투구 행을 잃었는데 종료 ${r.code} 다\n${r.err}`);
-    assert.match(r.err, new RegExp(`CAREER ERROR ${PITCHER}`));
+    assert.match(r.err, new RegExp(`CAREER ERROR ${PITCHER} — 있던 통산 표가 0행이 됐다`));
     assert.deepEqual(counts(env, PITCHER), before, "기존 통산 행이 사라졌다");
   } finally {
     await cleanup(env);

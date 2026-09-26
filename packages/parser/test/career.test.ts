@@ -8,7 +8,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { careerTotal, parseCareer, seasonsPlayed } from "../src/career.ts";
+import { CareerParseError, careerTotal, parseCareer, seasonsPlayed } from "../src/career.ts";
 
 /** 투수표의 投球回는 **중첩 표**로 온다 — 이 픽스처의 존재 이유가 그것이다 */
 const PITCH_INNINGS = `<td><table class="table_inning"><tbody><tr><th>28</th><td>.2</td></tr></tbody></table></td>`;
@@ -189,6 +189,39 @@ test("⚠탭만 남아도, 구획만 남아도 던진다", () => {
     .replace('<table id="tablefix_p">', '<table id="tablefix_pit">');
   assert.ok(!unitOnly.includes('id="nav_p"') && unitOnly.includes('id="stats_p"'), "픽스처가 의도한 모양이 아니다");
   assert.throws(() => parseCareer(unitOnly), /찾지 못했다/, "구획만 남았는데 안 던졌다");
+});
+
+/**
+ * ⚠**탭·구획·표 id 가 한꺼번에 바뀌면 위 신호는 그 표를 「원래 없음」으로 읽는다**(2026-09-26 · 3중 검토 3차 P2).
+ *
+ * 있던 통산 행이 있는 선수는 적재기의 「있던 표가 0행이면 실패」가 잡지만, **신규 투수**(있던 행 0)는
+ * 거기에도 안 걸려 **투구 통산 0행 · 실패 0 · 종료 0** 으로 조용히 빈다(검토자가 실물 01005134 로 재현).
+ * → 통계 구획(`#pc_stats`) 안에 **알려진 id(`tablefix_b`·`tablefix_p`)가 아닌 최상위 표**가 있으면 던진다.
+ * 실측(선수 페이지 파일 11,699장): 구획 안의 최상위 표는 그 둘뿐이다(모르는 표 0 · id 없는 표 0) —
+ * 중첩 표 38,950개는 전부 投球回의 `table_inning` 이라 최상위가 아니다.
+ */
+const renameAllPitching = (html: string): string =>
+  html.replace('id="nav_p"', 'id="nav_x"').replace('id="stats_p"', 'id="stats_x"').replace('<table id="tablefix_p">', '<table id="tablefix_x">');
+
+test("⚠탭·구획·표 id 가 한꺼번에 바뀌면 통계 구획의 「모르는 표」로 던진다", () => {
+  const moved = renameAllPitching(page());
+  assert.notEqual(moved, page(), "변이가 페이지를 안 바꿨다");
+  assert.throws(
+    () => parseCareer(moved),
+    (err: unknown) => err instanceof CareerParseError && /모르는 표가 있다/.test(err.message) && /tablefix_x/.test(err.message),
+    "id 가 한꺼번에 바뀌었는데 「원래 없음」으로 빈 배열을 냈다 — 신규 투수의 통산이 조용히 빈다",
+  );
+});
+
+test("⚠id 가 없는 표가 통계 구획에 생겨도 던진다", () => {
+  const idless = renameAllPitching(page()).replace('<table id="tablefix_x">', "<table>");
+  assert.throws(() => parseCareer(idless), /모르는 표가 있다/, "id 없는 표를 못 봤다");
+});
+
+/** ⚠**깊이를 센다** — 投球回 칸의 중첩 표(`table_inning`)는 알려진 표 **안**에 있으므로 모르는 표가 아니다 */
+test("중첩된 投球回 표(table_inning)는 모르는 표로 세지 않는다", () => {
+  assert.ok(page().includes('<table class="table_inning">'), "픽스처에 중첩 표가 없다 — 이 시험이 아무것도 안 잰다");
+  assert.doesNotThrow(() => parseCareer(page()));
 });
 
 /**

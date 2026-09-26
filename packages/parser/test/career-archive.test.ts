@@ -95,3 +95,33 @@ for (const [id, renamed] of [["tablefix_b", "tablefix_bat"], ["tablefix_p", "tab
     assert.deepEqual(falseAlarm, [], `${id} 가 원래 없는 ${lacked}장 중 ${falseAlarm.length}장이 던졌다`);
   });
 }
+
+/**
+ * ⚠**탭·구획·표 id 를 한꺼번에 바꾸는 변이**(2026-09-26 · 3중 검토 3차 P2) — 파서의 「탭·구획이 말하는가」 신호를
+ * 전부 피해 가므로, 예전에는 투수 표를 「원래 없음」으로 읽어 **조용히 빈 배열**이었다. 신규 투수는 적재기
+ * 불변식(있던 표가 0행)에도 안 걸린다. 이제 통계 구획의 **모르는 표**로 던진다.
+ */
+test("⚠투수 표의 탭·구획·표 id 를 한꺼번에 바꾸면 투수 페이지 **전부**가 「모르는 표」로 던진다", { skip }, () => {
+  let had = 0;
+  const silent: string[] = [];
+  const wrongError: string[] = [];
+  for (const p of PAGES) {
+    if (!hasTable(p.html, "tablefix_p")) continue;
+    had += 1;
+    const moved = p.html
+      .replace('id="nav_p"', 'id="nav_x"')
+      .replace('id="stats_p"', 'id="stats_x"')
+      .replace('<table id="tablefix_p">', '<table id="tablefix_x">');
+    try {
+      parseCareer(moved);
+      silent.push(p.id);
+    } catch (err) {
+      if (!(err instanceof CareerParseError) || !/모르는 표가 있다/.test(err.message)) {
+        wrongError.push(`${p.id}: ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`);
+      }
+    }
+  }
+  assert.ok(had > 0, "투수 표가 있는 페이지가 0장 — 이 시험이 아무것도 안 잰다");
+  assert.deepEqual(silent, [], `투수 페이지 ${had}장 중 ${silent.length}장이 조용히 빈 배열을 냈다 — 신규 투수의 통산이 빈다`);
+  assert.deepEqual(wrongError, [], `투수 페이지 ${had}장 중 ${wrongError.length}장이 「모르는 표」가 아닌 이유로 던졌다`);
+});
