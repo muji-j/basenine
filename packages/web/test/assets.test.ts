@@ -298,11 +298,20 @@ test("모션은 감소 설정에서 전부 꺼진다 — 애니메이션을 늘�
   assert.notEqual(block, "", "모션 감소 블록이 없다");
   assert.match(block, /\*,\*::before,\*::after/);
   // ⚠**값을 풀어서 잰다** — 리터럴을 찾으면 토큰으로 바뀌는 날 헛돈다(위 주석)
-  for (const prop of ["animation-duration", "transition-duration"] as const) {
-    const raw = new RegExp(`${prop}:([^;}]+?)!important`).exec(block)?.[1];
-    assert.ok(raw, `${prop} 를 !important 로 못 박지 않는다`);
-    assert.equal(resolve(raw, block), "1ms", `${prop} 가 감소 설정에서 1ms 로 풀리지 않는다`);
+  const raw = /animation-duration:([^;}]+?)!important/.exec(block)?.[1];
+  assert.ok(raw, "animation-duration 를 !important 로 못 박지 않는다");
+  assert.equal(resolve(raw, block), "1ms", "animation-duration 가 감소 설정에서 1ms 로 풀리지 않는다");
+  /**
+   * ⚠**전환은 못 박지 않는다 — 토큰이 맡는다**(2026-09-25 감사 W10 · 2026-09-27).
+   * 예전에는 여기서 `transition-duration` 의 못 박기까지 요구했는데, **그 못 박기가 결함이었다** —
+   * `transition-property` 의 초기값이 `all` 이라 전역 `transition-duration` 은 전환을 적지 않은
+   * 모든 요소에 transition:all 을 건다. 그래서 전환이 감소 설정에서 짧아지는 근거는 **토큰**이다:
+   * 모든 전환 시간이 이 토큰에서 나오는지는 `transitions.test.ts` 가 따로 잰다.
+   */
+  for (const tok of ["--t1", "--t2", "--t3"] as const) {
+    assert.equal(tokenValue(tok, block), "1ms", `${tok} 가 감소 설정에서 1ms 로 내려가지 않는다 — 전환이 감소를 무시한다`);
   }
+  assert.equal(tokenValue("--t-stagger", block), "0ms", "순번 지연이 감소 설정에서 0 이 되지 않는다");
 });
 
 test("구단 색은 CSS 변수로 받는다 — 색값이 스타일시트에 박혀 있지 않다", () => {

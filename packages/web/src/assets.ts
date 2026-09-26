@@ -2859,13 +2859,23 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
 /* ⚠**모션 감소의 분기가 이제 토큰에서 나온다**(1단계 · 2026-09-07). 아래 두 줄은 **같은 일을
    두 겹으로** 한다:
      ⑴ :root 가 시간 토큰을 내린다 → **토큰을 쓰는 모션은 앞으로 자동으로 따라온다**
-     ⑵ * 가 !important 로 못을 박는다 → **토큰을 안 거치는 모션까지 막는다**
+     ⑵ * 가 !important 로 못을 박는다 → **토큰을 안 거치는 애니메이션까지 막는다**
    ⚠**⑵ 를 지금 빼지 마라.** HIG 와 채택안 C 는 「끄지 말고 페이드로 바꾸라」고 하지만,
    그건 모션을 새로 설계하는 **2단계의 일**이다. 여기서 빼면 오늘 화면의 동작이 바뀐다.
-   ⚠**「1ms」를 두 번 적지 않는다** — ⑵ 가 ⑴ 의 토큰을 읽는다. 값은 한 곳에만 있다. */
+   ⚠**「1ms」를 두 번 적지 않는다** — ⑵ 가 ⑴ 의 토큰을 읽는다. 값은 한 곳에만 있다.
+   ⚠⚠**⑵ 에서 전환(transition-duration)은 뺐다**(2026-09-25 감사 W10 · 2026-09-27).
+   애니메이션은 animation-name 의 초기값이 none 이라 전역에 시간을 줘도 **없는 애니메이션이
+   생기지 않는다.** 전환은 반대다 — transition-property 의 초기값이 **all** 이라, 전역에 시간
+   하나만 줘도 **전환을 적지 않은 모든 요소가 transition:all 1ms** 가 됐다(감사 실측: 순위 화면
+   個人 탭 한 번에 max-width 전환 138건 · 감소 설정이 없으면 0건). 이 사이트가 금지하는
+   transition:all 을 **감소 모드에서만 거꾸로** 만들고 있었다.
+   ⚠**전환에는 ⑴ 만으로 충분하다** — 전환 시간은 전부 --t1~--t3 에서 나오고 여기서 1ms 가 된다.
+   리터럴 시간은 design-tokens 시험이, 감소 블록이 안 내리는 토큰은 transitions 시험이 막는다.
+   ⚠**transition-property 로 좁혀서 되살리지 마라** — 전역에 속성 목록을 적으면 각 요소가
+   이름으로 적어 둔 목록을 덮는다. 전역 선택자에는 전환 속성을 두지 않는다(transitions 시험). */
 @media (prefers-reduced-motion:reduce){
   :root{--t1:1ms;--t2:1ms;--t3:1ms;--t-stagger:0ms}
-  *,*::before,*::after{animation-duration:var(--t1)!important;animation-delay:var(--t-stagger)!important;transition-duration:var(--t1)!important}
+  *,*::before,*::after{animation-duration:var(--t1)!important;animation-delay:var(--t-stagger)!important}
 }
 /* ── 문서 간 전환 (2e · 2026-09-08) ────────────────────────────
    ⚠**감사의 「페이지 전환 애니메이션은 원리적으로 못 한다」는 낡은 판정이다.**
