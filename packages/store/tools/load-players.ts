@@ -41,6 +41,19 @@ const stmt = db.raw.prepare(
   //   **마지막에 도는 이쪽이 언제나 이겼다.** 「못 읽었다」와 「없다」를 같은 NULL 로 쓰면 안 된다.
   //   ⚠`COALESCE(?, col)` = 읽었으면 그 값, 못 읽었으면 **지금 값 그대로**.
   //   ⚠**권위는 여전히 여기다** — 읽은 값은 그대로 덮어쓴다(M1). 못 읽었을 때만 양보한다.
+  //
+  // ⚠**`profile_fetched_at` 은 「언제 받았나」다 — 「언제 적재했나」가 아니다**(M4 · 2026-09-26 감사 C7).
+  //   여기는 적재 시각(`nowIso`)을 넣고 있었다. 적재는 매일 아카이브 **전체**를 다시 훑으므로
+  //   8월에 받은 페이지가 매일 「오늘 받은 것」이 됐다 — 아래 통산 INSERT 는 사이드카 시각을 쓰는데
+  //   **같은 페이지의 같은 루프 안에서** 두 방식이 갈려 있었다.
+  //   → 통산 행과 **같은 값**(`fetchedAtOf` 한 벌)을 넣는다.
+  //   ⚠**사이드카를 못 읽으면(`null`) NULL 이다 — 이 칸에는 `COALESCE` 를 걸지 않는다**(M11 · 2026-09-26 3중 검토 2차 반영).
+  //     처음에는 `COALESCE(?, profile_fetched_at)` 로 **이전 시각을 남겼는데**, 같은 UPDATE 가 위 프로필 값은
+  //     **이번 페이지로** 덮어쓰므로 「값은 새 판 · 시각은 옛 판」이 됐다 — 그 시각은 값의 출처를 거짓으로 말한다(M4).
+  //     같은 페이지의 통산 행은 그때 NULL 이다. **모르면 모름**으로 한 벌을 맞춘다. 「지금」으로 메우지도 않는다.
+  //   ⚠**「옛 판이 새 판을 덮지 못하게」 하는 순서 가드는 넣지 않았다** — 이 시각은 **프로필 값·통산 행과 한 벌로**
+  //     움직여야 한다. 시각에만 가드를 걸면 값은 이번 페이지로 바뀌고 시각만 남아 **값과 시각이 갈린다.**
+  //     걸려면 이 UPDATE 전체와 통산 갈아 넣기를 함께 막아야 한다(범위 밖 — 경기 적재의 판 가드 `version-guard.ts` 가 그 모양이다).
   `UPDATE player SET position = COALESCE(?, position), throws = COALESCE(?, throws),
      bats = COALESCE(?, bats), birth_year = COALESCE(?, birth_year),
      physique = COALESCE(?, physique), draft = COALESCE(?, draft), kana = COALESCE(?, kana),
@@ -59,6 +72,9 @@ const stmt = db.raw.prepare(
 const CAREER_SOURCE = "npb.jp/bis/players (年度別成績)";
 const delBat = db.raw.prepare("DELETE FROM career_batting WHERE player_id = ?");
 const delPit = db.raw.prepare("DELETE FROM career_pitching WHERE player_id = ?");
+/** 지우기 **전에** 지금 몇 행을 갖고 있는지 — 「있던 표가 0행이 됐다」를 재는 분모다(감사 C8) */
+const hadBat = db.raw.prepare("SELECT COUNT(*) AS n FROM career_batting WHERE player_id = ?");
+const hadPit = db.raw.prepare("SELECT COUNT(*) AS n FROM career_pitching WHERE player_id = ?");
 const insBat = db.raw.prepare(
   `INSERT INTO career_batting (player_id, year, team, games, pa, ab, runs, h, d2, d3, hr, tb, rbi,
      sb, cs, sh, sf, bb, hbp, so, gidp, source, fetched_at, seq)
@@ -72,6 +88,12 @@ const insPit = db.raw.prepare(
 let careerBat = 0;
 let careerPit = 0;
 let careerFailed = 0;
+/**
+ * 통산 표가 **하나도 없던** 페이지(타격·투구 둘 다 0행 · 있던 행도 없음).
+ * ⚠**실패로 세지 않는다 — 대신 센다.** 1군 기록이 아직 없는 선수의 페이지가 이 모양일 수 있는데
+ *   그 실물을 본 적이 없다(보유 선수 페이지 파일 11,699장 중 0장 · 감사 C8). 「0장」과 「안 쟀음」을 가르려고 찍는다.
+ */
+let careerAbsent = 0;
 let metaMissing = 0;
 
 let updated = 0;
@@ -91,6 +113,8 @@ db.transaction(() => {
      *   메우면 두 가지가 동시에 망가진다: 화면이 그 날짜를 「진짜 취득일」이라 말하고,
      *   재취득 선정이 그것을 「가장 신선함」으로 읽어 **그 선수를 영영 다시 안 받는다.**
      *   그게 바로 이 커밋이 고치려던 사고다.
+     * ⚠**이 한 값을 프로필과 통산이 같이 쓴다**(2026-09-26 감사 C7). 통산 행은 선수 단위로 갈아 넣으므로
+     *   `null` 이 그대로 들어가고, 프로필의 `profile_fetched_at` 도 **`null` 이 그대로 들어간다**(위 SQL — 한 벌).
      */
     const fetchedAt = fetchedAtOf(join(dir, `${playerId}.meta.json`));
     if (fetchedAt === null) metaMissing += 1;
@@ -123,7 +147,8 @@ db.transaction(() => {
       profile.draft,
       profile.kana,
       profile.uniformNumber,
-      nowIso,
+      // ⚠**`nowIso` 가 아니다**(감사 C7) — 아래 통산 행과 같은 사이드카 시각. `null` 이면 NULL 이다(모르면 모름)
+      fetchedAt,
       playerId,
     );
     /**
@@ -153,6 +178,36 @@ db.transaction(() => {
        */
       db.savepoint(`career_${playerId}`, () => {
       const career = parseCareer(html);
+      /**
+       * ⚠**있던 통산 표가 0행이 되면 실패다**(2026-09-26 · 감사 C8).
+       *
+       * 표를 못 찾으면 예전 파서는 빈 배열을 냈고, 여기서 지운 뒤 아무것도 안 넣어 **통산이 조용히 사라지고 종료 0** 이었다.
+       * 파서는 이제 「그 표가 있다고 말하는데(탭·구획) 표가 없다」와 「통계 구획에 모르는 표가 있다」(id 가 한꺼번에
+       * 바뀐 경우)를 던진다. 그래도 **탭·구획·표가 통째로 사라진** 페이지는 야수 페이지와 모양이 같아 파서가 원리적으로
+       * 못 가른다. 그래서 **결과 쪽에서 한 번 더** 막는다 — **1군 기록은 사라지지 않는다.**
+       * 있던 표가 0행이 되는 것은 원래 없음이 아니라 **못 읽은 것**이다.
+       * ⚠**이 불변식은 있던 행이 있어야 운다** — 신규 선수는 못 지킨다. 그 몫은 파서의 「모르는 표」 검사다
+       *   (2026-09-26 · 3중 검토 3차 P2 — 처음에는 id 일괄 변경을 여기에만 맡겨 **신규 투수가 조용히 빌** 수 있었다).
+       * 실측(2026-09-26 · 선수 페이지 스냅숏 8벌 · 1,644명 · 서로 다른 판 3,291개 사이의 전이 1,647개):
+       * 표가 있다가 없어진 전이 **0건**(생긴 전이도 0건).
+       * ⚠던지면 위 `savepoint` 가 이 선수의 DELETE/INSERT 를 되돌려 **어제 값이 그대로 남는다** — 그리고 아래에서 센다.
+       * ⚠실패하면 종료 1 이라 배포가 막힌다 — 무엇을 확인하고 어떻게 푸는가는 런북 `docs/operations/deploy.md` §7-F.
+       */
+      const had = {
+        batting: (hadBat.get(playerId) as { n: number }).n,
+        pitching: (hadPit.get(playerId) as { n: number }).n,
+      };
+      const vanished = [
+        ...(had.batting > 0 && career.batting.length === 0 ? [`打撃成績 ${had.batting}행`] : []),
+        ...(had.pitching > 0 && career.pitching.length === 0 ? [`投手成績 ${had.pitching}행`] : []),
+      ];
+      if (vanished.length > 0) {
+        throw new Error(
+          `있던 통산 표가 0행이 됐다(${vanished.join(" · ")}) — 1군 기록은 사라지지 않는다. ` +
+            "표를 못 읽은 것이다(페이지 구조 변경 의심) · 기존 행을 지켰다",
+        );
+      }
+      if (career.batting.length === 0 && career.pitching.length === 0) careerAbsent += 1;
       delBat.run(playerId);
       delPit.run(playerId);
       for (const [i, r] of career.batting.entries()) {
@@ -177,7 +232,8 @@ db.transaction(() => {
 
 /** ⚠**세어 두고 안 쓰면 그것도 침묵이다.** 통산이 몇 줄 들어왔는지 보고한다 */
 console.error(
-  `年度別成績 타격 ${careerBat}행 · 투구 ${careerPit}행 · 실패 ${careerFailed}명 · 취득시각 결손 ${metaMissing}명`,
+  `年度別成績 타격 ${careerBat}행 · 투구 ${careerPit}행 · 실패 ${careerFailed}명 · ` +
+    `통산 표가 하나도 없는 페이지 ${careerAbsent}장 · 취득시각 결손 ${metaMissing}명`,
 );
 
 const total = (db.raw.prepare("SELECT COUNT(*) AS n FROM player").get() as { n: number }).n;

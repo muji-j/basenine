@@ -3,10 +3,11 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parsePaCell } from "@bb-app/parser";
-import type { BatterRow, PitcherRow } from "@bb-app/parser";
+import { OUTCOMES, parsePaCell } from "@bb-app/parser";
+import type { BatterRow, Outcome, PitcherRow } from "@bb-app/parser";
 import { listMigrations, openDb } from "../src/db.ts";
 import { deriveBatting, derivePitching } from "../src/derive.ts";
+import { foldOutcomes } from "../src/fold.ts";
 import { replaceQuarantine, upsertBatting, upsertGame, upsertPlayer } from "../src/load.ts";
 import type { GameRow } from "../src/load.ts";
 
@@ -78,6 +79,8 @@ test("마이그레이션은 재실행해도 안전하다", async () => {
 test("타석 셀에서 볼넷·삼진·장타를 센다", () => {
   const d = deriveBatting("g", "away", batter(["左越本②", "四 球", "三 振", "左線２"], { ab: 3, hits: 2, rbi: 2 }));
   assert.ok(d);
+  // ⚠링크를 못 읽은 행은 `row: null`(격리만)이다(감사 C9) — 여기는 적재되는 행이어야 한다
+  assert.ok(d.row);
   assert.equal(d.row.pa, 4);
   assert.equal(d.row.ab, 3);
   assert.equal(d.row.h, 2);
@@ -92,6 +95,8 @@ test("타석 셀에서 볼넷·삼진·장타를 센다", () => {
 test("⚠내야 희생번트 3종이 전부 sh로 모인다", () => {
   const d = deriveBatting("g", "away", batter(["投犠打", "投犠野", "投犠失"], { ab: 0 }));
   assert.ok(d);
+  // ⚠링크를 못 읽은 행은 `row: null`(격리만)이다(감사 C9) — 여기는 적재되는 행이어야 한다
+  assert.ok(d.row);
   assert.equal(d.row.sh, 3);
   assert.equal(d.row.ab, 0, "희생타는 타수가 아니다");
 });
@@ -108,6 +113,8 @@ test("⚠내야 희생번트 3종이 전부 sh로 모인다", () => {
 test("⚠외야 犠失은 sf로 간다 — sh로 접으면 출루율이 조용히 높아진다", () => {
   const d = deriveBatting("g", "away", batter(["中犠失", "右犠失", "左犠失"], { ab: 0 }));
   assert.ok(d);
+  // ⚠링크를 못 읽은 행은 `row: null`(격리만)이다(감사 C9) — 여기는 적재되는 행이어야 한다
+  assert.ok(d.row);
   assert.equal(d.row.sf, 3, "외야 犠失을 희생플라이로 세지 않았다");
   assert.equal(d.row.sh, 0, "외야 犠失이 희생번트에 섞였다");
   assert.equal(d.row.ab, 0, "희생타는 타수가 아니다");
@@ -117,6 +124,8 @@ test("⚠외야 犠失은 sf로 간다 — sh로 접으면 출루율이 조용�
 test("한 선수의 내야·외야 犠失이 각각 sh·sf로 갈린다", () => {
   const d = deriveBatting("g", "away", batter(["投犠失", "中犠失"], { ab: 0 }));
   assert.ok(d);
+  // ⚠링크를 못 읽은 행은 `row: null`(격리만)이다(감사 C9) — 여기는 적재되는 행이어야 한다
+  assert.ok(d.row);
   assert.equal(d.row.sh, 1);
   assert.equal(d.row.sf, 1);
 });
@@ -124,6 +133,8 @@ test("한 선수의 내야·외야 犠失이 각각 sh·sf로 갈린다", () => 
 test("⚠고의사구는 bb에도 ibb에도 들어간다", () => {
   const d = deriveBatting("g", "away", batter(["敬遠四", "四 球"], { ab: 0 }));
   assert.ok(d);
+  // ⚠링크를 못 읽은 행은 `row: null`(격리만)이다(감사 C9) — 여기는 적재되는 행이어야 한다
+  assert.ok(d.row);
   assert.equal(d.row.bb, 2, "BB는 고의사구를 포함한다");
   assert.equal(d.row.ibb, 1, "wOBA는 BB−IBB를 쓴다");
 });
@@ -131,6 +142,8 @@ test("⚠고의사구는 bb에도 ibb에도 들어간다", () => {
 test("⚠낫아웃 출루는 삼진으로 세되 타수에도 들어간다", () => {
   const d = deriveBatting("g", "away", batter(["振逃"], { ab: 1 }));
   assert.ok(d);
+  // ⚠링크를 못 읽은 행은 `row: null`(격리만)이다(감사 C9) — 여기는 적재되는 행이어야 한다
+  assert.ok(d.row);
   assert.equal(d.row.so, 1);
   assert.equal(d.row.ab, 1);
   assert.equal(d.row.h, 0);
@@ -139,14 +152,50 @@ test("⚠낫아웃 출루는 삼진으로 세되 타수에도 들어간다", () 
 test("⚠실책 출루를 센다 — wOBA 공식 산식이 요구한다", () => {
   const d = deriveBatting("g", "away", batter(["三ゴ失", "遊ゴ失①"], { ab: 2, rbi: 1 }));
   assert.ok(d);
+  // ⚠링크를 못 읽은 행은 `row: null`(격리만)이다(감사 C9) — 여기는 적재되는 행이어야 한다
+  assert.ok(d.row);
   assert.equal(d.row.roe, 2);
   assert.equal(d.row.ab, 2, "실책 출루는 타수다");
   assert.equal(d.row.h, 0, "실책 출루는 안타가 아니다");
 });
 
-test("팀 합계 행과 ID 없는 행은 적재 대상이 아니다", () => {
+test("팀 합계 행은 적재 대상이 아니다", () => {
   assert.equal(deriveBatting("g", "away", batter([], { isTeamTotal: true })), null);
-  assert.equal(deriveBatting("g", "away", batter([], { playerId: null })), null);
+});
+
+/**
+ * ⚠**선수 링크를 못 읽은 행은 버리지 않고 격리한다**(2026-09-26 · 감사 C9).
+ *
+ * 예전에는 `null` 을 돌려 적재기가 격리 **전에** `continue` 했다 — 이름은 있는데 그 행이 통째로 사라지고
+ * 흔적이 없었다. 이 자리의 옛 시험(「ID 없는 행은 적재 대상이 아니다」 → `null`)이 **그 침묵을 고정하고 있었다.**
+ * ⚠**이름으로 조인하지 않는다**(M10) — 그래서 적재는 하지 않고(`row: null`), 원문(이름·팀·경기)을 격리에 남긴다.
+ */
+test("⚠선수 링크를 못 읽은 타자 행은 적재하지 않고 격리한다 — 이름·팀·경기를 남긴다", () => {
+  const d = deriveBatting(
+    "2026/0815/b-f-20",
+    "away",
+    batter(["左飛"], { playerId: null, name: "山田", ab: 1, order: "3", position: "(遊)" }),
+  );
+  assert.ok(d, "링크 없는 행이 흔적 없이 사라졌다(null)");
+  assert.equal(d.row, null, "이름으로 조인할 수 없는 행을 적재했다(M10)");
+  assert.equal(d.quarantine.length, 1);
+  const q = d.quarantine[0]!;
+  assert.equal(q.kind, "unlinkedPlayer");
+  assert.equal(q.gameId, "2026/0815/b-f-20");
+  assert.equal(q.playerId, null);
+  assert.equal(q.raw, "山田", "원문 이름을 안 남겼다");
+  assert.match(q.detail ?? "", /先攻/, "어느 팀의 행인지 안 남겼다");
+  assert.match(q.detail ?? "", /打順3/);
+});
+
+/** 이름까지 비어도 조용히 버리지 않는다 — 보유 박스에는 0행이지만(비합계 타자 211,862 · 투수 63,315) 생기면 보여야 한다 */
+test("⚠이름도 링크도 없는 비합계 행도 격리한다", () => {
+  const d = deriveBatting("g", "home", batter([], { playerId: null, name: "" }));
+  assert.ok(d);
+  assert.equal(d.row, null);
+  assert.equal(d.quarantine[0]!.kind, "unlinkedPlayer");
+  assert.match(d.quarantine[0]!.detail ?? "", /後攻/);
+  assert.match(d.quarantine[0]!.detail ?? "", /名前も空/);
 });
 
 test("⚠npb.jp 합계와 어긋나면 격리한다 — 조용히 넘기지 않는다", () => {
@@ -155,6 +204,48 @@ test("⚠npb.jp 합계와 어긋나면 격리한다 — 조용히 넘기지 않�
   const kinds = d.quarantine.map((q) => q.kind);
   assert.ok(kinds.includes("abMismatch"));
   assert.ok(kinds.includes("hitMismatch"));
+});
+
+/**
+ * ⚠**결과 하나 = 타석 하나 = 많아야 한 칸**(2026-09-26 · 감사 C11).
+ *
+ * `deriveBatting` 에는 「ab+bb+hbp+sf+sh 가 pa 를 넘으면 격리한다」는 가드가 있었다. **이 성질 때문에
+ * 발화할 수 없었다** — 결과 하나는 타석 1 과 함께 많아야 한 칸에 들어가므로 합이 타석을 넘을 수 없다
+ * (반증자 실측: 23종 결과 낱개로 0/23). 가드를 지운 대신 **그 성질을 여기서 표로 고정한다.**
+ * ⚠**표가 곧 규칙이다** — 각 결과가 **어느 칸에** 들어가는지까지 적는다. 「많아야 한 칸」만 보면
+ *   `sacFly` 가 `sh` 로 옮겨 가도(출루율 분모가 바뀐다) 초록이다.
+ * ⚠`Record<Outcome, …>` 라 새 분류를 더하면 **이 표를 채울 때까지 컴파일이 멈춘다**(tokens.ts·fold.ts 의 `never` 분기와 짝).
+ * ⚠`ibb` 는 칸이 아니다 — `bb` 의 부분집합이라 고의사구는 `bb` 한 칸이다.
+ */
+const BUCKET: Readonly<Record<Outcome, "ab" | "bb" | "hbp" | "sf" | "sh" | null>> = {
+  single: "ab", double: "ab", triple: "ab", homerun: "ab",
+  walk: "bb", intentionalWalk: "bb", hitByPitch: "hbp",
+  strikeout: "ab", strikeoutReached: "ab",
+  sacFly: "sf", sacFlyError: "sf", sacBunt: "sh", sacBuntFieldersChoice: "sh", sacBuntError: "sh",
+  // ⚠타격방해·주루방해 출루는 **어느 칸에도 안 들어간다** — 타석이지만 타수도 사사구도 희생도 아니다
+  interference: null, obstruction: null,
+  // ⚠수비방해 아웃·규칙 위반 아웃은 **타수**다(위 둘과 이름이 닮았지만 방향이 반대다)
+  interferenceOut: "ab", ruleViolationOut: "ab",
+  reachedOnError: "ab", fieldersChoice: "ab", groundedIntoDoublePlay: "ab", fieldedOut: "ab",
+  // 모르는 결과는 자리를 모른다 — 타석만 센다(M11 · unknownToken 격리가 그것을 말한다)
+  unknown: null,
+};
+
+test("⚠OUTCOMES 전량: 결과 하나는 정확히 타석 1 이고, ab·bb·hbp·sf·sh 중 많아야 한 칸(표의 그 칸)에만 들어간다", () => {
+  assert.deepEqual(Object.keys(BUCKET).sort(), [...OUTCOMES].sort(), "표가 OUTCOMES 와 갈렸다");
+  const wrong: string[] = [];
+  for (const outcome of OUTCOMES) {
+    const { line } = foldOutcomes([{ outcome, count: 1, rbi: 0 }]);
+    if (line.pa !== 1) wrong.push(`${outcome}: 타석 ${line.pa}`);
+    const got = { ab: line.ab, bb: line.bb, hbp: line.hbp, sf: line.sf, sh: line.sh };
+    const want = { ab: 0, bb: 0, hbp: 0, sf: 0, sh: 0 };
+    const slot = BUCKET[outcome];
+    if (slot !== null) want[slot] = 1;
+    const filled = got.ab + got.bb + got.hbp + got.sf + got.sh;
+    if (filled > 1) wrong.push(`${outcome}: ${filled}칸에 들어갔다`);
+    if (JSON.stringify(got) !== JSON.stringify(want)) wrong.push(`${outcome}: ${JSON.stringify(got)} — 표는 ${slot ?? "칸 없음"}`);
+  }
+  assert.deepEqual(wrong, [], `결과 ${OUTCOMES.length}종 중 ${wrong.length}건이 어긋났다`);
 });
 
 test("⚠모르는 토큰은 격리되고 원문이 보존된다", () => {
@@ -187,6 +278,23 @@ const PITCHER: PitcherRow = {
 test("⚠투수 팀 합계 행은 적재 대상이 아니다", () => {
   assert.equal(derivePitching("g", "away", { ...PITCHER, isTeamTotal: true }), null);
   assert.ok(derivePitching("g", "away", PITCHER));
+});
+
+/**
+ * ⚠**투수는 교차 확인이 없다**(감사 C9) — 타자는 경과(playbyplay)와 타석 수를 맞대는 `paMismatch` 가 간접으로 잡지만,
+ * 투수 줄은 빠져도 팀 투구회·방어율이 **조용히 줄 뿐**이다. 그래서 여기서 반드시 격리한다.
+ */
+test("⚠선수 링크를 못 읽은 투수 행도 적재하지 않고 격리한다", () => {
+  const d = derivePitching("2026/0815/b-f-20", "home", { ...PITCHER, playerId: null });
+  assert.ok(d, "링크 없는 투수 행이 흔적 없이 사라졌다(null)");
+  assert.equal(d.row, null);
+  assert.equal(d.quarantine.length, 1);
+  const q = d.quarantine[0]!;
+  assert.equal(q.kind, "unlinkedPlayer");
+  assert.equal(q.playerId, null);
+  assert.equal(q.raw, PITCHER.name);
+  assert.match(q.detail ?? "", /後攻/);
+  assert.match(q.detail ?? "", /投手/);
 });
 
 test("투수 행을 아웃 카운트로 적재한다", () => {
@@ -332,7 +440,8 @@ test("타격 행 재적재는 갱신이지 추가가 아니다", async () => {
   await withDb((db) => {
     upsertGame(db, GAME);
     upsertPlayer(db, "12345678", "テスト", NOW);
-    const d = deriveBatting(GAME.gameId, "away", batter(["三 振"], { ab: 1 }))!;
+    const d = deriveBatting(GAME.gameId, "away", batter(["三 振"], { ab: 1 }));
+    assert.ok(d?.row);
     upsertBatting(db, d.row);
     upsertBatting(db, { ...d.row, h: 1 });
     const rows = db.raw.prepare("SELECT h FROM batting_line").all() as { h: number }[];
@@ -357,7 +466,9 @@ test("⚠격리는 경기 단위로 교체된다 — 재적재해도 쌓이지 �
 test("⚠존재하지 않는 경기의 타격 행은 외래키가 막는다", async () => {
   await withDb((db) => {
     upsertPlayer(db, "12345678", "テスト", NOW);
-    const d = deriveBatting("없는경기", "away", batter(["三 振"], { ab: 1 }))!;
-    assert.throws(() => upsertBatting(db, d.row), /FOREIGN KEY|constraint/i);
+    const d = deriveBatting("없는경기", "away", batter(["三 振"], { ab: 1 }));
+    assert.ok(d?.row);
+    const row = d.row;
+    assert.throws(() => upsertBatting(db, row), /FOREIGN KEY|constraint/i);
   });
 });

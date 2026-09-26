@@ -196,6 +196,78 @@ function topRows(bodyHtml: string): string[] {
   return out;
 }
 
+/**
+ * 표 하나의 **이름표** — 표 id 와, 그 표가 있다고 페이지가 말하는 두 자리.
+ *
+ * 실물 뼈대(`npb.jp/bis/players/{id}.html`):
+ * ```html
+ * <div id="pc_stats_nav"><ul>
+ *   <li id="nav_p" class="tab_btn current">投手成績</li>
+ *   <li id="nav_b" class="tab_btn ">打撃成績</li>
+ * </ul></div>
+ * <div id="pc_stats_wrapper">
+ *   <div class="stats_table tab_unit" id="stats_p"><table id="tablefix_p">…</table></div>
+ *   <div class="stats_table tab_unit" id="stats_b"><table id="tablefix_b">…</table></div>
+ * </div>
+ * ```
+ */
+const TABLE_SPEC = {
+  batting: { table: "tablefix_b", tab: "nav_b", unit: "stats_b" },
+  pitching: { table: "tablefix_p", tab: "nav_p", unit: "stats_p" },
+} as const;
+type TableSpec = (typeof TABLE_SPEC)[keyof typeof TABLE_SPEC];
+
+/**
+ * 이 페이지가 **그 표가 있다고 말하는가** — 탭(`<li id="nav_p">`)이나 구획(`<div id="stats_p">`) 중 하나라도.
+ *
+ * ⚠**「표가 원래 없다」와 「표를 못 찾았다」를 이것으로 가른다**(2026-09-26 · 감사 C8).
+ * 야수 페이지에는 투수 표가 **원래 없다** — 그때는 탭도 구획도 없다. 표 id 만 바뀌었다면 탭과 구획은 남는다.
+ * 실측(2026-09-26): 선수 페이지 파일 **11,699장**(로컬 아카이브 980 · 옛 로컬 사본 858 · CI 세대 사본 6벌 9,861 —
+ * 같은 선수가 여러 벌에 겹친다 · 서로 다른 선수 1,644명 · 서로 다른 판 3,291개)에서 탭·구획·표가
+ * **셋 다 있거나 셋 다 없다** — 어긋난 페이지 **0장**. 모양은 둘뿐이다(두 표 6,275장 · 타격 표만 5,424장).
+ * ⚠**id 로만 본다 — 글자(「投手成績」)로 보지 않는다.** 사이트 공통 메뉴에 그 낱말이 생기는 날
+ *   야수 페이지 전부가 「투수 표가 있다」가 되어 헛실패가 난다. id 는 이 구획에만 있다.
+ */
+function declares(html: string, spec: TableSpec): boolean {
+  return new RegExp(`<li\\b[^>]*\\bid="${spec.tab}"`).test(html)
+    || new RegExp(`<div\\b[^>]*\\bid="${spec.unit}"`).test(html);
+}
+
+/** 통계 구획에 있어도 되는 최상위 표 — `TABLE_SPEC` 에서 낸다(한 벌) */
+const KNOWN_TABLE_IDS: ReadonlySet<string> = new Set(Object.values(TABLE_SPEC).map((s) => s.table));
+
+/**
+ * 통계 구획(`<section id="pc_stats">`) 안의 **모르는 최상위 표** — id 가 알려진 것(`tablefix_b`·`tablefix_p`)이 아니거나 없는 표.
+ *
+ * ⚠**`declares` 가 못 막는 구멍을 막는다**(2026-09-26 · 3중 검토 3차 P2). 탭·구획·표의 id 가 **한꺼번에** 바뀌면
+ * `declares` 는 거짓이라 그 표를 「원래 없음」으로 읽는다. 있던 통산 행이 있는 선수는 적재기의 「있던 표가 0행이면 실패」가
+ * 잡지만 **신규 선수**(있던 행 0)는 거기에도 안 걸려 **조용히 빈다** — 투수 표만 바뀌면 그 뒤 신규 투수만 빈다.
+ * 표 자체는 여전히 구획 안에 있으므로, **구획 안에 모르는 표가 있다**가 그 변경의 흔적이다.
+ * ⚠**깊이를 센다** — 投球回 칸은 표 안에 표(`table_inning`)를 품는다. 그건 알려진 표 **안**이라 최상위가 아니다.
+ * 실측(선수 페이지 파일 11,699장): 구획은 전부 있고, 그 안의 최상위 표는 `tablefix_b`(5,424장) 또는 그 둘(6,275장)뿐 —
+ *   **모르는 표 0 · id 없는 표 0** · 중첩 표 38,950개는 전부 `table_inning` · 구획 안에 중첩 `<section>` 0.
+ * ⚠**구획이 없으면 빈 목록이다** — 1군 기록이 아직 없는 선수의 페이지 모양을 실물로 본 적이 없어서다(`parseTable` 주석).
+ */
+function unknownStatsTables(html: string): string[] {
+  const section = /<section\b[^>]*\bid="pc_stats"[^>]*>([\s\S]*?)<\/section>/.exec(html)?.[1];
+  if (section === undefined) return [];
+  const out: string[] = [];
+  let depth = 0;
+  for (const m of section.matchAll(/<(\/?)table\b([^>]*)>/g)) {
+    if (m[1] === "/") {
+      depth -= 1;
+      continue;
+    }
+    if (depth === 0) {
+      const id = /\bid="([^"]*)"/.exec(m[2] ?? "")?.[1];
+      if (id === undefined) out.push("(id 없음)");
+      else if (!KNOWN_TABLE_IDS.has(id)) out.push(id);
+    }
+    depth += 1;
+  }
+  return out;
+}
+
 function rowsOf(tableHtml: string): { head: string[]; body: string[][] } {
   const head = [...(/<thead>([\s\S]*?)<\/thead>/.exec(tableHtml)?.[1] ?? "").matchAll(/<th[^>]*>([\s\S]*?)<\/th>/g)]
     .map((m) => strip(m[1] ?? ""));
@@ -216,13 +288,44 @@ function rowsOf(tableHtml: string): { head: string[]; body: string[][] } {
  */
 function parseTable<T>(
   html: string,
-  id: string,
+  spec: TableSpec,
   keys: Readonly<Record<string, string>>,
   make: (year: number, team: string, get: (label: string) => number | null, cellOf: (label: string) => string) => T,
 ): { rows: T[]; head: string[]; foot: Map<string, number> | null } {
+  const id = spec.table;
   const table = new RegExp(`<table id="${id}">([\\s\\S]*?)</table>\\s*(?:</div>|<div)`).exec(html)
     ?? new RegExp(`<table id="${id}">([\\s\\S]*)`).exec(html);
-  if (table === null) return { rows: [], head: [], foot: null };
+  if (table === null) {
+    /**
+     * ⚠**표를 못 찾은 것과 표가 원래 없는 것은 다르다**(2026-09-26 · 감사 C8).
+     *
+     * 예전에는 여기서 **무조건 빈 배열**이었다. 적재기는 선수 단위로 지우고 다시 넣으므로
+     * 표 id 하나가 바뀌는 날 **전 선수의 통산이 지워지고 종료 0** 이었다(감사 재현: id 를 바꾼 980장 중
+     * 980장이 빈 배열 · 던진 것 0장). 아래 머리·열·합계 검사는 표를 **찾은 뒤에만** 돌아서 이 길을 못 막았다.
+     * ⚠그렇다고 「없으면 던진다」로 바꾸면 **야수 페이지 전부가 헛실패**다(투수 표가 원래 없다 · 980장 중 466장).
+     * → 페이지가 그 표가 **있다고 말하는데**(탭·구획) 표가 없으면 **못 찾은 것**이라 던진다.
+     *   아무 말도 없으면 **원래 없는 것**이라 빈 배열이다.
+     * ⚠**그 「원래 없음」에는 구멍이 둘 있고, 둘 다 여기 밖에서 막는다**(2026-09-26 · 3중 검토 3차 P2):
+     *   ① 탭·구획·표의 id 가 **한꺼번에** 바뀌면 여기서는 구별이 안 된다 — 표 자체는 구획 안에 남으므로
+     *      `parseCareer` 의 **모르는 표** 검사(`unknownStatsTables`)가 잡는다. ⚠처음에는 이것을 적재기에만 맡겼는데
+     *      적재기는 **있던 행**이 있어야 울어서 **신규 선수가 조용히 빌** 수 있었다.
+     *   ② 탭·구획·표가 **통째로 사라지면** 야수 페이지와 모양이 같아 원리적으로 못 가른다 — 적재기가 잡는다:
+     *      **있던 통산 행이 0행이 되면 실패**다(`load-players.ts` · 1군 기록은 사라지지 않는다).
+     * ⚠**표도 탭도 구획도 없는 페이지**(1군 기록이 아직 없는 선수 — 데뷔 당일 밤에 받은 페이지일 수 있다)는
+     *   **실물로 본 적이 없다**(보유 11,699장 중 0장 — 다음 판이 덮었을 수 있다). 던지는 쪽으로 추측하지 않는다 — 추측이 틀리면
+     *   데뷔가 있는 날마다 적재가 실패해 배포가 막힌다. 적재기가 그런 페이지의 장수를 요약에 찍는다.
+     */
+    if (declares(html, spec)) {
+      // ⚠구획 안의 모르는 표를 **같이 찍는다** — 바뀐 id 가 거기 있으면 처치(알려진 목록 고치기)가 바로 보인다
+      const strangers = unknownStatsTables(html);
+      throw new CareerParseError(
+        `${id} 를 찾지 못했다 — 이 페이지의 탭(${spec.tab})이나 구획(${spec.unit})은 그 표가 있다고 말한다. 페이지 구조 변경을 의심하라`,
+        `tab=${new RegExp(`\\bid="${spec.tab}"`).test(html)} unit=${new RegExp(`\\bid="${spec.unit}"`).test(html)} ` +
+          `모르는 표=${strangers.length === 0 ? "없음" : strangers.join(",")} length=${html.length}`,
+      );
+    }
+    return { rows: [], head: [], foot: null };
+  }
   const { head, body } = rowsOf(table[0]);
   if (head.length === 0) {
     throw new CareerParseError(`${id} 의 머리를 읽지 못했다`, `head=0 body=${body.length}`);
@@ -318,7 +421,7 @@ function checkAgainstFoot(
 }
 
 export function parseCareer(html: string): Career {
-  const bat = parseTable<CareerBattingSeason>(html, "tablefix_b", BAT_KEYS, (year, team, get) => {
+  const bat = parseTable<CareerBattingSeason>(html, TABLE_SPEC.batting, BAT_KEYS, (year, team, get) => {
     const row = { year, team } as CareerBattingSeason;
     for (const [label, key] of Object.entries(BAT_KEYS)) {
       // ⚠**못 읽은 칸은 0으로 둔다** — 이 표에서 빈 칸은 「그 항목이 그 해에 없었다」가 아니라
@@ -329,7 +432,7 @@ export function parseCareer(html: string): Career {
     return row;
   });
 
-  const pit = parseTable<CareerPitchingSeason>(html, "tablefix_p", PIT_KEYS, (year, team, get, cellOf) => {
+  const pit = parseTable<CareerPitchingSeason>(html, TABLE_SPEC.pitching, PIT_KEYS, (year, team, get, cellOf) => {
     const row = { year, team } as CareerPitchingSeason;
     for (const [label, key] of Object.entries(PIT_KEYS)) {
       (row as unknown as Record<string, number>)[key] = get(label) ?? 0;
@@ -337,6 +440,20 @@ export function parseCareer(html: string): Career {
     row.outs = outsOf(cellOf("投球回")) ?? 0;
     return row;
   });
+
+  /**
+   * ⚠**통계 구획에 모르는 표가 있으면 던진다**(2026-09-26 · 3중 검토 3차 P2 · 위 `unknownStatsTables`).
+   * 두 표를 읽은 **뒤에** 본다 — 그 표가 있다고 말하는데 못 찾은 경우는 위 `parseTable` 이 더 구체적인 말로 먼저 던진다.
+   * ⚠새 표가 **정당하게** 생긴 날(예: 새 탭)에도 여기서 멈춘다 — 그 표를 알려진 목록(`TABLE_SPEC`)에 넣을지는
+   *   사람이 실물을 보고 정한다(런북 `docs/operations/deploy.md` §7-F). 조용히 건너뛰는 것보다 그쪽이 싸다.
+   */
+  const strangers = unknownStatsTables(html);
+  if (strangers.length > 0) {
+    throw new CareerParseError(
+      "年度別成績 구획(#pc_stats)에 모르는 표가 있다 — 표 id 가 바뀌었거나 새 표가 생겼다. 페이지 구조 변경을 의심하라",
+      `모르는 표=${strangers.join(",")} 알려진 표=${[...KNOWN_TABLE_IDS].join(",")} 읽은 행=타격 ${bat.rows.length}·투구 ${pit.rows.length}`,
+    );
+  }
 
   /**
    * ⚠**여기서 검산한다.** 우리가 더한 합이 NPB 공표 합계와 어긋나면 던진다 —
