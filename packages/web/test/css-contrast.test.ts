@@ -185,7 +185,10 @@ const TEAM_MARKS: readonly {
   { sel: ".mf-shape", prop: "stroke", need: 3.0, what: "成績の紋 도형의 윤곽(비텍스트)" },
   { sel: ".mf-dot", prop: "stroke", need: 3.0, what: "成績の紋 꼭짓점의 링 — 조작 요소의 유일한 어포던스" },
   /**
-   * ⚠**구단 색을 선·글리프 색으로 쓰던 마지막 자리들**(2026-09-25 감사 W2 · 2026-09-27 수정).
+   * ⚠**구단 색을 선·글리프 색으로 쓰던 자리 중 감사 W2 가 짚은 넷**(2026-09-25 감사 W2 · 2026-09-27 수정).
+   *   ⚠~~마지막 자리들~~ 은 거짓이었다(같은 날 디자인 감사) — `.spitcher a` 의 구단 색 밑줄(box-shadow)이
+   *   남아 있고, 이 하네스(color/stroke/fill/border-color)도 box-shadow 시험도 그 자리를 안 본다.
+   *   다음 감사 라운드의 후보로 넘겼다(감사 문서 §10-4).
    * 감사 실측(바탕 --page · 비텍스트 3:1): 12구단 중 **라이트 4 · 다크 7 · 합집합 11** 이 미달이었다 —
    * ロッテ 다크 **1.188** · オリックス 다크 1.169 · 阪神 라이트 1.543. 広島만 양 테마 통과(5.637 / 3.073).
    * ⚠**바탕은 --page 다** — 선수 표제(`.idline`)와 명부(`.teamgroup`)는 배경을 안 깐다(body = --page).
@@ -362,10 +365,14 @@ test("⚠클라이언트 스크립트가 폴리곤의 선 색을 얹지 않는�
  * → 색을 CSS 토큰으로 옮겼다(`.spark polyline` · `.spark circle` — 위 `TEAM_MARKS` 가 잰다).
  * ⚠**구단 바탕 + 그 짝 잉크(marks.ts 의 `p.color.base` · `p.color.ink`)는 여기 안 걸린다** —
  * 그건 신원 표시이고 짝이 대비를 보장한다. 막는 것은 **바탕 위에 구단 색 변수로 선·점을 긋는 것**이다.
+ * ⚠**모양이 둘 더 있다**(2026-09-27 · 디자인 감사 P3): `style="stroke:var(--team)"` 과
+ * 보간(`stroke="${…}"`)이다. 처음 판은 둘 다 못 봤다. 보간은 **신원 표시의 짝 두 이름만** 허용한다.
  */
 test("⚠서버가 굽는 SVG 가 구단 색 변수를 선·채움 속성으로 싣지 않는다 — CSS 대비 검사가 못 본다", () => {
   const dir = join(import.meta.dirname, "..", "src");
   const files = readdirSync(dir).filter((f) => f.endsWith(".ts"));
+  /** 보간해도 되는 색 — 구단 바탕과 그 짝 잉크(신원 표시 · 짝이 대비를 보장한다) */
+  const IDENTITY = new Set(["p.color.base", "p.color.ink"]);
   let attrs = 0;
   const bad: string[] = [];
   for (const f of files) {
@@ -373,6 +380,10 @@ test("⚠서버가 굽는 SVG 가 구단 색 변수를 선·채움 속성으로 
     const code = stripJsComments(readFileSync(join(dir, f), "utf8")).code;
     attrs += [...code.matchAll(/\b(?:stroke|fill)="/g)].length;
     for (const m of code.matchAll(/\b(?:stroke|fill)="var\(\s*--(?:team|chip)\b[^"]*"/g)) bad.push(`${f}: ${m[0]}`);
+    for (const m of code.matchAll(/\bstyle="[^"]*\b(?:stroke|fill)\s*:\s*var\(\s*--(?:team|chip)\b[^"]*"/g)) bad.push(`${f}: ${m[0]}`);
+    for (const m of code.matchAll(/\b(?:stroke|fill)="\$\{\s*([^}]*?)\s*\}"/g)) {
+      if (!IDENTITY.has(m[1]!)) bad.push(`${f}: ${m[0]} — 신원 표시의 짝(${[...IDENTITY].join(" · ")}) 밖의 보간`);
+    }
   }
   // ⚠**공회전 방지** — marks.ts 가 SVG 채움 속성을 실제로 쓴다. 속성을 하나도 못 보면 이 스캔이 헛돈다
   assert.ok(files.length >= 10 && attrs >= 5, `훑은 파일 ${files.length}개 · SVG 색 속성 ${attrs}개 — 이 시험이 공회전한다`);

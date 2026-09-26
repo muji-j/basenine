@@ -51,16 +51,50 @@ const COMPOSITED = new Set(["transform", "opacity", "filter"]);
 
 interface Tr { sel: string; props: string[] }
 
+/** 이징·전환 동작 키워드 — 숏핸드에 섞여 와도 속성 이름이 아니다 */
+const NOT_PROP = new Set(["ease", "ease-in", "ease-out", "ease-in-out", "linear", "step-start", "step-end", "normal", "allow-discrete"]);
+
+/** 최상위 쉼표로만 가른다 — `cubic-bezier(.2,.6,.2,1)` 안의 쉼표에서 자르면 항목이 부서진다 */
+function topLevelItems(v: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of v) {
+    if (ch === "(") depth += 1;
+    else if (ch === ")") depth -= 1;
+    if (ch === "," && depth === 0) {
+      out.push(cur);
+      cur = "";
+    } else cur += ch;
+  }
+  out.push(cur);
+  return out.map((s) => s.trim()).filter(Boolean);
+}
+
+/**
+ * 숏핸드 한 항목이 전환하는 속성.
+ * ⚠**첫 낱말이 아니다**(2026-09-27 · W2·W10 디자인 감사 P3). 명세상 항목 안의 순서는 자유이고
+ * **속성을 생략하면 `all`** 이다 — `transition:var(--t1) var(--e-out)` 은 transition:all 인데,
+ * 첫 낱말을 속성으로 보던 추출기는 그것을 속성 「var(--t1)」로 셌다.
+ * → 함수(`var()`·`cubic-bezier()`·`steps()`)와 시간·이징 키워드를 걷어 내고 남는 식별자가 속성이다.
+ */
+function propOf(item: string): string {
+  let rest = item;
+  for (let prev = ""; prev !== rest; ) {
+    prev = rest;
+    rest = rest.replace(/[a-z-]+\([^()]*\)/g, " ");
+  }
+  const p = rest.split(/\s+/).find((w) => /^-?[a-z][a-z0-9-]*$/.test(w) && !NOT_PROP.has(w));
+  return p ?? "all";
+}
+
 function transitions(): Tr[] {
   const out: Tr[] = [];
   for (const m of css.matchAll(RULE)) {
     const sel = m[1]!.trim().replace(/\s+/g, " ");
     const body = m[2]!;
     for (const t of body.matchAll(/(?:^|;)\s*transition:\s*([^;]+)/g)) {
-      out.push({
-        sel,
-        props: bare(t[1]!).split(",").map((p) => p.trim().split(/\s+/)[0]!).filter(Boolean),
-      });
+      out.push({ sel, props: topLevelItems(bare(t[1]!)).map(propOf) });
     }
     /**
      * ⚠**롱핸드**(W10). 시간만 있고 속성이 없으면 그 요소의 속성은 **초기값 `all`** 이다 —
@@ -82,10 +116,14 @@ function transitions(): Tr[] {
 /**
  * **주어가 `*` 인 선택자** — `*` · `*::before` · `.x > *`.
  * ⚠마지막 복합 선택자만 본다 — 규칙이 실제로 걸리는 대상은 그것이다.
+ * ⚠**주어를 생략해도 `*` 다**(2026-09-27 · 디자인 감사 P3): `::before` · `::before,::after` 는
+ * `*::before` 와 같고, `:where(*)` · `:is(*)` 도 모든 요소다 — 처음 판은 셋 다 놓쳤다.
  */
 function isUniversal(part: string): boolean {
   const last = part.trim().split(/\s*[>+~]\s*|\s+/).pop() ?? "";
-  return /^\*(?:::?[a-z-]+(?:\([^)]*\))?)*$/.test(last);
+  if (/^\*(?:::?[a-z-]+(?:\([^)]*\))?)*$/.test(last)) return true;
+  if (/^::[a-z-]+(?:\([^)]*\))?$/.test(last)) return true;
+  return /^:(?:where|is)\(\s*\*\s*\)(?:::?[a-z-]+(?:\([^)]*\))?)*$/.test(last);
 }
 
 /**
@@ -188,6 +226,13 @@ test("⚠W10 전환 시간은 전부 감소 블록이 1ms 로 내리는 토큰�
     const sel = m[1]!.trim().replace(/\s+/g, " ");
     for (const d of m[2]!.matchAll(/(?:^|;)\s*(transition(?:-duration|-delay)?)\s*:\s*([^;]+)/g)) {
       decls += 1;
+      /**
+       * ⚠**계산식은 이 판정을 우회한다**(2026-09-27 · 교차 모델 검토 P3). 아래는 토큰 **이름**만 보므로
+       * `calc(var(--t1) * 1000)` 은 --t1 이 1ms 로 내려가도 **1000ms** 인데 초록이었다.
+       * 전환 시간은 토큰 그대로 준다 — 곱해야 하는 시간이면 **토큰을 새로 만들고 감소 블록에서도 내려라.**
+       */
+      const math = /\b(?:calc|min|max|clamp)\(/.exec(d[2]!);
+      if (math !== null) bad.push(`${sel} → ${d[1]}: 계산식 ${math[0]}…) — 토큰이 1ms 로 내려가도 계산 결과는 모른다`);
       for (const v of d[2]!.matchAll(/var\(\s*(--[a-z0-9-]+)/g)) {
         const name = v[1]!;
         if (name.startsWith("--e-")) continue; // 이징 곡선 — 시간이 아니다
@@ -209,6 +254,44 @@ test("⚠W10 전환 시간은 전부 감소 블록이 1ms 로 내리는 토큰�
       "⚠시간은 --t1/--t2/--t3 로 주거나, 새 토큰이면 감소 블록의 :root 에서도 1ms 로 내려라.",
   );
   console.log(`  · 감소 블록 밖 전환 선언 ${decls}개 · 시간 토큰 ${times}개가 전부 감소 블록에서 1ms 이하로 내려간다`);
+});
+
+/**
+ * ⚠**바로 위 시험의 전제를 붙든다**(2026-09-27 · 디자인 감사 P3).
+ *
+ * 위 시험은 감소 블록의 `:root` 재정의만 본다. 그런데 `.x{--t1:300ms}` 같은 **지역 재정의**가 생기면
+ * 그 하위에서는 커스텀 속성의 상속상 지역 값이 이기고 — 감소 블록은 `:root` 만 내리므로 —
+ * **감소 설정에서도 300ms 로 돈다.** 위 시험은 이름만 보므로 그래도 초록이다.
+ * → 감소 블록이 내리는 시간 토큰은 **`:root` 에서만** 정의한다.
+ * ⚠`--e-` 는 위 시험이 「이징 곡선」이라며 건너뛰는 이름이다 — 거기에 시간이 들어오면 그대로 샌다.
+ */
+test("⚠W10 시간 토큰은 :root 에서만 정의된다 — 지역 재정의는 그 하위에서 모션 감소를 무력화한다", () => {
+  const block = atRuleBody(css, "@media (prefers-reduced-motion:reduce){");
+  assert.notEqual(block, "", "모션 감소 블록이 없다 — 이 시험이 공회전한다");
+  const names = new Set<string>();
+  for (const m of block.matchAll(/(--[a-z0-9-]+)\s*:\s*(?:1ms|0m?s|0)\s*(?=[;}]|$)/g)) names.add(m[1]!);
+  // ⚠**공회전 방지** — --t1 · --t2 · --t3 · --t-stagger 가 실재한다
+  assert.ok(names.size >= 4, `감소 블록이 내리는 시간 토큰을 ${names.size}개밖에 못 찾았다 — 정규식이 헛돈다`);
+  const bad: string[] = [];
+  let defs = 0;
+  for (const m of css.matchAll(RULE)) {
+    const sel = m[1]!.trim().replace(/\s+/g, " ");
+    for (const d of m[2]!.matchAll(/(?:^|;)\s*(--[a-z0-9-]+)\s*:\s*([^;]*)/g)) {
+      if (names.has(d[1]!)) {
+        defs += 1;
+        if (sel !== ":root") bad.push(`${sel} → ${d[1]} 를 지역에서 정의한다`);
+      }
+      if (d[1]!.startsWith("--e-") && /\d(?:ms|s)\b/.test(d[2]!)) bad.push(`${sel} → ${d[1]} 에 시간이 들어 있다(${d[2]!.trim()})`);
+    }
+  }
+  // 본 정의(:root) + 감소 블록의 재정의 — 토큰마다 최소 둘
+  assert.ok(defs >= names.size * 2, `시간 토큰 정의를 ${defs}개밖에 못 찾았다 — 정규식이 헛돈다`);
+  assert.deepEqual(
+    bad,
+    [],
+    "시간 토큰을 :root 밖에서 정의하거나 --e- 토큰에 시간을 넣었다 — 그 자리에서는 모션 감소가 안 닿는다.\n" +
+      "⚠다른 시간이 필요하면 새 토큰을 :root 에 만들고 감소 블록의 :root 에서도 1ms 로 내려라.",
+  );
 });
 
 test("⚠레이아웃 속성을 애니메이트하는 자리는 목록뿐이다", () => {

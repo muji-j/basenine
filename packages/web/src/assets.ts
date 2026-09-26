@@ -2961,8 +2961,10 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
   /* 「이 구획 안에 있다」(page 가 아니라 true). page 는 font-weight 로 살아남지만
      이쪽은 색과 box-shadow 뿐이었다 — **점선 밑줄로 세기를 낮춰** 둘을 갈라 둔다 */
   .tnav a[aria-current="true"]{text-decoration:underline dotted;text-underline-offset:3px}
-  /* 즐겨찾기는 눌려도 글자가 ★ 그대로다 — 색이 죽으면 눌렀는지가 안 보인다.
-     ⚠낭독기는 aria-pressed 로 알지만, **고대비를 쓰는 눈 뜬 사용자**가 못 본다 */
+  /* 즐겨찾기 — ~~눌려도 글자가 ★ 그대로다~~ 는 2026-09-27 부로 거짓이다(감사 W2): ::before 가 ☆→★ 로
+     바뀌고 content 는 이 모드에서 남는다. 이 윤곽은 그 위에 한 겹 더 말하는 덧말이다.
+     ⚠이 윤곽이 전역 :focus-visible 의 초점 링을 덮는다는 지적이 있다(같은 날 디자인 감사) —
+     감사 문서 §10-4 의 다음 라운드에서 판정한다 */
   .favbtn[aria-pressed="true"]{outline:2px solid Highlight;outline-offset:1px}
 }
 @media print{

@@ -623,8 +623,11 @@ test("⚠W1 쉬는 탭의 굵기를 .tab 이 스스로 정한다 — h2 에서 �
  * 윤곽(`Highlight`)으로 다시 말하고, **일반 모드에서는 눌림을 색 하나로** 말하고 있었다 —
  * 글리프는 늘 ★ 이고 바뀌는 것은 ★ 와 테두리의 **구단 색**뿐이었는데, 그 색이 바탕 대비
  * 12구단 중 11구단에서 어느 한 테마 3:1 아래라 **눌렸는지를 말하는 것이 화면에서 사라졌다.**
- * → 눌림과 안 눌림이 **색이 아닌 속성**(위 `LIVES` — content · font-weight · border-width …)에서
+ * → 눌림과 안 눌림이 **색이 아닌, 눈에 보이는 속성**(아래 `PERCEIVED`)에서
  * 하나 이상 갈려야 한다. `::before`·`::after` 도 그 상태의 일부로 본다(`.favt` 의 ★ 가 거기 있다).
+ * ⚠**`LIVES` 를 쓰지 않는다**(2026-09-27 · 디자인 감사 P3). 그 목록은 「강제 색 모드에서 남는가」의
+ * 목록이라 padding·margin·width·display 까지 들어 있다 — 처음 판은 ☆·★ 를 지우고 눌림에
+ * `padding:3px` 만 더한 변이를 **통과시켰다.** 1px 여백 차이는 「색 말고도 말한다」가 아니다.
  * ⚠`box-shadow` 는 세지 않는다 — 강제 색 모드에서 none 이 되고, 일반 모드에서도 보이는지가 색 대비에 달렸다.
  * ⚠**선언된 값만 비교한다** — `font:inherit` 로 굵기를 물려받는 쪽은 「값 없음」으로 세고 눌린 쪽의
  * `var(--w-bold)` 와 다르다고 본다. 부모가 굵으면 같아지는 문제(W1)는 그 시험이 따로 잰다.
@@ -632,6 +635,8 @@ test("⚠W1 쉬는 탭의 굵기를 .tab 이 스스로 정한다 — h2 에서 �
 test("⚠W2 눌린 토글은 색 말고도 말한다 — 눌림과 안 눌림이 색이 아닌 속성에서 갈린다", () => {
   const rules = rulesBySelector();
   const PRESSED = '[aria-pressed="true"]';
+  /** 상태로 **읽히는** 색 아닌 채널 — 모양(글리프)·굵기·기울임·밑줄·선 모양 */
+  const PERCEIVED = /^(?:content|font-weight|font-style|text-decoration(?:-line|-style)?|border-style|outline-style)$/;
   /**
    * 그 선택자(와 그 ::before/::after)를 부분으로 가진 무조건 규칙들에서, **색이 아닌 속성의 이긴 값**.
    * ⚠숏핸드에 되감긴 값(`null`)은 「선언된 채널」이 아니므로 싣지 않는다 — 비교는 **눌린 쪽의 선언**이 기준이다.
@@ -645,7 +650,7 @@ test("⚠W2 눌린 토글은 색 말고도 말한다 — 눌림과 안 눌림이
       }
       const props = new Set(bodies.flatMap((b) => [...b.matchAll(/(?:^|;)\s*([a-z-]+)\s*:/g)].map((m) => m[1]!)));
       for (const p of props) {
-        if (!LIVES.test(p)) continue;
+        if (!PERCEIVED.test(p)) continue;
         const v = winningValue(bodies, p);
         if (typeof v === "string") out.set(`${pseudo}|${p}`, v);
       }
