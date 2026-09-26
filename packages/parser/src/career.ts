@@ -196,6 +196,43 @@ function topRows(bodyHtml: string): string[] {
   return out;
 }
 
+/**
+ * 표 하나의 **이름표** — 표 id 와, 그 표가 있다고 페이지가 말하는 두 자리.
+ *
+ * 실물 뼈대(`npb.jp/bis/players/{id}.html`):
+ * ```html
+ * <div id="pc_stats_nav"><ul>
+ *   <li id="nav_p" class="tab_btn current">投手成績</li>
+ *   <li id="nav_b" class="tab_btn ">打撃成績</li>
+ * </ul></div>
+ * <div id="pc_stats_wrapper">
+ *   <div class="stats_table tab_unit" id="stats_p"><table id="tablefix_p">…</table></div>
+ *   <div class="stats_table tab_unit" id="stats_b"><table id="tablefix_b">…</table></div>
+ * </div>
+ * ```
+ */
+const TABLE_SPEC = {
+  batting: { table: "tablefix_b", tab: "nav_b", unit: "stats_b" },
+  pitching: { table: "tablefix_p", tab: "nav_p", unit: "stats_p" },
+} as const;
+type TableSpec = (typeof TABLE_SPEC)[keyof typeof TABLE_SPEC];
+
+/**
+ * 이 페이지가 **그 표가 있다고 말하는가** — 탭(`<li id="nav_p">`)이나 구획(`<div id="stats_p">`) 중 하나라도.
+ *
+ * ⚠**「표가 원래 없다」와 「표를 못 찾았다」를 이것으로 가른다**(2026-09-26 · 감사 C8).
+ * 야수 페이지에는 투수 표가 **원래 없다** — 그때는 탭도 구획도 없다. 표 id 만 바뀌었다면 탭과 구획은 남는다.
+ * 실측(2026-09-26): 선수 페이지 파일 **11,699장**(로컬 아카이브 980 · 옛 로컬 사본 858 · CI 세대 사본 6벌 9,861 —
+ * 같은 선수가 여러 벌에 겹친다 · 서로 다른 선수 1,644명 · 서로 다른 판 3,291개)에서 탭·구획·표가
+ * **셋 다 있거나 셋 다 없다** — 어긋난 페이지 **0장**. 모양은 둘뿐이다(두 표 6,275장 · 타격 표만 5,424장).
+ * ⚠**id 로만 본다 — 글자(「投手成績」)로 보지 않는다.** 사이트 공통 메뉴에 그 낱말이 생기는 날
+ *   야수 페이지 전부가 「투수 표가 있다」가 되어 헛실패가 난다. id 는 이 구획에만 있다.
+ */
+function declares(html: string, spec: TableSpec): boolean {
+  return new RegExp(`<li\\b[^>]*\\bid="${spec.tab}"`).test(html)
+    || new RegExp(`<div\\b[^>]*\\bid="${spec.unit}"`).test(html);
+}
+
 function rowsOf(tableHtml: string): { head: string[]; body: string[][] } {
   const head = [...(/<thead>([\s\S]*?)<\/thead>/.exec(tableHtml)?.[1] ?? "").matchAll(/<th[^>]*>([\s\S]*?)<\/th>/g)]
     .map((m) => strip(m[1] ?? ""));
@@ -216,13 +253,37 @@ function rowsOf(tableHtml: string): { head: string[]; body: string[][] } {
  */
 function parseTable<T>(
   html: string,
-  id: string,
+  spec: TableSpec,
   keys: Readonly<Record<string, string>>,
   make: (year: number, team: string, get: (label: string) => number | null, cellOf: (label: string) => string) => T,
 ): { rows: T[]; head: string[]; foot: Map<string, number> | null } {
+  const id = spec.table;
   const table = new RegExp(`<table id="${id}">([\\s\\S]*?)</table>\\s*(?:</div>|<div)`).exec(html)
     ?? new RegExp(`<table id="${id}">([\\s\\S]*)`).exec(html);
-  if (table === null) return { rows: [], head: [], foot: null };
+  if (table === null) {
+    /**
+     * ⚠**표를 못 찾은 것과 표가 원래 없는 것은 다르다**(2026-09-26 · 감사 C8).
+     *
+     * 예전에는 여기서 **무조건 빈 배열**이었다. 적재기는 선수 단위로 지우고 다시 넣으므로
+     * 표 id 하나가 바뀌는 날 **전 선수의 통산이 지워지고 종료 0** 이었다(감사 재현: id 를 바꾼 980장 중
+     * 980장이 빈 배열 · 던진 것 0장). 아래 머리·열·합계 검사는 표를 **찾은 뒤에만** 돌아서 이 길을 못 막았다.
+     * ⚠그렇다고 「없으면 던진다」로 바꾸면 **야수 페이지 전부가 헛실패**다(투수 표가 원래 없다 · 980장 중 466장).
+     * → 페이지가 그 표가 **있다고 말하는데**(탭·구획) 표가 없으면 **못 찾은 것**이라 던진다.
+     *   아무 말도 없으면 **원래 없는 것**이라 빈 배열이다.
+     * ⚠**그 「원래 없음」에도 구멍이 하나 남는다** — 탭·구획·표의 id 가 **한꺼번에** 바뀌면 여기서는 구별이 안 된다.
+     *   그 경우는 적재기가 잡는다: **있던 통산 행이 0행이 되면 실패**다(`load-players.ts` · 1군 기록은 사라지지 않는다).
+     * ⚠**표도 탭도 구획도 없는 페이지**(1군 기록이 아직 없는 선수 — 데뷔 당일 밤에 받은 페이지일 수 있다)는
+     *   **실물로 본 적이 없다**(보유 11,699장 중 0장 — 다음 판이 덮었을 수 있다). 던지는 쪽으로 추측하지 않는다 — 추측이 틀리면
+     *   데뷔가 있는 날마다 적재가 실패해 배포가 막힌다. 적재기가 그런 페이지의 장수를 요약에 찍는다.
+     */
+    if (declares(html, spec)) {
+      throw new CareerParseError(
+        `${id} 를 찾지 못했다 — 이 페이지의 탭(${spec.tab})이나 구획(${spec.unit})은 그 표가 있다고 말한다. 페이지 구조 변경을 의심하라`,
+        `tab=${new RegExp(`\\bid="${spec.tab}"`).test(html)} unit=${new RegExp(`\\bid="${spec.unit}"`).test(html)} length=${html.length}`,
+      );
+    }
+    return { rows: [], head: [], foot: null };
+  }
   const { head, body } = rowsOf(table[0]);
   if (head.length === 0) {
     throw new CareerParseError(`${id} 의 머리를 읽지 못했다`, `head=0 body=${body.length}`);
@@ -318,7 +379,7 @@ function checkAgainstFoot(
 }
 
 export function parseCareer(html: string): Career {
-  const bat = parseTable<CareerBattingSeason>(html, "tablefix_b", BAT_KEYS, (year, team, get) => {
+  const bat = parseTable<CareerBattingSeason>(html, TABLE_SPEC.batting, BAT_KEYS, (year, team, get) => {
     const row = { year, team } as CareerBattingSeason;
     for (const [label, key] of Object.entries(BAT_KEYS)) {
       // ⚠**못 읽은 칸은 0으로 둔다** — 이 표에서 빈 칸은 「그 항목이 그 해에 없었다」가 아니라
@@ -329,7 +390,7 @@ export function parseCareer(html: string): Career {
     return row;
   });
 
-  const pit = parseTable<CareerPitchingSeason>(html, "tablefix_p", PIT_KEYS, (year, team, get, cellOf) => {
+  const pit = parseTable<CareerPitchingSeason>(html, TABLE_SPEC.pitching, PIT_KEYS, (year, team, get, cellOf) => {
     const row = { year, team } as CareerPitchingSeason;
     for (const [label, key] of Object.entries(PIT_KEYS)) {
       (row as unknown as Record<string, number>)[key] = get(label) ?? 0;

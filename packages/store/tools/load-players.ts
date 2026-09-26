@@ -68,6 +68,9 @@ const stmt = db.raw.prepare(
 const CAREER_SOURCE = "npb.jp/bis/players (年度別成績)";
 const delBat = db.raw.prepare("DELETE FROM career_batting WHERE player_id = ?");
 const delPit = db.raw.prepare("DELETE FROM career_pitching WHERE player_id = ?");
+/** 지우기 **전에** 지금 몇 행을 갖고 있는지 — 「있던 표가 0행이 됐다」를 재는 분모다(감사 C8) */
+const hadBat = db.raw.prepare("SELECT COUNT(*) AS n FROM career_batting WHERE player_id = ?");
+const hadPit = db.raw.prepare("SELECT COUNT(*) AS n FROM career_pitching WHERE player_id = ?");
 const insBat = db.raw.prepare(
   `INSERT INTO career_batting (player_id, year, team, games, pa, ab, runs, h, d2, d3, hr, tb, rbi,
      sb, cs, sh, sf, bb, hbp, so, gidp, source, fetched_at, seq)
@@ -81,6 +84,12 @@ const insPit = db.raw.prepare(
 let careerBat = 0;
 let careerPit = 0;
 let careerFailed = 0;
+/**
+ * 통산 표가 **하나도 없던** 페이지(타격·투구 둘 다 0행 · 있던 행도 없음).
+ * ⚠**실패로 세지 않는다 — 대신 센다.** 1군 기록이 아직 없는 선수의 페이지가 이 모양일 수 있는데
+ *   그 실물을 본 적이 없다(보유 선수 페이지 파일 11,699장 중 0장 · 감사 C8). 「0장」과 「안 쟀음」을 가르려고 찍는다.
+ */
+let careerAbsent = 0;
 let metaMissing = 0;
 
 let updated = 0;
@@ -165,6 +174,32 @@ db.transaction(() => {
        */
       db.savepoint(`career_${playerId}`, () => {
       const career = parseCareer(html);
+      /**
+       * ⚠**있던 통산 표가 0행이 되면 실패다**(2026-09-26 · 감사 C8).
+       *
+       * 표를 못 찾으면 예전 파서는 빈 배열을 냈고, 여기서 지운 뒤 아무것도 안 넣어 **통산이 조용히 사라지고 종료 0** 이었다.
+       * 파서는 이제 「그 표가 있다고 말하는데(탭·구획) 표가 없다」를 던지지만, 탭·구획·표의 id 가
+       * **한꺼번에** 바뀌면 파서 눈에는 「원래 없음」과 같다. 그래서 **결과 쪽에서 한 번 더** 막는다 —
+       * **1군 기록은 사라지지 않는다.** 있던 표가 0행이 되는 것은 원래 없음이 아니라 **못 읽은 것**이다.
+       * 실측(2026-09-26 · 선수 페이지 스냅숏 8벌 · 1,644명 · 서로 다른 판 3,291개 사이의 전이 1,647개):
+       * 표가 있다가 없어진 전이 **0건**(생긴 전이도 0건).
+       * ⚠던지면 위 `savepoint` 가 이 선수의 DELETE/INSERT 를 되돌려 **어제 값이 그대로 남는다** — 그리고 아래에서 센다.
+       */
+      const had = {
+        batting: (hadBat.get(playerId) as { n: number }).n,
+        pitching: (hadPit.get(playerId) as { n: number }).n,
+      };
+      const vanished = [
+        ...(had.batting > 0 && career.batting.length === 0 ? [`打撃成績 ${had.batting}행`] : []),
+        ...(had.pitching > 0 && career.pitching.length === 0 ? [`投手成績 ${had.pitching}행`] : []),
+      ];
+      if (vanished.length > 0) {
+        throw new Error(
+          `있던 통산 표가 0행이 됐다(${vanished.join(" · ")}) — 1군 기록은 사라지지 않는다. ` +
+            "표를 못 읽은 것이다(페이지 구조 변경 의심) · 기존 행을 지켰다",
+        );
+      }
+      if (career.batting.length === 0 && career.pitching.length === 0) careerAbsent += 1;
       delBat.run(playerId);
       delPit.run(playerId);
       for (const [i, r] of career.batting.entries()) {
@@ -189,7 +224,8 @@ db.transaction(() => {
 
 /** ⚠**세어 두고 안 쓰면 그것도 침묵이다.** 통산이 몇 줄 들어왔는지 보고한다 */
 console.error(
-  `年度別成績 타격 ${careerBat}행 · 투구 ${careerPit}행 · 실패 ${careerFailed}명 · 취득시각 결손 ${metaMissing}명`,
+  `年度別成績 타격 ${careerBat}행 · 투구 ${careerPit}행 · 실패 ${careerFailed}명 · ` +
+    `통산 표가 하나도 없는 페이지 ${careerAbsent}장 · 취득시각 결손 ${metaMissing}명`,
 );
 
 const total = (db.raw.prepare("SELECT COUNT(*) AS n FROM player").get() as { n: number }).n;

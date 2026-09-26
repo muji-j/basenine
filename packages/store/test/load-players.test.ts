@@ -13,6 +13,7 @@ import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promi
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { gunzipSync, gzipSync } from "node:zlib";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { openDb, upsertPlayer } from "../src/index.ts";
@@ -138,6 +139,108 @@ test("C7 · 사이드카를 못 읽으면 기존 profile_fetched_at 을 「지�
     assert.equal(got, KEPT, "모르는 취득 시각을 적재 시각으로 메웠다 — 재취득 선정이 그 선수를 「가장 신선함」으로 읽는다");
     // ⚠「모른다」는 조용히 넘기지 않는다 — 요약에 결손 수가 찍혀야 한다
     assert.match(r.err, /취득시각 결손 1명/);
+  } finally {
+    await cleanup(env);
+  }
+});
+
+// ─── C8 · 통산 표를 못 찾아도 기존 통산 행이 조용히 사라지지 않는다(M7·M11) ─────────────────────
+
+function counts(env: Env, id: string): { b: number; p: number } {
+  return {
+    b: q<{ n: number }>(env, "SELECT COUNT(*) AS n FROM career_batting WHERE player_id = ?", id).n,
+    p: q<{ n: number }>(env, "SELECT COUNT(*) AS n FROM career_pitching WHERE player_id = ?", id).n,
+  };
+}
+
+/** 임시 아카이브의 선수 페이지를 고친다. ⚠**안 바뀌면 던진다** — 변이가 헛돌면 이 시험은 아무것도 안 잰다 */
+async function mutatePage(env: Env, id: string, fn: (html: string) => string): Promise<void> {
+  const p = join(env.archive, "npb", "players", `${id}.html.gz`);
+  const html = gunzipSync(await readFile(p)).toString("utf8");
+  const next = fn(html);
+  assert.notEqual(next, html, "변이가 페이지를 바꾸지 않았다");
+  await writeFile(p, gzipSync(Buffer.from(next, "utf8")));
+}
+
+/**
+ * ⚠**감사 C8 의 재현 그대로다** — 표 id 하나가 바뀐 페이지를 적재하면, 예전에는 그 선수의
+ * 통산 투구 행이 **지워지고 아무것도 안 들어간 채 종료 0** 이었다. 화면은 그 투수를 「기록 없음」으로 그린다.
+ */
+test("C8 · 투수 표 id 가 바뀐 페이지 → 기존 통산 행을 지키고 실패로 끝난다(종료 1 · CAREER ERROR)", { skip }, async () => {
+  const env = await setup({ [PITCHER]: { fetchedAt: T_PITCHER } });
+  try {
+    const first = load(env);
+    assert.equal(first.code, 0, first.out + first.err);
+    const before = counts(env, PITCHER);
+    assert.ok(before.b > 0 && before.p > 0, `픽스처 투수에게 통산 행이 없다 — ${JSON.stringify(before)}`);
+
+    await mutatePage(env, PITCHER, (h) => h.replace('<table id="tablefix_p">', '<table id="tablefix_pitching">'));
+    const r = load(env);
+    assert.equal(r.code, 1, `통산 표를 잃었는데 종료 ${r.code} 다 — 크론이 「성공」으로 보고한다\n${r.err}`);
+    assert.match(r.err, new RegExp(`CAREER ERROR ${PITCHER}`));
+    assert.match(r.err, /실패 1명/);
+    assert.deepEqual(counts(env, PITCHER), before, "기존 통산 행이 사라졌다 — 파싱 실패가 DELETE 를 커밋했다");
+  } finally {
+    await cleanup(env);
+  }
+});
+
+/**
+ * ⚠**파서의 신호를 전부 피해 가는 변이**다 — 탭(`nav_p`)·구획(`stats_p`)·표(`tablefix_p`)의 id 를 한꺼번에 바꾸면
+ * 파서는 그 페이지를 「투수 표가 원래 없는 야수 페이지」로 읽는다(그 판단 자체는 옳다 — 신호가 없다).
+ * 그래도 **있던 통산 행이 0행이 되는 것**은 원래 없음이 아니다 — 1군 기록은 사라지지 않는다.
+ * 실측(선수 페이지 스냅숏 8벌 · 1,644명 · 서로 다른 판 3,291개 사이의 전이 1,647개): 표가 있다가 없어진 전이 **0건**.
+ */
+test("C8 · 투수 표의 탭·구획·표 id 가 한꺼번에 바뀌어도 있던 투구 행은 지킨다 — 있던 표가 0행이 되면 실패다", { skip }, async () => {
+  const env = await setup({ [PITCHER]: { fetchedAt: T_PITCHER } });
+  try {
+    assert.equal(load(env).code, 0);
+    const before = counts(env, PITCHER);
+    assert.ok(before.p > 0);
+
+    await mutatePage(env, PITCHER, (h) =>
+      h.replace('id="nav_p"', 'id="nav_x"').replace('id="stats_p"', 'id="stats_x"').replace('<table id="tablefix_p">', '<table id="tablefix_x">'));
+    const r = load(env);
+    assert.equal(r.code, 1, `있던 투구 행을 잃었는데 종료 ${r.code} 다\n${r.err}`);
+    assert.match(r.err, new RegExp(`CAREER ERROR ${PITCHER}`));
+    assert.deepEqual(counts(env, PITCHER), before, "기존 통산 행이 사라졌다");
+  } finally {
+    await cleanup(env);
+  }
+});
+
+/** ⚠**헛실패 쪽을 막는다** — 야수 페이지에는 투수 표가 원래 없다. 두 번 적재해도(두 번째는 「있던 행」을 본다) 실패가 아니다 */
+test("C8 · 투수 표가 원래 없는 야수 페이지는 실패가 아니다 — 두 번 적재해도 종료 0", { skip }, async () => {
+  const env = await setup({ [BATTER]: { fetchedAt: T_PITCHER } });
+  try {
+    for (const round of [1, 2]) {
+      const r = load(env);
+      assert.equal(r.code, 0, `${round}회째 종료 ${r.code}\n${r.err}`);
+      assert.match(r.err, /실패 0명/);
+    }
+    const c = counts(env, BATTER);
+    assert.ok(c.b > 0, "야수의 통산 타격 행이 없다");
+    assert.equal(c.p, 0);
+  } finally {
+    await cleanup(env);
+  }
+});
+
+/**
+ * ⚠**표가 하나도 없는 페이지**(1군 기록이 아직 없는 선수 — 실물 미관측)는 실패로 세지 않지만 **조용히 넘기지도 않는다.**
+ * 요약에 장수를 찍는다 — 「0건」과 「안 쟀음」을 가른다. 마크업이 통째로 바뀐 날에는 있던 선수 전원이
+ * 위의 「있던 표가 0행」으로 실패하므로 거기서 운다.
+ */
+test("C8 · 통산 표가 하나도 없는 새 선수 페이지는 실패가 아니되 요약에 장수가 찍힌다", { skip }, async () => {
+  const env = await setup({ [BATTER]: { fetchedAt: T_PITCHER } });
+  try {
+    await mutatePage(env, BATTER, (h) =>
+      h.replace(/<li id="nav_b"[^>]*>[^<]*<\/li>/, "")
+        .replace(/<div class="stats_table tab_unit" id="stats_b">[\s\S]*?<\/table>\s*<\/div>/, ""));
+    const r = load(env);
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.deepEqual(counts(env, BATTER), { b: 0, p: 0 });
+    assert.match(r.err, /통산 표가 하나도 없는 페이지 1장/);
   } finally {
     await cleanup(env);
   }
