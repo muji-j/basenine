@@ -205,6 +205,65 @@ test("경기 순회 안의 자식 행 쓰기(타격·투수·타석·주자·격
   assert.equal(codeIndicesOf("DELETE FROM").filter((i) => i > loopStart && i < loopEnd).length, 6, `DELETE FROM 개수가 다르다: ${counts.join(" · ")}`);
 });
 
+// ─── N1 · 경기 쓰기의 예외를 그 경기 안에 가둔다(감사 N1 · 설계 docs/superpowers/specs/2026-09-27-profile-version-guard-design.md §6 · 시험 1-5) ───
+//
+// ⚠**통합 시험(`load-archive-write-failure.test.ts`)이 실물 두 경기로 재지만, 모양은 여기서 고정한다** — 통합 시험은
+//   「그 두 경기가 밟는 연쇄」만 본다. 콜백 안에 전역 쓰기가 **하나** 새로 들어와도(다른 전역 · 다른 경로) 그 두 경기가
+//   안 밟으면 초록이다. 여기서는 콜백 **전체**를 본다.
+
+/** `from` 이 가리키는 `try {` 블록과 바로 뒤 `catch (…) {` 블록의 범위 */
+function tryCatchAt(from: number): { tryEnd: number; catchBody: string } {
+  const tryEnd = closingBrace(from);
+  const rest = SRC.slice(tryEnd + 1);
+  const m = /^\s*catch\s*\([^)]*\)\s*\{/.exec(rest);
+  assert.ok(m !== null, `${RAW.slice(0, from).split("\n").length}행의 try 뒤에 catch 가 없다`);
+  const catchOpen = tryEnd + 1 + m.index;
+  return { tryEnd, catchBody: SRC.slice(catchOpen, closingBrace(catchOpen) + 1) };
+}
+
+test("⚠N1 1-5 · 두 `writeGameGuarded(` 호출이 각각 경기별 `try` 안이고, 그 `catch` 는 실패를 세고 다음 경기로 간다", () => {
+  const [loopStart, loopEnd] = gameLoop();
+  const calls = codeIndicesOf(GUARDED);
+  assert.equal(calls.length, 2, `${GUARDED} 호출이 ${calls.length}곳이다(미성립·실시 둘이어야 한다)`);
+  const tries = codeIndicesOf("try {").filter((i) => i > loopStart && i < loopEnd);
+  for (const c of calls) {
+    const line = RAW.slice(0, c).split("\n").length;
+    // 그 호출을 감싸는 **가장 안쪽** try — 경기 순회 안이어야 한다(순회 밖이면 한 경기의 예외가 순회를 끝낸다)
+    const enclosing = tries.filter((t) => t < c && c < closingBrace(t)).at(-1);
+    assert.ok(enclosing !== undefined, `${line}행의 ${GUARDED} 가 경기 순회 안의 try 밖이다 — 한 경기의 쓰기 예외가 적재 전체를 멈춘다(감사 N1)`);
+    const { catchBody } = tryCatchAt(enclosing);
+    assert.match(catchBody, /noteWriteFailure\(/, `${line}행 쓰기의 catch 가 실패를 세지 않는다(noteWriteFailure)`);
+    assert.match(catchBody, /\bcontinue;/, `${line}행 쓰기의 catch 가 다음 경기로 가지 않는다(continue)`);
+  }
+});
+
+test("⚠N1 1-5 · `commitDelta(` 는 실시 쓰기의 `written` 갈래 안에 정확히 한 번이다 — 미성립 갈래에는 없다", () => {
+  const [start, end] = writtenBranch('if (written.outcome === "written") {');
+  const calls = codeIndicesOf("commitDelta(").filter((i) => !SRC.slice(Math.max(0, i - 9), i).endsWith("function "));
+  assert.equal(calls.length, 1, `commitDelta( 호출이 ${calls.length}곳이다(1곳이어야 한다)`);
+  assert.ok(calls[0]! > start && calls[0]! < end, "commitDelta( 가 실시 쓰기의 written 갈래 밖이다 — 되돌린 경기의 흔적이 전역에 남는다");
+  const [ns, ne] = writtenBranch('if (w.outcome === "written") {');
+  assert.ok(!SRC.slice(ns, ne).includes("commitDelta("), "미성립 갈래가 commitDelta( 를 부른다 — 그 콜백은 변경분을 만들지 않는다(설계 §6-2)");
+});
+
+test("⚠N1 1-5 · 두 쓰기 콜백 안에서 전역 상태를 바꾸지 않는다 — `seenPlayers.add(` · `noteSeasonName(` · 변경분 밖의 `budget.` 0", () => {
+  const ranges = guardedRanges();
+  assert.equal(ranges.length, 2, `${GUARDED} 호출이 ${ranges.length}곳이다`);
+  const line = (i: number): number => RAW.slice(0, i).split("\n").length;
+  let deltaBudget = 0;
+  for (const [s, e] of ranges) {
+    const body = SRC.slice(s, e);
+    for (const needle of ["seenPlayers.add(", "noteSeasonName("]) {
+      assert.equal(body.split(needle).length - 1, 0, `${line(s)}행 콜백 안에 ${needle} 가 있다 — 되돌린 경기가 전역에 흔적을 남긴다(설계 §1-2)`);
+    }
+    const raw = [...body.matchAll(/(?<!delta\.)budget\./g)];
+    assert.equal(raw.length, 0, `${line(s)}행 콜백 안에 변경분 밖의 budget. 가 ${raw.length}곳 — 되돌린 쓰기를 예산에 센다`);
+    deltaBudget += body.split("delta.budget.").length - 1;
+  }
+  // ⚠분모 — 실시 콜백의 예산 쓰기가 전부 변경분으로 갔는지(0 이면 이 시험은 아무것도 안 잰 것이다)
+  assert.ok(deltaBudget >= 7, `콜백 안의 delta.budget. 가 ${deltaBudget}곳뿐이다 — 소스 모양이 바뀌었거나 가림이 코드를 먹었다`);
+});
+
 /**
  * ⚠**box 의 본 시각은 스냅샷에서 낸다 — 파일을 다시 읽지 않는다**(2026-09-26 · 3중 검토 3차 P2).
  * 예전에는 `readGamePages` 로 네 장을 읽은 **뒤** `fetchedAtOf(box.meta.json)` 로 사이드카를 한 번 더 읽었다(TOCTOU) —

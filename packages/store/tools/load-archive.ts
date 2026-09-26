@@ -38,7 +38,10 @@ import {
   upsertPlayer,
   upsertPlayerSeasonName,
 } from "../src/load.ts";
+import type { WriteBudget } from "../src/load.ts";
 import { MAX_REFETCH_DATES, judgeVersion, writeGameGuarded } from "../src/version-guard.ts";
+import type { GuardedWrite } from "../src/version-guard.ts";
+import { MissingPlayerRefError, missingPlayerRefs } from "../src/player-refs.ts";
 import { checkIntegrity, checkSet, readGamePages } from "../src/page-integrity.ts";
 import type { GamePages } from "../src/page-integrity.ts";
 import { gameFromBoxPath } from "../src/game-slug.ts";
@@ -157,6 +160,42 @@ function noteSeasonName(playerId: string, season: number, name: string, date: st
   // ⚠**늦은 경기가 이긴다** — 호출 순서가 아니라 경기일로 가른다(저장층과 같은 규칙)
   if (prev === undefined || date >= prev.date) seasonNames.set(key, { season, name, date, source });
 }
+
+/**
+ * **경기 하나의 전역 변경분**(감사 N1 · 설계 `docs/superpowers/specs/2026-09-27-profile-version-guard-design.md` §6-2).
+ *
+ * ⚠**쓰기 콜백 안에서 전역(`seenPlayers` · `seasonNames` · `budget`)을 바로 바꾸지 않는다.** 콜백이 그 뒤에서 던지면
+ *   트랜잭션은 새 선수 행을 되돌리는데 전역에는 「이미 넣었다」가 남는다 — ⑴ 같은 선수가 나오는 **뒤 경기**가
+ *   `upsertPlayer` 를 건너뛰고 외래키로 실패하고(연쇄) ⑵ 되돌린 경기에만 나온 선수의 표시명이 남아 **마지막 표시명 쓰기**가
+ *   외래키로 죽는다(잡는 곳이 없어 요약 전에 끝난다). try/catch 만 넣으면 이 둘이 새로 생긴다.
+ * → 여기에 모았다가 **쓰기가 `written` 일 때만** `commitDelta` 로 합친다. 실패·옛 판·무효인 경기는 전역에 흔적을 안 남기고,
+ *   루프 머리의 쓰기 예산 상한 검사도 되돌린 쓰기를 세지 않는다.
+ * ⚠`load-archive-wiring.test.ts` 가 이 모양을 지킨다(콜백 안 `seenPlayers.add(` · `noteSeasonName(` · 변경분 밖 `budget.` 0).
+ */
+interface GameDelta {
+  /** 이 경기에서 새로 `upsertPlayer` 한 선수 */
+  players: Set<string>;
+  /** `noteSeasonName` 에 넘길 인자 — **호출 순서 그대로** 합친다(같은 날은 뒤 호출이 이긴다) */
+  seasonNames: { playerId: string; season: number; name: string; date: string; source: string }[];
+  budget: WriteBudget;
+}
+
+function emptyDelta(): GameDelta {
+  return { players: new Set(), seasonNames: [], budget: emptyBudget() };
+}
+
+function commitDelta(delta: GameDelta): void {
+  for (const id of delta.players) seenPlayers.add(id);
+  for (const s of delta.seasonNames) noteSeasonName(s.playerId, s.season, s.name, s.date, s.source);
+  budget.players += delta.budget.players;
+  budget.games += delta.budget.games;
+  budget.batting += delta.budget.batting;
+  budget.pitching += delta.budget.pitching;
+  budget.paEvents += delta.budget.paEvents;
+  budget.runnerEvents += delta.budget.runnerEvents;
+  budget.quarantine += delta.budget.quarantine;
+}
+
 let played = 0;
 let notPlayed = 0;
 /** 아직 끝나지 않은 경기. **실패가 아니다**(M11) — 다음 실행이 받는다 */
@@ -196,6 +235,41 @@ function noteVersionSkip(outcome: "stale" | "invalid-db", meta: { gameId: string
   }
   failed += 1;
   console.error(`DB 의 취득 시각이 무효다 ${meta.gameId} — 판을 비교할 수 없어 건너뛴다(fail-closed)`);
+}
+
+/**
+ * ⚠**쓰기에서 실패한 경기**(감사 N1 · 설계 §6-1 · §6-4). 그 경기의 트랜잭션만 되돌렸다 — 뒤 경기 · 명단 보충 · 표시명 쓰기는 돈다.
+ * 예전에는 쓰기 예외(외래키 등)가 경기별 처리 **밖**으로 나가 프로세스를 죽였다 — 뒤 경기도 · 명단 보충도 · 표시명 쓰기도 안 돌았다.
+ * ⚠**복구 입력(`refetch_dates=`)에 넣지 않는다** — 같은 페이지를 다시 받아도 같은 예외다. 푸는 방법은 파서·코드다(런북 §7-H).
+ */
+const writeFailures: { gameId: string; date: string; stage: string; reason: string; quarantine: string }[] = [];
+
+/** 격리 행을 종류별 수로 접는다(`unlinkedPlayer 1 · paMismatch 2`) */
+function quarantineSummary(rows: readonly QuarantineRow[]): string {
+  const kinds = new Map<string, number>();
+  for (const q of rows) kinds.set(q.kind, (kinds.get(q.kind) ?? 0) + 1);
+  return [...kinds].map(([k, n]) => `${k} ${n}`).join(" · ");
+}
+
+/**
+ * 쓰기 예외를 **그 경기의 실패**로 센다 — 미성립 쓰기 · 실시 쓰기 두 곳이 부른다(한 벌).
+ * ⚠그 경기에서 모은 격리 종류를 같이 말한다 — 트랜잭션이 되돌려져 **격리도 저장되지 않았다**(예: 박스에서 링크를 못 읽은
+ *   선수의 `unlinkedPlayer` · 감사 C9). 원인을 찾는 단서가 거기 있다.
+ * ⚠**되돌리기 자체가 실패했으면**(트랜잭션이 열린 채) 연결 상태를 모르므로 계속하지 않고 **다시 던진다**(적재 중단 · 종료 1).
+ *   `db.transaction` 은 예외에서 `ROLLBACK` 하고 다시 던지는데, 그 `ROLLBACK` 이 던지면 원래 예외 대신 그것이 온다.
+ */
+function noteWriteFailure(
+  meta: { gameId: string; gameDate: string },
+  stage: string,
+  err: unknown,
+  quarantine: readonly QuarantineRow[],
+): void {
+  if (db.raw.isTransaction) throw err;
+  failed += 1;
+  const reason = err instanceof Error ? err.message : String(err);
+  const kinds = quarantineSummary(quarantine);
+  writeFailures.push({ gameId: meta.gameId, date: meta.gameDate, stage, reason, quarantine: kinds });
+  console.error(`WRITE ERROR ${meta.gameId} — ${stage}: ${reason}` + (kinds === "" ? "" : ` · 되돌려져 저장되지 않은 격리: ${kinds}`));
 }
 
 /**
@@ -413,32 +487,41 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
   }
 
   if (box.status === "notPlayed") {
-    const w = writeGameGuarded(db, meta.gameId, boxFetchedAt, () => {
-      const n = upsertGame(db, {
-        ...meta,
-        status: "notPlayed",
-        notPlayedReason: box.reason,
-        competition,
-        series,
-        sourceUrl,
-        fetchedAt: boxFetchedAt,
-        // ⚠중지 경기에 결과는 없다. **0-0이 아니라 「없음」**이다(M11)
-        venue,
+    // ⚠**쓰기 예외는 그 경기의 실패다**(감사 N1) — 트랜잭션이 그 경기만 되돌리고, 적재는 다음 경기로 간다.
+    //   이 콜백은 전역 상태를 바꾸지 않는다(경기 행 수만 돌려준다) — 예산은 아래 `written` 갈래에서 더한다
+    let w: GuardedWrite<number>;
+    try {
+      w = writeGameGuarded(db, meta.gameId, boxFetchedAt, () => {
+        const n = upsertGame(db, {
+          ...meta,
+          status: "notPlayed",
+          notPlayedReason: box.reason,
+          competition,
+          series,
+          sourceUrl,
+          fetchedAt: boxFetchedAt,
+          // ⚠중지 경기에 결과는 없다. **0-0이 아니라 「없음」**이다(M11)
+          venue,
+        });
+        /**
+         * ⚠**성립하지 않은 경기의 기록을 지운다.**
+         *
+         * 재적재가 멱등이려면(M5) 「전에 실시로 들어왔다가 지금 미성립으로 바뀐」 경우에
+         * 이전 행이 남아 있으면 안 된다. 실제로 일어났다 — ノーゲーム 판정을 고치기 전에
+         * 3경기가 실시로 적재돼 있었고, 그 기록이 시즌 성적에 섞여 있었다.
+         * 상태만 바꾸고 자식 행을 두면 **화면은 「미성립」인데 성적에는 남는다.**
+         */
+        db.raw.prepare("DELETE FROM pa_event WHERE game_id = ?").run(meta.gameId);
+        db.raw.prepare("DELETE FROM batting_line WHERE game_id = ?").run(meta.gameId);
+        db.raw.prepare("DELETE FROM pitching_line WHERE game_id = ?").run(meta.gameId);
+        db.raw.prepare("DELETE FROM quarantine WHERE game_id = ?").run(meta.gameId);
+        return n;
       });
-      /**
-       * ⚠**성립하지 않은 경기의 기록을 지운다.**
-       *
-       * 재적재가 멱등이려면(M5) 「전에 실시로 들어왔다가 지금 미성립으로 바뀐」 경우에
-       * 이전 행이 남아 있으면 안 된다. 실제로 일어났다 — ノーゲーム 판정을 고치기 전에
-       * 3경기가 실시로 적재돼 있었고, 그 기록이 시즌 성적에 섞여 있었다.
-       * 상태만 바꾸고 자식 행을 두면 **화면은 「미성립」인데 성적에는 남는다.**
-       */
-      db.raw.prepare("DELETE FROM pa_event WHERE game_id = ?").run(meta.gameId);
-      db.raw.prepare("DELETE FROM batting_line WHERE game_id = ?").run(meta.gameId);
-      db.raw.prepare("DELETE FROM pitching_line WHERE game_id = ?").run(meta.gameId);
-      db.raw.prepare("DELETE FROM quarantine WHERE game_id = ?").run(meta.gameId);
-      return n;
-    });
+    } catch (err) {
+      // 미성립 경로에는 모은 격리가 없다
+      noteWriteFailure(meta, "미성립 쓰기", err, []);
+      continue;
+    }
     // ⚠아래 실시 경로와 같은 모양 — 성공 처리는 `written` 갈래 안에만 둔다(빠뜨릴 `continue` 가 없게)
     if (w.outcome === "written") {
       notPlayed += 1;
@@ -552,11 +635,17 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
   }
 
   const quarantine: QuarantineRow[] = [];
+  /** 이 경기의 전역 변경분 — **쓰기가 `written` 일 때만** 합친다(`commitDelta` · 감사 N1 · 설계 §6-2) */
+  const delta = emptyDelta();
 
   // ⚠경기 1건의 쓰기를 한 트랜잭션으로 묶는다. 개별 커밋은 느릴 뿐 아니라
   // 도중에 죽으면 **절반만 적재된 경기**를 남긴다.
   // ⚠판정을 그 트랜잭션 **안에서 다시** 한다(`writeGameGuarded` · 설계 D1)
-  const written = writeGameGuarded(db, meta.gameId, boxFetchedAt, () => {
+  // ⚠**쓰기 예외는 그 경기의 실패다**(감사 N1 · 설계 §6-1) — 트랜잭션이 그 경기만 되돌리고 적재는 다음 경기로 간다(아래 catch).
+  //   예전에는 이 호출이 경기별 try 밖이라 외래키 하나가 **프로세스를 죽였다**(뒤 경기 · 명단 보충 · 표시명 쓰기가 전부 안 돌았다)
+  let written: GuardedWrite<void>;
+  try {
+  written = writeGameGuarded(db, meta.gameId, boxFetchedAt, () => {
   /**
    * ⚠**재적재가 「줄어드는 방향」으로는 멱등이 아니었다**(M5 · 2026-08-18 감사 P2).
    * `upsertBatting`/`upsertPitching` 은 `(game_id, player_id)` 충돌 시 **갱신**만 한다 —
@@ -571,7 +660,7 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
   db.raw.prepare("DELETE FROM batting_line WHERE game_id = ?").run(meta.gameId);
   db.raw.prepare("DELETE FROM pitching_line WHERE game_id = ?").run(meta.gameId);
 
-  budget.games += upsertGame(db, {
+  delta.budget.games += upsertGame(db, {
     ...meta,
     status: "played",
     notPlayedReason: null,
@@ -602,13 +691,15 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
       if (row.sb > 0) {
         boxStealsBy.set(row.playerId, (boxStealsBy.get(row.playerId) ?? 0) + row.sb);
       }
-      if (!seenPlayers.has(row.playerId)) {
-        seenPlayers.add(row.playerId);
-        budget.players += upsertPlayer(db, row.playerId, b.name, nowIso);
+      // ⚠전역 `seenPlayers` 는 **읽기만** 한다 — 이 경기에서 넣은 선수는 변경분(`delta.players`)에 모은다(감사 N1)
+      if (!seenPlayers.has(row.playerId) && !delta.players.has(row.playerId)) {
+        delta.players.add(row.playerId);
+        delta.budget.players += upsertPlayer(db, row.playerId, b.name, nowIso);
       }
       // ⚠**여기는 `seenPlayers` 밖이다** — 시즌마다·경기마다 봐야 한다. 쓰기는 끝에 모아서 한 번
-      noteSeasonName(row.playerId, meta.season, b.name, meta.gameDate, sourceUrl);
-      budget.batting += upsertBatting(db, row);
+      //   (⚠변경분에 모았다가 쓰기가 `written` 일 때만 `noteSeasonName` 에 넘긴다 — 되돌린 경기의 표시명이 남지 않게)
+      delta.seasonNames.push({ playerId: row.playerId, season: meta.season, name: b.name, date: meta.gameDate, source: sourceUrl });
+      delta.budget.batting += upsertBatting(db, row);
     }
     for (const p of team.pitchers) {
       const derived = derivePitching(meta.gameId, side, p);
@@ -619,12 +710,12 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
       // 방어율만 부풀어 오른다 — 격리에 남았으므로 화면이 말해 준다
       if (derived.row === null) continue;
       const row = derived.row;
-      if (!seenPlayers.has(row.playerId)) {
-        seenPlayers.add(row.playerId);
-        budget.players += upsertPlayer(db, row.playerId, p.name, nowIso);
+      if (!seenPlayers.has(row.playerId) && !delta.players.has(row.playerId)) {
+        delta.players.add(row.playerId);
+        delta.budget.players += upsertPlayer(db, row.playerId, p.name, nowIso);
       }
-      noteSeasonName(row.playerId, meta.season, p.name, meta.gameDate, sourceUrl);
-      budget.pitching += upsertPitching(db, row);
+      delta.seasonNames.push({ playerId: row.playerId, season: meta.season, name: p.name, date: meta.gameDate, source: sourceUrl });
+      delta.budget.pitching += upsertPitching(db, row);
     }
   }
 
@@ -633,7 +724,16 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
   let aligned: ReturnType<typeof alignPaEvents> | undefined;
   if (pbpEvents !== null) {
     aligned = alignPaEvents(meta.gameId, box, pbpEvents, runsForCompleted);
-    budget.paEvents += replacePaEvents(db, meta.gameId, aligned.events);
+    /**
+     * ⚠**외래키 전에 원인 선수를 말하게 한다**(감사 N1 · 설계 §6-3). 박스에서 링크를 못 읽은 **신규** 선수는 선수 행이 없는데
+     * 경과의 링크는 살아 있으면 그 ID 가 `pitcher_id` 로 간다 — 외래키 오류는 `FOREIGN KEY constraint failed` 뿐이라
+     * **누구인지 말하지 않는다.** 박스 선수 `upsertPlayer` **뒤**(같은 트랜잭션이라 방금 넣은 선수가 보인다) ·
+     * 타석·주자 쓰기 **앞**에서 본다. ⚠**정렬 뒤 행**이어야 한다 — 미완결 타석만 던진 투수(박스에 줄이 없다)를 헛실패로 잡지 않게.
+     * 던지면 아래 catch 가 그 경기만 되돌린다(격리가 아니라 실패 — 설계 §6-6).
+     */
+    const missing = missingPlayerRefs(db, { events: aligned.events, runners: pbpRunners });
+    if (missing.length > 0) throw new MissingPlayerRefError(missing);
+    delta.budget.paEvents += replacePaEvents(db, meta.gameId, aligned.events);
     quarantine.push(...aligned.quarantine, ...runsQuarantine);
   }
 
@@ -671,7 +771,7 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
       }
       return 0;
     };
-    budget.runnerEvents += replaceRunnerEvents(
+    delta.budget.runnerEvents += replaceRunnerEvents(
       db,
       meta.gameId,
       pbpRunners.map((r, i) => ({ ...r, gameId: meta.gameId, seq: i + 1, afterSeq: remap(r.afterSeq) })),
@@ -721,14 +821,21 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
     }
   }
 
-  budget.quarantine += replaceQuarantine(db, meta.gameId, quarantine, nowIso);
+  delta.budget.quarantine += replaceQuarantine(db, meta.gameId, quarantine, nowIso);
   });
+  } catch (err) {
+    // ⚠그 경기에서 모은 격리를 같이 넘긴다 — 되돌려져 저장되지 않았다(원인의 단서 · 예: 박스 링크를 못 읽은 선수)
+    noteWriteFailure(meta, "실시 쓰기", err, quarantine);
+    continue;
+  }
   // ⚠성공 처리는 **`written` 갈래 안에만** 둔다(2026-09-26 최종 가지 검토 이월 1). 예전 모양은 `stale`·`invalid-db` 를
   //   걸러 `continue` 하고 그 **아래**에 성공 처리를 뒀다 — `continue` 한 줄이 빠지면 쓰지 않은 경기가 `played` 로 세어지고
   //   그 명단이 선수 표로 흘러가는데(설계 D1-6), 위치만 보던 배선 시험은 그 삭제를 못 잡았다. 갈래로 나누면 빠질 줄이 없다.
   //   `load-archive-wiring.test.ts` 가 이 모양을 지킨다.
   if (written.outcome === "written") {
     played += 1;
+    // ⚠전역 변경분은 **여기서만** 합친다(감사 N1) — 옛 판·무효·실패인 경기는 흔적을 안 남긴다
+    commitDelta(delta);
     mergeRoster(localRoster);
     for (const q of quarantine) quarantineKinds.set(q.kind, (quarantineKinds.get(q.kind) ?? 0) + 1);
   } else {
@@ -812,6 +919,8 @@ budget.total =
 
 console.log(
   `성립 ${played}건 · 미성립 ${notPlayed}건 · 실패 ${failed}건` +
+    // ⚠**0 이어도 찍는다**(감사 N1 · 설계 §6-4) — 쓰기 실패는 위 「실패」에 들어 있다. 「0건」과 「안 쟀음」을 가른다
+    `(그중 쓰기 실패 ${writeFailures.length}건)` +
     // ⚠**세어서 보여준다.** 안 보이면 「왜 오늘 경기가 없지?」에 답할 수 없다(M11·M12)
     (inProgress > 0 ? ` · 아직 진행 중 ${inProgress}건` : ""),
 );
@@ -852,6 +961,19 @@ for (const [label, list] of [["세트 표식이 갈린 경기", setMismatch], ["
       `   (${dates.length}일` + (runs > 1 ? ` · 위 ${runs}줄을 한 줄에 한 번씩 수동 실행` : "") +
         ") 절차: docs/operations/deploy.md §7-E",
     );
+  }
+}
+/**
+ * ⚠**쓰기에서 실패한 경기를 전부 · 날짜별로 찍는다**(감사 N1 · 설계 §6-4) — 자르지 않는다.
+ * ⚠**위 복구 입력(`refetch_dates=`)에 넣지 않는다** — 같은 페이지를 다시 받아도 같은 예외다. 푸는 방법은 파서·코드다.
+ */
+if (writeFailures.length > 0) {
+  console.log(`⚠쓰기에서 실패한 경기 ${writeFailures.length}건 — 그 경기만 되돌렸다(나머지 경기는 적재했다) · 절차: docs/operations/deploy.md §7-H`);
+  for (const [date, games] of byDate(writeFailures)) {
+    console.log(`   ${date}:`);
+    for (const s of games) {
+      console.log(`      ${s.gameId} — ${s.stage}: ${s.reason}` + (s.quarantine === "" ? "" : ` · 되돌려져 저장되지 않은 격리: ${s.quarantine}`));
+    }
   }
 }
 // ⚠**분모를 같이 낸다.** 「보충 122명」만 내면 그것이 전부인지 일부인지 모른다
