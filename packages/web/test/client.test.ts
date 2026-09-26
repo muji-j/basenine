@@ -2239,6 +2239,110 @@ test("⚠깨진 ?q= 로도 화면이 죽지 않는다", () => {
   assert.equal(doc.getElementById("rosterCount")!.textContent, "0人");
 });
 
+// ─── 헤더 검색과 選手一覧이 같은 판정을 쓰는가 (감사 W6) ────────────────────
+
+/**
+ * ⚠**헤더 검색은 구단명도 맞추는데 選手一覧은 안 맞췄다**(2026-09-25 감사 W6).
+ * 헤더에 「阪神」을 치면 「58人中20人を表示 — 選手一覧ですべて見る」라고 말하고 `players.html?q=阪神` 로
+ * 보내는데, 받는 쪽은 이름·읽는 법·등번호만 봐서 **0人** 이었다 — 「전부 보여 주겠다」고 약속한 뒤 0명.
+ * 두 곳의 주석은 「같은 규칙」이라고 적고 있었다. **규칙이 두 벌이면 주석은 지킬 수 없는 약속이다**(M1).
+ */
+type IndexEntry = { i: string; n: string; t: string; k?: string; u?: string };
+
+/**
+ * 색인 항목과 **같은 선수들로** 選手一覧을 짓는다.
+ * li 의 속성은 서버(`pages.ts` 의 `renderIndexPage`)가 내는 것과 같은 모양이다 —
+ * 그 일치는 `roster-teamname.test.ts` 가 진짜 렌더 결과에서 따로 잰다.
+ */
+function buildRosterOf(entries: readonly IndexEntry[]): ReturnType<typeof makeDocument> {
+  const doc = makeDocument("");
+  const find = make("section", { class: "find" });
+  find.appendChild(make("input", { id: "rosterFilter", type: "search" }));
+  find.appendChild(make("span", { id: "rosterCount" }));
+  doc.body.appendChild(find);
+  const teams = [...new Set(entries.map((e) => e.t))];
+  for (const [n, team] of teams.entries()) {
+    const group = make("section", { class: "teamgroup" });
+    const ul = make("ul", { class: "roster" });
+    for (const e of entries.filter((x) => x.t === team)) {
+      ul.appendChild(make("li", {
+        "data-team": `c${n}`, "data-name": e.n, "data-id": e.i, "data-teamname": e.t,
+        ...(e.k === undefined ? {} : { "data-kana": e.k }),
+        ...(e.u === undefined ? {} : { "data-uniform": e.u }),
+      }));
+    }
+    group.appendChild(ul);
+    doc.body.appendChild(group);
+  }
+  return doc;
+}
+
+/** 阪神 22명 + 巨人 3명. 헤더가 20명에서 자르고 「すべて見る」를 내게 **20명을 넘긴다** */
+const TEAM_INDEX: IndexEntry[] = [
+  ...Array.from({ length: 22 }, (_, i) => ({ i: `t${i}`, n: `虎${i}`, t: "阪神タイガース" })),
+  ...Array.from({ length: 3 }, (_, i) => ({ i: `g${i}`, n: `巨${i}`, t: "読売ジャイアンツ" })),
+];
+
+test("⚠W6 헤더 검색이 「すべて見る」로 보낸 구단명 질의가 選手一覧에서도 같은 인원이다", async () => {
+  const header = buildHeaderSearch();
+  run(header, { index: TEAM_INDEX });
+  const tail = (await searchIn(header, "q", "qhits", "阪神")).at(-1)!;
+  const said = /(\d+)人中20人を表示/.exec(tail.textContent);
+  assert.notEqual(said, null, `헤더가 자른 사실을 말하지 않았다 — 이 시험이 공회전한다: ${tail.textContent}`);
+  const promised = Number(said![1]);
+  assert.equal(promised, 22, "표본이 22명이 아니다 — 이 시험이 재는 것이 바뀌었다");
+  const href = tail.querySelector("a")!.getAttribute("href")!;
+
+  // 그 링크를 따라 選手一覧에 착지한다
+  const roster = buildRosterOf(TEAM_INDEX);
+  run(roster, { location: { search: href.slice(href.indexOf("?")), href: "" } });
+  assert.equal(roster.getElementById("rosterFilter")!.value, "阪神", "질의어가 안 넘어왔다 — 전제가 틀렸다");
+  assert.equal(
+    roster.getElementById("rosterCount")!.textContent,
+    `${promised}人`,
+    "헤더가 「すべて見る」라고 약속한 인원과 選手一覧의 인원이 다르다",
+  );
+  assert.equal(rosterNames(roster).length, promised, "보이는 선수 수가 헤더가 말한 수와 다르다");
+});
+
+/**
+ * ⚠**구단명만 맞추면 되는 게 아니다 — 두 곳의 결과가 어느 질의에서나 같아야 한다.**
+ * 이름·읽는 법(히라가나·카타카나 접기)·라틴 소문자·등번호 완전일치가 대조군이고,
+ * 구단명(부분·전체)이 이번 결함이다. 한쪽에만 규칙이 더해지면 여기서 갈린다.
+ */
+test("⚠W6 헤더 검색과 選手一覧은 어느 질의에서나 같은 선수를 찾는다 — 이름·읽는 법·등번호·구단명", async () => {
+  for (const q of ["山本", "やまもと", "ヤマモト", "voit", "8", "18", "阪神", "阪神タイガース", "カープ", "存在しない"]) {
+    const header = buildHeaderSearch();
+    run(header, { index: KANA_INDEX });
+    const fromHeader = names(await searchIn(header, "q", "qhits", q)).sort();
+
+    const roster = buildRosterOf(KANA_INDEX);
+    run(roster, { location: { search: `?q=${encodeURIComponent(q)}`, href: "" } });
+    assert.deepEqual(rosterNames(roster).sort(), fromHeader, `「${q}」 — 헤더와 選手一覧이 다른 선수를 찾았다`);
+  }
+  // 대조군이 실제로 무언가를 찾는지 — 둘 다 0건이면 위 비교는 공회전이다
+  const header = buildHeaderSearch();
+  run(header, { index: KANA_INDEX });
+  assert.deepEqual(names(await searchIn(header, "q", "qhits", "阪神")).sort(), ["ボイト", "佐藤"].sort(),
+    "헤더가 구단명으로 안 찾는다 — 이 시험의 전제가 바뀌었다");
+});
+
+/**
+ * ⚠**규칙은 한 벌이다**(M1). 행동이 같아도 규칙이 두 벌이면 다음 변경에서 한쪽만 고쳐진다 —
+ * 이번 결함이 정확히 그렇게 생겼다. 판정 함수가 하나이고 **두 곳이 그것을 부르는지**를 소스에서 본다.
+ */
+test("⚠W6 헤더 검색과 選手一覧 좁히기가 판정 함수 한 벌을 부른다(M1)", () => {
+  assert.equal((CLIENT_JS.match(/function playerHit\(/g) ?? []).length, 1, "판정 함수가 한 벌이 아니다");
+  const header = /const run=\(\)=>\{([\s\S]*?)\n  \};/.exec(CLIENT_JS);
+  assert.notEqual(header, null, "헤더 검색 실행부를 못 찾았다 — 이 시험이 공회전한다");
+  assert.match(header![1] ?? "", /playerHit\(/, "헤더 검색이 공유 판정을 안 부른다");
+  assert.doesNotMatch(header![1] ?? "", /\.indexOf\(term\)/, "헤더 검색에 판정 규칙이 따로 남아 있다");
+  const roster = /const filter=\$\("#rosterFilter"\);([\s\S]*?)\nconst isSnapshotHost/.exec(CLIENT_JS);
+  assert.notEqual(roster, null, "選手一覧 좁히기를 못 찾았다 — 이 시험이 공회전한다");
+  assert.match(roster![1] ?? "", /playerHit\(/, "選手一覧 좁히기가 공유 판정을 안 부른다");
+  assert.doesNotMatch(roster![1] ?? "", /\.indexOf\(term\)/, "選手一覧 좁히기에 판정 규칙이 따로 남아 있다");
+});
+
 /**
  * 比較 데이터의 샤딩.
  *

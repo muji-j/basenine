@@ -4188,6 +4188,22 @@ function fold(s){
   return out;
 }
 
+/* ── 선수 찾기 판정 ──
+   ⚠**헤더 검색과 選手一覧의 좁히기가 이 한 벌을 부른다**(M1 · 2026-09-25 감사 W6).
+   두 벌이었을 때 한쪽(헤더)만 구단명을 봐서, 헤더가 「58人中20人を表示 — 選手一覧ですべて見る」라고
+   보낸 곳이 **0人** 을 보였다. 두 곳의 주석은 「같은 규칙」이라고 적고 있었다 —
+   **규칙이 두 벌이면 그 주석은 지킬 수 없는 약속이다.**
+   p 는 색인 항목의 모양이다: n 이름 · t 구단명 · kf 접은 읽는 법(없으면 거짓 값) · u 등번호(없으면 undefined).
+   選手一覧은 서버가 그린 항목의 속성으로 같은 모양을 만들어 넘긴다.
+   term 은 다듬은 원문 질의어, q 는 fold(term) — 접기는 부르는 쪽이 **한 번만** 한다(키 입력마다 행 수만큼 접지 않는다). */
+function playerHit(p,term,q){
+  return p.n.indexOf(term)>=0||p.t.indexOf(term)>=0
+    ||(!!p.kf&&p.kf.indexOf(q)>=0)
+    /* ⚠**등번호는 완전일치다.** 부분일치로 두면 「1」이 1·10〜19·100번대를 전부 끌고 와
+       이름 검색 결과를 밀어낸다. 「34」로 34번을 찾는 것이 이 기능의 전부다 */
+    ||p.u===term;
+}
+
 /* ── 선수 색인 ── 한 번 받아서 헤더 검색과 색인 화면이 함께 쓴다 */
 let INDEX=null,indexError=false,fetching=false;
 const waiting=[];
@@ -4332,11 +4348,9 @@ function attachPicker(input,list,onPick){
     withIndex(idx=>{
       if(mine!==gen||input.value.trim()!==term)return;
       if(!idx){draw([],true);return}
-      /* ⚠**등번호는 완전일치다.** 부분일치로 두면 「1」이 1·10〜19·100번대를 전부 끌고 와
-         이름 검색 결과를 밀어낸다. 「34」로 34번을 찾는 것이 이 기능의 전부다 */
+      /* ⚠**판정은 選手一覧과 같은 한 벌이다**(playerHit · M1 · 감사 W6) — 여기서 규칙을 다시 적지 마라 */
       var q=fold(term);
-      var all=idx.filter(p=>p.n.indexOf(term)>=0||p.t.indexOf(term)>=0
-        ||(p.kf&&p.kf.indexOf(q)>=0)||p.u===term);
+      var all=idx.filter(p=>playerHit(p,term,q));
       /* ⚠**자르기 전에 센다.** 자른 뒤에 세면 언제나 20이 되어 「81人中」이 「20人中」이 된다 */
       hits=all.length;asked=term;
       rows=all.slice(0,SEARCH_LIMIT);
@@ -5011,26 +5025,33 @@ const chips=$$(".chip[data-team]");
 const favOnly=$("#favOnly");
 if(filter||chips.length){
   let team="",onlyFav=false;
+  /* 항목마다 **색인 항목과 같은 모양**을 한 번만 만든다 — 판정 함수(playerHit)가 받는 것이 그 모양이다.
+     ⚠**구단명(data-teamname)이 빠져 있었다**(2026-09-25 감사 W6). 헤더는 구단명으로도 찾고
+     「選手一覧ですべて見る」로 여기에 보내는데, 여기는 구단명을 몰라 같은 질의가 **0人** 이 됐다.
+     ⚠읽는 법은 **여기서 한 번만 접는다** — 키 입력마다 전 선수를 다시 접을 이유가 없다(색인 쪽과 같은 판단).
+     ⚠없는 값은 거짓 값으로 둔다 — 빈 구단명은 어떤 질의어에도 안 걸린다(모르는 것을 맞았다고 하지 않는다). */
+  const groups=$$(".teamgroup").map(g=>({g:g,items:$$("li",g).map(li=>({li:li,p:{
+    n:li.dataset.name||"",
+    t:li.dataset.teamname||"",
+    kf:li.dataset.kana?fold(li.dataset.kana):"",
+    u:li.dataset.uniform
+  }}))}));
   const apply=()=>{
     const term=(filter?filter.value.trim():"");
-    /* ⚠**헤더 검색과 같은 규칙으로 찾는다.** 여기만 이름 부분일치로 두면
-       「やまもと」나 「18」이 첫 화면에서만 0건이 된다 — 같은 기능이 화면에 따라 다르게 동작한다.
-       접기는 fold() 한 벌을 그대로 쓴다(M1). */
+    /* ⚠**헤더 검색과 같은 판정 한 벌을 부른다**(playerHit · M1). 규칙을 여기서 다시 적지 마라 —
+       예전에는 「같은 규칙」이라고 적어 두고 규칙을 따로 적었고, 한쪽에만 구단명이 들어가 있었다(감사 W6).
+       접기도 fold() 한 벌을 그대로 쓴다. */
     const q=fold(term);
     let shown=0;
-    $$(".teamgroup").forEach(g=>{
+    groups.forEach(x=>{
       let n=0;
-      $$("li",g).forEach(li=>{
-        const hit=(team===""||li.dataset.team===team)
-          &&(term===""
-            ||li.dataset.name.indexOf(term)>=0
-            ||(li.dataset.kana&&fold(li.dataset.kana).indexOf(q)>=0)
-            /* 등번호는 완전일치 — 부분일치면 「1」이 100번대까지 끌고 온다 */
-            ||li.dataset.uniform===term)
-          &&(!onlyFav||isFav(li.dataset.id));
-        li.hidden=!hit;if(hit)n++;
+      x.items.forEach(it=>{
+        const hit=(team===""||it.li.dataset.team===team)
+          &&(term===""||playerHit(it.p,term,q))
+          &&(!onlyFav||isFav(it.li.dataset.id));
+        it.li.hidden=!hit;if(hit)n++;
       });
-      g.hidden=n===0;shown+=n;
+      x.g.hidden=n===0;shown+=n;
     });
     const c=$("#rosterCount");
     if(c)c.textContent=shown+"人";
