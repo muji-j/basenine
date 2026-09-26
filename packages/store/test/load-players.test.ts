@@ -4,7 +4,8 @@
  * ⚠**합성 페이지를 쓰지 않는다** — 파서가 실물 마크업(탭 `#pc_stats_nav` · 구획 `stats_*` · 중첩 投球回 표)에
  *   기대므로 만든 문자열은 실물과 갈리고, 그러면 「아무것도 안 재는 초록」이 된다(`packages/parser/test/fixtures/README.md`).
  *   로컬·CI 의 `data/archive` 에서 선수 페이지를 **임시 폴더로 복사**해 쓴다.
- * ⚠사이드카(`*.meta.json`)는 실물을 읽어 **시각만 바꿔** 쓴다 — 적재기가 읽는 것은 `fetchedAtOf` 한 벌이다.
+ * ⚠사이드카(`*.meta.json`)는 실물을 읽어 **시각만 바꿔** 쓴다 — 시각 규칙은 `meta.ts` 한 벌이다(`seenAtOf` · `contentTimeOf`).
+ * ⚠**본문을 바꾸면 사이드카 `sha256` 도 맞춘다**(감사 N3) — 판은 본문 sha 이고, 사이드카가 본문을 말하지 않으면 시각을 모른다.
  * ⚠`data/archive` 가 없으면 건너뛴다. CI 는 `BB_REQUIRE_DB=1` 로 막는다.
  */
 import { test } from "node:test";
@@ -14,6 +15,7 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { openDb, upsertPlayer } from "../src/index.ts";
@@ -37,7 +39,8 @@ interface Env { dir: string; archive: string; dbPath: string }
 
 /**
  * @param sidecars 선수 ID → 사이드카에 쓸 시각. `null` 이면 **사이드카를 두지 않는다**(「모른다」의 재현).
- *   ⚠실물 사이드카를 읽어 `fetchedAt`·`checkedAt` 만 갈아 끼운다 — 나머지(sha256·revision)는 적재기가 안 본다.
+ *   ⚠실물 사이드카를 읽어 `fetchedAt`·`checkedAt` 만 갈아 끼운다 — 나머지(sha256·revision)는 실물 그대로다.
+ *   ⚠~~sha256 은 적재기가 안 본다~~ 는 2026-09-27 부로 낡았다(감사 N3) — 판 가드가 본다. 실물 sha 는 실물 본문과 같다(설계 §4-2 실측).
  */
 async function setup(sidecars: Record<string, { fetchedAt: string; checkedAt?: string } | null>): Promise<Env> {
   const dir = await mkdtemp(join(tmpdir(), "bb-players-"));
@@ -193,13 +196,39 @@ function counts(env: Env, id: string): { b: number; p: number } {
   };
 }
 
-/** 임시 아카이브의 선수 페이지를 고친다. ⚠**안 바뀌면 던진다** — 변이가 헛돌면 이 시험은 아무것도 안 잰다 */
+const pagePath = (env: Env, id: string): string => join(env.archive, "npb", "players", `${id}.html.gz`);
+const metaPath = (env: Env, id: string): string => join(env.archive, "npb", "players", `${id}.meta.json`);
+const shaOf = (body: Buffer): string => createHash("sha256").update(body).digest("hex");
+
+/**
+ * 임시 아카이브의 선수 페이지를 고친다. ⚠**안 바뀌면 던진다** — 변이가 헛돌면 이 시험은 아무것도 안 잰다.
+ * ⚠**사이드카가 있으면 `sha256` 을 바꾼 본문에 맞춘다**(감사 N3 · 설계 §9-1) — 아카이버가 새 본문을 받으면 새 sha 를 적는다.
+ *   안 맞추면 「사이드카가 본문을 말하지 않는다 → 시각 모름」이 되어, 판 가드가 이 시험들이 재려는 것(통산 표 구조 변경)
+ *   **전에** 그 선수를 `VERSION UNKNOWN` 으로 건너뛴다. 시각은 건드리지 않는다.
+ */
 async function mutatePage(env: Env, id: string, fn: (html: string) => string): Promise<void> {
-  const p = join(env.archive, "npb", "players", `${id}.html.gz`);
+  const p = pagePath(env, id);
   const html = gunzipSync(await readFile(p)).toString("utf8");
   const next = fn(html);
   assert.notEqual(next, html, "변이가 페이지를 바꾸지 않았다");
   await writeFile(p, gzipSync(Buffer.from(next, "utf8")));
+  if (existsSync(metaPath(env, id))) await editSidecar(env, id, { sha256: shaOf(Buffer.from(next, "utf8")) });
+}
+
+/** 원본 페이지로 되돌린다 — 본문과 **사이드카 sha** 를 함께(사이드카의 시각은 그대로) */
+async function restorePage(env: Env, id: string): Promise<void> {
+  await copyFile(join(PLAYERS, `${id}.html.gz`), pagePath(env, id));
+  await editSidecar(env, id, { sha256: shaOf(gunzipSync(await readFile(pagePath(env, id)))) });
+}
+
+/** 임시 아카이브의 사이드카를 고친다. 값이 `undefined` 인 키는 지운다 */
+async function editSidecar(env: Env, id: string, patch: Record<string, unknown>): Promise<void> {
+  const m = JSON.parse(await readFile(metaPath(env, id), "utf8")) as Record<string, unknown>;
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === undefined) delete m[k];
+    else m[k] = v;
+  }
+  await writeFile(metaPath(env, id), JSON.stringify(m));
 }
 
 /**
@@ -247,7 +276,8 @@ test("C8 · 신규 투수의 투수 표 탭·구획·표 id 가 한꺼번에 바
     assert.deepEqual(counts(env, PITCHER), { b: 0, p: 0 }, "실패한 선수의 통산이 반쪽만 들어갔다");
 
     // 원본으로 되돌리면 다음 적재가 정상으로 끝난다 — 막힌 것은 그 페이지뿐이다
-    await copyFile(join(PLAYERS, `${PITCHER}.html.gz`), join(env.archive, "npb", "players", `${PITCHER}.html.gz`));
+    // ⚠본문과 **사이드카 sha** 를 함께 되돌린다(아카이버가 원본을 다시 받은 모양 · 감사 N3 — 본문만 되돌리면 판을 모른다)
+    await restorePage(env, PITCHER);
     const again = load(env);
     assert.equal(again.code, 0, again.out + again.err);
     const c = counts(env, PITCHER);
@@ -332,6 +362,256 @@ test("C8 · 통산 표가 하나도 없는 새 선수 페이지는 실패가 아
     assert.equal(r.code, 0, r.out + r.err);
     assert.deepEqual(counts(env, BATTER), { b: 0, p: 0 });
     assert.match(r.err, /통산 표가 하나도 없는 페이지 1장/);
+  } finally {
+    await cleanup(env);
+  }
+});
+
+// ─── N3 · 옛 판 선수 페이지가 더 새 프로필·통산을 덮지 못한다(감사 N3 · 설계 docs/superpowers/specs/2026-09-27-profile-version-guard-design.md §5 · §9-1) ───
+//
+// ⚠**운영에서 일어나는 길**(설계 §1-1): 「보관소에 올림」이 오늘 세대를 지운 뒤 실패하면 다음 실행이 **어제 세대 + 더 새 DB** 를
+//   복원하고, 덧붙임 `archive-*.tar` 는 최신 세대 **위에** 풀린다. 경기 가드는 경기 폴더만 지킨다 — 선수 페이지는 판을 안 보고 덮었다.
+
+const T_OLD = "2026-01-01T00:00:00.000Z";
+const T_NEW = "2026-09-01T00:00:00.000Z";
+const T_MID = "2026-08-20T00:00:00.000Z";
+const T_LATER = "2026-09-10T00:00:00.000Z";
+/** DB 가 가진 「더 새 판」의 표지 — 아카이브 본문과 다른 sha(소문자 hex 64자) */
+const REV_Y = "b".repeat(64);
+
+/** 선수 행 전체와 그 선수의 통산 행 전부 — 「DB 불변」을 이것으로 잰다 */
+function snapshot(env: Env, id: string): { player: Record<string, unknown>; bat: unknown[]; pit: unknown[] } {
+  const db = openDb(env.dbPath, NOW);
+  try {
+    return {
+      player: { ...(db.raw.prepare("SELECT * FROM player WHERE player_id = ?").get(id) as Record<string, unknown>) },
+      bat: (db.raw.prepare("SELECT * FROM career_batting WHERE player_id = ? ORDER BY seq").all(id) as Record<string, unknown>[]).map((r) => ({ ...r })),
+      pit: (db.raw.prepare("SELECT * FROM career_pitching WHERE player_id = ? ORDER BY seq").all(id) as Record<string, unknown>[]).map((r) => ({ ...r })),
+    };
+  } finally {
+    db.close();
+  }
+}
+
+const realSha = async (id: string): Promise<string> => shaOf(gunzipSync(await readFile(join(PLAYERS, `${id}.html.gz`))));
+
+/** 옛 판으로 바꾸는 변이 — 배번만 바꾼다(반증자 재현과 같다) */
+const oldUniform = (h: string): string => h.replace('<li id="pc_v_no">34</li>', '<li id="pc_v_no">OLD-NO</li>');
+
+/**
+ * ⚠**반증자 재현 그대로다**(2026-09-27 · 실물 `01005134`). 새 판(rev 2 · 2026-09-01)을 적재한 뒤 배번만 바꾼 옛 판
+ * (rev 1 · 2026-01-01)을 적재하면 예전에는 **프로필 값 · `profile_fetched_at` · 통산 4행 `fetched_at` 이 전부 과거로** 갔고 종료 0 이었다.
+ * ⚠옛 판의 사이드카 sha 는 옛 본문에 맞춘다 — 안 맞추면 `stale` 이 아니라 `unknown`(종료 1)으로 떨어진다(설계 §9-1).
+ */
+test("⚠N3 3-5 · 새 판 뒤에 배번만 바꾼 옛 판을 적재해도 프로필·판·통산이 안 되돌아간다 — 종료 0 · 목록 · ::warning::", { skip }, async () => {
+  const env = await setup({ [PITCHER]: { fetchedAt: T_NEW } });
+  try {
+    await editSidecar(env, PITCHER, { revision: 2 });
+    assert.equal(load(env).code, 0);
+    const before = snapshot(env, PITCHER);
+    assert.equal(before.player["uniform_number"], "34");
+    assert.ok(before.bat.length > 0 && before.pit.length > 0, "통산 행이 없다 — 이 시험이 비교할 상대가 없다");
+
+    await mutatePage(env, PITCHER, oldUniform);
+    await editSidecar(env, PITCHER, { revision: 1, fetchedAt: T_OLD, checkedAt: undefined });
+    const r = load(env);
+    assert.equal(r.code, 0, `옛 판은 DB 를 지켰으니 종료 0 이다(설계 §5-5)\n${r.out}${r.err}`);
+    assert.deepEqual(snapshot(env, PITCHER), before, "옛 판이 프로필·판·통산을 되돌렸다");
+    assert.equal(before.player["profile_revision"], await realSha(PITCHER), "첫 적재가 적용 판을 안 채웠다");
+    assert.match(r.out, /판 가드 — 처음 0 · 같은 본문 0 · 새 판 0 · 옛 판 건너뜀 1\(재취득 대상 1 · 부재라 못 고침 0\) · 판 모름 건너뜀 0 · DB 시각 무효 0 · DB 에 없는 선수 0/);
+    assert.match(r.out, /⚠아카이브가 DB 보다 옛 판인 선수 1명 — 적재하지 않았다\(DB 를 지켰다\)/);
+    assert.match(r.out, new RegExp(`^ +${PITCHER}$`, "m"), "옛 판 선수 ID 를 찍지 않았다");
+    assert.match(r.out, /^::warning::선수 페이지 1장이 DB 보다 옛 판이라 적재하지 않았다 — 재취득 대상 1 · 부재라 못 고침 0 · 절차 docs\/operations\/deploy\.md §7-G$/m);
+  } finally {
+    await cleanup(env);
+  }
+});
+
+/**
+ * ⚠**같은 본문 · 이른 확인은 옛 판이 아니다** — 세대 복원이 같은 본문의 이른 사이드카를 되살린 모양이다. 시각만 비교하면
+ * 거짓 옛 판(헛경보 · 헛재취득)이다. 시각은 **늦은 쪽**(DB)을 지킨다. 변이 「같은 sha 에서도 시각을 비교」가 이 시험을 붉게 만든다.
+ */
+test("⚠N3 3-6 · 같은 본문에 더 이른 확인 시각 — 종료 0 · 경고 없음 · profile_fetched_at 은 늦은 쪽 그대로", { skip }, async () => {
+  const env = await setup({ [PITCHER]: { fetchedAt: T_OLD, checkedAt: T_NEW } });
+  try {
+    assert.equal(load(env).code, 0);
+    await editSidecar(env, PITCHER, { checkedAt: T_MID });
+    const r = load(env);
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.doesNotMatch(r.out, /::warning::/);
+    assert.match(r.out, /같은 본문 1 · 새 판 0 · 옛 판 건너뜀 0/);
+    const s = snapshot(env, PITCHER);
+    assert.equal(s.player["profile_fetched_at"], T_NEW, "같은 본문의 이른 확인이 시각을 되돌렸다");
+    assert.ok(s.bat.every((row) => (row as { fetched_at: unknown }).fetched_at === T_NEW), "통산 행의 시각이 프로필과 갈렸다");
+  } finally {
+    await cleanup(env);
+  }
+});
+
+test("N3 3-7 · 새 본문(다른 sha · 늦은 시각)은 적용된다 — 값 · 판 · 시각", { skip }, async () => {
+  const env = await setup({ [PITCHER]: { fetchedAt: T_MID } });
+  try {
+    assert.equal(load(env).code, 0);
+    await mutatePage(env, PITCHER, (h) => h.replace('<li id="pc_v_no">34</li>', '<li id="pc_v_no">99</li>'));
+    await editSidecar(env, PITCHER, { fetchedAt: T_NEW });
+    const r = load(env);
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.match(r.out, /처음 0 · 같은 본문 0 · 새 판 1 · 옛 판 건너뜀 0/);
+    const s = snapshot(env, PITCHER);
+    assert.equal(s.player["uniform_number"], "99");
+    assert.equal(s.player["profile_revision"], shaOf(gunzipSync(await readFile(pagePath(env, PITCHER)))));
+    assert.equal(s.player["profile_fetched_at"], T_NEW);
+    assert.ok(s.bat.every((row) => (row as { fetched_at: unknown }).fetched_at === T_NEW));
+  } finally {
+    await cleanup(env);
+  }
+});
+
+/**
+ * ⚠**첫 실행이 기존 DB 값을 거짓 옛 판으로 막지 않는다**(G4). C7 이전 DB 는 `profile_fetched_at` 이 **적재 실행 시각**이라
+ * 사이드카보다 언제나 늦다(실측 1,644/1,644 · 980/980). 적용 판이 NULL 이면 「처음」으로 보고 시각을 비교하지 않는다.
+ * 변이 「first 에서도 시각 비교」가 이 시험을 붉게 만든다(전원 옛 판 · 그리고 건너뛰면 DB 가 안 바뀌어 **영구히** 그렇다).
+ */
+test("⚠N3 3-8 · 첫 실행 — DB 시각이 사이드카보다 늦어도(C7 이전 모양) 적용 판 NULL 이면 건너뛰지 않고 판을 채운다", { skip }, async () => {
+  const env = await setup({ [PITCHER]: { fetchedAt: T_MID } });
+  try {
+    exec(env, "UPDATE player SET profile_fetched_at = ? WHERE player_id = ?", T_LATER, PITCHER);
+    const r = load(env);
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.match(r.out, /판 가드 — 처음 1 · 같은 본문 0 · 새 판 0 · 옛 판 건너뜀 0/);
+    const s = snapshot(env, PITCHER);
+    assert.equal(s.player["profile_fetched_at"], T_MID, "시각이 사이드카 시각으로 바뀌지 않았다");
+    assert.equal(s.player["profile_revision"], await realSha(PITCHER), "적용 판이 안 채워졌다");
+  } finally {
+    await cleanup(env);
+  }
+});
+
+/**
+ * DB 가 더 새 판(Y · T_NEW)을 가진 상태를 만든다 — 첫 적재로 값을 채운 뒤 판·시각을 **DB 쪽에서** 심는다(HTML 은 안 고친다).
+ * 배번에 표지(`NEW-NO`)를 심어 「덮였는가」를 한 칸으로도 읽을 수 있게 한다.
+ */
+async function dbHasNewer(env: Env, id: string): Promise<void> {
+  assert.equal(load(env).code, 0);
+  exec(env, "UPDATE player SET profile_revision = ?, profile_fetched_at = ?, uniform_number = 'NEW-NO' WHERE player_id = ?", REV_Y, T_NEW, id);
+  exec(env, "UPDATE career_batting SET fetched_at = ? WHERE player_id = ?", T_NEW, id);
+  exec(env, "UPDATE career_pitching SET fetched_at = ? WHERE player_id = ?", T_NEW, id);
+}
+
+/**
+ * ⚠⚠**부재 구멍**(설계 §1-1 사실 3). 404 경로는 옛 본문을 그대로 두고 `checkedAt`·`absentAt` 을 「지금」으로 쓴다 —
+ * 본 시각(`seenAtOf`)으로 순서를 가르면 **없어진 페이지의 옛 본문이 가장 새 판처럼 보여** DB 를 덮는다. 옛 사본을 다시 받게 하는
+ * 재취득이 바로 그 시각을 올린다. 순서는 받은 시각(`fetchedAt`)으로 가른다. 변이 「순서에 seenAtOf」가 이 시험을 붉게 만든다.
+ */
+test("⚠⚠N3 3-9 · 부재(404) 사이드카의 옛 본문은 확인 시각이 늦어도 옛 판이다 — DB 불변 · (부재) · 부재라 못 고침", { skip }, async () => {
+  const env = await setup({ [PITCHER]: { fetchedAt: T_OLD } });
+  try {
+    await dbHasNewer(env, PITCHER);
+    const before = snapshot(env, PITCHER);
+    await editSidecar(env, PITCHER, { fetchedAt: T_OLD, checkedAt: T_LATER, absentAt: T_LATER, status: 404 });
+    const r = load(env);
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.deepEqual(snapshot(env, PITCHER), before, "404 가 올린 시각으로 옛 본문이 새 판을 덮었다");
+    assert.match(r.out, /옛 판 건너뜀 1\(재취득 대상 0 · 부재라 못 고침 1\)/);
+    assert.match(r.out, new RegExp(`^ +${PITCHER}\\(부재\\)$`, "m"));
+  } finally {
+    await cleanup(env);
+  }
+});
+
+/**
+ * ⚠**무효 부재 표시는 「부재 아님」이 아니다**(2026-09-27 콜드 리뷰 P2). 「부재 아님」으로 읽으면 늦은 `checkedAt` 으로 순서가
+ * 매겨져 옛 본문이 새 판을 덮는다 — 순서를 **모른다**(unknown · 종료 1 · fail-closed). 같은 본문이면 순서가 필요 없어 쓴다.
+ * 변이 「무효를 부재 아님으로」가 이 시험을 붉게 만든다.
+ */
+test("⚠N3 3-9b · 부재 표시(absentAt)가 무효면 다른 본문은 판 모름(종료 1 · VERSION UNKNOWN · 불변) · 같은 본문은 쓴다", { skip }, async () => {
+  const env = await setup({ [PITCHER]: { fetchedAt: T_OLD } });
+  try {
+    await dbHasNewer(env, PITCHER);
+    const before = snapshot(env, PITCHER);
+    await editSidecar(env, PITCHER, { fetchedAt: T_OLD, checkedAt: T_LATER, absentAt: "not-a-date" });
+    const r = load(env);
+    assert.equal(r.code, 1, `순서를 모르는데 종료 ${r.code} 다\n${r.out}${r.err}`);
+    assert.match(r.err, new RegExp(`VERSION UNKNOWN ${PITCHER} — absentAt 무효`));
+    assert.match(r.out, /판 모름 건너뜀 1/);
+    assert.deepEqual(snapshot(env, PITCHER), before, "무효 부재 표시에서 DB 를 덮었다");
+
+    // 같은 본문(sha = 적용 판)이면 순서가 필요 없다 — 3번 same 으로 쓴다
+    exec(env, "UPDATE player SET profile_revision = ? WHERE player_id = ?", await realSha(PITCHER), PITCHER);
+    const same = load(env);
+    assert.equal(same.code, 0, same.out + same.err);
+    assert.match(same.out, /같은 본문 1/);
+    assert.equal(snapshot(env, PITCHER).player["uniform_number"], "34", "같은 본문을 지금 파서로 다시 읽지 않았다");
+  } finally {
+    await cleanup(env);
+  }
+});
+
+/** 부재여도 **같은 본문**이면 판이 같다 — 확인을 받은 뒤 페이지가 사라진 모양(내용 그대로). 시각은 늦은 쪽(지금 동작과 같은 값) */
+test("N3 3-10 · 부재 · 같은 본문 — same · 경고 없음 · 시각은 늦은 쪽", { skip }, async () => {
+  const env = await setup({ [PITCHER]: { fetchedAt: T_OLD } });
+  try {
+    assert.equal(load(env).code, 0);
+    await editSidecar(env, PITCHER, { fetchedAt: T_OLD, checkedAt: T_LATER, absentAt: T_LATER, status: 404 });
+    const r = load(env);
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.doesNotMatch(r.out, /::warning::/);
+    assert.match(r.out, /같은 본문 1 · 새 판 0 · 옛 판 건너뜀 0/);
+    assert.equal(snapshot(env, PITCHER).player["profile_fetched_at"], T_LATER);
+  } finally {
+    await cleanup(env);
+  }
+});
+
+/** 사이드카가 없어 **다른 본문**의 시각을 모른다 — 순서를 몰라 건너뛴다(종료 1). 다음 실행의 신규 선수 단계가 사이드카를 새로 쓴다 */
+test("⚠N3 3-11 · 판 모름 — DB 판 Y · 아카이브는 다른 본문 + 사이드카 없음 → 종료 1 · VERSION UNKNOWN · DB 불변", { skip }, async () => {
+  const env = await setup({ [PITCHER]: { fetchedAt: T_OLD } });
+  try {
+    await dbHasNewer(env, PITCHER);
+    const before = snapshot(env, PITCHER);
+    await rm(metaPath(env, PITCHER));
+    const r = load(env);
+    assert.equal(r.code, 1, r.out + r.err);
+    assert.match(r.err, new RegExp(`VERSION UNKNOWN ${PITCHER} — 사이드카 없음`));
+    assert.deepEqual(snapshot(env, PITCHER), before);
+  } finally {
+    await cleanup(env);
+  }
+});
+
+/**
+ * ⚠**읽는 법 커버리지의 분모에서 건너뛴 선수를 뺀다** — 안 빼면 옛 판을 많이 건너뛴 날 분자만 줄어 **거짓 커버리지 실패**(종료 1)가 난다.
+ * 여기서는 2장 중 1장(옛 판)을 건너뛰어, 뺐으면 1/1 = 100% · 안 뺐으면 1/2 = 50% < 90% 다.
+ * 변이 「분모를 files.length 로 되돌림」이 이 시험을 붉게 만든다.
+ */
+test("⚠N3 3-13 · 옛 판 1명 + 정상 1명 — 커버리지 경고 없음 · 종료 0", { skip }, async () => {
+  const env = await setup({ [PITCHER]: { fetchedAt: T_NEW }, [BATTER]: { fetchedAt: T_NEW } });
+  try {
+    assert.equal(load(env).code, 0);
+    await mutatePage(env, PITCHER, oldUniform);
+    await editSidecar(env, PITCHER, { fetchedAt: T_OLD });
+    const r = load(env);
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.match(r.out, /옛 판 건너뜀 1/);
+    assert.doesNotMatch(r.err, /읽는 법 커버리지/);
+  } finally {
+    await cleanup(env);
+  }
+});
+
+/** ⚠DB 시각이 무효면 판을 비교할 수 없다 — 건너뛰고 실패(fail-closed · 경기 가드와 같다) */
+test("⚠N3 3-14 · DB 시각 무효 · 다른 본문 — 종료 1 · DB VERSION INVALID · 불변", { skip }, async () => {
+  const env = await setup({ [PITCHER]: { fetchedAt: T_MID } });
+  try {
+    assert.equal(load(env).code, 0);
+    exec(env, "UPDATE player SET profile_fetched_at = 'not-a-date' WHERE player_id = ?", PITCHER);
+    const before = snapshot(env, PITCHER);
+    await mutatePage(env, PITCHER, oldUniform);
+    const r = load(env);
+    assert.equal(r.code, 1, r.out + r.err);
+    assert.match(r.err, new RegExp(`DB VERSION INVALID ${PITCHER} — not-a-date`));
+    assert.match(r.out, /DB 시각 무효 1/);
+    assert.deepEqual(snapshot(env, PITCHER), before);
   } finally {
     await cleanup(env);
   }

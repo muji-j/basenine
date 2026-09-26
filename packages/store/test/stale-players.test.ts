@@ -20,7 +20,8 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -340,3 +341,181 @@ test("⚠못 고치는 낡은 사본을 따로 센다 — 「고칠 수 있는�
     "제외한 선수 중 낡은 사본을 든 사람을 안 셌다 — 「0건」과 「안 쟀음」이 섞인다",
   );
 });
+
+// ─── N3 · 아카이브 옛 판을 같은 실행에서 다시 받는다(감사 N3 · 설계 docs/superpowers/specs/2026-09-27-profile-version-guard-design.md §5-4) ───
+//
+// ⚠**선정기가 DB 만 보면 옛 판이 영구히 남는다**(설계 §1-1 사실 1) — 적재기의 판 가드가 옛 사본을 건너뛰어 DB 를 지키면
+//   선정기는 그 선수를 신선하다고 보고 **다시 받지 않는다.** 가드는 매 실행 걸리고 사본은 그대로다.
+//   → `--archive <root>` 가 주어지면 사이드카(본문은 안 푼다)를 적용 판과 맞대 옛 판을 **평소 후보와 섞어** 뽑는다.
+
+const T_EARLY = "2026-08-10T00:00:00.000Z";
+const T_DB = "2026-08-17T00:00:00.000Z";
+const T_LATE = "2026-08-19T00:00:00.000Z";
+/** DB 가 적용한 판(X)과 아카이브의 다른 본문(Z) — 소문자 hex 64자 */
+const REV_X = "a".repeat(64);
+const REV_Z = "c".repeat(64);
+
+/**
+ * `withDb` 와 같되 사이드카를 둔 임시 아카이브를 만들고, `archive` 면 `--archive` 로 넘긴다.
+ * 사이드카 값이 문자열이면 **그대로** 쓴다(깨진 JSON 재현).
+ */
+async function withArchive(
+  fn: (db: Db, sidecar: (id: string, meta: unknown) => void) => void,
+  opts: { archive: boolean; limit?: number } = { archive: true },
+): Promise<Run> {
+  const dir = await mkdtemp(join(tmpdir(), "bb-stale-arch-"));
+  const dbPath = join(dir, "t.sqlite");
+  const archive = join(dir, "archive");
+  const players = join(archive, "npb", "players");
+  await mkdir(players, { recursive: true });
+  const sidecars = new Map<string, string>();
+  const db = openDb(dbPath, NOW);
+  try {
+    fn(db, (id, meta) => sidecars.set(id, typeof meta === "string" ? meta : JSON.stringify(meta)));
+  } finally {
+    db.close();
+  }
+  for (const [id, body] of sidecars) await writeFile(join(players, `${id}.meta.json`), body);
+  const r = spawnSync(
+    process.execPath,
+    [TOOL, dbPath, "--limit", String(opts.limit ?? 400), ...(opts.archive ? ["--archive", archive] : [])],
+    { encoding: "utf8" },
+  );
+  await rm(dir, { recursive: true, force: true });
+  assert.equal(r.status, 0, `도구가 실패했다: ${r.stderr}`);
+  return { ids: r.stdout.split("\n").map((x) => x.trim()).filter((x) => x !== ""), report: r.stderr };
+}
+
+/** 적용 판과 DB 시각을 심는다 */
+function applied(db: Db, id: string, revision: string | null, time: string | null): void {
+  db.raw.prepare("UPDATE player SET profile_revision = ?, profile_fetched_at = ? WHERE player_id = ?").run(revision, time, id);
+}
+
+/** 평소 사유로는 **안 뽑히는** 선수(출장 뒤에 받았고 그 경기가 실려 있다) — 이 선수가 뽑히면 이유는 아카이브 옛 판뿐이다 */
+function freshPlayer(db: Db, id: string, date = "2026-08-16"): void {
+  upsertPlayer(db, id, id, NOW);
+  play(db, id, date);
+  career(db, id, `${date}T23:00:00.000Z`, { games: 1, pa: 4 });
+}
+
+/**
+ * 한 DB 에 모든 갈래를 둔다. 평소 사유로 뽑히는 선수(LAGGED · NEVER)를 섞어 **마지막 출장일 순으로 섞이는지**도 본다.
+ * ⚠`SAME` 은 사이드카 시각이 DB 보다 **이르다** — sha 비교를 빼면(변이 ①) 옛 판으로 뽑혀 붉어진다.
+ */
+function scenario(db: Db, sidecar: (id: string, meta: unknown) => void): void {
+  upsertPlayer(db, "PIT", "投手", NOW);
+  // 평소 사유: 출장량 부족(08-18) · 취득기록 없음(08-10)
+  upsertPlayer(db, "LAGGED", "LAGGED", NOW);
+  play(db, "LAGGED", "2026-08-17");
+  play(db, "LAGGED", "2026-08-18");
+  career(db, "LAGGED", "2026-08-18T16:05:00.000Z", { games: 1, pa: 4 });
+  upsertPlayer(db, "NEVER", "NEVER", NOW);
+  play(db, "NEVER", "2026-08-10");
+  career(db, "NEVER", null);
+  // 아카이브 옛 판 — 다른 본문 · 이른 내용 시각 · 부재 아님
+  freshPlayer(db, "STALE");
+  applied(db, "STALE", REV_X, T_DB);
+  sidecar("STALE", { sha256: REV_Z, fetchedAt: T_EARLY, revision: 1 });
+  // 같은 본문 — 사이드카 시각은 이르지만 판이 같다
+  freshPlayer(db, "SAME");
+  applied(db, "SAME", REV_X, T_DB);
+  sidecar("SAME", { sha256: REV_X, fetchedAt: T_EARLY, revision: 1 });
+  // 부재 중 — 받아도 404 다
+  freshPlayer(db, "ABSENT");
+  applied(db, "ABSENT", REV_X, T_DB);
+  sidecar("ABSENT", { sha256: REV_Z, fetchedAt: T_EARLY, checkedAt: T_LATE, absentAt: T_LATE, status: 404, revision: 1 });
+  // 깨진 JSON — 이 사유로는 판단하지 못한다
+  freshPlayer(db, "BROKEN");
+  applied(db, "BROKEN", REV_X, T_DB);
+  sidecar("BROKEN", "{ not json");
+  // 적용 판 NULL(첫 실행 · 신규) — 이 사유는 판단하지 않는다
+  freshPlayer(db, "NOREV");
+  applied(db, "NOREV", null, T_DB);
+  sidecar("NOREV", { sha256: REV_Z, fetchedAt: T_EARLY, revision: 1 });
+  // 400일 밖 — 받을 수 없는 선수는 다른 사유처럼 뺀다
+  upsertPlayer(db, "GONE", "GONE", NOW);
+  play(db, "GONE", "2023-05-01");
+  career(db, "GONE", "2023-05-01T23:00:00.000Z", { year: 2023, games: 1, pa: 4 });
+  applied(db, "GONE", REV_X, T_DB);
+  sidecar("GONE", { sha256: REV_Z, fetchedAt: T_EARLY, revision: 1 });
+  // 투수 PIT 는 위 경기 전부에 던진다(`play`) — 최신 사본(2026 8등판 · 2023 1등판)을 둬 평소 사유로 안 뽑히게 한다
+  careerPit(db, "PIT", "2026-08-18T23:00:00.000Z", { games: 8 });
+  careerPit(db, "PIT", "2026-08-18T23:00:00.000Z", { year: 2023, games: 1 });
+}
+
+test("⚠N3 3-16 · --archive 로 아카이브 옛 판을 뽑는다 — 같은 본문 · 부재 · 깨진 사이드카 · 적용 판 NULL · 400일 밖은 안 뽑고 센다", async () => {
+  const { ids, report } = await withArchive(scenario);
+  assert.ok(ids.includes("STALE"), "아카이브 옛 판을 안 뽑았다 — 적재기가 매 실행 건너뛰고 사본이 영구히 남는다");
+  for (const id of ["SAME", "ABSENT", "BROKEN", "NOREV", "GONE"]) assert.ok(!ids.includes(id), `${id} 를 뽑았다`);
+  assert.match(
+    report,
+    /아카이브 옛 판 1명\(부재라 제외 1 · 사이드카 못 읽음 1 · 400일 밖 1 · 순서 모름 0 · 출력분 중 1\)/,
+    "사유별 보고가 아카이브 옛 판 갈래를 안 셌다",
+  );
+});
+
+/** ⚠**절대 우선을 주지 않는다** — 한 무리에 절대 우선을 주면 다른 무리가 그날 한 명도 못 들어간다(이 파일의 선례 · 설계 §5-4) */
+test("⚠N3 3-16 · 아카이브 옛 판은 다른 사유와 마지막 출장일 순으로 섞인다(절대 우선이 아니다)", async () => {
+  const { ids } = await withArchive(scenario);
+  assert.deepEqual(ids, ["LAGGED", "STALE", "NEVER"], "마지막 출장일 내림차순(08-18 · 08-16 · 08-10)이 아니다");
+  // 상한 2 면 가장 오래 안 뛴 NEVER 가 밀린다 — 아카이브 옛 판이 앞자리를 먹지 않는다
+  const two = await withArchive(scenario, { archive: true, limit: 2 });
+  assert.deepEqual(two.ids, ["LAGGED", "STALE"]);
+  assert.match(two.report, /1명이 오늘 몫에서 밀렸다/);
+});
+
+/**
+ * ⚠**`--archive` 가 없으면 새 사유를 계산하지도 찍지도 않는다 — 출력이 지금과 글자까지 같다**(설계 §5-4 · 3-17).
+ * 금본은 **고치기 전 선정기**가 같은 DB 에서 낸 글자다(2026-09-27 · 변경 직전 실측). 기존 시험 전부도 `--archive` 없이 돈다.
+ */
+test("⚠N3 3-17 · --archive 없이 돌면 출력이 고치기 전과 글자까지 같다(전후 대조)", async () => {
+  const { ids, report } = await withArchive(scenario, { archive: false });
+  assert.deepEqual(ids, GOLDEN_IDS);
+  assert.equal(report, GOLDEN_REPORT);
+});
+
+/**
+ * ⚠**자리표시자 수를 고정한다**(설계 §5-4 · 2026-09-27 콜드 리뷰 P2). 같은 JSON 을 `json_each(?)` 자리 수만큼 넘기는데,
+ * 도구는 그 수를 SQL 에서 센다(`archiveArgs`). 그러려면 두 SQL 의 `?` 가 **전부** `json_each(?)` 여야 하고 수가 이것이어야 한다 —
+ * 다른 `?` 가 섞이면 인자가 어긋나고, 남는 `?` 는 NULL 로 묶여 옛 판이 **조용히** 안 뽑힌다.
+ */
+test("⚠N3 3-16 · 선정 SQL 의 자리표시자는 전부 json_each(?) 이고 후보 2 · 제외 1 이다 — 둘 다 archiveArgs 로 묶는다", () => {
+  const src = readFileSync(TOOL, "utf8");
+  const template = (name: string): string => {
+    const m = new RegExp(`const ${name} = \`([\\s\\S]*?)\`;`).exec(src);
+    assert.ok(m !== null, `${name} 템플릿을 못 찾았다 — 소스 모양이 바뀌었다`);
+    return m[1]!;
+  };
+  const common = template("COMMON");
+  const cand = template("candidateSql");
+  const excl = template("excludedSql");
+  const count = (s: string, needle: string): number => s.split(needle).length - 1;
+  assert.equal(count(common, "?"), 0, "공통 조각(COMMON)에 자리표시자가 있다 — archiveArgs 가 json_each(?) 만 센다");
+  assert.equal(count(cand, "json_each(?)"), 2, "후보 SQL 의 json_each(?) 가 2 가 아니다(CASE · WHERE)");
+  assert.equal(count(excl, "json_each(?)"), 1, "제외 SQL 의 json_each(?) 가 1 이 아니다");
+  for (const [name, sql] of [["candidateSql", cand], ["excludedSql", excl]] as const) {
+    assert.equal(count(sql, "?"), count(sql, "json_each(?)"), `${name} 에 json_each(?) 가 아닌 ? 가 있다 — 인자가 어긋난다`);
+  }
+  assert.match(src, /\.prepare\(candidateSql\)\s*\.all\(\.\.\.archiveArgs\(candidateSql\)\)/, "후보 SQL 을 archiveArgs 로 묶지 않는다");
+  assert.match(src, /\.prepare\(excludedSql\)\s*\.get\(\.\.\.archiveArgs\(excludedSql\)\)/, "제외 SQL 을 archiveArgs 로 묶지 않는다");
+});
+
+test("N3 · --archive 뒤에 루트가 없으면 종료 2 — 아무것도 뽑지 않는다", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "bb-stale-arg-"));
+  try {
+    const dbPath = join(dir, "t.sqlite");
+    openDb(dbPath, NOW).close();
+    const r = spawnSync(process.execPath, [TOOL, dbPath, "--archive"], { encoding: "utf8" });
+    assert.equal(r.status, 2, r.stderr);
+    assert.equal(r.stdout, "");
+    assert.match(r.stderr, /--archive 뒤에 아카이브 루트가 없다/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+/** 고치기 전 선정기(`--archive` 없음)가 위 시나리오에서 낸 글자 그대로 */
+const GOLDEN_IDS = ["LAGGED", "NEVER"];
+const GOLDEN_REPORT =
+  "다시 받을 선수 2명 중 2명 출력 — 사유별: 출장량 부족 1명 · 취득기록 없음 1명 · 취득일 ≤ 마지막 출장일 0명" +
+  "（출력분 중 취득기록 없음 1명） · 최근 400일 미출장이라 제외 1명（그중 낡은 사본 0명）\n";

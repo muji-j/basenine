@@ -74,12 +74,34 @@
  *
  * ⚠**취득 시각을 모르는 선수(`fetched_at` 결손)는 대상에 넣는다.** 「모른다」를 「최신」으로
  * 취급하면 영영 안 받는다(M11).
+ *
+ * ## ⚠아카이브 옛 판 — `--archive <root>` (2026-09-27 · 감사 N3)
+ *
+ * 선수 적재기가 **아카이브가 DB 보다 옛 판**인 선수를 건너뛰어 DB 를 지키게 됐다(`load-players.ts` · 판 가드). 그런데 이 선정기가
+ * DB 만 보면 그 선수를 신선하다고 보고 **다시 받지 않는다** — 옛 사본이 영구히 남고 가드가 매 실행 걸린다(설계 §1-1 사실 1).
+ * → `--archive` 가 주어지면 적용 판(`profile_revision`)이 있는 선수마다 사이드카를 읽어(**본문은 안 푼다**) 옛 판이면 **후보에 더한다.**
+ *   규칙은 판정기와 한 벌이다(`classifyForRefetch` · `src/player-version.ts`). 부재 중(받아도 404) · 사이드카를 못 읽음 · 순서 모름은
+ *   **안 뽑고 센다.** ⚠**순서·상한은 그대로다** — 마지막 출장일 순으로 다른 사유와 **섞어** 세우고 `--limit` 안에서 자른다(절대 우선 아님).
+ * ⚠`update.ts` 가 이 선정 → 재취득 → 신규 → **적재** 순으로 돌리므로, 뽑힌 선수는 적재 전에 새 사이드카를 얻어 **같은 실행에서** 풀린다.
+ * ⚠**`--archive` 가 없으면 새 사유를 계산하지도 찍지도 않는다** — 출력이 예전과 글자까지 같다(`stale-players.test.ts` 3-17 금본).
+ * 설계: `docs/superpowers/specs/2026-09-27-profile-version-guard-design.md` §5-4.
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { playerKey } from "@bb-app/archiver";
 import { openDb } from "../src/db.ts";
+import { classifyForRefetch } from "../src/player-version.ts";
 
 const dbPath = process.argv[2];
 if (!dbPath) {
-  console.error("usage: node tools/emit-stale-player-ids.ts <db-path> [--limit N]");
+  console.error("usage: node tools/emit-stale-player-ids.ts <db-path> [--limit N] [--archive <archive-root>]");
+  process.exit(2);
+}
+const archiveArg = process.argv.indexOf("--archive");
+/** 아카이브 루트. `null` 이면 아카이브 옛 판 사유를 **계산하지도 찍지도 않는다** */
+const archiveRoot = archiveArg === -1 ? null : process.argv[archiveArg + 1];
+if (archiveRoot === undefined || archiveRoot === "" || archiveRoot?.startsWith("--") === true) {
+  console.error(`--archive 뒤에 아카이브 루트가 없다: ${String(archiveRoot)}`);
   process.exit(2);
 }
 const limitArg = process.argv.indexOf("--limit");
@@ -189,20 +211,70 @@ const COMMON = `
   cutoff AS (SELECT DATE(MAX(game_date), '-400 days') AS d FROM game WHERE status = 'played')
 `;
 
-const rows = db.raw
-  .prepare(
-    `${COMMON}
+/**
+ * **아카이브 옛 판**(`--archive` 일 때만 · 감사 N3 · 설계 §5-4). 적용 판이 있는 선수마다 사이드카를 적용 판과 맞댄다.
+ * ⚠적용 판이 NULL(첫 실행 · 신규)이면 이 사유는 **판단하지 않는다** — 그래서 첫 실행의 선정은 예전과 같다(요청 증가 0).
+ * ⚠사이드카가 없거나 못 읽으면 이 사유로는 뽑지 않고 센다 — 없는 것은 신규 선수 단계(`skipExisting`)가 **이미** 받는다.
+ *   경로로 못 쓰는 ID 도 같다(`playerKey` 가 던진다 — 아카이브 키는 수집기가 소유한다 · M1).
+ */
+const archiveTally = { stale: [] as string[], absent: 0, unreadable: 0, unknown: 0 };
+if (archiveRoot !== null) {
+  const identified = db.raw
+    .prepare(
+      `SELECT player_id AS id, profile_revision AS revision, profile_fetched_at AS time
+         FROM player WHERE profile_revision IS NOT NULL ORDER BY player_id`,
+    )
+    .all() as unknown as { id: string; revision: string; time: string | null }[];
+  for (const p of identified) {
+    let meta: unknown;
+    try {
+      meta = JSON.parse(readFileSync(join(archiveRoot, `${playerKey(p.id)}.meta.json`), "utf8"));
+    } catch {
+      meta = undefined;
+    }
+    switch (classifyForRefetch(meta, { revision: p.revision, time: p.time })) {
+      case "stale":
+        archiveTally.stale.push(p.id);
+        break;
+      case "stale-absent":
+        archiveTally.absent += 1;
+        break;
+      case "unreadable":
+        archiveTally.unreadable += 1;
+        break;
+      case "unknown":
+        archiveTally.unknown += 1;
+        break;
+      default:
+        break;
+    }
+  }
+}
+/**
+ * ⚠**ID 를 SQL 문자열에 이어 붙이지 않는다** — 값은 JSON 문자열 **한 개**이고, SQL 이 `json_each(?)` 를 쓰는 **자리 수만큼**
+ *   같은 값을 익명 `?` 에 넘긴다(이 저장소의 관례는 익명 `?` 뿐이다 · 2026-09-27 콜드 리뷰 P2). 자리 수는 SQL 에서 센다 —
+ *   손으로 맞추면 한쪽만 고쳤을 때 남는 `?` 가 NULL 로 묶여 `json_each(NULL)` = 0행, **옛 판이 조용히 안 뽑힌다.**
+ * ⚠목록이 비면 `"[]"` 다 — `json_each('[]')` 는 0행이라 `IN` 이 거짓이 되고 출력은 예전과 같다.
+ */
+const archiveJson = JSON.stringify(archiveTally.stale);
+const ARCHIVE_SLOT = "json_each(?)";
+const archiveArgs = (sql: string): string[] => Array.from({ length: sql.split(ARCHIVE_SLOT).length - 1 }, () => archiveJson);
+
+const candidateSql = `${COMMON}
      SELECT p.player_id AS id, l.last AS last, f.day AS day,
-            CASE WHEN g.id IS NULL THEN 0 ELSE 1 END AS lagging
+            CASE WHEN g.id IS NULL THEN 0 ELSE 1 END AS lagging,
+            CASE WHEN p.player_id IN (SELECT value FROM json_each(?)) THEN 1 ELSE 0 END AS archiveStale
        FROM player p
        JOIN last_seen l ON l.id = p.player_id
        LEFT JOIN fetched f ON f.id = p.player_id
        LEFT JOIN lagging g ON g.id = p.player_id
-      WHERE (f.day IS NULL OR f.day <= l.last OR g.id IS NOT NULL)
+      WHERE (f.day IS NULL OR f.day <= l.last OR g.id IS NOT NULL
+             OR p.player_id IN (SELECT value FROM json_each(?)))
         AND l.last >= (SELECT d FROM cutoff)
-      ORDER BY l.last DESC, p.player_id`,
-  )
-  .all() as unknown as { id: string; last: string; day: string | null; lagging: number }[];
+      ORDER BY l.last DESC, p.player_id`;
+const rows = db.raw
+  .prepare(candidateSql)
+  .all(...archiveArgs(candidateSql)) as unknown as { id: string; last: string; day: string | null; lagging: number; archiveStale: number }[];
 
 /**
  * ⚠**두 무리를 「최근에 뛴 순」 하나로 줄 세운다.**
@@ -225,7 +297,11 @@ const sent = rows.slice(0, limit);
 const never = rows.filter((r) => r.day === null).length;
 const sentNever = sent.filter((r) => r.day === null).length;
 const behind = rows.filter((r) => r.lagging === 1).length;
-const dateOnly = rows.filter((r) => r.day !== null && r.lagging === 0).length;
+// ⚠`r.day <= r.last` 를 명시한다 — 예전에는 WHERE 가 그것을 보장했는데, 아카이브 옛 판(`OR`)만으로 들어온 행은 아니다.
+//   `--archive` 가 없으면 WHERE 가 여전히 보장하므로 수가 예전과 같다(SQL 과 같은 문자열 비교 · `YYYY-MM-DD`)
+const dateOnly = rows.filter((r) => r.day !== null && r.lagging === 0 && r.day <= r.last).length;
+const archiveCandidates = rows.filter((r) => r.archiveStale === 1).length;
+const sentArchive = sent.filter((r) => r.archiveStale === 1).length;
 
 /**
  * ⚠**제외한 수도 낸다**(§3-7: 「0건」과 「안 쟀음」을 구별한다).
@@ -234,24 +310,32 @@ const dateOnly = rows.filter((r) => r.day !== null && r.lagging === 0).length;
  * 지금은 0명이지만 **시즌이 끝나면 반드시 생긴다** — 최종전을 뛰고 그대로 NPB 를 떠나는 선수다.
  * 실측(CI DB · 2026-08-20): 제외 810명 · 그중 낡은 사본 **0명**.
  */
-const excludedRow = db.raw
-  .prepare(
-    `${COMMON}
+const excludedSql = `${COMMON}
      SELECT COUNT(*) AS n,
-            SUM(CASE WHEN g.id IS NULL THEN 0 ELSE 1 END) AS stale
+            SUM(CASE WHEN g.id IS NULL THEN 0 ELSE 1 END) AS stale,
+            SUM(CASE WHEN p.player_id IN (SELECT value FROM json_each(?)) THEN 1 ELSE 0 END) AS archiveStale
        FROM player p
        JOIN last_seen l ON l.id = p.player_id
        LEFT JOIN lagging g ON g.id = p.player_id
-      WHERE l.last < (SELECT d FROM cutoff)`,
-  )
-  .get() as unknown as { n: number; stale: number | null };
+      WHERE l.last < (SELECT d FROM cutoff)`;
+const excludedRow = db.raw
+  .prepare(excludedSql)
+  .get(...archiveArgs(excludedSql)) as unknown as { n: number; stale: number | null; archiveStale: number | null };
 const excluded = excludedRow.n;
 const excludedStale = excludedRow.stale ?? 0;
+/** 아카이브 옛 판인데 400일 밖 — 다른 사유처럼 빼고 따로 센다(받을 수 없는 선수다) */
+const excludedArchive = excludedRow.archiveStale ?? 0;
 
 console.error(
   `다시 받을 선수 ${rows.length}명 중 ${sent.length}명 출력 — ` +
     `사유별: 출장량 부족 ${behind}명 · 취득기록 없음 ${never}명 · 취득일 ≤ 마지막 출장일 ${dateOnly}명` +
     `（출력분 중 취득기록 없음 ${sentNever}명）` +
+    // ⚠**`--archive` 가 없으면 이 조각을 안 찍는다** — 출력이 예전과 글자까지 같다(3-17 금본)
+    // ⚠괄호 안의 수는 성질이 다르다: 부재·못 읽음·순서 모름은 **안 뽑은** 선수이고 400일 밖은 옛 판인데 **받을 수 없어** 뺀 선수다
+    (archiveRoot === null
+      ? ""
+      : ` · 아카이브 옛 판 ${archiveCandidates}명(부재라 제외 ${archiveTally.absent} · 사이드카 못 읽음 ${archiveTally.unreadable}` +
+        ` · 400일 밖 ${excludedArchive} · 순서 모름 ${archiveTally.unknown} · 출력분 중 ${sentArchive})`) +
     ` · 최근 400일 미출장이라 제외 ${excluded}명` +
     // ⚠**받을 수 없는데 낡은 사본**은 재취득으로 안 고쳐진다 — 「0건」과 구별해서 낸다(M11)
     (excludedStale > 0
@@ -260,7 +344,9 @@ console.error(
     // ⚠**밀린 수를 반드시 낸다** — 조용히 자르면 「전부 했음」으로 읽힌다(§3-7)
     (rows.length > limit
       ? ` — ⚠**${rows.length - limit}명이 오늘 몫에서 밀렸다**` +
-        `(취득기록 없음 ${never - sentNever}명 포함 · 다음 실행에서 받는다)`
+        `(취득기록 없음 ${never - sentNever}명` +
+        (archiveRoot === null ? "" : ` · 아카이브 옛 판 ${archiveCandidates - sentArchive}명`) +
+        " 포함 · 다음 실행에서 받는다)"
       : ""),
 );
 db.close();

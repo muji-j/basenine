@@ -232,11 +232,14 @@ failures += run("DB 적재", [
  * 맞대서** 판정한다 — 자세한 근거는 `emit-stale-player-ids.ts` 머리주석.
  * ⚠**순서를 바꾸면 같은 선수를 하루에 두 번 받는다**(L1) — 3-1 이 먼저 받아 두면
  * 3-2 의 `skipExisting` 이 그것을 건너뛴다.
+ * ⚠**`--archive` 로 아카이브 옛 판도 뽑는다**(2026-09-27 · 감사 N3) — 선수 적재의 판 가드가 옛 사본을 건너뛰어 DB 를 지키면,
+ * 선정이 DB 만 볼 때는 그 선수를 신선하다고 보고 **영영 다시 안 받는다.** 이 선정이 적재 **전에** 도므로 뽑힌 선수는
+ * 같은 실행에서 풀린다(상한은 그대로 `--player-limit` 안 · 다른 사유와 섞어 줄 세운다). `scripts/test/player-refetch-wiring.test.ts` 가 지킨다.
  */
 const staleFile = join(ROOT, "data", "stale-player-ids.txt");
 const stale = spawnSync(
   process.execPath,
-  ["packages/store/tools/emit-stale-player-ids.ts", values.db, "--limit", values["player-limit"]],
+  ["packages/store/tools/emit-stale-player-ids.ts", values.db, "--limit", values["player-limit"], "--archive", values.archive],
   { cwd: ROOT, encoding: "utf8" },
 );
 if (stale.stderr) console.log(`  낡은 선수 페이지: ${stale.stderr.trim()}`);

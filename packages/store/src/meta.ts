@@ -80,3 +80,50 @@ export function seenAtOf(meta: unknown): string | null {
    */
   return normalizeFetchedAt(m.checkedAt) ?? normalizeFetchedAt(m.fetchedAt);
 }
+
+/**
+ * 사이드카 `absentAt`(404/410 을 본 시각)의 세 상태 — **없음** · **유효** · **무효**
+ * (감사 N3 · 설계 `docs/superpowers/specs/2026-09-27-profile-version-guard-design.md` §3).
+ *
+ * ⚠**무효는 「부재 아님」이 아니다** — 손상된 사이드카다(키가 있는데 문자열이 아니거나 시각으로 안 읽힌다).
+ *   「부재 아님」으로 읽으면 최근 `checkedAt` 으로 순서가 매겨져 **옛 본문이 새 판을 덮는다**(2026-09-27 콜드 리뷰 P2).
+ *   그래서 `contentTimeOf` 는 무효면 순서를 **모른다**(null · fail-closed).
+ * ⚠정상 아카이버는 두 값을 늘 유효한 ISO 로 쓴다(`archiver/src/players.ts` 의 404 경로) — 무효는 손상·변조에서만 열린다.
+ * 객체가 아니면 `"none"` 이다(그 사이드카가 본문을 말하는지는 호출자가 따로 가른다).
+ */
+export function absentStateOf(meta: unknown): "none" | "valid" | "invalid" {
+  if (meta === null || typeof meta !== "object" || Array.isArray(meta)) return "none";
+  const m = meta as { absentAt?: unknown };
+  if (!("absentAt" in m) || m.absentAt === undefined) return "none";
+  return normalizeFetchedAt(m.absentAt) === null ? "invalid" : "valid";
+}
+
+/**
+ * **마지막 관측이 404/410 이었나** — 부재 표시가 유효하고, `checkedAt` 이 없거나 무효이거나 `absentAt ≥ checkedAt`.
+ * ⚠404 경로는 두 값을 같은 실행에서 연달아 써서 `absentAt ≥ checkedAt` 이고, 그 뒤 **같은 본문으로 다시 확인되면**
+ *   `markSeen` 이 `checkedAt` 만 올려 `absentAt < checkedAt` 이 된다(부재가 풀렸다). 객체가 아니면 false.
+ */
+export function isAbsentNow(meta: unknown): boolean {
+  if (absentStateOf(meta) !== "valid") return false;
+  const m = meta as { absentAt: unknown; checkedAt?: unknown };
+  const absent = normalizeFetchedAt(m.absentAt)!;
+  const checked = normalizeFetchedAt(m.checkedAt);
+  return checked === null || Date.parse(absent) >= Date.parse(checked);
+}
+
+/**
+ * **이 내용이 언제 것인가** — 판의 **순서**를 가를 때만 쓴다(선수 판정기 · 재취득 선정기). `seenAtOf` 와 질문이 다르다:
+ * `seenAtOf` 는 「이 사본을 언제까지 믿을 수 있다고 봤나」(표시·신선도 감시가 쓴다 · **뜻을 바꾸지 않는다**)이고,
+ * 이것은 「이 **내용**이 언제 것인가」다.
+ * ⚠**부재 중이면 `fetchedAt`(그 본문을 받은 시각)** — 404 가 `checkedAt` 을 덮어 마지막 확인을 잃었으므로 알 수 있는 하한이다.
+ *   `seenAtOf` 로 가르면 **없어진 페이지의 옛 본문이 가장 새 판처럼 보이고**, 옛 사본을 다시 받게 하는 재취득이 그 시각을 올려
+ *   옛 판이 새 판을 덮는다(설계 §1-1 사실 3 · §5-1).
+ * ⚠**부재 표시가 무효면 null**(순서를 모른다 · fail-closed) — 본 시각이 유효해도 그렇다.
+ * ⚠쓰는 시각(`profile_fetched_at` · 통산 `fetched_at`)은 여전히 `seenAtOf` 다 — 바꾸면 `career-lag` 이 받을 수 없는 선수로
+ *   수집 잡을 최대 400일 빨갛게 만든다(설계 §5-7 · 미룬 결정 §10-2).
+ */
+export function contentTimeOf(meta: unknown): string | null {
+  if (absentStateOf(meta) === "invalid") return null;
+  if (isAbsentNow(meta)) return normalizeFetchedAt((meta as { fetchedAt?: unknown }).fetchedAt);
+  return seenAtOf(meta);
+}

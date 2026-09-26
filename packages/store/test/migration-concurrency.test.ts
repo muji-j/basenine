@@ -20,16 +20,23 @@ import { applyPendingMigrations, listMigrations, openDb } from "../src/db.ts";
 const DB_TS = fileURLToPath(new URL("../src/db.ts", import.meta.url));
 const NOW = "2026-09-11T00:00:00.000Z";
 
-/** 마지막 마이그레이션 둘을 되돌려 「새 마이그레이션을 막 받은 DB」를 만든다 */
-function rewindLastTwo(path: string): string[] {
+/**
+ * 021·022 를 되돌려 「새 마이그레이션을 막 받은 DB」를 만든다.
+ * ⚠**「마지막 둘」이 아니라 이름으로 고른다**(2026-09-27 · 감사 N3 의 023 이 드러냈다). 예전에는 `listMigrations().slice(-2)` 였는데,
+ *   아래 표 지우기는 **021 의 표**를 전제한다 — 023(칸 더하기)이 생기자 「마지막 둘」이 022·023 이 되어 021 의 표만 지우고
+ *   023 의 칸은 남긴 채 다시 적용하려다 `duplicate column name` 으로 떨어졌다. 이 시험이 재는 것(021 의 표 세 개로 만드는
+ *   부분 실패·경합)은 그대로이므로 대상을 021·022 로 못 박는다 — 뒤에 마이그레이션이 늘어도 적용된 채 건너뛴다.
+ */
+const REWOUND = ["021-collection-evidence.sql", "022-invalid-fetched-at.sql"];
+function rewind021And022(path: string): string[] {
   const names = listMigrations();
-  const last = names.slice(-2);
+  assert.ok(REWOUND.every((n) => names.includes(n)), `되돌릴 마이그레이션이 목록에 없다: ${REWOUND.join(",")}`);
   const raw = new DatabaseSync(path);
-  for (const n of last) raw.prepare("DELETE FROM schema_migration WHERE name = ?").run(n);
+  for (const n of REWOUND) raw.prepare("DELETE FROM schema_migration WHERE name = ?").run(n);
   // 021 이 만든 표를 지운다(022 는 UPDATE 뿐이다)
   for (const t of ["starters_fetch", "schedule_played", "schedule_month"]) raw.exec(`DROP TABLE IF EXISTS ${t}`);
   raw.close();
-  return last;
+  return [...REWOUND];
 }
 
 function openInChild(path: string): Promise<{ code: number | null; err: string }> {
@@ -53,7 +60,7 @@ test("⚠마이그레이션이 도중에 실패하면 앞서 만든 표까지 �
   const path = join(dir, "t.sqlite");
   try {
     openDb(path, NOW).close();
-    const rewound = rewindLastTwo(path);
+    const rewound = rewind021And022(path);
     // 021 의 세 번째 표와 같은 이름을 미리 만들어 둔다 → 앞의 두 표를 만든 뒤 세 번째에서 실패한다
     const pre = new DatabaseSync(path);
     pre.exec("CREATE TABLE schedule_month (x INTEGER)");
@@ -91,7 +98,7 @@ test("⚠⚠낡은 적용 목록을 쥔 연결도 이미 적용된 마이그레�
   let a: DatabaseSync | undefined;
   try {
     openDb(path, NOW).close();
-    const rewound = rewindLastTwo(path);
+    const rewound = rewind021And022(path);
     const conn = new DatabaseSync(path);
     a = conn;
     const stale = new Set((conn.prepare("SELECT name FROM schema_migration").all() as { name: string }[]).map((r) => r.name));
@@ -117,7 +124,7 @@ test("⚠프로세스 8개가 동시에 열어도 전부 성공하고 마이그�
   const path = join(dir, "t.sqlite");
   try {
     openDb(path, NOW).close();
-    const rewound = rewindLastTwo(path);
+    const rewound = rewind021And022(path);
     assert.ok(rewound.includes("021-collection-evidence.sql"), `되돌린 마이그레이션이 예상과 다르다: ${rewound.join(",")}`);
     const results = await Promise.all(Array.from({ length: 8 }, () => openInChild(path)));
     const failed = results.filter((r) => r.code !== 0);

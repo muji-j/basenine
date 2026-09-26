@@ -930,6 +930,69 @@ node -e 'const z=require("zlib"),fs=require("fs");const h=z.gunzipSync(fs.readFi
 그 모양일 수 있어 세기만 한다. 그런데 **그 모양을 실물로 본 적이 없다**(보유 11,699장 중 0장). N 이 0 이 아닌 날이 오면 그 페이지를
 위 3의 한 줄로 찍어 기록해 둬라 — 파서가 그 모양을 「원래 없음」으로 읽는 판단(`career.ts` 주석)을 그 실물로 다시 볼 수 있다.
 
+## 7-G. ⚠선수 적재의 판 가드 — 옛 판 선수 페이지를 건너뛰었을 때 (2026-09-27 · 감사 N3)
+
+**무엇이 일어났나**: 선수 페이지 적재(`packages/store/tools/load-players.ts` · `update.ts` 의 「선수 프로필 적재」 단계)가 아카이브의
+선수 페이지를 DB 가 적용한 판(`player.profile_revision` = 적용한 본문의 sha256)과 맞대, **본문이 다르고 내용이 더 이르면** 그 선수의
+**프로필과 통산을 함께** 건너뛰었다(DB 를 지켰다). 흔한 원인은 §7-E 와 같다 — 「보관소에 올림」이 오늘 세대를 지운 뒤 실패해 다음 실행이
+**어제 세대 + 더 새 DB** 를 복원했거나, 덧붙임 `archive-*.tar` 가 옛 선수 페이지를 최신 세대 위에 풀었다.
+설계: `docs/superpowers/specs/2026-09-27-profile-version-guard-design.md` §5.
+
+⚠**옛 판은 실패가 아니다 — 종료 0 + `::warning::`** 이다(경기 가드와 다르다 · 설계 §5-5 · §10-1 조정자 결정 · 사용자 번복 가능).
+경기와 달리 선수 페이지는 **같은 실행의 재취득 선정이 자동으로** 다시 받고(`emit-stale-player-ids.ts --archive` · 적재보다 먼저 돈다),
+수동 재수집 입력이 없어 막아도 사람이 누를 버튼이 없기 때문이다. ⚠`refetch_dates` 는 선수 페이지에 **듣지 않는다.**
+**순서를 모르면**(판 모름 · DB 시각 무효) 실패다 — 종료 1 · 배포가 막힌다(아카이브가 실제로 새것이면 갱신을 조용히 잃는다).
+
+| 로그 | 뜻 | 종료 |
+|---|---|---|
+| 요약 `판 가드 — 처음 N · 같은 본문 N · 새 판 N · 옛 판 건너뜀 N(재취득 대상 N · 부재라 못 고침 N) · 판 모름 건너뜀 N · DB 시각 무효 N · DB 에 없는 선수 N` | 판정별 수 — **0 이어도 찍힌다** | — |
+| `⚠아카이브가 DB 보다 옛 판인 선수 N명 — 적재하지 않았다(DB 를 지켰다)` + 선수 ID 전부(한 줄 20개) · `::warning::선수 페이지 N장이 …` | 옛 판 — DB 를 지켰다 | 0 |
+| 위 목록의 `<ID>(부재)` | 옛 판인데 **상류가 그 페이지를 지웠다**(마지막 관측이 404/410) — 다시 받아도 못 고친다 | 0 |
+| `VERSION UNKNOWN <ID> — <사유>` | 본문이 적용 판과 다른데 **그 본문의 시각을 모른다** — 건너뛰었다 | **1** |
+| `DB VERSION INVALID <ID> — <값>` | DB 의 `profile_fetched_at` 이 시각으로 안 읽힌다 — 판을 비교할 수 없어 건너뛰었다 | **1** |
+
+**처치**
+- **재취득 대상 — 할 일 없음.** 같은 실행이 대부분 풀고, 남은 것은 다음 실행의 선정이 다시 뽑는다(`--player-limit` 400/실행 안 ·
+  다른 사유와 섞어 줄 세운다). 같은 선수가 **며칠** 계속 찍히면 같은 로그의 선정 보고 줄
+  `낡은 선수 페이지: … · 아카이브 옛 판 N명(부재라 제외 N · 사이드카 못 읽음 N · 400일 밖 N · 순서 모름 N · 출력분 중 N)` 과 맞댄다 —
+  **뽑혔는데 안 풀렸으면** 받기 실패(「낡은 선수 프로필 재취득」 아카이버 로그) · **안 뽑혔으면** 선정 결함(`classifyForRefetch`)이다.
+  ⚠`400일 밖` 은 받을 수 없는 선수라 선정에서 빠진다 — 그 선수는 경고가 매 실행 남는다(값은 DB 에 있다).
+- **부재라 못 고침** — 상류가 페이지를 지웠고 DB 는 더 새 값을 갖고 있다. 출구는 **세대(최신 3개)에 적용 판과 sha 가 같은 본문**이
+  있을 때 그 **두 파일을 짝으로** 되살리는 것뿐이다(다음 실행이 「같은 본문」으로 진행한다). 없으면 받아들인다 — 값은 DB 에 있고
+  경고가 매 실행 남는다. 데이터 저장소에 쓰기 권한이 있는 계정으로 사람이 로컬에서 한다(§7-E 와 같은 명령 · 경로만 다르다):
+
+```bash
+P=01005134                               # 로그의 선수 ID
+W=$(mktemp -d)
+# ① DB 가 적용한 판을 본다 — 보관소 DB 를 받아 읽기 전용으로 연다
+gh release download data-store --repo muji-j/bb-app-data --dir "$W" --pattern bb.sqlite.gz
+gunzip -c "$W/bb.sqlite.gz" > "$W/bb.sqlite"
+node -e 'const{DatabaseSync}=require("node:sqlite");const d=new DatabaseSync(process.argv[1],{readOnly:true});console.log(d.prepare("SELECT profile_revision AS rev, profile_fetched_at AS at FROM player WHERE player_id = ?").get(process.argv[2]))' "$W/bb.sqlite" "$P"
+# ② 남은 세대를 보고(§7-E ①) 하나를 받아(§7-E ②) 그 선수의 두 파일을 짝으로 꺼낸다
+mkdir "$W/x" && tar -xf "$W/store-YYYYMMDD.tar" -C "$W/x" "archive/npb/players/$P.html.gz" "archive/npb/players/$P.meta.json"
+# ③ 본문 sha 가 ①의 rev 와 같고 사이드카 sha 와도 같은지 본다 — 셋이 같아야 되살릴 수 있다
+node -e 'const fs=require("fs"),z=require("zlib"),c=require("crypto"),d=process.argv[1],p=process.argv[2];const s=c.createHash("sha256").update(z.gunzipSync(fs.readFileSync(d+"/"+p+".html.gz"))).digest("hex");const m=JSON.parse(fs.readFileSync(d+"/"+p+".meta.json","utf8"));console.log("본문",s,"사이드카",m.sha256,s===m.sha256?"짝 일치":"짝 불일치","본시각="+(m.checkedAt??m.fetchedAt),"부재="+(m.absentAt??"-"))' "$W/x/archive/npb/players" "$P"
+# ④ 덧붙임 자산으로 싸서 올린다 — 이름은 archive- 로 시작한다(복원이 archive-*.tar 를 최신 세대 **위에** 푼다)
+tar -cf "$W/archive-restore-player-$P.tar" -C "$W/x" "archive/npb/players/$P.html.gz" "archive/npb/players/$P.meta.json"
+gh release upload data-store --repo muji-j/bb-app-data "$W/archive-restore-player-$P.tar"
+```
+
+  ⚠③에서 **본문 sha ≠ rev** 면 그 세대로는 못 푼다(다른 판이다) — 다른 세대를 본다. 되살린 사이드카에 `absentAt` 이 없어도 괜찮다 —
+  같은 본문이면 판정이 시각을 안 본다. ⑤ 다음 정시 실행이 덧붙임을 풀고 적재하면 그 선수는 `같은 본문` 으로 세어지고,
+  「보관소에 올림」이 덧붙임을 흡수해 지운다(§7-E ⑦과 같다). (①~④ 의 `gh` 는 안 돌려 봤다 — 기존 워크플로와 같은 명령이다.
+  ①·③의 `node` 한 줄과 ②·④의 `tar` 명령은 로컬 사본(023 을 적용한 DB 사본 · 선수 한 명으로 만든 가짜 세대)으로 실행해 확인했다 · 2026-09-27.)
+- **판 모름**(`VERSION UNKNOWN`) — 사유별:
+  - `사이드카 없음` — 다음 실행의 신규 선수 단계가 다시 받는다(사이드카가 없으면 `skipExisting` 이 건너뛰지 않는다).
+  - `사이드카 JSON 을 못 읽었다` — ⚠**아카이버도 그 선수를 만나는 목록에서 멈춘다**(`readMeta` 가 try 밖 · 설계 §12 잠재 결함) —
+    세대에서 **짝으로** 되살린다(위 ②~④).
+  - `본문 sha256 이 사이드카와 다르다` — 본문·사이드카 쓰기 사이에서 죽은 폴더다. 세대에서 짝으로 되살린다.
+  - `absentAt 무효` · `취득 시각 무효` — 손상·변조된 사이드카다(정상 아카이버는 늘 유효한 ISO 를 쓴다). 세대에서 짝으로 되살린다.
+  이 실행은 종료 1 이다.
+- **DB 시각 무효**(`DB VERSION INVALID`) — 보관소 DB 를 손으로 고치는 절차는 **없다.** 정리 마이그레이션(`022-invalid-fetched-at.sql` 선례)으로 푼다.
+
+**완료 기준**: 요약이 `옛 판 건너뜀 0(재취득 대상 0 · 부재라 못 고침 0) · 판 모름 건너뜀 0 · DB 시각 무효 0` 이고 `::warning::` 이 없다
+(부재라 못 고침을 받아들였다면 그 수만 남는다).
+
 ## 7-H. ⚠경기 적재가 `WRITE ERROR` 로 실패했을 때 — 그 경기만 되돌렸다 (2026-09-27 · 감사 N1)
 
 **무엇이 일어났나**: 경기 적재(`packages/store/tools/load-archive.ts` · `update.ts` 의 「DB 적재」 단계)가 한 경기의 쓰기 트랜잭션에서

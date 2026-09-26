@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fetchedAtOf, normalizeFetchedAt, seenAtOf } from "../src/meta.ts";
+import { absentStateOf, contentTimeOf, fetchedAtOf, isAbsentNow, normalizeFetchedAt, seenAtOf } from "../src/meta.ts";
 
 async function withDir(fn: (dir: string) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), "bb-meta-"));
@@ -228,4 +228,61 @@ test("⚠seenAtOf 는 같은 사이드카에서 fetchedAtOf 와 언제나 같은
     assert.equal(seenAtOf({ fetchedAt: "2026-08-15T03:51:56.478Z", checkedAt: "2026-08-17T02:00:00.000Z" }), "2026-08-17T02:00:00.000Z");
     assert.equal(seenAtOf(undefined), null, "값이 없으면 모른다(null)");
   });
+});
+
+// ─── N3 · 부재(404/410) 사이드카의 **순서** 시각(감사 N3 · 설계 docs/superpowers/specs/2026-09-27-profile-version-guard-design.md §3 · §5-1) ───
+//
+// ⚠**404 경로는 옛 본문을 그대로 두고 `checkedAt`·`absentAt` 을 「지금」으로 쓴다**(`archiver/src/players.ts`). `seenAtOf` 로 순서를 가르면
+//   **없어진 페이지의 옛 본문이 가장 새 판처럼 보인다** — 재취득이 그 시각을 올려 옛 판이 새 판을 덮는다. 그래서 순서는
+//   `contentTimeOf`(부재 중이면 받은 시각 `fetchedAt`)로 가르고, **쓰는 시각(`seenAtOf`)의 뜻은 바꾸지 않는다**(설계 §5-7).
+
+const F = "2026-08-01T00:00:00.000Z"; // fetchedAt — 그 본문을 받은 시각
+const C = "2026-09-01T00:00:00.000Z"; // checkedAt · absentAt — 404 를 본 실행
+const LATE = "2026-09-10T00:00:00.000Z"; // 부재 뒤 같은 본문으로 다시 확인된 시각
+
+/**
+ * ⚠**무효는 「부재 아님」이 아니다**(2026-09-27 콜드 리뷰 P2) — 손상된 사이드카다. 「부재 아님」으로 읽으면
+ *   최근 `checkedAt` 으로 순서가 매겨져 **옛 본문이 새 판을 덮는다.**
+ */
+test("⚠N3 3-9b · absentStateOf — 키 없음 · 유효 · 숫자 · 빈 문자열 · 무효 문자열 · null · 객체 아님", () => {
+  const cases: [string, unknown, "none" | "valid" | "invalid"][] = [
+    ["키 없음", { fetchedAt: F, checkedAt: C }, "none"],
+    ["유효", { fetchedAt: F, checkedAt: C, absentAt: C }, "valid"],
+    ["숫자", { fetchedAt: F, absentAt: 1756684800000 }, "invalid"],
+    ["빈 문자열", { fetchedAt: F, absentAt: "" }, "invalid"],
+    ["무효 문자열", { fetchedAt: F, absentAt: "not-a-date" }, "invalid"],
+    ["시간대 없는 시각", { fetchedAt: F, absentAt: "2026-09-01T00:00:00" }, "invalid"],
+    ["JSON null 값", { fetchedAt: F, absentAt: null }, "invalid"],
+    ["사이드카가 null", null, "none"],
+    ["사이드카가 배열", [], "none"],
+    ["사이드카가 없음(undefined)", undefined, "none"],
+  ];
+  for (const [label, meta, want] of cases) assert.equal(absentStateOf(meta), want, label);
+});
+
+test("⚠N3 3-4 · isAbsentNow · contentTimeOf — 마지막 관측이 404 면 받은 시각, 아니면 본 시각 · 부재 표시가 무효면 모른다(null)", () => {
+  const cases: [string, unknown, boolean, string | null][] = [
+    ["부재 아님(checkedAt 있음)", { fetchedAt: F, checkedAt: C }, false, C],
+    ["checkedAt 없는 옛 모양", { fetchedAt: F }, false, F],
+    ["부재 중(absentAt = checkedAt · 404 경로)", { fetchedAt: F, checkedAt: C, absentAt: C }, true, F],
+    ["부재 중(absentAt > checkedAt)", { fetchedAt: F, checkedAt: F, absentAt: C }, true, F],
+    ["부재 뒤 같은 본문으로 재확인(absentAt < checkedAt)", { fetchedAt: F, checkedAt: LATE, absentAt: C }, false, LATE],
+    ["부재 중 · checkedAt 없음", { fetchedAt: F, absentAt: C }, true, F],
+    ["부재 중 · checkedAt 무효", { fetchedAt: F, checkedAt: "not-a-date", absentAt: C }, true, F],
+    ["부재 중 · fetchedAt 무효(한 번도 못 받은 선수의 404)", { fetchedAt: "", checkedAt: C, absentAt: C }, true, null],
+    // ⚠본 시각이 유효해도 순서를 모른다 — fail-closed(설계 §5-2 4번 unknown)
+    ["부재 표시 무효", { fetchedAt: F, checkedAt: C, absentAt: "not-a-date" }, false, null],
+    ["사이드카가 null", null, false, null],
+  ];
+  for (const [label, meta, absentNow, contentTime] of cases) {
+    assert.equal(isAbsentNow(meta), absentNow, `${label}: isAbsentNow`);
+    assert.equal(contentTimeOf(meta), contentTime, `${label}: contentTimeOf`);
+  }
+});
+
+/** ⚠**쓰는 시각의 뜻은 바꾸지 않았다**(설계 §5-7 · §11) — 부재 사이드카에서도 `checkedAt ?? fetchedAt` 그대로다 */
+test("N3 3-4 · seenAtOf 는 부재 사이드카에서도 지금과 같은 값을 낸다(바꾸지 않았다)", () => {
+  assert.equal(seenAtOf({ fetchedAt: F, checkedAt: C, absentAt: C }), C);
+  assert.equal(seenAtOf({ fetchedAt: F, absentAt: C }), F);
+  assert.equal(seenAtOf({ fetchedAt: F, checkedAt: C, absentAt: "not-a-date" }), C);
 });

@@ -5,14 +5,20 @@
  *
  * ⚠**투타를 못 읽은 선수를 임의로 채우지 않는다.** null로 두고 몇 명인지 보고한다 —
  * 좌우 스플릿의 근거이므로 모르는 채로 섞이면 스플릿이 조용히 틀린다.
+ *
+ * ⚠**옛 판이 새 판을 덮지 못한다**(2026-09-27 · 감사 N3 · 설계 `docs/superpowers/specs/2026-09-27-profile-version-guard-design.md` §5).
+ *   선수마다 **적용 판**(`player.profile_revision` = 적용한 본문의 sha256)과 아카이브 본문을 맞대, 본문이 다르고 내용이 더 이르면
+ *   **프로필과 통산을 함께** 건너뛴다(DB 를 지킨다 · 종료 0 + `::warning::`). 순서를 **모르면** 건너뛰고 종료 1 이다.
+ *   건너뛴 선수는 같은 실행의 재취득 선정(`emit-stale-player-ids.ts --archive`)이 적재 **전에** 뽑아 다시 받는다.
  */
 import { readdir } from "node:fs/promises";
 import { readFileSync } from "node:fs";
-import { fetchedAtOf } from "../src/meta.ts";
 import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
 import { parseCareer, parsePlayerProfile } from "@bb-app/parser";
 import { openDb } from "../src/db.ts";
+import { judgePlayerVersion, playerArchiveOf } from "../src/player-version.ts";
+import type { MetaSnapshot } from "../src/player-version.ts";
 
 const [archiveRoot, dbPath] = process.argv.slice(2);
 if (!archiveRoot || !dbPath) {
@@ -46,20 +52,42 @@ const stmt = db.raw.prepare(
   //   여기는 적재 시각(`nowIso`)을 넣고 있었다. 적재는 매일 아카이브 **전체**를 다시 훑으므로
   //   8월에 받은 페이지가 매일 「오늘 받은 것」이 됐다 — 아래 통산 INSERT 는 사이드카 시각을 쓰는데
   //   **같은 페이지의 같은 루프 안에서** 두 방식이 갈려 있었다.
-  //   → 통산 행과 **같은 값**(`fetchedAtOf` 한 벌)을 넣는다.
+  //   → 통산 행과 **같은 값**(판정이 낸 시각 한 벌)을 넣는다.
   //   ⚠**사이드카를 못 읽으면(`null`) NULL 이다 — 이 칸에는 `COALESCE` 를 걸지 않는다**(M11 · 2026-09-26 3중 검토 2차 반영).
   //     처음에는 `COALESCE(?, profile_fetched_at)` 로 **이전 시각을 남겼는데**, 같은 UPDATE 가 위 프로필 값은
   //     **이번 페이지로** 덮어쓰므로 「값은 새 판 · 시각은 옛 판」이 됐다 — 그 시각은 값의 출처를 거짓으로 말한다(M4).
   //     같은 페이지의 통산 행은 그때 NULL 이다. **모르면 모름**으로 한 벌을 맞춘다. 「지금」으로 메우지도 않는다.
-  //   ⚠**「옛 판이 새 판을 덮지 못하게」 하는 순서 가드는 넣지 않았다** — 이 시각은 **프로필 값·통산 행과 한 벌로**
-  //     움직여야 한다. 시각에만 가드를 걸면 값은 이번 페이지로 바뀌고 시각만 남아 **값과 시각이 갈린다.**
-  //     걸려면 이 UPDATE 전체와 통산 갈아 넣기를 함께 막아야 한다(범위 밖 — 경기 적재의 판 가드 `version-guard.ts` 가 그 모양이다).
+  //     ⚠**예외 하나**(감사 N3 · 설계 §5-2 「C7 과의 조정」) — 적용 판과 **같은 본문**이면 사이드카를 못 읽어도 DB 시각을 남긴다.
+  //     그 시각은 **바로 이 본문**을 확인한 시각이라 값과 한 벌이다(판정이 `same` 의 시각으로 낸다).
+  //   ⚠~~「옛 판이 새 판을 덮지 못하게」 하는 순서 가드는 넣지 않았다~~ 는 2026-09-27 부로 낡았다(감사 N3) — 이 UPDATE 전체와
+  //     통산 갈아 넣기를 **한 판정으로 함께** 막는다(`judgePlayerVersion` · 아래 루프). 시각에만 가드를 걸지 않은 이유(값과 시각이
+  //     갈린다)는 그대로 지켰다 — 건너뛸 때는 **값도 시각도 안 쓴다.**
+  //   ⚠**`profile_revision` 은 적용한 본문의 sha256 이다**(023) — 이 칸에도 `COALESCE` 를 걸지 않는다(값·시각과 한 벌).
   `UPDATE player SET position = COALESCE(?, position), throws = COALESCE(?, throws),
      bats = COALESCE(?, bats), birth_year = COALESCE(?, birth_year),
      physique = COALESCE(?, physique), draft = COALESCE(?, draft), kana = COALESCE(?, kana),
-     uniform_number = COALESCE(?, uniform_number), profile_fetched_at = ?
+     uniform_number = COALESCE(?, uniform_number), profile_revision = ?, profile_fetched_at = ?
    WHERE player_id = ?`,
 );
+
+/**
+ * 사이드카를 **한 번** 읽은 스냅샷(설계 §5-3 ①). ⚠**`fetchedAtOf` 로 파일을 다시 읽지 않는다** — 판정한 판과 다른 판의 시각이
+ * 들어간다(경기 가드 부록 D A2 · TOCTOU). ENOENT 는 「없음」, 그 밖의 읽기 오류와 깨진 JSON 은 「깨짐」이다(둘 다 시각을 모른다).
+ */
+function readMetaSnapshot(path: string): MetaSnapshot {
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch (err) {
+    if ((err as { code?: unknown }).code === "ENOENT") return { state: "missing" };
+    return { state: "broken", error: err instanceof Error ? err.message : String(err) };
+  }
+  try {
+    return { state: "ok", value: JSON.parse(raw) as unknown };
+  } catch (err) {
+    return { state: "broken", error: err instanceof Error ? err.message : String(err) };
+  }
+}
 
 /**
  * 年度別成績.
@@ -104,25 +132,67 @@ let noHand = 0;
 let kanaRead = 0;
 const unknownPlayers: string[] = [];
 
+/**
+ * **판 판정별 수**(감사 N3 · 설계 §5-3). ⚠요약 줄을 0 이어도 찍는다 — 「0건」과 「안 쟀음」을 가른다.
+ * `stale` 은 실패가 아니라 목록(DB 를 지켰다 · 종료 0 + `::warning::`)이고, `unknown`·`invalid-db` 는 **실패**다(순서를 몰라
+ * 건너뛰었으니 아카이브가 실제로 새것이면 갱신을 조용히 잃는다 — M7 · 종료 1). 선을 가른 기준은 「DB(=화면)에 틀린 값이
+ * 들어갈 수 있는가」다(설계 §5-5 · 옛 판에서 경기 가드와 다른 종료 코드를 고른 이유 여섯은 거기에).
+ */
+const verdictCount = { "no-row": 0, first: 0, same: 0, newer: 0 };
+const staleProfiles: { playerId: string; absent: boolean }[] = [];
+let versionUnknown = 0;
+let dbTimeInvalid = 0;
+
 db.transaction(() => {
   for (const f of files) {
     const playerId = f.replace(/\.html\.gz$/, "");
+    // ① 사이드카를 **한 번** 읽는다(스냅샷 — 판정과 쓰는 시각이 같은 사이드카에서 나온다)
+    const meta = readMetaSnapshot(join(dir, `${playerId}.meta.json`));
+    // ② 본문을 읽고 푼다 — 실패하면 지금처럼 PARSE ERROR
+    let body: Buffer;
+    try {
+      // 트랜잭션 안이라 동기 읽기를 쓴다 — await 하면 트랜잭션이 열린 채로 이벤트 루프가 돈다.
+      body = gunzipSync(readFileSync(join(dir, f)));
+    } catch (err) {
+      failed += 1;
+      console.error(`PARSE ERROR ${playerId} — ${err instanceof Error ? err.message : String(err)}`);
+      continue;
+    }
     /**
+     * ③·④ **판을 가른다**(감사 N3 · 설계 §5-2 표) — 쓰기와 **같은 트랜잭션 안**이다(루프 전체가 트랜잭션 하나).
      * ⚠**취득 시각은 아카이브가 갖고 있다** — 적재 시각(`nowIso`)과 다르다.
      * ⚠**모르면 `null` 그대로 넣는다. 적재 시각으로 메우지 마라**(M11 · 2026-08-17 재검토 P1).
      *   메우면 두 가지가 동시에 망가진다: 화면이 그 날짜를 「진짜 취득일」이라 말하고,
      *   재취득 선정이 그것을 「가장 신선함」으로 읽어 **그 선수를 영영 다시 안 받는다.**
-     *   그게 바로 이 커밋이 고치려던 사고다.
-     * ⚠**이 한 값을 프로필과 통산이 같이 쓴다**(2026-09-26 감사 C7). 통산 행은 선수 단위로 갈아 넣으므로
+     * ⚠**판정이 낸 한 값(`v.time`)을 프로필과 통산이 같이 쓴다**(2026-09-26 감사 C7). 통산 행은 선수 단위로 갈아 넣으므로
      *   `null` 이 그대로 들어가고, 프로필의 `profile_fetched_at` 도 **`null` 이 그대로 들어간다**(위 SQL — 한 벌).
      */
-    const fetchedAt = fetchedAtOf(join(dir, `${playerId}.meta.json`));
-    if (fetchedAt === null) metaMissing += 1;
+    const archive = playerArchiveOf(meta, body);
+    if (archive.seenAt === null) metaMissing += 1;
+    const v = judgePlayerVersion(db, playerId, archive);
+    // ⑤ 건너뛴다 — **파싱하지 않는다**(옛 판의 파싱 실패가 종료 1 을 만들지 않게). 프로필과 통산을 **함께** 건너뛴다
+    if (v.kind === "stale") {
+      staleProfiles.push({ playerId, absent: v.absentNow });
+      continue;
+    }
+    if (v.kind === "unknown") {
+      failed += 1;
+      versionUnknown += 1;
+      console.error(`VERSION UNKNOWN ${playerId} — ${v.reason}`);
+      continue;
+    }
+    if (v.kind === "invalid-db") {
+      failed += 1;
+      dbTimeInvalid += 1;
+      console.error(`DB VERSION INVALID ${playerId} — ${v.value}`);
+      continue;
+    }
+    verdictCount[v.kind] += 1;
+    const fetchedAt = v.time;
+    // ⑥ 나머지는 지금처럼 — 파싱 → UPDATE → changes() 셈 → 통산 savepoint
+    const html = body.toString("utf8");
     let profile;
-    let html = "";
     try {
-      // 트랜잭션 안이라 동기 읽기를 쓴다 — await 하면 트랜잭션이 열린 채로 이벤트 루프가 돈다.
-      html = gunzipSync(readFileSync(join(dir, f))).toString("utf8");
       profile = parsePlayerProfile(html);
     } catch (err) {
       failed += 1;
@@ -147,7 +217,9 @@ db.transaction(() => {
       profile.draft,
       profile.kana,
       profile.uniformNumber,
-      // ⚠**`nowIso` 가 아니다**(감사 C7) — 아래 통산 행과 같은 사이드카 시각. `null` 이면 NULL 이다(모르면 모름)
+      // ⚠**적용 판 = 이 본문의 sha256**(감사 N3 · 023) — 값·시각과 한 벌로 쓴다
+      archive.bodySha256,
+      // ⚠**`nowIso` 가 아니다**(감사 C7) — 아래 통산 행과 같은 판정 시각. `null` 이면 NULL 이다(모르면 모름)
       fetchedAt,
       playerId,
     );
@@ -243,7 +315,34 @@ const withHand = (
   }
 ).n;
 
-console.log(`선수 페이지 ${files.length}장 · 갱신 ${updated} · DB에 없는 선수 ${missing} · 파싱 실패 ${failed}`);
+// ⚠`failed` 에는 판 모름·DB 시각 무효도 들어 있다(종료 코드 한 식 · 설계 §5-3) — 이 줄의 「파싱 실패」는 그 둘을 뺀 수다(아래 판 가드 줄이 따로 센다)
+console.log(
+  `선수 페이지 ${files.length}장 · 갱신 ${updated} · DB에 없는 선수 ${missing} · 파싱 실패 ${failed - versionUnknown - dbTimeInvalid}`,
+);
+/**
+ * ⚠**판 가드 — 0 이어도 찍는다**(감사 N3 · 설계 §5-3). 옛 판은 **실패가 아니다** — 순서를 알고 DB 를 지켰다(종료 0).
+ *   재취득 대상과 부재(상류가 페이지를 지웠다 — 받아도 404)를 **나눠서** 센다. 처치는 런북 §7-G.
+ */
+const staleRefetch = staleProfiles.filter((s) => !s.absent).length;
+const staleAbsent = staleProfiles.length - staleRefetch;
+console.log(
+  `판 가드 — 처음 ${verdictCount.first} · 같은 본문 ${verdictCount.same} · 새 판 ${verdictCount.newer} · ` +
+    `옛 판 건너뜀 ${staleProfiles.length}(재취득 대상 ${staleRefetch} · 부재라 못 고침 ${staleAbsent}) · ` +
+    `판 모름 건너뜀 ${versionUnknown} · DB 시각 무효 ${dbTimeInvalid} · DB 에 없는 선수 ${verdictCount["no-row"]}`,
+);
+if (staleProfiles.length > 0) {
+  // ⚠**선수 ID 를 전부 찍는다**(한 줄 20개 · ID 순) — 자르지 않는다. 잘린 목록은 처치할 선수를 조용히 빠뜨린다
+  const sorted = [...staleProfiles].sort((a, b) => (a.playerId < b.playerId ? -1 : a.playerId > b.playerId ? 1 : 0));
+  console.log(`⚠아카이브가 DB 보다 옛 판인 선수 ${staleProfiles.length}명 — 적재하지 않았다(DB 를 지켰다)`);
+  for (let i = 0; i < sorted.length; i += 20) {
+    console.log(`   ${sorted.slice(i, i + 20).map((s) => (s.absent ? `${s.playerId}(부재)` : s.playerId)).join(", ")}`);
+  }
+  // ⚠러너가 주석으로 읽는다(`update.ts` 가 `stdio: "inherit"` 로 띄운다) · 로컬에서는 그냥 한 줄이다
+  console.log(
+    `::warning::선수 페이지 ${staleProfiles.length}장이 DB 보다 옛 판이라 적재하지 않았다 — ` +
+      `재취득 대상 ${staleRefetch} · 부재라 못 고침 ${staleAbsent} · 절차 docs/operations/deploy.md §7-G`,
+  );
+}
 console.log(`투타 확인 ${withHand} / 전체 ${total}명 (미상 ${total - withHand}명)`);
 // ⚠**분모를 같이 낸다.** 「카나 있음 737」만 내면 121명이 빠진 것인지 그런 선수가 없는 것인지 모른다.
 // ⚠등번호 없음은 **결손이 아니라 「지금 등록이 없다」**(M11) — 은퇴·이적 선수다
@@ -266,10 +365,15 @@ if (unknownPlayers.length > 0) {
  * 한두 명이 특이해도 넘어가고, 구조가 바뀌면 반드시 걸린다.
  */
 const KANA_COVERAGE_MIN = 0.9;
-const coverage = files.length === 0 ? 1 : kanaRead / files.length;
+/**
+ * ⚠**분모에서 판 가드가 건너뛴 장수를 뺀다**(감사 N3 · 설계 §5-3) — 건너뛴 페이지는 파싱하지 않으므로 분자에 못 들어간다.
+ *   안 빼면 옛 판을 많이 건너뛴 날 분자만 줄어 **거짓 커버리지 실패**(종료 1)가 난다. 건너뛴 것이 0 이면 지금과 글자까지 같다.
+ */
+const judged = files.length - (staleProfiles.length + versionUnknown + dbTimeInvalid);
+const coverage = judged === 0 ? 1 : kanaRead / judged;
 if (coverage < KANA_COVERAGE_MIN) {
   console.error(
-    `⚠읽는 법 커버리지가 ${(coverage * 100).toFixed(1)}% (${kanaRead}/${files.length}장) — ` +
+    `⚠읽는 법 커버리지가 ${(coverage * 100).toFixed(1)}% (${kanaRead}/${judged}장) — ` +
       `임계값 ${KANA_COVERAGE_MIN * 100}% 미만이다. 선수 페이지의 표제부(#pc_vitals) 구조 변경을 의심하라`,
   );
 }
@@ -279,5 +383,7 @@ db.close();
  * ⚠**`careerFailed` 를 넣는다**(2026-08-17 이중 검토 지적).
  * 年度別成績 파싱이 깨지면 그 선수의 취입만 멈추고 **파이프라인은 성공으로 끝나고 있었다** —
  * 화면은 「1つでも合わなければ取り込みを止めます」라고 말하는데 절반만 사실이었다(M7).
+ * ⚠**판 모름(`VERSION UNKNOWN`) · DB 시각 무효(`DB VERSION INVALID`)는 `failed` 로 들어간다**(종료 1 · 감사 N3) —
+ *   **옛 판(`stale`)은 안 들어간다**(DB 를 지켰다 · `::warning::` · 설계 §5-5 · §10-1 조정자 결정 · 사용자 번복 가능).
  */
 process.exitCode = failed > 0 || careerFailed > 0 || coverage < KANA_COVERAGE_MIN ? 1 : 0;
