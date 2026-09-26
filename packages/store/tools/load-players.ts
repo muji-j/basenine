@@ -41,10 +41,19 @@ const stmt = db.raw.prepare(
   //   **마지막에 도는 이쪽이 언제나 이겼다.** 「못 읽었다」와 「없다」를 같은 NULL 로 쓰면 안 된다.
   //   ⚠`COALESCE(?, col)` = 읽었으면 그 값, 못 읽었으면 **지금 값 그대로**.
   //   ⚠**권위는 여전히 여기다** — 읽은 값은 그대로 덮어쓴다(M1). 못 읽었을 때만 양보한다.
+  //
+  // ⚠**`profile_fetched_at` 은 「언제 받았나」다 — 「언제 적재했나」가 아니다**(M4 · 2026-09-26 감사 C7).
+  //   여기는 적재 시각(`nowIso`)을 넣고 있었다. 적재는 매일 아카이브 **전체**를 다시 훑으므로
+  //   8월에 받은 페이지가 매일 「오늘 받은 것」이 됐다 — 아래 통산 INSERT 는 사이드카 시각을 쓰는데
+  //   **같은 페이지의 같은 루프 안에서** 두 방식이 갈려 있었다.
+  //   → 통산 행과 **같은 값**(`fetchedAtOf` 한 벌)을 넣는다.
+  //   ⚠사이드카를 못 읽으면(`null`) **지금 값을 그대로 둔다**(`COALESCE`) — 「모른다」를 「지금」으로 메우지 않는다(M11).
+  //   ⚠**「옛 판이 새 판을 덮지 못하게」 하는 순서 가드는 넣지 않았다** — 지금 DB 의 값은 전부 **적재 시각**이라
+  //     어떤 사이드카 시각보다도 늦다. 순서 가드를 걸면 그 거짓 값이 **영영 고쳐지지 않는다.**
   `UPDATE player SET position = COALESCE(?, position), throws = COALESCE(?, throws),
      bats = COALESCE(?, bats), birth_year = COALESCE(?, birth_year),
      physique = COALESCE(?, physique), draft = COALESCE(?, draft), kana = COALESCE(?, kana),
-     uniform_number = COALESCE(?, uniform_number), profile_fetched_at = ?
+     uniform_number = COALESCE(?, uniform_number), profile_fetched_at = COALESCE(?, profile_fetched_at)
    WHERE player_id = ?`,
 );
 
@@ -91,6 +100,8 @@ db.transaction(() => {
      *   메우면 두 가지가 동시에 망가진다: 화면이 그 날짜를 「진짜 취득일」이라 말하고,
      *   재취득 선정이 그것을 「가장 신선함」으로 읽어 **그 선수를 영영 다시 안 받는다.**
      *   그게 바로 이 커밋이 고치려던 사고다.
+     * ⚠**이 한 값을 프로필과 통산이 같이 쓴다**(2026-09-26 감사 C7). 통산 행은 선수 단위로 갈아 넣으므로
+     *   `null` 이 그대로 들어가고, 프로필은 `UPDATE` 라 `null` 이면 **지금 값을 둔다**(위 `COALESCE`).
      */
     const fetchedAt = fetchedAtOf(join(dir, `${playerId}.meta.json`));
     if (fetchedAt === null) metaMissing += 1;
@@ -123,7 +134,8 @@ db.transaction(() => {
       profile.draft,
       profile.kana,
       profile.uniformNumber,
-      nowIso,
+      // ⚠**`nowIso` 가 아니다**(감사 C7) — 아래 통산 행과 같은 사이드카 시각. `null` 이면 지금 값을 둔다
+      fetchedAt,
       playerId,
     );
     /**
