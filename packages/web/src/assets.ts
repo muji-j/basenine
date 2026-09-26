@@ -2971,16 +2971,25 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
   .qhits li.on a{background:Highlight;color:HighlightText}
   /* 카드는 안쪽 글자들이 각자 색을 가지므로 배경 대신 **윤곽**으로 말한다 */
   .card[aria-selected="true"]{outline:2px solid Highlight;outline-offset:-3px}
+  /* ⚠**고른 카드에 초점이 오면 모양이 달라져야 한다**(2026-09-27 · 감사 N9 · WCAG 2.4.7).
+     바로 위 규칙은 (0,2,0) 이라 전역 :focus-visible(0,1,0)의 초점 링을 **통째로 이겼다** —
+     고른 카드에 초점이 와도 안쪽 윤곽 그대로였다. 윤곽은 하나뿐이라 「고름」과 「초점」을 한 선이 같이 말해야 한다.
+     → **바깥쪽 이중선**: 초점 링처럼 바깥(offset 1px)에 서서 초점이 왔음을 말하고, 이중선이라
+       초점만 온 카드(한 줄)와도 갈린다 — 이 모드에서 고름을 말하는 다른 채널이 없어서다.
+     ⚠이중선은 3px 부터 두 줄로 그려진다(그 아래는 한 줄). 4px 로 두 줄 사이를 벌려 2px 한 줄 초점 링과
+       모양만으로 확실히 갈리게 한다. ⚠**렌더는 브라우저로 확인하지 못했다**(이 블록 머리 주석과 같은 사정). */
+  .card[aria-selected="true"]:focus-visible{outline:4px double Highlight;outline-offset:1px}
   /* 지금 페이지 표시가 box-shadow 밑줄 하나였다 — 글자 밑줄로 바꿔 남긴다 */
   .brand[aria-current="page"]{text-decoration:underline;text-underline-offset:3px}
   /* 「이 구획 안에 있다」(page 가 아니라 true). page 는 font-weight 로 살아남지만
      이쪽은 색과 box-shadow 뿐이었다 — **점선 밑줄로 세기를 낮춰** 둘을 갈라 둔다 */
   .tnav a[aria-current="true"]{text-decoration:underline dotted;text-underline-offset:3px}
-  /* 즐겨찾기 — ~~눌려도 글자가 ★ 그대로다~~ 는 2026-09-27 부로 거짓이다(감사 W2): ::before 가 ☆→★ 로
-     바뀌고 content 는 이 모드에서 남는다. 이 윤곽은 그 위에 한 겹 더 말하는 덧말이다.
-     ⚠이 윤곽이 전역 :focus-visible 의 초점 링을 덮는다는 지적이 있다(같은 날 디자인 감사) —
-     감사 문서 §10-4 의 다음 라운드에서 판정한다 */
-  .favbtn[aria-pressed="true"]{outline:2px solid Highlight;outline-offset:1px}
+  /* 즐겨찾기 — ⚠**눌림 윤곽을 뺐다**(2026-09-27 · 감사 N9 판정).
+     여기 있던 .favbtn[aria-pressed="true"]{outline:2px solid Highlight;outline-offset:1px} 는 (0,2,0) 이라
+     전역 :focus-visible 의 초점 링을 덮었다 — 눌린 버튼에 초점이 와도 모양이 같았다(WCAG 2.4.7).
+     ⚠**빼도 눌림은 남는다** — ::before 의 ☆→★ 가 바뀌고 content 는 이 모드에서 남는다(감사 W2).
+     그러면 이 버튼에서 윤곽은 **초점 하나만** 말한다. 한 선에 두 뜻을 싣는 것보다 낫다.
+     ⚠**다시 넣지 마라** — 넣으려면 위 .card 처럼 상태+초점 전용 윤곽을 함께 둬야 한다(forced-colors.test.ts N9). */
 }
 @media print{
   /* 조작에 쓰는 것은 종이에서 아무 일도 하지 않는다 */

@@ -31,6 +31,9 @@ import { CSS } from "../src/assets.ts";
 //   실제로 `更新が止まっています` 는 layout.ts 에 **주석 1 · 화면 1** 로 두 번 있고,
 //   뮤테이션(화면 쪽만 지우기)이 **안 잡혔다**(2026-09-08 실측). 판정기는 scripts 에 이미 한 벌 있다(M1).
 import { stripJsComments } from "../../../scripts/fonts.ts";
+// ⚠**특이도 싸움은 문자열로 못 본다** — N9 가 정확히 그 모양이었다(아래 시험). 계산기는 따로 잰다(css-cascade.test.ts)
+import { computed, elementOf, parseRules } from "./css-cascade.ts";
+import type { El } from "./css-cascade.ts";
 
 /** 주석 안의 예시가 규칙으로 잡히면 시험이 헛돈다 */
 const css = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
@@ -98,11 +101,12 @@ const JUSTIFIED: readonly Justification[] = [
   { sel: '.brand[aria-current="page"]', covered: true, why: "box-shadow 밑줄 하나뿐 · 글자 밑줄로 바꾼다" },
   { sel: '.tnav a[aria-current="true"]', covered: true, why: "page 는 font-weight 로 사는데 이쪽은 못 산다 · 점선 밑줄" },
   // ⚠**~~눌려도 글자가 ★ 그대로다~~ 는 2026-09-27 부로 거짓이다**(감사 W2) — 이제 ::before 가 ☆→★ 로 바뀌고
-  //   content 는 이 모드에서 남는다. 대응 블록의 윤곽은 그 위에 한 겹 더 말하는 것으로 둔다.
+  //   content 는 이 모드에서 남는다.
+  // ⚠**~~대응 블록이 윤곽으로도 다시 말한다~~ 도 같은 날 뺐다**(감사 N9) — 그 윤곽이 (0,2,0) 이라 전역
+  //   :focus-visible 의 초점 링을 덮었다. 눌림은 글리프가 말하고, 이 버튼의 윤곽은 초점 하나만 말한다.
   {
     sel: '.favbtn[aria-pressed="true"]',
-    covered: true,
-    why: "색·테두리는 이 모드에서 죽는다 · ::before 의 ☆→★(content)가 남고, 대응 블록이 윤곽으로도 다시 말한다",
+    why: "색·테두리는 이 모드에서 죽는다 · ::before 의 ☆→★(content)가 남는다(윤곽은 초점 전용으로 비워 둔다 · N9)",
     cites: [{ sel: '.favbtn[aria-pressed="true"]::before', decl: 'content:"★"' }],
   },
 
@@ -687,6 +691,62 @@ test("⚠W2 눌린 토글은 색 말고도 말한다 — 눌림과 안 눌림이
       "  ⚠.favt 처럼 글리프(content)나 굵기로도 말하게 하라. 색이 바탕에서 안 보이면 눌림이 통째로 사라진다.",
   );
   console.log(`  · 눌림 토글 ${subjects.size}개가 전부 색 말고도 말한다: ${how.join(" / ")}`);
+});
+
+/**
+ * ⚠**N9 — 이 모드의 상태 윤곽이 초점 링을 덮으면 안 된다**(2026-09-27 · 감사 N9 · WCAG 2.4.7).
+ *
+ * 대응 블록의 `.card[aria-selected="true"]{outline:…}` 와 `.favbtn[aria-pressed="true"]{outline:…}` 는
+ * 특이도 (0,2,0) 이라 전역 `:focus-visible`(0,1,0)의 윤곽을 **통째로 이겼다** — 고른 카드에 초점이 와도
+ * **모양이 하나도 안 바뀌었다.** `.card` 는 `<button>` 이라 초점을 받는다.
+ * 옛 시험은 「covered 라고 적은 선택자가 블록 안에 **있는가**」만 봐서 이것을 원리적으로 못 봤다.
+ *
+ * → **캐스케이드를 계산한다**(`css-cascade.ts`). 이 블록에서 윤곽을 주는 **상태 선택자마다**:
+ *   ⑴ 상태+초점의 윤곽이 보인다(style ≠ none)
+ *   ⑵ 상태+초점의 윤곽이 **상태만일 때와** 굵기·모양·간격 중 하나 이상 다르다 — 초점이 왔다는 것이 보인다
+ *   ⑶ 상태+초점의 윤곽이 **초점만일 때와도** 다르다 — 이 블록에 상태 윤곽을 둔 것은 그 상태를 말할 다른 채널이
+ *      이 모드에 없다는 뜻이라, 초점이 오는 순간 상태가 사라지면 안 된다
+ * ⚠**색은 비교하지 않는다** — `outline-color` 는 이 모드에서 갈린다(`Highlight` 같은 시스템 색만 남는다).
+ * ⚠**새 상태 윤곽을 더하면 이 시험이 그것도 잰다** — 태그를 `STATE_TAGS` 에 적어야 통과한다.
+ */
+const STATE_TAGS: Readonly<Record<string, string>> = { card: "button", favbtn: "button" };
+
+test("⚠N9 강제 색 모드에서 상태 윤곽이 초점 링을 덮지 않는다 — 상태+초점의 윤곽이 상태만·초점만과 다르다", () => {
+  const all = parseRules(CSS);
+  const forced = (q: string): boolean => /\(forced-colors\s*:\s*active\)/.test(q);
+  const shape = (el: El): { style: string; width: string; offset: string } => ({
+    style: computed(all, el, "outline-style", forced) ?? "none",
+    width: computed(all, el, "outline-width", forced) ?? "medium",
+    offset: computed(all, el, "outline-offset", forced) ?? "0",
+  });
+  const same = (a: ReturnType<typeof shape>, b: ReturnType<typeof shape>): boolean =>
+    a.style === b.style && a.width === b.width && a.offset === b.offset;
+  const subjects = [
+    ...new Set(
+      all
+        .filter((r) => r.media !== null && forced(r.media) && /(?:^|;)\s*outline(?:-(?:style|width|offset))?\s*:/.test(r.body))
+        .flatMap((r) => r.parts)
+        .filter((p) => STATE.test(p) && !/:focus/.test(p)),
+    ),
+  ];
+  // ⚠**공회전 방지** — 이 블록에는 고른 카드의 윤곽이 실재한다
+  assert.ok(subjects.length >= 1, "강제 색 블록에 상태 윤곽이 하나도 없다 — 이 시험이 공회전한다");
+  const bad: string[] = [];
+  for (const s of subjects) {
+    const cls = /^\.([\w-]+)/.exec(s)?.[1];
+    const tag = cls === undefined ? undefined : STATE_TAGS[cls];
+    assert.ok(tag !== undefined, `${s} 의 태그를 모른다 — STATE_TAGS 에 적어라(적어야 이 시험이 그 윤곽을 잰다)`);
+    const el = elementOf(s, tag);
+    const stateOnly = shape({ ...el, focused: false });
+    const stateFocus = shape({ ...el, focused: true });
+    const focusOnly = shape({ ...el, attrs: {}, focused: true });
+    const show = (x: ReturnType<typeof shape>): string => `${x.width} ${x.style} offset ${x.offset}`;
+    if (stateFocus.style === "none") bad.push(`${s} — 초점이 와도 윤곽이 없다`);
+    else if (same(stateFocus, stateOnly)) bad.push(`${s} — 초점이 와도 모양이 같다(${show(stateOnly)})`);
+    else if (same(stateFocus, focusOnly)) bad.push(`${s} — 초점이 오면 상태가 사라진다(초점만일 때와 같다: ${show(focusOnly)})`);
+  }
+  assert.deepEqual(bad, [], "강제 색 모드에서 상태 윤곽과 초점 링이 하나로 뭉개진다(WCAG 2.4.7)");
+  console.log(`  · 상태 윤곽 ${subjects.length}개: ${subjects.join(" / ")}`);
 });
 
 /**
