@@ -1355,6 +1355,170 @@ test("대전이 없는 조합이면 빈 표가 아니라 그렇다고 말한다(
   assert.equal(doc.getElementById("matchupEmpty")!.hidden, false);
 });
 
+// ─── ?vs= 착지 — 今季 / 通算 두 표 (감사 W7) ─────────────────────────────
+
+/**
+ * ⚠**`?vs=` 가 今季 표만 좁혔다**(2026-09-25 감사 W7).
+ * 今季 표에 그 상대가 없으면 좁히기 칸에 **원시 선수 ID** 를 넣고 「この条件の対戦記録はありません。」만 보였다 —
+ * **같은 페이지의 通算 표에 그 대전이 있는데도.** 선발예고 화면의 링크는 **통산 대전**에서 나오므로
+ * (`pages.ts` 의 선발예고 대전 표) 그 경로가 가장 자주 여기에 걸린다.
+ *
+ * 스텁은 서버의 `matchupBlock`(`player-page.ts`)과 같은 모양이다 —
+ * 범위 탭(`matchupScope` · season/career) 아래 패널마다 표 하나(`matchup` / `matchupCareer`).
+ * 그 이름들이 진짜 렌더에 있는지는 `matchup-career.test.ts` 가 잰다.
+ */
+type MRow = { id: string; name: string; team: string; pa: number };
+
+function matchupStable(id: string, rows: readonly MRow[], minGroup: string): El {
+  const stable = make("div", {
+    class: "stable", "data-stable": id, "data-sortdefault": "pa:desc",
+    "data-thinfield": "pa", "data-thinmin": "10", "data-thinunit": "打席",
+    "data-mingroup": minGroup, "data-minfield": "pa", "data-unit": "件",
+  });
+  const controls = make("div", { class: "mfind" });
+  controls.appendChild(make("input", { id: `${id}Filter`, type: "search", "data-stable-filter": "" }));
+  controls.appendChild(make("span", { id: `${id}Count`, "data-stable-count": "" }));
+  stable.appendChild(controls);
+  const table = make("table", { id: `${id}Table` });
+  const hrow = make("tr");
+  for (const [key, type] of [["name", "text"], ["pa", "num"]] as const) {
+    const th = make("th");
+    const b = make("button", { class: "sortable", "data-sortkey": key, "data-sorttype": type });
+    b.textContent = key === "name" ? "投手" : "打席";
+    th.appendChild(b);
+    hrow.appendChild(th);
+  }
+  const thead = make("thead");
+  thead.appendChild(hrow);
+  table.appendChild(thead);
+  const tbody = make("tbody");
+  for (const r of rows) {
+    tbody.appendChild(make("tr", {
+      "data-name": r.name, "data-oppid": r.id, "data-team": r.team, "data-teamcode": r.team, "data-pa": String(r.pa),
+    }));
+  }
+  table.appendChild(tbody);
+  const scroller = make("div", { class: "scroller" });
+  scroller.appendChild(table);
+  stable.appendChild(scroller);
+  const empty = make("p", { class: "empty", id: `${id}Empty`, "data-stable-empty": "", role: "status" });
+  empty.textContent = "この条件の対戦記録はありません。";
+  empty.hidden = true;
+  stable.appendChild(empty);
+  stable.appendChild(make("p", { class: "note", id: `${id}Status`, "data-stable-status": "", role: "status" }));
+  return stable;
+}
+
+const SEASON_ROWS: MRow[] = [
+  { id: "11", name: "山本", team: "B", pa: 14 },
+  { id: "22", name: "戸郷", team: "G", pa: 5 },
+];
+/** 通算 은 今季 를 포함한다(서버가 그렇게 만든다) — 「大津」만 通算 에만 있다 */
+const CAREER_ROWS: MRow[] = [
+  { id: "11", name: "山本", team: "B", pa: 40 },
+  { id: "22", name: "戸郷", team: "G", pa: 12 },
+  { id: "99", name: "大津", team: "H", pa: 7 },
+];
+
+function buildScopedMatchup(): ReturnType<typeof makeDocument> {
+  const doc = makeDocument("../");
+  const main = make("div", { class: "main" });
+  doc.body.appendChild(main);
+  const section = make("section", { class: "block", id: "b-matchup" });
+  const h2 = make("h2");
+  const { list, panels } = tabs("matchupScope", ["season", "career"]);
+  h2.appendChild(list);
+  section.appendChild(h2);
+  panels[0]!.appendChild(matchupStable("matchup", SEASON_ROWS, "matchupMin"));
+  panels[1]!.appendChild(matchupStable("matchupCareer", CAREER_ROWS, "matchupCareerMin"));
+  for (const p of panels) section.appendChild(p);
+  main.appendChild(section);
+  main.appendChild(make("div", { id: "blocksEnd" }));
+  return doc;
+}
+
+const scopeTab = (doc: ReturnType<typeof makeDocument>, key: string): El =>
+  doc.querySelectorAll('[data-tabgroup="matchupScope"] [data-tab]').find((b) => b.dataset["tab"] === key)!;
+const scopePanel = (doc: ReturnType<typeof makeDocument>, key: string): El =>
+  doc.querySelectorAll('[data-panelgroup="matchupScope"]').find((p) => p.dataset["panelkey"] === key)!;
+const shownIn = (doc: ReturnType<typeof makeDocument>, id: string): string[] =>
+  doc.querySelectorAll(`#${id}Table tbody tr`).filter((r) => !r.hidden).map((r) => String(r.dataset["oppid"]));
+const stableBox = (doc: ReturnType<typeof makeDocument>, id: string): El =>
+  doc.querySelectorAll("[data-stable]").find((b) => b.dataset["stable"] === id)!;
+
+test("W7 今季에 있는 상대 — 今季 탭 그대로 그 한 행 · 通算 표도 같은 상대에 머문다", () => {
+  const doc = buildScopedMatchup();
+  run(doc, { location: { search: "?vs=11", href: "" } });
+  assert.equal(scopeTab(doc, "season").getAttribute("aria-selected"), "true", "今季에 있는데 탭을 옮겼다");
+  assert.equal(scopePanel(doc, "season").hidden, false);
+  assert.deepEqual(shownIn(doc, "matchup"), ["11"], "今季 표가 그 한 행으로 좁혀지지 않았다");
+  assert.equal(doc.getElementById("matchupFilter")!.value, "山本", "좁히기 칸이 사람이 읽는 이름이 아니다");
+  // ⚠**通算 으로 바꿔도 「이 상대와의」 성적이어야 한다** — 거기서 64행 전체가 나오면 착지의 뜻이 사라진다
+  assert.deepEqual(shownIn(doc, "matchupCareer"), ["11"], "通算 표가 같은 상대로 좁혀지지 않았다");
+  assert.equal(doc.getElementById("matchupCareerFilter")!.value, "山本");
+});
+
+test("⚠W7 通算에만 있는 상대 — 通算 탭을 이번에만 열고 그 한 행만 · 원시 ID 를 칸에 넣지 않는다", () => {
+  const doc = buildScopedMatchup();
+  run(doc, { location: { search: "?vs=99", href: "" } });
+  assert.equal(scopeTab(doc, "career").getAttribute("aria-selected"), "true", "通算에만 있는데 通算 탭이 안 열렸다");
+  assert.equal(scopeTab(doc, "season").getAttribute("aria-selected"), "false");
+  assert.equal(scopePanel(doc, "career").hidden, false, "通算 패널이 닫혀 있다");
+  assert.equal(scopePanel(doc, "season").hidden, true);
+  assert.deepEqual(shownIn(doc, "matchupCareer"), ["99"], "通算 표가 정확히 그 한 행이 아니다");
+  assert.equal(doc.getElementById("matchupCareerFilter")!.value, "大津", "通算 좁히기 칸이 이름이 아니다");
+  for (const id of ["matchupFilter", "matchupCareerFilter"]) {
+    assert.ok(!doc.getElementById(id)!.value.includes("99"), `${id} 에 원시 선수 ID 가 들어갔다`);
+  }
+  // ⚠**왜 通算 이 열렸는지 말한다** — 말없이 바꾸면 통산 수치를 今季 로 읽는다
+  assert.match(stableBox(doc, "matchupCareer").textContent, /今季は大津との対戦がありません/,
+    "今季에 대전이 없어서 通算 을 연 것이라고 말하지 않는다");
+});
+
+test("⚠W7 通算 으로 연 것은 저장되지 않는다 — 다음 방문의 기본 탭은 그대로다", () => {
+  const storage = makeStorage();
+  const first = buildScopedMatchup();
+  run(first, { storage, location: { search: "?vs=99", href: "" } });
+  assert.equal(scopeTab(first, "career").getAttribute("aria-selected"), "true", "전제가 틀렸다 — 通算 이 안 열렸다");
+  // ⚠**저장을 한 번 일으킨다** — 정렬을 누르면 상태 전체가 저장된다. 이게 없으면 이 시험은 공회전한다
+  first.querySelectorAll('[data-stable="matchupCareer"] .sortable').find((b) => b.dataset["sortkey"] === "name")!.fire("click");
+  const saved = JSON.parse(storage.getItem("npb-meikan-layout") ?? "{}") as { tabs?: Record<string, string> };
+  assert.notEqual(saved.tabs?.["matchupScope"], "career", "링크 한 번이 사용자의 기본 탭을 通算 으로 바꿨다");
+
+  const second = buildScopedMatchup();
+  run(second, { storage });
+  assert.equal(scopeTab(second, "season").getAttribute("aria-selected"), "true", "다음 방문이 通算 으로 열린다");
+});
+
+test("⚠W7 어느 표에도 없는 상대 — 원시 ID 를 칸에 넣지 않고 그 이름과 「대전 기록 없음」을 말한다", async () => {
+  const doc = buildScopedMatchup();
+  run(doc, {
+    location: { search: "?vs=77777777", href: "" },
+    routes: { "players.json": [{ i: "77777777", n: "アドゥワ", t: "広島東洋カープ" }] },
+  });
+  await new Promise((r) => setTimeout(r, 10));
+  for (const id of ["matchupFilter", "matchupCareerFilter"]) {
+    assert.ok(!doc.getElementById(id)!.value.includes("77777777"), `${id} 에 원시 선수 ID 가 들어갔다`);
+  }
+  assert.equal(scopeTab(doc, "season").getAttribute("aria-selected"), "true", "없는 상대 때문에 탭을 옮겼다");
+  assert.equal(doc.getElementById("matchupCount")!.textContent, "0件", "없는 상대인데 다른 대전이 그 상대의 것처럼 남았다");
+  assert.equal(doc.getElementById("matchupEmpty")!.hidden, false, "0건을 빈 표로 두었다(M12)");
+  assert.match(stableBox(doc, "matchup").textContent, /アドゥワとの対戦記録はありません/,
+    "누구와의 대전이 없는지 이름으로 말하지 않는다");
+});
+
+test("W7 어느 표에도 없고 이름도 모르면 — 그래도 ID 를 칸에 넣지 않고 「대전 기록 없음」을 말한다", async () => {
+  const doc = buildScopedMatchup();
+  run(doc, { location: { search: "?vs=77777777", href: "" } }); // 색인 취득 실패
+  await new Promise((r) => setTimeout(r, 10));
+  for (const id of ["matchupFilter", "matchupCareerFilter"]) {
+    assert.ok(!doc.getElementById(id)!.value.includes("77777777"), `${id} 에 원시 선수 ID 가 들어갔다`);
+  }
+  const said = stableBox(doc, "matchup").textContent;
+  assert.match(said, /対戦記録はありません/, "대전 기록이 없다고 말하지 않는다");
+  assert.ok(!said.includes("77777777"), "사람이 읽을 수 없는 ID 를 화면에 적었다");
+});
+
 // ─── 즐겨찾기 ───────────────────────────────────────────────────────────
 
 /**
@@ -1544,7 +1708,11 @@ function buildCompare(): ReturnType<typeof makeDocument> {
     qbox.appendChild(make("ul", { id: `cmp${id}Hits`, role: "list", "aria-label": "候補" }));
     qbox.appendChild(make("p", { class: "vh", "data-hitstatus": "", role: "status" }));
     form.appendChild(qbox);
-    form.appendChild(make("b", { id: `cmp-${key}-chosen` }));
+    // ⚠**서버(`compare.ts`)는 「未選択」을 미리 그려 둔다** — 스텁도 같게 둔다. 비워 두면
+    //   「아무도 안 되살렸다」와 「되살리다 말았다」를 시험이 구별하지 못한다(감사 W8)
+    const chosen = make("b", { id: `cmp-${key}-chosen` });
+    chosen.textContent = "未選択";
+    form.appendChild(chosen);
   }
   const go = make("button", { id: "cmpGo", type: "button" });
   go.disabled = true;
@@ -1686,6 +1854,160 @@ test("C4 대조군 — 사용자가 아무것도 안 하면 늦게 와도 공유
     ["A", "B"],
     "사용자 조작이 없는데 복원을 건너뛰었다 — 공유 링크가 같은 화면을 안 연다",
   );
+});
+
+// ─── 공유 링크 복원 — 한쪽이 없거나 색인을 못 받을 때 (감사 W8) ────────────
+
+/**
+ * ⚠**한쪽이 색인에 없으면 양쪽을 조용히 버렸다**(2026-09-25 감사 W8).
+ * 옛 복원은 `if(!idx)return` · `if(!pa||!pb)return` 두 줄로 끝나서, 공유받은 사람은
+ * **유효한 쪽까지** 「未選択」인 빈 화면을 봤다 — 링크가 고장났는지, 그 선수가 없는지, 아직 읽는 중인지
+ * 구별할 수 없다. 시즌이 바뀌면 그런 링크가 늘어난다(2025 색인 721명 중 160명이 2026 색인에 없다 · 감사 실측).
+ * ⚠「없다」와 「못 읽었다」는 **다른 문구**다(M12) — 시키는 행동이 다르다(골라 다시 / 통신 확인 후 새로고침).
+ */
+const CMP_INDEX = [
+  { i: "p1", n: "山本", t: "チーム" },
+  { i: "p2", n: "宮城", t: "チーム" },
+  { i: "b1", n: "佐藤", t: "チーム" },
+];
+
+async function landCompare(
+  search: string,
+  opts: { index?: unknown; requested?: string[] } = {},
+): Promise<{ doc: ReturnType<typeof makeDocument>; out: string }> {
+  const doc = buildCompare();
+  const routes: Record<string, unknown> = {
+    "compare/p.json": { p1: card("p1", "山本"), p2: card("p2", "宮城") },
+    "compare/b.json": { b1: card("b1", "佐藤") },
+  };
+  // ⚠색인을 안 주면 요청이 거절된다 = 취득 실패(`run` 의 스텁 fetch)
+  if (opts.index !== undefined) routes["players.json"] = opts.index;
+  run(doc, { routes, location: { search, href: "" }, ...(opts.requested ? { requested: opts.requested } : {}) });
+  await new Promise((r) => setTimeout(r, 10));
+  return { doc, out: doc.getElementById("cmpOut")!.textContent };
+}
+
+const chosenOf = (doc: ReturnType<typeof makeDocument>): [string, string] => [
+  doc.getElementById("cmp-a-chosen")!.textContent,
+  doc.getElementById("cmp-b-chosen")!.textContent,
+];
+
+/**
+ * ⚠**기다리는 동안도 말한다**(M12 · 교차 모델 검토 P2). 복원은 색인을 기다리는데, 그 사이 화면이
+ * 서버가 그린 「未選択」·빈 비교 자리 그대로라 **「읽는 중」과 「아무도 안 골랐다」가 같은 화면**이었다 —
+ * 색인 응답이 멈추면 그 상태가 끝없이 간다. ⚠사용자가 고르면 그 안내는 **곧바로 걷힌다**(낡은 문구를 남기지 않는다).
+ */
+test("⚠W8 복원을 기다리는 동안 「読み込んでいます」를 말하고, 사용자가 고르면 걷는다", async () => {
+  const doc = buildCompare();
+  let release: () => void = () => assert.fail("색인 요청이 안 나갔다 — 이 시험이 공회전한다");
+  run(doc, {
+    routes: { "players.json": CMP_INDEX, "compare/p.json": { p1: card("p1", "山本") }, "compare/b.json": { b1: card("b1", "佐藤") } },
+    location: { search: "?a=p1&b=b1", href: "" },
+    hold: { "players.json": (r) => { release = r; } },
+  });
+  const out = doc.getElementById("cmpOut")!;
+  assert.match(out.textContent, /共有リンクの選手を読み込んでいます/, "기다리는 동안 아무 말도 없다 — 「읽는 중」이 「아무도 안 골랐다」와 같은 화면이다");
+  cpk(doc, "p2").fire("click"); // 사용자가 먼저 고른다
+  assert.doesNotMatch(out.textContent, /共有リンクの選手を読み込んでいます/, "사용자가 골랐는데 복원 안내가 남았다");
+  release();
+  await new Promise((r) => setTimeout(r, 10));
+  assert.doesNotMatch(out.textContent, /共有リンクの選手を読み込んでいます/, "응답이 온 뒤에도 안내가 남았다");
+});
+
+test("W8 복원 안내는 응답이 오면 걷힌다 — 비교 결과·없다 안내가 그 자리를 차지한다", async () => {
+  const { out: ok } = await landCompare("?a=p1&b=b1", { index: CMP_INDEX });
+  assert.doesNotMatch(ok, /共有リンクの選手を読み込んでいます/, "비교를 시작했는데 복원 안내가 남았다");
+  const { out: one } = await landCompare("?a=p1", { index: CMP_INDEX });
+  assert.doesNotMatch(one, /共有リンクの選手を読み込んでいます/, "한쪽만 되살리고 끝났는데 복원 안내가 남았다");
+});
+
+test("W8 유효한 쌍 — 두 사람을 되살리고 비교를 시작한다 · 없다/못 읽었다 안내는 없다", async () => {
+  const { doc, out } = await landCompare("?a=p1&b=b1", { index: CMP_INDEX });
+  assert.deepEqual(chosenOf(doc), ["山本（チーム）", "佐藤（チーム）"]);
+  assert.match(out, /山本/, "되살렸는데 비교를 시작하지 않았다");
+  // ⚠「いません」만으로 찾지 않는다 — 비교 결과의 「印はついていません」에도 걸린다
+  assert.doesNotMatch(out, /選手一覧にいません|読み込めなかった/, "멀쩡한 링크에 실패 안내를 냈다");
+});
+
+test("⚠W8 A 만 색인에 없다 — B 는 그 자리에 되살리고 A 가 없다고 말한다 · 비교는 시작하지 않는다", async () => {
+  const requested: string[] = [];
+  const { doc, out } = await landCompare("?a=zz99&b=b1", { index: CMP_INDEX, requested });
+  assert.deepEqual(chosenOf(doc), ["未選択", "佐藤（チーム）"], "색인에 있는 B 까지 버렸다");
+  assert.match(out, /選手A（ID zz99）/, "어느 쪽이 없는지 말하지 않는다");
+  assert.match(out, /このシーズンの選手一覧にいません/, "「없다」를 말하지 않는다");
+  assert.doesNotMatch(out, /選手B（ID/, "되살린 B 를 없다고 말했다");
+  assert.doesNotMatch(out, /読み込めなかった/, "「없다」를 「못 읽었다」로 말했다");
+  assert.equal(doc.getElementById("cmpGo")!.disabled, true, "한 사람뿐인데 비교 버튼이 열렸다");
+  assert.deepEqual(requested.filter((u) => u.includes("compare/")), [], "한 사람뿐인데 비교를 시작했다");
+});
+
+test("⚠W8 B 만 색인에 없다 — A 는 그 자리에 되살리고 B 가 없다고 말한다", async () => {
+  const { doc, out } = await landCompare("?a=p1&b=zz99", { index: CMP_INDEX });
+  assert.deepEqual(chosenOf(doc), ["山本（チーム）", "未選択"], "색인에 있는 A 까지 버렸다");
+  assert.match(out, /選手B（ID zz99）/);
+  assert.match(out, /このシーズンの選手一覧にいません/);
+  assert.doesNotMatch(out, /選手A（ID/, "되살린 A 를 없다고 말했다");
+  assert.equal(cpk(doc, "p1").getAttribute("data-slot"), "A", "되살린 A 가 버튼에 안 비쳤다");
+});
+
+test("⚠W8 두 사람 다 색인에 없다 — 둘 다 없다고 말한다", async () => {
+  const { doc, out } = await landCompare("?a=zz98&b=zz99", { index: CMP_INDEX });
+  assert.deepEqual(chosenOf(doc), ["未選択", "未選択"]);
+  assert.match(out, /選手A（ID zz98）/);
+  assert.match(out, /選手B（ID zz99）/);
+  assert.match(out, /このシーズンの選手一覧にいません/);
+});
+
+test("⚠W8 색인을 못 받았다 — 「없다」가 아니라 「못 읽었다」고 말한다(M12)", async () => {
+  const { doc, out } = await landCompare("?a=p1&b=b1"); // 색인 없음 = 취득 실패
+  assert.deepEqual(chosenOf(doc), ["未選択", "未選択"]);
+  assert.match(out, /選手一覧を読み込めなかった/, "취득 실패를 말하지 않는다 — 빈 화면이다");
+  assert.doesNotMatch(out, /選手一覧にいません/, "「못 읽었다」를 「없다」로 말했다 — 시키는 행동이 반대다");
+});
+
+/**
+ * ⚠**C4 는 실패 안내에도 걸린다.** 기다리는 사이 사용자가 골라 비교를 시작했다면,
+ * 늦게 온 「못 읽었다」 안내가 #cmpOut 의 **비교 결과를 덮으면 안 된다** — 복원이 덮어쓰지 않는 것과 같은 이유다.
+ */
+test("⚠W8·C4 사용자가 고른 뒤 늦게 온 색인 실패가 비교 결과를 덮지 않는다", async () => {
+  const doc = buildCompare();
+  let release: () => void = () => assert.fail("색인 요청이 안 나갔다 — 이 시험이 공회전한다");
+  run(doc, {
+    routes: {
+      // ⚠본문이 배열이 아니면 색인 적재가 던져 **취득 실패 경로**로 간다(hold 는 routes 에만 걸린다)
+      "players.json": null,
+      "compare/p.json": { p1: card("p1", "山本"), p2: card("p2", "宮城") },
+      "compare/b.json": { b1: card("b1", "佐藤") },
+    },
+    location: { search: "?a=p1&b=b1", href: "" },
+    hold: { "players.json": (r) => { release = r; } },
+  });
+  cpk(doc, "p2").fire("click");
+  cpk(doc, "b1").fire("click");
+  doc.getElementById("cmpGo")!.fire("click");
+  await new Promise((r) => setTimeout(r, 10));
+  assert.match(doc.getElementById("cmpOut")!.textContent, /宮城/, "비교가 안 그려졌다 — 전제가 틀렸다");
+  release();
+  await new Promise((r) => setTimeout(r, 10));
+  const out = doc.getElementById("cmpOut")!.textContent;
+  assert.match(out, /宮城/, "늦게 온 색인 실패가 사용자가 시작한 비교를 지웠다");
+  assert.doesNotMatch(out, /読み込めなかった/, "사용자가 고른 뒤에 공유 링크의 실패를 말했다");
+});
+
+test("W8 한쪽만 담긴 링크(?a= 만)는 그 자리만 되살리고 아무것도 없다고 말하지 않는다", async () => {
+  const { doc, out } = await landCompare("?a=p1", { index: CMP_INDEX });
+  assert.deepEqual(chosenOf(doc), ["山本（チーム）", "未選択"]);
+  assert.doesNotMatch(out, /選手一覧にいません|読み込めなかった/, "링크에 없던 B 를 없다고 말했다");
+});
+
+/**
+ * ⚠**깨진 % 열에 `decodeURIComponent` 가 던진다.** 여기서 던지면 초기화 전체가 죽어
+ * 탭·검색·비교 버튼이 **전부 조용히** 안 돈다 — 選手一覧의 `?q=` 가 이미 지키는 규칙이다.
+ */
+test("⚠W8 깨진 % 열이 담긴 공유 링크로도 화면이 죽지 않는다 — 읽을 수 있는 쪽은 되살린다", async () => {
+  const { doc, out } = await landCompare("?a=%E5%&b=b1", { index: CMP_INDEX });
+  assert.deepEqual(chosenOf(doc), ["未選択", "佐藤（チーム）"]);
+  assert.match(out, /選手A（ID/, "읽을 수 없는 A 를 말하지 않는다");
 });
 
 /**
@@ -2055,6 +2377,66 @@ test("⚠닫으면 소리도 지운다 — 닫힌 목록의 인원을 낭독기�
   assert.equal(await said(doc), "", "닫은 뒤에 미뤄 둔 인원수가 되살아났다");
 });
 
+/**
+ * ⚠**닫은 목록을 늦게 온 색인 응답이 다시 열지 않는다**(2026-09-25 감사 C3).
+ *
+ * 닫기(Esc · 바깥 클릭)는 **검색어를 바꾸지 않는다.** 그래서 「검색어가 그대로인가」만 보던
+ * 옛 보호(위 「늦게 온 결과가 새 검색어를 덮지 않는다」)를 그대로 통과했고, 색인이 오는 순간
+ * 그리기가 목록을 되살리고 인원수 낭독까지 다시 예약했다 — **사용자가 닫은 것이 저절로 다시 열린다.**
+ * ⚠색인은 `routes` 로 준다 — 스텁의 `hold` 는 `routes` 응답에만 걸린다(`index` 옵션은 즉시 응답한다).
+ */
+async function closeWhileLoading(
+  close: (doc: ReturnType<typeof makeDocument>, input: El) => void,
+): Promise<{ doc: ReturnType<typeof makeDocument>; input: El; list: El }> {
+  const doc = buildHeaderSearch();
+  let release: () => void = () => assert.fail("색인 요청이 안 나갔다 — 이 시험이 공회전한다");
+  run(doc, { routes: { "players.json": MANY_INDEX }, hold: { "players.json": (r) => { release = r; } } });
+  const input = doc.getElementById("q")!;
+  const list = doc.getElementById("qhits")!;
+  input.fire("focus");
+  input.value = "田";
+  input.fire("input");
+  // 전제 — 색인이 아직 안 왔으므로 「읽는 중」으로 열려 있다. 안 열렸으면 닫기를 잴 수 없다
+  assert.equal(list.hidden, false, "읽는 중 상태로 안 열렸다 — 전제가 틀렸다");
+  assert.match(list.textContent, /読み込み中/, "읽는 중 문구가 없다 — 전제가 틀렸다");
+  close(doc, input);
+  assert.equal(list.hidden, true, "닫기가 안 먹었다 — 전제가 틀렸다");
+  release();
+  await new Promise((r) => setTimeout(r, 10));
+  return { doc, input, list };
+}
+
+test("⚠C3 Esc 로 닫은 뒤 늦게 온 색인이 목록을 다시 열지 않는다 — 낭독도 되살아나지 않는다", async () => {
+  const { doc, list } = await closeWhileLoading((_d, input) => input.fire("keydown", { key: "Escape" }));
+  assert.equal(list.hidden, true, "Esc 로 닫았는데 늦게 온 색인이 목록을 다시 열었다");
+  assert.equal(await said(doc), "", "닫힌 목록의 인원수를 뒤늦게 낭독했다");
+});
+
+test("⚠C3 바깥을 눌러 닫은 뒤 늦게 온 색인이 목록을 다시 열지 않는다", async () => {
+  const { doc, list } = await closeWhileLoading((d) => d.fire("click", { target: d.body }));
+  assert.equal(list.hidden, true, "바깥을 눌러 닫았는데 늦게 온 색인이 목록을 다시 열었다");
+  assert.equal(await said(doc), "", "닫힌 목록의 인원수를 뒤늦게 낭독했다");
+});
+
+/**
+ * C3 대조군 — **막은 것은 「닫힌 뒤의 옛 응답」뿐이다.** 다시 치거나 다시 포커스하면 정상적으로 열려야 한다.
+ * 이것이 없으면 「목록을 아예 안 그리게 만든」 수정도 위 두 시험을 통과한다.
+ */
+test("C3 대조군 — 닫은 뒤 다시 치거나 다시 포커스하면 목록이 정상적으로 열린다", async () => {
+  const typed = await closeWhileLoading((_d, input) => input.fire("keydown", { key: "Escape" }));
+  typed.input.value = "田1";
+  typed.input.fire("input");
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(typed.list.hidden, false, "닫은 뒤 새로 쳤는데 목록이 안 열린다");
+  assert.equal(picks(typed.doc.querySelectorAll("#qhits li")).length, 11, "새 검색어의 결과가 아니다");
+
+  const refocused = await closeWhileLoading((d) => d.fire("click", { target: d.body }));
+  refocused.input.fire("focus");
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(refocused.list.hidden, false, "닫은 뒤 다시 포커스했는데 목록이 안 열린다");
+  assert.match(refocused.list.textContent, /25人中20人を表示/, "다시 연 목록이 그 검색어의 결과가 아니다");
+});
+
 test("⚠등번호가 없는 선수에게 자리를 만들지 않는다 — 「―」로 채우면 198줄이 같은 기호가 된다", async () => {
   const doc = buildPicker();
   run(doc, { index: KANA_INDEX });
@@ -2177,6 +2559,110 @@ test("⚠깨진 ?q= 로도 화면이 죽지 않는다", () => {
   // 못 푸는 값은 원문 그대로 쓴다. 결과가 0건이어도 **화면은 살아 있다**
   assert.equal(doc.getElementById("rosterFilter")!.value, "%E5%B1%B1%");
   assert.equal(doc.getElementById("rosterCount")!.textContent, "0人");
+});
+
+// ─── 헤더 검색과 選手一覧이 같은 판정을 쓰는가 (감사 W6) ────────────────────
+
+/**
+ * ⚠**헤더 검색은 구단명도 맞추는데 選手一覧은 안 맞췄다**(2026-09-25 감사 W6).
+ * 헤더에 「阪神」을 치면 「58人中20人を表示 — 選手一覧ですべて見る」라고 말하고 `players.html?q=阪神` 로
+ * 보내는데, 받는 쪽은 이름·읽는 법·등번호만 봐서 **0人** 이었다 — 「전부 보여 주겠다」고 약속한 뒤 0명.
+ * 두 곳의 주석은 「같은 규칙」이라고 적고 있었다. **규칙이 두 벌이면 주석은 지킬 수 없는 약속이다**(M1).
+ */
+type IndexEntry = { i: string; n: string; t: string; k?: string; u?: string };
+
+/**
+ * 색인 항목과 **같은 선수들로** 選手一覧을 짓는다.
+ * li 의 속성은 서버(`pages.ts` 의 `renderIndexPage`)가 내는 것과 같은 모양이다 —
+ * 그 일치는 `roster-teamname.test.ts` 가 진짜 렌더 결과에서 따로 잰다.
+ */
+function buildRosterOf(entries: readonly IndexEntry[]): ReturnType<typeof makeDocument> {
+  const doc = makeDocument("");
+  const find = make("section", { class: "find" });
+  find.appendChild(make("input", { id: "rosterFilter", type: "search" }));
+  find.appendChild(make("span", { id: "rosterCount" }));
+  doc.body.appendChild(find);
+  const teams = [...new Set(entries.map((e) => e.t))];
+  for (const [n, team] of teams.entries()) {
+    const group = make("section", { class: "teamgroup" });
+    const ul = make("ul", { class: "roster" });
+    for (const e of entries.filter((x) => x.t === team)) {
+      ul.appendChild(make("li", {
+        "data-team": `c${n}`, "data-name": e.n, "data-id": e.i, "data-teamname": e.t,
+        ...(e.k === undefined ? {} : { "data-kana": e.k }),
+        ...(e.u === undefined ? {} : { "data-uniform": e.u }),
+      }));
+    }
+    group.appendChild(ul);
+    doc.body.appendChild(group);
+  }
+  return doc;
+}
+
+/** 阪神 22명 + 巨人 3명. 헤더가 20명에서 자르고 「すべて見る」를 내게 **20명을 넘긴다** */
+const TEAM_INDEX: IndexEntry[] = [
+  ...Array.from({ length: 22 }, (_, i) => ({ i: `t${i}`, n: `虎${i}`, t: "阪神タイガース" })),
+  ...Array.from({ length: 3 }, (_, i) => ({ i: `g${i}`, n: `巨${i}`, t: "読売ジャイアンツ" })),
+];
+
+test("⚠W6 헤더 검색이 「すべて見る」로 보낸 구단명 질의가 選手一覧에서도 같은 인원이다", async () => {
+  const header = buildHeaderSearch();
+  run(header, { index: TEAM_INDEX });
+  const tail = (await searchIn(header, "q", "qhits", "阪神")).at(-1)!;
+  const said = /(\d+)人中20人を表示/.exec(tail.textContent);
+  assert.notEqual(said, null, `헤더가 자른 사실을 말하지 않았다 — 이 시험이 공회전한다: ${tail.textContent}`);
+  const promised = Number(said![1]);
+  assert.equal(promised, 22, "표본이 22명이 아니다 — 이 시험이 재는 것이 바뀌었다");
+  const href = tail.querySelector("a")!.getAttribute("href")!;
+
+  // 그 링크를 따라 選手一覧에 착지한다
+  const roster = buildRosterOf(TEAM_INDEX);
+  run(roster, { location: { search: href.slice(href.indexOf("?")), href: "" } });
+  assert.equal(roster.getElementById("rosterFilter")!.value, "阪神", "질의어가 안 넘어왔다 — 전제가 틀렸다");
+  assert.equal(
+    roster.getElementById("rosterCount")!.textContent,
+    `${promised}人`,
+    "헤더가 「すべて見る」라고 약속한 인원과 選手一覧의 인원이 다르다",
+  );
+  assert.equal(rosterNames(roster).length, promised, "보이는 선수 수가 헤더가 말한 수와 다르다");
+});
+
+/**
+ * ⚠**구단명만 맞추면 되는 게 아니다 — 두 곳의 결과가 어느 질의에서나 같아야 한다.**
+ * 이름·읽는 법(히라가나·카타카나 접기)·라틴 소문자·등번호 완전일치가 대조군이고,
+ * 구단명(부분·전체)이 이번 결함이다. 한쪽에만 규칙이 더해지면 여기서 갈린다.
+ */
+test("⚠W6 헤더 검색과 選手一覧은 어느 질의에서나 같은 선수를 찾는다 — 이름·읽는 법·등번호·구단명", async () => {
+  for (const q of ["山本", "やまもと", "ヤマモト", "voit", "8", "18", "阪神", "阪神タイガース", "カープ", "存在しない"]) {
+    const header = buildHeaderSearch();
+    run(header, { index: KANA_INDEX });
+    const fromHeader = names(await searchIn(header, "q", "qhits", q)).sort();
+
+    const roster = buildRosterOf(KANA_INDEX);
+    run(roster, { location: { search: `?q=${encodeURIComponent(q)}`, href: "" } });
+    assert.deepEqual(rosterNames(roster).sort(), fromHeader, `「${q}」 — 헤더와 選手一覧이 다른 선수를 찾았다`);
+  }
+  // 대조군이 실제로 무언가를 찾는지 — 둘 다 0건이면 위 비교는 공회전이다
+  const header = buildHeaderSearch();
+  run(header, { index: KANA_INDEX });
+  assert.deepEqual(names(await searchIn(header, "q", "qhits", "阪神")).sort(), ["ボイト", "佐藤"].sort(),
+    "헤더가 구단명으로 안 찾는다 — 이 시험의 전제가 바뀌었다");
+});
+
+/**
+ * ⚠**규칙은 한 벌이다**(M1). 행동이 같아도 규칙이 두 벌이면 다음 변경에서 한쪽만 고쳐진다 —
+ * 이번 결함이 정확히 그렇게 생겼다. 판정 함수가 하나이고 **두 곳이 그것을 부르는지**를 소스에서 본다.
+ */
+test("⚠W6 헤더 검색과 選手一覧 좁히기가 판정 함수 한 벌을 부른다(M1)", () => {
+  assert.equal((CLIENT_JS.match(/function playerHit\(/g) ?? []).length, 1, "판정 함수가 한 벌이 아니다");
+  const header = /const run=\(\)=>\{([\s\S]*?)\n  \};/.exec(CLIENT_JS);
+  assert.notEqual(header, null, "헤더 검색 실행부를 못 찾았다 — 이 시험이 공회전한다");
+  assert.match(header![1] ?? "", /playerHit\(/, "헤더 검색이 공유 판정을 안 부른다");
+  assert.doesNotMatch(header![1] ?? "", /\.indexOf\(term\)/, "헤더 검색에 판정 규칙이 따로 남아 있다");
+  const roster = /const filter=\$\("#rosterFilter"\);([\s\S]*?)\nconst isSnapshotHost/.exec(CLIENT_JS);
+  assert.notEqual(roster, null, "選手一覧 좁히기를 못 찾았다 — 이 시험이 공회전한다");
+  assert.match(roster![1] ?? "", /playerHit\(/, "選手一覧 좁히기가 공유 판정을 안 부른다");
+  assert.doesNotMatch(roster![1] ?? "", /\.indexOf\(term\)/, "選手一覧 좁히기에 판정 규칙이 따로 남아 있다");
 });
 
 /**

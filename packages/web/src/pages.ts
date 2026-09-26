@@ -619,8 +619,13 @@ ${d.teams.map(
        * 예전에는 이 목록이 `data-name` 부분일치만 봐서, 「やまもと」나 「18」을 치면
        * **첫 화면에서만 0건**이 됐다 — 「등번호로 찾을 수 있다」가 화면에 따라 참·거짓이 갈렸다.
        * ⚠접기는 클라이언트 `fold()` 한 벌이 한다(M1). 여기는 **원문만** 싣는다.
+       * ⚠**판정 재료는 색인 항목(`SearchEntry`)과 같은 넷이다** — 이름·구단명·읽는 법·등번호.
+       * 구단명(`data-teamname`)이 빠져 있어서, 헤더가 「阪神」으로 58명을 찾고 여기로 보내면
+       * **0人** 이었다(2026-09-25 감사 W6). 색인의 `t` 와 같은 `TEAMS` 이름이다.
+       * ⚠선수마다 속성이 하나 는다 — 구획(`teamgroup`)에 한 번만 싣는 편이 가볍지만,
+       * 판정 함수가 받는 모양(항목 하나 = 재료 넷)을 **항목 하나에서** 다 읽게 둔다.
        */
-      return html`<li data-team="${t.code}" data-name="${p.name}" data-id="${p.playerId}"${
+      return html`<li data-team="${t.code}" data-name="${p.name}" data-id="${p.playerId}" data-teamname="${t.name}"${
         p.kana === null ? raw("") : html` data-kana="${p.kana}"`
       }${p.uniformNumber === null ? raw("") : html` data-uniform="${p.uniformNumber}"`}>
       <a href="${base}players/${p.playerId}.html">

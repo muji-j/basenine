@@ -3760,6 +3760,11 @@ function vsParam(){
 if(!state.sort||typeof state.sort!=="object")state.sort={};
 if(!state.only||typeof state.only!=="object")state.only={};
 
+/* 표마다의 손잡이(data-stable 값 → 상자·행·좁히기 칸·다시 그리기).
+   ⚠**?vs= 착지가 今季·通算 두 표를 함께 다뤄야 해서 남긴다**(아래 landVs · 감사 W7) —
+   예전에는 표 하나의 초기화 안에서 그 표만 보고 끝났다. 키는 서버가 정한 표 이름이라 프로토타입 없는 지도에 둔다. */
+const stables=Object.create(null);
+
 $$("[data-stable]").forEach(box=>{
   const id=box.dataset.stable;
   const table=$("table",box);
@@ -3894,41 +3899,117 @@ $$("[data-stable]").forEach(box=>{
     }
   }
   tabHooks.push(apply);
-
-  /* 대전 표만의 사정: 「対戦を選ぶ」에서 ?vs= 로 넘어온 **선수 ID** 로 그 한 행만 남긴다.
-     ⚠**예전에는 이름을 넘겨 좁히기 칸에 넣었다**(2026-08-18 감사 P2). 그러면 동명이인이
-     함께 걸리고 부분일치까지 걸려, 「이 투수와의 성적」이라며 **남의 기록이 섞인 표**를 보여 준다.
-     ⚠**이름은 화면에 보여 줄 때만 쓴다** — 좁히기 칸에는 그 행의 이름을 넣어 무엇이 걸렸는지 말하되,
-     실제 판정은 ID 로 한다.
-     ⚠**옛 링크(이름)를 버리지 않는다** — ID 로 걸리는 행이 없으면 지금까지대로 이름 좁히기로 흘린다.
-     ⚠**「ID 처럼 생겼는가」로 판정하지 않는다.** 처음에 정규식으로 숫자인지 봤는데
-        (ㄱ) 이 파일은 템플릿 리터럴이라 소스에 쓴 숙자 클래스 이스케이프가
-             클라이언트에서는 글자 d 로 죽어 있었다 — 판정이 조용히 뒤집혀 있었다
-             (이 파일의 역따옴표 함정과 같은 부류다),
-        (ㄴ) ID 의 모양은 우리가 정한 것이 아니라 소스가 정한다.
-        **그냥 찾아보고 없으면 이름으로 다룬다** — 모양을 가정하지 않는 편이 짧고 안전하다. */
-  if(id==="matchup"&&finder){
-    const vs=vsParam();
-    if(vs!==""){
-      const byId=$$("tbody tr",box).filter(tr=>tr.dataset.oppid===vs)[0];
-      if(byId){
-        box.dataset.pinid=vs;
-        finder.value=String(byId.dataset.name||"");
-        /* ⚠**칸을 건드리면 못 박기를 푼다.** 안 그러면 지운 뒤에도 한 행만 남아
-           「대전 기록이 하나뿐인 선수」로 보인다 */
-        /* ⚠**지우고 다시 그린다.** 이미 등록된 input 핸들러가 먼저 돌아
-           못 박기가 살아있는 채로 걸러진다 — 순서에 기대지 않고 여기서 다시 적용한다 */
-        finder.addEventListener("input",()=>{
-          if(box.dataset.pinid!==undefined){delete box.dataset.pinid;apply()}
-        });
-      }else{
-        finder.value=vs;
-      }
-      /* 대전 블록이 꺼져 있으면 이번 방문에만 켠다 — 사용자의 저장된 구성은 건드리지 않는다 */
-      if(state.order.indexOf("matchup")<0)state.order=state.order.concat(["matchup"]);
-    }
-  }
+  stables[id]={box:box,all:all,finder:finder,apply:apply};
 });
+
+/* ── 대전 표의 ?vs= 착지 ──
+   「対戦を選ぶ」·比較 화면·선발예고가 ?vs=<선수 ID> 로 넘긴 **상대 한 사람**으로 대전 표를 좁힌다.
+   ⚠**이름이 아니라 선수 ID 로 못 박는다**(M10 · 2026-08-18 감사 P2). 이름을 넘기면 동명이인(이 저장소에
+     「小島」가 둘)과 부분일치가 함께 걸려, 「이 투수와의 성적」이라며 **남의 기록이 섞인 표**를 보여 준다.
+     좁히기 칸에는 그 행의 **이름**을 넣어 무엇이 걸렸는지 말하되, 실제 판정은 ID 로 한다.
+   ⚠**今季·通算 두 표를 함께 본다**(2026-09-25 감사 W7). 예전에는 今季 표만 보고, 거기 없는 상대면
+     **원시 ID 를 이름 좁히기 칸에 넣어** 「この条件の対戦記録はありません。」만 보였다 — 같은 페이지의
+     通算 표에 그 대전이 있는데도. 선발예고의 링크는 **통산 대전**에서 나오므로 그 경로가 가장 자주 걸렸다.
+       ① 今季에 있다   → 그 한 행. 通算 표도 같은 상대로 좁힌다(탭을 바꿔도 「이 상대와의」 성적이다)
+       ② 通算에만 있다 → 通算 탭을 **이번 방문에만** 연다(transient — 저장하지 않는다 · revealHash 와 같은 규칙)
+                          그리고 **왜 열었는지 말한다** — 말없이 바꾸면 통산 수치를 今季 로 읽는다
+       ③ 어디에도 없다 → ID 를 칸에 넣지 않는다. 0건으로 두고(그 상대와의 대전은 정말로 0이다)
+                          「대전 기록 없음」을 **이름으로** 말한다. 이름은 이 페이지에 없으므로 색인에서 찾고,
+                          못 찾으면(취득 실패 · 그 시즌 색인에 없음) 「この相手」로 말한다
+   ⚠**옛 링크(이름)를 버리지 않는다** — ID 로 걸리는 행이 어디에도 없고 이름으로 걸리는 행이 있으면
+     지금까지대로 이름 좁히기로 흘린다.
+   ⚠**「ID 처럼 생겼는가」로 판정하지 않는다.** 처음에 정규식으로 숫자인지 봤는데
+      (ㄱ) 이 파일은 템플릿 리터럴이라 소스에 쓴 숫자 클래스 이스케이프가
+           클라이언트에서는 글자 d 로 죽어 있었다 — 판정이 조용히 뒤집혀 있었다
+           (이 파일의 역따옴표 함정과 같은 부류다),
+      (ㄴ) ID 의 모양은 우리가 정한 것이 아니라 소스가 정한다.
+   **그냥 찾아보고 없으면 이름으로 다룬다** — 모양을 가정하지 않는 편이 짧고 안전하다.
+   ⚠**부르는 곳은 맨 아래 초기화 줄이다** — 색인(INDEX · withIndex)이 이 아래에서 let 으로 선언되므로
+     여기서 부르면 ③ 이 선언 전 접근(TDZ)으로 스크립트 전체를 죽인다. 그리고 renderBlocks·showTabs 보다 먼저여야
+     대전 블록과 通算 탭이 이번 방문에 열린다. */
+function landVs(){
+  const vs=vsParam();
+  if(vs==="")return;
+  const season=stables.matchup&&stables.matchup.finder?stables.matchup:null;
+  const career=stables.matchupCareer&&stables.matchupCareer.finder?stables.matchupCareer:null;
+  const scopes=[season,career].filter(s=>s!==null);
+  if(!scopes.length)return;
+  /* 대전 블록이 꺼져 있으면 이번 방문에만 켠다 — 사용자의 저장된 구성은 건드리지 않는다 */
+  if(state.order.indexOf("matchup")<0)state.order=state.order.concat(["matchup"]);
+
+  /* 착지가 무엇을 했는지 표 위에서 말한다. **서버가 그린 자리가 아니므로** 여기서 만든다 */
+  const vsNote=(s,text)=>{
+    let n=$("[data-vsnote]",s.box);
+    if(!n){
+      n=doc.createElement("p");
+      n.className="note";
+      n.setAttribute("role","status");
+      n.setAttribute("data-vsnote","");
+      const first=s.box.children&&s.box.children[0];
+      if(first)s.box.insertBefore(n,first);else s.box.appendChild(n);
+    }
+    n.textContent=text;
+    n.hidden=false;
+  };
+  /* ⚠**칸을 건드리면 못 박기를 풀고 착지의 말도 거둔다.** 안 그러면 지운 뒤에도 한 행만 남아
+     「대전 기록이 하나뿐인 선수」로 보인다.
+     ⚠**지우고 다시 그린다.** 이미 등록된 input 핸들러가 먼저 돌아 못 박기가 살아있는 채로 걸러진다 —
+     순서에 기대지 않고 여기서 다시 적용한다 */
+  scopes.forEach(s=>s.finder.addEventListener("input",()=>{
+    const n=$("[data-vsnote]",s.box);
+    if(n)n.hidden=true;
+    if(s.box.dataset.pinid!==undefined){delete s.box.dataset.pinid;s.apply()}
+  }));
+  /* 그 표를 감싼 닫힌 패널을 이번 방문에만 연다 — revealHash 와 같은 규칙(저장하지 않는다) */
+  const openScope=(s)=>{
+    let n=s.box;
+    while(n&&n!==doc.body){
+      const d=n.dataset;
+      if(d&&d.panelgroup&&d.panelkey&&state.tabs[d.panelgroup]!==d.panelkey&&state.tabs[d.panelgroup]!=="all"){
+        transient[d.panelgroup]=d.panelkey;
+      }
+      n=n.parentNode;
+    }
+  };
+
+  const rowsOf=(s,test)=>s===null?[]:s.all.filter(test);
+  let inSeason=rowsOf(season,tr=>tr.dataset.oppid===vs),inCareer=rowsOf(career,tr=>tr.dataset.oppid===vs);
+  const byId=inSeason.length>0||inCareer.length>0;
+  if(!byId){
+    const byName=(tr)=>String(tr.dataset.name||"").indexOf(vs)>=0;
+    inSeason=rowsOf(season,byName);inCareer=rowsOf(career,byName);
+  }
+
+  if(!inSeason.length&&!inCareer.length){
+    /* ③ 어디에도 없다 */
+    const tail=career!==null?"との対戦記録はありません（今季・通算とも）。":"との対戦記録はありません。";
+    scopes.forEach(s=>{s.box.dataset.pinid=vs;vsNote(s,"この相手"+tail)});
+    withIndex(idx=>{
+      const p=idx?idx.filter(x=>x.i===vs)[0]:null;
+      if(!p)return;
+      /* ⚠**그사이 사용자가 칸을 건드렸으면 그 표는 손대지 않는다** — 친 글자를 이름으로 덮지 않는다 */
+      scopes.forEach(s=>{
+        if(s.box.dataset.pinid!==vs)return;
+        vsNote(s,p.n+tail);
+        if(s.finder.value==="")s.finder.value=p.n;
+      });
+    });
+    fetchIndex();
+    return;
+  }
+
+  /* ①② 찾았다. ID 로 찾았으면 ID 로 못 박고 칸에는 이름을, 옛 이름 링크면 지금까지대로 이름으로 좁힌다 */
+  const name=byId?String((inSeason[0]||inCareer[0]).dataset.name||""):vs;
+  scopes.forEach(s=>{
+    if(byId)s.box.dataset.pinid=vs;
+    s.finder.value=name;
+  });
+  if(!inSeason.length&&career!==null){
+    /* ② 通算에만 있다 */
+    openScope(career);
+    vsNote(career,"今季は"+name+"との対戦がありません。通算の対戦成績を表示しています。");
+  }
+}
 
 /* ── 찾기로 펼쳐진 패널의 탭을 맞춘다 ──
 
@@ -4188,6 +4269,22 @@ function fold(s){
   return out;
 }
 
+/* ── 선수 찾기 판정 ──
+   ⚠**헤더 검색과 選手一覧의 좁히기가 이 한 벌을 부른다**(M1 · 2026-09-25 감사 W6).
+   두 벌이었을 때 한쪽(헤더)만 구단명을 봐서, 헤더가 「58人中20人を表示 — 選手一覧ですべて見る」라고
+   보낸 곳이 **0人** 을 보였다. 두 곳의 주석은 「같은 규칙」이라고 적고 있었다 —
+   **규칙이 두 벌이면 그 주석은 지킬 수 없는 약속이다.**
+   p 는 색인 항목의 모양이다: n 이름 · t 구단명 · kf 접은 읽는 법(없으면 거짓 값) · u 등번호(없으면 undefined).
+   選手一覧은 서버가 그린 항목의 속성으로 같은 모양을 만들어 넘긴다.
+   term 은 다듬은 원문 질의어, q 는 fold(term) — 접기는 부르는 쪽이 **한 번만** 한다(키 입력마다 행 수만큼 접지 않는다). */
+function playerHit(p,term,q){
+  return p.n.indexOf(term)>=0||p.t.indexOf(term)>=0
+    ||(!!p.kf&&p.kf.indexOf(q)>=0)
+    /* ⚠**등번호는 완전일치다.** 부분일치로 두면 「1」이 1·10〜19·100번대를 전부 끌고 와
+       이름 검색 결과를 밀어낸다. 「34」로 34번을 찾는 것이 이 기능의 전부다 */
+    ||p.u===term;
+}
+
 /* ── 선수 색인 ── 한 번 받아서 헤더 검색과 색인 화면이 함께 쓴다 */
 let INDEX=null,indexError=false,fetching=false;
 const waiting=[];
@@ -4245,9 +4342,14 @@ function attachPicker(input,list,onPick){
   const sayAtOnce=(text)=>{sayStop();sayApply(text)};
   /* hits = **자르기 전** 일치 수 · asked = 그 수를 낸 질의어(「一覧」으로 넘길 때 쓴다) */
   let rows=[],active=-1,hits=0,asked="";
+  /* ⚠**표시 세대**(2026-09-25 감사 C3). 닫으면 올린다 — 닫기 전에 걸어 둔 색인 대기는 그리지 않는다.
+     닫기(Esc · 바깥 클릭)는 **검색어를 바꾸지 않아서** 아래 run 의 「검색어가 그대로인가」 검사를
+     그대로 통과했고, 늦게 온 색인이 **사용자가 닫은 목록을 다시 열고** 인원수 낭독까지 되살렸다.
+     ⚠검색어 검사를 이것으로 바꾸지 않는다 — 둘은 막는 것이 다르다(새 검색어 / 닫힌 목록). */
+  let gen=0;
   /* ⚠**닫을 때 소리도 지운다** — 닫힌 목록의 인원을 낭독기가 계속 들고 있으면
      다음에 같은 수가 나왔을 때 아무 말도 안 하게 된다 */
-  const close=()=>{list.hidden=true;sayAtOnce("");active=-1};
+  const close=()=>{gen++;list.hidden=true;sayAtOnce("");active=-1};
   /* @param items 배열이면 결과, **null 이면 아직 읽는 중**이다 */
   const draw=(items,failed)=>{
     list.textContent="";
@@ -4322,14 +4424,14 @@ function attachPicker(input,list,onPick){
     if(term===""){close();return}
     /* 인덱스가 아직 안 왔으면 **그렇다고 말하고** 기다린다 — 잠자코 있지 않는다 */
     if(!INDEX&&!indexError)draw(null,false);
+    /* 이 요청을 건 때의 표시 세대. 그사이 닫혔으면 그리지 않는다(위 gen 주석 · C3) */
+    const mine=gen;
     withIndex(idx=>{
-      if(input.value.trim()!==term)return;
+      if(mine!==gen||input.value.trim()!==term)return;
       if(!idx){draw([],true);return}
-      /* ⚠**등번호는 완전일치다.** 부분일치로 두면 「1」이 1·10〜19·100번대를 전부 끌고 와
-         이름 검색 결과를 밀어낸다. 「34」로 34번을 찾는 것이 이 기능의 전부다 */
+      /* ⚠**판정은 選手一覧과 같은 한 벌이다**(playerHit · M1 · 감사 W6) — 여기서 규칙을 다시 적지 마라 */
       var q=fold(term);
-      var all=idx.filter(p=>p.n.indexOf(term)>=0||p.t.indexOf(term)>=0
-        ||(p.kf&&p.kf.indexOf(q)>=0)||p.u===term);
+      var all=idx.filter(p=>playerHit(p,term,q));
       /* ⚠**자르기 전에 센다.** 자른 뒤에 세면 언제나 20이 되어 「81人中」이 「20人中」이 된다 */
       hits=all.length;asked=term;
       rows=all.slice(0,SEARCH_LIMIT);
@@ -4496,11 +4598,15 @@ if(cmpForm){
      ⚠cmpGen(비교 요청 세대)과 따로 둔다 — 그쪽은 **요청끼리의 순서**를 지키고, 이것은 **누가 골랐는가**를 지킨다.
      복원 자신은 setCmp 를 거치지 않으므로 이 세대를 올리지 않는다. */
   let userGen=0;
-  const setCmp=(side,p)=>{userGen++;setInput(side,p);show(side,p)};
+  /* 공유 링크 복원을 기다리는 동안의 안내(아래 복원 절). ⚠**사용자가 조작하면 곧바로 걷는다** —
+     그 사람의 선택이 화면의 주인이고, 낡은 「읽는 중」을 남기면 무엇을 기다리는지 모르게 된다(M12) */
+  let restoring=null;
+  const touch=()=>{userGen++;if(restoring&&restoring.remove)restoring.remove();restoring=null};
+  const setCmp=(side,p)=>{touch();setInput(side,p);show(side,p)};
   attachPicker($("#cmpA"),$("#cmpAHits"),(p)=>setCmp("a",p));
   attachPicker($("#cmpB"),$("#cmpBHits"),(p)=>setCmp("b",p));
   /* 검색창에 치기 시작한 것도 조작이다 — 복원이 setInput 으로 **친 글자를 지우면** 같은 덮어쓰기다 */
-  ["#cmpA","#cmpB"].forEach(s=>{const i=$(s);if(i)i.addEventListener("input",()=>{userGen++})});
+  ["#cmpA","#cmpB"].forEach(s=>{const i=$(s);if(i)i.addEventListener("input",touch)});
   /* 오늘 대전하는 두 팀에서 바로 고르기. **누른 순서대로 A → B에 들어간다** —
      어느 자리에 넣을지 먼저 묻는 화면으로 만들면 조작이 한 단계 늘어난다 */
   $$("#cmpToday [data-pick]").forEach(b=>b.addEventListener("click",()=>{
@@ -4736,7 +4842,7 @@ if(cmpForm){
   if(goBtn)goBtn.addEventListener("click",run);
   const swap=$("#cmpSwap");
   if(swap)swap.addEventListener("click",()=>{
-    userGen++;
+    touch();
     const t=chosen.a;setInput("a",chosen.b);setInput("b",t);
     const bb=chosen.b;show("a",bb);show("b",t);
     if(out&&out.firstChild)run();
@@ -4745,20 +4851,60 @@ if(cmpForm){
   /* URL로 들어온 두 사람을 되살린다 — 공유한 링크가 같은 화면을 열어야 한다 */
   const qs=(name)=>{
     const m=new RegExp("[?&]"+name+"=([^&]*)").exec(LOC.search||"");
-    return m?decodeURIComponent(m[1]):"";
+    if(!m)return "";
+    /* ⚠**깨진 % 열에서 던진다** — 여기서 던지면 이 뒤의 초기화 전체가 죽는다(選手一覧 ?q= 와 같은 규칙).
+       못 푸는 값은 원문 그대로 쓴다 — 색인에 없으니 아래에서 「없다」고 말하게 된다 */
+    try{return decodeURIComponent(m[1])}catch(e){return m[1]}
   };
+  /* 되살리지 못한 이유를 비교 자리에 말한다. 샤드 실패·카드 없음과 같은 자리·같은 옷이다(M12) */
+  const sayRestore=(text)=>{
+    if(!out)return;
+    out.textContent="";
+    const e=el("section","cmpwrap");
+    e.appendChild(warn(text));
+    out.appendChild(e);
+  };
+  /* URL 에서 온 값이라 길이를 모른다 — 화면을 가로로 밀어내지 않게 줄여서 보인다 */
+  const shortId=(s)=>s.length>16?s.slice(0,16)+"…":s;
   const ia=qs("a"),ib=qs("b");
-  if(ia&&ib){
+  if(ia||ib){
     const asked=userGen;
+    /* ⚠**기다리는 동안도 말한다**(M12 · 2026-09-26 교차 모델 검토). 안 그러면 서버가 그린 「未選択」·빈 비교 자리
+       그대로라 **「읽는 중」과 「아무도 안 골랐다」가 같은 화면**이다 — 색인 응답이 멈추면 그 상태가 끝없이 간다.
+       모양은 비교를 읽는 동안(run)과 같다. 사용자가 조작하면 touch() 가 걷는다 */
+    if(out){
+      out.textContent="";
+      restoring=el("section","cmpwrap");
+      restoring.appendChild(el("p","empty","共有リンクの選手を読み込んでいます…"));
+      out.appendChild(restoring);
+    }
     withIndex(idx=>{
-      if(!idx)return;
-      /* ⚠기다리는 사이 사용자가 골랐으면 되살리지 않는다(C4 · 위 userGen 주석) */
+      /* ⚠**기다리는 사이 사용자가 골랐으면 되살리지도, 말하지도 않는다**(C4 · 위 userGen 주석).
+         그 사이 비교를 시작했다면 늦게 온 안내가 **그 결과를 덮는다** — 그래서 이 검사가 맨 앞이다 */
       if(userGen!==asked)return;
-      const find=(id)=>idx.filter(p=>p.i===id)[0]||null;
+      if(restoring&&restoring.remove)restoring.remove();
+      restoring=null;
+      /* ⚠**「못 읽었다」와 「없다」를 다른 말로 한다**(M12 · 2026-09-25 감사 W8). 예전에는 둘 다
+         아무 말 없이 돌아가서, 공유받은 사람은 링크가 고장났는지·그 선수가 없는지·읽는 중인지 몰랐다 */
+      if(!idx){
+        sayRestore("選手一覧を読み込めなかったため、共有リンクの選手を復元できませんでした。"+
+          "通信を確認して、ページを再読み込みしてください。");
+        return;
+      }
+      /* ⚠**양쪽을 따로 판정한다**(감사 W8). 예전에는 한쪽이라도 없으면 **색인에 있는 쪽까지** 버렸다 */
+      const find=(id)=>id===""?null:(idx.filter(p=>p.i===id)[0]||null);
       const pa=find(ia),pb=find(ib);
-      if(!pa||!pb)return;
-      setInput("a",pa);show("a",pa);setInput("b",pb);show("b",pb);
-      run();
+      if(pa){setInput("a",pa);show("a",pa)}
+      if(pb){setInput("b",pb);show("b",pb)}
+      /* 비교는 두 사람이 다 있을 때만 시작한다 */
+      if(pa&&pb){run();return}
+      const miss=[];
+      if(ia!==""&&!pa)miss.push("選手A（ID "+shortId(ia)+"）");
+      if(ib!==""&&!pb)miss.push("選手B（ID "+shortId(ib)+"）");
+      if(!miss.length)return;
+      /* 한쪽을 되살렸으면 무엇을 하면 되는지까지 말한다 */
+      const next=(pa&&ib!=="")?"選手Bを選ぶと比較できます。":(pb&&ia!=="")?"選手Aを選ぶと比較できます。":"";
+      sayRestore("共有リンクの"+miss.join("と")+"は、このシーズンの選手一覧にいません。"+next);
     });
     fetchIndex();
   }
@@ -5004,26 +5150,33 @@ const chips=$$(".chip[data-team]");
 const favOnly=$("#favOnly");
 if(filter||chips.length){
   let team="",onlyFav=false;
+  /* 항목마다 **색인 항목과 같은 모양**을 한 번만 만든다 — 판정 함수(playerHit)가 받는 것이 그 모양이다.
+     ⚠**구단명(data-teamname)이 빠져 있었다**(2026-09-25 감사 W6). 헤더는 구단명으로도 찾고
+     「選手一覧ですべて見る」로 여기에 보내는데, 여기는 구단명을 몰라 같은 질의가 **0人** 이 됐다.
+     ⚠읽는 법은 **여기서 한 번만 접는다** — 키 입력마다 전 선수를 다시 접을 이유가 없다(색인 쪽과 같은 판단).
+     ⚠없는 값은 거짓 값으로 둔다 — 빈 구단명은 어떤 질의어에도 안 걸린다(모르는 것을 맞았다고 하지 않는다). */
+  const groups=$$(".teamgroup").map(g=>({g:g,items:$$("li",g).map(li=>({li:li,p:{
+    n:li.dataset.name||"",
+    t:li.dataset.teamname||"",
+    kf:li.dataset.kana?fold(li.dataset.kana):"",
+    u:li.dataset.uniform
+  }}))}));
   const apply=()=>{
     const term=(filter?filter.value.trim():"");
-    /* ⚠**헤더 검색과 같은 규칙으로 찾는다.** 여기만 이름 부분일치로 두면
-       「やまもと」나 「18」이 첫 화면에서만 0건이 된다 — 같은 기능이 화면에 따라 다르게 동작한다.
-       접기는 fold() 한 벌을 그대로 쓴다(M1). */
+    /* ⚠**헤더 검색과 같은 판정 한 벌을 부른다**(playerHit · M1). 규칙을 여기서 다시 적지 마라 —
+       예전에는 「같은 규칙」이라고 적어 두고 규칙을 따로 적었고, 한쪽에만 구단명이 들어가 있었다(감사 W6).
+       접기도 fold() 한 벌을 그대로 쓴다. */
     const q=fold(term);
     let shown=0;
-    $$(".teamgroup").forEach(g=>{
+    groups.forEach(x=>{
       let n=0;
-      $$("li",g).forEach(li=>{
-        const hit=(team===""||li.dataset.team===team)
-          &&(term===""
-            ||li.dataset.name.indexOf(term)>=0
-            ||(li.dataset.kana&&fold(li.dataset.kana).indexOf(q)>=0)
-            /* 등번호는 완전일치 — 부분일치면 「1」이 100번대까지 끌고 온다 */
-            ||li.dataset.uniform===term)
-          &&(!onlyFav||isFav(li.dataset.id));
-        li.hidden=!hit;if(hit)n++;
+      x.items.forEach(it=>{
+        const hit=(team===""||it.li.dataset.team===team)
+          &&(term===""||playerHit(it.p,term,q))
+          &&(!onlyFav||isFav(it.li.dataset.id));
+        it.li.hidden=!hit;if(hit)n++;
       });
-      g.hidden=n===0;shown+=n;
+      x.g.hidden=n===0;shown+=n;
     });
     const c=$("#rosterCount");
     if(c)c.textContent=shown+"人";
@@ -5094,7 +5247,8 @@ function warnSnapshotHost(){
 
 press(".rail [data-preset]","preset",state.preset);
 press(".rail [data-density]","density",state.density);
-applyTheme();renderBlocks();renderEditor();showTabs();paintFav();paintFavTeam();revealHash();warnSnapshotHost();
+/* ⚠landVs 는 renderBlocks·showTabs 보다 앞이다 — 대전 블록과 通算 탭을 이번 방문에 연다(위 landVs 주석) */
+applyTheme();landVs();renderBlocks();renderEditor();showTabs();paintFav();paintFavTeam();revealHash();warnSnapshotHost();
 })();
 `;
 
