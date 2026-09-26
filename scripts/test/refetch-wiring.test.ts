@@ -11,12 +11,17 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const YML = readFileSync(fileURLToPath(new URL("../../.github/workflows/daily.yml", import.meta.url)), "utf8");
-const DATE_WINDOW = readFileSync(fileURLToPath(new URL("../date-window.ts", import.meta.url)), "utf8");
-const REFETCH_LIMIT = readFileSync(
-  fileURLToPath(new URL("../../packages/store/src/refetch-limit.ts", import.meta.url)),
-  "utf8",
-);
+/**
+ * ⚠**줄끝을 `\n` 으로 맞춰 읽는다** — Windows 체크아웃(`core.autocrlf=true`)은 작업 트리가 CRLF 라,
+ * 안 맞추면 `\n` 을 기대하는 정규식이 **거기서만** 떨어진다(CI 는 LF 라 초록 · 2026-09-26 실측).
+ */
+function readLf(rel: string): string {
+  return readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8").replace(/\r\n/g, "\n");
+}
+
+const YML = readLf("../../.github/workflows/daily.yml");
+const DATE_WINDOW = readLf("../date-window.ts");
+const REFETCH_LIMIT = readLf("../../packages/store/src/refetch-limit.ts");
 
 test("14 수동 실행에 refetch_dates 입력이 있다", () => {
   assert.match(YML, /workflow_dispatch:\s*\n\s+inputs:\s*\n\s+refetch_dates:/);
@@ -60,8 +65,7 @@ test("⚠I1 refetch-limit.ts 는 import 가 0개인 잎 파일이다", () => {
  * 틀린 입력으로 수집이 돌거나(종료 2 없음) 재수집 날짜가 무시되고 평소 창을 받는다(`refetch.dates ??` 없음) — 둘 다 초록인 채로.
  * ⚠주석은 걷어내고 본다(주석 속 낱말이 판정을 흐리지 않게).
  */
-const UPDATE = readFileSync(fileURLToPath(new URL("../update.ts", import.meta.url)), "utf8")
-  .replace(/\r\n/g, "\n")
+const UPDATE = readLf("../update.ts")
   .replace(/\/\*[\s\S]*?\*\//g, "")
   .replace(/(?<!:)\/\/[^\n]*/g, "");
 

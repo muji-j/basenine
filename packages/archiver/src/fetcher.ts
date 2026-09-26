@@ -53,6 +53,26 @@ async function discard(res: RawResponse): Promise<void> {
 
 const REDIRECTS = new Set([301, 302, 303, 307, 308]);
 
+/**
+ * `Location` 을 다음 주소로. **못 읽으면 `null`** — 호출자가 본문 없는 3xx 로 돌려준다.
+ *
+ * ⚠**퍼센트 인코딩 안 한 UTF-8 을 되살린다.** 규약을 어기고 한글·일본어를 날 바이트로 보내는 서버가 있고,
+ *   `headers.get` 은 그 바이트를 **latin1 한 글자씩**으로 준다. 그대로 `new URL` 에 넣으면 이중 인코딩된
+ *   주소(`/%C3%A6…`)로 가서 404 를 받는다 — 네이티브 `fetch` 가 따라가던 때는 undici 가 같은 복원을 해서
+ *   안 나던 실패다(2026-09-26 · C1 수정의 3중 검토 2차 실측).
+ * ⚠**형식이 깨진 주소도 `null` 이다** — 던지게 두면 바깥 `catch` 가 일시 오류로 보고 **재시도**한다.
+ *   같은 헤더가 또 올 뿐이므로 다른 출처로 보내는 3xx 처럼 **한 번에** 끝낸다.
+ */
+function resolveLocation(location: string | null, base: string): URL | null {
+  if (location === null) return null;
+  const raw = /[\x80-\xff]/.test(location) ? Buffer.from(location, "latin1").toString("utf8") : location;
+  try {
+    return new URL(raw, base);
+  } catch {
+    return null;
+  }
+}
+
 export type SleepImpl = (ms: number) => Promise<void>;
 
 export interface PoliteFetcherOptions {
@@ -189,14 +209,14 @@ export class PoliteFetcher {
          * ⚠**같은 출처(scheme+host+port)만 따라간다.** 다른 곳으로 보내면 따라가지 않고 **본문 없는 3xx** 를
          *   돌려준다 — 호출자(`archiveUrl`)가 「본문 없는 302 응답」 실패로 센다(조용히 넘기지 않는다).
          *   예의의 대상과 권리 판정(§2-5)은 우리가 고른 출처에 대한 것이지 상대가 보낸 곳에 대한 것이 아니다.
-         * ⚠**홉 수에 상한이 있다**(`MAX_REDIRECTS`) — 넘으면 역시 본문 없는 3xx.
+         * ⚠**홉 수에 상한이 있다**(`MAX_REDIRECTS`) — 넘으면 역시 본문 없는 3xx. `Location` 이 없거나
+         *   못 읽어도 같다(`resolveLocation`).
          */
         const origin = new URL(url).origin;
         let current = url;
         for (let hop = 0; REDIRECTS.has(res.status); hop += 1) {
-          const location = res.headers.get("location");
+          const next = resolveLocation(res.headers.get("location"), current);
           await discard(res);
-          const next = location === null ? null : new URL(location, current);
           if (next === null || next.origin !== origin || hop >= MAX_REDIRECTS) {
             return { status: res.status, body: null, etag: null, lastModified: null };
           }
