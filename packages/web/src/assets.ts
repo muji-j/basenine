@@ -3013,8 +3013,10 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
   /* ⚠**새 조작을 이 목록에 넣는 것을 빼먹지 마라**(2026-09-08 · 검토 Minor).
      .snwrap 은 시즌 띄를 담는 상자라 안 지우면 **바탕과 밑줄만 종이에 남고**,
      .snbtn · .hjbar 는 종이에서 아무 일도 안 하는 손잡이다. **목록은 이름으로 적는 방식이라
-     새 조작을 만들 때마다 여기를 같이 고쳐야 한다.** */
-  .topbar,.editor,.skip,.seasons,.snwrap,.snbtn,.hjbar,.daybar,.pickbar,.pickgames{display:none}
+     새 조작을 만들 때마다 여기를 같이 고쳐야 한다.**
+     ⚠**그 빼먹기가 실제로 났다 — .favbtn**(2026-09-27 · 감사 N10). 마크업의 hidden 은 스크립트가 걷으므로
+     .favbtn[hidden] 은 종이에서 안 걸리고, 선수 표제에 ☆/★ 버튼이 찍혔다. */
+  .topbar,.editor,.skip,.seasons,.snwrap,.snbtn,.hjbar,.daybar,.pickbar,.pickgames,.favbtn{display:none}
   /* ⚠**레일은 지우지 않는다 — 지우면 아래 규칙이 닿기도 전에 이름이 사라진다.**
      여기 있던 .rail 의 display:none 이 그 일을 하고 있었다(2026-08-17 이중 검토).
      바로 밑 주석이 「탭줄은 조작이면서 고른 것의 이름이다」라고 적어 두고,

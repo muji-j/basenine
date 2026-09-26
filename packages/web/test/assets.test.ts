@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CLIENT_JS, CSS } from "../src/assets.ts";
+import { computed, parseRules } from "./css-cascade.ts";
 import { BLOCKS, PRESETS } from "../src/blocks.ts";
 
 /**
@@ -412,6 +413,26 @@ test("인쇄는 보고 있는 것을 찍는다 — 닫힌 탭을 펼치지 않�
  * 「お気に入り」로 3명만 남기고 인쇄하면, 나중에 그 종이를 보는 사람은
  * 「이 구단에 3명뿐인가」로 읽는다.
  */
+/**
+ * ⚠**즐겨찾기 버튼이 종이에 찍혔다**(2026-09-27 · 감사 N10). 인쇄 숨김 목록에 `.favbtn` 이 없었고,
+ * 마크업의 `hidden` 은 스크립트가 걷는다(`paintFav` → `b.hidden=false`) — 그래서 `.favbtn[hidden]` 규칙도 안 걸린다.
+ * ⚠**문자열이 아니라 캐스케이드로 잰다** — 목록에 이름을 넣어도 더 구체적인 화면 규칙이 `display` 를 주면 진다.
+ */
+test("⚠N10 인쇄에 즐겨찾기 버튼이 찍히지 않는다 — 스크립트가 hidden 을 걷은 뒤에도", () => {
+  const all = parseRules(CSS);
+  const ancestors = [
+    { tag: "header", classes: ["idline"] },
+    { tag: "div", classes: ["idtext"] },
+    { tag: "div", classes: ["nmrow"] },
+  ];
+  for (const pressed of ["false", "true"]) {
+    const el = { tag: "button", classes: ["favbtn"], attrs: { type: "button", "aria-pressed": pressed }, ancestors };
+    assert.equal(computed(all, el, "display", (q) => q === "print"), "none", `인쇄에서 눌림=${pressed} 버튼이 숨지 않는다`);
+    // ⚠**공회전 방지** — 화면에서까지 숨으면 이 단언은 아무것도 구별하지 않는다
+    assert.notEqual(computed(all, el, "display"), "none", `화면에서 눌림=${pressed} 버튼이 숨는다`);
+  }
+});
+
 test("좁히기 조작은 지우되 「몇 명을 보고 있는가」는 종이에 남는다", () => {
   const printBlock = CSS.slice(CSS.indexOf("@media print"));
   assert.ok(!/[^-]\.find\{display:none\}/.test(printBlock), "분모까지 통째로 지웠다");
