@@ -9,7 +9,19 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { JST_TODAY_FROM_HOUR, MAX_CATCHUP_DAYS, MAX_REFETCH_DATES, jstDate, jstHour, parseRefetchDates, sinceStatus, targetDates } from "../date-window.ts";
+import {
+  JST_TODAY_FROM_HOUR,
+  MAX_CATCHUP_DAYS,
+  MAX_REFETCH_DATES,
+  dayStatus,
+  isYmd,
+  jstDate,
+  jstHour,
+  judgeDates,
+  parseRefetchDates,
+  sinceStatus,
+  targetDates,
+} from "../date-window.ts";
 
 /** UTC 문자열로 시각을 만든다. **JST 를 직접 못 만드는 것이 이 시험의 요점**이다 */
 const at = (utc: string): Date => new Date(utc);
@@ -324,4 +336,121 @@ test("⚠C10 sinceStatus DB 못 읽음 → 모름 — 빈 목록으로 두면 �
 test("C10 sinceStatus DB 에만 있는 경기(아카이브가 지워진 경우 포함)는 덜 받은 것이 아니다 → 완결", () => {
   assert.deepEqual(sinceStatus([G1], [G1, G2]), { status: "complete", missing: 0 });
   assert.deepEqual(sinceStatus([], [G1, G2]), { status: "complete", missing: 0 });
+});
+
+/**
+ * ## ⚠덜 받음 판정을 **최근 창으로 소급**한다 (2026-09-27 · C10 3중 검토 3차 P2 · 2차 F3)
+ *
+ * 「마지막 경기일(`since`) 하나만 본다」의 전제가 틀렸다. `update.ts` 는 날짜마다 따로 받고 실패도 따로 센다 —
+ * 한 실행 안에서 D 의 재수집(진행 중이던 경기)은 실패하고 D+1 은 성공하면 `MAX(played)` 가 D+1 로 전진해
+ * **다음 실행부터 D 를 다시 보지 않는다**(그 실행은 빨갛지만 그 뒤 자동 복구가 없다).
+ * → 판정 범위를 `[어제 − MAX_CATCHUP_DAYS, min(since, 어제)]` 의 **날마다**로 넓히고(`judgeDates`),
+ *   덜 받은 날 **전부**를 창에 더한다(`include` · 합집합 · 오름차순 · 중복 없음).
+ * ⚠**`include` 가 없거나 빈 배열이면 창은 예전과 글자까지 같다** — 정상·휴식일의 요청 0 증가가 여기에 걸려 있다.
+ */
+
+/** 07:00 JST 기준 판정 범위의 아래 끝(어제 − 상한) — 어제 08-18 이면 08-11 */
+const LO = "2026-08-11";
+
+test("C10′ include 가 없거나 빈 배열이면 창은 예전과 글자까지 같다 — 시각 셋 × 간격 −3~9", () => {
+  for (const utc of ["2026-08-18T22:00:00Z", "2026-08-18T05:00:00Z", "2026-08-18T14:30:00Z"]) {
+    for (let gap = -3; gap <= MAX_CATCHUP_DAYS + 2; gap += 1) {
+      const since = jstDate(at(utc), -1 - gap);
+      const plain = targetDates(at(utc), { collectedThrough: since });
+      assert.deepEqual(targetDates(at(utc), { collectedThrough: since, include: [] }), plain, `${utc} 간격 ${gap}: 빈 include 인데 창이 바뀌었다`);
+    }
+    assert.deepEqual(targetDates(at(utc), { include: [] }), targetDates(at(utc)), `${utc}: 기준점 없이 빈 include 인데 창이 바뀌었다`);
+  }
+});
+
+test("C10′ 덜 받은 날을 창에 더한다 — 합집합 · 오름차순 · 중복 없음(입력 순서·중복과 무관)", () => {
+  assert.equal(jstDate(MORNING, -1 - MAX_CATCHUP_DAYS), LO, "시험의 전제(판정 범위 아래 끝)가 틀렸다");
+  // since 08-17(간격 1) — 예전 창은 [어제] 뿐
+  assert.deepEqual(
+    targetDates(MORNING, { collectedThrough: "2026-08-17", include: ["2026-08-16", "2026-08-14", "2026-08-16", "2026-08-18"] }),
+    ["2026-08-14", "2026-08-16", "2026-08-18"],
+  );
+  // since 08-15(간격 3) — 사이 메우기(08-16·08-17)와 겹치는 날은 한 번만
+  assert.deepEqual(
+    targetDates(MORNING, { collectedThrough: "2026-08-15", include: ["2026-08-17", "2026-08-12", "2026-08-15"] }),
+    ["2026-08-12", "2026-08-15", "2026-08-16", "2026-08-17", "2026-08-18"],
+  );
+});
+
+/**
+ * ⚠**부분 실패 경로**(3중 검토 3차 P2 · 2차 F3 가 독립적으로 찾음). D(08-16)의 재수집은 실패하고 D+1(08-17)은 성공해
+ * `since` 가 08-17 로 전진했다. 예전 판정(since 하나만)은 08-17 이 완결이라 08-16 을 영영 다시 안 봤다.
+ */
+test("⚠C10′ 부분 실패 — D 덜 받음 · D+1 완결로 since 가 D+1 이 돼도 D 가 창에 든다", () => {
+  assert.deepEqual(targetDates(MORNING, { collectedThrough: "2026-08-17" }), ["2026-08-18"], "전제(예전 창)가 틀렸다");
+  assert.deepEqual(targetDates(MORNING, { collectedThrough: "2026-08-17", include: ["2026-08-16"] }), ["2026-08-16", "2026-08-18"]);
+});
+
+/** since 하나만 덜 받은 경우는 예전 표(간격 0·1·2·6·7·8)와 같은 창이 나와야 한다 — 모양만 바뀌고 뜻은 그대로다 */
+for (const [gap, since, want] of INCLUDE_SINCE_TABLE) {
+  test(`C10′ include [since] 간격 ${gap} → 예전 includeSince 표와 같은 창`, () => {
+    assert.deepEqual(targetDates(MORNING, { collectedThrough: since, include: [since] }), want);
+  });
+}
+
+test("⚠C10′ include 는 [어제 − 상한, 어제] 밖의 날을 더하지 않는다 — 범위 밖 · 오늘 · 미래 · 모양 틀림 · 없는 날짜", () => {
+  assert.deepEqual(
+    targetDates(MORNING, {
+      collectedThrough: "2026-08-17",
+      // ⚠`2026-08-15x` 는 문자열 비교로는 범위 **안**이다 — 모양 검사가 없으면 그대로 창에 들어간다
+      include: ["2026-08-10", LO, "2026-08-19", "2026-08-25", "2026-8-12", "2026-02-30", "garbage", "2026-08-15x"],
+    }),
+    [LO, "2026-08-18"],
+    "상한 밖·오늘 이후·틀린 모양을 창에 넣었다",
+  );
+});
+
+test("⚠C10′ 간격이 상한을 넘으면 include 도 더하지 않는다 — 백필은 사람의 일", () => {
+  assert.deepEqual(targetDates(MORNING, { collectedThrough: "2026-08-10", include: ["2026-08-10", "2026-08-12"] }), ["2026-08-18"]);
+});
+
+test("C10′ 기준점(since)을 모르면 include 를 더하지 않는다 — 넓힐 근거가 없다(M11)", () => {
+  assert.deepEqual(targetDates(MORNING, { include: ["2026-08-16"] }), ["2026-08-18"]);
+});
+
+/** ⚠**음수 간격** — since 가 어제보다 뒤(오늘 · 미래). −1 은 밤 실행 뒤 재실행에서 실재하고, 그 밖은 잘못된 자료에서만 난다(1차 P3) */
+test("⚠C10′ 음수 간격(−1·−2·−5) — 사이 메우기 없음 · include 는 범위 안의 것만 · 오늘 이후는 안 더한다", () => {
+  for (const [gap, since] of [[-1, "2026-08-19"], [-2, "2026-08-20"], [-5, "2026-08-23"]] as const) {
+    assert.deepEqual(targetDates(MORNING, { collectedThrough: since }), ["2026-08-18"], `간격 ${gap}: include 없이 창이 바뀌었다`);
+    assert.deepEqual(
+      targetDates(MORNING, { collectedThrough: since, include: ["2026-08-15", "2026-08-19", "2026-08-20", since] }),
+      ["2026-08-15", "2026-08-18"],
+      `간격 ${gap}: 범위 밖(오늘 이후)을 넣었거나 범위 안을 뺐다`,
+    );
+  }
+  // 밤 실행(23:30 JST · 어제 08-17 · 오늘 08-18) — 오늘은 include 가 아니라 22시 규칙으로만 들어온다(중복 없음)
+  const night = at("2026-08-18T14:30:00Z");
+  assert.deepEqual(
+    targetDates(night, { collectedThrough: "2026-08-21", include: ["2026-08-18", "2026-08-16"] }),
+    ["2026-08-16", "2026-08-17", "2026-08-18"],
+  );
+});
+
+test("C10′ judgeDates — [어제 − 상한, min(since, 어제)] · since 가 그보다 이르면(간격 > 상한) 빈 배열 · 틀린 모양도 빈 배열", () => {
+  assert.deepEqual(judgeDates(MORNING, "2026-08-16"), daysFrom(LO, "2026-08-16"), "since 까지");
+  assert.deepEqual(judgeDates(MORNING, "2026-08-18"), daysFrom(LO, "2026-08-18"), "since = 어제");
+  assert.deepEqual(judgeDates(MORNING, "2026-08-21"), daysFrom(LO, "2026-08-18"), "since 가 어제보다 뒤면 어제까지(오늘 이후는 판정하지 않는다)");
+  assert.deepEqual(judgeDates(MORNING, LO), [LO], "간격이 정확히 상한 — 그날 하나");
+  assert.deepEqual(judgeDates(MORNING, "2026-08-10"), [], "간격이 상한을 넘었다");
+  for (const bad of ["2026-8-16", "2026-02-30", "", "2026/08/16"]) assert.deepEqual(judgeDates(MORNING, bad), [], JSON.stringify(bad));
+  assert.equal(judgeDates(MORNING, "2026-08-18").length, MAX_CATCHUP_DAYS + 1, "판정 범위는 최대 상한 + 1 일이다");
+});
+
+test("C10′ isYmd — 모양과 실재를 둘 다 본다", () => {
+  for (const ok of ["2026-08-16", "2024-02-29", "2018-03-30"]) assert.equal(isYmd(ok), true, ok);
+  for (const bad of ["2026-8-16", "2026-02-30", "2025-02-29", "2026-13-01", "2026/08/16", "", " 2026-08-16"]) assert.equal(isYmd(bad), false, bad);
+});
+
+test("C10′ dayStatus — 완결 · 덜 받음(그 id 를 정렬해 돌려준다) · 아카이브 모름 · DB 모름 · DB 에만 있는 경기", () => {
+  assert.deepEqual(dayStatus([G1, G2, G3], [G3, G1, G2]), { status: "complete", missing: [] });
+  assert.deepEqual(dayStatus([G3, G1, G2, G3], [G2]), { status: "incomplete", missing: [G1, G3] }, "폴더는 있는데 행이 없는 경기를 못 봤다(중복은 한 번)");
+  assert.deepEqual(dayStatus(null, [G1]), { status: "unknown", missing: [] }, "아카이브를 못 읽었는데 판정했다");
+  assert.deepEqual(dayStatus([G1, G2], null), { status: "unknown", missing: [] }, "⚠DB 를 못 읽었는데 판정했다 — 그날 경기 전부를 덜 받음으로 오판한다");
+  assert.deepEqual(dayStatus([G1], [G1, G2]), { status: "complete", missing: [] });
+  assert.deepEqual(dayStatus([], [G1]), { status: "complete", missing: [] });
 });
