@@ -191,6 +191,7 @@ db.transaction(() => {
        * 실측(2026-09-26 · 선수 페이지 스냅숏 8벌 · 1,644명 · 서로 다른 판 3,291개 사이의 전이 1,647개):
        * 표가 있다가 없어진 전이 **0건**(생긴 전이도 0건).
        * ⚠던지면 위 `savepoint` 가 이 선수의 DELETE/INSERT 를 되돌려 **어제 값이 그대로 남는다** — 그리고 아래에서 센다.
+       * ⚠실패하면 종료 1 이라 배포가 막힌다 — 무엇을 확인하고 어떻게 푸는가는 런북 `docs/operations/deploy.md` §7-F.
        */
       const had = {
         batting: (hadBat.get(playerId) as { n: number }).n,

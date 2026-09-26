@@ -445,7 +445,7 @@ export function parseCareer(html: string): Career {
    * ⚠**통계 구획에 모르는 표가 있으면 던진다**(2026-09-26 · 3중 검토 3차 P2 · 위 `unknownStatsTables`).
    * 두 표를 읽은 **뒤에** 본다 — 그 표가 있다고 말하는데 못 찾은 경우는 위 `parseTable` 이 더 구체적인 말로 먼저 던진다.
    * ⚠새 표가 **정당하게** 생긴 날(예: 새 탭)에도 여기서 멈춘다 — 그 표를 알려진 목록(`TABLE_SPEC`)에 넣을지는
-   *   사람이 실물을 보고 정한다. 조용히 건너뛰는 것보다 그쪽이 싸다.
+   *   사람이 실물을 보고 정한다(런북 `docs/operations/deploy.md` §7-F). 조용히 건너뛰는 것보다 그쪽이 싸다.
    */
   const strangers = unknownStatsTables(html);
   if (strangers.length > 0) {
