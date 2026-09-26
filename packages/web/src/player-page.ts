@@ -2119,11 +2119,13 @@ function pitchingSplitTable(a: SplitAxisData, cells: Map<string, PitchingSplitCe
       <td class="l"><div class="track"><i style="width:${Math.round(
         Math.max(0, Math.min(1, (era ?? 0) / worst)) * 100,
       )}%${thin ? ";opacity:.35" : ""}"></i></div>
-        ${/* ⚠**분모는 이닝이다**(자책점 × 9 ÷ 投球回) — 등판 수가 아니다 */ ""}
-        <span class="wd">${valueWithDen({ value: era, denominator: c.outs / 3 }, denUnit("era"), 2)}</span></td>
+        ${/* ⚠**분모는 이닝이다**(자책점 × 9 ÷ 投球回) — 등판 수가 아니다.
+               ⚠**아웃을 그대로 넘긴다** — 단위 「回」가 아웃을 이닝 표기로 바꾼다(format.ts denominator).
+               `outs / 3` 을 넘겨 **두 번 나눴다**: 162아웃이 「18回」, 20아웃이 「2.0.666…回」(2026-09-27 · N7 작업 중 발견) */ ""}
+        <span class="wd">${valueWithDen({ value: era, denominator: c.outs }, denUnit("era"), 2)}</span></td>
       <td class="b">${c.games}</td>
       <td>${innings(c.outs)}</td>
-      <td class="wd">${valueWithDen({ value: whip, denominator: c.outs / 3 }, denUnit("whip"), 2)}</td>
+      <td class="wd">${valueWithDen({ value: whip, denominator: c.outs }, denUnit("whip"), 2)}</td>
       <td>${c.h}</td><td>${c.hr}</td><td>${c.bb}</td><td>${c.so}</td>
     </tr>`;
   })}</tbody>
