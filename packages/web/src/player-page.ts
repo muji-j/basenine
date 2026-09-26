@@ -36,7 +36,7 @@ import {
 } from "./parts.ts";
 import { stableTable } from "./table.ts";
 import type { BarRow, RankDigits } from "./parts.ts";
-import { NO_VALUE, avg3, dec2, fullDate, gameDate, innings, throwsBats } from "./format.ts";
+import { NO_VALUE, avg3, dec2, denominator, fullDate, gameDate, innings, rateParts, throwsBats } from "./format.ts";
 // ⚠**연속 기록의 값 서식은 한 벌이다**(M1) — 순위 화면의 連続記録 표가 같은 함수를 쓴다
 import { streakCountText, streakDen, streakInningsMax, streakInningsText } from "./streak-view.ts";
 import { isEmptyProfile, markFigure, markLetter, markProfile } from "./marks.ts";
@@ -691,8 +691,37 @@ export interface RankingPanel {
  * 대신 **우리가 계산한 값으로 만든 우리 그림**을 놓는다. 정보량도 사진보다 많다.
  */
 export interface SparkPoint {
+  /** 달 표기(`4月`) */
   label: string;
-  value: number | null;
+  /**
+   * 그 달의 값과 **분모**(M2) — 타자는 OPS(분모 打席), 투수는 방어율(분모 アウト).
+   *
+   * ⚠**값만 싣지 마라**(2026-09-27 · 감사 N7 · P0). 예전엔 `value` 하나였고, 그래서
+   * ⑴ 접근 가능한 이름이 「月別防御率：3月 27.000」처럼 **분모 없는 비율**을 읽었고
+   * ⑵ **얇은 달을 가를 방법이 없어** 1아웃짜리 방어율 189.00 이 선의 눈금을 통째로 정했다.
+   * `value: null` 은 「0」이 아니라 **값이 정의되지 않는 달**이다(M11 — 0아웃·0타수).
+   */
+  rate: Rate;
+}
+
+/**
+ * 표제 옆 꺾은선 한 벌 — **무엇의 추이인지와 얇음의 잣대를 함께 든다.**
+ *
+ * ⚠**이름(`月別OPS`)을 문자열로 따로 싣지 않는다**(2026-09-27). 예전엔 `sparkLabel` 이 따로 있었는데,
+ * 이름·자릿수·분모 단위가 전부 **지표 하나에서** 나오므로(용어집 · M1) 키 하나를 든다.
+ */
+export interface SparkData {
+  /** 용어집 키. 이름(`termLabel`) · 분모 단위(`denUnit`) · 자릿수가 여기서 정해진다 */
+  metric: "ops" | "era";
+  points: SparkPoint[];
+  /**
+   * 분모가 이 수 **미만**인 달은 얇다. 단위는 `rate.denominator` 와 같다(타자 打席 · 투수 アウト).
+   *
+   * ⚠**월 스플릿 표와 같은 수여야 한다** — 타자는 그 축의 `thinBelow`(`THIN_SPLIT_PA`),
+   * 투수는 `THIN_SPLIT_OUTS`(경기 단위 투구 표가 쓰는 그 상수). 같은 화면의 두 자리가
+   * 다른 달을 「얇다」고 하면 둘 중 하나는 거짓이다.
+   */
+  thinBelow: number;
 }
 
 /**
@@ -856,10 +885,8 @@ export interface PlayerPageData {
   ranking: RankingPanel[];
   /** 표제의 식별 마크 */
   mark: MarkData;
-  /** 월별 추이. 표제 옆의 꺾은선이 된다 */
-  spark: SparkPoint[];
-  /** 그 꺾은선이 무엇인지 (`月別OPS` 등) */
-  sparkLabel: string;
+  /** 월별 추이. 표제 옆의 꺾은선이 된다 — 이름·분모·얇음의 잣대를 함께 든다 */
+  spark: SparkData;
   /** 연속 기록. **타자 쪽.** 타석이 하나도 없으면 null */
   streaks: StreakBlockData | null;
   /**
@@ -958,48 +985,101 @@ const BASE_ORDER = ["-", "1", "2", "3", "12", "13", "23", "123"];
  */
 export const THIN_SITUATION_PA = 10;
 export const THIN_MATCHUP_PA = 10;
+/**
+ * **경기 단위 투구 스플릿**(月別·本拠地·球場別·対戦球団別)에서 「얇다」고 볼 **아웃 수** — 3이닝.
+ *
+ * ⚠**타석이 아니라 아웃이 잣대다** — 방어율의 분모가 이닝이기 때문이다.
+ * ⚠**리터럴이었다**(`c.outs < 9` · 2026-09-27 감사 N7 에서 끌어올렸다). 표제 옆 월별 꺾은선이
+ * 같은 달을 「얇다」고 해야 하는데, 수가 두 자리에 따로 적히면 한쪽만 고쳐지는 날이 온다(M1).
+ */
+export const THIN_SPLIT_OUTS = 9;
 /** 선수 페이지 순위표에 싣는 상위 인원. `query.ts`와 같은 값이어야 한다 */
 const RANKING_TOP = 10;
+
+/** 꺾은선 이름의 자릿수 — **화면의 다른 자리와 같은 규칙**(OPS 는 타율 계열 3자리 · 방어율 2자리) */
+const SPARK_DIGITS: Readonly<Record<SparkData["metric"], 2 | 3>> = { ops: 3, era: 2 };
 
 /**
  * 월별 추이 꺾은선.
  *
- * ⚠**축을 그리지 않는다.** 눈금 없는 선은 「값」이 아니라 **모양**이고, 정확한 값은
- * 스플릿 블록에 분모와 함께 있다. 여기서 읽히면 안 되는 것을 읽히게 만들지 않는다.
+ * ⚠**축을 그리지 않는다.** 눈금 없는 선은 「값」이 아니라 **모양**이다. 정확한 값은
+ * **접근 가능한 이름**(아래 `aria-label`)과 스플릿 블록의 月別 표에 **분모와 함께** 있다.
  *
- * ⚠**선과 끝점의 색을 여기(속성)서 주지 않는다 — CSS 토큰(`.spark polyline` · `.spark circle`)이 준다**
+ * ⚠**이름도 렌더링이다**(2026-09-27 · 감사 N7 · P0). 예전 이름은 월별 값을 `toFixed(3)` 로만
+ * 실었다 — 「月別防御率：3月 27.000」. 분모가 없었고(M2) 방어율까지 3자리였다(화면의 다른 자리는 2자리).
+ * 지금은 달마다 **값 + 분모**이고 표기는 `rateParts`(화면의 `valueWithDen` 과 같은 규칙의 글자판 · M1)다.
+ *
+ * ## 얇은 달 — 월 스플릿 표와 **같은 문턱**(`thinBelow`)
+ *
+ * ⚠**얇은 달은 선의 모양을 정하지 않는다.** 예전엔 최소·최대 정규화에 그대로 들어가서
+ * 1아웃짜리 방어율 189.00 이 눈금 전체를 먹고 나머지 달을 바닥에 눌렀다
+ * (실측: 투수 월 13,895건 중 1~8아웃 2,639건 · 타자 월 18,463건 중 1~29타석 11,954건).
+ *
+ * 세 부류를 **다르게** 그린다:
+ *
+ * | 달 | 선 | 점 | 이름 |
+ * |---|---|---|---|
+ * | 믿을 수 있는 달 | 꼭짓점이다 · 정규화에 든다 | 마지막 달만 **채운 점** | `4月 .812（98打席）` |
+ * | 얇은 달 | **꼭짓점이 아니다** · 정규화에서 뺀다 | **속 빈 점**(눈금 밖이면 가장자리에 붙인다) | `…（12打席・30打席未満）` |
+ * | 값이 없는 달(M11) | 꼭짓점이 아니다 | **없다** | `5月 なし（0回）` |
+ *
+ * ⚠**「꼭짓점이 아니다」는 「선이 끊긴다」가 아니다** — 선은 그 달을 건너 **앞뒤의 믿을 수 있는 달을 바로 잇는다**
+ * (값이 없는 달을 건너 잇던 옛 동작 그대로다). 가로 자리는 달 순서대로 고르게 나눠 그 달의 자리가 남는다.
+ *
+ * ⚠**속 빈 점은 저장소가 이미 쓰는 「얇음」의 어휘다** — 成績の紋의 `.mf-shape.thin` 이 같은 이유로
+ * 속을 비운다(「꽉 찬 도형은 『이만큼이다』라는 단정」). 채움 유무는 **강제 색 모드에서도 남는다**
+ * (`fill:none` 은 색이 아니라 강제 대상이 아니다 — forced-colors.test.ts).
+ * ⚠**눌러 붙인 얇은 점은 크기를 말하지 않는다** — 방향(다른 달보다 위/아래)만 참이다. 크기는 이름과 표가 말한다.
+ * ⚠**믿을 수 있는 달이 둘 미만이면 그리지 않는다** — 얇은 점만 있는 그림은 선이 없는 그림이다.
+ *
+ * ⚠**선과 점의 색을 여기(속성)서 주지 않는다 — CSS 토큰(`.spark polyline` · `.spark circle`)이 준다**
  * (2026-09-25 감사 W2 · 2026-09-27). 구단 색 변수를 속성으로 달았더니 12구단 중 11구단이 어느 한 테마에서
  * 바탕 대비 3:1 미달이었고, **CSS 만 읽는 대비 검사는 그것을 원리적으로 못 봤다**(`css-contrast.test.ts`).
  */
-function sparkline(points: readonly SparkPoint[], label: string): RawHtml {
-  const values = points.map((p) => p.value).filter((v): v is number => v !== null);
-  if (values.length < 2) return raw("");
+function sparkline(s: SparkData): RawHtml {
+  const unit = denUnit(s.metric);
+  const digits = SPARK_DIGITS[s.metric];
+  const label = `月別${termLabel(s.metric)}`;
+  // ⚠**표의 각주와 같은 말**이다 — 「30打席未満は薄く表示しています」「3回未満は…」
+  const thinText = `${denominator(s.thinBelow, unit)}未満`;
+  const isThin = (p: SparkPoint): boolean => p.rate.value !== null && p.rate.denominator < s.thinBelow;
+
+  const solid = s.points
+    .map((p) => p.rate.value)
+    .filter((v, i): v is number => v !== null && !isThin(s.points[i]!));
+  if (solid.length < 2) return raw("");
 
   const w = 108;
   const h = 26;
-  const lo = Math.min(...values);
-  const hi = Math.max(...values);
+  const lo = Math.min(...solid);
+  const hi = Math.max(...solid);
   const span = hi - lo || 1;
-  const step = w / (points.length - 1);
+  const step = w / (s.points.length - 1);
+  /** ⚠얇은 달은 눈금 밖일 수 있다 — 상자 밖으로 내보내지 않고 가장자리에 붙인다 */
+  const yOf = (v: number): number => h - Math.max(0, Math.min(1, (v - lo) / span)) * h;
+  const at = (x: number, y: number): { x: string; y: string } => ({ x: x.toFixed(1), y: y.toFixed(1) });
 
-  const coords = points.map((p, i) => ({
-    x: i * step,
-    y: p.value === null ? null : h - ((p.value - lo) / span) * h,
-  }));
-  const line = coords
-    .filter((c): c is { x: number; y: number } => c.y !== null)
-    .map((c) => `${c.x.toFixed(1)},${c.y.toFixed(1)}`)
-    .join(" ");
-  const last = [...coords].reverse().find((c) => c.y !== null);
+  const kept = s.points.flatMap((p, i) =>
+    p.rate.value === null || isThin(p) ? [] : [at(i * step, yOf(p.rate.value))],
+  );
+  const thin = s.points.flatMap((p, i) => (p.rate.value !== null && isThin(p) ? [at(i * step, yOf(p.rate.value))] : []));
+  const last = kept.at(-1)!;
+
+  const name = s.points
+    .map((p) => {
+      const { value, den } = rateParts(p.rate, unit, digits);
+      return `${p.label} ${p.rate.value === null ? "なし" : value}（${den}${isThin(p) ? `・${thinText}` : ""}）`;
+    })
+    .join("、");
 
   return html`<div class="spark">
-  <svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img"
-    aria-label="${label}：${points.map((p) => `${p.label} ${p.value === null ? "なし" : p.value.toFixed(3)}`).join("、")}">
-    <polyline points="${line}" fill="none" stroke-width="1.6"
+  <svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img" aria-label="${label}：${name}">
+    <polyline points="${kept.map((c) => `${c.x},${c.y}`).join(" ")}" fill="none" stroke-width="1.6"
       stroke-linejoin="round" stroke-linecap="round"></polyline>
-    ${last === undefined ? null : html`<circle cx="${last.x.toFixed(1)}" cy="${last.y!.toFixed(1)}" r="2.4"></circle>`}
+    ${thin.map((c) => html`<circle class="thin" cx="${c.x}" cy="${c.y}" r="2.4" fill="none" stroke-width="1.2"></circle>`)}
+    <circle cx="${last.x}" cy="${last.y}" r="2.4"></circle>
   </svg>
-  <span class="sl">${label}　${points[0]?.label ?? ""}→${points.at(-1)?.label ?? ""}</span>
+  <span class="sl">${label}　${s.points[0]?.label ?? ""}→${s.points.at(-1)?.label ?? ""}</span>
 </div>`;
 }
 
@@ -1060,7 +1140,7 @@ function idLine(d: PlayerPageData, base: string): RawHtml {
             `成績は今季の合計。順位は${d.stints.at(-1)!.leagueName}での${d.stints.at(-1)!.sampleText}で計算`
           }</em></span>`}
   </div>
-  ${sparkline(d.spark, d.sparkLabel)}
+  ${sparkline(d.spark)}
 </header>
 ${empty ? raw("") : markPanel(who, d.mark.axes, d.mark.sampleText)}`;
 }
@@ -2025,8 +2105,9 @@ function pitchingSplitTable(a: SplitAxisData, cells: Map<string, PitchingSplitCe
     if (c === undefined) return raw("");
     const era = eraOf(c);
     const whip = whipOf(c);
-    // ⚠**얇음의 잣대가 다르다** — 타석이 아니라 **이닝**이다. 3이닝 미만은 흐린다
-    const thin = c.outs < 9;
+    // ⚠**얇음의 잣대가 다르다** — 타석이 아니라 **이닝**이다. 3이닝 미만은 흐린다.
+    //   ⚠**표제 옆 월별 꺾은선과 같은 상수**다(M1) — 같은 달을 두 자리가 다르게 말하지 않게
+    const thin = c.outs < THIN_SPLIT_OUTS;
     return html`<tr class="${thin ? "thin" : ""}">
       <td class="l">${r.label}</td>
       <td class="l"><div class="track"><i style="width:${Math.round(
@@ -2137,7 +2218,8 @@ function splitsBlock(axes: readonly SplitAxisData[]): RawHtml {
             //   임계도 타석이 아니라 **이닝**이다(3이닝 미만).
             `棒は防御率（**短いほど良い**）。この区分は**登板がまるごと1つの枠に入る**ので、`
             + `投球回と自責点をそのまま合計できます — **本物の防御率**です。`
-            + `3回未満は薄く表示しています。`
+            // ⚠**수를 문장에 박지 않는다** — 문턱 상수에서 만든다(표·꺾은선·각주가 한 수를 말한다)
+            + `${denominator(THIN_SPLIT_OUTS, denUnit("era"))}未満は薄く表示しています。`
           : allowed
             ? `棒は被OPS（**短いほど良い**）。安打・本塁打・四球・三振は**投手が許した数**です。`
               + `${a.thinBelow}対戦打席未満は薄く表示しています。`

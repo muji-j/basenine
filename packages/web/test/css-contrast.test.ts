@@ -202,6 +202,8 @@ const TEAM_MARKS: readonly {
   { sel: '.roster li[data-favon="true"] .hn::before', prop: "color", need: 4.5, bg: "page", what: "명부의 즐겨찾기 ★(10px 글자)" },
   { sel: ".spark polyline", prop: "stroke", need: 3.0, bg: "page", what: "월별 추이 꺾은선(비텍스트)" },
   { sel: ".spark circle", prop: "fill", need: 3.0, bg: "page", what: "월별 추이의 끝점(비텍스트)" },
+  // ⚠**얇은 달의 속 빈 점은 테두리가 전부다**(2026-09-27 · 감사 N7) — 채움이 없으니 선이 3:1 을 넘어야 보인다
+  { sel: ".spark circle.thin", prop: "stroke", need: 3.0, bg: "page", what: "월별 추이의 얇은 달(속 빈 점 · 비텍스트)" },
 ];
 
 for (const scope of ["light", "dark"] as const) {

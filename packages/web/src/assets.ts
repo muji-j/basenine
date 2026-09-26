@@ -495,6 +495,13 @@ a{color:inherit}
    구단은 이 표제에서 .idline 의 밑줄과 .spine 이 말한다(면이라 대비 규칙이 다르다). */
 .spark polyline{stroke:var(--tx-2)}
 .spark circle{fill:var(--tx)}
+/* ⚠**얇은 달은 속 빈 점이다**(2026-09-27 · 감사 N7). 월 스플릿 표와 같은 문턱 미만인 달은
+   선의 모양을 정하지 않으므로 선에 잇지 않고, **채움을 비워** 「이 점은 단정이 아니다」를 말한다 —
+   成績の紋의 .mf-shape.thin 이 같은 이유로 속을 비운다(같은 어휘 · M1).
+   잉크는 선과 같은 --tx-2(--page 대비 6.336 / 7.229 · 비텍스트 3:1 통과 · css-contrast 가 잰다).
+   ⚠**fill:none 은 강제 색 모드에서도 남는다** — none 은 색이 아니라 강제 대상이 아니다.
+   그래서 그 모드에서도 채운 끝점(지금)과 속 빈 점(얇은 달)이 갈린다(forced-colors.test.ts). */
+.spark circle.thin{fill:none;stroke:var(--tx-2)}
 .spark .sl{font-family:var(--f-num);font-size:var(--fs-min);color:var(--tx-3);letter-spacing:.06em}
 .idline .asof{font-family:var(--f-num);font-size:var(--fs-note);color:var(--tx-3)}
 

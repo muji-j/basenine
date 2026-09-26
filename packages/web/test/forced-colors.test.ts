@@ -275,6 +275,13 @@ const JUSTIFIED: readonly Justification[] = [
     why: "바탕 .dia .do 가 fill:none 이고 none 은 색이 아니라 강제 대상이 아니다 — 채움 유무가 남는다",
     cites: [{ sel: ".dia .do", decl: "fill:none" }],
   },
+  // ⚠**월별 꺾은선의 얇은 달**(2026-09-27 · 감사 N7). 선 색은 이 모드에서 갈리지만 **채움 유무는 남는다** —
+  //   끝점(지금)은 채우고 얇은 달은 비운다. 둘이 같은 시스템 색이 돼도 모양으로 갈린다.
+  {
+    sel: ".spark circle.thin",
+    why: "fill:none 은 색이 아니라 강제 대상이 아니다 — 채운 끝점과 속 빈 점(얇은 달)이 모양으로 갈린다",
+    cites: [{ sel: ".spark circle.thin", decl: "fill:none" }],
+  },
   {
     sel: ".gcard.off .gvenue,.gcard.off .gt,.gcard.off .gr",
     why: ".gcard.off 의 border-style:dashed 가 남는다",
