@@ -41,6 +41,7 @@ import {
 import { MAX_REFETCH_DATES, judgeVersion, writeGameGuarded } from "../src/version-guard.ts";
 import { checkIntegrity, checkSet, readGamePages } from "../src/page-integrity.ts";
 import type { GamePages } from "../src/page-integrity.ts";
+import { gameFromBoxPath } from "../src/game-slug.ts";
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -105,10 +106,10 @@ async function* walkSchedules(dir: string): AsyncGenerator<string> {
 /**
  * `.../npb/scores/2026/0814/s-db-17/box.html.gz` → 경기 식별 정보
  *
- * ⚠**슬러그는 `{홈}-{원정}-{경기번호}` 순서다.** 직관과 반대라서 실제로 한 번 틀렸고,
- * 그 결과 전 선수의 소속 구단이 상대 팀으로 뒤집혔다.
- * 실측 근거: 박스스코어의 `tablefix_t_b`(先攻=원정)에 붙은 팀명이 **슬러그 두 번째**와
- * 일치한다 — 630경기 전건 확인(2026-08-15).
+ * ⚠**경기인가의 판정과 경로 해석은 잎 `../src/game-slug.ts` 의 `gameFromBoxPath` 한 벌이다**(M1 · 2026-09-26 · 감사 C10 설계 D2).
+ * 수집 창(`scripts/update.ts`)이 마지막 경기일의 「받아 둔 경기」를 **같은 함수로** 센다 — 여기에 판정을 따로 두면
+ * 한쪽만 고쳐졌을 때 수집 창이 적재기와 다른 폴더를 경기로 본다. 슬러그 순서(`{홈}-{원정}-{경기번호}`)의 근거도 거기 있다.
+ * 여기 남는 것은 **팀 코드 정규화**뿐이다 — domain 이라 잎(import 0개)에 둘 수 없다.
  */
 function gameFromPath(file: string): {
   gameId: string;
@@ -118,16 +119,12 @@ function gameFromPath(file: string): {
   homeCode: string;
   gameNo: number;
 } | null {
-  const m = /scores[\\/](\d{4})[\\/](\d{2})(\d{2})[\\/]([^\\/]+)[\\/]box\.html\.gz$/.exec(file);
-  if (!m) return null;
-  const [, season, mm, dd, slug] = m;
-  const parts = slug!.split("-");
-  const gameNo = Number(parts.at(-1));
-  if (parts.length < 3 || !Number.isFinite(gameNo)) return null;
+  const g = gameFromBoxPath(file);
+  if (g === null) return null;
   return {
-    gameId: `${season}/${mm}${dd}/${slug}`,
-    season: Number(season),
-    gameDate: `${season}-${mm}-${dd}`,
+    gameId: g.gameId,
+    season: g.season,
+    gameDate: g.gameDate,
     /**
      * ⚠**옛 슬러그를 지금 코드로 바꿔서 넣는다**(2026-08-18 · 2018 백필에서 알았다).
      * 오릭스는 2018 시즌까지 `bs` 였다. 그대로 저장하면 리그 필터·구단 페이지·색이
@@ -135,9 +132,9 @@ function gameFromPath(file: string): {
      * ⚠`gameId` 는 **슬러그 원문 그대로** 둔다 — 아카이브 경로와의 대응이 끊기면
      * 「이 수치가 어느 파일에서 왔나」에 답할 수 없다(§0-10).
      */
-    awayCode: canonicalTeamCode(parts.slice(1, -1).join("-")),
-    homeCode: canonicalTeamCode(parts[0]!),
-    gameNo,
+    awayCode: canonicalTeamCode(g.awaySlug),
+    homeCode: canonicalTeamCode(g.homeSlug),
+    gameNo: g.gameNo,
   };
 }
 
