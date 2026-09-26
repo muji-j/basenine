@@ -67,8 +67,17 @@ export function totalBases(line: BattingLine): number {
  * ⚠**표시용이다. 계산에 쓰지 마라** — `6.2` 를 수로 더하기 시작하면 이닝이 조용히 어긋난다.
  * ⚠**클라이언트(`assets.ts`)에는 한 벌이 더 있고 그건 어쩔 수 없다** — 브라우저가 서버 모듈을
  * 못 부른다. 그 자리는 그 사실이 이미 주석에 적혀 있다.
+ *
+ * ⚠**0 이상 정수가 아니면 던진다**(2026-09-27 · PR-D 검토 P3 · M7). 이 함수가 `20 / 3` 을 받아
+ * 「2.0.666666666666667」을 만들었고, 경기 단위 투구 표가 `outs / 3` 을 넘긴 결함(df5a72b)이
+ * 그대로 배포됐다 — 값이 아니라 **분모**라서 아무 시험도 안 울렸다.
+ * ⚠**부분 방어다** — 3의 배수를 한 번 더 나눈 값(`162 / 3` = 54 → 「18」)은 정수라 여기서 못 잡는다.
+ *   그 모양은 호출하는 쪽의 시험(표의 분모 「54回」)이 잡는다.
  */
 export function inningsFromOuts(outs: number): string {
+  if (!Number.isInteger(outs) || outs < 0) {
+    throw new RangeError(`아웃 카운트는 0 이상 정수여야 한다: ${outs} — 이닝을 넘겼거나 아웃을 나눴다(M7)`);
+  }
   const whole = Math.floor(outs / 3);
   const remainder = outs % 3;
   return remainder === 0 ? String(whole) : `${whole}.${remainder}`;

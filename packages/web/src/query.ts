@@ -234,7 +234,7 @@ import {
 import type { Competition, League, TeamColor } from "@bb-app/domain";
 import { countsAsHit } from "@bb-app/parser";
 import type { Outcome } from "@bb-app/parser";
-import { positionMark } from "./player-page.ts";
+import { positionMark, THIN_SPLIT_OUTS } from "./player-page.ts";
 import type { PlayerStint } from "./player-page.ts";
 import { battingProfile, pitchingProfile } from "./marks.ts";
 import type {
@@ -248,7 +248,7 @@ import type {
   RoleLine,
   ScorebookRow,
   SituationCell,
-  SparkPoint,
+  SparkData,
   PitchingSplitCell,
   SplitAxisData,
   SplitAxisId,
@@ -1557,13 +1557,19 @@ function loadMatchups(
   return { byBatter, byPitcher };
 }
 
-/** 투수의 월별 방어율. 표제 옆 꺾은선의 입력이 된다 */
+/**
+ * 투수의 월별 방어율. 표제 옆 꺾은선의 입력이 된다.
+ *
+ * ⚠**`Rate` 를 통째로 돌려준다 — 분모(아웃)를 버리지 않는다**(2026-09-27 · 감사 N7 · P0).
+ * 예전엔 값만 돌려줘서 꺾은선이 1아웃짜리 달(방어율 189.00)을 **얇은 달로 가를 수 없었고**
+ * 이름도 분모 없이 읽혔다. 분모가 없으면 M2 를 지킬 방법이 화면에 남지 않는다.
+ */
 function loadMonthlyEra(
   db: Db,
   season: number,
   competition: string,
   through: string,
-): Map<string, { month: string; era: number | null }[]> {
+): Map<string, { month: string; era: Rate }[]> {
   const rows = db.raw
     .prepare(
       `SELECT t.player_id AS playerId, substr(g.game_date, 1, 7) AS month,
@@ -1581,9 +1587,9 @@ function loadMonthlyEra(
     er: number;
   }[];
 
-  const out = new Map<string, { month: string; era: number | null }[]>();
+  const out = new Map<string, { month: string; era: Rate }[]>();
   for (const r of rows) {
-    const era = earnedRunAverage({ ...EMPTY_PITCHING, outs: r.outs, er: r.er }).value;
+    const era = earnedRunAverage({ ...EMPTY_PITCHING, outs: r.outs, er: r.er });
     const list = out.get(r.playerId);
     const entry = { month: r.month, era };
     if (list === undefined) out.set(r.playerId, [entry]);
@@ -6451,14 +6457,26 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
             sampleText: denominator(battingData?.line.pa ?? 0),
           };
 
-    // 표제 옆 꺾은선 — 타자는 월별 OPS, 투수는 월별 방어율. **사진 대신 쓰는 표시**다
-    const spark: SparkPoint[] =
+    /**
+     * 표제 옆 꺾은선 — 타자는 월별 OPS, 투수는 월별 방어율. **사진 대신 쓰는 표시**다.
+     *
+     * ⚠**분모를 싣고, 얇음의 잣대는 月別 표의 것을 그대로 넘긴다**(2026-09-27 · 감사 N7 · P0).
+     * 타자는 **그 축 자신의** `thinBelow` 를 읽는다 — 수를 여기서 다시 고르면 표와 꺾은선이 갈린다.
+     * 투수는 경기 단위 투구 표가 쓰는 `THIN_SPLIT_OUTS` 다(표도 이 상수로 흐린다).
+     */
+    const monthAxis = (splitsByPlayer.get(playerId) ?? []).find((a) => a.id === "month");
+    const spark: SparkData =
       role === "pitcher"
-        ? (monthlyEra.get(playerId) ?? []).map((m) => ({ label: monthLabel(m.month), value: m.era }))
-        : ((splitsByPlayer.get(playerId) ?? []).find((a) => a.id === "month")?.rows ?? []).map((r) => ({
-            label: r.label,
-            value: r.ops.value,
-          }));
+        ? {
+            metric: "era",
+            thinBelow: THIN_SPLIT_OUTS,
+            points: (monthlyEra.get(playerId) ?? []).map((m) => ({ label: monthLabel(m.month), rate: m.era })),
+          }
+        : {
+            metric: "ops",
+            thinBelow: monthAxis?.thinBelow ?? THIN_SPLIT_PA,
+            points: (monthAxis?.rows ?? []).map((r) => ({ label: r.label, rate: r.ops })),
+          };
 
     players.push({
       playerId,
@@ -6523,7 +6541,6 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
         role === "pitcher"
           ? reliefBlockOf(reliefCareer.get(playerId), reliefSeason.get(playerId), heldFrom, o.season)
           : null,
-      sparkLabel: role === "pitcher" ? "月別防御率" : "月別OPS",
       asOf: meta.latest,
       stints: stintsOf(playerId, role),
       bunts,

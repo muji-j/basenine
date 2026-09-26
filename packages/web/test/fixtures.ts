@@ -405,13 +405,23 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
       }),
       sampleText: "442打席",
     },
-    spark: [
-      { label: "3月", value: 0.812 },
-      { label: "4月", value: 1.104 },
-      { label: "5月", value: 0.99 },
-      { label: "6月", value: null },
-      { label: "7月", value: 1.201 },
-    ],
+    /**
+     * ⚠**분모를 싣는다**(2026-09-27 · 감사 N7) — 이름이 달마다 분모를 읽는다(M2).
+     * ⚠**얇은 달(3月 22打席)을 일부러 둔다** — 기본 픽스처에 없으면 그 분기를 아무 시험도 안 지난다.
+     * `6月` 은 **값이 정의되지 않는 달**(희생번트 1타석 — OPS 없음)이지 0 이 아니다(M11).
+     * `thinBelow` 는 月別 축의 문턱(`THIN_SPLIT_PA`)과 같은 30 이다 — 픽스처는 query.ts 를 끌어오지 않는다.
+     */
+    spark: {
+      metric: "ops",
+      thinBelow: 30,
+      points: [
+        { label: "3月", rate: r(0.812, 22) },
+        { label: "4月", rate: r(1.104, 98) },
+        { label: "5月", rate: r(0.99, 101) },
+        { label: "6月", rate: r(null, 1) },
+        { label: "7月", rate: r(1.201, 103) },
+      ],
+    },
     streaks: {
       hitting: { current: 3, best: 12, bestFrom: "2026-05-02", bestTo: "2026-05-17" },
       onBase: { current: 8, best: 21, bestFrom: "2026-04-20", bestTo: "2026-05-17" },
@@ -431,7 +441,6 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
      * `null` 은 「등판이 없다」이지 「기록이 0」이 아니다(M11).
      */
     pitchingStreaks: null,
-    sparkLabel: "月別OPS",
     /**
      * カウント別. ⚠**격리분이 0이 아닌 픽스처**를 기본으로 둔다 —
      * 0이면 「격리 수를 말하는 줄」이 영영 그려지지 않아 그 분기를 아무도 안 본다.

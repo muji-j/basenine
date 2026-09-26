@@ -86,6 +86,11 @@ export const CSS = `
   --topbar:46px;
   /* 탭줄 한 줄의 높이. 스크롤 여백 계산이 이 값을 쓰므로 .rail 이 실제로 이 높이여야 한다 */
   --rail:48px;
+  /* **누르는 표적의 최소 한 변** — WCAG 2.2 SC 2.5.8(24 × 24 CSS px).
+     ⚠**간격 척도(--s8 = 24px)를 빌리지 않는다** — 값이 같은 것은 우연이고 뜻이 다르다. 간격은 리듬이고
+     이것은 **기준**이라, 척도를 다시 짜는 날에도 움직이면 안 된다.
+     ⚠**「손가락이면」이 아니다** — 그 기준에 「포인터가 정밀하면 면제」는 없다(.term::after 주석과 같은 이유). */
+  --hit:24px;
   /* ══ 척도 ═══════════════════════════════════════════════════════════════════
      이름과 체계는 채택안 C(docs/superpowers/specs/mockups-2026-09-07/c-modern.html)에서
      가져왔다. **1단계(2026-09-07)는 배선만 세우고 화면을 안 바꿨고, 2a(2026-09-08)가
@@ -482,6 +487,12 @@ a{color:inherit}
    페이지 제목이 없었다(3,257장 중 h1 0장). 여백은 여기서 지운다 — h1 의 기본 여백이 붙으면
    머리줄이 벌어진다 */
 .idline .nm{margin:0;font-size:clamp(var(--fs-num),5vw,var(--fs-score));font-weight:var(--w-bold);letter-spacing:.08em;line-height:1.2}
+/* ⚠**이름과 즐겨찾기 버튼을 한 줄에 — 버튼은 h1 밖 형제다**(2026-09-27 · 감사 N11).
+   버튼이 h1 안에 있던 때는 인라인 흐름이 줄을 맞춰 줬다. 밖으로 빼면 그 일을 이 줄이 한다 —
+   세로 가운데 · 버튼 앞 간격(예전 margin-left 와 같은 --s4). 이름이 길면 h1 안에서 줄을 바꾸고 버튼은 옆에 남는다.
+   ⚠기본 규칙에서는 버튼(최소 24px · N13)이 이름 줄(22px × 1.2 = 26.4px 이상)보다 작아 이 줄의 높이를 안 바꾼다.
+     좁은 폭의 예외(약 364px 이하에서 최대 2.4px)는 .favbtn 주석에 적었다. */
+.idline .nmrow{display:flex;align-items:center;gap:var(--s4);min-width:0}
 .idline .sub{font-size:var(--fs-sub);color:var(--tx-2);letter-spacing:.06em}
 .spark{margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:var(--s1)}
 .spark svg{display:block;overflow:visible}
@@ -495,6 +506,13 @@ a{color:inherit}
    구단은 이 표제에서 .idline 의 밑줄과 .spine 이 말한다(면이라 대비 규칙이 다르다). */
 .spark polyline{stroke:var(--tx-2)}
 .spark circle{fill:var(--tx)}
+/* ⚠**얇은 달은 속 빈 점이다**(2026-09-27 · 감사 N7). 월 스플릿 표와 같은 문턱 미만인 달은
+   선의 모양을 정하지 않으므로 선에 잇지 않고, **채움을 비워** 「이 점은 단정이 아니다」를 말한다 —
+   成績の紋의 .mf-shape.thin 이 같은 이유로 속을 비운다(같은 어휘 · M1).
+   잉크는 선과 같은 --tx-2(--page 대비 6.336 / 7.229 · 비텍스트 3:1 통과 · css-contrast 가 잰다).
+   ⚠**fill:none 은 강제 색 모드에서도 남는다** — none 은 색이 아니라 강제 대상이 아니다.
+   그래서 그 모드에서도 채운 끝점(지금)과 속 빈 점(얇은 달)이 갈린다(forced-colors.test.ts). */
+.spark circle.thin{fill:none;stroke:var(--tx-2)}
 .spark .sl{font-family:var(--f-num);font-size:var(--fs-min);color:var(--tx-3);letter-spacing:.06em}
 .idline .asof{font-family:var(--f-num);font-size:var(--fs-note);color:var(--tx-3)}
 
@@ -1290,7 +1308,15 @@ th[aria-sort="descending"] .sortable i::before{content:"↓"}
 .sname{margin:0 0 var(--s3);font-size:var(--fs-note);letter-spacing:.14em;font-weight:var(--w-bold);display:flex;align-items:center;gap:var(--s3)}
 .sname i{width:10px;height:10px;background:var(--chip,#6b7280);font-style:normal}
 .spitcher{margin:0 0 var(--s4);font-size:var(--fs-title);font-weight:var(--w-bold);letter-spacing:.06em}
-.spitcher a{text-decoration:none;box-shadow:inset 0 -2px 0 var(--chip,#6b7280)}
+/* ⚠**링크임을 글자 밑줄로 말한다 — 구단 색 밑줄이 아니다**(2026-09-27 · 감사 N15).
+   예전엔 표준 밑줄을 끄고 **구단 색 2px box-shadow 하나**로 「누를 수 있다」를 말했다. 글자색은
+   물려받고 호버 표식도 없어 그 선이 **유일한 상시 단서**였는데, --panel 대비 12구단 중
+   **라이트 4 · 다크 8** 이 3:1 미달이었고 강제 색 모드에서는 box-shadow 가 통째로 none 이 됐다.
+   → 밑줄 색은 글자색(--tx · --panel 대비 17.889 / 13.592)을 따르고, 그 모드에서도 남는 text-decoration 으로 긋는다.
+   구단은 바로 위 .sname 의 칩과 이름이 말한다 — 이 자리에서 구단 색을 되살리지 마라.
+   ⚠**오프셋을 주는 이유**: 한자·가나는 글자가 알파벳 기준선 아래로 약 0.12em 내려온다 — 18px 에서 2px 남짓이라
+   서체 기본 위치의 밑줄은 획 끝에 닿는다. 4px(--s2) 아래로 내려 획과 떨어뜨린다. 굵기는 서체에 맡긴다. */
+.spitcher a{text-decoration:underline;text-underline-offset:var(--s2)}
 dl.srow{grid-template-columns:auto 1fr;margin-bottom:var(--s5)}
 @media (max-width:680px){.starters{grid-template-columns:1fr;gap:var(--s6)}}
 
@@ -1356,8 +1382,11 @@ dl.srow{grid-template-columns:auto 1fr;margin-bottom:var(--s5)}
    ⚠**U+FE0E(VS15)로 못 막는다** — 그 글자도 서체에 없어 게이트가 다시 선다(isNonGlyph 에 예외를 더하지 마라).
    → **더 가볍게 가려면 ›/‹(U+203A/U+2039)** 다. **네 서체 전부**가 갖고(라틴 포함)
    진폭 0.30em · 잉크 0.41~0.43em · **베이스라인 아래로 안 내려가고** 이모지 표현이 없다 —
-   즉 지금 CSS 가 전제한 그 치수다. 바꿀 때는 여기와 아래 .cmprow 두 줄을 **같이** 고쳐라. */
-.pickfold>summary::after{content:"▶" / "";margin-left:auto;font-size:var(--fs-min);color:var(--tx-3);
+   즉 지금 CSS 가 전제한 그 치수다. 바꿀 때는 여기와 아래 .cmprow 두 줄을 **같이** 고쳐라.
+   ⚠**폴백 선언이 빠져 있었다**(2026-09-27 · PR-D 검토 P3). 대체 텍스트 문법을 모르는 브라우저는
+   content:"▶" / "" 를 통째로 버리는데, 기본 표식도 list-style:none 으로 지워 둬서 **손잡이에 표식이 없었다.**
+   → 앞 선언(글리프만)이 보이는 ▶ 를 보장하고 뒤 선언이 아는 브라우저에서 낭독을 비운다(.cmprow 와 같은 두 겹). */
+.pickfold>summary::after{content:"▶";content:"▶" / "";margin-left:auto;font-size:var(--fs-min);color:var(--tx-3);
   transition:transform var(--t1) var(--e-out)}
 .pickfold[open]>summary::after{transform:rotate(90deg)}
 /* 눌리는 자리임을 손에 알린다 — 라벨만으로는 눌러도 되는지 알 수 없다.
@@ -2182,10 +2211,13 @@ table.stand .dif i.n{right:50%}
 .gside .gt{display:flex;align-items:center;gap:var(--s3);font-size:var(--fs-lead);color:var(--tx-2)}
 /* ⚠**어느 쪽이 홈인지가 카드에 없었다**(2026-08-20 감사 ②). 홈 화면의 「＠팀」과 같은 어법이다(M1).
    ⚠**자리는 두 줄 다 비워 둔다** — 글자를 한쪽에만 붙이면 팀명 시작선이 어긋난다.
-   ⚠생성 콘텐츠는 낭독되지 않을 수 있어 마크업에 .vh 로 「ホーム／ビジター」를 함께 둔다 */
+   ⚠생성 콘텐츠는 낭독되지 않을 수 있어 마크업에 .vh 로 「ホーム／ビジター」를 함께 둔다
+   ⚠⚠**그 전제의 반대쪽도 참이다 — 읽는 브라우저에서는 둘 다 읽혔다**(2026-09-27 · 감사 N12 과 같은 모양).
+   생성 콘텐츠도 이름·낭독에 들어가서 「＠ 広島 （ホーム）」처럼 뜻이 두 번 나갔다.
+   → 뜻은 .vh 가 한 번만 말하고 ＠ 는 대체 텍스트를 비운다. 앞 선언은 그 문법을 모르는 브라우저용 폴백이다. */
 .gside .gt::before{content:"";flex:none;width:.9em;text-align:center;
   font-size:var(--fs-label);color:var(--tx-3)}
-.gside.h .gt::before{content:"＠"}
+.gside.h .gt::before{content:"＠";content:"＠" / ""}
 .gside .gt i{width:9px;height:9px;background:var(--chip,#6b7280);font-style:normal;flex:none}
 /* ⚠이긴 쪽은 **굵기와 크기**로 표시한다. 색만 쓰면 색각 특성에 따라 구별되지 않는다 */
 .gside.w .gt{color:var(--tx);font-weight:var(--w-bold)}
@@ -2609,8 +2641,12 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
    ⚠**구단 색이 아니라 --tx-2 다**(2026-09-25 감사 W2 · 2026-09-27). 표식이 있다/없다(★ 자체)가
    상태를 말하고 색은 거들 뿐인데, 그 색이 구단 색 변수였다 — ⚠**게다가 이 화면(選手一覧)은
    --team 에 중립색을 싣는다**: 실제로 그려지던 것은 #6b7280 이고 다크 --page 대비 **3.740** 으로
-   10px 글자의 4.5 에 미달이었다. → 필터 칩(.chip.fav)의 ★ 와 같은 잉크(M1 · --page 대비 6.336 / 7.229). */
-.roster li[data-favon="true"] .hn::before{content:"★";color:var(--tx-2);margin-right:var(--s2);font-size:var(--fs-col)}
+   10px 글자의 4.5 에 미달이었다. → 필터 칩(.chip.fav)의 ★ 와 같은 잉크(M1 · --page 대비 6.336 / 7.229).
+   ⚠**★ 는 링크 이름에 넣지 않는다 — 대체 텍스트를 비운다**(2026-09-27 · 감사 N12). 생성 콘텐츠도 이름 계산에
+   들어가서, 스크립트가 같은 링크에 붙이는 .favtag.vh(「お気に入り」)와 **두 번** 읽혔다. 뜻은 그 글자가 한 번만 말한다.
+   ⚠**같은 선언을 두 번 쓰는 것은 실수가 아니다** — 대체 텍스트 문법을 모르는 브라우저는 뒤 선언을 통째로 버리므로
+   앞 선언이 보이는 ★ 를 보장한다(.cmprow .win::after 와 같은 두 겹 처방). */
+.roster li[data-favon="true"] .hn::before{content:"★";content:"★" / "";color:var(--tx-2);margin-right:var(--s2);font-size:var(--fs-col)}
 .chip.fav i{font-style:normal;margin-right:var(--s2)}
 /* ⚠**여기 적혀 있던 「9.55 / 9.14」도 같은 방식으로 틀렸다**(2026-09-08 · ⑵ 를 계산으로 바꾸면서 드러남).
    그 수는 --tx 를 --panel 위에 .8 로 합성한 값인데, **실제 잉크는 .chip 이 물려주는 --tx-2,
@@ -2626,8 +2662,18 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
    ⚠**옛 상태도 미달이었다**: inherit 를 .8 로 흐렸을 때 **3.760**. 흐림을 빼서 **4.834** 가 된다. */
 .chip.fav[aria-pressed="true"] s{color:inherit}
 .chip.fav[hidden]{display:none}
-.favbtn{font:inherit;font-size:var(--fs-lead);line-height:1;margin-left:var(--s4);padding:var(--s1) var(--s3);cursor:pointer;
-  background:transparent;border:var(--rw-row) solid var(--hair-2);color:var(--tx-3);vertical-align:middle;
+/* ⚠**margin-left·vertical-align 을 뺐다**(2026-09-27 · N11) — 버튼이 h1 밖으로 나가 인라인 흐름이 아니다.
+   간격과 세로 정렬은 부모 .idline .nmrow 가 준다.
+   ⚠**표적을 24 × 24 이상으로 — 항상**(2026-09-27 · 감사 N13). 글자 13 + 여백 2×2 + 테두리 1×2 = **높이 19px** 였고
+   손가락 확대 목록에도 없었다. 바로 아래 구단 링크가 붙어 있어 간격 예외도 장담할 수 없다.
+   글리프는 버튼이 세로 가운데로 두므로 자리만 커지고 별의 크기는 그대로다.
+   ⚠**표제 줄 높이는 거의 안 바뀐다** — 기본 규칙에서 이름 줄은 22px × 1.2 = 26.4px 이상이라 24px 버튼이 줄을 못 키운다.
+   예외 하나: ≤480px 규칙은 이름을 clamp(18px, 5.5vw, …) 로 줄이므로 이름이 20px 아래가 되는 폭
+   (약 364px 이하 · 계산값)에서는 줄이 버튼 높이를 따라 커진다 — 최대 2.4px(327px 이하 · 18px × 1.2 = 21.6px).
+   눌러도 크기가 안 바뀌므로 「흔들림」은 아니다(☆·★ 는 같은 서체 · 같은 진폭 — 위 주석). ⚠브라우저로는 안 쟀다. */
+.favbtn{font:inherit;font-size:var(--fs-lead);line-height:1;padding:var(--s1) var(--s3);cursor:pointer;
+  min-width:var(--hit);min-height:var(--hit);
+  background:transparent;border:var(--rw-row) solid var(--hair-2);color:var(--tx-3);
   transition:color var(--t1) var(--e-out),border-color var(--t1) var(--e-out)}
 .favbtn:hover{color:var(--tx-2);border-color:var(--tx-3)}
 /* ⚠**눌림을 색 하나로 말하고 있었다**(2026-09-25 감사 W2 · 2026-09-27).
@@ -2642,7 +2688,10 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
    (정렬 화살표 th[aria-sort] … ::before 와 같은 방식). 이름은 aria-label 이 말한다.
    ⚠☆·★ 는 두 서체 스택 모두 **일본어 서체(Plex JP · Noto JP)가 3웨이트 전부 갖는다**(원본 cmap 실측 ·
    라틴 서체는 둘 다 없다) — 같은 서체가 둘 다 그리므로 눌러도 글꼴이 안 바뀌고, 진폭도 둘 다 1000/1000(전각)이라
-   **버튼 폭이 안 흔들린다.** ⚠굵기는 더하지 않는다 — 글자가 별 하나라 채널 구실을 못 한다. */
+   **버튼 폭이 안 흔들린다.** ⚠굵기는 더하지 않는다 — 글자가 별 하나라 채널 구실을 못 한다.
+   ⚠**여기는 대체 텍스트를 비우지 않는다**(2026-09-27 · 감사 N12 판단 — 명부의 ★ 와 다르다).
+   버튼 이름은 aria-label 이 정하므로 이 글리프는 **지금도 이름에 안 들어간다**. 비워 두면 오히려
+   aria-label 이 빠지는 날 **이름 없는 버튼**이 된다 — 두면 최소한 글리프가 마지막 이름으로 남는다. */
 .favbtn::before{content:"☆"}
 .favbtn[aria-pressed="true"]{color:var(--tx);border-color:var(--tx-3)}
 .favbtn[aria-pressed="true"]::before{content:"★"}
@@ -2956,24 +3005,35 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
   .qhits li.on a{background:Highlight;color:HighlightText}
   /* 카드는 안쪽 글자들이 각자 색을 가지므로 배경 대신 **윤곽**으로 말한다 */
   .card[aria-selected="true"]{outline:2px solid Highlight;outline-offset:-3px}
+  /* ⚠**고른 카드에 초점이 오면 모양이 달라져야 한다**(2026-09-27 · 감사 N9 · WCAG 2.4.7).
+     바로 위 규칙은 (0,2,0) 이라 전역 :focus-visible(0,1,0)의 초점 링을 **통째로 이겼다** —
+     고른 카드에 초점이 와도 안쪽 윤곽 그대로였다. 윤곽은 하나뿐이라 「고름」과 「초점」을 한 선이 같이 말해야 한다.
+     → **바깥쪽 이중선**: 초점 링처럼 바깥(offset 1px)에 서서 초점이 왔음을 말하고, 이중선이라
+       초점만 온 카드(한 줄)와도 갈린다 — 이 모드에서 고름을 말하는 다른 채널이 없어서다.
+     ⚠이중선은 3px 부터 두 줄로 그려진다(그 아래는 한 줄). 4px 로 두 줄 사이를 벌려 2px 한 줄 초점 링과
+       모양만으로 확실히 갈리게 한다. ⚠**렌더는 브라우저로 확인하지 못했다**(이 블록 머리 주석과 같은 사정). */
+  .card[aria-selected="true"]:focus-visible{outline:4px double Highlight;outline-offset:1px}
   /* 지금 페이지 표시가 box-shadow 밑줄 하나였다 — 글자 밑줄로 바꿔 남긴다 */
   .brand[aria-current="page"]{text-decoration:underline;text-underline-offset:3px}
   /* 「이 구획 안에 있다」(page 가 아니라 true). page 는 font-weight 로 살아남지만
      이쪽은 색과 box-shadow 뿐이었다 — **점선 밑줄로 세기를 낮춰** 둘을 갈라 둔다 */
   .tnav a[aria-current="true"]{text-decoration:underline dotted;text-underline-offset:3px}
-  /* 즐겨찾기 — ~~눌려도 글자가 ★ 그대로다~~ 는 2026-09-27 부로 거짓이다(감사 W2): ::before 가 ☆→★ 로
-     바뀌고 content 는 이 모드에서 남는다. 이 윤곽은 그 위에 한 겹 더 말하는 덧말이다.
-     ⚠이 윤곽이 전역 :focus-visible 의 초점 링을 덮는다는 지적이 있다(같은 날 디자인 감사) —
-     감사 문서 §10-4 의 다음 라운드에서 판정한다 */
-  .favbtn[aria-pressed="true"]{outline:2px solid Highlight;outline-offset:1px}
+  /* 즐겨찾기 — ⚠**눌림 윤곽을 뺐다**(2026-09-27 · 감사 N9 판정).
+     여기 있던 .favbtn[aria-pressed="true"]{outline:2px solid Highlight;outline-offset:1px} 는 (0,2,0) 이라
+     전역 :focus-visible 의 초점 링을 덮었다 — 눌린 버튼에 초점이 와도 모양이 같았다(WCAG 2.4.7).
+     ⚠**빼도 눌림은 남는다** — ::before 의 ☆→★ 가 바뀌고 content 는 이 모드에서 남는다(감사 W2).
+     그러면 이 버튼에서 윤곽은 **초점 하나만** 말한다. 한 선에 두 뜻을 싣는 것보다 낫다.
+     ⚠**다시 넣지 마라** — 넣으려면 위 .card 처럼 상태+초점 전용 윤곽을 함께 둬야 한다(forced-colors.test.ts N9). */
 }
 @media print{
   /* 조작에 쓰는 것은 종이에서 아무 일도 하지 않는다 */
   /* ⚠**새 조작을 이 목록에 넣는 것을 빼먹지 마라**(2026-09-08 · 검토 Minor).
      .snwrap 은 시즌 띄를 담는 상자라 안 지우면 **바탕과 밑줄만 종이에 남고**,
      .snbtn · .hjbar 는 종이에서 아무 일도 안 하는 손잡이다. **목록은 이름으로 적는 방식이라
-     새 조작을 만들 때마다 여기를 같이 고쳐야 한다.** */
-  .topbar,.editor,.skip,.seasons,.snwrap,.snbtn,.hjbar,.daybar,.pickbar,.pickgames{display:none}
+     새 조작을 만들 때마다 여기를 같이 고쳐야 한다.**
+     ⚠**그 빼먹기가 실제로 났다 — .favbtn**(2026-09-27 · 감사 N10). 마크업의 hidden 은 스크립트가 걷으므로
+     .favbtn[hidden] 은 종이에서 안 걸리고, 선수 표제에 ☆/★ 버튼이 찍혔다. */
+  .topbar,.editor,.skip,.seasons,.snwrap,.snbtn,.hjbar,.daybar,.pickbar,.pickgames,.favbtn{display:none}
   /* ⚠**레일은 지우지 않는다 — 지우면 아래 규칙이 닿기도 전에 이름이 사라진다.**
      여기 있던 .rail 의 display:none 이 그 일을 하고 있었다(2026-08-17 이중 검토).
      바로 밑 주석이 「탭줄은 조작이면서 고른 것의 이름이다」라고 적어 두고,

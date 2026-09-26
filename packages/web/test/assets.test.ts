@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { CLIENT_JS, CSS } from "../src/assets.ts";
+import { computed, parseRules, toPx } from "./css-cascade.ts";
 import { BLOCKS, PRESETS } from "../src/blocks.ts";
 
 /**
@@ -410,6 +413,93 @@ test("인쇄는 보고 있는 것을 찍는다 — 닫힌 탭을 펼치지 않�
  * 「お気に入り」로 3명만 남기고 인쇄하면, 나중에 그 종이를 보는 사람은
  * 「이 구단에 3명뿐인가」로 읽는다.
  */
+/**
+ * ⚠**대체 텍스트를 쓴 `content` 는 앞선 폴백 `content` 를 갖는다 — 전수**(2026-09-27 · PR-D 검토 P3).
+ *
+ * `content:"x" / ""` 문법을 모르는 브라우저는 그 선언을 **통째로 버린다** — 폴백이 없으면 표식이 사라진다.
+ * N12 는 자리를 이름으로 적어 재서 `.pickfold>summary::after{content:"▶" / ""}` 를 못 봤다(기본 표식도
+ * `list-style:none` 으로 지워 둬서 그 브라우저에서는 **접힘 손잡이가 표식 없이** 남았다).
+ * → 대체 텍스트를 쓴 선언마다 **같은 규칙의 앞선 선언** 또는 **같은 선택자의 앞선 규칙**에
+ *   같은 글리프의 폴백이 있어야 한다(`.cmprow .win::after` 는 두 규칙으로 쓴 선례다).
+ */
+test("⚠대체 텍스트를 쓴 content 는 모두 앞선 폴백 content 를 갖는다 — 모르는 브라우저에서 표식이 안 사라진다", () => {
+  const seen = new Map<string, Set<string>>();
+  const missing: string[] = [];
+  let alts = 0;
+  for (const r of parseRules(CSS)) {
+    for (const d of r.body.matchAll(/(?:^|;)\s*content\s*:\s*([^;]+)/g)) {
+      const v = d[1]!.trim();
+      const alt = /^("[^"]*")\s*\/\s*"[^"]*"$/.exec(v);
+      for (const part of r.parts) {
+        const key = `${r.media ?? ""}|${part}`;
+        if (alt === null) {
+          (seen.get(key) ?? seen.set(key, new Set()).get(key)!).add(v);
+          continue;
+        }
+        alts += 1;
+        if (!(seen.get(key)?.has(alt[1]!) ?? false)) missing.push(`${part}{content:${v}}`);
+      }
+    }
+  }
+  // ⚠**공회전 방지** — 대체 텍스트를 쓴 자리는 여럿 있다(比較 · 명부 ★ · 경기 카드 ＠ · 접힘 손잡이)
+  assert.ok(alts >= 5, `대체 텍스트를 쓴 content 를 ${alts}곳밖에 못 찾았다 — 이 스캔이 공회전한다`);
+  assert.deepEqual(missing, [], "폴백 없이 대체 텍스트만 쓴 content 가 있다 — 그 문법을 모르는 브라우저에서 표식이 사라진다");
+});
+
+/**
+ * ⚠**즐겨찾기 버튼이 종이에 찍혔다**(2026-09-27 · 감사 N10). 인쇄 숨김 목록에 `.favbtn` 이 없었고,
+ * 마크업의 `hidden` 은 스크립트가 걷는다(`paintFav` → `b.hidden=false`) — 그래서 `.favbtn[hidden]` 규칙도 안 걸린다.
+ * ⚠**문자열이 아니라 캐스케이드로 잰다** — 목록에 이름을 넣어도 더 구체적인 화면 규칙이 `display` 를 주면 진다.
+ */
+test("⚠N10 인쇄에 즐겨찾기 버튼이 찍히지 않는다 — 스크립트가 hidden 을 걷은 뒤에도", () => {
+  const all = parseRules(CSS);
+  const ancestors = [
+    { tag: "header", classes: ["idline"] },
+    { tag: "div", classes: ["idtext"] },
+    { tag: "div", classes: ["nmrow"] },
+  ];
+  for (const pressed of ["false", "true"]) {
+    // ⚠**실제 버튼은 id="favBtn" 이다** — 안 적으면 `#favBtn{…}` 규칙을 계산기가 못 본다(PR-D 검토 P3)
+    const el = { tag: "button", classes: ["favbtn"], id: "favBtn", attrs: { type: "button", "aria-pressed": pressed }, ancestors };
+    assert.equal(computed(all, el, "display", (q) => q === "print"), "none", `인쇄에서 눌림=${pressed} 버튼이 숨지 않는다`);
+    // ⚠**공회전 방지** — 화면에서까지 숨으면 이 단언은 아무것도 구별하지 않는다
+    assert.notEqual(computed(all, el, "display"), "none", `화면에서 눌림=${pressed} 버튼이 숨는다`);
+  }
+});
+
+/**
+ * ⚠**즐겨찾기 버튼의 표적이 작았다**(2026-09-27 · 감사 N13 · 개연). 계산상 약 27×19px
+ * (높이 = 글자 13 + 여백 2×2 + 테두리 1×2)이고 `pointer:coarse` 확대 목록에도 없었다.
+ * 바로 아래에 구단 링크가 붙어 있어 간격 예외(SC 2.5.8)가 성립한다고 장담할 수 없다.
+ * ⚠**「손가락이면」이 아니라 「항상」이다** — SC 2.5.8 에 「포인터가 정밀하면 면제」는 없다
+ * (`.term::after` 를 coarse 밖으로 뺀 것과 같은 이유 · assets.ts).
+ */
+test("⚠N13 즐겨찾기 버튼의 최종 최소 폭·높이가 24px 이상이다 — 마우스에서도(WCAG 2.5.8)", () => {
+  const all = parseRules(CSS);
+  const ancestors = [
+    { tag: "header", classes: ["idline"] },
+    { tag: "div", classes: ["idtext"] },
+    { tag: "div", classes: ["nmrow"] },
+  ];
+  const scenes: readonly [string, (q: string) => boolean][] = [
+    ["마우스·넓은 화면", () => false],
+    // 화면 쪽 조건(손가락 · 좁은 폭 · 다크)은 다 켜고, 인쇄 · 강제 색 · 모션 감소 · 넓은 폭 조건만 끈다
+    ["손가락·좁은 화면", (q) => !/print|forced-colors|min-width|prefers-reduced-motion/.test(q)],
+  ];
+  for (const [scene, mediaOk] of scenes) {
+    for (const pressed of ["false", "true"]) {
+      // ⚠**실제 버튼은 id="favBtn" 이다** — 안 적으면 `#favBtn{min-height:0}` 같은 규칙을 못 본다(PR-D 검토 P3)
+      const el = { tag: "button", classes: ["favbtn"], id: "favBtn", attrs: { type: "button", "aria-pressed": pressed }, ancestors };
+      for (const prop of ["min-width", "min-height"]) {
+        const v = computed(all, el, prop, mediaOk);
+        assert.ok(v !== undefined, `${scene} · 눌림=${pressed}: ${prop} 가 없다 — 표적이 글자 크기에 맡겨져 있다`);
+        // ⚠**토큰도 같은 장면의 미디어로 푼다**(PR-D 검토 P3) — 손가락 미디어에서 --hit 를 줄이면 잡혀야 한다
+        assert.ok(toPx(CSS, v, mediaOk) >= 24, `${scene} · 눌림=${pressed}: ${prop} ${v} 가 24px 미만이다`);
+      }
+    }
+  }
+});
+
 test("좁히기 조작은 지우되 「몇 명을 보고 있는가」는 종이에 남는다", () => {
   const printBlock = CSS.slice(CSS.indexOf("@media print"));
   assert.ok(!/[^-]\.find\{display:none\}/.test(printBlock), "분모까지 통째로 지웠다");
@@ -638,4 +728,43 @@ test("⚠比較の勝ち表示は「見える形」と「読み上げの意味�
     /if\(winner\)d\.appendChild\(el\("span","vh",winner\+"が上"\)\)/,
     "이긴 칸의 보이지 않는 글자가 사라졌다 — 대체텍스트만 남으면 낭독기에 아무것도 안 들린다",
   );
+});
+
+/**
+ * ⚠**뜻을 따로 낭독 글자로 싣는 장식 글리프는 대체 텍스트를 비운다**(2026-09-27 · 감사 N12).
+ *
+ * 명부의 즐겨찾기 ★(`.hn::before`)는 대체 텍스트 없이 **링크 이름에 들어갔고**, 스크립트가 같은 링크에
+ * 붙이는 `.favtag.vh`(「お気に入り」)와 **두 번** 읽혔다(생성 콘텐츠도 이름 계산에 든다 — AccName).
+ * 같은 모양이 경기 카드의 홈 표식 ＠(`.gside.h .gt::before`) + `.vh`「（ホーム）」에도 있었다 —
+ * 그 자리의 주석은 「생성 콘텐츠는 낭독되지 않을 수 있다」를 전제했는데, 읽히는 브라우저에서는 둘 다 읽힌다.
+ * → 위 「比較の勝ち表示」와 같은 두 겹 처방이다: **폴백 선언(글리프) → 대체 텍스트를 비운 선언**, 그리고
+ *   뜻을 나르는 낭독 글자가 **살아 있는가**까지 본다(그게 없으면 대체 텍스트가 채널을 지우기만 한다).
+ * ⚠**`.favbtn::before` 의 ☆/★ 는 여기 없다** — 버튼 이름은 `aria-label` 이 정해 글리프가 이름에 안 들어가고,
+ *   비워 두면 `aria-label` 이 빠지는 날 **이름 없는 버튼**이 된다(assets.ts 의 그 규칙 주석).
+ */
+test("⚠N12 뜻을 따로 낭독하는 장식 글리프는 대체 텍스트가 비어 있다 — 두 번 읽히지 않는다", () => {
+  const today = readFileSync(join(import.meta.dirname, "..", "src", "today-page.ts"), "utf8");
+  const sites = [
+    {
+      sel: '.roster li[data-favon="true"] .hn::before',
+      glyph: "★",
+      speaks: CLIENT_JS.includes('tag.className="favtag vh";tag.textContent="お気に入り"'),
+    },
+    {
+      sel: ".gside.h .gt::before",
+      glyph: "＠",
+      speaks: today.includes('<span class="vh">（${home ? "ホーム" : "ビジター"}）</span>') && today.includes('<span class="vh">（ホーム）</span>'),
+    },
+  ];
+  const css = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
+  for (const s of sites) {
+    const esc = s.sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const contents = [...css.matchAll(new RegExp(`(?:^|[\\n}])\\s*${esc}\\{([^{}]*)\\}`, "g"))]
+      .flatMap((m) => [...m[1]!.matchAll(/(?:^|;)\s*content\s*:\s*([^;]+)/g)].map((c) => c[1]!.trim()));
+    assert.ok(contents.length > 0, `${s.sel} 의 content 가 없다 — 이 시험이 공회전한다`);
+    assert.equal(contents.at(-1), `"${s.glyph}" / ""`, `${s.sel} 의 글리프가 이름에 들어간다 — 뜻을 싣는 낭독 글자와 두 번 읽힌다`);
+    // ⚠**앞 선언이 보이는 표식을 보장한다** — 대체 텍스트 문법을 모르는 브라우저는 뒤 선언을 통째로 버린다
+    assert.equal(contents[0], `"${s.glyph}"`, `${s.sel} 의 폴백 선언이 없다 — 모르는 브라우저에서 표식이 사라진다`);
+    assert.ok(s.speaks, `${s.sel} 의 뜻을 싣는 낭독 글자가 사라졌다 — 대체 텍스트만 남으면 아무것도 안 들린다`);
+  }
 });
