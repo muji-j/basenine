@@ -490,7 +490,8 @@ a{color:inherit}
 /* ⚠**이름과 즐겨찾기 버튼을 한 줄에 — 버튼은 h1 밖 형제다**(2026-09-27 · 감사 N11).
    버튼이 h1 안에 있던 때는 인라인 흐름이 줄을 맞춰 줬다. 밖으로 빼면 그 일을 이 줄이 한다 —
    세로 가운데 · 버튼 앞 간격(예전 margin-left 와 같은 --s4). 이름이 길면 h1 안에서 줄을 바꾸고 버튼은 옆에 남는다.
-   ⚠버튼(최소 24px · N13)은 이름 줄 높이(22px × 1.2 = 26.4px 이상)보다 작아 이 줄의 높이를 바꾸지 않는다. */
+   ⚠기본 규칙에서는 버튼(최소 24px · N13)이 이름 줄(22px × 1.2 = 26.4px 이상)보다 작아 이 줄의 높이를 안 바꾼다.
+     좁은 폭의 예외(약 364px 이하에서 최대 2.4px)는 .favbtn 주석에 적었다. */
 .idline .nmrow{display:flex;align-items:center;gap:var(--s4);min-width:0}
 .idline .sub{font-size:var(--fs-sub);color:var(--tx-2);letter-spacing:.06em}
 .spark{margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:var(--s1)}
