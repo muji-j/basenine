@@ -567,7 +567,7 @@
 | 항목 | 상태 |
 |---|---|
 | C7 · C8 · C9 · C11 | **PR #22 머지**(3중 검토 — 3차 `gpt-6-astra` 의 P2 「신규 선수 + 투구 표 id 동시 변경 → 조용히 빈 통산」을 막은 뒤 반영분 집중 재검토) |
-| C10 | 설계 `docs/superpowers/specs/2026-09-26-catchup-partial-day-design.md`(콜드 리뷰 반영) → 구현 중 |
+| C10 | 설계 `docs/superpowers/specs/2026-09-26-catchup-partial-day-design.md`(콜드 리뷰 반영) → 구현(가지 `fix-catchup-partial-day`) → 3중 검토 |
 | C3 · W6 · W7 · W8 · W2 · W10 · C13 · C14 · W11 | 남음 |
 
 **PR #22 검토에서 새로 드러난 것 — 결함 목록에 더한다(아직 반증 전 · 고치기 전에 반증부터):**
