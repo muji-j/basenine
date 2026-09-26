@@ -1120,13 +1120,16 @@ function idLine(d: PlayerPageData, base: string): RawHtml {
   return html`<header class="idline">
   ${mark}
   <div class="idtext">
-    <h1 class="nm">${d.name}<!-- ⚠**계정 없이 되는 것만 만든다.** 이 표시는 이 브라우저에만 남고
+    <div class="nmrow"><h1 class="nm">${d.name}</h1><!-- ⚠**버튼은 h1 밖 형제다**(감사 N11 · 2026-09-27).
+      h1 의 자식이면 표제의 접근 가능한 이름이 내용에서 계산될 때 버튼의 aria-label 이 붙어
+      「佐藤 お気に入りに入れる」가 됐다. 같은 줄 배치는 .nmrow(flex)가 맡는다.
+      ⚠**계정 없이 되는 것만 만든다.** 이 표시는 이 브라우저에만 남고
       서버로 가지 않는다. 스크립트가 없으면 버튼 자체를 띄우지 않는다 —
       눌러도 아무 일이 없는 버튼을 두는 것보다 없는 편이 정직하다.
       ⚠**글리프(☆/★)는 마크업에 없다** — CSS 가 aria-pressed 에서 그린다(감사 W2 · 2026-09-27).
       글자로 두면 눌림과 글리프가 따로 놀 수 있고, 눌림을 색 하나로만 말하게 된다 -->
       <button class="favbtn" type="button" id="favBtn" data-fav="${d.playerId}"
-        aria-pressed="false" aria-label="お気に入りに入れる" hidden></button></h1>
+        aria-pressed="false" aria-label="お気に入りに入れる" hidden></button></div>
     <span class="sub">${teamLink(base, d.teamCode, d.teamName)}${bio.length === 0 ? null : raw(" · ")}${bio.join(" · ")}</span>
     <span class="asof">${d.season}年${d.asOf === null ? "" : ` · ${gameDate(d.asOf)}まで`}</span>
     ${d.stints.length < 2

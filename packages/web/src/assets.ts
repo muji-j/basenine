@@ -482,6 +482,11 @@ a{color:inherit}
    페이지 제목이 없었다(3,257장 중 h1 0장). 여백은 여기서 지운다 — h1 의 기본 여백이 붙으면
    머리줄이 벌어진다 */
 .idline .nm{margin:0;font-size:clamp(var(--fs-num),5vw,var(--fs-score));font-weight:var(--w-bold);letter-spacing:.08em;line-height:1.2}
+/* ⚠**이름과 즐겨찾기 버튼을 한 줄에 — 버튼은 h1 밖 형제다**(2026-09-27 · 감사 N11).
+   버튼이 h1 안에 있던 때는 인라인 흐름이 줄을 맞춰 줬다. 밖으로 빼면 그 일을 이 줄이 한다 —
+   세로 가운데 · 버튼 앞 간격(예전 margin-left 와 같은 --s4). 이름이 길면 h1 안에서 줄을 바꾸고 버튼은 옆에 남는다.
+   ⚠버튼(최소 24px · N13)은 이름 줄 높이(22px × 1.2 = 26.4px 이상)보다 작아 이 줄의 높이를 바꾸지 않는다. */
+.idline .nmrow{display:flex;align-items:center;gap:var(--s4);min-width:0}
 .idline .sub{font-size:var(--fs-sub);color:var(--tx-2);letter-spacing:.06em}
 .spark{margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:var(--s1)}
 .spark svg{display:block;overflow:visible}
@@ -2641,8 +2646,10 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
    ⚠**옛 상태도 미달이었다**: inherit 를 .8 로 흐렸을 때 **3.760**. 흐림을 빼서 **4.834** 가 된다. */
 .chip.fav[aria-pressed="true"] s{color:inherit}
 .chip.fav[hidden]{display:none}
-.favbtn{font:inherit;font-size:var(--fs-lead);line-height:1;margin-left:var(--s4);padding:var(--s1) var(--s3);cursor:pointer;
-  background:transparent;border:var(--rw-row) solid var(--hair-2);color:var(--tx-3);vertical-align:middle;
+/* ⚠**margin-left·vertical-align 을 뺐다**(2026-09-27 · N11) — 버튼이 h1 밖으로 나가 인라인 흐름이 아니다.
+   간격과 세로 정렬은 부모 .idline .nmrow 가 준다. */
+.favbtn{font:inherit;font-size:var(--fs-lead);line-height:1;padding:var(--s1) var(--s3);cursor:pointer;
+  background:transparent;border:var(--rw-row) solid var(--hair-2);color:var(--tx-3);
   transition:color var(--t1) var(--e-out),border-color var(--t1) var(--e-out)}
 .favbtn:hover{color:var(--tx-2);border-color:var(--tx-3)}
 /* ⚠**눌림을 색 하나로 말하고 있었다**(2026-09-25 감사 W2 · 2026-09-27).
