@@ -201,12 +201,37 @@ test("⚠勝率이 선발 순위의 맨 뒤에 온다 — 승패는 타선과 �
     assert.ok(ids.every((id, i) => i === 0 || metricRank(ids[i - 1]!) <= metricRank(id)), `${league}: 정본 순서가 아니다`);
   }
   /**
-   * ⚠**구원 목록에는 두지 않는다.** 最高勝率의 자격은 **NPB 규정투구회**인데
-   * 구원 쪽 자격선은 그 3분의 1인 **우리 기준**이다 — 같은 타이틀 이름에 다른 자격을 붙이면
+   * ⚠**구원 목록에는 두지 않는다.** 이 勝率 순위의 자격은 **NPB 규정투구회**인데
+   * 구원 쪽 자격선은 그 3분의 1인 **우리 기준**이다 — 같은 순위 이름에 다른 자격을 붙이면
    * 자체 기준이 공식으로 읽힌다(§0-10 출처 추적성).
+   * ⚠~~最高勝率의 자격은 NPB 규정투구회~~ 는 **틀렸다**(2026-09-26 1차 대조) — 표창의 자격은 승수다(아래 시험).
    */
   for (const league of LEAGUES) {
     const ids = categoryOf(site, league, "reliever").panels.map((p) => p.id);
-    assert.ok(!ids.includes("winPct"), `${league}: 구원 목록에 勝率이 있다 — 자격 기준이 NPB 의 것이 아니다`);
+    assert.ok(!ids.includes("winPct"), `${league}: 구원 목록에 勝率이 있다 — 구원의 자격선은 NPB 의 것이 아니다`);
+  }
+});
+
+/**
+ * ⚠**이 순위의 자격은 규정투구회이고, 표창의 자격이 아니다**(2026-09-26 · 1차 대조 ·
+ * `docs/sources/2026-09-26-winpct-title-qualification.md`). NPB 표창 「勝率第一位投手賞」(통칭 最高勝率)은
+ * **13勝以上**(120경기였던 2020パ 는 10勝以上)이라, 완결 16 리그-시즌 중 **4곳**에서 이 순위의 1위와
+ * 수상자가 다르다(2018セ·2018パ·2020パ·2025パ). 화면이 그걸 말하지 않으면 수상자가 1위가 아니거나
+ * 순위에 아예 없는 이유를 유저가 알 수 없다 — 예전 문구는 오히려 **규정투구회가 표창 자격이라고 단언했다.**
+ */
+test("⚠勝率 순위의 자격 문구가 「표창은 13勝以上이라 1위와 수상자가 다를 수 있다」를 말한다", { skip: HAS_DB ? false : "DB 없음" }, () => {
+  const { site } = load();
+  for (const league of LEAGUES) {
+    const panels = categoryOf(site, league, "starter").panels;
+    const winPct = panels.find((p) => p.id === "winPct");
+    assert.ok(winPct !== undefined, `${league}: 勝率 순위가 없다`);
+    assert.match(winPct.qualifier, /規定投球回/, `${league}: 이 순위의 자격(규정투구회)이 없다`);
+    assert.match(winPct.qualifier, /勝率第一位投手賞/, `${league}: 표창의 이름이 없다`);
+    assert.match(winPct.qualifier, /13勝以上/, `${league}: 표창의 자격(승수)이 없다`);
+    assert.match(winPct.qualifier, /一致しないことがあります/, `${league}: 1위와 수상자가 다를 수 있다는 말이 없다`);
+    // 표창 각주는 勝率만의 사정이다 — 다른 비율 순위에 새면 그 순위도 표창과 다르다고 읽힌다
+    const era = panels.find((p) => p.id === "era");
+    assert.ok(era !== undefined, `${league}: 防御率 순위가 없다 — 대조군이 없다`);
+    assert.ok(!era.qualifier.includes("勝率第一位投手賞"), `${league}: 勝率의 표창 각주가 防御率에 샜다`);
   }
 });

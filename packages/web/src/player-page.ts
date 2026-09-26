@@ -41,7 +41,7 @@ import { NO_VALUE, avg3, dec2, fullDate, gameDate, innings, throwsBats } from ".
 import { streakCountText, streakDen, streakInningsMax, streakInningsText } from "./streak-view.ts";
 import { isEmptyProfile, markFigure, markLetter, markProfile } from "./marks.ts";
 import type { MarkPlayer, ProfileAxis } from "./marks.ts";
-import { denUnit, termLabel, termOf } from "./glossary.ts";
+import { denUnit, termLabel, termOf, WIN_PCT_AWARD_RULE } from "./glossary.ts";
 import { page, ROSTER_PATH } from "./layout.ts";
 import { teamLink, teamPath } from "./team-page.ts";
 import { postseasonBrief } from "./postseason-page.ts";
@@ -1393,11 +1393,15 @@ function standardPitching(p: PitchingBlockData): RawHtml {
          * 救援投手には勝率の順位を出していないのだが、その理由がどこにも書かれていなかった —
          * 유저에게는 **「없는 것」과 「빠뜨린 것」이 구별되지 않는다.**
          * 판단 자체는 `query.ts` 의 `metricsFor` 에 적혀 있었다(자격선이 NPB 것이 아니다).
+         * ⚠**그 이유 문장이 거짓 전제 위에 있었다**(2026-09-26 1차 대조) — 「最高勝率はNPBの規定投球回が資格」.
+         *   표창의 자격은 승수(13勝以上)이고, 규정투구회는 **우리 勝率 순위**의 자격이다. 그래서 이유를
+         *   「우리 순위의 자격」으로 고쳐 쓰고, 표창의 실제 자격을 따로 말한다(구원도 13勝이면 표창 대상이다).
          */
         (p.role === "reliever"
           ? "⚠**救援投手には勝率の順位をつけていません**（出していないのであって、抜けているのではありません） — " +
-            "最高勝率はNPBの規定投球回が資格ですが、当サイトの救援の資格線はその3分の1の**当サイト基準**で、" +
-            "同じ名前で違う資格をつけると自前の基準が公式のものとして読まれてしまうためです。"
+            "当サイトの勝率の順位は規定投球回（NPB公式）に達した先発投手が対象で、救援の資格線はその3分の1の**当サイト基準**のため、" +
+            "同じ名前の順位に違う資格をつけると自前の基準が公式のものとして読まれてしまうからです。" +
+            WIN_PCT_AWARD_RULE
           : ""),
     )}`,
   });
