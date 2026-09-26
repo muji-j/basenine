@@ -3402,8 +3402,12 @@ function renderBlocks(){
        레이아웃 **+97회** · 클릭 동기 처리 326~363ms(실측). 펼칠 때는 탭 훅(showTabs → tabHooks)이 다시 부르고,
        찾기로 펼쳐도 beforematch 가 showTabs 를 부르므로 **넘치는 표는 여전히 잰다.**
        ⚠hidden 을 **속성이 아니라 프로퍼티로** 본다 — until-found 면 문자열 "until-found"(참)이고,
-       부모를 타고 올라가므로 closest 가 없는 환경(시험 스텁)에서도 같게 돈다. 읽기에 배치가 들지 않는다. */
-    const inHidden=(el)=>{for(let n=el;n;n=n.parentNode)if(n.hidden)return true;return false};
+       부모를 타고 올라가므로 closest 가 없는 환경(시험 스텁)에서도 같게 돈다. 읽기에 배치가 들지 않는다.
+       ⚠⚠**문서(doc)에서 멈춘다**(교차 모델 검토 P2). Document 에도 hidden 이 있는데 그건 **Page Visibility API**다 —
+       백그라운드 탭에서 열리면 참이라, 문서까지 올라가면 **모든 표가 「숨음」으로 빠져 탭 정지가 0개**가 되고
+       창 크기를 바꾸기 전까지 안 돌아온다(재현: 로드 전에 document.hidden=true · 보이는 넘치는 표 3개에 정지 0).
+       패널의 hidden 과 문서의 hidden 은 이름만 같은 다른 것이다. */
+    const inHidden=(el)=>{for(let n=el;n&&n!==doc;n=n.parentNode)if(n.hidden)return true;return false};
     const mark=()=>{
       $$(".scroller").forEach(el=>{
         if(inHidden(el))return;

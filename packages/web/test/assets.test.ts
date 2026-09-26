@@ -247,10 +247,29 @@ test("넓은 표는 자기 컨테이너 안에서만 가로 스크롤한다", ()
  * 2026-08-18 에 사용자가 보고한 「시즌 텍스트와 2026년이 겹침」과 같은 겹침이다.
  */
 test("⚠W4 시즌 띠의 스냅 기준선이 띠의 padding-left 를 포함한다 — 빼먹으면 로드 스냅이 연도를 라벨 밑에 세운다", () => {
-  const body = /\.seasons\{([^}]*)\}/.exec(CSS.replace(/\/\*[\s\S]*?\*\//g, ""))?.[1];
-  assert.ok(body !== undefined, ".seasons 규칙이 없다 — 이 시험이 공회전한다");
-  const pad = /(?:^|[;{\s])padding-left:([^;}]+)/.exec(body)?.[1]?.trim();
-  const snap = /scroll-padding-left:([^;}]+)/.exec(body)?.[1]?.trim();
+  /**
+   * ⚠**최상위 `.seasons` 규칙을 전부 보고, 마지막 선언을 이긴 값으로 읽는다**(교차 모델 검토 P3).
+   * 첫 블록만 보면 뒤쪽에 `.seasons{scroll-padding-left:84px}` 가 다시 생겨도 초록이다 — 같은 선택자·같은
+   * 명시도에서는 **나중 것이 이긴다.** @media 안(좁은 화면에서 스냅을 끄는 블록)은 넓은 화면의 값이 아니라 뺀다.
+   */
+  const flat = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
+  const depthAt = (i: number): number => {
+    let d = 0;
+    for (let k = 0; k < i; k += 1) {
+      if (flat[k] === "{") d += 1;
+      else if (flat[k] === "}") d -= 1;
+    }
+    return d;
+  };
+  const bodies = [...flat.matchAll(/(?<=^|[}\s])\.seasons\{([^}]*)\}/g)].filter((m) => depthAt(m.index) === 0).map((m) => m[1]!);
+  assert.ok(bodies.length > 0, ".seasons 규칙이 없다 — 이 시험이 공회전한다");
+  const last = (prop: string): string | undefined => {
+    let v: string | undefined;
+    for (const b of bodies) for (const m of b.matchAll(/(?:^|;)\s*([a-z-]+)\s*:\s*([^;]*)/g)) if (m[1] === prop) v = m[2]!.trim();
+    return v;
+  };
+  const pad = last("padding-left");
+  const snap = last("scroll-padding-left");
   assert.equal(pad, "calc(var(--gut) + var(--pad))", "띠의 padding-left 가 바뀌었다 — 이 시험의 전제를 다시 봐라");
   assert.ok(
     snap !== undefined && snap.includes("var(--gut)") && snap.includes("var(--pad)"),

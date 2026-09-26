@@ -2565,6 +2565,22 @@ test("⚠W9 숨은 패널 안의 넓은 표는 폭을 읽지 않는다 — 펼�
   assert.equal(sc.getAttribute("tabindex"), "0", "펼친 뒤에도 넘치는 표에 탭 정지가 없다 — 키보드로 밀 수 없다");
 });
 
+/**
+ * ⚠**문서의 hidden 은 패널의 hidden 이 아니다**(W9 수정의 교차 모델 검토 P2).
+ * Document.hidden 은 Page Visibility API 라 **백그라운드 탭에서 열리면 참**이다. 숨김 판정이 문서까지
+ * 올라가면 모든 표가 「숨음」으로 빠져 탭 정지가 0개가 되고, 창 크기를 바꾸기 전까지 돌아오지 않는다.
+ * ⚠스텁은 html 의 부모가 비어 있어서 **실제 DOM 처럼 문서로 이어 줘야** 이 경로를 잰다.
+ */
+test("⚠W9 백그라운드 탭에서 열려도(document.hidden) 보이는 넓은 표는 탭 정지를 얻는다", () => {
+  const doc = buildPage();
+  (doc.documentElement as unknown as { parentNode: unknown }).parentNode = doc;
+  (doc as unknown as { hidden: boolean }).hidden = true;
+  const stuck = scrollerCase(787, 353, 8, 90);
+  doc.body.appendChild(stuck);
+  run(doc);
+  assert.equal(stuck.getAttribute("tabindex"), "0", "백그라운드에서 열린 화면의 넘치는 표에 탭 정지가 안 붙었다 — 문서의 hidden 을 패널의 것으로 읽었다");
+});
+
 // ─── 최애 구단 ──────────────────────────────────────────────────────────
 /**
  * ⚠**최애는 하나다.** 「내비의 가장 첫 자리」가 하나이기 때문이다.
