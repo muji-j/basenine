@@ -79,7 +79,9 @@ function daysBetween(from: string, to: string): number {
  *
  * ⚠**어제는 언제나 받는다.** 연장·서스펜디드·늦게 끝난 경기가 있으면 밤 실행이
  * `inProgress` 로 건너뛰므로, 다음 실행이 그것을 메워야 한다 — **거르면 영영 안 들어온다.**
- * ⚠**요청이 두 배가 되지 않는다**(L7) — 어제 것은 이미 받아 둔 것이라 조건부 요청으로 304 다.
+ * ⚠~~**요청이 두 배가 되지 않는다**(L7) — 어제 것은 이미 받아 둔 것이라 조건부 요청으로 304 다~~ 는 **틀렸다**
+ *   (2026-09-26 · C10 설계 콜드 리뷰 ⑤). npb.jp 는 검증자(ETag·Last-Modified)를 하나도 안 줘서 **매번 200 전체 본문 + sha 비교**다
+ *   (`packages/archiver/src/archive.ts` 주석의 실측 · 사이드카 3,000 표본에 둘 다 0건). 어제를 다시 받는 값은 실재한다 — 그래도 받는 이유가 위 줄이다.
  * ⚠**명시한 날짜가 있으면 그 하루만**이다. 소급 수집·재수집의 어법을 바꾸지 않는다.
  *
  * ## ⚠따라잡기 — 「이틀 이상 멈추면 가운데 날이 영구히 빈다」 (2026-08-31)
@@ -95,13 +97,25 @@ function daysBetween(from: string, to: string): number {
  * 빠진 날은 `[월]` 하나이고 그건 예전의 `[어제]` 와 같다.
  * ⚠**상한을 넘으면 따라잡지 않는다**(위 `MAX_CATCHUP_DAYS`) — 비시즌에 매일 헛돌지 않기 위해서다.
  *
+ * ## ⚠「덜 받은 마지막 경기일」 — `since` 자신도 넣는다 (2026-09-26 · 감사 C10 · 설계 `docs/superpowers/specs/2026-09-26-catchup-partial-day-design.md` D4)
+ *
+ * 창이 `since` **다음 날부터**라서, 23:30 실행이 D 의 끝난 경기만 저장하고(진행 중은 `inProgress` 로 건너뜀)
+ * D+1 의 실행이 **전부 실패**하면 D 는 영영 창에 안 들었다 — `since` 가 D 에 머물고 다음 성공 실행의 창은 D+1 부터다.
+ * → 부르는 쪽이 「`since` 가 덜 받혔다」를 확인했을 때만(`sinceStatus` → `incomplete`) `includeSince` 를 넘기고,
+ *   그러면 창 **맨 앞에** `since` 를 더한다.
+ * ⚠**간격은 실제 `since` 로 잰다** — `since` 를 하루 앞당겨 넘기는 안은 간격이 정확히 상한일 때 8 이 되어
+ *   **따라잡기를 통째로 껐다**(콜드 리뷰 ③ · 재현). 그래서 옵션이 따로 있다.
+ * ⚠상한을 넘으면 `since` 도 안 넣는다(백필은 사람의 일) · `since` 가 어제거나 그 뒤면 더하지 않는다(어제는 이미 창에 있다).
+ * ⚠**`includeSince` 가 없거나 거짓이면 결과는 예전과 글자까지 같다** — 정상·휴식일의 요청 0 증가가 여기에 걸려 있다.
+ *
  * @param opts.collectedThrough 이미 받아 둔 **마지막 경기일**(`YYYY-MM-DD`).
  *   보통 DB 의 `MAX(game_date) WHERE status='played'` 다. 모르면 넘기지 않는다 —
  *   ⚠**모르는 것을 「오늘」로 메우지 마라**(M11): 그러면 빈 날이 있어도 안 메운다.
+ * @param opts.includeSince `collectedThrough` 날이 **덜 받혔다고 확인됐을 때만** 참(위 C10). 모르면 넘기지 않는다.
  */
 export function targetDates(
   now: Date,
-  opts: { date?: string; forceToday?: boolean; collectedThrough?: string } = {},
+  opts: { date?: string; forceToday?: boolean; collectedThrough?: string; includeSince?: boolean } = {},
 ): string[] {
   if (opts.date !== undefined) return [opts.date];
   const includeToday = opts.forceToday === true || jstHour(now) >= JST_TODAY_FROM_HOUR;
@@ -109,13 +123,39 @@ export function targetDates(
 
   const past: string[] = [];
   const since = opts.collectedThrough;
-  // ⚠**`gap >= 2` 일 때만 넓힌다.** 0·1 은 정상이고, 상한 초과는 백필이라 사람의 일이다
-  if (since !== undefined && daysBetween(since, yesterday) >= 2 && daysBetween(since, yesterday) <= MAX_CATCHUP_DAYS) {
-    for (let d = nextDay(since); d < yesterday; d = nextDay(d)) past.push(d);
+  // ⚠상한 초과는 백필이라 사람의 일이다 — since 도, 그 사이도 넣지 않는다
+  if (since !== undefined && daysBetween(since, yesterday) <= MAX_CATCHUP_DAYS) {
+    const gap = daysBetween(since, yesterday);
+    // ⚠**덜 받은 since 자신**(C10) — 어제보다 이를 때만(`gap >= 1`). 어제면 이미 창에 있다
+    if (opts.includeSince === true && gap >= 1) past.push(since);
+    // ⚠**`gap >= 2` 일 때만 그 사이를 넓힌다.** 0·1 은 정상이다
+    if (gap >= 2) for (let d = nextDay(since); d < yesterday; d = nextDay(d)) past.push(d);
   }
 
   const days = [...past, yesterday];
   return includeToday ? [...days, jstDate(now, 0)] : days;
+}
+
+/** `sinceStatus` 의 판정 — `missing` 은 「폴더는 있는데 행이 없는」 경기 수(`incomplete` 에서만 0 보다 크다) */
+export type SinceStatus = { status: "complete" | "incomplete" | "unknown"; missing: number };
+
+/**
+ * **마지막 경기일(`since`)이 덜 받혔는가**(감사 C10 · 설계 D1). 순수 함수 — I/O 는 `scripts/update.ts` 의 `collectedThrough()` 가 한다.
+ *
+ * @param archived `since` 날의 **아카이브** 경기 id 목록(`<시즌>/<MMDD>/<슬러그>` · 판별은 잎 `@bb-app/store/game-slug` 한 벌). 못 읽었으면 `null`.
+ * @param loaded `since` 날의 **DB** 경기 id 목록(**상태 무관** — 미성립도 행이다). 못 읽었으면 `null`.
+ *
+ * - 어느 쪽이든 `null` → `unknown` — **넓히지 않는다**(요청 0 증가 쪽으로 기운다 · 무엇을 못 읽었는지는 부르는 쪽이 말한다).
+ *   ⚠**`loaded` 실패를 빈 목록으로 두지 마라** — 그날 경기 **전부**를 「덜 받음」으로 오판해 매 실행 그 날을 다시 받는다(콜드 리뷰 ①).
+ * - `archived` 에 `loaded` 에 없는 id 가 있으면 `incomplete`(`missing` = 그 수) — 적재기가 끝나지 않은 경기(`inProgress`)를
+ *   **행 없이** 건너뛰므로, 「폴더는 있는데 행이 없다」가 곧 「진행 중에 받았다」의 흔적이다.
+ * - 그 밖(`loaded` 에만 있는 id 포함 — 아카이브가 지워진 경우)은 `complete`.
+ */
+export function sinceStatus(archived: readonly string[] | null, loaded: readonly string[] | null): SinceStatus {
+  if (archived === null || loaded === null) return { status: "unknown", missing: 0 };
+  const have = new Set(loaded);
+  const missing = new Set(archived.filter((id) => !have.has(id))).size;
+  return missing > 0 ? { status: "incomplete", missing } : { status: "complete", missing: 0 };
 }
 
 /**

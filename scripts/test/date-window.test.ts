@@ -9,7 +9,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { JST_TODAY_FROM_HOUR, MAX_CATCHUP_DAYS, MAX_REFETCH_DATES, jstDate, jstHour, parseRefetchDates, targetDates } from "../date-window.ts";
+import { JST_TODAY_FROM_HOUR, MAX_CATCHUP_DAYS, MAX_REFETCH_DATES, jstDate, jstHour, parseRefetchDates, sinceStatus, targetDates } from "../date-window.ts";
 
 /** UTC 문자열로 시각을 만든다. **JST 를 직접 못 만드는 것이 이 시험의 요점**이다 */
 const at = (utc: string): Date => new Date(utc);
@@ -190,4 +190,138 @@ test("13 재수집 날짜: 정확히 상한(7)개 · 전부 다른 날짜는 받
  */
 test("13 재수집 날짜: 뒤죽박죽 입력도 오름차순으로 정렬해 돌려준다", () => {
   assert.deepEqual(parseRefetchDates("2026-08-02,2025-09-01"), { ok: true, dates: ["2025-09-01", "2026-08-02"] });
+});
+
+/**
+ * ## ⚠「덜 받은 마지막 경기일」을 다시 받는다 (감사 C10 · 설계 `docs/superpowers/specs/2026-09-26-catchup-partial-day-design.md`)
+ *
+ * 23:30 JST 실행은 **끝난 경기만** 저장하고 진행 중인 경기는 건너뛴다(`inProgress`). 그래서 D 날 밤 실행 뒤
+ * `MAX(game_date)`(= `since`)는 D 가 되는데 D 의 진행 중이던 경기는 DB 에 없다. D+1 의 실행이 **전부 실패**하면
+ * 따라잡기 창이 `since` **다음 날부터**라 D 는 영영 창에 안 든다 — 자동으로는 안 받힌다(수동 `refetch_dates` 로만).
+ * → `since` 가 덜 받혔다고 판정되면(`sinceStatus` → `incomplete`) 창 맨 앞에 `since` 자신을 넣는다(`includeSince`).
+ * ⚠**정상·휴식일에는 요청이 1건도 안 는다** — 판정이 `complete` 면 `includeSince` 를 안 넘기고,
+ *   안 넘기면 창은 예전과 **글자까지 같다**(아래 「없거나 거짓이면」 시험 · 위 두 본이 그대로 지킨다).
+ */
+
+/** 07:00 JST(= 전날 22:00 UTC) — 어제는 2026-08-18 */
+const MORNING = at("2026-08-18T22:00:00Z");
+
+/** `from` 부터 `to` 까지(둘 다 포함) 하루씩 */
+function daysFrom(from: string, to: string): string[] {
+  const out: string[] = [];
+  for (let d = from; d <= to; d = new Date(new Date(`${d}T00:00:00Z`).getTime() + 86_400_000).toISOString().slice(0, 10)) out.push(d);
+  return out;
+}
+
+/** 간격(= 어제 − since)별 기대 창. ⚠시험을 간격마다 따로 둔다 — 한 본에 몰면 첫 실패에서 멈춰 **간격 7 이 떨어지는지**가 안 보인다 */
+const INCLUDE_SINCE_TABLE: [gap: number, since: string, want: string[], why: string][] = [
+  [0, "2026-08-18", ["2026-08-18"], "since 가 어제다 — 어제는 이미 창에 있다(더하지 않는다 · 중복 없음)"],
+  [1, "2026-08-17", ["2026-08-17", "2026-08-18"], "휴식일 다음 날 모양 — 예전 창은 [어제] 뿐이라 since 가 빠졌다"],
+  [2, "2026-08-16", ["2026-08-16", "2026-08-17", "2026-08-18"], "since 와 그 사이와 어제"],
+  [6, "2026-08-12", daysFrom("2026-08-12", "2026-08-18"), "since 부터 어제까지 7일"],
+  [MAX_CATCHUP_DAYS, "2026-08-11", daysFrom("2026-08-11", "2026-08-18"),
+    "⚠간격이 정확히 상한이어도 들어간다(8일) — `since - 1일` 을 넘기는 안은 여기서 따라잡기를 통째로 껐다(콜드 리뷰 ③)"],
+  [MAX_CATCHUP_DAYS + 1, "2026-08-10", ["2026-08-18"], "상한을 넘으면 따라잡지 않는다 — since 도 안 넣는다(백필은 사람의 일)"],
+];
+
+test("C10 표의 전제 — 07:00 JST 의 어제는 08-18 · 간격 7 의 창은 8일", () => {
+  assert.equal(jstDate(MORNING, -1), "2026-08-18");
+  assert.equal(daysFrom("2026-08-11", "2026-08-18").length, 8);
+  assert.deepEqual(INCLUDE_SINCE_TABLE.map(([gap]) => gap), [0, 1, 2, 6, 7, 8], "표의 간격이 설계(0·1·2·6·7·8)와 다르다");
+});
+
+for (const [gap, since, want, why] of INCLUDE_SINCE_TABLE) {
+  test(`⚠C10 includeSince 간격 ${gap} → [${want.length === 1 ? want[0] : `${want[0]} … ${want.at(-1)} (${want.length}일)`}] — ${why}`, () => {
+    assert.deepEqual(
+      targetDates(MORNING, { collectedThrough: since, includeSince: true }),
+      want,
+      `간격 ${gap}(since ${since}): 덜 받은 마지막 경기일을 다시 받는 창이 틀렸다`,
+    );
+  });
+}
+
+/**
+ * ⚠**반증자의 재현 그대로**(감사 C10). 09-10 밤 실행이 09-10 을 반만 저장하고, 09-11 실행이 전부 실패하고,
+ * 09-13 아침에야 성공한 경우 — 예전 창은 `["2026-09-11","2026-09-12"]` 이라 09-10 이 없었다.
+ */
+test("⚠C10 반증자 재현 — 09-13 07:00 JST · since 09-10(덜 받음) → 09-10 이 창에 있다", () => {
+  const now = at("2026-09-12T22:00:00Z");
+  assert.deepEqual(targetDates(now, { collectedThrough: "2026-09-10" }), ["2026-09-11", "2026-09-12"], "재현의 전제(예전 창)가 틀렸다");
+  assert.deepEqual(
+    targetDates(now, { collectedThrough: "2026-09-10", includeSince: true }),
+    ["2026-09-10", "2026-09-11", "2026-09-12"],
+    "덜 받은 09-10 이 창에 없다 — 진행 중이던 경기가 영영 안 받힌다",
+  );
+});
+
+test("C10 밤 실행에서도 since 가 맨 앞 · 오늘이 마지막 · since 가 오늘이면 아무것도 더하지 않는다", () => {
+  const night = at("2026-08-18T14:30:00Z"); // 23:30 JST · 어제 08-17 · 오늘 08-18
+  assert.deepEqual(
+    targetDates(night, { collectedThrough: "2026-08-15", includeSince: true }),
+    ["2026-08-15", "2026-08-16", "2026-08-17", "2026-08-18"],
+  );
+  // 같은 밤에 한 번 더 돌린 경우 — since 가 오늘(간격 −1)이면 그대로다
+  assert.deepEqual(
+    targetDates(night, { collectedThrough: "2026-08-18", includeSince: true }),
+    ["2026-08-17", "2026-08-18"],
+  );
+});
+
+/**
+ * ⚠**`includeSince` 가 없거나 거짓이면 지금과 한 글자도 다르지 않다**(설계 §5) — 정상·휴식일의 요청 0 증가가 여기에 걸려 있다.
+ * 표는 **고치기 전 창**을 그대로 적었다(간격 0·1 은 [어제] · 2~7 은 since 다음 날부터 · 8 은 [어제]).
+ */
+test("⚠C10 includeSince 가 없거나 거짓이면 창은 예전과 글자까지 같다", () => {
+  const before: [since: string, want: string[]][] = [
+    ["2026-08-18", ["2026-08-18"]],
+    ["2026-08-17", ["2026-08-18"]],
+    ["2026-08-16", ["2026-08-17", "2026-08-18"]],
+    ["2026-08-12", daysFrom("2026-08-13", "2026-08-18")],
+    ["2026-08-11", daysFrom("2026-08-12", "2026-08-18")],
+    ["2026-08-10", ["2026-08-18"]],
+  ];
+  for (const [since, want] of before) {
+    assert.deepEqual(targetDates(MORNING, { collectedThrough: since }), want, `since ${since}: includeSince 없이 창이 바뀌었다`);
+    assert.deepEqual(targetDates(MORNING, { collectedThrough: since, includeSince: false }), want, `since ${since}: includeSince=false 인데 창이 바뀌었다`);
+  }
+  // 시각 셋(아침·낮·밤) × 간격 −1~9 — 없음과 거짓이 늘 같다
+  for (const utc of ["2026-08-18T22:00:00Z", "2026-08-18T05:00:00Z", "2026-08-18T14:30:00Z"]) {
+    for (let gap = -1; gap <= MAX_CATCHUP_DAYS + 2; gap += 1) {
+      const since = jstDate(at(utc), -1 - gap);
+      assert.deepEqual(
+        targetDates(at(utc), { collectedThrough: since, includeSince: false }),
+        targetDates(at(utc), { collectedThrough: since }),
+        `${utc} 간격 ${gap}: includeSince=false 와 없음이 다르다`,
+      );
+    }
+  }
+});
+
+/**
+ * **마지막 경기일이 덜 받혔는가**(설계 D1). 아카이브의 그날 경기 폴더와 DB 의 그날 경기 행(상태 무관)을 맞댄다.
+ * ⚠**못 읽으면 넓히지 않는다**(`unknown`) — 특히 DB 쪽 실패를 빈 목록으로 두면 그날 경기 **전부**를 「덜 받음」으로
+ *   오판해 매 실행 그 날을 다시 받는다(콜드 리뷰 ①).
+ */
+const G1 = "2026/0816/b-f-21", G2 = "2026/0816/c-t-18", G3 = "2026/0816/d-g-20";
+
+test("C10 sinceStatus 완결 — 폴더 3 / 행 3", () => {
+  assert.deepEqual(sinceStatus([G1, G2, G3], [G1, G2, G3]), { status: "complete", missing: 0 });
+});
+
+test("⚠C10 sinceStatus 덜 받음 — 폴더 3 / 행 2 → 1건", () => {
+  assert.deepEqual(sinceStatus([G1, G2, G3], [G1, G2]), { status: "incomplete", missing: 1 }, "폴더는 있는데 행이 없는 경기를 못 봤다");
+});
+
+test("⚠C10 sinceStatus 아카이브 못 읽음 → 모름(넓히지 않는다)", () => {
+  assert.deepEqual(sinceStatus(null, [G1, G2]), { status: "unknown", missing: 0 }, "아카이브를 못 읽었는데 판정했다");
+  assert.deepEqual(sinceStatus(null, null), { status: "unknown", missing: 0 });
+});
+
+test("⚠C10 sinceStatus DB 못 읽음 → 모름 — 빈 목록으로 두면 그날 경기 전부를 덜 받음으로 오판한다(콜드 리뷰 ①)", () => {
+  assert.deepEqual(sinceStatus([G1, G2, G3], null), { status: "unknown", missing: 0 }, "⚠DB 를 못 읽었는데 판정했다");
+});
+
+test("C10 sinceStatus DB 에만 있는 경기(아카이브가 지워진 경우 포함)는 덜 받은 것이 아니다 → 완결", () => {
+  assert.deepEqual(sinceStatus([G1], [G1, G2]), { status: "complete", missing: 0 });
+  assert.deepEqual(sinceStatus([], [G1, G2]), { status: "complete", missing: 0 });
 });
