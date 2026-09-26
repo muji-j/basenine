@@ -3,10 +3,11 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parsePaCell } from "@bb-app/parser";
-import type { BatterRow, PitcherRow } from "@bb-app/parser";
+import { OUTCOMES, parsePaCell } from "@bb-app/parser";
+import type { BatterRow, Outcome, PitcherRow } from "@bb-app/parser";
 import { listMigrations, openDb } from "../src/db.ts";
 import { deriveBatting, derivePitching } from "../src/derive.ts";
+import { foldOutcomes } from "../src/fold.ts";
 import { replaceQuarantine, upsertBatting, upsertGame, upsertPlayer } from "../src/load.ts";
 import type { GameRow } from "../src/load.ts";
 
@@ -203,6 +204,48 @@ test("⚠npb.jp 합계와 어긋나면 격리한다 — 조용히 넘기지 않�
   const kinds = d.quarantine.map((q) => q.kind);
   assert.ok(kinds.includes("abMismatch"));
   assert.ok(kinds.includes("hitMismatch"));
+});
+
+/**
+ * ⚠**결과 하나 = 타석 하나 = 많아야 한 칸**(2026-09-26 · 감사 C11).
+ *
+ * `deriveBatting` 에는 「ab+bb+hbp+sf+sh 가 pa 를 넘으면 격리한다」는 가드가 있었다. **이 성질 때문에
+ * 발화할 수 없었다** — 결과 하나는 타석 1 과 함께 많아야 한 칸에 들어가므로 합이 타석을 넘을 수 없다
+ * (반증자 실측: 23종 결과 낱개로 0/23). 가드를 지운 대신 **그 성질을 여기서 표로 고정한다.**
+ * ⚠**표가 곧 규칙이다** — 각 결과가 **어느 칸에** 들어가는지까지 적는다. 「많아야 한 칸」만 보면
+ *   `sacFly` 가 `sh` 로 옮겨 가도(출루율 분모가 바뀐다) 초록이다.
+ * ⚠`Record<Outcome, …>` 라 새 분류를 더하면 **이 표를 채울 때까지 컴파일이 멈춘다**(tokens.ts·fold.ts 의 `never` 분기와 짝).
+ * ⚠`ibb` 는 칸이 아니다 — `bb` 의 부분집합이라 고의사구는 `bb` 한 칸이다.
+ */
+const BUCKET: Readonly<Record<Outcome, "ab" | "bb" | "hbp" | "sf" | "sh" | null>> = {
+  single: "ab", double: "ab", triple: "ab", homerun: "ab",
+  walk: "bb", intentionalWalk: "bb", hitByPitch: "hbp",
+  strikeout: "ab", strikeoutReached: "ab",
+  sacFly: "sf", sacFlyError: "sf", sacBunt: "sh", sacBuntFieldersChoice: "sh", sacBuntError: "sh",
+  // ⚠타격방해·주루방해 출루는 **어느 칸에도 안 들어간다** — 타석이지만 타수도 사사구도 희생도 아니다
+  interference: null, obstruction: null,
+  // ⚠수비방해 아웃·규칙 위반 아웃은 **타수**다(위 둘과 이름이 닮았지만 방향이 반대다)
+  interferenceOut: "ab", ruleViolationOut: "ab",
+  reachedOnError: "ab", fieldersChoice: "ab", groundedIntoDoublePlay: "ab", fieldedOut: "ab",
+  // 모르는 결과는 자리를 모른다 — 타석만 센다(M11 · unknownToken 격리가 그것을 말한다)
+  unknown: null,
+};
+
+test("⚠OUTCOMES 전량: 결과 하나는 정확히 타석 1 이고, ab·bb·hbp·sf·sh 중 많아야 한 칸(표의 그 칸)에만 들어간다", () => {
+  assert.deepEqual(Object.keys(BUCKET).sort(), [...OUTCOMES].sort(), "표가 OUTCOMES 와 갈렸다");
+  const wrong: string[] = [];
+  for (const outcome of OUTCOMES) {
+    const { line } = foldOutcomes([{ outcome, count: 1, rbi: 0 }]);
+    if (line.pa !== 1) wrong.push(`${outcome}: 타석 ${line.pa}`);
+    const got = { ab: line.ab, bb: line.bb, hbp: line.hbp, sf: line.sf, sh: line.sh };
+    const want = { ab: 0, bb: 0, hbp: 0, sf: 0, sh: 0 };
+    const slot = BUCKET[outcome];
+    if (slot !== null) want[slot] = 1;
+    const filled = got.ab + got.bb + got.hbp + got.sf + got.sh;
+    if (filled > 1) wrong.push(`${outcome}: ${filled}칸에 들어갔다`);
+    if (JSON.stringify(got) !== JSON.stringify(want)) wrong.push(`${outcome}: ${JSON.stringify(got)} — 표는 ${slot ?? "칸 없음"}`);
+  }
+  assert.deepEqual(wrong, [], `결과 ${OUTCOMES.length}종 중 ${wrong.length}건이 어긋났다`);
 });
 
 test("⚠모르는 토큰은 격리되고 원문이 보존된다", () => {

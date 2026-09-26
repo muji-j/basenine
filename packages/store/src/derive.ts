@@ -62,6 +62,10 @@ export interface QuarantineRow {
    */
   kind:
     | "unknownToken"
+    /**
+     * 타자별 타석 수가 박스(결과 칸)와 경과(playbyplay)에서 다르다 — **`align.ts` 만 낸다.**
+     * ⚠`deriveBatting` 도 같은 이름으로 「분류 합계 > 타석」을 냈었지만 **구조상 발화할 수 없어 지웠다**(2026-09-26 · 감사 C11).
+     */
     | "paMismatch"
     | "hitMismatch"
     | "abMismatch"
@@ -191,17 +195,25 @@ export function deriveBatting(
   if (out.h !== row.hits) {
     q.push({ kind: "hitMismatch", gameId, playerId: row.playerId, raw: String(row.hits), detail: `도출 ${out.h}` });
   }
-  // 타석 = 타수 + 사사구 + 희생 + 타격방해. 어긋나면 분류 규칙이 빠진 것이다.
-  const accounted = out.ab + out.bb + out.hbp + out.sf + out.sh;
-  if (accounted > out.pa) {
-    q.push({
-      kind: "paMismatch",
-      gameId,
-      playerId: row.playerId,
-      raw: String(out.pa),
-      detail: `분류 합계 ${accounted}`,
-    });
-  }
+  /**
+   * ⚠**여기 있던 「분류 합계 > 타석」 가드를 지웠다**(2026-09-26 · 감사 C11).
+   *
+   * 주석은 「타석 = 타수 + 사사구 + 희생 + 타격방해. 어긋나면 분류 규칙이 빠진 것이다」라고 했지만
+   * **구조상 발화할 수 없었다** — `foldOutcomes` 는 결과 하나를 타석 1 과 함께 ab·bb·hbp·sf·sh 중
+   * **많아야 한 칸**에 넣으므로 합이 타석을 넘을 수 없다(OUTCOMES 23종 전량 — `store.test.ts` 의 표가 그 성질을 고정한다).
+   * **방향도 틀렸다** — 규칙이 빠진 결과는 `unknown` 이 되어 **어느 칸에도 안 들어가므로** 합이 타석보다 **작아지고**,
+   * `>` 는 그쪽을 못 본다. 타격방해·주루방해 출루도 원래 합을 타석보다 작게 만든다.
+   * ⚠**남겨 두면 「타석 정합성을 재고 있다」는 거짓 안심을 준다** — 게다가 같은 이름(`paMismatch`)을 `align.ts` 가
+   *   **다른 뜻**(박스와 경과의 타석 수)으로 쓰고 있어, 격리 화면에서 두 뜻이 한 종류로 섞일 자리였다.
+   *
+   * 분류 누락·오분류를 **실제로** 잡는 것:
+   *   ① `unknownToken`(위) — 모르는 결과 칸은 전부 여기 걸린다
+   *   ② `abMismatch`·`hitMismatch`(위) — 아는 낱말을 **타수·안타 쪽으로** 잘못 접으면 박스의 `打数`·`安打` 열과 어긋난다
+   *   ③ 컴파일 — `countsAsAtBat`(tokens.ts)·`foldOutcomes`(fold.ts)의 `never` 분기가 새 분류를 빠뜨리면 멈춘다
+   *   ④ `align.ts` 의 `paMismatch` — 타자별 결과 칸 수를 경과(playbyplay)의 타석 수와 맞댄다(칸을 놓치거나 더 읽으면 걸린다)
+   * ⚠**비타수 칸 사이의 오분류**(犠飛↔犠打 · 四球↔死球)는 위 어디에서도 안 걸린다 — 박스에 그 열이 없다.
+   *   공표 성적표 대조(`packages/aggregate/tools/crosscheck.ts` · 매일 CI)가 잡는다 — 외야 `犠失` 을 犠打 로 접던 결함을 그것이 잡았다.
+   */
 
   return { row: out, quarantine: q };
 }
