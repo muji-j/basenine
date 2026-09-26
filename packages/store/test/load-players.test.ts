@@ -143,17 +143,32 @@ test("C7 · profile_fetched_at 은 적재 시각이 아니라 **각자의 사이
   }
 });
 
-/** 사이드카가 없던 판의 값. 적재 시각(지금)과 다르고, 사이드카 시각과도 다르다 */
-const KEPT = "2026-06-01T00:00:00.000Z";
+/** 이전 판의 취득 시각. 적재 시각(지금)과 다르고, 사이드카 시각과도 다르다 */
+const OLD_SEEN = "2026-06-01T00:00:00.000Z";
 
-test("C7 · 사이드카를 못 읽으면 기존 profile_fetched_at 을 「지금」으로 덮지 않는다(M11) · 결손은 센다", { skip }, async () => {
+/**
+ * ⚠**모르면 모른다(NULL)** — 이전 판의 시각을 남기지도, 적재 시각으로 메우지도 않는다(M4·M11 · 3중 검토 2차 반영).
+ *
+ * 처음에는 `COALESCE(?, profile_fetched_at)` 로 **이전 시각을 남겼다.** 그런데 같은 UPDATE 가 프로필 값
+ * (투타·읽는 법·배번)은 **이번 페이지로** 덮어쓰므로 「값은 새 판 · 시각은 옛 판」이 됐다 —
+ * 그 시각은 그 값의 출처를 거짓으로 말한다. 같은 페이지의 통산 행은 그때 **NULL** 이다(한 벌로 맞춘다).
+ */
+test("C7 · 사이드카를 못 읽으면 profile_fetched_at 은 NULL 이다 — 이전 시각도 적재 시각도 넣지 않는다(M11) · 결손은 센다", { skip }, async () => {
   const env = await setup({ [PITCHER]: null });
   try {
-    exec(env, "UPDATE player SET profile_fetched_at = ? WHERE player_id = ?", KEPT, PITCHER);
+    exec(env, "UPDATE player SET profile_fetched_at = ? WHERE player_id = ?", OLD_SEEN, PITCHER);
     const r = load(env);
     assert.equal(r.code, 0, r.out + r.err);
     const got = q<{ p: string | null }>(env, "SELECT profile_fetched_at AS p FROM player WHERE player_id = ?", PITCHER).p;
-    assert.equal(got, KEPT, "모르는 취득 시각을 적재 시각으로 메웠다 — 재취득 선정이 그 선수를 「가장 신선함」으로 읽는다");
+    assert.equal(got, null, `모르는 취득 시각에 ${got} 이 들어갔다 — 이전 판의 시각이면 「값은 새 판 · 시각은 옛 판」이다`);
+    // ⚠같은 페이지의 통산 행과 **같은 답**이어야 한다 — 그쪽도 NULL 이다
+    const cb = q<{ n: number; known: number }>(
+      env,
+      "SELECT COUNT(*) AS n, COUNT(fetched_at) AS known FROM career_batting WHERE player_id = ?",
+      PITCHER,
+    );
+    assert.ok(cb.n > 0, "통산 타격 행이 없다 — 이 시험이 비교할 상대가 없다");
+    assert.equal(cb.known, 0, "통산 행에는 시각이 들어갔다 — 프로필과 통산이 갈렸다");
     // ⚠「모른다」는 조용히 넘기지 않는다 — 요약에 결손 수가 찍혀야 한다
     assert.match(r.err, /취득시각 결손 1명/);
   } finally {
