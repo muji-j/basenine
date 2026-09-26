@@ -485,6 +485,16 @@ a{color:inherit}
 .idline .sub{font-size:var(--fs-sub);color:var(--tx-2);letter-spacing:.06em}
 .spark{margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:var(--s1)}
 .spark svg{display:block;overflow:visible}
+/* ⚠**월별 추이의 선과 끝점은 구단 색이 아니라 글자색 토큰이다**(2026-09-25 감사 W2 · 2026-09-27).
+   마크업의 stroke·fill 속성에 구단 색 변수를 달고 있어서 **CSS 만 읽는 대비 검사가 못 봤다** —
+   바탕(--page) 대비가 12구단 중 **라이트 4 · 다크 7 · 합집합 11** 구단에서 3:1 미달이었다
+   (ロッテ 다크 1.188 · オリックス 다크 1.169 · 阪神 라이트 1.543). 이 선이 추이의 유일한 시각 표현이다.
+   ⚠**이 저장소가 같은 처방을 이미 여러 번 했다** — .tbar i · .mf-shape/.mf-dot · .seasons a[aria-current] · .tnav:
+   **구단색을 선에서 빼고 토큰으로 바꾼다.** 선은 --tx-2(.mf-shape 윤곽과 같은 잉크 · --page 대비 6.336 / 7.229),
+   끝점은 --tx(17.139 / 14.736) — 「지금」은 색이 아니라 **자리(맨 끝)와 진하기**가 말한다.
+   구단은 이 표제에서 .idline 의 밑줄과 .spine 이 말한다(면이라 대비 규칙이 다르다). */
+.spark polyline{stroke:var(--tx-2)}
+.spark circle{fill:var(--tx)}
 .spark .sl{font-family:var(--f-num);font-size:var(--fs-min);color:var(--tx-3);letter-spacing:.06em}
 .idline .asof{font-family:var(--f-num);font-size:var(--fs-note);color:var(--tx-3)}
 
@@ -2595,8 +2605,12 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
 .roster .hn{font-size:var(--fs-lead);flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .roster .hp{flex:0 0 auto;font-size:var(--fs-col);color:var(--tx-3)}
 /* 즐겨찾기 표식 — 순서를 바꾸지 않고 **표시만** 얹는다.
-   순서를 바꾸면 「내 선수가 어디 갔지」가 되고, 명감의 배열이 무너진다 */
-.roster li[data-favon="true"] .hn::before{content:"★";color:var(--team,#6b7280);margin-right:var(--s2);font-size:var(--fs-col)}
+   순서를 바꾸면 「내 선수가 어디 갔지」가 되고, 명감의 배열이 무너진다
+   ⚠**구단 색이 아니라 --tx-2 다**(2026-09-25 감사 W2 · 2026-09-27). 표식이 있다/없다(★ 자체)가
+   상태를 말하고 색은 거들 뿐인데, 그 색이 구단 색 변수였다 — ⚠**게다가 이 화면(選手一覧)은
+   --team 에 중립색을 싣는다**: 실제로 그려지던 것은 #6b7280 이고 다크 --page 대비 **3.740** 으로
+   10px 글자의 4.5 에 미달이었다. → 필터 칩(.chip.fav)의 ★ 와 같은 잉크(M1 · --page 대비 6.336 / 7.229). */
+.roster li[data-favon="true"] .hn::before{content:"★";color:var(--tx-2);margin-right:var(--s2);font-size:var(--fs-col)}
 .chip.fav i{font-style:normal;margin-right:var(--s2)}
 /* ⚠**여기 적혀 있던 「9.55 / 9.14」도 같은 방식으로 틀렸다**(2026-09-08 · ⑵ 를 계산으로 바꾸면서 드러남).
    그 수는 --tx 를 --panel 위에 .8 로 합성한 값인데, **실제 잉크는 .chip 이 물려주는 --tx-2,
@@ -2616,7 +2630,22 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
   background:transparent;border:var(--rw-row) solid var(--hair-2);color:var(--tx-3);vertical-align:middle;
   transition:color var(--t1) var(--e-out),border-color var(--t1) var(--e-out)}
 .favbtn:hover{color:var(--tx-2);border-color:var(--tx-3)}
-.favbtn[aria-pressed="true"]{color:var(--team,#6b7280);border-color:var(--team,#6b7280)}
+/* ⚠**눌림을 색 하나로 말하고 있었다**(2026-09-25 감사 W2 · 2026-09-27).
+   글리프는 늘 ★ 이고 바뀌는 것은 ★ 와 테두리의 **구단 색**뿐이었는데, 그 색이 바탕(--page) 대비
+   12구단 중 11구단에서 어느 한 테마 3:1 미달이라(ロッテ 다크 1.188) **눌린 버튼이 통째로 사라졌다** —
+   ★ 는 이 버튼의 **유일한 시각 내용**이다.
+   → **.favt(구단 즐겨찾기 · 같은 뜻의 토글)와 같은 언어로 말한다**(M1): 잉크 --tx(17.139 / 14.736) ·
+   테두리 --tx-3(4.910 / 5.499), 그리고 **글리프가 바뀐다 — 안 눌림 ☆ · 눌림 ★.**
+   색이 전부 죽어도(흑백 · 강제 색 모드) 모양이 남는다. .favt 가 ★ 를 「나타나게」 하는 것과 같은 수법이다 —
+   이 버튼은 글자가 없어 비울 수 없으니 빈 별로 둔다.
+   ⚠**글리프를 마크업에 두지 않는다** — aria-pressed 하나가 상태의 정본이고 글리프는 거기서 나온다
+   (정렬 화살표 th[aria-sort] … ::before 와 같은 방식). 이름은 aria-label 이 말한다.
+   ⚠☆·★ 는 두 서체 스택 모두 **일본어 서체(Plex JP · Noto JP)가 3웨이트 전부 갖는다**(원본 cmap 실측 ·
+   라틴 서체는 둘 다 없다) — 같은 서체가 둘 다 그리므로 눌러도 글꼴이 안 바뀌고, 진폭도 둘 다 1000/1000(전각)이라
+   **버튼 폭이 안 흔들린다.** ⚠굵기는 더하지 않는다 — 글자가 별 하나라 채널 구실을 못 한다. */
+.favbtn::before{content:"☆"}
+.favbtn[aria-pressed="true"]{color:var(--tx);border-color:var(--tx-3)}
+.favbtn[aria-pressed="true"]::before{content:"★"}
 .favbtn[hidden]{display:none}
 
 .foot{padding:var(--s6) var(--pad);color:var(--tx-3);font-size:var(--fs-sub)}

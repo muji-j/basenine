@@ -97,7 +97,14 @@ const JUSTIFIED: readonly Justification[] = [
   { sel: '.card[aria-selected="true"]', covered: true, why: "바탕 .card 와 테두리 굵기가 같아 구별이 사라진다 · 윤곽으로 말한다" },
   { sel: '.brand[aria-current="page"]', covered: true, why: "box-shadow 밑줄 하나뿐 · 글자 밑줄로 바꾼다" },
   { sel: '.tnav a[aria-current="true"]', covered: true, why: "page 는 font-weight 로 사는데 이쪽은 못 산다 · 점선 밑줄" },
-  { sel: '.favbtn[aria-pressed="true"]', covered: true, why: "눌려도 글자가 ★ 그대로다 · 윤곽으로 말한다" },
+  // ⚠**~~눌려도 글자가 ★ 그대로다~~ 는 2026-09-27 부로 거짓이다**(감사 W2) — 이제 ::before 가 ☆→★ 로 바뀌고
+  //   content 는 이 모드에서 남는다. 대응 블록의 윤곽은 그 위에 한 겹 더 말하는 것으로 둔다.
+  {
+    sel: '.favbtn[aria-pressed="true"]',
+    covered: true,
+    why: "색·테두리는 이 모드에서 죽는다 · ::before 의 ☆→★(content)가 남고, 대응 블록이 윤곽으로도 다시 말한다",
+    cites: [{ sel: '.favbtn[aria-pressed="true"]::before', decl: 'content:"★"' }],
+  },
 
   {
     sel: ".state.stale",
@@ -607,4 +614,65 @@ test("⚠W1 쉬는 탭의 굵기를 .tab 이 스스로 정한다 — h2 에서 �
     if (w !== undefined && w !== "var(--w-reg)") others.push(`${sel} → ${String(w)}`);
   }
   assert.deepEqual(others, [], "상태 규칙이 아닌데 탭의 굵기를 바꾸는 무조건 규칙이 있다 — 쉬는 탭이 다시 고른 탭과 같아질 수 있다");
+});
+
+/**
+ * ⚠**W2 — 눌린 토글은 일반 모드에서도 색 말고 다른 것으로 말한다**(2026-09-25 감사 W2 · 2026-09-27).
+ *
+ * 위 시험들은 **강제 색 모드**에서 상태가 사라지는가를 본다. 그런데 `.favbtn` 은 그 모드에서만
+ * 윤곽(`Highlight`)으로 다시 말하고, **일반 모드에서는 눌림을 색 하나로** 말하고 있었다 —
+ * 글리프는 늘 ★ 이고 바뀌는 것은 ★ 와 테두리의 **구단 색**뿐이었는데, 그 색이 바탕 대비
+ * 12구단 중 11구단에서 어느 한 테마 3:1 아래라 **눌렸는지를 말하는 것이 화면에서 사라졌다.**
+ * → 눌림과 안 눌림이 **색이 아닌 속성**(위 `LIVES` — content · font-weight · border-width …)에서
+ * 하나 이상 갈려야 한다. `::before`·`::after` 도 그 상태의 일부로 본다(`.favt` 의 ★ 가 거기 있다).
+ * ⚠`box-shadow` 는 세지 않는다 — 강제 색 모드에서 none 이 되고, 일반 모드에서도 보이는지가 색 대비에 달렸다.
+ * ⚠**선언된 값만 비교한다** — `font:inherit` 로 굵기를 물려받는 쪽은 「값 없음」으로 세고 눌린 쪽의
+ * `var(--w-bold)` 와 다르다고 본다. 부모가 굵으면 같아지는 문제(W1)는 그 시험이 따로 잰다.
+ */
+test("⚠W2 눌린 토글은 색 말고도 말한다 — 눌림과 안 눌림이 색이 아닌 속성에서 갈린다", () => {
+  const rules = rulesBySelector();
+  const PRESSED = '[aria-pressed="true"]';
+  /**
+   * 그 선택자(와 그 ::before/::after)를 부분으로 가진 무조건 규칙들에서, **색이 아닌 속성의 이긴 값**.
+   * ⚠숏핸드에 되감긴 값(`null`)은 「선언된 채널」이 아니므로 싣지 않는다 — 비교는 **눌린 쪽의 선언**이 기준이다.
+   */
+  const surviving = (part: string): Map<string, string> => {
+    const out = new Map<string, string>();
+    for (const pseudo of ["", "::before", "::after"]) {
+      const bodies: string[] = [];
+      for (const [sel, list] of rules) {
+        if (sel.split(",").map((s) => s.trim()).includes(part + pseudo)) bodies.push(...list);
+      }
+      const props = new Set(bodies.flatMap((b) => [...b.matchAll(/(?:^|;)\s*([a-z-]+)\s*:/g)].map((m) => m[1]!)));
+      for (const p of props) {
+        if (!LIVES.test(p)) continue;
+        const v = winningValue(bodies, p);
+        if (typeof v === "string") out.set(`${pseudo}|${p}`, v);
+      }
+    }
+    return out;
+  };
+  const subjects = new Set<string>();
+  for (const sel of rules.keys()) {
+    for (const part of sel.split(",").map((s) => s.trim())) if (part.endsWith(PRESSED)) subjects.add(part);
+  }
+  // ⚠**공회전 방지** — .tab · .pk · .chip · .favt · .favbtn 이 실재한다
+  assert.ok(subjects.size >= 4, `눌림 규칙을 ${subjects.size}개밖에 못 찾았다 — 이 시험이 공회전한다`);
+  const bad: string[] = [];
+  const how: string[] = [];
+  for (const pressed of [...subjects].sort()) {
+    const base = pressed.slice(0, -PRESSED.length);
+    const on = surviving(pressed);
+    const off = surviving(base);
+    const differ = [...on].filter(([k, v]) => off.get(k) !== v).map(([k, v]) => `${k}=${v}`);
+    if (differ.length === 0) bad.push(`${pressed} — 눌림에만 있는 색 아닌 선언이 없다`);
+    else how.push(`${pressed} → ${differ.join(" · ")}`);
+  }
+  assert.deepEqual(
+    bad,
+    [],
+    "눌림을 색 하나로만 말하는 토글이 있다(§7 — 색만으로 상태를 말하지 않는다).\n" +
+      "  ⚠.favt 처럼 글리프(content)나 굵기로도 말하게 하라. 색이 바탕에서 안 보이면 눌림이 통째로 사라진다.",
+  );
+  console.log(`  · 눌림 토글 ${subjects.size}개가 전부 색 말고도 말한다: ${how.join(" / ")}`);
 });
