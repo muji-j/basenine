@@ -16,7 +16,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
-import { parseCareer } from "../src/career.ts";
+import { CareerParseError, parseCareer } from "../src/career.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const DIR = join(ROOT, "data", "archive", "npb", "players");
@@ -59,7 +59,14 @@ for (const [id, renamed] of [["tablefix_b", "tablefix_bat"], ["tablefix_p", "tab
     let had = 0;
     let lacked = 0;
     const silent: string[] = [];
+    /**
+     * ⚠**던지기만 하면 초록이 아니다**(3중 검토 2차 E) — `catch {}` 로 아무 예외나 받으면 파서가 **다른 이유로**
+     * 죽어도(열 이름 검사 · 합계 검산 · 엉뚱한 버그) 이 시험은 「못 찾았다고 말했다」로 읽는다.
+     * 던진 것이 `CareerParseError` 이고 **그 표를 못 찾았다고** 말하는지까지 본다.
+     */
+    const wrongError: string[] = [];
     const falseAlarm: string[] = [];
+    const want = new RegExp(`^${id} 를 찾지 못했다 — `);
     for (const p of PAGES) {
       if (hasTable(p.html, id)) {
         had += 1;
@@ -67,8 +74,10 @@ for (const [id, renamed] of [["tablefix_b", "tablefix_bat"], ["tablefix_p", "tab
         try {
           parseCareer(moved);
           silent.push(p.id);
-        } catch {
-          // 기대한 쪽 — 못 찾았다고 말했다
+        } catch (err) {
+          if (!(err instanceof CareerParseError) || !want.test(err.message)) {
+            wrongError.push(`${p.id}: ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`);
+          }
         }
       } else {
         // ⚠**그 표가 원래 없던 페이지**는 변이가 아무것도 안 바꾼다 — 여전히 던지면 안 된다
@@ -82,6 +91,7 @@ for (const [id, renamed] of [["tablefix_b", "tablefix_bat"], ["tablefix_p", "tab
     }
     assert.ok(had > 0, `${id} 가 있는 페이지가 0장 — 이 시험이 아무것도 안 잰다`);
     assert.deepEqual(silent, [], `${id} 를 잃은 ${had}장 중 ${silent.length}장이 조용히 빈 배열을 냈다`);
+    assert.deepEqual(wrongError, [], `${id} 를 잃은 ${had}장 중 ${wrongError.length}장이 「못 찾았다」가 아닌 이유로 던졌다`);
     assert.deepEqual(falseAlarm, [], `${id} 가 원래 없는 ${lacked}장 중 ${falseAlarm.length}장이 던졌다`);
   });
 }
