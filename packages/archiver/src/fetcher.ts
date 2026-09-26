@@ -19,12 +19,59 @@ export interface FetchResponse {
   lastModified: string | null;
 }
 
-/** 테스트에서 갈아끼우기 위한 최소 인터페이스. */
-export type FetchImpl = (url: string, init: { headers: Record<string, string> }) => Promise<{
+/**
+ * 테스트에서 갈아끼우기 위한 최소 인터페이스.
+ *
+ * ⚠`redirect: "manual"` 을 넘긴다 — 리디렉션은 `PoliteFetcher` 가 **직접** 따라간다(아래 `getUnqueued`).
+ * ⚠`body` 는 선택이다. 있으면 성공 본문을 읽지 않는 응답(3xx 홉·오류·304)에서 **취소**한다.
+ */
+export type FetchImpl = (url: string, init: { headers: Record<string, string>; redirect?: "manual" }) => Promise<{
   status: number;
   headers: { get(name: string): string | null };
   arrayBuffer(): Promise<ArrayBuffer>;
+  body?: { cancel(): Promise<void> } | null;
 }>;
+
+type RawResponse = Awaited<ReturnType<FetchImpl>>;
+
+/**
+ * 읽지 않을 응답 본문을 버린다(2026-09-25 감사 C2).
+ *
+ * ⚠**버리지 않으면 연결이 열린 채 남는다.** 네이티브 `fetch` 는 헤더만 받고 돌아오므로, 오류 본문을
+ * 안 버리면 백오프 뒤의 다음 요청이 **앞 응답이 열린 채로** 나간다 — 간격은 지켜도 L1 의
+ * **동시 1커넥션**이 깨진다(실측: 로컬 서버에서 첫 429 응답이 끝까지 안 닫혔다).
+ * ⚠**끝까지 읽지(`arrayBuffer`) 않고 취소한다** — 상대가 본문을 안 닫으면 읽기는 영원히 기다린다.
+ * ⚠취소 실패는 삼킨다 — 이미 닫힌 흐름을 또 닫는 것은 결함이 아니다. 요청의 성패는 상태 코드가 말한다.
+ */
+async function discard(res: RawResponse): Promise<void> {
+  try {
+    await res.body?.cancel();
+  } catch {
+    // 이미 닫혔다
+  }
+}
+
+const REDIRECTS = new Set([301, 302, 303, 307, 308]);
+
+/**
+ * `Location` 을 다음 주소로. **못 읽으면 `null`** — 호출자가 본문 없는 3xx 로 돌려준다.
+ *
+ * ⚠**퍼센트 인코딩 안 한 UTF-8 을 되살린다.** 규약을 어기고 한글·일본어를 날 바이트로 보내는 서버가 있고,
+ *   `headers.get` 은 그 바이트를 **latin1 한 글자씩**으로 준다. 그대로 `new URL` 에 넣으면 이중 인코딩된
+ *   주소(`/%C3%A6…`)로 가서 404 를 받는다 — 네이티브 `fetch` 가 따라가던 때는 undici 가 같은 복원을 해서
+ *   안 나던 실패다(2026-09-26 · C1 수정의 3중 검토 2차 실측).
+ * ⚠**형식이 깨진 주소도 `null` 이다** — 던지게 두면 바깥 `catch` 가 일시 오류로 보고 **재시도**한다.
+ *   같은 헤더가 또 올 뿐이므로 다른 출처로 보내는 3xx 처럼 **한 번에** 끝낸다.
+ */
+function resolveLocation(location: string | null, base: string): URL | null {
+  if (location === null) return null;
+  const raw = /[\x80-\xff]/.test(location) ? Buffer.from(location, "latin1").toString("utf8") : location;
+  try {
+    return new URL(raw, base);
+  } catch {
+    return null;
+  }
+}
 
 export type SleepImpl = (ms: number) => Promise<void>;
 
@@ -43,6 +90,13 @@ export interface ConditionalHeaders {
 }
 
 const RETRYABLE = new Set([408, 425, 429, 500, 502, 503, 504]);
+
+/**
+ * 따라가는 리디렉션 홉의 상한(2026-09-25 감사 C1).
+ * ⚠**상한이 없으면 고리 하나가 요청 폭주가 된다** — 네이티브 `fetch` 는 20홉까지 따라간 뒤 던지고,
+ *   그걸 재시도가 되풀이했다(실측: 로컬 고리 서버에 `get` 한 번이 수십 요청).
+ */
+export const MAX_REDIRECTS = 3;
 
 /**
  * L1 의 하한 — 「1req / 2~5초」의 아래쪽. **이 아래로는 만들 수 없다.**
@@ -146,18 +200,44 @@ export class PoliteFetcher {
       if (prev?.lastModified) headers["If-Modified-Since"] = prev.lastModified;
 
       try {
-        const res = await this.fetchImpl(url, { headers });
-        this.lastRequestAt = this.clock.now().getTime();
+        let res = await this.request(url, headers);
+
+        /**
+         * ⚠**리디렉션은 직접 따라간다**(2026-09-25 감사 C1). 네이티브 `fetch` 에 맡기면 홉이
+         * **그 호출 안에서** 일어나 `waitForSlot` 을 안 거친다 — 로컬 302→302→200 에서 세 요청 간격이
+         * 26.6ms·4ms 였다(L1 은 2초 이상). → 홉마다 슬롯을 기다리고 그 시각을 남긴다.
+         * ⚠**같은 출처(scheme+host+port)만 따라간다.** 다른 곳으로 보내면 따라가지 않고 **본문 없는 3xx** 를
+         *   돌려준다 — 호출자(`archiveUrl`)가 「본문 없는 302 응답」 실패로 센다(조용히 넘기지 않는다).
+         *   예의의 대상과 권리 판정(§2-5)은 우리가 고른 출처에 대한 것이지 상대가 보낸 곳에 대한 것이 아니다.
+         * ⚠**홉 수에 상한이 있다**(`MAX_REDIRECTS`) — 넘으면 역시 본문 없는 3xx. `Location` 이 없거나
+         *   못 읽어도 같다(`resolveLocation`).
+         */
+        const origin = new URL(url).origin;
+        let current = url;
+        for (let hop = 0; REDIRECTS.has(res.status); hop += 1) {
+          const next = resolveLocation(res.headers.get("location"), current);
+          await discard(res);
+          if (next === null || next.origin !== origin || hop >= MAX_REDIRECTS) {
+            return { status: res.status, body: null, etag: null, lastModified: null };
+          }
+          current = next.href;
+          await this.waitForSlot();
+          res = await this.request(current, headers);
+        }
 
         if (res.status === 304) {
+          await discard(res);
           return { status: 304, body: null, etag: prev?.etag ?? null, lastModified: prev?.lastModified ?? null };
         }
         if (res.status >= 400 && !RETRYABLE.has(res.status)) {
           // 404 등은 사실이다. 재시도해도 바뀌지 않는다.
+          await discard(res);
           return { status: res.status, body: null, etag: null, lastModified: null };
         }
         if (res.status >= 400) {
-          lastErr = new Error(`HTTP ${res.status} — ${url}`);
+          // ⚠**백오프 전에 버린다** — 안 버리면 다음 시도가 이 응답이 열린 채로 나간다(C2)
+          await discard(res);
+          lastErr = new Error(`HTTP ${res.status} — ${current}`);
           await this.backoff(attempt);
           continue;
         }
@@ -176,6 +256,13 @@ export class PoliteFetcher {
     }
 
     throw new Error(`취득 실패 (재시도 ${this.maxRetries}회 소진): ${url}`, { cause: lastErr });
+  }
+
+  /** 요청 한 번. ⚠리디렉션은 넘겨받지 않는다(`manual`) — 호출자가 홉마다 슬롯을 기다린다 */
+  private async request(url: string, headers: Record<string, string>): Promise<RawResponse> {
+    const res = await this.fetchImpl(url, { headers, redirect: "manual" });
+    this.lastRequestAt = this.clock.now().getTime();
+    return res;
   }
 
   private async waitForSlot(): Promise<void> {
