@@ -1032,9 +1032,12 @@ const SPARK_DIGITS: Readonly<Record<SparkData["metric"], 2 | 3>> = { ops: 3, era
  * ⚠**눌러 붙인 얇은 점은 크기를 말하지 않는다** — 방향(다른 달보다 위/아래)만 참이다. 크기는 이름과 표가 말한다.
  * ⚠**믿을 수 있는 달이 둘 미만이면 그리지 않는다** — 얇은 점만 있는 그림은 선이 없는 그림이다.
  *
- * ⚠**선과 점의 색을 여기(속성)서 주지 않는다 — CSS 토큰(`.spark polyline` · `.spark circle`)이 준다**
+ * ⚠**선과 점의 색은 CSS 토큰(`.spark polyline` · `.spark circle` · `.spark circle.thin`)이 준다**
  * (2026-09-25 감사 W2 · 2026-09-27). 구단 색 변수를 속성으로 달았더니 12구단 중 11구단이 어느 한 테마에서
  * 바탕 대비 3:1 미달이었고, **CSS 만 읽는 대비 검사는 그것을 원리적으로 못 봤다**(`css-contrast.test.ts`).
+ * ⚠**속성에는 `currentColor` 기본값만 둔다**(2026-09-27 · 감사 N14) — 스타일시트가 안 오면 SVG 초기값
+ * (`stroke:none` · `fill:black`) 때문에 선이 사라지고 끝점만 검게 남았다. 기본값은 글자색을 따를 뿐이고
+ * 정상 모드에서는 CSS 가 표현 속성을 이긴다. ⚠**구단 색을 여기 되살리지 마라**(위 W2).
  */
 function sparkline(s: SparkData): RawHtml {
   const unit = denUnit(s.metric);
@@ -1074,10 +1077,10 @@ function sparkline(s: SparkData): RawHtml {
 
   return html`<div class="spark">
   <svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img" aria-label="${label}：${name}">
-    <polyline points="${kept.map((c) => `${c.x},${c.y}`).join(" ")}" fill="none" stroke-width="1.6"
+    <polyline points="${kept.map((c) => `${c.x},${c.y}`).join(" ")}" fill="none" stroke="currentColor" stroke-width="1.6"
       stroke-linejoin="round" stroke-linecap="round"></polyline>
-    ${thin.map((c) => html`<circle class="thin" cx="${c.x}" cy="${c.y}" r="2.4" fill="none" stroke-width="1.2"></circle>`)}
-    <circle cx="${last.x}" cy="${last.y}" r="2.4"></circle>
+    ${thin.map((c) => html`<circle class="thin" cx="${c.x}" cy="${c.y}" r="2.4" fill="none" stroke="currentColor" stroke-width="1.2"></circle>`)}
+    <circle cx="${last.x}" cy="${last.y}" r="2.4" fill="currentColor"></circle>
   </svg>
   <span class="sl">${label}　${s.points[0]?.label ?? ""}→${s.points.at(-1)?.label ?? ""}</span>
 </div>`;

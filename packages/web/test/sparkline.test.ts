@@ -1,5 +1,5 @@
 /**
- * **표제 옆 월별 추이(스파크라인)** — 감사 N7(P0 · M2).
+ * **표제 옆 월별 추이(스파크라인)** — 감사 N7(P0 · M2) · N14(CSS 없이도 선이 남는다).
  *
  * ⚠**`aria-label` 도 렌더링이다.** 접근성 트리에 나가는 글자는 화면에 찍힌 글자와 같은 무게로
  * 사용자에게 도착한다 — 그래서 분모 없는 비율 금지(M2)가 그대로 걸린다.
@@ -207,6 +207,38 @@ test("⚠N7 얇은 달뿐이면 그리지 않는다 — 선이 없는 그림을 
     null,
     "얇은 달만 있는데 꺾은선을 그렸다",
   );
+});
+
+/**
+ * ⚠**CSS 가 없어도 선이 남는다**(2026-09-27 · 감사 N14 · 개연).
+ * 선과 점의 색이 CSS 에만 있어서, 스타일시트가 안 오면 `polyline` 은 SVG 초기값 `stroke:none` 으로
+ * **사라지고** 끝점만 초기값 검정으로 남았다. → 마크업에 **`currentColor` 기본값**을 둔다(글자색을 따른다).
+ * 정상 모드의 색은 지금처럼 CSS 토큰이 덮는다 — CSS 가 표현 속성을 이긴다(css-contrast 의 TEAM_MARKS 가 계속 잰다).
+ * ⚠**구단 색을 속성으로 되살리지 마라** — 그건 W2 가 걷어낸 결함이다(속성은 CSS 대비 검사가 못 본다).
+ */
+test("⚠N14 꺾은선의 선·점이 CSS 없이도 그려진다 — 기본 색 속성이 currentColor 다", () => {
+  const box = sparkBox(render("ops", [
+    { label: "4月", value: 0.7, den: 100 },
+    { label: "5月", value: 0.8, den: 8 },
+    { label: "6月", value: 0.9, den: 100 },
+  ]))!;
+  const polyline = /<polyline\b[^>]*>/.exec(box)?.[0] ?? "";
+  assert.match(polyline, /\bstroke="currentColor"/, `선에 기본 색이 없다 — CSS 가 없으면 stroke:none 으로 사라진다: ${polyline}`);
+  assert.match(polyline, /\bfill="none"/, "선 아래가 채워진다");
+  const circles = [...box.matchAll(/<circle\b[^>]*>/g)].map((m) => m[0]);
+  const end = circles.filter((c) => !c.includes('class="thin"'));
+  const thin = circles.filter((c) => c.includes('class="thin"'));
+  assert.equal(end.length, 1, "채운 끝점이 하나가 아니다 — 이 시험이 잴 것이 없다");
+  assert.equal(thin.length, 1, "속 빈 점이 하나가 아니다 — 이 시험이 잴 것이 없다");
+  assert.match(end[0]!, /\bfill="currentColor"/, `끝점에 기본 색이 없다 — CSS 가 없으면 검정으로 떨어진다: ${end[0]}`);
+  assert.match(thin[0]!, /\bstroke="currentColor"/, `속 빈 점에 기본 선 색이 없다 — CSS 가 없으면 테두리가 사라진다: ${thin[0]}`);
+  assert.match(thin[0]!, /\bfill="none"/, `속 빈 점이 채워진다 — CSS 가 없으면 끝점과 구별이 안 된다: ${thin[0]}`);
+  // ⚠**색 값은 currentColor 만** — 구단 색 변수·보간이 속성으로 돌아오면 CSS 대비 검사가 못 본다(W2)
+  for (const tag of [polyline, ...circles]) {
+    for (const m of tag.matchAll(/\b(?:stroke|fill)="([^"]*)"/g)) {
+      assert.ok(m[1] === "currentColor" || m[1] === "none", `꺾은선의 색 속성이 currentColor/none 밖이다: ${m[0]}`);
+    }
+  }
 });
 
 /** 투수 月別 표의 한 행 — 표는 경기 단위 투구 성적(`pitching`)을 그리고, 이 줄은 키·라벨만 쓴다 */
