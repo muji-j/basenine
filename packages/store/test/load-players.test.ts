@@ -65,6 +65,23 @@ async function setup(sidecars: Record<string, { fetchedAt: string; checkedAt?: s
   return { dir, archive, dbPath };
 }
 
+/**
+ * ⚠**픽스처의 전제를 먼저 잰다** — 아래 시험들은 「투수 페이지는 두 표 · 야수 페이지는 타격 표만」에 기댄다.
+ * CI 아카이브의 페이지는 다시 받히므로(재취득) 그 선수가 야수 등판이라도 하면 전제가 바뀐다.
+ * 그날 다른 시험이 엉뚱한 이유로 붉어지지 않게, **전제가 깨졌다고 여기서 말한다.**
+ */
+test("픽스처 전제 — 투수 페이지는 두 표(탭·구획·표) · 야수 페이지는 타격 표만", { skip }, async () => {
+  const shape = async (id: string) => {
+    const html = gunzipSync(await readFile(join(PLAYERS, `${id}.html.gz`))).toString("utf8");
+    return {
+      b: html.includes('<table id="tablefix_b">') && html.includes('id="nav_b"') && html.includes('id="stats_b"'),
+      p: html.includes('<table id="tablefix_p">') || html.includes('id="nav_p"') || html.includes('id="stats_p"'),
+    };
+  };
+  assert.deepEqual(await shape(PITCHER), { b: true, p: true }, `${PITCHER} 가 더는 「두 표」 투수 페이지가 아니다 — 픽스처를 바꿔라`);
+  assert.deepEqual(await shape(BATTER), { b: true, p: false }, `${BATTER} 가 더는 「타격 표만」인 야수 페이지가 아니다 — 픽스처를 바꿔라`);
+});
+
 function load(env: Env): { code: number; out: string; err: string } {
   const r = spawnSync(process.execPath, [TOOL, env.archive, env.dbPath], { encoding: "utf8" });
   return { code: r.status ?? 1, out: r.stdout, err: r.stderr };
