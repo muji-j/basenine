@@ -6,7 +6,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computed, elementOf, parseRules } from "./css-cascade.ts";
+import { computed, elementOf, parseRules, toPx } from "./css-cascade.ts";
 
 const BTN = { tag: "button", classes: ["card"], attrs: { "aria-selected": "true" } };
 
@@ -47,4 +47,12 @@ test("조상을 주면 결합자 앞 조건을 맞춰 보고, 모르는 구조 �
   assert.equal(computed(r, fav, "min-height"), "24px");
   assert.throws(() => computed(parseRules(`.card:first-child{display:none}`), BTN, "display"), /모르는 의사 클래스/);
   assert.deepEqual(elementOf('.card[aria-selected="true"]', "button"), BTN);
+});
+
+test("길이를 px 로 푼다 — 토큰을 따라가고, 모르는 형태는 던진다", () => {
+  const css = `:root{--a:var(--b);--b:24px} @media print{:root{--a:1px}}`;
+  assert.equal(toPx(css, "var(--a)"), 24);
+  assert.equal(toPx(css, "13px"), 13);
+  assert.throws(() => toPx(css, "calc(1px + 2px)"), /풀 수 없는/);
+  assert.throws(() => toPx(css, "var(--none)"), /없는 토큰/);
 });

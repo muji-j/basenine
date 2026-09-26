@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CLIENT_JS, CSS } from "../src/assets.ts";
-import { computed, parseRules } from "./css-cascade.ts";
+import { computed, parseRules, toPx } from "./css-cascade.ts";
 import { BLOCKS, PRESETS } from "../src/blocks.ts";
 
 /**
@@ -430,6 +430,37 @@ test("⚠N10 인쇄에 즐겨찾기 버튼이 찍히지 않는다 — 스크립�
     assert.equal(computed(all, el, "display", (q) => q === "print"), "none", `인쇄에서 눌림=${pressed} 버튼이 숨지 않는다`);
     // ⚠**공회전 방지** — 화면에서까지 숨으면 이 단언은 아무것도 구별하지 않는다
     assert.notEqual(computed(all, el, "display"), "none", `화면에서 눌림=${pressed} 버튼이 숨는다`);
+  }
+});
+
+/**
+ * ⚠**즐겨찾기 버튼의 표적이 작았다**(2026-09-27 · 감사 N13 · 개연). 계산상 약 27×19px
+ * (높이 = 글자 13 + 여백 2×2 + 테두리 1×2)이고 `pointer:coarse` 확대 목록에도 없었다.
+ * 바로 아래에 구단 링크가 붙어 있어 간격 예외(SC 2.5.8)가 성립한다고 장담할 수 없다.
+ * ⚠**「손가락이면」이 아니라 「항상」이다** — SC 2.5.8 에 「포인터가 정밀하면 면제」는 없다
+ * (`.term::after` 를 coarse 밖으로 뺀 것과 같은 이유 · assets.ts).
+ */
+test("⚠N13 즐겨찾기 버튼의 최종 최소 폭·높이가 24px 이상이다 — 마우스에서도(WCAG 2.5.8)", () => {
+  const all = parseRules(CSS);
+  const ancestors = [
+    { tag: "header", classes: ["idline"] },
+    { tag: "div", classes: ["idtext"] },
+    { tag: "div", classes: ["nmrow"] },
+  ];
+  const scenes: readonly [string, (q: string) => boolean][] = [
+    ["마우스·넓은 화면", () => false],
+    // 화면 쪽 조건(손가락 · 좁은 폭 · 다크)은 다 켜고, 인쇄 · 강제 색 · 모션 감소 · 넓은 폭 조건만 끈다
+    ["손가락·좁은 화면", (q) => !/print|forced-colors|min-width|prefers-reduced-motion/.test(q)],
+  ];
+  for (const [scene, mediaOk] of scenes) {
+    for (const pressed of ["false", "true"]) {
+      const el = { tag: "button", classes: ["favbtn"], attrs: { type: "button", "aria-pressed": pressed }, ancestors };
+      for (const prop of ["min-width", "min-height"]) {
+        const v = computed(all, el, prop, mediaOk);
+        assert.ok(v !== undefined, `${scene} · 눌림=${pressed}: ${prop} 가 없다 — 표적이 글자 크기에 맡겨져 있다`);
+        assert.ok(toPx(CSS, v) >= 24, `${scene} · 눌림=${pressed}: ${prop} ${v} 가 24px 미만이다`);
+      }
+    }
   }
 });
 

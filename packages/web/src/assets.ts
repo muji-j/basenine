@@ -86,6 +86,11 @@ export const CSS = `
   --topbar:46px;
   /* 탭줄 한 줄의 높이. 스크롤 여백 계산이 이 값을 쓰므로 .rail 이 실제로 이 높이여야 한다 */
   --rail:48px;
+  /* **누르는 표적의 최소 한 변** — WCAG 2.2 SC 2.5.8(24 × 24 CSS px).
+     ⚠**간격 척도(--s8 = 24px)를 빌리지 않는다** — 값이 같은 것은 우연이고 뜻이 다르다. 간격은 리듬이고
+     이것은 **기준**이라, 척도를 다시 짜는 날에도 움직이면 안 된다.
+     ⚠**「손가락이면」이 아니다** — 그 기준에 「포인터가 정밀하면 면제」는 없다(.term::after 주석과 같은 이유). */
+  --hit:24px;
   /* ══ 척도 ═══════════════════════════════════════════════════════════════════
      이름과 체계는 채택안 C(docs/superpowers/specs/mockups-2026-09-07/c-modern.html)에서
      가져왔다. **1단계(2026-09-07)는 배선만 세우고 화면을 안 바꿨고, 2a(2026-09-08)가
@@ -2654,8 +2659,16 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
 .chip.fav[aria-pressed="true"] s{color:inherit}
 .chip.fav[hidden]{display:none}
 /* ⚠**margin-left·vertical-align 을 뺐다**(2026-09-27 · N11) — 버튼이 h1 밖으로 나가 인라인 흐름이 아니다.
-   간격과 세로 정렬은 부모 .idline .nmrow 가 준다. */
+   간격과 세로 정렬은 부모 .idline .nmrow 가 준다.
+   ⚠**표적을 24 × 24 이상으로 — 항상**(2026-09-27 · 감사 N13). 글자 13 + 여백 2×2 + 테두리 1×2 = **높이 19px** 였고
+   손가락 확대 목록에도 없었다. 바로 아래 구단 링크가 붙어 있어 간격 예외도 장담할 수 없다.
+   글리프는 버튼이 세로 가운데로 두므로 자리만 커지고 별의 크기는 그대로다.
+   ⚠**표제 줄 높이는 거의 안 바뀐다** — 기본 규칙에서 이름 줄은 22px × 1.2 = 26.4px 이상이라 24px 버튼이 줄을 못 키운다.
+   예외 하나: ≤480px 규칙은 이름을 clamp(18px, 5.5vw, …) 로 줄이므로 이름이 20px 아래가 되는 폭
+   (약 364px 이하 · 계산값)에서는 줄이 버튼 높이를 따라 커진다 — 최대 2.4px(327px 이하 · 18px × 1.2 = 21.6px).
+   눌러도 크기가 안 바뀌므로 「흔들림」은 아니다(☆·★ 는 같은 서체 · 같은 진폭 — 위 주석). ⚠브라우저로는 안 쟀다. */
 .favbtn{font:inherit;font-size:var(--fs-lead);line-height:1;padding:var(--s1) var(--s3);cursor:pointer;
+  min-width:var(--hit);min-height:var(--hit);
   background:transparent;border:var(--rw-row) solid var(--hair-2);color:var(--tx-3);
   transition:color var(--t1) var(--e-out),border-color var(--t1) var(--e-out)}
 .favbtn:hover{color:var(--tx-2);border-color:var(--tx-3)}

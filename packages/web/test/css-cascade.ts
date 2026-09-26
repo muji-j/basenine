@@ -310,6 +310,29 @@ export function computed(rules: readonly Rule[], el: El, prop: string, mediaOk: 
   return best?.value;
 }
 
+/**
+ * 길이 값을 px 로 푼다 — `24px` · `var(--hit)`(기본 `:root` 의 값을 따라간다).
+ * ⚠**모르는 형태는 던진다**(`calc()` · `em` · 토큰 없음) — 못 푼 것을 0 이나 통과로 흘리지 않는다.
+ */
+export function toPx(source: string, value: string): number {
+  const css = source.replace(/\/\*[\s\S]*?\*\//g, "");
+  const head = css.slice(0, css.indexOf("@media"));
+  const seen = new Set<string>();
+  let v = value.trim();
+  for (;;) {
+    const px = /^(-?\d*\.?\d+)px$/.exec(v);
+    if (px !== null) return Number(px[1]);
+    if (v === "0") return 0;
+    const ref = /^var\(\s*(--[\w-]+)\s*\)$/.exec(v);
+    if (ref === null) throw new Error(`px 로 풀 수 없는 값: ${value}`);
+    if (seen.has(ref[1]!)) throw new Error(`토큰이 돌고 돈다: ${ref[1]}`);
+    seen.add(ref[1]!);
+    const def = new RegExp(`${ref[1]!.replace(/[-]/g, "\\-")}\\s*:\\s*([^;}]+)`).exec(head);
+    if (def === null) throw new Error(`기본 :root 에 없는 토큰: ${ref[1]}`);
+    v = def[1]!.trim();
+  }
+}
+
 /** 복합 선택자 하나(`.card[aria-selected="true"]`)에서 요소를 만든다 */
 export function elementOf(compound: string, tag: string): El {
   const c = parseCompound(compound);
