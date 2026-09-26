@@ -1000,6 +1000,16 @@ const RANKING_TOP = 10;
 const SPARK_DIGITS: Readonly<Record<SparkData["metric"], 2 | 3>> = { ops: 3, era: 2 };
 
 /**
+ * 꺾은선 캡션이 말하는 **좋은 쪽** — 기본 읽기(위가 좋다)와 반대인 지표에만 적는다.
+ *
+ * ⚠**방어율은 위로 갈수록 나쁘다**(2026-09-27 · PR-D 디자인 감사 P3). 같은 페이지의 月別 표는
+ * 「棒は防御率（短いほど良い）」라고 적는데 꺾은선만 말이 없었다 — 같은 모양(이름 뒤 괄호)으로 적는다.
+ * ⚠**축은 뒤집지 않는다** — 표도 막대를 안 뒤집고 글로 말한다(`splitsBlock` 각주의 규칙).
+ * ⚠**말은 용어집의 방어율 설명(「低いほど良い指標です」)과 같다**(M1 · 시험이 둘을 맞댄다).
+ */
+const SPARK_BETTER: Readonly<Record<SparkData["metric"], string | null>> = { ops: null, era: "低いほど良い" };
+
+/**
  * 월별 추이 꺾은선.
  *
  * ⚠**축을 그리지 않는다.** 눈금 없는 선은 「값」이 아니라 **모양**이다. 정확한 값은
@@ -1084,7 +1094,7 @@ function sparkline(s: SparkData): RawHtml {
     ${thin.map((c) => html`<circle class="thin" cx="${c.x}" cy="${c.y}" r="2.4" fill="none" stroke="currentColor" stroke-width="1.2"></circle>`)}
     <circle cx="${last.x}" cy="${last.y}" r="2.4" fill="currentColor"></circle>
   </svg>
-  <span class="sl">${label}　${s.points[0]?.label ?? ""}→${s.points.at(-1)?.label ?? ""}${
+  <span class="sl">${label}${SPARK_BETTER[s.metric] === null ? "" : `（${SPARK_BETTER[s.metric]}）`}　${s.points[0]?.label ?? ""}→${s.points.at(-1)?.label ?? ""}${
     // ⚠**속 빈 점의 뜻을 화면이 말한다 — 얇은 달이 있을 때만**(2026-09-27 · PR-D 디자인 감사 P2).
     //   얇은 달은 값이 극단이라 점이 상자 모서리를 차지하는데(약 73% 가 눈금 밖) 뜻은 이름에만 있었다.
     //   ⚠**글자는 이름의 얇음 문구(`thinText`)와 한 벌이다**(M1).

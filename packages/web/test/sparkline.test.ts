@@ -19,6 +19,7 @@ import { renderPlayerPage, THIN_SPLIT_OUTS } from "../src/player-page.ts";
 import type { PitchingSplitCell, PlayerPageData, SplitAxisData, SplitRow } from "../src/player-page.ts";
 import { loadSite, THIN_SPLIT_PA } from "../src/query.ts";
 import { innings } from "../src/format.ts";
+import { termOf } from "../src/glossary.ts";
 import { context, pitcherMark, pitchingBlock, playerPage, reliefBlock } from "./fixtures.ts";
 
 /** 한 달 — 값과 **분모**(타자 打席 · 투수 アウト) */
@@ -280,6 +281,27 @@ test("⚠속 빈 점의 뜻을 캡션이 말한다 — 얇은 달이 있을 때�
     { label: "5月", value: 0.9, den: 100 },
   ]))!);
   assert.ok(!none.text.includes("○"), `얇은 달이 없는데 범례가 있다: ${none.text}`);
+});
+
+/**
+ * ⚠**투수 꺾은선은 위로 갈수록 나쁘다 — 그걸 화면이 말해야 한다**(2026-09-27 · PR-D 디자인 감사 P3).
+ * 타자(OPS)는 위가 좋고 투수(방어율)는 위가 나쁜데, 캡션·그림 어디에도 말이 없었다.
+ * 같은 페이지의 月別 표는 「棒は防御率（**短いほど良い**）」라고 적는다 — 같은 모양(이름 뒤 괄호)으로 적는다.
+ * ⚠**축을 뒤집지 않는다** — 표도 막대를 안 뒤집고 방향을 글로 말한다(`splitsBlock` 각주 · 같은 페이지의 규칙).
+ * ⚠**말은 용어집의 방어율 설명과 같다**(「低いほど良い指標です」 · M1).
+ */
+test("⚠투수 꺾은선의 캡션이 방향을 말한다 — 「月別防御率（低いほど良い）」, 타자는 말하지 않는다", () => {
+  const pit = captionOf(sparkBox(render("era", [
+    { label: "4月", value: 3.0, den: 90 },
+    { label: "5月", value: 2.25, den: 60 },
+  ]))!);
+  assert.ok(pit.text.startsWith("月別防御率（低いほど良い）　"), `투수 캡션에 방향이 없다: ${pit.text}`);
+  assert.ok(termOf("era")!.short.includes("低いほど良い"), "용어집의 방어율 설명과 말이 갈렸다 — 둘 중 하나를 고쳐라(M1)");
+  const bat = captionOf(sparkBox(render("ops", [
+    { label: "4月", value: 0.7, den: 100 },
+    { label: "5月", value: 0.9, den: 100 },
+  ]))!);
+  assert.ok(!bat.text.includes("ほど良い"), `타자 캡션에 방향이 붙었다 — OPS 는 위가 좋다는 것이 기본 읽기다: ${bat.text}`);
 });
 
 /** 투수 月別 표의 한 행 — 표는 경기 단위 투구 성적(`pitching`)을 그리고, 이 줄은 키·라벨만 쓴다 */
