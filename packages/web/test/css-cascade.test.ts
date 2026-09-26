@@ -49,6 +49,23 @@ test("조상을 주면 결합자 앞 조건을 맞춰 보고, 모르는 구조 �
   assert.deepEqual(elementOf('.card[aria-selected="true"]', "button"), BTN);
 });
 
+/**
+ * ⚠**id 선택자를 조용히 「불일치」로 버렸다**(2026-09-27 · PR-D 교차 모델 검토 P3 · 디자인 감사 공통).
+ * `El` 에 id 가 없어 `#favBtn{…}` 이 언제나 안 맞았다 — 브라우저에서는 id 가 클래스를 이기는데
+ * 계산기는 클래스 쪽 값을 냈다. 파일 머리의 원칙(「모르면 조용히 틀리지 말 것」)을 어긴 자리였다.
+ */
+test("⚠id 선택자는 요소의 id 로 맞추고 특이도에서 클래스를 이긴다 — 조용히 버리지 않는다", () => {
+  const fav = { tag: "button", classes: ["favbtn"], id: "favBtn" };
+  const r = parseRules(`#favBtn{min-height:1px} .favbtn{min-height:24px}`);
+  assert.equal(computed(r, fav, "min-height"), "1px", "뒤에 온 클래스가 앞의 id 를 이겼다 — 특이도를 안 봤다");
+  const imp = parseRules(`#favBtn{min-height:1px!important}.favbtn{min-height:24px}`);
+  assert.equal(computed(imp, fav, "min-height"), "1px");
+  // id 가 없거나 다른 요소에는 안 맞는다
+  assert.equal(computed(r, { tag: "button", classes: ["favbtn"] }, "min-height"), "24px");
+  assert.equal(computed(r, { ...fav, id: "other" }, "min-height"), "24px");
+  assert.deepEqual(elementOf("#favBtn.favbtn", "button"), { tag: "button", classes: ["favbtn"], attrs: {}, id: "favBtn" });
+});
+
 test("길이를 px 로 푼다 — 토큰을 따라가고, 모르는 형태는 던진다", () => {
   const css = `:root{--a:var(--b);--b:24px} @media print{:root{--a:1px}}`;
   assert.equal(toPx(css, "var(--a)"), 24);

@@ -18,6 +18,12 @@
 export interface El {
   tag: string;
   classes: readonly string[];
+  /**
+   * 요소의 id. **없으면 id 가 없는 요소**로 잰다 — `#x` 는 맞지 않는다.
+   * ⚠**실제 요소에 id 가 있으면 반드시 적어라**(2026-09-27 · PR-D 검토 P3). 예전엔 이 칸이 아예 없어
+   * `#favBtn{…}` 이 언제나 「불일치」였고, 브라우저에서 이기는 id 규칙을 계산기가 조용히 놓쳤다.
+   */
+  id?: string;
   attrs?: Readonly<Record<string, string>>;
   /** `:focus-visible`·`:focus`·`:focus-within` 에 맞는가 */
   focused?: boolean;
@@ -195,7 +201,8 @@ type Node = Omit<El, "ancestors" | "focused"> & { focused?: boolean };
 
 /** 태그·클래스·속성·id 만 본다 */
 function matchesStatic(c: Compound, el: Node): boolean {
-  if (c.ids.length > 0) return false;
+  // ⚠**id 는 요소의 id 와 맞춘다** — 예전엔 id 가 있으면 무조건 false 였다(PR-D 검토 P3)
+  if (!c.ids.every((i) => i === el.id)) return false;
   if (!c.classes.every((k) => el.classes.includes(k))) return false;
   for (const a of c.attrs) {
     const v = el.attrs?.[a.name];
@@ -337,6 +344,7 @@ export function toPx(source: string, value: string): number {
 export function elementOf(compound: string, tag: string): El {
   const c = parseCompound(compound);
   if (c.pseudos.length > 0 || c.pseudoElement) throw new Error(`의사 클래스·요소가 붙은 선택자로 요소를 만들 수 없다: ${compound}`);
+  if (new Set(c.ids).size > 1) throw new Error(`id 가 둘인 요소는 없다: ${compound}`);
   return {
     tag,
     classes: c.classes,
@@ -344,5 +352,6 @@ export function elementOf(compound: string, tag: string): El {
       if (a.op === "^=") throw new Error(`앞머리 일치(^=)로는 요소의 값을 정할 수 없다: ${compound}`);
       return [a.name, a.value ?? ""];
     })),
+    ...(c.ids.length === 0 ? {} : { id: c.ids[0]! }),
   };
 }

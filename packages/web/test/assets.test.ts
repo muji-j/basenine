@@ -426,7 +426,8 @@ test("⚠N10 인쇄에 즐겨찾기 버튼이 찍히지 않는다 — 스크립�
     { tag: "div", classes: ["nmrow"] },
   ];
   for (const pressed of ["false", "true"]) {
-    const el = { tag: "button", classes: ["favbtn"], attrs: { type: "button", "aria-pressed": pressed }, ancestors };
+    // ⚠**실제 버튼은 id="favBtn" 이다** — 안 적으면 `#favBtn{…}` 규칙을 계산기가 못 본다(PR-D 검토 P3)
+    const el = { tag: "button", classes: ["favbtn"], id: "favBtn", attrs: { type: "button", "aria-pressed": pressed }, ancestors };
     assert.equal(computed(all, el, "display", (q) => q === "print"), "none", `인쇄에서 눌림=${pressed} 버튼이 숨지 않는다`);
     // ⚠**공회전 방지** — 화면에서까지 숨으면 이 단언은 아무것도 구별하지 않는다
     assert.notEqual(computed(all, el, "display"), "none", `화면에서 눌림=${pressed} 버튼이 숨는다`);
@@ -454,7 +455,8 @@ test("⚠N13 즐겨찾기 버튼의 최종 최소 폭·높이가 24px 이상이�
   ];
   for (const [scene, mediaOk] of scenes) {
     for (const pressed of ["false", "true"]) {
-      const el = { tag: "button", classes: ["favbtn"], attrs: { type: "button", "aria-pressed": pressed }, ancestors };
+      // ⚠**실제 버튼은 id="favBtn" 이다** — 안 적으면 `#favBtn{min-height:0}` 같은 규칙을 못 본다(PR-D 검토 P3)
+      const el = { tag: "button", classes: ["favbtn"], id: "favBtn", attrs: { type: "button", "aria-pressed": pressed }, ancestors };
       for (const prop of ["min-width", "min-height"]) {
         const v = computed(all, el, prop, mediaOk);
         assert.ok(v !== undefined, `${scene} · 눌림=${pressed}: ${prop} 가 없다 — 표적이 글자 크기에 맡겨져 있다`);
