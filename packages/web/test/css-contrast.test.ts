@@ -187,8 +187,9 @@ const TEAM_MARKS: readonly {
   /**
    * ⚠**구단 색을 선·글리프 색으로 쓰던 자리 중 감사 W2 가 짚은 넷**(2026-09-25 감사 W2 · 2026-09-27 수정).
    *   ⚠~~마지막 자리들~~ 은 거짓이었다(같은 날 디자인 감사) — `.spitcher a` 의 구단 색 밑줄(box-shadow)이
-   *   남아 있고, 이 하네스(color/stroke/fill/border-color)도 box-shadow 시험도 그 자리를 안 본다.
-   *   다음 감사 라운드의 후보로 넘겼다(감사 문서 §10-4).
+   *   남아 있었고, 이 하네스(color/stroke/fill/border-color)도 box-shadow 시험도 그 자리를 안 봤다.
+   *   ⚠**그 자리는 감사 N15 로 고쳤다**(2026-09-27) — 글자 밑줄로 바꿨고, 아래 「링크의 표식이 구단 색에
+   *   기대지 않는다」 시험이 링크 규칙 전체를 대상으로 box-shadow·밑줄·테두리·윤곽까지 본다.
    * 감사 실측(바탕 --page · 비텍스트 3:1): 12구단 중 **라이트 4 · 다크 7 · 합집합 11** 이 미달이었다 —
    * ロッテ 다크 **1.188** · オリックス 다크 1.169 · 阪神 라이트 1.543. 広島만 양 테마 통과(5.637 / 3.073).
    * ⚠**바탕은 --page 다** — 선수 표제(`.idline`)와 명부(`.teamgroup`)는 배경을 안 깐다(body = --page).
@@ -337,6 +338,56 @@ test("⚠구단 색을 선 색(stroke)으로 쓰는 자리가 늘지 않는다",
     found.push((m[1] ?? "").trim());
   }
   assert.deepEqual(found.sort(), [], `구단 색을 선 색으로 쓰는 자리가 바뀌었다: ${found.join(" / ")}`);
+});
+
+/**
+ * ⚠**링크의 표식을 구단 색에 걸지 마라**(2026-09-27 · 감사 N15).
+ *
+ * 予告先発 의 투수 이름은 글자색을 물려받고(`a{color:inherit}`) 표준 밑줄을 끈 채
+ * **구단 색 2px `box-shadow` 밑줄 하나**로 「누를 수 있다」를 말하고 있었다 —
+ * 초점 링은 초점이 온 뒤에야, 호버는 따로 표식이 없어 **그 밑줄이 유일한 상시 단서**였는데
+ * 12구단 중 **라이트 4 · 다크 8** 이 `--panel` 대비 3:1 미달이었다(반증자·중개자 독립 재계산 일치).
+ * 위 `TEAM_MARKS`(color/stroke/fill/border-color)도 `EDGE_MARKS`(토큰 box-shadow)도 그 자리를 **원리적으로** 못 봤다.
+ *
+ * → **링크(주어가 `a` 인 규칙)의 상시 선·밑줄·윤곽 선언이 구단 색 변수를 읽지 않는다**를 통째로 못 박는다.
+ *   구단 식별이 필요하면 면과 짝 잉크로 한다(`.sname i` 가 바로 위에서 그 일을 한다).
+ * ⚠**「상시」만 잰다** — `:hover`·`:focus`·`:active` 가 붙은 규칙은 뺀다. 링크임을 알리는 것은
+ *   손을 대기 **전에** 보이는 표식이고, 초점 표시는 전역 `:focus-visible`(--tx)이 따로 맡는다.
+ *   ⚠**그래서 이 시험이 안 보는 자리가 하나 있다**: `a.cg:hover` 의 왼쪽 테두리가 구단 색이다(달력의 경기 링크 ·
+ *   호버 피드백). 초점은 `a.cg:focus-visible` 이 --tx 로 말하므로 적합성 결함은 아니지만, 호버 피드백이
+ *   구단에 따라 안 보일 수 있다 — 고칠 것인지는 이 시험 밖의 판단이다(2026-09-27 · N15 작업 중 발견).
+ */
+test("⚠링크의 표식(밑줄·선·윤곽)이 구단 색에 기대지 않는다 — 予告先発 투수 링크가 그랬다(N15)", () => {
+  const css = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
+  const MARK = /^(?:box-shadow|text-decoration(?:-color)?|border(?:-(?:top|right|bottom|left))?(?:-color)?|outline(?:-color)?)$/;
+  const found: string[] = [];
+  let anchors = 0;
+  for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const parts = (m[1] ?? "").split(",").map((s) => s.trim());
+    // ⚠**주어가 `a` 인 상시 규칙만** — `td a` · `.spitcher a`. 가상 요소(::after 등)는 장식이라,
+    //   사용자 동작(:hover·:focus·:active)이 붙은 규칙은 「상시」가 아니라 뺀다(위 주석)
+    const resting = (p: string): boolean =>
+      /(?:^|[\s>+~])a(?=$|[.:[#])/.test(p) && !p.includes("::") && !/:(?:hover|focus|focus-visible|focus-within|active)\b/.test(p);
+    if (!parts.some(resting)) continue;
+    anchors += 1;
+    for (const d of (m[2] ?? "").matchAll(/(?:^|;)\s*([a-z-]+)\s*:\s*([^;]+)/g)) {
+      if (MARK.test(d[1]!) && /var\(\s*--(?:team|chip)\b/.test(d[2]!)) found.push(`${m[1]!.trim()} → ${d[1]}:${d[2]!.trim()}`);
+    }
+  }
+  // ⚠**공회전 방지** — 링크 규칙은 수십 개 있다. 못 찾으면 정규식이 헛돈다
+  assert.ok(anchors >= 10, `링크 규칙을 ${anchors}개밖에 못 찾았다 — 이 스캔이 공회전한다`);
+  assert.deepEqual(found, [], "링크의 표식이 구단 색이다 — 12구단 중 어느 한 테마에서 3:1 아래라 링크임이 사라진다");
+});
+
+/** ⚠**그 자리의 상시 표식이 실제로 있는가** — 구단 색을 뺐는데 밑줄도 없으면 링크임을 말하는 것이 0 이 된다 */
+test("⚠予告先発 투수 이름 링크는 글자 밑줄로 링크임을 말한다(N15)", () => {
+  const css = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
+  const rule = /(?:^|[\n}])\s*\.spitcher a\{([^{}]*)\}/.exec(css);
+  assert.ok(rule !== null, ".spitcher a 규칙이 없다 — 이 시험이 공회전한다");
+  const decl = /(?:^|;)\s*text-decoration(?:-line)?\s*:\s*([^;]+)/.exec(rule[1]!);
+  assert.ok(decl !== null && /\bunderline\b/.test(decl[1]!), `밑줄이 없다: ${rule[1]}`);
+  // ⚠**밑줄 색은 글자색을 따른다**(--panel 위 --tx · 17.889 / 13.592) — 구단 색 변수를 얹으면 위 시험의 결함으로 돌아간다
+  assert.doesNotMatch(rule[1]!, /text-decoration-color|box-shadow/, `밑줄 색을 따로 칠했다: ${rule[1]}`);
 });
 
 /**

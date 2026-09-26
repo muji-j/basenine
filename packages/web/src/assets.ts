@@ -1297,7 +1297,15 @@ th[aria-sort="descending"] .sortable i::before{content:"↓"}
 .sname{margin:0 0 var(--s3);font-size:var(--fs-note);letter-spacing:.14em;font-weight:var(--w-bold);display:flex;align-items:center;gap:var(--s3)}
 .sname i{width:10px;height:10px;background:var(--chip,#6b7280);font-style:normal}
 .spitcher{margin:0 0 var(--s4);font-size:var(--fs-title);font-weight:var(--w-bold);letter-spacing:.06em}
-.spitcher a{text-decoration:none;box-shadow:inset 0 -2px 0 var(--chip,#6b7280)}
+/* ⚠**링크임을 글자 밑줄로 말한다 — 구단 색 밑줄이 아니다**(2026-09-27 · 감사 N15).
+   예전엔 표준 밑줄을 끄고 **구단 색 2px box-shadow 하나**로 「누를 수 있다」를 말했다. 글자색은
+   물려받고 호버 표식도 없어 그 선이 **유일한 상시 단서**였는데, --panel 대비 12구단 중
+   **라이트 4 · 다크 8** 이 3:1 미달이었고 강제 색 모드에서는 box-shadow 가 통째로 none 이 됐다.
+   → 밑줄 색은 글자색(--tx · --panel 대비 17.889 / 13.592)을 따르고, 그 모드에서도 남는 text-decoration 으로 긋는다.
+   구단은 바로 위 .sname 의 칩과 이름이 말한다 — 이 자리에서 구단 색을 되살리지 마라.
+   ⚠**오프셋을 주는 이유**: 한자·가나는 글자가 알파벳 기준선 아래로 약 0.12em 내려온다 — 18px 에서 2px 남짓이라
+   서체 기본 위치의 밑줄은 획 끝에 닿는다. 4px(--s2) 아래로 내려 획과 떨어뜨린다. 굵기는 서체에 맡긴다. */
+.spitcher a{text-decoration:underline;text-underline-offset:var(--s2)}
 dl.srow{grid-template-columns:auto 1fr;margin-bottom:var(--s5)}
 @media (max-width:680px){.starters{grid-template-columns:1fr;gap:var(--s6)}}
 

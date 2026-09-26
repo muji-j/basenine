@@ -688,3 +688,21 @@ test("⚠W2 눌린 토글은 색 말고도 말한다 — 눌림과 안 눌림이
   );
   console.log(`  · 눌림 토글 ${subjects.size}개가 전부 색 말고도 말한다: ${how.join(" / ")}`);
 });
+
+/**
+ * ⚠**N15 — 予告先発 투수 이름 링크의 상시 표식이 이 모드에서 남는다**(2026-09-27).
+ *
+ * 옛 표식은 **구단 색 `box-shadow` 밑줄 하나**였다. 일반 모드에서는 12구단 중 라이트 4 · 다크 8 이
+ * 3:1 아래였고(css-contrast.test.ts), 이 모드에서는 `box-shadow` 가 **통째로 none** 이 되어 링크임이 사라졌다.
+ * → 표식을 `text-decoration` 으로 옮겼다 — 이 모드에서 남는 채널이다(위 `LIVES`).
+ */
+test("⚠N15 予告先発 투수 링크의 밑줄이 강제 색 모드에서 남는다 — box-shadow 가 아니라 text-decoration", () => {
+  const rules = rulesBySelector();
+  const bodies = rules.get(".spitcher a");
+  assert.ok(bodies !== undefined, ".spitcher a 규칙이 없다 — 이 시험이 공회전한다");
+  assert.ok(LIVES.test("text-decoration"), "이 시험의 전제(text-decoration 은 이 모드에서 남는다)가 목록에서 빠졌다");
+  const won = winningValue(bodies, "text-decoration");
+  assert.ok(typeof won === "string" && /\bunderline\b/.test(won), `상시 밑줄이 text-decoration 이 아니다(${String(won)}) — 이 모드에서 링크임이 사라진다`);
+  assert.equal(winningValue(bodies, "box-shadow"), undefined, "이 모드에서 none 이 되는 box-shadow 를 표식으로 쓴다");
+  assert.doesNotMatch(forcedBlock(), /\.spitcher a[^{]*\{[^}]*text-decoration\s*:\s*none/, "강제 색 블록이 그 밑줄을 지운다");
+});
