@@ -239,6 +239,25 @@ test("넓은 표는 자기 컨테이너 안에서만 가로 스크롤한다", ()
   assert.match(CSS, /\.scroller\{overflow-x:auto/);
 });
 
+/**
+ * ⚠**시즌 띠의 스냅 기준선은 띠 자신의 padding-left 를 포함해야 한다**(2026-09-25 감사 W4).
+ * 띠의 padding-left 는 `calc(var(--gut) + var(--pad))`(1440 에서 128px)인데 scroll-padding-left 가
+ * **84px 고정**이라, 띠가 넘치는 드래프트 화면에서 **로드 직후 스냅이 띠를 108px 굴려**
+ * 2026年·2025年 이 「シーズン」 라벨 밑에 섰다(실측 26%·60% 가림 · 스크립트를 꺼도 같다 — CSS 스냅이 원인).
+ * 2026-08-18 에 사용자가 보고한 「시즌 텍스트와 2026년이 겹침」과 같은 겹침이다.
+ */
+test("⚠W4 시즌 띠의 스냅 기준선이 띠의 padding-left 를 포함한다 — 빼먹으면 로드 스냅이 연도를 라벨 밑에 세운다", () => {
+  const body = /\.seasons\{([^}]*)\}/.exec(CSS.replace(/\/\*[\s\S]*?\*\//g, ""))?.[1];
+  assert.ok(body !== undefined, ".seasons 규칙이 없다 — 이 시험이 공회전한다");
+  const pad = /(?:^|[;{\s])padding-left:([^;}]+)/.exec(body)?.[1]?.trim();
+  const snap = /scroll-padding-left:([^;}]+)/.exec(body)?.[1]?.trim();
+  assert.equal(pad, "calc(var(--gut) + var(--pad))", "띠의 padding-left 가 바뀌었다 — 이 시험의 전제를 다시 봐라");
+  assert.ok(
+    snap !== undefined && snap.includes("var(--gut)") && snap.includes("var(--pad)"),
+    `scroll-padding-left(${String(snap)})가 띠의 padding-left 를 포함하지 않는다 — 넓은 화면에서 스냅이 연도를 라벨 밑에 세운다`,
+  );
+});
+
 test("좁은 화면 규칙이 실제로 들어 있다 — 스마트폰에서 보는 화면이다", () => {
   for (const bp of [900, 680, 420]) {
     assert.ok(CSS.includes(`@media (max-width:${bp}px)`), `${bp}px 분기점이 없다`);

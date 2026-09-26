@@ -1637,6 +1637,58 @@ test("공유 링크로 들어와도 버튼이 눌린 것으로 보인다 — 안
 });
 
 /**
+ * ⚠**공유 링크 복원이 늦게 와도 그 사이 사용자가 고른 것을 덮어쓰지 않는다**(2026-09-25 감사 C4).
+ * 복원은 색인(`players.json`)을 기다렸다가 도는데, 그동안 「今日の対戦」 버튼은 서버가 그린 것이라 **이미 눌린다.**
+ * 옛 코드는 색인이 오는 순간 **사용자 조작을 확인하지 않고** URL 의 두 사람으로 두 자리를 다시 채우고
+ * 비교를 시작했다 — 에러 없이 사용자의 최신 선택이 사라진다(조용한 실패).
+ */
+test("⚠C4 공유 링크 복원이 늦게 와도 그 사이 사용자가 고른 선수를 덮어쓰지 않는다", async () => {
+  const doc = buildCompare();
+  let release: () => void = () => assert.fail("색인 요청이 안 나갔다 — 이 시험이 공회전한다");
+  // ⚠색인은 `routes` 로 준다 — 스텁의 `hold` 는 `routes` 응답에만 걸린다(`index` 옵션은 즉시 응답한다)
+  run(doc, {
+    routes: {
+      "players.json": [
+        { i: "p1", n: "山本", t: "チーム" },
+        { i: "p2", n: "宮城", t: "チーム" },
+        { i: "b1", n: "佐藤", t: "チーム" },
+      ],
+    },
+    location: { search: "?a=p1&b=b1", href: "" },
+    hold: { "players.json": (r) => { release = r; } },
+  });
+  cpk(doc, "p2").fire("click"); // 색인이 오기 전에 사용자가 宮城를 고른다
+  assert.equal(doc.getElementById("cmp-a-chosen")!.textContent, "宮城（チーム）", "선택이 안 들어갔다 — 전제가 틀렸다");
+  release();
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(doc.getElementById("cmp-a-chosen")!.textContent, "宮城（チーム）", "늦게 온 URL 복원이 사용자의 선택을 덮어썼다");
+  assert.equal(cpk(doc, "p1").getAttribute("data-slot"), null, "URL 의 선수가 사용자 몰래 다시 자리에 앉았다");
+  assert.equal(cpk(doc, "p2").getAttribute("data-slot"), "A");
+});
+
+test("C4 대조군 — 사용자가 아무것도 안 하면 늦게 와도 공유 링크의 두 사람을 되살린다", async () => {
+  const doc = buildCompare();
+  let release: () => void = () => assert.fail("색인 요청이 안 나갔다 — 이 시험이 공회전한다");
+  run(doc, {
+    routes: {
+      "players.json": [
+        { i: "p1", n: "山本", t: "チーム" },
+        { i: "b1", n: "佐藤", t: "チーム" },
+      ],
+    },
+    location: { search: "?a=p1&b=b1", href: "" },
+    hold: { "players.json": (r) => { release = r; } },
+  });
+  release();
+  await new Promise((r) => setTimeout(r, 10));
+  assert.deepEqual(
+    [cpk(doc, "p1").getAttribute("data-slot"), cpk(doc, "b1").getAttribute("data-slot")],
+    ["A", "B"],
+    "사용자 조작이 없는데 복원을 건너뛰었다 — 공유 링크가 같은 화면을 안 연다",
+  );
+});
+
+/**
  * ⚠**부품을 공유하면 그 부품을 살리는 처리도 공유해야 한다.**
  * aria-label 이 「左右キーで移動」라고 말하는데 화살표가 안 먹으면 라벨이 거짓말이 된다.
  */
@@ -2484,6 +2536,33 @@ test("⚠넘치지 않으면 아무것도 붙이지 않는다", () => {
   doc.body.appendChild(fits);
   run(doc);
   assert.equal(fits.getAttribute("tabindex"), null, "넘치지도 않는데 탭 정지가 붙었다");
+});
+
+/**
+ * ⚠**숨은 패널 안의 표는 재지 않는다 — 재는 것 자체가 강제 레이아웃이다**(2026-09-25 감사 W9).
+ * `hidden="until-found"` 로 닫힌 패널은 `content-visibility:hidden` 이라 **scrollWidth 가 0 이 아니고**,
+ * 읽을 때마다 브라우저가 그 패널을 배치한다 — 순위 화면(390)에서 로드와 첫 「個人」 클릭마다 레이아웃 **+97회**,
+ * 클릭 동기 처리 **326~363ms**(실측). 「숨은 표는 폭이 0 이라 빠진다」던 주석은 until-found 에서 거짓이었다.
+ * ⚠**펼치면 그때 잰다** — 탭 훅이 다시 부르므로 넘치는 표는 여전히 탭 정지를 얻는다(아래 두 번째 절반).
+ */
+test("⚠W9 숨은 패널 안의 넓은 표는 폭을 읽지 않는다 — 펼치면 그때 재서 탭 정지를 붙인다", () => {
+  const doc = buildPage();
+  const strip = deepTabStrip(doc);
+  const panelB = doc.querySelectorAll('[data-panelgroup="deep"][data-panelkey="b"]')[0]!;
+  panelB.hidden = true; // 서버가 닫아서 보낸 패널
+  const sc = scrollerCase(787, 353, 8, 90);
+  let reads = 0;
+  Object.defineProperty(sc, "scrollWidth", { get: () => { reads += 1; return 787; }, configurable: true });
+  panelB.appendChild(sc);
+  run(doc, { storage: makeStorage() });
+  assert.equal(panelB.hidden, true, "패널 b 가 처음부터 열렸다 — 이 시험이 숨은 경우를 안 잰다");
+  assert.equal(reads, 0, `숨은 패널 안의 표 폭을 ${reads}번 읽었다 — until-found 에서는 읽을 때마다 강제 레이아웃이다`);
+  assert.equal(sc.getAttribute("tabindex"), null);
+
+  strip.querySelectorAll('[data-tab="b"]')[0]!.fire("click");
+  assert.equal(panelB.hidden, false, "탭을 눌렀는데 패널이 안 열렸다 — 이 시험의 후반이 공회전한다");
+  assert.ok(reads > 0, "펼친 뒤에도 안 쟀다");
+  assert.equal(sc.getAttribute("tabindex"), "0", "펼친 뒤에도 넘치는 표에 탭 정지가 없다 — 키보드로 밀 수 없다");
 });
 
 // ─── 최애 구단 ──────────────────────────────────────────────────────────

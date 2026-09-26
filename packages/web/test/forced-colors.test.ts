@@ -571,3 +571,25 @@ test("⚠죽는 채널만 쓰는 상태 규칙은 전부 사유가 적혀 있다
       "  ⚠「아마 괜찮다」는 사유가 아니다.",
   );
 });
+
+/**
+ * ⚠**쉬는 탭은 자기 굵기를 스스로 정한다**(2026-09-25 감사 W1).
+ * `.tab{font:inherit}` 가 **굵기까지** 물려받아, h2 안에 놓인 탭줄(선수 페이지의 분할·지표 탭 ·
+ * 선수 목록의 打者/先発/救援)에서는 쉬는 탭도 h2 의 굵기가 되어 **고른 탭과 700/700 으로 같았다**
+ * (실측 · 일반·강제 색 모드 둘 다). 그러면 위 JUSTIFIED 의 「고른 쪽은 굵기로 산다」가 그 자리에서 거짓이 되고,
+ * 고른 탭의 채움은 팀색이라 12구단 전부가 어느 한 테마에서 3:1 아래다 — **상태를 말하는 것이 사라진다.**
+ * ⚠이 시험은 캐스케이드의 **이기는 값**을 본다 — `font:inherit` 뒤에 굵기를 안 적으면 `null`(되감김)이다.
+ */
+test("⚠W1 쉬는 탭의 굵기를 .tab 이 스스로 정한다 — h2 에서 물려받으면 고른 탭과 같아진다", () => {
+  const rules = rulesBySelector();
+  const base = rules.get(".tab");
+  assert.ok(base !== undefined, ".tab 규칙이 없다 — 이 시험이 공회전한다");
+  const picked = winningValue(rules.get('.tab[aria-pressed="true"],.tab[aria-selected="true"]') ?? [], "font-weight");
+  assert.equal(picked, "var(--w-bold)", "고른 탭의 굵기 규칙이 바뀌었다 — 이 시험의 전제를 다시 봐라");
+  const rest = winningValue(base, "font-weight");
+  assert.equal(
+    rest,
+    "var(--w-reg)",
+    `.tab 이 굵기를 스스로 안 정한다(${String(rest)}) — font:inherit 로 h2 의 굵기(700)를 물려받아 고른 탭과 같아진다`,
+  );
+});

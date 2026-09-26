@@ -598,8 +598,12 @@ a{color:inherit}
    칠해져 있으면 그것이 지금 고른 것이거나 손가락이 얹힌 것이다.**
    ⚠**대비 후퇴가 아니다** — 이 무리는 위 .qbox 주석이 적은 그 판정에서 「가시 텍스트 라벨이 있어
    1.4.11 위반으로 단정할 수 없다」로 분류된 쪽이다. 라벨이 컨트롤을 말하고, 고른 것은
-   **배경 + 굵기**가 말한다(색만으로 말하지 않는다 · §7). */
-.tab{font:inherit;font-size:var(--fs-data);padding:var(--s2) var(--s4);cursor:pointer;background:transparent;color:var(--tx-2);
+   **배경 + 굵기**가 말한다(색만으로 말하지 않는다 · §7).
+   ⚠**굵기는 .tab 이 스스로 정한다**(2026-09-25 감사 W1). font:inherit 만 두면 **굵기까지** 물려받아,
+   h2 안의 탭줄(선수 페이지의 분할·지표 탭 · 선수 목록의 打者/先発/救援)에서 쉬는 탭도 700 이 되어
+   **고른 탭과 700/700 으로 같았다**(실측 · 강제 색 모드도 같다). 고른 탭의 채움은 팀색이라
+   12구단 전부가 어느 한 테마에서 3:1 아래다 — 굵기마저 같으면 **상태를 말하는 것이 없다.** */
+.tab{font:inherit;font-weight:var(--w-reg);font-size:var(--fs-data);padding:var(--s2) var(--s4);cursor:pointer;background:transparent;color:var(--tx-2);
   border:var(--rw-row) solid transparent;white-space:nowrap;
   transition:color var(--t1) var(--e-out),background var(--t1) var(--e-out),border-color var(--t1) var(--e-out)}
 .tab:hover{color:var(--tx);border-color:var(--tx-3)}
@@ -1968,7 +1972,11 @@ table.stand .dif i.n{right:50%}
    .seasons a 에 scroll-snap-align:start 가 있고 .slab 은 sticky left:0 이라,
    스냅이 끝나면 연도 하나가 **정확히 라벨이 있는 자리**에 와서 멈춘다 — 겹치는 것이 당연하다.
    ⚠**scroll-padding-left 로 스냅 기준선을 라벨 오른쪽으로 민다.**
-   라벨 폭(약 50px)+여백보다 넉넉하게 잡는다 — 모자라면 다시 겹친다. */
+   라벨 폭(약 50px)+여백보다 넉넉하게 잡는다 — 모자라면 다시 겹친다.
+   ⚠**띠 자신의 padding-left 도 더한다**(2026-09-25 감사 W4). 84px 만 두면 기준선이 padding
+   (1440 에서 128px) **안쪽**에 서서, 띠가 넘치는 드래프트 화면에서 **로드 직후 스냅이 띠를 108px 굴려**
+   2026年·2025年 이 라벨 밑에 섰다(실측 26%·60% 가림 · 스크립트를 꺼도 같다 — CSS 스냅이 원인).
+   padding 을 더하면 처음 자리(scrollLeft 0)가 그대로 유효한 스냅 위치가 된다. */
 /* ⚠**.topbar 와 같은 이유로 오른쪽을 맞춘다**(그쪽 주석 참조) — 이 띠도 .shell 밖이다.
    ⚠**가로 스크롤이 있는 띠다**(시즌이 늘면 넘친다). 여유 폭이 커지면 스크롤이 덜 필요해질 뿐,
    넘칠 때의 거동은 그대로다. */
@@ -1977,7 +1985,7 @@ table.stand .dif i.n{right:50%}
   border-bottom:var(--rw-row) solid var(--hair);background:var(--panel-2);
   flex-wrap:nowrap;overflow-x:auto;overscroll-behavior-x:contain;
   scrollbar-width:thin;scroll-snap-type:x proximity;
-  scroll-padding-left:84px}
+  scroll-padding-left:calc(var(--gut) + var(--pad) + 84px)}
 .seasons::-webkit-scrollbar{height:6px}
 .seasons::-webkit-scrollbar-thumb{background:var(--hair-2);border-radius:var(--r-thumb)}
 /* ⚠**좁은 화면에서는 굴리지 않고 접는다**(2026-09-08 · 2c).
@@ -3388,8 +3396,17 @@ function renderBlocks(){
    */
   (function(){
     const FOCUSABLE="a[href],button,input,select,textarea,[tabindex]";
+    /* ⚠**숨은 패널 안의 스크롤러는 재지 않는다**(2026-09-25 감사 W9).
+       hidden="until-found" 로 닫힌 패널은 content-visibility:hidden 이라 **scrollWidth 가 0 이 아니고**,
+       읽을 때마다 브라우저가 그 패널을 배치한다 — 순위 화면(390)에서 로드와 첫 「個人」 클릭마다
+       레이아웃 **+97회** · 클릭 동기 처리 326~363ms(실측). 펼칠 때는 탭 훅(showTabs → tabHooks)이 다시 부르고,
+       찾기로 펼쳐도 beforematch 가 showTabs 를 부르므로 **넘치는 표는 여전히 잰다.**
+       ⚠hidden 을 **속성이 아니라 프로퍼티로** 본다 — until-found 면 문자열 "until-found"(참)이고,
+       부모를 타고 올라가므로 closest 가 없는 환경(시험 스텁)에서도 같게 돈다. 읽기에 배치가 들지 않는다. */
+    const inHidden=(el)=>{for(let n=el;n;n=n.parentNode)if(n.hidden)return true;return false};
     const mark=()=>{
       $$(".scroller").forEach(el=>{
+        if(inHidden(el))return;
         /* ⚠크기를 모르는 환경(시험 스텁)에서는 아무것도 하지 않는다 — 없는 정보로 판정하지 않는다 */
         if(typeof el.scrollWidth!=="number"||typeof el.clientWidth!=="number")return;
         const overflows=el.scrollWidth>el.clientWidth+1;
@@ -3429,9 +3446,10 @@ function renderBlocks(){
       let t=0;
       addEventListener("resize",()=>{clearTimeout(t);t=setTimeout(mark,150)},{passive:true});
     }
-    /* ⚠**숨어 있던 패널은 폭이 0이라 판정에서 빠진다.** 이 함수는 showTabs() 앞에 도는데,
-       그때 hidden 이던 탭 안의 표는 scrollWidth === clientWidth === 0 이라 「안 넘친다」로 읽힌다.
-       순위 화면의 리그·지표 탭이 전부 여기 해당한다 — 탭이 바뀔 때 다시 잰다. */
+    /* ⚠**숨어 있던 패널은 판정에서 뺀다 — 탭이 바뀔 때 다시 잰다.** 순위 화면의 리그·지표 탭이 전부 여기 해당한다.
+       ⚠~~hidden 이던 탭 안의 표는 scrollWidth === clientWidth === 0 이라 「안 넘친다」로 읽힌다~~ 는
+       **until-found 에서 거짓이었다**(2026-09-25 감사 W9 · 실측 92/92 가 0 아닌 폭) — 그래서 위 inHidden 으로
+       읽기 자체를 건너뛴다. 읽으면 값은 나오지만 그 대가가 강제 레이아웃이다. */
     tabHooks.push(mark);
   })();
   $$(".block").forEach((el,i)=>{el.style.setProperty("--block-pad-y",pad);el.style.setProperty("--i",String(i))});
@@ -4467,9 +4485,18 @@ if(cmpForm){
       if(at==="")b.removeAttribute("data-slot");else b.setAttribute("data-slot",at);
     });
   }
-  const setCmp=(side,p)=>{setInput(side,p);show(side,p)};
+  /* ⚠**사용자 조작 세대**(2026-09-25 감사 C4). 공유 링크 복원은 색인을 기다렸다가 도는데, 그동안 사용자는
+     「今日の対戦」 버튼(서버가 그린 것이라 이미 눌린다)·검색·入れかえ 로 **이미 고를 수 있다.**
+     복원은 **기다리는 사이 사용자가 아무것도 안 했을 때만** 돈다 — 안 그러면 늦게 온 복원이
+     사용자의 최신 선택을 에러 없이 덮어쓰고 URL 의 두 사람으로 비교까지 시작한다(조용한 실패).
+     ⚠cmpGen(비교 요청 세대)과 따로 둔다 — 그쪽은 **요청끼리의 순서**를 지키고, 이것은 **누가 골랐는가**를 지킨다.
+     복원 자신은 setCmp 를 거치지 않으므로 이 세대를 올리지 않는다. */
+  let userGen=0;
+  const setCmp=(side,p)=>{userGen++;setInput(side,p);show(side,p)};
   attachPicker($("#cmpA"),$("#cmpAHits"),(p)=>setCmp("a",p));
   attachPicker($("#cmpB"),$("#cmpBHits"),(p)=>setCmp("b",p));
+  /* 검색창에 치기 시작한 것도 조작이다 — 복원이 setInput 으로 **친 글자를 지우면** 같은 덮어쓰기다 */
+  ["#cmpA","#cmpB"].forEach(s=>{const i=$(s);if(i)i.addEventListener("input",()=>{userGen++})});
   /* 오늘 대전하는 두 팀에서 바로 고르기. **누른 순서대로 A → B에 들어간다** —
      어느 자리에 넣을지 먼저 묻는 화면으로 만들면 조작이 한 단계 늘어난다 */
   $$("#cmpToday [data-pick]").forEach(b=>b.addEventListener("click",()=>{
@@ -4705,6 +4732,7 @@ if(cmpForm){
   if(goBtn)goBtn.addEventListener("click",run);
   const swap=$("#cmpSwap");
   if(swap)swap.addEventListener("click",()=>{
+    userGen++;
     const t=chosen.a;setInput("a",chosen.b);setInput("b",t);
     const bb=chosen.b;show("a",bb);show("b",t);
     if(out&&out.firstChild)run();
@@ -4717,8 +4745,11 @@ if(cmpForm){
   };
   const ia=qs("a"),ib=qs("b");
   if(ia&&ib){
+    const asked=userGen;
     withIndex(idx=>{
       if(!idx)return;
+      /* ⚠기다리는 사이 사용자가 골랐으면 되살리지 않는다(C4 · 위 userGen 주석) */
+      if(userGen!==asked)return;
       const find=(id)=>idx.filter(p=>p.i===id)[0]||null;
       const pa=find(ia),pb=find(ib);
       if(!pa||!pb)return;
