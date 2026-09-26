@@ -240,6 +240,12 @@ test("⚠N14 꺾은선의 선·점이 CSS 없이도 그려진다 — 기본 색 
       assert.ok(m[1] === "currentColor" || m[1] === "none", `꺾은선의 색 속성이 currentColor/none 밖이다: ${m[0]}`);
     }
   }
+  /**
+   * ⚠**속 빈 점의 테두리는 선과 같은 굵기다**(2026-09-27 · PR-D 디자인 감사 제안).
+   * 1.2 였을 때 선(1.6)보다 얇아 점이 흐리게 읽혔다 — 채움이 없으니 테두리가 곧 그 점의 전부다.
+   */
+  const width = (tag: string): string | undefined => /\bstroke-width="([^"]*)"/.exec(tag)?.[1];
+  assert.equal(width(thin[0]!), width(polyline), "속 빈 점의 테두리가 선보다 얇다");
 });
 
 /** 꺾은선 밑 캡션(`.sl`) — 원문과, 태그를 걷은 글자 */

@@ -1066,6 +1066,11 @@ function sparkline(s: SparkData): RawHtml {
 
   const w = 108;
   const h = 26;
+  /**
+   * 선과 속 빈 점 테두리의 굵기 — **한 수다**(2026-09-27 · PR-D 디자인 감사 제안).
+   * 점 테두리가 1.2 로 선(1.6)보다 얇아 흐리게 읽혔다. 채움이 없으니 테두리가 곧 그 점의 전부다.
+   */
+  const stroke = 1.6;
   const lo = Math.min(...solid);
   const hi = Math.max(...solid);
   const span = hi - lo || 1;
@@ -1089,9 +1094,9 @@ function sparkline(s: SparkData): RawHtml {
 
   return html`<div class="spark">
   <svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img" aria-label="${label}：${name}">
-    <polyline points="${kept.map((c) => `${c.x},${c.y}`).join(" ")}" fill="none" stroke="currentColor" stroke-width="1.6"
+    <polyline points="${kept.map((c) => `${c.x},${c.y}`).join(" ")}" fill="none" stroke="currentColor" stroke-width="${stroke}"
       stroke-linejoin="round" stroke-linecap="round"></polyline>
-    ${thin.map((c) => html`<circle class="thin" cx="${c.x}" cy="${c.y}" r="2.4" fill="none" stroke="currentColor" stroke-width="1.2"></circle>`)}
+    ${thin.map((c) => html`<circle class="thin" cx="${c.x}" cy="${c.y}" r="2.4" fill="none" stroke="currentColor" stroke-width="${stroke}"></circle>`)}
     <circle cx="${last.x}" cy="${last.y}" r="2.4" fill="currentColor"></circle>
   </svg>
   <span class="sl">${label}${SPARK_BETTER[s.metric] === null ? "" : `（${SPARK_BETTER[s.metric]}）`}　${s.points[0]?.label ?? ""}→${s.points.at(-1)?.label ?? ""}${
