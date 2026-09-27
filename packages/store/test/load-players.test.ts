@@ -86,8 +86,12 @@ test("픽스처 전제 — 투수 페이지는 두 표(탭·구획·표) · 야�
   assert.deepEqual(await shape(BATTER), { b: true, p: false }, `${BATTER} 가 더는 「타격 표만」인 야수 페이지가 아니다 — 픽스처를 바꿔라`);
 });
 
-function load(env: Env): { code: number; out: string; err: string } {
-  const r = spawnSync(process.execPath, [TOOL, env.archive, env.dbPath], { encoding: "utf8" });
+/**
+ * 적재기를 프로세스로 돌린다. `extra` 는 뒤에 붙는 인자(`--run-started-at <ISO>` — 이번 실행의 시작 시각 · 반영분 재검토 P2).
+ * ⚠안 주면 **단독 실행**이다 — 기준선 없는 행에 대한 「이번 실행 증명」이 없다.
+ */
+function load(env: Env, extra: string[] = []): { code: number; out: string; err: string } {
+  const r = spawnSync(process.execPath, [TOOL, env.archive, env.dbPath, ...extra], { encoding: "utf8" });
   return { code: r.status ?? 1, out: r.stdout, err: r.stderr };
 }
 
@@ -834,30 +838,175 @@ test("⚠3중 검토 3차 · B 의 사이드카에도 뒤에 404(t4)가 기록�
   }
 });
 
+// ─── 반영분 재검토 P2 · 기준선 없는 행 — 기본은 판 모름 · 이번 실행 200 증명 · 같은 sha 복구(2026-09-27) ───
+//
+// ⚠**기준선 NULL 을 무조건 새 판으로 받던 것을 버렸다.** 복원된 옛 사본도 「다른 본문」이라 그대로 받아 DB 를 되돌렸고, 출장 기록이 없는
+//   선수는 선정도 못 뽑아 경고조차 한 번뿐이었다(재검토자 재현). 기본은 **판 모름(종료 1 · 전 행 불변)** 이고, 풀리는 길은 둘이다:
+//   ⑴ 같은 sha 정상 사본 → 3번 `same` 이 기준선을 채운다 · ⑵ **이번 실행에서 받은 200**(사이드카가 부재가 아니고 본 시각 ≥ 실행 시작)
+//   → 상류의 지금 내용이라 새 판으로 받는다. 실행 시작은 `update.ts` 가 `--run-started-at` 으로 넘긴다(주입된 시계 · 단독 실행이면 증명 없음).
+
+/** 이번 실행의 시작 — 그 앞은 「복원된 사본」, 그 뒤는 「이번 실행에 받은 것」 */
+const RUN_START = "2026-09-27T01:00:00.000Z";
+const RUN_BEFORE = "2026-09-27T00:59:59.999Z";
+const RUN_AFTER = "2026-09-27T01:03:00.000Z";
+
+/** 사이드카 없이 처음 적재해 **기준선 없는 행**을 만든다(판은 실물 본문 · 두 시각 NULL — C7) */
+async function noBaselineRow(env: Env): Promise<ReturnType<typeof snapshot>> {
+  const first = load(env, ["--run-started-at", RUN_START]);
+  assert.equal(first.code, 0, first.out + first.err);
+  const s = snapshot(env, PITCHER);
+  assert.equal(s.player["profile_revision"], await realSha(PITCHER), "첫 적재가 판을 안 채웠다");
+  assert.equal(s.player["profile_content_at"], null, "모르는 내용 시각을 채웠다(M11)");
+  assert.equal(s.player["profile_fetched_at"], null);
+  return s;
+}
+
+/** 아카이브에 `html` 본문과 그 본문을 말하는 사이드카(실물 사이드카에서 시각만 바꿈)를 둔다 */
+async function putDescribed(env: Env, html: string, times: Record<string, unknown>): Promise<void> {
+  const bytes = Buffer.from(html, "utf8");
+  await writeFile(pagePath(env, PITCHER), gzipSync(bytes));
+  await copyFile(join(PLAYERS, `${PITCHER}.meta.json`), metaPath(env, PITCHER));
+  await editSidecar(env, PITCHER, { sha256: shaOf(bytes), checkedAt: undefined, absentAt: undefined, ...times });
+}
+
+const originalHtml = async (): Promise<string> => gunzipSync(await readFile(join(PLAYERS, `${PITCHER}.html.gz`))).toString("utf8");
+
 /**
- * ⚠**DB 에 순서 기준선이 없으면(§5-2 5번) 새 판으로 받되 조용히 넘기지 않는다**(3중 검토 반영 때 정했다).
- * 그 상태는 사이드카가 본문을 말하지 않던 **첫 적재** 뒤에만 생긴다 — 여기서는 사이드카 없이 처음 적재한다(C7: 시각 NULL).
- * 판 모름(종료 1)으로 막으면 DB 쪽 순서는 다시 받아도 안 되살아나므로 그 선수 때문에 **매 실행 배포가 영구히** 막힌다.
+ * ⚠⚠**재검토자 재현 그대로다** — B(배번 99)를 사이드카 없이 처음 적재(판 B · 두 시각 NULL) · 출장 기록 없는 선수 · 옛 A/A(34 · 과거 시각) 복원.
+ * 예전에는 선정 0명 · 적재가 A 를 새 판으로 받아 99 → 34 · 다음 실행은 같은 본문이라 경고도 없었다.
+ * 이제 판 모름 · 종료 1 · 프로필·통산·판 **전건 불변** — 반복해도 그대로다. 선정은 「기준선 없음 · 선정 밖」으로 센다.
+ * 변이 「기준선 NULL 을 무조건 newer」가 이 시험을 붉게 만든다.
  */
-test("⚠3중 검토 반영 · 순서 기준선 없는 판(사이드카 없이 첫 적재) 뒤의 새 본문 — 새 판으로 받고 따로 찍는다 · 종료 0", { skip }, async () => {
+test("⚠⚠반영분 재검토 P2 · 재검토자 재현 — 기준선 없는 B 위에 옛 A/A 복원 → 판 모름 · 종료 1 · 전 행 불변(반복해도) · 선정은 선정 밖", { skip }, async () => {
   const env = await setup({ [PITCHER]: null });
   try {
-    const first = load(env);
+    const a = await originalHtml();
+    await writeFile(pagePath(env, PITCHER), gzipSync(Buffer.from(a.replace('<li id="pc_v_no">34</li>', '<li id="pc_v_no">99</li>'), "utf8")));
+    const first = load(env, ["--run-started-at", RUN_START]);
     assert.equal(first.code, 0, first.out + first.err);
-    const s0 = snapshot(env, PITCHER);
-    assert.equal(s0.player["profile_revision"], await realSha(PITCHER), "첫 적재가 판을 안 채웠다");
-    assert.equal(s0.player["profile_content_at"], null, "모르는 내용 시각을 채웠다(M11)");
+    const withB = snapshot(env, PITCHER);
+    assert.equal(withB.player["uniform_number"], "99");
+    assert.equal(withB.player["profile_content_at"], null);
 
-    await mutatePage(env, PITCHER, (h) => h.replace('<li id="pc_v_no">34</li>', '<li id="pc_v_no">99</li>'));
-    await copyFile(join(PLAYERS, `${PITCHER}.meta.json`), metaPath(env, PITCHER));
-    await editSidecar(env, PITCHER, { sha256: shaOf(gunzipSync(await readFile(pagePath(env, PITCHER)))), fetchedAt: T_NEW, checkedAt: undefined });
+    await putDescribed(env, a, { fetchedAt: T_OLD });
+    for (const round of [1, 2]) {
+      const r = load(env, ["--run-started-at", RUN_START]);
+      assert.deepEqual(snapshot(env, PITCHER), withB, `${round}회째 — 옛 A 가 기준선 없는 B 를 되돌렸다\n${r.out}`);
+      assert.equal(r.code, 1, `${round}회째 — 순서를 모르는데 종료 ${r.code} 다\n${r.out}${r.err}`);
+      assert.match(r.err, new RegExp(`VERSION UNKNOWN ${PITCHER} — 순서 기준선\\(profile_content_at\\)이 없다`));
+      assert.match(r.out, /판 모름 건너뜀 1/);
+    }
+    // 선정기 — 출장 기록이 없어 뽑을 수 없다(선정 밖) · 조용히 넘기지 않고 센다
+    const sel = select(env);
+    assert.equal(sel.code, 0, sel.err);
+    assert.ok(!sel.ids.includes(PITCHER));
+    assert.match(sel.err, /기준선 없음 0명\(부재라 제외 0 · 선정 밖 1 · 출력분 중 0\)/, sel.err);
+  } finally {
+    await cleanup(env);
+  }
+});
+
+/** 복구 경로 ⑴ — 같은 sha 정상 사본이 오면 3번 `same` 이 기준선을 채운다(증명 없이도 · 단독 실행이어도). 그 뒤 옛 판은 옛 판으로 막힌다 */
+test("반영분 재검토 P2 · 복구 ⑴ — 기준선 없는 행에 같은 sha 정상 사본 → same · 기준선이 채워진다 · 그 뒤 옛 판은 옛 판", { skip }, async () => {
+  const env = await setup({ [PITCHER]: null });
+  try {
+    await noBaselineRow(env);
+    await putDescribed(env, await originalHtml(), { fetchedAt: T_MID });
     const r = load(env);
     assert.equal(r.code, 0, r.out + r.err);
+    assert.match(r.out, /같은 본문 1/);
+    const s = snapshot(env, PITCHER);
+    assert.equal(s.player["profile_content_at"], T_MID, "같은 본문이 기준선을 안 채웠다");
+    // 기준선이 섰으니 옛 판은 이제 옛 판이다(DB 를 지킨다 · 종료 0)
+    await putDescribed(env, oldUniform(await originalHtml()), { fetchedAt: T_OLD });
+    const old = load(env);
+    assert.equal(old.code, 0, old.out + old.err);
+    assert.match(old.out, /옛 판 건너뜀 1/);
+    assert.deepEqual(snapshot(env, PITCHER), s);
+  } finally {
+    await cleanup(env);
+  }
+});
+
+/**
+ * 복구 경로 ⑵ — **이번 실행에서 받은 200**(본 시각 ≥ 실행 시작)이면 기준선 없는 행도 새 판으로 받고 따로 찍는다(종료 0 · 기준선이 선다).
+ * 실행 시작보다 이르면(복원된 사본) 판 모름 · 단독 실행(인자 없음)이면 증명이 없어 판 모름이다.
+ */
+test("⚠반영분 재검토 P2 · 복구 ⑵ — 이번 실행 200(본 시각 ≥ 실행 시작)은 새 판 · 이전 시각·단독 실행은 판 모름", { skip }, async () => {
+  const env = await setup({ [PITCHER]: null });
+  try {
+    const s0 = await noBaselineRow(env);
+    const b = (await originalHtml()).replace('<li id="pc_v_no">34</li>', '<li id="pc_v_no">99</li>');
+    // 실행 시작보다 1ms 이르다 — 증명이 아니다
+    await putDescribed(env, b, { fetchedAt: RUN_BEFORE });
+    const before = load(env, ["--run-started-at", RUN_START]);
+    assert.equal(before.code, 1, before.out + before.err);
+    assert.deepEqual(snapshot(env, PITCHER), s0);
+    // 이번 실행에 받았지만 실행 시작을 모른다(단독 실행) — 증명이 아니다
+    await putDescribed(env, b, { fetchedAt: RUN_AFTER });
+    const alone = load(env);
+    assert.equal(alone.code, 1, alone.out + alone.err);
+    assert.match(alone.err, /--run-started-at/);
+    assert.deepEqual(snapshot(env, PITCHER), s0);
+    // 이번 실행에 받았다 — 새 판 · 따로 찍는다 · 기준선이 선다
+    const r = load(env, ["--run-started-at", RUN_START]);
+    assert.equal(r.code, 0, r.out + r.err);
     assert.match(r.out, /새 판 1 · 옛 판 건너뜀 0/);
-    assert.match(r.out, new RegExp(`⚠순서 기준선\\(profile_content_at\\)이 없어 새 판으로 받은 선수 1명 — ${PITCHER}`));
+    assert.match(r.out, new RegExp(`⚠순서 기준선\\(profile_content_at\\)이 없었는데 이번 실행에서 받은 판이라 새 판으로 받은 선수 1명 — ${PITCHER}`));
     const s = snapshot(env, PITCHER);
     assert.equal(s.player["uniform_number"], "99");
-    assert.equal(s.player["profile_content_at"], T_NEW, "새 판의 내용 시각이 기준선이 되지 않았다");
+    assert.equal(s.player["profile_content_at"], RUN_AFTER, "새 판의 내용 시각이 기준선이 되지 않았다");
+  } finally {
+    await cleanup(env);
+  }
+});
+
+/**
+ * ⚠복구 경로 ⑵ **종단** — 창 안의 기준선 없는 행에 옛 사본이 복원돼 판 모름(종료 1)이 된 뒤, **같은 실행**의 선정이 「기준선 없음」으로 뽑고 →
+ * 실제 `archivePlayer` 가 상류(= DB 가 가진 판)를 **이번 실행에** 받아 저장 → 적재는 같은 본문 · 기준선이 선다(종료 0). 외부 요청 0(가짜 응답).
+ * ⚠이 모양(사이드카 없는 첫 적재)은 통산 `fetched_at` 도 NULL 이라 **「취득기록 없음」으로도 뽑힌다**(C7 · M11) — 선정 사유 「기준선 없음」 자체는
+ *   `stale-players.test.ts` 가 따로 잰다(통산 시각이 있어 평소 사유로는 안 뽑히는 행 · 변이 「후보 목록에서 뺌」이 거기서 붉어진다).
+ */
+test("⚠반영분 재검토 P2 · 복구 ⑵ 종단 — 선정이 기준선 없는 행을 뽑고 이번 실행에 다시 받으면 같은 실행에서 풀린다", { skip }, async () => {
+  const env = await setup({ [PITCHER]: null });
+  try {
+    await noBaselineRow(env);
+    const year = q<{ y: number | null }>(env, "SELECT MAX(year) AS y FROM career_pitching WHERE player_id = ? AND games > 0", PITCHER).y;
+    assert.ok(year !== null, "픽스처 투수에게 등판 기록이 있는 해가 없다");
+    appear(env, PITCHER, `${year}-08-16`);
+    await putDescribed(env, oldUniform(await originalHtml()), { fetchedAt: T_OLD });
+    const blocked = load(env, ["--run-started-at", RUN_START]);
+    assert.equal(blocked.code, 1, blocked.out + blocked.err);
+
+    const sel = select(env);
+    assert.equal(sel.code, 0, sel.err);
+    assert.ok(sel.ids.includes(PITCHER), `기준선 없는 행을 안 뽑았다 — 같은 실행에서 안 풀린다\n${sel.err}`);
+    assert.match(sel.err, /기준선 없음 1명\(부재라 제외 0 · 선정 밖 0 · 출력분 중 1\)/, sel.err);
+
+    const r = await refetch(env, PITCHER, gunzipSync(await readFile(join(PLAYERS, `${PITCHER}.html.gz`))), RUN_AFTER);
+    assert.equal(r.outcome, "stored", JSON.stringify(r));
+    const healed = load(env, ["--run-started-at", RUN_START]);
+    assert.equal(healed.code, 0, healed.out + healed.err);
+    assert.match(healed.out, /같은 본문 1/);
+    assert.equal(snapshot(env, PITCHER).player["profile_content_at"], RUN_AFTER, "같은 본문이 기준선을 안 채웠다");
+    assert.equal(snapshot(env, PITCHER).player["uniform_number"], "34");
+  } finally {
+    await cleanup(env);
+  }
+});
+
+/** 인자가 틀리면 아무것도 안 하고 종료 2 — 모르는 실행 시작으로 증명을 만들지 않는다 */
+test("반영분 재검토 P2 · --run-started-at 이 없거나 시각이 아니면 종료 2 · DB 불변", { skip }, async () => {
+  const env = await setup({ [PITCHER]: { fetchedAt: T_MID } });
+  try {
+    assert.equal(load(env).code, 0);
+    const before = snapshot(env, PITCHER);
+    for (const bad of [["--run-started-at"], ["--run-started-at", "not-a-date"], ["--run-started-at", "2026-09-27T01:00:00"], ["--run-started-at", "--x"]]) {
+      const r = load(env, bad);
+      assert.equal(r.code, 2, `${bad.join(" ")} → 종료 ${r.code}\n${r.out}${r.err}`);
+      assert.match(r.err, /--run-started-at/);
+    }
+    assert.deepEqual(snapshot(env, PITCHER), before);
   } finally {
     await cleanup(env);
   }

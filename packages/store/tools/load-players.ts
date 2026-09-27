@@ -10,6 +10,12 @@
  *   선수마다 **적용 판**(`player.profile_revision` = 적용한 본문의 sha256)과 아카이브 본문을 맞대, 본문이 다르고 내용이 더 이르면
  *   **프로필과 통산을 함께** 건너뛴다(DB 를 지킨다 · 종료 0 + `::warning::`). 순서를 **모르면** 건너뛰고 종료 1 이다.
  *   건너뛴 선수는 같은 실행의 재취득 선정(`emit-stale-player-ids.ts --archive`)이 적재 **전에** 뽑아 다시 받는다.
+ *
+ *   node packages/store/tools/load-players.ts data/archive data/bb.sqlite --run-started-at <ISO>
+ *
+ * ⚠**`--run-started-at` — 이번 실행의 시작 시각**(2026-09-27 · 반영분 재검토 P2 · 설계 §5-2 5번). 순서 기준선이 없는 행에 다른 본문이 오면
+ *   **이번 실행에서 받은 200**(사이드카가 부재가 아니고 본 시각 ≥ 이 시각)일 때만 새 판으로 받는다. `update.ts` 가 한 번 읽은 시계를 넘긴다(M6).
+ *   ⚠없으면(단독 실행) 증명이 없다 — 그런 행은 판 모름(종료 1)으로 남는다. 시각으로 안 읽히면 **아무것도 안 하고** 종료 2 다.
  */
 import { readdir } from "node:fs/promises";
 import { readFileSync } from "node:fs";
@@ -17,13 +23,30 @@ import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
 import { parseCareer, parsePlayerProfile } from "@bb-app/parser";
 import { openDb } from "../src/db.ts";
+import { normalizeFetchedAt } from "../src/meta.ts";
 import { judgePlayerVersion, playerArchiveOf } from "../src/player-version.ts";
 import type { MetaSnapshot } from "../src/player-version.ts";
 import { playersInRefetchWindow } from "../src/refetch-window.ts";
 
-const [archiveRoot, dbPath] = process.argv.slice(2);
+const USAGE = "usage: node tools/load-players.ts <archive-root> <db-path> [--run-started-at <ISO8601>]";
+const args = process.argv.slice(2);
+/** 이번 실행의 시작(정규화된 ISO) — `null` 이면 단독 실행이라 「이번 실행 증명」이 없다 */
+let runStartedAt: string | null = null;
+const runArg = args.indexOf("--run-started-at");
+if (runArg !== -1) {
+  const raw = args[runArg + 1];
+  // ⚠모르는 값으로 증명을 만들지 않는다 — 없거나 · 다음 인자이거나 · 시간대 없는 값이면 멈춘다(`normalizeFetchedAt` 한 벌 · M1)
+  const norm = raw === undefined || raw.startsWith("--") ? null : normalizeFetchedAt(raw);
+  if (norm === null) {
+    console.error(`--run-started-at 뒤에 시각(시간대가 붙은 ISO8601)이 없다: ${JSON.stringify(raw ?? null)}\n${USAGE}`);
+    process.exit(2);
+  }
+  runStartedAt = norm;
+  args.splice(runArg, 2);
+}
+const [archiveRoot, dbPath] = args;
 if (!archiveRoot || !dbPath) {
-  console.error("usage: node tools/load-players.ts <archive-root> <db-path>");
+  console.error(USAGE);
   process.exit(2);
 }
 
@@ -161,8 +184,9 @@ const staleProfiles: { playerId: string; absent: boolean }[] = [];
 let versionUnknown = 0;
 let dbTimeInvalid = 0;
 /**
- * DB 에 순서 기준선(`profile_content_at`)이 없어 **순서를 가르지 않고** 새 판으로 받은 선수(§5-2 5번 · 3중 검토 3차 반영).
- * ⚠실패가 아니다(막으면 그 선수 때문에 매 실행 배포가 영구히 막힌다) — 그러나 **조용히 넘기지도 않는다**: 따로 찍는다.
+ * DB 에 순서 기준선(`profile_content_at`)이 없었는데 **이번 실행에서 받은 200**(`--run-started-at` 이상)이라 새 판으로 받은 선수
+ * (§5-2 5번 · 2026-09-27 반영분 재검토 P2). ⚠실패가 아니다 — 그러나 **조용히 넘기지도 않는다**: 따로 찍는다.
+ * ⚠~~기준선이 없으면 무조건 새 판~~ 이었다 — 복원된 옛 사본도 받아 DB 를 되돌렸다. 증명이 없으면 판 모름(`VERSION UNKNOWN` · 종료 1)이다.
  */
 const noBaseline: string[] = [];
 
@@ -191,7 +215,8 @@ db.transaction(() => {
      *   `null` 이 그대로 들어가고, 프로필의 `profile_fetched_at` 도 **`null` 이 그대로 들어간다**(위 SQL — 한 벌).
      */
     const archive = playerArchiveOf(meta, body);
-    const v = judgePlayerVersion(db, playerId, archive);
+    // ⚠실행 시작을 넘긴다 — 기준선 없는 행의 「이번 실행 증명」(§5-2 5번 · 반영분 재검토 P2). 단독 실행이면 null(증명 없음)
+    const v = judgePlayerVersion(db, playerId, archive, { runStartedAt });
     // ⑤ 건너뛴다 — **파싱하지 않는다**(옛 판의 파싱 실패가 종료 1 을 만들지 않게). 프로필과 통산을 **함께** 건너뛴다
     if (v.kind === "stale") {
       staleProfiles.push({ playerId, absent: v.absentNow });
@@ -385,10 +410,11 @@ if (staleProfiles.length > 0) {
   );
 }
 if (noBaseline.length > 0) {
-  // ⚠**순서를 가르지 않고 받았다는 사실을 남긴다**(§5-2 5번) — 실패가 아니지만 조용히 넘기지 않는다. 드물다:
-  //   사이드카가 본문을 말하지 않던 첫 적재 뒤에만 생긴다. ID 전부(자르지 않는다)
+  // ⚠**기준선 없는 행을 「이번 실행에서 받은 200」 증명으로 받았다는 사실을 남긴다**(§5-2 5번 · 반영분 재검토 P2) — 실패가 아니지만
+  //   조용히 넘기지 않는다. 드물다: 사이드카가 본문을 말하지 않던 첫 적재 뒤에만 생긴다. ID 전부(자르지 않는다)
   console.log(
-    `⚠순서 기준선(profile_content_at)이 없어 새 판으로 받은 선수 ${noBaseline.length}명 — ${[...noBaseline].sort().join(", ")} · 절차 docs/operations/deploy.md §7-G`,
+    `⚠순서 기준선(profile_content_at)이 없었는데 이번 실행에서 받은 판이라 새 판으로 받은 선수 ${noBaseline.length}명 — ` +
+      `${[...noBaseline].sort().join(", ")} · 절차 docs/operations/deploy.md §7-G`,
   );
 }
 console.log(`투타 확인 ${withHand} / 전체 ${total}명 (미상 ${total - withHand}명)`);

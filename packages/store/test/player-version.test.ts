@@ -53,13 +53,16 @@ function seed(db: Db, row: Row | null): void {
     .run(row.revision, row.time, row.contentAt === undefined ? row.time : row.contentAt, ID);
 }
 
-/** 판정은 쓰기 트랜잭션 안에서만 부른다(3-2) */
-function judge(row: Row | null, archive: PlayerArchive) {
+/**
+ * 판정은 쓰기 트랜잭션 안에서만 부른다(3-2).
+ * `opts` 를 안 주면 **실행 시작을 모르는** 단독 실행이다(기준선 없는 행의 「이번 실행 증명」이 없다 · 반영분 재검토 P2).
+ */
+function judge(row: Row | null, archive: PlayerArchive, opts?: { runStartedAt: string | null }) {
   let out: ReturnType<typeof judgePlayerVersion> | undefined;
   withDb((db) => {
     seed(db, row);
     db.transaction(() => {
-      out = judgePlayerVersion(db, ID, archive);
+      out = opts === undefined ? judgePlayerVersion(db, ID, archive) : judgePlayerVersion(db, ID, archive, opts);
     });
   });
   return out!;
@@ -115,13 +118,37 @@ test("⚠N3 3-1 ④ 본문이 다른데 내용 시각을 모르면 unknown — �
 });
 
 /**
- * ⚠**DB 에 순서 기준선이 없으면 새 판으로 받는다 — 판 모름으로 막지 않는다**(설계 §5-2 5번 · 3중 검토 반영 때 정했다).
- * 이 상태는 사이드카가 본문을 말하지 않던 첫 적재 뒤에만 생기고, DB 쪽 순서는 다시 받아도 안 되살아난다 — 막으면 영구 봉쇄다.
- * ⚠`noBaseline` 표시로 적재기가 따로 찍는다(조용히 넘기지 않는다). 표시 시각이 있어도 순서에 안 쓴다.
+ * ⚠⚠**기준선 없는 행에 다른 본문 — 기본은 판 모름**(2026-09-27 · 반영분 재검토 P2 · 설계 §5-2 5번). ~~새 판으로 받는다~~ 였는데,
+ * 복원된 옛 사본도 「다른 본문」이라 **그대로 받아 DB 를 되돌렸다**(재검토자 재현 · 출장 기록이 없어 선정도 못 뽑는다).
+ * 예외는 **이번 실행에서 받은 200 이라는 증명** 하나 — 사이드카가 부재가 아니고 본 시각이 실행 시작 이상이면 상류의 지금 내용이다.
+ * ⚠실행 시작을 모르면(단독 실행) 증명이 없다 · 복원된 사이드카의 옛 시각으로는 안 된다 · 표시 시각(`profile_fetched_at`)은 대체 기준선이
+ *   아니다(404 확인 시각 문제를 되살린다 — 재검토자가 기각). 변이 「무조건 newer」 · 「증명에서 부재 확인 삭제」 · 「경계를 초과로」가 붉게 만든다.
  */
-test("N3 3-1 ⑤ DB 의 profile_content_at 이 NULL 이면 newer(noBaseline) — 표시 시각은 순서에 안 쓴다", () => {
-  assert.deepEqual(judge({ revision: REV_Y, time: T_LATE, contentAt: null }, archiveOf({ fetchedAt: T_EARLY })), {
-    kind: "newer", time: T_EARLY, contentAt: T_EARLY, noBaseline: true,
+test("⚠⚠반영분 재검토 P2 · 3-1 ⑤ 기준선 NULL · 다른 본문 — 증명 없으면 unknown · 이번 실행 200(본 시각 ≥ 실행 시작)이면 newer(noBaseline)", () => {
+  const row = { revision: REV_Y, time: T_LATE, contentAt: null };
+  // 단독 실행(실행 시작 모름) — 증명이 없다
+  const alone = judge(row, archiveOf({ fetchedAt: T_EARLY }));
+  assert.equal(alone.kind, "unknown", JSON.stringify(alone));
+  if (alone.kind === "unknown") assert.match(alone.reason, /기준선.*증명/);
+  // 복원된 사본 — 본 시각이 실행 시작보다 이르다
+  assert.equal(judge(row, archiveOf({ fetchedAt: T_EARLY }), { runStartedAt: T_DB }).kind, "unknown");
+  // 이번 실행에서 받은 200 — 경계(본 시각 = 실행 시작) 포함
+  assert.deepEqual(judge(row, archiveOf({ fetchedAt: T_EARLY, checkedAt: T_DB }), { runStartedAt: T_DB }), {
+    kind: "newer", time: T_DB, contentAt: T_DB, noBaseline: true,
+  });
+  assert.deepEqual(judge(row, archiveOf({ fetchedAt: T_LATE }), { runStartedAt: T_DB }), {
+    kind: "newer", time: T_LATE, contentAt: T_LATE, noBaseline: true,
+  });
+  // 이번 실행에 본 것이 404(부재 중)면 증명이 아니다 — 본문은 옛것이다
+  assert.equal(judge(row, archiveOf({ fetchedAt: T_EARLY, checkedAt: T_LATE, absentAt: T_LATE }), { runStartedAt: T_DB }).kind, "unknown");
+  // 표시 시각은 대체 기준선이 아니다 — 표시 시각보다 늦은 본문이어도 증명 없으면 판 모름
+  assert.equal(judge({ revision: REV_Y, time: T_EARLY, contentAt: null }, archiveOf({ fetchedAt: T_LATE })).kind, "unknown");
+});
+
+/** 기준선 없는 행이라도 **같은 본문**이면 판정은 3번 `same` 이고 기준선을 채운다 — 복구 경로 ⑴(반영분 재검토 P2) */
+test("반영분 재검토 P2 · 기준선 NULL · 같은 본문 — same 이 기준선을 채운다(증명 없이도)", () => {
+  assert.deepEqual(judge({ revision: BODY_SHA, time: null, contentAt: null }, archiveOf({ fetchedAt: T_EARLY })), {
+    kind: "same", time: T_EARLY, contentAt: T_EARLY,
   });
 });
 
@@ -236,7 +263,10 @@ test("⚠N3 · classifyForRefetch — 선정기가 사이드카만 보고 가른
     ["다른 본문 · 부재 중", meta({ fetchedAt: T_EARLY, checkedAt: T_LATE, absentAt: T_LATE }), db, "stale-absent"],
     ["다른 본문 · 부재 표시 무효", meta({ fetchedAt: T_EARLY, absentAt: "not-a-date" }), db, "unknown"],
     ["다른 본문 · DB 기준선 무효", meta({ fetchedAt: T_EARLY }), { revision: REV_Y, contentAt: SHAPE_ONLY }, "unknown"],
-    ["다른 본문 · DB 기준선 NULL(적재기가 새 판으로 받는다 · §5-2 5번)", meta({ fetchedAt: T_EARLY }), { revision: REV_Y, contentAt: null }, "newer"],
+    // ⚠반영분 재검토 P2 — 기준선 없는 행은 적재기가 증명 없이는 판 모름이다. 같은 실행에서 다시 받아 증명을 만들도록 **뽑는다**
+    ["다른 본문 · DB 기준선 NULL → 뽑는다(§5-2 5번 복구 경로)", meta({ fetchedAt: T_EARLY }), { revision: REV_Y, contentAt: null }, "no-baseline"],
+    ["다른 본문 · DB 기준선 NULL · 부재 중 → 받아도 404(안 뽑고 센다)", meta({ fetchedAt: T_EARLY, checkedAt: T_LATE, absentAt: T_LATE }), { revision: REV_Y, contentAt: null }, "no-baseline-absent"],
+    ["같은 본문 · DB 기준선 NULL → 같은 판(적재가 기준선을 채운다)", { sha256: REV_Y, fetchedAt: T_EARLY }, { revision: REV_Y, contentAt: null }, "same"],
     // ⚠3차 P2 — 404 로 오른 표시 시각이 아니라 순서 기준선과 맞댄다: 기준선(T_DB)보다 늦은 본문은 새 판이다
     ["다른 본문 · 기준선보다 늦은 내용 시각(표시 시각은 무관)", meta({ fetchedAt: T_MID }), db, "newer"],
     ["다른 본문 · 늦은 내용 시각", meta({ fetchedAt: T_LATE }), db, "newer"],

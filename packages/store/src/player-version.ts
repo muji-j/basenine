@@ -99,6 +99,16 @@ export function isOlder(archiveTime: string, dbTime: string): boolean {
   return Date.parse(archiveTime) < Date.parse(dbTime);
 }
 
+/**
+ * **이번 실행에서 받은 200 이라는 증명**(2026-09-27 · 반영분 재검토 P2 · §5-2 5번) — 사이드카가 **부재가 아니고**(마지막 관측이 404/410 이
+ * 아니다) 그 본 시각(200 으로 받았거나 같은 sha 로 확인한 `checkedAt ?? fetchedAt`)이 **이번 실행의 시작 이상**이다 → 상류의 지금 내용이다.
+ * ⚠복원된 사이드카의 시각은 실행 시작보다 이르므로 증명이 못 된다 · 실행 시작을 모르면(`null`) 증명이 없다 · 경계(같은 시각)는 증명이다.
+ */
+function provenThisRun(a: PlayerArchive, runStartedAt: string | null): boolean {
+  if (runStartedAt === null || a.absentNow || a.seenAt === null) return false;
+  return !isOlder(a.seenAt, runStartedAt);
+}
+
 /** 둘 중 늦은 시각 · 한쪽이 null 이면 다른 쪽(둘 다 정규화된 값이다) */
 function later(a: string | null, b: string | null): string | null {
   if (a === null) return b;
@@ -115,20 +125,31 @@ function later(a: string | null, b: string | null): string | null {
  * | 2 | 적용 판 NULL | `first` | 본 시각(모르면 NULL — C7) | 후보 내용 시각(모르면 NULL) |
  * | 3 | 적용 판 = 본문 sha | `same` | 유효한 DB 값과 본 시각 중 **늦은 것** | 유효한 DB 값과 후보 내용 시각 중 **늦은 것** |
  * | 4 | (본문이 다르다) 후보 내용 시각 null | `unknown` | — | — |
- * | 5 | DB `profile_content_at` 이 NULL | `newer`(`noBaseline`) | 본 시각 | 후보 내용 시각 |
+ * | 5 | DB `profile_content_at` 이 NULL — **이번 실행에서 받은 200 이라는 증명**이 있다 | `newer`(`noBaseline`) | 본 시각 | 후보 내용 시각 |
+ * | 5′ | DB `profile_content_at` 이 NULL — 증명이 없다 | `unknown` | — | — |
  * | 6 | DB `profile_content_at` 이 무효 | `invalid-db` | — | — |
  * | 7 | 후보 내용 시각 < DB `profile_content_at` | `stale` | — | — |
  * | 8 | 그 밖(같은 시각 포함) | `newer` | 본 시각 | 후보 내용 시각 |
  *
  * ⚠**3번의 순서 칸이 404 로 안 오른다** — 부재 중 사이드카의 내용 시각은 받은 시각(`fetchedAt`)이다. 표시 칸은 지금처럼 오른다.
- * ⚠**5번은 새 판으로 받는다 — 판 모름(종료 1)으로 막지 않는다**(설계 §5-2 「5번의 선택」). 이 상태는 사이드카가 본문을 말하지 않던
- *   첫 적재에서만 생기는데, DB 쪽 순서는 **다시 받아도 되살아나지 않아**(후보는 이미 최신 사본이다) 막으면 그 선수 때문에
- *   **매 실행 배포가 영구히 막힌다.** 조용히 받지 않도록 적재기가 따로 찍는다(`noBaseline`). 남는 위험은 설계 §12.
- * ⚠**`profile_fetched_at` 은 순서에 안 쓴다** — 무효여도 막지 않는다(같은 본문·새 판이 본 시각으로 덮는다).
+ * ⚠⚠**5번 — 기준선 없는 행에 다른 본문이면 기본은 판 모름이다**(2026-09-27 · 반영분 재검토 P2 · 설계 §5-2 5번).
+ *   ~~무조건 새 판으로 받는다~~ 였는데, 복원된 **옛 사본도** 「다른 본문」이라 그대로 받아 DB 를 되돌렸다(재검토자 재현 · 출장 기록이 없으면
+ *   선정도 못 뽑아 경고가 한 번뿐이었다). 예외는 **이번 실행에서 받은 200 이라는 증명** 하나다(`provenThisRun`) — 상류의 **지금** 내용이다.
+ *   풀리는 길: ⑴ 같은 sha 정상 사본 → 3번이 기준선을 채운다 · ⑵ 재취득 선정이 이 행을 뽑아(`classifyForRefetch` 의 `no-baseline`)
+ *   같은 실행에서 다시 받는다 → 증명. 부재·선정 밖이라 다시 못 받으면 판 모름이 남는다(런북 §7-G).
+ * ⚠**`profile_fetched_at` 은 순서에 안 쓴다** — 무효여도 막지 않는다(같은 본문·새 판이 본 시각으로 덮는다). 5번의 **대체 기준선도 아니다** —
+ *   그 칸은 404 확인으로 오르므로 대신 쓰면 3차 P2(더 새 본문을 버림)가 되살아난다(재검토자가 기각).
  * ⚠**쓰기 트랜잭션 안에서만 부른다** — 트랜잭션의 첫 읽기가 SHARED 잠금을 커밋까지 쥐어, 판정과 쓰기 사이에 다른 연결이
  *   그 행을 커밋할 수 없다(끼어들면 SQLite 가 `SQLITE_BUSY` 로 한쪽을 실패시킨다 — 실패로 보인다). 밖이면 던진다.
+ * @param opts.runStartedAt 이번 실행의 시작 시각(`normalizeFetchedAt` 의 결과 · `update.ts` 가 주입된 시계로 넘긴다 · M6).
+ *   `null`(기본 · 단독 실행)이면 5번의 증명이 없다.
  */
-export function judgePlayerVersion(db: Db, playerId: string, a: PlayerArchive): PlayerVerdict {
+export function judgePlayerVersion(
+  db: Db,
+  playerId: string,
+  a: PlayerArchive,
+  opts: { runStartedAt: string | null } = { runStartedAt: null },
+): PlayerVerdict {
   if (db.raw.isTransaction !== true) {
     throw new TypeError("judgePlayerVersion 은 쓰기 트랜잭션 안에서만 부른다 — 판정과 쓰기 사이에 다른 연결이 끼어들 수 있다");
   }
@@ -147,7 +168,17 @@ export function judgePlayerVersion(db: Db, playerId: string, a: PlayerArchive): 
     };
   }
   if (a.contentTime === null) return { kind: "unknown", reason: a.unknownReason ?? "내용 시각을 모른다" };
-  if (row.profile_content_at === null) return { kind: "newer", time: a.seenAt, contentAt: a.contentTime, noBaseline: true };
+  if (row.profile_content_at === null) {
+    // ⚠5번 — 기본은 판 모름. 이번 실행에서 받은 200 이면 상류의 지금 내용이라 새 판이다(반영분 재검토 P2)
+    if (provenThisRun(a, opts.runStartedAt)) return { kind: "newer", time: a.seenAt, contentAt: a.contentTime, noBaseline: true };
+    return {
+      kind: "unknown",
+      reason:
+        "순서 기준선(profile_content_at)이 없다 — 이번 실행에서 받은 판이라는 증명이 없어 순서를 가를 수 없다" +
+        `(본 시각 ${a.seenAt ?? "모름"}${a.absentNow ? " · 부재 중" : ""} · ` +
+        `실행 시작 ${opts.runStartedAt ?? "모름(--run-started-at 없음 · 단독 실행)"})`,
+    };
+  }
   const dbContentAt = normalizeFetchedAt(row.profile_content_at);
   if (dbContentAt === null) return { kind: "invalid-db", value: String(row.profile_content_at) };
   if (isOlder(a.contentTime, dbContentAt)) {
@@ -156,7 +187,8 @@ export function judgePlayerVersion(db: Db, playerId: string, a: PlayerArchive): 
   return { kind: "newer", time: a.seenAt, contentAt: a.contentTime, noBaseline: false };
 }
 
-export type RefetchClass = "no-identity" | "unreadable" | "same" | "stale" | "stale-absent" | "unknown" | "newer";
+export type RefetchClass =
+  | "no-identity" | "unreadable" | "same" | "stale" | "stale-absent" | "no-baseline" | "no-baseline-absent" | "unknown" | "newer";
 
 /**
  * **재취득 선정기용** — 사이드카만 보고 「이 선수의 아카이브가 DB 보다 옛 판인가」를 가른다(설계 §5-4 · 본문은 선정기가 따로 본다).
@@ -166,8 +198,11 @@ export type RefetchClass = "no-identity" | "unreadable" | "same" | "stale" | "st
  * - `same` 사이드카 sha = 적용 판
  * - `stale` 다른 본문 · 내용 시각이 DB 기준선보다 이르다 · 부재 중 아님 → **뽑는다**
  * - `stale-absent` 위와 같은데 부재 중 — 받아도 404 이고 아카이버가 7일 동안 건너뛴다. 뽑지 않고 센다
+ * - `no-baseline` 다른 본문 · DB 기준선 NULL · 부재 중 아님 → **뽑는다**(2026-09-27 · 반영분 재검토 P2) — 적재기는 이번 실행에서 받은
+ *   증명 없이는 판 모름(종료 1)이다. 같은 실행에서 다시 받으면 증명이 생기거나(새 200) 같은 본문이 기준선을 채운다(§5-2 5번 복구 ⑵)
+ * - `no-baseline-absent` 위와 같은데 부재 중 — 받아도 404 라 증명이 안 생긴다. 뽑지 않고 센다(런북 §7-G)
  * - `unknown` 순서를 모른다(부재 표시·내용 시각 무효 · DB 기준선 무효) — 적재기가 종료 1 로 알린다
- * - `newer` 그 밖(DB 기준선 NULL 포함 — 적재기가 새 판으로 받는다 · §5-2 5번)
+ * - `newer` 그 밖 — 적재기가 새 판으로 받는다
  */
 export function classifyForRefetch(meta: unknown, db: { revision: string | null; contentAt: string | null }): RefetchClass {
   if (db.revision === null) return "no-identity";
@@ -176,7 +211,7 @@ export function classifyForRefetch(meta: unknown, db: { revision: string | null;
   if (sha === db.revision) return "same";
   const archiveTime = contentTimeOf(meta);
   if (archiveTime === null) return "unknown";
-  if (db.contentAt === null) return "newer";
+  if (db.contentAt === null) return isAbsentNow(meta) ? "no-baseline-absent" : "no-baseline";
   const dbContentAt = normalizeFetchedAt(db.contentAt);
   if (dbContentAt === null) return "unknown";
   if (!isOlder(archiveTime, dbContentAt)) return "newer";

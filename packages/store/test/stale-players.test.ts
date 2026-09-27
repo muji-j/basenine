@@ -487,6 +487,41 @@ test("⚠N3 3-16 · --archive 로 아카이브 옛 판을 뽑는다 — 같은 �
   );
   // 이 시나리오의 본문은 전부 사이드카와 짝이 맞는다 — 짝 불일치 갈래는 0 이어도 찍힌다(「0건」과 「안 쟀음」을 가른다)
   assert.match(report, /짝 불일치 0명\(부재라 제외 0 · 선정 밖 0 · 출력분 중 0\)/);
+  // 기준선 없는 행도 없다 — 0 이어도 찍힌다(반영분 재검토 P2)
+  assert.match(report, /기준선 없음 0명\(부재라 제외 0 · 선정 밖 0 · 출력분 중 0\)/);
+});
+
+/**
+ * ⚠⚠**기준선 없는 행을 뽑는다**(2026-09-27 · 반영분 재검토 P2 · 설계 §5-2 5번 복구 경로 ⑵). 적용 판은 있는데 순서 기준선이 NULL 이고
+ * 아카이브가 **다른 본문**이면 적재기는 이번 실행에서 받은 증명 없이는 판 모름(종료 1)이다 — 같은 실행에서 **다시 받아** 증명을 만든다
+ * (새 200 → 적용 · 같은 본문 → 기준선). 순서·상한·부재 제외·선정 밖은 다른 사유와 같다. 같은 본문이면 적재가 기준선을 채우므로 안 뽑는다.
+ * 변이 「기준선 없는 행을 안 뽑음」이 이 시험을 붉게 만든다.
+ */
+test("⚠⚠반영분 재검토 P2 · --archive 가 기준선 없는 행(다른 본문)을 뽑는다 — 부재·선정 밖은 안 뽑고 센다 · 같은 본문은 안 뽑는다", async () => {
+  const { ids, report } = await withArchive((db, sidecar) => {
+    upsertPlayer(db, "PIT", "投手", NOW);
+    freshPlayer(db, "NOBASE");
+    applied(db, "NOBASE", REV_X, null, null);
+    sidecar("NOBASE", { sha256: REV_Z, fetchedAt: T_EARLY, revision: 1 });
+    freshPlayer(db, "NOBASESAME");
+    applied(db, "NOBASESAME", REV_X, null, null);
+    sidecar("NOBASESAME", { sha256: REV_X, fetchedAt: T_EARLY, revision: 1 });
+    freshPlayer(db, "NOBASEABS");
+    applied(db, "NOBASEABS", REV_X, null, null);
+    sidecar("NOBASEABS", { sha256: REV_Z, fetchedAt: T_EARLY, checkedAt: T_LATE, absentAt: T_LATE, status: 404, revision: 1 });
+    upsertPlayer(db, "NOBASEOUT", "NOBASEOUT", NOW);
+    play(db, "NOBASEOUT", "2023-05-01");
+    career(db, "NOBASEOUT", "2023-05-01T23:00:00.000Z", { year: 2023, games: 1, pa: 4 });
+    applied(db, "NOBASEOUT", REV_X, null, null);
+    sidecar("NOBASEOUT", { sha256: REV_Z, fetchedAt: T_EARLY, revision: 1 });
+    // 투수 PIT 는 위 경기 전부에 던진다 — 최신 사본(2026 3등판 · 2023 1등판)을 둬 평소 사유로 안 뽑히게 한다
+    careerPit(db, "PIT", "2026-08-18T23:00:00.000Z", { games: 3 });
+    careerPit(db, "PIT", "2026-08-18T23:00:00.000Z", { year: 2023, games: 1 });
+  });
+  assert.ok(ids.includes("NOBASE"), `기준선 없는 행을 안 뽑았다 — 적재기는 증명 없이 매 실행 판 모름이다\n${report}`);
+  for (const id of ["NOBASESAME", "NOBASEABS", "NOBASEOUT"]) assert.ok(!ids.includes(id), `${id} 를 뽑았다\n${report}`);
+  assert.match(report, /기준선 없음 1명\(부재라 제외 1 · 선정 밖 1 · 출력분 중 1\)/, report);
+  assert.match(report, /아카이브 옛 판 0명/, report);
 });
 
 /**

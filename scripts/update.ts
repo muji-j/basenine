@@ -274,10 +274,16 @@ if (emit.status === 0 && emit.stdout) {
     "--contact", contact,
     "--delay", values.delay,
   ]) === 0 ? 0 : 1;
+  /**
+   * ⚠**이번 실행의 시작 시각을 넘긴다**(2026-09-27 · 반영분 재검토 P2 · 설계 §5-2 5번) — 순서 기준선이 없는 행에 다른 본문이 오면 적재기는
+   * **이번 실행에서 받은 200**(사이드카의 본 시각 ≥ 이 시각)일 때만 새 판으로 받는다. 위 재취득 선정이 그런 행을 뽑아 이 실행에서 다시 받으므로
+   * 여기서 풀린다. ⚠값은 맨 위에서 **한 번** 읽은 `now` 다(M6) — 새로 읽으면 재취득보다 늦은 시각이 되어 이 실행에 받은 것이 증명이 못 된다.
+   */
   failures += run("선수 프로필 적재", [
     "packages/store/tools/load-players.ts",
     values.archive,
     values.db,
+    "--run-started-at", now.toISOString(),
   ]) === 0 ? 0 : 1;
 } else {
   console.error("선수 ID 목록을 만들지 못했다 — 프로필 갱신을 건너뛴다");

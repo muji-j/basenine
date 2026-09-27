@@ -95,6 +95,13 @@
  * 못 읽으면 **짝 불일치**로 뽑는다(정의는 아카이버의 `localBodyIntact` 한 벌 · M1 — 아카이버가 바로 그 조건에서 본문을 되살린다).
  * ⚠순서·상한·부재 제외는 옛 판과 같다. 짝 불일치인 선수는 **옛 판 분류를 하지 않는다** — 사이드카의 시각이 그 본문 것이 아니다.
  * ⚠**비용**: 본문을 전부 푼다(예전에는 사이드카만 읽었다). 실측은 설계 §5-4.
+ *
+ * ## ⚠기준선 없음 — `--archive` 의 세 번째 사유 (2026-09-27 · 반영분 재검토 P2)
+ *
+ * 적용 판은 있는데 순서 기준선(`profile_content_at`)이 NULL 이고 아카이브가 **다른 본문**이면, 적재기는 **이번 실행에서 받은 200**이라는
+ * 증명 없이는 판 모름(종료 1 · 전 행 불변)이다(설계 §5-2 5번). 그래서 이 선정기가 그 행을 **같은 실행에서 다시 받게** 뽑는다 —
+ * 새 200 이면 증명이 생겨 적용되고, 상류가 DB 와 같은 본문이면 적재가 기준선을 채운다. 부재 중이면 받아도 404 라 안 뽑고 센다.
+ * ⚠순서·상한·선정의 창은 다른 사유와 같다 — 창 밖이면 「선정 밖」으로 세고 적재기의 판 모름이 남는다(런북 §7-G).
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -210,6 +217,12 @@ const COMMON = `
 const archiveTally = { stale: [] as string[], absent: 0, unreadable: 0, unknown: 0 };
 /** 짝 불일치(`--archive` 일 때만) — 뽑을 선수와 부재라 뺀 수. 옛 판(`archiveTally.stale`)과 **겹치지 않는다**(짝이 틀리면 옛 판 분류를 안 한다) */
 const pairTally = { broken: [] as string[], absent: 0 };
+/**
+ * **기준선 없음**(`--archive` 일 때만 · 2026-09-27 · 반영분 재검토 P2) — 적용 판은 있는데 순서 기준선이 NULL 이고 아카이브가 **다른 본문**.
+ * 적재기는 이번 실행에서 받은 증명 없이는 판 모름(종료 1)이라, 같은 실행에서 **다시 받아** 증명을 만든다(새 200 → 적용 · 같은 본문 → 기준선).
+ * 부재 중이면 받아도 404 라 증명이 안 생긴다 — 안 뽑고 센다. 옛 판·짝 불일치와 겹치지 않는다(분류가 하나를 고른다).
+ */
+const baselineTally = { missing: [] as string[], absent: 0 };
 if (archiveRoot !== null) {
   const sink = new LocalSink(archiveRoot);
   // ⚠**적용 판 NULL 도 읽는다** — 짝 검사는 판정 이력이 없어도 성립한다(첫 실행에도 짝이 틀린 본문은 시각을 몰라 모르는 채로 들어간다)
@@ -246,6 +259,12 @@ if (archiveRoot !== null) {
       case "stale-absent":
         archiveTally.absent += 1;
         break;
+      case "no-baseline":
+        baselineTally.missing.push(p.id);
+        break;
+      case "no-baseline-absent":
+        baselineTally.absent += 1;
+        break;
       case "unreadable":
         archiveTally.unreadable += 1;
         break;
@@ -262,9 +281,9 @@ if (archiveRoot !== null) {
  *   같은 값을 익명 `?` 에 넘긴다(이 저장소의 관례는 익명 `?` 뿐이다 · 2026-09-27 콜드 리뷰 P2). 자리 수는 SQL 에서 센다 —
  *   손으로 맞추면 한쪽만 고쳤을 때 남는 `?` 가 NULL 로 묶여 `json_each(NULL)` = 0행, **옛 판이 조용히 안 뽑힌다.**
  * ⚠목록이 비면 `"[]"` 다 — `json_each('[]')` 는 0행이라 `IN` 이 거짓이 되고 출력은 예전과 같다.
- * ⚠값은 **아카이브 사유 둘의 합**이다(옛 판 + 짝 불일치 · 서로 겹치지 않는다). 어느 사유인지는 아래에서 JS 가 가른다.
+ * ⚠값은 **아카이브 사유 셋의 합**이다(옛 판 + 짝 불일치 + 기준선 없음 · 서로 겹치지 않는다). 어느 사유인지는 아래에서 JS 가 가른다.
  */
-const archiveJson = JSON.stringify([...archiveTally.stale, ...pairTally.broken]);
+const archiveJson = JSON.stringify([...archiveTally.stale, ...pairTally.broken, ...baselineTally.missing]);
 const ARCHIVE_SLOT = "json_each(?)";
 const archiveArgs = (sql: string): string[] => Array.from({ length: sql.split(ARCHIVE_SLOT).length - 1 }, () => archiveJson);
 
@@ -322,6 +341,10 @@ const pairCandidates = rows.filter((r) => pairSet.has(r.id)).length;
 const sentPair = sent.filter((r) => pairSet.has(r.id)).length;
 const outsideArchive = archiveTally.stale.length - archiveCandidates;
 const outsidePair = pairTally.broken.length - pairCandidates;
+const baselineSet = new Set(baselineTally.missing);
+const baselineCandidates = rows.filter((r) => baselineSet.has(r.id)).length;
+const sentBaseline = sent.filter((r) => baselineSet.has(r.id)).length;
+const outsideBaseline = baselineTally.missing.length - baselineCandidates;
 
 /**
  * ⚠**제외한 수도 낸다**(§3-7: 「0건」과 「안 쟀음」을 구별한다).
@@ -354,7 +377,9 @@ console.error(
       : ` · 아카이브 옛 판 ${archiveCandidates}명(부재라 제외 ${archiveTally.absent} · 사이드카 못 읽음 ${archiveTally.unreadable}` +
         ` · 선정 밖 ${outsideArchive} · 순서 모름 ${archiveTally.unknown} · 출력분 중 ${sentArchive})` +
         // ⚠짝 불일치(3중 검토 2차 F1) — 0 이어도 찍는다. 옛 판과 겹치지 않는다
-        ` · 짝 불일치 ${pairCandidates}명(부재라 제외 ${pairTally.absent} · 선정 밖 ${outsidePair} · 출력분 중 ${sentPair})`) +
+        ` · 짝 불일치 ${pairCandidates}명(부재라 제외 ${pairTally.absent} · 선정 밖 ${outsidePair} · 출력분 중 ${sentPair})` +
+        // ⚠기준선 없음(반영분 재검토 P2) — 0 이어도 찍는다. 선정 밖이면 적재기의 판 모름(종료 1)이 남는다 — 런북 §7-G
+        ` · 기준선 없음 ${baselineCandidates}명(부재라 제외 ${baselineTally.absent} · 선정 밖 ${outsideBaseline} · 출력분 중 ${sentBaseline})`) +
     ` · 최근 400일 미출장이라 제외 ${excluded}명` +
     // ⚠**받을 수 없는데 낡은 사본**은 재취득으로 안 고쳐진다 — 「0건」과 구별해서 낸다(M11)
     (excludedStale > 0
@@ -364,7 +389,10 @@ console.error(
     (rows.length > limit
       ? ` — ⚠**${rows.length - limit}명이 오늘 몫에서 밀렸다**` +
         `(취득기록 없음 ${never - sentNever}명` +
-        (archiveRoot === null ? "" : ` · 아카이브 옛 판 ${archiveCandidates - sentArchive}명 · 짝 불일치 ${pairCandidates - sentPair}명`) +
+        (archiveRoot === null
+          ? ""
+          : ` · 아카이브 옛 판 ${archiveCandidates - sentArchive}명 · 짝 불일치 ${pairCandidates - sentPair}명` +
+            ` · 기준선 없음 ${baselineCandidates - sentBaseline}명`) +
         " 포함 · 다음 실행에서 받는다)"
       : ""),
 );

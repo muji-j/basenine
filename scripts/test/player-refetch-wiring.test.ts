@@ -53,6 +53,18 @@ test("⚠N3 3-18 · update.ts 의 재취득 선정 호출이 --archive 다음 va
   assert.match(argsOf('"packages/store/tools/load-players.ts"'), /values\.archive\b/, "선수 적재가 다른 아카이브를 본다");
 });
 
+/**
+ * ⚠**선수 적재에 이번 실행의 시작 시각을 넘긴다**(2026-09-27 · 반영분 재검토 P2 · 설계 §5-2 5번). 기준선 없는 행에 다른 본문이 오면
+ * 적재기는 「이번 실행에서 받은 200」이라는 증명(본 시각 ≥ 실행 시작)이 있을 때만 새 판으로 받는다 — 이 인자가 빠지면 증명이 없어
+ * 그 선수는 같은 실행에서 다시 받아도 **판 모름(종료 1)** 으로 남는다. 값은 `update.ts` 가 **한 번 읽은** 시계(`now` · M6)다.
+ */
+test("⚠반영분 재검토 P2 · update.ts 의 선수 적재 호출이 --run-started-at 다음 now.toISOString() 을 넘긴다", () => {
+  const args = argsOf('"packages/store/tools/load-players.ts"');
+  assert.match(args, /"--run-started-at",\s*now\.toISOString\(\)/, `선수 적재에 실행 시작을 안 넘긴다 — 기준선 없는 행이 같은 실행에서 안 풀린다\n${args}`);
+  // `now` 는 update.ts 가 한 번 읽는 시계다(두 번 읽으면 판정 범위와 증명이 서로 다른 「지금」을 본다)
+  assert.equal((UPDATE.match(/\bconst now = new Date\(\)/g) ?? []).length, 1, "update.ts 가 시계를 한 번만 읽지 않는다");
+});
+
 test("⚠N3 3-18 · 순서 — 재취득 선정 → 낡은 선수 재취득 → 신규 선수 → 선수 프로필 적재", () => {
   const at = (needle: string): number => {
     const i = UPDATE.indexOf(needle);
