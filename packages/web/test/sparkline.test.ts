@@ -606,7 +606,8 @@ test("⚠N18 꺾은선을 그리면 안내는 없다 — 경계가 꺾은선과 
  * 그리기 판정과 안내가 **같은 주입값**을 쓰는지를 한 번에 본다. 화면은 언제나 기본값(상수)으로 그린다.
  */
 test("⚠N18 최소 달 수는 주입된 수를 쓴다 — 3 이면 믿을 달 2개로는 안 그리고 안내가 「3つ」를 말한다(리터럴 2 를 잡는다)", () => {
-  const MIN = 3;
+  // ⚠**상수와 다른 수여야 한다** — 같으면 리터럴을 못 잡는다. 박지 않고 상수에서 유도해, 상수가 바뀐 날에도 목적이 남게 한다
+  const MIN = SPARK_MIN_SOLID_MONTHS + 1;
   for (const metric of ["ops", "era"] as const) {
     const thinBelow = metric === "era" ? THIN_SPLIT_OUTS : THIN_SPLIT_PA;
     const value = metric === "era" ? 3.0 : 0.8;
@@ -704,7 +705,8 @@ test("⚠N18 문턱 미만인 달만 여럿이면 첫째 문구 — 나온 달 �
 test("⚠N18 안내 조건과 그리기 판정이 동치다 — 나온 달이 있고 안 그릴 때만, 언제나 참인 한 문구(전수 · 최소 달 수 2·3)", () => {
   const seen: Record<string, number> = { none: 0, chart: 0, first: 0, second: 0 };
   let cases = 0;
-  for (const minSolid of [SPARK_MIN_SOLID_MONTHS, 3]) {
+  // ⚠**기본값과 그것과 다른 수** — 박은 「3」이면 상수가 3 이 된 날 같은 수를 두 번 잰다
+  for (const minSolid of [SPARK_MIN_SOLID_MONTHS, SPARK_MIN_SOLID_MONTHS + 1]) {
     for (let solid = 0; solid <= 3; solid += 1) {
       for (let thin = 0; thin <= 2; thin += 1) {
         for (let nullEnough = 0; nullEnough <= 3; nullEnough += 1) {
