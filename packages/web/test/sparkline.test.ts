@@ -15,7 +15,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb, replacePaEvents, upsertBatting, upsertGame, upsertPitching, upsertPlayer } from "@bb-app/store";
 import type { PaEventRow } from "@bb-app/store";
-import { renderPlayerPage, SPARK_MIN_SOLID_MONTHS, THIN_SPLIT_OUTS } from "../src/player-page.ts";
+import { renderPlayerPage, sparkline, SPARK_MIN_SOLID_MONTHS, THIN_SPLIT_OUTS } from "../src/player-page.ts";
+import { toString } from "../src/html.ts";
 import type { PitchingSplitCell, PlayerPageData, SplitAxisData, SplitRow } from "../src/player-page.ts";
 import { loadSite, THIN_SPLIT_PA } from "../src/query.ts";
 import { innings } from "../src/format.ts";
@@ -497,11 +498,12 @@ function noteOf(out: string): { html: string; text: string } | null {
  * 안내가 말해야 하는 글자. **수는 꺾은선이 쓰는 출처에서** 만든다 — 얇음의 문턱과 최소 달 수.
  * ⚠**단위 표기는 구현과 다른 길로 만든다**(구현은 `denominator` · 여기는 `innings` 와 리터럴 단위) —
  *   같은 함수로 기대값을 만들면 그 함수가 틀려도 시험이 따라 틀린다.
+ * ⚠**최소 달 수는 인자로 받는다** — 상수(2)로만 재면 구현이 리터럴 `2` 를 써도 못 잡는다(아래 주입 시험).
  * 지금 값으로 읽으면 「月別OPS　30打席以上の月が2つあれば表示」 · 「月別防御率　3回以上の月が2つあれば表示」.
  */
-function expectedNote(metric: "ops" | "era", thinBelow: number): string {
+function expectedNote(metric: "ops" | "era", thinBelow: number, minSolid: number = SPARK_MIN_SOLID_MONTHS): string {
   const bar = metric === "era" ? `${innings(thinBelow)}回` : `${thinBelow}打席`;
-  return `月別${termLabel(metric)}　${bar}以上の月が${SPARK_MIN_SOLID_MONTHS}つあれば表示`;
+  return `月別${termLabel(metric)}　${bar}以上の月が${minSolid}つあれば表示`;
 }
 
 test("⚠N18 믿을 달이 모자라 그리지 않으면 그 자리에 안내 한 줄 — 타자: 月別OPS + 月別 축의 문턱 + 최소 달 수", () => {
@@ -570,6 +572,42 @@ test("⚠N18 꺾은선을 그리면 안내는 없다 — 경계가 꺾은선과 
   const plain = renderPlayerPage(playerPage(), context());
   assert.ok(sparkBox(plain) !== null, "기본 픽스처에 꺾은선이 없다 — 이 단언이 잴 것이 없다");
   assert.equal(noteOf(plain), null, "기본 픽스처(꺾은선 있음)에 안내가 붙었다");
+});
+
+/**
+ * ⚠**최소 달 수를 2 가 아닌 수로 재야 한다**(2026-09-28 · N18 교차 검토 P2).
+ * 구현과 기대값이 같은 상수(`SPARK_MIN_SOLID_MONTHS` = 2)를 읽으니, 구현의 보간을 리터럴 `2` 로 바꿔도
+ * 시험이 전부 초록이었다(검토자 실측 21/21). → 최소 달 수를 **주입**할 수 있게 하고 **3** 으로 잰다.
+ * 그리기 판정과 안내가 **같은 주입값**을 쓰는지를 한 번에 본다. 화면은 언제나 기본값(상수)으로 그린다.
+ */
+test("⚠N18 최소 달 수는 주입된 수를 쓴다 — 3 이면 믿을 달 2개로는 안 그리고 안내가 「3つ」를 말한다(리터럴 2 를 잡는다)", () => {
+  const MIN = 3;
+  for (const metric of ["ops", "era"] as const) {
+    const thinBelow = metric === "era" ? THIN_SPLIT_OUTS : THIN_SPLIT_PA;
+    const value = metric === "era" ? 3.0 : 0.8;
+    /** 믿을 수 있는 달 n 개 + 얇은 달 하나 */
+    const spark = (n: number) =>
+      sparkOf(metric, [
+        ...Array.from({ length: n }, (_, i) => ({ label: `${4 + i}月`, value, den: thinBelow * 3 })),
+        { label: `${4 + n}月`, value, den: 1 },
+      ]).spark!;
+    // 전제: 기본값(상수 2)이면 믿을 달 2개로 그린다
+    assert.ok(sparkBox(toString(sparkline(spark(MIN - 1)))) !== null, `${metric}: 기본값으로 믿을 달 ${MIN - 1}개를 안 그린다 — 이 시험의 전제가 틀렸다`);
+    const below = toString(sparkline(spark(MIN - 1), MIN));
+    assert.equal(sparkBox(below), null, `${metric}: 최소 달 수 ${MIN} 인데 믿을 달 ${MIN - 1}개로 그렸다 — 그리기 판정이 주입된 수를 안 쓴다`);
+    assert.equal(noteOf(below)?.text, expectedNote(metric, thinBelow, MIN), `${metric}: 안내가 주입된 최소 달 수를 말하지 않는다`);
+    const drawn = toString(sparkline(spark(MIN), MIN));
+    assert.ok(sparkBox(drawn) !== null, `${metric}: 믿을 달 ${MIN}개인데 최소 ${MIN} 에서 안 그렸다`);
+    assert.equal(noteOf(drawn), null, `${metric}: 그렸는데 안내도 붙었다`);
+  }
+});
+
+test("⚠N18 최소 달 수는 2〜9 의 정수만 받는다 — 점 하나는 선이 아니고, 안내는 「つ」로 센다(1〜9 에서만 자연스럽다)", () => {
+  const s = sparkOf("ops", [{ label: "4月", value: 0.8, den: 100 }]).spark!;
+  for (const bad of [0, 1, 10, 2.5, Number.NaN]) {
+    assert.throws(() => sparkline(s, bad), RangeError, `최소 달 수 ${bad} 를 조용히 받았다`);
+  }
+  for (const ok of [2, 9]) assert.doesNotThrow(() => sparkline(s, ok), `최소 달 수 ${ok} 를 거절했다`);
 });
 
 test("⚠N18 그 시즌에 나온 달이 없으면 안내도 없다 — 「모자라서 안 그림」과 「그릴 것이 없음」은 다른 상태(M12)", () => {
