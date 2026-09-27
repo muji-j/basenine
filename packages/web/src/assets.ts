@@ -513,7 +513,18 @@ a{color:inherit}
    ⚠**fill:none 은 강제 색 모드에서도 남는다** — none 은 색이 아니라 강제 대상이 아니다.
    그래서 그 모드에서도 채운 끝점(지금)과 속 빈 점(얇은 달)이 갈린다(forced-colors.test.ts). */
 .spark circle.thin{fill:none;stroke:var(--tx-2)}
-.spark .sl{font-family:var(--f-num);font-size:var(--fs-min);color:var(--tx-3);letter-spacing:.06em}
+/* 꺾은선 캡션과, 꺾은선을 그리지 않을 때 그 자리의 안내(.sparknote)는 **같은 층의 글자 한 벌**이다(M1).
+   새 색·크기를 만들지 않는다 — --tx-3 은 --page 대비 라이트 4.910 · 다크 5.499(css-contrast · sparkline 시험이 잰다). */
+.spark .sl,.sparknote{font-family:var(--f-num);font-size:var(--fs-min);color:var(--tx-3);letter-spacing:.06em}
+/* ⚠**그리지 않는 자리의 안내 한 줄**(2026-09-28 · 감사 N18). 꺾은선 자리를 말없이 비우면 「기능이 사라졌다」로 읽힌다.
+   ⚠**그림처럼 만들지 않는다** — 빈 상자·회색 막대·점선 틀은 데이터가 있는 것처럼 보인다. 글자뿐이다.
+   ⚠**꺾은선이 차지하던 자리보다 커지지 않게** — 실측(harfbuzz · Consolas→Yu Gothic · palt · 9.5px):
+   한 줄은 타자 194.6 · 투수 191.5px 인데 꺾은선 상자는 타자 108~159 · 투수 166~226px 이고, 높이는 14.7 대 42.7px 이다.
+   한 줄 폭으로 줄바꿈을 판정하면 꺾은선이 들어갈 자리에서 안내만 다음 줄로 밀린다 →
+   **판정은 최소 폭**(flex-basis:0 → 라벨/조건 두 줄 · 타자 147.6 · 투수 131.8px)으로 하고,
+   자리가 남으면 **한 줄까지만** 넓힌다(max-width:max-content) · 오른쪽 끝은 꺾은선처럼 margin-left:auto.
+   ⚠**줄을 바꿔야 하면 라벨과 조건 사이(「　」)에서만** 바꾼다(keep-all) — 아무 글자 사이에서 끊으면 「2」와 「つ」가 갈린다. */
+.sparknote{flex-grow:1;flex-basis:0;max-width:max-content;margin:0;margin-left:auto;word-break:keep-all}
 .idline .asof{font-family:var(--f-num);font-size:var(--fs-note);color:var(--tx-3)}
 
 /* 紋을 여는 버튼 — 눌리는 것임을 글자로도 말한다. 도형만 두면 아무도 누르지 않는다 */
@@ -2866,6 +2877,8 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
   .idline{gap:var(--s5);padding-top:var(--s5)}
   .mark .mk{width:42px;height:42px}
   .spark{width:100%;margin-left:0;align-items:flex-start}
+  /* 안내도 꺾은선처럼 **제 줄의 왼쪽**에 선다 — 폭이 한 줄에 묶여 있으면 이름 옆에 끼어 자리가 갈린다 */
+  .sparknote{flex-basis:100%;max-width:none;margin-left:0}
   .cols{grid-template-columns:1fr;gap:0}
   .bars{max-width:none}
   .bar{grid-template-columns:1fr;gap:var(--s1)}

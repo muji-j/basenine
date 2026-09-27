@@ -15,11 +15,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb, replacePaEvents, upsertBatting, upsertGame, upsertPitching, upsertPlayer } from "@bb-app/store";
 import type { PaEventRow } from "@bb-app/store";
-import { renderPlayerPage, THIN_SPLIT_OUTS } from "../src/player-page.ts";
+import { renderPlayerPage, SPARK_MIN_SOLID_MONTHS, THIN_SPLIT_OUTS } from "../src/player-page.ts";
 import type { PitchingSplitCell, PlayerPageData, SplitAxisData, SplitRow } from "../src/player-page.ts";
 import { loadSite, THIN_SPLIT_PA } from "../src/query.ts";
 import { innings } from "../src/format.ts";
-import { termOf } from "../src/glossary.ts";
+import { termLabel, termOf } from "../src/glossary.ts";
+import { CSS } from "../src/assets.ts";
+import { computed, parseRules } from "./css-cascade.ts";
+import type { El } from "./css-cascade.ts";
 import { context, pitcherMark, pitchingBlock, playerPage, reliefBlock } from "./fixtures.ts";
 
 /** 한 달 — 값과 **분모**(타자 打席 · 투수 アウト) */
@@ -469,4 +472,228 @@ test("⚠N7 쿼리가 분모와 문턱을 싣는다 — 투수는 アウト·THI
     );
     assert.deepEqual(b.spark.points.map((x) => x.rate.denominator), [12, 3]);
   });
+});
+
+/*
+ * ## 그리지 않는 자리의 안내 — 감사 N18(사용자 결정 2026-09-28)
+ *
+ * ⚠**그 자리가 말없이 비었다.** N7 부터 믿을 수 있는 달이 `SPARK_MIN_SOLID_MONTHS` 미만이면 꺾은선을 그리지 않는다
+ * (M2 — 얇은 표본이 모양을 정하지 않게 · 이것 자체는 두 검토가 맞다고 판정했다). 그런데 개막월(3月)이 구조적으로 얇아
+ * **개막부터 5월 초까지 약 6주 동안 타자 꺾은선이 전부 없다**(2025 실측: 4/30 기준 153장 → 0장 · 5/31 232 → 100).
+ * 말없이 비면 「기능이 사라졌다」로 읽힌다 → **그 자리에 안내 한 줄**: 무엇의 추이인지 + 언제 그리는지.
+ * ⚠**수는 전부 꺾은선이 쓰는 그 출처에서 온다**(M1) — 얇음의 문턱(`thinBelow`)과 최소 달 수(`SPARK_MIN_SOLID_MONTHS`).
+ * ⚠**「모자라서 안 그림」과 「그릴 것이 없음」은 다른 상태다**(M12) — 그 시즌에 나온 달이 없으면 안내도 없다.
+ */
+
+/** 꺾은선 자리의 안내(`p.sparknote`) — 원문과, 태그를 걷은 글자. 없으면 null */
+function noteOf(out: string): { html: string; text: string } | null {
+  const all = [...out.matchAll(/<p class="sparknote"[^>]*>([\s\S]*?)<\/p>/g)];
+  assert.ok(all.length <= 1, `안내가 ${all.length}개다 — 한 줄이어야 한다`);
+  const m = all[0];
+  return m === undefined ? null : { html: m[0], text: m[1]!.replace(/<[^>]+>/g, "") };
+}
+
+/**
+ * 안내가 말해야 하는 글자. **수는 꺾은선이 쓰는 출처에서** 만든다 — 얇음의 문턱과 최소 달 수.
+ * ⚠**단위 표기는 구현과 다른 길로 만든다**(구현은 `denominator` · 여기는 `innings` 와 리터럴 단위) —
+ *   같은 함수로 기대값을 만들면 그 함수가 틀려도 시험이 따라 틀린다.
+ * 지금 값으로 읽으면 「月別OPS　30打席以上の月が2つあれば表示」 · 「月別防御率　3回以上の月が2つあれば表示」.
+ */
+function expectedNote(metric: "ops" | "era", thinBelow: number): string {
+  const bar = metric === "era" ? `${innings(thinBelow)}回` : `${thinBelow}打席`;
+  return `月別${termLabel(metric)}　${bar}以上の月が${SPARK_MIN_SOLID_MONTHS}つあれば表示`;
+}
+
+test("⚠N18 믿을 달이 모자라 그리지 않으면 그 자리에 안내 한 줄 — 타자: 月別OPS + 月別 축의 문턱 + 최소 달 수", () => {
+  const out = render("ops", [
+    // ⚠**개막월이 얇은 전형** — 4월·5월 초의 타자 페이지가 이 모양이다
+    { label: "3月", value: 0.8, den: 10 },
+    { label: "4月", value: 0.9, den: 12 },
+    { label: "5月", value: 0.85, den: 100 },
+  ]);
+  assert.equal(sparkBox(out), null, "믿을 수 있는 달이 하나뿐인데 꺾은선을 그렸다 — 이 시험의 전제가 틀렸다");
+  const note = noteOf(out);
+  assert.ok(note !== null, "꺾은선을 안 그렸는데 그 자리가 말없이 비었다(N18)");
+  assert.equal(note.text, expectedNote("ops", THIN_SPLIT_PA));
+  // ⚠**자리는 꺾은선이 있던 그곳**이다 — 표제(header.idline)의 마지막 자식, 글자 묶음(.idtext) 뒤
+  assert.match(
+    out,
+    /<header class="idline">[\s\S]*?<div class="idtext">[\s\S]*<\/div>\s*<p class="sparknote">[^<]*<\/p>\s*<\/header>/,
+    "안내가 표제 줄의 꺾은선 자리(마지막 자식)에 있지 않다",
+  );
+});
+
+test("⚠N18 투수도 같다 — 얇은 달뿐이면 「月別防御率　3回以上…」, 문턱은 THIN_SPLIT_OUTS 에서", () => {
+  const out = render("era", [
+    { label: "4月", value: 81.0, den: 1 },
+    { label: "5月", value: 0.0, den: 3 },
+  ]);
+  assert.equal(sparkBox(out), null, "얇은 달만 있는데 꺾은선을 그렸다 — 이 시험의 전제가 틀렸다");
+  // ⚠**방향(「低いほど良い」)은 말하지 않는다** — 그건 그림을 읽는 법이고, 여기엔 그림이 없다(완전 일치가 그것을 막는다)
+  assert.equal(noteOf(out)?.text, expectedNote("era", THIN_SPLIT_OUTS));
+});
+
+test("⚠N18 안내의 수를 손으로 적지 않는다 — 데이터의 문턱(thinBelow)을 바꾸면 문구가 따라온다(M1)", () => {
+  const pt = (label: string, value: number, den: number): { label: string; rate: { value: number; denominator: number } } => ({
+    label,
+    rate: { value, denominator: den },
+  });
+  // 타자 — 月別 축의 문턱이 25 인 픽스처면 「25打席以上」이어야 한다
+  const bat = noteOf(render("ops", [], { spark: { metric: "ops", thinBelow: 25, points: [pt("4月", 0.8, 24), pt("5月", 0.9, 25)] } }));
+  assert.ok(bat !== null, "문턱 25 인 타자에게 안내가 없다");
+  assert.equal(bat.text, expectedNote("ops", 25), "타자 안내가 데이터의 문턱을 안 따라간다");
+  assert.ok(!bat.text.includes(`${THIN_SPLIT_PA}打席`), `문턱을 바꿨는데 옛 수가 남았다: ${bat.text}`);
+  // 투수 — 12アウト면 「4回以上」이어야 한다(아웃 → 이닝 환산도 꺾은선의 얇음 문구와 같은 길)
+  const pit = noteOf(render("era", [], { spark: { metric: "era", thinBelow: 12, points: [pt("4月", 3.0, 11), pt("5月", 2.25, 12)] } }));
+  assert.ok(pit !== null, "문턱 12アウト인 투수에게 안내가 없다");
+  assert.equal(pit.text, expectedNote("era", 12), "투수 안내가 데이터의 문턱을 안 따라간다");
+  assert.ok(pit.text.includes("4回以上"), `12アウト가 4回로 읽히지 않는다: ${pit.text}`);
+});
+
+test("⚠N18 꺾은선을 그리면 안내는 없다 — 경계가 꺾은선과 같은 상수(SPARK_MIN_SOLID_MONTHS)다", () => {
+  for (const metric of ["ops", "era"] as const) {
+    const thinBelow = metric === "era" ? THIN_SPLIT_OUTS : THIN_SPLIT_PA;
+    const value = metric === "era" ? 3.0 : 0.8;
+    /** 믿을 수 있는 달 n 개 + 얇은 달 하나(얇은 달은 몇 개든 선을 만들지 않는다) */
+    const months = (n: number): Month[] => [
+      ...Array.from({ length: n }, (_, i) => ({ label: `${4 + i}月`, value, den: thinBelow * 3 })),
+      { label: `${4 + n}月`, value, den: 1 },
+    ];
+    const below = render(metric, months(SPARK_MIN_SOLID_MONTHS - 1));
+    assert.equal(sparkBox(below), null, `${metric}: 믿을 달이 ${SPARK_MIN_SOLID_MONTHS - 1}개인데 꺾은선을 그렸다`);
+    assert.equal(noteOf(below)?.text, expectedNote(metric, thinBelow), `${metric}: 경계 바로 아래에 안내가 없다`);
+    const drawn = render(metric, months(SPARK_MIN_SOLID_MONTHS));
+    assert.ok(sparkBox(drawn) !== null, `${metric}: 믿을 달이 ${SPARK_MIN_SOLID_MONTHS}개인데 꺾은선이 없다 — 이 시험이 잴 것이 없다`);
+    assert.equal(noteOf(drawn), null, `${metric}: 꺾은선을 그렸는데 안내도 붙었다 — 둘은 한 자리를 나눠 쓰지 않는다`);
+  }
+  // ⚠**기본 픽스처는 꺾은선을 그리는 타자다** — 다른 시험 전부가 보는 화면에 안내가 끼면 안 된다
+  const plain = renderPlayerPage(playerPage(), context());
+  assert.ok(sparkBox(plain) !== null, "기본 픽스처에 꺾은선이 없다 — 이 단언이 잴 것이 없다");
+  assert.equal(noteOf(plain), null, "기본 픽스처(꺾은선 있음)에 안내가 붙었다");
+});
+
+test("⚠N18 그 시즌에 나온 달이 없으면 안내도 없다 — 「모자라서 안 그림」과 「그릴 것이 없음」은 다른 상태(M12)", () => {
+  for (const metric of ["ops", "era"] as const) {
+    const out = render(metric, []);
+    assert.equal(sparkBox(out), null, `${metric}: 월별 값이 없는데 꺾은선을 그렸다`);
+    assert.equal(noteOf(out), null, `${metric}: 그 시즌에 나오지 않은 선수에게 「…あれば表示」를 말한다 — 모자란 게 아니라 없는 것이다`);
+  }
+});
+
+/**
+ * ⚠**「월별 값이 있다」는 「그 달에 나왔다」다**(요구의 괄호 「출장한 달이 있다」).
+ * 값이 정의되지 않는 달(희생번트 1타석뿐 · 0아웃 등판)도 **나온 달**이다 — 0 이 아니라 「정의 안 됨」이고(M11),
+ * 그 선수에게도 「몇 타석 이상인 달이 몇 개면 그린다」는 참이다. 안내를 비우는 것은 **나온 달이 0개**일 때뿐이다.
+ */
+test("⚠N18 값이 정의되지 않는 달뿐이어도 나온 달이 있으면 안내 — 비우는 것은 「나온 달 0개」뿐이다", () => {
+  const bat = render("ops", [{ label: "4月", value: null, den: 1 }]);
+  assert.equal(sparkBox(bat), null);
+  assert.equal(noteOf(bat)?.text, expectedNote("ops", THIN_SPLIT_PA), "희생번트 1타석뿐인 달의 타자에게 안내가 없다");
+  const pit = render("era", [{ label: "4月", value: null, den: 0 }]);
+  assert.equal(sparkBox(pit), null);
+  assert.equal(noteOf(pit)?.text, expectedNote("era", THIN_SPLIT_OUTS), "0아웃 등판뿐인 투수에게 안내가 없다");
+});
+
+test("⚠N18 안내는 그림이 아니라 글자다 — 낭독되고(aria-hidden 없음), 그림 요소가 없다", () => {
+  const out = render("ops", [
+    { label: "4月", value: 0.8, den: 10 },
+    { label: "5月", value: 0.9, den: 100 },
+  ]);
+  const note = noteOf(out);
+  assert.ok(note !== null, "안내가 없다 — 이 시험이 잴 것이 없다");
+  // ⚠**낭독에서 빼지 않는다** — 캡션 끝의 범례(○＝…)는 그림의 부호를 푸는 글자라 뺐지만, 이건 그림 대신 말하는 글자다
+  assert.doesNotMatch(note.html, /\baria-|\brole=|<svg|<img|<canvas/, `안내가 평범한 글자가 아니다: ${note.html}`);
+  const head = /<header class="idline"[^>]*>/.exec(out)?.[0];
+  assert.ok(head !== undefined && !head.includes("aria-hidden"), `표제가 낭독을 끈다: ${head}`);
+});
+
+/** WCAG 2.x 대비 — 이 저장소는 시험 파일마다 한 벌씩 둔다(css-contrast · css-tables 와 같은 식) */
+function contrastRatio(a: string, b: string): number {
+  const lum = (hex: string): number => {
+    const ch = [1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16) / 255);
+    const lin = ch.map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * lin[0]! + 0.7152 * lin[1]! + 0.0722 * lin[2]!;
+  };
+  const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p);
+  return (x! + 0.05) / (y! + 0.05);
+}
+
+/** 표제 줄의 요소들 — 캐스케이드 계산기(`css-cascade.ts`)에 넘긴다 */
+const IDLINE: Omit<El, "ancestors"> = { tag: "header", classes: ["idline"] };
+const NOTE_EL: El = { tag: "p", classes: ["sparknote"], ancestors: [IDLINE] };
+const SPARK_EL: El = { tag: "div", classes: ["spark"], ancestors: [IDLINE] };
+const CAPTION_EL: El = { tag: "span", classes: ["sl"], ancestors: [IDLINE, { tag: "div", classes: ["spark"] }] };
+
+test("⚠N18 안내는 캡션(.spark .sl)과 같은 층의 조용한 글자다 — 글꼴·크기·색·자간이 같고, 세 테마 길에서 4.5:1 이상", () => {
+  const rules = parseRules(CSS);
+  // ⚠**새 층을 만들지 않는다** — 캡션과 한 벌이어야 캡션을 고친 날 안내도 같이 바뀐다
+  for (const prop of ["font-family", "font-size", "color", "letter-spacing", "line-height", "font-weight"]) {
+    assert.equal(computed(rules, NOTE_EL, prop), computed(rules, CAPTION_EL, prop), `안내의 ${prop} 가 캡션과 다르다`);
+  }
+  assert.ok(computed(rules, CAPTION_EL, "color") !== undefined, "캡션의 글자색을 못 읽었다 — 이 시험이 공회전한다");
+  const color = computed(rules, NOTE_EL, "color");
+  const token = /^var\(\s*(--[\w-]+)\s*\)$/.exec(color ?? "")?.[1];
+  assert.ok(token !== undefined, `안내의 글자색이 토큰이 아니다: ${color}`);
+  // ⚠**대비는 계산한다**(눈대중 금지) — 라이트 · 다크(토글) · 다크(OS 설정) 세 길 전부. 바탕은 --page(표제는 배경을 안 깐다)
+  const root: El = { tag: "html", classes: [], root: true };
+  const themes: readonly [string, El, (q: string) => boolean][] = [
+    ["라이트", root, () => false],
+    ["다크(토글)", { ...root, attrs: { "data-theme": "dark" } }, () => false],
+    ["다크(OS)", root, (q) => /prefers-color-scheme:\s*dark/.test(q)],
+  ];
+  for (const [name, el, mediaOk] of themes) {
+    const ink = computed(rules, el, token, mediaOk);
+    const page = computed(rules, el, "--page", mediaOk);
+    assert.ok(ink !== undefined && page !== undefined, `${name}: ${token} 또는 --page 를 못 읽었다`);
+    const r = contrastRatio(ink, page);
+    assert.ok(r >= 4.5, `${name}: 안내 ${ink} / 바탕 ${page} = ${r.toFixed(3)}:1 — 본문 4.5:1 미달`);
+  }
+  // ⚠**흐리게 하지 않는다** — opacity 를 얹으면 위 계산이 거짓이 된다
+  assert.equal(computed(rules, NOTE_EL, "opacity"), undefined, "안내에 opacity 를 얹었다");
+});
+
+/**
+ * ⚠**꺾은선이 차지하던 자리보다 커지지 않는다 — 폭 세 구간에서.**
+ * 실측(2026-09-28 · Consolas→Yu Gothic · palt · 9.5px · 브라우저 아님, harfbuzz 로 글꼴을 직접 셈):
+ * 한 줄 안내는 타자 **194.6px** · 투수 **191.5px** 이고, 꺾은선 상자는 타자 108(범례 없음)~159px · 투수 166~226px,
+ * 높이는 꺾은선 **42.7px** 대 안내 **14.7px** 이다. 한 줄 폭으로 줄바꿈을 판정하면 꺾은선이 들어갈 자리에서
+ * 안내가 먼저 다음 줄로 밀린다 → **판정에는 최소 폭**(라벨 / 조건 두 줄 · 타자 147.6 · 투수 131.8px)을 쓰고,
+ * 자리가 있으면 한 줄까지만 넓힌다(`flex-basis:0` + `max-width:max-content`).
+ */
+test("⚠N18 안내는 꺾은선 자리보다 커지지 않는다 — 빈 틀 없이, 넓은 폭은 오른쪽 끝 · 680px 이하는 제 줄의 왼쪽", () => {
+  const rules = parseRules(CSS);
+  /** 폭 한 점에서 켜지는 `@media` — 이 스타일시트의 폭 조건은 max-width 뿐이다. 인쇄·강제 색·다크·모션 감소는 끈다 */
+  const at =
+    (width: number, coarse: boolean) =>
+    (q: string): boolean =>
+      q.split(/\s+and\s+/).every((c) => {
+        const w = /^\(max-width:\s*(\d+)px\)$/.exec(c.trim());
+        if (w !== null) return width <= Number(w[1]);
+        if (/^\(pointer:\s*coarse\)$/.test(c.trim())) return coarse;
+        if (/^\(hover:\s*hover\)$/.test(c.trim())) return !coarse;
+        return false;
+      });
+  const scenes = [
+    ["넓은 폭(1280 · 마우스)", at(1280, false), "row"],
+    ["680px 이하(600 · 마우스)", at(600, false), "own"],
+    ["좁은 폭(360 · 손가락)", at(360, true), "own"],
+  ] as const;
+  for (const [name, mediaOk, where] of scenes) {
+    // ⚠**빈 상자·회색 막대·점선 틀을 만들지 않는다**(「AI틱함」 · 빈 틀은 데이터가 있는 것처럼 보인다)
+    for (const prop of ["background", "background-color", "border", "border-top", "border-bottom", "border-left", "border-right",
+      "border-style", "box-shadow", "outline", "padding", "min-height", "height", "min-width"]) {
+      assert.equal(computed(rules, NOTE_EL, prop, mediaOk), undefined, `${name}: 안내에 ${prop} 가 있다 — 그림처럼 보이는 틀이다`);
+    }
+    if (where === "row") {
+      assert.equal(computed(rules, SPARK_EL, "margin-left", mediaOk), "auto", "꺾은선이 오른쪽 끝이 아니다 — 이 시험의 전제가 바뀌었다");
+      assert.equal(computed(rules, NOTE_EL, "margin-left", mediaOk), "auto", `${name}: 안내가 꺾은선 자리(오른쪽 끝)에 있지 않다`);
+      assert.equal(computed(rules, NOTE_EL, "flex-basis", mediaOk), "0", `${name}: 줄바꿈 판정에 한 줄 폭을 쓴다 — 꺾은선보다 먼저 밀린다`);
+      assert.equal(computed(rules, NOTE_EL, "max-width", mediaOk), "max-content", `${name}: 자리가 남으면 한 줄보다 넓어진다`);
+    } else {
+      assert.equal(computed(rules, SPARK_EL, "width", mediaOk), "100%", "꺾은선이 제 줄을 안 쓴다 — 이 시험의 전제가 바뀌었다");
+      assert.equal(computed(rules, NOTE_EL, "flex-basis", mediaOk), "100%", `${name}: 안내가 꺾은선처럼 제 줄을 쓰지 않는다`);
+      assert.equal(computed(rules, NOTE_EL, "max-width", mediaOk), "none", `${name}: 제 줄에서 폭이 한 줄로 묶였다`);
+      assert.equal(computed(rules, NOTE_EL, "margin-left", mediaOk), "0", `${name}: 안내가 왼쪽에서 시작하지 않는다(꺾은선과 다른 자리)`);
+    }
+  }
 });
