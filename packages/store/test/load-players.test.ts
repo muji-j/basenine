@@ -942,7 +942,7 @@ test("⚠⚠3중 검토 2차 F1 · E1(본문만 바뀜 · 사이드카 그대로
     const HEAL_AT = "2026-09-27T03:00:00.000Z";
     const r = await refetch(env, PITCHER, original, HEAL_AT);
     assert.equal(r.outcome, "unchanged", JSON.stringify(r));
-    assert.equal(r.repaired, true, `본문을 되살리지 않았다\n${JSON.stringify(r)}`);
+    assert.equal(r.repair, "rewritten", `본문을 되살리지 않았다\n${JSON.stringify(r)}`);
     assert.deepEqual(gunzipSync(await readFile(pagePath(env, PITCHER))), original, "로컬 본문이 사이드카가 말하는 바이트가 아니다");
     const sidecarAfter = JSON.parse(await readFile(metaPath(env, PITCHER), "utf8")) as { revision: number; fetchedAt: string };
     assert.equal(sidecarAfter.revision, sidecarBefore.revision, "내용이 안 바뀌었는데 revision 을 올렸다(M5)");
@@ -963,6 +963,81 @@ test("⚠⚠3중 검토 2차 F1 · E1(본문만 바뀜 · 사이드카 그대로
     // 다음 선정에서는 안 뽑힌다(매일 헛요청이 되지 않는다 · L1)
     const after = select(env);
     assert.ok(!after.ids.includes(PITCHER), `되살린 뒤에도 뽑혔다\n${after.err}`);
+  } finally {
+    await cleanup(env);
+  }
+});
+
+// ─── 반영분 재검토 P2 · 겹친 작성자 — 되살리기가 새 판을 덮어도 적재는 옛 판으로 막는다(2026-09-27) ───
+
+const RACE_T0 = "2026-09-20T00:00:00.000Z"; // A 를 처음 받은 시각
+const RACE_T1 = "2026-09-27T03:00:00.000Z"; // 첫 수집기가 A 를 다시 받은 시각
+const RACE_T2 = "2026-09-27T03:00:05.000Z"; // 겹친 작성자가 새 판 B 를 받은 시각(DB 에도 B)
+const RACE_T3 = "2026-09-27T03:00:09.000Z"; // 첫 수집기가 기록하는 시각(늦다)
+
+/**
+ * ⚠⚠**재확인과 쓰기 사이의 좁은 창**(아카이버의 비교-후-쓰기가 못 닫는 창 · 설계 §12)에서 겹친 작성자가 새 판 B(t2)를 쓰고 첫 수집기가
+ * 옛 A 로 덮는다. 그래도 A 의 시각은 **받은 시각 t1** 이라 DB 의 B(t2)보다 이르다 → 적재는 **옛 판**으로 건너뛰어 DB 를 지킨다.
+ * 예전에는 기록할 때 읽은 t3 이 붙어 A 가 **새 판**으로 적용됐다(조용한 되돌림 · 재검토자 재현).
+ * 실제 `archivePlayer` · 실제 `LocalSink` · 실제 적재기다(외부 요청 0 — 가짜 응답). 변이 「되살리기가 시계를 뒤에서 읽음」이 이 시험을 붉게 만든다.
+ */
+test("⚠⚠반영분 재검토 P2 · 되살리기가 겹친 작성자의 새 판 B 를 덮어도 A 의 시각은 받은 시각 — 적재는 옛 판 · DB 는 B 그대로", { skip }, async () => {
+  const env = await setup({ [PITCHER]: { fetchedAt: RACE_T0 } });
+  try {
+    const aBytes = gunzipSync(await readFile(pagePath(env, PITCHER)));
+    const aMeta = await readFile(metaPath(env, PITCHER), "utf8");
+    // ① DB 에 새 판 B(배번 99 · t2)를 적용해 둔다
+    await mutatePage(env, PITCHER, (h) => h.replace('<li id="pc_v_no">34</li>', '<li id="pc_v_no">99</li>'));
+    await editSidecar(env, PITCHER, { fetchedAt: RACE_T2, checkedAt: RACE_T2, revision: 2 });
+    const b = await pair(env, PITCHER);
+    assert.equal(load(env).code, 0);
+    const withB = snapshot(env, PITCHER);
+    assert.equal(withB.player["uniform_number"], "99");
+    // ② 아카이브를 짝 불일치(깨진 본문 · 사이드카 A)로 둔다 — 첫 수집기는 상류 A 를 받아 본문을 되살리려 한다
+    await writeFile(pagePath(env, PITCHER), gzipSync(Buffer.from("<html>깨진 사본</html>", "utf8")));
+    await writeFile(metaPath(env, PITCHER), aMeta);
+    // ③ 첫 수집기 — 상류는 A 를 t1 에 줬다. 로컬 본문 읽기가 늦어(시계가 t3 으로 간다) · **본문 쓰기 직전**(재확인 뒤)에
+    //   겹친 작성자가 B/B 를 쓴다. 기록할 때 시계를 다시 읽으면 여기서 t3 이 붙는다
+    let now = RACE_T1;
+    const clock = { now: () => new Date(now) };
+    const inner = new LocalSink(env.archive);
+    let raced = false;
+    const sink = {
+      readMeta: (k: string) => inner.readMeta(k),
+      readBody: async (k: string) => {
+        now = RACE_T3;
+        return inner.readBody(k);
+      },
+      writeMeta: (k: string, m: Parameters<LocalSink["writeMeta"]>[1]) => inner.writeMeta(k, m),
+      write: async (k: string, body: Uint8Array, m: Parameters<LocalSink["write"]>[2]) => {
+        if (!raced) {
+          raced = true;
+          await putPair(env, PITCHER, b);
+        }
+        return inner.write(k, body, m);
+      },
+    };
+    const fetcher = new PoliteFetcher({
+      userAgent: "bb-app-test",
+      clock,
+      fetchImpl: async () => ({
+        status: 200,
+        headers: { get: () => null },
+        arrayBuffer: async () => aBytes.buffer.slice(aBytes.byteOffset, aBytes.byteOffset + aBytes.byteLength) as ArrayBuffer,
+      }),
+      sleep: async () => undefined,
+    });
+    const r = await archivePlayer(PITCHER, { fetcher, sink, clock });
+    assert.ok(raced, "겹친 작성자가 끼어들지 않았다 — 이 시험이 그 창을 재지 못한다");
+    const written = JSON.parse(await readFile(metaPath(env, PITCHER), "utf8")) as { checkedAt: string; sha256: string };
+    assert.equal(written.sha256, shaOf(aBytes), "옛 A 가 덮지 않았다 — 이 시험의 전제(좁힌 창)가 성립하지 않는다");
+    // ④ 적재 — A 는 t1 이라 DB 의 B(t2)보다 이르다 → 옛 판 · DB 는 B 그대로
+    const after = load(env);
+    assert.deepEqual(snapshot(env, PITCHER), withB, `겹친 작성자의 새 판을 옛 A 가 되돌렸다(조용한 되돌림)\n${after.out}`);
+    assert.equal(after.code, 0, after.out + after.err);
+    assert.match(after.out, /옛 판 건너뜀 1/, `A 를 옛 판으로 막지 않았다\n${after.out}`);
+    assert.equal(written.checkedAt, RACE_T1, "덮은 A 에 늦은 기록 시각이 붙었다");
+    assert.equal(r.repair, "rewritten", JSON.stringify(r));
   } finally {
     await cleanup(env);
   }

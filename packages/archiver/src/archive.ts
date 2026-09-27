@@ -28,11 +28,13 @@ export interface PageResult {
   /** 실패했을 때만 채워진다 */
   error: string | null;
   /**
-   * 짝이 틀린 로컬 본문을 **방금 받은 바이트로 되살렸다**(선수 페이지만 · 2026-09-27 · 3중 검토 2차 F1).
-   * ⚠`outcome` 은 `unchanged` 다 — 상류 내용이 사이드카가 말하는 그대로라 새 판이 아니다(`revision` 불변 · M5).
+   * 짝이 틀린 로컬 본문을 두고 한 일(선수 페이지만 · 2026-09-27 · 3중 검토 2차 F1 · 반영분 재검토 P2):
+   * - `"rewritten"` — **방금 받은 바이트로 되살렸다**
+   * - `"concurrent"` — 되살리려 했는데 그 사이 **다른 작성자가 사이드카를 바꿔** 쓰지 않았다(비교-후-쓰기 · 다음 실행이 다시 본다)
+   * ⚠`outcome` 은 둘 다 `unchanged` 다 — 상류 내용이 사이드카가 말하던 그대로라 새 판이 아니다(`revision` 불변 · M5).
    *   그래서 `summarize` 의 네 갈래를 늘리지 않고 이 표지로 따로 센다(`cli-players.ts`).
    */
-  repaired?: true;
+  repair?: "rewritten" | "concurrent";
 }
 
 export interface DayResult {
