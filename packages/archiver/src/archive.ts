@@ -27,6 +27,12 @@ export interface PageResult {
   status: number | null;
   /** 실패했을 때만 채워진다 */
   error: string | null;
+  /**
+   * 짝이 틀린 로컬 본문을 **방금 받은 바이트로 되살렸다**(선수 페이지만 · 2026-09-27 · 3중 검토 2차 F1).
+   * ⚠`outcome` 은 `unchanged` 다 — 상류 내용이 사이드카가 말하는 그대로라 새 판이 아니다(`revision` 불변 · M5).
+   *   그래서 `summarize` 의 네 갈래를 늘리지 않고 이 표지로 따로 센다(`cli-players.ts`).
+   */
+  repaired?: true;
 }
 
 export interface DayResult {
@@ -134,7 +140,15 @@ export async function markSeen(
 ): Promise<void> {
   // ⚠**전에 본 적이 없으면 남길 것이 없다** — 빈 메타를 지어내지 않는다(M11)
   if (prev === null) return;
-  await sink.writeMeta(key, { ...prev, ...(extra ?? {}), checkedAt: seenAt ?? clock.now().toISOString() });
+  await sink.writeMeta(key, seenMeta(prev, clock, extra, seenAt));
+}
+
+/**
+ * 「봤다」를 얹은 사이드카 — `markSeen` 과 선수 페이지의 본문 되살리기(`players.ts`)가 **같이 쓰는 한 벌**이다(M1).
+ * ⚠`revision`·`fetchedAt`·`sha256` 은 그대로 두고 `checkedAt` 만 얹는다 — 내용이 안 바뀌었기 때문이다(M5).
+ */
+export function seenMeta(prev: BlobMeta, clock: Clock, extra?: BlobExtra, seenAt?: string): BlobMeta {
+  return { ...prev, ...(extra ?? {}), checkedAt: seenAt ?? clock.now().toISOString() };
 }
 
 /**

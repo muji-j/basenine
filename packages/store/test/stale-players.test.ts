@@ -22,6 +22,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { gzipSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -351,16 +353,27 @@ test("⚠못 고치는 낡은 사본을 따로 센다 — 「고칠 수 있는�
 const T_EARLY = "2026-08-10T00:00:00.000Z";
 const T_DB = "2026-08-17T00:00:00.000Z";
 const T_LATE = "2026-08-19T00:00:00.000Z";
-/** DB 가 적용한 판(X)과 아카이브의 다른 본문(Z) — 소문자 hex 64자 */
-const REV_X = "a".repeat(64);
-const REV_Z = "c".repeat(64);
+/**
+ * DB 가 적용한 판(X)과 아카이브의 다른 본문(Z) — **진짜 본문의 sha256** 이다(2026-09-27 · 3중 검토 2차 F1).
+ * ⚠~~`"a".repeat(64)` 같은 가짜 sha~~ 였는데, 선정기가 이제 **본문도 읽어 짝(본문 sha = 사이드카 sha)을 본다** —
+ *   가짜 sha 로는 짝이 맞는 본문을 만들 수 없어 전원이 「짝 불일치」로 뽑힌다.
+ */
+const BODY_X = Buffer.from("<html>본문 X — DB 가 적용한 판</html>", "utf8");
+const BODY_Z = Buffer.from("<html>본문 Z — 아카이브의 다른 판</html>", "utf8");
+const REV_X = createHash("sha256").update(BODY_X).digest("hex");
+const REV_Z = createHash("sha256").update(BODY_Z).digest("hex");
+/** 사이드카 sha 로 **짝이 맞는** 본문을 찾는 표 — `sidecar()` 에 본문을 안 주면 이것으로 짝을 맞춘다 */
+const BODY_OF = new Map([[REV_X, BODY_X], [REV_Z, BODY_Z]]);
 
 /**
  * `withDb` 와 같되 사이드카를 둔 임시 아카이브를 만들고, `archive` 면 `--archive` 로 넘긴다.
  * 사이드카 값이 문자열이면 **그대로** 쓴다(깨진 JSON 재현).
+ * ⚠**본문**(`body`): 안 주면(`undefined`) 사이드카 `sha256` 과 **짝이 맞는 본문**을 둔다(`BODY_OF` · 모르는 sha 면 안 둔다).
+ *   `null` 이면 본문을 두지 않는다 · `Buffer` 면 그 바이트를 gzip 해 둔다 · 문자열 `"raw:<...>"` 면 **gzip 이 아닌 날바이트**를 둔다(깨진 본문).
  */
+type BodySpec = Buffer | null | `raw:${string}` | undefined;
 async function withArchive(
-  fn: (db: Db, sidecar: (id: string, meta: unknown) => void) => void,
+  fn: (db: Db, sidecar: (id: string, meta: unknown, body?: BodySpec) => void) => void,
   opts: { archive: boolean; limit?: number } = { archive: true },
 ): Promise<Run> {
   const dir = await mkdtemp(join(tmpdir(), "bb-stale-arch-"));
@@ -369,13 +382,26 @@ async function withArchive(
   const players = join(archive, "npb", "players");
   await mkdir(players, { recursive: true });
   const sidecars = new Map<string, string>();
+  const bodies = new Map<string, Buffer>();
   const db = openDb(dbPath, NOW);
   try {
-    fn(db, (id, meta) => sidecars.set(id, typeof meta === "string" ? meta : JSON.stringify(meta)));
+    fn(db, (id, meta, body) => {
+      sidecars.set(id, typeof meta === "string" ? meta : JSON.stringify(meta));
+      const sha = typeof meta === "object" && meta !== null ? (meta as { sha256?: unknown }).sha256 : undefined;
+      const bytes =
+        body === undefined ? (typeof sha === "string" ? BODY_OF.get(sha) : undefined) :
+        body === null ? undefined :
+        typeof body === "string" ? Buffer.from(body.slice("raw:".length), "utf8") :
+        gzipSync(body);
+      if (bytes === undefined) return;
+      // ⚠짝이 맞는 기본 본문과 명시한 Buffer 는 gzip 해 둔다(아카이브 형식) — 날바이트(`raw:`)만 그대로 둔다
+      bodies.set(id, body === undefined ? gzipSync(bytes) : bytes);
+    });
   } finally {
     db.close();
   }
   for (const [id, body] of sidecars) await writeFile(join(players, `${id}.meta.json`), body);
+  for (const [id, body] of bodies) await writeFile(join(players, `${id}.html.gz`), body);
   const r = spawnSync(
     process.execPath,
     [TOOL, dbPath, "--limit", String(opts.limit ?? 400), ...(opts.archive ? ["--archive", archive] : [])],
@@ -455,9 +481,11 @@ test("⚠N3 3-16 · --archive 로 아카이브 옛 판을 뽑는다 — 같은 �
   for (const id of ["SAME", "ABSENT", "BROKEN", "NOREV", "GONE"]) assert.ok(!ids.includes(id), `${id} 를 뽑았다`);
   assert.match(
     report,
-    /아카이브 옛 판 1명\(부재라 제외 1 · 사이드카 못 읽음 1 · 400일 밖 1 · 순서 모름 0 · 출력분 중 1\)/,
+    /아카이브 옛 판 1명\(부재라 제외 1 · 사이드카 못 읽음 1 · 선정 밖 1 · 순서 모름 0 · 출력분 중 1\)/,
     "사유별 보고가 아카이브 옛 판 갈래를 안 셌다",
   );
+  // 이 시나리오의 본문은 전부 사이드카와 짝이 맞는다 — 짝 불일치 갈래는 0 이어도 찍힌다(「0건」과 「안 쟀음」을 가른다)
+  assert.match(report, /짝 불일치 0명\(부재라 제외 0 · 선정 밖 0 · 출력분 중 0\)/);
 });
 
 /**
@@ -480,6 +508,59 @@ test("⚠3중 검토 3차 P2 · 표시 시각이 404 로 늦어도 순서 기준
   assert.ok(!ids.includes("RAISED"), "404 로 오른 표시 시각과 맞대 새 판을 옛 판으로 뽑았다");
   assert.ok(ids.includes("OLDER"), "순서 기준선보다 이른 본문을 안 뽑았다 — 대조군이 헛돈다");
   assert.match(report, /아카이브 옛 판 1명/);
+});
+
+/**
+ * ⚠⚠**짝 불일치를 뽑는다**(2026-09-27 · 3중 검토 2차 F1). 본문만 새것이고 사이드카는 옛것이면(본문·사이드카 쓰기 사이에서 죽은 폴더 ·
+ * 짝이 틀린 복원) 적재기는 그 본문의 시각을 몰라 **매 실행 판 모름(종료 1)**으로 건너뛰는데, 옛 판 판정은 사이드카만 봐서
+ * `PDIFF` 처럼 「같은 판」으로 읽고 **안 뽑았다** — 다시 받을 길이 없어 영구히 막혔다.
+ * → 선정기가 본문 sha 도 계산해 짝을 본다(정의는 아카이버의 `localBodyIntact` 한 벌 · M1). 뽑힌 선수는 아카이버가 본문을 되살린다.
+ * 순서·상한·부재 제외 규칙은 다른 사유와 같다. 변이 「짝 검사를 뺀다」가 이 시험을 붉게 만든다.
+ */
+test("⚠3중 검토 2차 F1 · --archive 가 짝 불일치를 뽑는다 — 본문 다름·없음·못 읽음·적용 판 NULL · 부재·선정 밖은 안 뽑고 센다 · 짝이 맞으면 안 뽑는다", async () => {
+  const { ids, report } = await withArchive((db, sidecar) => {
+    upsertPlayer(db, "PIT", "投手", NOW);
+    // 2차 검토 E1 의 모양 — 사이드카는 적용 판(X)을 말하는데 본문만 다르다. 옛 판 판정은 이것을 「같은 판」으로 읽는다
+    freshPlayer(db, "PDIFF");
+    applied(db, "PDIFF", REV_X, T_DB);
+    sidecar("PDIFF", { sha256: REV_X, fetchedAt: T_DB, revision: 2 }, BODY_Z);
+    // 사이드카만 있고 본문이 없다
+    freshPlayer(db, "PMISS");
+    applied(db, "PMISS", REV_X, T_DB);
+    sidecar("PMISS", { sha256: REV_X, fetchedAt: T_DB, revision: 2 }, null);
+    // 본문이 gzip 이 아니다 — 적재기는 PARSE ERROR(종료 1)로 막힌다
+    freshPlayer(db, "PGZ");
+    applied(db, "PGZ", REV_X, T_DB);
+    sidecar("PGZ", { sha256: REV_X, fetchedAt: T_DB, revision: 2 }, "raw:not gzip");
+    // 적용 판 NULL(첫 실행 · 신규)이어도 짝은 본다 — 짝이 틀린 본문은 시각을 몰라(C7) 모르는 채로 들어간다
+    freshPlayer(db, "PNOREV");
+    applied(db, "PNOREV", null, null);
+    sidecar("PNOREV", { sha256: REV_X, fetchedAt: T_DB, revision: 1 }, BODY_Z);
+    // 부재 중 — 받아도 404 라 본문을 되살릴 바이트가 없다
+    freshPlayer(db, "PABS");
+    applied(db, "PABS", REV_X, T_DB);
+    sidecar("PABS", { sha256: REV_X, fetchedAt: T_DB, checkedAt: T_LATE, absentAt: T_LATE, status: 404, revision: 2 }, BODY_Z);
+    // 선정 밖(400일 밖) — 받을 수 없는 선수는 다른 사유처럼 뺀다
+    upsertPlayer(db, "POUT", "POUT", NOW);
+    play(db, "POUT", "2023-05-01");
+    career(db, "POUT", "2023-05-01T23:00:00.000Z", { year: 2023, games: 1, pa: 4 });
+    applied(db, "POUT", REV_X, T_DB);
+    sidecar("POUT", { sha256: REV_X, fetchedAt: T_DB, revision: 2 }, BODY_Z);
+    // 대조군 — 짝이 맞는다(본문 = 사이드카 = 적용 판)
+    freshPlayer(db, "PAIRED");
+    applied(db, "PAIRED", REV_X, T_DB);
+    sidecar("PAIRED", { sha256: REV_X, fetchedAt: T_DB, revision: 2 });
+    // 투수 PIT 는 위 경기 전부에 던진다 — 최신 사본(2026 6등판 · 2023 1등판)을 둬 평소 사유로 안 뽑히게 한다
+    careerPit(db, "PIT", "2026-08-18T23:00:00.000Z", { games: 6 });
+    careerPit(db, "PIT", "2026-08-18T23:00:00.000Z", { year: 2023, games: 1 });
+  });
+  for (const id of ["PDIFF", "PMISS", "PGZ", "PNOREV"]) {
+    assert.ok(ids.includes(id), `짝 불일치 ${id} 를 안 뽑았다 — 적재기는 매 실행 막히고 다시 받을 길이 없다\n${report}`);
+  }
+  for (const id of ["PABS", "POUT", "PAIRED"]) assert.ok(!ids.includes(id), `${id} 를 뽑았다\n${report}`);
+  assert.match(report, /짝 불일치 4명\(부재라 제외 1 · 선정 밖 1 · 출력분 중 4\)/, report);
+  // ⚠짝 불일치는 「아카이브 옛 판」으로 안 센다 — 사이드카의 시각이 그 본문 것이 아니다(적재기도 옛 판이 아니라 판 모름으로 본다)
+  assert.match(report, /아카이브 옛 판 0명/, report);
 });
 
 /** ⚠**절대 우선을 주지 않는다** — 한 무리에 절대 우선을 주면 다른 무리가 그날 한 명도 못 들어간다(이 파일의 선례 · 설계 §5-4) */
@@ -506,8 +587,10 @@ test("⚠N3 3-17 · --archive 없이 돌면 출력이 고치기 전과 글자까
  * ⚠**자리표시자 수를 고정한다**(설계 §5-4 · 2026-09-27 콜드 리뷰 P2). 같은 JSON 을 `json_each(?)` 자리 수만큼 넘기는데,
  * 도구는 그 수를 SQL 에서 센다(`archiveArgs`). 그러려면 두 SQL 의 `?` 가 **전부** `json_each(?)` 여야 하고 수가 이것이어야 한다 —
  * 다른 `?` 가 섞이면 인자가 어긋나고, 남는 `?` 는 NULL 로 묶여 옛 판이 **조용히** 안 뽑힌다.
+ * ⚠**제외 SQL 은 이제 0 이다**(2026-09-27 · 3중 검토 반영) — 「선정 밖」(400일 밖 · 출장 기록 없음)을 SQL 이 아니라 **후보에 없는 것**
+ *   (뽑을 사유 목록 − 후보)으로 센다. 400일 밖만 세던 SQL 은 출장 기록이 아예 없는 선수를 **어디에도 안 셌다.**
  */
-test("⚠N3 3-16 · 선정 SQL 의 자리표시자는 전부 json_each(?) 이고 후보 2 · 제외 1 이다 — 둘 다 archiveArgs 로 묶는다", () => {
+test("⚠N3 3-16 · 선정 SQL 의 자리표시자는 전부 json_each(?) 이고 후보 2 · 제외 0 이다 — 둘 다 archiveArgs 로 묶는다", () => {
   const src = readFileSync(TOOL, "utf8");
   const template = (name: string): string => {
     const m = new RegExp(`const ${name} = \`([\\s\\S]*?)\`;`).exec(src);
@@ -520,7 +603,7 @@ test("⚠N3 3-16 · 선정 SQL 의 자리표시자는 전부 json_each(?) 이고
   const count = (s: string, needle: string): number => s.split(needle).length - 1;
   assert.equal(count(common, "?"), 0, "공통 조각(COMMON)에 자리표시자가 있다 — archiveArgs 가 json_each(?) 만 센다");
   assert.equal(count(cand, "json_each(?)"), 2, "후보 SQL 의 json_each(?) 가 2 가 아니다(CASE · WHERE)");
-  assert.equal(count(excl, "json_each(?)"), 1, "제외 SQL 의 json_each(?) 가 1 이 아니다");
+  assert.equal(count(excl, "json_each(?)"), 0, "제외 SQL 에 json_each(?) 가 있다 — 선정 밖은 후보에 없는 것으로 센다");
   for (const [name, sql] of [["candidateSql", cand], ["excludedSql", excl]] as const) {
     assert.equal(count(sql, "?"), count(sql, "json_each(?)"), `${name} 에 json_each(?) 가 아닌 ? 가 있다 — 인자가 어긋난다`);
   }

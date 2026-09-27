@@ -18,7 +18,7 @@ import { gunzipSync, gzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { openDb, upsertPlayer } from "../src/index.ts";
+import { openDb, upsertGame, upsertPitching, upsertPlayer } from "../src/index.ts";
 import { LocalSink, PoliteFetcher, archivePlayer } from "@bb-app/archiver";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -800,6 +800,115 @@ test("3중 검토 3차 · 대조군 — 404 없이 A(t1) → B(t2) 는 새 판�
     const s = snapshot(env, PITCHER);
     assert.equal(s.player["uniform_number"], "99");
     assert.equal(s.player["profile_fetched_at"], T2);
+  } finally {
+    await cleanup(env);
+  }
+});
+
+// ─── 3중 검토 2차 F1 · 짝 불일치(본문만 새것 · 사이드카는 옛것)가 같은 실행에서 풀린다(2026-09-27) ───
+//
+// ⚠**2차 검토 E1 의 재현 그대로다** — 적용한 페이지의 **본문만** 바꾸고(배번 34 → 99) 사이드카는 그대로 두면, 적재기는 그 본문의
+//   시각을 몰라 **판 모름(종료 1)** 으로 건너뛴다. 그런데 옛 판 선정은 사이드카만 봐서 「같은 판」으로 읽고 안 뽑았고, 뽑혀도 아카이버는
+//   상류가 사이드카와 같으면 「봤다」만 남겼다 — **본문이 영영 안 고쳐져 매 실행 배포가 막혔다.**
+//   → 선정기가 짝을 보고 뽑는다(`localBodyIntact`) → 아카이버가 받은 바이트로 본문을 되살린다(revision 불변) → 적재기는 같은 본문이다.
+
+const SELECTOR = fileURLToPath(new URL("../tools/emit-stale-player-ids.ts", import.meta.url));
+
+/** 그 선수가 재취득 선정의 창 안에 있게 한다 — 치러진 경기 하나와 등판 한 줄(선정기는 출장 기록이 있는 선수만 뽑는다) */
+function appear(env: Env, id: string, date: string): void {
+  const db = openDb(env.dbPath, NOW);
+  try {
+    const gameId = `e1-${date}`;
+    upsertGame(db, {
+      gameId, season: Number(date.slice(0, 4)), gameDate: date, awayCode: "g", homeCode: "t", gameNo: 1,
+      status: "played", notPlayedReason: null, competition: "regular",
+      sourceUrl: "https://npb.jp/x", fetchedAt: NOW, awayRuns: 1, homeRuns: 2,
+    });
+    upsertPitching(db, {
+      gameId, playerId: id, side: "away", decision: null,
+      outs: 3, bf: 4, pitches: 15, h: 1, hr: 0, bb: 0, hbp: 0, so: 1, runs: 0, er: 0, wp: 0, balk: 0,
+    });
+  } finally {
+    db.close();
+  }
+}
+
+function select(env: Env): { code: number; ids: string[]; err: string } {
+  const r = spawnSync(process.execPath, [SELECTOR, env.dbPath, "--limit", "400", "--archive", env.archive], { encoding: "utf8" });
+  return { code: r.status ?? 1, ids: r.stdout.split(/\r?\n/).map((x) => x.trim()).filter((x) => x !== ""), err: r.stderr };
+}
+
+/** 상류가 `bytes` 를 준다고 치고 **실제 `archivePlayer`** 로 받는다(외부 요청 0 — 가짜 응답이다 · 검증자 없음은 상류 실측과 같다) */
+async function refetch(env: Env, id: string, bytes: Uint8Array, at: string) {
+  const clock = { now: () => new Date(at) };
+  const fetcher = new PoliteFetcher({
+    userAgent: "bb-app-test",
+    clock,
+    fetchImpl: async () => ({
+      status: 200,
+      headers: { get: () => null },
+      arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
+    }),
+    sleep: async () => undefined,
+  });
+  return archivePlayer(id, { fetcher, sink: new LocalSink(env.archive), clock });
+}
+
+test("⚠⚠3중 검토 2차 F1 · E1(본문만 바뀜 · 사이드카 그대로)이 같은 실행에서 풀린다 — 선정기가 뽑고 · 아카이버가 되살리고 · 적재기는 같은 본문 · 종료 0", { skip }, async () => {
+  const env = await setup({ [PITCHER]: { fetchedAt: T1 } });
+  try {
+    assert.equal(load(env).code, 0);
+    const applied = snapshot(env, PITCHER);
+    // 통산이 실린 해에 한 경기를 둬 선정의 창 안에 둔다 — 그 해 공표 등판이 우리(1경기)보다 많아 「출장량 부족」으로는 안 뽑힌다
+    const year = q<{ y: number | null }>(env, "SELECT MAX(year) AS y FROM career_pitching WHERE player_id = ? AND games > 0", PITCHER).y;
+    assert.ok(year !== null, "픽스처 투수에게 등판 기록이 있는 해가 없다 — 이 시험이 설 자리가 없다");
+    appear(env, PITCHER, `${year}-08-16`);
+    // 대조군 — 짝이 맞으면 어떤 사유로도 안 뽑힌다(아래에서 뽑히면 이유는 짝 불일치뿐이다)
+    const before = select(env);
+    assert.equal(before.code, 0, before.err);
+    assert.ok(!before.ids.includes(PITCHER), `짝이 맞는데 뽑혔다 — 이 시험이 짝 불일치를 재지 못한다\n${before.err}`);
+
+    // E1 — 본문만 바꾼다(사이드카는 그대로 · `mutatePage` 는 sha 를 맞추므로 쓰지 않는다)
+    const original = gunzipSync(await readFile(pagePath(env, PITCHER)));
+    const next = original.toString("utf8").replace('<li id="pc_v_no">34</li>', '<li id="pc_v_no">99</li>');
+    assert.notEqual(next, original.toString("utf8"), "변이가 페이지를 바꾸지 않았다");
+    await writeFile(pagePath(env, PITCHER), gzipSync(Buffer.from(next, "utf8")));
+    const blocked = load(env);
+    assert.equal(blocked.code, 1, `E1 이 재현되지 않았다\n${blocked.out}${blocked.err}`);
+    assert.match(blocked.err, new RegExp(`VERSION UNKNOWN ${PITCHER} — 본문 sha256 이 사이드카와 다르다`));
+
+    // ① 선정기가 뽑는다(같은 실행 · 적재 전)
+    const sel = select(env);
+    assert.equal(sel.code, 0, sel.err);
+    assert.ok(sel.ids.includes(PITCHER), `짝 불일치를 안 뽑았다 — 다시 받을 길이 없어 영구히 막힌다\n${sel.err}`);
+    assert.match(sel.err, /짝 불일치 1명\(부재라 제외 0 · 선정 밖 0 · 출력분 중 1\)/);
+
+    // ② 아카이버 — 상류는 사이드카가 말하는 그 바이트다(내용이 안 바뀌었다) · 본문을 되살리고 revision 은 그대로
+    const sidecarBefore = JSON.parse(await readFile(metaPath(env, PITCHER), "utf8")) as { revision: number; fetchedAt: string };
+    const HEAL_AT = "2026-09-27T03:00:00.000Z";
+    const r = await refetch(env, PITCHER, original, HEAL_AT);
+    assert.equal(r.outcome, "unchanged", JSON.stringify(r));
+    assert.equal(r.repaired, true, `본문을 되살리지 않았다\n${JSON.stringify(r)}`);
+    assert.deepEqual(gunzipSync(await readFile(pagePath(env, PITCHER))), original, "로컬 본문이 사이드카가 말하는 바이트가 아니다");
+    const sidecarAfter = JSON.parse(await readFile(metaPath(env, PITCHER), "utf8")) as { revision: number; fetchedAt: string };
+    assert.equal(sidecarAfter.revision, sidecarBefore.revision, "내용이 안 바뀌었는데 revision 을 올렸다(M5)");
+    assert.equal(sidecarAfter.fetchedAt, sidecarBefore.fetchedAt);
+
+    // ③ 적재기 — 같은 본문 · 종료 0 · 값은 적용한 그대로(배번 34)
+    const healed = load(env);
+    assert.equal(healed.code, 0, `같은 실행에서 안 풀렸다\n${healed.out}${healed.err}`);
+    assert.match(healed.out, /같은 본문 1 · 새 판 0 · 옛 판 건너뜀 0/);
+    assert.match(healed.out, /판 모름 건너뜀 0/);
+    const s = snapshot(env, PITCHER);
+    assert.equal(s.player["uniform_number"], "34");
+    assert.equal(s.player["profile_revision"], applied.player["profile_revision"]);
+    // ⚠두 시각이 확인 시각(HEAL_AT)으로 오르는 것은 되살리기 때문이 아니라 **「봤다」** 때문이다 — 같은 본문을 200 으로 다시 확인했으니
+    //   그 내용은 그때까지 최신이었다(`contentTimeOf` = 본 시각 · 부재 아님). 되살리지 않는 보통의 「변경없음」도 같은 값을 낸다
+    assert.equal(s.player["profile_fetched_at"], HEAL_AT);
+    assert.equal(s.player["profile_content_at"], HEAL_AT);
+    // 다음 선정에서는 안 뽑힌다(매일 헛요청이 되지 않는다 · L1)
+    const after = select(env);
+    assert.ok(!after.ids.includes(PITCHER), `되살린 뒤에도 뽑혔다\n${after.err}`);
   } finally {
     await cleanup(env);
   }

@@ -66,13 +66,17 @@ const results = await archivePlayers(ids, { fetcher, sink, clock }, {
   skipExisting: !values.refresh,
   onEach: (r, i, total) => {
     if (r.outcome === "failed") console.error(`  FAILED ${r.url} — ${r.error}`);
+    // ⚠짝이 틀린 로컬 본문을 되살렸다(3중 검토 2차 F1) — 드문 일이라 한 줄씩 남긴다(어느 선수였는지 로그로 답할 수 있게)
+    if (r.repaired === true) console.error(`  REPAIRED ${r.url} — 로컬 본문이 사이드카와 달라 받은 바이트로 되살렸다(revision 불변)`);
     if ((i + 1) % 50 === 0 || i + 1 === total) console.error(`  ${i + 1}/${total}`);
   },
 });
 
 const s = summarize(results);
+/** ⚠「변경없음」 안에 든다(내용은 그대로다) — 따로 세서 0 이어도 찍는다(「0건」과 「안 쟀음」을 가른다) */
+const repaired = results.filter((r) => r.repaired === true).length;
 console.error(
-  `\n합계 ${s.total}명 (신규 ${s.stored} / 변경없음·건너뜀 ${s.unchanged} / 부재 ${s.absent} / 실패 ${s.failed})`,
+  `\n합계 ${s.total}명 (신규 ${s.stored} / 변경없음·건너뜀 ${s.unchanged}(그중 본문 되살림 ${repaired}) / 부재 ${s.absent} / 실패 ${s.failed})`,
 );
 
 process.exitCode = s.failed > 0 ? 1 : 0;

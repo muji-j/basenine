@@ -11,7 +11,7 @@ import type { Clock } from "./clock.ts";
 import type { PoliteFetcher } from "./fetcher.ts";
 import type { BlobMeta, Sink } from "./sink.ts";
 import { sha256 } from "./sink.ts";
-import { markSeen } from "./archive.ts";
+import { markSeen, seenMeta } from "./archive.ts";
 import type { PageOutcome, PageResult } from "./archive.ts";
 
 /**
@@ -41,6 +41,25 @@ export interface ArchivePlayersDeps {
   fetcher: PoliteFetcher;
   sink: Sink;
   clock: Clock;
+}
+
+/**
+ * **로컬 본문이 사이드카가 말하는 바로 그 바이트인가**(`claimedSha` = 사이드카 `sha256`). 없거나 못 읽으면(깨진 gzip 등) 아니다.
+ *
+ * ⚠**「짝 불일치」의 정의는 이 한 벌이다**(M1 · 2026-09-27 · 3중 검토 2차 F1) — 아카이버의 본문 되살리기(아래 `archivePlayer`)와
+ *   재취득 선정기(`packages/store/tools/emit-stale-player-ids.ts --archive`)가 같이 쓴다. 선정기가 다른 정의를 쓰면
+ *   「뽑았는데 아카이버가 안 고친다」(매일 헛요청 · L1) 또는 「아카이버는 고치는데 안 뽑는다」(영구 판 모름)가 된다.
+ * ⚠읽기 오류를 던지지 않고 `false` 로 삼킨다 — 여기서 묻는 것은 「그 바이트가 맞는가」 하나이고, 못 읽는 본문은 맞지 않는다.
+ *   (다시 써도 되는가는 호출자가 정한다 — 아카이버는 상류가 같은 sha 를 줄 때만 쓴다.)
+ */
+export async function localBodyIntact(sink: Sink, key: string, claimedSha: string): Promise<boolean> {
+  let body: Uint8Array | null;
+  try {
+    body = await sink.readBody(key);
+  } catch {
+    return false;
+  }
+  return body !== null && sha256(body) === claimedSha;
 }
 
 /**
@@ -92,6 +111,20 @@ export async function archivePlayer(playerId: string, deps: ArchivePlayersDeps):
 
     const digest = sha256(res.body);
     if (prev && prev.sha256 === digest) {
+      /**
+       * ⚠**상류가 사이드카와 같아도 로컬 본문이 그 바이트인지 본다**(2026-09-27 · 3중 검토 2차 F1).
+       * 본문 rename 과 사이드카 rename 사이에서 죽었거나(`sink.ts` 의 `write` 는 본문이 먼저다) 세대·덧붙임이 짝을 틀리게 풀면
+       * **본문만 다른 폴더**가 남는다. 예전에는 여기서 「봤다」만 남겨 그 본문이 **영영** 안 고쳐졌고, 선수 적재기는 그 선수를
+       * 매 실행 판 모름(종료 1)으로 건너뛰어 배포를 막았다. → 없거나 · 못 읽거나 · sha 가 다르면 **방금 받은 바이트**로 본문을 다시 쓴다.
+       * ⚠**`revision`·`fetchedAt`·`sha256` 은 올리지도 바꾸지도 않는다** — 상류 sha 가 사이드카 sha 와 같으므로 내용은 사이드카가
+       *   **이미 말하는 그대로**이고, 바뀐 것은 로컬 파일이지 상류가 아니다(M5). 사이드카는 「봤다」(`checkedAt`)만 얹는다 —
+       *   `markSeen` 과 같은 한 벌(`seenMeta`)이다. 본문 → 사이드카 순서라 도중에 죽어도 짝은 맞는다(본문 = 사이드카 sha).
+       * ⚠**요청은 안 는다** — 이미 받은 응답의 바이트를 쓴다(L1). 짝이 맞으면 지금처럼 본문을 다시 쓰지 않는다(쓰기 0).
+       */
+      if (!(await localBodyIntact(deps.sink, key, digest))) {
+        await deps.sink.write(key, res.body, seenMeta(prev, deps.clock));
+        return { key, url, outcome: "unchanged", status: res.status, error: null, repaired: true };
+      }
       return await seen(res.status);
     }
 

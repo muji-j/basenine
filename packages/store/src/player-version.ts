@@ -41,6 +41,17 @@ export interface PlayerArchive {
 }
 
 /**
+ * 사이드카가 **어떤 본문을 말하는가** — 말하면 그 `sha256`, 말하지 않으면(객체 아님 · `sha256` 없음·문자열 아님·빈 값) `null`.
+ * ⚠판정기(`playerArchiveOf`) · 선정기의 옛 판 분류(`classifyForRefetch`) · 선정기의 짝 검사(`emit-stale-player-ids.ts`)가
+ *   **같이 쓴다**(M1 · 2026-09-27 · 3중 검토 2차 F1). 404 로 처음 본 선수의 사이드카(`sha256: ""`)는 본문을 말하지 않는다 — 짝을 볼 대상이 아니다.
+ */
+export function claimedShaOf(meta: unknown): string | null {
+  if (meta === null || typeof meta !== "object" || Array.isArray(meta)) return null;
+  const sha = (meta as { sha256?: unknown }).sha256;
+  return typeof sha === "string" && sha !== "" ? sha : null;
+}
+
+/**
  * 스냅샷과 본문으로 판정 재료를 만든다(순수).
  * ⚠**사이드카가 본문을 말하지 않으면**(없음 · JSON 깨짐 · 객체 아님 · `sha256` 없음/빈 값 · `sha256` ≠ 본문 sha) 시각을 **모른다** —
  *   다른 본문의 시각을 이 본문에 붙이면 순서가 거짓이 된다(본문·사이드카 쓰기 사이에서 죽은 폴더).
@@ -52,8 +63,8 @@ export function playerArchiveOf(meta: MetaSnapshot, body: Uint8Array): PlayerArc
   if (meta.state === "broken") return unknown(`사이드카 JSON 을 못 읽었다(${meta.error})`);
   const v = meta.value;
   if (v === null || typeof v !== "object" || Array.isArray(v)) return unknown("사이드카가 객체가 아니다");
-  const sha = (v as { sha256?: unknown }).sha256;
-  if (typeof sha !== "string" || sha === "") return unknown("사이드카에 sha256 이 없다");
+  const sha = claimedShaOf(v);
+  if (sha === null) return unknown("사이드카에 sha256 이 없다");
   if (sha !== bodySha256) {
     return unknown(`본문 sha256 이 사이드카와 다르다(사이드카 ${sha.slice(0, 12)}… · 본문 ${bodySha256.slice(0, 12)}…)`);
   }
@@ -160,9 +171,8 @@ export type RefetchClass = "no-identity" | "unreadable" | "same" | "stale" | "st
  */
 export function classifyForRefetch(meta: unknown, db: { revision: string | null; contentAt: string | null }): RefetchClass {
   if (db.revision === null) return "no-identity";
-  if (meta === null || typeof meta !== "object" || Array.isArray(meta)) return "unreadable";
-  const sha = (meta as { sha256?: unknown }).sha256;
-  if (typeof sha !== "string" || sha === "") return "unreadable";
+  const sha = claimedShaOf(meta);
+  if (sha === null) return "unreadable";
   if (sha === db.revision) return "same";
   const archiveTime = contentTimeOf(meta);
   if (archiveTime === null) return "unknown";
