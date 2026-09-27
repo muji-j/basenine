@@ -85,7 +85,7 @@ node packages/store/tools/load-archive.ts data/archive data/bb.sqlite --from 202
 | `unreadRunner` | 경과의 주자 행(도루·도루자·견제사) 원문을 못 읽었다 | `tools/load-archive.ts` |
 | `unreadableInnings` | 투구회를 못 읽었다 — 그 등판은 적재하지 않는다(0 으로 메우지 않는다) | `derive.ts` |
 | `unreadablePitchingStat` | 투수 기록 7열(被安打 등) 중 하나를 못 읽었다 — 그 등판은 적재하지 않는다 | `derive.ts` |
-| `unlinkedPlayer` | 박스 선수 행의 선수 링크(`/bis/players/{id}.html`)를 못 읽었다 — 그 행은 적재하지 않는다(이름으로 조인하지 않는다 · M10 · 감사 C9) | `derive.ts` |
+| `unlinkedPlayer` | 박스 선수 행의 선수 링크(`/bis/players/{id}.html`)를 못 읽었다 — 그 행은 적재하지 않는다(이름으로 조인하지 않는다 · M10 · 감사 C9). ⚠그 선수가 **선수 표에 없는 신규**이고 경과(playbyplay)가 그 선수를 가리키면 **그 경기 전체가 쓰기 실패**다 — 되돌려져 이 격리도 저장되지 않고, 적재기가 `WRITE ERROR` 줄에 격리 종류와 선수 ID 를 대신 말한다(감사 N1 · 런북 `docs/operations/deploy.md` §7-H) | `derive.ts` |
 
 격리는 **경기 단위로 교체**한다. 재적재해도 쌓이지 않는다.
 

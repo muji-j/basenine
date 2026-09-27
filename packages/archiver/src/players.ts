@@ -11,7 +11,7 @@ import type { Clock } from "./clock.ts";
 import type { PoliteFetcher } from "./fetcher.ts";
 import type { BlobMeta, Sink } from "./sink.ts";
 import { sha256 } from "./sink.ts";
-import { markSeen } from "./archive.ts";
+import { markSeen, seenMeta } from "./archive.ts";
 import type { PageOutcome, PageResult } from "./archive.ts";
 
 /**
@@ -44,6 +44,40 @@ export interface ArchivePlayersDeps {
 }
 
 /**
+ * **로컬 본문이 사이드카가 말하는 바로 그 바이트인가**(`claimedSha` = 사이드카 `sha256`). 없거나 못 읽으면(깨진 gzip 등) 아니다.
+ *
+ * ⚠**「짝 불일치」의 정의는 이 한 벌이다**(M1 · 2026-09-27 · 3중 검토 2차 F1) — 아카이버의 본문 되살리기(아래 `archivePlayer`)와
+ *   재취득 선정기(`packages/store/tools/emit-stale-player-ids.ts --archive`)가 같이 쓴다. 선정기가 다른 정의를 쓰면
+ *   「뽑았는데 아카이버가 안 고친다」(매일 헛요청 · L1) 또는 「아카이버는 고치는데 안 뽑는다」(영구 판 모름)가 된다.
+ * ⚠읽기 오류를 던지지 않고 `false` 로 삼킨다 — 여기서 묻는 것은 「그 바이트가 맞는가」 하나이고, 못 읽는 본문은 맞지 않는다.
+ *   (다시 써도 되는가는 호출자가 정한다 — 아카이버는 상류가 같은 sha 를 줄 때만 쓴다.)
+ */
+export async function localBodyIntact(sink: Sink, key: string, claimedSha: string): Promise<boolean> {
+  let body: Uint8Array | null;
+  try {
+    body = await sink.readBody(key);
+  } catch {
+    return false;
+  }
+  return body !== null && sha256(body) === claimedSha;
+}
+
+/**
+ * **사이드카가 아직 요청 전에 읽은 그것인가**(비교-후-쓰기 · 2026-09-27 · 반영분 재검토 P2). 다른 작성자가 그 사이 썼거나
+ * 지금 못 읽으면 아니다. ⚠창을 **좁힐** 뿐 닫지 못한다 — 이 확인과 쓰기 사이에 끼는 작성자는 못 막는다(설계 §12 · 같은 키의
+ *   프로세스 간 직렬화는 범위 밖). 그 창에서 옛 내용이 덮여도 본 시각이 **받은 시각**이라 적재가 옛 판으로 가른다(아래 `observedAt`).
+ */
+async function sidecarUnchanged(sink: Sink, key: string, prev: BlobMeta): Promise<boolean> {
+  let now: BlobMeta | null;
+  try {
+    now = await sink.readMeta(key);
+  } catch {
+    return false;
+  }
+  return now !== null && JSON.stringify(now) === JSON.stringify(prev);
+}
+
+/**
  * 선수 1명의 페이지를 보존한다. 경기 페이지와 같은 멱등 규칙을 따른다(M5).
  */
 export async function archivePlayer(playerId: string, deps: ArchivePlayersDeps): Promise<PageResult> {
@@ -53,6 +87,13 @@ export async function archivePlayer(playerId: string, deps: ArchivePlayersDeps):
 
   try {
     const res = await deps.fetcher.get(url, prev ?? undefined);
+    /**
+     * ⚠**본 시각은 응답 직후 한 번 읽는다**(2026-09-27 · 반영분 재검토 P2) — 아래의 모든 기록(「봤다」 · 404 · 새 판 · 되살리기)이
+     *   이 값을 쓰고 **시계를 다시 읽지 않는다.** 예전에는 기록할 때 읽어서, 로컬 본문을 읽는 동안(비동기) 다른 작성자가 새 판 B(t2)를
+     *   넣으면 옛 A 에 **늦은 시각 t3** 이 붙어 적재가 A 를 새 판으로 받았다(조용한 되돌림). 받은 시각(t1)이면 A 는 B 보다 이르다 → 옛 판.
+     *   경기·일정 페이지(`archive.ts` 의 `prepareUrl`)가 이미 같은 규칙이다(2026-09-26 · 3중 검토 3차 P1).
+     */
+    const observedAt = deps.clock.now().toISOString();
 
     /**
      * ⚠**「안 바뀌었다」도 「봤다」로 남긴다**(2026-08-17 재검토 P1).
@@ -63,7 +104,7 @@ export async function archivePlayer(playerId: string, deps: ArchivePlayersDeps):
     const seen = async (status: number): Promise<PageResult> => {
       // ⚠**규칙은 archive.ts 에 한 벌뿐이다**(M1 · 2026-08-25 · 감사 P3 #10).
       //   예전에는 이 자리에 같은 코드가 따로 있었고, 그래서 **경기·일정 페이지는 이 규칙을 못 받았다.**
-      await markSeen(deps.sink, deps.clock, key, prev);
+      await markSeen(deps.sink, deps.clock, key, prev, undefined, observedAt);
       return { key, url, outcome: "unchanged", status, error: null };
     };
 
@@ -81,8 +122,9 @@ export async function archivePlayer(playerId: string, deps: ArchivePlayersDeps):
         ...(prev ?? { url, fetchedAt: "", lastModified: null, etag: null, sha256: "", byteLength: 0, revision: 0 }),
         url,
         status: res.status,
-        checkedAt: deps.clock.now().toISOString(),
-        absentAt: deps.clock.now().toISOString(),
+        // ⚠두 값 다 응답 직후 읽은 본 시각이다(한 벌 · 반영분 재검토 P2) — 예전에는 시계를 두 번 읽어 서로 달랐다
+        checkedAt: observedAt,
+        absentAt: observedAt,
       });
       return { key, url, outcome: "absent", status: res.status, error: null };
     }
@@ -92,20 +134,41 @@ export async function archivePlayer(playerId: string, deps: ArchivePlayersDeps):
 
     const digest = sha256(res.body);
     if (prev && prev.sha256 === digest) {
+      /**
+       * ⚠**상류가 사이드카와 같아도 로컬 본문이 그 바이트인지 본다**(2026-09-27 · 3중 검토 2차 F1).
+       * 본문 rename 과 사이드카 rename 사이에서 죽었거나(`sink.ts` 의 `write` 는 본문이 먼저다) 세대·덧붙임이 짝을 틀리게 풀면
+       * **본문만 다른 폴더**가 남는다. 예전에는 여기서 「봤다」만 남겨 그 본문이 **영영** 안 고쳐졌고, 선수 적재기는 그 선수를
+       * 매 실행 판 모름(종료 1)으로 건너뛰어 배포를 막았다. → 없거나 · 못 읽거나 · sha 가 다르면 **방금 받은 바이트**로 본문을 다시 쓴다.
+       * ⚠**`revision`·`fetchedAt`·`sha256` 은 올리지도 바꾸지도 않는다** — 상류 sha 가 사이드카 sha 와 같으므로 내용은 사이드카가
+       *   **이미 말하는 그대로**이고, 바뀐 것은 로컬 파일이지 상류가 아니다(M5). 사이드카는 「봤다」(`checkedAt`)만 얹는다 —
+       *   `markSeen` 과 같은 한 벌(`seenMeta`)이다. 본문 → 사이드카 순서라 도중에 죽어도 짝은 맞는다(본문 = 사이드카 sha).
+       * ⚠**요청은 안 는다** — 이미 받은 응답의 바이트를 쓴다(L1). 짝이 맞으면 지금처럼 본문을 다시 쓰지 않는다(쓰기 0).
+       * ⚠⚠**겹친 작성자**(2026-09-27 · 반영분 재검토 P2) — 로컬 본문을 읽는 동안 다른 작성자(겹친 수동 백필 · `sink.ts` 의
+       *   `writeAtomic` 주석)가 새 판 B 를 쓰면, 그 B 를 「짝이 틀린 본문」으로 오인해 **옛 A 로 덮을** 수 있다. 두 겹으로 막는다:
+       *   ⑴ 쓰기 직전에 사이드카를 **다시 읽어** 요청 전의 것(`prev`)과 다르면 **쓰지 않는다**(`repair: "concurrent"` · 다음 실행이 다시 본다) ·
+       *   ⑵ 그래도 확인과 쓰기 사이에 끼면 덮을 수 있는데, 그때 붙는 시각은 **받은 시각**(`observedAt`)이라 적재가 A 를 B 보다 옛 판으로 가른다.
+       */
+      if (!(await localBodyIntact(deps.sink, key, digest))) {
+        if (!(await sidecarUnchanged(deps.sink, key, prev))) {
+          return { key, url, outcome: "unchanged", status: res.status, error: null, repair: "concurrent" };
+        }
+        await deps.sink.write(key, res.body, seenMeta(prev, deps.clock, undefined, observedAt));
+        return { key, url, outcome: "unchanged", status: res.status, error: null, repair: "rewritten" };
+      }
       return await seen(res.status);
     }
 
     const meta: BlobMeta = {
       url,
-      fetchedAt: deps.clock.now().toISOString(),
+      fetchedAt: observedAt,
       lastModified: res.lastModified,
       etag: res.etag,
       status: res.status,
       sha256: digest,
       byteLength: res.body.byteLength,
       revision: (prev?.revision ?? 0) + 1,
-      // 새로 받은 것이니 「본 시각」도 같다
-      checkedAt: deps.clock.now().toISOString(),
+      // 새로 받은 것이니 「본 시각」도 같다 — 응답 직후 한 번 읽은 값(한 벌 · 반영분 재검토 P2)
+      checkedAt: observedAt,
     };
     await deps.sink.write(key, res.body, meta);
     return { key, url, outcome: "stored", status: res.status, error: null };

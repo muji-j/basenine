@@ -226,3 +226,126 @@ test("모르는 도루 표기도 격리로 넘긴다 — 경기를 죽이지 않
   assert.equal(r.unreadRunners.length, 1, "모르는 표기를 세지 않았다");
   assert.match(r.unreadRunners[0]!, /二塁宇宙転送/);
 });
+
+// ─── N2 · 투수 표기 행의 모양을 검증한다(감사 N2 · 설계 docs/superpowers/specs/2026-09-27-profile-version-guard-design.md §7) ───
+//
+// ⚠**예전 규칙은 「링크가 하나라도 있으면 마지막 링크가 새 투수」였다** — 링크 개수도 화살표 위치도 안 봤다.
+//   교대 행에서 **새 투수의 링크만** 못 읽으면 `ids = [옛 투수]` 가 되어, 다음 교대까지의 타석이 **이전 투수에게
+//   조용히** 붙었다(반증자 실물 변이: 6회초 5타석). 정렬(`align.ts`)은 타자별 타석 수만 맞대므로 그것을 못 잡는다.
+
+/** 픽스처의 한 조각을 바꾼다. ⚠**정확히 한 번 있지 않으면 던진다** — 변이가 헛돌면 이 시험은 아무것도 안 잰다 */
+function mutate(from: string, to: string, html: string = FIXTURE): string {
+  assert.equal(html.split(from).length - 1, 1, `픽스처에 ${JSON.stringify(from)} 가 정확히 한 번이 아니다`);
+  return html.replace(from, to);
+}
+
+/** 던지는 것이 `PlayByPlayParseError` 이고 **그 이유**를 말하는지까지 본다 — 아무 예외나 받으면 다른 결함도 초록이 된다 */
+function throwsBecause(html: string, why: RegExp): PlayByPlayParseError {
+  let caught: unknown;
+  try {
+    parsePlayByPlay(html);
+  } catch (err) {
+    caught = err;
+  }
+  assert.ok(caught !== undefined, `던지지 않았다 — 기대한 이유: ${why}`);
+  assert.ok(caught instanceof PlayByPlayParseError, `PlayByPlayParseError 가 아니다: ${String(caught)}`);
+  assert.match(caught.message, why);
+  return caught;
+}
+
+/** 픽스처의 교대 행(2회표 · 宮城 7001 → 東松 7002) */
+const CHANGE_ROW = `（投手交代） ${link("7001", "宮城")} → ${link("7002", "東松")}`;
+/** 링크를 못 읽게 만든 모양(`.html` 이 빠졌다) — 파서의 링크 정규식은 `.html` 로 끝나는 것만 읽는다 */
+const unreadable = (id: string, name: string): string => `<a href="/bis/players/${id}">${name}</a>`;
+
+test("⚠N2 2-1 · 交代 의 새 투수 링크를 못 읽으면 던진다 — 이전 투수에게 조용히 붙이지 않는다", () => {
+  const html = mutate(CHANGE_ROW, `（投手交代） ${link("7001", "宮城")} → ${unreadable("7002", "東松")}`);
+  const err = throwsBecause(html, /投手交代 표기의 화살표 뒤에서 새 투수 링크를 정확히 하나 읽지 못했다/);
+  // detail 이 어느 하프·어느 행인지 말한다(M7 — 사람이 원문으로 돌아갈 자리)
+  assert.match(err.detail, /half=top/);
+  assert.match(err.detail, /row="（投手交代） 宮城 → 東松"/);
+});
+
+/**
+ * ⚠**옛 투수 링크만 없는 경우는 살린다** — 새 투수는 화살표 뒤에서 정확히 안다. 이것까지 던지면 헛실패다.
+ * 변이 「교대 행에 링크 정확히 2 를 요구」가 이 시험을 붉게 만든다.
+ */
+test("N2 2-2 · 交代 의 옛 투수 링크만 없으면 통과한다 — 그 뒤 타석의 투수는 새 투수다", () => {
+  for (const old of ["宮城", unreadable("7001", "宮城")]) {
+    const html = mutate(CHANGE_ROW, `（投手交代） ${old} → ${link("7002", "東松")}`);
+    const r = parsePlayByPlay(html);
+    if (r.status !== "played") return assert.fail("played 여야 한다");
+    assert.deepEqual(
+      r.events.map((e) => e.pitcherId),
+      ["7001", "7001", "7001", "8001", "7002", "7002"],
+      `옛 투수 표기 ${JSON.stringify(old)} 에서 투수 귀속이 달라졌다`,
+    );
+  }
+});
+
+test("⚠N2 2-3 · 先発 행은 화살표 0 · 링크 정확히 1 이어야 한다 — 0 · 2 · 화살표가 있으면 던진다", () => {
+  const start = `（先発投手） ${link("7001", "宮城")}`;
+  for (const [label, to] of [
+    ["링크 0", "（先発投手） 宮城"],
+    ["링크를 못 읽음", `（先発投手） ${unreadable("7001", "宮城")}`],
+    ["링크 2", `（先発投手） ${link("7001", "宮城")} ${link("7009", "誰")}`],
+    ["화살표", `（先発投手） ${link("7001", "宮城")} →`],
+  ] as const) {
+    const err = throwsBecause(mutate(start, to), /先発投手 표기에서 투수 링크를 정확히 하나 읽지 못했다/);
+    assert.match(err.detail, /links=\d/, `${label}: detail 이 링크 수를 말하지 않는다`);
+  }
+});
+
+test("⚠N2 2-3 · 交代 행은 글자·본문 양쪽에서 화살표가 정확히 1 이어야 한다 — 0 · 2 · &rarr; · 속성 안 화살표는 던진다", () => {
+  for (const to of [
+    `（投手交代） ${link("7001", "宮城")} ${link("7002", "東松")}`,
+    `（投手交代） ${link("7001", "宮城")} → → ${link("7002", "東松")}`,
+    // 글자로는 화살표가 0 이다(엔티티를 풀지 않는다) — 어디서 나눌지 모른다
+    `（投手交代） ${link("7001", "宮城")} &rarr; ${link("7002", "東松")}`,
+    // 글자로는 1 인데 본문에는 2 다(속성 안) — 본문을 나누는 자리가 갈린다
+    `（投手交代） <a href="/bis/players/7001.html" title="→">宮城</a> → ${link("7002", "東松")}`,
+  ]) {
+    throwsBecause(mutate(CHANGE_ROW, to), /投手交代 표기의 화살표\(→\)가 정확히 하나가 아니다/);
+  }
+});
+
+test("⚠N2 2-3 · 交代 행의 화살표 뒤 링크 2 · 앞 링크 2 는 던진다", () => {
+  throwsBecause(
+    mutate(CHANGE_ROW, `（投手交代） ${link("7001", "宮城")} → ${link("7002", "東松")} ${link("7003", "誰")}`),
+    /投手交代 표기의 화살표 뒤에서 새 투수 링크를 정확히 하나 읽지 못했다/,
+  );
+  throwsBecause(
+    mutate(CHANGE_ROW, `（投手交代） ${link("7009", "誰")} ${link("7001", "宮城")} → ${link("7002", "東松")}`),
+    /投手交代 표기의 화살표 앞 링크가 둘 이상이다/,
+  );
+});
+
+test("⚠N2 2-3 · 先発投手 와 投手交代 가 한 행에 같이 있으면 던진다", () => {
+  throwsBecause(
+    mutate(CHANGE_ROW, `（先発投手）（投手交代） ${link("7001", "宮城")} → ${link("7002", "東松")}`),
+    /先発投手 와 投手交代 가 한 행에 같이 있다/,
+  );
+});
+
+/**
+ * ⚠**옛 투수가 우리 추적과 다르면 그 앞 타석 귀속이 이미 틀렸을 수 있다**(빠진 先発 행 · 하프 헤더 오판).
+ * 같은 행에 이미 있는 정보로 잡는다 — 실측 어긋남 0/48,900(설계 §4-3). 변이 「대조 삭제」가 이 시험을 붉게 만든다.
+ */
+test("⚠N2 2-4 · 交代 의 옛 투수가 그 하프의 현재 투수와 다르면 던진다", () => {
+  const err = throwsBecause(
+    mutate(CHANGE_ROW, `（投手交代） ${link("7009", "誰か")} → ${link("7002", "東松")}`),
+    /投手交代 의 옛 투수가 그 하프의 현재 투수와 다르다/,
+  );
+  assert.match(err.detail, /old=7009/);
+  assert.match(err.detail, /current=7001/);
+});
+
+/** ⚠**규칙을 만족하는 행에서는 새 투수 = 예전의 「마지막 링크」다** — 기존 귀속이 한 타석도 안 바뀐다(설계 §7-3) */
+test("N2 · 규칙을 만족하는 픽스처의 투수 귀속은 그대로다", () => {
+  for (const html of [FIXTURE, RUNNER_PBP]) {
+    assert.doesNotThrow(() => parsePlayByPlay(html));
+  }
+  const r = parsePlayByPlay(FIXTURE);
+  if (r.status !== "played") return assert.fail("played 여야 한다");
+  assert.deepEqual(r.events.map((e) => e.pitcherId), ["7001", "7001", "7001", "8001", "7002", "7002"]);
+});
