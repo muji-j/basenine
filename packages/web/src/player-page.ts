@@ -1149,10 +1149,30 @@ export function sparkline(s: SparkData, minSolid: number = SPARK_MIN_SOLID_MONTH
  *   ⚠**「나온 달」은 값이 아니라 달이다** — 희생번트 1타석뿐인 달(OPS 정의 안 됨)도 나온 달이다(M11).
  * ⚠**그림처럼 만들지 않는다** — 빈 상자·회색 막대·점선 틀은 데이터가 있는 것처럼 보인다. 캡션(`.spark .sl`)과
  *   같은 층의 글자 하나이고, **낭독에서 빼지 않는다**(캡션 끝 범례와 달리 이건 그림 대신 말하는 글자다).
+ *
+ * ## 문구는 둘이고, **보일 때 언제나 참**이다(N18 교차 검토 P2 · 조정자 방침)
+ *
+ * | 경우 | 문구 |
+ * |---|---|
+ * | 분모가 문턱 이상인 달이 `minSolid` 미만 | `月別OPS　30打席以上の月が2つあれば表示` |
+ * | 그런 달은 채웠는데 **값이 나오는 달**(믿을 달)이 모자람 | `月別OPS　30打席以上で計算できる月が2つ未満` |
+ *
+ * ⚠**둘째가 왜 있는가** — 분모가 문턱 이상이어도 값이 정의되지 않는 달이 있다(타자: 30打席 이상인데 타수 0 이면
+ *   장타율이 없어 OPS 가 없다 · `ops()` · M11). 그런 달로 조건을 채우면 첫째 문구는 **이미 채운 조건**을 말해 거짓이다.
+ * ⚠**투수는 둘째 문구가 구조적으로 안 나온다** — 방어율은 0アウト에서만 정의되지 않고(`earnedRunAverage`),
+ *   0 은 문턱(`THIN_SPLIT_OUTS`) 미만이다. 렌더러의 분기가 아니라 데이터의 성질이다(시험이 그 사실을 붙든다).
+ * ⚠**둘을 가르는 것은 「나온 달 수」가 아니라 「분모가 문턱 이상인 달 수」다** — 얇은 달이 여럿이어도 첫째 문구가 참이다.
+ * ⚠**조용히 비지 않는다**(M12) — 나온 달이 있는데 안 그리면 둘 중 하나는 반드시 나온다(시험이 전수로 맞댄다).
  */
 function sparkNote(s: SparkData, label: string, bar: string, minSolid: number): RawHtml {
   if (s.points.length === 0) return raw("");
-  return html`<p class="sparknote">${label}　${bar}以上の月が${minSolid}つあれば表示</p>`;
+  /** 분모가 문턱 이상인 달 — **값이 나오든 안 나오든**. 믿을 달(값도 있음)은 이것의 부분집합이다 */
+  const enough = s.points.filter((p) => p.rate.denominator >= s.thinBelow).length;
+  const text =
+    enough < minSolid
+      ? `${label}　${bar}以上の月が${minSolid}つあれば表示`
+      : `${label}　${bar}以上で計算できる月が${minSolid}つ未満`;
+  return html`<p class="sparknote">${text}</p>`;
 }
 
 function idLine(d: PlayerPageData, base: string): RawHtml {

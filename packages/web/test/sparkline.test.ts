@@ -15,6 +15,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb, replacePaEvents, upsertBatting, upsertGame, upsertPitching, upsertPlayer } from "@bb-app/store";
 import type { PaEventRow } from "@bb-app/store";
+import { earnedRunAverage, ops } from "@bb-app/metrics";
+import type { BattingLine, PitchingLine } from "@bb-app/metrics";
 import { renderPlayerPage, sparkline, SPARK_MIN_SOLID_MONTHS, THIN_SPLIT_OUTS } from "../src/player-page.ts";
 import { toString } from "../src/html.ts";
 import type { PitchingSplitCell, PlayerPageData, SplitAxisData, SplitRow } from "../src/player-page.ts";
@@ -506,6 +508,16 @@ function expectedNote(metric: "ops" | "era", thinBelow: number, minSolid: number
   return `月別${termLabel(metric)}　${bar}以上の月が${minSolid}つあれば表示`;
 }
 
+/**
+ * **둘째 문구** — 분모가 문턱 이상인 달은 `minSolid` 개를 채웠는데 **값이 나오는 달**이 모자랄 때.
+ * 그때 첫째 문구(「…以上の月が2つあれば表示」)는 **이미 채운 조건**을 말해 거짓이다(N18 교차 검토 P2).
+ * 지금 값으로 읽으면 「月別OPS　30打席以上で計算できる月が2つ未満」.
+ */
+function expectedUncomputableNote(metric: "ops" | "era", thinBelow: number, minSolid: number = SPARK_MIN_SOLID_MONTHS): string {
+  const bar = metric === "era" ? `${innings(thinBelow)}回` : `${thinBelow}打席`;
+  return `月別${termLabel(metric)}　${bar}以上で計算できる月が${minSolid}つ未満`;
+}
+
 test("⚠N18 믿을 달이 모자라 그리지 않으면 그 자리에 안내 한 줄 — 타자: 月別OPS + 月別 축의 문턱 + 최소 달 수", () => {
   const out = render("ops", [
     // ⚠**개막월이 얇은 전형** — 4월·5월 초의 타자 페이지가 이 모양이다
@@ -550,6 +562,19 @@ test("⚠N18 안내의 수를 손으로 적지 않는다 — 데이터의 문턱
   assert.ok(pit !== null, "문턱 12アウト인 투수에게 안내가 없다");
   assert.equal(pit.text, expectedNote("era", 12), "투수 안내가 데이터의 문턱을 안 따라간다");
   assert.ok(pit.text.includes("4回以上"), `12アウト가 4回로 읽히지 않는다: ${pit.text}`);
+  /**
+   * ⚠**둘째 문구도 같은 문턱을 따른다** — 문턱 이상인데 값이 없는 달 2개(N18 교차 검토 P2 의 둘째 문구).
+   * 전수 시험은 문턱 30 으로만 재므로 둘째 문구의 「30打席」 하드코딩을 못 잡는다 — 여기서 문턱을 바꿔 잡는다.
+   * ⚠투수 쪽은 **합성**이다 — 실제 데이터에서는 구조적으로 안 나오지만(아래 시험), 렌더러는 지표를 가리지 않는다.
+   */
+  const none = (label: string, den: number): { label: string; rate: { value: null; denominator: number } } => ({
+    label,
+    rate: { value: null, denominator: den },
+  });
+  const bat2 = noteOf(render("ops", [], { spark: { metric: "ops", thinBelow: 25, points: [none("4月", 25), none("5月", 26)] } }));
+  assert.equal(bat2?.text, expectedUncomputableNote("ops", 25), "타자 둘째 문구가 데이터의 문턱을 안 따라간다");
+  const pit2 = noteOf(render("era", [], { spark: { metric: "era", thinBelow: 12, points: [none("4月", 12), none("5月", 13)] } }));
+  assert.equal(pit2?.text, expectedUncomputableNote("era", 12), "투수 둘째 문구가 데이터의 문턱을 안 따라간다");
 });
 
 test("⚠N18 꺾은선을 그리면 안내는 없다 — 경계가 꺾은선과 같은 상수(SPARK_MIN_SOLID_MONTHS)다", () => {
@@ -621,7 +646,8 @@ test("⚠N18 그 시즌에 나온 달이 없으면 안내도 없다 — 「모�
 /**
  * ⚠**「월별 값이 있다」는 「그 달에 나왔다」다**(요구의 괄호 「출장한 달이 있다」).
  * 값이 정의되지 않는 달(희생번트 1타석뿐 · 0아웃 등판)도 **나온 달**이다 — 0 이 아니라 「정의 안 됨」이고(M11),
- * 그 선수에게도 「몇 타석 이상인 달이 몇 개면 그린다」는 참이다. 안내를 비우는 것은 **나온 달이 0개**일 때뿐이다.
+ * 안내를 비우는 것은 **나온 달이 0개**일 때뿐이다(M12 — 조용히 비지 않는다).
+ * ⚠**여기 두 달은 분모가 문턱 미만**이라 첫째 문구가 참이다. 분모가 문턱 이상인데 값이 없는 달은 **둘째 문구**다(아래).
  */
 test("⚠N18 값이 정의되지 않는 달뿐이어도 나온 달이 있으면 안내 — 비우는 것은 「나온 달 0개」뿐이다", () => {
   const bat = render("ops", [{ label: "4月", value: null, den: 1 }]);
@@ -630,6 +656,116 @@ test("⚠N18 값이 정의되지 않는 달뿐이어도 나온 달이 있으면 
   const pit = render("era", [{ label: "4月", value: null, den: 0 }]);
   assert.equal(sparkBox(pit), null);
   assert.equal(noteOf(pit)?.text, expectedNote("era", THIN_SPLIT_OUTS), "0아웃 등판뿐인 투수에게 안내가 없다");
+});
+
+/**
+ * ⚠**안내는 보일 때 언제나 참이어야 한다**(2026-09-28 · N18 교차 검토 P2).
+ * 분모가 문턱 이상인데 **값이 정의되지 않는 달**이 있다 — 타자는 30打席 이상이어도 타수가 0 이면(전부 볼넷 등)
+ * 장타율이 없어 OPS 가 없다(`ops()` · M11). 그런 달로 「문턱 이상인 달」을 채우면 꺾은선은 없는데 첫째 문구는
+ * 「30打席以上の月が2つあれば表示」 — **이미 채운 조건**을 말한다. → 그때는 **둘째 문구**: 값이 나오는 달이 모자라다.
+ * ⚠**둘째 문구도 시제가 없다** — 지금 데이터에 대한 사실이라 끝난 시즌에도 참이다.
+ */
+test("⚠N18 문턱 이상인데 값이 없는 달로 조건을 채우면 둘째 문구 — 「…あれば表示」는 이미 채운 조건이라 거짓이다", () => {
+  // 문턱 이상 null 2개 — ⚠하나는 **정확히 문턱**이다(「이상」의 경계를 같이 잰다)
+  const twoNull = render("ops", [
+    { label: "4月", value: null, den: THIN_SPLIT_PA },
+    { label: "5月", value: null, den: THIN_SPLIT_PA + 5 },
+  ]);
+  assert.equal(sparkBox(twoNull), null, "값이 나오는 달이 없는데 꺾은선을 그렸다 — 이 시험의 전제가 틀렸다");
+  assert.equal(noteOf(twoNull)?.text, expectedUncomputableNote("ops", THIN_SPLIT_PA), "문턱 이상 null 2개에 첫째 문구(이미 채운 조건)를 말한다");
+  // 문턱 이상 null 1 + 문턱 이상 정상 1 — 분모는 2개를 채웠고 값이 나오는 달은 1개
+  const mixed = render("ops", [
+    { label: "4月", value: null, den: THIN_SPLIT_PA },
+    { label: "5月", value: 0.8, den: 100 },
+  ]);
+  assert.equal(sparkBox(mixed), null, "믿을 달이 1개인데 꺾은선을 그렸다 — 이 시험의 전제가 틀렸다");
+  assert.equal(noteOf(mixed)?.text, expectedUncomputableNote("ops", THIN_SPLIT_PA), "문턱 이상 null 1 + 정상 1 에 첫째 문구를 말한다");
+});
+
+test("⚠N18 문턱 미만인 달만 여럿이면 첫째 문구 — 나온 달 수가 아니라 「분모가 문턱 이상인 달」 수로 가른다", () => {
+  const out = render("ops", [
+    { label: "3月", value: 0.8, den: 10 },
+    { label: "4月", value: 0.9, den: 12 },
+    { label: "5月", value: null, den: 1 },
+    // ⚠**문턱 바로 아래** — 이것을 「문턱 이상」으로 세면 둘째 문구로 새어 나간다
+    { label: "6月", value: 0.7, den: THIN_SPLIT_PA - 1 },
+  ]);
+  assert.equal(sparkBox(out), null);
+  assert.equal(noteOf(out)?.text, expectedNote("ops", THIN_SPLIT_PA), "문턱 미만 달뿐인데 첫째 문구가 아니다");
+});
+
+/**
+ * ⚠**안내 조건과 그리기 판정을 전수로 맞댄다**(N18 교차 검토 P2 · 조정자 방침).
+ * 달의 네 부류(값·분모): 믿을 달(있음·문턱 이상) · 얇은 달(있음·미만) · 값 없는 문턱 이상 달 · 값 없는 미만 달.
+ * 부류마다 개수를 바꿔 가며, 최소 달 수는 **기본값과 3** 둘로 — 구현을 부르지 않는 **오라클**로 기대를 센다:
+ * 나온 달 0 → 아무것도 없음 · 믿을 달 ≥ 최소 → 꺾은선 · (믿을 달 + 값 없는 문턱 이상 달) < 최소 → 첫째 문구 · 나머지 → 둘째 문구.
+ * ⚠**M12 의 불변식**: 꺾은선도 안내도 없는 것은 **나온 달이 0개**일 때뿐이고, 둘이 함께 나오는 일은 없다.
+ */
+test("⚠N18 안내 조건과 그리기 판정이 동치다 — 나온 달이 있고 안 그릴 때만, 언제나 참인 한 문구(전수 · 최소 달 수 2·3)", () => {
+  const seen: Record<string, number> = { none: 0, chart: 0, first: 0, second: 0 };
+  let cases = 0;
+  for (const minSolid of [SPARK_MIN_SOLID_MONTHS, 3]) {
+    for (let solid = 0; solid <= 3; solid += 1) {
+      for (let thin = 0; thin <= 2; thin += 1) {
+        for (let nullEnough = 0; nullEnough <= 3; nullEnough += 1) {
+          for (let nullThin = 0; nullThin <= 2; nullThin += 1) {
+            const months: Month[] = [];
+            const add = (n: number, value: number | null, den: (i: number) => number): void => {
+              for (let i = 0; i < n; i += 1) months.push({ label: `${months.length + 1}月`, value, den: den(i) });
+            };
+            add(solid, 0.8, (i) => THIN_SPLIT_PA + i * 7);
+            add(thin, 0.7, (i) => THIN_SPLIT_PA - 1 - i * 9);
+            add(nullEnough, null, (i) => THIN_SPLIT_PA + i * 3);
+            add(nullThin, null, () => 1);
+            const expected =
+              months.length === 0 ? "none" : solid >= minSolid ? "chart" : solid + nullEnough < minSolid ? "first" : "second";
+            const out = toString(sparkline(sparkOf("ops", months).spark!, minSolid));
+            const chart = sparkBox(out) !== null;
+            const note = noteOf(out)?.text ?? null;
+            const got = chart
+              ? note === null ? "chart" : `꺾은선과 안내가 함께 — ${note}`
+              : note === null ? "none"
+              : note === expectedNote("ops", THIN_SPLIT_PA, minSolid) ? "first"
+              : note === expectedUncomputableNote("ops", THIN_SPLIT_PA, minSolid) ? "second"
+              : `모르는 문구 — ${note}`;
+            assert.equal(got, expected, `믿을 ${solid} · 얇은 ${thin} · 값 없는 문턱 이상 ${nullEnough} · 값 없는 미만 ${nullThin} · 최소 ${minSolid}`);
+            seen[got] = (seen[got] ?? 0) + 1;
+            cases += 1;
+          }
+        }
+      }
+    }
+  }
+  // ⚠**공회전 방지** — 네 결과가 전부 나와야 이 전수가 뜻이 있다
+  for (const k of ["none", "chart", "first", "second"]) assert.ok((seen[k] ?? 0) > 0, `「${k}」가 한 번도 안 나왔다 — 전수가 헛돈다: ${JSON.stringify(seen)}`);
+  console.log(`  · ${cases}경우 — ${JSON.stringify(seen)}`);
+});
+
+/**
+ * ⚠**둘째 문구는 투수에게 구조적으로 안 나온다**(조정자 방침 — 그 사실을 시험으로 둔다).
+ * 방어율은 `earnedRunAverage` 가 **0아웃에서만** 정의하지 않고, 0 은 문턱(`THIN_SPLIT_OUTS` = 9アウト) 미만이다 —
+ * 즉 문턱 이상인 달은 언제나 값이 있다. 타자는 다르다: 30打席이 전부 볼넷이면 타수 0 → 장타율 없음 → OPS 없음.
+ * ⚠**렌더러는 지표를 가리지 않는다** — 투수 쪽에 둘째 문구가 없는 것은 렌더러의 분기가 아니라 **데이터의 성질**이다.
+ */
+test("⚠N18 둘째 문구는 투수에게 구조적으로 안 나온다 — 문턱(9アウト) 이상이면 방어율은 늘 정의된다 · 타자는 나올 수 있다", () => {
+  const pitch = (outs: number, er: number): PitchingLine => ({ outs, bf: 0, h: 0, hr: 0, bb: 0, ibb: 0, hbp: 0, so: 0, er, r: er });
+  let checked = 0;
+  for (let outs = THIN_SPLIT_OUTS; outs <= THIN_SPLIT_OUTS * 40; outs += 1) {
+    for (const er of [0, 1, 9, 40]) {
+      assert.notEqual(earnedRunAverage(pitch(outs, er)).value, null, `${outs}アウト ${er}자책의 방어율이 정의되지 않는다`);
+      checked += 1;
+    }
+  }
+  assert.ok(checked > 1000, `잰 경우가 ${checked} 뿐이다 — 이 시험이 헛돈다`);
+  // 정의되지 않는 것은 0아웃뿐이고, 0 은 문턱 미만이라 그런 달은 첫째 문구 쪽이다
+  assert.equal(earnedRunAverage(pitch(0, 3)).value, null);
+  assert.ok(0 < THIN_SPLIT_OUTS, "문턱이 0 이하다 — 0아웃 달이 문턱 이상으로 세어진다");
+  // 타자는 문턱 이상이어도 값이 없을 수 있다 — 둘째 문구가 필요한 이유
+  const walks: BattingLine = {
+    pa: THIN_SPLIT_PA, ab: 0, h: 0, double: 0, triple: 0, hr: 0, bb: THIN_SPLIT_PA, ibb: 0, hbp: 0, sf: 0, sh: 0, so: 0, roe: 0,
+  };
+  assert.equal(ops(walks).value, null, "타수 0 인 달의 OPS 가 정의된다 — 둘째 문구의 전제가 바뀌었다");
+  assert.ok(ops(walks).denominator >= THIN_SPLIT_PA, "OPS 의 분모(타석)가 문턱 미만이다 — 이 시험의 전제가 틀렸다");
 });
 
 test("⚠N18 안내는 그림이 아니라 글자다 — 낭독되고(aria-hidden 없음), 그림 요소가 없다", () => {

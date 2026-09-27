@@ -523,6 +523,8 @@ a{color:inherit}
    한 줄 폭으로 줄바꿈을 판정하면 꺾은선이 들어갈 자리에서 안내만 다음 줄로 밀린다 →
    **판정은 최소 폭**(flex-basis:0 → 라벨/조건 두 줄 · 타자 147.6 · 투수 131.8px)으로 하고,
    자리가 남으면 **한 줄까지만** 넓힌다(max-width:max-content) · 오른쪽 끝은 꺾은선처럼 margin-left:auto.
+   ⚠**둘째 문구(「…で計算できる月が2つ未満」 · 값이 안 나오는 달)는 조금 넓다** — 한 줄 211.4 · 최소 164.5px(타자).
+   보유 9시즌 선수 페이지 6,207장 중 **0장**이라(2026-09-28 사본 실측) 그 폭에 맞춰 규칙을 바꾸지 않았다.
    ⚠**줄을 바꿔야 하면 라벨과 조건 사이(「　」)에서만** 바꾼다(keep-all) — 아무 글자 사이에서 끊으면 「2」와 「つ」가 갈린다. */
 .sparknote{flex-grow:1;flex-basis:0;max-width:max-content;margin:0;margin-left:auto;word-break:keep-all}
 .idline .asof{font-family:var(--f-num);font-size:var(--fs-note);color:var(--tx-3)}
