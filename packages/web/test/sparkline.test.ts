@@ -833,8 +833,12 @@ test("⚠N18 안내는 캡션(.spark .sl)과 같은 층의 조용한 글자다 �
  * 높이는 꺾은선 **42.7px** 대 안내 **14.7px** 이다. 한 줄 폭으로 줄바꿈을 판정하면 꺾은선이 들어갈 자리에서
  * 안내가 먼저 다음 줄로 밀린다 → **판정에는 최소 폭**(라벨 / 조건 두 줄 · 타자 147.6 · 투수 131.8px)을 쓰고,
  * 자리가 있으면 한 줄까지만 넓힌다(`flex-basis:0` + `max-width:max-content`).
+ * ⚠**이 시험이 재는 것은 CSS 계약(캐스케이드 계산값)이다 — 실제 박스 폭·높이·줄 수는 안 잰다**(브라우저 없음 ·
+ *   N18 교차 검토 P3). 위 폭 수치는 글꼴 파일만 센 것이고, 화면 실측은 빌드 때 따로 한다.
+ * ⚠**줄은 라벨과 조건 사이(「　」)에서만 바꾼다**(`word-break:keep-all`) — 이 선언을 빼도 예전 시험은 초록이었다
+ *   (검토자 실측 21/21). 빼면 좁은 폭에서 「2」와 「つ」가 갈릴 수 있다.
  */
-test("⚠N18 안내는 꺾은선 자리보다 커지지 않는다 — 빈 틀 없이, 넓은 폭은 오른쪽 끝 · 680px 이하는 제 줄의 왼쪽", () => {
+test("⚠N18 안내 자리의 CSS 계약 — 빈 틀 없이, 넓은 폭은 오른쪽 끝 · 680px 이하는 제 줄의 왼쪽 · 줄은 「　」에서만 바꾼다", () => {
   const rules = parseRules(CSS);
   /** 폭 한 점에서 켜지는 `@media` — 이 스타일시트의 폭 조건은 max-width 뿐이다. 인쇄·강제 색·다크·모션 감소는 끈다 */
   const at =
@@ -858,6 +862,7 @@ test("⚠N18 안내는 꺾은선 자리보다 커지지 않는다 — 빈 틀 �
       "border-style", "box-shadow", "outline", "padding", "min-height", "height", "min-width"]) {
       assert.equal(computed(rules, NOTE_EL, prop, mediaOk), undefined, `${name}: 안내에 ${prop} 가 있다 — 그림처럼 보이는 틀이다`);
     }
+    assert.equal(computed(rules, NOTE_EL, "word-break", mediaOk), "keep-all", `${name}: 안내가 아무 글자 사이에서나 줄을 바꾼다 — 「2」와 「つ」가 갈린다`);
     if (where === "row") {
       assert.equal(computed(rules, SPARK_EL, "margin-left", mediaOk), "auto", "꺾은선이 오른쪽 끝이 아니다 — 이 시험의 전제가 바뀌었다");
       assert.equal(computed(rules, NOTE_EL, "margin-left", mediaOk), "auto", `${name}: 안내가 꺾은선 자리(오른쪽 끝)에 있지 않다`);
