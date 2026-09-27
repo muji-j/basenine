@@ -15,10 +15,10 @@ import { BLOCKS, PRESETS, blocksFor, presetsFor } from "../src/blocks.ts";
  */
 const BATTER_PRESETS = presetsFor("batter");
 const BATTER_BLOCKS = blocksFor("batter");
-import { bootstrapFor } from "../src/player-page.ts";
+import { bootstrapFor, renderPlayerPage } from "../src/player-page.ts";
 import { El, make, makeDocument, makeStorage, withRect } from "./dom-stub.ts";
 import { compareCard } from "../src/compare.ts";
-import { playerPage } from "./fixtures.ts";
+import { context, playerPage } from "./fixtures.ts";
 
 /** 정렬 가능한 열. 서버(`player-page.ts`)의 목록과 같은 키여야 한다 */
 const MATCHUP_COLUMNS: { key: string; label: string; type: "text" | "num"; rate?: true }[] = [
@@ -1734,10 +1734,16 @@ function buildRoster(): ReturnType<typeof makeDocument> {
   return doc;
 }
 
-/** 선수 페이지의 즐겨찾기 버튼만 있는 최소 문서 */
+/**
+ * 선수 페이지의 즐겨찾기 버튼만 있는 최소 문서.
+ * ⚠**이름(aria-label)은 진짜 렌더에서 읽는다** — 스텁에 손으로 적으면 두 벌이 되어,
+ * 마크업의 이름이 바뀌어도 스텁은 옛 이름으로 초록이다.
+ */
 function buildFavBtn(id = "p1"): ReturnType<typeof makeDocument> {
+  const name = /id="favBtn"[^>]*?aria-label="([^"]*)"/.exec(renderPlayerPage(playerPage(), context()))?.[1];
+  assert.ok(name !== undefined && name !== "", "선수 페이지에서 즐겨찾기 버튼의 이름을 못 읽었다 — 이 스텁이 실물과 갈렸다");
   const doc = makeDocument();
-  const b = make("button", { class: "favbtn", id: "favBtn", "data-fav": id, "aria-pressed": "false" });
+  const b = make("button", { class: "favbtn", id: "favBtn", "data-fav": id, "aria-pressed": "false", "aria-label": name });
   b.hidden = true;
   doc.body.appendChild(b);
   return doc;
@@ -1746,19 +1752,26 @@ function buildFavBtn(id = "p1"): ReturnType<typeof makeDocument> {
 test("즐겨찾기는 이 브라우저에만 남는다 — 저장되고 다시 열어도 살아 있다", () => {
   const storage = makeStorage();
   const first = buildFavBtn();
+  const name = first.getElementById("favBtn")!.getAttribute("aria-label");
   run(first, { storage });
   const btn = first.getElementById("favBtn")!;
   assert.equal(btn.hidden, false, "스크립트가 있는데 버튼이 숨겨진 채다");
   assert.equal(btn.getAttribute("aria-pressed"), "false");
+  assert.equal(btn.getAttribute("aria-label"), name, "스크립트가 마크업의 이름을 갈아 끼웠다");
 
   btn.fire("click");
   assert.equal(btn.getAttribute("aria-pressed"), "true");
-  assert.match(btn.getAttribute("aria-label")!, /外す/, "누른 뒤에도 「넣는다」라고 말한다");
+  /* ⚠**예전에는 여기서 이름이 「…から外す」로 바뀌기를 요구했다**(`/外す/` · 2026-09-27 감사 N8 로 교체).
+     그 단언이 결함을 요구하고 있었다 — 눌림은 aria-pressed 가 말하는데 이름까지 반대 방향으로 뒤집으면
+     상태가 **두 번** 읽힌다(「お気に入りから外す、押されています」). 같은 뜻의 구단 즐겨찾기(.favt)는
+     이름을 고정하고 aria-pressed 만 바꾼다 — 두 토글이 다른 규칙이면 다음 사람이 또 틀린다(M1). */
+  assert.equal(btn.getAttribute("aria-label"), name, "누르면 이름이 바뀐다 — 상태를 이름과 aria-pressed 가 두 번 말한다");
 
-  // 다시 연다
+  // 다시 연다 — ⚠**눌린 채로 열어도 이름은 같다**(이름이 상태를 따라가지 않는다)
   const second = buildFavBtn();
   run(second, { storage });
   assert.equal(second.getElementById("favBtn")!.getAttribute("aria-pressed"), "true");
+  assert.equal(second.getElementById("favBtn")!.getAttribute("aria-label"), name, "눌린 채로 열었더니 이름이 다르다");
 });
 
 test("⚠스크립트가 없으면 버튼을 띄우지 않는다 — 눌러도 아무 일이 없는 버튼을 두지 않는다", () => {

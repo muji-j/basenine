@@ -5080,8 +5080,11 @@ function paintFav(){
   if(b){
     const on=isFav(b.dataset.fav);
     b.hidden=false;
+    /* ⚠**눌림만 바꾼다 — 이름(aria-label)은 건드리지 않는다**(2026-09-27 · 감사 N8).
+       예전에는 이름도 「お気に入りに入れる」↔「お気に入りから外す」로 갈아 끼워서, aria-pressed 와 함께
+       상태가 **두 번**(반대 방향으로) 읽혔다. 이름은 마크업의 고정 명칭 하나(player-page.ts)이고
+       같은 뜻의 구단 즐겨찾기(.favt · paintFavTeam 의 press)와 같은 규칙이다(M1). */
     b.setAttribute("aria-pressed",String(on));
-    b.setAttribute("aria-label",on?"お気に入りから外す":"お気に入りに入れる");
   }
   /* 일람에서는 표식만 얹는다 — 순서를 바꾸면 「내 선수가 어디 갔지」가 된다.
      ⚠**별은 CSS 로 그리지만 뜻은 글자로 말한다.** content 로 그린 ★만 있으면

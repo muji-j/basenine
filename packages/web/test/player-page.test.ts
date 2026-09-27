@@ -49,6 +49,24 @@ test("⚠N11 표제(h1)에는 선수명만 있다 — 즐겨찾기 버튼은 h1 
 });
 
 /**
+ * ⚠**N8 — 즐겨찾기 버튼의 이름은 동작이 아니라 명칭이다**(2026-09-27 · 감사 N8).
+ * 예전 이름은 동작형(「お気に入りに入れる」 ↔ 「お気に入りから外す」)이었고 스크립트가 누를 때마다 갈아 끼웠다 —
+ * aria-pressed 와 함께 상태를 **두 번**(반대 방향으로) 말했다. 같은 뜻의 구단 즐겨찾기(`.favt`)는 이름이
+ * 「ひいき球団 …」로 고정이고 aria-pressed 만 바뀐다. 이름은 **무엇인가**를, 눌렸는가는 aria-pressed 가 말한다.
+ * ⚠**이름을 비우지 않는다** — 이 버튼은 글자가 없어서(☆/★ 는 CSS 가 그린다) 이름이 없으면 글리프가 이름이 된다.
+ * 스크립트가 이름을 안 바꾸는지는 `client.test.ts` 의 즐겨찾기 시험이 잰다.
+ */
+test("⚠N8 즐겨찾기 버튼의 이름은 동작형이 아닌 고정 명칭이다 — 눌림은 aria-pressed 하나가 말한다", () => {
+  const out = renderPlayerPage(playerPage(), context());
+  const tag = /<button class="favbtn"[^>]*>/.exec(out);
+  assert.ok(tag !== null, "즐겨찾기 버튼이 없다 — 이 시험이 잴 것이 없다");
+  const label = /aria-label="([^"]*)"/.exec(tag[0])?.[1];
+  assert.ok(label !== undefined && label !== "", "이름이 없다 — 글자 없는 버튼이라 CSS 글리프가 이름이 된다");
+  assert.doesNotMatch(label, /入れる|外す|追加|削除|解除|登録|する/, `이름이 동작형이다(「${label}」) — 눌리면 거짓이 되거나 상태를 두 번 말한다`);
+  assert.match(tag[0], /aria-pressed="false"/, "눌림을 aria-pressed 로 말하지 않는다");
+});
+
+/**
  * ⚠**선수 페이지만 「지금 어디에 있는가」가 통째로 없었다**(2026-08-19 실측: dist 6,207장).
  *
  * `nav: "player"` 였는데 내비에 `選手` 항목이 없어서 **어느 링크에도 표시가 안 붙었다.**
