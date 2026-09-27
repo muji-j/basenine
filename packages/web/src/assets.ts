@@ -3267,8 +3267,27 @@ function slide(el,dir){
   if(typeof el.offsetWidth==="number")void el.offsetWidth;
   if(dir!==0)el.setAttribute("data-slide",dir>0?"next":"prev");
 }
+/* ⚠**로빙 tabindex 는 이 한 벌이다**(2026-09-27 · 감사 N6 · M1). 탭줄 하나마다 **고른 탭 하나만** 탭 정지(0),
+   나머지는 -1 — Tab 으로 탭줄에 들어오면 초점이 고른 탭으로 가야 한다(WAI-ARIA APG Tabs).
+   예전에는 initTabs 안의 지역 함수라 **클릭·화살표에서만** 돌았다. 선택을 바꾸는 경로가 셋 더 있는데
+   (깊은 링크 revealHash · 브라우저 찾기 beforematch · ?vs= 通算 착지) 셋 다 showTabs 만 불러서,
+   aria-selected 는 새 탭으로 옮기고 **탭 정지는 이전 탭에 남겼다.** 그래서 showTabs 가 늘 이것을 부른다 —
+   revealSelectedTabs 와 같은 이유다(부르는 자리를 늘리지 않고 **탭이 바뀌는 곳**에 건다).
+   ⚠**role=tablist 에만 쓴다** — aria-pressed 를 쓰는 버튼 묶음(role=group · buttonGroup)은 패널을 열지 않는
+   좁히기 버튼줄이고, 거기서 로빙을 쓰면 Tab 으로 닿던 버튼들이 **하나만 남고 사라진다**(아래 initTabs 주석 ·
+   2026-08-18 유저 지적). 서버의 role=tablist 는 전부 aria-selected 를 쓴다(tablist · 선발예고 카드).
+   ⚠**탭줄마다 하나씩 · 숨은 탭줄에도** 둔다(아래 initTabs 의 2026-09-07 P3 주석). */
+function roveTabs(lists,key){
+  lists.forEach(list=>{
+    if(!list.getAttribute||list.getAttribute("role")!=="tablist")return;
+    const bs=$$("[data-tab]",list);
+    const on=bs.filter(b=>b.dataset.tab===key)[0]||bs[0];
+    bs.forEach(b=>b.setAttribute("tabindex",b===on?"0":"-1"));
+  });
+}
 function showTabs(){
-  Object.keys(tabGroups()).forEach(g=>{
+  const groups=tabGroups();
+  Object.keys(groups).forEach(g=>{
     const cur=transient[g]!==undefined?transient[g]:state.tabs[g];
     /* 탭줄에 적힌 순서가 방향의 기준이다 */
     const keys=$$('[data-tabgroup="'+g+'"] [data-tab]').map(b=>b.dataset.tab);
@@ -3301,6 +3320,8 @@ function showTabs(){
       if(b.hasAttribute("aria-pressed"))b.setAttribute("aria-pressed",on);
       else b.setAttribute("aria-selected",on);
     });
+    /* 탭 정지도 같은 선택을 따라간다(위 roveTabs · 감사 N6) */
+    roveTabs(groups[g],cur);
   });
   /* ⚠**선택이 바뀌면 그 탭을 상자 안으로 들여놓는다 — 여기 한 곳에서 한다**(M1 · 2026-09-07 P2).
      처음에는 초기화에서 한 번만 불렀는데, **그 뒤에 선택을 바꾸는 경로가 넷 더 있었다**:
@@ -3331,8 +3352,8 @@ function showTabs(){
        aria-selected 와 role 만 붙어 있고 **키보드 규약은 없었다** — 낭독기는
        「タブ 1/4」라고 안내하는데 화살표를 눌러도 아무 일도 일어나지 않았다.
        ⚠**새로 만든 날짜 토글(오늘·내일)도 이 위에 얹혀 있다.**
-       ⚠tabindex 는 여기서 준다 — JS 가 없으면 화살표도 없으니 그때는 전부 탭으로 닿는 편이 맞다
-       (바로 아래 .picklist 가 쓰는 것과 같은 방침). */
+       ⚠tabindex 는 스크립트가 준다(마크업에 없다 · 2026-09-27 부터 showTabs → roveTabs) — JS 가 없으면
+       화살표도 없으니 그때는 전부 탭으로 닿는 편이 맞다(.picklist 가 쓰는 것과 같은 방침). */
     /* ⚠**로빙은 「탭줄 하나」 안의 규약이다 — 그룹 전체의 규약이 아니다**(2026-09-07 P3).
        한 그룹이 리그마다 탭줄을 한 벌씩 갖는데(순위 화면의 rankcat·rankmetric·rankstreak),
        버튼을 문서 전체에서 한 배열로 모으면 둘이 난다:
@@ -3344,19 +3365,12 @@ function showTabs(){
        「리그를 바꿔도 보던 지표가 남는다」가 함께 사라진다. 위의 클릭 배선은 그룹 전체
        그대로 두고, **탭 정지와 순환만** 탭줄 안으로 가둔다. */
     const tablists=groups[g].filter(l=>l.getAttribute&&l.getAttribute("role")==="tablist");
-    const inList=(list)=>$$("[data-tab]",list);
-    /* 지금 고른 키에 맞춰 **탭줄마다 하나씩** 탭 정지를 둔다. 숨은 탭줄에도 둔다 —
-       그 리그로 바꾸는 순간 그 자리가 필요해지고, 그때 다시 계산할 자리가 없다 */
-    const rove=(key)=>tablists.forEach(list=>{
-      const bs=inList(list);
-      const on=bs.filter(b=>b.dataset.tab===key)[0]||bs[0];
-      bs.forEach(b=>b.setAttribute("tabindex",b===on?"0":"-1"));
-    });
-    rove(state.tabs[g]);
+    /* ⚠**탭 정지는 여기서 두지 않는다 — showTabs 가 둔다**(위 roveTabs · 감사 N6).
+       예전에는 여기의 지역 함수가 초기화·클릭·화살표에서만 돌아서, 그 밖의 경로로 바뀐 선택을
+       탭 정지가 못 따라갔다. 초기화 줄이 showTabs 를 늘 부르므로 첫 탭 정지도 거기서 선다. */
     tablists.forEach(list=>{
-      const bs=inList(list);
+      const bs=$$("[data-tab]",list);
       bs.forEach((b,at)=>{
-        b.addEventListener("click",()=>rove(b.dataset.tab));
         b.addEventListener("keydown",(e)=>{
           const step=e.key==="ArrowRight"||e.key==="ArrowDown"?at+1
             :e.key==="ArrowLeft"||e.key==="ArrowUp"?at-1
@@ -3368,7 +3382,7 @@ function showTabs(){
              여는 비용이 없고, 수동 활성화(Enter 를 또 눌러야 함)는 여기서 손만 늘린다. */
           delete transient[g];
           state.tabs[g]=to.dataset.tab;save(state);showTabs();
-          rove(to.dataset.tab);if(to.focus)to.focus();
+          if(to.focus)to.focus();
         });
       });
     });

@@ -1630,6 +1630,72 @@ test("W7 어느 표에도 없고 이름도 모르면 — 그래도 ID 를 칸에
   assert.ok(!said.includes("77777777"), "사람이 읽을 수 없는 ID 를 화면에 적었다");
 });
 
+// ─── 로빙 tabindex 는 선택을 따라간다 (감사 N6) ─────────────────────────────
+
+/**
+ * ⚠**N6 — 일시 탭 전환이 탭 정지를 안 옮겼다**(2026-09-27 · 감사 N6 · 다른 벤더 반증이 재현).
+ * 로빙(고른 탭만 `tabindex="0"`)이 `initTabs` 안의 지역 함수라 **클릭·화살표에서만** 돌았다.
+ * 선택을 바꾸는 경로가 셋 더 있는데 — 깊은 링크(`revealHash`) · 브라우저 찾기(`beforematch`) ·
+ * `?vs=` 通算 착지 — 셋 다 `showTabs()` 만 불러서 `aria-selected` 는 새 탭으로 옮기고
+ * **탭 정지는 이전 탭에 남겼다.** Tab 으로 탭줄에 들어가면 고른 탭이 아니라 이전 탭에 초점이 간다
+ * (WAI-ARIA APG Tabs: 탭줄에 들어오면 초점은 활성 탭으로).
+ * ⚠**「고른 탭 = 0 · 이전 탭 = −1」을 함께 본다** — 한쪽만 보면 「둘 다 0」(탭 정지 둘)이 통과한다.
+ */
+const tabOf = (doc: ReturnType<typeof makeDocument>, group: string, key: string): El =>
+  doc.querySelectorAll(`[data-tabgroup="${group}"] [data-tab]`).find((b) => b.dataset["tab"] === key)!;
+
+function assertRoved(doc: ReturnType<typeof makeDocument>, group: string, on: string, was: string, path: string): void {
+  assert.equal(tabOf(doc, group, on).getAttribute("aria-selected"), "true", `전제가 틀렸다 — ${path} 가 ${group}:${on} 을 안 골랐다`);
+  assert.equal(tabOf(doc, group, on).getAttribute("tabindex"), "0",
+    `${path} 로 ${group}:${on} 을 골랐는데 탭 정지가 없다 — Tab 으로 들어가면 고른 탭에 초점이 안 간다`);
+  assert.equal(tabOf(doc, group, was).getAttribute("tabindex"), "-1",
+    `${path} 뒤에도 이전 탭 ${group}:${was} 가 탭 정지다 — 초점이 이전 탭으로 간다`);
+}
+
+test("⚠N6 깊은 링크(#앵커)로 연 탭에 탭 정지가 따라간다 — 거슬러 올라가 연 탭 전부", () => {
+  const doc = buildRankingPage();
+  const storage = makeStorage();
+  storage.setItem("npb-meikan-layout", JSON.stringify({ tabs: { ranktype: "team", rankleague: "pacific" } }));
+  run(doc, { storage, location: { search: "", href: "", hash: "#lg-central" } });
+  assertRoved(doc, "ranktype", "personal", "team", "깊은 링크");
+  assertRoved(doc, "rankleague", "central", "pacific", "깊은 링크");
+});
+
+test("⚠N6 브라우저 찾기(beforematch)로 펼친 탭에 탭 정지가 따라간다", () => {
+  const doc = buildRankingPage();
+  const storage = makeStorage();
+  storage.setItem("npb-meikan-layout", JSON.stringify({ tabs: { ranktype: "team" } }));
+  run(doc, { storage });
+  assert.equal(tabOf(doc, "ranktype", "team").getAttribute("tabindex"), "0", "전제가 틀렸다 — 처음 탭 정지가 저장된 탭에 없다");
+  doc.querySelectorAll('[data-panelgroup="ranktype"]')
+    .find((p) => p.dataset["panelkey"] === "personal" && p.getAttribute("role") === "tabpanel")!
+    .fire("beforematch");
+  assertRoved(doc, "ranktype", "personal", "team", "브라우저 찾기");
+});
+
+test("⚠N6 ?vs= 가 通算 탭을 열면 탭 정지도 通算 으로 간다", () => {
+  const doc = buildScopedMatchup();
+  run(doc, { location: { search: "?vs=99", href: "" } });
+  assertRoved(doc, "matchupScope", "career", "season", "?vs= 通算 착지");
+});
+
+/**
+ * ⚠**로빙은 탭줄(role=tablist)의 규약이다 — 버튼 묶음(role=group · aria-pressed)에는 붙이지 않는다**
+ * (2026-08-18 유저 지적으로 좁혔다 · `initTabs` 주석). 거기서 로빙을 쓰면 Tab 으로 닿던 버튼들이
+ * **하나만 남고 사라진다.** N6 이 로빙을 `showTabs` 로 옮기면서 **모든 그룹을 도는 자리**로 갔으므로
+ * 그 거름이 따라왔는지 본다 — ⚠이 시험은 **옛 코드에서도 통과한다**(고침의 부작용 감시).
+ */
+test("N6 버튼 묶음(role=group)의 버튼은 선택이 바뀌어도 탭 정지를 잃지 않는다", () => {
+  const doc = buildPage();
+  run(doc, { location: { search: "?vs=33", href: "" } });
+  const min = doc.querySelectorAll('[data-tabgroup="matchupMin"]');
+  assert.equal(min.length, 1, "픽스처에 버튼 묶음이 없다 — 이 시험이 공회전한다");
+  assert.equal(min[0]!.getAttribute("role"), "group");
+  tabOf(doc, "matchupMin", "5").fire("click");
+  const idx = min[0]!.querySelectorAll("[data-tab]").map((b) => b.getAttribute("tabindex"));
+  assert.deepEqual(idx, [null, null, null, null], "버튼 묶음에 로빙이 붙었다 — Tab 으로 닿던 버튼이 사라진다");
+});
+
 // ─── 즐겨찾기 ───────────────────────────────────────────────────────────
 
 /**
