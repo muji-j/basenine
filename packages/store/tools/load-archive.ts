@@ -200,7 +200,16 @@ let played = 0;
 let notPlayed = 0;
 /** 아직 끝나지 않은 경기. **실패가 아니다**(M11) — 다음 실행이 받는다 */
 let inProgress = 0;
-let failed = 0;
+/**
+ * ⚠**실패는 경기 단위로 센다**(2026-09-27 · 3중 검토 2차 m4). 요약의 「실패 N건」은 실패한 **경기** 수다(경로에서 경기를 식별하지
+ *   못한 파일은 그 파일 하나를 한 건으로 센다). 예전에는 **사건마다** 셌다 — 한 경기가 PBP ERROR 와 WRITE ERROR 를 둘 다 내면
+ *   `실패 2건(그중 쓰기 실패 1건)` 이었는데 실패한 경기는 하나였다. 사건은 각자의 줄(`PBP ERROR` · `WRITE ERROR` …)이 전부 말한다.
+ * ⚠**종료 코드는 그대로다** — 맨 끝의 `failed > 0` 은 「0건인가」만 보고, 그 답은 사건으로 세든 경기로 세든 같다.
+ */
+const failedGames = new Set<string>();
+const fail = (key: string): void => {
+  failedGames.add(key);
+};
 /**
  * ⚠**라인스코어만 못 읽은 경기.**
  *
@@ -233,7 +242,7 @@ function noteVersionSkip(outcome: "stale" | "invalid-db", meta: { gameId: string
     staleArchive.push({ gameId: meta.gameId, date: meta.gameDate });
     return;
   }
-  failed += 1;
+  fail(meta.gameId);
   console.error(`DB 의 취득 시각이 무효다 ${meta.gameId} — 판을 비교할 수 없어 건너뛴다(fail-closed)`);
 }
 
@@ -265,7 +274,7 @@ function noteWriteFailure(
   quarantine: readonly QuarantineRow[],
 ): void {
   if (db.raw.isTransaction) throw err;
-  failed += 1;
+  fail(meta.gameId);
   const reason = err instanceof Error ? err.message : String(err);
   const kinds = quarantineSummary(quarantine);
   writeFailures.push({ gameId: meta.gameId, date: meta.gameDate, stage, reason, quarantine: kinds });
@@ -339,7 +348,7 @@ for await (const f of walkSchedules(archiveRoot)) {
 for await (const file of walk(archiveRoot, "box.html.gz")) {
   const meta = gameFromPath(file);
   if (meta === null) {
-    failed += 1;
+    fail(file);
     console.error(`경로에서 경기를 식별하지 못했다: ${file}`);
     continue;
   }
@@ -367,7 +376,7 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
   try {
     pages = await readGamePages(dirname(file));
   } catch (err) {
-    failed += 1;
+    fail(meta.gameId);
     console.error(`READ ERROR ${meta.gameId} — ${err instanceof Error ? err.message : String(err)}`);
     continue;
   }
@@ -391,7 +400,7 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
    */
   const boxFetchedAt = seenAtOf(pages.box.meta);
   if (boxFetchedAt === null) {
-    failed += 1;
+    fail(meta.gameId);
     console.error(
       `취득 시각을 못 읽었다 ${meta.gameId} — ${join(dirname(file), "box.meta.json")}` +
         (pages.box.metaError === null ? "" : ` (${pages.box.metaError})`) +
@@ -435,7 +444,7 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
   try {
     box = parseBoxScore(boxHtml);
   } catch (err) {
-    failed += 1;
+    fail(meta.gameId);
     console.error(`PARSE ERROR ${meta.gameId} — ${err instanceof Error ? err.message : String(err)}`);
     continue;
   }
@@ -463,7 +472,7 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
       throw new RangeError(`구분이 표기(${series}→${competition})와 팀 코드(${byCode})에서 다르다`);
     }
   } catch (err) {
-    failed += 1;
+    fail(meta.gameId);
     console.error(`구분 판정 실패 ${meta.gameId} — ${err instanceof Error ? err.message : String(err)}`);
     continue;
   }
@@ -601,7 +610,7 @@ for await (const file of walk(archiveRoot, "box.html.gz")) {
         pbpUnreadRunners = pbp.unreadRunners;
       }
     } catch (err) {
-      failed += 1;
+      fail(meta.gameId);
       console.error(`PBP ERROR ${meta.gameId} — ${err instanceof Error ? err.message : String(err)}`);
     }
   }
@@ -917,6 +926,8 @@ budget.total =
   budget.players + budget.games + budget.batting + budget.pitching
   + budget.paEvents + budget.runnerEvents + budget.quarantine;
 
+/** 실패한 경기 수 — 요약과 종료 코드가 쓴다(위 `failedGames` · 경기 단위) */
+const failed = failedGames.size;
 console.log(
   `성립 ${played}건 · 미성립 ${notPlayed}건 · 실패 ${failed}건` +
     // ⚠**0 이어도 찍는다**(감사 N1 · 설계 §6-4) — 쓰기 실패는 위 「실패」에 들어 있다. 「0건」과 「안 쟀음」을 가른다

@@ -125,7 +125,13 @@ let careerFailed = 0;
  *   그 실물을 본 적이 없다(보유 선수 페이지 파일 11,699장 중 0장 · 감사 C8). 「0장」과 「안 쟀음」을 가르려고 찍는다.
  */
 let careerAbsent = 0;
-let metaMissing = 0;
+/**
+ * **취득 시각을 모른 채(NULL) 쓴 선수** — 프로필 `profile_fetched_at` 과 통산 `fetched_at` 을 NULL 로 넣었다(M11 · 모르면 모름).
+ * ⚠~~취득시각 결손~~ 이었고 **사이드카가 본문을 말하지 않는 페이지를 전부** 셌다(2026-09-27 · 3중 검토 2차 m4) — 그러면
+ *   건너뛴 선수(판 모름 · 아무것도 안 썼다)와 같은 본문이라 DB 시각을 지킨 선수(NULL 이 아니다)까지 들어가, 「NULL 로 들어간 행이
+ *   몇 명분인가」에 답하지 못했다. 이제 **실제로 NULL 로 쓴 선수만** 센다. 건너뛴 선수는 판 가드 줄이 따로 센다.
+ */
+let writtenWithoutTime = 0;
 
 let updated = 0;
 let missing = 0;
@@ -185,7 +191,6 @@ db.transaction(() => {
      *   `null` 이 그대로 들어가고, 프로필의 `profile_fetched_at` 도 **`null` 이 그대로 들어간다**(위 SQL — 한 벌).
      */
     const archive = playerArchiveOf(meta, body);
-    if (archive.seenAt === null) metaMissing += 1;
     const v = judgePlayerVersion(db, playerId, archive);
     // ⑤ 건너뛴다 — **파싱하지 않는다**(옛 판의 파싱 실패가 종료 1 을 만들지 않게). 프로필과 통산을 **함께** 건너뛴다
     if (v.kind === "stale") {
@@ -204,8 +209,6 @@ db.transaction(() => {
       console.error(`DB VERSION INVALID ${playerId} — ${v.value}`);
       continue;
     }
-    verdictCount[v.kind] += 1;
-    if (v.kind === "newer" && v.noBaseline) noBaseline.push(playerId);
     const fetchedAt = v.time;
     // ⑥ 나머지는 지금처럼 — 파싱 → UPDATE → changes() 셈 → 통산 savepoint
     const html = body.toString("utf8");
@@ -217,6 +220,10 @@ db.transaction(() => {
       console.error(`PARSE ERROR ${playerId} — ${err instanceof Error ? err.message : String(err)}`);
       continue;
     }
+    // ⚠**판정별 수는 파싱이 된 뒤에 센다**(2026-09-27 · 3중 검토 2차 m4) — 예전에는 파싱 전에 세서 파싱에 실패한 선수가
+    //   「처음·같은 본문·새 판」과 「파싱 실패」에 **두 번** 들어갔다(요약의 수를 더하면 페이지 수보다 컸다). 이제 판정별 수는 쓴 선수다.
+    verdictCount[v.kind] += 1;
+    if (v.kind === "newer" && v.noBaseline) noBaseline.push(playerId);
     if (profile.throws === null || profile.bats === null) {
       noHand += 1;
       unknownPlayers.push(playerId);
@@ -252,7 +259,11 @@ db.transaction(() => {
      */
     const changed = (db.raw.prepare("SELECT changes() AS n").get() as { n: number }).n;
     if (changed === 0) missing += 1;
-    else updated += 1;
+    else {
+      updated += 1;
+      // ⚠**실제로 NULL 로 쓴 선수만** 센다(3중 검토 2차 m4 · 위 `writtenWithoutTime` 주석) — 행이 없어 안 쓴 선수는 안 센다
+      if (fetchedAt === null) writtenWithoutTime += 1;
+    }
 
     /**
      * 年度別成績.
@@ -325,7 +336,7 @@ db.transaction(() => {
 /** ⚠**세어 두고 안 쓰면 그것도 침묵이다.** 통산이 몇 줄 들어왔는지 보고한다 */
 console.error(
   `年度別成績 타격 ${careerBat}행 · 투구 ${careerPit}행 · 실패 ${careerFailed}명 · ` +
-    `통산 표가 하나도 없는 페이지 ${careerAbsent}장 · 취득시각 결손 ${metaMissing}명`,
+    `통산 표가 하나도 없는 페이지 ${careerAbsent}장 · 취득시각 모름(NULL)으로 쓴 선수 ${writtenWithoutTime}명`,
 );
 
 const total = (db.raw.prepare("SELECT COUNT(*) AS n FROM player").get() as { n: number }).n;

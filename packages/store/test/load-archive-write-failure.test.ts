@@ -137,7 +137,49 @@ test("⚠N1 1-1 · 경과가 선수 표에 없는 투수를 가리키면 그 경
     assert.ok(n(env, "SELECT COUNT(*) AS n FROM player_season_name") > 0, "시즌 표시명 쓰기가 안 돌았다");
     assert.ok(n(env, "SELECT COUNT(*) AS n FROM player WHERE position IS NOT NULL") > 0, "명단 보충이 안 돌았다");
     console.log(`  · 겹치는 선수 ${both.length}명 · 첫 경기에만 ${onlyFirst.length}명(寺西 포함)`);
+    // ⚠요약의 「실패 N건」은 **경기 수**다(2026-09-27 · 3중 검토 2차 m4) — 이 실행에서 실패한 경기는 하나다
+    assert.match(r.out, /실패 1건\(그중 쓰기 실패 1건\)/, r.out);
   } finally {
     await rm(env.dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * ⚠**한 경기가 PBP ERROR 와 WRITE ERROR 를 둘 다 내도 실패는 1건이다**(2026-09-27 · 3중 검토 2차 m4) — 요약의 「실패 N건」은
+ *   실패한 **경기** 수다. 예전에는 두 번 셌다(`실패 2건(그중 쓰기 실패 1건)` — 실패한 경기는 하나뿐이다). 종료 코드는 그대로 1 이다.
+ * ⚠쓰기 실패는 **시험 DB 의 트리거**로 심는다 — 경과를 못 읽으면(PBP ERROR) 타석이 안 들어가 위 1-1 의 외래키 경로가 안 열린다.
+ * 변이 「경기마다가 아니라 사건마다 센다」가 이 시험을 붉게 만든다.
+ */
+test("⚠3중 검토 2차 m4 · 한 경기의 PBP ERROR + WRITE ERROR 는 실패 1건이다 — 종료 1 그대로", { skip }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), "bb-failonce-"));
+  try {
+    const archive = join(dir, "archive");
+    await cp(join(SCORES, NEXT), join(archive, "npb", "scores", NEXT), { recursive: true });
+    const gameDir = join(archive, "npb", "scores", NEXT);
+    // 경과를 못 읽게 한다(파서가 던진다 · M7) — 본문 sha256 을 사이드카에 맞춰 무결성 대조는 지나게 한다
+    const empty = Buffer.from("<html><body></body></html>", "utf8");
+    await writeFile(join(gameDir, "playbyplay.html.gz"), gzipSync(empty));
+    const metaPath = join(gameDir, "playbyplay.meta.json");
+    const meta = JSON.parse(await readFile(metaPath, "utf8")) as Record<string, unknown>;
+    meta["sha256"] = createHash("sha256").update(empty).digest("hex");
+    await writeFile(metaPath, JSON.stringify(meta));
+    const dbPath = join(dir, "t.sqlite");
+    const db = openDb(dbPath, NOW);
+    try {
+      db.raw.exec(
+        `CREATE TRIGGER fail_once BEFORE INSERT ON game WHEN NEW.game_id = '${NEXT}' ` +
+          "BEGIN SELECT RAISE(ABORT, '시험이 심은 쓰기 실패'); END;",
+      );
+    } finally {
+      db.close();
+    }
+    const r = spawnSync(process.execPath, [TOOL, archive, dbPath], { encoding: "utf8" });
+    const all = (r.stdout ?? "") + (r.stderr ?? "");
+    assert.equal(r.status, 1, all);
+    assert.match(r.stderr ?? "", new RegExp(`PBP ERROR ${NEXT} — `), all);
+    assert.match(r.stderr ?? "", new RegExp(`WRITE ERROR ${NEXT} — 실시 쓰기: 시험이 심은 쓰기 실패`), all);
+    assert.match(r.stdout ?? "", /실패 1건\(그중 쓰기 실패 1건\)/, `한 경기를 두 번 셌다\n${r.stdout}`);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
   }
 });

@@ -181,8 +181,8 @@ test("C7 · 사이드카를 못 읽으면 profile_fetched_at 은 NULL 이다 —
     );
     assert.ok(cp.n > 0, "통산 투구 행이 없다 — 투수 픽스처가 아니다");
     assert.equal(cp.known, 0, "통산 투구 행에는 시각이 들어갔다 — 프로필·타격 통산과 갈렸다");
-    // ⚠「모른다」는 조용히 넘기지 않는다 — 요약에 결손 수가 찍혀야 한다
-    assert.match(r.err, /취득시각 결손 1명/);
+    // ⚠「모른다」는 조용히 넘기지 않는다 — 요약에 NULL 로 쓴 선수 수가 찍혀야 한다(2026-09-27 이름을 고쳤다 · ~~취득시각 결손~~)
+    assert.match(r.err, /취득시각 모름\(NULL\)으로 쓴 선수 1명/);
   } finally {
     await cleanup(env);
   }
@@ -963,6 +963,53 @@ test("⚠⚠3중 검토 2차 F1 · E1(본문만 바뀜 · 사이드카 그대로
     // 다음 선정에서는 안 뽑힌다(매일 헛요청이 되지 않는다 · L1)
     const after = select(env);
     assert.ok(!after.ids.includes(PITCHER), `되살린 뒤에도 뽑혔다\n${after.err}`);
+  } finally {
+    await cleanup(env);
+  }
+});
+
+// ─── 3중 검토 2차 m4 · 요약의 수가 뜻대로 센다(2026-09-27) ───
+//
+// ⚠**종료 코드는 안 바꾼다** — 바뀌는 것은 사람이 읽는 수뿐이다.
+
+/**
+ * ⚠**판정별 수(처음·같은 본문·새 판)는 실제로 쓴 선수만 센다.** 예전에는 판정 직후 · 파싱 **전에** 세서, 프로필 파싱에 실패한 선수가
+ * 「처음」에도 「파싱 실패」에도 들어갔다 — 요약의 수를 더하면 페이지 수보다 컸다. 변이 「파싱 전에 센다」가 이 시험을 붉게 만든다.
+ */
+test("⚠3중 검토 2차 m4 · 프로필 파싱에 실패한 선수는 판정별 수에 안 센다 — 파싱 실패로만 센다(더하면 페이지 수)", { skip }, async () => {
+  const env = await setup({ [PITCHER]: { fetchedAt: T_NEW }, [BATTER]: { fetchedAt: T_NEW } });
+  try {
+    await mutatePage(env, PITCHER, (h) => h.replace('<section id="pc_bio">', '<section id="pc_bio_gone">'));
+    const r = load(env);
+    // 파싱 실패 · 커버리지 미달(1/2) — 종료 1 은 예나 지금이나 같다
+    assert.equal(r.code, 1, r.out + r.err);
+    assert.match(r.err, new RegExp(`PARSE ERROR ${PITCHER} — `));
+    assert.match(r.out, /선수 페이지 2장 · 갱신 1 · DB에 없는 선수 0 · 파싱 실패 1/);
+    assert.match(r.out, /판 가드 — 처음 1 · 같은 본문 0 · 새 판 0 · /, `파싱에 실패한 선수를 판정별 수에 셌다\n${r.out}`);
+  } finally {
+    await cleanup(env);
+  }
+});
+
+/**
+ * ⚠**「취득시각 모름(NULL)으로 쓴 선수」는 NULL 로 쓴 선수만 센다**(~~취득시각 결손~~ 이었다). 예전에는 사이드카가 본문을 말하지 않는
+ * 페이지를 **전부** 셌다 — 건너뛴 선수(판 모름 · 아무것도 안 썼다)와 같은 본문이라 DB 시각을 지킨 선수(NULL 이 아니다)까지.
+ * 변이 「사이드카를 못 읽으면 센다」가 이 시험을 붉게 만든다.
+ */
+test("⚠3중 검토 2차 m4 · 취득시각 모름으로 쓴 수 — 건너뛴 선수 · DB 시각을 지킨 같은 본문은 안 센다", { skip }, async () => {
+  const env = await setup({ [PITCHER]: { fetchedAt: T_NEW }, [BATTER]: { fetchedAt: T_NEW } });
+  try {
+    assert.equal(load(env).code, 0);
+    // PITCHER — 같은 본문 · 사이드카 없음 → 적용 판과 같아 DB 시각을 지킨다(NULL 로 안 쓴다)
+    await rm(metaPath(env, PITCHER));
+    // BATTER — DB 가 다른 판(Y) · 사이드카 없음 → 판 모름으로 건너뛴다(아무것도 안 쓴다)
+    exec(env, "UPDATE player SET profile_revision = ?, profile_content_at = ? WHERE player_id = ?", REV_Y, T_NEW, BATTER);
+    await rm(metaPath(env, BATTER));
+    const r = load(env);
+    assert.equal(r.code, 1, `판 모름이 있는데 종료 ${r.code} 다\n${r.out}${r.err}`);
+    assert.match(r.out, /같은 본문 1 · 새 판 0 · 옛 판 건너뜀 0\(.*?\) · 판 모름 건너뜀 1/);
+    assert.equal(snapshot(env, PITCHER).player["profile_fetched_at"], T_NEW, "같은 본문인데 DB 시각을 안 지켰다");
+    assert.match(r.err, /취득시각 모름\(NULL\)으로 쓴 선수 0명/, `NULL 로 쓰지 않은 선수를 셌다\n${r.err}`);
   } finally {
     await cleanup(env);
   }
