@@ -1,4 +1,5 @@
--- 023 선수 프로필의 적용 판 — 옛 판 선수 페이지가 더 새 프로필·통산을 덮지 못하게 한다(감사 N3)
+-- 023 선수 프로필의 적용 판과 순서 기준선 — 옛 판 선수 페이지가 더 새 프로필·통산을 덮지 못하게 한다(감사 N3)
+--   두 칸: `profile_revision`(적용한 본문의 sha256 · 동일성) · `profile_content_at`(그 본문의 내용 시각 · 순서 · 3중 검토 3차 P2 로 더했다)
 --
 -- 설계: docs/superpowers/specs/2026-09-27-profile-version-guard-design.md §5-1
 --
@@ -12,7 +13,21 @@
 --   시각만 보면 첫 실행에 전원이 **영구히** 거짓 옛 판이 된다(설계 §4-2 · G4).
 -- ⚠**가산 마이그레이션이다** — 기존 행·칸을 안 바꾼다(기존 행의 새 칸은 NULL).
 --   되돌리기: `ALTER TABLE player DROP COLUMN profile_revision`(칸 CHECK 는 그 칸의 것이라 막지 않는다 · 시험 3-20 이 확인한다).
---   이 칸을 모르는 옛 코드로 되돌려도 값만 쓰고 칸은 남는다 — 다시 배포하면 적용 판(옛 sha) ≠ 본문이라 시각으로 진행한다(§5-6 ⑦).
+--   이 칸을 모르는 옛 코드로 되돌려도 값만 쓰고 칸은 남는다 — 다시 배포하면 적용 판(옛 sha) ≠ 본문이라 내용 시각으로 순서를 가른다(§5-6 ⑦).
 
 ALTER TABLE player ADD COLUMN profile_revision TEXT
   CHECK (profile_revision IS NULL OR (length(profile_revision) = 64 AND profile_revision NOT GLOB '*[^0-9a-f]*'));
+
+-- ⚠⚠**순서 전용 칸 — 적용한 본문의 내용 시각**(2026-09-27 · 3중 검토 3차 P2 · 설계 §5-1).
+--   판의 **순서**(옛 판인가)는 이 칸과만 가른다. `profile_fetched_at`(표시·신선도 · `career-lag`)은 「마지막으로 본 시각」이라
+--   **같은 본문의 404 확인으로 오른다** — 그 값을 기준선으로 쓰자, 그 사이에 받은 **실제로 더 새** 본문이 「DB 보다 이르다」로
+--   버려졌다(재현: A(t1) → A 의 404(t3) → B(t2) 복원 → 옛 판 건너뜀 · 종료 0 · 옛 값 남음).
+--   → 쓰기: 처음·새 판은 후보의 내용 시각 · 같은 본문은 저장값과 후보 내용 시각 중 **늦은 쪽**(404 의 내용 시각은 받은 시각이라 안 오른다).
+-- ⚠**정규화된 ISO(`toISOString` 모양 24자)만** 받는다 — 판처럼 모양을 CHECK 한다. 달력상 무효(`2026-19-39T…`)는 모양을 통과하므로
+--   적재기가 `normalizeFetchedAt` 로 다시 보고 무효면 건너뛴다(fail-closed · DB VERSION INVALID).
+-- ⚠NULL = 그 본문의 내용 시각을 모른다(판 없음 · 또는 사이드카가 본문을 말하지 않던 첫 적재). 처리는 설계 §5-2 5번.
+--   ⚠이 칸이 생기기 **전에** 판이 적힌 행은 없다 — 023 이 두 칸을 한꺼번에 만든다(아직 배포 전에 같은 마이그레이션에 더했다).
+-- 되돌리기: `ALTER TABLE player DROP COLUMN profile_content_at`(칸 CHECK 는 그 칸의 것이다 · 시험 3-20 이 확인한다).
+ALTER TABLE player ADD COLUMN profile_content_at TEXT
+  CHECK (profile_content_at IS NULL OR (length(profile_content_at) = 24
+    AND profile_content_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]Z'));

@@ -221,10 +221,10 @@ const archiveTally = { stale: [] as string[], absent: 0, unreadable: 0, unknown:
 if (archiveRoot !== null) {
   const identified = db.raw
     .prepare(
-      `SELECT player_id AS id, profile_revision AS revision, profile_fetched_at AS time
+      `SELECT player_id AS id, profile_revision AS revision, profile_content_at AS contentAt
          FROM player WHERE profile_revision IS NOT NULL ORDER BY player_id`,
     )
-    .all() as unknown as { id: string; revision: string; time: string | null }[];
+    .all() as unknown as { id: string; revision: string; contentAt: string | null }[];
   for (const p of identified) {
     let meta: unknown;
     try {
@@ -232,7 +232,8 @@ if (archiveRoot !== null) {
     } catch {
       meta = undefined;
     }
-    switch (classifyForRefetch(meta, { revision: p.revision, time: p.time })) {
+    // ⚠순서 기준선은 적재기와 같은 칸(`profile_content_at`)이다 — 표시 칸(`profile_fetched_at`)은 404 로 오른다(3중 검토 3차 P2)
+    switch (classifyForRefetch(meta, { revision: p.revision, contentAt: p.contentAt })) {
       case "stale":
         archiveTally.stale.push(p.id);
         break;

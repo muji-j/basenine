@@ -49,6 +49,11 @@ interface Provenance {
   revision: string | null;
   /** `revision` 이 `null` 일 때 필수 */
   why?: string;
+  /**
+   * 판의 **순서**를 가르는 칸(있으면). ⚠「언제」(`when`)와 다를 수 있다 — `player` 는 표시 시각(`profile_fetched_at`)이
+   * 404 확인으로 오르므로 순서는 내용 시각 칸(`profile_content_at`)으로 가른다(023 · 3중 검토 3차 P2).
+   */
+  order?: string;
 }
 
 /**
@@ -81,7 +86,8 @@ const PROVENANCE: Readonly<Record<string, Provenance>> = {
   // ⚠**선수 프로필의 판은 적용한 본문의 sha256 이다**(023 · 감사 N3 · 2026-09-27). 예전에는 「현재 상태의 스냅숏이라 판이
   //   성립하지 않는다」고 면제했는데, 그래서 **옛 판 선수 페이지가 더 새 프로필을 조용히 덮었다**(반증자 재현). 판이 있어야
   //   「이 값이 어느 본문에서 왔나」에 답하고 옛 판을 막을 수 있다. `first_seen_at`·`last_seen_at` 은 따로 「언제부터 언제까지 봤나」를 답한다.
-  player: { where: "profile_fetched_at", when: "profile_fetched_at", revision: "profile_revision" },
+  //   ⚠**순서는 `profile_content_at` 이다**(3중 검토 3차 P2) — 「언제」(표시 · `career-lag`)와 「순서」(옛 판인가)를 칸으로 가른다.
+  player: { where: "profile_fetched_at", when: "profile_fetched_at", revision: "profile_revision", order: "profile_content_at" },
   player_season_name: {
     where: "source",
     when: "as_of",
@@ -205,6 +211,7 @@ test("⚠적어 둔 컬럼이 실제로 존재한다", () => {
     check(t, p.where, "where");
     check(t, p.when, "when");
     if (p.revision !== null) check(t, p.revision, "revision");
+    if (p.order !== undefined) check(t, p.order, "order");
   }
   assert.deepEqual(bad, [], `적어 둔 컬럼이 스키마에 없다:\n  ${bad.join("\n  ")}`);
 });

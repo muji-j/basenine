@@ -933,8 +933,10 @@ node -e 'const z=require("zlib"),fs=require("fs");const h=z.gunzipSync(fs.readFi
 ## 7-G. ⚠선수 적재의 판 가드 — 옛 판 선수 페이지를 건너뛰었을 때 (2026-09-27 · 감사 N3)
 
 **무엇이 일어났나**: 선수 페이지 적재(`packages/store/tools/load-players.ts` · `update.ts` 의 「선수 프로필 적재」 단계)가 아카이브의
-선수 페이지를 DB 가 적용한 판(`player.profile_revision` = 적용한 본문의 sha256)과 맞대, **본문이 다르고 내용이 더 이르면** 그 선수의
-**프로필과 통산을 함께** 건너뛰었다(DB 를 지켰다). 흔한 원인은 §7-E 와 같다 — 「보관소에 올림」이 오늘 세대를 지운 뒤 실패해 다음 실행이
+선수 페이지를 DB 가 적용한 판(`player.profile_revision` = 적용한 본문의 sha256)과 맞대, **본문이 다르고 그 내용 시각이 DB 의 순서 기준선
+(`player.profile_content_at` = 적용한 본문의 내용 시각)보다 이르면** 그 선수의 **프로필과 통산을 함께** 건너뛰었다(DB 를 지켰다).
+⚠**순서는 `profile_fetched_at`(화면의 取得 날짜 · 신선도)으로 가르지 않는다**(2026-09-27 · 3중 검토 3차 P2) — 그 칸은 같은 본문의
+404 확인으로 오르고, 그 값으로 가르면 그 사이에 받은 **더 새** 본문을 옛 판으로 버린다. 흔한 원인은 §7-E 와 같다 — 「보관소에 올림」이 오늘 세대를 지운 뒤 실패해 다음 실행이
 **어제 세대 + 더 새 DB** 를 복원했거나, 덧붙임 `archive-*.tar` 가 옛 선수 페이지를 최신 세대 위에 풀었다.
 설계: `docs/superpowers/specs/2026-09-27-profile-version-guard-design.md` §5.
 
@@ -949,7 +951,8 @@ node -e 'const z=require("zlib"),fs=require("fs");const h=z.gunzipSync(fs.readFi
 | `⚠아카이브가 DB 보다 옛 판인 선수 N명 — 적재하지 않았다(DB 를 지켰다)` + 선수 ID 전부(한 줄 20개) · `::warning::선수 페이지 N장이 …` | 옛 판 — DB 를 지켰다 | 0 |
 | 위 목록의 `<ID>(부재)` | 옛 판인데 **상류가 그 페이지를 지웠다**(마지막 관측이 404/410) — 다시 받아도 못 고친다 | 0 |
 | `VERSION UNKNOWN <ID> — <사유>` | 본문이 적용 판과 다른데 **그 본문의 시각을 모른다** — 건너뛰었다 | **1** |
-| `DB VERSION INVALID <ID> — <값>` | DB 의 `profile_fetched_at` 이 시각으로 안 읽힌다 — 판을 비교할 수 없어 건너뛰었다 | **1** |
+| `DB VERSION INVALID <ID> — <값>` | DB 의 순서 기준선 `profile_content_at` 이 시각으로 안 읽힌다(모양은 CHECK 가 막으니 달력상 무효 · 손으로 고친 값) — 판을 비교할 수 없어 건너뛰었다. ⚠`profile_fetched_at` 이 무효인 것은 막지 않는다(순서에 안 쓴다) | **1** |
+| `⚠순서 기준선(profile_content_at)이 없어 새 판으로 받은 선수 N명 — <ID…>` | 적용 판은 있는데 그 본문의 내용 시각을 모른다(사이드카가 본문을 말하지 않던 첫 적재 뒤) — **순서를 가르지 않고** 새 판으로 받았다(설계 §5-2 5번) | 0 |
 
 **처치**
 - **재취득 대상 — 할 일 없음.** 같은 실행이 대부분 풀고, 남은 것은 다음 실행의 선정이 다시 뽑는다(`--player-limit` 400/실행 안 ·
@@ -967,7 +970,7 @@ W=$(mktemp -d)
 # ① DB 가 적용한 판을 본다 — 보관소 DB 를 받아 읽기 전용으로 연다
 gh release download data-store --repo muji-j/bb-app-data --dir "$W" --pattern bb.sqlite.gz
 gunzip -c "$W/bb.sqlite.gz" > "$W/bb.sqlite"
-node -e 'const{DatabaseSync}=require("node:sqlite");const d=new DatabaseSync(process.argv[1],{readOnly:true});console.log(d.prepare("SELECT profile_revision AS rev, profile_fetched_at AS at FROM player WHERE player_id = ?").get(process.argv[2]))' "$W/bb.sqlite" "$P"
+node -e 'const{DatabaseSync}=require("node:sqlite");const d=new DatabaseSync(process.argv[1],{readOnly:true});console.log(d.prepare("SELECT profile_revision AS rev, profile_content_at AS content_at, profile_fetched_at AS seen_at FROM player WHERE player_id = ?").get(process.argv[2]))' "$W/bb.sqlite" "$P"
 # ② 남은 세대를 보고(§7-E ①) 하나를 받아(§7-E ②) 그 선수의 두 파일을 짝으로 꺼낸다
 mkdir "$W/x" && tar -xf "$W/store-YYYYMMDD.tar" -C "$W/x" "archive/npb/players/$P.html.gz" "archive/npb/players/$P.meta.json"
 # ③ 본문 sha 가 ①의 rev 와 같고 사이드카 sha 와도 같은지 본다 — 셋이 같아야 되살릴 수 있다
@@ -988,7 +991,11 @@ gh release upload data-store --repo muji-j/bb-app-data "$W/archive-restore-playe
   - `본문 sha256 이 사이드카와 다르다` — 본문·사이드카 쓰기 사이에서 죽은 폴더다. 세대에서 짝으로 되살린다.
   - `absentAt 무효` · `취득 시각 무효` — 손상·변조된 사이드카다(정상 아카이버는 늘 유효한 ISO 를 쓴다). 세대에서 짝으로 되살린다.
   이 실행은 종료 1 이다.
-- **DB 시각 무효**(`DB VERSION INVALID`) — 보관소 DB 를 손으로 고치는 절차는 **없다.** 정리 마이그레이션(`022-invalid-fetched-at.sql` 선례)으로 푼다.
+- **DB 시각 무효**(`DB VERSION INVALID` · 순서 기준선 `profile_content_at`) — 보관소 DB 를 손으로 고치는 절차는 **없다.** 정리 마이그레이션
+  (`022-invalid-fetched-at.sql` 선례)으로 푼다. 칸의 CHECK 가 모양을 막으므로 이 줄이 뜨면 **달력상 무효인 값이 손으로 들어간 것**이다.
+- **순서 기준선 없음**(`⚠순서 기준선(profile_content_at)이 없어 새 판으로 받은 선수`) — 할 일 없음(실패가 아니다). 그 선수의 첫 적재 때
+  사이드카가 본문을 말하지 않았다(사이드카 없음 · sha 불일치 등) — 이번에 받은 새 판의 내용 시각이 이제 기준선이 됐다.
+  ⚠드물게 **옛 세대 복원과 겹치면 옛 판을 받았을 수 있다**(설계 §12) — 같은 선수가 곧 「출장량 부족」으로 다시 뽑혀 풀린다.
 
 **완료 기준**: 요약이 `옛 판 건너뜀 0(재취득 대상 0 · 부재라 못 고침 0) · 판 모름 건너뜀 0 · DB 시각 무효 0` 이고 `::warning::` 이 없다
 (부재라 못 고침을 받아들였다면 그 수만 남는다).

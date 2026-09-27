@@ -19,6 +19,7 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { openDb, upsertPlayer } from "../src/index.ts";
+import { LocalSink, PoliteFetcher, archivePlayer } from "@bb-app/archiver";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const PLAYERS = join(ROOT, "data", "archive", "npb", "players");
@@ -493,7 +494,8 @@ test("⚠N3 3-8 · 첫 실행 — DB 시각이 사이드카보다 늦어도(C7 �
  */
 async function dbHasNewer(env: Env, id: string): Promise<void> {
   assert.equal(load(env).code, 0);
-  exec(env, "UPDATE player SET profile_revision = ?, profile_fetched_at = ?, uniform_number = 'NEW-NO' WHERE player_id = ?", REV_Y, T_NEW, id);
+  // ⚠순서 기준선(`profile_content_at`)도 심는다 — 판정은 그것과 가른다(3중 검토 3차 P2)
+  exec(env, "UPDATE player SET profile_revision = ?, profile_fetched_at = ?, profile_content_at = ?, uniform_number = 'NEW-NO' WHERE player_id = ?", REV_Y, T_NEW, T_NEW, id);
   exec(env, "UPDATE career_batting SET fetched_at = ? WHERE player_id = ?", T_NEW, id);
   exec(env, "UPDATE career_pitching SET fetched_at = ? WHERE player_id = ?", T_NEW, id);
 }
@@ -599,19 +601,205 @@ test("⚠N3 3-13 · 옛 판 1명 + 정상 1명 — 커버리지 경고 없음 ·
   }
 });
 
-/** ⚠DB 시각이 무효면 판을 비교할 수 없다 — 건너뛰고 실패(fail-closed · 경기 가드와 같다) */
-test("⚠N3 3-14 · DB 시각 무효 · 다른 본문 — 종료 1 · DB VERSION INVALID · 불변", { skip }, async () => {
+/**
+ * ⚠DB 의 순서 기준선이 무효면 판을 비교할 수 없다 — 건너뛰고 실패(fail-closed · 경기 가드와 같다).
+ * ⚠칸에 모양 CHECK 가 있어 `not-a-date` 는 못 들어간다 — **모양만 맞고 달력상 무효**인 값을 심는다(3중 검토 3차 반영).
+ */
+test("⚠N3 3-14 · DB 순서 기준선(profile_content_at) 무효 · 다른 본문 — 종료 1 · DB VERSION INVALID · 불변", { skip }, async () => {
   const env = await setup({ [PITCHER]: { fetchedAt: T_MID } });
   try {
     assert.equal(load(env).code, 0);
-    exec(env, "UPDATE player SET profile_fetched_at = 'not-a-date' WHERE player_id = ?", PITCHER);
+    exec(env, "UPDATE player SET profile_content_at = '2026-19-39T29:59:59.999Z' WHERE player_id = ?", PITCHER);
     const before = snapshot(env, PITCHER);
     await mutatePage(env, PITCHER, oldUniform);
     const r = load(env);
     assert.equal(r.code, 1, r.out + r.err);
-    assert.match(r.err, new RegExp(`DB VERSION INVALID ${PITCHER} — not-a-date`));
+    assert.ok(r.err.includes(`DB VERSION INVALID ${PITCHER} — 2026-19-39T29:59:59.999Z`), r.err);
     assert.match(r.out, /DB 시각 무효 1/);
     assert.deepEqual(snapshot(env, PITCHER), before);
+  } finally {
+    await cleanup(env);
+  }
+});
+
+/** ⚠**표시 시각(`profile_fetched_at`)이 무효여도 막지 않는다** — 순서는 순서 칸으로 가른다(3중 검토 3차 반영 · 표시 칸에는 CHECK 가 없다) */
+test("N3 3-14′ · 표시 시각만 무효 · 더 새 본문 — 새 판으로 받고 표시 시각을 본 시각으로 덮는다", { skip }, async () => {
+  const env = await setup({ [PITCHER]: { fetchedAt: T_MID } });
+  try {
+    assert.equal(load(env).code, 0);
+    exec(env, "UPDATE player SET profile_fetched_at = 'not-a-date' WHERE player_id = ?", PITCHER);
+    await mutatePage(env, PITCHER, (h) => h.replace('<li id="pc_v_no">34</li>', '<li id="pc_v_no">99</li>'));
+    await editSidecar(env, PITCHER, { fetchedAt: T_NEW });
+    const r = load(env);
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.match(r.out, /새 판 1 · 옛 판 건너뜀 0/);
+    const s = snapshot(env, PITCHER);
+    assert.equal(s.player["uniform_number"], "99");
+    assert.equal(s.player["profile_fetched_at"], T_NEW);
+    assert.equal(s.player["profile_content_at"], T_NEW);
+  } finally {
+    await cleanup(env);
+  }
+});
+
+// ─── 3중 검토 3차 P2 · 404 확인 시각이 순서 기준선을 끌어올리지 않는다(2026-09-27) ───
+//
+// ⚠**`same` 이 쓰는 표시 시각(`profile_fetched_at` = 늦은 쪽)을 다른 본문의 순서 기준선으로 다시 쓰고 있었다.** 404 는 옛 본문을
+//   그대로 두고 `checkedAt` 을 「지금」으로 올리므로, 같은 본문의 404 를 한 번 적재하면 표시 시각이 404 확인 시각이 되고 —
+//   그 뒤 **실제로 더 새** 본문(그 사이에 받은 것)이 복원돼도 「DB 보다 이르다」로 버려졌다(종료 0 · 옛 값 남음).
+//   → 순서 전용 칸 `profile_content_at`(내용 시각)을 두고 그것과만 가른다. 404 는 `contentTime`=받은 시각이라 올리지 않는다.
+
+const T1 = "2026-09-01T00:00:00.000Z"; // A 를 받은 시각
+const T2 = "2026-09-02T00:00:00.000Z"; // B(더 새 본문)를 받은 시각
+const T3 = "2026-09-03T00:00:00.000Z"; // A 가 404 로 확인된 시각
+const T4 = "2026-09-04T00:00:00.000Z"; // B 가 404 로 확인된 시각
+
+/**
+ * **실제 `archivePlayer` 의 404 경로**로 사이드카를 쓴다(3차 검토의 재현과 같은 모양 · 외부 요청 0 — 가짜 응답이다).
+ * ⚠손으로 사이드카를 지어내지 않는다 — 404 경로가 무엇을 남기는지(옛 sha·fetchedAt 유지 · checkedAt=absentAt=지금)가 곧 이 결함의 원인이다.
+ */
+async function recordAbsent(env: Env, id: string, at: string): Promise<void> {
+  const clock = { now: () => new Date(at) };
+  const fetcher = new PoliteFetcher({
+    userAgent: "bb-app-test",
+    clock,
+    fetchImpl: async () => ({ status: 404, headers: { get: () => null }, arrayBuffer: async () => new ArrayBuffer(0) }),
+    sleep: async () => undefined,
+  });
+  const r = await archivePlayer(id, { fetcher, sink: new LocalSink(env.archive), clock });
+  assert.equal(r.outcome, "absent", `404 경로를 안 탔다: ${JSON.stringify(r)}`);
+}
+
+/** 지금 임시 아카이브의 본문·사이드카 한 벌 */
+async function pair(env: Env, id: string): Promise<{ body: Buffer; meta: string }> {
+  return { body: await readFile(pagePath(env, id)), meta: await readFile(metaPath(env, id), "utf8") };
+}
+async function putPair(env: Env, id: string, p: { body: Buffer; meta: string }): Promise<void> {
+  await writeFile(pagePath(env, id), p.body);
+  await writeFile(metaPath(env, id), p.meta);
+}
+
+/** A(34 · t1) 를 적재하고, 더 새 B(99 · t2)를 따로 보관한 뒤 아카이브를 A 로 돌려 둔다 */
+async function loadAKeepB(env: Env): Promise<{ a: { body: Buffer; meta: string }; b: { body: Buffer; meta: string } }> {
+  assert.equal(load(env).code, 0);
+  const a = await pair(env, PITCHER);
+  await mutatePage(env, PITCHER, (h) => h.replace('<li id="pc_v_no">34</li>', '<li id="pc_v_no">99</li>'));
+  await editSidecar(env, PITCHER, { fetchedAt: T2, checkedAt: T2, revision: 2 });
+  const b = await pair(env, PITCHER);
+  await putPair(env, PITCHER, a);
+  return { a, b };
+}
+
+test("⚠3중 검토 3차 P2 · A(t1) → A 의 404(t3) → 더 새 B(t2) 복원 — B 가 적용되고 재적재는 같은 본문 · 전 행 불변 · 404 는 순서 기준선을 안 올린다", { skip }, async () => {
+  const env = await setup({ [PITCHER]: { fetchedAt: T1 } });
+  try {
+    const { b } = await loadAKeepB(env);
+    await recordAbsent(env, PITCHER, T3);
+    const absent = load(env);
+    assert.equal(absent.code, 0, absent.out + absent.err);
+    assert.match(absent.out, /같은 본문 1/);
+
+    await putPair(env, PITCHER, b);
+    const r = load(env);
+    assert.equal(r.code, 0, r.out + r.err);
+    const s = snapshot(env, PITCHER);
+    assert.equal(s.player["uniform_number"], "99", `더 새 B 가 옛 판으로 버려졌다 — 404 확인 시각(t3)이 순서 기준선이 됐다\n${r.out}`);
+    assert.match(r.out, /새 판 1 · 옛 판 건너뜀 0/);
+    assert.equal(s.player["profile_revision"], shaOf(gunzipSync(b.body)));
+    assert.equal(s.player["profile_fetched_at"], T2);
+    assert.equal(s.player["profile_content_at"], T2);
+    assert.ok(s.bat.every((row) => (row as { fetched_at: unknown }).fetched_at === T2), "통산 행이 B 의 시각이 아니다");
+
+    const again = load(env);
+    assert.equal(again.code, 0, again.out + again.err);
+    assert.match(again.out, /같은 본문 1/);
+    assert.deepEqual(snapshot(env, PITCHER), s, "같은 본문을 다시 적재했더니 행이 바뀌었다");
+  } finally {
+    await cleanup(env);
+  }
+});
+
+/**
+ * ⚠**404 로 `same` 을 적재해도 순서 기준선은 그대로다** — 표시 시각(`profile_fetched_at`)은 지금처럼 늦은 쪽(404 확인 시각)이다
+ * (쓰는 규칙은 바꾸지 않았다 · `career-lag` · 화면의 取得 날짜 · 설계 §5-7). 변이 「순서에 profile_fetched_at」이 위 시험을 붉게 만든다.
+ */
+test("⚠3중 검토 3차 · 같은 본문의 404 적재 — profile_fetched_at 은 404 확인 시각 · profile_content_at 은 받은 시각 그대로", { skip }, async () => {
+  const env = await setup({ [PITCHER]: { fetchedAt: T1 } });
+  try {
+    assert.equal(load(env).code, 0);
+    await recordAbsent(env, PITCHER, T3);
+    const r = load(env);
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.match(r.out, /같은 본문 1/);
+    const s = snapshot(env, PITCHER);
+    assert.equal(s.player["profile_fetched_at"], T3, "표시 시각의 쓰는 규칙이 바뀌었다(늦은 쪽이어야 한다)");
+    assert.equal(s.player["profile_content_at"], T1, "404 확인이 순서 기준선을 올렸다");
+  } finally {
+    await cleanup(env);
+  }
+});
+
+/** B 도 그 뒤 404 로 확인된 변형(3차 검토 요청) — B 의 순서 시각은 받은 시각(t2)이라 t1 보다 새것이다 */
+test("⚠3중 검토 3차 · B 의 사이드카에도 뒤에 404(t4)가 기록된 변형 — 그래도 B 가 적용된다", { skip }, async () => {
+  const env = await setup({ [PITCHER]: { fetchedAt: T1 } });
+  try {
+    const { b } = await loadAKeepB(env);
+    await recordAbsent(env, PITCHER, T3);
+    assert.equal(load(env).code, 0);
+    await putPair(env, PITCHER, b);
+    await recordAbsent(env, PITCHER, T4);
+    const r = load(env);
+    assert.equal(r.code, 0, r.out + r.err);
+    const s = snapshot(env, PITCHER);
+    assert.equal(s.player["uniform_number"], "99", `B(부재 중 · 받은 시각 t2)가 옛 판으로 버려졌다\n${r.out}`);
+    assert.equal(s.player["profile_content_at"], T2, "순서 기준선이 B 의 받은 시각이 아니다");
+    assert.equal(s.player["profile_fetched_at"], T4, "표시 시각은 본 시각(404 확인)이다 — 쓰는 규칙 그대로");
+  } finally {
+    await cleanup(env);
+  }
+});
+
+/**
+ * ⚠**DB 에 순서 기준선이 없으면(§5-2 5번) 새 판으로 받되 조용히 넘기지 않는다**(3중 검토 반영 때 정했다).
+ * 그 상태는 사이드카가 본문을 말하지 않던 **첫 적재** 뒤에만 생긴다 — 여기서는 사이드카 없이 처음 적재한다(C7: 시각 NULL).
+ * 판 모름(종료 1)으로 막으면 DB 쪽 순서는 다시 받아도 안 되살아나므로 그 선수 때문에 **매 실행 배포가 영구히** 막힌다.
+ */
+test("⚠3중 검토 반영 · 순서 기준선 없는 판(사이드카 없이 첫 적재) 뒤의 새 본문 — 새 판으로 받고 따로 찍는다 · 종료 0", { skip }, async () => {
+  const env = await setup({ [PITCHER]: null });
+  try {
+    const first = load(env);
+    assert.equal(first.code, 0, first.out + first.err);
+    const s0 = snapshot(env, PITCHER);
+    assert.equal(s0.player["profile_revision"], await realSha(PITCHER), "첫 적재가 판을 안 채웠다");
+    assert.equal(s0.player["profile_content_at"], null, "모르는 내용 시각을 채웠다(M11)");
+
+    await mutatePage(env, PITCHER, (h) => h.replace('<li id="pc_v_no">34</li>', '<li id="pc_v_no">99</li>'));
+    await copyFile(join(PLAYERS, `${PITCHER}.meta.json`), metaPath(env, PITCHER));
+    await editSidecar(env, PITCHER, { sha256: shaOf(gunzipSync(await readFile(pagePath(env, PITCHER)))), fetchedAt: T_NEW, checkedAt: undefined });
+    const r = load(env);
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.match(r.out, /새 판 1 · 옛 판 건너뜀 0/);
+    assert.match(r.out, new RegExp(`⚠순서 기준선\\(profile_content_at\\)이 없어 새 판으로 받은 선수 1명 — ${PITCHER}`));
+    const s = snapshot(env, PITCHER);
+    assert.equal(s.player["uniform_number"], "99");
+    assert.equal(s.player["profile_content_at"], T_NEW, "새 판의 내용 시각이 기준선이 되지 않았다");
+  } finally {
+    await cleanup(env);
+  }
+});
+
+/** 대조군 — 404 단계 없이 A(t1) → B(t2) 면 예나 지금이나 B 가 새 판이다(3차 검토의 대조군) */
+test("3중 검토 3차 · 대조군 — 404 없이 A(t1) → B(t2) 는 새 판으로 적용된다", { skip }, async () => {
+  const env = await setup({ [PITCHER]: { fetchedAt: T1 } });
+  try {
+    const { b } = await loadAKeepB(env);
+    await putPair(env, PITCHER, b);
+    const r = load(env);
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.match(r.out, /새 판 1/);
+    const s = snapshot(env, PITCHER);
+    assert.equal(s.player["uniform_number"], "99");
+    assert.equal(s.player["profile_fetched_at"], T2);
   } finally {
     await cleanup(env);
   }

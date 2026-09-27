@@ -63,10 +63,12 @@ const stmt = db.raw.prepare(
   //     통산 갈아 넣기를 **한 판정으로 함께** 막는다(`judgePlayerVersion` · 아래 루프). 시각에만 가드를 걸지 않은 이유(값과 시각이
   //     갈린다)는 그대로 지켰다 — 건너뛸 때는 **값도 시각도 안 쓴다.**
   //   ⚠**`profile_revision` 은 적용한 본문의 sha256 이다**(023) — 이 칸에도 `COALESCE` 를 걸지 않는다(값·시각과 한 벌).
+  //   ⚠**`profile_content_at` 은 그 본문의 내용 시각 — 순서 전용이다**(023 · 3중 검토 3차 P2). 표시 칸(`profile_fetched_at`)은
+  //     404 확인으로 오르므로 순서 기준선으로 쓰면 더 새 본문을 옛 판으로 버린다. 판정이 두 칸을 따로 낸다(`v.time` · `v.contentAt`).
   `UPDATE player SET position = COALESCE(?, position), throws = COALESCE(?, throws),
      bats = COALESCE(?, bats), birth_year = COALESCE(?, birth_year),
      physique = COALESCE(?, physique), draft = COALESCE(?, draft), kana = COALESCE(?, kana),
-     uniform_number = COALESCE(?, uniform_number), profile_revision = ?, profile_fetched_at = ?
+     uniform_number = COALESCE(?, uniform_number), profile_revision = ?, profile_fetched_at = ?, profile_content_at = ?
    WHERE player_id = ?`,
 );
 
@@ -142,6 +144,11 @@ const verdictCount = { "no-row": 0, first: 0, same: 0, newer: 0 };
 const staleProfiles: { playerId: string; absent: boolean }[] = [];
 let versionUnknown = 0;
 let dbTimeInvalid = 0;
+/**
+ * DB 에 순서 기준선(`profile_content_at`)이 없어 **순서를 가르지 않고** 새 판으로 받은 선수(§5-2 5번 · 3중 검토 3차 반영).
+ * ⚠실패가 아니다(막으면 그 선수 때문에 매 실행 배포가 영구히 막힌다) — 그러나 **조용히 넘기지도 않는다**: 따로 찍는다.
+ */
+const noBaseline: string[] = [];
 
 db.transaction(() => {
   for (const f of files) {
@@ -188,6 +195,7 @@ db.transaction(() => {
       continue;
     }
     verdictCount[v.kind] += 1;
+    if (v.kind === "newer" && v.noBaseline) noBaseline.push(playerId);
     const fetchedAt = v.time;
     // ⑥ 나머지는 지금처럼 — 파싱 → UPDATE → changes() 셈 → 통산 savepoint
     const html = body.toString("utf8");
@@ -221,6 +229,8 @@ db.transaction(() => {
       archive.bodySha256,
       // ⚠**`nowIso` 가 아니다**(감사 C7) — 아래 통산 행과 같은 판정 시각. `null` 이면 NULL 이다(모르면 모름)
       fetchedAt,
+      // ⚠**순서 기준선**(3중 검토 3차 P2) — 표시 시각과 따로 낸다. 같은 본문의 404 는 이것을 올리지 않는다
+      v.contentAt,
       playerId,
     );
     /**
@@ -341,6 +351,13 @@ if (staleProfiles.length > 0) {
   console.log(
     `::warning::선수 페이지 ${staleProfiles.length}장이 DB 보다 옛 판이라 적재하지 않았다 — ` +
       `재취득 대상 ${staleRefetch} · 부재라 못 고침 ${staleAbsent} · 절차 docs/operations/deploy.md §7-G`,
+  );
+}
+if (noBaseline.length > 0) {
+  // ⚠**순서를 가르지 않고 받았다는 사실을 남긴다**(§5-2 5번) — 실패가 아니지만 조용히 넘기지 않는다. 드물다:
+  //   사이드카가 본문을 말하지 않던 첫 적재 뒤에만 생긴다. ID 전부(자르지 않는다)
+  console.log(
+    `⚠순서 기준선(profile_content_at)이 없어 새 판으로 받은 선수 ${noBaseline.length}명 — ${[...noBaseline].sort().join(", ")} · 절차 docs/operations/deploy.md §7-G`,
   );
 }
 console.log(`투타 확인 ${withHand} / 전체 ${total}명 (미상 ${total - withHand}명)`);

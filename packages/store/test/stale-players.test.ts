@@ -387,8 +387,14 @@ async function withArchive(
 }
 
 /** 적용 판과 DB 시각을 심는다 */
-function applied(db: Db, id: string, revision: string | null, time: string | null): void {
-  db.raw.prepare("UPDATE player SET profile_revision = ?, profile_fetched_at = ? WHERE player_id = ?").run(revision, time, id);
+/**
+ * 적용 판 · 표시 시각 · 순서 기준선을 심는다. ⚠선정기는 **순서 기준선**(`profile_content_at`)과 맞댄다(3중 검토 3차 P2) —
+ * 표시 시각(`profile_fetched_at`)은 404 확인으로 오르는 값이라 순서에 안 쓴다. 따로 안 주면 표시 시각과 같게 둔다.
+ */
+function applied(db: Db, id: string, revision: string | null, time: string | null, contentAt: string | null = time): void {
+  db.raw
+    .prepare("UPDATE player SET profile_revision = ?, profile_fetched_at = ?, profile_content_at = ? WHERE player_id = ?")
+    .run(revision, time, contentAt, id);
 }
 
 /** 평소 사유로는 **안 뽑히는** 선수(출장 뒤에 받았고 그 경기가 실려 있다) — 이 선수가 뽑히면 이유는 아카이브 옛 판뿐이다 */
@@ -452,6 +458,28 @@ test("⚠N3 3-16 · --archive 로 아카이브 옛 판을 뽑는다 — 같은 �
     /아카이브 옛 판 1명\(부재라 제외 1 · 사이드카 못 읽음 1 · 400일 밖 1 · 순서 모름 0 · 출력분 중 1\)/,
     "사유별 보고가 아카이브 옛 판 갈래를 안 셌다",
   );
+});
+
+/**
+ * ⚠⚠**순서 기준선은 표시 시각이 아니다**(3중 검토 3차 P2). `RAISED` 는 같은 본문의 404 를 적재해 표시 시각이 늦어졌지만(T_LATE)
+ * 순서 기준선은 이르다(T_EARLY) — 아카이브 본문(T_DB)은 **새 판**이라 뽑지 않는다(뽑으면 적재기도 그 본문을 옛 판으로 버린다).
+ * 대조군 `OLDER` 는 기준선도 늦어(T_LATE) 같은 본문이 옛 판이다. 변이 「선정기가 표시 시각과 맞댄다」가 이 시험을 붉게 만든다.
+ */
+test("⚠3중 검토 3차 P2 · 표시 시각이 404 로 늦어도 순서 기준선보다 새 본문이면 옛 판으로 안 뽑는다 — 대조군은 뽑는다", async () => {
+  const { ids, report } = await withArchive((db, sidecar) => {
+    upsertPlayer(db, "PIT", "投手", NOW);
+    freshPlayer(db, "RAISED");
+    applied(db, "RAISED", REV_X, T_LATE, T_EARLY);
+    sidecar("RAISED", { sha256: REV_Z, fetchedAt: T_DB, revision: 2 });
+    freshPlayer(db, "OLDER");
+    applied(db, "OLDER", REV_X, T_LATE, T_LATE);
+    sidecar("OLDER", { sha256: REV_Z, fetchedAt: T_DB, revision: 2 });
+    // 투수 PIT 는 두 경기에 던졌다 — 최신 사본을 둬 평소 사유로 안 뽑히게 한다
+    careerPit(db, "PIT", "2026-08-18T23:00:00.000Z", { games: 2 });
+  });
+  assert.ok(!ids.includes("RAISED"), "404 로 오른 표시 시각과 맞대 새 판을 옛 판으로 뽑았다");
+  assert.ok(ids.includes("OLDER"), "순서 기준선보다 이른 본문을 안 뽑았다 — 대조군이 헛돈다");
+  assert.match(report, /아카이브 옛 판 1명/);
 });
 
 /** ⚠**절대 우선을 주지 않는다** — 한 무리에 절대 우선을 주면 다른 무리가 그날 한 명도 못 들어간다(이 파일의 선례 · 설계 §5-4) */
