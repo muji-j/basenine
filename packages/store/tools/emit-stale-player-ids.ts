@@ -102,6 +102,7 @@ import { LocalSink, localBodyIntact, playerKey } from "@bb-app/archiver";
 import { openDb } from "../src/db.ts";
 import { isAbsentNow } from "../src/meta.ts";
 import { claimedShaOf, classifyForRefetch } from "../src/player-version.ts";
+import { REFETCH_WINDOW_CTES } from "../src/refetch-window.ts";
 
 const dbPath = process.argv[2];
 if (!dbPath) {
@@ -132,25 +133,15 @@ const db = openDb(dbPath, "1970-01-01T00:00:00.000Z");
 /**
  * 판정에 쓰는 공통 조각.
  *
- * ⚠**「마지막 출장일」은 대회를 가리지 않는다** — 올스타·포스트시즌에 나와도 선수 페이지는
- * 갱신될 수 있고, 여기서 고르는 것은 「집계 대상」이 아니라 「다시 받을 대상」이다.
+ * ⚠**창(`appearance` · `last_seen` · `cutoff` — 「마지막 출장일」과 400일 선)은 `src/refetch-window.ts` 한 벌이다**
+ *   (M1 · 2026-09-27 · 3중 검토 2차 m1). 선수 적재기가 **같은 창**으로 옛 판을 「재취득 대상」과 「선정 밖이라 못 고침」으로 가른다 —
+ *   여기서 다시 적으면 적재기가 「같은 실행이 푼다」고 부른 선수를 이 선정기가 영영 안 뽑는 날이 온다. 그 근거 주석도 그쪽에 있다.
  * ⚠**출장량 대조는 반대로 `competition='regular'` 만 본다** — 年度別成績 표가 정규시즌이기 때문이다.
  * 실측: 이 경계를 지키면 완결 8시즌이 전건 일치하고, 안 지키면 올스타·CS 만큼 우리가 더 커져서
  * **전 선수가 영구 후보가 된다.**
  */
 const COMMON = `
-  WITH appearance AS (
-    SELECT b.player_id AS id, MAX(g.game_date) AS last
-      FROM batting_line b JOIN game g ON g.game_id = b.game_id
-     WHERE g.status = 'played'
-     GROUP BY b.player_id
-    UNION ALL
-    SELECT t.player_id AS id, MAX(g.game_date) AS last
-      FROM pitching_line t JOIN game g ON g.game_id = t.game_id
-     WHERE g.status = 'played'
-     GROUP BY t.player_id
-  ),
-  last_seen AS (SELECT id, MAX(last) AS last FROM appearance GROUP BY id),
+  WITH ${REFETCH_WINDOW_CTES},
   fetched AS (
     /**
      * JST 로 맞춘다(§2-1). fetched_at 은 ISO UTC 이고 game_date 는 JST 경기일이다.
@@ -207,19 +198,7 @@ const COMMON = `
     SELECT o.id AS id FROM ours_pit o
      WHERE EXISTS (SELECT 1 FROM career_pitching c WHERE c.player_id = o.id)
        AND NOT EXISTS (SELECT 1 FROM pub_pit p WHERE p.id = o.id AND p.y = o.y)
-  ),
-  /**
-   * 「받을 수 없는 선수」를 가르는 선.
-   *
-   * ⚠**이 조건이 없으면 그들이 매일 몫의 앞자리를 먹는다**(2026-08-17 재검토 P1).
-   * 선수 페이지는 **현재 등록 선수만** 확실히 받을 수 있으므로 NPB 를 떠난 선수는 받아도 안 온다.
-   * 소급 시즌을 넣을수록 이 무리가 시즌당 100~160명씩 늘어 상한을 통째로 잠식한다
-   * (실측 CI DB: **810명** · 마지막 출장 2018:101 · 2019:113 · 2020:96 · 2021:104 · 2022:132 ·
-   *  2023:113 · 2024:121 · 2025:30).
-   * ⚠**그건 백필의 일이지 「신선도 유지」의 일이 아니다.** 여기서는 빼고, 몇 명 뺐는지 보고에 낸다.
-   * ⚠**벽시계가 아니라 데이터 기준이다**(M6) — 우리가 가진 마지막 경기일에서 센다.
-   */
-  cutoff AS (SELECT DATE(MAX(game_date), '-400 days') AS d FROM game WHERE status = 'played')
+  )
 `;
 
 /**
@@ -332,6 +311,7 @@ const dateOnly = rows.filter((r) => r.day !== null && r.lagging === 0 && r.day <
 /**
  * 아카이브 사유를 **사유별로** 가른다(SQL 은 합 하나로 뽑는다). ⚠**선정 밖** = 뽑을 사유가 있는데 후보에 없다 — 400일 밖이거나
  * **출장 기록이 아예 없다**(`last_seen` 에 없다). 둘 다 이 선정기가 영영 못 뽑는 선수다(받을 수 없다 · 3중 검토 2차 m1).
+ * 창의 정의는 `src/refetch-window.ts` 한 벌이고, 선수 적재기가 같은 창으로 「선정 밖이라 못 고침」을 센다.
  * ⚠~~제외 SQL 로 「400일 밖」만 셌다~~ — 출장 기록이 없는 선수는 **어디에도 안 셌다**(0 과 안 쟀음이 섞였다 · 2026-09-27 정정).
  */
 const staleSet = new Set(archiveTally.stale);

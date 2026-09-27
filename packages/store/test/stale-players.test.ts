@@ -30,6 +30,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { openDb, upsertBatting, upsertGame, upsertPitching, upsertPlayer } from "../src/index.ts";
 import type { Db } from "../src/index.ts";
+import { REFETCH_WINDOW_CTES } from "../src/refetch-window.ts";
 import type { Competition } from "@bb-app/domain";
 
 const NOW = "2026-08-20T00:00:00.000Z";
@@ -602,6 +603,9 @@ test("⚠N3 3-16 · 선정 SQL 의 자리표시자는 전부 json_each(?) 이고
   const excl = template("excludedSql");
   const count = (s: string, needle: string): number => s.split(needle).length - 1;
   assert.equal(count(common, "?"), 0, "공통 조각(COMMON)에 자리표시자가 있다 — archiveArgs 가 json_each(?) 만 센다");
+  // ⚠창 조각은 다른 모듈에 있다(M1 · 2026-09-27) — COMMON 이 그것을 끼워 넣으므로 그쪽에도 `?` 가 없어야 한다
+  assert.match(common, /\$\{REFETCH_WINDOW_CTES\}/, "COMMON 이 창 조각(refetch-window.ts)을 안 쓴다 — 창이 두 벌이 됐다");
+  assert.equal(count(REFETCH_WINDOW_CTES, "?"), 0, "창 조각(REFETCH_WINDOW_CTES)에 자리표시자가 있다");
   assert.equal(count(cand, "json_each(?)"), 2, "후보 SQL 의 json_each(?) 가 2 가 아니다(CASE · WHERE)");
   assert.equal(count(excl, "json_each(?)"), 0, "제외 SQL 에 json_each(?) 가 있다 — 선정 밖은 후보에 없는 것으로 센다");
   for (const [name, sql] of [["candidateSql", cand], ["excludedSql", excl]] as const) {

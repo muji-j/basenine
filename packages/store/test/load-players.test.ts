@@ -407,6 +407,8 @@ const oldUniform = (h: string): string => h.replace('<li id="pc_v_no">34</li>', 
 test("⚠N3 3-5 · 새 판 뒤에 배번만 바꾼 옛 판을 적재해도 프로필·판·통산이 안 되돌아간다 — 종료 0 · 목록 · ::warning::", { skip }, async () => {
   const env = await setup({ [PITCHER]: { fetchedAt: T_NEW } });
   try {
+    // 재취득 선정의 창 안에 둔다(출장 기록) — 없으면 「선정 밖이라 못 고침」이다(3중 검토 2차 m1 · 아래 따로 잰다)
+    appear(env, PITCHER, "2026-08-16");
     await editSidecar(env, PITCHER, { revision: 2 });
     assert.equal(load(env).code, 0);
     const before = snapshot(env, PITCHER);
@@ -419,10 +421,10 @@ test("⚠N3 3-5 · 새 판 뒤에 배번만 바꾼 옛 판을 적재해도 프�
     assert.equal(r.code, 0, `옛 판은 DB 를 지켰으니 종료 0 이다(설계 §5-5)\n${r.out}${r.err}`);
     assert.deepEqual(snapshot(env, PITCHER), before, "옛 판이 프로필·판·통산을 되돌렸다");
     assert.equal(before.player["profile_revision"], await realSha(PITCHER), "첫 적재가 적용 판을 안 채웠다");
-    assert.match(r.out, /판 가드 — 처음 0 · 같은 본문 0 · 새 판 0 · 옛 판 건너뜀 1\(재취득 대상 1 · 부재라 못 고침 0\) · 판 모름 건너뜀 0 · DB 시각 무효 0 · DB 에 없는 선수 0/);
+    assert.match(r.out, /판 가드 — 처음 0 · 같은 본문 0 · 새 판 0 · 옛 판 건너뜀 1\(재취득 대상 1 · 부재라 못 고침 0 · 선정 밖이라 못 고침 0\) · 판 모름 건너뜀 0 · DB 시각 무효 0 · DB 에 없는 선수 0/);
     assert.match(r.out, /⚠아카이브가 DB 보다 옛 판인 선수 1명 — 적재하지 않았다\(DB 를 지켰다\)/);
     assert.match(r.out, new RegExp(`^ +${PITCHER}$`, "m"), "옛 판 선수 ID 를 찍지 않았다");
-    assert.match(r.out, /^::warning::선수 페이지 1장이 DB 보다 옛 판이라 적재하지 않았다 — 재취득 대상 1 · 부재라 못 고침 0 · 절차 docs\/operations\/deploy\.md §7-G$/m);
+    assert.match(r.out, /^::warning::선수 페이지 1장이 DB 보다 옛 판이라 적재하지 않았다 — 재취득 대상 1 · 부재라 못 고침 0 · 선정 밖이라 못 고침 0 · 절차 docs\/operations\/deploy\.md §7-G$/m);
   } finally {
     await cleanup(env);
   }
@@ -500,6 +502,31 @@ async function dbHasNewer(env: Env, id: string): Promise<void> {
   exec(env, "UPDATE career_pitching SET fetched_at = ? WHERE player_id = ?", T_NEW, id);
 }
 
+const SELECTOR = fileURLToPath(new URL("../tools/emit-stale-player-ids.ts", import.meta.url));
+
+/**
+ * 그 선수가 **출장 기록**을 갖게 한다 — 치러진 경기 하나와 등판 한 줄. 재취득 선정의 창(`src/refetch-window.ts`)은 출장 기록이 있고
+ * 마지막 출장일이 (가진 마지막 경기일 − 400일) 이후인 선수다 — 적재기는 그 창으로 옛 판을 「재취득 대상」과 「선정 밖이라 못 고침」으로
+ * 가른다(3중 검토 2차 m1). ⚠경기 id 는 날짜·선수로 만든다 — 같은 날 두 선수를 두면 경기가 둘이다(창은 날짜만 본다).
+ */
+function appear(env: Env, id: string, date: string): void {
+  const db = openDb(env.dbPath, NOW);
+  try {
+    const gameId = `e1-${date}-${id}`;
+    upsertGame(db, {
+      gameId, season: Number(date.slice(0, 4)), gameDate: date, awayCode: "g", homeCode: "t", gameNo: 1,
+      status: "played", notPlayedReason: null, competition: "regular",
+      sourceUrl: "https://npb.jp/x", fetchedAt: NOW, awayRuns: 1, homeRuns: 2,
+    });
+    upsertPitching(db, {
+      gameId, playerId: id, side: "away", decision: null,
+      outs: 3, bf: 4, pitches: 15, h: 1, hr: 0, bb: 0, hbp: 0, so: 1, runs: 0, er: 0, wp: 0, balk: 0,
+    });
+  } finally {
+    db.close();
+  }
+}
+
 /**
  * ⚠⚠**부재 구멍**(설계 §1-1 사실 3). 404 경로는 옛 본문을 그대로 두고 `checkedAt`·`absentAt` 을 「지금」으로 쓴다 —
  * 본 시각(`seenAtOf`)으로 순서를 가르면 **없어진 페이지의 옛 본문이 가장 새 판처럼 보여** DB 를 덮는다. 옛 사본을 다시 받게 하는
@@ -514,8 +541,56 @@ test("⚠⚠N3 3-9 · 부재(404) 사이드카의 옛 본문은 확인 시각이
     const r = load(env);
     assert.equal(r.code, 0, r.out + r.err);
     assert.deepEqual(snapshot(env, PITCHER), before, "404 가 올린 시각으로 옛 본문이 새 판을 덮었다");
-    assert.match(r.out, /옛 판 건너뜀 1\(재취득 대상 0 · 부재라 못 고침 1\)/);
+    // ⚠출장 기록이 없어도(선정 밖) 부재가 먼저다 — 다시 받아도 404 라는 것이 더 근본적인 이유다
+    assert.match(r.out, /옛 판 건너뜀 1\(재취득 대상 0 · 부재라 못 고침 1 · 선정 밖이라 못 고침 0\)/);
     assert.match(r.out, new RegExp(`^ +${PITCHER}\\(부재\\)$`, "m"));
+  } finally {
+    await cleanup(env);
+  }
+});
+
+/**
+ * ⚠⚠**선정 밖이라 못 고침**(2026-09-27 · 3중 검토 2차 m1). 재취득 선정은 창(출장 기록이 있고 마지막 출장일이 가진 마지막 경기일 − 400일
+ * 이후) 밖의 선수를 **어떤 사유로도** 안 뽑는다 — 그 선수의 옛 판은 저절로 안 풀리고 경고가 매 실행 남는다. 예전에는 그것을 「재취득 대상
+ * (할 일 없음)」에 섞어 사람이 결함으로 못 읽었다. → 따로 센다. 창은 선정기와 **한 벌**이다(`src/refetch-window.ts` · M1) — 이 시험이
+ * 선정기도 같이 돌려 두 쪽이 같은 선수를 같은 갈래로 보는지 잰다. 변이 「창을 안 본다」가 이 시험을 붉게 만든다.
+ */
+test("⚠⚠3중 검토 2차 m1 · 창 밖(출장 기록 없음 · 400일 밖) 옛 판은 「선정 밖이라 못 고침」 — 재취득 대상에 안 섞는다 · 선정기와 같은 창", { skip }, async () => {
+  const env = await setup({ [PITCHER]: { fetchedAt: T_NEW }, [BATTER]: { fetchedAt: T_NEW } });
+  try {
+    assert.equal(load(env).code, 0);
+    // 창을 세우는 다른 선수의 최근 경기(가진 마지막 경기일 2026-08-16 → 선은 2025-07-12)
+    const db = openDb(env.dbPath, NOW);
+    try {
+      upsertPlayer(db, "OTHER", "OTHER", NOW);
+    } finally {
+      db.close();
+    }
+    appear(env, "OTHER", "2026-08-16");
+    appear(env, BATTER, "2024-05-01"); // 400일 밖 · PITCHER 는 출장 기록이 아예 없다
+    const oldPage = (h: string): string => h.replace("</body>", "<!-- 옛 판 --></body>");
+    for (const id of [PITCHER, BATTER]) {
+      await mutatePage(env, id, oldPage);
+      await editSidecar(env, id, { fetchedAt: T_OLD, checkedAt: undefined });
+    }
+    const r = load(env);
+    assert.equal(r.code, 0, r.out + r.err);
+    assert.match(r.out, /옛 판 건너뜀 2\(재취득 대상 0 · 부재라 못 고침 0 · 선정 밖이라 못 고침 2\)/, r.out);
+    assert.match(r.out, new RegExp(`^ +${BATTER}\\(선정 밖\\), ${PITCHER}\\(선정 밖\\)$`, "m"), r.out);
+    assert.match(r.out, /^::warning::선수 페이지 2장이 DB 보다 옛 판이라 적재하지 않았다 — 재취득 대상 0 · 부재라 못 고침 0 · 선정 밖이라 못 고침 2 · /m);
+
+    // 대조군 — BATTER 가 창 안에서 한 번 더 뛰면 재취득 대상이다(창을 보고 가른다는 증거). PITCHER 는 그대로 선정 밖
+    appear(env, BATTER, "2026-08-15");
+    const again = load(env);
+    assert.equal(again.code, 0, again.out + again.err);
+    assert.match(again.out, /옛 판 건너뜀 2\(재취득 대상 1 · 부재라 못 고침 0 · 선정 밖이라 못 고침 1\)/, again.out);
+    assert.match(again.out, new RegExp(`^ +${BATTER}, ${PITCHER}\\(선정 밖\\)$`, "m"), again.out);
+    // 선정기도 같은 창이다 — 재취득 대상(BATTER)은 뽑고 선정 밖(PITCHER)은 안 뽑고 센다
+    const sel = select(env);
+    assert.equal(sel.code, 0, sel.err);
+    assert.ok(sel.ids.includes(BATTER), `적재기가 재취득 대상이라 부른 선수를 선정기가 안 뽑았다\n${sel.err}`);
+    assert.ok(!sel.ids.includes(PITCHER), `선정 밖 선수를 뽑았다\n${sel.err}`);
+    assert.match(sel.err, /아카이브 옛 판 1명\(부재라 제외 0 · 사이드카 못 읽음 0 · 선정 밖 1 · /, sel.err);
   } finally {
     await cleanup(env);
   }
@@ -811,27 +886,6 @@ test("3중 검토 3차 · 대조군 — 404 없이 A(t1) → B(t2) 는 새 판�
 //   시각을 몰라 **판 모름(종료 1)** 으로 건너뛴다. 그런데 옛 판 선정은 사이드카만 봐서 「같은 판」으로 읽고 안 뽑았고, 뽑혀도 아카이버는
 //   상류가 사이드카와 같으면 「봤다」만 남겼다 — **본문이 영영 안 고쳐져 매 실행 배포가 막혔다.**
 //   → 선정기가 짝을 보고 뽑는다(`localBodyIntact`) → 아카이버가 받은 바이트로 본문을 되살린다(revision 불변) → 적재기는 같은 본문이다.
-
-const SELECTOR = fileURLToPath(new URL("../tools/emit-stale-player-ids.ts", import.meta.url));
-
-/** 그 선수가 재취득 선정의 창 안에 있게 한다 — 치러진 경기 하나와 등판 한 줄(선정기는 출장 기록이 있는 선수만 뽑는다) */
-function appear(env: Env, id: string, date: string): void {
-  const db = openDb(env.dbPath, NOW);
-  try {
-    const gameId = `e1-${date}`;
-    upsertGame(db, {
-      gameId, season: Number(date.slice(0, 4)), gameDate: date, awayCode: "g", homeCode: "t", gameNo: 1,
-      status: "played", notPlayedReason: null, competition: "regular",
-      sourceUrl: "https://npb.jp/x", fetchedAt: NOW, awayRuns: 1, homeRuns: 2,
-    });
-    upsertPitching(db, {
-      gameId, playerId: id, side: "away", decision: null,
-      outs: 3, bf: 4, pitches: 15, h: 1, hr: 0, bb: 0, hbp: 0, so: 1, runs: 0, er: 0, wp: 0, balk: 0,
-    });
-  } finally {
-    db.close();
-  }
-}
 
 function select(env: Env): { code: number; ids: string[]; err: string } {
   const r = spawnSync(process.execPath, [SELECTOR, env.dbPath, "--limit", "400", "--archive", env.archive], { encoding: "utf8" });

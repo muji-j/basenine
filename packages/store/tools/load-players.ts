@@ -19,6 +19,7 @@ import { parseCareer, parsePlayerProfile } from "@bb-app/parser";
 import { openDb } from "../src/db.ts";
 import { judgePlayerVersion, playerArchiveOf } from "../src/player-version.ts";
 import type { MetaSnapshot } from "../src/player-version.ts";
+import { playersInRefetchWindow } from "../src/refetch-window.ts";
 
 const [archiveRoot, dbPath] = process.argv.slice(2);
 if (!archiveRoot || !dbPath) {
@@ -141,6 +142,15 @@ const unknownPlayers: string[] = [];
  * 들어갈 수 있는가」다(설계 §5-5 · 옛 판에서 경기 가드와 다른 종료 코드를 고른 이유 여섯은 거기에).
  */
 const verdictCount = { "no-row": 0, first: 0, same: 0, newer: 0 };
+/**
+ * 옛 판으로 건너뛴 선수와 **왜 저절로 안 풀리는가**(2026-09-27 · 3중 검토 2차 m1). 셋으로 가른다(위에서부터 처음 맞는 것):
+ * - `absent` 부재라 못 고침 — 마지막 관측이 404/410 이라 다시 받아도 못 고친다
+ * - `outside` 선정 밖이라 못 고침 — 재취득 선정의 창 밖(400일 밖 · 출장 기록 없음)이라 선정기가 **영영 안 뽑는다**
+ * - 그 밖 재취득 대상 — 같은 실행(또는 다음 실행)의 선정이 뽑는다
+ * ⚠`outside` 를 재취득 대상에 섞으면 「할 일 없음」이라 적힌 선수가 매 실행 경고로 남는다 — 사람이 결함으로 못 읽는다.
+ * 루프는 부재만 적어 두고, 창은 루프가 끝난 뒤 가른다(아래 요약 · 창 질의가 수 초라 옛 판이 없는 날은 재지 않는다).
+ */
+type StaleClass = "refetch" | "absent" | "outside";
 const staleProfiles: { playerId: string; absent: boolean }[] = [];
 let versionUnknown = 0;
 let dbTimeInvalid = 0;
@@ -331,26 +341,36 @@ console.log(
 );
 /**
  * ⚠**판 가드 — 0 이어도 찍는다**(감사 N3 · 설계 §5-3). 옛 판은 **실패가 아니다** — 순서를 알고 DB 를 지켰다(종료 0).
- *   재취득 대상과 부재(상류가 페이지를 지웠다 — 받아도 404)를 **나눠서** 센다. 처치는 런북 §7-G.
+ *   재취득 대상 · 부재(상류가 페이지를 지웠다 — 받아도 404) · **선정 밖**(선정기가 영영 안 뽑는다 · 3중 검토 2차 m1)을 **나눠서** 센다.
+ *   처치는 런북 §7-G. ⚠「같은 선수가 며칠 계속 찍히면 결함」이라는 판단(설계 §10-1 뒤집힐 조건)은 **재취득 대상만** 센다 —
+ *   못 고치는 두 갈래는 매 실행 남는 것이 정상이다.
+ * ⚠**창은 선정기와 한 벌이다**(M1 · `src/refetch-window.ts`) — 적재기는 경기 표를 안 바꾸므로 선정기가 본 창과 같다.
+ *   ⚠옛 판(부재 아님)이 있을 때만 잰다 — 창 질의는 수 초 걸리고(실측 CI 사본 약 7초 · 선정기도 같은 질의를 돈다) 옛 판이 없는 날이 보통이다.
  */
-const staleRefetch = staleProfiles.filter((s) => !s.absent).length;
-const staleAbsent = staleProfiles.length - staleRefetch;
+const refetchable = staleProfiles.some((s) => !s.absent) ? playersInRefetchWindow(db) : new Set<string>();
+const classOf = (s: { playerId: string; absent: boolean }): StaleClass =>
+  s.absent ? "absent" : refetchable.has(s.playerId) ? "refetch" : "outside";
+const staleCount = (cls: StaleClass): number => staleProfiles.filter((s) => classOf(s) === cls).length;
+const staleRefetch = staleCount("refetch");
+const staleAbsent = staleCount("absent");
+const staleOutside = staleCount("outside");
 console.log(
   `판 가드 — 처음 ${verdictCount.first} · 같은 본문 ${verdictCount.same} · 새 판 ${verdictCount.newer} · ` +
-    `옛 판 건너뜀 ${staleProfiles.length}(재취득 대상 ${staleRefetch} · 부재라 못 고침 ${staleAbsent}) · ` +
+    `옛 판 건너뜀 ${staleProfiles.length}(재취득 대상 ${staleRefetch} · 부재라 못 고침 ${staleAbsent} · 선정 밖이라 못 고침 ${staleOutside}) · ` +
     `판 모름 건너뜀 ${versionUnknown} · DB 시각 무효 ${dbTimeInvalid} · DB 에 없는 선수 ${verdictCount["no-row"]}`,
 );
 if (staleProfiles.length > 0) {
   // ⚠**선수 ID 를 전부 찍는다**(한 줄 20개 · ID 순) — 자르지 않는다. 잘린 목록은 처치할 선수를 조용히 빠뜨린다
   const sorted = [...staleProfiles].sort((a, b) => (a.playerId < b.playerId ? -1 : a.playerId > b.playerId ? 1 : 0));
+  const tag = { refetch: "", absent: "(부재)", outside: "(선정 밖)" } as const;
   console.log(`⚠아카이브가 DB 보다 옛 판인 선수 ${staleProfiles.length}명 — 적재하지 않았다(DB 를 지켰다)`);
   for (let i = 0; i < sorted.length; i += 20) {
-    console.log(`   ${sorted.slice(i, i + 20).map((s) => (s.absent ? `${s.playerId}(부재)` : s.playerId)).join(", ")}`);
+    console.log(`   ${sorted.slice(i, i + 20).map((s) => `${s.playerId}${tag[classOf(s)]}`).join(", ")}`);
   }
   // ⚠러너가 주석으로 읽는다(`update.ts` 가 `stdio: "inherit"` 로 띄운다) · 로컬에서는 그냥 한 줄이다
   console.log(
     `::warning::선수 페이지 ${staleProfiles.length}장이 DB 보다 옛 판이라 적재하지 않았다 — ` +
-      `재취득 대상 ${staleRefetch} · 부재라 못 고침 ${staleAbsent} · 절차 docs/operations/deploy.md §7-G`,
+      `재취득 대상 ${staleRefetch} · 부재라 못 고침 ${staleAbsent} · 선정 밖이라 못 고침 ${staleOutside} · 절차 docs/operations/deploy.md §7-G`,
   );
 }
 if (noBaseline.length > 0) {
