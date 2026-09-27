@@ -10,7 +10,10 @@
  * - 결합자(공백·`>`·`+`·`~`)는 전부 「조상 어딘가에 있다」로 근사한다. 요소가 `ancestors` 를 주면 그걸로
  *   맞춰 보고, 안 주면 조상 조건은 맞는다고 본다(그래서 결과를 쓰는 시험이 조상을 적어 두는 편이 정확하다).
  * - 주어의 타입 선택자는 요소의 `tag` 로 맞춘다. 모르는 의사 클래스를 만나면 **던진다**.
- * - 가상 요소(`::before` 등)를 가진 선택자는 요소 자신에 맞지 않는다고 본다.
+ * - 가상 요소(`::before` 등)를 가진 선택자는 요소 자신에 맞지 않는다고 본다. 요소가 `pseudo` 를 주면
+ *   **그 가상 요소만** 잰다(2026-09-27 · N8b·N8c — 생성 콘텐츠가 이름에 드는가를 물으려고).
+ *   ⚠**상속은 따라가지 않는다** — 가상 요소는 요소에서 값을 물려받는데 이 계산기는 조상 값을 안 들고 다닌다.
+ *   `content` 처럼 **상속되지 않는 속성**에만 써라.
  * - 스타일 규칙 안의 중첩(`&`)은 없다고 보고, 있으면 던진다.
  */
 
@@ -29,8 +32,13 @@ export interface El {
   focused?: boolean;
   /** 문서 뿌리(`:root`)인가 — 토큰(사용자 정의 속성)을 풀 때만 쓴다 */
   root?: boolean;
+  /**
+   * 이 요소의 **가상 요소**를 잰다. 주면 그 이름의 가상 요소를 가진 선택자만 맞고, 안 주면 가상 요소 선택자는 안 맞는다.
+   * ⚠`ancestors` 도 같이 준다 — 안 주면 조상 조건이 전부 「맞는다」가 된다(위 한계).
+   */
+  pseudo?: "before" | "after";
   /** 조상들. 주면 결합자 앞 조건을 이걸로 맞춘다(순서는 안 본다) */
-  ancestors?: readonly Omit<El, "ancestors" | "focused">[];
+  ancestors?: readonly Omit<El, "ancestors" | "focused" | "pseudo">[];
 }
 
 export interface Rule {
@@ -121,12 +129,13 @@ interface Compound {
   classes: string[];
   attrs: { name: string; op: "=" | "^=" | null; value: string | null }[];
   pseudos: { name: string; arg: string | null }[];
-  pseudoElement: boolean;
+  /** 가상 요소의 이름(`before` 등). 없으면 null */
+  pseudoElement: string | null;
 }
 
 /** 복합 선택자 하나를 단순 선택자로 쪼갠다 */
 function parseCompound(src: string): Compound {
-  const c: Compound = { tag: null, ids: [], classes: [], attrs: [], pseudos: [], pseudoElement: false };
+  const c: Compound = { tag: null, ids: [], classes: [], attrs: [], pseudos: [], pseudoElement: null };
   let i = 0;
   const ident = (): string => {
     const m = /^-?[_a-zA-Z][\w-]*/.exec(src.slice(i));
@@ -154,8 +163,7 @@ function parseCompound(src: string): Compound {
       });
     } else if (src.startsWith("::", i)) {
       i += 2;
-      ident();
-      c.pseudoElement = true;
+      c.pseudoElement = ident().toLowerCase();
     } else if (ch === ":") {
       i += 1;
       const name = ident().toLowerCase();
@@ -187,7 +195,7 @@ function listOf(arg: string): Compound[] {
 }
 
 function specOf(c: Compound): Spec {
-  let s: Spec = [c.ids.length, c.classes.length + c.attrs.length, (c.tag === null ? 0 : 1) + (c.pseudoElement ? 1 : 0)];
+  let s: Spec = [c.ids.length, c.classes.length + c.attrs.length, (c.tag === null ? 0 : 1) + (c.pseudoElement !== null ? 1 : 0)];
   for (const p of c.pseudos) {
     if (p.name === "where") continue;
     if (p.name === "not" || p.name === "is") {
@@ -216,8 +224,12 @@ function matchesStatic(c: Compound, el: Node): boolean {
   return true;
 }
 
+/**
+ * 복합 하나가 **그 요소(가상 요소라면 그 주인)** 에 맞는가. 가상 요소 판정은 여기서 하지 않는다 — `match()` 가 한다.
+ * ⚠여기서 하면 `:not(…)`·`:is(…)` 의 **안쪽 복합**까지 그 판정을 받아, 가상 요소를 잴 때 안쪽이 늘 「불일치」가 된다
+ *   (`.x:not([a="b"])::before` 가 a="b" 인 요소에도 맞아 버린다).
+ */
 function matches(c: Compound, el: Node, subject: boolean): boolean {
-  if (c.pseudoElement) return false;
   if (!matchesStatic(c, el)) return false;
   for (const p of c.pseudos) {
     switch (p.name) {
@@ -258,6 +270,10 @@ export function match(part: string, el: El): Spec | null {
     .map(parseCompound);
   const subject = compounds.at(-1);
   if (subject === undefined) return null;
+  /* ⚠가상 요소는 **주어(맨 끝 복합)에서만** 뜻이 있다. 주어의 가상 요소가 요소가 잰다고 한 것(`pseudo`)과 같아야 하고
+     — 둘 다 없거나 이름이 같거나 — 조상 자리에 가상 요소가 있는 선택자는 어디에도 안 맞는다 */
+  if ((subject.pseudoElement ?? undefined) !== el.pseudo) return null;
+  if (compounds.slice(0, -1).some((c) => c.pseudoElement !== null)) return null;
   if (!matches(subject, el, true)) return null;
   if (el.ancestors !== undefined) {
     for (const up of compounds.slice(0, -1)) {
@@ -369,7 +385,7 @@ export function toPx(source: string, value: string, mediaOk: (q: string) => bool
 /** 복합 선택자 하나(`.card[aria-selected="true"]`)에서 요소를 만든다 */
 export function elementOf(compound: string, tag: string): El {
   const c = parseCompound(compound);
-  if (c.pseudos.length > 0 || c.pseudoElement) throw new Error(`의사 클래스·요소가 붙은 선택자로 요소를 만들 수 없다: ${compound}`);
+  if (c.pseudos.length > 0 || c.pseudoElement !== null) throw new Error(`의사 클래스·요소가 붙은 선택자로 요소를 만들 수 없다: ${compound}`);
   if (new Set(c.ids).size > 1) throw new Error(`id 가 둘인 요소는 없다: ${compound}`);
   return {
     tag,

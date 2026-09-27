@@ -1153,9 +1153,13 @@ function idLine(d: PlayerPageData, base: string): RawHtml {
       서버로 가지 않는다. 스크립트가 없으면 버튼 자체를 띄우지 않는다 —
       눌러도 아무 일이 없는 버튼을 두는 것보다 없는 편이 정직하다.
       ⚠**글리프(☆/★)는 마크업에 없다** — CSS 가 aria-pressed 에서 그린다(감사 W2 · 2026-09-27).
-      글자로 두면 눌림과 글리프가 따로 놀 수 있고, 눌림을 색 하나로만 말하게 된다 -->
+      글자로 두면 눌림과 글리프가 따로 놀 수 있고, 눌림을 색 하나로만 말하게 된다.
+      ⚠**이름은 상태와 무관한 고정 명칭이다**(감사 N8 · 2026-09-27). 예전의 동작형 이름
+      (「…に入れる」↔「…から外す」)은 스크립트가 누를 때마다 갈아 끼워 aria-pressed 와 함께 상태를 **두 번**
+      말했다. 같은 뜻의 구단 즐겨찾기(.favt)처럼 이름은 무엇인가를, 눌렸는가는 aria-pressed 하나가 말한다.
+      스크립트는 이 이름을 건드리지 않는다(paintFav) -->
       <button class="favbtn" type="button" id="favBtn" data-fav="${d.playerId}"
-        aria-pressed="false" aria-label="お気に入りに入れる" hidden></button></div>
+        aria-pressed="false" aria-label="お気に入り" hidden></button></div>
     <span class="sub">${teamLink(base, d.teamCode, d.teamName)}${bio.length === 0 ? null : raw(" · ")}${bio.join(" · ")}</span>
     <span class="asof">${d.season}年${d.asOf === null ? "" : ` · ${gameDate(d.asOf)}まで`}</span>
     ${d.stints.length < 2

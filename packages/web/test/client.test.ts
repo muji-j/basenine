@@ -15,10 +15,10 @@ import { BLOCKS, PRESETS, blocksFor, presetsFor } from "../src/blocks.ts";
  */
 const BATTER_PRESETS = presetsFor("batter");
 const BATTER_BLOCKS = blocksFor("batter");
-import { bootstrapFor } from "../src/player-page.ts";
+import { bootstrapFor, renderPlayerPage } from "../src/player-page.ts";
 import { El, make, makeDocument, makeStorage, withRect } from "./dom-stub.ts";
 import { compareCard } from "../src/compare.ts";
-import { playerPage } from "./fixtures.ts";
+import { context, playerPage } from "./fixtures.ts";
 
 /** 정렬 가능한 열. 서버(`player-page.ts`)의 목록과 같은 키여야 한다 */
 const MATCHUP_COLUMNS: { key: string; label: string; type: "text" | "num"; rate?: true }[] = [
@@ -1338,6 +1338,10 @@ test("?vs= 로 오면 상대가 미리 채워지고 대전 블록이 열린다",
   assert.deepEqual(shown, ["今永"]);
 });
 
+/**
+ * ⚠**이 시험은 착지 직후 저장 없이 바로 다시 와서, 아래 N5 를 못 봤다**(2026-09-27 · 반증자 지적).
+ * 저장은 다른 조작에 딸려서 일어난다 — 그 경로는 아래 N5 시험이 잰다.
+ */
 test("?vs= 는 저장된 구성을 바꾸지 않는다 — 이번 방문에만 연다", () => {
   const storage = makeStorage();
   const first = buildPage();
@@ -1346,6 +1350,113 @@ test("?vs= 는 저장된 구성을 바꾸지 않는다 — 이번 방문에만 �
   const second = buildPage();
   run(second, { storage });
   assert.equal(second.getElementById("b-matchup")!.hidden, true, "다음 방문에도 대전 블록이 켜져 있다");
+});
+
+/** 저장된 블록 구성. 저장이 한 번도 안 일어났으면 undefined */
+const savedOrder = (storage: Storage): string[] | undefined =>
+  (JSON.parse(storage.getItem("npb-meikan-layout") ?? "{}") as { order?: string[] }).order;
+
+/**
+ * ⚠**N5 — ?vs= 로 연 대전 블록이 뒤따르는 저장에 딸려 영구히 켜졌다**(2026-09-27 · 감사 N5 · 다른 벤더 반증이 재현).
+ * 착지가 `state.order` **자체**에 matchup 을 더하고 있어서, 그 방문 중 **아무 저장**(정렬 · 밀도 · 테마)이
+ * 그것까지 저장했다 — 다음 방문(?vs= 없이)에도 대전 블록이 열린다. 탭에는 방문 한정 장치(`transient`)가
+ * 있었는데 블록에는 없었다(탭 쪽 같은 모양의 시험: 「⚠다른 탭을 눌러 저장이 일어나도 깊은 링크의 선택은 새어 나가지 않는다」).
+ * ⚠**저장을 한 번 일으켜야 공회전하지 않는다** — 그래서 저장이 실제로 일어났는지부터 본다.
+ * ⚠**계기를 셋 돈다** — 결함은 「정렬」이 아니라 「아무 저장」이다. 하나만 재면 다음 사람이 그것만 막는다.
+ */
+for (const [what, trigger] of [
+  ["정렬", (doc: ReturnType<typeof makeDocument>): void => clickHeader(doc, "hr")],
+  ["밀도", (doc: ReturnType<typeof makeDocument>): void => press(doc, "density", "compact")],
+  ["테마", (doc: ReturnType<typeof makeDocument>): void => doc.getElementById("themeBtn")!.fire("click")],
+] as const) {
+  test(`⚠N5 ?vs= 로 연 대전 블록은 뒤따르는 저장(${what})에 딸려 가지 않는다 — 다음 방문엔 닫혀 있다`, () => {
+    const storage = makeStorage();
+    const first = buildPage();
+    run(first, { storage, location: { search: "?vs=33", href: "" } });
+    assert.equal(first.getElementById("b-matchup")!.hidden, false, "전제가 틀렸다 — ?vs= 로 대전 블록이 안 열렸다");
+    trigger(first);
+    const order = savedOrder(storage);
+    assert.ok(Array.isArray(order), `${what} 이 저장을 일으키지 않았다 — 이 시험이 공회전한다`);
+    assert.ok(!order.includes("matchup"), `링크 한 번이 ${what} 저장에 딸려 블록 구성에 대전 블록을 넣었다: ${order.join(",")}`);
+    // ⚠**이 방문에서는 여전히 열려 있다** — 고친 것이 착지 자체를 죽이면 안 된다
+    assert.equal(first.getElementById("b-matchup")!.hidden, false, `${what} 뒤에 대전 블록이 닫혔다`);
+
+    const second = buildPage();
+    run(second, { storage });
+    assert.equal(second.getElementById("b-matchup")!.hidden, true, "?vs= 없이 다시 왔는데 대전 블록이 열려 있다");
+  });
+}
+
+/** 조립 목록에서 그 블록의 줄. ⚠목록은 조작마다 다시 그려지므로 **매번 새로 찾는다** */
+function blockRow(doc: ReturnType<typeof makeDocument>, id: string): El {
+  const name = BATTER_BLOCKS.find((b) => b.id === id)!.name;
+  const row = doc.querySelectorAll("#blockList .brow").find((r) => r.querySelector(".bn")?.textContent === name);
+  assert.notEqual(row, undefined, `조립 목록에 ${id} 줄이 없다`);
+  return row!;
+}
+
+/**
+ * N5 의 **고침이 지켜야 할 규칙들** — 방문 한정 블록은 탭의 `transient` 와 같은 규칙을 따른다(M1).
+ * ⚠이 넷은 **옛 코드에서도 통과한다**(옛 코드는 matchup 을 `state.order` 에 넣었으니 목록도 켜져 있었다).
+ * 결함을 재는 것이 아니라 **고침이 옆을 깨지 않는가**를 잰다 — 방문 한정 자리를 따로 두면
+ * 목록·옮기기·프리셋이 그 자리를 모른 채 남기 쉽다.
+ */
+test("N5 ?vs= 로 연 대전 블록은 조립 목록에서도 켜져 있다 — 화면과 목록이 어긋나지 않는다", () => {
+  const doc = buildPage();
+  run(doc, { location: { search: "?vs=33", href: "" } });
+  assert.equal(blockRow(doc, "matchup").querySelector("input")!.checked, true,
+    "대전 블록이 보이는데 목록에서는 꺼져 있다 — 화면이 자기 자신과 모순된다");
+});
+
+test("⚠N5 그 방문에 대전 블록을 직접 끄면 닫히고, 다시 켜면 그때는 저장된다 — 직접 고른 것이 임시를 이긴다(탭과 같은 규칙)", () => {
+  const storage = makeStorage();
+  const first = buildPage();
+  run(first, { storage, location: { search: "?vs=33", href: "" } });
+  const off = blockRow(first, "matchup").querySelector("input")!;
+  off.checked = false;
+  off.fire("change");
+  assert.equal(first.getElementById("b-matchup")!.hidden, true, "직접 껐는데 대전 블록이 남았다 — 임시가 직접 고른 것을 이겼다");
+  assert.ok(!(savedOrder(storage) ?? []).includes("matchup"));
+
+  const on = blockRow(first, "matchup").querySelector("input")!;
+  on.checked = true;
+  on.fire("change");
+  assert.equal(first.getElementById("b-matchup")!.hidden, false);
+  assert.ok((savedOrder(storage) ?? []).includes("matchup"), "직접 켠 대전 블록이 저장되지 않았다");
+
+  const second = buildPage();
+  run(second, { storage });
+  assert.equal(second.getElementById("b-matchup")!.hidden, false, "직접 켠 대전 블록이 다음 방문에 사라졌다");
+});
+
+test("N5 그 방문에 대전 블록을 직접 옮기면 그 자리에 저장된다 — 옮기는 것도 고르는 것이다", () => {
+  const storage = makeStorage();
+  const doc = buildPage();
+  run(doc, { storage, location: { search: "?vs=33", href: "" } });
+  const std = BATTER_PRESETS.find((p) => p.id === "standard")!.blocks;
+  // ⚠**방문 한정 블록은 맨 뒤에 붙는다** — 착지가 예전에 붙이던 자리 그대로다
+  assert.deepEqual(visible(doc), [...std, "matchup"], "전제가 틀렸다 — 방문 한정 블록이 맨 뒤에 없다");
+  blockRow(doc, "matchup").querySelectorAll(".mv")[0]!.fire("click"); // ↑
+  const moved = [...std.slice(0, -1), "matchup", std.at(-1)!];
+  assert.deepEqual(visible(doc), moved, "↑ 를 눌렀는데 대전 블록이 안 올라갔다");
+  assert.deepEqual(savedOrder(storage), moved, "직접 옮긴 대전 블록이 저장되지 않았다");
+  // ⚠**그 반대 방향 — 저장된 블록이 방문 한정 블록과 자리를 바꿔도 같다.** 눌러도 아무 일이 없으면 안 된다
+  const again = buildPage();
+  const storage2 = makeStorage();
+  run(again, { storage: storage2, location: { search: "?vs=33", href: "" } });
+  const lastSaved = std.at(-1)!;
+  blockRow(again, lastSaved).querySelectorAll(".mv")[1]!.fire("click"); // ↓
+  const swapped = [...std.slice(0, -1), "matchup", lastSaved];
+  assert.deepEqual(visible(again), swapped, `${lastSaved} 의 ↓ 가 아무 일도 안 했다`);
+  assert.deepEqual(savedOrder(storage2), swapped, "자리를 바꾼 대전 블록이 저장되지 않았다");
+});
+
+test("N5 그 방문에 프리셋을 고르면 방문 한정 블록도 걷힌다 — 프리셋은 구성 전체를 고르는 것이다", () => {
+  const doc = buildPage();
+  run(doc, { location: { search: "?vs=33", href: "" } });
+  press(doc, "preset", "simple");
+  assert.deepEqual(visible(doc), [...BATTER_PRESETS.find((p) => p.id === "simple")!.blocks],
+    "シンプル 을 골랐는데 대전 블록이 남았다 — 고른 프리셋과 화면이 다르다");
 });
 
 test("대전이 없는 조합이면 빈 표가 아니라 그렇다고 말한다(M12)", () => {
@@ -1519,6 +1630,72 @@ test("W7 어느 표에도 없고 이름도 모르면 — 그래도 ID 를 칸에
   assert.ok(!said.includes("77777777"), "사람이 읽을 수 없는 ID 를 화면에 적었다");
 });
 
+// ─── 로빙 tabindex 는 선택을 따라간다 (감사 N6) ─────────────────────────────
+
+/**
+ * ⚠**N6 — 일시 탭 전환이 탭 정지를 안 옮겼다**(2026-09-27 · 감사 N6 · 다른 벤더 반증이 재현).
+ * 로빙(고른 탭만 `tabindex="0"`)이 `initTabs` 안의 지역 함수라 **클릭·화살표에서만** 돌았다.
+ * 선택을 바꾸는 경로가 셋 더 있는데 — 깊은 링크(`revealHash`) · 브라우저 찾기(`beforematch`) ·
+ * `?vs=` 通算 착지 — 셋 다 `showTabs()` 만 불러서 `aria-selected` 는 새 탭으로 옮기고
+ * **탭 정지는 이전 탭에 남겼다.** Tab 으로 탭줄에 들어가면 고른 탭이 아니라 이전 탭에 초점이 간다
+ * (WAI-ARIA APG Tabs: 탭줄에 들어오면 초점은 활성 탭으로).
+ * ⚠**「고른 탭 = 0 · 이전 탭 = −1」을 함께 본다** — 한쪽만 보면 「둘 다 0」(탭 정지 둘)이 통과한다.
+ */
+const tabOf = (doc: ReturnType<typeof makeDocument>, group: string, key: string): El =>
+  doc.querySelectorAll(`[data-tabgroup="${group}"] [data-tab]`).find((b) => b.dataset["tab"] === key)!;
+
+function assertRoved(doc: ReturnType<typeof makeDocument>, group: string, on: string, was: string, path: string): void {
+  assert.equal(tabOf(doc, group, on).getAttribute("aria-selected"), "true", `전제가 틀렸다 — ${path} 가 ${group}:${on} 을 안 골랐다`);
+  assert.equal(tabOf(doc, group, on).getAttribute("tabindex"), "0",
+    `${path} 로 ${group}:${on} 을 골랐는데 탭 정지가 없다 — Tab 으로 들어가면 고른 탭에 초점이 안 간다`);
+  assert.equal(tabOf(doc, group, was).getAttribute("tabindex"), "-1",
+    `${path} 뒤에도 이전 탭 ${group}:${was} 가 탭 정지다 — 초점이 이전 탭으로 간다`);
+}
+
+test("⚠N6 깊은 링크(#앵커)로 연 탭에 탭 정지가 따라간다 — 거슬러 올라가 연 탭 전부", () => {
+  const doc = buildRankingPage();
+  const storage = makeStorage();
+  storage.setItem("npb-meikan-layout", JSON.stringify({ tabs: { ranktype: "team", rankleague: "pacific" } }));
+  run(doc, { storage, location: { search: "", href: "", hash: "#lg-central" } });
+  assertRoved(doc, "ranktype", "personal", "team", "깊은 링크");
+  assertRoved(doc, "rankleague", "central", "pacific", "깊은 링크");
+});
+
+test("⚠N6 브라우저 찾기(beforematch)로 펼친 탭에 탭 정지가 따라간다", () => {
+  const doc = buildRankingPage();
+  const storage = makeStorage();
+  storage.setItem("npb-meikan-layout", JSON.stringify({ tabs: { ranktype: "team" } }));
+  run(doc, { storage });
+  assert.equal(tabOf(doc, "ranktype", "team").getAttribute("tabindex"), "0", "전제가 틀렸다 — 처음 탭 정지가 저장된 탭에 없다");
+  doc.querySelectorAll('[data-panelgroup="ranktype"]')
+    .find((p) => p.dataset["panelkey"] === "personal" && p.getAttribute("role") === "tabpanel")!
+    .fire("beforematch");
+  assertRoved(doc, "ranktype", "personal", "team", "브라우저 찾기");
+});
+
+test("⚠N6 ?vs= 가 通算 탭을 열면 탭 정지도 通算 으로 간다", () => {
+  const doc = buildScopedMatchup();
+  run(doc, { location: { search: "?vs=99", href: "" } });
+  assertRoved(doc, "matchupScope", "career", "season", "?vs= 通算 착지");
+});
+
+/**
+ * ⚠**로빙은 탭줄(role=tablist)의 규약이다 — 버튼 묶음(role=group · aria-pressed)에는 붙이지 않는다**
+ * (2026-08-18 유저 지적으로 좁혔다 · `initTabs` 주석). 거기서 로빙을 쓰면 Tab 으로 닿던 버튼들이
+ * **하나만 남고 사라진다.** N6 이 로빙을 `showTabs` 로 옮기면서 **모든 그룹을 도는 자리**로 갔으므로
+ * 그 거름이 따라왔는지 본다 — ⚠이 시험은 **옛 코드에서도 통과한다**(고침의 부작용 감시).
+ */
+test("N6 버튼 묶음(role=group)의 버튼은 선택이 바뀌어도 탭 정지를 잃지 않는다", () => {
+  const doc = buildPage();
+  run(doc, { location: { search: "?vs=33", href: "" } });
+  const min = doc.querySelectorAll('[data-tabgroup="matchupMin"]');
+  assert.equal(min.length, 1, "픽스처에 버튼 묶음이 없다 — 이 시험이 공회전한다");
+  assert.equal(min[0]!.getAttribute("role"), "group");
+  tabOf(doc, "matchupMin", "5").fire("click");
+  const idx = min[0]!.querySelectorAll("[data-tab]").map((b) => b.getAttribute("tabindex"));
+  assert.deepEqual(idx, [null, null, null, null], "버튼 묶음에 로빙이 붙었다 — Tab 으로 닿던 버튼이 사라진다");
+});
+
 // ─── 즐겨찾기 ───────────────────────────────────────────────────────────
 
 /**
@@ -1557,10 +1734,16 @@ function buildRoster(): ReturnType<typeof makeDocument> {
   return doc;
 }
 
-/** 선수 페이지의 즐겨찾기 버튼만 있는 최소 문서 */
+/**
+ * 선수 페이지의 즐겨찾기 버튼만 있는 최소 문서.
+ * ⚠**이름(aria-label)은 진짜 렌더에서 읽는다** — 스텁에 손으로 적으면 두 벌이 되어,
+ * 마크업의 이름이 바뀌어도 스텁은 옛 이름으로 초록이다.
+ */
 function buildFavBtn(id = "p1"): ReturnType<typeof makeDocument> {
+  const name = /id="favBtn"[^>]*?aria-label="([^"]*)"/.exec(renderPlayerPage(playerPage(), context()))?.[1];
+  assert.ok(name !== undefined && name !== "", "선수 페이지에서 즐겨찾기 버튼의 이름을 못 읽었다 — 이 스텁이 실물과 갈렸다");
   const doc = makeDocument();
-  const b = make("button", { class: "favbtn", id: "favBtn", "data-fav": id, "aria-pressed": "false" });
+  const b = make("button", { class: "favbtn", id: "favBtn", "data-fav": id, "aria-pressed": "false", "aria-label": name });
   b.hidden = true;
   doc.body.appendChild(b);
   return doc;
@@ -1569,19 +1752,26 @@ function buildFavBtn(id = "p1"): ReturnType<typeof makeDocument> {
 test("즐겨찾기는 이 브라우저에만 남는다 — 저장되고 다시 열어도 살아 있다", () => {
   const storage = makeStorage();
   const first = buildFavBtn();
+  const name = first.getElementById("favBtn")!.getAttribute("aria-label");
   run(first, { storage });
   const btn = first.getElementById("favBtn")!;
   assert.equal(btn.hidden, false, "스크립트가 있는데 버튼이 숨겨진 채다");
   assert.equal(btn.getAttribute("aria-pressed"), "false");
+  assert.equal(btn.getAttribute("aria-label"), name, "스크립트가 마크업의 이름을 갈아 끼웠다");
 
   btn.fire("click");
   assert.equal(btn.getAttribute("aria-pressed"), "true");
-  assert.match(btn.getAttribute("aria-label")!, /外す/, "누른 뒤에도 「넣는다」라고 말한다");
+  /* ⚠**예전에는 여기서 이름이 「…から外す」로 바뀌기를 요구했다**(`/外す/` · 2026-09-27 감사 N8 로 교체).
+     그 단언이 결함을 요구하고 있었다 — 눌림은 aria-pressed 가 말하는데 이름까지 반대 방향으로 뒤집으면
+     상태가 **두 번** 읽힌다(「お気に入りから外す、押されています」). 같은 뜻의 구단 즐겨찾기(.favt)는
+     이름을 고정하고 aria-pressed 만 바꾼다 — 두 토글이 다른 규칙이면 다음 사람이 또 틀린다(M1). */
+  assert.equal(btn.getAttribute("aria-label"), name, "누르면 이름이 바뀐다 — 상태를 이름과 aria-pressed 가 두 번 말한다");
 
-  // 다시 연다
+  // 다시 연다 — ⚠**눌린 채로 열어도 이름은 같다**(이름이 상태를 따라가지 않는다)
   const second = buildFavBtn();
   run(second, { storage });
   assert.equal(second.getElementById("favBtn")!.getAttribute("aria-pressed"), "true");
+  assert.equal(second.getElementById("favBtn")!.getAttribute("aria-label"), name, "눌린 채로 열었더니 이름이 다르다");
 });
 
 test("⚠스크립트가 없으면 버튼을 띄우지 않는다 — 눌러도 아무 일이 없는 버튼을 두지 않는다", () => {

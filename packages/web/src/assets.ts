@@ -1143,11 +1143,17 @@ th.l .sortable{justify-content:flex-start}
    이 선택자를 「도형 대비는 별건으로 미검증」이라 적어 두고 있었다. 그 미검증이 이것이었다. */
 .sortable i{font-style:normal;width:7px;color:var(--tx-3)}
 .sortable:hover i{color:var(--tx)}
-.sortable i::before{content:"↕"}
+/* ⚠**화살표는 버튼 이름에 넣지 않는다 — 대체 텍스트를 비운다**(2026-09-27 · 감사 N8c).
+   이 버튼은 aria-label 이 없어 이름이 내용에서 계산되고, i 의 생성 콘텐츠도 거기 든다 — 「投手↕」「打率↓」로 읽혔다.
+   방향은 th 의 aria-sort 가 이미 말한다(상태를 두 번 말하지 않는다 · 선수 즐겨찾기 N8 과 같은 부류).
+   ⚠**세 규칙 전부에 붙인다** — 기본(↕)만 고치면 **정렬된 열에서만** 다시 샌다.
+   ⚠**같은 선언을 두 번 쓰는 것은 실수가 아니다** — 대체 텍스트 문법을 모르는 브라우저는 뒤 선언을 통째로 버리므로
+   앞 선언이 보이는 화살표를 보장한다(명부 ★ · .cmprow .win::after 와 같은 두 겹 처방). */
+.sortable i::before{content:"↕";content:"↕" / ""}
 th[aria-sort="ascending"] .sortable,th[aria-sort="descending"] .sortable{color:var(--tx);font-weight:var(--w-bold)}
 th[aria-sort="ascending"] .sortable i,th[aria-sort="descending"] .sortable i{color:inherit}
-th[aria-sort="ascending"] .sortable i::before{content:"↑"}
-th[aria-sort="descending"] .sortable i::before{content:"↓"}
+th[aria-sort="ascending"] .sortable i::before{content:"↑";content:"↑" / ""}
+th[aria-sort="descending"] .sortable i::before{content:"↓";content:"↓" / ""}
 @media (pointer:coarse){.sortable{padding:var(--s4) var(--s4)}}
 
 .pa{font-size:var(--fs-sub);letter-spacing:.02em}
@@ -2387,7 +2393,12 @@ table.stand .dif i.n{right:50%}
   transition:color var(--t1) var(--e-out),border-color var(--t1) var(--e-out)}
 .favt:hover{color:var(--tx-2);border-color:var(--tx-3)}
 .favt[aria-pressed="true"]{color:var(--tx);border-color:var(--tx-3);font-weight:var(--w-bold)}
-.favt[aria-pressed="true"]::before{content:"★";margin-right:var(--s2)}
+/* ⚠**★ 는 버튼 이름에 넣지 않는다 — 대체 텍스트를 비운다**(2026-09-27 · 감사 N8b).
+   이 버튼은 aria-label 이 없어(보이는 글자가 이름이어야 한다 · teams-page.ts) 이름이 내용에서 계산되고
+   생성 콘텐츠도 거기 든다 — 눌리면 이름이 「★ひいき球団 阪神」으로 바뀌어, aria-pressed 와 함께 상태를 **두 번** 말했다
+   (선수 즐겨찾기 N8 과 같은 결함). ★ 는 보이는 표식으로만 남는다.
+   ⚠**같은 선언을 두 번 쓰는 것은 실수가 아니다** — 모르는 브라우저에서 앞 선언이 ★ 를 보장한다(위 .sortable i::before 와 같다). */
+.favt[aria-pressed="true"]::before{content:"★";content:"★" / "";margin-right:var(--s2)}
 /* 좁은 화면에서는 버튼을 아래로 내린다 — 옆에 두면 구단명이 밀려 두 줄이 된다 */
 @media (max-width:560px){
   .tcard{grid-template-columns:38px 1fr}
@@ -3267,8 +3278,27 @@ function slide(el,dir){
   if(typeof el.offsetWidth==="number")void el.offsetWidth;
   if(dir!==0)el.setAttribute("data-slide",dir>0?"next":"prev");
 }
+/* ⚠**로빙 tabindex 는 이 한 벌이다**(2026-09-27 · 감사 N6 · M1). 탭줄 하나마다 **고른 탭 하나만** 탭 정지(0),
+   나머지는 -1 — Tab 으로 탭줄에 들어오면 초점이 고른 탭으로 가야 한다(WAI-ARIA APG Tabs).
+   예전에는 initTabs 안의 지역 함수라 **클릭·화살표에서만** 돌았다. 선택을 바꾸는 경로가 셋 더 있는데
+   (깊은 링크 revealHash · 브라우저 찾기 beforematch · ?vs= 通算 착지) 셋 다 showTabs 만 불러서,
+   aria-selected 는 새 탭으로 옮기고 **탭 정지는 이전 탭에 남겼다.** 그래서 showTabs 가 늘 이것을 부른다 —
+   revealSelectedTabs 와 같은 이유다(부르는 자리를 늘리지 않고 **탭이 바뀌는 곳**에 건다).
+   ⚠**role=tablist 에만 쓴다** — aria-pressed 를 쓰는 버튼 묶음(role=group · buttonGroup)은 패널을 열지 않는
+   좁히기 버튼줄이고, 거기서 로빙을 쓰면 Tab 으로 닿던 버튼들이 **하나만 남고 사라진다**(아래 initTabs 주석 ·
+   2026-08-18 유저 지적). 서버의 role=tablist 는 전부 aria-selected 를 쓴다(tablist · 선발예고 카드).
+   ⚠**탭줄마다 하나씩 · 숨은 탭줄에도** 둔다(아래 initTabs 의 2026-09-07 P3 주석). */
+function roveTabs(lists,key){
+  lists.forEach(list=>{
+    if(!list.getAttribute||list.getAttribute("role")!=="tablist")return;
+    const bs=$$("[data-tab]",list);
+    const on=bs.filter(b=>b.dataset.tab===key)[0]||bs[0];
+    bs.forEach(b=>b.setAttribute("tabindex",b===on?"0":"-1"));
+  });
+}
 function showTabs(){
-  Object.keys(tabGroups()).forEach(g=>{
+  const groups=tabGroups();
+  Object.keys(groups).forEach(g=>{
     const cur=transient[g]!==undefined?transient[g]:state.tabs[g];
     /* 탭줄에 적힌 순서가 방향의 기준이다 */
     const keys=$$('[data-tabgroup="'+g+'"] [data-tab]').map(b=>b.dataset.tab);
@@ -3301,6 +3331,8 @@ function showTabs(){
       if(b.hasAttribute("aria-pressed"))b.setAttribute("aria-pressed",on);
       else b.setAttribute("aria-selected",on);
     });
+    /* 탭 정지도 같은 선택을 따라간다(위 roveTabs · 감사 N6) */
+    roveTabs(groups[g],cur);
   });
   /* ⚠**선택이 바뀌면 그 탭을 상자 안으로 들여놓는다 — 여기 한 곳에서 한다**(M1 · 2026-09-07 P2).
      처음에는 초기화에서 한 번만 불렀는데, **그 뒤에 선택을 바꾸는 경로가 넷 더 있었다**:
@@ -3331,8 +3363,8 @@ function showTabs(){
        aria-selected 와 role 만 붙어 있고 **키보드 규약은 없었다** — 낭독기는
        「タブ 1/4」라고 안내하는데 화살표를 눌러도 아무 일도 일어나지 않았다.
        ⚠**새로 만든 날짜 토글(오늘·내일)도 이 위에 얹혀 있다.**
-       ⚠tabindex 는 여기서 준다 — JS 가 없으면 화살표도 없으니 그때는 전부 탭으로 닿는 편이 맞다
-       (바로 아래 .picklist 가 쓰는 것과 같은 방침). */
+       ⚠tabindex 는 스크립트가 준다(마크업에 없다 · 2026-09-27 부터 showTabs → roveTabs) — JS 가 없으면
+       화살표도 없으니 그때는 전부 탭으로 닿는 편이 맞다(.picklist 가 쓰는 것과 같은 방침). */
     /* ⚠**로빙은 「탭줄 하나」 안의 규약이다 — 그룹 전체의 규약이 아니다**(2026-09-07 P3).
        한 그룹이 리그마다 탭줄을 한 벌씩 갖는데(순위 화면의 rankcat·rankmetric·rankstreak),
        버튼을 문서 전체에서 한 배열로 모으면 둘이 난다:
@@ -3344,19 +3376,12 @@ function showTabs(){
        「리그를 바꿔도 보던 지표가 남는다」가 함께 사라진다. 위의 클릭 배선은 그룹 전체
        그대로 두고, **탭 정지와 순환만** 탭줄 안으로 가둔다. */
     const tablists=groups[g].filter(l=>l.getAttribute&&l.getAttribute("role")==="tablist");
-    const inList=(list)=>$$("[data-tab]",list);
-    /* 지금 고른 키에 맞춰 **탭줄마다 하나씩** 탭 정지를 둔다. 숨은 탭줄에도 둔다 —
-       그 리그로 바꾸는 순간 그 자리가 필요해지고, 그때 다시 계산할 자리가 없다 */
-    const rove=(key)=>tablists.forEach(list=>{
-      const bs=inList(list);
-      const on=bs.filter(b=>b.dataset.tab===key)[0]||bs[0];
-      bs.forEach(b=>b.setAttribute("tabindex",b===on?"0":"-1"));
-    });
-    rove(state.tabs[g]);
+    /* ⚠**탭 정지는 여기서 두지 않는다 — showTabs 가 둔다**(위 roveTabs · 감사 N6).
+       예전에는 여기의 지역 함수가 초기화·클릭·화살표에서만 돌아서, 그 밖의 경로로 바뀐 선택을
+       탭 정지가 못 따라갔다. 초기화 줄이 showTabs 를 늘 부르므로 첫 탭 정지도 거기서 선다. */
     tablists.forEach(list=>{
-      const bs=inList(list);
+      const bs=$$("[data-tab]",list);
       bs.forEach((b,at)=>{
-        b.addEventListener("click",()=>rove(b.dataset.tab));
         b.addEventListener("keydown",(e)=>{
           const step=e.key==="ArrowRight"||e.key==="ArrowDown"?at+1
             :e.key==="ArrowLeft"||e.key==="ArrowUp"?at-1
@@ -3368,7 +3393,7 @@ function showTabs(){
              여는 비용이 없고, 수동 활성화(Enter 를 또 눌러야 함)는 여기서 손만 늘린다. */
           delete transient[g];
           state.tabs[g]=to.dataset.tab;save(state);showTabs();
-          rove(to.dataset.tab);if(to.focus)to.focus();
+          if(to.focus)to.focus();
         });
       });
     });
@@ -3403,9 +3428,25 @@ function revealHash(){
 if(typeof window!=="undefined"&&window.addEventListener)window.addEventListener("hashchange",revealHash);
 
 /* ── 블록 조립 ── */
+/* ⚠**이번 방문에만 켜는 블록**(2026-09-27 · 감사 N5 · 위 탭의 transient 와 같은 모양 · M1).
+   ?vs= 착지가 대전 블록을 여기 넣는다. 예전에는 state.order **자체**에 더해서, 그 방문 중 **아무 저장**
+   (정렬 · 밀도 · 테마)이 그것까지 저장했다 — 다음 방문(?vs= 없이)에도 대전 블록이 열렸다.
+   배치·표시할 때만 저장된 구성과 합치고(shownOrder) **저장되는 state.order 는 건드리지 않는다.**
+   ⚠**맨 뒤에 붙는다** — 착지가 예전에 붙이던 자리 그대로다.
+   ⚠**직접 고른 것이 임시를 이긴다 — 그리고 그때는 저장한다**(탭과 같은 규칙 · initTabs 의 클릭 배선).
+   조립 목록에서 그 블록을 **켜고 끄거나 옮기면**(그 블록과 자리를 바꾸는 것도 포함) 임시에서 빼고 결과를 저장한다 —
+   화면에 보이는 목록을 손으로 고친 것이니 그 블록도 사용자가 고른 구성이다. 목록이 켜진 것으로 보여 주는 것도 그래서다.
+   다른 블록을 켜고 끄는 것 · 밀도 · 정렬 · 테마는 **그 블록의 선택이 아니다** — 다른 탭을 눌러도
+   깊은 링크가 연 탭이 새지 않는 것과 같다. **프리셋**은 구성 전체를 고르는 것이라 임시 블록도 걷는다
+   (고른 프리셋과 화면이 다르면 안 된다). */
+const transientBlocks={};
+function shownOrder(){
+  return state.order.concat(Object.keys(transientBlocks).filter(id=>state.order.indexOf(id)<0));
+}
 function renderBlocks(){
   const end=$("#blocksEnd");
-  state.order.forEach(id=>{const el=doc.getElementById("b-"+id);if(el&&end)end.parentNode.insertBefore(el,end)});
+  const order=shownOrder();
+  order.forEach(id=>{const el=doc.getElementById("b-"+id);if(el&&end)end.parentNode.insertBefore(el,end)});
   /* ⚠**조립 시스템이 있는 페이지에서만 숨긴다.**
      그 표식이 #blocksEnd 이고, 선수 페이지에만 있다.
 
@@ -3421,7 +3462,7 @@ function renderBlocks(){
     $$(".block").forEach(el=>{
       /* 조립 대상은 b- 접두사를 가진 블록뿐이다 */
       if(el.id.indexOf("b-")!==0)return;
-      el.hidden=state.order.indexOf(el.id.slice(2))<0;
+      el.hidden=order.indexOf(el.id.slice(2))<0;
     });
   }
   /* ⚠**인라인 스타일로 덮지 않는다** — 스타일시트의 설계값이 죽는다(감사 P1).
@@ -3561,14 +3602,19 @@ function renderBlocks(){
 }
 function renderEditor(){
   const host=$("#blockList");if(!host)return;host.textContent="";
-  const rest=BLOCKS.map(b=>b.id).filter(id=>state.order.indexOf(id)<0);
-  state.order.concat(rest).forEach(id=>{
+  /* ⚠**보이는 구성을 그린다**(shownOrder) — 방문 한정 블록이 화면에 있는데 목록에서 꺼져 있으면
+     화면이 자기 자신과 모순된다(감사 N5) */
+  const order=shownOrder();
+  const rest=BLOCKS.map(b=>b.id).filter(id=>order.indexOf(id)<0);
+  order.concat(rest).forEach(id=>{
     const meta=BLOCKS.filter(b=>b.id===id)[0];if(!meta)return;
-    const on=state.order.indexOf(id)>=0;
+    const on=order.indexOf(id)>=0;
     const row=doc.createElement("div");row.className="brow";
     const cb=doc.createElement("input");cb.type="checkbox";cb.checked=on;
     cb.setAttribute("aria-label",meta.name+"を表示");
     cb.addEventListener("change",()=>{
+      /* 직접 켜고 끈 것은 임시를 이긴다 — 그리고 그때는 저장한다(위 transientBlocks) */
+      delete transientBlocks[id];
       state.order=cb.checked?state.order.concat([id]):state.order.filter(x=>x!==id);
       state.preset="";press(".rail [data-preset]","preset","");commit();
     });
@@ -3577,24 +3623,32 @@ function renderEditor(){
     const d=doc.createElement("div");d.className="bd";d.textContent=meta.desc;
     txt.appendChild(n);txt.appendChild(d);
     const up=doc.createElement("button");up.className="mv";up.type="button";up.textContent="↑";
-    up.setAttribute("aria-label",meta.name+"を上へ");up.disabled=!on||state.order.indexOf(id)<=0;
+    up.setAttribute("aria-label",meta.name+"を上へ");up.disabled=!on||order.indexOf(id)<=0;
     up.addEventListener("click",()=>move(id,-1));
     const dn=doc.createElement("button");dn.className="mv";dn.type="button";dn.textContent="↓";
-    dn.setAttribute("aria-label",meta.name+"を下へ");dn.disabled=!on||state.order.indexOf(id)>=state.order.length-1;
+    dn.setAttribute("aria-label",meta.name+"を下へ");dn.disabled=!on||order.indexOf(id)>=order.length-1;
     dn.addEventListener("click",()=>move(id,1));
     row.appendChild(cb);row.appendChild(txt);row.appendChild(up);row.appendChild(dn);
     host.appendChild(row);
   });
 }
 function move(id,d){
-  const i=state.order.indexOf(id),j=i+d;
-  if(i<0||j<0||j>=state.order.length)return;
-  const next=state.order.slice();next.splice(j,0,next.splice(i,1)[0]);
-  state.order=next;state.preset="";press(".rail [data-preset]","preset","");commit();
+  /* ⚠**목록에 보이는 순서로 옮긴다**(shownOrder) — 버튼의 눌림 가능 여부도 그 순서로 정했다(renderEditor).
+     저장된 순서로만 옮기면 방문 한정 블록 바로 앞 블록의 ↓ 가 **눌리는데 아무 일도 안 한다.** */
+  const order=shownOrder();
+  const i=order.indexOf(id),j=i+d;
+  if(i<0||j<0||j>=order.length)return;
+  /* 옮긴 블록과 자리를 바꾼 블록은 사용자가 직접 배치한 것이다 — 임시였으면 여기서 저장으로 옮긴다(위 transientBlocks).
+     건드리지 않은 방문 한정 블록은 저장에서 빼고, 표시에서는 계속 맨 뒤에 붙는다 */
+  delete transientBlocks[order[i]];delete transientBlocks[order[j]];
+  const next=order.slice();next.splice(j,0,next.splice(i,1)[0]);
+  state.order=next.filter(x=>transientBlocks[x]!==true);state.preset="";press(".rail [data-preset]","preset","");commit();
 }
 function commit(){save(state);renderBlocks();renderEditor()}
 
 $$(".rail [data-preset]").forEach(b=>b.addEventListener("click",()=>{
+  /* 프리셋은 구성 **전체**를 고르는 것이다 — 방문 한정 블록도 걷는다(위 transientBlocks) */
+  Object.keys(transientBlocks).forEach(k=>{delete transientBlocks[k]});
   state.preset=b.dataset.preset;state.order=(PRESETS[state.preset]||[]).slice();
   press(".rail [data-preset]","preset",state.preset);commit();
 }));
@@ -4035,8 +4089,10 @@ function landVs(){
   const career=stables.matchupCareer&&stables.matchupCareer.finder?stables.matchupCareer:null;
   const scopes=[season,career].filter(s=>s!==null);
   if(!scopes.length)return;
-  /* 대전 블록이 꺼져 있으면 이번 방문에만 켠다 — 사용자의 저장된 구성은 건드리지 않는다 */
-  if(state.order.indexOf("matchup")<0)state.order=state.order.concat(["matchup"]);
+  /* 대전 블록이 꺼져 있으면 이번 방문에만 켠다 — 사용자의 저장된 구성은 건드리지 않는다.
+     ⚠**state.order 에 더하지 않는다**(감사 N5) — 더하면 그 방문의 **아무 저장**(정렬 한 번)이 그것까지 저장해
+     다음 방문에도 열렸다. 방문 한정 자리(transientBlocks)에 둔다 — 탭을 transient 에 두는 것과 같은 규칙이다 */
+  if(state.order.indexOf("matchup")<0)transientBlocks.matchup=true;
 
   /* 착지가 무엇을 했는지 표 위에서 말한다. **서버가 그린 자리가 아니므로** 여기서 만든다 */
   const vsNote=(s,text)=>{
@@ -5035,8 +5091,11 @@ function paintFav(){
   if(b){
     const on=isFav(b.dataset.fav);
     b.hidden=false;
+    /* ⚠**눌림만 바꾼다 — 이름(aria-label)은 건드리지 않는다**(2026-09-27 · 감사 N8).
+       예전에는 이름도 「お気に入りに入れる」↔「お気に入りから外す」로 갈아 끼워서, aria-pressed 와 함께
+       상태가 **두 번**(반대 방향으로) 읽혔다. 이름은 마크업의 고정 명칭 하나(player-page.ts)이고
+       같은 뜻의 구단 즐겨찾기(.favt · paintFavTeam 의 press)와 같은 규칙이다(M1). */
     b.setAttribute("aria-pressed",String(on));
-    b.setAttribute("aria-label",on?"お気に入りから外す":"お気に入りに入れる");
   }
   /* 일람에서는 표식만 얹는다 — 순서를 바꾸면 「내 선수가 어디 갔지」가 된다.
      ⚠**별은 CSS 로 그리지만 뜻은 글자로 말한다.** content 로 그린 ★만 있으면

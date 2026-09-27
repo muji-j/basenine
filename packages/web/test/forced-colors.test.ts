@@ -291,12 +291,14 @@ const JUSTIFIED: readonly Justification[] = [
     why: ".gcard.off 의 border-style:dashed 가 남는다",
     cites: [{ sel: ".gcard.off", decl: "border-style:dashed" }],
   },
+  // ⚠**인용이 대체 텍스트를 단 선언이다**(2026-09-27 · 감사 N8c) — 화살표를 버튼 이름에서 뺐다(`"↑" / ""`).
+  //   보이는 글리프는 그대로 ↕→↑↓ 로 바뀌므로 사유는 같다. 이기는 선언이 뒤의 것이라 인용도 그것이다.
   {
     sel: 'th[aria-sort="ascending"] .sortable i,th[aria-sort="descending"] .sortable i',
-    why: "::before 의 content 가 ↕→↑↓ 로 바뀐다",
+    why: "::before 의 content 가 ↕→↑↓ 로 바뀐다(보이는 글리프 · 대체 텍스트는 비어 이름에는 안 든다)",
     cites: [
-      { sel: 'th[aria-sort="ascending"] .sortable i::before', decl: 'content:"↑"' },
-      { sel: 'th[aria-sort="descending"] .sortable i::before', decl: 'content:"↓"' },
+      { sel: 'th[aria-sort="ascending"] .sortable i::before', decl: 'content:"↑" / ""' },
+      { sel: 'th[aria-sort="descending"] .sortable i::before', decl: 'content:"↓" / ""' },
     ],
   },
 ];

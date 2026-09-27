@@ -67,6 +67,37 @@ test("⚠id 선택자는 요소의 id 로 맞추고 특이도에서 클래스를
 });
 
 /**
+ * ⚠**가상 요소를 잰다**(2026-09-27 · 감사 N8b·N8c). 생성 콘텐츠도 접근 가능한 이름에 드는데(AccName),
+ * 계산기가 `::before` 를 가진 선택자를 **늘 「불일치」로 버려서** 그 값을 물을 방법이 없었다.
+ * `pseudo` 를 주면 그 가상 요소를 잰다 — 선택자의 나머지(태그·클래스·속성)는 요소 자신에, 결합자 앞은 조상에 맞춘다.
+ * ⚠**`ancestors: []` 를 준다** — 안 주면 조상 조건을 「맞는다」로 보므로 조상 규칙이 전부 이긴다(파일 머리 · 한계).
+ */
+test("가상 요소는 pseudo 를 준 쪽에만 맞는다 — 요소 자신·다른 가상 요소에는 안 맞고, 조상 조건은 맞춰 본다", () => {
+  const r = parseRules(
+    `.card::before{content:"a"} .card[aria-selected="true"]::before{content:"b";content:"b" / ""}` +
+      ` .card::after{content:"z"} .card{content:"self"} th[aria-sort="ascending"] .card::before{content:"up"}`,
+  );
+  const bare = { ...BTN, ancestors: [] };
+  // 특이도(0,2,1)가 (0,1,1)을 이기고, 같은 규칙 안에서는 뒤 선언이 이긴다
+  assert.equal(computed(r, { ...bare, pseudo: "before" }, "content"), `"b" / ""`);
+  assert.equal(computed(r, { ...bare, attrs: { "aria-selected": "false" }, pseudo: "before" }, "content"), `"a"`);
+  assert.equal(computed(r, { ...bare, pseudo: "after" }, "content"), `"z"`, "::before 규칙이 ::after 에 맞았다");
+  // ⚠**pseudo 없이 물으면 요소 자신이다** — 옛 동작 그대로 가상 요소 규칙은 안 맞는다
+  assert.equal(computed(r, bare, "content"), `"self"`);
+  // 결합자 앞 조건(조상)을 맞춰 본다 — 맞는 조상이 있으면 특이도가 더 높은 그 규칙이 이긴다
+  const sorted = { ...BTN, pseudo: "before" as const, ancestors: [{ tag: "th", classes: [], attrs: { "aria-sort": "ascending" } }] };
+  assert.equal(computed(r, sorted, "content"), `"up"`);
+  // ⚠**가상 요소는 조상 자리에 올 수 없다** — `.x::before .card` 같은 것은 어느 조상에도 안 맞는다
+  const odd = parseRules(`.card::before .card{display:none} .card{display:block}`);
+  assert.equal(computed(odd, { ...BTN, ancestors: [{ tag: "div", classes: ["card"] }] }, "display"), "block");
+  // ⚠**:not 의 안쪽은 주인 요소에 맞춘다** — 가상 요소 판정이 안쪽까지 번지면 :not 이 늘 통과한다(첫 구현이 그랬다)
+  const neg = parseRules(`.card::before{content:"base"} .card:not([aria-selected="false"])::before{content:"on"}`);
+  assert.equal(computed(neg, { ...bare, attrs: { "aria-selected": "false" }, pseudo: "before" }, "content"), `"base"`,
+    ":not 의 안쪽이 가상 요소 판정을 받아 늘 불일치가 됐다 — :not 이 거꾸로 맞는다");
+  assert.equal(computed(neg, { ...bare, pseudo: "before" }, "content"), `"on"`);
+});
+
+/**
  * ⚠**켜진 미디어 안의 `:root` 재정의도 따라간다**(2026-09-27 · PR-D 검토 P3).
  * 옛 판은 첫 `@media` 앞의 `:root` 만 읽어서, `@media (pointer:coarse){:root{--hit:20px}}` 를 더해도
  * 손가락 장면의 N13 시험이 24px 로 통과했다 — **그 시험이 재야 할 바로 그 장면**을 못 봤다.
