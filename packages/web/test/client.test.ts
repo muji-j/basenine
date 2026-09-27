@@ -1338,6 +1338,10 @@ test("?vs= 로 오면 상대가 미리 채워지고 대전 블록이 열린다",
   assert.deepEqual(shown, ["今永"]);
 });
 
+/**
+ * ⚠**이 시험은 착지 직후 저장 없이 바로 다시 와서, 아래 N5 를 못 봤다**(2026-09-27 · 반증자 지적).
+ * 저장은 다른 조작에 딸려서 일어난다 — 그 경로는 아래 N5 시험이 잰다.
+ */
 test("?vs= 는 저장된 구성을 바꾸지 않는다 — 이번 방문에만 연다", () => {
   const storage = makeStorage();
   const first = buildPage();
@@ -1346,6 +1350,113 @@ test("?vs= 는 저장된 구성을 바꾸지 않는다 — 이번 방문에만 �
   const second = buildPage();
   run(second, { storage });
   assert.equal(second.getElementById("b-matchup")!.hidden, true, "다음 방문에도 대전 블록이 켜져 있다");
+});
+
+/** 저장된 블록 구성. 저장이 한 번도 안 일어났으면 undefined */
+const savedOrder = (storage: Storage): string[] | undefined =>
+  (JSON.parse(storage.getItem("npb-meikan-layout") ?? "{}") as { order?: string[] }).order;
+
+/**
+ * ⚠**N5 — ?vs= 로 연 대전 블록이 뒤따르는 저장에 딸려 영구히 켜졌다**(2026-09-27 · 감사 N5 · 다른 벤더 반증이 재현).
+ * 착지가 `state.order` **자체**에 matchup 을 더하고 있어서, 그 방문 중 **아무 저장**(정렬 · 밀도 · 테마)이
+ * 그것까지 저장했다 — 다음 방문(?vs= 없이)에도 대전 블록이 열린다. 탭에는 방문 한정 장치(`transient`)가
+ * 있었는데 블록에는 없었다(탭 쪽 같은 모양의 시험: 「⚠다른 탭을 눌러 저장이 일어나도 깊은 링크의 선택은 새어 나가지 않는다」).
+ * ⚠**저장을 한 번 일으켜야 공회전하지 않는다** — 그래서 저장이 실제로 일어났는지부터 본다.
+ * ⚠**계기를 셋 돈다** — 결함은 「정렬」이 아니라 「아무 저장」이다. 하나만 재면 다음 사람이 그것만 막는다.
+ */
+for (const [what, trigger] of [
+  ["정렬", (doc: ReturnType<typeof makeDocument>): void => clickHeader(doc, "hr")],
+  ["밀도", (doc: ReturnType<typeof makeDocument>): void => press(doc, "density", "compact")],
+  ["테마", (doc: ReturnType<typeof makeDocument>): void => doc.getElementById("themeBtn")!.fire("click")],
+] as const) {
+  test(`⚠N5 ?vs= 로 연 대전 블록은 뒤따르는 저장(${what})에 딸려 가지 않는다 — 다음 방문엔 닫혀 있다`, () => {
+    const storage = makeStorage();
+    const first = buildPage();
+    run(first, { storage, location: { search: "?vs=33", href: "" } });
+    assert.equal(first.getElementById("b-matchup")!.hidden, false, "전제가 틀렸다 — ?vs= 로 대전 블록이 안 열렸다");
+    trigger(first);
+    const order = savedOrder(storage);
+    assert.ok(Array.isArray(order), `${what} 이 저장을 일으키지 않았다 — 이 시험이 공회전한다`);
+    assert.ok(!order.includes("matchup"), `링크 한 번이 ${what} 저장에 딸려 블록 구성에 대전 블록을 넣었다: ${order.join(",")}`);
+    // ⚠**이 방문에서는 여전히 열려 있다** — 고친 것이 착지 자체를 죽이면 안 된다
+    assert.equal(first.getElementById("b-matchup")!.hidden, false, `${what} 뒤에 대전 블록이 닫혔다`);
+
+    const second = buildPage();
+    run(second, { storage });
+    assert.equal(second.getElementById("b-matchup")!.hidden, true, "?vs= 없이 다시 왔는데 대전 블록이 열려 있다");
+  });
+}
+
+/** 조립 목록에서 그 블록의 줄. ⚠목록은 조작마다 다시 그려지므로 **매번 새로 찾는다** */
+function blockRow(doc: ReturnType<typeof makeDocument>, id: string): El {
+  const name = BATTER_BLOCKS.find((b) => b.id === id)!.name;
+  const row = doc.querySelectorAll("#blockList .brow").find((r) => r.querySelector(".bn")?.textContent === name);
+  assert.notEqual(row, undefined, `조립 목록에 ${id} 줄이 없다`);
+  return row!;
+}
+
+/**
+ * N5 의 **고침이 지켜야 할 규칙들** — 방문 한정 블록은 탭의 `transient` 와 같은 규칙을 따른다(M1).
+ * ⚠이 넷은 **옛 코드에서도 통과한다**(옛 코드는 matchup 을 `state.order` 에 넣었으니 목록도 켜져 있었다).
+ * 결함을 재는 것이 아니라 **고침이 옆을 깨지 않는가**를 잰다 — 방문 한정 자리를 따로 두면
+ * 목록·옮기기·프리셋이 그 자리를 모른 채 남기 쉽다.
+ */
+test("N5 ?vs= 로 연 대전 블록은 조립 목록에서도 켜져 있다 — 화면과 목록이 어긋나지 않는다", () => {
+  const doc = buildPage();
+  run(doc, { location: { search: "?vs=33", href: "" } });
+  assert.equal(blockRow(doc, "matchup").querySelector("input")!.checked, true,
+    "대전 블록이 보이는데 목록에서는 꺼져 있다 — 화면이 자기 자신과 모순된다");
+});
+
+test("⚠N5 그 방문에 대전 블록을 직접 끄면 닫히고, 다시 켜면 그때는 저장된다 — 직접 고른 것이 임시를 이긴다(탭과 같은 규칙)", () => {
+  const storage = makeStorage();
+  const first = buildPage();
+  run(first, { storage, location: { search: "?vs=33", href: "" } });
+  const off = blockRow(first, "matchup").querySelector("input")!;
+  off.checked = false;
+  off.fire("change");
+  assert.equal(first.getElementById("b-matchup")!.hidden, true, "직접 껐는데 대전 블록이 남았다 — 임시가 직접 고른 것을 이겼다");
+  assert.ok(!(savedOrder(storage) ?? []).includes("matchup"));
+
+  const on = blockRow(first, "matchup").querySelector("input")!;
+  on.checked = true;
+  on.fire("change");
+  assert.equal(first.getElementById("b-matchup")!.hidden, false);
+  assert.ok((savedOrder(storage) ?? []).includes("matchup"), "직접 켠 대전 블록이 저장되지 않았다");
+
+  const second = buildPage();
+  run(second, { storage });
+  assert.equal(second.getElementById("b-matchup")!.hidden, false, "직접 켠 대전 블록이 다음 방문에 사라졌다");
+});
+
+test("N5 그 방문에 대전 블록을 직접 옮기면 그 자리에 저장된다 — 옮기는 것도 고르는 것이다", () => {
+  const storage = makeStorage();
+  const doc = buildPage();
+  run(doc, { storage, location: { search: "?vs=33", href: "" } });
+  const std = BATTER_PRESETS.find((p) => p.id === "standard")!.blocks;
+  // ⚠**방문 한정 블록은 맨 뒤에 붙는다** — 착지가 예전에 붙이던 자리 그대로다
+  assert.deepEqual(visible(doc), [...std, "matchup"], "전제가 틀렸다 — 방문 한정 블록이 맨 뒤에 없다");
+  blockRow(doc, "matchup").querySelectorAll(".mv")[0]!.fire("click"); // ↑
+  const moved = [...std.slice(0, -1), "matchup", std.at(-1)!];
+  assert.deepEqual(visible(doc), moved, "↑ 를 눌렀는데 대전 블록이 안 올라갔다");
+  assert.deepEqual(savedOrder(storage), moved, "직접 옮긴 대전 블록이 저장되지 않았다");
+  // ⚠**그 반대 방향 — 저장된 블록이 방문 한정 블록과 자리를 바꿔도 같다.** 눌러도 아무 일이 없으면 안 된다
+  const again = buildPage();
+  const storage2 = makeStorage();
+  run(again, { storage: storage2, location: { search: "?vs=33", href: "" } });
+  const lastSaved = std.at(-1)!;
+  blockRow(again, lastSaved).querySelectorAll(".mv")[1]!.fire("click"); // ↓
+  const swapped = [...std.slice(0, -1), "matchup", lastSaved];
+  assert.deepEqual(visible(again), swapped, `${lastSaved} 의 ↓ 가 아무 일도 안 했다`);
+  assert.deepEqual(savedOrder(storage2), swapped, "자리를 바꾼 대전 블록이 저장되지 않았다");
+});
+
+test("N5 그 방문에 프리셋을 고르면 방문 한정 블록도 걷힌다 — 프리셋은 구성 전체를 고르는 것이다", () => {
+  const doc = buildPage();
+  run(doc, { location: { search: "?vs=33", href: "" } });
+  press(doc, "preset", "simple");
+  assert.deepEqual(visible(doc), [...BATTER_PRESETS.find((p) => p.id === "simple")!.blocks],
+    "シンプル 을 골랐는데 대전 블록이 남았다 — 고른 프리셋과 화면이 다르다");
 });
 
 test("대전이 없는 조합이면 빈 표가 아니라 그렇다고 말한다(M12)", () => {

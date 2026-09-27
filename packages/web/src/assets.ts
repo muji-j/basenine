@@ -3403,9 +3403,25 @@ function revealHash(){
 if(typeof window!=="undefined"&&window.addEventListener)window.addEventListener("hashchange",revealHash);
 
 /* ── 블록 조립 ── */
+/* ⚠**이번 방문에만 켜는 블록**(2026-09-27 · 감사 N5 · 위 탭의 transient 와 같은 모양 · M1).
+   ?vs= 착지가 대전 블록을 여기 넣는다. 예전에는 state.order **자체**에 더해서, 그 방문 중 **아무 저장**
+   (정렬 · 밀도 · 테마)이 그것까지 저장했다 — 다음 방문(?vs= 없이)에도 대전 블록이 열렸다.
+   배치·표시할 때만 저장된 구성과 합치고(shownOrder) **저장되는 state.order 는 건드리지 않는다.**
+   ⚠**맨 뒤에 붙는다** — 착지가 예전에 붙이던 자리 그대로다.
+   ⚠**직접 고른 것이 임시를 이긴다 — 그리고 그때는 저장한다**(탭과 같은 규칙 · initTabs 의 클릭 배선).
+   조립 목록에서 그 블록을 **켜고 끄거나 옮기면**(그 블록과 자리를 바꾸는 것도 포함) 임시에서 빼고 결과를 저장한다 —
+   화면에 보이는 목록을 손으로 고친 것이니 그 블록도 사용자가 고른 구성이다. 목록이 켜진 것으로 보여 주는 것도 그래서다.
+   다른 블록을 켜고 끄는 것 · 밀도 · 정렬 · 테마는 **그 블록의 선택이 아니다** — 다른 탭을 눌러도
+   깊은 링크가 연 탭이 새지 않는 것과 같다. **프리셋**은 구성 전체를 고르는 것이라 임시 블록도 걷는다
+   (고른 프리셋과 화면이 다르면 안 된다). */
+const transientBlocks={};
+function shownOrder(){
+  return state.order.concat(Object.keys(transientBlocks).filter(id=>state.order.indexOf(id)<0));
+}
 function renderBlocks(){
   const end=$("#blocksEnd");
-  state.order.forEach(id=>{const el=doc.getElementById("b-"+id);if(el&&end)end.parentNode.insertBefore(el,end)});
+  const order=shownOrder();
+  order.forEach(id=>{const el=doc.getElementById("b-"+id);if(el&&end)end.parentNode.insertBefore(el,end)});
   /* ⚠**조립 시스템이 있는 페이지에서만 숨긴다.**
      그 표식이 #blocksEnd 이고, 선수 페이지에만 있다.
 
@@ -3421,7 +3437,7 @@ function renderBlocks(){
     $$(".block").forEach(el=>{
       /* 조립 대상은 b- 접두사를 가진 블록뿐이다 */
       if(el.id.indexOf("b-")!==0)return;
-      el.hidden=state.order.indexOf(el.id.slice(2))<0;
+      el.hidden=order.indexOf(el.id.slice(2))<0;
     });
   }
   /* ⚠**인라인 스타일로 덮지 않는다** — 스타일시트의 설계값이 죽는다(감사 P1).
@@ -3561,14 +3577,19 @@ function renderBlocks(){
 }
 function renderEditor(){
   const host=$("#blockList");if(!host)return;host.textContent="";
-  const rest=BLOCKS.map(b=>b.id).filter(id=>state.order.indexOf(id)<0);
-  state.order.concat(rest).forEach(id=>{
+  /* ⚠**보이는 구성을 그린다**(shownOrder) — 방문 한정 블록이 화면에 있는데 목록에서 꺼져 있으면
+     화면이 자기 자신과 모순된다(감사 N5) */
+  const order=shownOrder();
+  const rest=BLOCKS.map(b=>b.id).filter(id=>order.indexOf(id)<0);
+  order.concat(rest).forEach(id=>{
     const meta=BLOCKS.filter(b=>b.id===id)[0];if(!meta)return;
-    const on=state.order.indexOf(id)>=0;
+    const on=order.indexOf(id)>=0;
     const row=doc.createElement("div");row.className="brow";
     const cb=doc.createElement("input");cb.type="checkbox";cb.checked=on;
     cb.setAttribute("aria-label",meta.name+"を表示");
     cb.addEventListener("change",()=>{
+      /* 직접 켜고 끈 것은 임시를 이긴다 — 그리고 그때는 저장한다(위 transientBlocks) */
+      delete transientBlocks[id];
       state.order=cb.checked?state.order.concat([id]):state.order.filter(x=>x!==id);
       state.preset="";press(".rail [data-preset]","preset","");commit();
     });
@@ -3577,24 +3598,32 @@ function renderEditor(){
     const d=doc.createElement("div");d.className="bd";d.textContent=meta.desc;
     txt.appendChild(n);txt.appendChild(d);
     const up=doc.createElement("button");up.className="mv";up.type="button";up.textContent="↑";
-    up.setAttribute("aria-label",meta.name+"を上へ");up.disabled=!on||state.order.indexOf(id)<=0;
+    up.setAttribute("aria-label",meta.name+"を上へ");up.disabled=!on||order.indexOf(id)<=0;
     up.addEventListener("click",()=>move(id,-1));
     const dn=doc.createElement("button");dn.className="mv";dn.type="button";dn.textContent="↓";
-    dn.setAttribute("aria-label",meta.name+"を下へ");dn.disabled=!on||state.order.indexOf(id)>=state.order.length-1;
+    dn.setAttribute("aria-label",meta.name+"を下へ");dn.disabled=!on||order.indexOf(id)>=order.length-1;
     dn.addEventListener("click",()=>move(id,1));
     row.appendChild(cb);row.appendChild(txt);row.appendChild(up);row.appendChild(dn);
     host.appendChild(row);
   });
 }
 function move(id,d){
-  const i=state.order.indexOf(id),j=i+d;
-  if(i<0||j<0||j>=state.order.length)return;
-  const next=state.order.slice();next.splice(j,0,next.splice(i,1)[0]);
-  state.order=next;state.preset="";press(".rail [data-preset]","preset","");commit();
+  /* ⚠**목록에 보이는 순서로 옮긴다**(shownOrder) — 버튼의 눌림 가능 여부도 그 순서로 정했다(renderEditor).
+     저장된 순서로만 옮기면 방문 한정 블록 바로 앞 블록의 ↓ 가 **눌리는데 아무 일도 안 한다.** */
+  const order=shownOrder();
+  const i=order.indexOf(id),j=i+d;
+  if(i<0||j<0||j>=order.length)return;
+  /* 옮긴 블록과 자리를 바꾼 블록은 사용자가 직접 배치한 것이다 — 임시였으면 여기서 저장으로 옮긴다(위 transientBlocks).
+     건드리지 않은 방문 한정 블록은 저장에서 빼고, 표시에서는 계속 맨 뒤에 붙는다 */
+  delete transientBlocks[order[i]];delete transientBlocks[order[j]];
+  const next=order.slice();next.splice(j,0,next.splice(i,1)[0]);
+  state.order=next.filter(x=>transientBlocks[x]!==true);state.preset="";press(".rail [data-preset]","preset","");commit();
 }
 function commit(){save(state);renderBlocks();renderEditor()}
 
 $$(".rail [data-preset]").forEach(b=>b.addEventListener("click",()=>{
+  /* 프리셋은 구성 **전체**를 고르는 것이다 — 방문 한정 블록도 걷는다(위 transientBlocks) */
+  Object.keys(transientBlocks).forEach(k=>{delete transientBlocks[k]});
   state.preset=b.dataset.preset;state.order=(PRESETS[state.preset]||[]).slice();
   press(".rail [data-preset]","preset",state.preset);commit();
 }));
@@ -4035,8 +4064,10 @@ function landVs(){
   const career=stables.matchupCareer&&stables.matchupCareer.finder?stables.matchupCareer:null;
   const scopes=[season,career].filter(s=>s!==null);
   if(!scopes.length)return;
-  /* 대전 블록이 꺼져 있으면 이번 방문에만 켠다 — 사용자의 저장된 구성은 건드리지 않는다 */
-  if(state.order.indexOf("matchup")<0)state.order=state.order.concat(["matchup"]);
+  /* 대전 블록이 꺼져 있으면 이번 방문에만 켠다 — 사용자의 저장된 구성은 건드리지 않는다.
+     ⚠**state.order 에 더하지 않는다**(감사 N5) — 더하면 그 방문의 **아무 저장**(정렬 한 번)이 그것까지 저장해
+     다음 방문에도 열렸다. 방문 한정 자리(transientBlocks)에 둔다 — 탭을 transient 에 두는 것과 같은 규칙이다 */
+  if(state.order.indexOf("matchup")<0)transientBlocks.matchup=true;
 
   /* 착지가 무엇을 했는지 표 위에서 말한다. **서버가 그린 자리가 아니므로** 여기서 만든다 */
   const vsNote=(s,text)=>{
