@@ -4,7 +4,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CLIENT_JS, CSS } from "../src/assets.ts";
 import { computed, parseRules, toPx } from "./css-cascade.ts";
+import type { Rule } from "./css-cascade.ts";
 import { BLOCKS, PRESETS } from "../src/blocks.ts";
+import { renderPlayerPage } from "../src/player-page.ts";
+import { renderTeamsPage } from "../src/teams-page.ts";
+import type { TeamsCard } from "../src/teams-page.ts";
+import { colorOf, shortNameOf, teamOf } from "@bb-app/domain";
+import { context, playerPage } from "./fixtures.ts";
 
 /**
  * ⚠**토큰이 생긴 뒤로 「리터럴이 있는가」는 헛돈다**(2026-09-07 · 토큰 1단계).
@@ -767,4 +773,135 @@ test("⚠N12 뜻을 따로 낭독하는 장식 글리프는 대체 텍스트가 
     assert.equal(contents[0], `"${s.glyph}"`, `${s.sel} 의 폴백 선언이 없다 — 모르는 브라우저에서 표식이 사라진다`);
     assert.ok(s.speaks, `${s.sel} 의 뜻을 싣는 낭독 글자가 사라졌다 — 대체 텍스트만 남으면 아무것도 안 들린다`);
   }
+});
+
+/* ── N8b · N8c — 생성 콘텐츠도 버튼 이름에 든다 ─────────────────────────────── */
+
+/** `content` 값 → 보이는 글자 · 이름에 드는 글자. ⚠모르는 형태는 던진다 — 조용히 「이름에 안 듦」으로 읽지 않는다 */
+function generated(v: string | undefined): { shown: string; spoken: string } {
+  if (v === undefined || v === "none" || v === "normal") return { shown: "", spoken: "" };
+  const alt = /^"([^"]*)"\s*\/\s*"([^"]*)"$/.exec(v);
+  if (alt !== null) return { shown: alt[1]!, spoken: alt[2]! };
+  const one = /^"([^"]*)"$/.exec(v);
+  if (one !== null) return { shown: one[1]!, spoken: one[1]! };
+  throw new Error(`이 시험이 모르는 content 값: ${v}`);
+}
+
+type Tag = { tag: string; classes: string[]; attrs: Record<string, string> };
+/** 여는 태그 하나를 요소로 */
+function tagOf(open: string): Tag {
+  const attrs = Object.fromEntries([...open.matchAll(/\s([\w-]+)="([^"]*)"/g)].map((x) => [x[1]!, x[2]!]));
+  return { tag: /^<(\w+)/.exec(open)![1]!.toLowerCase(), classes: (attrs["class"] ?? "").split(/\s+/).filter((c) => c !== ""), attrs };
+}
+
+/**
+ * 버튼의 접근 가능한 이름 — **이 시험이 쓰는 만큼만** 계산한다(AccName 1.2 의 부분집합).
+ * `aria-label` 이 있으면 그것(2C · 내용과 생성 콘텐츠는 안 든다). 없으면 내용(2F):
+ * 버튼 `::before` + 자식들(글자 · 요소면 `aria-hidden="true"` 가 아닐 때 그 `::before` + 글자 + `::after`) + 버튼 `::after`.
+ * ⚠**계산하지 않는 것은 던진다** — `aria-labelledby` · 한 단계보다 깊은 자식. 모르는 구조를 조용히 「이름에 안 듦」으로 읽으면
+ *   이 시험은 없는 결함을 놓치거나(초록) 있는 결함을 지어낸다.
+ * ⚠**CSS 로 숨긴 자식(display:none)은 안 본다** — 이 두 버튼의 자식(.vh · 화살표 i)은 둘 다 표시되는 요소다.
+ */
+function buttonName(rules: readonly Rule[], open: string, inner: string, ancestors: readonly Tag[]): { name: string; shown: string } {
+  const btn = tagOf(open);
+  if (btn.attrs["aria-labelledby"] !== undefined) throw new Error("aria-labelledby 는 이 시험이 계산하지 않는다");
+  const gen = (el: Tag, up: readonly Tag[], pseudo: "before" | "after"): { shown: string; spoken: string } =>
+    generated(computed(rules, { ...el, pseudo, ancestors: up }, "content"));
+  const parts: { shown: string; spoken: string }[] = [gen(btn, ancestors, "before")];
+  let eaten = "";
+  for (const m of inner.matchAll(/<(\w+)([^>]*)>([^<]*)<\/\1>|([^<]+)/g)) {
+    eaten += m[0];
+    if (m[4] !== undefined) {
+      parts.push({ shown: m[4], spoken: m[4] });
+      continue;
+    }
+    const child = tagOf(`<${m[1]}${m[2]}>`);
+    const before = gen(child, [btn, ...ancestors], "before");
+    const after = gen(child, [btn, ...ancestors], "after");
+    // aria-hidden 인 자식은 보이기는 하되 이름에서 통째로 빠진다(생성 콘텐츠 포함)
+    const hidden = child.attrs["aria-hidden"] === "true";
+    parts.push({ shown: before.shown + m[3]! + after.shown, spoken: hidden ? "" : before.spoken + m[3]! + after.spoken });
+  }
+  if (eaten !== inner) throw new Error(`이 시험이 모르는 버튼 내용: ${inner}`);
+  parts.push(gen(btn, ancestors, "after"));
+  const shown = parts.map((p) => p.shown).join("");
+  // ⚠빈 aria-label 은 없는 것과 같다(AccName 2C) — 그때는 내용으로 떨어진다
+  const label = btn.attrs["aria-label"];
+  return { name: label !== undefined && label.trim() !== "" ? label : parts.map((p) => p.spoken).join(""), shown };
+}
+
+/**
+ * **이름 계산기를 먼저 잰다** — 아래 N8b·N8c 의 RED 가 「시험의 가정」이 아니라 「구조」에서 나왔다는 근거다.
+ * 이름에 안 드는 구조(aria-label · aria-hidden 자식)를 「든다」로 읽으면 없는 결함을 지어낸다.
+ */
+test("N8b·N8c 이름 계산은 aria-label·aria-hidden 을 따른다 — 이름에 안 드는 구조를 「든다」로 읽지 않는다", () => {
+  const rules = parseRules(`.x i::before{content:"↕"} .x::before{content:"★"} .y i::before{content:"↑";content:"↑" / ""}`);
+  const up = [tagOf("<th>")];
+  assert.equal(buttonName(rules, '<button class="x">', "投手<i></i>", up).name, "★投手↕");
+  assert.equal(buttonName(rules, '<button class="x">', '投手<i aria-hidden="true"></i>', up).name, "★投手", "aria-hidden 자식의 생성 콘텐츠를 이름에 넣었다");
+  assert.equal(buttonName(rules, '<button class="x">', '投手<i aria-hidden="true"></i>', up).shown, "★投手↕", "aria-hidden 자식을 화면에서도 지웠다");
+  assert.equal(buttonName(rules, '<button class="x" aria-label="並べ替え">', "投手<i></i>", up).name, "並べ替え", "aria-label 이 있는데 내용으로 이름을 지었다");
+  assert.equal(buttonName(rules, '<button class="x" aria-label=" ">', "投手<i></i>", up).name, "★投手↕", "빈 aria-label 을 이름으로 썼다");
+  assert.deepEqual(buttonName(rules, '<button class="y">', "打率<i></i>", up), { name: "打率", shown: "打率↑" });
+  assert.throws(() => buttonName(rules, '<button class="x">', "<b><i></i></b>", up), /모르는 버튼 내용/);
+});
+
+/**
+ * ⚠**N8b·N8c — 생성 콘텐츠도 버튼 이름에 든다 · 상태를 이름과 aria-* 가 두 번 말하지 않는다**(2026-09-27).
+ * 버튼의 접근 가능한 이름은 `aria-label` 이 없으면 **내용**에서 계산되고, 그 내용에는 `::before`·`::after` 의
+ * 생성 콘텐츠도 든다(AccName 1.2 · 2F.ii). 대체 텍스트(`content:"x" / ""`)를 쓰면 그 대체 텍스트가 든다.
+ *  · N8b 구단 즐겨찾기 `.favt` — 눌리면 `::before` 의 ★ 가 이름 앞에 붙어 「★ひいき球団 阪神」이 됐다.
+ *    눌림은 aria-pressed 가 이미 말한다 — 선수 즐겨찾기 N8 과 같은 결함(상태를 두 번).
+ *  · N8c 정렬 버튼 `.sortable` — `<i>` 의 `::before` ↕/↑/↓ 가 버튼 이름에 붙었다. 방향은 th 의 aria-sort 가 말한다.
+ * ⚠**「이름에 드는 구조인가」는 진짜 렌더가 정한다** — `aria-label` 이 있거나 `<i>` 가 aria-hidden 이면 생성 콘텐츠는
+ *   이름에 안 든다(`buttonName`). 이 둘은 PR #26 이 보고했지만 **반증을 안 거쳤다** — 그래서 구조를 가정하지 않는다.
+ * ⚠**보이는 글리프는 그대로다** — 이름에서 빼는 것이지 화면에서 지우는 것이 아니다(그래서 `shown` 도 본다 · 이것이
+ *   규칙이 실제로 맞았다는 증거이기도 하다 — 조상을 잘못 주면 규칙이 안 맞아 이 줄이 붉어진다).
+ *   폴백 선언은 위 「대체 텍스트를 쓴 content 는 모두 앞선 폴백 content 를 갖는다」가 지킨다.
+ * ⚠**캐스케이드로 잰다** — 정렬 화살표는 규칙이 셋(↕ · ↑ · ↓)이라 한 규칙만 고치면 **정렬된 열에서만** 다시 샌다.
+ */
+test("⚠N8b 구단 즐겨찾기 버튼의 이름은 눌려도 같다 — ★ 는 보이되 이름에 안 든다", () => {
+  const card: TeamsCard = {
+    teamCode: "t", name: teamOf("t").name, shortName: shortNameOf("t"), color: colorOf("t"),
+    rank: 1, tiedRank: false, games: 1, w: 1, l: 0, t: 0, pct: 1, gamesBehind: 0,
+    last10: { w: 1, l: 0, t: 0 }, next: null, seasonOver: false,
+  };
+  const out = renderTeamsPage({ season: 2026, asOf: "2026-08-17", leagues: [{ id: "central", name: "セントラル・リーグ", teams: [card] }] }, context());
+  const m = /(<button class="favt"[^>]*>)([\s\S]*?)<\/button>/.exec(out);
+  assert.ok(m !== null, "구단 즐겨찾기 버튼이 없다 — 이 시험이 잴 것이 없다");
+  const text = m[2]!.replace(/<[^>]*>/g, "");
+  assert.equal(text, "ひいき球団 阪神", "전제가 바뀌었다 — 버튼 글자가 예상과 다르다");
+  const rules = parseRules(CSS);
+  // 실제 조상: li.tcard > p.tcf > button.favt (ol.tlist · section.block 안)
+  const up = [tagOf('<p class="tcf">'), tagOf('<li class="tcard">'), tagOf('<ol class="tlist">'), tagOf('<section class="block">')];
+  const badShown: string[] = [];
+  const badName: string[] = [];
+  for (const pressed of [false, true]) {
+    const open = m[1]!.replace(/aria-pressed="[^"]*"/, `aria-pressed="${pressed}"`);
+    const { name, shown } = buttonName(rules, open, m[2]!, up);
+    if (shown !== (pressed ? `★${text}` : text)) badShown.push(`눌림=${pressed}: 「${shown}」`);
+    if (name !== text) badName.push(`눌림=${pressed}: 「${name}」`);
+  }
+  assert.deepEqual(badShown, [], "보이는 표식이 바뀌었다 — 이름에서 빼는 것이지 화면에서 지우는 것이 아니다");
+  assert.deepEqual(badName, [], "★ 가 이름에 든다 — 상태를 이름과 aria-pressed 가 두 번 말한다");
+});
+
+test("⚠N8c 정렬 버튼의 이름에 화살표가 안 든다 — 방향은 th 의 aria-sort 가 말한다 · 세 상태 전부", () => {
+  const out = renderPlayerPage(playerPage(), context());
+  const m = /(<th[^>]*>)\s*(<button class="sortable"[^>]*>)([\s\S]*?)<\/button>/.exec(out);
+  assert.ok(m !== null, "정렬 버튼이 없다 — 이 시험이 잴 것이 없다");
+  const [, thOpen, open, inner] = m;
+  const label = inner!.replace(/<[^>]*>/g, "");
+  assert.ok(label !== "", "전제가 바뀌었다 — 정렬 버튼에 글자가 없다");
+  const rules = parseRules(CSS);
+  const badShown: string[] = [];
+  const badName: string[] = [];
+  for (const [sort, arrow] of [["none", "↕"], ["ascending", "↑"], ["descending", "↓"]] as const) {
+    const th = tagOf(thOpen!.replace(/aria-sort="[^"]*"/, `aria-sort="${sort}"`));
+    const { name, shown } = buttonName(rules, open!, inner!, [th, tagOf("<tr>"), tagOf("<thead>"), tagOf("<table>")]);
+    if (shown !== `${label}${arrow}`) badShown.push(`aria-sort=${sort}: 「${shown}」`);
+    if (name !== label) badName.push(`aria-sort=${sort}: 「${name}」`);
+  }
+  assert.deepEqual(badShown, [], "보이는 화살표가 바뀌었다 — 이름에서 빼는 것이지 화면에서 지우는 것이 아니다");
+  assert.deepEqual(badName, [], "화살표가 정렬 버튼 이름에 든다 — 방향을 이름과 aria-sort 가 두 번 말한다");
 });

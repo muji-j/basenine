@@ -122,6 +122,9 @@ function wlt(x: { w: number; l: number; t: number }): string {
  *   ⚠**`aria-label` 을 쓰지 않는다.** 보이는 글자가 이름 안에 있어야 하고(WCAG 2.5.3),
  *   무엇보다 **클라이언트가 라벨을 갱신하지 않는다**(T9) — 「…にする」 같은 동작형 라벨을
  *   넣으면 눌린 뒤에 거짓말이 된다. 숨은 글자를 덧붙이면 두 상태에서 모두 참이다.
+ *   ⚠**그런데 눌림 표식 ★(CSS `::before`)도 이름에 들었다**(2026-09-27 · 감사 N8b) — 이름은 내용에서 계산되고
+ *   생성 콘텐츠도 내용이라, 눌리면 「★ひいき球団 阪神」이 됐다. 지금은 CSS 가 대체 텍스트를 비워 ★ 는 보이기만 한다
+ *   (`assets.ts` 의 `.favt[aria-pressed="true"]::before`). 두 상태의 이름이 같은지는 `assets.test.ts` 의 N8b 가 잰다.
  */
 function teamRow(c: TeamsCard, base: string): RawHtml {
   return html`<li class="tcard"${

@@ -1143,11 +1143,17 @@ th.l .sortable{justify-content:flex-start}
    이 선택자를 「도형 대비는 별건으로 미검증」이라 적어 두고 있었다. 그 미검증이 이것이었다. */
 .sortable i{font-style:normal;width:7px;color:var(--tx-3)}
 .sortable:hover i{color:var(--tx)}
-.sortable i::before{content:"↕"}
+/* ⚠**화살표는 버튼 이름에 넣지 않는다 — 대체 텍스트를 비운다**(2026-09-27 · 감사 N8c).
+   이 버튼은 aria-label 이 없어 이름이 내용에서 계산되고, i 의 생성 콘텐츠도 거기 든다 — 「投手↕」「打率↓」로 읽혔다.
+   방향은 th 의 aria-sort 가 이미 말한다(상태를 두 번 말하지 않는다 · 선수 즐겨찾기 N8 과 같은 부류).
+   ⚠**세 규칙 전부에 붙인다** — 기본(↕)만 고치면 **정렬된 열에서만** 다시 샌다.
+   ⚠**같은 선언을 두 번 쓰는 것은 실수가 아니다** — 대체 텍스트 문법을 모르는 브라우저는 뒤 선언을 통째로 버리므로
+   앞 선언이 보이는 화살표를 보장한다(명부 ★ · .cmprow .win::after 와 같은 두 겹 처방). */
+.sortable i::before{content:"↕";content:"↕" / ""}
 th[aria-sort="ascending"] .sortable,th[aria-sort="descending"] .sortable{color:var(--tx);font-weight:var(--w-bold)}
 th[aria-sort="ascending"] .sortable i,th[aria-sort="descending"] .sortable i{color:inherit}
-th[aria-sort="ascending"] .sortable i::before{content:"↑"}
-th[aria-sort="descending"] .sortable i::before{content:"↓"}
+th[aria-sort="ascending"] .sortable i::before{content:"↑";content:"↑" / ""}
+th[aria-sort="descending"] .sortable i::before{content:"↓";content:"↓" / ""}
 @media (pointer:coarse){.sortable{padding:var(--s4) var(--s4)}}
 
 .pa{font-size:var(--fs-sub);letter-spacing:.02em}
@@ -2387,7 +2393,12 @@ table.stand .dif i.n{right:50%}
   transition:color var(--t1) var(--e-out),border-color var(--t1) var(--e-out)}
 .favt:hover{color:var(--tx-2);border-color:var(--tx-3)}
 .favt[aria-pressed="true"]{color:var(--tx);border-color:var(--tx-3);font-weight:var(--w-bold)}
-.favt[aria-pressed="true"]::before{content:"★";margin-right:var(--s2)}
+/* ⚠**★ 는 버튼 이름에 넣지 않는다 — 대체 텍스트를 비운다**(2026-09-27 · 감사 N8b).
+   이 버튼은 aria-label 이 없어(보이는 글자가 이름이어야 한다 · teams-page.ts) 이름이 내용에서 계산되고
+   생성 콘텐츠도 거기 든다 — 눌리면 이름이 「★ひいき球団 阪神」으로 바뀌어, aria-pressed 와 함께 상태를 **두 번** 말했다
+   (선수 즐겨찾기 N8 과 같은 결함). ★ 는 보이는 표식으로만 남는다.
+   ⚠**같은 선언을 두 번 쓰는 것은 실수가 아니다** — 모르는 브라우저에서 앞 선언이 ★ 를 보장한다(위 .sortable i::before 와 같다). */
+.favt[aria-pressed="true"]::before{content:"★";content:"★" / "";margin-right:var(--s2)}
 /* 좁은 화면에서는 버튼을 아래로 내린다 — 옆에 두면 구단명이 밀려 두 줄이 된다 */
 @media (max-width:560px){
   .tcard{grid-template-columns:38px 1fr}
