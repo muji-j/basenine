@@ -694,6 +694,16 @@ export interface SparkPoint {
   /** 달 표기(`4月`) */
   label: string;
   /**
+   * **달 번호**(1〜12) — 가로 자리가 이것으로 정해진다(2026-09-29 · 감사 N17).
+   *
+   * ⚠**점 순번으로 자리를 정하던 옛 판은 결장한 달을 접었다** — 월 행은 나온 달에만 있으므로
+   * 두 달 결장이 한 칸으로 이어져 기울기가 과장됐다. 자리는 **달력**에서 온다.
+   * ⚠**쿼리가 월 키(`2026-04`)에서 라벨과 한 번에 읽어 싣는다**(M1). 화면 글자(`label`)를 다시 읽어
+   * 달을 얻지 마라 — 그건 같은 달을 읽는 두 번째 규칙이다(시험이 숫자 없는 라벨로 잰다).
+   * ⚠**한 시즌 안의 달이다** — NPB 시즌은 해를 넘지 않으므로 1〜12 로 족하고, 꺾은선은 **엄격히 증가**를 요구한다(M7).
+   */
+  month: number;
+  /**
    * 그 달의 값과 **분모**(M2) — 타자는 OPS(분모 打席), 투수는 방어율(분모 アウト).
    *
    * ⚠**값만 싣지 마라**(2026-09-27 · 감사 N7 · P0). 예전엔 `value` 하나였고, 그래서
@@ -1007,6 +1017,9 @@ const SPARK_DIGITS: Readonly<Record<SparkData["metric"], 2 | 3>> = { ops: 3, era
  * ⚠**그 둘은 `sparkline` 의 `minSolid` 인자로 이 수를 받는다**(기본값이 이 상수). 시험은 **2 가 아닌 수**를 주입해
  * 두 자리가 같은 값을 쓰는지 잰다 — 상수만 읽으면 리터럴 `2` 를 써도 초록이다(N18 교차 검토 P2).
  * ⚠안내는 이 수를 「つ」로 센다 — 1〜9 에서만 자연스러운 조수사다. 그래서 2〜9 밖이면 `sparkline` 이 던진다.
+ * ⚠**결장으로 갈라진 믿을 달은 선이 아니라 점이다**(2026-09-29 · 감사 N17) — 둘이어도 선이 없을 수 있다.
+ *   그래도 **이 판정은 그대로다**(믿을 달의 수만 센다): 믿을 수 있는 점 둘은 서로 견줄 수 있고,
+ *   N7 이 막은 것은 「얇은 점만 있는 그림」이지 「끊긴 그림」이 아니다. 안내 문구도 그래서 안 바뀐다.
  */
 export const SPARK_MIN_SOLID_MONTHS = 2;
 
@@ -1019,6 +1032,20 @@ export const SPARK_MIN_SOLID_MONTHS = 2;
  * ⚠**말은 용어집의 방어율 설명(「低いほど良い指標です」)과 같다**(M1 · 시험이 둘을 맞댄다).
  */
 const SPARK_BETTER: Readonly<Record<SparkData["metric"], string | null>> = { ops: null, era: "低いほど良い" };
+
+/**
+ * 결장한 달을 이름에서 부르는 말 — **월 행이 무엇으로 생기는가**에서 나온다(2026-09-29 · 감사 N17).
+ *
+ * · 타자: 月別 행은 **타석**이 있어야 생긴다(`pa_event`). 대수비·대주자로만 나온 달은 행이 없다 —
+ *   그래서 감사가 적어 둔 「出場なし」는 **거짓일 수 있다**. 사본 실측(첫~끝 타석 달 사이의 타석 없는 달 중
+ *   박스 출장이 있던 달): **2026 17/99 · 2025 17/197**. 말할 수 있는 것은 「打席なし」까지다.
+ * · 투수: 월별 방어율 행은 **등판**이 있으면 생긴다(`pitching_line` — 0アウト 등판도 행이 있고 그건 「なし（0回）」다).
+ *   행이 없는 달은 정확히 「登板なし」다.
+ * ⚠**「なし（0回）」와 「登板なし」는 다른 상태다**(M11) — 앞은 나왔는데 값이 정의되지 않는 달, 뒤는 안 나온 달이다.
+ * ⚠**말의 모양은 건너뛴 시즌을 말하는 자리와 같다**(`maruSpanText` 의 「2020・2021年は登板なし」 · 타자는 그쪽이
+ *   경기 단위라 「出場」이고 이쪽은 타석 단위라 「打席」이다).
+ */
+const SPARK_ABSENT: Readonly<Record<SparkData["metric"], string>> = { ops: "打席なし", era: "登板なし" };
 
 /**
  * 월별 추이 꺾은선.
@@ -1036,16 +1063,41 @@ const SPARK_BETTER: Readonly<Record<SparkData["metric"], string | null>> = { ops
  * 1아웃짜리 방어율 189.00 이 눈금 전체를 먹고 나머지 달을 바닥에 눌렀다
  * (실측: 투수 월 13,895건 중 1~8아웃 2,639건 · 타자 월 18,463건 중 1~29타석 11,954건).
  *
- * 세 부류를 **다르게** 그린다:
+ * 네 부류를 **다르게** 그린다:
  *
  * | 달 | 선 | 점 | 이름 |
  * |---|---|---|---|
- * | 믿을 수 있는 달 | 꼭짓점이다 · 정규화에 든다 | 마지막 달만 **채운 점** | `4月 .812（98打席）` |
+ * | 믿을 수 있는 달 | 꼭짓점이다 · 정규화에 든다 | 마지막 달만 **채운 점** · 양옆이 결장이면 **채운 점**(선 잉크 · 아래) | `4月 .812（98打席）` |
  * | 얇은 달 | **꼭짓점이 아니다** · 정규화에서 뺀다 | **속 빈 점**(눈금 밖이면 가장자리에 붙인다) | `…（12打席・30打席未満）` |
  * | 값이 없는 달(M11) | 꼭짓점이 아니다 | **없다** | `5月 なし（0回）` |
+ * | 결장한 달(행이 없다 · N17) | **선이 끊긴다** | **없다** — 자리만 비어 있다 | `6・7月 打席なし`(이어진 결장은 한 항목) |
  *
- * ⚠**「꼭짓점이 아니다」는 「선이 끊긴다」가 아니다** — 선은 그 달을 건너 **앞뒤의 믿을 수 있는 달을 바로 잇는다**
- * (값이 없는 달을 건너 잇던 옛 동작 그대로다). 가로 자리는 달 순서대로 고르게 나눠 그 달의 자리가 남는다.
+ * ⚠**「꼭짓점이 아니다」는 「선이 끊긴다」가 아니다** — 선은 얇은 달·값 없는 달을 건너 **앞뒤의 믿을 수 있는 달을 바로 잇는다**
+ * (값이 없는 달을 건너 잇던 옛 동작 그대로다). **끊는 것은 결장한 달뿐이다**(아래).
+ *
+ * ## 결장한 달 — 가로는 **달력**, 선은 **끊는다**(2026-09-29 · 감사 N17)
+ *
+ * 월 행은 **나온 달에만** 있다(月別 스플릿은 타석으로, 월별 방어율은 등판으로 생긴다). 옛 판은 가로 자리를 **점 순번**으로 둬서
+ * 결장한 두 달이 한 칸으로 접혔고 기울기가 과장됐다(사본 실측 · 그린 꺾은선 중 첫~끝 달 사이에 결장이 낀 것:
+ * 2026 타자 12/149 · 투수 45/253 · 2025 타자 30/177 · 투수 76/275). → 가로는 **첫 달~끝 달의 달력 달 수**로 나눈다
+ * (`SparkPoint.month`). 캡션의 「3月→10月」은 처음부터 달력이었다 — 그림만 달랐다.
+ *
+ * **왜 끊는가 — 이 그림엔 눈금이 없다.** 올바른 간격으로 이으면 기울기는 맞지만 결장은 **아무 흔적도 안 남는다** —
+ * 달마다 표식이 없으니 선분이 긴 줄 알 수 없고, 두 달 결장이 연속 출장처럼 읽힌다. 선분은 그 사이의 추이를 말하는데
+ * 그 사이에는 **아무 기록도 없다**(그건 보간이다). 끊으면 빈자리가 그대로 「없음」을 말한다.
+ * ⚠**얇은 달·값 없는 달과 다르게 다루는 이유**(M11) — 그 달들은 **나왔다**(행이 있다). 선이 건너는 것은 믿을 수 없는 값이지
+ * 없는 시간이 아니다. 결장한 달은 값이 얇은 게 아니라 **없다**. 그래서 선은 **출장이 이어지는 동안만** 잇는다.
+ * ⚠**보간하지 않는다** — 결장한 달에는 점도 값도 없다. 그 자리는 비고, 이름만 「打席なし / 登板なし」라고 말한다(`SPARK_ABSENT`).
+ * ⚠**대가 — 혼자 남은 믿을 달.** 양옆이 결장(또는 끝)이면 선에 못 들어가는데, 한 점짜리 선은 SVG 가 그리지 않는다
+ *   (이동 명령뿐인 경로는 칠해지지 않는다) — 두면 **믿을 수 있는 달이 그림에서 사라진다.** 그래서 **채운 점**을 둔다:
+ *   잉크는 선과 같고(`.spark circle.solo` — 한 달짜리 선이다) 크기는 속 빈 점·끝점과 같은 「한 달」의 크기다.
+ *   ⚠**작게 두지 마라** — 시안에서 r 1.6 이었을 때 104打席짜리 달이 14打席짜리 속 빈 점보다 약하게 읽혔다(위계가 뒤집힌다).
+ *   끝점(「지금」)과는 **잉크(--tx)와 자리**가 가른다 — 혼자인 점은 언제나 끝점의 왼쪽이다(마지막 믿을 달은 끝점이 맡는다).
+ *   ⚠**선 없이 점만 남는 꺾은선도 그린다** — 판정은 믿을 달의 수이고(N18 · `SPARK_MIN_SOLID_MONTHS`) 결장과 무관하다.
+ *   1·2군을 오가는 투수의 그림이 조각나는데, **그 조각이 그 시즌의 사실이다.**
+ *   실측(2026-09-29 · 사본 · 그린 꺾은선 = 분모 · 2026 / 2025): 가로 자리가 바뀐 것 타자 12/149 · 투수 44/253 /
+ *   타자 30/177 · 투수 72/275(4·6·8月처럼 대칭인 결장은 자리가 안 바뀐다) · 선이 끊긴 것 타자 6 · 투수 32 / 타자 15 · 투수 57 ·
+ *   혼자인 점이 생긴 것 타자 5 · 투수 15 / 타자 10 · 투수 24 · **선 없이 점만 남는 것 타자 0 · 투수 8 / 타자 3 · 투수 8**.
  *
  * ⚠**속 빈 점은 저장소가 이미 쓰는 「얇음」의 어휘다** — 成績の紋의 `.mf-shape.thin` 이 같은 이유로
  * 속을 비운다(「꽉 찬 도형은 『이만큼이다』라는 단정」). 채움 유무는 **강제 색 모드에서도 남는다**
@@ -1068,6 +1120,17 @@ export function sparkline(s: SparkData, minSolid: number = SPARK_MIN_SOLID_MONTH
   if (!Number.isInteger(minSolid) || minSolid < 2 || minSolid > 9) {
     throw new RangeError(`꺾은선의 최소 달 수는 2〜9 의 정수여야 한다(선은 점 둘부터 · 안내는 「つ」로 센다): ${minSolid}`);
   }
+  /**
+   * ⚠**달 번호는 1〜12 의 정수로 엄격히 증가해야 한다**(M7 · N17) — 같은 달이 둘이면 자리가 겹치고, 줄어들면 선이
+   * 되돌아가며, 폭을 나눌 수(끝 달 − 첫 달)가 0 이 될 수 있다. 조용히 그리면 거짓 그림이다.
+   * ⚠**그릴지 정하기 전에 본다** — 데이터가 틀렸다는 사실은 그림 여부와 무관하다.
+   */
+  s.points.forEach((p, i) => {
+    const prev = s.points[i - 1];
+    if (!Number.isInteger(p.month) || p.month < 1 || p.month > 12 || (prev !== undefined && p.month <= prev.month)) {
+      throw new RangeError(`꺾은선의 달 번호는 1〜12 의 정수로 엄격히 증가해야 한다(한 시즌 안): ${s.points.map((q) => q.month).join(",")}`);
+    }
+  });
   const unit = denUnit(s.metric);
   const digits = SPARK_DIGITS[s.metric];
   const label = `月別${termLabel(s.metric)}`;
@@ -1080,9 +1143,8 @@ export function sparkline(s: SparkData, minSolid: number = SPARK_MIN_SOLID_MONTH
   const thinText = `${bar}未満`;
   const isThin = (p: SparkPoint): boolean => p.rate.value !== null && p.rate.denominator < s.thinBelow;
 
-  const solid = s.points
-    .map((p) => p.rate.value)
-    .filter((v, i): v is number => v !== null && !isThin(s.points[i]!));
+  /** 믿을 수 있는 달 — 값이 있고 얇지 않다. 선의 꼭짓점이고 정규화의 재료다 */
+  const solid = s.points.flatMap((p) => (p.rate.value !== null && !isThin(p) ? [{ month: p.month, value: p.rate.value }] : []));
   if (solid.length < minSolid) return sparkNote(s, label, bar, minSolid);
 
   const w = 108;
@@ -1092,33 +1154,74 @@ export function sparkline(s: SparkData, minSolid: number = SPARK_MIN_SOLID_MONTH
    * 점 테두리가 1.2 로 선(1.6)보다 얇아 흐리게 읽혔다. 채움이 없으니 테두리가 곧 그 점의 전부다.
    */
   const stroke = 1.6;
-  const lo = Math.min(...solid);
-  const hi = Math.max(...solid);
+  /**
+   * 달 하나의 표식 반지름 — 끝점 · 속 빈 점 · 혼자인 점이 **같다**(「한 달」의 크기 · N17).
+   * ⚠혼자인 점을 작게 하면 믿을 수 있는 달이 얇은 달보다 약하게 읽힌다(머리말 「대가」).
+   */
+  const dot = 2.4;
+  const lo = Math.min(...solid.map((q) => q.value));
+  const hi = Math.max(...solid.map((q) => q.value));
   const span = hi - lo || 1;
-  const step = w / (s.points.length - 1);
+  const first = s.points[0]!.month;
+  /**
+   * ⚠**점 수가 아니라 달력 달 수로 나눈다**(N17) — 옛 판(`w / (점 수 − 1)`)은 결장한 달을 접었다.
+   * 믿을 달이 둘 이상이면 행도 둘 이상이고 달이 엄격히 증가하므로(위 검사) 0 이 아니다.
+   */
+  const step = w / (s.points.at(-1)!.month - first);
   /** ⚠얇은 달은 눈금 밖일 수 있다 — 상자 밖으로 내보내지 않고 가장자리에 붙인다 */
   const yOf = (v: number): number => h - Math.max(0, Math.min(1, (v - lo) / span)) * h;
-  const at = (x: number, y: number): { x: string; y: string } => ({ x: x.toFixed(1), y: y.toFixed(1) });
+  const at = (month: number, v: number): { x: string; y: string } => ({ x: ((month - first) * step).toFixed(1), y: yOf(v).toFixed(1) });
 
-  const kept = s.points.flatMap((p, i) =>
-    p.rate.value === null || isThin(p) ? [] : [at(i * step, yOf(p.rate.value))],
-  );
-  const thin = s.points.flatMap((p, i) => (p.rate.value !== null && isThin(p) ? [at(i * step, yOf(p.rate.value))] : []));
-  const last = kept.at(-1)!;
+  /** 행이 있는 달 — 첫 달과 끝 달 사이에서 **여기 없는 달이 결장한 달**이다 */
+  const played = new Set(s.points.map((p) => p.month));
+  /** a 와 b 사이(양끝 제외)에 결장한 달이 있는가 */
+  const skipsAbsence = (a: number, b: number): boolean => {
+    for (let m = a + 1; m < b; m += 1) if (!played.has(m)) return true;
+    return false;
+  };
+  /**
+   * 믿을 달을 **출장이 이어지는 동안만** 한 선으로 묶는다 — 사이에 결장한 달이 있으면 새 선이다(N17).
+   * ⚠얇은 달·값 없는 달은 행이 있으므로 선을 끊지 않는다(N7 그대로 건너 잇는다).
+   */
+  const runs: (typeof solid)[] = [];
+  for (const q of solid) {
+    const run = runs.at(-1);
+    const prev = run?.at(-1);
+    if (run !== undefined && prev !== undefined && !skipsAbsence(prev.month, q.month)) run.push(q);
+    else runs.push([q]);
+  }
+  const lastSolid = solid.at(-1)!;
+  const lines = runs.filter((r) => r.length >= 2).map((r) => r.map((q) => at(q.month, q.value)));
+  // ⚠**한 점짜리 선은 칠해지지 않는다** — 채운 점으로 남긴다. 마지막 믿을 달은 끝점이 맡으므로 여기서 뺀다
+  const solos = runs.filter((r) => r.length === 1 && r[0] !== lastSolid).map((r) => at(r[0]!.month, r[0]!.value));
+  const thin = s.points.flatMap((p) => (p.rate.value !== null && isThin(p) ? [at(p.month, p.rate.value)] : []));
+  const last = at(lastSolid.month, lastSolid.value);
 
   const name = s.points
-    .map((p) => {
+    .flatMap((p, i) => {
       const { value, den } = rateParts(p.rate, unit, digits);
-      return `${p.label} ${p.rate.value === null ? "なし" : value}（${den}${isThin(p) ? `・${thinText}` : ""}）`;
+      const here = `${p.label} ${p.rate.value === null ? "なし" : value}（${den}${isThin(p) ? `・${thinText}` : ""}）`;
+      const prev = s.points[i - 1];
+      if (prev === undefined || p.month - prev.month === 1) return [here];
+      /**
+       * ⚠**결장을 이름이 말한다**(N17) — 그림이 끊긴 자리를 낭독에서도 들을 수 있게, **제자리**(앞뒤 달 사이)에서.
+       * **이어진 결장은 한 항목**(`6・7月 打席なし`)이라 이름이 결장한 달 수만큼 길어지지 않는다.
+       * ⚠달은 **달 번호**에서 만든다 — 행이 없으니 라벨이 애초에 없다. 다른 달의 표기(값·분모 · N7)는 그대로다.
+       */
+      const gap = Array.from({ length: p.month - prev.month - 1 }, (_, k) => prev.month + 1 + k);
+      return [`${gap.join("・")}月 ${SPARK_ABSENT[s.metric]}`, here];
     })
     .join("、");
 
   return html`<div class="spark">
   <svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img" aria-label="${label}：${name}">
-    <polyline points="${kept.map((c) => `${c.x},${c.y}`).join(" ")}" fill="none" stroke="currentColor" stroke-width="${stroke}"
-      stroke-linejoin="round" stroke-linecap="round"></polyline>
-    ${thin.map((c) => html`<circle class="thin" cx="${c.x}" cy="${c.y}" r="2.4" fill="none" stroke="currentColor" stroke-width="${stroke}"></circle>`)}
-    <circle cx="${last.x}" cy="${last.y}" r="2.4" fill="currentColor"></circle>
+    ${lines.map(
+      (l) => html`<polyline points="${l.map((c) => `${c.x},${c.y}`).join(" ")}" fill="none" stroke="currentColor" stroke-width="${stroke}"
+      stroke-linejoin="round" stroke-linecap="round"></polyline>`,
+    )}
+    ${solos.map((c) => html`<circle class="solo" cx="${c.x}" cy="${c.y}" r="${dot}" fill="currentColor"></circle>`)}
+    ${thin.map((c) => html`<circle class="thin" cx="${c.x}" cy="${c.y}" r="${dot}" fill="none" stroke="currentColor" stroke-width="${stroke}"></circle>`)}
+    <circle cx="${last.x}" cy="${last.y}" r="${dot}" fill="currentColor"></circle>
   </svg>
   <span class="sl">${label}${SPARK_BETTER[s.metric] === null ? "" : `（${SPARK_BETTER[s.metric]}）`}　${s.points[0]?.label ?? ""}→${s.points.at(-1)?.label ?? ""}${
     // ⚠**속 빈 점의 뜻을 화면이 말한다 — 얇은 달이 있을 때만**(2026-09-27 · PR-D 디자인 감사 P2).

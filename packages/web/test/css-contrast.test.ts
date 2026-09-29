@@ -205,6 +205,8 @@ const TEAM_MARKS: readonly {
   { sel: ".spark circle", prop: "fill", need: 3.0, bg: "page", what: "월별 추이의 끝점(비텍스트)" },
   // ⚠**얇은 달의 속 빈 점은 테두리가 전부다**(2026-09-27 · 감사 N7) — 채움이 없으니 선이 3:1 을 넘어야 보인다
   { sel: ".spark circle.thin", prop: "stroke", need: 3.0, bg: "page", what: "월별 추이의 얇은 달(속 빈 점 · 비텍스트)" },
+  // ⚠**결장 사이에 혼자 남은 믿을 달은 채운 점이 전부다**(2026-09-29 · 감사 N17) — 선에 못 들어가므로 이 점이 그 달의 유일한 표시다
+  { sel: ".spark circle.solo", prop: "fill", need: 3.0, bg: "page", what: "월별 추이의 혼자인 달(결장 사이 · 채운 점 · 비텍스트)" },
 ];
 
 for (const scope of ["light", "dark"] as const) {

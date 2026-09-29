@@ -410,16 +410,17 @@ export function playerPage(over: Partial<PlayerPageData> = {}): PlayerPageData {
      * ⚠**얇은 달(3月 22打席)을 일부러 둔다** — 기본 픽스처에 없으면 그 분기를 아무 시험도 안 지난다.
      * `6月` 은 **값이 정의되지 않는 달**(희생번트 1타석 — OPS 없음)이지 0 이 아니다(M11).
      * `thinBelow` 는 月別 축의 문턱(`THIN_SPLIT_PA`)과 같은 30 이다 — 픽스처는 query.ts 를 끌어오지 않는다.
+     * `month` 는 가로 자리를 정하는 달 번호다(감사 N17) — **결장 없는 연속 달**이라 옛 좌표와 같다.
      */
     spark: {
       metric: "ops",
       thinBelow: 30,
       points: [
-        { label: "3月", rate: r(0.812, 22) },
-        { label: "4月", rate: r(1.104, 98) },
-        { label: "5月", rate: r(0.99, 101) },
-        { label: "6月", rate: r(null, 1) },
-        { label: "7月", rate: r(1.201, 103) },
+        { label: "3月", month: 3, rate: r(0.812, 22) },
+        { label: "4月", month: 4, rate: r(1.104, 98) },
+        { label: "5月", month: 5, rate: r(0.99, 101) },
+        { label: "6月", month: 6, rate: r(null, 1) },
+        { label: "7月", month: 7, rate: r(1.201, 103) },
       ],
     },
     streaks: {
