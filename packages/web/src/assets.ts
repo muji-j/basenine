@@ -513,6 +513,13 @@ a{color:inherit}
    ⚠**fill:none 은 강제 색 모드에서도 남는다** — none 은 색이 아니라 강제 대상이 아니다.
    그래서 그 모드에서도 채운 끝점(지금)과 속 빈 점(얇은 달)이 갈린다(forced-colors.test.ts). */
 .spark circle.thin{fill:none;stroke:var(--tx-2)}
+/* ⚠**결장 사이에 혼자 남은 믿을 달은 선 잉크의 채운 점이다**(2026-09-29 · 감사 N17). 선은 결장한 달에서 끊기는데
+   한 점짜리 선은 칠해지지 않으므로, 이 점이 그 달의 유일한 표시다 — **한 달짜리 선**이라 잉크가 선과 같다
+   (--tx-2 · --page 대비 6.336 / 7.229 · 비텍스트 3:1 통과 · css-contrast 가 잰다).
+   채움은 「믿을 수 있는 값」(속 빈 점 = 얇은 달과 갈린다), 옅은 잉크는 「지금이 아니다」(끝점은 --tx)를 말한다.
+   ⚠**강제 색 모드에서는 끝점과 색이 같아진다** — 그때는 **자리**가 가른다: 혼자인 점은 언제나 끝점의 왼쪽이다
+   (마지막 믿을 달은 끝점이 맡는다 · 속 빈 점과는 채움 유무가 남아 갈린다). */
+.spark circle.solo{fill:var(--tx-2)}
 /* 꺾은선 캡션과, 꺾은선을 그리지 않을 때 그 자리의 안내(.sparknote)는 **같은 층의 글자 한 벌**이다(M1).
    새 색·크기를 만들지 않는다 — --tx-3 은 --page 대비 라이트 4.910 · 다크 5.499(css-contrast · sparkline 시험이 잰다). */
 .spark .sl,.sparknote{font-family:var(--f-num);font-size:var(--fs-min);color:var(--tx-3);letter-spacing:.06em}

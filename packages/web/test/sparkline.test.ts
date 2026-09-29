@@ -33,6 +33,20 @@ interface Month {
   label: string;
   value: number | null;
   den: number;
+  /**
+   * 달 번호(1〜12) — 가로 자리가 이것으로 정해진다(감사 N17). **없으면 라벨(「4月」)에서 뽑는다**(`labelMonth`).
+   * ⚠**그건 기존 픽스처를 손대지 않으려는 시험의 편의다** — 제품 코드는 라벨을 다시 읽지 않는다
+   * (쿼리가 월 키에서 라벨과 함께 싣는다 · M1). 그래서 N17 시험은 달 번호를 **직접** 주고,
+   * 라벨이 숫자가 아니어도 자리가 같은지까지 잰다.
+   */
+  month?: number;
+}
+
+/** **시험 픽스처 전용** — 라벨 「4月」에서 달 번호. 못 읽으면 픽스처가 틀린 것이다(`month` 를 직접 줘라) */
+function labelMonth(label: string): number {
+  const m = /^(\d{1,2})月$/.exec(label);
+  assert.ok(m !== null, `픽스처 라벨에서 달 번호를 못 읽었다 — month 를 직접 줘라: ${label}`);
+  return Number(m[1]);
 }
 
 /**
@@ -46,7 +60,7 @@ function sparkOf(metric: "ops" | "era", months: readonly Month[]): Partial<Playe
     spark: {
       metric,
       thinBelow: metric === "era" ? THIN_SPLIT_OUTS : THIN_SPLIT_PA,
-      points: months.map((m) => ({ label: m.label, rate: { value: m.value, denominator: m.den } })),
+      points: months.map((m) => ({ label: m.label, month: m.month ?? labelMonth(m.label), rate: { value: m.value, denominator: m.den } })),
     },
   };
 }
@@ -364,7 +378,23 @@ test("⚠N7 투수의 月別 표와 꺾은선이 같은 달을 얇다고 한다 
  */
 const NOW = "2026-06-01T00:00:00.000Z";
 
-async function withSite(fn: (site: ReturnType<typeof loadSite>) => void): Promise<void> {
+/** 합성 DB 에 경기를 더 넣는 손잡이 — `withSite` 의 기본 경기(4月 셋 · 5月 하나) 뒤에 붙는다 */
+interface MoreGames {
+  game(gameId: string, date: string): void;
+  pitch(gameId: string, outs: number, er: number): void;
+  /** 한 타석 = `[타자, 결과, 타석 뒤 주자, 그 타석의 득점]` · 반이닝은 3아웃으로 끝나야 한다 */
+  pas(gameId: string, innings: readonly (readonly (readonly ["B1" | "B2", "fieldedOut" | "single", string?, number?])[])[]): void;
+}
+
+/**
+ * @param more 기본 경기 뒤에 경기를 더 넣는다(감사 N17 — 결장한 달을 만들려고). ⚠**없으면 기존 시험이 보던 데이터 그대로다.**
+ * @param builtOn 사이트를 만든 날. 더한 경기가 기본값(6月 1日)보다 늦으면 그 뒤로 준다
+ */
+async function withSite(
+  fn: (site: ReturnType<typeof loadSite>) => void,
+  more?: (add: MoreGames) => void,
+  builtOn = "2026-06-01",
+): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), "bb-spark-"));
   const db = openDb(join(dir, "t.sqlite"), NOW);
   try {
@@ -441,7 +471,8 @@ async function withSite(fn: (site: ReturnType<typeof loadSite>) => void): Promis
     game("g4", "2026-05-08");
     pitch("g4", 1, 7);
     pas("g4", [[["B1", "single", "1"], ["B1", "single", "12"], ["B2", "fieldedOut"], ["B1", "fieldedOut"], ["B2", "fieldedOut"]]]);
-    fn(loadSite(db, { season: 2026, builtOn: "2026-06-01" }));
+    more?.({ game, pitch, pas });
+    fn(loadSite(db, { season: 2026, builtOn }));
   } finally {
     db.close();
     await rm(dir, { recursive: true, force: true });
@@ -548,8 +579,9 @@ test("⚠N18 투수도 같다 — 얇은 달뿐이면 「月別防御率　3回�
 });
 
 test("⚠N18 안내의 수를 손으로 적지 않는다 — 데이터의 문턱(thinBelow)을 바꾸면 문구가 따라온다(M1)", () => {
-  const pt = (label: string, value: number, den: number): { label: string; rate: { value: number; denominator: number } } => ({
+  const pt = (label: string, value: number, den: number): { label: string; month: number; rate: { value: number; denominator: number } } => ({
     label,
+    month: labelMonth(label),
     rate: { value, denominator: den },
   });
   // 타자 — 月別 축의 문턱이 25 인 픽스처면 「25打席以上」이어야 한다
@@ -567,8 +599,9 @@ test("⚠N18 안내의 수를 손으로 적지 않는다 — 데이터의 문턱
    * 전수 시험은 문턱 30 으로만 재므로 둘째 문구의 「30打席」 하드코딩을 못 잡는다 — 여기서 문턱을 바꿔 잡는다.
    * ⚠투수 쪽은 **합성**이다 — 실제 데이터에서는 구조적으로 안 나오지만(아래 시험), 렌더러는 지표를 가리지 않는다.
    */
-  const none = (label: string, den: number): { label: string; rate: { value: null; denominator: number } } => ({
+  const none = (label: string, den: number): { label: string; month: number; rate: { value: null; denominator: number } } => ({
     label,
+    month: labelMonth(label),
     rate: { value: null, denominator: den },
   });
   const bat2 = noteOf(render("ops", [], { spark: { metric: "ops", thinBelow: 25, points: [none("4月", 25), none("5月", 26)] } }));
@@ -877,4 +910,239 @@ test("⚠N18 안내 자리의 CSS 계약 — 빈 틀 없이, 넓은 폭은 오�
       assert.equal(computed(rules, NOTE_EL, "margin-left", mediaOk), "0", `${name}: 안내가 왼쪽에서 시작하지 않는다(꺾은선과 다른 자리)`);
     }
   }
+});
+
+/*
+ * ## 결장한 달 — 감사 N17(P3 · PR #26 디자인 감사 · 블라인드 반증은 거치지 않았다 → 아래 RED 가 곧 확인이다)
+ *
+ * 월 행은 **나온 달에만** 있다 — 月別 스플릿(타석)과 월별 방어율(등판)이 달로 GROUP BY 하므로 결장한 달(부상·2군)은
+ * 행 자체가 없다. 옛 판은 x 를 **점 순번**(`i * step` · `step = w / (점 수 − 1)`)으로 둬서 두 달 결장이 한 칸으로 이어졌다 —
+ * 시간이 압축되고 기울기가 과장된다. 실측(사본 · 그린 꺾은선 중 첫~끝 달 사이에 결장이 있는 것):
+ * 2026 타자 12/149 · 투수 45/253 · 2025 타자 30/177 · 투수 76/275.
+ * → x 는 **달력 순번**(첫 달~끝 달의 달 수로 나눈다) · 결장한 달에서 **선을 끊는다** · 이름이 「6・7月 打席なし」로 말한다.
+ * ⚠**보간하지 않는다** — 결장한 달에는 점도 값도 없다(M11). 규칙과 그 이유는 `sparkline` 머리말에 있다.
+ */
+
+/** 선(polyline) 하나하나의 꼭짓점 x — 끊겼으면 여러 벌, 선이 없으면 빈 배열 */
+function linesX(box: string): number[][] {
+  return [...box.matchAll(/<polyline points="([^"]*)"/g)].map((m) => m[1]!.trim().split(/\s+/).map((p) => Number(p.split(",")[0])));
+}
+
+/** 혼자인 달 — 양옆이 결장(또는 끝)이라 선에 못 들어간 믿을 수 있는 달 */
+function solos(box: string): Pt[] {
+  return [...box.matchAll(/<circle class="solo" cx="([-\d.]+)" cy="([-\d.]+)"/g)].map((m) => ({ x: Number(m[1]), y: Number(m[2]) }));
+}
+
+/** 채운 끝점 — 클래스가 없는 원(`dots` 는 혼자인 점까지 센다) */
+function ends(box: string): Pt[] {
+  return [...box.matchAll(/<circle cx="([-\d.]+)" cy="([-\d.]+)"/g)].map((m) => ({ x: Number(m[1]), y: Number(m[2]) }));
+}
+
+/** 상자 안 **모든 표식**(선의 꼭짓점 · 모든 원)의 x — 결장한 달에 무엇이든 지어냈는지 본다 */
+function markXs(box: string): number[] {
+  const circles = [...box.matchAll(/<circle\b[^>]*\bcx="([-\d.]+)"/g)].map((m) => Number(m[1]));
+  return [...new Set([...linesX(box).flat(), ...circles])].sort((a, b) => a - b);
+}
+
+/** 4月·5月·8月(6·7月 결장) — 세 달 다 믿을 수 있다(분모가 문턱의 세 배) */
+function gapFixture(metric: "ops" | "era"): Month[] {
+  const den = (metric === "era" ? THIN_SPLIT_OUTS : THIN_SPLIT_PA) * 3;
+  const [a, b, c] = metric === "era" ? [3.0, 2.25, 4.5] : [0.7, 0.8, 0.9];
+  return [
+    { label: "4月", month: 4, value: a, den },
+    { label: "5月", month: 5, value: b, den },
+    { label: "8月", month: 8, value: c, den },
+  ];
+}
+
+/** 결장한 달을 부르는 말 — 타자는 월 행이 **타석**으로 생기고, 투수는 **등판**으로 생긴다 */
+const ABSENT = { ops: "打席なし", era: "登板なし" } as const;
+
+test("⚠N17 결장한 달이 가로축에서 접히지 않는다 — 4月·5月·8月이면 5月 은 네 칸 중 첫 칸(27)이고 5月→8月 은 4月→5月 의 3배", () => {
+  for (const metric of ["ops", "era"] as const) {
+    const box = sparkBox(render(metric, gapFixture(metric)));
+    assert.ok(box !== null, `${metric}: 믿을 달이 셋인데 꺾은선이 없다 — 이 시험이 잴 것이 없다`);
+    const lines = linesX(box);
+    // ⚠**옛 판은 5月 을 가운데(54)에 놓았다** — 점 순번 x 라 두 달 결장이 한 칸이 됐다(감사 N17 의 그 모양)
+    assert.equal(lines[0]?.[1], 27, `${metric}: 5月 의 x 가 달력 자리(4月〜8月 네 칸 중 첫 칸 = 27)가 아니다 — 선 ${JSON.stringify(lines)}`);
+    const end = ends(box);
+    assert.equal(end.length, 1, `${metric}: 채운 끝점이 하나가 아니다`);
+    const [x4, x5, x8] = [lines[0]![0]!, lines[0]![1]!, end[0]!.x];
+    assert.deepEqual([x4, x8], [0, 108], `${metric}: 첫 달·끝 달이 상자의 양 끝이 아니다`);
+    assert.equal(x8 - x5, 3 * (x5 - x4), `${metric}: 5月→8月(${x8 - x5})이 4月→5月(${x5 - x4})의 3배가 아니다 — 결장한 두 달이 접혔다`);
+    // 선 — **끊는다**: 5月 과 8月 사이의 6·7月 은 행이 없다. 이으면 없는 두 달의 추이를 그린다
+    assert.deepEqual(lines, [[0, 27]], `${metric}: 결장한 6·7月 을 건너 선을 이었다 — 끊어야 한다`);
+    // 결장한 달(x 54 · 81)에 **어떤 표식도 없다** — 점·꼭짓점·속 빈 점 무엇이든 지어내면 여기서 걸린다
+    assert.deepEqual(markXs(box), [0, 27, 108], `${metric}: 결장한 달에 표식을 지어냈다`);
+    assert.deepEqual(solos(box), [], `${metric}: 8月 은 마지막 믿을 달이라 끝점이다 — 혼자인 점이 따로 있으면 안 된다`);
+    // 이름 — 결장을 **한 항목**으로 제자리(5月 과 8月 사이)에서 말한다 · 다른 달의 표기(N7)는 그대로
+    const { months } = nameOf(box);
+    assert.deepEqual(
+      months.map((m) => m.split(" ")[0]),
+      ["4月", "5月", "6・7月", "8月"],
+      `${metric}: 이름이 결장을 제자리에서 말하지 않는다: ${months.join("、")}`,
+    );
+    assert.ok(months.includes(`6・7月 ${ABSENT[metric]}`), `${metric}: 결장 항목의 말이 다르다: ${months.join("、")}`);
+    for (const m of months.filter((x) => !x.includes(ABSENT[metric]))) {
+      assert.match(m, /^\d+月 [\d.]+（[^）]+）$/, `${metric}: 결장 아닌 달의 표기(값·분모)가 바뀌었다: ${m}`);
+    }
+  }
+});
+
+/**
+ * 옛 좌표 — **점 순번 x** · 믿을 달의 최소·최대로 정규화. 결장이 없으면 달력 순번과 같아야 한다.
+ * ⚠**구현을 부르지 않고 따로 센다** — 같은 함수로 기대를 만들면 그 함수가 틀려도 시험이 따라 틀린다.
+ */
+function oldCoords(values: readonly number[]): Pt[] {
+  const lo = Math.min(...values);
+  const span = Math.max(...values) - lo || 1;
+  return values.map((v, i) => ({
+    x: Number(((i * 108) / (values.length - 1)).toFixed(1)),
+    y: Number((26 - ((v - lo) / span) * 26).toFixed(1)),
+  }));
+}
+
+test("⚠N17 결장이 없으면 좌표가 그대로다 — 연속 달의 달력 순번은 점 순번과 같다(회귀 없음)", () => {
+  for (const metric of ["ops", "era"] as const) {
+    const den = (metric === "era" ? THIN_SPLIT_OUTS : THIN_SPLIT_PA) * 3;
+    const values = metric === "era" ? [3.0, 2.25, 4.5, 1.8, 3.6] : [0.7, 0.9, 0.8, 1.0, 0.6];
+    const box = sparkBox(render(metric, values.map((value, i) => ({ label: `${3 + i}月`, month: 3 + i, value, den }))))!;
+    assert.deepEqual(linePoints(box), oldCoords(values), `${metric}: 결장 없는 연속 달의 좌표가 옛 판과 다르다`);
+    assert.equal(linesX(box).length, 1, `${metric}: 결장이 없는데 선이 끊겼다`);
+    assert.deepEqual(solos(box), [], `${metric}: 결장이 없는데 혼자인 점이 생겼다`);
+    assert.ok(!nameOf(box).months.some((m) => m.includes(ABSENT[metric])), `${metric}: 결장이 없는데 이름이 결장을 말한다`);
+  }
+});
+
+test("⚠N17 얇은 달도 달력 자리에 놓이고(N7), 결장을 사이에 둔 믿을 달은 잇지 않는다 — 혼자면 속 빈 점과 같은 크기의 채운 점", () => {
+  // 4月 믿을 · 5月 얇음(8打席) · (6·7月 결장) · 8月 믿을
+  const box = sparkBox(render("ops", [
+    { label: "4月", month: 4, value: 0.7, den: 100 },
+    { label: "5月", month: 5, value: 0.8, den: 8 },
+    { label: "8月", month: 8, value: 0.9, den: 100 },
+  ]));
+  assert.ok(box !== null, "믿을 달이 둘인데 안 그렸다 — N18 판정이 결장 때문에 바뀌었다");
+  assert.deepEqual(rings(box), [{ x: 27, y: 13 }], "얇은 5月 이 달력 자리(27)에 있지 않다");
+  assert.deepEqual(linesX(box), [], "결장한 6·7月 을 건너 4月 과 8月 을 이었다");
+  // ⚠**4月 이 그림에서 사라지면 안 된다** — 선이 한 점짜리면 SVG 는 아무것도 안 그린다(이동 명령만 있는 경로)
+  assert.deepEqual(solos(box), [{ x: 0, y: 26 }], "혼자 남은 믿을 달(4月)의 점이 없다");
+  assert.deepEqual(ends(box), [{ x: 108, y: 0 }], "채운 끝점이 마지막 믿을 달(8月)이 아니다");
+  assert.deepEqual(markXs(box), [0, 27, 108], "결장한 달에 표식을 지어냈다");
+  /**
+   * ⚠**혼자인 점은 얇은 달(속 빈 점)보다 작으면 안 된다** — 시안에서 r 1.6 이었을 때 104打席짜리 달이
+   * 14打席짜리 속 빈 점보다 약하게 읽혔다(위계가 뒤집힌다). 크기는 끝점·속 빈 점과 같은 「한 달」의 크기다.
+   * ⚠**CSS 가 없어도 보인다**(N14 와 같은 이유) — 채움 기본값은 `currentColor`.
+   */
+  const soloTag = /<circle class="solo"[^>]*>/.exec(box)?.[0] ?? "";
+  const ringTag = /<circle class="thin"[^>]*>/.exec(box)?.[0] ?? "";
+  const r = (tag: string): string | undefined => /\br="([^"]*)"/.exec(tag)?.[1];
+  assert.ok(r(soloTag) !== undefined && r(soloTag) === r(ringTag), `혼자인 점(r ${r(soloTag)})이 속 빈 점(r ${r(ringTag)})과 크기가 다르다`);
+  assert.match(soloTag, /\bfill="currentColor"/, `혼자인 점에 기본 채움이 없다 — CSS 가 없으면 검정으로 떨어진다: ${soloTag}`);
+  assert.doesNotMatch(soloTag, /\bstroke=/, `혼자인 점에 테두리가 있다 — 속 빈 점(얇은 달)과 헷갈린다: ${soloTag}`);
+
+  // 결장이 없으면 **N7 그대로** — 얇은 달을 건너 앞뒤의 믿을 달을 바로 잇는다
+  const bridged = sparkBox(render("ops", [
+    { label: "4月", month: 4, value: 0.7, den: 100 },
+    { label: "5月", month: 5, value: 0.8, den: 8 },
+    { label: "6月", month: 6, value: 0.9, den: 100 },
+  ]))!;
+  assert.deepEqual(linesX(bridged), [[0, 108]], "결장이 없는데 얇은 달에서 선이 끊겼다(N7 은 건너 잇는다)");
+  assert.deepEqual(solos(bridged), []);
+});
+
+test("⚠N17 「나왔는데 값이 없는 달」은 결장이 아니다 — 행이 있으면 건너 잇고, 행이 없을 때만 끊는다(M11)", () => {
+  // 5月 은 희생번트 1타석뿐(OPS 정의 안 됨) — **나온 달**이다. 선은 N7 대로 건너 잇는다
+  const played = sparkBox(render("ops", [
+    { label: "4月", month: 4, value: 0.7, den: 100 },
+    { label: "5月", month: 5, value: null, den: 1 },
+    { label: "6月", month: 6, value: 0.9, den: 100 },
+  ]))!;
+  assert.deepEqual(linesX(played), [[0, 108]], "값 없는 달(행은 있다)에서 선이 끊겼다");
+  assert.ok(!nameOf(played).months.some((m) => m.includes(ABSENT.ops)), "나온 달을 결장이라고 말한다");
+  // 5月 에 행이 없으면 결장이다 — 끊고, 이름이 말한다
+  const absent = sparkBox(render("ops", [
+    { label: "4月", month: 4, value: 0.7, den: 100 },
+    { label: "6月", month: 6, value: 0.9, den: 100 },
+  ]))!;
+  assert.deepEqual(linesX(absent), [], "결장한 5月 을 건너 이었다");
+  assert.deepEqual(nameOf(absent).months, ["4月 .700（100打席）", "5月 打席なし", "6月 .900（100打席）"]);
+});
+
+test("⚠N17 그리기 판정과 안내는 결장과 무관하다(N18) — 믿을 달 수만 센다 · 결장으로 갈라진 두 달은 점 둘로 그린다", () => {
+  // 믿을 달 하나(8月) + 얇은 4月 + 결장 — 안 그리고 첫째 문구(지금과 같다)
+  const one = render("ops", [
+    { label: "4月", month: 4, value: 0.8, den: 10 },
+    { label: "8月", month: 8, value: 0.9, den: 100 },
+  ]);
+  assert.equal(sparkBox(one), null, "믿을 달이 하나인데 그렸다");
+  assert.equal(noteOf(one)?.text, expectedNote("ops", THIN_SPLIT_PA), "결장이 있으니 안내가 달라졌다");
+  // 믿을 달 둘이 결장으로 갈라져 있다 — **판정은 그린다**(믿을 달 2 ≥ 최소). 선은 없고 점 둘이다
+  const two = render("era", [
+    { label: "4月", month: 4, value: 3.0, den: 90 },
+    { label: "9月", month: 9, value: 2.25, den: 60 },
+  ]);
+  const box = sparkBox(two);
+  assert.ok(box !== null, "믿을 달이 둘인데 안 그렸다 — N18 판정이 결장 때문에 바뀌었다");
+  assert.equal(noteOf(two), null, "그렸는데 안내도 붙었다");
+  assert.deepEqual(linesX(box), [], "결장한 5〜8月 을 건너 이었다");
+  assert.deepEqual(solos(box).map((p) => p.x), [0]);
+  assert.deepEqual(ends(box).map((p) => p.x), [108]);
+  assert.deepEqual(nameOf(box).months, ["4月 3.00（30回）", "5・6・7・8月 登板なし", "9月 2.25（20回）"]);
+});
+
+test("⚠N17 가로 자리는 라벨이 아니라 달 번호에서 온다 — 화면 글자(「5月」)를 다시 읽지 않는다(M1)", () => {
+  // 라벨을 숫자 없는 글자로 바꿔도 자리가 같아야 한다 — 라벨을 읽는 구현이면 여기서 무너진다
+  const kanji = gapFixture("ops").map((m, i) => ({ ...m, label: ["四月", "五月", "八月"][i]! }));
+  const box = sparkBox(render("ops", kanji));
+  assert.ok(box !== null, "꺾은선이 없다 — 이 시험이 잴 것이 없다");
+  assert.deepEqual(linesX(box), [[0, 27]], "라벨을 바꿨더니 자리가 달라졌다 — 가로 자리를 라벨에서 읽는다");
+  assert.deepEqual(ends(box).map((p) => p.x), [108]);
+  // 결장 항목의 달도 **달 번호**에서 만든다 — 행이 없으니 라벨이 애초에 없다
+  assert.deepEqual(nameOf(box).months.map((m) => m.split(" ")[0]), ["四月", "五月", "6・7月", "八月"]);
+});
+
+test("⚠N17 달 번호가 1〜12 의 정수로 엄격히 증가하지 않으면 던진다 — 겹치거나 되돌아가는 그림을 조용히 그리지 않는다(M7)", () => {
+  const spark = (months: readonly number[]) => ({
+    metric: "ops" as const,
+    thinBelow: THIN_SPLIT_PA,
+    points: months.map((month) => ({ label: `${month}月`, month, rate: { value: 0.8, denominator: 100 } })),
+  });
+  for (const bad of [[4, 4], [5, 4], [0, 1], [12, 13], [4, 4.5], [Number.NaN, 5]]) {
+    assert.throws(() => sparkline(spark(bad)), RangeError, `달 번호 ${bad.join(",")} 를 조용히 받았다`);
+  }
+  // ⚠**그리지 않을 모양이어도 던진다** — 판정 전에 본다(데이터가 틀렸다는 사실은 그림 여부와 무관하다)
+  assert.throws(() => sparkline({ ...spark([5, 4]), thinBelow: 1000 }), RangeError, "안 그리는 경우엔 달 순서를 안 본다");
+  for (const ok of [[4, 5], [1, 12], [3, 5, 10]]) assert.doesNotThrow(() => sparkline(spark(ok)), `달 번호 ${ok.join(",")} 를 거절했다`);
+});
+
+test("⚠N17 쿼리가 달 번호를 싣는다 — 타자(月別 축의 행)·투수(월별 방어율) 둘 다, 결장한 달은 행이 없고 그림이 끊긴다", async () => {
+  await withSite(
+    (site) => {
+      const p = site.players.find((x) => x.playerId === "P1");
+      const b = site.players.find((x) => x.playerId === "B1");
+      assert.ok(p !== undefined && b !== undefined, "투수·타자 페이지가 없다 — 이 시험이 잴 것이 없다");
+      for (const [who, s] of [["투수", p.spark], ["타자", b.spark]] as const) {
+        assert.deepEqual(
+          s.points.map((x) => [x.label, x.month]),
+          [["4月", 4], ["5月", 5], ["7月", 7]],
+          `${who}: 월 행이 달 번호를 싣지 않는다(또는 결장한 6月 에 행을 지어냈다)`,
+        );
+      }
+      // **그 달 번호가 그림까지 간다** — 투수: 4月(81アウト) · 5月(1アウト · 얇음) · 6月 결장 · 7月(27アウト)
+      const box = sparkBox(toString(sparkline(p.spark)));
+      assert.ok(box !== null, "투수 꺾은선이 없다 — 이 시험이 잴 것이 없다");
+      assert.deepEqual(rings(box).map((c) => c.x), [36], "얇은 5月 이 달력 자리(4月〜7月 세 칸 중 첫 칸 = 36)에 있지 않다");
+      assert.deepEqual(linesX(box), [], "결장한 6月 을 건너 선을 이었다");
+      assert.deepEqual(solos(box).map((c) => c.x), [0], "혼자 남은 4月 의 점이 없다");
+      assert.deepEqual(ends(box).map((c) => c.x), [108]);
+      assert.ok(nameOf(box).months.includes("6月 登板なし"), `투수 이름이 결장을 말하지 않는다: ${nameOf(box).months.join("、")}`);
+    },
+    ({ game, pitch, pas }) => {
+      // 7월 — **6月 은 둘 다 결장**(경기가 없다 = 행이 없다). P1 은 27아웃 3자책 · B1 은 2타석
+      game("g5", "2026-07-10");
+      pitch("g5", 27, 3);
+      pas("g5", [[["B1", "single", "1"], ["B2", "fieldedOut"], ["B1", "fieldedOut"], ["B2", "fieldedOut"]]]);
+    },
+    "2026-08-01",
+  );
 });

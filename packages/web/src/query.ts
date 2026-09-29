@@ -478,10 +478,33 @@ const PITCHER_SPLIT_KEY_LABEL: Readonly<Record<string, string>> = {
   away: "ビジター",
 };
 
+/**
+ * 월 키(`2026-04`)를 읽는 **한 벌**(M1) — 라벨(`4月`)과 달 번호(4)가 **한 번의 읽기에서 같이** 나온다.
+ *
+ * ⚠**꺾은선의 가로 자리는 달 번호로 정한다**(2026-09-29 · 감사 N17). 라벨은 화면 글자라,
+ * 그것을 다시 읽어 달을 얻으면 같은 달을 읽는 두 번째 규칙이 생긴다 — 그래서 여기서 둘을 함께 낸다.
+ * `null` 은 「월 키가 아니다」다.
+ */
+function readMonthKey(key: string): { label: string; month: number } | null {
+  const m = /^\d{4}-(\d{2})$/.exec(key);
+  return m === null ? null : { label: `${Number(m[1])}月`, month: Number(m[1]) };
+}
+
 /** `2026-04` → `4月` */
 function monthLabel(key: string): string {
-  const m = /^\d{4}-(\d{2})$/.exec(key);
-  return m === null ? key : `${Number(m[1])}月`;
+  return readMonthKey(key)?.label ?? key;
+}
+
+/**
+ * 꺾은선의 한 달 — 월 키에서 라벨과 달 번호를 **함께** 꺼낸다(N17).
+ *
+ * ⚠**월 키가 아니면 던진다**(M7). 표의 라벨은 `monthLabel` 처럼 키를 그대로 흘려도 화면이 버티지만,
+ * 달 번호가 없으면 가로 자리를 정할 수 없다 — 조용히 아무 데나 놓으면 거짓 그림이다.
+ */
+function sparkMonth(key: string): { label: string; month: number } {
+  const k = readMonthKey(key);
+  if (k === null) throw new Error(`월별 추이의 월 키가 YYYY-MM 이 아니다: ${key}`);
+  return k;
 }
 
 export function splitLabel(axis: SplitAxisId, key: string, allowed: boolean): string {
@@ -6463,6 +6486,8 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
      * ⚠**분모를 싣고, 얇음의 잣대는 月別 표의 것을 그대로 넘긴다**(2026-09-27 · 감사 N7 · P0).
      * 타자는 **그 축 자신의** `thinBelow` 를 읽는다 — 수를 여기서 다시 고르면 표와 꺾은선이 갈린다.
      * 투수는 경기 단위 투구 표가 쓰는 `THIN_SPLIT_OUTS` 다(표도 이 상수로 흐린다).
+     * ⚠**달 번호를 월 키에서 라벨과 함께 싣는다**(2026-09-29 · 감사 N17) — 두 경로 다 `sparkMonth` 한 벌이다.
+     * 월 행은 **나온 달에만** 있으므로(타자는 타석 · 투수는 등판) 결장한 달은 여기 없고, 꺾은선이 달 번호로 그 자리를 비운다.
      */
     const monthAxis = (splitsByPlayer.get(playerId) ?? []).find((a) => a.id === "month");
     const spark: SparkData =
@@ -6470,12 +6495,12 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
         ? {
             metric: "era",
             thinBelow: THIN_SPLIT_OUTS,
-            points: (monthlyEra.get(playerId) ?? []).map((m) => ({ label: monthLabel(m.month), rate: m.era })),
+            points: (monthlyEra.get(playerId) ?? []).map((m) => ({ ...sparkMonth(m.month), rate: m.era })),
           }
         : {
             metric: "ops",
             thinBelow: monthAxis?.thinBelow ?? THIN_SPLIT_PA,
-            points: (monthAxis?.rows ?? []).map((r) => ({ label: r.label, rate: r.ops })),
+            points: (monthAxis?.rows ?? []).map((r) => ({ ...sparkMonth(r.key), rate: r.ops })),
           };
 
     players.push({
