@@ -1000,6 +1000,17 @@ const RANKING_TOP = 10;
 const SPARK_DIGITS: Readonly<Record<SparkData["metric"], 2 | 3>> = { ops: 3, era: 2 };
 
 /**
+ * 꺾은선을 그리는 데 필요한 **믿을 수 있는 달의 최소 수** — 점이 둘은 있어야 선이다(감사 N7).
+ *
+ * ⚠**리터럴이었다**(`solid.length < 2` · 2026-09-28 감사 N18 에서 끌어올렸다). 그리지 않을 때 그 자리에 두는
+ * 안내(`sparkNote`)가 **같은 수를 말한다** — 수가 두 자리에 따로 적히면 이 수를 바꾼 날 안내만 거짓이 된다(M1).
+ * ⚠**그 둘은 `sparkline` 의 `minSolid` 인자로 이 수를 받는다**(기본값이 이 상수). 시험은 **2 가 아닌 수**를 주입해
+ * 두 자리가 같은 값을 쓰는지 잰다 — 상수만 읽으면 리터럴 `2` 를 써도 초록이다(N18 교차 검토 P2).
+ * ⚠안내는 이 수를 「つ」로 센다 — 1〜9 에서만 자연스러운 조수사다. 그래서 2〜9 밖이면 `sparkline` 이 던진다.
+ */
+export const SPARK_MIN_SOLID_MONTHS = 2;
+
+/**
  * 꺾은선 캡션이 말하는 **좋은 쪽** — 기본 읽기(위가 좋다)와 반대인 지표에만 적는다.
  *
  * ⚠**방어율은 위로 갈수록 나쁘다**(2026-09-27 · PR-D 디자인 감사 P3). 같은 페이지의 月別 표는
@@ -1042,7 +1053,8 @@ const SPARK_BETTER: Readonly<Record<SparkData["metric"], string | null>> = { ops
  * ⚠**눌러 붙인 얇은 점은 크기를 말하지 않는다** — 방향(다른 달보다 위/아래)만 참이다. 크기는 이름과 표가 말한다.
  * ⚠**속 빈 점의 뜻은 캡션 끝의 범례가 말한다**(`○＝30打席未満` · 얇은 달이 있을 때만 · PR-D 디자인 감사 P2).
  *   얇은 점은 값이 극단이라 모서리를 차지하기 쉬워서, 뜻 없이 두면 「이상한 점」으로 읽힌다.
- * ⚠**믿을 수 있는 달이 둘 미만이면 그리지 않는다** — 얇은 점만 있는 그림은 선이 없는 그림이다.
+ * ⚠**믿을 수 있는 달이 `minSolid`(기본 `SPARK_MIN_SOLID_MONTHS` = 2) 미만이면 그리지 않는다** — 얇은 점만 있는 그림은 선이 없는 그림이다.
+ *   ⚠**그 자리를 말없이 비우지 않는다** — 안내 한 줄을 둔다(`sparkNote` · 감사 N18).
  *
  * ⚠**선과 점의 색은 CSS 토큰(`.spark polyline` · `.spark circle` · `.spark circle.thin`)이 준다**
  * (2026-09-25 감사 W2 · 2026-09-27). 구단 색 변수를 속성으로 달았더니 12구단 중 11구단이 어느 한 테마에서
@@ -1051,18 +1063,27 @@ const SPARK_BETTER: Readonly<Record<SparkData["metric"], string | null>> = { ops
  * (`stroke:none` · `fill:black`) 때문에 선이 사라지고 끝점만 검게 남았다. 기본값은 글자색을 따를 뿐이고
  * 정상 모드에서는 CSS 가 표현 속성을 이긴다. ⚠**구단 색을 여기 되살리지 마라**(위 W2).
  */
-function sparkline(s: SparkData): RawHtml {
+export function sparkline(s: SparkData, minSolid: number = SPARK_MIN_SOLID_MONTHS): RawHtml {
+  // ⚠**조용히 받지 않는다**(M7) — 점 하나는 선이 아니고(1 이하), 안내의 「つ」는 1〜9 에서만 맞다(10 이상)
+  if (!Number.isInteger(minSolid) || minSolid < 2 || minSolid > 9) {
+    throw new RangeError(`꺾은선의 최소 달 수는 2〜9 의 정수여야 한다(선은 점 둘부터 · 안내는 「つ」로 센다): ${minSolid}`);
+  }
   const unit = denUnit(s.metric);
   const digits = SPARK_DIGITS[s.metric];
   const label = `月別${termLabel(s.metric)}`;
+  /**
+   * 얇음의 잣대를 사람이 읽는 꼴로(`30打席` · `3回`). ⚠**한 벌이다** — 이름·범례의 「…未満」과
+   * 그리지 않을 때 안내의 「…以上」이 같은 수에서 나온다(M1). 따로 만들면 문턱을 바꾼 날 둘이 갈린다.
+   */
+  const bar = denominator(s.thinBelow, unit);
   // ⚠**표의 각주와 같은 말**이다 — 「30打席未満は薄く表示しています」「3回未満は…」
-  const thinText = `${denominator(s.thinBelow, unit)}未満`;
+  const thinText = `${bar}未満`;
   const isThin = (p: SparkPoint): boolean => p.rate.value !== null && p.rate.denominator < s.thinBelow;
 
   const solid = s.points
     .map((p) => p.rate.value)
     .filter((v, i): v is number => v !== null && !isThin(s.points[i]!));
-  if (solid.length < 2) return raw("");
+  if (solid.length < minSolid) return sparkNote(s, label, bar, minSolid);
 
   const w = 108;
   const h = 26;
@@ -1107,6 +1128,51 @@ function sparkline(s: SparkData): RawHtml {
     thin.length === 0 ? null : html`　<span aria-hidden="true">○＝${thinText}</span>`
   }</span>
 </div>`;
+}
+
+/**
+ * 꺾은선을 **그리지 않을 때** 그 자리에 두는 안내 한 줄 — 감사 N18(사용자 결정 2026-09-28).
+ *
+ * ⚠**그 자리가 말없이 비었다.** N7 이 믿을 수 있는 달이 모자라면 그리지 않게 했는데(M2 — 그 자체는 맞다),
+ * 개막월(3月)이 구조적으로 얇아 **개막부터 5월 초까지 약 6주 동안 타자 꺾은선이 전부 없다**
+ * (2025 실측: 4/30 기준 153장 → 0장 · 5/31 232 → 100). 빈자리는 「기능이 사라졌다」로 읽힌다.
+ * → **무엇의 추이인지 + 언제 그리는지**를 한 줄로 말한다: `月別OPS　30打席以上の月が2つあれば表示`.
+ *
+ * ⚠**수를 손으로 적지 않는다**(M1). 이름은 캡션과 같은 `label`, 문턱은 이름·범례의 「…未満」과 같은 `bar`,
+ *   「2つ」는 그리기 판정이 쓴 **바로 그 `minSolid`**(기본값 `SPARK_MIN_SOLID_MONTHS`)다 — 문턱이나 최소 달 수가 바뀌면 안내도 같이 바뀐다.
+ * ⚠**시제가 없는 문장이다**(「…あれば表示」 — 요구의 예시 「そろうと表示」에서 다듬었다). 이 화면은 **끝난 시즌에도**
+ *   그려진다(2018〜) — 끝난 시즌에 「모이면 그린다」는 오지 않을 미래를 약속한다. 조건을 말하면 어느 시즌에도 참이다
+ *   (`pages.ts` 의 `streakPanelBody` 빈 화면 문구와 같은 규칙).
+ * ⚠**방향(「低いほど良い」)은 말하지 않는다** — 그건 그림을 읽는 법이고, 여기엔 그림이 없다.
+ * ⚠**그 시즌에 나온 달이 없으면 아무것도 두지 않는다**(M12). 「모자라서 안 그림」과 「그릴 것이 없음」은 다른 상태다 —
+ *   안 나온 선수에게 「…あれば表示」라고 하면 모자란 것처럼 읽힌다.
+ *   ⚠**「나온 달」은 값이 아니라 달이다** — 희생번트 1타석뿐인 달(OPS 정의 안 됨)도 나온 달이다(M11).
+ * ⚠**그림처럼 만들지 않는다** — 빈 상자·회색 막대·점선 틀은 데이터가 있는 것처럼 보인다. 캡션(`.spark .sl`)과
+ *   같은 층의 글자 하나이고, **낭독에서 빼지 않는다**(캡션 끝 범례와 달리 이건 그림 대신 말하는 글자다).
+ *
+ * ## 문구는 둘이고, **보일 때 언제나 참**이다(N18 교차 검토 P2 · 조정자 방침)
+ *
+ * | 경우 | 문구 |
+ * |---|---|
+ * | 분모가 문턱 이상인 달이 `minSolid` 미만 | `月別OPS　30打席以上の月が2つあれば表示` |
+ * | 그런 달은 채웠는데 **값이 나오는 달**(믿을 달)이 모자람 | `月別OPS　30打席以上で計算できる月が2つ未満` |
+ *
+ * ⚠**둘째가 왜 있는가** — 분모가 문턱 이상이어도 값이 정의되지 않는 달이 있다(타자: 30打席 이상인데 타수 0 이면
+ *   장타율이 없어 OPS 가 없다 · `ops()` · M11). 그런 달로 조건을 채우면 첫째 문구는 **이미 채운 조건**을 말해 거짓이다.
+ * ⚠**투수는 둘째 문구가 구조적으로 안 나온다** — 방어율은 0アウト에서만 정의되지 않고(`earnedRunAverage`),
+ *   0 은 문턱(`THIN_SPLIT_OUTS`) 미만이다. 렌더러의 분기가 아니라 데이터의 성질이다(시험이 그 사실을 붙든다).
+ * ⚠**둘을 가르는 것은 「나온 달 수」가 아니라 「분모가 문턱 이상인 달 수」다** — 얇은 달이 여럿이어도 첫째 문구가 참이다.
+ * ⚠**조용히 비지 않는다**(M12) — 나온 달이 있는데 안 그리면 둘 중 하나는 반드시 나온다(시험이 전수로 맞댄다).
+ */
+function sparkNote(s: SparkData, label: string, bar: string, minSolid: number): RawHtml {
+  if (s.points.length === 0) return raw("");
+  /** 분모가 문턱 이상인 달 — **값이 나오든 안 나오든**. 믿을 달(값도 있음)은 이것의 부분집합이다 */
+  const enough = s.points.filter((p) => p.rate.denominator >= s.thinBelow).length;
+  const text =
+    enough < minSolid
+      ? `${label}　${bar}以上の月が${minSolid}つあれば表示`
+      : `${label}　${bar}以上で計算できる月が${minSolid}つ未満`;
+  return html`<p class="sparknote">${text}</p>`;
 }
 
 function idLine(d: PlayerPageData, base: string): RawHtml {
