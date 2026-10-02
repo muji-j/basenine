@@ -9,7 +9,7 @@
  */
 import { createHash } from "node:crypto";
 import { gunzipSync, gzipSync } from "node:zlib";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 /** 저장된 블롭의 메타데이터 (CLAUDE.md M4: source · fetched_at · as_of · revision). */
@@ -76,12 +76,68 @@ export interface Sink {
   writeMeta(key: string, meta: BlobMeta): Promise<void>;
 }
 
+/**
+ * 한 키의 **저장 바이트** 사본(설계 `docs/superpowers/specs/2026-10-02-correction-auto-refetch-design.md` D7-5).
+ *
+ * `parts` 는 「저장 단위 이름 → 그 바이트(없으면 `null` = 「없음」)」이고 **차례가 정해져 있다** — 같은 sink 의 같은 키면
+ * 이름 열이 같으므로 두 사본을 바이트로 맞댈 수 있다(`sameSnapshot`).
+ * ⚠「없음」과 「빈 파일」을 섞지 않는다(M11) — 빈 파일은 길이 0 인 바이트다.
+ */
+export interface PageSnapshot {
+  readonly key: string;
+  readonly parts: readonly (readonly [name: string, bytes: Uint8Array | null])[];
+}
+
+/**
+ * 받기 전에 뜨고, 기록이 반쯤 실패하면 **그 바이트 그대로 되돌릴 수 있는** 저장소(정정 자동 재수집 전용 · 설계 D7-5).
+ * ⚠기존 `Sink` 사용처는 바뀌지 않는다 — 평소 수집 경로(`archiveGame`)는 되돌리지 않는다(선례 설계가 G3b 를 적재기의 G4 로 받기로 했다).
+ */
+export interface RestorableSink extends Sink {
+  /**
+   * 그 키의 저장 바이트를 뜬다. 없는 것은 `null`.
+   * ⚠**「없음」(ENOENT) 말고 읽기 오류는 던진다** — 못 뜬 사본으로는 되돌릴 수 없으므로 부르는 쪽이 그 경기를 받지 않는다(`snapshot_failed`).
+   */
+  snapshot(key: string): Promise<PageSnapshot>;
+  /**
+   * 사본의 바이트로 되돌린다 — 있던 것은 그 바이트로 다시 쓰고, 없던 것은 지운다(없어서 못 지우는 것은 성공).
+   * ⚠**스스로 확인하지 않는다** — 부르는 쪽이 다시 떠서 사전과 맞댄다(`sameSnapshot`). 반환을 「되돌렸다」의 증거로 쓰지 마라.
+   */
+  restore(key: string, snap: PageSnapshot): Promise<void>;
+}
+
+/** 두 사본이 **바이트로** 같은가 — 이름 열과 각 바이트(또는 「없음」)가 전부 같아야 한다 */
+export function sameSnapshot(a: PageSnapshot, b: PageSnapshot): boolean {
+  if (a.key !== b.key || a.parts.length !== b.parts.length) return false;
+  return a.parts.every(([name, bytes], i) => {
+    const other = b.parts[i];
+    if (other === undefined || other[0] !== name) return false;
+    if (bytes === null || other[1] === null) return bytes === other[1];
+    return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).equals(Buffer.from(other[1].buffer, other[1].byteOffset, other[1].byteLength));
+  });
+}
+
+/**
+ * **이 프로세스의** 임시 파일 경로 — `writeAtomic` 과 사본(`LocalSink.snapshot`)이 같은 규칙을 쓴다(M1).
+ * ⚠pid 를 넣는 이유는 `writeAtomic` 의 주석 — 같은 키를 두 프로세스가 동시에 쓰면 서로의 임시 파일을 깬다.
+ */
+export function tmpPathOf(path: string): string {
+  return `${path}.${String(process.pid)}.tmp`;
+}
+
+/** 이름 열이 기대와 같은가 — 다른 키·다른 프로세스의 사본으로 덮어쓰는 사고를 막는다 */
+function assertSnapshotOf(key: string, snap: PageSnapshot, names: readonly string[]): void {
+  const got = snap.parts.map(([name]) => name);
+  if (snap.key !== key || got.length !== names.length || got.some((n, i) => n !== names[i])) {
+    throw new Error(`다른 저장 단위의 사본이다 — 되돌리지 않는다: 키 ${key} ← 사본 ${snap.key} (${got.join(", ")})`);
+  }
+}
+
 export function sha256(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
 /** 로컬 디스크 구현. 본문은 gzip, 메타는 평문 JSON(사람이 읽을 수 있게). */
-export class LocalSink implements Sink {
+export class LocalSink implements RestorableSink {
   readonly root: string;
 
   constructor(root: string) {
@@ -132,6 +188,57 @@ export class LocalSink implements Sink {
     await mkdir(dirname(p), { recursive: true });
     await writeAtomic(p, Buffer.from(`${JSON.stringify(meta, null, 2)}\n`, "utf8"));
   }
+
+  /**
+   * 사본에 넣는 파일 — 본문 · 사이드카 · **이 프로세스가 남겼을 수 있는 두 임시 파일**(설계 D7-5).
+   * ⚠임시 파일까지 뜨는 이유: 기록 단계의 첫 쓰기가 `writeFile(임시)` 뒤 `rename` 전에 실패하면 최종 경로는 그대로인데
+   *   임시 파일만 남는다 — 그것도 「이 프로세스가 무언가를 썼다」의 증거다(G3b · 되돌릴 때 지운다).
+   */
+  private snapshotPaths(key: string): string[] {
+    const body = this.bodyPath(key);
+    const meta = this.metaPath(key);
+    return [body, meta, tmpPathOf(body), tmpPathOf(meta)];
+  }
+
+  /** ⚠본문은 **gzip 된 저장 바이트 그대로**다(풀지 않는다) — 되돌릴 때 같은 바이트를 써야 하므로 */
+  async snapshot(key: string): Promise<PageSnapshot> {
+    const parts: (readonly [string, Uint8Array | null])[] = [];
+    for (const path of this.snapshotPaths(key)) parts.push([path, await readBytesOrNull(path)]);
+    return { key, parts };
+  }
+
+  /**
+   * 본문 → 사이드카(`write` 와 같은 차례) → 임시 파일 차례로 되돌린다.
+   * - 있던 본문·사이드카는 원래 바이트를 **같은 디렉터리의 임시 파일 + rename** 으로 다시 쓴다(`writeAtomic` — 되돌리기 도중 죽어도 잘린 파일이 안 남는다).
+   * - 없던 것은 지운다(ENOENT 는 성공 · `force`).
+   * - 임시 파일은 본문·사이드카를 되돌린 **뒤에** 사전 상태로 맞춘다 — `writeAtomic` 이 같은 임시 이름을 거쳐 가기 때문이다.
+   *   사전에 없던 임시 파일(= 이 프로세스가 이번에 남긴 것)은 지운다.
+   * ⚠한 파일이 실패하면 던진다 — 나머지를 되돌렸는지는 부르는 쪽이 **다시 떠서** 판정한다.
+   */
+  async restore(key: string, snap: PageSnapshot): Promise<void> {
+    const paths = this.snapshotPaths(key);
+    assertSnapshotOf(key, snap, paths);
+    for (const [i, [path, bytes]] of snap.parts.entries()) {
+      if (bytes === null) {
+        await rm(path, { force: true });
+      } else if (i < 2) {
+        await mkdir(dirname(path), { recursive: true });
+        await writeAtomic(path, bytes);
+      } else {
+        await writeFile(path, bytes);
+      }
+    }
+  }
+}
+
+/** 파일의 바이트 그대로. **없으면 `null`**(「없음」) — 그 밖의 읽기 오류는 던진다 */
+async function readBytesOrNull(path: string): Promise<Uint8Array | null> {
+  try {
+    return new Uint8Array(await readFile(path));
+  } catch (err) {
+    if (isNotFound(err)) return null;
+    throw err;
+  }
 }
 
 /**
@@ -149,13 +256,13 @@ export class LocalSink implements Sink {
  *   (동시 실행은 워크플로 `concurrency` 로 막지만, 손으로 돌리는 백필이 겹칠 수 있다.)
  */
 async function writeAtomic(path: string, data: Uint8Array): Promise<void> {
-  const tmp = `${path}.${process.pid}.tmp`;
+  const tmp = tmpPathOf(path);
   await writeFile(tmp, data);
   await rename(tmp, path);
 }
 
 /** 테스트용 인메모리 구현. */
-export class MemorySink implements Sink {
+export class MemorySink implements RestorableSink {
   readonly bodies = new Map<string, Uint8Array>();
   readonly metas = new Map<string, BlobMeta>();
   /** write가 실제로 호출된 횟수 — 멱등성 검증에 쓴다 */
@@ -181,6 +288,30 @@ export class MemorySink implements Sink {
   async writeMeta(key: string, meta: BlobMeta): Promise<void> {
     this.metas.set(key, meta);
     this.metaWriteCount += 1;
+  }
+
+  /** 본문은 바이트 복사본, 사이드카는 `LocalSink` 처럼 JSON 바이트로 뜬다(같은 객체를 쥐면 뒤의 변경이 사본에 샌다) */
+  async snapshot(key: string): Promise<PageSnapshot> {
+    const body = this.bodies.get(key);
+    const meta = this.metas.get(key);
+    return {
+      key,
+      parts: [
+        ["body", body === undefined ? null : body.slice()],
+        ["meta", meta === undefined ? null : new TextEncoder().encode(JSON.stringify(meta))],
+      ],
+    };
+  }
+
+  /** ⚠`writeCount`·`metaWriteCount` 를 올리지 않는다 — 되돌리기는 아카이브의 「쓰기」가 아니다 */
+  async restore(key: string, snap: PageSnapshot): Promise<void> {
+    assertSnapshotOf(key, snap, ["body", "meta"]);
+    const body = snap.parts[0]?.[1] ?? null;
+    const meta = snap.parts[1]?.[1] ?? null;
+    if (body === null) this.bodies.delete(key);
+    else this.bodies.set(key, body.slice());
+    if (meta === null) this.metas.delete(key);
+    else this.metas.set(key, JSON.parse(new TextDecoder().decode(meta)) as BlobMeta);
   }
 }
 
