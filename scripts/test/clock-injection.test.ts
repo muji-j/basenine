@@ -80,6 +80,10 @@ const ALLOWED: ReadonlyMap<string, number> = new Map([
   //   판정 자체(`heartbeatVerdict`)는 `nowIso` 를 인자로 받는 순수 함수이고
   //   시계는 **진입점 한 곳에서만** 읽는다 — 위 verify-deploy 와 같은 모양이다.
   ["scripts/heartbeat.ts", 1],
+  // ⚠**정정 자동 재수집의 진입점** — 잡 시작부터의 경과(시간 예산 · D6 의 8)·이력의 시각·감지 시즌(JST 연도)에 「지금」이 필요하다.
+  //   판단(`scripts/correction-plan.ts`)은 `now` 를 인자로 받는 순수 모듈이고 시계는 **진입점 한 곳에서 한 번만** 읽는다
+  //   (설계 `docs/superpowers/specs/2026-10-02-correction-auto-refetch-design.md` D9 · T11)
+  ["scripts/correction-refetch.ts", 1],
   // 경과 시간 측정(성능). ⚠**날짜가 아니라 duration 이라 자정 경계와 무관하다**
   ["packages/web/test/client.test.ts", 2],
 ]);
