@@ -46,6 +46,7 @@
 2. 실측 검증(설계 D13 끝): 정정 전 CI 사본 DB(세션 스크래치)로 `crosscheck.ts --emit` → `status: "defects"` · `player_id: "91095136"` · `team: "t"` / 진입점 `--plan-only` → 고른 날짜 `2026-09-23, 2026-09-17, 2026-05-13`.
 3. 배포 전 `shiro-core:triple-review`(루트 §4 · 고위험).
 4. 머지 뒤 첫 정시 실행의 보고 첫 줄.
+5. 머지 뒤 첫 정시 실행에서 **M-J(새 단계 자리 → 잡 끝)를 다시 잰다** — 이 가지가 매 daily 「시험」 단계에 새 시험(로컬 `crosscheck-emit` 55.7초 · `crosscheck-gate-unchanged` 26.5초)을 더했고 45분 잡의 여유가 **1.94분**이다(T13 의 `afterStep` 11.43분은 그 시험들 이전 값 · 3중 검토 2차).
 
 ## 진행 기록
 
