@@ -273,6 +273,8 @@ export interface RunOpts {
   planOnly?: boolean;
   /** 실행마다 다른 작업 폴더(기본: 세계 폴더의 `work`) */
   work?: string;
+  /** 원격 이력 읽기를 갈아 끼운다(기본: 세계의 `remote` · `remoteFails`) — 진짜 `gitReadHistory` 에 가짜 git 을 물려 볼 때 */
+  readRemoteHistory?: MainDeps["readRemoteHistory"];
 }
 
 export interface Ran {
@@ -313,8 +315,9 @@ export function runMain(world: World, o: RunOpts = {}): Ran {
     now: () => new Date(now),
     root: world.dir,
     runChild: (spec) => fakeChild(world, spec, now),
-    readRemoteHistory: () => {
+    readRemoteHistory: (ref) => {
       world.remoteReads += 1;
+      if (o.readRemoteHistory !== undefined) return o.readRemoteHistory(ref);
       return world.remoteFails ? { ok: false, reason: "가짜 git fetch 실패" } : { ok: true, bytes: world.remote };
     },
     openDb: () => fakeDb(world),

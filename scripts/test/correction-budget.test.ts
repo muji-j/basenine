@@ -88,6 +88,9 @@ test("⚠T13⑶ 잡 최악 = 마감 + 한 경기 최악 + 재적재 + 감지·�
   );
   const jobLimit = collectJobTimeoutMin();
   assert.equal(jobLimit, 45, "collect 잡 시간 제한이 45분이 아니다 — 마감 25분을 다시 내라(설계 D7-8)");
+  // ⚠받기 도구의 「첫 전송 앞 대기」(`--delay` 한 번 · 프로세스를 넘는 L1 · `cli-games.ts`)는 **더하지 않는다** — 첫 경기의 마감 검사
+  //   **앞**이라 「잡 시작 → 마지막 경기 시작 < 25분」 안에 든다. 경기 안으로 옮겨도 한 경기 최악은 그대로다 — 위 식이 이미
+  //   전송마다(첫 전송 포함) 간격 대기 ≤ `--delay` 를 센다.
   const total = AUTO_REFETCH_START_DEADLINE_MIN + w.gameS / 60 + MEASURED_MIN.reload + MEASURED_MIN.detectReport + MEASURED_MIN.afterStep;
   assert.ok(
     total <= jobLimit - MARGIN_FLOOR_MIN,

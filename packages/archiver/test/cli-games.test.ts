@@ -34,6 +34,8 @@ interface Ran {
   code: number;
   urls: string[];
   timeouts: number[];
+  /** 전송과 대기를 일어난 차례대로(`fetch <url>` · `sleep <ms>`) — 「첫 전송 앞에 대기가 있는가」를 잰다 */
+  events: string[];
   stderr: string;
   dir: string;
   result: string;
@@ -68,10 +70,12 @@ async function runIn(
   const argv = [...Object.entries(base).flatMap(([k, v]) => (v === null ? [] : [k, v])), ...(o.extra ?? [])];
   const urls: string[] = [];
   const timeouts: number[] = [];
+  const events: string[] = [];
   const lines: string[] = [];
   const seen = new Map<string, number>();
   const fetchImpl: TimedFetchImpl = async (url) => {
     urls.push(url);
+    events.push(`fetch ${url}`);
     const n = (seen.get(url) ?? 0) + 1;
     seen.set(url, n);
     const status = o.status?.(url, n) ?? 200;
@@ -86,7 +90,9 @@ async function runIn(
   if (o.contact !== null) env["BB_ARCHIVER_CONTACT"] = o.contact ?? CONTACT;
   const code = await runCliGames(argv, env, {
     fetchImpl,
-    sleep: async () => undefined,
+    sleep: async (ms) => {
+      events.push(`sleep ${String(ms)}`);
+    },
     clock: fixedClock(NOW),
     timeoutSignal: (ms) => {
       timeouts.push(ms);
@@ -96,7 +102,7 @@ async function runIn(
       lines.push(line);
     },
   });
-  return { code, urls, timeouts, stderr: lines.join("\n"), dir, result };
+  return { code, urls, timeouts, events, stderr: lines.join("\n"), dir, result };
 }
 
 async function cleanup(r: Ran): Promise<void> {
@@ -256,6 +262,36 @@ test("⚠받기 실패가 있으면 종료 1 · 결과 JSON 의 exit 도 1 · �
     assert.deepEqual(json.games.map((g) => g.reason ?? g.status), ["prepare_failed", "circuit_open"]);
   } finally {
     await cleanup(r);
+  }
+});
+
+/**
+ * ⚠**프로세스를 넘는 L1**(3중 검토 2차 · 확인 불가 항목). 이 도구는 새 프로세스라 fetcher 가 직전 요청을 모른다
+ *   (`lastRequestAt === null` → 첫 요청이 기다리지 않고 나간다). 바로 앞 단계(`공표 성적표 갱신`)의 마지막 npb 요청과의 간격을
+ *   감지·계획 시간에 맡기지 않고 **첫 전송 앞에서 `--delay` 만큼 한 번** 기다린다. 가짜 시계가 흐르지 않으므로 그 뒤의 간격도
+ *   `sleep(--delay)` 로 찍힌다 — 그래서 **전체 열**로 단정한다(첫 대기 하나가 더해졌을 뿐 fetcher 의 간격은 그대로다).
+ */
+test("⚠프로세스를 넘는 L1 — 첫 전송 앞에도 --delay 만큼 한 번 기다린다 · 그 뒤 간격은 fetcher 그대로 · 입력이 틀리면 기다리지도 않는다", async () => {
+  for (const delay of ["3000", "4000"]) {
+    const r = await runIn({ ids: `${ID1}\n`, args: { "--delay": delay } });
+    try {
+      assert.equal(r.code, 0, r.stderr);
+      const urls = GAME_PAGES.map((p) => pageUrl(gameRefFromId(ID1), p));
+      assert.deepEqual(
+        r.events,
+        urls.flatMap((u) => [`sleep ${delay}`, `fetch ${u}`]),
+        `--delay ${delay}: 첫 전송 앞에 간격 대기가 없거나 간격이 바뀌었다 — ${r.events.slice(0, 3).join(" · ")}`,
+      );
+    } finally {
+      await cleanup(r);
+    }
+  }
+  const bad = await runIn({ ids: "2026/0923/S-T-23\n" });
+  try {
+    assert.equal(bad.code, 2);
+    assert.deepEqual(bad.events, [], "입력이 틀려 요청 0으로 끝나는데 기다렸다");
+  } finally {
+    await cleanup(bad);
   }
 });
 

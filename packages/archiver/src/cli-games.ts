@@ -91,6 +91,9 @@ export interface CliGamesIo {
 
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
+/** 진짜 대기 — `PoliteFetcher` 의 기본값과 같은 모양(`setTimeout`) */
+const defaultSleep: SleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 /** ⚠모르는 인자·위치 인자는 던진다(`strict`) — `--contact` 도 받지 않는다(연락처는 env 로만) */
 function readArgs(argv: readonly string[]) {
   return parseArgs({
@@ -190,6 +193,14 @@ export async function runCliGames(argv: readonly string[], env: Readonly<Record<
     `정정 자동 재수집 받기 — 경기 ${String(parsed.refs.length)}건 · 저장 ${out} · 요청 간격 ${String(delayMs)}ms · ` +
       `마감 ${deadline} · HTTP 예산 ${String(AUTO_REFETCH_MAX_HTTP)}`,
   );
+  /**
+   * ⚠**프로세스를 넘는 L1**(2026-10-02 · 3중 검토 2차) — 이 프로세스의 fetcher 는 직전 요청을 모른다(`lastRequestAt === null` →
+   *   첫 요청이 기다리지 않고 나간다). 바로 앞 단계(`공표 성적표 갱신`)의 마지막 npb 요청과의 간격을 감지·계획 시간에 맡기지 않고
+   *   **첫 경기 앞에서 `--delay` 만큼 한 번** 기다린다. ⚠`PoliteFetcher` 는 고치지 않는다 — 평소 수집(`cli.ts`)의 동작이 그대로다(설계 D7-3).
+   * ⚠첫 경기의 마감 검사(`refetchGames`) **앞**이라 이 대기는 설계 D7-8 의 「잡 시작 → 마지막 경기 시작 < 25분」 안에 든다 —
+   *   잡 최악(43.06분 · `scripts/test/correction-budget.test.ts`)은 그대로다. 결함이 없는 실행은 이 도구를 띄우지 않으므로 비용 0 이다.
+   */
+  await (io.sleep ?? defaultSleep)(delayMs);
   const result = await refetchGames(
     parsed.refs,
     { fetcher, sink: new LocalSink(out), clock, meter },

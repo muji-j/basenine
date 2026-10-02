@@ -575,13 +575,29 @@ export class PlanError extends Error {
 
 const GAME_ID = /^(\d{4})\/(\d{2})(\d{2})\/[a-z0-9]+(?:-[a-z0-9]+)+$/;
 
+/**
+ * 경기 ID(`<시즌>/<MMDD>/<슬러그>` · DB `game.game_id`)의 경기일 — 모양이 틀렸거나 **없는 날짜**(`2026/0230/…`)면 null.
+ * ⚠**받기 도구의 `gameRefFromId`(`packages/archiver/src/discover.ts`)와 판정이 같아야 한다**(3중 검토 1차 P3-2 · M1) — 계획이 통과시킨
+ *   ID 를 받기 도구가 거부하면 요청 0 · 결과 없음 · 단계 종료 1 이고, 반대면 계획 실패(종료 1)다. 이 파일은 잎만 가져오므로(머리말)
+ *   두 벌이고, 같은 코퍼스로 둘을 맞대는 시험이 지킨다(`scripts/test/correction-refetch-wiring.test.ts`).
+ * ⚠**1000년 미만 시즌(`0000`~`0999`)에서는 두 벌이 같지 않다** — 달력 검사가 0~99년에서 갈리고(`isYmd` 는 `Date.UTC` 라 그 해를
+ *   1900년대로 읽는다), 받기 도구는 그 범위에서 **자기 왕복이 깨진다**(`gameIdOf` 가 시즌을 `Number` 로 바꿔 앞 0 을 버린다 — 실측).
+ *   NPB 시즌은 1936~ 이고 DB 의 ID 는 같은 `\d{4}` 일정 링크에서 오므로 나올 수 없는 값이라 여기서 맞추지 않는다 — 막아야 하면 두 벌을 함께 고친다.
+ */
+export function gameIdDate(id: string): string | null {
+  const m = GAME_ID.exec(id);
+  if (m === null) return null;
+  const date = `${m[1]!}-${m[2]!}-${m[3]!}`;
+  return isYmd(date) ? date : null;
+}
+
 /** DB 가 준 행을 그대로 믿지 않는다 — 모양·기준일·ID 와 날짜의 짝이 틀리면 던진다(M7). 정렬해 돌려준다 */
 function checkRows(rows: readonly CandidateRow[], through: string): CandidateRow[] {
   const seen = new Set<string>();
   for (const r of rows) {
-    const m = GAME_ID.exec(r.game_id);
-    if (m === null) throw new PlanError(`후보 행의 경기 ID 모양이 틀렸다: ${JSON.stringify(r.game_id)}`);
-    if (!isYmd(r.game_date) || r.game_date !== `${m[1]!}-${m[2]!}-${m[3]!}`) {
+    const date = gameIdDate(r.game_id);
+    if (date === null) throw new PlanError(`후보 행의 경기 ID 모양이 틀렸거나 없는 날짜다: ${JSON.stringify(r.game_id)}`);
+    if (r.game_date !== date) {
       throw new PlanError(`후보 행의 경기일이 경기 ID 와 안 맞는다: ${r.game_id} · ${JSON.stringify(r.game_date)}`);
     }
     if (r.game_date > through) throw new PlanError(`후보 행이 기준일(${through}) 뒤다 — 범위 조각이 안 걸렸다: ${r.game_id}`);

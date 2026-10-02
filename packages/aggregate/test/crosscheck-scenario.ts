@@ -276,10 +276,22 @@ export interface ToolRun {
   stderr: string;
 }
 
-/** 도구를 자식 프로세스로 돌린다(외부 요청 0 — 임시 DB·임시 아카이브만 읽는다) */
+/**
+ * 도구를 자식 프로세스로 돌린다(외부 요청 0 — 임시 DB·임시 아카이브만 읽는다).
+ *
+ * ⚠**자식 env 에서 `FORCE_COLOR` · `NO_COLOR` 를 뺀다**(2026-10-02 · 3중 검토 3차 부수). 둘이 함께 설정된 셸에서는 Node 가
+ *   자식 stderr 맨 앞에 `(node:<pid>) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.` 를 섞는다 —
+ *   stderr 를 **바이트로** 맞대는 시험(`crosscheck-gate-unchanged.test.ts` 11본 · `crosscheck-emit.test.ts` 의 감지 모드↔관문 비교 5본)이
+ *   **도구가 아니라 셸 탓으로** 붉어졌다(실측 31본 중 16본 · pid 가 달라 두 자식끼리도 안 맞는다).
+ *   ⚠**시험 쪽에서만 뺀다** — 도구(제품 코드)와 관문 출력은 그대로다. 자식 stderr 는 파이프라 두 변수가 없으면 색을 안 쓴다.
+ */
 export function runTool(s: Scenario, extra: readonly string[] = []): ToolRun {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  delete env["FORCE_COLOR"];
+  delete env["NO_COLOR"];
   const r = spawnSync(process.execPath, [TOOL, s.db, String(SEASON), "--archive", s.archive, ...extra], {
     encoding: "utf8",
+    env,
   });
   if (r.error !== undefined) throw r.error;
   return { code: r.status, stdout: r.stdout, stderr: r.stderr };

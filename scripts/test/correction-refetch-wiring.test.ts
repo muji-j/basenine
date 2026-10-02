@@ -22,9 +22,11 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { AUTO_REFETCH_MAX_RETRIES, AUTO_REFETCH_REQUEST_TIMEOUT_MS } from "@bb-app/store/refetch-limit";
 import { CLI_GAMES_DEFAULT_DELAY_MS } from "../../packages/archiver/src/cli-games.ts";
-import { GAME_PAGES } from "../../packages/archiver/src/discover.ts";
+import { GAME_PAGES, gameIdOf, gameRefFromId } from "../../packages/archiver/src/discover.ts";
 import { MAX_REDIRECTS } from "../../packages/archiver/src/fetcher.ts";
-import { CHILD_TIMEOUT_MS, FETCH_CHILD_MARGIN_MS, FETCH_DELAY_MS, FETCH_WORST_GAME_MS, HISTORY_PATH } from "../correction-plan.ts";
+import { CHILD_TIMEOUT_MS, FETCH_CHILD_MARGIN_MS, FETCH_DELAY_MS, FETCH_WORST_GAME_MS, HISTORY_PATH, gameIdDate } from "../correction-plan.ts";
+import { gitReadHistory } from "../correction-refetch.ts";
+import type { GitExit, GitSpawn } from "../correction-refetch.ts";
 import { INCIDENT, K_WP, NOW, OLD, START, defect, detectJson, makeWorld, runMain, sha256 } from "./correction-fakes.ts";
 import type { World } from "./correction-fakes.ts";
 import { DAILY, jobBlock, runBash, runOf, stepNamed, stepsOf } from "./workflow-shell.ts";
@@ -124,6 +126,83 @@ test("⚠받기 시간 제한의 292초 · --delay 3000 은 아카이버 상수�
   for (let a = 0; a < attempts; a += 1) backoff += CLI_GAMES_DEFAULT_DELAY_MS * 2 ** a;
   const page = attempts * (1 + MAX_REDIRECTS) * transmission + backoff;
   assert.equal(FETCH_WORST_GAME_MS, GAME_PAGES.length * page);
+});
+
+/**
+ * 경기 ID 코퍼스 — `[ID, 받으면 그 경기일 · 안 받으면 null]`. ⚠**한쪽 규칙만 바꾸면 아래 시험이 붉다** — 둘 다 바꾸려면 기대값도 고친다.
+ * ⚠**1000년 미만 시즌(`0000`~`0999`)은 넣지 않는다** — 거기서는 두 벌이 실제로 갈린다(실측: `0000/0101/s-t-1` 을 계획은 거부 ·
+ *   받기 도구는 받는다 — 달력 검사가 `isYmd`(`Date.UTC` 가 0~99년을 1900년대로 읽음)와 `Date.parse` 왕복으로 다르다). 게다가 받기 도구
+ *   자신의 왕복도 깨진다(`gameIdOf` 가 시즌을 `Number` 로 바꿔 `0000/…` → `0/…`). NPB 시즌은 1936~ 이고 DB 의 ID 는 같은 `\d{4}` 일정
+ *   링크에서 오므로 나올 수 없는 값이다 — 막아야 하면 두 벌을 함께 고치고 여기에 넣는다(`gameIdDate` 머리말).
+ */
+const GAME_ID_CORPUS: readonly (readonly [string, string | null])[] = [
+  // 받는 것
+  ["2026/0923/s-t-23", "2026-09-23"],
+  ["2026/0917/t-c-20", "2026-09-17"],
+  ["2018/0330/bs-f-1", "2018-03-30"], // 2018 오릭스 슬러그(`bs`)
+  ["2026/1101/t-h-7", "2026-11-01"],
+  ["2026/0923/a-b-c-d", "2026-09-23"], // 하이픈 조각이 여럿
+  ["2026/0923/1-2", "2026-09-23"],
+  ["2024/0229/s-t-1", "2024-02-29"], // 윤년
+  ["1936/0429/a-b-1", "1936-04-29"],
+  ["9999/1231/s-t-1", "9999-12-31"],
+  // 안 받는 것 — 대문자 · 밑줄 · 하이픈 없음 · 빈 조각
+  ["2026/0923/S-T-23", null],
+  ["2026/0923/s_t-23", null],
+  ["2026/0923/s-t_23", null],
+  ["2026/0923/st23", null],
+  ["2026/0923/-s-t", null],
+  ["2026/0923/s-t-", null],
+  ["2026/0923/s--t", null],
+  // 없는 날짜
+  ["2026/0230/s-t-23", null],
+  ["2025/0229/s-t-1", null],
+  ["2026/1301/s-t-23", null],
+  ["2026/0000/s-t-1", null],
+  ["2026/0932/s-t-1", null],
+  // 앞뒤 공백 · 줄 끝
+  [" 2026/0923/s-t-23", null],
+  ["2026/0923/s-t-23 ", null],
+  ["2026/0923/s-t-23\n", null],
+  ["2026/0923/s-t-23\r", null],
+  // 자릿수 · 구분자
+  ["202/0923/s-t-23", null],
+  ["20266/0923/s-t-23", null],
+  ["2026/923/s-t-23", null],
+  ["2026/0923/s-t-23/", null],
+  ["2026/0923", null],
+  ["2026/0923/", null],
+  ["x/0923/s-t-1", null],
+  ["2026-09-23/s-t-1", null],
+  ["２０２６/0923/s-t-1", null], // 전각 숫자
+  ["../../etc/passwd", null],
+  ["", null],
+];
+
+/**
+ * ⚠**경기 ID 판정 두 벌을 맞댄다**(3중 검토 1차 P3-2 · M1). 계획(`gameIdDate` — `checkRows` 가 쓴다)은 잎 제약 때문에 아카이버를
+ *   가져오지 못해 받기 도구(`gameRefFromId`)와 따로 적혀 있다. 한쪽만 바뀌면 ⑴ 계획이 통과시킨 ID 를 받기 도구가 **요청 0 · 종료 2** 로
+ *   거부해 결과가 없고(단계 종료 1), ⑵ 반대면 DB 의 ID 를 계획이 거부해 **매 실행 계획 실패**(종료 1)다 — 둘 다 배포를 막는다.
+ *   같은 코퍼스에서 **받는가 · 받으면 그 경기일**이 같아야 하고, 받은 ID 는 받기 도구가 **같은 ID 로** 받는다(왕복).
+ */
+test("⚠경기 ID 판정 두 벌(계획 gameIdDate · 받기 도구 gameRefFromId)이 같은 코퍼스에서 같다 — 받는가 · 받으면 그 경기일", () => {
+  const fetchTool = (id: string): string | null => {
+    try {
+      return gameRefFromId(id).date;
+    } catch (e) {
+      if (!(e instanceof RangeError)) throw e; // 거부가 아니라 결함이다 — 「안 받음」으로 뭉개지 않는다
+      return null;
+    }
+  };
+  for (const [id, want] of GAME_ID_CORPUS) {
+    const plan = gameIdDate(id);
+    const tool = fetchTool(id);
+    assert.equal(plan, tool, `${JSON.stringify(id)}: 두 벌이 갈렸다 — 계획 ${JSON.stringify(plan)} · 받기 도구 ${JSON.stringify(tool)}`);
+    assert.equal(plan, want, `${JSON.stringify(id)}: 코퍼스의 기대(${JSON.stringify(want)})와 다르다`);
+    if (plan !== null) assert.equal(gameIdOf(gameRefFromId(id)), id, `${JSON.stringify(id)}: 받기 도구가 다른 ID 로 바꿔 받는다`);
+  }
+  // 공회전 막기 — 두 갈래가 다 있다
+  assert.ok(GAME_ID_CORPUS.filter(([, w]) => w !== null).length >= 5 && GAME_ID_CORPUS.filter(([, w]) => w === null).length >= 20);
 });
 
 // ── 보고 첫 줄의 갈래 · 종료 코드 ─────────────────────────────────────────────
@@ -280,6 +359,101 @@ test("⚠이력 — 원격 판 위에서만 쓴다: base = 원격 바이트의 s
   const r = runMain(w);
   assert.equal(r.file("history.base"), sha256(remote));
   assert.equal(r.file("history.next.json"), null, "unmeasured 인데 이력을 바꿨다");
+});
+
+// ── 원격 이력 읽기(git) — 「없음」과 「실패」 · 최소 권한(3중 검토 1차 P3-1 · 2차 Minor) ─────────────────────
+
+const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
+/** git 의 실제 두 문장(2026-10-02 실측 · `git cat-file -e HEAD:<없는 경로>` 와 `HEAD:<작업 트리에만 있는 경로>` · 둘 다 128) */
+const PATH_GONE = "fatal: path 'ops/correction-refetch.json' does not exist in 'origin/main'\n";
+const PATH_ONLY_ON_DISK = "fatal: path 'ops/correction-refetch.json' exists on disk, but not in 'origin/main'\n";
+/** 「없다」가 아닌 128 의 대표 — ⚠이 문장을 git 이 낸다고 주장하지 않는다. 「그 경로가 그 커밋에 없다」가 아니면 무엇이든 실패다 */
+const OTHER_FATAL = "fatal: unable to read 4b825dc642cb6eb9a060e54bf8d69288fbee4904\n";
+
+/** 가짜 git — 명령마다 정한 끝을 돌려주고 부른 것을 적는다(진짜 git 0 · 외부 요청 0) */
+function fakeGit(o: { fetch?: Partial<GitExit>; commit?: Partial<GitExit>; exists?: Partial<GitExit>; show?: Partial<GitExit> } = {}) {
+  const calls: { args: string[]; cwd: string; env: Readonly<Record<string, string | undefined>> }[] = [];
+  const spawn: GitSpawn = (args, opts) => {
+    calls.push({ args: [...args], cwd: opts.cwd, env: opts.env });
+    const pick = args[0] === "fetch" ? o.fetch : args[0] === "show" ? o.show : (args[2] ?? "").endsWith("^{commit}") ? o.commit : o.exists;
+    return { status: 0, stdout: new Uint8Array(), stderr: new Uint8Array(), error: null, ...pick };
+  };
+  return { spawn, calls };
+}
+
+test("⚠원격 이력 읽기 — cat-file 의 비0 은 git 이 「그 경로가 그 커밋에 없다」고 말할 때만 「없음」이다 · 그 밖은 실패(빈 이력으로 받지 않는다)", () => {
+  const env = { PATH: "/usr/bin" };
+  // 없음 — 두 문장(작업 트리에 있든 없든) · show 를 부르지 않는다
+  for (const stderr of [PATH_GONE, PATH_ONLY_ON_DISK]) {
+    const g = fakeGit({ exists: { status: 128, stderr: enc(stderr) } });
+    assert.deepEqual(gitReadHistory("/repo", "main", env, g.spawn), { ok: true, bytes: null }, stderr);
+    assert.equal(g.calls.some((c) => c.args[0] === "show"), false, "없는 파일을 show 했다");
+  }
+  // 실패 — 「없다」가 아닌 128 · 말 없는 1(블롭 없음 · 부분 clone — git 소스 근거) · 시간 제한(띄우지 못함과 같은 갈래)
+  for (const [name, exists] of [
+    ["128 · 다른 문장", { status: 128, stderr: enc(OTHER_FATAL) }],
+    ["1 · 말 없음(객체 없음)", { status: 1, stderr: new Uint8Array() }],
+    ["시간 제한", { status: null, error: new Error("spawnSync git ETIMEDOUT") }],
+  ] as const) {
+    const g = fakeGit({ exists });
+    const r = gitReadHistory("/repo", "main", env, g.spawn);
+    assert.equal(r.ok, false, `${name}: 「없음」으로 읽었다 — 빈 이력으로 새 일화를 열어 이미 받은 경기를 다시 받는다(L1)`);
+    assert.match(r.ok ? "" : r.reason, /cat-file/, name);
+    assert.equal(g.calls.some((c) => c.args[0] === "show"), false, `${name}: 실패 뒤에 show 했다`);
+  }
+  // 있음 — 차례와 인자(가지 이름은 인자 하나 · 셸 0)
+  const body = '{\n  "schema": 1,\n  "keys": {}\n}\n';
+  const g = fakeGit({ show: { stdout: enc(body) } });
+  const r = gitReadHistory("/repo", "main", env, g.spawn);
+  assert.deepEqual(r, { ok: true, bytes: enc(body) });
+  assert.deepEqual(
+    g.calls.map((c) => c.args),
+    [
+      ["fetch", "--quiet", "origin", "main"],
+      ["cat-file", "-e", "origin/main^{commit}"],
+      ["cat-file", "-e", "origin/main:ops/correction-refetch.json"],
+      ["show", "origin/main:ops/correction-refetch.json"],
+    ],
+  );
+  assert.ok(g.calls.every((c) => c.cwd === "/repo"));
+});
+
+test("⚠원격 이력 읽기 — git 자식 env 에 연락처가 없다(받기 도구에만) · 메시지는 영어로 고정(LC_ALL=C) · 나머지 env 는 그대로 · 넘긴 env 는 안 바꾼다", () => {
+  const env: Record<string, string | undefined> = { PATH: "/usr/bin", BB_ARCHIVER_CONTACT: "ops@example.invalid", LANG: "ja_JP.UTF-8", GITHUB_REF_NAME: "main" };
+  const g = fakeGit({ show: { stdout: enc("{}") } });
+  gitReadHistory("/repo", "main", env, g.spawn);
+  assert.equal(g.calls.length, 4);
+  for (const c of g.calls) {
+    assert.equal("BB_ARCHIVER_CONTACT" in c.env, false, `${c.args.join(" ")}: 연락처가 git 의 env 에 있다`);
+    assert.equal(c.env["LC_ALL"], "C", `${c.args.join(" ")}: 「없음」 판정이 git 의 문장에 기대는데 번역될 수 있다`);
+    assert.equal(c.env["PATH"], "/usr/bin");
+    assert.equal(c.env["GITHUB_REF_NAME"], "main");
+  }
+  assert.equal(env["BB_ARCHIVER_CONTACT"], "ops@example.invalid", "넘긴 env 를 고쳤다 — 받기 도구가 연락처를 잃는다");
+  assert.equal("LC_ALL" in env, false);
+});
+
+test("⚠이력 — 원격 cat-file 이 「없음」이 아닌 이유로 실패하면 빈 이력으로 받지 않고 작업 트리 사본으로 물러서며 경고한다 / 「없음」이면 원격의 없음을 쓴다", () => {
+  const local = `${JSON.stringify({ schema: 1, keys: { [K_WP]: { direction: "ours_more", first_seen_at: "2026-09-25T00:00:00.000Z", first_seen_run: "7", last_seen_at: "2026-09-25T00:00:00.000Z", attempts: [] } } }, null, 2)}\n`;
+  const run = (stderr: string) => {
+    const w = incidentWorld({ detect: () => ({ exit: 0, json: detectJson() }) });
+    mkdirSync(join(w.dir, "ops"), { recursive: true });
+    writeFileSync(join(w.dir, HISTORY_PATH), local);
+    const g = fakeGit({ exists: { status: 128, stderr: enc(stderr) } });
+    return runMain(w, { readRemoteHistory: (ref) => gitReadHistory(w.dir, ref, { BB_ARCHIVER_CONTACT: "ops@example.invalid" }, g.spawn) });
+  };
+  const broken = run(OTHER_FATAL);
+  assert.ok(
+    broken.out.some((l) => l.startsWith("::warning::") && l.includes("작업 트리 사본으로 물러선다") && l.includes("unable to read 4b825dc6")),
+    `경고가 없다 — 원격을 못 읽은 것을 「파일 없음」으로 삼켰다:\n${broken.out.join("\n")}`,
+  );
+  assert.equal(broken.file("history.base"), sha256(local), "작업 트리 사본으로 물러서지 않았다");
+  const next = JSON.parse(broken.file("history.next.json") ?? "{}") as { keys: Record<string, { first_seen_run: string }> };
+  assert.equal(next.keys[K_WP]?.first_seen_run, "7", "일화를 이어 가지 않고 새로 열었다");
+  // 대조 — 진짜 「없음」이면 원격의 없음이 정본이다(작업 트리 사본을 읽지 않는다 · 경고 없음)
+  const gone = run(PATH_GONE);
+  assert.equal(gone.out.some((l) => l.startsWith("::warning::") && l.includes("원격 이력")), false, gone.out.join("\n"));
+  assert.equal(gone.file("history.base"), "absent");
 });
 
 // ── 결정론(R2-4) · 작업 폴더 ─────────────────────────────────────────────────

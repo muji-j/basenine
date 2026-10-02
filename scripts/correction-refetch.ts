@@ -441,27 +441,77 @@ function spawnNode(root: string): (spec: ChildSpec) => ChildExit {
   };
 }
 
+/** git 한 번의 끝 — `spawnSync` 결과에서 이 파일이 읽는 칸만(시험이 가짜를 넣는다 · 진짜 git 0) */
+export interface GitExit {
+  readonly status: number | null;
+  readonly stdout: Uint8Array;
+  readonly stderr: Uint8Array;
+  /** 띄우지 못했다 · 시간 제한(60초) — 있으면 그 호출은 실패다 */
+  readonly error: Error | null;
+}
+
+/** git 을 한 번 띄운다 — 파일 실행은 `spawnSync("git", …)`(`spawnGit`), 시험은 가짜 */
+export type GitSpawn = (args: readonly string[], opts: { readonly cwd: string; readonly env: Readonly<Record<string, string | undefined>> }) => GitExit;
+
+/**
+ * 원격 이력 읽기(git) 자식의 env. ⚠**연락처(`BB_ARCHIVER_CONTACT`)를 뺀다** — 연락처는 받기 도구의 env 에만 간다(최소 권한 ·
+ * 3중 검토 2차 Minor · 다른 자식의 `childEnv` 와 같은 규칙). ⚠**메시지를 영어로 고정한다**(`LC_ALL=C`) — 「파일 없음」 판정이
+ * git 의 문장에 기댄다(`PATH_NOT_IN_REV`). 번역된 git 이면 「없음」이 「실패」로 읽혀 매번 경고하고 작업 트리 사본으로 물러선다.
+ */
+export function gitEnv(env: Readonly<Record<string, string | undefined>>): Record<string, string | undefined> {
+  const out: Record<string, string | undefined> = { ...env, LC_ALL: "C" };
+  delete out["BB_ARCHIVER_CONTACT"];
+  return out;
+}
+
+/**
+ * `cat-file -e <rev>:<path>` 의 비0 가운데 **「그 경로가 그 커밋에 없다」만** 「파일 없음」이다(설계 D8 · 3중 검토 1차 P3-1).
+ * git 은 경로가 없으면 `fatal: path '<p>' does not exist in '<rev>'`(작업 트리에는 있으면 `… exists on disk, but not in '<rev>'`)를 찍고
+ * 128 로 끝난다(둘 다 실측). ⚠그런데 **객체를 못 읽어도 비0** 이다 — 블롭이 없으면(부분 clone · 손상) **말없이 1** 이다(`cat-file -e` 는
+ * 객체 유무만 종료코드로 낸다 — git 소스 근거 · 안 쟀다). 그것까지 「없음」으로 읽으면 빈 이력으로 새 일화를 열어 이미 받은 경기를
+ * 다시 받는다(L1) — 그래서 그 밖의 비0 은 실패(→ 작업 트리 사본 · 경고)다.
+ * ⚠**남는 한계**: 트리 객체를 못 읽을 때는 git 의 경로 진단이 같은 「없다」 문장을 낼 수 있어(git 소스 근거 · 안 쟀다) 그 갈래는 여전히
+ * 「없음」으로 읽힌다. 바로 앞의 `^{commit}` 확인이 막는 것은 커밋까지다.
+ */
+const PATH_NOT_IN_REV = /(?:does not exist in|exists on disk, but not in) '/;
+
 /**
  * `origin/<ref>` 의 이력 파일(설계 D8) — `git fetch --quiet origin <ref>`(60초) → 커밋이 있는지 → `cat-file -e` 로 「없음」과 「실패」를
- * 가른다 → `git show`. ⚠가지 이름은 인자 하나로 넘긴다(셸을 안 거친다 · `-` 로 시작하는 이름은 부르기 전에 거른다).
+ * 가른다(`PATH_NOT_IN_REV`) → `git show`. ⚠가지 이름은 인자 하나로 넘긴다(셸을 안 거친다 · `-` 로 시작하는 이름은 부르기 전에 거른다).
  */
-function gitReadHistory(root: string, ref: string): RemoteHistory {
-  const git = (args: string[]) =>
-    spawnSync("git", args, { cwd: root, timeout: CHILD_TIMEOUT_MS.git, maxBuffer: HISTORY_MAX_BYTES * 2, windowsHide: true });
-  const why = (r: ReturnType<typeof git>): string =>
-    r.error !== undefined ? r.error.message : `종료 ${String(r.status)}${r.stderr.length > 0 ? ` · ${r.stderr.toString("utf8").trim().slice(0, 200)}` : ""}`;
+export function gitReadHistory(root: string, ref: string, env: Readonly<Record<string, string | undefined>>, spawn: GitSpawn): RemoteHistory {
+  const childEnv = gitEnv(env);
+  const git = (args: readonly string[]): GitExit => spawn(args, { cwd: root, env: childEnv });
+  const why = (r: GitExit): string =>
+    r.error !== null ? r.error.message : `종료 ${String(r.status)}${r.stderr.length > 0 ? ` · ${Buffer.from(r.stderr).toString("utf8").trim().slice(0, 200)}` : ""}`;
   const fetched = git(["fetch", "--quiet", "origin", ref]);
-  if (fetched.error !== undefined || fetched.status !== 0) return { ok: false, reason: `git fetch 실패(${why(fetched)})` };
+  if (fetched.error !== null || fetched.status !== 0) return { ok: false, reason: `git fetch 실패(${why(fetched)})` };
   const remote = `origin/${ref}`;
   const commit = git(["cat-file", "-e", `${remote}^{commit}`]);
-  if (commit.error !== undefined || commit.status !== 0) return { ok: false, reason: `${remote} 커밋을 못 찾았다(${why(commit)})` };
+  if (commit.error !== null || commit.status !== 0) return { ok: false, reason: `${remote} 커밋을 못 찾았다(${why(commit)})` };
   const exists = git(["cat-file", "-e", `${remote}:${HISTORY_PATH}`]);
-  if (exists.error !== undefined) return { ok: false, reason: `git cat-file 실패(${why(exists)})` };
-  if (exists.status !== 0) return { ok: true, bytes: null };
+  if (exists.error !== null) return { ok: false, reason: `git cat-file 실패(${why(exists)})` };
+  if (exists.status !== 0) {
+    if (PATH_NOT_IN_REV.test(Buffer.from(exists.stderr).toString("utf8"))) return { ok: true, bytes: null };
+    return { ok: false, reason: `git cat-file 실패 — 「그 경로가 그 커밋에 없다」가 아니다(${why(exists)})` };
+  }
   const shown = git(["show", `${remote}:${HISTORY_PATH}`]);
-  if (shown.error !== undefined || shown.status !== 0) return { ok: false, reason: `git show 실패(${why(shown)})` };
+  if (shown.error !== null || shown.status !== 0) return { ok: false, reason: `git show 실패(${why(shown)})` };
   return { ok: true, bytes: shown.stdout };
 }
+
+/** 진짜 git — 호출마다 60초 · 출력 상한은 이력 상한의 2배 */
+const spawnGit: GitSpawn = (args, opts) => {
+  const r = spawnSync("git", [...args], {
+    cwd: opts.cwd,
+    env: opts.env as NodeJS.ProcessEnv,
+    timeout: CHILD_TIMEOUT_MS.git,
+    maxBuffer: HISTORY_MAX_BYTES * 2,
+    windowsHide: true,
+  });
+  // ⚠띄우지 못하면(ENOENT) 출력 칸이 비어 온다(`undefined` · 실측) — 빈 바이트로 받고 실패는 `error` 가 말한다
+  return { status: r.status, stdout: r.stdout ?? new Uint8Array(), stderr: r.stderr ?? new Uint8Array(), error: r.error ?? null };
+};
 
 /**
  * **파일로 실행될 때만** 진입한다. ⚠경로 전체가 아니라 **파일 이름**으로 가른다(Windows 의 드라이브 문자·구분자 차이로
@@ -476,7 +526,7 @@ if (entry !== undefined && /(?:^|[\\/])correction-refetch\.ts$/.test(entry)) {
     now: () => new Date(),
     root: ROOT,
     runChild: spawnNode(ROOT),
-    readRemoteHistory: (ref) => gitReadHistory(ROOT, ref),
+    readRemoteHistory: (ref) => gitReadHistory(ROOT, ref, process.env, spawnGit),
     openDb: openCandidateDb,
     out: (text) => console.log(text),
   });
