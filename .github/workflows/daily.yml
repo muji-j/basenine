@@ -98,7 +98,8 @@ on:
         #   비워 두면 평소 수집과 같다. 값은 **환경변수로만** 넘긴다 — `run:` 에 직접 쓰면 셸 코드로 끼어든다.
         # ⚠상한의 정본은 packages/store/src/refetch-limit.ts 의 MAX_REFETCH_DATES — 바꾸면 이 설명도 고친다
         #   (YAML 은 그 값을 import 할 수 없어 아래 숫자는 손으로 맞춘다).
-        description: "다시 받을 경기일 YYYY-MM-DD (쉼표 구분 · 최대 7개). 평소에는 비워 둔다"
+        # ⚠수동 날짜와 자동 재수집(`정정 감지 · 자동 재수집`)이 이 7일 자리를 **나눠 쓴다** — 수동으로 7개를 다 쓰면 그 실행의 자동 재수집은 받지 않는다(`no_date_slots`).
+        description: "다시 받을 경기일 YYYY-MM-DD (쉼표 구분 · 최대 7개 · 남은 자리는 자동 재수집이 쓴다). 평소에는 비워 둔다"
         required: false
         default: ""
         type: string
@@ -149,6 +150,10 @@ jobs:
     outputs:
       run: ${{ steps.check.outputs.run }}
       deep: ${{ steps.check.outputs.deep }}
+      # ⚠**이 실행이 어느 슬롯인가**(`scheduled` · `retry` · `manual`) — 정정 자동 재수집(`collect` 의 「정정 감지 · 자동 재수집」)이
+      #   **정시·수동만** 받고 재시도 슬롯은 받지 않게 하려는 값이다(L1 — 받으면 하루 6회가 된다 · 설계 D1·D6 의 4).
+      #   `scripts/test/retry-slot.test.ts` 가 크론마다 실제로 무엇이 나오는지 셸을 돌려 지킨다.
+      slot: ${{ steps.check.outputs.slot }}
     steps:
       - name: 재시도 슬롯인가 · 직전 실행이 실패했는가 · 이번이 깊은 실행인가
         id: check
@@ -187,8 +192,13 @@ jobs:
           case "${SCHEDULE:-}" in
             # ⚠**위 `schedule:` 의 재시도 세 줄과 글자까지 같아야 한다**(2026-08-20 +1h30m 로 이동).
             #   어긋나면 재시도가 「정시 슬롯」으로 판정돼 **성공한 날에도 수집이 돈다**(하루 6회).
-            "30 23 * * *"|"30 6 * * *"|"0 16 * * *") ;;
+            "30 23 * * *"|"30 6 * * *"|"0 16 * * *")
+              # ⚠**`slot` 은 갈래마다 `exit 0` 보다 앞에서 낸다** — 뒤에 두면 정시 슬롯에서 비어 나가고,
+              #   진입점은 빈 값을 `slot_unknown`(받지 않음)으로 읽어 **정정 자동 재수집이 영영 안 도는데 아무것도 안 붉다.**
+              #   재시도 크론 목록은 여기 한 곳이다 — 슬롯용 둘째 목록을 만들지 않는다.
+              echo "slot=retry" >> "$GITHUB_OUTPUT" ;;
             *)
+              if [ -z "${SCHEDULE:-}" ]; then echo "slot=manual" >> "$GITHUB_OUTPUT"; else echo "slot=scheduled" >> "$GITHUB_OUTPUT"; fi
               echo "정시 슬롯(또는 수동) — 그대로 돈다"
               echo "run=true" >> "$GITHUB_OUTPUT"; exit 0 ;;
           esac
@@ -220,6 +230,15 @@ jobs:
       contents: write
     timeout-minutes: 45
     steps:
+      # ⚠**맨 앞 스텝이다 — 체크아웃보다도 앞이다**(설계 D1). 이 시각이 **잡이 시작한 때**를 가리켜야 하므로 무엇이 먼저 돌든 이 앞에 두지 않는다.
+      #   쓰이는 곳 셋: ⑴ 정정 자동 재수집이 새 결함 키를 **일화의 시작**으로 적는 시각 ⑵ 그 단계의 시간 예산(잡 시작 + 25분을 넘으면 새로 받지 않는다)
+      #   ⑶ 경기마다의 마감. UTC `…Z` 초 단위로 적는다(진입점은 시간대 없는 값을 못 읽는 값으로 취급한다).
+      # ⚠초 단위로 잘라 적으므로 실제 시작보다 최대 999ms 이르다 — 경과가 그만큼 크게 잡힌다(안전한 쪽).
+      # ⚠「실패한 잡 다시 실행」은 `collect` 를 처음부터 돌리므로 이 값도 새로 찍힌다.
+      - name: 잡 시작 시각 — 정정 자동 재수집의 기준선과 시간 예산
+        id: job-start
+        run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       # ⚠**`persist-credentials: false` 를 넣지 않았다 — 미수정으로 남긴다**(2026-08-18 감사 P3).
       #   지적 자체는 옳다: 기본값(true)이면 checkout 이 `contents: write` 토큰을
       #   `.git/config` 에 적어 두고, 같은 잡에서 `npm ci` 의 설치 스크립트와
@@ -483,6 +502,34 @@ jobs:
         # ⚠**JST 로 연도를 정한다**(§2-1) — UTC 로 세면 새해 첫날에 지난 시즌을 받는다
         run: node packages/archiver/src/cli-stats.ts --season "$(TZ=Asia/Tokyo date +%Y)"
 
+      - name: 정정 감지 · 자동 재수집 — 외부 대조가 찾을 불일치의 경기를 이 실행 안에서 다시 받는다
+        # ⚠**2026-09-28~10-02 사고에서 나왔다**(런북 §7-I): npb.jp 가 경기 약 열흘 뒤 기록을 고쳤는데 우리 수집기는 지난 경기를 다시 받지 않아
+        #   외부 대조 관문이 **20회 연속** 같은 결함 1건으로 울었고, 풀어 줄 경로가 없어 **배포가 4일 막혔다.** 관문은 제 일을 했다 — 풀 길이 없었다.
+        #   → 이 단계가 관문보다 **먼저** 같은 대조를 감지 모드(`--emit`)로 돌려 그 차이를 만들 수 있는 **경기만** 이 실행 안에서 다시 받고 다시 적재한다.
+        #   설계: `docs/superpowers/specs/2026-10-02-correction-auto-refetch-design.md`.
+        # ⚠**관문(아래 「외부 대조」)은 그대로다**(사용자 결정 ②) — 풀리지 않으면 **지금처럼 배포를 막는다.**
+        #   실패한 관문은 이 단계의 보고(`/tmp/correction-refetch/report.txt`)를 다시 찍는다.
+        # ⚠**`if:` 를 두지 않는다(= `success()`).** 앞 단계가 하나라도 실패한 실행에서는 안 돈다 — 그 실행은 이미 빨갛고 관문도 안 돈다.
+        #   정정은 다음 실행이 다시 감지한다. ⚠**`continue-on-error` 도 두지 않는다** — 종료 1(받기·기록·다시 적재 실패)은 배포를 막아야 한다.
+        #   종료 0 은 「할 일 없음 · 건너뜀 · 받았는데 결함이 남음」이다 — **남은 결함의 판정은 관문의 몫이다.**
+        # ⚠**자리가 정해져 있다 — 업로드(「보관소에 올림」) 앞이다.** 정정된 아카이브와 DB 가 **같은 업로드 호출**에 실려야 한다.
+        #   뒤에 두면 다시 받은 페이지가 사라진다(조용히 틀리지는 않는다 — 그 경기는 다시 후보가 된다).
+        # ⚠**시간**: 단계 시간 제한 30분. 정상 동작의 최장은 약 27분이고(마감 = 잡 시작 + 25분 · 설계 D7-8~9) 30분은 그것을 덮는 마지막 걸쇠다.
+        #   잡 전체 45분의 합(43.06분)은 `scripts/test/correction-budget.test.ts` 가 상수로 다시 셈한다.
+        # ⚠**요청량(L1)**: 결함이 없거나 재시도 슬롯이면 요청이 **0** 늘어난다. 정시 실행에서 결함이 있으면 최대 24경기 · 논리 페이지 96 · HTTP 전송 128
+        #   (하루 정시 3회 × 128 = 384) — 회로 차단·마감·예산이 경기 사이에서 멈춘다.
+        # ⚠입력(`BB_REFETCH_DATES`)은 **env 로만** 넘긴다 — `run:` 에 직접 쓰면 셸 코드로 끼어든다(`refetch-wiring.test.ts` 가 지킨다).
+        #   수동 날짜와 자동이 날짜 자리 7을 나눠 쓴다. 연락처는 진입점이 받기 도구의 env 에만 물려준다(명령줄에 남기지 않는다).
+        #   Cloudflare·데이터 저장소 토큰은 넘기지 않는다(`GITHUB_RUN_ID`·`GITHUB_REF_NAME` 은 러너 기본 env).
+        id: correction
+        timeout-minutes: 30
+        env:
+          BB_ARCHIVER_CONTACT: ${{ secrets.BB_ARCHIVER_CONTACT }}
+          BB_REFETCH_DATES: ${{ inputs.refetch_dates }}
+          BB_RUN_SLOT: ${{ needs.decide.outputs.slot }}
+          BB_COLLECT_STARTED_AT: ${{ steps.job-start.outputs.at }}
+        run: node scripts/correction-refetch.ts --db data/bb.sqlite --archive data/archive --work-dir /tmp/correction-refetch
+
       - name: 수집 후 재검증
         id: guard
         # 수집이 아카이브를 줄이는 일은 없어야 한다. 줄었다면 올리기 전에 멈춘다
@@ -681,7 +728,24 @@ jobs:
               >> ops/collection-log.txt 2>&1 || true
             echo "--- $(date -u +%FT%TZ) ---" >> ops/collection-log.txt
 
+            # ⚠**정정 재수집 이력 — 이 실행이 읽은 판(base) 위에서만 바꾼다**(설계 D8 · 3차 리뷰 R3-5).
+            #   `정정 감지 · 자동 재수집` 단계가 읽은 파일의 sha256 을 `history.base` 에 **먼저** 적고, 이력이 바뀐 경우에만 `history.next.json` 을 **나중에** 쓴다.
+            #   위 `reset --hard` 가 원격 최신으로 되돌렸으므로, 그 원격 파일이 **읽은 판 그대로일 때만** 새 판을 복사한다.
+            #   다르면(그 사이 사람이 고쳤거나 다른 실행이 썼다) **덮어쓰지 않고** 경고한다 — 잃는 것은 최대 한 실행치이고 이미 받은 경기를 많아야 한 번 더 받는다(L1 상한 안).
+            #   ⚠이력은 **실행 ref 의 것**이다(정시 = main). 수치(우리 값 · 공표 값)는 들어 있지 않다 — 공개 저장소다.
+            #   ⚠`attempt()` 가 3번까지 다시 도므로 이 블록도 매번 다시 돈다(원격 최신 위에서 다시 대조한다 — 멱등).
+            if [ -f /tmp/correction-refetch/history.next.json ]; then
+              cur=absent
+              if [ -f ops/correction-refetch.json ]; then cur=$(sha256sum ops/correction-refetch.json | cut -d' ' -f1); fi
+              if [ "$cur" = "$(cat /tmp/correction-refetch/history.base)" ]; then
+                cp /tmp/correction-refetch/history.next.json ops/correction-refetch.json
+              else
+                echo "::warning::정정 재수집 이력이 이 실행이 읽은 뒤에 바뀌었다 — 덮어쓰지 않는다(다음 실행이 다시 만든다)"
+              fi
+            fi
             git add ops/collection-log.txt ops/collection-log.jsonl ops/archive-manifest.json
+            # ⚠이력은 **파일이 있을 때만** add 한다 — 없는 경로를 add 하면 `fatal: pathspec` 으로 이 단계(60일 비활성화를 막는 커밋)가 죽는다.
+            if [ -f ops/correction-refetch.json ]; then git add ops/correction-refetch.json; fi
             if git diff --staged --quiet; then return 0; fi
             git commit -q -m "chore(ops): collection log" || return 1
             git push
@@ -759,6 +823,16 @@ jobs:
             echo "── $y ──"
             node packages/aggregate/tools/crosscheck.ts data/bb.sqlite "$y" --archive data/archive --verbose || fail=1
           done
+          # ⚠**판정은 그대로다**(사용자 결정 ② · 위 `fail` 과 `exit`). 실패했을 때만 `정정 감지 · 자동 재수집` 단계의 보고를 **다시 찍는다** —
+          #   「해 봤는데 남았다」와 「해 보지 않았다(사유)」를 이 로그 한 곳에서 가르게 하려는 것이다(런북 §7-I).
+          #   ⚠`보고 없음` 은 그 단계가 워크플로에 **없을 때(롤백 · 런북 §7-I 「10」)만** 찍힌다 — ~~앞 단계 실패~~ 가 아니다(3중 검토 2차 F1).
+          #   관문(이 단계)은 `if:` 가 없어(= `success()`) 앞 단계(정정 단계 포함)가 실패한 실행에서는 **아예 안 돌고**,
+          #   정정 단계가 종료 0 이면 `report.txt` 는 반드시 있다(못 쓰면 그 단계가 종료 1 이다).
+          if [ "$fail" != 0 ]; then
+            echo "── 정정 자동 재수집 보고(이 실행) ──"
+            if [ -f /tmp/correction-refetch/report.txt ]; then cat /tmp/correction-refetch/report.txt
+            else echo "보고 없음 — 「정정 감지 · 자동 재수집」 단계가 이 실행에서 보고를 남기지 않았다"; fi
+          fi
           exit $fail
 
       - name: 화면 생성

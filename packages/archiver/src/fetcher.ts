@@ -89,7 +89,11 @@ export interface ConditionalHeaders {
   lastModified?: string | null;
 }
 
-const RETRYABLE = new Set([408, 425, 429, 500, 502, 503, 504]);
+/**
+ * 재시도할 상태(일시 오류). ⚠**정정 자동 재수집의 계측(`metered-fetch.ts`)이 「고통 신호」를 가르는 데 이 집합을 그대로 쓴다**(M1 ·
+ * 설계 `2026-10-02-correction-auto-refetch-design.md` D7-3) — 두 벌로 두면 「재시도는 했는데 고통 신호는 아니다」가 생긴다.
+ */
+export const RETRYABLE: ReadonlySet<number> = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 /**
  * 따라가는 리디렉션 홉의 상한(2026-09-25 감사 C1).

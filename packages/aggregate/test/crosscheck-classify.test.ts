@@ -23,8 +23,13 @@ import assert from "node:assert/strict";
 import { classifyDiff } from "../src/crosscheck-classify.ts";
 import type { CrosscheckDiff } from "../src/crosscheck-classify.ts";
 
+/**
+ * ⚠**`playerId` 를 함께 든다**(설계 `docs/superpowers/specs/2026-10-02-correction-auto-refetch-design.md` D2 · T12).
+ * 결함 후보는 감지 모드(`--emit`)로 공표 정정 자동 재수집에 넘어가고, 그쪽은 **ID 로만** 경기를 찾는다(M10).
+ * 판정(`classifyDiff`)은 ID 를 보지 않는다 — 표기의 뜻은 사람이 누구든 같다(위 머리말의 「이름으로 면제하지 않았다」).
+ */
 function diff(o: Partial<CrosscheckDiff>): CrosscheckDiff {
-  return { team: "f", kind: "pitching", name: "テスト", field: "投球回", ours: "0", published: "+", ...o };
+  return { team: "f", kind: "pitching", playerId: "00000001", name: "テスト", field: "投球回", ours: "0", published: "+", ...o };
 }
 
 test("⚠아웃 0 인 등판의 공표 표기 「+」를 우리 「0」과 같은 뜻으로 본다 — 실측 사례", () => {

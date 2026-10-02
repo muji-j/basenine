@@ -12,13 +12,32 @@
  * **추측하지 않고 미해결로 보고한다.** 잘못 짝지은 대조는 대조를 안 한 것보다 나쁘다.
  *
  * 사용:
- *   node packages/aggregate/tools/crosscheck.ts data/bb.sqlite 2026 [--archive data/archive]
+ *   node packages/aggregate/tools/crosscheck.ts data/bb.sqlite 2026 [--archive data/archive] [--emit <path>]
+ *
+ * ## 감지 모드(`--emit <path>`) — 공표 정정 자동 재수집이 부른다
+ *
+ * 설계 `docs/superpowers/specs/2026-10-02-correction-auto-refetch-design.md` D2·D3. 사람용 출력은 **관문과 같은 것**을 찍고,
+ * 결과를 JSON(스키마 1)으로 `<path>` 에 **원자적으로** 쓴다(`<path>.tmp-<pid>` → `rename` · 부르는 쪽이 호출 전에 `<path>` 를 지운다).
+ *
+ * | | `--emit` 없이(관문 · **불변**) | `--emit` 있음 |
+ * |---|---|---|
+ * | 측정 성공 · 결함 0 | 종료 0 | 종료 0 · `status: "no_defects"` |
+ * | 측정 성공 · 결함 N | 종료 1 | 종료 0 · `status: "defects"` |
+ * | 측정 실패(`asof_split`·`table_parse_error`·`tables_missing`·`compared_zero`) | 종료 1 또는 잡히지 않은 예외 | 종료 2 · `status: "unmeasured"` |
+ * | 예상 밖 예외 | 0 이 아닌 종료 | 0·2 가 아닌 종료 · JSON 을 약속하지 않는다 |
+ *
+ * ⚠⚠**`--emit` 없이 부를 때의 출력과 종료코드는 바이트 단위로 그대로다**(사용자 결정 2026-10-02 · 관문 판정 불변).
+ *   감지 모드의 갈래는 전부 `emitPath !== undefined` 뒤에 있고, 공표표 해석 실패도 **감지 모드에서만** 잡는다 —
+ *   관문은 지금처럼 잡히지 않은 예외로 죽는다. `test/crosscheck-gate-unchanged.test.ts` 가 감지 모드 이전 출력과 바이트로 맞댄다.
+ * ⚠**감지 모드는 관문보다 엄격하다** — 공표표가 한 장이라도 빠지면 `tables_missing` 이다(관문은 경고만 하고 넘어간다 · 설계 §7 · 기존 한계).
+ * ⚠**`status` 가 `unmeasured` 여도 `defects` 는 이번에 실제로 맞댄 만큼 담는다**(기준일이 갈렸으면 맞대지 않으므로 빈 배열) —
+ *   부분 측정이라 부르는 쪽은 그것으로 경기를 받지 않는다(설계 D6 의 관문 2).
  */
 import { parseArgs } from "node:util";
-import { readFileSync } from "node:fs";
+import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { openDb } from "@bb-app/store";
-import { parseTeamBatting, parseTeamPitching, publishedAsOf } from "@bb-app/parser";
+import { StatsParseError, parseTeamBatting, parseTeamPitching, publishedAsOf } from "@bb-app/parser";
 import type { PublishedBatting, PublishedPitching } from "@bb-app/parser";
 import { TEAMS } from "@bb-app/domain";
 import {
@@ -31,8 +50,15 @@ import type { BattingLine, PitchingLine } from "@bb-app/metrics";
 // ⚠**판정 규칙은 여기 두지 않는다**(M1) — 시험이 직접 부를 수 있어야 한다
 // ⚠**화면이 쓰는 그 이름을 쓴다**(M1) — 기본명은 「지금」의 이름이라 시즌마다 갈린다
 import { seasonNameExpr, seasonNameJoin } from "../src/season-name.ts";
-import { classifyDiff } from "../src/crosscheck-classify.ts";
-import type { CrosscheckDiff as Diff } from "../src/crosscheck-classify.ts";
+import {
+  classifyDiff,
+  crosscheckEmitExitCode,
+  crosscheckEmitStatus,
+  crosscheckUnmeasuredReasons,
+} from "../src/crosscheck-classify.ts";
+import type { CrosscheckDiff as Diff, CrosscheckEmitInput, CrosscheckUnmeasuredReason } from "../src/crosscheck-classify.ts";
+// ⚠**범위 조각은 한 벌이다**(M1) — 공표 정정 자동 재수집의 후보 조회가 같은 조각으로 「이 도구가 센 경기」를 다시 찾는다
+import { crosscheckScope, crosscheckScopeParams } from "../src/crosscheck-fields.ts";
 // ⚠**화면과 같은 반올림을 쓴다.** 두 벌이면 대조가 거짓 경보를 낸다
 import { avg3 as webAvg3, dec2 as webDec2 } from "../../web/src/format.ts";
 
@@ -51,10 +77,26 @@ const { values, positionals } = parseArgs({
      */
     through: { type: "string" },
     verbose: { type: "boolean", default: false },
+    /** 감지 모드 — 결과 JSON 을 쓸 경로(머리말 · 설계 D2). 없으면 관문(그대로) */
+    emit: { type: "string" },
   },
 });
 const dbPath = positionals[0] ?? "data/bb.sqlite";
 const season = Number(positionals[1] ?? 2026);
+
+/** 감지 모드의 결과 경로. `undefined` 면 관문이다 — **관문 경로의 출력·종료코드는 이 값과 무관하게 그대로다** */
+const emitPath = values.emit;
+if (emitPath === "") throw new Error("--emit 에 경로가 없다");
+/** 기대하는 공표표 장 수 — 12구단 × 타격(`idb1`)·투구(`idp1`) */
+const TABLES_EXPECTED = TEAMS.length * 2;
+
+/** 감지 모드에서만 잡아 센 공표표 해석 실패(관문은 잡지 않는다) */
+interface ParseFailure {
+  table: string;
+  message: string;
+  detail: string;
+}
+const parseFailures: ParseFailure[] = [];
 
 /**
  * 공표표가 어느 날까지를 담고 있는가.
@@ -73,8 +115,13 @@ const season = Number(positionals[1] ?? 2026);
  * 「◯◯ 現在」라고 적을 것이 없다(2024 표 실측: `現在` 0건). 그때는 **자르지 않는다.**
  * 그 상태에서 우리 DB 가 앞선다면 그건 가정이 아니라 **진짜 불일치**이므로 잡혀야 한다.
  */
-function publishedThrough(): { date: string; from: string } {
-  if (values.through !== undefined) return { date: values.through, from: "--through" };
+function publishedThrough(): {
+  date: string;
+  from: string;
+  /** 기준일(`現在`) 판독 — 날짜 → 그 날짜를 적은 장들. `--through` 면 읽지 않으므로 `null`(감지 모드의 `as_of`·`with_genzai` 가 쓴다) */
+  seen: ReadonlyMap<string, readonly string[]> | null;
+} {
+  if (values.through !== undefined) return { date: values.through, from: "--through", seen: null };
 
   // ⚠**한 장이 아니라 우리가 읽는 전부에서 읽는다**(2026-09-09 · 2차 검토 F5).
   //   예전에는 idb1_c 한 장만 봤는데, **어차피 아래에서 24장을 전부 파싱한다** — 이미 손에 든 HTML 이다.
@@ -84,12 +131,28 @@ function publishedThrough(): { date: string; from: string } {
   //   ⚠**원자적으로 갱신된다고 가정하지 않는다 — 안 쟀다.** 대신 갈리면 잡는다.
   const seen = new Map<string, string[]>();
   let read = 0;
+  const missing: string[] = [];
   for (const t of TEAMS) {
     for (const kind of ["idb1", "idp1"] as const) {
       const html = readArchived(`npb/stats/${season}/${kind}_${t.code}`);
-      if (html === null) continue;
+      if (html === null) {
+        missing.push(`${kind}_${t.code}`);
+        continue;
+      }
       read += 1;
-      const asOf = publishedAsOf(html);
+      let asOf: string | null;
+      if (emitPath === undefined) {
+        // ⚠관문 — 지금처럼 잡지 않는다(한 장 안에 날짜가 둘이면 그대로 죽는다)
+        asOf = publishedAsOf(html);
+      } else {
+        try {
+          asOf = publishedAsOf(html);
+        } catch (e) {
+          if (!(e instanceof StatsParseError)) throw e;
+          noteParseFailure(`${kind}_${t.code}`, e);
+          continue;
+        }
+      }
       if (asOf === null) continue;
       seen.set(asOf, [...(seen.get(asOf) ?? []), `${kind}_${t.code}`]);
     }
@@ -100,11 +163,29 @@ function publishedThrough(): { date: string; from: string } {
     const detail = [...seen].map(([d, who]) => `${d}(${String(who.length)}장)`).join(" / ");
     console.error(`⚠공표표의 기준일이 장마다 다르다 — ${detail}`);
     console.error("  갱신 중에 받았을 수 있다. 고르면 그쪽이 아닌 팀 전원이 불일치로 잡힌다.");
+    if (emitPath !== undefined) {
+      // 감지 모드 — 대조하지 않고 「잴 수 없었다(asof_split)」를 쓴다. 갈린 날짜 중 하나를 골라 적지 않는다
+      emitAndExit({
+        asOf: { date: null, source: "partial" },
+        asOfDates: [...seen.keys()],
+        tablesRead: read,
+        withGenzai: withGenzaiOf(seen),
+        missing,
+        splitDetail: detail,
+        compared: false,
+        comparedPlayers: 0,
+        comparedFields: 0,
+        unmatchedOurs: 0,
+        unmatchedPub: 0,
+        folded: 0,
+        defects: [],
+      });
+    }
     process.exit(1);
   }
   if (seen.size === 1) {
     const [date, who] = [...seen][0]!;
-    return { date, from: `공표표에 적힌 「現在」 · ${String(who.length)}/${String(read)}장 일치` };
+    return { date, from: `공표표에 적힌 「現在」 · ${String(who.length)}/${String(read)}장 일치`, seen };
   }
   if (read > 0) {
     // ⚠**「완결 시즌」과 「마크업이 바뀌어 못 찾음」을 구별할 수 없다**(2차 검토 F8).
@@ -113,9 +194,10 @@ function publishedThrough(): { date: string; from: string } {
     return {
       date: "9999-12-31",
       from: `${String(read)}장 어디에도 기준일이 없다 — 완결 시즌이거나 ⚠문구가 바뀐 것이다. 자르지 않는다`,
+      seen,
     };
   }
-  return { date: "9999-12-31", from: "⚠공표표를 한 장도 못 읽었다 — 전 기간으로 비교한다" };
+  return { date: "9999-12-31", from: "⚠공표표를 한 장도 못 읽었다 — 전 기간으로 비교한다", seen };
 }
 const through = publishedThrough();
 
@@ -163,14 +245,28 @@ function match<T extends { name: string }>(ourName: string, pub: readonly T[]): 
   return pre.length === 1 ? pre[0]! : null;
 }
 
-function cmp(team: string, kind: Diff["kind"], name: string, field: string, ours: string, published: string): void {
+/**
+ * ⚠**`playerId` 를 함께 나른다**(설계 D2) — 짝짓기는 이름이지만(공표표에 ID 가 없다) **그 뒤는 ID 로만 간다**(M10).
+ * 사람용 출력은 ID 를 찍지 않는다(관문 출력 불변).
+ */
+function cmp(
+  team: string,
+  kind: Diff["kind"],
+  playerId: string,
+  name: string,
+  field: string,
+  ours: string,
+  published: string,
+): void {
   comparedFields += 1;
-  if (ours !== published) diffs.push({ team, kind, name, field, ours, published });
+  if (ours !== published) diffs.push({ team, kind, playerId, name, field, ours, published });
 }
 
 // ── 타격 ────────────────────────────────────────────────────────────────
+// ⚠범위(시즌 · played · 대회 · 기준일 · 그 팀 쪽)는 `crosscheckScope` 한 벌이다 — 값은 `crosscheckScopeParams` 의 차례로 묶는다
 const BAT_SQL = `
-SELECT ${seasonNameExpr("p")} AS name,
+SELECT b.player_id AS player_id,
+       ${seasonNameExpr("p")} AS name,
        COUNT(DISTINCT b.game_id) AS games,
        SUM(b.pa) AS pa, SUM(b.ab) AS ab, SUM(b.runs) AS runs, SUM(b.h) AS h,
        SUM(b.d2) AS d2, SUM(b.d3) AS d3, SUM(b.hr) AS hr, SUM(b.rbi) AS rbi,
@@ -180,14 +276,13 @@ FROM batting_line b
 JOIN game g ON g.game_id = b.game_id
 JOIN player p ON p.player_id = b.player_id
 ${seasonNameJoin("b.player_id", "g.season")}
-WHERE g.season = ? AND g.status = 'played' AND g.competition = ?
-  AND g.game_date <= ?
-  AND ((b.side = 'away' AND g.away_code = ?) OR (b.side = 'home' AND g.home_code = ?))
+WHERE ${crosscheckScope("b")}
 GROUP BY b.player_id
 `;
 
 const PIT_SQL = `
-SELECT ${seasonNameExpr("p")} AS name,
+SELECT pl.player_id AS player_id,
+       ${seasonNameExpr("p")} AS name,
        COUNT(DISTINCT pl.game_id) AS games,
        -- ⚠SUM(x = 'y')는 x가 전부 NULL이면 **NULL을 돌려준다**(0이 아니라).
        -- 결정 표기가 한 번도 없는 투수 79명이 그래서 「불일치」로 잡혔다 — 대조 도구의 버그였다
@@ -202,9 +297,7 @@ FROM pitching_line pl
 JOIN game g ON g.game_id = pl.game_id
 JOIN player p ON p.player_id = pl.player_id
 ${seasonNameJoin("pl.player_id", "g.season")}
-WHERE g.season = ? AND g.status = 'played' AND g.competition = ?
-  AND g.game_date <= ?
-  AND ((pl.side = 'away' AND g.away_code = ?) OR (pl.side = 'home' AND g.home_code = ?))
+WHERE ${crosscheckScope("pl")}
 GROUP BY pl.player_id
 `;
 
@@ -215,68 +308,83 @@ function innings(outs: number): string {
   return rest === 0 ? String(whole) : `${whole}.${rest}`;
 }
 
+/** 이 루프가 읽은 공표표 장 수와 못 읽은 장(감지 모드의 `tables_missing` · 관문 출력에는 안 나온다) */
+let tablesRead = 0;
+const missingTables: string[] = [];
+
 for (const team of TEAMS) {
+  const scope = crosscheckScopeParams({ season, competition: values.competition, through: through.date, team: team.code });
   // ── 타격 ──
   const batHtml = readArchived(`npb/stats/${season}/idb1_${team.code}`);
   if (batHtml === null) {
+    missingTables.push(`idb1_${team.code}`);
     console.error(`⚠ 공표 타격 성적표 없음: ${team.code} — 먼저 cli-stats.ts로 받아라`);
   } else {
-    const pub = parseTeamBatting(batHtml);
-    const ours = db.raw.prepare(BAT_SQL).all(season, values.competition, through.date, team.code, team.code) as unknown as {
-      name: string; games: number; pa: number; ab: number; runs: number; h: number;
-      d2: number; d3: number; hr: number; rbi: number; sb: number; sh: number; sf: number;
-      bb: number; ibb: number; hbp: number; so: number;
-    }[];
+    tablesRead += 1;
+    // ⚠관문은 해석 실패를 잡지 않는다(지금처럼 그대로 죽는다) — 감지 모드만 세고 그 장을 건너뛴다
+    const pub =
+      emitPath === undefined ? parseTeamBatting(batHtml) : parsedOrNull(`idb1_${team.code}`, () => parseTeamBatting(batHtml));
+    if (pub !== null) {
+      const ours = db.raw.prepare(BAT_SQL).all(...scope) as unknown as {
+        player_id: string; name: string; games: number; pa: number; ab: number; runs: number; h: number;
+        d2: number; d3: number; hr: number; rbi: number; sb: number; sh: number; sf: number;
+        bb: number; ibb: number; hbp: number; so: number;
+      }[];
 
-    const used = new Set<PublishedBatting>();
-    for (const o of ours) {
-      const p = match(o.name, pub);
-      if (p === null) {
-        unmatchedOurs.push(`${team.code}/打 ${o.name}`);
-        continue;
+      const used = new Set<PublishedBatting>();
+      for (const o of ours) {
+        const p = match(o.name, pub);
+        if (p === null) {
+          unmatchedOurs.push(`${team.code}/打 ${o.name}`);
+          continue;
+        }
+        used.add(p);
+        comparedPlayers += 1;
+        const line: BattingLine = {
+          pa: o.pa, ab: o.ab, h: o.h, double: o.d2, triple: o.d3, hr: o.hr,
+          bb: o.bb, ibb: o.ibb, hbp: o.hbp, sf: o.sf, sh: o.sh, so: o.so, roe: 0,
+        };
+        const c = (f: string, a: number, b: number): void =>
+          cmp(team.code, "batting", o.player_id, o.name, f, String(a), String(b));
+        c("試合", o.games, p.games);
+        c("打席", o.pa, p.pa);
+        c("打数", o.ab, p.ab);
+        c("得点", o.runs, p.runs);
+        c("安打", o.h, p.h);
+        c("二塁打", o.d2, p.double);
+        c("三塁打", o.d3, p.triple);
+        c("本塁打", o.hr, p.hr);
+        c("打点", o.rbi, p.rbi);
+        c("盗塁", o.sb, p.sb);
+        c("犠打", o.sh, p.sh);
+        c("犠飛", o.sf, p.sf);
+        c("四球", o.bb, p.bb);
+        c("故意四", o.ibb, p.ibb);
+        c("死球", o.hbp, p.hbp);
+        c("三振", o.so, p.so);
+        // ⚠비율은 **우리가 계산한 값을 공표와 같은 표기로 만들어** 문자열로 비교한다.
+        // 반올림 규칙이 다르면 그것도 차이로 잡혀야 한다
+        cmp(team.code, "batting", o.player_id, o.name, "打率", avg3(battingAverage(line).value), p.avg);
+        cmp(team.code, "batting", o.player_id, o.name, "長打率", avg3(sluggingPercentage(line).value), p.slg);
+        cmp(team.code, "batting", o.player_id, o.name, "出塁率", avg3(onBasePercentage(line).value), p.obp);
       }
-      used.add(p);
-      comparedPlayers += 1;
-      const line: BattingLine = {
-        pa: o.pa, ab: o.ab, h: o.h, double: o.d2, triple: o.d3, hr: o.hr,
-        bb: o.bb, ibb: o.ibb, hbp: o.hbp, sf: o.sf, sh: o.sh, so: o.so, roe: 0,
-      };
-      const c = (f: string, a: number, b: number): void =>
-        cmp(team.code, "batting", o.name, f, String(a), String(b));
-      c("試合", o.games, p.games);
-      c("打席", o.pa, p.pa);
-      c("打数", o.ab, p.ab);
-      c("得点", o.runs, p.runs);
-      c("安打", o.h, p.h);
-      c("二塁打", o.d2, p.double);
-      c("三塁打", o.d3, p.triple);
-      c("本塁打", o.hr, p.hr);
-      c("打点", o.rbi, p.rbi);
-      c("盗塁", o.sb, p.sb);
-      c("犠打", o.sh, p.sh);
-      c("犠飛", o.sf, p.sf);
-      c("四球", o.bb, p.bb);
-      c("故意四", o.ibb, p.ibb);
-      c("死球", o.hbp, p.hbp);
-      c("三振", o.so, p.so);
-      // ⚠비율은 **우리가 계산한 값을 공표와 같은 표기로 만들어** 문자열로 비교한다.
-      // 반올림 규칙이 다르면 그것도 차이로 잡혀야 한다
-      cmp(team.code, "batting", o.name, "打率", avg3(battingAverage(line).value), p.avg);
-      cmp(team.code, "batting", o.name, "長打率", avg3(sluggingPercentage(line).value), p.slg);
-      cmp(team.code, "batting", o.name, "出塁率", avg3(onBasePercentage(line).value), p.obp);
+      for (const p of pub) if (!used.has(p)) unmatchedPub.push(`${team.code}/打 ${p.rawName}`);
     }
-    for (const p of pub) if (!used.has(p)) unmatchedPub.push(`${team.code}/打 ${p.rawName}`);
   }
 
   // ── 투구 ──
   const pitHtml = readArchived(`npb/stats/${season}/idp1_${team.code}`);
   if (pitHtml === null) {
+    missingTables.push(`idp1_${team.code}`);
     console.error(`⚠ 공표 투구 성적표 없음: ${team.code}`);
     continue;
   }
-  const pub = parseTeamPitching(pitHtml);
-  const ours = db.raw.prepare(PIT_SQL).all(season, values.competition, through.date, team.code, team.code) as unknown as {
-    name: string; games: number; w: number; l: number; sv: number; hld: number;
+  tablesRead += 1;
+  const pub =
+    emitPath === undefined ? parseTeamPitching(pitHtml) : parsedOrNull(`idp1_${team.code}`, () => parseTeamPitching(pitHtml));
+  if (pub === null) continue;
+  const ours = db.raw.prepare(PIT_SQL).all(...scope) as unknown as {
+    player_id: string; name: string; games: number; w: number; l: number; sv: number; hld: number;
     outs: number; h: number; hr: number; bb: number; hbp: number; so: number;
     runs: number; er: number; wp: number; balk: number;
   }[];
@@ -295,7 +403,7 @@ for (const team of TEAMS) {
       so: o.so, er: o.er, r: o.runs,
     };
     const c = (f: string, a: number, b: number): void =>
-      cmp(team.code, "pitching", o.name, f, String(a), String(b));
+      cmp(team.code, "pitching", o.player_id, o.name, f, String(a), String(b));
     c("試合", o.games, p.games);
     c("勝利", o.w, p.w);
     c("敗戦", o.l, p.l);
@@ -310,8 +418,8 @@ for (const team of TEAMS) {
     c("自責点", o.er, p.er);
     c("暴投", o.wp, p.wp);
     c("ボーク", o.balk, p.balk);
-    cmp(team.code, "pitching", o.name, "投球回", innings(o.outs), p.innings);
-    cmp(team.code, "pitching", o.name, "防御率", dec2(earnedRunAverage(line).value), p.era);
+    cmp(team.code, "pitching", o.player_id, o.name, "投球回", innings(o.outs), p.innings);
+    cmp(team.code, "pitching", o.player_id, o.name, "防御率", dec2(earnedRunAverage(line).value), p.era);
   }
   for (const p of pub) if (!used.has(p)) unmatchedPub.push(`${team.code}/投 ${p.rawName}`);
 }
@@ -395,10 +503,167 @@ if (comparedPlayers === 0) {
       `\n  기준일 ${through.date} · 공표쪽 미해결 ${String(unmatchedPub.length)}명` +
       `\n  공표표를 못 받았거나, 기준일이 우리 데이터 범위 밖이거나, 시즌이 아직 시작 전이다.`,
   );
-  process.exit(1);
+  if (emitPath === undefined) process.exit(1);
+}
+
+// ── 감지 모드 — 사람용 출력은 위에서 관문과 똑같이 찍었다. 결과를 쓰고 status 의 종료코드로 끝난다 ──
+if (emitPath !== undefined) {
+  emitAndExit({
+    asOf: measuredAsOf(),
+    asOfDates: through.seen === null ? [] : [...through.seen.keys()],
+    tablesRead,
+    withGenzai: through.seen === null ? null : withGenzaiOf(through.seen),
+    missing: missingTables,
+    splitDetail: null,
+    compared: true,
+    comparedPlayers,
+    comparedFields,
+    unmatchedOurs: unmatchedOurs.length,
+    unmatchedPub: unmatchedPub.length,
+    folded: diffs.length - real.length,
+    defects: real,
+  });
 }
 
 // ⚠**정의 차이로 실패하지 않는다.** 그러면 이 도구가 늘 빨간불이라 아무도 안 보게 되고,
 // 그 안에 섞인 진짜 1건이 묻힌다.
 // ⚠**미해결은 실패가 아니라 미측정이다.** 「0건」과 「안 쟀음」을 구별해 낸다
 process.exit(real.length > 0 ? 1 : 0);
+
+// ── 감지 모드의 도구들(함수 선언 — 위에서 부른다) ─────────────────────────────
+
+/** 감지 모드에서만 — 공표표 해석 실패를 세고 사람용으로도 찍는다(관문은 이 자리에 오지 않고 예외로 죽는다) */
+function noteParseFailure(table: string, e: StatsParseError): void {
+  parseFailures.push({ table, message: e.message, detail: e.detail });
+  console.error(`⚠공표표 해석 실패: ${table} — ${e.message}（${e.detail}）`);
+}
+
+/** 감지 모드에서만 부른다 — 해석이 던지면(`StatsParseError`) 세고 `null`. 그 밖의 예외는 그대로 던진다(버그다) */
+function parsedOrNull<T>(table: string, parse: () => T): T | null {
+  try {
+    return parse();
+  } catch (e) {
+    if (!(e instanceof StatsParseError)) throw e;
+    noteParseFailure(table, e);
+    return null;
+  }
+}
+
+/** 「現在」를 읽어 낸 장 수 — 날짜마다의 장을 더한다(해석이 던진 장은 들어 있지 않다) */
+function withGenzaiOf(seen: ReadonlyMap<string, readonly string[]>): number {
+  let n = 0;
+  for (const who of seen.values()) n += who.length;
+  return n;
+}
+
+type AsOfSource = "genzai" | "partial" | "absent" | "override";
+
+/**
+ * 대조를 마친 실행의 `as_of`(설계 D2·D3). 기준일이 갈린 실행은 여기 오지 않는다(`publishedThrough` 가 먼저 끝낸다).
+ * - `override` — `--through` 로 사람이 정했다(「現在」는 읽지 않았다)
+ * - `genzai` — **24장 전부**에 같은 「現在」 — 자동 재수집은 이때만 한다
+ * - `partial` — 일부 장에만(못 읽은 장 · 문구 없는 장 · 해석이 던진 장이 섞였다)
+ * - `absent` — 어디에도 없다(완결 시즌이거나 문구가 바뀌었다 — 못 가른다 · `date: null`)
+ */
+function measuredAsOf(): { date: string | null; source: AsOfSource } {
+  if (values.through !== undefined) return { date: values.through, source: "override" };
+  if (through.seen === null || through.seen.size === 0) return { date: null, source: "absent" };
+  return {
+    date: through.date,
+    source: withGenzaiOf(through.seen) === TABLES_EXPECTED ? "genzai" : "partial",
+  };
+}
+
+interface EmitInput {
+  asOf: { date: string | null; source: AsOfSource };
+  asOfDates: readonly string[];
+  tablesRead: number;
+  /** `--through` 면 「現在」를 읽지 않았으므로 `null`(= 안 쟀다 · 0 이 아니다) */
+  withGenzai: number | null;
+  missing: readonly string[];
+  /** 기준일이 갈렸을 때 그 내역(`2026-09-27(1장) / 2026-09-28(23장)`) */
+  splitDetail: string | null;
+  /** 대조를 했는가 — 기준일이 갈리면 하지 않는다 */
+  compared: boolean;
+  comparedPlayers: number;
+  comparedFields: number;
+  unmatchedOurs: number;
+  unmatchedPub: number;
+  folded: number;
+  defects: readonly Diff[];
+}
+
+/** 측정 실패 사유 하나를 사람이 읽는 글로 — `reason_detail` 의 글감 */
+function reasonText(r: CrosscheckUnmeasuredReason, m: EmitInput): string {
+  switch (r) {
+    case "asof_split":
+      return `공표표의 기준일이 장마다 다르다 — ${m.splitDetail ?? "(내역 없음)"}`;
+    case "table_parse_error":
+      // ⚠「장」이 아니라 「건」이다 — 한 장이 「現在」와 표 본문에서 두 번 실패할 수 있다
+      return `공표표 해석 실패 ${String(parseFailures.length)}건 — ${parseFailures
+        .map((f) => `${f.table}: ${f.message}（${f.detail}）`)
+        .join(" / ")}`;
+    case "tables_missing":
+      return `공표표 ${String(TABLES_EXPECTED)}장 중 ${String(m.tablesRead)}장만 읽었다 — 없음: ${m.missing.join(", ")}`;
+    case "compared_zero":
+      return m.compared
+        ? "대조한 선수가 0명이다 — 「0건」이 아니라 「안 쟀다」"
+        : "대조한 선수가 0명이다 — 기준일이 갈려 대조하지 않았다";
+  }
+}
+
+/** 결과를 쓰고(원자적으로) status 의 종료코드로 끝난다. **감지 모드에서만** 부른다 */
+function emitAndExit(m: EmitInput): never {
+  if (emitPath === undefined) throw new Error("감지 모드가 아닌데 결과를 쓰려 했다");
+  const input: CrosscheckEmitInput = {
+    asOfDates: m.asOfDates,
+    tablesRead: m.tablesRead,
+    tablesExpected: TABLES_EXPECTED,
+    parseError: parseFailures.length > 0,
+    comparedPlayers: m.comparedPlayers,
+    defects: m.defects.length,
+  };
+  const { status, reason } = crosscheckEmitStatus(input);
+  const reasons = crosscheckUnmeasuredReasons(input);
+  const result = {
+    schema: 1,
+    season,
+    competition: values.competition,
+    status,
+    reason,
+    // 첫 사유를 포함해 걸린 사유 전부를 차례대로 — 첫 것만 `reason` 이다(설계 D2)
+    reason_detail: reasons.length === 0 ? null : reasons.map((r) => reasonText(r, m)).join(" · "),
+    as_of: m.asOf,
+    tables: { expected: TABLES_EXPECTED, read: m.tablesRead, with_genzai: m.withGenzai },
+    compared: { players: m.comparedPlayers, fields: m.comparedFields },
+    unmatched: { ours: m.unmatchedOurs, published: m.unmatchedPub },
+    folded: m.folded,
+    // ⚠순서는 계약이 아니다(SQL 에 ORDER BY 가 없다) — 부르는 쪽이 정렬한다(설계 D6)
+    defects: m.defects.map((d) => ({
+      team: d.team,
+      kind: d.kind,
+      player_id: d.playerId,
+      name: d.name,
+      field: d.field,
+      ours: d.ours,
+      published: d.published,
+    })),
+  };
+  writeAtomically(emitPath, `${JSON.stringify(result, null, 2)}\n`);
+  process.exit(crosscheckEmitExitCode(status));
+}
+
+/**
+ * `<path>.tmp-<pid>` 에 쓰고 `rename` 한다 — 읽는 쪽이 반쯤 쓴 파일을 보지 않는다.
+ * ⚠쓰기에 실패하면 던진다(→ 0·2 가 아닌 종료 · 결과 JSON 을 약속하지 않는다). 임시 파일은 남기지 않는다.
+ */
+function writeAtomically(path: string, text: string): void {
+  const tmp = `${path}.tmp-${String(process.pid)}`;
+  try {
+    writeFileSync(tmp, text);
+    renameSync(tmp, path);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    throw e;
+  }
+}

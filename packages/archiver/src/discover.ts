@@ -111,11 +111,44 @@ export function monthlyScheduleUrl(season: number, month: number): string {
 export const GAME_PAGES = ["", "playbyplay.html", "box.html", "roster.html"] as const;
 export type GamePage = (typeof GAME_PAGES)[number];
 
+/**
+ * 경기 ID — `<시즌>/<MMDD>/<슬러그>`. **DB `game.game_id` 와 같은 모양이다**(`packages/store/src/game-slug.ts` 의 `gameFromBoxPath`)
+ * — 저장 키(`pageKey`)와 주소(`pageUrl`)의 가운데 조각이 곧 이것이다.
+ * ⚠`MMDD` 규칙은 여기 한 벌이다(M1) — `pageKey` 도 이것을 지난다.
+ */
+export function gameIdOf(ref: GameRef): string {
+  const mmdd = ref.date.slice(5).replace("-", "");
+  return `${String(ref.season)}/${mmdd}/${ref.slug}`;
+}
+
+/**
+ * 경기 ID 의 모양. 슬러그 규칙은 월간 일정의 경기 링크(`GAME_HREF`)와 같다.
+ * ⚠정정 자동 재수집의 받기 도구(`cli-games.ts`)가 받는 **유일한 입력**이라 여기서 어긋나면 요청 0으로 거부한다(설계 D7-2).
+ */
+const GAME_ID = /^(\d{4})\/(\d{2})(\d{2})\/([a-z0-9]+(?:-[a-z0-9]+)+)$/;
+
+/**
+ * 경기 ID → `GameRef`. **`gameIdOf` 의 역함수**다 — `pageKey`·`pageUrl` 이 ID 에서 그대로 나온다(왕복 시험 · 설계 D7-2).
+ * ⚠**월간 일정을 받지 않는다** — 경기 ID 가 곧 주소다(`game.source_url` 실측). 그래서 **구장은 모른다**(`venue: null` · M11) —
+ *   경기 페이지를 받는 데(`archiveGame`)는 구장이 필요 없다.
+ * @throws {RangeError} 모양이 틀렸거나 **없는 날짜**(`2026/0230/…`)면. 조용히 다른 경기로 바꾸지 않는다.
+ */
+export function gameRefFromId(id: string): GameRef {
+  const [, yyyy, mm, dd, slug] = GAME_ID.exec(id) ?? [];
+  if (!yyyy || !mm || !dd || !slug) throw new RangeError(`경기 ID 모양이 아니다(<시즌>/<MMDD>/<슬러그>): ${JSON.stringify(id)}`);
+  const date = `${yyyy}-${mm}-${dd}`;
+  // ⚠`new Date(ms)` 는 주어진 값을 해석할 뿐 시계를 읽지 않는다(M6). 넘친 날짜(2/30 → 3/2)는 되돌려 비교해 걸러낸다
+  const ms = Date.parse(`${date}T00:00:00.000Z`);
+  if (!Number.isFinite(ms) || new Date(ms).toISOString().slice(0, 10) !== date) {
+    throw new RangeError(`경기 ID 의 날짜가 없는 날짜다: ${JSON.stringify(id)}`);
+  }
+  return { season: Number(yyyy), date, slug, path: `/scores/${yyyy}/${mm}${dd}/${slug}/`, venue: null };
+}
+
 /** 하위 페이지의 저장 키. 빈 문자열은 `index`로 정규화한다. */
 export function pageKey(ref: GameRef, page: GamePage): string {
   const leaf = page === "" ? "index" : page.replace(/\.html$/, "");
-  const mmdd = ref.date.slice(5).replace("-", "");
-  return `npb/scores/${ref.season}/${mmdd}/${ref.slug}/${leaf}`;
+  return `npb/scores/${gameIdOf(ref)}/${leaf}`;
 }
 
 export function pageUrl(ref: GameRef, page: GamePage): string {
