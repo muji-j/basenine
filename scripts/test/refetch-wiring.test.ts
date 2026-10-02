@@ -10,6 +10,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { runOf, stepsOf } from "./workflow-shell.ts";
 
 /**
  * ⚠**줄끝을 `\n` 으로 맞춰 읽는다** — Windows 체크아웃(`core.autocrlf=true`)은 작업 트리가 CRLF 라,
@@ -27,12 +28,45 @@ test("14 수동 실행에 refetch_dates 입력이 있다", () => {
   assert.match(YML, /workflow_dispatch:\s*\n\s+inputs:\s*\n\s+refetch_dates:/);
 });
 
-test("⚠14 입력은 수집 단계의 env 로만 쓰인다 — run: 에 직접 나오지 않는다", () => {
+/**
+ * ⚠**두 곳이다**(2026-10-02 · 정정 자동 재수집 · 설계 D13 의 T10). 수집·적재(수동 날짜를 받는다)와
+ * 정정 감지 · 자동 재수집(그 날짜를 날짜 자리 계산과 E3 제외에 쓴다 — `parseRefetchDates` 한 벌)이다.
+ * 둘 다 **env 로만** 읽는다. 셋째 곳이 생기거나 `run:` 에 직접 나오면 붉다.
+ */
+test("⚠14 입력은 두 단계(수집·적재 · 정정 감지)의 env 로만 쓰인다 — run: 에 직접 나오지 않는다", () => {
   const uses = [...YML.matchAll(/inputs\.refetch_dates/g)].length;
-  assert.equal(uses, 1, "정확히 한 곳(env)에서만 읽어야 한다");
-  assert.match(YML, /\n\s+BB_REFETCH_DATES: \$\{\{ inputs\.refetch_dates \}\}\n/);
-  const step = YML.slice(YML.indexOf("- name: 수집·적재"), YML.indexOf("- name: 드래프트 적재"));
-  assert.equal(step.includes("BB_REFETCH_DATES: ${{ inputs.refetch_dates }}"), true, "수집·적재 단계의 env 에 그 줄 그대로 있어야 한다");
+  assert.equal(uses, 2, "정확히 두 곳(env)에서만 읽어야 한다");
+  const lines = YML.split("\n").filter((l) => l.includes("inputs.refetch_dates"));
+  assert.deepEqual(
+    lines,
+    Array(2).fill("          BB_REFETCH_DATES: ${{ inputs.refetch_dates }}"),
+    "두 곳 모두 `BB_REFETCH_DATES: ${{ inputs.refetch_dates }}` env 줄이어야 한다",
+  );
+  const collect = YML.slice(YML.indexOf("- name: 수집·적재"), YML.indexOf("- name: 드래프트 적재"));
+  assert.equal(collect.includes("BB_REFETCH_DATES: ${{ inputs.refetch_dates }}"), true, "수집·적재 단계의 env 에 그 줄 그대로 있어야 한다");
+  const corr = YML.slice(YML.indexOf("- name: 정정 감지 · 자동 재수집"), YML.indexOf("- name: 수집 후 재검증"));
+  assert.notEqual(YML.indexOf("- name: 정정 감지 · 자동 재수집"), -1, "정정 감지 · 자동 재수집 단계가 없다");
+  assert.equal(corr.includes("BB_REFETCH_DATES: ${{ inputs.refetch_dates }}"), true, "정정 감지 단계의 env 에 그 줄 그대로 있어야 한다");
+});
+
+/**
+ * ⚠**어느 스텝의 `run:` 에도 `${{ inputs.* }}` 를 직접 쓰지 않는다**(스크립트 인젝션). 날짜 입력만이 아니라 입력 전부다 —
+ * 새 입력이 생겨도 같은 규칙이 먼저 막는다.
+ */
+test("⚠14 어느 스텝의 run: 에도 ${{ inputs.* }} 가 직접 나오지 않는다 — env 로만", () => {
+  let checked = 0;
+  for (const job of ["decide", "collect"]) {
+    for (const s of stepsOf(YML, job)) {
+      if (!/^ {8}run:/m.test(s.body)) continue;
+      checked += 1;
+      const code = runOf(s)
+        .split("\n")
+        .filter((l) => !/^\s*#/.test(l))
+        .join("\n");
+      assert.equal(/\$\{\{\s*inputs\./.test(code), false, `「${s.name}」의 run: 에 \${{ inputs.* }} 가 직접 있다 — env 로 넘겨라`);
+    }
+  }
+  assert.ok(checked >= 10, `run: 이 있는 스텝을 ${String(checked)}개밖에 못 봤다 — 이 시험이 공회전한다`);
 });
 
 /**

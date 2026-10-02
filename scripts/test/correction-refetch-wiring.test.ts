@@ -11,12 +11,12 @@
  *   파일로 띄우는 본 하나(인자 오류)는 **자식을 띄우기 전에** 끝난다.
  * ⚠시계를 안 읽는다(M6).
  *
- * ⚠T8(`daily.yml` 정적 배선)은 작업 D 가 이 파일에 더한다(설계 D13 이 T8 · T9 를 같은 파일에 둔다).
+ * **T8**(`daily.yml` 정적 배선 + 순수 셸 조각의 실제 실행)은 이 파일 맨 아래다(설계 D13 이 T8 · T9 를 같은 파일에 둔다 · 작업 D).
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -27,6 +27,7 @@ import { MAX_REDIRECTS } from "../../packages/archiver/src/fetcher.ts";
 import { CHILD_TIMEOUT_MS, FETCH_CHILD_MARGIN_MS, FETCH_DELAY_MS, FETCH_WORST_GAME_MS, HISTORY_PATH } from "../correction-plan.ts";
 import { INCIDENT, K_WP, NOW, OLD, START, defect, detectJson, makeWorld, runMain, sha256 } from "./correction-fakes.ts";
 import type { World } from "./correction-fakes.ts";
+import { DAILY, jobBlock, runBash, runOf, stepNamed, stepsOf } from "./workflow-shell.ts";
 
 const IDS = ["2026/0923/s-t-23", "2026/0917/t-c-20", "2026/0513/s-t-08"];
 const ENTRY = fileURLToPath(new URL("../correction-refetch.ts", import.meta.url));
@@ -333,4 +334,301 @@ test("import 만으로는 아무것도 하지 않는다 · 파일로 띄우면 �
   assert.equal(r.status, 2, r.stderr);
   assert.deepEqual(readdirSync(dir), [], "인자 오류인데 작업 폴더에 무엇을 썼다");
   assert.equal(existsSync(join(dir, "report.txt")), false);
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// T8 — `daily.yml` 정적 배선 + 순수 셸 조각의 실제 실행(설계 D1 · D8 · D10 · D13 의 T8)
+//
+// ⚠**글자만 보지 않는다.** 이 저장소는 「배선이 있다」와 「그것이 돈다」가 갈린 사고를 여러 번 겪었다 — 외부 요청 0 · git 0 인 셸 조각
+//   (이력 반영 · 관문의 보고 재출력)은 임시 폴더에서 **실제 bash 로** 돌린다(`workflow-shell.ts` · bash 가 없으면 시험이 실패한다).
+// ⚠주석은 걷어내고 본다 — 「이렇게 하지 마라」고 적은 주석이 증거로 읽히면 시험이 헛돈다.
+// ══════════════════════════════════════════════════════════════════════════════
+
+const DECIDE = jobBlock(DAILY, "decide");
+const COLLECT_JOB = jobBlock(DAILY, "collect");
+const COLLECT_STEPS = stepsOf(DAILY, "collect");
+
+const CORR_NAME = "정정 감지 · 자동 재수집";
+/** ⚠새 스텝이 없을 때(고치기 전 코드) import 에서 죽지 않게 빈 스텝으로 받는다 — 시험마다 따로 붉어지게 한다 */
+const soft = (prefix: string): ReturnType<typeof stepNamed> => {
+  try {
+    return stepNamed(DAILY, "collect", prefix);
+  } catch {
+    return { name: `<${prefix} 없음>`, uses: "", body: "", at: -1 };
+  }
+};
+const CORR = soft(CORR_NAME);
+const STAMP = soft("잡 시작 시각");
+const RECORD = stepNamed(DAILY, "collect", "기록 갱신과 커밋");
+const GATE = stepNamed(DAILY, "collect", "외부 대조");
+
+/** 글자에서 `#` 주석 줄을 뺀다(셸 글자와 YAML 키 줄 둘 다) */
+const noComment = (s: string): string =>
+  s
+    .split("\n")
+    .filter((l) => !/^\s*#/.test(l))
+    .join("\n");
+
+test("⚠T8 collect 잡 — timeout-minutes 는 45 그대로(D7-8 의 합이 이 값 안이다)", () => {
+  assert.match(COLLECT_JOB, /^ {4}timeout-minutes: 45$/m);
+});
+
+test("⚠T8 job-start — collect 의 맨 앞 스텝이고 체크아웃보다 앞이며 UTC 초 단위 시각을 낸다", () => {
+  assert.equal(COLLECT_STEPS[0]!.name, STAMP.name, `첫 스텝이 「${COLLECT_STEPS[0]!.name}」다 — 잡 시작 시각이 첫 스텝이어야 한다`);
+  const checkout = COLLECT_STEPS.findIndex((s) => s.uses.startsWith("actions/checkout@"));
+  assert.ok(checkout > 0, "체크아웃 스텝을 못 찾았거나 첫 스텝이다 — 잡 시작 시각이 그보다 앞이어야 한다");
+  assert.match(noComment(STAMP.body), /^ {8}id: job-start$/m);
+  assert.equal(runOf(STAMP), 'echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"');
+  assert.doesNotMatch(noComment(STAMP.body), /^ {8}if:/m, "잡 시작 시각에 조건이 붙었다 — 늘 찍어야 한다");
+});
+
+test("⚠T8 job-start 의 출력 모양은 진입점이 읽는 모양이다(UTC `…Z` 초 단위 · 시간대 없는 값이 아니다)", () => {
+  const r = runBash(runOf(STAMP), { GITHUB_OUTPUT: "out.txt" });
+  assert.equal(r.status, 0, r.stderr);
+  const out = readFileSync(join(r.dir, "out.txt"), "utf8").trim();
+  assert.match(out, /^at=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+});
+
+test("⚠T8 decide — slot 출력이 outputs 에 있고 · 갈래마다 · exit 0 앞에서 나온다", () => {
+  assert.match(DECIDE, /^ {6}slot: \$\{\{ steps\.check\.outputs\.slot \}\}$/m, "decide 의 outputs 에 slot 이 없다");
+  const run = noComment(runOf(stepNamed(DAILY, "decide", "재시도 슬롯인가")));
+  const open = run.indexOf('case "${SCHEDULE:-}" in');
+  assert.notEqual(open, -1);
+  const close = run.indexOf("esac", open);
+  const body = run.slice(open, close);
+  for (const v of ["retry", "manual", "scheduled"]) {
+    const n = body.split(`slot=${v}`).length - 1;
+    assert.equal(n, 1, `case 안에 slot=${v} 가 ${String(n)}번이다 — 정확히 한 번이어야 한다`);
+  }
+  const exit0 = body.indexOf("exit 0");
+  assert.ok(exit0 > body.indexOf("slot=manual") && exit0 > body.indexOf("slot=scheduled"), "slot 출력이 `exit 0` 뒤에 있다 — 정시 슬롯에서 비어 나간다");
+  assert.ok(body.indexOf("slot=retry") < exit0, "slot=retry 가 정시 갈래의 `exit 0` 뒤에 있다");
+  // 재시도 크론 목록은 한 곳이다 — 슬롯용 둘째 목록을 만들지 않았다(`retry-slot.test.ts` 가 크론과의 일치를 따로 지킨다)
+  assert.equal((run.match(/"30 23 \* \* \*"/g) ?? []).length, 1, "재시도 크론 글자가 case 한 곳 말고도 쓰였다 — 목록이 둘이 됐다");
+});
+
+test("⚠T8 새 스텝의 자리 — 공표 성적표 갱신 바로 뒤 · 수집 후 재검증 바로 앞(사이에 스텝이 없다)", () => {
+  const names = COLLECT_STEPS.map((s) => s.name);
+  const at = names.findIndex((n) => n.startsWith(CORR_NAME));
+  assert.ok(at > 0);
+  assert.ok(names[at - 1]!.startsWith("공표 성적표 갱신"), `앞 스텝이 「${names[at - 1]}」다`);
+  assert.ok(names[at + 1]!.startsWith("수집 후 재검증"), `뒤 스텝이 「${names[at + 1]}」다`);
+});
+
+test("⚠T8 새 스텝 — id correction · if 없음(= success()) · continue-on-error 없음 · timeout-minutes 30 · 실행 한 줄", () => {
+  const b = noComment(CORR.body);
+  assert.match(b, /^ {8}id: correction$/m);
+  assert.doesNotMatch(b, /^ {8}if:/m, "if: 가 붙었다 — 앞 단계가 실패한 실행에서 돌면 안 되고, 그걸 `if:` 없이(success()) 지킨다");
+  assert.doesNotMatch(b, /^ {8}continue-on-error:/m, "continue-on-error 가 붙었다 — 이 단계의 실패(종료 1)는 배포를 막아야 한다");
+  assert.match(b, /^ {8}timeout-minutes: 30$/m);
+  assert.equal(runOf(CORR), "node scripts/correction-refetch.ts --db data/bb.sqlite --archive data/archive --work-dir /tmp/correction-refetch");
+  assert.equal(noComment(runOf(CORR)).includes("${{"), false, "run: 에 식이 직접 들어갔다 — env 로만 넘겨라");
+});
+
+test("⚠T8 새 스텝의 env — 정확히 네 줄(시크릿 하나 · 입력 · 슬롯 · 잡 시작) · 다른 토큰은 넘기지 않는다", () => {
+  const lines = noComment(CORR.body).split("\n");
+  const envAt = lines.findIndex((l) => l === "        env:");
+  assert.notEqual(envAt, -1, "env: 가 없다");
+  const envLines: string[] = [];
+  for (const l of lines.slice(envAt + 1)) {
+    if (!l.startsWith("          ")) break;
+    envLines.push(l);
+  }
+  assert.deepEqual(envLines, [
+    "          BB_ARCHIVER_CONTACT: ${{ secrets.BB_ARCHIVER_CONTACT }}",
+    "          BB_REFETCH_DATES: ${{ inputs.refetch_dates }}",
+    "          BB_RUN_SLOT: ${{ needs.decide.outputs.slot }}",
+    "          BB_COLLECT_STARTED_AT: ${{ steps.job-start.outputs.at }}",
+  ]);
+  assert.equal(/secrets\.(BB_DATA_TOKEN|CLOUDFLARE|BB_CONTACT)|GH_TOKEN|github\.token/.test(noComment(CORR.body)), false, "이 단계에 필요 없는 토큰이 넘어갔다");
+});
+
+test("⚠T8 워크플로의 env 이름과 진입점이 읽는 env 가 같은 집합이다 — 한쪽만 바뀌면 붉다", () => {
+  const src = readFileSync(ENTRY, "utf8");
+  const read = new Set([...src.matchAll(/env\["([A-Z_]+)"\]/g)].map((m) => m[1]!));
+  const runner = ["GITHUB_RUN_ID", "GITHUB_REF_NAME"]; // 러너가 늘 주는 값 — 워크플로에 적지 않는다
+  const given = [...noComment(CORR.body).matchAll(/^ {10}([A-Z_]+):/gm)].map((m) => m[1]!);
+  assert.deepEqual([...read].sort(), [...given, ...runner].sort());
+  for (const flag of ["db", "archive", "work-dir"]) assert.ok(src.includes(`"${flag}"`) || src.includes(`${flag}:`), `진입점이 --${flag} 를 모른다`);
+});
+
+test("⚠T8 always() 단계의 조건과 순서가 그대로다 — 새 단계가 업로드 · 기록 · 관문의 조건을 바꾸지 않았다", () => {
+  const names = COLLECT_STEPS.map((s) => s.name);
+  const idx = (p: string): number => names.findIndex((n) => n.startsWith(p));
+  assert.ok(idx(CORR_NAME) >= 0, "새 스텝이 없다 — 아래 순서 검사가 빈 채로 통과하지 않게 먼저 막는다");
+  assert.ok(idx(CORR_NAME) < idx("수집 후 재검증") && idx("수집 후 재검증") < idx("보관소에 올림") && idx("보관소에 올림") < idx("기록 갱신과 커밋"), "차례가 바뀌었다");
+  assert.ok(idx("기록 갱신과 커밋") < idx("파서 자기 검증") && idx("파서 자기 검증") < idx("득점 대조") && idx("득점 대조") < idx("외부 대조") && idx("외부 대조") < idx("화면 생성"), "관문의 차례가 바뀌었다");
+  assert.match(noComment(stepNamed(DAILY, "collect", "수집 후 재검증").body), /^ {8}if: always\(\)$/m);
+  assert.match(noComment(stepNamed(DAILY, "collect", "보관소에 올림").body), /^ {8}if: always\(\) && steps\.guard\.outcome == 'success'$/m);
+  assert.match(noComment(RECORD.body), /^ {8}if: always\(\)$/m);
+  assert.doesNotMatch(noComment(GATE.body), /^ {8}if:/m, "관문에 조건이 붙었다 — success() 여야 이전 단계 실패 때 건너뛴다");
+});
+
+// ── 기록 단계 — 이력 반영(D8 · D1) ─────────────────────────────────────────────
+
+const RECORD_CODE = noComment(runOf(RECORD));
+const HIST_FROM = RECORD_CODE.indexOf("if [ -f /tmp/correction-refetch/history.next.json ]; then");
+const GIT_ADD = RECORD_CODE.indexOf("git add ops/collection-log.txt");
+
+test("⚠T8 기록 단계 — 이력 반영은 `git reset --hard` 뒤 · `git add` 앞이고 `attempt()` 안이다", () => {
+  assert.notEqual(HIST_FROM, -1, "이력 반영 블록이 없다");
+  const attempt = RECORD_CODE.indexOf("attempt() {");
+  const reset = RECORD_CODE.indexOf('git reset --quiet --hard "origin/${GITHUB_REF_NAME}"');
+  assert.ok(attempt !== -1 && reset > attempt, "reset 이 attempt() 안에 없다");
+  assert.ok(HIST_FROM > reset, "이력 반영이 reset 앞이다 — reset 이 복사본을 지운다");
+  assert.ok(HIST_FROM < GIT_ADD, "이력 반영이 git add 뒤다");
+  assert.ok(GIT_ADD < RECORD_CODE.indexOf("git commit"), "git add 가 commit 뒤다");
+});
+
+test("⚠T8 기록 단계 — git add 는 로그 3파일 한 줄 + 「파일이 있을 때만」 이력 한 줄뿐이다", () => {
+  const adds = RECORD_CODE.split("\n").filter((l) => /\bgit add\b/.test(l));
+  assert.deepEqual(
+    adds.map((l) => l.trim()),
+    [
+      "git add ops/collection-log.txt ops/collection-log.jsonl ops/archive-manifest.json",
+      "if [ -f ops/correction-refetch.json ]; then git add ops/correction-refetch.json; fi",
+    ],
+  );
+  assert.equal(RECORD_CODE.includes("git add ."), false);
+  assert.equal(/git add -[Aa]/.test(RECORD_CODE), false);
+});
+
+/** 이력 반영 블록만 — 경로를 상대로 바꿔 임시 폴더에서 돌린다(`/tmp/correction-refetch` → `work`) */
+const HISTORY_BLOCK = RECORD_CODE.slice(HIST_FROM, GIT_ADD).replaceAll("/tmp/correction-refetch", "work");
+
+function runHistory(o: { base?: string; next?: string; current?: string }): { out: string; ops: string | null } {
+  const r = runBash(`set -euo pipefail\n${HISTORY_BLOCK}`, {}, (dir) => {
+    mkdirSync(join(dir, "ops"));
+    mkdirSync(join(dir, "work"));
+    if (o.base !== undefined) writeFileSync(join(dir, "work", "history.base"), o.base); // ⚠끝 줄바꿈 없음(작업 C 계약)
+    if (o.next !== undefined) writeFileSync(join(dir, "work", "history.next.json"), o.next);
+    if (o.current !== undefined) writeFileSync(join(dir, "ops", "correction-refetch.json"), o.current);
+  });
+  assert.equal(r.status, 0, `${r.stderr}\n${HISTORY_BLOCK}`);
+  const p = join(r.dir, "ops", "correction-refetch.json");
+  return { out: r.stdout, ops: existsSync(p) ? readFileSync(p, "utf8") : null };
+}
+
+test("⚠T8 이력 반영(실제 bash) — base 가 현재 파일과 같을 때만 복사한다", () => {
+  assert.equal(HISTORY_BLOCK.startsWith("if [ -f work/history.next.json ]; then"), true, "블록을 못 잘랐다 — 이 시험이 공회전한다");
+  const cur = '{"schema": 1, "keys": {"a": 1}}\n';
+  const next = '{\n  "schema": 1,\n  "keys": {}\n}\n';
+  // ① next 가 없으면 아무것도 안 한다(작업 폴더가 없는 실행 · 변화 없음 · 손상 · 감지기 오류)
+  const none = runHistory({ base: sha256(cur), current: cur });
+  assert.equal(none.ops, cur);
+  assert.equal(none.out, "");
+  // ② 없던 파일에서 시작(base = absent)
+  assert.equal(runHistory({ base: "absent", next }).ops, next);
+  // ③ 읽은 판 그대로(base = 현재 sha256)
+  const same = runHistory({ base: sha256(cur), next, current: cur });
+  assert.equal(same.ops, next);
+  assert.equal(same.out, "");
+  // ④ 읽은 뒤에 누가 바꿨다 — 덮어쓰지 않고 경고한다
+  const changed = runHistory({ base: sha256(cur), next, current: `${cur} ` });
+  assert.equal(changed.ops, `${cur} `, "읽은 뒤에 바뀐 이력을 덮어썼다");
+  assert.match(changed.out, /::warning::정정 재수집 이력이 이 실행이 읽은 뒤에 바뀌었다/);
+  // ⑤ 없다고 읽었는데 그 사이 생겼다
+  const born = runHistory({ base: "absent", next, current: cur });
+  assert.equal(born.ops, cur);
+  assert.match(born.out, /::warning::/);
+  // ⑥ 있다고 읽었는데 지금은 없다(사람이 지웠다)
+  const gone = runHistory({ base: sha256(cur), next });
+  assert.equal(gone.ops, null);
+  assert.match(gone.out, /::warning::/);
+  // ⑦ base 를 못 읽으면(파일 없음) 덮어쓰지 않는다 — 읽은 판을 모르는 채로 쓰지 않는다
+  const nobase = runHistory({ next, current: cur });
+  assert.equal(nobase.ops, cur);
+  assert.match(nobase.out, /::warning::/);
+});
+
+// ── 런북 §7-I 가 코드의 사유 코드·보고 첫 줄과 같은 말을 한다(D10) ─────────────────────
+
+test("⚠T8 런북 §7-I 가 사유 코드 전부와 보고 첫 줄의 갈래를 적는다 — 코드와 어긋나면 붉다", () => {
+  const doc = readFileSync(fileURLToPath(new URL("../../docs/operations/deploy.md", import.meta.url)), "utf8").replace(/\r\n/g, "\n");
+  const at = doc.indexOf("## 7-I. ");
+  assert.notEqual(at, -1, "런북에 §7-I 가 없다");
+  const next = doc.indexOf("\n## ", at + 5);
+  const section = doc.slice(at, next === -1 ? doc.length : next);
+  const plan = readFileSync(fileURLToPath(new URL("../correction-plan.ts", import.meta.url)), "utf8");
+  const classify = readFileSync(fileURLToPath(new URL("../../packages/aggregate/src/crosscheck-classify.ts", import.meta.url)), "utf8");
+  const CODES = [
+    "detector_error",
+    "history_invalid",
+    "unmeasured:asof_split",
+    "unmeasured:table_parse_error",
+    "unmeasured:tables_missing",
+    "unmeasured:compared_zero",
+    "no_defects",
+    "retry_slot",
+    "slot_unknown",
+    "as_of:absent",
+    "as_of:partial",
+    "as_of:override",
+    "too_many_defects",
+    "no_eligible",
+    "started_at_unknown",
+    "time_budget",
+    "no_date_slots",
+    "all_exhausted",
+  ];
+  for (const c of CODES) {
+    assert.ok(section.includes(`\`${c}\``), `런북 §7-I 에 사유 코드 \`${c}\` 가 없다`);
+    const word = c.split(":").at(-1)!;
+    assert.ok(plan.includes(word) || classify.includes(word), `코드(correction-plan.ts · crosscheck-classify.ts)에 「${word}」가 없다 — 사유 코드가 바뀌었는데 이 목록과 런북이 안 따라갔다`);
+  }
+  // 코드가 내는 `skip("<코드>"` 리터럴이 전부 위 목록에 있다 — 새 사유가 생기면 런북부터 쓴다
+  const emitted = [...plan.matchAll(/skip\("([a-z_]+)"/g)].map((m) => m[1]!);
+  assert.ok(emitted.length >= 8, `skip 리터럴을 ${String(emitted.length)}개밖에 못 찾았다 — 이 검사가 공회전한다`);
+  for (const e of emitted) assert.ok(CODES.includes(e), `코드가 새 사유 「${e}」 를 내는데 런북 §7-I 의 목록에 없다`);
+  // 보고 첫 줄의 갈래 · 소진 경고 · 관문이 다시 찍는 머리
+  for (const frag of ["해 봤다:", "해 보지 않았다:", "해 봤으나 실패", "섞인 세트 남음", "소진 — 런북 §7-I", "── 정정 자동 재수집 보고(이 실행) ──"]) {
+    assert.ok(section.includes(frag), `런북 §7-I 에 「${frag}」 가 없다`);
+  }
+  for (const frag of ["해 봤다:", "해 보지 않았다:", "해 봤으나 실패", "섞인 세트 남음", "소진 — 런북 §7-I"]) {
+    assert.ok(plan.includes(frag), `correction-plan.ts 에 「${frag}」 가 없다 — 보고 문구가 바뀌었는데 이 시험과 런북이 안 따라갔다`);
+  }
+});
+
+// ── 관문 — 판정 불변 · 실패할 때만 보고를 다시 찍는다(D1 · D10) ─────────────────────
+
+const GATE_CODE = noComment(runOf(GATE));
+
+test("⚠T8 관문 — 판정 줄은 그대로다(--emit 없음 · `|| fail=1` · 마지막이 `exit $fail`)", () => {
+  assert.match(
+    GATE_CODE,
+    /node packages\/aggregate\/tools\/crosscheck\.ts data\/bb\.sqlite "\$y" --archive data\/archive --verbose \|\| fail=1\n/,
+    "외부 대조 호출이 바뀌었다 — 사용자 결정 ②(관문 판정 불변)",
+  );
+  assert.equal(GATE_CODE.includes("--emit"), false, "관문이 감지 모드로 돈다 — 관문은 --emit 없이 부른다");
+  assert.ok(GATE_CODE.trimEnd().endsWith("exit $fail"), "마지막 줄이 `exit $fail` 이 아니다");
+  assert.match(GATE_CODE, /^ *fail=0$/m);
+  assert.equal((GATE_CODE.match(/fail=1/g) ?? []).length, 1, "fail 을 올리는 곳이 둘 이상이다 — 판정이 바뀌었다");
+});
+
+const GATE_TAIL = GATE_CODE.slice(GATE_CODE.indexOf('if [ "$fail" != 0 ]; then')).replaceAll("/tmp/correction-refetch", "work");
+
+function runGateTail(fail: number, report: string | null): { status: number | null; out: string } {
+  const r = runBash(`fail=${String(fail)}\n${GATE_TAIL}`, {}, (dir) => {
+    mkdirSync(join(dir, "work"));
+    if (report !== null) writeFileSync(join(dir, "work", "report.txt"), report);
+  });
+  return { status: r.status, out: r.stdout };
+}
+
+test("⚠T8 관문 꼬리(실제 bash) — 실패할 때만 보고를 다시 찍고 종료코드는 그대로다", () => {
+  const rep = "정정 자동 재수집 — 해 봤다: 3경기(3일) · 논리 페이지 12 · HTTP 전송 12 · 남은 결함 후보 1건(대상 키 1 · 소진 0)\n본문\n";
+  assert.equal(GATE_TAIL.startsWith('if [ "$fail" != 0 ]; then'), true, "꼬리를 못 잘랐다 — 이 시험이 공회전한다");
+  const ok = runGateTail(0, rep);
+  assert.equal(ok.status, 0);
+  assert.equal(ok.out, "", "통과했는데 보고를 찍었다 — 성공 로그가 길어진다");
+  const bad = runGateTail(1, rep);
+  assert.equal(bad.status, 1, "종료코드가 fail 을 안 따른다");
+  assert.ok(bad.out.includes("── 정정 자동 재수집 보고(이 실행) ──"));
+  assert.ok(bad.out.includes(rep), "report.txt 를 그대로 찍지 않았다");
+  const none = runGateTail(1, null);
+  assert.equal(none.status, 1);
+  assert.match(none.out, /보고 없음 — 「정정 감지 · 자동 재수집」 단계가 이 실행에서 보고를 남기지 않았다/);
+  const noneOk = runGateTail(0, null);
+  assert.equal(noneOk.status, 0);
+  assert.equal(noneOk.out, "");
 });

@@ -24,9 +24,10 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DAILY, runBash, runOf, stepNamed } from "./workflow-shell.ts";
 
 const YML = join(dirname(fileURLToPath(import.meta.url)), "..", "..", ".github", "workflows", "daily.yml");
 const yml = readFileSync(YML, "utf8");
@@ -162,4 +163,68 @@ test("⚠BB_ALL_SEASONS 를 실제로 읽는 시험이 있다", () => {
     `BB_ALL_SEASONS 를 읽는 시험이 ${readers.length}개뿐이다 — 배선만 있고 읽는 쪽이 없다`,
   );
   console.log(`  · 읽는 시험 ${readers.length}본: ${readers.join(" · ")}`);
+});
+
+/**
+ * ## ⚠`slot` 출력(2026-10-02 · 정정 자동 재수집 · 설계 D1 · D6 의 4)
+ *
+ * 새 단계(`정정 감지 · 자동 재수집`)는 **정시·수동 실행만** 받는다 — 재시도 슬롯은 받지 않는다(하루 6회가 되면 L1 에서 멀어진다).
+ * 그 판정에 쓰는 `BB_RUN_SLOT` 은 `decide` 의 `slot` 출력(`scheduled` · `retry` · `manual`)이고, **재시도 크론 목록은 위 `case` 한 곳**이다.
+ *
+ * ⚠**`case` 는 `exit 0` 으로 빠져나간다.** 정시 갈래에서 `slot` 을 `exit 0` 뒤에 내면 **값이 비어 나가고**, 진입점은 빈 값을
+ * `slot_unknown`(받지 않음)으로 읽는다 — **정정 자동 재수집이 영영 안 도는데 아무것도 안 붉다.** 순서가 곧 값이다(`deep` 과 같은 모양).
+ *
+ * ⚠**글자 검사로는 부족하다** — `decide` 의 셸을 **실제로 돌려** 크론마다 무엇이 나오는지 본다(외부 호출 앞에서 자른다 · `gh` 0).
+ */
+
+/** `decide` 의 run 에서 `case "${SCHEDULE:-}" in … esac` 까지(그 뒤의 `gh api` 호출 앞) */
+function decideUntilEsac(): string {
+  const run = runOf(stepNamed(DAILY, "decide", "재시도 슬롯인가"));
+  const open = run.indexOf('case "${SCHEDULE:-}" in');
+  assert.notEqual(open, -1, "decide 의 재시도 case 를 못 찾았다 — 이 시험이 공회전한다");
+  const close = run.indexOf("esac", open);
+  assert.notEqual(close, -1);
+  return `${run.slice(0, close + 4)}\necho FALLTHROUGH`;
+}
+
+function decideOutputs(schedule: string): { out: Map<string, string>; fell: boolean; status: number | null } {
+  const r = runBash(decideUntilEsac(), { SCHEDULE: schedule, GITHUB_OUTPUT: "out.txt" }, (dir) => writeFileSync(join(dir, "out.txt"), ""));
+  assert.ok(r.status === 0, `decide 조각이 실패했다(${String(r.status)}): ${r.stderr}`);
+  const out = new Map<string, string>();
+  for (const l of readFileSync(join(r.dir, "out.txt"), "utf8").split("\n")) {
+    const m = /^([a-z]+)=(.*)$/.exec(l);
+    if (m !== null) out.set(m[1]!, m[2]!);
+  }
+  return { out, fell: r.stdout.includes("FALLTHROUGH"), status: r.status };
+}
+
+test("⚠T12 slot — 정시 크론은 scheduled · 곧바로 run=true 로 끝난다(case 뒤로 안 내려간다)", () => {
+  const { regular } = crons();
+  for (const c of regular) {
+    const r = decideOutputs(c);
+    assert.equal(r.out.get("slot"), "scheduled", `정시 크론 "${c}" 의 slot`);
+    assert.equal(r.out.get("run"), "true", `정시 크론 "${c}" 는 늘 돈다`);
+    assert.equal(r.fell, false, `정시 크론 "${c}" 가 case 를 지나 직전 실행 판정까지 내려갔다`);
+    assert.ok(r.out.has("deep"), "deep 이 비어 나갔다");
+  }
+});
+
+test("⚠T12 slot — 재시도 크론은 retry · run 은 아직 정하지 않는다(직전 실행을 본 뒤에 정한다)", () => {
+  const { retry } = crons();
+  for (const c of retry) {
+    const r = decideOutputs(c);
+    assert.equal(r.out.get("slot"), "retry", `재시도 크론 "${c}" 의 slot`);
+    assert.equal(r.fell, true, `재시도 크론 "${c}" 가 직전 실행 판정으로 안 내려갔다`);
+    assert.equal(r.out.has("run"), false, `재시도 크론 "${c}" 가 직전 실행을 보기 전에 run 을 정했다`);
+  }
+});
+
+test("⚠T12 slot — 수동(크론 없음)은 manual · 모르는 크론은 scheduled 다(retry 로 새지 않는다)", () => {
+  const manual = decideOutputs("");
+  assert.equal(manual.out.get("slot"), "manual");
+  assert.equal(manual.out.get("run"), "true");
+  assert.equal(manual.fell, false);
+  const unknown = decideOutputs("17 3 * * *");
+  assert.equal(unknown.out.get("slot"), "scheduled", "모르는 크론은 정시로 읽어 돈다(모르면 돈다 — 위 주석)");
+  assert.equal(unknown.out.get("run"), "true");
 });
