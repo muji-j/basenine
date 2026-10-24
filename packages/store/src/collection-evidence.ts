@@ -9,7 +9,7 @@
  */
 import type { DatabaseSync } from "node:sqlite";
 import type { CollectionEvidence, MissedAnnounced, MissedPlayed } from "@bb-app/domain";
-import { LOOKBACK_DAYS } from "@bb-app/domain";
+import { LOOKBACK_DAYS, TEAMS } from "@bb-app/domain";
 import { CAREER_RECEIVED_CTES } from "./career-received.ts";
 import type { Db } from "./db.ts";
 import { REFETCH_WINDOW_CTES } from "./refetch-window.ts";
@@ -67,20 +67,35 @@ export function restDeclarations(src: Db | DatabaseSync, from: string, to: strin
 }
 
 /**
- * `from` 이후(그날 포함) 가장 가까운 경기일과 **그 행의 시즌**(`game` ∪ `upcoming_game`).
+ * 予告先発이 나는 경기의 구단 — **12구단**(도메인 `TEAMS` 한 벌 · M1). 아래 `nextGameDayOf` 가 두 표를 이것으로 거른다.
+ * ⚠올스타(`cl`·`pl` · 도메인 `NON_TEAM_CODES`)는 예고 대상이 아니다 — 실측(2026-10-25 · CI DB 사본): 올스타 16일 전부
+ *   `probable_pitcher`·`starters_fetch` 0행.
+ */
+const CLUB_CODES: readonly string[] = TEAMS.map((t) => t.code);
+const CLUB_IN = CLUB_CODES.map(() => "?").join(", ");
+
+/**
+ * `from` 이후(그날 포함) **12구단 경기**가 있는 가장 가까운 날과 **그 행의 시즌**(`game` ∪ `upcoming_game`).
  * ⚠**감시(`nextGameDay`)와 화면(次の予告先発 · 설계 D5 의 N)이 같은 질의를 쓴다**(M1) — 「다음 경기일」을 두 벌로 두지 않는다.
  * ⚠「최신 시즌」이 아니다 — 그 행의 시즌이다(오프시즌 설계 D4 · 개막일이 전년도 종료에 가려지지 않게).
+ * ⚠⚠**올스타는 「다음 경기일」이 아니다**(2026-10-25 · PR-3 검토 GPT P2) — 예전에는 대회·구단을 안 가려서 **올스타 날마다**
+ *   감시가 `starters-behind` 로 울고(수집 잡이 막힌다) 試合 화면이 거짓 「取り込めていません」을 낼 모양이었다.
+ *   ⚠PR-2b 이후 예정(`upcoming_game`)에는 `cl`·`pl` 이 안 들어가지만 **경기 행(`game`)에는 있다** — 두 표를 같은 규칙으로 거른다.
+ *   ⚠대회(`competition`)가 아니라 **구단 코드**로 가르는 이유: 예정 표에는 대회 칸이 없다(015 마이그레이션) — 한 규칙으로 두 표를 다 거른다.
  */
 export function nextGameDayOf(src: Db | DatabaseSync, from: string): { date: string; season: number } | null {
   const row = rawOf(src)
     .prepare(
       `SELECT d, s FROM (
-         SELECT game_date AS d, season AS s FROM game WHERE game_date >= ?
+         SELECT game_date AS d, season AS s FROM game
+          WHERE game_date >= ? AND home_code IN (${CLUB_IN}) AND away_code IN (${CLUB_IN})
          UNION ALL
-         SELECT game_date AS d, season AS s FROM upcoming_game WHERE game_date >= ?
+         SELECT game_date AS d, season AS s FROM upcoming_game
+          WHERE game_date >= ? AND home_code IN (${CLUB_IN}) AND away_code IN (${CLUB_IN})
        ) ORDER BY d LIMIT 1`,
     )
-    .get(from, from) as unknown as { d: string | null; s: number | null } | undefined;
+    .get(from, ...CLUB_CODES, ...CLUB_CODES, from, ...CLUB_CODES, ...CLUB_CODES) as unknown as
+    { d: string | null; s: number | null } | undefined;
   return row === undefined || row.d === null || row.s === null ? null : { date: row.d, season: row.s };
 }
 
@@ -157,7 +172,7 @@ export function collectionEvidence(src: Db | DatabaseSync, today: string, lookba
     "SELECT substr(datetime(MAX(fetched_at), '+9 hours'), 1, 10) AS d FROM starters_fetch WHERE fetched_at IS NOT NULL",
   ).d;
 
-  /** 오늘 이후 가장 가까운 경기일과 **그 행의 시즌**(`game` ∪ `upcoming_game`) — ⚠「최신 시즌」이 아니다(설계 D4) · 질의는 `nextGameDayOf` 한 벌 */
+  /** 오늘 이후 **12구단 경기**가 있는 가장 가까운 날과 **그 행의 시즌**(`game` ∪ `upcoming_game` · 올스타 제외) — ⚠「최신 시즌」이 아니다(설계 D4) · 질의는 `nextGameDayOf` 한 벌 */
   const next = nextGameDayOf(db, today);
   const nextGameDay = next?.date ?? null;
   const nextGameRestDeclared = nextGameDay !== null && one<{ n: number }>(

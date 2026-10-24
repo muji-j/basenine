@@ -75,7 +75,10 @@ export interface CollectionEvidence {
   startersLatest: string | null;
   /** 予告先発 맥박 — `MAX(starters_fetch.fetched_at)` 의 JST 날짜 */
   startersPulseDate: string | null;
-  /** 오늘 이후 가장 가까운 경기일(`game` ∪ `upcoming_game`) */
+  /**
+   * 오늘 이후 **12구단 경기**가 있는 가장 가까운 날(`game` ∪ `upcoming_game`).
+   * ⚠올스타(`cl`·`pl`)는 세지 않는다 — 予告先発 대상이 아니다(2026-10-25 · 증거 질의 `nextGameDayOf` 의 주석)
+   */
   nextGameDay: string | null;
   /** NPB 가 `nextGameDay` 에 「試合が予定されていません」이라고 공표했는가 */
   nextGameRestDeclared: boolean;
