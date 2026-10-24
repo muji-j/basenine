@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./refetch-limit": "./src/refetch-limit.ts",
-    "./game-slug": "./src/game-slug.ts"
+    "./game-slug": "./src/game-slug.ts",
+    "./schedule-owed": "./src/schedule-owed.ts"
   },
   "scripts": {
     "test": "node --test \"test/*.test.ts\""

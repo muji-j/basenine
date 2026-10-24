@@ -11,14 +11,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { openDb } from "../../packages/store/src/db.ts";
+import { upsertGame } from "../../packages/store/src/load.ts";
 import { blockingSleep, createStepRunner, fetchExitDisposition } from "../collect-steps.ts";
+import { targetDates } from "../date-window.ts";
 
 const UPDATE = fileURLToPath(new URL("../update.ts", import.meta.url));
 const FAKE = pathToFileURL(fileURLToPath(new URL("./fake-spawn.ts", import.meta.url))).href;
+/** 자식 프로세스의 「지금」을 고정한다(`BB_TEST_NOW`) — 제품 코드에 시험용 구멍을 내지 않는다(그 파일 머리말) */
+const FIXED_NOW = pathToFileURL(fileURLToPath(new URL("../../packages/store/test/fixed-now-preload.ts", import.meta.url))).href;
 
 const S = {
   starters: "packages/archiver/src/cli-starters.ts",
@@ -40,6 +45,8 @@ interface Planned {
   stdout?: string;
   stderr?: string;
   reasonsFile?: string;
+  /** n 번째 호출(0부터)의 계획(`fake-spawn.ts`) */
+  seq?: Planned[];
 }
 
 interface Call {
@@ -69,12 +76,13 @@ const BASE: Record<string, Planned> = {
 };
 
 /**
- * `update.ts` 를 가짜 자식으로 한 번 돌린다. `dates` 가 `null` 이면 `--date` 를 안 준다(`env.BB_REFETCH_DATES` 로 날짜를 줄 때) ·
- * `args` 는 뒤에 덧붙인다(`--delay` 등).
+ * `update.ts` 를 가짜 자식으로 한 번 돌린다. `dates` 가 `null` 이면 `--date` 를 안 준다(`env.BB_REFETCH_DATES` 로 날짜를 줄 때 ·
+ * 또는 평소 창 — 그때는 덜 받은 날·owed 판정이 `--db` 의 DB 를 실제로 읽는다) · `args` 는 뒤에 덧붙인다(`--delay` 등) ·
+ * `now` 를 주면 자식의 「지금」을 그 시각으로 고정한다(`fixed-now-preload.ts`).
  */
 function run(
   plan: Record<string, Planned>,
-  o: { before?: (work: string) => void; dates?: string | null; args?: readonly string[]; env?: Record<string, string> } = {},
+  o: { before?: (work: string) => void; dates?: string | null; args?: readonly string[]; env?: Record<string, string>; now?: string } = {},
 ): Ran {
   const work = mkdtempSync(join(tmpdir(), "bb-update-steps-"));
   try {
@@ -83,10 +91,12 @@ function run(
     const env: Record<string, string> = { ...(process.env as Record<string, string>) };
     delete env["BB_REFETCH_DATES"];
     delete env["BB_NPB_CIRCUIT_N"];
+    delete env["BB_TEST_NOW"];
     const dateArgs = o.dates === null ? [] : ["--date", o.dates ?? "2026-10-20"];
     const r = spawnSync(
       process.execPath,
       [
+        ...(o.now === undefined ? [] : ["--import", FIXED_NOW]),
         "--import", FAKE, UPDATE,
         "--contact", "me@example.com",
         ...dateArgs,
@@ -95,7 +105,17 @@ function run(
         "--work", work,
         ...(o.args ?? []),
       ],
-      { encoding: "utf8", env: { ...env, ...(o.env ?? {}), BB_FAKE_SPAWN_PLAN: JSON.stringify({ ...BASE, ...plan }), BB_FAKE_SPAWN_LOG: log }, timeout: 60_000 },
+      {
+        encoding: "utf8",
+        env: {
+          ...env,
+          ...(o.env ?? {}),
+          ...(o.now === undefined ? {} : { BB_TEST_NOW: o.now }),
+          BB_FAKE_SPAWN_PLAN: JSON.stringify({ ...BASE, ...plan }),
+          BB_FAKE_SPAWN_LOG: log,
+        },
+        timeout: 60_000,
+      },
     );
     const lines = existsSync(log)
       ? readFileSync(log, "utf8").trim().split("\n").filter((l) => l !== "").map((l) => JSON.parse(l) as Call | { sleep: number | null })
@@ -397,6 +417,154 @@ test("⚠T6 신선도 2(표 없음 등)는 사유 파일과 무관하게 blockin
     upstream: 4,
     reason: /blocking: 신선도 — 사유 파일을 못 읽었다/,
   });
+});
+
+// ---- 받았어야 할 날(owed) · 확인된 휴식일 — 평소 창(--date 없음)에서 DB 를 실제로 읽는다(PR-2b · 시험 T6) ----------------
+
+/**
+ * ⚠**설계 `docs/superpowers/specs/2026-10-24-catchup-owed-days-design.md` D3 · D4.** 여기서는 `--date` 를 안 주고 **실제 스키마의 임시 DB** 와
+ * 고정한 「지금」(`fixed-now-preload.ts`)으로 `update.ts` 를 돌린다 — 판정(`readCollectedThrough`) · 창(`planOwed`) · 몫(`owedRoom`) ·
+ * 알림(`catchupNotes`)이 **제자리에서 실제로 맞물리는가**를 날짜 자식의 `--date` 로 잰다(받기 자식은 가짜라 요청 0).
+ */
+const SEED_STAMP = "2026-10-21T09:50:36.996Z";
+const SEEN_1021 = "2026-10-21T09:50:36.996Z";
+type Card = readonly [date: string, home: string, away: string];
+
+interface Seed {
+  /** 치러진 경기 — 경기 행 · 치러짐 표시 · 아카이브 폴더(`box.html.gz`)를 같이 만든다(덜 받은 날 판정이 완결로 나오게) */
+  games?: readonly Card[];
+  /** 예정 카드(링크 없음) */
+  upcoming?: readonly Card[];
+  /** 그 달 사본을 본 시각 */
+  months?: readonly (readonly [season: number, month: number, seenAt: string])[];
+}
+
+function seed(work: string, s: Seed): void {
+  const db = openDb(join(work, "bb.sqlite"), SEED_STAMP);
+  try {
+    for (const [d, h, a] of s.games ?? []) {
+      const id = `${d.slice(0, 4)}/${d.slice(5, 7)}${d.slice(8, 10)}/${h}-${a}-01`;
+      upsertGame(db, {
+        gameId: id, season: Number(d.slice(0, 4)), gameDate: d, awayCode: a, homeCode: h, gameNo: 1, status: "played", notPlayedReason: null,
+        competition: "regular", series: null, sourceUrl: "https://example.invalid/", fetchedAt: SEED_STAMP,
+      });
+      db.raw.prepare("INSERT INTO schedule_played (season, game_date, home_code, away_code, seq, source, fetched_at) VALUES (?, ?, ?, ?, 0, 'x', ?)")
+        .run(Number(d.slice(0, 4)), d, h, a, SEED_STAMP);
+      const dir = join(work, "archive", "npb", "scores", ...id.split("/"));
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "box.html.gz"), "");
+    }
+    for (const [d, h, a] of s.upcoming ?? []) {
+      db.raw.prepare(
+        "INSERT INTO upcoming_game (season, game_date, home_code, away_code, seq, venue, start_time, source, fetched_at) VALUES (?, ?, ?, ?, 0, '', '18:00', 'x', ?)",
+      ).run(Number(d.slice(0, 4)), d, h, a, SEED_STAMP);
+    }
+    // 첫 내용일은 그 달 1일(내용 있는 사본 — `load-upcoming` 이 채운다)
+    for (const [y, m, at] of s.months ?? []) {
+      db.raw.prepare("INSERT INTO schedule_month (season, month, source, fetched_at, date_rows, games, first_content) VALUES (?, ?, 'x', ?, 31, 1, ?)")
+        .run(y, m, at, `${String(y)}-${String(m).padStart(2, "0")}-01`);
+    }
+  } finally {
+    db.close();
+  }
+}
+
+/** 날짜 자식이 받은 `--date` 차례 그대로 */
+const gameDates = (r: Ran): string[] => r.calls.filter((c) => c.script === S.games).map((c) => c.args[c.args.indexOf("--date") + 1]!);
+
+const JS_CARDS: readonly Card[] = [
+  ["2026-10-24", "db", "h"], ["2026-10-25", "db", "h"], ["2026-10-27", "h", "db"], ["2026-10-28", "h", "db"],
+  ["2026-10-29", "h", "db"], ["2026-10-31", "db", "h"], ["2026-11-01", "db", "h"],
+];
+/** 최신 CI DB 의 모양 — 마지막 경기 10/17 · 사본 10/21 · 일본시리즈 예정 7일 */
+const OUTAGE: Seed = {
+  games: [["2026-10-17", "h", "f"]],
+  upcoming: JS_CARDS,
+  months: [[2026, 10, SEEN_1021], [2026, 11, "2026-10-21T09:50:39.837Z"]],
+};
+
+/**
+ * ⚠⚠**설계 D4 의 표 4행 — 기준선(`since` 그대로 · owed 없음 = 고치기 전 창) 대비 날짜 자식.**
+ * 정상 · 비시즌은 **같다**(owed 로 추가되는 날짜 자식 0) · 확인된 휴식일이 있는 복구는 **준다** · 장기 장애 뒤 복구만 owed(≤ 5)만큼 는다.
+ */
+const D4_ROWS: [name: string, now: string, s: Seed, since: string, want: string[]][] = [
+  ["정상(10/18 07:00 JST)", "2026-10-17T22:00:00Z", {
+    games: [["2026-10-16", "h", "f"], ["2026-10-17", "h", "f"]],
+    upcoming: [["2026-10-24", "db", "h"]],
+    months: [[2026, 9, "2026-10-01T00:00:00Z"], [2026, 10, "2026-10-17T14:30:00Z"]],
+  }, "2026-10-17", ["2026-10-17"]],
+  ["확인된 휴식일이 있는 복구(10/22 07:00 JST)", "2026-10-21T22:00:00Z", {
+    games: [["2026-10-17", "h", "f"]],
+    upcoming: [["2026-10-24", "db", "h"]],
+    months: [[2026, 10, SEEN_1021]],
+  }, "2026-10-17", ["2026-10-21"]],
+  ["비시즌(12/11 07:00 JST)", "2026-12-10T22:00:00Z", {
+    games: [["2026-11-01", "db", "h"]],
+    months: [[2026, 11, "2026-12-01T00:00:00Z"], [2026, 12, "2026-12-10T14:30:00Z"]],
+  }, "2026-11-01", ["2026-12-10"]],
+  ["장기 장애 뒤 복구(11/03 07:00 JST)", "2026-11-02T22:00:00Z", OUTAGE, "2026-10-17",
+    ["2026-10-24", "2026-10-25", "2026-10-27", "2026-10-28", "2026-10-29", "2026-11-02"]],
+];
+
+for (const [name, now, s, since, want] of D4_ROWS) {
+  test(`⚠⚠T6 D4 표 — ${name}: 날짜 자식이 설계대로 · 기준선 대비`, () => {
+    const r = run({}, { dates: null, now, before: (work) => seed(work, s) });
+    assert.equal(r.status, 0, r.out);
+    assert.match(r.out, new RegExp(`마지막으로 받아 둔 경기일 ${since}`), "판정이 DB 를 안 읽었다(기준점을 말하지 않는다)");
+    const got = gameDates(r);
+    assert.deepEqual(got, want, r.out);
+    const baseline = targetDates(new Date(now), { collectedThrough: since });
+    if (name.startsWith("정상") || name.startsWith("비시즌")) {
+      assert.deepEqual(got, baseline, "정상·비시즌인데 날짜 자식이 기준선과 다르다 — owed 로 요청이 늘었다");
+    } else if (name.startsWith("확인된")) {
+      assert.ok(got.length < baseline.length && got.every((d) => baseline.includes(d)), `휴식일 복구인데 줄지 않았다: ${got.join(",")} vs ${baseline.join(",")}`);
+    } else {
+      assert.ok(baseline.every((d) => got.includes(d)), "기준선의 날을 뺐다");
+      assert.ok(got.length - baseline.length <= 5, "owed 로 더한 날짜 자식이 실행당 상한(5)을 넘었다");
+    }
+  });
+}
+
+test("⚠⚠T6 장기 장애 뒤 복구 — owed 가 정규일(어제)보다 앞 · 미룬 2일(10/31 · 11/01)을 말한다 · 선수 재취득 상한이 6일 몫(172)으로 준다", () => {
+  const r = run({}, { dates: null, now: "2026-11-02T22:00:00Z", before: (work) => seed(work, OUTAGE) });
+  assert.equal(r.status, 0, r.out);
+  const got = gameDates(r);
+  assert.equal(got.at(-1), "2026-11-02", "어제가 마지막이 아니다");
+  assert.ok(got.slice(0, -1).every((d) => d < "2026-11-02"), "owed 가 어제보다 뒤에 떴다");
+  const deferred = r.out.split("\n").find((l) => l.includes("미룬다"));
+  assert.ok(deferred !== undefined && deferred.includes("2026-10-31") && deferred.includes("2026-11-01") && deferred.includes("2일"), r.out);
+  assert.match(r.out, /받았어야 할 날 2026-10-24/);
+  assert.match(r.out, /2026-10-20/, "확인된 휴식일(10/18~10/20)을 말하지 않는다");
+  assert.equal(staleLimit(r), "172", "owed 를 더한 날짜 수(6일)로 선수 재취득 상한을 낮추지 않았다 — 30분 걸쇠가 단계를 죽인다");
+});
+
+/**
+ * ⚠⚠**장애 중 — owed 가 소진 몫을 먼저 쓴다**(설계 D4). 예고는 성공 · 첫 날짜 자식(owed 10/24)이 75(닫힌 채 실패) → 다음 날짜 자식이
+ * 연속 한도 1 로 **한 번 더** 뜨고 · 그것이 69(열림)면 멈춘다 — 남은 owed 와 **어제까지** 굶는다(대가: 다음 실행이 받는다).
+ */
+test("⚠⚠T6 예고 성공 + owed 자식 75 → 다음 날짜 자식은 연속 한도 1 로 한 번 더 · 69 면 멈춘다(어제도 건너뜀) · 종료 75", () => {
+  const r = run({ [S.games]: { seq: [{ exit: 75 }, { exit: 69 }] } }, { dates: null, now: "2026-11-02T22:00:00Z", before: (work) => seed(work, OUTAGE) });
+  assert.equal(r.status, 75, r.out);
+  const games = r.calls.filter((c) => c.script === S.games);
+  assert.deepEqual(games.map((c) => c.args[c.args.indexOf("--date") + 1]), ["2026-10-24", "2026-10-25"]);
+  assert.deepEqual(games.map((c) => c.circuitN), [null, "1"], "75 뒤 날짜 자식이 연속 한도 1 로 안 떴다");
+  assert.deepEqual(fetchCalls(r).map((c) => c.script), [S.starters, S.games, S.games], "69 뒤에 받기 자식이 떴다");
+  assert.match(r.out, /상류 실패 — 이후 받기 건너뜀 경기 아카이브 2026-11-02/, "어제가 굶는다는 것을 로그가 말하지 않는다");
+});
+
+test("⚠T6 ⒝ 월말 뒤 못 본 사본 — 8월 사본을 08-30 에 마지막으로 봤으면 09/03 07:00 실행이 08-31 을 받아 그 달 일정을 새로 받는다 · 그 사유를 말한다", () => {
+  const r = run({}, {
+    dates: null,
+    now: "2026-09-02T22:00:00Z",
+    before: (work) => seed(work, {
+      games: [["2026-08-31", "g", "t"], ["2026-09-02", "g", "t"]],
+      months: [[2026, 8, "2026-08-30T14:00:00Z"], [2026, 9, "2026-09-02T14:30:00Z"]],
+    }),
+  });
+  assert.equal(r.status, 0, r.out);
+  assert.deepEqual(gameDates(r), ["2026-08-31", "2026-09-02"]);
+  const line = r.out.split("\n").find((l) => l.includes("받았어야 할 날 2026-08-31"));
+  assert.ok(line !== undefined && line.includes("2026-08 일정 사본") && /월말/.test(line), r.out);
 });
 
 // ---- 정적 — spawnSync 직접 호출 0 ----------------------------------------------------------------

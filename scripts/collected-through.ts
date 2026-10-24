@@ -35,13 +35,30 @@
  *
  * ⚠**대가**(받아들인다): 영구히 덜 받힌 날(서스펜디드 · 적재 실패로 행이 안 생기는 경기)은 판정 범위에서 밀려날 때까지
  *   **최대 상한 + 1 일** 매 실행 다시 받는다 — `catchupNotes` 가 그 날짜와 경기 id 를 말한다.
+ *
+ * ## 받았어야 할 날(owed) · 확인된 휴식일(gapFrom) — 같은 스냅숏 (PR-2b · 설계 `docs/superpowers/specs/2026-10-24-catchup-owed-days-design.md` D1~D3)
+ *
+ * `since` 를 읽은 **같은 트랜잭션**(같은 연결 · 같은 스냅숏)에서 잎 `@bb-app/store/schedule-owed` 로 둘을 더 읽는다:
+ * - `gapFrom` — `since` 다음 날부터 이어진 **확인된 휴식일의 끝**(없으면 `since`). `update.ts` 가 따라잡기 간격의 기준으로 넘긴다
+ *   (`judgeDates`·`include` 는 `since` 그대로 — C10 을 바꾸지 않는다).
+ * - `owed` — 일정표가 「예정·치렀다」고 했는데 경기 행이 없는 날(⒜) + 월말 뒤에 못 본 사본의 말일(⒝) · 사유와 함께.
+ *
+ * **오류 행렬(설계 D3 표)** — ⚠**모르면 owed 를 더하지 않는다**:
+ * | 상황 | `collected` | `gapFrom` / `owed` | 알림 |
+ * |---|---|---|---|
+ * | DB 없음 · 열기 실패 · `MAX` 실패 · `MAX(played)` NULL · `since` 모양 틀림 | `undefined`(현행) | 없음(일정 증거만 있어도) | 현행 |
+ * | 경기 목록(C10) 실패 | `{since, include: []}`(현행) | `since` · `[]` | 현행 줄에 「owed 도 못 구했다」 |
+ * | 일정 증거 쿼리 실패(021 미적용 · 칸 다름) | `{since, include}` 보존 | `since` · `[]` | 「일정 증거를 못 읽었다 — 따라잡기는 예전 규칙」 |
+ * | 증거 표가 비었음(정상 · 비시즌) | 정상 | `since` · `[]` | 없음 |
+ * ⚠**반쯤 구한 값을 내보내지 않는다** — `gapFrom` 을 구한 뒤 `owed` 가 실패하면 둘 다 예전 규칙이다.
  */
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 // ⚠**잎 서브패스로 가져온다**(I1) — store 배럴 금지
 import { gameFromBoxPath } from "@bb-app/store/game-slug";
-import { dayStatus, isYmd, judgeDates } from "./date-window.ts";
+import { confirmedRestThrough, owedDays, type OwedDay, type OwedReason } from "@bb-app/store/schedule-owed";
+import { dayStatus, isYmd, jstDate, judgeDates } from "./date-window.ts";
 
 /** 알릴 것 한 줄. `update.ts` 가 `warn` 은 표준오류로, `info` 는 표준출력으로 찍는다 */
 export type Note = { level: "info" | "warn"; text: string };
@@ -57,8 +74,15 @@ export interface JudgedDay {
 export interface CollectedThrough {
   /** 마지막으로 받아 둔 경기일 — `MAX(game_date) WHERE status='played'` */
   since: string;
+  /**
+   * 확인된 휴식일의 끝(`since` 이상 · 없으면 `since`) — `targetDates` 의 `collectedThrough` 로 넘긴다(PR-2b D2).
+   * ⚠일정 증거를 못 읽었거나 경기 목록을 못 읽었으면 `since` 다(예전 규칙).
+   */
+  gapFrom: string;
   /** 덜 받았다고 확인된 날(오름차순) — `targetDates` 의 `include` 로 넘긴다 */
   include: string[];
+  /** 받았어야 할 날(날짜 오름차순 · 사유와 함께 · PR-2b D1) — `planOwed` 가 실행당 몫만큼 골라 창에 더한다 */
+  owed: OwedDay[];
   /** 판정한 날(아카이브에 그날 폴더가 있거나 그 폴더를 못 읽은 날) */
   days: JudgedDay[];
   /** 그날 폴더가 없는데 DB 에 행이 있는 날(아카이브 손실·`--archive` 설정 오류의 신호) */
@@ -86,6 +110,10 @@ export function readCollectedThrough(o: { dbPath: string; archiveRoot: string; n
   let range: string[] = [];
   let loaded: Map<string, string[]> | null = null;
   let loadedError = "";
+  // ③ 일정 증거(PR-2b) — 같은 스냅숏. 못 구하면 예전 규칙(gapFrom = since · owed = [])
+  let gapFrom: string | undefined;
+  let owed: OwedDay[] = [];
+  let evidenceError: string | null = null;
   try {
     const db = new DatabaseSync(o.dbPath, { readOnly: true });
     try {
@@ -113,6 +141,21 @@ export function readCollectedThrough(o: { dbPath: string; archiveRoot: string; n
             loadedError = String(e);
           }
         }
+        /**
+         * ⚠**경기 목록을 못 읽었으면 구하지 않는다**(설계 D3 표 2행) — 같은 `game` 표를 보는 증거라 그 판정을 믿을 수 없다.
+         * ⚠**둘 다 구해진 뒤에만 내보낸다** — 휴식일 끝을 구한 뒤 owed 가 실패하면 둘 다 예전 규칙이다(반쯤 구한 값은 모르는 값이다 · M11).
+         */
+        if (loaded !== null) {
+          try {
+            const today = jstDate(o.now);
+            const through = confirmedRestThrough(db, since, today);
+            const days = owedDays(db, today);
+            gapFrom = through;
+            owed = days;
+          } catch (e) {
+            evidenceError = String(e);
+          }
+        }
       }
       db.exec("COMMIT");
     } finally {
@@ -133,9 +176,15 @@ export function readCollectedThrough(o: { dbPath: string; archiveRoot: string; n
       level: "warn",
       text:
         `⚠${range[0]}~${range[range.length - 1]} 의 DB 의 경기 목록을 못 읽었다(${loadedError}) — ` +
-        "덜 받은 날을 넓히지 않는다(빠진 날 메우기는 그대로)",
+        "덜 받은 날을 넓히지 않는다(빠진 날 메우기는 그대로) · 받았어야 할 날(owed)도 못 구했다(확인된 휴식일 없이 예전 규칙)",
     });
-    return { collected: { since, include: [], days: [], noFolder: [] }, notes };
+    return { collected: { since, gapFrom: since, include: [], owed: [], days: [], noFolder: [] }, notes };
+  }
+  if (evidenceError !== null) {
+    notes.push({
+      level: "warn",
+      text: `⚠일정 증거를 못 읽었다(${evidenceError}) — 따라잡기는 예전 규칙(받았어야 할 날 · 확인된 휴식일 없이)`,
+    });
   }
 
   // ② 그다음 아카이브 — 판정 범위의 날마다, 적재기가 경기로 보는 폴더만(D2)
@@ -180,7 +229,7 @@ export function readCollectedThrough(o: { dbPath: string; archiveRoot: string; n
     });
   }
   const include = days.filter((d) => d.status === "incomplete").map((d) => d.date);
-  return { collected: { since, include, days, noFolder }, notes };
+  return { collected: { since, gapFrom: gapFrom ?? since, include, owed, days, noFolder }, notes };
 }
 
 /**
@@ -190,10 +239,30 @@ export function readCollectedThrough(o: { dbPath: string; archiveRoot: string; n
  * ⚠덜 받았는데 **창에 없는 날**은 경고한다 — `judgeDates` 의 범위가 `targetDates` 의 범위 규칙 안이라 원래 없어야 하는 모양이고,
  *   생기면 두 규칙이 어긋난 **코드 결함**이다. 조용히 넘기면 그 날은 자동으로는 영영 안 받힌다.
  *
- * @param base `include` **없이** 잡은 창(원래 창) · @param dates `include` 를 넘겨 잡은 창(실제로 받을 창)
+ * ## 받았어야 할 날(owed) · 확인된 휴식일 (PR-2b · 설계 D3 · D4)
+ *
+ * - **확인된 휴식일** — `gapFrom` 이 `since` 보다 뒤면 한 줄(따라잡기 간격을 어디서부터 세는지). 「왜 오늘은 사이를 안 메우지」에 답한다.
+ * - **owed 로 새로 더한 날마다** 사유(치러짐 표시 · 예정 · 월말)와 카드 — ⚠원래 창에 있던 날 · `include` 로 이미 말한 날은 말하지 않는다
+ *   (한 날 한 줄 · 요청 수를 셀 때 오독하지 않게).
+ * - **미룬 날**(실행당 몫 초과) — 수 · 날짜 · 몫. 다음 실행이 같은 증거로 다시 고른다.
+ * - ⚠owed 날이 창에도 미룬 날에도 없으면 **경고** — owed 의 범위(잎)와 창의 범위 규칙(`targetDates`)이 어긋난 **코드 결함**이다.
+ *
+ * @param base `include`·`owed` **없이** 잡은 창(원래 창 — 기준은 `gapFrom`) · @param dates 실제로 받을 창
+ * @param owedPlan `planOwed` 의 미룬 날과 몫(없으면 미룬 것 없음)
  */
-export function catchupNotes(c: CollectedThrough, base: readonly string[], dates: readonly string[]): Note[] {
+export function catchupNotes(
+  c: CollectedThrough,
+  base: readonly string[],
+  dates: readonly string[],
+  owedPlan: { readonly deferred: readonly string[]; readonly room: number } = { deferred: [], room: 0 },
+): Note[] {
   const notes: Note[] = [];
+  if (c.gapFrom !== c.since) {
+    notes.push({
+      level: "info",
+      text: `· 마지막 경기일 ${c.since} 뒤 ${c.gapFrom} 까지는 월간 일정 사본이 경기 없음을 확인한 휴식일이다 — 따라잡기 간격은 ${c.gapFrom} 부터 센다`,
+    });
+  }
   for (const d of c.days) {
     if (d.status !== "incomplete" || base.includes(d.date)) continue;
     const what = `경기일 ${d.date} 에 아카이브 폴더는 있는데 DB 에 행이 없는 경기 ${d.missing.length}건(${d.missing.join(", ")})`;
@@ -203,5 +272,43 @@ export function catchupNotes(c: CollectedThrough, base: readonly string[], dates
         : { level: "warn", text: `⚠${what} — 그런데 이번 창에 없다(판정 범위와 창 규칙이 어긋났다 · 코드 결함을 의심하라)` },
     );
   }
+  for (const o of c.owed) {
+    if (base.includes(o.date) || c.include.includes(o.date) || owedPlan.deferred.includes(o.date)) continue;
+    notes.push(
+      dates.includes(o.date)
+        ? { level: "info", text: `· 받았어야 할 날 ${o.date} — ${owedWhy(o.reasons)} — 받는다` }
+        : { level: "warn", text: `⚠받았어야 할 날 ${o.date} — ${owedWhy(o.reasons)} — 그런데 이번 창에도 미룬 날에도 없다(owed 범위와 창 규칙이 어긋났다 · 코드 결함을 의심하라)` },
+    );
+  }
+  if (owedPlan.deferred.length > 0) {
+    notes.push({
+      level: "info",
+      text:
+        `· 받았어야 할 날 ${String(owedPlan.deferred.length)}일(${owedPlan.deferred.join(" · ")})은 다음 실행으로 미룬다 — ` +
+        `이번 실행의 몫 ${String(owedPlan.room)}일(실행당 상한 · 30분 예산 · 오래된 날부터)`,
+    });
+  }
   return notes;
+}
+
+/** 카드 한 장 — `홈-원정`(같은 카드 두 번째부터 `#2`) */
+function card(r: { readonly homeCode: string; readonly awayCode: string; readonly seq: number }): string {
+  return `${r.homeCode}-${r.awayCode}${r.seq > 0 ? `#${String(r.seq + 1)}` : ""}`;
+}
+
+/** owed 사유를 한 줄로 — 치러짐 표시 → 예정 → 월말 */
+function owedWhy(reasons: readonly OwedReason[]): string {
+  const parts: string[] = [];
+  const played = reasons.flatMap((r) => (r.kind === "played" ? [card(r)] : []));
+  if (played.length > 0) parts.push(`일정이 치렀다고 표시했는데 경기 행이 없다 ${played.join(" · ")}`);
+  const scheduled = reasons.flatMap((r) => (r.kind === "scheduled" ? [r] : []));
+  if (scheduled.length > 0) {
+    parts.push(
+      `예정인데 경기 행이 없다 ${scheduled.map(card).join(" · ")}(그 달 사본을 그 날 뒤로 못 봤다 · 마지막으로 본 날 ${scheduled[0]!.seenOn ?? "모름"})`,
+    );
+  }
+  for (const r of reasons) {
+    if (r.kind === "month-end") parts.push(`${r.month} 일정 사본을 월말 뒤에 못 봤다(마지막으로 본 날 ${r.seenOn ?? "모름"}) — 그 달 일정을 새로 받는다`);
+  }
+  return parts.join(" · ");
 }

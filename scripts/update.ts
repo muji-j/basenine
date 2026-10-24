@@ -29,7 +29,7 @@
  */
 import { parseArgs } from "node:util";
 import { writeFileSync } from "node:fs";
-import { JST_TODAY_FROM_HOUR, jstDate, parseRefetchDates, targetDates } from "./date-window.ts";
+import { JST_TODAY_FROM_HOUR, jstDate, parseRefetchDates, planOwed, targetDates } from "./date-window.ts";
 // ⚠**덜 받은 날의 판정 I/O 는 이 모듈 한 벌이다**(C10 · M1) — import 해도 부작용이 없고(시계·출력 없음) 시험이 실제로 돌린다
 import { catchupNotes, readCollectedThrough } from "./collected-through.ts";
 import type { Note } from "./collected-through.ts";
@@ -38,7 +38,7 @@ import { createStepRunner } from "./collect-steps.ts";
 import { classifyRun } from "./run-verdict.ts";
 // ⚠잎만 가져온다(I1) — 간격의 술어 한 벌(`l1.ts` · undici 를 끌지 않는다) · 복구 실행의 선수 재취득 상한(`collect-budget.ts`)
 import { L1_MIN_DELAY_MS, parseDelayMs } from "../packages/archiver/src/l1.ts";
-import { playerRefetchCap } from "./collect-budget.ts";
+import { owedRoom, playerRefetchCap } from "./collect-budget.ts";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 
@@ -153,6 +153,9 @@ if (delayMs === null) {
  * ⚠**덜 받은 날은 `since` 하나가 아니다**(3중 검토 3차 P2) — 한 실행 안에서 D 의 재수집은 실패하고 D+1 은 성공하면
  *   `since` 가 D+1 로 전진한다. 그래서 판정은 `[어제 − 상한, min(since, 어제)]` 의 날마다 한다.
  * ⚠**모르면 넘기지 않는다**(M11) · **읽기 실패를 삼키지 않되 멈추지도 않는다** — 규칙과 근거는 그 모듈의 머리말.
+ * ⚠**받았어야 할 날(owed)과 확인된 휴식일의 끝(`gapFrom`)도 그 모듈이 같은 스냅숏에서 읽는다**(PR-2b · 설계
+ *   `docs/superpowers/specs/2026-10-24-catchup-owed-days-design.md`) — 상한 7일 밖으로 밀린 경기일(긴 휴식·장애 뒤의 일본시리즈 등)을
+ *   일정표의 증거로 이어 받는다. 모르면(DB 못 읽음 · 치러진 경기 없음 · 증거 쿼리 실패) owed 없이 예전 규칙이다(오류 행렬은 그 모듈 머리말).
  */
 /** 판정 모듈의 알림 한 줄 — 경고는 표준오류로, 안내는 표준출력으로 */
 function say(n: Note): void {
@@ -192,13 +195,28 @@ const since = collected?.since;
 const windowOpts = {
   ...(values.date === undefined ? {} : { date: values.date }),
   ...(values.today === true ? { forceToday: true } : {}),
-  ...(since === undefined ? {} : { collectedThrough: since }),
+  // ⚠**따라잡기 간격은 확인된 휴식일의 끝(`gapFrom` ≥ `since`)부터 센다**(PR-2b D2) — 휴식이 7일 상한을 갉아먹지 않게.
+  //   덜 받은 날(C10 · `include`)은 판정 모듈이 `since` 로 이미 골랐다. 일정 증거를 못 읽었으면 `gapFrom` 은 `since` 다(예전 규칙)
+  ...(collected === undefined ? {} : { collectedThrough: collected.gapFrom }),
 };
-const dates = refetch.dates ?? targetDates(now, {
-  ...windowOpts,
-  // ⚠**덜 받았다고 확인된 날만**(C10 D4) — 판정 범위의 날마다 대조한 결과다. 없거나 빈 배열이면 창은 예전과 글자까지 같다(정상·휴식일 요청 0 증가)
-  ...(collected === undefined ? {} : { include: collected.include }),
-});
+/**
+ * ⚠**받았어야 할 날(owed)을 실행당 몫만큼 더한다**(PR-2b · 설계 `docs/superpowers/specs/2026-10-24-catchup-owed-days-design.md` D3 · D4).
+ * 몫 = `owedRoom(정규 창의 날짜 수, --delay)` — 30분 단계 예산(`collect-budget.ts`)에서 정규 창을 뺀 날짜 수와 상한 5 중 작은 쪽이다.
+ * 정규 창에 이미 있는 날은 몫을 안 쓰고, 넘친 날은 오래된 것부터 남기고 다음 실행이 같은 증거로 다시 고른다.
+ * ⚠**정상 · 휴식일 · 비시즌에는 owed 로 더해지는 날이 0 이다** — owed 가 비거나 어제(이미 창에 있다)뿐이다(`update-steps.test.ts` 의 D4 표).
+ * ⚠owed 는 정규일보다 **앞에** 뜬다(오름차순) — 장애 중에는 owed 날짜 자식이 회로의 소진 몫을 먼저 쓴다(실행 전체 소진 ≤ 6 은 그대로 · 설계 D4).
+ */
+const plan = planOwed(
+  now,
+  {
+    ...windowOpts,
+    // ⚠**덜 받았다고 확인된 날만**(C10 D4) — 판정 범위의 날마다 대조한 결과다. 없거나 빈 배열이면 창은 예전과 글자까지 같다(정상·휴식일 요청 0 증가)
+    ...(collected === undefined ? {} : { include: collected.include }),
+  },
+  collected?.owed.map((o) => o.date) ?? [],
+  (n) => owedRoom(n, delayMs),
+);
+const dates = refetch.dates ?? plan.dates;
 console.log(
   `대상 경기일 ${dates.join(" · ")}` +
     (refetch.dates !== null
@@ -215,9 +233,9 @@ console.log(
 // ⚠**기준점을 말한다.** 창이 조용히 넓어지면 「왜 오늘 요청이 많지」에 아무도 답할 수 없다.
 //   위 「대상 경기일」 줄과 나란히 읽으면 넓어졌는지가 그 자리에서 보인다.
 if (since !== undefined) console.log(`  · 마지막으로 받아 둔 경기일 ${since}`);
-// ⚠**덜 받아서 새로 더한 날만 말한다**(C10 D5 · 3중 검토 2차 Minor) — `include` 없이 잡은 창(원래 창)과 맞댄다.
-//   원래 창에 있던 날(간격 0 의 어제 등)까지 「다시 받는다」고 하면 로그로 요청 수를 셀 때 오독한다
-if (collected !== undefined) for (const n of catchupNotes(collected, targetDates(now, windowOpts), dates)) say(n);
+// ⚠**덜 받아서 · 받았어야 해서 새로 더한 날만 말한다**(C10 D5 · 3중 검토 2차 Minor · PR-2b) — `include`·`owed` 없이 잡은 창(원래 창)과 맞댄다.
+//   원래 창에 있던 날(간격 0 의 어제 등)까지 「다시 받는다」고 하면 로그로 요청 수를 셀 때 오독한다. 미룬 owed 는 수와 날짜를 말한다
+if (collected !== undefined) for (const n of catchupNotes(collected, targetDates(now, windowOpts), dates, plan)) say(n);
 
 
 /**

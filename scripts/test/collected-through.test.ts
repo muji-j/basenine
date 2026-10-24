@@ -37,6 +37,8 @@ interface Setup {
   extra?: (archiveRoot: string) => void;
   /** 실제 스키마 대신 쓸 DB(표 없음 · 표 모양 다름) */
   rawDb?: (db: DatabaseSync) => void;
+  /** 실제 스키마(`openDb`)에 경기 행을 넣은 **뒤** 손댄다 — 일정 증거 행을 넣거나 표를 망가뜨린다(PR-2b T5) */
+  after?: (db: DatabaseSync) => void;
   /** DB 파일을 만들지 않는다 */
   noDb?: boolean;
 }
@@ -70,6 +72,7 @@ function withFixture<T>(s: Setup, fn: (f: { dbPath: string; archiveRoot: string 
             sourceUrl: "https://example.invalid/", fetchedAt: STAMP,
           });
         }
+        s.after?.(db.raw);
       } finally {
         db.raw.close();
       }
@@ -328,7 +331,7 @@ test("⚠C10 알림은 새로 더한 날만 — 날짜 · 건수 · 그 id · �
  * ⚠**I1** — `update.ts`(수집 오케스트레이터)가 이 모듈을 가져온다. store **배럴**을 가져오면 parser·domain 까지 평가돼
  * 무관한 모듈의 로드 오류가 수집을 시작 전에 죽인다. 잎 서브패스만 허용한다. ⚠M6(시계)은 `clock-injection.test.ts` 가 전 파일을 센다.
  */
-test("⚠I1 collected-through.ts 는 store 배럴을 가져오지 않는다 — @bb-app 가져오기는 잎 game-slug 하나뿐이다", () => {
+test("⚠I1 collected-through.ts 는 store 배럴을 가져오지 않는다 — @bb-app 가져오기는 잎 game-slug · schedule-owed 둘뿐이다", () => {
   const src = readFileSync(new URL("../collected-through.ts", import.meta.url), "utf8")
     .replace(/\r\n/g, "\n")
     .replace(/\/\*[\s\S]*?\*\//g, "")
@@ -339,13 +342,19 @@ test("⚠I1 collected-through.ts 는 store 배럴을 가져오지 않는다 — 
     ...src.matchAll(/\bexport\b[^"'`;]*\bfrom\s*["']([^"']+)["']/g),
   ].map((m) => m[1]!);
   assert.ok(specifiers.includes("./date-window.ts"), `가져오기를 못 찾았다(${specifiers.join(", ")}) — 이 시험이 공회전한다`);
-  assert.deepEqual(specifiers.filter((s) => s.startsWith("@bb-app/")), ["@bb-app/store/game-slug"], "잎 서브패스 밖의 @bb-app 모듈을 가져온다");
+  assert.deepEqual(
+    specifiers.filter((s) => s.startsWith("@bb-app/")).sort(),
+    ["@bb-app/store/game-slug", "@bb-app/store/schedule-owed"],
+    "잎 서브패스 밖의 @bb-app 모듈을 가져온다",
+  );
 });
 
 test("⚠C10 덜 받은 날이 창에 없으면 경고한다 — 판정 범위와 창 규칙이 어긋난 결함의 신호(조용히 넘기지 않는다)", () => {
   const c: CollectedThrough = {
     since: D16,
+    gapFrom: D16,
     include: [D15],
+    owed: [],
     days: [{ date: D15, status: "incomplete", missing: [gid(D15, "b-f-21")], reason: null }],
     noFolder: [],
   };
@@ -353,4 +362,228 @@ test("⚠C10 덜 받은 날이 창에 없으면 경고한다 — 판정 범위�
   assert.equal(notes.length, 1);
   assert.equal(notes[0]!.level, "warn");
   assert.match(notes[0]!.text, /2026-08-15/);
+});
+
+/**
+ * ## ⚠받았어야 할 날(owed) · 확인된 휴식일(gapFrom) — 읽기 계약 (PR-2b · 설계 `docs/superpowers/specs/2026-10-24-catchup-owed-days-design.md` D3 · 시험 T5)
+ *
+ * owed·gapFrom 쿼리는 **기존 BEGIN…COMMIT 안 · 같은 연결 · 같은 스냅숏**에서 돈다. 오류 행렬(설계 D3 표) 네 줄:
+ * | 상황 | collected | gapFrom / owed | 경고 |
+ * | DB 없음 · 열기 실패 · MAX 실패 · MAX NULL · since 모양 틀림 | undefined(현행) | 없음 — **모르면 owed 를 더하지 않는다** | 현행 |
+ * | 경기 목록(C10) 실패 | {since, include:[]}(현행) | since · [] | 현행 + 「owed 도 못 구했다」 |
+ * | 일정 증거 쿼리 실패 | {since, include} 보존 | since · [] | 「일정 증거를 못 읽었다 — 따라잡기는 예전 규칙」 |
+ * | 증거 표가 비었음 | 정상 | since · [] | 없음 |
+ */
+
+/** 07:00 JST 2026-11-03 — 어제 11/02 · 판정 범위 아래 끝 10/26(since 10/17 은 그보다 이르다 → C10 판정 0일) */
+const NOV3 = new Date("2026-11-02T22:00:00Z");
+/** 최신 CI DB 사본의 10월·11월 사본 본 시각(JST 2026-10-21 18:50) */
+const SEEN_1021 = "2026-10-21T09:50:36.996Z";
+const JS_DATES = ["2026-10-24", "2026-10-25", "2026-10-27", "2026-10-28", "2026-10-29", "2026-10-31", "2026-11-01"] as const;
+
+/** 최신 CI DB 의 모양 — 마지막 경기 10/17 · 사본 10/21(첫 내용일 10/01 · 11/01) · 일본시리즈 예정 7일(경기 행 없음) */
+function seedOutage(db: DatabaseSync): void {
+  const month = db.prepare("INSERT INTO schedule_month (season, month, source, fetched_at, date_rows, games, first_content) VALUES (2026, ?, 'x', ?, 31, 1, ?)");
+  month.run(10, SEEN_1021, "2026-10-01");
+  month.run(11, SEEN_1021, "2026-11-01");
+  db.prepare("INSERT INTO schedule_played (season, game_date, home_code, away_code, seq, source, fetched_at) VALUES (2026, '2026-10-17', 'h', 'f', 0, 'x', ?)").run(STAMP);
+  const up = db.prepare(
+    "INSERT INTO upcoming_game (season, game_date, home_code, away_code, seq, venue, start_time, source, fetched_at) VALUES (2026, ?, 'db', 'h', 0, '', '18:00', 'x', ?)",
+  );
+  for (const d of JS_DATES) up.run(d, SEEN_1021);
+}
+const ROW_1017: Row = [gid("2026-10-17", "h-f-01")];
+
+test("⚠⚠T5 owed — 장애 뒤 첫 실행(11/03 07:00 JST): 받았어야 할 날 7일 + 확인된 휴식일 끝 10/20 · C10 판정 0일 · 알림 없음", () => {
+  const { collected, notes } = read({ rows: [ROW_1017], folders: [ROW_1017[0]], after: seedOutage }, NOV3);
+  assert.ok(collected !== undefined);
+  assert.equal(collected.since, "2026-10-17");
+  assert.equal(collected.gapFrom, "2026-10-20", "확인된 휴식일(10/18~10/20)을 기준점에 반영하지 않았다");
+  assert.deepEqual(collected.owed.map((o) => o.date), [...JS_DATES]);
+  assert.deepEqual(collected.owed.find((o) => o.date === "2026-10-31")?.reasons.map((r) => r.kind).sort(), ["month-end", "scheduled"], "⒝(월말 뒤 못 본 사본)를 못 봤다");
+  assert.deepEqual([collected.include, collected.days], [[], []]);
+  assert.deepEqual(notes, []);
+});
+
+test("⚠T5 owed 는 C10 판정 범위가 비어 있지 않아도 같은 스냅숏에서 구한다 — 10/25 07:00 JST · 판정 [10/17] · owed [10/24]", () => {
+  const { collected, notes } = read({ rows: [ROW_1017], folders: [ROW_1017[0]], after: seedOutage }, new Date("2026-10-24T22:00:00Z"));
+  assert.ok(collected !== undefined);
+  assert.deepEqual(collected.days.map((d) => [d.date, d.status]), [["2026-10-17", "complete"]]);
+  assert.deepEqual(collected.owed.map((o) => o.date), ["2026-10-24"]);
+  assert.equal(collected.gapFrom, "2026-10-20");
+  assert.deepEqual(notes, []);
+});
+
+test("⚠⚠T5 계약 1행 — MAX(played) 가 NULL 이면 일정 증거가 있어도 collected 는 undefined · owed 를 구하지 않는다(모르면 더하지 않는다)", () => {
+  const { collected, notes } = read(
+    { rows: [[gid("2026-10-17", "h-f-01"), "notPlayed"]], folders: [gid("2026-10-17", "h-f-01")], after: seedOutage },
+    NOV3,
+  );
+  assert.equal(collected, undefined, "치러진 경기가 없는데 기준점을 만들었다");
+  assert.deepEqual(notes, [], "기준점이 없는데 owed 를 말했다");
+});
+
+test("⚠T5 계약 1행 — DB 파일 없음 · game 표 없음(MAX 실패) · since 모양 틀림 → collected undefined(현행 그대로)", () => {
+  assert.equal(read({ noDb: true }, NOV3).collected, undefined);
+  assert.equal(read({ rawDb: (db) => db.exec("CREATE TABLE other (a TEXT)") }, NOV3).collected, undefined);
+  const odd = read({
+    rawDb: (db) => {
+      db.exec("CREATE TABLE game (game_id TEXT, game_date TEXT, status TEXT, home_code TEXT, away_code TEXT)");
+      db.exec("INSERT INTO game VALUES ('2026/1017/h-f-01', '2026/10/17', 'played', 'h', 'f')");
+    },
+  }, NOV3);
+  assert.equal(odd.collected, undefined);
+});
+
+/**
+ * ⚠⚠**계약 2행** — 경기 목록(C10) 쿼리가 실패하면 owed 를 **구하지 않는다**. `game_id` 만 이름을 바꿔 C10 쿼리만 떨어뜨렸다 —
+ * owed·gapFrom 쿼리는 이 DB 에서 **돌 수 있다**(그 칸을 안 쓴다). 그래서 구현이 owed 를 그대로 구했다면 여기서 비지 않는다.
+ */
+test("⚠⚠T5 계약 2행 — 경기 목록 실패 → {since, gapFrom: since, include: [], owed: []} · 현행 경고 한 줄에 「owed 도 못 구했다」", () => {
+  const { collected, notes } = read(
+    {
+      rows: [ROW_1017],
+      folders: [ROW_1017[0]],
+      after: (db) => {
+        seedOutage(db);
+        db.exec("ALTER TABLE game RENAME COLUMN game_id TO gid_renamed");
+      },
+    },
+    new Date("2026-10-24T22:00:00Z"),
+  );
+  assert.ok(collected !== undefined, "since 까지 버렸다 — 빠진 날 메우기가 꺼진다");
+  assert.equal(collected.since, "2026-10-17");
+  assert.equal(collected.gapFrom, "2026-10-17", "경기 목록을 못 읽었는데 확인된 휴식일을 반영했다");
+  assert.deepEqual([collected.include, collected.owed], [[], []], "경기 목록을 못 읽었는데 owed 를 구했다");
+  assert.equal(notes.length, 1, `경고가 ${String(notes.length)}줄이다(한 줄이어야 한다)`);
+  assert.equal(notes[0]!.level, "warn");
+  assert.match(notes[0]!.text, /DB 의 경기 목록을 못 읽었다/);
+  assert.match(notes[0]!.text, /받았어야 할 날\(owed\)도 못 구했다/);
+});
+
+/**
+ * ⚠⚠**계약 3행** — 일정 증거 쿼리가 실패하면(표 없음 = 021 미적용 · 칸 다름) **둘 다** 예전 규칙이다: `gapFrom = since` · `owed = []`.
+ * `upcoming_game` 에서 `seq` 만 빼서 owed 쿼리만 떨어뜨렸다 — 확인된 휴식일 쿼리는 이 DB 에서 **돌 수 있고** 돌면 10/20 을 낸다.
+ * 반쯤 구한 값을 내보내지 않는다(모르면 넓히지 않는다 · M11). C10 의 `include` 는 그대로 지킨다.
+ */
+test("⚠⚠T5 계약 3행 — 일정 증거 쿼리 실패 → gapFrom = since · owed = [] · include 는 보존 · 경고 한 줄", () => {
+  const D24 = "2026-10-24";
+  const { collected, notes } = read(
+    {
+      rows: [ROW_1017, [gid(D24, "db-h-01")]],
+      folders: [ROW_1017[0], gid(D24, "db-h-01"), gid(D24, "c-t-01")],
+      after: (db) => {
+        seedOutage(db);
+        db.exec("DROP TABLE upcoming_game");
+        db.exec("CREATE TABLE upcoming_game (season INTEGER, game_date TEXT, home_code TEXT, away_code TEXT)");
+      },
+    },
+    new Date("2026-10-25T22:00:00Z"),
+  );
+  assert.ok(collected !== undefined);
+  assert.equal(collected.since, D24);
+  assert.deepEqual(collected.include, [D24], "일정 증거 실패가 C10 의 덜 받은 날까지 지웠다");
+  assert.equal(collected.gapFrom, D24);
+  assert.deepEqual(collected.owed, []);
+  const warns = notes.filter((n) => n.level === "warn");
+  assert.equal(warns.length, 1, notes.map((n) => n.text).join("\n"));
+  assert.match(warns[0]!.text, /일정 증거를 못 읽었다/);
+  assert.match(warns[0]!.text, /예전 규칙/);
+});
+
+test("⚠⚠T5 계약 3행 — 반쯤 구한 값을 내보내지 않는다: 확인된 휴식일은 구해지는 DB 에서도 owed 가 실패하면 gapFrom = since", () => {
+  const { collected } = read(
+    {
+      rows: [ROW_1017],
+      folders: [ROW_1017[0]],
+      after: (db) => {
+        seedOutage(db);
+        db.exec("DROP TABLE upcoming_game");
+        db.exec("CREATE TABLE upcoming_game (season INTEGER, game_date TEXT, home_code TEXT, away_code TEXT)");
+      },
+    },
+    NOV3,
+  );
+  assert.ok(collected !== undefined);
+  assert.equal(collected.gapFrom, "2026-10-17", "owed 가 실패했는데 확인된 휴식일(10/20)을 내보냈다");
+  assert.deepEqual(collected.owed, []);
+});
+
+test("⚠T5 계약 3행 — 일정 증거 표가 아예 없어도(021 미적용) 같다", () => {
+  const { collected, notes } = read({ rows: [ROW_1017], folders: [ROW_1017[0]], after: (db) => db.exec("DROP TABLE schedule_month") }, NOV3);
+  assert.ok(collected !== undefined);
+  assert.deepEqual([collected.since, collected.gapFrom, collected.owed], ["2026-10-17", "2026-10-17", []]);
+  assert.equal(notes.length, 1);
+  assert.match(notes[0]!.text, /일정 증거를 못 읽었다/);
+});
+
+test("⚠T5 계약 4행 — 증거 표가 비었으면(정상 · 비시즌) gapFrom = since · owed = [] · 알림 없음", () => {
+  const { collected, notes } = read({ rows: [ROW_1017], folders: [ROW_1017[0]] }, NOV3);
+  assert.ok(collected !== undefined);
+  assert.deepEqual([collected.since, collected.gapFrom, collected.owed, collected.include], ["2026-10-17", "2026-10-17", [], []]);
+  assert.deepEqual(notes, []);
+});
+
+// ---- catchupNotes — owed · 확인된 휴식일 · 미룬 수 ---------------------------------------------------
+
+const OWED_C: CollectedThrough = {
+  since: "2026-10-17",
+  gapFrom: "2026-10-20",
+  include: [],
+  owed: [
+    { date: "2026-10-24", reasons: [{ kind: "scheduled", homeCode: "db", awayCode: "h", seq: 0, seenOn: "2026-10-21" }] },
+    { date: "2026-10-25", reasons: [{ kind: "played", homeCode: "db", awayCode: "h", seq: 0 }] },
+    { date: "2026-10-31", reasons: [{ kind: "scheduled", homeCode: "db", awayCode: "h", seq: 0, seenOn: "2026-10-21" }, { kind: "month-end", month: "2026-10", seenOn: "2026-10-21" }] },
+    { date: "2026-11-01", reasons: [{ kind: "scheduled", homeCode: "db", awayCode: "h", seq: 0, seenOn: null }] },
+    { date: "2026-11-02", reasons: [{ kind: "played", homeCode: "h", awayCode: "db", seq: 0 }] },
+  ],
+  days: [],
+  noFolder: [],
+};
+
+test("⚠⚠T6 catchupNotes — 새로 더한 owed 날마다 사유(예정 · 치러짐 표시 · 월말) · 미룬 날의 수 · 확인된 휴식일 · 원래 창에 있던 날은 말하지 않는다", () => {
+  const base = ["2026-11-02"];
+  const dates = ["2026-10-24", "2026-10-25", "2026-11-02"];
+  const notes = catchupNotes(OWED_C, base, dates, { deferred: ["2026-10-31", "2026-11-01"], room: 2 });
+  const text = notes.map((n) => n.text).join("\n");
+  assert.ok(notes.every((n) => n.level === "info"), text);
+  for (const part of ["2026-10-17", "2026-10-20", "휴식일"]) assert.ok(text.includes(part), `확인된 휴식일 알림에 ${part} 가 없다:\n${text}`);
+  const d24 = notes.find((n) => n.text.includes("2026-10-24"));
+  assert.ok(d24 !== undefined && /예정/.test(d24.text) && d24.text.includes("db-h") && d24.text.includes("2026-10-21"), `10/24 의 사유가 없다:\n${text}`);
+  const d25 = notes.find((n) => n.text.includes("2026-10-25"));
+  assert.ok(d25 !== undefined && /치렀다/.test(d25.text), `10/25 의 사유(치러짐 표시)가 없다:\n${text}`);
+  const deferred = notes.find((n) => /미룬다/.test(n.text));
+  assert.ok(deferred !== undefined, `미룬 날을 말하지 않는다:\n${text}`);
+  for (const part of ["2일", "2026-10-31", "2026-11-01", "2"]) assert.ok(deferred.text.includes(part), `미룬 알림에 ${part} 가 없다: ${deferred.text}`);
+  assert.equal(notes.filter((n) => n.text.includes("2026-11-02")).length, 0, "원래 창에 있던 어제를 「받는다」고 말했다(요청 수를 셀 때 오독한다)");
+});
+
+test("⚠T6 catchupNotes — ⒝(월말 뒤 못 본 사본)를 받으면 그 달과 「새로 받는다」를 말한다", () => {
+  const notes = catchupNotes(OWED_C, ["2026-11-02"], ["2026-10-31", "2026-11-02"], { deferred: [], room: 5 });
+  const d31 = notes.find((n) => n.text.includes("2026-10-31"));
+  assert.ok(d31 !== undefined, notes.map((n) => n.text).join("\n"));
+  assert.ok(d31.text.includes("2026-10 일정 사본"), `그 달을 말하지 않는다: ${d31.text}`);
+  assert.match(d31.text, /월말/);
+  assert.match(d31.text, /새로 받는다/);
+});
+
+test("⚠T6 catchupNotes — owed 날이 창에도 없고 미룬 것도 아니면 경고한다(두 규칙이 어긋난 코드 결함) · 휴식일이 없으면 그 알림도 없다", () => {
+  const c: CollectedThrough = { ...OWED_C, gapFrom: OWED_C.since, owed: [OWED_C.owed[0]!] };
+  const notes = catchupNotes(c, ["2026-11-02"], ["2026-11-02"], { deferred: [], room: 5 });
+  assert.equal(notes.length, 1, notes.map((n) => n.text).join("\n"));
+  assert.equal(notes[0]!.level, "warn");
+  assert.match(notes[0]!.text, /2026-10-24/);
+});
+
+test("T6 catchupNotes — include 로 이미 더한 날은 owed 로 또 말하지 않는다(한 날 한 줄)", () => {
+  const c: CollectedThrough = {
+    ...OWED_C,
+    gapFrom: OWED_C.since,
+    include: ["2026-10-24"],
+    owed: [OWED_C.owed[0]!],
+    days: [{ date: "2026-10-24", status: "incomplete", missing: [gid("2026-10-24", "db-h-01")], reason: null }],
+  };
+  const notes = catchupNotes(c, ["2026-10-25"], ["2026-10-24", "2026-10-25"], { deferred: [], room: 5 });
+  assert.equal(notes.length, 1, notes.map((n) => n.text).join("\n"));
+  assert.match(notes[0]!.text, /다시 받는다/);
 });

@@ -9,6 +9,8 @@
  * ⚠**정상 실행(1~2일)은 건드리지 않는다**(브리프 결정) — 설정값(기본 400) 그대로다. 그 경우의 시간은 실측 요청 속도에 기대고 이 식의 보수값으로는
  *   경계를 넘는다(설계 D6 의 표 · 뒤집힐 조건).
  * ⚠**순수다 — 시계·I/O 없음.** 가져오는 것은 import 0개인 잎 `l1.ts` 하나뿐이다(`update.ts` 가 가져온다 · I1).
+ * ⚠**받았어야 할 날(owed)의 실행당 몫도 여기서 낸다**(PR-2b · 설계 `docs/superpowers/specs/2026-10-24-catchup-owed-days-design.md` D3) —
+ *   `owedRoom` 은 같은 최악 시간 식(`worstStepMin`)에서 유도하고, owed 를 더한 날짜 수가 `playerRefetchCap` 에 그대로 들어가 선수 몫이 자동으로 준다.
  */
 import { L1_MIN_DELAY_MS, isValidDelayMs } from "../packages/archiver/src/l1.ts";
 
@@ -51,6 +53,40 @@ export function worstStepMin(dates: number, playerRefetch: number, delayMs: numb
   const requests = STARTERS_REQUESTS + dates * REQUESTS_PER_DATE + playerRefetch + NEW_PLAYER_RESERVE;
   const gaps = (dates + CHILD_COUNT_BESIDES_DATES - 1) * (delayMs / 1000);
   return LOCAL_MIN + (requests * requestS + gaps) / 60;
+}
+
+/**
+ * **실행당 받았어야 할 날(owed) 상한**(우리가 고른 값 · 설계 `docs/superpowers/specs/2026-10-24-catchup-owed-days-design.md` D3).
+ * 장기 장애 뒤 owed 가 이보다 많으면 며칠(실행)에 걸쳐 이어 받는다 — 오래된 날부터. 30분 예산이 더 좁으면 그쪽이 이긴다(`owedRoom`).
+ */
+export const MAX_OWED_PER_RUN = 5;
+
+/**
+ * **30분 단계 예산 안에 드는 가장 큰 대상 경기일 수** — `worstStepMin(D, 0, 간격) ≤ STEP_LIMIT_MIN − MARGIN_MIN`(27분)인 최대 D.
+ * ⚠**새 상수 없이 PR-2a 의 식에서 유도한다**(설계 D3) — 요청 수(`REQUESTS_PER_DATE`)나 여유를 바꾸면 이 값도 따라 바뀐다.
+ *   간격 3000ms: `(12,0)` = 26.2분 · `(13,0)` = 28.0분 → **12일** · 5000ms → 7일 · 2000ms → 17일.
+ * ⚠**선수 재취득 0명 기준이다** — 날짜가 2일을 넘으면 `playerRefetchCap` 이 남는 몫만큼만 선수를 얹는다(그래서 둘을 합쳐도 27분 안).
+ * ⚠**성공 경로의 계산 예산이다**(설계 D3 「30분 보장의 범위」) — 장애 경로는 PR-2a 의 회로 + 단계 30분 걸쇠가 맡는다.
+ * ⚠0 일도 예산을 넘는 간격이면 0 이다(owed 몫도 0 — 날짜를 더하지 않는다).
+ */
+export function maxDatesWithinBudget(delayMs: number): number {
+  check(0, 0, delayMs);
+  const budget = STEP_LIMIT_MIN - MARGIN_MIN;
+  let dates = 0;
+  // ⚠날짜 하나마다 요청이 26개씩 늘어 최악 시간이 단조 증가한다 — 반드시 끝난다
+  while (worstStepMin(dates + 1, 0, delayMs) <= budget) dates += 1;
+  return dates;
+}
+
+/**
+ * **이번 실행에 owed 로 더할 수 있는 날짜 수** = `max(0, min(MAX_OWED_PER_RUN, maxDatesWithinBudget(간격) − 정규 창))`(설계 D3).
+ * 정규 창은 owed 없이 잡은 창(어제 · 사이 메우기 · 덜 받은 날 · 22시 이후 오늘)이고 최대 9일이다 — 간격 3000ms 면 owed 여유는 3일 이상이다.
+ * ⚠정규 창이 이미 예산을 넘으면(간격 5000ms 의 8·9일) 0 이다 — owed 가 그 경계를 더 넓히지 않는다.
+ * @param regularDates 정규 창의 날짜 수(0 이상의 정수) · @param delayMs `--delay`(L1 술어를 지난 값)
+ */
+export function owedRoom(regularDates: number, delayMs: number): number {
+  if (!Number.isInteger(regularDates) || regularDates < 0) throw new RangeError(`정규 창 날짜 수가 0 이상의 정수가 아니다: ${String(regularDates)}`);
+  return Math.max(0, Math.min(MAX_OWED_PER_RUN, maxDatesWithinBudget(delayMs) - regularDates));
 }
 
 /**

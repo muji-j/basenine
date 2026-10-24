@@ -16,9 +16,13 @@
  * `scripts/test/refetch-wiring.test.ts` 가 배럴 import 를 정적으로 금지한다.
  */
 import { MAX_REFETCH_DATES } from "@bb-app/store/refetch-limit";
+// ⚠owed 의 창 길이도 잎에서 — 증거를 찾는 쪽(`schedule-owed.ts`)과 창에 더하는 쪽(여기)이 같은 값을 본다(M1)
+import { OWED_LOOKBACK_DAYS } from "@bb-app/store/schedule-owed";
 
 /** 재수집 날짜 상한 — 정본은 `packages/store/src/refetch-limit.ts`(M1). 이 파일에서 다시 쓴다 */
 export { MAX_REFETCH_DATES };
+/** owed 의 창 길이 — 정본은 `packages/store/src/schedule-owed.ts`(M1) */
+export { OWED_LOOKBACK_DAYS };
 
 /**
  * 오늘 것까지 받을 시각인가.
@@ -123,15 +127,25 @@ function daysBetween(from: string, to: string): number {
  * ⚠결과는 **합집합 · 오름차순 · 중복 없음**이다.
  * ⚠**`include` 가 없거나 빈 배열이면 결과는 예전과 글자까지 같다** — 정상·휴식일의 요청 0 증가가 여기에 걸려 있다.
  *
+ * ## ⚠받았어야 할 날(owed) — 상한 밖에서도 이어 받는다 (PR-2b · 설계 `docs/superpowers/specs/2026-10-24-catchup-owed-days-design.md` D3)
+ *
+ * `since = MAX(played)` 이고 상한이 7일이라 휴식·장애가 길면 창이 **다음 경기일을 놓친다** — CS→일본시리즈 휴식이 창을 다 써서
+ * JST 10/26 00시 이후 첫 실행은 10/24 를 영영 안 받았다(설계 §1). `owed` 는 **일정표가 「예정·치렀다」고 했는데 경기 행이 없는 날**
+ * (증거는 잎 `@bb-app/store/schedule-owed` · I/O 는 `scripts/collected-through.ts`)이고, 여기서는 창에 더하는 규칙만 둔다:
+ * ⚠**상한 7일 밖이어도 더한다**(그것이 존재 이유다) · ⚠`[오늘 − OWED_LOOKBACK_DAYS, 어제]` 밖(오늘 이후 포함)과 틀린 모양은 버린다 ·
+ * ⚠`since` 를 모르면 더하지 않는다(include 와 같은 규칙 · M11 — 기준점을 모르는 DB 에서 owed 로만 창을 넓히지 않는다) ·
+ * ⚠결과는 **합집합 · 오름차순 · 중복 없음** · ⚠**`owed` 가 없거나 빈 배열이면 예전과 글자까지 같다**(정상 · 휴식일 · 비시즌의 요청 0 증가).
+ * ⚠**실행당 몫으로 자르는 것은 여기가 아니다** — `planOwed`(아래)가 정규 창에 없는 owed 를 오래된 것부터 몫(`owedRoom`)까지 고른다.
+ *
  * @param opts.collectedThrough 이미 받아 둔 **마지막 경기일**(`YYYY-MM-DD`).
  *   보통 DB 의 `MAX(game_date) WHERE status='played'` 다. 모르면 넘기지 않는다 —
  *   ⚠**모르는 것을 「오늘」로 메우지 마라**(M11): 그러면 빈 날이 있어도 안 메운다.
+ *   ⚠`update.ts` 는 여기에 **확인된 휴식일의 끝**(`gapFrom` ≥ `since` · PR-2b D2)을 넘긴다 — 휴식이 7일 상한을 갉아먹지 않게.
+ *   `gapFrom` 은 `since` 이상이라 간격이 줄기만 하고, `include` 의 범위(`[어제 − 상한, 어제]`)는 이 값과 무관하다.
  * @param opts.include **덜 받았다고 확인된 날들**(위 C10). 모르면 넘기지 않는다.
+ * @param opts.owed **받았어야 할 날들**(위 PR-2b). 모르면 넘기지 않는다.
  */
-export function targetDates(
-  now: Date,
-  opts: { date?: string; forceToday?: boolean; collectedThrough?: string; include?: readonly string[] } = {},
-): string[] {
+export function targetDates(now: Date, opts: WindowOpts & { owed?: readonly string[] } = {}): string[] {
   if (opts.date !== undefined) return [opts.date];
   const includeToday = opts.forceToday === true || jstHour(now) >= JST_TODAY_FROM_HOUR;
   const yesterday = jstDate(now, -1);
@@ -147,10 +161,23 @@ export function targetDates(
     const lo = jstDate(now, -1 - MAX_CATCHUP_DAYS);
     for (const d of opts.include ?? []) if (isYmd(d) && lo <= d && d <= yesterday) past.push(d);
   }
+  // ⚠**받았어야 할 날**(PR-2b) — 상한과 무관하게 `[오늘 − OWED_LOOKBACK_DAYS, 어제]` 안의 것만 · 기준점을 모르면 더하지 않는다
+  if (since !== undefined && isYmd(since)) {
+    const lo = jstDate(now, -OWED_LOOKBACK_DAYS);
+    for (const d of opts.owed ?? []) if (isYmd(d) && lo <= d && d <= yesterday) past.push(d);
+  }
 
-  // ⚠합집합 · 오름차순 · 중복 없음. `include` 가 없으면 `past` 는 이미 오름차순·중복 없음·전부 어제보다 앞이라 예전과 같다
+  // ⚠합집합 · 오름차순 · 중복 없음. `include`·`owed` 가 없으면 `past` 는 이미 오름차순·중복 없음·전부 어제보다 앞이라 예전과 같다
   const days = [...new Set([...past, yesterday])].sort();
   return includeToday ? [...days, jstDate(now, 0)] : days;
+}
+
+/** 창의 입력 — `owed` 는 `planOwed` 가 고른 뒤 `targetDates` 에 넘긴다 */
+export interface WindowOpts {
+  date?: string;
+  forceToday?: boolean;
+  collectedThrough?: string;
+  include?: readonly string[];
 }
 
 /**
@@ -170,6 +197,45 @@ export function judgeDates(now: Date, since: string): string[] {
   const out: string[] = [];
   for (let d = lo; d <= hi; d = nextDay(d)) out.push(d);
   return out;
+}
+
+/** `planOwed` 의 결과 */
+export interface OwedPlan {
+  /** owed 없이 잡은 창(정규 창 — 어제 · 사이 메우기 · 덜 받은 날 · 22시 이후 오늘) */
+  regular: string[];
+  /** 정규 창에 없어서 owed 로 더한 날 — **오래된 것부터** 몫(`room`)까지 */
+  added: string[];
+  /** 몫에 걸려 다음 실행으로 미룬 날(오래된 것부터) — 다음 실행의 owed 에 다시 든다(증거가 그대로이므로) */
+  deferred: string[];
+  /** 이번 실행의 몫 — `roomFor(regular.length)` */
+  room: number;
+  /** 실제로 받을 창 — `targetDates(now, { ...opts, owed: added })` */
+  dates: string[];
+}
+
+/**
+ * **받았어야 할 날을 실행당 몫만큼 고른다**(설계 D3 「실행당 상한」).
+ *
+ * ⚠**정규 창에 이미 있는 날은 몫을 쓰지 않는다** — 몫(`owedRoom` = 30분 예산에서 정규 창을 뺀 날짜 수)은 **더하는** 날짜 자식의 수다.
+ *   owed 를 먼저 자르고 정규 창과 합치면 이미 받을 어제가 몫 하나를 먹어 한 날이 괜히 밀린다.
+ * ⚠**오래된 것부터** — 오래된 날일수록 lookback(30일) 밖으로 먼저 밀려난다. 남은 날은 다음 실행이 같은 증거로 다시 고른다.
+ * ⚠범위 규칙은 `targetDates` 한 벌을 지난다(M1) — 여기서 따로 거르지 않는다.
+ * ⚠몫이 0 이상의 정수가 아니면 던진다 — 모르는 몫을 기본값으로 메우지 않는다.
+ * @param roomFor 정규 창의 날짜 수 → 이번 실행의 몫(`update.ts` 는 `(n) => owedRoom(n, 간격)`)
+ */
+export function planOwed(
+  now: Date,
+  opts: WindowOpts,
+  owed: readonly string[],
+  roomFor: (regularCount: number) => number,
+): OwedPlan {
+  const regular = targetDates(now, opts);
+  const room = roomFor(regular.length);
+  if (!Number.isInteger(room) || room < 0) throw new RangeError(`owed 몫이 0 이상의 정수가 아니다: ${String(room)}`);
+  // 범위 규칙을 지난 owed 중 정규 창에 없는 것 — targetDates 가 오름차순이라 오래된 것부터다
+  const extra = targetDates(now, { ...opts, owed }).filter((d) => !regular.includes(d));
+  const added = extra.slice(0, room);
+  return { regular, added, deferred: extra.slice(added.length), room, dates: targetDates(now, { ...opts, owed: added }) };
 }
 
 /** `dayStatus` 의 판정 — `missing` 은 「아카이브에 폴더는 있는데 DB 에 행이 없는」 경기 id(정렬 · 중복 없음 · `incomplete` 에서만 비지 않는다) */
