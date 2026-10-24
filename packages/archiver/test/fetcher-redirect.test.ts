@@ -15,6 +15,14 @@ import { createServer } from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { MAX_REDIRECTS, PoliteFetcher } from "../src/fetcher.ts";
+import { UpstreamError } from "../src/upstream.ts";
+
+/**
+ * ⚠**3xx 종결은 이제 반환이 아니라 `UpstreamError(http-<3xx>)` 다**(2026-10-24 · 설계 `2026-10-24-collection-resilience-design.md` D1 · T12).
+ * 예전에는 본문 없는 3xx 를 돌려주고 호출자가 「본문 없는 302 응답」 실패로 셌다 — 그 실패는 **상류 실패인데 분류가 없었다.**
+ * 이제 fetcher 가 한 곳에서 던지고 회로에도 센다. 요청 수·간격(L1)은 그대로다.
+ */
+const threw3xx = (status: number) => (e: unknown): boolean => e instanceof UpstreamError && e.kind === `http-${String(status)}` && e.status === status;
 
 const MIN = 2000;
 
@@ -81,27 +89,28 @@ test("⚠C1 같은 출처의 302→302→200 은 홉마다 L1 간격을 지킨�
   }
 });
 
-test("⚠C1 다른 출처로의 리디렉션은 따라가지 않는다 — 본문 없는 3xx 로 돌려준다", async () => {
+test("⚠C1 다른 출처로의 리디렉션은 따라가지 않는다 — UpstreamError(http-302) 를 던진다(요청 1 · 재시도 없음)", async () => {
   let otherHits = 0;
   const other = await listen((_req, res) => {
     otherHits += 1;
     res.writeHead(200).end("ELSEWHERE");
   });
+  let hits = 0;
   const { server, origin } = await listen((_req, res) => {
+    hits += 1;
     res.writeHead(302, { location: `${other.origin}/x` }).end();
   });
   try {
-    const r = await fetcherWith(harness()).get(`${origin}/a`);
-    assert.equal(r.status, 302);
-    assert.equal(r.body, null);
+    await assert.rejects(fetcherWith(harness()).get(`${origin}/a`), threw3xx(302));
     assert.equal(otherHits, 0, "다른 출처에는 요청이 나가면 안 된다");
+    assert.equal(hits, 1, "3xx 종결을 재시도했다");
   } finally {
     await close(server);
     await close(other.server);
   }
 });
 
-test("⚠C1 홉 수에 상한이 있다", async () => {
+test("⚠C1 홉 수에 상한이 있다 — 넘으면 UpstreamError(http-302)", async () => {
   const hits: string[] = [];
   const { server, origin } = await listen((req, res) => {
     hits.push(req.url ?? "");
@@ -109,9 +118,7 @@ test("⚠C1 홉 수에 상한이 있다", async () => {
     res.writeHead(302, { location: `/r${n + 1}` }).end();
   });
   try {
-    const r = await fetcherWith(harness()).get(`${origin}/r0`);
-    assert.equal(r.status, 302);
-    assert.equal(r.body, null);
+    await assert.rejects(fetcherWith(harness()).get(`${origin}/r0`), threw3xx(302));
     assert.equal(hits.length, 1 + MAX_REDIRECTS, "첫 요청 + 상한만큼의 홉");
   } finally {
     await close(server);
@@ -135,7 +142,7 @@ test("C1 퍼센트 인코딩 없는 UTF-8 Location 도 네이티브 fetch 처럼
   }
 });
 
-test("C1 형식이 깨진 Location 은 재시도하지 않고 본문 없는 3xx 로 돌려준다", async () => {
+test("C1 형식이 깨진 Location 은 재시도하지 않고 UpstreamError(http-302) 를 던진다", async () => {
   let hits = 0;
   const { server, origin } = await listen((_req, res) => {
     hits += 1;
@@ -143,9 +150,7 @@ test("C1 형식이 깨진 Location 은 재시도하지 않고 본문 없는 3xx 
   });
   try {
     const h = harness();
-    const r = await fetcherWith(h).get(`${origin}/a`);
-    assert.equal(r.status, 302);
-    assert.equal(r.body, null);
+    await assert.rejects(fetcherWith(h).get(`${origin}/a`), threw3xx(302));
     assert.equal(hits, 1, "같은 헤더가 또 올 뿐인데 재시도했다");
     assert.deepEqual(h.sleeps, [], "백오프를 잤다 — 일시 오류로 읽었다");
   } finally {

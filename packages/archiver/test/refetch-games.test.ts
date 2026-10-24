@@ -224,7 +224,12 @@ test("T7⑴ 전부 200 — 경기당 전송 4 · 백오프 0 · 결과 JSON 의 
   });
 });
 
-test("⚠T7⑵ 503 연속 — 페이지당 전송 2 · 백오프 [3000, 6000] · 그 경기 prepare_failed · 다음 경기 skipped:circuit_open · 종료 1", async () => {
+/**
+ * ⚠**넷째 장(roster)은 fetcher 회로가 요청 0 으로 끊는다**(2026-10-24 · 설계 `2026-10-24-collection-resilience-design.md` D1 · D4) —
+ * 정정 경로도 `PoliteFetcher` 의 기본 회로(연속 3 · 합계 6)를 공통으로 받는다. 503 소진이 세 장 연달아면 넷째 장은 간격 대기도 없이 끝난다
+ * (예전 8전송 → 6전송). 그 경기의 판정(`prepare_failed`)·둘째 경기의 `circuit_open`·종료 1 은 그대로다.
+ */
+test("⚠T7⑵ 503 연속 — 페이지당 전송 2 · 백오프 [3000, 6000] · 넷째 장은 fetcher 회로가 끊는다 · 그 경기 prepare_failed · 다음 경기 skipped:circuit_open · 종료 1", async () => {
   const sink = new MemorySink();
   await seedGame(sink, G1);
   await seedGame(sink, G2);
@@ -232,13 +237,18 @@ test("⚠T7⑵ 503 연속 — 페이지당 전송 2 · 백오프 [3000, 6000] ·
   const r = rig(() => ({ status: 503 }));
   const res = await run(r, sink, [G1, G2]);
 
-  assert.deepEqual(r.events, game("g1", fail2x, true), "⚠maxRetries 가 1 이 아니면 페이지당 전송이 2 가 아니다");
+  assert.deepEqual(
+    r.events,
+    LEAVES.slice(0, 3).flatMap((leaf, i) => fail2x(`g1/${leaf}`, i === 0)),
+    "⚠maxRetries 가 1 이 아니면 페이지당 전송이 2 가 아니다 · 넷째 장(roster)에는 요청도 대기도 없어야 한다",
+  );
   assert.deepEqual(statuses(res), ["prepare_failed", "skipped:circuit_open"]);
-  assert.equal(res.games[0]!.http_attempts, 8);
+  assert.equal(res.games[0]!.http_attempts, 6);
+  assert.equal(res.games[0]!.pages.failed, 4, "넷째 장도 실패로 남는다(회로 열림) — 조용히 빠지지 않는다");
   assert.equal(res.games[0]!.rollback, null, "받기 실패(G3a)는 되돌릴 것이 없다");
   assert.equal(res.games[1]!.http_attempts, 0);
   assert.equal(res.games[1]!.page_fetches, 0);
-  assert.deepEqual(res.by_status, { "503": 8 });
+  assert.deepEqual(res.by_status, { "503": 6 });
   assert.equal(res.distress, true);
   assert.equal(res.stopped, "circuit_open");
   assert.equal(res.exit, 1);
@@ -246,7 +256,38 @@ test("⚠T7⑵ 503 연속 — 페이지당 전송 2 · 백오프 [3000, 6000] ·
   assert.deepEqual(after, before, "받기 실패면 아무것도 안 쓴다");
 });
 
+/**
+ * ⚠**한 경기 최악(32)은 fetcher 회로가 있어도 닿는다** — 셋째 장(box)이 둘째 시도에서 성공하면 연속이 끊겨 회로가 안 열리고,
+ * 그 성공도 홉 넷을 두 번 탄다(8전송). 그래서 예산 검사(`WORST_HTTP_PER_GAME`)의 상계는 그대로 맞다.
+ * 네 장이 다 실패하는 모양은 아래 T7⑶′ 이 잰다(회로가 넷째 장을 끊어 24).
+ */
 test("⚠T7⑶ 302→302→302→503 — 페이지당 전송 8 · 경기 32(= 한 경기 최악) · 백오프 [3000, 6000] · 회로가 열린다", async () => {
+  const sink = new MemorySink();
+  await seedGame(sink, G1);
+  await seedGame(sink, G2);
+  const r = rig((lbl, n) => {
+    const h = Number(/\?h=(\d)$/.exec(lbl)?.[1] ?? "0");
+    if (h < 3) return { status: 302, location: `?h=${String(h + 1)}` };
+    return lbl.startsWith("g1/box") && n === 2 ? ok(lbl) : { status: 503 };
+  });
+  const res = await run(r, sink, [G1, G2]);
+
+  assert.deepEqual(r.events, [
+    ...redirect2x("g1/index", true),
+    ...redirect2x("g1/playbyplay", false),
+    // 둘째 시도의 마지막 홉이 200 — 성공 뒤에는 백오프가 없다
+    ...redirect2x("g1/box", false).slice(0, -1),
+    ...redirect2x("g1/roster", false),
+  ]);
+  assert.equal(r.meter.http, 32);
+  assert.equal(WORST_HTTP_PER_GAME, 32, "한 경기 최악 = 4장 × 2시도 × (1 + 3홉)");
+  assert.equal(res.games[0]!.http_attempts, WORST_HTTP_PER_GAME, "이 응답 모양이 한 경기 최악에 정확히 닿는다");
+  assert.deepEqual(res.by_status, { "302": 24, "503": 7, "200": 1 });
+  assert.deepEqual(statuses(res), ["prepare_failed", "skipped:circuit_open"]);
+  assert.equal(res.exit, 1);
+});
+
+test("⚠T7⑶′ 네 장이 다 302→…→503 이면 넷째 장은 fetcher 회로가 요청 0 으로 끊는다 — 24전송(설계 2026-10-24 D4)", async () => {
   const sink = new MemorySink();
   await seedGame(sink, G1);
   await seedGame(sink, G2);
@@ -255,12 +296,9 @@ test("⚠T7⑶ 302→302→302→503 — 페이지당 전송 8 · 경기 32(= �
     return h < 3 ? { status: 302, location: `?h=${String(h + 1)}` } : { status: 503 };
   });
   const res = await run(r, sink, [G1, G2]);
-
-  assert.deepEqual(r.events, game("g1", redirect2x, true));
-  assert.equal(r.meter.http, 32);
-  assert.equal(WORST_HTTP_PER_GAME, 32, "한 경기 최악 = 4장 × 2시도 × (1 + 3홉)");
-  assert.equal(res.games[0]!.http_attempts, WORST_HTTP_PER_GAME, "이 응답 모양이 한 경기 최악에 정확히 닿는다");
-  assert.deepEqual(res.by_status, { "302": 24, "503": 8 });
+  assert.deepEqual(r.events, LEAVES.slice(0, 3).flatMap((leaf, i) => redirect2x(`g1/${leaf}`, i === 0)));
+  assert.equal(r.meter.http, 24);
+  assert.deepEqual(res.by_status, { "302": 18, "503": 6 });
   assert.deepEqual(statuses(res), ["prepare_failed", "skipped:circuit_open"]);
   assert.equal(res.exit, 1);
 });
