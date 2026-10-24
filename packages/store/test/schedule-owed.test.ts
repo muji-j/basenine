@@ -14,8 +14,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { LOOKBACK_DAYS } from "@bb-app/domain";
-import { openDb, upsertGame } from "../src/index.ts";
+import { NO_GAME_MONTHS } from "../../domain/src/season-calendar.ts";
+import { openDb, upsertGame, upsertProbablePitcher } from "../src/index.ts";
 import type { Db } from "../src/index.ts";
+import { collectionEvidence } from "../src/collection-evidence.ts";
 import { OWED_LOOKBACK_DAYS, confirmedRestThrough, owedDays } from "../src/schedule-owed.ts";
 import type { OwedDay } from "../src/schedule-owed.ts";
 
@@ -295,17 +297,17 @@ test("⚠⚠T2 설계 예 — since 10/17 · 사본 10/21 → 10/18·19·20 확�
   month(db, 2026, 10, SEEN_1021);
   game(db, "2026-10-17", "h", "f");
   upcoming(db, "2026-10-24", "db", "h");
-  assert.equal(confirmedRestThrough(db.raw, "2026-10-17", "2026-10-26"), "2026-10-20");
+  assert.equal(confirmedRestThrough(db.raw, "2026-10-17", "2026-10-26", NO_GAME_MONTHS), "2026-10-20");
 }));
 
 test("⚠⚠T2 본 날이 그 날과 같으면 확인이 아니다 — 경계는 JST 달력 날짜", async () => {
   await withDb((db) => {
     month(db, 2026, 10, "2026-10-21T14:59:59Z"); // JST 10/21 23:59:59
-    assert.equal(confirmedRestThrough(db.raw, "2026-10-20", "2026-10-26"), "2026-10-20", "같은 날 본 사본으로 그 날을 휴식으로 확인했다");
+    assert.equal(confirmedRestThrough(db.raw, "2026-10-20", "2026-10-26", NO_GAME_MONTHS), "2026-10-20", "같은 날 본 사본으로 그 날을 휴식으로 확인했다");
   });
   await withDb((db) => {
     month(db, 2026, 10, "2026-10-21T15:00:00Z"); // JST 10/22 00:00
-    assert.equal(confirmedRestThrough(db.raw, "2026-10-20", "2026-10-26"), "2026-10-21");
+    assert.equal(confirmedRestThrough(db.raw, "2026-10-20", "2026-10-26", NO_GAME_MONTHS), "2026-10-21");
   });
 });
 
@@ -318,7 +320,7 @@ test("⚠T2 그 날 행이 하나라도 있으면 거기서 멈춘다 — 예정
     await withDb((db) => {
       month(db, 2026, 10, SEEN_1021);
       put(db);
-      assert.equal(confirmedRestThrough(db.raw, "2026-10-17", "2026-10-26"), "2026-10-18");
+      assert.equal(confirmedRestThrough(db.raw, "2026-10-17", "2026-10-26", NO_GAME_MONTHS), "2026-10-18");
     });
   }
 });
@@ -327,41 +329,144 @@ test("⚠T2 월 경계 — 다음 달 날은 다음 달 사본으로 본다 · �
   await withDb((db) => {
     month(db, 2026, 10, "2026-11-03T00:00:00Z");
     month(db, 2026, 11, "2026-11-03T00:00:00Z");
-    assert.equal(confirmedRestThrough(db.raw, "2026-10-29", "2026-11-05"), "2026-11-02");
+    assert.equal(confirmedRestThrough(db.raw, "2026-10-29", "2026-11-05", NO_GAME_MONTHS), "2026-11-02");
   });
   await withDb((db) => {
     month(db, 2026, 10, "2026-11-03T00:00:00Z");
-    assert.equal(confirmedRestThrough(db.raw, "2026-10-29", "2026-11-05"), "2026-10-31", "다음 달 사본 없이 그 달 날을 확인했다");
+    assert.equal(confirmedRestThrough(db.raw, "2026-10-29", "2026-11-05", NO_GAME_MONTHS), "2026-10-31", "다음 달 사본 없이 그 달 날을 확인했다");
   });
 });
 
 /** ⚠**대진 미정 날**(예정 표기라 `upcoming_game` 에 없다) — 사본을 그 날 **전에** 봤으면 확인하지 않는다(콜드 리뷰 1 P1) */
 test("⚠T2 사본을 그 날 전에 봤으면 확인하지 않는다(대진 미정 날이 휴식으로 오인되지 않는다) · gapFrom ≥ since", () => withDb((db) => {
   month(db, 2026, 10, SEEN_1021);
-  assert.equal(confirmedRestThrough(db.raw, "2026-10-21", "2026-10-30"), "2026-10-21");
-  assert.equal(confirmedRestThrough(db.raw, "2026-10-25", "2026-10-30"), "2026-10-25");
+  assert.equal(confirmedRestThrough(db.raw, "2026-10-21", "2026-10-30", NO_GAME_MONTHS), "2026-10-21");
+  assert.equal(confirmedRestThrough(db.raw, "2026-10-25", "2026-10-30", NO_GAME_MONTHS), "2026-10-25");
 }));
 
 test("T2 사본 본 시각 모름 · 사본 없음 → 확인하지 않는다(M11)", async () => {
   await withDb((db) => {
     month(db, 2026, 10, null);
-    assert.equal(confirmedRestThrough(db.raw, "2026-10-17", "2026-10-26"), "2026-10-17");
+    assert.equal(confirmedRestThrough(db.raw, "2026-10-17", "2026-10-26", NO_GAME_MONTHS), "2026-10-17");
   });
   await withDb((db) => {
-    assert.equal(confirmedRestThrough(db.raw, "2026-10-17", "2026-10-26"), "2026-10-17");
+    assert.equal(confirmedRestThrough(db.raw, "2026-10-17", "2026-10-26", NO_GAME_MONTHS), "2026-10-17");
   });
 });
 
 test("T2 어제를 넘지 않는다 · since 가 어제 이후면 since 그대로", () => withDb((db) => {
   month(db, 2026, 10, "2026-11-30T00:00:00Z");
-  assert.equal(confirmedRestThrough(db.raw, "2026-10-17", "2026-10-26"), "2026-10-25", "어제(10/25)를 넘었다 — 오늘 이후는 확인할 수 없다");
-  assert.equal(confirmedRestThrough(db.raw, "2026-10-25", "2026-10-26"), "2026-10-25");
-  assert.equal(confirmedRestThrough(db.raw, "2026-10-28", "2026-10-26"), "2026-10-28");
+  assert.equal(confirmedRestThrough(db.raw, "2026-10-17", "2026-10-26", NO_GAME_MONTHS), "2026-10-25", "어제(10/25)를 넘었다 — 오늘 이후는 확인할 수 없다");
+  assert.equal(confirmedRestThrough(db.raw, "2026-10-25", "2026-10-26", NO_GAME_MONTHS), "2026-10-25");
+  assert.equal(confirmedRestThrough(db.raw, "2026-10-28", "2026-10-26", NO_GAME_MONTHS), "2026-10-28");
+}));
+
+/**
+ * ## ⚠⚠비시즌 달(`NO_GAME_MONTHS` = 12·1·2) — 사본 없이도 세 표 0행이면 확인한다 (PR-2b 검토 P2-1 · PR-4 설계 D1-c 를 당겼다)
+ *
+ * 12·1·2월은 그 달 일정 사본이 없다(보유 9시즌 0장). 사본 조건만으로 확인하면 확인이 11/30 에서 멈춰 `gapFrom` 이 월말에 걸리고,
+ * 12월 첫 주마다 사이 메우기로 날짜 자식이 최대 +6(약 126요청)이 됐다 — 「비시즌 0」이 거짓이었다.
+ * ⚠**11월은 넣지 않는다** — 경기가 열리는 해가 있다. 사본 없는 11월 날은 여전히 미확인이다.
+ * ⚠비시즌 달이라도 **그 날 행이 있으면 멈춘다**(보수적인 쪽).
+ */
+test("⚠⚠T2′ 11월 확인 · 12월 사본 없음 · 12/05 판정 → 12-04 (비시즌 달은 사본 조건 없이 세 표 0행으로 확인)", () => withDb((db) => {
+  month(db, 2026, 11, "2026-12-01T00:00:00Z");
+  game(db, "2026-11-01", "db", "h");
+  assert.equal(confirmedRestThrough(db.raw, "2026-11-01", "2026-12-05", NO_GAME_MONTHS), "2026-12-04", "사본 없는 12월에서 멈췄다 — 12월 첫 주 사이 메우기가 는다");
+  // 고치기 전 규칙(비시즌 달 없음)이면 11/30 에서 멈춘다
+  assert.equal(confirmedRestThrough(db.raw, "2026-11-01", "2026-12-05", []), "2026-11-30");
+}));
+
+test("⚠⚠T2′ 12/31 까지 확인 · 1월 사본 없음 · 1/3 판정 → 01-02 (해 넘김에서도 멈추지 않는다)", () => withDb((db) => {
+  month(db, 2026, 11, "2026-12-01T00:00:00Z");
+  game(db, "2026-11-01", "db", "h");
+  assert.equal(confirmedRestThrough(db.raw, "2026-11-01", "2027-01-03", NO_GAME_MONTHS), "2027-01-02");
+}));
+
+test("⚠⚠T2′ 11월 날은 사본이 없으면 미확인 — 11월은 비시즌 달이 아니다(경기가 열리는 해가 있다)", () => withDb((db) => {
+  month(db, 2026, 10, "2026-11-03T00:00:00Z");
+  game(db, "2026-10-29", "h", "db");
+  assert.equal(confirmedRestThrough(db.raw, "2026-10-29", "2026-11-05", NO_GAME_MONTHS), "2026-10-31", "사본 없는 11월 날을 휴식으로 확인했다");
+}));
+
+test("⚠T2′ 비시즌 달이라도 그 날 행(예정 · 치러짐 표시 · 경기)이 있으면 멈춘다", async () => {
+  for (const put of [
+    (d: Db) => upcoming(d, "2026-12-03", "g", "t"),
+    (d: Db) => played(d, "2026-12-03", "g", "t"),
+    (d: Db) => game(d, "2026-12-03", "g", "t", "notPlayed"),
+  ]) {
+    await withDb((db) => {
+      month(db, 2026, 11, "2026-12-01T00:00:00Z");
+      put(db);
+      assert.equal(confirmedRestThrough(db.raw, "2026-11-30", "2026-12-06", NO_GAME_MONTHS), "2026-12-02");
+    });
+  }
+});
+
+test("⚠T2′ ⒝ 는 사본 행이 없는 달·내용이 없던 달을 후보로 안 낸다 — 12월 · 1월", async () => {
+  await withDb((db) => {
+    month(db, 2026, 11, "2026-12-01T00:00:00Z");
+    assert.deepEqual(owedDays(db.raw, "2027-01-05"), [], "사본 행이 없는 12월로 12/31 을 냈다");
+  });
+  await withDb((db) => {
+    month(db, 2026, 12, "2026-12-15T00:00:00Z", null);
+    month(db, 2027, 1, "2027-01-20T00:00:00Z", null);
+    assert.deepEqual(owedDays(db.raw, "2027-02-03"), [], "내용 없는 비시즌 사본으로 말일을 냈다");
+  });
+});
+
+test("T2′ 비시즌 달 목록이 1~12 의 정수가 아니면 던진다(모르는 달로 확인하지 않는다)", () => withDb((db) => {
+  for (const bad of [[0], [13], [1.5], [Number.NaN]]) {
+    assert.throws(() => confirmedRestThrough(db.raw, "2026-11-01", "2026-12-05", bad), RangeError, JSON.stringify(bad));
+  }
+}));
+
+/**
+ * ## ⚠⚠잎의 SQL 조각 ≡ 수집 판정 증거 A·B (PR-2b 검토 P3-3)
+ *
+ * 따라잡기의 owed ⒜ 와 감시(`collectionEvidence`)의 A·B 는 **같은 표 · 같은 식**을 두 곳에 적었다(잎은 import 0 이라 그 SQL 을 가져올 수 없다).
+ * 같은 임시 DB 로 날 집합을 대조해 두 벌이 갈리면 여기서 붉게 한다.
+ * ⚠**오늘 포함 여부는 의도된 차이다** — A·B 는 `[오늘 − 30, 오늘]` 이고 owed 는 `[오늘 − 30, 어제]`(오늘은 22시 이후 실행의 몫)다.
+ * - A(치러짐인데 경기 없음) ≡ ⒜-치러짐 표시: 카드(날 · 홈 · 원정 · seq) 단위로 같다.
+ * - B 의 「사본이 D 뒤에 안 보였다」 조각 ≡ ⒜-예정의 조건 4: 예고와 예정이 같은 날에 있고 그 날 경기 행·휴식 공표가 없을 때 날 집합이 같다.
+ */
+test("⚠⚠P3-3 owed ⒜-치러짐 표시 ≡ 수집 판정 A(카드 단위) · ⒜-예정의 사본 조건 ≡ B 의 사본 조건 — 오늘만 다르다(의도)", () => withDb((db) => {
+  const TODAY = "2026-10-30";
+  // A 쪽 — 경계(−30 · −31) · 오늘 · 어제 · 더블헤더 · 중지 · 올스타 · 다른 카드의 경기 행
+  for (const d of ["2026-09-29", "2026-09-30", "2026-10-29", "2026-10-30"]) played(db, d, "g", "t");
+  played(db, "2026-10-10", "s", "d", 0);
+  played(db, "2026-10-10", "s", "d", 1);
+  game(db, "2026-10-10", "s", "d");
+  played(db, "2026-10-11", "c", "db");
+  game(db, "2026-10-11", "c", "db", "notPlayed");
+  played(db, "2026-10-12", "cl", "pl");
+  played(db, "2026-10-13", "b", "f");
+  game(db, "2026-10-13", "e", "m");
+  // B 쪽 — 예고와 예정이 같은 날 · 경기 행 없음 · 사본(10/21 18:50 JST)이 그 날 뒤를 봤는지만 다르다
+  month(db, 2026, 10, SEEN_1021);
+  for (const d of ["2026-10-20", "2026-10-21", "2026-10-22", "2026-10-30"]) {
+    upcoming(db, d, "h", "db");
+    upsertProbablePitcher(db, {
+      gameDate: d, teamCode: "h", opponentCode: "db", playerId: null, sourceName: null, venue: null,
+      startTime: "18:00", league: "pl", sourceUrl: "https://npb.jp/announcement/starter/", fetchedAt: NOW,
+    });
+  }
+  const e = collectionEvidence(db, TODAY);
+  const o = owedDays(db.raw, TODAY);
+  const owedPlayed = o.flatMap((x) => x.reasons.flatMap((r) => (r.kind === "played" ? [[x.date, r.homeCode, r.awayCode, r.seq]] : [])));
+  const aCards = e.playedWithoutGame.map((m) => [m.date, m.homeCode, m.awayCode, m.seq]);
+  assert.deepEqual(aCards.filter(([d]) => d !== TODAY), owedPlayed, "A 와 owed ⒜-치러짐 표시가 갈렸다 — 두 벌의 SQL 중 한쪽만 고쳤다");
+  assert.ok(aCards.some(([d]) => d === TODAY) && !owedPlayed.some(([d]) => d === TODAY), "오늘의 차이(A 포함 · owed 제외)가 전제와 다르다");
+  assert.ok(owedPlayed.length >= 4, `대조한 카드가 ${String(owedPlayed.length)}개뿐이다 — 이 시험이 공회전한다`);
+  const owedScheduled = o.filter((x) => x.reasons.some((r) => r.kind === "scheduled")).map((x) => x.date);
+  const bDates = [...new Set(e.announcedWithoutGame.map((m) => m.date))];
+  assert.deepEqual(bDates.filter((d) => d !== TODAY), owedScheduled, "B 와 owed ⒜-예정의 사본 조건이 갈렸다");
+  assert.deepEqual(owedScheduled, ["2026-10-21", "2026-10-22"], "사본 조건의 전제(10/20 은 사본이 뒤에 봤다 · 10/21·22 는 못 봤다)가 틀렸다");
 }));
 
 test("T2 since · 오늘이 YYYY-MM-DD 가 아니면 던진다", () => withDb((db) => {
-  assert.throws(() => confirmedRestThrough(db.raw, "2026/10/17", "2026-10-26"), RangeError);
-  assert.throws(() => confirmedRestThrough(db.raw, "2026-10-17", "2026-13-01"), RangeError);
+  assert.throws(() => confirmedRestThrough(db.raw, "2026/10/17", "2026-10-26", NO_GAME_MONTHS), RangeError);
+  assert.throws(() => confirmedRestThrough(db.raw, "2026-10-17", "2026-13-01", NO_GAME_MONTHS), RangeError);
 }));
 
 // ---- 잎 ----------------------------------------------------------------------------------------

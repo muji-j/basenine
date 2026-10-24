@@ -40,7 +40,8 @@
  *
  * `since` 를 읽은 **같은 트랜잭션**(같은 연결 · 같은 스냅숏)에서 잎 `@bb-app/store/schedule-owed` 로 둘을 더 읽는다:
  * - `gapFrom` — `since` 다음 날부터 이어진 **확인된 휴식일의 끝**(없으면 `since`). `update.ts` 가 따라잡기 간격의 기준으로 넘긴다
- *   (`judgeDates`·`include` 는 `since` 그대로 — C10 을 바꾸지 않는다).
+ *   (`judgeDates`·`include` 는 `since` 그대로 — C10 을 바꾸지 않는다). ⚠비시즌 달(`NO_GAME_MONTHS` = 12·1·2 · domain 잎)을 넘긴다 —
+ *   그 달은 일정 사본이 없어 사본 조건만으로는 확인이 11/30 에서 멈췄다(PR-2b 검토 P2-1 · 12월 첫 주 날짜 자식 최대 +6).
  * - `owed` — 일정표가 「예정·치렀다」고 했는데 경기 행이 없는 날(⒜) + 월말 뒤에 못 본 사본의 말일(⒝) · 사유와 함께.
  *
  * **오류 행렬(설계 D3 표)** — ⚠**모르면 owed 를 더하지 않는다**:
@@ -58,6 +59,8 @@ import { DatabaseSync } from "node:sqlite";
 // ⚠**잎 서브패스로 가져온다**(I1) — store 배럴 금지
 import { gameFromBoxPath } from "@bb-app/store/game-slug";
 import { confirmedRestThrough, owedDays, type OwedDay, type OwedReason } from "@bb-app/store/schedule-owed";
+// ⚠비시즌 달(12·1·2)은 domain 의 잎 한 벌이다(M1 · PR-2b 검토 P2-1) — 잎 `schedule-owed` 는 import 0 이라 여기서 넘긴다. 배럴 금지(I1)
+import { NO_GAME_MONTHS } from "@bb-app/domain/season-calendar";
 import { dayStatus, isYmd, jstDate, judgeDates } from "./date-window.ts";
 
 /** 알릴 것 한 줄. `update.ts` 가 `warn` 은 표준오류로, `info` 는 표준출력으로 찍는다 */
@@ -148,7 +151,7 @@ export function readCollectedThrough(o: { dbPath: string; archiveRoot: string; n
         if (loaded !== null) {
           try {
             const today = jstDate(o.now);
-            const through = confirmedRestThrough(db, since, today);
+            const through = confirmedRestThrough(db, since, today, NO_GAME_MONTHS);
             const days = owedDays(db, today);
             gapFrom = through;
             owed = days;

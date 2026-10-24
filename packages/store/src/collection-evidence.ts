@@ -46,6 +46,9 @@ export function collectionEvidence(src: Db | DatabaseSync, today: string, lookba
    * **A** — 월간 일정이 「치렀다」(점수 링크)고 표시했는데 우리에게 경기 행이 없다.
    * ⚠**경기 단위다** — 같은 날 같은 카드가 둘이면 페이지 순서의 `seq` 로 가르고, 경기 행이 `seq` 개 이하면 그 번째가 없다.
    * ⚠**상태를 가리지 않는다** — 중지(`notPlayed`) 행도 「받았다」다(점수 페이지를 받아 중지로 적재했다).
+   * ⚠**올스타도 든다**(2026-10-24 · PR-2b 검토 P2-2) — 적재기가 치러진 올스타 행을 리그 선발 코드(`cl`·`pl`)로 남기고, 경기 행도 같은 코드를 쓴다.
+   * ⚠**따라잡기의 owed ⒜(잎 `schedule-owed.ts`)가 같은 식을 따로 적는다**(잎은 import 0) — `schedule-owed.test.ts` 의 P3-3 이 두 벌의 날 집합을 대조한다
+   *   (이쪽은 오늘까지 · 저쪽은 어제까지 — 의도된 차이).
    */
   const playedWithoutGame = db.prepare(
     `SELECT p.game_date AS date, p.home_code AS homeCode, p.away_code AS awayCode, p.seq AS seq

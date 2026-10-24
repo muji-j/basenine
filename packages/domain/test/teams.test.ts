@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   NON_TEAM_CODES,
+  NON_TEAM_CODE_BY_LABEL,
   TEAM_CODE_ALIASES,
   TEAMS,
   canonicalTeamCode,
@@ -46,6 +47,16 @@ test("⚠올스타전은 정규시즌이 아니다 — 섞으면 성적이 부�
   assert.equal(competitionOf("cl", "pl"), "allStar");
   assert.equal(competitionOf("pl", "cl"), "allStar");
   assert.deepEqual(Object.keys(NON_TEAM_CODES).sort(), ["cl", "pl"]);
+});
+
+/**
+ * ⚠**월간 일정의 구단 아닌 표기 → 비구단 코드**(PR-2b 검토 P2-2). 치러진 올스타 행을 치러짐 표시(`schedule_played`)에 남길 때
+ * 이 코드를 쓴다 — 경기 행(`game`)의 코드(점수 링크 슬러그 `cl-pl-01`)와 같아야 수집 판정 A 와 따라잡기가 같은 증거를 본다.
+ * 값이 `NON_TEAM_CODES` 의 키와 갈리면 여기서 붉다(두 벌이 되지 않게).
+ */
+test("⚠올스타 표기 → 코드는 セ・リーグ→cl · パ・リーグ→pl 이고 · 값은 NON_TEAM_CODES 의 키와 같다", () => {
+  assert.deepEqual({ ...NON_TEAM_CODE_BY_LABEL }, { "セ・リーグ": "cl", "パ・リーグ": "pl" });
+  assert.deepEqual(Object.values(NON_TEAM_CODE_BY_LABEL).sort(), Object.keys(NON_TEAM_CODES).sort());
 });
 
 test("⚠모르는 코드 조합은 regular로 흘리지 않는다", () => {

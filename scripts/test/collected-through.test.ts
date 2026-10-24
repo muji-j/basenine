@@ -344,9 +344,31 @@ test("⚠I1 collected-through.ts 는 store 배럴을 가져오지 않는다 — 
   assert.ok(specifiers.includes("./date-window.ts"), `가져오기를 못 찾았다(${specifiers.join(", ")}) — 이 시험이 공회전한다`);
   assert.deepEqual(
     specifiers.filter((s) => s.startsWith("@bb-app/")).sort(),
-    ["@bb-app/store/game-slug", "@bb-app/store/schedule-owed"],
+    ["@bb-app/domain/season-calendar", "@bb-app/store/game-slug", "@bb-app/store/schedule-owed"],
     "잎 서브패스 밖의 @bb-app 모듈을 가져온다",
   );
+});
+
+/**
+ * ⚠⚠**비시즌 달(`NO_GAME_MONTHS`)을 잎에 넘긴다**(PR-2b 검토 P2-1 · PR-4 설계 D1-c). 12월은 그 달 일정 사본이 없어서,
+ * 넘기지 않으면 확인된 휴식일이 11/30 에서 멈춰 12월 첫 주마다 사이 메우기가 는다(최대 +6 날짜 자식).
+ */
+test("⚠⚠P2-1 사본 없는 12월 — 12/05 07:00 JST · 마지막 경기 11/01 · 11월 사본 12/01 · 12월 사본 없음 → gapFrom 12/04", () => {
+  const ID = gid("2026-11-01", "db-h-01");
+  const { collected, notes } = read(
+    {
+      rows: [[ID]],
+      folders: [ID],
+      after: (db) => db.prepare("INSERT INTO schedule_month (season, month, source, fetched_at, date_rows, games, first_content) VALUES (2026, 11, 'x', ?, 30, 1, '2026-11-01')")
+        .run("2026-12-01T00:00:00.000Z"),
+    },
+    new Date("2026-12-04T22:00:00Z"),
+  );
+  assert.ok(collected !== undefined);
+  assert.equal(collected.since, "2026-11-01");
+  assert.equal(collected.gapFrom, "2026-12-04", "사본 없는 12월에서 확인이 멈췄다 — 비시즌 달을 잎에 안 넘겼다");
+  assert.deepEqual(collected.owed, []);
+  assert.deepEqual(notes, []);
 });
 
 test("⚠C10 덜 받은 날이 창에 없으면 경고한다 — 판정 범위와 창 규칙이 어긋난 결함의 신호(조용히 넘기지 않는다)", () => {

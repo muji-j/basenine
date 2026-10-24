@@ -189,7 +189,7 @@ for (
 const playedSeen = new Map<string, number>();
 const orphans: string[] = [];
 
-let months = 0, kept = 0, playedRows = 0, nonTeam = 0;
+let months = 0, kept = 0, playedRows = 0, nonTeam = 0, nonTeamPlayed = 0;
 /** 10·11월 예외로 예정 표기에 넣은 팀 칸 행의 표기 — 요약에 찍어 사람이 진짜 미정 표기인지 가른다(수정분 재검토 1차 R1) */
 const pendingLabels: string[] = [];
 /** 파일의 달과 다른 날짜의 경기 행 — 적재하지 않고 요약에 찍는다(6라운드 재검토 2차 F3) */
@@ -296,6 +296,29 @@ db.transaction(() => {
       ins.run(season, g.date, g.homeCode, g.awayCode, seq, g.venue, g.startTime, sourceOf(f), fetchedAt);
       kept += 1;
     }
+    /**
+     * ⚠⚠**치러진 올스타 행도 치러짐 표시에 남긴다**(2026-10-24 · PR-2b 검토 P2-2 · 실DB 복사본으로 재현됨).
+     * 예전에는 세기만 하고 버려서 올스타 날은 예정 · 치러짐 표시 · 경기 어느 표에도 안 남았고, 그 경기를 놓치면 따라잡기가 그 날을
+     * 「확인된 휴식일」로 **영구히** 건너뛰었다(옛 규칙은 7일 안이면 다시 받았다).
+     * ⚠코드는 리그 선발(`cl`·`pl` · domain `NON_TEAM_CODE_BY_LABEL`)이고 **경기 행의 코드(점수 링크 슬러그)와 같다** — 그래서 수집 판정 A
+     *   (`collectionEvidence` 의 치러짐인데 경기 없음)와 따라잡기의 owed ⒜ 가 같은 카드를 본다. 받아 둔 올스타는 A 가 안 운다.
+     * ⚠**앞으로의 경기(`upcoming_game`)에는 넣지 않는다** — 화면이 구단 경기만 다룬다. 링크 없는 올스타 행은 지금처럼 세기만 한다.
+     * ⚠**마이그레이션이 없다** — 표의 뜻(「월간 일정이 치렀다고 표시한 경기」)이 그대로이고 경기 행도 이미 `cl`·`pl` 을 쓴다.
+     *   달 단위로 지우고 다시 넣으므로 다음 적재가 그 시즌의 달을 다시 채운다(M5 · 기존 DB 는 다음 실행에서 맞춰진다).
+     */
+    for (const g of r.nonTeamGames) {
+      if (g.date.slice(5, 7) !== mm) {
+        foreignRows.push(g.date);
+        continue;
+      }
+      if (!g.played) continue;
+      nonTeamPlayed += 1;
+      const card = `${g.date}|${g.homeCode}|${g.awayCode}`;
+      const nth = (playedSeen.get(card) ?? 0) + 1;
+      playedSeen.set(card, nth);
+      insPlayed.run(season, g.date, g.homeCode, g.awayCode, nth - 1, sourceOf(f), fetchedAt);
+      if ((loaded.get(card) ?? 0) < nth) orphans.push(card);
+    }
   }
   if (noDateRowMonths.length > 0) {
     throw new ScheduleShapeError(
@@ -329,7 +352,7 @@ db.transaction(() => {
 
 console.log(
   `일정 ${months}개월분 · 앞으로의 경기 ${kept}건 적재 · 치러진 행 ${playedRows}건 제외` +
-    ` · 구단 아닌 행 ${nonTeam}건 · 경기가 없는 달 ${noGameMonths.length}개` +
+    ` · 구단 아닌 행 ${nonTeam}건(치러짐 표시로 ${nonTeamPlayed}건 남김) · 경기가 없는 달 ${noGameMonths.length}개` +
     (noGameMonths.length === 0 ? "" : `(${noGameMonths.join("·")})`) +
     /**
      * ⚠**10·11월 예외로 받은 행은 표기를 찍는다** — 예외는 진짜 미정 표기(`CS勝者`)와 약칭이 깨진 미래 경기를 못 가른다.

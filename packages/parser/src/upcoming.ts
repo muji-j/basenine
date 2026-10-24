@@ -14,7 +14,7 @@
  * ⚠**구단이 아닌 행이 섞인다** — 올스타는 `セ・リーグ`/`パ・リーグ` 다. 조용히 버리지 않고
  * **세어서 돌려준다**(M11: 「없음」과 「못 읽음」을 구별한다).
  */
-import { isTeamShortName, teamCodeByShortName } from "@bb-app/domain";
+import { NON_TEAM_CODE_BY_LABEL, isTeamShortName, teamCodeByShortName } from "@bb-app/domain";
 import { normalizeVenue } from "./schedule.ts";
 
 export interface UpcomingGame {
@@ -35,8 +35,15 @@ export interface UpcomingGame {
 
 export interface UpcomingResult {
   games: UpcomingGame[];
-  /** 구단이 아닌 행(올스타 등). **버린 수를 센다** */
+  /** 구단이 아닌 행(올스타 등)의 수 — `nonTeamGames.length` 와 같다 */
   nonTeamRows: number;
+  /**
+   * **구단이 아닌 행(올스타)을 경기 모양으로** — 코드는 `NON_TEAM_CODE_BY_LABEL`(`cl`·`pl` · team1 = 홈) · `games` 와 따로 둔다.
+   * ⚠예전에는 세기만 하고 버렸다(2026-10-24 · PR-2b 검토 P2-2) — 그래서 올스타 날은 어느 증거 표에도 안 남아, 놓치면 따라잡기가
+   *   그 날을 「확인된 휴식일」로 영구히 건너뛰었다. 적재기가 치러진 것(`played`)만 치러짐 표시에 남긴다.
+   * ⚠`games` 에 섞지 않는다 — 앞으로의 경기(`upcoming_game`)와 화면은 구단 경기만 다룬다.
+   */
+  nonTeamGames: UpcomingGame[];
   /** 못 읽은 행. 0이 아니면 표기가 바뀐 것이다(M7) — 분류 규칙은 `classifyScheduleRows` */
   unreadableRows: number;
   /** `<tr id="dateMMDD">` 행 수. ⚠**날짜 수가 아니다** — 한 날짜에 경기가 여럿이면 행이 반복된다 */
@@ -90,6 +97,8 @@ export interface ScheduleRows {
   placeholder: number;
   games: UpcomingGame[];
   nonTeam: number;
+  /** 구단이 아닌 행을 경기 모양으로(`UpcomingResult.nonTeamGames`) — `nonTeam` 과 같은 수 */
+  nonTeamGames: UpcomingGame[];
   unreadable: number;
   /**
    * **10·11월 예외로 「예정 표기」에 넣은 팀 칸 행의 표기**(`阪神−CS勝者` · 행마다 · 중복 그대로) — `placeholder` 에 이미 세어져 있다.
@@ -121,8 +130,10 @@ const SCORE_LINK = /\/scores\/\d{4}\/\d{4}\/[^/"']+\//;
  * ⚠**모르는 약칭을 전부 여기로 빼면 구단 약칭이 바뀌는 날 그 구단 경기가 조용히 치러짐 표시에서 빠진다**(2026-09-11 · 콜드 리뷰 지적).
  * 실측: 월간 일정 75장에서 「구단 아님」은 **16행 · 두 표기**(`セ・リーグ - パ・リーグ` 9 · `パ・リーグ - セ・リーグ` 7)뿐이다.
  * 새 표기가 실물에 나타나면 「못 읽음」으로 멈추고, 사람이 여기에 더한다.
+ * ⚠**목록은 domain 의 `NON_TEAM_CODE_BY_LABEL` 의 키 한 벌이다**(2026-10-24 · PR-2b 검토 P2-2) — 표기 → 코드(`cl`·`pl`)가 같은 표에 있어야
+ *   「구단 아님으로 인정했는데 코드가 없다」가 생기지 않는다.
  */
-const NON_TEAM_LABELS: ReadonlySet<string> = new Set(["セ・リーグ", "パ・リーグ"]);
+const NON_TEAM_LABELS: ReadonlySet<string> = new Set(Object.keys(NON_TEAM_CODE_BY_LABEL));
 
 /**
  * **대진이 정해지는 도중일 수 있는 달** — 포스트시즌(CS · 일본시리즈)이 치러지는 10·11월(2020 은 11월).
@@ -142,7 +153,9 @@ const PENDING_MATCHUP_MONTHS: ReadonlySet<string> = new Set(["10", "11"]);
  * @param season 연도. **페이지에 없다** — 표는 `8/18（火）` 라고만 쓴다. 호출자가 안다. 파서는 시계를 읽지 않는다(M6).
  */
 export function classifyScheduleRows(html: string, season: number): ScheduleRows {
-  const out: ScheduleRows = { dateRows: 0, dateKeys: [], blank: 0, placeholder: 0, games: [], nonTeam: 0, unreadable: 0, pendingMatchups: [], contentKeys: [] };
+  const out: ScheduleRows = {
+    dateRows: 0, dateKeys: [], blank: 0, placeholder: 0, games: [], nonTeam: 0, nonTeamGames: [], unreadable: 0, pendingMatchups: [], contentKeys: [],
+  };
   const seenKeys = new Set<string>();
   const seenContent = new Set<string>();
   const markContent = (mmdd: string): void => {
@@ -185,8 +198,17 @@ export function classifyScheduleRows(html: string, season: number): ScheduleRows
     markContent(mmdd);
     const played = SCORE_LINK.test(row);
     const scored = /<div class="score[12]">\s*\d+\s*<\/div>/.test(row);
+    const date = `${season}-${mmdd.slice(0, 2)}-${mmdd.slice(2)}`;
+    const venue = normalizeVenue(/<div class="place">([^<]*)<\/div>/.exec(row)?.[1] ?? "");
+    const t = /<div class="time">\s*(\d{1,2}:\d{2})\s*<\/div>/.exec(row)?.[1] ?? null;
     if (!isTeamShortName(home) || !isTeamShortName(away)) {
-      if (NON_TEAM_LABELS.has(home) && NON_TEAM_LABELS.has(away)) out.nonTeam += 1;
+      if (NON_TEAM_LABELS.has(home) && NON_TEAM_LABELS.has(away)) {
+        out.nonTeam += 1;
+        // ⚠**버리지 않고 경기 모양으로 돌려준다**(PR-2b 검토 P2-2) — 코드는 표기 → `cl`·`pl`(team1 = 홈 · 점수 링크 슬러그와 같다)
+        out.nonTeamGames.push({
+          date, homeCode: NON_TEAM_CODE_BY_LABEL[home]!, awayCode: NON_TEAM_CODE_BY_LABEL[away]!, venue, startTime: t, played,
+        });
+      }
       else if (!played && !scored && PENDING_MATCHUP_MONTHS.has(mmdd.slice(0, 2))) {
         out.placeholder += 1;
         out.pendingMatchups.push(`${home}−${away}`);
@@ -198,10 +220,8 @@ export function classifyScheduleRows(html: string, season: number): ScheduleRows
       out.unreadable += 1;
       continue;
     }
-    const venue = normalizeVenue(/<div class="place">([^<]*)<\/div>/.exec(row)?.[1] ?? "");
-    const t = /<div class="time">\s*(\d{1,2}:\d{2})\s*<\/div>/.exec(row)?.[1] ?? null;
     out.games.push({
-      date: `${season}-${mmdd.slice(0, 2)}-${mmdd.slice(2)}`,
+      date,
       homeCode: teamCodeByShortName(home),
       awayCode: teamCodeByShortName(away),
       venue,
@@ -221,6 +241,7 @@ export function parseUpcoming(html: string, season: number): UpcomingResult {
   return {
     games: r.games,
     nonTeamRows: r.nonTeam,
+    nonTeamGames: r.nonTeamGames,
     unreadableRows: r.unreadable,
     dateRows: r.dateRows,
     blankRows: r.blank,
