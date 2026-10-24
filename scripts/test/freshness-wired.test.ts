@@ -201,9 +201,19 @@ test("⚠⚠끝난 시즌이 문서 고정 범위 밖이면 알린다 — 종료
   // ⚠비차단 — 알림이 있든 없든 종료 코드와 사유가 같다. 둘 다 0 이어야 「알림이 실패를 만들지 않는다」를 잰다
   assert.equal(a.status, 0, `전제가 틀렸다 — 알림 없는 DB 가 이미 실패한다: ${a.stdout}${a.stderr}`);
   assert.equal(b.status, 0, `알림이 종료 코드를 바꿨다 — 배포가 막힌다: ${b.stdout}${b.stderr}`);
-  const reasons = async (log: string): Promise<unknown> =>
-    (JSON.parse((await readFile(join(dir, log), "utf8")).trim()) as Record<string, unknown>).staleReasons;
-  assert.deepEqual(await reasons("b.jsonl"), await reasons("a.jsonl"), "알림이 사유를 바꿨다");
+  const record = async (log: string): Promise<Record<string, unknown>> =>
+    JSON.parse((await readFile(join(dir, log), "utf8")).trim()) as Record<string, unknown>;
+  const ra = await record("a.jsonl");
+  const rb = await record("b.jsonl");
+  assert.deepEqual(rb.staleReasons, ra.staleReasons, "알림이 사유를 바꿨다");
+  assert.equal(rb.stale, ra.stale, "알림이 stale 을 바꿨다");
+  /**
+   * ⚠**판정 기록에도 남긴다**(이중 검토 P3 · 2026-10-24) — `::warning::` 은 그 실행의 화면에만 남아 지나가면 찾기 어렵다.
+   * JSONL(`ops/collection-log.jsonl`)에 **배열로** 적는다: 없으면 `[]`(「끝났는데 범위 밖인 시즌이 없다」) — 필드가 아예 없는 줄은
+   * 「기록하지 않던 시절」이다(M11 · `staleReasons` 와 같은 구별).
+   */
+  assert.deepEqual(ra.docSeasonsToAdd, [], "알림이 없을 때 JSONL 에 빈 배열을 안 남겼다 — 「없음」과 「안 적음」이 섞인다");
+  assert.deepEqual(rb.docSeasonsToAdd, [2017], "알림을 JSONL 에 안 남겼다 — 초록 실행의 경고는 지나가면 안 보인다");
 }));
 
 test("⚠⚠「끝났다」는 일본시리즈 결착이다 — 정규시즌 143경기와 CS 가 끝나도 안 알린다", () => withDir(async (dir) => {

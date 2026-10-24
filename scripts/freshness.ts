@@ -285,6 +285,10 @@ if (jsonAt >= 0) {
       // ⚠**어느 축이 울렸는가.** `[]` 는 「울린 감시가 없다」이고, **이 칸이 아예 없는 줄**은
       //   「이유를 안 남기던 시절(2026-08-25 이전)」이다 — 화면이 그 둘을 구별해 말한다(M11)
       staleReasons,
+      // ⚠**연례 갱신 알림도 남긴다**(2026-10-24 · 이중 검토 P3) — `::warning::` 은 그 실행 화면에만 남는다.
+      //   끝났는데 문서 고정 범위(`DOC_SEASONS`) 밖인 시즌 · 없으면 `[]` · **이 칸이 없는 줄은 기록하지 않던 시절**이다(M11).
+      //   ⚠**판정이 아니다** — `stale` · `staleReasons` 에 안 들어간다(비차단).
+      docSeasonsToAdd: docPending,
     };
     appendFileSync(path, `${JSON.stringify(record)}\n`, "utf8");
   }
