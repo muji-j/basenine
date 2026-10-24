@@ -106,6 +106,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { LocalSink, localBodyIntact, playerKey } from "@bb-app/archiver";
+import { CAREER_RECEIVED_CTES } from "../src/career-received.ts";
 import { openDb } from "../src/db.ts";
 import { isAbsentNow } from "../src/meta.ts";
 import { claimedShaOf, classifyForRefetch } from "../src/player-version.ts";
@@ -146,23 +147,15 @@ const db = openDb(dbPath, "1970-01-01T00:00:00.000Z");
  * ⚠**출장량 대조는 반대로 `competition='regular'` 만 본다** — 年度別成績 표가 정규시즌이기 때문이다.
  * 실측: 이 경계를 지키면 완결 8시즌이 전건 일치하고, 안 지키면 올스타·CS 만큼 우리가 더 커져서
  * **전 선수가 영구 후보가 된다.**
+ * ⚠**「받았다」(`career_received`)도 한 벌이다**(M1 · 2026-10-24 · `src/career-received.ts`) — 신선도 감시(`career-lag`)가 같은 조각을 쓴다.
+ *   통산 행이 없고 **정규시즌 출장도 없으면** 프로필 취득 시각으로 받은 것이다(사용자 결정 A). ~~통산 행 시각으로만 쟀다~~ — 그래서 1군 출장이
+ *   포스트시즌뿐인 선수(통산 행 0)를 **매 실행 「취득기록 없음」으로 다시 받았고**, 감시는 같은 사본 탓에 수집 잡을 매일 실패시켰다.
+ *   ⚠정규시즌에 나왔는데 통산 행이 0 이면 대체하지 않는다 — 데뷔 직후 늦은 사본이고, 그 선수는 아래 `lagging` 이 못 잡는다(통산 행이 없다).
+ *   JST 절단(우연에 기대지 않는다)·`NULL` = 모름(M11)의 근거도 그쪽 머리말에 옮겼다.
  */
 const COMMON = `
   WITH ${REFETCH_WINDOW_CTES},
-  fetched AS (
-    /**
-     * JST 로 맞춘다(§2-1). fetched_at 은 ISO UTC 이고 game_date 는 JST 경기일이다.
-     * 그냥 앞 10글자를 자르면 JST 00:00~08:59 에 받은 페이지가 하루 이르게 기록된다.
-     * 지금 크론은 17:00 UTC(=02:00 JST)라 우연히 안전한 쪽으로만 어긋나지만,
-     * 손으로 다른 시각에 돌리면 그 우연이 깨진다 — 우연에 기대지 않는다.
-     * fetched_at 이 NULL 이면 datetime() 도 NULL 이다 — 「모른다」가 그대로 흐른다(M11).
-     */
-    SELECT player_id AS id, MAX(SUBSTR(datetime(fetched_at, '+9 hours'), 1, 10)) AS day
-      FROM (SELECT player_id, fetched_at FROM career_batting
-            UNION ALL
-            SELECT player_id, fetched_at FROM career_pitching)
-     GROUP BY player_id
-  ),
+  ${CAREER_RECEIVED_CTES},
   ours_bat AS (
     SELECT g.season AS y, b.player_id AS id,
            SUM(b.pa) AS pa, COUNT(DISTINCT b.game_id) AS gm
@@ -293,7 +286,7 @@ const candidateSql = `${COMMON}
             CASE WHEN p.player_id IN (SELECT value FROM json_each(?)) THEN 1 ELSE 0 END AS archivePick
        FROM player p
        JOIN last_seen l ON l.id = p.player_id
-       LEFT JOIN fetched f ON f.id = p.player_id
+       LEFT JOIN career_received f ON f.id = p.player_id
        LEFT JOIN lagging g ON g.id = p.player_id
       WHERE (f.day IS NULL OR f.day <= l.last OR g.id IS NOT NULL
              OR p.player_id IN (SELECT value FROM json_each(?)))

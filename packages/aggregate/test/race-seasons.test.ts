@@ -31,6 +31,17 @@
  *    → **한 질의의 같은 행에서 둘 다 만든다.** 필터가 갈릴 여지 자체를 없앴다
  *      (지금 DB 에는 `played`·`regular` 인데 득점이 `NULL` 인 행이 0건이라 오늘은 값이 같지만,
  *       같아 보이는 것과 같은 것은 다르다).
+ *
+ * ---
+ * ## ⚠검산하는 시즌은 고정 범위다 — `DOC_SEASONS` (2026-10-24)
+ *
+ * 위 1번의 처방(「12팀 전부가 규정에 도달하면 완결」)대로 **데이터가 고르는 시즌**을 돌았는데, 그 판정이 2026 정규시즌
+ * 최종전이 들어온 날(2026-10-08) 2026 을 넣었고 **`PENNANT` 에 2026 이 없어** 이 파일 2본이 붉어졌다 — 고정 수치 시험 13본이
+ * 같이 붉어져 **배포가 막혔다.** 2026 의 공식 우승 기록을 대조할 준비가 안 된 날에 시험이 그것을 요구한 것이다.
+ * → 검산하는 시즌은 `@bb-app/domain` 의 `DOC_SEASONS` 한 벌(M1)이다. 범위 밖의 시즌은 **막지 않는다** — 끝나면 수집 로그가
+ *   비차단으로 알리고(`scripts/freshness.ts`), 범위를 올리는 날 `PENNANT` 에 그 시즌을 **npb.jp 공식 순위로** 더한다
+ *   (`docs/operations.md` 「해마다 하는 일」). ⚠**범위에 넣었는데 `PENNANT` 에 없으면 여기서 떨어진다** — 「조용히 안 세고 넘어가지 않는다」는 그대로다.
+ * ⚠**1번의 처방은 버리지 않았다** — `complete`(12팀 전부 규정 도달)는 이제 **가드**다: 범위의 시즌이 이 DB 에서 정말 완결인가.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -41,7 +52,7 @@ import { DatabaseSync } from "node:sqlite";
 import { pairKey, seasonRace } from "../src/race.ts";
 import type { SeasonRace, TeamRaceInput } from "../src/race.ts";
 import { pctKey, winPct } from "../src/standings.ts";
-import { canonicalTeamCode, leagueOf, regularSeasonGames } from "@bb-app/domain";
+import { DOC_SEASONS, canonicalTeamCode, leagueOf, regularSeasonGames } from "@bb-app/domain";
 
 const DB = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "data", "bb.sqlite");
 const HAS_DB = existsSync(DB);
@@ -148,23 +159,26 @@ function load(): readonly SeasonRows[] {
 let cache: readonly SeasonRows[] | null = null;
 
 /**
- * ⚠**공회전 방지.** 완결 시즌이 0개면 아래 루프가 한 번도 안 돌고 시험이 **조용히 통과**한다.
- * 그러면 「전부 통과」가 「이 검산은 한 번도 안 돌았다」를 덮는다(작업규칙 7·8).
- * ⚠여기에 **본수를 적지 않는다** — 그 수가 낡는 순간 판정 기준 자체가 거짓이 된다.
+ * **검산할 시즌 = 고정 범위(`DOC_SEASONS`)의 시즌** — 그리고 **그 전부가 이 DB 에서 완결이어야 한다**(가드).
  *
- * ⚠**개수를 하드코딩하지 않는다.** 백필로 늘어나는 값이라 못 박으면 다음 백필에서 거짓 실패한다 —
- * 대신 **바닥값**만 두고 실제로 발견한 개수와 시즌 목록을 실패 메시지에 넣는다.
+ * ⚠**~~데이터가 완결이라고 판정한 시즌 전부~~ 가 아니다**(2026-10-24 · 이 파일 머리말 「검산하는 시즌은 고정 범위다」).
+ * ⚠**공회전 방지.** 범위의 시즌이 DB 에 없거나 미완결이면 아래 루프가 그 시즌을 **조용히 건너뛰는** 대신 여기서 떨어진다 —
+ * 「전부 통과」가 「이 검산은 그 시즌을 안 돌았다」를 덮지 않게 한다(작업규칙 7·8).
+ * ⚠여기에 **본수를 적지 않는다** — 범위가 정본이고, 실패 메시지에 DB 가 가진 시즌을 넣는다.
  * (지연 로드라 첫 시험이 DB 를 읽고 나머지는 그 결과를 쓴다. 모듈 최상위에서 읽지 않는 것은
  *  DB 가 깨졌을 때 그것이 **파일 전체의 ERROR** 가 아니라 **한 시험의 FAIL** 로 보이게 하기 위함이다.)
  */
 function finished(): readonly SeasonRows[] {
   if (cache === null) cache = load();
-  const done = cache.filter((s) => s.complete);
-  assert.ok(
-    done.length > 0,
-    `완결 시즌이 0개다 — 이 시험이 공회전한다. DB 가 가진 시즌: ${cache.map((s) => `${s.season}(${s.teams.length}팀 최대 ${Math.max(...s.teams.map((t) => t.games))}/${s.total})`).join(" ")}`,
+  const bySeason = new Map(cache.map((s) => [s.season, s] as const));
+  const bad = DOC_SEASONS.filter((y) => bySeason.get(y)?.complete !== true);
+  assert.deepEqual(
+    bad,
+    [],
+    `고정 범위(DOC_SEASONS)의 시즌 중 이 DB 에서 완결이 아닌 것: ${bad.join("·")} — 경기를 잃었거나 범위를 너무 일찍 올렸다. ` +
+      `DB 가 가진 시즌: ${cache.map((s) => `${s.season}(${s.teams.length}팀 최대 ${Math.max(...s.teams.map((t) => t.games))}/${s.total})`).join(" ")}`,
   );
-  return done;
+  return DOC_SEASONS.map((y) => bySeason.get(y)!);
 }
 
 function raceOf(s: SeasonRows): SeasonRace {
@@ -203,7 +217,8 @@ function championCodes(s: SeasonRows, league: string): readonly string[] {
  * 이 표가 그 구멍을 막는다. 픽스처의 문제(「내 오해가 그대로 통과」)는 데이터 축에도 똑같이 있다.
  *
  * ⚠**모르는 시즌은 예외로 만든다**(M7 · `competitionFromLabel` 과 같은 태도).
- * 백필로 시즌이 늘면 여기서 먼저 붉어진다 — 조용히 안 세고 넘어가지 않는다.
+ * 고정 범위(`DOC_SEASONS`)에 시즌을 넣으면 여기서 먼저 붉어진다 — 조용히 안 세고 넘어가지 않는다.
+ * ⚠~~백필로 시즌이 늘면~~ 이 아니다(2026-10-24) — 범위 **밖**의 시즌은 안 묻는다. 끝나거나 백필되면 수집 로그가 알린다.
  *
  * ⚠**동률 우승은 이 표로 갈리지 않는다.** `race.ts` 는 `pctKey` 까지만 보고 NPB 협약
  * ①当該球団間の対戦成績를 적용하지 않으므로(그건 `standings.ts` 의 몫이다 · M1),
@@ -255,13 +270,21 @@ const PENNANT: ReadonlyMap<number, Readonly<Record<(typeof LEAGUES)[number], Cha
   [2025, { central: { code: "t", wlt: [85, 54, 4] }, pacific: { code: "h", wlt: [87, 52, 4] } }],
 ]);
 
-test("⚠완결 시즌이 충분히 있다 — 없으면 아래 검산이 전부 공회전한다", {
+/**
+ * ⚠**범위가 검산을 덮는가** — 범위의 시즌이 전부 이 DB 에서 완결이고(가드는 `finished()`) **`PENNANT` 가 그 전부를 안다.**
+ * 범위를 올리고 `PENNANT` 를 안 채우면 아래 대조 두 본보다 **먼저** 여기서 어느 해가 빠졌는지 말한다.
+ * ⚠**범위 밖의 시즌(정규시즌이 끝난 2026 등)은 `PENNANT` 에 없어도 막지 않는다** — 그날이 배포를 막았다(2026-10-08).
+ */
+test("⚠고정 범위가 이 DB 에서 전부 완결이고 PENNANT 가 그 범위를 덮는다 — 없으면 아래 검산이 공회전한다", {
   skip: HAS_DB ? false : "data/bb.sqlite 없음",
 }, () => {
   const done = finished();
-  assert.ok(
-    done.length >= 5,
-    `완결 시즌이 ${done.length}개뿐이다(${done.map((s) => s.season).join(",")}) — 이 시험이 공회전한다`,
+  assert.ok(done.length >= 5, `검산할 시즌이 ${done.length}개뿐이다(${done.map((s) => s.season).join(",")}) — 이 시험이 공회전한다`);
+  const unknown = DOC_SEASONS.filter((y) => !PENNANT.has(y));
+  assert.deepEqual(
+    unknown,
+    [],
+    `고정 범위에 넣었는데 리그 우승팀을 모르는 시즌: ${unknown.join("·")} — npb.jp 공식 순위를 읽어 PENNANT 에 더하라(DB 값을 옮겨 적지 마라)`,
   );
 });
 
@@ -424,7 +447,7 @@ test("⚠완결 시즌: pctKey 최상위 집합에 실제 리그 우승팀이 �
     const want = PENNANT.get(s.season);
     assert.ok(
       want !== undefined,
-      `${s.season} 의 리그 우승팀을 모른다 — 백필로 시즌이 늘었으면 이 파일의 PENNANT 표를 갱신하라(조용히 안 세고 넘어가지 않는다)`,
+      `${s.season} 의 리그 우승팀을 모른다 — 고정 범위(DOC_SEASONS)에 넣었으면 이 파일의 PENNANT 표를 npb.jp 공식 순위로 갱신하라(조용히 안 세고 넘어가지 않는다)`,
     );
     for (const league of LEAGUES) {
       const champs = championCodes(s, league);
@@ -471,7 +494,7 @@ test("⚠완결 시즌: 리그 우승팀의 승-패-무가 실제 기록과 같�
     const want = PENNANT.get(s.season);
     assert.ok(
       want !== undefined,
-      `${s.season} 의 리그 우승팀을 모른다 — 백필로 시즌이 늘었으면 이 파일의 PENNANT 표를 갱신하라`,
+      `${s.season} 의 리그 우승팀을 모른다 — 고정 범위(DOC_SEASONS)에 넣었으면 이 파일의 PENNANT 표를 npb.jp 공식 순위로 갱신하라`,
     );
     for (const league of LEAGUES) {
       // ⚠타입 표기가 필요한 이유는 위 시험의 `code` 와 같다(assertion function + TS7022)

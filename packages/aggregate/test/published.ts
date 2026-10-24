@@ -128,6 +128,10 @@ export interface CrossCheck {
  * **우리가 가진 경기 수**로 판정한다. 시즌이 끝나면 아무도 안 고쳐도 자동으로 완결이 된다.
  * ⚠**143 을 상수로 쓰지 않는다** — 2020 은 120경기다(`regularSeasonGames`).
  * ⚠**마지막 경기일까지 돌려주는 이유**는 `fetchedAfterSeason` 이 그것을 필요로 하기 때문이다.
+ * ⚠⚠**「문서가 말하는 완결 시즌」은 이것이 아니다 — `@bb-app/domain` 의 `DOC_SEASONS` 다**(2026-10-24 · M1).
+ *   고정 수치를 이 판정으로 세던 시험들이 **정규시즌이 끝난 날 2026 을 넣어** 붉어졌고 배포가 막혔다(13본).
+ *   이 함수는 **데이터 측정**으로만 쓴다: ⑴ 공표치 대조의 「시즌이 끝났나 · 언제」(`crossCheck`) ⑵ 고정 범위가 이 DB 에서
+ *   정말 완결인가의 가드(`steal-seasons.test.ts`). 고정 수치를 셀 범위로 쓰지 마라.
  */
 export function settledSeasons(db: Db): Map<number, string> {
   const rows = db.raw

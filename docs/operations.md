@@ -213,6 +213,39 @@ node scripts/freshness.ts data/bb.sqlite 2
    ⚠**제외된 행이 치러진 경기이고 제 달 파일이 없거나 낡았으면 그 경기의 치러짐 표시가 증거에서 빠진다**(A 가 조용하다 · 설계서 §5 맞교환 · 7라운드 재검토 2차 F2 ·
    사용자 결정 2026-09-12). 그래서 이 경고가 보이면 **제 달 파일이 있는지 · 언제 받았는지(사이드카 `checkedAt`)** 를 먼저 보고, 없거나 낡았으면 소급 절차로 그 달을 받는다.
 
+## 해마다 하는 일 — 일본시리즈가 끝난 뒤 (2026-10-24)
+
+문서와 고정 수치 시험이 말하는 「완결 시즌」은 **손으로 고정한 범위**다 — `packages/domain/src/doc-seasons.ts` 의 `DOC_SEASONS`.
+⚠**예전에는 시험이 데이터로 그때그때 쟀고, 정규시즌이 끝난 날(2026-10-08) 13본이 붉어져 배포가 막혔다.** 그래서 고정했고,
+잊지 않게 **수집이 알린다**: 끝난 시즌이 범위 밖이면 신선도 단계가 매 실행 이 한 줄을 찍는다(⚠**배포는 막지 않는다**):
+
+```
+::warning::끝난 시즌 2026 이 문서 고정 범위(DOC_SEASONS 2018〜2025 · 8시즌) 밖이다 — …
+```
+
+「끝났다」는 `seasonIsOver` 다 — **일본시리즈 결착**(또는 다음 시즌 경기). ⚠**정규시즌 종료가 아니다** — 고정 수치 일부가
+**전 대회** 수(타석 등)라 포스트시즌 동안 매일 자란다. 백필로 앞 시즌이 생겨도 같은 줄이 찍힌다(같은 절차다).
+
+**그 줄이 보이면** — 로컬에서 한다(외부 요청 0 · DB 만 읽는다):
+
+1. 최신 보관소 DB 를 받아 `data/bb.sqlite` 자리에 둔다(⚠기존 파일은 먼저 복사해 둔다 — 시험이 마이그레이션을 적용해 파일을 바꾼다).
+2. `DOC_SEASONS` 에 그 시즌을 더한다.
+3. 고정 수치 시험을 **한 러너로** 돌린다 — **붉어지는 것이 정상이다.** 실패 메시지의 값(**DB 가 정본**)으로 고친다:
+   ```
+   BB_REQUIRE_DB=1 node --test --test-concurrency=1 scripts/test/doc-figures.test.ts packages/aggregate/test/steal-seasons.test.ts packages/metrics/test/park-db.test.ts scripts/test/runner-seq.test.ts packages/aggregate/test/race-seasons.test.ts
+   ```
+   | 시험 | 고칠 곳 |
+   |---|---|
+   | `doc-figures` | `CLAUDE.md` §2-2 · `docs/metrics/README.md` §6 · `docs/sources/2026-08-20-war-xfip-recheck.md` · `packages/aggregate/src/steal.ts` 머리말 |
+   | `steal-seasons` | 그 시험 안의 루별 표 · `steal.ts` 주석 · `docs/metrics/README.md` §1-A |
+   | `park-db` | 그 시험 안의 RPW·파크팩터 표 · `docs/metrics/README.md` §3.3(파크팩터) · §6(RPW) — ⚠**문서 쪽은 시험이 대조하지 않는다**, 손으로 맞춘다. 표 전체는 `node scripts/rpw-measure.ts data/bb.sqlite` · `node scripts/venue-measure.ts data/bb.sqlite --pf` 의 **「문서 범위」 줄**에서 옮긴다(「참고」 줄은 옮기지 마라) |
+   | `runner-seq` | `docs/metrics/README.md` §6 wSB 절(재현: `node scripts/runner-seq-measure.ts data/bb.sqlite` 의 「문서 범위」 줄) |
+   | `race-seasons` | `PENNANT` 에 그 시즌 리그 우승팀과 승-패-무 — ⚠**DB 에서 옮겨 적지 마라. npb.jp 공식 순위(`https://npb.jp/bis/<시즌>/standings/`)를 읽어 적는다**(DB 값을 쓰면 자기 검산이 된다) |
+4. 같은 명령이 전부 초록인지 보고, 커밋한다. 다음 실행부터 경고가 사라진다.
+
+⚠**일본시리즈 결착 전에 범위를 올리지 마라** — `doc-figures` 의 가드(「고정 범위의 시즌은 전부 끝났다」)가 막는다.
+⚠**미뤄도 화면·배포는 멀쩡하다** — 새 시즌이 고정 수치에 **안 들어갈 뿐**이고, 경고가 매 실행 남는다.
+
 ## 쓰기 예산
 
 ⚠**지금 운영은 D1 이 아니다**(SQLite 1파일 · 정적 사이트 — CLAUDE.md §1 · 2026-09-11 정정 · 4라운드 재검토 1차 Q1). 아래는 **D1 로 옮길 때를 대비해

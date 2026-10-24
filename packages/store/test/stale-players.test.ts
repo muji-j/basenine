@@ -30,6 +30,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { openDb, upsertBatting, upsertGame, upsertPitching, upsertPlayer } from "../src/index.ts";
 import type { Db } from "../src/index.ts";
+import { CAREER_RECEIVED_CTES } from "../src/career-received.ts";
 import { REFETCH_WINDOW_CTES } from "../src/refetch-window.ts";
 import type { Competition } from "@bb-app/domain";
 
@@ -343,6 +344,95 @@ test("⚠못 고치는 낡은 사본을 따로 센다 — 「고칠 수 있는�
     /그중 1명은 낡은 사본을 든 채다/,
     "제외한 선수 중 낡은 사본을 든 사람을 안 셌다 — 「0건」과 「안 쟀음」이 섞인다",
   );
+});
+
+/**
+ * ⚠⚠**정규시즌 출장이 없는 선수의 통산 표 없는 페이지 — 프로필을 출장 뒤에 받았으면 받은 것이다**(2026-10-24 · 사용자 결정 A).
+ *
+ * 年度別成績 은 **정규시즌만** 싣는다. 1군 출장이 포스트시즌뿐인 선수는 페이지를 받아도 통산 행이 0 이라,
+ * 「받았다」를 통산 행 시각으로만 재면 **매 실행 「취득기록 없음」으로 다시 받는다**(L1 낭비) — 그리고 감시는 같은 이유로
+ * `career-lag` 을 울려 수집 잡을 매일 실패시켰다(첫 실물: 2026 CS ファイナル 3차전 10-16 에 **대주자(0타석)로 한 번** 나온 포수 · 10-20 부터).
+ * → 통산 행이 없고 **정규시즌 출장도 없으면** 프로필 취득 시각을 쓴다. 규칙은 감시와 한 벌이다(`src/career-received.ts` · M1).
+ * ⚠**사유 분류도 같이 본다** — 출장 전에 받았으면 「취득일 ≤ 마지막 출장일」, 시각을 모르면 「취득기록 없음」이다.
+ */
+test("⚠⚠통산 행이 0 인 CS 출장자 — 프로필을 출장 뒤에 받았으면 안 뽑는다 · 전이면 뽑는다 · 모르면 뽑는다(M11)", async () => {
+  const cases = [
+    { profile: "2026-10-21T09:52:27.518Z", picked: false, reason: /취득기록 없음 0명 · 취득일 ≤ 마지막 출장일 0명/ }, // JST 10-21 — 출장 뒤(실물의 시각)
+    { profile: "2026-10-15T03:00:00.000Z", picked: true, reason: /취득기록 없음 0명 · 취득일 ≤ 마지막 출장일 1명/ }, // JST 10-15 — 출장 전
+    { profile: null, picked: true, reason: /취득기록 없음 1명 · 취득일 ≤ 마지막 출장일 0명/ },
+    // ⚠JST 10-17 01:00 — UTC 로 자르면 10-16(= 출장일)이라 하루 이르게 「출장 당일에 받았다」로 읽는다(§2-1 · 위 JST 시험과 같은 함정)
+    { profile: "2026-10-16T16:00:00.000Z", picked: false, reason: /취득기록 없음 0명 · 취득일 ≤ 마지막 출장일 0명/ },
+  ] as const;
+  for (const c of cases) {
+    const { ids, report } = await withDb((_p, db) => {
+      upsertPlayer(db, "CSONLY", "CSのみ", NOW);
+      upsertPlayer(db, "PIT", "投手", NOW);
+      // CSONLY 는 CS 1경기(10-16)에 **대주자로만**(0타석) 나왔고 통산 행이 0 이다(실물의 모양).
+      // 그 경기의 투수 PIT 는 최신 사본을 둬 평소 사유로 안 뽑히게 한다
+      play(db, "CSONLY", "2026-10-16", { pa: 0, competition: "climaxSeries" });
+      careerPit(db, "PIT", "2026-10-21T09:00:00.000Z", { games: 1 });
+      db.raw.prepare("UPDATE player SET profile_fetched_at = ? WHERE player_id = 'CSONLY'").run(c.profile);
+    });
+    assert.equal(ids.includes("CSONLY"), c.picked, `프로필 ${c.profile ?? "모름"}: 뽑힘이 ${c.picked} 가 아니다 — ${report}`);
+    assert.ok(!ids.includes("PIT"), "최신인 투수를 같이 뽑았다");
+    assert.match(report, c.reason, `프로필 ${c.profile ?? "모름"}: 사유 분류가 틀렸다 — ${report}`);
+  }
+});
+
+/**
+ * ⚠⚠**정규시즌에 나왔는데 통산 행이 아직 0 이면 대상이다 — 프로필을 출장 뒤에 받았어도**(이중 검토 P2 · 2026-10-24).
+ * 데뷔전 다음날 받은 사본에는 그 경기도 통산 표도 아직 없다(npb.jp 반영 지연 · 위 「출장 다음날에 받았어도」 시험과 같은 사실).
+ * 그 선수는 통산 행이 없어 **출장량 대조(`lagging`)가 한 번도 안 돈다** — 날짜 판정마저 프로필 시각으로 꺼지면 그 데뷔는 영영 안 실린다.
+ * ⚠**투구 · 대주자(0타석) 두 갈래 다 잰다** — 「출장」은 타석이 아니다(정규 경계는 `ours_bat`·`ours_pit` 와 같다).
+ */
+test("⚠⚠정규 출장 + 통산 행 0 + 출장 뒤 프로필 — 데뷔 직후 늦은 사본이다 · 대상이다(투구 · 대주자)", async () => {
+  for (const kind of ["투구", "대주자 0타석"] as const) {
+    const { ids, report } = await withDb((_p, db) => {
+      upsertPlayer(db, "DEBUT", "初出場", NOW);
+      upsertPlayer(db, "MATE", "相手", NOW);
+      if (kind === "투구") {
+        // DEBUT 가 던지고 MATE 가 친다 — MATE 는 최신 사본(1試合 4打席)
+        play(db, "MATE", "2026-10-09", { pitcherId: "DEBUT" });
+        career(db, "MATE", "2026-10-10T03:00:00.000Z", { games: 1, pa: 4 });
+      } else {
+        // DEBUT 가 대주자로만 나오고 MATE 가 던진다 — MATE 는 최신 사본(1登板)
+        play(db, "DEBUT", "2026-10-09", { pa: 0, pitcherId: "MATE" });
+        careerPit(db, "MATE", "2026-10-10T03:00:00.000Z", { games: 1 });
+      }
+      db.raw.prepare("UPDATE player SET profile_fetched_at = ? WHERE player_id = 'DEBUT'").run("2026-10-10T03:00:00.000Z");
+    });
+    assert.ok(ids.includes("DEBUT"), `${kind}: 정규시즌 데뷔의 늦은 사본을 「받았다」로 읽었다 — 그 경기가 영영 안 실린다 · ${report}`);
+    assert.ok(!ids.includes("MATE"), `${kind}: 최신인 상대를 같이 뽑았다`);
+  }
+});
+
+/**
+ * ⚠**통산 행이 있는데 그 시각을 모르면 프로필 시각으로 메우지 않는다**(M11 · 위 「취득 시각을 모르는 선수는 반드시 대상이다」와 같은 원칙).
+ * 두 시각은 적재가 한 값으로 쓰므로 보통 같고, 갈리는 것은 통산만 실패한(C8) 뒤뿐이다 — 그때 통산 행은 **옛 판**이다.
+ */
+test("⚠통산 행이 있는데 시각을 모르면 프로필을 받았어도 대상이다 — 프로필 시각을 빌리지 않는다(M11)", async () => {
+  const { ids } = await withDb((_p, db) => {
+    upsertPlayer(db, "UNK", "取得不明", NOW);
+    upsertPlayer(db, "PIT", "投手", NOW);
+    play(db, "UNK", "2026-08-16");
+    career(db, "UNK", null);
+    db.raw.prepare("UPDATE player SET profile_fetched_at = ? WHERE player_id = 'UNK'").run("2026-08-18T09:00:00.000Z");
+  });
+  assert.ok(ids.includes("UNK"), "통산 행의 「모름」을 프로필 시각으로 메웠다 — 옛 통산을 최신으로 읽는다");
+});
+
+/**
+ * ⚠**「받았다」는 감시와 한 벌이다**(M1 · `src/career-received.ts`) — 선정 SQL 이 그 조각을 끼워 쓰고 사본을 안 갖는다.
+ * ⚠**그 조각에도 자리표시자가 없어야 한다** — 선정기는 `json_each(?)` 자리 수로 인자를 센다(아래 3-16 과 같은 이유).
+ */
+test("⚠선정 SQL 이 「받았다」 조각(career-received.ts)을 끼워 쓴다 — 사본이 없고 자리표시자도 없다", () => {
+  const src = readFileSync(TOOL, "utf8");
+  const m = /const COMMON = `([\s\S]*?)`;/.exec(src);
+  assert.ok(m !== null, "COMMON 템플릿을 못 찾았다 — 소스 모양이 바뀌었다");
+  assert.match(m[1]!, /\$\{CAREER_RECEIVED_CTES\}/, "COMMON 이 「받았다」 조각을 안 쓴다 — 감시와 규칙이 두 벌이 됐다");
+  // ⚠출장량 대조(`pub_bat` · `lagging`)는 통산 표를 따로 읽는다 — 막는 것은 **취득 시각을 읽는 사본**뿐이다
+  assert.doesNotMatch(src, /fetched_at\s+FROM\s+career_(batting|pitching)/, "선정기에 「받았다」(통산 취득 시각) SQL 사본이 남았다");
+  assert.equal(CAREER_RECEIVED_CTES.split("?").length - 1, 0, "「받았다」 조각에 자리표시자가 있다 — archiveArgs 가 어긋난다");
 });
 
 // ─── N3 · 아카이브 옛 판을 같은 실행에서 다시 받는다(감사 N3 · 설계 docs/superpowers/specs/2026-09-27-profile-version-guard-design.md §5-4) ───

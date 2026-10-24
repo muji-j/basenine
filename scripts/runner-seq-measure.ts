@@ -17,9 +17,12 @@
  * 이 스크립트는 **`after_seq` 쪽도 그런가**를 실측한다.
  *
  * ⚠**대회를 섞지 않는다**(§2-1) — 정규시즌만 낸다. 전 대회 수치도 같이 낸다(분모를 적기 위해).
+ * ⚠⚠**「문서에 적는 수」는 고정 범위(`DOC_SEASONS`)로 센다**(2026-10-24 · 이중 검토 P3) — `scripts/test/runner-seq.test.ts` 와
+ *   같은 범위다. ~~데이터상 완결 시즌~~ 으로 셌더니 정규시즌이 끝난 날 2026 이 섞여 재현 명령이 시험·문서와 다른 분모를 냈다.
+ *   데이터상 완결 시즌은 **참고 줄**로 따로 낸다(범위를 올리는 절차는 `docs/operations.md` 「해마다 하는 일」).
  */
 import { DatabaseSync } from "node:sqlite";
-import { regularSeasonGames } from "@bb-app/domain";
+import { DOC_SEASONS, regularSeasonGames } from "@bb-app/domain";
 
 const dbPath = process.argv[2];
 if (dbPath === undefined) {
@@ -34,9 +37,11 @@ if (dbPath === undefined) {
 const db = new DatabaseSync(dbPath, { readOnly: true });
 
 /**
- * **완결 시즌** — 12구단 전부가 `regularSeasonGames(시즌)` 을 치렀는가.
+ * **데이터상 완결 시즌** — 12구단 전부가 `regularSeasonGames(시즌)` 을 치렀는가 · **2020 은 120경기다.** ⚠**참고 줄에만 쓴다.**
  * ⚠**문서에 적는 수는 완결 시즌의 것이어야 한다** — 진행 중 시즌을 넣으면 경기가 들어올 때마다 낡는다.
- * ⚠**「최근 시즌을 뺀다」로 쓰지 마라**(2026 이 끝난 뒤에도 영원히 빠진다) · **2020 은 120경기다.**
+ *   그 「완결 시즌」은 **`DOC_SEASONS`(고정 범위)** 다 — 데이터 판정은 정규시즌이 끝난 날 범위 밖 시즌을 넣는다.
+ * ⚠**「최근 시즌을 뺀다」로 쓰지 마라**(2026 이 끝난 뒤에도 영원히 빠진다) — 고정 범위는 명시한 목록이고, 끝난 시즌이 그 밖이면
+ *   수집 로그가 알린다(`scripts/freshness.ts`).
  */
 const settled = new Set(
   (
@@ -55,12 +60,20 @@ const settled = new Set(
     .filter((r) => Number(r.fewest) >= regularSeasonGames(Number(r.season)))
     .map((r) => Number(r.season)),
 );
-const SETTLED_SQL = `g.season IN (${[...settled].sort().join(",")})`;
-console.log(`완결 시즌: ${[...settled].sort().join(" ")}`);
+// ⚠비면 `IN ()` 는 구문 오류다 — `IN (NULL)` 은 아무것도 안 고른다(0건이 「안 쟀음」이 아니라 「해당 없음」으로 찍힌다)
+const inList = (seasons: Iterable<number>): string => `g.season IN (${[...seasons].sort((a, b) => a - b).join(",") || "NULL"})`;
+/** **문서에 적는 수의 범위** — `DOC_SEASONS` 한 벌(M1) */
+const DOC_SQL = inList(DOC_SEASONS);
+const SETTLED_SQL = inList(settled);
+console.log(`문서 범위(DOC_SEASONS): ${DOC_SEASONS.join(" ")} ← **문서·시험에 적는 수는 이 범위다**`);
+console.log(`(참고) 데이터상 완결 시즌: ${[...settled].sort((a, b) => a - b).join(" ") || "없음"}`);
+const docNotSettled = DOC_SEASONS.filter((s) => !settled.has(s));
+if (docNotSettled.length > 0) console.log(`⚠문서 범위 중 이 DB 에서 완결이 아닌 시즌: ${docNotSettled.join(" ")} — 그 시즌의 수가 문서와 다르다`);
 console.log("");
 
 for (const [label, where] of [
-  ["**완결 시즌** · 정규 · played  ← **문서에 적는 수**", `g.competition = 'regular' AND g.status = 'played' AND ${SETTLED_SQL}`],
+  ["**문서 범위(DOC_SEASONS)** · 정규 · played  ← **문서에 적는 수**", `g.competition = 'regular' AND g.status = 'played' AND ${DOC_SQL}`],
+  ["(참고) 데이터상 완결 시즌 · 정규 · played", `g.competition = 'regular' AND g.status = 'played' AND ${SETTLED_SQL}`],
   ["보유 전 시즌 · 정규 · played (진행 중 포함 — 자란다)", `g.competition = 'regular' AND g.status = 'played'`],
   ["보유 전 시즌 · 전 대회 · played", `g.status = 'played'`],
 ] as const) {
@@ -96,6 +109,7 @@ for (const [label, where] of [
  * ⚠**어긋남이 「한 칸 밀림」인가** — 고칠 사람에게 필요한 진단.
  * `after_seq − 1` 의 타석이 그 주자 사건과 같은 이닝·표리라면 **`after_seq` 가 다음 타석을 가리킨** 것이다.
  * ⚠**이 스크립트는 어느 쪽이 옳은지 판정하지 않는다** — 「둘이 갈린다」까지가 여기서 말할 수 있는 것이다.
+ * ⚠**범위는 위 「문서에 적는 수」 줄과 같다**(`DOC_SEASONS`) — 그 줄의 어긋남을 설명하는 진단이다.
  */
 const offByOne = db
   .prepare(
@@ -105,7 +119,7 @@ const offByOne = db
        JOIN game g ON g.game_id = r.game_id
        JOIN pa_event p ON p.game_id = r.game_id AND p.seq = r.after_seq
        LEFT JOIN pa_event q ON q.game_id = r.game_id AND q.seq = r.after_seq - 1
-      WHERE g.competition = 'regular' AND g.status = 'played' AND ${SETTLED_SQL}
+      WHERE g.competition = 'regular' AND g.status = 'played' AND ${DOC_SQL}
         AND (p.inning <> r.inning OR p.half <> r.half)`,
   )
   .get() as { mismatched: number; prevMatches: number };

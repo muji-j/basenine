@@ -3,11 +3,14 @@
  *
  * ⚠**여기 적힌 수는 「완결 시즌」의 것이다.** 진행 중 시즌을 넣으면 **경기가 하나 들어올 때마다**
  * 이 파일이 낡고, 시즌 중에는 **매일** 붉어진다. 이 저장소는 그 병을 이미 앓았다
- * (`steal-seasons.test.ts` 머리말 · 2026-08-20). 완결 시즌은 더 늘 것이 없으므로
- * 이 시험이 붉어지는 것은 **백필했거나 시즌이 끝났을 때**뿐이다 — 둘 다 사람이 볼 만한 사건이다.
+ * (`steal-seasons.test.ts` 머리말 · 2026-08-20).
  *
- * ⚠**「완결」을 벽시계로 판정하지 않는다**(M6) — 12팀이 그 시즌의 경기 수를 채웠는가로 본다.
- * ⚠**2020 은 120경기다**(`regularSeasonGames`).
+ * ⚠**「완결 시즌」은 고정 범위다 — `@bb-app/domain` 의 `DOC_SEASONS` 한 벌**(M1 · 2026-10-24).
+ * ~~12팀이 그 시즌의 경기 수를 채웠는가로 본다 · 이 시험이 붉어지는 것은 백필했거나 시즌이 끝났을 때뿐이다~~ —
+ * 그 판정이 정규시즌이 끝난 날(2026-10-08) 2026 을 넣어 이 파일 4본이 붉어졌고 **배포가 막혔다**(고정 수치 시험 13본).
+ * 이제 「시즌이 끝났다 · 백필했다」는 **수집 로그가 비차단으로 알리고**(`scripts/freshness.ts`), 이 파일이 붉어지는 것은
+ * **범위를 올린 날**이다 — 표를 고치는 절차는 `docs/operations.md` 「해마다 하는 일」.
+ * ⚠**2020 은 120경기다**(`regularSeasonGames`) — 범위에 들어 있다.
  * ⚠**대회 경계**: `competition='regular' AND status='played'`(§2-1).
  *
  * ⚠**DB 가 없으면 건너뛴다.** CI 는 `BB_REQUIRE_DB=1` 로 막는다(작업규칙 7·8).
@@ -20,7 +23,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
-import { isHomeVenue, leagueOf, regularSeasonGames, venueOf } from "@bb-app/domain";
+import { DOC_SEASONS, isHomeVenue, leagueOf, venueOf } from "@bb-app/domain";
 import { parkFactor, runsPerWin, sumRunEnvironments } from "../src/park.ts";
 import type { RunEnvironment } from "../src/park.ts";
 
@@ -58,18 +61,11 @@ function load(): { games: GameRow[]; settled: Set<number> } {
     ).map((r) => ({ ...r, season: Number(r.season) }));
     assert.ok(games.length > 6_000, `경기가 ${games.length}건뿐이다 — 이 시험이 공회전한다`);
 
-    const per = new Map<number, Map<string, number>>();
-    for (const g of games) {
-      const m = per.get(g.season) ?? new Map<string, number>();
-      for (const c of [g.awayCode, g.homeCode]) m.set(c, (m.get(c) ?? 0) + 1);
-      per.set(g.season, m);
-    }
-    const settled = new Set(
-      [...per]
-        .filter(([s, m]) => m.size === 12 && Math.min(...m.values()) >= regularSeasonGames(s))
-        .map(([s]) => s),
-    );
-    assert.ok(settled.size >= 8, `완결 시즌이 ${settled.size}개뿐이다 — 이 시험이 공회전한다`);
+    /**
+     * ⚠**범위는 `DOC_SEASONS` 한 벌이다**(M1) — 데이터로 다시 판정하지 않는다.
+     * 범위의 시즌이 이 DB 에 빠져 있으면 아래 표 대조가 「DB 에 없다」 · 경기 수 어긋남으로 떨어진다(조용히 줄지 않는다).
+     */
+    const settled = new Set(DOC_SEASONS);
     cache = { games, settled };
     return cache;
   } finally {
@@ -137,8 +133,8 @@ test("⚠RPW 16개(완결 8시즌 × 2리그)가 DB 와 같다 — **리그내 �
       bad.push(`${line} ← 표는 ${games}경기 ${runs}점 RPW ${rpw}`);
     }
   }
-  assert.deepEqual(bad, [], "RPW 실측이 바뀌었다 — 백필했거나 시즌이 끝났으면 이 표를 갱신하라");
-  // ⚠완결 시즌이 늘면 표도 늘어야 한다. 「16건 통과」가 「8건만 쟀음」이 되지 않게(작업규칙 7)
+  assert.deepEqual(bad, [], "RPW 실측이 바뀌었다 — 고정 범위(DOC_SEASONS)를 올렸으면 이 표를 갱신하라(docs/operations.md 「해마다 하는 일」)");
+  // ⚠범위가 늘면 표도 늘어야 한다. 「16건 통과」가 「8건만 쟀음」이 되지 않게(작업규칙 7)
   assert.equal(inner.size, Object.entries(RPW).length, `잰 것 ${inner.size}건 · 표 ${Object.entries(RPW).length}건`);
 });
 
@@ -241,7 +237,7 @@ test("⚠건물 단위 파크팩터가 DB 와 같다 — 기준 표본도 함께
       bad.push(`${id}: ${e.games}경기 PF ${got.value?.toFixed(3)} ← 표는 ${games}경기 ${pf}`);
     }
   }
-  assert.deepEqual(bad, [], "파크팩터 실측이 바뀌었다 — 백필했거나 시즌이 끝났으면 이 표를 갱신하라");
+  assert.deepEqual(bad, [], "파크팩터 실측이 바뀌었다 — 고정 범위(DOC_SEASONS)를 올렸으면 이 표를 갱신하라(docs/operations.md 「해마다 하는 일」)");
   assert.equal(byBuilding.size, Object.entries(PF).length, "본거지·제2 홈구장이 늘거나 줄었다");
 });
 

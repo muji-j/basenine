@@ -10,7 +10,9 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { CollectionEvidence, MissedAnnounced, MissedPlayed } from "@bb-app/domain";
 import { LOOKBACK_DAYS } from "@bb-app/domain";
+import { CAREER_RECEIVED_CTES } from "./career-received.ts";
 import type { Db } from "./db.ts";
+import { REFETCH_WINDOW_CTES } from "./refetch-window.ts";
 import { seasonIsOver } from "./season-over.ts";
 
 function rawOf(src: Db | DatabaseSync): DatabaseSync {
@@ -102,40 +104,31 @@ export function collectionEvidence(src: Db | DatabaseSync, today: string, lookba
   const nextGameSeasonOver = next?.s != null && seasonIsOver(db, next.s);
 
   /**
-   * **통산** — ⚠**기존 감시(`scripts/freshness.ts`)의 SQL 을 그대로 옮겼다**(설계 D10 · 규칙을 바꾸지 않는다).
-   * 「아직 못 받은 선수 중 가장 오래전에 뛴 사람의 그 경기일」 — 재취득이 멈추면 하루씩 뒤로 밀린다.
+   * **통산** — 「아직 못 받은 선수 중 가장 오래전에 뛴 사람의 그 경기일」 — 재취득이 멈추면 하루씩 뒤로 밀린다.
+   * ⚠~~기존 감시의 SQL 을 그대로 옮겼다(설계 D10 · 규칙을 바꾸지 않는다)~~ 는 2026-10-24 부로 낡았다 — **「받았다」가 바뀌었다**:
+   *   통산 행이 없고 **정규시즌 출장도 없으면** 프로필 취득 시각으로 받은 것이다(`career-received.ts` · 사용자 결정 A). 통산 행이 0 인
+   *   CS 출장자가 **영원히 못 받은 선수**로 남아 `career-lag` 이 10-20 부터 수집 잡을 매일 실패시켰다.
+   *   ⚠정규시즌에 나왔는데 통산 행이 0 이면 여전히 「못 받음」이다 — 데뷔 직후 늦은 사본이라 울어야 한다(이중 검토 P2).
+   * ⚠**「받았다」와 창(마지막 출장일 · 400일 선)은 재취득 선정기와 한 벌이다**(M1 · `career-received.ts` · `refetch-window.ts`) —
+   *   예전에는 둘 다 이 자리에 사본이 있었고, 그래서 **감시와 선정이 같이 틀렸다**(선정기는 그를 매 실행 다시 받았다).
+   * ⚠**요약(대상 수 · 취득일 범위 · 모름)은 여전히 「통산 기록」의 것이다**(`career_fetched`) — 통산 행이 없는 선수는 대상 수에 안 든다.
+   *   대상이 0 이면 판정이 꺼지는 규칙(통산을 아직 적재하지 않은 DB)도 그대로다.
    */
   const career = one<{ players: number; unknown: number | null; oldest: string | null; newest: string | null; stalestPlayed: string | null }>(`
-    WITH appearance AS (
-      SELECT b.player_id AS id, MAX(g.game_date) AS last
-        FROM batting_line b JOIN game g ON g.game_id = b.game_id
-       WHERE g.status = 'played' GROUP BY b.player_id
-      UNION ALL
-      SELECT t.player_id AS id, MAX(g.game_date) AS last
-        FROM pitching_line t JOIN game g ON g.game_id = t.game_id
-       WHERE g.status = 'played' GROUP BY t.player_id
-    ),
-    last_seen AS (SELECT id, MAX(last) AS last FROM appearance GROUP BY id),
-    fetched AS (
-      SELECT player_id AS id,
-             MAX(SUBSTR(datetime(fetched_at, '+9 hours'), 1, 10)) AS day
-        FROM (SELECT player_id, fetched_at FROM career_batting
-              UNION ALL
-              SELECT player_id, fetched_at FROM career_pitching)
-       GROUP BY player_id
-    )
+    WITH ${REFETCH_WINDOW_CTES},
+    ${CAREER_RECEIVED_CTES}
     SELECT COUNT(*) AS players,
            SUM(f.day IS NULL) AS unknown,
            MIN(f.day) AS oldest,
            MAX(f.day) AS newest,
            (SELECT MIN(l2.last) FROM last_seen l2
-              LEFT JOIN fetched f2 ON f2.id = l2.id
-             WHERE (f2.day IS NULL OR f2.day <= l2.last)
-               AND l2.last >= (SELECT DATE(MAX(game_date), '-400 days') FROM game WHERE status = 'played')
+              LEFT JOIN career_received r ON r.id = l2.id
+             WHERE (r.day IS NULL OR r.day <= l2.last)
+               AND l2.last >= (SELECT d FROM cutoff)
            ) AS stalestPlayed
-      FROM fetched f
+      FROM career_fetched f
       JOIN last_seen l ON l.id = f.id
-     WHERE l.last >= (SELECT DATE(MAX(game_date), '-400 days') FROM game WHERE status = 'played')
+     WHERE l.last >= (SELECT d FROM cutoff)
   `);
 
   return {
