@@ -14,23 +14,26 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { DraftBidRow, DraftKind, DraftPickRow } from "@bb-app/parser";
+import type { DraftBidRow, DraftHeldOn, DraftKind, DraftPickRow } from "@bb-app/parser";
 import { openDb } from "../src/db.ts";
-import { loadDraft } from "../src/draft.ts";
+import { draftPicksIn, loadDraft } from "../src/draft.ts";
+import type { DraftEventSource } from "../src/draft.ts";
 
 /**
  * ⚠**출처가 두 벌이다**([I3]). 구단 페이지(`page`)와 연도 톱(`event`)은 **입도가 다르므로**
  * 값도 달라야 한다 — 여기서 같은 값을 쓰면 「덮였는가」를 재는 시험이 **구별할 수 없게 된다.**
+ * ⚠**개최일도 연도 톱에서 온다**(2026-10-24) — 그래서 `event` 가 함께 싣는다(실물 2019 = 10月17日).
  */
 const PAGE = {
   source: "https://npb.jp/draft/2019/draftlist_g.html",
   fetchedAt: "2026-09-05T01:00:00Z",
   revision: "sha256:page-g",
 };
-const EVENT = {
+const EVENT: DraftEventSource = {
   source: "https://npb.jp/draft/2019/",
   fetchedAt: "2026-09-05T00:00:00Z",
   revision: "sha256:event-2019",
+  heldOn: { shape: "single", date: "2019-10-17" },
 };
 const META = { page: PAGE, event: EVENT };
 
@@ -147,8 +150,92 @@ test("draft_event 가 kind 마다 생기고 출처 3종을 채운다(M4)", async
       assert.equal(e.fetched_at, EVENT.fetchedAt);
       assert.equal(e.revision, EVENT.revision);
       assert.notEqual(e.source, PAGE.source, "⚠구단 페이지가 회의의 출처가 되면 안 된다");
-      assert.equal(e.held_on, null, "개최일은 이 소스가 안 준다(M11)");
+      // ⚠~~「개최일은 이 소스가 안 준다(M11)」~~ 는 거짓이었다(2026-10-24) — 연도 톱이 줄곧 적고 있었다.
+      //   회의를 하나로 적은 해는 支配下·育成 둘 다 그 날짜다.
+      assert.equal(e.held_on, "2019-10-17", "개최일이 연도 톱에서 안 왔다");
     }
+  });
+});
+
+/** 2005 연도 톱의 실물 모양(회의 셋 · `parseDraftHeldOn` 이 내는 값 그대로) */
+const HELD_2005: DraftHeldOn = {
+  shape: "per-meeting",
+  meetings: [
+    { kind: "daigaku_shakaijin", label: "大学生・社会人ほか選択会議", date: "2005-11-18" },
+    { kind: "koukousei", label: "高校生選択会議", date: "2005-10-03" },
+    { kind: "ikusei", label: "育成選手選択会議", date: "2005-12-01" },
+  ],
+};
+
+test("⚠회의별로 적힌 해(2005)는 구획마다 자기 날짜 — 적히지 않은 구획은 NULL(M11)", async () => {
+  await withDb((db) => {
+    loadDraft(db, {
+      season: 2005,
+      team: "e",
+      picks: [
+        pick("e", "koukousei", 1, "片山 博視"),
+        pick("e", "daigaku_shakaijin", 1, "松崎 伸吾"),
+        pick("e", "ikusei", 1, "育成 一"),
+        pick("e", "kibou_nyudanwaku", null, "希望 一"),
+      ],
+      bids: [],
+      page: PAGE,
+      event: { ...EVENT, source: "https://npb.jp/draft/2005/", heldOn: HELD_2005 },
+    });
+    const evs = db.raw
+      .prepare("SELECT kind, held_on FROM draft_event WHERE season = 2005 ORDER BY kind")
+      .all() as unknown as Array<{ kind: string; held_on: string | null }>;
+    assert.deepEqual(evs.map((e) => ({ ...e })), [
+      { kind: "daigaku_shakaijin", held_on: "2005-11-18" },
+      { kind: "ikusei", held_on: "2005-12-01" },
+      // ⚠**希望入団枠 은 회의가 아니라 제도다** — 날짜를 지어내지 않는다(「소스가 안 말한다」)
+      { kind: "kibou_nyudanwaku", held_on: null },
+      { kind: "koukousei", held_on: "2005-10-03" },
+    ]);
+  });
+});
+
+test("⚠연도 톱의 날짜가 바뀌면 개최일도 바뀐다 — 그 행의 판(revision)과 함께 움직인다(M4·M5)", async () => {
+  await withDb((db) => {
+    loadDraft(db, { season: 2019, team: "g", picks: [pick("g", "shihaika", 1, "堀田 賢慎")], bids: [], ...META });
+    // 같은 페이지의 다음 판 — 일정이 바뀌었다(가상의 연기)
+    const next: DraftEventSource = { ...EVENT, revision: "sha256:event-2019-b", heldOn: { shape: "single", date: "2019-10-24" } };
+    loadDraft(db, { season: 2019, team: "g", picks: [pick("g", "shihaika", 1, "堀田 賢慎")], bids: [], page: PAGE, event: next });
+    const ev = db.raw
+      .prepare("SELECT held_on, revision FROM draft_event WHERE season = 2019 AND kind = 'shihaika'")
+      .get() as unknown as { held_on: string; revision: string };
+    assert.deepEqual({ ...ev }, { held_on: "2019-10-24", revision: "sha256:event-2019-b" }, "⚠옛 날짜가 새 판에 남았다");
+    // 같은 입력을 한 번 더 — 행이 그대로다(M5)
+    loadDraft(db, { season: 2019, team: "g", picks: [pick("g", "shihaika", 1, "堀田 賢慎")], bids: [], page: PAGE, event: next });
+    const n = db.raw.prepare("SELECT COUNT(*) AS n FROM draft_event").get() as unknown as { n: number };
+    assert.equal(n.n, 1);
+  });
+});
+
+test("⚠개최일을 못 읽은 판이면 held_on 은 NULL 이고 지명·출처는 그대로 들어간다 — 옛 날짜를 남기지 않는다", async () => {
+  await withDb((db) => {
+    loadDraft(db, { season: 2019, team: "g", picks: [pick("g", "shihaika", 1, "堀田 賢慎")], bids: [], ...META });
+    // 다음 판에서 연도 톱 모양이 바뀌어 날짜를 못 읽었다 — ⚠지명은 막지 않고, 날짜는 **옛 판의 값을 남기지 않는다**
+    const broken: DraftEventSource = {
+      ...EVENT,
+      revision: "sha256:event-2019-c",
+      heldOn: { shape: "unreadable", reason: "DraftParseError: 연도 톱에서 개최일을 못 찾았다" },
+    };
+    loadDraft(db, { season: 2019, team: "g", picks: [pick("g", "shihaika", 1, "堀田 賢慎")], bids: [], page: PAGE, event: broken });
+    const ev = db.raw
+      .prepare("SELECT held_on, revision FROM draft_event WHERE season = 2019 AND kind = 'shihaika'")
+      .get() as unknown as { held_on: string | null; revision: string };
+    assert.deepEqual({ ...ev }, { held_on: null, revision: "sha256:event-2019-c" }, "⚠옛 판의 날짜가 새 판에 남았다");
+    assert.equal(draftPicksIn(db, 2019), 1, "⚠개최일 하나 때문에 지명이 빠졌다");
+  });
+});
+
+test("시즌의 지명 행 수 — 「개최 후 미수집」 판정의 재료(출처를 가리지 않는다)", async () => {
+  await withDb((db) => {
+    assert.equal(draftPicksIn(db, 2019), 0, "빈 DB 는 0 이다");
+    loadDraft(db, { season: 2019, team: "g", picks: [pick("g", "shihaika", 1, "堀田 賢慎"), pick("g", "ikusei", 1, "平間 隼人")], bids: [], ...META });
+    assert.equal(draftPicksIn(db, 2019), 2);
+    assert.equal(draftPicksIn(db, 2020), 0, "다른 시즌을 세지 않는다");
   });
 });
 

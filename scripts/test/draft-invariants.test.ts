@@ -47,6 +47,8 @@ const EVENT = {
   source: "https://npb.jp/draft/2019/",
   fetchedAt: "2026-09-05T00:00:00Z",
   revision: "sha256:event",
+  // ⚠연도 톱은 개최일도 싣는다(2026-10-24). 이 시험의 불변식은 날짜를 안 본다 — 실물 2019 값을 둔다
+  heldOn: { shape: "single", date: "2019-10-17" } as const,
 };
 const META = { page: PAGE, event: EVENT };
 

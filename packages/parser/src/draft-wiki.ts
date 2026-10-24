@@ -129,8 +129,28 @@ export interface DraftWikiCell {
   /**
    * ⚠**굵기의 출처는 표 자신이다** — 표 스타일이 `font-weight:bold` 라
    * **셀에 `font-weight` 가 없으면 굵고 `normal` 이면 안 굵다.**
+   * ⚠**CSS 문법상 무효인 값은 「없다」와 같다**(`ignoredFontWeight` · 2026-10-24 · 규칙표 §3).
    */
   readonly bold: boolean;
+  /**
+   * 브라우저가 **버리는** `font-weight` 값(소문자 · 예 `heavy`). 버려진 칸은 선언이 없는 칸과 같게 읽었다.
+   * ⚠**`null` 은 「버린 것이 없다」**다 — 선언이 없었거나 `normal` 이었다.
+   */
+  readonly ignoredFontWeight: string | null;
+}
+
+/**
+ * **무효라서 선언이 없는 것으로 읽은** `font-weight` 한 칸(2026-10-24 · 규칙표 §3).
+ *
+ * ⚠**조용히 흡수하지 않는다** — 그리드 결과에 실려 적재 로그가 센다. 규칙은 연도마다 사람이 확인한다
+ * (규칙표 §11 조건 1). 0 이 아니면 **그해 편집자가 스타일을 새로 썼다**는 뜻이다.
+ */
+export interface DraftWikiIgnoredFontWeight {
+  /** 행 라벨 원문(`1巡目1`) */
+  readonly rowLabel: string;
+  readonly columnIndex: number;
+  /** 소문자로 접은 원값(`heavy`) */
+  readonly value: string;
 }
 
 export interface DraftWikiRow {
@@ -201,6 +221,11 @@ export type DraftWikiParse =
       readonly picks: readonly DraftWikiPick[];
       readonly bids: readonly DraftWikiBid[];
       readonly markers: readonly DraftWikiMarkerCell[];
+      /**
+       * CSS 문법상 무효라 **선언이 없는 칸과 같게 읽은** `font-weight`. 원본 칸 하나에 한 번(rowspan 은 한 번만 센다).
+       * ⚠**빈 배열이 정상이다** — 2005~2025 그리드 21개 연도 전수 0건, 2026 개최 후 판 **3건**(`heavy` · 당첨 칸).
+       */
+      readonly ignoredFontWeights: readonly DraftWikiIgnoredFontWeight[];
     }
   /**
    * ⚠**실패가 아니다**(M11). 2026 이 이 상태다 — 절은 있는데 그리드가 없다(미개최·미기재).
@@ -346,23 +371,32 @@ function decodeEntities(s: string): string {
   });
 }
 
+/** 선언 하나. 프로퍼티·값 둘 다 소문자로 접었다(CSS 프로퍼티·키워드는 대소문자를 안 가린다) */
+interface CssDecl {
+  readonly prop: string;
+  readonly value: string;
+}
+
 /**
- * CSS 를 **프로퍼티 단위로** 읽는다.
+ * CSS 를 **선언 단위로, 적힌 순서대로** 읽는다.
  *
  * ⚠⚠**문자열 매칭 금지**(규칙표 §6-5). 같은 표 안에서 `…normal;` 와 `…normal` 이 **공존한다**(2019).
  * 색도 마찬가지로 `#ccf;` 와 `#ccf` 가 섞인다(2019·2024·2025 실측).
  * **세미콜론 하나로 낙첨이 당첨이 된다.**
+ * ⚠⚠**순서를 버리지 마라**(2026-10-24 · GPT 검토 P1). 프로퍼티마다 마지막 값 하나만 남기면(옛 `cssProps`)
+ * `font-weight:normal;font-weight:heavy` 에서 **앞의 `normal` 이 사라진다** — 브라우저는 무효인 `heavy` 를 버리고
+ * `normal` 을 적용하는데, 우리는 `heavy`(무효 → 선언 없음 → 굵음)만 보고 **낙첨을 당첨으로** 읽는다.
  */
-function cssProps(style: string | null): Map<string, string> {
-  const out = new Map<string, string>();
+function cssDecls(style: string | null): CssDecl[] {
+  const out: CssDecl[] = [];
   if (style === null) return out;
   for (const decl of style.split(";")) {
     const at = decl.indexOf(":");
     if (at === -1) {
-      if (decl.trim() !== "") out.set(decl.trim().toLowerCase(), "");
+      if (decl.trim() !== "") out.push({ prop: decl.trim().toLowerCase(), value: "" });
       continue;
     }
-    out.set(decl.slice(0, at).trim().toLowerCase(), decl.slice(at + 1).trim().toLowerCase());
+    out.push({ prop: decl.slice(0, at).trim().toLowerCase(), value: decl.slice(at + 1).trim().toLowerCase() });
   }
   return out;
 }
@@ -570,6 +604,54 @@ function expandGrid(rows: readonly RawCell[][], where: string): GridCell[][] {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// font-weight — **CSS 문법으로** 가른다(2026-10-24 · 규칙표 §3)
+// ──────────────────────────────────────────────────────────────────────────
+
+/** `font-weight` 의 **고유 키워드** 전량(CSS Fonts 4). `normal` 도 여기 든다 */
+const FONT_WEIGHT_KEYWORDS: ReadonlySet<string> = new Set(["normal", "bold", "bolder", "lighter"]);
+/**
+ * **모든 프로퍼티에 유효한 전역 키워드**(CSS Cascade). ⚠**무효로 접지 마라** — `initial` 은
+ * 브라우저에서 `normal`(= 낙첨)이 된다. 무효로 접으면 그 칸이 굵게(= 당첨으로) 읽혀 **조용히 틀린다.**
+ */
+const CSS_WIDE_KEYWORDS: ReadonlySet<string> = new Set(["inherit", "initial", "unset", "revert", "revert-layer"]);
+/** 식별자 **하나**. ⚠`--x`(사용자 정의 속성 모양)는 안 맞는다 — 둘째 글자가 `-` 라 */
+const CSS_IDENT = /^-?[a-z_][a-z0-9_-]*$/u;
+/** 수 **하나**(부호·소수·지수). 단위가 붙은 것(`700px`)은 안 맞는다 */
+const CSS_NUMBER = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/u;
+
+/**
+ * `font-weight` 선언값 하나의 판정. ⚠**`cssDecls` 가 이미 소문자로 접은 값**을 받는다(CSS 키워드는 대소문자를 안 가린다).
+ *
+ * | 판정 | 무엇 | 칸은 |
+ * |---|---|---|
+ * | `normal` | `normal` | **안 굵다**(낙첨) |
+ * | `invalid` | 문법상 **확실히** 무효 — 모르는 식별자 하나(`heavy`) · 1~1000 밖의 수(`0`·`1001`) | **선언이 없는 칸과 같다** — 표의 `bold` 를 물려받아 굵다 |
+ * | `valid-other` | 유효한데 `normal` 이 아니다 — `bold`·`600`·`inherit`·`initial` … | **던진다**(M7) |
+ * | `unknown` | 모양을 판정할 수 없다 — 함수(`var()`·`calc()`) · `!important` · 여러 토큰 · 단위 · 문자열 · `--x` | **던진다**(M7) |
+ *
+ * ⚠⚠**왜 `invalid` 만 흡수하는가**: 브라우저는 무효 선언을 **버린다**(CSS Syntax 의 오류 처리).
+ * 그러면 칸은 상속값 — 표 스타일의 `font-weight:bold` — 을 그대로 갖고, **화면에서 굵게 보인다.**
+ * 우리가 읽는 것은 「사람이 화면에서 본 굵기」이므로 그것과 같게 읽는 것이 옳다(2026 `heavy` 3칸 · 실측).
+ * ⚠**유효한 값은 흡수하지 않는다** — `bold`·`600` 은 굵기를 실제로 바꾸고 `initial` 은 `normal` 이 된다.
+ * 그 뜻을 우리가 정하면 「굵음 = 당첨」 규칙을 조용히 넓히는 것이다. **사람이 규칙표를 고친 뒤에만** 받는다.
+ * ⚠**`unknown` 을 무효로 접지 마라** — `var()` 는 파싱 시점에 **유효**하고 계산 시점에 무엇이 될지 모른다.
+ * 「아마 무효」를 무효로 단정하는 순간 그 칸의 당락을 우리가 지어낸다.
+ */
+type FontWeightVerdict = "normal" | "invalid" | "valid-other" | "unknown";
+
+function fontWeightVerdict(value: string): FontWeightVerdict {
+  if (value === "normal") return "normal";
+  if (FONT_WEIGHT_KEYWORDS.has(value) || CSS_WIDE_KEYWORDS.has(value)) return "valid-other";
+  if (CSS_NUMBER.test(value)) {
+    // ⚠**`<number [1,1000]>` — 범위 밖은 파싱 시점에 무효다**(CSS Fonts 4 §2.2). 범위 안은 유효하고 굵기를 바꾼다.
+    const n = Number(value);
+    return n >= 1 && n <= 1000 ? "valid-other" : "invalid";
+  }
+  if (CSS_IDENT.test(value)) return "invalid";
+  return "unknown";
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // 셀 판정
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -578,9 +660,13 @@ function classifyCell(
   columnIndex: number,
   where: string,
 ): DraftWikiCell {
-  const props = cssProps(attrOf(raw.attrs, "style"));
-  const bgRaw = props.get("background-color") ?? null;
-  const fw = props.get("font-weight") ?? null;
+  const decls = cssDecls(attrOf(raw.attrs, "style"));
+  /**
+   * ⚠**배경색은 마지막 선언을 쓴다**(옛 `cssProps` 와 같다). 중복이어도 조용히 틀리지 않는다 — 마지막이 유효하면
+   * 브라우저와 같고, 마지막이 무효면 아래에서 **던진다**(브라우저는 앞의 유효한 색을 쓰겠지만 우리는 단정하지 않는다).
+   * 무효를 흡수하는 것은 `font-weight` 뿐이라 **중복이 위험한 것도 그쪽뿐**이다.
+   */
+  const bgRaw = decls.filter((d) => d.prop === "background-color").at(-1)?.value ?? null;
 
   if (bgRaw !== null && !LOTTERY_COLORS.has(bgRaw) && bgRaw !== NON_LOTTERY_COLOR) {
     throw new DraftWikiParseError(
@@ -588,13 +674,37 @@ function classifyCell(
       `${where} / col=${columnIndex} background-color=${JSON.stringify(bgRaw)}`,
     );
   }
-  if (fw !== null && fw !== "normal") {
+  /**
+   * ⚠⚠**`font-weight` 선언을 전부, 적힌 순서대로 본다**(2026-10-24 · GPT 검토 P1). 브라우저는 **무효 선언을 버리고
+   * 남은 유효 선언 중 마지막**을 쓴다. 우리가 받는 유효값은 `normal` 하나뿐이므로(나머지는 던진다) 규칙은 이렇다:
+   *   · 유효한데 `normal` 이 아닌 값이나 모양을 모르는 값이 **하나라도** 있으면 → **던진다**(M7)
+   *   · `normal` 이 하나라도 있으면 → `normal`(낙첨) — `normal;heavy` 도 `heavy;normal` 도 normal 이다
+   *   · 전부 무효면 → 선언 없음(굵음)
+   */
+  const fwVerdicts = decls
+    .filter((d) => d.prop === "font-weight")
+    .map((d) => ({ value: d.value, verdict: fontWeightVerdict(d.value) }));
+  const refused = fwVerdicts.find((x) => x.verdict === "valid-other" || x.verdict === "unknown");
+  if (refused !== undefined) {
     throw new DraftWikiParseError(
-      "모르는 font-weight — 굵기가 곧 당첨이라 값이 늘면 판정이 바뀐다(M7)",
-      `${where} / col=${columnIndex} font-weight=${JSON.stringify(fw)}`,
+      refused.verdict === "valid-other"
+        ? "모르는 font-weight — 유효한 값이라 굵기를 실제로 바꾼다. 굵기가 곧 당첨이라 값이 늘면 판정이 바뀐다(M7 · 규칙표 §3)"
+        : "font-weight 값의 모양을 판정할 수 없다 — 함수·!important·여러 토큰·단위는 무효라고 단정하지 않는다(M7 · 규칙표 §3)",
+      `${where} / col=${columnIndex} font-weight=${JSON.stringify(refused.value)}`
+        + (fwVerdicts.length > 1 ? ` (이 칸의 font-weight 선언 ${fwVerdicts.length}개)` : ""),
     );
   }
-  for (const key of props.keys()) {
+  /**
+   * ⚠**아래 판정은 전부 「브라우저가 적용하는 값」으로 한다.** 무효 선언은 버려지므로 `null`(선언 없음)과 같다 —
+   * 굵기도, `---` 칸 검사도, 「굵기만 지정되고 배경색이 없다」는 표식 모양 검사도 그 값으로 본다.
+   * ⚠**두 가드가 무효 굵기를 「스타일 없음」으로 보는 것은 의도다**: 표 전체가 `bold` 라 `---` 도 이름도 원래 굵고,
+   *   무효 선언은 버려지므로 **화면에 보이는 정보가 하나도 늘지 않는다** — 스타일 없는 칸과 구별할 근거가 없다.
+   *   대신 원값을 `ignoredFontWeight` 로 남겨 **센다**(조용히 흡수하지 않는다 · 적재 로그 `~~ [css]`).
+   */
+  const fw = fwVerdicts.some((x) => x.verdict === "normal") ? "normal" : null;
+  const invalid = fwVerdicts.filter((x) => x.verdict === "invalid").map((x) => x.value);
+  const ignoredFontWeight = invalid.length === 0 ? null : invalid.join(";");
+  for (const key of new Set(decls.map((d) => d.prop))) {
     if (key !== "background-color" && key !== "font-weight" && key !== "") {
       throw new DraftWikiParseError(
         "칸 스타일에 모르는 프로퍼티가 있다 — 어휘가 닫혀 있다는 전제가 깨졌다(M7)",
@@ -614,7 +724,16 @@ function classifyCell(
         `${where} / col=${columnIndex} style=${JSON.stringify(attrOf(raw.attrs, "style"))}`,
       );
     }
-    return { columnIndex, cellKind: "unnominated", display: null, canonical: null, marker: null, background: null, bold };
+    return {
+      columnIndex,
+      cellKind: "unnominated",
+      display: null,
+      canonical: null,
+      marker: null,
+      background: null,
+      bold,
+      ignoredFontWeight,
+    };
   }
 
   if (MARKERS.has(display)) {
@@ -626,6 +745,7 @@ function classifyCell(
       marker: display as DraftWikiMarker,
       background: bgRaw,
       bold,
+      ignoredFontWeight,
     };
   }
 
@@ -641,7 +761,7 @@ function classifyCell(
   if (display === "") {
     throw new DraftWikiParseError("빈 칸 — 미지명(`---`)과 다르다. 빈 값으로 흘리지 않는다(M7)", `${where} / col=${columnIndex}`);
   }
-  return { columnIndex, cellKind: "player", display, canonical, marker: null, background: bgRaw, bold };
+  return { columnIndex, cellKind: "player", display, canonical, marker: null, background: bgRaw, bold, ignoredFontWeight };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -659,7 +779,10 @@ function textOf(inner: string, where: string): string {
  *   규칙표 §10-5 가 「이 규칙은 이 렌더링에 한정」이라고 적어 둔 그 한계다.
  * @param year 연도. ⚠**페이지가 아니라 호출자가 아는 사실**이다(npb 파서의 `team` 과 같은 자리).
  * @throws {DraftWikiParseError} 절이 없을 때 · 표 스타일에 `font-weight:bold` 가 없을 때 ·
- *   폭이 13이 아닐 때 · 배너·행라벨·배경색·굵기·셀 어휘가 밖일 때. **빈 값으로 흘리지 않는다**(M7).
+ *   폭이 13이 아닐 때 · 배너·행라벨·배경색·셀 어휘가 밖일 때 · **굵기 값이 유효한데 `normal` 이 아니거나
+ *   모양을 판정할 수 없을 때**. **빈 값으로 흘리지 않는다**(M7).
+ *   ⚠**CSS 문법상 무효인 굵기 값(`heavy`)은 던지지 않는다** — 브라우저처럼 선언이 없는 것으로 읽고
+ *   `ignoredFontWeights` 에 센다(`fontWeightVerdict` · 규칙표 §3).
  */
 export function parseDraftWiki(html: string, year: number): DraftWikiParse {
   const where = `wikipedia/${year}`;
@@ -746,6 +869,9 @@ export function parseDraftWiki(html: string, year: number): DraftWikiParse {
   let kind: DraftKind = "shihaika";
   let sawBanner = false;
   let rowsBeforeFirstBanner = 0;
+  const ignoredFontWeights: DraftWikiIgnoredFontWeight[] = [];
+  /** 이미 센 **원본 칸**. ⚠`expandGrid` 는 한 원본 칸을 펼친 자리마다 **같은 객체**로 놓는다(rowspan·colspan 둘 다) */
+  const countedCells = new Set<GridCell>();
 
   grid.forEach((line, r) => {
     if (line.length !== WIDTH) {
@@ -798,6 +924,15 @@ export function parseDraftWiki(html: string, year: number): DraftWikiParse {
     const label = parseRowLabel(firstText, `${where} row=${r}`);
     const cells = line.slice(1).map((c, i) => classifyCell(c.cell, i, `${where} row=${r} ${firstText}`));
     rows.push({ rowIndex: r, labelRaw: firstText, label, kind, cells });
+    // ⚠**원본 칸 하나에 한 번만 센다** — `rowspan`·`colspan` 칸은 여러 자리에 같은 원본으로 나온다
+    //   (2007 `指名権剥奪` 이 rowspan 5 다). 행·열 번호는 **처음 나온 자리**를 적는다.
+    cells.forEach((cell, i) => {
+      const source = line[i + 1]!;
+      if (cell.ignoredFontWeight !== null && !countedCells.has(source)) {
+        countedCells.add(source);
+        ignoredFontWeights.push({ rowLabel: firstText, columnIndex: i, value: cell.ignoredFontWeight });
+      }
+    });
   });
 
   if (headerLabel === null) {
@@ -821,7 +956,7 @@ export function parseDraftWiki(html: string, year: number): DraftWikiParse {
 
   const g: DraftWikiGrid = { sectionId, headerLabel, columns, banners, rows, rowsBeforeFirstBanner };
   const { picks, bids, markers } = derive(g, where);
-  return { kind: "grid", year, grid: g, picks, bids, markers };
+  return { kind: "grid", year, grid: g, picks, bids, markers, ignoredFontWeights };
 }
 
 // ──────────────────────────────────────────────────────────────────────────

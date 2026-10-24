@@ -33,24 +33,26 @@
  * ⚠**브리프 초판은 `typeof meta.revision !== "string"` 으로 걸렀는데 그 값은 숫자라
  * 언제나 던졌을 것이다**(실측: `BlobMeta.revision: number`).
  */
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { gunzipSync } from "node:zlib";
-import { BACKNUMBER_KEY, draftWikiKey, teamPageKey, yearIndexKey } from "@bb-app/archiver";
+import { BACKNUMBER_KEY, draftWikiKey, teamPageKey, toJstDateString, yearIndexKey } from "@bb-app/archiver";
 import {
   DraftParseError,
   DraftWikiParseError,
   checkDraftWikiInvariants,
+  draftHeldOnFirst,
   normalizePlayerName,
   parseDraftBids,
+  parseDraftHeldOn,
   parseDraftPicks,
   parseDraftWiki,
 } from "@bb-app/parser";
-import type { DraftBidRow, DraftPickRow, DraftWikiParse } from "@bb-app/parser";
+import type { DraftBidRow, DraftHeldOn, DraftKind, DraftPickRow, DraftWikiParse } from "@bb-app/parser";
 import { openDb } from "../src/db.ts";
 import type { Db } from "../src/db.ts";
-import { DraftLoadError, loadDraft } from "../src/draft.ts";
-import type { DraftProvenance } from "../src/draft.ts";
+import { DraftLoadError, draftPicksIn, eventHeldOnFor, loadDraft } from "../src/draft.ts";
+import type { DraftEventHeldOn, DraftEventSource, DraftProvenance } from "../src/draft.ts";
 import {
   DraftWikiLoadError,
   compareDraftWikiBids,
@@ -188,8 +190,64 @@ async function provenanceOf(root: string, key: string, label: string): Promise<D
 
 export interface SeasonPages {
   readonly pages: readonly TeamPageWithMeta[];
-  /** 연도 톱(`/draft/{YYYY}/`) — **회의 행(`draft_event`)**의 출처다([I3]) */
-  readonly event: DraftProvenance;
+  /**
+   * 연도 톱(`/draft/{YYYY}/`) — **회의 행(`draft_event`)**의 출처([I3])와 **그 페이지가 적은 개최일**(2026-10-24).
+   */
+  readonly event: DraftEventSource;
+}
+
+/**
+ * 연도 톱 본문을 읽는다. ⚠**`TextDecoder` 로 푼다** — 아래 `readSeasonPages` 주석의 그 사고 때문이다.
+ * @returns 본문. **파일이 없을 때(`ENOENT`)만** `null`(「안 받았다」 · M11)
+ * @throws ⚠**그 밖의 읽기 오류는 던진다**(2026-10-24 · GPT 검토 P2) — `EACCES`·`EISDIR` 같은 것을 「없음」으로 삼키면
+ *   자산 손상·권한 장애가 난 **바로 그때** 경고가 꺼진다. gzip 이 깨져도 던진다.
+ */
+async function readYearIndex(archiveRoot: string, season: number): Promise<string | null> {
+  const p = bodyPath(archiveRoot, yearIndexKey(season));
+  let raw: Buffer;
+  try {
+    raw = await readFile(p);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+  return new TextDecoder("utf-8").decode(gunzipSync(raw));
+}
+
+/** 오류를 사람이 읽을 한 줄로. ⚠코드가 있으면 붙인다(`EISDIR` 같은 것이 사유의 핵심이다) */
+function errLine(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const code = (err as NodeJS.ErrnoException).code;
+  return `${err.name}${code === undefined ? "" : `(${code})`}: ${err.message}`;
+}
+
+/** 그 경로에 **아무것도 없는가**(`ENOENT`). ⚠그 밖의 오류는 던진다 — 「모르겠다」를 「없다」로 접지 않는다 */
+async function isAbsent(p: string): Promise<boolean> {
+  try {
+    await stat(p);
+    return false;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw err;
+  }
+}
+
+/**
+ * **적재 경로**의 개최일 — ⚠**던지지 않는다.** 못 읽으면 사유를 든 `unreadable` 을 돌려주고, 그 해 지명·입찰은 그대로 넣는다
+ * (2026-10-24 · 1차 검토 P2 (b)). 실패는 `SeasonLoadReport.heldOnError` → 사유 줄 + 종료 1 로 시끄럽다(M7).
+ * ⚠**이 경로는 연도 톱 사이드카가 있는 것이 확인된 뒤에만 온다**(`provenanceOf` 가 먼저 돈다) — 그래서 본문이 없으면
+ *   「안 받았다」가 아니라 **불완전한 자산**이다.
+ */
+async function readSeasonHeldOn(archiveRoot: string, season: number): Promise<DraftEventHeldOn> {
+  try {
+    const html = await readYearIndex(archiveRoot, season);
+    if (html === null) {
+      return { shape: "unreadable", reason: "연도 톱 사이드카는 있는데 본문이 없다 — 불완전한 자산이다(다시 받으면 풀린다)" };
+    }
+    return parseDraftHeldOn(html, season);
+  } catch (err) {
+    return { shape: "unreadable", reason: errLine(err) };
+  }
 }
 
 /**
@@ -222,7 +280,8 @@ export async function readSeasonPages(archiveRoot: string, season: number): Prom
     throw new DraftArchiveError("absent", `${season}: 구단 페이지가 0장`, dir);
   }
 
-  const event = await provenanceOf(archiveRoot, indexKey, `${season}/${indexSlug}`);
+  const eventProv = await provenanceOf(archiveRoot, indexKey, `${season}/${indexSlug}`);
+  const event: DraftEventSource = { ...eventProv, heldOn: await readSeasonHeldOn(archiveRoot, season) };
 
   const pages: TeamPageWithMeta[] = [];
   for (const slug of slugs) {
@@ -281,6 +340,23 @@ export interface SeasonLoadCounts {
    * 뜻이라 사람이 알아야 한다 — CLI 가 그 시즌 이름을 따로 찍는다.
    */
   readonly yielded: { readonly picks: number; readonly bids: number };
+  /**
+   * 구획마다 **실제로 넣은** 개최일(`draft_event.held_on` · 2026-10-24). 구획 이름순.
+   * ⚠**`date: null` 의 뜻은 `heldOnError` 가 가른다** — `null` 이면 「연도 톱이 그 회의의 날짜를 안 적는다」(M11),
+   *   아니면 「우리가 못 읽었다」(M7)다.
+   */
+  readonly heldOn: readonly HeldOnEntry[];
+  /**
+   * 연도 톱에서 개최일을 **못 읽은 사유**. 못 읽었어도 지명·입찰은 넣었다 — 이 칸이 그 실패를 **시끄럽게** 만든다
+   * (요약이 시즌을 따로 세고 종료코드를 올린다). ⚠`null` 은 「읽었다」다.
+   */
+  readonly heldOnError: string | null;
+}
+
+/** 구획 하나의 개최일. ⚠`null` 은 「소스가 안 말한다」 */
+export interface HeldOnEntry {
+  readonly kind: DraftKind;
+  readonly date: string | null;
 }
 
 function applyPages(db: Db, season: number, sp: SeasonPages, decision: BidsDecision): SeasonLoadCounts {
@@ -306,14 +382,19 @@ function applyPages(db: Db, season: number, sp: SeasonPages, decision: BidsDecis
     yieldedPicks += r.yielded.picks;
     yieldedBids += r.yielded.bids;
   }
+  // ⚠**`loadDraft` 가 `draft_event` 를 세우는 구획과 같은 식이다**(지명이 있는 구획) — 두 벌이 갈리면
+  //   로그가 넣지 않은 구획의 날짜를 말하게 된다. 날짜 규칙은 `draftHeldOnFor` 한 벌이다(M1 · `eventHeldOnFor` 가 감싼다).
+  const kinds = [...new Set(sp.pages.flatMap((p) => p.picks.map((x) => x.kind)))].sort();
   return {
     teams: sp.pages.length,
-    events: new Set(sp.pages.flatMap((p) => p.picks.map((x) => x.kind))).size,
+    events: kinds.length,
     picks,
     bids,
     soleNominations: decision.sourceWritesBids ? soles : null,
     sourceWritesBids: decision.sourceWritesBids,
     yielded: { picks: yieldedPicks, bids: yieldedBids },
+    heldOn: kinds.map((kind) => ({ kind, date: eventHeldOnFor(sp.event.heldOn, kind) })),
+    heldOnError: sp.event.heldOn.shape === "unreadable" ? sp.event.heldOn.reason : null,
   };
 }
 
@@ -391,6 +472,10 @@ export interface SeasonLoadReport {
    * 브리프 초판은 건너뛴 시즌에도 `false` 를 넣었는데, **그건 이 태스크가 막으려는 바로 그 혼동**이다.
    */
   readonly sourceWritesBids: boolean | null;
+  /** 구획별 개최일(`SeasonLoadCounts.heldOn`). ⚠**`null` 은 「안 쟀음」**(건너뛴 시즌)이다 */
+  readonly heldOn: readonly HeldOnEntry[] | null;
+  /** 개최일을 못 읽은 사유(`SeasonLoadCounts.heldOnError`). ⚠건너뛴 시즌은 `null`(묻지 않았다) */
+  readonly heldOnError: string | null;
 }
 
 function classify(err: unknown): SeasonSkip {
@@ -414,6 +499,8 @@ function skipped(season: number, skip: SeasonSkip): SeasonLoadReport {
     yielded: null,
     skipped: skip,
     sourceWritesBids: null,
+    heldOn: null,
+    heldOnError: null,
   };
 }
 
@@ -447,10 +534,134 @@ export async function loadDraftSeason(
       yielded: n.yielded,
       skipped: null,
       sourceWritesBids: n.sourceWritesBids,
+      heldOn: n.heldOn,
+      heldOnError: n.heldOnError,
     };
   } catch (err) {
     return skipped(season, classify(err));
   }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// 개최일 — 로그 한 칸 · 「개최 후 미수집」 경고(2026-10-24)
+// ──────────────────────────────────────────────────────────────────────────
+
+/**
+ * 시즌 줄의 개최일 칸. ⚠**「모름」을 숨기지 않는다** — 구획마다 같은 날이면 한 번, 아니면 구획별로 적는다.
+ * ⚠**세 가지를 가른다**: 건너뛴 시즌은 「안쟀음」, 연도 톱이 안 적은 구획은 「모름」(M11),
+ *   **우리가 못 읽은 것은 「못읽음」**(M7 · 사유는 요약 줄이 적는다). 셋 다 DB 에서는 NULL 이라 **줄이 갈라 줘야 한다.**
+ */
+export function heldOnNote(h: readonly HeldOnEntry[] | null, error: string | null): string {
+  if (h === null) return "개최일 안쟀음";
+  if (error !== null) return "개최일 못읽음(⚠요약 줄에 사유)";
+  if (h.length === 0) return "개최일 구획없음";
+  const dates = new Set(h.map((x) => x.date));
+  const only = [...dates][0];
+  if (dates.size === 1 && only !== null && only !== undefined) return `개최일 ${only}`;
+  return `개최일 ${h.map((x) => `${x.kind} ${x.date ?? "모름"}`).join(" · ")}`;
+}
+
+/**
+ * 「개최 후 미수집」의 유예(일). 개최일 **다음 날부터 세어** 이 날수를 **넘으면** 경고한다 —
+ * 2026-10-22 개최면 10-25 까지 조용하고 **10-26 부터** 운다.
+ * ⚠**3일인 이유**: 수집은 사람이 로컬에서 연 1회 돌리고(런북 §0), 경합 주석은 개최 며칠 뒤에 붙는다(런북 §2).
+ *   개최 당일 밤에 울면 아직 할 수 없는 일을 재촉하게 된다.
+ */
+export const DRAFT_UNCOLLECTED_GRACE_DAYS = 3;
+
+/** `YYYY-MM-DD` → 1970-01-01 부터의 날수. ⚠시계를 안 읽는다(M6) — 주어진 글자를 해석할 뿐이다 */
+function dayNumber(ymd: string, label: string): number {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(ymd);
+  const t = m === null ? Number.NaN : Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  if (m === null || !Number.isFinite(t) || new Date(t).toISOString().slice(0, 10) !== ymd) {
+    // ⚠**모르면 「넘지 않았다」로 기울지 않는다** — 그러면 경고가 조용히 꺼진다. 던진다.
+    throw new Error(`${label} 이 YYYY-MM-DD 가 아니다: ${JSON.stringify(ymd)}`);
+  }
+  return t / 86_400_000;
+}
+
+/**
+ * **「개최 후 미수집」 판정** — 순수 함수(M6: 오늘은 주입받는다).
+ *
+ * @returns 경고 문장(`::warning::` 접두사 없이). 조용해야 하면 `null`.
+ * ⚠**배포를 막지 않는다** — 드래프트는 연 1회 바뀌고 어제 값이 그대로 나간다. 그래도 **조용하면 안 된다**:
+ *   화면은 그 해를 「まだ収集していません」으로 그리는데 그건 **에러가 아니라 빈 칸**이라 아무도 결함으로 못 읽는다.
+ */
+export function uncollectedDraftWarning(input: {
+  readonly season: number;
+  /** 그 해 **가장 이른** 회의의 날짜(`draftHeldOnFirst`) */
+  readonly heldOn: string;
+  /** 그 시즌 `draft_pick` 행 수(출처 무관) */
+  readonly picks: number;
+  /** 오늘(JST · `YYYY-MM-DD`) */
+  readonly todayJst: string;
+}): string | null {
+  const elapsed = dayNumber(input.todayJst, "todayJst") - dayNumber(input.heldOn, "heldOn");
+  if (input.picks > 0 || elapsed <= DRAFT_UNCOLLECTED_GRACE_DAYS) return null;
+  return (
+    `${input.season} 드래프트는 ${input.heldOn} 에 열렸는데(${elapsed}일 전) 지명이 0행이다 — `
+    + "수집하지 않았거나 자산(draft-archive.tar)을 안 올렸다. 배포는 막지 않는다 · "
+    + "docs/operations/draft-backfill.md §1(수집)·§0(자산 업로드)"
+  );
+}
+
+/** 연도 톱에서 개최일을 읽은 결과. ⚠**세 갈래를 뭉치지 마라** — 할 일이 다르다 */
+export type HeldOnRead =
+  | { readonly state: "dated"; readonly heldOn: DraftHeldOn }
+  /** 연도 톱을 **안 받았다**(M11) — 판정할 근거가 없다. 조용하다 */
+  | { readonly state: "no-index" }
+  /** 받았는데 **날짜를 못 읽었다**(M7) — 경고가 이 해를 못 본다는 사실을 알린다 */
+  | { readonly state: "unreadable"; readonly reason: string };
+
+/**
+ * ⚠**던지지 않는다** — 경고 경로가 적재 도구 전체를 죽이면 요약·종료코드 줄이 통째로 사라진다.
+ *   본문이 깨져 있어도(gzip 손상 등) 「못 읽었다」로 돌려준다.
+ * ⚠**「안 받았다(no-index)」는 본문도 사이드카도 없을 때뿐이다**(2026-10-24 · GPT 검토 P2). 사이드카만 있으면
+ *   **불완전한 자산**이고, 본문 자리를 못 읽으면(`EISDIR`·`EACCES` …) 그건 「없다」가 아니라 「못 읽었다」다 —
+ *   그 둘을 조용히 넘기면 **자산 손상이 난 바로 그 해에 경고가 꺼진다.**
+ */
+export async function readHeldOn(archiveRoot: string, season: number): Promise<HeldOnRead> {
+  try {
+    const html = await readYearIndex(archiveRoot, season);
+    if (html === null) {
+      if (await isAbsent(metaPath(archiveRoot, yearIndexKey(season)))) return { state: "no-index" };
+      return { state: "unreadable", reason: "연도 톱 사이드카는 있는데 본문이 없다 — 불완전한 자산이다(다시 받거나 자산을 다시 펴라)" };
+    }
+    return { state: "dated", heldOn: parseDraftHeldOn(html, season) };
+  } catch (err) {
+    return { state: "unreadable", reason: errLine(err) };
+  }
+}
+
+/**
+ * 시즌들의 「개최 후 미수집」 경고 문장(`::warning::` 접두사 없이). **지명이 1행이라도 있는 시즌은 묻지 않는다.**
+ *
+ * ⚠**오늘은 주입받는다**(M6) — CLI 는 적재 시각을 스탬프한 **그 한 번의 시계**에서 JST 날짜를 만든다.
+ * ⚠**연도 톱이 없는 해는 판정하지 못한다**(조용하다) — 그래서 개최일이 발표되면 그 해 연도 톱을
+ *   **미리 한 장 받아 자산에 넣어 두라**고 런북 §1 이 말한다. 그 장이 없으면 이 경고는 그 해를 못 본다.
+ * ⚠**날짜를 못 읽은 해는 그 사실을 문장으로 낸다** — 경고가 꺼진 것을 경고한다. 단 지명이 있는 해는 묻지 않으므로
+ *   (그 해의 날짜 실패는 npb 적재가 이미 `parse` 로 붉혔다) 같은 실패를 두 번 세지 않는다.
+ */
+export async function draftCollectionWarnings(
+  db: Db,
+  archiveRoot: string,
+  seasons: readonly number[],
+  todayJst: string,
+): Promise<string[]> {
+  const out: string[] = [];
+  for (const season of seasons) {
+    const picks = draftPicksIn(db, season);
+    if (picks > 0) continue;
+    const read = await readHeldOn(archiveRoot, season);
+    if (read.state === "no-index") continue;
+    if (read.state === "unreadable") {
+      out.push(`${season} 연도 톱에서 개최일을 못 읽었다 — 「개최 후 미수집」 경고가 이 해를 못 본다(${read.reason})`);
+      continue;
+    }
+    const w = uncollectedDraftWarning({ season, heldOn: draftHeldOnFirst(read.heldOn), picks, todayJst });
+    if (w !== null) out.push(w);
+  }
+  return out;
 }
 
 
@@ -502,6 +713,12 @@ export interface WikiSeasonReport {
   readonly bidDiffs: readonly string[];
   readonly wrote: { readonly picks: number; readonly bids: number; readonly events: number } | null;
   readonly deferred: { readonly picks: number; readonly bids: number } | null;
+  /**
+   * CSS 문법상 무효라 **선언이 없는 칸으로 읽은** `font-weight`(2026-10-24 · 규칙표 §3).
+   * 한 줄에 「행 라벨 · 열 머리 · 값」(`1巡目1 楽天 heavy`). ⚠**빈 배열이 정상이다**(2005~2025 전수 0).
+   * ⚠종료코드를 안 올린다 — 브라우저와 같게 읽은 것이지 실패가 아니다. 대신 **세어서 찍는다.**
+   */
+  readonly ignoredFontWeights: readonly string[];
 }
 
 function wikiSkip(season: number, state: WikiSeasonReport["state"], reason: string | null): WikiSeasonReport {
@@ -524,6 +741,7 @@ function wikiSkip(season: number, state: WikiSeasonReport["state"], reason: stri
     bidDiffs: [],
     wrote: null,
     deferred: null,
+    ignoredFontWeights: [],
   };
 }
 
@@ -662,6 +880,9 @@ export async function loadDraftWikiSeason(
       bidDiffs: x1.diffs.map((d) => `[${d.severity}] ${d.detail}`),
       wrote: wrote === null ? null : { picks: wrote.picks, bids: wrote.bids, events: wrote.events },
       deferred: wrote === null ? null : { picks: wrote.picksDeferred, bids: wrote.bidsDeferred },
+      ignoredFontWeights: parsed.ignoredFontWeights.map(
+        (s) => `${s.rowLabel} ${parsed.grid.columns[s.columnIndex] ?? `col=${s.columnIndex}`} ${s.value}`,
+      ),
     };
   } catch (err) {
     if (err instanceof DraftWikiLoadError || err instanceof DraftWikiParseError || err instanceof DraftLoadError) {
@@ -766,6 +987,11 @@ export interface SeasonsSummary {
    * ⚠**종료코드는 안 올린다** — 정상 동작이다.
    */
   readonly yielded: readonly number[];
+  /**
+   * 연도 톱에서 **개최일을 못 읽은** 적재 시즌(2026-10-24). ⚠지명·입찰은 들어갔다 — 그래서 `loaded` 로 세면서도
+   * **종료코드를 올린다**(M7 을 로그와 종료코드가 지킨다 · 조용한 NULL 이 아니다).
+   */
+  readonly heldOnFailed: readonly number[];
   readonly exitCode: 0 | 1;
 }
 
@@ -783,6 +1009,7 @@ export function summarizeSeasons(reports: readonly SeasonLoadReport[]): SeasonsS
   /** ⚠**걸 수 있는 개수로 세 갈래를 가른다** — 「여섯보다 적다」 하나로 묶으면 거짓이 된다 */
   const loadedWith = (want: (n: number) => boolean): number[] =>
     reports.filter((r) => r.loaded && want(checkableInvariants(r).length)).map((r) => r.season);
+  const heldOnFailed = reports.filter((r) => r.loaded && r.heldOnError !== null).map((r) => r.season);
   return {
     targets: reports.length,
     loaded: reports.filter((r) => r.loaded).length,
@@ -795,7 +1022,8 @@ export function summarizeSeasons(reports: readonly SeasonLoadReport[]): SeasonsS
     limited: loadedWith((n) => n > 0 && n < ALL_INVARIANTS.length),
     incomplete: loadedWith((n) => n === 0),
     yielded: reports.filter((r) => (r.yielded?.picks ?? 0) + (r.yielded?.bids ?? 0) > 0).map((r) => r.season),
-    exitCode: bad > 0 ? 1 : 0,
+    heldOnFailed,
+    exitCode: bad > 0 || heldOnFailed.length > 0 ? 1 : 0,
   };
 }
 
@@ -832,7 +1060,9 @@ export function wikiLine(w: WikiSeasonReport): string {
   // ⚠**「사실」과 「표기」를 한 수로 접지 않는다** — 접으면 매일 붉고, 붉으면 아무도 안 읽는다
   const x3 = `X-3 사실 ${w.pickFact} · 표기 ${w.pickSpelling} / ${w.pickChecked}`;
   const x1 = w.bidChecked === 0 ? "X-1 안쟀음" : `X-1 사실 ${w.bidFact} · 표기 ${w.bidSpelling} / ${w.bidChecked}`;
-  return `열 ${w.columns}/12 (겹침 최소 ${w.minOverlap}) · ${wrote}${held} · ${x3} · ${x1} · ${invariantNote(w)}`;
+  // ⚠**0 이면 안 적는다** — `done` 이면 언제나 잰 수라 「안 쟀음」과 섞일 일이 없다. 0 이 아닐 때만 눈에 띄게 붙인다
+  const css = w.ignoredFontWeights.length === 0 ? "" : ` · ⚠무효 font-weight ${w.ignoredFontWeights.length}칸(굵게 읽음)`;
+  return `열 ${w.columns}/12 (겹침 최소 ${w.minOverlap}) · ${wrote}${held} · ${x3} · ${x1} · ${invariantNote(w)}${css}`;
 }
 
 export interface WikiSummary {
@@ -862,6 +1092,8 @@ export interface WikiSummary {
   readonly bidChecked: number;
   readonly bidFact: number;
   readonly bidSpelling: number;
+  /** 무효 `font-weight` 를 선언 없음으로 읽은 칸의 합. ⚠종료코드는 안 올린다 — 세어서 찍는다 */
+  readonly ignoredFontWeights: number;
 }
 
 /** ⚠**세는 규칙은 한 벌이다**(M1) — 화면과 종료코드가 갈릴 자리를 없앤다 */
@@ -893,6 +1125,7 @@ export function summarizeWiki(reports: readonly WikiSeasonReport[]): WikiSummary
     bidChecked: sum((r) => r.bidChecked),
     bidFact: sum((r) => r.bidFact),
     bidSpelling: sum((r) => r.bidSpelling),
+    ignoredFontWeights: sum((r) => r.ignoredFontWeights.length),
   };
 }
 
@@ -950,9 +1183,13 @@ async function main(): Promise<void> {
   const targets = only !== null ? [only] : all.filter((y) => y >= (from ?? -Infinity) && y <= (to ?? Infinity));
 
   // 시계는 1회만 읽어 전체 적재에 같은 값을 쓴다(M6).
-  const db = openDb(dbPath, new Date().toISOString());
+  // ⚠**「개최 후 미수집」의 오늘도 이 한 번에서 만든다** — 두 번 읽으면 자정 경계에서 날짜가 갈린다.
+  const nowIso = new Date().toISOString();
+  const todayJst = toJstDateString(new Date(nowIso));
+  const db = openDb(dbPath, nowIso);
   const reports: SeasonLoadReport[] = [];
   const wiki: WikiSeasonReport[] = [];
+  let warnings: string[] = [];
   try {
     for (const season of targets) {
       const r = await loadDraftSeason(db, season, { archiveRoot });
@@ -969,7 +1206,8 @@ async function main(): Promise<void> {
           `${season}: 구단 ${r.teams} · 구획 ${r.events} · 지명 ${r.picks} · 입찰 ${r.bids}`
             + ` · 단독지명 ${r.soleNominations ?? "유도안함"}`
             + ` · 경합표기 ${r.sourceWritesBids === true ? "있음" : "없음"}`
-            + ` · 검사가능 ${invNote}`,
+            + ` · 검사가능 ${invNote}`
+            + ` · ${heldOnNote(r.heldOn, r.heldOnError)}`,
         );
       } else {
         console.log(`${season}: 건너뜀 [${r.skipped?.kind}] ${r.skipped?.reason}`);
@@ -985,7 +1223,11 @@ async function main(): Promise<void> {
       wiki.push(w);
       console.log(`${season}: wiki ${wikiLine(w)}`);
       for (const d of [...w.invariantViolations, ...w.pickDiffs, ...w.bidDiffs]) console.log(`    !! ${d}`);
+      // ⚠**무효 굵기 칸은 하나하나 적는다** — 「몇 칸」만으로는 그 칸이 당첨인지 낙첨인지 사람이 못 맞춰 본다
+      for (const c of w.ignoredFontWeights) console.log(`    ~~ [css] ${season} ${c} → 선언 없음(표의 bold 상속)으로 읽었다`);
     }
+    // ⚠**지명을 다 넣은 뒤에 묻는다** — 적재 전에 물으면 이번 실행이 채운 해까지 「0행」으로 운다.
+    warnings = await draftCollectionWarnings(db, archiveRoot, targets, todayJst);
   } finally {
     db.close();
   }
@@ -1013,6 +1255,32 @@ async function main(): Promise<void> {
     console.log(
       `⚠구단이 덜 들어온 시즌 ${s.incomplete.length}개(${s.incomplete.join(",")})`
         + " — 불변식을 하나도 걸 수 없다. 아카이브가 불완전하니 그 해를 다시 받아라",
+    );
+  }
+  /**
+   * ⚠**개최일 「모름」을 합계로도 적는다**(2026-10-24). 그 구획은 `held_on` 이 NULL 인데,
+   * 그건 「못 읽었다(M7)」가 아니라 **「연도 톱이 그 회의의 날짜를 안 적는다(M11)」**다.
+   * 못 읽은 시즌은 지명·입찰은 그대로 적재되고 `heldOnError` 가 실린다 — 그래서 여기 `unknownHeld` 에서 빼고
+   * 아래 `heldOnFailed` 줄이 따로 세며 종료 1 이 된다(2026-10-24 검토 반영 · 런북 §2-1).
+   */
+  // ⚠**못 읽은 시즌(M7)은 여기 넣지 않는다** — 그건 「모름」이 아니라 아래 ⚠ 줄이 따로 센다.
+  const unknownHeld = reports
+    .filter((r) => r.heldOnError === null)
+    .flatMap((r) => (r.heldOn ?? []).filter((x) => x.date === null).map((x) => `${r.season} ${x.kind}`));
+  if (unknownHeld.length > 0) {
+    console.log(
+      `개최일 모름 ${unknownHeld.length}구획(${unknownHeld.join(" · ")}) — 연도 톱이 그 회의의 날짜를 안 적는다(M11 · 런북 §2-1)`,
+    );
+  }
+  if (s.heldOnFailed.length > 0) {
+    /**
+     * ⚠⚠**개최일을 못 읽었다 — 지명·입찰은 넣었고 `held_on` 만 NULL 이다**(2026-10-24 · 1차 검토 P2 (b)).
+     * 곁가지 하나로 그 해 지명을 막지 않되 **조용하지도 않다** — 이 줄과 종료코드 1 이 M7 을 지킨다.
+     */
+    const rows = reports.filter((r) => r.heldOnError !== null).map((r) => `${r.season}(${r.heldOnError})`);
+    console.log(
+      `⚠개최일을 못 읽은 시즌 ${s.heldOnFailed.length}개 — 지명·입찰은 넣었고 held_on 만 NULL 이다.`
+        + ` 연도 톱 모양이 바뀌었거나 자산이 불완전하다(M7 · 런북 §2-1): ${rows.join(" · ")}`,
     );
   }
   if (s.noBidsSource > 0) {
@@ -1089,9 +1357,26 @@ async function main(): Promise<void> {
       );
     }
   }
+  if (w.ignoredFontWeights > 0) {
+    /**
+     * ⚠**실패가 아니지만 조용하면 안 된다**(2026-10-24 · 규칙표 §3). CSS 에 없는 값(`heavy`)은 브라우저가 버리므로
+     * 그 칸은 표의 `bold` 를 물려받아 굵게 보이고, 우리도 그렇게 읽었다. **그해 편집자가 스타일을 새로 썼다**는 뜻이라
+     * 연도마다 사람이 규칙을 확인할 때(규칙표 §11 조건 1) 이 줄을 본다.
+     */
+    console.log(
+      `⚠무효 font-weight ${w.ignoredFontWeights}칸 — CSS 에 없는 값이라 선언이 없는 칸(굵게 = 당첨)으로 읽었다.`
+        + " 시즌 줄 아래 `~~ [css]` 가 어느 칸인지 말한다(규칙표 §3 · 런북 §8-7)",
+    );
+  }
   if (w.failed > 0) {
     console.log("⚠wikipedia 실패는 재시도로 안 풀릴 수 있다 — 규칙이 바뀐 것이면 사람이 봐야 한다(M7)");
   }
+  /**
+   * ⚠⚠**「개최 후 미수집」 — 배포를 막지 않는다**(2026-10-24). 종료코드를 안 올리고 워크플로 주석으로만 올린다:
+   * 드래프트는 연 1회 바뀌고 어제 값이 그대로 나가므로 **그날 사이트를 막을 이유가 없다.** 그래도 조용하면
+   * 그 해 화면이 「まだ収集していません」인 채로 계속 나간다 — **에러가 아니라 빈 칸**이라 아무도 결함으로 못 읽는다.
+   */
+  for (const line of warnings) console.log(`::warning::${line}`);
   /**
    * ⚠⚠**위의 npb 줄이 「검사가능 INV-N2」라고 말한 시즌에 이제 입찰이 있다.**
    * `checkableInvariants` 는 **npb 적재 보고**만 보므로 그 줄은 여전히 「npb 는 경합을 안 쓴다」를
