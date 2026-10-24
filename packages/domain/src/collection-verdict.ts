@@ -118,6 +118,21 @@ export interface CollectionVerdict {
   period: CollectionPeriod;
 }
 
+/**
+ * **`starters-behind` 의 술어** — 다음 경기일이 오늘(이전)인데, NPB 가 그날 휴식을 공표하지 않았고 그 시즌도 안 끝났는데,
+ * 예고가 그날까지 못 미쳤다.
+ *
+ * ⚠**감시와 화면(試合의 「次の予告先発」 · 2026-10-24 설계 D5)이 이 한 벌을 쓴다**(M1).
+ * ⚠**`startersLatest === null`(예고 기록이 한 건도 없음)도 「못 미쳤다」로 친다** — 그것이 화면의 뜻이다(설계 지적 4).
+ *   감시는 그 경우를 **재지 않는다**(기존 규칙 · 측정 범위를 넓히면 일일 잡이 붉어질 수 있다 · 설계 §9) —
+ *   그래서 감시 쪽은 `e.startersLatest !== null &&` 를 앞에 붙여 부른다(아래 `collectionVerdict`).
+ */
+export function startersBehind(e: Pick<CollectionEvidence, "today" | "nextGameDay" | "startersLatest" | "nextGameRestDeclared" | "nextGameSeasonOver">): boolean {
+  return e.nextGameDay !== null && e.nextGameDay <= e.today
+    && (e.startersLatest === null || e.startersLatest < e.nextGameDay)
+    && !e.nextGameRestDeclared && !e.nextGameSeasonOver;
+}
+
 /** JST 달력일 차. ⚠시계를 읽지 않는다 — 주어진 두 문자열만 본다 */
 function daysBetween(fromIso: string, toIso: string): number {
   return Math.round((Date.parse(`${toIso}T00:00:00Z`) - Date.parse(`${fromIso}T00:00:00Z`)) / 86_400_000);
@@ -152,9 +167,8 @@ export function collectionVerdict(e: CollectionEvidence, o: VerdictOptions): Col
   let startersPulseAge: number | null = null;
   if (e.startersLatest !== null || e.startersPulseDate !== null) {
     // ⚠기존 조건(다음 경기일이 오늘인데 예고가 거기 못 미친다)에 **가드 둘만** 더했다 — 휴식 공표 · 다음 경기일 시즌의 종료
-    const behind = e.nextGameDay !== null && e.startersLatest !== null
-      && e.nextGameDay <= e.today && e.startersLatest < e.nextGameDay
-      && !e.nextGameRestDeclared && !e.nextGameSeasonOver;
+    // ⚠술어는 `startersBehind` 한 벌이다(화면과 같이 쓴다) — 감시는 **예고 기록이 있을 때만** 잰다(기존 측정 범위 그대로)
+    const behind = e.startersLatest !== null && startersBehind(e);
     if (behind) reasons.push("starters-behind");
     startersPulseAge = e.startersPulseDate === null ? null : daysBetween(e.startersPulseDate, e.today);
     if (startersPulseAge === null || startersPulseAge > o.grace) reasons.push("starters-lag");
