@@ -8,9 +8,11 @@
  *   이 파일이 `update.ts` 보다 **먼저** 평가되므로(`--import`) 그 뒤 가져오는 모듈은 전부 가짜를 받는다.
  *
  * env:
- * - `BB_FAKE_SPAWN_PLAN` — `{ "<스크립트 경로>": { exit?: number|null, signal?: string, stdout?: string, stderr?: string, reasonsFile?: string } }`.
+ * - `BB_FAKE_SPAWN_PLAN` — `{ "<스크립트 경로>": { exit?: number|null, signal?: string, stdout?: string, stderr?: string, reasonsFile?: string, seq?: [...] } }`.
  *   `exit: null` 은 「신호로 죽었다」(`status: null`)다. 계획에 없는 스크립트는 종료 0 · 빈 출력.
  *   `reasonsFile` 이 있으면 `--reasons-out <경로>` 에 그 글자를 그대로 쓴다(신선도 자식 흉내).
+ *   `seq` 가 있으면 그 스크립트의 **n 번째 호출**(0부터)은 `seq[n]` 을 쓰고, `seq` 가 다 떨어지면 그 항목 자신을 쓴다 —
+ *   날짜 자식마다 다른 종료(예: 첫 날짜 75 · 둘째 69)를 재려고 둔다(PR-2b T6). ⚠호출 수를 세는 표는 이 프로세스 하나의 것이다(시험 전용).
  * - `BB_FAKE_SPAWN_LOG` — 부른 차례대로 `{ script, args, circuitN }` 를 한 줄씩 덧붙인다. `circuitN` 은 그 자식이 받은
  *   `BB_NPB_CIRCUIT_N`(부모가 `env` 로 넘긴 것 · 안 넘겼으면 물려받은 값 · 없으면 `null`) — 「닫힌 채 실패한 자식 뒤는 연속 한도 1」을 잰다.
  *   부모의 **받기 자식 사이 간격**(`collect-steps.ts` 의 `blockingSleep` = `Atomics.wait`)도 가로채 `{ sleep: <ms> }` 로 같은 줄에 남기고
@@ -26,16 +28,23 @@ interface Planned {
   stdout?: string;
   stderr?: string;
   reasonsFile?: string;
+  /** n 번째 호출(0부터)의 계획 — 다 떨어지면 이 항목 자신 */
+  seq?: Planned[];
 }
 
 const plan = JSON.parse(process.env["BB_FAKE_SPAWN_PLAN"] ?? "{}") as Record<string, Planned>;
 const logPath = process.env["BB_FAKE_SPAWN_LOG"];
+/** 스크립트마다 몇 번 불렸나 — `seq` 의 차례 */
+const callCount = new Map<string, number>();
 
 function fakeSpawnSync(_cmd: string, args: readonly string[] = [], opts: { encoding?: string; env?: Record<string, string | undefined> } = {}) {
   const script = args[0] ?? "";
   const circuitN = (opts.env ?? process.env)["BB_NPB_CIRCUIT_N"] ?? null;
   if (logPath !== undefined) appendFileSync(logPath, `${JSON.stringify({ script, args, circuitN })}\n`);
-  const p = plan[script] ?? {};
+  const n = callCount.get(script) ?? 0;
+  callCount.set(script, n + 1);
+  const entry = plan[script] ?? {};
+  const p = entry.seq?.[n] ?? entry;
   if (p.reasonsFile !== undefined) {
     const at = args.indexOf("--reasons-out");
     const path = at === -1 ? undefined : args[at + 1];

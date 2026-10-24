@@ -18,6 +18,7 @@ import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
 import { parseUpcoming } from "@bb-app/parser";
+import type { UpcomingGame } from "@bb-app/parser";
 import { fetchedAtOf, openDb } from "../src/index.ts";
 
 const [archiveDir, dbPath, seasonArg] = process.argv.slice(2);
@@ -189,7 +190,7 @@ for (
 const playedSeen = new Map<string, number>();
 const orphans: string[] = [];
 
-let months = 0, kept = 0, playedRows = 0, nonTeam = 0;
+let months = 0, kept = 0, playedRows = 0, nonTeam = 0, nonTeamPlayed = 0;
 /** 10·11월 예외로 예정 표기에 넣은 팀 칸 행의 표기 — 요약에 찍어 사람이 진짜 미정 표기인지 가른다(수정분 재검토 1차 R1) */
 const pendingLabels: string[] = [];
 /** 파일의 달과 다른 날짜의 경기 행 — 적재하지 않고 요약에 찍는다(6라운드 재검토 2차 F3) */
@@ -269,25 +270,32 @@ db.transaction(() => {
     delUpcomingMonth.run(season, mm);
     delPlayedMonth.run(season, mm);
     upsertMonth.run(season, Number(mm), sourceOf(f), fetchedAt, r.dateRows, r.games.length, baseline);
+    /**
+     * ⚠⚠**그 달 파일은 그 달 행만 쓴다**(6라운드 재검토 2차 F3 · 실행 재현). 교체가 달 단위라 다른 달 날짜 행을 넣으면 **그 행을 지울 파일이 없다** —
+     * ⑴ 제 달 파일과 카드 번호(`playedSeen` · `seqOf` 는 파일끼리 공유)가 겹쳐 짝 없는 치러짐 표시가 남고(A 헛경보 · 어느 방향이든)
+     * ⑵ 제 달 파일이 없으면 **같은 입력의 두 번째 실행이 UNIQUE 충돌로 멈춘다**(M5 · 배포가 매일 막힌다).
+     * ⚠시즌 단위로 지우던 옛 적재기에는 없던 문제다 — 달 단위 교체가 만들었다. ⚠버리지 않고 **세어 요약에 날짜를 찍는다**(실물 75장 0행).
+     * 그 날의 행은 제 달 파일이 싣는다 — 날짜 완결성 · 기준선도 이미 그 달 키만 본다.
+     * ⚠구단 경기와 올스타가 **같은 규칙 한 벌**을 지난다(아래 두 루프 · PR-2b 재검토 RS F4 — 두 벌이면 한쪽만 고쳐진다).
+     */
+    const foreign = (g: UpcomingGame): boolean => {
+      if (g.date.slice(5, 7) === mm) return false;
+      foreignRows.push(g.date);
+      return true;
+    };
+    /** 치러짐 표시 한 카드 — 같은 날 같은 카드는 페이지 순서의 번째(seq) · 그 번째 경기 행이 없으면 `orphans`(구단 · 올스타 한 벌) */
+    const markPlayed = (g: UpcomingGame): void => {
+      const card = `${g.date}|${g.homeCode}|${g.awayCode}`;
+      const nth = (playedSeen.get(card) ?? 0) + 1;
+      playedSeen.set(card, nth);
+      insPlayed.run(season, g.date, g.homeCode, g.awayCode, nth - 1, sourceOf(f), fetchedAt);
+      if ((loaded.get(card) ?? 0) < nth) orphans.push(card);
+    };
     for (const g of r.games) {
-      /**
-       * ⚠⚠**그 달 파일은 그 달 행만 쓴다**(6라운드 재검토 2차 F3 · 실행 재현). 교체가 달 단위라 다른 달 날짜 행을 넣으면 **그 행을 지울 파일이 없다** —
-       * ⑴ 제 달 파일과 카드 번호(`playedSeen` · `seqOf` 는 파일끼리 공유)가 겹쳐 짝 없는 치러짐 표시가 남고(A 헛경보 · 어느 방향이든)
-       * ⑵ 제 달 파일이 없으면 **같은 입력의 두 번째 실행이 UNIQUE 충돌로 멈춘다**(M5 · 배포가 매일 막힌다).
-       * ⚠시즌 단위로 지우던 옛 적재기에는 없던 문제다 — 달 단위 교체가 만들었다. ⚠버리지 않고 **세어 요약에 날짜를 찍는다**(실물 75장 0행).
-       * 그 날의 행은 제 달 파일이 싣는다 — 날짜 완결성 · 기준선도 이미 그 달 키만 본다.
-       */
-      if (g.date.slice(5, 7) !== mm) {
-        foreignRows.push(g.date);
-        continue;
-      }
+      if (foreign(g)) continue;
       if (g.played) {
         playedRows += 1;
-        const card = `${g.date}|${g.homeCode}|${g.awayCode}`;
-        const nth = (playedSeen.get(card) ?? 0) + 1;
-        playedSeen.set(card, nth);
-        insPlayed.run(season, g.date, g.homeCode, g.awayCode, nth - 1, sourceOf(f), fetchedAt);
-        if ((loaded.get(card) ?? 0) < nth) orphans.push(card);
+        markPlayed(g);
         continue;
       }
       const key = `${g.date}|${g.homeCode}|${g.awayCode}`;
@@ -295,6 +303,23 @@ db.transaction(() => {
       seqOf.set(key, seq + 1);
       ins.run(season, g.date, g.homeCode, g.awayCode, seq, g.venue, g.startTime, sourceOf(f), fetchedAt);
       kept += 1;
+    }
+    /**
+     * ⚠⚠**치러진 올스타 행도 치러짐 표시에 남긴다**(2026-10-24 · PR-2b 검토 P2-2 · 실DB 복사본으로 재현됨).
+     * 예전에는 세기만 하고 버려서 올스타 날은 예정 · 치러짐 표시 · 경기 어느 표에도 안 남았고, 그 경기를 놓치면 따라잡기가 그 날을
+     * 「확인된 휴식일」로 **영구히** 건너뛰었다(옛 규칙은 7일 안이면 다시 받았다).
+     * ⚠코드는 리그 선발(`cl`·`pl`)이고 파서가 **점수 링크 슬러그에서** 낸다(PR-2b 재검토 GPT P2) — 경기 행의 코드와 같은 출처라 수집 판정 A
+     *   (`collectionEvidence` 의 치러짐인데 경기 없음)와 따라잡기의 owed ⒜ 가 같은 카드를 본다. 받아 둔 올스타는 A 가 안 운다.
+     * ⚠점수만 있고 링크가 없는 올스타 행은 파서가 「못 읽음」으로 세어 이 달 전체를 되돌린다(M7 · 링크 모양이 바뀐 사본이 기존 표시를 못 지운다).
+     * ⚠**앞으로의 경기(`upcoming_game`)에는 넣지 않는다** — 화면이 구단 경기만 다룬다. 링크 없는 올스타(예정) 행은 지금처럼 세기만 한다.
+     * ⚠**마이그레이션이 없다** — 표의 뜻(「월간 일정이 치렀다고 표시한 경기」)이 그대로이고 경기 행도 이미 `cl`·`pl` 을 쓴다.
+     *   달 단위로 지우고 다시 넣으므로 다음 적재가 그 시즌의 달을 다시 채운다(M5 · 기존 DB 는 다음 실행에서 맞춰진다).
+     */
+    for (const g of r.nonTeamGames) {
+      if (foreign(g)) continue;
+      if (!g.played) continue;
+      nonTeamPlayed += 1;
+      markPlayed(g);
     }
   }
   if (noDateRowMonths.length > 0) {
@@ -329,7 +354,7 @@ db.transaction(() => {
 
 console.log(
   `일정 ${months}개월분 · 앞으로의 경기 ${kept}건 적재 · 치러진 행 ${playedRows}건 제외` +
-    ` · 구단 아닌 행 ${nonTeam}건 · 경기가 없는 달 ${noGameMonths.length}개` +
+    ` · 구단 아닌 행 ${nonTeam}건(치러짐 표시로 ${nonTeamPlayed}건 남김) · 경기가 없는 달 ${noGameMonths.length}개` +
     (noGameMonths.length === 0 ? "" : `(${noGameMonths.join("·")})`) +
     /**
      * ⚠**10·11월 예외로 받은 행은 표기를 찍는다** — 예외는 진짜 미정 표기(`CS勝者`)와 약칭이 깨진 미래 경기를 못 가른다.

@@ -84,11 +84,58 @@ test("점수 링크가 있으면 치러진 경기 · 없으면 앞으로의 경�
   );
 });
 
+/**
+ * ⚠슬러그는 실물 모양이다(2026-10-24 · PR-2b 재검토) — 예전 합성 링크 `c-p-01` 은 실물에 없는 모양이었다.
+ * 실물 올스타 슬러그는 `cl-pl-NN` · `pl-cl-NN` 뿐이다(월간 일정 75장 · 16행 · 경기 행 16건과 16/16).
+ */
 test("구단이 아닌 두 칸(올스타)은 따로 센다", () => {
-  const r = classifyScheduleRows(page(gameRow("0723", "セ・リーグ", "パ・リーグ", { score: [4, 1], link: "/scores/2025/0723/c-p-01/" })), 2025);
+  const r = classifyScheduleRows(page(gameRow("0723", "セ・リーグ", "パ・リーグ", { score: [4, 1], link: "/scores/2025/0723/cl-pl-01/" })), 2025);
   assert.equal(r.nonTeam, 1);
   assert.equal(r.games.length, 0);
   assert.equal(r.unreadable, 0);
+});
+
+/**
+ * ⚠⚠**점수는 있는데 점수 링크가 없는 올스타 행은 못 읽음이다**(2026-10-24 · PR-2b 재검토 GPT P2 · M7).
+ * 구단 행은 「숫자 ⇒ 링크」 가드로 막는데 구단 아닌 행은 그 가드 앞에서 빠져나가, 링크 모양만 바뀐 치러진 올스타가
+ * 「예정」(`played: false`)으로 통과했고 적재기가 그 달의 **기존 치러짐 표시를 지웠다**(달 단위 교체).
+ */
+test("⚠⚠점수만 있고 점수 링크가 없는 올스타 행은 못 읽음이다 — 링크 모양이 바뀌었다(M7)", () => {
+  const r = classifyScheduleRows(page(gameRow("0723", "セ・リーグ", "パ・リーグ", { score: [4, 1] })), 2025);
+  assert.equal(r.unreadable, 1, "점수만 있는 올스타 행을 못 읽음으로 안 셌다 — 기존 치러짐 표시가 조용히 지워진다");
+  assert.equal(r.nonTeam, 0);
+  assert.deepEqual(r.nonTeamGames, []);
+});
+
+/**
+ * ⚠⚠**치러진 올스타의 코드는 점수 링크 슬러그에서 낸다**(2026-10-24 · PR-2b 재검토 GPT P2 · RS F3) — 경기 행(`game`)의 코드와
+ * **같은 출처**라 표기 순서(team1 = 홈)라는 가정이 필요 없다. 표기는 「구단 아님」 허용 목록 검사로만 쓴다.
+ */
+test("⚠⚠치러진 올스타의 코드는 점수 링크 슬러그에서 — 표기 순서를 뒤집어도 슬러그의 홈·원정이다", () => {
+  const r = classifyScheduleRows(page(gameRow("0723", "パ・リーグ", "セ・リーグ", { score: [4, 1], link: "/scores/2025/0723/cl-pl-01/" })), 2025);
+  assert.equal(r.unreadable, 0);
+  assert.deepEqual(
+    r.nonTeamGames.map((g) => [g.date, g.homeCode, g.awayCode, g.played]),
+    [["2025-07-23", "cl", "pl", true]],
+    "표기 순서로 코드를 냈다 — 경기 행(슬러그)과 갈리면 수집 판정 A 가 30일 운다",
+  );
+});
+
+test("⚠치러진 올스타의 링크 슬러그가 cl·pl 한 쌍이 아니면 못 읽음이다(구단 슬러그 · 같은 쪽 둘 · 번호 없음 · 번호가 수 아님)", () => {
+  for (const link of ["/scores/2025/0723/t-g-01/", "/scores/2025/0723/cl-cl-01/", "/scores/2025/0723/cl-pl/", "/scores/2025/0723/pl-cl-x/"]) {
+    const r = classifyScheduleRows(page(gameRow("0723", "セ・リーグ", "パ・リーグ", { score: [4, 1], link })), 2025);
+    assert.equal(r.unreadable, 1, link);
+    assert.equal(r.nonTeam, 0, link);
+    assert.deepEqual(r.nonTeamGames, [], link);
+  }
+});
+
+test("링크 없는 올스타(예정)는 표기로 코드를 내고 played: false · 같은 표기 둘(セ−セ)은 못 읽음이다", () => {
+  const ok = classifyScheduleRows(page(gameRow("0723", "セ・リーグ", "パ・リーグ")), 2025);
+  assert.deepEqual(ok.nonTeamGames.map((g) => [g.homeCode, g.awayCode, g.played]), [["cl", "pl", false]]);
+  const same = classifyScheduleRows(page(gameRow("0723", "セ・リーグ", "セ・リーグ")), 2025);
+  assert.equal(same.unreadable, 1, "구단 아님은 セ 대 パ 한 쌍뿐이다");
+  assert.equal(same.nonTeam, 0);
 });
 
 /**

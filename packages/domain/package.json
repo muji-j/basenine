@@ -4,7 +4,8 @@
   "type": "module",
   "description": "NPB 도메인 상수. 의존성 없음.",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./season-calendar": "./src/season-calendar.ts"
   },
   "scripts": {
     "test": "node --test \"test/*.test.ts\""

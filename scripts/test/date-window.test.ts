@@ -13,14 +13,17 @@ import {
   JST_TODAY_FROM_HOUR,
   MAX_CATCHUP_DAYS,
   MAX_REFETCH_DATES,
+  OWED_LOOKBACK_DAYS,
   dayStatus,
   isYmd,
   jstDate,
   jstHour,
   judgeDates,
   parseRefetchDates,
+  planOwed,
   targetDates,
 } from "../date-window.ts";
+import { owedRoom } from "../collect-budget.ts";
 
 /** UTC 문자열로 시각을 만든다. **JST 를 직접 못 만드는 것이 이 시험의 요점**이다 */
 const at = (utc: string): Date => new Date(utc);
@@ -410,4 +413,139 @@ test("C10′ dayStatus — 완결 · 덜 받음(그 id 를 정렬해 돌려준�
   assert.deepEqual(dayStatus([G1, G2], null), { status: "unknown", missing: [] }, "⚠DB 를 못 읽었는데 판정했다 — 그날 경기 전부를 덜 받음으로 오판한다");
   assert.deepEqual(dayStatus([G1], [G1, G2]), { status: "complete", missing: [] });
   assert.deepEqual(dayStatus([], [G1]), { status: "complete", missing: [] });
+});
+
+/**
+ * ## ⚠받았어야 할 날(owed) — 상한 밖에서도 이어 받는다 (PR-2b · 설계 `docs/superpowers/specs/2026-10-24-catchup-owed-days-design.md` D3 · 시험 T3)
+ *
+ * `since = MAX(played)` 이고 상한이 7일이라, 휴식·장애가 길면 창이 다음 경기일을 놓친다 — CS→일본시리즈 휴식이 창을 다 써서
+ * JST 10/26 00시 이후 실행은 10/24 를 영영 안 받는다(설계 §1). owed 는 **일정표가 「예정·치렀다」고 한 날 중 경기 행이 없는 날**이고
+ * (판정 I/O 는 잎 `@bb-app/store/schedule-owed` · `collected-through.ts`), 여기서는 그 날들을 창에 더하는 **순수 규칙**만 잰다:
+ * ⚠상한 7일 밖이어도 더한다 · ⚠`[오늘 − OWED_LOOKBACK_DAYS, 어제]` 밖과 틀린 모양은 버린다 · ⚠합집합 · 오름차순 · 중복 없음 ·
+ * ⚠**없거나 비면 예전과 글자까지 같다**(정상·휴식일·비시즌의 요청 0 증가) · ⚠기준점을 모르면 더하지 않는다(M11 · include 와 같은 규칙).
+ */
+
+/** 07:00 JST 2026-11-03(= 11-02 22:00 UTC) — 어제 11/02 · lookback 아래 끝 10/04 */
+const NOV3 = at("2026-11-02T22:00:00Z");
+
+test("⚠T3 owed — 따라잡기 상한(7일) 밖이어도 더한다 · 어제와 합집합 · 오름차순", () => {
+  assert.deepEqual(targetDates(NOV3, { collectedThrough: "2026-10-20" }), ["2026-11-02"], "전제(간격 > 상한이면 [어제])가 틀렸다");
+  assert.deepEqual(
+    targetDates(NOV3, { collectedThrough: "2026-10-20", owed: ["2026-10-25", "2026-10-24"] }),
+    ["2026-10-24", "2026-10-25", "2026-11-02"],
+    "상한 밖의 받았어야 할 날을 안 더했다 — 10/24 가 영영 안 받힌다",
+  );
+});
+
+test("⚠⚠T3 owed — [오늘 − 30, 어제] 밖 · 오늘 · 미래 · 틀린 모양 · 없는 날짜는 버린다", () => {
+  assert.equal(jstDate(NOV3, -OWED_LOOKBACK_DAYS), "2026-10-04", "시험의 전제(lookback 아래 끝)가 틀렸다");
+  assert.deepEqual(
+    targetDates(NOV3, {
+      collectedThrough: "2026-10-20",
+      // ⚠`2026-10-24x` 는 문자열 비교로는 범위 **안**이다 — 모양 검사가 없으면 그대로 창에 들어간다
+      owed: ["2026-10-03", "2026-10-04", "2026-11-03", "2026-11-09", "2026-10-24x", "2026-02-30", "2026-10-2", "garbage"],
+    }),
+    ["2026-10-04", "2026-11-02"],
+    "범위 밖·오늘 이후·틀린 모양을 창에 넣었거나 범위 안(− 30)을 뺐다",
+  );
+});
+
+test("T3 owed — 사이 메우기 · include · 오늘(22시 이후)과 겹치면 한 번만", () => {
+  const night = at("2026-11-02T14:00:00Z"); // 23:00 JST 11/02 · 어제 11/01 · 오늘 11/02
+  assert.deepEqual(
+    targetDates(night, { collectedThrough: "2026-10-28", include: ["2026-10-27"], owed: ["2026-10-29", "2026-10-24", "2026-10-27", "2026-10-29", "2026-11-01"] }),
+    ["2026-10-24", "2026-10-27", "2026-10-29", "2026-10-30", "2026-10-31", "2026-11-01", "2026-11-02"],
+  );
+});
+
+test("⚠⚠T3 owed 가 없거나 빈 배열이면 창은 예전과 글자까지 같다 — 시각 셋 × 간격 −3~9 × include 유무", () => {
+  for (const utc of ["2026-08-18T22:00:00Z", "2026-08-18T05:00:00Z", "2026-08-18T14:30:00Z"]) {
+    for (let gap = -3; gap <= MAX_CATCHUP_DAYS + 2; gap += 1) {
+      const since = jstDate(at(utc), -1 - gap);
+      for (const include of [undefined, [], [since, jstDate(at(utc), -4)]]) {
+        const opts = { collectedThrough: since, ...(include === undefined ? {} : { include }) };
+        const plain = targetDates(at(utc), opts);
+        assert.deepEqual(targetDates(at(utc), { ...opts, owed: [] }), plain, `${utc} 간격 ${String(gap)}: 빈 owed 인데 창이 바뀌었다`);
+      }
+    }
+    assert.deepEqual(targetDates(at(utc), { owed: [] }), targetDates(at(utc)), `${utc}: 기준점 없이 빈 owed 인데 창이 바뀌었다`);
+  }
+});
+
+test("⚠T3 기준점(since)을 모르면 owed 를 더하지 않는다(M11 — include 와 같은 규칙) · 날짜를 명시하면 그 하루만", () => {
+  assert.deepEqual(targetDates(NOV3, { owed: ["2026-10-24"] }), ["2026-11-02"]);
+  assert.deepEqual(targetDates(NOV3, { date: "2026-10-01", collectedThrough: "2026-10-20", owed: ["2026-10-24"] }), ["2026-10-01"]);
+});
+
+// ---- planOwed — 실행당 몫(정규 창에 없는 owed 를 오래된 것부터) ------------------------------------------
+
+test("⚠⚠T3 planOwed — 정규 창에 이미 있는 날은 몫을 안 쓴다 · 오래된 것부터 몫까지 · 나머지는 미룬다", () => {
+  const owed = ["2026-10-24", "2026-10-25", "2026-10-27", "2026-10-28", "2026-10-29", "2026-10-31", "2026-11-01", "2026-11-02"];
+  const p = planOwed(NOV3, { collectedThrough: "2026-10-20" }, owed, () => 5);
+  assert.deepEqual(p.regular, ["2026-11-02"]);
+  assert.deepEqual(p.added, ["2026-10-24", "2026-10-25", "2026-10-27", "2026-10-28", "2026-10-29"], "어제(이미 창에 있다)가 몫을 썼거나 순서가 틀렸다");
+  assert.deepEqual(p.deferred, ["2026-10-31", "2026-11-01"]);
+  assert.equal(p.room, 5);
+  assert.deepEqual(p.dates, ["2026-10-24", "2026-10-25", "2026-10-27", "2026-10-28", "2026-10-29", "2026-11-02"]);
+});
+
+test("⚠T3 planOwed — 몫은 정규 창의 날짜 수로 정한다 · 몫 0 이면 전부 미룬다 · 틀린 몫은 던진다", () => {
+  const seen: number[] = [];
+  const p = planOwed(at("2026-11-02T14:00:00Z"), { collectedThrough: "2026-10-20" }, ["2026-10-24"], (n) => {
+    seen.push(n);
+    return 0;
+  });
+  assert.deepEqual(seen, [2], "몫 함수에 정규 창의 날짜 수(어제 + 오늘 = 2)를 안 넘겼다");
+  assert.deepEqual(p.added, []);
+  assert.deepEqual(p.deferred, ["2026-10-24"]);
+  assert.deepEqual(p.dates, p.regular);
+  for (const bad of [-1, 1.5, Number.NaN]) {
+    assert.throws(() => planOwed(NOV3, { collectedThrough: "2026-10-20" }, ["2026-10-24"], () => bad), RangeError, String(bad));
+  }
+});
+
+test("T3 planOwed — owed 가 없으면 창은 정규 창 그대로(몫 함수의 값과 무관)", () => {
+  const p = planOwed(NOV3, { collectedThrough: "2026-10-30" }, [], () => 5);
+  assert.deepEqual(p.dates, ["2026-10-31", "2026-11-01", "2026-11-02"]);
+  assert.deepEqual(p.dates, targetDates(NOV3, { collectedThrough: "2026-10-30" }));
+  assert.deepEqual([p.added, p.deferred], [[], []]);
+});
+
+/**
+ * ⚠⚠**설계 §1 표 재현**(최신 CI DB 의 모양 · 장애 중 DB 가 그대로라는 가정) — `since` 10/17 · 확인된 휴식일 끝(`gapFrom`) 10/20 ·
+ * 예정 카드 10/24·25·27·28·29·31·11/1(사본 10/21). 「제안」은 `planOwed` + `owedRoom`(간격 3000ms) 그대로다.
+ * ⚠owed 는 여기서 「오늘 이전의 예정 날」로 손으로 만든다 — 실제 DB 에서 그 값이 나오는지는 잎 시험(T1)과 시뮬레이션이 잰다.
+ */
+const SCHEDULED = ["2026-10-24", "2026-10-25", "2026-10-27", "2026-10-28", "2026-10-29", "2026-10-31", "2026-11-01"];
+const SECTION1: [jst: string, utc: string, current: string[], proposed: string[]][] = [
+  ["10/25 00시", "2026-10-24T15:00:00Z", daysFrom("2026-10-18", "2026-10-24"), daysFrom("2026-10-21", "2026-10-24")],
+  ["10/25 23시", "2026-10-25T14:00:00Z", daysFrom("2026-10-18", "2026-10-25"), daysFrom("2026-10-21", "2026-10-25")],
+  ["10/26 07시", "2026-10-25T22:00:00Z", ["2026-10-25"], daysFrom("2026-10-21", "2026-10-25")],
+  ["10/26 23시", "2026-10-26T14:00:00Z", ["2026-10-25", "2026-10-26"], daysFrom("2026-10-21", "2026-10-26")],
+  ["10/28 07시", "2026-10-27T22:00:00Z", ["2026-10-27"], daysFrom("2026-10-21", "2026-10-27")],
+  ["10/29 23시", "2026-10-29T14:00:00Z", ["2026-10-28", "2026-10-29"], ["2026-10-24", "2026-10-25", "2026-10-27", "2026-10-28", "2026-10-29"]],
+  ["11/03 07시", "2026-11-02T22:00:00Z", ["2026-11-02"], ["2026-10-24", "2026-10-25", "2026-10-27", "2026-10-28", "2026-10-29", "2026-11-02"]],
+  ["11/11 07시", "2026-11-10T22:00:00Z", ["2026-11-10"], ["2026-10-24", "2026-10-25", "2026-10-27", "2026-10-28", "2026-10-29", "2026-11-10"]],
+];
+
+for (const [jst, utc, current, proposed] of SECTION1) {
+  test(`⚠⚠T3 §1 표 — 첫 정상 실행 JST ${jst}: 현행 ${current.includes("2026-10-24") ? "10/24 있음" : "10/24 없음"} · 제안 10/24 있음`, () => {
+    const now = at(utc);
+    assert.deepEqual(targetDates(now, { collectedThrough: "2026-10-17" }), current, "현행 창(재현의 전제)이 설계 표와 다르다");
+    const owed = SCHEDULED.filter((d) => d < jstDate(now));
+    const p = planOwed(now, { collectedThrough: "2026-10-20", include: [] }, owed, (n) => owedRoom(n, 3000));
+    assert.deepEqual(p.dates, proposed, "제안 창이 설계 표와 다르다");
+    assert.ok(p.dates.includes("2026-10-24"), "제안 창에 10/24 가 없다");
+  });
+}
+
+test("⚠T3 §1 표의 셈 — 현행은 8시각 중 6시각에서 10/24 를 잃고 제안은 8/8 · 마지막 두 행은 owed 7일 중 5일(남은 10/31·11/1 은 다음 실행)", () => {
+  assert.equal(SECTION1.length, 8);
+  assert.equal(SECTION1.filter(([, , current]) => !current.includes("2026-10-24")).length, 6);
+  for (const utc of ["2026-11-02T22:00:00Z", "2026-11-10T22:00:00Z"]) {
+    const now = at(utc);
+    const p = planOwed(now, { collectedThrough: "2026-10-20", include: [] }, SCHEDULED.filter((d) => d < jstDate(now)), (n) => owedRoom(n, 3000));
+    assert.equal(p.added.length + p.deferred.length, 7);
+    assert.deepEqual(p.deferred, ["2026-10-31", "2026-11-01"]);
+  }
 });

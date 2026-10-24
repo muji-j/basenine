@@ -61,6 +61,41 @@ test("⚠구단이 아닌 행은 세어서 돌려준다 — 조용히 버리지 
   assert.ok(!r.games.some((g) => g.homeCode === "cl" || g.homeCode === "pl"), "올스타가 경기로 섞였다");
 });
 
+/**
+ * ⚠⚠**구단이 아닌 행도 경기로 돌려준다 — 단 `games` 와 따로**(PR-2b 검토 P2-2).
+ * 세기만 하고 버리면 올스타 날은 예정·치러짐 표시·경기 어느 표에도 안 남아, 그 경기를 놓쳤을 때 따라잡기가 그 날을
+ * 「확인된 휴식일」로 **영구히** 건너뛴다(옛 규칙은 7일 안이면 다시 받았다). 적재기가 치러진 것을 치러짐 표시에 남긴다.
+ * ⚠치러진 행의 코드는 **점수 링크 슬러그에서** 낸다(= 경기 행의 코드와 같은 출처 · PR-2b 재검토 GPT P2) — 아래는 실물 두 행이 그대로 슬러그임을 대조한다.
+ *   링크 없는 예정 행만 표기 → 코드(`NON_TEAM_CODE_BY_LABEL`)다.
+ * ⚠`games` 에는 여전히 안 섞는다 — 앞으로의 경기(`upcoming_game`)·화면은 구단 경기만 다룬다.
+ */
+test("⚠⚠구단이 아닌 행(올스타)은 nonTeamGames 로 돌려준다 — 코드는 점수 링크 슬러그와 같다 · games 에는 안 섞는다", () => {
+  const july = read("2026-07-schedule.html.gz");
+  const r = parseUpcoming(july, 2026);
+  assert.deepEqual(r.nonTeamGames.map((g) => ({ ...g })), [
+    { date: "2026-07-28", homeCode: "cl", awayCode: "pl", venue: "東京ドーム", startTime: "18:30", played: true },
+    { date: "2026-07-29", homeCode: "pl", awayCode: "cl", venue: "富山", startTime: "18:30", played: true },
+  ]);
+  assert.equal(r.nonTeamRows, r.nonTeamGames.length, "센 수와 돌려준 수가 다르다");
+  // 점수 링크 슬러그 `{홈}-{원정}-{번호}` 가 곧 경기 행(`game`)의 코드다 — 표기에서 낸 코드와 대조한다
+  for (const g of r.nonTeamGames) {
+    const mmdd = `${g.date.slice(5, 7)}${g.date.slice(8, 10)}`;
+    const slug = new RegExp(`/scores/2026/${mmdd}/([a-z]+)-([a-z]+)-\\d+/`).exec(july);
+    assert.ok(slug !== null, `${g.date} 의 점수 링크를 못 찾았다`);
+    assert.deepEqual([g.homeCode, g.awayCode], [slug[1], slug[2]], `${g.date}: 표기에서 낸 코드가 슬러그와 다르다 — 수집 판정 A 가 헛경보를 낸다`);
+  }
+  assert.ok(!r.games.some((g) => g.homeCode === "cl" || g.homeCode === "pl"), "올스타가 구단 경기로 섞였다");
+});
+
+test("구단 아닌 행이 링크 없이 오면 played: false 로 돌려준다(적재기는 치러진 것만 남긴다)", () => {
+  const html = '<table><tr id="date0728"><td><div class="team1">セ・リーグ</div><div class="team2">パ・リーグ</div></td><td><div class="place">東京ドーム</div><div class="time">18:30</div></td></tr></table>';
+  const r = parseUpcoming(html, 2026);
+  assert.deepEqual(r.nonTeamGames.map((g) => ({ ...g })), [
+    { date: "2026-07-28", homeCode: "cl", awayCode: "pl", venue: "東京ドーム", startTime: "18:30", played: false },
+  ]);
+  assert.equal(r.games.length, 0);
+});
+
 /** 경기가 없는 날(월요일 등)은 결손이 아니다 — 그 행에는 팀 칸 자체가 없다 */
 test("경기 없는 날을 「못 읽음」으로 세지 않는다", () => {
   const r = parseUpcoming(html, 2026);

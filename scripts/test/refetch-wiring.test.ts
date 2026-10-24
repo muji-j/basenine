@@ -125,7 +125,8 @@ test("⚠14b update.ts 는 BB_REFETCH_DATES 를 검증 함수로 읽고 · 틀�
 });
 
 test("⚠14c 재수집 날짜가 수집 창을 대신한다(`refetch.dates ??`) · --date · --today 와 같이 주면 각각 종료 2", () => {
-  assert.match(UPDATE, /const dates = refetch\.dates \?\? targetDates\(/, "재수집 날짜가 수집 창을 대신하지 않는다 — 평소 창을 받는다");
+  // ⚠2026-10-24 PR-2b 부터 평소 창은 `planOwed` 가 낸다(`plan.dates`) — 재수집 날짜가 그것을 대신한다는 뜻은 그대로다
+  assert.match(UPDATE, /const dates = refetch\.dates \?\? plan\.dates;/, "재수집 날짜가 수집 창을 대신하지 않는다 — 평소 창을 받는다");
   assert.match(topBlock("if (refetch.dates !== null && values.date !== undefined) {"), /process\.exit\(2\)/, "--date 와 같이 줘도 멈추지 않는다");
   assert.match(topBlock("if (refetch.dates !== null && values.today === true) {"), /process\.exit\(2\)/, "--today 와 같이 줘도 멈추지 않는다");
 });

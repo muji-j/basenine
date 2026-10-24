@@ -47,6 +47,9 @@ test("⚠M6·D6 시계를 먼저 한 번 읽고 · 재수집·--date 가 아닐 
   const clock = clocks[0]!.index;
   const call = once("readCollectedThrough(", "판정 호출");
   assert.ok(clock < call, "판정이 시계보다 먼저다 — 판정과 창이 다른 「지금」을 본다(M6)");
+  // ⚠owed 의 몫·창도 같은 `now` 를 본다(PR-2b) — 판정의 「오늘」과 창의 「어제」가 갈리면 owed 범위와 창 범위가 어긋난다
+  assert.ok(clock < once("planOwed(", "owed 창 호출"), "planOwed 가 시계보다 먼저다");
+  assert.match(UPDATE, /planOwed\(\s*now,/, "planOwed 가 진입점의 now 를 받지 않는다");
   assert.match(
     UPDATE,
     /const read = values\.date === undefined && refetch\.dates === null\s*\?\s*readCollectedThrough\(\{ dbPath: resolve\(ROOT, values\.db\), archiveRoot: resolve\(ROOT, values\.archive\), now \}\)\s*:\s*undefined;/,
@@ -54,22 +57,34 @@ test("⚠M6·D6 시계를 먼저 한 번 읽고 · 재수집·--date 가 아닐 
   );
 });
 
-test("⚠D4 덜 받은 날은 include 로만 창에 들어간다 — 한 곳 · 옛 includeSince 는 없다", () => {
+/**
+ * ⚠**2026-10-24 PR-2b 에서 모양이 바뀌었다** — 창은 `planOwed`(정규 창 + 받았어야 할 날을 실행당 몫만큼)가 내고 `dates` 는 `plan.dates` 다.
+ * 뜻은 그대로다: 덜 받은 날은 `include` 한 곳으로만 들어가고, 받았어야 할 날은 `planOwed` 의 `owed` 로만 들어간다.
+ * 실제로 맞물리는지는 `update-steps.test.ts` 의 D4 표(가짜 자식 + 실제 스키마 DB + 고정한 「지금」)가 잰다.
+ */
+test("⚠D4 덜 받은 날은 include 로만 · 받았어야 할 날은 planOwed 의 owed 로만 창에 들어간다 — 각각 한 곳 · 옛 includeSince 는 없다", () => {
   assert.equal(UPDATE.includes("includeSince"), false, "옛 includeSince 가 남아 있다");
   assert.match(
     UPDATE,
-    /const dates = refetch\.dates \?\? targetDates\(now, \{\s*\.\.\.windowOpts,\s*\.\.\.\(collected === undefined \? \{\} : \{ include: collected\.include \}\),?\s*\}\);/,
-    "덜 받은 날을 include 로 넘기지 않는다(또는 모양이 바뀌었다)",
+    /const plan = planOwed\(\s*now,\s*\{\s*\.\.\.windowOpts,\s*\.\.\.\(collected === undefined \? \{\} : \{ include: collected\.include \}\),?\s*\},\s*collected\?\.owed\.map\(\(o\) => o\.date\) \?\? \[\],\s*\(n\) => owedRoom\(n, delayMs\),?\s*\);/,
+    "덜 받은 날을 include 로 · 받았어야 할 날을 owed 로 · 몫을 owedRoom(정규 창, --delay)으로 넘기지 않는다(또는 모양이 바뀌었다)",
   );
+  assert.match(UPDATE, /const dates = refetch\.dates \?\? plan\.dates;/, "창이 planOwed 의 결과가 아니다");
   assert.equal([...UPDATE.matchAll(/include:/g)].length, 1, "include 를 넘기는 곳이 한 곳이 아니다");
+  assert.equal([...UPDATE.matchAll(/\bowed:/g)].length, 0, "owed 를 planOwed 밖에서 창에 직접 넘긴다 — 실행당 몫을 건너뛴다");
 });
 
-test("⚠D5 판정 모듈의 알림을 찍고 · 창에 새로 더한 날만 말한다(include 없는 창과 맞댄다)", () => {
+test("⚠PR-2b D2 따라잡기 간격은 확인된 휴식일의 끝(gapFrom)에서 센다 — since 를 collectedThrough 로 넘기지 않는다", () => {
+  assert.match(UPDATE, /\.\.\.\(collected === undefined \? \{\} : \{ collectedThrough: collected\.gapFrom \}\),/, "windowOpts 가 gapFrom 을 넘기지 않는다");
+  assert.equal(/collectedThrough:\s*since\b/.test(UPDATE), false, "since 를 따라잡기 기준으로 넘긴다 — 휴식이 7일 상한을 갉아먹는다");
+});
+
+test("⚠D5 판정 모듈의 알림을 찍고 · 창에 새로 더한 날만 말한다(include·owed 없는 창과 맞댄다) · 미룬 owed 는 plan 으로 넘긴다", () => {
   assert.match(UPDATE, /for \(const n of read\?\.notes \?\? \[\]\) say\(n\);/, "판정 모듈의 알림을 찍지 않는다");
   assert.match(
     UPDATE,
-    /if \(collected !== undefined\) for \(const n of catchupNotes\(collected, targetDates\(now, windowOpts\), dates\)\) say\(n\);/,
-    "알림이 include 없는 창(원래 창)과 맞대지 않는다 — 원래 창에 있던 날도 「다시 받는다」고 말한다",
+    /if \(collected !== undefined\) for \(const n of catchupNotes\(collected, targetDates\(now, windowOpts\), dates, plan\)\) say\(n\);/,
+    "알림이 include·owed 없는 창(원래 창)과 맞대지 않거나 미룬 owed 를 넘기지 않는다 — 원래 창에 있던 날도 「다시 받는다」고 말한다",
   );
   const say = UPDATE.slice(once("function say(", "알림 출력"), UPDATE.indexOf("\n}", UPDATE.indexOf("function say(")));
   assert.match(say, /n\.level === "warn"[\s\S]*console\.error/, "경고를 표준오류로 찍지 않는다");
