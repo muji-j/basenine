@@ -793,3 +793,167 @@ test("⚠T13 예고를 붙이는 날에 같은 팀의 경기가 둘이면 빌드
     }
   }
 });
+
+/* ── PR-3 이중 검토 반영(2026-10-25) ─────────────────────────────────────── */
+
+/** 구단 화면의 「予告先発」 한 줄 */
+function probableLineOf(files: Map<string, string>, code: string): string {
+  const m = /<s>予告先発<\/s><b>([\s\S]*?)<\/b>/.exec(page(files, `teams/${code}.html`));
+  assert.ok(m !== null, `teams/${code}.html 에 「予告先発」 줄이 없다`);
+  return text(m[1]!);
+}
+
+/**
+ * ⚠**올스타 날은 「다음 경기일」이 아니다**(검토 GPT P2 · 실측: 올스타 16일 전부 `probable_pitcher`·`starters_fetch` 0행).
+ * 予告先発은 12구단 경기에만 난다. 올스타(`cl`·`pl`)를 N 으로 세면 **올스타 날마다** 試合 화면이 거짓 「取り込めていません」을 내고
+ * 감시 `starters-behind` 도 같은 날 울어 수집 잡을 막는다. 감시와 화면은 같은 질의(`nextGameDayOf`)를 쓴다.
+ * ⚠PR-2b 이후 예정(`upcoming_game`)에는 `cl`·`pl` 이 안 들어가고 **경기 행(`game`)에는 있다** — 그 실물 모양으로 잰다
+ *   (예정 표의 거르기는 `collection-evidence.test.ts` 가 방어로 잰다 · 예정 표에 `cl`·`pl` 이 들어오면 対戦 화면이 「모르는 구단 코드」로 빌드를 멈춘다).
+ */
+test("⚠올스타 날 — 次の予告先発이 「取り込めていません」이라고 하지 않고 다음 정규 경기일을 말한다 · 감시도 안 운다", () => {
+  const fx = new Fixture();
+  try {
+    fx.batch(() => {
+      regularSeason(fx, { first: "2026-07-01", days: 22 }); // 7/22 까지
+      fx.probable("2026-07-22", "t", "g", "2026-07-21T09:00:00.000Z");
+      fx.game({ date: "2026-07-24", home: "cl", away: "pl", competition: "allStar", series: "オールスターゲーム", venue: "東京ドーム" });
+      fx.upcoming("2026-07-27", "t", "g", { venue: "甲子園" });
+    });
+    const files = site(fx, "2026-07-24");
+    const block = text(nextBlock(files));
+    assert.ok(!block.includes("取り込めていません"), `올스타 날에 예고를 못 받았다고 했다: ${block}`);
+    assert.match(block, /次の試合は2026年7月27日です/, "다음 정규 경기일을 안 말했다 — 올스타를 「次の試合」로 셌다");
+    const v = collectionVerdict(collectionEvidence(fx.db, "2026-07-24"), { grace: 2, backstopMargin: 0 });
+    assert.ok(!v.reasons.includes("starters-behind"), "감시가 올스타 날에 「予告先発이 뒤처졌다」고 울었다");
+  } finally {
+    fx.close();
+  }
+});
+
+/**
+ * ⚠**낡은 일정 사본이 이미 적재된 경기를 「次の試合」로 되살린다**(검토 GPT P2).
+ * 받기 실패만이면 배포한다(2026-10-24 운영 결정) — 경기는 받고 일정 사본은 못 받은 실행에서 **같은 경기가 두 표에 한 번씩** 남는다
+ * (`assertOneGamePerTeam` 이 이 상태를 정상으로 받는다). 그 날 저녁 빌드에서 참가 구단의 「次の試合」가 **끝난 1차전**을 가리켰다.
+ * → 같은 시즌·날짜·홈·원정의 경기 행 수만큼 예정을 뺀다(다중집합 · 진짜 더블헤더의 남은 경기는 남는다).
+ */
+test("⚠낡은 일정 사본 — 이미 적재된 오늘 경기를 「次の試合」로 다시 부르지 않는다(구단 · 구단 목록)", () => {
+  const fx = regularDone();
+  try {
+    fx.batch(() => {
+      fx.game({ date: "2026-10-24", home: "db", away: "h", competition: "nipponSeries", series: "SMBC日本シリーズ", gameNo: 1, homeRuns: 2, awayRuns: 2, venue: "横浜" });
+      // 10/21 사본 그대로 — 끝난 10/24 행이 남았다
+      for (const u of JS_UPCOMING) fx.upcoming(u.date, u.home, u.away, { venue: u.venue, startTime: u.time });
+    });
+    const files = site(fx, "2026-10-24");
+    assert.equal(nextGame(files, "db"), "2026年10月25日 18:00 対ソフトバンク（横浜） — 日本シリーズ", "끝난 1차전을 「次の試合」라고 했다");
+    assert.equal(nextGame(files, "h"), "2026年10月25日 18:00 ＠DeNA（横浜） — 日本シリーズ");
+    const list = text(page(files, "teams.html"));
+    assert.match(list, /2026年10月25日 18:00 対ソフトバンク（横浜） — 日本シリーズ/);
+    assert.ok(!/2026年10月24日 18:30/.test(list), "구단 목록이 끝난 1차전을 「次の試合」라고 했다");
+  } finally {
+    fx.close();
+  }
+});
+
+/**
+ * ⚠**저녁 빌드 — 다음 날 예고를 받아 두고 「まだ発表されていません」**(검토 RS P2-1 · 재현 `r1.mjs`).
+ * P 를 「予告先発 화면의 기본 날짜(= 생성일)」로 잡아서, 오늘 경기가 기록에 들어온 뒤(L = 오늘)에는 관문에서 떨어지고
+ * 다음 경기일까지 짚으며 「発表されていません」이라고 했다 — 같은 빌드의 予告先発 화면은 그 날의 카드를 냈다.
+ * → P 는 `max(B, L+1)` 이후의 **가장 이른 예고일**이다(⑥ 의 다음 경기일과 같은 기준).
+ * ⚠**구단 화면도 「次の試合」의 날짜로 예고를 찾는다** — 기본 날짜만 보면 내일 경기와 짝이 안 맞아 「発表待ち」로 떨어진다.
+ */
+test("⚠저녁 빌드 — 내일 예고를 받았으면 「次の予告先発」은 내일 카드다 · 구단 화면도 같은 투수를 말한다", () => {
+  const fx = new Fixture();
+  try {
+    fx.batch(() => {
+      regularSeason(fx, { first: "2026-08-01", days: 12 }); // 8/12 까지 — 오늘(8/12) 경기도 받았다
+      fx.probable("2026-08-12", "t", "g", "2026-08-11T09:00:00.000Z");
+      fx.probable("2026-08-13", "t", "g", "2026-08-12T09:00:00.000Z"); // 내일 것 — 오늘 저녁에 나왔다
+      fx.upcoming("2026-08-13", "t", "g", { venue: "甲子園" });
+    });
+    const files = site(fx, "2026-08-12");
+    const block = nextBlock(files);
+    assert.match(text(block), /次の予告先発\s*2026年8月13日/, "받아 둔 내일 예고를 「次」로 안 냈다");
+    assert.ok(/class="pbcard/.test(block), "내일 예고 카드가 없다");
+    assert.ok(!text(block).includes("まだ発表されていません"), "받아 둔 내일 예고를 「발표 전」이라고 했다");
+    assert.equal(probableLineOf(files, "t"), "t投手 ─ g投手", "구단 화면이 내일 경기의 예고를 못 찾았다");
+    assert.equal(probableLineOf(files, "g"), "g投手 ─ t投手");
+  } finally {
+    fx.close();
+  }
+});
+
+/**
+ * ⚠**같은 빌드가 試合 에서는 「取り込めていません」, 구단 화면에서는 「発表待ち」**(검토 RS P2-2 · 구현 보고 걱정 1).
+ * 이 PR 이 감시와 같은 술어로 「예고를 못 받았다」를 아는 상태(`startersMissingDate`)를 만들어 놓고 한 화면에만 말했다.
+ * → 구단 화면의 予告先発 줄도 그 날이 「次の試合」이면 같은 말을 한다. 그 전날(정상 대기)은 「発表待ち」 그대로다.
+ */
+test("⚠예고를 못 받은 날 — 구단 화면의 予告先発 줄도 試合 화면처럼 「取り込めていません」 · 전날은 「発表待ち」 그대로", () => {
+  const fx = stateAt("2026-10-24");
+  try {
+    const files = site(fx, "2026-10-24");
+    assert.match(text(nextBlock(files)), /2026年10月24日の予告先発を取り込めていません/);
+    for (const code of ["db", "h"]) assert.equal(probableLineOf(files, code), "取り込めていません", `${code}: 試合 화면과 다른 말(「発表待ち」)을 했다`);
+    assert.equal(probableLineOf(files, "t"), "—", "다음 경기가 없는 구단에 예고 상태를 말했다");
+  } finally {
+    fx.close();
+  }
+  const before = stateAt("2026-10-22");
+  try {
+    const files = site(before, "2026-10-22");
+    assert.equal(probableLineOf(files, "db"), "発表待ち", "발표 전인 정상 상태를 「取り込めていません」이라고 했다");
+  } finally {
+    before.close();
+  }
+});
+
+/**
+ * ⚠**더블헤더 가드는 표마다 센다 — 더하지 않는다**(검토 RS P2-3 · 구현 보고 「다르게 한 것」 ②를 지키는 시험이 없었다).
+ * 일정 사본이 낡으면 같은 경기가 경기 행과 예정에 **한 번씩** 남는다 — 더하면 거짓 더블헤더로 빌드가 멈춰
+ * 「받기 실패만이면 배포」(2026-10-24)와 부딪힌다. 진짜 더블헤더는 **같은 표에** 두 경기다(T13).
+ */
+test("⚠더블헤더 가드 — 같은 경기가 경기 행과 낡은 예정에 한 번씩이면 멈추지 않는다 · 같은 표에 둘이면 멈춘다", () => {
+  const make = (second: boolean): Fixture => {
+    const fx = new Fixture();
+    fx.batch(() => {
+      regularSeason(fx, { first: "2026-08-01", days: 10 }); // 8/10 은 巨人(홈)−阪神 이 경기 행에 있다
+      fx.probable("2026-08-10", "t", "g", "2026-08-09T09:00:00.000Z");
+      fx.upcoming("2026-08-10", "g", "t", { venue: "東京ドーム" }); // 낡은 사본 — 같은 경기
+      fx.upcoming("2026-08-11", "t", "g", { venue: "甲子園" });
+      if (second) fx.game({ date: "2026-08-10", home: "g", away: "t", gameNo: 30, idSuffix: "-dh" });
+    });
+    return fx;
+  };
+  const a = make(false);
+  const b = make(true);
+  try {
+    assert.doesNotThrow(() => a.load(2026, "2026-08-11"), "같은 경기가 두 표에 한 번씩인데 더블헤더라고 멈췄다");
+    assert.throws(() => b.load(2026, "2026-08-11"), /더블헤더/, "같은 표에 두 경기인데 멈추지 않았다");
+  } finally {
+    a.close();
+    b.close();
+  }
+});
+
+/**
+ * ⚠**일람 칸의 약어에 풀이를 단다**(검토 RS P3 · 루트 §7 접근성). 「日本S」·「CS」는 글자로 말하지만 스크린리더는 약어를 어색하게 읽는다.
+ * → 보이는 약어는 `<abbr title>`(마우스로 풀이)이고 낭독에서는 빠지며(`aria-hidden`), 풀어 쓴 이름을 시각 숨김(`.vh`)으로 둔다.
+ */
+test("⚠일람 칸의 「CS」·「日本S」에 풀이 — 마우스는 title, 스크린리더는 풀어 쓴 이름", () => {
+  const fx = withJs(JS_2018.slice(0, 2));
+  try {
+    const days = page(site(fx, "2026-10-26"), "days.html");
+    const raw = (iso: string): string => {
+      const m = new RegExp(`<a class="dayc[^"]*"\\s+href="[^"]*${iso === "2026-10-25" ? "today" : `days/${iso}`}\\.html">([\\s\\S]*?)</a>`).exec(days);
+      assert.ok(m !== null, `${iso} 칸이 없다`);
+      return m[1]!;
+    };
+    for (const [iso, short, full] of [["2026-10-17", "CS", "クライマックスシリーズ"], ["2026-10-25", "日本S", "日本シリーズ"]] as const) {
+      const cell = raw(iso);
+      assert.match(cell, new RegExp(`<abbr title="${full}" aria-hidden="true">${short}</abbr>`), `${iso}: 약어에 풀이(title)가 없다`);
+      assert.match(cell, new RegExp(`<span class="vh">${full}</span>`), `${iso}: 스크린리더가 읽을 풀어 쓴 이름이 없다`);
+    }
+  } finally {
+    fx.close();
+  }
+});

@@ -217,8 +217,9 @@ test("⚠D9 일람 — 칸에 「CS」·「日本S」를 글자로(中止 상자
     postseasonPlayed: 1,
   };
   const out = renderDayIndexPage(idx, context());
-  assert.match(out, /<s>1試合<\/s><i class="dk">CS<\/i>/);
-  assert.match(out, /<s>0試合<em>中止1<\/em><\/s><i class="dk">日本S<\/i>/);
+  // ⚠약어에 풀이(2026-10-25 · PR-3 검토 RS P3) — 보이는 약어는 title 로 풀고 낭독에서 빠진다 · 스크린리더는 .vh 의 이름을 읽는다
+  assert.match(out, /<s>1試合<\/s><i class="dk"><abbr title="クライマックスシリーズ" aria-hidden="true">CS<\/abbr><span class="vh">クライマックスシリーズ<\/span><\/i>/);
+  assert.match(out, /<s>0試合<em>中止1<\/em><\/s><i class="dk"><abbr title="日本シリーズ" aria-hidden="true">日本S<\/abbr><span class="vh">日本シリーズ<\/span><\/i>/);
   assert.match(out, /<s>6試合<\/s>\n/, "정규 칸에 대회 표기를 붙였다");
   assert.match(out, /2026年 · 3日 · 7試合（うちポストシーズン 1） · 中止1試合/);
 });

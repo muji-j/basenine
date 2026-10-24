@@ -2513,6 +2513,8 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
 .dayc em{font-style:normal;color:var(--tx-2);border:var(--rw-row) solid var(--hair-2);padding:0 var(--s1)}
 /* 그 날의 대회(설계 D9) — 「CS」·「日本S」. ⚠中止 상자와 **다른 모양**: 테두리 없는 보조 잉크, 제 줄에. 색으로 말하지 않는다 */
 .dayc .dk{font-style:normal;font-size:var(--fs-min);color:var(--tx-2);letter-spacing:.04em}
+/* 약어 풀이(title)는 마우스로 · 낭독은 .vh 의 풀어 쓴 이름 — 밑줄은 긋지 않는다(달력 요일 abbr 와 같은 규칙) */
+.dayc .dk abbr{text-decoration:none;border:var(--rw-none)}
 .dayc:hover{border-color:var(--tx-3);background:var(--panel-2)}
 /* 지금 보고 있는 최신 경기일 */
 .dayc.now{border-color:var(--tx);background:var(--panel-2)}

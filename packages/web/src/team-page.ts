@@ -186,7 +186,7 @@ export interface TeamNow {
   /**
    * 그 경기의 予告先発. 아직 없으면 `null` — **「投手なし」가 아니라 「発表待ち」다**(M11).
    * ⚠**`next` 의 경기에 대한 것만 들어온다.** 다른 날의 예고를 여기 넣으면
-   * 화면이 끝난 경기의 선발을 「次の」라고 부르게 된다(`isNextProbable` 이 막던 결함).
+   * 화면이 끝난 경기의 선발을 「次の」라고 부르게 된다(`nextProbableDate` 가 막는 결함).
    */
   probable: { mine: string | null; theirs: string | null } | null;
   /**
@@ -743,7 +743,15 @@ export function nextGameText(o: { next: TeamNextGame | null; seasonOver: boolean
  * ⚠**탭 밖에 둔다.** 안에 넣으면 다른 탭을 골라 둔 사람에게는 이 띠가 안 보인다 —
  * 요약이 조건부로 사라지면 요약이 아니다.
  */
-function nowBlock(d: TeamPageData, base: string): RawHtml {
+function nowBlock(
+  d: TeamPageData,
+  base: string,
+  /**
+   * 빌드의 사이트 전체 수집 판정이 「予告先発을 못 받았다」고 짚은 날(`CollectionStatus.startersMissingDate` · 감시와 같은 술어).
+   * ⚠試合 화면(次の予告先発)이 같은 값을 쓴다 — 두 화면이 같은 날을 다른 말로 하지 않게(2026-10-25 · PR-3 검토 RS P2-2).
+   */
+  startersMissingDate: string | null,
+): RawHtml {
   const n = d.now;
 
   const gbText = gamesBehindText(d.rank, d.gamesBehind);
@@ -765,11 +773,17 @@ function nowBlock(d: TeamPageData, base: string): RawHtml {
    * ⚠**끝난 시즌에 「発表待ち」라고 쓰지 않는다** — 기다리는 것이 아니라 끝난 것이다
    * (予告先発·対戦 화면이 이미 밟은 결함 · 2026-08-16 이중 검토 P2).
    * **다음 경기가 없으면 가리킬 경기 자체가 없으므로** 「기다린다」고 말할 자리가 아니다.
+   * ⚠⚠**「못 받았다」를 아는 날에는 「発表待ち」라고 하지 않는다**(2026-10-25 · PR-3 검토 RS P2-2). 「次の試合」이 사이트 수집 판정이
+   *   짚은 날(`startersMissingDate` — 감시의 `starters-behind` 와 같은 술어 · 그 날은 오늘이다)이고 예고가 하나도 없으면
+   *   **試合 화면과 같은 말**(「取り込めていません」)을 한다. 예전에는 같은 빌드가 試合 에서 「取り込めていません」,
+   *   여기서 「発表待ち」라고 해서 **같은 사실을 두 말로** 했다(日本シリーズ 1차전 당일 · DeNA·ソフトバンク).
+   *   ⚠한쪽 예고만 있으면 그 날 예고는 받은 것이다(감시도 안 운다) — 빈 쪽은 지금처럼 「発表待ち」다.
    */
+  const missing = n.next !== null && startersMissingDate !== null && n.next.date <= startersMissingDate;
   const probableText = n.next === null
     ? NO_VALUE
     : n.probable === null || (n.probable.mine === null && n.probable.theirs === null)
-      ? "発表待ち"
+      ? missing ? "取り込めていません" : "発表待ち"
       : `${n.probable.mine ?? "発表待ち"} ─ ${n.probable.theirs ?? "発表待ち"}`;
 
   /**
@@ -959,7 +973,7 @@ export function renderTeamPage(d: TeamPageData, ctx: RenderContext): string {
      이 띠가 안 보인다 — 조건부로 사라지는 요약은 요약이 아니다.
      ⚠**여기서 우승 경쟁 판정이 처음으로 화면에 나온다.** 값의 뜻은 race.ts 가 증명해서
      정했고, 그 뜻을 문장으로 옮기는 자리는 raceVerdict 한 곳뿐이다(M1). -->
-${nowBlock(d, base)}
+${nowBlock(d, base, ctx.freshness.collection.startersMissingDate)}
 
 <!-- ⚠**연속 기록·기록 근접도 탭 밖에 둔다** — 요약 띠와 같은 이유다. 홈 화면이 만든 배열을
      팀으로 거른 것뿐이고(M1 · query.ts), 여기서 다시 계산하지 않는다.

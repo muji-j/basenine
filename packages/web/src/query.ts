@@ -223,7 +223,7 @@ import type {
   SrpEntry,
   SrpTotals,
 } from "@bb-app/aggregate";
-import { nipponSeriesSlot, splitUpcoming } from "./calendar.ts";
+import { loadedKey, nipponSeriesSlot, splitUpcoming, withoutLoaded } from "./calendar.ts";
 import type { CalendarData, CalendarGame, CalendarMonth } from "./calendar.ts";
 import {
   NEUTRAL_COLOR,
@@ -1734,7 +1734,15 @@ export function defaultProbableDate(dates: readonly string[], builtOn: string): 
 }
 
 /**
- * 그 예고일을 **「次の」라고 불러도 되는가**.
+ * **「次の予告先発」의 날짜** — `max(B, L+1)` 이후(그날 포함)의 **가장 이른 예고일**. 없으면 null.
+ * (`B` = 생성일 · `L` = 그 시즌 기록의 최신 경기일 — 대회·상태 무관)
+ *
+ * ⚠⚠**「予告先発 화면의 기본 날짜」를 그대로 쓰지 않는다**(2026-10-25 · PR-3 검토 RS P2-1). 기본 날짜는 「당일」(생성일)이라,
+ *   오늘 경기가 기록에 들어온 **저녁 빌드**(L = 오늘)에는 관문에서 떨어지고 「まだ発表されていません。次の試合は（내일）です」라고 했다 —
+ *   **내일 예고를 이미 받아 둔 채로**(같은 빌드의 予告先発 화면은 그 날의 카드를 냈다). 옛 코드도 같은 거짓이었다(회귀는 아니다).
+ *   ⑥ 의 다음 경기일과 **같은 기준**(`max(B, L+1)`)으로 고른다.
+ * ⚠**인자는 객체다**(검토 RS P3) — ~~`isNextProbable(probableDate, builtOn, latestGameDate)`~~ 는 날짜 문자열이 나란히 있어
+ *   `builtOn` 과 `latestGameDate` 를 바꿔 넘겨도 타입이 못 잡았다.
  *
  * ⚠**끝난 날을 「次の」라고 부르지 않는다**(2026-08-18 감사 P1).
  * 배포물이 위 구획에서 「次の予告先発 8月16日」이라 쓰고 아래 구획에서
@@ -1750,11 +1758,20 @@ export function defaultProbableDate(dates: readonly string[], builtOn: string): 
  * ⚠**같은 날이면 「다음」이 아니다.** 그날 경기는 이미 우리 기록에 들어와 있다.
  * ⚠⚠**생성일보다 이른 날도 「다음」이 아니다**(2026-10-24 · 설계 D5 의 `P ≥ B`). **열리지 않은 경기는 `game` 에 행이 안 생겨**
  *   최신 경기일(`L`)이 멈춘다 — 2026 CS 5차전(10/18)이 그랬고, `P > L` 만 보던 이 함수는 10/18 을 **10/19 부터 10/24 까지 「次」**라고 불렀다.
- * @param latestGameDate 그 시즌 기록의 최신 경기일 — **대회·상태 무관**(정규만 보면 포스트시즌 동안 지난 날을 「次」라고 부른다)
+ * @param dates 예고를 가진 날들(`probableDates` · 순서는 묻지 않는다 — 가장 이른 것을 고른다)
+ * @param at.latestGameDate 그 시즌 기록의 최신 경기일 — **대회·상태 무관**(정규만 보면 포스트시즌 동안 지난 날을 「次」라고 부른다)
  */
-export function isNextProbable(probableDate: string | null, builtOn: string, latestGameDate: string | null): boolean {
-  if (probableDate === null || probableDate < builtOn) return false;
-  return latestGameDate === null || probableDate > latestGameDate;
+export function nextProbableDate(
+  dates: readonly string[],
+  at: { builtOn: string; latestGameDate: string | null },
+): string | null {
+  let best: string | null = null;
+  for (const d of dates) {
+    if (d < at.builtOn) continue;
+    if (at.latestGameDate !== null && d <= at.latestGameDate) continue;
+    if (best === null || d < best) best = d;
+  }
+  return best;
 }
 
 /**
@@ -3993,7 +4010,7 @@ const HOME_PITCHING_STREAK_MIN = 5;
  * ⚠**정렬은 그대로 길이순이다** — 종류가 다르면 비교가 성립하지 않는다는 것은 **각주가 말한다**
  * (`streakTableNote`). 여기서 하는 일은 **어느 쪽도 사라지지 않게 하는 것**뿐이다.
  *
- * ⚠**export 는 시험을 위해서다**(`isNextProbable`·`foldThinVenues`·`sliceRelief` 와 같은 이유) —
+ * ⚠**export 는 시험을 위해서다**(`nextProbableDate`·`foldThinVenues`·`sliceRelief` 와 같은 이유) —
  * 이 자르기는 **후보가 수십 명일 때만** 드러나는데, 그만큼의 실DB 픽스처를 만드는 것은
  * 이 규칙 하나를 재자고 치르기엔 비싼 값이다.
  *
@@ -4278,27 +4295,45 @@ function calendarOf(
    * 팀별로 세는 것이 중요하다: 순위가 일찍 확정된 팀은 남들보다 먼저 143에 닿고,
    * CS는 **그 팀부터** 일정에 붙기 때문이다.
    *
-   * 규칙 자체와 실측 근거는 `regularSeasonUpcoming` 에 있다 — 2025년으로 되돌려 돌리면
+   * 규칙 자체와 실측 근거는 `splitUpcoming`(calendar.ts)에 있다 — 2025년으로 되돌려 돌리면
    * **포스트시즌 40슬롯 전부 잘리고 정규시즌은 0건 잘린다**.
    *
    * ⚠**자르기 전에 순서를 정한다**(2026-10-24 · 설계 D7 지적 6). 예전에는 `ORDER BY game_date` 뿐이라 같은 날 두 행의
    *   순서를 SQLite 에 맡겼고, **삽입 순서를 뒤집은 DB 둘이 다른 컷을 냈다**(`postseason-timeline.test.ts` T9⑹ · 실측 RED).
    *   `seq` 는 그 날 일정 표의 행 순서다(015 마이그레이션). 컷 뒤의 상대 코드 정렬로는 경계를 못 고친다.
+   * ⚠⚠**자르기 전에 이미 적재된 경기를 뺀다**(2026-10-25 · PR-3 검토 GPT P2 · `withoutLoaded`). 받기 실패만이면 배포하므로
+   *   경기는 받고 일정 사본은 못 받은 실행에서 **같은 경기가 두 표에 한 번씩** 남는다 — 그 날 저녁 빌드에서 「次の試合」가 끝난 경기를 가리켰다.
+   *   ⚠**대회를 가리지 않는다** — 위 `past` 는 이 화면의 대회(정규)만 읽지만, 日本シリーズ 1차전처럼 **다른 대회의 경기 행**도 그 예정을 지운다.
+   *   ⚠`through` 뒤의 경기 행은 아직 없는 것이다(재현 가능한 빌드의 기준선) — 그 예정은 남긴다.
    */
+  const loaded = new Map(
+    (db.raw
+      .prepare(
+        `SELECT game_date AS d, home_code AS h, away_code AS a, COUNT(*) AS n
+           FROM game
+          WHERE season = ? AND (home_code = ? OR away_code = ?) AND game_date >= ? AND game_date <= ?
+          GROUP BY game_date, home_code, away_code`,
+      )
+      .all(season, teamCode, teamCode, today, through) as unknown as { d: string; h: string; a: string; n: number }[])
+      .map((r) => [loadedKey(r.d, r.h, r.a), r.n] as const),
+  );
   const { regular: upcoming, beyond } = competition !== "regular"
     ? { regular: [] as UpcomingSlot[], beyond: [] as UpcomingSlot[] }
     : splitUpcoming(
-      (db.raw
-        .prepare(
-          `SELECT game_date AS date, home_code AS home, away_code AS away, venue,
-                start_time AS startTime,
-                SUBSTR(datetime(fetched_at, '+9 hours'), 1, 10) AS asOf
-           FROM upcoming_game
-          WHERE season = ? AND (home_code = ? OR away_code = ?) AND game_date >= ?
-          ORDER BY game_date, seq, home_code, away_code`,
-        )
-        .all(season, teamCode, teamCode, today) as unknown as Omit<UpcomingSlot, "opponentCode">[])
-        .map((r) => ({ ...r, opponentCode: r.home === teamCode ? r.away : r.home })),
+      withoutLoaded(
+        (db.raw
+          .prepare(
+            `SELECT game_date AS date, home_code AS home, away_code AS away, venue,
+                  start_time AS startTime,
+                  SUBSTR(datetime(fetched_at, '+9 hours'), 1, 10) AS asOf
+             FROM upcoming_game
+            WHERE season = ? AND (home_code = ? OR away_code = ?) AND game_date >= ?
+            ORDER BY game_date, seq, home_code, away_code`,
+          )
+          .all(season, teamCode, teamCode, today) as unknown as Omit<UpcomingSlot, "opponentCode">[])
+          .map((r) => ({ ...r, opponentCode: r.home === teamCode ? r.away : r.home })),
+        loaded,
+      ),
       past.filter((g) => g.status === "played").length,
       regularSeasonGames(season),
     );
@@ -4454,8 +4489,10 @@ function teamPages(
   /**
    * 予告先発. ⚠**여기서 다시 조회하지 않는다**(M1) — 試合 화면·予告先発 화면과 같은 한 벌을 받는다.
    * 따로 읽으면 「구단 페이지만 다른 날의 예고를 말한다」가 언젠가 난다.
+   * ⚠**날짜별로 받는다**(2026-10-25 · PR-3 검토) — 「次の試合」의 날짜로 찾는다. 기본 날짜 하나만 받던 때는 저녁 빌드에서
+   *   내일 경기의 예고를 받아 두고도 「発表待ち」라고 했다(같은 빌드의 試合 화면은 내일 카드를 낸다).
    */
-  starters: StartersPageData,
+  starters: StartersIndex,
   /**
    * 연속 기록·기록 근접 — **홈 화면이 만든 것과 같은 한 벌**(M1). 여기서 다시 계산하지 않는다.
    *
@@ -4591,6 +4628,7 @@ function teamPages(
        * ⚠**새로 조회하지 않는다**(§2-2-1 「받고 있는데 안 읽던 것」 · M1). 캘린더를 그린 **같은 행들**이고,
        *   순서도 그 질의의 안정 순서(`game_date, seq, home_code, away_code`)다 — 다시 정렬하면 컷의 순서와 갈린다.
        * ⚠`upcoming` 은 `game_date >= today` 로 이미 걸러져 있다 — 지난 경기가 「다음」이 될 수 없다.
+       *   그리고 **이미 적재된 경기를 뺐다**(`withoutLoaded` · 2026-10-25) — 낡은 사본에 남은 오늘의 끝난 경기도 「다음」이 될 수 없다.
        *
        * 결정표(위에서부터 처음 참인 줄 · 문장은 `nextGameText` 한 벌):
        * | 1 | 시즌 종료 | 없음(「終了しています」) — ⚠**남은 예정보다 먼저다**(2025-11 사본에 열리지 않은 日本S 6·7차전이 남아 있었다) |
@@ -4630,7 +4668,7 @@ function teamPages(
         //   않고 0 으로 메우는 것은 더 나쁘다 — 판정을 내지 않는 값을 준다
         race: race.teams.get(code) ?? unknownRace(code),
         next,
-        probable: next === null ? null : probableOf(starters, code, next),
+        probable: next === null ? null : probableOf(starters.on(next.date), code, next),
         // ⚠**정확히 같을 때만**이다(설계 D7-4) — 규정 수를 넘겼으면 우리가 모르는 시즌이라 「予定はありません」 쪽이다
         regularDone: competition === "regular" && playedOf.get(code) === regularGames,
       };
@@ -4823,8 +4861,11 @@ function teamPages(
    * **2026-08-19** 였고, 12구단 전부의 다음 경기가 8/19 라 **12/12 가 「発表待ち」**였다.
    * NPB 予告先発은 **전날** 발표되므로 그 예고는 현실에 존재했다 — 화면이 말한 이유가
    * 사실이 아니었고, 진짜 이유(**우리 데이터가 3일 낡았다**)는 아무 데도 안 나왔다.
-   * ⚠**화면 문구는 바꾸지 않는다.** 방문자가 알아야 할 것이 아니라 운영자가 알아야 할 것이다 —
-   * 위의 `disagreed` 경고와 같은 자리·같은 형식으로 빌드 로그에 낸다.
+   * ⚠~~**화면 문구는 바꾸지 않는다.** 방문자가 알아야 할 것이 아니라 운영자가 알아야 할 것이다~~ 는 2026-10-25 부로 낡았다
+   *   (PR-3 검토 RS P2-2) — 試合 화면이 감시와 같은 술어(`starters-behind`)로 「取り込めていません」을 말하기 시작했는데 구단 화면만
+   *   「発表待ち」라고 해서 **같은 빌드가 같은 사실을 두 말로** 했다. 이제 구단 화면도 그 날이 「次の試合」이면 같은 말을 한다(`nowBlock`).
+   * ⚠**이 경고는 그와 별개로 운영자 로그에 남는다** — 창이 다르다(감시 술어는 휴식 공표·시즌 종료를 거르고 이 경고는 안 거른다).
+   *   위의 `disagreed` 경고와 같은 자리·같은 형식으로 빌드 로그에 낸다.
    *
    * ⚠**「발표 전(정상)」에는 울리지 않는다.** 기준일보다 **이전**일 때만이다 —
    * 기준일 당일의 예고를 갖고 있는데 다음 날 것이 아직 없는 것은 정상이고, 그때는
@@ -4852,16 +4893,18 @@ function teamPages(
    */
   assertOneGamePerTeam(db, [...new Set(out.flatMap((t) => (t.now.next === null ? [] : [t.now.next.date])))], "구단 次の試合");
 
+  /** 予告先発 화면의 기본 날짜 — 이 경고의 창은 지금까지 그대로 그 날을 기준으로 잰다 */
+  const startersDefault = defaultProbableDate(starters.dates, o.builtOn);
   const staleTeams = out.filter((t) => {
     if (t.now.next === null || t.now.probable !== null) return false;
-    if (starters.gameDate === null) return true;
-    return starters.gameDate < t.now.next.date && t.now.next.date <= o.builtOn;
+    if (startersDefault === null) return true;
+    return startersDefault < t.now.next.date && t.now.next.date <= o.builtOn;
   });
   if (staleTeams.length > 0) {
     console.warn(
-      `⚠ ${o.season}: 予告先発が古い — 画面は「発表待ち」と書きますが、実際には` +
+      `⚠ ${o.season}: 予告先発が古い — 次の試合の予告を` +
         `**取り込めていない**可能性があります（${staleTeams.length}/${out.length}球団 · ` +
-        `予告の対象日=${starters.gameDate ?? "1日も持っていない"} · 生成日=${o.builtOn}）`,
+        `予告の対象日=${startersDefault ?? "1日も持っていない"} · 生成日=${o.builtOn}）`,
     );
   }
 
@@ -4913,22 +4956,25 @@ function unknownRace(teamCode: string): TeamRace {
  * 그 팀의 **다음 경기**에 대한 予告先発.
  *
  * ⚠**다음 경기의 것일 때만 붙인다.** 예고일이 다음 경기일과 다르면 그것은 다른 경기의 예고이고,
- * 그걸 「次の」라고 부르는 것이 이 리포가 이미 밟은 결함이다(`isNextProbable` 의 주석 —
+ * 그걸 「次の」라고 부르는 것이 이 리포가 이미 밟은 결함이다(`nextProbableDate` 의 주석 —
  * 한 페이지가 같은 날을 예정이자 종료로 동시에 선언했다).
  * ⚠**상대 팀까지 맞춘다** — 더블헤더·재편성에서 같은 날 다른 경기를 집을 수 있다.
  * ⚠**못 찾으면 `null`**(= 発表待ち)이다. 「投手なし」가 아니다(M11).
  *
- * ⚠**export 는 시험을 위해서다**(`isNextProbable`·`foldThinVenues` 와 같은 이유).
+ * ⚠**export 는 시험을 위해서다**(`nextProbableDate`·`foldThinVenues` 와 같은 이유).
  * 이 함수가 조용히 늘 `null` 을 내면 12구단 페이지가 **영원히 「発表待ち」**가 되는데,
  * 그건 화면상 정상으로 보이는 침묵 실패다 — 실데이터로는 오늘 확인할 수 없다
  * (2026-08-19 실측: DB 의 예고일이 `2026-08-16` 하나뿐이고 그 날은 이미 치러졌다).
+ * ⚠⚠**호출자는 「次の試合」의 날짜로 찾은 예고를 넘긴다**(2026-10-25 · PR-3 검토 RS P2-1·P2-2 · `StartersIndex.on`).
+ *   예전에는 予告先発 화면의 **기본 날짜**(당일) 것만 받아서, 저녁 빌드(오늘 경기는 끝났고 내일 예고는 받았다)에서
+ *   구단의 「次の試合」(내일)와 짝이 안 맞아 「発表待ち」로 떨어졌다 — 같은 빌드의 試合 화면은 내일 카드를 낸다.
  */
 export function probableOf(
-  starters: StartersPageData,
+  starters: StartersPageData | null,
   code: string,
   next: TeamNextGame,
 ): { mine: string | null; theirs: string | null } | null {
-  if (starters.gameDate !== next.date) return null;
+  if (starters === null || starters.gameDate !== next.date) return null;
   for (const g of starters.games) {
     const [a, b] = g.sides;
     if (a.teamCode === code && b.teamCode === next.opponentCode) return { mine: a.name, theirs: b.name };
@@ -4937,10 +4983,44 @@ export function probableOf(
   return null;
 }
 
+/**
+ * **날짜별 予告先発** — 予告先発 화면이 그리는 것과 **같은 한 벌**(M1). 試合 화면(次の予告先発)과 구단 화면(予告先発 줄)이
+ * 「그 날」의 예고를 여기서 찾는다.
+ * ⚠**기본 날짜 하나만 넘기던 것이 결함이었다**(2026-10-25 · PR-3 검토 RS P2-1·P2-2) — 저녁 빌드에서 내일 예고를 받아 두고도
+ *   두 화면이 「発表待ち」·「まだ発表されていません」이라고 했다.
+ */
+interface StartersIndex {
+  /** 예고를 가진 모든 날(`probableDates` · 오래된 것부터) */
+  dates: readonly string[];
+  /** 그 날의 予告先発 화면 데이터. 그 날 예고가 없으면 null */
+  on(date: string): StartersPageData | null;
+  /** 예고를 처음 보존한 해(설계 D5-1 · `probableSavedFrom`). 하나도 없으면 null */
+  savedFrom: number | null;
+}
+
+/** 試合 화면의 예고 카드 — 予告先発 화면 데이터에서 옮긴다(M1 · 여기서 다시 조회하지 않는다) */
+function todayProbablesOf(starters: StartersPageData): TodayProbable[] {
+  return starters.games.map((g) => ({
+    venue: g.venue,
+    startTime: g.startTime,
+    anchor: startersAnchor(gameKey(g)),
+    sides: [0, 1].map((i) => {
+      const s = g.sides[i]!;
+      return {
+        shortName: s.shortName,
+        color: s.color,
+        playerId: s.playerId,
+        name: s.name,
+        era: s.summary === null ? null : s.summary.era,
+      };
+    }) as [TodayProbable["sides"][0], TodayProbable["sides"][1]],
+  }));
+}
+
 function todayPage(
   db: Db,
   o: LoadOptions,
-  starters: StartersPageData,
+  starters: StartersIndex,
   nameOf: (playerId: string) => string | null,
   gamePageIds: ReadonlySet<string>,
   days: readonly GameDay[],
@@ -4965,27 +5045,11 @@ function todayPage(
     latestDate === null ? [] : dayGames(db, o, latestDate, nameOf, gamePageIds);
   const at = days.findIndex((d) => d.date === latestDate);
 
-  const probables: TodayProbable[] = starters.games.map((g) => ({
-    venue: g.venue,
-    startTime: g.startTime,
-    anchor: startersAnchor(gameKey(g)),
-    sides: [0, 1].map((i) => {
-      const s = g.sides[i]!;
-      return {
-        shortName: s.shortName,
-        color: s.color,
-        playerId: s.playerId,
-        name: s.name,
-        era: s.summary === null ? null : s.summary.era,
-      };
-    }) as [TodayProbable["sides"][0], TodayProbable["sides"][1]],
-  }));
-
   return {
     gameDate: latestDate,
     builtOn: o.builtOn,
     games,
-    next: nextProbableOf(db, o, starters, probables),
+    next: nextProbableOf(db, o, starters),
     starRule: starRuleText(),
     starLimit: STAR_LIMIT,
     // 최신 경기일이 목록의 끝이므로 「다음 날」은 없다
@@ -5000,28 +5064,32 @@ function todayPage(
  * | # | 조건 | 상태 |
  * |---|---|---|
  * | ① | 그 시즌이 끝났다(`seasonIsOver`) | `seasonOver` — 예고 기록이 있던 시즌인지와 첫 보존 연도를 든다 |
- * | ②③④ | `P ≥ B` ∧ `P > L` | 그 날의 철회 3값 → `announced` · `withdrawn` · `unknown` |
+ * | ②③④ | `P` 가 있다 | 그 날의 철회 3값 → `announced` · `withdrawn` · `unknown` |
  * | ⑥ | 그 밖 | `awaiting` — 다음 경기일(모르면 null) |
  *
- * `P` = 予告先発 화면의 기본 날짜(`defaultProbableDate` · 지금 그대로) · `B` = 생성일 · `L` = 그 시즌 기록의 최신 경기일(**대회·상태 무관**).
+ * `P` = `max(B, L+1)` 이후의 **가장 이른 예고일**(`nextProbableDate`) · `B` = 생성일 · `L` = 그 시즌 기록의 최신 경기일(**대회·상태 무관**).
  * ⚠**`P ≥ B` 가 이번 결함의 처방이다** — 열리지 않은 경기는 `game` 에 행이 안 생겨 `L` 이 멈춘다(10/17).
  *   `L` 만 보면 끝난 10/18 을 열흘 넘게 「次」라고 불렀다(옛 `isNextProbable` 의 `P > 정규 최신일`).
+ * ⚠⚠**`P` 는 予告先発 화면의 기본 날짜가 아니다**(2026-10-25 · PR-3 검토 RS P2-1) — 기본 날짜(당일)를 쓰면 저녁 빌드(L = 오늘)에서
+ *   **받아 둔 내일 예고**를 두고 「まだ発表されていません。次の試合は（내일）です」라고 했다. ⑥ 의 다음 경기일과 같은 기준으로 고른다.
  * ⚠**⑥ 의 다음 경기일은 「아직 기록에 없는 날」이다**(설계와 다른 점 · 보고에 적었다): 감시의 다음 경기일(`B` 이상)을 그대로 쓰면
  *   저녁 빌드에서 **이미 결과가 아래 구획에 실린 오늘**을 「次の試合は今日」이라고 부른다 — 한 화면이 같은 날을 예정이자 종료로 선언한다.
  *   그래서 `max(B, L+1)` 이후의 가장 가까운 날을 같은 질의(`nextGameDayOf`)로 찾는다. ⑤ 는 감시의 날짜를 그대로 쓴다.
  */
-function nextProbableOf(db: Db, o: LoadOptions, starters: StartersPageData, probables: TodayProbable[]): NextProbable {
+function nextProbableOf(db: Db, o: LoadOptions, starters: StartersIndex): NextProbable {
   if (seasonIsOver(db, o.season)) {
-    return { kind: "seasonOver", recorded: probableDates(db, o.season).length > 0, savedFrom: starters.savedFrom };
+    return { kind: "seasonOver", recorded: starters.dates.length > 0, savedFrom: starters.savedFrom };
   }
   const B = o.builtOn;
   const L = (db.raw
     .prepare("SELECT MAX(game_date) AS d FROM game WHERE season = ? AND game_date <= ?")
     .get(o.season, o.through ?? "9999-12-31") as unknown as { d: string | null } | undefined)?.d ?? null;
-  const P = starters.gameDate;
-  if (P !== null && isNextProbable(P, B, L)) {
-    const w = starters.withdrawal ?? "notWithdrawn";
+  const P = nextProbableDate(starters.dates, { builtOn: B, latestGameDate: L });
+  const day = P === null ? null : starters.on(P);
+  if (P !== null && day !== null) {
+    const w = day.withdrawal ?? "notWithdrawn";
     if (w === "withdrawn") return { kind: "withdrawn", date: P };
+    const probables = todayProbablesOf(day);
     if (w === "unknown") return { kind: "unknown", date: P, probables };
     // ⚠카드가 하나도 안 지어지면(두 행이 짝지어지지 않음) 「発表された」고 하지 않는다 — 발표 전으로 떨어진다
     if (probables.length > 0) return { kind: "announced", date: P, probables };
@@ -5195,7 +5263,7 @@ export function buildCareerContext(db: Db, o: CareerContextOptions): CareerConte
  * 무해했지만(실측 2026-08-21: 정규시즌 `status='final'` **552,563행 중 0행**),
  * ⚠**「실데이터 0」과 「안전」은 다르다.**
  *
- * ⚠**export 는 시험을 위해서다**(`isNextProbable`·`foldThinVenues` 와 같은 이유) —
+ * ⚠**export 는 시험을 위해서다**(`nextProbableDate`·`foldThinVenues` 와 같은 이유) —
  * 이 값은 `SiteData` 에 안 드러나므로 화면으로는 어긋남을 잡을 수 없다.
  */
 export function sliceRelief(scan: ReliefScan, season: number): ReliefScan {
@@ -6966,6 +7034,17 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   const starterDays = probDates
     .filter((d) => d !== startersData.gameDate)
     .map((d) => ({ ...startersFor(d), isDayPage: true }));
+  /**
+   * **날짜별 予告先発 — 화면이 그린 바로 그 데이터**(M1). 試合 화면의 次の予告先発과 구단 화면의 予告先発 줄이 「그 날」을 여기서 찾는다.
+   * ⚠기본 날짜 하나만 넘기던 것이 결함이었다(2026-10-25 · PR-3 검토 RS P2-1·P2-2 · `StartersIndex` 주석).
+   */
+  const startersByDate = new Map<string, StartersPageData>();
+  for (const s of [startersData, ...starterDays]) if (s.gameDate !== null) startersByDate.set(s.gameDate, s);
+  const startersIndex: StartersIndex = {
+    dates: probDates,
+    on: (date) => startersByDate.get(date) ?? null,
+    savedFrom,
+  };
 
   // 선수명은 시즌 집계에서 온다 — **이름 문자열로 조인하지 않는다**(M10). ID로 찾아 이름을 붙인다
   const nameOf = (playerId: string): string | null =>
@@ -7039,7 +7118,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
    * 試合 화면. ⚠**대시보드도 이것을 그대로 쓴다**(M1) — 따로 조회하면
    * 「홈과 試合가 다른 경기를 보여준다」가 언젠가 난다.
    */
-  const todayData = todayPage(db, o, startersData, nameOf, gamePageIds, days, todayDate);
+  const todayData = todayPage(db, o, startersIndex, nameOf, gamePageIds, days, todayDate);
 
   /**
    * 대시보드.
@@ -7110,8 +7189,8 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     // ⚠**만들어진 목록 자체를 넘긴다**(M1) — 「어느 경기에 페이지가 있는가」의 조건을
     //   캘린더에 베끼면 한쪽이 바뀔 때 조용히 갈린다
     gamePageIds,
-    // ⚠**予告先発도 같은 한 벌이다**(M1) — 試合 화면·予告先発 화면이 쓰는 것을 그대로 넘긴다
-    startersData,
+    // ⚠**予告先発도 같은 한 벌이다**(M1) — 試合 화면·予告先発 화면이 쓰는 것을 그대로 넘긴다(날짜별 · 「次の試合」의 날짜로 찾는다)
+    startersIndex,
     /**
      * ⚠**연속 기록·기록 근접도 같은 한 벌이다**(M1 · Task 6) — 여기서 다시 계산하지 않는다.
      * ⚠**`homeData.page.streaks` 가 아니라 `allStreaks` 다**(2026-08-19 수정). 홈이 상위 N으로

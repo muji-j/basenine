@@ -713,10 +713,15 @@ export function renderDayIndexPage(d: DayIndexData, ctx: RenderContext): string 
   /**
    * 칸의 대회 표기(설계 D9) — **글자로**, `中止` 상자와 다른 모양으로(테두리 없는 보조 잉크 · `.dayc .dk`).
    * ⚠정규만인 날은 아무것도 안 붙는다 — 그 칸의 바이트는 그대로다.
+   * ⚠**약어에 풀이를 단다**(2026-10-25 · PR-3 검토 RS P3 · 루트 §7) — 보이는 「CS」·「日本S」는 `<abbr title>`(마우스로 풀이)이고
+   *   **낭독에서는 빠진다**(`aria-hidden`), 스크린리더는 시각 숨김(`.vh`)의 풀어 쓴 이름을 읽는다. 둘 다 읽히면 같은 말을 두 번 한다.
+   *   `title` 만으로는 스크린리더가 읽는다는 보장이 없다.
    */
   const comp = (cs: readonly string[]): RawHtml => {
-    const marks = cs.map((c) => COMPETITION_SHORT[c]).filter((x): x is string => x !== undefined);
-    return marks.length === 0 ? raw("") : html`<i class="dk">${marks.join("・")}</i>`;
+    const marks = cs.filter((c) => COMPETITION_SHORT[c] !== undefined);
+    return marks.length === 0
+      ? raw("")
+      : html`<i class="dk">${marks.map((c, i) => html`${i === 0 ? "" : "・"}<abbr title="${COMPETITION_NAME[c] ?? c}" aria-hidden="true">${COMPETITION_SHORT[c]}</abbr><span class="vh">${COMPETITION_NAME[c] ?? c}</span>`)}</i>`;
   };
 
   const body = html`<header class="idline">
