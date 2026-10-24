@@ -238,8 +238,8 @@ node scripts/freshness.ts data/bb.sqlite 2
    |---|---|
    | `doc-figures` | `CLAUDE.md` §2-2 · `docs/metrics/README.md` §6 · `docs/sources/2026-08-20-war-xfip-recheck.md` · `packages/aggregate/src/steal.ts` 머리말 |
    | `steal-seasons` | 그 시험 안의 루별 표 · `steal.ts` 주석 · `docs/metrics/README.md` §1-A |
-   | `park-db` | 그 시험 안의 RPW·파크팩터 표 · `docs/metrics/README.md` §3.3(파크팩터) · §6(RPW) — ⚠**문서 쪽은 시험이 대조하지 않는다**, 손으로 맞춘다 |
-   | `runner-seq` | `docs/metrics/README.md` §6 wSB 절 |
+   | `park-db` | 그 시험 안의 RPW·파크팩터 표 · `docs/metrics/README.md` §3.3(파크팩터) · §6(RPW) — ⚠**문서 쪽은 시험이 대조하지 않는다**, 손으로 맞춘다. 표 전체는 `node scripts/rpw-measure.ts data/bb.sqlite` · `node scripts/venue-measure.ts data/bb.sqlite --pf` 의 **「문서 범위」 줄**에서 옮긴다(「참고」 줄은 옮기지 마라) |
+   | `runner-seq` | `docs/metrics/README.md` §6 wSB 절(재현: `node scripts/runner-seq-measure.ts data/bb.sqlite` 의 「문서 범위」 줄) |
    | `race-seasons` | `PENNANT` 에 그 시즌 리그 우승팀과 승-패-무 — ⚠**DB 에서 옮겨 적지 마라. npb.jp 공식 순위(`https://npb.jp/bis/<시즌>/standings/`)를 읽어 적는다**(DB 값을 쓰면 자기 검산이 된다) |
 4. 같은 명령이 전부 초록인지 보고, 커밋한다. 다음 실행부터 경고가 사라진다.
 

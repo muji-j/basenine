@@ -14,6 +14,9 @@
  *   올스타·CS·일본시리즈를 섞으면 구장 집합도 득점 환경도 다른 수가 된다.
  * ⚠**파크팩터는 완결 시즌만.** 진행 중 시즌을 넣으면 경기가 들어올 때마다 값이 움직여
  *   문서에 적을 수 없는 수가 된다(`scripts/test/doc-figures.test.ts` 가 같은 규약).
+ * ⚠⚠**그 「완결 시즌」은 고정 범위(`DOC_SEASONS`)다**(2026-10-24 · 이중 검토 P3) — `packages/metrics/test/park-db.test.ts` 의
+ *   파크팩터 표와 같은 범위다. ~~데이터상 완결 시즌~~ 으로 셌더니 정규시즌이 끝난 날 2026 이 섞여 재현 명령이 시험·문서와
+ *   다른 기준 표본을 냈다. 데이터상 완결 시즌의 기준 표본은 **참고 줄**로 따로 낸다(범위를 올리는 절차는 `docs/operations.md` 「해마다 하는 일」).
  */
 import { parseArgs } from "node:util";
 import { DatabaseSync } from "node:sqlite";
@@ -21,8 +24,10 @@ import { DatabaseSync } from "node:sqlite";
  * ⚠**패키지 진입점(`@bb-app/domain`)이 아니라 파일을 직접 가리킨다.**
  * 진입점은 `venues.ts` 를 재수출하므로, 그걸 쓰면 **정본 표가 깨진 상태에서 `--raw` 가 안 돈다** —
  * 아래 「표는 `--raw` 뒤에 읽는다」가 거짓말이 된다. 스스로 다시 읽다가 잡았다(작업규칙 10).
+ * ⚠`doc-seasons.ts` 도 같은 이유로 파일을 직접 가리킨다(그 파일은 아무것도 import 하지 않는다).
  */
 import { regularSeasonGames } from "../packages/domain/src/teams.ts";
+import { DOC_SEASONS } from "../packages/domain/src/doc-seasons.ts";
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -259,9 +264,10 @@ console.log(`(팀, 건물) 짝: ${[...new Set(notableNeutral.map((n) => `${n.tea
 
 if (values.pf) {
   /**
-   * **완결 시즌** = 12구단 전부가 `regularSeasonGames(시즌)` 을 치른 시즌.
-   * ⚠**「최근 시즌을 뺀다」로 쓰지 마라** — 2026 이 끝난 뒤에도 영원히 빠진다(doc-figures 와 같은 규약).
-   * ⚠**2020 은 120경기다.**
+   * **데이터상 완결 시즌** = 12구단 전부가 `regularSeasonGames(시즌)` 을 치른 시즌 · **2020 은 120경기다.** ⚠**참고 줄에만 쓴다** —
+   * 「문서에 적는 수」는 `DOC_SEASONS`(고정 범위)로 센다(이 파일 머리말).
+   * ⚠**「최근 시즌을 뺀다」로 쓰지 마라** — 2026 이 끝난 뒤에도 영원히 빠진다(doc-figures 와 같은 규약). 고정 범위는 명시한 목록이고
+   *   끝난 시즌이 그 밖이면 수집 로그가 알린다(`scripts/freshness.ts`).
    */
   const counted = new Map<number, Map<string, number>>();
   for (const r of db
@@ -287,16 +293,31 @@ if (values.pf) {
    * 「홈팀의 홈구장」 = 정본 표가 primary 또는 secondary 라고 말하는 것.
    * ⚠**경기 수로 자르지 않는다** — 阪神 京セラ(연 3~9) · オリックス ほっと神戸(연 3~11) 가 잘려 나간다.
    */
-  const homeRows = rows.filter(
-    (r) => done.has(r.season) && r.runsUnknown === 0 && isHomeVenue(r.venue, r.homeCode, r.season),
-  );
+  const homeRowsOf = (only: ReadonlySet<number>): Row[] =>
+    rows.filter((r) => only.has(r.season) && r.runsUnknown === 0 && isHomeVenue(r.venue, r.homeCode, r.season));
+  /** **문서에 적는 수의 범위** — `DOC_SEASONS` 한 벌(M1) */
+  const docSet: ReadonlySet<number> = new Set(DOC_SEASONS);
+  const homeRows = homeRowsOf(docSet);
   const baseGames = homeRows.reduce((a, r) => a + r.games, 0);
   const baseRuns = homeRows.reduce((a, r) => a + r.runs, 0);
   const baseline = baseRuns / baseGames;
 
   console.log("");
-  console.log(`## ⑤ 파크팩터 — 완결 ${done.size}시즌(${[...done].sort().join("·")}) · 경기당 양팀 합계 득점`);
+  console.log(
+    `## ⑤ 파크팩터 — 문서 범위 ${DOC_SEASONS.length}시즌(${DOC_SEASONS.join("·")}) · 경기당 양팀 합계 득점  ← **문서에 적는 수**`,
+  );
   console.log(`기준 표본: **${baseGames.toLocaleString("en-US")}경기** · 기준 **${baseline.toFixed(3)}점/경기**`);
+  const ref = homeRowsOf(done);
+  const refGames = ref.reduce((a, r) => a + r.games, 0);
+  const refRuns = ref.reduce((a, r) => a + r.runs, 0);
+  const doneList = [...done].sort((a, b) => a - b);
+  console.log(
+    `(참고) 데이터상 완결 ${done.size}시즌(${doneList.join("·") || "없음"}): 기준 표본 ${refGames.toLocaleString("en-US")}경기 · ` +
+      `${refGames === 0 ? "-" : (refRuns / refGames).toFixed(3)}점/경기` +
+      (doneList.length === docSet.size && doneList.every((s) => docSet.has(s)) ? " — 문서 범위와 같다" : " — ⚠문서 범위와 다르다(문서에 옮기지 마라)"),
+  );
+  const docNotDone = DOC_SEASONS.filter((s) => !done.has(s));
+  if (docNotDone.length > 0) console.log(`⚠문서 범위 중 이 DB 에서 완결이 아닌 시즌: ${docNotDone.join("·")} — 그 시즌의 수가 문서와 다르다`);
   console.log("⚠기준 표본을 조금만 다르게 자르면 전 구장이 같은 방향으로 움직인다 — **값과 기준을 같이 인용하라**");
 
   const fold = (sel: (r: Row) => string): Map<string, { games: number; runs: number }> => {

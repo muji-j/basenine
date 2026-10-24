@@ -12,10 +12,14 @@
  * ⚠**대회 경계**: `competition='regular' AND status='played'`(§2-1).
  * ⚠**한 경기는 한 번만 센다.** 홈·원정 양쪽에서 세면 경기 수가 두 배가 되고 RPW 가 √2 배 작아진다.
  * ⚠**득점이 NULL 인 경기는 분모에서도 뺀다**(M11) — 0점으로 때우면 그 리그가 투수 친화로 보인다.
- * ⚠**진행 중 시즌은 별표로 낸다** — 경기가 들어올 때마다 값이 움직인다.
+ * ⚠**진행 중 시즌은 별표(`*`)로 낸다** — 경기가 들어올 때마다 값이 움직인다.
+ * ⚠⚠**「문서에 적는 수」는 고정 범위(`DOC_SEASONS`)로 센다**(2026-10-24 · 이중 검토 P3) — `packages/metrics/test/park-db.test.ts` 의
+ *   RPW 표와 같은 범위다. ~~데이터상 완결 시즌(12구단이 규정 경기수를 치렀는가)~~ 으로 셌더니 정규시즌이 끝난 날 2026 이 섞여
+ *   재현 명령이 시험·문서와 다른 수를 냈다. 데이터상 완결이지만 범위 밖인 시즌은 `+` 로 표시하고 **참고 줄**로 따로 낸다
+ *   (범위를 올리는 절차는 `docs/operations.md` 「해마다 하는 일」).
  */
 import { DatabaseSync } from "node:sqlite";
-import { leagueOf, regularSeasonGames } from "@bb-app/domain";
+import { DOC_SEASONS, leagueOf, regularSeasonGames } from "@bb-app/domain";
 import { runsPerWin, sumRunEnvironments } from "@bb-app/metrics";
 import type { RunEnvironment } from "@bb-app/metrics";
 
@@ -50,7 +54,10 @@ const games = (
     .all() as unknown as GameRow[]
 ).map((r) => ({ ...r, season: Number(r.season) }));
 
-/** 완결 시즌 — 12구단 전부가 `regularSeasonGames(시즌)` 을 치렀는가. ⚠**2020 은 120경기다** */
+/**
+ * **데이터상 완결 시즌** — 12구단 전부가 `regularSeasonGames(시즌)` 을 치렀는가. ⚠**2020 은 120경기다**.
+ * ⚠**참고용이다** — 진행 중 표시(`*`)와 참고 줄에만 쓴다. 「문서에 적는 수」는 아래 `docSet`(고정 범위)이다.
+ */
 const played = new Map<number, Map<string, number>>();
 for (const g of games) {
   const m = played.get(g.season) ?? new Map<string, number>();
@@ -62,6 +69,9 @@ const settled = new Set(
     .filter(([s, m]) => m.size === 12 && Math.min(...m.values()) >= regularSeasonGames(s))
     .map(([s]) => s),
 );
+/** **문서에 적는 수의 범위** — `DOC_SEASONS` 한 벌(M1) */
+const docSet: ReadonlySet<number> = new Set(DOC_SEASONS);
+const sameSet = (a: ReadonlySet<number>, b: ReadonlySet<number>): boolean => a.size === b.size && [...a].every((x) => b.has(x));
 
 type Scope = "리그내" | "교류전 포함";
 const buckets = new Map<string, RunEnvironment>();
@@ -88,16 +98,21 @@ const seasons = [...new Set(games.map((g) => g.season))].sort((a, b) => a - b);
 const LEAGUES = ["central", "pacific"] as const;
 
 console.log(`# RPW — 정규 · 실시 · ${seasons.length}시즌 · 득점 미상 ${runsUnknown}경기(분모에서 뺐다)`);
-console.log(`완결 시즌: ${[...settled].sort().join(" ")} · 진행 중: ${seasons.filter((s) => !settled.has(s)).join(" ") || "없음"}`);
+console.log(`문서 범위(DOC_SEASONS): ${DOC_SEASONS.join(" ")} ← **문서·시험에 적는 수는 이 범위다**`);
+console.log(
+  `(참고) 데이터상 완결: ${[...settled].sort().join(" ") || "없음"} · 진행 중: ${seasons.filter((s) => !settled.has(s)).join(" ") || "없음"}`,
+);
+const docNotSettled = DOC_SEASONS.filter((s) => !settled.has(s));
+if (docNotSettled.length > 0) console.log(`⚠문서 범위 중 이 DB 에서 완결이 아닌 시즌: ${docNotSettled.join(" ")} — 그 시즌의 수가 문서와 다르다`);
 console.log("");
-console.log("season\tleague\t리그내경기\t득점\t경기당\tRPW\t|\t교류전포함경기\tRPW");
+console.log("season\tleague\t리그내경기\t득점\t경기당\tRPW\t|\t교류전포함경기\tRPW   (* 진행 중 · + 완결이지만 문서 범위 밖)");
 for (const s of seasons) {
   for (const l of LEAGUES) {
     const inner = buckets.get(`${s}\t${l}\t리그내`) ?? { runs: 0, games: 0 };
     const all = buckets.get(`${s}\t${l}\t교류전 포함`) ?? { runs: 0, games: 0 };
     const a = runsPerWin(inner);
     const b = runsPerWin(all);
-    const mark = settled.has(s) ? "" : "*";
+    const mark = !settled.has(s) ? "*" : docSet.has(s) ? "" : "+";
     console.log(
       `${s}${mark}\t${l}\t${inner.games}\t${inner.runs}\t${a.runsPerGame?.toFixed(3) ?? "-"}\t` +
         `${a.value?.toFixed(3) ?? "-"}\t|\t${all.games}\t${b.value?.toFixed(3) ?? "-"}`,
@@ -106,24 +121,30 @@ for (const s of seasons) {
 }
 
 console.log("");
-console.log("## 완결 시즌 합계 — **시즌을 뭉치면 다른 수다.** 비교용으로만 본다");
-for (const l of LEAGUES) {
-  const parts = [...settled].map((s) => buckets.get(`${s}\t${l}\t리그내`) ?? { runs: 0, games: 0 });
-  const r = runsPerWin(sumRunEnvironments(parts));
-  console.log(`${l}\t${r.games}경기\t경기당 ${r.runsPerGame?.toFixed(3) ?? "-"}\tRPW ${r.value?.toFixed(3) ?? "-"}`);
-}
+const totals = (label: string, only: ReadonlySet<number>): void => {
+  console.log(`## ${label} 합계 — **시즌을 뭉치면 다른 수다.** 비교용으로만 본다`);
+  for (const l of LEAGUES) {
+    const parts = [...only].map((s) => buckets.get(`${s}\t${l}\t리그내`) ?? { runs: 0, games: 0 });
+    const r = runsPerWin(sumRunEnvironments(parts));
+    console.log(`${l}\t${r.games}경기\t경기당 ${r.runsPerGame?.toFixed(3) ?? "-"}\tRPW ${r.value?.toFixed(3) ?? "-"}`);
+  }
+};
+totals("문서 범위(DOC_SEASONS)", docSet);
+if (!sameSet(settled, docSet)) totals("(참고) 데이터상 완결 시즌", settled);
 
 /**
  * ⚠**「교류전을 뺐다」가 얼마짜리 선택인가** — 수로 말할 수 있어야 기각도 채택도 근거가 된다.
  *
- * ⚠**완결 시즌과 전체를 따로 낸다.** 진행 중 시즌이 섞인 수를 문서·시험에 옮기면
+ * ⚠**문서 범위 · 데이터상 완결 · 전체를 따로 낸다.** 진행 중 시즌이 섞인 수를 문서·시험에 옮기면
  * 경기가 들어올 때마다 낡는다 — 실제로 이 수를 그대로 옮겼다가
  * `packages/metrics/test/park-db.test.ts` 가 잡았다(전체 0.216 은 2026 것이다).
+ * ⚠**문서에 옮기는 것은 첫 줄(문서 범위)뿐이다** — 데이터상 완결은 정규시즌이 끝난 날 범위 밖 시즌을 넣는다(2026-10-08).
  */
 console.log("");
 for (const [label, only] of [
-  ["완결 시즌만", settled],
-  ["전 시즌(진행 중 포함)", new Set(seasons)],
+  ["문서 범위 DOC_SEASONS ← 문서에 적는 수", docSet],
+  ["참고 · 데이터상 완결", settled],
+  ["참고 · 전 시즌 · 진행 중 포함", new Set(seasons)],
 ] as const) {
   const diffs: number[] = [];
   for (const s of seasons) {
