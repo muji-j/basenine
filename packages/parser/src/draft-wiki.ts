@@ -371,23 +371,32 @@ function decodeEntities(s: string): string {
   });
 }
 
+/** 선언 하나. 프로퍼티·값 둘 다 소문자로 접었다(CSS 프로퍼티·키워드는 대소문자를 안 가린다) */
+interface CssDecl {
+  readonly prop: string;
+  readonly value: string;
+}
+
 /**
- * CSS 를 **프로퍼티 단위로** 읽는다.
+ * CSS 를 **선언 단위로, 적힌 순서대로** 읽는다.
  *
  * ⚠⚠**문자열 매칭 금지**(규칙표 §6-5). 같은 표 안에서 `…normal;` 와 `…normal` 이 **공존한다**(2019).
  * 색도 마찬가지로 `#ccf;` 와 `#ccf` 가 섞인다(2019·2024·2025 실측).
  * **세미콜론 하나로 낙첨이 당첨이 된다.**
+ * ⚠⚠**순서를 버리지 마라**(2026-10-24 · GPT 검토 P1). 프로퍼티마다 마지막 값 하나만 남기면(옛 `cssProps`)
+ * `font-weight:normal;font-weight:heavy` 에서 **앞의 `normal` 이 사라진다** — 브라우저는 무효인 `heavy` 를 버리고
+ * `normal` 을 적용하는데, 우리는 `heavy`(무효 → 선언 없음 → 굵음)만 보고 **낙첨을 당첨으로** 읽는다.
  */
-function cssProps(style: string | null): Map<string, string> {
-  const out = new Map<string, string>();
+function cssDecls(style: string | null): CssDecl[] {
+  const out: CssDecl[] = [];
   if (style === null) return out;
   for (const decl of style.split(";")) {
     const at = decl.indexOf(":");
     if (at === -1) {
-      if (decl.trim() !== "") out.set(decl.trim().toLowerCase(), "");
+      if (decl.trim() !== "") out.push({ prop: decl.trim().toLowerCase(), value: "" });
       continue;
     }
-    out.set(decl.slice(0, at).trim().toLowerCase(), decl.slice(at + 1).trim().toLowerCase());
+    out.push({ prop: decl.slice(0, at).trim().toLowerCase(), value: decl.slice(at + 1).trim().toLowerCase() });
   }
   return out;
 }
@@ -611,7 +620,7 @@ const CSS_IDENT = /^-?[a-z_][a-z0-9_-]*$/u;
 const CSS_NUMBER = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/u;
 
 /**
- * `font-weight` 선언값 하나의 판정. ⚠**`cssProps` 가 이미 소문자로 접은 값**을 받는다(CSS 키워드는 대소문자를 안 가린다).
+ * `font-weight` 선언값 하나의 판정. ⚠**`cssDecls` 가 이미 소문자로 접은 값**을 받는다(CSS 키워드는 대소문자를 안 가린다).
  *
  * | 판정 | 무엇 | 칸은 |
  * |---|---|---|
@@ -651,9 +660,13 @@ function classifyCell(
   columnIndex: number,
   where: string,
 ): DraftWikiCell {
-  const props = cssProps(attrOf(raw.attrs, "style"));
-  const bgRaw = props.get("background-color") ?? null;
-  const fwRaw = props.get("font-weight") ?? null;
+  const decls = cssDecls(attrOf(raw.attrs, "style"));
+  /**
+   * ⚠**배경색은 마지막 선언을 쓴다**(옛 `cssProps` 와 같다). 중복이어도 조용히 틀리지 않는다 — 마지막이 유효하면
+   * 브라우저와 같고, 마지막이 무효면 아래에서 **던진다**(브라우저는 앞의 유효한 색을 쓰겠지만 우리는 단정하지 않는다).
+   * 무효를 흡수하는 것은 `font-weight` 뿐이라 **중복이 위험한 것도 그쪽뿐**이다.
+   */
+  const bgRaw = decls.filter((d) => d.prop === "background-color").at(-1)?.value ?? null;
 
   if (bgRaw !== null && !LOTTERY_COLORS.has(bgRaw) && bgRaw !== NON_LOTTERY_COLOR) {
     throw new DraftWikiParseError(
@@ -661,23 +674,37 @@ function classifyCell(
       `${where} / col=${columnIndex} background-color=${JSON.stringify(bgRaw)}`,
     );
   }
-  const verdict = fwRaw === null ? null : fontWeightVerdict(fwRaw);
-  if (verdict === "valid-other" || verdict === "unknown") {
+  /**
+   * ⚠⚠**`font-weight` 선언을 전부, 적힌 순서대로 본다**(2026-10-24 · GPT 검토 P1). 브라우저는 **무효 선언을 버리고
+   * 남은 유효 선언 중 마지막**을 쓴다. 우리가 받는 유효값은 `normal` 하나뿐이므로(나머지는 던진다) 규칙은 이렇다:
+   *   · 유효한데 `normal` 이 아닌 값이나 모양을 모르는 값이 **하나라도** 있으면 → **던진다**(M7)
+   *   · `normal` 이 하나라도 있으면 → `normal`(낙첨) — `normal;heavy` 도 `heavy;normal` 도 normal 이다
+   *   · 전부 무효면 → 선언 없음(굵음)
+   */
+  const fwVerdicts = decls
+    .filter((d) => d.prop === "font-weight")
+    .map((d) => ({ value: d.value, verdict: fontWeightVerdict(d.value) }));
+  const refused = fwVerdicts.find((x) => x.verdict === "valid-other" || x.verdict === "unknown");
+  if (refused !== undefined) {
     throw new DraftWikiParseError(
-      verdict === "valid-other"
+      refused.verdict === "valid-other"
         ? "모르는 font-weight — 유효한 값이라 굵기를 실제로 바꾼다. 굵기가 곧 당첨이라 값이 늘면 판정이 바뀐다(M7 · 규칙표 §3)"
         : "font-weight 값의 모양을 판정할 수 없다 — 함수·!important·여러 토큰·단위는 무효라고 단정하지 않는다(M7 · 규칙표 §3)",
-      `${where} / col=${columnIndex} font-weight=${JSON.stringify(fwRaw)}`,
+      `${where} / col=${columnIndex} font-weight=${JSON.stringify(refused.value)}`
+        + (fwVerdicts.length > 1 ? ` (이 칸의 font-weight 선언 ${fwVerdicts.length}개)` : ""),
     );
   }
   /**
    * ⚠**아래 판정은 전부 「브라우저가 적용하는 값」으로 한다.** 무효 선언은 버려지므로 `null`(선언 없음)과 같다 —
    * 굵기도, `---` 칸 검사도, 「굵기만 지정되고 배경색이 없다」는 표식 모양 검사도 그 값으로 본다.
-   * 원값은 `ignoredFontWeight` 로 남겨 **센다**(조용히 흡수하지 않는다).
+   * ⚠**두 가드가 무효 굵기를 「스타일 없음」으로 보는 것은 의도다**: 표 전체가 `bold` 라 `---` 도 이름도 원래 굵고,
+   *   무효 선언은 버려지므로 **화면에 보이는 정보가 하나도 늘지 않는다** — 스타일 없는 칸과 구별할 근거가 없다.
+   *   대신 원값을 `ignoredFontWeight` 로 남겨 **센다**(조용히 흡수하지 않는다 · 적재 로그 `~~ [css]`).
    */
-  const fw = verdict === "normal" ? "normal" : null;
-  const ignoredFontWeight = verdict === "invalid" ? fwRaw : null;
-  for (const key of props.keys()) {
+  const fw = fwVerdicts.some((x) => x.verdict === "normal") ? "normal" : null;
+  const invalid = fwVerdicts.filter((x) => x.verdict === "invalid").map((x) => x.value);
+  const ignoredFontWeight = invalid.length === 0 ? null : invalid.join(";");
+  for (const key of new Set(decls.map((d) => d.prop))) {
     if (key !== "background-color" && key !== "font-weight" && key !== "") {
       throw new DraftWikiParseError(
         "칸 스타일에 모르는 프로퍼티가 있다 — 어휘가 닫혀 있다는 전제가 깨졌다(M7)",

@@ -59,17 +59,39 @@ export interface DraftProvenance {
 }
 
 /**
+ * 연도 톱에서 **개최일을 못 읽었다**(M7) — 왜 못 읽었는지를 싣는다.
+ *
+ * ⚠⚠**그래도 그 해의 지명은 막지 않는다**(2026-10-24 · 1차 검토 P2 (b)). 곁가지(개최일) 하나 때문에 본체(지명·입찰)가
+ * 그 해 화면에서 빠지는 것은 손해의 크기가 안 맞는다. 그 행의 `held_on` 만 NULL 이 되고, **실패는 적재 도구가
+ * 사유 줄과 종료코드 1 로 낸다**(`load-draft-archive.ts`). ⚠**맨 `null` 이 아니라 사유를 든 값인 이유**: 그래야
+ * 「소스가 안 말한다(M11 · `draftHeldOnFor` 의 null)」와 「우리가 못 읽었다(M7)」가 **타입에서** 갈린다.
+ */
+export interface DraftHeldOnUnreadable {
+  readonly shape: "unreadable";
+  readonly reason: string;
+}
+
+/** 연도 톱이 적은 개최일 — 또는 그것을 **못 읽었다는 사실**(사유 포함) */
+export type DraftEventHeldOn = DraftHeldOn | DraftHeldOnUnreadable;
+
+/**
  * 연도 톱(`/draft/{YYYY}/`)에서 온 것 **전부** — 그 페이지의 출처와, 그 페이지가 적은 개최일.
  *
  * ⚠**개최일을 출처와 한 덩어리로 받는 이유**(2026-10-24): `draft_event` 한 행의 `revision` 은
  * **그 행의 모든 값**이 어느 판에서 왔는지를 말해야 한다(M4). 개최일을 따로 받아 따로 쓰면
  * 「출처는 새 판인데 날짜는 옛 판」인 행이 생길 수 있다 — 한 문장(upsert)으로 같이 쓴다.
- * ⚠**기본값이 없다** — 「못 읽었으면 NULL」을 허용하면 M7(구조가 바뀌어 못 읽음)과 M11(소스가 안 말함)이
- * 같은 NULL 이 된다. 못 읽었으면 파서가 이미 던졌고 그 시즌은 적재되지 않는다.
+ * ⚠**기본값이 없다** — 못 읽었으면 `DraftHeldOnUnreadable`(사유 포함)을 명시해서 넘긴다. 맨 `null` 을 받지 않는다.
  */
 export interface DraftEventSource extends DraftProvenance {
   /** `parseDraftHeldOn` 이 연도 톱에서 읽은 값. 구획별 날짜는 `draftHeldOnFor` 한 벌이 정한다(M1) */
-  heldOn: DraftHeldOn;
+  heldOn: DraftEventHeldOn;
+}
+
+/**
+ * 그 구획의 `held_on`. ⚠**구획 → 날짜 규칙은 파서의 `draftHeldOnFor` 한 벌**이고(M1) 여기는 「못 읽음」만 NULL 로 바꾼다.
+ */
+export function eventHeldOnFor(h: DraftEventHeldOn, kind: DraftKind): string | null {
+  return h.shape === "unreadable" ? null : draftHeldOnFor(h, kind);
 }
 
 /**
@@ -661,7 +683,7 @@ export function loadDraft(db: Db, input: DraftLoadInput): DraftLoadResult {
     // ⚠**시즌 단위 출처를 쓴다.** 구단 페이지(`page`)를 여기 쓰면 12구단 중 11구단분이
     //   마지막에 적재된 한 장으로 덮여 **「이 회의는 어느 판인가」의 답이 틀린다**([I3]).
     for (const kind of kinds) {
-      ev.run(season, kind, draftHeldOnFor(event.heldOn, kind), event.source, event.fetchedAt, event.revision);
+      ev.run(season, kind, eventHeldOnFor(event.heldOn, kind), event.source, event.fetchedAt, event.revision);
     }
 
     // ⚠**지명이 0건이어도 지운다.** 그래서 지울 구단을 행에서 유도하지 않고 입력에서 받는다 —

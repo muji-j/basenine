@@ -1176,8 +1176,13 @@ function parseMeetingDate(text: string, season: number, where: string): string {
   return `${ys}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
-/** `<th>…</th><td>…</td>` 이웃 쌍. ⚠`<th\b` 는 `<thead` 에 안 걸린다 */
-const TH_TD = /<th\b[^>]*>([\s\S]*?)<\/th>\s*<td\b[^>]*>([\s\S]*?)<\/td>/g;
+/**
+ * `<th>…</th><td>…</td>` 이웃 쌍. ⚠`<th\b` 는 `<thead` 에 안 걸린다.
+ * ⚠⚠**칸 경계를 넘지 않는다**(2026-10-24 · 1차 검토 P2) — 칸 안은 `(?:(?!<\/th>)[\s\S])*` 로 **닫는 태그 앞에서 멈춘다.**
+ * 옛 식의 게으른 `[\s\S]*?` 는 첫 `</th>` 뒤가 `<td` 가 아니면 **다음 `</th>` 까지 뻗었다** — 머리행
+ * (`<th>項目</th><th>内容</th>`)이 앞서면 그 글자가 `開催日時`·회의 이름에 붙어 **진술을 놓치거나 이름이 오염됐다.**
+ */
+const TH_TD = /<th\b[^>]*>((?:(?!<\/th>)[\s\S])*)<\/th>\s*<td\b[^>]*>((?:(?!<\/td>)[\s\S])*)<\/td>/g;
 
 /** 모양 C 의 머리 칸 — 실측 둘(`開催日時` 2009~2022·2025·2026 / `開催日` 2023·2024·2026 개최 전 판) */
 const SINGLE_DATE_LABELS: ReadonlySet<string> = new Set(["開催日時", "開催日"]);

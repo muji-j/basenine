@@ -15,6 +15,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -178,6 +179,7 @@ function report(over: Partial<SeasonLoadReport> = {}): SeasonLoadReport {
       { kind: "ikusei", date: "2019-10-17" },
       { kind: "shihaika", date: "2019-10-17" },
     ],
+    heldOnError: null,
     ...over,
   };
 }
@@ -801,49 +803,95 @@ test("⚠[Minor-1] INV 는 분모와 함께 찍는다 — 「0건」과 「안 �
 
 // ── 개최일(held_on) — 연도 톱에서 읽는다(2026-10-24) ─────────────────────────
 
-test("⚠연도 톱에 개최일이 없으면 그 시즌을 `parse` 로 건너뛴다 — NULL 로 넣지 않는다(M7 · 행 0)", async () => {
-  // ⚠**NULL 로 흘리면 「소스가 안 말한다(M11)」와 「구조가 바뀌어 못 읽었다(M7)」가 같은 값이 된다.**
+/** 그 시즌 `draft_event` 의 (구획, 개최일) */
+function heldRows(db: Db, season: number): string[] {
+  return (
+    db.raw.prepare("SELECT kind, held_on FROM draft_event WHERE season = ? ORDER BY kind").all(season) as unknown as {
+      kind: string;
+      held_on: string | null;
+    }[]
+  ).map((r) => `${r.kind}=${r.held_on ?? "NULL"}`);
+}
+
+/**
+ * ⚠⚠**개최일을 못 읽어도 그 해의 지명은 막지 않는다**(2026-10-24 · 1차 검토 P2 (b) 채택).
+ * 처음에는 그 시즌을 통째로 `parse` 로 건너뛰었다 — 그러면 **곁가지(개최일) 하나 때문에 본체(지명·입찰)가 그 해 화면에서 빠진다.**
+ * 지금 계약: 지명·입찰은 그대로 넣고 `held_on` 만 NULL · 실패는 **사유 줄과 종료코드 1** 로 시끄럽게(M7 은 로그와 종료코드가 지킨다).
+ * ⚠**조용한 NULL 이 아니다** — 보고서가 `heldOnError` 를 싣고 요약이 그 시즌을 따로 세며 종료코드를 올린다.
+ */
+test("⚠연도 톱에서 개최일을 못 읽어도 지명·입찰은 들어간다 — held_on 만 NULL · 사유와 종료 1 로 시끄럽다(M7)", async () => {
   const root = await archive2019({ idxBody: "<html><body>お知らせ</body></html>" });
   try {
     await withDb(async (db) => {
       const r = await loadDraftSeason(db, 2019, { archiveRoot: root });
-      assert.equal(r.loaded, false);
-      assert.equal(r.skipped?.kind, "parse", `parse 가 아니다: ${JSON.stringify(r.skipped)}`);
-      assert.match(r.skipped?.reason ?? "", /개최일/u);
-      assert.equal(r.heldOn, null, "⚠건너뛴 시즌은 「안 쟀음」이다");
-      assert.equal(count(db, "draft_pick"), 0, "⚠구단 페이지는 멀쩡했지만 넣지 않았다 — 시즌 단위 원자성");
-      assert.equal(count(db, "draft_event"), 0);
+      assert.equal(r.loaded, true, `건너뛰었다: ${JSON.stringify(r.skipped)}`);
+      assert.equal(r.picks, 17, "⚠개최일 하나 때문에 지명이 빠졌다");
+      assert.equal(count(db, "draft_pick"), 17);
+      assert.match(r.heldOnError ?? "", /개최일/u, "사유가 안 실렸다");
+      assert.deepEqual(heldRows(db, 2019), ["ikusei=NULL", "shihaika=NULL"]);
+      assert.match(heldOnNote(r.heldOn, r.heldOnError), /못읽음/u, "⚠「모름(M11)」과 「못 읽음(M7)」을 같은 말로 적었다");
+      const s = summarizeSeasons([r]);
+      assert.deepEqual(s.heldOnFailed, [2019]);
+      assert.equal(s.exitCode, 1, "⚠조용한 NULL 이 됐다 — 종료코드가 안 올라갔다");
     });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("⚠연도 톱 사이드카는 있는데 본문이 없으면 `provenance` 다 — 다시 받으면 풀린다(행 0)", async () => {
+test("⚠연도 톱 사이드카는 있는데 본문이 없어도 지명은 들어간다 — 개최일만 「못 읽음」이다(종료 1)", async () => {
   const root = await archive2019({ idxBody: null });
   try {
     await withDb(async (db) => {
       const r = await loadDraftSeason(db, 2019, { archiveRoot: root });
-      assert.equal(r.skipped?.kind, "provenance", `provenance 가 아니다: ${JSON.stringify(r.skipped)}`);
-      assert.equal(count(db, "draft_pick"), 0);
+      assert.equal(r.loaded, true, `건너뛰었다: ${JSON.stringify(r.skipped)}`);
+      assert.equal(count(db, "draft_pick"), 17);
+      assert.match(r.heldOnError ?? "", /본문/u);
+      assert.deepEqual(heldRows(db, 2019), ["ikusei=NULL", "shihaika=NULL"]);
+      assert.equal(summarizeSeasons([r]).exitCode, 1);
     });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("시즌 줄의 개최일 칸 — 같은 날이면 한 번 · 다르면 구획별 · 「모름」과 「안쟀음」을 가른다(M11)", () => {
-  assert.equal(heldOnNote(report().heldOn), "개최일 2019-10-17");
+test("⚠연도 톱 본문 자리가 디렉터리(EISDIR)면 「없음」이 아니라 「못 읽음」이다 — 조용히 삼키지 않는다", async () => {
+  const root = await archive2019({ idxBody: null });
+  try {
+    // 본문 파일 자리에 디렉터리를 둔다 → `readFile` 이 ENOENT 가 아닌 오류를 낸다
+    await mkdir(join(root, `${yearIndexKey(2019)}.html.gz`), { recursive: true });
+    await withDb(async (db) => {
+      const r = await loadDraftSeason(db, 2019, { archiveRoot: root });
+      assert.equal(r.loaded, true, `건너뛰었다: ${JSON.stringify(r.skipped)}`);
+      assert.match(r.heldOnError ?? "", /EISDIR|illegal operation on a directory/u, `ENOENT 가 아닌 오류가 안 실렸다: ${r.heldOnError}`);
+      assert.equal(summarizeSeasons([r]).exitCode, 1);
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("시즌 줄의 개최일 칸 — 같은 날이면 한 번 · 다르면 구획별 · 「모름」·「못읽음」·「안쟀음」을 가른다(M11·M7)", () => {
+  assert.equal(heldOnNote(report().heldOn, null), "개최일 2019-10-17");
   assert.equal(
-    heldOnNote([
-      { kind: "daigaku_shakaijin", date: "2006-11-21" },
-      { kind: "ikusei", date: null },
-      { kind: "koukousei", date: "2006-09-25" },
-    ]),
+    heldOnNote(
+      [
+        { kind: "daigaku_shakaijin", date: "2006-11-21" },
+        { kind: "ikusei", date: null },
+        { kind: "koukousei", date: "2006-09-25" },
+      ],
+      null,
+    ),
     "개최일 daigaku_shakaijin 2006-11-21 · ikusei 모름 · koukousei 2006-09-25",
   );
-  assert.equal(heldOnNote([{ kind: "kibou_nyudanwaku", date: null }]), "개최일 kibou_nyudanwaku 모름", "⚠전부 모름을 「같은 날」로 접지 않는다");
-  assert.equal(heldOnNote(null), "개최일 안쟀음");
+  assert.equal(
+    heldOnNote([{ kind: "kibou_nyudanwaku", date: null }], null),
+    "개최일 kibou_nyudanwaku 모름",
+    "⚠전부 모름을 「같은 날」로 접지 않는다",
+  );
+  // ⚠**못 읽은 것(M7)은 「모름(M11)」이 아니다** — 같은 NULL 이라도 줄이 다르게 말한다
+  assert.match(heldOnNote([{ kind: "shihaika", date: null }], "DraftParseError: 연도 톱에서 개최일을 못 찾았다"), /^개최일 못읽음/u);
+  assert.equal(heldOnNote(null, null), "개최일 안쟀음");
 });
 
 // ── 「개최 후 미수집」 비차단 경고 ─────────────────────────────────────────
@@ -881,20 +929,26 @@ test("⚠「개최 후 미수집」 — 지명 0행인 해만 묻고, 연도 톱
     // 2029: 연도 톱 본문이 gzip 이 아니다(손상) — ⚠경고 경로가 도구 전체를 죽이면 요약·종료코드 줄이 사라진다
     await mkdir(dirname(join(root, yearIndexKey(2029))), { recursive: true });
     await writeFile(join(root, `${yearIndexKey(2029)}.html.gz`), "not gzip");
+    // 2030: 사이드카만 있고 본문이 없다 — ⚠「안 받았다」가 아니라 **불완전한 자산**이다(GPT 검토 P2)
+    await writeBlob(root, yearIndexKey(2030), null, meta("https://draft.npb.jp/draft/2030/"));
+    // 2031: 본문 자리가 디렉터리다 — `readFile` 이 ENOENT 가 아닌 오류(EISDIR)를 낸다. ⚠「없음」으로 삼키지 않는다
+    await mkdir(join(root, `${yearIndexKey(2031)}.html.gz`), { recursive: true });
     await withDb(async (db) => {
       await loadDraftSeason(db, 2019, { archiveRoot: root });
-      const seasons = [2019, 2026, 2027, 2028, 2029];
+      const seasons = [2019, 2026, 2027, 2028, 2029, 2030, 2031];
 
       const quiet = await draftCollectionWarnings(db, root, seasons, "2026-10-25");
       assert.deepEqual(quiet.filter((l) => l.startsWith("2026")), [], "⚠+3일까지는 조용하다");
 
       const loud = await draftCollectionWarnings(db, root, seasons, "2026-10-26");
-      assert.equal(loud.length, 3, `경고 줄이 3개가 아니다: ${JSON.stringify(loud)}`);
+      assert.equal(loud.length, 5, `경고 줄이 5개가 아니다: ${JSON.stringify(loud)}`);
       assert.match(loud[0]!, /^2026 드래프트는 2026-10-22 에 열렸는데\(4일 전\) 지명이 0행이다/u);
       // ⚠**날짜를 못 읽은 해는 「경고가 이 해를 못 본다」를 낸다** — 경고가 꺼진 것을 경고한다
       assert.match(loud[1]!, /^2027 연도 톱에서 개최일을 못 읽었다/u);
       assert.match(loud[2]!, /^2029 연도 톱에서 개최일을 못 읽었다/u, "손상된 본문이 「못 읽었다」가 아니다");
-      // 2019(지명 있음)·2028(연도 톱 없음)은 조용하다
+      assert.match(loud[3]!, /^2030 연도 톱에서 개최일을 못 읽었다.*본문/u, "사이드카만 있는 해가 「없음」으로 조용했다");
+      assert.match(loud[4]!, /^2031 연도 톱에서 개최일을 못 읽었다/u, "EISDIR 이 「없음」으로 조용했다");
+      // 2019(지명 있음)·2028(연도 톱이 본문·사이드카 둘 다 없음)은 조용하다
       assert.ok(loud.every((l) => !l.startsWith("2019") && !l.startsWith("2028")), JSON.stringify(loud));
 
       // ⚠**지명이 있는 해는 연도 톱을 아예 안 본다** — 그 해의 날짜 실패는 npb 적재가 이미 `parse` 로 붉혔다.
@@ -905,6 +959,43 @@ test("⚠「개최 후 미수집」 — 지명 0행인 해만 묻고, 연도 톱
     });
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+// ── CLI 배선 — 「개최 후 미수집」이 실제로 stdout 에 나오는가(1차 검토 P3) ──────
+
+const TOOL = fileURLToPath(new URL("../tools/load-draft-archive.ts", import.meta.url));
+/** 자식 프로세스의 `Date` 를 고정하는 미리 읽기. ⚠**제품 코드에 시험용 「오늘」 구멍을 내지 않으려고** 바깥에서 바꾼다 */
+const FIXED_NOW = new URL("./fixed-now-preload.ts", import.meta.url).href;
+
+function runTool(args: readonly string[], nowIso: string): { status: number | null; stdout: string; stderr: string } {
+  const r = spawnSync(process.execPath, ["--import", FIXED_NOW, TOOL, ...args], {
+    env: { ...process.env, BB_TEST_NOW: nowIso },
+    encoding: "utf8",
+  });
+  return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+}
+
+/**
+ * ⚠**`draftCollectionWarnings` 를 부르는 것만으로는 배선이 증명되지 않는다** — `main` 이 그것을 부르는지 ·
+ * `::warning::` 접두사를 붙이는지 · 종료코드를 안 올리는지 · **「오늘」을 JST 로 자르는지**는 여기서만 잰다.
+ * ⚠**두 시각이 그 경계다**: UTC 10-25 15:30 = JST 10-26 00:30(+4일 · 운다) / UTC 10-25 14:30 = JST 10-25 23:30(+3일 · 조용하다).
+ *   UTC 로 날짜를 자르면 앞의 것이 조용해진다.
+ */
+test("⚠CLI — 「개최 후 미수집」이 stdout 의 `::warning::` 으로 나오고 종료코드는 0 이다(오늘은 JST)", async () => {
+  const root = await mkdtemp(join(tmpdir(), "bb-draft-cli-"));
+  const dbDir = await mkdtemp(join(tmpdir(), "bb-draft-cli-db-"));
+  try {
+    await writeIndexOnly(root, 2026, yearIndexHtml("2026年10月22日（木）"));
+    const loud = runTool([root, join(dbDir, "a.sqlite"), "--only", "2026"], "2026-10-25T15:30:00.000Z");
+    assert.equal(loud.status, 0, `종료코드가 0 이 아니다 — 비차단이어야 한다\n${loud.stderr}`);
+    assert.match(loud.stdout, /^::warning::2026 드래프트는 2026-10-22 에 열렸는데\(4일 전\) 지명이 0행이다/mu, loud.stdout);
+    const quiet = runTool([root, join(dbDir, "b.sqlite"), "--only", "2026"], "2026-10-25T14:30:00.000Z");
+    assert.equal(quiet.status, 0, quiet.stderr);
+    assert.doesNotMatch(quiet.stdout, /::warning::/u, "⚠JST 10-25 23:30(+3일)에 울었다 — 오늘을 UTC 로 잘랐다");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(dbDir, { recursive: true, force: true });
   }
 });
 

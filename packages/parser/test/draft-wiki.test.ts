@@ -418,6 +418,101 @@ test("⚠`colspan` 칸도 원본 하나에 한 번 센다 — 2026 의 `---` 두
   );
 });
 
+// ── 같은 칸에 `font-weight` 가 둘 이상 — 브라우저처럼 「무효는 버리고 남은 유효 선언 중 마지막」 ──
+
+/** 2026 1巡目1 의 두 칸 — 楽天(당첨 · heavy)과 中日(낙첨 · normal). 같은 경합 그룹(#ffc)이다 */
+const RAKUTEN_1_1 = '<td style="background-color:#ffc;font-weight:heavy" id="mwdg">';
+const CHUNICHI_1_1 = '<td style="background-color:#ffc;font-weight:normal" id="mweA">';
+
+/**
+ * ⚠⚠**`cssProps` 는 프로퍼티마다 마지막 문자열 하나만 남긴다** — 그래서 고치기 전에는 `normal;heavy` 에서
+ * **앞의 `normal` 이 사라지고** `heavy`(무효 → 선언 없음 → 굵음)만 남았다. 브라우저는 반대로 **무효인 `heavy` 를 버리고
+ * `normal` 을 적용**한다(GPT 검토 P1 · 2026-10-24).
+ * ⚠**1차 검토의 관찰**: 고치기 전 코드에서 낙첨 칸(中日)에 `normal;heavy` 를 쓰면 그 칸이 굵게 읽혀 **INV-1 이 던졌다**(당첨 2명) —
+ *   시끄러웠지만 이유가 틀렸다. 당첨 칸(楽天)에 쓰면 **아무것도 안 던지고 楽天 을 당첨으로** 읽었다 — 그쪽이 조용히 틀린 경로다.
+ */
+test("⚠중복 `font-weight` — 낙첨 칸의 `normal;heavy` 는 브라우저처럼 normal 이다(낙첨 그대로 · 무효 1칸은 센다)", () => {
+  const src = htmlOf(HELD_2026);
+  const out = src.replace(CHUNICHI_1_1, '<td style="background-color:#ffc;font-weight:normal;font-weight:heavy" id="mweA">');
+  assert.notEqual(out, src, "中日 1巡目1 칸을 못 찾았다 — 이 본이 공회전한다");
+  const p = parseDraftWiki(out, 2026);
+  assert.equal(p.kind, "grid");
+  if (p.kind !== "grid") return;
+  assert.deepEqual(
+    p.bids.filter((b) => b.won === true).map((b) => bidLabel(p, b)).sort(),
+    ["ソフトバンク/1/鈴木泰成", "中日/2/宮原廉", "楽天/1/渡部海"].sort(),
+    "⚠당첨이 바뀌었다 — 中日 의 normal 이 버려졌다",
+  );
+  assert.ok(
+    p.ignoredFontWeights.some((s) => s.rowLabel === "1巡目1" && p.grid.columns[s.columnIndex] === "中日" && s.value === "heavy"),
+    `버린 heavy 를 안 셌다: ${JSON.stringify(p.ignoredFontWeights)}`,
+  );
+});
+
+test("⚠중복 `font-weight` — 당첨 칸의 `normal;heavy` 는 normal 이라 그 그룹에 당첨이 없다 → INV-1 이 던진다(조용히 楽天 을 당첨으로 읽지 않는다)", () => {
+  const src = htmlOf(HELD_2026);
+  for (const style of ["background-color:#ffc;font-weight:normal;font-weight:heavy", "background-color:#ffc;font-weight:heavy;font-weight:normal"]) {
+    const out = src.replace(RAKUTEN_1_1, `<td style="${style}" id="mwdg">`);
+    assert.notEqual(out, src, "楽天 1巡目1 칸을 못 찾았다 — 이 본이 공회전한다");
+    assert.throws(() => parseDraftWiki(out, 2026), DraftWikiParseError, `${style}: 楽天 을 당첨으로 읽었다`);
+  }
+});
+
+test("⚠중복 `font-weight` — 전부 무효면 선언 없음(굵음)이고 값은 순서대로 남는다 · 유효한 값이 섞이면 던진다", () => {
+  const src = htmlOf(HELD_2026);
+  const allInvalid = src.replace(RAKUTEN_1_1, '<td style="background-color:#ffc;font-weight:heavy;font-weight:semibold" id="mwdg">');
+  const p = parseDraftWiki(allInvalid, 2026);
+  assert.equal(p.kind, "grid");
+  if (p.kind !== "grid") return;
+  assert.equal(p.bids.filter((b) => b.won === true).length, 3, "당첨이 3명이 아니다");
+  assert.equal(p.ignoredFontWeights[0]?.value, "heavy;semibold", "버린 값을 다 안 남겼다");
+  // ⚠유효한데 normal 이 아닌 값이 **어느 자리에든** 하나라도 있으면 그 뜻을 우리가 정하지 않는다(M7) — 마지막만 보지 않는다
+  for (const style of ["background-color:#ffc;font-weight:normal;font-weight:bold", "background-color:#ffc;font-weight:bold;font-weight:normal"]) {
+    const mixed = src.replace(CHUNICHI_1_1, `<td style="${style}" id="mweA">`);
+    assert.notEqual(mixed, src);
+    assert.throws(() => parseDraftWiki(mixed, 2026), DraftWikiParseError, `${style}: 안 던졌다`);
+  }
+});
+
+// ── 무효 굵기가 두 모양 가드를 어떻게 지나는가 — **지금 동작을 못으로 박는다**(1차 검토 P3) ──
+
+/**
+ * ⚠**의도다 — 무효 굵기 칸은 화면에서 「스타일 없는 칸」과 구별되지 않는다.** 표 전체가 `font-weight:bold` 라
+ * `---` 도 이름도 원래 굵게 보이고, `heavy` 는 버려지므로 **눈에 보이는 정보가 하나도 더해지지 않는다.**
+ * 그래서 두 가드(「미지명 칸에 색·굵기」 · 「굵기만 있고 배경색 없는 칸 = 표식 모양」)는 이 칸을 **스타일 없는 칸과 똑같이** 본다.
+ * ⚠**대신 조용하지 않다** — 그 칸은 `ignoredFontWeights` 에 들어가 적재 로그에 `~~ [css]` 로 찍힌다.
+ * ⚠**`normal` 은 다르다** — 화면에서 굵기를 실제로 지우므로 두 가드가 그대로 던진다(아래 대조).
+ */
+test("⚠무효 굵기가 붙은 `---` 칸은 미지명이다 — `normal` 이 붙으면 던진다(대조)", () => {
+  const src = htmlOf(HELD_2026);
+  const heavy = src.replace('<td id="mwoA">---</td>', '<td style="font-weight:heavy" id="mwoA">---</td>');
+  assert.notEqual(heavy, src, "1巡目3 의 `---` 칸을 못 찾았다");
+  const p = parseDraftWiki(heavy, 2026);
+  assert.equal(p.kind, "grid");
+  if (p.kind !== "grid") return;
+  const row = p.grid.rows.find((r) => r.labelRaw === "1巡目3")!;
+  assert.equal(row.cells[0]!.cellKind, "unnominated");
+  assert.equal(p.ignoredFontWeights.length, 4, "그 칸을 안 셌다");
+  const normal = src.replace('<td id="mwoA">---</td>', '<td style="font-weight:normal" id="mwoA">---</td>');
+  assert.throws(() => parseDraftWiki(normal, 2026), DraftWikiParseError, "normal 이 붙은 --- 가 안 던졌다");
+});
+
+test("⚠배경색 없이 무효 굵기만 붙은 칸은 선수 칸이다(표식 모양 가드가 안 뜬다) — `normal` 이면 던진다(대조)", () => {
+  const src = htmlOf(HELD_2026);
+  const heavy = src.replace('<td id="mwfA">', '<td style="font-weight:heavy" id="mwfA">');
+  assert.notEqual(heavy, src, "ヤクルト 1巡目1 칸을 못 찾았다");
+  const p = parseDraftWiki(heavy, 2026);
+  assert.equal(p.kind, "grid");
+  if (p.kind !== "grid") return;
+  const solo = p.bids.find((b) => p.grid.columns[b.columnIndex] === "ヤクルト" && b.bidRound === 1);
+  assert.equal(solo?.nameDisplay, "藤澤涼介");
+  assert.equal(solo?.won, null, "단독지명 그대로다");
+  assert.equal(p.ignoredFontWeights.length, 4);
+  // `normal` + 배경색 없음 + 어휘 밖 이름 = 표식 모양인데 모르는 표기 → 던진다(기존 가드)
+  const normal = src.replace('<td id="mwfA">', '<td style="font-weight:normal" id="mwfA">');
+  assert.throws(() => parseDraftWiki(normal, 2026), DraftWikiParseError, "표식 모양 가드가 안 떴다");
+});
+
 test("⚠URL 은 `/wiki/` 만 친다 — `/w/`·`/api/` 는 robots Disallow 다", () => {
   const u = draftWikiUrl(2025);
   assert.equal(u, "https://ja.wikipedia.org/wiki/2025年度新人選手選択会議_(日本プロ野球)");

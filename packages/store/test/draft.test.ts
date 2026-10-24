@@ -212,6 +212,24 @@ test("⚠연도 톱의 날짜가 바뀌면 개최일도 바뀐다 — 그 행의
   });
 });
 
+test("⚠개최일을 못 읽은 판이면 held_on 은 NULL 이고 지명·출처는 그대로 들어간다 — 옛 날짜를 남기지 않는다", async () => {
+  await withDb((db) => {
+    loadDraft(db, { season: 2019, team: "g", picks: [pick("g", "shihaika", 1, "堀田 賢慎")], bids: [], ...META });
+    // 다음 판에서 연도 톱 모양이 바뀌어 날짜를 못 읽었다 — ⚠지명은 막지 않고, 날짜는 **옛 판의 값을 남기지 않는다**
+    const broken: DraftEventSource = {
+      ...EVENT,
+      revision: "sha256:event-2019-c",
+      heldOn: { shape: "unreadable", reason: "DraftParseError: 연도 톱에서 개최일을 못 찾았다" },
+    };
+    loadDraft(db, { season: 2019, team: "g", picks: [pick("g", "shihaika", 1, "堀田 賢慎")], bids: [], page: PAGE, event: broken });
+    const ev = db.raw
+      .prepare("SELECT held_on, revision FROM draft_event WHERE season = 2019 AND kind = 'shihaika'")
+      .get() as unknown as { held_on: string | null; revision: string };
+    assert.deepEqual({ ...ev }, { held_on: null, revision: "sha256:event-2019-c" }, "⚠옛 판의 날짜가 새 판에 남았다");
+    assert.equal(draftPicksIn(db, 2019), 1, "⚠개최일 하나 때문에 지명이 빠졌다");
+  });
+});
+
 test("시즌의 지명 행 수 — 「개최 후 미수집」 판정의 재료(출처를 가리지 않는다)", async () => {
   await withDb((db) => {
     assert.equal(draftPicksIn(db, 2019), 0, "빈 DB 는 0 이다");

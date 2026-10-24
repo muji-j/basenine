@@ -1232,6 +1232,30 @@ test("⚠모양 A 의 모르는 회의·같은 회의 두 번은 던진다(M7)",
   );
 });
 
+/**
+ * ⚠⚠**`<th>…</th><td>…</td>` 를 찾는 정규식이 칸 경계를 넘으면 안 된다**(2026-10-24 · 1차 검토 P2).
+ * 옛 식(`<th\b[^>]*>([\s\S]*?)<\/th>\s*<td…`)은 게으른 `[\s\S]*?` 가 **`</th>` 를 넘어** 다음 `</th><td>` 까지 뻗었다 —
+ * 앞에 머리행(`<th>項目</th><th>内容</th>`)이 있으면 그 머리 글자와 `開催日時` 가 **한 칸으로 붙어** 진술을 놓치거나(모양 C),
+ * 회의 이름 앞에 머리 글자가 붙는다(모양 A). 실물 22장에는 그 머리행이 없어서 지금까지 안 드러났을 뿐이다.
+ */
+test("⚠머리행 `<th>` 가 앞서도 칸 경계를 넘지 않는다 — 모양 C", () => {
+  const html = HELD_2009.replace("<tbody>\n", "<tbody>\n<tr><th>項目</th><th>内容</th></tr>\n");
+  assert.notEqual(html, HELD_2009, "합성 입력이 안 바뀌었다");
+  assert.deepEqual(parseDraftHeldOn(html, 2009), { shape: "single", date: "2009-10-29" });
+});
+
+test("⚠머리행 `<th>` 가 앞서도 칸 경계를 넘지 않는다 — 모양 A(회의 이름에 머리 글자가 붙지 않는다)", () => {
+  const html = HELD_2005.replace("<tbody>\n", "<tbody>\n<tr><th>会議</th><th>日程</th></tr>\n");
+  assert.notEqual(html, HELD_2005, "합성 입력이 안 바뀌었다");
+  const h = parseDraftHeldOn(html, 2005);
+  assert.equal(h.shape, "per-meeting");
+  if (h.shape !== "per-meeting") return;
+  assert.deepEqual(
+    h.meetings.map((m) => `${m.label}=${m.date}`),
+    ["大学生・社会人ほか選択会議=2005-11-18", "高校生選択会議=2005-10-03", "育成選手選択会議=2005-12-01"],
+  );
+});
+
 test("⚠주석 안의 개최일은 읽지 않는다 — 보이지 않는 것을 사실로 삼지 않는다([N2])", () => {
   // 진술이 주석 안에만 있으면 **없는 것**이다 → 던진다
   assert.throws(() => parseDraftHeldOn(`<!-- ${HELD_2009} -->`, 2009), DraftParseError);
