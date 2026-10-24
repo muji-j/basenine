@@ -371,6 +371,22 @@ test("⚠T1 buildUserAgent — 제어 문자(CR·LF·TAB·DEL·C1)와 ByteString
   assert.doesNotThrow(() => buildUserAgent("café@lunomel.jp"));
 });
 
+test("⚠T1 buildUserAgent — 예약 도메인 거부 메시지도 입력값을 되찍지 않는다(메일·URL) · 「예약 도메인이다」만", () => {
+  for (const bad of ["audit-canary@example.com", "https://example.com/audit-canary-path", "audit-canary@foo.invalid", "http://localhost:8080/audit-canary"]) {
+    let message = "";
+    assert.throws(
+      () => buildUserAgent(bad),
+      (e: unknown) => {
+        message = e instanceof Error ? e.message : String(e);
+        return /닿지 않/.test(message) && /예약 도메인/.test(message);
+      },
+      bad,
+    );
+    assert.equal(message.includes("audit-canary"), false, `거부 메시지에 연락처가 남았다: ${message}`);
+    assert.equal(message.includes("example.com") || message.includes("localhost") || message.includes("foo.invalid"), false, `거부 메시지에 입력 도메인이 남았다: ${message}`);
+  }
+});
+
 test("⚠T2 exitCodeFor — 회로가 열렸으면 상류만 69 · 로컬이 있으면 70(부모가 뒤 받기를 멈춘다) · 닫혔으면 75 / 1", () => {
   const up: PageResult = { key: "b", url: "u", outcome: "failed", status: null, error: "x", errorKind: "upstream" };
   const local: PageResult = { key: "c", url: "u", outcome: "failed", status: null, error: "x", errorKind: "local" };

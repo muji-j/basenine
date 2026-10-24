@@ -562,9 +562,9 @@ export function buildUserAgent(contact: string): string {
   //   (`https://example.com/issues` — 초판이 실제로 통과시켰다).
   const host = contactHost(trimmed);
   if (host !== "" && UNREACHABLE_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`))) {
-    throw new Error(
-      `닿지 않는 연락처는 연락처가 아니다 — 예약 도메인(RFC 2606/6761)이다 (CLAUDE.md L1): ${trimmed}`,
-    );
+    // ⚠**입력을 되찍지 않는다**(반영분 재검토 P3) — 예전에는 `…: ${연락처}` 로 원문을 실었다. 연락처 검증 메시지 셋(빈 값 ·
+    //   쓸 수 없는 문자 · 예약 도메인)이 전부 원문 없이 사유만 말한다
+    throw new Error("닿지 않는 연락처는 연락처가 아니다 — 예약 도메인(RFC 2606/6761)이다 (CLAUDE.md L1)");
   }
   return `${UA_HEAD}${trimmed}${UA_TAIL}`;
 }

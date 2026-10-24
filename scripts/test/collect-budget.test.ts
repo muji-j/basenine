@@ -53,9 +53,38 @@ test("⚠⚠D6 2일 이하(정상 실행)는 설정값 그대로 — 바꾸는 �
   }
 });
 
-test("⚠D6 설정이 더 작으면 그대로 · 날짜가 아주 많아도 0 이 아니라 1(목록 도구는 양의 정수만 받는다)", () => {
+/**
+ * ⚠⚠**예산에 남는 몫이 없으면 0 이다 — 1 이 아니다**(반영분 재검토 P3). 예전에는 최소 1 로 올려 「30분 안」이라는 설명이
+ * 거짓이 됐다(9일 · 간격 5000ms 에서 선수 1명이어도 30.5분). 0 이면 `update.ts` 가 그 실행의 선수 재취득을 건너뛰고 다음 실행이 잇는다.
+ */
+test("⚠⚠D6 설정이 더 작으면 그대로 · 예산에 남는 몫이 없으면 0(그 실행은 재취득을 건너뛴다)", () => {
   assert.equal(playerRefetchCap(7, 100, 3000), 100);
-  assert.equal(playerRefetchCap(30, 400, 3000), 1);
+  assert.equal(playerRefetchCap(30, 400, 3000), 0);
+  assert.equal(playerRefetchCap(9, 400, 5000), 0);
+  assert.equal(playerRefetchCap(8, 400, 5000), 0);
+});
+
+/**
+ * ⚠⚠**상한을 내준 모든 경우가 실제로 예산 안이다**(교차 검사 · 반영분 재검토 P3) — 3~9일 × 간격 2000·3000·5000ms.
+ * 1 이상이면 `T ≤ 27` 이고 하나 더면 넘거나(설정값에 걸린 경우 빼고) · 0 이면 1명만 더해도 넘는다.
+ */
+test("⚠⚠D6 교차 검사 — 3~9일 × 간격 2000·3000·5000ms 에서 내준 상한은 전부 예산 안 · 0 은 1명도 안 들어갈 때만", () => {
+  const budget = STEP_LIMIT_MIN - MARGIN_MIN;
+  let zero = 0;
+  for (let d = 3; d <= 9; d += 1) {
+    for (const ms of [2000, 3000, 5000]) {
+      const cap = playerRefetchCap(d, 400, ms);
+      if (cap >= 1) {
+        assert.ok(worstStepMin(d, cap, ms) <= budget, `${String(d)}일 · ${String(ms)}ms: ${String(cap)}명이면 ${String(worstStepMin(d, cap, ms))}분`);
+        if (cap < 400) assert.ok(worstStepMin(d, cap + 1, ms) > budget, `${String(d)}일 · ${String(ms)}ms: 상한이 가장 크지 않다`);
+      } else {
+        zero += 1;
+        assert.equal(cap, 0);
+        assert.ok(worstStepMin(d, 1, ms) > budget, `${String(d)}일 · ${String(ms)}ms: 1명은 들어가는데 0 을 냈다`);
+      }
+    }
+  }
+  assert.equal(zero, 2, "간격 5000ms 의 8·9일 두 경우만 0 이어야 한다 — 전제가 바뀌었다");
 });
 
 test("⚠D6 간격이 길면 상한이 준다(요청 하나의 시간 = 간격 + 응답 여유)", () => {

@@ -99,6 +99,29 @@ test("⚠T8 다음 달 404 · 410 → 0 + 꼬리표 「（오프시즌이면 정
   }
 });
 
+/**
+ * ⚠⚠**다음 달 일정의 로컬 고장도 로컬 실패다**(반영분 재검토 P2) — 상류 실패(75)도 404·410(꼬리표만)도 아니다.
+ * 예전 갈래는 `UpstreamError` 만 실패로 세고 나머지를 경고로 남겨, 3중 검토 반영으로 새로 생긴 `FetchLocalError`(헤더 검증 · 인증서 등)가
+ * **경고 한 줄과 종료 0** 이 됐다 — 다른 단계가 초록이면 그 실행은 초록으로 배포된다. 같은 오류가 현재 달이면 1 이었다.
+ */
+test("⚠⚠T8 다음 달 일정의 로컬 고장(FetchLocalError — UND_ERR_INVALID_ARG · CERT_HAS_EXPIRED)은 1 · 요청 1 · 재시도 0", async () => {
+  const local = [
+    (): Error => new TypeError("fetch failed", { cause: Object.assign(new Error("invalid user-agent header"), { code: "UND_ERR_INVALID_ARG" }) }),
+    (): Error => new TypeError("fetch failed", { cause: Object.assign(new Error("certificate has expired"), { code: "CERT_HAS_EXPIRED" }) }),
+  ];
+  for (const make of local) {
+    const r = await archiveCli({ route: (u) => (isNext(u) ? make() : 200) });
+    assert.equal(r.code, 1, `다음 달 일정의 로컬 고장이 막지 않았다: ${r.log}`);
+    assert.equal(r.calls.filter(isNext).length, 1, "로컬 고장을 재시도했다");
+    assert.match(r.log, /다음 달 일정\(2026-11\) 은 못 받았다 — 로컬 오류 \(재시도 없음 · 상류 실패 아님\)/);
+    assert.doesNotMatch(r.log, /오프시즌이면 정상/);
+  }
+  // 대조군 — 네트워크 코드면 지금처럼 상류(재시도 4 → 75)
+  const up = await archiveCli({ route: (u) => (isNext(u) ? refused() : 200) });
+  assert.equal(up.code, EXIT_UPSTREAM_ONLY, up.log);
+  assert.equal(up.calls.filter(isNext).length, 4);
+});
+
 test("⚠T8 현재 달 일정 404 → 1(우리가 모르는 상태 — 받기 실패가 아니다)", async () => {
   const r = await archiveCli({ route: (u) => (isCurrent(u) ? 404 : 200) });
   assert.equal(r.code, 1, r.log);
@@ -298,6 +321,19 @@ test("⚠cli-starters — 받기 실패면 75 · 쓰기 실패면 1 · 성공이
  * 예전에는 내부 CR/LF 가 든 연락처가 undici 의 헤더 검증에서 `TypeError` 가 됐고, 그것이 「네트워크」로 분류돼 4번 재시도한 뒤
  * **75(배포)** 가 됐다 — 그 오류 메시지는 UA(= 연락처)를 그대로 로그에 실었다.
  */
+/**
+ * ⚠**예약 도메인 연락처의 거부 메시지도 입력값을 되찍지 않는다**(반영분 재검토 P3) — 예전에는 `…(CLAUDE.md L1): <연락처>` 로 원문을 실었다.
+ * 빈 값(공백뿐)도 같이 본다 — 연락처 검증 메시지 셋(빈 값 · 예약 도메인 · 쓸 수 없는 문자)이 전부 원문을 싣지 않는다.
+ */
+test("⚠cli-starters — 예약 도메인 연락처(메일·URL)·공백뿐인 연락처는 요청 0 · 종료 2 · 로그에 입력값 없음", async () => {
+  for (const contact of ["audit-canary@example.com", "https://example.com/audit-canary-path", "audit-canary@foo.test", "   "]) {
+    const r = await startersCli({ env: { BB_ARCHIVER_CONTACT: contact } });
+    assert.equal(r.code, 2, `${JSON.stringify(contact)}: ${r.log}`);
+    assert.equal(r.calls.length, 0, "요청이 나갔다");
+    assert.equal(r.log.includes("audit-canary"), false, `로그에 연락처가 남았다: ${r.log}`);
+  }
+});
+
 test("⚠⚠cli-starters — CR/LF·비 latin1 연락처는 요청 0 · 종료 2 · 로그에 연락처 없음", async () => {
   for (const contact of ["canary-contact@lunomel.jp\r\nX-Injected: 1", "canary-contact@lunomel.jp\nX-Injected: 1", "canary-연락처@lunomel.jp"]) {
     const r = await startersCli({ env: { BB_ARCHIVER_CONTACT: contact } });

@@ -298,6 +298,21 @@ test("⚠⚠T6 대상 경기일이 2일을 넘으면 선수 재취득 상한을 
   assert.equal(staleLimit(run({}, { dates: null, env: { BB_REFETCH_DATES: DAYS7 }, args: ["--player-limit", "100"] })), "100");
 });
 
+/**
+ * ⚠⚠**예산에 남는 몫이 없으면(상한 0) 그 실행의 선수 재취득을 건너뛴다**(반영분 재검토 P3) — 목록 도구(`emit-stale-player-ids`)는
+ * `--limit 0` 을 「양의 정수가 아니다」로 거부(종료 2 → blocking)하므로 **띄우지 않는다.** 신규 선수 받기와 나머지는 그대로 돈다.
+ * 간격 20000ms × 재수집 7일이면 날짜만으로 예산을 넘는다(fake-spawn 이 잠을 가로채므로 실제로는 안 잔다).
+ */
+test("⚠⚠T6 상한이 0 이면 낡은 선수 목록·재취득 자식을 띄우지 않는다 · 신규 선수 받기는 돈다 · 종료 0", () => {
+  const r = run({}, { dates: null, env: { BB_REFETCH_DATES: DAYS7 }, args: ["--delay", "20000"] });
+  assert.equal(r.status, 0, r.out);
+  assert.ok(!r.scripts.includes(S.stale), "상한 0 인데 낡은 선수 목록을 띄웠다 — `--limit 0` 은 거부(blocking)된다");
+  assert.equal(r.scripts.filter((s) => s === S.players).length, 1, "신규 선수 받기만 떠야 한다(재취득은 건너뛴다)");
+  assert.ok(r.scripts.includes(S.loadPlayers) && r.scripts.includes(S.fresh), "나머지 단계가 안 돌았다");
+  assert.match(r.out, /선수 재취득 건너뜀/);
+  assert.match(r.out, /blocking 0 · 상류 0/);
+});
+
 // ---- emit 둘 — 1·2·신호가 blocking 한 건씩 ----------------------------------------------
 
 for (const [label, exit] of [["1", 1], ["2", 2], ["신호(null)", null]] as const) {

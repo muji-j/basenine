@@ -55,8 +55,10 @@ export function worstStepMin(dates: number, playerRefetch: number, delayMs: numb
 
 /**
  * **선수 재취득 상한** — 대상 경기일이 `NORMAL_MAX_DATES` 이하면 `configured` 그대로 · 넘으면 `worstStepMin ≤ 단계 제한 − 여유` 를 지키는 가장 큰 수
- * (`configured` 를 넘지 않고 1 아래로 내려가지 않는다 — 목록 도구는 양의 정수만 받는다).
- * 간격 3초면 3~9일이 252 · 225 · 198 · 172 · 145 · 118 · 91 이다.
+ * (`configured` 를 넘지 않는다). 간격 3초면 3~9일이 252 · 225 · 198 · 172 · 145 · 118 · 91 이다.
+ * ⚠⚠**예산에 남는 몫이 없으면 0 이다**(반영분 재검토 P3) — 예전에는 1 로 올려서 「30분 안」이 거짓이 됐다(9일 · 간격 5000ms 면 1명이어도 30.5분).
+ *   0 이면 `update.ts` 가 그 실행의 선수 재취득(목록 + 받기 자식)을 **건너뛰고** 다음 실행이 잇는다 — 목록 도구는 `--limit 0` 을 거부하므로 넘기지 않는다.
+ *   ⚠0 이어도 날짜만으로 예산을 넘는 입력(간격 5000ms · 8~9일)은 30분을 **보장하지 못한다** — 기본 간격 3000ms 에서는 9일까지 든다(설계 D6).
  */
 export function playerRefetchCap(dates: number, configured: number, delayMs: number): number {
   check(dates, configured, delayMs);
@@ -66,5 +68,5 @@ export function playerRefetchCap(dates: number, configured: number, delayMs: num
   const availS = (STEP_LIMIT_MIN - LOCAL_MIN - MARGIN_MIN) * 60 - (dates + CHILD_COUNT_BESIDES_DATES - 1) * (delayMs / 1000);
   const fixed = STARTERS_REQUESTS + dates * REQUESTS_PER_DATE + NEW_PLAYER_RESERVE;
   const cap = Math.floor(availS / requestS - fixed);
-  return Math.max(1, Math.min(configured, cap));
+  return Math.max(0, Math.min(configured, cap));
 }

@@ -233,6 +233,7 @@ const WORK = resolve(ROOT, values.work);
 /**
  * ⚠**복구 실행의 선수 재취득 상한**(설계 D6 · 3중 검토 1차 P2-2 · 2차 F2) — 대상 경기일이 2일을 넘으면(따라잡기 · 재수집) 30분 단계 걸쇠 안에
  * 들도록 상한을 낮춘다(7일이면 145). 밀린 몫은 다음 실행이 잇는다(`emit-stale-player-ids` 가 밀린 수를 찍는다). 정상(1~2일)은 설정값 그대로.
+ * ⚠예산에 남는 몫이 없으면 상한은 0 이고 아래에서 그 실행의 선수 재취득을 **건너뛴다**(반영분 재검토 P3 — 1 로 올리지 않는다).
  * ⚠설정값이 양의 정수가 아니면 손대지 않고 그대로 넘긴다 — 목록 도구가 지금처럼 거부한다(blocking).
  */
 const configuredPlayerLimit = Number(values["player-limit"]);
@@ -301,25 +302,33 @@ execStep("DB 적재", "load", [
  * ⚠**목록 만들기(emit)는 로컬 단계다** — 앞 받기에서 회로가 열렸어도 돈다. 그 목록을 받는 자식(`cli-players`)만 실행기가 건너뛴다.
  */
 const staleFile = join(WORK, "stale-player-ids.txt");
-const stale = execStep(
-  "낡은 선수 목록",
-  "emit",
-  ["packages/store/tools/emit-stale-player-ids.ts", values.db, "--limit", playerLimit === null ? values["player-limit"] : String(playerLimit), "--archive", values.archive],
-  { capture: true },
-);
-if (stale.stderr) console.log(`  낡은 선수 페이지: ${stale.stderr.trim()}`);
-if (stale.exit === 0 && stale.stdout.trim() !== "") {
-  writeFileSync(staleFile, stale.stdout, "utf8");
-  execStep("낡은 선수 프로필 재취득", "fetch", [
-    "packages/archiver/src/cli-players.ts",
-    "--ids", staleFile,
-    "--out", values.archive,
-    "--contact", contact,
-    "--delay", values.delay,
-    "--refresh",
-  ], { area: "players" });
-} else if (stale.exit !== 0) {
-  console.error("낡은 선수 목록을 만들지 못했다 — 재취득을 건너뛴다");
+if (playerLimit === 0) {
+  /**
+   * ⚠**예산에 남는 몫이 없다**(반영분 재검토 P3 · `collect-budget.ts`) — 이 실행의 선수 재취득(목록 + 받기 자식)을 건너뛰고 다음 실행이 잇는다.
+   * 목록 도구는 `--limit 0` 을 「양의 정수가 아니다」로 거부(종료 2 → blocking)하므로 **띄우지 않는다.** 신규 선수 받기와 적재는 그대로 돈다.
+   */
+  console.log(`\n── 낡은 선수 목록 ──\n  · 선수 재취득 건너뜀 — 30분 단계 예산에 남는 몫이 없다(대상 경기일 ${String(dates.length)}일 · 간격 ${String(delayMs)}ms) · 밀린 몫은 다음 실행`);
+} else {
+  const stale = execStep(
+    "낡은 선수 목록",
+    "emit",
+    ["packages/store/tools/emit-stale-player-ids.ts", values.db, "--limit", playerLimit === null ? values["player-limit"] : String(playerLimit), "--archive", values.archive],
+    { capture: true },
+  );
+  if (stale.stderr) console.log(`  낡은 선수 페이지: ${stale.stderr.trim()}`);
+  if (stale.exit === 0 && stale.stdout.trim() !== "") {
+    writeFileSync(staleFile, stale.stdout, "utf8");
+    execStep("낡은 선수 프로필 재취득", "fetch", [
+      "packages/archiver/src/cli-players.ts",
+      "--ids", staleFile,
+      "--out", values.archive,
+      "--contact", contact,
+      "--delay", values.delay,
+      "--refresh",
+    ], { area: "players" });
+  } else if (stale.exit !== 0) {
+    console.error("낡은 선수 목록을 만들지 못했다 — 재취득을 건너뛴다");
+  }
 }
 
 const idsFile = join(WORK, "player-ids.txt");

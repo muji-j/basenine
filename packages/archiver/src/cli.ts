@@ -26,7 +26,7 @@ import { LocalSink } from "./sink.ts";
 import type { Sink } from "./sink.ts";
 import { MonthlyScheduleCache, archiveDates, isDayError, summarize } from "./archive.ts";
 import type { DayError, PageResult } from "./archive.ts";
-import { ScheduleAbsentError, UpstreamError, exitCodeFor } from "./upstream.ts";
+import { FetchLocalError, ScheduleAbsentError, UpstreamError, exitCodeFor } from "./upstream.ts";
 import type { ResultLike } from "./upstream.ts";
 
 /** 진입 함수에 주입하는 것 — **시험 전용**이다. 파일로 실행될 때는 전부 기본값(undici 전송 · 진짜 sleep · 시스템 시계 · `LocalSink(--out)`) */
@@ -184,11 +184,12 @@ async function collect(
    *   못 고친 이유: 304 를 받으면 파싱할 본문이 없는데 `Sink` 에 **본문 읽기가 없다.**
    *   인터페이스를 넓히는 변경이라 수집 경로를 건드린다 — 얻는 것은 월 10요청분의 바이트뿐이다.
    *   ⚠수집 경로를 손볼 일이 생기면 그때 같이 넣어라.
-   * ⚠**갈래가 셋이다**(2026-10-24 · 설계 D1 · 3차-3):
+   * ⚠**갈래가 넷이다**(2026-10-24 · 설계 D1 · 3차-3 · 반영분 재검토 P2):
    *   ⑴ **404·410**(`ScheduleAbsentError`) — 12월에 다음 해 1월을 물으면 그런 것이 정상이다. 꼬리표 「（오프시즌이면 정상）」만 · 종료 코드 무영향.
-   *   ⑵ **상류 실패**(`UpstreamError`) — **75 에 넣는다.** 예전에는 무영향이라 장애 중 이것만 실패하면 실행이 초록이었다.
+   *   ⑵ **상류 실패**(`UpstreamError`) — **75(회로 열림이면 69)에 넣는다.** 예전에는 무영향이라 장애 중 이것만 실패하면 실행이 초록이었다.
    *      ⚠예전에는 이 경우에도 「（오프시즌이면 정상）」이 붙었다(P3) — 네트워크 실패는 오프시즌과 무관하다.
-   *   ⑶ 그 밖(구조 변경 의심 등) — 지금처럼 **경고만**(무영향 · 현행 유지).
+   *   ⑶ **로컬 고장**(`FetchLocalError` — 헤더 검증 · 인증서 · 목록 밖 코드) — **로컬 실패로 센다**(1 · 회로 열림이면 70).
+   *   ⑷ 그 밖(구조 변경 의심 등) — 지금처럼 **경고만**(무영향 · 현행 유지).
    */
   const extra: ResultLike[] = [];
   const last = dates[dates.length - 1];
@@ -207,6 +208,11 @@ async function collect(
       } else if (err instanceof UpstreamError) {
         log(`${label} 은 못 받았다 — ${err.message}`);
         extra.push({ error: err.message, errorKind: "upstream" });
+      } else if (err instanceof FetchLocalError) {
+        // ⚠⚠**로컬 고장은 로컬 실패다**(반영분 재검토 P2) — 아래 「그 밖」(구조 변경 의심 · 경고만)과 다르다. 헤더 검증·인증서 같은
+        //   우리 쪽 고장이 다음 달에서만 나면 예전 갈래로는 경고 한 줄 · 종료 0 이 되어 그 실행이 초록으로 배포됐다(현재 달이면 1 이었다)
+        log(`${label} 은 못 받았다 — ${err.message}`);
+        extra.push({ error: err.message, errorKind: "local" });
       } else {
         log(`${label} 은 못 받았다 — ${errorText(err)}`);
       }
