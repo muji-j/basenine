@@ -13,6 +13,7 @@ import type { BlobMeta, Sink } from "./sink.ts";
 import { sha256 } from "./sink.ts";
 import { markSeen, seenMeta } from "./archive.ts";
 import type { PageOutcome, PageResult } from "./archive.ts";
+import { errorKindOf } from "./upstream.ts";
 
 /**
  * 저장 키. ⚠**선수 ID 는 외부에서 온 문자열이고 여기서 경로가 된다.**
@@ -129,7 +130,8 @@ export async function archivePlayer(playerId: string, deps: ArchivePlayersDeps):
       return { key, url, outcome: "absent", status: res.status, error: null };
     }
     if (res.body === null) {
-      return { key, url, outcome: "failed", status: res.status, error: `본문 없는 ${res.status} 응답` };
+      // ⚠fetcher 는 2xx·304·404·410 만 돌려준다 — 도달 불가 갈래라 local(막는 쪽)이다(설계 D1)
+      return { key, url, outcome: "failed", status: res.status, error: `본문 없는 ${res.status} 응답`, errorKind: "local" };
     }
 
     const digest = sha256(res.body);
@@ -173,7 +175,8 @@ export async function archivePlayer(playerId: string, deps: ArchivePlayersDeps):
     await deps.sink.write(key, res.body, meta);
     return { key, url, outcome: "stored", status: res.status, error: null };
   } catch (err) {
-    return { key, url, outcome: "failed", status: null, error: err instanceof Error ? err.message : String(err) };
+    // ⚠이 `catch` 는 받기와 쓰기를 같이 덮는다 — `UpstreamError` 만 upstream 이고 쓰기·「없다」 기록 실패는 local 이다(설계 D1 · T2)
+    return { key, url, outcome: "failed", status: null, error: err instanceof Error ? err.message : String(err), errorKind: errorKindOf(err) };
   }
 }
 

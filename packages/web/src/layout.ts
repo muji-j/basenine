@@ -366,6 +366,33 @@ export function contactGate(contact: string, requireContact: string | undefined)
   };
 }
 
+/** `staleGate` 의 판정. `fatal` 이면 호출자가 종료 코드를 세운다 */
+export interface StaleGate {
+  /** 빌드를 실패로 만들 것인가 */
+  fatal: boolean;
+  /** 로그에 낼 문장 — 경고면 `::warning::` 으로 시작한다(GitHub 요약에 남게) */
+  message: string;
+}
+
+/**
+ * **낡은 데이터의 빌드 게이트**(2026-10-24 · 설계 `docs/superpowers/specs/2026-10-24-collection-resilience-design.md` D5).
+ *
+ * 낡았으면 막는다 — ⚠**단 `BB_UPSTREAM_OUTAGE=1` 이면 경고만 한다.** 워크플로가 `수집·적재` 의 rc 가 75(npb.jp 받기 실패만)일 때만
+ * 그 값을 넘긴다: 그 실행은 **이미 받은 데이터로 배포**하고(사용자 결정 ②) 화면의 신선도 띠가 낡음을 말하며, 실행 자체는 워크플로의
+ * 마지막 단계가 붉게 끝낸다(경보는 사라지지 않는다 · I5).
+ * ⚠**이 스위치는 낡음 게이트에만 걸린다** — 깨진 링크·중복 id·연락처·우승 판정 등 다른 게이트는 env 와 무관하게 막는다(`build.ts`).
+ * ⚠**정확히 `"1"` 만 받는다** — 모르는 값은 막는 쪽이다(M11).
+ */
+export function staleGate(upstreamOutage: string | undefined): StaleGate {
+  if (upstreamOutage === "1") {
+    return {
+      fatal: false,
+      message: "::warning::데이터가 낡았다 — npb.jp 받기 실패만 있었던 실행이라(BB_UPSTREAM_OUTAGE=1) 막지 않는다. 화면의 띠가 낡음을 말한다",
+    };
+  }
+  return { fatal: true, message: "⚠ 데이터가 낡았다 — 수집이 멈췄는지 확인하라" };
+}
+
 /**
  * 選手一覧의 경로. **한 곳에서만 만든다**(M1) — 갈리면 어딘가는 404다.
  *

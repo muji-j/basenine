@@ -18,7 +18,7 @@ import { systemClock, toJstDateString } from "@bb-app/archiver";
 import { DRAFT_SEASON_PATHS, buildDraftSeason, buildSite, seasonPaths } from "../src/site.ts";
 import type { BuildResult } from "../src/site.ts";
 // ⚠**연락처 게이트의 판정은 한 벌이다**(M1) — 조건을 여기서 다시 쓰지 않는다
-import { collectionStatus, contactGate } from "../src/layout.ts";
+import { collectionStatus, contactGate, staleGate } from "../src/layout.ts";
 import {
   buildCareerContext,
   draftHeldSeasons,
@@ -438,8 +438,17 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
         process.exitCode = 1;
       }
       if (result.stale) {
-        console.error("⚠ 데이터가 낡았다 — 수집이 멈췄는지 확인하라");
-        process.exitCode = 1;
+        /**
+         * ⚠**받기 실패만 있었던 실행(`BB_UPSTREAM_OUTAGE=1`)이면 경고만 한다**(2026-10-24 · 설계 D5) — 판정은 `layout.ts` 의 `staleGate` 한 벌이다.
+         * ⚠그 스위치는 **이 블록 안에서만** 읽는다 — 위의 다른 게이트(링크·id·연락처·우승 판정)는 env 와 무관하게 막는다(`stale-outage.test.ts`).
+         */
+        const gate = staleGate(process.env["BB_UPSTREAM_OUTAGE"]);
+        if (gate.fatal) {
+          console.error(gate.message);
+          process.exitCode = 1;
+        } else {
+          console.log(gate.message);
+        }
       }
     } finally {
       db.close();

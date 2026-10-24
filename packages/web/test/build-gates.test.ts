@@ -206,6 +206,8 @@ async function withBuild(
   seasonArg: string,
   seedFn: (db: Db) => void,
   fn: (r: { status: number | null; stdout: string; stderr: string }) => void,
+  /** 덧붙일 env — ⚠`BB_UPSTREAM_OUTAGE` 는 기본으로 비운다(러너 env 에 남아 있어도 낡음 게이트가 풀리지 않게 · 2026-10-24) */
+  extraEnv: Record<string, string> = {},
 ): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), "bb-build-run-"));
   const dbPath = join(dir, "t.sqlite");
@@ -226,7 +228,7 @@ async function withBuild(
          * ⚠**연락처 스위치를 꺼서 넘긴다.** CI 가 `BB_REQUIRE_CONTACT=1` 을 켜 둔 채로
          * 이 시험이 돌면 연락처 게이트가 끼어들어 종료 코드의 뜻이 또 하나 늘어난다.
          */
-        env: { ...process.env, BB_CONTACT: "", BB_REQUIRE_CONTACT: "" },
+        env: { ...process.env, BB_CONTACT: "", BB_REQUIRE_CONTACT: "", BB_UPSTREAM_OUTAGE: "", ...extraEnv },
       },
     );
     fn({ status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" });
@@ -417,6 +419,41 @@ test("⚠빌드를 실제로 돌리면 끝난 시즌의 판정 부재만 막는�
       assert.doesNotMatch(r.stderr, /\n\s+2026: 규정 대전수/, "아직 안 끝난 시즌까지 막았다");
       assert.equal(r.status, 1, "배포를 세우지 않았다");
     },
+  );
+});
+
+/**
+ * ⚠⚠**T10 — `BB_UPSTREAM_OUTAGE=1` 은 낡음 게이트만 푼다**(2026-10-24 · 설계 `2026-10-24-collection-resilience-design.md` D5).
+ * 위와 같은 픽스처(끝난 2025 의 판정 부재 · 경기가 2026-04 뿐이라 **반드시 낡았다**)를 두 번 굽는다:
+ * env 없음 → 낡음 게이트가 막는 문구 · env 1 → 경고 문구로 바뀌고 막는 문구는 사라진다 · **그래도 종료 1**(판정 부재 게이트는 env 와 무관).
+ */
+test("⚠⚠T10 빌드를 실제로 돌리면 BB_UPSTREAM_OUTAGE=1 은 낡음 게이트만 경고로 바꾸고 다른 게이트는 그대로 막는다", async () => {
+  const seedRace = (db: Db): void => {
+    roster(db);
+    confirmableSeason(db, 2024);
+    for (const season of [2025, 2026]) {
+      for (let i = 0; i < 3; i += 1) {
+        const d = `${season}-04-0${i + 1}`;
+        played(db, d, "t", "g", season);
+        played(db, d, "l", "m", season);
+      }
+    }
+  };
+  await withBuild("2026,2025,2024", seedRace, (r) => {
+    assert.match(r.stdout, /생성: \d+파일/, `빌드가 게이트까지 가지도 못했다:\n${r.stderr}`);
+    assert.match(r.stderr, /데이터가 낡았다 — 수집이 멈췄는지 확인하라/, "전제가 틀렸다 — 픽스처가 낡지 않았다");
+  });
+  await withBuild(
+    "2026,2025,2024",
+    seedRace,
+    (r) => {
+      assert.match(r.stdout, /생성: \d+파일/, `빌드가 게이트까지 가지도 못했다:\n${r.stderr}`);
+      assert.match(r.stdout, /::warning::데이터가 낡았다 — npb\.jp 받기 실패만 있었던 실행이라/, "env 1 인데 낡음을 경고로 안 바꿨다");
+      assert.doesNotMatch(r.stderr, /데이터가 낡았다 — 수집이 멈췄는지 확인하라/, "env 1 인데 낡음 게이트가 막았다");
+      assert.match(r.stderr, /이미 끝난 시즌인데 우승 판정이 서지 않았다 — 1시즌/, "다른 게이트가 안 울렸다");
+      assert.equal(r.status, 1, "env 1 이 다른 게이트(끝난 시즌의 판정 부재)까지 풀었다");
+    },
+    { BB_UPSTREAM_OUTAGE: "1" },
   );
 });
 

@@ -15,6 +15,7 @@ import type { PoliteFetcher } from "./fetcher.ts";
 import type { BlobMeta, Sink } from "./sink.ts";
 import { sha256 } from "./sink.ts";
 import type { PageResult } from "./archive.ts";
+import { errorKindOf } from "./upstream.ts";
 
 export const STARTERS_URL = "https://npb.jp/announcement/starter/";
 
@@ -48,7 +49,8 @@ export async function archiveStarters(jstDate: string, deps: ArchiveStartersDeps
       return { key, url, outcome: "absent", status: res.status, error: null };
     }
     if (res.body === null) {
-      return { key, url, outcome: "failed", status: res.status, error: `본문 없는 ${res.status} 응답` };
+      // ⚠도달 불가 갈래(fetcher 는 2xx·304·404·410 만 돌려준다) — local(막는 쪽)
+      return { key, url, outcome: "failed", status: res.status, error: `본문 없는 ${res.status} 응답`, errorKind: "local" };
     }
 
     const digest = sha256(res.body);
@@ -69,12 +71,14 @@ export async function archiveStarters(jstDate: string, deps: ArchiveStartersDeps
     await deps.sink.write(key, res.body, meta);
     return { key, url, outcome: "stored", status: res.status, error: null };
   } catch (err) {
+    // ⚠받기와 쓰기를 같이 덮는 `catch` — `UpstreamError` 만 upstream · 쓰기 실패는 local(설계 D1 · T2)
     return {
       key,
       url,
       outcome: "failed",
       status: null,
       error: err instanceof Error ? err.message : String(err),
+      errorKind: errorKindOf(err),
     };
   }
 }

@@ -22,6 +22,7 @@ import { DraftIndexError, DraftParseError, parseDraftTeamSlugs, parseDraftYears 
 import type { DraftIndexObservation } from "@bb-app/parser";
 import { archiveUrl } from "./archive.ts";
 import type { ArchiveDeps, PageResult } from "./archive.ts";
+import type { ErrorKind } from "./upstream.ts";
 
 /** 아카이브 키 접두. `cli-stats.ts` 의 `npb/stats/...` 와 같은 층이다 */
 const KEY_ROOT = "npb/draft";
@@ -36,7 +37,7 @@ const KEY_ROOT = "npb/draft";
  * **별도 서브도메인이고 CDN 뒤에 있다.**
  * ⚠**이제는 아예 못 받는다**(2026-09-25 감사 C1 이후). `PoliteFetcher` 가 리디렉션을 직접 따라가며
  * **같은 출처만** 따르므로, `https://npb.jp` → `http://draft.npb.jp` 첫 홉(호스트도 스킴도 다름)에서
- * 요청 1건 뒤 **본문 없는 302 실패**로 끝난다. ~~같은 문서 §9-A 의 「리다이렉트 홉은 간격 밖이다」~~ 는
+ * 요청 1건 뒤 **3xx 종결 실패**(`UpstreamError(http-302)` · 2026-10-24 부터 · 그 전에는 「본문 없는 302」)로 끝난다. ~~같은 문서 §9-A 의 「리다이렉트 홉은 간격 밖이다」~~ 는
  * 그 조사 도구와 이 수정 전의 우리 fetcher 에 대한 서술이다 — 지금은 같은 출처 홉도 간격을 지킨다.
  * ⚠**페이지 안의 `og:url` 은 `npb.jp` 라고 적혀 있다** — 그건 페이지가 스스로 쓴 문자열이지
  * 서버가 어디서 답하는지가 아니다. **근거로 쓰지 마라.**
@@ -101,7 +102,11 @@ export function draftTargets(input: {
  */
 export type DraftYearSkip =
   | { readonly kind: "absent"; readonly status: number }
-  | { readonly kind: "failed"; readonly error: string }
+  /**
+   * ⚠`errorKind` 는 관측이다(설계 `2026-10-24-collection-resilience-design.md` D1) — 「상류에서 못 받았다」인지 「우리 쪽 기록 실패」인지.
+   * `cli-draft.ts` 의 종료 코드는 0/1 그대로다(75 계약은 일일 받기 자식 셋뿐).
+   */
+  | { readonly kind: "failed"; readonly error: string; readonly errorKind?: ErrorKind }
   | { readonly kind: "index"; readonly observed: DraftIndexObservation; readonly error: string }
   | { readonly kind: "parse"; readonly error: string }
   | { readonly kind: "error"; readonly error: string };
@@ -191,7 +196,9 @@ async function fetchAndRead(
 /** 본문이 없을 때 그 이유를 관측 그대로 옮긴다. ⚠**「없다」와 「못 받았다」를 안 섞는다**(M11) */
 function skipFromResult(result: PageResult): DraftYearSkip {
   if (result.outcome === "absent") return { kind: "absent", status: result.status ?? 404 };
-  if (result.outcome === "failed") return { kind: "failed", error: result.error ?? "이유 미상" };
+  if (result.outcome === "failed") {
+    return { kind: "failed", error: result.error ?? "이유 미상", ...(result.errorKind === undefined ? {} : { errorKind: result.errorKind }) };
+  }
   // stored/unchanged 인데 본문이 없다 = 우리가 예상하지 못한 상태다. 삼키지 않는다.
   return { kind: "error", error: `${result.outcome} 인데 아카이브에 본문이 없다` };
 }

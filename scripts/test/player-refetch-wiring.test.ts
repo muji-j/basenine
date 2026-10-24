@@ -71,9 +71,10 @@ test("⚠N3 3-18 · 순서 — 재취득 선정 → 낡은 선수 재취득 → 
     assert.notEqual(i, -1, `update.ts 에 ${needle} 가 없다`);
     return i;
   };
+  // ⚠2026-10-24 부터 자식은 전부 `execStep(<단계>, <갈래>, …)` 를 지난다(설계 `2026-10-24-collection-resilience-design.md` D5) — 순서는 그대로다
   const select = at('"packages/store/tools/emit-stale-player-ids.ts"');
-  const refetch = at('run("낡은 선수 프로필 재취득"');
-  const fresh = at('run("신규 선수 프로필"');
-  const load = at('run("선수 프로필 적재"');
+  const refetch = at('execStep("낡은 선수 프로필 재취득", "fetch"');
+  const fresh = at('execStep("신규 선수 프로필", "fetch"');
+  const load = at('execStep("선수 프로필 적재", "load"');
   assert.ok(select < refetch && refetch < fresh && fresh < load, "선정·재취득이 적재 뒤에 있다 — 옛 판이 같은 실행에서 안 풀린다");
 });

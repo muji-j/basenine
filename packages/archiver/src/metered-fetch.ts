@@ -4,7 +4,7 @@
  * `PoliteFetcher` 에 넘기는 `fetchImpl` 을 감싼다. ⚠**`PoliteFetcher` 는 고치지 않는다** — 첫 전송 · 리디렉트 홉 · 재시도가
  * **전부** `request()` → `fetchImpl` 을 지나므로(`fetcher.ts`) 감싼 쪽이 전송을 빠짐없이 센다.
  * ⚠**간격 하한(L1)은 이 감싸기와 무관하게 걸린다** — `PoliteFetcher` 생성자가 `minDelayMs` 를 검사하고, 간격 대기는 `fetchImpl`
- *   바깥(`waitForSlot`)에 있다. 「전송 수단을 갈아 끼우면 하한이 사라진다」를 만들지 않았다(`fetcher.ts` 의 `isValidDelayMs`).
+ *   바깥(`waitForSlot`)에 있다. 「전송 수단을 갈아 끼우면 하한이 사라진다」를 만들지 않았다(`l1.ts` 의 `isValidDelayMs`).
  *
  * 왜 두나:
  * - **논리 페이지와 실제 HTTP 전송은 다르다**(설계 R2-1). 재시도·리디렉트로 한 페이지가 여러 전송이 된다 — 상한은 **전송**으로 건다.

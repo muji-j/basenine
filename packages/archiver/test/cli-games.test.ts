@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AUTO_REFETCH_MAX_GAMES, AUTO_REFETCH_REQUEST_TIMEOUT_MS } from "@bb-app/store/refetch-limit";
+import { CIRCUIT_CONSECUTIVE_DEFAULT } from "../src/circuit.ts";
 import { CLI_GAMES_DEFAULT_DELAY_MS, parseDeadline, parseGameIds, runCliGames } from "../src/cli-games.ts";
 import { fixedClock } from "../src/clock.ts";
 import { GAME_PAGES, discoverGames, gameIdOf, gameRefFromId, pageKey, pageUrl } from "../src/discover.ts";
@@ -252,11 +253,17 @@ test("⚠월간 일정 요청 0 — 경기 ID 가 곧 주소다 · 받는 차례
   }
 });
 
+/**
+ * ⚠**넷째 장은 fetcher 회로가 요청 0 으로 끊는다**(2026-10-24 · 설계 `2026-10-24-collection-resilience-design.md` D1 「cli-games 는 0/1 그대로 ·
+ * 회로(D4)만 공통으로 받는다」). 503 소진이 연속 3장이면 `PoliteFetcher` 의 기본 회로(연속 3)가 열린다 — 예전 8전송이 6전송이 된다.
+ * 종료 코드(1)·결과 JSON·둘째 경기의 `circuit_open` 은 그대로다.
+ */
 test("⚠받기 실패가 있으면 종료 1 · 결과 JSON 의 exit 도 1 · 자동 경로는 maxRetries 1(페이지당 전송 2)", async () => {
   const r = await runIn({ status: (url) => (url.includes(ID1) ? 503 : 200) });
   try {
     assert.equal(r.code, 1);
-    assert.equal(r.urls.length, GAME_PAGES.length * 2, "첫 경기 4장 × 2시도 뒤 회로가 열려 둘째 경기는 안 받는다");
+    assert.equal(r.urls.length, CIRCUIT_CONSECUTIVE_DEFAULT * 2, "첫 경기 앞 3장 × 2시도 뒤 fetcher 회로가 넷째 장을 끊고, 받기 회로가 둘째 경기를 안 받는다");
+    assert.equal(GAME_PAGES.length, CIRCUIT_CONSECUTIVE_DEFAULT + 1, "이 시험의 전제(넷째 장이 회로에 걸린다)가 바뀌었다");
     const json = JSON.parse(await readFile(r.result, "utf8")) as { exit: number; games: { status: string; reason: string | null }[] };
     assert.equal(json.exit, 1);
     assert.deepEqual(json.games.map((g) => g.reason ?? g.status), ["prepare_failed", "circuit_open"]);

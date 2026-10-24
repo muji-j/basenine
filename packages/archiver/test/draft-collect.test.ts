@@ -126,7 +126,7 @@ test("⚠호스트는 draft.npb.jp 다 — npb.jp 로 치면 다른 출처로 �
   //   https://npb.jp/draft/ → 302 → http://draft.npb.jp/draft/ → 301 → https://draft.npb.jp/draft/
   // ⚠같은 문서 §9-A 는 「리다이렉트 홉은 간격 밖이다」라고 적는데, 그건 **2026-09-25 감사 C1 이전**이다.
   //   지금 PoliteFetcher 는 홉마다 L1 간격을 지키고 **같은 출처만** 따른다 — 첫 홉이 http://draft.npb.jp
-  //   (호스트·스킴 모두 다름)라 요청 1건 뒤 본문 없는 302 실패가 된다(fetcher-redirect.test.ts).
+  //   (호스트·스킴 모두 다름)라 요청 1건 뒤 3xx 종결 실패(UpstreamError(http-302))가 된다(fetcher-redirect.test.ts).
   for (const u of [BACKNUMBER_URL, yearIndexUrl(2013), teamPageUrl(2013, "bs")]) {
     assert.match(u, /^https:\/\/draft\.npb\.jp\/draft\//, `리다이렉트를 타는 주소다: ${u}`);
   }

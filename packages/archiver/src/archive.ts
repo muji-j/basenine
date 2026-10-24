@@ -13,6 +13,8 @@ import type { GamePage, GameRef } from "./discover.ts";
 import type { FetchResponse, PoliteFetcher } from "./fetcher.ts";
 import type { BlobMeta, Sink } from "./sink.ts";
 import { sha256 } from "./sink.ts";
+import { ScheduleAbsentError, errorKindOf } from "./upstream.ts";
+import type { ErrorKind } from "./upstream.ts";
 
 /**
  * ⚠`held`(보류) — 받았고 바뀌었지만 같은 경기의 다른 페이지가 실패해서 **기록하지 않은** 페이지(설계 D2).
@@ -27,6 +29,12 @@ export interface PageResult {
   status: number | null;
   /** 실패했을 때만 채워진다 */
   error: string | null;
+  /**
+   * 실패의 갈래(`failed` 에만 · 설계 `2026-10-24-collection-resilience-design.md` D1) — `upstream` 은 「새로 못 받았다」(데이터 불변) ·
+   * `local` 은 쓰기·사이드카·구조·모르는 것. ⚠**없으면 미분류이고 종료 코드는 1(막는 쪽)이다**(`exitCodeFor`).
+   * ⚠`upstream` 은 **fetcher 가 던진 `UpstreamError` 에서만** 나온다(`errorKindOf`) — 여기서 손으로 적지 않는다.
+   */
+  errorKind?: ErrorKind;
   /**
    * 짝이 틀린 로컬 본문을 두고 한 일(선수 페이지만 · 2026-09-27 · 3중 검토 2차 F1 · 반영분 재검토 P2):
    * - `"rewritten"` — **방금 받은 바이트로 되살렸다**
@@ -81,7 +89,13 @@ export class MonthlyScheduleCache {
   private async load(season: number, month: number, deps: ArchiveDeps): Promise<GameRef[]> {
     this.fetchCount += 1;
     const url = monthlyScheduleUrl(season, month);
+    // ⚠받기 실패는 fetcher 가 `UpstreamError` 로 던진다(설계 D1) — 여기서 만들지 않는다
     const res = await deps.fetcher.get(url);
+    /**
+     * ⚠**404·410 은 「그 달 일정이 없다」는 사실이다** — 받기는 성공했다(회로도 성공으로 셌다). `ScheduleAbsentError` 로 가른다:
+     * 현재 달이면 local(우리가 모르는 상태 → 막는다) · 다음 달이면 꼬리표 「（오프시즌이면 정상）」만 붙는다(`cli.ts` · 설계 D1).
+     */
+    if (res.status === 404 || res.status === 410) throw new ScheduleAbsentError(url, res.status);
     if (res.body === null) throw new Error(`월간 일정을 받지 못했다 (HTTP ${res.status}): ${url}`);
 
     // 발견의 출처도 보존한다 (M4: 이 경기 목록이 어디서 나왔는가).
@@ -175,7 +189,7 @@ export type Prepared = { key: string; url: string; prev: BlobMeta | null; observ
   | { kind: "changed"; status: number; body: Uint8Array; meta: BlobMeta }
   | { kind: "unchanged"; status: number }
   | { kind: "absent"; status: number }
-  | { kind: "failed"; status: number | null; error: string }
+  | { kind: "failed"; status: number | null; error: string; errorKind: ErrorKind }
 );
 
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
@@ -185,6 +199,7 @@ const errorText = (err: unknown): string => (err instanceof Error ? err.message 
  * ⚠`readMeta` 예외도 `failed` 로 흡수한다(2026-09-25 · 설계 D2). 예전에는 `try` 밖이라 깨진 사이드카 하나가
  *   `archiveGame` → `archiveDate` 를 거쳐 **그날 전체를 날짜 단위 오류**로 만들었다. 단독 호출자에게도 같은 변화다(의도).
  * ⚠**본 시각은 여기서 한 번 읽는다**(받은 직후 · M6) — 기록이 늦어져도 「언제 본 내용인가」가 바뀌지 않게.
+ * ⚠**`errorKind` 는 받기(`fetcher.get`)의 예외에서만 가른다**(설계 D1) — 사이드카·판정의 실패는 언제나 local 이다.
  */
 export async function prepareUrl(key: string, url: string, deps: ArchiveDeps): Promise<Prepared> {
   let prev: BlobMeta | null;
@@ -192,21 +207,22 @@ export async function prepareUrl(key: string, url: string, deps: ArchiveDeps): P
     prev = await deps.sink.readMeta(key);
   } catch (err) {
     const observedAt = deps.clock.now().toISOString();
-    return { key, url, prev: null, observedAt, kind: "failed", status: null, error: `사이드카를 못 읽었다: ${errorText(err)}` };
+    return { key, url, prev: null, observedAt, kind: "failed", status: null, error: `사이드카를 못 읽었다: ${errorText(err)}`, errorKind: "local" };
   }
   let res: FetchResponse;
   try {
     res = await deps.fetcher.get(url, prev ?? undefined);
   } catch (err) {
     const observedAt = deps.clock.now().toISOString();
-    return { key, url, prev, observedAt, kind: "failed", status: null, error: errorText(err) };
+    return { key, url, prev, observedAt, kind: "failed", status: null, error: errorText(err), errorKind: errorKindOf(err) };
   }
   const observedAt = deps.clock.now().toISOString();
   try {
     if (res.status === 304) return { key, url, prev, observedAt, kind: "unchanged", status: 304 };
     // 사실이다 — 이 경기에 이 페이지는 존재하지 않는다. 실패가 아니다.
     if (res.status === 404 || res.status === 410) return { key, url, prev, observedAt, kind: "absent", status: res.status };
-    if (res.body === null) return { key, url, prev, observedAt, kind: "failed", status: res.status, error: `본문 없는 ${res.status} 응답` };
+    // ⚠fetcher 는 이제 2xx·304·404·410 만 돌려준다 — 본문 없는 다른 상태는 도달 불가이고, 오면 결함이라 local(막는 쪽)이다
+    if (res.body === null) return { key, url, prev, observedAt, kind: "failed", status: res.status, error: `본문 없는 ${res.status} 응답`, errorKind: "local" };
     const digest = sha256(res.body);
     // 서버가 조건부 요청을 지원하지 않아 200을 줬지만 내용은 같다 → 본문은 안 쓴다(멱등)
     if (prev && prev.sha256 === digest) return { key, url, prev, observedAt, kind: "unchanged", status: res.status };
@@ -222,7 +238,7 @@ export async function prepareUrl(key: string, url: string, deps: ArchiveDeps): P
     };
     return { key, url, prev, observedAt, kind: "changed", status: res.status, body: res.body, meta };
   } catch (err) {
-    return { key, url, prev, observedAt, kind: "failed", status: null, error: errorText(err) };
+    return { key, url, prev, observedAt, kind: "failed", status: null, error: errorText(err), errorKind: "local" };
   }
 }
 
@@ -231,6 +247,8 @@ export async function prepareUrl(key: string, url: string, deps: ArchiveDeps): P
  * ⚠「받았는데 안 바뀌었다」도 「봤다」로 남긴다(`markSeen`) — 안 남기면 취득일이 실제보다 낡게 나가고 재취득이 오판한다.
  * ⚠**시계를 읽지 않는다** — 「봤다」는 `p.observedAt`(받은 시각)이다. 기록 시각을 찍으면 겹친 아카이버가
  *   옛 내용에 새 시각을 붙인다(설계 부록 D · 3중 검토 3차 P1).
+ * ⚠⚠**기록 실패는 언제나 local 이다**(설계 D7 · 시험 T2) — 여기서 상류로 적으면 「4장 받고 기록 중 실패」(일부 쓰기)가
+ *   「받기만 실패」로 보여 **배포가 열린다.** 이 `catch` 는 받기가 끝난 뒤의 일만 덮는다.
  */
 export async function commitPrepared(p: Prepared, deps: ArchiveDeps, extra?: BlobExtra): Promise<PageResult> {
   const base = { key: p.key, url: p.url };
@@ -245,10 +263,10 @@ export async function commitPrepared(p: Prepared, deps: ArchiveDeps, extra?: Blo
       case "absent":
         return { ...base, outcome: "absent", status: p.status, error: null };
       case "failed":
-        return { ...base, outcome: "failed", status: p.status, error: p.error };
+        return { ...base, outcome: "failed", status: p.status, error: p.error, errorKind: p.errorKind };
     }
   } catch (err) {
-    return { ...base, outcome: "failed", status: null, error: errorText(err) };
+    return { ...base, outcome: "failed", status: null, error: errorText(err), errorKind: "local" };
   }
 }
 
@@ -298,7 +316,8 @@ export async function archiveGame(ref: GameRef, deps: ArchiveDeps): Promise<Page
     const p = await prepareUrl(pageKey(ref, page), pageUrl(ref, page), deps);
     prepared.push(
       p.kind === "absent" && p.prev !== null
-        ? { key: p.key, url: p.url, prev: p.prev, observedAt: p.observedAt, kind: "failed", status: p.status, error: "있던 페이지가 사라졌다" }
+        ? // ⚠상류는 404 를 **줬다**(받기 성공) — 「있던 것이 없어졌다」는 우리 판정이라 local 이다(막는 쪽 · 지금처럼 종료 1)
+          { key: p.key, url: p.url, prev: p.prev, observedAt: p.observedAt, kind: "failed", status: p.status, error: "있던 페이지가 사라졌다", errorKind: "local" }
         : p,
     );
   }
@@ -322,7 +341,7 @@ export async function archiveGame(ref: GameRef, deps: ArchiveDeps): Promise<Page
         case "absent":
           return { key: p.key, url: p.url, outcome: "absent", status: p.status, error: null };
         case "failed":
-          return { key: p.key, url: p.url, outcome: "failed", status: p.status, error: p.error };
+          return { key: p.key, url: p.url, outcome: "failed", status: p.status, error: p.error, errorKind: p.errorKind };
       }
     });
   }
@@ -386,7 +405,8 @@ export async function archiveDates(
     try {
       entry = await archiveDate(date, withCache);
     } catch (err) {
-      entry = { date, error: err instanceof Error ? err.message : String(err) };
+      // ⚠월간 일정의 받기 실패(`UpstreamError`)만 upstream — 구조 변경·사이드카·쓰기·현재 달 일정 없음(`ScheduleAbsentError`)은 local(설계 D1)
+      entry = { date, error: err instanceof Error ? err.message : String(err), errorKind: errorKindOf(err) };
     }
     out.push(entry);
     onDay?.(entry);
@@ -398,6 +418,8 @@ export async function archiveDates(
 export interface DayError {
   date: string;
   error: string;
+  /** `PageResult.errorKind` 와 같은 뜻 — 없으면 미분류(종료 1) */
+  errorKind?: ErrorKind;
 }
 
 export function isDayError(x: DayResult | DayError): x is DayError {
