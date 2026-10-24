@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { openDb, upsertGame } from "../src/index.ts";
 import { collectionEvidence } from "../src/collection-evidence.ts";
 import { confirmedRestThrough, owedDays } from "../src/schedule-owed.ts";
-import { NO_GAME_MONTHS } from "../../domain/src/season-calendar.ts";
+import { NO_GAME_MONTHS } from "@bb-app/domain/season-calendar";
 
 const TOOL = fileURLToPath(new URL("../tools/load-upcoming.ts", import.meta.url));
 const NOW = "2026-08-17T00:00:00.000Z";
@@ -310,6 +310,89 @@ test("⚠⚠올스타형 날 — 치러진 올스타 행은 치러짐 표시(cl/
       d.close();
     }
   });
+});
+
+/**
+ * 실물 모양의 올스타 행(2026-07-28 실물에서 옮김 — 점수 칸을 점수 링크가 감싼다). `link` 를 주면 그 주소로 점수를 감싸고,
+ * `score` 만 주면 점수 숫자만 있고 링크가 없다(링크 모양이 바뀐 사본 흉내).
+ */
+function allStarRow(mmdd: string, team1: string, team2: string, o: { link?: string; score?: [number, number] } = {}): string {
+  const scores = o.score === undefined
+    ? '<div class="score1">&nbsp;</div><div class="state">-</div><div class="score2">&nbsp;</div>'
+    : `<div class="score1">${String(o.score[0])}</div><div class="state">-</div><div class="score2">${String(o.score[1])}</div>`;
+  return `<tr id="date${mmdd}" class=""><th>${Number(mmdd.slice(0, 2))}/${Number(mmdd.slice(2))}</th>
+    <td><div class="team1">${team1}</div>${o.link === undefined ? scores : `<a href="${o.link}">${scores}</a>`}<div class="team2">${team2}</div></td>
+    <td><div class="place">東京ドーム</div><div class="time">18:30</div></td></tr>`;
+}
+
+/**
+ * ⚠⚠**링크 모양만 바뀐 사본이 기존 치러짐 표시를 지우지 않는다**(2026-10-24 · PR-2b 재검토 GPT P2 · M7).
+ * 점수는 있는데 점수 링크가 없는 올스타 행은 파서가 「못 읽음」으로 세고, 적재기는 그 달을 **통째로 되돌리고 멈춘다** —
+ * 예전에는 「예정」으로 통과해 그 달의 올스타 치러짐 표시가 지워졌다(그 경기 행까지 없으면 owed·수집 판정 A 의 유일한 증거가 사라진다).
+ */
+test("⚠⚠올스타 치러짐 표시가 있는 달을 점수 링크만 바뀐 사본으로 다시 적재하면 종료 1 · 세 표 불변", async () => {
+  await withArchive(async ({ games, run, db }) => {
+    const july = (cl: Record<string, string> | null): string => padMonth("07",
+      allStarRow("0728", "セ・リーグ", "パ・リーグ", cl === null ? { score: [5, 7] } : { score: [5, 7], link: cl["0728"]! })
+        + allStarRow("0729", "パ・リーグ", "セ・リーグ", cl === null ? { score: [7, 8] } : { score: [7, 8], link: cl["0729"]! }));
+    await writeMonth(games, "07", july({ "0728": "/scores/2026/0728/cl-pl-01/", "0729": "/scores/2026/0729/pl-cl-02/" }), "2026-07-30T00:00:00.000Z");
+    const first = run();
+    assert.equal(first.code, 0, `첫 적재가 실패했다: ${first.out}${first.err}`);
+    const snapshot = (): string => {
+      const d = db();
+      try {
+        return JSON.stringify(["schedule_played", "upcoming_game", "game"].map((t) => d.raw.prepare(`SELECT * FROM ${t} ORDER BY 1, 2, 3, 4`).all()));
+      } finally {
+        d.close();
+      }
+    };
+    const before = snapshot();
+    assert.ok(before.includes('"cl"') && before.includes('"pl"'), "전제(첫 적재가 올스타 치러짐 표시를 남겼다)가 틀렸다");
+    // 같은 달을 점수만 있고 링크가 없는 사본으로 바꿔 다시 적재한다
+    await writeMonth(games, "07", july(null), "2026-07-31T00:00:00.000Z");
+    const second = run();
+    assert.equal(second.code, 1, `링크 모양만 바뀐 사본을 받아들였다: ${second.out}${second.err}`);
+    assert.match(second.err, /못 읽은 행/);
+    assert.equal(snapshot(), before, "되돌리지 않고 세 표(치러짐 표시 · 앞으로의 경기 · 경기)를 바꿨다");
+  });
+});
+
+/**
+ * ⚠⚠**적재기의 올스타 경로 가드**(2026-10-24 · PR-2b 재검토 RS F1) — 링크 없는 올스타(예정)는 남기지 않는다 · 두 번 적재해도 같다(M5) ·
+ * 다른 달 날짜 행은 그 달 규칙대로(구단 행과 같은 결과) 적재하지 않고 요약에 찍는다.
+ * ⚠올스타가 치러지기 전의 7월 사본에는 그 행이 링크 없이 있을 것이다(구단 행과 같은 모양 · ⚠그 시점의 사본은 안 쟀다) — 이 가드가 없으면
+ *   미래 올스타가 치러짐 표시로 들어가고, 그 올스타가 링크 없이 취소되면 수집 판정 A 가 30일 운다.
+ */
+test("⚠⚠링크 없는 올스타(예정) 행은 치러짐 표시에도 앞으로의 경기에도 안 남는다 · 종료 0", async () => {
+  await withLoad({ "07": allStarRow("0728", "セ・リーグ", "パ・リーグ") }, (d, out, err, code) => {
+    assert.equal(code, 0, `${out}${err}`);
+    assert.equal((d.raw.prepare("SELECT COUNT(*) n FROM schedule_played").get() as unknown as { n: number }).n, 0, "링크 없는 올스타를 치러짐 표시에 넣었다");
+    assert.equal((d.raw.prepare("SELECT COUNT(*) n FROM upcoming_game").get() as unknown as { n: number }).n, 0, "올스타를 앞으로의 경기(화면)에 넣었다");
+    assert.match(out, /구단 아닌 행 1건\(치러짐 표시로 0건 남김\)/);
+  });
+});
+
+test("⚠올스타 행이 든 파일을 두 번 적재해도 결과가 같다(M5) · 종료 0", async () => {
+  await withLoad(
+    { "07": allStarRow("0728", "セ・リーグ", "パ・リーグ", { score: [5, 7], link: "/scores/2026/0728/cl-pl-01/" }) },
+    (d, out, err, code) => {
+      assert.equal(code, 0, `두 번째 적재가 실패했다: ${out}${err}`);
+      const rows = d.raw.prepare("SELECT game_date d, home_code h, away_code a, seq FROM schedule_played").all() as unknown as { d: string; h: string; a: string; seq: number }[];
+      assert.deepEqual(rows.map((r) => [r.d, r.h, r.a, r.seq]), [["2026-07-28", "cl", "pl", 0]], "두 번 적재하자 올스타 치러짐 표시가 늘었거나 사라졌다");
+    },
+    2,
+  );
+});
+
+test("⚠한 달 파일에 섞인 다른 달 날짜의 올스타 행은 적재하지 않고 요약에 찍는다 — 구단 행과 같은 규칙", async () => {
+  await withLoad(
+    { "07": allStarRow("0801", "セ・リーグ", "パ・リーグ", { score: [5, 7], link: "/scores/2026/0801/cl-pl-01/" }) },
+    (d, out, err, code) => {
+      assert.equal(code, 0, `${out}${err}`);
+      assert.equal((d.raw.prepare("SELECT COUNT(*) n FROM schedule_played").get() as unknown as { n: number }).n, 0, "다른 달 날짜의 올스타를 이 달 파일에서 적재했다");
+      assert.match(out, /다른 달 날짜 행 1건 제외\(날짜: 2026-08-01\)/);
+    },
+  );
 });
 
 /** 한 시즌 아카이브를 직접 다루는 시험용 — 달마다 본문과 사이드카를 쓴다 */

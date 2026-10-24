@@ -14,7 +14,7 @@
  * ⚠**구단이 아닌 행이 섞인다** — 올스타는 `セ・リーグ`/`パ・リーグ` 다. 조용히 버리지 않고
  * **세어서 돌려준다**(M11: 「없음」과 「못 읽음」을 구별한다).
  */
-import { NON_TEAM_CODE_BY_LABEL, isTeamShortName, teamCodeByShortName } from "@bb-app/domain";
+import { NON_TEAM_CODES, NON_TEAM_CODE_BY_LABEL, isTeamShortName, teamCodeByShortName } from "@bb-app/domain";
 import { normalizeVenue } from "./schedule.ts";
 
 export interface UpcomingGame {
@@ -38,7 +38,8 @@ export interface UpcomingResult {
   /** 구단이 아닌 행(올스타 등)의 수 — `nonTeamGames.length` 와 같다 */
   nonTeamRows: number;
   /**
-   * **구단이 아닌 행(올스타)을 경기 모양으로** — 코드는 `NON_TEAM_CODE_BY_LABEL`(`cl`·`pl` · team1 = 홈) · `games` 와 따로 둔다.
+   * **구단이 아닌 행(올스타)을 경기 모양으로** — `games` 와 따로 둔다. 코드는 **치러진 행이면 점수 링크 슬러그**(경기 행과 같은 출처 ·
+   * 재검토 GPT P2)이고 링크 없는 예정 행만 표기 → `NON_TEAM_CODE_BY_LABEL` 이다. 둘 다 `cl` 대 `pl` 한 쌍이 아니면 못 읽음으로 센다.
    * ⚠예전에는 세기만 하고 버렸다(2026-10-24 · PR-2b 검토 P2-2) — 그래서 올스타 날은 어느 증거 표에도 안 남아, 놓치면 따라잡기가
    *   그 날을 「확인된 휴식일」로 영구히 건너뛰었다. 적재기가 치러진 것(`played`)만 치러짐 표시에 남긴다.
    * ⚠`games` 에 섞지 않는다 — 앞으로의 경기(`upcoming_game`)와 화면은 구단 경기만 다룬다.
@@ -122,8 +123,32 @@ export interface ScheduleRows {
  */
 const ROW = /<tr[^>]*\sid=(["'])date(\d{4})\1[\s\S]*?(?=<tr[^>]*\sid=["']date\d{4}["']|<\/table>)/g;
 
-/** 점수 링크 — 이것이 있으면 NPB 가 「치렀다」고 표시한 경기다 */
-const SCORE_LINK = /\/scores\/\d{4}\/\d{4}\/[^/"']+\//;
+/**
+ * 점수 링크 — 이것이 있으면 NPB 가 「치렀다」고 표시한 경기다. 잡는 조각은 슬러그(`{홈}-{원정}-{번호}`)다 —
+ * ⚠치러진 올스타의 코드를 여기서 낸다(경기 행 `game` 의 코드와 같은 출처 · 아래 `leagueCodesFromLink`).
+ */
+const SCORE_LINK = /\/scores\/\d{4}\/\d{4}\/([^/"']+)\//;
+
+/** 비구단 코드 `cl`·`pl`(domain `NON_TEAM_CODES` 의 키) — 올스타 카드는 이 둘의 한 쌍이어야 한다 */
+const LEAGUE_CODES: ReadonlySet<string> = new Set(Object.keys(NON_TEAM_CODES));
+
+/** `cl` 대 `pl` 한 쌍(홈 · 원정)인가 — 같은 쪽 둘(`cl-cl`)이나 그 밖의 코드면 `null` */
+function leaguePair(home: string | undefined, away: string | undefined): [string, string] | null {
+  if (home === undefined || away === undefined || home === away) return null;
+  return LEAGUE_CODES.has(home) && LEAGUE_CODES.has(away) ? [home, away] : null;
+}
+
+/**
+ * **치러진 올스타의 코드 — 점수 링크 슬러그에서**(2026-10-24 · PR-2b 재검토 GPT P2 · RS F3).
+ * 경기 행(`game`)의 홈·원정은 아카이브 폴더 = 이 슬러그에서 온다(`load-archive` 의 `gameFromBoxPath`) — 같은 출처라
+ * 「표기 순서(team1) = 홈」이라는 가정이 필요 없다(16/16 맞았지만 시험이 그 가정을 2026 두 행으로만 잠갔다).
+ * 슬러그가 `{cl|pl}-{pl|cl}-{번호}` 가 아니면 `null` — 부르는 쪽이 「못 읽음」으로 센다(M7).
+ */
+function leagueCodesFromLink(slug: string | undefined): [string, string] | null {
+  const parts = (slug ?? "").split("-");
+  if (parts.length !== 3 || !/^\d+$/.test(parts[2]!)) return null;
+  return leaguePair(parts[0], parts[1]);
+}
 
 /**
  * **「구단 아님」으로 인정하는 표기** — 올스타뿐이다.
@@ -196,18 +221,32 @@ export function classifyScheduleRows(html: string, season: number): ScheduleRows
       continue;
     }
     markContent(mmdd);
-    const played = SCORE_LINK.test(row);
+    const link = SCORE_LINK.exec(row);
+    const played = link !== null;
     const scored = /<div class="score[12]">\s*\d+\s*<\/div>/.test(row);
     const date = `${season}-${mmdd.slice(0, 2)}-${mmdd.slice(2)}`;
     const venue = normalizeVenue(/<div class="place">([^<]*)<\/div>/.exec(row)?.[1] ?? "");
     const t = /<div class="time">\s*(\d{1,2}:\d{2})\s*<\/div>/.exec(row)?.[1] ?? null;
     if (!isTeamShortName(home) || !isTeamShortName(away)) {
       if (NON_TEAM_LABELS.has(home) && NON_TEAM_LABELS.has(away)) {
-        out.nonTeam += 1;
-        // ⚠**버리지 않고 경기 모양으로 돌려준다**(PR-2b 검토 P2-2) — 코드는 표기 → `cl`·`pl`(team1 = 홈 · 점수 링크 슬러그와 같다)
-        out.nonTeamGames.push({
-          date, homeCode: NON_TEAM_CODE_BY_LABEL[home]!, awayCode: NON_TEAM_CODE_BY_LABEL[away]!, venue, startTime: t, played,
-        });
+        /**
+         * ⚠**버리지 않고 경기 모양으로 돌려준다**(PR-2b 검토 P2-2). 표기는 「구단 아님」 허용 목록 검사로만 쓴다.
+         * ⚠⚠**「숫자 ⇒ 링크」 가드를 구단 행과 같이 건다**(재검토 GPT P2 · M7) — 점수는 있는데 링크가 없으면 링크 모양이 바뀐 것이다.
+         *   예전에는 이 분기가 아래 가드 앞에서 빠져나가 「예정」으로 통과했고, 적재기가 그 달의 기존 치러짐 표시를 지웠다.
+         * ⚠⚠**치러진 올스타의 코드는 점수 링크 슬러그에서**(재검토 GPT P2 · RS F3 · 경기 행과 같은 출처) · 슬러그가 `cl`·`pl` 한 쌍이 아니면 못 읽음.
+         *   링크 없는 올스타(예정)만 표기 → 코드(`NON_TEAM_CODE_BY_LABEL`)이고 적재기는 그것을 남기지 않는다. 같은 표기 둘(セ−セ)도 못 읽음이다.
+         */
+        const codes = scored && !played
+          ? null
+          : played
+            ? leagueCodesFromLink(link?.[1])
+            : leaguePair(NON_TEAM_CODE_BY_LABEL[home], NON_TEAM_CODE_BY_LABEL[away]);
+        if (codes === null) {
+          out.unreadable += 1;
+        } else {
+          out.nonTeam += 1;
+          out.nonTeamGames.push({ date, homeCode: codes[0], awayCode: codes[1], venue, startTime: t, played });
+        }
       }
       else if (!played && !scored && PENDING_MATCHUP_MONTHS.has(mmdd.slice(0, 2))) {
         out.placeholder += 1;

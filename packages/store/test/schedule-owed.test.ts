@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { LOOKBACK_DAYS } from "@bb-app/domain";
-import { NO_GAME_MONTHS } from "../../domain/src/season-calendar.ts";
+import { NO_GAME_MONTHS } from "@bb-app/domain/season-calendar";
 import { openDb, upsertGame, upsertProbablePitcher } from "../src/index.ts";
 import type { Db } from "../src/index.ts";
 import { collectionEvidence } from "../src/collection-evidence.ts";
@@ -389,7 +389,13 @@ test("⚠⚠T2′ 11월 날은 사본이 없으면 미확인 — 11월은 비시
   assert.equal(confirmedRestThrough(db.raw, "2026-10-29", "2026-11-05", NO_GAME_MONTHS), "2026-10-31", "사본 없는 11월 날을 휴식으로 확인했다");
 }));
 
-test("⚠T2′ 비시즌 달이라도 그 날 행(예정 · 치러짐 표시 · 경기)이 있으면 멈춘다", async () => {
+/**
+ * ⚠⚠**비시즌 달의 단축은 그 달 전체가 무행일 때만이다**(2026-10-24 · PR-2b 재검토 GPT P2 · 설계 D2 · M11).
+ * 그 달에 예정 · 치러짐 표시 · 경기 행이 **하나라도** 있으면 「그 달은 경기가 없다」는 전제가 깨진 것이라 **일반 달처럼** 사본이 그 날 뒤에
+ * 보였어야 확인한다. 예전에는 그 날 하나의 행만 봐서, 같은 달 다른 날에 경기 증거가 있어도 중간의 무행 날(증거까지 놓친 경기일일 수 있다)을
+ * 휴식으로 확정하고 지나갔다.
+ */
+test("⚠⚠T2′ 비시즌 달에 행이 하나라도 있으면 그 달은 일반 달 규칙 — 사본이 그 날 뒤에 보였으면 행 있는 날 전까지 · 사본이 없으면 첫날부터 미확인", async () => {
   for (const put of [
     (d: Db) => upcoming(d, "2026-12-03", "g", "t"),
     (d: Db) => played(d, "2026-12-03", "g", "t"),
@@ -398,7 +404,26 @@ test("⚠T2′ 비시즌 달이라도 그 날 행(예정 · 치러짐 표시 · 
     await withDb((db) => {
       month(db, 2026, 11, "2026-12-01T00:00:00Z");
       put(db);
-      assert.equal(confirmedRestThrough(db.raw, "2026-11-30", "2026-12-06", NO_GAME_MONTHS), "2026-12-02");
+      assert.equal(confirmedRestThrough(db.raw, "2026-11-30", "2026-12-06", NO_GAME_MONTHS), "2026-11-30", "그 달에 행이 있는데 사본 없이 12월 날을 확인했다");
+    });
+    await withDb((db) => {
+      month(db, 2026, 11, "2026-12-01T00:00:00Z");
+      month(db, 2026, 12, "2026-12-06T00:00:00Z");
+      put(db);
+      assert.equal(confirmedRestThrough(db.raw, "2026-11-30", "2026-12-08", NO_GAME_MONTHS), "2026-12-02", "사본이 그 뒤를 봤는데 일반 달처럼 확인하지 않았다");
+    });
+  }
+});
+
+test("⚠⚠T2′ 12월 다른 날(예정 또는 치러짐 표시만 · 경기 행 없음)에 행이 있으면 중간 무행 날도 사본 없이 확인하지 않는다 — since 에서 전진하지 않는다", async () => {
+  for (const [what, put] of [
+    ["예정만", (d: Db) => upcoming(d, "2027-12-03", "g", "t")],
+    ["치러짐 표시만", (d: Db) => played(d, "2027-12-03", "g", "t")],
+    ["경기 행", (d: Db) => game(d, "2027-12-03", "g", "t")],
+  ] as const) {
+    await withDb((db) => {
+      put(db);
+      assert.equal(confirmedRestThrough(db.raw, "2027-12-01", "2027-12-05", NO_GAME_MONTHS), "2027-12-01", `${what}: 같은 달에 경기 증거가 있는데 12/02 를 휴식으로 확정했다`);
     });
   }
 });

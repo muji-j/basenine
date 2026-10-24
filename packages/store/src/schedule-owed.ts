@@ -180,6 +180,9 @@ export function owedDays(db: SqlReader, today: string): OwedDay[] {
  * ⚠⚠**단 비시즌 달(`noGameMonths` — 호출자가 domain 의 `NO_GAME_MONTHS` = 12·1·2 를 넘긴다)의 날은 사본 조건 없이** 세 표 0행만으로 확인한다
  *   (2026-10-24 · PR-2b 검토 P2-1 · PR-4 설계 D1-c 를 당겼다). 그 달은 일정 사본이 없어서(보유 9시즌 0장) 사본 조건으로는 확인이 11/30 에서
  *   멈췄고, 12월 첫 주마다 사이 메우기가 늘었다(최대 +6 날짜 자식 · 일정 2요청씩). 그 달에도 **그 날 행이 있으면 멈춘다**(보수적인 쪽).
+ *   ⚠⚠**단축은 그 달(해 · 달) 전체의 세 표가 0행일 때만이다**(재검토 GPT P2 · M11) — 그 달에 예정 · 치러짐 표시 · 경기 행이 **하나라도** 있으면
+ *   「그 달은 경기가 없다」는 전제가 깨진 것이라 **일반 달처럼** 사본이 그 날 뒤에 보였어야 확인한다. 그 날 하나만 보면 같은 달 다른 날에
+ *   경기 증거가 있어도 중간의 무행 날(증거까지 놓친 경기일일 수 있다)을 휴식으로 확정하고 지나간다.
  *   ⚠11월은 넘기지 않는다 — 경기가 열리는 해가 있다(사본 없는 11월 날은 여전히 미확인이다).
  *   ⚠상수를 여기 두지 않는다 — 이 파일은 import 0 인 잎이라 domain 을 못 가져온다. 한 벌은 domain 에 있고 호출자가 넘긴다(M1).
  * ⚠어제까지만 본다 — 오늘 이후는 사본이 아직 말할 수 없다.
@@ -199,11 +202,29 @@ export function confirmedRestThrough(db: SqlReader, since: string, today: string
           + (SELECT COUNT(*) FROM schedule_played WHERE game_date = ?1)
           + (SELECT COUNT(*) FROM game WHERE game_date = ?1) AS n`,
   );
+  const rowsInMonth = db.prepare(
+    `SELECT (SELECT COUNT(*) FROM upcoming_game WHERE game_date BETWEEN ?1 AND ?2)
+          + (SELECT COUNT(*) FROM schedule_played WHERE game_date BETWEEN ?1 AND ?2)
+          + (SELECT COUNT(*) FROM game WHERE game_date BETWEEN ?1 AND ?2) AS n`,
+  );
+  /** 해 · 달(`YYYY-MM`) → 사본 없이 확인해도 되는 비시즌 달인가(그 달 세 표 0행) — 이 호출 안에서만 기억한다(모듈 상태 아님) */
+  const quiet = new Map<string, boolean>();
+  const quietNoGameMonth = (d: string): boolean => {
+    if (!noGame.has(Number(d.slice(5, 7)))) return false;
+    const ym = d.slice(0, 7);
+    let q = quiet.get(ym);
+    if (q === undefined) {
+      // ⚠못 읽거나 1행이라도 있으면 일반 달 규칙(보수적인 쪽 · M11)
+      q = (rowsInMonth.all(`${ym}-01`, `${ym}-31`)[0] as { n: number } | undefined)?.n === 0;
+      quiet.set(ym, q);
+    }
+    return q;
+  };
   const yesterday = addDays(today, -1);
   let through = since;
   for (let d = addDays(since, 1); d <= yesterday; d = addDays(d, 1)) {
-    // ⚠비시즌 달이 아니면 그 달 사본을 그 날 뒤에 봤어야 한다
-    if (!noGame.has(Number(d.slice(5, 7)))) {
+    // ⚠경기가 없는 비시즌 달(그 달 전체 0행)이 아니면 그 달 사본을 그 날 뒤에 봤어야 한다
+    if (!quietNoGameMonth(d)) {
       const seen = (seenOf.all(Number(d.slice(0, 4)), Number(d.slice(5, 7)))[0] as { seenOn: string | null } | undefined)?.seenOn ?? null;
       if (seen === null || !(seen > d)) break;
     }
