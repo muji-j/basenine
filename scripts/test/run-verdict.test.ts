@@ -8,10 +8,24 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { STALE_REASON_KEYS } from "@bb-app/domain";
-import { EXIT_LOCAL_CIRCUIT_OPEN, EXIT_UPSTREAM_CIRCUIT_OPEN, EXIT_UPSTREAM_ONLY, EXPLAINED_BY_UPSTREAM, classifyRun, parseFreshnessReasons } from "../run-verdict.ts";
-import type { FreshReasons, StepRecord } from "../run-verdict.ts";
+import {
+  EXIT_LOCAL_CIRCUIT_OPEN,
+  EXIT_UPSTREAM_CIRCUIT_OPEN,
+  EXIT_UPSTREAM_ONLY,
+  EXPLAINED_BY_UPSTREAM,
+  REASON_AREA,
+  classifyRun,
+  parseFreshnessReasons,
+} from "../run-verdict.ts";
+import type { FetchArea, FreshReasons, StepRecord } from "../run-verdict.ts";
 
-const fetch = (id: string, exit: number, skipped = false): StepRecord => ({ id, group: "fetch", exit, ...(skipped ? { skipped } : {}) });
+const fetch = (id: string, exit: number, o: { skipped?: boolean; area?: FetchArea } = {}): StepRecord => ({
+  id,
+  group: "fetch",
+  exit,
+  ...(o.skipped === true ? { skipped: true } : {}),
+  ...(o.area === undefined ? {} : { area: o.area }),
+});
 const load = (id: string, exit: number): StepRecord => ({ id, group: "load", exit });
 const emit = (id: string, exit: number): StepRecord => ({ id, group: "emit", exit });
 const fresh = (exit: number): StepRecord => ({ id: "신선도", group: "freshness", exit });
@@ -41,7 +55,7 @@ test("⚠T7 R2 — 받기 자식의 0·75·69 밖 종료(1·70·2·137)는 block
 test("⚠T7 R3 — 받기 75·69(회로 열림 · 건너뛴 합성 step 포함)는 upstream → 75(69 는 밖으로 안 나간다)", () => {
   assert.equal(EXIT_UPSTREAM_CIRCUIT_OPEN, 69);
   const v = classifyRun(
-    [fetch("予告先発 아카이브", 75), fetch("경기 아카이브 2026-10-20", EXIT_UPSTREAM_CIRCUIT_OPEN), fetch("신규 선수 프로필", EXIT_UPSTREAM_CIRCUIT_OPEN, true), load("DB 적재", 0), fresh(0)],
+    [fetch("予告先発 아카이브", 75), fetch("경기 아카이브 2026-10-20", EXIT_UPSTREAM_CIRCUIT_OPEN), fetch("신규 선수 프로필", EXIT_UPSTREAM_CIRCUIT_OPEN, { skipped: true }), load("DB 적재", 0), fresh(0)],
     null,
   );
   assert.equal(v.exit, EXIT_UPSTREAM_ONLY);
@@ -50,7 +64,7 @@ test("⚠T7 R3 — 받기 75·69(회로 열림 · 건너뛴 합성 step 포함)�
 });
 
 test("⚠T7 R2 — 모르는 종료로 건너뛴 합성 step(종료 1)은 blocking 이고 「건너뜀」이라고 적는다", () => {
-  const v = classifyRun([fetch("予告先発 아카이브", 2), fetch("경기 아카이브 2026-10-20", 1, true), load("DB 적재", 0), fresh(0)], null);
+  const v = classifyRun([fetch("予告先発 아카이브", 2), fetch("경기 아카이브 2026-10-20", 1, { skipped: true }), load("DB 적재", 0), fresh(0)], null);
   assert.equal(v.exit, 1);
   assert.deepEqual(v.blocking, ["予告先発 아카이브 — 종료 2", "경기 아카이브 2026-10-20 — 건너뜀(앞선 받기의 종료를 몰라 멈췄다)"]);
 });
@@ -64,13 +78,45 @@ test("⚠T7 R5 — blocking 이 하나라도 있으면 상류 실패가 있어�
 
 // ---- R4 · 신선도 사유 표 ---------------------------------------------------------
 
-test("⚠T7 R4 — 설명되는 사유 넷+하나는 상류 실패가 있을 때만 explained → 75", () => {
+test("⚠T7 R4 — 사유 → 갈래 표(닫힌 표): game-missed·game-lag ↔ 경기 · career-lag ↔ 선수 · starters-* ↔ 예고", () => {
   assert.deepEqual([...EXPLAINED_BY_UPSTREAM].sort(), ["career-lag", "game-lag", "game-missed", "starters-behind", "starters-lag"]);
+  assert.deepEqual(Object.fromEntries([...REASON_AREA].sort(([a], [b]) => a.localeCompare(b))), {
+    "career-lag": "players",
+    "game-lag": "games",
+    "game-missed": "games",
+    "starters-behind": "starters",
+    "starters-lag": "starters",
+  });
+});
+
+/**
+ * ⚠⚠**그 사유의 갈래에 상류 실패가 있을 때만 explained**(3중 검토 1차 P3-3) — 예전에는 어느 갈래든 상류 실패가 하나 있으면 다섯을 전부 설명했다.
+ */
+test("⚠⚠T7 R4 — 설명되는 사유는 그 갈래의 받기가 상류 실패(75·69 · 건너뜀 69 포함)일 때만 explained → 75 · 다른 갈래면 blocking", () => {
+  const areas: readonly FetchArea[] = ["starters", "games", "players"];
   for (const r of EXPLAINED_BY_UPSTREAM) {
-    const v = classifyRun([fetch("予告先発 아카이브", 75), load("DB 적재", 0), fresh(1)], ok(r));
-    assert.equal(v.exit, EXIT_UPSTREAM_ONLY, `${r}: ${JSON.stringify(v)}`);
-    assert.deepEqual(v.explained, [r]);
+    const own = REASON_AREA.get(r)!;
+    for (const exit of [75, EXIT_UPSTREAM_CIRCUIT_OPEN]) {
+      const v = classifyRun([fetch("받기", exit, { area: own }), load("DB 적재", 0), fresh(1)], ok(r));
+      assert.equal(v.exit, EXIT_UPSTREAM_ONLY, `${r}(${own} ${String(exit)}): ${JSON.stringify(v)}`);
+      assert.deepEqual(v.explained, [r]);
+    }
+    const skipped = classifyRun([fetch("받기", EXIT_UPSTREAM_CIRCUIT_OPEN, { area: own, skipped: true }), fresh(1)], ok(r));
+    assert.deepEqual(skipped.explained, [r], `${r}: 회로 열림으로 건너뛴 갈래가 설명하지 못했다`);
+    for (const other of areas.filter((a) => a !== own)) {
+      const v = classifyRun([fetch("받기", 75, { area: other }), load("DB 적재", 0), fresh(1)], ok(r));
+      assert.equal(v.exit, 1, `${r} 를 다른 갈래(${other})의 상류 실패가 설명했다`);
+      assert.deepEqual(v.explained, []);
+    }
   }
+});
+
+test("⚠T7 R4 — 갈래가 없는 받기의 상류 실패는 아무것도 설명하지 않는다(모르면 막는다) · 사유 하나라도 갈래가 비면 전부 blocking", () => {
+  assert.equal(classifyRun([fetch("받기", 75), fresh(1)], ok("career-lag")).exit, 1);
+  const v = classifyRun([fetch("예고", 75, { area: "starters" }), fresh(1)], ok("starters-lag", "game-missed"));
+  assert.equal(v.exit, 1);
+  assert.deepEqual(v.explained, []);
+  assert.deepEqual(v.blocking, ["신선도 — 그 갈래에 상류 실패가 없다 game-missed(경기)"]);
 });
 
 test("⚠⚠T7 R4 — 상류 실패 없는 신선도 사유는 blocking(career-lag 포함 — PR-1 이 고친 헛경보 유형은 여전히 막힌다)", () => {

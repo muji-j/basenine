@@ -36,6 +36,9 @@ import type { Note } from "./collected-through.ts";
 // ⚠**자식 실행은 이 헬퍼 한 벌을 지난다**(설계 D5) — 이 파일에 `spawnSync` 직접 호출은 0 이다(`update-steps.test.ts`)
 import { createStepRunner } from "./collect-steps.ts";
 import { classifyRun } from "./run-verdict.ts";
+// ⚠잎만 가져온다(I1) — 간격의 술어 한 벌(`l1.ts` · undici 를 끌지 않는다) · 복구 실행의 선수 재취득 상한(`collect-budget.ts`)
+import { L1_MIN_DELAY_MS, parseDelayMs } from "../packages/archiver/src/l1.ts";
+import { playerRefetchCap } from "./collect-budget.ts";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 
@@ -95,6 +98,16 @@ const { values } = parseArgs({
 const contact = values.contact ?? process.env["BB_ARCHIVER_CONTACT"] ?? "";
 if (!contact) {
   console.error("연락처가 필요하다. --contact <닿는-연락처> 또는 BB_ARCHIVER_CONTACT (CLAUDE.md L1)");
+  process.exit(2);
+}
+
+/**
+ * ⚠**간격을 부모도 검사한다**(L1 · 2026-10-24 3중 검토 3차 ②) — 받기 자식 사이 간격(`collect-steps.ts`)에 이 값을 그대로 쓴다.
+ * 예전에는 문자열을 자식에 넘기기만 해서 자식마다 따로 거부했다. 이제 틀리면 자식을 하나도 띄우지 않고 종료 2(요청 0)다 — 술어는 `l1.ts` 한 벌.
+ */
+const delayMs = parseDelayMs(values.delay);
+if (delayMs === null) {
+  console.error(`--delay 는 ${String(L1_MIN_DELAY_MS)}ms 이상이어야 한다 (L1: 1req/2~5초): ${String(values.delay)}. 아무것도 받지 않는다`);
   process.exit(2);
 }
 
@@ -213,8 +226,24 @@ if (collected !== undefined) for (const n of catchupNotes(collected, targetDates
  *   합성 step 으로 남긴다(D4 · `collect-steps.ts` 의 표).
  * ⚠작업 파일은 `--work`(기본 `data`) 아래에 둔다.
  */
-const { steps, execStep, failStep, freshnessStep } = createStepRunner({ cwd: ROOT });
+// ⚠받기 자식 사이 간격 = `--delay`(L1 · 3중 검토 3차 ②) — 자식 안의 간격과 같은 값이다
+const { steps, execStep, failStep, freshnessStep } = createStepRunner({ cwd: ROOT, fetchGapMs: delayMs });
 const WORK = resolve(ROOT, values.work);
+
+/**
+ * ⚠**복구 실행의 선수 재취득 상한**(설계 D6 · 3중 검토 1차 P2-2 · 2차 F2) — 대상 경기일이 2일을 넘으면(따라잡기 · 재수집) 30분 단계 걸쇠 안에
+ * 들도록 상한을 낮춘다(7일이면 145). 밀린 몫은 다음 실행이 잇는다(`emit-stale-player-ids` 가 밀린 수를 찍는다). 정상(1~2일)은 설정값 그대로.
+ * ⚠설정값이 양의 정수가 아니면 손대지 않고 그대로 넘긴다 — 목록 도구가 지금처럼 거부한다(blocking).
+ */
+const configuredPlayerLimit = Number(values["player-limit"]);
+const playerLimit = Number.isInteger(configuredPlayerLimit) && configuredPlayerLimit >= 1
+  ? playerRefetchCap(dates.length, configuredPlayerLimit, delayMs)
+  : null;
+if (playerLimit !== null && playerLimit !== configuredPlayerLimit) {
+  console.log(
+    `  · 선수 재취득 상한 ${String(configuredPlayerLimit)} → ${String(playerLimit)}(대상 경기일 ${String(dates.length)}일 · 수집·적재 30분 안 · 밀린 몫은 다음 실행 · 설계 D6)`,
+  );
+}
 
 /**
  * 0. 予告先発 — 하루 1요청. ⚠거르면 그날 예고는 영영 못 받는다(페이지가 하루치만 보여준다).
@@ -226,7 +255,7 @@ execStep("予告先発 아카이브", "fetch", [
   "--out", values.archive,
   "--contact", contact,
   "--delay", values.delay,
-]);
+], { area: "starters" });
 
 // 1. 경기 페이지
 // ⚠**날짜마다 따로 센다.** 한 날이 실패해도 다른 날은 받는다 — 부분 실패를 전체 실패로 만들지 않는다
@@ -239,7 +268,7 @@ for (const d of dates) {
     "--out", values.archive,
     "--contact", contact,
     "--delay", values.delay,
-  ]);
+  ], { area: "games" });
 }
 
 // 2. 적재
@@ -275,7 +304,7 @@ const staleFile = join(WORK, "stale-player-ids.txt");
 const stale = execStep(
   "낡은 선수 목록",
   "emit",
-  ["packages/store/tools/emit-stale-player-ids.ts", values.db, "--limit", values["player-limit"], "--archive", values.archive],
+  ["packages/store/tools/emit-stale-player-ids.ts", values.db, "--limit", playerLimit === null ? values["player-limit"] : String(playerLimit), "--archive", values.archive],
   { capture: true },
 );
 if (stale.stderr) console.log(`  낡은 선수 페이지: ${stale.stderr.trim()}`);
@@ -288,7 +317,7 @@ if (stale.exit === 0 && stale.stdout.trim() !== "") {
     "--contact", contact,
     "--delay", values.delay,
     "--refresh",
-  ]);
+  ], { area: "players" });
 } else if (stale.exit !== 0) {
   console.error("낡은 선수 목록을 만들지 못했다 — 재취득을 건너뛴다");
 }
@@ -303,7 +332,7 @@ if (emit.exit === 0 && emit.stdout) {
     "--out", values.archive,
     "--contact", contact,
     "--delay", values.delay,
-  ]);
+  ], { area: "players" });
   /**
    * ⚠**이번 실행의 시작 시각을 넘긴다**(2026-09-27 · 반영분 재검토 P2 · 설계 §5-2 5번) — 순서 기준선이 없는 행에 다른 본문이 오면 적재기는
    * **이번 실행에서 받은 200**(사이드카의 본 시각 ≥ 이 시각)일 때만 새 판으로 받는다. 위 재취득 선정이 그런 행을 뽑아 이 실행에서 다시 받으므로

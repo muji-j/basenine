@@ -13,6 +13,8 @@
  *   `reasonsFile` 이 있으면 `--reasons-out <경로>` 에 그 글자를 그대로 쓴다(신선도 자식 흉내).
  * - `BB_FAKE_SPAWN_LOG` — 부른 차례대로 `{ script, args, circuitN }` 를 한 줄씩 덧붙인다. `circuitN` 은 그 자식이 받은
  *   `BB_NPB_CIRCUIT_N`(부모가 `env` 로 넘긴 것 · 안 넘겼으면 물려받은 값 · 없으면 `null`) — 「닫힌 채 실패한 자식 뒤는 연속 한도 1」을 잰다.
+ *   부모의 **받기 자식 사이 간격**(`collect-steps.ts` 의 `blockingSleep` = `Atomics.wait`)도 가로채 `{ sleep: <ms> }` 로 같은 줄에 남기고
+ *   **실제로는 자지 않는다** — 차례(받기 자식 → 잠 → 다음 받기 자식)와 길이를 시험이 읽는다.
  */
 import cp from "node:child_process";
 import { appendFileSync, writeFileSync } from "node:fs";
@@ -61,3 +63,9 @@ const api = cp as unknown as Record<string, unknown>;
 api["spawnSync"] = fakeSpawnSync;
 for (const name of ["spawn", "exec", "execSync", "execFile", "execFileSync", "fork"]) api[name] = blocked(name);
 syncBuiltinESMExports();
+
+/** 부모의 동기 잠(`Atomics.wait`) — 기록만 하고 바로 돌아온다(시험이 몇 초씩 자지 않게) */
+(Atomics as unknown as { wait: (a: Int32Array, i: number, v: number, ms?: number) => string }).wait = (_a, _i, _v, ms) => {
+  if (logPath !== undefined) appendFileSync(logPath, `${JSON.stringify({ sleep: ms ?? null })}\n`);
+  return "timed-out";
+};

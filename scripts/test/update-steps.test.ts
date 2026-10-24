@@ -15,7 +15,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { fetchExitDisposition } from "../collect-steps.ts";
+import { blockingSleep, createStepRunner, fetchExitDisposition } from "../collect-steps.ts";
 
 const UPDATE = fileURLToPath(new URL("../update.ts", import.meta.url));
 const FAKE = pathToFileURL(fileURLToPath(new URL("./fake-spawn.ts", import.meta.url))).href;
@@ -49,11 +49,16 @@ interface Call {
   circuitN: string | null;
 }
 
+/** 가짜 자식 기록 한 줄 — 자식 하나(`spawn`) 또는 부모의 동기 잠(`sleep` · `fake-spawn.ts` 가 가로챈 `Atomics.wait`) */
+type Event = { kind: "spawn"; script: string } | { kind: "sleep"; ms: number | null };
+
 interface Ran {
   status: number | null;
   out: string;
   scripts: string[];
   calls: Call[];
+  /** 자식과 잠의 차례 그대로 */
+  events: Event[];
   work: string;
 }
 
@@ -63,7 +68,14 @@ const BASE: Record<string, Planned> = {
   [S.ids]: { stdout: "00000001\n00000002\n" },
 };
 
-function run(plan: Record<string, Planned>, o: { before?: (work: string) => void; dates?: string } = {}): Ran {
+/**
+ * `update.ts` 를 가짜 자식으로 한 번 돌린다. `dates` 가 `null` 이면 `--date` 를 안 준다(`env.BB_REFETCH_DATES` 로 날짜를 줄 때) ·
+ * `args` 는 뒤에 덧붙인다(`--delay` 등).
+ */
+function run(
+  plan: Record<string, Planned>,
+  o: { before?: (work: string) => void; dates?: string | null; args?: readonly string[]; env?: Record<string, string> } = {},
+): Ran {
   const work = mkdtempSync(join(tmpdir(), "bb-update-steps-"));
   try {
     o.before?.(work);
@@ -71,22 +83,26 @@ function run(plan: Record<string, Planned>, o: { before?: (work: string) => void
     const env: Record<string, string> = { ...(process.env as Record<string, string>) };
     delete env["BB_REFETCH_DATES"];
     delete env["BB_NPB_CIRCUIT_N"];
+    const dateArgs = o.dates === null ? [] : ["--date", o.dates ?? "2026-10-20"];
     const r = spawnSync(
       process.execPath,
       [
         "--import", FAKE, UPDATE,
         "--contact", "me@example.com",
-        "--date", o.dates ?? "2026-10-20",
+        ...dateArgs,
         "--archive", join(work, "archive"),
         "--db", join(work, "bb.sqlite"),
         "--work", work,
+        ...(o.args ?? []),
       ],
-      { encoding: "utf8", env: { ...env, BB_FAKE_SPAWN_PLAN: JSON.stringify({ ...BASE, ...plan }), BB_FAKE_SPAWN_LOG: log }, timeout: 60_000 },
+      { encoding: "utf8", env: { ...env, ...(o.env ?? {}), BB_FAKE_SPAWN_PLAN: JSON.stringify({ ...BASE, ...plan }), BB_FAKE_SPAWN_LOG: log }, timeout: 60_000 },
     );
-    const calls = existsSync(log)
-      ? readFileSync(log, "utf8").trim().split("\n").filter((l) => l !== "").map((l) => JSON.parse(l) as Call)
+    const lines = existsSync(log)
+      ? readFileSync(log, "utf8").trim().split("\n").filter((l) => l !== "").map((l) => JSON.parse(l) as Call | { sleep: number | null })
       : [];
-    return { status: r.status, out: `${r.stdout}\n${r.stderr}`, scripts: calls.map((c) => c.script), calls, work };
+    const calls = lines.filter((l): l is Call => "script" in l);
+    const events: Event[] = lines.map((l) => ("script" in l ? { kind: "spawn", script: l.script } : { kind: "sleep", ms: l.sleep }));
+    return { status: r.status, out: `${r.stdout}\n${r.stderr}`, scripts: calls.map((c) => c.script), calls, events, work };
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
@@ -182,6 +198,105 @@ for (const [label, exit] of [["2(입력 오류)", 2], ["신호(null)", null], ["
     verdict(r, { status: 1, blocking: 4, upstream: 0, reason: /blocking: 경기 아카이브 2026-10-20 — 건너뜀/ });
   });
 }
+
+// ---- 받기 자식 경계의 L1 간격(3중 검토 3차 ②) ------------------------------------------------
+
+/**
+ * ⚠⚠**받기 자식마다 fetcher 가 새로 서므로 각 자식의 첫 요청은 기다리지 않는다** — 예고 자식의 마지막 요청과 경기 자식의 첫 요청이
+ * 붙을 수 있었다(공유 가상 시계 재현에서 둘 다 0ms). 부모가 받기 자식을 띄우기 전에 `--delay` 만큼 잔다(첫 받기 자식 앞은 안 잔다).
+ */
+test("⚠⚠T6 받기 자식 사이에 --delay 만큼 쉰다(L1) — 예고 → 경기 사이 ≥ delay · 첫 받기 앞·로컬 자식 앞은 안 잔다 · 자식 수 불변", () => {
+  const r = run({});
+  assert.equal(r.status, 0, r.out);
+  assert.deepEqual(r.scripts, [S.starters, S.games, S.load, S.stale, S.players, S.ids, S.players, S.loadPlayers, S.upcoming, S.loadStarters, S.fresh], "자식 수·차례가 바뀌었다");
+  assert.deepEqual(r.events.slice(0, 3), [
+    { kind: "spawn", script: S.starters },
+    { kind: "sleep", ms: 3000 },
+    { kind: "spawn", script: S.games },
+  ], "예고 자식과 경기 자식 사이에 L1 간격이 없다");
+  const fetchAt = r.events.flatMap((e, i) => (e.kind === "spawn" && FETCHERS.includes(e.script) ? [i] : []));
+  for (const i of fetchAt.slice(1)) {
+    const prev = r.events[i - 1];
+    assert.ok(prev?.kind === "sleep" && (prev.ms ?? 0) >= 3000, `받기 자식 #${String(i)} 앞에 L1 간격이 없다: ${JSON.stringify(r.events)}`);
+  }
+  assert.equal(r.events.filter((e) => e.kind === "sleep").length, fetchAt.length - 1, "받기 자식이 아닌 곳에서 잤다(또는 첫 받기 앞에서 잤다)");
+});
+
+test("⚠T6 blockingSleep 은 정말로 잔다(동기) · NaN·0·음수는 안 잔다(NaN 은 Atomics.wait 에서 무한이다) · 실행기는 L1 밖 간격으로 만들 수 없다", () => {
+  const t0 = performance.now();
+  blockingSleep(40);
+  assert.ok(performance.now() - t0 >= 35, "자지 않았다");
+  const t1 = performance.now();
+  for (const bad of [Number.NaN, 0, -5, Number.POSITIVE_INFINITY]) blockingSleep(bad);
+  assert.ok(performance.now() - t1 < 1000, "NaN·0·음수·무한에서 잤다");
+  for (const gap of [0, 500, Number.NaN]) assert.throws(() => createStepRunner({ cwd: ".", fetchGapMs: gap }), RangeError, String(gap));
+});
+
+test("⚠T6 --delay 5000 이면 받기 자식 사이도 5000 · L1 밖(500 · abc)이면 자식 0 으로 종료 2 · 멈춘 뒤에는 자지 않는다", () => {
+  const slow = run({}, { args: ["--delay", "5000"] });
+  assert.equal(slow.status, 0, slow.out);
+  assert.deepEqual([...new Set(slow.events.flatMap((e) => (e.kind === "sleep" ? [e.ms] : [])))], [5000]);
+  for (const c of fetchCalls(slow)) assert.equal(c.args[c.args.indexOf("--delay") + 1], "5000", "자식에 같은 간격을 안 넘겼다");
+  for (const bad of ["500", "abc"]) {
+    const r = run({}, { args: ["--delay", bad] });
+    assert.equal(r.status, 2, `${bad}: ${r.out}`);
+    assert.deepEqual(r.events, [], `${bad}: 자식이 떴다(또는 잤다)`);
+  }
+  const stopped = run({ [S.starters]: { exit: 69 } });
+  assert.deepEqual(stopped.events.filter((e) => e.kind === "sleep"), [], "띄우지 않는 받기 자식 앞에서 잤다");
+});
+
+// ---- 신선도 사유와 원인 갈래(3중 검토 1차 P3-3) -----------------------------------------------
+
+/**
+ * ⚠⚠**설명되는 사유는 그 사유의 갈래에 상류 실패가 있을 때만이다** — `game-missed`·`game-lag` ↔ 경기 · `career-lag` ↔ 선수 · `starters-*` ↔ 예고.
+ * 예전에는 상류 실패가 **어디든** 하나 있으면 다섯 사유를 전부 설명된 것으로 봤다 — 선수 페이지 하나의 소진이 경기 누락을 덮었다.
+ */
+test("⚠⚠T6 선수 받기만 75 · 경기 받기는 성공 · game-missed → blocking(그 갈래에 상류 실패가 없다)", () => {
+  verdict(run({ [S.players]: { exit: 75 }, [S.fresh]: { exit: 1, reasonsFile: reasons("game-missed") } }), {
+    status: 1,
+    blocking: 1,
+    upstream: 2,
+    reason: /blocking: 신선도 — 그 갈래에 상류 실패가 없다 game-missed\(경기\)/,
+  });
+});
+
+test("⚠T6 선수 받기 75 + career-lag → 설명됨(75) · 예고 받기만 75 + career-lag → blocking", () => {
+  verdict(run({ [S.players]: { exit: 75 }, [S.fresh]: { exit: 1, reasonsFile: reasons("career-lag") } }), { status: 75, blocking: 0, upstream: 2, explained: 1 });
+  verdict(run({ [S.starters]: { exit: 75 }, [S.fresh]: { exit: 1, reasonsFile: reasons("career-lag") } }), {
+    status: 1,
+    blocking: 1,
+    upstream: 1,
+    reason: /그 갈래에 상류 실패가 없다 career-lag\(선수\)/,
+  });
+});
+
+test("⚠T6 회로 열림으로 건너뛴 갈래는 설명된다 — 예고 69 → 경기·선수 건너뜀 → game-missed·career-lag·starters-lag 전부 설명(75)", () => {
+  verdict(run({ [S.starters]: { exit: 69 }, [S.fresh]: { exit: 1, reasonsFile: reasons("game-missed", "career-lag", "starters-lag") } }), {
+    status: 75,
+    blocking: 0,
+    upstream: 4,
+    explained: 3,
+  });
+});
+
+// ---- 복구 실행의 선수 재취득 상한(설계 D6 · 3중 검토 1차 P2-2 · 2차 F2) ------------------------------
+
+const staleLimit = (r: Ran): string | undefined => {
+  const c = r.calls.find((x) => x.script === S.stale);
+  return c === undefined ? undefined : c.args[c.args.indexOf("--limit") + 1];
+};
+const DAYS7 = "2026-10-14,2026-10-15,2026-10-16,2026-10-17,2026-10-18,2026-10-19,2026-10-20";
+
+test("⚠⚠T6 대상 경기일이 2일을 넘으면 선수 재취득 상한을 낮춘다 — 7일이면 145 · 1일이면 400(설정값) · 설정이 더 작으면 그대로", () => {
+  const seven = run({}, { dates: null, env: { BB_REFETCH_DATES: DAYS7 } });
+  assert.equal(seven.status, 0, seven.out);
+  assert.equal(seven.scripts.filter((s) => s === S.games).length, 7, "날짜 자식이 7개가 아니다 — 전제가 틀렸다");
+  assert.equal(staleLimit(seven), "145", "7일 복구 실행에서 상한을 안 낮췄다 — 30분 걸쇠가 단계를 죽인다");
+  assert.match(seven.out, /선수 재취득 상한 400 → 145/);
+  assert.equal(staleLimit(run({})), "400", "정상 실행(1일)의 상한을 바꿨다");
+  assert.equal(staleLimit(run({}, { dates: null, env: { BB_REFETCH_DATES: DAYS7 }, args: ["--player-limit", "100"] })), "100");
+});
 
 // ---- emit 둘 — 1·2·신호가 blocking 한 건씩 ----------------------------------------------
 

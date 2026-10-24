@@ -23,13 +23,26 @@
  *   다음 자식 ≤ 1(연속 1 → 열림 → 69/70 → 멈춤) · 열린 채 끝나면 그 자식 ≤ 6 → 멈춤. 걸쇠(30분)가 자식을 죽이면 그때 진행 중이던 `get()` 하나가 더해질 수 있다.
  * ⚠**정규화**: 판정용 종료 코드는 지금처럼 — 종료 코드가 없음(`status === null` · 신호) · spawn 실패는 **1**(막는 쪽 · I4).
  *   ⚠단 **뒤 받기를 정할 때는 정규화 전의 값을 본다** — 신호로 죽은 자식(1 로 정규화)을 「로컬 · 회로 닫힘」(계속)으로 읽지 않는다.
+ * ⚠⚠**받기 자식 사이에 L1 간격을 둔다**(2026-10-24 · 3중 검토 3차 ②) — 받기 자식마다 `PoliteFetcher` 가 새로 서므로 **각 자식의 첫 요청은
+ *   기다리지 않는다**: 예고 자식의 마지막 요청과 경기 자식의 첫 요청이 붙을 수 있었다. 앞서 받기 자식이 떴으면 다음 받기 자식을 띄우기 전에
+ *   `fetchGapMs`(= `update.ts` 의 `--delay`)만큼 잔다. 평소 `PoliteFetcher` 는 그대로다(자식 안의 간격은 거기서). 요청 수는 안 는다.
  * ⚠import 하는 것은 `node:*` 와 잎 모듈뿐이다 — 이 모듈은 부작용이 없다(만들 때 자식을 띄우지 않는다).
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { CIRCUIT_ENV } from "../packages/archiver/src/circuit.ts";
+import { L1_MIN_DELAY_MS, isValidDelayMs } from "../packages/archiver/src/l1.ts";
 import { EXIT_LOCAL_CIRCUIT_OPEN, EXIT_UPSTREAM_CIRCUIT_OPEN, EXIT_UPSTREAM_ONLY, parseFreshnessReasons } from "./run-verdict.ts";
-import type { FreshReasons, StepGroup, StepRecord } from "./run-verdict.ts";
+import type { FetchArea, FreshReasons, StepGroup, StepRecord } from "./run-verdict.ts";
+
+/**
+ * 동기 잠 — 실행기가 `spawnSync` 로 자식을 하나씩 띄우는 동기 흐름이라 이벤트 루프 잠을 쓸 수 없다. `Atomics.wait` 는 Node 메인 스레드에서도 된다.
+ * ⚠`ms` 가 양의 유한수가 아니면 자지 않는다 — `NaN` 은 `Atomics.wait` 에서 **무한**이다(호출자는 L1 술어로 검사한 값을 넘긴다).
+ */
+export function blockingSleep(ms: number): void {
+  if (!Number.isFinite(ms) || ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
 
 export interface StepLog {
   /** 단계 머리 · 안내(표준출력) */
@@ -81,9 +94,22 @@ export function fetchExitDisposition(r: { readonly status: number | null; readon
  * 자식 실행기 하나 — `update.ts` 의 한 실행에 하나. `steps` 가 판정(`classifyRun`)의 입력이다.
  * ⚠`cwd` 는 저장소 뿌리다 — 자식에 넘기는 상대 경로(`packages/…`)가 그 기준으로 풀린다.
  */
-export function createStepRunner(o: { readonly cwd: string; readonly log?: StepLog }) {
+export function createStepRunner(o: {
+  readonly cwd: string;
+  /** 받기 자식 사이의 L1 간격(ms) — **반드시** 준다(빠뜨려 간격 0 이 되지 않게). L1 하한 밖이면 만들지 않는다 */
+  readonly fetchGapMs: number;
+  readonly log?: StepLog;
+  /** 시험이 갈아 끼운다 — 기본은 `blockingSleep` */
+  readonly sleep?: (ms: number) => void;
+}) {
+  if (!isValidDelayMs(o.fetchGapMs)) {
+    throw new RangeError(`받기 자식 사이 간격은 ${String(L1_MIN_DELAY_MS)}ms 이상의 유한한 수여야 한다(CLAUDE.md L1): ${String(o.fetchGapMs)}`);
+  }
   const log = o.log ?? consoleLog;
+  const sleep = o.sleep ?? blockingSleep;
   const steps: StepRecord[] = [];
+  /** 이번 실행에서 실제로 띄운 받기 자식 수 — 둘째부터 그 앞에서 L1 간격만큼 잔다 */
+  let fetchSpawned = 0;
   /** 뒤 받기를 멈추게 한 받기 단계(위 표의 「멈춤」) — 그 뒤 받기는 띄우지 않는다 */
   let stoppedBy: { readonly id: string; readonly circuit: boolean; readonly exit: string } | null = null;
   /** 실패했지만 회로가 닫힌 채 끝난 첫 받기 단계(75 · 1) — 그 뒤 받기 자식은 연속 한도 1 로 띄운다 */
@@ -93,19 +119,33 @@ export function createStepRunner(o: { readonly cwd: string; readonly log?: StepL
    * 자식 하나. `capture` 면 표준출력·오류를 돌려주고(목록 만들기) 아니면 그대로 물려준다(머리 줄을 찍는다).
    * ⚠`args[0]` 은 스크립트 경로다 — 실행기는 언제나 이 Node(`process.execPath`)다.
    */
-  function execStep(id: string, group: StepGroup, args: readonly string[], opts: { readonly capture?: boolean } = {}): ExecResult {
+  function execStep(
+    id: string,
+    group: StepGroup,
+    args: readonly string[],
+    opts: { readonly capture?: boolean; readonly area?: FetchArea } = {},
+  ): ExecResult {
+    const area = opts.area === undefined ? {} : { area: opts.area };
     if (group === "fetch" && stoppedBy !== null) {
       log.out(`\n── ${id} ──`);
       if (stoppedBy.circuit) {
         log.err(`  상류 실패 — 이후 받기 건너뜀 ${id}(앞선 「${stoppedBy.id}」 가 ${stoppedBy.exit} 로 끝났다 · 회로 열림 · 요청 0)`);
-        steps.push({ id, group, exit: EXIT_UPSTREAM_CIRCUIT_OPEN, skipped: true });
+        steps.push({ id, group, exit: EXIT_UPSTREAM_CIRCUIT_OPEN, skipped: true, ...area });
         return { exit: EXIT_UPSTREAM_CIRCUIT_OPEN, ran: false, stdout: "", stderr: "" };
       }
       log.err(`  모르는 종료 — 이후 받기 건너뜀 ${id}(앞선 「${stoppedBy.id}」 의 종료 ${stoppedBy.exit} · 요청에 대해 닫힌 쪽 · 요청 0)`);
-      steps.push({ id, group, exit: 1, skipped: true });
+      steps.push({ id, group, exit: 1, skipped: true, ...area });
       return { exit: 1, ran: false, stdout: "", stderr: "" };
     }
     if (opts.capture !== true) log.out(`\n── ${id} ──`);
+    if (group === "fetch") {
+      // ⚠L1 — 앞 받기 자식의 마지막 요청과 이 자식의 첫 요청 사이(자식마다 fetcher 가 새로 서서 그 첫 요청은 안 기다린다)
+      if (fetchSpawned > 0) {
+        log.out(`  · 받기 자식 사이 간격 ${String(o.fetchGapMs)}ms(L1)`);
+        sleep(o.fetchGapMs);
+      }
+      fetchSpawned += 1;
+    }
     // ⚠앞선 받기가 닫힌 채 실패했으면 연속 한도 1 — 실행 전체 소진 ≤ 6(위 머리말)
     const env = group === "fetch" && tightenedBy !== null ? { ...process.env, [CIRCUIT_ENV]: "1" } : undefined;
     const r =
@@ -114,7 +154,7 @@ export function createStepRunner(o: { readonly cwd: string; readonly log?: StepL
         : spawnSync(process.execPath, [...args], { cwd: o.cwd, stdio: "inherit", ...(env === undefined ? {} : { env }) });
     const exit = normalizeExit(r);
     if (exit !== 0) log.err(`  ⚠${id} 종료 코드 ${describeExit(r)}`);
-    steps.push({ id, group, exit });
+    steps.push({ id, group, exit, ...area });
     if (group === "fetch") {
       const d = fetchExitDisposition(r);
       if (d !== "continue") {
