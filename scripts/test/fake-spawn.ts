@@ -48,5 +48,14 @@ function fakeSpawnSync(_cmd: string, args: readonly string[] = [], opts: { encod
   };
 }
 
-(cp as unknown as { spawnSync: unknown }).spawnSync = fakeSpawnSync;
+/**
+ * ⚠⚠**그 밖의 자식 실행은 전부 막는다(fail closed)** — 실행기가 언젠가 `spawnSync` 말고 다른 길(`execFileSync` 등)로 자식을 띄우게
+ *   바뀌면, 이 가짜가 그것을 못 가로채 **진짜 받기 자식이 npb.jp 를 친다.** 그러면 시험이 조용히 외부 요청을 보내는 대신 여기서 던진다.
+ */
+const blocked = (name: string) => (): never => {
+  throw new Error(`fake-spawn: ${name} 는 막았다 — update.ts 의 자식은 spawnSync(가짜)로만 띄워야 한다(외부 요청 0)`);
+};
+const api = cp as unknown as Record<string, unknown>;
+api["spawnSync"] = fakeSpawnSync;
+for (const name of ["spawn", "exec", "execSync", "execFile", "execFileSync", "fork"]) api[name] = blocked(name);
 syncBuiltinESMExports();
