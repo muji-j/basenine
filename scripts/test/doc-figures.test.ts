@@ -24,13 +24,23 @@
  * 이 시험은 **진행 중 시즌을 포함한 수**를 문서에 요구했다. 같은 브랜치가 走塁 각주를
  * 완결 시즌으로 바꾸며 「경기가 하나 들어올 때마다 이 문서가 낡는다 … 시즌 중에는 매일 그렇게 된다 …
  * 지속 가능한 구조가 아니었다」고 적어 놓고, **여기서 정반대를 했다.**
- * → **문서에 요구하는 수는 완결 시즌만**으로 좁혔다(`completedSeasons`).
+ * → **문서에 요구하는 수는 완결 시즌만**으로 좁혔다(~~`completedSeasons`~~ → 지금은 `DOC_SEASONS` · 아래 절).
  *
  * ⚠**전칭 명제는 약해지지 않는다.** 「번트를 뺀 안타는 **전 보유 시즌** 전건이 타구 종류 없음」과
  * 「미분류율이 20%를 넘는다」는 **진행 중 시즌까지 포함해** 계속 검사한다 —
  * 그 둘은 **자라는 수를 문서에 요구하지 않으므로** 매일 낡지 않는다.
- * ⚠**완결 판정은 손으로 적지 않는다** — 12구단 전부가 `regularSeasonGames(시즌)` 을 치렀는가로 잰다.
- * 2026 이 끝나는 날 이 수들은 **한 번** 바뀌고, 그때 문서를 고치는 것이 맞는 일이다.
+ *
+ * ## ⚠~~완결 판정은 손으로 적지 않는다~~ — **범위는 손으로 고정한다** (2026-10-24)
+ *
+ * 예전에는 「12구단 전부가 `regularSeasonGames(시즌)` 을 치렀는가」로 그때그때 쟀고,
+ * 「2026 이 끝나는 날 이 수들은 **한 번** 바뀌고, 그때 문서를 고치는 것이 맞는 일이다」라고 적었다.
+ * **그 「한 번」이 배포를 막았다** — 2026-10-08 정규시즌 최종전이 들어온 날 이 파일 4본을 포함해 고정 수치 시험 13본이
+ * 붉어졌고, 그 뒤로 배포가 나가지 않았다. **「한 번」도 아니었다** — 여기 수치 일부(타석 · 인플레이 · 대회를 섞은 도루)는
+ * **전 대회** 수라 포스트시즌 동안 **매일** 다시 낡는다.
+ * → 범위는 `@bb-app/domain` 의 `DOC_SEASONS` 한 곳(M1)에 적는다. 끝난 시즌(`seasonIsOver`)이 그 밖에 있으면
+ *   **수집 로그가 매 실행 알린다**(`scripts/freshness.ts` · `::warning::` · 배포는 막지 않는다).
+ *   범위를 올리는 날 이 파일이 붉어지는 것은 **정상**이고, 실패 메시지의 값으로 문서를 고친다 — 절차는 `docs/operations.md` 「해마다 하는 일」.
+ * ⚠**범위를 일본시리즈 결착 전에 올리지 마라** — 아래 가드(「고정 범위의 시즌은 전부 끝났다」)가 막는다.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -38,8 +48,8 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { openDb } from "@bb-app/store";
-import { regularSeasonGames } from "@bb-app/domain";
+import { openDb, seasonIsOver } from "@bb-app/store";
+import { DOC_SEASONS } from "@bb-app/domain";
 import { GAME_PAGES } from "@bb-app/archiver";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -90,27 +100,12 @@ interface Figures {
 }
 
 /**
- * **완결 시즌** — 12구단 전부가 그 시즌의 규정 경기수를 치렀는가.
+ * **문서가 말하는 완결 시즌** — `DOC_SEASONS` 한 벌(M1 · 2026-10-24). ~~`completedSeasons`(12구단이 규정 경기수를 치렀는가)~~ 는 지웠다.
  *
- * ⚠**「최근 시즌을 뺀다」로 쓰지 마라.** 그러면 2026 이 끝난 뒤에도 영원히 빠진다.
- * ⚠**2020 은 120경기다** — `regularSeasonGames` 가 시즌별 표를 갖고 있으므로 여기서 143을 쓰지 않는다.
+ * ⚠**「최근 시즌을 뺀다」로 쓰지 마라.** 그러면 2026 이 끝난 뒤에도 영원히 빠진다 — 원저자 경고이고 지금도 맞다.
+ *   고정 범위는 그 규칙이 아니다: **명시한 목록**이고, 끝난 시즌이 그 밖에 있으면 수집 로그가 매 실행 알린다(`docSeasonsToAdd`).
  */
-function completedSeasons(db: ReturnType<typeof openDb>): Set<number> {
-  const rows = db.raw
-    .prepare(
-      `SELECT season, MIN(n) AS fewest FROM (
-         SELECT season, code, COUNT(*) AS n FROM (
-           SELECT season, home_code AS code FROM game
-            WHERE competition = 'regular' AND status = 'played'
-           UNION ALL
-           SELECT season, away_code AS code FROM game
-            WHERE competition = 'regular' AND status = 'played'
-         ) GROUP BY season, code
-       ) GROUP BY season`,
-    )
-    .all() as { season: number; fewest: number }[];
-  return new Set(rows.filter((r) => r.fewest >= regularSeasonGames(r.season)).map((r) => r.season));
-}
+const DOC_SET: ReadonlySet<number> = new Set(DOC_SEASONS);
 
 /** 같은 스캔을 시험마다 다시 하지 않는다 — 타석 로그가 50만 행이다 */
 const cache = new Map<string, Figures>();
@@ -196,17 +191,18 @@ function measure(only: ReadonlySet<number> | null): Figures {
   }
 }
 
-/** 문서가 요구하는 수는 **완결 시즌만**이다 — 진행 중 시즌을 넣으면 매일 낡는다 */
+/**
+ * 문서가 요구하는 수는 **완결 시즌만**이다 — 진행 중 시즌을 넣으면 매일 낡는다.
+ * ⚠**범위의 시즌이 전부 DB 에 있어야 한다** — 빠진 시즌이 있으면 수가 줄어 「문서가 낡았다」로 오진한다.
+ */
 function completed(): Figures {
-  const db = openDb(DB, "1970-01-01T00:00:00.000Z");
-  let only: Set<number>;
-  try {
-    only = completedSeasons(db);
-  } finally {
-    db.close();
-  }
-  assert.ok(only.size >= 8, `완결 시즌이 ${only.size}개뿐이다 — 이 시험이 공회전한다`);
-  return measure(only);
+  const f = measure(DOC_SET);
+  assert.deepEqual(
+    f.seasons,
+    [...DOC_SEASONS],
+    `고정 범위(DOC_SEASONS)의 시즌 중 이 DB 에 타석이 없는 것이 있다 — 잰 시즌: ${f.seasons.join("·")}. 문서가 아니라 DB 를 의심하라`,
+  );
+  return f;
 }
 
 /** 문서 안에 있어야 하는 글자들. **하나라도 없으면 그 문서가 낡은 것이다** */
@@ -241,8 +237,32 @@ test("⚠xFIP 사유의 수치가 DB 와 같다 — 완결 시즌만 센다(진�
       "**DB 가 정본이다** — 위에 적힌 값으로 문서를 고쳐라.\n" +
       "⚠세 문서가 같은 말을 해야 한다(M1): CLAUDE.md §2-2 · docs/metrics/README.md §6 · " +
       "docs/sources/2026-08-20-war-xfip-recheck.md\n" +
-      "⚠**이 수는 완결 시즌만 센다.** 진행 중 시즌이 자라서 떨어진 것이라면 그건 이 시험의 결함이다",
+      "⚠**이 수는 고정 범위(DOC_SEASONS)만 센다.** 범위를 막 올렸다면 정상이다 — 위 값으로 문서를 고쳐라" +
+      "(docs/operations.md 「해마다 하는 일」). 범위를 안 바꿨는데 떨어졌다면 완결 시즌의 데이터가 바뀐 것이다",
   );
+});
+
+/**
+ * ⚠**범위를 너무 일찍 올리지 않았는가** — 고정 범위의 시즌은 전부 `seasonIsOver` 여야 한다(2026-10-24).
+ *
+ * 이 파일의 수치 일부(타석 · 인플레이 · 대회를 섞은 도루)는 **전 대회** 수라 포스트시즌 동안 매일 자란다.
+ * 정규시즌이 끝난 날 범위를 올리면 이 파일이 **매일** 붉어진다 — 2026-10-08 의 사고와 같은 모양이다.
+ * ⚠**「끝났다」는 제품의 `seasonIsOver` 한 벌이다**(일본시리즈 결착 · 더 나중 시즌의 경기 · M1) — 여기서 다시 정의하지 않는다.
+ * ⚠**DB 에 없는 시즌도 여기서 떨어진다** — 경기 행이 없으면 일본시리즈도 없다.
+ */
+test("⚠고정 범위의 시즌은 전부 끝났다 — 일본시리즈 결착 전에 올리면 전 대회 수치가 매일 낡는다", { skip: HAS_DB ? false : "DB 없음" }, () => {
+  const db = openDb(DB, "1970-01-01T00:00:00.000Z");
+  try {
+    const notOver = DOC_SEASONS.filter((s) => !seasonIsOver(db, s));
+    assert.deepEqual(
+      notOver,
+      [],
+      `고정 범위(DOC_SEASONS)에 아직 안 끝난 시즌이 있다: ${notOver.join("·")}. ` +
+        "일본시리즈 결착(또는 다음 시즌 경기) 뒤에 올려라 — 그 전에는 전 대회 수치가 매일 낡는다",
+    );
+  } finally {
+    db.close();
+  }
 });
 
 test("⚠「번트를 뺀 안타는 전건이 종류 없음」이 아직 참이다 — **진행 중 시즌까지 본다**", { skip: HAS_DB ? false : "DB 없음" }, () => {
@@ -311,8 +331,8 @@ interface StealFigures {
 function stealFigures(): StealFigures {
   const db = openDb(DB, "2026-08-22T00:00:00.000Z");
   try {
-    const only = [...completedSeasons(db)].sort((a, b) => a - b);
-    assert.ok(only.length >= 8, `완결 시즌이 ${only.length}개뿐이다 — 이 시험이 공회전한다`);
+    // ⚠범위는 `DOC_SEASONS` 한 벌이다(M1). 오름차순이라 `at(-1)` 이 「마지막 완결 시즌」이다
+    const only = [...DOC_SEASONS];
     const list = only.join(",");
     const rows = db.raw
       .prepare(
@@ -384,7 +404,7 @@ test("⚠走塁 대조 수치가 DB 와 같다 — 완결 시즌만 센다", { s
  */
 test("⚠走塁 대조가 실제로 무언가를 세고 있다 — 분모", { skip: HAS_DB ? false : "DB 없음" }, () => {
   const f = stealFigures();
-  assert.ok(f.games > 5_000, `대조 경기가 ${f.games}뿐이다 — 완결 시즌 판정이 망가졌다`);
+  assert.ok(f.games > 5_000, `대조 경기가 ${f.games}뿐이다 — 고정 범위(DOC_SEASONS)의 경기가 이 DB 에 없다`);
   assert.ok(f.withSteal > 3_000, `도루가 있던 경기가 ${f.withSteal}뿐이다 — 주자 행이 안 들어왔을 수 있다`);
   assert.ok(f.gap > 0, "정규와 전 대회의 도루가 같다 — 대회 구분이 안 들어갔을 수 있다");
 });
@@ -404,16 +424,15 @@ test("⚠走塁 대조가 실제로 무언가를 세고 있다 — 분모", { sk
 test("⚠백필 예산이 DB × GAME_PAGES 와 같다 — 완결 시즌만 센다", { skip: HAS_DB ? false : "DB 없음" }, () => {
   const db = openDb(DB, "2026-08-24T00:00:00.000Z");
   let games = 0;
-  let only: ReadonlySet<number>;
+  // ⚠범위는 `DOC_SEASONS` 한 벌이다(M1)
+  const only = DOC_SET;
   try {
-    only = completedSeasons(db);
     games = (db.raw
       .prepare(`SELECT COUNT(*) AS n FROM game WHERE season IN (${[...only].join(",")})`)
       .get() as unknown as { n: number }).n;
   } finally {
     db.close();
   }
-  assert.ok(only.size >= 8, `완결 시즌이 ${only.size}개뿐이다 — 이 시험이 공회전한다`);
   assert.ok(games > 5_000, `경기가 ${games}건뿐이다`);
   const src = read(DOCS.claude);
   const want = [

@@ -44,3 +44,4 @@ export type {
   StaleReason,
   VerdictOptions,
 } from "./collection-verdict.ts";
+export { DOC_SEASONS, docSeasonsToAdd } from "./doc-seasons.ts";

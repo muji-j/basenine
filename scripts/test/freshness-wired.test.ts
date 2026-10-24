@@ -3,7 +3,7 @@
  *
  * 설계: docs/superpowers/specs/2026-09-11-offseason-collection-verdict-design.md (D10 · D11)
  * ⚠판정 규칙 자체는 `packages/domain/test/collection-verdict.test.ts`·`packages/store/test/collection-evidence.test.ts` 가 잰다.
- * 여기는 **연결**만 본다 — 종료 코드 · 새 표가 없는 DB · JSONL 의 새 필드. 오늘 날짜에 기대지 않는 입력만 쓴다.
+ * 여기는 **연결**만 본다 — 종료 코드 · 새 표가 없는 DB · JSONL 의 새 필드 · 연례 갱신 알림(비차단). 오늘 날짜에 기대지 않는 입력만 쓴다.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -156,4 +156,86 @@ test("⚠--json 뒤에 경로가 없으면 종료 코드 2 가 남는다(예전�
   openDb(path, "2026-09-11T00:00:00.000Z").close();
   const r = spawnSync(process.execPath, [SCRIPT, path, "2", "--json"], { encoding: "utf8" });
   assert.equal(r.status, 2, "인자 오류를 사유 판정으로 덮었다");
+}));
+
+/**
+ * ⚠⚠**연례 갱신 알림 — 끝난 시즌이 문서 고정 범위(`DOC_SEASONS`) 밖이면 `::warning::` 한 줄 · 배포는 막지 않는다**(2026-10-24).
+ *
+ * 고정 수치 시험 13본이 「완결 시즌」을 데이터로 재다가 **정규시즌이 끝난 날 2026 을 넣어** 붉어졌고 배포가 막혔다(2026-10-08).
+ * 범위를 손으로 고정하면 그 일은 안 나지만 **잊으면 영원히 낡는다** — 원저자 경고(「최근 시즌을 뺀다로 쓰지 마라」)가 그것이다.
+ * → 끝난 시즌이 범위 밖이면 **수집 로그가 매 실행 알린다.** ⚠**종료 코드와 사유에는 아무것도 더하지 않는다** — 더하면 그날의 사고가 되돌아온다.
+ * ⚠**「끝났다」는 `seasonIsOver`(일본시리즈 결착 · 더 나중 시즌의 경기)다** — 고정 수치 일부가 전 대회 수라 포스트시즌 동안 자란다.
+ * ⚠**시계에 기대지 않는다** — 비교할 두 DB 의 최신 경기를 2099 로 두어 오늘이 언제든 백스톱이 안 운다(둘의 종료 코드가 0 이어야 비차단이 잰다).
+ */
+const DOC_WARN = /^::warning::끝난 시즌 (\S+) 이 문서 고정 범위/m;
+const FIXED_AT = "2026-09-11T00:00:00.000Z";
+
+/** 치러진 경기 한 줄. `competition` 이 일본시리즈면 승패가 시즌 종료를 정한다(`japanSeriesDecided`) */
+function addGame(db: Db, gameId: string, date: string, home: string, away: string, o: { competition?: string; homeRuns?: number; awayRuns?: number } = {}): void {
+  upsertGame(db, {
+    gameId, season: Number(date.slice(0, 4)), gameDate: date, awayCode: away, homeCode: home, gameNo: 1,
+    status: "played", notPlayedReason: null, competition: o.competition ?? "regular", sourceUrl: "https://npb.jp/x",
+    fetchedAt: FIXED_AT, awayRuns: o.awayRuns ?? 1, homeRuns: o.homeRuns ?? 2,
+  });
+}
+
+test("⚠⚠끝난 시즌이 문서 고정 범위 밖이면 알린다 — 종료 코드·사유는 그대로다(비차단 · 백필도 같은 사건이다)", () => withDir(async (dir) => {
+  const build = (name: string, withBackfill: boolean): string => {
+    const path = join(dir, name);
+    const db: Db = openDb(path, FIXED_AT);
+    try {
+      addGame(db, "a2025", "2025-06-01", "t", "g"); // 범위 안 — 더 나중 시즌(2099)의 경기가 있어 끝났다
+      addGame(db, "a2099", "2099-04-01", "t", "g"); // 진행 중 — 이 DB 의 최신 경기(백스톱이 오늘에 기대지 않게)
+      if (withBackfill) addGame(db, "a2017", "2017-06-01", "t", "g"); // 범위 밖 · 끝났다 = 백필
+    } finally {
+      db.close();
+    }
+    return path;
+  };
+  const run = (path: string, log: string) => spawnSync(process.execPath, [SCRIPT, path, "2", "--json", log], { encoding: "utf8" });
+  const a = run(build("in-range.sqlite", false), join(dir, "a.jsonl"));
+  const b = run(build("backfill.sqlite", true), join(dir, "b.jsonl"));
+
+  assert.doesNotMatch(a.stdout, DOC_WARN, `범위 안 시즌만 끝났는데 알렸다: ${a.stdout}`);
+  assert.equal(DOC_WARN.exec(b.stdout)?.[1], "2017", `범위 밖의 끝난 시즌(2017)을 안 알렸다: ${b.stdout}`);
+  // ⚠비차단 — 알림이 있든 없든 종료 코드와 사유가 같다. 둘 다 0 이어야 「알림이 실패를 만들지 않는다」를 잰다
+  assert.equal(a.status, 0, `전제가 틀렸다 — 알림 없는 DB 가 이미 실패한다: ${a.stdout}${a.stderr}`);
+  assert.equal(b.status, 0, `알림이 종료 코드를 바꿨다 — 배포가 막힌다: ${b.stdout}${b.stderr}`);
+  const reasons = async (log: string): Promise<unknown> =>
+    (JSON.parse((await readFile(join(dir, log), "utf8")).trim()) as Record<string, unknown>).staleReasons;
+  assert.deepEqual(await reasons("b.jsonl"), await reasons("a.jsonl"), "알림이 사유를 바꿨다");
+}));
+
+test("⚠⚠「끝났다」는 일본시리즈 결착이다 — 정규시즌 143경기와 CS 가 끝나도 안 알린다", () => withDir(async (dir) => {
+  const path = join(dir, "season.sqlite");
+  const db: Db = openDb(path, FIXED_AT);
+  try {
+    db.raw.exec("BEGIN");
+    // 2026 정규시즌을 전부 치렀다 — 12구단 × 143경기(하루 6경기 × 143일). 옛 「완결」 판정이면 여기서 이미 완결이다
+    const teams = ["g", "t", "s", "c", "db", "d", "h", "l", "f", "m", "e", "b"];
+    for (let k = 0; k < 143; k += 1) {
+      const date = new Date(Date.parse("2026-04-01T00:00:00Z") + k * 86_400_000).toISOString().slice(0, 10);
+      for (let i = 0; i < teams.length; i += 2) addGame(db, `r${k}-${i}`, date, teams[i]!, teams[i + 1]!);
+    }
+    addGame(db, "cs1", "2026-10-15", "h", "f", { competition: "climaxSeries" });
+    // 일본시리즈 3승 — 아직 결착이 아니다
+    for (const [i, d] of ["2026-10-24", "2026-10-25", "2026-10-27"].entries()) {
+      addGame(db, `js${i}`, d, "h", "t", { competition: "nipponSeries", homeRuns: 3, awayRuns: 1 });
+    }
+    db.raw.exec("COMMIT");
+  } finally {
+    db.close();
+  }
+  const before = spawnSync(process.execPath, [SCRIPT, path, "2"], { encoding: "utf8" });
+  assert.match(before.stdout, /최신 경기일 2026-10-27/, `전제가 틀렸다 — 경기가 안 들어갔다: ${before.stdout}`);
+  assert.doesNotMatch(before.stdout, DOC_WARN, "정규시즌·CS 가 끝났을 뿐인데 알렸다 — 전 대회 수치가 아직 자란다");
+
+  const db2: Db = openDb(path, FIXED_AT);
+  try {
+    addGame(db2, "js3", "2026-10-28", "h", "t", { competition: "nipponSeries", homeRuns: 3, awayRuns: 1 }); // 4승 — 결착
+  } finally {
+    db2.close();
+  }
+  const after = spawnSync(process.execPath, [SCRIPT, path, "2"], { encoding: "utf8" });
+  assert.equal(DOC_WARN.exec(after.stdout)?.[1], "2026", `일본시리즈가 결착했는데 안 알렸다: ${after.stdout}`);
 }));

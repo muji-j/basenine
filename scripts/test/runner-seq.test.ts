@@ -18,7 +18,9 @@
  *
  * ⚠**완결 시즌만 센다**(2018~). 진행 중 시즌을 넣으면 경기가 들어올 때마다 낡고,
  * 시즌 중에는 매일 붉어진다 — `scripts/test/doc-figures.test.ts` 머리말이 적은 그 병이다.
- * ⚠**2020 은 120경기다**(`regularSeasonGames`).
+ * ⚠**「완결 시즌」은 고정 범위다 — `@bb-app/domain` 의 `DOC_SEASONS` 한 벌**(M1 · 2026-10-24).
+ *   ~~12구단이 규정 경기수를 치렀는가로 그때그때 판정~~ 하던 것이 정규시즌이 끝난 날(2026-10-08) 2026 을 넣어
+ *   아래 「문서가 말하는 수」가 붉어졌고 배포가 막혔다. 범위를 올리는 날 문서를 고친다(`docs/operations.md` 「해마다 하는 일」).
  *
  * 재현: `node scripts/runner-seq-measure.ts data/bb.sqlite`
  */
@@ -27,7 +29,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
-import { regularSeasonGames } from "@bb-app/domain";
+import { DOC_SEASONS } from "@bb-app/domain";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const DB = `${ROOT}data/bb.sqlite`;
@@ -52,23 +54,8 @@ interface Counts {
 function measure(): Counts {
   const db = new DatabaseSync(DB, { readOnly: true });
   try {
-    const seasons = (
-      db
-        .prepare(
-          `SELECT season, MIN(n) AS fewest FROM (
-             SELECT season, code, COUNT(*) AS n FROM (
-               SELECT season, home_code AS code FROM game WHERE competition='regular' AND status='played'
-               UNION ALL
-               SELECT season, away_code AS code FROM game WHERE competition='regular' AND status='played'
-             ) GROUP BY season, code
-           ) GROUP BY season`,
-        )
-        .all() as unknown as { season: number; fewest: number }[]
-    )
-      .filter((r) => Number(r.fewest) >= regularSeasonGames(Number(r.season)))
-      .map((r) => Number(r.season))
-      .sort((a, b) => a - b);
-    assert.ok(seasons.length >= 8, `완결 시즌이 ${seasons.length}개뿐이다 — 이 시험이 공회전한다`);
+    // ⚠범위는 `DOC_SEASONS` 한 벌이다(M1) — 데이터로 다시 판정하지 않는다. 범위의 시즌이 DB 에 없으면 분모가 줄어 아래 문서 대조가 떨어진다
+    const seasons = [...DOC_SEASONS];
     const scope = `g.competition='regular' AND g.status='played' AND g.season IN (${seasons.join(",")})`;
 
     const r = db

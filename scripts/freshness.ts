@@ -32,8 +32,8 @@
  * 종료 코드: 사유가 하나라도 있으면 1 · 새 표가 없는 DB(마이그레이션 021 미적용)면 2.
  */
 import { DatabaseSync } from "node:sqlite";
-import { collectionEvidence } from "@bb-app/store";
-import { LOOKBACK_DAYS, backstopDays, collectionVerdict } from "@bb-app/domain";
+import { collectionEvidence, seasonIsOver } from "@bb-app/store";
+import { DOC_SEASONS, LOOKBACK_DAYS, backstopDays, collectionVerdict, docSeasonsToAdd } from "@bb-app/domain";
 
 const [dbPath, staleDaysArg] = process.argv.slice(2);
 if (!dbPath) {
@@ -209,6 +209,25 @@ if (counts.quarantine > 0) {
   }[]) {
     console.error(`   ${r.kind}: ${r.n}`);
   }
+}
+
+/**
+ * ── 문서 고정 범위 — 연례 갱신 알림(2026-10-24) ──────────────────────────
+ * 끝난 시즌이 문서·고정 수치 시험의 범위(`DOC_SEASONS`) 밖이면 **한 줄 알린다.** 범위를 올리고 수치·문서를 고칠 때다
+ * (`docs/operations.md` 「해마다 하는 일」). 시즌 종료와 백필이 같은 사건이다.
+ * ⚠⚠**종료 코드에도 사유에도 넣지 않는다** — 고정 수치를 데이터로 판정하던 시험이 정규시즌 종료일에 붉어져 **배포가 막혔다**(2026-10-08).
+ *   이 알림이 실패를 만들면 그 사고가 되돌아온다. `::warning::` 은 실행을 실패시키지 않고 요약 화면에 남는다.
+ * ⚠**「끝났다」는 `seasonIsOver` 한 벌이다**(일본시리즈 결착 · 더 나중 시즌의 경기 · M1) — 정규시즌 종료가 아니다.
+ *   고정 수치 일부가 전 대회 수(타석 등)라 포스트시즌 동안 자란다. 그 전에 범위를 올리면 매일 낡는다.
+ * ⚠보유 시즌(경기 행이 있는 시즌)만 묻는다 — 드래프트만 있는 해(2005〜2017)는 경기가 없어 묻지 않는다.
+ */
+const heldSeasons = (db.prepare("SELECT DISTINCT season FROM game ORDER BY season").all() as { season: number }[]).map((r) => Number(r.season));
+const docPending = docSeasonsToAdd(heldSeasons.filter((s) => seasonIsOver(db, s)));
+if (docPending.length > 0) {
+  console.log(
+    `::warning::끝난 시즌 ${docPending.join("·")} 이 문서 고정 범위(DOC_SEASONS ${DOC_SEASONS[0]}〜${DOC_SEASONS.at(-1)} · ${DOC_SEASONS.length}시즌) 밖이다` +
+      " — 범위를 올리고 고정 수치·문서를 갱신할 때다(docs/operations.md 「해마다 하는 일」 · 배포는 막지 않는다)",
+  );
 }
 
 /**
