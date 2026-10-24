@@ -99,6 +99,40 @@ test("⚠T13⑶ 잡 최악 = 마감 + 한 경기 최악 + 재적재 + 감지·�
   assert.equal(total.toFixed(2), "43.06", "설계 D7-8 의 합(43.06분)과 다르다 — 설계와 이 시험을 같이 고쳐라");
 });
 
+/**
+ * `수집·적재` 단계의 시간 제한 — 워크플로에서 읽는다(그 단계 블록의 `timeout-minutes` · 잡 수준이 아니다).
+ * ⚠설계 `docs/superpowers/specs/2026-10-24-collection-resilience-design.md` D6 · 시험 T11.
+ */
+function updateStepTimeoutMin(): number {
+  const yml = readFileSync(fileURLToPath(new URL("../../.github/workflows/daily.yml", import.meta.url)), "utf8").replace(/\r\n/g, "\n");
+  const at = yml.indexOf("      - name: 수집·적재\n");
+  assert.notEqual(at, -1, "daily.yml 에 수집·적재 단계가 없다 — 이 시험의 전제가 바뀌었다");
+  const next = yml.indexOf("\n      - ", at + 1);
+  const block = yml.slice(at, next === -1 ? yml.length : next);
+  const m = /\n {8}timeout-minutes: (\d+)(?=\n)/.exec(block);
+  assert.ok(m, "수집·적재 단계에 timeout-minutes(걸쇠)가 없다 — 응답 지연형 장애에서 잡 전체가 45분에 죽고 배포가 0 이 된다");
+  return Number(m[1]);
+}
+
+/**
+ * 실측 입력(분) — 설계 2026-10-24 D6:
+ * - `beforeUpdate` 1.0 — 잡 시작 → `수집·적재` 시작 실측 최대 **0.61분**(23.3 · 20.8 · 36.6 · 18.9초 · 4실행)을 올린 값
+ * - `between` 0.4 — `수집·적재` 끝 → `수집 후 재검증` 시작(드래프트 적재 실측 9.2초 등 · 설계의 값)
+ * - `afterStep` 11.43 — M-J(위 `MEASURED_MIN` 과 같은 값 · 같은 출처)
+ */
+const OUTAGE_MIN = { beforeUpdate: 1.0, between: 0.4 } as const;
+
+test("⚠T11 수집·적재 걸쇠 — 선행 1.0 + 단계 제한 + 0.4 + 후속 11.43 ≤ 잡 제한 − 여유 1.5 · 단계 제한은 30(33 이면 넘는다)", () => {
+  const stepLimit = updateStepTimeoutMin();
+  assert.equal(stepLimit, 30, "단계 제한이 30분이 아니다 — 설계 D6 의 식을 다시 내라");
+  const jobLimit = collectJobTimeoutMin();
+  const total = OUTAGE_MIN.beforeUpdate + stepLimit + OUTAGE_MIN.between + MEASURED_MIN.afterStep;
+  assert.ok(total <= jobLimit - MARGIN_FLOOR_MIN, `${total.toFixed(2)}분 > ${String(jobLimit)} − ${String(MARGIN_FLOOR_MIN)} — 걸쇠가 잡을 못 지킨다`);
+  assert.equal(total.toFixed(2), "42.83", "설계 D6 의 합(42.83분)과 다르다 — 설계와 이 시험을 같이 고쳐라");
+  // ⚠예전 판의 33분이었다면 넘는다(설계 3차 리뷰 — 44.8)
+  assert.ok(OUTAGE_MIN.beforeUpdate + 33 + OUTAGE_MIN.between + MEASURED_MIN.afterStep > jobLimit - MARGIN_FLOOR_MIN);
+});
+
 test("T13 나머지 상한 — 날짜 7(수동·자동이 나눠 쓴다) · 결함 20 · 시간 상한은 실측 최대 전송 시간(0.191초)의 26배", () => {
   assert.equal(MAX_REFETCH_DATES, 7);
   assert.equal(AUTO_REFETCH_MAX_DEFECTS, 20);

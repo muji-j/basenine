@@ -589,10 +589,15 @@ test("⚠T8 새 스텝의 자리 — 공표 성적표 갱신 바로 뒤 · 수�
   assert.ok(names[at + 1]!.startsWith("수집 후 재검증"), `뒤 스텝이 「${names[at + 1]}」다`);
 });
 
-test("⚠T8 새 스텝 — id correction · if 없음(= success()) · continue-on-error 없음 · timeout-minutes 30 · 실행 한 줄", () => {
+/**
+ * ⚠**`if:` 는 `success()` 에 「rc 가 75 가 아닐 때」만 더했다**(2026-10-24 · 설계 `2026-10-24-collection-resilience-design.md` D6) —
+ * 받기 실패만 있었던 실행에서는 이 단계의 받기도 같은 상류를 두드리므로 건너뛴다(요청 0 · 이 단계의 0|1 계약은 그대로).
+ * 앞 단계가 실패한 실행에서 안 도는 것(`success()`)은 그대로다.
+ */
+test("⚠T8 새 스텝 — id correction · if 는 success() && rc != '75' · continue-on-error 없음 · timeout-minutes 30 · 실행 한 줄", () => {
   const b = noComment(CORR.body);
   assert.match(b, /^ {8}id: correction$/m);
-  assert.doesNotMatch(b, /^ {8}if:/m, "if: 가 붙었다 — 앞 단계가 실패한 실행에서 돌면 안 되고, 그걸 `if:` 없이(success()) 지킨다");
+  assert.match(b, /^ {8}if: success\(\) && steps\.update\.outputs\.rc != '75'$/m, "if: 가 설계 D6 과 다르다 — 앞 단계가 실패한 실행·받기 실패만 있던 실행에서 돌면 안 된다");
   assert.doesNotMatch(b, /^ {8}continue-on-error:/m, "continue-on-error 가 붙었다 — 이 단계의 실패(종료 1)는 배포를 막아야 한다");
   assert.match(b, /^ {8}timeout-minutes: 30$/m);
   assert.equal(runOf(CORR), "node scripts/correction-refetch.ts --db data/bb.sqlite --archive data/archive --work-dir /tmp/correction-refetch");
