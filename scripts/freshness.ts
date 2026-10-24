@@ -2,7 +2,12 @@
 /**
  * 데이터 신선도 점검.
  *
- *   node scripts/freshness.ts data/bb.sqlite [유예_일수] [--json ops/collection-log.jsonl]
+ *   node scripts/freshness.ts data/bb.sqlite [유예_일수] [--json ops/collection-log.jsonl] [--reasons-out <path>]
+ *
+ * ⚠**`--reasons-out <path>`**(2026-10-24 · 설계 `docs/superpowers/specs/2026-10-24-collection-resilience-design.md` D5 · 4차-3) — `update.ts` 가
+ *   「어느 감시가 울었는가」를 산문이 아니라 파일로 받는다. 스키마 `{"schema":1,"exit":<0|1>,"reasons":[…]}`(키는 `STALE_REASON_KEYS`).
+ *   종료 **직전**에 `<path>.tmp-<pid>` 로 쓰고 `rename` 한다(원자적) — 정상(`exit:0`)일 때도 빈 `reasons` 로 쓴다.
+ *   **못 쓰면 표준오류 한 줄 + 종료 2**(1 이 아니다 → 읽는 쪽이 blocking). 종료가 2 인 실행(표 없음 · 인자 오류)은 파일을 쓰지 않는다.
  *
  * ⚠**~~이것이 이 서비스의 주 감시 장치다~~ 는 낡았다**(2026-09-11 정정).
  * **주 감시는 `.github/workflows/heartbeat.yml` 이다.** 이 파일은 그 **입력을 만드는 한 층**이다.
@@ -295,4 +300,34 @@ if (jsonAt >= 0) {
 }
 
 db.close();
-if (process.exitCode !== 2) process.exitCode = stale ? 1 : 0;
+const exit = process.exitCode === 2 ? 2 : stale ? 1 : 0;
+
+/**
+ * **사유 파일**(`--reasons-out` · 설계 D5 · 4차-3) — 종료 직전에 원자적으로 쓴다. ⚠종료 2 면 쓰지 않는다(읽는 쪽은 2 를 파일과 무관하게 막는다).
+ * ⚠못 쓰면 종료 2 — 1 로 두면 읽는 쪽이 「파일이 없다」로 막긴 하지만, **쓰는 쪽의 고장**과 **사유가 울린 것**이 같은 코드가 된다.
+ */
+const reasonsAt = process.argv.indexOf("--reasons-out");
+let finalExit = exit;
+if (reasonsAt >= 0) {
+  const path = process.argv[reasonsAt + 1];
+  if (path === undefined || path.startsWith("--")) {
+    console.error("--reasons-out 뒤에 경로가 필요하다");
+    finalExit = 2;
+  } else if (exit !== 2) {
+    const { renameSync, rmSync, writeFileSync } = await import("node:fs");
+    const tmp = `${path}.tmp-${String(process.pid)}`;
+    try {
+      writeFileSync(tmp, `${JSON.stringify({ schema: 1, exit, reasons: staleReasons })}\n`, "utf8");
+      renameSync(tmp, path);
+    } catch (err) {
+      try {
+        rmSync(tmp, { force: true });
+      } catch {
+        // 임시 파일도 못 지웠다 — 읽는 쪽은 정식 이름만 읽으므로 판정이 흐려지지 않는다
+      }
+      console.error(`⚠사유 파일을 못 썼다(${path}) — ${err instanceof Error ? err.message : String(err)} · 종료 2`);
+      finalExit = 2;
+    }
+  }
+}
+process.exitCode = finalExit;

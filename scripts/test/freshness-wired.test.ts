@@ -7,7 +7,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -248,4 +248,54 @@ test("⚠⚠「끝났다」는 일본시리즈 결착이다 — 정규시즌 143
   }
   const after = spawnSync(process.execPath, [SCRIPT, path, "2"], { encoding: "utf8" });
   assert.equal(DOC_WARN.exec(after.stdout)?.[1], "2026", `일본시리즈가 결착했는데 안 알렸다: ${after.stdout}`);
+}));
+
+/**
+ * ⚠⚠**사유 파일 — 쓰는 쪽**(2026-10-24 · 설계 `docs/superpowers/specs/2026-10-24-collection-resilience-design.md` D5 · 4차-3 · 시험 T7).
+ * `update.ts` 는 이 파일로 「어느 감시가 울었는가」를 받아 상류 장애로 설명되는지 가른다(`run-verdict.ts`). 읽는 쪽 계약은
+ * `run-verdict.test.ts` · `update-steps.test.ts` 가 잰다 — 여기는 **원자적으로 · 정상일 때도 · 종료 2 면 안 쓴다 · 못 쓰면 2** 를 잰다.
+ */
+test("⚠⚠사유 파일 — 정상(exit 0)도 빈 reasons 로 쓴다 · 사유가 울리면 그 키를 쓴다 · 임시 파일을 남기지 않는다", () => withDir(async (dir) => {
+  const quiet = join(dir, "quiet.sqlite");
+  const db: Db = openDb(quiet, FIXED_AT);
+  try {
+    addGame(db, "a2099", "2099-04-01", "t", "g"); // 오늘이 언제든 백스톱이 안 운다(위 연례 알림 시험과 같은 방법)
+  } finally {
+    db.close();
+  }
+  const out0 = join(dir, "r0.json");
+  const r0 = spawnSync(process.execPath, [SCRIPT, quiet, "2", "--reasons-out", out0], { encoding: "utf8" });
+  assert.equal(r0.status, 0, `${r0.stdout}${r0.stderr}`);
+  assert.deepEqual(JSON.parse(await readFile(out0, "utf8")), { schema: 1, exit: 0, reasons: [] });
+
+  const empty = join(dir, "empty.sqlite");
+  openDb(empty, FIXED_AT).close();
+  const out1 = join(dir, "r1.json");
+  const r1 = spawnSync(process.execPath, [SCRIPT, empty, "2", "--reasons-out", out1], { encoding: "utf8" });
+  assert.equal(r1.status, 1);
+  assert.deepEqual(JSON.parse(await readFile(out1, "utf8")), { schema: 1, exit: 1, reasons: ["no-games"] });
+  assert.deepEqual((await readdir(dir)).filter((f) => f.includes(".tmp-")), [], "임시 파일(.tmp-<pid>)이 남았다 — rename 이 아니다");
+}));
+
+test("⚠사유 파일 — 종료 2(새 표 없는 DB)면 쓰지 않는다 · 경로가 없으면 2 · 못 쓰면 표준오류 한 줄 + 2", () => withDir(async (dir) => {
+  const old = join(dir, "old.sqlite");
+  const raw = new DatabaseSync(old);
+  raw.exec("CREATE TABLE game (game_id TEXT, game_date TEXT, status TEXT)");
+  raw.close();
+  const out = join(dir, "r.json");
+  const r = spawnSync(process.execPath, [SCRIPT, old, "2", "--reasons-out", out], { encoding: "utf8" });
+  assert.equal(r.status, 2);
+  assert.equal((await readdir(dir)).includes("r.json"), false, "종료 2 인데 사유 파일을 썼다");
+
+  const empty = join(dir, "empty.sqlite");
+  openDb(empty, FIXED_AT).close();
+  assert.equal(spawnSync(process.execPath, [SCRIPT, empty, "2", "--reasons-out"], { encoding: "utf8" }).status, 2, "경로 없는 --reasons-out 을 받았다");
+  // 판정은 끝까지 돌았는데 다른 인자 오류(--json 뒤 경로 없음)로 종료 2 — 그때도 안 쓴다(스키마의 exit 는 0|1 뿐이다)
+  const late = join(dir, "late.json");
+  const r2 = spawnSync(process.execPath, [SCRIPT, empty, "2", "--reasons-out", late, "--json"], { encoding: "utf8" });
+  assert.equal(r2.status, 2, `${r2.stdout}${r2.stderr}`);
+  assert.equal((await readdir(dir)).includes("late.json"), false, "종료 2 인데 사유 파일을 썼다(--json 인자 오류)");
+  const bad = spawnSync(process.execPath, [SCRIPT, empty, "2", "--reasons-out", join(dir, "no-such-dir", "r.json")], { encoding: "utf8" });
+  assert.equal(bad.status, 2, "못 썼는데 1 로 끝났다 — 쓰는 쪽 고장과 사유가 같은 코드가 된다");
+  assert.match(bad.stderr, /사유 파일을 못 썼다/);
 }));

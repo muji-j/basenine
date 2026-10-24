@@ -15,13 +15,24 @@
  *
  * ⚠**「돌았다」가 아니라 「몇 건을 언제까지 넣었는가」를 보고한다.** 크론이 조용히
  * 안 도는 것이 이 서비스의 가장 흔한 죽음이고, 그건 성공 로그로는 구별되지 않는다.
+ *
+ * ## 종료 코드 — 0 / 75 / 1 (2026-10-24 · 설계 `docs/superpowers/specs/2026-10-24-collection-resilience-design.md` D4 · D5)
+ *
+ * - **0** — 실패 없음. **75** — **받기 실패만** 있었다(npb.jp 소진·거절·회로 열림 · 그로 설명되는 신선도 사유) — 데이터는 「검증된 아카이브」의
+ *   함수 그대로라 워크플로가 **이미 받은 데이터로 배포**하고 실행은 붉게 끝낸다(사용자 결정 ②). **1** — 적재·파싱·emit·신선도(설명 안 됨)·
+ *   받기 자식의 그 밖 종료 중 하나라도 — **지금처럼 막는다.** 판정은 `run-verdict.ts` 한 벌이다.
+ * - ⚠**받기 자식이 75 로 끝나면 그 뒤의 받기 자식은 띄우지 않는다**(로컬 자식은 계속 돈다 · `collect-steps.ts`). 그래서 **予告先発을 맨 앞에서 받는다** —
+ *   거르면 영영 못 받는 유일한 요청이라, 경기 단계의 소진이 그것을 건너뛰게 하면 안 된다(D4-4). 정상일 때는 로그 순서만 바뀐다.
  */
 import { parseArgs } from "node:util";
-import { spawnSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import { JST_TODAY_FROM_HOUR, jstDate, parseRefetchDates, targetDates } from "./date-window.ts";
 // ⚠**덜 받은 날의 판정 I/O 는 이 모듈 한 벌이다**(C10 · M1) — import 해도 부작용이 없고(시계·출력 없음) 시험이 실제로 돌린다
 import { catchupNotes, readCollectedThrough } from "./collected-through.ts";
 import type { Note } from "./collected-through.ts";
+// ⚠**자식 실행은 이 헬퍼 한 벌을 지난다**(설계 D5) — 이 파일에 `spawnSync` 직접 호출은 0 이다(`update-steps.test.ts`)
+import { createStepRunner } from "./collect-steps.ts";
+import { classifyRun } from "./run-verdict.ts";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 
@@ -62,6 +73,11 @@ const { values } = parseArgs({
      * 밀린 몫은 다음 날 받는다 — 넘친 수는 로그에 낸다(조용히 자르지 않는다).
      */
     "player-limit": { type: "string", default: "400" },
+    /**
+     * 작업 파일(선수 ID 목록 둘 · 신선도 사유 파일)을 두는 폴더 — 기본은 `data`(뿌리 기준).
+     * ⚠시험이 저장소의 `data/` 를 건드리지 않게 하려고 둔다(`scripts/test/update-steps.test.ts`) — 운영은 기본값 그대로다.
+     */
+    work: { type: "string", default: "data" },
     /**
      * 오늘 경기를 **지금** 받는다(시각 판정을 넘긴다).
      *
@@ -187,34 +203,47 @@ if (since !== undefined) console.log(`  · 마지막으로 받아 둔 경기일 
 //   원래 창에 있던 날(간격 0 의 어제 등)까지 「다시 받는다」고 하면 로그로 요청 수를 셀 때 오독한다
 if (collected !== undefined) for (const n of catchupNotes(collected, targetDates(now, windowOpts), dates)) say(n);
 
-function run(label: string, args: string[]): number {
-  console.log(`\n── ${label} ──`);
-  const r = spawnSync(process.execPath, args, { cwd: ROOT, stdio: "inherit" });
-  if (r.status !== 0) console.error(`  ⚠${label} 종료 코드 ${r.status}`);
-  return r.status ?? 1;
-}
 
-let failures = 0;
+/**
+ * ⚠**자식은 전부 `execStep(<단계>, <갈래>, <인자>)` 를 지난다**(설계 D5) — 갈래(`fetch` 받기 · `load` 적재 · `emit` 목록 · `freshness`)가
+ *   판정(`classifyRun`)의 입력이다. 받기 자식이 75 로 끝나면 그 뒤 받기 자식은 실행기가 띄우지 않고 합성 step 으로 남긴다(D4-2).
+ * ⚠작업 파일은 `--work`(기본 `data`) 아래에 둔다.
+ */
+const { steps, execStep, failStep, freshnessStep } = createStepRunner({ cwd: ROOT });
+const WORK = resolve(ROOT, values.work);
+
+/**
+ * 0. 予告先発 — 하루 1요청. ⚠거르면 그날 예고는 영영 못 받는다(페이지가 하루치만 보여준다).
+ * ⚠**받기의 맨 앞이다**(2026-10-24 · 설계 D4-4) — 예전에는 5번째였고, 경기 단계가 상류 실패(75)로 끝나면 부모가 이후 받기를 멈추므로
+ *   받을 수 있던 예고까지 건너뛰게 된다. 적재(`予告先発 적재`)는 DB 가 선 뒤라 지금 자리(5)에 그대로 둔다.
+ */
+execStep("予告先発 아카이브", "fetch", [
+  "packages/archiver/src/cli-starters.ts",
+  "--out", values.archive,
+  "--contact", contact,
+  "--delay", values.delay,
+]);
 
 // 1. 경기 페이지
 // ⚠**날짜마다 따로 센다.** 한 날이 실패해도 다른 날은 받는다 — 부분 실패를 전체 실패로 만들지 않는다
+//   ⚠단 **상류 실패(75)는 예외다** — 그 날짜 자식이 75 면 남은 날짜 자식은 안 뜬다(같은 월간 일정 URL 을 날짜 수만큼 두드리던 것이 사라진다 · D4-5)
 for (const d of dates) {
-  failures += run(`경기 아카이브 ${d}`, [
+  execStep(`경기 아카이브 ${d}`, "fetch", [
     "packages/archiver/src/cli.ts",
     "--date", d,
     "--out", values.archive,
     "--contact", contact,
     "--delay", values.delay,
-  ]) === 0 ? 0 : 1;
+  ]);
 }
 
 // 2. 적재
-failures += run("DB 적재", [
+execStep("DB 적재", "load", [
   "packages/store/tools/load-archive.ts",
   values.archive,
   values.db,
   ...(values["max-writes"] === undefined ? [] : ["--max-writes", values["max-writes"]]),
-]) === 0 ? 0 : 1;
+]);
 
 /**
  * 3. 선수 프로필.
@@ -235,59 +264,56 @@ failures += run("DB 적재", [
  * ⚠**`--archive` 로 아카이브 옛 판도 뽑는다**(2026-09-27 · 감사 N3) — 선수 적재의 판 가드가 옛 사본을 건너뛰어 DB 를 지키면,
  * 선정이 DB 만 볼 때는 그 선수를 신선하다고 보고 **영영 다시 안 받는다.** 이 선정이 적재 **전에** 도므로 뽑힌 선수는
  * 같은 실행에서 풀린다(상한은 그대로 `--player-limit` 안 · 다른 사유와 섞어 줄 세운다). `scripts/test/player-refetch-wiring.test.ts` 가 지킨다.
+ * ⚠**목록 만들기(emit)는 로컬 단계다** — 앞 받기가 75 여도 돈다. 그 목록을 받는 자식(`cli-players`)만 실행기가 건너뛴다.
  */
-const staleFile = join(ROOT, "data", "stale-player-ids.txt");
-const stale = spawnSync(
-  process.execPath,
+const staleFile = join(WORK, "stale-player-ids.txt");
+const stale = execStep(
+  "낡은 선수 목록",
+  "emit",
   ["packages/store/tools/emit-stale-player-ids.ts", values.db, "--limit", values["player-limit"], "--archive", values.archive],
-  { cwd: ROOT, encoding: "utf8" },
+  { capture: true },
 );
 if (stale.stderr) console.log(`  낡은 선수 페이지: ${stale.stderr.trim()}`);
-if (stale.status === 0 && stale.stdout.trim() !== "") {
-  const { writeFileSync } = await import("node:fs");
+if (stale.exit === 0 && stale.stdout.trim() !== "") {
   writeFileSync(staleFile, stale.stdout, "utf8");
-  failures += run("낡은 선수 프로필 재취득", [
+  execStep("낡은 선수 프로필 재취득", "fetch", [
     "packages/archiver/src/cli-players.ts",
     "--ids", staleFile,
     "--out", values.archive,
     "--contact", contact,
     "--delay", values.delay,
     "--refresh",
-  ]) === 0 ? 0 : 1;
-} else if (stale.status !== 0) {
+  ]);
+} else if (stale.exit !== 0) {
   console.error("낡은 선수 목록을 만들지 못했다 — 재취득을 건너뛴다");
-  failures += 1;
 }
 
-const idsFile = join(ROOT, "data", "player-ids.txt");
-const emit = spawnSync(process.execPath, ["packages/store/tools/emit-player-ids.ts", values.db], {
-  cwd: ROOT,
-  encoding: "utf8",
-});
-if (emit.status === 0 && emit.stdout) {
-  const { writeFileSync } = await import("node:fs");
+const idsFile = join(WORK, "player-ids.txt");
+const emit = execStep("선수 ID 목록", "emit", ["packages/store/tools/emit-player-ids.ts", values.db], { capture: true });
+if (emit.exit === 0 && emit.stdout) {
   writeFileSync(idsFile, emit.stdout, "utf8");
-  failures += run("신규 선수 프로필", [
+  execStep("신규 선수 프로필", "fetch", [
     "packages/archiver/src/cli-players.ts",
     "--ids", idsFile,
     "--out", values.archive,
     "--contact", contact,
     "--delay", values.delay,
-  ]) === 0 ? 0 : 1;
+  ]);
   /**
    * ⚠**이번 실행의 시작 시각을 넘긴다**(2026-09-27 · 반영분 재검토 P2 · 설계 §5-2 5번) — 순서 기준선이 없는 행에 다른 본문이 오면 적재기는
    * **이번 실행에서 받은 200**(사이드카의 본 시각 ≥ 이 시각)일 때만 새 판으로 받는다. 위 재취득 선정이 그런 행을 뽑아 이 실행에서 다시 받으므로
    * 여기서 풀린다. ⚠값은 맨 위에서 **한 번** 읽은 `now` 다(M6) — 새로 읽으면 재취득보다 늦은 시각이 되어 이 실행에 받은 것이 증명이 못 된다.
    */
-  failures += run("선수 프로필 적재", [
+  execStep("선수 프로필 적재", "load", [
     "packages/store/tools/load-players.ts",
     values.archive,
     values.db,
     "--run-started-at", now.toISOString(),
-  ]) === 0 ? 0 : 1;
+  ]);
 } else {
+  // ⚠**종료 0 인데 빈 목록도 실패다** — 옛 판도 실패로 셌다(DB 에 선수가 0명이면 적재가 안 돈 DB 다)
+  if (emit.exit === 0) failStep("선수 ID 목록", "emit", "종료 0 인데 목록이 비었다");
   console.error("선수 ID 목록을 만들지 못했다 — 프로필 갱신을 건너뛴다");
-  failures += 1;
 }
 
 /**
@@ -305,34 +331,36 @@ if (emit.status === 0 && emit.stdout) {
 const upcomingSeason = refetch.dates !== null ? jstDate(now).slice(0, 4) :
   // ⚠**가장 늦은 대상일의 해**를 쓴다. 연말에 어제와 오늘의 해가 갈릴 수 있다
   dates[dates.length - 1]!.slice(0, 4);
-failures += run("앞으로의 일정 적재", [
+execStep("앞으로의 일정 적재", "load", [
   "packages/store/tools/load-upcoming.ts",
   values.archive,
   values.db,
   upcomingSeason,
-]) === 0 ? 0 : 1;
+]);
 
-// 5. 予告先発 — 하루 1요청. ⚠거르면 그날 예고는 영영 못 받는다(페이지가 하루치만 보여준다)
-failures += run("予告先発 아카이브", [
-  "packages/archiver/src/cli-starters.ts",
-  "--out", values.archive,
-  "--contact", contact,
-  "--delay", values.delay,
-]) === 0 ? 0 : 1;
-failures += run("予告先発 적재", [
+// 5. 予告先発 적재 — 받기는 맨 앞(0)에서 했다
+execStep("予告先発 적재", "load", [
   "packages/store/tools/load-starters.ts",
   values.archive,
   values.db,
-]) === 0 ? 0 : 1;
+]);
 
-// 6. 신선도 보고
-console.log(`\n── 신선도 ──`);
-const freshness = spawnSync(
-  process.execPath,
-  ["scripts/freshness.ts", values.db, values["stale-days"]!],
-  { cwd: ROOT, stdio: "inherit" },
+/**
+ * 6. 신선도 보고 — 사유 파일(`--reasons-out`)로 **어느 감시가 울었는지**를 받는다(설계 D5 · 4차-3).
+ * ⚠spawn **전에** 그 파일을 지운다 — 이전 실행의 파일을 이번 판정에 쓰지 않는다(`collect-steps.ts` 의 `freshnessStep`).
+ */
+const fresh = freshnessStep("신선도", ["scripts/freshness.ts", values.db, values["stale-days"]!], join(WORK, "freshness-reasons.json"));
+
+/**
+ * 7. 판정(`run-verdict.ts` R1~R5) — 마지막 줄이 `blocking N · 상류 M · 설명된 신선도 K` 를 가른다.
+ * ⚠예전 `⚠실패 단계 N건` 은 받기 실패 8건과 신선도 1건을 한 숫자로 섞었다(설계 §1 · 실행 40044974431).
+ */
+const verdict = classifyRun(steps, fresh);
+for (const b of verdict.blocking) console.error(`  · blocking: ${b}`);
+for (const u of verdict.upstream) console.error(`  · 상류: ${u}`);
+for (const e of verdict.explained) console.error(`  · 설명된 신선도(상류 장애): ${e}`);
+const tally = `blocking ${verdict.blocking.length} · 상류 ${verdict.upstream.length} · 설명된 신선도 ${verdict.explained.length}`;
+console.log(
+  `\n${verdict.exit === 0 ? "정상 종료" : verdict.exit === 1 ? "⚠막는 실패가 있다" : "⚠받기 실패만 있었다(이미 받은 데이터로 배포할 수 있다)"} — ${tally} · 종료 ${verdict.exit}`,
 );
-if (freshness.status !== 0) failures += 1;
-
-console.log(`\n${failures === 0 ? "정상 종료" : `⚠실패 단계 ${failures}건`}`);
-process.exitCode = failures > 0 ? 1 : 0;
+process.exitCode = verdict.exit;

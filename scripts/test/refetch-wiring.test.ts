@@ -118,9 +118,10 @@ test("⚠14b update.ts 는 BB_REFETCH_DATES 를 검증 함수로 읽고 · 틀�
   assert.equal(calls.length, 1, `parseRefetchDates(process.env["BB_REFETCH_DATES"]) 호출이 ${calls.length}곳이다(1곳이어야 한다)`);
   const invalid = topBlock("if (!refetch.ok) {");
   assert.match(invalid, /process\.exit\(2\)/, "틀린 BB_REFETCH_DATES 에서 종료 2 로 멈추지 않는다 — 틀린 입력으로 수집이 돈다");
-  const firstRun = UPDATE.indexOf("run(`");
-  assert.notEqual(firstRun, -1, "수집 단계(run)를 못 찾았다 — 이 순서 검사가 공회전한다");
-  assert.ok(firstRun > UPDATE.indexOf("if (!refetch.ok) {"), "검증이 첫 수집(run) 뒤에 있다 — 틀린 입력으로 일부를 받은 뒤에 멈춘다");
+  // ⚠2026-10-24 부터 자식은 전부 `execStep(` 을 지나고 첫 자식은 予告先発이다(설계 `2026-10-24-collection-resilience-design.md` D4-4 · D5)
+  const firstRun = UPDATE.indexOf("execStep(");
+  assert.notEqual(firstRun, -1, "수집 단계(execStep)를 못 찾았다 — 이 순서 검사가 공회전한다");
+  assert.ok(firstRun > UPDATE.indexOf("if (!refetch.ok) {"), "검증이 첫 수집(execStep) 뒤에 있다 — 틀린 입력으로 일부를 받은 뒤에 멈춘다");
 });
 
 test("⚠14c 재수집 날짜가 수집 창을 대신한다(`refetch.dates ??`) · --date · --today 와 같이 주면 각각 종료 2", () => {
@@ -142,7 +143,7 @@ test("⚠14d 재수집이면 앞으로의 일정 시즌은 jstDate(now) 의 해 
     /const upcomingSeason = refetch\.dates !== null \? jstDate\(now\)\.slice\(0, 4\) :\s*dates\[dates\.length - 1\]!\.slice\(0, 4\);/,
     "재수집 갈래가 JST 올해를 쓰지 않는다 — 작년 날짜를 재수집하면 올해 일정을 건너뛴다",
   );
-  const at = UPDATE.indexOf('run("앞으로의 일정 적재", [');
+  const at = UPDATE.indexOf('execStep("앞으로의 일정 적재", "load", [');
   assert.notEqual(at, -1, "앞으로의 일정 적재 단계를 못 찾았다");
   const args = UPDATE.slice(at, UPDATE.indexOf("])", at));
   assert.match(args, /\bupcomingSeason\b/, "load-upcoming 에 upcomingSeason 이 안 간다");
