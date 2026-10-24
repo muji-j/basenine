@@ -6,10 +6,13 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openDb, upsertGame, upsertProbablePitcher } from "../src/index.ts";
+import { fileURLToPath } from "node:url";
+import { collectionVerdict } from "@bb-app/domain";
+import { ensurePlayer, openDb, upsertGame, upsertPitching, upsertProbablePitcher } from "../src/index.ts";
 import type { Db } from "../src/index.ts";
 import { collectionEvidence } from "../src/collection-evidence.ts";
 
@@ -169,3 +172,97 @@ test("빈 DB — 경기도 기록도 없다", () => withDb((db) => {
   assert.equal(e.careerPlayers, 0);
   assert.deepEqual([e.playedWithoutGame.length, e.announcedWithoutGame.length], [0, 0]);
 }));
+
+/**
+ * ⚠⚠**통산 「받았다」 — 통산 표가 없는 페이지는 프로필 취득 시각으로 받았다**(2026-10-24 · 사용자 결정 A).
+ *
+ * 年度別成績 은 **정규시즌만** 싣는다. 1군 출장이 포스트시즌뿐인 선수는 페이지를 받아도 통산 행이 0 이라, 「받았다」를 통산 행의
+ * `fetched_at` 으로만 재면 **영원히 못 받은 선수**다. 첫 실물: 2026 CS ファイナル 3차전(10-16)에만 나온 투수 —
+ * `career-lag` 이 10-20 부터 수집 잡을 매일 실패시켜 배포가 막혔다(재취득 선정도 그를 매 실행 다시 받았다).
+ * ⚠**행으로 재현한다** — 마이그레이션을 적용한 임시 DB. 판정은 감시와 같은 함수(`collectionVerdict` · 유예 2)로 본다.
+ */
+const CAREER_TODAY = "2026-10-24";
+const MONITOR = { grace: 2, backstopMargin: 0 };
+
+/** 치러진 경기에 `playerId` 가 한 번 던졌다 */
+function pitchedIn(db: Db, gameId: string, date: string, playerId: string, competition: string): void {
+  upsertGame(db, {
+    gameId, season: Number(date.slice(0, 4)), gameDate: date, awayCode: "f", homeCode: "h", gameNo: 1,
+    status: "played", notPlayedReason: null, competition, sourceUrl: "https://npb.jp/x", fetchedAt: NOW, awayRuns: 1, homeRuns: 2,
+  });
+  ensurePlayer(db, playerId, playerId, NOW);
+  upsertPitching(db, {
+    gameId, playerId, side: "away", decision: null,
+    outs: 3, bf: 4, pitches: 15, h: 1, hr: 0, bb: 0, hbp: 0, so: 1, runs: 0, er: 0, wp: 0, balk: 0,
+  });
+}
+/** 통산 투구 행 한 줄. `fetchedAt === null` 은 「모름」 */
+function careerRow(db: Db, playerId: string, fetchedAt: string | null): void {
+  db.raw.prepare(
+    `INSERT INTO career_pitching (player_id, year, team, games, w, l, sv, hld, hp, cg, sho, nbb, bf, outs,
+       h, hr, bb, hbp, so, wp, balk, runs, er, source, fetched_at, seq)
+     VALUES (?, 2026, '日本ハム', 1, 0, 0, 0, 0, 0, 0, 0, 0, 4, 3, 1, 0, 0, 0, 1, 0, 0, 0, 0, 'npb', ?, 0)`,
+  ).run(playerId, fetchedAt);
+}
+const profileAt = (db: Db, playerId: string, fetchedAt: string | null): void => {
+  db.raw.prepare("UPDATE player SET profile_fetched_at = ? WHERE player_id = ?").run(fetchedAt, playerId);
+};
+/**
+ * 공통 무대: 정규시즌 투수 `REG` 는 통산 행을 갖고 최신이다(통산 감시를 켠다 — 대상 0명이면 안 잰다).
+ * `CSONLY` 는 **CS 1경기(10-16)에만** 나왔고 통산 행이 **0** 이다(年度別成績 은 정규시즌만 싣는다).
+ */
+function stage(db: Db, csProfileAt: string | null): void {
+  pitchedIn(db, "c-reg", "2026-10-08", "REG", "regular");
+  careerRow(db, "REG", "2026-10-21T09:00:00.000Z"); // JST 10-21 — 마지막 출장(10-08) 뒤
+  profileAt(db, "REG", "2026-10-21T09:00:00.000Z");
+  pitchedIn(db, "c-cs", "2026-10-16", "CSONLY", "climaxSeries");
+  profileAt(db, "CSONLY", csProfileAt);
+}
+
+test("⚠⚠통산 행이 0 인 CS 출장자 — 프로필을 출장 뒤에 받았으면 받았다 · career-lag 이 안 운다", () => withDb((db) => {
+  stage(db, "2026-10-21T09:52:27.518Z"); // JST 10-21 — CS 출장(10-16) 뒤(실물의 시각)
+  const e = collectionEvidence(db, CAREER_TODAY);
+  assert.equal(e.careerPlayers, 1, "전제가 틀렸다 — 통산 감시 대상이 0 이면 판정이 꺼진다");
+  assert.equal(e.careerStalestPlayed, null, "통산 표가 없는 페이지를 받았는데 「아직 못 받았다」로 셌다 — 영원히 운다");
+  assert.ok(!collectionVerdict(e, MONITOR).reasons.includes("career-lag"), "career-lag 이 헛되이 울었다 — 수집 잡이 매일 실패한다");
+}));
+
+test("⚠통산 행이 0 인 CS 출장자 — 프로필을 출장 전에 받았으면 아직 못 받았다 · 지금처럼 운다", () => withDb((db) => {
+  stage(db, "2026-10-15T03:00:00.000Z"); // JST 10-15 — CS 출장(10-16) 전
+  const e = collectionEvidence(db, CAREER_TODAY);
+  assert.equal(e.careerStalestPlayed, "2026-10-16");
+  assert.ok(collectionVerdict(e, MONITOR).reasons.includes("career-lag"), "출장 뒤에 안 받은 선수를 받았다고 봤다");
+}));
+
+test("⚠통산 행이 0 이고 프로필 시각도 모르면 못 받았다 — 모름을 받음으로 읽지 않는다(M11)", () => withDb((db) => {
+  stage(db, null);
+  assert.equal(collectionEvidence(db, CAREER_TODAY).careerStalestPlayed, "2026-10-16");
+}));
+
+/**
+ * ⚠**통산 행이 있는데 그 시각을 모르면 프로필 시각으로 메우지 않는다**(M11 · 2026-10-24).
+ * 두 시각은 적재가 한 값으로 쓰므로 보통 같다(실측 CI 사본 1,651명 중 갈리는 선수 0명). 갈리는 것은 통산만 실패한(C8) 뒤뿐이고,
+ * 그때 통산 행은 **옛 판**이다 — 프로필 시각을 빌리면 옛 통산을 「받았다」고 거짓말한다.
+ */
+test("⚠통산 행이 있는데 시각을 모르면 프로필을 받았어도 못 받았다 — 프로필 시각을 빌리지 않는다(M11)", () => withDb((db) => {
+  stage(db, "2026-10-21T09:52:27.518Z");
+  pitchedIn(db, "c-unk", "2026-10-09", "UNK", "regular");
+  careerRow(db, "UNK", null);
+  profileAt(db, "UNK", "2026-10-21T09:00:00.000Z");
+  const e = collectionEvidence(db, CAREER_TODAY);
+  assert.equal(e.careerUnknown, 1);
+  assert.equal(e.careerStalestPlayed, "2026-10-09", "통산 행의 「모름」을 프로필 시각으로 메웠다");
+}));
+
+/**
+ * ⚠**규칙은 한 벌이다**(M1) — 감시와 재취득 선정(`tools/emit-stale-player-ids.ts`)이 같은 「받았다」(`src/career-received.ts`)와
+ * 같은 창(`src/refetch-window.ts`)을 쓴다. 한쪽만 고치면 「감시는 운다 · 선정은 안 뽑는다」(또는 그 반대)가 된다 —
+ * 이번 결함이 바로 그 둘이 **같이** 틀린 모양이었다.
+ */
+test("⚠감시의 통산 SQL 이 「받았다」·창 조각을 한 벌로 쓴다 — 사본이 없다", () => {
+  const src = readFileSync(fileURLToPath(new URL("../src/collection-evidence.ts", import.meta.url)), "utf8");
+  assert.match(src, /\$\{CAREER_RECEIVED_CTES\}/, "감시가 「받았다」 조각(career-received.ts)을 안 쓴다 — 규칙이 두 벌이 됐다");
+  assert.match(src, /\$\{REFETCH_WINDOW_CTES\}/, "감시가 창 조각(refetch-window.ts)을 안 쓴다 — 창이 두 벌이 됐다");
+  assert.doesNotMatch(src, /fetched_at\s+FROM\s+career_(batting|pitching)/, "감시에 「받았다」(통산 취득 시각) SQL 사본이 남았다");
+  assert.doesNotMatch(src, /'-400 days'/, "감시에 창(400일 선) 사본이 남았다");
+});
