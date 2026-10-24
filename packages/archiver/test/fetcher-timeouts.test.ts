@@ -182,9 +182,12 @@ test("⚠T4 3홉 리디렉션 — 마지막 홉이 멈추면 그 홉의 헤더 �
 
 /**
  * ⚠**프로세스가 끝난다**(설계 T4) — 시간 초과 뒤에 Agent 의 소켓·타이머가 이벤트 루프를 붙들면 CLI 가 안 끝나고
- * 단계 걸쇠(30분)가 죽일 때까지 매달린다. 자식 프로세스로 띄워 4초 안에 **스스로** 끝나는지 본다(`process.exit` 없이).
+ * 단계 걸쇠(30분)가 죽일 때까지 매달린다. 자식 프로세스로 띄워 **스스로** 끝나는지 본다(`process.exit` 없이).
+ * ⚠⚠**잴 것은 「오류 뒤에 얼마나 남아 있는가」다 — 자식 안에서 잰다**(2026-10-24 · 3중 검토 반영 중 실측). 처음에는 자식 전체의 벽시계를
+ *   4초 걸쇠로 쟀는데, 전체 시험을 병렬로 돌리면 시동·가져오기가 느려져 **2/2 회 ETIMEDOUT** 이었다(단독 3/3 · 1.37초). 자식 안 실측은
+ *   오류 → 종료 **1ms**(3/3)였다 — 붙드는 것이 없다. 그래서 오류 뒤 남은 시간을 1초 상한으로 재고, 매달림은 15초 걸쇠가 잡는다.
  */
-test("⚠T4 헤더 시간 초과 뒤 프로세스가 4초 안에 스스로 끝난다", { timeout: 15_000 }, () => {
+test("⚠T4 헤더 시간 초과 뒤 프로세스가 스스로 끝난다 — 오류 뒤 1초 안(자식 안에서 잰다) · 매달리면 15초 걸쇠", { timeout: 30_000 }, () => {
   const script = [
     `import { createServer } from "node:http";`,
     `const { PoliteFetcher, createDefaultFetchImpl } = await import(${JSON.stringify(pathToFileURL(FETCHER).href)});`,
@@ -192,12 +195,18 @@ test("⚠T4 헤더 시간 초과 뒤 프로세스가 4초 안에 스스로 끝�
     `await new Promise((r) => server.listen(0, "127.0.0.1", r));`,
     `const { port } = server.address();`,
     `const f = new PoliteFetcher({ userAgent: "bb-test", maxRetries: 0, clock: { now: () => new Date(0) }, sleep: async () => {}, fetchImpl: createDefaultFetchImpl({ connectMs: 1000, headersMs: 300, bodyMs: 1000 }) });`,
-    `try { await f.get("http://127.0.0.1:" + port + "/hang"); console.log("no-error"); } catch (e) { console.log("kind=" + e.kind); }`,
+    `let caughtAt = null;`,
+    `try { await f.get("http://127.0.0.1:" + port + "/hang"); console.log("no-error"); } catch (e) { caughtAt = performance.now(); console.log("kind=" + e.kind); }`,
     `server.closeAllConnections(); server.close();`,
+    // 이벤트 루프가 비어 저절로 끝날 때 부른다 — 무언가가 붙들면 그만큼 늦게 불린다
+    `process.on("exit", () => { console.log("linger=" + (caughtAt === null ? "none" : String(Math.round(performance.now() - caughtAt)))); });`,
   ].join("\n");
-  const r = spawnSync(process.execPath, ["--input-type=module", "-e", script], { encoding: "utf8", timeout: 4000 });
-  assert.equal(r.error, undefined, `4초 안에 안 끝났다(또는 못 띄웠다): ${String(r.error)}`);
+  const r = spawnSync(process.execPath, ["--input-type=module", "-e", script], { encoding: "utf8", timeout: 15_000 });
+  assert.equal(r.error, undefined, `15초 안에 안 끝났다(또는 못 띄웠다) — 무언가가 이벤트 루프를 붙든다: ${String(r.error)}`);
   assert.equal(r.signal, null, "시간 제한으로 죽었다 — 무언가가 이벤트 루프를 붙든다");
   assert.equal(r.status, 0, r.stderr);
+  const linger = /^linger=(\d+)$/m.exec(r.stdout);
+  assert.ok(linger !== null, `오류 뒤 시간을 못 읽었다: ${r.stdout}`);
+  assert.ok(Number(linger[1]) <= 1000, `오류 뒤 ${linger[1]}ms 동안 프로세스가 남았다 — 소켓·타이머가 이벤트 루프를 붙든다`);
   assert.match(r.stdout, /kind=headers-timeout/, r.stdout + r.stderr);
 });
