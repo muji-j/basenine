@@ -4,8 +4,9 @@
  *
  *   node packages/archiver/src/cli-starters.ts --contact <닿는-연락처>
  *
- * **종료 코드**(설계 `docs/superpowers/specs/2026-10-24-collection-resilience-design.md` D1): 0 성공 · **75 상류 받기 실패** ·
- * 1 local(쓰기 실패 등)·미분류 · 2 입력이 틀렸다(요청 0).
+ * **종료 코드**(설계 `docs/superpowers/specs/2026-10-24-collection-resilience-design.md` D1 · D4 — 회로가 열렸는가로 가른다): 0 성공 ·
+ * **75 상류 받기 실패 · 회로 닫힘**(부모 계속) · **69 상류 · 회로 열림**(부모가 뒤 받기를 멈춘다 — 요청 1 이라 연속 한도 1 일 때만) ·
+ * 1 local(쓰기 실패·전송 전 로컬 고장 등)·미분류 · **70 local · 회로 열림** · 2 입력이 틀렸다(요청 0).
  * ⚠`scripts/update.ts` 는 이것을 **받기의 맨 앞**에서 부른다(설계 D4-4) — 거르면 영영 못 받는 유일한 요청이라서다.
  */
 import { parseArgs } from "node:util";
@@ -99,13 +100,20 @@ export async function runStartersCli(argv: readonly string[], env: Readonly<Reco
     ...(io.sleep !== undefined ? { sleep: io.sleep } : {}),
   });
 
-  const result = await archiveStarters(jstDate, { fetcher, sink: io.sink ?? new LocalSink(values.out), clock });
+  let result: Awaited<ReturnType<typeof archiveStarters>>;
+  try {
+    result = await archiveStarters(jstDate, { fetcher, sink: io.sink ?? new LocalSink(values.out), clock });
+  } catch (err) {
+    // ⚠**던져서 끝나는 local**(사이드카를 못 읽음 등) — 회로 상태로 1/70 을 고른다(설계 D4)
+    log(`⚠중단 — ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
+    return exitCodeFor([{ error: errorText(err), errorKind: "local" }], fetcher.circuit.isOpen);
+  }
 
   out(`予告先発 ${jstDate}: ${result.outcome}${result.status === null ? "" : ` (${result.status})`}`);
   if (result.error !== null) log(`  ⚠${result.error}`);
   log(`  ${firstSuccessNote(fetcher.firstSuccess)}`);
-  // 취득 실패는 그날 예고를 영영 못 받는다는 뜻이다 — 조용히 성공으로 끝내지 않는다(상류 실패면 75 · 그 밖은 1)
-  return exitCodeFor([result]);
+  // 취득 실패는 그날 예고를 영영 못 받는다는 뜻이다 — 조용히 성공으로 끝내지 않는다(상류 실패면 75/69 · 그 밖은 1/70)
+  return exitCodeFor([result], fetcher.circuit.isOpen);
 }
 
 /** **파일로 실행될 때만** 진입한다 — import 만으로는 아무것도 하지 않는다(`cli.ts` 와 같은 방식) */

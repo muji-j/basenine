@@ -3,10 +3,13 @@
  *
  * ⚠**왜 있는가**: 2026-10-21 장애 중에도 평소 경로는 하루 약 250~340시도를 보냈다 — 회로가 정정 경로(`refetch-games.ts`)에만 있었다.
  *   실행 하나(`40044974431`)가 14 URL × 4시도 = 56시도를 22분 동안 두드렸다.
- * ⚠**상태 파일이 없다 — 프로세스 안에서만 센다.** 프로세스 사이는 부모(`scripts/update.ts`)가 「받기 자식이 75 면 그 뒤 받기 자식을
- *   띄우지 않는다」로 막는다. 그래서 한 실행의 소진(`UpstreamError` 로 끝난 `get()`) ≤ 6 이다(설계 D4-3).
+ * ⚠**상태 파일이 없다 — 프로세스 안에서만 센다.** 프로세스 사이는 부모(`scripts/collect-steps.ts`)가 자식의 종료 코드로 잇는다:
+ *   회로가 **열린 채** 끝난 자식(69 · 70)이 있으면 그 뒤 받기 자식을 띄우지 않고, 실패가 있었지만 **닫힌 채** 끝난 자식(75 · 1) 뒤의 받기 자식은
+ *   연속 한도 1 로 띄운다. 그래서 한 실행의 소진(`UpstreamError` 로 끝난 `get()`) ≤ 6 이다(설계 D4-3 · 2026-10-24 3중 검토 반영).
  * ⚠**세는 곳은 fetcher 한 곳이다**(`PoliteFetcher.getUnqueued`) — 404·410 을 뺀 모든 비성공이 연속 +1 · 합계 +1 이다(4차-2).
- *   성공(404·410 포함)은 **연속만** 리셋한다. 401·403·451 은 그 한 번에 열린다(거절의 신호 — 더 두드리지 않는다).
+ *   성공(404·410 포함)은 **연속만** 리셋한다. ⚠**401·403·451 도 +1 일 뿐이다** — 「한 번에 열림」은 없앴다(3중 검토 2차 F1):
+ *   한 페이지만의 거절(자원 단위)이 형제 받기를 막았다. 의도적 차단이면 모든 페이지가 같은 응답이라 연속 3(재시도 슬롯 1)에서 곧 열린다.
+ * ⚠**로컬 오류(`FetchLocalError`)는 세지 않는다** — 상대 탓이 아니다(설계 D1 ⑶).
  * ⚠**한 번 열리면 프로세스가 끝날 때까지 닫히지 않는다** — 반쯤 열기(시간이 지나면 다시 시도)는 없다. 다음 실행이 다시 연다.
  */
 import type { Clock } from "./clock.ts";
@@ -15,8 +18,6 @@ import type { Clock } from "./clock.ts";
 export const CIRCUIT_CONSECUTIVE_DEFAULT = 3;
 /** 합계 소진 한도 — 간헐 장애(소진과 성공이 번갈아)에도 요청 수의 상한이 서게 한다 */
 export const CIRCUIT_TOTAL_LIMIT = 6;
-/** 한 번에 여는 상태 — 인증·금지·법적 거절. 의도적 차단의 정황이라 더 두드리지 않는다(설계 D3 · 우회하지 않는다) */
-export const CIRCUIT_IMMEDIATE_STATUSES: ReadonlySet<number> = new Set([401, 403, 451]);
 /** 연속 한도를 주는 env — 받기 자식 셋만 읽는다(정정 경로·연 1회 도구는 기본값) */
 export const CIRCUIT_ENV = "BB_NPB_CIRCUIT_N";
 
@@ -32,7 +33,7 @@ export function parseCircuitN(raw: string | undefined): number | null {
 }
 
 /** 열린 계기 */
-export type CircuitOpenReason = "consecutive" | "total" | `immediate-${number}`;
+export type CircuitOpenReason = "consecutive" | "total";
 
 export interface CircuitSnapshot {
   readonly consecutive: number;
@@ -82,13 +83,12 @@ export class HostCircuit {
     this.consecutive = 0;
   }
 
-  /** 비성공 하나(`UpstreamError` 로 끝난 `get()`) — `status` 는 마지막 HTTP 상태(응답이 없었으면 `null`) */
-  failure(status: number | null): void {
+  /** 비성공 하나(`UpstreamError` 로 끝난 `get()`) — 상태가 무엇이든(401·403·451 포함) 연속 +1 · 합계 +1 이다 */
+  failure(): void {
     this.consecutive += 1;
     this.total += 1;
     if (this.isOpen) return;
-    if (status !== null && CIRCUIT_IMMEDIATE_STATUSES.has(status)) this.open(`immediate-${status}`);
-    else if (this.consecutive >= this.limit) this.open("consecutive");
+    if (this.consecutive >= this.limit) this.open("consecutive");
     else if (this.total >= CIRCUIT_TOTAL_LIMIT) this.open("total");
   }
 

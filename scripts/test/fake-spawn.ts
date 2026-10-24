@@ -11,7 +11,8 @@
  * - `BB_FAKE_SPAWN_PLAN` — `{ "<스크립트 경로>": { exit?: number|null, signal?: string, stdout?: string, stderr?: string, reasonsFile?: string } }`.
  *   `exit: null` 은 「신호로 죽었다」(`status: null`)다. 계획에 없는 스크립트는 종료 0 · 빈 출력.
  *   `reasonsFile` 이 있으면 `--reasons-out <경로>` 에 그 글자를 그대로 쓴다(신선도 자식 흉내).
- * - `BB_FAKE_SPAWN_LOG` — 부른 차례대로 `{ script, args }` 를 한 줄씩 덧붙인다.
+ * - `BB_FAKE_SPAWN_LOG` — 부른 차례대로 `{ script, args, circuitN }` 를 한 줄씩 덧붙인다. `circuitN` 은 그 자식이 받은
+ *   `BB_NPB_CIRCUIT_N`(부모가 `env` 로 넘긴 것 · 안 넘겼으면 물려받은 값 · 없으면 `null`) — 「닫힌 채 실패한 자식 뒤는 연속 한도 1」을 잰다.
  */
 import cp from "node:child_process";
 import { appendFileSync, writeFileSync } from "node:fs";
@@ -28,9 +29,10 @@ interface Planned {
 const plan = JSON.parse(process.env["BB_FAKE_SPAWN_PLAN"] ?? "{}") as Record<string, Planned>;
 const logPath = process.env["BB_FAKE_SPAWN_LOG"];
 
-function fakeSpawnSync(_cmd: string, args: readonly string[] = [], opts: { encoding?: string } = {}) {
+function fakeSpawnSync(_cmd: string, args: readonly string[] = [], opts: { encoding?: string; env?: Record<string, string | undefined> } = {}) {
   const script = args[0] ?? "";
-  if (logPath !== undefined) appendFileSync(logPath, `${JSON.stringify({ script, args })}\n`);
+  const circuitN = (opts.env ?? process.env)["BB_NPB_CIRCUIT_N"] ?? null;
+  if (logPath !== undefined) appendFileSync(logPath, `${JSON.stringify({ script, args, circuitN })}\n`);
   const p = plan[script] ?? {};
   if (p.reasonsFile !== undefined) {
     const at = args.indexOf("--reasons-out");

@@ -9,19 +9,24 @@
  * | 규칙 | 조건 | 결과 |
  * |---|---|---|
  * | R1 | 적재·emit 의 종료 ≠ 0 | blocking |
- * | R2 | 받기의 종료 ∉ {0, 75} | blocking |
- * | R3 | 받기의 종료 = 75(건너뛴 합성 step 포함) | upstream |
+ * | R2 | 받기의 종료 ∉ {0, 75, 69}(1 · 70 · 2 · 신호 → 1 · 모르는 종료로 건너뛴 합성 step) | blocking |
+ * | R3 | 받기의 종료 ∈ {75, 69}(69 = 회로 열림 · 회로 열림으로 건너뛴 합성 step 포함) | upstream |
  * | R4 | 신선도: 0 → 파일 불필요 · ≠ 0 → 사유 파일 계약으로 읽는다(읽기 실패 · `no-games` → blocking · 그 밖은 upstream 이 1건 이상이면 explained, 아니면 blocking) | |
  * | R5 | blocking ≥ 1 → **1** · 아니면 upstream ∪ explained ≥ 1 → **75** · 아니면 **0** | |
  *
  * ⚠**대가**: 상류 실패와 수집 결함이 같은 실행에 겹치면 결함은 한 실행 늦게 드러난다 — 실행은 붉고 배포되는 것은 검증된 옛 데이터라
  *   지연이지 오염이 아니다(설계 D5).
  */
-import { EXIT_UPSTREAM_ONLY } from "../packages/archiver/src/upstream.ts";
+import { EXIT_LOCAL_CIRCUIT_OPEN, EXIT_UPSTREAM_CIRCUIT_OPEN, EXIT_UPSTREAM_ONLY } from "../packages/archiver/src/upstream.ts";
 import { STALE_REASON_KEYS } from "../packages/domain/src/collection-verdict.ts";
 import type { StaleReason } from "../packages/domain/src/collection-verdict.ts";
 
-export { EXIT_UPSTREAM_ONLY };
+export { EXIT_LOCAL_CIRCUIT_OPEN, EXIT_UPSTREAM_CIRCUIT_OPEN, EXIT_UPSTREAM_ONLY };
+
+/** 받기 자식의 「상류 실패만」 — 회로 닫힘(75)과 열림(69) · 실행 판정에서는 같다(설계 D4 · D5) */
+function isUpstreamOnlyExit(exit: number): boolean {
+  return exit === EXIT_UPSTREAM_ONLY || exit === EXIT_UPSTREAM_CIRCUIT_OPEN;
+}
 
 /** 자식의 갈래 — 받기(npb.jp) · 적재 · 목록 만들기 · 신선도 */
 export type StepGroup = "fetch" | "load" | "emit" | "freshness";
@@ -31,7 +36,10 @@ export interface StepRecord {
   readonly id: string;
   readonly group: StepGroup;
   readonly exit: number;
-  /** 부모가 띄우지 않고 합성한 step(앞선 받기가 75 — 설계 D4-2) */
+  /**
+   * 부모가 띄우지 않고 합성한 step(설계 D4) — 앞선 받기가 회로를 연 채(69·70) 끝났으면 종료 69(상류) ·
+   * 종료를 모르게 끝났으면(2 · 신호 등) 종료 1(blocking)로 남긴다.
+   */
   readonly skipped?: boolean;
 }
 
@@ -105,8 +113,8 @@ export function classifyRun(steps: readonly StepRecord[], fresh: FreshReasons | 
     if (s.group === "load" || s.group === "emit") {
       if (s.exit !== 0) blocking.push(`${s.id} — 종료 ${String(s.exit)}`); // R1
     } else if (s.group === "fetch") {
-      if (s.exit === EXIT_UPSTREAM_ONLY) upstream.push(s.id); // R3
-      else if (s.exit !== 0) blocking.push(`${s.id} — 종료 ${String(s.exit)}`); // R2
+      if (isUpstreamOnlyExit(s.exit)) upstream.push(s.id); // R3
+      else if (s.exit !== 0) blocking.push(s.skipped === true ? `${s.id} — 건너뜀(앞선 받기의 종료를 몰라 멈췄다)` : `${s.id} — 종료 ${String(s.exit)}`); // R2
     }
   }
   const explained: string[] = [];

@@ -12,14 +12,17 @@ import { errors as undiciErrors } from "undici";
 import { MonthlyScheduleCache, archiveDates, archiveUrl, isDayError } from "../src/archive.ts";
 import type { DayError, DayResult, PageResult } from "../src/archive.ts";
 import { HostCircuit } from "../src/circuit.ts";
-import { PoliteFetcher } from "../src/fetcher.ts";
+import { PoliteFetcher, buildUserAgent, createDefaultFetchImpl } from "../src/fetcher.ts";
 import type { FetchImpl } from "../src/fetcher.ts";
 import { archivePlayer } from "../src/players.ts";
 import { MemorySink } from "../src/sink.ts";
 import type { BlobMeta } from "../src/sink.ts";
 import { archiveStarters } from "../src/starters.ts";
 import {
+  EXIT_LOCAL_CIRCUIT_OPEN,
+  EXIT_UPSTREAM_CIRCUIT_OPEN,
   EXIT_UPSTREAM_ONLY,
+  FetchLocalError,
   MESSAGE_CUT,
   MESSAGE_MAX,
   ScheduleAbsentError,
@@ -28,6 +31,7 @@ import {
   errorKindOf,
   exitCodeFor,
   fitMessage,
+  isUpstreamCause,
   upstreamMessage,
 } from "../src/upstream.ts";
 
@@ -50,11 +54,12 @@ function harness() {
   };
 }
 
-/** 가짜 응답 한 벌 */
+/** 가짜 응답 한 벌 — `bodyError` 가 있으면 본문 읽기가 그것을 던진다(헤더 뒤 끊김) */
 interface Fake {
   status: number;
   body?: string;
   location?: string;
+  bodyError?: Error;
 }
 
 function respond(f: Fake) {
@@ -62,7 +67,10 @@ function respond(f: Fake) {
   return {
     status: f.status,
     headers: { get: (n: string) => (n.toLowerCase() === "location" ? (f.location ?? null) : null) },
-    arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
+    arrayBuffer: async () => {
+      if (f.bodyError !== undefined) throw f.bodyError;
+      return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+    },
   };
 }
 
@@ -99,7 +107,48 @@ const coded = (code: string, message = `${code}(주입)`): Error => Object.assig
 
 // ---- T1 · classifyFetchCause(설계 D1 의 kind 매핑 표) ------------------------
 
-test("⚠T1 classifyFetchCause — HTTP 응답이 있으면 http-<status> · 코드 표 · 모르는 코드는 network · AggregateError 는 첫 원소", () => {
+/**
+ * ⚠⚠**로컬 오류를 상류로 분류하지 않는다**(2026-10-24 · 3중 검토 반영 · 설계 D1 ⑶). 예전에는 「모르는 것 → network」라
+ * `cause` 없는 `TypeError`(헤더 검증 실패 등 우리 쪽 고장)도 4번 재시도한 뒤 상류 실패(75)가 되어 **배포가 열렸다.**
+ * 이제 **HTTP 응답이 있었거나 `cause` 사슬에 알려진 네트워크 코드가 있을 때만** 상류다 — 목록은 `upstream.ts` 한 곳이다.
+ */
+test("⚠⚠T1 isUpstreamCause — 알려진 네트워크 코드·시간 초과만 상류 · cause 없는 TypeError·RangeError·ERR_INVALID_URL·모르는 코드는 로컬", () => {
+  const upstream: [string, unknown][] = [
+    ["연결 시간 초과", connectTimeout()],
+    ["헤더 시간 초과", headersTimeout()],
+    ["본문 시간 초과", bodyTimeout()],
+    ["UND_ERR_SOCKET", new TypeError("fetch failed", { cause: coded("UND_ERR_SOCKET") })],
+    ["ECONNRESET(직접)", coded("ECONNRESET")],
+    ["ECONNREFUSED(cause)", new TypeError("fetch failed", { cause: coded("ECONNREFUSED") })],
+    ["ECONNABORTED", coded("ECONNABORTED")],
+    ["ENOTFOUND", coded("ENOTFOUND")],
+    ["EAI_AGAIN", coded("EAI_AGAIN")],
+    ["ETIMEDOUT", coded("ETIMEDOUT")],
+    ["EPIPE", coded("EPIPE")],
+    ["EHOSTUNREACH", coded("EHOSTUNREACH")],
+    ["ENETUNREACH", coded("ENETUNREACH")],
+    ["EPROTO", coded("EPROTO")],
+    ["ERR_SSL_*", coded("ERR_SSL_WRONG_VERSION_NUMBER")],
+    ["AggregateError 의 첫 원소", new TypeError("fetch failed", { cause: new AggregateError([coded("ECONNREFUSED"), coded("ENETUNREACH")]) })],
+    // 정정 경로의 전송 시간 상한(AbortSignal.timeout) — 이름으로 온다
+    ["DOMException(TimeoutError)", new DOMException("시간 초과", "TimeoutError")],
+    ["DOMException(AbortError)", new DOMException("끊김", "AbortError")],
+  ];
+  const local: [string, unknown][] = [
+    ["cause 없는 TypeError", new TypeError("Headers.append: invalid header value")],
+    ["cause 없는 RangeError", new RangeError("x")],
+    ["ERR_INVALID_URL", Object.assign(new TypeError("Invalid URL"), { code: "ERR_INVALID_URL" })],
+    ["모르는 코드", coded("E_SOMETHING_NEW")],
+    ["undici 의 인자 오류(UND_ERR_INVALID_ARG)", new TypeError("fetch failed", { cause: coded("UND_ERR_INVALID_ARG") })],
+    ["인증서 오류(목록 밖 — 막는 쪽)", coded("CERT_HAS_EXPIRED")],
+    ["문자열", "boom"],
+    ["null", null],
+  ];
+  for (const [name, err] of upstream) assert.equal(isUpstreamCause(err), true, `${name} 를 상류로 안 봤다`);
+  for (const [name, err] of local) assert.equal(isUpstreamCause(err), false, `${name} 를 상류로 봤다 — 로컬 고장이 배포를 연다`);
+});
+
+test("⚠T1 classifyFetchCause — HTTP 응답이 있으면 http-<status> · 코드 표 · AggregateError 는 첫 원소", () => {
   const rows: [string, Parameters<typeof classifyFetchCause>[0], string, string][] = [
     ["HTTP 503", { status: 503 }, "http-503", "503"],
     ["HTTP 403", { status: 403 }, "http-403", "403"],
@@ -114,8 +163,6 @@ test("⚠T1 classifyFetchCause — HTTP 응답이 있으면 http-<status> · 코
     ["EPROTO", { error: coded("EPROTO") }, "network", "EPROTO"],
     ["UND_ERR_SOCKET", { error: coded("UND_ERR_SOCKET") }, "network", "UND_ERR_SOCKET"],
     ["ERR_SSL_*", { error: coded("ERR_SSL_WRONG_VERSION_NUMBER") }, "network", "ERR_SSL_WRONG_VERSION_NUMBER"],
-    ["모르는 코드", { error: coded("E_SOMETHING_NEW") }, "network", "E_SOMETHING_NEW"],
-    ["코드 없음 — 이름이 남는다", { error: new RangeError("x") }, "network", "RangeError"],
     // ⚠DOMException 의 code 는 옛 숫자 코드(23)다 — 문자열 코드만 읽고 이름으로 떨어진다
     ["DOMException(TimeoutError)", { error: new DOMException("시간 초과", "TimeoutError") }, "network", "TimeoutError"],
     [
@@ -155,21 +202,21 @@ interface Row {
   /** 설계 D1 표의 줄 */
   name: string;
   route: (url: string, n: number) => Fake | Error;
-  /** 반환이면 상태 · 던지면 kind 와 시도 기록 수 */
-  want: { returns: number } | { throws: string; attempts: number };
+  /** 반환이면 상태 · 상류 실패면 kind 와 시도 기록 수 · 로컬 오류면 `local`(재시도 0 · 회로 0) */
+  want: { returns: number } | { throws: string; attempts: number } | { local: true };
   /** 전송 수 */
   calls: number;
   /** 그 get 하나 뒤의 회로(연속 · 합계 · 열림) */
   circuit: { consecutive: number; total: number; open: boolean };
   /** 같은 응답으로 archiveUrl 을 돌렸을 때의 결과 */
-  page: { outcome: PageResult["outcome"]; errorKind?: "upstream" };
+  page: { outcome: PageResult["outcome"]; errorKind?: "upstream" | "local" };
 }
 
 const elsewhere = "https://other.example.net/x";
 const CLOSED0 = { consecutive: 0, total: 0, open: false };
 const FAILED1 = { consecutive: 1, total: 1, open: false };
-const OPENED1 = { consecutive: 1, total: 1, open: true };
 const UP: Row["page"] = { outcome: "failed", errorKind: "upstream" };
+const LOCAL: Row["page"] = { outcome: "failed", errorKind: "local" };
 const ROWS: Row[] = [
   { name: "200", route: () => ({ status: 200, body: "OK" }), want: { returns: 200 }, calls: 1, circuit: CLOSED0, page: { outcome: "stored" } },
   { name: "304", route: () => ({ status: 304 }), want: { returns: 304 }, calls: 1, circuit: CLOSED0, page: { outcome: "unchanged" } },
@@ -177,9 +224,11 @@ const ROWS: Row[] = [
   { name: "410(사실)", route: () => ({ status: 410 }), want: { returns: 410 }, calls: 1, circuit: CLOSED0, page: { outcome: "absent" } },
   { name: "400 — 즉시(재시도 없음)", route: () => ({ status: 400 }), want: { throws: "http-400", attempts: 1 }, calls: 1, circuit: FAILED1, page: UP },
   { name: "405 — 즉시", route: () => ({ status: 405 }), want: { throws: "http-405", attempts: 1 }, calls: 1, circuit: FAILED1, page: UP },
-  { name: "401 — 즉시 · 회로 즉시 열림", route: () => ({ status: 401 }), want: { throws: "http-401", attempts: 1 }, calls: 1, circuit: OPENED1, page: UP },
-  { name: "403 — 즉시 · 회로 즉시 열림", route: () => ({ status: 403 }), want: { throws: "http-403", attempts: 1 }, calls: 1, circuit: OPENED1, page: UP },
-  { name: "451 — 즉시 · 회로 즉시 열림", route: () => ({ status: 451 }), want: { throws: "http-451", attempts: 1 }, calls: 1, circuit: OPENED1, page: UP },
+  // ⚠401·403·451 도 즉시 열지 않는다(3중 검토 반영) — 한 페이지만의 403 이 형제 받기를 막지 않게. 의도적 차단이면 모든 페이지가 같아 연속 3 에서 곧 열린다
+  { name: "401 — 즉시(재시도 없음) · 회로 +1", route: () => ({ status: 401 }), want: { throws: "http-401", attempts: 1 }, calls: 1, circuit: FAILED1, page: UP },
+  { name: "403 — 즉시(재시도 없음) · 회로 +1", route: () => ({ status: 403 }), want: { throws: "http-403", attempts: 1 }, calls: 1, circuit: FAILED1, page: UP },
+  { name: "451 — 즉시(재시도 없음) · 회로 +1", route: () => ({ status: 451 }), want: { throws: "http-451", attempts: 1 }, calls: 1, circuit: FAILED1, page: UP },
+  { name: "501(재시도 집합 밖의 5xx) — 즉시 · 회로 +1", route: () => ({ status: 501 }), want: { throws: "http-501", attempts: 1 }, calls: 1, circuit: FAILED1, page: UP },
   { name: "408 — 재시도 후 소진", route: () => ({ status: 408 }), want: { throws: "http-408", attempts: 4 }, calls: 4, circuit: FAILED1, page: UP },
   { name: "429 — 재시도 후 소진(즉시 열림 아님)", route: () => ({ status: 429 }), want: { throws: "http-429", attempts: 4 }, calls: 4, circuit: FAILED1, page: UP },
   { name: "500 — 재시도 후 소진", route: () => ({ status: 500 }), want: { throws: "http-500", attempts: 4 }, calls: 4, circuit: FAILED1, page: UP },
@@ -190,6 +239,10 @@ const ROWS: Row[] = [
   { name: "네트워크(ECONNRESET) — 재시도 후 소진", route: () => coded("ECONNRESET"), want: { throws: "network", attempts: 4 }, calls: 4, circuit: FAILED1, page: UP },
   { name: "연결 시간 초과 — 재시도 후 소진", route: () => connectTimeout(), want: { throws: "connect-timeout", attempts: 4 }, calls: 4, circuit: FAILED1, page: UP },
   { name: "헤더 시간 초과 — 재시도 후 소진", route: () => headersTimeout(), want: { throws: "headers-timeout", attempts: 4 }, calls: 4, circuit: FAILED1, page: UP },
+  // ⚠로컬 오류 — 재시도 0 · 회로 0 · UpstreamError 아님(3중 검토 반영 · 설계 D1 ⑶)
+  { name: "cause 없는 TypeError — 로컬 즉시", route: () => new TypeError("Headers.append: invalid"), want: { local: true }, calls: 1, circuit: CLOSED0, page: LOCAL },
+  { name: "ERR_INVALID_URL — 로컬 즉시", route: () => Object.assign(new TypeError("Invalid URL"), { code: "ERR_INVALID_URL" }), want: { local: true }, calls: 1, circuit: CLOSED0, page: LOCAL },
+  { name: "모르는 코드 — 로컬 즉시", route: () => coded("E_SOMETHING_NEW"), want: { local: true }, calls: 1, circuit: CLOSED0, page: LOCAL },
 ];
 
 for (const row of ROWS) {
@@ -200,9 +253,15 @@ for (const row of ROWS) {
       const res = await fetcher.get(URL0);
       got = { returns: res.status };
     } catch (err) {
-      assert.ok(err instanceof UpstreamError, `UpstreamError 가 아닌 것을 던졌다: ${String(err)}`);
-      got = { throws: err.kind, attempts: err.attempts.length };
-      assert.equal(err.url, URL0);
+      if ("local" in row.want) {
+        assert.ok(err instanceof FetchLocalError, `로컬 오류가 FetchLocalError 가 아니다: ${String(err)}`);
+        assert.ok(!(err instanceof UpstreamError));
+        got = { local: true };
+      } else {
+        assert.ok(err instanceof UpstreamError, `UpstreamError 가 아닌 것을 던졌다: ${String(err)}`);
+        got = { throws: err.kind, attempts: err.attempts.length };
+        assert.equal(err.url, URL0);
+      }
     }
     assert.deepEqual(got, row.want);
     assert.equal(calls.length, row.calls, "전송 수");
@@ -219,19 +278,109 @@ for (const row of ROWS) {
 
 test("⚠T1 회로가 열리면 남은 get 은 요청 0 으로 circuit-open 을 던진다 · 회로 상태는 그대로다", async () => {
   const { fetcher, calls, circuit } = fetcherOf(() => ({ status: 403 }));
-  await assert.rejects(fetcher.get(URL0), (e) => e instanceof UpstreamError && e.kind === "http-403");
+  // ⚠403 도 한 번으로는 안 연다 — 연속 3 이면 연다(3중 검토 반영)
+  for (let i = 0; i < 3; i += 1) await assert.rejects(fetcher.get(URL0), (e) => e instanceof UpstreamError && e.kind === "http-403");
+  assert.equal(circuit.isOpen, true);
   const before = circuit.snapshot();
   await assert.rejects(fetcher.get(URL0), (e) => e instanceof UpstreamError && e.kind === "circuit-open" && e.attempts.length === 0);
-  assert.equal(calls.length, 1, "열린 뒤에 요청이 나갔다");
+  assert.equal(calls.length, 3, "열린 뒤에 요청이 나갔다");
   assert.deepEqual(circuit.snapshot(), before, "열린 뒤의 get 이 회로를 바꿨다");
+});
+
+test("⚠T1 로컬 오류는 재시도하지 않고 회로에 안 센다 — 그 뒤의 get 은 그대로 나간다", async () => {
+  let n = 0;
+  const { fetcher, calls, circuit } = fetcherOf(() => (++n <= 5 ? new TypeError("Headers.append: invalid") : { status: 200, body: "ok" }));
+  for (let i = 0; i < 5; i += 1) await assert.rejects(fetcher.get(URL0), (e) => e instanceof FetchLocalError);
+  assert.equal(calls.length, 5, "로컬 오류를 재시도했다");
+  assert.deepEqual([circuit.snapshot().consecutive, circuit.snapshot().total, circuit.isOpen], [0, 0, false], "로컬 오류를 회로에 셌다");
+  assert.equal((await fetcher.get(URL0)).status, 200);
+});
+
+/**
+ * ⚠**응답이 왔으면 상류다**(설계 D1 ⑶ 「HTTP 응답이 있었다」) — 200 헤더 뒤 본문 읽기가 코드 없는 예외로 끊겨도 상대가 말을 하다 끊긴 것이다.
+ * 이 갈래가 없으면 그런 끊김이 로컬 오류(재시도 0 · 막음)로 떨어진다.
+ */
+test("⚠T1 200 헤더 뒤 본문 읽기가 코드 없는 예외로 끊기면 상류(재시도 → 소진) — 응답이 있었다", async () => {
+  const { fetcher, calls, circuit } = fetcherOf(() => ({ status: 200, bodyError: new TypeError("본문 끊김(주입)") }));
+  const err = await fetcher.get(URL0).catch((e: unknown) => e);
+  assert.ok(err instanceof UpstreamError, `상류 실패가 아니다: ${String(err)}`);
+  assert.equal(err.kind, "network");
+  assert.equal(calls.length, 4, "재시도하지 않았다");
+  assert.equal(circuit.snapshot().total, 1);
 });
 
 test("T1 errorKindOf — UpstreamError 만 upstream · 나머지는 전부 local", () => {
   const up = new UpstreamError("x", { kind: "network", url: URL0, attempts: [], status: null });
   assert.equal(errorKindOf(up), "upstream");
-  for (const other of [new Error("x"), new TypeError("fetch failed"), new ScheduleAbsentError(URL0, 404), "문자열", null, undefined]) {
+  for (const other of [new Error("x"), new TypeError("fetch failed"), new ScheduleAbsentError(URL0, 404), new FetchLocalError("x", URL0), "문자열", null, undefined]) {
     assert.equal(errorKindOf(other), "local", String(other));
   }
+});
+
+/**
+ * ⚠⚠**연락처가 로그에 안 남는다**(3중 검토 ③ · 방어). undici 의 헤더 검증 오류는 **헤더 값(= UA = 연락처)** 을 메시지에 싣는다 —
+ * 로컬 오류든 상류 오류의 원인이든 메시지에서 UA 와 연락처를 지운다. ⚠`buildUserAgent` 가 이제 제어 문자를 막으므로 이 갈래는 방어다.
+ */
+test("⚠⚠T1 오류 메시지에서 UA 와 연락처를 지운다 — 로컬 오류 · 상류 오류의 원인 둘 다", async () => {
+  const contact = "canary-contact@lunomel.jp";
+  const ua = buildUserAgent(contact);
+  const h = harness();
+  const mk = (route: () => Error) =>
+    new PoliteFetcher({ userAgent: ua, clock: h.clock, sleep: h.sleep, maxRetries: 1, fetchImpl: async () => { throw route(); } });
+  const local = await mk(() => new TypeError(`Headers.append: "${ua}" is an invalid header value`)).get(URL0).catch((e: unknown) => e);
+  assert.ok(local instanceof FetchLocalError);
+  assert.equal(local.message.includes(contact), false, `로컬 오류 메시지에 연락처가 남았다: ${local.message}`);
+  assert.equal(local.message.includes(ua), false);
+  assert.match(local.message, /<User-Agent>/);
+  const up = await mk(() => new TypeError("fetch failed", { cause: coded("ECONNRESET", `socket hang up (${ua}) ${contact}`) })).get(URL0).catch((e: unknown) => e);
+  assert.ok(up instanceof UpstreamError);
+  assert.equal(up.message.includes(contact), false, `상류 오류 메시지에 연락처가 남았다: ${up.message}`);
+});
+
+/**
+ * ⚠**실제 undici 의 헤더 검증**(3중 검토 ③의 재현 모양) — 내부 CR/LF 가 든 UA 로 요청하면 연결 전에 `TypeError` 가 난다.
+ * ⚠루프백 discard 포트(127.0.0.1:9)만 쓴다 — 검증이 요청 전이라 연결조차 안 한다(외부 요청 0).
+ */
+test("⚠T1 실제 undici — 내부 CR/LF 가 든 UA 는 로컬 오류(재시도 0 · UpstreamError 아님) · 메시지에 연락처 없음", async () => {
+  const contact = "canary-contact@lunomel.jp";
+  const ua = `bb-app-archiver/0.1 (personal, non-commercial; ${contact}\r\nX-Injected: 1)`;
+  const h = harness();
+  const fetcher = new PoliteFetcher({ userAgent: ua, clock: h.clock, sleep: h.sleep, fetchImpl: createDefaultFetchImpl({ connectMs: 500, headersMs: 500, bodyMs: 500 }) });
+  const err = await fetcher.get("http://127.0.0.1:9/x").catch((e: unknown) => e);
+  assert.ok(err instanceof FetchLocalError, `로컬 오류가 아니다: ${String(err)}`);
+  assert.deepEqual(h.sleeps, [], "로컬 오류를 재시도했다(백오프를 잤다)");
+  assert.equal(err.message.includes(contact), false, `메시지에 연락처가 남았다: ${err.message}`);
+  assert.equal(fetcher.circuit.snapshot().total, 0, "로컬 오류를 회로에 셌다");
+});
+
+test("⚠T1 buildUserAgent — 제어 문자(CR·LF·TAB·DEL·C1)와 ByteString 밖 문자를 거부한다 · 메시지에 연락처를 남기지 않는다", () => {
+  for (const bad of ["me@lunomel.jp\r\nX: 1", "me@lu\nnomel.jp", "me\t@lunomel.jp", "me@lunomel.jp\u007f", "me@lunomel.jp\u0085", "연락@lunomel.jp", "me@lunomel.jp😀"]) {
+    let message = "";
+    assert.throws(
+      () => buildUserAgent(bad),
+      (e: unknown) => {
+        message = e instanceof Error ? e.message : String(e);
+        return /쓸 수 없는 문자/.test(message);
+      },
+      JSON.stringify(bad),
+    );
+    assert.equal(message.includes("lunomel"), false, `거부 메시지에 연락처가 남았다: ${message}`);
+  }
+  // 앞뒤 공백은 지금처럼 잘라서 받는다 · latin1 보통 문자(é)는 ByteString 이라 받는다
+  assert.match(buildUserAgent("  me@lunomel.jp \n"), /\(personal, non-commercial; me@lunomel\.jp\)$/);
+  assert.doesNotThrow(() => buildUserAgent("café@lunomel.jp"));
+});
+
+test("⚠T2 exitCodeFor — 회로가 열렸으면 상류만 69 · 로컬이 있으면 70(부모가 뒤 받기를 멈춘다) · 닫혔으면 75 / 1", () => {
+  const up: PageResult = { key: "b", url: "u", outcome: "failed", status: null, error: "x", errorKind: "upstream" };
+  const local: PageResult = { key: "c", url: "u", outcome: "failed", status: null, error: "x", errorKind: "local" };
+  assert.deepEqual([EXIT_UPSTREAM_CIRCUIT_OPEN, EXIT_LOCAL_CIRCUIT_OPEN, EXIT_UPSTREAM_ONLY], [69, 70, 75]);
+  assert.equal(exitCodeFor([up], true), 69);
+  assert.equal(exitCodeFor([up], false), 75);
+  assert.equal(exitCodeFor([up, local], true), 70);
+  assert.equal(exitCodeFor([up, local], false), 1);
+  assert.equal(exitCodeFor([local], true), 70);
+  assert.equal(exitCodeFor([], false), 0);
 });
 
 // ---- T2 · local 은 75 가 되지 않는다(가장 중요) ------------------------------
@@ -264,7 +413,7 @@ test("⚠⚠T2 쓰기 실패(commitPrepared 의 catch)는 local — exitCodeFor 
   const r = await archiveUrl("npb/test/page", URL0, { fetcher, sink, clock: h.clock });
   assert.equal(r.outcome, "failed");
   assert.equal(r.errorKind, "local", "쓰기 실패가 상류로 분류됐다 — 받기만 실패한 것으로 보고 배포한다");
-  assert.equal(exitCodeFor([r]), 1);
+  assert.equal(exitCodeFor([r], false), 1);
 });
 
 test("⚠T2 사이드카를 못 읽음(readMeta) → local → 1", async () => {
@@ -275,7 +424,7 @@ test("⚠T2 사이드카를 못 읽음(readMeta) → local → 1", async () => {
   assert.equal(r.outcome, "failed");
   assert.equal(r.errorKind, "local");
   assert.equal(calls.length, 0, "사이드카를 못 읽으면 받지도 않는다(지금과 같다)");
-  assert.equal(exitCodeFor([r]), 1);
+  assert.equal(exitCodeFor([r], false), 1);
 });
 
 test("⚠T2 일정 구조 변경(NoGamesFoundError) · 현재 달 일정 404(ScheduleAbsentError) → 날짜 실패 local → 1", async () => {
@@ -284,7 +433,7 @@ test("⚠T2 일정 구조 변경(NoGamesFoundError) · 현재 달 일정 404(Sch
   const a = await archiveDates(["2026-10-20"], { fetcher: broken.fetcher, sink: new MemorySink(), clock: broken.h.clock });
   assert.ok(isDayError(a[0]!));
   assert.equal(a[0].errorKind, "local");
-  assert.equal(exitCodeFor(a), 1);
+  assert.equal(exitCodeFor(a, false), 1);
 
   // 현재 달 일정 404 — 404 는 사실이지만 「그 달 일정이 없다」는 받기 실패가 아니라 우리가 모르는 상태다
   const absent = fetcherOf((url) => (url.includes("schedule_10_detail") ? { status: 404 } : { status: 200, body: "x" }));
@@ -292,7 +441,7 @@ test("⚠T2 일정 구조 변경(NoGamesFoundError) · 현재 달 일정 404(Sch
   assert.ok(isDayError(b[0]!));
   assert.equal(b[0].errorKind, "local");
   assert.match(b[0].error, /월간 일정을 받지 못했다 \(HTTP 404\)/);
-  assert.equal(exitCodeFor(b), 1);
+  assert.equal(exitCodeFor(b, false), 1);
   // 꼬리표를 붙일 자리가 가를 수 있게 — ScheduleAbsentError 자체를 던진다
   const cache = new MonthlyScheduleCache();
   const again = fetcherOf(() => ({ status: 410 }));
@@ -304,7 +453,7 @@ test("⚠T2 일정 받기가 상류 실패면 날짜 실패는 upstream → 75",
   const days = await archiveDates(["2026-10-20"], { fetcher: down.fetcher, sink: new MemorySink(), clock: down.h.clock });
   assert.ok(isDayError(days[0]!));
   assert.equal(days[0].errorKind, "upstream");
-  assert.equal(exitCodeFor(days), EXIT_UPSTREAM_ONLY);
+  assert.equal(exitCodeFor(days, false), EXIT_UPSTREAM_ONLY);
 });
 
 test("⚠T2 선수 페이지 — 쓰기 실패·「없다」 기록 실패는 local → 1 · 받기 실패는 upstream → 75", async () => {
@@ -314,7 +463,7 @@ test("⚠T2 선수 페이지 — 쓰기 실패·「없다」 기록 실패는 lo
   const ra = await archivePlayer("00000001", { fetcher: a.fetcher, sink: write, clock: a.h.clock });
   assert.equal(ra.outcome, "failed");
   assert.equal(ra.errorKind, "local");
-  assert.equal(exitCodeFor([ra]), 1);
+  assert.equal(exitCodeFor([ra], false), 1);
 
   const meta = new FaultySink();
   meta.failWriteMeta = true;
@@ -327,7 +476,7 @@ test("⚠T2 선수 페이지 — 쓰기 실패·「없다」 기록 실패는 lo
   const rc = await archivePlayer("00000001", { fetcher: c.fetcher, sink: new MemorySink(), clock: c.h.clock });
   assert.equal(rc.outcome, "failed");
   assert.equal(rc.errorKind, "upstream");
-  assert.equal(exitCodeFor([rc]), EXIT_UPSTREAM_ONLY);
+  assert.equal(exitCodeFor([rc], false), EXIT_UPSTREAM_ONLY);
 });
 
 test("⚠T2 予告先発 — 쓰기 실패는 local → 1 · 받기 실패는 upstream → 75", async () => {
@@ -336,13 +485,13 @@ test("⚠T2 予告先発 — 쓰기 실패는 local → 1 · 받기 실패는 up
   const a = fetcherOf(() => ({ status: 200, body: "<html>予告</html>" }));
   const ra = await archiveStarters("2026-10-24", { fetcher: a.fetcher, sink: write, clock: a.h.clock });
   assert.equal(ra.errorKind, "local");
-  assert.equal(exitCodeFor([ra]), 1);
+  assert.equal(exitCodeFor([ra], false), 1);
 
   const b = fetcherOf(() => coded("ECONNRESET"));
   const rb = await archiveStarters("2026-10-24", { fetcher: b.fetcher, sink: new MemorySink(), clock: b.h.clock });
   assert.equal(rb.outcome, "failed");
   assert.equal(rb.errorKind, "upstream");
-  assert.equal(exitCodeFor([rb]), EXIT_UPSTREAM_ONLY);
+  assert.equal(exitCodeFor([rb], false), EXIT_UPSTREAM_ONLY);
 });
 
 test("⚠T2 exitCodeFor — 0건 0 · 전부 upstream 75 · local 이 하나라도 1 · 미분류(errorKind 없음)도 1 · 실패 아닌 결과는 세지 않는다", () => {
@@ -352,22 +501,22 @@ test("⚠T2 exitCodeFor — 0건 0 · 전부 upstream 75 · local 이 하나라�
   const local: PageResult = { key: "c", url: "u", outcome: "failed", status: null, error: "x", errorKind: "local" };
   const unknown: PageResult = { key: "d", url: "u", outcome: "failed", status: null, error: "x" };
   assert.equal(EXIT_UPSTREAM_ONLY, 75);
-  assert.equal(exitCodeFor([]), 0);
-  assert.equal(exitCodeFor([ok, held]), 0);
-  assert.equal(exitCodeFor([ok, up]), 75);
+  assert.equal(exitCodeFor([], false), 0);
+  assert.equal(exitCodeFor([ok, held], false), 0);
+  assert.equal(exitCodeFor([ok, up], false), 75);
   // 날짜 실패·다음 달 일정 실패는 `outcome` 없이 `error` 를 든 실패다
   const dayUp: DayError = { date: "2026-10-20", error: "x", errorKind: "upstream" };
-  assert.equal(exitCodeFor([up, dayUp]), 75);
-  assert.equal(exitCodeFor([{ error: "다음 달 일정 소진", errorKind: "upstream" }]), 75);
+  assert.equal(exitCodeFor([up, dayUp], false), 75);
+  assert.equal(exitCodeFor([{ error: "다음 달 일정 소진", errorKind: "upstream" }], false), 75);
   // 날짜 결과(`DayResult`)는 실패가 아니다 — 경기 0건인 날도, 페이지가 실패한 날도(페이지는 따로 넘긴다)
   const quiet: DayResult = { date: "2026-10-20", gamesFound: 0, pages: [] };
   const withFailedPage: DayResult = { date: "2026-10-21", gamesFound: 1, pages: [local] };
-  assert.equal(exitCodeFor([quiet, withFailedPage]), 0);
-  assert.equal(exitCodeFor([up, local]), 1, "상류와 섞여도 local 이면 1");
-  assert.equal(exitCodeFor([local, up]), 1);
-  assert.equal(exitCodeFor([up, unknown]), 1, "미분류는 막는 쪽(1)이다(I4)");
+  assert.equal(exitCodeFor([quiet, withFailedPage], false), 0);
+  assert.equal(exitCodeFor([up, local], false), 1, "상류와 섞여도 local 이면 1");
+  assert.equal(exitCodeFor([local, up], false), 1);
+  assert.equal(exitCodeFor([up, unknown], false), 1, "미분류는 막는 쪽(1)이다(I4)");
   const dayUnknown: DayError = { date: "2026-10-20", error: "x" };
-  assert.equal(exitCodeFor([dayUnknown]), 1, "분류 없는 날짜 실패는 1");
+  assert.equal(exitCodeFor([dayUnknown], false), 1, "분류 없는 날짜 실패는 1");
 });
 
 // ---- T3 · 원인 기록(설계 D2) -------------------------------------------------
@@ -466,9 +615,9 @@ test("⚠T3 400자 규칙 — 긴 URL 200자 + 긴 detail + 4시도 AggregateErr
 
 test("T3 회로 열림의 메시지 — 요청 0 이라고 적고 열린 계기를 적는다", async () => {
   const { fetcher } = fetcherOf(() => ({ status: 451 }));
-  await fetcher.get(URL0).catch(() => undefined);
+  for (let i = 0; i < 3; i += 1) await fetcher.get(URL0).catch(() => undefined);
   const err = (await fetcher.get(URL0).catch((e: unknown) => e)) as UpstreamError;
   assert.equal(err.kind, "circuit-open");
-  assert.ok(err.message.startsWith(`취득 실패 (회로 열림 · 요청 0): ${URL0} — 마지막 원인 circuit-open[immediate-451]`), err.message);
+  assert.ok(err.message.startsWith(`취득 실패 (회로 열림 · 요청 0): ${URL0} — 마지막 원인 circuit-open[consecutive]`), err.message);
   assert.ok(err.message.length <= MESSAGE_MAX);
 });

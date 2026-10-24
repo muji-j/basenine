@@ -3,8 +3,10 @@
  *
  * ⚠**외부 요청 0 · 진짜 자식 0** — `fake-spawn.ts` 를 `--import` 로 먼저 올려 `spawnSync` 를 갈아 끼운다. 받기 자식(npb.jp)도
  *   적재 자식(DB)도 안 뜬다. `--date` 를 주므로 덜 받은 날 판정(DB 읽기)도 안 돈다. 작업 파일은 `--work` 의 임시 폴더에만 쓴다.
- * ⚠재는 것: ① 予告先発이 받기의 **맨 앞** ② 받기 자식이 75 면 **그 뒤 받기 자식은 안 뜨고** 로컬 자식(적재·emit·신선도)은 뜬다
- *   ③ emit 둘의 종료 1·2·신호(null)가 blocking 한 건씩 ④ 사유 파일을 spawn **전에** 지운다 ⑤ 종료 코드 0 / 75 / 1.
+ * ⚠재는 것: ① 予告先発이 받기의 **맨 앞** ② 받기 자식의 종료가 뒤 받기를 정한다(`collect-steps.ts` 의 표 — 69·70·모름은 **멈춤** ·
+ *   75·1 은 **계속하되 연속 한도 1**) · 로컬 자식(적재·emit·신선도)은 언제나 뜬다 ③ emit 둘의 종료 1·2·신호(null)가 blocking 한 건씩
+ *   ④ 사유 파일을 spawn **전에** 지운다 ⑤ 종료 코드 0 / 75 / 1(69·70 은 밖으로 안 나간다).
+ * ⚠연락처는 RFC 2606 예약 도메인이다(3중 검토 2차 F5) — 가짜 자식만 받으므로 어디에도 안 닿고, 진짜 자식이 잘못 떠도 `buildUserAgent` 가 요청 0 으로 거부한다.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -13,6 +15,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { fetchExitDisposition } from "../collect-steps.ts";
 
 const UPDATE = fileURLToPath(new URL("../update.ts", import.meta.url));
 const FAKE = pathToFileURL(fileURLToPath(new URL("./fake-spawn.ts", import.meta.url))).href;
@@ -39,11 +42,18 @@ interface Planned {
   reasonsFile?: string;
 }
 
+interface Call {
+  script: string;
+  args: string[];
+  /** 그 자식이 받은 `BB_NPB_CIRCUIT_N`(없으면 `null`) */
+  circuitN: string | null;
+}
+
 interface Ran {
   status: number | null;
   out: string;
   scripts: string[];
-  calls: { script: string; args: string[] }[];
+  calls: Call[];
   work: string;
 }
 
@@ -65,7 +75,7 @@ function run(plan: Record<string, Planned>, o: { before?: (work: string) => void
       process.execPath,
       [
         "--import", FAKE, UPDATE,
-        "--contact", "bb-app@lunomel.jp",
+        "--contact", "me@example.com",
         "--date", o.dates ?? "2026-10-20",
         "--archive", join(work, "archive"),
         "--db", join(work, "bb.sqlite"),
@@ -74,7 +84,7 @@ function run(plan: Record<string, Planned>, o: { before?: (work: string) => void
       { encoding: "utf8", env: { ...env, BB_FAKE_SPAWN_PLAN: JSON.stringify({ ...BASE, ...plan }), BB_FAKE_SPAWN_LOG: log }, timeout: 60_000 },
     );
     const calls = existsSync(log)
-      ? readFileSync(log, "utf8").trim().split("\n").filter((l) => l !== "").map((l) => JSON.parse(l) as { script: string; args: string[] })
+      ? readFileSync(log, "utf8").trim().split("\n").filter((l) => l !== "").map((l) => JSON.parse(l) as Call)
       : [];
     return { status: r.status, out: `${r.stdout}\n${r.stderr}`, scripts: calls.map((c) => c.script), calls, work };
   } finally {
@@ -97,12 +107,25 @@ test("⚠T6 정상 — 종료 0 · 予告先発이 받기의 맨 앞(경기보�
   assert.equal(freshCall.args[freshCall.args.indexOf("--reasons-out") + 1], join(r.work, "freshness-reasons.json"));
 });
 
-// ---- 부모 중단(D4-2) ---------------------------------------------------------------
+// ---- 부모의 처분(D4 · collect-steps.ts 의 표) ------------------------------------------------
 
-test("⚠⚠T6 予告先発이 75 → 그 뒤 받기 자식은 안 뜬다 · 로컬 자식은 뜬다 · 종료 75", () => {
-  const r = run({ [S.starters]: { exit: 75 } });
+const fetchCalls = (r: Ran): Call[] => r.calls.filter((c) => FETCHERS.includes(c.script));
+
+test("⚠⚠T6 받기 자식의 처분 표(닫힌 표) — 0·75·1 계속 · 69·70 회로 · 그 밖(2·137·신호·종료 코드 없음·spawn 실패)은 모름 = 멈춤", () => {
+  const plain = (status: number | null) => ({ status, signal: null });
+  for (const s of [0, 75, 1]) assert.equal(fetchExitDisposition(plain(s)), "continue", String(s));
+  for (const s of [69, 70]) assert.equal(fetchExitDisposition(plain(s)), "circuit", String(s));
+  for (const s of [2, 3, 76, 137, 255]) assert.equal(fetchExitDisposition(plain(s)), "unknown", String(s));
+  assert.equal(fetchExitDisposition({ status: null, signal: "SIGKILL" }), "unknown", "신호로 죽은 자식(정규화하면 1)을 「계속」으로 읽었다");
+  assert.equal(fetchExitDisposition({ status: 1, signal: "SIGTERM" }), "unknown");
+  assert.equal(fetchExitDisposition({ status: null, signal: null }), "unknown");
+  assert.equal(fetchExitDisposition({ status: 0, signal: null, error: new Error("spawn ENOENT") }), "unknown");
+});
+
+test("⚠⚠T6 予告先発이 69(상류만 · 회로 열림) → 그 뒤 받기 자식은 안 뜬다 · 로컬 자식은 뜬다 · 종료 75(69 는 밖으로 안 나간다)", () => {
+  const r = run({ [S.starters]: { exit: 69 } });
   assert.equal(r.status, 75, r.out);
-  assert.deepEqual(r.scripts.filter((s) => FETCHERS.includes(s)), [S.starters], "75 뒤에 받기 자식이 떴다 — 장애 중 같은 URL 을 또 두드린다");
+  assert.deepEqual(r.scripts.filter((s) => FETCHERS.includes(s)), [S.starters], "회로가 열렸는데 받기 자식이 떴다 — 장애 중 같은 호스트를 또 두드린다");
   for (const local of [S.load, S.stale, S.ids, S.loadPlayers, S.upcoming, S.loadStarters, S.fresh]) {
     assert.ok(r.scripts.includes(local), `로컬 자식 ${local} 이 안 떴다 — 이미 받은 데이터로 배포할 수 없다`);
   }
@@ -112,17 +135,53 @@ test("⚠⚠T6 予告先発이 75 → 그 뒤 받기 자식은 안 뜬다 · 로
   assert.match(r.out, /blocking 0 · 상류 4 · 설명된 신선도 0/);
 });
 
-test("⚠T6 경기 받기가 75 → 그 뒤 날짜·선수 받기 자식은 안 뜬다(같은 URL 반복이 사라진다)", () => {
-  const r = run({ [S.games]: { exit: 75 } }, { dates: "2026-10-20" });
+/**
+ * ⚠⚠**75(상류만 · 회로 닫힘)는 뒤 받기를 멈추지 않는다**(3중 검토 2차 F1) — 한 페이지만의 소진이 형제·다음 단계를 굶기지 않게.
+ * 대신 **뒤 받기 자식은 연속 한도 1 로 뜬다** — 자식마다 회로가 새로 서므로, 이게 없으면 실행 전체 소진 ≤ 6 이 깨진다(3중 검토 3차 ①).
+ */
+test("⚠⚠T6 予告先発이 75(회로 닫힘) → 뒤 받기 자식은 뜬다 · 그 자식들은 BB_NPB_CIRCUIT_N=1 · 종료 75", () => {
+  const r = run({ [S.starters]: { exit: 75 } });
+  assert.equal(r.status, 75, r.out);
+  const fetches = fetchCalls(r);
+  assert.deepEqual(fetches.map((c) => c.script), [S.starters, S.games, S.players, S.players], "75 뒤에 받기를 멈췄다 — 한 URL 의 소진이 나머지를 굶긴다");
+  assert.deepEqual(fetches.map((c) => c.circuitN), [null, "1", "1", "1"], "75 뒤의 받기 자식이 연속 한도 1 로 안 떴다 — 자식마다 소진 5 를 되풀이할 수 있다");
+  assert.match(r.out, /blocking 0 · 상류 1 · 설명된 신선도 0/);
+});
+
+test("⚠T6 경기 받기가 69 → 그 뒤 날짜·선수 받기 자식은 안 뜬다(같은 URL 반복이 사라진다)", () => {
+  const r = run({ [S.games]: { exit: 69 } }, { dates: "2026-10-20" });
   assert.equal(r.status, 75, r.out);
   assert.deepEqual(r.scripts.filter((s) => FETCHERS.includes(s)), [S.starters, S.games]);
 });
 
-test("T6 받기 자식이 1 이면 중단하지 않는다(지금처럼) · 종료 1", () => {
+test("⚠T6 받기 자식이 1(로컬 · 회로 닫힘)이면 계속하되 뒤 받기는 연속 한도 1 · 종료 1", () => {
   const r = run({ [S.starters]: { exit: 1 } });
   assert.equal(r.status, 1, r.out);
-  assert.deepEqual(r.scripts.filter((s) => FETCHERS.includes(s)), [S.starters, S.games, S.players, S.players]);
+  const fetches = fetchCalls(r);
+  assert.deepEqual(fetches.map((c) => c.script), [S.starters, S.games, S.players, S.players]);
+  assert.deepEqual(fetches.map((c) => c.circuitN), [null, "1", "1", "1"]);
 });
+
+test("⚠T6 정상이면 받기 자식은 물려받은 회로 env 그대로다(덮어쓰지 않는다)", () => {
+  const r = run({});
+  assert.deepEqual(fetchCalls(r).map((c) => c.circuitN), [null, null, null, null]);
+});
+
+/** ⚠⚠**3중 검토 3차 ①의 모양** — 로컬과 상류가 섞여(70) 회로가 열린 채 끝나도 부모가 멈춘다. 예전에는 1 이라 다음 자식이 새 회로로 또 두드렸다 */
+test("⚠⚠T6 받기 자식이 70(로컬 · 회로 열림)이면 뒤 받기를 멈춘다 · 종료 1", () => {
+  const r = run({ [S.starters]: { exit: 70 } });
+  assert.deepEqual(r.scripts.filter((s) => FETCHERS.includes(s)), [S.starters], "70 뒤에 받기 자식이 떴다 — 열린 회로가 부모에게 전해지지 않았다");
+  verdict(r, { status: 1, blocking: 1, upstream: 3, reason: /blocking: 予告先発 아카이브 — 종료 70/ });
+});
+
+for (const [label, exit] of [["2(입력 오류)", 2], ["신호(null)", null], ["137", 137]] as const) {
+  test(`⚠T6 받기 자식의 모르는 종료 ${label} → 뒤 받기를 멈춘다(요청에 대해 닫힌 쪽) · 건너뛴 받기는 blocking · 종료 1`, () => {
+    const r = run({ [S.starters]: { exit } });
+    assert.deepEqual(r.scripts.filter((s) => FETCHERS.includes(s)), [S.starters], "모르는 종료 뒤에 받기 자식이 떴다");
+    assert.match(r.out, /모르는 종료 — 이후 받기 건너뜀 경기 아카이브 2026-10-20/);
+    verdict(r, { status: 1, blocking: 4, upstream: 0, reason: /blocking: 경기 아카이브 2026-10-20 — 건너뜀/ });
+  });
+}
 
 // ---- emit 둘 — 1·2·신호가 blocking 한 건씩 ----------------------------------------------
 
@@ -157,16 +216,17 @@ function verdict(r: Ran, want: { status: number; blocking: number; upstream: num
   if (want.reason !== undefined) assert.match(r.out, want.reason, r.out);
 }
 
-test("⚠T6 적재 자식은 75 여도 blocking(R1) · 받기 자식의 2 는 blocking(R2) · 신호로 죽은 자식은 1 로 정규화", () => {
+test("⚠T6 적재 자식은 75 여도 blocking(R1) · 받기 자식의 2 는 blocking(R2) 이고 뒤 받기(선수 둘)를 멈춘다 · 신호로 죽은 자식은 1 로 정규화", () => {
   verdict(run({ [S.load]: { exit: 75 } }), { status: 1, blocking: 1, upstream: 0, reason: /blocking: DB 적재 — 종료 75/ });
-  verdict(run({ [S.games]: { exit: 2 } }), { status: 1, blocking: 1, upstream: 0, reason: /blocking: 경기 아카이브 2026-10-20 — 종료 2/ });
+  // ⚠받기 자식의 2 는 「모름」이다 — 뒤 받기 자식(선수 둘)을 띄우지 않고 그 둘도 blocking(건너뜀)으로 남긴다(설계 D4 · 3중 검토 반영)
+  verdict(run({ [S.games]: { exit: 2 } }), { status: 1, blocking: 3, upstream: 0, reason: /blocking: 경기 아카이브 2026-10-20 — 종료 2/ });
   verdict(run({ [S.upcoming]: { exit: null } }), { status: 1, blocking: 1, upstream: 0, reason: /blocking: 앞으로의 일정 적재 — 종료 1/ });
 });
 
 // ---- 신선도와 사유 파일(D5 · 4차-3) -----------------------------------------------------------
 
 test("⚠T6 신선도 1 + 사유 파일(career-lag) + 상류 실패 → 75(설명됨)", () => {
-  const r = run({ [S.starters]: { exit: 75 }, [S.fresh]: { exit: 1, reasonsFile: reasons("career-lag", "starters-lag") } });
+  const r = run({ [S.starters]: { exit: 69 }, [S.fresh]: { exit: 1, reasonsFile: reasons("career-lag", "starters-lag") } });
   assert.equal(r.status, 75, r.out);
   assert.match(r.out, /설명된 신선도 2/);
 });
@@ -182,26 +242,26 @@ test("⚠⚠T6 신선도 1 + career-lag + 상류 실패 없음 → 1(PR-1 이 �
 
 test("⚠⚠T6 사유 파일은 spawn 전에 지운다 — 이전 실행의 파일을 읽지 않는다(새 파일이 없으면 blocking)", () => {
   const r = run(
-    { [S.starters]: { exit: 75 }, [S.fresh]: { exit: 1 } }, // 이번 신선도는 파일을 안 쓴다
+    { [S.starters]: { exit: 69 }, [S.fresh]: { exit: 1 } }, // 이번 신선도는 파일을 안 쓴다
     { before: (work) => writeFileSync(join(work, "freshness-reasons.json"), reasons("career-lag")) }, // 이전 실행의 유효한 파일
   );
   verdict(r, { status: 1, blocking: 1, upstream: 4, reason: /blocking: 신선도 — 사유 파일이 없다/ });
 });
 
 test("⚠T6 신선도 2(표 없음 등)는 사유 파일과 무관하게 blocking · no-games 는 상류 실패가 있어도 blocking · 깨진 파일도 blocking", () => {
-  verdict(run({ [S.starters]: { exit: 75 }, [S.fresh]: { exit: 2, reasonsFile: reasons("career-lag") } }), {
+  verdict(run({ [S.starters]: { exit: 69 }, [S.fresh]: { exit: 2, reasonsFile: reasons("career-lag") } }), {
     status: 1,
     blocking: 1,
     upstream: 4,
     reason: /blocking: 신선도 — 종료 2/,
   });
-  verdict(run({ [S.starters]: { exit: 75 }, [S.fresh]: { exit: 1, reasonsFile: reasons("no-games") } }), {
+  verdict(run({ [S.starters]: { exit: 69 }, [S.fresh]: { exit: 1, reasonsFile: reasons("no-games") } }), {
     status: 1,
     blocking: 1,
     upstream: 4,
     reason: /blocking: 신선도 — 설명되지 않는 사유 no-games/,
   });
-  verdict(run({ [S.starters]: { exit: 75 }, [S.fresh]: { exit: 1, reasonsFile: "{" } }), {
+  verdict(run({ [S.starters]: { exit: 69 }, [S.fresh]: { exit: 1, reasonsFile: "{" } }), {
     status: 1,
     blocking: 1,
     upstream: 4,

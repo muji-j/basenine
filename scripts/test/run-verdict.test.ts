@@ -8,7 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { STALE_REASON_KEYS } from "@bb-app/domain";
-import { EXIT_UPSTREAM_ONLY, EXPLAINED_BY_UPSTREAM, classifyRun, parseFreshnessReasons } from "../run-verdict.ts";
+import { EXIT_LOCAL_CIRCUIT_OPEN, EXIT_UPSTREAM_CIRCUIT_OPEN, EXIT_UPSTREAM_ONLY, EXPLAINED_BY_UPSTREAM, classifyRun, parseFreshnessReasons } from "../run-verdict.ts";
 import type { FreshReasons, StepRecord } from "../run-verdict.ts";
 
 const fetch = (id: string, exit: number, skipped = false): StepRecord => ({ id, group: "fetch", exit, ...(skipped ? { skipped } : {}) });
@@ -32,15 +32,27 @@ test("⚠T7 R1 — 적재·emit 의 0 아닌 종료는 blocking(75 여도)", () 
   }
 });
 
-test("⚠T7 R2 — 받기 자식의 0·75 밖 종료(1·2·137)는 blocking", () => {
-  for (const exit of [1, 2, 137]) assert.equal(classifyRun([...healthy, fetch("경기 아카이브 2026-10-21", exit)], null).exit, 1, String(exit));
+test("⚠T7 R2 — 받기 자식의 0·75·69 밖 종료(1·70·2·137)는 blocking", () => {
+  for (const exit of [1, EXIT_LOCAL_CIRCUIT_OPEN, 2, 137]) {
+    assert.equal(classifyRun([...healthy, fetch("경기 아카이브 2026-10-21", exit)], null).exit, 1, String(exit));
+  }
 });
 
-test("⚠T7 R3 — 받기 75(건너뛴 합성 step 포함)는 upstream → 75", () => {
-  const v = classifyRun([fetch("予告先発 아카이브", 75), fetch("경기 아카이브 2026-10-20", 75, true), load("DB 적재", 0), fresh(0)], null);
+test("⚠T7 R3 — 받기 75·69(회로 열림 · 건너뛴 합성 step 포함)는 upstream → 75(69 는 밖으로 안 나간다)", () => {
+  assert.equal(EXIT_UPSTREAM_CIRCUIT_OPEN, 69);
+  const v = classifyRun(
+    [fetch("予告先発 아카이브", 75), fetch("경기 아카이브 2026-10-20", EXIT_UPSTREAM_CIRCUIT_OPEN), fetch("신규 선수 프로필", EXIT_UPSTREAM_CIRCUIT_OPEN, true), load("DB 적재", 0), fresh(0)],
+    null,
+  );
   assert.equal(v.exit, EXIT_UPSTREAM_ONLY);
-  assert.deepEqual(v.upstream, ["予告先発 아카이브", "경기 아카이브 2026-10-20"]);
+  assert.deepEqual(v.upstream, ["予告先発 아카이브", "경기 아카이브 2026-10-20", "신규 선수 프로필"]);
   assert.deepEqual(v.blocking, []);
+});
+
+test("⚠T7 R2 — 모르는 종료로 건너뛴 합성 step(종료 1)은 blocking 이고 「건너뜀」이라고 적는다", () => {
+  const v = classifyRun([fetch("予告先発 아카이브", 2), fetch("경기 아카이브 2026-10-20", 1, true), load("DB 적재", 0), fresh(0)], null);
+  assert.equal(v.exit, 1);
+  assert.deepEqual(v.blocking, ["予告先発 아카이브 — 종료 2", "경기 아카이브 2026-10-20 — 건너뜀(앞선 받기의 종료를 몰라 멈췄다)"]);
 });
 
 test("⚠T7 R5 — blocking 이 하나라도 있으면 상류 실패가 있어도 1", () => {

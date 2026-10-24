@@ -12,8 +12,10 @@
  *
  * ## 받기 실패의 분류 · 원인 기록 · 회로 · 시간 상한 (2026-10-24 · 설계 `docs/superpowers/specs/2026-10-24-collection-resilience-design.md`)
  *
- * - **2xx · 304 · 404 · 410 만 돌려준다.** 그 밖의 모든 비성공은 `UpstreamError` 를 **여기서만** 던진다(D1) — 재시도 대상(408·425·429·5xx 일부 ·
- *   네트워크·시간 초과)은 소진 뒤에, 그 밖의 4xx·3xx 종결은 즉시. 호출자는 만들지도 세지도 않는다.
+ * - **2xx · 304 · 404 · 410 만 돌려준다.** 그 밖의 모든 비성공은 `UpstreamError` 를 **여기서만** 던진다(D1) — 재시도 대상(`RETRYABLE` 의
+ *   408·425·429·500·502·503·504 · 알려진 네트워크 코드·시간 초과)은 소진 뒤에, 그 밖의 4xx·5xx·3xx 종결은 즉시. 호출자는 만들지도 세지도 않는다.
+ * - ⚠**응답 없는 예외가 알려진 네트워크 코드가 아니면 로컬 오류다**(D1 ⑶ · 2026-10-24 3중 검토 반영) — `FetchLocalError` 를 즉시 던진다
+ *   (재시도 0 · 회로 0). 헤더 검증(연락처의 CR/LF) 같은 우리 고장이 「상류 장애」로 배포를 여는 길을 막는다. 메시지에서 UA·연락처를 지운다.
  * - **소진 메시지에 원인을 싣는다**(D2) — 예전에는 `cause` 만 붙이고 메시지에 안 넣어 **10/21 장애 로그에 원인이 0건**이었다.
  * - **회로**(D4 · `circuit.ts`) — 404·410 을 뺀 비성공이 연속 N 또는 합계 6 이면 남은 `get()` 이 요청 0 으로 끝난다.
  * - **홉마다 연결 30 · 헤더 30 · 본문 유휴 30초**(D3) — 기본 전송이 undici `Agent` 다. 예전 기본(내장 `fetch`)은 연결 10초(실측)에
@@ -22,7 +24,16 @@
 import { Agent, fetch as undiciFetch } from "undici";
 import type { Clock } from "./clock.ts";
 import { HostCircuit } from "./circuit.ts";
-import { UpstreamError, classifyFetchCause, upstreamMessage } from "./upstream.ts";
+import {
+  FetchLocalError,
+  UpstreamError,
+  classifyFetchCause,
+  describeCause,
+  isUpstreamCause,
+  localFetchMessage,
+  redactSecrets,
+  upstreamMessage,
+} from "./upstream.ts";
 import type { FetchCause, UpstreamAttempt } from "./upstream.ts";
 
 export interface FetchResponse {
@@ -263,6 +274,8 @@ export class PoliteFetcher {
   private readonly sleep: SleepImpl;
   /** 회로 — 세는 곳은 `getUnqueued` 한 곳이다(설계 D1) */
   readonly circuit: HostCircuit;
+  /** 오류 메시지에서 지울 것 — UA 와(그 안의) 연락처(3중 검토 ③ · `redactSecrets`) */
+  private readonly secrets: readonly { readonly value: string; readonly label: string }[];
   /** 직전 요청 시각(ms). 동시 1커넥션을 큐로 강제한다 */
   private lastRequestAt: number | null = null;
   private chain: Promise<unknown> = Promise.resolve();
@@ -287,6 +300,11 @@ export class PoliteFetcher {
     this.fetchImpl = opts.fetchImpl ?? createDefaultFetchImpl();
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.circuit = opts.circuit ?? new HostCircuit({ clock: opts.clock });
+    const contact = contactOfUserAgent(opts.userAgent);
+    this.secrets = [
+      { value: opts.userAgent, label: "<User-Agent>" },
+      ...(contact === null ? [] : [{ value: contact, label: "<연락처>" }]),
+    ];
   }
 
   /** 이 fetcher 의 첫 성공 응답(없으면 `null`) — CLI 합계 줄이 `firstSuccessNote` 로 적는다 */
@@ -346,8 +364,13 @@ export class PoliteFetcher {
       try {
         step = await this.attemptOnce(url, headers, prev, startedAt);
       } catch (err) {
-        // 네트워크·시간 초과·본문 읽기 실패 — 재시도 대상이다
+        /**
+         * 응답 없는 예외. ⚠⚠**알려진 네트워크 코드(시간 초과 포함)만 상류이고 재시도 대상이다**(설계 D1 ⑶ · 3중 검토 반영).
+         * 그 밖(cause 없는 `TypeError` — undici 의 헤더 검증 · 잘못된 URL · 우리 코드의 예외 · 모르는 코드)은 **로컬 오류로 즉시 던진다** —
+         * 재시도 0 · 회로 계수 0. 예전에는 전부 「network」로 4번 재시도한 뒤 상류(75)가 되어 우리 고장이 배포를 열었다.
+         */
         this.lastRequestAt = this.clock.now().getTime();
+        if (!isUpstreamCause(err)) throw this.localError(url, err);
         step = { type: "retry", cause: classifyFetchCause({ error: err }), error: err };
       }
       const ms = this.clock.now().getTime() - startedAt;
@@ -357,25 +380,28 @@ export class PoliteFetcher {
         this.first ??= { url, headersMs: step.headersMs };
         return step.response;
       }
-      attempts.push({ code: step.cause.code, ms });
+      // ⚠원인의 한 줄에서 UA·연락처를 지운다(자르기 전에 · `redactSecrets`)
+      const cause = this.scrub(step.cause);
+      attempts.push({ code: cause.code, ms });
       if (step.type === "terminal") {
         // ⚠**즉시 실패에는 백오프가 없다**(예전 「본문 없는 3xx/4xx 반환」과 같은 요청 수 · L1)
-        this.circuit.failure(step.cause.status);
-        throw new UpstreamError(upstreamMessage({ mode: "immediate", retries: this.maxRetries, url, last: step.cause, attempts }), {
-          kind: step.cause.kind,
+        // ⚠401·403·451 도 여기서 **+1 일 뿐이다** — 즉시 열림은 없앴다(3중 검토 2차 F1 · 한 페이지만의 거절이 형제 받기를 막지 않게)
+        this.circuit.failure();
+        throw new UpstreamError(upstreamMessage({ mode: "immediate", retries: this.maxRetries, url, last: cause, attempts }), {
+          kind: cause.kind,
           url,
           attempts,
-          status: step.cause.status,
+          status: cause.status,
         });
       }
-      last = step.cause;
+      last = cause;
       lastErr = step.error;
       await this.backoff(attempt);
     }
 
     // 루프가 한 번은 돌았으므로 `last` 는 있다 — 없으면 결함이고 그래도 상류 실패로 끝낸다(막는 쪽은 부르는 쪽 종료 코드가 정한다)
-    const cause = last ?? classifyFetchCause({ error: lastErr });
-    this.circuit.failure(cause.status);
+    const cause = last ?? this.scrub(classifyFetchCause({ error: lastErr }));
+    this.circuit.failure();
     throw new UpstreamError(
       upstreamMessage({ mode: "exhausted", retries: this.maxRetries, url, last: cause, attempts }),
       { kind: cause.kind, url, attempts, status: cause.status },
@@ -447,16 +473,42 @@ export class PoliteFetcher {
       return { type: "terminal", cause: classifyFetchCause({ status: res.status, detail: via }) };
     }
 
+    let bytes: ArrayBuffer;
+    try {
+      bytes = await res.arrayBuffer();
+    } catch (err) {
+      /**
+       * ⚠**응답(상태 2xx)은 왔다 — 본문을 받는 중의 실패는 상류다**(설계 D1 ⑶ 「HTTP 응답이 있었다」) · 재시도 대상.
+       * undici 는 `TypeError("terminated", { cause })` 로, 정정 경로의 시간 상한은 `DOMException` 으로 온다 — 어느 쪽이든 상대가 말을 하다 끊겼다.
+       */
+      this.lastRequestAt = this.clock.now().getTime();
+      return { type: "retry", cause: classifyFetchCause({ error: err }), error: err };
+    }
     return {
       type: "ok",
       headersMs,
       response: {
         status: res.status,
-        body: new Uint8Array(await res.arrayBuffer()),
+        body: new Uint8Array(bytes),
         etag: res.headers.get("etag"),
         lastModified: res.headers.get("last-modified"),
       },
     };
+  }
+
+  /** 원인의 한 줄에서 UA·연락처를 지운다 */
+  private scrub(cause: FetchCause): FetchCause {
+    const detail = redactSecrets(cause.detail, this.secrets);
+    return detail === cause.detail ? cause : { ...cause, detail };
+  }
+
+  /**
+   * 로컬 오류 하나 — **원인(`cause`)을 붙이지 않는다**: 헤더 검증 오류의 메시지는 UA(= 연락처)를 품고, 붙여 두면 누가 `util.inspect` 로
+   * 찍는 순간 그대로 나간다. 코드와(지운) 한 줄은 메시지에 있다.
+   */
+  private localError(url: string, err: unknown): FetchLocalError {
+    const { code, detail } = describeCause(err);
+    return new FetchLocalError(localFetchMessage({ url, code, detail: redactSecrets(detail, this.secrets) }), url);
   }
 
   /** 요청 한 번. ⚠리디렉션은 넘겨받지 않는다(`manual`) — 호출자가 홉마다 슬롯을 기다린다 */
@@ -532,6 +584,19 @@ export function buildUserAgent(contact: string): string {
   const trimmed = contact.trim();
   if (!trimmed) throw new Error("연락처 없는 User-Agent는 허용하지 않는다 (CLAUDE.md L1)");
 
+  /**
+   * ⚠⚠**헤더에 쓸 수 없는 문자를 막는다**(2026-10-24 · 3중 검토 ③) — 제어 문자(CR·LF·TAB 등 C0 · DEL · C1)와 ByteString 밖(0xFF 초과).
+   * 예전에는 통과시켰고, 내부 CR/LF 는 undici 의 헤더 검증에서 `TypeError` 가 되어 **「네트워크」로 4번 재시도한 뒤 75(배포)** 가 됐다 —
+   * 그 오류 메시지가 UA(= 연락처)를 그대로 로그에 실었다. ⚠**거부 메시지에 연락처를 싣지 않는다**(위치만) — 줄바꿈이 든 값을 로그에 되찍지 않는다.
+   * ⚠예약 도메인 검사보다 **먼저** 본다 — 그쪽 메시지는 연락처를 되찍는다.
+   */
+  const bad = unwritableCharAt(trimmed);
+  if (bad !== -1) {
+    throw new Error(
+      `연락처에 User-Agent 에 쓸 수 없는 문자가 있다(제어 문자 또는 latin1 밖 · ${String(bad + 1)}번째 글자) — 연락처는 로그에 남기지 않는다 (CLAUDE.md L1)`,
+    );
+  }
+
   // ⚠**호스트를 꺼내서 도메인 경계로 맞춘다.** 부분 문자열로 보면 `myexample.com` 같은
   //   **실도메인을 오탐**하고, 문자열 끝만 보면 **URL 연락처를 놓친다**
   //   (`https://example.com/issues` — 초판이 실제로 통과시켰다).
@@ -541,5 +606,24 @@ export function buildUserAgent(contact: string): string {
       `닿지 않는 연락처는 연락처가 아니다 — 예약 도메인(RFC 2606/6761)이다 (CLAUDE.md L1): ${trimmed}`,
     );
   }
-  return `bb-app-archiver/0.1 (personal, non-commercial; ${trimmed})`;
+  return `${UA_HEAD}${trimmed}${UA_TAIL}`;
+}
+
+/** UA 의 모양 — `buildUserAgent` 가 만들고 `contactOfUserAgent` 가 거꾸로 읽는다(한 곳 · M1) */
+const UA_HEAD = "bb-app-archiver/0.1 (personal, non-commercial; ";
+const UA_TAIL = ")";
+
+/** 헤더 값으로 못 쓰는 첫 글자의 위치(없으면 -1) — C0 제어 문자 · DEL · C1 제어 문자 · 0xFF 초과(서로게이트 포함) */
+function unwritableCharAt(s: string): number {
+  for (let i = 0; i < s.length; i += 1) {
+    const c = s.charCodeAt(i);
+    if (c < 0x20 || (c >= 0x7f && c <= 0x9f) || c > 0xff) return i;
+  }
+  return -1;
+}
+
+/** `buildUserAgent` 가 만든 UA 에서 연락처를 꺼낸다(모양이 다르면 `null`) — 오류 메시지에서 지우려고만 쓴다 */
+function contactOfUserAgent(ua: string): string | null {
+  if (!ua.startsWith(UA_HEAD) || !ua.endsWith(UA_TAIL) || ua.length <= UA_HEAD.length + UA_TAIL.length) return null;
+  return ua.slice(UA_HEAD.length, ua.length - UA_TAIL.length);
 }

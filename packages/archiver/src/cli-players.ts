@@ -6,9 +6,10 @@
  *
  * ID 목록은 한 줄에 하나. `#`로 시작하는 줄과 빈 줄은 무시한다.
  *
- * **종료 코드**(설계 `docs/superpowers/specs/2026-10-24-collection-resilience-design.md` D1): 0 실패 없음 ·
- * **75 실패가 전부 상류 받기 실패** · 1 하나라도 local(쓰기·「없다」 기록 실패 등)·미분류 · 2 입력이 틀렸다(요청 0).
- * ⚠사이드카를 못 읽으면(`readMeta` 예외) 지금처럼 **던져서 끝난다**(종료 1 — local).
+ * **종료 코드**(설계 `docs/superpowers/specs/2026-10-24-collection-resilience-design.md` D1 · D4 — 회로가 열렸는가로 가른다): 0 실패 없음 ·
+ * **75 실패가 전부 상류 · 회로 닫힘**(부모 계속) · **69 전부 상류 · 회로 열림**(부모가 뒤 받기를 멈춘다) ·
+ * 1 하나라도 local(쓰기·「없다」 기록 실패 등)·미분류 · 회로 닫힘 · **70 local 이 있고 회로 열림** · 2 입력이 틀렸다(요청 0).
+ * ⚠사이드카를 못 읽으면(`readMeta` 예외) 지금처럼 **그 자리에서 끝난다** — 진입 함수가 잡아 회로 상태로 1/70 을 고른다(local).
  */
 import { parseArgs } from "node:util";
 import { readFile } from "node:fs/promises";
@@ -115,19 +116,28 @@ export async function runPlayersCli(argv: readonly string[], env: Readonly<Recor
       `${values.refresh ? "전량 재취득" : "기존은 건너뜀"} · 회로 연속 ${String(circuitN)}`,
   );
 
-  const results = await archivePlayers(ids, { fetcher, sink, clock }, {
-    skipExisting: !values.refresh,
-    onEach: (r, i, total) => {
-      if (r.outcome === "failed") log(`  FAILED ${r.url} — ${r.error}`);
-      // ⚠짝이 틀린 로컬 본문을 되살렸다(3중 검토 2차 F1) — 드문 일이라 한 줄씩 남긴다(어느 선수였는지 로그로 답할 수 있게)
-      if (r.repair === "rewritten") log(`  REPAIRED ${r.url} — 로컬 본문이 사이드카와 달라 받은 바이트로 되살렸다(revision 불변)`);
-      // ⚠되살리려 했는데 그 사이 다른 작성자가 사이드카를 바꿨다(반영분 재검토 P2) — 안 썼다. 겹친 실행이 있었다는 신호다
-      if (r.repair === "concurrent") {
-        log(`  REPAIR SKIPPED ${r.url} — 확인하는 사이 다른 작성자가 사이드카를 바꿔 되살리지 않았다(겹친 실행 · 다음 실행이 다시 본다)`);
-      }
-      if ((i + 1) % 50 === 0 || i + 1 === total) log(`  ${i + 1}/${total}`);
-    },
-  });
+  let results: Awaited<ReturnType<typeof archivePlayers>>;
+  try {
+    results = await archivePlayers(ids, { fetcher, sink, clock }, {
+      skipExisting: !values.refresh,
+      onEach: (r, i, total) => {
+        if (r.outcome === "failed") log(`  FAILED ${r.url} — ${r.error}`);
+        // ⚠짝이 틀린 로컬 본문을 되살렸다(3중 검토 2차 F1) — 드문 일이라 한 줄씩 남긴다(어느 선수였는지 로그로 답할 수 있게)
+        if (r.repair === "rewritten") log(`  REPAIRED ${r.url} — 로컬 본문이 사이드카와 달라 받은 바이트로 되살렸다(revision 불변)`);
+        // ⚠되살리려 했는데 그 사이 다른 작성자가 사이드카를 바꿨다(반영분 재검토 P2) — 안 썼다. 겹친 실행이 있었다는 신호다
+        if (r.repair === "concurrent") {
+          log(`  REPAIR SKIPPED ${r.url} — 확인하는 사이 다른 작성자가 사이드카를 바꿔 되살리지 않았다(겹친 실행 · 다음 실행이 다시 본다)`);
+        }
+        if ((i + 1) % 50 === 0 || i + 1 === total) log(`  ${i + 1}/${total}`);
+      },
+    });
+  } catch (err) {
+    // ⚠**던져서 끝나는 local**(사이드카를 못 읽음 등) — 회로가 열려 있으면 70(부모가 뒤 받기를 멈춘다) · 닫혀 있으면 1(설계 D4)
+    const circuit = fetcher.circuit.snapshot();
+    log(`⚠중단 — ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
+    log(`\n중단: 회로 ${circuit.open ? `열림(${String(circuit.reason)})` : "닫힘"} · 소진 ${String(circuit.total)} · ${firstSuccessNote(fetcher.firstSuccess)}`);
+    return exitCodeFor([{ error: errorText(err), errorKind: "local" }], circuit.open);
+  }
 
   const s = summarize(results);
   /** ⚠「변경없음」 안에 든다(내용은 그대로다) — 따로 세서 0 이어도 찍는다(「0건」과 「안 쟀음」을 가른다) */
@@ -139,7 +149,8 @@ export async function runPlayersCli(argv: readonly string[], env: Readonly<Recor
       `회로 ${circuit.open ? `열림(${String(circuit.reason)})` : "닫힘"} · 소진 ${String(circuit.total)} · ${firstSuccessNote(fetcher.firstSuccess)}`,
   );
 
-  return exitCodeFor(results);
+  // ⚠회로가 열린 채 끝났으면 69/70 — 부모가 뒤 받기 자식을 멈춘다(설계 D4)
+  return exitCodeFor(results, circuit.open);
 }
 
 /** **파일로 실행될 때만** 진입한다 — import 만으로는 아무것도 하지 않는다(`cli.ts` 와 같은 방식) */

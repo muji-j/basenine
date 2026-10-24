@@ -7,11 +7,13 @@
  *
  * 연락처는 필수다(CLAUDE.md L1) — `--contact` 또는 `BB_ARCHIVER_CONTACT`.
  *
- * **종료 코드**(설계 `docs/superpowers/specs/2026-10-24-collection-resilience-design.md` D1):
+ * **종료 코드**(설계 `docs/superpowers/specs/2026-10-24-collection-resilience-design.md` D1 · D4 — **회로가 열렸는가로 가른다**):
  * - **0** — 실패 없음(다음 달 일정이 404·410 인 것은 사실이라 실패가 아니다).
- * - **75** — 실패가 있고 **전부 상류 받기 실패**(`UpstreamError` — 소진·즉시 실패·회로 열림). 데이터는 바뀌지 않았다.
- *   `scripts/update.ts` 가 이 코드로 「이후 받기 건너뜀」과 「이미 받은 데이터로 배포」를 정한다.
- * - **1** — 하나라도 local(쓰기·사이드카·구조 변경·현재 달 일정 없음) 또는 미분류.
+ * - **75** — 실패가 있고 **전부 상류 받기 실패**(`UpstreamError` — 소진·즉시 실패·회로 열림) · 회로 **닫힘**.
+ *   실패한 단위는 쓰기 0 · 나머지는 온전한 단위만 썼다(경기 4장은 세트로만 쓴다). 부모(`scripts/update.ts`)는 뒤 받기를 **계속**한다.
+ * - **69** — 실패가 전부 상류 · 회로 **열림**. 부모가 뒤 받기 자식을 **멈춘다**(실행 판정은 75 와 같다 — 이미 받은 데이터로 배포).
+ * - **1** — 하나라도 local(쓰기·사이드카·구조 변경·현재 달 일정 없음·전송 전 로컬 고장) 또는 미분류 · 회로 닫힘. 부모는 계속 · 실행은 막는다.
+ * - **70** — local 이 있고 회로 **열림**. 부모가 뒤 받기 자식을 멈추고 실행은 막는다.
  * - **2** — 입력이 틀렸다(연락처 · `--delay` · `BB_NPB_CIRCUIT_N` · 날짜). **요청 0.**
  */
 import { parseArgs } from "node:util";
@@ -123,6 +125,21 @@ export async function runArchiveCli(argv: readonly string[], env: Readonly<Recor
 
   log(`대상 ${dates.length}일 · 저장 위치 ${values.out} · 요청 간격 ${delayMs}ms · 회로 연속 ${String(circuitN)} · 합계 ${String(CIRCUIT_TOTAL_LIMIT)}`);
 
+  try {
+    return await collect(dates, { fetcher, sink, clock, log });
+  } catch (err) {
+    // ⚠**던져서 끝나는 local 도 회로 상태로 가른다**(설계 D4) — 열려 있으면 70(부모가 뒤 받기를 멈춘다) · 닫혀 있으면 1
+    log(`⚠중단 — ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
+    return exitCodeFor([{ error: errorText(err), errorKind: "local" }], fetcher.circuit.isOpen);
+  }
+}
+
+/** 날짜들과 다음 달 일정을 받고 종료 코드를 고른다 — `runArchiveCli` 의 본체 */
+async function collect(
+  dates: readonly string[],
+  o: { readonly fetcher: PoliteFetcher; readonly sink: Sink; readonly clock: Clock; readonly log: (line: string) => void },
+): Promise<number> {
+  const { fetcher, sink, clock, log } = o;
   const all: PageResult[] = [];
   const dayErrors: DayError[] = [];
   let daysWithGames = 0;
@@ -205,7 +222,8 @@ export async function runArchiveCli(argv: readonly string[], env: Readonly<Recor
       `회로 ${circuit.open ? `열림(${String(circuit.reason)})` : "닫힘"} · 소진 ${String(circuit.total)} · ${firstSuccessNote(fetcher.firstSuccess)}`,
   );
 
-  return exitCodeFor([...all, ...dayErrors, ...extra]);
+  // ⚠회로가 열린 채 끝났으면 69/70 — 부모가 뒤 받기 자식을 멈춘다(설계 D4 · 열린 회로를 부모에게 전한다)
+  return exitCodeFor([...all, ...dayErrors, ...extra], fetcher.circuit.isOpen);
 }
 
 function resolveDates(values: ReturnType<typeof readArgs>, clock: Clock): string[] {
