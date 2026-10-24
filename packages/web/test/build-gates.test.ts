@@ -16,10 +16,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import {
   loadDraft,
   openDb,
@@ -33,6 +33,8 @@ import type { Db } from "@bb-app/store";
 import { regularSeasonGames } from "@bb-app/domain";
 import { loadSite } from "../src/query.ts";
 import { contactGate } from "../src/layout.ts";
+// ⚠**서체 게이트의 판정 한 벌**(M1) — 배포를 막은 바로 그 수집기로 잰다
+import { collectUsedChars } from "../../../scripts/fonts.ts";
 
 const NOW = "2026-08-19T00:00:00.000Z";
 /** 빌드 기준일. **주입한다**(M6) — 시험이 시계를 읽으면 날마다 다른 시험이 된다 */
@@ -205,7 +207,8 @@ async function withSite(
 async function withBuild(
   seasonArg: string,
   seedFn: (db: Db) => void,
-  fn: (r: { status: number | null; stdout: string; stderr: string }) => void,
+  /** `dist` — 구운 배포물 디렉터리. ⚠**콜백 안에서만 있다**(끝나면 지운다) */
+  fn: (r: { status: number | null; stdout: string; stderr: string; dist: string }) => void,
   /** 덧붙일 env — ⚠`BB_UPSTREAM_OUTAGE` 는 기본으로 비운다(러너 env 에 남아 있어도 낡음 게이트가 풀리지 않게 · 2026-10-24) */
   extraEnv: Record<string, string> = {},
 ): Promise<void> {
@@ -231,7 +234,7 @@ async function withBuild(
         env: { ...process.env, BB_CONTACT: "", BB_REQUIRE_CONTACT: "", BB_UPSTREAM_OUTAGE: "", ...extraEnv },
       },
     );
-    fn({ status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" });
+    fn({ status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "", dist: join(dir, "dist") });
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -481,12 +484,12 @@ test("⚠끝난 시즌의 판정 부재가 종료 코드를 바꾼다 — 경고
  * 그 시즌에 드래프트 행 하나를 남긴다 — **경기 데이터와는 독립이다**(그게 이 게이트의 전제).
  * ⚠**`bids: null`** — 「이 시즌 소스는 경합을 아예 안 쓴다」이고, `[]`(=안 겹쳤다)와 다른 사실이다(M11).
  */
-function draftOf(db: Db, season: number, team: string): void {
+function draftOf(db: Db, season: number, team: string, name = "山田 太郎"): void {
   const at = { source: `https://npb.jp/draft/${season}/`, fetchedAt: NOW, revision: "sha256:x" };
   loadDraft(db, {
     season,
     team,
-    picks: [{ team, kind: "shihaika", roundNo: 1, waiverDir: null, nameDisplay: "山田 太郎", position: null, fromOrg: null }],
+    picks: [{ team, kind: "shihaika", roundNo: 1, waiverDir: null, nameDisplay: name, position: null, fromOrg: null }],
     bids: null,
     page: { ...at, source: `https://npb.jp/draft/${season}/draftlist_${team}.html` },
     // ⚠연도 톱은 개최일도 싣는다(2026-10-24) — 이 게이트는 날짜를 안 본다
@@ -543,6 +546,107 @@ test("⚠그 시즌이 빠진 것이 종료 코드를 바꾼다 — 경고로 �
     g.block,
     /process\.exitCode = 1/,
     "보긴 하는데 종료 코드를 안 바꾼다 — 경고만으로는 그대로 배포된다",
+  );
+});
+
+// ── 서체 게이트의 전제. **보이지 않는 글자가 배포물에 새지 않는다** ─────────────────
+
+/**
+ * ⚠⚠**2026-10-24 배포가 이것으로 멈췄다**(daily run 40116508045 · 「서체 부분집합」 단계 · 종료 1).
+ * 2026 드래프트 npb 원본이 이름 두 곳의 첫 글자 뒤에 **이체자 선택자 U+E0100** 을 달았고
+ * 어느 서체도 그 글자를 못 덮었다 — **게이트는 옳았다.** 화면은 출력 경계에서 그 글자를 뗀다
+ * (`html.ts` 의 `escapeHtml` · `toJson`). ⚠원본·DB 는 그대로다(M4).
+ *
+ * ⚠**빌드를 실제로 돌려 배포물 전수(HTML·JSON)를 본다** — 출력 경로 하나가 그 경계를 비켜 가면 여기서 붉어진다.
+ * 이름이 실리는 자리를 다 태운다: 선수 페이지(타자·투수) · 검색 색인 · 比較 샤드 · 드래프트(현재 시즌 · 드래프트만 있는 시즌).
+ * ⚠**「0개」가 공허하지 않게 양성 대조를 같이 단다** — 이름 자체가 배포물에 안 실렸다면 0 은 아무것도 안 잰 것이다.
+ * ⚠**마지막 판정은 서체 게이트의 「쓰이는 글자」 수집기 그것이다**(`scripts/fonts.ts` · M1).
+ */
+test("⚠⚠이름의 이체자 선택자(IVS·SVS)가 배포물에 새지 않는다 — 서체 게이트가 그 글자를 요구하지 않는다", async () => {
+  const IVS = "\u{E0100}";
+  const SVS = "\u{FE00}";
+  const SELECTOR = /[\u{E0100}-\u{E01EF}\u{FE00}-\u{FE0F}]/gu;
+  const isSelector = (cp: number): boolean => (cp >= 0xe0100 && cp <= 0xe01ef) || (cp >= 0xfe00 && cp <= 0xfe0f);
+
+  /**
+   * ⚠**대조 — 수집기는 그 글자를 실제로 센다.** 이게 안 서면 아래 「요구 목록에 없다」는 공허하다.
+   * 그리고 **게이트를 느슨하게 하지 않았다는 증거**다 — `isNonGlyph` 에 이 범위를 더하면 여기서 붉어진다.
+   */
+  const ctl = await mkdtemp(join(tmpdir(), "bb-ivs-ctl-"));
+  try {
+    writeFileSync(join(ctl, "a.html"), `<p>辻${IVS}村 · 神${SVS}田</p>`, "utf8");
+    const seen = collectUsedChars(ctl).chars;
+    assert.ok(seen.has(0xe0100) && seen.has(0xfe00), "수집기가 이체자 선택자를 못 본다 — 아래 판정이 공허하다(또는 게이트가 느슨해졌다)");
+  } finally {
+    await rm(ctl, { recursive: true, force: true });
+  }
+
+  await withBuild(
+    "2026",
+    (db) => {
+      roster(db);
+      played(db, "2026-04-01", "t", "g");
+      played(db, "2026-04-01", "l", "m");
+      // ⚠**실물 그대로의 모양** — 첫 글자 뒤에 IVS(辻 · 榊). SVS 는 호환 한자 표준 순서(神+U+FE00)의 모양이다
+      upsertPlayer(db, batId("t"), `辻${IVS}村 大我`, NOW);
+      upsertPlayer(db, pitId("g"), `神${SVS}田 次郎`, NOW);
+      // 드래프트 — 굽는 경로가 둘이다: 현재 시즌(`buildSite`) · 드래프트만 있는 시즌(`buildDraftSeason`)
+      draftOf(db, 2026, "t", `榊${IVS}原 七斗`);
+      draftOf(db, 2010, "t", `榊${IVS}原 七斗`);
+    },
+    (r) => {
+      // ⚠**빌드가 끝까지 갔는가부터 본다** — 도중에 죽으면 아래 「0개」가 공허해진다
+      assert.match(r.stdout, /생성: \d+파일/, `빌드가 파일을 다 쓰지도 못했다:\n${r.stderr}`);
+
+      const leaks: string[] = [];
+      const byExt = new Map<string, number>();
+      const text = new Map<string, string>();
+      const walk = (dir: string): void => {
+        for (const e of readdirSync(dir, { withFileTypes: true })) {
+          const full = join(dir, e.name);
+          if (e.isDirectory()) {
+            walk(full);
+            continue;
+          }
+          const rel = relative(r.dist, full).split(sep).join("/");
+          const s = readFileSync(full, "utf8");
+          const dot = e.name.lastIndexOf(".");
+          const ext = dot < 0 ? e.name : e.name.slice(dot);
+          byExt.set(ext, (byExt.get(ext) ?? 0) + 1);
+          const n = [...s.matchAll(SELECTOR)].length;
+          if (n > 0) leaks.push(`${rel} ×${n}`);
+          text.set(rel, s);
+        }
+      };
+      walk(r.dist);
+      const tally = [...byExt].map(([e, n]) => `${e} ${n}`).join(" · ");
+      // ⚠**분모** — HTML 과 JSON 이 실제로 훑혔는가(「JSON 전부」가 0장이면 아무것도 안 잰 것이다)
+      assert.ok((byExt.get(".html") ?? 0) > 0 && (byExt.get(".json") ?? 0) >= 2, `훑은 파일이 모자란다: ${tally}`);
+      assert.deepEqual(leaks, [], `배포물에 이체자 선택자가 남았다(훑은 파일 ${tally}): ${leaks.join(" / ")}`);
+
+      // ⚠**양성 대조** — 그 이름들이 **뗀 모양으로** 배포물에 실제로 실렸다
+      const has = (rel: string, needle: string): void => {
+        const s = text.get(rel);
+        assert.ok(s !== undefined, `${rel} 가 안 구워졌다 — 이 대조가 안 선다(훑은 파일 ${tally})`);
+        assert.ok(s.includes(needle), `${rel} 에 「${needle}」이 없다 — 이름이 안 실렸으면 위 「0개」는 공허하다`);
+      };
+      has(`players/${batId("t")}.html`, "辻村 大我");
+      has(`players/${pitId("g")}.html`, "神田 次郎");
+      has("players.json", "辻村 大我");
+      has("players.json", "神田 次郎");
+      has("compare/9.json", "辻村 大我");
+      has("draft.html", "榊原 七斗");
+      has("2010/draft.html", "榊原 七斗");
+
+      // ⚠**배포를 막은 판정 그 자체로 잰다** — 서체 게이트의 「쓰이는 글자」에 그 범위가 0자여야 한다
+      const used = collectUsedChars(r.dist).chars;
+      const wanted = [...used].filter(isSelector).map((cp) => `U+${cp.toString(16).toUpperCase()}`);
+      assert.deepEqual(wanted, [], `서체 게이트가 이체자 선택자를 요구한다 — 배포가 또 멈춘다: ${wanted.join(" ")}`);
+      // 대조 — 그 이름의 한자는 요구 목록에 있다(이름이 안 실려서 0 인 것이 아니다)
+      for (const ch of ["辻", "榊", "神"]) {
+        assert.ok(used.has(ch.codePointAt(0)!), `「${ch}」가 요구 목록에 없다 — 이름이 배포물에 안 실렸다`);
+      }
+    },
   );
 });
 

@@ -1328,6 +1328,17 @@ gh release upload data-store --repo muji-j/bb-app-data "$W/archive-restore-playe
 - 가장 작은 되돌림은 `daily.yml` 의 `수집·적재` `run:` 을 옛 한 줄(`node scripts/update.ts --max-writes 5000000`)로 되돌리는 것이다 — 그러면 75 가 단계 실패가 되어 **예전처럼 배포가 막힌다.**
   ⚠같은 커밋에서 `scripts/test/collect-outage-wiring.test.ts`(T9)를 고친다 — 그 시험이 셸·`if:`·A·B 를 고정한다.
 
+## 7-K. ⚠「서체 부분집합」이 보이지 않는 글자로 실패했을 때 — 이체자 선택자 (2026-10-25)
+
+**표지**: 「서체 부분집합」 단계가 종료 1 이고 `[IBM Plex] 스택 어느 서체도 못 덮는 글자 1자: U+E0100` · `[Noto Sans JP] …` · `⚠서체 게이트 실패 2건` 처럼
+**따옴표 안이 비어 보이는 글자**가 `U+E0100–E01EF`(IVS) 나 `U+FE00–FE0F`(SVS) 면 이것이다 — 같은 한자의 **모양만 고르는 보이지 않는 글자**(이체자 선택자)가
+수집 원본에 섞여 왔다. 2026-10-24 실행(run 40116508045)에서 났고, 2026 드래프트 npb 원본의 이름 2명(辻村 大我 · 榊原 七斗 — 첫 글자 뒤에 U+E0100)이었다.
+**2026-10-25 부터 화면은 출력 경계에서 그 글자를 뗀다**(`packages/web/src/html.ts` 의 `escapeHtml` · `toJson` — 원본·DB 는 그대로다 · M4) —
+그러니 **다시 났다면 그 경계를 비켜 간 출력 경로**다(데이터 문자열을 `raw()` 로 넣었거나, 이름이 실리는 새 JSON 이 `toJson` 을 안 지난다).
+어느 파일인지는 `LC_ALL=C.UTF-8 grep -rlP '[\x{FE00}-\x{FE0F}\x{E0100}-\x{E01EF}]' dist --exclude-dir=fonts` 가 말한다
+(⚠`--exclude-dir=fonts` 를 빼면 부분집합 woff2 가 우연히 걸린다 · 실측). 재현 시험은 `packages/web/test/build-gates.test.ts` 의 이체자 선택자 시험이다.
+⚠**게이트를 느슨하게 하지 마라**(`scripts/fonts.ts` 의 `isNonGlyph` 에 그 범위를 더하면 글자가 배포물에 남은 채 통과한다) · **서체 교체는 사람의 결정이다**.
+
 ## 7-A. ⚠「배포했다」와 「보인다」는 다른 말이다 (2026-08-30 사고)
 
 사용자가 **「最新の試合 2026年8月18日 まで反映」**을 보고 있다고 알려 왔다. 같은 날 배포된 화면은 **8월 29일**이었다.
