@@ -489,7 +489,8 @@ function draftOf(db: Db, season: number, team: string): void {
     picks: [{ team, kind: "shihaika", roundNo: 1, waiverDir: null, nameDisplay: "山田 太郎", position: null, fromOrg: null }],
     bids: null,
     page: { ...at, source: `https://npb.jp/draft/${season}/draftlist_${team}.html` },
-    event: at,
+    // ⚠연도 톱은 개최일도 싣는다(2026-10-24) — 이 게이트는 날짜를 안 본다
+    event: { ...at, heldOn: { shape: "single", date: `${season}-10-22` } },
   });
 }
 

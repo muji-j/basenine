@@ -27,7 +27,10 @@ import { fileURLToPath } from "node:url";
 import {
   DraftParseError,
   DraftIndexError,
+  draftHeldOnFirst,
+  draftHeldOnFor,
   parseDraftBids,
+  parseDraftHeldOn,
   parseDraftPicks,
   parseDraftTeamSlugs,
   parseDraftYears,
@@ -1095,4 +1098,144 @@ test("⚠`開催要項` 을 표지로 쓰지 마라 — 끝난 시즌에도 남�
   const err = caught(() => parseDraftTeamSlugs(html));
   assert.ok(err instanceof DraftIndexError);
   assert.equal(err.observed, "no-team-links", "開催要項 이 없어도 드래프트 페이지다");
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 개최일(`draft_event.held_on`) — 연도 톱(`/draft/{YYYY}/`).
+ *
+ * ⚠**받고 안 읽던 것이다**(2026-10-24). `draft_event.held_on` 이 47/47 NULL 이었는데, 그 날짜는
+ * **우리가 이미 받는 연도 톱에 줄곧 적혀 있었다**(아카이브 2005~2026 · 22/22 장). CLAUDE.md §2-2-1 의 그 모양이다.
+ *
+ * ⚠**모양이 셋이다**(아카이브 22장 전수 · 2026-10-24):
+ * | 모양 | 연도 | 마크업 |
+ * |---|---|---|
+ * | A 회의별 | 2005~2007 | `<h4>開催日</h4>` + 표(`<th>高校生選択会議</th><td>…</td>` …) |
+ * | B 단락 | 2008 | `<h4>開催日</h4><p>2008年10月30日（木）</p>` |
+ * | C 표 한 칸 | 2009~2026 | `<th>開催日時</th>`(또는 `開催日`)`<td>2009年10月29日（木） 16:00～</td>` |
+ * ⚠**`section#ct_summary` 로 찾지 마라** — 2024 픽스처(2026-09-04 취득)에는 그 id 가 **없다.**
+ * ⚠**아래 A·B·C 의 합성 문자열은 실물의 구조와 날짜를 옮긴 것이다** — 그 세 연도의 연도 톱은 npb 픽스처로
+ *   커밋돼 있지 않다(비공개 자산 · `fixtures/README.md`). 실물 전수는 적재 명령이 잰다(런북 §2-1).
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** 모양 A — 2005(회의 셋). 실물의 행 순서 그대로(大学生 → 高校生 → 育成) */
+const HELD_2005 = `<body class="page_draft" id="ctop"><section id="ct_summary"><h4>開催日</h4>
+<div class="table_summary summary_table"><table><tbody>
+<tr><th>大学生・社会人ほか選択会議</th><td>2005年11月18日（金）</td></tr>
+<tr><th>高校生選択会議</th><td>2005年10月3日（月）</td></tr>
+<tr><th>育成選手選択会議</th><td>2005年12月1日（木）</td></tr>
+</tbody></table></div></section><section><h4>概要</h4><p>…</p></section></body>`;
+
+/** 모양 A — 2006(회의 둘 · ⚠育成 행이 없다) */
+const HELD_2006 = `<section id="ct_summary"><h4>開催日</h4><div class="table_summary summary_table"><table><tbody>
+<tr><th>大学生・社会人ほか選択会議</th><td>2006年11月21日（火）</td></tr>
+<tr><th>高校生選択会議</th><td>2006年9月25日（月）</td></tr>
+</tbody></table></div></section>`;
+
+/** 모양 B — 2008 */
+const HELD_2008 = `<section id="ct_summary"><h4>開催日</h4> <p>2008年10月30日（木）</p> </section>
+<section><h4>概要</h4><ul><li><a href="./information.html">新人選手選択会議（ドラフト会議）の概要</a></li></ul></section>`;
+
+/** 모양 C — 2009(`開催日時` · 시각 꼬리 `16:00～`) */
+const HELD_2009 = `<section id="ct_summary"><h4>開催要項</h4><div class="table_summary summary_table"><table><tbody>
+<tr><th>開催日時</th><td>2009年10月29日（木） 16:00～</td></tr>
+<tr><th>特別協賛</th><td>株式会社東芝</td></tr>
+</tbody></table></div></section>`;
+
+test("⚠실물 연도 톱 3장에서 개최일을 읽는다 — 모양 C · `開催日時`/`開催日` · 시각 꼬리 有無", () => {
+  // 2013: `開催日時` + `17:00～` · 2024: `開催日` + `16:50開始予定`(⚠`ct_summary` id 가 없다) · 2026: 개최 전 판(꼬리 없음)
+  assert.deepEqual(parseDraftHeldOn(fixture("draft-2013-index"), 2013), { shape: "single", date: "2013-10-24" });
+  assert.deepEqual(parseDraftHeldOn(fixture("draft-2024-index"), 2024), { shape: "single", date: "2024-10-24" });
+  assert.deepEqual(parseDraftHeldOn(fixture("draft-2026-index"), 2026), { shape: "single", date: "2026-10-22" });
+});
+
+test("⚠날짜 진술이 없는 연도 톱은 던진다(M7) — 실물 2001(범위 밖)이 그 모양이다", () => {
+  // ⚠**NULL 로 흘리지 않는다.** 흘리면 「소스가 안 말한다(M11)」와 「구조가 바뀌어 못 읽었다(M7)」가 같은 값이 된다.
+  assert.ok(!fixture("draft-2001-index").includes("開催日"), "2001 톱에 開催日 이 생겼다 — 이 본의 전제가 바뀌었다");
+  assert.throws(() => parseDraftHeldOn(fixture("draft-2001-index"), 2001), DraftParseError);
+  assert.throws(() => parseDraftHeldOn("<html><body>お知らせ</body></html>", 2026), DraftParseError);
+});
+
+test("모양 A — 회의별 날짜를 구획에 붙인다(2005 · 회의 셋)", () => {
+  const h = parseDraftHeldOn(HELD_2005, 2005);
+  assert.equal(h.shape, "per-meeting");
+  assert.equal(draftHeldOnFor(h, "koukousei"), "2005-10-03");
+  assert.equal(draftHeldOnFor(h, "daigaku_shakaijin"), "2005-11-18");
+  assert.equal(draftHeldOnFor(h, "ikusei"), "2005-12-01");
+  // ⚠**希望入団枠 은 회의가 아니라 제도다** — 그 페이지가 그 날짜를 적지 않는다(M11 · 「소스가 안 말한다」)
+  assert.equal(draftHeldOnFor(h, "kibou_nyudanwaku"), null);
+  // 「개최 후 미수집」 판정의 기준은 **가장 이른 회의**다 — 첫 회의가 끝나면 지명이 생긴다
+  assert.equal(draftHeldOnFirst(h), "2005-10-03");
+});
+
+test("⚠모양 A — 적히지 않은 회의는 **모름(null)** 이다 · 2006 育成(M11)", () => {
+  const h = parseDraftHeldOn(HELD_2006, 2006);
+  assert.equal(draftHeldOnFor(h, "koukousei"), "2006-09-25");
+  assert.equal(draftHeldOnFor(h, "daigaku_shakaijin"), "2006-11-21");
+  // ⚠**지어내지 않는다** — 그해 育成 지명은 실재하지만(DB 실측) 연도 톱이 그 회의의 날짜를 안 적는다
+  assert.equal(draftHeldOnFor(h, "ikusei"), null);
+});
+
+test("모양 B — `<h4>開催日</h4><p>…</p>` 한 줄(2008)", () => {
+  const h = parseDraftHeldOn(HELD_2008, 2008);
+  assert.deepEqual(h, { shape: "single", date: "2008-10-30" });
+  // 회의 하나로 적은 해는 **그 해 회의 전체**(支配下·育成)의 날짜다
+  assert.equal(draftHeldOnFor(h, "shihaika"), "2008-10-30");
+  assert.equal(draftHeldOnFor(h, "ikusei"), "2008-10-30");
+  // ⚠**회의가 아닌 제도(自由獲得·希望入団枠)에는 붙이지 않는다**
+  assert.equal(draftHeldOnFor(h, "kibou_nyudanwaku"), null);
+  assert.equal(draftHeldOnFor(h, "jiyuu_kakutoku"), null);
+  assert.equal(draftHeldOnFirst(h), "2008-10-30");
+});
+
+test("모양 C — `開催日時` · 시각 꼬리 `16:00～` 를 떼고 날짜만(2009)", () => {
+  assert.deepEqual(parseDraftHeldOn(HELD_2009, 2009), { shape: "single", date: "2009-10-29" });
+});
+
+test("⚠날짜가 어긋나면 던진다(M7) — 요일 · 연도 · 없는 날 · 모르는 꼬리 · 미정", () => {
+  const c = (td: string): string => HELD_2009.replace("2009年10月29日（木） 16:00～", td);
+  const bad: Array<[string, string]> = [
+    ["요일이 날짜와 안 맞는다", "2009年10月29日（金） 16:00～"],
+    ["연도가 시즌과 다르다", "2008年10月29日（水） 16:00～"],
+    ["없는 날", "2009年2月30日（月）"],
+    ["모르는 꼬리(延期)", "2009年10月29日（木） 延期"],
+    ["미정", "未定"],
+    ["요일이 없다", "2009年10月29日 16:00～"],
+  ];
+  for (const [label, td] of bad) {
+    const html = c(td);
+    assert.notEqual(html, HELD_2009, `${label}: 합성 입력이 안 바뀌었다`);
+    assert.throws(() => parseDraftHeldOn(html, 2009), DraftParseError, label);
+  }
+});
+
+test("⚠진술이 둘이면 던진다 — 어느 것이 정본인지 정하지 않는다(M7)", () => {
+  // 모양 C 가 둘
+  assert.throws(
+    () => parseDraftHeldOn(`${HELD_2009}<table><tr><th>開催日</th><td>2009年10月29日（木）</td></tr></table>`, 2009),
+    DraftParseError,
+  );
+  // 모양 B 와 C 가 함께
+  const c2008 = HELD_2009.replace("2009年10月29日（木） 16:00～", "2008年10月30日（木）");
+  assert.throws(() => parseDraftHeldOn(`${HELD_2008}${c2008}`, 2008), DraftParseError);
+});
+
+test("⚠모양 A 의 모르는 회의·같은 회의 두 번은 던진다(M7)", () => {
+  assert.throws(
+    () => parseDraftHeldOn(HELD_2005.replace("<th>高校生選択会議</th>", "<th>特別選択会議</th>"), 2005),
+    DraftParseError,
+    "모르는 회의 이름",
+  );
+  assert.throws(
+    () => parseDraftHeldOn(HELD_2005.replace("<th>育成選手選択会議</th>", "<th>高校生選択会議</th>"), 2005),
+    DraftParseError,
+    "같은 회의가 두 번",
+  );
+});
+
+test("⚠주석 안의 개최일은 읽지 않는다 — 보이지 않는 것을 사실로 삼지 않는다([N2])", () => {
+  // 진술이 주석 안에만 있으면 **없는 것**이다 → 던진다
+  assert.throws(() => parseDraftHeldOn(`<!-- ${HELD_2009} -->`, 2009), DraftParseError);
+  // 주석 안의 옛 날짜는 무시되고 보이는 날짜만 읽힌다
+  const both = `<!-- <table><tr><th>開催日時</th><td>2009年10月22日（木）</td></tr></table> -->${HELD_2009}`;
+  assert.deepEqual(parseDraftHeldOn(both, 2009), { shape: "single", date: "2009-10-29" });
 });

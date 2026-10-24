@@ -31,8 +31,8 @@
  * ⚠**`origin` 은 `'npb'` 고정이다.** wikipedia 를 넣게 되면 **두 번째 적재기를 만들지 말고**
  * `origin`·`license` 를 입력으로 올려라(M1).
  */
-import { DRAFT_KINDS, normalizePlayerName } from "@bb-app/parser";
-import type { DraftBidRow, DraftKind, DraftPickRow } from "@bb-app/parser";
+import { DRAFT_KINDS, draftHeldOnFor, normalizePlayerName } from "@bb-app/parser";
+import type { DraftBidRow, DraftHeldOn, DraftKind, DraftPickRow } from "@bb-app/parser";
 import type { Db } from "./db.ts";
 
 export class DraftLoadError extends Error {
@@ -56,6 +56,20 @@ export interface DraftProvenance {
   fetchedAt: string;
   /** ⚠**본문 해시다.** npb.jp 는 `ETag`·`Last-Modified` 를 주지 않는다(019 주석) */
   revision: string;
+}
+
+/**
+ * 연도 톱(`/draft/{YYYY}/`)에서 온 것 **전부** — 그 페이지의 출처와, 그 페이지가 적은 개최일.
+ *
+ * ⚠**개최일을 출처와 한 덩어리로 받는 이유**(2026-10-24): `draft_event` 한 행의 `revision` 은
+ * **그 행의 모든 값**이 어느 판에서 왔는지를 말해야 한다(M4). 개최일을 따로 받아 따로 쓰면
+ * 「출처는 새 판인데 날짜는 옛 판」인 행이 생길 수 있다 — 한 문장(upsert)으로 같이 쓴다.
+ * ⚠**기본값이 없다** — 「못 읽었으면 NULL」을 허용하면 M7(구조가 바뀌어 못 읽음)과 M11(소스가 안 말함)이
+ * 같은 NULL 이 된다. 못 읽었으면 파서가 이미 던졌고 그 시즌은 적재되지 않는다.
+ */
+export interface DraftEventSource extends DraftProvenance {
+  /** `parseDraftHeldOn` 이 연도 톱에서 읽은 값. 구획별 날짜는 `draftHeldOnFor` 한 벌이 정한다(M1) */
+  heldOn: DraftHeldOn;
 }
 
 /**
@@ -113,9 +127,9 @@ export interface DraftLoadInput {
    *
    * ⚠**이 페이지는 파이프라인이 이미 받는다** — 구단 슬러그를 발견하는 곳이
    * 바로 여기다(`parseDraftTeamSlugs`). 즉 새로 요청을 늘리지 않는다(M8).
-   * ⚠**`held_on`(개최일)도 언젠가 여기서 온다** — 그래서 이 페이지가 그 행의 출처인 것이 맞다.
+   * ⚠**`held_on`(개최일)도 여기서 온다**(2026-10-24 · `DraftEventSource`) — 그래서 이 페이지가 그 행의 출처인 것이 맞다.
    */
-  event: DraftProvenance;
+  event: DraftEventSource;
 }
 
 export interface DraftLoadResult {
@@ -634,15 +648,21 @@ export function loadDraft(db: Db, input: DraftLoadInput): DraftLoadResult {
   let yieldedBids = 0;
 
   db.savepoint("draft_load", () => {
+    // ⚠**`held_on` 도 갱신한다**(2026-10-24) — 출처·판과 **한 문장**으로 쓴다. 따로 쓰면
+    //   「판은 새것인데 날짜는 옛것」인 행이 생기고, 그 행의 `revision` 이 거짓이 된다(M4).
+    //   ⚠그 판이 그 구획의 날짜를 안 적으면 `NULL` 로 **되돌린다** — 옛 판의 날짜를 남기지 않는다.
     const ev = db.raw.prepare(
       `INSERT INTO draft_event (season, kind, held_on, source, fetched_at, revision)
-       VALUES (?, ?, NULL, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(season, kind) DO UPDATE SET
+         held_on = excluded.held_on,
          source = excluded.source, fetched_at = excluded.fetched_at, revision = excluded.revision`,
     );
     // ⚠**시즌 단위 출처를 쓴다.** 구단 페이지(`page`)를 여기 쓰면 12구단 중 11구단분이
     //   마지막에 적재된 한 장으로 덮여 **「이 회의는 어느 판인가」의 답이 틀린다**([I3]).
-    for (const kind of kinds) ev.run(season, kind, event.source, event.fetchedAt, event.revision);
+    for (const kind of kinds) {
+      ev.run(season, kind, draftHeldOnFor(event.heldOn, kind), event.source, event.fetchedAt, event.revision);
+    }
 
     // ⚠**지명이 0건이어도 지운다.** 그래서 지울 구단을 행에서 유도하지 않고 입력에서 받는다 —
     //   「전 회차를 건너뛴 구단」으로 정정된 판이 오면 옛 행이 **조용히 남는 것**이 결함이다.
@@ -724,4 +744,12 @@ export function loadDraft(db: Db, input: DraftLoadInput): DraftLoadResult {
     soleNominations: soles === null ? null : soles.length,
     yielded: { picks: yieldedPicks, bids: yieldedBids },
   };
+}
+
+/**
+ * 그 시즌의 지명 행 수 — **출처를 가리지 않는다**(npb·wikipedia).
+ * ⚠「개최 후 미수집」 경고의 재료다(`load-draft-archive.ts`). 화면이 실제로 그릴 행이 0인가를 묻는다.
+ */
+export function draftPicksIn(db: Db, season: number): number {
+  return (db.raw.prepare("SELECT COUNT(*) AS n FROM draft_pick WHERE season = ?").get(season) as { n: number }).n;
 }

@@ -23,12 +23,17 @@ import { fileURLToPath } from "node:url";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { draftWikiKey, teamPageKey, yearIndexKey } from "@bb-app/archiver";
 import type { BlobMeta } from "@bb-app/archiver";
+import { parseDraftWiki } from "@bb-app/parser";
 import type { DraftBidRow, DraftKind, DraftPickRow } from "@bb-app/parser";
 import { openDb, type Db } from "../src/db.ts";
 import { DraftLoadError } from "../src/draft.ts";
+import type { DraftEventSource } from "../src/draft.ts";
 import {
+  DRAFT_UNCOLLECTED_GRACE_DAYS,
   checkableInvariants,
   decideBids,
+  draftCollectionWarnings,
+  heldOnNote,
   invariantNote,
   loadDraftSeason,
   loadDraftWikiSeason,
@@ -36,6 +41,7 @@ import {
   seasonsInArchive,
   summarizeSeasons,
   summarizeWiki,
+  uncollectedDraftWarning,
   wikiLine,
   type SeasonLoadReport,
   type TeamPage,
@@ -91,13 +97,26 @@ const IDX_URL = "https://draft.npb.jp/draft/2019/";
 const C_URL = "https://draft.npb.jp/draft/2019/draftlist_c.html";
 const G_URL = "https://draft.npb.jp/draft/2019/draftlist_g.html";
 
+/**
+ * 연도 톱 본문 — **모양 C**(2009~2026)의 구조를 옮긴 것. 실물 2019 는 `2019年10月17日（木） 17:00開始予定`.
+ * ⚠**`<html>index</html>` 로 두지 마라**(2026-10-24 까지 그랬다) — 적재가 이제 이 페이지에서 개최일을 읽으므로
+ *   날짜가 없는 연도 톱은 그 시즌을 `parse` 로 건너뛰게 만든다(M7).
+ */
+function yearIndexHtml(date: string): string {
+  return `<body class="page_draft" id="ctop"><section id="ct_summary"><h4>開催要項</h4>`
+    + `<div class="table_summary summary_table"><table><tr><th width="150">開催日時</th><td>${date}</td></tr></table></div>`
+    + `</section></body>`;
+}
+
 /** 2019 = 「소스가 경합을 쓴 시즌」의 실물. `c` 는 0건이고 `g` 는 2건(둘 다 낙첨)이다 */
-async function archive2019(opts: { cMeta?: boolean; gBody?: string; idxMeta?: boolean } = {}): Promise<string> {
+async function archive2019(
+  opts: { cMeta?: boolean; gBody?: string; idxMeta?: boolean; idxBody?: string | null } = {},
+): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "bb-draft-arc-"));
   await writeBlob(
     root,
     yearIndexKey(2019),
-    "<html>index</html>",
+    opts.idxBody === undefined ? yearIndexHtml("2019年10月17日（木） 17:00開始予定") : opts.idxBody,
     opts.idxMeta === false ? null : meta(IDX_URL, { sha256: "idx".padEnd(64, "0"), checkedAt: "2026-09-03T00:00:00.000Z" }),
   );
   await writeBlob(
@@ -155,6 +174,10 @@ function report(over: Partial<SeasonLoadReport> = {}): SeasonLoadReport {
     yielded: { picks: 0, bids: 0 },
     skipped: null,
     sourceWritesBids: true,
+    heldOn: [
+      { kind: "ikusei", date: "2019-10-17" },
+      { kind: "shihaika", date: "2019-10-17" },
+    ],
     ...over,
   };
 }
@@ -169,7 +192,13 @@ function bid(team: string, roundNo: number, rivals: string[], nameDisplay: strin
   return { team, kind: null, roundNo, rivals, nameDisplay, won };
 }
 
-const PROV = { source: "https://draft.npb.jp/draft/2019/", fetchedAt: "2026-09-05T00:00:00.000Z", revision: "h" };
+/** 연도 톱 한 장 = 출처 + 개최일(2026-10-24 부터 `event` 가 함께 싣는다) */
+const PROV: DraftEventSource = {
+  source: "https://draft.npb.jp/draft/2019/",
+  fetchedAt: "2026-09-05T00:00:00.000Z",
+  revision: "h",
+  heldOn: { shape: "single", date: "2019-10-17" },
+};
 
 function page(team: string, picks: DraftPickRow[], bids: DraftBidRow[]): TeamPageWithMeta {
   return { team, picks, bids, source: `${PROV.source}draftlist_${team}.html`, fetchedAt: PROV.fetchedAt, revision: `r-${team}` };
@@ -288,6 +317,15 @@ test("⚠M4 — source·fetched_at·revision 이 전부 사이드카에서 온�
       assert.equal(ev[0]?.source, IDX_URL, "⚠구단 페이지가 아니라 연도 톱이다");
       assert.equal(ev[0]?.revision, "idx".padEnd(64, "0"));
       assert.equal(ev[0]?.fetched_at, "2026-09-03T00:00:00.000Z");
+
+      // ⚠**개최일도 그 연도 톱에서 온다**(2026-10-24) — 같은 판(revision)의 값이다
+      const held = db.raw
+        .prepare("SELECT kind, held_on FROM draft_event ORDER BY kind")
+        .all() as unknown as { kind: string; held_on: string | null }[];
+      assert.deepEqual(held.map((h) => ({ ...h })), [
+        { kind: "ikusei", held_on: "2019-10-17" },
+        { kind: "shihaika", held_on: "2019-10-17" },
+      ]);
     });
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -739,6 +777,7 @@ test("⚠[Minor-1] INV 는 분모와 함께 찍는다 — 「0건」과 「안 �
     bidDiffs: [],
     wrote: { picks: 0, bids: 22, events: 0 },
     deferred: { picks: 123, bids: 0 },
+    ignoredFontWeights: [],
   };
   assert.equal(invariantNote(base), "INV 위반 0 / 6종 분모 47");
   assert.match(wikiLine(base), /INV 위반 0 \/ 6종 분모 47/u, "시즌 줄이 분모를 안 싣는다");
@@ -758,4 +797,185 @@ test("⚠[Minor-1] INV 는 분모와 함께 찍는다 — 「0건」과 「안 �
   assert.match(invariantNote(skipped), /안쟀음/u);
   assert.equal(summarizeWiki([skipped]).invariantChecked, 0);
   assert.deepEqual(summarizeWiki([skipped]).invariantBlind, [], "⚠안 잰 시즌을 「분모 0」으로 세면 안 된다");
+});
+
+// ── 개최일(held_on) — 연도 톱에서 읽는다(2026-10-24) ─────────────────────────
+
+test("⚠연도 톱에 개최일이 없으면 그 시즌을 `parse` 로 건너뛴다 — NULL 로 넣지 않는다(M7 · 행 0)", async () => {
+  // ⚠**NULL 로 흘리면 「소스가 안 말한다(M11)」와 「구조가 바뀌어 못 읽었다(M7)」가 같은 값이 된다.**
+  const root = await archive2019({ idxBody: "<html><body>お知らせ</body></html>" });
+  try {
+    await withDb(async (db) => {
+      const r = await loadDraftSeason(db, 2019, { archiveRoot: root });
+      assert.equal(r.loaded, false);
+      assert.equal(r.skipped?.kind, "parse", `parse 가 아니다: ${JSON.stringify(r.skipped)}`);
+      assert.match(r.skipped?.reason ?? "", /개최일/u);
+      assert.equal(r.heldOn, null, "⚠건너뛴 시즌은 「안 쟀음」이다");
+      assert.equal(count(db, "draft_pick"), 0, "⚠구단 페이지는 멀쩡했지만 넣지 않았다 — 시즌 단위 원자성");
+      assert.equal(count(db, "draft_event"), 0);
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("⚠연도 톱 사이드카는 있는데 본문이 없으면 `provenance` 다 — 다시 받으면 풀린다(행 0)", async () => {
+  const root = await archive2019({ idxBody: null });
+  try {
+    await withDb(async (db) => {
+      const r = await loadDraftSeason(db, 2019, { archiveRoot: root });
+      assert.equal(r.skipped?.kind, "provenance", `provenance 가 아니다: ${JSON.stringify(r.skipped)}`);
+      assert.equal(count(db, "draft_pick"), 0);
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("시즌 줄의 개최일 칸 — 같은 날이면 한 번 · 다르면 구획별 · 「모름」과 「안쟀음」을 가른다(M11)", () => {
+  assert.equal(heldOnNote(report().heldOn), "개최일 2019-10-17");
+  assert.equal(
+    heldOnNote([
+      { kind: "daigaku_shakaijin", date: "2006-11-21" },
+      { kind: "ikusei", date: null },
+      { kind: "koukousei", date: "2006-09-25" },
+    ]),
+    "개최일 daigaku_shakaijin 2006-11-21 · ikusei 모름 · koukousei 2006-09-25",
+  );
+  assert.equal(heldOnNote([{ kind: "kibou_nyudanwaku", date: null }]), "개최일 kibou_nyudanwaku 모름", "⚠전부 모름을 「같은 날」로 접지 않는다");
+  assert.equal(heldOnNote(null), "개최일 안쟀음");
+});
+
+// ── 「개최 후 미수집」 비차단 경고 ─────────────────────────────────────────
+
+test("⚠「개최 후 미수집」은 개최일 + 3일을 **넘어야** 운다 — 10-22 개최면 10-25 까지 조용하고 10-26 부터", () => {
+  assert.equal(DRAFT_UNCOLLECTED_GRACE_DAYS, 3);
+  const at = (todayJst: string, picks = 0): string | null =>
+    uncollectedDraftWarning({ season: 2026, heldOn: "2026-10-22", picks, todayJst });
+  assert.equal(at("2026-10-22"), null, "개최 당일");
+  assert.equal(at("2026-10-25"), null, "⚠+3일까지는 조용하다 — 경합 주석이 붙기 전이다");
+  const w = at("2026-10-26");
+  assert.notEqual(w, null, "+4일에 안 울었다");
+  assert.match(w!, /2026 드래프트는 2026-10-22 에 열렸는데\(4일 전\) 지명이 0행이다/u);
+  assert.match(w!, /draft-backfill\.md §1/u, "어디를 보라는지 안 말한다");
+  assert.equal(at("2027-03-01"), at("2027-03-01"), "결정론이다(M6)");
+  assert.equal(at("2026-10-26", 1), null, "⚠지명이 1행이라도 있으면 조용하다");
+  assert.equal(at("2026-09-04"), null, "개최 전");
+  // ⚠**모르면 「안 넘었다」로 기울지 않는다** — 그러면 경고가 조용히 꺼진다
+  assert.throws(() => at("2026/10/26"), /todayJst/u);
+  assert.throws(() => at("2026-02-30"), /todayJst/u);
+});
+
+/** 연도 톱만 있는 시즌(개최 전에 받아 둔 모양 — 2026-09-05 의 자산이 그랬다) */
+async function writeIndexOnly(root: string, season: number, body: string): Promise<void> {
+  await writeBlob(root, yearIndexKey(season), body, meta(`https://draft.npb.jp/draft/${season}/`));
+}
+
+test("⚠「개최 후 미수집」 — 지명 0행인 해만 묻고, 연도 톱이 없으면 조용하고, 날짜를 못 읽으면 그 사실을 낸다", async () => {
+  const root = await archive2019();
+  try {
+    await writeIndexOnly(root, 2026, yearIndexHtml("2026年10月22日（木）"));
+    await writeIndexOnly(root, 2027, "<html><body>お知らせ</body></html>");
+    // 2028: 디렉터리는 있는데 연도 톱이 없다(구단 페이지만 남은 이상한 상태도 「모름」이다)
+    await writeBlob(root, teamPageKey(2028, "g"), "<html>x</html>", meta("https://draft.npb.jp/draft/2028/draftlist_g.html"));
+    // 2029: 연도 톱 본문이 gzip 이 아니다(손상) — ⚠경고 경로가 도구 전체를 죽이면 요약·종료코드 줄이 사라진다
+    await mkdir(dirname(join(root, yearIndexKey(2029))), { recursive: true });
+    await writeFile(join(root, `${yearIndexKey(2029)}.html.gz`), "not gzip");
+    await withDb(async (db) => {
+      await loadDraftSeason(db, 2019, { archiveRoot: root });
+      const seasons = [2019, 2026, 2027, 2028, 2029];
+
+      const quiet = await draftCollectionWarnings(db, root, seasons, "2026-10-25");
+      assert.deepEqual(quiet.filter((l) => l.startsWith("2026")), [], "⚠+3일까지는 조용하다");
+
+      const loud = await draftCollectionWarnings(db, root, seasons, "2026-10-26");
+      assert.equal(loud.length, 3, `경고 줄이 3개가 아니다: ${JSON.stringify(loud)}`);
+      assert.match(loud[0]!, /^2026 드래프트는 2026-10-22 에 열렸는데\(4일 전\) 지명이 0행이다/u);
+      // ⚠**날짜를 못 읽은 해는 「경고가 이 해를 못 본다」를 낸다** — 경고가 꺼진 것을 경고한다
+      assert.match(loud[1]!, /^2027 연도 톱에서 개최일을 못 읽었다/u);
+      assert.match(loud[2]!, /^2029 연도 톱에서 개최일을 못 읽었다/u, "손상된 본문이 「못 읽었다」가 아니다");
+      // 2019(지명 있음)·2028(연도 톱 없음)은 조용하다
+      assert.ok(loud.every((l) => !l.startsWith("2019") && !l.startsWith("2028")), JSON.stringify(loud));
+
+      // ⚠**지명이 있는 해는 연도 톱을 아예 안 본다** — 그 해의 날짜 실패는 npb 적재가 이미 `parse` 로 붉혔다.
+      //   여기서 또 내면 같은 실패를 두 번 센다(지명이 남은 DB 에 연도 톱만 바뀐 모양으로 잰다)
+      await writeIndexOnly(root, 2019, "<html><body>お知らせ</body></html>");
+      const again = await draftCollectionWarnings(db, root, seasons, "2026-10-26");
+      assert.ok(again.every((l) => !l.startsWith("2019")), `지명이 있는 해를 물었다: ${JSON.stringify(again)}`);
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// ── wikipedia 2026 — 무효 font-weight 를 끝까지 운반한다 ─────────────────────
+
+test("⚠위키 2026(개최 후 · `heavy` 3칸)이 적재까지 간다 — 무효 굵기는 세어서 찍는다", async () => {
+  const root = await mkdtemp(join(tmpdir(), "bb-wiki-arc-"));
+  try {
+    const html = fixture("wiki-draft-2026-held");
+    await writeBlob(
+      root,
+      draftWikiKey(2026),
+      html,
+      meta("https://ja.wikipedia.org/wiki/2026年度新人選手選択会議_(日本プロ野球)", { sha256: "w26".padEnd(64, "0") }),
+    );
+    await withDb(async (db) => {
+      // npb 지명을 **위키 명단 그대로** 넣는다 — 열↔구단 맞추기의 재료다(구단 코드는 열 번호로 짓는다).
+      // ⚠X-3 이 0 인 것은 그래서 자명하다 — 이 본이 재는 것은 **대조가 아니라 운반**이다(실물 대조는 런북 §8 의 적재 로그).
+      const parsed = parseDraftWiki(html, 2026);
+      assert.equal(parsed.kind, "grid");
+      if (parsed.kind !== "grid") return;
+      const ins = db.raw.prepare(
+        `INSERT INTO draft_pick (season, kind, team, round_no, waiver_dir, name_display, name_canonical, origin, source, fetched_at, revision)
+         VALUES (2026, ?, ?, ?, NULL, ?, NULL, 'npb', 'https://draft.npb.jp/draft/2026/x', '2026-10-24T00:00:00Z', 'h')`,
+      );
+      for (const p of parsed.picks) ins.run(p.kind, `c${p.columnIndex}`, p.roundNo, p.nameDisplay);
+
+      const w = await loadDraftWikiSeason(db, 2026, { archiveRoot: root });
+      assert.equal(w.state, "done", `[${w.state}] ${w.reason ?? ""}`);
+      assert.deepEqual(w.ignoredFontWeights, ["1巡目1 楽天 heavy", "1巡目1 ソフトバンク heavy", "1巡目2 中日 heavy"]);
+      assert.deepEqual(w.invariantViolations, []);
+      assert.equal(w.pickFact, 0);
+      assert.match(wikiLine(w), /⚠무효 font-weight 3칸\(굵게 읽음\)/u, "시즌 줄이 무효 칸 수를 안 싣는다");
+      assert.equal(summarizeWiki([w]).ignoredFontWeights, 3);
+      // npb 가 2026 경합을 안 쓰므로 위키가 입찰을 채운다 — **당첨 3명이 DB 까지 간다**
+      const won = db.raw
+        .prepare("SELECT team, round_no, name_display FROM draft_bid WHERE season = 2026 AND won = 1 ORDER BY round_no, team")
+        .all() as unknown as { team: string; round_no: number; name_display: string }[];
+      assert.deepEqual(
+        // 구단 코드를 열 번호로 지었으므로 행 순서에는 뜻이 없다 — 정렬해서 비교한다
+        won.map((r) => `${parsed.grid.columns[Number(r.team.slice(1))]}/${r.round_no}/${r.name_display}`).sort(),
+        ["ソフトバンク/1/鈴木泰成", "中日/2/宮原廉", "楽天/1/渡部海"].sort(),
+      );
+      assert.equal(w.wrote?.bids, 15, "입찰 15행(경합 6 + 단독 9)이 아니다");
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("⚠무효 굵기 칸이 없으면 시즌 줄에 아무것도 안 붙는다 — 0 은 정상이다", () => {
+  const w: WikiSeasonReport = {
+    season: 2025,
+    state: "done",
+    reason: null,
+    columns: 12,
+    minOverlap: 6,
+    invariantChecked: { "INV-1": 4, "INV-2": 2, "INV-3": 1, "INV-4": 12, "INV-5": 20, "INV-6": 8 },
+    invariantViolations: [],
+    pickChecked: 116,
+    pickFact: 0,
+    pickSpelling: 2,
+    pickDiffs: [],
+    bidChecked: 0,
+    bidFact: 0,
+    bidSpelling: 0,
+    bidDiffs: [],
+    wrote: { picks: 0, bids: 17, events: 0 },
+    deferred: { picks: 116, bids: 0 },
+    ignoredFontWeights: [],
+  };
+  assert.doesNotMatch(wikiLine(w), /font-weight/u);
+  assert.equal(summarizeWiki([w]).ignoredFontWeights, 0);
 });

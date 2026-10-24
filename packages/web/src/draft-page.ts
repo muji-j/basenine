@@ -264,7 +264,11 @@ export interface DraftEventRef {
   revision: string;
   /** wikipedia 유래면 `CC BY-SA 4.0`. ⚠npb 유래면 `null`(실측 47/47 전건 NULL) */
   license: string | null;
-  /** 개최일. ⚠**실측 47/47 전건 NULL** — 소스가 이 페이지에 안 적는다(M11) */
+  /**
+   * 개최일(`YYYY-MM-DD`). ⚠~~실측 47/47 전건 NULL — 소스가 이 페이지에 안 적는다~~ 는 **거짓이었다** — 연도 톱이 줄곧 적고 있었고
+   * 2026-10-24 부터 적재한다(49행 중 45행 · 런북 §2-1). **`null` 은 「연도 톱이 그 회의의 날짜를 안 적는다」**(M11 · 2006·2007 育成 등).
+   * ⚠화면은 아직 안 그린다(이번 범위 밖).
+   */
   heldOn: string | null;
 }
 

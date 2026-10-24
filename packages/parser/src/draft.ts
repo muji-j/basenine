@@ -232,7 +232,10 @@ function stripComments(html: string, where: string): string {
  * parseDraftBids      → visibleScope    (주석 제거 + 푸터 컷)
  * parseDraftYears     → stripComments   (주석 제거만 · 푸터 컷 없음)
  * parseDraftTeamSlugs → stripComments   (주석 제거만 · 푸터 컷 없음)
+ * parseDraftHeldOn    → stripComments   (주석 제거만 · 푸터 컷 없음 — 2026-10-24)
  * ```
+ * ⚠**`parseDraftHeldOn` 이 푸터를 안 자르는 이유**: 날짜 진술을 `<h4>`·`<th>` 로 **콕 집어** 찾고
+ * **둘이면 던진다.** 푸터에 날짜 진술이 생기면 자르는 쪽은 조용히 넘기고 안 자르는 쪽은 **시끄럽게 실패**한다(M7).
  * 사유는 **마지막 섹션의 본문이 문서 끝까지 뻗는다**는 것이다 — 언젠가 푸터에 표나 `※` 가
  * 생기면 그것이 지명·경합으로 섞여 든다. **진입점에는 그 사정이 없다**(`href` 를 콕 집어 찾는다).
  * 갈라 둔 이유와 각각이 무엇을 잃는지는 `visibleScope` 주석에 있다.
@@ -1068,4 +1071,184 @@ export function parseDraftTeamSlugs(html: string): string[] {
     );
   }
   return [...slugs].sort();
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 개최일 — 연도 톱(`/draft/{YYYY}/`)이 적는 「開催日」(2026-10-24).
+ *
+ * ⚠**받고 안 읽던 것이다**(CLAUDE.md §2-2-1 의 모양). `draft_event.held_on` 이 **47/47 NULL** 이었는데
+ * 그 날짜는 **우리가 이미 받는 연도 톱**(구단 슬러그를 찾는 그 페이지)에 줄곧 적혀 있었다 —
+ * 아카이브 2005~2026 **22장 중 22장**. 요청을 하나도 늘리지 않는다(M8).
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** 회의 하나의 개최일. ⚠`label` 은 **원문**(`高校生選択会議`) — 사람이 로그에서 페이지와 맞춰 볼 수 있게 남긴다 */
+export interface DraftMeetingDate {
+  readonly kind: DraftKind;
+  readonly label: string;
+  /** `YYYY-MM-DD`(JST 달력의 날짜 · 시각은 버린다) */
+  readonly date: string;
+}
+
+/**
+ * 연도 톱이 **적은 그대로**의 개최일.
+ *
+ * ⚠**모양이 둘이다**(아카이브 22장 전수 · 2026-10-24):
+ *   · `single` — 회의를 **하나로** 적은 해(**2008~2026**). 그 해 회의 전체(支配下·育成)의 날짜다.
+ *   · `per-meeting` — 회의마다 적은 해(**2005~2007** 分離ドラフト). **적힌 회의만** 담는다 —
+ *     2006·2007 은 育成 회의 행이 **없다**(그해 育成 지명은 실재한다). 그 자리는 「모름」이다(M11).
+ * ⚠**구획 → 날짜는 `draftHeldOnFor` 한 벌이 정한다**(M1) — 적재와 경고가 같은 규칙을 쓴다.
+ */
+export type DraftHeldOn =
+  | { readonly shape: "single"; readonly date: string }
+  | { readonly shape: "per-meeting"; readonly meetings: readonly DraftMeetingDate[] };
+
+/**
+ * **회의가 아니라 제도인** 구획 — 自由獲得·希望入団枠. 회의를 하나로 적은 해의 날짜를 여기에 붙이지 않는다.
+ * ⚠**「회의 날짜 = 그 지명의 날짜」로 접지 마라** — 그 지명은 회의에서 「뽑힌」 것이 아니라 제도로 「획득」한 것이다.
+ */
+const NOT_A_MEETING: ReadonlySet<DraftKind> = new Set<DraftKind>(["jiyuu_kakutoku", "kibou_nyudanwaku"]);
+
+/**
+ * 그 구획의 개최일. **`null` 은 「연도 톱이 그 구획의 회의 날짜를 말하지 않는다」**(M11)이지 「못 읽었다」가 아니다 —
+ * 못 읽었으면 `parseDraftHeldOn` 이 이미 던졌다(M7).
+ */
+export function draftHeldOnFor(h: DraftHeldOn, kind: DraftKind): string | null {
+  if (h.shape === "per-meeting") return h.meetings.find((m) => m.kind === kind)?.date ?? null;
+  return NOT_A_MEETING.has(kind) ? null : h.date;
+}
+
+/**
+ * 그 해 **가장 이른** 회의의 날짜 — 「개최 후 미수집」 판정의 기준이다.
+ * ⚠**마지막 회의가 아니라 첫 회의다**: 첫 회의가 끝나면 그 회의의 지명이 npb 에 생기므로,
+ * 그 뒤에도 지명이 0행이면 「안 받았다」가 맞다(分離ドラフト의 高校生 회의는 9~10월이었다).
+ */
+export function draftHeldOnFirst(h: DraftHeldOn): string {
+  if (h.shape === "single") return h.date;
+  // ⚠`YYYY-MM-DD` 는 문자열 순서가 곧 날짜 순서다
+  const first = h.meetings.map((m) => m.date).sort()[0];
+  if (first === undefined) {
+    // ⚠파서는 회의 0개를 내지 않는다(행이 0이면 모양 B 로 가거나 던진다) — 손으로 만든 값만 여기 온다
+    throw new Error("회의가 0개인 개최일이다 — 가장 이른 날을 정할 수 없다");
+  }
+  return first;
+}
+
+/** 요일 한 글자 — `Date#getUTCDay()` 의 순서(0=日) */
+const WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"] as const;
+
+/**
+ * 날짜 칸 하나를 `YYYY-MM-DD` 로. ⚠**모양이 하나라도 어긋나면 던진다**(M7).
+ *
+ * 받는 모양(NFKC + 공백 제거 후 · 아카이브 22장 실측):
+ *   `2009年10月29日(木)16:00~` · `2016年10月20日(木)17:00開始予定` · `2005年10月3日(月)`(꼬리 없음)
+ * ⚠**꼬리는 시각만 받는다.** `延期`·`中止`·`予定` 같은 낱말이 붙으면 날짜의 뜻이 바뀔 수 있으므로 던진다.
+ * ⚠**요일을 대조한다** — 페이지가 스스로 적은 요일과 날짜가 안 맞으면 **어느 쪽이 틀렸는지 우리가 정하지 않는다.**
+ * ⚠**연도가 시즌과 다르면 던진다** — 다른 해의 연도 톱을 붙인 배선 실수가 여기서 잡힌다.
+ * ⚠`new Date(Date.UTC(…))` 는 **시계를 읽지 않는다**(M6) — 주어진 수를 해석할 뿐이다.
+ */
+function parseMeetingDate(text: string, season: number, where: string): string {
+  const t = compact(text);
+  const m = /^(\d{4})年(\d{1,2})月(\d{1,2})日\(([日月火水木金土])\)(.*)$/u.exec(t);
+  if (!m) {
+    throw new DraftParseError("개최일이 `YYYY年M月D日（曜）` 모양이 아니다(M7)", `${where} / ${JSON.stringify(text)}`);
+  }
+  const [, ys, ms, ds, weekday, tail] = m as unknown as [string, string, string, string, string, string];
+  // ⚠`～`(U+FF5E)는 NFKC 가 `~` 로 접는다. `〜`(U+301C)는 안 접혀서 따로 받는다.
+  if (!/^(?:\d{1,2}:\d{2}(?:~|〜|開始予定)?)?$/u.test(tail)) {
+    throw new DraftParseError("개최일 뒤에 시각이 아닌 말이 붙어 있다 — 날짜의 뜻이 바뀔 수 있다(M7)", `${where} / ${JSON.stringify(text)}`);
+  }
+  const y = Number(ys);
+  const mo = Number(ms);
+  const d = Number(ds);
+  if (y !== season) {
+    throw new DraftParseError("개최일의 연도가 시즌과 다르다 — 다른 해의 연도 톱일 수 있다(M7)", `${where} / season=${season} ${JSON.stringify(text)}`);
+  }
+  const at = new Date(Date.UTC(y, mo - 1, d));
+  if (at.getUTCFullYear() !== y || at.getUTCMonth() !== mo - 1 || at.getUTCDate() !== d) {
+    throw new DraftParseError("개최일이 달력에 없는 날이다(M7)", `${where} / ${JSON.stringify(text)}`);
+  }
+  if (WEEKDAYS[at.getUTCDay()] !== weekday) {
+    throw new DraftParseError(
+      "개최일의 요일이 날짜와 안 맞는다 — 어느 쪽이 틀렸는지 정하지 않는다(M7)",
+      `${where} / ${JSON.stringify(text)} 계산=${WEEKDAYS[at.getUTCDay()]}`,
+    );
+  }
+  return `${ys}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
+/** `<th>…</th><td>…</td>` 이웃 쌍. ⚠`<th\b` 는 `<thead` 에 안 걸린다 */
+const TH_TD = /<th\b[^>]*>([\s\S]*?)<\/th>\s*<td\b[^>]*>([\s\S]*?)<\/td>/g;
+
+/** 모양 C 의 머리 칸 — 실측 둘(`開催日時` 2009~2022·2025·2026 / `開催日` 2023·2024·2026 개최 전 판) */
+const SINGLE_DATE_LABELS: ReadonlySet<string> = new Set(["開催日時", "開催日"]);
+
+/**
+ * 연도 톱에서 **개최일**을 읽는다.
+ *
+ * 세 모양을 받는다(아카이브 2005~2026 · **22장 전수** · 2026-10-24):
+ * | 모양 | 연도 | 찾는 곳 |
+ * |---|---|---|
+ * | A | 2005~2007 | `<h4>開催日</h4>` 다음의 표 — `<th>{회의}</th><td>{날짜}</td>` 행마다 |
+ * | B | 2008 | `<h4>開催日</h4>` 다음의 `<p>{날짜}</p>` 하나 |
+ * | C | 2009~2026 | `<th>開催日時</th>`(또는 `開催日`)`<td>{날짜}</td>` 한 쌍 |
+ * ⚠**`section#ct_summary` 로 찾지 마라** — 2024 픽스처(2026-09-04 취득)에는 그 id 가 없다.
+ * ⚠**회의 이름 → 구획은 `kindOf`(구단 페이지의 `<h4>` 어휘) 한 벌을 쓴다**(M1) —
+ * `大学生・社会人ほか選択会議`·`高校生選択会議`·`育成選手選択会議` 는 구단 페이지의 구획 머리와 **같은 낱말**이다.
+ *
+ * @param season ⚠**페이지가 아니라 호출자가 아는 사실**이다. 날짜의 연도가 이것과 다르면 던진다.
+ * @throws {DraftParseError} ⚠**`null` 로 흘리지 않는다**(M7) — 날짜 진술이 **없을 때**(실물 2001 이 그 모양) ·
+ *   **둘 이상일 때** · 날짜 모양·요일·연도가 어긋날 때 · 모양 A 의 회의 이름이 어휘 밖이거나 겹칠 때.
+ *   「소스가 안 말한다(M11)」는 **모양 A 에 적히지 않은 구획**뿐이고 그건 `draftHeldOnFor` 가 `null` 로 낸다.
+ */
+export function parseDraftHeldOn(html: string, season: number): DraftHeldOn {
+  const where = `연도 톱 ${season}`;
+  // ⚠**주석 안의 날짜를 읽지 않는다**([N2]) — 브라우저가 감춘 옛 일정이 사실이 된다.
+  const scope = stripComments(html, where);
+
+  const heads = [...scope.matchAll(/<h4\b[^>]*>([\s\S]*?)<\/h4>/g)];
+  const dateHeads = heads.filter((m) => compact(decode(m[1] ?? "")) === "開催日");
+  const singles = [...scope.matchAll(TH_TD)].filter((m) => SINGLE_DATE_LABELS.has(compact(decode(m[1] ?? ""))));
+
+  const statements = dateHeads.length + singles.length;
+  if (statements === 0) {
+    throw new DraftParseError("연도 톱에서 개최일을 못 찾았다 — 빈 값으로 흘리지 않는다(M7)", `${where} / html ${html.length}자`);
+  }
+  if (statements > 1) {
+    throw new DraftParseError(
+      "연도 톱에 개최일 진술이 둘 이상이다 — 어느 것이 정본인지 정하지 않는다(M7)",
+      `${where} / <h4>開催日</h4> ${dateHeads.length}개 · <th>開催日(時)</th> ${singles.length}개`,
+    );
+  }
+
+  const single = singles[0];
+  if (single !== undefined) {
+    return { shape: "single", date: parseMeetingDate(decode(single[2] ?? ""), season, where) };
+  }
+
+  // ── 모양 A·B: `<h4>開催日</h4>` 의 블록 — 다음 `<h4` 나 `</section>` 까지 ──
+  const head = dateHeads[0]!;
+  const from = head.index + head[0].length;
+  const ends = [scope.indexOf("<h4", from), scope.indexOf("</section>", from)].filter((i) => i !== -1);
+  const block = scope.slice(from, ends.length === 0 ? scope.length : Math.min(...ends));
+
+  const rows = [...block.matchAll(TH_TD)];
+  if (rows.length > 0) {
+    const meetings: DraftMeetingDate[] = rows.map((r) => {
+      const label = decode(r[1] ?? "");
+      return { kind: kindOf(label, where), label, date: parseMeetingDate(decode(r[2] ?? ""), season, `${where} ${label}`) };
+    });
+    const kinds = meetings.map((m) => m.kind);
+    if (new Set(kinds).size !== kinds.length) {
+      throw new DraftParseError("개최일 표에 같은 구획의 회의가 둘 이상이다 — 어느 날짜인지 정하지 않는다(M7)", `${where} / ${JSON.stringify(kinds)}`);
+    }
+    return { shape: "per-meeting", meetings };
+  }
+  const paras = [...block.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/g)];
+  if (paras.length !== 1) {
+    throw new DraftParseError(
+      "`<h4>開催日</h4>` 블록이 회의 표도 날짜 한 줄도 아니다(M7)",
+      `${where} / 표 행 0 · <p> ${paras.length}개`,
+    );
+  }
+  return { shape: "single", date: parseMeetingDate(decode(paras[0]![1] ?? ""), season, where) };
 }

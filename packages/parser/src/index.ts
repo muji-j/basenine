@@ -41,12 +41,22 @@ export {
   DRAFT_KINDS,
   DraftIndexError,
   DraftParseError,
+  draftHeldOnFirst,
+  draftHeldOnFor,
   parseDraftBids,
+  parseDraftHeldOn,
   parseDraftPicks,
   parseDraftTeamSlugs,
   parseDraftYears,
 } from "./draft.ts";
-export type { DraftBidRow, DraftIndexObservation, DraftKind, DraftPickRow } from "./draft.ts";
+export type {
+  DraftBidRow,
+  DraftHeldOn,
+  DraftIndexObservation,
+  DraftKind,
+  DraftMeetingDate,
+  DraftPickRow,
+} from "./draft.ts";
 /**
  * ⚠**wikipedia 는 npb 와 다른 소스다** — 파서도 다르고 산출 타입도 다르다.
  * 섞어 쓰면 「어느 소스가 말한 것인가」가 타입에서 사라진다(M1·M4).
@@ -62,6 +72,7 @@ export type {
   DraftWikiBid,
   DraftWikiCell,
   DraftWikiGrid,
+  DraftWikiIgnoredFontWeight,
   DraftWikiInvariantReport,
   DraftWikiMarker,
   DraftWikiMarkerCell,
