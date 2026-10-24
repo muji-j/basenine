@@ -17,7 +17,7 @@ function siteData(over: Partial<SiteData> = {}): SiteData {
     home: {
       season: 2026,
       asOf: "2026-08-14",
-      latestDate: "2026-08-14",
+      todayDate: "2026-08-14",
       latest: null,
       leagues: [],
       week: null,
@@ -55,7 +55,7 @@ function siteData(over: Partial<SiteData> = {}): SiteData {
       highlights: [],
     },
     ranking: { season: 2026, asOf: "2026-08-14", seasonOver: false, standings: [], tieRule: "同順位", draws: [], leagues: [] },
-    starters: { heldFrom: 2019, gameDate: null, defaultDate: null, prev: null, next: null, dayCount: 0, builtOn: "2026-08-15", games: [] },
+    starters: { heldFrom: 2019, savedFrom: 2026, gameDate: null, defaultDate: null, prev: null, next: null, dayCount: 0, builtOn: "2026-08-15", games: [], withdrawal: null },
     starterDays: [],
     matchup: { season: 2026, asOf: "2026-08-14", builtOn: "2026-08-15", days: [
       { date: "2026-08-15", state: "unknown" as const, hasProbable: false, games: [] },
@@ -65,15 +65,14 @@ function siteData(over: Partial<SiteData> = {}): SiteData {
       gameDate: "2026-08-14",
       builtOn: "2026-08-15",
       games: [],
-      probableDate: null,
-      probables: [],
+      next: { kind: "awaiting" as const, nextGameDay: null },
       starRule: "3安打以上",
       starLimit: 6,
       prev: null,
       dayCount: 1,
     },
     days: [],
-    dayIndex: { season: 2026, latestDate: "2026-08-14", days: [] },
+    dayIndex: { season: 2026, todayDate: "2026-08-14", days: [], postseasonPlayed: 0 },
     heldSeasons: { from: 2022, to: 2026 },
     latestAnyGameDate: "2026-08-14",
     postseason: { season: 2026, competitions: [] },
@@ -206,7 +205,7 @@ test("⚠빌드 게이트는 사이트 전체 판정을 따른다 — 휴식(증
   assert.equal(rest.stale, false, "6일 휴식에 빌드를 실패시켰다 — 옛 규칙이다");
   const missed = buildSite(siteData({ latestAnyGameDate: "2026-08-14" }), SITE, "2026-08-15", undefined, [], {
     stale: true, missedPlayed: 1, missedAnnounced: 0, missedEarliest: "2026-08-12",
-    siteLatestGameDate: "2026-08-14", siteLagDays: 1, latestSeasonOver: false,
+    siteLatestGameDate: "2026-08-14", siteLagDays: 1, latestSeasonOver: false, startersMissingDate: null,
   });
   assert.equal(missed.stale, true, "넘겨받은 판정을 무시했다");
 });
@@ -223,7 +222,7 @@ test("⚠T8 — 현행·과거 시즌이 같은 수집 판정을 받고, 띠의 
   ];
   const collection = {
     stale: false, missedPlayed: 0, missedAnnounced: 0, missedEarliest: null,
-    siteLatestGameDate: "2026-08-14", siteLagDays: 1, latestSeasonOver: false,
+    siteLatestGameDate: "2026-08-14", siteLagDays: 1, latestSeasonOver: false, startersMissingDate: null,
   };
   const cur = buildSite(siteData({ latestAnyGameDate: "2026-08-14" }), SITE, "2026-08-15", undefined, plans, collection);
   const d22 = siteData({ season: 2022, asOf: "2022-10-02", latestAnyGameDate: "2022-10-30" });
@@ -302,7 +301,7 @@ test("CSS와 클라이언트 스크립트는 파일로 나간다 — 페이지�
 function day(date: string) {
   return {
     date, builtOn: "2026-08-15", games: [], starRule: "3安打以上", starLimit: 6,
-    prev: null, next: null, latestDate: "2026-08-14", dayCount: 2,
+    prev: null, next: null, todayDate: "2026-08-14", dayCount: 2,
   };
 }
 
@@ -378,7 +377,7 @@ test("만든 화면이 전부 시즌 경로 목록에 있다 — 빠진 만큼�
         pct: 1, gamesBehind: 0, rf: 1, ra: 0,
         avg: { value: null, denominator: 0 }, era: { value: null, denominator: 0 },
         home: { w: 1, l: 0, t: 0 }, away: { w: 0, l: 0, t: 0 }, last10: { w: 1, l: 0, t: 0 },
-        months: [], batters: [], pitchers: [], recent: [], vs: [], latestDate: "2026-08-14",
+        months: [], batters: [], pitchers: [], recent: [], vs: [], todayDate: "2026-08-14",
         batQualifier: "規定打席 4", pitQualifier: "先発は規定投球回 1回",
         hasPostseason: false,
         // ⚠**판정이 안 선 상태를 픽스처의 기본으로 둔다**(M11) — 이 시험이 재는 것은 경로 목록이지
@@ -390,6 +389,7 @@ test("만든 화면이 전부 시즌 경로 목록에 있다 — 빠진 만큼�
           },
           next: null,
           probable: null,
+          regularDone: false,
         },
         streaks: [],
         milestones: [],

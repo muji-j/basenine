@@ -54,7 +54,7 @@ test("⚠어느 화면에서든 용어집으로 갈 수 있다 — 툴팁 말고
   for (const [name, out] of [
     ["선수", renderPlayerPage(playerPage(), context())],
     ["試合", renderTodayPage({
-      gameDate: null, builtOn: "2026-08-16", games: [], probableDate: null, probables: [],
+      gameDate: null, builtOn: "2026-08-16", games: [], next: { kind: "awaiting", nextGameDay: null },
       starRule: "x", starLimit: 6, prev: null, dayCount: 0,
     }, context())],
   ] as const) {

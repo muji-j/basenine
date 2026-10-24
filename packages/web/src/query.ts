@@ -13,6 +13,10 @@ import { LOTTERY_KINDS, ROUND_NUMBERED_KINDS } from "@bb-app/store";
 //   화면과 감시가 「끝났다」를 따로 판정하면 언젠가 갈린다. 기존 호출부·시험을 위해 같은 이름으로 다시 내보낸다.
 import { seasonIsOver } from "@bb-app/store";
 export { seasonIsOver } from "@bb-app/store";
+// ⚠**日本シリーズ 성적 · 예고 철회 · 다음 경기일은 저장소 쪽 한 벌이다**(M1 · 2026-10-24 포스트시즌 화면 설계 D4·D5) —
+//   결착 판정(`japanSeriesDecided`)과 수집 감시(`collectionEvidence`)가 같은 함수를 쓴다. 화면이 따로 세면 언젠가 갈린다.
+import { nextGameDayOf, nipponSeriesRecord, probableWithdrawal, restDeclarations } from "@bb-app/store";
+import type { ProbableWithdrawal } from "@bb-app/store";
 import type { DataState } from "./layout.ts";
 import { daysBetween } from "./layout.ts";
 import {
@@ -219,7 +223,7 @@ import type {
   SrpEntry,
   SrpTotals,
 } from "@bb-app/aggregate";
-import { regularSeasonUpcoming } from "./calendar.ts";
+import { nipponSeriesSlot, splitUpcoming } from "./calendar.ts";
 import type { CalendarData, CalendarGame, CalendarMonth } from "./calendar.ts";
 import {
   NEUTRAL_COLOR,
@@ -312,12 +316,16 @@ import type {
 import type {
   DayIndexData,
   DayPageData,
+  NextProbable,
+  NipponSeriesView,
   PlayerRef,
   TodayGame,
   TodayPageData,
   TodayProbable,
   TodaySide,
 } from "./today-page.ts";
+// ⚠**대회의 화면 이름은 렌더러 쪽 한 벌이다**(M1) — 他大会·試合·날짜 화면이 같은 이름을 쓴다
+import { COMPETITION_NAME } from "./today-page.ts";
 import { KEY_PLAY_LIMIT } from "@bb-app/aggregate";
 import { gameSlug } from "./game-page.ts";
 import type { GamePageData, GamePlayView, GameSide } from "./game-page.ts";
@@ -1735,14 +1743,17 @@ export function defaultProbableDate(dates: readonly string[], builtOn: string): 
  * 원인은 당일 예고를 못 받은 날에 **무조건 마지막 예고일로 떨어지는** 기본값이고,
  * 그 마지막 예고일이 이미 치러진 날이었다.
  *
- * ⚠**해결을 새 상태로 만들지 않는다**(M12). 「예고일이 과거다」를 5번째 상태로 두는 대신
- * **없는 것으로 떨어뜨려** 기존 「まだ発表されていません」 분기로 흘린다 — 사실 그대로다.
+ * ⚠~~해결을 새 상태로 만들지 않는다 — 「まだ発表されていません」 분기로 흘린다~~ 는 2026-10-24 부로 낡았다(설계 D5).
+ *   그 한 문장이 「발표 전」·「못 받았다」·「다음 일정을 모른다」·「열리지 않았다」를 다 덮고 있었다 — 지금은 상태 6종이다(`NextProbable`).
  * ⚠**지난 예고 자체를 지우는 것이 아니다.** 그건 날짜별 예고 화면(아카이브)의 일이고,
  *   여기는 「다음」 구획이다.
  * ⚠**같은 날이면 「다음」이 아니다.** 그날 경기는 이미 우리 기록에 들어와 있다.
+ * ⚠⚠**생성일보다 이른 날도 「다음」이 아니다**(2026-10-24 · 설계 D5 의 `P ≥ B`). **열리지 않은 경기는 `game` 에 행이 안 생겨**
+ *   최신 경기일(`L`)이 멈춘다 — 2026 CS 5차전(10/18)이 그랬고, `P > L` 만 보던 이 함수는 10/18 을 **10/19 부터 10/24 까지 「次」**라고 불렀다.
+ * @param latestGameDate 그 시즌 기록의 최신 경기일 — **대회·상태 무관**(정규만 보면 포스트시즌 동안 지난 날을 「次」라고 부른다)
  */
-export function isNextProbable(probableDate: string | null, latestGameDate: string | null): boolean {
-  if (probableDate === null) return false;
+export function isNextProbable(probableDate: string | null, builtOn: string, latestGameDate: string | null): boolean {
+  if (probableDate === null || probableDate < builtOn) return false;
   return latestGameDate === null || probableDate > latestGameDate;
 }
 
@@ -1767,8 +1778,14 @@ function startersPage(
   defaultDate: string | null,
   /** 우리가 보유한 첫 시즌. ⚠**화면이 「通算」이라고 말하지 않게 하는 근거다** */
   heldFrom: number,
+  /** 그 예고일의 철회 여부(설계 D6 · 날짜 단위 · `withdrawalOn`). 예고가 없으면 무시된다 */
+  withdrawal: ProbableWithdrawal,
+  /** 예고를 처음 보존한 해(설계 D5-1 · `probableSavedFrom`). 하나도 없으면 null */
+  savedFrom: number | null,
 ): StartersPageData {
-  if (rows.length === 0) return { heldFrom, gameDate: null, defaultDate: null, prev: null, next: null, dayCount: 0, builtOn, games: [] };
+  if (rows.length === 0) {
+    return { heldFrom, savedFrom, gameDate: null, defaultDate: null, prev: null, next: null, dayCount: 0, builtOn, games: [], withdrawal: null };
+  }
 
   const at = allDates.indexOf(rows[0]!.gameDate);
   const prev = at > 0 ? allDates[at - 1]! : null;
@@ -1832,7 +1849,73 @@ function startersPage(
   }
 
   games.sort((a, b) => (a.startTime ?? "").localeCompare(b.startTime ?? "") || a.league.localeCompare(b.league));
-  return { heldFrom, gameDate: rows[0]!.gameDate, defaultDate, prev, next, dayCount, builtOn, games };
+  return { heldFrom, savedFrom, gameDate: rows[0]!.gameDate, defaultDate, prev, next, dayCount, builtOn, games, withdrawal };
+}
+
+/**
+ * 그 예고일의 **철회 여부 — 날짜 단위**(설계 D5·D6).
+ *
+ * 행마다 `probableWithdrawal`(감시와 같은 술어 · M1)로 판정하고, **그 날 전 행이 같은 값이면 그 값 · 섞이면 `unknown`** 이다.
+ * ⚠섞였다는 것은 어떤 행은 공표 전에, 어떤 행은 공표 뒤에 받았다는 뜻이다 — 어느 쪽이 맞는지 화면이 고르지 않는다(M11).
+ * ⚠실측(2026-10-24 CI DB): 예고 494행 · 휴식 공표 68행 전부 시각이 있다 — `unknown` 은 지금 0건이다.
+ */
+function withdrawalOn(db: Db, date: string): ProbableWithdrawal {
+  const rows = db.raw
+    .prepare("SELECT fetched_at AS at FROM probable_pitcher WHERE game_date = ?")
+    .all(date) as unknown as { at: string | null }[];
+  const declared = restDeclarations(db, date, date).get(date) ?? [];
+  const values = new Set(rows.map((r) => probableWithdrawal(r.at, declared)));
+  if (values.size === 0) return "notWithdrawn";
+  return values.size === 1 ? [...values][0]! : "unknown";
+}
+
+/**
+ * **예고를 처음 보존한 해** — `probable_pitcher` 의 가장 이른 날짜의 연도. 하나도 없으면 null.
+ * ⚠~~「予告先発の保存を始めたのが今シーズンからです」~~ 를 대신한다(설계 D6) — 그 문장은 두 벌이었고 2027년에 거짓이 된다.
+ */
+function probableSavedFrom(db: Db): number | null {
+  const row = db.raw.prepare("SELECT MIN(game_date) AS d FROM probable_pitcher").get() as unknown as { d: string | null } | undefined;
+  return row?.d == null ? null : Number(row.d.slice(0, 4));
+}
+
+/**
+ * ⚠**예고를 경기에 붙이는 날에 같은 팀의 경기가 둘이면 빌드를 멈춘다**(M7 · 설계 D5 · 콜드 리뷰 지적 7).
+ *
+ * 예고는 (날짜·팀) 단위다(017 마이그레이션의 기본키 · `startersPage` 의 `Map<팀>`) — 한 팀의 같은 날 두 경기를 담지 못한다.
+ * 한 경기로 접으면 **어느 경기의 예고·취소인지 복원할 수 없다.** 실측 0(9시즌 16,086 팀-일 · `upcoming_game` 0)이라
+ * 그 날 배포가 멈추는 비용을 받는다(설계 §9 ⑶ — 생기면 경기 식별자를 예고·휴식 공표·화면 키까지 관통시키는 PR 이 필요하다).
+ *
+ * ⚠**표마다 세고 큰 쪽을 본다**(`game` 의 수와 `upcoming_game` 의 수 중 큰 것) — **더하지 않는다.**
+ *   예정 사본이 경기 행보다 낡으면(사본은 못 받고 경기는 받은 실행) **같은 경기가 두 표에 한 번씩** 있다. 더하면 그 날
+ *   더블헤더로 오판해 배포가 멈춘다 — 받기 실패만이면 배포한다는 운영 결정(2026-10-24)과 정면으로 부딪힌다.
+ *   진짜 더블헤더는 두 경기가 **같은 표에** 있다(그 날 전에는 둘 다 예정 · 다음 날 아침 수집 뒤에는 둘 다 경기 행).
+ */
+function assertOneGamePerTeam(db: Db, dates: readonly string[], where: string): void {
+  if (dates.length === 0) return;
+  const ph = dates.map(() => "?").join(", ");
+  const counted = (table: "game" | "upcoming_game"): Map<string, number> => {
+    const rows = db.raw
+      .prepare(
+        `SELECT d, code, COUNT(*) AS n FROM (
+           SELECT game_date AS d, home_code AS code FROM ${table} WHERE game_date IN (${ph})
+           UNION ALL
+           SELECT game_date AS d, away_code AS code FROM ${table} WHERE game_date IN (${ph})
+         ) GROUP BY d, code`,
+      )
+      .all(...dates, ...dates) as unknown as { d: string; code: string; n: number }[];
+    return new Map(rows.map((r) => [`${r.d}|${r.code}`, r.n]));
+  };
+  const played = counted("game");
+  const planned = counted("upcoming_game");
+  const doubled = [...new Set([...played.keys(), ...planned.keys()])]
+    .filter((k) => Math.max(played.get(k) ?? 0, planned.get(k) ?? 0) > 1)
+    .sort();
+  if (doubled.length > 0) {
+    throw new RangeError(
+      `더블헤더 — 예고를 붙이는 날(${where})에 같은 팀의 경기가 둘 이상이다: ${doubled.join(" ")}. ` +
+        "予告先発은 (날짜·팀) 단위라 한 경기로 접으면 어느 경기의 예고인지 복원할 수 없다(M7) — 경기 식별자를 예고까지 관통시키는 변경이 필요하다",
+    );
+  }
 }
 
 /**
@@ -2137,7 +2220,8 @@ function dayGames(
   /** 실제로 만들어진 경기 페이지의 ID. ⚠**없는 페이지로 링크하면 404다** */
   gamePageIds: ReadonlySet<string>,
 ): TodayGame[] {
-  const competition = o.competition ?? "regular";
+  // ⚠**試合 타임라인 = 정규 + CS + 日本S**(설계 D2) — 다른 대회(올스타·이스턴/웨스턴 등)는 섞지 않는다(§2-1)
+  const timeline = timelineOf(o.competition ?? "regular");
   const ref = (p: { playerId: string; teamCode: string } | null): PlayerRef | null => {
     if (p === null) return null;
     const name = nameOf(p.playerId);
@@ -2154,13 +2238,29 @@ function dayGames(
     errors: s.errors,
   });
 
+  const rows = dayResults(db, o.season, date).filter((g) => timeline.includes(g.competition));
+  /**
+   * ⚠**한 날 안의 순서: 정규 → CS(セ→パ) → 日本S**(설계 D2). CS 의 セ→パ 는 他大会와 **같은 규칙**(`stageRanker`)이다(M1).
+   * ⚠정규끼리는 지금 순서(`game_id`) 그대로다 — `sort` 는 안정 정렬이라 같은 순위는 들어온 순서를 지킨다.
+   */
+  const csRank = stageRanker(rows.filter((g) => g.competition === "climaxSeries"), true);
+  const rankOf = (g: DayGame): number =>
+    timeline.indexOf(g.competition) * 1000 + (g.competition === "climaxSeries" ? csRank({ series: g.series, homeCode: g.home.teamCode }) : 0);
+  const ordered = [...rows].sort((a, b) => rankOf(a) - rankOf(b));
+  /**
+   * 日本シリーズ의 **그 날까지**(그날 포함) 성적 — 하루 한 경기라 「그 경기까지」와 같다(설계 D4).
+   * ⚠**CS 는 세지 않는다**(결정됨 · §10).
+   */
+  const series = ordered.some((g) => g.competition === "nipponSeries") ? nipponSeriesView(db, o.season, date) : null;
+
   return (
-    dayResults(db, o.season, date)
-      // 다른 대회(오픈전·교류전 표기 등)를 섞지 않는다(§2-1)
-      .filter((g) => g.competition === competition)
+    ordered
       .map((g) => ({
         gameId: g.gameId,
         venue: g.venue,
+        competition: g.competition,
+        label: postseasonLabel(g.competition, g.series, g.home.teamCode, g.gameNo),
+        series: g.competition === "nipponSeries" ? series : null,
         status: g.status,
         notPlayedReason: g.notPlayedReason,
         away: side(g.away),
@@ -2194,12 +2294,13 @@ function dayPages(
   db: Db,
   o: LoadOptions,
   days: readonly GameDay[],
-  latestDate: string | null,
+  /** ⚠**試合 타임라인의 최신일**(라우팅 · 설계 D1) — 그 날만 `today.html` 이 맡는다. 정규 최신일을 넘기지 마라 */
+  todayDate: string | null,
   nameOf: (playerId: string) => string | null,
   gamePageIds: ReadonlySet<string>,
 ): DayPageData[] {
   return days
-    .filter((d) => d.date !== latestDate)
+    .filter((d) => d.date !== todayDate)
     .map((d, i, list) => ({
       date: d.date,
       builtOn: o.builtOn,
@@ -2208,8 +2309,8 @@ function dayPages(
       starLimit: STAR_LIMIT,
       // ⚠앞뒤는 **달력의 하루 전후가 아니라 경기가 있었던 날**이다. 월요일은 대개 경기가 없다
       prev: i === 0 ? null : list[i - 1]!.date,
-      next: i === list.length - 1 ? (latestDate ?? null) : list[i + 1]!.date,
-      latestDate,
+      next: i === list.length - 1 ? (todayDate ?? null) : list[i + 1]!.date,
+      todayDate,
       dayCount: days.length,
     }));
 }
@@ -2238,6 +2339,93 @@ const POSTSEASON_PAGES: readonly Exclude<Competition, "regular" | "allStar">[] =
 ];
 
 /**
+ * **試合 타임라인** — 試合 화면·날짜 화면·날짜 일람·홈 「直近の結果」가 보는 대회(2026-10-24 · 설계 D2).
+ *
+ * ⚠**`POSTSEASON_PAGES` 에서 파생한다**(M1) — 경기 상세를 만드는 대회와 타임라인에 싣는 대회가 갈리면
+ *   카드는 있는데 상세가 없거나, 상세는 있는데 날짜 화면에서 닿지 못한다.
+ * ⚠**올스타는 빠진다** — 경기 상세가 없는 것과 같은 이유(팀 코드 `cl`/`pl`)이고 사용자 결정 밖이다. 他大会 화면만 싣는다.
+ * ⚠**집계는 한 줄도 안 바뀐다** — `aggregateSeason`·순위·`meta`·홈/구단의 `competition` 은 여전히 `regular` 하나다(사용자 결정).
+ * ⚠정규가 아닌 대회로 빌드하면(`o.competition`) 지금처럼 그 대회 하나다.
+ * ⚠**순서가 화면 순서다** — 한 날 안에서 정규 → CS → 日本S.
+ */
+function timelineOf(competition: string): readonly string[] {
+  return competition === "regular" ? ["regular", ...POSTSEASON_PAGES] : [competition];
+}
+
+/** CS 스테이지 제목의 리그 — **팀 코드에서 나온다**(CS 는 두 팀이 같은 리그 · 104/104 실측) */
+function leagueTag(homeCode: string): string {
+  return squadName(leagueOf(homeCode) === "central" ? "cl" : "pl");
+}
+
+/**
+ * 포스트시즌 경기의 **스테이지 제목** — 他大会(스테이지 묶음)와 試合 카드(`postseasonLabel`)가 같이 쓴다(M1 · 설계 D3).
+ *
+ * - CS: `セ・リーグ CS ファイナルステージ` — npb.jp 표기가 セ/パ를 안 가르므로 리그를 붙인다(他大会의 바이트 그대로)
+ * - 日本S: `日本シリーズ` — ⚠후원사(`SMBC`)는 원문(`series`)에 남기고 화면은 대회 이름을 쓴다. 他大会에서는 그룹이 하나라 제목이 안 나온다
+ * - 올스타: 원문 그대로(他大会 전용)
+ * - 정규: null
+ */
+export function postseasonStage(competition: string, series: string | null, homeCode: string): string | null {
+  switch (competition) {
+    case "regular":
+      return null;
+    case "climaxSeries":
+      return series === null ? null : `${leagueTag(homeCode)} ${series}`;
+    case "nipponSeries":
+      return COMPETITION_NAME["nipponSeries"] ?? "日本シリーズ";
+    default:
+      return series;
+  }
+}
+
+/**
+ * 試合 카드·홈의 **대회 표기** — `セ・リーグ CS ファイナルステージ 第4戦` · `日本シリーズ 第1戦` · 정규는 null(설계 D3).
+ * ⚠**「第N戦」을 세지 않는다** — `game.game_no` 그대로다(중지와 재경기가 같은 번호인 것이 맞다 · 2019-10-12 · 2024-11-02 실측).
+ * ⚠2020 은 스테이지가 하나라 원문이 `クライマックスシリーズ` 다 — 그대로 `パ・リーグ クライマックスシリーズ 第2戦`.
+ */
+export function postseasonLabel(competition: string, series: string | null, homeCode: string, gameNo: number): string | null {
+  if (competition === "regular") return null;
+  const stage = postseasonStage(competition, series, homeCode)
+    ?? (competition === "climaxSeries"
+      ? `${leagueTag(homeCode)} ${COMPETITION_NAME["climaxSeries"] ?? "クライマックスシリーズ"}`
+      : COMPETITION_NAME[competition] ?? competition);
+  return `${stage} 第${gameNo}戦`;
+}
+
+/**
+ * 포스트시즌 경기의 **스테이지 순위** — 他大会(대회 화면의 순서)와 試合(하루 안의 CS 순서)가 같이 쓴다(M1 · 설계 D2).
+ * 스테이지 첫 등장 순 × 2 + (セ=0 / パ=1) — 세·파가 번갈지 않고 스테이지끼리 붙는다.
+ * ⚠**리그로 가르는 것은 CS 뿐이다**(`splitsByLeague`) — 日本シリーズ는 양 리그가 맞붙고, 올스타는 팀 코드가 cl/pl 이라 `leagueOf` 가 던진다.
+ * @param games 첫 등장 순서를 정하는 경기들(날짜·`game_id` 순)
+ */
+function stageRanker(
+  games: readonly { series: string | null }[],
+  splitsByLeague: boolean,
+): (g: { series: string | null; homeCode: string }) => number {
+  const order = new Map<string, number>();
+  for (const g of games) {
+    const key = g.series ?? "";
+    if (!order.has(key)) order.set(key, order.size);
+  }
+  return (g) => (order.get(g.series ?? "") ?? 0) * 2 + (splitsByLeague && leagueOf(g.homeCode) === "pacific" ? 1 : 0);
+}
+
+/**
+ * 日本シリーズ 카드의 시리즈 성적 — **그 날까지**(그날 포함 · 설계 D4). 셀 경기가 하나도 없으면 null —
+ * 1차전이 중지된 날에 「0勝0敗」를 그리지 않는다.
+ * ⚠**세는 것은 저장소의 `nipponSeriesRecord` 한 벌이다**(M1) — 결착 판정(`japanSeriesDecided`)과 같은 수다.
+ * ⚠export 는 시험을 위해서다(실DB 8시즌 대조 · `nippon-series-db.test.ts`).
+ */
+export function nipponSeriesView(db: Db, season: number, through: string): NipponSeriesView | null {
+  const rec = nipponSeriesRecord(db, season, through);
+  if (rec.byTeam.size === 0 && rec.unknownGames === 0) return null;
+  return {
+    teams: [...rec.byTeam].map(([code, x]) => ({ teamCode: code, shortName: shortNameOf(code), w: x.w, l: x.l, t: x.t })),
+    unknownGames: rec.unknownGames,
+  };
+}
+
+/**
  * ⚠**모르는 대회가 DB에 있으면 던진다**(M7).
  *
  * 이 커밋이 고치고 있는 결함이 정확히 그 모양이었다 — 데이터는 있었는데 어느 목록에도 없어서
@@ -2259,11 +2447,8 @@ function assertKnownCompetitions(db: Db, season: number): void {
   }
 }
 
-const POSTSEASON_NAME: Readonly<Record<string, string>> = {
-  climaxSeries: "クライマックスシリーズ",
-  nipponSeries: "日本シリーズ",
-  allStar: "オールスターゲーム",
-};
+/** ⚠**렌더러의 한 벌을 그대로 쓴다**(M1 · 2026-10-24) — 他大会와 試合·날짜 화면이 같은 이름을 쓴다 */
+const POSTSEASON_NAME: Readonly<Record<string, string>> = COMPETITION_NAME;
 
 /**
  * ⚠**규칙을 화면에 적는다**(M3의 정신). 무엇을 세고 무엇을 안 세는지 말하지 않으면
@@ -2357,19 +2542,10 @@ function postseasonPage(db: Db, o: LoadOptions): PostseasonPageData {
      * ⚠**日本シリーズ에는 하지 않는다** — 양 리그가 맞붙어 「어느 리그의 시리즈」가 성립하지 않는다.
      * ⚠**올스타에도 하지 않는다** — 팀 코드가 `cl`/`pl`이라 `leagueOf`가 던진다.
      */
-    const splitsByLeague = id === "climaxSeries";
-    const stageOrder = new Map<string, number>();
-    for (const g of raw) {
-      const key = g.series ?? "";
-      if (!stageOrder.has(key)) stageOrder.set(key, stageOrder.size);
-    }
-    const leagueTag = (homeCode: string): string => squadName(leagueOf(homeCode) === "central" ? "cl" : "pl");
+    // ⚠**제목과 순서는 試合 카드와 같은 함수다**(M1 · 2026-10-24 설계 D2·D3) — 여기서 따로 지으면 두 화면이 다른 제목을 단다
     const stageOf = (g: { series: string | null; homeCode: string }): string | null =>
-      g.series === null ? null : splitsByLeague ? `${leagueTag(g.homeCode)} ${g.series}` : g.series;
-    /** 스테이지 첫 등장 순 × 2 + (セ=0 / パ=1) — 세·파가 번갈지 않고 스테이지끼리 붙는다 */
-    const stageRank = (g: { series: string | null; homeCode: string }): number =>
-      (stageOrder.get(g.series ?? "") ?? 0) * 2 +
-      (splitsByLeague && leagueOf(g.homeCode) === "pacific" ? 1 : 0);
+      postseasonStage(id, g.series, g.homeCode);
+    const stageRank = stageRanker(raw, id === "climaxSeries");
 
     const games: PostGame[] = raw.map((g) => ({
       gameId: gameSlug(g.gameId),
@@ -3381,7 +3557,14 @@ function homePage(
   /** 리그별 RE 행렬 — 주간 SRC/SRP 를 **시즌과 같은 커널**로 재기 위해 받는다(M1) */
   reByLeague: ReadonlyMap<string, RunExpectancy>,
   asOf: string | null,
-  latestDate: string | null,
+  /**
+   * ⚠⚠**「최신일」이 둘이다 — 이름으로 가른다**(2026-10-24 · 설계 D1 · 이 설계의 함정).
+   * `todayDate` 는 **라우팅**(試合 타임라인의 최신일 — `dayHref` 가 그 날만 `today.html` 로 보낸다)이고,
+   * `regularLatest` 는 **정규 내용**(「続いている記録」의 출장 필터 · 「先週の顔」의 주)이다.
+   * 하나로 쓰면 CS 기간에 **연속기록이 0행이 되고 주간이 다른 주를 고른다 — 에러 없이**(T3 가 지킨다).
+   */
+  todayDate: string | null,
+  regularLatest: string | null,
   latestGames: HomePageData["latest"],
   hasPostseason: boolean,
 ): HomePageResult {
@@ -3571,7 +3754,8 @@ function homePage(
     });
   }
   for (const [playerId, st] of streaksByPlayer) {
-    if (latestDate !== null && st.lastGameDate !== latestDate) continue;
+    // ⚠**정규 최신일이다**(설계 D1) — 타임라인 최신일(CS 날)을 쓰면 정규 연속기록이 전부 「그 날 안 나왔다」로 빠진다
+    if (regularLatest !== null && st.lastGameDate !== regularLatest) continue;
     const code = teamCodeOf(playerId);
     if (code === "") continue;
     /** ⚠**분모는 「타석이 있던 경기」다**(M2) — 마루의 길이(`current`)와 다른 수다 */
@@ -3600,7 +3784,8 @@ function homePage(
    * ⚠**시즌과 같은 RE 행렬을 쓴다**(M1). 주간만 따로 행렬을 만들면 한 주의 득점환경으로
    *   재게 되어 같은 타석이 시즌 화면과 다른 값을 갖는다.
    */
-  const span = lastCompleteWeek(latestDate);
+  // ⚠**정규 최신일이다**(설계 D1) — 「先週の顔」는 정규시즌의 주다
+  const span = lastCompleteWeek(regularLatest);
   let week: HomeWeek | null = null;
   if (span !== null) {
     const wk = aggregateSeason(db, o.season, competition, span.to, span.from);
@@ -3720,7 +3905,7 @@ function homePage(
     page: {
       season: o.season,
       asOf,
-      latestDate,
+      todayDate,
       latest: latestGames,
       leagues,
       week,
@@ -4050,7 +4235,13 @@ function calendarOf(
    * 캘린더에는 8월 16일 경기가 승패까지 그려진다** — 같은 페이지가 두 시점을 말한다.
    */
   through: string,
-): CalendarData {
+): {
+  calendar: CalendarData;
+  /** 캘린더에 그린 앞으로의 정규시즌 예정 — **안정 순서**(`game_date, seq, home_code, away_code`) */
+  regular: readonly UpcomingSlot[];
+  /** 컷 밖의 예정 — 日本シリーズ로 부를 수 있는지는 `nipponSeriesSlot` 이 정한다(설계 D7-3) */
+  beyond: readonly UpcomingSlot[];
+} {
   const past = db.raw
     .prepare(
       `SELECT game_id AS gameId, game_date AS date, home_code AS home, away_code AS away,
@@ -4089,22 +4280,25 @@ function calendarOf(
    *
    * 규칙 자체와 실측 근거는 `regularSeasonUpcoming` 에 있다 — 2025년으로 되돌려 돌리면
    * **포스트시즌 40슬롯 전부 잘리고 정규시즌은 0건 잘린다**.
+   *
+   * ⚠**자르기 전에 순서를 정한다**(2026-10-24 · 설계 D7 지적 6). 예전에는 `ORDER BY game_date` 뿐이라 같은 날 두 행의
+   *   순서를 SQLite 에 맡겼고, **삽입 순서를 뒤집은 DB 둘이 다른 컷을 냈다**(`postseason-timeline.test.ts` T9⑹ · 실측 RED).
+   *   `seq` 는 그 날 일정 표의 행 순서다(015 마이그레이션). 컷 뒤의 상대 코드 정렬로는 경계를 못 고친다.
    */
-  const upcoming = competition !== "regular"
-    ? []
-    : regularSeasonUpcoming(db.raw
-      .prepare(
-        `SELECT game_date AS date, home_code AS home, away_code AS away, venue,
-              start_time AS startTime,
-              SUBSTR(datetime(fetched_at, '+9 hours'), 1, 10) AS asOf
-         FROM upcoming_game
-        WHERE season = ? AND (home_code = ? OR away_code = ?) AND game_date >= ?
-        ORDER BY game_date`,
-      )
-      .all(season, teamCode, teamCode, today) as unknown as {
-        date: string; home: string; away: string; venue: string;
-        startTime: string | null; asOf: string | null;
-      }[],
+  const { regular: upcoming, beyond } = competition !== "regular"
+    ? { regular: [] as UpcomingSlot[], beyond: [] as UpcomingSlot[] }
+    : splitUpcoming(
+      (db.raw
+        .prepare(
+          `SELECT game_date AS date, home_code AS home, away_code AS away, venue,
+                start_time AS startTime,
+                SUBSTR(datetime(fetched_at, '+9 hours'), 1, 10) AS asOf
+           FROM upcoming_game
+          WHERE season = ? AND (home_code = ? OR away_code = ?) AND game_date >= ?
+          ORDER BY game_date, seq, home_code, away_code`,
+        )
+        .all(season, teamCode, teamCode, today) as unknown as Omit<UpcomingSlot, "opponentCode">[])
+        .map((r) => ({ ...r, opponentCode: r.home === teamCode ? r.away : r.home })),
       past.filter((g) => g.status === "played").length,
       regularSeasonGames(season),
     );
@@ -4185,15 +4379,31 @@ function calendarOf(
 
   const c = chip(teamCode);
   return {
-    teamCode,
-    shortName: c.shortName,
-    color: c.color,
-    months,
-    today,
-    upcoming: upcoming.length,
-    upcomingAsOf: upcoming[0]?.asOf ?? null,
-    seasonOver: seasonIsOver(db, season),
+    calendar: {
+      teamCode,
+      shortName: c.shortName,
+      color: c.color,
+      months,
+      today,
+      upcoming: upcoming.length,
+      upcomingAsOf: upcoming[0]?.asOf ?? null,
+      seasonOver: seasonIsOver(db, season),
+    },
+    regular: upcoming,
+    beyond,
   };
+}
+
+/** 앞으로의 경기 한 행(그 구단에서 본 상대를 붙인 것) */
+interface UpcomingSlot {
+  date: string;
+  home: string;
+  away: string;
+  venue: string;
+  startTime: string | null;
+  asOf: string | null;
+  /** 이 구단에서 본 상대 */
+  opponentCode: string;
 }
 
 /**
@@ -4234,7 +4444,11 @@ function teamPages(
   gidpByTeam: ReadonlyMap<string, number>,
   asOf: string | null,
   hasPostseason: boolean,
-  latestDate: string | null,
+  /**
+   * ⚠**試合 타임라인의 최신일 — 라우팅만**(설계 D1). 「直近の試合」 링크가 그 날만 `today.html` 로 간다.
+   * 정규 최신일을 넘기면 정규 마지막 날의 링크가 포스트시즌 마지막 날 화면으로 간다 — 404 가 아니라 다른 날이다(T2).
+   */
+  todayDate: string | null,
   /** 실제로 만들어지는 경기 페이지의 gameId. 캘린더가 「누를 수 있는 날」을 이걸로 정한다 */
   builtGameIds: ReadonlySet<string>,
   /**
@@ -4333,6 +4547,16 @@ function teamPages(
        ORDER BY g.game_date DESC, g.game_id DESC LIMIT 10`,
     );
 
+  /**
+   * 「次の試合」 결정표의 **시즌 단위 재료**(설계 D7) — 구단마다 다시 세지 않는다.
+   * ⑴ 12구단 전부 정규를 규정 수만큼 치렀는가 · ⑵ 그 시즌 정규 마지막 경기일(상태 무관) · 구단별 소화 수(D7-4 「全日程を終えました」).
+   * ⚠**`playedByTeam` 은 순위표·잔여 경기와 같은 한 벌이다**(M1 · `status='played'` 만 센다 — 중지 행을 세면 팀당 144~153).
+   */
+  const playedOf = playedByTeam(db, o.season, competition, through);
+  const regularGames = regularSeasonGames(o.season);
+  const allTeamsDone = competition === "regular" && TEAMS.every((t) => playedOf.get(t.code) === regularGames);
+  const regularLast = competition === "regular" ? latestGameDate(db, o.season, through, "regular") : null;
+
   const out: TeamPageData[] = [];
   for (const section of standings) {
     for (const r of section.rows) {
@@ -4356,37 +4580,50 @@ function teamPages(
        * ⚠**오늘을 주입한다**(M6). `builtOn` 은 사이트를 만든 날이고, 캘린더의 「오늘」이 그것이다 —
        * 여기서 시계를 읽으면 빌드마다 다른 화면이 나오고 재현이 안 된다.
        */
-      const calendar = calendarOf(db, o.season, competition, code, o.builtOn, (c) => ({
+      const { calendar, regular: regularUpcoming, beyond } = calendarOf(db, o.season, competition, code, o.builtOn, (c) => ({
         shortName: shortNameOf(c),
         color: colorOf(c),
       }), builtGameIds, through);
 
       /**
-       * **다음 경기 — 캘린더가 이미 들고 있는 것을 읽는다.**
+       * **다음 경기 — 캘린더가 이미 들고 있는 것을 읽는다**(+ 컷 밖에서 日本シリーズ로 부를 수 있는 것 · 설계 D7).
        *
-       * ⚠**새로 조회하지 않는다**(§2-2-1 「받고 있는데 안 읽던 것」 · M1). 여기서 따로 질의하면
-       * 캘린더가 그리는 「次」와 이 띠가 말하는 「次」가 언젠가 갈린다.
-       * ⚠**대회를 섞지 않는다**(§2-1) — 캘린더의 예정은 `regularSeasonUpcoming` 이 이미
-       * 포스트시즌 슬롯을 잘라 낸 뒤의 것이라 CS·일본시리즈가 들어오지 않는다.
+       * ⚠**새로 조회하지 않는다**(§2-2-1 「받고 있는데 안 읽던 것」 · M1). 캘린더를 그린 **같은 행들**이고,
+       *   순서도 그 질의의 안정 순서(`game_date, seq, home_code, away_code`)다 — 다시 정렬하면 컷의 순서와 갈린다.
        * ⚠`upcoming` 은 `game_date >= today` 로 이미 걸러져 있다 — 지난 경기가 「다음」이 될 수 없다.
+       *
+       * 결정표(위에서부터 처음 참인 줄 · 문장은 `nextGameText` 한 벌):
+       * | 1 | 시즌 종료 | 없음(「終了しています」) — ⚠**남은 예정보다 먼저다**(2025-11 사본에 열리지 않은 日本S 6·7차전이 남아 있었다) |
+       * | 2 | 컷 안의 정규 예정 | 그 경기 |
+       * | 3 | 컷 밖 · ⑴12구단 소진 ⑵정규 뒤 ⑶다른 리그 | 그 경기 — 「日本シリーズ」(`nipponSeriesSlot`) |
+       * | 4·5 | 없음 | 이 구단이 규정 수를 치렀으면 「全日程を終えました」, 아니면 「予定はありません（…場合も）」 |
+       * ⚠**CS 슬롯은 내지 않는다**(같은 리그면 3 에서 떨어진다) — 탈락을 판정할 수 없다(설계 D4·§10).
        */
-      const upcomingGames = calendar.months
-        .flatMap((m) => [...m.byDay.values()].flat())
-        .filter((g) => g.upcoming)
-        // 같은 날 두 경기(더블헤더)면 순서가 흔들리지 않게 상대 코드까지 본다
-        .sort((a, b) => a.date.localeCompare(b.date) || a.opponentCode.localeCompare(b.opponentCode));
-      const first = upcomingGames[0];
-      const next: TeamNextGame | null = first === undefined
+      const toNext = (s: UpcomingSlot, competitionOfNext: TeamNextGame["competition"]): TeamNextGame => ({
+        date: s.date,
+        opponentCode: s.opponentCode,
+        opponentName: shortNameOf(s.opponentCode),
+        home: s.home === code,
+        // ⚠**빈 문자열은 「없음」이지 구장 이름이 아니다**(M11)
+        venue: s.venue === "" ? null : s.venue,
+        startTime: s.startTime,
+        competition: competitionOfNext,
+      });
+      const regularNext = regularUpcoming[0];
+      const nipponNext = regularNext === undefined
+        ? nipponSeriesSlot(beyond, {
+          allTeamsDone,
+          regularLastDate: regularLast,
+          otherLeague: (opp) => leagueOf(opp) !== leagueOf(code),
+        })
+        : null;
+      const next: TeamNextGame | null = calendar.seasonOver
         ? null
-        : {
-          date: first.date,
-          opponentCode: first.opponentCode,
-          opponentName: first.opponent,
-          home: first.home,
-          // ⚠**빈 문자열은 「없음」이지 구장 이름이 아니다**(M11)
-          venue: first.venue === "" ? null : first.venue,
-          startTime: first.startTime,
-        };
+        : regularNext !== undefined
+          ? toNext(regularNext, "regular")
+          : nipponNext !== null
+            ? toNext(nipponNext, "nipponSeries")
+            : null;
       const now: TeamNow = {
         // ⚠**없을 수 없지만 없을 때 거짓말하지 않는다**(M11). 순위표와 같은 입력에서 만들었으므로
         //   지금은 반드시 있지만, 입력이 갈리는 날에 「모른다」가 아니라 예외로 죽는 편이 낫지도
@@ -4394,6 +4631,8 @@ function teamPages(
         race: race.teams.get(code) ?? unknownRace(code),
         next,
         probable: next === null ? null : probableOf(starters, code, next),
+        // ⚠**정확히 같을 때만**이다(설계 D7-4) — 규정 수를 넘겼으면 우리가 모르는 시즌이라 「予定はありません」 쪽이다
+        regularDone: competition === "regular" && playedOf.get(code) === regularGames,
       };
 
       const batters: TeamBatter[] = agg.battingByTeam
@@ -4555,7 +4794,7 @@ function teamPages(
             w: x.w, l: x.l, t: x.t,
           }))
           .sort((a, b) => b.w - a.w || a.l - b.l || a.code.localeCompare(b.code)),
-        latestDate,
+        todayDate,
         hasPostseason,
         now,
         /**
@@ -4607,6 +4846,12 @@ function teamPages(
    * 그건 날짜 어긋남이 아니라 **수집 자체가 없었다**는 뜻이라 무조건 경고한다
    * (`build-gates.test.ts` 의 「予告先発을 하나도 못 받았는데」가 이 분기를 고정한다).
    */
+  /**
+   * ⚠**구단의 다음 경기일에 같은 팀의 경기가 둘이면 빌드를 멈춘다**(M7 · 설계 D5) — `probableOf` 가 그 날의 예고를
+   * (날짜·팀) 하나로 붙이므로, 더블헤더면 어느 경기의 선발인지 조용히 틀린다.
+   */
+  assertOneGamePerTeam(db, [...new Set(out.flatMap((t) => (t.now.next === null ? [] : [t.now.next.date])))], "구단 次の試合");
+
   const staleTeams = out.filter((t) => {
     if (t.now.next === null || t.now.probable !== null) return false;
     if (starters.gameDate === null) return true;
@@ -4699,6 +4944,11 @@ function todayPage(
   nameOf: (playerId: string) => string | null,
   gamePageIds: ReadonlySet<string>,
   days: readonly GameDay[],
+  /**
+   * ⚠**試合 타임라인의 최신일**(설계 D1 의 `todayDate`) — 호출자가 날짜 목록과 **같은 타임라인**으로 한 번 정해 넘긴다.
+   * 여기서 따로 계산하면 날짜 목록·라우팅과 언젠가 갈린다.
+   */
+  todayDate: string | null,
 ): TodayPageData {
   /**
    * ⚠**이 화면의 대상일은 「최신 실시 경기일」이 아니라 「최신 경기일」이다.**
@@ -4708,8 +4958,9 @@ function todayPage(
    * 신선도 띠(`asOf`)는 실시 기준 그대로다. 「데이터가 언제까지 들어왔나」와
    * 「어제 무슨 일이 있었나」는 다른 질문이다.
    * (2026-08-16 이중 검토에서 두 정의가 어긋나 있다는 지적을 받았다.)
+   * ⚠**그리고 정규만이 아니다**(2026-10-24 · 설계 D2) — 정규가 10/08 에 끝나면 CS 12경기(10/10~10/17)가 이 화면에 한 번도 안 나왔다.
    */
-  const latestDate = latestGameDate(db, o.season, o.through ?? "9999-12-31", o.competition ?? "regular");
+  const latestDate = todayDate;
   const games: TodayGame[] =
     latestDate === null ? [] : dayGames(db, o, latestDate, nameOf, gamePageIds);
   const at = days.findIndex((d) => d.date === latestDate);
@@ -4730,20 +4981,53 @@ function todayPage(
     }) as [TodayProbable["sides"][0], TodayProbable["sides"][1]],
   }));
 
-  const probableIsNext = isNextProbable(starters.gameDate, latestDate);
-
   return {
     gameDate: latestDate,
     builtOn: o.builtOn,
     games,
-    probableDate: probableIsNext ? starters.gameDate : null,
-    probables: probableIsNext ? probables : [],
+    next: nextProbableOf(db, o, starters, probables),
     starRule: starRuleText(),
     starLimit: STAR_LIMIT,
     // 최신 경기일이 목록의 끝이므로 「다음 날」은 없다
     prev: at > 0 ? days[at - 1]!.date : null,
     dayCount: days.length,
   };
+}
+
+/**
+ * 「次の予告先発」 — **상태 결정표**(설계 D5 · 위에서부터 처음 참인 줄). ⑤(못 받음)는 렌더러가 빌드의 수집 판정으로 얹는다.
+ *
+ * | # | 조건 | 상태 |
+ * |---|---|---|
+ * | ① | 그 시즌이 끝났다(`seasonIsOver`) | `seasonOver` — 예고 기록이 있던 시즌인지와 첫 보존 연도를 든다 |
+ * | ②③④ | `P ≥ B` ∧ `P > L` | 그 날의 철회 3값 → `announced` · `withdrawn` · `unknown` |
+ * | ⑥ | 그 밖 | `awaiting` — 다음 경기일(모르면 null) |
+ *
+ * `P` = 予告先発 화면의 기본 날짜(`defaultProbableDate` · 지금 그대로) · `B` = 생성일 · `L` = 그 시즌 기록의 최신 경기일(**대회·상태 무관**).
+ * ⚠**`P ≥ B` 가 이번 결함의 처방이다** — 열리지 않은 경기는 `game` 에 행이 안 생겨 `L` 이 멈춘다(10/17).
+ *   `L` 만 보면 끝난 10/18 을 열흘 넘게 「次」라고 불렀다(옛 `isNextProbable` 의 `P > 정규 최신일`).
+ * ⚠**⑥ 의 다음 경기일은 「아직 기록에 없는 날」이다**(설계와 다른 점 · 보고에 적었다): 감시의 다음 경기일(`B` 이상)을 그대로 쓰면
+ *   저녁 빌드에서 **이미 결과가 아래 구획에 실린 오늘**을 「次の試合は今日」이라고 부른다 — 한 화면이 같은 날을 예정이자 종료로 선언한다.
+ *   그래서 `max(B, L+1)` 이후의 가장 가까운 날을 같은 질의(`nextGameDayOf`)로 찾는다. ⑤ 는 감시의 날짜를 그대로 쓴다.
+ */
+function nextProbableOf(db: Db, o: LoadOptions, starters: StartersPageData, probables: TodayProbable[]): NextProbable {
+  if (seasonIsOver(db, o.season)) {
+    return { kind: "seasonOver", recorded: probableDates(db, o.season).length > 0, savedFrom: starters.savedFrom };
+  }
+  const B = o.builtOn;
+  const L = (db.raw
+    .prepare("SELECT MAX(game_date) AS d FROM game WHERE season = ? AND game_date <= ?")
+    .get(o.season, o.through ?? "9999-12-31") as unknown as { d: string | null } | undefined)?.d ?? null;
+  const P = starters.gameDate;
+  if (P !== null && isNextProbable(P, B, L)) {
+    const w = starters.withdrawal ?? "notWithdrawn";
+    if (w === "withdrawn") return { kind: "withdrawn", date: P };
+    if (w === "unknown") return { kind: "unknown", date: P, probables };
+    // ⚠카드가 하나도 안 지어지면(두 행이 짝지어지지 않음) 「発表された」고 하지 않는다 — 발표 전으로 떨어진다
+    if (probables.length > 0) return { kind: "announced", date: P, probables };
+  }
+  const from = L !== null && L >= B ? addDays(L, 1) : B;
+  return { kind: "awaiting", nextGameDay: nextGameDayOf(db, from)?.date ?? null };
 }
 
 function standingsSections(db: Db, o: LoadOptions): StandingsSection[] {
@@ -4830,6 +5114,8 @@ function teamsPage(
       next: p?.now.next ?? null,
       // ⚠**모르면 「끝났다」고 하지 않는다.** 끝났다고 단정하는 쪽이 되돌리기 어려운 거짓말이다
       seasonOver: p?.calendar.seasonOver ?? false,
+      // ⚠**모르면 「다 치렀다」고 하지 않는다** — 「予定はありません（…場合も）」 쪽이 정직하다
+      regularDone: p?.now.regularDone ?? false,
     };
   };
   return {
@@ -6635,10 +6921,18 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
    */
   const probDates = probableDates(db, o.season);
   /**
+   * ⚠**예고를 경기에 붙이는 날마다 더블헤더가 없는지 먼저 본다**(M7 · 설계 D5) — 予告先発 화면의 모든 날짜(試合 화면의 P 를 포함한다).
+   * 구단 「次の試合」의 날짜는 `teamPages` 가 따로 본다.
+   */
+  assertOneGamePerTeam(db, probDates, "予告先発");
+  /** 예고를 처음 보존한 해 — 「この年の予告先発は記録していません（保存は…年から）」의 근거(설계 D5-1 · D6) */
+  const savedFrom = probableSavedFrom(db);
+  /**
    * 날짜별 予告先発.
    *
    * ⚠**기본 날짜는 여기서 뺀다** — `starters.html` 이 이미 그 날을 그린다.
    *   두 주소에 같은 화면이 생기면 「어느 쪽이 진짜인가」가 생긴다(날짜 화면과 같은 규칙).
+   * ⚠**날짜마다 철회 여부를 붙인다**(설계 D6) — 열리지 않은 경기의 예고를 「その日の試合」라고만 쓰면 열린 것처럼 읽힌다.
    */
   const startersFor = (date: string): StartersPageData =>
     startersPage(
@@ -6651,18 +6945,23 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
       probableDates(db, o.season),
       defaultProbableDate(probableDates(db, o.season), o.builtOn),
       heldSeasonsOf(db).from || o.season,
+      withdrawalOn(db, date),
+      savedFrom,
     );
 
+  const defaultDate = defaultProbableDate(probDates, o.builtOn);
   const startersData = startersPage(
-    loadProbables(db, o.season, defaultProbableDate(probDates, o.builtOn) ?? undefined),
+    loadProbables(db, o.season, defaultDate ?? undefined),
     o.builtOn,
     pitchingByPlayer,
     matchupsByPlayer.byPitcher,
     srpByPlayer,
     careerMatchups.byPitcher,
     probDates,
-    defaultProbableDate(probDates, o.builtOn),
+    defaultDate,
     heldSeasonsOf(db).from || o.season,
+    defaultDate === null ? "notWithdrawn" : withdrawalOn(db, defaultDate),
+    savedFrom,
   );
   const starterDays = probDates
     .filter((d) => d !== startersData.gameDate)
@@ -6707,8 +7006,18 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
   const gamePageIds = new Set([...gameList, ...postGameList].map((g) => g.gameId));
   // ⚠**경기일 목록도 먼저 만든다.** 「앞뒤 경기일」이 이 목록에서 나오므로,
   // 날짜 화면과 오늘 화면이 서로 다른 목록을 보면 링크가 끊긴다
-  const days = gameDates(db, o.season, through, competition);
-  const latestDay = latestGameDate(db, o.season, through, competition);
+  // ⚠**試合 타임라인(정규 + CS + 日本S)이다**(2026-10-24 · 설계 D2) — 집계·순위의 `competition` 은 그대로 정규다
+  const timeline = timelineOf(competition);
+  const days = gameDates(db, o.season, through, timeline);
+  /**
+   * ⚠⚠**「최신일」이 둘이다 — 이름으로 가른다**(설계 D1 · 이 설계의 함정).
+   * - `todayDate` — **라우팅**: 그 날만 `today.html` 이 맡는다(날짜 화면·날짜 띠·일람·홈·구단의 링크 전부)
+   * - `regularLatest` — **정규 내용**: 홈의 「続いている記録」·「先週の顔」
+   * 통째로 하나로 쓰면 연속기록이 0행이 되고 주간이 다른 주를 고른다 — **에러 없이**.
+   * 라우팅을 한 곳이라도 덜 바꾸면 그 링크는 404 가 아니라 **다른 날**로 가서 링크 검사가 못 잡는다(T2).
+   */
+  const todayDate = latestGameDate(db, o.season, through, timeline);
+  const regularLatest = latestGameDate(db, o.season, through, competition);
   const postseasonData = withGamePages(postseasonStats, gamePageIds);
   /**
    * 신선도가 보는 「가장 최근 경기일」 — **대회를 가리지 않는다.**
@@ -6730,7 +7039,7 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
    * 試合 화면. ⚠**대시보드도 이것을 그대로 쓴다**(M1) — 따로 조회하면
    * 「홈과 試合가 다른 경기를 보여준다」가 언젠가 난다.
    */
-  const todayData = todayPage(db, o, startersData, nameOf, gamePageIds, days);
+  const todayData = todayPage(db, o, startersData, nameOf, gamePageIds, days, todayDate);
 
   /**
    * 대시보드.
@@ -6749,19 +7058,29 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     pitchStreakSeason,
     reFull,
     meta.latest,
-    latestDay,
+    todayDate,
+    regularLatest,
     todayData.gameDate === null
       ? null
       : {
         date: todayData.gameDate,
-        games: todayData.games.map((g) => ({
-          away: g.away.shortName,
-          home: g.home.shortName,
-          awayCode: g.away.teamCode,
-          homeCode: g.home.teamCode,
-          awayRuns: g.away.runs,
-          homeRuns: g.home.runs,
-        })),
+        /**
+         * ⚠**상태를 버리지 않고 옮긴다**(설계 D8 · 콜드 리뷰 지적 3). 예전에는 점수만 옮겨서 중지 경기가 「—-—」(득점 모름)으로 그려졌다 —
+         * 정규시즌에도 있던 결함이다(중지가 있던 날 9시즌 217일). 「中止」는 試合 카드와 같은 문구 함수가 낸다.
+         */
+        games: todayData.games.map((g) => {
+          const head = {
+            away: g.away.shortName,
+            home: g.home.shortName,
+            awayCode: g.away.teamCode,
+            homeCode: g.home.teamCode,
+            label: g.label,
+            series: g.series,
+          };
+          return g.status === "played"
+            ? { ...head, status: "played" as const, awayRuns: g.away.runs, homeRuns: g.home.runs }
+            : { ...head, status: "notPlayed" as const, reason: g.notPlayedReason };
+        }),
       },
     postseasonData.competitions.some((c) => c.id !== "allStar"),
   );
@@ -6786,7 +7105,8 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     // 「ポストシーズンは別の画面にあります」라고 쓰면 없는 것을 있다고 안내하는 것이 된다.
     // 내비 항목은 기록이 있으면 내지만, 이 문구는 진짜 포스트시즌일 때만이다
     postseasonData.competitions.some((c) => c.id !== "allStar"),
-    latestDay,
+    // ⚠**라우팅이다**(설계 D1) — 「直近の試合」의 정규 마지막 날 링크가 `today.html`(CS 화면)로 가면 안 된다
+    todayDate,
     // ⚠**만들어진 목록 자체를 넘긴다**(M1) — 「어느 경기에 페이지가 있는가」의 조건을
     //   캘린더에 베끼면 한쪽이 바뀔 때 조용히 갈린다
     gamePageIds,
@@ -6845,8 +7165,20 @@ export function loadSite(db: Db, o: LoadOptions): SiteData {
     starterDays,
     matchup: matchupPage(db, o, meta.latest, startersData, battingByPlayer, pitchingByPlayer),
     today: todayData,
-    days: dayPages(db, o, days, latestDay, nameOf, gamePageIds),
-    dayIndex: { season: o.season, latestDate: latestDay, days: [...days] },
+    days: dayPages(db, o, days, todayDate, nameOf, gamePageIds),
+    dayIndex: {
+      season: o.season,
+      todayDate,
+      days: [...days],
+      // ⚠머리의 「うちポストシーズン」(설계 D9) — 같은 날짜 목록(`days`)과 같은 범위·같은 대회다
+      postseasonPlayed: (db.raw
+        .prepare(
+          `SELECT COUNT(*) AS n FROM game
+            WHERE season = ? AND game_date <= ? AND status = 'played'
+              AND competition IN (${timeline.filter((c) => c !== "regular").map(() => "?").join(", ") || "NULL"})`,
+        )
+        .get(o.season, through, ...timeline.filter((c) => c !== "regular")) as unknown as { n: number }).n,
+    },
     postseason: postseasonData,
     /**
      * ⚠**드래프트가 없는 시즌에도 부른다** — 그때 `state` 가 **왜 없는지**를 말한다(M12).

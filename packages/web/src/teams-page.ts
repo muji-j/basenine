@@ -70,6 +70,11 @@ export interface TeamsCard {
    * 「끝났다」와 「아직 안 받았다」가 같은 화면이면 그것 자체가 결함이다.
    */
   seasonOver: boolean;
+  /**
+   * 이 구단이 정규 규정 수를 정확히 치렀는가 — `next === null` 의 셋째 이유(「全日程を終えました」 · 설계 D7-4).
+   * ⚠**구단 페이지의 `TeamNow.regularDone` 과 같은 값이다**(M1) — 여기서 다시 세지 않는다.
+   */
+  regularDone: boolean;
 }
 
 /** 한 리그. ⚠**순위 순서 그대로 들어온다** — 이 화면이 다시 정렬하지 않는다(M1) */
@@ -147,7 +152,7 @@ function teamRow(c: TeamsCard, base: string): RawHtml {
     <span class="tcv"><s>ゲーム差</s><b>${gamesBehindText(c.rank, c.gamesBehind)}</b></span>
     <span class="tcv"><s>直近10試合</s><b>${wlt(c.last10)}</b></span>
   </p>
-  <p class="tcx"><s>次の試合</s><b>${nextGameText(c.next, c.seasonOver)}</b></p>
+  <p class="tcx"><s>次の試合</s><b>${nextGameText({ next: c.next, seasonOver: c.seasonOver, regularDone: c.regularDone })}</b></p>
   <p class="tcf"><button class="favt" type="button"
     data-favteam="${c.teamCode}" data-favname="${c.shortName}" data-favpath="${teamPath(c.teamCode)}"
     aria-pressed="false">ひいき球団<span class="vh"> ${c.shortName}</span></button></p>

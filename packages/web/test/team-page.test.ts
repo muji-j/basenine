@@ -39,9 +39,11 @@ function nowFixture(over: Partial<TeamNow> = {}): TeamNow {
     race: race(),
     next: {
       date: "2026-08-18", opponentCode: "c", opponentName: "広島",
-      home: true, venue: "甲子園", startTime: "18:00",
+      home: true, venue: "甲子園", startTime: "18:00", competition: "regular",
     },
     probable: { mine: "村上", theirs: "大瀬良" },
+    // ⚠기본은 시즌 한가운데다 — 「全日程を終えました」(설계 D7-4)는 시험이 따로 켠다
+    regularDone: false,
     ...over,
   };
 }
@@ -202,7 +204,7 @@ function data(over: Partial<TeamPageData> = {}): TeamPageData {
       { date: "2026-08-15", opponent: "広島", home: false, result: "●" },
       { date: "2026-08-14", opponent: "広島", home: true, result: "○" },
     ],
-    latestDate: "2026-08-15",
+    todayDate: "2026-08-15",
     hasPostseason: false,
     now: nowFixture(),
     // ⚠**기본은 빈 배열이다.** 값이 필요한 시험은 `streakFixture`·`milestoneFixture`로 채운다

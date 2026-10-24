@@ -24,6 +24,9 @@ function game(over: Partial<TodayGame> = {}): TodayGame {
   return {
     gameId: "g1",
     venue: "ベルーナドーム",
+    competition: "regular",
+    label: null,
+    series: null,
     status: "played",
     notPlayedReason: null,
     away: side("m", "ロッテ", 0),
@@ -47,7 +50,7 @@ function data(over: Partial<DayPageData> = {}): DayPageData {
     starLimit: 6,
     prev: "2026-08-12",
     next: "2026-08-14",
-    latestDate: "2026-08-15",
+    todayDate: "2026-08-15",
     dayCount: 122,
     ...over,
   };
@@ -114,12 +117,13 @@ test("중지 경기를 센다 — 「1試合」이라고만 쓰면 하루가 반
 function index(over: Partial<DayIndexData> = {}): DayIndexData {
   return {
     season: 2026,
-    latestDate: "2026-08-15",
+    todayDate: "2026-08-15",
     days: [
-      { date: "2026-07-31", scheduled: 6, played: 6 },
-      { date: "2026-08-13", scheduled: 6, played: 5 },
-      { date: "2026-08-15", scheduled: 6, played: 6 },
+      { date: "2026-07-31", scheduled: 6, played: 6, competitions: ["regular"] },
+      { date: "2026-08-13", scheduled: 6, played: 5, competitions: ["regular"] },
+      { date: "2026-08-15", scheduled: 6, played: 6, competitions: ["regular"] },
     ],
+    postseasonPlayed: 0,
     ...over,
   };
 }
@@ -150,6 +154,6 @@ test("최신 경기일은 today.html로 보내고 지금 보고 있다고 표시
 });
 
 test("경기가 하나도 없는 시즌이면 그렇게 말한다", () => {
-  const out = renderDayIndexPage(index({ days: [], latestDate: null }), context());
+  const out = renderDayIndexPage(index({ days: [], todayDate: null }), context());
   assert.match(out, /このシーズンの試合はまだありません/);
 });

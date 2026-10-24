@@ -39,12 +39,13 @@ import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import { NO_VALUE, avg3, fullDate, gameDate } from "./format.ts";
 import { streakSpan } from "./streak-view.ts";
-import { ROSTER_PATH, page } from "./layout.ts";
+import { ROSTER_PATH, page, regularThrough } from "./layout.ts";
 import type { RenderContext } from "./layout.ts";
 import { note, runCell, scroller, term, widestRunDiff, wlCell } from "./parts.ts";
 import { termLabel } from "./glossary.ts";
 import { teamPath } from "./team-page.ts";
-import { dayHref } from "./today-page.ts";
+import { dayHref, nipponSeriesText, notPlayedText } from "./today-page.ts";
+import type { NipponSeriesView } from "./today-page.ts";
 import { NEUTRAL_COLOR, REGULAR_SEASON_GAMES, regularSeasonGames } from "@bb-app/domain";
 import type { TeamColor } from "@bb-app/domain";
 
@@ -241,14 +242,38 @@ export interface HomeMilestone {
   thisSeason: number;
 }
 
+/**
+ * 「直近の結果」 한 줄 — **상태로 갈리는 판별 합집합**(설계 D8).
+ * ⚠**중지를 점수로 그리지 않는다** — 예전에는 상태를 버리고 득점만 옮겨서 「—-—」(득점 모름)이 나갔다(M11).
+ */
+export type HomeLatestGame = {
+  away: string;
+  home: string;
+  awayCode: string;
+  homeCode: string;
+  /** 대회 표기(설계 D3 · 試合 카드와 같은 값). 정규는 null */
+  label: string | null;
+  /** 日本シリーズ의 그 경기까지 성적(설계 D4 · 試合 카드와 같은 값). 그 밖 null */
+  series: NipponSeriesView | null;
+} & (
+  /** 득점은 못 읽었으면 null 이다(M11) — 0 이 아니다 */
+  | { status: "played"; awayRuns: number | null; homeRuns: number | null }
+  /** 중지·노게임. 사유가 없으면 null */
+  | { status: "notPlayed"; reason: string | null }
+);
+
 export interface HomePageData {
   season: number;
   asOf: string | null;
-  latestDate: string | null;
-  /** 최신 경기일의 결과 요약 */
+  /**
+   * **試合 타임라인의 최신일 — 라우팅만**(설계 D1). 「この日の詳細」가 그 날만 `today.html` 로 간다.
+   * ⚠~~`latestDate`~~ 에서 이름을 바꿨다 — 하나의 「최신일」이 라우팅과 정규 내용(연속기록·주간) 두 일을 하고 있었다.
+   */
+  todayDate: string | null;
+  /** 試合 타임라인 최신일의 결과 요약 — ⚠포스트시즌일 수 있다(대회 표기가 그 사실을 말한다) */
   latest: {
     date: string;
-    games: { away: string; home: string; awayCode: string; homeCode: string; awayRuns: number | null; homeRuns: number | null }[];
+    games: HomeLatestGame[];
   } | null;
   leagues: HomeLeague[];
   /** 지난주(월~일)의 베스트. 완결된 주가 없으면 null */
@@ -508,12 +533,18 @@ function jumpNav(d: HomePageData): RawHtml {
 
 export function renderHomePage(d: HomePageData, ctx: RenderContext): string {
   const { base, root, seasons, navTo } = ctx.paths("index.html");
+  /**
+   * ⚠**직근 결과에 정규가 아닌 경기가 있으면 머리의 기준일이 정규라는 것을 말한다**(설계 D8) — 띠와 **같은 함수**(`regularThrough`).
+   * 그렇지 않으면 「10月8日まで」 바로 아래에 10月17日의 CS 결과가 나란히 선다.
+   * ⚠「날짜가 다르면」으로 가르지 않는다 — 시즌 중 전 경기 중지일에도 날짜가 달라진다(그때는 정규 이야기다).
+   */
+  const postseasonLatest = d.latest !== null && d.latest.games.some((g) => g.label !== null);
 
   const body = html`<header class="idline">
   <div class="idtext">
     <h1 class="nm">${d.season}年 ${ctx.site.name}</h1>
-    <span class="sub">リーグの今を一枚で</span>
-    <span class="asof">${d.asOf === null ? "" : `${fullDate(d.asOf)}まで`}</span>
+    <span class="sub">${d.seasonOver ? "シーズンの結果を一枚で" : "リーグの今を一枚で"}</span>
+    <span class="asof">${d.asOf === null ? "" : postseasonLatest ? regularThrough(d.asOf) : `${fullDate(d.asOf)}まで`}</span>
   </div>
 </header>
 
@@ -537,13 +568,18 @@ ${d.latest === null
        팀명이 셀 **바깥쪽**으로 밀려 있었다 — 실측 1280px 잉크 기준으로 경기 **내부**가 최대 71px,
        경기 **사이**가 18px 이라 **간격이 뜻과 반대로 묶였다.** 점수에 이름을 붙인다. */ ""}
   <ul class="hgames">${d.latest.games.map(
-      (g) => html`<li>
+      (g) => html`<li>${g.label === null
+        ? raw("")
+        : html`
+    <span class="hg-c">${g.label}${g.series === null ? "" : ` — ${nipponSeriesText(g.series)}`}</span>`}
     <span class="hg-t">${g.away}</span>
-    <b class="hg-s">${g.awayRuns === null ? NO_VALUE : g.awayRuns}<s>-</s>${g.homeRuns === null ? NO_VALUE : g.homeRuns}</b>
+    ${g.status === "played"
+      ? html`<b class="hg-s">${g.awayRuns === null ? NO_VALUE : g.awayRuns}<s>-</s>${g.homeRuns === null ? NO_VALUE : g.homeRuns}</b>`
+      : html`<b class="hg-s hg-off">${notPlayedText(g.reason)}</b>`}
     <span class="hg-t">＠${g.home}</span>
   </li>`,
     )}</ul>
-  <p class="more"><a href="${dayHref(base, d.latest.date, d.latestDate)}">この日の詳細</a></p>
+  <p class="more"><a href="${dayHref(base, d.latest.date, d.todayDate)}">この日の詳細</a></p>
 </section>`}
 
 ${d.leagues.map(

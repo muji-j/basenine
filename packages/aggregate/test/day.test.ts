@@ -287,9 +287,38 @@ test("경기일 목록은 전 경기 중지된 날도 센다 — 편성과 실�
       sourceUrl: "https://npb.jp/y", fetchedAt: NOW,
     });
     assert.deepEqual(gameDates(db, 2026), [
-      { date: DATE, scheduled: 1, played: 1 },
-      { date: "2026-08-15", scheduled: 1, played: 0 },
+      { date: DATE, scheduled: 1, played: 1, competitions: ["regular"] },
+      { date: "2026-08-15", scheduled: 1, played: 0, competitions: ["regular"] },
     ]);
+  });
+});
+
+/**
+ * ⚠**試合 타임라인은 「정규 + CS + 日本S」다**(2026-10-24 · 설계 D2). 목록을 받으면 그 대회들의 날을 모으고,
+ * 그날 어떤 대회가 있었는지를 **받은 목록의 순서로** 말한다(일람 칸의 `CS`·`日本S` 표기 재료 · D9).
+ * ⚠올스타는 목록에 없으면 안 들어온다 — 他大会 화면만 그것을 싣는다.
+ */
+test("⚠경기일 목록과 최신일이 대회 목록을 받는다 — 그날의 대회를 목록 순서로 말한다", async () => {
+  await withDb((db) => {
+    game(db);
+    const extra = (gameId: string, date: string, competition: string, status: "played" | "notPlayed" = "played"): void => {
+      upsertGame(db, {
+        gameId, season: 2026, gameDate: date, awayCode: "g", homeCode: "db", gameNo: 1,
+        status, notPlayedReason: status === "played" ? null : "中止", competition,
+        sourceUrl: "https://npb.jp/z", fetchedAt: NOW,
+      });
+    };
+    extra("cs1", DATE, "climaxSeries");
+    extra("as1", "2026-07-28", "allStar");
+    extra("js1", "2026-10-24", "nipponSeries", "notPlayed");
+    const timeline = ["regular", "climaxSeries", "nipponSeries"] as const;
+    assert.deepEqual(gameDates(db, 2026, "9999-12-31", timeline), [
+      { date: DATE, scheduled: 2, played: 2, competitions: ["regular", "climaxSeries"] },
+      { date: "2026-10-24", scheduled: 1, played: 0, competitions: ["nipponSeries"] },
+    ], "올스타가 들어왔거나, 중지뿐인 日本S 날이 빠졌거나, 대회 순서가 목록과 다르다");
+    assert.equal(latestGameDate(db, 2026, "9999-12-31", timeline), "2026-10-24");
+    assert.equal(latestGameDate(db, 2026), DATE, "기본값(정규)이 바뀌었다 — 집계·순위가 포스트시즌을 보게 된다");
+    assert.throws(() => gameDates(db, 2026, "9999-12-31", []), /비었다/, "빈 목록을 조용히 0건으로 돌려줬다");
   });
 });
 

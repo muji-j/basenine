@@ -165,6 +165,12 @@ export interface TeamNextGame {
   venue: string | null;
   /** 미정이면 `null`(M11) */
   startTime: string | null;
+  /**
+   * 그 경기의 대회(설계 D7). 일정 표에는 대회 구분이 없어 **조건으로 닫는다** — `nipponSeries` 는
+   * ⑴12구단 정규 소진 ⑵정규 마지막 날 뒤 ⑶다른 리그 상대 셋이 다 참일 때만이다(`nipponSeriesSlot`).
+   * ⚠CS 는 오지 않는다 — 탈락을 판정할 수 없어 열리지 않을 「필요 시 경기」를 「次」로 부를 수 있다.
+   */
+  competition: "regular" | "nipponSeries";
 }
 
 /**
@@ -183,6 +189,12 @@ export interface TeamNow {
    * 화면이 끝난 경기의 선발을 「次の」라고 부르게 된다(`isNextProbable` 이 막던 결함).
    */
   probable: { mine: string | null; theirs: string | null } | null;
+  /**
+   * 이 구단이 정규시즌 규정 경기 수를 **정확히** 치렀는가(설계 D7-4) — `next === null` 의 이유를 가른다.
+   * ⚠「全日程を終えました」(받아 둔 일정이 없어도 사실이다)와 「予定はありません（取り込んでいない場合も）」(정말 모른다)는 다른 말이다(M12).
+   * ⚠규정 수를 **넘겼으면** false 다 — 우리가 모르는 시즌이므로 「모른다」 쪽에 둔다.
+   */
+  regularDone: boolean;
 }
 
 export interface TeamPageData {
@@ -238,8 +250,11 @@ export interface TeamPageData {
    * ⚠**무승부는 승률의 분모에서 빠진다**(NPB 규정) — 그래서 경기 수를 따로 들고 다닌다(M2).
    */
   vs: { code: string; shortName: string; color: TeamColor; w: number; l: number; t: number }[];
-  /** 최신 경기일. `dayHref`가 그 날만 `today.html`로 보낸다 */
-  latestDate: string | null;
+  /**
+   * **試合 타임라인의 최신일 — 라우팅만**(설계 D1). `dayHref`가 그 날만 `today.html`로 보낸다.
+   * ⚠정규 최신일이 아니다 — 포스트시즌 기간에 정규 마지막 날 링크가 `today.html`(CS 화면)로 가면 404 가 아니라 다른 날이다(T2).
+   */
+  todayDate: string | null;
   /** 이 시즌에 ポストシーズン 기록이 있는가 */
   hasPostseason: boolean;
   /** 맨 위 요약 띠. **이 화면에 오는 사람이 가장 먼저 묻는 것** */
@@ -694,16 +709,28 @@ export function gamesBehindText(rank: number | null, gamesBehind: number): strin
  * (calendar.ts: 실측 48/48장이 끝난 시즌에 「まだ取り込んでいません」이라고 말하던 결함).
  * ⚠**두 화면이 쓴다**(M1 · 구단 페이지 · 구단 목록). 한쪽만 고치면 같은 경기가
  * 두 화면에서 다른 문장이 된다.
+ *
+ * **결정표 — 위에서부터 처음 참인 줄**(2026-10-24 · 설계 D7):
+ * | 1 | 시즌 종료 | 「このシーズンは終了しています」 — ⚠**남은 예정보다 먼저다**(열리지 않은 日本S 6·7차전이 사본에 남는다) |
+ * | 2 | 정규 예정 | 지금 그대로 |
+ * | 3 | 日本シリーズ 예정 | 지금 문장 + 「 — 日本シリーズ」 |
+ * | 4 | 이 구단이 규정 수를 치렀다 | 「レギュラーシーズンの全日程を終えました」 |
+ * | 5 | 그 밖 | 「予定はありません（日程をまだ取り込んでいない場合もあります）」 — 이때는 정말 모른다 |
+ * ⚠~~예정이 없으면 시즌 종료 아니면 「取り込んでいない」~~ 는 낡았다 — 日本S 에 나가는 구단에게 일정을 받아 두고도
+ *   「日程をまだ取り込んでいない」라고 원인을 「미수집」으로 짚었다(2026 DeNA·ソフトバンク).
  */
-export function nextGameText(next: TeamNextGame | null, seasonOver: boolean): string {
+export function nextGameText(o: { next: TeamNextGame | null; seasonOver: boolean; regularDone: boolean }): string {
+  if (o.seasonOver) return "このシーズンは終了しています";
+  const next = o.next;
   if (next === null) {
-    return seasonOver
-      ? "このシーズンは終了しています"
+    return o.regularDone
+      ? "レギュラーシーズンの全日程を終えました"
       : "予定はありません（日程をまだ取り込んでいない場合もあります）";
   }
   return (
     `${fullDate(next.date)}${next.startTime === null ? "" : ` ${next.startTime}`}` +
-    ` ${next.home ? "対" : "＠"}${next.opponentName}${next.venue === null ? "" : `（${next.venue}）`}`
+    ` ${next.home ? "対" : "＠"}${next.opponentName}${next.venue === null ? "" : `（${next.venue}）`}` +
+    (next.competition === "nipponSeries" ? " — 日本シリーズ" : "")
   );
 }
 
@@ -731,7 +758,7 @@ function nowBlock(d: TeamPageData, base: string): RawHtml {
     : `残り ${n.race.remaining}試合`;
 
   /** 다음 경기. **문장을 만드는 자리는 위의 `nextGameText` 하나다**(M1) */
-  const nextText = nextGameText(n.next, d.calendar.seasonOver);
+  const nextText = nextGameText({ next: n.next, seasonOver: d.calendar.seasonOver, regularDone: n.regularDone });
 
   /**
    * 予告先発. ⚠**「投手なし」가 아니라 「発表待ち」다**(M11).
@@ -1005,7 +1032,7 @@ ${d.recent.length === 0
   <h2>直近の試合</h2>
   <ul class="trecent">${d.recent.map(
       (g) => html`<li class="${g.result === "○" ? "w" : g.result === "●" ? "l" : ""}">
-    <a href="${dayHref(base, g.date, d.latestDate)}"><b>${g.result}</b><span>${fullDate(g.date)}</span>
+    <a href="${dayHref(base, g.date, d.todayDate)}"><b>${g.result}</b><span>${fullDate(g.date)}</span>
     <s>${g.home ? "対" : "＠"}${g.opponent}</s></a>
   </li>`,
     )}</ul>

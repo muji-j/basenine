@@ -91,7 +91,9 @@ function game(over: Partial<ProbableGame> = {}): ProbableGame {
 
 function data(over: Partial<StartersPageData> = {}): StartersPageData {
   return {
-    heldFrom: 2019, defaultDate: "2026-08-16", prev: "2026-08-15", next: null, dayCount: 3, gameDate: "2026-08-16", builtOn: "2026-08-15", games: [game()], ...over };
+    heldFrom: 2019, savedFrom: 2026, defaultDate: "2026-08-16", prev: "2026-08-15", next: null, dayCount: 3, gameDate: "2026-08-16", builtOn: "2026-08-15", games: [game()],
+    // ⚠기본은 「철회 아님」이다 — 철회·모름은 `postseason-timeline.test.ts` 가 DB 로 잰다(설계 D6)
+    withdrawal: "notWithdrawn", ...over };
 }
 
 test("경기와 구장·시각을 낸다", () => {
@@ -353,10 +355,20 @@ test("진행 중인 시즌에서는 지금까지대로 말한다", () => {
  */
 test("⚠끝난 날을 「次の予告先発」이라고 부르지 않는다", () => {
   // 실제로 났던 상태: 예고도 최신 경기일도 8/16
-  assert.equal(isNextProbable("2026-08-16", "2026-08-16"), false, "같은 날을 「다음」이라고 했다");
-  assert.equal(isNextProbable("2026-08-15", "2026-08-16"), false, "지난 날을 「다음」이라고 했다");
-  assert.equal(isNextProbable("2026-08-17", "2026-08-16"), true, "진짜 다음 날을 감췄다");
-  assert.equal(isNextProbable(null, "2026-08-16"), false);
+  assert.equal(isNextProbable("2026-08-16", "2026-08-16", "2026-08-16"), false, "같은 날을 「다음」이라고 했다");
+  assert.equal(isNextProbable("2026-08-15", "2026-08-15", "2026-08-16"), false, "지난 날을 「다음」이라고 했다");
+  assert.equal(isNextProbable("2026-08-17", "2026-08-17", "2026-08-16"), true, "진짜 다음 날을 감췄다");
+  assert.equal(isNextProbable(null, "2026-08-16", "2026-08-16"), false);
+});
+
+/**
+ * ⚠⚠**생성일보다 이른 예고일도 「다음」이 아니다**(2026-10-24 · 포스트시즌 화면 설계 D5 의 `P ≥ B`).
+ * **열리지 않은 경기는 경기 행이 안 생겨** 최신 경기일이 멈춘다 — 2026 CS 5차전(10/18)이 그랬고,
+ * `P > L` 만 보면 10/19 부터 10/24 까지 지난 10/18 을 「次」라고 불렀다(설계 §0 · 7일 중 5일).
+ */
+test("⚠생성일보다 이른 예고일은 「次」가 아니다 — 열리지 않은 경기는 최신 경기일을 멈춘다", () => {
+  assert.equal(isNextProbable("2026-10-18", "2026-10-19", "2026-10-17"), false, "지난 10/18 을 「次」라고 불렀다");
+  assert.equal(isNextProbable("2026-10-18", "2026-10-18", "2026-10-17"), true, "그날 아침의 예고를 감췄다");
 });
 
 /**
@@ -364,7 +376,7 @@ test("⚠끝난 날을 「次の予告先発」이라고 부르지 않는다", (
  * 개막 전날에 予告先発이 통째로 사라진다 — 정작 가장 보고 싶은 날이다.
  */
 test("⚠최신 경기일이 없으면(개막 전) 예고는 그대로 「다음」이다", () => {
-  assert.equal(isNextProbable("2026-03-27", null), true, "개막 전날의 예고를 감췄다");
+  assert.equal(isNextProbable("2026-03-27", "2026-03-26", null), true, "개막 전날의 예고를 감췄다");
 });
 
 // ── 구단 페이지의 「予告先発」 고르기 ──────────────────────────────────────
@@ -375,7 +387,7 @@ test("⚠최신 경기일이 없으면(개막 전) 예고는 그대로 「다음
 // `2026-08-16` 하나뿐이고 그 날은 이미 치러졌다(다음 경기는 8/19). 그래서 여기서 잰다.
 
 function next(over: Partial<TeamNextGame> = {}): TeamNextGame {
-  return { date: "2026-08-16", opponentCode: "g", opponentName: "巨人", home: true, venue: null, startTime: null, ...over };
+  return { date: "2026-08-16", opponentCode: "g", opponentName: "巨人", home: true, venue: null, startTime: null, competition: "regular", ...over };
 }
 
 test("⚠다음 경기와 같은 날의 예고만 붙인다 — 다른 날 것을 「次の」라고 부르지 않는다", () => {

@@ -58,6 +58,16 @@ export interface DayGame {
   gameId: string;
   venue: string | null;
   competition: string;
+  /**
+   * 대회 표기 **원문**(`game.series` · `CS ファイナルステージ` 등). 없으면 null(M4).
+   * 화면의 「セ・リーグ CS ファイナルステージ 第4戦」이 이 값과 `gameNo` 에서 나온다(설계 2026-10-24 D3).
+   */
+  series: string | null;
+  /**
+   * npb.jp 슬러그 끝의 경기 번호(`game.game_no`). ⚠**우리가 세지 않는다** — 중지와 재경기가 같은 번호인 것이 맞다.
+   * 정규시즌에서는 그 카드의 몇 번째인지라 화면에 내지 않는다.
+   */
+  gameNo: number;
   /** `played`면 결과가 있다. 아니면 `notPlayedReason`이 이유를 말한다 */
   status: string;
   notPlayedReason: string | null;
@@ -92,7 +102,7 @@ export const STAR_SO = 10;
 export const STAR_LIMIT = 6;
 
 const GAME_SQL = `
-SELECT game_id AS gameId, venue, competition, status,
+SELECT game_id AS gameId, venue, competition, series, game_no AS gameNo, status,
        not_played_reason AS notPlayedReason,
        away_code AS awayCode, home_code AS homeCode,
        away_runs AS awayRuns, home_runs AS homeRuns,
@@ -136,6 +146,8 @@ interface GameRow {
   gameId: string;
   venue: string | null;
   competition: string;
+  series: string | null;
+  gameNo: number;
   status: string;
   notPlayedReason: string | null;
   awayCode: string;
@@ -262,6 +274,8 @@ export function dayResults(db: Db, season: number, date: string): DayGame[] {
       gameId: r.gameId,
       venue: r.venue,
       competition: r.competition,
+      series: r.series,
+      gameNo: r.gameNo,
       status: r.status,
       notPlayedReason: r.notPlayedReason,
       away: { teamCode: r.awayCode, runs: r.awayRuns, hits: r.awayHits, errors: r.awayErrors },
@@ -288,6 +302,21 @@ export interface GameDay {
   scheduled: number;
   /** 그중 실제로 치른 수. **`scheduled`와 다르면 중지가 있었다**(M11) */
   played: number;
+  /**
+   * 그날 경기가 있었던 대회 — **받은 목록의 순서대로**(설계 2026-10-24 D9 · 일람 칸의 `CS`·`日本S` 표기 재료).
+   * ⚠중지만 있었던 대회도 든다 — 편성이 있었다는 사실이다(M11).
+   */
+  competitions: string[];
+}
+
+/**
+ * 대회 인자를 목록으로 편다. ⚠**빈 목록은 받지 않는다** — `IN ()` 은 SQLite 문법 오류이고,
+ * 「아무 대회도 아님」을 조용히 0건으로 돌려주면 試合 화면이 통째로 비어 「경기가 없었다」로 읽힌다(M7).
+ */
+function competitionList(competition: string | readonly string[]): readonly string[] {
+  const list = typeof competition === "string" ? [competition] : competition;
+  if (list.length === 0) throw new RangeError("대회 목록이 비었다 — 試合 타임라인이 통째로 사라진다");
+  return list;
 }
 
 /**
@@ -295,26 +324,34 @@ export interface GameDay {
  *
  * ⚠**`status`로 거르지 않는다.** 전 경기가 우천 중지된 날도 경기일이다 —
  * 빼면 「그날이 없었던 것」이 되고, 날짜를 짚어 온 사람에게 404가 된다.
+ * ⚠**대회는 목록도 받는다**(2026-10-24 · 설계 D2). 試合 타임라인은 「정규 + CS + 日本S」이고
+ * 그 목록은 호출자가 정한다 — 여기서 박으면 화면마다 다른 타임라인이 생긴다.
  */
 export function gameDates(
   db: Db,
   season: number,
   through = "9999-12-31",
-  competition = "regular",
+  competition: string | readonly string[] = "regular",
 ): GameDay[] {
+  const list = competitionList(competition);
   const rows = db.raw
     .prepare(
       `SELECT game_date AS date,
               COUNT(*) AS scheduled,
-              SUM(CASE WHEN status = 'played' THEN 1 ELSE 0 END) AS played
+              SUM(CASE WHEN status = 'played' THEN 1 ELSE 0 END) AS played,
+              GROUP_CONCAT(DISTINCT competition) AS comps
        FROM game
-       WHERE season = ? AND game_date <= ? AND competition = ?
+       WHERE season = ? AND game_date <= ? AND competition IN (${list.map(() => "?").join(", ")})
        GROUP BY game_date
        ORDER BY game_date`,
     )
-    .all(season, through, competition) as unknown as GameDay[];
+    .all(season, through, ...list) as unknown as (Omit<GameDay, "competitions"> & { comps: string })[];
   // ⚠**node:sqlite는 프로토타입 없는 객체를 준다.** 그대로 흘리면 전개·비교에서 조용히 어긋난다
-  return rows.map((r) => ({ date: r.date, scheduled: r.scheduled, played: r.played }));
+  // ⚠`GROUP_CONCAT(DISTINCT)` 의 순서는 정해져 있지 않다 — **받은 목록의 순서**로 다시 세운다
+  return rows.map((r) => {
+    const here = new Set(r.comps.split(","));
+    return { date: r.date, scheduled: r.scheduled, played: r.played, competitions: list.filter((c) => here.has(c)) };
+  });
 }
 
 export function latestGameDate(
@@ -323,14 +360,16 @@ export function latestGameDate(
   through = "9999-12-31",
   // ⚠**`gameDates`와 같은 계약이어야 한다.** 여기만 'regular'로 박아 두면, 대회를 바꿔 빌드했을 때
   // 「최신 경기일」이 날짜 목록에 없는 날이 되어 앞뒤 이동이 통째로 사라진다(2026-08-16 이중 검토 P2)
-  competition = "regular",
+  competition: string | readonly string[] = "regular",
 ): string | null {
+  const list = competitionList(competition);
   // ⚠**`status`로 거르지 않는다.** 이 함수의 존재 이유가 그것이다 —
   // 신선도(`asOf`)는 실시 기준이 맞지만, 「어제 무슨 일이 있었나」는 중지도 포함해야 한다
   const row = db.raw
     .prepare(
-      `SELECT MAX(game_date) AS d FROM game WHERE season = ? AND game_date <= ? AND competition = ?`,
+      `SELECT MAX(game_date) AS d FROM game
+       WHERE season = ? AND game_date <= ? AND competition IN (${list.map(() => "?").join(", ")})`,
     )
-    .get(season, through, competition) as unknown as { d: string | null } | undefined;
+    .get(season, through, ...list) as unknown as { d: string | null } | undefined;
   return row?.d ?? null;
 }

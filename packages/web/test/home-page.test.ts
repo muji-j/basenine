@@ -43,13 +43,13 @@ function data(over: Partial<HomePageData> = {}): HomePageData {
   return {
     season: 2026,
     asOf: "2026-08-16",
-    latestDate: "2026-08-16",
+    todayDate: "2026-08-16",
     latest: {
       date: "2026-08-16",
       games: [
-        { away: "阪神", home: "広島", awayCode: "t", homeCode: "c", awayRuns: 8, homeRuns: 1 },
-        // ⚠**득점을 못 읽은 경기**(M11). 0대0 으로 때우면 무승부가 늘어난다
-        { away: "巨人", home: "中日", awayCode: "g", homeCode: "d", awayRuns: null, homeRuns: null },
+        { away: "阪神", home: "広島", awayCode: "t", homeCode: "c", label: null, series: null, status: "played", awayRuns: 8, homeRuns: 1 },
+        // ⚠**득점을 못 읽은 경기**(M11). 0대0 으로 때우면 무승부가 늘어난다 — 치렀는데 득점만 모르는 경기다(중지와 다르다)
+        { away: "巨人", home: "中日", awayCode: "g", homeCode: "d", label: null, series: null, status: "played", awayRuns: null, homeRuns: null },
       ],
     },
     leagues: [
