@@ -8,6 +8,6 @@
   },
   "scripts": {
     "test": "node --test \"test/*.test.ts\"",
-    "build": "node tools/build.ts ../../data/bb.sqlite ../../dist 2026"
+    "build": "node tools/build.ts ../../data/bb.sqlite ../../dist auto"
   }
 }

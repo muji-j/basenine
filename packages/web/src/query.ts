@@ -7503,19 +7503,21 @@ export function draftHeldSeasons(db: Db): number[] {
 }
 
 /**
- * **경기가 있는 시즌.**
+ * **치른(`played`) 경기가 있는 시즌** — 내림차순. 빌드 시즌 목록(`build-seasons.ts`)의 재료다(PR-4 설계 D4).
  *
  * ⚠**「드래프트만 있는 시즌」의 반대편이다**(2026-09-07 이중 검토 P3). `build.ts` 는
- * 「빌드 인자에 없는 드래프트 시즌」을 전부 드래프트 전용으로 분류하는데, 그 분류에는
- * **경기가 있는지 묻는 자리가 없었다.** 2017 을 백필해 놓고 `package.json` 의 시즌 목록을
- * 잊으면 그 시즌이 **조용히 한 장으로만 구워지고** 선수·경기·순위가 통째로 사라진 채
- * 「그 해는 원래 드래프트만 있는 해」로 읽힌다 — **빈 화면조차 안 남아 M7 이 경계하는 것보다
- * 더 안 보인다.** 그걸 묻는 것이 이 함수다.
+ * 「빌드 시즌에 없는 드래프트 시즌」을 전부 드래프트 전용으로 분류하는데, 그 분류에는
+ * **경기가 있는지 묻는 자리가 없었다.** 2017 을 백필해 놓고 시즌 목록을 잊으면 그 시즌이
+ * **조용히 한 장으로만 구워지고** 선수·경기·순위가 통째로 사라진 채 「그 해는 원래 드래프트만 있는 해」로 읽힌다 —
+ * **빈 화면조차 안 남아 M7 이 경계하는 것보다 더 안 보인다.** 그걸 묻는 것이 이 함수다.
+ * ⚠⚠**`auto` 면 이것이 곧 시즌 목록이다**(PR-4) — 명시 목록이면 이 시즌이 목록에 다 있어야 굽는다(**굽기 전에** 막는다).
+ * ⚠**`played` 로 센다** — 예전 `gameHeldSeasons` 는 상태를 안 가렸다. 개막일이 전부 중지면 `notPlayed` 행만으로 새 시즌이 생겨
+ *   「선수 0명」 게이트로 배포가 멈춘다(설계 D4).
  * ⚠**`MIN/MAX(season)` 로 대신하지 마라** — 구간 안에 구멍이 있으면 그 시즌을 놓친다.
  */
-export function gameHeldSeasons(db: Db): number[] {
+export function playedSeasons(db: Db): number[] {
   return (
-    db.raw.prepare("SELECT DISTINCT season FROM game ORDER BY season").all() as unknown as { season: number }[]
+    db.raw.prepare("SELECT DISTINCT season FROM game WHERE status = 'played' ORDER BY season DESC").all() as unknown as { season: number }[]
   ).map((r) => r.season);
 }
 

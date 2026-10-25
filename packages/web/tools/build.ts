@@ -2,56 +2,66 @@
  * 정적 사이트 생성.
  *
  * ```
- * node packages/web/tools/build.ts data/bb.sqlite dist 2026
+ * node packages/web/tools/build.ts data/bb.sqlite dist auto
+ * node packages/web/tools/build.ts data/bb.sqlite dist 2026,2025   # 시험·로컬용 명시 목록(순서 무관 · 목록 밖 played 시즌이 있으면 1)
  * ```
  *
  * ⚠**서버가 없다.** 데이터는 하루 1회만 바뀌므로 요청마다 계산할 이유가 없고,
  * 정적 파일이면 D1 읽기 예산도 배포 때 1회만 쓴다.
  * ⚠**시계는 여기서 한 번만 읽는다**(M6). 아래로 내려가는 것은 `YYYY-MM-DD` 문자열이다.
+ * ⚠⚠**시즌 목록은 DB 가 정한다**(PR-4 설계 `docs/superpowers/specs/2026-10-24-offseason-readiness-design.md` D4 · `../src/build-seasons.ts`) —
+ *   `auto` = 치른 경기가 있는 시즌 전부 · 결과는 언제나 내림차순이고 **최댓값이 루트**다. 판정(형식 2 · DB 못 읽음 · played 0 · 목록 밖 played 시즌 1)은
+ *   **`rmSync(outDir)` 앞**이라 실패면 굽지 않고 기존 dist 를 건드리지 않는다.
  */
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { brokenLinksIn, duplicateIds, linkIndex, tooDeepPlayerPages } from "../src/link-check.ts";
 import type { LinkIndex } from "../src/link-check.ts";
 import { dirname, join, resolve } from "node:path";
 import { collectionEvidence, openDb } from "@bb-app/store";
+import type { Db } from "@bb-app/store";
 import { systemClock, toJstDateString } from "@bb-app/archiver";
 import { DRAFT_SEASON_PATHS, buildDraftSeason, buildSite, seasonPaths } from "../src/site.ts";
 import type { BuildResult } from "../src/site.ts";
 // ⚠**연락처 게이트의 판정은 한 벌이다**(M1) — 조건을 여기서 다시 쓰지 않는다
 import { collectionStatus, contactGate, staleGate } from "../src/layout.ts";
+import { parseSeasonArg, resolveBuildSeasons } from "../src/build-seasons.ts";
+import type { SeasonArg } from "../src/build-seasons.ts";
 import {
   buildCareerContext,
   draftHeldSeasons,
-  gameHeldSeasons,
   loadDraftPage,
   loadLog,
   loadSite,
+  playedSeasons,
 } from "../src/query.ts";
 
 const [dbArg, outArg, seasonArg, throughArg] = process.argv.slice(2);
 
 if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
-  console.error("usage: build.ts <db> <outDir> <season[,season...]> [through=YYYY-MM-DD]");
+  console.error("usage: build.ts <db> <outDir> <auto|season[,season...]> [through=YYYY-MM-DD]");
   process.exitCode = 2;
 } else {
   /**
-   * ⚠**첫 시즌이 「현재 시즌」이다.** 그 시즌만 사이트 루트에 놓이고 나머지는 `/{연도}/` 아래로 간다.
+   * ⚠**최댓값 시즌이 「현재 시즌」이다.** 그 시즌만 사이트 루트에 놓이고 나머지는 `/{연도}/` 아래로 간다.
    * 기존 URL(`/players/x.html`)이 계속 현재 시즌을 가리키게 하기 위한 배치다.
+   * ⚠~~첫 시즌이 「현재 시즌」이다~~ 는 2026-10-25 부로 낡았다(PR-4 D4) — 명시 목록의 입력 순서는 뜻이 없다(`resolveBuildSeasons` 가 내림차순으로 준다).
+   * ⚠**형식 오류(2)는 DB 를 열기 전 · 유도·목록 판정(1)은 DB 를 연 뒤 — 둘 다 `rmSync(outDir)` 앞이다.**
    */
-  const seasons = seasonArg.split(",").map((x) => Number(x.trim()));
-  if (seasons.length === 0 || seasons.some((x) => !Number.isInteger(x))) {
-    console.error(`시즌이 정수가 아니다: ${seasonArg}`);
+  const arg = parseSeasonArg(seasonArg);
+  const now = systemClock.now();
+  const target = arg.ok ? openBuildTarget(resolve(dbArg), now.toISOString(), arg.value) : null;
+  if (!arg.ok) {
+    console.error(arg.message);
     process.exitCode = 2;
-  } else if (new Set(seasons).size !== seasons.length) {
-    console.error(`시즌이 중복됐다: ${seasonArg}`);
-    process.exitCode = 2;
+  } else if (target === null || !target.ok) {
+    for (const line of target?.lines ?? []) console.error(line);
+    process.exitCode = 1;
   } else {
+    const { db, seasons } = target;
     const season = seasons[0]!;
-    const now = systemClock.now();
     const builtOn = toJstDateString(now);
     const outDir = resolve(outArg);
 
-    const db = openDb(resolve(dbArg), now.toISOString());
     try {
       const t0 = process.hrtime.bigint();
       /**
@@ -212,28 +222,12 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
       const result = current!;
 
       /**
-       * ⚠**경기가 있는 시즌을 드래프트 한 장으로 굽지 않는다**(2026-09-07 이중 검토 P3).
-       *
-       * `draftOnly` 는 **「빌드 인자 목록에 없는 드래프트 시즌」**을 전부 드래프트 전용으로 본다.
-       * 그 분류에는 **경기가 있는지 묻는 자리가 없다** — 2017 을 백필해 놓고 `package.json` 의
-       * 시즌 목록 갱신을 잊으면 그 시즌이 **조용히 한 장으로만 구워지고** 선수·경기·순위가
-       * 통째로 사라진 채 **「그 해는 원래 드래프트만 있는 해」로 읽힌다.**
-       * ⚠**빈 화면조차 안 남는다** — 바로 아래 `emptySeasons` 는 **목록에 적힌** 시즌만 보므로
-       *   이 갈래에는 닿지 않는다. 링크 검사도 통과한다(없는 화면은 링크도 없다).
-       *   M7 이 경계하는 「조용한 0」보다 더 안 보이는 모양이다.
-       * ⚠**바로 아래 게이트와 방향이 반대인 짝이다**: 저쪽은 「적었는데 데이터가 없다」,
-       *   이쪽은 **「데이터가 있는데 안 적었다」**다. 둘 다 사람의 선언과 데이터가 어긋난 사고다.
-       * ⚠**산출물은 남긴다** — 다른 게이트와 같은 형식이다. 배포만 막는다.
+       * ⚠**「데이터가 있는데 안 적었다」(경기가 있는 시즌을 드래프트 한 장으로 굽기)는 여기서 막지 않는다 — 굽기 전에 막았다**(PR-4 설계 D4).
+       * ~~`droppedSeasons`(드래프트 ∩ 경기 · 굽고 나서 막는다)~~ 는 2026-10-25 부로 `openBuildTarget` 의 「목록 밖 played 시즌」 판정으로 넓혔다 —
+       *   드래프트가 없는 시즌도 보고 · **`rmSync(outDir)` 앞**이라 기존 dist 가 남는다(`build-gates.test.ts` 의 T5 (c)).
+       * ⚠**바로 아래 게이트와 방향이 반대인 짝이다**: 저쪽은 「적었는데 데이터가 없다」, 그쪽은 「데이터가 있는데 안 적었다」다.
+       *   둘 다 사람의 선언과 데이터가 어긋난 사고고, `auto` 면 사람의 선언 자체가 없다.
        */
-      const gameSeasons = new Set(gameHeldSeasons(db));
-      const droppedSeasons = draftOnly.filter((s) => gameSeasons.has(s));
-      if (droppedSeasons.length > 0) {
-        console.error(
-          `⚠ 경기가 있는 시즌을 ドラフト 한 장으로만 구웠다: ${droppedSeasons.join("·")} — ` +
-            `시즌 목록(${seasons.join(",")})에 넣어라. **선수·경기·순위가 통째로 사라진다**. 배포하지 않는다`,
-        );
-        process.exitCode = 1;
-      }
 
       /**
        * ⚠**목록에 적었는데 데이터가 없는 시즌을 조용히 배포하지 않는다.**
@@ -454,4 +448,39 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
       db.close();
     }
   }
+}
+
+/**
+ * **DB 를 열고 굽는 시즌을 정한다** — 실패하면 굽지 않는다(종료 1 · 호출자가 `rmSync(outDir)` 전에 멈춘다 · PR-4 설계 D4).
+ * ⚠**DB 파일이 없으면 만들지 않는다** — `openDb` 는 없는 경로에 빈 DB 를 만들고 마이그레이션까지 적용한다. 그 빈 DB 로 굽던 옛 흐름은
+ *   dist 를 지운 뒤 「선수 0명」 게이트에서야 멈췄다(복원 실패 · 경로 오류의 모양).
+ * ⚠**못 열거나 못 읽으면 실패다**(SQLite 가 아닌 파일 · 잠금 · 마이그레이션 실패) — 던지지 않고 줄로 돌려준다(호출자가 종료 코드를 정한다).
+ * ⚠성공하면 **열린 DB 를 넘긴다** — 닫는 것은 호출자의 `finally` 다. 실패 갈래는 여기서 닫는다.
+ */
+function openBuildTarget(
+  dbPath: string,
+  nowIso: string,
+  arg: SeasonArg,
+): { readonly ok: true; readonly db: Db; readonly seasons: number[] } | { readonly ok: false; readonly lines: string[] } {
+  const keep = "굽지 않는다 · **기존 dist 를 건드리지 않는다**";
+  if (!existsSync(dbPath)) return { ok: false, lines: [`⚠DB 가 없다: ${dbPath} — ${keep}`] };
+  let db: Db;
+  try {
+    db = openDb(dbPath, nowIso);
+  } catch (err) {
+    return { ok: false, lines: [`⚠DB 를 열지 못했다: ${dbPath} — ${err instanceof Error ? err.message : String(err)} · ${keep}`] };
+  }
+  let played: number[];
+  try {
+    played = playedSeasons(db);
+  } catch (err) {
+    db.close();
+    return { ok: false, lines: [`⚠DB 를 열지 못했다(치른 시즌을 못 읽었다): ${dbPath} — ${err instanceof Error ? err.message : String(err)} · ${keep}`] };
+  }
+  const r = resolveBuildSeasons(arg, played);
+  if (!r.ok) {
+    db.close();
+    return { ok: false, lines: [r.message] };
+  }
+  return { ok: true, db, seasons: r.value };
 }

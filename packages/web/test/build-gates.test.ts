@@ -16,7 +16,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
-import { readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
@@ -497,56 +497,201 @@ function draftOf(db: Db, season: number, team: string, name = "山田 太郎"): 
   });
 }
 
+// ── 빌드 시즌 목록(PR-4 설계 `2026-10-24-offseason-readiness-design.md` D4 · T5) ─────────────────────────
+
 /**
- * ⚠⚠**분류에 「경기가 있는가」를 묻는 자리가 없었다**(2026-09-07 이중 검토 P3).
- *
- * `draftOnly` 는 **「빌드 인자 목록에 없는 드래프트 시즌」**을 전부 드래프트 전용으로 본다.
- * 2017 을 백필해 놓고 `package.json` 의 시즌 목록 갱신을 잊으면 그 시즌이 **조용히 한 장으로만
- * 구워지고** 선수·경기·순위가 통째로 사라진 채 **「그 해는 원래 드래프트만 있는 해」로 읽힌다.**
- * ⚠**빈 화면조차 안 남는다** — `emptySeasons` 는 **목록에 적힌** 시즌만 보므로 이 갈래에 닿지 않고,
- * 링크 검사도 통과한다(없는 화면은 링크도 없다). M7 의 「조용한 0」보다 더 안 보이는 모양이다.
- *
- * **한 번의 실행으로 양쪽을 다 잰다**:
- * ```
- * 2025  드래프트 있음 · 경기 있음 · 목록 밖  → **여기만 막는다**
- * 2010  드래프트 있음 · 경기 없음 · 목록 밖  → 막지 않는다(이 기능의 정상 사용)
- * ```
+ * **`build.ts` 를 띄워 시즌 목록 판정을 잰다** — 기존 dist 에 표지 파일을 두고, 판정이 실패하면 **그 표지가 그대로인가**를 본다.
+ * ⚠⚠**시즌 목록의 판정(형식 · DB 유도 · 목록 밖 played 시즌)은 `rmSync(outDir)` 앞이다**(설계 D4) — 실패면 굽지 않고
+ *   **기존 dist 를 건드리지 않는다**(CI 에서는 배포 단계가 `success()` 라 안 돌고 지금 사이트가 남는다).
+ * `db`: `ok`(기본 · `seed` 로 채움) · `garbage`(SQLite 가 아닌 바이트) · `missing`(파일 없음 — 빌드가 만들지도 않아야 한다).
  */
-test("⚠경기가 있는 시즌을 드래프트 한 장으로 굽지 않는다 — 목록에서 빠진 것을 조용히 지우지 않는다", async () => {
-  await withBuild(
-    "2026",
-    (db) => {
-      roster(db);
-      played(db, "2026-04-01", "t", "g", 2026);
-      played(db, "2025-04-01", "t", "g", 2025);
-      draftOf(db, 2025, "t");
-      draftOf(db, 2010, "t");
-    },
-    (r) => {
-      // ⚠**게이트까지 갔는가부터 확인한다** — 도중에 죽으면 아래 「안 났다」가 공허해진다
-      assert.match(r.stdout, /생성: \d+파일/, `빌드가 게이트까지 가지도 못했다:\n${r.stderr}`);
-      assert.match(
-        r.stderr,
-        /경기가 있는 시즌을 ドラフト 한 장으로만 구웠다: 2025 —/,
-        `경기가 있는 시즌이 한 장으로 구워지는데 아무 말도 안 했다:\n${r.stderr}`,
-      );
-      assert.doesNotMatch(r.stderr, /구웠다:[^\n]*2010/, "경기가 없는 시즌까지 막았다 — 이 기능이 죽는다");
-      assert.equal(r.status, 1, "배포를 세우지 않았다");
-    },
-  );
+async function runBuild(
+  o: { seasonArg: string; seed?: (db: Db) => void; db?: "ok" | "garbage" | "missing" },
+  fn: (r: { status: number | null; stdout: string; stderr: string; dist: string; markerKept: boolean; dbExists: boolean }) => void,
+): Promise<void> {
+  const dir = await mkdtemp(join(tmpdir(), "bb-build-seasons-"));
+  const dbPath = join(dir, "t.sqlite");
+  const dist = join(dir, "dist");
+  const marker = join(dist, "marker-from-last-deploy.txt");
+  try {
+    if ((o.db ?? "ok") === "ok") {
+      const db = openDb(dbPath, NOW);
+      try {
+        o.seed?.(db);
+      } finally {
+        db.close();
+      }
+    } else if (o.db === "garbage") {
+      writeFileSync(dbPath, "this is not an sqlite database\n".repeat(64));
+    }
+    mkdirSync(dist, { recursive: true });
+    writeFileSync(marker, "지난 배포물\n");
+    const r = spawnSync(process.execPath, [join(import.meta.dirname, "..", "tools", "build.ts"), dbPath, dist, o.seasonArg], {
+      encoding: "utf8",
+      cwd: join(import.meta.dirname, "..", "..", ".."),
+      env: { ...process.env, BB_CONTACT: "", BB_REQUIRE_CONTACT: "", BB_UPSTREAM_OUTAGE: "" },
+    });
+    fn({
+      status: r.status,
+      stdout: r.stdout ?? "",
+      stderr: r.stderr ?? "",
+      dist,
+      markerKept: existsSync(marker),
+      dbExists: existsSync(dbPath),
+    });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/** 그 시즌에 치른 경기 셋(양 리그) — 빌드가 그 시즌을 끝까지 굽게 */
+function threeDays(db: Db, season: number): void {
+  for (let i = 0; i < 3; i += 1) {
+    const d = `${String(season)}-04-0${String(i + 1)}`;
+    played(db, d, "t", "g", season);
+    played(db, d, "l", "m", season);
+  }
+}
+
+/** 그 시즌에 **중지된** 경기 하나 — `played` 가 아니다(개막일 전부 중지) */
+function canceledOnly(db: Db, season: number): void {
+  seq += 1;
+  upsertGame(db, {
+    gameId: `c${String(seq)}`, season, gameDate: `${String(season)}-03-27`, awayCode: "g", homeCode: "t", gameNo: 1,
+    status: "notPlayed", notPlayedReason: "雨天中止", competition: "regular",
+    sourceUrl: "https://npb.jp/x", fetchedAt: NOW, awayRuns: null, homeRuns: null,
+  });
+}
+
+test("⚠⚠PR-4 T5 auto — 2026·2027 에 치른 경기가 있으면 루트는 2027 · 2026 은 /2026/ 으로 간다(새 시즌 전환을 데이터가 한다)", async () => {
+  await runBuild({ seasonArg: "auto", seed: (db) => { roster(db); threeDays(db, 2026); threeDays(db, 2027); } }, (r) => {
+    assert.match(r.stdout, /생성: \d+파일/, `빌드가 끝까지 가지도 못했다:\n${r.stderr}`);
+    assert.match(r.stdout, /^ {2}2027年\(現行\) : /m, "루트가 2027 이 아니다");
+    assert.match(r.stdout, /^ {2}2026年 → \/2026\/ : /m, "2026 이 /2026/ 으로 가지 않았다");
+    assert.match(r.stdout, /시즌 2027·2026/, "시즌 목록이 내림차순 2027·2026 이 아니다");
+    assert.ok(existsSync(join(r.dist, "2026", "index.html")), "/2026/ 에 화면이 없다");
+    assert.ok(!existsSync(join(r.dist, "2027")), "루트 시즌이 /2027/ 에도 구워졌다");
+  });
+});
+
+test("⚠⚠PR-4 T5 명시 목록의 입력 순서는 뜻이 없다 — 2025,2026 이어도 루트는 최댓값 2026", async () => {
+  await runBuild({ seasonArg: "2025,2026", seed: (db) => { roster(db); threeDays(db, 2025); threeDays(db, 2026); } }, (r) => {
+    assert.match(r.stdout, /생성: \d+파일/, `빌드가 끝까지 가지도 못했다:\n${r.stderr}`);
+    assert.match(r.stdout, /^ {2}2026年\(現行\) : /m, "입력의 첫 원소(2025)를 루트로 썼다 — 기존 URL 이 통째로 옮겨 간다");
+    assert.match(r.stdout, /^ {2}2025年 → \/2025\/ : /m);
+  });
+});
+
+test("⚠⚠PR-4 T5 auto — 2027 이 중지 경기(notPlayed)뿐이면 2027 은 목록에 안 든다(played 로 센다)", async () => {
+  await runBuild({ seasonArg: "auto", seed: (db) => { roster(db); threeDays(db, 2026); canceledOnly(db, 2027); } }, (r) => {
+    assert.match(r.stdout, /생성: \d+파일/, `빌드가 끝까지 가지도 못했다:\n${r.stderr}`);
+    assert.match(r.stdout, /^ {2}2026年\(現行\) : /m, "중지 경기뿐인 2027 이 루트가 됐다 — 선수 0명 게이트로 배포가 멈춘다");
+    assert.doesNotMatch(r.stdout, /2027年/);
+    assert.doesNotMatch(r.stderr, /선수가 0명이다: 2027/);
+  });
+});
+
+/** ⚠판정 실패의 공통 계약 — 굽지 않았고(「생성」 없음) 기존 dist 의 표지가 그대로다 */
+function assertNotBuilt(r: { status: number | null; stdout: string; stderr: string; markerKept: boolean }, code: number, why: RegExp): void {
+  assert.equal(r.status, code, `종료 코드가 ${String(code)} 가 아니다:\n${r.stderr}`);
+  assert.match(r.stderr, why);
+  assert.doesNotMatch(r.stdout, /생성: \d+파일/, "판정이 실패했는데 굽었다");
+  assert.ok(r.markerKept, "판정이 실패했는데 기존 dist 를 지웠다 — 지금 사이트를 지킬 수 없다");
+}
+
+test("⚠⚠PR-4 T5 (a) auto 인데 치른 경기가 있는 시즌이 0 이면 1 · 기존 dist 그대로", async () => {
+  await runBuild({ seasonArg: "auto", seed: (db) => { roster(db); canceledOnly(db, 2027); } }, (r) => {
+    assertNotBuilt(r, 1, /치른 경기가 있는 시즌이 하나도 없다/);
+  });
+});
+
+test("⚠⚠PR-4 T5 (b) DB 를 못 읽으면(SQLite 가 아님 · 파일 없음) 1 · 기존 dist 그대로 · 없는 DB 를 만들지 않는다", async () => {
+  for (const seasonArg of ["auto", "2026"]) {
+    await runBuild({ seasonArg, db: "garbage" }, (r) => assertNotBuilt(r, 1, /DB 를 열지 못했다/));
+    await runBuild({ seasonArg, db: "missing" }, (r) => {
+      assertNotBuilt(r, 1, /DB 가 없다/);
+      assert.equal(r.dbExists, false, "없는 DB 를 빈 DB 로 만들었다");
+    });
+  }
 });
 
 /**
- * ⚠**「막는가」는 위에서 쟀다. 여기서는 「그 줄이 종료 코드를 세우는가」를 잰다** —
- * 자식 프로세스의 종료 코드는 이 픽스처에서 세 게이트가 함께 세우므로 귀속이 안 된다.
+ * ⚠⚠**분류에 「경기가 있는가」를 묻는 자리가 없었다**(2026-09-07 이중 검토 P3) — 그리고 **굽고 나서 물었다**(PR-4 설계 R8).
+ *
+ * `draftOnly` 는 **「빌드 인자 목록에 없는 드래프트 시즌」**을 전부 드래프트 전용으로 본다. 2017 을 백필해 놓고 시즌 목록 갱신을 잊으면
+ * 그 시즌이 **조용히 한 장으로만 구워지고** 선수·경기·순위가 통째로 사라진 채 「그 해는 원래 드래프트만 있는 해」로 읽힌다.
+ * 옛 게이트(`droppedSeasons`)는 그것을 막았지만 **드래프트도 있는 시즌만** 봤고 **`rmSync(outDir)` 뒤에** 돌았다(설계 R8).
+ * → ⚠**기대값을 바꿨다**(설계 §4 「의도한 기대값 변경」): 목록 밖의 **치른(played) 시즌 전부**를 **굽기 전에** 막고 dist 는 그대로다.
+ *
+ * **한 번의 실행으로 양쪽을 다 잰다**:
+ * ```
+ * 2025  드래프트 있음 · 치른 경기 있음 · 목록 밖  → **막는다**(굽기 전 · dist 불변)
+ * 2010  드래프트 있음 · 경기 없음     · 목록 밖  → 막지 않는다(드래프트만 있는 시즌 · 이 기능의 정상 사용)
+ * ```
  */
-test("⚠그 시즌이 빠진 것이 종료 코드를 바꾼다 — 경고로 끝내지 않는다", () => {
-  const g = gate(buildSrc(), "droppedSeasons");
-  assert.match(
-    g.block,
-    /process\.exitCode = 1/,
-    "보긴 하는데 종료 코드를 안 바꾼다 — 경고만으로는 그대로 배포된다",
+test("⚠⚠PR-4 T5 (c) 목록 밖의 치른 시즌이 있으면 굽기 전에 1 · 기존 dist 그대로 — 드래프트가 있든 없든 · 드래프트만 있는 시즌은 막지 않는다", async () => {
+  await runBuild(
+    {
+      seasonArg: "2026",
+      seed: (db) => {
+        roster(db);
+        played(db, "2026-04-01", "t", "g", 2026);
+        played(db, "2025-04-01", "t", "g", 2025);
+        draftOf(db, 2025, "t");
+        draftOf(db, 2010, "t");
+      },
+    },
+    (r) => {
+      assertNotBuilt(r, 1, /치른 경기가 있는 시즌이 시즌 목록\(2026\)에 없다: 2025 —/);
+      assert.doesNotMatch(r.stderr, /없다:[^\n]*2010/, "경기가 없는 시즌(드래프트만)까지 막았다 — 이 기능이 죽는다");
+    },
   );
+  // 드래프트가 **없는** 목록 밖 played 시즌도 막는다 — 옛 게이트는 드래프트 ∩ 경기만 봐서 이 시즌을 조용히 뺐다
+  await runBuild({ seasonArg: "2026", seed: (db) => { roster(db); threeDays(db, 2026); threeDays(db, 2024); } }, (r) => {
+    assertNotBuilt(r, 1, /시즌 목록\(2026\)에 없다: 2024 —/);
+  });
+});
+
+test("⚠PR-4 T5 (d) 중복·형식 오류는 지금처럼 2 · 기존 dist 그대로(DB 를 열기 전)", async () => {
+  for (const [seasonArg, why] of [["2026,2026", /시즌이 중복됐다/], ["2026,x", /시즌이 정수가 아니다/], ["", /시즌이 정수가 아니다/], ["2026,,2025", /시즌이 정수가 아니다/]] as const) {
+    await runBuild({ seasonArg, seed: (db) => { roster(db); threeDays(db, 2026); } }, (r) => assertNotBuilt(r, 2, why));
+  }
+});
+
+/**
+ * ⚠**목록 사본 2곳이 0곳이 된다**(설계 D4 · M1) — 워크플로와 `npm run build:web` 이 같은 판정(`auto`)을 쓴다.
+ * ⚠`packages/web/package.json` 의 `build` 도 같이 본다 — 단일 시즌(`2026`) 목록이 남아 있으면 목록 밖 played 시즌 게이트에 늘 막힌다.
+ */
+test("⚠⚠PR-4 T5 daily.yml 의 화면 생성 · npm run build:web · web 패키지 build 가 시즌을 auto 로 준다 — 시즌 목록 사본이 없다", () => {
+  const root = join(import.meta.dirname, "..", "..", "..");
+  const daily = readFileSync(join(root, ".github", "workflows", "daily.yml"), "utf8").replace(/\r\n/g, "\n");
+  const builds = daily.split("\n").filter((l) => /^\s*run: .*packages\/web\/tools\/build\.ts/.test(l));
+  assert.equal(builds.length, 1, `daily.yml 의 화면 생성 줄이 ${String(builds.length)}개다`);
+  assert.match(builds[0]!, /packages\/web\/tools\/build\.ts data\/bb\.sqlite dist auto$/, `daily.yml 이 auto 가 아니다: ${builds[0]!}`);
+  const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { scripts: Record<string, string> };
+  assert.match(pkg.scripts["build:web"] ?? "", /packages\/web\/tools\/build\.ts data\/bb\.sqlite dist auto &&/, "npm run build:web 이 auto 가 아니다");
+  const web = JSON.parse(readFileSync(join(root, "packages", "web", "package.json"), "utf8").replace(/^﻿/, "")) as { scripts: Record<string, string> };
+  assert.match(web.scripts["build"] ?? "", /tools\/build\.ts \.\.\/\.\.\/data\/bb\.sqlite \.\.\/\.\.\/dist auto$/, "web 패키지 build 가 auto 가 아니다");
+  for (const text of [daily, JSON.stringify(pkg), JSON.stringify(web)]) {
+    assert.doesNotMatch(text, /build\.ts [^\n"]*\b20\d\d,20\d\d/, "시즌 목록 사본이 남아 있다");
+  }
+});
+
+/**
+ * ⚠⚠**판정 자리를 소스로 고정한다** — 시즌 목록을 정하는 호출이 `rmSync(outDir` 보다 **앞**이고, 실패 갈래가 종료 코드를 세운다.
+ * (위 (c) 가 표지로 재지만, 다른 실패가 겹쳐 표지가 우연히 남는 경우까지 막으려고 자리도 본다.)
+ */
+test("⚠PR-4 T5 시즌 목록 판정(openBuildTarget)은 rmSync(outDir) 앞이고 실패면 종료 코드를 세운다", () => {
+  // ⚠주석을 걷고 찾는다 — 머리 주석이 `rmSync(outDir)` 를 글자로 인용한다(주석을 코드로 읽으면 순서가 거꾸로 잡힌다)
+  const src = buildSrc().replace(/\r\n/g, "\n").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const at = src.indexOf("openBuildTarget(resolve(dbArg)");
+  const rm = src.indexOf("rmSync(outDir, {");
+  assert.ok(at > 0 && rm > 0, "두 자리를 다 못 찾았다 — 이 시험이 공회전한다");
+  assert.ok(at < rm, "시즌 목록 판정이 dist 를 지운 뒤다 — 실패하면 지금 사이트까지 잃는다");
+  const fail = /\} else if \(target === null \|\| !target\.ok\) \{([\s\S]*?)\n {2}\} else \{/.exec(src);
+  assert.ok(fail !== null, "판정 실패 갈래를 못 찾았다 — 이 시험이 공회전한다");
+  assert.match(fail[1]!, /process\.exitCode = 1;/, "판정이 실패해도 종료 코드를 안 세운다");
+  assert.doesNotMatch(fail[1]!, /rmSync/, "실패 갈래가 dist 를 지운다");
 });
 
 // ── 서체 게이트의 전제. **보이지 않는 글자가 배포물에 새지 않는다** ─────────────────
