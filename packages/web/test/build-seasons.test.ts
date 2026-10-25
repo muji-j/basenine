@@ -7,17 +7,22 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DEFER_MAX_GAME_DAYS, PUBLIC_SEASON_FLOOR, deferNewestSeason, deferNotice, resolveBuildSeasons } from "../src/build-seasons.ts";
-import type { BuildSeasons, Parsed } from "../src/build-seasons.ts";
+import type { Parsed } from "../src/build-seasons.ts";
 
 const AUTO = { kind: "auto" } as const;
 const list = (...seasons: number[]): { kind: "list"; seasons: number[] } => ({ kind: "list", seasons });
 const range = (from: number, to: number): number[] => Array.from({ length: to - from + 1 }, (_, i) => from + i);
+/** DB 의 두 목록 — 치른 시즌 · 경기 행이 있는 시즌(상태 무관 · `extra` 는 중지 경기만 있는 시즌) */
+const db = (played: readonly number[], extra: readonly number[] = []): { played: number[]; withGames: number[] } => ({
+  played: [...played],
+  withGames: [...played, ...extra],
+});
 
-function ok(r: Parsed<BuildSeasons>): BuildSeasons {
+function ok(r: Parsed<number[]>): number[] {
   assert.ok(r.ok, r.ok ? "" : `실패했다:\n${r.message}`);
   return r.value;
 }
-function fail(r: Parsed<BuildSeasons>): string[] {
+function fail(r: Parsed<number[]>): string[] {
   assert.ok(!r.ok, "실패해야 하는데 통과했다");
   return r.message.split("\n");
 }
@@ -26,82 +31,96 @@ test("⚠공개 하한은 2018 이다 — 보유 9시즌(2018~2026)의 첫 시�
   assert.equal(PUBLIC_SEASON_FLOOR, 2018);
 });
 
-test("auto — 하한 이상 치른 시즌 전부 · 내림차순 · 최댓값이 루트 · 경고 없음(실측 모양 2018~2026 연속)", () => {
-  const v = ok(resolveBuildSeasons(AUTO, range(2018, 2026)));
-  assert.deepEqual(v.seasons, range(2018, 2026).reverse());
-  assert.deepEqual(v.warnings, []);
+test("auto — 하한 이상 치른 시즌 전부 · 내림차순 · 최댓값이 루트(실측 모양 2018~2026 연속)", () => {
+  assert.deepEqual(ok(resolveBuildSeasons(AUTO, db(range(2018, 2026)))), range(2018, 2026).reverse());
 });
 
 test("⚠auto — 새 시즌(최신 + 1)은 하한과 무관하게 자동으로 든다", () => {
-  assert.deepEqual(ok(resolveBuildSeasons(AUTO, range(2018, 2027))).seasons[0], 2027);
+  assert.deepEqual(ok(resolveBuildSeasons(AUTO, db(range(2018, 2027))))[0], 2027);
 });
 
-test("⚠⚠auto — 하한 아래 치른 시즌(2017)은 굽지 않고 경고 한 줄 · 실패가 아니다", () => {
-  const v = ok(resolveBuildSeasons(AUTO, [2017, ...range(2018, 2026)]));
-  assert.ok(!v.seasons.includes(2017), "하한 아래 시즌을 굽는 목록에 넣었다 — 품질을 안 잰 소급 시즌이 공개된다");
-  assert.deepEqual(v.seasons, range(2018, 2026).reverse());
-  assert.equal(v.warnings.length, 1);
-  assert.match(v.warnings[0]!, /^::warning::공개 하한\(2018\) 아래 치른 시즌 2017 은 굽지 않는다/);
-  assert.match(v.warnings[0]!, /품질을 재고/);
-  assert.match(v.warnings[0]!, /통산 집계·「収録」 범위에는 이미 들어간다/, "화면 밖으로 새는 몫(통산)을 말하지 않는다");
-});
-
-test("⚠⚠구멍 — 하한~최신 사이에 치른 경기가 없는 시즌이 있으면 실패(가운데 · 하한 자신 · 둘 다)", () => {
-  const mid = fail(resolveBuildSeasons(AUTO, [2018, 2020]));
-  assert.equal(mid.length, 1, mid.join("\n"));
-  assert.match(mid[0]!, /공개 하한\(2018\)~최신\(2020\) 사이에 치른 경기가 없는 시즌이 있다: 2019 —/);
-  // ⚠하한 자신이 빠진 경우 — 범위를 「가진 시즌의 최솟값부터」로 잡으면 이것을 못 본다(하한 시즌이 조용히 사라진다)
-  assert.match(fail(resolveBuildSeasons(AUTO, [2019, 2020]))[0]!, /치른 경기가 없는 시즌이 있다: 2018 —/);
-  assert.match(fail(resolveBuildSeasons(AUTO, [2019, 2021]))[0]!, /치른 경기가 없는 시즌이 있다: 2018·2020 —/);
-  // 명시 목록도 같다 — 구멍은 인자가 아니라 DB 의 상태다
-  assert.match(fail(resolveBuildSeasons(list(2020, 2018), [2018, 2020]))[0]!, /치른 경기가 없는 시즌이 있다: 2019 —/);
-});
-
-test("⚠구멍 판정은 하한 아래를 보지 않는다 — 2016·2018 이 있어도 2017 은 구멍이 아니다", () => {
-  const v = ok(resolveBuildSeasons(AUTO, [2016, 2018, 2019]));
-  assert.deepEqual(v.seasons, [2019, 2018]);
-  assert.equal(v.warnings.length, 1);
-  assert.match(v.warnings[0]!, /치른 시즌 2016 은/);
-});
-
-test("auto — 하한 이상 치른 시즌이 0 이면 실패(하한 아래만 있어도) · 구멍 줄은 안 낸다", () => {
-  for (const played of [[], [2017], [2010, 2017]]) {
-    const lines = fail(resolveBuildSeasons(AUTO, played));
-    assert.equal(lines.length, 1, lines.join("\n"));
-    assert.match(lines[0]!, /공개 하한\(2018\) 이상 치른 경기가 있는 시즌이 하나도 없다/);
+/**
+ * ⚠⚠**하한 아래 시즌의 경기가 DB 에 있으면 멈춘다**(fail-closed · 2026-10-25 조정자 결정 · 옛 명시 목록 시절과 같다).
+ * 화면은 안 굽지만 통산·「収録」 범위·드래프트 꼬리말(`query.ts` 의 `heldSeasonsOf` · `build.ts` 의 `held`)에 그 시즌이 섞인다 —
+ * 품질을 안 잰 시즌의 통산을 조용히 내보내는 것이다(M7 · M11).
+ */
+test("⚠⚠하한 아래 시즌의 경기가 있으면 실패 — auto · 명시 목록(그 시즌을 적어도) 둘 다 · 사유와 처치(하한을 내리거나 보관소에서 빼라 · 런북 §7-L)를 말한다", () => {
+  for (const arg of [AUTO, list(2026, 2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018), list(2026, 2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018, 2017)]) {
+    const lines = fail(resolveBuildSeasons(arg, db([2017, ...range(2018, 2026)])));
+    const below = lines.filter((l) => l.includes("아래 시즌의 경기가 DB 에 있다"));
+    assert.equal(below.length, 1, `${JSON.stringify(arg)}:\n${lines.join("\n")}`);
+    assert.match(below[0]!, /공개 하한\(2018\) 아래 시즌의 경기가 DB 에 있다: 2017 —/);
+    assert.match(below[0]!, /통산/, "왜 막는지(통산에 섞인다) 안 말한다");
+    assert.match(below[0]!, /품질을 재고/);
+    assert.match(below[0]!, /공개 하한\(PUBLIC_SEASON_FLOOR\)을 내리거나 그 시즌을 보관소에서 빼라/);
+    assert.match(below[0]!, /§7-L/, "런북 절을 안 가리킨다");
   }
 });
 
+test("⚠⚠하한 아래 시즌이 중지 경기만 있어도 실패 — 「収録」 범위(`heldSeasonsOf`)는 상태를 안 가린다", () => {
+  const lines = fail(resolveBuildSeasons(AUTO, db(range(2018, 2026), [2017])));
+  assert.equal(lines.length, 1, lines.join("\n"));
+  assert.match(lines[0]!, /아래 시즌의 경기가 DB 에 있다: 2017 —/);
+});
+
+test("⚠드래프트만 있는 하한 아래 시즌(경기 행 0)은 해당 없다 — 그 시즌은 이 판정의 입력에 없다(드래프트 한 장은 빌드가 따로 굽는다)", () => {
+  assert.deepEqual(ok(resolveBuildSeasons(AUTO, db(range(2018, 2026)))), range(2018, 2026).reverse());
+});
+
+test("⚠⚠구멍 — 하한~최신 사이에 치른 경기가 없는 시즌이 있으면 실패(가운데 · 하한 자신 · 둘 다)", () => {
+  const mid = fail(resolveBuildSeasons(AUTO, db([2018, 2020])));
+  assert.equal(mid.length, 1, mid.join("\n"));
+  assert.match(mid[0]!, /공개 하한\(2018\)~최신\(2020\) 사이에 치른 경기가 없는 시즌이 있다: 2019 —/);
+  // ⚠하한 자신이 빠진 경우 — 범위를 「가진 시즌의 최솟값부터」로 잡으면 이것을 못 본다(하한 시즌이 조용히 사라진다)
+  assert.match(fail(resolveBuildSeasons(AUTO, db([2019, 2020])))[0]!, /치른 경기가 없는 시즌이 있다: 2018 —/);
+  assert.match(fail(resolveBuildSeasons(AUTO, db([2019, 2021])))[0]!, /치른 경기가 없는 시즌이 있다: 2018·2020 —/);
+  // 명시 목록도 같다 — 구멍은 인자가 아니라 DB 의 상태다
+  assert.match(fail(resolveBuildSeasons(list(2020, 2018), db([2018, 2020])))[0]!, /치른 경기가 없는 시즌이 있다: 2019 —/);
+  // 중지 경기만 있는 시즌은 구멍이다(치른 경기로 센다)
+  assert.match(fail(resolveBuildSeasons(AUTO, db([2018, 2020], [2019])))[0]!, /치른 경기가 없는 시즌이 있다: 2019 —/);
+});
+
+test("⚠구멍 판정은 하한 아래를 보지 않는다 — 2016·2018·2019 면 하한 아래 줄만 나고 「2017 구멍」이라고 말하지 않는다", () => {
+  const lines = fail(resolveBuildSeasons(AUTO, db([2016, 2018, 2019])));
+  assert.equal(lines.length, 1, lines.join("\n"));
+  assert.match(lines[0]!, /아래 시즌의 경기가 DB 에 있다: 2016 —/);
+});
+
+test("auto — 하한 이상 치른 시즌이 0 이면 실패 · 구멍 줄은 안 낸다(하한 아래만 있으면 그 줄도 함께)", () => {
+  const none = fail(resolveBuildSeasons(AUTO, db([])));
+  assert.equal(none.length, 1, none.join("\n"));
+  assert.match(none[0]!, /공개 하한\(2018\) 이상 치른 경기가 있는 시즌이 하나도 없다/);
+  const onlyBelow = fail(resolveBuildSeasons(AUTO, db([2010, 2017])));
+  assert.equal(onlyBelow.length, 2, onlyBelow.join("\n"));
+  assert.match(onlyBelow[0]!, /아래 시즌의 경기가 DB 에 있다: 2017·2010 —/);
+  assert.match(onlyBelow[1]!, /하나도 없다/);
+});
+
 test("명시 목록 — 목록 밖의 치른 시즌(하한 이상)이 있으면 실패 · 그 줄만 낸다", () => {
-  const lines = fail(resolveBuildSeasons(list(2019), [2018, 2019]));
+  const lines = fail(resolveBuildSeasons(list(2019), db([2018, 2019])));
   assert.equal(lines.length, 1, lines.join("\n"));
   assert.match(lines[0]!, /치른 경기가 있는 시즌이 시즌 목록\(2019\)에 없다: 2018 —/);
 });
 
-test("명시 목록 — 실패 사유가 여럿이면 전부 한 메시지에 줄로(구멍 · 목록 밖)", () => {
-  const lines = fail(resolveBuildSeasons(list(2020), [2018, 2020]));
-  assert.equal(lines.length, 2, lines.join("\n"));
-  assert.match(lines[0]!, /치른 경기가 없는 시즌이 있다: 2019/);
-  assert.match(lines[1]!, /시즌 목록\(2020\)에 없다: 2018/);
+test("명시 목록 — 실패 사유가 여럿이면 전부 한 메시지에 줄로(하한 아래 · 구멍 · 목록 밖)", () => {
+  const lines = fail(resolveBuildSeasons(list(2020), db([2017, 2018, 2020])));
+  assert.equal(lines.length, 3, lines.join("\n"));
+  assert.match(lines[0]!, /아래 시즌의 경기가 DB 에 있다: 2017/);
+  assert.match(lines[1]!, /치른 경기가 없는 시즌이 있다: 2019/);
+  assert.match(lines[2]!, /시즌 목록\(2020\)에 없다: 2018/);
 });
 
-test("명시 목록 — 입력 순서는 뜻이 없다(내림차순) · 목록에 적은 하한 아래 시즌은 사람이 고른 것이라 굽고 경고하지 않는다", () => {
-  assert.deepEqual(ok(resolveBuildSeasons(list(2018, 2019), [2018, 2019])).seasons, [2019, 2018]);
-  const v = ok(resolveBuildSeasons(list(2017, 2019, 2018), [2017, 2018, 2019]));
-  assert.deepEqual(v.seasons, [2019, 2018, 2017]);
-  assert.deepEqual(v.warnings, []);
-  // 목록에 안 적은 하한 아래 시즌은 auto 와 같이 경고한다
-  const w = ok(resolveBuildSeasons(list(2019, 2018), [2016, 2018, 2019])).warnings;
-  assert.equal(w.length, 1);
-  assert.match(w[0]!, /치른 시즌 2016 은/);
+test("명시 목록 — 입력 순서는 뜻이 없다(내림차순)", () => {
+  assert.deepEqual(ok(resolveBuildSeasons(list(2018, 2019), db([2018, 2019]))), [2019, 2018]);
 });
 
 test("하한 인자 — 시험에서만 넘긴다(기본은 PUBLIC_SEASON_FLOOR)", () => {
-  assert.deepEqual(ok(resolveBuildSeasons(AUTO, [2010, 2011], 2010)).seasons, [2011, 2010]);
-  assert.match(fail(resolveBuildSeasons(AUTO, [2011], 2010))[0]!, /공개 하한\(2010\)~최신\(2011\) 사이에 치른 경기가 없는 시즌이 있다: 2010/);
+  assert.deepEqual(ok(resolveBuildSeasons(AUTO, db([2010, 2011]), 2010)), [2011, 2010]);
+  assert.match(fail(resolveBuildSeasons(AUTO, db([2011]), 2010))[0]!, /공개 하한\(2010\)~최신\(2011\) 사이에 치른 경기가 없는 시즌이 있다: 2010/);
+  assert.match(fail(resolveBuildSeasons(AUTO, db([2009, 2010]), 2010))[0]!, /공개 하한\(2010\) 아래 시즌의 경기가 DB 에 있다: 2009/);
 });
 
-// ── 새 시즌 유예(반영 ① · 조정자 결정 ⒜) — 조건 넷이 전부 서야 한다 ─────────────────────────
+// ── 새 시즌 유예(반영 ① · 조정자 결정 ⒜) — 조건 다섯이 전부 서야 한다 ─────────────────────────
 
 const BASE = { kind: "auto", seasons: [2027, 2026, 2025], failedSeason: 2027, failedSeasonOver: false, gameDays: 1 } as const;
 

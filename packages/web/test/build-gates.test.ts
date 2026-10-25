@@ -894,32 +894,39 @@ test("⚠⚠PR-4 반영① 예외는 좁다 — 최대가 아닌 시즌의 표�
 // ── PR-4 3중 검토 반영 ② 공개 하한 — 소급 시즌은 사람이 품질을 잰 뒤 하한을 내리는 커밋으로만 공개된다(1차 P2 · 2차 F2 · 조정자 결정) ──
 
 /**
- * ⚠**하한 아래 시즌의 드래프트 한 장은 그대로 남는다** — 지금 2005~2017 은 드래프트만 굽는 시즌이다. 2017 경기를 소급해 넣어도
- *   하한을 내리기 전까지는 그 화면(`/2017/draft.html`)이 지금처럼 있어야 한다(있던 링크가 404 가 되면 안 된다).
+ * ⚠⚠**하한 아래 시즌의 경기가 DB 에 있으면 굽기 전에 멈춘다**(fail-closed · 2026-10-25 조정자 결정 · 옛 명시 목록 시절과 같다).
+ * 화면은 안 굽더라도 통산·「収録」 범위·드래프트 꼬리말(`heldSeasonsOf` · `build.ts` 의 `held`)에 그 시즌이 섞인다 — 품질을 안 잰 시즌의
+ * 통산을 조용히 내보내는 것이다(M7 · M11). **상태를 안 가린다**(중지 경기만 있어도 「収録」 시작이 내려간다).
+ * ⚠**드래프트만 있는 하한 아래 시즌(경기 행 0)은 해당 없다** — 지금 2005~2017 이 그렇고, 그 한 장은 지금처럼 굽는다.
  */
-test("⚠⚠PR-4 반영② auto · 공개 하한(2018) 아래 치른 시즌(2017)은 굽지 않는다 · 경고 · 종료 0 · 그 시즌의 드래프트 한 장은 그대로", async () => {
+test("⚠⚠PR-4 반영② 공개 하한(2018) 아래 시즌의 경기(치른 1경기 · 중지 1경기)가 있으면 굽기 전에 1 · 표지 그대로 — auto · 명시 목록 둘 다", async () => {
+  const withPlayed2017 = (db: Db): void => {
+    roster(db);
+    played(db, "2017-04-01", "t", "g", 2017);
+    draftOf(db, 2017, "t");
+    cleanSeason(db, 2018);
+    openingDay(db, 2019);
+  };
+  const why = /공개 하한\(2018\) 아래 시즌의 경기가 DB 에 있다: 2017 —[^\n]*품질을 재고[^\n]*보관소에서 빼라[^\n]*§7-L/;
+  for (const seasonArg of ["auto", "2019,2018,2017"]) {
+    await runBuild({ seasonArg, now: DAY_AFTER_OPENING(2019), seed: withPlayed2017 }, (r) => assertNotBuilt(r, 1, why));
+  }
+  // 중지 경기만 — 치른 경기는 없지만 「収録」 범위(상태 무관)에 2017 이 들어간다
   await runBuild(
-    {
-      seasonArg: "auto",
-      now: DAY_AFTER_OPENING(2019),
-      seed: (db) => {
-        roster(db);
-        played(db, "2017-04-01", "t", "g", 2017);
-        draftOf(db, 2017, "t");
-        cleanSeason(db, 2018);
-        openingDay(db, 2019);
-      },
-    },
+    { seasonArg: "auto", now: DAY_AFTER_OPENING(2019), seed: (db) => { roster(db); canceledOnly(db, 2017); cleanSeason(db, 2018); openingDay(db, 2019); } },
+    (r) => assertNotBuilt(r, 1, why),
+  );
+});
+
+test("⚠⚠PR-4 반영② 드래프트만 있는 하한 아래 시즌(2010 · 경기 행 0)은 막지 않는다 — 종료 0 · 그 시즌은 드래프트 한 장뿐", async () => {
+  await runBuild(
+    { seasonArg: "auto", now: DAY_AFTER_OPENING(2019), seed: (db) => { roster(db); draftOf(db, 2010, "t"); cleanSeason(db, 2018); openingDay(db, 2019); } },
     (r) => {
       assert.equal(r.status, 0, r.stderr);
-      assert.doesNotMatch(r.stdout, /2017年/, "하한 아래 시즌을 구웠다 — 품질을 안 잰 소급 시즌이 공개된다");
-      assert.deepEqual(readdirSync(join(r.dist, "2017")), ["draft.html"], "하한 아래 시즌이 드래프트 한 장 말고도 구워졌다(또는 그 한 장이 사라졌다)");
+      assert.deepEqual(readdirSync(join(r.dist, "2010")), ["draft.html"], "드래프트 전용 시즌이 한 장 말고도 구워졌다(또는 그 한 장이 사라졌다)");
       assert.match(r.stdout, /^ {2}2019年\(現行\) : /m);
       assert.match(r.stdout, /^ {2}2018年 → \/2018\/ : /m);
-      const w = r.stdout.split(/\r?\n/).filter((l) => l.startsWith("::warning::") && l.includes("공개 하한"));
-      assert.equal(w.length, 1, `하한 경고가 ${String(w.length)}줄이다:\n${r.stdout}`);
-      assert.match(w[0]!, /2017/);
-      assert.match(w[0]!, /품질을 재고/);
+      assert.doesNotMatch(r.stderr, /아래 시즌의 경기가 DB 에 있다/);
     },
   );
 });

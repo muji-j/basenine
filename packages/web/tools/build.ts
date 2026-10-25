@@ -11,7 +11,8 @@
  * ⚠**시계는 여기서 한 번만 읽는다**(M6). 아래로 내려가는 것은 `YYYY-MM-DD` 문자열이다.
  * ⚠⚠**시즌 목록은 DB 가 정한다**(PR-4 설계 `docs/superpowers/specs/2026-10-24-offseason-readiness-design.md` D4 · `../src/build-seasons.ts`) —
  *   `auto` = 공개 하한(`PUBLIC_SEASON_FLOOR`) 이상 치른 경기가 있는 시즌 전부 · 결과는 언제나 내림차순이고 **최댓값이 루트**다.
- *   판정(형식 2 · DB 못 읽음 · played 0 · 목록 밖 played 시즌 · 하한~최신 구멍 1)은 **`rmSync(outDir)` 앞**이라 실패면 굽지 않고 기존 dist 를 건드리지 않는다.
+ *   판정(형식 2 · DB 못 읽음 · played 0 · 목록 밖 played 시즌 · **하한 아래 경기(상태 무관)** · 하한~최신 구멍 1)은 **`rmSync(outDir)` 앞**이라
+ *   실패면 굽지 않고 기존 dist 를 건드리지 않는다.
  * ⚠⚠**새 시즌 개막 직후**(계수 유도 표본이 서기 전 · 9시즌 실측으로 표본은 개막 1~3경기일째에 선다 · 미루는 상한 `DEFER_MAX_GAME_DAYS` 경기일)에는 `auto` 가
  *   그 시즌을 **아직 굽지 않고** 경고 한 줄과 함께 이전 시즌을 루트로 굽는다(`loadNewest` · PR-4 3중 검토 2차 F1 · 조정자 결정 ⒜) — 이것도 `rmSync` 앞이다.
  */
@@ -32,6 +33,7 @@ import type { SeasonArg } from "../src/build-seasons.ts";
 import {
   buildCareerContext,
   draftHeldSeasons,
+  gameSeasons,
   loadDraftPage,
   loadLog,
   loadSite,
@@ -63,8 +65,6 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
     const { db, kind } = target;
     const builtOn = toJstDateString(now);
     const outDir = resolve(outArg);
-    // ⚠실패가 아닌 알림(하한 아래 치른 시즌 등) — `::warning::` 이라 표준출력에 찍는다(GitHub 요약에 남게)
-    for (const w of target.warnings) console.log(w);
 
     try {
       const t0 = process.hrtime.bigint();
@@ -473,7 +473,7 @@ function openBuildTarget(
   nowIso: string,
   arg: SeasonArg,
 ):
-  | { readonly ok: true; readonly db: Db; readonly kind: SeasonArg["kind"]; readonly seasons: number[]; readonly warnings: string[] }
+  | { readonly ok: true; readonly db: Db; readonly kind: SeasonArg["kind"]; readonly seasons: number[] }
   | { readonly ok: false; readonly lines: string[] } {
   const keep = "굽지 않는다 · **기존 dist 를 건드리지 않는다**";
   if (!existsSync(dbPath)) return { ok: false, lines: [`⚠DB 가 없다: ${dbPath} — ${keep}`] };
@@ -483,19 +483,20 @@ function openBuildTarget(
   } catch (err) {
     return { ok: false, lines: [`⚠DB 를 열지 못했다: ${dbPath} — ${err instanceof Error ? err.message : String(err)} · ${keep}`] };
   }
-  let played: number[];
+  let seasons: { played: number[]; withGames: number[] };
   try {
-    played = playedSeasons(db);
+    // ⚠두 목록 — 무엇을 굽나(치른 시즌) · 하한 아래가 섞였나(경기 행 · 상태 무관 · 통산·「収録」 범위가 보는 것과 같은 집합)
+    seasons = { played: playedSeasons(db), withGames: gameSeasons(db) };
   } catch (err) {
     db.close();
-    return { ok: false, lines: [`⚠DB 를 열지 못했다(치른 시즌을 못 읽었다): ${dbPath} — ${err instanceof Error ? err.message : String(err)} · ${keep}`] };
+    return { ok: false, lines: [`⚠DB 를 열지 못했다(시즌을 못 읽었다): ${dbPath} — ${err instanceof Error ? err.message : String(err)} · ${keep}`] };
   }
-  const r = resolveBuildSeasons(arg, played);
+  const r = resolveBuildSeasons(arg, seasons);
   if (!r.ok) {
     db.close();
     return { ok: false, lines: r.message.split("\n") };
   }
-  return { ok: true, db, kind: arg.kind, seasons: r.value.seasons, warnings: r.value.warnings };
+  return { ok: true, db, kind: arg.kind, seasons: r.value };
 }
 
 /**

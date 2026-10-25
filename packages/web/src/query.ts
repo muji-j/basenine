@@ -7521,6 +7521,19 @@ export function playedSeasons(db: Db): number[] {
   ).map((r) => r.season);
 }
 
+/**
+ * **경기 행이 있는 시즌(상태 무관)** — 내림차순. 공개 하한 판정(`build-seasons.ts` · 하한 아래 경기가 있으면 굽기 전에 멈춘다)의 재료다.
+ *
+ * ⚠⚠**`heldSeasonsOf` 와 같은 행 집합이다**(상태 무관 · M1 · 2026-10-25 PR-4 3중 검토 반영) — 통산·「収録」 범위·드래프트 꼬리말은
+ *   `game` 의 `MIN/MAX(season)` 으로 정해진다. 판정이 `played` 만 보면 **중지 경기만 있는 하한 아래 시즌**이 판정은 통과하고 「収録」 시작은 끌어내린다.
+ * ⚠빌드 시즌 목록(무엇을 굽나)은 여전히 `playedSeasons` 다 — 이것은 「섞이면 안 되는 것이 DB 에 있는가」만 묻는다.
+ */
+export function gameSeasons(db: Db): number[] {
+  return (
+    db.raw.prepare("SELECT DISTINCT season FROM game ORDER BY season DESC").all() as unknown as { season: number }[]
+  ).map((r) => r.season);
+}
+
 export function loadDraftPage(db: Db, o: LoadOptions): DraftPageData {
   const season = o.season;
 

@@ -1,7 +1,7 @@
 /**
  * **빌드 시즌 목록** — 무엇을 굽고 무엇을 루트에 놓는가(PR-4 설계 `docs/superpowers/specs/2026-10-24-offseason-readiness-design.md` D4 · §9).
  *
- * ⚠**순수다** — DB 도 시계도 없다(M6). DB 에서 「치른 경기가 있는 시즌」을 읽는 것은 호출자(`tools/build.ts` → `query.ts` 의 `playedSeasons`)다.
+ * ⚠**순수다** — DB 도 시계도 없다(M6). DB 에서 시즌 목록을 읽는 것은 호출자(`tools/build.ts` → `query.ts` 의 `playedSeasons` · `gameSeasons`)다.
  *
  * 시즌 인자는 `auto` 또는 `2026,2025,…`:
  * - **`auto`** — DB 의 치른(`played`) 시즌 중 **공개 하한(`PUBLIC_SEASON_FLOOR`) 이상** 전부. 0 개면 실패(굽지 않는다).
@@ -9,8 +9,12 @@
  *   ⚠**목록 밖의 치른 시즌(하한 이상)이 있으면 실패**(종료 1) — 예전 `droppedSeasons`(드래프트 ∩ 경기 · **굽고 나서** 막았다)를 넓혔다(설계 R8).
  *   그 시즌을 빼고 구우면 선수·경기·순위가 통째로 사라진 채 「그 해는 원래 그렇다」로 읽힌다.
  * - **어느 쪽이든 결과는 중복 없는 내림차순이고 첫째(최댓값)가 루트다** — 명시 목록의 입력 순서는 뜻이 없다(예전 `seasons[0]` 을 바꿨다).
+ * - ⚠⚠**하한 아래 시즌의 경기(상태 무관)가 DB 에 있으면 실패**(종료 1 · 두 모드 다 · fail-closed · 2026-10-25 조정자 결정) — 화면을 안 굽더라도
+ *   통산·「収録」 범위·드래프트 꼬리말(`query.ts` 의 `heldSeasonsOf` · `build.ts` 의 `held`)에 그 시즌이 섞인다. 품질을 안 잰 시즌의 통산을
+ *   조용히 내보내지 않는다(M7 · M11). 옛 명시 목록 시절에도 같은 상황은 빌드를 세웠다(`droppedSeasons`). **드래프트만 있는 시즌(경기 행 0)은 해당 없다.**
  * - ⚠⚠**하한~최신 사이에 치른 경기가 없는 시즌(구멍)이 있으면 실패**(종료 1 · 두 모드 다) — 사라진 시즌을 조용히 빼고 굽지 않는다
- *   (옛 명시 목록의 `emptySeasons`(선수 0명) 게이트의 몫 · PR-4 3중 검토 1차 P2). 실측: 보유 2018~2026 연속 9시즌 — 오탐 0.
+ *   (옛 명시 목록의 `emptySeasons`(선수 0명) 게이트의 몫 · PR-4 3중 검토 1차 P2). 실측: 보유 2018~2026 연속 9시즌 — 오탐 0
+ *   (경기 행도 상태 무관 2018~2026 · 하한 아래 0행 — CI DB 사본 · 로컬 DB 둘 다).
  *
  * ⚠⚠**호출자는 이 판정을 `rmSync(outDir)` 앞에서 한다** — 실패면 굽지 않고 **기존 dist 를 건드리지 않는다**(CI 에서는 배포 단계가
  *   `success()` 라 안 돌고 지금 사이트가 남는다). 다른 게이트(선수 0명 · 링크 · 우승 판정 …)는 지금처럼 굽고 나서 막는다.
@@ -20,13 +24,14 @@
  */
 
 /**
- * **공개 하한** — 이 시즌부터 화면으로 굽는다(2026-10-25 · PR-4 3중 검토 반영 · 조정자 결정).
+ * **공개 하한** — 이 시즌부터 굽는다(2026-10-25 · PR-4 3중 검토 반영 · 조정자 결정).
  *
  * ⚠⚠**`auto` 는 보관소에 치른 경기가 오르면 그 시즌을 굽는다** — 옛 명시 목록은 「목록에 더하는 순간 = 공개」라는 **사람의 선언**이었고,
  *   CLAUDE.md §2-2 의 「공개 전에 품질을 쟀다(2021) · 백필 전에 시즌마다 재라」가 거기 걸려 있었다. 하한이 그 선언을 대신한다:
- *   **하한 아래 시즌은 보관소에 있어도 굽지 않고**(경고 한 줄 · 실패 아님) · **소급 공개는 사람이 품질을 잰 뒤 이 값을 내리는 커밋**이 정한다.
+ *   **하한 아래 시즌의 경기가 DB 에 있으면 빌드가 굽기 전에 멈춘다**(fail-closed) · **소급 공개는 사람이 품질을 잰 뒤 이 값을 내리는 커밋**이 정한다
+ *   (그 커밋과 소급 덧붙임 업로드는 같은 수집 실행 사이에 둘 다 끝낸다 — 한쪽만 있으면 그 실행은 1 이다: 하한 아래 경기 · 또는 하한~최신 구멍).
+ * ⚠⚠**경고로 넘기지 않는 이유**: 화면을 안 굽더라도 통산·「収録」 범위(`query.ts` 의 `heldSeasonsOf`)는 DB 의 경기 행 전부로 정해져 그 시즌이 섞인다.
  * ⚠**한 곳(M1)** — 빌드·워크플로가 숫자를 따로 박지 않는다(`build-gates.test.ts` 가 지킨다). 새 시즌(최신 + 1)은 하한과 무관하게 자동이다.
- * ⚠**화면만 막는다** — 하한 아래 시즌의 경기도 DB 에 있으면 통산 집계·「収録」 범위(`query.ts` 의 `heldSeasonsOf`)에는 들어간다(경고가 그 사실을 말한다).
  */
 export const PUBLIC_SEASON_FLOOR = 2018;
 
@@ -45,21 +50,36 @@ export function parseSeasonArg(arg: string): Parsed<SeasonArg> {
   return { ok: true, value: { kind: "list", seasons } };
 }
 
-/** 굽는 시즌과 함께 낼 경고(`::warning::` 로 시작 · 호출자가 표준출력에 찍는다) */
-export type BuildSeasons = { readonly seasons: number[]; readonly warnings: string[] };
+/** DB 에서 읽은 시즌 두 목록(순서 무관) — 호출자가 `query.ts` 의 `playedSeasons` · `gameSeasons` 로 채운다 */
+export type DbSeasons = {
+  /** 치른(`played`) 경기가 있는 시즌 — 무엇을 굽나 · 구멍 */
+  readonly played: readonly number[];
+  /** 경기 행이 있는 시즌(상태 무관) — 하한 아래가 섞였나(`heldSeasonsOf` 와 같은 집합) */
+  readonly withGames: readonly number[];
+};
 
 /**
  * 굽는 시즌(내림차순 · 첫째가 루트)을 정한다 — 실패는 호출자가 종료 1(굽지 않는다 · dist 불변).
- * ⚠실패 사유가 여럿이면 **전부** 한 메시지에 줄로 싣는다(구멍과 목록 밖이 함께 난 경우 둘 다 말한다).
- * @param played DB 에서 치른 경기가 있는 시즌(순서 무관)
+ * ⚠실패 사유가 여럿이면 **전부** 한 메시지에 줄로 싣는다(하한 아래 · 구멍 · 목록 밖 순).
  * @param floor 공개 하한 — 시험이 아니면 넘기지 않는다(`PUBLIC_SEASON_FLOOR` 한 곳)
  */
-export function resolveBuildSeasons(arg: SeasonArg, played: readonly number[], floor: number = PUBLIC_SEASON_FLOOR): Parsed<BuildSeasons> {
+export function resolveBuildSeasons(arg: SeasonArg, db: DbSeasons, floor: number = PUBLIC_SEASON_FLOOR): Parsed<number[]> {
   const desc = (xs: readonly number[]): number[] => [...new Set(xs)].sort((a, b) => b - a);
-  const playedSet = new Set(played);
-  const above = desc(played.filter((s) => s >= floor));
+  const playedSet = new Set(db.played);
+  const above = desc(db.played.filter((s) => s >= floor));
   const keep = "굽지 않는다 · **기존 dist 를 건드리지 않는다**";
   const errors: string[] = [];
+
+  // ⚠⚠하한 아래 경기(상태 무관) — 화면은 안 굽지만 통산·「収録」에 섞인다(fail-closed · 목록에 적었어도)
+  const below = desc(db.withGames.filter((s) => s < floor));
+  if (below.length > 0) {
+    errors.push(
+      `⚠공개 하한(${String(floor)}) 아래 시즌의 경기가 DB 에 있다: ${below.join("·")} — 그 시즌은 굽지 않지만 통산·「収録」 범위·드래프트 꼬리말에 섞인다` +
+        "(품질을 안 잰 통산을 조용히 내보내지 않는다 · M7 · M11). " +
+        "품질을 재고(CLAUDE.md §2-2) 공개 하한(PUBLIC_SEASON_FLOOR)을 내리거나 그 시즌을 보관소에서 빼라 — 런북 docs/operations/deploy.md §7-L. " +
+        keep,
+    );
+  }
 
   // ⚠⚠구멍 — 하한~최신 사이에 치른 경기가 없는 시즌(사라진 시즌을 조용히 빼지 않는다)
   const latest = above[0];
@@ -88,18 +108,7 @@ export function resolveBuildSeasons(arg: SeasonArg, played: readonly number[], f
     }
   }
   if (errors.length > 0) return { ok: false, message: errors.join("\n") };
-
-  // 하한 아래 치른 시즌 — 굽지 않는다(명시 목록에 적힌 것은 사람이 고른 것이라 굽는다)
-  const below = desc(played.filter((s) => s < floor && !(listed?.has(s) ?? false)));
-  const warnings =
-    below.length === 0
-      ? []
-      : [
-          `::warning::공개 하한(${String(floor)}) 아래 치른 시즌 ${below.join("·")} 은 굽지 않는다 — ` +
-            "공개하려면 그 시즌의 품질을 재고(CLAUDE.md §2-2 — 투수 귀속 · 12구단 경기 수 · 적재 실패 0) 하한(PUBLIC_SEASON_FLOOR)을 내리는 커밋으로 연다 · " +
-            "⚠그 시즌의 경기는 DB 에 있어 통산 집계·「収録」 범위에는 이미 들어간다",
-        ];
-  return { ok: true, value: { seasons: arg.kind === "auto" ? above : desc(arg.seasons), warnings } };
+  return { ok: true, value: arg.kind === "auto" ? above : desc(arg.seasons) };
 }
 
 /**
