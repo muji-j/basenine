@@ -56,17 +56,17 @@ function run(args: string[]): { code: number | null; out: string; err: string } 
 
 const sha = (p: string): string => createHash("sha256").update(readFileSync(p)).digest("hex");
 
-test("⚠⚠T7 season-has-games — 그 시즌에 치른 경기가 있으면 0 · 없으면 1(중지 경기만이어도) · DB 를 못 읽으면 2", () => {
+test("⚠⚠T7 season-has-games — 그 시즌에 치른 경기가 있으면 0 · 없으면 10(중지 경기만이어도) · DB 를 못 읽으면 2", () => {
   withDb((db) => { game(db, "a", 2026, "played"); game(db, "b", 2027, "notPlayed"); }, (dbPath) => {
     const before = sha(dbPath);
     const has = run([dbPath, "2026"]);
     assert.equal(has.code, 0, has.err);
     assert.match(has.out, /2026 시즌 치른 경기 1건/);
     const canceled = run([dbPath, "2027"]);
-    assert.equal(canceled.code, 1, `중지 경기뿐인 시즌을 「경기 있음」으로 봤다:\n${canceled.out}${canceled.err}`);
+    assert.equal(canceled.code, 10, `중지 경기뿐인 시즌을 「경기 있음」으로 봤다:\n${canceled.out}${canceled.err}`);
     assert.match(canceled.out, /2027 시즌 치른 경기 0건/);
     const none = run([dbPath, "2028"]);
-    assert.equal(none.code, 1);
+    assert.equal(none.code, 10);
     assert.equal(sha(dbPath), before, "읽기 전용이 아니다 — DB 를 바꿨다");
   });
   withDb("garbage", (dbPath) => {
@@ -88,6 +88,21 @@ test("⚠T7 season-has-games — 인자가 틀리면 2(시즌이 4자리 연도�
       const r = run(args);
       assert.equal(r.code, 2, `${JSON.stringify(args.slice(1))}: ${r.out}${r.err}`);
     }
+  });
+});
+
+/**
+ * ⚠⚠**「없다」는 전용 코드 10 이다 — Node 의 비정상 종료(1)와 겹치지 않게**(PR-4 3중 검토 2차 F3).
+ * 「없다」가 1 이던 때는 스크립트가 **모듈 수준에서 죽어도**(import 실패 · 미리 읽기 실패 · 잡히지 않은 예외 — Node 가 1 로 끝낸다)
+ * 워크플로가 그것을 「개막 전 — 공표표를 받지 않는다」로 읽었다. 여기서는 그 모양을 실제로 만든다: 미리 읽기(`--import`)가 던지면
+ * 스크립트 본문은 돌지도 않고 종료가 1 이다 → 10 이 아니다 → 워크플로는 단계 실패로 읽는다(아래 배선 시험).
+ */
+test("⚠⚠T7 season-has-games — 모듈 수준 실패(Node 비정상 종료)는 1 이고 「없다」(10)가 아니다", () => {
+  withDb((db) => game(db, "a", 2026, "played"), (dbPath) => {
+    const crash = spawnSync(process.execPath, ["--import", "data:text/javascript,throw new Error('module-level failure (injected)')", SCRIPT, dbPath, "2027"], { encoding: "utf8" });
+    assert.equal(crash.status, 1, `모듈 수준 실패의 종료가 1 이 아니다: ${crash.stderr}`);
+    assert.notEqual(crash.status, 10);
+    assert.doesNotMatch(crash.stdout, /치른 경기/, "주입한 실패인데 본문이 돌았다 — 이 시험이 아무것도 안 잰다");
   });
 });
 
@@ -117,15 +132,15 @@ test("⚠⚠T7 공표 성적표 갱신 — 그 시즌에 치른 경기가 있을
   assert.notEqual(failed.status, 0, "cli-stats 실패를 삼켰다");
 });
 
-test("⚠⚠T7 공표 성적표 갱신 — 치른 경기가 0(1)이면 cli-stats 를 안 부르고 한 줄 · 단계는 성공", () => {
-  const r = runStep(1);
+test("⚠⚠T7 공표 성적표 갱신 — 치른 경기가 0(10)이면 cli-stats 를 안 부르고 한 줄 · 단계는 성공", () => {
+  const r = runStep(10);
   assert.equal(r.status, 0, r.out);
   assert.deepEqual(r.calls, ["node scripts/season-has-games.ts data/bb.sqlite 2027"], "경기가 0 인 시즌의 공표표를 받으러 갔다 — 빈 표가 대조 0명으로 관문을 1 로 만든다");
   assert.match(r.out, /2027 시즌 경기가 DB 에 0 — 공표표를 받지 않는다\(개막 전\)/);
 });
 
-test("⚠T7 공표 성적표 갱신 — 못 읽음(2) · 그 밖이면 cli-stats 를 안 부르고 단계 실패(::error::)", () => {
-  for (const has of [2, 127]) {
+test("⚠T7 공표 성적표 갱신 — 못 읽음(2) · Node 비정상 종료(1) · 그 밖이면 cli-stats 를 안 부르고 단계 실패(::error::) — 「개막 전」으로 안 읽는다", () => {
+  for (const has of [1, 2, 127]) {
     const r = runStep(has);
     assert.notEqual(r.status, 0, `${String(has)}: 판정을 못 했는데 단계가 성공했다`);
     assert.deepEqual(r.calls, ["node scripts/season-has-games.ts data/bb.sqlite 2027"], `${String(has)}: 판정을 못 했는데 받으러 갔다`);

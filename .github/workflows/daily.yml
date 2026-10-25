@@ -524,7 +524,8 @@ jobs:
         # ⚠⚠**경기가 0 인 시즌의 공표표는 받지 않는다**(2026-10-25 · PR-4 설계 `docs/superpowers/specs/2026-10-24-offseason-readiness-design.md` D6 —
         #   9/11 설계 D8 의 대체). 1/1~개막 전에 새 해의 빈 표(200)를 받으면 아래 「외부 대조」가 **대조 0명**으로 1 이 된다.
         #   ⚠**관문(`crosscheck.ts`)은 안 바꾼다**(사용자 결정 2026-10-02 「관문 판정 불변」) — 안 받으면 `npb/stats/<새 해>` 가 안 생기고 대조는 보유 시즌으로 돈다.
-        #   `scripts/season-has-games.ts` 의 종료: 0 = 치른 경기 있음 → 받는다 · 1 = 없음 → 한 줄만 · 그 밖(2 = DB 를 못 읽음) → **단계 실패**(배포는 안 막는다).
+        #   `scripts/season-has-games.ts` 의 종료: 0 = 치른 경기 있음 → 받는다 · **10** = 없음 → 한 줄만 · 그 밖(2 = DB 를 못 읽음 · 1 = Node 비정상 종료) → **단계 실패**(배포는 안 막는다).
+        #   ⚠「없음」이 1 이 아닌 이유: Node 는 모듈 수준 실패를 1 로 끝낸다 — 1 을 「없음」으로 읽으면 죽은 스크립트가 「개막 전」이 된다(3중 검토 2차 F3).
         #   덤: 1/1~개막 약 85일 × 하루 3실행 × 30장 ≈ 7,650요청을 안 보낸다(L1).
         continue-on-error: true
         # ⚠**JST 로 연도를 정한다**(§2-1) — UTC 로 세면 새해 첫날에 지난 시즌을 받는다
@@ -535,7 +536,7 @@ jobs:
           node scripts/season-has-games.ts data/bb.sqlite "$y" || has=$?
           if [ "$has" = 0 ]; then
             node packages/archiver/src/cli-stats.ts --season "$y"
-          elif [ "$has" = 1 ]; then
+          elif [ "$has" = 10 ]; then
             echo "${y} 시즌 경기가 DB 에 0 — 공표표를 받지 않는다(개막 전)"
           else
             echo "::error::${y} 시즌에 경기가 있는지 DB 에서 판정하지 못했다(종료 ${has}) — 공표표를 받지 않는다. 외부 대조는 옛 스냅숏으로 돈다"

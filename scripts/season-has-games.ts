@@ -4,7 +4,10 @@
  *
  *   node scripts/season-has-games.ts data/bb.sqlite 2027
  *
- * **종료 코드**: **0** 있다 · **1** 없다(중지 경기만 있어도 · 그 시즌 행이 없어도) · **2** 못 읽었다(DB 없음 · SQLite 아님 · 표 없음) 또는 인자가 틀렸다.
+ * **종료 코드**: **0** 있다 · **10** 없다(중지 경기만 있어도 · 그 시즌 행이 없어도) · **2** 못 읽었다(DB 없음 · SQLite 아님 · 표 없음) 또는 인자가 틀렸다.
+ * ⚠⚠**「없다」는 전용 코드 10 이다 — 1 이 아니다**(PR-4 3중 검토 2차 F3). Node 는 잡히지 않은 예외 · import 실패 · 미리 읽기 실패에서 **1** 로 끝난다.
+ *   「없다」가 1 이면 이 스크립트가 **모듈 수준에서 죽어도** 워크플로가 「개막 전 — 공표표를 받지 않는다」로 읽는다(조용한 실패 · M7).
+ *   워크플로는 0 → 받기 · 10 → 「개막 전」 한 줄 · **그 밖(1·2·…) → 단계 실패**로 읽는다(`scripts/test/season-has-games.test.ts`).
  *
  * ⚠**왜 있는가**: 1/1~개막 전에 `cli-stats.ts --season <새 해>` 가 빈 표(200)를 받으면 외부 대조가 **대조 0명**으로 1 이 된다(설계 G6).
  *   관문(`packages/aggregate/tools/crosscheck.ts`)은 바꾸지 않는다 — 사용자 결정 2026-10-02 「관문 판정 불변」. **경기가 0 인 시즌은 받지 않는다.**
@@ -15,6 +18,9 @@
  */
 import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+
+/** 「그 시즌에 치른 경기가 없다」의 종료 코드 — Node 의 비정상 종료(1)와 겹치지 않는 값(위 머리말) */
+const EXIT_NO_GAMES = 10;
 
 const args = process.argv.slice(2);
 const [dbPath, seasonArg] = args;
@@ -44,6 +50,6 @@ if (args.length !== 2 || dbPath === undefined || seasonArg === undefined || !/^\
     process.exitCode = 2;
   } else {
     console.log(`${seasonArg} 시즌 치른 경기 ${String(played)}건`);
-    process.exitCode = played > 0 ? 0 : 1;
+    process.exitCode = played > 0 ? 0 : EXIT_NO_GAMES;
   }
 }
