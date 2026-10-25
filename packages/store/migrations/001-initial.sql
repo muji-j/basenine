@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS game (
   -- played | notPlayed. 중지 경기는 오류가 아니라 상태다(M11)
   status      TEXT NOT NULL CHECK (status IN ('played', 'notPlayed')),
   not_played_reason TEXT,
-  -- regular | climax | japanSeries | preseason. v1은 regular만 넣지만 컬럼은 처음부터 둔다
+  -- 대회 구분 — 값의 정본은 @bb-app/domain 의 Competition(teams.ts). 여기 나열하면 낡는다(2026-10-24 · 옛 climax·japanSeries·preseason 은 쓰인 적 없다)
   competition TEXT NOT NULL DEFAULT 'regular',
   -- M4: 출처 추적성
   source_url  TEXT NOT NULL,

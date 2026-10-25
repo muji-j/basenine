@@ -7,6 +7,8 @@
  *     「저장 안 함」의 이유를 뭉개면 나중에 버그와 정상을 구별할 수 없다.
  *   - **부분 실패를 삼키지 않는다**: 실패한 페이지는 결과에 남고, 재실행하면 그것만 다시 받는다.
  */
+// ⚠**서브패스(잎 · import 0)로 가져온다** — 배럴(`@bb-app/domain`)을 거치면 domain 전체가 평가되고 그 사슬의 로드 오류가 받기 자식을 죽인다
+import { scheduleAbsencePolicy } from "@bb-app/domain/season-calendar";
 import type { Clock } from "./clock.ts";
 import { GAME_PAGES, discoverGames, gamesOn, monthlyScheduleUrl, pageKey, pageUrl } from "./discover.ts";
 import type { GamePage, GameRef } from "./discover.ts";
@@ -49,6 +51,12 @@ export interface DayResult {
   date: string;
   gamesFound: number;
   pages: PageResult[];
+  /**
+   * **그 날의 달 월간 일정이 404·410 이었고 비시즌 규칙으로 「경기 0」으로 받았다** — 그 상태 코드(PR-4 설계 D1 · `scheduleAbsencePolicy`).
+   * ⚠12·1·2월(`quiet`)과 11월(`warn`)에서만 채워진다 — 3~10월의 404 는 지금처럼 날짜 실패(local)다.
+   * ⚠없으면 일정을 **받았다**(200)는 뜻이다 — 「경기 0」의 두 출처(받은 일정이 0건 / 일정 페이지가 없다)를 섞지 않는다(M11).
+   */
+  scheduleAbsent?: number;
 }
 
 export interface ArchiveDeps {
@@ -80,7 +88,12 @@ export class MonthlyScheduleCache {
     this.byMonth.set(key, pending);
     // ⚠실패를 캐시에 남기지 않는다. 남기면 일과성 오류 1회로 **그 달의 남은 날짜가 전부**
     // 같은 실패를 되풀이한다 — 긴 백필에서 하루치 오류가 한 달치 손실이 된다.
-    void pending.catch(() => {
+    // ⚠⚠**단 비시즌 규칙으로 받아들이는 달(11·12·1·2)의 404·410(`ScheduleAbsentError`)은 남긴다**(PR-4 설계 D1 「요청 수」) — 그 달에는
+    //   「그 달 일정이 없다」는 사실이고, 지우면 같은 프로세스의 여러 날(묶음 실행)이 **같은 404 를 날짜 수만큼 다시 친다**(L1).
+    // ⚠⚠**3~10월(시즌 달)의 404 는 지운다**(PR-4 3중 검토 1차 P3) — 그 달의 404 는 사실로 받지 않는다(우리가 모르는 상태 → local 실패).
+    //   일과성일 수 있으니 위 원칙대로 다음 날짜가 다시 받아 복구할 수 있어야 한다. 판정은 `archiveDate` 와 같은 `scheduleAbsencePolicy` 한 벌이다(M1).
+    void pending.catch((err: unknown) => {
+      if (err instanceof ScheduleAbsentError && scheduleAbsencePolicy(month) !== "fail") return;
       if (this.byMonth.get(key) === pending) this.byMonth.delete(key);
     });
     return pending;
@@ -93,7 +106,8 @@ export class MonthlyScheduleCache {
     const res = await deps.fetcher.get(url);
     /**
      * ⚠**404·410 은 「그 달 일정이 없다」는 사실이다** — 받기는 성공했다(회로도 성공으로 셌다). `ScheduleAbsentError` 로 가른다:
-     * 현재 달이면 local(우리가 모르는 상태 → 막는다) · 다음 달이면 꼬리표 「（오프시즌이면 정상）」만 붙는다(`cli.ts` · 설계 D1).
+     * 현재 달이면 달로 가른다(PR-4 설계 D1 · `archiveDate` — 3~10월은 local(우리가 모르는 상태 → 막는다) · 11·12·1·2월은 「경기 0」) ·
+     * 다음 달이면 꼬리표 「（오프시즌이면 정상）」만 붙는다(`cli.ts` · PR-2a 설계 D1).
      */
     if (res.status === 404 || res.status === 410) throw new ScheduleAbsentError(url, res.status);
     if (res.body === null) throw new Error(`월간 일정을 받지 못했다 (HTTP ${res.status}): ${url}`);
@@ -367,6 +381,10 @@ export async function archiveGame(ref: GameRef, deps: ArchiveDeps): Promise<Page
  * ⚠월간 일정 페이지에서 링크를 하나도 못 찾으면 `discoverGames`가 예외를 던진다(M7).
  * 여기서 잡아서 빈 결과로 만들지 마라 — 호출자가 실패를 알아야 한다.
  * 반면 「그날 경기가 0건」(월요일·우천 등)은 정상이며 `gamesFound: 0`으로 표현된다.
+ * ⚠⚠**그 달 일정이 404·410 이면 달로 가른다**(PR-4 설계 D1 · `scheduleAbsencePolicy` 한 벌): 12·1·2월과 11월은 「그날 경기 0」인
+ *   사실로 받고(`scheduleAbsent` · 11월은 호출자가 경고한다) · 3~10월은 지금처럼 `ScheduleAbsentError` 를 던진다(날짜 실패 local → 막는다).
+ *   ⚠달로 가르는 이유: 아카이버는 DB 를 열지 않는다 — 「시즌이 끝났는가」를 모른다(설계 §5 기각안). 12·1·2월은 보유 9시즌에 경기 0 이다.
+ *   ⚠**상류 실패·구조 예외는 달과 무관하게 지금처럼 던진다** — 404 를 본 것만 사실이다.
  */
 export async function archiveDate(date: string, deps: ArchiveDeps): Promise<DayResult> {
   const parsed = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
@@ -375,7 +393,15 @@ export async function archiveDate(date: string, deps: ArchiveDeps): Promise<DayR
   const month = Number(parsed[2]);
 
   const schedule = deps.schedule ?? new MonthlyScheduleCache();
-  const all = await schedule.get(season, month, deps);
+  let all: GameRef[];
+  try {
+    all = await schedule.get(season, month, deps);
+  } catch (err) {
+    if (err instanceof ScheduleAbsentError && scheduleAbsencePolicy(month) !== "fail") {
+      return { date, gamesFound: 0, pages: [], scheduleAbsent: err.status };
+    }
+    throw err;
+  }
   const games = gamesOn(all, date);
 
   const pages: PageResult[] = [];
@@ -405,7 +431,8 @@ export async function archiveDates(
     try {
       entry = await archiveDate(date, withCache);
     } catch (err) {
-      // ⚠월간 일정의 받기 실패(`UpstreamError`)만 upstream — 구조 변경·사이드카·쓰기·현재 달 일정 없음(`ScheduleAbsentError`)은 local(설계 D1)
+      // ⚠월간 일정의 받기 실패(`UpstreamError`)만 upstream — 구조 변경·사이드카·쓰기·3~10월의 현재 달 일정 없음(`ScheduleAbsentError`)은 local(설계 D1)
+      //   (11·12·1·2월의 현재 달 404·410 은 여기 오지 않는다 — `archiveDate` 가 「경기 0」으로 돌려준다 · PR-4 설계 D1)
       entry = { date, error: err instanceof Error ? err.message : String(err), errorKind: errorKindOf(err) };
     }
     out.push(entry);

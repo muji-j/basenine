@@ -46,6 +46,28 @@ import type { RunExpectancy } from "./run-expectancy.ts";
 export type WobaEvent = keyof WobaWeights;
 
 /**
+ * **계수 유도의 표본이 0** — 그 리그·시즌에 그 사건(또는 원점을 만드는 계수 0 사건 전체)이 한 번도 없다.
+ *
+ * ⚠**`RangeError` 를 잇는다** — 예전 호출자(시험 · 측정 도구)는 그대로 `RangeError`·메시지로 받는다(메시지도 같다).
+ * ⚠⚠**빌드는 이 형만** 「새 시즌 개막 직후 — 그 시즌을 아직 굽지 않는다」로 받는다(`packages/web/tools/build.ts` · PR-4 3중 검토 2차 F1).
+ *   실측(보유 9시즌): 개막 1경기일째에 한 리그 이상이 표본 0 인 시즌 **7/9** · 2경기일째 **3/9** · 3경기일째 이후 **0/9**.
+ *   ⚠메시지 글자로 가르지 않는다 — 같은 `RangeError` 인 어휘·구조 오류(M7)를 「아직 이르다」로 삼키면 안 된다.
+ */
+export class RunValueSampleError extends RangeError {
+  readonly season: number;
+  readonly league: string;
+  /** 표본이 0 인 사건 — `origin` 이면 원점(계수 0 사건 전체) */
+  readonly event: WobaEvent | "origin";
+  constructor(message: string, fields: { season: number; league: string; event: WobaEvent | "origin" }) {
+    super(message);
+    this.name = "RunValueSampleError";
+    this.season = fields.season;
+    this.league = fields.league;
+    this.event = fields.event;
+  }
+}
+
+/**
  * 이 결과가 wOBA 안에서 어디에 서는가.
  *
  * - `weighted` … 계수가 붙는다(분모에도 들어간다)
@@ -165,7 +187,7 @@ ORDER BY e.game_id, e.seq
  *
  * @param re **같은 리그·시즌·같은 기준일**로 만든 RE 행렬. 다른 것을 넣지 마라
  *
- * @throws {RangeError} 원점이나 어느 계수의 표본이 0일 때.
+ * @throws {RunValueSampleError} 원점이나 어느 계수의 표본이 0일 때(`RangeError` 를 잇는다).
  *   ⚠0으로 나눈 계수를 조용히 돌려주면 그 리그·시즌의 **전 타격 지표가 조용히 틀린다.**
  */
 export function deriveRunValues(
@@ -243,7 +265,9 @@ export function deriveRunValues(
   }
 
   const where = `(${re.season} ${re.league})`;
-  if (originN === 0) throw new RangeError(`원점의 표본이 0이다 — 계수를 만들 수 없다 ${where}`);
+  const sampleZero = (event: WobaEvent | "origin", message: string): RunValueSampleError =>
+    new RunValueSampleError(message, { season: re.season, league: re.league, event });
+  if (originN === 0) throw sampleZero("origin", `원점의 표본이 0이다 — 계수를 만들 수 없다 ${where}`);
   const origin = originSum / originN;
 
   const meanValues = {} as Record<WobaEvent, number>;
@@ -258,7 +282,7 @@ export function deriveRunValues(
       continue;
     }
     const count = n.get(e) ?? 0;
-    if (count === 0) throw new RangeError(`${e} 의 표본이 0이다 — 계수를 만들 수 없다 ${where}`);
+    if (count === 0) throw sampleZero(e, `${e} 의 표본이 0이다 — 계수를 만들 수 없다 ${where}`);
     samples[e] = count;
     meanValues[e] = sum.get(e)! / count;
     runValues[e] = meanValues[e] - origin;

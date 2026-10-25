@@ -8,15 +8,18 @@
  * 연락처는 필수다(CLAUDE.md L1) — `--contact` 또는 `BB_ARCHIVER_CONTACT`.
  *
  * **종료 코드**(설계 `docs/superpowers/specs/2026-10-24-collection-resilience-design.md` D1 · D4 — **회로가 열렸는가로 가른다**):
- * - **0** — 실패 없음(다음 달 일정이 404·410 인 것은 사실이라 실패가 아니다).
+ * - **0** — 실패 없음(다음 달 일정이 404·410 인 것은 사실이라 실패가 아니다 · **현재 달이 11·12·1·2월이면 그 달의 404·410 도 사실이다** —
+ *   PR-4 설계 `2026-10-24-offseason-readiness-design.md` D1 · 11월은 표준출력에 `::warning::` 한 줄).
  * - **75** — 실패가 있고 **전부 상류 받기 실패**(`UpstreamError` — 소진·즉시 실패·회로 열림) · 회로 **닫힘**.
  *   실패한 단위는 쓰기 0 · 나머지는 온전한 단위만 썼다(경기 4장은 세트로만 쓴다). 부모(`scripts/update.ts`)는 뒤 받기를 **계속**한다.
  * - **69** — 실패가 전부 상류 · 회로 **열림**. 부모가 뒤 받기 자식을 **멈춘다**(실행 판정은 75 와 같다 — 이미 받은 데이터로 배포).
- * - **1** — 하나라도 local(쓰기·사이드카·구조 변경·현재 달 일정 없음·전송 전 로컬 고장) 또는 미분류 · 회로 닫힘. 부모는 계속 · 실행은 막는다.
+ * - **1** — 하나라도 local(쓰기·사이드카·구조 변경·**3~10월** 현재 달 일정 없음·전송 전 로컬 고장) 또는 미분류 · 회로 닫힘. 부모는 계속 · 실행은 막는다.
  * - **70** — local 이 있고 회로 **열림**. 부모가 뒤 받기 자식을 멈추고 실행은 막는다.
  * - **2** — 입력이 틀렸다(연락처 · `--delay` · `BB_NPB_CIRCUIT_N` · 날짜). **요청 0.**
  */
 import { parseArgs } from "node:util";
+// ⚠서브패스(잎 · import 0) — `archive.ts` 와 같은 판정 한 벌을 로그 문구에도 쓴다(M1)
+import { scheduleAbsencePolicy } from "@bb-app/domain/season-calendar";
 import { systemClock, toJstDateString } from "./clock.ts";
 import type { Clock } from "./clock.ts";
 import { CIRCUIT_ENV, CIRCUIT_TOTAL_LIMIT, HostCircuit, parseCircuitN } from "./circuit.ts";
@@ -37,6 +40,11 @@ export interface ArchiveCliIo {
   sink?: Sink;
   /** 사람이 읽는 줄(기본: 표준오류) */
   log?: (line: string) => void;
+  /**
+   * 워크플로 명령(`::warning::`) 줄(기본: 표준출력 — `cli-starters.ts` 의 `out` · `load-draft-archive.ts` 의 `console.log` 관례).
+   * ⚠부모(`scripts/update.ts`)는 이 자식을 `stdio: "inherit"` 로 띄우므로 그대로 잡 로그에 남는다.
+   */
+  out?: (line: string) => void;
 }
 
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
@@ -62,6 +70,7 @@ function readArgs(argv: readonly string[]) {
  */
 export async function runArchiveCli(argv: readonly string[], env: Readonly<Record<string, string | undefined>>, io: ArchiveCliIo = {}): Promise<number> {
   const log = io.log ?? ((line: string) => console.error(line));
+  const out = io.out ?? ((line: string) => console.log(line));
   let values: ReturnType<typeof readArgs>;
   try {
     values = readArgs(argv);
@@ -126,7 +135,7 @@ export async function runArchiveCli(argv: readonly string[], env: Readonly<Recor
   log(`대상 ${dates.length}일 · 저장 위치 ${values.out} · 요청 간격 ${delayMs}ms · 회로 연속 ${String(circuitN)} · 합계 ${String(CIRCUIT_TOTAL_LIMIT)}`);
 
   try {
-    return await collect(dates, { fetcher, sink, clock, log });
+    return await collect(dates, { fetcher, sink, clock, log, out });
   } catch (err) {
     // ⚠**던져서 끝나는 local 도 회로 상태로 가른다**(설계 D4) — 열려 있으면 70(부모가 뒤 받기를 멈춘다) · 닫혀 있으면 1
     log(`⚠중단 — ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
@@ -137,12 +146,20 @@ export async function runArchiveCli(argv: readonly string[], env: Readonly<Recor
 /** 날짜들과 다음 달 일정을 받고 종료 코드를 고른다 — `runArchiveCli` 의 본체 */
 async function collect(
   dates: readonly string[],
-  o: { readonly fetcher: PoliteFetcher; readonly sink: Sink; readonly clock: Clock; readonly log: (line: string) => void },
+  o: {
+    readonly fetcher: PoliteFetcher;
+    readonly sink: Sink;
+    readonly clock: Clock;
+    readonly log: (line: string) => void;
+    readonly out: (line: string) => void;
+  },
 ): Promise<number> {
-  const { fetcher, sink, clock, log } = o;
+  const { fetcher, sink, clock, log, out } = o;
   const all: PageResult[] = [];
   const dayErrors: DayError[] = [];
   let daysWithGames = 0;
+  /** 그 달 일정이 404·410 이라 「경기 0」으로 받은 날(PR-4 설계 D1) — 「받은 일정이 0건」과 섞지 않고 따로 센다(M11) */
+  let daysScheduleAbsent = 0;
   const schedule = new MonthlyScheduleCache();
 
   // ERROR(돌지도 않음)와 FAIL(떨어짐)을 분리해서 센다 (CLAUDE.md 작업규칙 8).
@@ -150,6 +167,24 @@ async function collect(
     if (isDayError(day)) {
       dayErrors.push(day);
       log(`${day.date}  ERROR — ${day.error}`);
+      return;
+    }
+    if (day.scheduleAbsent !== undefined) {
+      daysScheduleAbsent += 1;
+      /**
+       * ⚠⚠**11월은 시끄럽게 받는다**(PR-4 설계 D1) — 경기가 열리는 해가 있는 달이라, 경기가 남았는데 일정 주소가 바뀌었다면
+       *   사본이 낡는다. 그때 막는 것은 예고 대조(B · `game-missed`)이고 유예 2일 뒤에 운다 — 그 사이 사람이 이 줄을 볼 수 있게 한다.
+       * ⚠달의 판정은 `archive.ts` 와 같은 `scheduleAbsencePolicy` 한 벌이다(M1).
+       */
+      const month = Number(day.date.slice(5, 7));
+      if (scheduleAbsencePolicy(month) === "warn") {
+        out(
+          `::warning::${day.date} ${String(month)}월 일정 없음(HTTP ${String(day.scheduleAbsent)}) — 경기 0건으로 받는다 · ` +
+            "경기가 남았다면 예고 대조(B)가 이틀 뒤 운다",
+        );
+      } else {
+        log(`${day.date} 월간 일정 없음(HTTP ${String(day.scheduleAbsent)}) — 비시즌 달이라 경기 0건으로 본다`);
+      }
       return;
     }
     const s = summarize(day.pages);
@@ -222,7 +257,8 @@ async function collect(
   const total = summarize(all);
   const circuit = fetcher.circuit.snapshot();
   log(
-    `\n합계: ${dates.length}일 중 ${dates.length - dayErrors.length}일 처리 (경기 있는 날 ${daysWithGames}일) · ` +
+    `\n합계: ${dates.length}일 중 ${dates.length - dayErrors.length}일 처리 (경기 있는 날 ${daysWithGames}일` +
+      `${daysScheduleAbsent > 0 ? ` · 그 달 일정 없음(404·410) ${String(daysScheduleAbsent)}일` : ""}) · ` +
       `월간 일정 취득 ${schedule.fetchCount}회 · ` +
       `페이지 ${total.total}장 (신규 ${total.stored} / 변경없음 ${total.unchanged} / 부재 ${total.absent} / 실패 ${total.failed} / 보류 ${total.held}) · ` +
       `회로 ${circuit.open ? `열림(${String(circuit.reason)})` : "닫힘"} · 소진 ${String(circuit.total)} · ${firstSuccessNote(fetcher.firstSuccess)}`,

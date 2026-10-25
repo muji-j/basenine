@@ -31,14 +31,17 @@ const MONTH10 = `<a href="/scores/2026/1020/s-db-17/">g1</a>`;
 /** 네트워크 오류는 `cause` 의 코드로 온다(undici 모양) — cause 없는 TypeError 는 로컬 오류다(3중 검토 반영 · 설계 D1 ⑶) */
 const refused = (): Error => new TypeError("fetch failed", { cause: Object.assign(new Error("connect ECONNREFUSED 203.0.113.7:443"), { code: "ECONNREFUSED" }) });
 
-/** 가짜 전송 — `route` 가 URL 별 상태(또는 던질 오류)를 정한다. 기본은 200 */
-function transport(route: (url: string) => number | Error = () => 200) {
+/**
+ * 가짜 전송 — `route` 가 URL 별 상태(또는 던질 오류)를 정한다. 기본은 200.
+ * `bodyOf` 가 글을 돌려주면 그 URL 의 본문이다(없으면 10월 일정은 `MONTH10` · 그 밖은 `<html>url</html>`).
+ */
+function transport(route: (url: string) => number | Error = () => 200, bodyOf: (url: string) => string | undefined = () => undefined) {
   const calls: string[] = [];
   const fetchImpl: FetchImpl = async (url) => {
     calls.push(url);
     const r = route(url);
     if (r instanceof Error) throw r;
-    const body = new TextEncoder().encode(url.includes("schedule_10_detail") ? MONTH10 : `<html>${url}</html>`);
+    const body = new TextEncoder().encode(bodyOf(url) ?? (url.includes("schedule_10_detail") ? MONTH10 : `<html>${url}</html>`));
     return {
       status: r,
       headers: { get: () => null },
@@ -63,18 +66,35 @@ interface Ran {
   log: string;
 }
 
-async function archiveCli(o: { date?: string; route?: (url: string) => number | Error; env?: Record<string, string | undefined>; sink?: MemorySink }): Promise<Ran> {
+/** `cli.ts` 만 표준출력 줄을 따로 받는다 */
+interface ArchiveRan extends Ran {
+  /** 표준출력 줄(`out`) — `::warning::` 같은 워크플로 명령은 여기로 나간다. 진입 함수가 `out` 을 안 쓰면 비어 있다 */
+  stdout: string[];
+}
+
+async function archiveCli(o: {
+  date?: string;
+  /** `--from`·`--to` 로 띄운다(같은 프로세스의 여러 날 · 월간 일정 캐시) — 주면 `date` 를 안 쓴다 */
+  range?: readonly [string, string];
+  route?: (url: string) => number | Error;
+  bodyOf?: (url: string) => string | undefined;
+  env?: Record<string, string | undefined>;
+  sink?: MemorySink;
+}): Promise<ArchiveRan> {
   return withDir(async (dir) => {
-    const t = transport(o.route);
+    const t = transport(o.route, o.bodyOf);
     const lines: string[] = [];
-    const code = await runArchiveCli(["--date", o.date ?? "2026-10-20", "--out", join(dir, "archive")], { BB_ARCHIVER_CONTACT: CONTACT, ...(o.env ?? {}) }, {
+    const stdout: string[] = [];
+    const dates = o.range === undefined ? ["--date", o.date ?? "2026-10-20"] : ["--from", o.range[0], "--to", o.range[1]];
+    const code = await runArchiveCli([...dates, "--out", join(dir, "archive")], { BB_ARCHIVER_CONTACT: CONTACT, ...(o.env ?? {}) }, {
       fetchImpl: t.fetchImpl,
       sleep: async () => undefined,
       clock: fixedClock(NOW),
       log: (l) => lines.push(l),
+      out: (l) => stdout.push(l),
       ...(o.sink === undefined ? {} : { sink: o.sink }),
     });
-    return { code, calls: t.calls, log: lines.join("\n") };
+    return { code, calls: t.calls, log: lines.join("\n"), stdout };
   });
 }
 
@@ -126,6 +146,105 @@ test("⚠T8 현재 달 일정 404 → 1(우리가 모르는 상태 — 받기 �
   const r = await archiveCli({ route: (u) => (isCurrent(u) ? 404 : 200) });
   assert.equal(r.code, 1, r.log);
   assert.match(r.log, /2026-10-20 {2}ERROR — 월간 일정을 받지 못했다 \(HTTP 404\)/);
+});
+
+// ---- PR-4 T1 · 비시즌 달의 현재 달 일정 404·410(설계 `2026-10-24-offseason-readiness-design.md` D1) ----------------
+
+/** 그 해·달의 월간 일정 URL 인가 */
+const isSchedule = (y: number, m: number) => (url: string): boolean => url.includes(`/games/${String(y)}/schedule_${String(m).padStart(2, "0")}_detail`);
+const SILENT_LINE = (date: string, status: number): RegExp =>
+  new RegExp(`^${date} 월간 일정 없음\\(HTTP ${String(status)}\\) — 비시즌 달이라 경기 0건으로 본다$`, "m");
+const NOV_WARNING = /^::warning::2026-11-02 11월 일정 없음\(HTTP 404\) — 경기 0건으로 받는다 · 경기가 남았다면 예고 대조\(B\)가 이틀 뒤 운다$/;
+
+test("⚠⚠PR-4 T1 2026-12-05 · 12월·2027-01 일정 404 → 0 · 「비시즌 달」 줄 · 요청 2 · 경고 없음", async () => {
+  const r = await archiveCli({ date: "2026-12-05", route: (u) => (isSchedule(2026, 12)(u) || isSchedule(2027, 1)(u) ? 404 : 200) });
+  assert.equal(r.code, 0, `12월 일정 404 로 막았다 — 12/01 부터 매 실행 1:\n${r.log}`);
+  assert.match(r.log, SILENT_LINE("2026-12-05", 404));
+  assert.match(r.log, /다음 달 일정\(2027-01\) 은 못 받았다 — 월간 일정을 받지 못했다 \(HTTP 404\).*（오프시즌이면 정상）/);
+  assert.equal(r.calls.length, 2, `요청이 현재 달 1 + 다음 달 1 이 아니다: ${r.calls.join(" ")}`);
+  assert.deepEqual(r.stdout.filter((l) => l.startsWith("::warning::")), [], "12월에 경고를 냈다 — 조용해야 할 달이다");
+  assert.doesNotMatch(r.log, /ERROR/);
+});
+
+test("⚠PR-4 T1 2027-01-05 · 1월 일정 410 → 0(410 도 같은 사실)", async () => {
+  const r = await archiveCli({ date: "2027-01-05", route: (u) => (isSchedule(2027, 1)(u) ? 410 : isSchedule(2027, 2)(u) ? 404 : 200) });
+  assert.equal(r.code, 0, r.log);
+  assert.match(r.log, SILENT_LINE("2027-01-05", 410));
+});
+
+test("⚠⚠PR-4 T1 2026-11-02 · 11월 일정 404 → 0 · 표준출력에 ::warning:: 정확히 1줄(경기가 열리는 해가 있는 달)", async () => {
+  const r = await archiveCli({ date: "2026-11-02", route: (u) => (isSchedule(2026, 11)(u) || isSchedule(2026, 12)(u) ? 404 : 200) });
+  assert.equal(r.code, 0, r.log);
+  const warnings = r.stdout.filter((l) => l.startsWith("::warning::"));
+  assert.equal(warnings.length, 1, `경고가 ${String(warnings.length)}줄이다: ${r.stdout.join(" | ")}`);
+  assert.match(warnings[0]!, NOV_WARNING);
+  assert.doesNotMatch(r.log, /비시즌 달이라/, "11월을 「비시즌 달」로 불렀다 — 11월은 NO_GAME_MONTHS 가 아니다");
+});
+
+test("⚠PR-4 T1 2026-10-05 · 10월(시즌 달) 일정 404 → 1 — 그대로 막는다(주소·구조 변경 의심)", async () => {
+  const r = await archiveCli({ date: "2026-10-05", route: (u) => (isSchedule(2026, 10)(u) ? 404 : 200) });
+  assert.equal(r.code, 1, r.log);
+  assert.match(r.log, /2026-10-05 {2}ERROR — 월간 일정을 받지 못했다 \(HTTP 404\)/);
+  assert.deepEqual(r.stdout.filter((l) => l.startsWith("::warning::")), []);
+});
+
+test("⚠PR-4 T1 12월 일정 503 소진 → 75 — 비시즌 달이어도 상류 실패는 상류 실패다", async () => {
+  const r = await archiveCli({ date: "2026-12-05", route: (u) => (isSchedule(2026, 12)(u) ? 503 : isSchedule(2027, 1)(u) ? 404 : 200) });
+  assert.equal(r.code, EXIT_UPSTREAM_ONLY, r.log);
+  assert.equal(r.calls.filter(isSchedule(2026, 12)).length, 4, "12월을 4시도 하지 않았다");
+  assert.match(r.log, /2026-12-05 {2}ERROR — 취득 실패 \(재시도 3회 소진\)/);
+  assert.doesNotMatch(r.log, /비시즌 달이라/);
+});
+
+test("⚠PR-4 T1 12월 일정이 200 + 빈 날짜 행이면 0 — 「일정 없음」 줄이 아니다(404 를 본 것이 아니다)", async () => {
+  const blankDec = `<table>${Array.from({ length: 31 }, (_, i) => `<tr id="date12${String(i + 1).padStart(2, "0")}" class=""><th>12/${String(i + 1)}</th><td>&nbsp;</td><td>&nbsp;</td></tr>`).join("")}</table>`;
+  const r = await archiveCli({
+    date: "2026-12-05",
+    route: (u) => (isSchedule(2027, 1)(u) ? 404 : 200),
+    bodyOf: (u) => (isSchedule(2026, 12)(u) ? blankDec : undefined),
+  });
+  assert.equal(r.code, 0, r.log);
+  assert.doesNotMatch(r.log, /월간 일정 없음/, "200 을 404 처럼 말했다");
+  assert.match(r.log, /경기 있는 날 0일/);
+});
+
+/**
+ * ⚠⚠**404 는 사실이지 일과성 오류가 아니다** — 캐시에서 지우지 않는다(설계 D1 「요청 수」). 지우면 묶음 실행(같은 프로세스의 여러 날)이
+ * 같은 404 를 날짜 수만큼 다시 친다(L1). ⚠상류 실패·구조 예외는 지금처럼 지운다(`fetcher-archive.test.ts` 의 「캐시에 갇히지 않는다」).
+ */
+test("⚠⚠PR-4 T1 같은 프로세스의 12월 날짜 둘 → 12월 일정 요청 1(404 캐시) · 둘 다 「비시즌 달」 줄 · 0", async () => {
+  const r = await archiveCli({ range: ["2026-12-05", "2026-12-06"], route: (u) => (isSchedule(2026, 12)(u) || isSchedule(2027, 1)(u) ? 404 : 200) });
+  assert.equal(r.code, 0, r.log);
+  assert.equal(r.calls.filter(isSchedule(2026, 12)).length, 1, `같은 404 를 날짜마다 다시 쳤다: ${r.calls.join(" ")}`);
+  assert.match(r.log, SILENT_LINE("2026-12-05", 404));
+  assert.match(r.log, SILENT_LINE("2026-12-06", 404));
+  assert.match(r.log, /월간 일정 취득 2회/, "취득 횟수(현재 달 1 + 다음 달 1)가 아니다");
+});
+
+/**
+ * ⚠⚠**3~10월(시즌 달)의 404 는 캐시에 남기지 않는다**(PR-4 3중 검토 1차 P3) — 그 달의 404 는 「사실」이 아니라 우리가 모르는 상태(→ local 실패)라
+ * 일과성 오류와 같이 다룬다: 같은 프로세스의 다음 날짜가 **다시 받아** 복구할 수 있어야 한다(위 「실패를 캐시에 남기지 않는다」의 근거 그대로).
+ * 캐시에 남기는 것은 비시즌 규칙으로 받아들인 404 뿐이다(12·1·2 · 11).
+ */
+test("⚠⚠PR-4 T1 시즌 달(7월) 404 는 캐시에 안 남는다 — 같은 프로세스의 두 날짜가 두 번 받는다 · 둘째가 200 이면 복구한다", async () => {
+  const both404 = await archiveCli({ range: ["2026-07-05", "2026-07-06"], route: (u) => (isSchedule(2026, 7)(u) ? 404 : 200) });
+  assert.equal(both404.code, 1, both404.log);
+  assert.equal(both404.calls.filter(isSchedule(2026, 7)).length, 2, `시즌 달의 404 를 캐시에 가뒀다 — 그 달 나머지 날짜가 재시도 없이 같은 실패를 되풀이한다: ${both404.calls.join(" ")}`);
+  // 첫 요청만 404 · 둘째부터 200(빈 날짜 행 · 경기 0) — 둘째 날짜는 복구된다
+  let julyCalls = 0;
+  const blankJuly = `<table>${Array.from({ length: 31 }, (_, i) => `<tr id="date07${String(i + 1).padStart(2, "0")}" class=""><th>7/${String(i + 1)}</th><td>&nbsp;</td><td>&nbsp;</td></tr>`).join("")}</table>`;
+  const recovered = await archiveCli({
+    range: ["2026-07-05", "2026-07-06"],
+    route: (u) => {
+      if (!isSchedule(2026, 7)(u)) return isSchedule(2026, 8)(u) ? 404 : 200;
+      julyCalls += 1;
+      return julyCalls === 1 ? 404 : 200;
+    },
+    bodyOf: (u) => (isSchedule(2026, 7)(u) ? blankJuly : undefined),
+  });
+  assert.equal(recovered.code, 1, "첫 날짜의 404 는 여전히 실패다(시즌 달)");
+  assert.match(recovered.log, /2026-07-05 {2}ERROR — 월간 일정을 받지 못했다 \(HTTP 404\)/);
+  assert.doesNotMatch(recovered.log, /2026-07-06 {2}ERROR/, "둘째 날짜가 다시 받지 않고 같은 실패를 되풀이했다");
 });
 
 /**

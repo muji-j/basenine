@@ -23,9 +23,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { STALE_REASON_KEYS } from "@bb-app/domain";
+import { STALE_REASON_KEYS, collectionVerdict } from "@bb-app/domain";
+import type { CollectionEvidence } from "@bb-app/domain";
 import { staleVerdict } from "../src/log-page.ts";
-import { BANNER_VERDICT, STALE_AFTER_DAYS } from "../src/layout.ts";
+import { BANNER_VERDICT, STALE_AFTER_DAYS, collectionStatus } from "../src/layout.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const MONITOR = readFileSync(join(ROOT, "scripts", "freshness.ts"), "utf8");
@@ -101,6 +102,27 @@ test("⚠경보 임계가 띠 임계보다 엄격하다", () => {
       "  수집 로그는 「正常」인 날이 생긴다.",
   );
   console.log(`  · 감시 ${monitorDays}일 < 띠 ${STALE_AFTER_DAYS}일`);
+});
+
+/**
+ * ⚠⚠**PR-4 T6 · D5 는 감시만 바꾼다 — 화면 띠(`collectionStatus`)는 「변화 없음」**(설계 `2026-10-24-offseason-readiness-design.md` D5 · R10).
+ * 띠의 `stale` 은 경기 축(`no-games`·`game-missed`·`game-lag`)만 본다 — 予告先発 축(`starters-lag`)은 감시가 말한다.
+ * ⚠같은 증거를 두 모양으로 넣는다: ⑴ 비시즌(D5 가 `starters-lag` 를 안 내는 모양) ⑵ 시즌 중 맥박 정지(감시는 `starters-lag` 로 운다) —
+ *   둘 다 띠는 낡지 않았다. ⑵가 붉어지면 누군가 띠에 予告先発 축을 넣은 것이다(그러면 D5 의 영향이 화면까지 간다).
+ */
+test("⚠⚠PR-4 T6 화면 띠는 D5 와 무관 — 비시즌 맥박 낡음 · 시즌 중 맥박 정지 둘 다 stale 거짓", () => {
+  const today = "2026-12-05";
+  const ago = (n: number): string => new Date(Date.parse(`${today}T00:00:00Z`) - n * 86_400_000).toISOString().slice(0, 10);
+  const offseason: CollectionEvidence = {
+    today, latestPlayed: ago(35), latestSeasonOver: true, playedWithoutGame: [], announcedWithoutGame: [],
+    startersLatest: ago(36), startersPulseDate: ago(10), nextGameDay: null, nextGameRestDeclared: false, nextGameSeasonOver: false,
+    careerPlayers: 800, careerStalestPlayed: null, latestGameRowDate: ago(35), latestPlayedMarkDate: ago(35), nextAnnouncementDate: null,
+  };
+  assert.equal(collectionStatus(offseason).stale, false, "비시즌 · 맥박 낡음에 띠가 낡았다고 했다");
+  assert.equal(collectionStatus(offseason).startersMissingDate, null);
+  const inSeason: CollectionEvidence = { ...offseason, latestSeasonOver: false, latestPlayed: ago(1), latestGameRowDate: ago(1), latestPlayedMarkDate: ago(1) };
+  assert.ok(collectionVerdict(inSeason, BANNER_VERDICT).reasons.includes("starters-lag"), "전제가 틀렸다 — 시즌 중 맥박 정지가 starters-lag 를 안 낸다");
+  assert.equal(collectionStatus(inSeason).stale, false, "띠가 予告先発 축(starters-lag)으로 낡았다고 했다 — D5 의 영향이 화면까지 간다");
 });
 
 /**

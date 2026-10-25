@@ -3,8 +3,9 @@
  *
  *   node packages/store/tools/load-starters.ts data/archive data/bb.sqlite [--season 2026]
  *
- * ⚠**페이지에 연도가 없다**(`8月16日の予告先発投手`). 연도는 여기서 붙이고,
- * 어떻게 붙였는지 아래에 적어 둔다 — 연말 경계에서 조용히 틀리기 좋은 곳이다.
+ * ⚠**페이지에 연도가 없다**(`8月16日の予告先発投手`). 연도는 여기서 붙인다 — 규칙은 `../src/starters-date.ts` 한 벌이다
+ * (PR-4 설계 `docs/superpowers/specs/2026-10-24-offseason-readiness-design.md` D3 · 연말 경계에서 조용히 틀리기 좋은 곳이다).
+ * ⚠**지난 날짜 게시(`lag < 0`)는 맥박만 남긴다** — 비시즌의 낡은 페이지가 옛 예고를 「다시 받은 것」으로 만들지 않게(아래 루프).
  * ⚠**미발표는 실패가 아니다**(M11). 행은 만들되 `player_id`를 NULL로 둔다.
  */
 import { readdir } from "node:fs/promises";
@@ -18,6 +19,7 @@ import { STARTERS_URL } from "@bb-app/archiver";
 import { openDb } from "../src/db.ts";
 import { ensurePlayer, upsertProbablePitcher } from "../src/load.ts";
 import { fetchedAtOf } from "../src/meta.ts";
+import { resolveStartersDate } from "../src/starters-date.ts";
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -64,23 +66,9 @@ let pending = 0;
 let failed = 0;
 /** 경기가 예정되지 않은 날. **실패가 아니다** — 적재할 것이 없을 뿐이다(M11) */
 let restDays = 0;
+/** 게시 날짜가 취득일보다 이른 페이지(비시즌의 낡은 페이지) — **맥박만** 남겼다(설계 D3-5) */
+let pastPulses = 0;
 const problems: string[] = [];
-
-/**
- * 취득일(`YYYY-MM-DD`)과 페이지의 `MM-DD`로 경기일을 만든다.
- *
- * ⚠**예고는 취득일과 같은 날이거나 그 다음날이다**(실측: 8/15에 8/16분이 게시돼 있었다).
- * 그래서 「취득한 해」를 그대로 쓰되, **月이 12→1로 넘어간 경우에만** 해를 하나 올린다.
- * 반대 방향(1월에 12월분)은 있을 수 없으므로 나오면 문제로 보고한다.
- */
-function resolveGameDate(fetchedDate: string, monthDay: string): string | null {
-  const year = Number(fetchedDate.slice(0, 4));
-  const fetchedMonth = Number(fetchedDate.slice(5, 7));
-  const month = Number(monthDay.slice(0, 2));
-  if (fetchedMonth === 12 && month === 1) return `${year + 1}-${monthDay}`;
-  if (fetchedMonth === 1 && month === 12) return null;
-  return `${year}-${monthDay}`;
-}
 
 for (const file of files) {
   const fetchedDate = file.replace(/\.html\.gz$/, "");
@@ -106,6 +94,34 @@ for (const file of files) {
   }
 
   /**
+   * ⚠**연도를 정할 수 없으면 실패다**(M7 · 설계 D3-2·4) — 창 [취득일 − 351, 취득일 + 14](366일) 안에 그 날짜가 없다. 평년 날짜는 언제나 걸리므로
+   *   **사실상 2/29 뿐**이다(낡은 비시즌 페이지는 351일까지 맥박만 · 3판).
+   * ⚠**그 파일은 어느 표도 안 바꾼다** — 맥박(`starters_fetch`)도 남기지 않는다(「받았다」와 「읽었다」를 섞지 않는다 · 위 파서 실패와 같다).
+   * ⚠**아카이브 전체를 매번 다시 읽으므로 그 파일은 매 실행 실패한다**(저절로 안 낫는다 · 처치는 런북 `docs/operations/deploy.md` §7-L 「予告先発 파일이 매 실행 실패할 때」).
+   */
+  const resolved = resolveStartersDate(fetchedDate, parsed.monthDay);
+  if (!resolved.ok) {
+    failed += 1;
+    problems.push(`${file}: 게시 ${parsed.monthDay}의 연도를 정할 수 없다 — ${resolved.reason}`);
+    continue;
+  }
+  const gameDate = resolved.date;
+  if (values.season !== undefined && !gameDate.startsWith(`${values.season}-`)) continue;
+
+  /**
+   * ⚠⚠**지난 날짜 게시는 맥박만 남긴다**(설계 D3-5) — 게시 날짜 · `no_games` 는 페이지대로, `probable_pitcher`·`player` 는 안 쓴다.
+   * 시즌 중 실측 68회는 전부 0·+1일이다(설계 R4) — 음수는 비시즌의 **낡은 페이지**뿐이다. 그 페이지로 예고를 다시 쓰면
+   *   ⑴ 옛 예고의 `fetched_at` 이 올라가 「예고보다 늦은 휴식 공표」 순서(9/11 D1-B · `probableWithdrawal`)가 뒤집히고
+   *   ⑵ 「받았다」(맥박)와 「새 예고」가 섞인다. ⚠옛 갈래(1월 취득 ∧ 12월 게시 → 실패)도 여기로 흡수된다.
+   * ⚠대가: 자정 직후 어제 게시를 다시 보면 그 예고 행을 안 갱신한다(관측 0/68).
+   */
+  if (resolved.lag < 0) {
+    pastPulses += 1;
+    upsertFetch.run(fetchedDate, gameDate, parsed.noGamesScheduled ? 1 : 0, STARTERS_URL, fetchedAt);
+    continue;
+  }
+
+  /**
    * ⚠**휴일은 실패가 아니다**(M11). NPB는 월요일이 대체로 휴일이고, 일요일 밤이면
    * 이 페이지가 이미 월요일자로 넘어가 「試合が予定されていません。」만 남는다.
    * 그것을 실패로 세면 **매주 일요일 밤에 수집이 exit 1로 끝나고, 빌드도 배포도 못 간다**
@@ -114,20 +130,9 @@ for (const file of files) {
   if (parsed.noGamesScheduled) {
     restDays += 1;
     // ⚠**휴식 공표도 맥박이다** — NPB 가 날짜를 붙여 「그날은 경기가 없다」고 적은 것이다(예비 경기 날의 근거 · 설계 D4)
-    const restDate = resolveGameDate(fetchedDate, parsed.monthDay);
-    if (values.season === undefined || restDate === null || restDate.startsWith(`${values.season}-`)) {
-      upsertFetch.run(fetchedDate, restDate, 1, STARTERS_URL, fetchedAt);
-    }
+    upsertFetch.run(fetchedDate, gameDate, 1, STARTERS_URL, fetchedAt);
     continue;
   }
-
-  const gameDate = resolveGameDate(fetchedDate, parsed.monthDay);
-  if (gameDate === null) {
-    failed += 1;
-    problems.push(`${file}: 취득일 ${fetchedDate}와 게시 ${parsed.monthDay}의 연도를 정할 수 없다`);
-    continue;
-  }
-  if (values.season !== undefined && !gameDate.startsWith(`${values.season}-`)) continue;
 
   db.transaction(() => {
     upsertFetch.run(fetchedDate, gameDate, 0, STARTERS_URL, fetchedAt);
@@ -172,7 +177,9 @@ db.close();
 console.log(
   `予告先発: 파일 ${files.length}건 · 경기 ${games} · 발표 ${announced} · 미발표 ${pending}` +
     // ⚠**「경기가 없는 날」을 세어서 보여준다.** 안 보이면 「왜 오늘은 0건이지?」에 답할 수 없다
-    (restDays > 0 ? ` · 경기 없는 날 ${restDays}` : ""),
+    (restDays > 0 ? ` · 경기 없는 날 ${restDays}` : "") +
+    // ⚠**맥박만 남긴 지난 날짜 게시도 센다**(설계 D3-5) — 비시즌 내내 이 수가 는다면 그 페이지가 낡은 채 멈춰 있다는 뜻이다
+    (pastPulses > 0 ? ` · 지난 날짜 게시 ${pastPulses}건(맥박만)` : ""),
 );
 if (problems.length > 0) {
   console.error(`⚠문제 ${problems.length}건`);

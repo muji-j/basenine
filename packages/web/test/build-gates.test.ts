@@ -16,23 +16,28 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
-import { readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import {
   loadDraft,
   openDb,
+  replacePaEvents,
   upsertBatting,
   upsertGame,
   upsertPitching,
   upsertPlayer,
   upsertProbablePitcher,
 } from "@bb-app/store";
-import type { Db } from "@bb-app/store";
+import type { Db, PaEventRow } from "@bb-app/store";
+import type { Outcome } from "@bb-app/parser";
 import { regularSeasonGames } from "@bb-app/domain";
 import { loadSite } from "../src/query.ts";
 import { contactGate } from "../src/layout.ts";
+import { DEFER_MAX_GAME_DAYS } from "../src/build-seasons.ts";
+import { leagueGameDays, noticeOf, rootSeason } from "../src/newest-season.ts";
+import { RunValueSampleError } from "@bb-app/aggregate";
 // ⚠**서체 게이트의 판정 한 벌**(M1) — 배포를 막은 바로 그 수집기로 잰다
 import { collectUsedChars } from "../../../scripts/fonts.ts";
 
@@ -60,7 +65,7 @@ const pitId = (code: string): string => String(9_000_000 + CODES.indexOf(code) *
  * ⚠**양 리그에 선수를 남긴다.** 리그 번들이 없으면 `teamPages` 가 그 리그의 팀을 통째로
  * 건너뛰어서, 「発表待ち」를 세는 자리 자체가 안 돈다.
  */
-function played(db: Db, date: string, home: string, away: string, season = 2026): void {
+function played(db: Db, date: string, home: string, away: string, season = 2026): string {
   seq += 1;
   const gameId = `g${seq}`;
   upsertGame(db, {
@@ -77,6 +82,7 @@ function played(db: Db, date: string, home: string, away: string, season = 2026)
     gameId, playerId: pitId(away), side: "away", decision: null,
     outs: 21, bf: 28, pitches: 90, h: 5, hr: 0, bb: 2, hbp: 0, so: 7, runs: 1, er: 1, wp: 0, balk: 0,
   });
+  return gameId;
 }
 
 /** 12구단 전부의 선수를 남긴다. 경기가 없는 팀은 화면에 안 나오므로 이것만으로는 아무 일도 안 난다 */
@@ -95,7 +101,7 @@ function roster(db: Db): void {
  * 교류전이 **3** 일 때뿐이라(`(143 − 3×6) / 5 = 25`), 한 쌍만 3경기를 치르면 유도가 선다.
  * 리그내 최대는 1이라 25 이하 조건도 만족한다. **9경기로 `confirmed` 가 된다.**
  */
-function confirmableSeason(db: Db, season: number): void {
+function confirmableSeason(db: Db, season: number): { id: string; home: string; away: string }[] {
   const plan: readonly [string, string, number][] = [
     // 교류전 최대치 3 — 이게 유도의 열쇠다
     ["t", "l", 3],
@@ -103,23 +109,119 @@ function confirmableSeason(db: Db, season: number): void {
     ["g", "c", 1], ["d", "s", 1], ["db", "t", 1],
     ["m", "h", 1], ["b", "f", 1], ["e", "l", 1],
   ];
+  const games: { id: string; home: string; away: string }[] = [];
   let day = 1;
   for (const [home, away, n] of plan) {
     for (let i = 0; i < n; i += 1) {
-      played(db, `${season}-04-${String(day).padStart(2, "0")}`, home, away, season);
+      games.push({ id: played(db, `${season}-04-${String(day).padStart(2, "0")}`, home, away, season), home, away });
       day += 1;
     }
   }
+  return games;
+}
+
+/**
+ * **실제 모양의 타석 로그** — 결과마다 실물 표기(박스 칸 · 실황 문장)를 단다. 타구 분류(`battedBalls`)가 실황 문장의 어휘를 검사하므로
+ * 지어낸 글자를 넣으면 빌드가 「모르는 표기」로 멈춘다(M7) — 그래서 실물에 있는 표기만 쓴다.
+ * ⚠wOBA 계수가 붙는 7종 + 원점(계수 0) 2종이 다 있어야 그 리그의 계수 유도가 선다(`deriveRunValues`).
+ */
+const PA_RAW: Readonly<Record<string, { box: string; pbp: string; runs: number }>> = {
+  single: { box: "中安", pbp: "センター前ヒット", runs: 0 },
+  double: { box: "左２", pbp: "レフトへのツーベースヒット", runs: 0 },
+  triple: { box: "右３", pbp: "ライトへのスリーベースヒット", runs: 0 },
+  homerun: { box: "左本", pbp: "レフトへのホームラン", runs: 1 },
+  walk: { box: "四球", pbp: "フォアボール", runs: 0 },
+  hitByPitch: { box: "死球", pbp: "デッドボール", runs: 0 },
+  reachedOnError: { box: "遊失", pbp: "ショートゴロエラー", runs: 0 },
+  strikeout: { box: "三振", pbp: "空振り三振", runs: 0 },
+  fieldedOut: { box: "投ゴロ", pbp: "ピッチャーゴロ", runs: 0 },
+};
+const ALL_PA = Object.keys(PA_RAW);
+
+/**
+ * 그 경기의 **윗 이닝(원정 공격)** 타석 — 이닝마다 한 타석이고 그 타석으로 이닝이 끝난다(무사 주자 없음에서 시작 · `afterStateOf` 의 「이닝 끝」).
+ * `rawPbp` 를 주면 모든 타석의 실황 문장을 그것으로 바꾼다(모르는 표기 시험용).
+ */
+function topHalfPas(db: Db, gameId: string, away: string, home: string, outcomes: readonly string[], rawPbp?: string): void {
+  replacePaEvents(db, gameId, outcomes.map((o, i): PaEventRow => {
+    const raw = PA_RAW[o]!;
+    return {
+      gameId, seq: i + 1, inning: i + 1, half: "top", outsBefore: 0, bases: "",
+      batterId: batId(away), pitcherId: pitId(home), outcome: o as Outcome, rbi: raw.runs, runsScored: raw.runs,
+      rawBox: raw.box, rawPbp: rawPbp ?? raw.pbp, ballCount: null, status: "final",
+    };
+  }));
+  /**
+   * ⚠**그 타석들과 맞는 원정 타자의 박스 줄도 남긴다** — 리그 상수(`wobaWeightsFrom`)는 계수를 **박스 성적**에 곱해 리그 합을 만든다.
+   * 이 픽스처의 타석은 전부 「한 타석에 이닝 끝」이라 득점 없는 사건의 득점가치가 원점과 같다(계수 0) — 홈런만 계수가 선다.
+   * 박스에 홈런이 없으면 리그 합이 0 이 되어 `RangeError`(선형가중치의 리그 합이 0)로 멈춘다.
+   */
+  const n = (k: string): number => outcomes.filter((o) => o === k).length;
+  const bb = n("walk");
+  const hbp = n("hitByPitch");
+  upsertBatting(db, {
+    gameId, playerId: batId(away), side: "away", battingOrder: "1", position: "(中)",
+    pa: outcomes.length, ab: outcomes.length - bb - hbp, h: n("single") + n("double") + n("triple") + n("homerun"),
+    d2: n("double"), d3: n("triple"), hr: n("homerun"), bb, ibb: 0, hbp, sf: 0, sh: 0, so: n("strikeout"), roe: n("reachedOnError"),
+    runs: n("homerun"), rbi: n("homerun"), sb: 0,
+  });
+  // ⚠상대 투수(홈)의 투구 줄도 남긴다 — 대전 표가 그 투수를 링크하므로 선수 페이지가 없으면 깨진 링크로 배포가 막힌다
+  upsertPitching(db, {
+    gameId, playerId: pitId(home), side: "home", decision: null,
+    outs: 3 * outcomes.length, bf: outcomes.length, pitches: 4 * outcomes.length,
+    h: n("single") + n("double") + n("triple") + n("homerun"), hr: n("homerun"), bb, hbp, so: n("strikeout"),
+    runs: n("homerun"), er: n("homerun"), wp: 0, balk: 0,
+  });
+}
+
+/**
+ * **게이트를 다 통과하는 끝난 시즌** — 12구단 6:6(우승 판정 confirmed) + 두 리그 모두 계수 유도가 서는 타석 로그.
+ * `central`·`pacific` 으로 리그별 사건 목록을 바꿀 수 있다(표본 0 재현).
+ */
+function cleanSeason(db: Db, season: number, o: { central?: readonly string[]; pacific?: readonly string[] } = {}): void {
+  const games = confirmableSeason(db, season);
+  const central = games.find((g) => g.home === "g" && g.away === "c")!;
+  const pacific = games.find((g) => g.home === "m" && g.away === "h")!;
+  topHalfPas(db, central.id, "c", "g", o.central ?? ALL_PA);
+  topHalfPas(db, pacific.id, "h", "m", o.pacific ?? ALL_PA);
+}
+
+/**
+ * **새 시즌의 개막일 모양** — 그날 두 리그 한 경기씩. `central` 에서 사건 하나를 빼면 그 리그의 계수 유도가 「표본 0」으로 던진다
+ * (실측: 보유 9시즌 중 개막 1경기일째 7/9 · 2경기일째 3/9 · 3경기일째 이후 0/9 · PR-4 3중 검토 2차 F1).
+ */
+function openingDay(db: Db, season: number, o: { central?: readonly string[]; rawPbp?: string; days?: number } = {}): void {
+  // `days` — 개막(3월 27일)부터 이어지는 경기일 수(기본 1). 날마다 같은 두 경기를 둔다
+  for (let i = 0; i < (o.days ?? 1); i += 1) {
+    const date = new Date(Date.UTC(season, 2, 27) + i * 86_400_000).toISOString().slice(0, 10);
+    topHalfPas(db, played(db, date, "g", "c", season), "c", "g", o.central ?? ALL_PA, o.rawPbp);
+    topHalfPas(db, played(db, date, "m", "h", season), "h", "m", ALL_PA);
+  }
+}
+
+/**
+ * **리그 개막이 엇갈린 해의 모양**(PR-4 재검토 F2) — 퍼시픽이 `pacificDays` 경기일 먼저 치르고, **그 마지막 날에** 센트럴이 개막한다.
+ * 센트럴 개막일에 사건 하나(`central`)를 빼면 그 리그만 「표본 0」 — 시즌 전체 경기일은 `pacificDays` 다.
+ * @returns 마지막 날(센트럴 개막일)
+ */
+function staggeredOpening(db: Db, season: number, pacificDays: number, central: readonly string[]): string {
+  let last = "";
+  for (let i = 0; i < pacificDays; i += 1) {
+    last = new Date(Date.UTC(season, 2, 27) + i * 86_400_000).toISOString().slice(0, 10);
+    topHalfPas(db, played(db, last, "m", "h", season), "h", "m", ALL_PA);
+  }
+  topHalfPas(db, played(db, last, "g", "c", season), "c", "g", central);
+  return last;
 }
 
 /** 예정 경기 한 개. `game` 표가 아니라 `upcoming_game` 이다(마이그레이션 015의 이유) */
-function upcoming(db: Db, date: string, home: string, away: string): void {
+function upcoming(db: Db, date: string, home: string, away: string, season = 2026): void {
   db.raw
     .prepare(
       `INSERT INTO upcoming_game (season, game_date, home_code, away_code, seq, venue, start_time, source, fetched_at)
        VALUES (?, ?, ?, ?, 1, '甲子園', '18:00', 'https://npb.jp/games/', ?)`,
     )
-    .run(2026, date, home, away, NOW);
+    .run(season, date, home, away, NOW);
 }
 
 interface Fixture {
@@ -388,20 +490,22 @@ test("⚠12구단이 갖춰지면 판정이 선다 — 위 시험이 「늘 unkn
  *
  * **한 번의 실행으로 진리표 전부를 잰다**(실측 비용: 1회 약 0.7~1초):
  * ```
- * 2024  12구단 6:6 → confirmed · 뒤 시즌이 있으니 seasonOver   → 막지 않는다
- * 2025  4구단      → unknown   · 뒤 시즌이 있으니 seasonOver   → **여기만 막는다**
- * 2026  4구단      → unknown   · 마지막 시즌이라 아직 안 끝남  → 막지 않는다(4~5월의 정상 상태)
+ * 2018  12구단 6:6 → confirmed · 뒤 시즌이 있으니 seasonOver   → 막지 않는다
+ * 2019  4구단      → unknown   · 뒤 시즌이 있으니 seasonOver   → **여기만 막는다**
+ * 2020  4구단      → unknown   · 마지막 시즌이라 아직 안 끝남  → 막지 않는다(4~5월의 정상 상태)
  * ```
- * ⚠**「1시즌」이라는 수 자체가 판정식 양쪽을 다 재는 단언이다** — `seasonOver` 를 빼면 2026 이,
- * `basis` 를 뒤집으면 2024 가 같이 잡혀서 수가 달라진다.
+ * ⚠**「1시즌」이라는 수 자체가 판정식 양쪽을 다 재는 단언이다** — `seasonOver` 를 빼면 2020 이,
+ * `basis` 를 뒤집으면 2018 이 같이 잡혀서 수가 달라진다.
+ * ⚠**시즌이 2018 부터 이어진다**(2026-10-25 · PR-4 3중 검토 반영 ②) — 빌드가 공개 하한(`PUBLIC_SEASON_FLOOR` = 2018)~최신의
+ *   구멍을 굽기 전에 막으므로, 2024 부터 시작하면 게이트까지 가지도 못한다. ⚠2020 은 120경기 시즌이라 「끝난 confirmed」 자리에 못 쓴다.
  */
 test("⚠빌드를 실제로 돌리면 끝난 시즌의 판정 부재만 막는다 — 죽은 코드가 아니다", async () => {
   await withBuild(
-    "2026,2025,2024",
+    "2020,2019,2018",
     (db) => {
       roster(db);
-      confirmableSeason(db, 2024);
-      for (const season of [2025, 2026]) {
+      confirmableSeason(db, 2018);
+      for (const season of [2019, 2020]) {
         for (let i = 0; i < 3; i += 1) {
           const d = `${season}-04-0${i + 1}`;
           played(db, d, "t", "g", season);
@@ -417,9 +521,9 @@ test("⚠빌드를 실제로 돌리면 끝난 시즌의 판정 부재만 막는�
         /이미 끝난 시즌인데 우승 판정이 서지 않았다 — 1시즌/,
         `끝난 시즌의 판정 부재를 안 막았다(또는 몇 시즌인지가 다르다):\n${r.stderr}`,
       );
-      assert.match(r.stderr, /\n\s+2025: 규정 대전수 유도 실패/, "어느 시즌인지 안 말한다");
-      assert.doesNotMatch(r.stderr, /\n\s+2024: 규정 대전수/, "판정이 선 시즌까지 막았다");
-      assert.doesNotMatch(r.stderr, /\n\s+2026: 규정 대전수/, "아직 안 끝난 시즌까지 막았다");
+      assert.match(r.stderr, /\n\s+2019: 규정 대전수 유도 실패/, "어느 시즌인지 안 말한다");
+      assert.doesNotMatch(r.stderr, /\n\s+2018: 규정 대전수/, "판정이 선 시즌까지 막았다");
+      assert.doesNotMatch(r.stderr, /\n\s+2020: 규정 대전수/, "아직 안 끝난 시즌까지 막았다");
       assert.equal(r.status, 1, "배포를 세우지 않았다");
     },
   );
@@ -427,14 +531,14 @@ test("⚠빌드를 실제로 돌리면 끝난 시즌의 판정 부재만 막는�
 
 /**
  * ⚠⚠**T10 — `BB_UPSTREAM_OUTAGE=1` 은 낡음 게이트만 푼다**(2026-10-24 · 설계 `2026-10-24-collection-resilience-design.md` D5).
- * 위와 같은 픽스처(끝난 2025 의 판정 부재 · 경기가 2026-04 뿐이라 **반드시 낡았다**)를 두 번 굽는다:
+ * 위와 같은 픽스처(끝난 2019 의 판정 부재 · 최신 경기가 2020-04 뿐이라 **반드시 낡았다**)를 두 번 굽는다:
  * env 없음 → 낡음 게이트가 막는 문구 · env 1 → 경고 문구로 바뀌고 막는 문구는 사라진다 · **그래도 종료 1**(판정 부재 게이트는 env 와 무관).
  */
 test("⚠⚠T10 빌드를 실제로 돌리면 BB_UPSTREAM_OUTAGE=1 은 낡음 게이트만 경고로 바꾸고 다른 게이트는 그대로 막는다", async () => {
   const seedRace = (db: Db): void => {
     roster(db);
-    confirmableSeason(db, 2024);
-    for (const season of [2025, 2026]) {
+    confirmableSeason(db, 2018);
+    for (const season of [2019, 2020]) {
       for (let i = 0; i < 3; i += 1) {
         const d = `${season}-04-0${i + 1}`;
         played(db, d, "t", "g", season);
@@ -442,12 +546,12 @@ test("⚠⚠T10 빌드를 실제로 돌리면 BB_UPSTREAM_OUTAGE=1 은 낡음 �
       }
     }
   };
-  await withBuild("2026,2025,2024", seedRace, (r) => {
+  await withBuild("2020,2019,2018", seedRace, (r) => {
     assert.match(r.stdout, /생성: \d+파일/, `빌드가 게이트까지 가지도 못했다:\n${r.stderr}`);
     assert.match(r.stderr, /데이터가 낡았다 — 수집이 멈췄는지 확인하라/, "전제가 틀렸다 — 픽스처가 낡지 않았다");
   });
   await withBuild(
-    "2026,2025,2024",
+    "2020,2019,2018",
     seedRace,
     (r) => {
       assert.match(r.stdout, /생성: \d+파일/, `빌드가 게이트까지 가지도 못했다:\n${r.stderr}`);
@@ -497,56 +601,500 @@ function draftOf(db: Db, season: number, team: string, name = "山田 太郎"): 
   });
 }
 
+// ── 빌드 시즌 목록(PR-4 설계 `2026-10-24-offseason-readiness-design.md` D4 · T5) ─────────────────────────
+
 /**
- * ⚠⚠**분류에 「경기가 있는가」를 묻는 자리가 없었다**(2026-09-07 이중 검토 P3).
+ * **`build.ts` 를 띄워 시즌 목록 판정을 잰다** — 기존 dist 에 표지 파일을 두고, 판정이 실패하면 **그 표지가 그대로인가**를 본다.
+ * ⚠⚠**시즌 목록의 판정(형식 · DB 유도 · 목록 밖 played 시즌)은 `rmSync(outDir)` 앞이다**(설계 D4) — 실패면 굽지 않고
+ *   **기존 dist 를 건드리지 않는다**(CI 에서는 배포 단계가 `success()` 라 안 돌고 지금 사이트가 남는다).
+ * `db`: `ok`(기본 · `seed` 로 채움) · `garbage`(SQLite 가 아닌 바이트) · `missing`(파일 없음 — 빌드가 만들지도 않아야 한다).
+ */
+/** 자식 빌드의 「지금」을 고정하는 미리 읽기(제품 코드에 시험용 구멍을 내지 않는다 · `packages/store/test/fixed-now-preload.ts`) */
+const FIXED_NOW = new URL("../../store/test/fixed-now-preload.ts", import.meta.url).href;
+
+async function runBuild(
+  o: {
+    seasonArg: string;
+    seed?: (db: Db) => void;
+    db?: "ok" | "garbage" | "missing";
+    /** 주면 빌드의 시계를 그 시각으로 고정한다(낡음 게이트를 픽스처 날짜에 맞춘다 · 「종료 0」 시험용) */
+    now?: string;
+  },
+  fn: (r: { status: number | null; stdout: string; stderr: string; dist: string; markerKept: boolean; dbExists: boolean }) => void,
+): Promise<void> {
+  const dir = await mkdtemp(join(tmpdir(), "bb-build-seasons-"));
+  const dbPath = join(dir, "t.sqlite");
+  const dist = join(dir, "dist");
+  const marker = join(dist, "marker-from-last-deploy.txt");
+  try {
+    if ((o.db ?? "ok") === "ok") {
+      const db = openDb(dbPath, NOW);
+      try {
+        o.seed?.(db);
+      } finally {
+        db.close();
+      }
+    } else if (o.db === "garbage") {
+      writeFileSync(dbPath, "this is not an sqlite database\n".repeat(64));
+    }
+    mkdirSync(dist, { recursive: true });
+    writeFileSync(marker, "지난 배포물\n");
+    const pre = o.now === undefined ? [] : ["--import", FIXED_NOW];
+    const r = spawnSync(process.execPath, [...pre, join(import.meta.dirname, "..", "tools", "build.ts"), dbPath, dist, o.seasonArg], {
+      encoding: "utf8",
+      cwd: join(import.meta.dirname, "..", "..", ".."),
+      env: { ...process.env, BB_CONTACT: "", BB_REQUIRE_CONTACT: "", BB_UPSTREAM_OUTAGE: "", ...(o.now === undefined ? {} : { BB_TEST_NOW: o.now }) },
+    });
+    fn({
+      status: r.status,
+      stdout: r.stdout ?? "",
+      stderr: r.stderr ?? "",
+      dist,
+      markerKept: existsSync(marker),
+      dbExists: existsSync(dbPath),
+    });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/** 그 시즌에 치른 경기 셋(양 리그) — 빌드가 그 시즌을 끝까지 굽게 */
+function threeDays(db: Db, season: number): void {
+  for (let i = 0; i < 3; i += 1) {
+    const d = `${String(season)}-04-0${String(i + 1)}`;
+    played(db, d, "t", "g", season);
+    played(db, d, "l", "m", season);
+  }
+}
+
+/** 그 시즌에 **중지된** 경기 하나 — `played` 가 아니다(개막일 전부 중지) */
+function canceledOnly(db: Db, season: number): void {
+  seq += 1;
+  upsertGame(db, {
+    gameId: `c${String(seq)}`, season, gameDate: `${String(season)}-03-27`, awayCode: "g", homeCode: "t", gameNo: 1,
+    status: "notPlayed", notPlayedReason: "雨天中止", competition: "regular",
+    sourceUrl: "https://npb.jp/x", fetchedAt: NOW, awayRuns: null, homeRuns: null,
+  });
+}
+
+/*
+ * ⚠**아래 빌드 시험의 시즌은 2018 부터 이어진다**(2026-10-25 · PR-4 3중 검토 반영 ②) — 빌드가 공개 하한(`PUBLIC_SEASON_FLOOR` = 2018)~최신
+ *   사이의 구멍을 굽기 전에 막으므로(`resolveBuildSeasons`), 2026·2027 만 넣으면 「2018~2025 구멍」으로 게이트 앞에서 멈춘다.
+ *   ⚠2020 은 120경기 시즌이라 `confirmableSeason`(143경기 역산)의 「끝난 시즌」 자리에 못 쓴다 — 2018·2019 를 쓴다.
+ */
+test("⚠⚠PR-4 T5 auto — 2018·2019 에 치른 경기가 있으면 루트는 2019 · 2018 은 /2018/ 으로 간다(새 시즌 전환을 데이터가 한다)", async () => {
+  await runBuild({ seasonArg: "auto", seed: (db) => { roster(db); threeDays(db, 2018); threeDays(db, 2019); } }, (r) => {
+    assert.match(r.stdout, /생성: \d+파일/, `빌드가 끝까지 가지도 못했다:\n${r.stderr}`);
+    assert.match(r.stdout, /^ {2}2019年\(現行\) : /m, "루트가 2019 가 아니다");
+    assert.match(r.stdout, /^ {2}2018年 → \/2018\/ : /m, "2018 이 /2018/ 으로 가지 않았다");
+    assert.match(r.stdout, /시즌 2019·2018/, "시즌 목록이 내림차순 2019·2018 이 아니다");
+    assert.ok(existsSync(join(r.dist, "2018", "index.html")), "/2018/ 에 화면이 없다");
+    assert.ok(!existsSync(join(r.dist, "2019")), "루트 시즌이 /2019/ 에도 구워졌다");
+  });
+});
+
+test("⚠⚠PR-4 T5 명시 목록의 입력 순서는 뜻이 없다 — 2018,2019 여도 루트는 최댓값 2019", async () => {
+  await runBuild({ seasonArg: "2018,2019", seed: (db) => { roster(db); threeDays(db, 2018); threeDays(db, 2019); } }, (r) => {
+    assert.match(r.stdout, /생성: \d+파일/, `빌드가 끝까지 가지도 못했다:\n${r.stderr}`);
+    assert.match(r.stdout, /^ {2}2019年\(現行\) : /m, "입력의 첫 원소(2018)를 루트로 썼다 — 기존 URL 이 통째로 옮겨 간다");
+    assert.match(r.stdout, /^ {2}2018年 → \/2018\/ : /m);
+  });
+});
+
+test("⚠⚠PR-4 T5 auto — 2019 가 중지 경기(notPlayed)뿐이면 2019 는 목록에 안 든다(played 로 센다)", async () => {
+  await runBuild({ seasonArg: "auto", seed: (db) => { roster(db); threeDays(db, 2018); canceledOnly(db, 2019); } }, (r) => {
+    assert.match(r.stdout, /생성: \d+파일/, `빌드가 끝까지 가지도 못했다:\n${r.stderr}`);
+    assert.match(r.stdout, /^ {2}2018年\(現行\) : /m, "중지 경기뿐인 2019 가 루트가 됐다 — 선수 0명 게이트로 배포가 멈춘다");
+    assert.doesNotMatch(r.stdout, /2019年/);
+    assert.doesNotMatch(r.stderr, /선수가 0명이다: 2019/);
+  });
+});
+
+/** ⚠판정 실패의 공통 계약 — 굽지 않았고(「생성」 없음) 기존 dist 의 표지가 그대로다 */
+function assertNotBuilt(r: { status: number | null; stdout: string; stderr: string; markerKept: boolean }, code: number, why: RegExp): void {
+  assert.equal(r.status, code, `종료 코드가 ${String(code)} 가 아니다:\n${r.stderr}`);
+  assert.match(r.stderr, why);
+  assert.doesNotMatch(r.stdout, /생성: \d+파일/, "판정이 실패했는데 굽었다");
+  assert.ok(r.markerKept, "판정이 실패했는데 기존 dist 를 지웠다 — 지금 사이트를 지킬 수 없다");
+}
+
+test("⚠⚠PR-4 T5 (a) auto 인데 치른 경기가 있는 시즌이 0 이면 1 · 기존 dist 그대로", async () => {
+  await runBuild({ seasonArg: "auto", seed: (db) => { roster(db); canceledOnly(db, 2027); } }, (r) => {
+    assertNotBuilt(r, 1, /치른 경기가 있는 시즌이 하나도 없다/);
+  });
+});
+
+test("⚠⚠PR-4 T5 (b) DB 를 못 읽으면(SQLite 가 아님 · 파일 없음) 1 · 기존 dist 그대로 · 없는 DB 를 만들지 않는다", async () => {
+  for (const seasonArg of ["auto", "2026"]) {
+    await runBuild({ seasonArg, db: "garbage" }, (r) => assertNotBuilt(r, 1, /DB 를 열지 못했다/));
+    await runBuild({ seasonArg, db: "missing" }, (r) => {
+      assertNotBuilt(r, 1, /DB 가 없다/);
+      assert.equal(r.dbExists, false, "없는 DB 를 빈 DB 로 만들었다");
+    });
+  }
+});
+
+/**
+ * ⚠⚠**분류에 「경기가 있는가」를 묻는 자리가 없었다**(2026-09-07 이중 검토 P3) — 그리고 **굽고 나서 물었다**(PR-4 설계 R8).
  *
- * `draftOnly` 는 **「빌드 인자 목록에 없는 드래프트 시즌」**을 전부 드래프트 전용으로 본다.
- * 2017 을 백필해 놓고 `package.json` 의 시즌 목록 갱신을 잊으면 그 시즌이 **조용히 한 장으로만
- * 구워지고** 선수·경기·순위가 통째로 사라진 채 **「그 해는 원래 드래프트만 있는 해」로 읽힌다.**
- * ⚠**빈 화면조차 안 남는다** — `emptySeasons` 는 **목록에 적힌** 시즌만 보므로 이 갈래에 닿지 않고,
- * 링크 검사도 통과한다(없는 화면은 링크도 없다). M7 의 「조용한 0」보다 더 안 보이는 모양이다.
+ * `draftOnly` 는 **「빌드 인자 목록에 없는 드래프트 시즌」**을 전부 드래프트 전용으로 본다. 2017 을 백필해 놓고 시즌 목록 갱신을 잊으면
+ * 그 시즌이 **조용히 한 장으로만 구워지고** 선수·경기·순위가 통째로 사라진 채 「그 해는 원래 드래프트만 있는 해」로 읽힌다.
+ * 옛 게이트(`droppedSeasons`)는 그것을 막았지만 **드래프트도 있는 시즌만** 봤고 **`rmSync(outDir)` 뒤에** 돌았다(설계 R8).
+ * → ⚠**기대값을 바꿨다**(설계 §4 「의도한 기대값 변경」): 목록 밖의 **치른(played) 시즌 전부**를 **굽기 전에** 막고 dist 는 그대로다.
  *
  * **한 번의 실행으로 양쪽을 다 잰다**:
  * ```
- * 2025  드래프트 있음 · 경기 있음 · 목록 밖  → **여기만 막는다**
- * 2010  드래프트 있음 · 경기 없음 · 목록 밖  → 막지 않는다(이 기능의 정상 사용)
+ * 2018  드래프트 있음 · 치른 경기 있음 · 목록 밖  → **막는다**(굽기 전 · dist 불변)
+ * 2010  드래프트 있음 · 경기 없음     · 목록 밖  → 막지 않는다(드래프트만 있는 시즌 · 이 기능의 정상 사용)
  * ```
+ * ⚠**구멍 판정이 섞이지 않게 2018·2019 로 잰다**(2026-10-25) — 구멍이 있으면 그 판정도 같은 실행에서 1 을 내서
+ *   「목록 밖」 판정을 빼도 이 시험이 붉어지지 않는다(공회전).
  */
-test("⚠경기가 있는 시즌을 드래프트 한 장으로 굽지 않는다 — 목록에서 빠진 것을 조용히 지우지 않는다", async () => {
-  await withBuild(
-    "2026",
-    (db) => {
-      roster(db);
-      played(db, "2026-04-01", "t", "g", 2026);
-      played(db, "2025-04-01", "t", "g", 2025);
-      draftOf(db, 2025, "t");
-      draftOf(db, 2010, "t");
+test("⚠⚠PR-4 T5 (c) 목록 밖의 치른 시즌이 있으면 굽기 전에 1 · 기존 dist 그대로 — 드래프트가 있든 없든 · 드래프트만 있는 시즌은 막지 않는다", async () => {
+  const noHole = (r: { stderr: string }): void =>
+    assert.doesNotMatch(r.stderr, /치른 경기가 없는 시즌이 있다/, "구멍 판정이 섞였다 — 「목록 밖」 판정만 재야 한다");
+  await runBuild(
+    {
+      seasonArg: "2019",
+      seed: (db) => {
+        roster(db);
+        played(db, "2019-04-01", "t", "g", 2019);
+        played(db, "2018-04-01", "t", "g", 2018);
+        draftOf(db, 2018, "t");
+        draftOf(db, 2010, "t");
+      },
     },
     (r) => {
-      // ⚠**게이트까지 갔는가부터 확인한다** — 도중에 죽으면 아래 「안 났다」가 공허해진다
-      assert.match(r.stdout, /생성: \d+파일/, `빌드가 게이트까지 가지도 못했다:\n${r.stderr}`);
-      assert.match(
-        r.stderr,
-        /경기가 있는 시즌을 ドラフト 한 장으로만 구웠다: 2025 —/,
-        `경기가 있는 시즌이 한 장으로 구워지는데 아무 말도 안 했다:\n${r.stderr}`,
-      );
-      assert.doesNotMatch(r.stderr, /구웠다:[^\n]*2010/, "경기가 없는 시즌까지 막았다 — 이 기능이 죽는다");
-      assert.equal(r.status, 1, "배포를 세우지 않았다");
+      assertNotBuilt(r, 1, /치른 경기가 있는 시즌이 시즌 목록\(2019\)에 없다: 2018 —/);
+      assert.doesNotMatch(r.stderr, /없다:[^\n]*2010/, "경기가 없는 시즌(드래프트만)까지 막았다 — 이 기능이 죽는다");
+      noHole(r);
+    },
+  );
+  // 드래프트가 **없는** 목록 밖 played 시즌도 막는다 — 옛 게이트는 드래프트 ∩ 경기만 봐서 이 시즌을 조용히 뺐다
+  await runBuild({ seasonArg: "2019", seed: (db) => { roster(db); threeDays(db, 2019); threeDays(db, 2018); } }, (r) => {
+    assertNotBuilt(r, 1, /시즌 목록\(2019\)에 없다: 2018 —/);
+    noHole(r);
+  });
+});
+
+test("⚠PR-4 T5 (d) 중복·형식 오류는 지금처럼 2 · 기존 dist 그대로(DB 를 열기 전)", async () => {
+  for (const [seasonArg, why] of [["2026,2026", /시즌이 중복됐다/], ["2026,x", /시즌이 정수가 아니다/], ["", /시즌이 정수가 아니다/], ["2026,,2025", /시즌이 정수가 아니다/]] as const) {
+    await runBuild({ seasonArg, seed: (db) => { roster(db); threeDays(db, 2026); } }, (r) => assertNotBuilt(r, 2, why));
+  }
+});
+
+/**
+ * ⚠**목록 사본 2곳이 0곳이 된다**(설계 D4 · M1) — 워크플로와 `npm run build:web` 이 같은 판정(`auto`)을 쓴다.
+ * ⚠`packages/web/package.json` 의 `build` 도 같이 본다 — 단일 시즌(`2026`) 목록이 남아 있으면 목록 밖 played 시즌 게이트에 늘 막힌다.
+ */
+test("⚠⚠PR-4 T5 daily.yml 의 화면 생성 · npm run build:web · web 패키지 build 가 시즌을 auto 로 준다 — 시즌 목록 사본이 없다", () => {
+  const root = join(import.meta.dirname, "..", "..", "..");
+  const daily = readFileSync(join(root, ".github", "workflows", "daily.yml"), "utf8").replace(/\r\n/g, "\n");
+  const builds = daily.split("\n").filter((l) => /^\s*run: .*packages\/web\/tools\/build\.ts/.test(l));
+  assert.equal(builds.length, 1, `daily.yml 의 화면 생성 줄이 ${String(builds.length)}개다`);
+  assert.match(builds[0]!, /packages\/web\/tools\/build\.ts data\/bb\.sqlite dist auto$/, `daily.yml 이 auto 가 아니다: ${builds[0]!}`);
+  const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { scripts: Record<string, string> };
+  assert.match(pkg.scripts["build:web"] ?? "", /packages\/web\/tools\/build\.ts data\/bb\.sqlite dist auto &&/, "npm run build:web 이 auto 가 아니다");
+  const web = JSON.parse(readFileSync(join(root, "packages", "web", "package.json"), "utf8").replace(/^﻿/, "")) as { scripts: Record<string, string> };
+  assert.match(web.scripts["build"] ?? "", /tools\/build\.ts \.\.\/\.\.\/data\/bb\.sqlite \.\.\/\.\.\/dist auto$/, "web 패키지 build 가 auto 가 아니다");
+  for (const text of [daily, JSON.stringify(pkg), JSON.stringify(web)]) {
+    assert.doesNotMatch(text, /build\.ts [^\n"]*\b20\d\d,20\d\d/, "시즌 목록 사본이 남아 있다");
+  }
+});
+
+// ── PR-4 3중 검토 반영 ① 새 시즌 개막 직후 — 계수 유도 표본이 서기 전에는 그 시즌을 아직 굽지 않는다(2차 F1 · 조정자 결정 ⒜) ──
+
+const notTriple = ALL_PA.filter((o) => o !== "triple");
+/** 새 시즌 개막일 다음 날 정오(JST) — 낡음 게이트가 픽스처 날짜를 기준으로 판정하게 */
+const DAY_AFTER_OPENING = (season: number): string => `${String(season)}-03-28T03:00:00.000Z`;
+const deferLines = (stdout: string, season: number): string[] =>
+  stdout.split(/\r?\n/).filter((l) => l.startsWith("::warning::") && l.includes(`${String(season)} 시즌은 아직 굽지 않는다`));
+
+/**
+ * ⚠**새 시즌의 앞으로의 일정·予告先発도 넣는다** — 개막 다음 날의 실제 DB 에는 그 둘이 있다. 루트(앞 시즌)의 화면이 굽지 않은 새 시즌 쪽으로
+ *   링크를 내면 링크 검사가 막아 종료 1 이 된다(그 경로를 이 시험이 같이 잰다 · 질의가 시즌으로 거른다는 것의 실측).
+ */
+test("⚠⚠PR-4 반영① auto · 새 시즌(최대) 개막일에 한 리그의 계수 표본이 0(triple) → 그 시즌을 아직 굽지 않는다 · 루트는 이전 시즌 · 경고 1줄 · 종료 0", async () => {
+  const seed = (db: Db): void => {
+    roster(db);
+    cleanSeason(db, 2018);
+    openingDay(db, 2019, { central: notTriple });
+    upcoming(db, "2019-03-29", "t", "g", 2019);
+    upcoming(db, "2019-03-29", "l", "m", 2019);
+    for (const [me, you, league] of [["t", "g", "central"], ["g", "t", "central"]] as const) {
+      upsertProbablePitcher(db, {
+        gameDate: "2019-03-29", teamCode: me, opponentCode: you, playerId: pitId(me),
+        sourceName: `${me}投手`, venue: "甲子園", startTime: "18:00", league,
+        sourceUrl: "https://npb.jp/announcement/starter/", fetchedAt: NOW,
+      });
+    }
+  };
+  await runBuild(
+    { seasonArg: "auto", now: DAY_AFTER_OPENING(2019), seed },
+    (r) => {
+      assert.equal(r.status, 0, `새 시즌 개막일에 빌드가 실패했다 — 그날부터 사흘 배포가 멈춘다:\n${r.stderr}`);
+      assert.match(r.stdout, /^ {2}2018年\(現行\) : /m, "루트가 이전 시즌(2018)이 아니다");
+      assert.doesNotMatch(r.stdout, /2019年/, "표본이 안 선 시즌을 구웠다");
+      assert.ok(!existsSync(join(r.dist, "2019")) && !existsSync(join(r.dist, "2018")), "시즌 폴더 배치가 「2018 루트 · 2019 없음」이 아니다");
+      const w = deferLines(r.stdout, 2019);
+      assert.equal(w.length, 1, `경고가 ${String(w.length)}줄이다:\n${r.stdout}`);
+      assert.match(w[0]!, /triple/, "사유(어느 사건의 표본이 0 인가)를 안 말한다");
+      assert.match(w[0]!, /개막 1경기일째/, "개막 며칠째인지 안 말한다");
+      assert.match(w[0]!, /2018 시즌이 루트다/, "이번 루트가 어느 시즌인지 안 말한다");
+    },
+  );
+});
+
+test("⚠⚠PR-4 반영① 같은 모양에서 새 시즌의 표본이 서면(모든 사건이 있다) 그 시즌을 굽는다 — 루트 2019 · 2018 은 /2018/ · 종료 0 · 경고 없음", async () => {
+  await runBuild(
+    { seasonArg: "auto", now: DAY_AFTER_OPENING(2019), seed: (db) => { roster(db); cleanSeason(db, 2018); openingDay(db, 2019); } },
+    (r) => {
+      assert.equal(r.status, 0, r.stderr);
+      assert.match(r.stdout, /^ {2}2019年\(現行\) : /m);
+      assert.match(r.stdout, /^ {2}2018年 → \/2018\/ : /m);
+      assert.deepEqual(deferLines(r.stdout, 2019), []);
     },
   );
 });
 
 /**
- * ⚠**「막는가」는 위에서 쟀다. 여기서는 「그 줄이 종료 코드를 세우는가」를 잰다** —
- * 자식 프로세스의 종료 코드는 이 픽스처에서 세 게이트가 함께 세우므로 귀속이 안 된다.
+ * ⚠예외는 좁다 — 최대 시즌 · 「표본 0」 · auto · 아직 안 끝남 · 남는 시즌이 있음 · 개막 직후(`DEFER_MAX_GAME_DAYS` 경기일 이하)일 때뿐이다.
+ *   그 밖은 지금처럼 실패하고 굽기 전이라 기존 dist 가 남는다(M7). 조건 하나하나의 참·거짓은 `build-seasons.test.ts` 가 순수 함수로 잰다 —
+ *   여기서는 **빌드가 그 조건에 실제 값을 넘기는가**(배선)를 잰다.
  */
-test("⚠그 시즌이 빠진 것이 종료 코드를 바꾼다 — 경고로 끝내지 않는다", () => {
-  const g = gate(buildSrc(), "droppedSeasons");
-  assert.match(
-    g.block,
-    /process\.exitCode = 1/,
-    "보긴 하는데 종료 코드를 안 바꾼다 — 경고만으로는 그대로 배포된다",
+test("⚠⚠PR-4 반영① 예외는 좁다 — 최대가 아닌 시즌의 표본 0 · 표본 0 이 아닌 RangeError(모르는 실황 표기) · 명시 목록 · 남는 시즌 없음 · 개막 직후가 아님이면 1 · 기존 dist 그대로", async () => {
+  const failsBeforeBaking = (r: { status: number | null; stdout: string; stderr: string; markerKept: boolean }, why: RegExp): void => {
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, why);
+    assert.doesNotMatch(r.stdout, /생성: \d+파일/, "굽고 나서 막았다");
+    assert.ok(r.markerKept, "기존 dist 를 지웠다");
+    assert.deepEqual(deferLines(r.stdout, 2019), [], "예외 밖인데 「아직 굽지 않는다」로 넘겼다");
+    assert.deepEqual(deferLines(r.stdout, 2018), [], "예외 밖인데 「아직 굽지 않는다」로 넘겼다");
+  };
+  // 최대가 아닌 시즌(2018)의 표본 0 — 끝난 시즌의 계수가 안 서는 것은 데이터 결함이다
+  await runBuild(
+    { seasonArg: "auto", now: DAY_AFTER_OPENING(2019), seed: (db) => { roster(db); cleanSeason(db, 2018, { central: notTriple }); openingDay(db, 2019); } },
+    (r) => failsBeforeBaking(r, /triple 의 표본이 0이다[^\n]*2018/),
   );
+  // 최대 시즌이지만 표본 0 이 아닌 RangeError — 실황 표기가 바뀌었다(M7)
+  await runBuild(
+    { seasonArg: "auto", now: DAY_AFTER_OPENING(2019), seed: (db) => { roster(db); cleanSeason(db, 2018); openingDay(db, 2019, { rawPbp: "謎の打球表記" }); } },
+    (r) => failsBeforeBaking(r, /모르는 표기/),
+  );
+  // 명시 목록 — 예외는 auto 만이다(사람이 그 시즌을 적었다)
+  await runBuild(
+    { seasonArg: "2019,2018", now: DAY_AFTER_OPENING(2019), seed: (db) => { roster(db); cleanSeason(db, 2018); openingDay(db, 2019, { central: notTriple }); } },
+    (r) => failsBeforeBaking(r, /triple 의 표본이 0이다[^\n]*2019/),
+  );
+  // 굽을 시즌이 그것뿐 — 빼면 배포할 것이 없다(빈 사이트를 굽지 않는다)
+  await runBuild(
+    { seasonArg: "auto", now: DAY_AFTER_OPENING(2018), seed: (db) => { roster(db); openingDay(db, 2018, { central: notTriple }); } },
+    (r) => failsBeforeBaking(r, /triple 의 표본이 0이다[^\n]*2018/),
+  );
+  // 끝난 시즌 — 다음 시즌(2020)이 시작됐다(개막전이 전부 중지라 played 는 없다). 굽는 목록의 최대(2019)라도 끝난 시즌의 표본 0 은 결함이다
+  await runBuild(
+    { seasonArg: "auto", now: DAY_AFTER_OPENING(2020), seed: (db) => { roster(db); cleanSeason(db, 2018); openingDay(db, 2019, { central: notTriple }); canceledOnly(db, 2020); } },
+    (r) => failsBeforeBaking(r, /triple 의 표본이 0이다[^\n]*2019/),
+  );
+  // ⚠개막 직후가 아니다(상한 + 1 경기일) — 시즌 도중의 「표본 0」은 파서·적재 회귀다. 미루면 현재 시즌이 빠진 채 종료 0 으로 배포된다
+  const days = DEFER_MAX_GAME_DAYS + 1;
+  await runBuild(
+    {
+      seasonArg: "auto",
+      now: new Date(Date.UTC(2019, 2, 27 + days, 3)).toISOString(),
+      seed: (db) => { roster(db); cleanSeason(db, 2018); openingDay(db, 2019, { central: notTriple, days }); },
+    },
+    (r) => failsBeforeBaking(r, /triple 의 표본이 0이다[^\n]*2019/),
+  );
+});
+
+/**
+ * ⚠⚠**경기일은 그 리그로 센다**(PR-4 재검토 F2) — 퍼시픽이 9경기일 먼저 치르고 센트럴이 연 날(센트럴 표본 0)은 **센트럴 1경기일째**다.
+ *   시즌 전체로 세면 9 라 상한(7)을 넘어 「결함」(종료 1)이 됐다 — 유예가 막으려던 바로 그 증상(리그 개막이 엇갈린 해).
+ */
+test("⚠⚠PR-4 재검토 F2 리그 개막이 엇갈린 해 — 퍼시픽 9경기일 뒤 센트럴 개막일(센트럴 표본 0)은 센트럴 1경기일째라 미룬다 · 종료 0", async () => {
+  await runBuild(
+    {
+      seasonArg: "auto",
+      now: "2019-04-05T03:00:00.000Z",
+      seed: (db) => { roster(db); cleanSeason(db, 2018); staggeredOpening(db, 2019, 9, notTriple); },
+    },
+    (r) => {
+      assert.equal(r.status, 0, `늦게 연 리그의 개막일을 결함으로 막았다(시즌 전체 경기일로 셌다):\n${r.stderr}`);
+      assert.match(r.stdout, /^ {2}2018年\(現行\) : /m);
+      const w = deferLines(r.stdout, 2019);
+      assert.equal(w.length, 1, `경고가 ${String(w.length)}줄이다:\n${r.stdout}`);
+      assert.match(w[0]!, /central 의 triple 표본 0/);
+      assert.match(w[0]!, /개막 1경기일째\(첫 경기 2019-04-04\)/, "그 리그의 경기일로 안 셌다");
+    },
+  );
+});
+
+/**
+ * ⚠⚠**실DB 시험 셋도 빌드와 같은 함수로 루트 시즌을 고른다**(PR-4 재검토 F1 · `src/newest-season.ts` 의 `rootSeason`).
+ * 예전에는 그 시험들이 `MAX(season)` 을 따로 골라, 개막 1~2경기일에 빌드는 이전 시즌으로 굽고 종료 0 인데
+ * **「시험」 단계가 같은 「표본 0」으로 떨어져 배포가 막혔다**(실DB 사본을 개막 1경기일 모양으로 잘라 재현 · 설계 §9-D).
+ * 여기서는 그 선택 함수를 합성 DB 로 잰다 — 빌드와 같은 판정이므로 조건 밖(8경기일째 표본 0)이면 시험도 던진다.
+ */
+test("⚠⚠PR-4 재검토 F1 rootSeason — 개막 1경기일(표본 0) → 이전 시즌 · 표본이 서면 새 시즌 · 엇갈린 개막은 그 리그로 셈 · 8경기일째 표본 0 이면 던진다", async () => {
+  const withDb = async (seedFn: (db: Db) => void, fn: (db: Db) => void): Promise<void> => {
+    const dir = await mkdtemp(join(tmpdir(), "bb-root-season-"));
+    const db = openDb(join(dir, "t.sqlite"), NOW);
+    try {
+      seedFn(db);
+      fn(db);
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  };
+  const pick = (db: Db) => rootSeason(db, (s) => loadSite(db, { season: s, builtOn: "2019-04-05" }));
+
+  await withDb((db) => { roster(db); cleanSeason(db, 2018); openingDay(db, 2019, { central: notTriple }); }, (db) => {
+    const r = pick(db);
+    assert.equal(r.season, 2018, "개막 1경기일(표본 0)인데 새 시즌을 골랐다 — 「시험」 단계가 그 시즌을 읽다 떨어진다");
+    assert.deepEqual(r.seasons, [2018]);
+    assert.equal(r.site.season, 2018, "고른 시즌과 읽은 자료가 다르다");
+    assert.deepEqual(r.deferred && { season: r.deferred.season, league: r.deferred.league, gameDays: r.deferred.gameDays, root: r.deferred.root }, { season: 2019, league: "central", gameDays: 1, root: 2018 });
+    assert.match(noticeOf(r.deferred!), /2019 시즌은 아직 굽지 않는다[^\n]*central 의 triple 표본 0[^\n]*2018 시즌이 루트다/);
+  });
+  await withDb((db) => { roster(db); cleanSeason(db, 2018); openingDay(db, 2019); }, (db) => {
+    const r = pick(db);
+    assert.equal(r.season, 2019, "표본이 섰는데 새 시즌을 안 골랐다");
+    assert.deepEqual(r.seasons, [2019, 2018]);
+    assert.equal(r.deferred, null);
+  });
+  await withDb((db) => { roster(db); cleanSeason(db, 2018); staggeredOpening(db, 2019, 9, notTriple); }, (db) => {
+    const r = pick(db);
+    assert.equal(r.season, 2018, "엇갈린 개막을 시즌 전체 경기일로 셌다");
+    assert.equal(r.deferred?.gameDays, 1);
+  });
+  await withDb(
+    (db) => { roster(db); cleanSeason(db, 2018); openingDay(db, 2019, { central: notTriple, days: DEFER_MAX_GAME_DAYS + 1 }); },
+    (db) => {
+      assert.throws(() => pick(db), (e: unknown) => e instanceof RunValueSampleError && e.season === 2019, "8경기일째의 표본 0 을 미뤘다 — 시즌 도중의 결함을 시험이 숨긴다");
+    },
+  );
+});
+
+/**
+ * ⚠**그 리그의 경기일은 홈이든 원정이든 그 리그 구단이 나선 날이다**(재검토 F2) — 교류전에서 원정 간 날도 그 리그의 경기일이다.
+ * 중지 경기 · 정규시즌 밖 · 다른 시즌은 안 센다.
+ */
+test("⚠PR-4 재검토 F2 leagueGameDays — 홈·원정 둘 다 센다(교류전 원정 포함) · 중지·포스트시즌·다른 시즌은 안 센다", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "bb-league-days-"));
+  const db = openDb(join(dir, "t.sqlite"), NOW);
+  try {
+    roster(db);
+    played(db, "2019-03-29", "g", "c", 2019); // 센트럴끼리
+    played(db, "2019-03-30", "m", "g", 2019); // 교류전 — 센트럴 g 가 퍼시픽 m 에 원정
+    played(db, "2019-03-31", "m", "h", 2019); // 퍼시픽끼리
+    canceledOnly(db, 2019); // 2019-03-27 중지(g 원정 · t 홈) — 안 센다
+    played(db, "2018-04-01", "g", "c", 2018); // 다른 시즌 — 안 센다
+    seq += 1;
+    upsertGame(db, {
+      gameId: `cs${String(seq)}`, season: 2019, gameDate: "2019-10-10", awayCode: "c", homeCode: "g", gameNo: 1,
+      status: "played", notPlayedReason: null, competition: "climaxSeries",
+      sourceUrl: "https://npb.jp/x", fetchedAt: NOW, awayRuns: 1, homeRuns: 2,
+    }); // 포스트시즌 — 안 센다
+    assert.deepEqual({ ...leagueGameDays(db, 2019, "central") }, { n: 2, first: "2019-03-29" }, "센트럴: 홈 경기일과 교류전 원정일을 둘 다 세야 한다");
+    assert.deepEqual({ ...leagueGameDays(db, 2019, "pacific") }, { n: 2, first: "2019-03-30" }, "퍼시픽: 교류전 홈경기일 + 리그 경기일");
+    assert.throws(() => leagueGameDays(db, 2019, "western"), RangeError, "모르는 리그를 0 으로 셌다");
+  } finally {
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+/** ⚠**그 선택을 실DB 시험 셋이 실제로 쓰는가** — 셋 중 하나라도 `MAX(season)` 으로 돌아가면 개막일 「시험」 단계가 다시 떨어진다 */
+test("⚠⚠PR-4 재검토 F1 실DB 시험 셋(woba-weights-wired · ranking-title-metrics · gidp-by-team)은 루트 시즌을 rootSeason 으로 고른다 — MAX(season) 을 따로 고르지 않는다", () => {
+  for (const name of ["woba-weights-wired.test.ts", "ranking-title-metrics.test.ts", "gidp-by-team.test.ts"]) {
+    const code = readFileSync(join(import.meta.dirname, name), "utf8")
+      .replace(/\r\n/g, "\n")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/(?<!:)\/\/[^\n]*/g, "");
+    assert.match(code, /import \{[^}]*\brootSeason\b[^}]*\} from "\.\.\/src\/newest-season\.ts"/, `${name}: rootSeason 을 안 가져온다`);
+    assert.match(code, /\brootSeason\(db,/, `${name}: rootSeason 을 안 부른다`);
+    assert.doesNotMatch(code, /MAX\(season\)/i, `${name}: 시즌을 MAX(season) 으로 따로 고른다 — 빌드가 미룬 시즌을 읽는다`);
+    assert.doesNotMatch(code, /HAVING n > 0/, `${name}: 시즌을 따로 고른다 — 빌드가 미룬 시즌을 읽는다`);
+  }
+});
+
+// ── PR-4 3중 검토 반영 ② 공개 하한 — 소급 시즌은 사람이 품질을 잰 뒤 하한을 내리는 커밋으로만 공개된다(1차 P2 · 2차 F2 · 조정자 결정) ──
+
+/**
+ * ⚠⚠**하한 아래 시즌의 경기가 DB 에 있으면 굽기 전에 멈춘다**(fail-closed · 2026-10-25 조정자 결정 · 옛 명시 목록 시절과 같다).
+ * 화면은 안 굽더라도 통산·「収録」 범위·드래프트 꼬리말(`heldSeasonsOf` · `build.ts` 의 `held`)에 그 시즌이 섞인다 — 품질을 안 잰 시즌의
+ * 통산을 조용히 내보내는 것이다(M7 · M11). **상태를 안 가린다**(중지 경기만 있어도 「収録」 시작이 내려간다).
+ * ⚠**드래프트만 있는 하한 아래 시즌(경기 행 0)은 해당 없다** — 지금 2005~2017 이 그렇고, 그 한 장은 지금처럼 굽는다.
+ */
+test("⚠⚠PR-4 반영② 공개 하한(2018) 아래 시즌의 경기(치른 1경기 · 중지 1경기)가 있으면 굽기 전에 1 · 표지 그대로 — auto · 명시 목록 둘 다", async () => {
+  const withPlayed2017 = (db: Db): void => {
+    roster(db);
+    played(db, "2017-04-01", "t", "g", 2017);
+    draftOf(db, 2017, "t");
+    cleanSeason(db, 2018);
+    openingDay(db, 2019);
+  };
+  const why = /공개 하한\(2018\) 아래 시즌의 경기가 DB 에 있다: 2017 —[^\n]*품질을 재고[^\n]*보관소에서 빼라[^\n]*§7-L/;
+  for (const seasonArg of ["auto", "2019,2018,2017"]) {
+    await runBuild({ seasonArg, now: DAY_AFTER_OPENING(2019), seed: withPlayed2017 }, (r) => assertNotBuilt(r, 1, why));
+  }
+  // 중지 경기만 — 치른 경기는 없지만 「収録」 범위(상태 무관)에 2017 이 들어간다
+  await runBuild(
+    { seasonArg: "auto", now: DAY_AFTER_OPENING(2019), seed: (db) => { roster(db); canceledOnly(db, 2017); cleanSeason(db, 2018); openingDay(db, 2019); } },
+    (r) => assertNotBuilt(r, 1, why),
+  );
+});
+
+test("⚠⚠PR-4 반영② 드래프트만 있는 하한 아래 시즌(2010 · 경기 행 0)은 막지 않는다 — 종료 0 · 그 시즌은 드래프트 한 장뿐", async () => {
+  await runBuild(
+    { seasonArg: "auto", now: DAY_AFTER_OPENING(2019), seed: (db) => { roster(db); draftOf(db, 2010, "t"); cleanSeason(db, 2018); openingDay(db, 2019); } },
+    (r) => {
+      assert.equal(r.status, 0, r.stderr);
+      assert.deepEqual(readdirSync(join(r.dist, "2010")), ["draft.html"], "드래프트 전용 시즌이 한 장 말고도 구워졌다(또는 그 한 장이 사라졌다)");
+      assert.match(r.stdout, /^ {2}2019年\(現行\) : /m);
+      assert.match(r.stdout, /^ {2}2018年 → \/2018\/ : /m);
+      assert.doesNotMatch(r.stderr, /아래 시즌의 경기가 DB 에 있다/);
+    },
+  );
+});
+
+test("⚠⚠PR-4 반영② 공개 하한~최신 사이에 치른 경기가 없는 시즌(구멍)이 있으면 굽기 전에 1 · 기존 dist 그대로 — auto · 명시 목록 둘 다", async () => {
+  for (const seasonArg of ["auto", "2020,2018"]) {
+    await runBuild({ seasonArg, seed: (db) => { roster(db); threeDays(db, 2018); threeDays(db, 2020); } }, (r) => {
+      assertNotBuilt(r, 1, /치른 경기가 없는 시즌이 있다: 2019/);
+    });
+  }
+});
+
+/** ⚠**하한은 한 곳이다**(M1) — 빌드가 숫자를 따로 박으면 하한을 내리는 커밋이 절반만 고친다 */
+test("⚠⚠PR-4 반영② 공개 하한 상수는 한 곳(`build-seasons.ts` 의 PUBLIC_SEASON_FLOOR = 2018)뿐이다 — 빌드·워크플로가 따로 박지 않는다", async () => {
+  const mod = (await import("../src/build-seasons.ts")) as { PUBLIC_SEASON_FLOOR?: number };
+  assert.equal(mod.PUBLIC_SEASON_FLOOR, 2018);
+  const root = join(import.meta.dirname, "..", "..", "..");
+  const code = (p: string): string => readFileSync(join(root, p), "utf8").replace(/\r\n/g, "\n").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(?<!:)\/\/[^\n]*/g, "");
+  assert.equal((code("packages/web/src/build-seasons.ts").match(/\b2018\b/g) ?? []).length, 1, "build-seasons.ts 에 2018 이 상수 정의 말고도 있다");
+  assert.doesNotMatch(code("packages/web/tools/build.ts"), /\b20(1\d|2\d)\b/, "build.ts 가 시즌 숫자를 박았다");
+  const daily = readFileSync(join(root, ".github", "workflows", "daily.yml"), "utf8");
+  assert.doesNotMatch(daily, /PUBLIC_SEASON_FLOOR|--floor/, "워크플로가 하한을 따로 넘긴다");
+});
+
+/**
+ * ⚠⚠**판정 자리를 소스로 고정한다** — 시즌 목록을 정하는 호출이 `rmSync(outDir` 보다 **앞**이고, 실패 갈래가 종료 코드를 세운다.
+ * (위 (c) 가 표지로 재지만, 다른 실패가 겹쳐 표지가 우연히 남는 경우까지 막으려고 자리도 본다.)
+ */
+test("⚠PR-4 T5 시즌 목록 판정(openBuildTarget)은 rmSync(outDir) 앞이고 실패면 종료 코드를 세운다", () => {
+  // ⚠주석을 걷고 찾는다 — 머리 주석이 `rmSync(outDir)` 를 글자로 인용한다(주석을 코드로 읽으면 순서가 거꾸로 잡힌다)
+  const src = buildSrc().replace(/\r\n/g, "\n").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const at = src.indexOf("openBuildTarget(resolve(dbArg)");
+  const rm = src.indexOf("rmSync(outDir, {");
+  assert.ok(at > 0 && rm > 0, "두 자리를 다 못 찾았다 — 이 시험이 공회전한다");
+  assert.ok(at < rm, "시즌 목록 판정이 dist 를 지운 뒤다 — 실패하면 지금 사이트까지 잃는다");
+  const fail = /\} else if \(target === null \|\| !target\.ok\) \{([\s\S]*?)\n {2}\} else \{/.exec(src);
+  assert.ok(fail !== null, "판정 실패 갈래를 못 찾았다 — 이 시험이 공회전한다");
+  assert.match(fail[1]!, /process\.exitCode = 1;/, "판정이 실패해도 종료 코드를 안 세운다");
+  assert.doesNotMatch(fail[1]!, /rmSync/, "실패 갈래가 dist 를 지운다");
 });
 
 // ── 서체 게이트의 전제. **보이지 않는 글자가 배포물에 새지 않는다** ─────────────────
@@ -582,16 +1130,17 @@ test("⚠⚠이름의 이체자 선택자(IVS·SVS)가 배포물에 새지 않�
   }
 
   await withBuild(
-    "2026",
+    // ⚠시즌은 공개 하한(2018)에 둔다 — 하한~최신 사이에 구멍이 있으면 빌드가 굽기 전에 멈춘다(PR-4 3중 검토 반영 ②)
+    "2018",
     (db) => {
       roster(db);
-      played(db, "2026-04-01", "t", "g");
-      played(db, "2026-04-01", "l", "m");
+      played(db, "2018-04-01", "t", "g", 2018);
+      played(db, "2018-04-01", "l", "m", 2018);
       // ⚠**실물 그대로의 모양** — 첫 글자 뒤에 IVS(辻 · 榊). SVS 는 호환 한자 표준 순서(神+U+FE00)의 모양이다
       upsertPlayer(db, batId("t"), `辻${IVS}村 大我`, NOW);
       upsertPlayer(db, pitId("g"), `神${SVS}田 次郎`, NOW);
       // 드래프트 — 굽는 경로가 둘이다: 현재 시즌(`buildSite`) · 드래프트만 있는 시즌(`buildDraftSeason`)
-      draftOf(db, 2026, "t", `榊${IVS}原 七斗`);
+      draftOf(db, 2018, "t", `榊${IVS}原 七斗`);
       draftOf(db, 2010, "t", `榊${IVS}原 七斗`);
     },
     (r) => {

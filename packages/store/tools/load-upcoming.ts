@@ -33,10 +33,11 @@ if (!Number.isInteger(season)) {
 }
 
 const dir = join(archiveDir, "npb", "games", String(season));
-if (!existsSync(dir)) {
-  console.error(`일정 아카이브가 없다: ${dir}`);
-  process.exit(1);
-}
+/**
+ * ⚠**폴더가 없어도 여기서 멈추지 않는다** — 「새 시즌 사본이 아직 없다」인지 「사본이 사라졌다」인지 **DB 로 가른다**(PR-4 설계 D2 · 아래 `files.length === 0`).
+ * 예전에는 `일정 아카이브가 없다` 로 1 이라 **1월 첫 실행부터 개막 전까지 매 실행이 붉었다**(대상일의 해가 새 시즌인데 그 폴더는 일정이 공표돼야 생긴다).
+ */
+const files = existsSync(dir) ? readdirSync(dir).filter((f) => /^schedule_\d{2}\.html\.gz$/.test(f)).sort() : [];
 
 /**
  * 이 행이 **어느 페이지에서 왔는가**(M4).
@@ -214,15 +215,50 @@ const noDateRowMonths: string[] = [];
 const unreadableMonths: string[] = [];
 const incompleteMonths: string[] = [];
 const noGameMonths: string[] = [];
-const files = readdirSync(dir).filter((f) => /^schedule_\d{2}\.html\.gz$/.test(f)).sort();
 
 /**
- * ⚠**읽을 파일이 0개면 아무것도 지우지 않고 멈춘다**(설계 D5 · 콜드 리뷰 지적). 예전에는 반복문이 0회라 가드가 하나도 안 돌고
- * **`DELETE` 만 커밋됐다.** 새 시즌 일정이 아직 공표되지 않은 경우(404 관측)는 설계 D7 이 따로 다룬다.
+ * ⚠**읽을 파일이 0개면(폴더가 없어도) 아무것도 지우지 않는다**(9/11 설계 D5 · 콜드 리뷰 지적). 예전에는 반복문이 0회라 가드가 하나도 안 돌고
+ * **`DELETE` 만 커밋됐다.**
+ * ⚠⚠**그다음은 DB 로 가른다**(PR-4 설계 `docs/superpowers/specs/2026-10-24-offseason-readiness-design.md` D2 — 9/11 설계 D7 적재기 절의 대체):
+ *
+ * | 그 시즌의 경기 행 | 받은 흔적(사본 기록 · 예정 · 치러짐 표시) | `S` 대 보유 최신 시즌 | 판정 · 종료 |
+ * |---|---|---|---|
+ * | 0 | 0 | `S = 최신 + 1` | 「사본이 아직 없다」 · **0** |
+ * | 0 | 0 | 그 밖(경기가 하나도 없는 DB 포함) | 시즌 인자가 보유 범위와 안 맞는다 · 1 |
+ * | 1 이상 | 무관 | — | 모순(사본이 사라졌다) · 1 |
+ * | 무관 | 1 이상 | — | 사본이 사라진 달(사본 기록) · 받은 흔적(예정·치러짐 표시) · 1 |
+ *
+ * ⚠**「미공표」라고 말하지 않는다** — 404 를 봤는지와 무관하게 「아직 받은 사본이 없다」는 사실만 적는다(M11).
+ * ⚠**받은 흔적에 예정·치러짐 표시를 더한 것은 설계 표보다 넓다**(PR-4 구현) — 사본 기록(`schedule_month`)이 없는 DB(021 이전 적재 · 기록 삭제)에서
+ *   그 시즌의 예정 행이 남아 있으면 **받은 사본이 있었다**. 그때 `S = 최신 + 1` 로 통과시키면 사라진 사본이 조용히 0 이 된다(아래 시험이 지킨다).
+ * ⚠시즌 인자 버그(`S = 최신 + 2`)는 둘째 줄이, 주소 오류는 3월의 현재 달 규칙(아카이버 D1 — 3~10월 404 는 1)이 잡는다.
+ * ⚠**차단 중의 1월이어도 0 이다** — 「받기 실패만이면 배포」(PR-2a ②)와 맞는다. 사본이 하나라도 생기면 아래의 지금 경로(달 단위 교체 · M7)로 돈다.
  */
 if (files.length === 0) {
-  console.error(`⚠${season} 시즌 일정 파일이 하나도 없다: ${dir} — **기존 일정을 건드리지 않고 멈춘다**`);
+  const count = (sql: string): number => (db.raw.prepare(sql).get(season) as unknown as { n: number }).n;
+  const gameRows = count("SELECT COUNT(*) AS n FROM game WHERE season = ?");
+  const copyMonths = (db.raw.prepare("SELECT month FROM schedule_month WHERE season = ? ORDER BY month").all(season) as unknown as { month: number }[])
+    .map((r) => String(r.month).padStart(2, "0"));
+  const upcomingRows = count("SELECT COUNT(*) AS n FROM upcoming_game WHERE season = ?");
+  const playedMarks = count("SELECT COUNT(*) AS n FROM schedule_played WHERE season = ?");
+  const latestSeason = (db.raw.prepare("SELECT MAX(season) AS s FROM game").get() as unknown as { s: number | null }).s;
   db.close();
+  const why: string[] = [];
+  if (gameRows > 0) why.push(`그 시즌의 경기 행이 ${gameRows}건 있다 — 모순(사본이 사라졌다)`);
+  if (copyMonths.length > 0) why.push(`사본이 사라진 달 ${copyMonths.join("·")} — 전에 받은 일정 사본이 아카이브에 없다`);
+  if (upcomingRows + playedMarks > 0) {
+    why.push(`그 시즌의 앞으로의 경기 ${upcomingRows}행 · 치러짐 표시 ${playedMarks}행이 남아 있다 — 받은 사본이 있었다는 흔적이다`);
+  }
+  if (why.length === 0 && (latestSeason === null || season !== latestSeason + 1)) {
+    why.push(`시즌 인자가 보유 범위와 안 맞는다(보유 최신 시즌 ${latestSeason === null ? "없음" : String(latestSeason)} · 사본 없이 받아들이는 것은 그 다음 해뿐)`);
+  }
+  if (why.length === 0) {
+    console.log(`${season} 시즌 일정 사본이 아직 없다(받은 달 0 · 경기 0) — 표 불변`);
+    process.exit(0);
+  }
+  console.error(`⚠${season} 시즌 일정 파일이 하나도 없다: ${dir} — **기존 일정을 건드리지 않고 멈춘다**`);
+  for (const w of why) console.error(`   ${w}`);
+  console.error("   아카이브 복원 누락이나 경로 오류를 의심하라(`scripts/archive-guard.ts` 가 줄어든 아카이브를 따로 잡는다).");
   process.exit(1);
 }
 /** 전에 사본을 받았던 달 — 이번에 파일이 없으면 「사본이 사라진 달」이다 */

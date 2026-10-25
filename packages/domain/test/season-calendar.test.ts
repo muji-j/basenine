@@ -10,7 +10,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { NO_GAME_MONTHS } from "../src/season-calendar.ts";
+import { NO_GAME_MONTHS, scheduleAbsencePolicy } from "../src/season-calendar.ts";
 
 /** ⚠줄끝을 `\n` 으로 맞추고 BOM 을 뗀다 — 이 패키지의 `package.json` 은 BOM 으로 시작한다 */
 function readLf(rel: string): string {
@@ -25,6 +25,31 @@ test("⚠NO_GAME_MONTHS 는 12·1·2월이다 — 11월은 없다(경기가 열�
 
 test("⚠NO_GAME_MONTHS 는 얼어 있다 — 모듈 전역 가변 상태를 두지 않는다", () => {
   assert.equal(Object.isFrozen(NO_GAME_MONTHS), true);
+});
+
+/**
+ * ⚠⚠**현재 달 월간 일정 404·410 의 해석**(PR-4 설계 `2026-10-24-offseason-readiness-design.md` D1) — 12·1·2 조용 · 11 경고 · 3~10 실패.
+ * ⚠11월이 「경고」인 이유: 경기가 열리는 해가 있다(5시즌 71경기) — 사본 없이 받으면 남은 경기를 잃을 수 있어 **시끄럽게** 받는다.
+ * ⚠3~10월은 시즌 달이다 — 그 달 일정이 없다는 것은 주소·구조 변경 의심이라 지금처럼 막는다(PR-2a D1).
+ */
+test("⚠⚠scheduleAbsencePolicy — 12·1·2 quiet · 11 warn · 3~10 fail(달 12개 전부)", () => {
+  const got = Array.from({ length: 12 }, (_, i) => [i + 1, scheduleAbsencePolicy(i + 1)] as const);
+  assert.deepEqual(got, [
+    [1, "quiet"], [2, "quiet"], [3, "fail"], [4, "fail"], [5, "fail"], [6, "fail"],
+    [7, "fail"], [8, "fail"], [9, "fail"], [10, "fail"], [11, "warn"], [12, "quiet"],
+  ]);
+});
+
+/** ⚠**조용한 달은 `NO_GAME_MONTHS` 한 벌에서 나온다**(M1) — 따라잡기의 「확인된 휴식일」과 404 의 해석이 다른 달 목록을 쓰지 않게 */
+test("⚠scheduleAbsencePolicy 의 quiet 달 = NO_GAME_MONTHS — 두 벌이 아니다", () => {
+  const quiet = Array.from({ length: 12 }, (_, i) => i + 1).filter((m) => scheduleAbsencePolicy(m) === "quiet");
+  assert.deepEqual(quiet, [...NO_GAME_MONTHS].sort((a, b) => a - b));
+});
+
+test("scheduleAbsencePolicy — 1~12 의 정수가 아니면 던진다(모르는 달을 조용히 받지 않는다)", () => {
+  for (const bad of [0, 13, -1, 1.5, Number.NaN]) {
+    assert.throws(() => scheduleAbsencePolicy(bad), RangeError, String(bad));
+  }
 });
 
 /**
