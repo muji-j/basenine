@@ -471,9 +471,32 @@ test("⚠절반짜리 예산(16,389 · 149MB)이 문서에 살아 돌아오지 �
  *
  * 경기가 들어오면 페이지가 늘어난다. 정확 일치를 요구하면 **매일 붉어지고**, 매일 붉은 시험은
  * 아무도 안 읽는다(`archive-guard` 의 바이트 임계와 같은 판단).
- * → **허용 오차 3%**. 옛 값(8,611)은 실제의 **55.6%** 라 이 안에 절대 안 들어온다.
+ * → ~~허용 오차 3%~~ → ⚠⚠**허용 15%**(2026-10-25 · PR-4 마지막 재검토 N5 · 조정자 결정).
+ *   ⑴ 바로 아래 바이트 시험이 스스로 적고 있다 — **「55% 같은 어긋남을 잡는 것이 목적이지 소수점을 맞추는 것이 아니다」**.
+ *   ⑵ **한 시즌 증가분이 약 11~12%다**(2026 루트 시즌이 시즌 끝에 1,199장 · 개막 2경기일 +292 · 개막 한 달 약 +560(추정)) — 3% 면
+ *      시즌 중 거의 매달 문서 수치가 daily 「시험」을 막는다(PR #39 가 바로 그것으로 문서를 고쳤다 — PR #38 의 날짜 화면 +105 가 3% 를 넘겼다).
+ *      15% 면 **해마다 한 번**(일본시리즈 뒤 · `docs/operations.md` 「해마다 하는 일」) 문서 수치를 고치는 것으로 한 해를 덮는다.
+ *   ⑶ **15% 여도 옛 사고값은 잡는다** — 8,611 은 실제의 **55.6%** 였다(아래 「허용의 모양」 시험이 고정한다).
  */
-const DIST_TOLERANCE = 0.03;
+const DIST_TOLERANCE = 0.15;
+
+/** 문서 값이 실측에서 허용보다 멀리 떨어졌는가 — 배포물 대조 두 시험(파일 수 · 바이트)과 「허용의 모양」 시험이 같이 쓴다 */
+function tooFar(doc: number, actual: number, tolerance: number): boolean {
+  return Math.abs(doc - actual) / actual > tolerance;
+}
+
+/**
+ * ⚠⚠**허용의 모양** — 해마다 문서를 고친 뒤 한 해 동안 배포물이 자라는 모양은 막지 않고, 옛 사고값은 잡는다.
+ * 문서 값 9,874(2026-10-25 · PR #39) 기준: 새 시즌 첫 굽기 +292(재검토 실측 · 2경기일) · 첫 달 약 +560(추정 — 2026 개막 한 달 출장 선수 495 + 그 밖 화면) ·
+ * 시즌 끝 +1,199(2026 루트 시즌의 시즌 끝 파일 수 · 실측).
+ */
+test("⚠배포물 파일 수의 허용(15%)은 새 시즌 첫날부터 시즌 끝까지의 증가를 막지 않고 옛 사고값(실제의 55.6%)은 잡는다", () => {
+  const doc = 9_874;
+  for (const [what, grown] of [["새 시즌 첫 굽기", doc + 292], ["새 시즌 첫 달", doc + 560], ["시즌 끝", doc + 1_199]] as const) {
+    assert.equal(tooFar(doc, grown, DIST_TOLERANCE), false, `${what}(${grown}): 해마다 고치는 문서 값이 시즌 안의 증가로 「시험」을 막는다 — 허용이 시즌 성장보다 좁다`);
+  }
+  assert.equal(tooFar(8_611, 15_500, DIST_TOLERANCE), true, "옛 사고값(문서 8,611 · 실제 15,500 = 55.6%)을 못 잡는다");
+});
 
 test("⚠문서의 배포물 파일 수가 dist 와 크게 어긋나지 않는다", () => {
   const dist = `${ROOT}dist`;
@@ -511,8 +534,8 @@ test("⚠문서의 배포물 파일 수가 dist 와 크게 어긋나지 않는�
       continue;
     }
     for (const n of nums) {
-      const off = Math.abs(n - actual) / actual;
-      if (off > DIST_TOLERANCE) {
+      if (tooFar(n, actual, DIST_TOLERANCE)) {
+        const off = Math.abs(n - actual) / actual;
         bad.push(`${rel}: ${n.toLocaleString("en-US")}파일 은 실측 ${actual.toLocaleString("en-US")} 과 ${(off * 100).toFixed(1)}% 어긋난다`);
       }
     }
@@ -534,9 +557,13 @@ test("⚠문서의 배포물 파일 수가 dist 와 크게 어긋나지 않는�
  * 그리고 문서는 「`doc-figures.test.ts` 가 `dist/` 와 대조한다」고 적어 두고 있었다 —
  * 읽는 사람은 **두 수 다 지켜진다고 믿는다.** 「없는 장치를 있다고 적는다」의 전형이다.
  *
- * ⚠**허용 오차를 파일 수보다 넓게 잡는다(10%)**. 바이트는 경기가 들어올 때마다 늘고
+ * ⚠**허용 오차를 ~~파일 수보다 넓게~~ 잡는다(10%)**. 바이트는 경기가 들어올 때마다 늘고
  * 시즌 진행 중에는 매일 움직인다 — 3% 로 조이면 **헛되이 붉어지고, 그러면 곧 무시된다.**
  * 55% 같은 어긋남을 잡는 것이 목적이지 소수점을 맞추는 것이 아니다.
+ * ⚠⚠**지금은 파일 수(15% · 2026-10-25)보다 좁다** — 그리고 **연례 갱신만으로 한 시즌을 못 버틸 수 있다**(추정 · 아직 안 겪었다):
+ *   끝난 시즌 한 벌이 배포물에서 182.7~188.6 MiB(2024·2025 실측)인데 이 허용은 새 시즌 루트가 문서 값의 약 11%(지금 값으로 약 167~169 MiB)를
+ *   넘으면 깨진다 → 시즌 후반(8~9월 추정) daily 「시험」이 막는다. 지금 처치는 **시즌 중 한 번 사람이 바이트 값을 고치는 것**이고(런북 §7-L
+ *   「사람 손이 드는 일」), 파일 수처럼 넓힐지는 **열린 결정**이다(설계 `docs/superpowers/specs/2026-10-24-offseason-readiness-design.md` §9-E).
  */
 const DIST_MB_TOLERANCE = 0.10;
 
@@ -574,8 +601,8 @@ test("⚠문서의 배포물 크기(MB)가 dist 와 크게 어긋나지 않는�
       continue;
     }
     for (const n of nums) {
-      const off = Math.abs(n - actualMb) / actualMb;
-      if (off > DIST_MB_TOLERANCE) {
+      if (tooFar(n, actualMb, DIST_MB_TOLERANCE)) {
+        const off = Math.abs(n - actualMb) / actualMb;
         bad.push(`${rel}: ${n}MB 는 실측 ${actualMb.toFixed(1)}MB 와 ${(off * 100).toFixed(1)}% 어긋난다`);
       }
     }
