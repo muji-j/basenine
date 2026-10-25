@@ -10,21 +10,24 @@
  * 정적 파일이면 D1 읽기 예산도 배포 때 1회만 쓴다.
  * ⚠**시계는 여기서 한 번만 읽는다**(M6). 아래로 내려가는 것은 `YYYY-MM-DD` 문자열이다.
  * ⚠⚠**시즌 목록은 DB 가 정한다**(PR-4 설계 `docs/superpowers/specs/2026-10-24-offseason-readiness-design.md` D4 · `../src/build-seasons.ts`) —
- *   `auto` = 치른 경기가 있는 시즌 전부 · 결과는 언제나 내림차순이고 **최댓값이 루트**다. 판정(형식 2 · DB 못 읽음 · played 0 · 목록 밖 played 시즌 1)은
- *   **`rmSync(outDir)` 앞**이라 실패면 굽지 않고 기존 dist 를 건드리지 않는다.
+ *   `auto` = 공개 하한(`PUBLIC_SEASON_FLOOR`) 이상 치른 경기가 있는 시즌 전부 · 결과는 언제나 내림차순이고 **최댓값이 루트**다.
+ *   판정(형식 2 · DB 못 읽음 · played 0 · 목록 밖 played 시즌 · 하한~최신 구멍 1)은 **`rmSync(outDir)` 앞**이라 실패면 굽지 않고 기존 dist 를 건드리지 않는다.
+ * ⚠⚠**새 시즌 개막 직후**(계수 유도 표본이 서기 전 · 9시즌 실측으로 표본은 개막 1~3경기일째에 선다 · 미루는 상한 `DEFER_MAX_GAME_DAYS` 경기일)에는 `auto` 가
+ *   그 시즌을 **아직 굽지 않고** 경고 한 줄과 함께 이전 시즌을 루트로 굽는다(`loadNewest` · PR-4 3중 검토 2차 F1 · 조정자 결정 ⒜) — 이것도 `rmSync` 앞이다.
  */
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { brokenLinksIn, duplicateIds, linkIndex, tooDeepPlayerPages } from "../src/link-check.ts";
 import type { LinkIndex } from "../src/link-check.ts";
 import { dirname, join, resolve } from "node:path";
-import { collectionEvidence, openDb } from "@bb-app/store";
+import { RunValueSampleError } from "@bb-app/aggregate";
+import { collectionEvidence, openDb, seasonIsOver } from "@bb-app/store";
 import type { Db } from "@bb-app/store";
 import { systemClock, toJstDateString } from "@bb-app/archiver";
 import { DRAFT_SEASON_PATHS, buildDraftSeason, buildSite, seasonPaths } from "../src/site.ts";
 import type { BuildResult } from "../src/site.ts";
 // ⚠**연락처 게이트의 판정은 한 벌이다**(M1) — 조건을 여기서 다시 쓰지 않는다
 import { collectionStatus, contactGate, staleGate } from "../src/layout.ts";
-import { parseSeasonArg, resolveBuildSeasons } from "../src/build-seasons.ts";
+import { deferNewestSeason, deferNotice, parseSeasonArg, resolveBuildSeasons } from "../src/build-seasons.ts";
 import type { SeasonArg } from "../src/build-seasons.ts";
 import {
   buildCareerContext,
@@ -57,10 +60,11 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
     for (const line of target?.lines ?? []) console.error(line);
     process.exitCode = 1;
   } else {
-    const { db, seasons } = target;
-    const season = seasons[0]!;
+    const { db, kind } = target;
     const builtOn = toJstDateString(now);
     const outDir = resolve(outArg);
+    // ⚠실패가 아닌 알림(하한 아래 치른 시즌 등) — `::warning::` 이라 표준출력에 찍는다(GitHub 요약에 남게)
+    for (const w of target.warnings) console.log(w);
 
     try {
       const t0 = process.hrtime.bigint();
@@ -77,8 +81,8 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
         .prepare("SELECT MIN(season) AS lo, MAX(season) AS hi FROM game")
         .get() as { lo: number | null; hi: number | null };
       const career = buildCareerContext(db, {
-        from: held.lo ?? Math.min(...seasons),
-        to: held.hi ?? Math.max(...seasons),
+        from: held.lo ?? Math.min(...target.seasons),
+        to: held.hi ?? Math.max(...target.seasons),
         ...(throughArg === undefined ? {} : { through: throughArg }),
       });
       /**
@@ -99,16 +103,23 @@ if (dbArg === undefined || outArg === undefined || seasonArg === undefined) {
       /**
        * ⚠**전 시즌을 먼저 읽는다.** 시즌 전환이 「그 시즌에 같은 화면이 있는가」를 물어야 하고,
        * 그건 렌더링 **전에** 알아야 한다 — 없는 곳으로 링크하면 404가 되고 조용하다.
+       * ⚠⚠**최대(새) 시즌을 먼저 읽는다** — 개막 직후 계수 유도 표본이 서지 않으면 그 시즌을 빼고 이전 시즌이 루트가 된다(`loadNewest`).
+       *   그래서 루트(`season`)와 굽는 목록(`seasons`)은 **여기서 정해진다** — 위의 `target.seasons` 를 아래에서 쓰지 마라.
        */
-      const loaded = seasons.map((s) => ({
-        season: s,
-        prefix: s === season ? "" : `${s}/`,
-        data: loadSite(db, {
+      const loadOne = (s: number): ReturnType<typeof loadSite> =>
+        loadSite(db, {
           season: s,
           builtOn,
           career,
           ...(throughArg === undefined ? {} : { through: throughArg }),
-        }),
+        });
+      const newest = loadNewest(db, kind, target.seasons, loadOne);
+      const seasons = newest.seasons;
+      const season = seasons[0]!;
+      const loaded = seasons.map((s, i) => ({
+        season: s,
+        prefix: s === season ? "" : `${s}/`,
+        data: i === 0 && newest.first !== null ? newest.first : loadOne(s),
       }));
       const loadMs = Number(process.hrtime.bigint() - t0) / 1e6;
 
@@ -461,7 +472,9 @@ function openBuildTarget(
   dbPath: string,
   nowIso: string,
   arg: SeasonArg,
-): { readonly ok: true; readonly db: Db; readonly seasons: number[] } | { readonly ok: false; readonly lines: string[] } {
+):
+  | { readonly ok: true; readonly db: Db; readonly kind: SeasonArg["kind"]; readonly seasons: number[]; readonly warnings: string[] }
+  | { readonly ok: false; readonly lines: string[] } {
   const keep = "굽지 않는다 · **기존 dist 를 건드리지 않는다**";
   if (!existsSync(dbPath)) return { ok: false, lines: [`⚠DB 가 없다: ${dbPath} — ${keep}`] };
   let db: Db;
@@ -480,7 +493,51 @@ function openBuildTarget(
   const r = resolveBuildSeasons(arg, played);
   if (!r.ok) {
     db.close();
-    return { ok: false, lines: [r.message] };
+    return { ok: false, lines: r.message.split("\n") };
   }
-  return { ok: true, db, seasons: r.value };
+  return { ok: true, db, kind: arg.kind, seasons: r.value.seasons, warnings: r.value.warnings };
+}
+
+/**
+ * **굽는 목록의 최대(새) 시즌을 먼저 읽는다** — 계수 유도가 「표본 0」이면 조건이 맞을 때만 그 시즌을 뺀다
+ * (PR-4 3중 검토 2차 F1 · 조정자 결정 ⒜ · 조건은 `deferNewestSeason` 한 벌).
+ *
+ * ⚠**오류 형으로 가른다**(`RunValueSampleError`) — 같은 `RangeError` 인 어휘·구조 오류(M7)는 그대로 던진다. 그 시즌이 최대가 아니거나 ·
+ *   이미 끝났거나 · 명시 목록이거나 · 남는 시즌이 없거나 · **개막 직후가 아니면**(`DEFER_MAX_GAME_DAYS` 경기일 초과 — 시즌 도중의 「표본 0」은 결함이다)
+ *   그대로 던진다(굽기 전이라 기존 dist 가 남는다 · 종료 1).
+ * ⚠뺐으면 `::warning::` 한 줄(사유 · 시즌 · 개막 며칠째 · 이번 루트)을 표준출력에 낸다 — 표본이 서는 날(실측 개막 1~3경기일째) 자동으로 굽힌다.
+ * @returns 굽는 시즌(내림차순)과 이미 읽은 첫 시즌의 자료(뺐으면 `null` — 호출자가 새 첫 시즌을 읽는다)
+ */
+function loadNewest<T>(
+  db: Db,
+  kind: SeasonArg["kind"],
+  seasons: readonly number[],
+  load: (season: number) => T,
+): { readonly seasons: number[]; readonly first: T | null } {
+  const newest = seasons[0]!;
+  try {
+    return { seasons: [...seasons], first: load(newest) };
+  } catch (err) {
+    if (!(err instanceof RunValueSampleError) || err.season !== newest) throw err;
+    const days = db.raw
+      .prepare(
+        `SELECT COUNT(DISTINCT game_date) AS n, MIN(game_date) AS first
+           FROM game WHERE season = ? AND status = 'played' AND competition = 'regular'`,
+      )
+      .get(newest) as { n: number; first: string | null };
+    if (!deferNewestSeason({ kind, seasons, failedSeason: newest, failedSeasonOver: seasonIsOver(db, newest), gameDays: days.n })) {
+      throw err;
+    }
+    const rest = seasons.slice(1);
+    console.log(
+      deferNotice({
+        season: newest,
+        reason: `${err.league} 의 ${err.event === "origin" ? "원점(계수 0 사건)" : err.event} 표본 0`,
+        gameDays: days.n,
+        firstDate: days.first,
+        root: rest[0]!,
+      }),
+    );
+    return { seasons: rest, first: null };
+  }
 }

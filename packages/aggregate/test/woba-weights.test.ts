@@ -20,7 +20,7 @@ import { wobaDenominator } from "@bb-app/metrics";
 import type { BattingLine } from "@bb-app/metrics";
 import { emptyBattingLine, foldOutcomes } from "@bb-app/store";
 import { buildRunExpectancy } from "../src/run-expectancy.ts";
-import { WOBA_EVENTS, deriveRunValues, wobaSlotOf } from "../src/woba-weights.ts";
+import { RunValueSampleError, WOBA_EVENTS, deriveRunValues, wobaSlotOf } from "../src/woba-weights.ts";
 
 const NOW = "2026-08-15T00:00:00.000Z";
 const CODES = ["g", "t"] as const;
@@ -134,6 +134,16 @@ test("⚠선형가중치 = (그 사건의 평균 득점가치) − (계수 0인 
 
     // ⚠홈런만 있으면 다른 계수의 표본이 0이라 던진다. 그것 자체가 지켜야 할 성질이다
     assert.throws(() => deriveRunValues(db, re, CODES), /표본이 0이다/);
+    /**
+     * ⚠⚠**그 예외는 전용 형이다**(PR-4 3중 검토 2차 F1) — 빌드가 「새 시즌 개막 직후」를 **이 형으로만** 가른다(메시지 글자로 가르지 않는다).
+     * `RangeError` 를 잇고(예전 호출자 호환) 시즌·리그·사건을 싣는다.
+     */
+    assert.throws(
+      () => deriveRunValues(db, re, CODES),
+      (e: unknown) =>
+        e instanceof RunValueSampleError && e instanceof RangeError && e.season === 2026 && e.league === "central"
+        && e.event !== "origin" && (WOBA_EVENTS as readonly string[]).includes(e.event),
+    );
   });
 });
 

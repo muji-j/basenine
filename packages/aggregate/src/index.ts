@@ -30,7 +30,7 @@ export { deriveSeriesLengths, pairKey, seasonRace } from "./race.ts";
 export type { SeasonRace, SeriesLengths, TeamRace, TeamRaceInput } from "./race.ts";
 export { ALL_STATES, buildRunExpectancy, paValue, stateKey } from "./run-expectancy.ts";
 export type { RunExpectancy, StateKey } from "./run-expectancy.ts";
-export { WOBA_EVENTS, deriveRunValues, wobaSlotOf } from "./woba-weights.ts";
+export { RunValueSampleError, WOBA_EVENTS, deriveRunValues, wobaSlotOf } from "./woba-weights.ts";
 export { careerNameJoin, careerNames, seasonNameExpr, seasonNameJoin } from "./season-name.ts";
 export type { DerivedRunValues, WobaEvent } from "./woba-weights.ts";
 export { addSrc, addSrp, computeSrc, computeSrp, missingStates, srcPer600Of, srpPer9Of } from "./situational.ts";
