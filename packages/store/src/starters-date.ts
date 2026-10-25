@@ -5,21 +5,24 @@
  * ⚠**옛 규칙(「취득한 해 · 12→1 이면 +1 · 1월에 12월이면 실패」)은 비시즌의 낡은 페이지에서 틀렸다** — 1월에 받은 「11月1日」(지난 일본시리즈)을
  *   `2027-11-01` 로 만들면 `MAX(probable_pitcher.game_date)` 가 미래가 되어 **2027 시즌 내내 `starters-behind` 가 조용히 꺼진다**(설계 G4).
  *
- * 규칙(`lag = 그 날 − 취득일` · 달력 일수):
+ * 규칙(`lag = 그 날 − 취득일` · 달력 일수) — **후보 창은 `[취득일 − 351, 취득일 + 14]`(366일)**:
  * 1. 후보 해 `{Y−1, Y, Y+1}` 중 **그 해에 그 날짜가 실재하는 것만**(Y = 취득일의 해). ⚠**자동 정규화 금지** — `2027-02-29` 를 `03-01` 로 넘기지 않는다.
  * 2. 후보가 없으면 **실패**(M7 — 「정할 수 없다」를 빈 값·추측으로 메우지 않는다).
  * 3. **앞쪽(오늘~미래)은 `0 ≤ lag ≤ 14` 인 후보만** 받는다 — 있으면 그것(정상 예고 · 휴식 공표).
- * 4. 없으면 **가장 가까운 지난 후보**(`lag < 0`)를 `|lag| ≤ 183` 일 때만 받는다(호출자가 맥박만 남긴다). 그 밖은 **실패**.
+ * 4. 없으면 **지난 후보**(`−351 ≤ lag < 0` · 창 안에 많아야 하나)를 받는다(호출자가 맥박만 남긴다). 그 밖은 **실패**.
  *
  * ⚠⚠**앞쪽을 14일로 좁혔다**(2026-10-25 · PR-4 3중 검토 1차 P3 · 옛 판은 ±183 대칭이었다).
  *   대칭이면 **183일 넘게 낡은 페이지가 「미래 예고」로 들어간다** — 2027-06-15 에 받은 「10月30日」(지난 일본시리즈)이 2027-10-30(+137)의 예고가 되어
  *   `starters-behind` 가 그 시즌 내내 꺼진다(G4 가 막으려던 바로 그 피해 · 개막이 늦은 해(2020형 6월)나 연기된 해에 발현).
  *   **실측(2026-10-25)**: CI DB `starters_fetch` 68행(08-15~10-21)이 **0일 7 · +1일 61 · +2 이상 0**(휴식 공표 포함) ·
  *   실물 페이지 23장(데이터 보관소 사본 · 취득 08-15~09-06)이 0일 4 · +1일 19 — 둘 다 최대 +1.
- *   14일은 그 위의 여유다(연휴 뒤 며칠 앞 경기를 싣는 모양이 와도 거짓 실패를 내지 않게) — 1년 낡은 페이지가 앞쪽으로 잡히려면 351일 넘게 낡아야 한다.
- * ⚠**대가**: 지난 후보가 183일 밖이고 앞쪽 후보가 14일 밖이면 실패다 — 오프시즌이 183일보다 긴 해(2020형)에 페이지가 지난 날짜로 멈춰 있으면
- *   그 날부터 매일 받는 파일마다 적재가 1 이다(시끄러운 쪽 · 런북 `docs/operations/deploy.md` §7-L 의 처치).
- *   평년(일본시리즈 종료 → 개막 약 146일)은 183 안이라 맥박만이다.
+ *   14일은 그 위의 여유다(연휴 뒤 며칠 앞 경기를 싣는 모양이 와도 거짓 실패를 내지 않게).
+ * ⚠⚠**뒤쪽을 351(= 365 − 14)로 넓혔다**(3판 · 2026-10-25 · 조정자 결정). 앞쪽이 14일이면 「지난 날짜」는 더 이상 모호하지 않다 —
+ *   3중 검토 반영 첫 판(앞쪽 14 · 뒤쪽 183)은 개막이 늦은 해(2020형 · 2019 일본시리즈 10/23 → 개막 6/19 · 240일)에 낡은 비시즌 페이지를 184일째부터 **받은 파일마다 실패**로 만들었고,
+ *   적재는 아카이브 전체를 매번 다시 읽으므로 그건 **매 실행 blocking(배포 정지)** 이었다. 지금은 351일까지 맥박만이다.
+ *   ⚠352일 넘게 낡은 날짜는 그 다음 해(앞쪽 0~13일)로 읽힌다 — 연도 없는 `MM-DD` 는 366일 창에서 하나로만 정해진다(오프시즌이 351일을 넘는 해는 없다).
+ * ⚠**창이 366일이라 같은 날짜가 두 번 걸리는 날이 하나 있다** — 양 끝(−351 · +14)이 같은 `MM-DD` 이고 그 사이에 2/29 가 없을 때다. 그때는 **앞쪽(+14)** 을 고른다(규칙 3이 먼저다).
+ * ⚠**남는 실패는 2/29 뿐이다** — 평년 날짜는 366일 창에 언제나 한 번 걸린다(`starters-date.test.ts` 가 날짜 전수로 잰다). NPB 는 2월에 공식 경기를 안 하므로 사실상 안 난다.
  *
  * ⚠**`lag < 0`(지난 날짜)을 어떻게 쓸지는 호출자(`tools/load-starters.ts`)가 정한다** — 맥박만 남긴다(설계 D3-5). 이 함수는 날짜만 정한다.
  * ⚠**import 0개 · 시계를 읽지 않는다**(M6) — 주어진 두 문자열만 본다.
@@ -27,8 +30,8 @@
 
 /** 앞쪽(오늘~미래)으로 받는 최대 거리(일) — 실측 최대 +1 에 여유(위 머리말) */
 export const STARTERS_MAX_AHEAD_DAYS = 14;
-/** 뒤쪽(지난 날짜)으로 받는 최대 거리(일) — 넘으면 실패. 평년 오프시즌(약 146일)은 이 안이다 */
-export const STARTERS_MAX_BEHIND_DAYS = 183;
+/** 뒤쪽(지난 날짜)으로 받는 최대 거리(일) — `365 − 앞쪽` 이라 창 `[−351, +14]` 가 366일이다(위 머리말 · 3판) */
+export const STARTERS_MAX_BEHIND_DAYS = 365 - STARTERS_MAX_AHEAD_DAYS;
 
 export type StartersDate =
   | { readonly ok: true; readonly date: string; readonly lag: number }
@@ -45,7 +48,7 @@ function dayNumber(y: number, m: number, d: number): number | null {
   return t / DAY_MS;
 }
 
-/** 부호를 붙인 일수 — `+183일` · `-228일` */
+/** 부호를 붙인 일수 — `+15일` · `-352일` */
 const signed = (lag: number): string => `${lag > 0 ? "+" : ""}${String(lag)}일`;
 
 /**
@@ -76,16 +79,17 @@ export function resolveStartersDate(fetchedDate: string, monthDay: string): Star
   const ahead = candidates.find((c) => c.lag >= 0 && c.lag <= STARTERS_MAX_AHEAD_DAYS);
   if (ahead !== undefined) return { ok: true, date: label(ahead), lag: ahead.lag };
 
-  // 4. 가장 가까운 지난 후보 — 183일 안일 때만
+  // 4. 지난 후보 — 351일 안일 때만(창 안에 많아야 하나 · 가장 가까운 것)
   const behind = candidates.filter((c) => c.lag < 0).sort((a, b) => b.lag - a.lag)[0];
   if (behind !== undefined && -behind.lag <= STARTERS_MAX_BEHIND_DAYS) return { ok: true, date: label(behind), lag: behind.lag };
 
+  // 5. 창 밖 — 평년 날짜는 366일 창에 언제나 걸리므로 사실상 2/29 뿐이다
   const future = candidates.filter((c) => c.lag > STARTERS_MAX_AHEAD_DAYS).sort((a, b) => a.lag - b.lag)[0];
   return {
     ok: false,
     reason:
-      `연도를 정할 수 없다 — 앞쪽 ${String(STARTERS_MAX_AHEAD_DAYS)}일 안의 후보가 없고` +
-      (behind === undefined ? " 지난 후보도 없다" : ` 가장 가까운 지난 해 ${label(behind)} 는 ${signed(behind.lag)}(뒤쪽 ${String(STARTERS_MAX_BEHIND_DAYS)}일 밖)`) +
+      `연도를 정할 수 없다 — 창 [취득일 −${String(STARTERS_MAX_BEHIND_DAYS)}, +${String(STARTERS_MAX_AHEAD_DAYS)}] 안에 ${String(month)}月${String(day)}日 이 없다:` +
+      (behind === undefined ? " 지난 후보 없음" : ` 가장 가까운 지난 해 ${label(behind)} 는 ${signed(behind.lag)}`) +
       (future === undefined ? "" : ` · 앞쪽 후보 ${label(future)} 는 ${signed(future.lag)}(미래 예고로 받지 않는다)`),
   };
 }
