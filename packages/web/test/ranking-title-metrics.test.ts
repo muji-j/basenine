@@ -16,7 +16,8 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { openDb } from "@bb-app/store";
+import { openDb, seasonIsOver } from "@bb-app/store";
+import type { Db } from "@bb-app/store";
 import { canonicalTeamCode, leagueOf } from "@bb-app/domain";
 import type { League } from "@bb-app/domain";
 import { loadSite } from "../src/query.ts";
@@ -32,7 +33,7 @@ if (process.env["BB_REQUIRE_DB"] === "1" && !HAS_DB) {
   throw new Error(`BB_REQUIRE_DB=1 인데 ${DB} 가 없다`);
 }
 
-interface Loaded {
+interface SeasonData {
   season: number;
   site: SiteData;
   /** 리그별 최다 안타. **화면 밖에서 따로 센 값**이다 */
@@ -41,18 +42,18 @@ interface Loaded {
   decisions: Map<string, { w: number; l: number; games: number }>;
 }
 
-/**
- * ⚠**한 번만 읽는다** — `loadSite` 는 실측 약 6초다(`ranking-src-srp.test.ts` 와 같은 이유).
- * ⚠⚠**시즌은 빌드가 사이트 루트에 놓는 시즌이다**(`rootSeason` · 2026-10-25 · PR-4 재검토 F1) — 예전 `MAX(season)` 은
- *   개막 1~2경기일에 빌드가 아직 굽지 않는 새 시즌을 읽다 「표본 0」으로 떨어져 CI 「시험」 단계가 배포를 막았다.
- */
-let loaded: Loaded | null = null;
-function load(): Loaded {
-  if (loaded !== null) return loaded;
-  const db = openDb(DB, "1970-01-01T00:00:00.000Z");
-  const root = rootSeason(db, (s) => loadSite(db, { season: s, builtOn: "1970-01-01" }));
-  const season = root.season;
+interface Loaded extends SeasonData {
+  /**
+   * **가장 최근 끝난 시즌**(`seasonIsOver`) — 루트가 끝난 시즌이면 루트 그 자체다.
+   * ⚠**공회전 하한(勝率 행 · 「분모 ≠ 등판」 행)은 여기서 잰다**(2026-10-25 · PR-4 마지막 재검토 N2) — 루트가 개막 2~7경기일째인
+   *   새 시즌이면 勝率 행이 18~54 · 「분모 ≠ 등판」이 0~4 라(노디시전 1등판 선발은 행이 없다) 하한이 「시험」을 떨어뜨려 배포를 막았다.
+   *   ⚠**하한을 낮추지 않는다** — 그것이 「분모 = 登板数」 회귀를 가르는 그물이다. 루트에서는 같은 단언(분모 · 값)만 한다.
+   */
+  settled: SeasonData;
+}
 
+/** 그 시즌의 바깥 근거(최다 안타 · 승패) — **화면과 따로 센다** */
+function measure(db: Db, season: number, site: SiteData): SeasonData {
   const hitRows = db.raw
     .prepare(
       `SELECT (CASE b.side WHEN 'away' THEN g.away_code ELSE g.home_code END) AS code,
@@ -94,10 +95,36 @@ function load(): Loaded {
     const cur = decisions.get(key) ?? { w: 0, l: 0, games: 0 };
     decisions.set(key, { w: cur.w + Number(r.w), l: cur.l + Number(r.l), games: cur.games + Number(r.games) });
   }
+  return { season, site, topHits, decisions };
+}
 
-  loaded = { season, site: root.site, topHits, decisions };
-  db.close();
-  return loaded;
+/**
+ * ⚠**한 번만 읽는다** — `loadSite` 는 비싸다(`ranking-src-srp.test.ts` 와 같은 이유 · ~~실측 약 6초~~ 는 낡았다 —
+ *   2026-10-25 로컬 9시즌 DB 에서 이 파일 하나가 45.7~56.9초).
+ * ⚠⚠**시즌은 빌드가 사이트 루트에 놓는 시즌이다**(`rootSeason` · 2026-10-25 · PR-4 재검토 F1) — 예전 `MAX(season)` 은
+ *   개막 1~2경기일에 빌드가 아직 굽지 않는 새 시즌을 읽다 「표본 0」으로 떨어져 CI 「시험」 단계가 배포를 막았다.
+ * ⚠루트가 진행 중이면 **끝난 시즌을 한 번 더 읽는다**(`settled`) — 시즌 중(4~10월)에는 `loadSite` 가 두 번이다
+ *   (같은 로컬에서 이 파일 105.7~110.0초 · 대가로 받는다 — 하한을 낮추는 쪽이 싸지만 그물이 사라진다).
+ */
+let loaded: Loaded | null = null;
+function load(): Loaded {
+  if (loaded !== null) return loaded;
+  const db = openDb(DB, "1970-01-01T00:00:00.000Z");
+  try {
+    const root = rootSeason(db, (s) => loadSite(db, { season: s, builtOn: "1970-01-01" }));
+    const atRoot = measure(db, root.season, root.site);
+    // 빌드가 굽는 시즌 중 가장 최근 끝난 것 — `root.seasons` 는 최신부터다
+    const settledSeason = root.seasons.find((s) => seasonIsOver(db, s));
+    assert.ok(settledSeason !== undefined, `끝난 시즌이 없다(${root.seasons.join("·")}) — 勝率 순위의 공회전 하한을 잴 곳이 없다`);
+    const settled =
+      settledSeason === root.season
+        ? atRoot
+        : measure(db, settledSeason, loadSite(db, { season: settledSeason, builtOn: "1970-01-01" }));
+    loaded = { ...atRoot, settled };
+    return loaded;
+  } finally {
+    db.close();
+  }
 }
 
 function categoryOf(site: SiteData, league: string, id: string): RankingCategory {
@@ -145,14 +172,14 @@ test("⚠最多安打 순위가 화면에 있다 — 계산은 있는데 부르�
  * ⚠**등판 수를 분모로 쓰면 조용히 틀린다** — 그것이 SRP 가 밟은 함정의 같은 얼굴이다
  * (분모를 붙이는 것만으로는 M2 를 지킨 것이 아니고 **맞는 분모**여야 한다).
  */
-test("⚠最高勝率 순위가 있고 분모가 決着数다 — 登板数도 試合数도 아니다", { skip: HAS_DB ? false : "DB 없음" }, () => {
-  const { site, decisions } = load();
+/** 한 시즌의 勝率 순위를 바깥 근거와 대본다 — 본 행 수와 「분모 ≠ 등판」 행 수를 돌려준다 */
+function checkWinPct({ site, decisions, season }: SeasonData): { rowsSeen: number; differsFromGames: number } {
   let rowsSeen = 0;
   let differsFromGames = 0;
   for (const league of LEAGUES) {
     const cat = categoryOf(site, league, "starter");
     const panel = cat.panels.find((p) => p.id === "winPct");
-    assert.ok(panel !== undefined, `${league}: 勝率 순위가 없다 — 부문 ${cat.panels.map((p) => p.id).join("·")}`);
+    assert.ok(panel !== undefined, `${season} ${league}: 勝率 순위가 없다 — 부문 ${cat.panels.map((p) => p.id).join("·")}`);
     assert.equal(panel.label, "勝率");
     assert.equal(panel.unit, denUnit("winPct"), "분모 단위가 용어집과 다르다");
     // ⚠**아웃 카운트가 아니다** — 켜 두면 `12決着` 이 `4回` 로 나간다(SRP 가 밟은 그 함정)
@@ -161,25 +188,37 @@ test("⚠最高勝率 순위가 있고 분모가 決着数다 — 登板数도 �
 
     for (const row of panel.rows) {
       const d = decisions.get(`${row.playerId}|${league}`);
-      assert.ok(d !== undefined, `${row.name}: 투구 기록을 못 찾았다`);
-      assert.equal(row.value.denominator, d.w + d.l, `${row.name}: 분모가 勝+敗가 아니다`);
+      assert.ok(d !== undefined, `${season} ${row.name}: 투구 기록을 못 찾았다`);
+      assert.equal(row.value.denominator, d.w + d.l, `${season} ${row.name}: 분모가 勝+敗가 아니다`);
       assert.equal(
         row.value.value,
         d.w + d.l === 0 ? null : d.w / (d.w + d.l),
-        `${row.name}: 값이 勝 ÷ (勝+敗)가 아니다`,
+        `${season} ${row.name}: 값이 勝 ÷ (勝+敗)가 아니다`,
       );
       rowsSeen += 1;
       if (d.games !== d.w + d.l) differsFromGames += 1;
     }
   }
-  assert.ok(rowsSeen >= 20, `勝率 행을 ${rowsSeen}개밖에 못 봤다 — 이 시험이 공회전한다`);
+  return { rowsSeen, differsFromGames };
+}
+
+test("⚠最高勝率 순위가 있고 분모가 決着数다 — 登板数도 試合数도 아니다", { skip: HAS_DB ? false : "DB 없음" }, () => {
+  const root = load();
+  // 루트(빌드가 사이트 맨 앞에 두는 시즌)는 크기와 무관하게 같은 단언을 받는다 — 개막 직후의 작은 시즌이어도
+  const atRoot = checkWinPct(root);
+  // ⚠**공회전 하한은 끝난 시즌에서 잰다**(`Loaded.settled`) — 루트가 끝난 시즌이면 같은 것을 두 번 세지 않는다
+  const { settled } = root;
+  const { rowsSeen, differsFromGames } = settled.season === root.season ? atRoot : checkWinPct(settled);
+  assert.ok(rowsSeen >= 20, `${settled.season}(끝난 시즌): 勝率 행을 ${rowsSeen}개밖에 못 봤다 — 이 시험이 공회전한다`);
   /**
    * ⚠**「분모 = 등판 수」여도 통과하는 상태를 막는다.** 노디시전이 한 번도 없으면
    * 두 수가 같아 위 단언이 아무것도 가르지 않는다. 실제로는 대부분의 선발이 노디시전을 갖는다.
+   * ⚠⚠**그래서 끝난 시즌에서 잰다** — 개막 직후의 루트는 첫 로테이션이 한 바퀴 돌기 전이라 이 수가 거의 없다
+   *   (2026 개막을 2027 로 옮긴 사본 실측 · 행/「분모 ≠ 등판」: 2경기일째 18/0 · 5경기일째 44/0 · 7경기일째 54/4 · 8경기일째 55/12).
    */
   assert.ok(
     differsFromGames >= 10,
-    `분모가 등판 수와 다른 행이 ${differsFromGames}개뿐이다 — 이 시험이 「決着数 대 登板数」를 안 가르고 있다`,
+    `${settled.season}(끝난 시즌): 분모가 등판 수와 다른 행이 ${differsFromGames}개뿐이다 — 이 시험이 「決着数 대 登板数」를 안 가르고 있다`,
   );
 });
 
