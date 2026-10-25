@@ -222,6 +222,32 @@ test("⚠⚠PR-4 T1 같은 프로세스의 12월 날짜 둘 → 12월 일정 요
 });
 
 /**
+ * ⚠⚠**3~10월(시즌 달)의 404 는 캐시에 남기지 않는다**(PR-4 3중 검토 1차 P3) — 그 달의 404 는 「사실」이 아니라 우리가 모르는 상태(→ local 실패)라
+ * 일과성 오류와 같이 다룬다: 같은 프로세스의 다음 날짜가 **다시 받아** 복구할 수 있어야 한다(위 「실패를 캐시에 남기지 않는다」의 근거 그대로).
+ * 캐시에 남기는 것은 비시즌 규칙으로 받아들인 404 뿐이다(12·1·2 · 11).
+ */
+test("⚠⚠PR-4 T1 시즌 달(7월) 404 는 캐시에 안 남는다 — 같은 프로세스의 두 날짜가 두 번 받는다 · 둘째가 200 이면 복구한다", async () => {
+  const both404 = await archiveCli({ range: ["2026-07-05", "2026-07-06"], route: (u) => (isSchedule(2026, 7)(u) ? 404 : 200) });
+  assert.equal(both404.code, 1, both404.log);
+  assert.equal(both404.calls.filter(isSchedule(2026, 7)).length, 2, `시즌 달의 404 를 캐시에 가뒀다 — 그 달 나머지 날짜가 재시도 없이 같은 실패를 되풀이한다: ${both404.calls.join(" ")}`);
+  // 첫 요청만 404 · 둘째부터 200(빈 날짜 행 · 경기 0) — 둘째 날짜는 복구된다
+  let julyCalls = 0;
+  const blankJuly = `<table>${Array.from({ length: 31 }, (_, i) => `<tr id="date07${String(i + 1).padStart(2, "0")}" class=""><th>7/${String(i + 1)}</th><td>&nbsp;</td><td>&nbsp;</td></tr>`).join("")}</table>`;
+  const recovered = await archiveCli({
+    range: ["2026-07-05", "2026-07-06"],
+    route: (u) => {
+      if (!isSchedule(2026, 7)(u)) return isSchedule(2026, 8)(u) ? 404 : 200;
+      julyCalls += 1;
+      return julyCalls === 1 ? 404 : 200;
+    },
+    bodyOf: (u) => (isSchedule(2026, 7)(u) ? blankJuly : undefined),
+  });
+  assert.equal(recovered.code, 1, "첫 날짜의 404 는 여전히 실패다(시즌 달)");
+  assert.match(recovered.log, /2026-07-05 {2}ERROR — 월간 일정을 받지 못했다 \(HTTP 404\)/);
+  assert.doesNotMatch(recovered.log, /2026-07-06 {2}ERROR/, "둘째 날짜가 다시 받지 않고 같은 실패를 되풀이했다");
+});
+
+/**
  * ⚠⚠**3중 검토 3차 ①의 재현 모양** — 경기 index 의 사이드카 읽기가 실패하고(local) 나머지 세 장이 503 으로 소진되면 회로가 열린다.
  * 예전에는 혼합 실패라 1 이 되어 부모가 다음 날짜 자식을 새 회로로 또 띄웠다(날짜 셋에 소진 9 · 시도 36). 이제 70 — 부모가 멈춘다.
  */

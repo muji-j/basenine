@@ -488,6 +488,34 @@ test("⚠실패한 달 조회가 캐시에 갇히지 않는다 — 갇히면 그
   assert.equal(schedule.fetchCount, 2, "실패한 조회는 캐시에서 지워지고 다시 시도된다");
 });
 
+/**
+ * ⚠⚠**비시즌 달(12월)이어도 404 가 아닌 실패는 캐시에 갇히지 않는다**(2026-10-25 · PR-4 3중 검토 반영 · 1차 P3).
+ * 캐시에 남기는 것은 그 달의 「일정이 없다」는 **사실**(`ScheduleAbsentError` · 404·410)뿐이다 — 달 조건만 보고 남기면
+ * 12월의 일과성 503 한 번으로 그 프로세스의 12월 날짜가 전부 같은 실패를 되풀이한다(위 시험의 비시즌 판).
+ */
+test("⚠비시즌 달(12월)이어도 404 가 아닌 실패는 캐시에 갇히지 않는다 — 남기는 것은 「일정이 없다」는 사실뿐이다", async () => {
+  const h = harness();
+  const sink = new MemorySink();
+  let attempt = 0;
+  // 첫 날짜: 1회 시도 + 3회 재시도 = 503 넷(소진) · 그 뒤: 404(비시즌 달이라 「그날 경기 0」)
+  const { fetcher } = fetcherFor(h, (url) => {
+    if (url.includes("schedule_12_detail")) {
+      attempt += 1;
+      return attempt <= 4 ? response(503) : response(404);
+    }
+    return response(200, "x");
+  });
+  const schedule = new MonthlyScheduleCache();
+  const deps = { fetcher, sink, clock: h.clock, schedule };
+
+  const first = await archiveDates(["2026-12-05"], deps);
+  assert.ok(isDayError(first[0]!), "재시도를 소진했으므로 첫 시도는 ERROR");
+
+  const second = await archiveDates(["2026-12-05"], deps);
+  assert.ok(!isDayError(second[0]!), "503 이 캐시에 갇혔다 — 같은 캐시로 다시 물었으면 404(비시즌 달 · 경기 0)를 받았다");
+  assert.equal(schedule.fetchCount, 2, "503 이 캐시에 갇혔다");
+});
+
 test("summarize는 분모를 함께 낸다 (작업규칙 7)", () => {
   const s = summarize([
     { key: "a", url: "u", outcome: "stored", status: 200, error: null },

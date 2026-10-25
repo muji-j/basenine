@@ -88,10 +88,12 @@ export class MonthlyScheduleCache {
     this.byMonth.set(key, pending);
     // ⚠실패를 캐시에 남기지 않는다. 남기면 일과성 오류 1회로 **그 달의 남은 날짜가 전부**
     // 같은 실패를 되풀이한다 — 긴 백필에서 하루치 오류가 한 달치 손실이 된다.
-    // ⚠⚠**단 404·410(`ScheduleAbsentError`)은 남긴다**(PR-4 설계 D1 「요청 수」) — 일과성 오류가 아니라 「그 달 일정이 없다」는 사실이고,
-    //   지우면 같은 프로세스의 여러 날(묶음 실행)이 **같은 404 를 날짜 수만큼 다시 친다**(L1). 판정(조용·경고·실패)은 받는 쪽(`archiveDate`)이 달로 한다.
+    // ⚠⚠**단 비시즌 규칙으로 받아들이는 달(11·12·1·2)의 404·410(`ScheduleAbsentError`)은 남긴다**(PR-4 설계 D1 「요청 수」) — 그 달에는
+    //   「그 달 일정이 없다」는 사실이고, 지우면 같은 프로세스의 여러 날(묶음 실행)이 **같은 404 를 날짜 수만큼 다시 친다**(L1).
+    // ⚠⚠**3~10월(시즌 달)의 404 는 지운다**(PR-4 3중 검토 1차 P3) — 그 달의 404 는 사실로 받지 않는다(우리가 모르는 상태 → local 실패).
+    //   일과성일 수 있으니 위 원칙대로 다음 날짜가 다시 받아 복구할 수 있어야 한다. 판정은 `archiveDate` 와 같은 `scheduleAbsencePolicy` 한 벌이다(M1).
     void pending.catch((err: unknown) => {
-      if (err instanceof ScheduleAbsentError) return;
+      if (err instanceof ScheduleAbsentError && scheduleAbsencePolicy(month) !== "fail") return;
       if (this.byMonth.get(key) === pending) this.byMonth.delete(key);
     });
     return pending;
