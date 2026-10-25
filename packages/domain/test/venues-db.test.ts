@@ -174,7 +174,25 @@ test("⚠표가 적은 본거지가 실측 최다 건물이다 — **구장 이�
     minShare = Math.min(minShare, share);
     if (top[0] !== declared.id) bad.push(`${season} ${team}: 표 ${declared.id} · 실측 최다 ${top[0]}(${top[1]})`);
   }
-  assert.equal(by.size, 108, `(팀, 시즌) 이 ${by.size}건이다 — 9시즌 × 12팀 = 108 이어야 한다`);
+  /**
+   * ⚠⚠**시즌 수를 박지 않는다**(2026-10-25 · PR-4 재검토 — 새 시즌 개막 모양의 실DB 사본으로 찾음). 예전 단언은 `108`(9시즌 × 12팀)이라
+   *   **새 시즌 첫 경기가 적재되는 날부터 그 시즌 내내** CI 「시험」 단계가 떨어져 배포가 멈췄다(개막일 사본: 9 × 12 + 홈경기를 치른 6팀 = 114).
+   *   → **최신이 아닌 시즌은 12구단 전부**(끝난 시즌에서 한 구단이 빠지면 그 구단 본거지를 안 잰 것이다) · **최신 시즌은 1~12구단**
+   *   (개막 직후에는 홈경기를 치른 구단만 있다). 공회전 방지는 시즌 수(보유 9시즌 이상)로 한다.
+   */
+  const teamsBySeason = new Map<number, number>();
+  for (const key of by.keys()) {
+    const season = Number(key.split("|")[0]);
+    teamsBySeason.set(season, (teamsBySeason.get(season) ?? 0) + 1);
+  }
+  const seasons = [...teamsBySeason.keys()].sort((a, b) => a - b);
+  assert.ok(seasons.length >= 9, `정규시즌이 ${seasons.length}개뿐이다 — 이 시험이 공회전한다`);
+  const newest = seasons.at(-1)!;
+  for (const season of seasons) {
+    const n = teamsBySeason.get(season)!;
+    if (season === newest) assert.ok(n >= 1 && n <= 12, `${season}(최신): 홈경기를 치른 구단이 ${n}개다 — 1~12 여야 한다`);
+    else assert.equal(n, 12, `${season}: 홈경기를 치른 구단이 ${n}개다 — 끝난 시즌은 12구단 전부여야 한다(빠진 구단의 본거지를 안 쟀다)`);
+  }
   assert.deepEqual(bad, [], "본거지가 실측과 다르다 — 구단이 구장을 옮겼으면 `homes` 를 갱신하라");
   // 실측 최저 80.3%(2018 日本ハム). 과반을 밑돌면 「본거지」라는 말 자체가 흔들린다
   assert.ok(minShare > 0.5, `본거지 점유율 최저가 ${(minShare * 100).toFixed(1)}% 다`);
