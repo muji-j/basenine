@@ -18,9 +18,14 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
 import { clickDepthLazy, tooDeepIn } from "../src/link-check.ts";
 
 const DIST = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "dist");
+const DB = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "data", "bb.sqlite");
+if (process.env["BB_REQUIRE_DB"] === "1" && !existsSync(DB)) {
+  throw new Error(`BB_REQUIRE_DB=1 인데 ${DB} 가 없다`);
+}
 
 /**
  * ⚠**경로만 모은다. 링크는 안 들고 있는다**(2026-08-31 · CI 에서 **OOM 으로 죽었다**).
@@ -82,7 +87,8 @@ test("⚠홈에서 못 닿는 화면이 없다 — 아무도 안 가리키는 �
  * 그 사실을 수치로 남겨야 다음 사람이 「한 단계 더 넣어도 되겠지」를 안 한다.
  * ⚠⚠**현행 시즌 선수 수에 하한을 박지 않는다**(2026-10-25 · PR-4 마지막 재검토 N3). 예전 `> 300` 은 새 시즌이 루트가 되는 날
  *   (개막 1~3경기일째 · 루트 선수 183~296 · 2026 실측)부터 「시험」을 떨어뜨려 배포를 막았다 — 루트의 선수 페이지는 **그 시즌에 나온 선수**다.
- *   공회전 그물은 위 시험(전 시즌 선수 > 500 · 화면 > 1000)이 맡고, 여기는 **현행 선수가 하나라도 있는가**만 본다(0 이면 경로 규칙이 바뀐 것이다).
+ *   여기는 **현행 선수가 하나라도 있는가**만 본다(0 이면 경로 규칙이 바뀐 것이다 · DB 가 없는 곳의 마지막 그물).
+ *   ⚠**몇 장이어야 하는가는 아래 시험이 DB 로 정한다**(완화 검토 P2 — `≥ 1` 만으로는 현행 선수 페이지가 한 장만 남는 대량 소실도 통과했다).
  */
 test("현행 시즌 선수는 2클릭 이내다 — 과거 시즌만 3클릭을 쓴다", {
   skip: paths.length === 0 ? "dist 없음" : false,
@@ -93,4 +99,56 @@ test("현행 시즌 선수는 2클릭 이내다 — 과거 시즌만 3클릭을 
     .map((p) => depth.get(p) ?? 99);
   assert.ok(worst.length >= 1, "현행 시즌 선수 페이지가 한 장도 없다 — 루트 경로 규칙이 바뀌었다(이 시험이 공회전한다)");
   assert.ok(Math.max(...worst) <= 2, `현행 시즌 선수가 ${Math.max(...worst)}클릭이다 — 과거 시즌의 여유가 사라진다`);
+});
+
+/**
+ * ⚠⚠**현행 시즌 선수 페이지는 「그 시즌 정규시즌에 타석·등판 기록이 있는 선수」와 정확히 같다**(2026-10-25 · PR-4 완화 검토 P2).
+ *
+ * 고정 숫자는 둘 다 틀렸다 — `> 300` 은 개막 직후 배포를 막았고, `≥ 1` 은 시즌 중 현행 선수 페이지 수백 장이 사라져도 통과한다
+ * (페이지와 링크가 같은 줄어든 집합에서 나오면 깨진 링크도 없고, 과거 시즌이 「선수 > 500」을 채운다).
+ * → **기대 집합을 화면 밖에서 따로 센다**: DB 에서 그 시즌 정규시즌 실시 경기에 `batting_line` 또는 `pitching_line` 이 있는 선수.
+ *   빌드가 선수 페이지를 만드는 조건과 같다 — 선수 = 그 시즌 집계의 타자 ∪ 투수(`packages/web/src/query.ts` 의 `ids`)이고,
+ *   집계가 `status = 'played' AND competition = 'regular'` 로 거른다(`packages/aggregate/src/season.ts` 의 `BATTING_SQL` · `PITCHING_SQL`).
+ *   ⚠**같은 함수를 부르지 않는다** — 그러면 「내 계산이 내 계산과 같다」밖에 증명 못 한다. 질의를 따로 짠다.
+ * ⚠**시즌은 배포물이 스스로 말하는 루트 시즌이다**(`index.html` 의 제목 `YYYY年 …`) — 빌드가 새 시즌을 미루는 날(개막 1~3경기일째)에는
+ *   DB 의 최신 시즌이 아니라 그 앞 시즌이 루트다. 제목에서 시즌을 못 읽으면 **실패다**(M7 — 조용히 건너뛰지 않는다).
+ * ⚠**DB 는 읽기 전용으로 연다**(`openDb` 는 마이그레이션을 적용한다 — 쓴다) · DB 가 없으면 건너뛰고 `BB_REQUIRE_DB=1` 이면 맨 위에서 던진다(이웃 시험과 같은 관례).
+ * 실측(2026-10-25 · 로컬 배포물 9/29 빌드 · 로컬 DB): 루트 2026 · 페이지 698 = 기대 698 · 빠진 것 0 · 남는 것 0.
+ */
+test("⚠현행 시즌 선수 페이지가 그 시즌 정규시즌 출장 선수(DB)와 정확히 같다", {
+  skip: paths.length === 0 ? "dist 없음" : existsSync(DB) ? false : "DB 없음",
+}, () => {
+  const title = /<title>(\d{4})年 /.exec(readFileSync(join(DIST, "index.html"), "utf8"));
+  assert.ok(title !== null, "index.html 의 제목에서 루트 시즌을 못 읽었다 — 제목 형식이 바뀌었으면 이 시험을 같이 고쳐라");
+  const season = Number(title[1]);
+  const pages = new Set(
+    paths.filter((p) => /^players\/[^/]+\.html$/.test(p)).map((p) => p.slice("players/".length, -".html".length)),
+  );
+  const db = new DatabaseSync(DB, { readOnly: true });
+  let expected: Set<string>;
+  try {
+    expected = new Set(
+      (
+        db
+          .prepare(
+            `SELECT b.player_id AS id FROM batting_line b JOIN game g ON g.game_id = b.game_id
+              WHERE g.season = ? AND g.status = 'played' AND g.competition = 'regular'
+             UNION
+             SELECT t.player_id AS id FROM pitching_line t JOIN game g ON g.game_id = t.game_id
+              WHERE g.season = ? AND g.status = 'played' AND g.competition = 'regular'`,
+          )
+          .all(season, season) as unknown as { id: string }[]
+      ).map((r) => String(r.id)),
+    );
+  } finally {
+    db.close();
+  }
+  assert.ok(expected.size > 0, `${season}(루트) 시즌의 정규시즌 출장 선수가 DB 에 0명이다 — 배포물과 DB 가 다른 것을 보고 있다`);
+  const missing = [...expected].filter((id) => !pages.has(id)).sort();
+  const extra = [...pages].filter((id) => !expected.has(id)).sort();
+  assert.deepEqual(
+    { missing: missing.slice(0, 10), extra: extra.slice(0, 10) },
+    { missing: [], extra: [] },
+    `${season}(루트): 선수 페이지 ${pages.size}장 · DB 기대 ${expected.size}명 — 빠진 것 ${missing.length} · 남는 것 ${extra.length}`,
+  );
 });
