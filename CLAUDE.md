@@ -53,7 +53,7 @@ v3+  시장 배포·수익화 검토
 |---|---|---|
 | 런타임·언어 | **Node ≥24 + TypeScript** npm 워크스페이스 · 패키지 **7개**(`domain`·`parser`·`store`·`aggregate`·`metrics`·`archiver`·`web`) | `package.json` (`engines.node` = `>=24`) · `packages/` |
 | 저장 | **SQLite 1파일**(`data/bb.sqlite`) · 원본은 `data/archive` 의 `.html.gz` | ⚠**둘 다 `.gitignore`** — 저장소에 없다 |
-| 화면 | **정적 다페이지 생성 · 서버가 없다.** `npm run build:web` 이 9시즌을 `dist/` 로 굽는다 | `packages/web/tools/build.ts` |
+| 화면 | **정적 다페이지 생성 · 서버가 없다.** `npm run build:web` 이 DB 의 치른 시즌 전부(지금 9시즌 · `auto` · 최신이 루트 · 2026-10-25 PR-4)를 `dist/` 로 굽는다 | `packages/web/tools/build.ts` |
 | 호스팅 | **Cloudflare Pages** + **Access**(One-time PIN · 세션 1개월) | `docs/operations/deploy.md` |
 | 배치 | **GitHub Actions** — `daily.yml`(수집·빌드·배포·반영 확인) · `access-config.yml` | `.github/workflows/` |
 | 배포 도구 | `wrangler` | `package.json` devDependencies |
@@ -930,6 +930,13 @@ S3 수익화 검토      ⚠영리목적이 붙는 순간 3층 판단요소가 �
   → `update.ts` 종료 **0 / 75(상류 받기 실패만) / 1(그 밖 하나라도)** · 75 면 화면 생성·시험·배포까지 가고 **잡은 붉게 끝난다**(경보·신선도 띠는 유지).
   ⚠**적재·파싱·판 가드·시험·외부 대조 실패는 여전히 막는다** — 「상류」는 fetcher 한 곳만 정하고 HTTP 응답 또는 닫힌 네트워크 코드 목록일 때뿐이다(모르는 오류는 로컬 = 막는 쪽).
   ⚠**의도적 차단으로 확정되면 우회하지 않는다**(다른 IP·경로로 피하지 않는다 · 사용자와 상의) — 원인은 실패 메시지의 시도 기록으로 가른다.
+- ⚠**비시즌(11월~개막)의 「경기 0」은 사실이지만 달·데이터로 가른다 — 날짜를 박지 않는다**(2026-10-25 · PR-4 ·
+  설계 `docs/superpowers/specs/2026-10-24-offseason-readiness-design.md` · 런북 `docs/operations/deploy.md` §7-L — 확인 날짜도 거기).
+  ⑴ 현재 달 일정 404·410 은 12·1·2월이면 조용히 · **11월이면 `::warning::` 과 함께** 「그날 경기 0」 · 3~10월은 지금처럼 1(`scheduleAbsencePolicy` · `NO_GAME_MONTHS` 한 벌 · M1)
+  ⑵ 새 시즌 폴더가 없으면 「보유 최신 + 1」이고 받은 흔적이 0 일 때만 0 ⑶ 予告先発 연도는 실재하는 가장 가까운 해(±183)이고 **지난 날짜면 맥박만**
+  ⑷ 빌드 시즌은 **`auto`**(치른 시즌 · 최신이 루트 · 판정 실패면 dist 를 지우기 전에 멈춘다 — **시즌 목록을 다시 박지 마라**)
+  ⑸ 최신 시즌이 끝났고 다음 경기가 없으면 予告先発 맥박을 요구하지 않는다(감시만) ⑹ 경기가 0 인 시즌의 공표표는 받지 않는다(**관문은 그대로**).
+  ⚠**11월을 조용한 달로 만들지 마라** — 경기가 열리는 해가 있다(5시즌 71경기). ⚠**전제 하나가 사람 몫이다**: 일본시리즈 전 경기가 12/01 전에 DB 에 있어야 한다(G1 — 없으면 `game-lag` 이 막고 ⑸도 안 선다).
 - ⚠**「AI틱함」 목록은 루트 §7 이 소유한다.** 이 제품이 **더하는** 것은
   `design-graphics-engineer.md` 가 갖는다(모든 요소에 같은 border-radius · 근거 없는 그림자).
 
