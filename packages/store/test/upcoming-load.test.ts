@@ -924,6 +924,155 @@ test("⚠시즌 폴더에 일정 파일이 0개면 아무것도 지우지 않고
   });
 });
 
+// ---- PR-4 T3 · 새 시즌 폴더가 없을 때(설계 `2026-10-24-offseason-readiness-design.md` D2) ----------------------------------
+
+/**
+ * 시즌 폴더가 **없거나**(`missing`) **일정 파일이 0개**(`empty`)인 아카이브에 `S` 로 적재기를 띄운다.
+ * ⚠세 표(예정 · 치러짐 표시 · 사본 기록)는 **어느 경우에도 안 바뀐다** — 사본이 없으면 바꿀 근거가 없다. 그래서 전후를 통째로 대조한다.
+ */
+async function withNoCopy(
+  o: { season: number; folder: "missing" | "empty"; seed: (db: ReturnType<typeof openDb>) => void },
+  fn: (r: { code: number; out: string; err: string }) => void,
+): Promise<void> {
+  const dir = await mkdtemp(join(tmpdir(), "bb-upcoming-nocopy-"));
+  const gamesRoot = join(dir, "archive", "npb", "games");
+  await mkdir(gamesRoot, { recursive: true });
+  if (o.folder === "empty") await mkdir(join(gamesRoot, String(o.season)), { recursive: true });
+  const dbPath = join(dir, "t.sqlite");
+  const seedDb = openDb(dbPath, NOW);
+  try {
+    o.seed(seedDb);
+  } finally {
+    seedDb.close();
+  }
+  const snapshot = (): string => {
+    const d = openDb(dbPath, NOW);
+    try {
+      return JSON.stringify(
+        ["upcoming_game", "schedule_played", "schedule_month"].map((t) => d.raw.prepare(`SELECT * FROM ${t} ORDER BY 1, 2, 3, 4`).all()),
+      );
+    } finally {
+      d.close();
+    }
+  };
+  try {
+    const before = snapshot();
+    const r = spawnSync(process.execPath, [TOOL, join(dir, "archive"), dbPath, String(o.season)], { encoding: "utf8" });
+    assert.equal(snapshot(), before, "사본이 없는데 세 표(예정·치러짐 표시·사본 기록)를 바꿨다");
+    fn({ code: r.status ?? 1, out: r.stdout, err: r.stderr });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/** 보유 시즌 2026 — 경기 하나 · 그 시즌의 예정 · 치러짐 표시 · 사본 기록 하나씩(다른 시즌의 행이 안 바뀌는 것도 본다) */
+function held2026(d: ReturnType<typeof openDb>): void {
+  upsertGame(d, {
+    gameId: "2026/1001/g-t-01", season: 2026, gameDate: "2026-10-01", awayCode: "t", homeCode: "g", gameNo: 1,
+    status: "played", notPlayedReason: null, competition: "regular", sourceUrl: "https://npb.jp/x", fetchedAt: NOW, awayRuns: 0, homeRuns: 1,
+  });
+  d.raw.prepare(
+    `INSERT INTO upcoming_game (season, game_date, home_code, away_code, seq, venue, start_time, source, fetched_at)
+     VALUES (2026, '2026-10-30', 'g', 't', 0, '東京ドーム', '18:00', 'npb.jp/games/2026/schedule_10_detail', ?)`,
+  ).run(NOW);
+  d.raw.prepare(
+    `INSERT INTO schedule_played (season, game_date, home_code, away_code, seq, source, fetched_at)
+     VALUES (2026, '2026-10-01', 'g', 't', 0, 'npb.jp/games/2026/schedule_10_detail', ?)`,
+  ).run(NOW);
+  d.raw.prepare(
+    `INSERT INTO schedule_month (season, month, source, fetched_at, date_rows, games, first_content)
+     VALUES (2026, 10, 'npb.jp/games/2026/schedule_10_detail', ?, 31, 2, '2026-10-01')`,
+  ).run(NOW);
+}
+
+const FOLDERS = ["missing", "empty"] as const;
+
+test("⚠⚠PR-4 T3 D2 1줄 — S = 보유 최신 시즌 + 1 · 그 시즌의 경기 0 · 받은 달 0 → 0 · 「사본이 아직 없다」 · 세 표 불변(폴더 없음 · 파일 0)", async () => {
+  for (const folder of FOLDERS) {
+    await withNoCopy({ season: 2027, folder, seed: held2026 }, (r) => {
+      assert.equal(r.code, 0, `${folder}: 1월~개막 전에 매 실행 1 이다(새 시즌 폴더가 아직 없다):\n${r.err}`);
+      assert.match(r.out, /2027 시즌 일정 사본이 아직 없다\(받은 달 0 · 경기 0\) — 표 불변/, folder);
+      assert.doesNotMatch(r.out, /미공표/, "「미공표」라고 말했다 — 404 를 봤는지 모른다(M11)");
+    });
+  }
+});
+
+test("⚠⚠PR-4 T3 D2 2줄 — 경기 0 · 받은 달 0 이어도 S 가 보유 최신 + 1 이 아니면 1(시즌 인자 버그 · 경기가 하나도 없는 DB)", async () => {
+  for (const folder of FOLDERS) {
+    await withNoCopy({ season: 2028, folder, seed: held2026 }, (r) => {
+      assert.equal(r.code, 1, `${folder}: 보유 최신 + 2 를 통과시켰다:\n${r.out}`);
+      assert.match(r.err, /시즌 인자가 보유 범위와 안 맞는다/, folder);
+    });
+    await withNoCopy({ season: 2027, folder, seed: () => undefined }, (r) => {
+      assert.equal(r.code, 1, `${folder}: 경기가 하나도 없는 DB(보유 최신 시즌 없음)를 통과시켰다:\n${r.out}`);
+      assert.match(r.err, /시즌 인자가 보유 범위와 안 맞는다/, folder);
+    });
+  }
+});
+
+test("⚠PR-4 T3 D2 3줄 — 그 시즌의 경기 행이 있는데 사본이 없으면 1(모순 — 사본이 사라졌다)", async () => {
+  for (const folder of FOLDERS) {
+    await withNoCopy({
+      season: 2027,
+      folder,
+      seed: (d) => {
+        held2026(d);
+        upsertGame(d, {
+          gameId: "2027/0327/g-t-01", season: 2027, gameDate: "2027-03-27", awayCode: "t", homeCode: "g", gameNo: 1,
+          status: "notPlayed", notPlayedReason: "雨天中止", competition: "regular", sourceUrl: "https://npb.jp/x", fetchedAt: NOW, awayRuns: null, homeRuns: null,
+        });
+      },
+    }, (r) => {
+      assert.equal(r.code, 1, `${folder}:\n${r.out}`);
+      assert.match(r.err, /경기 행이 1건 있다 — 모순/, `${folder}: 모순(사본이 사라졌다)이라고 말하지 않았다`);
+    });
+  }
+});
+
+test("⚠⚠PR-4 T3 D2 4줄 — 그 시즌에 전에 받은 달(사본 기록)이 있는데 사본이 없으면 1(사본이 사라진 달) · S = 보유 최신 + 1 이어도", async () => {
+  for (const folder of FOLDERS) {
+    await withNoCopy({
+      season: 2027,
+      folder,
+      seed: (d) => {
+        held2026(d);
+        // 2월 실행이 다음 달로 2027-03 을 받아 적재했다 — 그 뒤 사본이 사라졌다(복원 누락 · 경로 오류)
+        d.raw.prepare(
+          `INSERT INTO schedule_month (season, month, source, fetched_at, date_rows, games, first_content)
+           VALUES (2027, 3, 'npb.jp/games/2027/schedule_03_detail', ?, 31, 6, '2027-03-26')`,
+        ).run(NOW);
+      },
+    }, (r) => {
+      assert.equal(r.code, 1, `${folder}: 사본이 사라진 달을 「아직 없다」로 통과시켰다:\n${r.out}`);
+      assert.match(r.err, /사본이 사라진 달 03/, folder);
+    });
+  }
+});
+
+/**
+ * ⚠**설계 D2 표에 더한 것**(PR-4 구현 · 보고에 적는다) — 사본 기록(`schedule_month`)이 없는데 **그 시즌의 예정·치러짐 표시가 있는** DB.
+ * 021 이전에 적재한 DB 이거나 기록이 지워진 DB 다(위 「일정 파일이 0개면 … 사본 기록이 없어도」 시험과 같은 전제). 그 행은 **받은 사본이 있었다는 흔적**이라
+ * `S = 보유 최신 + 1` 이어도 「아직 없다」가 아니다 — 통과시키면 사라진 사본이 조용히 0 이 된다.
+ */
+test("⚠PR-4 T3 D2(더함) — 사본 기록은 없는데 그 시즌의 예정·치러짐 표시가 있으면 1(받은 흔적이 있다)", async () => {
+  for (const folder of FOLDERS) {
+    await withNoCopy({
+      season: 2027,
+      folder,
+      seed: (d) => {
+        held2026(d);
+        d.raw.prepare(
+          `INSERT INTO upcoming_game (season, game_date, home_code, away_code, seq, venue, start_time, source, fetched_at)
+           VALUES (2027, '2027-03-27', 'g', 't', 0, '東京ドーム', '18:00', 'npb.jp/games/2027/schedule_03_detail', ?)`,
+        ).run(NOW);
+      },
+    }, (r) => {
+      assert.equal(r.code, 1, `${folder}: 받은 흔적(예정 행)이 있는데 「아직 없다」로 통과시켰다:\n${r.out}`);
+      assert.match(r.err, /앞으로의 경기 1행/, folder);
+    });
+  }
+});
+
 /**
  * ⚠**감지에 성공해도 데이터를 지켜야 한다.**
  * 처음에는 종료 코드만 1로 두었는데, 그 시점에 **DELETE 는 이미 커밋**돼 표가 빈 채로 남았다 —

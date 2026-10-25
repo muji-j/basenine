@@ -147,6 +147,135 @@ test("⚠파서가 실패한 파일은 맥박을 남기지 않는다 — 다른 
   );
 });
 
+// ---- PR-4 T4 · 予告先発 연도(설계 `2026-10-24-offseason-readiness-design.md` D3) --------------------------------------
+
+/** 한 경기 · **양쪽 선발이 발표된** 予告先発 페이지 — 맥박만인 날에 `player`·`probable_pitcher` 를 안 쓰는지 재려고 */
+const ANNOUNCED_DAY = (md: string): string => GAME_DAY(md)
+  .replace(
+    `<img src="/img/common/logo/2026/logo_s_m.gif" alt="東京ヤクルトスワローズ" title="東京ヤクルトスワローズ" />`,
+    `<img src="/img/common/logo/2026/logo_s_m.gif" alt="東京ヤクルトスワローズ" title="東京ヤクルトスワローズ" /><a href="/bis/players/91000001.html">山田　一郎</a>`,
+  )
+  .replace(
+    `<img src="/img/common/logo/2026/logo_db_m.gif" alt="横浜DeNAベイスターズ" title="横浜DeNAベイスターズ" />`,
+    `<img src="/img/common/logo/2026/logo_db_m.gif" alt="横浜DeNAベイスターズ" title="横浜DeNAベイスターズ" /><a href="/bis/players/91000002.html">佐藤　二郎</a>`,
+  );
+
+const tableCount = (db: ReturnType<typeof openDb>, table: "probable_pitcher" | "player" | "starters_fetch"): number =>
+  (db.raw.prepare(`SELECT COUNT(*) n FROM ${table}`).get() as unknown as { n: number }).n;
+const probableDates = (db: ReturnType<typeof openDb>): string[] =>
+  (db.raw.prepare("SELECT DISTINCT game_date d FROM probable_pitcher ORDER BY d").all() as unknown as { d: string }[]).map((r) => r.d);
+
+/** 파일 하나를 적재하고 결과를 본다 */
+async function loadOne(
+  fetched: string,
+  html: string,
+  fn: (r: { code: number; out: string; err: string; fetch: FetchRow[]; probables: string[]; players: number }) => void,
+): Promise<void> {
+  await withStarters({ [fetched]: { html } }, ({ run, db }) => {
+    const r = run();
+    const d = db();
+    try {
+      fn({ ...r, fetch: fetchRows(d), probables: probableDates(d), players: tableCount(d, "player") });
+    } finally {
+      d.close();
+    }
+  });
+}
+
+test("⚠⚠PR-4 T4 1월에 받은 「11月1日」 경기 → 2026-11-01 의 맥박만 · 예고·선수 0행(옛 규칙은 2027-11-01 을 만들어 시즌 내내 starters-behind 를 껐다)", async () => {
+  await loadOne("2027-01-05", ANNOUNCED_DAY("11月1日"), (r) => {
+    assert.equal(r.code, 0, r.err);
+    assert.deepEqual(r.fetch.map((x) => [x.fetched_date, x.game_date, x.no_games]), [["2027-01-05", "2026-11-01", 0]], "맥박의 게시 날짜가 지난 해가 아니다");
+    assert.deepEqual(r.probables, [], "지난 날짜 게시로 예고 행을 만들었다(2027-11-01 이면 시즌 내내 「다음 경기가 예고됐다」가 된다)");
+    assert.equal(r.players, 0, "맥박만인데 선수 행을 만들었다");
+    assert.match(r.out, /지난 날짜 게시 1건\(맥박만\)/);
+  });
+});
+
+test("⚠PR-4 T4 1월에 받은 「11月2日」 휴식 공표 → 2026-11-02 · no_games 1 의 맥박", async () => {
+  await loadOne("2027-01-05", REST_DAY("11月2日"), (r) => {
+    assert.equal(r.code, 0, r.err);
+    assert.deepEqual(r.fetch.map((x) => [x.fetched_date, x.game_date, x.no_games]), [["2027-01-05", "2026-11-02", 1]]);
+    assert.deepEqual(r.probables, []);
+  });
+});
+
+test("⚠⚠PR-4 T4 1월 1일에 받은 「12月31日」 경기 → 맥박만 · 종료 0(옛 규칙은 「연도를 정할 수 없다」로 1)", async () => {
+  await loadOne("2027-01-01", ANNOUNCED_DAY("12月31日"), (r) => {
+    assert.equal(r.code, 0, `해 넘김 직후의 낡은 페이지로 막았다:\n${r.err}`);
+    assert.deepEqual(r.fetch.map((x) => [x.game_date, x.no_games]), [["2026-12-31", 0]]);
+    assert.deepEqual(r.probables, []);
+    assert.equal(r.players, 0);
+  });
+});
+
+test("⚠PR-4 T4 12월 31일에 받은 「1月1日」 → 2027-01-01 정상 적재(+1일)", async () => {
+  await loadOne("2026-12-31", ANNOUNCED_DAY("1月1日"), (r) => {
+    assert.equal(r.code, 0, r.err);
+    assert.deepEqual(r.fetch.map((x) => [x.game_date, x.no_games]), [["2027-01-01", 0]]);
+    assert.deepEqual(r.probables, ["2027-01-01"]);
+    assert.equal(r.players, 2);
+  });
+});
+
+test("⚠PR-4 T4 0일·+1일(시즌 중 실측 68회 전부)은 지금과 같다 — 예고·선수까지 적재", async () => {
+  for (const [fetched, md, want] of [["2026-08-16", "8月16日", "2026-08-16"], ["2026-08-15", "8月16日", "2026-08-16"]] as const) {
+    await loadOne(fetched, ANNOUNCED_DAY(md), (r) => {
+      assert.equal(r.code, 0, r.err);
+      assert.deepEqual(r.fetch.map((x) => [x.game_date, x.no_games]), [[want, 0]], fetched);
+      assert.deepEqual(r.probables, [want], fetched);
+      assert.equal(r.players, 2, fetched);
+      assert.doesNotMatch(r.out, /지난 날짜 게시/, fetched);
+    });
+  }
+});
+
+/** ⚠실패한 파일은 **어느 표도 안 바꾼다**(설계 D3-2) — 맥박도 남기지 않는다(「받았다」와 「읽었다」를 섞지 않는다) */
+const assertUntouched = (r: { code: number; err: string; fetch: FetchRow[]; probables: string[]; players: number }, why: RegExp): void => {
+  assert.equal(r.code, 1, "정할 수 없는 연도를 실패로 세지 않았다(M7)");
+  assert.match(r.err, why);
+  assert.deepEqual(r.fetch, [], "실패한 파일이 맥박을 남겼다");
+  assert.deepEqual(r.probables, [], "실패한 파일이 예고 행을 남겼다");
+  assert.equal(r.players, 0, "실패한 파일이 선수 행을 남겼다");
+};
+
+test("⚠⚠PR-4 T4 2026-12-31 에 받은 「2月29日」 → 후보 해 0(2025·2026·2027 어느 해에도 없다) → 1 · 세 표 불변(자동 정규화 금지)", async () => {
+  await loadOne("2026-12-31", ANNOUNCED_DAY("2月29日"), (r) => assertUntouched(r, /후보 해가 없다/));
+});
+
+test("⚠⚠PR-4 T4 「2月29日」 경계 — 2027-08-30 → 2028-02-29(+183) 받음 · 2027-08-29 → +184 → 1", async () => {
+  await loadOne("2027-08-30", ANNOUNCED_DAY("2月29日"), (r) => {
+    assert.equal(r.code, 0, r.err);
+    assert.deepEqual(r.probables, ["2028-02-29"], "+183 일을 받지 않았다");
+  });
+  await loadOne("2027-08-29", ANNOUNCED_DAY("2月29日"), (r) => assertUntouched(r, /184일/));
+});
+
+test("⚠⚠PR-4 T4 「2月29日」 경계 — 2028-08-30 → −183 맥박만(2028-02-29) · 2028-08-31 → −184 → 1", async () => {
+  await loadOne("2028-08-30", ANNOUNCED_DAY("2月29日"), (r) => {
+    assert.equal(r.code, 0, r.err);
+    assert.deepEqual(r.fetch.map((x) => [x.game_date, x.no_games]), [["2028-02-29", 0]], "−183 일을 맥박으로 받지 않았다");
+    assert.deepEqual(r.probables, []);
+  });
+  await loadOne("2028-08-31", ANNOUNCED_DAY("2月29日"), (r) => assertUntouched(r, /184일/));
+});
+
+test("⚠⚠PR-4 T4 2027-08-31 에 받은 「3月1日」 → ±183 동률은 과거(2027-03-01 · 맥박만)", async () => {
+  await loadOne("2027-08-31", ANNOUNCED_DAY("3月1日"), (r) => {
+    assert.equal(r.code, 0, r.err);
+    assert.deepEqual(r.fetch.map((x) => [x.game_date, x.no_games]), [["2027-03-01", 0]], "동률을 미래(2028-03-01)로 골랐다");
+    assert.deepEqual(r.probables, []);
+  });
+});
+
+test("⚠PR-4 T4 2028-02-28 에 받은 「2月29日」 → 2028-02-29(+1) 정상", async () => {
+  await loadOne("2028-02-28", ANNOUNCED_DAY("2月29日"), (r) => {
+    assert.equal(r.code, 0, r.err);
+    assert.deepEqual(r.probables, ["2028-02-29"]);
+    assert.equal(r.players, 2);
+  });
+});
+
 test("⚠두 번 적재해도 같다(M5)", async () => {
   await withStarters(
     { "2026-08-15": { html: GAME_DAY("8月16日") }, "2026-08-16": { html: REST_DAY("8月17日") } },
