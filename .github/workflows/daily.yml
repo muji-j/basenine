@@ -521,9 +521,26 @@ jobs:
         # ⚠⚠**「멈추지 않는다」가 「아무것도 안 재도 통과한다」를 뜻하지는 않는다**(2차 검토 F1).
         #   한 장도 못 받아 대조 대상이 0명이 되면 **아래 단계가 exit 1 로 멈춘다** —
         #   예전에는 그 상태가 「결함 후보 0건 · 전부 맞는다 · exit 0」이었다(실측).
+        # ⚠⚠**경기가 0 인 시즌의 공표표는 받지 않는다**(2026-10-25 · PR-4 설계 `docs/superpowers/specs/2026-10-24-offseason-readiness-design.md` D6 —
+        #   9/11 설계 D8 의 대체). 1/1~개막 전에 새 해의 빈 표(200)를 받으면 아래 「외부 대조」가 **대조 0명**으로 1 이 된다.
+        #   ⚠**관문(`crosscheck.ts`)은 안 바꾼다**(사용자 결정 2026-10-02 「관문 판정 불변」) — 안 받으면 `npb/stats/<새 해>` 가 안 생기고 대조는 보유 시즌으로 돈다.
+        #   `scripts/season-has-games.ts` 의 종료: 0 = 치른 경기 있음 → 받는다 · 1 = 없음 → 한 줄만 · 그 밖(2 = DB 를 못 읽음) → **단계 실패**(배포는 안 막는다).
+        #   덤: 1/1~개막 약 85일 × 하루 3실행 × 30장 ≈ 7,650요청을 안 보낸다(L1).
         continue-on-error: true
         # ⚠**JST 로 연도를 정한다**(§2-1) — UTC 로 세면 새해 첫날에 지난 시즌을 받는다
-        run: node packages/archiver/src/cli-stats.ts --season "$(TZ=Asia/Tokyo date +%Y)"
+        # ⚠GitHub 의 기본 셸은 `bash -e` 다 — 판정 종료 코드는 `|| has=$?` 로 잡는다(그냥 부르면 1 에서 단계가 끝난다)
+        run: |
+          y=$(TZ=Asia/Tokyo date +%Y)
+          has=0
+          node scripts/season-has-games.ts data/bb.sqlite "$y" || has=$?
+          if [ "$has" = 0 ]; then
+            node packages/archiver/src/cli-stats.ts --season "$y"
+          elif [ "$has" = 1 ]; then
+            echo "${y} 시즌 경기가 DB 에 0 — 공표표를 받지 않는다(개막 전)"
+          else
+            echo "::error::${y} 시즌에 경기가 있는지 DB 에서 판정하지 못했다(종료 ${has}) — 공표표를 받지 않는다. 외부 대조는 옛 스냅숏으로 돈다"
+            exit 1
+          fi
 
       - name: 정정 감지 · 자동 재수집 — 외부 대조가 찾을 불일치의 경기를 이 실행 안에서 다시 받는다
         # ⚠**2026-09-28~10-02 사고에서 나왔다**(런북 §7-I): npb.jp 가 경기 약 열흘 뒤 기록을 고쳤는데 우리 수집기는 지난 경기를 다시 받지 않아

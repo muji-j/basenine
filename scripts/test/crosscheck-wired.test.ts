@@ -77,12 +77,17 @@ test("⚠공표 성적표를 갱신한다 — 정답지가 낡으면 대조도 �
  * ⚠**진행 중 시즌만 받는다.** 완결 시즌의 공표표는 더 이상 바뀌지 않으므로 다시 받는 것은
  * **L1 예산을 태우기만 한다**(시즌당 30페이지 · 1req/2~5초).
  * ⚠**연도는 JST 로 정한다**(§2-1) — UTC 로 세면 새해 첫날에 지난 시즌을 받는다.
+ * ⚠⚠**연도는 한 번만 읽는다**(2026-10-25 · PR-4 설계 D6 · M6) — 그 단계가 이제 「그 시즌에 경기가 있는가」(`season-has-games.ts`)를 먼저 묻고
+ *   같은 연도로 받는다. 두 명령이 `date` 를 따로 읽으면 JST 자정에 **물은 해와 받는 해가 갈린다** — 그래서 변수 하나로 넘긴다.
  */
-test("⚠공표표는 진행 중 시즌만 · 연도는 JST 로 정한다", () => {
+test("⚠공표표는 진행 중 시즌만 · 연도는 JST 로 정한다 · 한 번만 읽어 판정과 받기에 같이 넘긴다", () => {
   const line = code.split("\n").find((l) => l.includes("cli-stats.ts"));
   assert.notEqual(line, undefined, "cli-stats 줄을 못 찾았다 — 이 시험이 공회전한다");
-  assert.match(line!, /--season/, "시즌을 안 준다 — 도구가 usage 를 내고 종료한다");
-  assert.match(line!, /Asia\/Tokyo/, "연도를 JST 로 안 정한다 — 새해 첫날에 지난 시즌을 받는다");
+  assert.match(line!, /--season "\$y"/, "시즌을 연도 변수로 안 준다 — 도구가 usage 를 내거나 판정과 다른 해를 받는다");
+  const step = code.slice(code.lastIndexOf("- name: 공표 성적표 갱신", code.indexOf("cli-stats.ts")), code.indexOf("cli-stats.ts"));
+  assert.equal((step.match(/date \+%Y/g) ?? []).length, 1, "연도를 한 번만 읽지 않는다 — JST 자정에 판정한 해와 받는 해가 갈린다(M6)");
+  assert.match(step, /^\s*y=\$\(TZ=Asia\/Tokyo date \+%Y\)$/m, "연도를 JST 로 안 정한다 — 새해 첫날에 지난 시즌을 받는다");
+  assert.match(step, /season-has-games\.ts data\/bb\.sqlite "\$y"/, "받기 전에 그 시즌에 경기가 있는지 같은 해로 묻지 않는다(PR-4 D6)");
 });
 
 /**
