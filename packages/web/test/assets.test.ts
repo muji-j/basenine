@@ -864,7 +864,7 @@ test("⚠N8b 구단 즐겨찾기 버튼의 이름은 눌려도 같다 — ★ �
   const card: TeamsCard = {
     teamCode: "t", name: teamOf("t").name, shortName: shortNameOf("t"), color: colorOf("t"),
     rank: 1, tiedRank: false, games: 1, w: 1, l: 0, t: 0, pct: 1, gamesBehind: 0,
-    last10: { w: 1, l: 0, t: 0 }, next: null, seasonOver: false,
+    last10: { w: 1, l: 0, t: 0 }, next: null, seasonOver: false, regularDone: false,
   };
   const out = renderTeamsPage({ season: 2026, asOf: "2026-08-17", leagues: [{ id: "central", name: "セントラル・リーグ", teams: [card] }] }, context());
   const m = /(<button class="favt"[^>]*>)([\s\S]*?)<\/button>/.exec(out);

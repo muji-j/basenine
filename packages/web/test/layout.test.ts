@@ -227,8 +227,8 @@ test("검색 엔진에 올리지 않는다 — S1은 지인한정이다", () => 
 test("스크립트가 없으면 닫힌 탭 패널을 전부 펼친다 — 길어지는 것이 닿지 못하는 것보다 낫다", () => {
   const out = renderTodayPage(
     {
-      gameDate: "2026-08-14", builtOn: "2026-08-16", games: [], probableDate: null,
-      probables: [], starRule: "x", starLimit: 6, prev: null, dayCount: 1,
+      gameDate: "2026-08-14", builtOn: "2026-08-16", games: [], next: { kind: "awaiting", nextGameDay: null },
+      starRule: "x", starLimit: 6, prev: null, dayCount: 1,
     },
     context(),
   );
@@ -245,8 +245,8 @@ test("스크립트가 없으면 닫힌 탭 패널을 전부 펼친다 — 길어
 const shell = (): string =>
   renderTodayPage(
     {
-      gameDate: "2026-08-14", builtOn: "2026-08-16", games: [], probableDate: null,
-      probables: [], starRule: "x", starLimit: 6, prev: null, dayCount: 1,
+      gameDate: "2026-08-14", builtOn: "2026-08-16", games: [], next: { kind: "awaiting", nextGameDay: null },
+      starRule: "x", starLimit: 6, prev: null, dayCount: 1,
     },
     context(),
   );
@@ -557,7 +557,7 @@ test("⚠끝난 시즌은 「취득 실패」라고 말하지 않는다 — 다�
   assert.ok(!toString(freshnessBar(quiet, false)).includes("state stale"), "증거 없는 32일 휴식에 경고를 냈다");
   const missed: CollectionStatus = {
     stale: true, missedPlayed: 2, missedAnnounced: 0, missedEarliest: "2026-11-15",
-    siteLatestGameDate: "2026-10-19", siteLagDays: 32, latestSeasonOver: false,
+    siteLatestGameDate: "2026-10-19", siteLagDays: 32, latestSeasonOver: false, startersMissingDate: null,
   };
   const running = freshness("2026-10-19", "2026-11-20", "2026-10-19", { from: 2018, to: 2026 }, false, missed);
   const barRunning = toString(freshnessBar(running, false));
@@ -572,7 +572,7 @@ test("⚠끝난 시즌은 「취득 실패」라고 말하지 않는다 — 다�
 test("⚠띠 결정표 — 현행 시즌은 낡음이 종료보다 앞 · 단위를 섞지 않는다 · 과거 시즌은 종료", () => {
   const col = (o: Partial<CollectionStatus>): CollectionStatus => ({
     stale: false, missedPlayed: 0, missedAnnounced: 0, missedEarliest: null,
-    siteLatestGameDate: "2026-10-30", siteLagDays: 3, latestSeasonOver: true, ...o,
+    siteLatestGameDate: "2026-10-30", siteLagDays: 3, latestSeasonOver: true, startersMissingDate: null, ...o,
   });
   const bar = (c: CollectionStatus, past = false, over = true, latest = "2026-10-30") =>
     toString(freshnessBar(freshness(latest, "2026-11-02", latest, { from: 2018, to: 2026 }, over, c), past));

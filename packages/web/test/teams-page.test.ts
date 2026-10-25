@@ -46,8 +46,10 @@ function card(code: string, rank: number, over: Partial<TeamsCard> = {}): TeamsC
       home: true,
       venue: "甲子園",
       startTime: "18:00",
+      competition: "regular",
     },
     seasonOver: false,
+    regularDone: false,
     ...over,
   };
 }

@@ -1565,6 +1565,10 @@ td.bad{color:var(--warn);font-weight:var(--w-bold)}
 .hgames .hg-t{font-size:var(--fs-data);color:var(--tx-2);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hgames .hg-s{font-size:var(--fs-name);font-weight:var(--w-bold);white-space:nowrap}
 .hgames .hg-s s{text-decoration:none;color:var(--tx-3);font-size:var(--fs-note);font-weight:var(--w-reg);margin:0 var(--s1)}
+/* 대회 표기 한 줄(설계 D8) — 그 경기 줄 위에 칸 셋을 다 쓴다. ⚠정규 줄에는 없다(그 줄의 바이트는 그대로다) */
+.hgames .hg-c{grid-column:1 / -1;font-size:var(--fs-note);color:var(--tx-2);font-weight:var(--w-bold);letter-spacing:.04em}
+/* 중지 — 점수 자리에 상태 문구(試合 카드와 같은 함수 · 설계 D8). ⚠「—-—」(득점 모름)로 그리지 않는다(M11) */
+.hgames .hg-s.hg-off{font-size:var(--fs-data);font-weight:var(--w-semi);color:var(--tx-2)}
 .more{margin:var(--s4) 0 0;font-size:var(--fs-sub)}
 
 /* ── 일정 캘린더 ────────────────────────────────────────────────
@@ -2230,8 +2234,15 @@ table.stand .dif i.n{right:50%}
 .gcard.off .gvenue,.gcard.off .gt,.gcard.off .gr{color:var(--tx-2)}
 .gcard.off .gnone{color:var(--tx);font-weight:var(--w-semi)}
 .gvenue{margin:0 0 var(--s4);font-size:var(--fs-label);letter-spacing:.12em;color:var(--tx-3);font-weight:var(--w-reg);
-  display:flex;align-items:baseline;gap:var(--s3)}
+  display:flex;flex-wrap:wrap;align-items:baseline;gap:var(--s3);row-gap:var(--s1)}
 .gtie{margin-left:auto;color:var(--tx-2);letter-spacing:.04em}
+/* 대회 표기(2026-10-24 · 포스트시즌 화면 설계 D3) — 「セ・リーグ CS ファイナルステージ 第4戦」.
+   ⚠**라벨급이다** — 점수가 주역이고 이 줄은 그 점수가 어느 경기의 것인지 말한다(§6 라벨 강조 도메인 예외).
+   ⚠**새 색·배지·그림자를 쓰지 않는다** — 보조 잉크 · 굵게, 글자만으로. 구장 줄 위에 한 줄을 다 쓴다(flex-basis).
+   ⚠정규 카드에는 이 요소가 없다 — 정규 화면은 그대로다. */
+.gcomp{flex-basis:100%;color:var(--tx-2);font-weight:var(--w-bold);letter-spacing:.04em}
+/* 日本シリーズ의 그 경기까지 성적(설계 D4) — 점수 바로 아래. 값은 점수가 맡고 이 줄은 시리즈의 상태를 말한다 */
+.gser{margin:var(--s3) 0 0;font-size:var(--fs-sub);color:var(--tx);font-weight:var(--w-semi)}
 .gscore{display:flex;flex-direction:column;gap:var(--s1)}
 .gside{display:flex;align-items:baseline;gap:var(--s4);padding:var(--s1) 0}
 .gside .gt{display:flex;align-items:center;gap:var(--s3);font-size:var(--fs-lead);color:var(--tx-2)}
@@ -2500,6 +2511,10 @@ table.vs .vsbar i{display:block;height:100%;width:calc(var(--w,0) * 1%);backgrou
 .dayc b{font-size:var(--fs-name);font-variant-numeric:tabular-nums;color:var(--tx)}
 .dayc s{text-decoration:none;font-size:var(--fs-min);color:var(--tx-3);display:flex;gap:var(--s2);align-items:baseline}
 .dayc em{font-style:normal;color:var(--tx-2);border:var(--rw-row) solid var(--hair-2);padding:0 var(--s1)}
+/* 그 날의 대회(설계 D9) — 「CS」·「日本S」. ⚠中止 상자와 **다른 모양**: 테두리 없는 보조 잉크, 제 줄에. 색으로 말하지 않는다 */
+.dayc .dk{font-style:normal;font-size:var(--fs-min);color:var(--tx-2);letter-spacing:.04em}
+/* 약어 풀이(title)는 마우스로 · 낭독은 .vh 의 풀어 쓴 이름 — 밑줄은 긋지 않는다(달력 요일 abbr 와 같은 규칙) */
+.dayc .dk abbr{text-decoration:none;border:var(--rw-none)}
 .dayc:hover{border-color:var(--tx-3);background:var(--panel-2)}
 /* 지금 보고 있는 최신 경기일 */
 .dayc.now{border-color:var(--tx);background:var(--panel-2)}

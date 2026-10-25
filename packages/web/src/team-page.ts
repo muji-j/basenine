@@ -165,6 +165,12 @@ export interface TeamNextGame {
   venue: string | null;
   /** 미정이면 `null`(M11) */
   startTime: string | null;
+  /**
+   * 그 경기의 대회(설계 D7). 일정 표에는 대회 구분이 없어 **조건으로 닫는다** — `nipponSeries` 는
+   * ⑴12구단 정규 소진 ⑵정규 마지막 날 뒤 ⑶다른 리그 상대 셋이 다 참일 때만이다(`nipponSeriesSlot`).
+   * ⚠CS 는 오지 않는다 — 탈락을 판정할 수 없어 열리지 않을 「필요 시 경기」를 「次」로 부를 수 있다.
+   */
+  competition: "regular" | "nipponSeries";
 }
 
 /**
@@ -180,9 +186,15 @@ export interface TeamNow {
   /**
    * 그 경기의 予告先発. 아직 없으면 `null` — **「投手なし」가 아니라 「発表待ち」다**(M11).
    * ⚠**`next` 의 경기에 대한 것만 들어온다.** 다른 날의 예고를 여기 넣으면
-   * 화면이 끝난 경기의 선발을 「次の」라고 부르게 된다(`isNextProbable` 이 막던 결함).
+   * 화면이 끝난 경기의 선발을 「次の」라고 부르게 된다(`nextProbableDate` 가 막는 결함).
    */
   probable: { mine: string | null; theirs: string | null } | null;
+  /**
+   * 이 구단이 정규시즌 규정 경기 수를 **정확히** 치렀는가(설계 D7-4) — `next === null` 의 이유를 가른다.
+   * ⚠「全日程を終えました」(받아 둔 일정이 없어도 사실이다)와 「予定はありません（取り込んでいない場合も）」(정말 모른다)는 다른 말이다(M12).
+   * ⚠규정 수를 **넘겼으면** false 다 — 우리가 모르는 시즌이므로 「모른다」 쪽에 둔다.
+   */
+  regularDone: boolean;
 }
 
 export interface TeamPageData {
@@ -238,8 +250,11 @@ export interface TeamPageData {
    * ⚠**무승부는 승률의 분모에서 빠진다**(NPB 규정) — 그래서 경기 수를 따로 들고 다닌다(M2).
    */
   vs: { code: string; shortName: string; color: TeamColor; w: number; l: number; t: number }[];
-  /** 최신 경기일. `dayHref`가 그 날만 `today.html`로 보낸다 */
-  latestDate: string | null;
+  /**
+   * **試合 타임라인의 최신일 — 라우팅만**(설계 D1). `dayHref`가 그 날만 `today.html`로 보낸다.
+   * ⚠정규 최신일이 아니다 — 포스트시즌 기간에 정규 마지막 날 링크가 `today.html`(CS 화면)로 가면 404 가 아니라 다른 날이다(T2).
+   */
+  todayDate: string | null;
   /** 이 시즌에 ポストシーズン 기록이 있는가 */
   hasPostseason: boolean;
   /** 맨 위 요약 띠. **이 화면에 오는 사람이 가장 먼저 묻는 것** */
@@ -694,16 +709,28 @@ export function gamesBehindText(rank: number | null, gamesBehind: number): strin
  * (calendar.ts: 실측 48/48장이 끝난 시즌에 「まだ取り込んでいません」이라고 말하던 결함).
  * ⚠**두 화면이 쓴다**(M1 · 구단 페이지 · 구단 목록). 한쪽만 고치면 같은 경기가
  * 두 화면에서 다른 문장이 된다.
+ *
+ * **결정표 — 위에서부터 처음 참인 줄**(2026-10-24 · 설계 D7):
+ * | 1 | 시즌 종료 | 「このシーズンは終了しています」 — ⚠**남은 예정보다 먼저다**(열리지 않은 日本S 6·7차전이 사본에 남는다) |
+ * | 2 | 정규 예정 | 지금 그대로 |
+ * | 3 | 日本シリーズ 예정 | 지금 문장 + 「 — 日本シリーズ」 |
+ * | 4 | 이 구단이 규정 수를 치렀다 | 「レギュラーシーズンの全日程を終えました」 |
+ * | 5 | 그 밖 | 「予定はありません（日程をまだ取り込んでいない場合もあります）」 — 이때는 정말 모른다 |
+ * ⚠~~예정이 없으면 시즌 종료 아니면 「取り込んでいない」~~ 는 낡았다 — 日本S 에 나가는 구단에게 일정을 받아 두고도
+ *   「日程をまだ取り込んでいない」라고 원인을 「미수집」으로 짚었다(2026 DeNA·ソフトバンク).
  */
-export function nextGameText(next: TeamNextGame | null, seasonOver: boolean): string {
+export function nextGameText(o: { next: TeamNextGame | null; seasonOver: boolean; regularDone: boolean }): string {
+  if (o.seasonOver) return "このシーズンは終了しています";
+  const next = o.next;
   if (next === null) {
-    return seasonOver
-      ? "このシーズンは終了しています"
+    return o.regularDone
+      ? "レギュラーシーズンの全日程を終えました"
       : "予定はありません（日程をまだ取り込んでいない場合もあります）";
   }
   return (
     `${fullDate(next.date)}${next.startTime === null ? "" : ` ${next.startTime}`}` +
-    ` ${next.home ? "対" : "＠"}${next.opponentName}${next.venue === null ? "" : `（${next.venue}）`}`
+    ` ${next.home ? "対" : "＠"}${next.opponentName}${next.venue === null ? "" : `（${next.venue}）`}` +
+    (next.competition === "nipponSeries" ? " — 日本シリーズ" : "")
   );
 }
 
@@ -716,7 +743,15 @@ export function nextGameText(next: TeamNextGame | null, seasonOver: boolean): st
  * ⚠**탭 밖에 둔다.** 안에 넣으면 다른 탭을 골라 둔 사람에게는 이 띠가 안 보인다 —
  * 요약이 조건부로 사라지면 요약이 아니다.
  */
-function nowBlock(d: TeamPageData, base: string): RawHtml {
+function nowBlock(
+  d: TeamPageData,
+  base: string,
+  /**
+   * 빌드의 사이트 전체 수집 판정이 「予告先発을 못 받았다」고 짚은 날(`CollectionStatus.startersMissingDate` · 감시와 같은 술어).
+   * ⚠試合 화면(次の予告先発)이 같은 값을 쓴다 — 두 화면이 같은 날을 다른 말로 하지 않게(2026-10-25 · PR-3 검토 RS P2-2).
+   */
+  startersMissingDate: string | null,
+): RawHtml {
   const n = d.now;
 
   const gbText = gamesBehindText(d.rank, d.gamesBehind);
@@ -731,18 +766,24 @@ function nowBlock(d: TeamPageData, base: string): RawHtml {
     : `残り ${n.race.remaining}試合`;
 
   /** 다음 경기. **문장을 만드는 자리는 위의 `nextGameText` 하나다**(M1) */
-  const nextText = nextGameText(n.next, d.calendar.seasonOver);
+  const nextText = nextGameText({ next: n.next, seasonOver: d.calendar.seasonOver, regularDone: n.regularDone });
 
   /**
    * 予告先発. ⚠**「投手なし」가 아니라 「発表待ち」다**(M11).
    * ⚠**끝난 시즌에 「発表待ち」라고 쓰지 않는다** — 기다리는 것이 아니라 끝난 것이다
    * (予告先発·対戦 화면이 이미 밟은 결함 · 2026-08-16 이중 검토 P2).
    * **다음 경기가 없으면 가리킬 경기 자체가 없으므로** 「기다린다」고 말할 자리가 아니다.
+   * ⚠⚠**「못 받았다」를 아는 날에는 「発表待ち」라고 하지 않는다**(2026-10-25 · PR-3 검토 RS P2-2). 「次の試合」이 사이트 수집 판정이
+   *   짚은 날(`startersMissingDate` — 감시의 `starters-behind` 와 같은 술어 · 그 날은 오늘이다)이고 예고가 하나도 없으면
+   *   **試合 화면과 같은 말**(「取り込めていません」)을 한다. 예전에는 같은 빌드가 試合 에서 「取り込めていません」,
+   *   여기서 「発表待ち」라고 해서 **같은 사실을 두 말로** 했다(日本シリーズ 1차전 당일 · DeNA·ソフトバンク).
+   *   ⚠한쪽 예고만 있으면 그 날 예고는 받은 것이다(감시도 안 운다) — 빈 쪽은 지금처럼 「発表待ち」다.
    */
+  const missing = n.next !== null && startersMissingDate !== null && n.next.date <= startersMissingDate;
   const probableText = n.next === null
     ? NO_VALUE
     : n.probable === null || (n.probable.mine === null && n.probable.theirs === null)
-      ? "発表待ち"
+      ? missing ? "取り込めていません" : "発表待ち"
       : `${n.probable.mine ?? "発表待ち"} ─ ${n.probable.theirs ?? "発表待ち"}`;
 
   /**
@@ -932,7 +973,7 @@ export function renderTeamPage(d: TeamPageData, ctx: RenderContext): string {
      이 띠가 안 보인다 — 조건부로 사라지는 요약은 요약이 아니다.
      ⚠**여기서 우승 경쟁 판정이 처음으로 화면에 나온다.** 값의 뜻은 race.ts 가 증명해서
      정했고, 그 뜻을 문장으로 옮기는 자리는 raceVerdict 한 곳뿐이다(M1). -->
-${nowBlock(d, base)}
+${nowBlock(d, base, ctx.freshness.collection.startersMissingDate)}
 
 <!-- ⚠**연속 기록·기록 근접도 탭 밖에 둔다** — 요약 띠와 같은 이유다. 홈 화면이 만든 배열을
      팀으로 거른 것뿐이고(M1 · query.ts), 여기서 다시 계산하지 않는다.
@@ -1005,7 +1046,7 @@ ${d.recent.length === 0
   <h2>直近の試合</h2>
   <ul class="trecent">${d.recent.map(
       (g) => html`<li class="${g.result === "○" ? "w" : g.result === "●" ? "l" : ""}">
-    <a href="${dayHref(base, g.date, d.latestDate)}"><b>${g.result}</b><span>${fullDate(g.date)}</span>
+    <a href="${dayHref(base, g.date, d.todayDate)}"><b>${g.result}</b><span>${fullDate(g.date)}</span>
     <s>${g.home ? "対" : "＠"}${g.opponent}</s></a>
   </li>`,
     )}</ul>

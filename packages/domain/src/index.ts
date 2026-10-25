@@ -35,6 +35,7 @@ export {
   STALE_REASON_KEYS,
   backstopDays,
   collectionVerdict,
+  startersBehind,
 } from "./collection-verdict.ts";
 export type {
   CollectionEvidence,

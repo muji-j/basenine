@@ -192,7 +192,38 @@ export function calendarBlock(d: CalendarData, base: string): RawHtml {
 }
 
 /**
- * **정규시즌 예정만 남긴다** — 포스트시즌이 「予定」으로 새는 것을 막는 유일한 장치.
+ * **이미 적재된 경기를 예정에서 뺀다** — 같은 (날짜·홈·원정)의 경기 행 수만큼, **앞에서부터**(안정 순서 · `seq`).
+ *
+ * ⚠**왜**(2026-10-25 · PR-3 검토 GPT P2): 받기 실패만이면 배포한다(2026-10-24 운영 결정) — 경기는 받고 일정 사본은 못 받은 실행에서
+ *   **같은 경기가 경기 행과 예정에 한 번씩** 남는다(`assertOneGamePerTeam` 이 이 상태를 정상으로 받는다). 그대로 두면 그 날 저녁 빌드에서
+ *   구단의 「次の試合」가 **끝난 경기**를 가리키고(日本シリーズ 1차전에서 재현), 아래 정규 컷(`splitUpcoming`)의 자리도 하나 잡아먹는다.
+ * ⚠**다중집합으로 뺀다** — 단순 `NOT EXISTS` 가 아니다. 진짜 더블헤더에서 1경기만 적재됐으면 **남은 경기는 남는다.**
+ * ⚠**경기 행의 상태를 가리지 않는다** — 중지(`notPlayed`)도 「그 경기는 이미 지나갔다」다(재편성은 새 날짜의 새 예정 행으로 온다).
+ * @param upcoming 예정 — **안정 순서**(`game_date, seq, home_code, away_code`)로 들어와야 한다(같은 열쇠는 앞의 것부터 뺀다)
+ * @param loaded `loadedKey(날짜, 홈, 원정)` → 그 경기 행 수
+ */
+export function withoutLoaded<T extends { date: string; home: string; away: string }>(
+  upcoming: readonly T[],
+  loaded: ReadonlyMap<string, number>,
+): T[] {
+  const left = new Map(loaded);
+  return upcoming.filter((u) => {
+    const key = loadedKey(u.date, u.home, u.away);
+    const n = left.get(key) ?? 0;
+    if (n <= 0) return true;
+    left.set(key, n - 1);
+    return false;
+  });
+}
+
+/** `withoutLoaded` 의 열쇠 — 질의와 함수가 같은 모양을 쓴다(M1) */
+export function loadedKey(date: string, home: string, away: string): string {
+  return `${date}|${home}|${away}`;
+}
+
+/**
+ * 컷의 **양쪽** — 정규시즌일 수 있는 앞쪽(`regular`)과 그 밖(`beyond`).
+ * **정규시즌 예정만 남기는 것**(`regular`)이 포스트시즌이 「予定」으로 새는 것을 막는 유일한 장치다.
  *
  * ⚠**`upcoming_game` 에는 대회 구분이 없고, 있을 수도 없다.** 우리는 대회를
  * **박스스코어의 `【…】` 표기**로 판정하는데(`competitionFromLabel`) 안 치른 경기에는
@@ -222,11 +253,52 @@ export function calendarBlock(d: CalendarData, base: string): RawHtml {
  * 넘치는 쪽을 **뒤에서** 자르므로, 그 초과분이 시즌 중반의 예비일이었다면
  * 10월 초 경기가 대신 잘릴 수 있다. 2025년에는 그런 일이 없었다.
  * ⚠**`played` 만 센다** — 중지 행과 재편성 행이 따로 남아 행 수로 세면 팀당 144~153이 된다.
+ * ⚠**자르기 전에 순서가 정해져 있어야 한다**(2026-10-24 · 설계 D7 지적 6) — 같은 날 두 행이면 「어느 쪽이 컷 안인가」를
+ *   SQLite 의 반환 순서에 맡기게 된다(삽입 순서를 뒤집은 DB 둘이 다른 컷을 냈다 · `postseason-timeline.test.ts` T9⑹).
+ *   그래서 호출자의 질의가 `game_date, seq, home_code, away_code` 로 정렬한다.
+ * ⚠**자르기 전에 이미 적재된 경기를 뺀다**(`withoutLoaded` · 2026-10-25) — 낡은 사본에 남은 끝난 경기가 컷 자리를 잡아먹지 않게.
+ *
+ * ⚠**`beyond` 를 「포스트시즌」이라고 부르지 않는다.** 정규 규정 수를 넘는 예정일 뿐이다 —
+ * 교류전 재편성·예비일·정체 불명의 초과분(위의 2026 중일 146)이 섞일 수 있다.
+ * 그중 무엇을 日本シリーズ 로 부를 수 있는지는 `nipponSeriesSlot` 이 따로 정한다(설계 D7-3).
+ * ⚠~~`regularSeasonUpcoming`(이 함수의 `regular` 만 돌려주는 껍데기)~~ 은 지웠다(2026-10-25 · PR-3 검토 RS P3) — 제품 코드는 이 함수만
+ *   부르고 껍데기는 시험만 불러서 **같은 컷 규칙의 입구가 둘**이었다. 시험은 이제 이 함수의 `regular` 를 직접 잰다.
  */
-export function regularSeasonUpcoming<T>(
+export function splitUpcoming<T>(
   upcoming: readonly T[],
   playedCount: number,
   regularSeasonGames: number,
-): readonly T[] {
-  return upcoming.slice(0, Math.max(0, regularSeasonGames - playedCount));
+): { regular: readonly T[]; beyond: readonly T[] } {
+  const keep = Math.max(0, regularSeasonGames - playedCount);
+  return { regular: upcoming.slice(0, keep), beyond: upcoming.slice(keep) };
+}
+
+/**
+ * 컷 밖 슬롯 중 **日本シリーズ로 부를 수 있는 첫 행** — 없으면 null(설계 D7-3).
+ *
+ * 일정 표에는 대회 구분이 없다(위 `splitUpcoming` 주석). 그래서 **조건으로 닫는다** — 셋 다 참일 때만:
+ * ⑴ **12구단 전부** 정규를 규정 수만큼 치렀다 — 어느 팀에도 정규 경기가 남아 있을 수 없다
+ * ⑵ 그 슬롯의 날짜가 **그 시즌 정규 마지막 경기일보다 뒤**다 — 정규의 날짜 범위 밖이다
+ * ⑶ 상대가 **다른 리그**다 — 그 뒤에 다른 리그끼리 맞붙는 1군 경기는 日本シリーズ뿐이다(CS 는 같은 리그 104/104 실측)
+ *
+ * ⚠**하나라도 아니면 표기하지 않는다** — 그때 호출자는 「全日程を終えました」·「予定はありません」으로 떨어진다.
+ * ⚠**특이도는 2026 의 7행으로만 쟀다**(지난 일정 사본은 DB 에 안 남는다) — 그래서 측정이 아니라 조건으로 닫는다.
+ * ⚠**CS 슬롯은 내지 않는다**(같은 리그면 ⑶ 에서 떨어진다) — 탈락을 판정할 수 없어 열리지 않을 「필요 시 경기」를
+ *   「次」로 부를 수 있다(설계 D4 · §10).
+ * ⚠`beyond` 는 **이미 안정 순서로** 들어온다(`game_date, seq, home_code, away_code`) — 첫 행이 곧 「次」다.
+ */
+export function nipponSeriesSlot<T extends { date: string; opponentCode: string }>(
+  beyond: readonly T[],
+  o: {
+    /** ⑴ 12구단 전부 played = 규정 수 */
+    allTeamsDone: boolean;
+    /** ⑵ 그 시즌 정규 마지막 경기일(상태 무관). 모르면 null — 그러면 표기하지 않는다 */
+    regularLastDate: string | null;
+    /** ⑶ 이 구단과 상대가 다른 리그인가 */
+    otherLeague: (opponentCode: string) => boolean;
+  },
+): T | null {
+  if (!o.allTeamsDone || o.regularLastDate === null) return null;
+  const last = o.regularLastDate;
+  return beyond.find((s) => s.date > last && o.otherLeague(s.opponentCode)) ?? null;
 }

@@ -7,7 +7,7 @@
 import { html, raw, toString } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import type { CollectionEvidence, TeamColor } from "@bb-app/domain";
-import { collectionVerdict } from "@bb-app/domain";
+import { collectionVerdict, startersBehind } from "@bb-app/domain";
 import { fullDate } from "./format.ts";
 
 /**
@@ -156,6 +156,15 @@ export interface CollectionStatus {
   siteLatestGameDate: string | null;
   siteLagDays: number | null;
   latestSeasonOver: boolean;
+  /**
+   * **予告先発을 받았어야 하는데 못 받은 다음 경기일** — 없으면 null(2026-10-24 · 포스트시즌 화면 설계 D5 의 `behind`).
+   *
+   * ⚠**술어는 감시의 `starters-behind` 한 벌이다**(`startersBehind` · M1). 다른 점은 하나 —
+   *   화면은 **예고 기록이 한 건도 없는 것**(`startersLatest === null`)도 못 받은 것으로 친다(설계 지적 4).
+   *   감시의 측정 범위는 바꾸지 않았다 — 그 경우 감시는 울지 않는다(설계 §9).
+   * ⚠**띠는 이 축을 말하지 않는다**(`stale` 에 안 든다) — 試合 화면의 「次の予告先発」 구획만 쓴다.
+   */
+  startersMissingDate: string | null;
 }
 
 export function collectionStatus(e: CollectionEvidence): CollectionStatus {
@@ -168,6 +177,7 @@ export function collectionStatus(e: CollectionEvidence): CollectionStatus {
     siteLatestGameDate: e.latestPlayed,
     siteLagDays: v.ageDays,
     latestSeasonOver: e.latestSeasonOver,
+    startersMissingDate: startersBehind(e) ? e.nextGameDay : null,
   };
 }
 
@@ -244,6 +254,17 @@ export function heldRange(f: Freshness): string {
 }
 
 /**
+ * 「정규시즌은 …까지」 — **정규 한정어 한 벌**(2026-10-24 · 포스트시즌 화면 설계 D8).
+ *
+ * ⚠**띠와 홈의 머리가 같은 말을 한다**(M1). 화면이 포스트시즌 경기를 싣기 시작하면서 홈 머리의 기준일(정규)이
+ * 바로 아래 「直近の結果」(CS·日本S)와 다른 날을 가리키게 됐다 — 띠는 이미 이 한정어로 그 차이를 말하고 있었다.
+ * ⚠**띠의 바이트는 그대로다** — 띠가 쓰던 글자를 여기로 옮겼을 뿐이다(괄호는 띠가 감싼다).
+ */
+export function regularThrough(date: string): string {
+  return `レギュラーシーズンは ${fullDate(date)} まで`;
+}
+
+/**
  * 신선도 띠. **낡았을 때만 눈에 띄게** 한다 — 정상일 때 경고색을 쓰면 경고가 소음이 된다.
  *
  * @param pastSeason 지난 시즌의 화면인가.
@@ -265,7 +286,7 @@ export function freshnessBar(f: Freshness, pastSeason = false): RawHtml {
   const regular =
     f.regularGameDate === null || f.regularGameDate === f.latestGameDate
       ? raw("")
-      : html`（レギュラーシーズンは ${fullDate(f.regularGameDate)} まで）`;
+      : html`（${regularThrough(f.regularGameDate)}）`;
   /**
    * ⚠**결정표 — 위에서부터 처음 참인 줄**(설계 D9).
    * | 1 | 과거 시즌 화면 | 「終了」 — 수집 상태를 말하지 않는다(그 시즌 자료는 확정이고 게이트는 따로 있다) |

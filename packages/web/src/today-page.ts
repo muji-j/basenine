@@ -13,7 +13,7 @@ import { html, raw } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import { NO_VALUE, dec2, fullDate, innings } from "./format.ts";
 import { note } from "./parts.ts";
-import { page, pastSeasonOf, ROSTER_PATH } from "./layout.ts";
+import { page, ROSTER_PATH } from "./layout.ts";
 import type { RenderContext } from "./pages.ts";
 import { NEUTRAL_COLOR, shortNameOf } from "@bb-app/domain";
 import { gamePath, gameSlug } from "./game-page.ts";
@@ -60,6 +60,21 @@ export interface TodayStar {
 export interface TodayGame {
   gameId: string;
   venue: string | null;
+  /**
+   * 대회 — `regular` · `climaxSeries` · `nipponSeries`(試合 타임라인 · 2026-10-24 설계 D2).
+   * ⚠**올스타는 오지 않는다** — 경기 상세가 없는 것과 같은 이유로 他大会 화면만 싣는다.
+   */
+  competition: string;
+  /**
+   * 대회 표기 — 「セ・リーグ CS ファイナルステージ 第4戦」 · 「日本シリーズ 第1戦」(설계 D3 · `postseasonLabel` 한 벌).
+   * **정규는 null** — 정규 경기에 「第25戦」을 붙이면 그 카드의 몇 번째인지라 읽는 사람에게 뜻이 없다.
+   */
+  label: string | null;
+  /**
+   * 日本シリーズ의 **그 경기까지**(그날 포함) 성적(설계 D4). 다른 대회 · 셀 경기가 아직 없으면 null.
+   * ⚠**CS 는 내지 않는다**(결정됨 · 설계 §10) — 파이널의 1승 어드밴티지가 데이터에 없어 경기를 세면 공식과 다른 수가 된다.
+   */
+  series: NipponSeriesView | null;
   /** `played`가 아니면 결과가 없다 */
   status: string;
   notPlayedReason: string | null;
@@ -98,15 +113,48 @@ export interface ProbableBrief {
   era: Rate | null;
 }
 
+/**
+ * 日本シリーズ 한 경기 시점의 시리즈 성적(설계 D4).
+ * ⚠**`unknownGames` 가 0 이 아니면 성적을 말하지 않는다** — 득점을 못 읽은 경기를 빼고 센 「2勝1敗」는 거짓이다(M11).
+ */
+export interface NipponSeriesView {
+  /** 득점을 읽은 경기가 있는 구단의 승·패·분. 순서는 뜻이 없다 — 문구가 앞선 쪽을 고른다 */
+  teams: { teamCode: string; shortName: string; w: number; l: number; t: number }[];
+  /** 치렀는데 득점을 못 읽은 경기 수 */
+  unknownGames: number;
+}
+
+/**
+ * 「次の予告先発」의 상태 — **판별 합집합**(설계 D5). 렌더러는 `switch` 로 전부 다룬다(빠뜨리면 타입 오류).
+ *
+ * 위에서부터 처음 참인 줄이다: ① 시즌 종료 → ②~④ 그 예고일이 오늘 이후이고 아직 기록에 없다(철회 3값) →
+ * ⑤ 받았어야 할 예고를 못 받았다 → ⑥ 그 밖(발표 전).
+ * ⚠**⑤ 는 데이터가 아니라 빌드의 수집 판정에서 온다**(`CollectionStatus.startersMissingDate` · 감시와 같은 술어) —
+ *   그래서 질의는 ⑤ 를 만들지 않고, 렌더러가 `withStartersBehind` 로 ⑥ 위에 얹는다. ①~④ 가 그보다 먼저인 순서는 그대로다.
+ * ⚠**「発表待ち」 한 문장으로 다섯 가지를 덮던 것이 이 결함이었다** — 열리지 않은 CS 5차전을 열흘 넘게 「次」라고 불렀다.
+ */
+export type NextProbable =
+  /** ① 시즌이 끝났다. `recorded` = 그 시즌에 예고 기록이 있는가 · `savedFrom` = 예고를 처음 보존한 해(모르면 null) */
+  | { kind: "seasonOver"; recorded: boolean; savedFrom: number | null }
+  /** ② 발표됐다 — 카드를 낸다 */
+  | { kind: "announced"; date: string; probables: TodayProbable[] }
+  /** ③ 발표됐는데 NPB 가 그 날을 휴식으로 공표했다(예고보다 늦게) — 열리지 않은 경기다 */
+  | { kind: "withdrawn"; date: string }
+  /** ④ 철회인지 모른다(취득 시각이 없는 행) — 카드는 내되 그 사실을 말한다 */
+  | { kind: "unknown"; date: string; probables: TodayProbable[] }
+  /** ⑤ 받았어야 하는데 못 받았다(수집 실패) */
+  | { kind: "behind"; date: string }
+  /** ⑥ 아직 발표 전. 다음 경기일을 모르면 null — **정상 문구로 덮지 않는다** */
+  | { kind: "awaiting"; nextGameDay: string | null };
+
 export interface TodayPageData {
-  /** 결과를 싣는 경기일. 경기가 하나도 없으면 null */
+  /** 결과를 싣는 경기일 — **試合 타임라인의 최신일**(정규+CS+日本S). 경기가 하나도 없으면 null */
   gameDate: string | null;
   /** 사이트 생성일. 「本日」인지 판정한다 */
   builtOn: string;
   games: TodayGame[];
-  /** 예고선발이 나와 있는 날 */
-  probableDate: string | null;
-  probables: TodayProbable[];
+  /** 「次の予告先発」 — 상태와 그 상태의 재료(설계 D5) */
+  next: NextProbable;
   /** 「눈에 띈 기록」의 기준. **화면에 그대로 적는다** */
   starRule: string;
   /** 한 경기에 싣는 최대 인원 */
@@ -126,16 +174,92 @@ export interface DayPageData {
   starLimit: number;
   prev: string | null;
   next: string | null;
-  /** 최신 경기일. **그 날만 `today.html`이 맡는다** */
-  latestDate: string | null;
+  /**
+   * **試合 타임라인의 최신일**(라우팅) — **그 날만 `today.html`이 맡는다**.
+   * ⚠정규 최신일이 아니다(설계 D1) — 둘을 섞으면 링크가 404 가 아니라 **다른 날의 화면**으로 가서 링크 검사가 못 잡는다.
+   */
+  todayDate: string | null;
   dayCount: number;
 }
 
 /** 그 시즌의 경기일 일람 */
 export interface DayIndexData {
   season: number;
-  latestDate: string | null;
-  days: { date: string; scheduled: number; played: number }[];
+  /** 試合 타임라인의 최신일(라우팅 · 설계 D1) */
+  todayDate: string | null;
+  /** `competitions` 는 그날 경기가 있었던 대회(타임라인 순서) — 칸의 `CS`·`日本S` 표기 재료(설계 D9) */
+  days: { date: string; scheduled: number; played: number; competitions: string[] }[];
+  /** 그중 포스트시즌(CS·日本S)에서 치른 경기 수 — 머리의 「うちポストシーズン」 */
+  postseasonPlayed: number;
+}
+
+/**
+ * 대회의 화면 이름 — **試合·他大会·날짜 화면이 같이 쓴다**(M1).
+ * ⚠후원사 이름(`SMBC日本シリーズ`)은 원문(`game.series`)에 남기고 화면은 이 이름을 쓴다 — 해마다 바뀐다.
+ */
+export const COMPETITION_NAME: Readonly<Record<string, string>> = {
+  climaxSeries: "クライマックスシリーズ",
+  nipponSeries: "日本シリーズ",
+  allStar: "オールスターゲーム",
+};
+
+/**
+ * 날짜 일람 칸의 **짧은 표기**(설계 D9). ⚠`中止` 상자(`.dayc em`)와 **다른 모양**으로 그린다 — 테두리 없는 보조 잉크.
+ * 색이 아니라 글자로 말한다(§7).
+ */
+export const COMPETITION_SHORT: Readonly<Record<string, string>> = {
+  climaxSeries: "CS",
+  nipponSeries: "日本S",
+};
+
+/**
+ * 日本シリーズ 카드 문구(설계 D4) — **試合 카드와 홈 「直近の結果」가 같이 쓴다**(M1).
+ *
+ * - 결측 0 · 진행: `対戦成績 ソフトバンク 2勝1敗` · 동률: `対戦成績 2勝2敗` · 결착: `ソフトバンクが4勝2敗で日本一`(분이 있으면 `1分`)
+ * - 결측 있음: `対戦成績は確認できません（得点を読めていない試合 N）` · 결착: `ソフトバンクが日本一（対戦成績は確認できません）`
+ * ⚠**결착은 「알려진 4승」이다** — `japanSeriesDecided` 와 같은 뜻(모르는 경기가 이미 이긴 4승을 없애지 않는다).
+ * ⚠**숨기지 않고 모른다고 말한다** — 결측을 빼고 센 성적은 「확인된 것」처럼 읽힌다.
+ */
+export function nipponSeriesText(s: NipponSeriesView): string {
+  const champ = s.teams.find((x) => x.w >= 4) ?? null;
+  if (s.unknownGames > 0) {
+    return champ === null
+      ? `対戦成績は確認できません（得点を読めていない試合 ${s.unknownGames}）`
+      : `${champ.shortName}が日本一（対戦成績は確認できません）`;
+  }
+  const rec = (x: { w: number; l: number; t: number }): string => `${x.w}勝${x.l}敗${x.t > 0 ? `${x.t}分` : ""}`;
+  if (champ !== null) return `${champ.shortName}が${rec(champ)}で日本一`;
+  const [a, b] = [...s.teams].sort((x, y) => y.w - x.w || x.teamCode.localeCompare(y.teamCode));
+  if (a === undefined) return "対戦成績 0勝0敗";
+  return b === undefined || a.w === b.w ? `対戦成績 ${rec(a)}` : `対戦成績 ${a.shortName} ${rec(a)}`;
+}
+
+/**
+ * 중지·노게임의 상태 문구 — **試合 카드와 홈 「直近の結果」가 같은 함수를 쓴다**(M1 · 설계 D8).
+ * ⚠홈이 이 상태를 버리고 득점 칸에 「—-—」를 그리고 있었다(정규시즌에도 있던 결함 · 중지가 있던 날 9시즌 217일) —
+ *   「—」는 「득점을 못 읽었다」이지 「경기가 없었다」가 아니다(M11).
+ */
+export function notPlayedText(reason: string | null): string {
+  return reason ?? "試合なし";
+}
+
+/**
+ * 예고를 보존하지 않던 해의 문구(설계 D5-1 · D6) — **試合 화면과 予告先発 화면이 같은 한 문장을 쓴다**(M1).
+ * ⚠~~「予告先発の保存を始めたのが今シーズンからです」~~ 는 두 벌이었고 **2027년에 거짓이 된다** — 첫 예고 연도를 데이터에서 받는다.
+ */
+export function notRecordedText(savedFrom: number | null): string {
+  return savedFrom === null
+    ? "この年の予告先発は記録していません"
+    : `この年の予告先発は記録していません（保存は${savedFrom}年から）`;
+}
+
+/**
+ * D5 의 ⑤(받았어야 할 예고를 못 받았다)를 얹는다 — **⑥(발표 전)만 올린다**.
+ * ⚠①~④ 가 ⑤ 보다 먼저다(설계 D5 · 위에서부터 처음 참인 줄). 그 넷은 질의가 이미 정했으므로 건드리지 않는다.
+ * @param missing 빌드의 사이트 전체 수집 판정이 낸 날짜(`CollectionStatus.startersMissingDate`) — 감시와 같은 술어다
+ */
+export function withStartersBehind(next: NextProbable, missing: string | null): NextProbable {
+  return next.kind === "awaiting" && missing !== null ? { kind: "behind", date: missing } : next;
 }
 
 /**
@@ -144,9 +268,11 @@ export interface DayIndexData {
  * ⚠**최신 경기일만 `today.html`이다.** 같은 내용을 두 주소에 두면 「어느 쪽이 진짜인가」가 생기므로
  * 그 날의 `days/` 페이지는 아예 만들지 않는다. 그러니 **링크를 만드는 곳이 한 군데여야** 한다 —
  * 여기서 갈리지 않으면 어딘가는 반드시 404가 된다.
+ * ⚠**세 번째 인자는 試合 타임라인의 최신일(`todayDate`)이다**(2026-10-24 · 설계 D1) — 정규 최신일을 넘기면
+ *   그 날의 링크가 `today.html`(포스트시즌 마지막 날 화면)로 간다. **404 가 아니라 다른 날이라 링크 검사가 못 잡는다.**
  */
-export function dayHref(base: string, date: string, latestDate: string | null): string {
-  return date === latestDate ? `${base}today.html` : `${base}days/${date}.html`;
+export function dayHref(base: string, date: string, todayDate: string | null): string {
+  return date === todayDate ? `${base}today.html` : `${base}days/${date}.html`;
 }
 
 /**
@@ -157,7 +283,7 @@ export function dayHref(base: string, date: string, latestDate: string | null): 
  */
 function dayBar(
   base: string,
-  o: { prev: string | null; next: string | null; latestDate: string | null; dayCount: number },
+  o: { prev: string | null; next: string | null; todayDate: string | null; dayCount: number },
 ): RawHtml {
   // ⚠**방향을 애니메이션이 아니라 형태로 낸다.** 앞뒤 이동은 문서가 바뀌는 이동이라
   // 화면 전환으로 방향을 말하려면 브라우저를 가린다. 화살표는 어디서나 보이고 인쇄에도 남는다
@@ -171,7 +297,7 @@ function dayBar(
         : html`<span class="dayrow">${label}<i aria-hidden="true">${arrow}</i></span>`;
     return date === null
       ? html`<span class="daystep ${cls} off">${body}</span>`
-      : html`<a class="daystep ${cls}" href="${dayHref(base, date, o.latestDate)}"
+      : html`<a class="daystep ${cls}" href="${dayHref(base, date, o.todayDate)}"
           >${body}<s>${fullDate(date)}</s></a>`;
   };
   return html`<nav class="daybar" aria-label="日付">
@@ -263,15 +389,37 @@ const DECISION_LABEL: Readonly<Record<string, string>> = { "○": "勝", "●": 
  * ⚠**날짜를 모르면 링크를 만들지 않는다.** 빈 문자열로 때우면 `games/.html` 이라는
  * 없는 곳을 가리킨다 — 이 파일이 `hasPage` 에서 이미 쓰는 규칙과 같다(M12).
  */
+/**
+ * 카드 머리 — **대회 표기(첫 줄) + 구장(둘째 줄)**(설계 D3 · §4).
+ *
+ * ⚠**표기는 라벨급이다** — 값(점수)이 주역이고 이 줄은 그 점수가 「어느 경기의 것인가」를 말한다(§6 라벨 강조 도메인 예외).
+ *   새 색·배지·그림자 없이 **글자**로 낸다 — 보조 잉크 · 굵게(`assets.ts` 의 `.gcomp`).
+ * ⚠**표기는 h3 안이다** — 제목으로 훑는 사람에게 「セ・リーグ CS ファイナルステージ 第4戦、甲子園」이 한 번에 들린다.
+ *   두 줄 사이의 쉼표는 낭독용이다(`.vh`) — 줄바꿈은 소리로 나오지 않는다.
+ * ⚠**정규는 표기가 없다** — 정규 카드의 바이트는 그대로다.
+ */
+function cardHead(g: TodayGame, tie: boolean): RawHtml {
+  return html`<h3 class="gvenue">${g.label === null
+    ? raw("")
+    : html`<span class="gcomp">${g.label}<span class="vh">、</span></span>`}${g.venue ?? ""}${tie
+    ? html`<span class="gtie">引き分け</span>`
+    : null}</h3>`;
+}
+
+/** 日本シリーズ의 그 경기까지 성적 한 줄(설계 D4). 다른 대회·셀 경기가 없으면 아무것도 안 낸다 */
+function seriesLine(g: TodayGame): RawHtml {
+  return g.series === null ? raw("") : html`<p class="gser">${nipponSeriesText(g.series)}</p>`;
+}
+
 function gameCard(g: TodayGame, base: string, date: string | null): RawHtml {
   if (g.status !== "played") {
     return html`<article class="gcard off">
-  <h3 class="gvenue">${g.venue ?? ""}</h3>
+  ${cardHead(g, false)}
   <div class="gscore">
     <div class="gside" style="--chip:${g.away.color.base}"><span class="gt"><i></i>${teamLink(base, g.away.teamCode, g.away.shortName)}<span class="vh">（ビジター）</span></span></div>
     <div class="gside h" style="--chip:${g.home.color.base}"><span class="gt"><i></i>${teamLink(base, g.home.teamCode, g.home.shortName)}<span class="vh">（ホーム）</span></span></div>
   </div>
-  <p class="gnone">${g.notPlayedReason ?? "試合なし"}</p>
+  <p class="gnone">${notPlayedText(g.notPlayedReason)}</p>${seriesLine(g)}
 </article>`;
   }
 
@@ -279,16 +427,21 @@ function gameCard(g: TodayGame, base: string, date: string | null): RawHtml {
   const hits = g.away.hits === null || g.home.hits === null ? null : `${g.away.hits}-${g.home.hits}`;
   const errs =
     g.away.errors === null || g.home.errors === null ? null : `${g.away.errors}-${g.home.errors}`;
+  /**
+   * ⚠**「引き分け」는 득점을 둘 다 읽었고 같을 때만이다**(M11). `winner === null` 은 「득점을 못 읽음」도 뜻한다 —
+   * 그 경기에 「引き分け」를 달면 모르는 결과를 무승부로 단정한다. 日本シリーズ 카드가 「確認できません」이라고 말하는 바로 그 경기다.
+   */
+  const tie = g.away.runs !== null && g.home.runs !== null && g.away.runs === g.home.runs;
 
   // ⚠**카드 전체를 누를 수 있게 하는 것은 `.gmore`의 링크를 넓히는 것이지 링크를 하나 더 두는 것이 아니다.**
   // 겹쳐 놓으면 스크린리더의 링크 목록에 같은 곳이 두 번 나오고, 탭 이동도 두 번 걸린다.
   // 상세 페이지가 없는 경기는 `link`를 붙이지 않는다 — 눌러도 안 가는데 눌릴 것처럼 보이면 그것이 결함이다
   return html`<article class="gcard${g.hasPage ? " tapcard" : ""}">
-  <h3 class="gvenue">${g.venue ?? ""}${g.winner === null ? html`<span class="gtie">引き分け</span>` : null}</h3>
+  ${cardHead(g, tie)}
   <div class="gscore">
     ${scoreLine(g.away, g.winner === "away", false, base)}
     ${scoreLine(g.home, g.winner === "home", true, base)}
-  </div>
+  </div>${seriesLine(g)}
   ${hits === null && errs === null
     ? raw("")
     : html`<p class="ghe">${hits === null ? null : html`<span>安打 <b>${hits}</b></span>`}${errs === null ? null : html`<span>失策 <b>${errs}</b></span>`}</p>`}
@@ -330,38 +483,113 @@ function probableCard(p: TodayProbable, base: string): RawHtml {
 </article>`;
 }
 
+/**
+ * 그 날 경기 수 한 마디 — **試合 화면·날짜 화면의 부제**(설계 D9).
+ * - 정규만: `6試合`(지금 그대로) · 포스트시즌 한 대회만: `クライマックスシリーズ 2試合` · 섞이면: `6試合（うちクライマックスシリーズ 2）`
+ * - 중지가 있으면 ` · 中止N試合`(지금 그대로)
+ * ⚠**정규만인 날의 바이트는 그대로다** — 정규 화면이 이 PR 로 달라지지 않게.
+ */
+function gamesSummary(games: readonly TodayGame[]): string {
+  const played = games.filter((g) => g.status === "played");
+  const off = games.length - played.length;
+  const posts = [...new Set(games.map((g) => g.competition))].filter((c) => c !== "regular");
+  const hasRegular = games.some((g) => g.competition === "regular");
+  const name = (c: string): string => COMPETITION_NAME[c] ?? c;
+  const head = posts.length === 0
+    ? `${played.length}試合`
+    : !hasRegular && posts.length === 1
+      ? `${name(posts[0]!)} ${played.length}試合`
+      : `${played.length}試合（うち${posts.map((c) => `${name(c)} ${played.filter((g) => g.competition === c).length}`).join("・")}）`;
+  return `${head}${off > 0 ? ` · 中止${off}試合` : ""}`;
+}
+
+/**
+ * 결과 구획의 포스트시즌 각주 — **試合 화면·날짜 화면이 같이 쓴다**(M1).
+ * ⚠**CS 카드가 있는 날에만** 시리즈 성적을 안 내는 사유를 적는다(설계 D4 · M3 의 정신) — 경기 밖의 1승 어드밴티지가 데이터에 없다.
+ * ⚠**他大会 링크는 그 화면이 있을 때만**(`hasPostseason`) — 없는 화면을 가리키면 404 다.
+ */
+function postseasonNotes(games: readonly TodayGame[], base: string, hasPostseason: boolean): RawHtml {
+  const cs = games.some((g) => g.competition === "climaxSeries");
+  const post = games.some((g) => g.competition !== "regular");
+  return html`${cs
+    ? note(
+      "クライマックスシリーズの勝敗数は出していません — ファイナルステージには試合の外のアドバンテージ（1勝）があり、" +
+        "試合を数えた数が公式と一致しないためです。",
+    )
+    : raw("")}${post && hasPostseason
+    ? html`<p class="note">ポストシーズンの打撃・投手成績は<a href="${base}postseason.html">「他大会」</a>にあります。</p>`
+    : raw("")}`;
+}
+
+/**
+ * 「次の予告先発」 상태 한 줄 — **문구는 `kind` 를 키로 한 표 하나**(설계 D5). 카드만 내는 ② 는 줄이 없다.
+ *
+ * ⚠**M12 — 상태를 모양으로 가른다**(`.empty[data-state]`): 시즌 외는 `offseason` · 발표 전·철회는 `empty` ·
+ *   못 받음·모름·다음 경기일 모름은 `failed`. 넷이 같은 모양이면 그것 자체가 결함이다.
+ * ⚠**`switch` 에 default 가 없다** — 상태가 하나 늘면 여기가 타입 오류로 먼저 죽는다.
+ * ⚠予告先発 화면(D6)도 ④ 의 문구를 여기서 받는다(M1).
+ */
+export function nextStateLine(n: NextProbable): { state: "empty" | "failed" | "offseason"; text: string } | null {
+  switch (n.kind) {
+    case "seasonOver":
+      return { state: "offseason", text: n.recorded ? "このシーズンの試合は終わりました" : notRecordedText(n.savedFrom) };
+    case "announced":
+      return null;
+    case "withdrawn":
+      return {
+        state: "empty",
+        text: `${fullDate(n.date)}の予告先発は発表されましたが、試合は行われませんでした（NPB がこの日を「試合が予定されていません」と公表）`,
+      };
+    case "unknown":
+      return { state: "failed", text: `${fullDate(n.date)}の予告先発が有効か確認できません（取得時刻が記録されていない行があります）` };
+    case "behind":
+      return { state: "failed", text: `${fullDate(n.date)}の予告先発を取り込めていません` };
+    case "awaiting":
+      return n.nextGameDay === null
+        ? { state: "failed", text: "次の試合の日程がまだありません（日程を取り込めていない場合もあります）" }
+        : { state: "empty", text: `予告先発はまだ発表されていません。次の試合は${fullDate(n.nextGameDay)}です（発表は前日〜当日）` };
+  }
+}
+
 export function renderTodayPage(d: TodayPageData, ctx: RenderContext): string {
   const { base, root, seasons, navTo } = ctx.paths("today.html");
   const isToday = d.gameDate !== null && d.gameDate === d.builtOn;
-  // ⚠**끝난 시즌에 「発表待ち」라고 쓰지 않는다.** 기다리는 것이 아니라 끝난 것이다
-  const past = pastSeasonOf(seasons);
-  const played = d.games.filter((g) => g.status === "played").length;
-  const off = d.games.length - played;
+  /**
+   * ⚠**⑤(못 받음)는 빌드의 수집 판정에서 얹는다**(설계 D5) — 감시와 같은 술어(`startersBehind`)·같은 증거다.
+   * ⚠~~끝난 시즌이면 `pastSeasonOf(seasons)` 로 「記録していません」~~ 은 낡았다 — 시즌 종료는 질의가 `seasonIsOver` 로 정한다(①).
+   *   그 문장은 2027년에 거짓이 되고(「今シーズンから」), 지난 시즌이어도 예고 기록이 있으면 「終わりました」가 맞다.
+   */
+  const next = withStartersBehind(d.next, ctx.freshness.collection.startersMissingDate);
+  const line = nextStateLine(next);
+  const cards = next.kind === "announced" || next.kind === "unknown" ? next.probables : [];
+  const shownDate = next.kind === "announced" || next.kind === "unknown" ? next.date : null;
 
   const body = html`<header class="idline">
   <div class="idtext">
     <h1 class="nm">試合</h1>
     <span class="sub">${d.gameDate === null
       ? "試合の記録がまだありません"
-      : `${fullDate(d.gameDate)}${isToday ? "（本日）" : ""}の結果 · ${played}試合${off > 0 ? ` · 中止${off}試合` : ""}`}</span>
+      : `${fullDate(d.gameDate)}${isToday ? "（本日）" : ""}の結果 · ${gamesSummary(d.games)}`}</span>
   </div>
   <span class="asof">${fullDate(d.builtOn)}生成</span>
 </header>
 
-${dayBar(base, { prev: d.prev, next: null, latestDate: d.gameDate, dayCount: d.dayCount })}
+${dayBar(base, { prev: d.prev, next: null, todayDate: d.gameDate, dayCount: d.dayCount })}
 
 <!-- ⚠**구획을 통째로 지우지 않는다**(M12). 예전에는 예고가 없으면 이 구획이 사라져서,
      읽는 사람이 「아직 발표 전」인지 「화면이 고장났는지」를 구별할 수 없었다.
      ⚠그리고 이 구획이 사라지면 **予告先発 화면으로 가는 유일한 길이 함께 사라진다** —
      내비에 항목이 없어서, 예고가 없는 날에는 그 화면에 닿을 방법이 아예 없었다. -->
 <section class="block" id="b-probable">
-  <h2>次の予告先発<span class="qt">${d.probableDate === null ? "" : fullDate(d.probableDate)}</span></h2>
-  ${d.probables.length === 0
-    ? html`<p class="empty">${past
-      ? "このシーズンの予告先発は記録していません。予告先発の保存を始めたのが今シーズンからです。"
-      : "予告先発はまだ発表されていません。発表は前日〜当日です。"}</p>`
-    : html`<div class="pbcards">${d.probables.map((p) => probableCard(p, base))}</div>`}
-  <p class="note"><a href="${base}starters.html">${d.probables.length === 0
+  <h2>次の予告先発<span class="qt">${shownDate === null ? "" : `${fullDate(shownDate)}${shownDate === d.builtOn ? "（本日）" : ""}`}</span></h2>
+  ${line === null
+    ? raw("")
+    : html`<p class="empty" data-state="${line.state}"${raw(line.state === "failed" ? ' role="status"' : "")}>${line.text}</p>`}
+  ${cards.length === 0
+    ? raw("")
+    : html`<div class="pbcards">${cards.map((p) => probableCard(p, base))}</div>
+  ${note("防御率はレギュラーシーズンの成績です。")}`}
+  <p class="note"><a href="${base}starters.html">${cards.length === 0
     ? "予告先発のページを見る"
     : "対戦する打者の成績まで見る"}</a></p>
 </section>
@@ -380,7 +608,7 @@ ${dayBar(base, { prev: d.prev, next: null, latestDate: d.gameDate, dayCount: d.d
     // ⚠**기준을 화면에 적는다.** 「왜 이 선수가 없지?」에 답할 수 없으면 목록이 아니라 인상이다
     `各試合の下に出るのは「${d.starRule}」に当てはまった記録です。多いときは1試合${d.starLimit}人までにしています。` +
       "得点・安打・失策はその試合の公表記録、投手成績は当サイトの再計算です。",
-  )}
+  )}${postseasonNotes(d.games, base, ctx.hasPostseason)}
 </section>
 
 <nav class="find" aria-label="ほかのページ">
@@ -416,15 +644,13 @@ export function renderDayPage(d: DayPageData, ctx: RenderContext): string {
     path: "days.html",
     label: "日付一覧",
   });
-  const played = d.games.filter((g) => g.status === "played").length;
-  const off = d.games.length - played;
 
   const body = html`<header class="idline">
   <div class="idtext">
     <h1 class="nm">${fullDate(d.date)}の試合</h1>
     <span class="sub">${d.games.length === 0
       ? "この日の記録がありません"
-      : `${played}試合${off > 0 ? ` · 中止${off}試合` : ""}`}</span>
+      : gamesSummary(d.games)}</span>
   </div>
   <span class="asof">${fullDate(d.builtOn)}生成</span>
 </header>
@@ -439,7 +665,7 @@ ${dayBar(base, d)}
   ${note(
     `各試合の下に出るのは「${d.starRule}」に当てはまった記録です。多いときは1試合${d.starLimit}人までにしています。` +
       "得点・安打・失策はその試合の公表記録、投手成績は当サイトの再計算です。",
-  )}
+  )}${postseasonNotes(d.games, base, ctx.hasPostseason)}
 </section>
 
 <nav class="find" aria-label="ほかのページ">
@@ -484,11 +710,26 @@ export function renderDayIndexPage(d: DayIndexData, ctx: RenderContext): string 
   }
   const played = d.days.reduce((n, x) => n + x.played, 0);
   const off = d.days.reduce((n, x) => n + x.scheduled - x.played, 0);
+  /**
+   * 칸의 대회 표기(설계 D9) — **글자로**, `中止` 상자와 다른 모양으로(테두리 없는 보조 잉크 · `.dayc .dk`).
+   * ⚠정규만인 날은 아무것도 안 붙는다 — 그 칸의 바이트는 그대로다.
+   * ⚠**약어에 풀이를 단다**(2026-10-25 · PR-3 검토 RS P3 · 루트 §7) — 보이는 「CS」·「日本S」는 `<abbr title>`(마우스로 풀이)이고
+   *   **낭독에서는 빠진다**(`aria-hidden`), 스크린리더는 시각 숨김(`.vh`)의 풀어 쓴 이름을 읽는다. 둘 다 읽히면 같은 말을 두 번 한다.
+   *   `title` 만으로는 스크린리더가 읽는다는 보장이 없다.
+   */
+  const comp = (cs: readonly string[]): RawHtml => {
+    const marks = cs.filter((c) => COMPETITION_SHORT[c] !== undefined);
+    return marks.length === 0
+      ? raw("")
+      : html`<i class="dk">${marks.map((c, i) => html`${i === 0 ? "" : "・"}<abbr title="${COMPETITION_NAME[c] ?? c}" aria-hidden="true">${COMPETITION_SHORT[c]}</abbr><span class="vh">${COMPETITION_NAME[c] ?? c}</span>`)}</i>`;
+  };
 
   const body = html`<header class="idline">
   <div class="idtext">
     <h1 class="nm">日付をえらぶ</h1>
-    <span class="sub">${d.season}年 · ${d.days.length}日 · ${played}試合${off > 0 ? ` · 中止${off}試合` : ""}</span>
+    <span class="sub">${d.season}年 · ${d.days.length}日 · ${played}試合${d.postseasonPlayed > 0
+      ? `（うちポストシーズン ${d.postseasonPlayed}）`
+      : ""}${off > 0 ? ` · 中止${off}試合` : ""}</span>
   </div>
 </header>
 
@@ -498,10 +739,10 @@ ${d.days.length === 0
       ([month, list]) => html`<section class="block">
   <h2>${Number(month.slice(5))}月<span class="qt">${list.length}日</span></h2>
   <div class="daygrid">${list.map(
-        (day) => html`<a class="dayc${day.date === d.latestDate ? " now" : ""}"
-      href="${dayHref(base, day.date, d.latestDate)}">
+        (day) => html`<a class="dayc${day.date === d.todayDate ? " now" : ""}"
+      href="${dayHref(base, day.date, d.todayDate)}">
       <b>${Number(day.date.slice(8))}</b>
-      <s>${day.played}試合${day.scheduled > day.played ? html`<em>中止${day.scheduled - day.played}</em>` : null}</s>
+      <s>${day.played}試合${day.scheduled > day.played ? html`<em>中止${day.scheduled - day.played}</em>` : null}</s>${comp(day.competitions)}
     </a>`,
       )}</div>
 </section>`,

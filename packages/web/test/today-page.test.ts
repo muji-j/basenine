@@ -9,7 +9,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ambiguousNames, renderTodayPage } from "../src/today-page.ts";
-import type { TodayGame, TodayPageData, TodayStar } from "../src/today-page.ts";
+import type { TodayGame, TodayPageData, TodayProbable, TodayStar } from "../src/today-page.ts";
 import { colorOf } from "@bb-app/domain";
 import { context } from "./fixtures.ts";
 import { CSS } from "../src/assets.ts";
@@ -30,6 +30,10 @@ function game(over: Partial<TodayGame> = {}): TodayGame {
   return {
     gameId: "g1",
     venue: "ベルーナドーム",
+    // ⚠기본은 정규 경기다 — 대회 표기·시리즈 성적이 없다(포스트시즌은 `postseason-timeline.test.ts` 가 DB 로 잰다)
+    competition: "regular",
+    label: null,
+    series: null,
     status: "played",
     notPlayedReason: null,
     away: side("m", "ロッテ", 0, 5, 1),
@@ -49,8 +53,8 @@ function data(over: Partial<TodayPageData> = {}): TodayPageData {
     gameDate: "2026-08-14",
     builtOn: "2026-08-16",
     games: [game()],
-    probableDate: "2026-08-16",
-    probables: [],
+    // ⚠기본은 「발표 전 · 다음 경기일을 안다」다(설계 D5 ⑥) — 다른 상태는 시험이 각자 켠다
+    next: { kind: "awaiting", nextGameDay: "2026-08-16" },
     starRule: "打者は3安打以上・本塁打・4打点以上、投手は6回以上を自責2以内、または10奪三振以上",
     starLimit: 6,
     prev: "2026-08-13",
@@ -190,10 +194,15 @@ test("중지 경기 수를 표제에 센다 — 「6試合」이라고만 쓰면
   assert.match(out, /1試合 · 中止1試合/);
 });
 
+/** 「次の予告先発」 ② — 발표된 카드(설계 D5) */
+function announced(probables: TodayProbable[]): TodayPageData["next"] {
+  return { kind: "announced", date: "2026-08-16", probables };
+}
+
 test("예고선발 요약에 방어율과 분모가 함께 나온다(M2)", () => {
   const out = renderTodayPage(
     data({
-      probables: [
+      next: announced([
         {
           venue: "神宮",
           startTime: "18:00",
@@ -203,7 +212,7 @@ test("예고선발 요약에 방어율과 분모가 함께 나온다(M2)", () =>
             { shortName: "DeNA", color: colorOf("db"), playerId: null, name: null, era: null },
           ],
         },
-      ],
+      ]),
     }),
     context(),
   );
@@ -279,7 +288,7 @@ test("덮개 링크의 이름은 보이는 글자를 품은 채 어느 경기인
 test("予告先発 카드도 카드 전체가 눌리고, 그 경기 구획으로 간다", () => {
   const out = renderTodayPage(
     data({
-      probables: [
+      next: announced([
         {
           venue: "神宮",
           startTime: "18:00",
@@ -289,7 +298,7 @@ test("予告先発 카드도 카드 전체가 눌리고, 그 경기 구획으로
             { shortName: "DeNA", color: colorOf("db"), playerId: null, name: null, era: null },
           ],
         },
-      ],
+      ]),
     }),
     context(),
   );
@@ -324,7 +333,7 @@ test("앞 경기일이 없으면(시즌 첫날) 그쪽도 링크가 아니다", 
  * 예고가 없는 날은 오프시즌·월요일·발표 전 시각이라 **드문 상태가 아니다.**
  */
 test("⚠예고선발이 없어도 구획과 링크가 남는다 — 지우면 그 화면에 닿을 길이 없다(M12)", () => {
-  const out = renderTodayPage(data({ probables: [] }), context());
+  const out = renderTodayPage(data({ next: { kind: "awaiting", nextGameDay: "2026-08-16" } }), context());
   assert.match(out, /id="b-probable"/, "예고가 없다고 구획을 통째로 지웠다");
   assert.match(out, /starters\.html/, "予告先発 화면으로 가는 링크가 사라졌다");
   // 「없다」를 말로 한다 — 빈 화면은 고장으로 읽힌다
@@ -334,7 +343,7 @@ test("⚠예고선발이 없어도 구획과 링크가 남는다 — 지우면 �
 test("예고선발이 있으면 카드를 내고 문구가 바뀐다", () => {
   const out = renderTodayPage(
     data({
-      probables: [
+      next: announced([
         {
           venue: "神宮",
           startTime: "18:00",
@@ -344,7 +353,7 @@ test("예고선발이 있으면 카드를 내고 문구가 바뀐다", () => {
             { shortName: "DeNA", color: colorOf("db"), playerId: null, name: null, era: null },
           ],
         },
-      ],
+      ]),
     }),
     context(),
   );

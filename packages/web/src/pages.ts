@@ -59,6 +59,9 @@ import { streakDen, streakSpan } from "./streak-view.ts";
 // ⚠**「続いている記録」이라는 이름을 여기서 다시 적지 않는다**(M1) — 이 표의 각주가
 //   「그건 저쪽 화면이다」라고 말할 때 쓰는 그 이름이다. 한쪽만 고쳐지면 안내가 거짓이 된다
 import { streakSectionTitle } from "./home-page.ts";
+// ⚠**「次の予告先発」의 문구 한 벌을 그대로 쓴다**(M1 · 설계 D6) — 予告先発 화면과 試合 화면이 같은 문장을 낸다
+import { nextStateLine, notRecordedText } from "./today-page.ts";
+import type { ProbableWithdrawal } from "@bb-app/store";
 
 // ⚠**타입은 `layout.ts` 한 벌만 둔다.** 세 곳에 두면 필드를 늘릴 때마다 세 곳을 고친다
 export type { RenderContext } from "./layout.ts";
@@ -1118,6 +1121,17 @@ export interface StartersPageData {
   /** 사이트를 만든 날. 「本日」인지 판정하는 데 쓴다 */
   builtOn: string;
   games: ProbableGame[];
+  /**
+   * 그 예고일의 **철회 여부**(2026-10-24 · 설계 D6) — 그 날 전 행이 같은 값이면 그 값, 섞이면 `unknown`. 예고가 없으면 null.
+   * ⚠`withdrawn` 이어도 **카드는 남긴다** — 발표된 사실이다. 부제가 「行われませんでした」라고 말한다.
+   * ⚠행 단위 판정은 감시와 같은 술어(`probableWithdrawal`)다(M1).
+   */
+  withdrawal: ProbableWithdrawal | null;
+  /**
+   * 예고를 처음 보존한 해(설계 D5-1). 하나도 없으면 null.
+   * ⚠~~「予告先発の保存を始めたのが今シーズンからです」~~ 는 2027년에 거짓이 된다 — 데이터에서 받는다.
+   */
+  savedFrom: number | null;
 }
 
 /**
@@ -1284,21 +1298,34 @@ export function renderStartersPage(d: StartersPageData, ctx: RenderContext): str
     </div>`;
   };
 
+  /**
+   * 그 날의 철회 상태 한 줄(설계 D6) — 문구는 試合 화면의 「次の予告先発」과 **같은 함수**다(M1).
+   * ⚠카드는 남긴다 — 발표된 사실이다. 이 줄과 부제가 「열리지 않았다」·「확인할 수 없다」를 말한다.
+   */
+  const withdrawalLine = d.gameDate === null || d.withdrawal === null || d.withdrawal === "notWithdrawn"
+    ? null
+    : nextStateLine(d.withdrawal === "withdrawn"
+      ? { kind: "withdrawn", date: d.gameDate }
+      : { kind: "unknown", date: d.gameDate, probables: [] });
+
   const body = html`<header class="idline">
   <div class="idtext">
     <h1 class="nm">予告先発</h1>
     <span class="sub">${d.gameDate === null
       ? past ? "終了したシーズンです" : "発表待ち"
-      : `${fullDate(d.gameDate)}${isToday ? "（本日）" : ""}の試合`}</span>
+      : `${fullDate(d.gameDate)}${isToday ? "（本日）" : ""}の試合${d.withdrawal === "withdrawn" ? " — 行われませんでした" : ""}`}</span>
   </div>
   <span class="asof">成績は${fullDate(d.builtOn)}生成時点</span>
 </header>
 
-${d.dayCount <= 1 ? raw("") : startersBar(base, d)}
+${d.dayCount <= 1 ? raw("") : startersBar(base, d)}${withdrawalLine === null
+    ? raw("")
+    : html`
+<section class="block"><p class="empty" data-state="${withdrawalLine.state}"${raw(withdrawalLine.state === "failed" ? ' role="status"' : "")}>${withdrawalLine.text}</p></section>`}
 
 ${d.gameDate === null || d.games.length === 0
     ? html`<section class="block"><p class="empty">${past
-      ? "このシーズンの予告先発は記録していません。予告先発の保存を始めたのが今シーズンからです。"
+      ? notRecordedText(d.savedFrom)
       : "予告先発はまだ発表されていません。発表は前日〜当日です。"}</p></section>`
     : html`<div class="cards" role="tablist" data-tabgroup="starters" aria-label="試合">
     ${d.games.map(

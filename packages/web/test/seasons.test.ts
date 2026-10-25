@@ -81,8 +81,8 @@ test("현재 시즌 칸은 자기 자신을 가리키고 current다", () => {
 test("시즌이 하나면 전환 띠를 그리지 않는다 — 고를 것 없는 조작은 소음이다", () => {
   const out = renderTodayPage(
     {
-      gameDate: "2026-08-14", builtOn: "2026-08-16", games: [], probableDate: null,
-      probables: [], starRule: "x", starLimit: 6, prev: null, dayCount: 1,
+      gameDate: "2026-08-14", builtOn: "2026-08-16", games: [], next: { kind: "awaiting", nextGameDay: null },
+      starRule: "x", starLimit: 6, prev: null, dayCount: 1,
     },
     context(),
   );
@@ -92,8 +92,8 @@ test("시즌이 하나면 전환 띠를 그리지 않는다 — 고를 것 없�
 test("시즌이 둘이면 「シーズン」이라는 이름과 함께 그린다 — 연도만 띄우면 무엇인지 모른다", () => {
   const out = renderTodayPage(
     {
-      gameDate: "2026-08-14", builtOn: "2026-08-16", games: [], probableDate: null,
-      probables: [], starRule: "x", starLimit: 6, prev: null, dayCount: 1,
+      gameDate: "2026-08-14", builtOn: "2026-08-16", games: [], next: { kind: "awaiting", nextGameDay: null },
+      starRule: "x", starLimit: 6, prev: null, dayCount: 1,
     },
     seasonContext(["today.html"]),
   );

@@ -151,6 +151,48 @@ test("⚠B 가 울리면 그 달 사본의 취득 시각을 적는다 — 모르
   assert.match(`${r.stdout}${r.stderr}`, /予告先発 취득 시각 모름 1장/, "予告先発 취득 시각 모름 행 수를 안 적었다");
 }));
 
+/**
+ * ⚠⚠**올스타 날 — 감시가 「予告先発이 뒤처졌다」로 울지 않는다**(2026-10-25 · PR-3 검토 GPT P2 · 판정 규칙은 `collection-evidence.test.ts`).
+ * 여기는 **연결**만 본다 — 스크립트가 같은 증거 질의(`nextGameDayOf`)를 거쳐 사유 파일에 `starters-behind` 를 안 쓰는가.
+ * 대조로 같은 모양의 정규 날은 지금처럼 운다(그 밖은 불변). ⚠시험이 시계를 읽지 않는다 — 스크립트가 찍는 「오늘(JST)」을 먼저 읽는다.
+ */
+test("⚠⚠올스타 날 — 감시가 starters-behind 로 안 운다 · 정규 날이면 지금처럼 운다", () => withDir(async (dir) => {
+  const probe = join(dir, "probe.sqlite");
+  openDb(probe, "2026-09-11T00:00:00.000Z").close();
+  const today = /오늘\(JST\) (\d{4}-\d{2}-\d{2})/.exec(spawnSync(process.execPath, [SCRIPT, probe, "2"], { encoding: "utf8" }).stdout)?.[1];
+  assert.ok(today !== undefined, "스크립트가 오늘(JST)을 안 찍는다 — 이 시험이 공회전한다");
+  const shift = (d: string, days: number): string => new Date(Date.parse(`${d}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+  const season = Number(today.slice(0, 4));
+
+  for (const [name, home, away, competition, behind] of [["allstar", "cl", "pl", "allStar", false], ["regular", "t", "g", "regular", true]] as const) {
+    const path = join(dir, `${name}.sqlite`);
+    const db: Db = openDb(path, "2026-09-11T00:00:00.000Z");
+    try {
+      for (const [me, you] of [["g", "t"], ["t", "g"]] as const) {
+        upsertProbablePitcher(db, {
+          gameDate: shift(today, -2), teamCode: me, opponentCode: you, playerId: null, sourceName: null, venue: null, startTime: "18:00",
+          league: "cl", sourceUrl: "https://npb.jp/announcement/starter/", fetchedAt: `${shift(today, -3)}T09:00:00.000Z`,
+        });
+      }
+      upsertGame(db, {
+        gameId: `as-${name}`, season, gameDate: today, awayCode: away, homeCode: home, gameNo: 1,
+        status: "played", notPlayedReason: null, competition, sourceUrl: "https://npb.jp/x",
+        fetchedAt: "2026-09-11T00:00:00.000Z", awayRuns: 1, homeRuns: 2,
+      });
+      db.raw.prepare(
+        "INSERT INTO upcoming_game (season, game_date, home_code, away_code, seq, venue, start_time, source, fetched_at) VALUES (?, ?, 'g', 't', 0, '', '18:00', 'x', NULL)",
+      ).run(season, shift(today, 3));
+    } finally {
+      db.close();
+    }
+    const out = join(dir, `${name}.reasons.json`);
+    const r = spawnSync(process.execPath, [SCRIPT, path, "2", "--reasons-out", out], { encoding: "utf8" });
+    assert.notEqual(r.status, 2, `${name}: 판정이 돌지 않았다: ${r.stdout}${r.stderr}`);
+    const reasons = (JSON.parse(await readFile(out, "utf8")) as { reasons: string[] }).reasons;
+    assert.equal(reasons.includes("starters-behind"), behind, `${name}: starters-behind 가 ${behind ? "안 울었다" : "울었다"} — ${reasons.join(",")}`);
+  }
+}));
+
 test("⚠--json 뒤에 경로가 없으면 종료 코드 2 가 남는다(예전엔 마지막 줄이 1/0 으로 덮었다)", () => withDir(async (dir) => {
   const path = join(dir, "empty.sqlite");
   openDb(path, "2026-09-11T00:00:00.000Z").close();

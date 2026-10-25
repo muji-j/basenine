@@ -151,6 +151,39 @@ test("⚠개막일 — 다음 경기일의 시즌은 새 시즌이다(전년도 
   assert.equal(e.nextGameSeasonOver, false, "새 시즌 개막일을 끝난 시즌으로 봤다");
 }));
 
+/**
+ * ⚠⚠**올스타 날은 「다음 경기일」이 아니다**(2026-10-25 · PR-3 검토 GPT P2) — 予告先発은 **12구단 경기**에만 난다
+ * (실측: 올스타 16일 전부 `probable_pitcher`·`starters_fetch` 0행). 올스타(`cl`·`pl`)를 N 으로 세면 올스타 날마다
+ * `starters-behind` 가 울어 수집 잡이 막히고, 같은 날짜를 받는 試合 화면이 거짓 「取り込めていません」을 낸다.
+ * ⚠**감시 판정이 바뀐다** — 그래서 같은 픽스처의 정규 날(대조)은 지금처럼 운다는 것도 같이 잰다(그 밖은 불변).
+ * ⚠PR-2b 이후 예정(`upcoming_game`)에는 `cl`·`pl` 이 안 들어가지만 경기 행(`game`)에는 있다 — 두 표를 다 거른다(예정 행은 방어).
+ */
+test("⚠⚠올스타 날은 「다음 경기일」이 아니다 — 감시가 starters-behind 로 안 운다 · 정규 날은 지금처럼 운다", async () => {
+  const D = "2026-07-24";
+  const seed = (db: Db, home: string, away: string, competition: string): void => {
+    announce(db, "2026-07-22", "g", "t", "2026-07-21T09:00:00.000Z");
+    announce(db, "2026-07-22", "t", "g", "2026-07-21T09:00:00.000Z");
+    game(db, D, home, away, { competition });
+    const up = db.raw.prepare(
+      "INSERT INTO upcoming_game (season, game_date, home_code, away_code, seq, venue, start_time, source, fetched_at) VALUES (2026, ?, ?, ?, 0, '', '18:00', 'x', ?)",
+    );
+    up.run("2026-07-25", "pl", "cl", NOW); // 올스타 2차전(방어 — 예정 표에 남은 모양)
+    up.run("2026-07-27", "g", "t", NOW);
+  };
+  await withDb((db) => {
+    seed(db, "cl", "pl", "allStar");
+    const e = collectionEvidence(db, D);
+    assert.equal(e.nextGameDay, "2026-07-27", "올스타(경기 행 또는 예정)를 다음 경기일로 셌다");
+    assert.ok(!collectionVerdict(e, MONITOR).reasons.includes("starters-behind"), "감시가 올스타 날에 「予告先発이 뒤처졌다」고 울었다");
+  });
+  await withDb((db) => {
+    seed(db, "g", "t", "regular");
+    const e = collectionEvidence(db, D);
+    assert.equal(e.nextGameDay, D, "정규 경기 날을 다음 경기일로 안 셌다 — 그 밖이 바뀌었다");
+    assert.ok(collectionVerdict(e, MONITOR).reasons.includes("starters-behind"), "정규 날의 예고 누락에 감시가 안 울었다 — 그 밖이 바뀌었다");
+  });
+});
+
 test("period 재료 — 오늘 이전 가장 최근 경기 행·치러짐 표시 · 오늘 이후 가장 가까운 예고", () => withDb((db) => {
   game(db, "2026-10-18", "g", "t", { status: "notPlayed" });
   game(db, "2026-10-21", "s", "d"); // 오늘 뒤 — 재료가 아니다
