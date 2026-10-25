@@ -73,14 +73,26 @@ test("⚠보유한 모든 시즌에서 12팀의 소화 경기수가 이 표와 �
      * 그래서 **완결된 시즌만** 본다(12팀이 전부 같은 수이고 그 수가 표의 값과 같은가).
      * 진행 중인 시즌에는 대신 **표의 값을 넘지 않는가**만 본다.
      */
+    /**
+     * ⚠⚠**진행 중인 최신 시즌은 구단이 12개보다 적을 수 있다**(2026-10-25 · PR-4 마지막 재검토 N4).
+     *   새 시즌 첫날 12구단이 다 안 나오면(2023 은 03-30 에 **1경기**로 열었다 · 개막일 우천 중지도 같은 모양)
+     *   「시즌마다 12팀」이 「시험」을 떨어뜨려 배포를 막았다. → **최신 시즌이 아직 완결이 아니면 1~12**, 그 밖(완결 · 최신이 아닌 시즌)은 지금처럼 **12**.
+     *   ⚠12 를 **넘는** 것은 어느 시즌이든 실패다(슬러그가 바뀌면 옛 코드와 새 코드가 함께 나온다).
+     */
+    const newest = Math.max(...bySeason.keys());
     let finished = 0;
     for (const [season, teams] of [...bySeason].sort((a, b) => a[0] - b[0])) {
-      assert.equal(teams.length, 12, `${season}: 구단이 ${teams.length}개다 — 슬러그가 바뀌었을 수 있다`);
       const want = regularSeasonGames(season);
       const counts = [...new Set(teams.map((t) => t.n))];
+      const done = teams.length === 12 && counts.length === 1 && counts[0] === want;
+      if (season === newest && !done) {
+        assert.ok(teams.length >= 1 && teams.length <= 12, `${season}(진행 중): 구단이 ${teams.length}개다 — 1~12 여야 한다(슬러그가 바뀌었을 수 있다)`);
+      } else {
+        assert.equal(teams.length, 12, `${season}: 구단이 ${teams.length}개다 — 슬러그가 바뀌었을 수 있다`);
+      }
       const max = Math.max(...counts);
       assert.ok(max <= want, `${season}: ${max}경기로 표의 ${want}를 넘었다 — 표를 고쳐라`);
-      if (counts.length === 1 && counts[0] === want) finished += 1;
+      if (done) finished += 1;
     }
     assert.ok(finished >= 2, `완결 시즌을 ${finished}개밖에 못 봤다 — 이 시험이 공회전한다`);
   } finally {
