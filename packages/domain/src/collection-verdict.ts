@@ -182,8 +182,13 @@ export function collectionVerdict(e: CollectionEvidence, o: VerdictOptions): Col
      * ⚠`startersPulseAge` 는 그대로 보고한다(사유만 안 낸다). `starters-behind` · 시즌 중 휴식(종료 아님)은 **불변**이다.
      * ⚠잃는 것: 비시즌에 予告先発 수집이 멈춰도 개막 전날까지 조용 — 개막일에 `starters-behind`(다음 경기일의 시즌 = 미종료)가 잡는다.
      *   `latestSeasonOver` 는 일본시리즈 적재에 기댄다(설계 G1).
+     * ⚠⚠**`nextGameSeasonOver` 는 설계 공식에 더했다**(PR-4 구현 · 설계 §9) — 일본시리즈가 7차전 전에 끝나도 월간 일정은 남은 차전을
+     *   **링크 없는 예정으로 영구히** 싣고(실물 2025-11 사본: 10/30 결착 · 11/01·11/02 예정 행), 그 행이 `nextGameDay` 가 된다.
+     *   그 날은 치르지 않을 경기라 예고가 없다 — `starters-behind` 가 같은 근거(`!nextGameSeasonOver` · 「일본시리즈 예비일」)로 이미 쉰다.
+     *   더하지 않으면 결착 직후 予告先発이 404 일 때 **예비일마다 blocking** 이다(CI DB 사본 시뮬레이션: 4연승 결착 → 10/31 · 11/01).
+     *   ⚠새 시즌 개막일은 그 날의 시즌이 안 끝났으므로 그대로 잰다.
      */
-    const startersQuiet = e.latestSeasonOver && (e.nextGameDay === null || e.nextGameDay > e.today);
+    const startersQuiet = e.latestSeasonOver && (e.nextGameDay === null || e.nextGameDay > e.today || e.nextGameSeasonOver);
     if (!startersQuiet && (startersPulseAge === null || startersPulseAge > o.grace)) reasons.push("starters-lag");
   }
 

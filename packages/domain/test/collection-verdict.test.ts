@@ -151,6 +151,30 @@ test("⚠⚠PR-4 T6 starters-lag — 종료 ∧ 다음 경기 없음 ∧ 맥박 
   assert.ok(v({ latestSeasonOver: false, nextGameDay: ago(-30) }).reasons.includes("starters-lag"), "종료 아님이면 다음 경기가 멀어도 맥박을 잰다(불변)");
 });
 
+/**
+ * ⚠⚠**일본시리즈 예비일 — 치르지 않을 6·7차전의 예정 행**(PR-4 구현 · 설계 D5 공식에 더한 것 · 보고 대상).
+ * 일본시리즈가 7차전 전에 끝나도 월간 일정은 남은 차전을 **링크 없는 예정으로 영구히** 싣는다(실물: 2025-11 사본에 11/01·11/02 · 2025 는 10/30 결착).
+ * 그 행이 `nextGameDay` 가 되면 설계 공식(`nextGameDay > today`)은 그날 맥박을 요구한다 — 결착 직후 予告先発이 404 면 그 예비일마다 blocking 이다
+ * (CI DB 사본 시뮬레이션 · 4연승 결착 · 맥박 10/28 정지 → 10/31 · 11/01 두 날 `starters-lag`). `starters-behind` 는 같은 날을
+ * `nextGameSeasonOver` 로 이미 쉰다 — 맥박도 같은 근거로 쉰다. ⚠개막일(다음 경기일의 시즌 = 미종료)은 그대로 잰다(위 시험).
+ */
+test("⚠⚠PR-4 T6 일본시리즈 예비일(다음 경기일이 오늘이지만 그 시즌이 끝났다) — 맥박을 요구하지 않는다 · 새 시즌 개막일은 그대로", () => {
+  const sparePlaceholder: Partial<CollectionEvidence> = {
+    latestSeasonOver: true, latestPlayed: ago(3), latestGameRowDate: ago(3), latestPlayedMarkDate: ago(3),
+    startersLatest: ago(3), startersPulseDate: ago(4), nextGameDay: ago(0), nextGameSeasonOver: true, nextAnnouncementDate: null,
+  };
+  assert.deepEqual(collectionVerdict(evidence(sparePlaceholder), MONITOR).reasons, [], "치르지 않을 예비일에 予告先発 맥박을 요구했다 — 결착 직후 그 날마다 blocking 이다");
+  assert.ok(
+    collectionVerdict(evidence({ ...sparePlaceholder, nextGameSeasonOver: false }), MONITOR).reasons.includes("starters-lag"),
+    "다음 경기일의 시즌이 안 끝났는데(개막일) 맥박을 안 쟀다",
+  );
+  // ⚠예외는 **최신 시즌이 끝났을 때만**이다 — 종료 아님이면 다음 경기일 쪽이 무엇이든 지금처럼 잰다(설계 D5 「시즌 중 휴식(종료 아님)은 불변」)
+  assert.ok(
+    collectionVerdict(evidence({ ...sparePlaceholder, latestSeasonOver: false }), MONITOR).reasons.includes("starters-lag"),
+    "최신 시즌이 안 끝났는데 다음 경기일의 시즌 종료만 보고 맥박을 안 쟀다",
+  );
+});
+
 test("⚠PR-4 T6 starters-behind 는 D5 와 무관하다 — 개막일(다음 경기일 시즌 미종료)에 예고가 못 미치면 그대로 운다", () => {
   const v = collectionVerdict(evidence({
     latestSeasonOver: true, nextGameDay: ago(0), nextGameSeasonOver: false, startersLatest: ago(150),
