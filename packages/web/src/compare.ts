@@ -21,7 +21,7 @@
  * 그래서 여기서 만드는 것은 **이미 계산이 끝난 표시용 문자열**이고,
  * 브라우저는 배치만 한다. 계산도, 반올림도, 등급 판정도 하지 않는다.
  */
-import { html, raw } from "./html.ts";
+import { html, raw, toJson } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import { NO_VALUE, avg3, dec1, dec2, denominator, fullDate, innings, signed1 } from "./format.ts";
 import { note, panel, tablist } from "./parts.ts";
@@ -336,7 +336,8 @@ export function compareShardOf(playerId: string): string {
  * 배열이면 받은 쪽이 매번 훑어야 한다.
  */
 export function compareShardJson(cards: ReadonlyMap<string, CompareCard>): string {
-  return JSON.stringify(Object.fromEntries(cards));
+  // ⚠**JSON 출력 경계를 지난다**(`toJson` — 이체자 선택자를 뗀다 · 2026-10-25). 서체 게이트는 `.json` 도 훑는다
+  return toJson(Object.fromEntries(cards));
 }
 
 /**
