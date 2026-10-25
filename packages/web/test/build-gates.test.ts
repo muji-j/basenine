@@ -36,6 +36,8 @@ import { regularSeasonGames } from "@bb-app/domain";
 import { loadSite } from "../src/query.ts";
 import { contactGate } from "../src/layout.ts";
 import { DEFER_MAX_GAME_DAYS } from "../src/build-seasons.ts";
+import { leagueGameDays, noticeOf, rootSeason } from "../src/newest-season.ts";
+import { RunValueSampleError } from "@bb-app/aggregate";
 // ⚠**서체 게이트의 판정 한 벌**(M1) — 배포를 막은 바로 그 수집기로 잰다
 import { collectUsedChars } from "../../../scripts/fonts.ts";
 
@@ -195,6 +197,21 @@ function openingDay(db: Db, season: number, o: { central?: readonly string[]; ra
     topHalfPas(db, played(db, date, "g", "c", season), "c", "g", o.central ?? ALL_PA, o.rawPbp);
     topHalfPas(db, played(db, date, "m", "h", season), "h", "m", ALL_PA);
   }
+}
+
+/**
+ * **리그 개막이 엇갈린 해의 모양**(PR-4 재검토 F2) — 퍼시픽이 `pacificDays` 경기일 먼저 치르고, **그 마지막 날에** 센트럴이 개막한다.
+ * 센트럴 개막일에 사건 하나(`central`)를 빼면 그 리그만 「표본 0」 — 시즌 전체 경기일은 `pacificDays` 다.
+ * @returns 마지막 날(센트럴 개막일)
+ */
+function staggeredOpening(db: Db, season: number, pacificDays: number, central: readonly string[]): string {
+  let last = "";
+  for (let i = 0; i < pacificDays; i += 1) {
+    last = new Date(Date.UTC(season, 2, 27) + i * 86_400_000).toISOString().slice(0, 10);
+    topHalfPas(db, played(db, last, "m", "h", season), "h", "m", ALL_PA);
+  }
+  topHalfPas(db, played(db, last, "g", "c", season), "c", "g", central);
+  return last;
 }
 
 /** 예정 경기 한 개. `game` 표가 아니라 `upcoming_game` 이다(마이그레이션 015의 이유) */
@@ -889,6 +906,118 @@ test("⚠⚠PR-4 반영① 예외는 좁다 — 최대가 아닌 시즌의 표�
     },
     (r) => failsBeforeBaking(r, /triple 의 표본이 0이다[^\n]*2019/),
   );
+});
+
+/**
+ * ⚠⚠**경기일은 그 리그로 센다**(PR-4 재검토 F2) — 퍼시픽이 9경기일 먼저 치르고 센트럴이 연 날(센트럴 표본 0)은 **센트럴 1경기일째**다.
+ *   시즌 전체로 세면 9 라 상한(7)을 넘어 「결함」(종료 1)이 됐다 — 유예가 막으려던 바로 그 증상(리그 개막이 엇갈린 해).
+ */
+test("⚠⚠PR-4 재검토 F2 리그 개막이 엇갈린 해 — 퍼시픽 9경기일 뒤 센트럴 개막일(센트럴 표본 0)은 센트럴 1경기일째라 미룬다 · 종료 0", async () => {
+  await runBuild(
+    {
+      seasonArg: "auto",
+      now: "2019-04-05T03:00:00.000Z",
+      seed: (db) => { roster(db); cleanSeason(db, 2018); staggeredOpening(db, 2019, 9, notTriple); },
+    },
+    (r) => {
+      assert.equal(r.status, 0, `늦게 연 리그의 개막일을 결함으로 막았다(시즌 전체 경기일로 셌다):\n${r.stderr}`);
+      assert.match(r.stdout, /^ {2}2018年\(現行\) : /m);
+      const w = deferLines(r.stdout, 2019);
+      assert.equal(w.length, 1, `경고가 ${String(w.length)}줄이다:\n${r.stdout}`);
+      assert.match(w[0]!, /central 의 triple 표본 0/);
+      assert.match(w[0]!, /개막 1경기일째\(첫 경기 2019-04-04\)/, "그 리그의 경기일로 안 셌다");
+    },
+  );
+});
+
+/**
+ * ⚠⚠**실DB 시험 셋도 빌드와 같은 함수로 루트 시즌을 고른다**(PR-4 재검토 F1 · `src/newest-season.ts` 의 `rootSeason`).
+ * 예전에는 그 시험들이 `MAX(season)` 을 따로 골라, 개막 1~2경기일에 빌드는 이전 시즌으로 굽고 종료 0 인데
+ * **「시험」 단계가 같은 「표본 0」으로 떨어져 배포가 막혔다**(실DB 사본을 개막 1경기일 모양으로 잘라 재현 · 설계 §9-D).
+ * 여기서는 그 선택 함수를 합성 DB 로 잰다 — 빌드와 같은 판정이므로 조건 밖(8경기일째 표본 0)이면 시험도 던진다.
+ */
+test("⚠⚠PR-4 재검토 F1 rootSeason — 개막 1경기일(표본 0) → 이전 시즌 · 표본이 서면 새 시즌 · 엇갈린 개막은 그 리그로 셈 · 8경기일째 표본 0 이면 던진다", async () => {
+  const withDb = async (seedFn: (db: Db) => void, fn: (db: Db) => void): Promise<void> => {
+    const dir = await mkdtemp(join(tmpdir(), "bb-root-season-"));
+    const db = openDb(join(dir, "t.sqlite"), NOW);
+    try {
+      seedFn(db);
+      fn(db);
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  };
+  const pick = (db: Db) => rootSeason(db, (s) => loadSite(db, { season: s, builtOn: "2019-04-05" }));
+
+  await withDb((db) => { roster(db); cleanSeason(db, 2018); openingDay(db, 2019, { central: notTriple }); }, (db) => {
+    const r = pick(db);
+    assert.equal(r.season, 2018, "개막 1경기일(표본 0)인데 새 시즌을 골랐다 — 「시험」 단계가 그 시즌을 읽다 떨어진다");
+    assert.deepEqual(r.seasons, [2018]);
+    assert.equal(r.site.season, 2018, "고른 시즌과 읽은 자료가 다르다");
+    assert.deepEqual(r.deferred && { season: r.deferred.season, league: r.deferred.league, gameDays: r.deferred.gameDays, root: r.deferred.root }, { season: 2019, league: "central", gameDays: 1, root: 2018 });
+    assert.match(noticeOf(r.deferred!), /2019 시즌은 아직 굽지 않는다[^\n]*central 의 triple 표본 0[^\n]*2018 시즌이 루트다/);
+  });
+  await withDb((db) => { roster(db); cleanSeason(db, 2018); openingDay(db, 2019); }, (db) => {
+    const r = pick(db);
+    assert.equal(r.season, 2019, "표본이 섰는데 새 시즌을 안 골랐다");
+    assert.deepEqual(r.seasons, [2019, 2018]);
+    assert.equal(r.deferred, null);
+  });
+  await withDb((db) => { roster(db); cleanSeason(db, 2018); staggeredOpening(db, 2019, 9, notTriple); }, (db) => {
+    const r = pick(db);
+    assert.equal(r.season, 2018, "엇갈린 개막을 시즌 전체 경기일로 셌다");
+    assert.equal(r.deferred?.gameDays, 1);
+  });
+  await withDb(
+    (db) => { roster(db); cleanSeason(db, 2018); openingDay(db, 2019, { central: notTriple, days: DEFER_MAX_GAME_DAYS + 1 }); },
+    (db) => {
+      assert.throws(() => pick(db), (e: unknown) => e instanceof RunValueSampleError && e.season === 2019, "8경기일째의 표본 0 을 미뤘다 — 시즌 도중의 결함을 시험이 숨긴다");
+    },
+  );
+});
+
+/**
+ * ⚠**그 리그의 경기일은 홈이든 원정이든 그 리그 구단이 나선 날이다**(재검토 F2) — 교류전에서 원정 간 날도 그 리그의 경기일이다.
+ * 중지 경기 · 정규시즌 밖 · 다른 시즌은 안 센다.
+ */
+test("⚠PR-4 재검토 F2 leagueGameDays — 홈·원정 둘 다 센다(교류전 원정 포함) · 중지·포스트시즌·다른 시즌은 안 센다", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "bb-league-days-"));
+  const db = openDb(join(dir, "t.sqlite"), NOW);
+  try {
+    roster(db);
+    played(db, "2019-03-29", "g", "c", 2019); // 센트럴끼리
+    played(db, "2019-03-30", "m", "g", 2019); // 교류전 — 센트럴 g 가 퍼시픽 m 에 원정
+    played(db, "2019-03-31", "m", "h", 2019); // 퍼시픽끼리
+    canceledOnly(db, 2019); // 2019-03-27 중지(g 원정 · t 홈) — 안 센다
+    played(db, "2018-04-01", "g", "c", 2018); // 다른 시즌 — 안 센다
+    seq += 1;
+    upsertGame(db, {
+      gameId: `cs${String(seq)}`, season: 2019, gameDate: "2019-10-10", awayCode: "c", homeCode: "g", gameNo: 1,
+      status: "played", notPlayedReason: null, competition: "climaxSeries",
+      sourceUrl: "https://npb.jp/x", fetchedAt: NOW, awayRuns: 1, homeRuns: 2,
+    }); // 포스트시즌 — 안 센다
+    assert.deepEqual({ ...leagueGameDays(db, 2019, "central") }, { n: 2, first: "2019-03-29" }, "센트럴: 홈 경기일과 교류전 원정일을 둘 다 세야 한다");
+    assert.deepEqual({ ...leagueGameDays(db, 2019, "pacific") }, { n: 2, first: "2019-03-30" }, "퍼시픽: 교류전 홈경기일 + 리그 경기일");
+    assert.throws(() => leagueGameDays(db, 2019, "western"), RangeError, "모르는 리그를 0 으로 셌다");
+  } finally {
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+/** ⚠**그 선택을 실DB 시험 셋이 실제로 쓰는가** — 셋 중 하나라도 `MAX(season)` 으로 돌아가면 개막일 「시험」 단계가 다시 떨어진다 */
+test("⚠⚠PR-4 재검토 F1 실DB 시험 셋(woba-weights-wired · ranking-title-metrics · gidp-by-team)은 루트 시즌을 rootSeason 으로 고른다 — MAX(season) 을 따로 고르지 않는다", () => {
+  for (const name of ["woba-weights-wired.test.ts", "ranking-title-metrics.test.ts", "gidp-by-team.test.ts"]) {
+    const code = readFileSync(join(import.meta.dirname, name), "utf8")
+      .replace(/\r\n/g, "\n")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/(?<!:)\/\/[^\n]*/g, "");
+    assert.match(code, /import \{[^}]*\brootSeason\b[^}]*\} from "\.\.\/src\/newest-season\.ts"/, `${name}: rootSeason 을 안 가져온다`);
+    assert.match(code, /\brootSeason\(db,/, `${name}: rootSeason 을 안 부른다`);
+    assert.doesNotMatch(code, /MAX\(season\)/i, `${name}: 시즌을 MAX(season) 으로 따로 고른다 — 빌드가 미룬 시즌을 읽는다`);
+    assert.doesNotMatch(code, /HAVING n > 0/, `${name}: 시즌을 따로 고른다 — 빌드가 미룬 시즌을 읽는다`);
+  }
 });
 
 // ── PR-4 3중 검토 반영 ② 공개 하한 — 소급 시즌은 사람이 품질을 잰 뒤 하한을 내리는 커밋으로만 공개된다(1차 P2 · 2차 F2 · 조정자 결정) ──

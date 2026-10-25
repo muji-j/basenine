@@ -20,6 +20,7 @@ import { openDb } from "@bb-app/store";
 import { canonicalTeamCode, leagueOf } from "@bb-app/domain";
 import type { League } from "@bb-app/domain";
 import { loadSite } from "../src/query.ts";
+import { rootSeason } from "../src/newest-season.ts";
 import type { SiteData } from "../src/query.ts";
 import type { RankingCategory } from "../src/pages.ts";
 import { metricRank } from "../src/metric-order.ts";
@@ -42,19 +43,15 @@ interface Loaded {
 
 /**
  * ⚠**한 번만 읽는다** — `loadSite` 는 실측 약 6초다(`ranking-src-srp.test.ts` 와 같은 이유).
+ * ⚠⚠**시즌은 빌드가 사이트 루트에 놓는 시즌이다**(`rootSeason` · 2026-10-25 · PR-4 재검토 F1) — 예전 `MAX(season)` 은
+ *   개막 1~2경기일에 빌드가 아직 굽지 않는 새 시즌을 읽다 「표본 0」으로 떨어져 CI 「시험」 단계가 배포를 막았다.
  */
 let loaded: Loaded | null = null;
 function load(): Loaded {
   if (loaded !== null) return loaded;
   const db = openDb(DB, "1970-01-01T00:00:00.000Z");
-  const season = (
-    db.raw
-      .prepare(
-        `SELECT MAX(season) AS season FROM game WHERE status = 'played' AND competition = 'regular'`,
-      )
-      .get() as { season: number | null }
-  ).season;
-  if (season === null) throw new Error("정규시즌 경기가 하나도 없다 — 이 시험이 아무것도 못 잰다");
+  const root = rootSeason(db, (s) => loadSite(db, { season: s, builtOn: "1970-01-01" }));
+  const season = root.season;
 
   const hitRows = db.raw
     .prepare(
@@ -98,7 +95,7 @@ function load(): Loaded {
     decisions.set(key, { w: cur.w + Number(r.w), l: cur.l + Number(r.l), games: cur.games + Number(r.games) });
   }
 
-  loaded = { season, site: loadSite(db, { season, builtOn: "1970-01-01" }), topHits, decisions };
+  loaded = { season, site: root.site, topHits, decisions };
   db.close();
   return loaded;
 }

@@ -37,6 +37,7 @@ import {
   wobaWeightsFrom,
 } from "@bb-app/metrics";
 import { loadSite } from "../src/query.ts";
+import { rootSeason } from "../src/newest-season.ts";
 
 const DB = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "data", "bb.sqlite");
 const HAS_DB = existsSync(DB);
@@ -55,25 +56,17 @@ const FULL = process.env["BB_ALL_SEASONS"] === "1";
 const BUILT_ON = "2026-08-20";
 
 /**
- * 어느 시즌을 볼 것인가 — **DB 에 물어본다.** 목록을 손으로 적으면 백필할 때 낡는다.
+ * 어느 시즌을 볼 것인가 — **빌드와 같은 판정으로 고른다**(`rootSeason` · `src/newest-season.ts`). 목록을 손으로 적으면 백필할 때 낡는다.
  *
  * ⚠**`HAVING n > 100` 이었다**(2026-08-21 검토 P2-③). 그러면 **리그 총 100경기 미만인 시즌이
  * 통째로 검사 밖**이었다 — 그건 개막 후 2~3주이고, **하필 폴백이 가장 나기 쉬운 때**다
  * (박스는 들어왔는데 타석 로그 적재가 아직 안 붙은 상태). 그물이 가장 필요한 구간에 그물이 없었다.
- * ⚠**지금 DB 에서는 이 완화가 아무것도 바꾸지 않는다**(2018~2026 전부 600경기 이상 · 실측).
- * 바뀌는 것은 **다음 개막 직후**다.
+ * → 그래서 **빌드가 굽는 순간부터** 그 시즌을 잰다(루트 시즌 = 빌드가 사이트 루트에 놓는 시즌).
+ * ⚠⚠**`MAX(season)`(`HAVING n > 0`)을 따로 고르지 않는다**(2026-10-25 · PR-4 재검토 F1) — 개막 1~2경기일에는 빌드가 그 시즌의
+ *   계수 표본이 서지 않아 **아직 굽지 않는데**(이전 시즌이 루트), 이 시험이 그 시즌을 `loadSite` 로 읽다 같은 「표본 0」으로 떨어져
+ *   CI 「시험」 단계가 배포를 막았다. 빌드와 같은 함수로 고르면 **빌드가 미룬 시즌은 시험도 안 읽고**, 미룰 조건 밖(8경기일째 표본 0 등)이면 시험도 던진다.
+ * ⚠깊은 실행(`BB_ALL_SEASONS=1`)은 **빌드가 굽는 시즌 전부**다.
  */
-function seasonsToScan(db: ReturnType<typeof openDb>): number[] {
-  const rows = db.raw
-    .prepare(
-      `SELECT season AS s, COUNT(*) AS n FROM game
-        WHERE competition = 'regular' AND status = 'played'
-        GROUP BY season HAVING n > 0 ORDER BY season DESC`,
-    )
-    .all() as { s: number }[];
-  const all = rows.map((r) => r.s);
-  return FULL ? all : all.slice(0, 1);
-}
 
 test(
   "⚠순위표의 wOBA 는 리그·시즌 유도 계수로 계산돼 있다 — 폴백으로 떨어지면 여기서 잡힌다",
@@ -81,12 +74,13 @@ test(
   () => {
     const db = openDb(DB, "1970-01-01T00:00:00.000Z");
     try {
-      const seasons = seasonsToScan(db);
+      const root = rootSeason(db, (s) => loadSite(db, { season: s, builtOn: BUILT_ON }));
+      const seasons = FULL ? root.seasons : [root.season];
       assert.ok(seasons.length > 0, "볼 시즌이 없다 — 이 시험이 공회전한다");
       let checked = 0;
 
       for (const season of seasons) {
-        const site = loadSite(db, { season, builtOn: BUILT_ON });
+        const site = season === root.season ? root.site : loadSite(db, { season, builtOn: BUILT_ON });
         const agg = aggregateSeason(db, season);
 
         /**

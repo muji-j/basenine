@@ -152,4 +152,7 @@ test("유예 경고 — 사유 · 시즌 · 개막 며칠째(첫 경기) · 이�
   assert.match(line, /이번 배포는 2026 시즌이 루트다/);
   assert.ok(!line.includes("\n"), "경고가 한 줄이 아니다");
   assert.doesNotMatch(deferNotice({ season: 2027, reason: "x", gameDays: 0, firstDate: null, root: 2026 }), /첫 경기/);
+  // ⚠시즌 수를 박지 않는다(재검토 m3) — 「보유 9시즌 실측」은 시즌이 늘면 낡는다
+  assert.doesNotMatch(line, /\d+\s*시즌 실측/, "경고 문구에 시즌 수가 박혀 있다 — 시즌이 늘면 거짓이 된다");
+  assert.match(line, /8경기일째에도 안 서면 실패/, "상한(실패하는 날)을 안 말한다");
 });

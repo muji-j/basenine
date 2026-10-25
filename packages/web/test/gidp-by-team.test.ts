@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import { openDb } from "@bb-app/store";
 import type { Db } from "@bb-app/store";
 import { gidpOrUnknown, loadSite } from "../src/query.ts";
+import { rootSeason } from "../src/newest-season.ts";
 // ⚠**명시 타입을 붙인다** — 단언 함수로 좁히는 값을 자기 메시지에서 참조하면
 //   TS 가 초기화식 순환(TS7022)으로 본다. 시험이 컴파일 안 되는 것이 가장 조용한 실패다
 import type { TeamBatter, TeamPageData } from "../src/team-page.ts";
@@ -170,32 +171,26 @@ WHERE g.status = 'played' AND g.competition = 'regular' AND e.status = 'final' A
 GROUP BY pid
 `;
 
-/** 가장 최근의, 타자가 실려 있는 시즌 */
-function latestSeason(db: Db): number {
-  const row = db.raw
-    .prepare("SELECT MAX(season) AS s FROM game WHERE status = 'played' AND competition = 'regular'")
-    .get() as unknown as { s: number | null };
-  assert.notEqual(row.s, null, "정규시즌 경기가 하나도 없다");
-  return Number(row.s);
-}
-
 /**
  * 두 방향을 **한 번의 `loadSite` 로** 잰다.
  *
  * ⚠**나누면 30초가 두 번이다**(실측: `loadSite` 1회 ≈ 30초). 재는 것이 같은 산출물이므로
  * 한 시험에 담되, 실패했을 때 **어느 방향인지** 메시지가 말하게 한다.
+ * ⚠⚠**시즌은 빌드가 사이트 루트에 놓는 시즌이다**(`rootSeason` · 2026-10-25 · PR-4 재검토 F1) — 예전 `MAX(season)` 은
+ *   개막 1~2경기일에 빌드가 아직 굽지 않는 새 시즌을 읽다 「표본 0」으로 떨어져 CI 「시험」 단계가 배포를 막았다.
  */
 test("⚠併殺打의 0과 「—」 — 打席 0 은 0, 打席가 있는데 못 세면 「—」(실DB)", { skip: HAS_DB ? false : "DB 없음" }, () => {
   const db = openDb(DB, "1970-01-01T00:00:00.000Z");
   try {
-    const season = latestSeason(db);
+    const root = rootSeason(db, (s) => loadSite(db, { season: s, builtOn: "1970-01-01" }));
+    const season = root.season;
     const counted = new Map<string, number>();
     for (const r of db.raw.prepare(GIDP_BY_PLAYER).all(season) as unknown as { pid: string; gidp: number }[]) {
       counted.set(r.pid, Number(r.gidp));
     }
     assert.ok(counted.size > 100, `${season}시즌 타석 로그가 ${counted.size}명뿐이다 — 시험이 공회전한다`);
 
-    const site = loadSite(db, { season, builtOn: "1970-01-01" });
+    const site = root.site;
     const batters = site.players.filter((p) => p.batting !== null);
     assert.ok(batters.length > 100, `타자가 ${batters.length}명뿐이다 — 공회전`);
 
