@@ -38,7 +38,7 @@
  *   (예: `hidden until-found` 를 유지한 채 상위 N명만 그리고 나머지는 「もっと見る」로).
  */
 
-import { html, raw } from "./html.ts";
+import { html, raw, toJson } from "./html.ts";
 import type { RawHtml } from "./html.ts";
 import { NO_VALUE, avg3, dec2, fullDate, innings } from "./format.ts";
 import { block, denText, follower, note, panel, panelId, rankValue, runCell, scopedGroup, scroller, statCount, statRateOuts, statSigned, statText, subGroup, tabId, tablist, term, THIN_MARK, thinMark, valueWithDen, widestRunDiff, wlCell } from "./parts.ts";
@@ -361,7 +361,8 @@ export function rankingRestJson(cat: RankingCategory): string {
       q: r.rank !== null,
     }));
   }
-  return JSON.stringify(out);
+  // ⚠**JSON 출력 경계를 지난다**(`toJson` — 이체자 선택자를 뗀다 · 2026-10-25). 서체 게이트는 `.json` 도 훑는다
+  return toJson(out);
 }
 
 /** 그 화면이 내보낼 「もっと見る」 파일들. ⚠**경로 규칙은 여기 한 벌이다**(M1) */
@@ -1769,5 +1770,6 @@ export interface SearchEntry {
 }
 
 export function searchIndexJson(entries: readonly SearchEntry[]): string {
-  return JSON.stringify(entries);
+  // ⚠**JSON 출력 경계를 지난다**(`toJson` · 2026-10-25) — 이름의 이체자 선택자가 빠져 「辻村」으로 쳐도 찾힌다
+  return toJson(entries);
 }

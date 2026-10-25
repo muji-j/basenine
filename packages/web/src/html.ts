@@ -29,8 +29,57 @@ const ESCAPES: Readonly<Record<string, string>> = {
   "'": "&#39;",
 };
 
+/**
+ * 이체자 선택자 — **IVS**(U+E0100–E01EF) · **SVS**(U+FE00–FE0F).
+ * ⚠**소스에 그 글자를 날것으로 적지 마라** — 보이지 않는다. 범위는 이스케이프로만 쓴다.
+ */
+const VARIATION_SELECTORS = /[\u{E0100}-\u{E01EF}\u{FE00}-\u{FE0F}]/gu;
+
+/**
+ * **이체자 선택자를 뗀다 — 화면에 나가는 데이터 문자열의 출력 경계**(2026-10-25).
+ *
+ * ⚠**2026-10-24 배포가 이것으로 멈췄다**(daily run 40116508045 · 「서체 부분집합」 단계).
+ * 2026 드래프트 npb 원본이 이름 두 곳(辻村 大我 · 榊原 七斗)의 첫 글자 뒤에 U+E0100 을 달았고,
+ * **어느 서체도 그 글자를 못 덮어** 서체 게이트(`scripts/build-fonts.ts`)가 섰다 — **게이트는 옳았다.**
+ * 게이트가 허용하는 두 길 중 ⑴ 「그 글자를 화면에서 안 쓴다」를 여기서 탄다(⑵ 서체 교체는 사람의 결정이다).
+ *
+ * ⚠**보이지 않는 글자다**(Unicode Default_Ignorable) — 같은 한자의 **글리프 변형만** 고른다.
+ * 떼면 같은 한자가 서체의 기본 모양으로 나온다(위키백과 표기와 같다). **이름의 뜻은 안 바뀐다.**
+ * 두면 그 글자를 덮는 서체가 없어 게이트가 선다 — 게이트가 막는 까닭은 `scripts/fonts.ts` 머리말(빠진 글자는
+ * 시스템 서체로 떨어진다)이고, ⚠**이 글자를 브라우저가 실제로 어떻게 그리는지는 안 쟀다.**
+ * ⚠**독립 코드포인트 이체자(髙 U+9AD9 · 﨑 U+FA11 · 𠮷 U+20BB7)는 다른 글자다** — 서체가 덮고, 떼면 이름이 바뀐다. 건드리지 않는다.
+ * ⚠**클라이언트 번들(`assets.ts`)에 이 범위를 이스케이프로 적지 마라** — 게이트가 `.js` 의 `\u` 이스케이프를 풀어
+ *   **양 끝 글자 넷(U+E0100·E01EF·FE00·FE0F)을 요구 목록에 넣는다**(2026-10-25 실측). 질의어에서 떼야 할 날이 오면 그것부터 풀어라.
+ * ⚠**원본·DB 는 그대로다**(M4 — 원본 표기는 사실로 남긴다). 파서·적재기에서 떼지 마라.
+ * ⚠**게이트를 느슨하게 하지 마라** — `scripts/fonts.ts` 의 `isNonGlyph` 에 이 범위를 더하면
+ *   글자가 배포물에 남은 채로 통과한다. **서체가 덮지 못하는 글자를 화면에 내보내는 것** — 게이트가 막는 바로 그것이다.
+ * ⚠**화면 문구에 SVS 를 쓰는 곳은 0건이었다**(2026-10-25 실측 · 이 변경 전 git 추적 텍스트 606파일 전수 ·
+ *   글자·이스케이프 둘 다 — 이체자 선택자는 런북 한 곳의 IVS 3자뿐). 기호의 텍스트/이모지 표시를 강제하려고
+ *   U+FE0E·FE0F 를 **끼워 넣는 값으로** 넘기면 여기서 사라진다 — 우리 문구라면 템플릿의 고정 부분에 쓴다
+ *   (그 자리는 이 함수를 안 지난다. 그리고 서체 게이트가 그 글자를 따로 본다).
+ */
+export function stripVariationSelectors(s: string): string {
+  return s.replace(VARIATION_SELECTORS, "");
+}
+
+/**
+ * ⚠**이체자 선택자도 여기서 뗀다**(`stripVariationSelectors`) — 템플릿에 끼워 넣는 값은 **전부** 이 함수를 지나므로
+ * 출력 경계가 한 곳이다(M1). `raw()` 는 지나지 않는다 — **데이터 유래 문자열을 `raw()` 로 넣지 마라.**
+ */
 export function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ESCAPES[c]!);
+  return stripVariationSelectors(s).replace(/[&<>"']/g, (c) => ESCAPES[c]!);
+}
+
+/**
+ * **배포물에 나가는 JSON 의 출력 경계** — `escapeHtml` 의 JSON 짝(검색 색인 · 比較 샤드 · 순위 「もっと見る」).
+ *
+ * ⚠**서체 게이트는 `.json` 도 훑는다**(`scripts/fonts.ts` 의 `TEXT_EXTENSIONS`) — 브라우저가 그 글자를 그리기 때문이다.
+ * 그래서 이름이 실리는 JSON 이 이 함수를 비켜 가면 HTML 을 고쳐도 게이트가 다시 선다.
+ * ⚠**직렬화한 결과에서 뗀다** — `JSON.stringify` 는 짝이 맞는 서러게이트와 U+FE0x 를 이스케이프하지 않고
+ * 글자 그대로 쓰고, JSON 의 구조 글자는 전부 ASCII 라 떼도 JSON 이 안 깨진다. 값과 키에 함께 걸린다.
+ */
+export function toJson(value: unknown): string {
+  return stripVariationSelectors(JSON.stringify(value));
 }
 
 /** 배열·null·숫자도 받는다. null/undefined는 빈 문자열이 된다(빈 값 렌더링과 구별은 호출자 책임). */
@@ -82,6 +131,7 @@ export function html(strings: TemplateStringsArray, ...values: Renderable[]): Ra
  * ⚠**속성값은 걱정하지 않아도 된다** — `escapeHtml` 이 `<` 를 `&lt;` 로 바꾸므로
  * 끼워 넣은 값에 여는 주석 표기가 들어갈 수 없다(실측: 전수에서 속성값 안 **0건**).
  * **그 전제가 무너지면 이 함수도 무너진다** — `escapeHtml` 을 고칠 때 여기를 같이 봐라.
+ * (2026-10-25 에 이체자 선택자를 떼는 일이 더해졌다 — 지우기만 하므로 `<` 를 만들지 않는다. 전제는 그대로다.)
  *
  * ⚠**클라이언트가 주석 노드를 읽지 않는다**(`nodeType===8`·`COMMENT_NODE`·`createComment` **0건**).
  * 하나도 load-bearing 이 아니다.
