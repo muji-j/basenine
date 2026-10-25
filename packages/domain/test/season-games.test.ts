@@ -14,6 +14,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { REGULAR_SEASON_GAMES, regularSeasonGames } from "../src/index.ts";
+import { OPENING_WINDOW_GAME_DAYS, newestSeasonWindow } from "./opening-window.ts";
 
 test("보유 시즌은 전부 143이다 — 실측으로 확인한 값", () => {
   for (const s of [2018, 2019, 2021, 2022, 2023, 2024, 2025, 2026]) {
@@ -74,21 +75,31 @@ test("⚠보유한 모든 시즌에서 12팀의 소화 경기수가 이 표와 �
      * 진행 중인 시즌에는 대신 **표의 값을 넘지 않는가**만 본다.
      */
     /**
-     * ⚠⚠**진행 중인 최신 시즌은 구단이 12개보다 적을 수 있다**(2026-10-25 · PR-4 마지막 재검토 N4).
+     * ⚠⚠**개막 초기 창 안의 최신 시즌은 구단이 12개보다 적을 수 있다**(2026-10-25 · PR-4 마지막 재검토 N4 · 완화 검토 P2).
      *   새 시즌 첫날 12구단이 다 안 나오면(2023 은 03-30 에 **1경기**로 열었다 · 개막일 우천 중지도 같은 모양)
-     *   「시즌마다 12팀」이 「시험」을 떨어뜨려 배포를 막았다. → **최신 시즌이 아직 완결이 아니면 1~12**, 그 밖(완결 · 최신이 아닌 시즌)은 지금처럼 **12**.
+     *   「시즌마다 12팀」이 「시험」을 떨어뜨려 배포를 막았다. → **최신 시즌이 개막 초기 창 안이면 1~12**, 그 밖은 **12**.
+     *   ⚠~~최신 시즌이 아직 완결이 아니면 1~12~~ 는 **순환했다** — 끝난 최신 시즌에서 한 구단이 통째로 빠지면 그 결손이 「미완결」이 되어
+     *   다음 시즌 개막까지 받아 줬다. 창은 **경기일 수**로 가른다(`./opening-window.ts` · `venues-db` 와 한 벌).
      *   ⚠12 를 **넘는** 것은 어느 시즌이든 실패다(슬러그가 바뀌면 옛 코드와 새 코드가 함께 나온다).
      */
-    const newest = Math.max(...bySeason.keys());
+    const newestWin = newestSeasonWindow(db);
     let finished = 0;
     for (const [season, teams] of [...bySeason].sort((a, b) => a[0] - b[0])) {
       const want = regularSeasonGames(season);
       const counts = [...new Set(teams.map((t) => t.n))];
       const done = teams.length === 12 && counts.length === 1 && counts[0] === want;
-      if (season === newest && !done) {
-        assert.ok(teams.length >= 1 && teams.length <= 12, `${season}(진행 중): 구단이 ${teams.length}개다 — 1~12 여야 한다(슬러그가 바뀌었을 수 있다)`);
+      if (season === newestWin.newest && newestWin.opening) {
+        assert.ok(
+          teams.length >= 1 && teams.length <= 12,
+          `${season}(개막 초기 · ${newestWin.gameDays}경기일 ≤ ${OPENING_WINDOW_GAME_DAYS}): 구단이 ${teams.length}개다 — 1~12 여야 한다(슬러그가 바뀌었을 수 있다)`,
+        );
       } else {
-        assert.equal(teams.length, 12, `${season}: 구단이 ${teams.length}개다 — 슬러그가 바뀌었을 수 있다`);
+        assert.equal(
+          teams.length,
+          12,
+          `${season}: 구단이 ${teams.length}개다 — 슬러그가 바뀌었거나 한 구단의 경기가 통째로 빠졌다` +
+            (season === newestWin.newest ? `(최신 시즌 · ${newestWin.gameDays}경기일 > 개막 초기 창 ${OPENING_WINDOW_GAME_DAYS})` : ""),
+        );
       }
       const max = Math.max(...counts);
       assert.ok(max <= want, `${season}: ${max}경기로 표의 ${want}를 넘었다 — 표를 고쳐라`);
