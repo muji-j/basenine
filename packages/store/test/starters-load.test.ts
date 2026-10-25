@@ -243,12 +243,42 @@ test("⚠⚠PR-4 T4 2026-12-31 에 받은 「2月29日」 → 후보 해 0(2025�
   await loadOne("2026-12-31", ANNOUNCED_DAY("2月29日"), (r) => assertUntouched(r, /후보 해가 없다/));
 });
 
-test("⚠⚠PR-4 T4 「2月29日」 경계 — 2027-08-30 → 2028-02-29(+183) 받음 · 2027-08-29 → +184 → 1", async () => {
-  await loadOne("2027-08-30", ANNOUNCED_DAY("2月29日"), (r) => {
+/**
+ * ⚠⚠**앞쪽(미래)은 14일까지만 받는다**(PR-4 3중 검토 1차 P3 · 설계 D3 고침). 예전 규칙(±183 대칭)은 2027-08-30 의 「2月29日」을
+ * 2028-02-29(+183)의 **예고**로 적재했다 — 지금은 앞쪽 후보가 14일 밖이고 지난 후보(2/29)가 없어 실패다(세 표 불변).
+ */
+test("⚠⚠PR-4 T4 「2月29日」 — 2027-08-30(+183)·2027-08-29(+184)는 앞쪽 14일 밖이고 지난 후보가 없어 1 · 세 표 불변", async () => {
+  await loadOne("2027-08-30", ANNOUNCED_DAY("2月29日"), (r) => assertUntouched(r, /\+183일/));
+  await loadOne("2027-08-29", ANNOUNCED_DAY("2月29日"), (r) => assertUntouched(r, /\+184일/));
+});
+
+/**
+ * ⚠⚠**183일 넘게 낡은 페이지가 「미래 예고」로 들어가지 않는다**(1차 P3 실측) — 예전 규칙은 2027-06-15 에 받은 「10月30日」(지난 일본시리즈)을
+ * 2027-10-30(+137)의 예고로 적재해 `MAX(probable_pitcher.game_date)` 를 미래로 만들었다 → 그 시즌 내내 `starters-behind` 가 꺼진다(설계 G4 의 피해).
+ * 지금은 앞쪽 +137 을 안 받고, 지난 2026-10-30 은 −228(183 밖)이라 실패다. 2027-05-01 이면 지난 해가 −183 이라 맥박만이다.
+ */
+test("⚠⚠PR-4 T4 낡은 「10月30日」 — 2027-06-15 는 1(앞쪽 +137 거부 · 지난 −228) · 2027-05-01 은 2026-10-30 맥박만(−183)", async () => {
+  await loadOne("2027-06-15", ANNOUNCED_DAY("10月30日"), (r) => assertUntouched(r, /−228일|-228일/));
+  await loadOne("2027-05-01", ANNOUNCED_DAY("10月30日"), (r) => {
     assert.equal(r.code, 0, r.err);
-    assert.deepEqual(r.probables, ["2028-02-29"], "+183 일을 받지 않았다");
+    assert.deepEqual(r.fetch.map((x) => [x.game_date, x.no_games]), [["2026-10-30", 0]], "앞쪽 +182 를 미래 예고로 받았다");
+    assert.deepEqual(r.probables, []);
+    assert.equal(r.players, 0);
   });
-  await loadOne("2027-08-29", ANNOUNCED_DAY("2月29日"), (r) => assertUntouched(r, /184일/));
+});
+
+/**
+ * ⚠**2020형(늦은 개막 · 6/19) — 오프시즌이 길면 그 동안 낡은 페이지가 미래로 안 간다.** 2019 일본시리즈는 10/23 에 끝났다.
+ * 6/10 에 「10月23日」이면 앞쪽 2020-10-23(+135)은 거부 · 지난 2019-10-23 은 −231 → 실패(시끄러운 쪽 · 런북 §7-L 의 처치) ·
+ * 개막 전날(6/18)의 「6月19日」은 +1 이라 그대로 예고다.
+ */
+test("⚠⚠PR-4 T4 2020형(늦은 개막) — 2020-06-10 「10月23日」 은 1(미래로 안 감) · 2020-06-18 「6月19日」 은 정상 예고(+1)", async () => {
+  await loadOne("2020-06-10", ANNOUNCED_DAY("10月23日"), (r) => assertUntouched(r, /−231일|-231일/));
+  await loadOne("2020-06-18", ANNOUNCED_DAY("6月19日"), (r) => {
+    assert.equal(r.code, 0, r.err);
+    assert.deepEqual(r.probables, ["2020-06-19"]);
+    assert.equal(r.players, 2);
+  });
 });
 
 test("⚠⚠PR-4 T4 「2月29日」 경계 — 2028-08-30 → −183 맥박만(2028-02-29) · 2028-08-31 → −184 → 1", async () => {
@@ -260,10 +290,10 @@ test("⚠⚠PR-4 T4 「2月29日」 경계 — 2028-08-30 → −183 맥박만(2
   await loadOne("2028-08-31", ANNOUNCED_DAY("2月29日"), (r) => assertUntouched(r, /184일/));
 });
 
-test("⚠⚠PR-4 T4 2027-08-31 에 받은 「3月1日」 → ±183 동률은 과거(2027-03-01 · 맥박만)", async () => {
+test("⚠⚠PR-4 T4 2027-08-31 에 받은 「3月1日」 → 앞쪽 2028-03-01(+183)은 안 받고 지난 2027-03-01(−183) 맥박만", async () => {
   await loadOne("2027-08-31", ANNOUNCED_DAY("3月1日"), (r) => {
     assert.equal(r.code, 0, r.err);
-    assert.deepEqual(r.fetch.map((x) => [x.game_date, x.no_games]), [["2027-03-01", 0]], "동률을 미래(2028-03-01)로 골랐다");
+    assert.deepEqual(r.fetch.map((x) => [x.game_date, x.no_games]), [["2027-03-01", 0]], "앞쪽 +183(2028-03-01)을 골랐다");
     assert.deepEqual(r.probables, []);
   });
 });
