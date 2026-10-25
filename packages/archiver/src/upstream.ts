@@ -80,7 +80,8 @@ export class FetchLocalError extends Error {
 
 /**
  * **그 달 월간 일정이 없다**(404 · 410) — 받기는 성공했다(회로도 성공으로 셌다).
- * ⚠**상류 실패가 아니다** — 현재 달이면 local(우리가 모르는 상태 → 막는다) · 다음 달이면 꼬리표 「（오프시즌이면 정상）」만 붙인다(설계 D1).
+ * ⚠**상류 실패가 아니다** — 현재 달이면 달로 가른다(PR-4 설계 `2026-10-24-offseason-readiness-design.md` D1 · `archive.ts` 의 `archiveDate`:
+ *   3~10월은 local(우리가 모르는 상태 → 막는다) · 11·12·1·2월은 「그날 경기 0」) · 다음 달이면 꼬리표 「（오프시즌이면 정상）」만 붙인다(설계 D1).
  * ⚠메시지 앞 구절은 옛 「월간 일정을 받지 못했다 (HTTP 404)」 그대로다(로그 검색 호환).
  */
 export class ScheduleAbsentError extends Error {
