@@ -9,6 +9,7 @@
  *   node scripts/venue-measure.ts data/bb.sqlite            # 문자열 수 · 표 대조 · 홈 귀속
  *   node scripts/venue-measure.ts data/bb.sqlite --raw      # 구장 × 시즌 × 홈팀 전수 덤프(표를 만드는 입력)
  *   node scripts/venue-measure.ts data/bb.sqlite --pf       # 파크팩터: 건물 단위 vs 팀 단위
+ *   node scripts/venue-measure.ts data/bb.sqlite --opening  # 개막 직후의 본거지 판정(진행 중 시즌의 판정 하한 근거)
  *
  * ⚠**대회 경계**: `competition='regular' AND status='played'` 만(CLAUDE.md §2-1).
  *   올스타·CS·일본시리즈를 섞으면 구장 집합도 득점 환경도 다른 수가 된다.
@@ -34,12 +35,13 @@ const { values, positionals } = parseArgs({
   options: {
     raw: { type: "boolean", default: false },
     pf: { type: "boolean", default: false },
+    opening: { type: "boolean", default: false },
   },
 });
 
 const dbPath = positionals[0];
 if (dbPath === undefined) {
-  console.error("usage: node scripts/venue-measure.ts <db-path> [--raw] [--pf]");
+  console.error("usage: node scripts/venue-measure.ts <db-path> [--raw] [--pf] [--opening]");
   process.exit(2);
 }
 
@@ -369,6 +371,62 @@ if (values.pf) {
         .join(" / ")} · 건물 간 폭 ${spread.toFixed(3)}`,
     );
   }
+}
+
+/* ── ⑥ 개막 직후의 본거지 판정 ─────────────────────────────────────────── */
+
+if (values.opening) {
+  /**
+   * `packages/domain/test/venues-db.test.ts` 의 「본거지」 판정(실측 최다 건물 · 점유 과반)을 **시즌마다 개막부터 하루씩 자른 접두**에 돌린다.
+   * 진행 중 시즌의 판정 하한(그 시험의 `IN_PROGRESS_MIN_HOME_GAMES`)의 근거다(2026-10-25 · PR-4 마지막 재검토 N1).
+   * ⚠개막 직후에는 제2 구장 개막 카드(阪神 京セラ · 2018·2019 日本ハム)가 본거지보다 많거나 같아서 판정이 떨어진다 —
+   *   **떨어지는 (구단, 접두)의 홈경기 수 최댓값 + 1** 이 「보유 시즌 모든 접두에서 실패 0 이 되는 최소값」이다.
+   */
+  const games = db
+    .prepare(
+      `SELECT season, game_date AS d, home_code AS h, venue FROM game
+        WHERE ${WHERE} AND venue IS NOT NULL ORDER BY season, game_date`,
+    )
+    .all() as unknown as { season: number; d: string; h: string; venue: string }[];
+  console.log("");
+  console.log("## ⑥ 개막 직후의 본거지 판정 — 시즌마다 개막부터 하루씩 자른 접두");
+  console.log("season\t떨어지는 경기일/경기일\t떨어지는 홈경기 수 최대\t그 예");
+  let worst = 0;
+  for (const season of seasons) {
+    const list = games.filter((g) => Number(g.season) === season);
+    const dates = [...new Set(list.map((g) => g.d))];
+    const by = new Map<string, Map<string, number>>();
+    let next = 0;
+    let failDays = 0;
+    let seasonWorst = 0;
+    let sample = "-";
+    for (const [k, d] of dates.entries()) {
+      for (; next < list.length && list[next]!.d === d; next += 1) {
+        const g = list[next]!;
+        const m = by.get(g.h) ?? new Map<string, number>();
+        const id = venueOf(g.venue).id;
+        m.set(id, (m.get(id) ?? 0) + 1);
+        by.set(g.h, m);
+      }
+      let failed = false;
+      for (const [team, m] of by) {
+        const total = [...m.values()].reduce((a, b) => a + b, 0);
+        const top = [...m].sort((x, y) => y[1] - x[1])[0]!;
+        const declared = primaryVenue(team, season);
+        const share = (m.get(declared.id) ?? 0) / total;
+        if (top[0] === declared.id && share > 0.5) continue;
+        failed = true;
+        if (total > seasonWorst) {
+          seasonWorst = total;
+          sample = `${k + 1}경기일째(${d}) ${team} 홈 ${total} · 최다 ${top[0]}(${top[1]}) · 표 ${declared.id} · 점유 ${share.toFixed(2)}`;
+        }
+      }
+      if (failed) failDays += 1;
+    }
+    worst = Math.max(worst, seasonWorst);
+    console.log(`${season}\t${failDays}/${dates.length}\t${seasonWorst}\t${sample}`);
+  }
+  console.log(`떨어지는 홈경기 수 최대 ${worst} → 보유 ${seasons.length}시즌 모든 접두에서 실패 0 이 되는 최소값: **${worst + 1}**`);
 }
 
 db.close();
