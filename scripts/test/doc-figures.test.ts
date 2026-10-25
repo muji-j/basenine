@@ -480,9 +480,13 @@ test("⚠절반짜리 예산(16,389 · 149MB)이 문서에 살아 돌아오지 �
  */
 const DIST_TOLERANCE = 0.15;
 
-/** 문서 값이 실측에서 허용보다 멀리 떨어졌는가 — 배포물 대조 두 시험(파일 수 · 바이트)과 「허용의 모양」 시험이 같이 쓴다 */
-function tooFar(doc: number, actual: number, tolerance: number): boolean {
-  return Math.abs(doc - actual) / actual > tolerance;
+/**
+ * 문서 값이 실측에서 허용(`DIST_TOLERANCE`)보다 멀리 떨어졌는가 — 배포물 대조 두 시험(파일 수 · 바이트)과 「허용의 모양」 시험 둘이 **같은 이 함수**를 쓴다.
+ * ⚠**허용을 인자로 받지 않는다** — 받으면 대조 시험이 모양 시험과 다른 수를 넘겨도 아무것도 안 붉어진다(모양 시험이 지키는 것이 대조 시험의 허용이어야 한다).
+ * ⚠**바이트도 같은 15%**(2026-10-25 조정자 결정 · 아래 바이트 시험 머리말).
+ */
+function tooFar(doc: number, actual: number): boolean {
+  return Math.abs(doc - actual) / actual > DIST_TOLERANCE;
 }
 
 /**
@@ -493,9 +497,9 @@ function tooFar(doc: number, actual: number, tolerance: number): boolean {
 test("⚠배포물 파일 수의 허용(15%)은 새 시즌 첫날부터 시즌 끝까지의 증가를 막지 않고 옛 사고값(실제의 55.6%)은 잡는다", () => {
   const doc = 9_874;
   for (const [what, grown] of [["새 시즌 첫 굽기", doc + 292], ["새 시즌 첫 달", doc + 560], ["시즌 끝", doc + 1_199]] as const) {
-    assert.equal(tooFar(doc, grown, DIST_TOLERANCE), false, `${what}(${grown}): 해마다 고치는 문서 값이 시즌 안의 증가로 「시험」을 막는다 — 허용이 시즌 성장보다 좁다`);
+    assert.equal(tooFar(doc, grown), false, `${what}(${grown}): 해마다 고치는 문서 값이 시즌 안의 증가로 「시험」을 막는다 — 허용이 시즌 성장보다 좁다`);
   }
-  assert.equal(tooFar(8_611, 15_500, DIST_TOLERANCE), true, "옛 사고값(문서 8,611 · 실제 15,500 = 55.6%)을 못 잡는다");
+  assert.equal(tooFar(8_611, 15_500), true, "옛 사고값(문서 8,611 · 실제 15,500 = 55.6%)을 못 잡는다");
 });
 
 test("⚠문서의 배포물 파일 수가 dist 와 크게 어긋나지 않는다", () => {
@@ -534,7 +538,7 @@ test("⚠문서의 배포물 파일 수가 dist 와 크게 어긋나지 않는�
       continue;
     }
     for (const n of nums) {
-      if (tooFar(n, actual, DIST_TOLERANCE)) {
+      if (tooFar(n, actual)) {
         const off = Math.abs(n - actual) / actual;
         bad.push(`${rel}: ${n.toLocaleString("en-US")}파일 은 실측 ${actual.toLocaleString("en-US")} 과 ${(off * 100).toFixed(1)}% 어긋난다`);
       }
@@ -549,6 +553,23 @@ test("⚠문서의 배포물 파일 수가 dist 와 크게 어긋나지 않는�
 });
 
 /**
+ * ⚠⚠**크기의 허용 모양**(2026-10-25 · 조정자 결정 — 바이트도 파일 수와 같은 15%) — 문서 값 1524.3MB(`docs/operations/deploy.md` §5 표 3행 · PR #39) 기준:
+ * 새 시즌 첫 굽기 +55.4MB(재검토 실측 — 2경기일 사본 빌드 1578.0 대 지금 모양 1522.6) · 시즌 끝 +188.6MB(끝난 시즌 한 벌 · 2025 · 로컬 배포물 실측)는
+ * 막지 않고, 옛 사고값(문서 878.8MB · 실제 1,354.0MB)은 잡는다. ⚠10% 였다면 시즌 끝(+188.6 = 11.0%)에서 막혔다.
+ */
+test("⚠배포물 크기의 허용(15%)도 한 시즌의 증가를 막지 않고 옛 사고값(878.8MB 대 1,354.0MB)은 잡는다", () => {
+  const doc = 1_524.3;
+  for (const [what, grown] of [["새 시즌 첫 굽기", doc + 55.4], ["시즌 끝", doc + 188.6]] as const) {
+    assert.equal(
+      tooFar(doc, grown),
+      false,
+      `${what}(${grown.toFixed(1)}MB): 해마다 고치는 문서 값이 시즌 안의 증가로 「시험」을 막는다 — 허용이 시즌 성장보다 좁다`,
+    );
+  }
+  assert.equal(tooFar(878.8, 1_354.0), true, "옛 사고값(문서 878.8MB · 실제 1,354.0MB)을 못 잡는다");
+});
+
+/**
  * **배포물의 바이트도 같이 잰다.**
  *
  * ⚠**파일 수만 재고 있었고, 그 사이 바이트가 55% 벌어졌다**(2026-08-27).
@@ -557,16 +578,15 @@ test("⚠문서의 배포물 파일 수가 dist 와 크게 어긋나지 않는�
  * 그리고 문서는 「`doc-figures.test.ts` 가 `dist/` 와 대조한다」고 적어 두고 있었다 —
  * 읽는 사람은 **두 수 다 지켜진다고 믿는다.** 「없는 장치를 있다고 적는다」의 전형이다.
  *
- * ⚠**허용 오차를 ~~파일 수보다 넓게~~ 잡는다(10%)**. 바이트는 경기가 들어올 때마다 늘고
+ * ⚠**허용 오차를 ~~파일 수보다 넓게 잡는다(10%)~~**. 바이트는 경기가 들어올 때마다 늘고
  * 시즌 진행 중에는 매일 움직인다 — 3% 로 조이면 **헛되이 붉어지고, 그러면 곧 무시된다.**
  * 55% 같은 어긋남을 잡는 것이 목적이지 소수점을 맞추는 것이 아니다.
- * ⚠⚠**지금은 파일 수(15% · 2026-10-25)보다 좁다** — 그리고 **연례 갱신만으로 한 시즌을 못 버틸 수 있다**(추정 · 아직 안 겪었다):
- *   끝난 시즌 한 벌이 배포물에서 182.7~188.6 MiB(2024·2025 실측)인데 이 허용은 새 시즌 루트가 문서 값의 약 11%(지금 값으로 약 167~169 MiB)를
- *   넘으면 깨진다 → 시즌 후반(8~9월 추정) daily 「시험」이 막는다. 지금 처치는 **시즌 중 한 번 사람이 바이트 값을 고치는 것**이고(런북 §7-L
- *   「사람 손이 드는 일」), 파일 수처럼 넓힐지는 **열린 결정**이다(설계 `docs/superpowers/specs/2026-10-24-offseason-readiness-design.md` §9-E).
+ * ⚠⚠**지금은 파일 수와 같은 허용 한 벌(`DIST_TOLERANCE` · 15%)이다**(2026-10-25 · 조정자 결정 · 근거가 파일 수와 같다).
+ *   10% 는 **연례 갱신만으로 한 시즌을 못 버텼다** — 끝난 시즌 한 벌이 배포물에서 182.7~188.6 MiB(2024·2025 · 로컬 배포물 실측)라
+ *   새 시즌 루트가 그만큼 자라면 문서 값(1524.3MB)과 약 11% 어긋나 **매 시즌 후반 daily 「시험」이 막혔을 것**이다(추정 — 겪기 전에 바꿨다).
+ *   15% 면 한 시즌(약 12%)은 덮고, 옛 사고값(878.8 대 1,354.0 — 실제의 35.1% 어긋남)은 여전히 잡는다(위 「크기의 허용 모양」 시험).
+ *   ⚠**갈라야 할 사유가 생기면 그때 상수를 가른다** — 지금 둘로 두면 한쪽만 고쳐질 자리가 하나 더 생긴다.
  */
-const DIST_MB_TOLERANCE = 0.10;
-
 test("⚠문서의 배포물 크기(MB)가 dist 와 크게 어긋나지 않는다", () => {
   const dist = `${ROOT}dist`;
   if (!existsSync(dist)) {
@@ -601,7 +621,7 @@ test("⚠문서의 배포물 크기(MB)가 dist 와 크게 어긋나지 않는�
       continue;
     }
     for (const n of nums) {
-      if (tooFar(n, actualMb, DIST_MB_TOLERANCE)) {
+      if (tooFar(n, actualMb)) {
         const off = Math.abs(n - actualMb) / actualMb;
         bad.push(`${rel}: ${n}MB 는 실측 ${actualMb.toFixed(1)}MB 와 ${(off * 100).toFixed(1)}% 어긋난다`);
       }
@@ -610,7 +630,7 @@ test("⚠문서의 배포물 크기(MB)가 dist 와 크게 어긋나지 않는�
   assert.deepEqual(
     bad,
     [],
-    `문서의 배포물 크기가 낡았다(실측 ${actualMb.toFixed(1)}MB · 허용 ${DIST_MB_TOLERANCE * 100}%).\n`
+    `문서의 배포물 크기가 낡았다(실측 ${actualMb.toFixed(1)}MB · 허용 ${DIST_TOLERANCE * 100}%).\n`
       + "⚠**두 문서가 같은 수를 말해야 한다**(M1) — 한쪽만 고치지 마라.",
   );
   console.log(`  · 배포물 ${actualMb.toFixed(1)}MB`);
